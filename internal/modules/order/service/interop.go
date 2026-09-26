@@ -79,6 +79,7 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 //	  "email":           "a@b.com",     // optional
 //	  "currency_code":   "TRY",         // REQUIRED, ISO 4217
 //	  "idempotency_key": "wf_01H…",     // optional; MUST BE FILLED in the saga
+//	  "adds_to_order_id": "order_01H…", // optional; the order this one adds to
 //	  "subtotal":        3000,          // minor unit INTEGER
 //	  "discount_total":  0,
 //	  "tax_total":       600,
@@ -126,6 +127,7 @@ type interopSnapshot struct {
 	Email          string             `json:"email"`
 	CurrencyCode   string             `json:"currency_code"`
 	IdempotencyKey string             `json:"idempotency_key"`
+	AddsToOrderID  string             `json:"adds_to_order_id"`
 	Subtotal       int64              `json:"subtotal"`
 	DiscountTotal  int64              `json:"discount_total"`
 	TaxTotal       int64              `json:"tax_total"`
@@ -267,6 +269,7 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 		CurrencyCode:   incoming.CurrencyCode,
 		CartID:         incoming.CartID,
 		IdempotencyKey: incoming.IdempotencyKey,
+		AddsToOrderID:  incoming.AddsToOrderID,
 		Subtotal:       incoming.Subtotal,
 		DiscountTotal:  incoming.DiscountTotal,
 		TaxTotal:       incoming.TaxTotal,
@@ -280,6 +283,16 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 		return "", err
 	}
 	return order.ID, nil
+}
+
+// CheckAddition answers whether an order of customerID in currencyCode may add
+// to orderID now; nil means it may (ADR 0192).
+//
+// A cart opened for an addition asks it, so a closed or mistyped order is
+// refused before anything is bought. The order's write asks again under a lock
+// on the parent, so the answer given here is advice and not a reservation.
+func (i *Interop) CheckAddition(ctx context.Context, orderID, customerID, currencyCode string) error {
+	return i.svc.CheckAddition(ctx, orderID, customerID, currencyCode)
 }
 
 // CancelOrder cancels the order; it IS THE SAGA COMPENSATION and it IS

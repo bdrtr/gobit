@@ -78,6 +78,11 @@ type Cart struct {
 	// value is copied from the region; the side that copies it is the workflow,
 	// the cart module does not call the region module (ADR 0001/0006).
 	CurrencyCode string
+	// AddsToOrderID is the order this cart was opened to add to; it belongs to
+	// the order module and IS NOT A FOREIGN KEY. Empty on a cart that adds to
+	// nothing. It is written when the cart is opened, never changed, and
+	// carried into the order the cart becomes (ADR 0192).
+	AddsToOrderID string
 	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
 	// DiscountTotal is the total discount (minor unit); it is stored positive

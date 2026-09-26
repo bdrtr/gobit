@@ -80,7 +80,8 @@ func NewInterop(w *Workflows) *Interop { return &Interop{w: w} }
 // counterpart on the server. The same gap is the absence of the price parameter in
 // [Interop.AddPricedLineItem].
 //
-// If customerID is left empty the cart belongs to a GUEST. metadata is the free
+// If customerID is left empty the cart belongs to a GUEST. addsToOrderID, when
+// given, opens the cart to add to that order (ADR 0192). metadata is the free
 // JSON object to attach to the cart; it may be left empty.
 //
 // Only the ID is returned: the cart itself is a record richer than this surface
@@ -88,14 +89,15 @@ func NewInterop(w *Workflows) *Interop { return &Interop{w: w} }
 // choice is made in [Interop.AddPricedLineItem].
 func (i *Interop) OpenCartForCountry(
 	ctx context.Context,
-	countryCode, customerID, email string,
+	countryCode, customerID, email, addsToOrderID string,
 	metadata json.RawMessage,
 ) (string, error) {
 	result, err := i.w.CreateCart(ctx, CreateCartInput{
-		CountryCode: countryCode,
-		CustomerID:  customerID,
-		Email:       email,
-		Metadata:    metadata,
+		CountryCode:   countryCode,
+		CustomerID:    customerID,
+		Email:         email,
+		AddsToOrderID: addsToOrderID,
+		Metadata:      metadata,
 	})
 	if err != nil {
 		return "", err

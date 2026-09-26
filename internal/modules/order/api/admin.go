@@ -36,6 +36,9 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 		status := models.OrderStatus(raw)
 		in.Status = &status
 	}
+	if raw := r.URL.Query().Get("adds_to_order_id"); raw != "" {
+		in.AddsToOrderID = &raw
+	}
 
 	result, err := h.svc.ListOrders(ctx, in)
 	if err != nil {

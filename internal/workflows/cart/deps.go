@@ -44,6 +44,12 @@ const (
 	// falling back to a number the caller supplied (see
 	// [Workflows.AddQuotedShippingMethod]).
 	ServiceFulfillment = "fulfillment.interop"
+	// ServiceOrder is the order module's cross-module surface.
+	//
+	// IT IS OPTIONAL to resolve, and a cart opened to add to an order FAILS
+	// CLOSED without it: whether an order may be added to is the order module's
+	// question, and no other side can answer it (see [Orders]).
+	ServiceOrder = "order.interop"
 	// ServiceLink is the core's Module Links service.
 	ServiceLink = "core.link"
 	// ServiceQuery is the core's cross-module read layer.
@@ -169,6 +175,9 @@ const (
 	// CodeTaxInvalid says that the tax module reported a computation result
 	// outside the contract.
 	CodeTaxInvalid = "cart_workflow_tax_invalid"
+	// CodeAdditionsUnavailable reports that the order surface is not wired, so
+	// no cart can be opened to add to an order.
+	CodeAdditionsUnavailable = "cart_workflow_additions_unavailable"
 	// CodeRegionReadFailed reports that the region record COULD NOT BE READ from
 	// the Query layer; it DOES NOT mean that the region does not exist.
 	CodeRegionReadFailed = "cart_workflow_region_read_failed"
@@ -227,9 +236,12 @@ type Carts interface {
 	// this package DOES NOT READ it and it enters no computation — but since this
 	// flow is the only way to open a cart, carrying it is mandatory; if it were
 	// not carried the field the client sent would silently be dropped.
+	//
+	// addsToOrderID is the order the cart is opened to add to, or empty; this
+	// package asked [Orders] about it before calling (ADR 0192).
 	OpenCart(
 		ctx context.Context,
-		regionID, currencyCode, customerID, email string,
+		regionID, currencyCode, customerID, email, addsToOrderID string,
 		metadata json.RawMessage,
 	) (cartID string, err error)
 
@@ -373,6 +385,17 @@ type Customers interface {
 // can match (ADR 0185). "" means the customer is no company's employee.
 type Companies interface {
 	CompanyOfCustomer(ctx context.Context, customerID string) (string, error)
+}
+
+// Orders is the surface of the order module ("order.interop") that this package
+// uses.
+//
+// One question, asked when a cart is opened to add to an order (ADR 0192): may
+// an order of this customer in this currency add to that one now. The order's
+// write asks it again under a lock on the parent, so the answer here spares the
+// shopper a cart they could not check out and decides nothing.
+type Orders interface {
+	CheckAddition(ctx context.Context, orderID, customerID, currencyCode string) error
 }
 
 // Discounts is the surface of the promotion module ("promotion.interop") that
@@ -519,6 +542,11 @@ type Deps struct {
 	// defect this surface exists to close. So nil here does not degrade the
 	// flow, it disables it.
 	Shipping Shipping
+	// Orders is the order surface; IT IS OPTIONAL to supply, and like
+	// [Deps.Shipping] its absence disables rather than degrades: a cart that
+	// names an order is not opened when nothing can say the order may be added
+	// to.
+	Orders Orders
 	// Links is the Module Links surface; it is mandatory.
 	Links Links
 	// Catalog is the Query surface; it is mandatory.
@@ -538,6 +566,7 @@ type Workflows struct {
 	discounts Discounts
 	taxes     Taxes
 	shipping  Shipping
+	orders    Orders
 	links     Links
 	catalog   Catalog
 	log       *slog.Logger
@@ -586,6 +615,7 @@ func New(deps Deps) (*Workflows, error) {
 		discounts: deps.Discounts,
 		taxes:     deps.Taxes,
 		shipping:  deps.Shipping,
+		orders:    deps.Orders,
 		links:     deps.Links,
 		catalog:   deps.Catalog,
 		log:       log,
@@ -645,6 +675,10 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 	if err != nil {
 		return nil, err
 	}
+	orders, err := resolveOptional[Orders](c, ServiceOrder)
+	if err != nil {
+		return nil, err
+	}
 	links, err := resolve[Links](c, ServiceLink)
 	if err != nil {
 		return nil, err
@@ -678,6 +712,7 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 		Discounts: discounts,
 		Taxes:     taxes,
 		Shipping:  shipping,
+		Orders:    orders,
 		Links:     links,
 		Catalog:   catalog,
 		Logger:    log,

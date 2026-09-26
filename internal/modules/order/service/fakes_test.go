@@ -113,6 +113,8 @@ type fakeStore struct {
 	// is a concurrency contract and in a real database its violation only shows
 	// up under a race; here it can be read directly.
 	lockedOrders []string
+	// sharedOrders records the orders read under a share lock, in order.
+	sharedOrders []string
 	// lockedReturns records the return rows that were locked, in order.
 	lockedReturns []string
 	// lockedClaims records the claim rows that were locked, in order.
@@ -383,6 +385,25 @@ func (f *fakeStore) GetOrderByIdempotencyKey(ctx context.Context, key string) (m
 		"no order was found with this idempotency key")
 }
 
+// ShareLockOrder reads the order the way LockOrder does and records the share
+// lock apart from the exclusive ones; it can only be called inside a
+// transaction.
+func (f *fakeStore) ShareLockOrder(ctx context.Context, id string) (models.Order, error) {
+	if err := requireTx(ctx, "ShareLockOrder"); err != nil {
+		return models.Order{}, err
+	}
+
+	f.mu.Lock()
+	f.sharedOrders = append(f.sharedOrders, id)
+	order, ok := f.orders[id]
+	f.mu.Unlock()
+
+	if !ok {
+		return models.Order{}, notFound(id)
+	}
+	return order, nil
+}
+
 // LockOrder locks the order; it can only be called inside a transaction.
 func (f *fakeStore) LockOrder(ctx context.Context, id string) (models.Order, error) {
 	if err := requireTx(ctx, "LockOrder"); err != nil {
@@ -412,6 +433,9 @@ func (f *fakeStore) ListOrders(ctx context.Context, filter models.OrderFilter) (
 			continue
 		}
 		if filter.Status != nil && snapshot.orders[id].Status != *filter.Status {
+			continue
+		}
+		if filter.AddsToOrderID != nil && snapshot.orders[id].AddsToOrderID != *filter.AddsToOrderID {
 			continue
 		}
 		matched = append(matched, snapshot.orders[id])

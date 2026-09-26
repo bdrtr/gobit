@@ -118,6 +118,12 @@ type CreateOrderInput struct {
 	// has to be filled in the complete_cart flow; when it is left empty every
 	// call produces a new order.
 	IdempotencyKey string
+	// AddsToOrderID is the order this one adds to; it is optional (ADR 0192).
+	//
+	// When it is given the parent is read under a share lock in the write's
+	// transaction and the order is not written unless the parent is pending,
+	// of the same customer and currency, and not an addition itself.
+	AddsToOrderID string
 	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
 	// DiscountTotal is the total discount; it is given as a POSITIVE number and
@@ -302,6 +308,9 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 	var created models.Order
 
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.checkParent(ctx, in); err != nil {
+			return err
+		}
 		if err := s.enforceSpendingLimit(ctx, rule, in); err != nil {
 			return err
 		}
@@ -315,6 +324,7 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 			CurrencyCode:   in.CurrencyCode,
 			CartID:         in.CartID,
 			IdempotencyKey: in.IdempotencyKey,
+			AddsToOrderID:  in.AddsToOrderID,
 			Subtotal:       in.Subtotal,
 			DiscountTotal:  in.DiscountTotal,
 			TaxTotal:       in.TaxTotal,
@@ -412,6 +422,24 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 		return models.Order{}, err
 	}
 	return created, nil
+}
+
+// checkParent refuses an addition whose parent may not be added to, reading the
+// parent under a share lock (ADR 0192).
+//
+// It runs FIRST in the write's transaction. A cancellation of the parent locks
+// it FOR UPDATE, so the two run one after the other: an addition written first
+// stands when the parent is canceled later, and one that waited reads the
+// cancellation and is refused. Two additions to the same parent share the lock.
+func (s *Service) checkParent(ctx context.Context, in CreateOrderInput) error {
+	if in.AddsToOrderID == "" {
+		return nil
+	}
+	parent, err := s.store.ShareLockOrder(ctx, in.AddsToOrderID)
+	if err != nil {
+		return err
+	}
+	return additionRefusal(parent, in.CustomerID, in.CurrencyCode)
 }
 
 // replayedOrder returns the existing order of an idempotent call that lost the
@@ -543,6 +571,9 @@ type ListOrdersInput struct {
 	RegionID *string
 	// Status, when given, filters the orders by status.
 	Status *models.OrderStatus
+	// AddsToOrderID, when given, returns only the orders that add to that
+	// order: its additions (ADR 0192).
+	AddsToOrderID *string
 	// Page holds the pagination parameters.
 	Page Page
 }
@@ -578,6 +609,12 @@ func (s *Service) ListOrders(ctx context.Context, in ListOrdersInput) (OrderPage
 				"undefined order status: %q", in.Status.String())
 		}
 		filter.Status = in.Status
+	}
+	if in.AddsToOrderID != nil {
+		if err := requireID("adds_to_order_id", *in.AddsToOrderID); err != nil {
+			return OrderPage{}, err
+		}
+		filter.AddsToOrderID = in.AddsToOrderID
 	}
 
 	// One row MORE than asked for is fetched and the extra one is dropped

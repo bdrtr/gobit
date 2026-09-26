@@ -778,14 +778,14 @@ var _ api.CartOpening = (*cartOpening)(nil)
 // OpenCartForCountry opens the cart and returns its id.
 func (p *cartOpening) OpenCartForCountry(
 	ctx context.Context,
-	countryCode, customerID, email string,
+	countryCode, customerID, email, addsToOrderID string,
 	metadata json.RawMessage,
 ) (string, error) {
 	p.once.Do(func() { p.resolve(ctx) })
 	if p.err != nil {
 		return "", p.err
 	}
-	return p.svc.OpenCartForCountry(ctx, countryCode, customerID, email, metadata)
+	return p.svc.OpenCartForCountry(ctx, countryCode, customerID, email, addsToOrderID, metadata)
 }
 
 // resolve resolves the flow from the container; it stores the result once.

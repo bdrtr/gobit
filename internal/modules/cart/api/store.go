@@ -79,6 +79,14 @@ type createCartRequest struct {
 	// is never applied to an order born of a cart without a customer.
 	CustomerID string `json:"customer_id"`
 	Email      string `json:"email"`
+	// AddsToOrderID opens the cart to add to one of the customer's pending
+	// orders; left empty the cart adds to nothing (ADR 0192).
+	//
+	// It needs a customer, and the customer has to be the order's: a guest
+	// proves nothing that ties a second purchase to the first. The order module
+	// answers whether the order may be added to before the cart is opened, and
+	// again when the cart is checked out.
+	AddsToOrderID string `json:"adds_to_order_id"`
 	// Metadata is the cart's free-form extra data (campaign source, storefront
 	// session).
 	//
@@ -136,7 +144,8 @@ func (h *Handler) storeCreateCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := flow.OpenCartForCountry(ctx, body.CountryCode, customerID, body.Email, metadata)
+	id, err := flow.OpenCartForCountry(ctx, body.CountryCode, customerID, body.Email,
+		body.AddsToOrderID, metadata)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return

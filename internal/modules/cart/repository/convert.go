@@ -228,6 +228,7 @@ func toCart(row cartdb.Cart) (models.Cart, error) {
 		ID:             row.ID,
 		RegionID:       row.RegionID,
 		CustomerID:     stringValue(row.CustomerID),
+		AddsToOrderID:  stringValue(row.AddsToOrderID),
 		Email:          stringValue(row.Email),
 		CurrencyCode:   row.CurrencyCode,
 		Subtotal:       row.Subtotal,

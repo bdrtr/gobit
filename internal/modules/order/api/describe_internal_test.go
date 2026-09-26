@@ -634,14 +634,15 @@ func filledOrder() orderDTO {
 	now := time.Now().UTC()
 
 	return orderDTO{
-		CustomerID:   "cus_1",
-		Email:        "a@b.c",
-		CartID:       "cart_1",
-		Metadata:     map[string]any{"k": "v"},
-		CompletedAt:  &now,
-		CanceledAt:   &now,
-		ArchivedAt:   &now,
-		CancelReason: "the customer changed their mind",
+		CustomerID:    "cus_1",
+		Email:         "a@b.c",
+		CartID:        "cart_1",
+		AddsToOrderID: "order_0",
+		Metadata:      map[string]any{"k": "v"},
+		CompletedAt:   &now,
+		CanceledAt:    &now,
+		ArchivedAt:    &now,
+		CancelReason:  "the customer changed their mind",
 	}
 }
 

@@ -227,6 +227,7 @@ func (r *Repository) CreateOrder(ctx context.Context, order models.Order) (model
 		ShippingTotal:  order.ShippingTotal,
 		Total:          order.Total,
 		Metadata:       meta,
+		AddsToOrderID:  nullString(order.AddsToOrderID),
 	})
 	if err != nil {
 		return models.Order{}, classify(err, codeQueryFailed, "could not create the order")
@@ -290,6 +291,23 @@ func (r *Repository) LockOrder(ctx context.Context, id string) (models.Order, er
 	return toOrder(row)
 }
 
+// ShareLockOrder locks the order against a change of state for the rest of the
+// transaction and returns it; NotFound if there is none. An addition reads its
+// parent through it (ADR 0192).
+func (r *Repository) ShareLockOrder(ctx context.Context, id string) (models.Order, error) {
+	if err := requireTx(ctx, "ShareLockOrder"); err != nil {
+		return models.Order{}, err
+	}
+	row, err := r.queries(ctx).ShareLockOrder(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Order{}, orderNotFound(id)
+		}
+		return models.Order{}, classify(err, codeQueryFailed, "could not lock the order")
+	}
+	return toOrder(row)
+}
+
 // ListOrders filters and pages the orders; the second value is the total count.
 func (r *Repository) ListOrders(ctx context.Context, filter models.OrderFilter) ([]models.Order, int64, error) {
 	var status *string
@@ -311,22 +329,24 @@ func (r *Repository) ListOrders(ctx context.Context, filter models.OrderFilter) 
 	}
 
 	rows, err := r.queries(ctx).ListOrders(ctx, orderdb.ListOrdersParams{
-		CustomerID: filter.CustomerID,
-		RegionID:   filter.RegionID,
-		Status:     status,
-		RowLimit:   filter.Limit,
-		RowOffset:  filter.Offset,
-		AfterAt:    afterAt,
-		AfterID:    afterID,
+		CustomerID:    filter.CustomerID,
+		RegionID:      filter.RegionID,
+		Status:        status,
+		AddsToOrderID: filter.AddsToOrderID,
+		RowLimit:      filter.Limit,
+		RowOffset:     filter.Offset,
+		AfterAt:       afterAt,
+		AfterID:       afterID,
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed, "could not list the orders")
 	}
 
 	total, err := r.queries(ctx).CountOrders(ctx, orderdb.CountOrdersParams{
-		CustomerID: filter.CustomerID,
-		RegionID:   filter.RegionID,
-		Status:     status,
+		CustomerID:    filter.CustomerID,
+		RegionID:      filter.RegionID,
+		Status:        status,
+		AddsToOrderID: filter.AddsToOrderID,
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed, "could not count the orders")

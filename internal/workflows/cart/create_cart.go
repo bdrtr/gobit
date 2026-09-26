@@ -19,6 +19,11 @@ type CreateCartInput struct {
 	// Email is the cart's contact address; it is optional. If it is left empty
 	// on a registered customer's cart, the customer's registered address is used.
 	Email string
+	// AddsToOrderID is the order the cart is opened to add to; it is OPTIONAL
+	// (ADR 0192). The order module is asked whether an order of CustomerID in
+	// the cart's currency may add to it, and the cart is not opened when it may
+	// not.
+	AddsToOrderID string
 	// Metadata is the FREE-FORM JSON object to attach to the cart; it is optional.
 	//
 	// The flow does NOT READ it and lets it into none of its decisions, it only
@@ -44,6 +49,9 @@ type CreateCartResult struct {
 	Email string
 	// Guest reports whether the cart belongs to a guest.
 	Guest bool
+	// AddsToOrderID is the order the cart adds to; empty when it adds to
+	// nothing.
+	AddsToOrderID string
 }
 
 // CreateCart resolves the region from the country code and creates the cart.
@@ -90,6 +98,7 @@ func (w *Workflows) CreateCart(ctx context.Context, in CreateCartInput) (CreateC
 			return CreateCartResult{}, err
 		}
 	}
+	addsTo := strings.TrimSpace(in.AddsToOrderID)
 
 	regionID, err := w.regions.RegionIDForCountry(ctx, country)
 	if err != nil {
@@ -110,22 +119,44 @@ func (w *Workflows) CreateCart(ctx context.Context, in CreateCartInput) (CreateC
 			email = known
 		}
 	}
+	if addsTo != "" {
+		if err := w.checkAddition(ctx, addsTo, in.CustomerID, currency); err != nil {
+			return CreateCartResult{}, err
+		}
+	}
 
-	cartID, err := w.carts.OpenCart(ctx, regionID, currency, in.CustomerID, email, in.Metadata)
+	cartID, err := w.carts.OpenCart(ctx, regionID, currency, in.CustomerID, email, addsTo, in.Metadata)
 	if err != nil {
 		return CreateCartResult{}, err
 	}
 
 	w.log.InfoContext(ctx, "cart opened",
 		"cart_id", cartID, "region_id", regionID, "currency_code", currency,
-		"guest", in.CustomerID == "")
+		"guest", in.CustomerID == "", "adds_to_order_id", addsTo)
 
 	return CreateCartResult{
-		CartID:       cartID,
-		RegionID:     regionID,
-		CurrencyCode: currency,
-		CustomerID:   in.CustomerID,
-		Email:        email,
-		Guest:        in.CustomerID == "",
+		CartID:        cartID,
+		RegionID:      regionID,
+		CurrencyCode:  currency,
+		CustomerID:    in.CustomerID,
+		Email:         email,
+		Guest:         in.CustomerID == "",
+		AddsToOrderID: addsTo,
 	}, nil
+}
+
+// checkAddition asks the order module whether an order of customerID in
+// currency may add to orderID, and refuses when nothing can answer (ADR 0192).
+//
+// The answer is advice: the customer of an open cart can change and the order
+// can be closed before the cart is checked out, and the order's write asks the
+// same question again under a lock on the parent. What it buys is the refusal
+// before the shopper builds a cart they could never check out.
+func (w *Workflows) checkAddition(ctx context.Context, orderID, customerID, currency string) error {
+	if w.orders == nil {
+		return errors.Internal(CodeAdditionsUnavailable,
+			"the order surface (%q) is not wired, so no cart can be opened to add to order %s",
+			ServiceOrder, orderID)
+	}
+	return w.orders.CheckAddition(ctx, orderID, customerID, currency)
 }

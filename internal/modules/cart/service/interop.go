@@ -57,10 +57,13 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 // and the match can only be proven by an integration test: because this module
 // cannot import the workflow package, the compiler cannot check the match.
 type interopSnapshot struct {
-	ID              string                  `json:"id"`
-	RegionID        string                  `json:"region_id"`
-	CustomerID      string                  `json:"customer_id"`
-	CurrencyCode    string                  `json:"currency_code"`
+	ID           string `json:"id"`
+	RegionID     string `json:"region_id"`
+	CustomerID   string `json:"customer_id"`
+	CurrencyCode string `json:"currency_code"`
+	// AddsToOrderID is the order the cart was opened to add to; absent when it
+	// adds to nothing. The checkout carries it into the order (ADR 0192).
+	AddsToOrderID   string                  `json:"adds_to_order_id,omitempty"`
 	Revision        int64                   `json:"revision"`
 	Completed       bool                    `json:"completed"`
 	Items           []interopItem           `json:"items"`
@@ -186,12 +189,16 @@ type interopLineTotals struct {
 // opens a cart goes through the same derivation, none of them takes the region
 // from the client.
 //
+// addsToOrderID is the order the cart is opened to add to, or empty (ADR 0192).
+// It is the caller's answer too: the workflow asked the order module whether
+// that order may be added to, which this module cannot ask.
+//
 // metadata is the cart's free-form extra data and must be a JSON OBJECT; it may
 // be left empty. A malformed body is errors.Invalid and the cart IS NOT OPENED;
 // the rationale is the same as the one in the [Interop.AddCartLineItem] godoc.
 func (i *Interop) OpenCart(
 	ctx context.Context,
-	regionID, currencyCode, customerID, email string,
+	regionID, currencyCode, customerID, email, addsToOrderID string,
 	metadata json.RawMessage,
 ) (string, error) {
 	extra, err := decodeInteropMetadata(metadata)
@@ -200,11 +207,12 @@ func (i *Interop) OpenCart(
 	}
 
 	cart, err := i.svc.CreateCart(ctx, CreateCartInput{
-		RegionID:     regionID,
-		CustomerID:   customerID,
-		Email:        email,
-		CurrencyCode: currencyCode,
-		Metadata:     extra,
+		RegionID:      regionID,
+		CustomerID:    customerID,
+		Email:         email,
+		CurrencyCode:  currencyCode,
+		AddsToOrderID: addsToOrderID,
+		Metadata:      extra,
 	})
 	if err != nil {
 		return "", err
@@ -229,6 +237,7 @@ func (i *Interop) CartSnapshotJSON(ctx context.Context, cartID string) (json.Raw
 		RegionID:        detail.RegionID,
 		CustomerID:      detail.CustomerID,
 		CurrencyCode:    detail.CurrencyCode,
+		AddsToOrderID:   detail.AddsToOrderID,
 		Revision:        detail.Revision,
 		Completed:       detail.Completed(),
 		Items:           make([]interopItem, 0, len(detail.Items)),

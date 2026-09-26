@@ -109,7 +109,8 @@ func (s OrderStatus) String() string {
 // the permanent answer to the question "what was sold at that moment and how
 // much did it cost". The only thing that changes is [Order.Status] and the
 // stamps tied to it. Corrections that arise afterwards are carried in separate
-// records ([Return], [Exchange], [Claim]).
+// records ([Return], [Exchange], [Claim]), and goods bought afterwards are an
+// order of their own that names this one ([Order.AddsToOrderID], ADR 0192).
 //
 // # Identifiers of other modules
 //
@@ -146,6 +147,15 @@ type Order struct {
 	// IdempotencyKey is the key that prevents the same order from being written
 	// twice; it may be empty (see Principle 2.6).
 	IdempotencyKey string
+	// AddsToOrderID is the order this one adds to, written once when it is
+	// placed; empty on an order that adds to nothing (ADR 0192).
+	//
+	// An addition is an ordinary order in every other respect, and its amounts
+	// are its own: nothing here is summed into the parent. The parent was
+	// pending, of the same customer and currency, and not an addition itself
+	// when the addition was written, which the service checks under a lock on
+	// the parent.
+	AddsToOrderID string
 	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
 	// DiscountTotal is the total discount (minor unit); it is stored positive

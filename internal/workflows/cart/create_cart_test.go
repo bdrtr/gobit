@@ -192,7 +192,7 @@ func TestOpenCartForCountryDerivesRegion(t *testing.T) {
 	seen := recordOpenCart(h.carts, testCartID)
 
 	cartID, err := NewInterop(h.wf).OpenCartForCountry(
-		context.Background(), "TR", "", "misafir@example.com", nil)
+		context.Background(), "TR", "", "misafir@example.com", "", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, testCartID, cartID)
@@ -214,7 +214,7 @@ func TestOpenCartForCountryOpensNoCartForUnknownCountry(t *testing.T) {
 		return testCartID, nil
 	}
 
-	cartID, err := NewInterop(h.wf).OpenCartForCountry(context.Background(), "ZZ", "", "", nil)
+	cartID, err := NewInterop(h.wf).OpenCartForCountry(context.Background(), "ZZ", "", "", "", nil)
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err))
 	assert.Empty(t, cartID)

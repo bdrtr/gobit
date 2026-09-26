@@ -40,7 +40,9 @@ func errUnexpected(what string) error {
 // stubCarts is the implementation of the [Carts] interface that the tests can
 // script.
 type stubCarts struct {
-	openCartFn   func(ctx context.Context, regionID, currencyCode, customerID, email string, metadata json.RawMessage) (string, error)
+	openCartFn func(ctx context.Context, regionID, currencyCode, customerID, email string, metadata json.RawMessage) (string, error)
+	// openedAddsTo is the order the last opened cart was told it adds to.
+	openedAddsTo string
 	snapshotFn   func(ctx context.Context, cartID string) (json.RawMessage, error)
 	addLineFn    func(ctx context.Context, cartID, variantID, title string, quantity, unitPrice int64, metadata json.RawMessage) (string, error)
 	setQtyFn     func(ctx context.Context, cartID, lineItemID string, quantity int64) error
@@ -78,14 +80,18 @@ func newStubCarts() *stubCarts {
 }
 
 // OpenCart applies the scripted cart-opening behavior.
+//
+// The order the cart adds to is recorded rather than passed to the script: the
+// scripts predate it, and the tests that care about it read the record.
 func (s *stubCarts) OpenCart(
 	ctx context.Context,
-	regionID, currencyCode, customerID, email string,
+	regionID, currencyCode, customerID, email, addsToOrderID string,
 	metadata json.RawMessage,
 ) (string, error) {
 	if s.openCartFn == nil {
 		return "", errUnexpected("OpenCart")
 	}
+	s.openedAddsTo = addsToOrderID
 	return s.openCartFn(ctx, regionID, currencyCode, customerID, email, metadata)
 }
 

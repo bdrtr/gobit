@@ -26,6 +26,7 @@ type Cart struct {
 	CreatedAt      pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
 	DeletedAt      pgtype.Timestamptz
+	AddsToOrderID  *string
 }
 
 type CartAddress struct {

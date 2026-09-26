@@ -275,10 +275,11 @@ func storeEndpoints() []endpointExpectation {
 // filledCart produces a cart record whose omitempty fields are written too.
 func filledCart(now time.Time) cartDTO {
 	return cartDTO{
-		CustomerID:  "cus_1",
-		Email:       "a@b.c",
-		Metadata:    map[string]any{"k": "v"},
-		CompletedAt: &now,
+		CustomerID:    "cus_1",
+		Email:         "a@b.c",
+		AddsToOrderID: "order_1",
+		Metadata:      map[string]any{"k": "v"},
+		CompletedAt:   &now,
 	}
 }
 

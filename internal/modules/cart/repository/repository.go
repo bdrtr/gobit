@@ -194,12 +194,13 @@ func (r *Repository) CreateCart(ctx context.Context, cart models.Cart) (models.C
 	}
 
 	row, err := r.queries(ctx).CreateCart(ctx, cartdb.CreateCartParams{
-		ID:           cart.ID,
-		RegionID:     cart.RegionID,
-		CustomerID:   nullString(cart.CustomerID),
-		Email:        nullString(cart.Email),
-		CurrencyCode: cart.CurrencyCode,
-		Metadata:     meta,
+		ID:            cart.ID,
+		RegionID:      cart.RegionID,
+		CustomerID:    nullString(cart.CustomerID),
+		Email:         nullString(cart.Email),
+		CurrencyCode:  cart.CurrencyCode,
+		Metadata:      meta,
+		AddsToOrderID: nullString(cart.AddsToOrderID),
 	})
 	if err != nil {
 		return models.Cart{}, classify(err, codeQueryFailed, "the cart could not be created")

@@ -22,6 +22,9 @@ type OrderFilter struct {
 	RegionID *string
 	// Status, when given, filters the orders by status.
 	Status *OrderStatus
+	// AddsToOrderID, when given, returns only the orders that add to that
+	// order (ADR 0192).
+	AddsToOrderID *string
 	// Limit is the maximum number of rows to return.
 	Limit int64
 	// Offset is the number of rows to skip.

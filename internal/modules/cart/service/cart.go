@@ -36,6 +36,11 @@ type CreateCartInput struct {
 	// THE CLIENT; the rationale for its removal is written in the
 	// api.createCartRequest godoc.
 	CurrencyCode string
+	// AddsToOrderID is the order the cart is opened to add to; it is OPTIONAL
+	// (ADR 0192). Only its shape is validated here: whether that order may be
+	// added to is the order module's question, which the workflow asked before
+	// calling, and the order's write asks again.
+	AddsToOrderID string
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 }
@@ -52,6 +57,11 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 	}
 	if in.CustomerID != "" {
 		if err := requireID("customer_id", in.CustomerID); err != nil {
+			return models.Cart{}, err
+		}
+	}
+	if in.AddsToOrderID != "" {
+		if err := requireID("adds_to_order_id", in.AddsToOrderID); err != nil {
 			return models.Cart{}, err
 		}
 	}
@@ -73,12 +83,13 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 	at := time.Now().UTC()
 	err = s.store.WithTx(ctx, func(ctx context.Context) error {
 		created, createErr := s.store.CreateCart(ctx, models.Cart{
-			ID:           models.NewCartID(),
-			RegionID:     in.RegionID,
-			CustomerID:   in.CustomerID,
-			Email:        email,
-			CurrencyCode: currency,
-			Metadata:     in.Metadata,
+			ID:            models.NewCartID(),
+			RegionID:      in.RegionID,
+			CustomerID:    in.CustomerID,
+			Email:         email,
+			CurrencyCode:  currency,
+			AddsToOrderID: in.AddsToOrderID,
+			Metadata:      in.Metadata,
 		})
 		if createErr != nil {
 			return createErr

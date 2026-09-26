@@ -64,6 +64,10 @@ type adminCreateCartRequest struct {
 	CustomerID string `json:"customer_id"`
 	// Email is the address the order will be confirmed to; it may be empty.
 	Email string `json:"email"`
+	// AddsToOrderID opens the cart to add to one of the customer's pending
+	// orders, for a caller who rings to add to what they bought; empty adds to
+	// nothing (ADR 0192). It needs customer_id, and it has to be the order's.
+	AddsToOrderID string `json:"adds_to_order_id"`
 	// Metadata is the free-form object attached to the cart.
 	Metadata map[string]any `json:"metadata"`
 }
@@ -116,7 +120,7 @@ func (h *Handler) adminCreateCart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, err := flow.OpenCartForCountry(ctx, body.CountryCode, body.CustomerID,
-		body.Email, metadata)
+		body.Email, body.AddsToOrderID, metadata)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 

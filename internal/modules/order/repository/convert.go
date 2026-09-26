@@ -324,6 +324,7 @@ func toOrder(row orderdb.Order) (models.Order, error) {
 		CurrencyCode:         row.CurrencyCode,
 		CartID:               stringValue(row.CartID),
 		IdempotencyKey:       stringValue(row.IdempotencyKey),
+		AddsToOrderID:        stringValue(row.AddsToOrderID),
 		Subtotal:             row.Subtotal,
 		DiscountTotal:        row.DiscountTotal,
 		TaxTotal:             row.TaxTotal,

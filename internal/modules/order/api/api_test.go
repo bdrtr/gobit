@@ -556,6 +556,28 @@ func TestStoreGetOrderReturnsSameEnvelope(t *testing.T) {
 	assert.Equal(t, []string{"GetOrder"}, svc.calls)
 }
 
+// TestAnAdditionSaysWhatItAddsTo holds the one field an addition carries beyond
+// an ordinary order, on the record both surfaces share (ADR 0192), and keeps it
+// off an order that adds to nothing.
+func TestAnAdditionSaysWhatItAddsTo(t *testing.T) {
+	detail := sampleDetail()
+	detail.AddsToOrderID = "order_0"
+	r := newRouter(&fakeOrders{detail: detail})
+
+	rec := doRequest(t, r, http.MethodGet, "/store/v1/orders/order_1", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "order_0", data["adds_to_order_id"])
+
+	rec = doRequest(t, newRouter(&fakeOrders{detail: sampleDetail()}), http.MethodGet,
+		"/admin/v1/orders/order_1", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	data, ok = decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, data, "adds_to_order_id")
+}
+
 // TestAdminListOrders verifies the list envelope and the filters (plan
 // Section 8).
 func TestAdminListOrders(t *testing.T) {
@@ -563,7 +585,8 @@ func TestAdminListOrders(t *testing.T) {
 	r := newRouter(svc)
 
 	rec := doRequest(t, r, http.MethodGet,
-		"/admin/v1/orders?limit=2&offset=4&customer_id=cus_1&region_id=reg_1&status=pending", "")
+		"/admin/v1/orders?limit=2&offset=4&customer_id=cus_1&region_id=reg_1&status=pending"+
+			"&adds_to_order_id=order_0", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
 
@@ -581,6 +604,8 @@ func TestAdminListOrders(t *testing.T) {
 	assert.Equal(t, "reg_1", *svc.listInput.RegionID)
 	require.NotNil(t, svc.listInput.Status)
 	assert.Equal(t, models.OrderPending, *svc.listInput.Status)
+	require.NotNil(t, svc.listInput.AddsToOrderID)
+	assert.Equal(t, "order_0", *svc.listInput.AddsToOrderID)
 	assert.Equal(t, int64(2), svc.listInput.Page.Limit)
 	assert.Equal(t, int64(4), svc.listInput.Page.Offset)
 }

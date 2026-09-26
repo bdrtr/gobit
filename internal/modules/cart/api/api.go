@@ -317,12 +317,16 @@ type CartOpening interface {
 	// to a guest; metadata is the free-form JSON object the caller attaches to
 	// the cart and it can be left empty.
 	//
+	// addsToOrderID, when given, opens the cart to add to that order (ADR 0192):
+	// the flow asks the order module whether an order of this customer in this
+	// currency may add to it, and passes a refusal through as it is.
+	//
 	// If the country has no region it returns errors.NotFound, if the code is
 	// malformed errors.Invalid; both are the region module's error and pass
 	// through as they are.
 	OpenCartForCountry(
 		ctx context.Context,
-		countryCode, customerID, email string,
+		countryCode, customerID, email, addsToOrderID string,
 		metadata json.RawMessage,
 	) (cartID string, err error)
 }
@@ -731,11 +735,14 @@ type listEnvelope struct {
 // stale amount being taken for a correct one would be the most expensive mistake
 // this API could produce.
 type cartDTO struct {
-	ID            string         `json:"id"`
-	RegionID      string         `json:"region_id"`
-	CustomerID    string         `json:"customer_id,omitempty"`
-	Email         string         `json:"email,omitempty"`
-	CurrencyCode  string         `json:"currency_code"`
+	ID           string `json:"id"`
+	RegionID     string `json:"region_id"`
+	CustomerID   string `json:"customer_id,omitempty"`
+	Email        string `json:"email,omitempty"`
+	CurrencyCode string `json:"currency_code"`
+	// AddsToOrderID is the order the cart was opened to add to; absent when it
+	// adds to nothing (ADR 0192).
+	AddsToOrderID string         `json:"adds_to_order_id,omitempty"`
 	Subtotal      int64          `json:"subtotal"`
 	DiscountTotal int64          `json:"discount_total"`
 	TaxTotal      int64          `json:"tax_total"`
@@ -825,6 +832,7 @@ func toCartDTO(cart models.Cart) cartDTO {
 		CustomerID:    cart.CustomerID,
 		Email:         cart.Email,
 		CurrencyCode:  cart.CurrencyCode,
+		AddsToOrderID: cart.AddsToOrderID,
 		Subtotal:      cart.Subtotal,
 		DiscountTotal: cart.DiscountTotal,
 		TaxTotal:      cart.TaxTotal,

@@ -73,6 +73,10 @@ type Store interface {
 	// LockOrder locks the order for the duration of the transaction and returns
 	// its current state.
 	LockOrder(ctx context.Context, id string) (models.Order, error)
+	// ShareLockOrder locks the order against a change of state for the
+	// duration of the transaction and returns its current state; other share
+	// locks on it do not wait.
+	ShareLockOrder(ctx context.Context, id string) (models.Order, error)
 	// ListOrders filters and pages the orders; the second value is the total
 	// count.
 	ListOrders(ctx context.Context, filter models.OrderFilter) ([]models.Order, int64, error)

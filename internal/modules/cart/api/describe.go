@@ -74,10 +74,11 @@ func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/carts", openapi.Operation{
 		Summary: "Opens a new cart; the server derives the region and the currency from the country.",
 		Description: "A body carrying customer_id has to PROVE that customer; a body " +
-			"without one opens a guest cart and is never asked for a proof.",
+			"without one opens a guest cart and is never asked for a proof. \n\n" +
+			additionNote,
 		RequestBody: d.RequestBody(createCartRequest{}),
-		Responses: claimRefusals("201",
-			openapi.Response("The created cart", d.Item(cartDTO{}))),
+		Responses: withAdditionRefusals(claimRefusals("201",
+			openapi.Response("The created cart", d.Item(cartDTO{})))),
 	})
 
 	d.Describe(http.MethodGet, "/store/v1/carts/{id}", openapi.Operation{
@@ -111,7 +112,8 @@ func Describe(d *openapi.Doc) {
 			"keeps its title and its price; only the quantity moves. \n\n" +
 			"It is refused with 409 when the two carts are in different regions or " +
 			"currencies (a price is quoted FOR one of each), when the source belongs to " +
-			"another customer, and when either cart is completed.",
+			"another customer, when the two do not add to the same order (or both to " +
+			"none, ADR 0192), and when either cart is completed.",
 		RequestBody: d.RequestBody(mergeCartRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The surviving cart", d.Item(cartDTO{})),
@@ -318,14 +320,15 @@ func describeAdmin(d *openapi.Doc) {
 			"An empty customer_id opens a guest cart. \n\n" +
 			"The region and the currency come from country_code, decided on the server " +
 			"exactly as on the storefront. No sales channel is asked for: nothing on " +
-			"this path reads one, and the line-item endpoint names it per request.",
+			"this path reads one, and the line-item endpoint names it per request. \n\n" +
+			additionNote,
 		RequestBody: d.RequestBody(adminCreateCartRequest{}),
-		Responses: map[string]any{
+		Responses: withAdditionRefusals(map[string]any{
 			"201": openapi.Response("The opened cart and its children",
 				d.Item(cartDetailDTO{})),
 			"422": openapi.ErrorResponse(
 				"The body could not be read, or the country is not served by any region."),
-		},
+		}),
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/carts/{id}/line-items", openapi.Operation{
@@ -363,6 +366,28 @@ func queryParameter(name, valueType, description string) openapi.Parameter {
 		Schema:      map[string]any{schemaType: valueType},
 		Description: description,
 	}
+}
+
+// additionNote is what both cart-opening endpoints say about adds_to_order_id.
+const additionNote = "adds_to_order_id opens the cart to add to that order (ADR 0192): " +
+	"the checkout places an ordinary order that names it, with its own lines, total, " +
+	"payment and invoice. It needs customer_id, which has to be the order's customer, " +
+	"and the order has to be pending and in the cart's currency and not an addition " +
+	"itself. The order module answers before the cart is opened and again when it is " +
+	"checked out, so an order closed in between refuses the checkout before any payment."
+
+// withAdditionRefusals adds the two answers a cart opened to add to an order can
+// get beyond the endpoint's own.
+func withAdditionRefusals(responses map[string]any) map[string]any {
+	responses["404"] = openapi.ErrorResponse(
+		"The country is served by no region, or adds_to_order_id names no order.")
+	responses["409"] = openapi.ErrorResponse(
+		"adds_to_order_id names an order this cart may not add to: code " +
+			"\"order_addition_needs_customer\" (no customer_id), " +
+			"\"order_addition_customer_mismatch\", \"order_addition_currency_mismatch\", " +
+			"\"order_addition_parent_not_pending\" or \"order_addition_parent_is_addition\".")
+
+	return responses
 }
 
 // claimRefusals merges a success response with the refusals a body NAMING a

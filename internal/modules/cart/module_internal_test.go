@@ -227,7 +227,7 @@ var _ api.CartOpening = (*stubOpening)(nil)
 
 // OpenCartForCountry returns the cart's id.
 func (s *stubOpening) OpenCartForCountry(
-	_ context.Context, _, _, _ string, _ json.RawMessage,
+	_ context.Context, _, _, _, _ string, _ json.RawMessage,
 ) (string, error) {
 	s.calls++
 	return s.cartID, nil
@@ -251,7 +251,7 @@ func TestCartOpeningFlowIsResolvedByName(t *testing.T) {
 	require.NoError(t, c.Provide(CartFlowsName, flow))
 
 	wrapper := &cartOpening{c: c, log: silentLog()}
-	cartID, err := wrapper.OpenCartForCountry(t.Context(), "TR", "", "", nil)
+	cartID, err := wrapper.OpenCartForCountry(t.Context(), "TR", "", "", "", nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "cart_1", cartID)
@@ -270,7 +270,7 @@ func TestCartOpeningFlowFailsClosedWhenMissing(t *testing.T) {
 
 	wrapper := &cartOpening{c: container.New(nil), log: silentLog()}
 
-	cartID, err := wrapper.OpenCartForCountry(t.Context(), "TR", "", "", nil)
+	cartID, err := wrapper.OpenCartForCountry(t.Context(), "TR", "", "", "", nil)
 	require.Error(t, err, "an unresolvable flow must return an error")
 	assert.Empty(t, cartID, "the cart must NEVER be opened")
 	assert.Equal(t, codeSetupFailed, coreerrors.CodeOf(err))
@@ -299,7 +299,7 @@ func TestCartOpeningFlowRejectsIncompatibleType(t *testing.T) {
 	require.NoError(t, c.Provide(CartFlowsName, foreignType{}))
 
 	wrapper := &cartOpening{c: c, log: silentLog()}
-	cartID, err := wrapper.OpenCartForCountry(t.Context(), "TR", "", "", nil)
+	cartID, err := wrapper.OpenCartForCountry(t.Context(), "TR", "", "", "", nil)
 
 	require.Error(t, err)
 	assert.Empty(t, cartID)

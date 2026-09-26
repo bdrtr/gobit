@@ -358,6 +358,18 @@ var storefrontStoredClaims = map[string]claimVerdict{
 			"no party — a contact is a datum about the writer, not a subject the writer claims " +
 			"to be — and the effect completes inside the writer's own reach",
 	},
+	"cart.carts.adds_to_order_id": {
+		limb: limbConfined,
+		why: "the order the writer is adding to, and the order module accepts it only when that " +
+			"order's customer is the cart's — the customer a storefront body has to PROVE " +
+			"(ADR 0125) — and the order is still pending: when the cart is opened and again, " +
+			"under a lock on the order, in the transaction that writes the addition (ADR 0192). " +
+			"So the order named is one of the writer's own purchases, and the column is read " +
+			"to mean exactly that: this order adds to that one. Nothing is written to the " +
+			"parent. Where the customer claim is believed unproven, this column stands on " +
+			"cart.carts.customer_id's open defect rather than opening a second one: a writer " +
+			"who can name the customer can already place orders in that name",
+	},
 	"cart.cart_addresses.phone": {
 		limb: limbConfined,
 		why: "the delivery contact on the writer's own cart, reached only through the cart id in " +

@@ -53,6 +53,23 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **An order can add to another** (ADR 0192). **For API consumers:**
+  `POST /store/v1/carts` and `POST /admin/v1/carts` take `adds_to_order_id`;
+  the cart carries it, and its checkout places an ordinary order whose
+  `adds_to_order_id` names that order, with its own lines, total, payment and
+  invoice. The named order must be pending, of the cart's customer and currency,
+  and not an addition itself: `409 order_addition_needs_customer`,
+  `order_addition_customer_mismatch`, `order_addition_currency_mismatch`,
+  `order_addition_parent_not_pending` or `order_addition_parent_is_addition`,
+  when the cart is opened and again at checkout, before any payment.
+  `GET /admin/v1/orders?adds_to_order_id=` lists an order's additions. Two carts
+  that do not add to the same order do not merge (`409 cart_addition_mismatch`).
+  **For embedders:** the order interop gains `CheckAddition`, which the cart
+  workflows resolve from `order.interop` when it is registered; without it a
+  cart naming an order is not opened. **For operators:** order migration 000022
+  adds `orders.adds_to_order_id` and cart migration 000003 adds
+  `carts.adds_to_order_id`.
+
 - **The catalog reads a list of variants** (ADR 0191). **For API consumers:**
   the storefront product listing takes a repeated `variant_id` query parameter
   and GraphQL's `products` a `variantIds` argument, up to 100 ids, and returns

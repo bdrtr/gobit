@@ -15,7 +15,10 @@ package cart_test
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -193,8 +196,36 @@ func TestMigrationCanBeRolledBack(t *testing.T) {
 	version, dirty, err := db.Version(ctx, testDSN, cartmod.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "there must be no half-finished migration")
-	assert.Equal(t, uint(2), version,
-		"the module has two migrations: the initial schema and the coupon table (ADR 0109)")
+	assert.Equal(t, highestMigrationVersion(t, src), version,
+		"re-applying has to run EVERY migration, not only the first")
+}
+
+// highestMigrationVersion returns the largest version in the embedded set.
+//
+// It is read from the set rather than written out, as the order and customer
+// modules' tests read it: the literal this replaced was the count of the day's
+// migrations, and the claim is that everything was applied again.
+func highestMigrationVersion(t *testing.T, src fs.FS) uint {
+	t.Helper()
+
+	entries, err := fs.ReadDir(src, ".")
+	require.NoError(t, err)
+
+	var highest uint
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+
+		digits, _, _ := strings.Cut(name, "_")
+		n, convErr := strconv.ParseUint(digits, 10, 32)
+		require.NoError(t, convErr, "%s does not start with a version number", name)
+		highest = max(highest, uint(n))
+	}
+
+	require.Positive(t, highest, "the embedded migration set looks empty")
+	return highest
 }
 
 // TestNoCrossModuleForeignKeys verifies that ALL the foreign keys in the

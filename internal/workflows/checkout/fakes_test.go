@@ -195,7 +195,7 @@ func (s *stubCarts) MarkCompleted(ctx context.Context, cartID string) error {
 // OpenCart completes the surface of the cart workflows; this package never calls
 // it.
 func (s *stubCarts) OpenCart(
-	_ context.Context, _, _, _, _ string, _ json.RawMessage,
+	_ context.Context, _, _, _, _, _ string, _ json.RawMessage,
 ) (string, error) {
 	return "", errUnexpected("OpenCart")
 }
@@ -464,6 +464,12 @@ func (s *stubOrders) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessag
 		return testOrderID, nil
 	}
 	return s.placeFn(ctx, snapshot)
+}
+
+// CheckAddition completes the surface the cart workflows resolve under the same
+// name; this package never asks it, and a cart the tests open adds to nothing.
+func (s *stubOrders) CheckAddition(_ context.Context, _, _, _ string) error {
+	return errUnexpected("CheckAddition")
 }
 
 // CancelOrder applies the scripted cancellation behavior.

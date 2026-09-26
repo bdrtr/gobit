@@ -29,6 +29,9 @@ type Snapshot struct {
 	CustomerID string `json:"customer_id"`
 	// CurrencyCode is the currency of the cart (ISO 4217).
 	CurrencyCode string `json:"currency_code"`
+	// AddsToOrderID is the order the cart was opened to add to; empty when it
+	// adds to nothing (ADR 0192).
+	AddsToOrderID string `json:"adds_to_order_id,omitempty"`
 	// Revision is the shape counter of the cart; it is the stamp of the totals.
 	Revision int64 `json:"revision"`
 	// Completed reports whether the cart has been completed.
@@ -118,6 +121,11 @@ type checkoutPlan struct {
 	Email string `json:"email"`
 	// CurrencyCode is the currency of the order (ISO 4217).
 	CurrencyCode string `json:"currency_code"`
+	// AddsToOrderID is the order the new order adds to; empty when it adds to
+	// nothing. This flow does not check it: the order module does, under a
+	// lock on the parent, in the transaction that writes the order, and a
+	// refusal there comes before any payment (ADR 0192).
+	AddsToOrderID string `json:"adds_to_order_id,omitempty"`
 	// Revision is the SHARED shape counter of the totals and the snapshot.
 	Revision int64 `json:"revision"`
 	// LocationID is the stock location the caller DECLARED; it may be empty.
@@ -330,6 +338,7 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		CustomerID:        snap.CustomerID,
 		Email:             in.Email,
 		CurrencyCode:      snap.CurrencyCode,
+		AddsToOrderID:     snap.AddsToOrderID,
 		Revision:          snap.Revision,
 		LocationID:        in.LocationID,
 		SalesChannelIDs:   in.SalesChannelIDs,
@@ -822,6 +831,7 @@ type orderSnapshot struct {
 	Email          string              `json:"email"`
 	CurrencyCode   string              `json:"currency_code"`
 	IdempotencyKey string              `json:"idempotency_key"`
+	AddsToOrderID  string              `json:"adds_to_order_id,omitempty"`
 	Subtotal       int64               `json:"subtotal"`
 	DiscountTotal  int64               `json:"discount_total"`
 	TaxTotal       int64               `json:"tax_total"`
@@ -905,6 +915,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 		Email:          p.Email,
 		CurrencyCode:   p.CurrencyCode,
 		IdempotencyKey: idempotencyKey,
+		AddsToOrderID:  p.AddsToOrderID,
 		Subtotal:       p.Subtotal,
 		DiscountTotal:  p.DiscountTotal,
 		TaxTotal:       p.TaxTotal,

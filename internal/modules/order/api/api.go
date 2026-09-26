@@ -355,14 +355,17 @@ type listEnvelope struct {
 
 // orderDTO is the external representation of the order.
 type orderDTO struct {
-	ID            string         `json:"id"`
-	DisplayID     int64          `json:"display_id"`
-	Status        string         `json:"status"`
-	RegionID      string         `json:"region_id"`
-	CustomerID    string         `json:"customer_id,omitempty"`
-	Email         string         `json:"email,omitempty"`
-	CurrencyCode  string         `json:"currency_code"`
-	CartID        string         `json:"cart_id,omitempty"`
+	ID           string `json:"id"`
+	DisplayID    int64  `json:"display_id"`
+	Status       string `json:"status"`
+	RegionID     string `json:"region_id"`
+	CustomerID   string `json:"customer_id,omitempty"`
+	Email        string `json:"email,omitempty"`
+	CurrencyCode string `json:"currency_code"`
+	CartID       string `json:"cart_id,omitempty"`
+	// AddsToOrderID is the order this one adds to; absent on an order that
+	// adds to nothing (ADR 0192). The amounts beside it are this order's own.
+	AddsToOrderID string         `json:"adds_to_order_id,omitempty"`
 	Subtotal      int64          `json:"subtotal"`
 	DiscountTotal int64          `json:"discount_total"`
 	TaxTotal      int64          `json:"tax_total"`
@@ -538,6 +541,7 @@ func toOrderDTO(order models.Order) orderDTO {
 		Email:         order.Email,
 		CurrencyCode:  order.CurrencyCode,
 		CartID:        order.CartID,
+		AddsToOrderID: order.AddsToOrderID,
 		Subtotal:      order.Subtotal,
 		DiscountTotal: order.DiscountTotal,
 		TaxTotal:      order.TaxTotal,

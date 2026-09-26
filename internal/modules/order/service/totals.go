@@ -32,6 +32,9 @@ func normalizeCreateOrder(in CreateOrderInput) (CreateOrderInput, error) {
 	if err := optionalID("idempotency_key", in.IdempotencyKey); err != nil {
 		return CreateOrderInput{}, err
 	}
+	if err := optionalID("adds_to_order_id", in.AddsToOrderID); err != nil {
+		return CreateOrderInput{}, err
+	}
 
 	currency, err := normalizeCurrency(in.CurrencyCode)
 	if err != nil {

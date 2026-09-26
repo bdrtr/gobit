@@ -20,12 +20,12 @@ INSERT INTO orders (
     id, status, region_id, customer_id, email, currency_code,
     cart_id, idempotency_key,
     subtotal, discount_total, tax_total, shipping_total, total,
-    metadata, placed_at
+    metadata, adds_to_order_id, placed_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8,
     $9, $10, $11, $12, $13,
-    $14, now()
+    $14, $15, now()
 )
 RETURNING *;
 
@@ -57,11 +57,26 @@ SELECT * FROM orders
 WHERE id = $1
 FOR UPDATE;
 
+-- ShareLockOrder locks the order against a change of state for the duration of
+-- the transaction and returns its current form.
+--
+-- An addition reads its parent through this (ADR 0192). FOR SHARE conflicts
+-- with LockOrder's FOR UPDATE, so a cancellation of the parent and the write of
+-- an addition run one after the other and the addition reads the parent's
+-- status the cancellation left. Two additions to one parent share the lock and
+-- do not wait for each other. The foreign key alone would not do it: it locks
+-- the parent when the addition's row is inserted, after the status was read.
+-- name: ShareLockOrder :one
+SELECT * FROM orders
+WHERE id = $1
+FOR SHARE;
+
 -- name: ListOrders :many
 SELECT * FROM orders
 WHERE (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('customer_id')::text)
   AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
+  AND (sqlc.narg('adds_to_order_id')::text IS NULL OR adds_to_order_id = sqlc.narg('adds_to_order_id')::text)
   AND (created_at, id) < (
     COALESCE(sqlc.narg('after_at')::timestamptz, 'infinity'::timestamptz),
     COALESCE(sqlc.narg('after_id')::text, '')
@@ -80,7 +95,8 @@ LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 SELECT COUNT(*) FROM orders
 WHERE (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('customer_id')::text)
   AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
+  AND (sqlc.narg('adds_to_order_id')::text IS NULL OR adds_to_order_id = sqlc.narg('adds_to_order_id')::text);
 
 -- GetOrdersByIDs satisfies the Query layer's FetchByIDs call in a SINGLE round
 -- trip; no per-ID query (N+1) is made.

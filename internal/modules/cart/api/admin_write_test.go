@@ -41,6 +41,7 @@ type channelRecordingOpening struct {
 	gotChannels   []string
 	gotPrincipal  corehttp.Principal
 	gotCustomerID string
+	gotAddsTo     string
 	calls         int
 }
 
@@ -48,12 +49,13 @@ var _ api.CartOpening = (*channelRecordingOpening)(nil)
 
 // OpenCartForCountry records the identity and returns the scripted id.
 func (f *channelRecordingOpening) OpenCartForCountry(
-	ctx context.Context, _, customerID, _ string, _ json.RawMessage,
+	ctx context.Context, _, customerID, _, addsToOrderID string, _ json.RawMessage,
 ) (string, error) {
 	f.calls++
 	f.gotChannels = corehttp.SalesChannelIDs(ctx)
 	f.gotPrincipal, _ = corehttp.PrincipalFromContext(ctx)
 	f.gotCustomerID = customerID
+	f.gotAddsTo = addsToOrderID
 
 	return f.cartID, nil
 }
@@ -132,13 +134,16 @@ func TestAnAdminCartOpensForTheCustomerTheOperatorNames(t *testing.T) {
 	h := newAdminWriteServer(t, opening, &channelRecordingPricing{})
 
 	rec := doRequestAs(t, h, &adminWriter, http.MethodPost, "/admin/v1/carts",
-		`{"country_code":"tr","customer_id":"cust_9","email":"a@example.test"}`)
+		`{"country_code":"tr","customer_id":"cust_9","email":"a@example.test",`+
+			`"adds_to_order_id":"order_7"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	assert.Equal(t, 1, opening.calls)
 	assert.Equal(t, "cust_9", opening.gotCustomerID,
 		"the customer reaches the flow unproven; on the storefront the same field "+
 			"has to be proved first (ADR 0125)")
+	assert.Equal(t, "order_7", opening.gotAddsTo,
+		"the order the cart adds to reaches the flow, which asks the order module (ADR 0192)")
 
 	// The identity reaches the flow whole, or the audit row would name nobody.
 	assert.Equal(t, "user_operator", opening.gotPrincipal.ID)

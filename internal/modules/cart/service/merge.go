@@ -13,6 +13,10 @@ const CodeRegionMismatch = "cart_region_mismatch"
 // CodeCurrencyMismatch is the refusal of a merge across currencies.
 const CodeCurrencyMismatch = "cart_currency_mismatch"
 
+// CodeAdditionMismatch is the refusal of a merge between carts that do not add
+// to the same order.
+const CodeAdditionMismatch = "cart_addition_mismatch"
+
 // MergeCart folds the source cart's lines into the target and closes the source.
 //
 // # Why this exists beside [Service.UpdateCart]
@@ -46,6 +50,11 @@ const CodeCurrencyMismatch = "cart_currency_mismatch"
 //
 // A source that belongs to another customer (409), which is
 // [Service.UpdateCart]'s refusal seen from the other end.
+//
+// Two carts that do not add to the same order (409), one of them adding to
+// nothing included (ADR 0192). The order a cart adds to is fixed when it is
+// opened, so a merge would either carry lines into an addition the shopper did
+// not open or out of the one they did.
 //
 // A completed cart on either side (409), because a completed cart is the record
 // an order rests on.
@@ -156,6 +165,11 @@ func mergeable(source, target models.Cart) error {
 		return errors.Conflict(CodeCustomerMismatch,
 			"the cart belongs to another customer: %s (merging into: %s)",
 			source.CustomerID, target.CustomerID)
+	}
+	if source.AddsToOrderID != target.AddsToOrderID {
+		return errors.Conflict(CodeAdditionMismatch,
+			"the carts do not add to the same order: %q and %q",
+			source.AddsToOrderID, target.AddsToOrderID)
 	}
 
 	return nil

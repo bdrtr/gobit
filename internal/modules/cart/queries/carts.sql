@@ -7,8 +7,8 @@
 
 -- name: CreateCart :one
 INSERT INTO carts (
-    id, region_id, customer_id, email, currency_code, metadata
-) VALUES ($1, $2, $3, $4, $5, $6)
+    id, region_id, customer_id, email, currency_code, metadata, adds_to_order_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetCart :one

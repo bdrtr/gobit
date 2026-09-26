@@ -15,7 +15,7 @@ const bumpCartRevision = `-- name: BumpCartRevision :one
 UPDATE carts
 SET revision = revision + 1, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
-RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at
+RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id
 `
 
 // BumpCartRevision raises the cart's shape counter by one; it is called in the
@@ -41,6 +41,7 @@ func (q *Queries) BumpCartRevision(ctx context.Context, id string) (Cart, error)
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.AddsToOrderID,
 	)
 	return i, err
 }
@@ -77,18 +78,19 @@ func (q *Queries) CountCarts(ctx context.Context, arg CountCartsParams) (int64, 
 const createCart = `-- name: CreateCart :one
 
 INSERT INTO carts (
-    id, region_id, customer_id, email, currency_code, metadata
-) VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at
+    id, region_id, customer_id, email, currency_code, metadata, adds_to_order_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id
 `
 
 type CreateCartParams struct {
-	ID           string
-	RegionID     string
-	CustomerID   *string
-	Email        *string
-	CurrencyCode string
-	Metadata     []byte
+	ID            string
+	RegionID      string
+	CustomerID    *string
+	Email         *string
+	CurrencyCode  string
+	Metadata      []byte
+	AddsToOrderID *string
 }
 
 // carts queries.
@@ -105,6 +107,7 @@ func (q *Queries) CreateCart(ctx context.Context, arg CreateCartParams) (Cart, e
 		arg.Email,
 		arg.CurrencyCode,
 		arg.Metadata,
+		arg.AddsToOrderID,
 	)
 	var i Cart
 	err := row.Scan(
@@ -125,12 +128,13 @@ func (q *Queries) CreateCart(ctx context.Context, arg CreateCartParams) (Cart, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.AddsToOrderID,
 	)
 	return i, err
 }
 
 const getCart = `-- name: GetCart :one
-SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at FROM carts
+SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id FROM carts
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -155,12 +159,13 @@ func (q *Queries) GetCart(ctx context.Context, id string) (Cart, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.AddsToOrderID,
 	)
 	return i, err
 }
 
 const getCartsByIDs = `-- name: GetCartsByIDs :many
-SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at FROM carts
+SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id FROM carts
 WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
@@ -194,6 +199,7 @@ func (q *Queries) GetCartsByIDs(ctx context.Context, ids []string) ([]Cart, erro
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.AddsToOrderID,
 		); err != nil {
 			return nil, err
 		}
@@ -206,7 +212,7 @@ func (q *Queries) GetCartsByIDs(ctx context.Context, ids []string) ([]Cart, erro
 }
 
 const listCarts = `-- name: ListCarts :many
-SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at FROM carts
+SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id FROM carts
 WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR customer_id = $1::text)
   AND ($2::text IS NULL OR region_id = $2::text)
@@ -265,6 +271,7 @@ func (q *Queries) ListCarts(ctx context.Context, arg ListCartsParams) ([]Cart, e
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.AddsToOrderID,
 		); err != nil {
 			return nil, err
 		}
@@ -277,7 +284,7 @@ func (q *Queries) ListCarts(ctx context.Context, arg ListCartsParams) ([]Cart, e
 }
 
 const lockCart = `-- name: LockCart :one
-SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at FROM carts
+SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id FROM carts
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
@@ -311,6 +318,7 @@ func (q *Queries) LockCart(ctx context.Context, id string) (Cart, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.AddsToOrderID,
 	)
 	return i, err
 }
@@ -319,7 +327,7 @@ const markCartCompleted = `-- name: MarkCartCompleted :one
 UPDATE carts
 SET completed_at = now(), updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
-RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at
+RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id
 `
 
 // MarkCartCompleted stamps the cart as completed.
@@ -349,6 +357,7 @@ func (q *Queries) MarkCartCompleted(ctx context.Context, id string) (Cart, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.AddsToOrderID,
 	)
 	return i, err
 }
@@ -373,7 +382,7 @@ SET email       = $2,
     customer_id = $3,
     updated_at  = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
-RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at
+RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id
 `
 
 type UpdateCartContactParams struct {
@@ -409,6 +418,7 @@ func (q *Queries) UpdateCartContact(ctx context.Context, arg UpdateCartContactPa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.AddsToOrderID,
 	)
 	return i, err
 }
@@ -423,7 +433,7 @@ SET subtotal        = $2,
     totals_revision = $7,
     updated_at      = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
-RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at
+RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id
 `
 
 type UpdateCartTotalsParams struct {
@@ -467,6 +477,7 @@ func (q *Queries) UpdateCartTotals(ctx context.Context, arg UpdateCartTotalsPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.AddsToOrderID,
 	)
 	return i, err
 }

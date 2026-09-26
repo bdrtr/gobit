@@ -180,6 +180,7 @@ type fakeOpening struct {
 	gotCountry    string
 	gotCustomerID string
 	gotEmail      string
+	gotAddsTo     string
 	gotMetadata   json.RawMessage
 	calls         int
 }
@@ -190,11 +191,12 @@ var _ api.CartOpening = (*fakeOpening)(nil)
 // OpenCartForCountry returns the cart's id and records the arguments.
 func (f *fakeOpening) OpenCartForCountry(
 	_ context.Context,
-	countryCode, customerID, email string,
+	countryCode, customerID, email, addsToOrderID string,
 	metadata json.RawMessage,
 ) (string, error) {
 	f.calls++
 	f.gotCountry, f.gotCustomerID, f.gotEmail, f.gotMetadata = countryCode, customerID, email, metadata
+	f.gotAddsTo = addsToOrderID
 	return f.cartID, f.err
 }
 
@@ -484,7 +486,7 @@ func TestCreateCartReturns201AndSingleEnvelope(t *testing.T) {
 	})
 
 	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts",
-		`{"country_code":"TR","customer_id":"cust_1","email":"a@b.c"}`)
+		`{"country_code":"TR","customer_id":"cust_1","email":"a@b.c","adds_to_order_id":"order_7"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	data := object(t, bodyMap(t, rec)["data"])
@@ -494,6 +496,7 @@ func TestCreateCartReturns201AndSingleEnvelope(t *testing.T) {
 	assert.Equal(t, "TR", flow.gotCountry)
 	assert.Equal(t, "cust_1", flow.gotCustomerID)
 	assert.Equal(t, "a@b.c", flow.gotEmail)
+	assert.Equal(t, "order_7", flow.gotAddsTo)
 }
 
 // TestCreateCartRegionComesFromTheFlow verifies that the cart's region comes not

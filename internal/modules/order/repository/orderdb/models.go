@@ -32,6 +32,7 @@ type Order struct {
 	UpdatedAt            pgtype.Timestamptz
 	ArchivedAt           pgtype.Timestamptz
 	PersonalDataErasedAt pgtype.Timestamptz
+	AddsToOrderID        *string
 }
 
 type OrderAddress struct {
