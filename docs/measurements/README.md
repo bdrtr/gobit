@@ -125,3 +125,4 @@ truth: a report says what was true on the day it was taken.
 | [Goods bought afterwards — measured 2026-09-26](0192-goods-bought-afterwards.md) | 108 |
 | [An address nobody read — measured 2026-09-26](0193-an-address-nobody-read.md) | 83 |
 | [A label with no destination — measured 2026-09-26](0194-a-label-with-no-destination.md) | 71 |
+| [A typo in a street — measured 2026-09-26](0195-a-typo-in-a-street.md) | 94 |

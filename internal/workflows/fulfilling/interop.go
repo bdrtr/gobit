@@ -60,6 +60,15 @@ func (i *Interop) OpenForOrder(
 	return out.FulfillmentID, out.AlreadyOpen, nil
 }
 
+// CorrectShippingAddress corrects where an order ships; the rules are
+// [Workflows.CorrectShippingAddress]'s. The address travels as the order
+// module's JSON both ways.
+func (i *Interop) CorrectShippingAddress(
+	ctx context.Context, orderID string, address json.RawMessage,
+) (json.RawMessage, error) {
+	return i.w.CorrectShippingAddress(ctx, orderID, address)
+}
+
 // ShipmentsOfOrderJSON lists the shipments bound to an order.
 //
 // It answers with identities and statuses rather than with the shipments: a

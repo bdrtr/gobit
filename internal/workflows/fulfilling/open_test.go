@@ -128,6 +128,10 @@ type fakeOrders struct {
 	// lines is what DispatchableLinesJSON answers; nil means an empty order.
 	lines    []testLine
 	linesErr error
+	// corrected counts the corrections that reached the order module, and
+	// correctedWith is the last body.
+	corrected     int
+	correctedWith json.RawMessage
 }
 
 // testLine is the order module's answer as a CONSUMER writes it.
@@ -151,6 +155,16 @@ func (f *fakeOrders) ShippingAddressJSON(context.Context, string) (json.RawMessa
 	}
 
 	return json.Marshal(f.destination)
+}
+
+// CorrectShippingAddressJSON records the correction and echoes the body.
+func (f *fakeOrders) CorrectShippingAddressJSON(
+	_ context.Context, _ string, address json.RawMessage,
+) (json.RawMessage, error) {
+	f.corrected++
+	f.correctedWith = address
+
+	return address, nil
 }
 
 // DispatchableLinesJSON answers what the order sold and what was written off.

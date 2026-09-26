@@ -805,6 +805,19 @@ func (p *fulfillingFlow) ShipmentsOfOrderJSON(
 	return p.svc.ShipmentsOfOrderJSON(ctx, orderID)
 }
 
+// CorrectShippingAddress corrects where the order ships.
+func (p *fulfillingFlow) CorrectShippingAddress(
+	ctx context.Context, orderID string, address json.RawMessage,
+) (json.RawMessage, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return p.svc.CorrectShippingAddress(ctx, orderID, address)
+}
+
 // resolve looks the flow up in the container and remembers the outcome.
 func (p *fulfillingFlow) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.Fulfilling](p.c, fulfillingFlowName)

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"strconv"
@@ -791,6 +792,58 @@ func (i *Interop) ShippingAddressJSON(ctx context.Context, orderID string) (json
 		CountryCode: address.CountryCode,
 		Phone:       address.Phone,
 		Metadata:    address.Metadata,
+	})
+}
+
+// CorrectShippingAddressJSON replaces the order's current shipping address with
+// the one in the body, in the schema of [interopDestination], and returns the
+// address that is current afterwards in the same schema (ADR 0195).
+//
+// A field the schema does not name is refused rather than dropped: the body is
+// the operator's, and an address saved without the field they typed is a
+// parcel sent somewhere they did not say. The rules are
+// [Service.CorrectShippingAddress]'s; whether a parcel is already on its way is
+// the caller's question, because this module cannot read parcels.
+func (i *Interop) CorrectShippingAddressJSON(
+	ctx context.Context, orderID string, address json.RawMessage,
+) (json.RawMessage, error) {
+	decoder := json.NewDecoder(bytes.NewReader(address))
+	decoder.DisallowUnknownFields()
+	var in interopDestination
+	if err := decoder.Decode(&in); err != nil {
+		return nil, errors.Wrap(err, errors.KindInvalid, CodeInvalidInput,
+			"the corrected address could not be read")
+	}
+
+	current, err := i.svc.CorrectShippingAddress(ctx, orderID, models.OrderAddress{
+		FirstName:   in.FirstName,
+		LastName:    in.LastName,
+		Company:     in.Company,
+		Address1:    in.Address1,
+		Address2:    in.Address2,
+		City:        in.City,
+		Province:    in.Province,
+		PostalCode:  in.PostalCode,
+		CountryCode: in.CountryCode,
+		Phone:       in.Phone,
+		Metadata:    in.Metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(interopDestination{
+		FirstName:   current.FirstName,
+		LastName:    current.LastName,
+		Company:     current.Company,
+		Address1:    current.Address1,
+		Address2:    current.Address2,
+		City:        current.City,
+		Province:    current.Province,
+		PostalCode:  current.PostalCode,
+		CountryCode: current.CountryCode,
+		Phone:       current.Phone,
+		Metadata:    current.Metadata,
 	})
 }
 

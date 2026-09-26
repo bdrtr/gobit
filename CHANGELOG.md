@@ -12,6 +12,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The order module's migration test rewound other tests' rows** (D141). It
+  dropped the shared schema believing it ran first, and seven files ran before
+  it. It runs in a database of its own now.
+
 - **An order's addresses were kept and read by nothing** (D140). Since B11 the
   order stores the shipping and billing addresses its cart carried, so that it
   could say where it went and an invoice could print a buyer; no API field
@@ -58,6 +62,20 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A shipping address can be corrected before it ships** (ADR 0195). **For API
+  consumers:** `PUT /admin/v1/orders/{id}/shipping-address` (`order:write`)
+  takes the whole corrected address and answers with the admin order record.
+  It is refused with `409 fulfilling_parcel_underway` while a parcel is
+  pending, shipped or delivered, `order_address_not_correctable` for an order
+  that is not pending or was erased, `order_address_missing` for one with no
+  shipping address, and `order_address_country_changed`. The address the order
+  was placed with is kept; the timeline, storefront included, gets an
+  `order.shipping_address_corrected` entry that carries no address. **For
+  embedders:** the order interop gains `CorrectShippingAddressJSON` and the
+  fulfilling interop `CorrectShippingAddress`. **For operators:** order
+  migration 000023 adds `order_addresses.superseded_at` and makes the one-per-type
+  index partial; its rollback refuses a database that holds a correction.
 
 - **A carrier is told where a parcel goes** (ADR 0194). **For plugin
   authors:** `core/provider.CreateFulfillmentInput` carries `Destination

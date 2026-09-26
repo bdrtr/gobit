@@ -12,6 +12,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/order/api"
+	"github.com/bdrtr/gobit/internal/modules/order/models"
 )
 
 // shipmentsPath is where both shipment endpoints live: POST opens a parcel for
@@ -32,10 +33,11 @@ type fakeFulfilling struct {
 	shipments     json.RawMessage
 	err           error
 
-	gotOrderID string
-	gotBody    json.RawMessage
-	openCalls  int
-	listCalls  int
+	gotOrderID   string
+	gotBody      json.RawMessage
+	openCalls    int
+	listCalls    int
+	correctCalls int
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -69,6 +71,21 @@ func (f *fakeFulfilling) ShipmentsOfOrderJSON(
 	}
 
 	return f.shipments, nil
+}
+
+// CorrectShippingAddress records the call and the body verbatim.
+func (f *fakeFulfilling) CorrectShippingAddress(
+	_ context.Context, orderID string, address json.RawMessage,
+) (json.RawMessage, error) {
+	f.correctCalls++
+	f.gotOrderID = orderID
+	f.gotBody = address
+
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	return address, nil
 }
 
 // newRouterWithFulfilling wires a router with the given fulfilling flow.
@@ -317,4 +334,33 @@ func TestOpeningAShipmentIsWriteScopedWhileListingIsNot(t *testing.T) {
 	assert.Equal(t, 1, flow.listCalls,
 		"the same identity has to pass on the read, otherwise the 403 above proves only "+
 			"that the scope map is too narrow")
+}
+
+// TestTheCorrectionEndpointPassesTheAddressThrough holds the PUT's contract
+// (ADR 0195): the body reaches the flow verbatim, the answer is the admin
+// record, and an empty body never reaches the flow.
+func TestTheCorrectionEndpointPassesTheAddressThrough(t *testing.T) {
+	detail := sampleDetail()
+	detail.ShippingAddress = &models.OrderAddress{Type: models.AddressShipping, Address1: "12 Right St"}
+	flow := &fakeFulfilling{}
+	r := newRouterWithFulfilling(&fakeOrders{detail: detail}, flow)
+
+	body := `{"address_1":"12 Right St","country_code":"TR"}`
+	rec := doRequest(t, r, http.MethodPut, "/admin/v1/orders/order_1/shipping-address", body)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, flow.correctCalls)
+	assert.Equal(t, "order_1", flow.gotOrderID)
+	assert.JSONEq(t, body, string(flow.gotBody))
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Contains(t, data, "shipping_address", "the answer is the admin record")
+
+	rec = doRequest(t, r, http.MethodPut, "/admin/v1/orders/order_1/shipping-address", "  ")
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Equal(t, 1, flow.correctCalls, "an empty body never reached the flow")
+
+	flow.err = errors.Conflict("fulfilling_parcel_underway", "a parcel is pending")
+	rec = doRequest(t, r, http.MethodPut, "/admin/v1/orders/order_1/shipping-address", body)
+	assert.Equal(t, http.StatusConflict, rec.Code)
 }

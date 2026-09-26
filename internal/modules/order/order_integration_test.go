@@ -182,46 +182,35 @@ func validInput() service.CreateOrderInput {
 	}
 }
 
-// tableExists reports whether the table is present in the database.
-func tableExists(ctx context.Context, t *testing.T, table string) bool {
-	t.Helper()
-
-	var exists bool
-	err := testPool.Pool().QueryRow(ctx,
-		`SELECT EXISTS (
-             SELECT 1 FROM pg_class c
-             JOIN pg_namespace n ON n.oid = c.relnamespace
-             WHERE c.relname = $1 AND c.relkind = 'r' AND n.nspname = current_schema()
-         )`, table).Scan(&exists)
-	require.NoError(t, err)
-	return exists
-}
-
 // TestMigrationIsReversible verifies that the migration can be applied and
 // rolled back (plan Section 8: up/down pairs, reversible).
 //
-// The test is ORDER sensitive and has to run before the others: it drops the
-// schema and sets it up again. Because Go runs the tests of a file in
-// declaration order, it stands at the top of the file.
+// It drops the schema and sets it up again, so it runs in a database of its
+// own (D141). It used to run in the shared one, saying it had to run before
+// the others and stood at the top of its file for that; but a package's files
+// run in name order, and seven ran before this one. Since 000023 a rollback
+// REFUSES a database holding a corrected address, which an earlier file writes.
 func TestMigrationIsReversible(t *testing.T) {
 	ctx := context.Background()
 	src := order.New().Migrations()
+	dsn, pool := isolatedDatabase(ctx, t, "order_migration")
+	exists := func(table string) bool { return tableExistsIn(ctx, t, pool, table) }
 
 	for _, table := range moduleTables {
-		require.True(t, tableExists(ctx, t, table), "%s must exist at the start", table)
+		require.True(t, exists(table), "%s must exist at the start", table)
 	}
 
-	require.NoError(t, db.MigrateDown(ctx, testDSN, src, order.ModuleName, 0))
+	require.NoError(t, db.MigrateDown(ctx, dsn, src, order.ModuleName, 0))
 	for _, table := range moduleTables {
-		assert.False(t, tableExists(ctx, t, table), "%s must not remain after the rollback", table)
+		assert.False(t, exists(table), "%s must not remain after the rollback", table)
 	}
 
-	require.NoError(t, db.Migrate(ctx, testDSN, src, order.ModuleName))
+	require.NoError(t, db.Migrate(ctx, dsn, src, order.ModuleName))
 	for _, table := range moduleTables {
-		assert.True(t, tableExists(ctx, t, table), "%s must be applied again", table)
+		assert.True(t, exists(table), "%s must be applied again", table)
 	}
 
-	version, dirty, err := db.Version(ctx, testDSN, order.ModuleName)
+	version, dirty, err := db.Version(ctx, dsn, order.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "there must be no half-finished migration")
 	assert.Equal(t, highestMigrationVersion(t, src), version,

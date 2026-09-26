@@ -53,6 +53,7 @@ type OrderAddress struct {
 	Metadata        []byte
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	SupersededAt    pgtype.Timestamptz
 }
 
 type OrderClaim struct {

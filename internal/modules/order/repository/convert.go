@@ -647,6 +647,7 @@ func toOrderAddress(row orderdb.OrderAddress) (models.OrderAddress, error) {
 		CountryCode:     textValue(row.CountryCode),
 		Phone:           textValue(row.Phone),
 		Metadata:        meta,
+		SupersededAt:    toTimePtr(row.SupersededAt),
 		CreatedAt:       toTime(row.CreatedAt),
 		UpdatedAt:       toTime(row.UpdatedAt),
 	}, nil

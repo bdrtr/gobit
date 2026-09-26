@@ -896,14 +896,19 @@ func transitionError(action, orderID string, required, actual models.OrderStatus
 		action, required, actual, orderID)
 }
 
-// splitAddresses picks the shipping and the billing address out of the list.
+// splitAddresses picks the current shipping and billing address out of the list.
 //
-// A type that is present twice cannot happen — the schema has a unique index on
-// (order_id, address_type) — so the first of each is taken rather than the last;
-// were the constraint ever dropped, taking the first at least makes the choice
-// stable rather than dependent on row order.
+// A superseded row is what the order held before a correction (ADR 0195) and is
+// skipped. Two current rows of one type cannot happen — the schema has a
+// partial unique index on (order_id, address_type) over the current rows — so
+// the first of each is taken rather than the last; were the constraint ever
+// dropped, taking the first at least makes the choice stable rather than
+// dependent on row order.
 func splitAddresses(addresses []models.OrderAddress) (shipping, billing *models.OrderAddress) {
 	for i := range addresses {
+		if !addresses[i].Current() {
+			continue
+		}
 		switch addresses[i].Type {
 		case models.AddressShipping:
 			if shipping == nil {

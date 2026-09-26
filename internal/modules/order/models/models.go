@@ -915,10 +915,17 @@ type OrderAddress struct {
 	Phone       string
 	// Metadata is free structured context.
 	Metadata map[string]any
+	// SupersededAt is the moment a correction replaced this address; nil
+	// while it is the order's current one (ADR 0195). A superseded row is what
+	// the order held before, kept for the person's file and the timeline.
+	SupersededAt *time.Time
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// Current reports whether the address is the order's current one of its type.
+func (a OrderAddress) Current() bool { return a.SupersededAt == nil }
 
 // NormalizeEmail folds an e-mail into its storage form: trimmed, lower-cased.
 //

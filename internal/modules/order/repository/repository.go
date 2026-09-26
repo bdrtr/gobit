@@ -624,8 +624,28 @@ func (r *Repository) CreateOrderAddress(
 	return toOrderAddress(row)
 }
 
+// SupersedeOrderAddress closes the order's current address of the type and
+// reports how many rows it closed: one, or none when the order had none.
+func (r *Repository) SupersedeOrderAddress(
+	ctx context.Context, orderID string, kind models.AddressType,
+) (int64, error) {
+	if err := requireTx(ctx, "SupersedeOrderAddress"); err != nil {
+		return 0, err
+	}
+
+	closed, err := r.queries(ctx).SupersedeOrderAddress(ctx, orderdb.SupersedeOrderAddressParams{
+		OrderID:     orderID,
+		AddressType: string(kind),
+	})
+	if err != nil {
+		return 0, classify(err, codeQueryFailed, "could not close the order address")
+	}
+
+	return closed, nil
+}
+
 // OrderAddressesByOrderIDs reads the addresses of several orders in a SINGLE
-// query; there is no query per order (N+1).
+// query; there is no query per order (N+1). Superseded rows are included.
 func (r *Repository) OrderAddressesByOrderIDs(
 	ctx context.Context, orderIDs []string,
 ) (map[string][]models.OrderAddress, error) {

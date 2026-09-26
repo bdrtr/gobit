@@ -590,6 +590,11 @@ func describedEndpoints() []endpointExpectation {
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/archive", status: "200",
 			response: filledAdminOrderDetail(),
 		},
+		{
+			method: http.MethodPut, path: "/admin/v1/orders/{id}/shipping-address", status: "200",
+			request:  *filledAdminOrderDetail().ShippingAddress,
+			response: filledAdminOrderDetail(),
+		},
 	}
 }
 

@@ -19,7 +19,7 @@ INSERT INTO order_addresses (
     $5, $6, $7, $8, $9,
     $10, $11, $12, $13, $14, $15
 )
-RETURNING id, order_id, address_type, source_address_id, first_name, last_name, company, address_1, address_2, city, province, postal_code, country_code, phone, metadata, created_at, updated_at
+RETURNING id, order_id, address_type, source_address_id, first_name, last_name, company, address_1, address_2, city, province, postal_code, country_code, phone, metadata, created_at, updated_at, superseded_at
 `
 
 type CreateOrderAddressParams struct {
@@ -83,18 +83,23 @@ func (q *Queries) CreateOrderAddress(ctx context.Context, arg CreateOrderAddress
 		&i.Metadata,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.SupersededAt,
 	)
 	return i, err
 }
 
 const listOrderAddressesByOrderIDs = `-- name: ListOrderAddressesByOrderIDs :many
-SELECT id, order_id, address_type, source_address_id, first_name, last_name, company, address_1, address_2, city, province, postal_code, country_code, phone, metadata, created_at, updated_at FROM order_addresses
+SELECT id, order_id, address_type, source_address_id, first_name, last_name, company, address_1, address_2, city, province, postal_code, country_code, phone, metadata, created_at, updated_at, superseded_at FROM order_addresses
 WHERE order_id = ANY ($1::text[])
-ORDER BY order_id, address_type
+ORDER BY order_id, address_type, created_at, id
 `
 
 // ListOrderAddressesByOrderIDs reads the addresses of several orders in a
 // SINGLE query; there is no query per order (N+1).
+//
+// It returns every row, the superseded ones too (ADR 0195): the person's file
+// lists what the order held before a correction, and the timeline dates the
+// corrections by them. Which row is current is the service's reading.
 func (q *Queries) ListOrderAddressesByOrderIDs(ctx context.Context, orderIds []string) ([]OrderAddress, error) {
 	rows, err := q.db.Query(ctx, listOrderAddressesByOrderIDs, orderIds)
 	if err != nil {
@@ -122,6 +127,7 @@ func (q *Queries) ListOrderAddressesByOrderIDs(ctx context.Context, orderIds []s
 			&i.Metadata,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.SupersededAt,
 		); err != nil {
 			return nil, err
 		}
@@ -131,4 +137,31 @@ func (q *Queries) ListOrderAddressesByOrderIDs(ctx context.Context, orderIds []s
 		return nil, err
 	}
 	return items, nil
+}
+
+const supersedeOrderAddress = `-- name: SupersedeOrderAddress :execrows
+UPDATE order_addresses
+SET superseded_at = now(),
+    updated_at    = now()
+WHERE order_id = $1
+  AND address_type = $2
+  AND superseded_at IS NULL
+`
+
+type SupersedeOrderAddressParams struct {
+	OrderID     string
+	AddressType string
+}
+
+// SupersedeOrderAddress closes the order's current address of one type.
+//
+// It runs under the order's lock, followed in the same transaction by the
+// corrected row (ADR 0195). It touches the current row only, so a second
+// correction closes the first correction and not the original.
+func (q *Queries) SupersedeOrderAddress(ctx context.Context, arg SupersedeOrderAddressParams) (int64, error) {
+	result, err := q.db.Exec(ctx, supersedeOrderAddress, arg.OrderID, arg.AddressType)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

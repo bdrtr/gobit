@@ -67,6 +67,11 @@ const (
 	KindReplacementDispatched = "replacement.dispatched"
 	KindReplacementCanceled   = "replacement.canceled"
 	KindExchangeFunded        = "exchange.funded"
+
+	// KindShippingAddressCorrected is a correction of where the order ships
+	// (ADR 0195), dated by the moment the address it replaced was closed. It
+	// names the replaced row and carries no address.
+	KindShippingAddressCorrected = "order.shipping_address_corrected"
 )
 
 // The payment collection's movements, read through the Query layer (ADR 0170).
@@ -582,8 +587,34 @@ func (s *Service) orderFactEntries(ctx context.Context, order models.OrderDetail
 	if err != nil {
 		return nil, err
 	}
+	addresses, err := s.store.OrderAddressesByOrderIDs(ctx, []string{order.ID})
+	if err != nil {
+		return nil, err
+	}
 
-	return factEntries(order.CurrencyCode, cancellations, credits, replacements), nil
+	entries := factEntries(order.CurrencyCode, cancellations, credits, replacements)
+
+	return append(entries, correctionEntries(addresses[order.ID])...), nil
+}
+
+// correctionEntries dates each shipping address a correction closed (ADR 0195).
+//
+// The entry names the closed row and says nothing of either address: the
+// timeline reaches the storefront, whose read is open to anyone holding the
+// order's id, and where the parcel goes is the admin record's to say.
+func correctionEntries(addresses []models.OrderAddress) []TimelineEntry {
+	var entries []TimelineEntry
+	for i := range addresses {
+		if addresses[i].Type != models.AddressShipping || addresses[i].SupersededAt == nil {
+			continue
+		}
+		entries = append(entries, TimelineEntry{
+			At: addresses[i].SupersededAt, Kind: KindShippingAddressCorrected,
+			RefID: addresses[i].ID, Clock: ClockDatabase,
+		})
+	}
+
+	return entries
 }
 
 // factEntries maps the facts, split out of [Service.orderFactEntries] for the
@@ -684,6 +715,9 @@ var customerVisibleKinds = map[string]bool{
 	KindReplacementOpened:     true,
 	KindReplacementDispatched: true,
 	KindReplacementCanceled:   true,
+	// ADR 0195: where the goods go is about the goods, and the customer who
+	// rang to correct it sees that it was done. The entry carries no address.
+	KindShippingAddressCorrected: true,
 }
 
 // StorefrontTimeline is the timeline a customer may see on their own order.

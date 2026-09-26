@@ -107,6 +107,33 @@ func describeOrderDetail(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodPut, "/admin/v1/orders/{id}/shipping-address", openapi.Operation{
+		Summary: "Corrects where the order ships, while nothing is on its way.",
+		Description: "The body is the WHOLE corrected address. The address the order was " +
+			"placed with is not edited: it is closed and the correction written beside it, " +
+			"so the person's file lists both and the timeline dates the correction with an " +
+			"\"order.shipping_address_corrected\" entry that names no address (ADR 0195). " +
+			"A body identical to the current address writes nothing.\n\n" +
+			"The country cannot change: the tax and the shipping price were computed on it. " +
+			"An empty \"country_code\" means the current one. A field the schema does not " +
+			"name is refused. " + detailNote,
+		RequestBody: d.RequestBody(orderAddressDTO{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The order with its corrected address",
+				d.Item(adminOrderDetailDTO{})),
+			"404": openapi.ErrorResponse("No such order."),
+			"409": openapi.ErrorResponse(
+				"The correction is refused: \"fulfilling_parcel_underway\" while a parcel is " +
+					"pending, shipped or delivered (its carrier has the old address; a canceled " +
+					"or returned parcel does not stand in the way), " +
+					"\"order_address_not_correctable\" for an order that is not pending or " +
+					"whose personal data was erased, \"order_address_missing\" for an order " +
+					"that recorded no shipping address, and \"order_address_country_changed\"."),
+			"422": openapi.ErrorResponse("The body is empty, unreadable, or names a field the " +
+				"address does not have."),
+		},
+	})
+
 	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/archive", openapi.Operation{
 		Summary: "Archives a completed order.",
 		Description: "Archiving takes a finished order out of the working list without " +

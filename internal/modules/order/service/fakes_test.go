@@ -897,7 +897,7 @@ func (f *fakeStore) CreateOrderAddress(
 
 	existing := f.addresses[address.OrderID]
 	for i := range existing {
-		if existing[i].Type == address.Type {
+		if existing[i].Type == address.Type && existing[i].Current() {
 			return models.OrderAddress{}, errors.Conflict("order_address_duplicate",
 				"order %s already has a %s address", address.OrderID, address.Type)
 		}
@@ -910,6 +910,33 @@ func (f *fakeStore) CreateOrderAddress(
 	f.addresses[address.OrderID] = append(existing, address)
 
 	return address, nil
+}
+
+// SupersedeOrderAddress closes the order's current address of the type, the way
+// the partial unique index's companion statement does.
+func (f *fakeStore) SupersedeOrderAddress(
+	ctx context.Context, orderID string, kind models.AddressType,
+) (int64, error) {
+	if err := requireTx(ctx, "SupersedeOrderAddress"); err != nil {
+		return 0, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.recordUndo(ctx, undoEntry(f.addresses, orderID))
+	rows := slices.Clone(f.addresses[orderID])
+	var closed int64
+	for i := range rows {
+		if rows[i].Type == kind && rows[i].Current() {
+			stamp := f.nextStamp()
+			rows[i].SupersededAt = &stamp
+			closed++
+		}
+	}
+	f.addresses[orderID] = rows
+
+	return closed, nil
 }
 
 // OrderAddressesByOrderIDs reads the addresses of several orders at once.

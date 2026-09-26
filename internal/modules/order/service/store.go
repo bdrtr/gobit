@@ -201,6 +201,9 @@ type Store interface {
 	// CreateOrderAddress writes one address of the order, inside the order's
 	// own transaction.
 	CreateOrderAddress(ctx context.Context, address models.OrderAddress) (models.OrderAddress, error)
+	// SupersedeOrderAddress closes the order's current address of the type,
+	// inside the caller's transaction, and reports how many rows it closed.
+	SupersedeOrderAddress(ctx context.Context, orderID string, kind models.AddressType) (int64, error)
 	// OrderAddressesByOrderIDs reads the addresses of several orders in a
 	// SINGLE query; there is no query per order.
 	OrderAddressesByOrderIDs(ctx context.Context, orderIDs []string) (map[string][]models.OrderAddress, error)

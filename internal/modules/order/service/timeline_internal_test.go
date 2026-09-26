@@ -297,3 +297,25 @@ func TestAnOpenExchangeReportsOnlyItsOpening(t *testing.T) {
 
 	assert.Equal(t, []string{KindExchangeOpened}, kindsOf(entries))
 }
+
+// TestACorrectionIsDatedByTheAddressItClosed holds the timeline entry of an
+// address correction (ADR 0195): one per closed SHIPPING row, dated by its
+// closing, naming that row, carrying no address, and shown to the customer.
+func TestACorrectionIsDatedByTheAddressItClosed(t *testing.T) {
+	closed := time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC)
+	addresses := []models.OrderAddress{
+		{ID: "oaddr_placed", Type: models.AddressShipping, Address1: "12 Wrong St", SupersededAt: &closed},
+		{ID: "oaddr_current", Type: models.AddressShipping, Address1: "12 Right St"},
+		{ID: "oaddr_billing", Type: models.AddressBilling, Company: "Engines Ltd"},
+	}
+
+	entries := correctionEntries(addresses)
+
+	require.Len(t, entries, 1)
+	assert.Equal(t, KindShippingAddressCorrected, entries[0].Kind)
+	assert.Equal(t, "oaddr_placed", entries[0].RefID)
+	assert.Equal(t, &closed, entries[0].At)
+	assert.Equal(t, ClockDatabase, entries[0].Clock)
+	assert.Empty(t, entries[0].Detail, "the entry names the row and says nothing of the address")
+	assert.Len(t, customerVisible(entries), 1, "the customer who rang sees that it was done")
+}

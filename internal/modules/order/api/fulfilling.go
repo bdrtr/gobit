@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -38,6 +39,12 @@ type Fulfilling interface {
 
 	// ShipmentsOfOrderJSON lists the shipments bound to the order.
 	ShipmentsOfOrderJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+
+	// CorrectShippingAddress corrects where the order ships and returns the
+	// address that is current afterwards (ADR 0195). It lives on the flow
+	// because the one question this module cannot answer — is a parcel already
+	// on its way — is the flow's.
+	CorrectShippingAddress(ctx context.Context, orderID string, address json.RawMessage) (json.RawMessage, error)
 }
 
 // openShipmentRequest is the body of the open endpoint.
@@ -112,6 +119,45 @@ func (h *Handler) adminOpenShipment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, response)
+}
+
+// adminCorrectShippingAddress PUT /admin/v1/orders/{id}/shipping-address
+//
+// The body is the whole corrected address, in the order's address schema, and
+// it is passed through to the flow as raw JSON; the order module decodes it
+// and refuses a field it does not know. The answer is the admin order record,
+// so the operator reads the address the order now holds (ADR 0195).
+func (h *Handler) adminCorrectShippingAddress(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+			"the request body could not be read"))
+
+		return
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+			"the request body cannot be empty; it carries the corrected address"))
+
+		return
+	}
+
+	flow, err := h.fulfillingFlow()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	if _, err := flow.CorrectShippingAddress(ctx, orderID(r), body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	h.writeCurrentOrder(w, r)
 }
 
 // adminListShipments GET /admin/v1/orders/{id}/fulfillments

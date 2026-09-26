@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
@@ -88,12 +89,11 @@ func (carrierSpyPlugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	return nil
 }
 
-// TestTheCarrierIsHandedWhereTheOrderWent opens a parcel for an order through
-// the admin surface and reads the destination the carrier received.
-func TestTheCarrierIsHandedWhereTheOrderWent(t *testing.T) {
-	ctx := t.Context()
-	orderID := addressedOrder(t)
+// spyOption creates an admin-only shipping option on the spy carrier.
+func spyOption(t *testing.T) string {
+	t.Helper()
 
+	ctx := t.Context()
 	option, err := shippingSvc.CreateShippingOption(ctx, fulfillmentsvc.CreateOptionInput{
 		Name:              fmt.Sprintf("Spy carrier %d", fixtureCounter.Add(1)),
 		ProviderID:        carrierSpyID,
@@ -105,11 +105,35 @@ func TestTheCarrierIsHandedWhereTheOrderWent(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	key := fmt.Sprintf("carrier-destination-%d", fixtureCounter.Add(1))
+	return option.ID
+}
+
+// openSpyParcel opens a parcel for the order on the spy carrier and returns the
+// idempotency key it was opened under and the parcel's id.
+func openSpyParcel(t *testing.T, orderID, optionID string) (key, fulfillmentID string) {
+	t.Helper()
+
+	key = fmt.Sprintf("carrier-destination-%d", fixtureCounter.Add(1))
 	opened, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+orderID+"/fulfillments",
-		map[string]any{"shipping_option_id": option.ID, "idempotency_key": key})
+		map[string]any{"shipping_option_id": optionID, "idempotency_key": key})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, opened.Code, "body: %s", opened.Body.String())
+
+	var answer struct {
+		Data struct {
+			FulfillmentID string `json:"fulfillment_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(opened.Body.Bytes(), &answer))
+
+	return key, answer.Data.FulfillmentID
+}
+
+// TestTheCarrierIsHandedWhereTheOrderWent opens a parcel for an order through
+// the admin surface and reads the destination the carrier received.
+func TestTheCarrierIsHandedWhereTheOrderWent(t *testing.T) {
+	orderID := addressedOrder(t)
+	key, _ := openSpyParcel(t, orderID, spyOption(t))
 
 	handed, ok := carrierSpy.shipmentFor(key)
 	require.True(t, ok, "the parcel never reached the carrier")

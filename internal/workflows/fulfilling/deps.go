@@ -97,6 +97,11 @@ type Orders interface {
 	// was. The flow read the order's contact for that refusal alone until the
 	// destination gave the read a use.
 	ShippingAddressJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+	// CorrectShippingAddressJSON replaces the order's current shipping address
+	// and returns the one that is current afterwards (ADR 0195). The order
+	// module holds the rules it can check; whether a parcel is underway is this
+	// flow's.
+	CorrectShippingAddressJSON(ctx context.Context, orderID string, address json.RawMessage) (json.RawMessage, error)
 	// DispatchableLinesJSON returns, per line, how many units were sold and how
 	// many of them were written off.
 	//

@@ -200,6 +200,8 @@ func (h *Handler) Routes(r chi.Router) {
 	// order" is asked about an order, and until the binding existed nothing
 	// could answer which order a parcel belonged to.
 	write.Post("/admin/v1/orders/{id}/fulfillments", h.adminOpenShipment)
+	// Where the order ships, corrected while nothing is on its way (ADR 0195).
+	write.Put("/admin/v1/orders/{id}/shipping-address", h.adminCorrectShippingAddress)
 	read.Get("/admin/v1/orders/{id}/fulfillments", h.adminListShipments)
 
 	// The timeline. It is the support desk's view and it composes what the
