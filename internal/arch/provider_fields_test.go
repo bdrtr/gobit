@@ -136,13 +136,17 @@ var catalogReadForeignFields = map[string]string{
 // Until then the honest reading of this block is that a rename inside pricing
 // would silently empty a price-filtered catalog, and the fix is one word per
 // constant in a file this audit cannot reach on its own.
-var catalogUnboundForeignFields = map[string]string{
-	"prices":        "pricing",
-	"price_list_id": "pricing",
-	"currency_code": "pricing",
-	"amount":        "pricing",
-	"min_quantity":  "pricing",
-	"max_quantity":  "pricing",
+//
+// A name can belong to more than one module: the export reads a region's
+// currency_code as well as a price's (ADR 0204), and neither module publishes
+// it, so both are listed and both are checked.
+var catalogUnboundForeignFields = map[string][]string{
+	"prices":        {"pricing"},
+	"price_list_id": {"pricing"},
+	"currency_code": {"pricing", "region"},
+	"amount":        {"pricing"},
+	"min_quantity":  {"pricing"},
+	"max_quantity":  {"pricing"},
 }
 
 // catalogModuleDir is the module tree the catalog's foreign-field reads live in.
@@ -727,12 +731,14 @@ func TestEveryUnboundForeignFieldIsStillUnpublished(t *testing.T) {
 
 	published := publishedProviderFields(t)
 
-	for field, module := range catalogUnboundForeignFields {
-		assert.NotContainsf(t, published[module], field,
-			"%q is listed as a field the %s module does NOT publish, and it publishes it now.\n"+
-				"The pairing can be checked from here at last: move the entry into "+
-				"catalogReadForeignFields so a rename fails in this test rather than in a "+
-				"storefront that quietly stops matching a price bracket.", field, module)
+	for field, modules := range catalogUnboundForeignFields {
+		for _, module := range modules {
+			assert.NotContainsf(t, published[module], field,
+				"%q is listed as a field the %s module does NOT publish, and it publishes it now.\n"+
+					"The pairing can be checked from here at last: move the entry into "+
+					"catalogReadForeignFields so a rename fails in this test rather than in a "+
+					"storefront that quietly stops matching a price bracket.", field, module)
+		}
 	}
 }
 

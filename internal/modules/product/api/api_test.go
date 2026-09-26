@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -33,6 +34,7 @@ type fakeCatalog struct {
 	getProduct        func(ctx context.Context, id string) (models.Product, error)
 	listProducts      func(ctx context.Context, opts service.ListProductsOptions) (service.ListResult[models.Product], error)
 	deleteProduct     func(ctx context.Context, id string) error
+	exportProducts    func(ctx context.Context, out io.Writer, opts service.ExportOptions, afterPage func() error) error
 	createVariant     func(ctx context.Context, productID string, in service.CreateVariantInput) (models.Variant, error)
 	setPriceSet       func(ctx context.Context, variantID, priceSetID string) error
 	variantLinks      func(ctx context.Context, variantID string) (service.VariantLinks, error)
@@ -76,6 +78,12 @@ func (f *fakeCatalog) ListProducts(
 
 func (f *fakeCatalog) DeleteProduct(ctx context.Context, id string) error {
 	return f.deleteProduct(ctx, id)
+}
+
+func (f *fakeCatalog) ExportProducts(
+	ctx context.Context, out io.Writer, opts service.ExportOptions, afterPage func() error,
+) error {
+	return f.exportProducts(ctx, out, opts, afterPage)
 }
 
 func (f *fakeCatalog) AddProductImage(

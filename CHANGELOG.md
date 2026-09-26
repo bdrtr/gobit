@@ -77,6 +77,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **The catalog leaves as CSV** (ADR 0204). **For API consumers:** `GET
+  /admin/v1/products/export` (optionally `?status=`) streams the catalog as
+  `text/csv`: a row per variant, a row for a product with none, tag and
+  category ids joined with `|`, metadata and options as JSON, a formula-like
+  cell prefixed with `'`, and a `variant_price_<currency>` column per currency
+  a region sells in holding the base price at one unit in minor units. It
+  requires both `product:read` and `pricing:read`. A failure after the first
+  row drops the connection.
+
 - **An exchange's difference is on the books** (ADR 0203). **For API
   consumers:** `GET /admin/v1/order-journal` gains two kinds: a funded exchange
   is an `exchange_funded` entry at its funding that debits `receivable` and

@@ -17,12 +17,14 @@ import (
 // document is generated, and it only surfaces once the client reading the
 // schema produces the parameter with the wrong type.
 const (
-	schemaType  = "type"
-	typeString  = "string"
-	typeInteger = "integer"
-	typeBoolean = "boolean"
-	typeObject  = "object"
-	typeArray   = "array"
+	schemaType = "type"
+	// schemaDescription is the description key of a hand-written schema.
+	schemaDescription = "description"
+	typeString        = "string"
+	typeInteger       = "integer"
+	typeBoolean       = "boolean"
+	typeObject        = "object"
+	typeArray         = "array"
 )
 
 // The parameter location and the tag more than one description spells.
@@ -254,6 +256,7 @@ func Describe(d *openapi.Doc) {
 	describeStorefrontVocabulary(d)
 	describeStorefrontGraphQL(d)
 	describeAdminProducts(d)
+	describeAdminExport(d)
 	describeAdminVariants(d)
 	describeAdminOptions(d)
 	describeAdminLinks(d)
@@ -424,13 +427,13 @@ func describeStorefrontGraphQL(d *openapi.Doc) {
 					schemaType: typeObject,
 					"properties": map[string]any{
 						"data": map[string]any{
-							schemaType:    typeObject,
-							"description": "The queried fields; the query decides their shape.",
+							schemaType:        typeObject,
+							schemaDescription: "The queried fields; the query decides their shape.",
 						},
 						"errors": map[string]any{
-							schemaType:    typeArray,
-							"description": "The error list; the codes come from the same dictionary as REST (extensions.code).",
-							"items":       map[string]any{schemaType: typeObject},
+							schemaType:        typeArray,
+							schemaDescription: "The error list; the codes come from the same dictionary as REST (extensions.code).",
+							"items":           map[string]any{schemaType: typeObject},
 						},
 					},
 				}),

@@ -516,6 +516,17 @@ func TestSchemaDescribesEndpointsWithTheirBodies(t *testing.T) {
 					continue
 				}
 
+				// A file is not an envelope (ADR 0204): its media type names the
+				// format and its schema is a string, which is the whole shape.
+				if content, ok := definition["content"].(map[string]any); ok {
+					if csv, isCSV := content["text/csv"].(map[string]any); isCSV {
+						schema := objectField(t, csv, "schema", endpoint+" "+code+".content.text/csv")
+						assert.Equal(t, "string", schema["type"], "a CSV file is described as a string")
+
+						continue
+					}
+				}
+
 				record := recordSchema(t, doc, jsonSchema(t, definition, endpoint+" "+code))
 				assert.True(t, shapeIsKnown(record),
 					"the SHAPE of the %s response record must be known; an empty schema leaves the client guessing (got: %v)",

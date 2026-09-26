@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -132,6 +133,12 @@ func (f *scopeCatalog) RemoveProductImage(context.Context, string, string) error
 
 // DeleteProduct counts the call.
 func (f *scopeCatalog) DeleteProduct(context.Context, string) error {
+	f.count()
+	return nil
+}
+
+// ExportProducts counts the call.
+func (f *scopeCatalog) ExportProducts(context.Context, io.Writer, service.ExportOptions, func() error) error {
 	f.count()
 	return nil
 }

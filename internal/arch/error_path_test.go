@@ -131,6 +131,26 @@ var errorPathExemptions = []errorPathExemption{
 		reason: "serves file content; it is not a JSON envelope and the error path passes " +
 			"through corehttp.WriteError before entering ServeContent",
 	},
+	{
+		file: "internal/modules/product/api/export.go",
+		call: "http.NewResponseController",
+		reason: "flushes each page of the export and moves its write deadline; it writes no " +
+			"body of its own (ADR 0204)",
+	},
+	{
+		file: "internal/modules/product/api/export.go",
+		call: "w.WriteHeader",
+		reason: "streams the catalog as a CSV file (ADR 0204); it is not a JSON envelope. An " +
+			"error before the first byte passes through corehttp.WriteError, and one after it " +
+			"aborts the connection rather than writing an error body into the file",
+	},
+	{
+		file: "internal/modules/product/api/export.go",
+		call: "w.Write",
+		reason: "streams the catalog as a CSV file (ADR 0204); it is not a JSON envelope. An " +
+			"error before the first byte passes through corehttp.WriteError, and one after it " +
+			"aborts the connection rather than writing an error body into the file",
+	},
 }
 
 // httpSurfaceExemption is a package that writes an HTTP response OUTSIDE the

@@ -10,7 +10,8 @@ import (
 
 // This file holds the two catalog answers that are computed OVER ANOTHER
 // MODULE'S data: whether a product is in stock (ADR 0040) and whether its price
-// falls inside a bracket (ADR 0041).
+// falls inside a bracket (ADR 0041). The export (ADR 0204) reads the same base
+// price, and a region's currency, through the constants below.
 //
 // # Why they live in the catalog at all
 //
@@ -127,6 +128,11 @@ const (
 	// filtering a catalog is thinking of.
 	foreignMinQuantity = "min_quantity"
 	foreignMaxQuantity = "max_quantity"
+
+	// foreignRegionCurrencyCode is the currency a region sells in. The export
+	// makes each one a price column (ADR 0204); it is the only field of
+	// region's record this module reads.
+	foreignRegionCurrencyCode = "currency_code"
 )
 
 // filterQuantity is the quantity ADR 0041 compares at: one unit.

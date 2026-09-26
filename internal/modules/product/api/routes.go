@@ -113,6 +113,9 @@ func (h *Handler) Routes(r chi.Router) {
 	// --- Admin API: products ---
 	write.Post("/admin/v1/products", h.adminCreateProduct)
 	read.Get("/admin/v1/products", h.adminListProducts)
+	// The catalog as CSV (ADR 0204). It carries prices, so it takes pricing's
+	// read as well as this module's.
+	read.With(corehttp.RequireScope(scopePricingRead)).Get(pathAdminProductExport, h.adminExportProducts)
 	read.Get("/admin/v1/products/{id}", h.adminGetProduct)
 	write.Patch("/admin/v1/products/{id}", h.adminUpdateProduct)
 	write.Delete("/admin/v1/products/{id}", h.adminDeleteProduct)

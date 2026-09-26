@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"io"
 
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
@@ -19,6 +20,8 @@ type Catalog interface {
 	ListProducts(ctx context.Context, opts service.ListProductsOptions) (service.ListResult[models.Product], error)
 	UpdateProduct(ctx context.Context, id string, in service.UpdateProductInput) (models.Product, error)
 	DeleteProduct(ctx context.Context, id string) error
+	// ExportProducts writes the catalog as CSV (ADR 0204).
+	ExportProducts(ctx context.Context, out io.Writer, opts service.ExportOptions, afterPage func() error) error
 	// ProductRelations, SetProductRelations and StoreRelatedProducts are a
 	// product's relations (ADR 0180).
 	ProductRelations(ctx context.Context, id string) (map[models.RelationType][]string, error)

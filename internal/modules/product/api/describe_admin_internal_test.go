@@ -204,6 +204,9 @@ type adminEndpoint struct {
 	// schemas and mixing them up would produce the wrong type in a client
 	// generator.
 	list bool
+	// csv reports that the response is a CSV file rather than an envelope
+	// (ADR 0204).
+	csv bool
 }
 
 // key returns the operation's "METHOD path" identity.
@@ -226,6 +229,7 @@ func adminEndpoints() []adminEndpoint {
 			method: http.MethodGet, path: "/admin/v1/products", status: "200",
 			record: filledAdminProduct(), list: true,
 		},
+		{method: http.MethodGet, path: pathAdminProductExport, status: "200", csv: true},
 		{
 			method: http.MethodGet, path: "/admin/v1/products/{id}", status: "200",
 			record: filledAdminProduct(),
@@ -584,6 +588,15 @@ func TestAdminEndpointsDescribeTheirBodies(t *testing.T) {
 			require.True(t, ok,
 				"the code the handler REALLY writes has to be documented: %s", endpoint.status)
 
+			if endpoint.csv {
+				content, ok := definition["content"].(map[string]any)
+				require.True(t, ok)
+				assert.Contains(t, content, "text/csv", "the export answers with a CSV file")
+				assert.NotContains(t, content, "application/json")
+
+				return
+			}
+
 			// A listing that takes a cursor has to give one back, and one that
 			// does not must not document a field it never writes. Reading the
 			// answer off the operation's own parameters ties the two halves
@@ -702,6 +715,7 @@ func TestAdminEndpointsDescribeOnlyParametersTheyRead(t *testing.T) {
 		"GET /admin/v1/products": {
 			"collection_id", "handle", "q", "status", "expand", "limit", "offset", "after",
 		},
+		"GET /admin/v1/products/export":        {"status"},
 		"GET /admin/v1/products/{id}/variants": {"limit", "offset"},
 		"GET /admin/v1/product-collections":    {"limit", "offset"},
 		"GET /admin/v1/product-types":          {"limit", "offset"},

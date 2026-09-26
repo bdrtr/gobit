@@ -144,6 +144,14 @@ var variantReadExemptions = []variantReadExemption{
 			"links. Filtering a second time would mean applying the same rule twice in " +
 			"the same request; a product outside the scope never reaches here.",
 	},
+	{
+		file:     "internal/modules/product/service/export.go",
+		function: "basePrices",
+		why: "the export is the ADMIN's whole catalog (ADR 0204): an administrator has no " +
+			"sales channel and the admin product listing it pages through is unscoped by " +
+			"the same decision. This read prices the variants of that page and nothing " +
+			"else; a channel filter here would drop prices of products the file lists.",
+	},
 }
 
 // channelDecidingCalls are the function names showing that a variant read makes
