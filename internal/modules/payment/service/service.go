@@ -187,7 +187,10 @@ type Store interface {
 	// InsertGiftCard writes a card with its code's digest (ADR 0208) and reports
 	// whether it did: a sold card whose sale already made one is not written
 	// (ADR 0210).
-	InsertGiftCard(ctx context.Context, card models.GiftCard, digest string) (models.GiftCard, bool, error)
+	InsertGiftCard(ctx context.Context, card models.GiftCard, digest string, validityDays int32) (models.GiftCard, bool, error)
+	// ExpiredOpenGiftCards returns the open cards whose moment has come
+	// (ADR 0214).
+	ExpiredOpenGiftCards(ctx context.Context, limit int32) ([]string, error)
 	// GiftCardBySourceReference returns the card a sale made, or NotFound.
 	GiftCardBySourceReference(ctx context.Context, reference string) (models.GiftCard, error)
 	// SoldGiftCardReferences returns which of the references a card was sold
@@ -368,7 +371,16 @@ type Options struct {
 	// program this record has not thought about, and the multiplication it
 	// feeds would be a step closer to overflowing.
 	LoyaltyEarnBasisPoints int64
+	// GiftCardValidityDays is how many days a gift card pays for when nobody
+	// names its moment (ADR 0214): every sold card, and an issued card whose
+	// operator did not say. ZERO is the default and means never, so an
+	// installation that did not decide makes no card that expires.
+	GiftCardValidityDays int
 }
+
+// MaxGiftCardValidityDays is the longest validity an installation may set: a
+// hundred years, past which a shop means never and zero says so.
+const MaxGiftCardValidityDays = 36_500
 
 // EventPublisher is the NARROW surface the service needs from the event bus.
 //
@@ -392,6 +404,8 @@ type Service struct {
 
 	// earnBasisPoints is [Options.LoyaltyEarnBasisPoints]; zero earns nothing.
 	earnBasisPoints int64
+	// giftCardValidityDays is [Options.GiftCardValidityDays]; zero is never.
+	giftCardValidityDays int32
 }
 
 // New produces a service with the given dependencies.
@@ -414,16 +428,22 @@ func New(opts Options) (*Service, error) {
 			"the loyalty earn rate has to be between 0 and %d basis points, %d given",
 			MaxLoyaltyEarnBasisPoints, opts.LoyaltyEarnBasisPoints)
 	}
+	if opts.GiftCardValidityDays < 0 || opts.GiftCardValidityDays > MaxGiftCardValidityDays {
+		return nil, errors.Internal(CodeNotReady,
+			"the gift card validity has to be between 0 and %d days, %d given",
+			MaxGiftCardValidityDays, opts.GiftCardValidityDays)
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
 	return &Service{
-		store:           opts.Store,
-		providers:       opts.Providers,
-		events:          opts.Events,
-		log:             log,
-		earnBasisPoints: opts.LoyaltyEarnBasisPoints,
+		store:                opts.Store,
+		providers:            opts.Providers,
+		events:               opts.Events,
+		log:                  log,
+		earnBasisPoints:      opts.LoyaltyEarnBasisPoints,
+		giftCardValidityDays: int32(opts.GiftCardValidityDays),
 	}, nil
 }
 

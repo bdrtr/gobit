@@ -34,7 +34,7 @@ var envKeys = []string{
 	"FILE_PROVIDER", "FILE_ROOT", "FILE_MAX_UPLOAD_BYTES", "FILE_ALLOWED_TYPES",
 	"GRAPHQL_MAX_DEPTH", "GRAPHQL_MAX_COMPLEXITY", "GRAPHQL_INTROSPECTION",
 	"STOREFRONT_CATALOG_CACHE_TTL", "STOREFRONT_CATALOG_CACHE_SHARED",
-	"PAYMENT_LOYALTY_EARN_BASIS_POINTS",
+	"PAYMENT_LOYALTY_EARN_BASIS_POINTS", "PAYMENT_GIFT_CARD_VALIDITY_DAYS",
 	"DB_MAX_CONNS", "DB_MIN_CONNS",
 }
 
@@ -329,6 +329,35 @@ func TestTheCatalogCacheTTLRefusesANegativeValueAndAcceptsZero(t *testing.T) {
 	if cfg.CatalogCacheShared {
 		t.Fatal("the shared flag has to default to false; a cache nobody asked for " +
 			"must not be shareable")
+	}
+}
+
+// TestTheGiftCardValidityIsBoundedAtBothEnds: never is zero and the default,
+// a negative number is a typo that would read as never, and the ceiling is
+// accepted (ADR 0214).
+func TestTheGiftCardValidityIsBoundedAtBothEnds(t *testing.T) {
+	for _, days := range []string{"-1", "36501"} {
+		clearEnv(t)
+		t.Setenv("PAYMENT_GIFT_CARD_VALIDITY_DAYS", days)
+
+		if _, err := config.Load(); err == nil {
+			t.Fatalf("Load() should have refused PAYMENT_GIFT_CARD_VALIDITY_DAYS=%s", days)
+		}
+	}
+
+	clearEnv(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("the default has to load: %v", err)
+	}
+	if cfg.GiftCardValidityDays != 0 {
+		t.Fatalf("a card never expires unless the shop says so, got %d days", cfg.GiftCardValidityDays)
+	}
+
+	clearEnv(t)
+	t.Setenv("PAYMENT_GIFT_CARD_VALIDITY_DAYS", "36500")
+	if cfg, err = config.Load(); err != nil || cfg.GiftCardValidityDays != config.MaxGiftCardValidityDays {
+		t.Fatalf("the ceiling has to survive: %d, %v", cfg.GiftCardValidityDays, err)
 	}
 }
 

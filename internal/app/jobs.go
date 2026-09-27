@@ -23,6 +23,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/jobs/giftcardexpiry"
 	"github.com/bdrtr/gobit/internal/jobs/giftcardsweep"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
@@ -49,6 +50,12 @@ type paymentReconciler interface {
 	Reconcile(
 		ctx context.Context, unchangedFor time.Duration, limit int,
 	) (paymentsvc.ReconciliationReport, error)
+}
+
+// giftCardExpirer is the payment service as the gift card expiry needs it
+// (ADR 0214).
+type giftCardExpirer interface {
+	ExpireGiftCards(ctx context.Context, limit int64) (closed, held int, err error)
 }
 
 // productPublisher is the product service as the scheduled publisher needs it.
@@ -110,7 +117,8 @@ type reviewSuggester interface {
 //
 // The gift card sweep writes for the relay's reason: it issues the cards a
 // paid order bought when the capture's delivery did not (ADR 0212), and undoes
-// nothing.
+// nothing. The gift card expiry writes for the scheduled publisher's: it closes
+// a card at the moment the card was made to stop (ADR 0214).
 func registerJobs(
 	c *container.Container, host *coreplugin.Host, log *slog.Logger,
 ) (*job.Registry, error) {
@@ -180,6 +188,17 @@ func registerJobs(
 		return nil, err
 	}
 	if err := registry.Add(giftcardsweep.Definition(giftCards, log)); err != nil {
+		return nil, err
+	}
+	// The expiry job closes the cards whose moment has come (ADR 0214). It is
+	// registered unconditionally too: with the validity at zero and no operator
+	// naming a moment it closes nothing, and says so.
+	expirer, err := container.Resolve[giftCardExpirer](c, payment.ServiceName)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"the job runner could not resolve the payment service (%q)", payment.ServiceName)
+	}
+	if err := registry.Add(giftcardexpiry.Definition(expirer, log)); err != nil {
 		return nil, err
 	}
 

@@ -89,11 +89,14 @@ const (
 )
 
 // The template's data keys. Every value is a string (core/provider's rule).
+// DataExpiresAt is the moment the card stops paying in RFC 3339, or empty when
+// it never does (ADR 0214).
 const (
 	DataCode         = "code"
 	DataAmount       = "amount"
 	DataCurrencyCode = "currency_code"
 	DataOrderID      = "order_id"
+	DataExpiresAt    = "expires_at"
 )
 
 // linePage is how many lines are read at a time.
@@ -118,9 +121,9 @@ type Payments interface {
 	Collection(ctx context.Context, collectionID string) (
 		status string, amount, authorized, captured, refunded int64, err error)
 	// IssueSoldGiftCard issues the card a sale made; the code is empty when
-	// the card already existed.
+	// the card already existed, and expiresAt when it never expires.
 	IssueSoldGiftCard(ctx context.Context, reference, orderID, currencyCode string, amount int64) (
-		cardID, code string, err error)
+		cardID, code, expiresAt string, err error)
 	// SoldGiftCardReferences returns which of the sales already made their
 	// card.
 	SoldGiftCardReferences(ctx context.Context, references []string) ([]string, error)
@@ -331,7 +334,7 @@ func (w *Workflow) issue(ctx context.Context, orderID string, lines []soldLine) 
 		for unit := int64(1); unit <= line.quantity; unit++ {
 			// The card's value is the line's unit price, before any discount
 			// (ADR 0210).
-			cardID, code, err := w.payments.IssueSoldGiftCard(ctx,
+			cardID, code, expiresAt, err := w.payments.IssueSoldGiftCard(ctx,
 				line.reference(unit), orderID, contact.CurrencyCode, line.unitPrice)
 			if err != nil {
 				return made, err
@@ -343,7 +346,7 @@ func (w *Workflow) issue(ctx context.Context, orderID string, lines []soldLine) 
 			made++
 			if err := w.notifier.Send(ctx, TemplateIssued, ChannelEmail, cardID, contact.Email, map[string]string{
 				DataCode: code, DataAmount: fmt.Sprint(line.unitPrice),
-				DataCurrencyCode: contact.CurrencyCode, DataOrderID: orderID,
+				DataCurrencyCode: contact.CurrencyCode, DataOrderID: orderID, DataExpiresAt: expiresAt,
 			}); err != nil {
 				w.log.ErrorContext(ctx, "a sold gift card's code could not be mailed; give the card a new code",
 					"gift_card", cardID, "order_id", orderID, "error", err)

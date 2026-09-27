@@ -75,17 +75,23 @@ func (i *Interop) CheckTender(
 // safe to repeat: a second call for it returns the card the first made and an
 // EMPTY code, because the code is shown once and kept nowhere. A caller that
 // gets an empty code has already been handed it once.
+//
+// expiresAt is the moment the card stops paying, in RFC 3339 and UTC, or empty
+// when it never does (ADR 0214).
 func (i *Interop) IssueSoldGiftCard(
 	ctx context.Context, reference, orderID, currencyCode string, amount int64,
-) (cardID, code string, err error) {
+) (cardID, code, expiresAt string, err error) {
 	issued, _, err := i.svc.IssueSoldGiftCard(ctx, SoldGiftCardInput{
 		Reference: reference, OrderID: orderID, CurrencyCode: currencyCode, Amount: amount,
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
+	}
+	if issued.Card.ExpiresAt != nil {
+		expiresAt = issued.Card.ExpiresAt.UTC().Format(time.RFC3339)
 	}
 
-	return issued.Card.ID, issued.Code, nil
+	return issued.Card.ID, issued.Code, expiresAt, nil
 }
 
 // SoldGiftCardReferences returns which of the given sale references a card

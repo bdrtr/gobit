@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
@@ -32,6 +33,9 @@ type IssueGiftCardInput struct {
 	Amount int64
 	// Reason is why the card is issued; required, for store credit's reason.
 	Reason string
+	// ExpiresAt is the moment the card stops paying, which has to be ahead;
+	// nil leaves it to the installation's validity (ADR 0214).
+	ExpiresAt *time.Time
 }
 
 // IssuedGiftCard is a card as its issue returns it: the one moment its code is
@@ -66,9 +70,18 @@ func (s *Service) IssueGiftCard(ctx context.Context, in IssueGiftCardInput) (Iss
 			"the gift card needs a reason: why it was issued will never exist again if it is "+
 				"not in the record the moment it is asked")
 	}
+	var expiresAt *time.Time
+	if in.ExpiresAt != nil {
+		at := in.ExpiresAt.UTC()
+		if !at.After(time.Now()) {
+			return IssuedGiftCard{}, errors.Invalid(CodeGiftCardInvalidInput,
+				"a gift card's expiry has to be ahead: %s", at.Format(time.RFC3339))
+		}
+		expiresAt = &at
+	}
 
 	out, _, err := s.issueGiftCard(ctx, models.GiftCard{
-		CurrencyCode: currency, Reason: reason, Source: models.GiftCardIssued,
+		CurrencyCode: currency, Reason: reason, Source: models.GiftCardIssued, ExpiresAt: expiresAt,
 	}, in.Amount)
 	if err != nil {
 		return IssuedGiftCard{}, err
@@ -138,7 +151,8 @@ func (s *Service) issueGiftCard(
 	var out IssuedGiftCard
 	var created bool
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
-		written, inserted, err := s.store.InsertGiftCard(ctx, card, models.GiftCardCodeDigest(normalized))
+		written, inserted, err := s.store.InsertGiftCard(ctx, card, models.GiftCardCodeDigest(normalized),
+			s.giftCardValidityDays)
 		if err != nil {
 			return err
 		}
@@ -211,6 +225,38 @@ func (s *Service) ReplaceGiftCardCode(ctx context.Context, id string) (IssuedGif
 	s.log.InfoContext(ctx, "gift card code replaced", "gift_card", card.ID, "tail", card.CodeTail)
 
 	return IssuedGiftCard{Card: card, Code: code, Balance: balance}, nil
+}
+
+// ReasonExpired is the reason a card closed by its expiry records (ADR 0214).
+const ReasonExpired = "expired"
+
+// ExpireGiftCards closes up to limit open cards whose moment has come, the way
+// an operator's close does (ADR 0214): what each held is voided and the
+// journal books it. A card a payment still holds is left for a later pass and
+// counted; the other cards are closed all the same.
+func (s *Service) ExpireGiftCards(ctx context.Context, limit int64) (closed, held int, err error) {
+	if limit <= 0 || limit > MaxLimit {
+		return 0, 0, errors.Invalid(CodeGiftCardInvalidInput,
+			"the expiry pass reads between 1 and %d cards, %d asked", MaxLimit, limit)
+	}
+	ids, err := s.store.ExpiredOpenGiftCards(ctx, int32(limit))
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, id := range ids {
+		_, closeErr := s.DisableGiftCard(ctx, id, ReasonExpired)
+		if errors.CodeOf(closeErr) == CodeGiftCardHeld {
+			held++
+
+			continue
+		}
+		if closeErr != nil {
+			return closed, held, closeErr
+		}
+		closed++
+	}
+
+	return closed, held, nil
 }
 
 // DisableGiftCard closes a card: it pays nothing from then on, and what it

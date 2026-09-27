@@ -40,6 +40,14 @@ type GiftCard struct {
 	// holds nothing.
 	DisabledAt    *time.Time
 	DisableReason string
+	// ExpiresAt is the moment the card stops paying; nil if never (ADR 0214).
+	// It is set when the card is made and does not move.
+	ExpiresAt *time.Time
+}
+
+// ExpiredAt reports whether the card's moment has come by the given time.
+func (c GiftCard) ExpiredAt(now time.Time) bool {
+	return c.ExpiresAt != nil && !now.Before(*c.ExpiresAt)
 }
 
 // GiftCardSource says how a card came to be.

@@ -331,7 +331,7 @@ func anlatilanUclar() []ucBeklentisi {
 		// Gift cards (ADR 0208).
 		{
 			metod: http.MethodPost, yol: pathAdminGiftCards, durum: "201",
-			istek: issueGiftCardRequest{}, yanit: fullGiftCard(),
+			istek: issueGiftCardRequest{ExpiresAt: fullGiftCard().ExpiresAt}, yanit: fullGiftCard(),
 		},
 		{
 			metod: http.MethodGet, yol: pathAdminGiftCards, durum: "200",
@@ -363,7 +363,7 @@ func fullGiftCard() giftCardDTO {
 
 	return giftCardDTO{
 		Code: "ABCD-EFGH-JKMN-PQRS", CodeChangedAt: &changed,
-		DisabledAt: &changed, DisableReason: "a test",
+		DisabledAt: &changed, DisableReason: "a test", ExpiresAt: &changed,
 	}
 }
 

@@ -212,6 +212,16 @@ func TestTheLoyaltyEarnCeilingAgreesWithThePaymentService(t *testing.T) {
 		"the config's loyalty earn ceiling must match the payment service's")
 }
 
+// TestTheGiftCardValidityCeilingAgreesWithThePaymentService binds the two
+// homes of the gift card validity's ceiling, for the loyalty ceiling's reason
+// (ADR 0214).
+func TestTheGiftCardValidityCeilingAgreesWithThePaymentService(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, paymentservice.MaxGiftCardValidityDays, config.MaxGiftCardValidityDays,
+		"the config's gift card validity ceiling must match the payment service's")
+}
+
 // TestTheReceivableAccountAgrees binds the one account the payment and the order
 // journals share (ADR 0186, ADR 0188).
 //

@@ -583,6 +583,8 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 		// the default — means the ledger is there and nothing is written into
 		// it (ADR 0164).
 		LoyaltyEarnBasisPoints: cfg.LoyaltyEarnBasisPoints,
+		// The gift card validity likewise (ADR 0214); zero is never.
+		GiftCardValidityDays: cfg.GiftCardValidityDays,
 	}))
 	registry.Add(order.New())
 	// Phase 7: fulfillment, promotion, tax

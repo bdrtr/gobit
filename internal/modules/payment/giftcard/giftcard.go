@@ -15,6 +15,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
@@ -48,6 +49,9 @@ const (
 	// CodeDisabled reports a card an operator closed (ADR 0213): it opens no
 	// payment and takes no refund.
 	CodeDisabled = "payment_gift_card_disabled"
+	// CodeExpired reports a card whose moment has come (ADR 0214), answered
+	// the same way from that moment, before the expiry job closes it.
+	CodeExpired = "payment_gift_card_expired"
 )
 
 // Store is the persistence this provider needs, declared here and narrow.
@@ -140,8 +144,8 @@ func cardOf(store Store) func(ctx context.Context, in coreprovider.CreateSession
 		if err != nil {
 			return "", err
 		}
-		if card.DisabledAt != nil {
-			return "", disabled(card.ID)
+		if err := unusable(card); err != nil {
+			return "", err
 		}
 		if !strings.EqualFold(card.CurrencyCode, strings.TrimSpace(in.CurrencyCode)) {
 			return "", errors.Conflict(CodeCurrency,
@@ -157,10 +161,20 @@ func unknown() error {
 	return errors.Invalid(CodeUnknown, "no gift card has this code")
 }
 
-// disabled is the answer about a card an operator closed. It is told apart
-// from an unknown code: whoever sends it holds a real card's code.
-func disabled(cardID string) error {
-	return errors.Conflict(CodeDisabled, "gift card %s is closed", cardID)
+// unusable is the answer about a card that pays nothing: one an operator
+// closed, or one whose moment has come and the expiry job has not closed yet.
+// It is told apart from an unknown code: whoever sends it holds a real card's
+// code.
+func unusable(card models.GiftCard) error {
+	if card.DisabledAt != nil {
+		return errors.Conflict(CodeDisabled, "gift card %s is closed", card.ID)
+	}
+	if card.ExpiredAt(time.Now()) {
+		return errors.Conflict(CodeExpired, "gift card %s expired at %s",
+			card.ID, card.ExpiresAt.UTC().Format(time.RFC3339))
+	}
+
+	return nil
 }
 
 // ledger adapts [Store] to the machine's surface.
@@ -210,7 +224,8 @@ func (l ledger) UpdateSessionState(
 // Move writes one movement as a card ledger row, referenced by the session.
 //
 // A refund onto a closed card is refused (ADR 0213): the card holds nothing and
-// pays nothing, so the money would reach nobody. The card's lock is taken first,
+// pays nothing, so the money would reach nobody. An expired card is refused for
+// the same reason, since the expiry job closes it (ADR 0214). The card's lock is taken first,
 // the one a close takes, so a refund and a close cannot pass each other.
 func (l ledger) Move(ctx context.Context, entry balancetender.Entry) error {
 	if entry.Movement == balancetender.Refund {
@@ -221,8 +236,8 @@ func (l ledger) Move(ctx context.Context, entry balancetender.Entry) error {
 		if err != nil {
 			return err
 		}
-		if card.DisabledAt != nil {
-			return disabled(card.ID)
+		if err := unusable(card); err != nil {
+			return err
 		}
 	}
 	_, err := l.store.AppendGiftCardEntry(ctx, models.GiftCardEntry{

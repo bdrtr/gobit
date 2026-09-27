@@ -32,6 +32,9 @@ type issueGiftCardRequest struct {
 	Amount int64 `json:"amount"`
 	// Reason is why the card is issued; required.
 	Reason string `json:"reason"`
+	// ExpiresAt is the moment the card stops paying, which has to be ahead;
+	// omitted, the installation's validity decides it (ADR 0214).
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // disableGiftCardRequest is the body that closes a card.
@@ -60,6 +63,8 @@ type giftCardDTO struct {
 	// (ADR 0213).
 	DisabledAt    *time.Time `json:"disabled_at,omitempty"`
 	DisableReason string     `json:"disable_reason,omitempty"`
+	// ExpiresAt is when the card stops paying; absent if never (ADR 0214).
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // giftCardEntryDTO is a row of a card's history. Amount is SIGNED, so the rows
@@ -84,7 +89,7 @@ func (h *Handler) issueGiftCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	issued, err := h.svc.IssueGiftCard(ctx, service.IssueGiftCardInput{
-		CurrencyCode: body.CurrencyCode, Amount: body.Amount, Reason: body.Reason,
+		CurrencyCode: body.CurrencyCode, Amount: body.Amount, Reason: body.Reason, ExpiresAt: body.ExpiresAt,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
@@ -203,7 +208,7 @@ func toGiftCardDTO(in service.GiftCardWithBalance) giftCardDTO {
 		ID: in.Card.ID, CodeTail: in.Card.CodeTail, CurrencyCode: in.Card.CurrencyCode,
 		Balance: in.Balance, Reason: in.Card.Reason, Source: string(in.Card.Source),
 		CreatedAt: in.Card.CreatedAt, CodeChangedAt: in.Card.CodeChangedAt,
-		DisabledAt: in.Card.DisabledAt, DisableReason: in.Card.DisableReason,
+		DisabledAt: in.Card.DisabledAt, DisableReason: in.Card.DisableReason, ExpiresAt: in.Card.ExpiresAt,
 	}
 }
 
@@ -215,7 +220,10 @@ func describeGiftCards(d *openapi.Doc) {
 			"code ONCE: the shop keeps only a digest of it and cannot show it again, so the " +
 			"code is handed to its holder from this answer. Whoever presents the code pays " +
 			"with the card, at the storefront through the gift_card provider with " +
-			"{\"code\": \"...\"} as the payment's data. The reason is required. " + amountNote,
+			"{\"code\": \"...\"} as the payment's data. The reason is required. expires_at, " +
+			"when given, has to be ahead; omitted, the installation's validity decides it, and " +
+			"a card whose moment has come pays nothing and is closed by the expiry job (ADR 0214). " +
+			amountNote,
 		RequestBody: d.RequestBody(issueGiftCardRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The card, with its code", d.Item(giftCardDTO{})),

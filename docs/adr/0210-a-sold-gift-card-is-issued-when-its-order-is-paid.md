@@ -8,6 +8,7 @@ each code to the order's address. An operator can give a card a new code.
 - **Date:** 2026-09-27
 - **Amended by:** [0211](0211-an-order-books-a-sold-gift-card-as-a-debt.md): the line keeps the flag, the order books the card as a debt, and the flow reads the line
 - **Amended by:** [0212](0212-a-sweep-issues-the-cards-a-lost-delivery-did-not.md): a scheduled sweep issues what a lost delivery did not, and neither way issues for a canceled order
+- **Amended by:** [0214](0214-a-gift-card-can-expire.md): a sold card takes the installation's validity, and its mail carries `expires_at`
 
 Measurement: [measurements/0210](../measurements/0210-a-card-that-was-bought.md)
 

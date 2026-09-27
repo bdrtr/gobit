@@ -252,6 +252,12 @@ const (
 	// refused at startup, or the reverse for an embedder who never passes
 	// through this package.
 	MaxLoyaltyEarnBasisPoints int64 = 10_000
+
+	// MaxGiftCardValidityDays is the longest gift card validity an installation
+	// may set (ADR 0214): a hundred years, past which a shop means never and zero
+	// says so. It repeats the payment service's ceiling for the loyalty rate's
+	// reason, and an arch assertion binds the two.
+	MaxGiftCardValidityDays = 36_500
 )
 
 // The valid enum values; Validate checks against these.
@@ -927,6 +933,16 @@ type Config struct {
 	// with points earns nothing — at the ceiling a point would otherwise earn
 	// itself back forever.
 	LoyaltyEarnBasisPoints int64 `env:"PAYMENT_LOYALTY_EARN_BASIS_POINTS" envDefault:"0"`
+
+	// GiftCardValidityDays is how many days a gift card pays for when nobody
+	// names its moment: every sold card, and an issued card whose operator did
+	// not say (ADR 0214).
+	//
+	// Zero is the default and means never, because an expiry is a term the shop
+	// sells its cards under, and an installation must not start imposing one by
+	// upgrading. A card keeps the moment it was made with; changing the number
+	// changes the cards made afterwards.
+	GiftCardValidityDays int `env:"PAYMENT_GIFT_CARD_VALIDITY_DAYS" envDefault:"0"`
 
 	// GraphQLMaxFieldRepetition is the upper bound on how many times the same field
 	// may be selected under the same object.

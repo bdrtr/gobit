@@ -47,6 +47,7 @@ type PaymentGiftCard struct {
 	CodeChangedAt   pgtype.Timestamptz
 	DisabledAt      pgtype.Timestamptz
 	DisableReason   *string
+	ExpiresAt       pgtype.Timestamptz
 }
 
 type PaymentGiftCardEntry struct {

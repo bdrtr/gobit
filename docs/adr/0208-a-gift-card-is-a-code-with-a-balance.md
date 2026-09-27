@@ -8,6 +8,7 @@ currency, and whoever presents the code pays with it at checkout through a
 - **Date:** 2026-09-27
 - **Amended by:** [0209](0209-a-gift-card-pays-first-and-a-provider-the-rest.md): a card holds what it has rather than declining, and a provider pays the rest
 - **Amended by:** [0213](0213-an-operator-closes-a-gift-card-and-a-card-line-is-final.md): an operator can close a card, which then pays nothing and takes no refund
+- **Amended by:** [0214](0214-a-gift-card-can-expire.md): a card can carry a moment after which it pays nothing and is closed
 
 Measurement: [measurements/0208](../measurements/0208-a-code-with-a-balance.md)
 

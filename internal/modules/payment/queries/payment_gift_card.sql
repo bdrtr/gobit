@@ -7,9 +7,16 @@
 -- InsertGiftCard writes a card. A sold card whose sale already made one writes
 -- nothing and returns no row; the caller reads the existing card by its
 -- source reference (ADR 0210).
+--
+-- Its expiry is the one named, or else the installation's validity in days
+-- from the insert's own now(), or none when that is zero (ADR 0214).
 -- name: InsertGiftCard :one
-INSERT INTO payment_gift_cards (id, code_digest, code_tail, currency_code, reason, source, source_reference)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO payment_gift_cards (id, code_digest, code_tail, currency_code, reason, source, source_reference, expires_at)
+VALUES (sqlc.arg('id'), sqlc.arg('code_digest'), sqlc.arg('code_tail'), sqlc.arg('currency_code'),
+        sqlc.arg('reason'), sqlc.arg('source'), sqlc.narg('source_reference'),
+        COALESCE(sqlc.narg('expires_at')::timestamptz,
+                 CASE WHEN sqlc.arg('validity_days')::int > 0
+                      THEN now() + make_interval(days => sqlc.arg('validity_days')::int) END))
 ON CONFLICT (source_reference) WHERE source_reference IS NOT NULL DO NOTHING
 RETURNING *;
 
@@ -36,6 +43,14 @@ UPDATE payment_gift_cards
 SET disabled_at = now(), disable_reason = $2
 WHERE id = $1 AND disabled_at IS NULL
 RETURNING *;
+
+-- ExpiredOpenGiftCards returns the open cards whose moment has come, oldest
+-- first (ADR 0214).
+-- name: ExpiredOpenGiftCards :many
+SELECT id FROM payment_gift_cards
+WHERE disabled_at IS NULL AND expires_at IS NOT NULL AND expires_at <= now()
+ORDER BY expires_at, id
+LIMIT $1;
 
 -- GiftCardOpenHolds counts the card's sessions still holding part of it: an
 -- authorized session's hold comes back when it is captured in part or canceled.

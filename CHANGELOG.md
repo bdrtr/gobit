@@ -109,6 +109,18 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A gift card can expire** (ADR 0214). **For operators:**
+  `PAYMENT_GIFT_CARD_VALIDITY_DAYS` (default 0, never; at most 36500) gives
+  every sold card, and every issued card whose operator names no moment, that
+  many days; a new `gift-card-expiry` job closes a card whose moment has come,
+  voiding what it held as ADR 0213's close does. Payment migration 000012 adds
+  the moment; rolling it back stops while a card has one. **For API
+  consumers:** `POST /admin/v1/gift-cards` takes an optional `expires_at`, which
+  has to be ahead, and gift card responses carry `expires_at`. A card past its
+  moment is answered 409 `payment_gift_card_expired` at checkout and refuses a
+  refund. **For plugin authors:** the `gift_card.issued` notification carries
+  `expires_at`, empty for a card that never expires.
+
 - **An operator closes a gift card, and a card line is final** (ADR 0213). **For
   API consumers:** a return request or a line write-off naming a line that sold
   gift cards is answered 409 `order_gift_card_line_final`. `POST

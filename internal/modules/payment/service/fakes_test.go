@@ -82,6 +82,8 @@ type fakeStore struct {
 	// giftLocks the cards whose balance was locked, in order.
 	giftHolds map[string]int64
 	giftLocks []string
+	// giftValidity is the validity each card insert was given (ADR 0214).
+	giftValidity []int32
 }
 
 // newFakeStore boş bir sahte depo üretir.

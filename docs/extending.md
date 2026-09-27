@@ -304,7 +304,8 @@ Two rules are binding:
 The gift card sale flow issues the cards an order sold once its collection is
 fully captured, and mails each code through the notification module with the
 template `gift_card.issued`, whose data is `code`, `amount` (minor units),
-`currency_code` and `order_id`. A notification provider has to know that
+`currency_code`, `order_id` and `expires_at` (RFC 3339, empty for a card that
+never expires; ADR 0214). A notification provider has to know that
 template to deliver the code; the code is in no other record. The capture's
 delivery is not the only way in: the `gift-card-sweep` job issues, every five
 minutes, the cards that the paid orders of the last week sold and no delivery

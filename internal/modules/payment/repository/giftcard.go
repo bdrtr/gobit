@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
@@ -25,9 +26,16 @@ const (
 // InsertGiftCard writes a card and reports whether it did. A sold card whose
 // sale already made one is not written: the second return is false and the
 // caller reads the existing card by its source reference (ADR 0210).
+//
+// The card expires at card.ExpiresAt when it is set, else validityDays after
+// the insert's own now(), else never (ADR 0214).
 func (r *Repository) InsertGiftCard(
-	ctx context.Context, card models.GiftCard, digest string,
+	ctx context.Context, card models.GiftCard, digest string, validityDays int32,
 ) (models.GiftCard, bool, error) {
+	var expiresAt pgtype.Timestamptz
+	if card.ExpiresAt != nil {
+		expiresAt = fromTime(*card.ExpiresAt)
+	}
 	var reference *string
 	if card.SourceReference != "" {
 		reference = &card.SourceReference
@@ -40,6 +48,8 @@ func (r *Repository) InsertGiftCard(
 		Reason:          card.Reason,
 		Source:          string(card.Source),
 		SourceReference: reference,
+		ExpiresAt:       expiresAt,
+		ValidityDays:    validityDays,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.GiftCard{}, false, nil
@@ -86,6 +96,16 @@ func (r *Repository) DisableGiftCard(ctx context.Context, id, reason string) (mo
 	}
 
 	return toGiftCard(row), nil
+}
+
+// ExpiredOpenGiftCards returns the open cards whose moment has come.
+func (r *Repository) ExpiredOpenGiftCards(ctx context.Context, limit int32) ([]string, error) {
+	ids, err := r.queries(ctx).ExpiredOpenGiftCards(ctx, limit)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the expired gift cards could not be read")
+	}
+
+	return ids, nil
 }
 
 // GiftCardOpenHolds counts the card's sessions still holding part of it.
@@ -353,6 +373,7 @@ func toGiftCard(row paymentdb.PaymentGiftCard) models.GiftCard {
 	}
 	card.CodeChangedAt = toTimePtr(row.CodeChangedAt)
 	card.DisabledAt = toTimePtr(row.DisabledAt)
+	card.ExpiresAt = toTimePtr(row.ExpiresAt)
 	if row.DisableReason != nil {
 		card.DisableReason = *row.DisableReason
 	}

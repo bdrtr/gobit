@@ -199,6 +199,11 @@ type Options struct {
 	// yapılandırmayı okumasını gerektirmeden (İlke 2.4) oranı tek bir yerde
 	// bırakıyor.
 	LoyaltyEarnBasisPoints int64
+
+	// GiftCardValidityDays is how many days a gift card pays for when nobody
+	// names its moment; zero, the default, is never (ADR 0214). It is held here
+	// for the loyalty rate's reason: the module does not read configuration.
+	GiftCardValidityDays int
 }
 
 // Name modülün benzersiz adını döner.
@@ -299,6 +304,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		Events:                 bus,
 		Logger:                 log,
 		LoyaltyEarnBasisPoints: m.opts.LoyaltyEarnBasisPoints,
+		GiftCardValidityDays:   m.opts.GiftCardValidityDays,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,

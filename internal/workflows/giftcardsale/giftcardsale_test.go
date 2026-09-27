@@ -29,6 +29,8 @@ type fakePayments struct {
 	lookups    [][]string
 	// failFor makes the issue of that order's cards fail.
 	failFor string
+	// expiresAt is the moment every card is issued with (ADR 0214).
+	expiresAt string
 }
 
 //nolint:gocritic // The result count comes from the [giftcardsale.Payments] signature.
@@ -38,18 +40,18 @@ func (f *fakePayments) Collection(_ context.Context, collectionID string) (strin
 
 func (f *fakePayments) IssueSoldGiftCard(
 	_ context.Context, reference, orderID, _ string, amount int64,
-) (cardID, code string, err error) {
+) (cardID, code, expiresAt string, err error) {
 	if orderID == f.failFor {
-		return "", "", errors.Unavailable("payment_down", "the payment module did not answer")
+		return "", "", "", errors.Unavailable("payment_down", "the payment module did not answer")
 	}
 	f.references, f.amounts = append(f.references, reference), append(f.amounts, amount)
 	if card, ok := f.issued[reference]; ok {
-		return card, "", nil
+		return card, "", f.expiresAt, nil
 	}
 	card := fmt.Sprintf("gcard_%d", len(f.issued)+1)
 	f.issued[reference] = card
 
-	return card, "CODE-" + card, nil
+	return card, "CODE-" + card, f.expiresAt, nil
 }
 
 func (f *fakePayments) SoldGiftCardReferences(_ context.Context, references []string) ([]string, error) {
@@ -231,6 +233,7 @@ func TestAPaidOrderIssuesItsCardsAndMailsTheirCodes(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness()
+	h.payments.expiresAt = "2027-09-27T12:00:00Z"
 
 	require.NoError(t, h.flow.HandleCaptured(context.Background(), captured()))
 
@@ -245,7 +248,8 @@ func TestAPaidOrderIssuesItsCardsAndMailsTheirCodes(t *testing.T) {
 		assert.Equal(t, map[string]string{
 			giftcardsale.DataCode: "CODE-" + card, giftcardsale.DataAmount: "5000",
 			giftcardsale.DataCurrencyCode: "TRY", giftcardsale.DataOrderID: "order_1",
-		}, message.data)
+			giftcardsale.DataExpiresAt: "2027-09-27T12:00:00Z",
+		}, message.data, "the buyer is told when the card stops paying (ADR 0214)")
 	}
 }
 

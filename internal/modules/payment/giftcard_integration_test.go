@@ -803,3 +803,103 @@ func TestAClosedCardStopsTheCollectionRefundAtItsShare(t *testing.T) {
 	require.NoError(t, err, "the provider's capture is refunded through its own payment")
 	assert.Zero(t, cardBalance(ctx, t, svc, issued.Card.ID))
 }
+
+// giftCardServiceWithValidity builds a real-repository service whose
+// installation validity is the given number of days (ADR 0214).
+func giftCardServiceWithValidity(t *testing.T, days int) *service.Service {
+	t.Helper()
+
+	repo := repository.New(testPool.Pool())
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(manual.New(repo, nil)))
+	require.NoError(t, registry.Register(giftcard.New(repo, nil)))
+	svc, err := service.New(service.Options{
+		Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil), GiftCardValidityDays: days,
+	})
+	require.NoError(t, err)
+
+	return svc
+}
+
+// TestAGiftCardExpiresOnTheRealSchema is ADR 0214 in the module: the
+// installation's validity counts from the same now() the card is stamped
+// with, an operator's moment stands, a card past its moment is refused and then
+// closed by the expiry pass, and the schema refuses a moment before the issue.
+func TestAGiftCardExpiresOnTheRealSchema(t *testing.T) {
+	ctx := context.Background()
+	svc := giftCardServiceWithValidity(t, 30)
+	pool := testPool.Pool()
+
+	sold, _, err := svc.IssueSoldGiftCard(ctx, service.SoldGiftCardInput{
+		Reference: "oline_" + models.NewGiftCardID() + ":1", OrderID: "order_expiry",
+		CurrencyCode: testCurrency, Amount: 3_000,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, sold.Card.ExpiresAt)
+	assert.Equal(t, sold.Card.CreatedAt.AddDate(0, 0, 30), *sold.Card.ExpiresAt)
+
+	named := time.Now().Add(72 * time.Hour).UTC().Truncate(time.Second)
+	issued, err := svc.IssueGiftCard(ctx, service.IssueGiftCardInput{
+		CurrencyCode: testCurrency, Amount: 5_000, Reason: "an integration test", ExpiresAt: &named,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, issued.Card.ExpiresAt)
+	assert.True(t, named.Equal(*issued.Card.ExpiresAt), "the operator's moment stands")
+
+	_, err = pool.Exec(ctx, `UPDATE payment_gift_cards SET expires_at = created_at WHERE id = $1`, issued.Card.ID)
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	assert.Equal(t, "payment_gift_cards_expires_after_issue", pgErr.ConstraintName)
+
+	// The card's moment is moved behind, as time passing would leave it.
+	_, err = pool.Exec(ctx,
+		`UPDATE payment_gift_cards SET expires_at = created_at + interval '1 microsecond' WHERE id = $1`,
+		issued.Card.ID)
+	require.NoError(t, err)
+	col, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
+		Reference: testReference + "-expired", Amount: 1_000, CurrencyCode: testCurrency,
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateSession(ctx, col.ID, giftcard.ID, service.CreateSessionInput{
+		IdempotencyKey: "expired-" + col.ID, Data: map[string]any{giftcard.DataCode: issued.Code},
+	})
+	require.Error(t, err)
+	assert.Equal(t, giftcard.CodeExpired, errors.CodeOf(err), "refused before the pass closes it")
+
+	closed, _, err := svc.ExpireGiftCards(ctx, 100)
+	require.NoError(t, err)
+	assert.Positive(t, closed)
+	card, err := svc.GetGiftCard(ctx, issued.Card.ID)
+	require.NoError(t, err)
+	require.NotNil(t, card.Card.DisabledAt)
+	assert.Equal(t, service.ReasonExpired, card.Card.DisableReason)
+	assert.Zero(t, card.Balance)
+	unexpired, err := svc.GetGiftCard(ctx, sold.Card.ID)
+	require.NoError(t, err)
+	assert.Nil(t, unexpired.Card.DisabledAt, "a card before its moment is left open")
+
+	again, _, err := svc.ExpireGiftCards(ctx, 100)
+	require.NoError(t, err)
+	assert.Zero(t, again, "a closed card is not read by the next pass, which would otherwise spend its "+
+		"batch on cards already closed")
+}
+
+// TestAnExpiringCardHoldsBackTheRollback: 000012's down stops while a card has
+// a moment. It runs in a database of its own (D135).
+func TestAnExpiringCardHoldsBackTheRollback(t *testing.T) {
+	ctx := context.Background()
+	src := payment.New().Migrations()
+	dsn, pool := isolatedDatabase(ctx, t, "payment_expiring_rollback")
+	repo := repository.New(pool.Pool())
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(manual.New(repo, nil)))
+	svc, err := service.New(service.Options{
+		Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil), GiftCardValidityDays: 30,
+	})
+	require.NoError(t, err)
+	issueCard(ctx, t, svc, 1_000)
+	rollBackTo(ctx, t, dsn, 12)
+
+	err = db.MigrateDown(ctx, dsn, src, payment.ModuleName, 1)
+	assertRefusedBy(t, err, "payment_gift_cards_none_expiring_on_rollback")
+}

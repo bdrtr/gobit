@@ -13,11 +13,12 @@ import (
 // entries, as in the real table.
 
 func (f *fakeStore) InsertGiftCard(
-	_ context.Context, card models.GiftCard, digest string,
+	_ context.Context, card models.GiftCard, digest string, validityDays int32,
 ) (models.GiftCard, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	f.giftValidity = append(f.giftValidity, validityDays)
 	if f.giftCards == nil {
 		f.giftCards, f.giftDigests = map[string]models.GiftCard{}, map[string]string{}
 	}
@@ -34,6 +35,10 @@ func (f *fakeStore) InsertGiftCard(
 	// The table stamps each card with its own transaction's moment; the fake
 	// stamps the order they arrive in.
 	card.CreatedAt = time.Unix(int64(len(f.giftCards)), 0).UTC()
+	if card.ExpiresAt == nil && validityDays > 0 {
+		expires := card.CreatedAt.AddDate(0, 0, int(validityDays))
+		card.ExpiresAt = &expires
+	}
 	f.giftCards[card.ID], f.giftDigests[card.ID] = card, digest
 
 	return card, true, nil
@@ -64,6 +69,25 @@ func (f *fakeStore) SoldGiftCardReferences(_ context.Context, references []strin
 	}
 
 	return found, nil
+}
+
+func (f *fakeStore) ExpiredOpenGiftCards(_ context.Context, limit int32) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var ids []string
+	for id := range f.giftCards {
+		card := f.giftCards[id]
+		if card.DisabledAt == nil && card.ExpiredAt(time.Now()) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	if len(ids) > int(limit) {
+		ids = ids[:limit]
+	}
+
+	return ids, nil
 }
 
 func (f *fakeStore) LockGiftCardBalance(ctx context.Context, cardID, _ string) error {

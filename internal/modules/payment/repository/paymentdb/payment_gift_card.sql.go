@@ -7,6 +7,8 @@ package paymentdb
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const countGiftCardEntries = `-- name: CountGiftCardEntries :one
@@ -36,7 +38,7 @@ const disableGiftCard = `-- name: DisableGiftCard :one
 UPDATE payment_gift_cards
 SET disabled_at = now(), disable_reason = $2
 WHERE id = $1 AND disabled_at IS NULL
-RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason
+RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason, expires_at
 `
 
 type DisableGiftCardParams struct {
@@ -60,12 +62,42 @@ func (q *Queries) DisableGiftCard(ctx context.Context, arg DisableGiftCardParams
 		&i.CodeChangedAt,
 		&i.DisabledAt,
 		&i.DisableReason,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
 
+const expiredOpenGiftCards = `-- name: ExpiredOpenGiftCards :many
+SELECT id FROM payment_gift_cards
+WHERE disabled_at IS NULL AND expires_at IS NOT NULL AND expires_at <= now()
+ORDER BY expires_at, id
+LIMIT $1
+`
+
+// ExpiredOpenGiftCards returns the open cards whose moment has come, oldest
+// first (ADR 0214).
+func (q *Queries) ExpiredOpenGiftCards(ctx context.Context, limit int32) ([]string, error) {
+	rows, err := q.db.Query(ctx, expiredOpenGiftCards, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getGiftCard = `-- name: GetGiftCard :one
-SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason, expires_at FROM payment_gift_cards
 WHERE id = $1
 `
 
@@ -84,12 +116,13 @@ func (q *Queries) GetGiftCard(ctx context.Context, id string) (PaymentGiftCard, 
 		&i.CodeChangedAt,
 		&i.DisabledAt,
 		&i.DisableReason,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
 
 const getGiftCardByDigest = `-- name: GetGiftCardByDigest :one
-SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason, expires_at FROM payment_gift_cards
 WHERE code_digest = $1
 `
 
@@ -109,12 +142,13 @@ func (q *Queries) GetGiftCardByDigest(ctx context.Context, codeDigest string) (P
 		&i.CodeChangedAt,
 		&i.DisabledAt,
 		&i.DisableReason,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
 
 const getGiftCardBySourceReference = `-- name: GetGiftCardBySourceReference :one
-SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason, expires_at FROM payment_gift_cards
 WHERE source_reference = $1
 `
 
@@ -133,6 +167,7 @@ func (q *Queries) GetGiftCardBySourceReference(ctx context.Context, sourceRefere
 		&i.CodeChangedAt,
 		&i.DisabledAt,
 		&i.DisableReason,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -251,10 +286,14 @@ func (q *Queries) GiftCardOpenHolds(ctx context.Context, giftCardID string) (int
 
 const insertGiftCard = `-- name: InsertGiftCard :one
 
-INSERT INTO payment_gift_cards (id, code_digest, code_tail, currency_code, reason, source, source_reference)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO payment_gift_cards (id, code_digest, code_tail, currency_code, reason, source, source_reference, expires_at)
+VALUES ($1, $2, $3, $4,
+        $5, $6, $7,
+        COALESCE($8::timestamptz,
+                 CASE WHEN $9::int > 0
+                      THEN now() + make_interval(days => $9::int) END))
 ON CONFLICT (source_reference) WHERE source_reference IS NOT NULL DO NOTHING
-RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason
+RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason, expires_at
 `
 
 type InsertGiftCardParams struct {
@@ -265,6 +304,8 @@ type InsertGiftCardParams struct {
 	Reason          string
 	Source          string
 	SourceReference *string
+	ExpiresAt       pgtype.Timestamptz
+	ValidityDays    int32
 }
 
 // payment_gift_card queries — the cards, their ledger and the provider's own
@@ -275,6 +316,9 @@ type InsertGiftCardParams struct {
 // InsertGiftCard writes a card. A sold card whose sale already made one writes
 // nothing and returns no row; the caller reads the existing card by its
 // source reference (ADR 0210).
+//
+// Its expiry is the one named, or else the installation's validity in days
+// from the insert's own now(), or none when that is zero (ADR 0214).
 func (q *Queries) InsertGiftCard(ctx context.Context, arg InsertGiftCardParams) (PaymentGiftCard, error) {
 	row := q.db.QueryRow(ctx, insertGiftCard,
 		arg.ID,
@@ -284,6 +328,8 @@ func (q *Queries) InsertGiftCard(ctx context.Context, arg InsertGiftCardParams) 
 		arg.Reason,
 		arg.Source,
 		arg.SourceReference,
+		arg.ExpiresAt,
+		arg.ValidityDays,
 	)
 	var i PaymentGiftCard
 	err := row.Scan(
@@ -298,6 +344,7 @@ func (q *Queries) InsertGiftCard(ctx context.Context, arg InsertGiftCardParams) 
 		&i.CodeChangedAt,
 		&i.DisabledAt,
 		&i.DisableReason,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
@@ -424,7 +471,7 @@ func (q *Queries) ListGiftCardEntries(ctx context.Context, arg ListGiftCardEntri
 }
 
 const listGiftCards = `-- name: ListGiftCards :many
-SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason, expires_at FROM payment_gift_cards
 ORDER BY created_at DESC, id DESC
 LIMIT $2::bigint OFFSET $1::bigint
 `
@@ -455,6 +502,7 @@ func (q *Queries) ListGiftCards(ctx context.Context, arg ListGiftCardsParams) ([
 			&i.CodeChangedAt,
 			&i.DisabledAt,
 			&i.DisableReason,
+			&i.ExpiresAt,
 		); err != nil {
 			return nil, err
 		}
@@ -513,7 +561,7 @@ const replaceGiftCardCode = `-- name: ReplaceGiftCardCode :one
 UPDATE payment_gift_cards
 SET code_digest = $2, code_tail = $3, code_changed_at = now()
 WHERE id = $1
-RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason
+RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason, expires_at
 `
 
 type ReplaceGiftCardCodeParams struct {
@@ -538,6 +586,7 @@ func (q *Queries) ReplaceGiftCardCode(ctx context.Context, arg ReplaceGiftCardCo
 		&i.CodeChangedAt,
 		&i.DisabledAt,
 		&i.DisableReason,
+		&i.ExpiresAt,
 	)
 	return i, err
 }
