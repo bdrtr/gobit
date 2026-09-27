@@ -39,12 +39,13 @@ ORDER BY created_at, id
 LIMIT sqlc.arg('row_limit');
 
 -- A gift card's issue is read with the card's currency, which the entry does not
--- repeat (ADR 0208).
+-- repeat (ADR 0208). Only an ISSUED card's is: a sold card is the order's sale,
+-- and the order's books hold it (ADR 0210).
 -- name: JournalGiftCardIssues :many
 SELECT e.id, e.gift_card_id, g.currency_code, e.amount, e.created_at
 FROM payment_gift_card_entries e
 JOIN payment_gift_cards g ON g.id = e.gift_card_id
-WHERE e.kind = 'issue'
+WHERE e.kind = 'issue' AND g.source = 'issued'
   AND e.created_at >= sqlc.arg('from_at') AND e.created_at < sqlc.arg('to_at')
   AND (sqlc.narg('currency_code')::text IS NULL OR g.currency_code = sqlc.narg('currency_code')::text)
 ORDER BY e.created_at, e.id

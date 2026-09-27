@@ -23,11 +23,30 @@ type GiftCard struct {
 	CodeTail string
 	// CurrencyCode is the one currency the card holds.
 	CurrencyCode string
-	// Reason is why an operator issued the card; shown to nobody else.
+	// Reason is why the card exists; shown to nobody but an operator.
 	Reason string
+	// Source is how the card came to be: issued by an operator, or sold on an
+	// order (ADR 0210).
+	Source GiftCardSource
+	// SourceReference names the sale of a sold card, the order line and the
+	// unit, and is empty on an issued one.
+	SourceReference string
 	// CreatedAt is when the card was issued (UTC).
 	CreatedAt time.Time
+	// CodeChangedAt is when the card's code was last replaced; nil if never.
+	CodeChangedAt *time.Time
 }
+
+// GiftCardSource says how a card came to be.
+type GiftCardSource string
+
+// The two sources.
+const (
+	// GiftCardIssued is a card an operator issued (ADR 0208).
+	GiftCardIssued GiftCardSource = "issued"
+	// GiftCardSold is a card sold on an order (ADR 0210).
+	GiftCardSold GiftCardSource = "sold"
+)
 
 // GiftCardKind says what happened to a card's balance. The vocabulary is store
 // credit's, closed by the schema for the same reason.

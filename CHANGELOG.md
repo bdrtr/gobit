@@ -12,6 +12,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A flow could be dropped from production with every test green** (D146).
+  The end-to-end ground wires its flows by hand. **For contributors:** an arch
+  gate now fails when the ground wires a flow `internal/app` does not.
+
 - **Two payment ledger gates counted the ledgers by hand** (D145). A new ledger
   left both green without being read. **For contributors:** a payment ledger's
   insert query and its table are now required to be named in
@@ -95,6 +99,20 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A sold gift card is issued when its order is paid** (ADR 0210). **For API
+  consumers:** buying a product flagged `is_giftcard` issues, once the order's
+  collection is fully captured, one gift card per unit worth the line's unit
+  price, and mails its code to the order's address with the notification
+  template `gift_card.issued` (data: `code`, `amount`, `currency_code`,
+  `order_id`). `POST /admin/v1/gift-cards/{id}/code` (payment:write) replaces a
+  card's code and answers the new one once; the balance stays. Gift card
+  responses carry `source` (`issued` or `sold`) and `code_changed_at`. Money
+  captured through a gift card no longer earns loyalty points. **For plugin
+  authors:** a notification provider has to handle `gift_card.issued` to
+  deliver sold cards' codes; nothing else holds them. **For operators:**
+  payment migration 000010 adds the card's source and sale; rolling it back
+  stops while a sold card exists.
 
 - **A gift card pays first and a provider the rest** (ADR 0209). **For API
   consumers:** `POST /store/v1/carts/{id}/complete` takes an optional

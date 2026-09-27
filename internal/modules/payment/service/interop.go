@@ -68,6 +68,26 @@ func (i *Interop) CheckTender(
 	return i.svc.CheckTender(ctx, providerID, customerID, currencyCode, decoded)
 }
 
+// IssueSoldGiftCard issues the gift card a sale made and returns its id and
+// code (ADR 0210).
+//
+// reference names the sale — the order line and the unit — and makes the call
+// safe to repeat: a second call for it returns the card the first made and an
+// EMPTY code, because the code is shown once and kept nowhere. A caller that
+// gets an empty code has already been handed it once.
+func (i *Interop) IssueSoldGiftCard(
+	ctx context.Context, reference, orderID, currencyCode string, amount int64,
+) (cardID, code string, err error) {
+	issued, _, err := i.svc.IssueSoldGiftCard(ctx, SoldGiftCardInput{
+		Reference: reference, OrderID: orderID, CurrencyCode: currencyCode, Amount: amount,
+	})
+	if err != nil {
+		return "", "", err
+	}
+
+	return issued.Card.ID, issued.Code, nil
+}
+
 // CreateCollection opens a payment collection for a reference and returns its
 // identifier.
 //

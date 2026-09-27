@@ -969,12 +969,12 @@ func (f *fakeStore) LoyaltyPointsForReference(_ context.Context, reference strin
 	return points, nil
 }
 
-// CollectionNetCapturedExcludingProvider gerçek sorgunun yaptığını yapar:
-// koleksiyonun tahsilatlarını oturumlarının sağlayıcısına göre süzüp
-// (tutar − iade) toplamını döner. Kazanım tabanı budur; koleksiyon satırının
-// kendi toplamları DEĞİL, çünkü onlar sağlayıcıyı bilmez (ADR 0165).
-func (f *fakeStore) CollectionNetCapturedExcludingProvider(
-	_ context.Context, collectionID, excludedProviderID string,
+// CollectionNetCapturedExcludingProviders does what the real query does: it
+// filters the collection's captures by their sessions' providers and sums
+// amount less refunds. That is the earn base, not the collection row's own
+// totals, which do not know the provider (ADR 0165).
+func (f *fakeStore) CollectionNetCapturedExcludingProviders(
+	_ context.Context, collectionID string, excludedProviderIDs []string,
 ) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -985,7 +985,7 @@ func (f *fakeStore) CollectionNetCapturedExcludingProvider(
 		if payment.PaymentCollectionID != collectionID {
 			continue
 		}
-		if f.sessions[payment.PaymentSessionID].ProviderID == excludedProviderID {
+		if slices.Contains(excludedProviderIDs, f.sessions[payment.PaymentSessionID].ProviderID) {
 			continue
 		}
 		net += payment.Amount - payment.RefundedAmount

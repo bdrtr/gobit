@@ -129,18 +129,19 @@ func toLoyaltyEntry(row paymentdb.PaymentLoyaltyEntry) models.LoyaltyEntry {
 	}
 }
 
-// CollectionNetCapturedExcludingProvider returns what a collection has captured
-// and not refunded through every tender but the named one.
+// CollectionNetCapturedExcludingProviders returns what a collection has
+// captured and not refunded through every tender but the named ones.
 //
-// It is the earn path's base (ADR 0165): money that came out of the points
-// ledger earns no points. A collection with no captures returns zero.
-func (r *Repository) CollectionNetCapturedExcludingProvider(
-	ctx context.Context, collectionID, excludedProviderID string,
+// It is the earn path's base (ADR 0165, ADR 0210): money that came out of the
+// points ledger or off a gift card earns no points. A collection with no
+// captures returns zero.
+func (r *Repository) CollectionNetCapturedExcludingProviders(
+	ctx context.Context, collectionID string, excludedProviderIDs []string,
 ) (int64, error) {
-	net, err := r.queries(ctx).CollectionNetCapturedExcludingProvider(ctx,
-		paymentdb.CollectionNetCapturedExcludingProviderParams{
+	net, err := r.queries(ctx).CollectionNetCapturedExcludingProviders(ctx,
+		paymentdb.CollectionNetCapturedExcludingProvidersParams{
 			PaymentCollectionID: collectionID,
-			ExcludedProviderID:  excludedProviderID,
+			ExcludedProviderIds: excludedProviderIDs,
 		})
 	if err != nil {
 		return 0, classify(err, codeQueryFailed,

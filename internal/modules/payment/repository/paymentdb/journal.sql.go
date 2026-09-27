@@ -144,7 +144,7 @@ const journalGiftCardIssues = `-- name: JournalGiftCardIssues :many
 SELECT e.id, e.gift_card_id, g.currency_code, e.amount, e.created_at
 FROM payment_gift_card_entries e
 JOIN payment_gift_cards g ON g.id = e.gift_card_id
-WHERE e.kind = 'issue'
+WHERE e.kind = 'issue' AND g.source = 'issued'
   AND e.created_at >= $1 AND e.created_at < $2
   AND ($3::text IS NULL OR g.currency_code = $3::text)
 ORDER BY e.created_at, e.id
@@ -167,7 +167,8 @@ type JournalGiftCardIssuesRow struct {
 }
 
 // A gift card's issue is read with the card's currency, which the entry does not
-// repeat (ADR 0208).
+// repeat (ADR 0208). Only an ISSUED card's is: a sold card is the order's sale,
+// and the order's books hold it (ADR 0210).
 func (q *Queries) JournalGiftCardIssues(ctx context.Context, arg JournalGiftCardIssuesParams) ([]JournalGiftCardIssuesRow, error) {
 	rows, err := q.db.Query(ctx, journalGiftCardIssues,
 		arg.FromAt,

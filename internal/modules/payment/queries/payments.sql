@@ -38,11 +38,12 @@ SET refunded_amount = $2,
 WHERE id = $1
 RETURNING *;
 
--- CollectionNetCapturedExcludingProvider is the money a collection has captured
--- and not refunded through every tender BUT one.
+-- CollectionNetCapturedExcludingProviders is the money a collection has
+-- captured and not refunded through every tender but the named ones.
 --
 -- It is the earn path's base (ADR 0165): a capture paid with loyalty points earns
--- nothing, or a point would earn itself back at the ceiling rate. The collection
+-- nothing, or a point would earn itself back at the ceiling rate; nor does one
+-- paid with a gift card, whose money earned when the card was bought (ADR 0210). The collection
 -- row's own totals are provider-blind, so the base is taken one table down, from
 -- the captures, whose session names the provider. It is read under the
 -- collection's lock, after the capture or the refund it is earning for has been
@@ -50,9 +51,9 @@ RETURNING *;
 --
 -- COALESCE because a collection with no captures has earned zero, which is a
 -- number rather than an absence.
--- name: CollectionNetCapturedExcludingProvider :one
+-- name: CollectionNetCapturedExcludingProviders :one
 SELECT COALESCE(SUM(p.amount - p.refunded_amount), 0)::bigint AS net
 FROM payments p
 JOIN payment_sessions s ON s.id = p.payment_session_id
 WHERE p.payment_collection_id = sqlc.arg('payment_collection_id')
-  AND s.provider_id <> sqlc.arg('excluded_provider_id');
+  AND s.provider_id <> ALL(sqlc.arg('excluded_provider_ids')::text[]);

@@ -11,24 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const collectionNetCapturedExcludingProvider = `-- name: CollectionNetCapturedExcludingProvider :one
+const collectionNetCapturedExcludingProviders = `-- name: CollectionNetCapturedExcludingProviders :one
 SELECT COALESCE(SUM(p.amount - p.refunded_amount), 0)::bigint AS net
 FROM payments p
 JOIN payment_sessions s ON s.id = p.payment_session_id
 WHERE p.payment_collection_id = $1
-  AND s.provider_id <> $2
+  AND s.provider_id <> ALL($2::text[])
 `
 
-type CollectionNetCapturedExcludingProviderParams struct {
+type CollectionNetCapturedExcludingProvidersParams struct {
 	PaymentCollectionID string
-	ExcludedProviderID  string
+	ExcludedProviderIds []string
 }
 
-// CollectionNetCapturedExcludingProvider is the money a collection has captured
-// and not refunded through every tender BUT one.
+// CollectionNetCapturedExcludingProviders is the money a collection has
+// captured and not refunded through every tender but the named ones.
 //
 // It is the earn path's base (ADR 0165): a capture paid with loyalty points earns
-// nothing, or a point would earn itself back at the ceiling rate. The collection
+// nothing, or a point would earn itself back at the ceiling rate; nor does one
+// paid with a gift card, whose money earned when the card was bought (ADR 0210). The collection
 // row's own totals are provider-blind, so the base is taken one table down, from
 // the captures, whose session names the provider. It is read under the
 // collection's lock, after the capture or the refund it is earning for has been
@@ -36,8 +37,8 @@ type CollectionNetCapturedExcludingProviderParams struct {
 //
 // COALESCE because a collection with no captures has earned zero, which is a
 // number rather than an absence.
-func (q *Queries) CollectionNetCapturedExcludingProvider(ctx context.Context, arg CollectionNetCapturedExcludingProviderParams) (int64, error) {
-	row := q.db.QueryRow(ctx, collectionNetCapturedExcludingProvider, arg.PaymentCollectionID, arg.ExcludedProviderID)
+func (q *Queries) CollectionNetCapturedExcludingProviders(ctx context.Context, arg CollectionNetCapturedExcludingProvidersParams) (int64, error) {
+	row := q.db.QueryRow(ctx, collectionNetCapturedExcludingProviders, arg.PaymentCollectionID, arg.ExcludedProviderIds)
 	var net int64
 	err := row.Scan(&net)
 	return net, err

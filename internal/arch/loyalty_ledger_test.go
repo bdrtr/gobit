@@ -72,7 +72,8 @@ type ledgerDoor struct {
 // The credit ledger's chain is two entries: its service door (IssueCredit) is
 // the operator's act and has callers of its own, so the chain ends there. The
 // gift card ledger's is the same shape: the card's issue, and the tender that
-// spends it (ADR 0208).
+// spends it (ADR 0208). The issue's door is issueGiftCard, which both an
+// operator's issue and a sale's call (ADR 0210); the chain ends there.
 var paymentLedgerChokePoints = map[string]ledgerDoor{
 	"InsertLoyaltyEntry":     {onlyFrom: "AppendLoyaltyEntry"},
 	"AppendLoyaltyEntry":     {onlyFrom: "earnLoyaltyPoints", orTheTender: "loyalty_points"},
@@ -80,7 +81,7 @@ var paymentLedgerChokePoints = map[string]ledgerDoor{
 	"InsertStoreCreditEntry": {onlyFrom: "AppendStoreCreditEntry"},
 	"AppendStoreCreditEntry": {onlyFrom: "IssueCredit", orTheTender: "store_credit"},
 	"InsertGiftCardEntry":    {onlyFrom: "AppendGiftCardEntry"},
-	"AppendGiftCardEntry":    {onlyFrom: "IssueGiftCard", orTheTender: "gift_card"},
+	"AppendGiftCardEntry":    {onlyFrom: "issueGiftCard", orTheTender: "gift_card"},
 }
 
 // paymentLedgerQueriesDir is where the payment module's generated queries live.

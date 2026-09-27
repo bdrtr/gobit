@@ -25,6 +25,7 @@ import (
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
+	giftcardsalewf "github.com/bdrtr/gobit/internal/workflows/giftcardsale"
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
@@ -173,6 +174,13 @@ func registerWorkflows(c *container.Container, log *slog.Logger) error {
 	if _, err := ordercancelwf.FromContainer(c, log); err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
 			"the cancellation workflow could not be set up")
+	}
+
+	// The gift card sale flow only listens as well: it issues the cards an
+	// order sold when the order's money is in (ADR 0210).
+	if _, err := giftcardsalewf.FromContainer(c, log); err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+			"the gift card sale workflow could not be set up")
 	}
 
 	return nil

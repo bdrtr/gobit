@@ -102,3 +102,24 @@ func TestAGiftCardIsIssuedUnderThePaymentWrite(t *testing.T) {
 	require.Equal(t, http.StatusOK, history.Code, history.Body.String())
 	assert.Contains(t, history.Body.String(), `"kind":"issue"`)
 }
+
+// TestAReplacedCodeIsAnsweredOnceUnderThePaymentWrite (ADR 0210).
+func TestAReplacedCodeIsAnsweredOnceUnderThePaymentWrite(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakePayments{issuedCard: service.IssuedGiftCard{
+		Card: models.GiftCard{ID: "gcard_1", CodeTail: "WXYZ", CurrencyCode: "TRY", Source: models.GiftCardSold},
+		Code: "QRST-UVWX-YZ01-WXYZ", Balance: 3_000,
+	}}
+	r := giftCardRouter(svc)
+	reader := corehttp.Principal{ID: "user_reader", Kind: "user", Scopes: []string{api.ScopeRead}}
+
+	refused := giftCardRequest(t, r, http.MethodPost, "/admin/v1/gift-cards/gcard_1/code", "", reader)
+	assert.Equal(t, http.StatusForbidden, refused.Code)
+
+	replaced := giftCardRequest(t, r, http.MethodPost, "/admin/v1/gift-cards/gcard_1/code", "", operator)
+	require.Equal(t, http.StatusOK, replaced.Code, replaced.Body.String())
+	assert.Equal(t, "gcard_1", svc.lastGiftID)
+	assert.Contains(t, replaced.Body.String(), `"code":"QRST-UVWX-YZ01-WXYZ"`)
+	assert.Contains(t, replaced.Body.String(), `"source":"sold"`)
+}

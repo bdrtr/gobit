@@ -65,6 +65,7 @@ import (
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
+	giftcardsalewf "github.com/bdrtr/gobit/internal/workflows/giftcardsale"
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
@@ -151,6 +152,11 @@ var (
 	_ ordercancelwf.Inventory   = (*inventorysvc.Interop)(nil)
 	_ ordercancelwf.Fulfillment = (*fulfillsvc.Interop)(nil)
 	_ ordercancelwf.Orders      = (*ordersvc.Interop)(nil)
+
+	// The gift card sale flow (ADR 0210).
+	_ giftcardsalewf.Payments = (*paymentsvc.Interop)(nil)
+	_ giftcardsalewf.Orders   = (*ordersvc.Interop)(nil)
+	_ giftcardsalewf.Notifier = (*notifsvc.Interop)(nil)
 )
 
 // A PLUGIN resolving a MODULE's surface, and the CORE resolving one.

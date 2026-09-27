@@ -158,3 +158,86 @@ func TestTheTenderCheckHandsTheProviderThePayment(t *testing.T) {
 		CurrencyCode: "TRY", CustomerID: "cus_1", Data: map[string]any{"code": "X"},
 	}, provider.got)
 }
+
+// TestASoldCardIsIssuedOnce is ADR 0210: a sale's card is made by the first
+// call, and a second call for the same sale finds it without its code.
+func TestASoldCardIsIssuedOnce(t *testing.T) {
+	t.Parallel()
+
+	svc, store := giftCardService(t)
+	in := service.SoldGiftCardInput{Reference: "oline_1:1", OrderID: "order_1", CurrencyCode: "try", Amount: 5_000}
+
+	first, created, err := svc.IssueSoldGiftCard(context.Background(), in)
+	require.NoError(t, err)
+	require.True(t, created)
+	second, again, err := svc.IssueSoldGiftCard(context.Background(), in)
+	require.NoError(t, err)
+
+	assert.False(t, again, "the second call made nothing")
+	assert.Equal(t, first.Card.ID, second.Card.ID)
+	assert.NotEmpty(t, first.Code)
+	assert.Empty(t, second.Code, "the code was handed out once")
+	assert.Equal(t, int64(5_000), second.Balance)
+	assert.Equal(t, models.GiftCardSold, first.Card.Source)
+	assert.Equal(t, "oline_1:1", first.Card.SourceReference)
+	assert.Equal(t, "sold on order order_1", first.Card.Reason)
+	assert.Len(t, store.giftEntries[first.Card.ID], 1, "one issue row")
+
+	_, _, err = svc.IssueSoldGiftCard(context.Background(), service.SoldGiftCardInput{CurrencyCode: "TRY", Amount: 1})
+	assert.True(t, errors.IsInvalid(err), "a sale is named by its line and its order")
+}
+
+// TestAReplacedCodeOpensTheSameCard: the old code's digest is gone, the balance
+// stays, and the new code is handed out once.
+func TestAReplacedCodeOpensTheSameCard(t *testing.T) {
+	t.Parallel()
+
+	svc, store := giftCardService(t)
+	issued, err := svc.IssueGiftCard(context.Background(), service.IssueGiftCardInput{
+		CurrencyCode: "TRY", Amount: 7_000, Reason: "a test",
+	})
+	require.NoError(t, err)
+	oldDigest := store.giftDigests[issued.Card.ID]
+
+	replaced, err := svc.ReplaceGiftCardCode(context.Background(), issued.Card.ID)
+	require.NoError(t, err)
+
+	normalized, ok := models.NormalizeGiftCardCode(replaced.Code)
+	require.True(t, ok)
+	assert.Equal(t, models.GiftCardCodeDigest(normalized), store.giftDigests[issued.Card.ID])
+	assert.NotEqual(t, oldDigest, store.giftDigests[issued.Card.ID], "the old code opens nothing")
+	assert.Equal(t, int64(7_000), replaced.Balance)
+	assert.NotNil(t, replaced.Card.CodeChangedAt)
+
+	_, err = svc.ReplaceGiftCardCode(context.Background(), "gcard_missing")
+	assert.True(t, errors.IsNotFound(err))
+}
+
+// TestMoneyOffAGiftCardEarnsNoPoints: a sold card's money earned when it was
+// bought, so spending it earns nothing (ADR 0210).
+func TestMoneyOffAGiftCardEarnsNoPoints(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeStore()
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(newFakeProvider(models.GiftCardTenderID)))
+	svc, err := service.New(service.Options{
+		Store: store, Providers: registry, Events: newFakeBus(), LoyaltyEarnBasisPoints: 100,
+	})
+	require.NoError(t, err)
+	ctx := context.Background()
+	col, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
+		Reference: "cart_gift", Amount: 10_000, CurrencyCode: "TRY", CustomerID: "cus_gift",
+	})
+	require.NoError(t, err)
+	ses, err := svc.CreateSession(ctx, col.ID, models.GiftCardTenderID, service.CreateSessionInput{IdempotencyKey: "k"})
+	require.NoError(t, err)
+	_, err = svc.AuthorizePayment(ctx, ses.ID)
+	require.NoError(t, err)
+	_, err = svc.CapturePayment(ctx, ses.ID, 10_000)
+	require.NoError(t, err)
+
+	balance, err := svc.LoyaltyBalance(ctx, "cus_gift", "TRY")
+	require.NoError(t, err)
+	assert.Zero(t, balance)
+}

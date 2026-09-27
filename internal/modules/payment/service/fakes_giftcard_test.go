@@ -12,7 +12,9 @@ import (
 // The gift card half of fakeStore (ADR 0208). The balance is the sum of the
 // entries, as in the real table.
 
-func (f *fakeStore) InsertGiftCard(_ context.Context, card models.GiftCard, digest string) (models.GiftCard, error) {
+func (f *fakeStore) InsertGiftCard(
+	_ context.Context, card models.GiftCard, digest string,
+) (models.GiftCard, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -21,13 +23,46 @@ func (f *fakeStore) InsertGiftCard(_ context.Context, card models.GiftCard, dige
 	}
 	for _, existing := range f.giftDigests {
 		if existing == digest {
-			return models.GiftCard{}, errors.Conflict("payment_query_failed", "the digest is taken")
+			return models.GiftCard{}, false, errors.Conflict("payment_query_failed", "the digest is taken")
+		}
+	}
+	for id := range f.giftCards {
+		if card.SourceReference != "" && f.giftCards[id].SourceReference == card.SourceReference {
+			return models.GiftCard{}, false, nil
 		}
 	}
 	// The table stamps each card with its own transaction's moment; the fake
 	// stamps the order they arrive in.
 	card.CreatedAt = time.Unix(int64(len(f.giftCards)), 0).UTC()
 	f.giftCards[card.ID], f.giftDigests[card.ID] = card, digest
+
+	return card, true, nil
+}
+
+func (f *fakeStore) GiftCardBySourceReference(_ context.Context, reference string) (models.GiftCard, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for id := range f.giftCards {
+		if f.giftCards[id].SourceReference == reference {
+			return f.giftCards[id], nil
+		}
+	}
+
+	return models.GiftCard{}, errors.NotFound("payment_gift_card_not_found", "no gift card was sold as %s", reference)
+}
+
+func (f *fakeStore) ReplaceGiftCardCode(_ context.Context, id, digest, tail string) (models.GiftCard, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	card, ok := f.giftCards[id]
+	if !ok {
+		return models.GiftCard{}, errors.NotFound("payment_gift_card_not_found", "no such gift card: %s", id)
+	}
+	changed := time.Unix(1_000, 0).UTC()
+	card.CodeTail, card.CodeChangedAt = tail, &changed
+	f.giftCards[id], f.giftDigests[id] = card, digest
 
 	return card, nil
 }
@@ -85,8 +120,8 @@ func (f *fakeStore) ListGiftCards(_ context.Context, limit, offset int64) ([]mod
 	defer f.mu.Unlock()
 
 	cards := make([]models.GiftCard, 0, len(f.giftCards))
-	for _, card := range f.giftCards {
-		cards = append(cards, card)
+	for id := range f.giftCards {
+		cards = append(cards, f.giftCards[id])
 	}
 	slices.SortFunc(cards, func(a, b models.GiftCard) int {
 		if c := b.CreatedAt.Compare(a.CreatedAt); c != 0 {

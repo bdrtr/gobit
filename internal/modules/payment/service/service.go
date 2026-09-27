@@ -184,8 +184,14 @@ type Store interface {
 		ctx context.Context, customerID, currencyCode string, limit, offset int64,
 	) ([]models.StoreCreditEntry, int64, error)
 
-	// InsertGiftCard writes a card with its code's digest (ADR 0208).
-	InsertGiftCard(ctx context.Context, card models.GiftCard, digest string) (models.GiftCard, error)
+	// InsertGiftCard writes a card with its code's digest (ADR 0208) and reports
+	// whether it did: a sold card whose sale already made one is not written
+	// (ADR 0210).
+	InsertGiftCard(ctx context.Context, card models.GiftCard, digest string) (models.GiftCard, bool, error)
+	// GiftCardBySourceReference returns the card a sale made, or NotFound.
+	GiftCardBySourceReference(ctx context.Context, reference string) (models.GiftCard, error)
+	// ReplaceGiftCardCode gives a card a new code's digest and tail.
+	ReplaceGiftCardCode(ctx context.Context, id, digest, tail string) (models.GiftCard, error)
 	// AppendGiftCardEntry appends ONE event to a card's ledger; the service
 	// writes only the issue.
 	AppendGiftCardEntry(ctx context.Context, entry models.GiftCardEntry) (models.GiftCardEntry, error)
@@ -210,8 +216,8 @@ type Store interface {
 	// CollectionNetCapturedExcludingProvider sums what ONE collection has
 	// captured and not refunded through every tender but the named one. It is the
 	// earn target's base (ADR 0165) and is read under the same lock.
-	CollectionNetCapturedExcludingProvider(
-		ctx context.Context, collectionID, excludedProviderID string,
+	CollectionNetCapturedExcludingProviders(
+		ctx context.Context, collectionID string, excludedProviderIDs []string,
 	) (int64, error)
 	// LoyaltyBalance sums one customer's points in one currency; a customer with
 	// no entries is zero rather than an absence.

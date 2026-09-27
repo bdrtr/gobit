@@ -149,6 +149,8 @@ type Payments interface {
 	ListGiftCards(ctx context.Context, page service.Page) ([]service.GiftCardWithBalance, int64, error)
 	// ListGiftCardEntries pages a card's history.
 	ListGiftCardEntries(ctx context.Context, id string, page service.Page) ([]models.GiftCardEntry, int64, error)
+	// ReplaceGiftCardCode gives a card a new code and returns it once (ADR 0210).
+	ReplaceGiftCardCode(ctx context.Context, id string) (service.IssuedGiftCard, error)
 	// ListLoyalty müşterinin puan geçmişini sayfalar.
 	ListLoyalty(
 		ctx context.Context, in service.ListLoyaltyInput,
@@ -274,6 +276,7 @@ func (h *Handler) Routes(r chi.Router) {
 	okuma.Get(pathAdminGiftCards, h.listGiftCards)
 	okuma.Get(pathAdminGiftCard, h.getGiftCard)
 	okuma.Get(pathAdminGiftCardEntries, h.listGiftCardEntries)
+	yazma.Post(pathAdminGiftCardCode, h.replaceGiftCardCode)
 
 	yazma.Post(pathAdminCollections, h.createCollection)
 	okuma.Get(pathAdminCollections, h.listCollections)

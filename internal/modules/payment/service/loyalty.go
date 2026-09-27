@@ -94,7 +94,11 @@ func (s *Service) earnLoyaltyPoints(ctx context.Context, col models.PaymentColle
 		return nil
 	}
 
-	net, err := s.store.CollectionNetCapturedExcludingProvider(ctx, col.ID, models.LoyaltyTenderID)
+	// Points and gift cards are money that already earned, or never came in:
+	// a point earned when its money was captured, and a sold gift card when it
+	// was bought (ADR 0210).
+	net, err := s.store.CollectionNetCapturedExcludingProviders(ctx, col.ID,
+		[]string{models.LoyaltyTenderID, models.GiftCardTenderID})
 	if err != nil {
 		return err
 	}

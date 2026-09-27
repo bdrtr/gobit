@@ -33,7 +33,7 @@ func (q *Queries) CountGiftCards(ctx context.Context) (int64, error) {
 }
 
 const getGiftCard = `-- name: GetGiftCard :one
-SELECT id, code_digest, code_tail, currency_code, reason, created_at FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at FROM payment_gift_cards
 WHERE id = $1
 `
 
@@ -47,12 +47,15 @@ func (q *Queries) GetGiftCard(ctx context.Context, id string) (PaymentGiftCard, 
 		&i.CurrencyCode,
 		&i.Reason,
 		&i.CreatedAt,
+		&i.Source,
+		&i.SourceReference,
+		&i.CodeChangedAt,
 	)
 	return i, err
 }
 
 const getGiftCardByDigest = `-- name: GetGiftCardByDigest :one
-SELECT id, code_digest, code_tail, currency_code, reason, created_at FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at FROM payment_gift_cards
 WHERE code_digest = $1
 `
 
@@ -67,6 +70,31 @@ func (q *Queries) GetGiftCardByDigest(ctx context.Context, codeDigest string) (P
 		&i.CurrencyCode,
 		&i.Reason,
 		&i.CreatedAt,
+		&i.Source,
+		&i.SourceReference,
+		&i.CodeChangedAt,
+	)
+	return i, err
+}
+
+const getGiftCardBySourceReference = `-- name: GetGiftCardBySourceReference :one
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at FROM payment_gift_cards
+WHERE source_reference = $1
+`
+
+func (q *Queries) GetGiftCardBySourceReference(ctx context.Context, sourceReference *string) (PaymentGiftCard, error) {
+	row := q.db.QueryRow(ctx, getGiftCardBySourceReference, sourceReference)
+	var i PaymentGiftCard
+	err := row.Scan(
+		&i.ID,
+		&i.CodeDigest,
+		&i.CodeTail,
+		&i.CurrencyCode,
+		&i.Reason,
+		&i.CreatedAt,
+		&i.Source,
+		&i.SourceReference,
+		&i.CodeChangedAt,
 	)
 	return i, err
 }
@@ -171,17 +199,20 @@ func (q *Queries) GiftCardBalances(ctx context.Context, ids []string) ([]GiftCar
 
 const insertGiftCard = `-- name: InsertGiftCard :one
 
-INSERT INTO payment_gift_cards (id, code_digest, code_tail, currency_code, reason)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, code_digest, code_tail, currency_code, reason, created_at
+INSERT INTO payment_gift_cards (id, code_digest, code_tail, currency_code, reason, source, source_reference)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (source_reference) WHERE source_reference IS NOT NULL DO NOTHING
+RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at
 `
 
 type InsertGiftCardParams struct {
-	ID           string
-	CodeDigest   string
-	CodeTail     string
-	CurrencyCode string
-	Reason       string
+	ID              string
+	CodeDigest      string
+	CodeTail        string
+	CurrencyCode    string
+	Reason          string
+	Source          string
+	SourceReference *string
 }
 
 // payment_gift_card queries — the cards, their ledger and the provider's own
@@ -189,6 +220,9 @@ type InsertGiftCardParams struct {
 //
 // As with store credit, there is no update or delete of a card or an entry: a
 // balance is the sum of what happened to it, and a correction is a new row.
+// InsertGiftCard writes a card. A sold card whose sale already made one writes
+// nothing and returns no row; the caller reads the existing card by its
+// source reference (ADR 0210).
 func (q *Queries) InsertGiftCard(ctx context.Context, arg InsertGiftCardParams) (PaymentGiftCard, error) {
 	row := q.db.QueryRow(ctx, insertGiftCard,
 		arg.ID,
@@ -196,6 +230,8 @@ func (q *Queries) InsertGiftCard(ctx context.Context, arg InsertGiftCardParams) 
 		arg.CodeTail,
 		arg.CurrencyCode,
 		arg.Reason,
+		arg.Source,
+		arg.SourceReference,
 	)
 	var i PaymentGiftCard
 	err := row.Scan(
@@ -205,6 +241,9 @@ func (q *Queries) InsertGiftCard(ctx context.Context, arg InsertGiftCardParams) 
 		&i.CurrencyCode,
 		&i.Reason,
 		&i.CreatedAt,
+		&i.Source,
+		&i.SourceReference,
+		&i.CodeChangedAt,
 	)
 	return i, err
 }
@@ -331,7 +370,7 @@ func (q *Queries) ListGiftCardEntries(ctx context.Context, arg ListGiftCardEntri
 }
 
 const listGiftCards = `-- name: ListGiftCards :many
-SELECT id, code_digest, code_tail, currency_code, reason, created_at FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at FROM payment_gift_cards
 ORDER BY created_at DESC, id DESC
 LIMIT $2::bigint OFFSET $1::bigint
 `
@@ -357,6 +396,9 @@ func (q *Queries) ListGiftCards(ctx context.Context, arg ListGiftCardsParams) ([
 			&i.CurrencyCode,
 			&i.Reason,
 			&i.CreatedAt,
+			&i.Source,
+			&i.SourceReference,
+			&i.CodeChangedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -407,6 +449,37 @@ func (q *Queries) LockGiftCardSession(ctx context.Context, id string) (PaymentGi
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const replaceGiftCardCode = `-- name: ReplaceGiftCardCode :one
+UPDATE payment_gift_cards
+SET code_digest = $2, code_tail = $3, code_changed_at = now()
+WHERE id = $1
+RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at
+`
+
+type ReplaceGiftCardCodeParams struct {
+	ID         string
+	CodeDigest string
+	CodeTail   string
+}
+
+// ReplaceGiftCardCode gives a card a new code; the balance stays with the card.
+func (q *Queries) ReplaceGiftCardCode(ctx context.Context, arg ReplaceGiftCardCodeParams) (PaymentGiftCard, error) {
+	row := q.db.QueryRow(ctx, replaceGiftCardCode, arg.ID, arg.CodeDigest, arg.CodeTail)
+	var i PaymentGiftCard
+	err := row.Scan(
+		&i.ID,
+		&i.CodeDigest,
+		&i.CodeTail,
+		&i.CurrencyCode,
+		&i.Reason,
+		&i.CreatedAt,
+		&i.Source,
+		&i.SourceReference,
+		&i.CodeChangedAt,
 	)
 	return i, err
 }

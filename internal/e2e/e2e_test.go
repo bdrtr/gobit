@@ -146,6 +146,7 @@ import (
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
+	giftcardsalewf "github.com/bdrtr/gobit/internal/workflows/giftcardsale"
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
@@ -815,6 +816,9 @@ func setUpHarness(ctx context.Context) error {
 	}
 	if setupErr = setUpOrderCancelWorkflow(); setupErr != nil {
 		return fmt.Errorf("could not set up the cancellation workflow: %w", setupErr)
+	}
+	if _, setupErr = giftcardsalewf.FromContainer(ctr, nil); setupErr != nil {
+		return fmt.Errorf("could not set up the gift card sale workflow: %w", setupErr)
 	}
 
 	if err := setUpRegionFixtures(ctx); err != nil {

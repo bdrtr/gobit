@@ -17,6 +17,7 @@ import (
 	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
+	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	"github.com/bdrtr/gobit/internal/modules/payment/giftcard"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
@@ -269,8 +270,10 @@ func TestAGiftCardHoldsBackTheRollback(t *testing.T) {
 	ctx := context.Background()
 	src := payment.New().Migrations()
 
+	// MigrateDown counts STEPS back, not a version: 000010 is undone first,
+	// then 000009 on its own.
 	emptyDSN, empty := isolatedDatabase(ctx, t, "payment_gift_rollback_empty")
-	require.NoError(t, db.MigrateDown(ctx, emptyDSN, src, payment.ModuleName, 8))
+	require.NoError(t, db.MigrateDown(ctx, emptyDSN, src, payment.ModuleName, 2))
 	assert.False(t, tableExistsIn(ctx, t, empty, "payment_gift_cards"), "with no card the rollback goes through")
 
 	heldDSN, held := isolatedDatabase(ctx, t, "payment_gift_rollback_held")
@@ -281,10 +284,157 @@ func TestAGiftCardHoldsBackTheRollback(t *testing.T) {
 	require.NoError(t, err)
 	issued := issueCard(ctx, t, svc, 1_000)
 
-	require.Error(t, db.MigrateDown(ctx, heldDSN, src, payment.ModuleName, 8),
-		"the rollback has to stop while a card is owed to its holder")
+	require.NoError(t, db.MigrateDown(ctx, heldDSN, src, payment.ModuleName, 1), "000010 holds no sold card here")
+	err = db.MigrateDown(ctx, heldDSN, src, payment.ModuleName, 1)
+	require.Error(t, err, "the rollback has to stop while a card is owed to its holder")
+	assert.Contains(t, err.Error(), "payment_gift_cards_none_on_rollback", "000009's own refusal stopped it")
 	var cards int
 	require.NoError(t, held.Pool().QueryRow(ctx,
 		`SELECT count(*) FROM payment_gift_cards WHERE id = $1`, issued.Card.ID).Scan(&cards))
 	assert.Equal(t, 1, cards, "the card is still there")
+}
+
+// TestTwoDeliveriesOfOneSaleMakeOneCard is ADR 0210 on the real schema: the bus
+// delivers a capture at least once, and two handlers issuing the same sale at
+// once make one card, one of them holding its code.
+func TestTwoDeliveriesOfOneSaleMakeOneCard(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := giftCardServiceOn(t, "")
+	reference := "oline_" + models.NewGiftCardID() + ":1"
+
+	type result struct {
+		code    string
+		created bool
+		err     error
+	}
+	results := make(chan result, 2)
+	start := make(chan struct{})
+	for range 2 {
+		go func() {
+			<-start
+			issued, created, err := svc.IssueSoldGiftCard(ctx, service.SoldGiftCardInput{
+				Reference: reference, OrderID: "order_x", CurrencyCode: testCurrency, Amount: 4_000,
+			})
+			results <- result{code: issued.Code, created: created, err: err}
+		}()
+	}
+	close(start)
+
+	var codes, made int
+	for range 2 {
+		r := <-results
+		require.NoError(t, r.err)
+		if r.code != "" {
+			codes++
+		}
+		if r.created {
+			made++
+		}
+	}
+	assert.Equal(t, 1, made, "one card")
+	assert.Equal(t, 1, codes, "one code handed out")
+	var cards, issues int
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM payment_gift_cards WHERE source_reference = $1`, reference).Scan(&cards))
+	require.NoError(t, testPool.Pool().QueryRow(ctx, `
+        SELECT count(*) FROM payment_gift_card_entries e JOIN payment_gift_cards g ON g.id = e.gift_card_id
+        WHERE g.source_reference = $1`, reference).Scan(&issues))
+	assert.Equal(t, 1, cards)
+	assert.Equal(t, 1, issues, "one issue row")
+}
+
+// TestASoldCardIsTheOrdersAndNotTheJournals: the payment journal books an
+// issued card's cost and not a sold card's sale (ADR 0210).
+func TestASoldCardIsTheOrdersAndNotTheJournals(t *testing.T) {
+	ctx := context.Background()
+	from := time.Now().Add(-time.Minute)
+	svc, _ := giftCardServiceOn(t, "")
+	issued := issueCard(ctx, t, svc, 1_000)
+	sold, _, err := svc.IssueSoldGiftCard(ctx, service.SoldGiftCardInput{
+		Reference: "oline_" + models.NewGiftCardID() + ":1", OrderID: "order_y", CurrencyCode: testCurrency, Amount: 2_000,
+	})
+	require.NoError(t, err)
+
+	journal, err := svc.Journal(ctx, service.JournalQuery{From: from, To: time.Now().Add(time.Minute)})
+	require.NoError(t, err)
+	entryOf := func(cardID string) string {
+		entries, _, err := svc.ListGiftCardEntries(ctx, cardID, service.Page{})
+		require.NoError(t, err)
+		require.Len(t, entries, 1)
+		return entries[0].ID
+	}
+	booked := map[string]bool{}
+	for _, entry := range journal.Entries {
+		booked[entry.ID] = true
+	}
+	assert.True(t, booked[entryOf(issued.Card.ID)], "an issued card is a cost the shop took on")
+	assert.False(t, booked[entryOf(sold.Card.ID)], "a sold card is the order's sale")
+}
+
+// TestAReplacedCodeStopsTheOldOne: the card is found by its new code only, and
+// its balance is where it was.
+func TestAReplacedCodeStopsTheOldOne(t *testing.T) {
+	ctx := context.Background()
+	svc, repo := giftCardServiceOn(t, "")
+	issued := issueCard(ctx, t, svc, 6_000)
+
+	replaced, err := svc.ReplaceGiftCardCode(ctx, issued.Card.ID)
+	require.NoError(t, err)
+
+	provider := giftcard.New(repo, nil)
+	check := func(code string) error {
+		return provider.CheckPayment(ctx, coreprovider.CreateSessionInput{
+			CurrencyCode: testCurrency, Data: map[string]any{giftcard.DataCode: code},
+		})
+	}
+	assert.Equal(t, giftcard.CodeUnknown, errors.CodeOf(check(issued.Code)), "the old code opens nothing")
+	require.NoError(t, check(replaced.Code))
+	assert.Equal(t, int64(6_000), replaced.Balance)
+	assert.NotNil(t, replaced.Card.CodeChangedAt)
+}
+
+// TestTheSaleConstraintsAreTheLastDefence: a sold card names its sale, and a
+// sale names one card.
+func TestTheSaleConstraintsAreTheLastDefence(t *testing.T) {
+	ctx := context.Background()
+	insert := `INSERT INTO payment_gift_cards (id, code_digest, code_tail, currency_code, reason, source, source_reference)
+               VALUES ($1, $2, 'ZZZZ', 'TRY', 'a test', $3, $4)`
+	refusedBy := func(constraint string, args ...any) {
+		t.Helper()
+		_, err := testPool.Pool().Exec(ctx, insert, args...)
+		require.Error(t, err)
+		var pgErr *pgconn.PgError
+		require.ErrorAs(t, err, &pgErr)
+		assert.Equal(t, constraint, pgErr.ConstraintName)
+	}
+	digest := func() string { return models.GiftCardCodeDigest(models.NewGiftCardID()[6:22]) }
+
+	refusedBy("payment_gift_cards_sold_names_its_sale", models.NewGiftCardID(), digest(), "sold", nil)
+	refusedBy("payment_gift_cards_sold_names_its_sale", models.NewGiftCardID(), digest(), "issued", "oline_z:1")
+	refusedBy("payment_gift_cards_source_valid", models.NewGiftCardID(), digest(), "gifted", nil)
+	reference := "oline_" + models.NewGiftCardID() + ":1"
+	_, err := testPool.Pool().Exec(ctx, insert, models.NewGiftCardID(), digest(), "sold", reference)
+	require.NoError(t, err)
+	refusedBy("payment_gift_cards_source_reference_uniq", models.NewGiftCardID(), digest(), "sold", reference)
+}
+
+// TestASoldCardHoldsBackTheSecondRollback: 000010's down stops while a sold
+// card exists. It runs in a database of its own (D135).
+func TestASoldCardHoldsBackTheSecondRollback(t *testing.T) {
+	ctx := context.Background()
+	src := payment.New().Migrations()
+	dsn, pool := isolatedDatabase(ctx, t, "payment_sold_rollback")
+	repo := repository.New(pool.Pool())
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(manual.New(repo, nil)))
+	svc, err := service.New(service.Options{Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil)})
+	require.NoError(t, err)
+	_, _, err = svc.IssueSoldGiftCard(ctx, service.SoldGiftCardInput{
+		Reference: "oline_r:1", OrderID: "order_r", CurrencyCode: testCurrency, Amount: 1_000,
+	})
+	require.NoError(t, err)
+
+	err = db.MigrateDown(ctx, dsn, src, payment.ModuleName, 1)
+	require.Error(t, err, "the rollback has to stop while a card records the sale it came from")
+	assert.Contains(t, err.Error(), "payment_gift_cards_none_sold_on_rollback", "000010's own refusal stopped it")
 }

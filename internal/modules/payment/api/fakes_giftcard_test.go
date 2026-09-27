@@ -45,3 +45,12 @@ func (f *fakePayments) ListGiftCardEntries(
 
 	return f.giftEntries, int64(len(f.giftEntries)), nil
 }
+
+func (f *fakePayments) ReplaceGiftCardCode(_ context.Context, id string) (service.IssuedGiftCard, error) {
+	f.lastGiftID = id
+	if f.err != nil {
+		return service.IssuedGiftCard{}, f.err
+	}
+
+	return f.issuedCard, nil
+}

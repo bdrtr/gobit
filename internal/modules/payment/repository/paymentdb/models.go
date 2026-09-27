@@ -36,12 +36,15 @@ type PaymentCollection struct {
 }
 
 type PaymentGiftCard struct {
-	ID           string
-	CodeDigest   string
-	CodeTail     string
-	CurrencyCode string
-	Reason       string
-	CreatedAt    pgtype.Timestamptz
+	ID              string
+	CodeDigest      string
+	CodeTail        string
+	CurrencyCode    string
+	Reason          string
+	CreatedAt       pgtype.Timestamptz
+	Source          string
+	SourceReference *string
+	CodeChangedAt   pgtype.Timestamptz
 }
 
 type PaymentGiftCardEntry struct {

@@ -101,6 +101,38 @@ func TestTheEndToEndGroundWiresEveryFlowProductionDoes(t *testing.T) {
 		appRootDir, e2eGroundDir, missing)
 }
 
+// TestProductionWiresEveryFlowTheGroundDoes is the other direction, and the
+// one that fails silently in production rather than in a test.
+//
+// A flow the ground wires and production does not is a flow every scenario
+// proves and no running shop runs. It is the shape of a bus-driven flow above
+// taken one step further: the gift card sale flow (ADR 0210) was wired on both,
+// and a mutation that took it out of production alone left every test green —
+// the ground wired it on its own, so the cards were issued in every scenario and
+// would have been issued in no shop. Only production files count here: a
+// production root's test importing a flow wires nothing.
+func TestProductionWiresEveryFlowTheGroundDoes(t *testing.T) {
+	t.Parallel()
+
+	wired := flowsIn(t, appRootDir, false)
+	ground := flowsImportedBy(t, e2eGroundDir)
+
+	require.GreaterOrEqual(t, len(wired), wiredFlowFloor,
+		"only %d flow(s) were found in %s's production files; the scan has gone blind",
+		len(wired), appRootDir)
+
+	var missing []string
+	for _, flow := range ground.sorted() {
+		if !wired[flow] {
+			missing = append(missing, flow)
+		}
+	}
+
+	assert.Empty(t, missing,
+		"internal/e2e wires these flows and internal/app's production files do not: %v.\n"+
+			"Every scenario would prove them and no running shop would run them.", missing)
+}
+
 // flowImportPattern matches an import of a flow package.
 var flowImportPattern = regexp.MustCompile(
 	`"` + regexp.QuoteMeta(workflowImportPrefix) + `([a-z][a-z0-9]*)"`)
@@ -117,6 +149,13 @@ var flowImportPattern = regexp.MustCompile(
 func flowsImportedBy(t *testing.T, dir string) flowSet {
 	t.Helper()
 
+	return flowsIn(t, dir, true)
+}
+
+// flowsIn is [flowsImportedBy] with the directory's test files counted or not.
+func flowsIn(t *testing.T, dir string, withTests bool) flowSet {
+	t.Helper()
+
 	entries, err := os.ReadDir(filepath.Join(repoRoot, dir))
 	require.NoError(t, err, "%s could not be read; if it moved, this gate is auditing "+
 		"a place nothing lives in", dir)
@@ -124,6 +163,9 @@ func flowsImportedBy(t *testing.T, dir string) flowSet {
 	found := flowSet{}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			continue
+		}
+		if !withTests && strings.HasSuffix(entry.Name(), "_test.go") {
 			continue
 		}
 

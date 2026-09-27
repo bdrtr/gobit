@@ -22,17 +22,58 @@ const (
 	codeGiftCardSessionNotFound = "payment_gift_card_session_not_found"
 )
 
-// InsertGiftCard writes a card.
-func (r *Repository) InsertGiftCard(ctx context.Context, card models.GiftCard, digest string) (models.GiftCard, error) {
+// InsertGiftCard writes a card and reports whether it did. A sold card whose
+// sale already made one is not written: the second return is false and the
+// caller reads the existing card by its source reference (ADR 0210).
+func (r *Repository) InsertGiftCard(
+	ctx context.Context, card models.GiftCard, digest string,
+) (models.GiftCard, bool, error) {
+	var reference *string
+	if card.SourceReference != "" {
+		reference = &card.SourceReference
+	}
 	row, err := r.queries(ctx).InsertGiftCard(ctx, paymentdb.InsertGiftCardParams{
-		ID:           card.ID,
-		CodeDigest:   digest,
-		CodeTail:     card.CodeTail,
-		CurrencyCode: card.CurrencyCode,
-		Reason:       card.Reason,
+		ID:              card.ID,
+		CodeDigest:      digest,
+		CodeTail:        card.CodeTail,
+		CurrencyCode:    card.CurrencyCode,
+		Reason:          card.Reason,
+		Source:          string(card.Source),
+		SourceReference: reference,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.GiftCard{}, false, nil
+	}
 	if err != nil {
-		return models.GiftCard{}, classify(err, codeQueryFailed, "the gift card could not be written")
+		return models.GiftCard{}, false, classify(err, codeQueryFailed, "the gift card could not be written")
+	}
+
+	return toGiftCard(row), true, nil
+}
+
+// GiftCardBySourceReference returns the card a sale made, or NotFound.
+func (r *Repository) GiftCardBySourceReference(ctx context.Context, reference string) (models.GiftCard, error) {
+	row, err := r.queries(ctx).GetGiftCardBySourceReference(ctx, &reference)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.GiftCard{}, errors.NotFound(codeGiftCardNotFound, "no gift card was sold as %s", reference)
+	}
+	if err != nil {
+		return models.GiftCard{}, classify(err, codeQueryFailed, "the gift card could not be read")
+	}
+
+	return toGiftCard(row), nil
+}
+
+// ReplaceGiftCardCode gives a card a new code's digest and tail.
+func (r *Repository) ReplaceGiftCardCode(ctx context.Context, id, digest, tail string) (models.GiftCard, error) {
+	row, err := r.queries(ctx).ReplaceGiftCardCode(ctx, paymentdb.ReplaceGiftCardCodeParams{
+		ID: id, CodeDigest: digest, CodeTail: tail,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.GiftCard{}, errors.NotFound(codeGiftCardNotFound, "no such gift card: %s", id)
+	}
+	if err != nil {
+		return models.GiftCard{}, classify(err, codeQueryFailed, "the gift card's code could not be replaced")
 	}
 
 	return toGiftCard(row), nil
@@ -265,13 +306,20 @@ func (r *Repository) UpdateGiftCardSessionState(
 // toGiftCard turns a database row into the domain model; the digest stays in
 // the database.
 func toGiftCard(row paymentdb.PaymentGiftCard) models.GiftCard {
-	return models.GiftCard{
+	card := models.GiftCard{
 		ID:           row.ID,
 		CodeTail:     row.CodeTail,
 		CurrencyCode: row.CurrencyCode,
 		Reason:       row.Reason,
+		Source:       models.GiftCardSource(row.Source),
 		CreatedAt:    toTime(row.CreatedAt),
 	}
+	if row.SourceReference != nil {
+		card.SourceReference = *row.SourceReference
+	}
+	card.CodeChangedAt = toTimePtr(row.CodeChangedAt)
+
+	return card
 }
 
 // toGiftCardEntry turns a database row into the domain model.

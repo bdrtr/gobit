@@ -4,9 +4,24 @@
 -- As with store credit, there is no update or delete of a card or an entry: a
 -- balance is the sum of what happened to it, and a correction is a new row.
 
+-- InsertGiftCard writes a card. A sold card whose sale already made one writes
+-- nothing and returns no row; the caller reads the existing card by its
+-- source reference (ADR 0210).
 -- name: InsertGiftCard :one
-INSERT INTO payment_gift_cards (id, code_digest, code_tail, currency_code, reason)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO payment_gift_cards (id, code_digest, code_tail, currency_code, reason, source, source_reference)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (source_reference) WHERE source_reference IS NOT NULL DO NOTHING
+RETURNING *;
+
+-- name: GetGiftCardBySourceReference :one
+SELECT * FROM payment_gift_cards
+WHERE source_reference = $1;
+
+-- ReplaceGiftCardCode gives a card a new code; the balance stays with the card.
+-- name: ReplaceGiftCardCode :one
+UPDATE payment_gift_cards
+SET code_digest = $2, code_tail = $3, code_changed_at = now()
+WHERE id = $1
 RETURNING *;
 
 -- name: GetGiftCard :one

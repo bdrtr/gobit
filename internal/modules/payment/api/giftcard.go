@@ -20,6 +20,7 @@ const (
 	pathAdminGiftCards       = "/admin/v1/gift-cards"
 	pathAdminGiftCard        = "/admin/v1/gift-cards/{id}"
 	pathAdminGiftCardEntries = "/admin/v1/gift-cards/{id}/entries"
+	pathAdminGiftCardCode    = "/admin/v1/gift-cards/{id}/code"
 )
 
 // issueGiftCardRequest is the body that issues a card.
@@ -39,11 +40,15 @@ type giftCardDTO struct {
 	// digest of it and cannot show it again.
 	Code string `json:"code,omitempty"`
 	// CodeTail is the code's last four characters, to tell cards apart.
-	CodeTail     string    `json:"code_tail"`
-	CurrencyCode string    `json:"currency_code"`
-	Balance      int64     `json:"balance"`
-	Reason       string    `json:"reason"`
-	CreatedAt    time.Time `json:"created_at"`
+	CodeTail     string `json:"code_tail"`
+	CurrencyCode string `json:"currency_code"`
+	Balance      int64  `json:"balance"`
+	Reason       string `json:"reason"`
+	// Source is "issued" by an operator or "sold" on an order (ADR 0210).
+	Source    string    `json:"source"`
+	CreatedAt time.Time `json:"created_at"`
+	// CodeChangedAt is when the card's code was last replaced.
+	CodeChangedAt *time.Time `json:"code_changed_at,omitempty"`
 }
 
 // giftCardEntryDTO is a row of a card's history. Amount is SIGNED, so the rows
@@ -146,11 +151,28 @@ func (h *Handler) listGiftCardEntries(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{Data: out, Count: total, Offset: page.Offset, Limit: page.Limit})
 }
 
+// replaceGiftCardCode gives a card a new code (POST /admin/v1/gift-cards/{id}/code).
+func (h *Handler) replaceGiftCardCode(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	replaced, err := h.svc.ReplaceGiftCardCode(ctx, chi.URLParam(r, "id"))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	out := toGiftCardDTO(service.GiftCardWithBalance{Card: replaced.Card, Balance: replaced.Balance})
+	out.Code = replaced.Code
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: out})
+}
+
 // toGiftCardDTO turns a card into its outward shape, without its code.
 func toGiftCardDTO(in service.GiftCardWithBalance) giftCardDTO {
 	return giftCardDTO{
 		ID: in.Card.ID, CodeTail: in.Card.CodeTail, CurrencyCode: in.Card.CurrencyCode,
-		Balance: in.Balance, Reason: in.Card.Reason, CreatedAt: in.Card.CreatedAt,
+		Balance: in.Balance, Reason: in.Card.Reason, Source: string(in.Card.Source),
+		CreatedAt: in.Card.CreatedAt, CodeChangedAt: in.Card.CodeChangedAt,
 	}
 }
 
@@ -183,6 +205,17 @@ func describeGiftCards(d *openapi.Doc) {
 		Description: "The balance is the sum of the card's history, open holds subtracted. " + amountNote,
 		Responses: map[string]any{
 			"200": openapi.Response("The card", d.Item(giftCardDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, pathAdminGiftCardCode, openapi.Operation{
+		Summary: "Gives a gift card a new code.",
+		Description: "The old code stops opening the card; the balance and the history stay with " +
+			"it, and the answer carries the new code ONCE. It is how a code that never reached its " +
+			"holder is recovered — a sold card's code is mailed once and kept nowhere (ADR 0210). " +
+			amountNote,
+		Responses: map[string]any{
+			"200": openapi.Response("The card, with its new code", d.Item(giftCardDTO{})),
 		},
 	})
 

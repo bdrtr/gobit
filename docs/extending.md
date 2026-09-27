@@ -260,11 +260,11 @@ integrations) listen to them. Which backend carries them is chosen by
 `EVENT_BUS=inmemory|redis`, and the difference between the two is what the
 second rule below is about.
 
-Today there are five subscribers: the search plugin `search-pg` (`product.*`),
+Today there are six subscribers: the search plugin `search-pg` (`product.*`),
 the notification module (`order.placed`), the browser push plugin `web-push`
 (`order.placed`), the **order module** itself (`payment.captured`,
-`payment.refunded`) and the outbound webhook plugin `webhook-out` (all six of the
-topics below).
+`payment.refunded`), the **gift card sale flow** (`payment.captured`, ADR 0210)
+and the outbound webhook plugin `webhook-out` (all six of the topics below).
 
 The order module is the only subscriber that is not a plugin, and it is a
 subscriber for the reason a plugin would not do: money moved by the payment
@@ -300,6 +300,12 @@ Two rules are binding:
   `int64` reaches the subscriber as a `float64` — the same subscriber would work
   in development and **fall over in production**, and money would travel over a
   float on top of that.
+
+The gift card sale flow issues the cards an order sold once its collection is
+fully captured, and mails each code through the notification module with the
+template `gift_card.issued`, whose data is `code`, `amount` (minor units),
+`currency_code` and `order_id`. A notification provider has to know that
+template to deliver the code; the code is in no other record.
 
 **Notification** listens to `order.placed` and sends the order confirmation
 through the selected `NotificationProvider`. The recipient address is read

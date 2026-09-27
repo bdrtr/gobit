@@ -345,12 +345,18 @@ func anlatilanUclar() []ucBeklentisi {
 			metod: http.MethodGet, yol: pathAdminGiftCardEntries, durum: "200",
 			yanit: giftCardEntryDTO{Reference: "gcses_1"}, liste: true,
 		},
+		{
+			metod: http.MethodPost, yol: pathAdminGiftCardCode, durum: "200",
+			yanit: fullGiftCard(),
+		},
 	}
 }
 
 // fullGiftCard is a card with every field written, the code included.
 func fullGiftCard() giftCardDTO {
-	return giftCardDTO{Code: "ABCD-EFGH-JKMN-PQRS"}
+	changed := time.Unix(1_000, 0).UTC()
+
+	return giftCardDTO{Code: "ABCD-EFGH-JKMN-PQRS", CodeChangedAt: &changed}
 }
 
 // doluPuanSatiri bütün alanları yazılan bir puan defteri satırı üretir.
