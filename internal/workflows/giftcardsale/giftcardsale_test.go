@@ -68,38 +68,36 @@ func (f *fakeNotifier) Send(_ context.Context, template, _, reference, to string
 	return f.err
 }
 
-// fakeCatalog holds an order's lines and the catalog behind them.
-type fakeCatalog struct {
-	lines     []query.Record
-	products  map[string]string
-	giftcards map[string]bool
+// fakeReader holds an order's lines, and reads nothing else. It answers the
+// fields asked for and no others, as the read layer does, so a flow that does
+// not ask for the flag does not get it.
+type fakeReader struct {
+	lines []query.Record
 }
 
-func (f *fakeCatalog) Graph(_ context.Context, spec query.GraphSpec) ([]query.Record, error) {
-	switch spec.Entity {
-	case giftcardsale.EntityLineItem:
-		end := min(spec.Offset+spec.Limit, len(f.lines))
-		if spec.Offset >= len(f.lines) {
-			return nil, nil
+func (f *fakeReader) Graph(_ context.Context, spec query.GraphSpec) ([]query.Record, error) {
+	if spec.Entity != giftcardsale.EntityLineItem {
+		return nil, errors.Invalid("unknown_entity", "no entity %s", spec.Entity)
+	}
+	if spec.Offset >= len(f.lines) {
+		return nil, nil
+	}
+	var out []query.Record
+	for _, line := range f.lines[spec.Offset:min(spec.Offset+spec.Limit, len(f.lines))] {
+		record := query.Record{}
+		for _, field := range spec.Fields {
+			record[field] = line[field]
 		}
-		return f.lines[spec.Offset:end], nil
-	case giftcardsale.EntityVariant:
-		var out []query.Record
-		ids, _ := spec.Filters["ids"].([]string)
-		for _, id := range ids {
-			out = append(out, query.Record{query.IDField: id, "product_id": f.products[id]})
-		}
-		return out, nil
-	case giftcardsale.EntityProduct:
-		var out []query.Record
-		ids, _ := spec.Filters["ids"].([]string)
-		for _, id := range ids {
-			out = append(out, query.Record{query.IDField: id, giftcardsale.FieldIsGiftcard: f.giftcards[id]})
-		}
-		return out, nil
+		out = append(out, record)
 	}
 
-	return nil, errors.Invalid("unknown_entity", "no entity %s", spec.Entity)
+	return out, nil
+}
+
+// line is one order line as the read layer answers it.
+func line(id string, quantity int32, unitPrice int64, giftcard bool) query.Record {
+	return query.Record{query.IDField: id, "quantity": quantity, "unit_price": unitPrice,
+		giftcardsale.FieldIsGiftcard: giftcard}
 }
 
 // fakeLinks binds the collection to its order.
@@ -113,7 +111,7 @@ func (f fakeLinks) ListManyByTo(context.Context, string, []string) (map[string][
 type harness struct {
 	payments *fakePayments
 	notifier *fakeNotifier
-	catalog  *fakeCatalog
+	reader   *fakeReader
 	flow     *giftcardsale.Workflow
 }
 
@@ -121,16 +119,12 @@ func newHarness() *harness {
 	h := &harness{
 		payments: &fakePayments{amount: 12_000, captured: 12_000, issued: map[string]string{}},
 		notifier: &fakeNotifier{},
-		catalog: &fakeCatalog{
-			lines: []query.Record{
-				{query.IDField: "line_card", "variant_id": "var_card", "quantity": int32(2), "unit_price": int64(5_000)},
-				{query.IDField: "line_mug", "variant_id": "var_mug", "quantity": int32(1), "unit_price": int64(2_000)},
-			},
-			products:  map[string]string{"var_card": "prod_card", "var_mug": "prod_mug"},
-			giftcards: map[string]bool{"prod_card": true},
-		},
+		reader: &fakeReader{lines: []query.Record{
+			line("line_card", 2, 5_000, true),
+			line("line_mug", 1, 2_000, false),
+		}},
 	}
-	h.flow = giftcardsale.New(h.payments, fakeOrders{}, h.notifier, h.catalog,
+	h.flow = giftcardsale.New(h.payments, fakeOrders{}, h.notifier, h.reader,
 		fakeLinks{orders: map[string][]string{"paycol_1": {"order_1"}}}, slog.New(slog.DiscardHandler))
 
 	return h
@@ -200,7 +194,7 @@ func TestACollectionNoOrderWasPlacedThroughIsLeftAlone(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness()
-	h.flow = giftcardsale.New(h.payments, fakeOrders{}, h.notifier, h.catalog,
+	h.flow = giftcardsale.New(h.payments, fakeOrders{}, h.notifier, h.reader,
 		fakeLinks{orders: map[string][]string{}}, slog.New(slog.DiscardHandler))
 
 	require.NoError(t, h.flow.HandleCaptured(context.Background(), captured()))
@@ -228,14 +222,11 @@ func TestALongOrderIsReadToTheEnd(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness()
-	var lines []query.Record
+	h.reader.lines = nil
 	for i := range 100 {
-		lines = append(lines, query.Record{query.IDField: fmt.Sprintf("line_%d", i), "variant_id": "var_mug",
-			"quantity": int32(1), "unit_price": int64(100)})
+		h.reader.lines = append(h.reader.lines, line(fmt.Sprintf("line_%d", i), 1, 100, false))
 	}
-	lines = append(lines, query.Record{query.IDField: "line_card", "variant_id": "var_card",
-		"quantity": int32(1), "unit_price": int64(5_000)})
-	h.catalog.lines = lines
+	h.reader.lines = append(h.reader.lines, line("line_card", 1, 5_000, true))
 
 	require.NoError(t, h.flow.HandleCaptured(context.Background(), captured()))
 
@@ -251,5 +242,20 @@ func TestAnEventWithoutACollectionIsIgnored(t *testing.T) {
 	require.NoError(t, h.flow.HandleCaptured(context.Background(),
 		eventbus.Event{Name: giftcardsale.TopicPaymentCaptured, Data: map[string]any{}}))
 
+	assert.Empty(t, h.payments.references)
+}
+
+// TestALineWhoseFlagCannotBeReadStopsTheFlow: a line that cannot say whether it
+// sold a card is not guessed to be a mug.
+func TestALineWhoseFlagCannotBeReadStopsTheFlow(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.reader.lines[1][giftcardsale.FieldIsGiftcard] = "false"
+
+	err := h.flow.HandleCaptured(context.Background(), captured())
+
+	require.Error(t, err)
+	assert.True(t, errors.HasKind(err, errors.KindInternal))
 	assert.Empty(t, h.payments.references)
 }

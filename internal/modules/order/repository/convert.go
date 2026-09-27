@@ -377,6 +377,7 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 		Total:         row.Total,
 		Metadata:      meta,
 		PriceOrigin:   toPriceOrigin(row.PriceID, row.PriceListID, row.PriceListType),
+		IsGiftcard:    row.IsGiftcard,
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
 	}, nil

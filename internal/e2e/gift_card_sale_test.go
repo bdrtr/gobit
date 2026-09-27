@@ -15,8 +15,12 @@ import (
 
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
+	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
+	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	"github.com/bdrtr/gobit/internal/modules/payment/giftcard"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
+	paymentmodels "github.com/bdrtr/gobit/internal/modules/payment/models"
+	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 	pricingsvc "github.com/bdrtr/gobit/internal/modules/pricing/service"
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
@@ -73,9 +77,11 @@ func issuedCardMail(t *testing.T, orderID string) coreprovider.Notification {
 // TestABoughtGiftCardIsMailedAndSpent is ADR 0210 on the production wiring: a
 // customer buys a 5,000 TRY card, the capture issues it and mails its code to
 // the order's address, the purchase earns points, spending the card earns none,
-// and a replaced code stops the old one.
+// and a replaced code stops the old one. On the two journals together the
+// card's debt is its balance (ADR 0211).
 func TestABoughtGiftCardIsMailedAndSpent(t *testing.T) {
 	ctx := t.Context()
+	from := time.Now().UTC().Add(-time.Second)
 	customerID, address := newCustomer(ctx, t)
 	cardVariant := newGiftCardVariant(ctx, t, 5_000)
 	cartID, totals := prepareCart(ctx, t, customerID, cardVariant, 1)
@@ -85,6 +91,10 @@ func TestABoughtGiftCardIsMailedAndSpent(t *testing.T) {
 		PaymentData: paymentBehavior(t, manual.OutcomeAuthorize), Email: address, ExpectedTotal: totals.Total,
 	})
 	require.NoError(t, err)
+	order, err := orderSvc.GetOrder(ctx, bought.OrderID)
+	require.NoError(t, err)
+	require.Len(t, order.Items, 1)
+	assert.True(t, order.Items[0].IsGiftcard, "the line knows it sold a card")
 
 	mail := issuedCardMail(t, bought.OrderID)
 	assert.Equal(t, address, mail.To, "the code goes to the order's address")
@@ -103,12 +113,14 @@ func TestABoughtGiftCardIsMailedAndSpent(t *testing.T) {
 	spendCart, spendTotals := prepareCart(ctx, t, customerID, mugVariant, 1)
 	cardData, err := json.Marshal(map[string]string{giftcard.DataCode: code})
 	require.NoError(t, err)
-	_, err = orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+	spent, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
 		CartID: spendCart, LocationID: stockLocationID, PaymentProviderID: giftcard.ID,
 		PaymentData: cardData, Email: address, ExpectedTotal: spendTotals.Total,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 5_000-spendTotals.Total, giftCardBalance(t, cardID))
+	assert.Equal(t, 5_000-spendTotals.Total, giftCardDebt(t, from, bought.OrderID, spent.PaymentCollectionID),
+		"the card's debt on the two journals is its balance")
 	pointsAfterSpend, err := paymentSvc.LoyaltyBalance(ctx, customerID, taxedCurrency)
 	require.NoError(t, err)
 	assert.Equal(t, pointsAfterPurchase, pointsAfterSpend, "spending the card earned nothing")
@@ -157,4 +169,42 @@ func TestAnOrderWithoutAGiftCardIssuesNone(t *testing.T) {
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT count(*) FROM payment_gift_cards WHERE reason = $1`, "sold on order "+placed.OrderID).Scan(&cards))
 	assert.Zero(t, cards)
+}
+
+// giftCardDebt is what the gift card account owes on the two journals
+// together: the order that sold the card credits it, and the collection that
+// spent it debits it.
+func giftCardDebt(t *testing.T, from time.Time, orderID, collectionID string) int64 {
+	t.Helper()
+
+	window := time.Now().UTC().Add(time.Minute)
+	orders, err := orderSvc.Journal(t.Context(), ordersvc.JournalQuery{From: from, To: window})
+	require.NoError(t, err)
+	payments, err := paymentSvc.Journal(t.Context(), paymentsvc.JournalQuery{From: from, To: window})
+	require.NoError(t, err)
+
+	var debt int64
+	for _, entry := range orders.Entries {
+		if entry.OrderID != orderID {
+			continue
+		}
+		for _, line := range entry.Lines {
+			if line.Account == ordermodels.AccountGiftCard {
+				debt += line.Credit - line.Debit
+			}
+			assert.NotEqual(t, ordermodels.AccountSales, line.Account, "a card is not a sale")
+		}
+	}
+	for _, entry := range payments.Entries {
+		if entry.CollectionID != collectionID {
+			continue
+		}
+		for _, line := range entry.Lines {
+			if line.Account == paymentmodels.AccountGiftCard {
+				debt += line.Credit - line.Debit
+			}
+		}
+	}
+
+	return debt
 }

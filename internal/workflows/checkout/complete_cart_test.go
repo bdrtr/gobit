@@ -146,7 +146,8 @@ func TestHappyPathRunsTheFiveStepsInOrder(t *testing.T) {
 	assert.Equal(t, []string{
 		"totals:calculate",
 		"cart:snapshot",
-		"catalog:graph",
+		"catalog:graph", // the variants
+		"catalog:graph", // their products (ADR 0211)
 		"link:list_many:" + LinkVariantInventory,
 		"inventory:reserve:" + testLineA,
 		"inventory:reserve:" + testLineB,

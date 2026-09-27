@@ -36,6 +36,10 @@ const (
 	// AccountClaimAllowances is what a claim's refunds sent back for goods that
 	// arrived wrong or damaged and were not returned (ADR 0189).
 	AccountClaimAllowances JournalAccount = "claim_allowances"
+	// AccountGiftCard is the gift cards the shop owes their holders: a sold
+	// card's price is a debt, not a sale (ADR 0211). It is the SAME name as the
+	// payment module's account, which a capture through a card debits.
+	AccountGiftCard JournalAccount = "gift_card"
 )
 
 // JournalKind is the fact an entry is read from.
@@ -110,6 +114,9 @@ type JournalFact struct {
 	CurrencyCode string
 
 	Subtotal, DiscountTotal, TaxTotal, ShippingTotal, Total int64
+	// GiftCardSubtotal is the part of Subtotal the order's gift card lines
+	// sold (ADR 0211).
+	GiftCardSubtotal int64
 
 	Amount int64
 }

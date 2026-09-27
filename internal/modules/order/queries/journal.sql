@@ -4,21 +4,27 @@
 -- the order the journal lists it, and takes one row more than the caller's
 -- limit so the caller can tell a full window from one that was cut.
 
+-- An order's gift card subtotal is the price of the lines that sold gift cards,
+-- which the books hold as a debt rather than as sales (ADR 0211).
 -- name: JournalOrdersPlaced :many
-SELECT id, currency_code, subtotal, discount_total, tax_total, shipping_total, total, placed_at
-FROM orders
-WHERE placed_at >= sqlc.arg('from_at') AND placed_at < sqlc.arg('to_at')
-  AND (sqlc.narg('currency_code')::text IS NULL OR currency_code = sqlc.narg('currency_code')::text)
-ORDER BY placed_at, id
+SELECT o.id, o.currency_code, o.subtotal, o.discount_total, o.tax_total, o.shipping_total, o.total, o.placed_at,
+       (SELECT COALESCE(SUM(li.subtotal), 0)::bigint FROM order_line_items li
+        WHERE li.order_id = o.id AND li.is_giftcard) AS gift_card_subtotal
+FROM orders o
+WHERE o.placed_at >= sqlc.arg('from_at') AND o.placed_at < sqlc.arg('to_at')
+  AND (sqlc.narg('currency_code')::text IS NULL OR o.currency_code = sqlc.narg('currency_code')::text)
+ORDER BY o.placed_at, o.id
 LIMIT sqlc.arg('row_limit');
 
 -- name: JournalOrdersCanceled :many
-SELECT id, currency_code, subtotal, discount_total, tax_total, shipping_total, total,
-       canceled_at::timestamptz AS canceled_at
-FROM orders
-WHERE canceled_at >= sqlc.arg('from_at') AND canceled_at < sqlc.arg('to_at')
-  AND (sqlc.narg('currency_code')::text IS NULL OR currency_code = sqlc.narg('currency_code')::text)
-ORDER BY canceled_at, id
+SELECT o.id, o.currency_code, o.subtotal, o.discount_total, o.tax_total, o.shipping_total, o.total,
+       o.canceled_at::timestamptz AS canceled_at,
+       (SELECT COALESCE(SUM(li.subtotal), 0)::bigint FROM order_line_items li
+        WHERE li.order_id = o.id AND li.is_giftcard) AS gift_card_subtotal
+FROM orders o
+WHERE o.canceled_at >= sqlc.arg('from_at') AND o.canceled_at < sqlc.arg('to_at')
+  AND (sqlc.narg('currency_code')::text IS NULL OR o.currency_code = sqlc.narg('currency_code')::text)
+ORDER BY o.canceled_at, o.id
 LIMIT sqlc.arg('row_limit');
 
 -- A credit line a delivery change wrote names the change (ADR 0199): the

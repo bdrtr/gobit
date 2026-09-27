@@ -141,3 +141,4 @@ truth: a report says what was true on the day it was taken.
 | [A code with a balance — measured 2026-09-27](0208-a-code-with-a-balance.md) | 100 |
 | [Two tenders, one order — measured 2026-09-27](0209-two-tenders-one-order.md) | 70 |
 | [A card that was bought — measured 2026-09-27](0210-a-card-that-was-bought.md) | 81 |
+| [A card is owed — measured 2026-09-27](0211-a-card-is-owed.md) | 82 |

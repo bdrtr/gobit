@@ -64,7 +64,7 @@ func (r *Repository) JournalFacts(
 			ID: row.ID, Kind: models.JournalOrderPlaced, OrderID: row.ID,
 			OccurredAt: toTime(row.PlacedAt), CurrencyCode: row.CurrencyCode,
 			Subtotal: row.Subtotal, DiscountTotal: row.DiscountTotal, TaxTotal: row.TaxTotal,
-			ShippingTotal: row.ShippingTotal, Total: row.Total,
+			ShippingTotal: row.ShippingTotal, Total: row.Total, GiftCardSubtotal: row.GiftCardSubtotal,
 		})
 	}
 	for i := range canceled {
@@ -73,7 +73,7 @@ func (r *Repository) JournalFacts(
 			ID: row.ID, Kind: models.JournalOrderCanceled, OrderID: row.ID,
 			OccurredAt: toTime(row.CanceledAt), CurrencyCode: row.CurrencyCode,
 			Subtotal: row.Subtotal, DiscountTotal: row.DiscountTotal, TaxTotal: row.TaxTotal,
-			ShippingTotal: row.ShippingTotal, Total: row.Total,
+			ShippingTotal: row.ShippingTotal, Total: row.Total, GiftCardSubtotal: row.GiftCardSubtotal,
 		})
 	}
 	for i := range credits {

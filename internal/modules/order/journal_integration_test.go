@@ -105,3 +105,50 @@ func TestAnExchangesDifferenceIsOnTheRealBooks(t *testing.T) {
 	assert.Equal(t, "exchange", causes[0].Kind)
 	assert.Equal(t, placed.ID, causes[0].OrderID)
 }
+
+// TestASoldGiftCardIsADebtOnTheRealBooks is ADR 0211 on the real schema: the
+// line keeps its flag, and the journal's placement and cancellation read the
+// gift card lines' subtotal out of the lines.
+func TestASoldGiftCardIsADebtOnTheRealBooks(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	from := time.Now().UTC().Add(-time.Second)
+
+	input := validInput()
+	input.Items = append(input.Items, service.CreateOrderItemInput{
+		VariantID: "variant_card", Title: "Gift card", Quantity: 2, UnitPrice: 2_500,
+		Subtotal: 5_000, Total: 5_000, IsGiftcard: true,
+	})
+	input.Subtotal += 5_000
+	input.Total += 5_000
+	kept, err := svc.CreateOrder(ctx, input)
+	require.NoError(t, err)
+	canceled, err := svc.CreateOrder(ctx, input)
+	require.NoError(t, err)
+	require.NoError(t, svc.CancelOrder(ctx, canceled.ID, "journal test"))
+
+	detail, err := svc.GetOrder(ctx, kept.ID)
+	require.NoError(t, err)
+	flags := map[string]bool{}
+	for _, item := range detail.Items {
+		flags[item.VariantID] = item.IsGiftcard
+	}
+	assert.Equal(t, map[string]bool{"variant_A": false, "variant_card": true}, flags)
+
+	journal, err := svc.Journal(ctx, service.JournalQuery{
+		From: from, To: time.Now().UTC().Add(time.Minute), CurrencyCode: testCurrency,
+	})
+	require.NoError(t, err)
+	byKind := map[string][]models.JournalLine{}
+	for _, entry := range journal.Entries {
+		if entry.OrderID == kept.ID || entry.OrderID == canceled.ID {
+			byKind[entry.OrderID+"/"+string(entry.Kind)] = entry.Lines
+		}
+	}
+
+	placed := byKind[kept.ID+"/"+string(models.JournalOrderPlaced)]
+	assert.Contains(t, placed, models.JournalLine{Account: models.AccountSales, Credit: 3_000})
+	assert.Contains(t, placed, models.JournalLine{Account: models.AccountGiftCard, Credit: 5_000})
+	assert.Contains(t, byKind[canceled.ID+"/"+string(models.JournalOrderCanceled)],
+		models.JournalLine{Account: models.AccountGiftCard, Debit: 5_000}, "a cancellation takes the debt back")
+}

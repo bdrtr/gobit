@@ -835,7 +835,13 @@ type variantScript struct {
 	title           string
 	manageInventory bool
 	allowBackorder  bool
+	// giftcard is the flag of the variant's product, which is named after the
+	// variant by [productOf].
+	giftcard bool
 }
+
+// productOf is the product a scripted variant belongs to.
+func productOf(variantID string) string { return "prod_" + variantID }
 
 // catalogRecords turns the scripted variants into the records the provider
 // would return.
@@ -852,7 +858,21 @@ func catalogRecords(scripts map[string]variantScript) []query.Record {
 			FieldTitle:           script.title,
 			FieldManageInventory: script.manageInventory,
 			FieldAllowBackorder:  script.allowBackorder,
+			FieldProductID:       productOf(id),
 		})
+	}
+	return out
+}
+
+// catalogAnswer answers a read of the scripted variants or of their products,
+// as the read layer does.
+func catalogAnswer(scripts map[string]variantScript, spec query.GraphSpec) []query.Record {
+	if spec.Entity != EntityProduct {
+		return catalogRecords(scripts)
+	}
+	out := make([]query.Record, 0, len(scripts))
+	for id, script := range scripts {
+		out = append(out, query.Record{query.IDField: productOf(id), FieldIsGiftcard: script.giftcard})
 	}
 	return out
 }
@@ -872,14 +892,14 @@ func defaultVariants() map[string]variantScript {
 }
 
 // defaultCatalog returns the titles and the stock flags of the variants.
-func defaultCatalog(_ context.Context, _ query.GraphSpec) ([]query.Record, error) {
-	return catalogRecords(defaultVariants()), nil
+func defaultCatalog(_ context.Context, spec query.GraphSpec) ([]query.Record, error) {
+	return catalogAnswer(defaultVariants(), spec), nil
 }
 
 // scriptCatalog makes the fake catalog answer with the given variants.
 func scriptCatalog(h *harness, scripts map[string]variantScript) {
-	h.catalog.graphFn = func(_ context.Context, _ query.GraphSpec) ([]query.Record, error) {
-		return catalogRecords(scripts), nil
+	h.catalog.graphFn = func(_ context.Context, spec query.GraphSpec) ([]query.Record, error) {
+		return catalogAnswer(scripts, spec), nil
 	}
 }
 

@@ -100,6 +100,17 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **An order books a sold gift card as a debt** (ADR 0211). **For API
+  consumers:** order lines carry `is_giftcard`, copied from the product when
+  the order is placed, on both order views. `GET /admin/v1/order-journal`
+  credits an order's gift card lines to a new `gift_card` account rather than
+  `sales`, the account the payment journal debits when a card is spent. A
+  checkout whose products cannot be read is refused as one whose variants
+  cannot. **For plugin authors:** the read layer's `order_line_item` publishes
+  `is_giftcard`, and the gift card sale flow issues cards from it rather than
+  from the catalog. **For operators:** order migration 000028 adds the column;
+  lines written before it read `false`.
+
 - **A sold gift card is issued when its order is paid** (ADR 0210). **For API
   consumers:** buying a product flagged `is_giftcard` issues, once the order's
   collection is fully captured, one gift card per unit worth the line's unit

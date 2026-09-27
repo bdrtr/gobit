@@ -345,6 +345,9 @@ type OrderLineItem struct {
 	// 0168); nil is UNKNOWN — every line written before the column existed, and
 	// a line a recovered saga placed from a plan that carried none.
 	PriceOrigin *LinePriceOrigin
+	// IsGiftcard says the line sold gift cards: the product's flag at the
+	// moment of sale (ADR 0211). The books hold such a line's price as a debt.
+	IsGiftcard bool
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

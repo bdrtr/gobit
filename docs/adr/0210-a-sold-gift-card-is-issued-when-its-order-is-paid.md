@@ -6,6 +6,7 @@ each code to the order's address. An operator can give a card a new code.
 
 - **Status:** Accepted
 - **Date:** 2026-09-27
+- **Amended by:** [0211](0211-an-order-books-a-sold-gift-card-as-a-debt.md): the line keeps the flag, the order books the card as a debt, and the flow reads the line
 
 Measurement: [measurements/0210](../measurements/0210-a-card-that-was-bought.md)
 

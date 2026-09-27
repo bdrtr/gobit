@@ -127,14 +127,6 @@ type variantReadExemption struct {
 // the list shrinks by itself once an exception goes away.
 var variantReadExemptions = []variantReadExemption{
 	{
-		file:     "internal/workflows/giftcardsale/giftcardsale.go",
-		function: "productsOf",
-		why: "it reads the variants an order ALREADY SOLD, to learn which of their products " +
-			"are gift cards (ADR 0210). The channel decision was made when the lines entered " +
-			"the cart; filtering here would leave a paid card unissued because an operator " +
-			"moved its product to another channel after the sale.",
-	},
-	{
 		file:     "internal/workflows/checkout/plan.go",
 		function: "variantTitles",
 		why: "the scope is applied AT THE ENTRANCE: the only way a variant can get into " +

@@ -1,12 +1,19 @@
 // Package giftcardsale issues the gift cards an order sold, once its money is
 // in, and mails each card's code to the order's address (ADR 0210).
 //
-// It is a workflow because it combines four modules (ADR 0006): the payment
+// It is a workflow because it combines three modules (ADR 0006): the payment
 // module says the money is in and keeps the cards, the order module holds the
-// lines and the address, the catalog says which products are gift cards, and
-// the notification module sends the code. None of them imports another, and
-// this package imports none of them: each is reached by name through the
+// lines, which say which of them sold gift cards (ADR 0211), and the address,
+// and the notification module sends the code. None of them imports another,
+// and this package imports none of them: each is reached by name through the
 // narrow interface declared here.
+//
+// # The line, not the catalog
+//
+// The order's books count a line as a gift card by its own flag, copied from
+// the product when the order was placed (ADR 0211). The flow reads the same
+// flag, so a line booked as a card is the line that issues one, whatever the
+// catalog says about the product afterwards.
 //
 // # At least once, and once
 //
@@ -58,12 +65,9 @@ const (
 	FieldCollectionID    = "payment_collection_id"
 	// LinkOrderPayment binds an order to the collection its checkout opened.
 	LinkOrderPayment = "order_payment"
-	// EntityLineItem, EntityVariant and EntityProduct are the read layer's
-	// entities the flow walks from an order's lines to their products.
-	EntityLineItem = "order_line_item"
-	EntityVariant  = "variant"
-	EntityProduct  = "product"
-	// FieldIsGiftcard is the product's flag.
+	// EntityLineItem is the read layer's order line, and FieldIsGiftcard its
+	// flag.
+	EntityLineItem  = "order_line_item"
 	FieldIsGiftcard = "is_giftcard"
 	// TemplateIssued is the notification a sold card's code is mailed with.
 	TemplateIssued = "gift_card.issued"
@@ -108,8 +112,8 @@ type Notifier interface {
 	Send(ctx context.Context, template, channel, reference, to string, data map[string]string) error
 }
 
-// Catalog is the read layer.
-type Catalog interface {
+// Reader is the read layer.
+type Reader interface {
 	// Graph reads records of an entity.
 	Graph(ctx context.Context, spec query.GraphSpec) ([]query.Record, error)
 }
@@ -131,18 +135,18 @@ type Workflow struct {
 	payments Payments
 	orders   Orders
 	notifier Notifier
-	catalog  Catalog
+	reader   Reader
 	links    Links
 	log      *slog.Logger
 }
 
 // New builds the flow from resolved dependencies.
-func New(payments Payments, orders Orders, notifier Notifier, catalog Catalog, links Links, log *slog.Logger) *Workflow {
+func New(payments Payments, orders Orders, notifier Notifier, reader Reader, links Links, log *slog.Logger) *Workflow {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	return &Workflow{payments: payments, orders: orders, notifier: notifier, catalog: catalog, links: links, log: log}
+	return &Workflow{payments: payments, orders: orders, notifier: notifier, reader: reader, links: links, log: log}
 }
 
 // HandleCaptured issues the cards an order sold once its collection is paid.
@@ -234,109 +238,40 @@ func (w *Workflow) issueFor(ctx context.Context, orderID string) error {
 	return nil
 }
 
-// giftCardLines reads an order's lines and keeps the ones whose product is a
-// gift card.
+// giftCardLines reads an order's lines and keeps the ones that sold gift
+// cards.
 func (w *Workflow) giftCardLines(ctx context.Context, orderID string) ([]soldLine, error) {
-	var lines []query.Record
+	var out []soldLine
 	for offset := 0; ; offset += linePage {
-		page, err := w.catalog.Graph(ctx, query.GraphSpec{
+		page, err := w.reader.Graph(ctx, query.GraphSpec{
 			Entity:  EntityLineItem,
-			Fields:  []string{query.IDField, "variant_id", "quantity", "unit_price"},
+			Fields:  []string{query.IDField, "quantity", "unit_price", FieldIsGiftcard},
 			Filters: map[string]any{"order_id": orderID},
 			Limit:   linePage, Offset: offset,
 		})
 		if err != nil {
 			return nil, err
 		}
-		lines = append(lines, page...)
+		for _, line := range page {
+			giftcard, ok := line[FieldIsGiftcard].(bool)
+			if !ok {
+				return nil, errors.Internal(CodeNotReady, "a line of order %s could not be read", orderID)
+			}
+			if !giftcard {
+				continue
+			}
+			id, _ := line[query.IDField].(string)
+			quantity, quantityOK := number(line["quantity"])
+			price, priceOK := number(line["unit_price"])
+			if id == "" || !quantityOK || !priceOK {
+				return nil, errors.Internal(CodeNotReady, "a gift card line of order %s could not be read", orderID)
+			}
+			out = append(out, soldLine{id: id, quantity: quantity, unitPrice: price})
+		}
 		if len(page) < linePage {
-			break
+			return out, nil
 		}
 	}
-
-	variantIDs := make([]string, 0, len(lines))
-	for _, line := range lines {
-		if id, _ := line["variant_id"].(string); id != "" {
-			variantIDs = append(variantIDs, id)
-		}
-	}
-	productOf, err := w.productsOf(ctx, variantIDs)
-	if err != nil {
-		return nil, err
-	}
-	giftcards, err := w.giftCardProducts(ctx, productOf)
-	if err != nil {
-		return nil, err
-	}
-
-	var out []soldLine
-	for _, line := range lines {
-		variantID, _ := line["variant_id"].(string)
-		if !giftcards[productOf[variantID]] {
-			continue
-		}
-		id, _ := line[query.IDField].(string)
-		quantity, quantityOK := number(line["quantity"])
-		price, priceOK := number(line["unit_price"])
-		if id == "" || !quantityOK || !priceOK {
-			return nil, errors.Internal(CodeNotReady, "a gift card line of order %s could not be read", orderID)
-		}
-		out = append(out, soldLine{id: id, quantity: quantity, unitPrice: price})
-	}
-
-	return out, nil
-}
-
-// productsOf maps variants to their products.
-func (w *Workflow) productsOf(ctx context.Context, variantIDs []string) (map[string]string, error) {
-	out := map[string]string{}
-	if len(variantIDs) == 0 {
-		return out, nil
-	}
-	records, err := w.catalog.Graph(ctx, query.GraphSpec{
-		Entity: EntityVariant, Fields: []string{query.IDField, "product_id"},
-		Filters: map[string]any{"ids": variantIDs}, Limit: len(variantIDs),
-	})
-	if err != nil {
-		return nil, err
-	}
-	for _, record := range records {
-		id, _ := record[query.IDField].(string)
-		product, _ := record["product_id"].(string)
-		out[id] = product
-	}
-
-	return out, nil
-}
-
-// giftCardProducts reports which of the products are gift cards.
-func (w *Workflow) giftCardProducts(ctx context.Context, productOf map[string]string) (map[string]bool, error) {
-	ids := make([]string, 0, len(productOf))
-	seen := map[string]bool{}
-	for _, product := range productOf {
-		if product != "" && !seen[product] {
-			seen[product] = true
-			ids = append(ids, product)
-		}
-	}
-	out := map[string]bool{}
-	if len(ids) == 0 {
-		return out, nil
-	}
-	records, err := w.catalog.Graph(ctx, query.GraphSpec{
-		Entity: EntityProduct, Fields: []string{query.IDField, FieldIsGiftcard},
-		Filters: map[string]any{"ids": ids}, Limit: len(ids),
-	})
-	if err != nil {
-		return nil, err
-	}
-	for _, record := range records {
-		id, _ := record[query.IDField].(string)
-		giftcard, _ := record[FieldIsGiftcard].(bool)
-		out[id] = giftcard
-	}
-
-	return out, nil
 }
 
 // number reads an integer a provider wrote as int, int32 or int64.
@@ -371,7 +306,7 @@ func FromContainer(c *container.Container, log *slog.Logger) (*Workflow, error) 
 	if err != nil {
 		return nil, err
 	}
-	catalog, err := resolve[Catalog](c, ServiceQuery)
+	reader, err := resolve[Reader](c, ServiceQuery)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +319,7 @@ func FromContainer(c *container.Container, log *slog.Logger) (*Workflow, error) 
 		return nil, err
 	}
 
-	w := New(payments, orders, notifier, catalog, links, log)
+	w := New(payments, orders, notifier, reader, links, log)
 	if err := bus.Subscribe(TopicPaymentCaptured, w.HandleCaptured); err != nil {
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeNotReady,
 			"the gift card sale flow could not subscribe to %q", TopicPaymentCaptured)

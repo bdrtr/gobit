@@ -129,7 +129,8 @@ func kindOrder(kind models.JournalKind) int {
 // journalEntry is the chart of accounts, in one place.
 //
 //	order placed      Dr receivable (total), sales_discounts (discount)
-//	                  Cr sales (subtotal), tax_payable (tax), shipping (shipping)
+//	                  Cr sales (subtotal less gift cards), gift_card (gift card
+//	                  lines), tax_payable (tax), shipping (shipping)
 //	order canceled    the same lines, the other way
 //	credit line       Dr credit_allowances   Cr receivable
 //	return refunded   Dr sales_returns       Cr receivable
@@ -151,7 +152,9 @@ func journalEntry(f *models.JournalFact) (models.JournalEntry, error) {
 
 	switch f.Kind {
 	case models.JournalOrderPlaced, models.JournalOrderCanceled:
-		for _, amount := range []int64{f.Subtotal, f.DiscountTotal, f.TaxTotal, f.ShippingTotal, f.Total} {
+		for _, amount := range []int64{
+			f.Subtotal, f.DiscountTotal, f.TaxTotal, f.ShippingTotal, f.Total, f.GiftCardSubtotal,
+		} {
 			if amount < 0 {
 				return models.JournalEntry{}, errors.Internal(CodeInvalidInput,
 					"the journal read order %s with a negative amount", f.ID)
@@ -161,10 +164,17 @@ func journalEntry(f *models.JournalFact) (models.JournalEntry, error) {
 			return models.JournalEntry{}, errors.Internal(CodeInvalidInput,
 				"the journal read order %s whose total does not add up", f.ID)
 		}
+		if f.GiftCardSubtotal > f.Subtotal {
+			return models.JournalEntry{}, errors.Internal(CodeInvalidInput,
+				"the journal read order %s whose gift card lines exceed its subtotal", f.ID)
+		}
+		// A sold gift card's price is a debt to its holder rather than a sale
+		// (ADR 0211); the rest of the subtotal is sales.
 		lines := []models.JournalLine{
 			{Account: models.AccountReceivable, Debit: f.Total},
 			{Account: models.AccountSalesDiscounts, Debit: f.DiscountTotal},
-			{Account: models.AccountSales, Credit: f.Subtotal},
+			{Account: models.AccountSales, Credit: f.Subtotal - f.GiftCardSubtotal},
+			{Account: models.AccountGiftCard, Credit: f.GiftCardSubtotal},
 			{Account: models.AccountTaxPayable, Credit: f.TaxTotal},
 			{Account: models.AccountShipping, Credit: f.ShippingTotal},
 		}

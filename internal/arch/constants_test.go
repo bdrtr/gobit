@@ -227,6 +227,17 @@ func TestTheReceivableAccountAgrees(t *testing.T) {
 		"the payment and order journals must spell receivable alike")
 }
 
+// TestTheGiftCardAccountAgrees binds the second account the two journals share
+// (ADR 0211): the order that sells a card credits it and the capture that
+// spends the card debits it, so the card's debt closes only if both spell it
+// alike.
+func TestTheGiftCardAccountAgrees(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, string(paymentmodels.AccountGiftCard), string(ordermodels.AccountGiftCard),
+		"the payment and order journals must spell gift_card alike")
+}
+
 // TestTheGiftCardNamesAgree binds the checkout's spelling of the gift card
 // provider and of its code's key to the payment module's (ADR 0209). A drift is
 // silent until a card is spent: the checkout would open the card's session at a

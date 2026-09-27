@@ -9,8 +9,8 @@
 INSERT INTO order_line_items (
     id, order_id, variant_id, title, quantity,
     unit_price, subtotal, discount_total, tax_total, tax_rate_bps, total, metadata,
-    price_id, price_list_id, price_list_type
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+    price_id, price_list_id, price_list_type, is_giftcard
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 RETURNING *;
 
 -- name: ListOrderLineItems :many

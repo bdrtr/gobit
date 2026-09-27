@@ -267,26 +267,30 @@ func TestBackorderDoesNotForgiveAnythingButAConflict(t *testing.T) {
 //
 // The saga already reads every variant of the cart in one batch for the title,
 // and the variant record already publishes both flags. If the flags ever move
-// to a query of their own, every checkout starts paying a second catalog call
-// and this test says so.
+// to a query of their own, every checkout starts paying a third catalog call
+// and this test says so. The second is the products' gift card flag, which is
+// not on the variant (ADR 0211).
 func TestTheStockFlagsRideOnTheTitleQuery(t *testing.T) {
 	h := newHarness(t)
 
 	var specs []query.GraphSpec
 	h.catalog.graphFn = func(_ context.Context, spec query.GraphSpec) ([]query.Record, error) {
 		specs = append(specs, spec)
-		return catalogRecords(defaultVariants()), nil
+		return catalogAnswer(defaultVariants(), spec), nil
 	}
 
 	_, err := h.wf.CompleteCart(context.Background(), h.input())
 	require.NoError(t, err)
 
-	require.Len(t, specs, 1, "the whole checkout reads the catalog ONCE")
+	require.Len(t, specs, 2, "the whole checkout reads the variants once and their products once")
 	assert.Equal(t, EntityVariant, specs[0].Entity)
 	assert.Equal(t,
-		[]string{query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder},
+		[]string{query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder, FieldProductID},
 		specs[0].Fields,
 		"the two flags are two more names in the field list the title already pays for")
+	assert.Equal(t, EntityProduct, specs[1].Entity)
+	assert.ElementsMatch(t, []string{productOf(testVariantA), productOf(testVariantB)}, specs[1].Filters[FilterIDs],
+		"every product of the cart in one batch")
 }
 
 // TestAFlagThatIsNotABoolIsRefused verifies that a broken record does not
@@ -304,6 +308,7 @@ func TestAFlagThatIsNotABoolIsRefused(t *testing.T) {
 			FieldTitle:           testTitleA,
 			FieldManageInventory: "true",
 			FieldAllowBackorder:  false,
+			FieldProductID:       productOf(testVariantA),
 		}}, nil
 	}
 

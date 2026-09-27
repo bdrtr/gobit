@@ -146,6 +146,7 @@ type OrderLineItem struct {
 	PriceID       *string
 	PriceListID   *string
 	PriceListType *string
+	IsGiftcard    bool
 }
 
 type OrderLineTax struct {

@@ -489,8 +489,10 @@ type lineItemDTO struct {
 	// list price, the list and its type (ADR 0168). It is absent when unknown:
 	// every line sold before the order kept it.
 	PriceOrigin *linePriceOriginDTO `json:"price_origin,omitempty"`
-	CreatedAt   time.Time           `json:"created_at"`
-	UpdatedAt   time.Time           `json:"updated_at"`
+	// IsGiftcard says the line sold gift cards (ADR 0211).
+	IsGiftcard bool      `json:"is_giftcard"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // linePriceOriginDTO is which of a variant's prices a line was charged.
@@ -710,6 +712,7 @@ func toLineItemDTO(item models.OrderLineItem) lineItemDTO {
 		Total:         item.Total,
 		Metadata:      item.Metadata,
 		PriceOrigin:   toLinePriceOriginDTO(item.PriceOrigin),
+		IsGiftcard:    item.IsGiftcard,
 		CreatedAt:     item.CreatedAt,
 		UpdatedAt:     item.UpdatedAt,
 	}

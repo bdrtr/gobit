@@ -229,6 +229,9 @@ type interopOrderItem struct {
 	PriceID       string  `json:"price_id"`
 	PriceListID   *string `json:"price_list_id"`
 	PriceListType string  `json:"price_list_type"`
+	// IsGiftcard says the line sells gift cards (ADR 0211); it changed
+	// together with the sender, for TaxComponents' reason.
+	IsGiftcard bool `json:"is_giftcard"`
 }
 
 // interopLineTax is one rate inside a stacked line's tax, on the wire.
@@ -272,6 +275,7 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 			PriceID:       incoming.Items[k].PriceID,
 			PriceListID:   derefString(incoming.Items[k].PriceListID),
 			PriceListType: incoming.Items[k].PriceListType,
+			IsGiftcard:    incoming.Items[k].IsGiftcard,
 		})
 	}
 

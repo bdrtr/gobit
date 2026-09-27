@@ -159,6 +159,58 @@ func TestTheOrderJournalBalances(t *testing.T) {
 	assert.Equal(t, debits, credits)
 }
 
+// TestASoldGiftCardIsADebtNotASale is ADR 0211: the part of the subtotal the
+// gift card lines sold is owed to the cards' holders, and a cancellation takes
+// it back the same way.
+func TestASoldGiftCardIsADebtNotASale(t *testing.T) {
+	t.Parallel()
+
+	placed := placedOrder(models.JournalOrderPlaced, 1)
+	placed.GiftCardSubtotal = 4_000
+	canceled := placedOrder(models.JournalOrderCanceled, 2)
+	canceled.GiftCardSubtotal = 4_000
+	allCards := placedOrder(models.JournalOrderPlaced, 3)
+	allCards.ID, allCards.OrderID, allCards.GiftCardSubtotal = "order_2", "order_2", 10_000
+
+	journal, err := orderJournal(t, placed, canceled, allCards)
+	require.NoError(t, err)
+	require.Len(t, journal.Entries, 3)
+
+	lines := []models.JournalLine{
+		{Account: models.AccountReceivable, Debit: 11_300},
+		{Account: models.AccountSalesDiscounts, Debit: 1_000},
+		{Account: models.AccountSales, Credit: 6_000},
+		{Account: models.AccountGiftCard, Credit: 4_000},
+		{Account: models.AccountTaxPayable, Credit: 1_800},
+		{Account: models.AccountShipping, Credit: 500},
+	}
+	assert.Equal(t, lines, journal.Entries[0].Lines)
+	reversed := make([]models.JournalLine, len(lines))
+	for i, line := range lines {
+		reversed[i] = models.JournalLine{Account: line.Account, Debit: line.Credit, Credit: line.Debit}
+	}
+	assert.Equal(t, reversed, journal.Entries[1].Lines)
+
+	for _, line := range journal.Entries[2].Lines {
+		assert.NotEqual(t, models.AccountSales, line.Account, "an order of cards alone sold nothing")
+	}
+	assert.Contains(t, journal.Entries[2].Lines, models.JournalLine{Account: models.AccountGiftCard, Credit: 10_000})
+}
+
+// TestGiftCardLinesBeyondTheSubtotalAreAnError: a sum that could only come from
+// a broken row would book a negative sale.
+func TestGiftCardLinesBeyondTheSubtotalAreAnError(t *testing.T) {
+	t.Parallel()
+
+	broken := placedOrder(models.JournalOrderPlaced, 1)
+	broken.GiftCardSubtotal = broken.Subtotal + 1
+
+	_, err := orderJournal(t, broken)
+
+	require.Error(t, err)
+	assert.True(t, errors.HasKind(err, errors.KindInternal), "%v", err)
+}
+
 // TestAPlacementComesBeforeItsCancellation keeps an order placed and canceled
 // in one instant in the order that happened.
 func TestAPlacementComesBeforeItsCancellation(t *testing.T) {

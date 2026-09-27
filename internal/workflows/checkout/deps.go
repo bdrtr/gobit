@@ -107,6 +107,12 @@ const (
 	// negative level and no promised date — so a merchant who reads the checkbox
 	// as "pre-order" is expecting a feature this repository does not have yet.
 	FieldAllowBackorder = "allow_backorder"
+	// FieldProductID is the variant record's product. EntityProduct and
+	// FieldIsGiftcard name the product record's gift card flag, which the
+	// checkout copies onto the order line (ADR 0211).
+	FieldProductID  = "product_id"
+	EntityProduct   = "product"
+	FieldIsGiftcard = "is_giftcard"
 	// FilterIDs is the BATCH identifier filter of the variant provider; thanks to
 	// this filter a separate query per line (N+1) is not needed.
 	FilterIDs = "ids"

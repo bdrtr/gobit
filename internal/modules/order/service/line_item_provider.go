@@ -82,6 +82,9 @@ const (
 	// of this provider ([FilterPlacedFrom]) is bound to the order and not to
 	// this column.
 	FieldLineItemCreatedAt = "created_at"
+	// FieldLineItemIsGiftcard says the line sold gift cards, as the product was
+	// flagged at the moment of sale (ADR 0211).
+	FieldLineItemIsGiftcard = "is_giftcard"
 )
 
 // The filter names this provider accepts that are NOT fields.
@@ -132,6 +135,7 @@ var lineItemFieldGetters = map[string]func(models.OrderLineItem) any{
 	FieldLineItemTaxRateBps:    func(l models.OrderLineItem) any { return l.TaxRateBps },
 	FieldLineItemTotal:         func(l models.OrderLineItem) any { return l.Total },
 	FieldLineItemCreatedAt:     func(l models.OrderLineItem) any { return l.CreatedAt },
+	FieldLineItemIsGiftcard:    func(l models.OrderLineItem) any { return l.IsGiftcard },
 }
 
 // LineItemQueryProvider offers the ORDER LINE to the cross-module read layer.

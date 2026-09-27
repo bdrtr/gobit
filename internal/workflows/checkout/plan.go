@@ -3,6 +3,7 @@ package checkout
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
@@ -298,6 +299,9 @@ type planLine struct {
 	PriceID       string  `json:"price_id,omitempty"`
 	PriceListID   *string `json:"price_list_id,omitempty"`
 	PriceListType string  `json:"price_list_type,omitempty"`
+	// IsGiftcard reports that the line's product is a gift card, read when
+	// the plan was made and copied onto the order line (ADR 0211).
+	IsGiftcard bool `json:"is_giftcard"`
 }
 
 // prepare builds the input of the saga and leaves NO reversible side effect.
@@ -507,6 +511,7 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 			PriceID:         amounts.PriceID,
 			PriceListID:     amounts.PriceListID,
 			PriceListType:   amounts.PriceListType,
+			IsGiftcard:      facts[item.VariantID].IsGiftcard,
 		})
 	}
 	return lines, nil
@@ -528,6 +533,10 @@ type variantFacts struct {
 	// AllowBackorder reports that a line no warehouse can cover does not refuse
 	// the order.
 	AllowBackorder bool
+	// ProductID is the variant's product, and IsGiftcard that product's flag
+	// (ADR 0211).
+	ProductID  string
+	IsGiftcard bool
 }
 
 // variantTitles reads the catalog facts of the variants in a SINGLE query.
@@ -573,7 +582,7 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 
 	records, err := w.catalog.Graph(ctx, query.GraphSpec{
 		Entity:  EntityVariant,
-		Fields:  []string{query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder},
+		Fields:  []string{query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder, FieldProductID},
 		Filters: map[string]any{FilterIDs: variantIDs},
 		Limit:   len(variantIDs),
 	})
@@ -592,7 +601,8 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 		title, titleOK := records[i][FieldTitle].(string)
 		managed, managedOK := records[i][FieldManageInventory].(bool)
 		backorder, backorderOK := records[i][FieldAllowBackorder].(bool)
-		if !idOK || !titleOK || title == "" || !managedOK || !backorderOK {
+		product, productOK := records[i][FieldProductID].(string)
+		if !idOK || !titleOK || title == "" || !managedOK || !backorderOK || !productOK || product == "" {
 			return nil, errors.Internal(CodeVariantUnknown,
 				"the catalog record could not be read: %v", records[i])
 		}
@@ -600,6 +610,7 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 			Title:          title,
 			Unmanaged:      !managed,
 			AllowBackorder: backorder,
+			ProductID:      product,
 		}
 	}
 
@@ -609,7 +620,60 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 				"variant %s is not in the catalog; an order line cannot be written without a title", variantID)
 		}
 	}
+	if err := w.giftCardFlags(ctx, facts); err != nil {
+		return nil, err
+	}
 	return facts, nil
+}
+
+// giftCardFlags reads, in one query, whether the variants' products are gift
+// cards, and marks the facts (ADR 0211).
+//
+// The flag is on the product, not the variant, so this is the checkout's
+// second catalog read. It is strict where the cart's totals are lenient: the
+// totals price a cart without the flag when the read fails, but the order books
+// a gift card line as a debt and the card sale flow issues its card from this
+// flag, so a guess would book a card as a sale and never issue it.
+func (w *Workflows) giftCardFlags(ctx context.Context, facts map[string]variantFacts) error {
+	productIDs := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		if !slices.Contains(productIDs, fact.ProductID) {
+			productIDs = append(productIDs, fact.ProductID)
+		}
+	}
+
+	records, err := w.catalog.Graph(ctx, query.GraphSpec{
+		Entity:  EntityProduct,
+		Fields:  []string{query.IDField, FieldIsGiftcard},
+		Filters: map[string]any{FilterIDs: productIDs},
+		Limit:   len(productIDs),
+	})
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), CodeCatalogReadFailed,
+			"the products could not be read from the catalog (%d products)", len(productIDs))
+	}
+
+	giftcard := make(map[string]bool, len(records))
+	for i := range records {
+		id, idOK := records[i][query.IDField].(string)
+		flag, flagOK := records[i][FieldIsGiftcard].(bool)
+		if !idOK || !flagOK {
+			return errors.Internal(CodeVariantUnknown, "the product record could not be read: %v", records[i])
+		}
+		giftcard[id] = flag
+	}
+
+	for variantID, fact := range facts {
+		flag, ok := giftcard[fact.ProductID]
+		if !ok {
+			return errors.NotFound(CodeVariantUnknown,
+				"the product of variant %s is not in the catalog", variantID)
+		}
+		fact.IsGiftcard = flag
+		facts[variantID] = fact
+	}
+
+	return nil
 }
 
 // inventoryItems resolves the inventory items of the COUNTED variants with a
@@ -910,6 +974,9 @@ type orderSnapshotItem struct {
 	PriceID       string  `json:"price_id,omitempty"`
 	PriceListID   *string `json:"price_list_id,omitempty"`
 	PriceListType string  `json:"price_list_type,omitempty"`
+	// IsGiftcard says the line sold gift cards; the order books it as a debt
+	// (ADR 0211).
+	IsGiftcard bool `json:"is_giftcard"`
 }
 
 // orderSnapshotTaxComponent is one rate inside a stacked line's tax, on the wire
@@ -945,6 +1012,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 			PriceID:       p.Lines[i].PriceID,
 			PriceListID:   p.Lines[i].PriceListID,
 			PriceListType: p.Lines[i].PriceListType,
+			IsGiftcard:    p.Lines[i].IsGiftcard,
 		})
 	}
 

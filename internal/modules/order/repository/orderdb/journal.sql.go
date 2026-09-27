@@ -243,12 +243,14 @@ func (q *Queries) JournalExchangesFunded(ctx context.Context, arg JournalExchang
 }
 
 const journalOrdersCanceled = `-- name: JournalOrdersCanceled :many
-SELECT id, currency_code, subtotal, discount_total, tax_total, shipping_total, total,
-       canceled_at::timestamptz AS canceled_at
-FROM orders
-WHERE canceled_at >= $1 AND canceled_at < $2
-  AND ($3::text IS NULL OR currency_code = $3::text)
-ORDER BY canceled_at, id
+SELECT o.id, o.currency_code, o.subtotal, o.discount_total, o.tax_total, o.shipping_total, o.total,
+       o.canceled_at::timestamptz AS canceled_at,
+       (SELECT COALESCE(SUM(li.subtotal), 0)::bigint FROM order_line_items li
+        WHERE li.order_id = o.id AND li.is_giftcard) AS gift_card_subtotal
+FROM orders o
+WHERE o.canceled_at >= $1 AND o.canceled_at < $2
+  AND ($3::text IS NULL OR o.currency_code = $3::text)
+ORDER BY o.canceled_at, o.id
 LIMIT $4
 `
 
@@ -260,14 +262,15 @@ type JournalOrdersCanceledParams struct {
 }
 
 type JournalOrdersCanceledRow struct {
-	ID            string
-	CurrencyCode  string
-	Subtotal      int64
-	DiscountTotal int64
-	TaxTotal      int64
-	ShippingTotal int64
-	Total         int64
-	CanceledAt    pgtype.Timestamptz
+	ID               string
+	CurrencyCode     string
+	Subtotal         int64
+	DiscountTotal    int64
+	TaxTotal         int64
+	ShippingTotal    int64
+	Total            int64
+	CanceledAt       pgtype.Timestamptz
+	GiftCardSubtotal int64
 }
 
 func (q *Queries) JournalOrdersCanceled(ctx context.Context, arg JournalOrdersCanceledParams) ([]JournalOrdersCanceledRow, error) {
@@ -293,6 +296,7 @@ func (q *Queries) JournalOrdersCanceled(ctx context.Context, arg JournalOrdersCa
 			&i.ShippingTotal,
 			&i.Total,
 			&i.CanceledAt,
+			&i.GiftCardSubtotal,
 		); err != nil {
 			return nil, err
 		}
@@ -306,11 +310,13 @@ func (q *Queries) JournalOrdersCanceled(ctx context.Context, arg JournalOrdersCa
 
 const journalOrdersPlaced = `-- name: JournalOrdersPlaced :many
 
-SELECT id, currency_code, subtotal, discount_total, tax_total, shipping_total, total, placed_at
-FROM orders
-WHERE placed_at >= $1 AND placed_at < $2
-  AND ($3::text IS NULL OR currency_code = $3::text)
-ORDER BY placed_at, id
+SELECT o.id, o.currency_code, o.subtotal, o.discount_total, o.tax_total, o.shipping_total, o.total, o.placed_at,
+       (SELECT COALESCE(SUM(li.subtotal), 0)::bigint FROM order_line_items li
+        WHERE li.order_id = o.id AND li.is_giftcard) AS gift_card_subtotal
+FROM orders o
+WHERE o.placed_at >= $1 AND o.placed_at < $2
+  AND ($3::text IS NULL OR o.currency_code = $3::text)
+ORDER BY o.placed_at, o.id
 LIMIT $4
 `
 
@@ -322,14 +328,15 @@ type JournalOrdersPlacedParams struct {
 }
 
 type JournalOrdersPlacedRow struct {
-	ID            string
-	CurrencyCode  string
-	Subtotal      int64
-	DiscountTotal int64
-	TaxTotal      int64
-	ShippingTotal int64
-	Total         int64
-	PlacedAt      pgtype.Timestamptz
+	ID               string
+	CurrencyCode     string
+	Subtotal         int64
+	DiscountTotal    int64
+	TaxTotal         int64
+	ShippingTotal    int64
+	Total            int64
+	PlacedAt         pgtype.Timestamptz
+	GiftCardSubtotal int64
 }
 
 // The rows the order journal is derived from (ADR 0188).
@@ -337,6 +344,8 @@ type JournalOrdersPlacedRow struct {
 // Each query reads one kind of fact inside a half-open window [from, to), in
 // the order the journal lists it, and takes one row more than the caller's
 // limit so the caller can tell a full window from one that was cut.
+// An order's gift card subtotal is the price of the lines that sold gift cards,
+// which the books hold as a debt rather than as sales (ADR 0211).
 func (q *Queries) JournalOrdersPlaced(ctx context.Context, arg JournalOrdersPlacedParams) ([]JournalOrdersPlacedRow, error) {
 	rows, err := q.db.Query(ctx, journalOrdersPlaced,
 		arg.FromAt,
@@ -360,6 +369,7 @@ func (q *Queries) JournalOrdersPlaced(ctx context.Context, arg JournalOrdersPlac
 			&i.ShippingTotal,
 			&i.Total,
 			&i.PlacedAt,
+			&i.GiftCardSubtotal,
 		); err != nil {
 			return nil, err
 		}
