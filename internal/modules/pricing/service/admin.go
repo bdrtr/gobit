@@ -76,6 +76,7 @@ func (a *AdminSurface) SetBasePriceAmount(
 
 // setUnitBasePrices sets the base price at one unit in each named currency,
 // leaves every other price on the set as it is, and reports whether it wrote.
+// The panel's surface and the interop's [Service.SetUnitBasePrices] share it.
 //
 // The currency code is normalized but NOT checked for emptiness here. SetPrices
 // below refuses an empty currency with the same Kind and writes nothing, so a

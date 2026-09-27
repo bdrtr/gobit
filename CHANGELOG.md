@@ -12,6 +12,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Pricing's godoc named a caller that did not exist** (D144). It said the
+  product module creates a price set for every new variant. **For plugin
+  authors:** creating a variant creates no price set; `CreateEmptyPriceSet` is
+  called by a catalog import pricing a variant that has none (ADR 0207).
+
 - **The panel's price form overwrote quantity tiers** (D143, ADR 0206). Saving
   a variant's price in a currency set every base price in it to the amount, a
   price for ten or more included, and the page offered the same form for a tier
@@ -85,6 +90,19 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **An import writes its prices through pricing** (ADR 0207). **For API
+  consumers:** a `variant_price_<currency>` cell in a file sent to `POST
+  /admin/v1/products/imports` now sets the variant's base price at one unit in
+  that currency, in minor units, and gives a variant without a price set one;
+  a quantity tier and a list price keep their amounts, and an empty cell leaves
+  the currency as it is. A file with price columns requires `pricing:write` as
+  well as `product:write` (403 without it), and is refused with 422
+  `product_import_prices_unavailable` in an installation without the pricing
+  module. A cell that is not a whole number, or a price on a row naming no
+  variant, refuses that row. **For plugin authors:** pricing's service gains
+  `SetUnitBasePrices`, which never deletes a price; `SetBasePrices` still
+  replaces the set.
 
 - **A catalog import is a record a job works through** (ADR 0205). **For API
   consumers:** `POST /admin/v1/products/imports` takes a CSV file (text/csv,

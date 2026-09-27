@@ -308,6 +308,18 @@ func newServiceWithBus(
 	return svc
 }
 
+// newImportService builds a service whose import writes prices through the
+// given fake pricing.
+func newImportService(
+	t *testing.T, store *memStore, links *fakeLinker, graph service.Grapher, prices *fakePrices,
+) *service.Service {
+	t.Helper()
+	store.links = links
+	svc, err := service.New(service.Options{Repo: store, Links: links, Query: graph, Prices: prices})
+	require.NoError(t, err)
+	return svc
+}
+
 // seedProduct is the shared setup of the tests: one published product with one
 // variant.
 func seedProduct(t *testing.T, svc *service.Service, handle, title string) models.Product {

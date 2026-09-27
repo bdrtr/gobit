@@ -100,6 +100,7 @@ var (
 // a container name. Nothing checked the structural half until this file.
 var (
 	_ productsvc.UploadReader     = (*filesvc.Interop)(nil)
+	_ productsvc.PriceSetWriter   = (*pricingsvc.Service)(nil)
 	_ ordersvc.SpendingPolicy     = (*b2bsvc.Interop)(nil)
 	_ ordersvc.CausedRefunds      = (*paymentsvc.Interop)(nil)
 	_ notifsvc.OrderContactReader = (*ordersvc.Interop)(nil)
@@ -240,8 +241,9 @@ var interopPinExemptions = map[string]string{
 		"this repository (ADR 0008/0043), so there is no producer here to assign. What " +
 		"holds the shape instead is core/identitytest.Contract (ADR 0126).",
 	"pricing.service": "the producer is a *service.Service rather than an Interop, and it " +
-		"IS pinned above — the name is listed here because it does not end in .interop " +
-		"and the derivation below prices the interop family.",
+		"IS pinned above, for the cart flow and for the product module's import — the " +
+		"name is listed here because it does not end in .interop and the derivation " +
+		"below prices the interop family.",
 }
 
 // The names this file pins that the derivation does NOT price, and the measured

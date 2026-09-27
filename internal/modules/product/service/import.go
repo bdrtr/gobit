@@ -29,8 +29,9 @@ const prefixImport = "pimp_"
 // codeImportInvalid refuses a file an import cannot read.
 const codeImportInvalid = "product_import_invalid"
 
-// priceColumn is a price column of the export, which an import accepts and
-// does not apply yet (ADR 0205).
+// priceColumn is a price column of the export: a currency's base price at one
+// unit, in minor units (ADR 0204), which an import writes through pricing
+// (ADR 0207).
 var priceColumn = regexp.MustCompile(`^variant_price_[a-z]{3}$`)
 
 // utf8BOM is the byte order mark a spreadsheet may put before the header.
@@ -42,11 +43,15 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 // The file is read in full here and refused as a whole when it cannot be
 // applied at all: not UTF-8, not CSV, a row of another width, a column the
 // export does not write, a column twice, or neither product_id nor
-// product_handle. A row that can be read but not applied is the job's to
-// refuse, one row at a time.
+// product_handle. A file with price columns is refused as well when this
+// installation has no pricing module to write them (ADR 0207). A row that can
+// be read but not applied is the job's to refuse, one row at a time.
 func (s *Service) CreateImport(ctx context.Context, file []byte) (models.Import, error) {
-	rows, err := readImportFile(file)
+	header, rows, err := readImportFile(file)
 	if err != nil {
+		return models.Import{}, err
+	}
+	if err := s.checkImportPrices(ctx, header); err != nil {
 		return models.Import{}, err
 	}
 
@@ -111,43 +116,52 @@ func (s *Service) ApplyImports(ctx context.Context, until time.Time) (int, error
 	return applied, s.repo.FinishImport(ctx, claimed.ID)
 }
 
-// readImportFile checks the file an import is given and counts its rows.
-func readImportFile(file []byte) (int, error) {
+// importHeader reads a file's header.
+func importHeader(file []byte) ([]string, error) {
+	header, err := csv.NewReader(bytes.NewReader(bytes.TrimPrefix(file, utf8BOM))).Read()
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInvalid, codeImportInvalid, "the header could not be read")
+	}
+
+	return header, nil
+}
+
+// readImportFile checks the file an import is given, and returns its header
+// and how many rows it has.
+func readImportFile(file []byte) (header []string, rows int, err error) {
 	file = bytes.TrimPrefix(file, utf8BOM)
 	switch {
 	case len(file) == 0:
-		return 0, errors.Invalid(codeImportInvalid, "the file is empty")
+		return nil, 0, errors.Invalid(codeImportInvalid, "the file is empty")
 	case len(file) > MaxImportBytes:
-		return 0, errors.Invalid(codeImportInvalid, "the file is larger than %d bytes", MaxImportBytes)
+		return nil, 0, errors.Invalid(codeImportInvalid, "the file is larger than %d bytes", MaxImportBytes)
 	case !utf8.Valid(file):
-		return 0, errors.Invalid(codeImportInvalid, "the file is not UTF-8")
+		return nil, 0, errors.Invalid(codeImportInvalid, "the file is not UTF-8")
 	}
 
 	reader := csv.NewReader(bytes.NewReader(file))
-	header, err := reader.Read()
-	if err != nil {
-		return 0, errors.Wrap(err, errors.KindInvalid, codeImportInvalid, "the header could not be read")
+	if header, err = reader.Read(); err != nil {
+		return nil, 0, errors.Wrap(err, errors.KindInvalid, codeImportInvalid, "the header could not be read")
 	}
 	if err := checkImportHeader(header); err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 
-	rows := 0
 	for {
-		_, err := reader.Read()
-		if err != nil {
+		if _, err := reader.Read(); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return 0, errors.Wrap(err, errors.KindInvalid, codeImportInvalid, "the file is not CSV the import can read")
+			return nil, 0, errors.Wrap(err, errors.KindInvalid, codeImportInvalid,
+				"the file is not CSV the import can read")
 		}
 		rows++
 	}
 	if rows == 0 {
-		return 0, errors.Invalid(codeImportInvalid, "the file has a header and no rows")
+		return nil, 0, errors.Invalid(codeImportInvalid, "the file has a header and no rows")
 	}
 
-	return rows, nil
+	return header, rows, nil
 }
 
 // checkImportHeader refuses a header the import would misread.
@@ -291,15 +305,34 @@ func (s *Service) applyImportRow(ctx context.Context, row importRow) models.Impo
 	return outcome
 }
 
-// importRow finds or creates the row's product, then its variant.
+// importRow finds or creates the row's product, then its variant, then writes
+// the variant's prices.
+//
+// The price cells are read before anything is written, so a row whose price
+// cannot be read, or which prices no variant, changes nothing.
 func (s *Service) importRow(ctx context.Context, row importRow) (models.ImportRowOutcome, error) {
+	amounts, err := row.prices()
+	if err != nil {
+		return models.ImportRowOutcome{}, err
+	}
+	if len(amounts) > 0 && !row.hasVariant() {
+		return models.ImportRowOutcome{}, errors.Invalid(codeImportInvalid,
+			"the row has a price and no variant; a price belongs to a variant")
+	}
+
 	product, found, err := s.importedProduct(ctx, row)
 	if err != nil {
 		return models.ImportRowOutcome{}, err
 	}
 	if !found {
-		if err := s.createImportedProduct(ctx, row); err != nil {
+		created, err := s.createImportedProduct(ctx, row)
+		if err != nil {
 			return models.ImportRowOutcome{}, err
+		}
+		if len(created.Variants) > 0 {
+			if _, err := s.importPrices(ctx, created.Variants[0].ID, amounts); err != nil {
+				return models.ImportRowOutcome{}, err
+			}
 		}
 
 		return models.ImportRowOutcome{Created: true}, nil
@@ -313,7 +346,11 @@ func (s *Service) importRow(ctx context.Context, row importRow) (models.ImportRo
 		return models.ImportRowOutcome{Updated: changedProduct}, nil
 	}
 
-	created, changedVariant, err := s.importVariant(ctx, row, product)
+	variantID, created, changedVariant, err := s.importVariant(ctx, row, product)
+	if err != nil {
+		return models.ImportRowOutcome{}, err
+	}
+	changedPrices, err := s.importPrices(ctx, variantID, amounts)
 	if err != nil {
 		return models.ImportRowOutcome{}, err
 	}
@@ -321,7 +358,7 @@ func (s *Service) importRow(ctx context.Context, row importRow) (models.ImportRo
 		return models.ImportRowOutcome{Created: true}, nil
 	}
 
-	return models.ImportRowOutcome{Updated: changedProduct || changedVariant}, nil
+	return models.ImportRowOutcome{Updated: changedProduct || changedVariant || changedPrices}, nil
 }
 
 // importedProduct finds the row's product: by id, or else by handle.
@@ -351,7 +388,7 @@ func (s *Service) importedProduct(ctx context.Context, row importRow) (models.Pr
 
 // createImportedProduct creates the row's product, with its variant and the
 // options the variant names, in one call.
-func (s *Service) createImportedProduct(ctx context.Context, row importRow) error {
+func (s *Service) createImportedProduct(ctx context.Context, row importRow) (models.Product, error) {
 	in := CreateProductInput{
 		Handle: row.text(columnProductHandle), Title: row.text("product_title"),
 		Subtitle: row.optText("product_subtitle"), Description: row.optText("product_description"),
@@ -362,29 +399,29 @@ func (s *Service) createImportedProduct(ctx context.Context, row importRow) erro
 	}
 	var err error
 	if in.Metadata, err = jsonObject[any](row, "product_metadata"); err != nil {
-		return err
+		return models.Product{}, err
 	}
 	if giftcard, err := row.optBool("product_is_giftcard"); err != nil {
-		return err
+		return models.Product{}, err
 	} else if giftcard != nil {
 		in.IsGiftcard = *giftcard
 	}
 	if in.Discountable, err = row.optBool("product_discountable"); err != nil {
-		return err
+		return models.Product{}, err
 	}
 	for column, target := range map[string]**int32{
 		columnProductWeight: &in.Weight, columnProductLength: &in.Length,
 		columnProductHeight: &in.Height, columnProductWidth: &in.Width,
 	} {
 		if *target, err = row.optInt32(column); err != nil {
-			return err
+			return models.Product{}, err
 		}
 	}
 
 	if row.hasVariant() {
 		variant, options, err := newImportedVariant(row)
 		if err != nil {
-			return err
+			return models.Product{}, err
 		}
 		for _, title := range slices.Sorted(maps.Keys(options)) {
 			in.Options = append(in.Options, CreateOptionInput{Title: title, Values: []string{options[title]}})
@@ -392,9 +429,7 @@ func (s *Service) createImportedProduct(ctx context.Context, row importRow) erro
 		in.Variants = []CreateVariantInput{variant}
 	}
 
-	_, err = s.CreateProduct(ctx, in)
-
-	return err
+	return s.CreateProduct(ctx, in)
 }
 
 // newImportedVariant is the row's variant as a new one.
@@ -498,51 +533,52 @@ func (s *Service) updateImportedProduct(ctx context.Context, row importRow, p mo
 // it, or creates it, adding the options it names that the product lacks.
 func (s *Service) importVariant(
 	ctx context.Context, row importRow, p models.Product,
-) (created, changed bool, err error) {
+) (variantID string, created, changed bool, err error) {
 	options, err := jsonObject[string](row, "variant_options")
 	if err != nil {
-		return false, false, err
+		return "", false, false, err
 	}
 	addedOptions, err := s.ensureImportedOptions(ctx, p, options)
 	if err != nil {
-		return false, false, err
+		return "", false, false, err
 	}
 
 	variant, found, err := importedVariant(row, p, options)
 	if err != nil {
-		return false, false, err
+		return "", false, false, err
 	}
 	if !found {
 		in, _, err := newImportedVariant(row)
 		if err != nil {
-			return false, false, err
+			return "", false, false, err
 		}
-		if _, err := s.CreateVariant(ctx, p.ID, in); err != nil {
-			return false, false, err
+		createdVariant, err := s.CreateVariant(ctx, p.ID, in)
+		if err != nil {
+			return "", false, false, err
 		}
 
-		return true, false, nil
+		return createdVariant.ID, true, false, nil
 	}
 
 	in, variantChanged, err := variantUpdate(row, variant)
 	if err != nil {
-		return false, false, err
+		return "", false, false, err
 	}
 	if options != nil && !sameOptions(variant.OptionValues, options) {
 		ids, err := s.optionValueIDs(ctx, p.ID, options)
 		if err != nil {
-			return false, false, err
+			return "", false, false, err
 		}
 		in.OptionValueIDs, variantChanged = ids, true
 	}
 	if !variantChanged {
-		return false, addedOptions, nil
+		return variant.ID, false, addedOptions, nil
 	}
 	if _, err := s.UpdateVariant(ctx, variant.ID, in); err != nil {
-		return false, false, err
+		return "", false, false, err
 	}
 
-	return false, true, nil
+	return variant.ID, false, true, nil
 }
 
 // importedVariant finds the row's variant among the product's.

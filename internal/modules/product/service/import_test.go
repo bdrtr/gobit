@@ -50,7 +50,7 @@ func TestAnExportComesBackAsAnImport(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	svc := newService(t, newMemStore(), newFakeLinker(), &exportGraph{currencies: []string{"TRY"}})
+	svc := newImportService(t, newMemStore(), newFakeLinker(), &exportGraph{currencies: []string{"TRY"}}, newFakePrices())
 	shirt, err := svc.CreateProduct(ctx, service.CreateProductInput{
 		Handle: "shirt", Title: "Shirt", Status: models.StatusPublished,
 		Options: []service.CreateOptionInput{{Title: "Size", Values: []string{"S", "M"}}},
@@ -143,7 +143,7 @@ func TestARowThatCannotBeAppliedIsRefusedAlone(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	svc := newService(t, newMemStore(), newFakeLinker(), &exportGraph{})
+	svc := newImportService(t, newMemStore(), newFakeLinker(), &exportGraph{}, newFakePrices())
 	_, err := svc.CreateProduct(ctx, service.CreateProductInput{
 		Handle: "shirt", Title: "Shirt",
 		Options:  []service.CreateOptionInput{{Title: "Size", Values: []string{"S"}}},
@@ -156,7 +156,7 @@ func TestARowThatCannotBeAppliedIsRefusedAlone(t *testing.T) {
 		[]string{"prod_missing", "", "Ghost", "", "", ""},
 		[]string{"", "shirt", "Shirt", "maybe", "", ""},
 		[]string{"", "shirt", "", "", "A variant nobody can find again", ""},
-		[]string{"", "hat", "Hat", "true", "", "1999"},
+		[]string{"", "hat", "Hat", "true", "", ""},
 	))
 
 	assert.Equal(t, 4, done.RowsDone)
@@ -255,7 +255,7 @@ func TestAnUnchangedExportChangesNothing(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	svc := newService(t, newMemStore(), newFakeLinker(), &exportGraph{currencies: []string{"TRY"}})
+	svc := newImportService(t, newMemStore(), newFakeLinker(), &exportGraph{currencies: []string{"TRY"}}, newFakePrices())
 	_, err := svc.CreateProduct(ctx, service.CreateProductInput{
 		Handle: "shirt", Title: "Shirt", Status: models.StatusPublished, Subtitle: ptr("Cotton"),
 		Options: []service.CreateOptionInput{{Title: "Size", Values: []string{"S", "M"}}},

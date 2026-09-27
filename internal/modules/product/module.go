@@ -119,10 +119,20 @@ const AdminName = Name + ".admin"
 // constant.
 const UploadReaderName = "file.interop"
 
+// PricesName is the container name of pricing's service, through which a
+// catalog import writes its price columns (ADR 0207).
+//
+// Like [UploadReaderName] it is repeated here as a string, and an unresolvable
+// name reads as "pricing is not installed": a file with price columns is then
+// refused when it is sent. The single source of truth is pricing's ServiceName.
+const PricesName = "pricing.service"
+
 // Error codes.
 const (
 	codeSetupFailed = "product_module_setup_failed"
-	codeLinkDefine  = "product_link_define_failed"
+	// codePricesAbsent says pricing is not installed.
+	codePricesAbsent = "product_prices_unavailable"
+	codeLinkDefine   = "product_link_define_failed"
 )
 
 //go:embed migrations/*.sql
@@ -259,7 +269,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// module and the container may not hold it yet (the module.Module
 		// contract). The wrapper resolves it on first use.
 		Uploads: &uploadReader{c: c, log: log},
-		Logger:  log,
+		// Pricing is resolved the same way, for the import's price columns.
+		Prices: &importPrices{c: c, log: log},
+		Logger: log,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
@@ -429,6 +441,68 @@ func (r *uploadReader) resolve(ctx context.Context) {
 	default:
 		r.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
 			"the %s module could not resolve the upload read-back (%q)", Name, UploadReaderName)
+	}
+}
+
+// importPrices is the wrapper that resolves pricing's surface ON FIRST USE, for
+// a catalog import's price columns (ADR 0207).
+//
+// It is lazy and optional for [uploadReader]'s reasons. An installation without
+// pricing is a setup decision and [importPrices.Installed] says so, which the
+// import turns into a refusal of the file; a name that IS registered and does
+// not satisfy the surface is a wiring fault, kept and returned from every call.
+type importPrices struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  service.PriceSetWriter
+	err  error
+}
+
+// That the wrapper satisfies the surface the service expects is pinned at
+// compile time.
+var _ service.ImportPrices = (*importPrices)(nil)
+
+// Installed answers nil when pricing's surface is bound.
+func (p *importPrices) Installed(ctx context.Context) error {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	return p.err
+}
+
+// CreateEmptyPriceSet creates an empty price set through pricing.
+func (p *importPrices) CreateEmptyPriceSet(ctx context.Context) (string, error) {
+	if err := p.Installed(ctx); err != nil {
+		return "", err
+	}
+
+	return p.svc.CreateEmptyPriceSet(ctx)
+}
+
+// SetUnitBasePrices sets the base prices at one unit through pricing.
+func (p *importPrices) SetUnitBasePrices(
+	ctx context.Context, priceSetID string, amountsByCurrency map[string]int64,
+) (bool, error) {
+	if err := p.Installed(ctx); err != nil {
+		return false, err
+	}
+
+	return p.svc.SetUnitBasePrices(ctx, priceSetID, amountsByCurrency)
+}
+
+// resolve resolves the surface from the container; the result is stored once.
+func (p *importPrices) resolve(ctx context.Context) {
+	svc, err := container.Resolve[service.PriceSetWriter](p.c, PricesName)
+	switch {
+	case err == nil:
+		p.svc = svc
+		p.log.InfoContext(ctx, "import prices bound", "provider", PricesName)
+	case errors.IsNotFound(err):
+		p.err = errors.Unavailable(codePricesAbsent,
+			"the pricing module is not in this installation (%q is not registered)", PricesName)
+	default:
+		p.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the %s module could not resolve pricing's surface (%q)", Name, PricesName)
 	}
 }
 

@@ -26,9 +26,11 @@ import (
 
 // CreateEmptyPriceSet creates a price set with no prices and returns ITS ID.
 //
-// The product module calls this while creating a variant and writes the returned
-// id into the "product_variant_price_set" link; pricing never sees that link and
-// is unaware that the variant exists (Principle 2.1/2.3).
+// The product module calls this when a catalog import prices a variant that has
+// no price set (ADR 0207), and writes the returned id into its own
+// "product_variant_price_set" link; pricing never sees that link and is unaware
+// that the variant exists (Principle 2.1/2.3). Creating a variant creates no
+// price set.
 //
 // The counterpart on the consumer side:
 //
@@ -72,6 +74,31 @@ func (s *Service) SetBasePrices(ctx context.Context, priceSetID string, amountsB
 
 	_, err := s.SetPrices(ctx, priceSetID, inputs)
 	return err
+}
+
+// SetUnitBasePrices sets the base price at one unit in each currency given and
+// leaves every other price on the set as it is (ADR 0206, ADR 0207).
+//
+// The price it changes is the one on no list, with no rules, covering one unit:
+// ADR 0041's price, the one a catalog export writes. A quantity tier and a list
+// price keep their amounts. A currency with no price at one unit gains one
+// ending below its lowest tier, and a currency holding two is refused with
+// [CodeUnitPriceAmbiguous]. It reports whether it wrote; an amount that already
+// stands writes nothing. Unlike [Service.SetBasePrices] it never deletes a price.
+//
+// The counterpart on the consumer side:
+//
+//	type PriceSetWriter interface {
+//	    SetUnitBasePrices(ctx context.Context, priceSetID string, amountsByCurrency map[string]int64) (bool, error)
+//	}
+func (s *Service) SetUnitBasePrices(
+	ctx context.Context, priceSetID string, amountsByCurrency map[string]int64,
+) (bool, error) {
+	if err := s.ready(); err != nil {
+		return false, err
+	}
+
+	return s.setUnitBasePrices(ctx, priceSetID, amountsByCurrency)
 }
 
 // CalculateAmount returns the UNIT amount of the selected price in minor units.

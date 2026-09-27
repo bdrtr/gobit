@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/internal/modules/product/api"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
@@ -19,10 +20,17 @@ import (
 func postCSV(t *testing.T, catalog *fakeCatalog, contentType, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
+	return postCSVAs(t, catalog, []string{corehttp.ScopeAdmin}, contentType, body)
+}
+
+// postCSVAs sends a file to the import endpoint with the given scopes.
+func postCSVAs(t *testing.T, catalog *fakeCatalog, scopes []string, contentType, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
 	req := httptest.NewRequest(http.MethodPost, "/admin/v1/products/imports", strings.NewReader(body))
 	req.Header.Set("Content-Type", contentType)
 	req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-		ID: "usr_test", Kind: "user", Scopes: []string{corehttp.ScopeAdmin},
+		ID: "usr_test", Kind: "user", Scopes: scopes,
 	}))
 	rec := httptest.NewRecorder()
 	newRouter(catalog).ServeHTTP(rec, req)
@@ -90,4 +98,30 @@ func TestAnImportIsReadBack(t *testing.T) {
 	errs, ok := data["errors"].([]any)
 	require.True(t, ok)
 	require.Len(t, errs, 1)
+}
+
+// TestAnImportWithPricesTakesThePricingWrite: a file with price columns writes
+// prices, so the catalog's write alone does not send it (ADR 0207).
+func TestAnImportWithPricesTakesThePricingWrite(t *testing.T) {
+	t.Parallel()
+
+	sent := 0
+	catalog := &fakeCatalog{createImport: func(context.Context, []byte) (models.Import, error) {
+		sent++
+		return models.Import{ID: "pimp_1", Status: models.ImportPending, RowsTotal: 1}, nil
+	}}
+	priced := "product_handle,variant_sku,variant_price_try\nshirt,S1,1000\n"
+	plain := "product_handle,product_title\nshirt,Shirt\n"
+
+	rec := postCSVAs(t, catalog, []string{api.ScopeWrite}, "text/csv", priced)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "pricing:write")
+	assert.Zero(t, sent, "the file was not kept")
+
+	rec = postCSVAs(t, catalog, []string{api.ScopeWrite}, "text/csv", plain)
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+	rec = postCSVAs(t, catalog, []string{api.ScopeWrite, "pricing:write"}, "text/csv", priced)
+	require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+	assert.Equal(t, 2, sent)
 }

@@ -7,6 +7,7 @@ costs a table holding the file until the import ends; prices follow in 0206.
 
 - **Status:** Accepted
 - **Date:** 2026-09-27
+- **Amended by:** [0207](0207-an-import-writes-its-prices-through-pricing.md) for the price columns, which are now applied; the record this one calls 0206 is 0207, because [0206](0206-a-base-price-is-changed-at-one-unit.md) first corrected the write they use
 
 Measurement: [measurements/0205](../measurements/0205-a-file-worked-through.md)
 

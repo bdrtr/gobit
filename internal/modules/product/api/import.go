@@ -85,6 +85,18 @@ func (h *Handler) adminCreateImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A file with price columns writes prices too, and an operator allowed the
+	// catalog and not the prices must not change them this way (ADR 0207).
+	if service.ImportNamesPrices(file) {
+		principal, _ := corehttp.PrincipalFromContext(r.Context())
+		if !principal.HasScope(scopePricingWrite) {
+			corehttp.WriteError(r.Context(), w, coreerrors.Forbidden(corehttp.CodeForbidden,
+				"a file with price columns also requires the %q privilege", scopePricingWrite))
+
+			return
+		}
+	}
+
 	created, err := h.svc.CreateImport(r.Context(), file)
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
@@ -126,7 +138,12 @@ func describeAdminImport(d *openapi.Doc) {
 			"or else by variant_options, and creates it when none matches. An empty cell leaves " +
 			"the value as it is. A row that cannot be applied is refused alone and named in the " +
 			"import's errors by its line. A row a stopped job applied already runs again and " +
-			"finds what it made. The price columns are read and not applied (ADR 0205).",
+			"finds what it made.\n\n" +
+			"A variant_price_<currency> cell sets the variant's base price at one unit in that " +
+			"currency, in minor units, through the pricing module, and gives the variant a price " +
+			"set when it has none; a quantity tier and a list price keep their amounts. A file " +
+			"with price columns also requires pricing:write, and is answered 403 without it and " +
+			"422 in an installation without the pricing module (ADR 0207).",
 		RequestBody: map[string]any{
 			"required": true,
 			"content": map[string]any{

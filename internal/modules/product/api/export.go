@@ -24,6 +24,10 @@ const mediaCSV = "text/csv"
 // allowed the catalog and not the prices must not get the prices this way.
 const scopePricingRead = "pricing:read"
 
+// scopePricingWrite is the pricing module's write scope, which an import with
+// price columns takes as well as the catalog's (ADR 0207).
+const scopePricingWrite = "pricing:write"
+
 // exportPageDeadline is how long each page of an export may take to write.
 // The server's write timeout covers one ordinary response; an export moves it
 // forward page by page instead.

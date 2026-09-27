@@ -113,6 +113,9 @@ type Options struct {
 	// upload id is recorded WITHOUT being verified (see
 	// [Service.verifyImageUploads]).
 	Uploads UploadReader
+	// Prices is pricing's surface an import's price columns are written
+	// through (ADR 0207); if nil is given, a file with price columns is refused.
+	Prices ImportPrices
 	// Events is the bus the catalog events are published on; if nil is given, the
 	// events are silently skipped (rationale: [Service.publishProductEvent]).
 	Events EventPublisher
@@ -133,6 +136,7 @@ type Service struct {
 	links   Linker
 	graph   Grapher
 	uploads UploadReader
+	prices  ImportPrices
 	events  EventPublisher
 	log     *slog.Logger
 	now     func() time.Time
@@ -160,6 +164,7 @@ func New(opts Options) (*Service, error) {
 		links:   opts.Links,
 		graph:   opts.Query,
 		uploads: opts.Uploads,
+		prices:  opts.Prices,
 		events:  opts.Events,
 		log:     log,
 		now:     now,
