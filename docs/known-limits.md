@@ -677,11 +677,12 @@ past and is not corrected retroactively.
   per-customer and no storefront view, because both would need an identity in a
   payload that deliberately carries none.
 
-- **Every published event reaches every registered webhook endpoint, including
-  `cart.created`.** `plugins/webhookout` forwards the whole topic set by
-  construction — its own gate fails the build in both directions — so installing
-  it means one delivery per opened cart. There is no per-topic subscription and no
-  rate limit; the only lever is not registering a receiver.
+- **`plugins/webhookout` forwards every published topic, `cart.created`
+  included.** Its own gate fails the build in both directions. A receiver is
+  owed only the topics it registered for, only the events its filters match, and
+  only the fields it lists (ADR 0218), so a receiver of `cart.created` is still
+  owed one delivery per opened cart in the regions it names. There is no rate
+  limit.
 
 - **No lane proves a generated project works at the version it PINS.** Every
   out-of-tree proof rewrites the generated `go.mod` to point at the checkout, so

@@ -128,7 +128,7 @@ func TestTheReceiverListingCarriesTheForwardedSet(t *testing.T) {
 		Data: []endpointResponse{}, Count: 0, ForwardedTopics: ForwardedTopics,
 	}
 
-	assert.Equal(t, []string{"count", "data", "forwarded_topics"}, keysOf(t, body))
+	assert.Equal(t, []string{"count", "data", "forwarded_topics", "topic_fields"}, keysOf(t, body))
 
 	raw, err := json.Marshal(body)
 	require.NoError(t, err)

@@ -109,6 +109,18 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A webhook receiver can narrow what it gets** (ADR 0218). **For API
+  consumers:** a receiver registered at `POST /admin/v1/webhooks/` takes
+  `filters` (per topic, payload fields and the values one of which an event
+  must carry) and `fields` (per topic, the payload fields it is sent); the
+  listing returns both and `topic_fields`, the names they may use. `PATCH
+  /admin/v1/webhooks/{id}` changes topics, filters, fields or description and
+  keeps the URL and the secret. A request body may be 64 KB. **For operators:**
+  webhookout migration 000002 adds the two columns; rolling it back keeps the
+  receivers and sends them every event of their topics whole. **For plugin
+  authors:** a publisher that adds a payload field fails webhookout's census
+  until `TopicFields` lists it.
+
 - **A customer group can be a segment** (ADR 0217). **For API consumers:**
   `PUT /admin/v1/customer-groups/{id}/segment` gives a group a rule of ANDed
   conditions over `has_account`, `account_age_days`, `country_code` (the default

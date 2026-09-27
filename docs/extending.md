@@ -260,11 +260,15 @@ integrations) listen to them. Which backend carries them is chosen by
 `EVENT_BUS=inmemory|redis`, and the difference between the two is what the
 second rule below is about.
 
-Today there are six subscribers: the search plugin `search-pg` (`product.*`),
+Today there are eight subscribers: the search plugin `search-pg` (`product.*`),
 the notification module (`order.placed`), the browser push plugin `web-push`
 (`order.placed`), the **order module** itself (`payment.captured`,
-`payment.refunded`), the **gift card sale flow** (`payment.captured`, ADR 0210)
-and the outbound webhook plugin `webhook-out` (all six of the topics below).
+`payment.refunded`), the **gift card sale flow** (`payment.captured`, ADR 0210),
+the **cancellation flow** (`order.line_canceled`, `fulfillment.canceled`, ADR
+0134 and 0139), the analytics plugin `analytics` (`cart.created`,
+`cart.completed`, `order.placed`, ADR 0153) and the outbound webhook plugin
+`webhook-out` (all ten topics below; a receiver narrows them by topic, filter and
+field, ADR 0218).
 
 The order module is the only subscriber that is not a plugin, and it is a
 subscriber for the reason a plugin would not do: money moved by the payment
@@ -274,9 +278,16 @@ order (ADR 0121).
 | Event | Payload |
 |---|---|
 | `order.placed` | `order_id`, `display_id`, `status`, `region_id`, `customer_id`, `currency_code`, `total`, `item_count`, `placed_at` |
+| `order.line_canceled` | `order_id`, `order_line_item_id`, `variant_id`, `cancellation_id`, `canceled_quantity`, `canceled_before`, `bought_quantity`, `canceled_at` |
 | `product.created` / `product.updated` | `product_id`, `status` |
 | `product.deleted` | `product_id` |
 | `payment.captured` / `payment.refunded` | `payment_collection_id`, `occurred_at` |
+| `fulfillment.canceled` | `fulfillment_id`, `reference`, `canceled_at` |
+| `cart.created` / `cart.completed` | `cart_id`, `region_id`, `currency_code`, `occurred_at` |
+
+`plugins/webhookout` lists the same fields, `customer_id` withheld, as
+`TopicFields`, and its census reads them out of the publishers, so a receiver's
+filter or field list can name only a field the topic carries.
 
 `placed_at` is a timestamp, but it too is a string: the moment the order was
 placed, converted to UTC and formatted with `time.RFC3339Nano`

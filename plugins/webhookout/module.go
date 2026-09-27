@@ -400,6 +400,7 @@ func (m *webhookModule) Routes(r chi.Router) {
 			Post("/deliveries/{id}/redrive", m.handleRedrive)
 		r.With(corehttp.RequireScope(ScopeWrite)).
 			Post("/deliveries/{id}/discard", m.handleDiscard)
+		r.With(corehttp.RequireScope(ScopeWrite)).Patch("/{id}", m.handleUpdate)
 		r.With(corehttp.RequireScope(ScopeWrite)).Delete("/{id}", m.handleDelete)
 	})
 }
@@ -696,3 +697,41 @@ func mustSub(files embed.FS, dir string) fs.FS {
 
 	return sub
 }
+
+// TopicFields are the payload fields each forwarded topic carries to a
+// receiver, redacted fields left out (ADR 0218). A receiver's filter and field
+// list name only these, and fields_test.go reads them out of the publishers.
+//
+// A field is listed in alphabetical order. A publisher that adds one fails that
+// test until it is listed here, and a receiver can then filter on it.
+var TopicFields = map[string][]string{
+	topicOrderPlaced: {
+		fieldCurrencyCode, "display_id", "item_count", fieldOrderID, "placed_at", fieldRegionID, fieldStatus, "total",
+	},
+	topicPaymentCaptured: {fieldOccurredAt, fieldPaymentCollectionID},
+	topicPaymentRefunded: {fieldOccurredAt, fieldPaymentCollectionID},
+	topicProductCreated:  {fieldProductID, fieldStatus},
+	topicProductUpdated:  {fieldProductID, fieldStatus},
+	topicProductDeleted:  {fieldProductID},
+	topicOrderLineCanceled: {
+		"bought_quantity", fieldCanceledAt, "canceled_before", "canceled_quantity", "cancellation_id",
+		fieldOrderID, "order_line_item_id", "variant_id",
+	},
+	topicFulfillmentCanceled: {fieldCanceledAt, "fulfillment_id", "reference"},
+	topicCartCreated:         {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
+	topicCartCompleted:       {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
+}
+
+// The payload fields more than one topic carries, spelled as their publishers
+// spell them; the census holds TopicFields, and so these, to the source.
+const (
+	fieldCanceledAt          = "canceled_at"
+	fieldCartID              = "cart_id"
+	fieldCurrencyCode        = "currency_code"
+	fieldOccurredAt          = "occurred_at"
+	fieldOrderID             = "order_id"
+	fieldPaymentCollectionID = "payment_collection_id"
+	fieldProductID           = "product_id"
+	fieldRegionID            = "region_id"
+	fieldStatus              = "status"
+)

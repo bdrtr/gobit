@@ -45,6 +45,15 @@ func (m *webhookModule) Describe(d *openapi.Doc) {
 	m.describeDeliveries(d)
 }
 
+// narrowing describes a receiver's filters and fields (ADR 0218).
+const narrowing = "\"filters\" names, per topic, payload fields and the values one of which an " +
+	"event has to carry in each of them, compared as text; an event that does not match is " +
+	"queued for this receiver not at all. \"fields\" names, per topic, the payload fields the " +
+	"receiver is sent; a topic it leaves out is sent whole, and the envelope and its " +
+	"\"redacted\" list are always sent. Both name only topics the receiver takes and only " +
+	"fields those topics carry, and \"topic_fields\" on the listing lists them; a redacted " +
+	"field is none of them."
+
 // describeReceivers records the registration surface.
 func (m *webhookModule) describeReceivers(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathReceivers, openapi.Operation{
@@ -62,6 +71,7 @@ func (m *webhookModule) describeReceivers(d *openapi.Doc) {
 			"that silently never fires, and this request is the only moment somebody is " +
 			"present to be told. Read \"forwarded_topics\" on the listing for the set that " +
 			"is accepted." +
+			"\n\n" + narrowing +
 			"\n\n" +
 			"Requires the " + ScopeWrite + " scope.",
 		RequestBody: d.RequestBody(createRequest{}),
@@ -85,6 +95,24 @@ func (m *webhookModule) describeReceivers(d *openapi.Doc) {
 		Responses: map[string]any{
 			"200": openapi.Response("The receivers and the topics that can be asked for",
 				d.SchemaOf(endpointListResponse{})),
+		},
+	})
+
+	d.Describe(http.MethodPatch, pathReceiver, openapi.Operation{
+		Summary: "Changes a receiver's topics, filters, fields or description.",
+		Description: "A field left out of the body is kept; a field given replaces the whole " +
+			"of it. The URL and the secret are not changed here: a new URL is a new receiver, " +
+			"with a new secret. A topic taken away while a filter or a field list still names " +
+			"it is refused, so the request that drops it sends those too. The change applies " +
+			"to the events after it; the deliveries already queued are sent as they were " +
+			"written." +
+			"\n\n" + narrowing +
+			"\n\n" +
+			"Requires the " + ScopeWrite + " scope.",
+		RequestBody: d.RequestBody(updateRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The receiver as it is now, without its secret",
+				d.Item(endpointResponse{})),
 		},
 	})
 

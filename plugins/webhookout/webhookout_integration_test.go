@@ -242,7 +242,7 @@ func register(t *testing.T, m *webhookModule, target string, topics ...string) e
 	validated, err := validateTopics(topics)
 	require.NoError(t, err)
 
-	e, err := m.store.createEndpoint(t.Context(), target, validated, "an integration test")
+	e, err := m.store.createEndpoint(t.Context(), target, validated, nil, nil, "an integration test")
 	require.NoError(t, err)
 
 	return e
@@ -288,10 +288,12 @@ func TestTheMigrationIsReallyReversible(t *testing.T) {
 	version, dirty, err := db.Version(ctx, dsn, ModuleName)
 	require.NoError(t, err)
 	require.False(t, dirty, "the ledger must not be dirty after a clean apply")
-	require.Equal(t, uint(1), version)
+	require.Equal(t, uint(upMigrations(t)), version, "every up file applied")
 
-	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 1),
-		"the down migration has to roll back")
+	// Zero steps rolls every migration back, so the tables go whatever the
+	// number of files is.
+	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 0),
+		"the down migrations have to roll back")
 
 	pool := testPoolFor(t, dsn)
 	for _, table := range []string{"webhook_endpoint", "webhook_delivery"} {
@@ -321,14 +323,15 @@ func TestTheMigrationIsReversibleWithDataInIt(t *testing.T) {
 
 	st := newStore(testPoolFor(t, dsn).Pool())
 	e, err := st.createEndpoint(ctx, "https://receiver.test/hook",
-		[]string{topicOrderPlaced}, "with data")
+		[]string{topicOrderPlaced}, topicFilters{topicOrderPlaced: {"region_id": {"reg_1"}}},
+		topicFields{topicOrderPlaced: {"order_id"}}, "with data")
 	require.NoError(t, err)
 	_, err = st.enqueue(ctx, "evt_1", topicOrderPlaced, time.Now(),
 		map[string]any{"order_id": "ord_1"}, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, e.ID)
 
-	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 1),
+	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 0),
 		"the rollback has to work with rows in the tables, not only on empty ones")
 }
 

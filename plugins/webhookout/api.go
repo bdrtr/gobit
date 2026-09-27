@@ -18,10 +18,11 @@ import (
 
 // maxBodyBytes bounds a request body.
 //
-// A registration is a URL, a handful of topic names and a sentence of prose. Two
-// kilobytes is generous for that and far too small to be a way of filling
+// A registration is a URL, a handful of topic names, a sentence of prose and,
+// since ADR 0218, the filters and field lists of up to ten topics. Sixty-four
+// kilobytes holds those with room and is far too small to be a way of filling
 // memory.
-const maxBodyBytes = 2 << 10
+const maxBodyBytes = 64 << 10
 
 // listLimit bounds one page of the delivery listing.
 //
@@ -41,15 +42,31 @@ type createRequest struct {
 	Topics []string `json:"topics"`
 	// Description is what a human wrote about the receiver.
 	Description string `json:"description"`
+	// Filters are, per topic, the payload fields an event must carry one of the
+	// listed values in to be sent (ADR 0218).
+	Filters topicFilters `json:"filters"`
+	// Fields are, per topic, the payload fields the receiver is sent.
+	Fields topicFields `json:"fields"`
+}
+
+// updateRequest changes a receiver (ADR 0218). A field left out is kept, and a
+// field given replaces the whole of it; the URL and the secret are not changed.
+type updateRequest struct {
+	Topics      *[]string     `json:"topics"`
+	Filters     *topicFilters `json:"filters"`
+	Fields      *topicFields  `json:"fields"`
+	Description *string       `json:"description"`
 }
 
 // createResponse is the ONLY time the secret is returned.
 type createResponse struct {
-	ID          string    `json:"id"`
-	URL         string    `json:"url"`
-	Topics      []string  `json:"topics"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string       `json:"id"`
+	URL         string       `json:"url"`
+	Topics      []string     `json:"topics"`
+	Filters     topicFilters `json:"filters"`
+	Fields      topicFields  `json:"fields"`
+	Description string       `json:"description"`
+	CreatedAt   time.Time    `json:"created_at"`
 	// Secret is the signing key. It is returned here and NOWHERE else — not by
 	// the listing, not by any other endpoint — so it has to be stored by
 	// whoever registered the receiver at this moment.
@@ -63,11 +80,21 @@ type createResponse struct {
 
 // endpointResponse is a receiver as the listing shows it: no secret.
 type endpointResponse struct {
-	ID          string    `json:"id"`
-	URL         string    `json:"url"`
-	Topics      []string  `json:"topics"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string       `json:"id"`
+	URL         string       `json:"url"`
+	Topics      []string     `json:"topics"`
+	Filters     topicFilters `json:"filters"`
+	Fields      topicFields  `json:"fields"`
+	Description string       `json:"description"`
+	CreatedAt   time.Time    `json:"created_at"`
+}
+
+// toEndpointResponse renders a receiver without its secret.
+func toEndpointResponse(e *endpoint) endpointResponse {
+	return endpointResponse{
+		ID: e.ID, URL: e.URL, Topics: e.Topics, Filters: e.Filters, Fields: e.Fields,
+		Description: e.Description, CreatedAt: e.CreatedAt,
+	}
 }
 
 // deliveryResponse is one delivery row as a human reads it.
@@ -105,6 +132,9 @@ type endpointListResponse struct {
 	Data            []endpointResponse `json:"data"`
 	Count           int                `json:"count"`
 	ForwardedTopics []string           `json:"forwarded_topics"`
+	// TopicFields are the fields each topic carries to a receiver: the names a
+	// filter and a field list can use (ADR 0218).
+	TopicFields map[string][]string `json:"topic_fields"`
 }
 
 // deliveryListResponse is the answer of GET /admin/v1/webhooks/deliveries.
@@ -196,7 +226,14 @@ func (m *webhookModule) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := m.store.createEndpoint(ctx, target, topics, strings.TrimSpace(req.Description))
+	filters, fields, err := validateNarrowing(topics, req.Filters, req.Fields)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	created, err := m.store.createEndpoint(ctx, target, topics, filters, fields, strings.TrimSpace(req.Description))
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 
@@ -210,6 +247,8 @@ func (m *webhookModule) handleCreate(w http.ResponseWriter, r *http.Request) {
 		ID:          created.ID,
 		URL:         created.URL,
 		Topics:      created.Topics,
+		Filters:     created.Filters,
+		Fields:      created.Fields,
 		Description: created.Description,
 		CreatedAt:   created.CreatedAt,
 		Secret:      created.Secret,
@@ -230,16 +269,81 @@ func (m *webhookModule) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := make([]endpointResponse, 0, len(endpoints))
-	for _, e := range endpoints {
-		items = append(items, endpointResponse{
-			ID: e.ID, URL: e.URL, Topics: e.Topics,
-			Description: e.Description, CreatedAt: e.CreatedAt,
-		})
+	for i := range endpoints {
+		items = append(items, toEndpointResponse(&endpoints[i]))
 	}
 
 	corehttp.WriteJSON(ctx, w, http.StatusOK, endpointListResponse{
-		Data: items, Count: len(items), ForwardedTopics: ForwardedTopics,
+		Data: items, Count: len(items), ForwardedTopics: ForwardedTopics, TopicFields: TopicFields,
 	})
+}
+
+// handleUpdate changes a receiver's topics, filters, fields or description
+// (ADR 0218).
+//
+// The receiver's current row is read under its lock and the change is checked
+// whole: a topic taken away while a filter or a field list still names it is
+// refused, so the request that drops it sends those too. The URL and the secret
+// are not changed here; a new URL is a new receiver, with a new secret.
+func (m *webhookModule) handleUpdate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+
+	var req updateRequest
+	if err := decodeBody(r, &req); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+	if req.Topics == nil && req.Filters == nil && req.Fields == nil && req.Description == nil {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+			"the request changes nothing; it names topics, filters, fields or description"))
+
+		return
+	}
+
+	updated, found, err := m.store.updateEndpoint(ctx, id, func(current endpoint) (endpoint, error) {
+		next := current
+		if req.Topics != nil {
+			topics, err := validateTopics(*req.Topics)
+			if err != nil {
+				return endpoint{}, err
+			}
+			next.Topics = topics
+		}
+		if req.Filters != nil {
+			next.Filters = *req.Filters
+		}
+		if req.Fields != nil {
+			next.Fields = *req.Fields
+		}
+		if req.Description != nil {
+			next.Description = strings.TrimSpace(*req.Description)
+		}
+		filters, fields, err := validateNarrowing(next.Topics, next.Filters, next.Fields)
+		if err != nil {
+			return endpoint{}, err
+		}
+		next.Filters, next.Fields = filters, fields
+
+		return next, nil
+	})
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+	if !found {
+		corehttp.WriteError(ctx, w, coreerrors.NotFound(codeNotFound,
+			"there is no webhook receiver with the id %q", id))
+
+		return
+	}
+
+	m.log.InfoContext(ctx, "a webhook receiver was changed",
+		"endpoint_id", id, "topics", strings.Join(updated.Topics, ","))
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toEndpointResponse(&updated)})
 }
 
 // handleDelete removes a receiver.

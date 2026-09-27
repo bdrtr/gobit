@@ -43,12 +43,21 @@ const (
 	codeNotFound    = "webhookout_not_found"
 )
 
+// topicFilters is, per topic, the payload fields an event must carry one of
+// the listed values in (ADR 0218).
+type topicFilters map[string]map[string][]string
+
+// topicFields is, per topic, the payload fields a receiver is sent.
+type topicFields map[string][]string
+
 // endpoint is one registered receiver.
 type endpoint struct {
 	ID          string
 	URL         string
 	Secret      string
 	Topics      []string
+	Filters     topicFilters
+	Fields      topicFields
 	Description string
 	CreatedAt   time.Time
 }
@@ -111,7 +120,7 @@ func newStore(pool *pgxpool.Pool) *store { return &store{pool: pool} }
 // pasting their own would eventually paste a short one, and the surface that
 // accepts a weak key is the surface that gets one.
 func (s *store) createEndpoint(
-	ctx context.Context, url string, topics []string, description string,
+	ctx context.Context, url string, topics []string, filters topicFilters, fields topicFields, description string,
 ) (endpoint, error) {
 	id, err := newID(endpointPrefix)
 	if err != nil {
@@ -123,14 +132,20 @@ func (s *store) createEndpoint(
 		return endpoint{}, err
 	}
 
+	if filters == nil {
+		filters = topicFilters{}
+	}
+	if fields == nil {
+		fields = topicFields{}
+	}
 	row := endpoint{
-		ID: id, URL: url, Secret: secret, Topics: topics, Description: description,
+		ID: id, URL: url, Secret: secret, Topics: topics, Filters: filters, Fields: fields, Description: description,
 	}
 	err = s.pool.QueryRow(ctx, `
-		INSERT INTO webhook_endpoint (id, url, secret, topics, description)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO webhook_endpoint (id, url, secret, topics, filters, fields, description)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING created_at`,
-		id, url, secret, topics, description).Scan(&row.CreatedAt)
+		id, url, secret, topics, filters, fields, description).Scan(&row.CreatedAt)
 	if err != nil {
 		return endpoint{}, wrapDB(err, "the webhook endpoint could not be registered")
 	}
@@ -145,7 +160,7 @@ func (s *store) createEndpoint(
 // an admin response, and the only thing needing it is the sender.
 func (s *store) listEndpoints(ctx context.Context) ([]endpoint, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, url, topics, description, created_at
+		SELECT id, url, topics, filters, fields, description, created_at
 		FROM webhook_endpoint
 		ORDER BY created_at, id`)
 	if err != nil {
@@ -156,13 +171,56 @@ func (s *store) listEndpoints(ctx context.Context) ([]endpoint, error) {
 	var out []endpoint
 	for rows.Next() {
 		var e endpoint
-		if err := rows.Scan(&e.ID, &e.URL, &e.Topics, &e.Description, &e.CreatedAt); err != nil {
+		if err := rows.Scan(&e.ID, &e.URL, &e.Topics, &e.Filters, &e.Fields, &e.Description, &e.CreatedAt); err != nil {
 			return nil, wrapDB(err, "a webhook endpoint row could not be read")
 		}
 		out = append(out, e)
 	}
 
 	return out, wrapDB(rows.Err(), "the webhook endpoint rows could not be read")
+}
+
+// updateEndpoint rewrites a receiver's topics, filters, fields and description
+// under its row lock (ADR 0218): change is handed the row as it is and returns
+// it as it is to be, or an error that writes nothing. The URL and the secret are
+// not changed, and the deliveries already written stay as they were written.
+// A receiver that is not there is (endpoint{}, false, nil).
+func (s *store) updateEndpoint(
+	ctx context.Context, id string, change func(current endpoint) (endpoint, error),
+) (endpoint, bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return endpoint{}, false, wrapDB(err, "the webhook endpoint could not be read")
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	current := endpoint{ID: id}
+	err = tx.QueryRow(ctx, `
+		SELECT url, topics, filters, fields, description, created_at
+		FROM webhook_endpoint WHERE id = $1 FOR UPDATE`, id).
+		Scan(&current.URL, &current.Topics, &current.Filters, &current.Fields, &current.Description, &current.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return endpoint{}, false, nil
+	}
+	if err != nil {
+		return endpoint{}, false, wrapDB(err, "the webhook endpoint could not be read")
+	}
+	next, err := change(current)
+	if err != nil {
+		return endpoint{}, true, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE webhook_endpoint
+		SET topics = $2, filters = $3, fields = $4, description = $5, updated_at = now()
+		WHERE id = $1`, id, next.Topics, next.Filters, next.Fields, next.Description); err != nil {
+		return endpoint{}, true, wrapDB(err, "the webhook endpoint could not be updated")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return endpoint{}, true, wrapDB(err, "the webhook endpoint could not be updated")
+	}
+	next.ID, next.URL, next.CreatedAt = id, current.URL, current.CreatedAt
+
+	return next, true, nil
 }
 
 // deleteEndpoint removes a receiver and reports whether there was one.
@@ -200,14 +258,33 @@ func (s *store) deleteEndpoint(ctx context.Context, id string) (bool, error) {
 // not known until the SELECT runs. It is the same alphabet and length the Go
 // side uses, built from gen_random_uuid()'s hex — a decision worth naming
 // because two id shapes for one column would make the prefix meaningless.
+//
+// # Filters and fields (ADR 0218)
+//
+// A receiver's filter for the topic is read in the same statement: every field
+// it names has to carry one of its values, as text, and an event that does not
+// writes no row for that receiver. Its field list for the topic, when it has
+// one, is applied to the row's payload, so what is queued is what is sent and a
+// redrive sends the same body.
 const enqueueSQL = `
 INSERT INTO webhook_delivery (
     id, endpoint_id, url, event_id, event_name, occurred_at, payload, redacted
 )
 SELECT $1 || upper(translate(substr(gen_random_uuid()::text, 1, 26), '-', '0')),
-       e.id, e.url, $2, $3, $4, $5, $6
+       e.id, e.url, $2, $3, $4,
+       CASE WHEN e.fields ? $3 THEN (
+           SELECT COALESCE(jsonb_object_agg(p.key, p.value), '{}'::jsonb)
+           FROM jsonb_each($5::jsonb) AS p
+           WHERE e.fields -> $3 ? p.key
+       ) ELSE $5::jsonb END,
+       $6
 FROM webhook_endpoint e
 WHERE e.topics @> ARRAY[$3]::text[]
+  AND NOT EXISTS (
+      SELECT 1 FROM jsonb_each(COALESCE(e.filters -> $3, '{}'::jsonb)) AS f
+      WHERE NOT (f.value ? ($5::jsonb ->> f.key))
+         OR ($5::jsonb ->> f.key) IS NULL
+  )
 ON CONFLICT (endpoint_id, event_id) DO NOTHING`
 
 // enqueue writes the deliveries this event owes and returns how many were new.
