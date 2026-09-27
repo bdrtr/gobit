@@ -51,13 +51,21 @@ type Interop struct {
 func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 
 // CheckTender refuses a payment that can never be made: a provider that is not
-// registered, or a person's balance for a cart that names nobody.
+// registered, a person's balance for a cart that names nobody, or a gift card
+// code that opens no card in the payment's currency.
 //
 // The checkout asks it before the order is opened, so a refusal known in advance
 // does not first place an order and announce it (ADR 0175). customerID may be
-// EMPTY for a guest.
-func (i *Interop) CheckTender(ctx context.Context, providerID, customerID string) error {
-	return i.svc.CheckTender(ctx, providerID, customerID)
+// EMPTY for a guest; data is what the payment's provider will be sent.
+func (i *Interop) CheckTender(
+	ctx context.Context, providerID, customerID, currencyCode string, data json.RawMessage,
+) error {
+	decoded, err := decodeInteropData(data)
+	if err != nil {
+		return err
+	}
+
+	return i.svc.CheckTender(ctx, providerID, customerID, currencyCode, decoded)
 }
 
 // CreateCollection opens a payment collection for a reference and returns its

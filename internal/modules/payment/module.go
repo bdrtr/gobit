@@ -68,6 +68,7 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/payment/api"
+	"github.com/bdrtr/gobit/internal/modules/payment/giftcard"
 	"github.com/bdrtr/gobit/internal/modules/payment/loyaltypoints"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 	"github.com/bdrtr/gobit/internal/modules/payment/repository"
@@ -274,6 +275,13 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// [Options.PersonBoundTenders] üzerinde: müşteri iddiasına kanıtsız güvenen
 	// bir kurulumda bu sağlayıcılar başkasının bakiyesini harcatırdı, o yüzden
 	// birleşim yapılandırılamıyor.
+	// A gift card is registered in every installation (ADR 0208). It is not
+	// person-bound: its owner is whoever presents the code, so the claim the two
+	// tenders above depend on plays no part in it.
+	if err := providers.Register(giftcard.New(repo, log)); err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
+			"the %s module could not register the gift card provider", ModuleName)
+	}
 	if m.opts.PersonBoundTenders {
 		if err := providers.Register(storecredit.New(repo, log)); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,

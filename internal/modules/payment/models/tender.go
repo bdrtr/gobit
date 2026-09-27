@@ -21,10 +21,16 @@ const LoyaltyTenderID = "loyalty_points"
 // credit the shop owes rather than against a provider's clearing (ADR 0186).
 const StoreCreditTenderID = "store_credit"
 
+// GiftCardTenderID is the identity of the provider that spends a gift card
+// (ADR 0208), here for [StoreCreditTenderID]'s reason: the journal books a
+// capture through it against the gift cards the shop owes.
+const GiftCardTenderID = "gift_card"
+
 // TenderSession is a balance tender's OWN view of a payment session.
 //
-// Store credit and loyalty points are one state machine over two ledgers
-// (ADR 0165), so they keep one session record in two tables. It mirrors
+// Store credit, loyalty points and gift cards are one state machine over three
+// ledgers (ADR 0165, ADR 0208), so they keep one session record in three
+// tables. It mirrors
 // [ManualSession] because the state machine belongs to the core contract rather
 // than to any provider, and it is a separate table from the module's
 // payment_sessions for the same reason the manual provider's is: the module
@@ -37,8 +43,9 @@ type TenderSession struct {
 	IdempotencyKey string
 	// Reference is the payment collection's identifier.
 	Reference string
-	// CustomerID is whose balance this session spends.
-	CustomerID string
+	// OwnerID is whose balance this session spends: the customer's for store
+	// credit and points, the card's for a gift card.
+	OwnerID string
 	// Amount is the session's amount and CurrencyCode its currency. The amount
 	// is in the ledger's unit, which for both tenders is the currency's minor
 	// unit: a point is worth one of them (ADR 0165).

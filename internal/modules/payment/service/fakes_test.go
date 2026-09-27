@@ -70,6 +70,14 @@ type fakeStore struct {
 	journalCalls []journalCall
 	// caused is what CausedRefunds returns (ADR 0189).
 	caused []models.CausedRefund
+
+	// giftCards, giftDigests and giftEntries are the gift cards, their codes'
+	// digests and their ledger (ADR 0208); failGiftEntry makes the issue's
+	// ledger write fail.
+	giftCards     map[string]models.GiftCard
+	giftDigests   map[string]string
+	giftEntries   map[string][]models.GiftCardEntry
+	failGiftEntry error
 }
 
 // newFakeStore boş bir sahte depo üretir.
@@ -103,6 +111,9 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		refunds     map[string]models.Refund
 		credit      map[string][]models.StoreCreditEntry
 		loyalty     map[string][]models.LoyaltyEntry
+		giftCards   map[string]models.GiftCard
+		giftDigests map[string]string
+		giftEntries map[string][]models.GiftCardEntry
 	}{
 		collections: maps.Clone(f.collections),
 		sessions:    maps.Clone(f.sessions),
@@ -110,6 +121,9 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		refunds:     maps.Clone(f.refunds),
 		credit:      maps.Clone(f.credit),
 		loyalty:     maps.Clone(f.loyalty),
+		giftCards:   maps.Clone(f.giftCards),
+		giftDigests: maps.Clone(f.giftDigests),
+		giftEntries: maps.Clone(f.giftEntries),
 	}
 	f.mu.Unlock()
 
@@ -118,6 +132,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		f.collections, f.sessions = snapshot.collections, snapshot.sessions
 		f.payments, f.refunds = snapshot.payments, snapshot.refunds
 		f.credit, f.loyalty = snapshot.credit, snapshot.loyalty
+		f.giftCards, f.giftDigests, f.giftEntries = snapshot.giftCards, snapshot.giftDigests, snapshot.giftEntries
 		f.mu.Unlock()
 		return err
 	}

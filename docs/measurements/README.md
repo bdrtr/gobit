@@ -138,3 +138,4 @@ truth: a report says what was true on the day it was taken.
 | [A file worked through — measured 2026-09-27](0205-a-file-worked-through.md) | 76 |
 | [One price at one unit — measured 2026-09-27](0206-one-price-at-one-unit.md) | 66 |
 | [Prices in a file — measured 2026-09-27](0207-prices-in-a-file.md) | 67 |
+| [A code with a balance — measured 2026-09-27](0208-a-code-with-a-balance.md) | 100 |

@@ -44,7 +44,7 @@ func TestTheTenderCheckRefusesOnlyWhatIsKnownInAdvance(t *testing.T) {
 		"a provider nobody registered":  {provider: "adyen", customer: "cus_1", code: service.CodeProviderNotFound},
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := svc.CheckTender(context.Background(), tc.provider, tc.customer)
+			err := svc.CheckTender(context.Background(), tc.provider, tc.customer, "TRY", nil)
 			if tc.code == "" {
 				assert.NoError(t, err)
 				return

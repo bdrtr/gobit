@@ -39,6 +39,11 @@ const (
 	AccountLoyalty JournalAccount = "loyalty"
 	// AccountLoyaltyGranted is what the points the shop gave cost it.
 	AccountLoyaltyGranted JournalAccount = "loyalty_granted"
+	// AccountGiftCard is the gift cards the shop owes whoever holds their codes
+	// (ADR 0208).
+	AccountGiftCard JournalAccount = "gift_card"
+	// AccountGiftCardGranted is what the gift cards the shop issued cost it.
+	AccountGiftCardGranted JournalAccount = "gift_card_granted"
 )
 
 // JournalKind is the movement an entry is read from.
@@ -56,6 +61,8 @@ const (
 	JournalLoyaltyEarn JournalKind = "loyalty_earn"
 	// JournalLoyaltyReverse is a reverse row of the loyalty ledger.
 	JournalLoyaltyReverse JournalKind = "loyalty_reverse"
+	// JournalGiftCardIssue is an issue row of the gift card ledger.
+	JournalGiftCardIssue JournalKind = "gift_card_issue"
 )
 
 // JournalLine is one side of an entry. Exactly one of Debit and Credit is

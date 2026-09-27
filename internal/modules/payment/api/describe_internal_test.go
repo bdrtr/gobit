@@ -328,7 +328,29 @@ func anlatilanUclar() []ucBeklentisi {
 			metod: http.MethodGet, yol: pathAdminPaymentJournal, durum: "200",
 			yanit: fullJournal(),
 		},
+		// Gift cards (ADR 0208).
+		{
+			metod: http.MethodPost, yol: pathAdminGiftCards, durum: "201",
+			istek: issueGiftCardRequest{}, yanit: fullGiftCard(),
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminGiftCards, durum: "200",
+			yanit: fullGiftCard(), liste: true,
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminGiftCard, durum: "200",
+			yanit: fullGiftCard(),
+		},
+		{
+			metod: http.MethodGet, yol: pathAdminGiftCardEntries, durum: "200",
+			yanit: giftCardEntryDTO{Reference: "gcses_1"}, liste: true,
+		},
 	}
+}
+
+// fullGiftCard is a card with every field written, the code included.
+func fullGiftCard() giftCardDTO {
+	return giftCardDTO{Code: "ABCD-EFGH-JKMN-PQRS"}
 }
 
 // doluPuanSatiri bütün alanları yazılan bir puan defteri satırı üretir.

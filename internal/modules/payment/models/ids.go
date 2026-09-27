@@ -35,6 +35,13 @@ const (
 	// session identifiers; like the store-credit provider's, it sits on the
 	// module's session record as external_id.
 	LoyaltySessionIDPrefix = "lpses_"
+	// GiftCardIDPrefix is the prefix of gift cards.
+	GiftCardIDPrefix = "gcard_"
+	// GiftCardEntryIDPrefix is the prefix of gift card ledger entries.
+	GiftCardEntryIDPrefix = "gcentry_"
+	// GiftCardSessionIDPrefix is the prefix of the gift-card provider's own
+	// session identifiers; it sits on the module's session record as external_id.
+	GiftCardSessionIDPrefix = "gcses_"
 )
 
 // idEncoding is padding-free encoding over the Crockford Base32 alphabet. A
@@ -61,6 +68,15 @@ func NewLoyaltyEntryID() string { return newID(LoyaltyEntryIDPrefix, time.Now())
 
 // NewLoyaltySessionID produces a new loyalty-points provider session identifier.
 func NewLoyaltySessionID() string { return newID(LoyaltySessionIDPrefix, time.Now()) }
+
+// NewGiftCardID produces a new gift card identifier.
+func NewGiftCardID() string { return newID(GiftCardIDPrefix, time.Now()) }
+
+// NewGiftCardEntryID produces a new gift card ledger entry identifier.
+func NewGiftCardEntryID() string { return newID(GiftCardEntryIDPrefix, time.Now()) }
+
+// NewGiftCardSessionID produces a new gift-card provider session identifier.
+func NewGiftCardSessionID() string { return newID(GiftCardSessionIDPrefix, time.Now()) }
 
 // NewPaymentID produces a new capture identifier.
 func NewPaymentID() string { return newID(PaymentIDPrefix, time.Now()) }

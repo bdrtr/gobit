@@ -50,6 +50,15 @@ type fakePayments struct {
 	// journal is the scripted journal and journalQueries how it was asked.
 	journal        service.Journal
 	journalQueries []service.JournalQuery
+
+	// issuedCard, giftCards and giftEntries are the gift card endpoints'
+	// scripted answers (ADR 0208); lastGiftInput and lastGiftID are what the
+	// handlers passed on.
+	issuedCard    service.IssuedGiftCard
+	giftCards     []service.GiftCardWithBalance
+	giftEntries   []models.GiftCardEntry
+	lastGiftInput service.IssueGiftCardInput
+	lastGiftID    string
 	// lastLoyaltyPage listeleme ucunun servise ilettiği sayfalamadır.
 	lastLoyaltyPage service.Page
 

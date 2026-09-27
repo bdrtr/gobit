@@ -179,11 +179,11 @@ func TestEveryMovementCarriesItsSignAndTheSessionsName(t *testing.T) {
 	require.NoError(t, machine.Refund(context.Background(), partial.ID, 0))
 
 	want := []balancetender.Entry{
-		{CustomerID: "cus_1", CurrencyCode: "TRY", Movement: balancetender.Hold, Amount: -5_000, SessionID: canceled.ID},
-		{CustomerID: "cus_1", CurrencyCode: "TRY", Movement: balancetender.Release, Amount: 5_000, SessionID: canceled.ID},
-		{CustomerID: "cus_1", CurrencyCode: "TRY", Movement: balancetender.Hold, Amount: -5_000, SessionID: partial.ID},
-		{CustomerID: "cus_1", CurrencyCode: "TRY", Movement: balancetender.Release, Amount: 3_000, SessionID: partial.ID},
-		{CustomerID: "cus_1", CurrencyCode: "TRY", Movement: balancetender.Refund, Amount: 2_000, SessionID: partial.ID},
+		{OwnerID: "cus_1", CurrencyCode: "TRY", Movement: balancetender.Hold, Amount: -5_000, SessionID: canceled.ID},
+		{OwnerID: "cus_1", CurrencyCode: "TRY", Movement: balancetender.Release, Amount: 5_000, SessionID: canceled.ID},
+		{OwnerID: "cus_1", CurrencyCode: "TRY", Movement: balancetender.Hold, Amount: -5_000, SessionID: partial.ID},
+		{OwnerID: "cus_1", CurrencyCode: "TRY", Movement: balancetender.Release, Amount: 3_000, SessionID: partial.ID},
+		{OwnerID: "cus_1", CurrencyCode: "TRY", Movement: balancetender.Refund, Amount: 2_000, SessionID: partial.ID},
 	}
 	assert.Equal(t, want, store.entries)
 

@@ -140,6 +140,65 @@ func (q *Queries) JournalCaptures(ctx context.Context, arg JournalCapturesParams
 	return items, nil
 }
 
+const journalGiftCardIssues = `-- name: JournalGiftCardIssues :many
+SELECT e.id, e.gift_card_id, g.currency_code, e.amount, e.created_at
+FROM payment_gift_card_entries e
+JOIN payment_gift_cards g ON g.id = e.gift_card_id
+WHERE e.kind = 'issue'
+  AND e.created_at >= $1 AND e.created_at < $2
+  AND ($3::text IS NULL OR g.currency_code = $3::text)
+ORDER BY e.created_at, e.id
+LIMIT $4
+`
+
+type JournalGiftCardIssuesParams struct {
+	FromAt       pgtype.Timestamptz
+	ToAt         pgtype.Timestamptz
+	CurrencyCode *string
+	RowLimit     int32
+}
+
+type JournalGiftCardIssuesRow struct {
+	ID           string
+	GiftCardID   string
+	CurrencyCode string
+	Amount       int64
+	CreatedAt    pgtype.Timestamptz
+}
+
+// A gift card's issue is read with the card's currency, which the entry does not
+// repeat (ADR 0208).
+func (q *Queries) JournalGiftCardIssues(ctx context.Context, arg JournalGiftCardIssuesParams) ([]JournalGiftCardIssuesRow, error) {
+	rows, err := q.db.Query(ctx, journalGiftCardIssues,
+		arg.FromAt,
+		arg.ToAt,
+		arg.CurrencyCode,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []JournalGiftCardIssuesRow{}
+	for rows.Next() {
+		var i JournalGiftCardIssuesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.GiftCardID,
+			&i.CurrencyCode,
+			&i.Amount,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const journalLoyaltyGrants = `-- name: JournalLoyaltyGrants :many
 SELECT id, customer_id, currency_code, points, kind, created_at
 FROM payment_loyalty_entries

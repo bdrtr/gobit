@@ -259,6 +259,9 @@ func TestIdentifierPrefixesAndOrdering(t *testing.T) {
 		models.StoreCreditSessionIDPrefix: models.NewStoreCreditSessionID,
 		models.LoyaltyEntryIDPrefix:       models.NewLoyaltyEntryID,
 		models.LoyaltySessionIDPrefix:     models.NewLoyaltySessionID,
+		models.GiftCardIDPrefix:           models.NewGiftCardID,
+		models.GiftCardEntryIDPrefix:      models.NewGiftCardEntryID,
+		models.GiftCardSessionIDPrefix:    models.NewGiftCardSessionID,
 	}
 
 	declared := declaredIDPrefixes(t)

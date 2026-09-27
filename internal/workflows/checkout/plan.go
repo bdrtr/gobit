@@ -338,7 +338,8 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 	// A payment that can never be made is refused HERE, with the payment
 	// module's own code, rather than at the payment step: by then the order is
 	// placed and order.placed is out (ADR 0175).
-	if err := w.payments.CheckTender(ctx, in.PaymentProviderID, snap.CustomerID); err != nil {
+	if err := w.payments.CheckTender(ctx, in.PaymentProviderID, snap.CustomerID, snap.CurrencyCode,
+		in.PaymentData); err != nil {
 		return nil, err
 	}
 

@@ -35,6 +35,40 @@ type PaymentCollection struct {
 	CustomerID       *string
 }
 
+type PaymentGiftCard struct {
+	ID           string
+	CodeDigest   string
+	CodeTail     string
+	CurrencyCode string
+	Reason       string
+	CreatedAt    pgtype.Timestamptz
+}
+
+type PaymentGiftCardEntry struct {
+	ID         string
+	GiftCardID string
+	Amount     int64
+	Kind       string
+	Reference  string
+	CreatedAt  pgtype.Timestamptz
+}
+
+type PaymentGiftCardSession struct {
+	ID               string
+	IdempotencyKey   string
+	Reference        string
+	GiftCardID       string
+	Amount           int64
+	CurrencyCode     string
+	Status           string
+	AuthorizedAmount int64
+	CapturedAmount   int64
+	RefundedAmount   int64
+	DeclineReason    *string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type PaymentLoyaltyEntry struct {
 	ID           string
 	CustomerID   string

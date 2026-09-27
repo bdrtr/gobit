@@ -12,6 +12,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Two payment ledger gates counted the ledgers by hand** (D145). A new ledger
+  left both green without being read. **For contributors:** a payment ledger's
+  insert query and its table are now required to be named in
+  `internal/arch/loyalty_ledger_test.go`, and the gate fails until they are.
+
 - **Pricing's godoc named a caller that did not exist** (D144). It said the
   product module creates a price set for every new variant. **For plugin
   authors:** creating a variant creates no price set; `CreateEmptyPriceSet` is
@@ -90,6 +95,21 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A gift card is a code with a balance** (ADR 0208). **For API consumers:**
+  `POST /admin/v1/gift-cards` (payment:write) issues a card holding an amount in
+  one currency, with a required reason, and answers with its code ONCE; `GET
+  /admin/v1/gift-cards`, `/admin/v1/gift-cards/{id}` and `/{id}/entries`
+  (payment:read) read the cards, their balances and their history, never the
+  code. A storefront pays with a card by completing a cart with
+  `payment_provider_id: "gift_card"` and `payment_data: {"code": "..."}`; a guest
+  may. A code that opens no card is refused with 422 `payment_gift_card_unknown`
+  and a card in another currency with 409 `payment_gift_card_currency`, both
+  before an order is opened. A card has to cover the whole order for now. The
+  payment journal gains the `gift_card` and `gift_card_granted` accounts and the
+  `gift_card_issue` kind. **For operators:** payment migration 000009 adds three
+  tables, and rolling it back stops while a card exists. **For plugin
+  authors:** the `gift_card` provider is registered in every installation.
 
 - **An import writes its prices through pricing** (ADR 0207). **For API
   consumers:** a `variant_price_<currency>` cell in a file sent to `POST

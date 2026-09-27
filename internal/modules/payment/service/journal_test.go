@@ -86,6 +86,10 @@ func TestTheChartOfAccounts(t *testing.T) {
 			CurrencyCode: "TRY", Amount: 100, CustomerID: "cus_1"},
 		models.JournalMovement{ID: "lpt_reverse", Kind: models.JournalLoyaltyReverse, OccurredAt: at(7),
 			CurrencyCode: "TRY", Amount: -25, CustomerID: "cus_1"},
+		models.JournalMovement{ID: "gc_issue", Kind: models.JournalGiftCardIssue, OccurredAt: at(8),
+			CurrencyCode: "TRY", Amount: 5_000},
+		models.JournalMovement{ID: "pay_card_gift", Kind: models.JournalCapture, OccurredAt: at(9),
+			CurrencyCode: "TRY", Amount: 2_000, CollectionID: "paycol_4", ProviderID: models.GiftCardTenderID},
 	)
 
 	journal, err := svc.Journal(t.Context(), journalQuery())
@@ -104,6 +108,10 @@ func TestTheChartOfAccounts(t *testing.T) {
 		"scr_1":       {{models.AccountStoreCreditGranted, "", "", 4_000}, {models.AccountStoreCredit, "", "cus_1", 4_000}},
 		"lpt_earn":    {{models.AccountLoyaltyGranted, "", "", 100}, {models.AccountLoyalty, "", "cus_1", 100}},
 		"lpt_reverse": {{models.AccountLoyalty, "", "cus_1", 25}, {models.AccountLoyaltyGranted, "", "", 25}},
+		// ADR 0208: an issued card is a debt to its holder, and spending it
+		// reduces that debt rather than a provider's clearing.
+		"gc_issue":      {{models.AccountGiftCardGranted, "", "", 5_000}, {models.AccountGiftCard, "", "", 5_000}},
+		"pay_card_gift": {{models.AccountGiftCard, "", "", 2_000}, {models.AccountReceivable, "", "", 2_000}},
 	}
 	require.Len(t, journal.Entries, len(want))
 	for _, entry := range journal.Entries {

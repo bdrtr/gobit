@@ -140,6 +140,15 @@ type Payments interface {
 
 	// Journal derives the module's books over a window (ADR 0186).
 	Journal(ctx context.Context, q service.JournalQuery) (service.Journal, error)
+
+	// IssueGiftCard issues a gift card and returns its code once (ADR 0208).
+	IssueGiftCard(ctx context.Context, in service.IssueGiftCardInput) (service.IssuedGiftCard, error)
+	// GetGiftCard returns a card and its balance.
+	GetGiftCard(ctx context.Context, id string) (service.GiftCardWithBalance, error)
+	// ListGiftCards pages the cards with their balances.
+	ListGiftCards(ctx context.Context, page service.Page) ([]service.GiftCardWithBalance, int64, error)
+	// ListGiftCardEntries pages a card's history.
+	ListGiftCardEntries(ctx context.Context, id string, page service.Page) ([]models.GiftCardEntry, int64, error)
 	// ListLoyalty müşterinin puan geçmişini sayfalar.
 	ListLoyalty(
 		ctx context.Context, in service.ListLoyaltyInput,
@@ -258,6 +267,13 @@ func (h *Handler) Routes(r chi.Router) {
 	okuma.Get(pathAdminLoyaltyPointsBalance, h.loyaltyPointBalance)
 
 	okuma.Get(pathAdminPaymentJournal, h.paymentJournal)
+
+	// Gift cards (ADR 0208): issuing one creates money a holder can spend, so it
+	// is a write under the payment scope, as store credit's issue is.
+	yazma.Post(pathAdminGiftCards, h.issueGiftCard)
+	okuma.Get(pathAdminGiftCards, h.listGiftCards)
+	okuma.Get(pathAdminGiftCard, h.getGiftCard)
+	okuma.Get(pathAdminGiftCardEntries, h.listGiftCardEntries)
 
 	yazma.Post(pathAdminCollections, h.createCollection)
 	okuma.Get(pathAdminCollections, h.listCollections)

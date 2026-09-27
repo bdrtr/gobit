@@ -42,6 +42,7 @@ import (
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	"github.com/bdrtr/gobit/internal/modules/payment/giftcard"
 	"github.com/bdrtr/gobit/internal/modules/payment/loyaltypoints"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
@@ -65,6 +66,9 @@ var modulTablolari = []string{
 	// oturumları (ADR 0165): kredideki ayrımın aynısı, defter modülün, oturumlar
 	// sağlayıcının.
 	"payment_loyalty_entries", "payment_loyalty_sessions",
+	// The gift cards, their ledger and the gift-card provider's sessions
+	// (ADR 0208).
+	"payment_gift_cards", "payment_gift_card_entries", "payment_gift_card_sessions",
 }
 
 // Test verisinde kullanılan sabitler. Referans BAŞKA bir modüle (sepet ya da
@@ -901,8 +905,8 @@ func TestModulContainerdaAdlariKaydeder(t *testing.T) {
 
 	registry, err := container.Resolve[*service.ProviderRegistry](c, payment.ProvidersName)
 	require.NoError(t, err)
-	assert.Equal(t, []string{manual.ID}, registry.IDs(),
-		"varsayılan sağlayıcı Register sırasında kaydedilmeli")
+	assert.Equal(t, []string{giftcard.ID, manual.ID}, registry.IDs(),
+		"the default provider and the gift card are registered in every installation (ADR 0208)")
 
 	provider, err := container.Resolve[query.Provider](c, payment.ProviderName)
 	require.NoError(t, err)
@@ -1252,8 +1256,8 @@ func TestModulAyarAcikkenKrediSaglayicisiniKaydeder(t *testing.T) {
 
 	registry, err := container.Resolve[*service.ProviderRegistry](c, payment.ProvidersName)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{manual.ID, storecredit.ID, loyaltypoints.ID}, registry.IDs(),
-		"ayar açıkken mağaza kredisi de sadakat puanı da seçilebilir birer ödeme yöntemi olmalı")
+	assert.ElementsMatch(t, []string{manual.ID, giftcard.ID, storecredit.ID, loyaltypoints.ID}, registry.IDs(),
+		"with the setting on, store credit and loyalty points are tenders too, beside the gift card")
 }
 
 // lockWaiters counts the requests WAITING on a lock the given backend holds.

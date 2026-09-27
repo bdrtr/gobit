@@ -121,6 +121,7 @@ func Describe(d *openapi.Doc) {
 	// (ADR 0164).
 	describeLoyaltyPoints(d)
 	describeJournal(d)
+	describeGiftCards(d)
 
 	describeOturumlar(d)
 	describeTahsilatlar(d)

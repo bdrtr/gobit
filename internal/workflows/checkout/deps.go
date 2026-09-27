@@ -430,13 +430,15 @@ type Orders interface {
 // of the session, it looks at the amounts (see [Payments.Collection]).
 type Payments interface {
 	// CheckTender refuses a payment that can never be made — a provider that is
-	// not registered, or a person's balance for a cart that names nobody — and
-	// returns nil for every other.
+	// not registered, a person's balance for a cart that names nobody, or a gift
+	// card code that opens no card in the cart's currency — and returns nil for
+	// every other.
 	//
 	// [Workflows.prepare] asks it before the saga, so a refusal known in advance
-	// opens no order and publishes no order.placed (ADR 0175). customerID may be
-	// EMPTY for a guest.
-	CheckTender(ctx context.Context, providerID, customerID string) error
+	// opens no order and publishes no order.placed (ADR 0175, ADR 0208).
+	// customerID may be EMPTY for a guest; data is the payment's data as the
+	// provider will receive it.
+	CheckTender(ctx context.Context, providerID, customerID, currencyCode string, data json.RawMessage) error
 
 	// CreateCollection opens a payment collection for a reference and returns its
 	// identifier. The amount must be POSITIVE.

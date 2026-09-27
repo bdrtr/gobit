@@ -90,10 +90,11 @@ func describeJournal(d *openapi.Doc) {
 		Description: "Every entry is DERIVED from a row the module already keeps and never " +
 			"deletes, so the journal cannot disagree with the payments it describes: a " +
 			"capture debits the account the money came from (a provider's clearing, or the " +
-			"store credit or loyalty points the customer spent) and credits receivable; a " +
-			"refund does the reverse; a store credit grant debits store_credit_granted and " +
-			"credits store_credit; a loyalty earn debits loyalty_granted and credits " +
-			"loyalty, and a reverse does the reverse. A hold and a release are a tender's " +
+			"store credit, loyalty points or gift card the customer spent) and credits " +
+			"receivable; a refund does the reverse; a store credit grant debits " +
+			"store_credit_granted and credits store_credit; a gift card's issue debits " +
+			"gift_card_granted and credits gift_card; a loyalty earn debits loyalty_granted " +
+			"and credits loyalty, and a reverse does the reverse. A hold and a release are a tender's " +
 			"own mechanics and move no money, so they are not entries. " +
 			"\n\n" +
 			"Each entry's debits equal its credits, and so do the balances' in every " +

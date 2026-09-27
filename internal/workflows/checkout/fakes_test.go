@@ -531,7 +531,9 @@ type stubPayments struct {
 }
 
 // CheckTender records the question and applies the scripted answer.
-func (s *stubPayments) CheckTender(ctx context.Context, providerID, customerID string) error {
+func (s *stubPayments) CheckTender(
+	ctx context.Context, providerID, customerID, _ string, _ json.RawMessage,
+) error {
 	s.checkedTenders = append(s.checkedTenders, [2]string{providerID, customerID})
 	if s.checkTenderFn == nil {
 		return nil

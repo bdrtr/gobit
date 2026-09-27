@@ -12,7 +12,7 @@ import (
 // the half-open window [from, to) and in one currency when currencyCode is set
 // (ADR 0186).
 //
-// Each of the four kinds is read with a limit of limit+1, so a caller that gets
+// Each of the five kinds is read with a limit of limit+1, so a caller that gets
 // more than limit movements back knows the window was cut and can refuse it
 // rather than export a journal missing its tail. The rows come back grouped by
 // kind; ordering the whole is the caller's.
@@ -50,8 +50,14 @@ func (r *Repository) JournalMovements(
 	if err != nil {
 		return nil, classify(err, codeQueryFailed, "the loyalty grants of the journal could not be read")
 	}
+	cards, err := q.JournalGiftCardIssues(ctx, paymentdb.JournalGiftCardIssuesParams{
+		FromAt: fromTime(from), ToAt: fromTime(to), CurrencyCode: currency, RowLimit: rowLimit,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the gift card issues of the journal could not be read")
+	}
 
-	out := make([]models.JournalMovement, 0, len(captures)+len(refunds)+len(issues)+len(grants))
+	out := make([]models.JournalMovement, 0, len(captures)+len(refunds)+len(issues)+len(grants)+len(cards))
 	for i := range captures {
 		row := &captures[i]
 		out = append(out, models.JournalMovement{
@@ -84,6 +90,13 @@ func (r *Repository) JournalMovements(
 		out = append(out, models.JournalMovement{
 			ID: row.ID, Kind: kind, OccurredAt: toTime(row.CreatedAt),
 			CurrencyCode: row.CurrencyCode, Amount: row.Points, CustomerID: row.CustomerID,
+		})
+	}
+	for i := range cards {
+		row := &cards[i]
+		out = append(out, models.JournalMovement{
+			ID: row.ID, Kind: models.JournalGiftCardIssue, OccurredAt: toTime(row.CreatedAt),
+			CurrencyCode: row.CurrencyCode, Amount: row.Amount,
 		})
 	}
 

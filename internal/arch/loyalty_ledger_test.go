@@ -3,6 +3,8 @@ package arch_test
 import (
 	"go/ast"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -11,8 +13,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This file holds ONE rule for the payment module's two ledgers: EVERY ROW A
-// CUSTOMER'S BALANCE IS MADE OF ENTERED THROUGH A NAMED DOOR.
+// This file holds ONE rule for the payment module's ledgers: EVERY ROW A
+// BALANCE IS MADE OF ENTERED THROUGH A NAMED DOOR.
 //
 // It is ADR 0164's load-bearing half, widened by ADR 0165, and it is
 // [stockLedgerChokePoints]'s instrument pointed at two ledgers. A point ledger
@@ -68,13 +70,57 @@ type ledgerDoor struct {
 // reaches the table without ever touching the name the gate was watching.
 //
 // The credit ledger's chain is two entries: its service door (IssueCredit) is
-// the operator's act and has callers of its own, so the chain ends there.
+// the operator's act and has callers of its own, so the chain ends there. The
+// gift card ledger's is the same shape: the card's issue, and the tender that
+// spends it (ADR 0208).
 var paymentLedgerChokePoints = map[string]ledgerDoor{
 	"InsertLoyaltyEntry":     {onlyFrom: "AppendLoyaltyEntry"},
 	"AppendLoyaltyEntry":     {onlyFrom: "earnLoyaltyPoints", orTheTender: "loyalty_points"},
 	"earnLoyaltyPoints":      {onlyFrom: "writeCollectionTotals"},
 	"InsertStoreCreditEntry": {onlyFrom: "AppendStoreCreditEntry"},
 	"AppendStoreCreditEntry": {onlyFrom: "IssueCredit", orTheTender: "store_credit"},
+	"InsertGiftCardEntry":    {onlyFrom: "AppendGiftCardEntry"},
+	"AppendGiftCardEntry":    {onlyFrom: "IssueGiftCard", orTheTender: "gift_card"},
+}
+
+// paymentLedgerQueriesDir is where the payment module's generated queries live.
+const paymentLedgerQueriesDir = "internal/modules/payment/repository/paymentdb"
+
+// TestEveryPaymentLedgerHasADoor derives the ledgers from the generated
+// queries: every Insert...Entry the payment module has is a ledger's first
+// link, and each has to be named above.
+//
+// The map above is written by hand, and a hand-written list is the shape this
+// repository keeps finding wrong: a third ledger added without its entry was
+// not audited at all, and nothing said so. The gift card ledger was written
+// that way first and this test is why it could not stay so.
+func TestEveryPaymentLedgerHasADoor(t *testing.T) {
+	t.Parallel()
+
+	tree := scanProductionSource(t)
+
+	var inserts []string
+	for _, file := range tree.files {
+		if filepath.ToSlash(filepath.Dir(file.path)) != paymentLedgerQueriesDir {
+			continue
+		}
+		for _, decl := range file.tree.Decls {
+			name := funcDeclName(decl)
+			if strings.HasPrefix(name, "Insert") && strings.HasSuffix(name, "Entry") {
+				inserts = append(inserts, name)
+			}
+		}
+	}
+	sort.Strings(inserts)
+
+	require.GreaterOrEqual(t, len(inserts), 3,
+		"only %v was found as a ledger insert under %s; the scan has gone blind", inserts, paymentLedgerQueriesDir)
+	for _, name := range inserts {
+		assert.Contains(t, paymentLedgerChokePoints, name,
+			"%s writes a row of a payment ledger and no door is named for it.\n"+
+				"Name the one function allowed to call it, and the chain up to the act that "+
+				"writes the ledger, in paymentLedgerChokePoints.", name)
+	}
 }
 
 // TestEveryPaymentLedgerWriteEntersThroughANamedDoor refuses a third way to
@@ -268,7 +314,34 @@ func containsString(values []string, value string) bool {
 // migrations. The list is what makes the audit below cover the tables rather
 // than one file: the rule that made it necessary — a correction is a new row —
 // is the module's own since its migration 000003.
-var paymentLedgerTables = []string{"payment_store_credit_entries", "payment_loyalty_entries"}
+var paymentLedgerTables = []string{
+	"payment_store_credit_entries", "payment_loyalty_entries", "payment_gift_card_entries",
+}
+
+// paymentLedgerTable matches a ledger's creation in the payment migrations.
+var paymentLedgerTable = regexp.MustCompile(`(?i)create table if not exists (payment_[a-z_]+_entries)\b`)
+
+// TestTheLedgerTableListIsTheSchemas derives the ledgers from the payment
+// module's migrations and holds the list above to them. The list was written
+// by hand and a third ledger was added without it (ADR 0208); the audit below
+// would have read its queries for nothing.
+func TestTheLedgerTableListIsTheSchemas(t *testing.T) {
+	t.Parallel()
+
+	migrations := readSQL(t, filepath.Join(repoRoot, modulesDir, "payment", "migrations"), ".up.sql")
+	var created []string
+	for _, match := range paymentLedgerTable.FindAllStringSubmatch(migrations, -1) {
+		created = append(created, strings.ToLower(match[1]))
+	}
+	sort.Strings(created)
+	listed := slices.Clone(paymentLedgerTables)
+	sort.Strings(listed)
+
+	require.NotEmpty(t, created, "no ledger table was found in the payment migrations; the scan has gone blind")
+	assert.Equal(t, created, listed,
+		"the payment migrations create these ledgers and paymentLedgerTables names those; "+
+			"a ledger missing from the list is one whose append-only rule nobody checks")
+}
 
 // TestThePaymentLedgersAreAppendOnlyInSQL refuses a statement that rewrites a
 // customer's money or points.

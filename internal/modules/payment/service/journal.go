@@ -115,6 +115,7 @@ func journalEntries(movements []models.JournalMovement) ([]models.JournalEntry, 
 //	store credit issue Dr store_credit_granted       Cr store_credit
 //	loyalty earn       Dr loyalty_granted            Cr loyalty
 //	loyalty reverse    Dr loyalty                    Cr loyalty_granted
+//	gift card issue    Dr gift_card_granted          Cr gift_card
 //
 // The tender's account is where the money of a capture came from ([tenderLine]).
 func journalEntry(m *models.JournalMovement) (models.JournalEntry, error) {
@@ -137,6 +138,9 @@ func journalEntry(m *models.JournalMovement) (models.JournalEntry, error) {
 	case models.JournalLoyaltyEarn:
 		debit = models.JournalLine{Account: models.AccountLoyaltyGranted}
 		credit = models.JournalLine{Account: models.AccountLoyalty, CustomerID: m.CustomerID}
+	case models.JournalGiftCardIssue:
+		debit = models.JournalLine{Account: models.AccountGiftCardGranted}
+		credit = models.JournalLine{Account: models.AccountGiftCard}
 	case models.JournalLoyaltyReverse:
 		// The ledger stores a reverse as negative points; the entry moves the
 		// same amount the other way.
@@ -171,6 +175,8 @@ func tenderLine(m *models.JournalMovement) models.JournalLine {
 		return models.JournalLine{Account: models.AccountStoreCredit, CustomerID: m.CustomerID}
 	case models.LoyaltyTenderID:
 		return models.JournalLine{Account: models.AccountLoyalty, CustomerID: m.CustomerID}
+	case models.GiftCardTenderID:
+		return models.JournalLine{Account: models.AccountGiftCard}
 	default:
 		return models.JournalLine{Account: models.AccountProviderClearing, ProviderID: m.ProviderID}
 	}

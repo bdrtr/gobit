@@ -169,7 +169,7 @@ func (l ledger) UpdateSessionState(
 func (l ledger) Move(ctx context.Context, entry balancetender.Entry) error {
 	_, err := l.store.AppendLoyaltyEntry(ctx, models.LoyaltyEntry{
 		ID:           models.NewLoyaltyEntryID(),
-		CustomerID:   entry.CustomerID,
+		CustomerID:   entry.OwnerID,
 		CurrencyCode: entry.CurrencyCode,
 		Points:       entry.Amount,
 		Kind:         movementKinds[entry.Movement],

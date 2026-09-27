@@ -1,5 +1,6 @@
 // Package balancetender is the ONE state machine the payment module's own
-// tenders run: store credit (ADR 0152) and loyalty points (ADR 0165).
+// tenders run: store credit (ADR 0152), loyalty points (ADR 0165) and gift
+// cards (ADR 0208).
 //
 // A balance tender spends money a customer already holds in a ledger of this
 // module. What differs between the two is the ledger and the name; what is the
@@ -29,11 +30,15 @@
 //
 // # Whose balance it is
 //
-// The customer comes from [coreprovider.CreateSessionInput.CustomerID], which the
-// payment module fills from the COLLECTION. It does not come from Data: that map
-// is the client's, and a shopper naming somebody else's id would spend their
-// balance. A session opened with no customer is refused rather than served with
-// an empty owner.
+// For store credit and points the owner is the customer, and it comes from
+// [coreprovider.CreateSessionInput.CustomerID], which the payment module fills
+// from the COLLECTION. It does not come from Data: that map is the client's, and
+// a shopper naming somebody else's id would spend their balance. A session opened
+// with no customer is refused rather than served with an empty owner.
+//
+// A gift card is the one balance whose owner IS what the client sends: its code
+// is a bearer credential, and whoever presents it spends the card. The tender
+// says so through [Identity.Owner], which resolves the owner from the input.
 //
 // # The provider package is the door
 //
@@ -72,8 +77,8 @@ const (
 
 // Entry is one ledger row the machine asks a tender to write.
 type Entry struct {
-	// CustomerID and CurrencyCode say whose balance, in which currency.
-	CustomerID   string
+	// OwnerID and CurrencyCode say whose balance, in which currency.
+	OwnerID      string
 	CurrencyCode string
 	// Movement is what happened and Amount is SIGNED accordingly: a hold is
 	// negative, a release and a refund are positive.
@@ -113,13 +118,13 @@ type Store interface {
 
 	// Move appends one row to the ledger.
 	Move(ctx context.Context, entry Entry) error
-	// Balance sums a customer's rows in one currency.
-	Balance(ctx context.Context, customerID, currencyCode string) (int64, error)
-	// LockBalance locks that customer's balance in one currency for the
+	// Balance sums an owner's rows in one currency.
+	Balance(ctx context.Context, ownerID, currencyCode string) (int64, error)
+	// LockBalance locks that owner's balance in one currency for the
 	// transaction. It is a lock on the BALANCE rather than on its rows: a sum has
 	// no row, and a lock on the rows that exist takes nothing from a customer who
 	// has none yet (D118).
-	LockBalance(ctx context.Context, customerID, currencyCode string) error
+	LockBalance(ctx context.Context, ownerID, currencyCode string) error
 }
 
 // Identity is what a tender brings to the machine besides its store.
@@ -132,6 +137,10 @@ type Identity struct {
 	Codes Codes
 	// NewSessionID mints the tender's own session identifier.
 	NewSessionID func() string
+	// Owner resolves whose balance a session spends, and refuses a session no
+	// balance can pay. Nil means the customer the collection names, refused when
+	// there is none ([Machine.CheckOwner]).
+	Owner func(ctx context.Context, in coreprovider.CreateSessionInput) (string, error)
 }
 
 // Codes are the four error codes a tender declares.
@@ -190,7 +199,28 @@ func (m *Machine) CheckOwner(customerID string) error {
 	return nil
 }
 
-// CreateSession opens a session against the customer's balance.
+// CheckPayment refuses a payment this tender can never make, before any session
+// or order exists (ADR 0175): the owner is resolved exactly as
+// [Machine.CreateSession] resolves it, and nothing is written.
+func (m *Machine) CheckPayment(ctx context.Context, in coreprovider.CreateSessionInput) error {
+	_, err := m.owner(ctx, in)
+
+	return err
+}
+
+// owner resolves whose balance a session spends.
+func (m *Machine) owner(ctx context.Context, in coreprovider.CreateSessionInput) (string, error) {
+	if m.id.Owner != nil {
+		return m.id.Owner(ctx, in)
+	}
+	if err := m.CheckOwner(in.CustomerID); err != nil {
+		return "", err
+	}
+
+	return strings.TrimSpace(in.CustomerID), nil
+}
+
+// CreateSession opens a session against the owner's balance.
 //
 // It takes NOTHING: the balance is not even read here. A session is the
 // statement "this much is about to be asked of this customer's balance", and
@@ -200,10 +230,10 @@ func (m *Machine) CheckOwner(customerID string) error {
 func (m *Machine) CreateSession(
 	ctx context.Context, in coreprovider.CreateSessionInput,
 ) (coreprovider.Session, error) {
-	if err := m.CheckOwner(in.CustomerID); err != nil {
+	ownerID, err := m.owner(ctx, in)
+	if err != nil {
 		return coreprovider.Session{}, err
 	}
-	customerID := strings.TrimSpace(in.CustomerID)
 	if in.Amount <= 0 {
 		return coreprovider.Session{}, errors.Invalid(m.id.Codes.InvalidInput,
 			"the session amount has to be positive, %d given", in.Amount)
@@ -218,7 +248,7 @@ func (m *Machine) CreateSession(
 		ID:             m.id.NewSessionID(),
 		IdempotencyKey: key,
 		Reference:      in.Reference,
-		CustomerID:     customerID,
+		OwnerID:        ownerID,
 		Amount:         in.Amount,
 		CurrencyCode:   in.CurrencyCode,
 		Status:         models.SessionPending,
@@ -286,11 +316,11 @@ func (m *Machine) Authorize(
 		// The ledger lock comes AFTER the session lock, and the order is the
 		// module's own: every flow takes the collection first and the children
 		// after, so a pair of transactions can never hold one another's next lock.
-		if err := m.store.LockBalance(ctx, session.CustomerID, session.CurrencyCode); err != nil {
+		if err := m.store.LockBalance(ctx, session.OwnerID, session.CurrencyCode); err != nil {
 			return err
 		}
 
-		balance, err := m.store.Balance(ctx, session.CustomerID, session.CurrencyCode)
+		balance, err := m.store.Balance(ctx, session.OwnerID, session.CurrencyCode)
 		if err != nil {
 			return err
 		}
@@ -304,7 +334,7 @@ func (m *Machine) Authorize(
 			}
 
 			m.log.DebugContext(ctx, "balance tender declined",
-				"unit", m.id.Unit, "session", session.ID, "customer", session.CustomerID,
+				"unit", m.id.Unit, "session", session.ID, "owner", session.OwnerID,
 				"balance", balance, "asked", session.Amount)
 
 			out = authResultOf(updated)
@@ -313,7 +343,7 @@ func (m *Machine) Authorize(
 		}
 
 		if err := m.store.Move(ctx, Entry{
-			CustomerID:   session.CustomerID,
+			OwnerID:      session.OwnerID,
 			CurrencyCode: session.CurrencyCode,
 			Movement:     Hold,
 			// NEGATIVE: from this moment the amount is not spendable by anything
@@ -386,7 +416,7 @@ func (m *Machine) Capture(ctx context.Context, sessionID string, amount int64) e
 
 		if remainder := session.AuthorizedAmount - taken; remainder > 0 {
 			if err := m.store.Move(ctx, Entry{
-				CustomerID:   session.CustomerID,
+				OwnerID:      session.OwnerID,
 				CurrencyCode: session.CurrencyCode,
 				Movement:     Release,
 				Amount:       remainder,
@@ -441,7 +471,7 @@ func (m *Machine) Refund(ctx context.Context, sessionID string, amount int64) er
 		}
 
 		if err := m.store.Move(ctx, Entry{
-			CustomerID:   session.CustomerID,
+			OwnerID:      session.OwnerID,
 			CurrencyCode: session.CurrencyCode,
 			Movement:     Refund,
 			Amount:       given,
@@ -489,7 +519,7 @@ func (m *Machine) Cancel(ctx context.Context, sessionID string) error {
 
 		if session.AuthorizedAmount > 0 {
 			if err := m.store.Move(ctx, Entry{
-				CustomerID:   session.CustomerID,
+				OwnerID:      session.OwnerID,
 				CurrencyCode: session.CurrencyCode,
 				Movement:     Release,
 				Amount:       session.AuthorizedAmount,

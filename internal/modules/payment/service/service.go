@@ -184,6 +184,22 @@ type Store interface {
 		ctx context.Context, customerID, currencyCode string, limit, offset int64,
 	) ([]models.StoreCreditEntry, int64, error)
 
+	// InsertGiftCard writes a card with its code's digest (ADR 0208).
+	InsertGiftCard(ctx context.Context, card models.GiftCard, digest string) (models.GiftCard, error)
+	// AppendGiftCardEntry appends ONE event to a card's ledger; the service
+	// writes only the issue.
+	AppendGiftCardEntry(ctx context.Context, entry models.GiftCardEntry) (models.GiftCardEntry, error)
+	// GiftCard returns a card, or NotFound.
+	GiftCard(ctx context.Context, id string) (models.GiftCard, error)
+	// GiftCardBalance sums a card's entries.
+	GiftCardBalance(ctx context.Context, cardID string) (int64, error)
+	// GiftCardBalances sums several cards' entries; a card with none is absent.
+	GiftCardBalances(ctx context.Context, cardIDs []string) (map[string]int64, error)
+	// ListGiftCards pages the cards, newest first.
+	ListGiftCards(ctx context.Context, limit, offset int64) ([]models.GiftCard, int64, error)
+	// ListGiftCardEntries pages a card's history, newest first.
+	ListGiftCardEntries(ctx context.Context, cardID string, limit, offset int64) ([]models.GiftCardEntry, int64, error)
+
 	// AppendLoyaltyEntry appends ONE row to a customer's point ledger; the
 	// balance is the sum of them and there is no update or delete (ADR 0164).
 	AppendLoyaltyEntry(ctx context.Context, entry models.LoyaltyEntry) (models.LoyaltyEntry, error)
