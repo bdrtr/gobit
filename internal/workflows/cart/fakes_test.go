@@ -179,6 +179,15 @@ type stubPrices struct {
 	// batchFn, when given, produces the batch response entirely; it is there
 	// for out-of-contract response scenarios.
 	batchFn func(request priceRequest) (priceResponse, error)
+	// trialAmounts are the amounts a price list under trial offers; a set
+	// without one is priced the same with the list as without it (ADR 0220).
+	trialAmounts map[string]int64
+	// compared holds the decoded bodies of the comparison calls, with the list
+	// each was asked about.
+	compared     []compareRequest
+	comparedList []string
+	// compareRaw, when given, is the comparison's answer as it is.
+	compareRaw json.RawMessage
 	// batchErr, when given, makes the batch call fail with this error.
 	batchErr error
 }
@@ -251,6 +260,53 @@ func (s *stubPrices) CalculateAmountsJSON(_ context.Context, request json.RawMes
 		resp.Items = append(resp.Items, pricedItem(req.Items[i].PriceSetID, amount))
 	}
 	return json.Marshal(resp)
+}
+
+// CompareListJSON prices each line with and without the list: the baseline is
+// amounts, the trial is trialAmounts where the list prices the set.
+func (s *stubPrices) CompareListJSON(_ context.Context, listID string, request json.RawMessage) (json.RawMessage, error) {
+	var req compareRequest
+	if err := json.Unmarshal(request, &req); err != nil {
+		return nil, err
+	}
+	s.compared = append(s.compared, req)
+	s.comparedList = append(s.comparedList, listID)
+	if s.batchErr != nil {
+		return nil, s.batchErr
+	}
+	if s.compareRaw != nil {
+		return s.compareRaw, nil
+	}
+	type item struct {
+		Baseline priceResponseItem `json:"baseline"`
+		Trial    priceResponseItem `json:"trial"`
+	}
+	type entry struct {
+		Reference string `json:"reference"`
+		Items     []item `json:"items"`
+	}
+	out := struct {
+		Entries []entry `json:"entries"`
+	}{}
+	for _, e := range req.Entries {
+		answer := entry{Reference: e.Reference, Items: []item{}}
+		for _, it := range e.Items {
+			baseline, ok := s.amounts[it.PriceSetID]
+			if !ok {
+				answer.Items = append(answer.Items, item{})
+				continue
+			}
+			trial := baseline
+			if listed, ok := s.trialAmounts[it.PriceSetID]; ok {
+				trial = listed
+			}
+			answer.Items = append(answer.Items, item{
+				Baseline: pricedItem(it.PriceSetID, baseline), Trial: pricedItem(it.PriceSetID, trial),
+			})
+		}
+		out.Entries = append(out.Entries, answer)
+	}
+	return json.Marshal(out)
 }
 
 // stubRegions is the fake implementation of the [Regions] interface.

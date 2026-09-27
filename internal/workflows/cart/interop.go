@@ -216,6 +216,23 @@ func (i *Interop) TrialPromotionJSON(
 	return json.Marshal(report)
 }
 
+// TrialPriceListJSON prices the goods of the orders placed in [from, to) with a
+// price list as if active and without it, and returns the
+// [PriceListTrialReport] as JSON; it writes nothing (ADR 0220).
+//
+// Its consumer is the pricing module's admin endpoint, for the reason
+// [Interop.TrialPromotionJSON] gives about the promotion module's.
+func (i *Interop) TrialPriceListJSON(
+	ctx context.Context, listID string, from, to time.Time,
+) (json.RawMessage, error) {
+	report, err := i.w.TrialPriceList(ctx, listID, from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(report)
+}
+
 // RepriceAfter runs a write the cart module makes on its own and then recomputes
 // the cart's totals.
 //

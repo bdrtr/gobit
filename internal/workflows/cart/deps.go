@@ -349,6 +349,10 @@ type Prices interface {
 	// the SAME ORDER and at the SAME LENGTH as the request; an item with no price
 	// is not an error but a result reported with a flag.
 	CalculateAmountsJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+
+	// CompareListJSON prices purchases twice, without a price list and with it
+	// offered as active, for a price list trial (ADR 0220).
+	CompareListJSON(ctx context.Context, listID string, request json.RawMessage) (json.RawMessage, error)
 }
 
 // Regions is the surface of the region module ("region.service") that this

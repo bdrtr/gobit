@@ -91,6 +91,12 @@ func (s stubPricing) CalculateAmountsJSON(
 	return json.Marshal(out)
 }
 
+// CompareListJSON satisfies the price list trial's surface (ADR 0220); a
+// checkout never tries a list.
+func (stubPricing) CompareListJSON(context.Context, string, json.RawMessage) (json.RawMessage, error) {
+	return nil, errors.Internal("stub_not_used", "a checkout does not try a price list")
+}
+
 // stubRegions satisfies the region surface of the cart totals.
 type stubRegions struct{}
 

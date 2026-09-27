@@ -277,6 +277,11 @@ func endpoints() []endpointExpectation {
 			response: priceTimelineDTO{Stretches: []appliedPriceDTO{{}}},
 			query:    []string{paramCurrencyCode, paramFrom, paramTo},
 		},
+		{
+			method: http.MethodGet, path: pathListTrial, status: "200",
+			response: listTrialReportDTO{Currencies: []listTrialCurrencyDTO{{}}, Orders: []listTrialOrderDTO{{}}},
+			query:    []string{paramFrom, paramTo},
+		},
 	}
 }
 
@@ -527,6 +532,8 @@ func TestTimeParametersDescribeTheirFormat(t *testing.T) {
 		{"/admin/v1/price-sets/{id}/calculate", paramAt},
 		{pathAdminPriceHistory, paramFrom},
 		{pathAdminPriceHistory, paramTo},
+		{pathListTrial, paramFrom},
+		{pathListTrial, paramTo},
 	} {
 		op := operation(t, paths, http.MethodGet, tc.path)
 

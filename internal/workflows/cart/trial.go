@@ -15,8 +15,8 @@ import (
 
 // Error codes of the promotion trial.
 const (
-	// CodeTrialInvalid reports a trial asked for with an unusable period or
-	// promotion.
+	// CodeTrialInvalid reports a trial asked for with an unusable period,
+	// promotion or price list.
 	CodeTrialInvalid = "cart_workflow_trial_invalid"
 	// CodeTrialTooWide reports a period holding more orders than one trial
 	// prices.

@@ -67,6 +67,7 @@ func Describe(d *openapi.Doc) {
 	describePriceRules(d)
 	describeStore(d)
 	describePriceHistory(d)
+	describeListTrial(d)
 }
 
 // describePriceSets describes the price set endpoints.

@@ -81,6 +81,8 @@ const (
 // API pricing'in HTTP handler'larını barındırır.
 type API struct {
 	svc *service.Service
+	// trial is the flow the price list trial runs on; see [API.WithTrial].
+	trial PriceListTrial
 }
 
 // New verilen servis üzerinde çalışan bir API üretir.
@@ -138,6 +140,9 @@ func (a *API) Routes(r chi.Router) {
 	okuma.Get("/admin/v1/price-lists/{id}", a.getPriceList)
 	yazma.Put("/admin/v1/price-lists/{id}", a.updatePriceList)
 	yazma.Delete("/admin/v1/price-lists/{id}", a.deletePriceList)
+	// What a list would do to the orders of a period (ADR 0220); its answer is
+	// orders, so it asks for the order module's read privilege too.
+	okuma.With(corehttp.RequireScope(orderReadScope)).Get(pathListTrial, a.trialPriceList)
 
 	okuma.Get("/admin/v1/prices/{price_id}/rules", a.listPriceRules)
 	yazma.Post("/admin/v1/prices/{price_id}/rules", a.createPriceRule)

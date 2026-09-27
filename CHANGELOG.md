@@ -109,6 +109,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A price list can be tried on past orders** (ADR 0220). **For API
+  consumers:** `GET /admin/v1/price-lists/{id}/trial?from=&to=` prices the
+  goods of every uncanceled order placed in the period with today's ladder,
+  without the list and with it as if active with no window, whatever its
+  status; it answers per currency `baseline`, `trial` and `charged`, the
+  hundred orders the list changes most, and what it assumed. Both ends are
+  RFC 3339 and in the past, the period at most 93 days and 5,000 orders; it
+  needs `order:read` beside `pricing:read`. Nothing is written.
+
 - **A product carries typed attributes** (ADR 0219). **For API consumers:**
   `POST/GET /admin/v1/product-attributes`, `PATCH/DELETE
   /admin/v1/product-attributes/{id}`, `POST .../{id}/options` and `DELETE
