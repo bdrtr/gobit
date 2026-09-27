@@ -28,22 +28,34 @@ type ExportOptions struct {
 	Status *models.Status
 }
 
-// The two columns an import will match rows by (ADR 0204).
+// The columns an import matches rows by (ADR 0204, 0205).
 const (
-	columnProductID = "product_id"
-	columnVariantID = "variant_id"
+	columnProductID     = "product_id"
+	columnProductHandle = "product_handle"
+	columnVariantID     = "variant_id"
+)
+
+// The columns the export writes and an import reads in more than one place.
+const (
+	columnProductWeight          = "product_weight"
+	columnProductLength          = "product_length"
+	columnProductHeight          = "product_height"
+	columnProductWidth           = "product_width"
+	columnVariantManageInventory = "variant_manage_inventory"
+	columnVariantAllowBackorder  = "variant_allow_backorder"
+	columnVariantWeight          = "variant_weight"
 )
 
 // exportColumns are the columns every export starts with, in order. The
 // price columns follow, one per currency a region sells in.
 var exportColumns = []string{
-	columnProductID, "product_handle", "product_title", "product_subtitle", "product_description",
+	columnProductID, columnProductHandle, "product_title", "product_subtitle", "product_description",
 	"product_status", "product_thumbnail", "product_is_giftcard", "product_discountable",
-	"product_weight", "product_length", "product_height", "product_width",
+	columnProductWeight, columnProductLength, columnProductHeight, columnProductWidth,
 	"product_material", "product_origin_country", "product_collection_id", "product_type_id",
 	"product_tag_ids", "product_category_ids", "product_metadata",
 	columnVariantID, "variant_title", "variant_sku", "variant_barcode", "variant_ean", "variant_upc",
-	"variant_manage_inventory", "variant_allow_backorder", "variant_weight", "variant_options",
+	columnVariantManageInventory, columnVariantAllowBackorder, columnVariantWeight, "variant_options",
 	"variant_metadata",
 }
 

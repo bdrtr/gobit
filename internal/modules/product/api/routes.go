@@ -112,6 +112,9 @@ func (h *Handler) Routes(r chi.Router) {
 
 	// --- Admin API: products ---
 	write.Post("/admin/v1/products", h.adminCreateProduct)
+	// A catalog import, applied by a job (ADR 0205).
+	write.Post(pathAdminProductImports, h.adminCreateImport)
+	read.Get(pathAdminProductImport, h.adminGetImport)
 	read.Get("/admin/v1/products", h.adminListProducts)
 	// The catalog as CSV (ADR 0204). It carries prices, so it takes pricing's
 	// read as well as this module's.

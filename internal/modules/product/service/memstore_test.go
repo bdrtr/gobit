@@ -48,6 +48,8 @@ type memStore struct {
 	productCats   map[string][]string
 	// relations is the product -> kind -> related ids mapping, in rank order.
 	relations map[string]map[models.RelationType][]string
+	// imports are the catalog imports (ADR 0205), made on first use.
+	imports map[string]*memImport
 
 	// links is the fake link service the sales channel links are read from.
 	//

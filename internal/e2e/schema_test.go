@@ -565,6 +565,17 @@ func TestSchemaDescribesEndpointsWithTheirBodies(t *testing.T) {
 			// is that the SHAPE of the body is known.
 			assert.Contains(t, body, "content", "the %s body must carry content", endpoint)
 
+			// A request body sent as CSV (the product import, ADR 0205) is a file
+			// too, and its string schema is the whole shape.
+			if content, ok := body["content"].(map[string]any); ok {
+				if csv, isCSV := content["text/csv"].(map[string]any); isCSV {
+					schema := objectField(t, csv, "schema", endpoint+" requestBody.content.text/csv")
+					assert.Equal(t, "string", schema["type"], "a CSV file is described as a string")
+
+					return
+				}
+			}
+
 			request := resolvedSchema(t, doc, requestSchema(t, body, endpoint+" requestBody"))
 			assert.NotEmpty(t, objectField(t, request, "properties", endpoint+" request body"),
 				"the request body must carry fields; a fieldless body leaves the client guessing")

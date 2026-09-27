@@ -77,6 +77,19 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A catalog import is a record a job works through** (ADR 0205). **For API
+  consumers:** `POST /admin/v1/products/imports` takes a CSV file (text/csv,
+  up to 32 MiB) in any subset of the export's columns and answers 202 with the
+  import; `GET /admin/v1/products/imports/{id}` reports its status, its rows
+  done, created, updated and failed, and the first thousand refused rows by
+  line. A row finds its product by `product_id` or `product_handle` and its
+  variant by `variant_id`, `variant_sku` or `variant_options`, writes its
+  non-empty cells that differ, and creates what it does not find; price
+  columns are read and not applied yet. A file over 1 MiB is sent without
+  `Idempotency-Key`, which refuses a larger body with 422 `body_too_large`.
+  **For operators:** product migration 000010 adds `product_import`, and the
+  `product-import` job runs every minute.
+
 - **The catalog leaves as CSV** (ADR 0204). **For API consumers:** `GET
   /admin/v1/products/export` (optionally `?status=`) streams the catalog as
   `text/csv`: a row per variant, a row for a product with none, tag and

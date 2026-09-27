@@ -137,6 +137,18 @@ func (f *scopeCatalog) DeleteProduct(context.Context, string) error {
 	return nil
 }
 
+// CreateImport counts the call.
+func (f *scopeCatalog) CreateImport(context.Context, []byte) (models.Import, error) {
+	f.count()
+	return models.Import{}, nil
+}
+
+// GetImport counts the call.
+func (f *scopeCatalog) GetImport(context.Context, string) (models.Import, error) {
+	f.count()
+	return models.Import{}, nil
+}
+
 // ExportProducts counts the call.
 func (f *scopeCatalog) ExportProducts(context.Context, io.Writer, service.ExportOptions, func() error) error {
 	f.count()

@@ -257,6 +257,7 @@ func Describe(d *openapi.Doc) {
 	describeStorefrontGraphQL(d)
 	describeAdminProducts(d)
 	describeAdminExport(d)
+	describeAdminImport(d)
 	describeAdminVariants(d)
 	describeAdminOptions(d)
 	describeAdminLinks(d)

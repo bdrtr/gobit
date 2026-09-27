@@ -77,6 +77,21 @@ type ProductImage struct {
 	AltText   string
 }
 
+type ProductImport struct {
+	ID          string
+	Status      string
+	File        []byte
+	RowsTotal   int32
+	RowsDone    int32
+	RowsCreated int32
+	RowsUpdated int32
+	RowsFailed  int32
+	Errors      []byte
+	CreatedAt   pgtype.Timestamptz
+	StartedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+}
+
 type ProductOption struct {
 	ID        string
 	ProductID string

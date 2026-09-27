@@ -23,7 +23,9 @@ import (
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
+	"github.com/bdrtr/gobit/internal/jobs/productimport"
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
+	"github.com/bdrtr/gobit/internal/jobs/scheduledpublish"
 )
 
 // jobsEnv points the binary at a database of its own and gives it the smallest
@@ -259,7 +261,9 @@ func TestEveryJobTheRootDeclaresCanBeBuiltAgainstARealInstallation(t *testing.T)
 		"a job whose dependency cannot be resolved fails the whole boot; this is the "+
 			"error an operator would see instead of a running server")
 
-	for _, name := range []string{sagawatch.Name, paymentrecon.Name, outboxrelay.Name} {
+	for _, name := range []string{
+		sagawatch.Name, paymentrecon.Name, outboxrelay.Name, scheduledpublish.Name, productimport.Name,
+	} {
 		definition, getErr := registry.Get(name)
 		require.NoError(t, getErr,
 			"%q is missing from the registry the runner and `gobit jobs` both read; "+

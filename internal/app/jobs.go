@@ -25,6 +25,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
+	"github.com/bdrtr/gobit/internal/jobs/productimport"
 	"github.com/bdrtr/gobit/internal/jobs/reviewsuggest"
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
 	"github.com/bdrtr/gobit/internal/jobs/scheduledpublish"
@@ -51,6 +52,8 @@ type paymentReconciler interface {
 // productPublisher is the product service as the scheduled publisher needs it.
 type productPublisher interface {
 	ApplyDueSchedules(ctx context.Context, limit int64) (published, archived []string, err error)
+	// ApplyImports works through the catalog imports (ADR 0205).
+	ApplyImports(ctx context.Context, until time.Time) (int, error)
 }
 
 // jobsCommand is the subcommand that prints the job listing.
@@ -156,6 +159,11 @@ func registerJobs(
 			"the job runner could not resolve the product service (%q)", product.ServiceName)
 	}
 	if err := registry.Add(scheduledpublish.Definition(products, log)); err != nil {
+		return nil, err
+	}
+	// The catalog import is registered unconditionally for the same reason: an
+	// import nothing applied looks exactly like one still waiting (ADR 0205).
+	if err := registry.Add(productimport.Definition(products, log)); err != nil {
 		return nil, err
 	}
 

@@ -242,6 +242,17 @@ type Store interface {
 	// ids the upload binding returns into records.
 	ListImagesByIDs(ctx context.Context, imageIDs []string) ([]models.Image, error)
 	DeleteImagesByProduct(ctx context.Context, productID string) error
+
+	// CreateImport writes an import with its file (ADR 0205).
+	CreateImport(ctx context.Context, id string, file []byte, rowsTotal int) (models.Import, error)
+	// GetImport reads an import without its file.
+	GetImport(ctx context.Context, id string) (models.Import, error)
+	// ClaimImport takes the oldest import with rows left; false when none.
+	ClaimImport(ctx context.Context) (models.ClaimedImport, bool, error)
+	// RecordImportRow moves an import past the row at rowIndex, once.
+	RecordImportRow(ctx context.Context, id string, rowIndex int, outcome models.ImportRowOutcome) error
+	// FinishImport closes an import whose rows are all done and drops its file.
+	FinishImport(ctx context.Context, id string) error
 }
 
 // Repo is the PostgreSQL implementation of [Store].

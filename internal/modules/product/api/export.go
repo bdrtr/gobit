@@ -16,6 +16,9 @@ import (
 // pathAdminProductExport is where the catalog leaves as CSV (ADR 0204).
 const pathAdminProductExport = "/admin/v1/products/export"
 
+// mediaCSV is the media type the export answers with and an import is sent as.
+const mediaCSV = "text/csv"
+
 // scopePricingRead is the pricing module's read scope, spelled as its API
 // spells it. The export carries prices, so it takes both reads: an operator
 // allowed the catalog and not the prices must not get the prices this way.
@@ -83,7 +86,7 @@ func csvResponse(w http.ResponseWriter, started *bool) writerFunc {
 	return func(p []byte) (int, error) {
 		if !*started {
 			header := w.Header()
-			header.Set("Content-Type", "text/csv; charset=utf-8")
+			header.Set("Content-Type", mediaCSV+"; charset=utf-8")
 			header.Set("Content-Disposition", `attachment; filename="products.csv"`)
 			header.Set("Cache-Control", "no-store")
 			w.WriteHeader(http.StatusOK)
@@ -120,7 +123,7 @@ func describeAdminExport(d *openapi.Doc) {
 			"200": map[string]any{
 				schemaDescription: "The catalog as CSV",
 				"content": map[string]any{
-					"text/csv": map[string]any{"schema": map[string]any{schemaType: typeString}},
+					mediaCSV: map[string]any{"schema": map[string]any{schemaType: typeString}},
 				},
 			},
 		},

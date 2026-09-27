@@ -35,6 +35,8 @@ type fakeCatalog struct {
 	listProducts      func(ctx context.Context, opts service.ListProductsOptions) (service.ListResult[models.Product], error)
 	deleteProduct     func(ctx context.Context, id string) error
 	exportProducts    func(ctx context.Context, out io.Writer, opts service.ExportOptions, afterPage func() error) error
+	createImport      func(ctx context.Context, file []byte) (models.Import, error)
+	getImport         func(ctx context.Context, id string) (models.Import, error)
 	createVariant     func(ctx context.Context, productID string, in service.CreateVariantInput) (models.Variant, error)
 	setPriceSet       func(ctx context.Context, variantID, priceSetID string) error
 	variantLinks      func(ctx context.Context, variantID string) (service.VariantLinks, error)
@@ -78,6 +80,14 @@ func (f *fakeCatalog) ListProducts(
 
 func (f *fakeCatalog) DeleteProduct(ctx context.Context, id string) error {
 	return f.deleteProduct(ctx, id)
+}
+
+func (f *fakeCatalog) CreateImport(ctx context.Context, file []byte) (models.Import, error) {
+	return f.createImport(ctx, file)
+}
+
+func (f *fakeCatalog) GetImport(ctx context.Context, id string) (models.Import, error) {
+	return f.getImport(ctx, id)
 }
 
 func (f *fakeCatalog) ExportProducts(

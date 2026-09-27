@@ -207,6 +207,8 @@ type adminEndpoint struct {
 	// csv reports that the response is a CSV file rather than an envelope
 	// (ADR 0204).
 	csv bool
+	// csvRequest reports that the request body is a CSV file (ADR 0205).
+	csvRequest bool
 }
 
 // key returns the operation's "METHOD path" identity.
@@ -230,6 +232,11 @@ func adminEndpoints() []adminEndpoint {
 			record: filledAdminProduct(), list: true,
 		},
 		{method: http.MethodGet, path: pathAdminProductExport, status: "200", csv: true},
+		{
+			method: http.MethodPost, path: pathAdminProductImports, status: "202",
+			record: filledImport(), csvRequest: true,
+		},
+		{method: http.MethodGet, path: pathAdminProductImport, status: "200", record: filledImport()},
 		{
 			method: http.MethodGet, path: "/admin/v1/products/{id}", status: "200",
 			record: filledAdminProduct(),
@@ -571,9 +578,14 @@ func TestAdminEndpointsDescribeTheirBodies(t *testing.T) {
 			assert.NotEmpty(t, op["summary"], "the endpoint has to be described in one line")
 
 			requestDefinition, hasBody := op["requestBody"].(map[string]any)
-			require.Equal(t, endpoint.request != nil, hasBody,
+			require.Equal(t, endpoint.request != nil || endpoint.csvRequest, hasBody,
 				"an endpoint that takes a body has to have a requestBody, one that does not must not")
 
+			if endpoint.csvRequest {
+				content, ok := requestDefinition["content"].(map[string]any)
+				require.True(t, ok)
+				assert.Contains(t, content, "text/csv", "the import takes a CSV file")
+			}
 			if endpoint.request != nil {
 				schema := adminBodySchema(t, requestDefinition)
 				assert.ElementsMatch(t, adminJSONKeys(t, endpoint.request),
@@ -760,4 +772,14 @@ func adminParameterNames(t *testing.T, op map[string]any, location string) []str
 // filledRelations is a relations body with every kind holding an id.
 func filledRelations() relationsDTO {
 	return relationsDTO{CrossSell: []string{"prod_2"}, UpSell: []string{"prod_3"}, Substitute: []string{"prod_4"}}
+}
+
+// filledImport is an import with every field written (ADR 0205).
+func filledImport() importDTO {
+	at := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+
+	return importDTO{
+		ID: "pimp_1", Status: "running", Errors: []importErrorDTO{{Row: 2, Message: "x"}},
+		StartedAt: &at, FinishedAt: &at,
+	}
 }

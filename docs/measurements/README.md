@@ -135,3 +135,4 @@ truth: a report says what was true on the day it was taken.
 | [A carrier that keeps the address — measured 2026-09-26](0202-a-carrier-that-keeps-the-address.md) | 47 |
 | [A swap outside the books — measured 2026-09-27](0203-a-swap-outside-the-books.md) | 51 |
 | [Fifty thousand rows — measured 2026-09-27](0204-fifty-thousand-rows.md) | 62 |
+| [A file worked through — measured 2026-09-27](0205-a-file-worked-through.md) | 76 |
