@@ -66,6 +66,42 @@ func (f *fakeStore) SoldGiftCardReferences(_ context.Context, references []strin
 	return found, nil
 }
 
+func (f *fakeStore) LockGiftCardBalance(ctx context.Context, cardID, _ string) error {
+	if ctx.Value(txMarkerKey{}) == nil {
+		return errors.Internal("payment_query_failed", "LockGiftCardBalance outside a transaction")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.giftCards[cardID]; !ok {
+		return errors.NotFound("payment_gift_card_not_found", "no such gift card: %s", cardID)
+	}
+	f.giftLocks = append(f.giftLocks, cardID)
+
+	return nil
+}
+
+func (f *fakeStore) GiftCardOpenHolds(_ context.Context, id string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.giftHolds[id], nil
+}
+
+func (f *fakeStore) DisableGiftCard(_ context.Context, id, reason string) (models.GiftCard, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	card, ok := f.giftCards[id]
+	if !ok || card.DisabledAt != nil {
+		return models.GiftCard{}, errors.NotFound("payment_gift_card_not_found", "no open gift card %s", id)
+	}
+	closed := time.Unix(2_000, 0).UTC()
+	card.DisabledAt, card.DisableReason = &closed, reason
+	f.giftCards[id] = card
+
+	return card, nil
+}
+
 func (f *fakeStore) ReplaceGiftCardCode(_ context.Context, id, digest, tail string) (models.GiftCard, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

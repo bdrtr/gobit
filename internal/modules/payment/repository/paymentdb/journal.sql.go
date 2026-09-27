@@ -200,6 +200,68 @@ func (q *Queries) JournalGiftCardIssues(ctx context.Context, arg JournalGiftCard
 	return items, nil
 }
 
+const journalGiftCardVoids = `-- name: JournalGiftCardVoids :many
+SELECT e.id, e.gift_card_id, g.currency_code, g.source, e.amount, e.created_at
+FROM payment_gift_card_entries e
+JOIN payment_gift_cards g ON g.id = e.gift_card_id
+WHERE e.kind = 'void'
+  AND e.created_at >= $1 AND e.created_at < $2
+  AND ($3::text IS NULL OR g.currency_code = $3::text)
+ORDER BY e.created_at, e.id
+LIMIT $4
+`
+
+type JournalGiftCardVoidsParams struct {
+	FromAt       pgtype.Timestamptz
+	ToAt         pgtype.Timestamptz
+	CurrencyCode *string
+	RowLimit     int32
+}
+
+type JournalGiftCardVoidsRow struct {
+	ID           string
+	GiftCardID   string
+	CurrencyCode string
+	Source       string
+	Amount       int64
+	CreatedAt    pgtype.Timestamptz
+}
+
+// A closed card's void is read with the card's source, which decides where the
+// balance goes: a granted card's cost comes back, a sold card's price is kept
+// (ADR 0213).
+func (q *Queries) JournalGiftCardVoids(ctx context.Context, arg JournalGiftCardVoidsParams) ([]JournalGiftCardVoidsRow, error) {
+	rows, err := q.db.Query(ctx, journalGiftCardVoids,
+		arg.FromAt,
+		arg.ToAt,
+		arg.CurrencyCode,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []JournalGiftCardVoidsRow{}
+	for rows.Next() {
+		var i JournalGiftCardVoidsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.GiftCardID,
+			&i.CurrencyCode,
+			&i.Source,
+			&i.Amount,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const journalLoyaltyGrants = `-- name: JournalLoyaltyGrants :many
 SELECT id, customer_id, currency_code, points, kind, created_at
 FROM payment_loyalty_entries

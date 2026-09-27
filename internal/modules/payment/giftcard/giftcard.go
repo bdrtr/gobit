@@ -45,6 +45,9 @@ const (
 	CodeInsufficient = "payment_gift_card_insufficient"
 	// CodeInvalidState reports a transition the session's status does not allow.
 	CodeInvalidState = "payment_gift_card_invalid_state"
+	// CodeDisabled reports a card an operator closed (ADR 0213): it opens no
+	// payment and takes no refund.
+	CodeDisabled = "payment_gift_card_disabled"
 )
 
 // Store is the persistence this provider needs, declared here and narrow.
@@ -54,6 +57,8 @@ type Store interface {
 
 	// GiftCardByDigest returns the card a code's digest opens, or NotFound.
 	GiftCardByDigest(ctx context.Context, digest string) (models.GiftCard, error)
+	// GiftCard returns a card by its id, or NotFound.
+	GiftCard(ctx context.Context, id string) (models.GiftCard, error)
 
 	// InsertGiftCardSessionIfAbsent writes the session only if the idempotency
 	// key is unused; the second return says whether the row was written.
@@ -135,6 +140,9 @@ func cardOf(store Store) func(ctx context.Context, in coreprovider.CreateSession
 		if err != nil {
 			return "", err
 		}
+		if card.DisabledAt != nil {
+			return "", disabled(card.ID)
+		}
 		if !strings.EqualFold(card.CurrencyCode, strings.TrimSpace(in.CurrencyCode)) {
 			return "", errors.Conflict(CodeCurrency,
 				"the gift card holds %s and this payment is in %s", card.CurrencyCode, in.CurrencyCode)
@@ -147,6 +155,12 @@ func cardOf(store Store) func(ctx context.Context, in coreprovider.CreateSession
 // unknown is the one answer to a code that opens no card.
 func unknown() error {
 	return errors.Invalid(CodeUnknown, "no gift card has this code")
+}
+
+// disabled is the answer about a card an operator closed. It is told apart
+// from an unknown code: whoever sends it holds a real card's code.
+func disabled(cardID string) error {
+	return errors.Conflict(CodeDisabled, "gift card %s is closed", cardID)
 }
 
 // ledger adapts [Store] to the machine's surface.
@@ -194,7 +208,23 @@ func (l ledger) UpdateSessionState(
 }
 
 // Move writes one movement as a card ledger row, referenced by the session.
+//
+// A refund onto a closed card is refused (ADR 0213): the card holds nothing and
+// pays nothing, so the money would reach nobody. The card's lock is taken first,
+// the one a close takes, so a refund and a close cannot pass each other.
 func (l ledger) Move(ctx context.Context, entry balancetender.Entry) error {
+	if entry.Movement == balancetender.Refund {
+		if err := l.store.LockGiftCardBalance(ctx, entry.OwnerID, entry.CurrencyCode); err != nil {
+			return err
+		}
+		card, err := l.store.GiftCard(ctx, entry.OwnerID)
+		if err != nil {
+			return err
+		}
+		if card.DisabledAt != nil {
+			return disabled(card.ID)
+		}
+	}
 	_, err := l.store.AppendGiftCardEntry(ctx, models.GiftCardEntry{
 		ID:         models.NewGiftCardEntryID(),
 		GiftCardID: entry.OwnerID,

@@ -59,6 +59,8 @@ type fakePayments struct {
 	giftEntries   []models.GiftCardEntry
 	lastGiftInput service.IssueGiftCardInput
 	lastGiftID    string
+	// lastDisableReason is the reason a close was asked with (ADR 0213).
+	lastDisableReason string
 	// lastLoyaltyPage listeleme ucunun servise ilettiği sayfalamadır.
 	lastLoyaltyPage service.Page
 

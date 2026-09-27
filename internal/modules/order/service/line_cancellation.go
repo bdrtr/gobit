@@ -112,6 +112,9 @@ func (s *Service) CancelOrderLine(
 		if listErr != nil {
 			return listErr
 		}
+		if err := refuseGiftCardLines(lines, []string{in.OrderLineItemID}, "written off"); err != nil {
+			return err
+		}
 
 		spokenFor, sumErr := s.unitsSpokenFor(ctx, []string{in.OrderLineItemID})
 		if sumErr != nil {

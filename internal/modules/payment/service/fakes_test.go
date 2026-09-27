@@ -78,6 +78,10 @@ type fakeStore struct {
 	giftDigests   map[string]string
 	giftEntries   map[string][]models.GiftCardEntry
 	failGiftEntry error
+	// giftHolds is how many sessions hold part of each card (ADR 0213), and
+	// giftLocks the cards whose balance was locked, in order.
+	giftHolds map[string]int64
+	giftLocks []string
 }
 
 // newFakeStore boş bir sahte depo üretir.

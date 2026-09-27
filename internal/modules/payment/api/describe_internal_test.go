@@ -349,6 +349,11 @@ func anlatilanUclar() []ucBeklentisi {
 			metod: http.MethodPost, yol: pathAdminGiftCardCode, durum: "200",
 			yanit: fullGiftCard(),
 		},
+		// Closing a gift card (ADR 0213).
+		{
+			metod: http.MethodPost, yol: pathAdminGiftCardDisable, durum: "200",
+			istek: disableGiftCardRequest{}, yanit: fullGiftCard(),
+		},
 	}
 }
 
@@ -356,7 +361,10 @@ func anlatilanUclar() []ucBeklentisi {
 func fullGiftCard() giftCardDTO {
 	changed := time.Unix(1_000, 0).UTC()
 
-	return giftCardDTO{Code: "ABCD-EFGH-JKMN-PQRS", CodeChangedAt: &changed}
+	return giftCardDTO{
+		Code: "ABCD-EFGH-JKMN-PQRS", CodeChangedAt: &changed,
+		DisabledAt: &changed, DisableReason: "a test",
+	}
 }
 
 // doluPuanSatiri bütün alanları yazılan bir puan defteri satırı üretir.

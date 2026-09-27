@@ -97,6 +97,10 @@ const (
 	// CodeReturnQuantityExceeded reports that more units of a line were asked
 	// back than were bought.
 	CodeReturnQuantityExceeded = "order_return_quantity_exceeded"
+	// CodeGiftCardLineFinal reports a return or a write-off that named a line
+	// that sold gift cards (ADR 0213): the cards were mailed and are their
+	// holders', so the line's units are not taken back through the order.
+	CodeGiftCardLineFinal = "order_gift_card_line_final"
 	// CodeReturnLineUnknown reports that a return line points at a line that is
 	// not on the order.
 	CodeReturnLineUnknown = "order_return_line_unknown"

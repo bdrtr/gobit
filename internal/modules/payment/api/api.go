@@ -151,6 +151,8 @@ type Payments interface {
 	ListGiftCardEntries(ctx context.Context, id string, page service.Page) ([]models.GiftCardEntry, int64, error)
 	// ReplaceGiftCardCode gives a card a new code and returns it once (ADR 0210).
 	ReplaceGiftCardCode(ctx context.Context, id string) (service.IssuedGiftCard, error)
+	// DisableGiftCard closes a card and voids what it held (ADR 0213).
+	DisableGiftCard(ctx context.Context, id, reason string) (service.GiftCardWithBalance, error)
 	// ListLoyalty müşterinin puan geçmişini sayfalar.
 	ListLoyalty(
 		ctx context.Context, in service.ListLoyaltyInput,
@@ -277,6 +279,7 @@ func (h *Handler) Routes(r chi.Router) {
 	okuma.Get(pathAdminGiftCard, h.getGiftCard)
 	okuma.Get(pathAdminGiftCardEntries, h.listGiftCardEntries)
 	yazma.Post(pathAdminGiftCardCode, h.replaceGiftCardCode)
+	yazma.Post(pathAdminGiftCardDisable, h.disableGiftCard)
 
 	yazma.Post(pathAdminCollections, h.createCollection)
 	okuma.Get(pathAdminCollections, h.listCollections)

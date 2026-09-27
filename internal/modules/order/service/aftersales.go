@@ -116,6 +116,9 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 		// would leave a rejected return in the table for the length of the
 		// transaction, and the sum the NEXT request reads is exactly that
 		// table.
+		if err := refuseGiftCardLines(lines, lineIDsOf(in.Lines), "returned"); err != nil {
+			return err
+		}
 		spokenFor, err := s.unitsSpokenFor(ctx, lineIDsOf(in.Lines))
 		if err != nil {
 			return err

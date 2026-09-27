@@ -35,6 +35,11 @@ type GiftCard struct {
 	CreatedAt time.Time
 	// CodeChangedAt is when the card's code was last replaced; nil if never.
 	CodeChangedAt *time.Time
+	// DisabledAt is when an operator closed the card, and DisableReason why;
+	// nil and empty on an open card (ADR 0213). A closed card pays nothing and
+	// holds nothing.
+	DisabledAt    *time.Time
+	DisableReason string
 }
 
 // GiftCardSource says how a card came to be.
@@ -52,7 +57,7 @@ const (
 // credit's, closed by the schema for the same reason.
 type GiftCardKind string
 
-// The four things that can happen to a card's balance.
+// The five things that can happen to a card's balance.
 const (
 	// GiftCardIssue is the balance the card was issued with; positive.
 	GiftCardIssue GiftCardKind = "issue"
@@ -62,12 +67,15 @@ const (
 	GiftCardRelease GiftCardKind = "release"
 	// GiftCardRefund is a captured payment repaid onto the card; positive.
 	GiftCardRefund GiftCardKind = "refund"
+	// GiftCardVoid is what a card held when an operator closed it, taken
+	// away; NEGATIVE (ADR 0213).
+	GiftCardVoid GiftCardKind = "void"
 )
 
-// Valid reports whether the kind is one of the four.
+// Valid reports whether the kind is one of the five.
 func (k GiftCardKind) Valid() bool {
 	switch k {
-	case GiftCardIssue, GiftCardHold, GiftCardRelease, GiftCardRefund:
+	case GiftCardIssue, GiftCardHold, GiftCardRelease, GiftCardRefund, GiftCardVoid:
 		return true
 	default:
 		return false

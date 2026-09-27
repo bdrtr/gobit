@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/payment/giftcard"
@@ -80,6 +81,27 @@ func (m *memStore) GiftCardByDigest(_ context.Context, digest string) (models.Gi
 	}
 
 	return m.cards[id], nil
+}
+
+func (m *memStore) GiftCard(_ context.Context, id string) (models.GiftCard, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	card, ok := m.cards[id]
+	if !ok {
+		return models.GiftCard{}, errors.NotFound("payment_gift_card_not_found", "no such gift card: %s", id)
+	}
+
+	return card, nil
+}
+
+// close marks a card closed, as an operator's close leaves it (ADR 0213).
+func (m *memStore) close(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	card := m.cards[id]
+	closed := time.Unix(1_000, 0).UTC()
+	card.DisabledAt, card.DisableReason = &closed, "a test"
+	m.cards[id] = card
 }
 
 func (m *memStore) InsertGiftCardSessionIfAbsent(

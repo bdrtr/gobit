@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
@@ -535,6 +536,26 @@ func checkReturnQuantities(
 					"returned or canceled, %d bought",
 				requested[i].OrderLineItemID, requested[i].Quantity,
 				spokenFor[requested[i].OrderLineItemID], bought)
+		}
+	}
+
+	return nil
+}
+
+// refuseGiftCardLines refuses an act that would take back units of a line that
+// sold gift cards (ADR 0213).
+//
+// The line's cards are issued once its order is paid and their codes are
+// mailed to the buyer; the order cannot take a code back. A return would send
+// money back beside cards that still pay, and a write-off would record units
+// as not delivered whose cards the sale flow issues anyway. A card that must
+// not be spent is closed in the payment module instead.
+func refuseGiftCardLines(lines []models.OrderLineItem, named []string, act string) error {
+	for i := range lines {
+		if lines[i].IsGiftcard && slices.Contains(named, lines[i].ID) {
+			return errors.Conflict(CodeGiftCardLineFinal,
+				"line %s sold gift cards and cannot be %s; close a card in the payment module instead",
+				lines[i].ID, act)
 		}
 	}
 

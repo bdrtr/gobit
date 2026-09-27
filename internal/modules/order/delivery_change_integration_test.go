@@ -325,7 +325,9 @@ func TestARollbackRefusesADatabaseHoldingAPaidDelivery(t *testing.T) {
 	err = db.MigrateDown(ctx, dsn, order.New().Migrations(), order.ModuleName, 25)
 
 	require.Error(t, err, "the rollback dropped the collection a change was paid with")
-	assert.Contains(t, err.Error(), "order_delivery_changes_costs_no_more")
+	// The server's report quotes the constraint; the bare name is also in the
+	// migration's own text, which the error carries (D148).
+	assert.Contains(t, err.Error(), `check constraint "order_delivery_changes_costs_no_more"`)
 }
 
 // TestAChangeRefusesACollectionAnExchangeTook reads the exchanges' column on

@@ -54,6 +54,10 @@ import (
 type ledgerDoor struct {
 	// onlyFrom is the ONE function allowed to call it.
 	onlyFrom string
+	// andFrom is a second function allowed to call it, named for the record
+	// that decided it; empty for a link with a single door. The gift card
+	// ledger has one: an operator's close voids what the card held (ADR 0213).
+	andFrom string
 	// orTheTender is the identity of the provider whose package is ALSO allowed
 	// to call it; empty for a link with a single door.
 	orTheTender string
@@ -73,7 +77,9 @@ type ledgerDoor struct {
 // the operator's act and has callers of its own, so the chain ends there. The
 // gift card ledger's is the same shape: the card's issue, and the tender that
 // spends it (ADR 0208). The issue's door is issueGiftCard, which both an
-// operator's issue and a sale's call (ADR 0210); the chain ends there.
+// operator's issue and a sale's call (ADR 0210); the chain ends there. Its
+// second door is DisableGiftCard, the operator's close, which voids what the
+// card held (ADR 0213).
 var paymentLedgerChokePoints = map[string]ledgerDoor{
 	"InsertLoyaltyEntry":     {onlyFrom: "AppendLoyaltyEntry"},
 	"AppendLoyaltyEntry":     {onlyFrom: "earnLoyaltyPoints", orTheTender: "loyalty_points"},
@@ -81,7 +87,7 @@ var paymentLedgerChokePoints = map[string]ledgerDoor{
 	"InsertStoreCreditEntry": {onlyFrom: "AppendStoreCreditEntry"},
 	"AppendStoreCreditEntry": {onlyFrom: "IssueCredit", orTheTender: "store_credit"},
 	"InsertGiftCardEntry":    {onlyFrom: "AppendGiftCardEntry"},
-	"AppendGiftCardEntry":    {onlyFrom: "issueGiftCard", orTheTender: "gift_card"},
+	"AppendGiftCardEntry":    {onlyFrom: "issueGiftCard", andFrom: "DisableGiftCard", orTheTender: "gift_card"},
 }
 
 // paymentLedgerQueriesDir is where the payment module's generated queries live.
@@ -181,7 +187,13 @@ func TestEveryPaymentLedgerWriteEntersThroughANamedDoor(t *testing.T) {
 			tenderPkg = tenderPackage(t, tree, door.orTheTender)
 		}
 
-		fromDoor, fromTender := 0, 0
+		if door.andFrom != "" {
+			require.True(t, declared[door.andFrom],
+				"%q is named as the second function allowed to reach %s, and no function of "+
+					"that name exists in the production source.", door.andFrom, name)
+		}
+
+		fromDoor, fromSecond, fromTender := 0, 0, 0
 
 		for _, site := range tree.calls[name] {
 			if site.fn == nil || site.fn.Name.Name == name {
@@ -197,6 +209,11 @@ func TestEveryPaymentLedgerWriteEntersThroughANamedDoor(t *testing.T) {
 			}
 			if site.fn.Name.Name == door.onlyFrom {
 				fromDoor++
+			}
+			if door.andFrom != "" && site.fn.Name.Name == door.andFrom {
+				fromSecond++
+
+				continue
 			}
 
 			assert.Equal(t, door.onlyFrom, site.fn.Name.Name,
@@ -221,6 +238,13 @@ func TestEveryPaymentLedgerWriteEntersThroughANamedDoor(t *testing.T) {
 				"nothing and approved everything, or the door stopped opening: the writer it "+
 				"names reaches the ledger some other way, which this audit would then not see, "+
 				"or it no longer writes and the door should go.", door.onlyFrom, name)
+
+		if door.andFrom != "" {
+			require.Positive(t, fromSecond,
+				"%s is the second door to %s and no call from it was found; a door held open "+
+					"for a writer that does not write is an inert mechanism and should go.",
+				door.andFrom, name)
+		}
 
 		if tenderPkg != "" {
 			require.Positive(t, fromTender,

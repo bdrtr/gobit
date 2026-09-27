@@ -56,8 +56,15 @@ func (r *Repository) JournalMovements(
 	if err != nil {
 		return nil, classify(err, codeQueryFailed, "the gift card issues of the journal could not be read")
 	}
+	voids, err := q.JournalGiftCardVoids(ctx, paymentdb.JournalGiftCardVoidsParams{
+		FromAt: fromTime(from), ToAt: fromTime(to), CurrencyCode: currency, RowLimit: rowLimit,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the gift card voids of the journal could not be read")
+	}
 
-	out := make([]models.JournalMovement, 0, len(captures)+len(refunds)+len(issues)+len(grants)+len(cards))
+	out := make([]models.JournalMovement, 0,
+		len(captures)+len(refunds)+len(issues)+len(grants)+len(cards)+len(voids))
 	for i := range captures {
 		row := &captures[i]
 		out = append(out, models.JournalMovement{
@@ -90,6 +97,17 @@ func (r *Repository) JournalMovements(
 		out = append(out, models.JournalMovement{
 			ID: row.ID, Kind: kind, OccurredAt: toTime(row.CreatedAt),
 			CurrencyCode: row.CurrencyCode, Amount: row.Points, CustomerID: row.CustomerID,
+		})
+	}
+	for i := range voids {
+		row := &voids[i]
+		kind := models.JournalGiftCardVoid
+		if models.GiftCardSource(row.Source) == models.GiftCardSold {
+			kind = models.JournalGiftCardForfeit
+		}
+		out = append(out, models.JournalMovement{
+			ID: row.ID, Kind: kind, OccurredAt: toTime(row.CreatedAt),
+			CurrencyCode: row.CurrencyCode, Amount: row.Amount,
 		})
 	}
 	for i := range cards {

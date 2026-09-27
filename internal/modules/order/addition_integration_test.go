@@ -283,7 +283,9 @@ func TestARollbackRefusesADatabaseHoldingACorrection(t *testing.T) {
 	err = db.MigrateDown(ctx, dsn, order.New().Migrations(), order.ModuleName, 22)
 
 	require.Error(t, err, "the rollback dropped the address the order was placed with")
-	assert.Contains(t, err.Error(), "order_addresses_one_per_type")
+	// The server's report quotes the index; the bare name is also in the
+	// migration's own text, which the error carries (D148).
+	assert.Contains(t, err.Error(), `unique index "order_addresses_one_per_type"`)
 }
 
 // TestASecondCorrectionLeavesTheFirstDated closes only the current row: the

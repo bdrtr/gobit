@@ -30,6 +30,19 @@ SET code_digest = $2, code_tail = $3, code_changed_at = now()
 WHERE id = $1
 RETURNING *;
 
+-- DisableGiftCard closes an open card (ADR 0213); a closed one is left as it is.
+-- name: DisableGiftCard :one
+UPDATE payment_gift_cards
+SET disabled_at = now(), disable_reason = $2
+WHERE id = $1 AND disabled_at IS NULL
+RETURNING *;
+
+-- GiftCardOpenHolds counts the card's sessions still holding part of it: an
+-- authorized session's hold comes back when it is captured in part or canceled.
+-- name: GiftCardOpenHolds :one
+SELECT count(*) FROM payment_gift_card_sessions
+WHERE gift_card_id = $1 AND status = 'authorized';
+
 -- name: GetGiftCard :one
 SELECT * FROM payment_gift_cards
 WHERE id = $1;

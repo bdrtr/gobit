@@ -32,8 +32,40 @@ func (q *Queries) CountGiftCards(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const disableGiftCard = `-- name: DisableGiftCard :one
+UPDATE payment_gift_cards
+SET disabled_at = now(), disable_reason = $2
+WHERE id = $1 AND disabled_at IS NULL
+RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason
+`
+
+type DisableGiftCardParams struct {
+	ID            string
+	DisableReason *string
+}
+
+// DisableGiftCard closes an open card (ADR 0213); a closed one is left as it is.
+func (q *Queries) DisableGiftCard(ctx context.Context, arg DisableGiftCardParams) (PaymentGiftCard, error) {
+	row := q.db.QueryRow(ctx, disableGiftCard, arg.ID, arg.DisableReason)
+	var i PaymentGiftCard
+	err := row.Scan(
+		&i.ID,
+		&i.CodeDigest,
+		&i.CodeTail,
+		&i.CurrencyCode,
+		&i.Reason,
+		&i.CreatedAt,
+		&i.Source,
+		&i.SourceReference,
+		&i.CodeChangedAt,
+		&i.DisabledAt,
+		&i.DisableReason,
+	)
+	return i, err
+}
+
 const getGiftCard = `-- name: GetGiftCard :one
-SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason FROM payment_gift_cards
 WHERE id = $1
 `
 
@@ -50,12 +82,14 @@ func (q *Queries) GetGiftCard(ctx context.Context, id string) (PaymentGiftCard, 
 		&i.Source,
 		&i.SourceReference,
 		&i.CodeChangedAt,
+		&i.DisabledAt,
+		&i.DisableReason,
 	)
 	return i, err
 }
 
 const getGiftCardByDigest = `-- name: GetGiftCardByDigest :one
-SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason FROM payment_gift_cards
 WHERE code_digest = $1
 `
 
@@ -73,12 +107,14 @@ func (q *Queries) GetGiftCardByDigest(ctx context.Context, codeDigest string) (P
 		&i.Source,
 		&i.SourceReference,
 		&i.CodeChangedAt,
+		&i.DisabledAt,
+		&i.DisableReason,
 	)
 	return i, err
 }
 
 const getGiftCardBySourceReference = `-- name: GetGiftCardBySourceReference :one
-SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason FROM payment_gift_cards
 WHERE source_reference = $1
 `
 
@@ -95,6 +131,8 @@ func (q *Queries) GetGiftCardBySourceReference(ctx context.Context, sourceRefere
 		&i.Source,
 		&i.SourceReference,
 		&i.CodeChangedAt,
+		&i.DisabledAt,
+		&i.DisableReason,
 	)
 	return i, err
 }
@@ -197,12 +235,26 @@ func (q *Queries) GiftCardBalances(ctx context.Context, ids []string) ([]GiftCar
 	return items, nil
 }
 
+const giftCardOpenHolds = `-- name: GiftCardOpenHolds :one
+SELECT count(*) FROM payment_gift_card_sessions
+WHERE gift_card_id = $1 AND status = 'authorized'
+`
+
+// GiftCardOpenHolds counts the card's sessions still holding part of it: an
+// authorized session's hold comes back when it is captured in part or canceled.
+func (q *Queries) GiftCardOpenHolds(ctx context.Context, giftCardID string) (int64, error) {
+	row := q.db.QueryRow(ctx, giftCardOpenHolds, giftCardID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const insertGiftCard = `-- name: InsertGiftCard :one
 
 INSERT INTO payment_gift_cards (id, code_digest, code_tail, currency_code, reason, source, source_reference)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (source_reference) WHERE source_reference IS NOT NULL DO NOTHING
-RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at
+RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason
 `
 
 type InsertGiftCardParams struct {
@@ -244,6 +296,8 @@ func (q *Queries) InsertGiftCard(ctx context.Context, arg InsertGiftCardParams) 
 		&i.Source,
 		&i.SourceReference,
 		&i.CodeChangedAt,
+		&i.DisabledAt,
+		&i.DisableReason,
 	)
 	return i, err
 }
@@ -370,7 +424,7 @@ func (q *Queries) ListGiftCardEntries(ctx context.Context, arg ListGiftCardEntri
 }
 
 const listGiftCards = `-- name: ListGiftCards :many
-SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at FROM payment_gift_cards
+SELECT id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason FROM payment_gift_cards
 ORDER BY created_at DESC, id DESC
 LIMIT $2::bigint OFFSET $1::bigint
 `
@@ -399,6 +453,8 @@ func (q *Queries) ListGiftCards(ctx context.Context, arg ListGiftCardsParams) ([
 			&i.Source,
 			&i.SourceReference,
 			&i.CodeChangedAt,
+			&i.DisabledAt,
+			&i.DisableReason,
 		); err != nil {
 			return nil, err
 		}
@@ -457,7 +513,7 @@ const replaceGiftCardCode = `-- name: ReplaceGiftCardCode :one
 UPDATE payment_gift_cards
 SET code_digest = $2, code_tail = $3, code_changed_at = now()
 WHERE id = $1
-RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at
+RETURNING id, code_digest, code_tail, currency_code, reason, created_at, source, source_reference, code_changed_at, disabled_at, disable_reason
 `
 
 type ReplaceGiftCardCodeParams struct {
@@ -480,6 +536,8 @@ func (q *Queries) ReplaceGiftCardCode(ctx context.Context, arg ReplaceGiftCardCo
 		&i.Source,
 		&i.SourceReference,
 		&i.CodeChangedAt,
+		&i.DisabledAt,
+		&i.DisableReason,
 	)
 	return i, err
 }

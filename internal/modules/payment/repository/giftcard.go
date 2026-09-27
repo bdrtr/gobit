@@ -74,6 +74,30 @@ func (r *Repository) SoldGiftCardReferences(ctx context.Context, references []st
 	return found, nil
 }
 
+// DisableGiftCard closes an open card; a card already closed is NotFound here,
+// which the service reads under the card's lock before asking.
+func (r *Repository) DisableGiftCard(ctx context.Context, id, reason string) (models.GiftCard, error) {
+	row, err := r.queries(ctx).DisableGiftCard(ctx, paymentdb.DisableGiftCardParams{ID: id, DisableReason: &reason})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return models.GiftCard{}, errors.NotFound(codeGiftCardNotFound, "no open gift card %s", id)
+	}
+	if err != nil {
+		return models.GiftCard{}, classify(err, codeQueryFailed, "the gift card could not be closed")
+	}
+
+	return toGiftCard(row), nil
+}
+
+// GiftCardOpenHolds counts the card's sessions still holding part of it.
+func (r *Repository) GiftCardOpenHolds(ctx context.Context, id string) (int64, error) {
+	held, err := r.queries(ctx).GiftCardOpenHolds(ctx, id)
+	if err != nil {
+		return 0, classify(err, codeQueryFailed, "the gift card's holds could not be read")
+	}
+
+	return held, nil
+}
+
 // ReplaceGiftCardCode gives a card a new code's digest and tail.
 func (r *Repository) ReplaceGiftCardCode(ctx context.Context, id, digest, tail string) (models.GiftCard, error) {
 	row, err := r.queries(ctx).ReplaceGiftCardCode(ctx, paymentdb.ReplaceGiftCardCodeParams{
@@ -328,6 +352,10 @@ func toGiftCard(row paymentdb.PaymentGiftCard) models.GiftCard {
 		card.SourceReference = *row.SourceReference
 	}
 	card.CodeChangedAt = toTimePtr(row.CodeChangedAt)
+	card.DisabledAt = toTimePtr(row.DisabledAt)
+	if row.DisableReason != nil {
+		card.DisableReason = *row.DisableReason
+	}
 
 	return card
 }

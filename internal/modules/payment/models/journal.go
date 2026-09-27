@@ -44,6 +44,9 @@ const (
 	AccountGiftCard JournalAccount = "gift_card"
 	// AccountGiftCardGranted is what the gift cards the shop issued cost it.
 	AccountGiftCardGranted JournalAccount = "gift_card_granted"
+	// AccountGiftCardForfeited is what the shop kept of the sold gift cards
+	// an operator closed (ADR 0213).
+	AccountGiftCardForfeited JournalAccount = "gift_card_forfeited"
 )
 
 // JournalKind is the movement an entry is read from.
@@ -63,6 +66,10 @@ const (
 	JournalLoyaltyReverse JournalKind = "loyalty_reverse"
 	// JournalGiftCardIssue is an issue row of the gift card ledger.
 	JournalGiftCardIssue JournalKind = "gift_card_issue"
+	// JournalGiftCardVoid is the void row of an issued card an operator
+	// closed, and JournalGiftCardForfeit the void row of a sold one (ADR 0213).
+	JournalGiftCardVoid    JournalKind = "gift_card_void"
+	JournalGiftCardForfeit JournalKind = "gift_card_forfeit"
 )
 
 // JournalLine is one side of an entry. Exactly one of Debit and Credit is

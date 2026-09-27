@@ -12,6 +12,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A rollback test passed on the wrong refusal** (D148). A migration's error
+  carries the down file's text, which names the refusal it drops. **For
+  contributors:** rollback tests assert the constraint as the server quotes it,
+  `check constraint "…"` or `unique index "…"`.
+
 - **A job built and never registered passed the registration gate** (D147).
   **For contributors:** `TestEveryJobIsRegisteredInTheCompositionRoot` now
   counts a job only when its `Definition` is handed to the registry's `Add`.
@@ -103,6 +108,20 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **An operator closes a gift card, and a card line is final** (ADR 0213). **For
+  API consumers:** a return request or a line write-off naming a line that sold
+  gift cards is answered 409 `order_gift_card_line_final`. `POST
+  /admin/v1/gift-cards/{id}/disable` (payment:write, body `{"reason": ...}`)
+  closes a card: what it held is voided, the answer carries `disabled_at` and
+  `disable_reason`, and a card a payment still holds is answered 409
+  `payment_gift_card_held`. A closed card's code is answered 409
+  `payment_gift_card_disabled` at checkout, a refund onto it is refused with the
+  same code, and it gets no new code. The payment journal books a closed card's
+  balance as `gift_card_void` (issued cards, back to `gift_card_granted`) or
+  `gift_card_forfeit` (sold cards, to a new `gift_card_forfeited` account).
+  **For operators:** payment migration 000011 adds the close; rolling it back
+  stops while a closed card exists.
 
 - **A sweep issues the gift cards a lost delivery did not** (ADR 0212). **For
   operators:** a new job, `gift-card-sweep`, runs every five minutes and issues

@@ -21,6 +21,7 @@ const (
 	pathAdminGiftCard        = "/admin/v1/gift-cards/{id}"
 	pathAdminGiftCardEntries = "/admin/v1/gift-cards/{id}/entries"
 	pathAdminGiftCardCode    = "/admin/v1/gift-cards/{id}/code"
+	pathAdminGiftCardDisable = "/admin/v1/gift-cards/{id}/disable"
 )
 
 // issueGiftCardRequest is the body that issues a card.
@@ -30,6 +31,12 @@ type issueGiftCardRequest struct {
 	// Amount is the balance the card is issued with (minor unit); positive.
 	Amount int64 `json:"amount"`
 	// Reason is why the card is issued; required.
+	Reason string `json:"reason"`
+}
+
+// disableGiftCardRequest is the body that closes a card.
+type disableGiftCardRequest struct {
+	// Reason is why the card is closed; required.
 	Reason string `json:"reason"`
 }
 
@@ -49,6 +56,10 @@ type giftCardDTO struct {
 	CreatedAt time.Time `json:"created_at"`
 	// CodeChangedAt is when the card's code was last replaced.
 	CodeChangedAt *time.Time `json:"code_changed_at,omitempty"`
+	// DisabledAt is when an operator closed the card, and DisableReason why
+	// (ADR 0213).
+	DisabledAt    *time.Time `json:"disabled_at,omitempty"`
+	DisableReason string     `json:"disable_reason,omitempty"`
 }
 
 // giftCardEntryDTO is a row of a card's history. Amount is SIGNED, so the rows
@@ -167,16 +178,36 @@ func (h *Handler) replaceGiftCardCode(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: out})
 }
 
+// disableGiftCard closes a card (POST /admin/v1/gift-cards/{id}/disable).
+func (h *Handler) disableGiftCard(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var body disableGiftCardRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+	closed, err := h.svc.DisableGiftCard(ctx, chi.URLParam(r, "id"), body.Reason)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toGiftCardDTO(closed)})
+}
+
 // toGiftCardDTO turns a card into its outward shape, without its code.
 func toGiftCardDTO(in service.GiftCardWithBalance) giftCardDTO {
 	return giftCardDTO{
 		ID: in.Card.ID, CodeTail: in.Card.CodeTail, CurrencyCode: in.Card.CurrencyCode,
 		Balance: in.Balance, Reason: in.Card.Reason, Source: string(in.Card.Source),
 		CreatedAt: in.Card.CreatedAt, CodeChangedAt: in.Card.CodeChangedAt,
+		DisabledAt: in.Card.DisabledAt, DisableReason: in.Card.DisableReason,
 	}
 }
 
-// describeGiftCards describes the four gift card endpoints.
+// describeGiftCards describes the gift card endpoints.
 func describeGiftCards(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminGiftCards, openapi.Operation{
 		Summary: "Issues a gift card.",
@@ -216,6 +247,18 @@ func describeGiftCards(d *openapi.Doc) {
 			amountNote,
 		Responses: map[string]any{
 			"200": openapi.Response("The card, with its new code", d.Item(giftCardDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, pathAdminGiftCardDisable, openapi.Operation{
+		Summary: "Closes a gift card.",
+		Description: "A closed card pays nothing and takes no refund, and what it still held is " +
+			"voided in the same step, so its balance is zero (ADR 0213). The reason is required. " +
+			"A card a payment still holds part of is refused with 409 payment_gift_card_held; " +
+			"closing a closed card changes nothing. There is no reopening. " + amountNote,
+		RequestBody: d.RequestBody(disableGiftCardRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The closed card", d.Item(giftCardDTO{})),
 		},
 	})
 

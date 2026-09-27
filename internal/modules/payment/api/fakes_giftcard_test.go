@@ -54,3 +54,12 @@ func (f *fakePayments) ReplaceGiftCardCode(_ context.Context, id string) (servic
 
 	return f.issuedCard, nil
 }
+
+func (f *fakePayments) DisableGiftCard(_ context.Context, id, reason string) (service.GiftCardWithBalance, error) {
+	f.lastGiftID, f.lastDisableReason = id, reason
+	if f.err != nil {
+		return service.GiftCardWithBalance{}, f.err
+	}
+
+	return f.giftCards[0], nil
+}

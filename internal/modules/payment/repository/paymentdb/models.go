@@ -45,6 +45,8 @@ type PaymentGiftCard struct {
 	Source          string
 	SourceReference *string
 	CodeChangedAt   pgtype.Timestamptz
+	DisabledAt      pgtype.Timestamptz
+	DisableReason   *string
 }
 
 type PaymentGiftCardEntry struct {

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/payment/api"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
@@ -122,4 +123,38 @@ func TestAReplacedCodeIsAnsweredOnceUnderThePaymentWrite(t *testing.T) {
 	assert.Equal(t, "gcard_1", svc.lastGiftID)
 	assert.Contains(t, replaced.Body.String(), `"code":"QRST-UVWX-YZ01-WXYZ"`)
 	assert.Contains(t, replaced.Body.String(), `"source":"sold"`)
+}
+
+// TestAGiftCardIsClosedWithAReasonUnderThePaymentWrite (ADR 0213): the reason
+// reaches the service, the answer says when and why, and a card a payment holds
+// is answered 409.
+func TestAGiftCardIsClosedWithAReasonUnderThePaymentWrite(t *testing.T) {
+	t.Parallel()
+
+	closedAt := time.Unix(2_000, 0).UTC()
+	svc := &fakePayments{giftCards: []service.GiftCardWithBalance{{Card: models.GiftCard{
+		ID: "gcard_1", CodeTail: "WXYZ", CurrencyCode: "TRY", DisabledAt: &closedAt, DisableReason: "sold by mistake",
+	}}}}
+	r := giftCardRouter(svc)
+	reader := corehttp.Principal{ID: "user_reader", Kind: "user", Scopes: []string{api.ScopeRead}}
+
+	refused := giftCardRequest(t, r, http.MethodPost, "/admin/v1/gift-cards/gcard_1/disable",
+		`{"reason":"sold by mistake"}`, reader)
+	assert.Equal(t, http.StatusForbidden, refused.Code)
+	assert.Empty(t, svc.lastDisableReason, "the service was not asked")
+
+	closed := giftCardRequest(t, r, http.MethodPost, "/admin/v1/gift-cards/gcard_1/disable",
+		`{"reason":"sold by mistake"}`, operator)
+	require.Equal(t, http.StatusOK, closed.Code, closed.Body.String())
+	assert.Equal(t, "gcard_1", svc.lastGiftID)
+	assert.Equal(t, "sold by mistake", svc.lastDisableReason)
+	assert.Contains(t, closed.Body.String(), `"disabled_at":"1970-01-01T00:33:20Z"`)
+	assert.Contains(t, closed.Body.String(), `"disable_reason":"sold by mistake"`)
+	assert.Contains(t, closed.Body.String(), `"balance":0`)
+
+	svc.err = errors.Conflict(service.CodeGiftCardHeld, "held")
+	held := giftCardRequest(t, r, http.MethodPost, "/admin/v1/gift-cards/gcard_1/disable",
+		`{"reason":"sold by mistake"}`, operator)
+	assert.Equal(t, http.StatusConflict, held.Code)
+	assert.Contains(t, held.Body.String(), service.CodeGiftCardHeld)
 }

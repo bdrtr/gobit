@@ -51,6 +51,19 @@ WHERE e.kind = 'issue' AND g.source = 'issued'
 ORDER BY e.created_at, e.id
 LIMIT sqlc.arg('row_limit');
 
+-- A closed card's void is read with the card's source, which decides where the
+-- balance goes: a granted card's cost comes back, a sold card's price is kept
+-- (ADR 0213).
+-- name: JournalGiftCardVoids :many
+SELECT e.id, e.gift_card_id, g.currency_code, g.source, e.amount, e.created_at
+FROM payment_gift_card_entries e
+JOIN payment_gift_cards g ON g.id = e.gift_card_id
+WHERE e.kind = 'void'
+  AND e.created_at >= sqlc.arg('from_at') AND e.created_at < sqlc.arg('to_at')
+  AND (sqlc.narg('currency_code')::text IS NULL OR g.currency_code = sqlc.narg('currency_code')::text)
+ORDER BY e.created_at, e.id
+LIMIT sqlc.arg('row_limit');
+
 -- name: JournalLoyaltyGrants :many
 SELECT id, customer_id, currency_code, points, kind, created_at
 FROM payment_loyalty_entries

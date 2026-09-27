@@ -196,8 +196,15 @@ type Store interface {
 	// ReplaceGiftCardCode gives a card a new code's digest and tail.
 	ReplaceGiftCardCode(ctx context.Context, id, digest, tail string) (models.GiftCard, error)
 	// AppendGiftCardEntry appends ONE event to a card's ledger; the service
-	// writes only the issue.
+	// writes only the issue and the void (ADR 0213).
 	AppendGiftCardEntry(ctx context.Context, entry models.GiftCardEntry) (models.GiftCardEntry, error)
+	// LockGiftCardBalance locks a card's balance for the transaction; it is the
+	// lock an authorization takes.
+	LockGiftCardBalance(ctx context.Context, cardID, currencyCode string) error
+	// GiftCardOpenHolds counts the card's sessions still holding part of it.
+	GiftCardOpenHolds(ctx context.Context, id string) (int64, error)
+	// DisableGiftCard closes an open card (ADR 0213).
+	DisableGiftCard(ctx context.Context, id, reason string) (models.GiftCard, error)
 	// GiftCard returns a card, or NotFound.
 	GiftCard(ctx context.Context, id string) (models.GiftCard, error)
 	// GiftCardBalance sums a card's entries.

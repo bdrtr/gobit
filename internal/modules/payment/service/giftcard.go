@@ -17,6 +17,13 @@ import (
 // CodeGiftCardInvalidInput reports a card input that makes no sense.
 const CodeGiftCardInvalidInput = "payment_gift_card_invalid_input"
 
+// CodeGiftCardHeld reports a card that cannot be closed while a payment
+// session holds part of it (ADR 0213).
+const CodeGiftCardHeld = "payment_gift_card_held"
+
+// CodeGiftCardClosed reports an act a closed card does not take (ADR 0213).
+const CodeGiftCardClosed = "payment_gift_card_disabled"
+
 // IssueGiftCardInput is the input for issuing a card.
 type IssueGiftCardInput struct {
 	// CurrencyCode is the one currency the card holds; required.
@@ -181,6 +188,14 @@ func (s *Service) ReplaceGiftCardCode(ctx context.Context, id string) (IssuedGif
 	if strings.TrimSpace(id) == "" {
 		return IssuedGiftCard{}, errors.Invalid(CodeGiftCardInvalidInput, "the gift card id is required")
 	}
+	current, err := s.store.GiftCard(ctx, id)
+	if err != nil {
+		return IssuedGiftCard{}, err
+	}
+	if current.DisabledAt != nil {
+		return IssuedGiftCard{}, errors.Conflict(CodeGiftCardClosed,
+			"gift card %s is closed; a new code would open nothing", id)
+	}
 	code := models.NewGiftCardCode()
 	normalized, _ := models.NormalizeGiftCardCode(code)
 
@@ -196,6 +211,88 @@ func (s *Service) ReplaceGiftCardCode(ctx context.Context, id string) (IssuedGif
 	s.log.InfoContext(ctx, "gift card code replaced", "gift_card", card.ID, "tail", card.CodeTail)
 
 	return IssuedGiftCard{Card: card, Code: code, Balance: balance}, nil
+}
+
+// DisableGiftCard closes a card: it pays nothing from then on, and what it
+// still held is voided in the same transaction (ADR 0213).
+//
+// The card's lock is the one an authorization takes, so a payment either held
+// its part before the close, and the close is refused while that hold stands,
+// or it comes after and finds nothing to hold. A card already closed is
+// returned as it is, with nothing written.
+func (s *Service) DisableGiftCard(ctx context.Context, id, reason string) (GiftCardWithBalance, error) {
+	if strings.TrimSpace(id) == "" {
+		return GiftCardWithBalance{}, errors.Invalid(CodeGiftCardInvalidInput, "the gift card id is required")
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return GiftCardWithBalance{}, errors.Invalid(CodeGiftCardInvalidInput,
+			"a gift card is closed with a reason")
+	}
+	if err := checkTextLen("reason", reason); err != nil {
+		return GiftCardWithBalance{}, err
+	}
+
+	var out GiftCardWithBalance
+	var voided int64
+	closedNow := false
+	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		card, err := s.store.GiftCard(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := s.store.LockGiftCardBalance(ctx, card.ID, card.CurrencyCode); err != nil {
+			return err
+		}
+		if card, err = s.store.GiftCard(ctx, id); err != nil {
+			return err
+		}
+		if card.DisabledAt != nil {
+			out = GiftCardWithBalance{Card: card}
+
+			return nil
+		}
+		held, err := s.store.GiftCardOpenHolds(ctx, card.ID)
+		if err != nil {
+			return err
+		}
+		if held > 0 {
+			return errors.Conflict(CodeGiftCardHeld,
+				"gift card %s is held by %d payment sessions; it is closed once they are captured or canceled",
+				card.ID, held)
+		}
+		balance, err := s.store.GiftCardBalance(ctx, card.ID)
+		if err != nil {
+			return err
+		}
+		if balance > 0 {
+			if _, err := s.store.AppendGiftCardEntry(ctx, models.GiftCardEntry{
+				ID:         models.NewGiftCardEntryID(),
+				GiftCardID: card.ID,
+				Amount:     -balance,
+				Kind:       models.GiftCardVoid,
+			}); err != nil {
+				return err
+			}
+			voided = balance
+		}
+		closed, err := s.store.DisableGiftCard(ctx, card.ID, reason)
+		if err != nil {
+			return err
+		}
+		out, closedNow = GiftCardWithBalance{Card: closed}, true
+
+		return nil
+	})
+	if err != nil {
+		return GiftCardWithBalance{}, err
+	}
+	if closedNow {
+		s.log.InfoContext(ctx, "gift card closed", "gift_card", out.Card.ID, "tail", out.Card.CodeTail,
+			"voided", voided, "source", out.Card.Source)
+	}
+
+	return out, nil
 }
 
 // GetGiftCard returns a card and its balance.

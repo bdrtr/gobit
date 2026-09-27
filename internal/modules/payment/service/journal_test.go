@@ -90,6 +90,10 @@ func TestTheChartOfAccounts(t *testing.T) {
 			CurrencyCode: "TRY", Amount: 5_000},
 		models.JournalMovement{ID: "pay_card_gift", Kind: models.JournalCapture, OccurredAt: at(9),
 			CurrencyCode: "TRY", Amount: 2_000, CollectionID: "paycol_4", ProviderID: models.GiftCardTenderID},
+		models.JournalMovement{ID: "gc_void", Kind: models.JournalGiftCardVoid, OccurredAt: at(10),
+			CurrencyCode: "TRY", Amount: -3_000},
+		models.JournalMovement{ID: "gc_forfeit", Kind: models.JournalGiftCardForfeit, OccurredAt: at(11),
+			CurrencyCode: "TRY", Amount: -1_500},
 	)
 
 	journal, err := svc.Journal(t.Context(), journalQuery())
@@ -112,6 +116,10 @@ func TestTheChartOfAccounts(t *testing.T) {
 		// reduces that debt rather than a provider's clearing.
 		"gc_issue":      {{models.AccountGiftCardGranted, "", "", 5_000}, {models.AccountGiftCard, "", "", 5_000}},
 		"pay_card_gift": {{models.AccountGiftCard, "", "", 2_000}, {models.AccountReceivable, "", "", 2_000}},
+		// ADR 0213: closing an issued card takes its cost back, and closing a
+		// sold one keeps its price.
+		"gc_void":    {{models.AccountGiftCard, "", "", 3_000}, {models.AccountGiftCardGranted, "", "", 3_000}},
+		"gc_forfeit": {{models.AccountGiftCard, "", "", 1_500}, {models.AccountGiftCardForfeited, "", "", 1_500}},
 	}
 	require.Len(t, journal.Entries, len(want))
 	for _, entry := range journal.Entries {
