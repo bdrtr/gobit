@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 
@@ -33,12 +34,19 @@ type AdminSurface struct{ svc *Service }
 // NewAdminSurface builds the admin surface over the given service.
 func NewAdminSurface(svc *Service) *AdminSurface { return &AdminSurface{svc: svc} }
 
-// SetBasePriceAmount sets the amount of ONE base price and leaves every other
-// price on the set untouched.
+// CodeUnitPriceAmbiguous reports a price set holding more than one base price
+// at one unit in a currency, so that a write naming the currency cannot tell
+// which of them it means (ADR 0206).
+const CodeUnitPriceAmbiguous = "pricing_unit_price_ambiguous"
+
+// SetBasePriceAmount sets the base price at one unit in a currency and leaves
+// every other price on the set untouched (ADR 0206).
 //
-// "Base" means no price list and no rules — the price that applies when nothing
-// else does. When the currency has no base price yet, one is added; the panel's
-// form can then give a price to a set that only had campaign prices.
+// The price it changes is ADR 0041's: bound to no list, carrying no rules, and
+// covering one unit. A quantity tier starting above one is another price and
+// keeps its amount. When the currency has no price at one unit, one is added,
+// ending below the currency's lowest tier so the two do not overlap. An amount
+// that already stands writes nothing.
 //
 // # What it costs
 //
@@ -61,46 +69,74 @@ func (a *AdminSurface) SetBasePriceAmount(
 		return err
 	}
 
-	// The code is normalized but NOT checked for emptiness here. SetPrices
-	// below refuses an empty currency with the same Kind and writes nothing,
-	// so a guard on this line would be a branch no test could distinguish from
-	// its absence — and a branch nothing can distinguish is a branch that rots.
-	currency := strings.ToUpper(strings.TrimSpace(currencyCode))
+	_, err := a.svc.setUnitBasePrices(ctx, priceSetID, map[string]int64{currencyCode: amount})
+
+	return err
+}
+
+// setUnitBasePrices sets the base price at one unit in each named currency,
+// leaves every other price on the set as it is, and reports whether it wrote.
+//
+// The currency code is normalized but NOT checked for emptiness here. SetPrices
+// below refuses an empty currency with the same Kind and writes nothing, so a
+// guard here would be a branch no test could distinguish from its absence.
+func (s *Service) setUnitBasePrices(
+	ctx context.Context, priceSetID string, amountsByCurrency map[string]int64,
+) (bool, error) {
+	amounts := make(map[string]int64, len(amountsByCurrency))
+	for code, amount := range amountsByCurrency {
+		currency := strings.ToUpper(strings.TrimSpace(code))
+		if _, twice := amounts[currency]; twice {
+			return false, errors.Invalid(CodeInvalidInput, "the currency %s is named twice", currency)
+		}
+		amounts[currency] = amount
+	}
 
 	// ListPrices returns EVERY price, including the ones with rules and the
 	// ones on a price list. Reading through the storefront-facing list would
 	// hand back a filtered set and the write below would delete the rest.
-	existing, err := a.svc.ListPrices(ctx, priceSetID)
+	existing, err := s.ListPrices(ctx, priceSetID)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	inputs := make([]PriceInput, 0, len(existing)+1)
-	replaced := false
-
+	inputs := make([]PriceInput, 0, len(existing)+len(amounts))
 	for i := range existing {
-		price := existing[i]
-		input := PriceInput{
-			CurrencyCode: price.CurrencyCode,
-			Amount:       price.Amount,
-			MinQuantity:  price.MinQuantity,
-			MaxQuantity:  price.MaxQuantity,
-			PriceListID:  price.PriceListID,
-			Rules:        ruleInputs(price.Rules),
-		}
-		if isBasePrice(price) && strings.EqualFold(price.CurrencyCode, currency) {
-			input.Amount = amount
-			replaced = true
-		}
-		inputs = append(inputs, input)
+		inputs = append(inputs, PriceInput{
+			CurrencyCode: existing[i].CurrencyCode,
+			Amount:       existing[i].Amount,
+			MinQuantity:  existing[i].MinQuantity,
+			MaxQuantity:  existing[i].MaxQuantity,
+			PriceListID:  existing[i].PriceListID,
+			Rules:        ruleInputs(existing[i].Rules),
+		})
 	}
 
-	if !replaced {
-		inputs = append(inputs, PriceInput{
-			CurrencyCode: currency,
-			Amount:       amount,
-			MinQuantity:  models.MinQuantity,
-		})
+	changed := false
+	for _, currency := range slices.Sorted(maps.Keys(amounts)) {
+		at := unitBasePrices(existing, currency)
+		switch len(at) {
+		case 0:
+			inputs = append(inputs, PriceInput{
+				CurrencyCode: currency,
+				Amount:       amounts[currency],
+				MinQuantity:  models.MinQuantity,
+				MaxQuantity:  belowTiers(existing, currency),
+			})
+			changed = true
+		case 1:
+			if inputs[at[0]].Amount != amounts[currency] {
+				inputs[at[0]].Amount = amounts[currency]
+				changed = true
+			}
+		default:
+			return false, errors.Conflict(CodeUnitPriceAmbiguous,
+				"the price set %s has %d base prices at one unit in %s; which one to change is not this write's to guess",
+				priceSetID, len(at), currency)
+		}
+	}
+	if !changed {
+		return false, nil
 	}
 
 	// The order is pinned so the same edit writes the same rows every time and
@@ -109,9 +145,52 @@ func (a *AdminSurface) SetBasePriceAmount(
 		return strings.Compare(a.CurrencyCode, b.CurrencyCode)
 	})
 
-	_, err = a.svc.SetPrices(ctx, priceSetID, inputs)
+	if _, err := s.SetPrices(ctx, priceSetID, inputs); err != nil {
+		return false, err
+	}
 
-	return err
+	return true, nil
+}
+
+// unitBasePrices returns the indexes of the base prices at one unit in a
+// currency: ADR 0041's definition, the price the export writes and the catalog
+// filter compares.
+func unitBasePrices(prices []models.Price, currency string) []int {
+	var out []int
+	for i := range prices {
+		price := &prices[i]
+		if !isBasePrice(*price) || !strings.EqualFold(price.CurrencyCode, currency) {
+			continue
+		}
+		if price.MinQuantity <= models.MinQuantity &&
+			(price.MaxQuantity == nil || *price.MaxQuantity >= models.MinQuantity) {
+			out = append(out, i)
+		}
+	}
+
+	return out
+}
+
+// belowTiers is the upper end of a new price at one unit: one below the
+// lowest tier the currency's base prices start at, or open when there is none.
+func belowTiers(prices []models.Price, currency string) *int32 {
+	var lowest *int32
+	for i := range prices {
+		price := &prices[i]
+		if !isBasePrice(*price) || !strings.EqualFold(price.CurrencyCode, currency) {
+			continue
+		}
+		if lowest == nil || price.MinQuantity < *lowest {
+			lowest = &price.MinQuantity
+		}
+	}
+	if lowest == nil {
+		return nil
+	}
+
+	upTo := *lowest - 1
+
+	return &upTo
 }
 
 // isBasePrice reports whether a price applies when nothing else does.

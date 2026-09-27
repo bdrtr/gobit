@@ -462,3 +462,72 @@ func TestParseAmountIsIntegerArithmeticEndToEnd(t *testing.T) {
 		})
 	}
 }
+
+// tieredCatalog is a read layer whose variant's price set holds what pricing
+// allows beside the price at one unit: a quantity tier, a price on an open
+// list, and a second currency. The values carry the types pricing's provider
+// writes, typed nils included.
+func tieredCatalog(prices ...map[string]any) *fakeCatalog {
+	catalog := variantCatalog(2)
+	catalog.byEntity[EntityVariant][0][keyPriceSet] = query.Record{"id": "pset_1", "prices": prices}
+
+	return catalog
+}
+
+// tier builds one price sub-record as pricing's provider writes it.
+func tier(currency string, amount int64, from int32, upTo *int32, listID *string) map[string]any {
+	return map[string]any{
+		"currency_code": currency, "amount": amount,
+		"min_quantity": from, "max_quantity": upTo, "price_list_id": listID,
+	}
+}
+
+// TestVariantPageEditsOnlyThePriceAtOneUnit is D143: every price the read
+// layer listed got a form naming only its currency, and saving the form for a
+// tier or a list price changed the base price instead.
+func TestVariantPageEditsOnlyThePriceAtOneUnit(t *testing.T) {
+	t.Parallel()
+
+	nine, list := int32(9), "plist_autumn"
+	panel := newVariantPanel(t, tieredCatalog(
+		tier("TRY", 19990, 1, &nine, nil),
+		tier("TRY", 17990, 10, nil, nil),
+		tier("TRY", 14990, 1, nil, &list),
+		tier("USD", 999, 1, (*int32)(nil), (*string)(nil)),
+	), &fakePriceWriter{}, nil)
+
+	rec := getVariant(panel)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.Equal(t, 1, strings.Count(body, `name="currency" value="TRY"`), "one form for TRY, the price at one unit")
+	assert.Contains(t, body, `value="199.90"`)
+	assert.Contains(t, body, `name="currency" value="USD"`, "a typed nil is no list and no upper end")
+	assert.NotContains(t, body, `value="179.90"`, "the tier gets no box")
+	assert.NotContains(t, body, `value="149.90"`, "the list price gets no box")
+	assert.Contains(t, body, "179.90")
+	assert.Contains(t, body, "10 or more")
+	assert.Contains(t, body, "149.90")
+	assert.Contains(t, body, "1 or more, on price list plist_autumn")
+}
+
+// TestTwoPricesAtOneUnitAreShownNotEdited: the write refuses to guess between
+// them, so the page offers no box that could only be refused.
+func TestTwoPricesAtOneUnitAreShownNotEdited(t *testing.T) {
+	t.Parallel()
+
+	five := int32(5)
+	panel := newVariantPanel(t, tieredCatalog(
+		tier("TRY", 19990, 1, nil, nil),
+		tier("TRY", 18990, 1, &five, nil),
+	), &fakePriceWriter{}, nil)
+
+	rec := getVariant(panel)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	assert.NotContains(t, body, `name="currency" value="TRY"`)
+	assert.Contains(t, body, "1 to 5")
+	assert.Contains(t, body, "1 or more")
+	assert.Contains(t, body, "no single base price at one unit to edit here")
+}

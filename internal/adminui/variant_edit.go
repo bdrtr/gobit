@@ -205,10 +205,13 @@ func (u *UI) renderVariant(
 	priceSetID, _ := recordChildID(record, keyPriceSet)
 	itemID, _ := recordChildID(record, keyInventory)
 
+	editable, others := variantPrices(record, u.currencyScales(r.Context()))
+
 	u.templates.render(w, r, status, "variant.gohtml", map[string]any{
 		titleKey:      recordString(record, fieldTitle),
 		"Variant":     variantRow{ID: recordString(record, fieldID), Title: recordString(record, fieldTitle), SKU: recordString(record, fieldSKU)},
-		"Prices":      u.priceRows(r.Context(), record),
+		"Prices":      editable,
+		"OtherPrices": others,
 		"PriceSetID":  priceSetID,
 		"ItemID":      itemID,
 		"Levels":      u.stockRows(r.Context(), itemID),
@@ -221,17 +224,125 @@ func (u *UI) renderVariant(
 	})
 }
 
-// priceRows turns the price-set expansion into editable rows.
-func (u *UI) priceRows(ctx context.Context, record query.Record) []priceRow {
-	scales := u.currencyScales(ctx)
-	views := pricesOf(record, scales)
+// The price sub-record's fields that say when a price applies. Like the amount
+// and the currency, they are pricing's and pricing does not publish them.
+const (
+	fieldMinQuantity = "min_quantity"
+	fieldMaxQuantity = "max_quantity"
+	fieldPriceListID = "price_list_id"
+)
 
-	rows := make([]priceRow, 0, len(views))
-	for _, view := range views {
-		rows = append(rows, priceRow{Currency: view.Currency, Amount: view.Amount, Minor: view.Minor})
+// otherPriceRow is a price the variant page shows and does not edit.
+type otherPriceRow struct {
+	Currency string
+	Amount   string
+	Minor    bool
+	// Applies says when the price applies: its quantities and its list.
+	Applies string
+}
+
+// variantPrices splits the price-set expansion into the prices the page edits
+// and the ones it only shows (ADR 0206).
+//
+// The form names a currency and nothing else, and the write behind it changes
+// the base price at one unit in that currency. So only that price gets a form:
+// a quantity tier, a price on a list, or one of two prices at one unit in the
+// same currency would have been a box whose save changed another price.
+func variantPrices(record query.Record, scales map[string]int) ([]priceRow, []otherPriceRow) {
+	set, _ := record[keyPriceSet].(query.Record)
+	raw, _ := set[fieldPrices].([]map[string]any)
+
+	type read struct {
+		view    priceView
+		unit    bool
+		applies string
+	}
+	prices := make([]read, 0, len(raw))
+	unitCount := map[string]int{}
+	for _, price := range raw {
+		amount, ok := intValue(price[fieldAmount])
+		if !ok {
+			continue
+		}
+		code := strings.ToUpper(stringValue(price[fieldCurrencyCod]))
+		text, exact := formatAmount(int64(amount), code, scales)
+		listID := priceListID(price[fieldPriceListID])
+		from, upTo := quantityRange(price)
+		unit := listID == "" && from <= 1 && (upTo == nil || *upTo >= 1)
+		if unit {
+			unitCount[code]++
+		}
+		prices = append(prices, read{
+			view:    priceView{Amount: text, Currency: code, Minor: !exact},
+			unit:    unit,
+			applies: applies(from, upTo, listID),
+		})
 	}
 
-	return rows
+	var editable []priceRow
+	var others []otherPriceRow
+	for _, price := range prices {
+		if price.unit && unitCount[price.view.Currency] == 1 {
+			editable = append(editable, priceRow{Currency: price.view.Currency, Amount: price.view.Amount, Minor: price.view.Minor})
+			continue
+		}
+		others = append(others, otherPriceRow{
+			Currency: price.view.Currency, Amount: price.view.Amount, Minor: price.view.Minor, Applies: price.applies,
+		})
+	}
+
+	return editable, others
+}
+
+// priceListID reads a price's list, "" when it has none. Pricing writes a
+// *string that may be a typed nil, which a nil check on the interface misses.
+func priceListID(raw any) string {
+	switch value := raw.(type) {
+	case *string:
+		if value != nil {
+			return *value
+		}
+	case string:
+		return value
+	}
+
+	return ""
+}
+
+// quantityRange reads a price's quantity range: a missing lower end is one,
+// and a missing upper end is open, as pricing's schema defaults them.
+func quantityRange(price map[string]any) (from int, upTo *int) {
+	from = 1
+	if value, ok := intValue(price[fieldMinQuantity]); ok {
+		from = value
+	}
+
+	switch value := price[fieldMaxQuantity].(type) {
+	case *int32:
+		if value != nil {
+			bound := int(*value)
+			return from, &bound
+		}
+	default:
+		if bound, ok := intValue(value); ok {
+			return from, &bound
+		}
+	}
+
+	return from, nil
+}
+
+// applies describes when a price applies.
+func applies(from int, upTo *int, listID string) string {
+	quantities := strconv.Itoa(from) + " or more"
+	if upTo != nil {
+		quantities = strconv.Itoa(from) + " to " + strconv.Itoa(*upTo)
+	}
+	if listID != "" {
+		return quantities + ", on price list " + listID
+	}
+
+	return quantities
 }
 
 // stockRows reads the per-location levels through the inventory admin surface.

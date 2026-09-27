@@ -43,7 +43,21 @@ only appeared once it had stock could never be stocked from this form.
       </form>
     {{ end }}
   {{ else }}
-    <p>This variant's price set has no base price yet. Add one through the admin API.</p>
+    <p>This variant's price set has no single base price at one unit to edit here. Add or change one through the admin API.</p>
+  {{ end }}
+  {{ if .OtherPrices }}
+    <h3>Other prices</h3>
+    <p>Quantity tiers and prices on a price list are changed through the admin API.</p>
+    <table>
+      <thead>
+        <tr><th>Currency</th><th>Amount</th><th>Applies to</th></tr>
+      </thead>
+      <tbody>
+      {{ range .OtherPrices }}
+        <tr><td>{{ .Currency }}</td><td>{{ .Amount }}{{ if .Minor }} (minor units){{ end }}</td><td>{{ .Applies }}</td></tr>
+      {{ end }}
+      </tbody>
+    </table>
   {{ end }}
 {{ else }}
   <p>This variant is not linked to a price set.</p>

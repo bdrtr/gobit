@@ -141,9 +141,8 @@ func TestSetBasePriceAmountPreservesRuleContent(t *testing.T) {
 // TestSetBasePriceAmountAddsAMissingCurrency proves a set with no base price in
 // that currency gains one.
 //
-// Without it the form could not give a price to a set that only had campaign
-// prices: the operator would type into an empty box and saving would do
-// nothing.
+// Without it a write naming a currency the set has no price at one unit in
+// would do nothing and say nothing.
 func TestSetBasePriceAmountAddsAMissingCurrency(t *testing.T) {
 	t.Parallel()
 
@@ -228,4 +227,107 @@ func TestPricingAdminSurfaceIsNilSafe(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable))
+}
+
+// tierPrice builds a stored base price for a quantity range.
+func tierPrice(id string, amount int64, from int32, upTo *int32) models.Price {
+	price := listedPrice("TRY", amount, nil, nil)
+	price.ID, price.MinQuantity, price.MaxQuantity = id, from, upTo
+
+	return price
+}
+
+// writtenAmounts maps each written TRY price's lower quantity bound to its
+// amount.
+func writtenAmounts(written []models.Price) map[int32]int64 {
+	out := map[int32]int64{}
+	for i := range written {
+		out[written[i].MinQuantity] = written[i].Amount
+	}
+
+	return out
+}
+
+// TestSetBasePriceAmountLeavesAQuantityTierAlone is D143: a price for ten or
+// more is another price than the one at one unit, and an edit of the one at
+// one unit used to write its amount over both.
+func TestSetBasePriceAmountLeavesAQuantityTierAlone(t *testing.T) {
+	t.Parallel()
+
+	upTo := int32(9)
+	fx := newAdminFixture(t, []models.Price{
+		tierPrice("price_unit", 10000, 1, &upTo),
+		tierPrice("price_ten", 9000, 10, nil),
+	})
+
+	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 12000))
+
+	assert.Equal(t, map[int32]int64{1: 12000, 10: 9000}, writtenAmounts(fx.written))
+}
+
+// TestAPriceAtOneUnitIsAddedBelowTheLowestTier: a currency priced only from
+// ten units gains a price for one to nine, so the two do not overlap.
+func TestAPriceAtOneUnitIsAddedBelowTheLowestTier(t *testing.T) {
+	t.Parallel()
+
+	fx := newAdminFixture(t, []models.Price{
+		tierPrice("price_fifty", 8000, 50, nil),
+		tierPrice("price_ten", 9000, 10, nil),
+	})
+
+	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 10000))
+
+	assert.Equal(t, map[int32]int64{1: 10000, 10: 9000, 50: 8000}, writtenAmounts(fx.written))
+	for i := range fx.written {
+		if fx.written[i].MinQuantity == 1 {
+			require.NotNil(t, fx.written[i].MaxQuantity)
+			assert.Equal(t, int32(9), *fx.written[i].MaxQuantity, "the new price ends below the lowest tier")
+		}
+	}
+}
+
+// TestAnAmountThatStandsWritesNothing: the write replaces the whole set and
+// regenerates its price ids, so an amount already in place is left alone.
+func TestAnAmountThatStandsWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	fx := newAdminFixture(t, []models.Price{listedPrice("TRY", 19990, nil, nil)})
+
+	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 19990))
+
+	assert.Nil(t, fx.written, "nothing is written")
+}
+
+// TestTwoPricesAtOneUnitAreNotGuessedBetween: overlapping base prices are
+// allowed, and a write naming only a currency cannot tell which one it means.
+func TestTwoPricesAtOneUnitAreNotGuessedBetween(t *testing.T) {
+	t.Parallel()
+
+	upTo := int32(5)
+	fx := newAdminFixture(t, []models.Price{
+		tierPrice("price_open", 10000, 1, nil),
+		tierPrice("price_five", 9500, 1, &upTo),
+	})
+
+	err := fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 12000)
+
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err))
+	assert.Equal(t, CodeUnitPriceAmbiguous, errors.CodeOf(err))
+	assert.Nil(t, fx.written, "nothing is written")
+}
+
+// TestACurrencyNamedTwiceIsRefused: two spellings of one currency would each
+// find the same price, and the later would win by map order.
+func TestACurrencyNamedTwiceIsRefused(t *testing.T) {
+	t.Parallel()
+
+	fx := newAdminFixture(t, nil)
+
+	_, err := fx.surface.svc.setUnitBasePrices(context.Background(), "pset_1",
+		map[string]int64{"TRY": 100, "try": 200})
+
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err))
+	assert.Nil(t, fx.written)
 }

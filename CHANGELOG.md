@@ -12,6 +12,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel's price form overwrote quantity tiers** (D143, ADR 0206). Saving
+  a variant's price in a currency set every base price in it to the amount, a
+  price for ten or more included, and the page offered the same form for a tier
+  and for an open list's price, whose save changed the base price instead.
+  **For operators:** the variant page edits the price at one unit only and
+  lists the others with the quantities and list they apply to; a set with two
+  prices at one unit in a currency is edited through the admin API, and the
+  panel's write for it answers 409 `pricing_unit_price_ambiguous`.
+
 - **Eleven migration tests rolled back the database their package shares**
   (D141, ADR 0201). Three of them asserted afterwards that a module table held
   no rows: every other test's rows in it had just been dropped with the schema.
