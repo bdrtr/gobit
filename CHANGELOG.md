@@ -109,6 +109,21 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A customer group can be a segment** (ADR 0217). **For API consumers:**
+  `PUT /admin/v1/customer-groups/{id}/segment` gives a group a rule of ANDed
+  conditions over `has_account`, `account_age_days`, `country_code` (the default
+  shipping address), `order_count` and `net_spend` (with `currency_code` and
+  `window_days`); `DELETE` on the same path takes it away and keeps the members;
+  `POST /admin/v1/customer-segments/preview` counts the customers a rule would
+  take in. Groups carry `segment` and `segment_evaluated_at`. While a group is a
+  segment, adding or removing a member by hand is refused with 409
+  `customer_group_segment_managed`; at most 50 groups are segments. **For
+  operators:** a new hourly `customer-segments` job writes every segment's
+  members; customer migration 000006 adds the rule, and rolling it back forgets
+  the rules and keeps their members. **For plugin authors:** `order.interop`
+  answers `CustomerOrderTotalsJSON`, each customer's order count and net spend
+  per currency.
+
 - **A wishlist item can ask for its price** (ADR 0216). **For API consumers:**
   `PUT /store/v1/customers/{id}/wishlist/{variant_id}/price-alert` (proven
   customer) with `{"region_id": "..."}` saves the variant if needed and marks

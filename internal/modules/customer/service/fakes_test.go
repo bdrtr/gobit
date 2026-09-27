@@ -248,8 +248,8 @@ func (m *memRepo) DeleteCustomer(_ context.Context, id string, now time.Time) er
 
 func (m *memRepo) CreateGroup(_ context.Context, g models.CustomerGroup) (models.CustomerGroup, error) {
 	m.record("CreateGroup")
-	for _, existing := range m.groups {
-		if existing.DeletedAt == nil && existing.Name == g.Name {
+	for id := range m.groups {
+		if existing := m.groups[id]; existing.DeletedAt == nil && existing.Name == g.Name {
 			return models.CustomerGroup{}, errors.Conflict(repository.CodeGroupNameTaken,
 				"%q adında bir müşteri grubu zaten var", g.Name)
 		}
@@ -317,8 +317,8 @@ func (m *memRepo) ListGroups(_ context.Context, limit, offset int64) ([]models.C
 	m.record("ListGroups")
 
 	all := make([]models.CustomerGroup, 0, len(m.groups))
-	for _, g := range m.groups {
-		if g.DeletedAt == nil {
+	for id := range m.groups {
+		if g := m.groups[id]; g.DeletedAt == nil {
 			all = append(all, g)
 		}
 	}
@@ -338,8 +338,12 @@ func (m *memRepo) AddToGroup(_ context.Context, customerID, groupID string, _ ti
 	if _, ok := m.liveCustomer(customerID); !ok {
 		return errors.NotFound(repository.CodeCustomerNotFound, "müşteri bulunamadı: %s", customerID)
 	}
-	if _, ok := m.liveGroup(groupID); !ok {
+	g, ok := m.liveGroup(groupID)
+	if !ok {
 		return errors.NotFound(repository.CodeGroupNotFound, "müşteri grubu bulunamadı: %s", groupID)
+	}
+	if g.Segment != nil {
+		return errors.Conflict(models.CodeSegmentManaged, "group %s is a segment", groupID)
 	}
 	if m.members[customerID] == nil {
 		m.members[customerID] = map[string]bool{}
@@ -351,6 +355,9 @@ func (m *memRepo) AddToGroup(_ context.Context, customerID, groupID string, _ ti
 func (m *memRepo) RemoveFromGroup(_ context.Context, customerID, groupID string) error {
 	m.record("RemoveFromGroup")
 
+	if g, ok := m.liveGroup(groupID); ok && g.Segment != nil {
+		return errors.Conflict(models.CodeSegmentManaged, "group %s is a segment", groupID)
+	}
 	if !m.members[customerID][groupID] {
 		return errors.NotFound(repository.CodeMembershipNotFound,
 			"%s müşterisi %s grubunun üyesi değil", customerID, groupID)

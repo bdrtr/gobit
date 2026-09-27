@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -167,8 +168,12 @@ func (r *Repo) AddToGroup(ctx context.Context, customerID, groupID string, now t
 		if _, err := q.GetCustomer(ctx, customerID); err != nil {
 			return notFoundOr(err, CodeCustomerNotFound, "müşteri bulunamadı: %s", customerID)
 		}
-		if _, err := q.GetCustomerGroup(ctx, groupID); err != nil {
+		group, err := q.GetCustomerGroup(ctx, groupID)
+		if err != nil {
 			return notFoundOr(err, CodeGroupNotFound, "müşteri grubu bulunamadı: %s", groupID)
+		}
+		if group.Segment != nil {
+			return segmentManaged(groupID)
 		}
 
 		if err := q.AddCustomerToGroup(ctx, customerdb.AddCustomerToGroupParams{
@@ -192,6 +197,11 @@ func (r *Repo) RemoveFromGroup(ctx context.Context, customerID, groupID string) 
 		return err
 	}
 
+	// A group that is not found falls through: the missing membership is what
+	// the caller hears, as before.
+	if group, err := r.q.GetCustomerGroup(ctx, groupID); err == nil && group.Segment != nil {
+		return segmentManaged(groupID)
+	}
 	affected, err := r.q.RemoveCustomerFromGroup(ctx, customerdb.RemoveCustomerFromGroupParams{
 		CustomerID:      customerID,
 		CustomerGroupID: groupID,
@@ -252,14 +262,25 @@ func toGroup(row customerdb.CustomerGroup) (models.CustomerGroup, error) {
 	if err != nil {
 		return models.CustomerGroup{}, err
 	}
+	var segment *models.SegmentRule
+	if row.Segment != nil {
+		segment = &models.SegmentRule{}
+		if err := json.Unmarshal(row.Segment, segment); err != nil {
+			return models.CustomerGroup{}, errors.Wrap(err, errors.KindInternal, CodeGroupNotFound,
+				"the segment rule of group %s could not be read", row.ID)
+		}
+	}
 	return models.CustomerGroup{
-		ID:        row.ID,
-		Name:      row.Name,
-		Rank:      row.Rank,
-		Metadata:  meta,
-		CreatedAt: toTime(row.CreatedAt),
-		UpdatedAt: toTime(row.UpdatedAt),
-		DeletedAt: toTimePtr(row.DeletedAt),
+		ID:                 row.ID,
+		Name:               row.Name,
+		Rank:               row.Rank,
+		Metadata:           meta,
+		Segment:            segment,
+		SegmentSetAt:       toTimePtr(row.SegmentSetAt),
+		SegmentEvaluatedAt: toTimePtr(row.SegmentEvaluatedAt),
+		CreatedAt:          toTime(row.CreatedAt),
+		UpdatedAt:          toTime(row.UpdatedAt),
+		DeletedAt:          toTimePtr(row.DeletedAt),
 	}, nil
 }
 

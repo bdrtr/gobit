@@ -126,6 +126,17 @@ type Repository interface {
 	ListGroupsOf(ctx context.Context, customerID string) ([]models.CustomerGroup, error)
 	GroupIDsOfCustomers(ctx context.Context, customerIDs []string) (map[string][]string, error)
 
+	// SetGroupSegment, ClearGroupSegment, ListSegments, ListSegmentFacts,
+	// ApplySegmentPage and FinishSegment keep the segments (ADR 0217).
+	SetGroupSegment(ctx context.Context, id string, rule models.SegmentRule, limit int64, now time.Time) (models.CustomerGroup, error)
+	ClearGroupSegment(ctx context.Context, id string, now time.Time) (models.CustomerGroup, error)
+	ListSegments(ctx context.Context, limit int32) ([]models.CustomerGroup, error)
+	ListSegmentFacts(ctx context.Context, afterID string, limit int32) ([]models.SegmentFacts, error)
+	ApplySegmentPage(
+		ctx context.Context, groupID string, setAt time.Time, afterID, lastID string, members []string, now time.Time,
+	) (added, removed int64, applied bool, err error)
+	FinishSegment(ctx context.Context, groupID string, setAt, evaluatedAt time.Time) (bool, error)
+
 	CreateAddress(ctx context.Context, a models.CustomerAddress) (models.CustomerAddress, error)
 	GetAddress(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error)
 	ListAddresses(ctx context.Context, customerID string) ([]models.CustomerAddress, error)

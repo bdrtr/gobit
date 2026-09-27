@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"maps"
@@ -1819,6 +1820,43 @@ func (f *fakeStore) SumCustomerSpend(
 		total += order.Total - snapshot.summaries[id].RefundedTotal
 	}
 	return total, nil
+}
+
+// CustomerOrderTotals imitates queries/spending.sql's batch: the rules of
+// [fakeStore.SumCustomerSpend], per customer and currency, sorted.
+func (f *fakeStore) CustomerOrderTotals(
+	ctx context.Context, customerIDs []string, since *time.Time,
+) ([]models.CustomerOrderTotal, error) {
+	snapshot := f.view(ctx)
+
+	asked := map[string]bool{}
+	for _, id := range customerIDs {
+		asked[id] = true
+	}
+	sums := map[[2]string]*models.CustomerOrderTotal{}
+	for id := range snapshot.orders {
+		order := snapshot.orders[id]
+		if order.Status == models.OrderCanceled || !asked[order.CustomerID] {
+			continue
+		}
+		if since != nil && order.PlacedAt.Before(*since) {
+			continue
+		}
+		key := [2]string{order.CustomerID, order.CurrencyCode}
+		if sums[key] == nil {
+			sums[key] = &models.CustomerOrderTotal{CustomerID: order.CustomerID, CurrencyCode: order.CurrencyCode}
+		}
+		sums[key].Orders++
+		sums[key].NetSpend += order.Total - snapshot.summaries[id].RefundedTotal
+	}
+	out := make([]models.CustomerOrderTotal, 0, len(sums))
+	for _, total := range sums {
+		out = append(out, *total)
+	}
+	slices.SortFunc(out, func(a, b models.CustomerOrderTotal) int {
+		return cmp.Or(strings.Compare(a.CustomerID, b.CustomerID), strings.Compare(a.CurrencyCode, b.CurrencyCode))
+	})
+	return out, nil
 }
 
 // seedOrder writes an order into the store directly and fixes its PLACED_AT to

@@ -312,3 +312,44 @@ func TestCustomerWithoutALimitTakesNoLock(t *testing.T) {
 	_, err := svc.CreateOrder(ctx, limitedInput(customer))
 	assert.NoError(t, err)
 }
+
+// TestCustomerOrderTotalsFollowTheSpendRules is ADR 0217's batch on a real
+// PostgreSQL: per customer and currency, the canceled order and the order before
+// the window left out, the refund deducted through the summary's LEFT JOIN, a
+// customer with no order absent, and a customer outside the page not read.
+func TestCustomerOrderTotalsFollowTheSpendRules(t *testing.T) {
+	ctx := context.Background()
+	svc := limitedService(t, nil)
+	since := time.Now().UTC().Add(-24 * time.Hour)
+	a, b, none, other := "cus_TOTALS_A", "cus_TOTALS_B", "cus_TOTALS_NONE", "cus_TOTALS_OTHER"
+
+	refunded := writePastOrder(ctx, t, a, 5_000, since.Add(time.Hour))
+	_, err := testPool.Pool().Exec(ctx, `INSERT INTO order_summaries (id, order_id, paid_total, refunded_total)
+        VALUES ($1, $2, 5000, 1500)`, models.NewSummaryID(), refunded)
+	require.NoError(t, err)
+	writePastOrder(ctx, t, a, 2_000, since)
+	canceled := writePastOrder(ctx, t, a, 9_000, since.Add(time.Hour))
+	_, err = testPool.Pool().Exec(ctx,
+		`UPDATE orders SET status = 'canceled', canceled_at = now() WHERE id = $1`, canceled)
+	require.NoError(t, err)
+	writePastOrder(ctx, t, a, 7_000, since.Add(-time.Second))
+	euro := writePastOrder(ctx, t, a, 800, since.Add(time.Hour))
+	_, err = testPool.Pool().Exec(ctx, `UPDATE orders SET currency_code = 'EUR' WHERE id = $1`, euro)
+	require.NoError(t, err)
+	writePastOrder(ctx, t, b, 1_000, since.Add(time.Hour))
+	writePastOrder(ctx, t, other, 4_000, since.Add(time.Hour))
+
+	totals, err := svc.CustomerOrderTotals(ctx, []string{a, b, none}, &since)
+
+	require.NoError(t, err)
+	assert.Equal(t, []models.CustomerOrderTotal{
+		{CustomerID: a, CurrencyCode: "EUR", Orders: 1, NetSpend: 800},
+		{CustomerID: a, CurrencyCode: testCurrency, Orders: 2, NetSpend: 5_500},
+		{CustomerID: b, CurrencyCode: testCurrency, Orders: 1, NetSpend: 1_000},
+	}, totals)
+
+	whole, err := svc.CustomerOrderTotals(ctx, []string{a}, nil)
+	require.NoError(t, err)
+	require.Len(t, whole, 2)
+	assert.Equal(t, int64(3), whole[1].Orders, "no window reads the order before it too")
+}

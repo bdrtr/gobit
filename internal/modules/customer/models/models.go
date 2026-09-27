@@ -126,6 +126,14 @@ type CustomerGroup struct {
 	Rank int32
 	// Metadata is structural context the caller writes freely; it can be empty.
 	Metadata map[string]any
+	// Segment is the rule that decides the group's members, or nil for a group
+	// the operator fills by hand (ADR 0217).
+	Segment *SegmentRule
+	// SegmentSetAt is when the rule was set; it names the rule.
+	SegmentSetAt *time.Time
+	// SegmentEvaluatedAt is when a pass last finished writing the members of
+	// this rule; nil until one has.
+	SegmentEvaluatedAt *time.Time
 	// CreatedAt is the moment the record was created (UTC).
 	CreatedAt time.Time
 	// UpdatedAt is the moment the record was last updated (UTC).

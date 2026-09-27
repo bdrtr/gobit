@@ -29,6 +29,7 @@ import (
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
+	segmentwf "github.com/bdrtr/gobit/internal/workflows/segment"
 )
 
 // codeFlowSetupFailed reports that the cross-module workflows could not be set
@@ -183,7 +184,16 @@ func registerWorkflows(c *container.Container, log *slog.Logger) error {
 			"the gift card sale workflow could not be set up")
 	}
 
-	return nil
+	// The segment flow writes the members of the groups a rule decides (ADR
+	// 0217); the customer module's preview endpoint resolves it by name, and the
+	// segment job builds its own.
+	segments, err := segmentwf.FromContainer(c, log)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeFlowSetupFailed,
+			"the segment workflow could not be set up")
+	}
+
+	return c.Provide(segmentwf.InteropName, segmentwf.NewInterop(segments))
 }
 
 // registerPanel builds the admin panel and binds its paths.

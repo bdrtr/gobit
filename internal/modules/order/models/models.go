@@ -1047,3 +1047,15 @@ func (a OrderAddress) Current() bool { return a.SupersededAt == nil }
 func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
+
+// CustomerOrderTotal is what one customer's orders in one currency add up to
+// (ADR 0217): their count and their total less what was refunded, canceled
+// orders left out.
+type CustomerOrderTotal struct {
+	CustomerID   string
+	CurrencyCode string
+	// Orders is how many orders were placed.
+	Orders int64
+	// NetSpend is their totals less their refunds, in minor units.
+	NetSpend int64
+}

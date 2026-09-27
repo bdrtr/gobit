@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/repository/orderdb"
 )
 
@@ -104,4 +105,32 @@ func (r *Repository) SumCustomerSpend(
 		return 0, classify(err, codeQueryFailed, "could not read the customer's spend")
 	}
 	return spent, nil
+}
+
+// CustomerOrderTotals counts and sums the given customers' orders placed since
+// the given moment, per customer and currency; since nil reads their whole
+// history. The rules are in queries/spending.sql.
+func (r *Repository) CustomerOrderTotals(
+	ctx context.Context, customerIDs []string, since *time.Time,
+) ([]models.CustomerOrderTotal, error) {
+	var from pgtype.Timestamptz
+	if since != nil {
+		from = pgtype.Timestamptz{Time: since.UTC(), Valid: true}
+	}
+
+	rows, err := r.queries(ctx).CustomerOrderTotals(ctx, orderdb.CustomerOrderTotalsParams{
+		CustomerIds: customerIDs,
+		Since:       from,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the customers' order totals")
+	}
+	out := make([]models.CustomerOrderTotal, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, models.CustomerOrderTotal{
+			CustomerID: row.CustomerID, CurrencyCode: row.CurrencyCode,
+			Orders: row.Orders, NetSpend: row.NetSpend,
+		})
+	}
+	return out, nil
 }

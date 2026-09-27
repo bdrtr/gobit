@@ -60,6 +60,11 @@ import (
 //     is the shop's ordering of its segments (ADR 0049). Its metadata
 //     is NOT exempt and is declared Open, because it is the same free-form
 //     jsonb as customer.metadata and gobit refuses to look inside either one.
+//     Its segment is exempt although it is jsonb too, because gobit does look
+//     inside it: the service admits only the rule vocabulary of ADR 0217, whose
+//     values are booleans, whole numbers and country codes, so it can name a
+//     kind of customer and never one; segment_set_at and segment_evaluated_at
+//     are its moments.
 //   - The timestamps and the flags (has_account, is_default_shipping,
 //     is_default_billing) describe the record's state, not the person: they are
 //     true of the row whether or not anybody is behind it.
@@ -73,6 +78,7 @@ var notPersonalColumns = map[string][]string{
 	},
 	"customer_group": {
 		"id", "name", "rank", "created_at", "updated_at", "deleted_at",
+		"segment", "segment_set_at", "segment_evaluated_at",
 	},
 	"customer_group_customer": {
 		"customer_id", "customer_group_id", "created_at",

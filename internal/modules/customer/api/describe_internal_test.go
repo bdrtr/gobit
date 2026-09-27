@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -260,6 +261,18 @@ func anlatilanUclar() []ucBeklentisi {
 			durum: "204",
 		},
 		{
+			metod: http.MethodPut, yol: "/admin/v1/customer-groups/{id}/segment", durum: "200",
+			istek: *fullSegmentRule(), yanit: doluGrup(),
+		},
+		{
+			metod: http.MethodDelete, yol: "/admin/v1/customer-groups/{id}/segment", durum: "200",
+			yanit: doluGrup(),
+		},
+		{
+			metod: http.MethodPost, yol: "/admin/v1/customer-segments/preview", durum: "200",
+			istek: *fullSegmentRule(), yanit: segmentPreviewDTO{},
+		},
+		{
 			metod: http.MethodPost, yol: "/store/v1/customers", durum: "201",
 			istek: customerRequest{}, yanit: doluMusteri(),
 		},
@@ -383,7 +396,19 @@ func doluMusteri() customerDTO {
 
 // doluGrup omitempty alanları da yazılan bir grup kaydı üretir.
 func doluGrup() customerGroupDTO {
-	return customerGroupDTO{Metadata: map[string]any{"k": "v"}}
+	evaluated := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+
+	return customerGroupDTO{
+		Metadata: map[string]any{"k": "v"}, Segment: fullSegmentRule(), SegmentEvaluatedAt: &evaluated,
+	}
+}
+
+// fullSegmentRule is a rule with every field that can be left out written.
+func fullSegmentRule() *segmentRuleDTO {
+	return &segmentRuleDTO{CurrencyCode: "TRY", WindowDays: 30, Conditions: []segmentConditionDTO{
+		{Attribute: "net_spend", Operator: "gte", Value: json.RawMessage(`1000`)},
+		{Attribute: "country_code", Operator: "in", Values: []string{"TR"}},
+	}}
 }
 
 // TestUclarGovdeleriniAnlatir her anlatılan ucun ne ALDIĞINI ve ne DÖNDÜĞÜNÜ

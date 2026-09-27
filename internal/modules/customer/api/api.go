@@ -118,6 +118,10 @@ type Customer interface {
 	RemoveFromGroup(ctx context.Context, customerID, groupID string) error
 	// ListGroupsOf müşterinin gruplarını döner.
 	ListGroupsOf(ctx context.Context, customerID string) ([]models.CustomerGroup, error)
+	// SetGroupSegment and ClearGroupSegment give a group a rule that decides
+	// its members, and take it away (ADR 0217).
+	SetGroupSegment(ctx context.Context, groupID string, rule models.SegmentRule) (models.CustomerGroup, error)
+	ClearGroupSegment(ctx context.Context, groupID string) (models.CustomerGroup, error)
 
 	// CreateAddress müşterinin yeni adresini ekler.
 	CreateAddress(ctx context.Context, customerID string, in service.AddressInput) (models.CustomerAddress, error)
@@ -153,6 +157,9 @@ type Customer interface {
 // Handler customer modülünün HTTP handler kümesidir.
 type Handler struct {
 	svc Customer
+	// preview is the segment flow the preview endpoint runs on; see
+	// [Handler.WithPreview].
+	preview SegmentPreview
 	// identity proves which customer a storefront request belongs to. It is
 	// NIL when the installation bound none, and that state is CLOSED rather
 	// than open; see [Handler.storeCustomerID].
@@ -256,6 +263,9 @@ func (h *Handler) Routes(r chi.Router) {
 	yazma.Delete("/admin/v1/customer-groups/{id}", h.adminDeleteGroup)
 	yazma.Post("/admin/v1/customer-groups/{id}/customers", h.adminAddToGroup)
 	yazma.Delete("/admin/v1/customer-groups/{id}/customers/{customer_id}", h.adminRemoveFromGroup)
+	yazma.Put("/admin/v1/customer-groups/{id}/segment", h.adminSetGroupSegment)
+	yazma.Delete("/admin/v1/customer-groups/{id}/segment", h.adminClearGroupSegment)
+	yazma.Post("/admin/v1/customer-segments/preview", h.adminPreviewSegment)
 
 	// --- vitrin ---
 	//

@@ -180,7 +180,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 
 	repo := repository.New(pool.Pool())
 	m.svc = service.New(repo, service.Options{Logger: m.log})
-	m.handler = api.New(m.svc, &identityBinding{c: c, log: m.log})
+	m.handler = api.New(m.svc, &identityBinding{c: c, log: m.log}).
+		WithPreview(&segmentPreview{c: c, log: m.log})
 
 	if err := c.Provide(ServiceName, m.svc); err != nil {
 		return err

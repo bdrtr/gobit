@@ -23,6 +23,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/jobs/customersegment"
 	"github.com/bdrtr/gobit/internal/jobs/giftcardexpiry"
 	"github.com/bdrtr/gobit/internal/jobs/giftcardsweep"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
@@ -39,6 +40,7 @@ import (
 	reviewmodels "github.com/bdrtr/gobit/internal/modules/review/models"
 	reviewservice "github.com/bdrtr/gobit/internal/modules/review/service"
 	giftcardsalewf "github.com/bdrtr/gobit/internal/workflows/giftcardsale"
+	segmentwf "github.com/bdrtr/gobit/internal/workflows/segment"
 	stockalertwf "github.com/bdrtr/gobit/internal/workflows/stockalert"
 )
 
@@ -211,6 +213,16 @@ func registerJobs(
 		return nil, err
 	}
 	if err := registry.Add(stockalert.Definition(alerts, log)); err != nil {
+		return nil, err
+	}
+	// The segment job writes the members of the groups a rule decides (ADR
+	// 0217). It is registered unconditionally: with no segment it reads nothing,
+	// and says so.
+	segments, err := segmentwf.FromContainer(c, log)
+	if err != nil {
+		return nil, err
+	}
+	if err := registry.Add(customersegment.Definition(segments, log)); err != nil {
 		return nil, err
 	}
 

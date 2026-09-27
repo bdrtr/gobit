@@ -150,6 +150,7 @@ import (
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
+	segmentwf "github.com/bdrtr/gobit/internal/workflows/segment"
 	stockalertwf "github.com/bdrtr/gobit/internal/workflows/stockalert"
 )
 
@@ -431,6 +432,10 @@ var orderWorkflows *checkoutwf.Workflows
 // stockAlerts is the stock alert flow the ground wires (ADR 0215); a scenario
 // runs its pass where production's job would.
 var stockAlerts *stockalertwf.Workflow
+
+// segments is the segment flow the ground wires (ADR 0217); a scenario runs a
+// pass through it as the customer-segments job does.
+var segments *segmentwf.Workflow
 
 // The identifiers of the fixture regions.
 var (
@@ -829,6 +834,15 @@ func setUpHarness(ctx context.Context) error {
 	// keeps it to run a pass where a scenario needs one.
 	if stockAlerts, setupErr = stockalertwf.FromContainer(ctr, nil); setupErr != nil {
 		return fmt.Errorf("could not set up the stock alert workflow: %w", setupErr)
+	}
+	// The segment flow runs on a job in production and answers the customer
+	// module's preview (ADR 0217); the ground provides it under the same name
+	// and keeps it to run a pass where a scenario needs one.
+	if segments, setupErr = segmentwf.FromContainer(ctr, nil); setupErr != nil {
+		return fmt.Errorf("could not set up the segment workflow: %w", setupErr)
+	}
+	if setupErr = ctr.Provide(segmentwf.InteropName, segmentwf.NewInterop(segments)); setupErr != nil {
+		return fmt.Errorf("could not provide the segment workflow: %w", setupErr)
 	}
 
 	if err := setUpRegionFixtures(ctx); err != nil {

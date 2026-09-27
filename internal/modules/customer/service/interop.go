@@ -74,8 +74,8 @@ func (s *Service) CustomerGroupIDs(ctx context.Context, customerID string) ([]st
 	}
 
 	ids := make([]string, 0, len(groups))
-	for _, g := range groups {
-		ids = append(ids, g.ID)
+	for i := range groups {
+		ids = append(ids, groups[i].ID)
 	}
 	return ids, nil
 }

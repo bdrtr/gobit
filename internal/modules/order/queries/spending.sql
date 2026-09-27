@@ -60,3 +60,26 @@ WHERE o.customer_id = sqlc.arg('customer_id')::text
       sqlc.narg('window_start')::timestamptz IS NULL
       OR o.placed_at >= sqlc.narg('window_start')::timestamptz
   );
+
+-- CustomerOrderTotals counts and sums the orders of many customers at once, per
+-- customer and currency (ADR 0217).
+--
+-- The rules are SumCustomerSpend's: a canceled order does not count, a pending
+-- one does, the refunded amount is deducted, and no currency is converted, so
+-- each currency is a row of its own. A customer with no order in the window has
+-- no row. The customer's index (orders_customer_idx) serves the ids.
+-- name: CustomerOrderTotals :many
+SELECT o.customer_id::text AS customer_id,
+       o.currency_code,
+       count(*)::bigint AS orders,
+       COALESCE(SUM(o.total - COALESCE(s.refunded_total, 0)), 0)::bigint AS net_spend
+FROM orders o
+LEFT JOIN order_summaries s ON s.order_id = o.id
+WHERE o.customer_id = ANY(sqlc.arg('customer_ids')::text[])
+  AND o.status <> 'canceled'
+  AND (
+      sqlc.narg('since')::timestamptz IS NULL
+      OR o.placed_at >= sqlc.narg('since')::timestamptz
+  )
+GROUP BY o.customer_id, o.currency_code
+ORDER BY o.customer_id, o.currency_code;

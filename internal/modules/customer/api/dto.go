@@ -43,6 +43,12 @@ type customerGroupDTO struct {
 	// Metadata is free structural context; if empty it does not appear in the
 	// body.
 	Metadata map[string]any `json:"metadata,omitempty"`
+	// Segment is the rule that decides the group's members (ADR 0217); a group
+	// the operator fills by hand has none.
+	Segment *segmentRuleDTO `json:"segment,omitempty"`
+	// SegmentEvaluatedAt is when the segment job last finished writing the
+	// members of this rule; absent until it has.
+	SegmentEvaluatedAt *time.Time `json:"segment_evaluated_at,omitempty"`
 	// CreatedAt is the moment of creation.
 	CreatedAt time.Time `json:"created_at"`
 	// UpdatedAt is the moment of the last update.
@@ -186,12 +192,14 @@ func toCustomerDTO(c models.Customer) customerDTO {
 // toGroupDTO converts the group into the response body.
 func toGroupDTO(g models.CustomerGroup) customerGroupDTO {
 	return customerGroupDTO{
-		ID:        g.ID,
-		Name:      g.Name,
-		Rank:      g.Rank,
-		Metadata:  g.Metadata,
-		CreatedAt: g.CreatedAt,
-		UpdatedAt: g.UpdatedAt,
+		ID:                 g.ID,
+		Name:               g.Name,
+		Rank:               g.Rank,
+		Metadata:           g.Metadata,
+		Segment:            toSegmentRuleDTO(g.Segment),
+		SegmentEvaluatedAt: g.SegmentEvaluatedAt,
+		CreatedAt:          g.CreatedAt,
+		UpdatedAt:          g.UpdatedAt,
 	}
 }
 

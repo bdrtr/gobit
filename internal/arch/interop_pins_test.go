@@ -47,6 +47,7 @@ import (
 	b2bsvc "github.com/bdrtr/gobit/internal/modules/b2b/service"
 	cartapi "github.com/bdrtr/gobit/internal/modules/cart/api"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
+	customerapi "github.com/bdrtr/gobit/internal/modules/customer/api"
 	customersvc "github.com/bdrtr/gobit/internal/modules/customer/service"
 	filesvc "github.com/bdrtr/gobit/internal/modules/file/service"
 	fulfillsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
@@ -70,6 +71,7 @@ import (
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
+	segmentwf "github.com/bdrtr/gobit/internal/workflows/segment"
 	stockalertwf "github.com/bdrtr/gobit/internal/workflows/stockalert"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 )
@@ -94,6 +96,8 @@ var (
 	_ orderapi.Fulfilling      = (*fulfillingwf.Interop)(nil)
 
 	_ fulfillsvc.DispatchBound = (*fulfillingwf.Interop)(nil)
+
+	_ customerapi.SegmentPreview = (*segmentwf.Interop)(nil)
 )
 
 // A MODULE resolving another MODULE's surface.
@@ -171,6 +175,10 @@ var (
 	_ stockalertwf.Reader    = query.Query(nil)
 	// Its price marks are judged by the cart workflow's quote (ADR 0216).
 	_ stockalertwf.Prices = (*cartwf.Workflows)(nil)
+
+	// The segment flow (ADR 0217).
+	_ segmentwf.Customers = (*customersvc.Service)(nil)
+	_ segmentwf.Orders    = (*ordersvc.Interop)(nil)
 )
 
 // A PLUGIN resolving a MODULE's surface, and the CORE resolving one.
@@ -228,6 +236,7 @@ var pinnedNames = map[string]string{
 	"workflows.cart.interop":       "the cart module's storefront endpoints and the promotion trial",
 	"workflows.checkout.interop":   "the cart module's completion endpoint",
 	"workflows.returns.interop":    "the order module's receive endpoint",
+	"workflows.segment.interop":    "the customer module's segment preview",
 	"workflows.invoicing.interop":  "the order module's invoice endpoint",
 	"workflows.fulfilling.interop": "the order module's shipment reads and the fulfillment module's dispatch bound",
 	"file.interop":                 "the product module reading an upload back",

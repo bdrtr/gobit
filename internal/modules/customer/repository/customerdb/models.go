@@ -41,13 +41,16 @@ type CustomerAddress struct {
 }
 
 type CustomerGroup struct {
-	ID        string
-	Name      string
-	Metadata  []byte
-	CreatedAt pgtype.Timestamptz
-	UpdatedAt pgtype.Timestamptz
-	DeletedAt pgtype.Timestamptz
-	Rank      int32
+	ID                 string
+	Name               string
+	Metadata           []byte
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	DeletedAt          pgtype.Timestamptz
+	Rank               int32
+	Segment            []byte
+	SegmentSetAt       pgtype.Timestamptz
+	SegmentEvaluatedAt pgtype.Timestamptz
 }
 
 type CustomerGroupCustomer struct {

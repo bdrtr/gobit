@@ -11,6 +11,67 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const customerOrderTotals = `-- name: CustomerOrderTotals :many
+SELECT o.customer_id::text AS customer_id,
+       o.currency_code,
+       count(*)::bigint AS orders,
+       COALESCE(SUM(o.total - COALESCE(s.refunded_total, 0)), 0)::bigint AS net_spend
+FROM orders o
+LEFT JOIN order_summaries s ON s.order_id = o.id
+WHERE o.customer_id = ANY($1::text[])
+  AND o.status <> 'canceled'
+  AND (
+      $2::timestamptz IS NULL
+      OR o.placed_at >= $2::timestamptz
+  )
+GROUP BY o.customer_id, o.currency_code
+ORDER BY o.customer_id, o.currency_code
+`
+
+type CustomerOrderTotalsParams struct {
+	CustomerIds []string
+	Since       pgtype.Timestamptz
+}
+
+type CustomerOrderTotalsRow struct {
+	CustomerID   string
+	CurrencyCode string
+	Orders       int64
+	NetSpend     int64
+}
+
+// CustomerOrderTotals counts and sums the orders of many customers at once, per
+// customer and currency (ADR 0217).
+//
+// The rules are SumCustomerSpend's: a canceled order does not count, a pending
+// one does, the refunded amount is deducted, and no currency is converted, so
+// each currency is a row of its own. A customer with no order in the window has
+// no row. The customer's index (orders_customer_idx) serves the ids.
+func (q *Queries) CustomerOrderTotals(ctx context.Context, arg CustomerOrderTotalsParams) ([]CustomerOrderTotalsRow, error) {
+	rows, err := q.db.Query(ctx, customerOrderTotals, arg.CustomerIds, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerOrderTotalsRow{}
+	for rows.Next() {
+		var i CustomerOrderTotalsRow
+		if err := rows.Scan(
+			&i.CustomerID,
+			&i.CurrencyCode,
+			&i.Orders,
+			&i.NetSpend,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sumCustomerSpend = `-- name: SumCustomerSpend :one
 
 SELECT COALESCE(SUM(o.total - COALESCE(s.refunded_total, 0)), 0)::bigint AS spent

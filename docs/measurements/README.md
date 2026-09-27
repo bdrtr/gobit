@@ -147,3 +147,4 @@ truth: a report says what was true on the day it was taken.
 | [A card that ran out — measured 2026-09-27](0214-a-card-that-ran-out.md) | 98 |
 | [A variant that came back — measured 2026-09-27](0215-a-variant-that-came-back.md) | 93 |
 | [A price that fell — measured 2026-09-27](0216-a-price-that-fell.md) | 147 |
+| [A group that follows its rule — measured 2026-09-27](0217-a-group-that-follows-its-rule.md) | 148 |

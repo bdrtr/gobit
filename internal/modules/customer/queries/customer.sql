@@ -327,3 +327,15 @@ ORDER BY id;
 SELECT * FROM customer
 WHERE id = sqlc.arg('id') OR email = sqlc.arg('email')
 ORDER BY id;
+
+-- ListSegmentFacts pages the live customers in id order with what a segment
+-- rule reads of their record (ADR 0217): whether they hold an account, when
+-- they were created, and the country of their default shipping address.
+-- name: ListSegmentFacts :many
+SELECT c.id, c.has_account, c.created_at, a.country_code
+FROM customer c
+LEFT JOIN customer_address a
+    ON a.customer_id = c.id AND a.is_default_shipping AND a.deleted_at IS NULL
+WHERE c.deleted_at IS NULL AND c.id > sqlc.arg('after_id')::text
+ORDER BY c.id
+LIMIT sqlc.arg('row_limit');

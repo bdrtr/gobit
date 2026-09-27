@@ -553,6 +553,56 @@ func (q *Queries) ListCustomersByIDs(ctx context.Context, ids []string) ([]Custo
 	return items, nil
 }
 
+const listSegmentFacts = `-- name: ListSegmentFacts :many
+SELECT c.id, c.has_account, c.created_at, a.country_code
+FROM customer c
+LEFT JOIN customer_address a
+    ON a.customer_id = c.id AND a.is_default_shipping AND a.deleted_at IS NULL
+WHERE c.deleted_at IS NULL AND c.id > $1::text
+ORDER BY c.id
+LIMIT $2
+`
+
+type ListSegmentFactsParams struct {
+	AfterID  string
+	RowLimit int32
+}
+
+type ListSegmentFactsRow struct {
+	ID          string
+	HasAccount  bool
+	CreatedAt   pgtype.Timestamptz
+	CountryCode *string
+}
+
+// ListSegmentFacts pages the live customers in id order with what a segment
+// rule reads of their record (ADR 0217): whether they hold an account, when
+// they were created, and the country of their default shipping address.
+func (q *Queries) ListSegmentFacts(ctx context.Context, arg ListSegmentFactsParams) ([]ListSegmentFactsRow, error) {
+	rows, err := q.db.Query(ctx, listSegmentFacts, arg.AfterID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSegmentFactsRow{}
+	for rows.Next() {
+		var i ListSegmentFactsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.HasAccount,
+			&i.CreatedAt,
+			&i.CountryCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockCustomerForErasure = `-- name: LockCustomerForErasure :one
 SELECT id FROM customer
 WHERE id = $1

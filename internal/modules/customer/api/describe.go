@@ -80,6 +80,7 @@ func Describe(d *openapi.Doc) {
 	// a file of their own and why they were undescribed until ADR 0036.
 	describeAddresses(d)
 	describeWishlist(d)
+	describeSegments(d)
 }
 
 // describeMusteriler müşterinin yönetim uçlarını anlatır.

@@ -90,3 +90,70 @@ FROM customer_group_customer m
 JOIN customer_group g ON g.id = m.customer_group_id
 WHERE m.customer_id = ANY(@customer_ids::text[]) AND g.deleted_at IS NULL
 ORDER BY m.customer_id, m.customer_group_id;
+
+-- SetGroupSegment makes a group a segment with the given rule, or gives it a
+-- new rule (ADR 0217). The rule's moment is new, so a pass that read the old
+-- rule writes nothing more, and the group waits for its next evaluation.
+-- name: SetGroupSegment :one
+UPDATE customer_group
+SET segment = sqlc.arg('segment'), segment_set_at = sqlc.arg('set_at'),
+    segment_evaluated_at = NULL, updated_at = sqlc.arg('set_at')
+WHERE id = sqlc.arg('id') AND deleted_at IS NULL
+RETURNING *;
+
+-- ClearGroupSegment hands a segment back to the operator; its members stay.
+-- name: ClearGroupSegment :one
+UPDATE customer_group
+SET segment = NULL, segment_set_at = NULL, segment_evaluated_at = NULL, updated_at = $2
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING *;
+
+-- CountSegments counts the live segments other than the given group.
+-- name: CountSegments :one
+SELECT count(*) FROM customer_group
+WHERE segment IS NOT NULL AND deleted_at IS NULL AND id <> $1;
+
+-- ListSegments reads the live segments in id order.
+-- name: ListSegments :many
+SELECT * FROM customer_group
+WHERE segment IS NOT NULL AND deleted_at IS NULL
+ORDER BY id
+LIMIT $1;
+
+-- LockSegment locks a live segment's row and returns the moment of its rule;
+-- no row is a group that is gone or is no segment any more.
+-- name: LockSegment :one
+SELECT segment_set_at FROM customer_group
+WHERE id = $1 AND deleted_at IS NULL AND segment IS NOT NULL
+FOR UPDATE;
+
+-- RemoveSegmentStrays takes out of a segment the members whose id falls in
+-- (after_id, last_id] and who are not among the given ones; an empty last_id
+-- reaches the end of the ids.
+-- name: RemoveSegmentStrays :execrows
+DELETE FROM customer_group_customer
+WHERE customer_group_id = sqlc.arg('group_id')
+  AND customer_id > sqlc.arg('after_id')::text
+  AND (sqlc.arg('last_id')::text = '' OR customer_id <= sqlc.arg('last_id')::text)
+  AND NOT (customer_id = ANY(sqlc.arg('members')::text[]));
+
+-- AddSegmentMembers puts the given live customers in a segment.
+-- name: AddSegmentMembers :execrows
+INSERT INTO customer_group_customer (customer_id, customer_group_id, created_at)
+SELECT c.id, sqlc.arg('group_id'), sqlc.arg('created_at')
+FROM customer c
+WHERE c.id = ANY(sqlc.arg('members')::text[]) AND c.deleted_at IS NULL
+ON CONFLICT (customer_id, customer_group_id) DO NOTHING;
+
+-- FinishSegment records that a pass wrote a segment's members, only while the
+-- rule it evaluated is still the segment's.
+-- name: FinishSegment :execrows
+UPDATE customer_group
+SET segment_evaluated_at = sqlc.arg('evaluated_at')
+WHERE id = sqlc.arg('id') AND deleted_at IS NULL AND segment_set_at = sqlc.arg('set_at');
+
+-- LockSegmentCount serializes the writers that turn a group into a segment, so
+-- the count under MaxSegments is the count they all see. The key is the
+-- repository's SegmentCountLockKey.
+-- name: LockSegmentCount :exec
+SELECT pg_advisory_xact_lock(sqlc.arg('lock_key')::bigint);

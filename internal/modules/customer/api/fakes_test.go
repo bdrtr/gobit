@@ -34,6 +34,8 @@ type stubCustomer struct {
 	addToGroupFn      func(ctx context.Context, customerID, groupID string) error
 	removeFromGroupFn func(ctx context.Context, customerID, groupID string) error
 	listGroupsOfFn    func(ctx context.Context, customerID string) ([]models.CustomerGroup, error)
+	setSegmentFn      func(ctx context.Context, groupID string, rule models.SegmentRule) (models.CustomerGroup, error)
+	clearSegmentFn    func(ctx context.Context, groupID string) (models.CustomerGroup, error)
 	createAddressFn   func(ctx context.Context, customerID string, in service.AddressInput) (models.CustomerAddress, error)
 	listAddressesFn   func(ctx context.Context, customerID string) ([]models.CustomerAddress, error)
 	updateAddressFn   func(ctx context.Context, customerID, addressID string, in service.UpdateAddressInput) (models.CustomerAddress, error)
@@ -195,6 +197,24 @@ func (s *stubCustomer) ListGroupsOf(ctx context.Context, customerID string) ([]m
 		return nil, unset("ListGroupsOf")
 	}
 	return s.listGroupsOfFn(ctx, customerID)
+}
+
+func (s *stubCustomer) SetGroupSegment(
+	ctx context.Context, groupID string, rule models.SegmentRule,
+) (models.CustomerGroup, error) {
+	s.sonGroupID = groupID
+	if s.setSegmentFn == nil {
+		return models.CustomerGroup{}, unset("SetGroupSegment")
+	}
+	return s.setSegmentFn(ctx, groupID, rule)
+}
+
+func (s *stubCustomer) ClearGroupSegment(ctx context.Context, groupID string) (models.CustomerGroup, error) {
+	s.sonGroupID = groupID
+	if s.clearSegmentFn == nil {
+		return models.CustomerGroup{}, unset("ClearGroupSegment")
+	}
+	return s.clearSegmentFn(ctx, groupID)
 }
 
 func (s *stubCustomer) CreateAddress(

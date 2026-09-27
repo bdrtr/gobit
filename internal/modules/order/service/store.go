@@ -154,6 +154,10 @@ type Store interface {
 	// Canceled orders do not enter the sum and the refunded amount is subtracted
 	// (see queries/spending.sql).
 	SumCustomerSpend(ctx context.Context, customerID, currencyCode string, windowStart *time.Time) (int64, error)
+	// CustomerOrderTotals counts and sums the given customers' orders placed
+	// since the given moment, per customer and currency, by the same rules; since
+	// nil reads the whole history, and a customer with no order has no row.
+	CustomerOrderTotals(ctx context.Context, customerIDs []string, since *time.Time) ([]models.CustomerOrderTotal, error)
 
 	// CreateLineItem records a new order line.
 	CreateLineItem(ctx context.Context, item models.OrderLineItem) (models.OrderLineItem, error)

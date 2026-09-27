@@ -33,6 +33,60 @@ func (q *Queries) AddCustomerToGroup(ctx context.Context, arg AddCustomerToGroup
 	return err
 }
 
+const addSegmentMembers = `-- name: AddSegmentMembers :execrows
+INSERT INTO customer_group_customer (customer_id, customer_group_id, created_at)
+SELECT c.id, $1, $2
+FROM customer c
+WHERE c.id = ANY($3::text[]) AND c.deleted_at IS NULL
+ON CONFLICT (customer_id, customer_group_id) DO NOTHING
+`
+
+type AddSegmentMembersParams struct {
+	GroupID   string
+	CreatedAt pgtype.Timestamptz
+	Members   []string
+}
+
+// AddSegmentMembers puts the given live customers in a segment.
+func (q *Queries) AddSegmentMembers(ctx context.Context, arg AddSegmentMembersParams) (int64, error) {
+	result, err := q.db.Exec(ctx, addSegmentMembers, arg.GroupID, arg.CreatedAt, arg.Members)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const clearGroupSegment = `-- name: ClearGroupSegment :one
+UPDATE customer_group
+SET segment = NULL, segment_set_at = NULL, segment_evaluated_at = NULL, updated_at = $2
+WHERE id = $1 AND deleted_at IS NULL
+RETURNING id, name, metadata, created_at, updated_at, deleted_at, rank, segment, segment_set_at, segment_evaluated_at
+`
+
+type ClearGroupSegmentParams struct {
+	ID        string
+	UpdatedAt pgtype.Timestamptz
+}
+
+// ClearGroupSegment hands a segment back to the operator; its members stay.
+func (q *Queries) ClearGroupSegment(ctx context.Context, arg ClearGroupSegmentParams) (CustomerGroup, error) {
+	row := q.db.QueryRow(ctx, clearGroupSegment, arg.ID, arg.UpdatedAt)
+	var i CustomerGroup
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Rank,
+		&i.Segment,
+		&i.SegmentSetAt,
+		&i.SegmentEvaluatedAt,
+	)
+	return i, err
+}
+
 const countCustomerGroups = `-- name: CountCustomerGroups :one
 SELECT count(*) FROM customer_group
 WHERE deleted_at IS NULL
@@ -45,8 +99,43 @@ func (q *Queries) CountCustomerGroups(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countSegments = `-- name: CountSegments :one
+SELECT count(*) FROM customer_group
+WHERE segment IS NOT NULL AND deleted_at IS NULL AND id <> $1
+`
+
+// CountSegments counts the live segments other than the given group.
+func (q *Queries) CountSegments(ctx context.Context, id string) (int64, error) {
+	row := q.db.QueryRow(ctx, countSegments, id)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const finishSegment = `-- name: FinishSegment :execrows
+UPDATE customer_group
+SET segment_evaluated_at = $1
+WHERE id = $2 AND deleted_at IS NULL AND segment_set_at = $3
+`
+
+type FinishSegmentParams struct {
+	EvaluatedAt pgtype.Timestamptz
+	ID          string
+	SetAt       pgtype.Timestamptz
+}
+
+// FinishSegment records that a pass wrote a segment's members, only while the
+// rule it evaluated is still the segment's.
+func (q *Queries) FinishSegment(ctx context.Context, arg FinishSegmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, finishSegment, arg.EvaluatedAt, arg.ID, arg.SetAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getCustomerGroup = `-- name: GetCustomerGroup :one
-SELECT id, name, metadata, created_at, updated_at, deleted_at, rank FROM customer_group
+SELECT id, name, metadata, created_at, updated_at, deleted_at, rank, segment, segment_set_at, segment_evaluated_at FROM customer_group
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -61,6 +150,9 @@ func (q *Queries) GetCustomerGroup(ctx context.Context, id string) (CustomerGrou
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.Rank,
+		&i.Segment,
+		&i.SegmentSetAt,
+		&i.SegmentEvaluatedAt,
 	)
 	return i, err
 }
@@ -69,7 +161,7 @@ const insertCustomerGroup = `-- name: InsertCustomerGroup :one
 
 INSERT INTO customer_group (id, name, rank, metadata, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $5)
-RETURNING id, name, metadata, created_at, updated_at, deleted_at, rank
+RETURNING id, name, metadata, created_at, updated_at, deleted_at, rank, segment, segment_set_at, segment_evaluated_at
 `
 
 type InsertCustomerGroupParams struct {
@@ -98,12 +190,15 @@ func (q *Queries) InsertCustomerGroup(ctx context.Context, arg InsertCustomerGro
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.Rank,
+		&i.Segment,
+		&i.SegmentSetAt,
+		&i.SegmentEvaluatedAt,
 	)
 	return i, err
 }
 
 const listCustomerGroups = `-- name: ListCustomerGroups :many
-SELECT id, name, metadata, created_at, updated_at, deleted_at, rank FROM customer_group
+SELECT id, name, metadata, created_at, updated_at, deleted_at, rank, segment, segment_set_at, segment_evaluated_at FROM customer_group
 WHERE deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 LIMIT $2::int OFFSET $1::int
@@ -131,6 +226,9 @@ func (q *Queries) ListCustomerGroups(ctx context.Context, arg ListCustomerGroups
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.Rank,
+			&i.Segment,
+			&i.SegmentSetAt,
+			&i.SegmentEvaluatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -181,7 +279,7 @@ func (q *Queries) ListGroupIDsOfCustomers(ctx context.Context, customerIds []str
 }
 
 const listGroupsOfCustomer = `-- name: ListGroupsOfCustomer :many
-SELECT g.id, g.name, g.metadata, g.created_at, g.updated_at, g.deleted_at, g.rank FROM customer_group g
+SELECT g.id, g.name, g.metadata, g.created_at, g.updated_at, g.deleted_at, g.rank, g.segment, g.segment_set_at, g.segment_evaluated_at FROM customer_group g
 JOIN customer_group_customer m ON m.customer_group_id = g.id
 WHERE m.customer_id = $1 AND g.deleted_at IS NULL
 ORDER BY g.rank, g.id
@@ -210,6 +308,9 @@ func (q *Queries) ListGroupsOfCustomer(ctx context.Context, customerID string) (
 			&i.UpdatedAt,
 			&i.DeletedAt,
 			&i.Rank,
+			&i.Segment,
+			&i.SegmentSetAt,
+			&i.SegmentEvaluatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -219,6 +320,72 @@ func (q *Queries) ListGroupsOfCustomer(ctx context.Context, customerID string) (
 		return nil, err
 	}
 	return items, nil
+}
+
+const listSegments = `-- name: ListSegments :many
+SELECT id, name, metadata, created_at, updated_at, deleted_at, rank, segment, segment_set_at, segment_evaluated_at FROM customer_group
+WHERE segment IS NOT NULL AND deleted_at IS NULL
+ORDER BY id
+LIMIT $1
+`
+
+// ListSegments reads the live segments in id order.
+func (q *Queries) ListSegments(ctx context.Context, limit int32) ([]CustomerGroup, error) {
+	rows, err := q.db.Query(ctx, listSegments, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerGroup{}
+	for rows.Next() {
+		var i CustomerGroup
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.Rank,
+			&i.Segment,
+			&i.SegmentSetAt,
+			&i.SegmentEvaluatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockSegment = `-- name: LockSegment :one
+SELECT segment_set_at FROM customer_group
+WHERE id = $1 AND deleted_at IS NULL AND segment IS NOT NULL
+FOR UPDATE
+`
+
+// LockSegment locks a live segment's row and returns the moment of its rule;
+// no row is a group that is gone or is no segment any more.
+func (q *Queries) LockSegment(ctx context.Context, id string) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, lockSegment, id)
+	var segment_set_at pgtype.Timestamptz
+	err := row.Scan(&segment_set_at)
+	return segment_set_at, err
+}
+
+const lockSegmentCount = `-- name: LockSegmentCount :exec
+SELECT pg_advisory_xact_lock($1::bigint)
+`
+
+// LockSegmentCount serializes the writers that turn a group into a segment, so
+// the count under MaxSegments is the count they all see. The key is the
+// repository's SegmentCountLockKey.
+func (q *Queries) LockSegmentCount(ctx context.Context, lockKey int64) error {
+	_, err := q.db.Exec(ctx, lockSegmentCount, lockKey)
+	return err
 }
 
 const removeCustomerFromGroup = `-- name: RemoveCustomerFromGroup :execrows
@@ -241,6 +408,72 @@ func (q *Queries) RemoveCustomerFromGroup(ctx context.Context, arg RemoveCustome
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const removeSegmentStrays = `-- name: RemoveSegmentStrays :execrows
+DELETE FROM customer_group_customer
+WHERE customer_group_id = $1
+  AND customer_id > $2::text
+  AND ($3::text = '' OR customer_id <= $3::text)
+  AND NOT (customer_id = ANY($4::text[]))
+`
+
+type RemoveSegmentStraysParams struct {
+	GroupID string
+	AfterID string
+	LastID  string
+	Members []string
+}
+
+// RemoveSegmentStrays takes out of a segment the members whose id falls in
+// (after_id, last_id] and who are not among the given ones; an empty last_id
+// reaches the end of the ids.
+func (q *Queries) RemoveSegmentStrays(ctx context.Context, arg RemoveSegmentStraysParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeSegmentStrays,
+		arg.GroupID,
+		arg.AfterID,
+		arg.LastID,
+		arg.Members,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setGroupSegment = `-- name: SetGroupSegment :one
+UPDATE customer_group
+SET segment = $1, segment_set_at = $2,
+    segment_evaluated_at = NULL, updated_at = $2
+WHERE id = $3 AND deleted_at IS NULL
+RETURNING id, name, metadata, created_at, updated_at, deleted_at, rank, segment, segment_set_at, segment_evaluated_at
+`
+
+type SetGroupSegmentParams struct {
+	Segment []byte
+	SetAt   pgtype.Timestamptz
+	ID      string
+}
+
+// SetGroupSegment makes a group a segment with the given rule, or gives it a
+// new rule (ADR 0217). The rule's moment is new, so a pass that read the old
+// rule writes nothing more, and the group waits for its next evaluation.
+func (q *Queries) SetGroupSegment(ctx context.Context, arg SetGroupSegmentParams) (CustomerGroup, error) {
+	row := q.db.QueryRow(ctx, setGroupSegment, arg.Segment, arg.SetAt, arg.ID)
+	var i CustomerGroup
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Rank,
+		&i.Segment,
+		&i.SegmentSetAt,
+		&i.SegmentEvaluatedAt,
+	)
+	return i, err
 }
 
 const softDeleteCustomerGroup = `-- name: SoftDeleteCustomerGroup :one
@@ -278,7 +511,7 @@ UPDATE customer_group SET
     metadata   = COALESCE($3::jsonb, metadata),
     updated_at = $4
 WHERE id = $5 AND deleted_at IS NULL
-RETURNING id, name, metadata, created_at, updated_at, deleted_at, rank
+RETURNING id, name, metadata, created_at, updated_at, deleted_at, rank, segment, segment_set_at, segment_evaluated_at
 `
 
 type UpdateCustomerGroupParams struct {
@@ -311,6 +544,9 @@ func (q *Queries) UpdateCustomerGroup(ctx context.Context, arg UpdateCustomerGro
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.Rank,
+		&i.Segment,
+		&i.SegmentSetAt,
+		&i.SegmentEvaluatedAt,
 	)
 	return i, err
 }
