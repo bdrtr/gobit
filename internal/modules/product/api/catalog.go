@@ -88,6 +88,18 @@ type Catalog interface {
 
 	CreateTag(ctx context.Context, value string) (models.Tag, error)
 	ListTags(ctx context.Context, limit, offset int) (service.ListResult[models.Tag], error)
+
+	// The typed attributes and their facets (ADR 0219).
+	CreateAttribute(ctx context.Context, in service.AttributeInput) (models.Attribute, error)
+	ListAttributes(ctx context.Context) ([]models.Attribute, error)
+	UpdateAttribute(ctx context.Context, id string, patch service.AttributePatch) (models.Attribute, error)
+	DeleteAttribute(ctx context.Context, id string) error
+	AddAttributeOption(ctx context.Context, attributeID string, in service.AttributeOptionInput) (models.AttributeOption, error)
+	DeleteAttributeOption(ctx context.Context, id string) error
+	SetProductAttributes(
+		ctx context.Context, productID string, values []service.ProductAttributeInput,
+	) ([]models.ProductAttributeValue, error)
+	StoreFacets(ctx context.Context, opts service.StoreListOptions) ([]service.Facet, error)
 	// ListOptionValues is the fourth vocabulary read and the only one that
 	// returns TEXT rather than ids; the reason is in
 	// [service.Service.ListOptionValues].

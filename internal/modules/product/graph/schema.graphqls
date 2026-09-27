@@ -126,6 +126,13 @@ type Query {
     """
     variantIds: [ID!]
     """
+    Narrows the listing by typed attributes (ADR 0219): a product is kept when
+    it holds a matching value of EVERY attribute named. The handles come from
+    /store/v1/product-attributes, and a handle, an option or a value the catalog
+    does not have is refused rather than answered with an empty page.
+    """
+    attributes: [AttributeFilter!]
+    """
     Narrows the listing by availability (ADR 0040).
 
     A VARIANT is in stock when it is not counted (manageInventory false), OR it
@@ -177,6 +184,44 @@ type Query {
   different error would pierce the hiding itself.
   """
   product(id: ID, handle: String): Product
+}
+
+"""
+One attribute of a products filter (ADR 0219): the options of a select
+attribute, any of which a product may hold; the bounds of a number attribute,
+each inclusive and either left open; or the value of a boolean attribute.
+"""
+input AttributeFilter {
+  "The attribute's handle."
+  attribute: String!
+  "The option handles of a select attribute."
+  options: [String!]
+  "The inclusive lower bound of a number attribute."
+  min: Float
+  "The inclusive upper bound of a number attribute."
+  max: Float
+  "The value of a boolean attribute."
+  boolean: Boolean
+}
+
+"""
+A product's value of one typed attribute (ADR 0219): the options it chose, or
+its number, or its boolean.
+"""
+type ProductAttribute {
+  handle: String!
+  title: String!
+  "number, boolean or select."
+  kind: String!
+  options: [AttributeOption!]!
+  number: Float
+  boolean: Boolean
+}
+
+"One choice of a select attribute."
+type AttributeOption {
+  handle: String!
+  value: String!
 }
 
 """
@@ -285,6 +330,8 @@ type Product {
   images: [Image!]!
   tags: [Tag!]!
   categories: [Category!]!
+  "The product's typed attribute values, in the operator's order (ADR 0219)."
+  attributes: [ProductAttribute!]!
   """
   The products the operator related to this one under one kind, in the
   operator's order, as the storefront shows them (ADR 0180, ADR 0184).

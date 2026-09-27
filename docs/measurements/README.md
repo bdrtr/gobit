@@ -149,3 +149,4 @@ truth: a report says what was true on the day it was taken.
 | [A price that fell — measured 2026-09-27](0216-a-price-that-fell.md) | 147 |
 | [A group that follows its rule — measured 2026-09-27](0217-a-group-that-follows-its-rule.md) | 148 |
 | [A receiver that asked for less — measured 2026-09-27](0218-a-receiver-that-asked-for-less.md) | 97 |
+| [A catalog that can be narrowed — measured 2026-09-28](0219-a-catalog-that-can-be-narrowed.md) | 132 |

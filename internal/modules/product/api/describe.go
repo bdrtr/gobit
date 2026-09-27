@@ -110,6 +110,7 @@ func Describe(d *openapi.Doc) {
 					"The option TITLE is not part of it: this asks \"offers the value red on any "+
 					"axis\"."),
 			variantIDsParameter(),
+			attributesParameter(),
 			queryParameter("in_stock", typeBoolean,
 				"Restricts the products by availability. A VARIANT is in stock when it is not "+
 					"counted (manage_inventory false), OR it may be sold past zero "+
@@ -263,6 +264,7 @@ func Describe(d *openapi.Doc) {
 	describeAdminLinks(d)
 	describeAdminSalesChannels(d)
 	describeAdminTaxonomy(d)
+	describeAttributes(d)
 }
 
 // describeStorefrontVocabulary documents the three endpoints that turn a word

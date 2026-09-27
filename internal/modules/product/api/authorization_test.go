@@ -675,3 +675,55 @@ func (f *scopeCatalog) DeleteProductType(context.Context, string) error {
 
 	return nil
 }
+
+// CreateAttribute counts the call.
+func (f *scopeCatalog) CreateAttribute(context.Context, service.AttributeInput) (models.Attribute, error) {
+	f.count()
+	return models.Attribute{}, nil
+}
+
+// ListAttributes counts the call.
+func (f *scopeCatalog) ListAttributes(context.Context) ([]models.Attribute, error) {
+	f.count()
+	return nil, nil
+}
+
+// UpdateAttribute counts the call.
+func (f *scopeCatalog) UpdateAttribute(context.Context, string, service.AttributePatch) (models.Attribute, error) {
+	f.count()
+	return models.Attribute{}, nil
+}
+
+// DeleteAttribute counts the call.
+func (f *scopeCatalog) DeleteAttribute(context.Context, string) error {
+	f.count()
+	return nil
+}
+
+// AddAttributeOption counts the call.
+func (f *scopeCatalog) AddAttributeOption(
+	context.Context, string, service.AttributeOptionInput,
+) (models.AttributeOption, error) {
+	f.count()
+	return models.AttributeOption{}, nil
+}
+
+// DeleteAttributeOption counts the call.
+func (f *scopeCatalog) DeleteAttributeOption(context.Context, string) error {
+	f.count()
+	return nil
+}
+
+// SetProductAttributes counts the call.
+func (f *scopeCatalog) SetProductAttributes(
+	context.Context, string, []service.ProductAttributeInput,
+) ([]models.ProductAttributeValue, error) {
+	f.count()
+	return nil, nil
+}
+
+// StoreFacets counts the call.
+func (f *scopeCatalog) StoreFacets(context.Context, service.StoreListOptions) ([]service.Facet, error) {
+	f.count()
+	return nil, nil
+}

@@ -156,6 +156,9 @@ type ListProductsOptions struct {
 	// VariantIDs narrows the listing to the products that own one of these
 	// variants; see [StoreListOptions.VariantIDs].
 	VariantIDs []string
+	// Attributes keep the products whose value of each named attribute
+	// matches (ADR 0219); see [AttributeCriterion].
+	Attributes []AttributeCriterion
 	// SalesChannelIDs is the sales channel filter; for its meaning and the
 	// nil/empty distinction see [StoreListOptions.SalesChannelIDs].
 	//
@@ -457,6 +460,11 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 		folded := models.FoldOptionValue(*opts.OptionValue)
 		filter.OptionValueFolded = &folded
 	}
+	attributes, err := s.resolveAttributeCriteria(ctx, opts.Attributes)
+	if err != nil {
+		return ListResult[models.Product]{}, err
+	}
+	filter.Attributes = attributes
 	if opts.Status != nil {
 		status, err := normalizeStatus(*opts.Status)
 		if err != nil {
@@ -862,6 +870,10 @@ func (s *Service) attachRelations(ctx context.Context, products []models.Product
 	if err != nil {
 		return err
 	}
+	attributes, err := s.repo.ListProductAttributeValues(ctx, ids)
+	if err != nil {
+		return err
+	}
 
 	variantsByProduct := groupBy(variants, func(v models.Variant) string { return v.ProductID })
 	optionsByProduct := groupBy(options, func(o models.Option) string { return o.ProductID })
@@ -873,6 +885,7 @@ func (s *Service) attachRelations(ctx context.Context, products []models.Product
 		products[i].Images = images[id]
 		products[i].Tags = tags[id]
 		products[i].Categories = categories[id]
+		products[i].Attributes = attributes[id]
 	}
 	return nil
 }

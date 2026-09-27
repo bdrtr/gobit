@@ -45,6 +45,9 @@ type ProductFilter struct {
 	// variants (ADR 0191). nil applies no filter, and an empty slice matches
 	// nothing: it is a list of wanted variants that names none.
 	VariantIDs []string
+	// Attributes keep the products whose value of each named attribute
+	// matches (ADR 0219); the service resolves handles to ids first.
+	Attributes []AttributeFilter
 	// SalesChannelIDs are the sales channels the request is bound to.
 	//
 	// Here nil and an EMPTY BUT NON-nil slice say DIFFERENT things, and the

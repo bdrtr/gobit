@@ -371,6 +371,34 @@ func adminEndpoints() []adminEndpoint {
 			record: deleted{},
 		},
 		{
+			method: http.MethodPost, path: "/admin/v1/product-attributes", status: "201",
+			request: attributeRequest{}, record: filledAttribute(),
+		},
+		{
+			method: http.MethodGet, path: "/admin/v1/product-attributes", status: "200",
+			record: filledAttribute(), list: true,
+		},
+		{
+			method: http.MethodPatch, path: "/admin/v1/product-attributes/{id}", status: "200",
+			request: attributePatchRequest{}, record: filledAttribute(),
+		},
+		{
+			method: http.MethodDelete, path: "/admin/v1/product-attributes/{id}", status: "200",
+			record: deleted{},
+		},
+		{
+			method: http.MethodPost, path: "/admin/v1/product-attributes/{id}/options", status: "201",
+			request: attributeOptionRequest{}, record: models.AttributeOption{},
+		},
+		{
+			method: http.MethodDelete, path: "/admin/v1/product-attribute-options/{id}", status: "200",
+			record: deleted{},
+		},
+		{
+			method: http.MethodPut, path: "/admin/v1/products/{id}/attributes", status: "200",
+			request: productAttributesRequest{}, record: filledAttributeValue(), list: true,
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/product-types", status: "201",
 			request: createProductTypeRequest{}, record: filledProductType(),
 		},
@@ -445,6 +473,7 @@ func filledAdminProduct() adminProduct {
 		Images:        []models.Image{{}},
 		Tags:          []models.Tag{{}},
 		Categories:    []models.Category{{}},
+		Attributes:    []models.ProductAttributeValue{{}},
 	})
 }
 
@@ -523,6 +552,18 @@ func filledImage() models.Image {
 		UpdatedAt: now,
 		DeletedAt: &now,
 	}
+}
+
+// filledAttribute produces an attribute whose omitempty fields are written too.
+func filledAttribute() models.Attribute {
+	return models.Attribute{Options: []models.AttributeOption{{}}}
+}
+
+// filledAttributeValue produces a value whose omitempty fields are written too.
+func filledAttributeValue() models.ProductAttributeValue {
+	number, yes := 1.5, true
+
+	return models.ProductAttributeValue{Options: []models.AttributeOption{{}}, Number: &number, Boolean: &yes}
 }
 
 // filledProductType produces a type whose omitempty fields are written too.

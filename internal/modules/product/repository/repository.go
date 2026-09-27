@@ -253,6 +253,18 @@ type Store interface {
 	RecordImportRow(ctx context.Context, id string, rowIndex int, outcome models.ImportRowOutcome) error
 	// FinishImport closes an import whose rows are all done and drops its file.
 	FinishImport(ctx context.Context, id string) error
+
+	// The typed attributes (ADR 0219).
+	CreateAttribute(ctx context.Context, a models.Attribute, limit int) (models.Attribute, error)
+	ListAttributes(ctx context.Context, limit int) ([]models.Attribute, error)
+	GetAttribute(ctx context.Context, id string) (models.Attribute, error)
+	UpdateAttribute(ctx context.Context, id string, title *string, rank *int32) (models.Attribute, error)
+	DeleteAttribute(ctx context.Context, id string) error
+	AddAttributeOption(ctx context.Context, o models.AttributeOption, limit int) (models.AttributeOption, error)
+	DeleteAttributeOption(ctx context.Context, id string) error
+	SetProductAttributeValues(ctx context.Context, productID string, rows []AttributeValueRow) error
+	ListProductAttributeValues(ctx context.Context, productIDs []string) (map[string][]models.ProductAttributeValue, error)
+	AttributeFacets(ctx context.Context, f ProductFilter, attributeIDs []string) ([]FacetRow, error)
 }
 
 // Repo is the PostgreSQL implementation of [Store].
@@ -364,6 +376,8 @@ func conflictReason(constraint string) (code, reason string) {
 		return codeHandleTaken, "this handle is already in use"
 	case "product_variant_sku_uniq":
 		return codeSKUTaken, "this SKU is already in use"
+	case "product_attribute_handle_uniq", "product_attribute_option_handle_uniq":
+		return codeHandleTaken, "this handle is already in use"
 	case "product_tag_value_uniq":
 		return codeDuplicate, "this tag already exists"
 	case "product_option_title_uniq":

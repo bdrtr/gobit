@@ -109,6 +109,19 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A product carries typed attributes** (ADR 0219). **For API consumers:**
+  `POST/GET /admin/v1/product-attributes`, `PATCH/DELETE
+  /admin/v1/product-attributes/{id}`, `POST .../{id}/options` and `DELETE
+  /admin/v1/product-attribute-options/{id}` define store-wide `number`,
+  `boolean` and `select` attributes; `PUT /admin/v1/products/{id}/attributes`
+  replaces a product's values. Products carry `attributes`. The storefront
+  listing takes a repeated `attribute` parameter (`material:cotton,wool`,
+  `width:10..120`, `waterproof:true`), GraphQL `products` takes `attributes`
+  and `Product` has `attributes`, `GET /store/v1/product-attributes` is the
+  vocabulary, and `GET /store/v1/sales-channels/{id}/product-facets` counts the
+  products per value. **For operators:** product migration 000011 adds three
+  tables; at most 100 attributes and 200 options per select.
+
 - **A webhook receiver can narrow what it gets** (ADR 0218). **For API
   consumers:** a receiver registered at `POST /admin/v1/webhooks/` takes
   `filters` (per topic, payload fields and the values one of which an event

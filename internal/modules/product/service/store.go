@@ -138,6 +138,9 @@ type StoreListOptions struct {
 	// product is left out as any other product would be. At most [MaxLimit]
 	// ids are taken, so one page holds every product they name.
 	VariantIDs []string
+	// Attributes keep the products whose value of each named attribute
+	// matches (ADR 0219); see [AttributeCriterion].
+	Attributes []AttributeCriterion
 	// InStock narrows the catalog by ADR 0040's definition: true keeps the
 	// products with at least one sellable variant, false keeps the ones with
 	// none.
@@ -415,6 +418,7 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 		TagID:           opts.TagID,
 		OptionValue:     opts.OptionValue,
 		VariantIDs:      opts.VariantIDs,
+		Attributes:      opts.Attributes,
 		Search:          opts.Search,
 		SalesChannelIDs: opts.SalesChannelIDs,
 		Limit:           opts.Limit,
@@ -590,6 +594,7 @@ func (s *Service) scanStoreProducts(
 			TagID:           opts.TagID,
 			OptionValue:     opts.OptionValue,
 			VariantIDs:      opts.VariantIDs,
+			Attributes:      opts.Attributes,
 			Search:          opts.Search,
 			SalesChannelIDs: opts.SalesChannelIDs,
 			Limit:           chunk,

@@ -34,6 +34,35 @@ type Product struct {
 	ArchiveAt     pgtype.Timestamptz
 }
 
+type ProductAttribute struct {
+	ID        string
+	Handle    string
+	Title     string
+	Kind      string
+	Rank      int32
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
+}
+
+type ProductAttributeOption struct {
+	ID          string
+	AttributeID string
+	Handle      string
+	Value       string
+	Rank        int32
+	CreatedAt   pgtype.Timestamptz
+	DeletedAt   pgtype.Timestamptz
+}
+
+type ProductAttributeValue struct {
+	ProductID    string
+	AttributeID  string
+	OptionID     *string
+	NumberValue  *float64
+	BooleanValue *bool
+}
+
 type ProductCategory struct {
 	ID          string
 	Name        string

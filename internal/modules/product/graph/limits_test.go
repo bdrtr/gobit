@@ -49,6 +49,7 @@ const allProductFields = `
   images { id productId url altText rank metadata }
   tags { id value }
   categories { id name handle description parentId isActive isInternal rank }
+  attributes { handle title kind options { handle value } number boolean }
 `
 
 // deepestDataQuery is the deepest DATA path the schema allows without the
@@ -857,20 +858,23 @@ func TestFieldRepetitionCountsDifferentTypesSeparately(t *testing.T) {
 // below. That is the calibration working, not drifting -- the point of pinning
 // the documents here is that such a move fails a test instead of quietly
 // leaving the table measuring a document that is no longer all-fields.
+// ADR 0219's "attributes" moved the four rows that select every field again,
+// by 250 per product and 250 per page product: from 2,390 / 6,440 / 28,880 /
+// 140,400, and the default page stays under the ceiling as limit=100 stays over.
 var calibrationDocuments = map[string]struct {
 	document   string
 	complexity int
 }{
 	"product page (PDP, everything included)": {
 		document:   `{ product(handle: "t-shirt") {` + allProductFields + `} }`,
-		complexity: 2390,
+		complexity: 2640,
 	},
 	"product page with its three related lists": {
 		document: `{ product(handle: "t-shirt") {` + allProductFields +
 			` crossSell: related(type: cross_sell) ` + relatedCard +
 			` upSell: related(type: up_sell) ` + relatedCard +
 			` substitutes: related(type: substitute) ` + relatedCard + ` } }`,
-		complexity: 6440,
+		complexity: 6690,
 	},
 	"related on every product of a page of 50": {
 		document:   `{ products(limit: 50) { items { id related(type: cross_sell) { id } } } }`,
@@ -887,11 +891,11 @@ var calibrationDocuments = map[string]struct {
 	},
 	"ALL fields on the default page (20 products x whole tree)": {
 		document:   `{ products { count offset limit items {` + allProductFields + `} } }`,
-		complexity: 28880,
+		complexity: 33880,
 	},
 	"ALL fields with limit=100": {
 		document:   `{ products(limit: 100) { count offset limit items {` + allProductFields + `} } }`,
-		complexity: 140400,
+		complexity: 165400,
 	},
 	"products { count } with 400 aliases": {
 		document:   aliasedStacking(400),

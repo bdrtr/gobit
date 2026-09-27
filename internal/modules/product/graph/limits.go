@@ -1021,6 +1021,7 @@ func complexityCosts(costs *ComplexityRoot) {
 		_ *models.ProductOrder,
 		_, _, _, _ *string,
 		_ []string,
+		_ []service.AttributeCriterion,
 		_ *bool,
 		_ *service.PriceBracket,
 	) int {
@@ -1044,6 +1045,8 @@ func complexityCosts(costs *ComplexityRoot) {
 	costs.Product.Images = collectionCost
 	costs.Product.Tags = collectionCost
 	costs.Product.Categories = collectionCost
+	costs.Product.Attributes = collectionCost
+	costs.ProductAttribute.Options = collectionCost
 	costs.Option.Values = collectionCost
 	costs.Variant.OptionValues = collectionCost
 }

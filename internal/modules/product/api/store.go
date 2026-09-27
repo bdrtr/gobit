@@ -227,6 +227,11 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
+	attributes, err := attributesParam(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
 	// The cursor is decoded against the listing name of THE ORDER ASKED FOR, so
 	// a cursor minted under the other order is refused here rather than serving
 	// a page out of a key space it does not describe.
@@ -243,6 +248,7 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		TagID:           stringParam(r, "tag_id"),
 		OptionValue:     stringParam(r, "option_value"),
 		VariantIDs:      variantIDsParam(r),
+		Attributes:      attributes,
 		Search:          stringParam(r, "q"),
 		InStock:         inStock,
 		Price:           bracket,

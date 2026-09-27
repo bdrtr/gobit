@@ -40,6 +40,11 @@ type DirectiveRoot struct {
 }
 
 type ComplexityRoot struct {
+	AttributeOption struct {
+		Handle func(childComplexity int) int
+		Value  func(childComplexity int) int
+	}
+
 	Category struct {
 		Description func(childComplexity int) int
 		Handle      func(childComplexity int) int
@@ -77,6 +82,7 @@ type ComplexityRoot struct {
 	}
 
 	Product struct {
+		Attributes    func(childComplexity int) int
 		Categories    func(childComplexity int) int
 		CollectionID  func(childComplexity int) int
 		CreatedAt     func(childComplexity int) int
@@ -105,6 +111,15 @@ type ComplexityRoot struct {
 		Width         func(childComplexity int) int
 	}
 
+	ProductAttribute struct {
+		Boolean func(childComplexity int) int
+		Handle  func(childComplexity int) int
+		Kind    func(childComplexity int) int
+		Number  func(childComplexity int) int
+		Options func(childComplexity int) int
+		Title   func(childComplexity int) int
+	}
+
 	ProductList struct {
 		Count      func(childComplexity int) int
 		Items      func(childComplexity int) int
@@ -115,7 +130,7 @@ type ComplexityRoot struct {
 
 	Query struct {
 		Product  func(childComplexity int, id *string, handle *string) int
-		Products func(childComplexity int, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string, optionValue *string, variantIds []string, inStock *bool, price *service.PriceBracket) int
+		Products func(childComplexity int, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion, inStock *bool, price *service.PriceBracket) int
 	}
 
 	Tag struct {
@@ -153,7 +168,7 @@ type ProductResolver interface {
 	Related(ctx context.Context, obj *service.StoreProduct, typeArg models.RelationType) ([]service.StoreProduct, error)
 }
 type QueryResolver interface {
-	Products(ctx context.Context, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string, optionValue *string, variantIds []string, inStock *bool, price *service.PriceBracket) (*service.ListResult[service.StoreProduct], error)
+	Products(ctx context.Context, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion, inStock *bool, price *service.PriceBracket) (*service.ListResult[service.StoreProduct], error)
 	Product(ctx context.Context, id *string, handle *string) (*service.StoreProduct, error)
 }
 type VariantResolver interface {
@@ -178,6 +193,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 	ec := newExecutionContext(nil, e, nil)
 	_ = ec
 	switch typeName + "." + field {
+
+	case "AttributeOption.handle":
+		if e.ComplexityRoot.AttributeOption.Handle == nil {
+			break
+		}
+
+		return e.ComplexityRoot.AttributeOption.Handle(childComplexity), true
+	case "AttributeOption.value":
+		if e.ComplexityRoot.AttributeOption.Value == nil {
+			break
+		}
+
+		return e.ComplexityRoot.AttributeOption.Value(childComplexity), true
 
 	case "Category.description":
 		if e.ComplexityRoot.Category.Description == nil {
@@ -327,6 +355,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.OptionValue.Value(childComplexity), true
 
+	case "Product.attributes":
+		if e.ComplexityRoot.Product.Attributes == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Product.Attributes(childComplexity), true
 	case "Product.categories":
 		if e.ComplexityRoot.Product.Categories == nil {
 			break
@@ -489,6 +523,43 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Product.Width(childComplexity), true
 
+	case "ProductAttribute.boolean":
+		if e.ComplexityRoot.ProductAttribute.Boolean == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProductAttribute.Boolean(childComplexity), true
+	case "ProductAttribute.handle":
+		if e.ComplexityRoot.ProductAttribute.Handle == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProductAttribute.Handle(childComplexity), true
+	case "ProductAttribute.kind":
+		if e.ComplexityRoot.ProductAttribute.Kind == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProductAttribute.Kind(childComplexity), true
+	case "ProductAttribute.number":
+		if e.ComplexityRoot.ProductAttribute.Number == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProductAttribute.Number(childComplexity), true
+	case "ProductAttribute.options":
+		if e.ComplexityRoot.ProductAttribute.Options == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProductAttribute.Options(childComplexity), true
+	case "ProductAttribute.title":
+		if e.ComplexityRoot.ProductAttribute.Title == nil {
+			break
+		}
+
+		return e.ComplexityRoot.ProductAttribute.Title(childComplexity), true
+
 	case "ProductList.count":
 		if e.ComplexityRoot.ProductList.Count == nil {
 			break
@@ -541,7 +612,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.Products(childComplexity, args["limit"].(*int), args["offset"].(*int), args["after"].(*string), args["q"].(*string), args["sort"].(*models.ProductOrder), args["collectionId"].(*string), args["categoryId"].(*string), args["tagId"].(*string), args["optionValue"].(*string), args["variantIds"].([]string), args["inStock"].(*bool), args["price"].(*service.PriceBracket)), true
+		return e.ComplexityRoot.Query.Products(childComplexity, args["limit"].(*int), args["offset"].(*int), args["after"].(*string), args["q"].(*string), args["sort"].(*models.ProductOrder), args["collectionId"].(*string), args["categoryId"].(*string), args["tagId"].(*string), args["optionValue"].(*string), args["variantIds"].([]string), args["attributes"].([]service.AttributeCriterion), args["inStock"].(*bool), args["price"].(*service.PriceBracket)), true
 
 	case "Tag.id":
 		if e.ComplexityRoot.Tag.ID == nil {
@@ -673,6 +744,7 @@ func (e *executableSchema) Exec(ctx context.Context) graphql.ResponseHandler {
 	opCtx := graphql.GetOperationContext(ctx)
 	ec := newExecutionContext(opCtx, e, make(chan graphql.DeferredResult))
 	inputUnmarshalMap := graphql.BuildUnmarshalerMap(
+		ec.unmarshalInputAttributeFilter,
 		ec.unmarshalInputPriceFilter,
 	)
 	first := true
@@ -752,6 +824,16 @@ var parsedSchema = gqlparser.MustLoadSchema(sources...)
 // childFields_* functions provide shared child field context lookups.
 // Each function is generated once per unique object type, deduplicating the
 // switch statements that were previously inlined in every fieldContext_* function.
+
+func (ec *executionContext) childFields_AttributeOption(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "handle":
+		return ec.fieldContext_AttributeOption_handle(ctx, field)
+	case "value":
+		return ec.fieldContext_AttributeOption_value(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type AttributeOption", field.Name)
+}
 
 func (ec *executionContext) childFields_Category(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
@@ -877,10 +959,30 @@ func (ec *executionContext) childFields_Product(ctx context.Context, field graph
 		return ec.fieldContext_Product_tags(ctx, field)
 	case "categories":
 		return ec.fieldContext_Product_categories(ctx, field)
+	case "attributes":
+		return ec.fieldContext_Product_attributes(ctx, field)
 	case "related":
 		return ec.fieldContext_Product_related(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Product", field.Name)
+}
+
+func (ec *executionContext) childFields_ProductAttribute(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "handle":
+		return ec.fieldContext_ProductAttribute_handle(ctx, field)
+	case "title":
+		return ec.fieldContext_ProductAttribute_title(ctx, field)
+	case "kind":
+		return ec.fieldContext_ProductAttribute_kind(ctx, field)
+	case "options":
+		return ec.fieldContext_ProductAttribute_options(ctx, field)
+	case "number":
+		return ec.fieldContext_ProductAttribute_number(ctx, field)
+	case "boolean":
+		return ec.fieldContext_ProductAttribute_boolean(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type ProductAttribute", field.Name)
 }
 
 func (ec *executionContext) childFields_ProductList(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -1200,22 +1302,30 @@ func (ec *executionContext) field_Query_products_args(ctx context.Context, rawAr
 		return nil, err
 	}
 	args["variantIds"] = arg9
-	arg10, err := graphql.ProcessArgField(ctx, rawArgs, "inStock",
+	arg10, err := graphql.ProcessArgField(ctx, rawArgs, "attributes",
+		func(ctx context.Context, v any) ([]service.AttributeCriterion, error) {
+			return ec.unmarshalOAttributeFilter2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐAttributeCriterionᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["attributes"] = arg10
+	arg11, err := graphql.ProcessArgField(ctx, rawArgs, "inStock",
 		func(ctx context.Context, v any) (*bool, error) {
 			return ec.unmarshalOBoolean2ᚖbool(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["inStock"] = arg10
-	arg11, err := graphql.ProcessArgField(ctx, rawArgs, "price",
+	args["inStock"] = arg11
+	arg12, err := graphql.ProcessArgField(ctx, rawArgs, "price",
 		func(ctx context.Context, v any) (*service.PriceBracket, error) {
 			return ec.unmarshalOPriceFilter2ᚖgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐPriceBracket(ctx, v)
 		})
 	if err != nil {
 		return nil, err
 	}
-	args["price"] = arg11
+	args["price"] = arg12
 	return args, nil
 }
 
@@ -1278,6 +1388,52 @@ func (ec *executionContext) field___Type_fields_args(ctx context.Context, rawArg
 // endregion ***************************** args.gotpl *****************************
 
 // region    **************************** field.gotpl *****************************
+
+func (ec *executionContext) _AttributeOption_handle(ctx context.Context, field graphql.CollectedField, obj *models.AttributeOption) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_AttributeOption_handle(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Handle, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_AttributeOption_handle(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("AttributeOption", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _AttributeOption_value(ctx context.Context, field graphql.CollectedField, obj *models.AttributeOption) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_AttributeOption_value(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Value, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_AttributeOption_value(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("AttributeOption", field, false, false, errors.New("field of type String does not have child fields"))
+}
 
 func (ec *executionContext) _Category_id(ctx context.Context, field graphql.CollectedField, obj *models.Category) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
@@ -2460,6 +2616,38 @@ func (ec *executionContext) fieldContext_Product_categories(_ context.Context, f
 	return fc, nil
 }
 
+func (ec *executionContext) _Product_attributes(ctx context.Context, field graphql.CollectedField, obj *service.StoreProduct) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Product_attributes(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Attributes, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.ProductAttributeValue) graphql.Marshaler {
+			return ec.marshalNProductAttribute2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐProductAttributeValueᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Product_attributes(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Product",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_ProductAttribute(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Product_related(ctx context.Context, field graphql.CollectedField, obj *service.StoreProduct) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2502,6 +2690,153 @@ func (ec *executionContext) fieldContext_Product_related(ctx context.Context, fi
 		return fc, err
 	}
 	return fc, nil
+}
+
+func (ec *executionContext) _ProductAttribute_handle(ctx context.Context, field graphql.CollectedField, obj *models.ProductAttributeValue) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ProductAttribute_handle(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Handle, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ProductAttribute_handle(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ProductAttribute", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _ProductAttribute_title(ctx context.Context, field graphql.CollectedField, obj *models.ProductAttributeValue) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ProductAttribute_title(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Title, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ProductAttribute_title(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ProductAttribute", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _ProductAttribute_kind(ctx context.Context, field graphql.CollectedField, obj *models.ProductAttributeValue) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ProductAttribute_kind(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Kind, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ProductAttribute_kind(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ProductAttribute", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _ProductAttribute_options(ctx context.Context, field graphql.CollectedField, obj *models.ProductAttributeValue) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ProductAttribute_options(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Options, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.AttributeOption) graphql.Marshaler {
+			return ec.marshalNAttributeOption2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐAttributeOptionᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_ProductAttribute_options(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "ProductAttribute",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_AttributeOption(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _ProductAttribute_number(ctx context.Context, field graphql.CollectedField, obj *models.ProductAttributeValue) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ProductAttribute_number(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Number, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *float64) graphql.Marshaler {
+			return ec.marshalOFloat2ᚖfloat64(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_ProductAttribute_number(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ProductAttribute", field, false, false, errors.New("field of type Float does not have child fields"))
+}
+
+func (ec *executionContext) _ProductAttribute_boolean(ctx context.Context, field graphql.CollectedField, obj *models.ProductAttributeValue) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_ProductAttribute_boolean(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Boolean, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *bool) graphql.Marshaler {
+			return ec.marshalOBoolean2ᚖbool(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_ProductAttribute_boolean(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("ProductAttribute", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
 func (ec *executionContext) _ProductList_items(ctx context.Context, field graphql.CollectedField, obj *service.ListResult[service.StoreProduct]) (ret graphql.Marshaler) {
@@ -2638,7 +2973,7 @@ func (ec *executionContext) _Query_products(ctx context.Context, field graphql.C
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().Products(ctx, fc.Args["limit"].(*int), fc.Args["offset"].(*int), fc.Args["after"].(*string), fc.Args["q"].(*string), fc.Args["sort"].(*models.ProductOrder), fc.Args["collectionId"].(*string), fc.Args["categoryId"].(*string), fc.Args["tagId"].(*string), fc.Args["optionValue"].(*string), fc.Args["variantIds"].([]string), fc.Args["inStock"].(*bool), fc.Args["price"].(*service.PriceBracket))
+			return ec.Resolvers.Query().Products(ctx, fc.Args["limit"].(*int), fc.Args["offset"].(*int), fc.Args["after"].(*string), fc.Args["q"].(*string), fc.Args["sort"].(*models.ProductOrder), fc.Args["collectionId"].(*string), fc.Args["categoryId"].(*string), fc.Args["tagId"].(*string), fc.Args["optionValue"].(*string), fc.Args["variantIds"].([]string), fc.Args["attributes"].([]service.AttributeCriterion), fc.Args["inStock"].(*bool), fc.Args["price"].(*service.PriceBracket))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *service.ListResult[service.StoreProduct]) graphql.Marshaler {
@@ -4320,6 +4655,64 @@ func (ec *executionContext) fieldContext___Type_isOneOf(_ context.Context, field
 
 // region    **************************** input.gotpl *****************************
 
+func (ec *executionContext) unmarshalInputAttributeFilter(ctx context.Context, obj any) (service.AttributeCriterion, error) {
+	var it service.AttributeCriterion
+	if obj == nil {
+		return it, nil
+	}
+
+	asMap := map[string]any{}
+	for k, v := range obj.(map[string]any) {
+		asMap[k] = v
+	}
+
+	fieldsInOrder := [...]string{"attribute", "options", "min", "max", "boolean"}
+	for _, k := range fieldsInOrder {
+		v, ok := asMap[k]
+		if !ok {
+			continue
+		}
+		switch k {
+		case "attribute":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("attribute"))
+			data, err := ec.unmarshalNString2string(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Attribute = data
+		case "options":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("options"))
+			data, err := ec.unmarshalOString2ᚕstringᚄ(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Options = data
+		case "min":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("min"))
+			data, err := ec.unmarshalOFloat2ᚖfloat64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Min = data
+		case "max":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("max"))
+			data, err := ec.unmarshalOFloat2ᚖfloat64(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Max = data
+		case "boolean":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("boolean"))
+			data, err := ec.unmarshalOBoolean2ᚖbool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.Boolean = data
+		}
+	}
+	return it, nil
+}
+
 func (ec *executionContext) unmarshalInputPriceFilter(ctx context.Context, obj any) (service.PriceBracket, error) {
 	var it service.PriceBracket
 	if obj == nil {
@@ -4371,6 +4764,49 @@ func (ec *executionContext) unmarshalInputPriceFilter(ctx context.Context, obj a
 // endregion ************************** interface.gotpl ***************************
 
 // region    **************************** object.gotpl ****************************
+
+var attributeOptionImplementors = []string{"AttributeOption"}
+
+func (ec *executionContext) _AttributeOption(ctx context.Context, sel ast.SelectionSet, obj *models.AttributeOption) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, attributeOptionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("AttributeOption")
+		case "handle":
+			out.Values[i] = ec._AttributeOption_handle(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "value":
+			out.Values[i] = ec._AttributeOption_value(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
 
 var categoryImplementors = []string{"Category"}
 
@@ -4761,6 +5197,11 @@ func (ec *executionContext) _Product(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "attributes":
+			out.Values[i] = ec._Product_attributes(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
 		case "related":
 			field := field
 
@@ -4799,6 +5240,69 @@ func (ec *executionContext) _Product(ctx context.Context, sel ast.SelectionSet, 
 			}
 
 			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var productAttributeImplementors = []string{"ProductAttribute"}
+
+func (ec *executionContext) _ProductAttribute(ctx context.Context, sel ast.SelectionSet, obj *models.ProductAttributeValue) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, productAttributeImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("ProductAttribute")
+		case "handle":
+			out.Values[i] = ec._ProductAttribute_handle(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "title":
+			out.Values[i] = ec._ProductAttribute_title(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "kind":
+			out.Values[i] = ec._ProductAttribute_kind(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "options":
+			out.Values[i] = ec._ProductAttribute_options(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "number":
+			out.Values[i] = ec._ProductAttribute_number(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "boolean":
+			out.Values[i] = ec._ProductAttribute_boolean(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -5601,6 +6105,31 @@ func (ec *executionContext) ___Type(ctx context.Context, sel ast.SelectionSet, o
 
 // region    ***************************** type.gotpl *****************************
 
+func (ec *executionContext) unmarshalNAttributeFilter2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐAttributeCriterion(ctx context.Context, v any) (service.AttributeCriterion, error) {
+	res, err := ec.unmarshalInputAttributeFilter(ctx, v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNAttributeOption2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐAttributeOption(ctx context.Context, sel ast.SelectionSet, v models.AttributeOption) graphql.Marshaler {
+	return ec._AttributeOption(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNAttributeOption2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐAttributeOptionᚄ(ctx context.Context, sel ast.SelectionSet, v []models.AttributeOption) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNAttributeOption2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐAttributeOption(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
 func (ec *executionContext) unmarshalNBoolean2bool(ctx context.Context, v any) (bool, error) {
 	res, err := graphql.UnmarshalBoolean(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -5776,6 +6305,26 @@ func (ec *executionContext) marshalNProduct2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋin
 		fc := graphql.GetFieldContext(ctx)
 		fc.Result = &v[i]
 		return ec.marshalNProduct2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐStoreProduct(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNProductAttribute2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐProductAttributeValue(ctx context.Context, sel ast.SelectionSet, v models.ProductAttributeValue) graphql.Marshaler {
+	return ec._ProductAttribute(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNProductAttribute2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐProductAttributeValueᚄ(ctx context.Context, sel ast.SelectionSet, v []models.ProductAttributeValue) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNProductAttribute2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐProductAttributeValue(ctx, sel, v[i])
 	})
 
 	for _, e := range ret {
@@ -6030,6 +6579,23 @@ func (ec *executionContext) marshalN__TypeKind2string(ctx context.Context, sel a
 	return res
 }
 
+func (ec *executionContext) unmarshalOAttributeFilter2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐAttributeCriterionᚄ(ctx context.Context, v any) ([]service.AttributeCriterion, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]service.AttributeCriterion, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNAttributeFilter2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐAttributeCriterion(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
 func (ec *executionContext) unmarshalOBoolean2bool(ctx context.Context, v any) (bool, error) {
 	res, err := graphql.UnmarshalBoolean(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -6058,6 +6624,23 @@ func (ec *executionContext) marshalOBoolean2ᚖbool(ctx context.Context, sel ast
 	_ = ctx
 	res := graphql.MarshalBoolean(*v)
 	return res
+}
+
+func (ec *executionContext) unmarshalOFloat2ᚖfloat64(ctx context.Context, v any) (*float64, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalFloatContext(ctx, v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOFloat2ᚖfloat64(ctx context.Context, sel ast.SelectionSet, v *float64) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	_ = sel
+	res := graphql.MarshalFloatContext(*v)
+	return graphql.WrapContextMarshaler(ctx, res)
 }
 
 func (ec *executionContext) unmarshalOID2ᚕstringᚄ(ctx context.Context, v any) ([]string, error) {
@@ -6229,6 +6812,41 @@ func (ec *executionContext) marshalOString2string(ctx context.Context, sel ast.S
 	_ = ctx
 	res := graphql.MarshalString(v)
 	return res
+}
+
+func (ec *executionContext) unmarshalOString2ᚕstringᚄ(ctx context.Context, v any) ([]string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	vSlice := graphql.CoerceList(v)
+	var err error
+	res := make([]string, len(vSlice))
+	for i := range vSlice {
+		ctx := graphql.WithPathContext(ctx, graphql.NewPathWithIndex(i))
+		res[i], err = ec.unmarshalNString2string(ctx, vSlice[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	return res, nil
+}
+
+func (ec *executionContext) marshalOString2ᚕstringᚄ(ctx context.Context, sel ast.SelectionSet, v []string) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	ret := make(graphql.Array, len(v))
+	for i := range v {
+		ret[i] = ec.marshalNString2string(ctx, sel, v[i])
+	}
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
 }
 
 func (ec *executionContext) unmarshalOString2ᚖstring(ctx context.Context, v any) (*string, error) {

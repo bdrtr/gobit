@@ -566,6 +566,9 @@ func productFilterSQL(f ProductFilter) (body string, args []any) {
 	if f.VariantIDs != nil {
 		fmt.Fprintf(&clauses, variantFilterSQL, param(f.VariantIDs))
 	}
+	for i := range f.Attributes {
+		clauses.WriteString(attributeFilterSQL(&f.Attributes[i], param))
+	}
 	if f.SalesChannelIDs != nil {
 		clauses.WriteString("\n  AND " + salesChannelAssigned("product.id", param(f.SalesChannelIDs)))
 	}

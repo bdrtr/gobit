@@ -87,6 +87,12 @@ models:
   # in the service does not compile.
   PriceFilter:
     model: github.com/bdrtr/gobit/internal/modules/product/service.PriceBracket
+  AttributeFilter:
+    model: github.com/bdrtr/gobit/internal/modules/product/service.AttributeCriterion
+  ProductAttribute:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.ProductAttributeValue
+  AttributeOption:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.AttributeOption
   Option:
     model: github.com/bdrtr/gobit/internal/modules/product/models.Option
   OptionValue:

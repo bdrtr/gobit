@@ -226,6 +226,7 @@ func filledStoreProduct() service.StoreProduct {
 			Images:        []models.Image{{}},
 			Tags:          []models.Tag{{}},
 			Categories:    []models.Category{{}},
+			Attributes:    []models.ProductAttributeValue{{}},
 		},
 		Variants: []service.StoreVariant{filledStoreVariant()},
 	}
@@ -430,7 +431,7 @@ func TestStoreListDescribesOnlyParametersItReads(t *testing.T) {
 
 	names := parameterNames(t, op, "query")
 	assert.ElementsMatch(t, []string{
-		"collection_id", "category_id", "tag_id", "option_value", "variant_id", "in_stock",
+		"collection_id", "category_id", "tag_id", "option_value", "variant_id", "attribute", "in_stock",
 		"currency_code", "min_price", "max_price",
 		"q", "sort", "limit", "offset", "after", "with_count",
 	}, names,
@@ -750,6 +751,10 @@ func TestEveryStoreEndpointIsDescribed(t *testing.T) {
 		"GET /store/v1/collections",
 		"GET /store/v1/categories",
 		"GET /store/v1/tags",
+		// The attribute filter's vocabulary, unscoped like the tags, and its
+		// counts, over the channel's catalog like the listing (ADR 0219).
+		"GET /store/v1/product-attributes",
+		"GET /store/v1/sales-channels/{sales_channel_id}/product-facets",
 	}, found)
 }
 

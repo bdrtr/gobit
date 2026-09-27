@@ -50,6 +50,8 @@ type memStore struct {
 	relations map[string]map[models.RelationType][]string
 	// imports are the catalog imports (ADR 0205), made on first use.
 	imports map[string]*memImport
+	// attributeState is the typed attributes (ADR 0219), made on first use.
+	attributeState *attributeState
 
 	// links is the fake link service the sales channel links are read from.
 	//
@@ -255,6 +257,8 @@ func (m *memStore) matches(p *models.Product, f repository.ProductFilter) bool {
 	case f.OptionValueFolded != nil && !m.offersOptionValue(p.ID, *f.OptionValueFolded):
 		return false
 	case f.VariantIDs != nil && !m.ownsOneOf(p.ID, f.VariantIDs):
+		return false
+	case !m.holdsAttributes(p.ID, f.Attributes):
 		return false
 	default:
 		return m.visibleIn(p.ID, f.SalesChannelIDs)

@@ -244,6 +244,7 @@ func TestProductsArgumentsMatchWhatTheServiceReads(t *testing.T) {
 		"TagID":        "tagId",
 		"OptionValue":  "optionValue",
 		"VariantIDs":   "variantIds",
+		"Attributes":   "attributes",
 		"Search":       "q",
 		"InStock":      "inStock",
 		// The price bracket is ONE argument and one option field, which is

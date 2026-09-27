@@ -103,6 +103,11 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/store/v1/collections", h.storeListCollections)
 	r.Get("/store/v1/categories", h.storeListCategories)
 	r.Get("/store/v1/tags", h.storeListTags)
+	// The attribute filter's vocabulary and its counts (ADR 0219). The
+	// vocabulary is unscoped like the tags; the counts are over the channel's
+	// catalog, so they carry the channel segment like the listing.
+	r.Get("/store/v1/product-attributes", h.storeListAttributes)
+	r.Get(pathStoreFacets, h.storeFacets)
 
 	// The GraphQL storefront read surface. ONLY POST is registered; for why GET
 	// is not opened see [graph.NewHandler]. The path sitting under /store/v1
@@ -203,6 +208,13 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Post("/admin/v1/product-types", h.adminCreateProductType)
 	read.Get("/admin/v1/product-types", h.adminListProductTypes)
 	write.Delete("/admin/v1/product-types/{id}", h.adminDeleteProductType)
+	write.Post("/admin/v1/product-attributes", h.adminCreateAttribute)
+	read.Get("/admin/v1/product-attributes", h.adminListAttributes)
+	write.Patch("/admin/v1/product-attributes/{id}", h.adminUpdateAttribute)
+	write.Delete("/admin/v1/product-attributes/{id}", h.adminDeleteAttribute)
+	write.Post("/admin/v1/product-attributes/{id}/options", h.adminAddAttributeOption)
+	write.Delete("/admin/v1/product-attribute-options/{id}", h.adminDeleteAttributeOption)
+	write.Put("/admin/v1/products/{id}/attributes", h.adminSetProductAttributes)
 	write.Post("/admin/v1/product-tags", h.adminCreateTag)
 	read.Get("/admin/v1/product-tags", h.adminListTags)
 	write.Delete("/admin/v1/product-tags/{id}", h.adminDeleteTag)

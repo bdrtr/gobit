@@ -131,4 +131,6 @@ type Product struct {
 	Images     []Image    `json:"images,omitempty"`
 	Tags       []Tag      `json:"tags,omitempty"`
 	Categories []Category `json:"categories,omitempty"`
+	// Attributes are the product's typed attribute values (ADR 0219).
+	Attributes []ProductAttributeValue `json:"attributes,omitempty"`
 }
