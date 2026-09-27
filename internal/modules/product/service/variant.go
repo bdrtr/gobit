@@ -100,10 +100,8 @@ func (s *Service) CreateVariant(ctx context.Context, productID string, in Create
 	}
 
 	var created models.Variant
-	err := s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
-		if _, err := tx.GetProductForUpdate(ctx, productID); err != nil {
-			return err
-		}
+	// revise takes the product's row lock before the variant is written.
+	err := s.revise(ctx, productID, func(ctx context.Context, tx repository.Store) error {
 		v, err := createVariantTx(ctx, tx, productID, in, 0)
 		if err != nil {
 			return err
@@ -130,7 +128,7 @@ func (s *Service) GetVariant(ctx context.Context, id string) (models.Variant, er
 	}
 
 	variants := []models.Variant{variant}
-	if err := s.attachVariantOptionValues(ctx, variants); err != nil {
+	if err := attachVariantOptionValues(ctx, s.repo, variants); err != nil {
 		return models.Variant{}, err
 	}
 	return variants[0], nil
@@ -153,7 +151,7 @@ func (s *Service) ListVariants(ctx context.Context, opts ListVariantsOptions) (L
 		return ListResult[models.Variant]{}, err
 	}
 	if opts.WithOptionValues {
-		if err := s.attachVariantOptionValues(ctx, variants); err != nil {
+		if err := attachVariantOptionValues(ctx, s.repo, variants); err != nil {
 			return ListResult[models.Variant]{}, err
 		}
 	}
@@ -186,7 +184,11 @@ func (s *Service) UpdateVariant(ctx context.Context, id string, in UpdateVariant
 		patch.Title = &title
 	}
 
-	err := s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+	variant, err := s.repo.GetVariant(ctx, id)
+	if err != nil {
+		return models.Variant{}, err
+	}
+	err = s.revise(ctx, variant.ProductID, func(ctx context.Context, tx repository.Store) error {
 		updated, err := tx.UpdateVariant(ctx, id, patch)
 		if err != nil {
 			return err
@@ -208,7 +210,13 @@ func (s *Service) DeleteVariant(ctx context.Context, id string) error {
 	if _, err := requireID("id", id); err != nil {
 		return err
 	}
-	if err := s.repo.SoftDeleteVariant(ctx, id); err != nil {
+	variant, err := s.repo.GetVariant(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := s.revise(ctx, variant.ProductID, func(ctx context.Context, tx repository.Store) error {
+		return tx.SoftDeleteVariant(ctx, id)
+	}); err != nil {
 		return err
 	}
 
@@ -226,7 +234,7 @@ func (s *Service) SetVariantOptionValues(ctx context.Context, variantID string, 
 	if err != nil {
 		return err
 	}
-	return s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+	return s.revise(ctx, variant.ProductID, func(ctx context.Context, tx repository.Store) error {
 		return replaceOptionValues(ctx, tx, variant.ProductID, variantID, valueIDs)
 	})
 }
@@ -248,16 +256,12 @@ func (s *Service) CreateOption(ctx context.Context, productID string, in CreateO
 	}
 
 	var created models.Option
-	err = s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
-		// The existence of the product is verified INSIDE THE TRANSACTION and
-		// with a row lock. If it is verified outside, an intervening DELETE
-		// /admin/v1/products/{id} leaves an option whose owner is deleted but
-		// whose deleted_at is NULL; because the delete is SOFT the foreign key
-		// does not close that gap (see the same pattern in CreateVariant).
-		if _, err := tx.GetProductForUpdate(ctx, productID); err != nil {
-			return err
-		}
-
+	// The existence of the product is verified INSIDE THE TRANSACTION and with
+	// a row lock, which revise takes. If it is verified outside, an intervening
+	// DELETE /admin/v1/products/{id} leaves an option whose owner is deleted but
+	// whose deleted_at is NULL; because the delete is SOFT the foreign key does
+	// not close that gap (see the same pattern in CreateVariant).
+	err = s.revise(ctx, productID, func(ctx context.Context, tx repository.Store) error {
 		stored, err := writeOptions(ctx, tx, options)
 		if err != nil {
 			return err
@@ -281,7 +285,7 @@ func (s *Service) ListOptions(ctx context.Context, productID string) ([]models.O
 	if err != nil {
 		return nil, err
 	}
-	return s.attachOptionValues(ctx, options)
+	return attachOptionValues(ctx, s.repo, options)
 }
 
 // AddOptionValue adds a value to an existing option.
@@ -303,17 +307,25 @@ func (s *Service) AddOptionValue(ctx context.Context, optionID, value string) (m
 	if err != nil {
 		return models.OptionValue{}, err
 	}
-	existing, err := s.repo.ListOptionValuesByOptionIDs(ctx, []string{option.ID})
+
+	var created models.OptionValue
+	err = s.revise(ctx, option.ProductID, func(ctx context.Context, tx repository.Store) error {
+		existing, err := tx.ListOptionValuesByOptionIDs(ctx, []string{option.ID})
+		if err != nil {
+			return err
+		}
+		created, err = tx.CreateOptionValue(ctx, models.OptionValue{
+			ID:       newID(prefixOptionValue),
+			OptionID: option.ID,
+			Value:    clean,
+			Rank:     nextRank(existing),
+		})
+		return err
+	})
 	if err != nil {
 		return models.OptionValue{}, err
 	}
-
-	return s.repo.CreateOptionValue(ctx, models.OptionValue{
-		ID:       newID(prefixOptionValue),
-		OptionID: option.ID,
-		Value:    clean,
-		Rank:     nextRank(existing),
-	})
+	return created, nil
 }
 
 // nextRank produces the rank to be appended AFTER the given values.
@@ -351,7 +363,11 @@ func (s *Service) DeleteOption(ctx context.Context, id string) error {
 		return err
 	}
 
-	return s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+	option, err := s.repo.GetOption(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.revise(ctx, option.ProductID, func(ctx context.Context, tx repository.Store) error {
 		// The option goes first: an unknown id has to stop before any value is
 		// touched, and SoftDeleteOption is the statement that knows.
 		if err := tx.SoftDeleteOption(ctx, id); err != nil {
@@ -389,7 +405,11 @@ func (s *Service) DeleteOptionValue(ctx context.Context, id string) error {
 		return err
 	}
 
-	return s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+	productID, err := s.repo.OptionValueProductID(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.revise(ctx, productID, func(ctx context.Context, tx repository.Store) error {
 		users, err := tx.CountVariantsUsingOptionValue(ctx, id)
 		if err != nil {
 			return err

@@ -215,6 +215,21 @@ func (q *Queries) GetOption(ctx context.Context, id string) (ProductOption, erro
 	return i, err
 }
 
+const getOptionValueProductID = `-- name: GetOptionValueProductID :one
+SELECT o.product_id FROM product_option_value v
+JOIN product_option o ON o.id = v.option_id AND o.deleted_at IS NULL
+WHERE v.id = $1 AND v.deleted_at IS NULL
+`
+
+// The product a live option value belongs to, which a write to the value
+// revises (ADR 0221).
+func (q *Queries) GetOptionValueProductID(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, getOptionValueProductID, id)
+	var product_id string
+	err := row.Scan(&product_id)
+	return product_id, err
+}
+
 const getVariant = `-- name: GetVariant :one
 SELECT id, product_id, title, sku, barcode, ean, upc, manage_inventory, allow_backorder, weight, rank, metadata, created_at, updated_at, deleted_at FROM product_variant
 WHERE id = $1 AND deleted_at IS NULL

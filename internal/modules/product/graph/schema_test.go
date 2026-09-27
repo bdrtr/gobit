@@ -98,6 +98,8 @@ func bindings() []binding {
 					"published products; a launch date is the merchant's (ADR 0177)",
 				"ArchiveAt": "the date a product will be gone is the merchant's, not the " +
 					"shopper's (ADR 0179)",
+				"Version": "how many times the merchant revised the product is the admin " +
+					"surface's (ADR 0221)",
 			},
 			readBy: map[string]string{"related": "StoreRelatedProducts"},
 		},

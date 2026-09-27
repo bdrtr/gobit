@@ -184,6 +184,19 @@ past and is not corrected retroactively.
   not supplied is preserved, which leaves no way to say "make this NULL" — the
   same limit the product update carries and for the same reason.
 
+## A product's history
+
+- **A product's revisions are its admin view, not everything about it.** Since
+  [ADR 0221](adr/0221-a-product-keeps-its-revisions.md) every write through a
+  product's own routes records its view: own fields, variants, options, images,
+  tags, categories and attribute values. Its relations, sales channels, prices
+  and stock links are not in it, and removing a collection, type, tag, category
+  or attribute changes every product carrying it without a revision of each; the
+  next revision shows it. A restore writes back the descriptive content and
+  leaves the status, the schedule, the variants, the options and the images as
+  they are. A product written before the migration has no past before its first
+  write since.
+
 ## Tax
 
 - **In a tax-inclusive market the discount stays a GROSS figure beside a NET

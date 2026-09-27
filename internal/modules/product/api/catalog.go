@@ -38,6 +38,11 @@ type Catalog interface {
 	// (ADR 0177, ADR 0179).
 	SetSchedule(ctx context.Context, id string, schedule service.Schedule) (models.Product, error)
 	ClearSchedule(ctx context.Context, id string) (models.Product, error)
+	// ListRevisions, GetRevision and RestoreRevision are a product's revisions
+	// (ADR 0221).
+	ListRevisions(ctx context.Context, productID string, limit, offset int) (service.ListResult[models.Revision], error)
+	GetRevision(ctx context.Context, productID string, version int64) (models.Revision, error)
+	RestoreRevision(ctx context.Context, productID string, version int64) (service.RestoreResult, error)
 	// The image writes: one image at a time, each addressed by BOTH the
 	// product's id and the image's (ADR 0108).
 	AddProductImage(ctx context.Context, productID string, in service.CreateImageInput) (models.Image, error)

@@ -6,6 +6,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
+	"github.com/bdrtr/gobit/internal/modules/product/repository"
 )
 
 // Error codes of a product's schedule (ADR 0177, ADR 0179).
@@ -129,11 +130,14 @@ func (s *Service) ClearSchedule(ctx context.Context, id string) (models.Product,
 //
 // Each change gets the product.updated event the same change by hand gets,
 // carrying the new status, so the search index and the webhooks follow without
-// knowing a schedule exists.
+// knowing a schedule exists, and the revision a change by hand gets (ADR 0221),
+// in the statement's transaction.
 func (s *Service) ApplyDueSchedules(ctx context.Context, limit int64) (published, archived []string, err error) {
 	now := s.now()
 
-	published, err = s.repo.PublishDueProducts(ctx, now, limit)
+	published, err = s.applyDue(ctx, func(ctx context.Context, tx repository.Store) ([]string, error) {
+		return tx.PublishDueProducts(ctx, now, limit)
+	})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -141,7 +145,9 @@ func (s *Service) ApplyDueSchedules(ctx context.Context, limit int64) (published
 		s.publishProductEvent(ctx, EventProductUpdated, id, models.StatusPublished)
 	}
 
-	archived, err = s.repo.ArchiveDueProducts(ctx, now, limit)
+	archived, err = s.applyDue(ctx, func(ctx context.Context, tx repository.Store) ([]string, error) {
+		return tx.ArchiveDueProducts(ctx, now, limit)
+	})
 	if err != nil {
 		return published, nil, err
 	}
@@ -150,6 +156,29 @@ func (s *Service) ApplyDueSchedules(ctx context.Context, limit int64) (published
 	}
 
 	return published, archived, nil
+}
+
+// applyDue runs one of the schedule's statements and records a revision of
+// every product it changed, in one transaction. The statement holds the rows it
+// changed, so a product whose history begins here begins after the change.
+func (s *Service) applyDue(
+	ctx context.Context, statement func(ctx context.Context, tx repository.Store) ([]string, error),
+) ([]string, error) {
+	var ids []string
+	err := s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+		changed, err := statement(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for _, id := range changed {
+			if err := s.recordRevision(ctx, tx, id); err != nil {
+				return err
+			}
+		}
+		ids = changed
+		return nil
+	})
+	return ids, err
 }
 
 // afterScheduleChange reads the product back the way the other admin writes

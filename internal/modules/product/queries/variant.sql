@@ -210,3 +210,10 @@ LIMIT sqlc.arg('row_limit')::bigint;
 UPDATE product_option_value
 SET value_folded = sqlc.arg('value_folded')::text
 WHERE id = sqlc.arg('id')::text;
+
+-- name: GetOptionValueProductID :one
+-- The product a live option value belongs to, which a write to the value
+-- revises (ADR 0221).
+SELECT o.product_id FROM product_option_value v
+JOIN product_option o ON o.id = v.option_id AND o.deleted_at IS NULL
+WHERE v.id = $1 AND v.deleted_at IS NULL;

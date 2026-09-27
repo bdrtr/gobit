@@ -56,7 +56,7 @@ func (q *Queries) ArchiveDueProducts(ctx context.Context, arg ArchiveDueProducts
 const cancelProductPublication = `-- name: CancelProductPublication :one
 UPDATE product SET publish_at = NULL, archive_at = NULL, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at
+RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at, version
 `
 
 // Takes the whole schedule off a product; it stays whatever it is.
@@ -87,6 +87,7 @@ func (q *Queries) CancelProductPublication(ctx context.Context, id string) (Prod
 		&i.TypeID,
 		&i.PublishAt,
 		&i.ArchiveAt,
+		&i.Version,
 	)
 	return i, err
 }
@@ -147,7 +148,7 @@ INSERT INTO product (
     $8, $9, $10, $11, $12, $13,
     $14, $15, $16, $17, $18
 )
-RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at
+RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at, version
 `
 
 type CreateProductParams struct {
@@ -227,6 +228,7 @@ func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (P
 		&i.TypeID,
 		&i.PublishAt,
 		&i.ArchiveAt,
+		&i.Version,
 	)
 	return i, err
 }
@@ -273,7 +275,7 @@ func (q *Queries) GetImageOfProduct(ctx context.Context, arg GetImageOfProductPa
 }
 
 const getProduct = `-- name: GetProduct :one
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at, version FROM product
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -304,12 +306,13 @@ func (q *Queries) GetProduct(ctx context.Context, id string) (Product, error) {
 		&i.TypeID,
 		&i.PublishAt,
 		&i.ArchiveAt,
+		&i.Version,
 	)
 	return i, err
 }
 
 const getProductByHandle = `-- name: GetProductByHandle :one
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at, version FROM product
 WHERE handle = $1 AND deleted_at IS NULL
 `
 
@@ -340,12 +343,13 @@ func (q *Queries) GetProductByHandle(ctx context.Context, handle string) (Produc
 		&i.TypeID,
 		&i.PublishAt,
 		&i.ArchiveAt,
+		&i.Version,
 	)
 	return i, err
 }
 
 const getProductForUpdate = `-- name: GetProductForUpdate :one
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at, version FROM product
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
@@ -386,6 +390,7 @@ func (q *Queries) GetProductForUpdate(ctx context.Context, id string) (Product, 
 		&i.TypeID,
 		&i.PublishAt,
 		&i.ArchiveAt,
+		&i.Version,
 	)
 	return i, err
 }
@@ -473,7 +478,7 @@ func (q *Queries) ListImagesByProductIDs(ctx context.Context, dollar_1 []string)
 }
 
 const listProductsByHandles = `-- name: ListProductsByHandles :many
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at, version FROM product
 WHERE handle = ANY($1::text[]) AND deleted_at IS NULL
 `
 
@@ -513,6 +518,7 @@ func (q *Queries) ListProductsByHandles(ctx context.Context, handles []string) (
 			&i.TypeID,
 			&i.PublishAt,
 			&i.ArchiveAt,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}
@@ -526,7 +532,7 @@ func (q *Queries) ListProductsByHandles(ctx context.Context, handles []string) (
 
 const listProductsByIDs = `-- name: ListProductsByIDs :many
 
-SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at FROM product
+SELECT id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at, version FROM product
 WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 `
@@ -574,6 +580,7 @@ func (q *Queries) ListProductsByIDs(ctx context.Context, dollar_1 []string) ([]P
 			&i.TypeID,
 			&i.PublishAt,
 			&i.ArchiveAt,
+			&i.Version,
 		); err != nil {
 			return nil, err
 		}
@@ -663,7 +670,7 @@ const setProductSchedule = `-- name: SetProductSchedule :one
 UPDATE product SET publish_at = $1, archive_at = $2,
     updated_at = now()
 WHERE id = $3 AND deleted_at IS NULL
-RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at
+RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at, version
 `
 
 type SetProductScheduleParams struct {
@@ -702,6 +709,7 @@ func (q *Queries) SetProductSchedule(ctx context.Context, arg SetProductSchedule
 		&i.TypeID,
 		&i.PublishAt,
 		&i.ArchiveAt,
+		&i.Version,
 	)
 	return i, err
 }
@@ -842,7 +850,7 @@ UPDATE product SET
                           THEN archive_at ELSE NULL END,
     updated_at     = now()
 WHERE id = $17 AND deleted_at IS NULL
-RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at
+RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at, version
 `
 
 type UpdateProductParams struct {
@@ -914,6 +922,7 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (P
 		&i.TypeID,
 		&i.PublishAt,
 		&i.ArchiveAt,
+		&i.Version,
 	)
 	return i, err
 }

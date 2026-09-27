@@ -118,6 +118,11 @@ type Product struct {
 	// or nil (ADR 0179). It is kept out of this type's JSON for PublishAt's
 	// reason: a storefront body must not say when a product will be gone.
 	ArchiveAt *time.Time `json:"-"`
+	// Version counts the product's revisions (ADR 0221); 0 is a product not
+	// written since revisions began. It is kept out of this type's JSON for
+	// PublishAt's reason: the admin surface adds it and the storefront does not
+	// answer it.
+	Version   int64      `json:"-"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt time.Time  `json:"updated_at"`
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`

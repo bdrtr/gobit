@@ -364,7 +364,8 @@ func (s *Service) CreateProduct(ctx context.Context, in CreateProductInput) (mod
 				return err
 			}
 		}
-		return nil
+		// The product's first revision is what it was created as (ADR 0221).
+		return s.recordRevision(ctx, tx, product.ID)
 	})
 	if err != nil {
 		return models.Product{}, err
@@ -545,7 +546,7 @@ func (s *Service) UpdateProduct(ctx context.Context, id string, in UpdateProduct
 		return models.Product{}, err
 	}
 
-	err = s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+	err = s.revise(ctx, id, func(ctx context.Context, tx repository.Store) error {
 		if _, err := tx.UpdateProduct(ctx, id, patch); err != nil {
 			return err
 		}
@@ -833,6 +834,12 @@ func (s *Service) ensureHandleFree(ctx context.Context, handle, exceptID string)
 // options, option values, variant-value links, images, tags and categories. A
 // query per product would mean N+1.
 func (s *Service) attachRelations(ctx context.Context, products []models.Product) error {
+	return s.attachRelationsFrom(ctx, s.repo, products)
+}
+
+// attachRelationsFrom is [Service.attachRelations] reading from the given
+// store, which a revision's snapshot needs to be the transaction (ADR 0221).
+func (s *Service) attachRelationsFrom(ctx context.Context, store repository.Store, products []models.Product) error {
 	if len(products) == 0 {
 		return nil
 	}
@@ -841,36 +848,36 @@ func (s *Service) attachRelations(ctx context.Context, products []models.Product
 		ids = append(ids, products[i].ID)
 	}
 
-	variants, err := s.repo.ListVariantsByProductIDs(ctx, ids)
+	variants, err := store.ListVariantsByProductIDs(ctx, ids)
 	if err != nil {
 		return err
 	}
-	if err := s.attachVariantOptionValues(ctx, variants); err != nil {
+	if err := attachVariantOptionValues(ctx, store, variants); err != nil {
 		return err
 	}
 
-	options, err := s.repo.ListOptionsByProductIDs(ctx, ids)
+	options, err := store.ListOptionsByProductIDs(ctx, ids)
 	if err != nil {
 		return err
 	}
-	options, err = s.attachOptionValues(ctx, options)
+	options, err = attachOptionValues(ctx, store, options)
 	if err != nil {
 		return err
 	}
 
-	images, err := s.repo.ListImagesByProductIDs(ctx, ids)
+	images, err := store.ListImagesByProductIDs(ctx, ids)
 	if err != nil {
 		return err
 	}
-	tags, err := s.repo.ListTagsByProductIDs(ctx, ids)
+	tags, err := store.ListTagsByProductIDs(ctx, ids)
 	if err != nil {
 		return err
 	}
-	categories, err := s.repo.ListCategoriesByProductIDs(ctx, ids)
+	categories, err := store.ListCategoriesByProductIDs(ctx, ids)
 	if err != nil {
 		return err
 	}
-	attributes, err := s.repo.ListProductAttributeValues(ctx, ids)
+	attributes, err := store.ListProductAttributeValues(ctx, ids)
 	if err != nil {
 		return err
 	}
@@ -891,7 +898,7 @@ func (s *Service) attachRelations(ctx context.Context, products []models.Product
 }
 
 // attachVariantOptionValues fills the option values of the variants in a SINGLE query.
-func (s *Service) attachVariantOptionValues(ctx context.Context, variants []models.Variant) error {
+func attachVariantOptionValues(ctx context.Context, store repository.Store, variants []models.Variant) error {
 	if len(variants) == 0 {
 		return nil
 	}
@@ -900,7 +907,7 @@ func (s *Service) attachVariantOptionValues(ctx context.Context, variants []mode
 		ids = append(ids, variants[i].ID)
 	}
 
-	values, err := s.repo.ListVariantOptionValues(ctx, ids)
+	values, err := store.ListVariantOptionValues(ctx, ids)
 	if err != nil {
 		return err
 	}
@@ -911,7 +918,7 @@ func (s *Service) attachVariantOptionValues(ctx context.Context, variants []mode
 }
 
 // attachOptionValues fills the values of the options in a SINGLE query.
-func (s *Service) attachOptionValues(ctx context.Context, options []models.Option) ([]models.Option, error) {
+func attachOptionValues(ctx context.Context, store repository.Store, options []models.Option) ([]models.Option, error) {
 	if len(options) == 0 {
 		return options, nil
 	}
@@ -920,7 +927,7 @@ func (s *Service) attachOptionValues(ctx context.Context, options []models.Optio
 		ids = append(ids, options[i].ID)
 	}
 
-	values, err := s.repo.ListOptionValuesByOptionIDs(ctx, ids)
+	values, err := store.ListOptionValuesByOptionIDs(ctx, ids)
 	if err != nil {
 		return nil, err
 	}

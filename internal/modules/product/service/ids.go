@@ -23,6 +23,7 @@ const (
 	prefixProductType = "ptype_"
 	prefixTag         = "ptag_"
 	prefixImage       = "pimg_"
+	prefixRevision    = "prodrev_"
 )
 
 // idEncoding is the unpadded encoding over the Crockford Base32 alphabet.

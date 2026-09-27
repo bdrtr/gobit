@@ -131,6 +131,7 @@ func toProduct(row productdb.Product) (models.Product, error) {
 		Metadata:      meta,
 		PublishAt:     toTimePtr(row.PublishAt),
 		ArchiveAt:     toTimePtr(row.ArchiveAt),
+		Version:       row.Version,
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
 		DeletedAt:     toTimePtr(row.DeletedAt),

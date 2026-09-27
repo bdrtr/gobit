@@ -32,6 +32,7 @@ type Product struct {
 	TypeID        *string
 	PublishAt     pgtype.Timestamptz
 	ArchiveAt     pgtype.Timestamptz
+	Version       int64
 }
 
 type ProductAttribute struct {
@@ -148,6 +149,16 @@ type ProductRelation struct {
 	RelatedProductID string
 	Rank             int32
 	CreatedAt        pgtype.Timestamptz
+}
+
+type ProductRevision struct {
+	ID         string
+	ProductID  string
+	Version    int64
+	RecordedAt pgtype.Timestamptz
+	Changed    []string
+	RequestID  *string
+	Snapshot   []byte
 }
 
 type ProductTag struct {

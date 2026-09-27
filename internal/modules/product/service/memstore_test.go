@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"sort"
@@ -52,6 +53,9 @@ type memStore struct {
 	imports map[string]*memImport
 	// attributeState is the typed attributes (ADR 0219), made on first use.
 	attributeState *attributeState
+	// revisions are the products' revisions in version order (ADR 0221), made
+	// on first use.
+	revisions map[string][]models.Revision
 
 	// links is the fake link service the sales channel links are read from.
 	//
@@ -519,8 +523,18 @@ func (m *memStore) UpdateProduct(_ context.Context, id string, patch repository.
 			p.ArchiveAt = nil
 		}
 	}
-	if patch.Subtitle != nil {
-		p.Subtitle = patch.Subtitle
+	// Every other field follows the statement's COALESCE: a nil one is kept.
+	p.Subtitle = cmp.Or(patch.Subtitle, p.Subtitle)
+	p.Description = cmp.Or(patch.Description, p.Description)
+	p.Thumbnail = cmp.Or(patch.Thumbnail, p.Thumbnail)
+	p.Weight, p.Length = cmp.Or(patch.Weight, p.Weight), cmp.Or(patch.Length, p.Length)
+	p.Height, p.Width = cmp.Or(patch.Height, p.Height), cmp.Or(patch.Width, p.Width)
+	p.Material = cmp.Or(patch.Material, p.Material)
+	p.OriginCountry = cmp.Or(patch.OriginCountry, p.OriginCountry)
+	p.CollectionID = cmp.Or(patch.CollectionID, p.CollectionID)
+	p.TypeID = cmp.Or(patch.TypeID, p.TypeID)
+	if patch.Discountable != nil {
+		p.Discountable = *patch.Discountable
 	}
 	if patch.Metadata != nil {
 		p.Metadata = patch.Metadata

@@ -12,9 +12,9 @@ import (
 // pathProductSchedule is the moment a draft is published (ADR 0177).
 const pathProductSchedule = "/admin/v1/products/{id}/schedule"
 
-// adminProduct is a product as the admin surface answers it: the record, and the
+// adminProduct is a product as the admin surface answers it: the record, the
 // moment it is scheduled to be published, which only this surface publishes
-// (ADR 0177).
+// (ADR 0177), and its version (ADR 0221).
 //
 // The schedule is kept out of [models.Product]'s own JSON because the storefront
 // answers with a type that embeds it; a launch date is the merchant's, and an
@@ -26,11 +26,16 @@ type adminProduct struct {
 	// ArchiveAt is the moment the product is archived; absent when it has none
 	// (ADR 0179).
 	ArchiveAt *time.Time `json:"archive_at,omitempty"`
+	// Version is the number of the product's latest revision; 0 is a product
+	// not written since revisions began (ADR 0221).
+	Version int64 `json:"version"`
 }
 
-// toAdminProduct adds the schedule to the product.
+// toAdminProduct adds the schedule and the version to the product.
 func toAdminProduct(product models.Product) adminProduct {
-	return adminProduct{Product: product, PublishAt: product.PublishAt, ArchiveAt: product.ArchiveAt}
+	return adminProduct{
+		Product: product, PublishAt: product.PublishAt, ArchiveAt: product.ArchiveAt, Version: product.Version,
+	}
 }
 
 // toAdminProducts does the same to a page.

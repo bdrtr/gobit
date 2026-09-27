@@ -109,6 +109,24 @@ func (f *scopeCatalog) ClearSchedule(context.Context, string) (models.Product, e
 	return models.Product{}, nil
 }
 
+// ListRevisions counts the call.
+func (f *scopeCatalog) ListRevisions(context.Context, string, int, int) (service.ListResult[models.Revision], error) {
+	f.count()
+	return service.ListResult[models.Revision]{}, nil
+}
+
+// GetRevision counts the call.
+func (f *scopeCatalog) GetRevision(context.Context, string, int64) (models.Revision, error) {
+	f.count()
+	return models.Revision{}, nil
+}
+
+// RestoreRevision counts the call.
+func (f *scopeCatalog) RestoreRevision(context.Context, string, int64) (service.RestoreResult, error) {
+	f.count()
+	return service.RestoreResult{}, nil
+}
+
 // AddProductImage counts the call.
 func (f *scopeCatalog) AddProductImage(
 	context.Context, string, service.CreateImageInput,
@@ -487,6 +505,7 @@ var writeEndpoints = map[string]struct {
 	"add image":         {http.MethodPost, "/admin/v1/products/prod_1/images", `{"url":"https://e/x.png"}`},
 	"update image":      {http.MethodPatch, "/admin/v1/products/prod_1/images/img_1", `{"rank":1}`},
 	"remove image":      {http.MethodDelete, "/admin/v1/products/prod_1/images/img_1", ""},
+	"restore revision":  {http.MethodPost, "/admin/v1/products/prod_1/revisions/1/restore", ""},
 	"create collection": {http.MethodPost, "/admin/v1/product-collections", `{}`},
 	"create category":   {http.MethodPost, "/admin/v1/product-categories", `{}`},
 	"create tag":        {http.MethodPost, "/admin/v1/product-tags", `{}`},
@@ -501,6 +520,8 @@ var readEndpoints = map[string]string{
 	"option list":     "/admin/v1/products/prod_1/options",
 	"variant links":   "/admin/v1/variants/var_1/links",
 	"sales channels":  "/admin/v1/products/prod_1/sales-channels",
+	"revision list":   "/admin/v1/products/prod_1/revisions",
+	"single revision": "/admin/v1/products/prod_1/revisions/1",
 	"upload images":   "/admin/v1/product-images/by-upload/upl_1",
 	"collection list": "/admin/v1/product-collections",
 	"category list":   "/admin/v1/product-categories",

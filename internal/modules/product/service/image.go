@@ -78,7 +78,15 @@ func (s *Service) AddProductImage(
 		return models.Image{}, err
 	}
 
-	return s.repo.CreateImage(ctx, image)
+	var created models.Image
+	err = s.revise(ctx, id, func(ctx context.Context, tx repository.Store) error {
+		created, err = tx.CreateImage(ctx, image)
+		return err
+	})
+	if err != nil {
+		return models.Image{}, err
+	}
+	return created, nil
 }
 
 // nextImageRank returns one past the highest rank the product's images carry.
@@ -140,7 +148,15 @@ func (s *Service) UpdateProductImage(
 			"no field was given to update: alt_text, rank or metadata is required")
 	}
 
-	return s.repo.UpdateImage(ctx, product, image, patch)
+	var updated models.Image
+	err = s.revise(ctx, product, func(ctx context.Context, tx repository.Store) error {
+		updated, err = tx.UpdateImage(ctx, product, image, patch)
+		return err
+	})
+	if err != nil {
+		return models.Image{}, err
+	}
+	return updated, nil
 }
 
 // RemoveProductImage removes one image from a product.
@@ -165,7 +181,9 @@ func (s *Service) RemoveProductImage(ctx context.Context, productID, imageID str
 	if err != nil {
 		return err
 	}
-	if err := s.repo.SoftDeleteImage(ctx, product, image); err != nil {
+	if err := s.revise(ctx, product, func(ctx context.Context, tx repository.Store) error {
+		return tx.SoftDeleteImage(ctx, product, image)
+	}); err != nil {
 		return err
 	}
 	s.cleanupImageUploadLinks(ctx, []models.Image{existing})

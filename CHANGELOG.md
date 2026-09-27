@@ -12,6 +12,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The product service's fake store dropped most of an edit** (D151). It
+  applied five of the product patch's sixteen fields, so a service test of an
+  edit to the material, the weight, the collection or the type passed against a
+  write that never happened. It applies all sixteen now.
+
 - **A rollback test passed on the wrong refusal** (D148). A migration's error
   carries the down file's text, which names the refusal it drops. **For
   contributors:** rollback tests assert the constraint as the server quotes it,
@@ -108,6 +113,17 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A product keeps its revisions** (ADR 0221). **For API consumers:** an admin
+  product carries `version`; `GET /admin/v1/products/{id}/revisions` lists its
+  revisions newest first with `changed` and `request_id`, `GET
+  .../revisions/{version}` returns one with its `snapshot`, and `POST
+  .../revisions/{version}/restore` writes back its own fields, collection, type,
+  tags, categories and attribute values, answering `product` and `dropped`. A
+  write to one product's content now waits for another to the same product.
+  **For operators:** product migration 000012 adds `product.version` and the
+  `product_revision` table; a product written before it gets its first revision
+  at its first write since.
 
 - **A price list can be tried on past orders** (ADR 0220). **For API
   consumers:** `GET /admin/v1/price-lists/{id}/trial?from=&to=` prices the

@@ -265,6 +265,16 @@ type Store interface {
 	SetProductAttributeValues(ctx context.Context, productID string, rows []AttributeValueRow) error
 	ListProductAttributeValues(ctx context.Context, productIDs []string) (map[string][]models.ProductAttributeValue, error)
 	AttributeFacets(ctx context.Context, f ProductFilter, attributeIDs []string) ([]FacetRow, error)
+
+	// The revisions (ADR 0221).
+	AppendProductRevision(ctx context.Context, rev models.Revision) error
+	LatestProductRevision(ctx context.Context, productID string) (models.Revision, bool, error)
+	GetProductRevision(ctx context.Context, productID string, version int64) (models.Revision, error)
+	ListProductRevisions(ctx context.Context, productID string, limit, offset int) ([]models.Revision, int64, error)
+	RestoreProductContent(ctx context.Context, productID string, c ProductContent) error
+	LiveTagIDs(ctx context.Context, ids []string) ([]string, error)
+	LiveCategoryIDs(ctx context.Context, ids []string) ([]string, error)
+	OptionValueProductID(ctx context.Context, valueID string) (string, error)
 }
 
 // Repo is the PostgreSQL implementation of [Store].

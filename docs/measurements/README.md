@@ -151,3 +151,4 @@ truth: a report says what was true on the day it was taken.
 | [A receiver that asked for less — measured 2026-09-27](0218-a-receiver-that-asked-for-less.md) | 97 |
 | [A catalog that can be narrowed — measured 2026-09-28](0219-a-catalog-that-can-be-narrowed.md) | 132 |
 | [A list against its period — measured 2026-09-28](0220-a-list-against-its-period.md) | 130 |
+| [What a product was — measured 2026-09-28](0221-what-a-product-was.md) | 119 |

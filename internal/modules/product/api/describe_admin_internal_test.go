@@ -258,6 +258,18 @@ func adminEndpoints() []adminEndpoint {
 			record: filledAdminProduct(),
 		},
 		{
+			method: http.MethodGet, path: pathProductRevisions, status: "200",
+			record: toRevisionSummary(filledRevision(false)), list: true,
+		},
+		{
+			method: http.MethodGet, path: pathProductRevision, status: "200",
+			record: filledRevision(true),
+		},
+		{
+			method: http.MethodPost, path: pathProductRevisionRestore, status: "200",
+			record: restoreResponse{Product: filledAdminProduct(), Dropped: []string{"tag:ptag_1"}},
+		},
+		{
 			method: http.MethodGet, path: pathProductRelations, status: "200",
 			record: filledRelations(),
 		},
@@ -774,6 +786,7 @@ func TestAdminEndpointsDescribeOnlyParametersTheyRead(t *testing.T) {
 		"GET /admin/v1/product-types":          {"limit", "offset"},
 		"GET /admin/v1/product-categories":     {"parent_id", "limit", "offset"},
 		"GET /admin/v1/product-tags":           {"limit", "offset"},
+		"GET " + pathProductRevisions:          {"limit", "offset"},
 	}
 
 	for _, endpoint := range adminEndpoints() {
@@ -808,6 +821,20 @@ func adminParameterNames(t *testing.T, op map[string]any, location string) []str
 	}
 
 	return names
+}
+
+// filledRevision is a revision with every field written, the snapshot only
+// when it is read alone (ADR 0221).
+func filledRevision(withSnapshot bool) models.Revision {
+	request := "req_1"
+	rev := models.Revision{
+		ID: "prodrev_1", ProductID: "prod_1", Version: 2, RecordedAt: time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC),
+		Changed: []string{"title"}, RequestID: &request,
+	}
+	if withSnapshot {
+		rev.Snapshot = json.RawMessage(`{"title":"x"}`)
+	}
+	return rev
 }
 
 // filledRelations is a relations body with every kind holding an id.

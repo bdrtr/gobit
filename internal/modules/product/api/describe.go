@@ -524,6 +524,7 @@ func describeAdminProducts(d *openapi.Doc) {
 	})
 
 	describeAdminSchedule(d)
+	describeAdminRevisions(d)
 	describeAdminRelations(d)
 }
 

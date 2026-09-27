@@ -213,7 +213,9 @@ func (s *Service) SetProductAttributes(
 		}
 		rows = append(rows, valueRows...)
 	}
-	if err := s.repo.SetProductAttributeValues(ctx, productID, rows); err != nil {
+	if err := s.revise(ctx, productID, func(ctx context.Context, tx repository.Store) error {
+		return tx.SetProductAttributeValues(ctx, productID, rows)
+	}); err != nil {
 		return nil, err
 	}
 	stored, err := s.repo.ListProductAttributeValues(ctx, []string{productID})

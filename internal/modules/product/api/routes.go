@@ -131,6 +131,10 @@ func (h *Handler) Routes(r chi.Router) {
 	// PATCH above cannot set a field back to empty.
 	write.Put(pathProductSchedule, h.adminScheduleProduct)
 	write.Delete(pathProductSchedule, h.adminCancelSchedule)
+	// A product's revisions (ADR 0221): read them, and write one back.
+	read.Get(pathProductRevisions, h.adminListRevisions)
+	read.Get(pathProductRevision, h.adminGetRevision)
+	write.Post(pathProductRevisionRestore, h.adminRestoreRevision)
 	// A product's relations (ADR 0180): read them all, replace one kind.
 	read.Get(pathProductRelations, h.adminListRelations)
 	write.Put(pathProductRelationsOfType, h.adminSetRelations)
