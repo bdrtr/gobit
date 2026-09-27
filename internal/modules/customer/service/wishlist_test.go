@@ -37,9 +37,9 @@ func (m *memRepo) SaveToWishlist(
 		m.wishlist = map[string][]models.WishlistItem{}
 	}
 
-	for _, item := range m.wishlist[customerID] {
-		if item.VariantID == variantID {
-			return item, nil
+	for i := range m.wishlist[customerID] {
+		if m.wishlist[customerID][i].VariantID == variantID {
+			return m.wishlist[customerID][i], nil
 		}
 	}
 	if int64(len(m.wishlist[customerID])) >= limit {

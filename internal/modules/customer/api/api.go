@@ -142,6 +142,12 @@ type Customer interface {
 	// (ADR 0215).
 	MarkStockAlert(ctx context.Context, customerID, variantID string, channels []string) (models.WishlistItem, error)
 	UnmarkStockAlert(ctx context.Context, customerID, variantID string) error
+	// MarkPriceAlert and UnmarkPriceAlert set and clear an item's price alert
+	// (ADR 0216).
+	MarkPriceAlert(
+		ctx context.Context, customerID, variantID, regionID string, channels []string,
+	) (models.WishlistItem, error)
+	UnmarkPriceAlert(ctx context.Context, customerID, variantID string) error
 }
 
 // Handler customer modülünün HTTP handler kümesidir.
@@ -270,6 +276,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Delete("/store/v1/customers/{id}/wishlist/{variant_id}", h.storeRemoveFromWishlist)
 	r.Put("/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", h.storeMarkStockAlert)
 	r.Delete("/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", h.storeUnmarkStockAlert)
+	r.Put("/store/v1/customers/{id}/wishlist/{variant_id}/price-alert", h.storeMarkPriceAlert)
+	r.Delete("/store/v1/customers/{id}/wishlist/{variant_id}/price-alert", h.storeUnmarkPriceAlert)
 }
 
 // itemEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).

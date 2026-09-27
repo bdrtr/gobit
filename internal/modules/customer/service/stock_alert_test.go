@@ -45,7 +45,7 @@ func (m *memRepo) UnmarkStockAlert(_ context.Context, customerID, variantID stri
 	return nil
 }
 
-func (m *memRepo) ListStockAlerts(
+func (m *memRepo) ListAlerts(
 	_ context.Context, afterCustomerID, afterVariantID string, limit int32,
 ) ([]models.WishlistItem, error) {
 	var out []models.WishlistItem
@@ -53,10 +53,12 @@ func (m *memRepo) ListStockAlerts(
 		if _, ok := m.liveCustomer(customerID); !ok {
 			continue
 		}
-		for _, item := range items {
+		for i := range items {
+			item := &items[i]
 			key := [2]string{item.CustomerID, item.VariantID}
-			if item.StockAlert && (key[0] > afterCustomerID || (key[0] == afterCustomerID && key[1] > afterVariantID)) {
-				out = append(out, item)
+			marked := item.StockAlert || item.PriceAlert
+			if marked && (key[0] > afterCustomerID || (key[0] == afterCustomerID && key[1] > afterVariantID)) {
+				out = append(out, *item)
 			}
 		}
 	}
@@ -95,6 +97,63 @@ func (m *memRepo) ClearStockAlert(_ context.Context, customerID, variantID strin
 	})
 
 	return cleared, nil
+}
+
+func (m *memRepo) MarkPriceAlert(
+	ctx context.Context, customerID, variantID, regionID string, channels []string, limit int64, now time.Time,
+) (models.WishlistItem, error) {
+	if _, err := m.SaveToWishlist(ctx, customerID, variantID, limit, now); err != nil {
+		return models.WishlistItem{}, err
+	}
+	var out models.WishlistItem
+	m.updateItem(customerID, variantID, func(item *models.WishlistItem) {
+		marked := now
+		item.PriceAlert, item.PriceAlertMarkedAt, item.PriceAlertRegionID = true, &marked, regionID
+		item.PriceAlertChannels, item.PriceAlertCurrency, item.PriceAlertAmount = channels, "", nil
+		out = *item
+	})
+
+	return out, nil
+}
+
+func (m *memRepo) UnmarkPriceAlert(_ context.Context, customerID, variantID string) error {
+	if _, ok := m.liveCustomer(customerID); !ok {
+		return errors.NotFound(repository.CodeCustomerNotFound, "customer not found: %s", customerID)
+	}
+	m.updateItem(customerID, variantID, clearPrice)
+
+	return nil
+}
+
+func (m *memRepo) RecordPriceBaseline(
+	_ context.Context, customerID, variantID string, markedAt time.Time, currency string, amount int64,
+) (bool, error) {
+	recorded := false
+	m.updateItem(customerID, variantID, func(item *models.WishlistItem) {
+		if item.PriceAlert && item.PriceAlertMarkedAt.Equal(markedAt) && item.PriceAlertAmount == nil {
+			item.PriceAlertCurrency, item.PriceAlertAmount, recorded = currency, &amount, true
+		}
+	})
+
+	return recorded, nil
+}
+
+func (m *memRepo) ClearPriceAlert(_ context.Context, customerID, variantID string, markedAt time.Time) (bool, error) {
+	cleared := false
+	m.updateItem(customerID, variantID, func(item *models.WishlistItem) {
+		if item.PriceAlertMarkedAt != nil && item.PriceAlertMarkedAt.Equal(markedAt) {
+			clearPrice(item)
+			cleared = true
+		}
+	})
+
+	return cleared, nil
+}
+
+// clearPrice takes an item's price mark off.
+func clearPrice(item *models.WishlistItem) {
+	item.PriceAlert, item.PriceAlertMarkedAt, item.PriceAlertRegionID = false, nil, ""
+	item.PriceAlertChannels, item.PriceAlertCurrency, item.PriceAlertAmount = nil, "", nil
 }
 
 // updateItem changes one saved item in place, if it is there.
@@ -169,13 +228,14 @@ func TestTheAlertFlowReadsArmsAndClearsThroughTheInterop(t *testing.T) {
 	_, err = svc.SaveToWishlist(ctx, customer.ID, "variant_B")
 	require.NoError(t, err)
 
-	raw, err := svc.StockAlertsJSON(ctx, "", "", 100)
+	raw, err := svc.WishlistAlertsJSON(ctx, "", "", 100)
 	require.NoError(t, err)
 	var page []map[string]any
 	require.NoError(t, json.Unmarshal(raw, &page))
 	assert.Equal(t, []map[string]any{{
 		"customer_id": customer.ID, "variant_id": "variant_A",
-		"sales_channel_ids": []any{"sc_1"}, "armed_at": nil,
+		"stock_alert": true, "sales_channel_ids": []any{"sc_1"}, "armed_at": nil,
+		"price_alert": false, "price_marked_at": nil, "price_sales_channel_ids": nil, "price_amount": nil,
 	}}, page, "the unmarked item is not a page's")
 
 	armed, err := svc.ArmStockAlert(ctx, customer.ID, "variant_A")
@@ -192,6 +252,6 @@ func TestTheAlertFlowReadsArmsAndClearsThroughTheInterop(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, cleared)
 
-	_, err = svc.StockAlertsJSON(ctx, "", "", 0)
+	_, err = svc.WishlistAlertsJSON(ctx, "", "", 0)
 	assert.True(t, errors.IsInvalid(err), "a page of nothing is a mistake")
 }

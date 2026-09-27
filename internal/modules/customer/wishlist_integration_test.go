@@ -220,11 +220,13 @@ func TestADisclosureShowsTheWishlistInTheDatabase(t *testing.T) {
 	require.NoError(t, err)
 	_, err = svc.MarkStockAlert(ctx, created.ID, "variant_B", []string{"sc_1"})
 	require.NoError(t, err)
+	_, err = svc.MarkPriceAlert(ctx, created.ID, "variant_C", "reg_1", nil)
+	require.NoError(t, err)
 
 	disclosure, err := svc.PersonalDataOf(ctx, personaldata.Subject{CustomerID: created.ID})
 	require.NoError(t, err)
 
-	alerts := map[any]any{}
+	alerts := map[any][2]any{}
 	for _, record := range disclosure.Records {
 		if record.Table != service.TableWishlist {
 			continue
@@ -233,9 +235,11 @@ func TestADisclosureShowsTheWishlistInTheDatabase(t *testing.T) {
 		for _, field := range record.Fields {
 			fields[field.Column] = field.Value
 		}
-		alerts[fields["variant_id"]] = fields["stock_alert"]
+		alerts[fields["variant_id"]] = [2]any{fields["stock_alert"], fields["price_alert"]}
 	}
-	assert.Equal(t, map[any]any{"variant_A": false, "variant_B": true}, alerts)
+	assert.Equal(t, map[any][2]any{
+		"variant_A": {false, false}, "variant_B": {true, false}, "variant_C": {false, true},
+	}, alerts, "each item with its stock mark and its price mark")
 }
 
 // TestABlankVariantIsRefusedByTheTable shows the CHECK behind the service's
@@ -259,7 +263,7 @@ func stockAlertsOf(ctx context.Context, t *testing.T, svc *service.Service, cust
 	var mine []map[string]any
 	afterCustomer, afterVariant := "", ""
 	for {
-		raw, err := svc.StockAlertsJSON(ctx, afterCustomer, afterVariant, 500)
+		raw, err := svc.WishlistAlertsJSON(ctx, afterCustomer, afterVariant, 500)
 		require.NoError(t, err)
 		var page []map[string]any
 		require.NoError(t, json.Unmarshal(raw, &page))
@@ -377,4 +381,108 @@ func TestAMarkSetAgainWaitsAgain(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, again.StockAlertArmedAt, "the wait starts again")
 	assert.Equal(t, []string{"sc_2"}, again.StockAlertChannels, "and in the new request's channels")
+}
+
+// TestAPriceAlertLivesOnTheRealSchema is ADR 0216 in the module: a mark names
+// its region and channels and no price, the price at the mark is recorded once
+// and only for the mark it was read for, a mark set again forgets it, a clear
+// takes only its own mark and leaves the stock mark beside it, and the schema
+// refuses half a price.
+func TestAPriceAlertLivesOnTheRealSchema(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	owner := newAccount(ctx, t, svc)
+
+	item, err := svc.MarkPriceAlert(ctx, owner.ID, "variant_price", "reg_1", []string{"sc_1"})
+	require.NoError(t, err)
+	assert.True(t, item.PriceAlert)
+	assert.Nil(t, item.PriceAlertAmount, "the request records no price")
+	require.NotNil(t, item.PriceAlertMarkedAt)
+	markedAt := *item.PriceAlertMarkedAt
+	_, err = svc.MarkStockAlert(ctx, owner.ID, "variant_price", nil)
+	require.NoError(t, err)
+
+	priceOnly, err := svc.MarkPriceAlert(ctx, owner.ID, "variant_price_only", "reg_1", nil)
+	require.NoError(t, err)
+	alerts := stockAlertsOf(ctx, t, svc, owner.ID)
+	require.Len(t, alerts, 2, "a price mark alone is paged")
+	require.NoError(t, svc.UnmarkPriceAlert(ctx, owner.ID, priceOnly.VariantID))
+
+	alerts = stockAlertsOf(ctx, t, svc, owner.ID)
+	require.Len(t, alerts, 1, "one item carries both marks, and an unmarked item is not paged")
+	assert.Equal(t, true, alerts[0]["price_alert"])
+	assert.Equal(t, true, alerts[0]["stock_alert"])
+	assert.Equal(t, "reg_1", alerts[0]["price_region_id"])
+	assert.Equal(t, []any{"sc_1"}, alerts[0]["price_sales_channel_ids"])
+	assert.Nil(t, alerts[0]["price_amount"])
+
+	stale, err := svc.RecordPriceBaseline(ctx, owner.ID, "variant_price", markedAt.Add(-time.Second), "TRY", 2_000)
+	require.NoError(t, err)
+	assert.False(t, stale, "a price read for another mark is not recorded")
+	recorded, err := svc.RecordPriceBaseline(ctx, owner.ID, "variant_price", markedAt, "TRY", 2_000)
+	require.NoError(t, err)
+	assert.True(t, recorded)
+	again, err := svc.RecordPriceBaseline(ctx, owner.ID, "variant_price", markedAt, "TRY", 1_000)
+	require.NoError(t, err)
+	assert.False(t, again, "recorded once")
+	alerts = stockAlertsOf(ctx, t, svc, owner.ID)
+	require.Len(t, alerts, 1)
+	assert.Equal(t, "TRY", alerts[0]["price_currency_code"])
+	assert.Equal(t, float64(2_000), alerts[0]["price_amount"])
+
+	remarked, err := svc.MarkPriceAlert(ctx, owner.ID, "variant_price", "reg_2", nil)
+	require.NoError(t, err)
+	assert.Nil(t, remarked.PriceAlertAmount, "a mark set again waits for its own price")
+	assert.Empty(t, remarked.PriceAlertCurrency)
+	assert.Equal(t, "reg_2", remarked.PriceAlertRegionID)
+	require.NotNil(t, remarked.PriceAlertMarkedAt)
+	assert.True(t, remarked.PriceAlertMarkedAt.After(markedAt), "a new mark")
+
+	cleared, err := svc.ClearPriceAlert(ctx, owner.ID, "variant_price", markedAt)
+	require.NoError(t, err)
+	assert.False(t, cleared, "a clear for the old mark takes nothing")
+	cleared, err = svc.ClearPriceAlert(ctx, owner.ID, "variant_price", *remarked.PriceAlertMarkedAt)
+	require.NoError(t, err)
+	assert.True(t, cleared)
+	alerts = stockAlertsOf(ctx, t, svc, owner.ID)
+	require.Len(t, alerts, 1, "the stock mark stays")
+	assert.Equal(t, false, alerts[0]["price_alert"])
+	assert.Equal(t, true, alerts[0]["stock_alert"])
+
+	for constraint, update := range map[string]string{
+		"customer_wishlist_item_price_marked":         `SET price_alert = true`,
+		"customer_wishlist_item_price_unmarked_empty": `SET price_alert_channels = '{sc_1}'`,
+		"customer_wishlist_item_price_baseline_whole": `SET price_alert = true, price_alert_marked_at = now(),
+            price_alert_region_id = 'reg_1', price_alert_currency = 'TRY'`,
+		"customer_wishlist_item_price_amount_nonneg": `SET price_alert = true, price_alert_marked_at = now(),
+            price_alert_region_id = 'reg_1', price_alert_currency = 'TRY', price_alert_amount = -1`,
+	} {
+		_, err = testPool.Pool().Exec(ctx, `UPDATE customer_wishlist_item `+update+`
+            WHERE customer_id = $1 AND variant_id = 'variant_price'`, owner.ID)
+		var pgErr *pgconn.PgError
+		require.ErrorAs(t, err, &pgErr, constraint)
+		assert.Equal(t, constraint, pgErr.ConstraintName)
+	}
+}
+
+// TestUnmarkingAPriceLeavesTheStockMark: the two marks on one item are taken
+// off one at a time.
+func TestUnmarkingAPriceLeavesTheStockMark(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	owner := newAccount(ctx, t, svc)
+	_, err := svc.MarkPriceAlert(ctx, owner.ID, "variant_both", "reg_1", nil)
+	require.NoError(t, err)
+	_, err = svc.MarkStockAlert(ctx, owner.ID, "variant_both", nil)
+	require.NoError(t, err)
+
+	require.NoError(t, svc.UnmarkPriceAlert(ctx, owner.ID, "variant_both"))
+
+	items, err := svc.ListWishlist(ctx, owner.ID)
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.False(t, items[0].PriceAlert)
+	assert.Empty(t, items[0].PriceAlertRegionID)
+	assert.True(t, items[0].StockAlert, "the stock mark is the other half of the item")
+	require.NoError(t, svc.UnmarkPriceAlert(ctx, owner.ID, "variant_both"), "unmarking again is not an error")
 }

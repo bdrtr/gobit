@@ -8,6 +8,7 @@ who set the mark is mailed, and the mail clears it.
 - **Status:** Accepted
 - **Date:** 2026-09-27
 - **Amends:** [0190](0190-a-customer-keeps-a-wishlist.md), whose items could not ask for anything
+- **Amended by:** [0216](0216-a-wishlist-item-can-ask-for-its-price.md): an item can ask for its price too, and the job answers both marks
 
 Measurement: [measurements/0215](../measurements/0215-a-variant-that-came-back.md)
 

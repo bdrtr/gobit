@@ -1,4 +1,5 @@
-// Package stockalert runs the stock alert flow on a schedule (ADR 0215).
+// Package stockalert runs the wishlist alert flow on a schedule (ADR 0215): the
+// stock marks, and the price marks (ADR 0216).
 //
 // # Why a job
 //
@@ -36,9 +37,9 @@ const MaxRun = 4 * time.Minute
 // codePassFailed reports a run that could not handle its marks.
 const codePassFailed = "stockalert_failed"
 
-// passer is the stock alert flow as this job needs it.
+// passer is the wishlist alert flow as this job needs it.
 type passer interface {
-	Pass(ctx context.Context) (armed, mailed int, err error)
+	Pass(ctx context.Context) (armed, recorded, mailed int, err error)
 }
 
 // Definition returns the job.
@@ -57,16 +58,17 @@ func Definition(p passer, log *slog.Logger) job.Definition {
 
 // run makes one pass over the marks.
 func run(ctx context.Context, p passer, log *slog.Logger) error {
-	armed, mailed, err := p.Pass(ctx)
+	armed, recorded, mailed, err := p.Pass(ctx)
 	// What was mailed before a failure is reported all the same: those mails
 	// went and their marks are cleared.
-	jobreport.Report(ctx, fmt.Sprintf("mailed %d stock alerts; armed %d marks that ran out", mailed, armed))
+	jobreport.Report(ctx, fmt.Sprintf("mailed %d wishlist alerts; armed %d marks that ran out; "+
+		"recorded %d prices at their mark", mailed, armed, recorded))
 	if err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindOf(err), codePassFailed,
 			"the stock alerts could not all be handled")
 	}
 	if mailed > 0 {
-		log.InfoContext(ctx, "stock alerts were mailed", "mailed", mailed)
+		log.InfoContext(ctx, "wishlist alerts were mailed", "mailed", mailed)
 	}
 
 	return nil

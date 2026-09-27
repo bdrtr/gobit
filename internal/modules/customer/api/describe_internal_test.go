@@ -310,15 +310,15 @@ func anlatilanUclar() []ucBeklentisi {
 	uclar = append(uclar,
 		ucBeklentisi{
 			metod: http.MethodGet, yol: "/admin/v1/customers/{id}/wishlist", durum: "200",
-			yanit: wishlistItemDTO{}, liste: true,
+			yanit: fullWishlistItem(), liste: true,
 		},
 		ucBeklentisi{
 			metod: http.MethodGet, yol: "/store/v1/customers/{id}/wishlist", durum: "200",
-			yanit: wishlistItemDTO{}, liste: true,
+			yanit: fullWishlistItem(), liste: true,
 		},
 		ucBeklentisi{
 			metod: http.MethodPut, yol: "/store/v1/customers/{id}/wishlist/{variant_id}", durum: "200",
-			yanit: wishlistItemDTO{},
+			yanit: fullWishlistItem(),
 		},
 		ucBeklentisi{
 			metod: http.MethodDelete, yol: "/store/v1/customers/{id}/wishlist/{variant_id}", durum: "204",
@@ -326,10 +326,18 @@ func anlatilanUclar() []ucBeklentisi {
 		// The stock alert (ADR 0215).
 		ucBeklentisi{
 			metod: http.MethodPut, yol: "/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", durum: "200",
-			yanit: wishlistItemDTO{},
+			yanit: fullWishlistItem(),
 		},
 		ucBeklentisi{
 			metod: http.MethodDelete, yol: "/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", durum: "204",
+		},
+		// The price alert (ADR 0216).
+		ucBeklentisi{
+			metod: http.MethodPut, yol: "/store/v1/customers/{id}/wishlist/{variant_id}/price-alert", durum: "200",
+			istek: priceAlertRequest{}, yanit: fullWishlistItem(),
+		},
+		ucBeklentisi{
+			metod: http.MethodDelete, yol: "/store/v1/customers/{id}/wishlist/{variant_id}/price-alert", durum: "204",
 		},
 	)
 
@@ -589,4 +597,14 @@ func parametreAdlari(t *testing.T, op map[string]any, konum string) []string {
 	}
 
 	return adlar
+}
+
+// fullWishlistItem is a wishlist item with every field written, the price
+// alert's included (ADR 0216).
+func fullWishlistItem() wishlistItemDTO {
+	amount := int64(1_000)
+
+	return wishlistItemDTO{
+		PriceAlert: true, PriceAlertRegionID: "reg_1", PriceAlertCurrencyCode: "TRY", PriceAlertAmount: &amount,
+	}
 }

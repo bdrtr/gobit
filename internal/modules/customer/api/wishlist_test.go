@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,22 @@ func (s *stubCustomer) UnmarkStockAlert(ctx context.Context, customerID, variant
 	return s.unmarkStockAlertFn(ctx, customerID, variantID)
 }
 
+func (s *stubCustomer) MarkPriceAlert(
+	ctx context.Context, customerID, variantID, regionID string, channels []string,
+) (models.WishlistItem, error) {
+	if s.markPriceAlertFn == nil {
+		return models.WishlistItem{}, unset("MarkPriceAlert")
+	}
+	return s.markPriceAlertFn(ctx, customerID, variantID, regionID, channels)
+}
+
+func (s *stubCustomer) UnmarkPriceAlert(ctx context.Context, customerID, variantID string) error {
+	if s.unmarkPriceAlertFn == nil {
+		return unset("UnmarkPriceAlert")
+	}
+	return s.unmarkPriceAlertFn(ctx, customerID, variantID)
+}
+
 // TestAVariantIsSavedForTheProvenCustomer shows the save reaches the service
 // with the proven customer and the variant the path names, and answers with
 // the item.
@@ -84,6 +101,7 @@ func TestAVariantIsSavedForTheProvenCustomer(t *testing.T) {
 		"variant_id":  "variant_X",
 		"created_at":  "2026-09-26T10:00:00Z",
 		"stock_alert": false,
+		"price_alert": false,
 	}, body.Data)
 }
 
@@ -204,4 +222,42 @@ func TestAStockAlertCarriesTheRequestsChannels(t *testing.T) {
 	assert.Equal(t, "variant_X", askedVariant)
 	assert.Equal(t, []string{"sc_ours"}, askedChannels)
 	assert.Contains(t, rec.Body.String(), `"stock_alert":true`)
+}
+
+// TestAPriceAlertCarriesTheRegionAndTheRequestsChannels is ADR 0216: the mark
+// is set for the proven customer in the body's region with the sales channels
+// the request's key holds, which is where the variant will be judged shown.
+func TestAPriceAlertCarriesTheRegionAndTheRequestsChannels(t *testing.T) {
+	t.Parallel()
+
+	var askedCustomer, askedVariant, askedRegion string
+	var askedChannels []string
+	svc := &stubCustomer{
+		markPriceAlertFn: func(
+			_ context.Context, customerID, variantID, regionID string, channels []string,
+		) (models.WishlistItem, error) {
+			askedCustomer, askedVariant, askedRegion, askedChannels = customerID, variantID, regionID, channels
+			return models.WishlistItem{
+				CustomerID: customerID, VariantID: variantID, PriceAlert: true, PriceAlertRegionID: regionID,
+			}, nil
+		},
+	}
+	r := routerWithIdentity(svc, &fixedIdentity{customerID: provenCustomer})
+	ctx := corehttp.WithPrincipal(context.Background(), corehttp.Principal{
+		ID: "pk_1", Kind: "publishable_key", SalesChannelIDs: []string{"sc_ours"},
+	})
+	req := httptest.NewRequestWithContext(ctx, http.MethodPut,
+		"/store/v1/customers/"+provenCustomer+"/wishlist/variant_X/price-alert",
+		strings.NewReader(`{"region_id":"reg_tr"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, provenCustomer, askedCustomer)
+	assert.Equal(t, "variant_X", askedVariant)
+	assert.Equal(t, "reg_tr", askedRegion)
+	assert.Equal(t, []string{"sc_ours"}, askedChannels)
+	assert.Contains(t, rec.Body.String(), `"price_alert":true`)
+	assert.Contains(t, rec.Body.String(), `"price_alert_region_id":"reg_tr"`)
 }

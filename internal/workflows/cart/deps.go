@@ -137,6 +137,9 @@ const (
 	// CodePriceUnavailable reports that the variant has no price in the cart's
 	// currency.
 	CodePriceUnavailable = "cart_workflow_price_unavailable"
+	// CodeQuoteRegionUnknown reports that a price was asked in a region that does
+	// not exist (ADR 0216): the region was deleted, or never was one.
+	CodeQuoteRegionUnknown = "cart_workflow_quote_region_unknown"
 	// CodePriceResponseInvalid says that the pricing module reported a bulk price
 	// response outside the contract.
 	//

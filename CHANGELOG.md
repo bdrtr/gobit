@@ -109,6 +109,21 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A wishlist item can ask for its price** (ADR 0216). **For API consumers:**
+  `PUT /store/v1/customers/{id}/wishlist/{variant_id}/price-alert` (proven
+  customer) with `{"region_id": "..."}` saves the variant if needed and marks
+  its price in that region with the request's sales channels; `DELETE` on the
+  same path takes the mark off. Wishlist items carry `price_alert`, and a marked
+  item `price_alert_region_id` and, once recorded, `price_alert_currency_code`
+  and `price_alert_amount`. **For operators:** the `stock-alert` job records the
+  unit price the customer's cart would be charged at the first pass after the
+  mark and mails the customer once when it falls below that, clearing the mark;
+  its line counts the prices recorded. Customer migration 000005 adds the mark,
+  and rolling it back forgets the price marks. **For plugin authors:** a
+  notification provider has to know `wishlist.price_drop` (the stock mail's data
+  plus `currency_code`, `previous_amount`, `amount`), and the cart workflow
+  answers `QuoteUnitPrices`. The mark is declared personal data.
+
 - **A wishlist item can ask for its stock** (ADR 0215). **For API consumers:**
   `PUT /store/v1/customers/{id}/wishlist/{variant_id}/stock-alert` (proven
   customer) saves the variant if needed and marks it with the request's sales

@@ -314,8 +314,11 @@ issued, and mails them the same way (ADR 0212).
 The stock alert flow mails a customer once, at the address on their own record,
 when a variant they marked on their wishlist is back in stock, with the template
 `wishlist.back_in_stock`, whose data is `variant_id`, `variant_title`,
-`product_id`, `product_title` and `product_handle` (ADR 0215). The
-`stock-alert` job runs it every five minutes.
+`product_id`, `product_title` and `product_handle` (ADR 0215). It mails once
+more, with the template `wishlist.price_drop`, when a variant whose price the
+customer marked in a region is quoted below the price recorded at the mark; the
+data adds `currency_code`, `previous_amount` and `amount`, both amounts in
+minor units (ADR 0216). The `stock-alert` job runs it every five minutes.
 
 **Notification** listens to `order.placed` and sends the order confirmation
 through the selected `NotificationProvider`. The recipient address is read

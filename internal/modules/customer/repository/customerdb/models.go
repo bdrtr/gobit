@@ -63,4 +63,10 @@ type CustomerWishlistItem struct {
 	StockAlert         bool
 	StockAlertChannels []string
 	StockAlertArmedAt  pgtype.Timestamptz
+	PriceAlert         bool
+	PriceAlertMarkedAt pgtype.Timestamptz
+	PriceAlertRegionID *string
+	PriceAlertChannels []string
+	PriceAlertCurrency *string
+	PriceAlertAmount   *int64
 }

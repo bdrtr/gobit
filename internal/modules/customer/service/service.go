@@ -143,9 +143,18 @@ type Repository interface {
 		ctx context.Context, customerID, variantID string, channels []string, limit int64, now time.Time,
 	) (models.WishlistItem, error)
 	UnmarkStockAlert(ctx context.Context, customerID, variantID string) error
-	ListStockAlerts(ctx context.Context, afterCustomerID, afterVariantID string, limit int32) ([]models.WishlistItem, error)
+	ListAlerts(ctx context.Context, afterCustomerID, afterVariantID string, limit int32) ([]models.WishlistItem, error)
 	ArmStockAlert(ctx context.Context, customerID, variantID string) (bool, error)
 	ClearStockAlert(ctx context.Context, customerID, variantID string, armedAt time.Time) (bool, error)
+	// The wishlist's price alert (ADR 0216).
+	MarkPriceAlert(
+		ctx context.Context, customerID, variantID, regionID string, channels []string, limit int64, now time.Time,
+	) (models.WishlistItem, error)
+	UnmarkPriceAlert(ctx context.Context, customerID, variantID string) error
+	RecordPriceBaseline(
+		ctx context.Context, customerID, variantID string, markedAt time.Time, currency string, amount int64,
+	) (bool, error)
+	ClearPriceAlert(ctx context.Context, customerID, variantID string, markedAt time.Time) (bool, error)
 	WishlistForDisclosure(ctx context.Context, customerIDs []string) ([]models.WishlistItem, error)
 }
 

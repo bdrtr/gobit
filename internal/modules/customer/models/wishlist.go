@@ -36,4 +36,15 @@ type WishlistItem struct {
 	StockAlert         bool
 	StockAlertChannels []string
 	StockAlertArmedAt  *time.Time
+	// PriceAlert says the customer asked to be told once when the variant's
+	// price drops (ADR 0216). PriceAlertMarkedAt names the mark, PriceAlertRegionID
+	// is the region the price is asked in and PriceAlertChannels the request's
+	// channels; PriceAlertCurrency and PriceAlertAmount are the price at the
+	// mark, recorded by the alert job's first pass after it.
+	PriceAlert         bool
+	PriceAlertMarkedAt *time.Time
+	PriceAlertRegionID string
+	PriceAlertChannels []string
+	PriceAlertCurrency string
+	PriceAlertAmount   *int64
 }

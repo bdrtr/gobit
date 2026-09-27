@@ -1,10 +1,21 @@
 // Package stockalert mails a customer once when a variant they marked on their
-// wishlist is back in stock (ADR 0215).
+// wishlist is back in stock (ADR 0215), or when its price drops (ADR 0216).
 //
-// It is a workflow because it combines three modules (ADR 0006): the customer
+// It is a workflow because it combines four modules (ADR 0006): the customer
 // module holds the marks and the address, the product module answers whether a
-// variant is in stock as the storefront shows it, and the notification module
-// sends. None of them imports another, and this package imports none of them.
+// variant is in stock and shown as the storefront shows it, pricing answers
+// what the customer's cart would be charged for it, through the cart
+// workflow's own quote, and the notification module sends. None of them
+// imports another, and this package imports none of them.
+//
+// # A price that drops
+//
+// A price mark names a region. The first pass after the mark records the unit
+// price the customer's cart in that region would be charged for one, price
+// lists included and promotions not (the cart workflow's quote); a later pass
+// that finds that price lower, in the same currency, mails once and clears the
+// mark. A variant the storefront does not show in the mark's channels is not
+// priced.
 //
 // # Back, not merely in
 //
@@ -40,6 +51,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
+	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 )
 
 // The container names this flow resolves, spelled by hand because it imports
@@ -53,8 +65,10 @@ const (
 
 // The cross-module names the flow reads, spelled by hand for the same reason.
 const (
-	// TemplateBackInStock is the notification the mail is sent with.
+	// TemplateBackInStock is the notification a stock mail is sent with, and
+	// TemplatePriceDrop the notification a price mail is sent with.
 	TemplateBackInStock = "wishlist.back_in_stock"
+	TemplatePriceDrop   = "wishlist.price_drop"
 	// ChannelEmail is the notification channel.
 	ChannelEmail = "email"
 	// EntityVariant and EntityProduct are the read layer's catalog entities,
@@ -70,6 +84,11 @@ const (
 	DataProductTitle = "product_title"
 	DataProductID    = "product_id"
 	DataHandle       = "product_handle"
+	// DataCurrencyCode, DataPreviousAmount and DataAmount are a price mail's:
+	// the price at the mark and the price now, in minor units.
+	DataCurrencyCode   = "currency_code"
+	DataPreviousAmount = "previous_amount"
+	DataAmount         = "amount"
 )
 
 // page is how many marks one read takes.
@@ -84,14 +103,27 @@ const CodeNotReady = "stock_alert_not_ready"
 
 // Customers is the slice of the customer module this flow calls.
 type Customers interface {
-	// StockAlertsJSON pages the marked wishlist items after the given key.
-	StockAlertsJSON(ctx context.Context, afterCustomerID, afterVariantID string, limit int) (json.RawMessage, error)
+	// WishlistAlertsJSON pages the marked wishlist items after the given key.
+	WishlistAlertsJSON(ctx context.Context, afterCustomerID, afterVariantID string, limit int) (json.RawMessage, error)
 	// ArmStockAlert records that a marked variant was seen out of stock.
 	ArmStockAlert(ctx context.Context, customerID, variantID string) (bool, error)
 	// ClearStockAlert takes a mark off while it is armed at the given moment.
 	ClearStockAlert(ctx context.Context, customerID, variantID string, armedAt time.Time) (bool, error)
 	// CustomerEmail returns the customer's address.
 	CustomerEmail(ctx context.Context, customerID string) (string, error)
+	// RecordPriceBaseline records the price at the mark, once.
+	RecordPriceBaseline(
+		ctx context.Context, customerID, variantID string, markedAt time.Time, currency string, amount int64,
+	) (bool, error)
+	// ClearPriceAlert takes a price mark off while it is the given mark.
+	ClearPriceAlert(ctx context.Context, customerID, variantID string, markedAt time.Time) (bool, error)
+}
+
+// Prices is the cart workflow's quote: the unit price a one-unit line would be
+// charged in the customer's cart in the region, before promotions.
+type Prices interface {
+	QuoteUnitPrices(ctx context.Context, regionID, customerID string, variantIDs []string) (
+		currency string, prices map[string]int64, err error)
 }
 
 // Catalog is the slice of the product module this flow calls.
@@ -117,48 +149,63 @@ type Reader interface {
 type Workflow struct {
 	customers Customers
 	catalog   Catalog
+	prices    Prices
 	notifier  Notifier
 	reader    Reader
 	log       *slog.Logger
 }
 
 // New builds the flow from resolved dependencies.
-func New(customers Customers, catalog Catalog, notifier Notifier, reader Reader, log *slog.Logger) *Workflow {
+func New(
+	customers Customers, catalog Catalog, prices Prices, notifier Notifier, reader Reader, log *slog.Logger,
+) *Workflow {
 	if log == nil {
 		log = slog.Default()
 	}
 
-	return &Workflow{customers: customers, catalog: catalog, notifier: notifier, reader: reader, log: log}
+	return &Workflow{customers: customers, catalog: catalog, prices: prices, notifier: notifier, reader: reader, log: log}
 }
 
-// alert is one mark as the customer module pages it.
+// alert is one marked item as the customer module pages it.
 type alert struct {
 	CustomerID      string     `json:"customer_id"`
 	VariantID       string     `json:"variant_id"`
+	StockAlert      bool       `json:"stock_alert"`
 	SalesChannelIDs []string   `json:"sales_channel_ids"`
 	ArmedAt         *time.Time `json:"armed_at"`
+
+	PriceAlert           bool       `json:"price_alert"`
+	PriceMarkedAt        *time.Time `json:"price_marked_at"`
+	PriceRegionID        string     `json:"price_region_id"`
+	PriceSalesChannelIDs []string   `json:"price_sales_channel_ids"`
+	PriceCurrencyCode    string     `json:"price_currency_code"`
+	PriceAmount          *int64     `json:"price_amount"`
 }
 
-// Pass walks every mark once: it arms the marks whose variant is out of stock,
-// and mails and clears the armed ones whose variant is back. A mark that fails
-// is reported and does not stop the others.
-func (w *Workflow) Pass(ctx context.Context) (armed, mailed int, err error) {
+// Pass walks every mark once. It arms the stock marks whose variant is out of
+// stock and mails and clears the armed ones whose variant is back; it records
+// the price at the mark of the price marks that have none and mails and clears
+// the ones whose price is lower now. It reports the stock marks armed, the
+// prices recorded and the mails of either kind. A mark that fails is reported
+// and does not stop the others.
+func (w *Workflow) Pass(ctx context.Context) (armed, recorded, mailed int, err error) {
 	var first error
 	failed := 0
 	afterCustomer, afterVariant := "", ""
 	for {
-		raw, err := w.customers.StockAlertsJSON(ctx, afterCustomer, afterVariant, page)
+		raw, err := w.customers.WishlistAlertsJSON(ctx, afterCustomer, afterVariant, page)
 		if err != nil {
-			return armed, mailed, err
+			return armed, recorded, mailed, err
 		}
 		var alerts []alert
 		if err := json.Unmarshal(raw, &alerts); err != nil {
-			return armed, mailed, errors.Wrap(err, errors.KindInternal, CodeNotReady,
-				"the stock alerts could not be read")
+			return armed, recorded, mailed, errors.Wrap(err, errors.KindInternal, CodeNotReady,
+				"the wishlist alerts could not be read")
 		}
 		a, m, pageErrs := w.handle(ctx, alerts)
-		armed, mailed = armed+a, mailed+m
-		for _, pageErr := range pageErrs {
+		r, pm, priceErrs := w.handlePrices(ctx, alerts)
+		armed, recorded, mailed = armed+a, recorded+r, mailed+m+pm
+		for _, pageErr := range append(pageErrs, priceErrs...) {
 			failed++
 			if first == nil {
 				first = pageErr
@@ -170,18 +217,22 @@ func (w *Workflow) Pass(ctx context.Context) (armed, mailed int, err error) {
 		afterCustomer, afterVariant = alerts[len(alerts)-1].CustomerID, alerts[len(alerts)-1].VariantID
 	}
 	if first != nil {
-		return armed, mailed, errors.Wrap(first, errors.KindOf(first), CodePassIncomplete,
-			"%d stock alerts could not be handled", failed)
+		return armed, recorded, mailed, errors.Wrap(first, errors.KindOf(first), CodePassIncomplete,
+			"%d wishlist alerts could not be handled", failed)
 	}
 
-	return armed, mailed, nil
+	return armed, recorded, mailed, nil
 }
 
-// handle answers one page of marks, a channel set at a time.
+// handle answers one page's stock marks, a channel set at a time.
 func (w *Workflow) handle(ctx context.Context, alerts []alert) (armed, mailed int, failures []error) {
-	groups := map[string][]alert{}
+	groups := map[string][]*alert{}
 	var order []string
-	for _, a := range alerts {
+	for i := range alerts {
+		a := &alerts[i]
+		if !a.StockAlert {
+			continue
+		}
 		key := channelKey(a.SalesChannelIDs)
 		if _, ok := groups[key]; !ok {
 			order = append(order, key)
@@ -225,7 +276,7 @@ func (w *Workflow) handle(ctx context.Context, alerts []alert) (armed, mailed in
 }
 
 // mail sends one armed mark's mail and clears it.
-func (w *Workflow) mail(ctx context.Context, a alert) error {
+func (w *Workflow) mail(ctx context.Context, a *alert) error {
 	to, err := w.customers.CustomerEmail(ctx, a.CustomerID)
 	if err != nil {
 		return err
@@ -239,6 +290,102 @@ func (w *Workflow) mail(ctx context.Context, a alert) error {
 		return err
 	}
 	_, err = w.customers.ClearStockAlert(ctx, a.CustomerID, a.VariantID, *a.ArmedAt)
+
+	return err
+}
+
+// handlePrices answers one page's price marks, a customer, region and channel
+// set at a time, since the price is the customer's in the region.
+func (w *Workflow) handlePrices(ctx context.Context, alerts []alert) (recorded, mailed int, failures []error) {
+	groups := map[string][]*alert{}
+	var order []string
+	for i := range alerts {
+		a := &alerts[i]
+		if !a.PriceAlert || a.PriceMarkedAt == nil {
+			continue
+		}
+		key := a.CustomerID + "\x00" + a.PriceRegionID + "\x00" + channelKey(a.PriceSalesChannelIDs)
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], a)
+	}
+	for _, key := range order {
+		group := groups[key]
+		variantIDs := make([]string, 0, len(group))
+		for _, a := range group {
+			variantIDs = append(variantIDs, a.VariantID)
+		}
+		// The storefront's own answer decides which variants are shown in the
+		// mark's channels; only their price is asked.
+		shown, err := w.catalog.VariantsInStock(ctx, variantIDs, group[0].PriceSalesChannelIDs)
+		if err != nil {
+			failures = append(failures, err)
+
+			continue
+		}
+		currency, quotes, err := w.prices.QuoteUnitPrices(ctx, group[0].PriceRegionID, group[0].CustomerID, variantIDs)
+		if errors.CodeOf(err) == cartwf.CodeQuoteRegionUnknown {
+			// The request named a region that does not exist, or one that was
+			// deleted since: the mark waits for nothing, and a pass is not the
+			// worse for it.
+			w.log.DebugContext(ctx, "a price mark names a region that does not exist",
+				"customer_id", group[0].CustomerID, "region_id", group[0].PriceRegionID)
+
+			continue
+		}
+		if err != nil {
+			failures = append(failures, err)
+
+			continue
+		}
+		for _, a := range group {
+			price, priced := quotes[a.VariantID]
+			if _, visible := shown[a.VariantID]; !visible || !priced {
+				continue
+			}
+			switch {
+			case a.PriceAmount == nil:
+				done, err := w.customers.RecordPriceBaseline(ctx, a.CustomerID, a.VariantID,
+					*a.PriceMarkedAt, currency, price)
+				if err != nil {
+					failures = append(failures, err)
+				} else if done {
+					recorded++
+				}
+			case currency == a.PriceCurrencyCode && price < *a.PriceAmount:
+				if err := w.mailPrice(ctx, a, currency, price); err != nil {
+					w.log.ErrorContext(ctx, "a price alert could not be mailed",
+						"customer_id", a.CustomerID, "variant_id", a.VariantID, "error", err)
+					failures = append(failures, err)
+				} else {
+					mailed++
+				}
+			}
+		}
+	}
+
+	return recorded, mailed, failures
+}
+
+// mailPrice sends one price mark's mail and clears it.
+func (w *Workflow) mailPrice(ctx context.Context, a *alert, currency string, price int64) error {
+	to, err := w.customers.CustomerEmail(ctx, a.CustomerID)
+	if err != nil {
+		return err
+	}
+	data, err := w.names(ctx, a.VariantID)
+	if err != nil {
+		return err
+	}
+	data[DataCurrencyCode] = currency
+	data[DataPreviousAmount] = fmt.Sprint(*a.PriceAmount)
+	data[DataAmount] = fmt.Sprint(price)
+	reference := fmt.Sprintf("%s:%s:price:%d", a.CustomerID, a.VariantID, a.PriceMarkedAt.UnixNano())
+	if err := w.notifier.Send(ctx, TemplatePriceDrop, ChannelEmail, reference, to, data); err != nil {
+		return err
+	}
+	_, err = w.customers.ClearPriceAlert(ctx, a.CustomerID, a.VariantID, *a.PriceMarkedAt)
 
 	return err
 }
@@ -312,8 +459,14 @@ func FromContainer(c *container.Container, log *slog.Logger) (*Workflow, error) 
 	if err != nil {
 		return nil, err
 	}
+	// The quote is the cart workflow's, built from the same container, so the
+	// price a mark is judged by is the one the customer's cart would charge.
+	prices, err := cartwf.FromContainer(c)
+	if err != nil {
+		return nil, err
+	}
 
-	return New(customers, catalog, notifier, reader, log), nil
+	return New(customers, catalog, prices, notifier, reader, log), nil
 }
 
 // resolve reads one service and says which name failed.

@@ -325,5 +325,6 @@ func wishlistValues(w models.WishlistItem) map[string]any {
 	return map[string]any{
 		columnVariantID:  w.VariantID,
 		columnStockAlert: w.StockAlert,
+		columnPriceAlert: w.PriceAlert,
 	}
 }

@@ -88,6 +88,40 @@ func (s *Service) UnmarkStockAlert(ctx context.Context, customerID, variantID st
 	return s.repo.UnmarkStockAlert(ctx, customerID, variantID)
 }
 
+// MarkPriceAlert asks for the customer to be told once when the variant's price
+// drops below the price at the mark (ADR 0216).
+//
+// The variant is put on the wishlist if it is not there, under the list's cap.
+// The mark names the region the price is asked in — its currency is the
+// region's — and the request's sales channels; the price at the mark is
+// recorded by the alert job's first pass after it. Marking again is a new mark.
+func (s *Service) MarkPriceAlert(
+	ctx context.Context, customerID, variantID, regionID string, channels []string,
+) (models.WishlistItem, error) {
+	if err := s.ready(); err != nil {
+		return models.WishlistItem{}, err
+	}
+	if err := requireWishlistIDs(customerID, variantID); err != nil {
+		return models.WishlistItem{}, err
+	}
+	if err := requireID(regionID, "", "region id"); err != nil {
+		return models.WishlistItem{}, err
+	}
+	return s.repo.MarkPriceAlert(ctx, customerID, variantID, regionID, channels, models.MaxWishlistItems, s.clock())
+}
+
+// UnmarkPriceAlert takes the price mark off and leaves the variant on the list;
+// an item that is not marked is not an error.
+func (s *Service) UnmarkPriceAlert(ctx context.Context, customerID, variantID string) error {
+	if err := s.ready(); err != nil {
+		return err
+	}
+	if err := requireWishlistIDs(customerID, variantID); err != nil {
+		return err
+	}
+	return s.repo.UnmarkPriceAlert(ctx, customerID, variantID)
+}
+
 // requireWishlistIDs checks the customer id and the form of the variant id.
 //
 // The variant id carries no prefix check: the prefix is the product module's

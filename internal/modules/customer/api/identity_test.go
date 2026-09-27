@@ -242,6 +242,16 @@ func refusingService(t *testing.T) *stubCustomer {
 
 			return nil
 		},
+		markPriceAlertFn: func(context.Context, string, string, string, []string) (models.WishlistItem, error) {
+			fail("MarkPriceAlert")
+
+			return models.WishlistItem{}, nil
+		},
+		unmarkPriceAlertFn: func(context.Context, string, string) error {
+			fail("UnmarkPriceAlert")
+
+			return nil
+		},
 	}
 }
 

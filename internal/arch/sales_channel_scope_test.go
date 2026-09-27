@@ -131,8 +131,9 @@ var variantReadExemptions = []variantReadExemption{
 		function: "names",
 		why: "it reads the NAME of a variant for the mail, after the product module's " +
 			"in-stock answer has already been given in the mark's own sales channels " +
-			"(ADR 0215): the channel decision is made there, over the storefront's one " +
-			"path, and a second one here would decide nothing the first did not.",
+			"(ADR 0215; a price mark asks the same question, ADR 0216): the channel " +
+			"decision is made there, over the storefront's one path, and a second one " +
+			"here would decide nothing the first did not.",
 	},
 	{
 		file:     "internal/workflows/checkout/plan.go",

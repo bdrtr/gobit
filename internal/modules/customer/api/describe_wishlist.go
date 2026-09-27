@@ -16,6 +16,7 @@ func describeWishlist(d *openapi.Doc) {
 		storeList  = "/store/v1/customers/{id}/wishlist"
 		storeItem  = storeList + "/{variant_id}"
 		storeAlert = storeItem + "/stock-alert"
+		priceAlert = storeItem + "/price-alert"
 		adminList  = "/admin/v1/customers/{id}/wishlist"
 	)
 
@@ -89,5 +90,29 @@ func describeWishlist(d *openapi.Doc) {
 			"repeated: an item that is not marked answers the same 204.",
 		Responses: answers(storefrontIdentityRefusals(), "204",
 			emptyResponse("The variant is not marked")),
+	})
+
+	d.Describe(http.MethodPut, priceAlert, openapi.Operation{
+		Summary: "Asks to be told when a wishlist variant's price drops.",
+		Description: storefront +
+			"The variant is saved to the wishlist if it is not there, under the same cap, " +
+			"and marked for the region the body names; the price is the region's currency. " +
+			"The price at the mark is the unit price the shopper's cart in that region would " +
+			"be charged for one, price lists included and promotions not, recorded by the " +
+			"alert job's first pass after the mark. The shopper is mailed ONCE, at the address " +
+			"on their own customer record, when that price is next lower; the mail clears the " +
+			"mark, and marking again is a new mark (ADR 0216).",
+		RequestBody: d.RequestBody(priceAlertRequest{}),
+		Responses: answers(full, "200",
+			openapi.Response("The marked item", d.Item(wishlistItemDTO{}))),
+	})
+
+	d.Describe(http.MethodDelete, priceAlert, openapi.Operation{
+		Summary: "Stops watching a wishlist variant's price.",
+		Description: storefront +
+			"The price mark is taken off and the variant stays on the wishlist. It can be " +
+			"repeated: an item whose price is not marked answers the same 204.",
+		Responses: answers(storefrontIdentityRefusals(), "204",
+			emptyResponse("The variant's price is not marked")),
 	})
 }

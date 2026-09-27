@@ -169,6 +169,8 @@ var (
 	_ stockalertwf.Catalog   = (*productsvc.Interop)(nil)
 	_ stockalertwf.Notifier  = (*notifsvc.Interop)(nil)
 	_ stockalertwf.Reader    = query.Query(nil)
+	// Its price marks are judged by the cart workflow's quote (ADR 0216).
+	_ stockalertwf.Prices = (*cartwf.Workflows)(nil)
 )
 
 // A PLUGIN resolving a MODULE's surface, and the CORE resolving one.

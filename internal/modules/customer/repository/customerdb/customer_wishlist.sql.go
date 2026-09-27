@@ -31,6 +31,29 @@ func (q *Queries) ArmStockAlert(ctx context.Context, arg ArmStockAlertParams) (i
 	return result.RowsAffected(), nil
 }
 
+const clearPriceAlert = `-- name: ClearPriceAlert :execrows
+UPDATE customer_wishlist_item
+SET price_alert = false, price_alert_marked_at = NULL, price_alert_region_id = NULL,
+    price_alert_channels = NULL, price_alert_currency = NULL, price_alert_amount = NULL
+WHERE customer_id = $1 AND variant_id = $2 AND price_alert_marked_at = $3
+`
+
+type ClearPriceAlertParams struct {
+	CustomerID         string
+	VariantID          string
+	PriceAlertMarkedAt pgtype.Timestamptz
+}
+
+// ClearPriceAlert clears a mark once its mail went, only while it is the mark
+// the mail was sent for.
+func (q *Queries) ClearPriceAlert(ctx context.Context, arg ClearPriceAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, clearPriceAlert, arg.CustomerID, arg.VariantID, arg.PriceAlertMarkedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearStockAlert = `-- name: ClearStockAlert :execrows
 UPDATE customer_wishlist_item
 SET stock_alert = false, stock_alert_channels = NULL, stock_alert_armed_at = NULL
@@ -99,7 +122,7 @@ func (q *Queries) DeleteWishlistOfCustomer(ctx context.Context, customerID strin
 }
 
 const getWishlistItem = `-- name: GetWishlistItem :one
-SELECT customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at FROM customer_wishlist_item
+SELECT customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at, price_alert, price_alert_marked_at, price_alert_region_id, price_alert_channels, price_alert_currency, price_alert_amount FROM customer_wishlist_item
 WHERE customer_id = $1 AND variant_id = $2
 `
 
@@ -118,6 +141,12 @@ func (q *Queries) GetWishlistItem(ctx context.Context, arg GetWishlistItemParams
 		&i.StockAlert,
 		&i.StockAlertChannels,
 		&i.StockAlertArmedAt,
+		&i.PriceAlert,
+		&i.PriceAlertMarkedAt,
+		&i.PriceAlertRegionID,
+		&i.PriceAlertChannels,
+		&i.PriceAlertCurrency,
+		&i.PriceAlertAmount,
 	)
 	return i, err
 }
@@ -126,7 +155,7 @@ const insertWishlistItem = `-- name: InsertWishlistItem :one
 
 INSERT INTO customer_wishlist_item (customer_id, variant_id, created_at)
 VALUES ($1, $2, $3)
-RETURNING customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at
+RETURNING customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at, price_alert, price_alert_marked_at, price_alert_region_id, price_alert_channels, price_alert_currency, price_alert_amount
 `
 
 type InsertWishlistItemParams struct {
@@ -149,28 +178,35 @@ func (q *Queries) InsertWishlistItem(ctx context.Context, arg InsertWishlistItem
 		&i.StockAlert,
 		&i.StockAlertChannels,
 		&i.StockAlertArmedAt,
+		&i.PriceAlert,
+		&i.PriceAlertMarkedAt,
+		&i.PriceAlertRegionID,
+		&i.PriceAlertChannels,
+		&i.PriceAlertCurrency,
+		&i.PriceAlertAmount,
 	)
 	return i, err
 }
 
-const listStockAlerts = `-- name: ListStockAlerts :many
-SELECT w.customer_id, w.variant_id, w.created_at, w.stock_alert, w.stock_alert_channels, w.stock_alert_armed_at FROM customer_wishlist_item w
+const listAlerts = `-- name: ListAlerts :many
+SELECT w.customer_id, w.variant_id, w.created_at, w.stock_alert, w.stock_alert_channels, w.stock_alert_armed_at, w.price_alert, w.price_alert_marked_at, w.price_alert_region_id, w.price_alert_channels, w.price_alert_currency, w.price_alert_amount FROM customer_wishlist_item w
 JOIN customer c ON c.id = w.customer_id
-WHERE w.stock_alert AND c.deleted_at IS NULL
+WHERE (w.stock_alert OR w.price_alert) AND c.deleted_at IS NULL
   AND (w.customer_id, w.variant_id) > ($1::text, $2::text)
 ORDER BY w.customer_id, w.variant_id
 LIMIT $3
 `
 
-type ListStockAlertsParams struct {
+type ListAlertsParams struct {
 	AfterCustomerID string
 	AfterVariantID  string
 	RowLimit        int32
 }
 
-// ListStockAlerts pages the marked items of live customers in key order.
-func (q *Queries) ListStockAlerts(ctx context.Context, arg ListStockAlertsParams) ([]CustomerWishlistItem, error) {
-	rows, err := q.db.Query(ctx, listStockAlerts, arg.AfterCustomerID, arg.AfterVariantID, arg.RowLimit)
+// ListAlerts pages the items of live customers marked for their stock or their
+// price, in key order (ADR 0215, ADR 0216).
+func (q *Queries) ListAlerts(ctx context.Context, arg ListAlertsParams) ([]CustomerWishlistItem, error) {
+	rows, err := q.db.Query(ctx, listAlerts, arg.AfterCustomerID, arg.AfterVariantID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -185,6 +221,12 @@ func (q *Queries) ListStockAlerts(ctx context.Context, arg ListStockAlertsParams
 			&i.StockAlert,
 			&i.StockAlertChannels,
 			&i.StockAlertArmedAt,
+			&i.PriceAlert,
+			&i.PriceAlertMarkedAt,
+			&i.PriceAlertRegionID,
+			&i.PriceAlertChannels,
+			&i.PriceAlertCurrency,
+			&i.PriceAlertAmount,
 		); err != nil {
 			return nil, err
 		}
@@ -197,7 +239,7 @@ func (q *Queries) ListStockAlerts(ctx context.Context, arg ListStockAlertsParams
 }
 
 const listWishlistForDisclosure = `-- name: ListWishlistForDisclosure :many
-SELECT customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at FROM customer_wishlist_item
+SELECT customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at, price_alert, price_alert_marked_at, price_alert_region_id, price_alert_channels, price_alert_currency, price_alert_amount FROM customer_wishlist_item
 WHERE customer_id = ANY ($1::text[])
 ORDER BY customer_id, created_at, variant_id
 `
@@ -218,6 +260,12 @@ func (q *Queries) ListWishlistForDisclosure(ctx context.Context, customerIds []s
 			&i.StockAlert,
 			&i.StockAlertChannels,
 			&i.StockAlertArmedAt,
+			&i.PriceAlert,
+			&i.PriceAlertMarkedAt,
+			&i.PriceAlertRegionID,
+			&i.PriceAlertChannels,
+			&i.PriceAlertCurrency,
+			&i.PriceAlertAmount,
 		); err != nil {
 			return nil, err
 		}
@@ -230,7 +278,7 @@ func (q *Queries) ListWishlistForDisclosure(ctx context.Context, customerIds []s
 }
 
 const listWishlistItems = `-- name: ListWishlistItems :many
-SELECT customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at FROM customer_wishlist_item
+SELECT customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at, price_alert, price_alert_marked_at, price_alert_region_id, price_alert_channels, price_alert_currency, price_alert_amount FROM customer_wishlist_item
 WHERE customer_id = $1
 ORDER BY created_at DESC, variant_id
 `
@@ -252,6 +300,12 @@ func (q *Queries) ListWishlistItems(ctx context.Context, customerID string) ([]C
 			&i.StockAlert,
 			&i.StockAlertChannels,
 			&i.StockAlertArmedAt,
+			&i.PriceAlert,
+			&i.PriceAlertMarkedAt,
+			&i.PriceAlertRegionID,
+			&i.PriceAlertChannels,
+			&i.PriceAlertCurrency,
+			&i.PriceAlertAmount,
 		); err != nil {
 			return nil, err
 		}
@@ -263,6 +317,56 @@ func (q *Queries) ListWishlistItems(ctx context.Context, customerID string) ([]C
 	return items, nil
 }
 
+const markPriceAlert = `-- name: MarkPriceAlert :one
+
+UPDATE customer_wishlist_item
+SET price_alert = true,
+    price_alert_marked_at = $1,
+    price_alert_region_id = $2,
+    price_alert_channels = $3::text[],
+    price_alert_currency = NULL,
+    price_alert_amount = NULL
+WHERE customer_id = $4 AND variant_id = $5
+RETURNING customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at, price_alert, price_alert_marked_at, price_alert_region_id, price_alert_channels, price_alert_currency, price_alert_amount
+`
+
+type MarkPriceAlertParams struct {
+	MarkedAt   pgtype.Timestamptz
+	RegionID   *string
+	Channels   []string
+	CustomerID string
+	VariantID  string
+}
+
+// A wishlist item's price alert (ADR 0216).
+// MarkPriceAlert marks an item with the region and channels its price is asked
+// in; the baseline is left for the alert job to record.
+func (q *Queries) MarkPriceAlert(ctx context.Context, arg MarkPriceAlertParams) (CustomerWishlistItem, error) {
+	row := q.db.QueryRow(ctx, markPriceAlert,
+		arg.MarkedAt,
+		arg.RegionID,
+		arg.Channels,
+		arg.CustomerID,
+		arg.VariantID,
+	)
+	var i CustomerWishlistItem
+	err := row.Scan(
+		&i.CustomerID,
+		&i.VariantID,
+		&i.CreatedAt,
+		&i.StockAlert,
+		&i.StockAlertChannels,
+		&i.StockAlertArmedAt,
+		&i.PriceAlert,
+		&i.PriceAlertMarkedAt,
+		&i.PriceAlertRegionID,
+		&i.PriceAlertChannels,
+		&i.PriceAlertCurrency,
+		&i.PriceAlertAmount,
+	)
+	return i, err
+}
+
 const markStockAlert = `-- name: MarkStockAlert :one
 
 UPDATE customer_wishlist_item
@@ -270,7 +374,7 @@ SET stock_alert = true,
     stock_alert_channels = $1::text[],
     stock_alert_armed_at = NULL
 WHERE customer_id = $2 AND variant_id = $3
-RETURNING customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at
+RETURNING customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at, price_alert, price_alert_marked_at, price_alert_region_id, price_alert_channels, price_alert_currency, price_alert_amount
 `
 
 type MarkStockAlertParams struct {
@@ -292,8 +396,65 @@ func (q *Queries) MarkStockAlert(ctx context.Context, arg MarkStockAlertParams) 
 		&i.StockAlert,
 		&i.StockAlertChannels,
 		&i.StockAlertArmedAt,
+		&i.PriceAlert,
+		&i.PriceAlertMarkedAt,
+		&i.PriceAlertRegionID,
+		&i.PriceAlertChannels,
+		&i.PriceAlertCurrency,
+		&i.PriceAlertAmount,
 	)
 	return i, err
+}
+
+const recordPriceBaseline = `-- name: RecordPriceBaseline :execrows
+UPDATE customer_wishlist_item
+SET price_alert_currency = $1, price_alert_amount = $2
+WHERE customer_id = $3 AND variant_id = $4
+  AND price_alert AND price_alert_marked_at = $5 AND price_alert_amount IS NULL
+`
+
+type RecordPriceBaselineParams struct {
+	Currency   *string
+	Amount     *int64
+	CustomerID string
+	VariantID  string
+	MarkedAt   pgtype.Timestamptz
+}
+
+// RecordPriceBaseline records the price at the mark, once, for the mark it was
+// read for.
+func (q *Queries) RecordPriceBaseline(ctx context.Context, arg RecordPriceBaselineParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordPriceBaseline,
+		arg.Currency,
+		arg.Amount,
+		arg.CustomerID,
+		arg.VariantID,
+		arg.MarkedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const unmarkPriceAlert = `-- name: UnmarkPriceAlert :execrows
+UPDATE customer_wishlist_item
+SET price_alert = false, price_alert_marked_at = NULL, price_alert_region_id = NULL,
+    price_alert_channels = NULL, price_alert_currency = NULL, price_alert_amount = NULL
+WHERE customer_id = $1 AND variant_id = $2 AND price_alert
+`
+
+type UnmarkPriceAlertParams struct {
+	CustomerID string
+	VariantID  string
+}
+
+func (q *Queries) UnmarkPriceAlert(ctx context.Context, arg UnmarkPriceAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unmarkPriceAlert, arg.CustomerID, arg.VariantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const unmarkStockAlert = `-- name: UnmarkStockAlert :execrows

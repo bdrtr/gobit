@@ -13,15 +13,15 @@ import (
 
 // fakePasser answers with scripted counts.
 type fakePasser struct {
-	armed, mailed int
-	err           error
-	passes        int
+	armed, recorded, mailed int
+	err                     error
+	passes                  int
 }
 
-func (f *fakePasser) Pass(context.Context) (armed, mailed int, err error) {
+func (f *fakePasser) Pass(context.Context) (armed, recorded, mailed int, err error) {
 	f.passes++
 
-	return f.armed, f.mailed, f.err
+	return f.armed, f.recorded, f.mailed, f.err
 }
 
 // TestARunMakesOnePassAndSaysSo: the operator's line counts the mails and the
@@ -30,12 +30,13 @@ func TestARunMakesOnePassAndSaysSo(t *testing.T) {
 	t.Parallel()
 
 	ctx := jobreport.WithReporter(context.Background())
-	fake := &fakePasser{armed: 2, mailed: 3}
+	fake := &fakePasser{armed: 2, recorded: 4, mailed: 3}
 
 	require.NoError(t, Definition(fake, nil).Run(ctx))
 
 	assert.Equal(t, 1, fake.passes)
-	assert.Equal(t, "mailed 3 stock alerts; armed 2 marks that ran out", jobreport.Detail(ctx))
+	assert.Equal(t, "mailed 3 wishlist alerts; armed 2 marks that ran out; recorded 4 prices at their mark",
+		jobreport.Detail(ctx))
 }
 
 // TestAFailedRunReportsWhatItMailed: the mails that went, went.
@@ -49,7 +50,8 @@ func TestAFailedRunReportsWhatItMailed(t *testing.T) {
 
 	require.Error(t, err)
 	assert.True(t, coreerrors.HasKind(err, coreerrors.KindUnavailable))
-	assert.Equal(t, "mailed 1 stock alerts; armed 0 marks that ran out", jobreport.Detail(ctx))
+	assert.Equal(t, "mailed 1 wishlist alerts; armed 0 marks that ran out; recorded 0 prices at their mark",
+		jobreport.Detail(ctx))
 }
 
 // TestTheDefinitionFitsItsInterval: a run cannot outlast the gap to the next.

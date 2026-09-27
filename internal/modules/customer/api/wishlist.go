@@ -22,6 +22,20 @@ type wishlistItemDTO struct {
 	// StockAlert says the shopper asked to be told once when the variant is
 	// back in stock (ADR 0215).
 	StockAlert bool `json:"stock_alert"`
+	// PriceAlert says the shopper asked to be told once when the variant's
+	// price drops (ADR 0216), in the region PriceAlertRegionID names; the
+	// price at the mark is PriceAlertAmount in PriceAlertCurrencyCode once the
+	// alert job has recorded it.
+	PriceAlert             bool   `json:"price_alert"`
+	PriceAlertRegionID     string `json:"price_alert_region_id,omitempty"`
+	PriceAlertCurrencyCode string `json:"price_alert_currency_code,omitempty"`
+	PriceAlertAmount       *int64 `json:"price_alert_amount,omitempty"`
+}
+
+// priceAlertRequest is the body that marks an item's price.
+type priceAlertRequest struct {
+	// RegionID is the region the price is asked in; required.
+	RegionID string `json:"region_id"`
 }
 
 // toWishlistItemDTO converts the domain model into the response body.
@@ -31,6 +45,11 @@ func toWishlistItemDTO(item models.WishlistItem) wishlistItemDTO {
 		VariantID:  item.VariantID,
 		CreatedAt:  item.CreatedAt,
 		StockAlert: item.StockAlert,
+
+		PriceAlert:             item.PriceAlert,
+		PriceAlertRegionID:     item.PriceAlertRegionID,
+		PriceAlertCurrencyCode: item.PriceAlertCurrency,
+		PriceAlertAmount:       item.PriceAlertAmount,
 	}
 }
 
@@ -133,6 +152,46 @@ func (h *Handler) storeUnmarkStockAlert(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if err := h.svc.UnmarkStockAlert(r.Context(), customerID, pathParam(r, paramVariantID)); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	corehttp.WriteJSON(r.Context(), w, http.StatusNoContent, nil)
+}
+
+// storeMarkPriceAlert asks for the proven customer to be told once when the
+// variant's price drops (PUT
+// /store/v1/customers/{id}/wishlist/{variant_id}/price-alert, ADR 0216).
+func (h *Handler) storeMarkPriceAlert(w http.ResponseWriter, r *http.Request) {
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	var body priceAlertRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	item, err := h.svc.MarkPriceAlert(r.Context(), customerID, pathParam(r, paramVariantID), body.RegionID,
+		corehttp.SalesChannelIDs(r.Context()))
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	writeItem(w, r, http.StatusOK, toWishlistItemDTO(item))
+}
+
+// storeUnmarkPriceAlert takes the price mark off and leaves the variant on the
+// list (DELETE /store/v1/customers/{id}/wishlist/{variant_id}/price-alert).
+func (h *Handler) storeUnmarkPriceAlert(w http.ResponseWriter, r *http.Request) {
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	if err := h.svc.UnmarkPriceAlert(r.Context(), customerID, pathParam(r, paramVariantID)); err != nil {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}

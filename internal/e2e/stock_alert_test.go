@@ -44,13 +44,13 @@ func TestAWishlistVariantBackInStockIsMailedOnce(t *testing.T) {
 	require.Equal(t, http.StatusOK, marked.Code, marked.Body.String())
 	assert.Equal(t, true, storefrontData(t, marked)["stock_alert"])
 
-	_, _, err := stockAlerts.Pass(ctx)
+	_, _, _, err := stockAlerts.Pass(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, notificationSpy.stockAlertMails(variantID), "out of stock mails nothing")
 
 	_, err = inventorySvc.SetInventoryLevel(ctx, itemID, stockLocationID, 5)
 	require.NoError(t, err)
-	_, _, err = stockAlerts.Pass(ctx)
+	_, _, _, err = stockAlerts.Pass(ctx)
 	require.NoError(t, err)
 
 	mails := notificationSpy.stockAlertMails(variantID)
@@ -62,7 +62,7 @@ func TestAWishlistVariantBackInStockIsMailedOnce(t *testing.T) {
 	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
 	assert.Contains(t, list.Body.String(), `"stock_alert":false`, "the mail cleared the mark")
 
-	_, _, err = stockAlerts.Pass(ctx)
+	_, _, _, err = stockAlerts.Pass(ctx)
 	require.NoError(t, err)
 	assert.Len(t, notificationSpy.stockAlertMails(variantID), 1, "once")
 }

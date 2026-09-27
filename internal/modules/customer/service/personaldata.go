@@ -55,6 +55,7 @@ const (
 	columnCountryCode = "country_code"
 	columnVariantID   = "variant_id"
 	columnStockAlert  = "stock_alert"
+	columnPriceAlert  = "price_alert"
 )
 
 // personalDataHoldings is every place this module keeps personal data.
@@ -177,6 +178,11 @@ var personalDataHoldings = []personaldata.Holding{
 	{
 		Table: TableWishlist, Column: columnStockAlert, Kind: personaldata.Named,
 		Why:       "the person asked to be mailed once when the saved variant is back in stock (ADR 0215)",
+		OnErasure: personaldata.Emptied,
+	},
+	{
+		Table: TableWishlist, Column: columnPriceAlert, Kind: personaldata.Named,
+		Why:       "the person asked to be mailed once when the saved variant's price drops (ADR 0216)",
 		OnErasure: personaldata.Emptied,
 	},
 }

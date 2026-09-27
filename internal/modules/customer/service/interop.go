@@ -102,46 +102,83 @@ func (s *Service) RegisterGuestCustomer(ctx context.Context, email, firstName, l
 	return customer.ID, nil
 }
 
-// interopStockAlert is one marked wishlist item as the stock alert flow reads
-// it (ADR 0215).
+// interopWishlistAlert is one marked wishlist item as the alert flow reads it
+// (ADR 0215, ADR 0216). The stock fields mean something when stock_alert is
+// true, the price fields when price_alert is.
 //
 //	{"customer_id": "cus_...", "variant_id": "variant_...",
-//	 "sales_channel_ids": ["sc_..."] or null, "armed_at": "RFC 3339" or null}
-type interopStockAlert struct {
+//	 "stock_alert": true, "sales_channel_ids": ["sc_..."] or null, "armed_at": "RFC 3339" or null,
+//	 "price_alert": true, "price_marked_at": "RFC 3339" or null, "price_region_id": "reg_...",
+//	 "price_sales_channel_ids": ["sc_..."] or null, "price_currency_code": "TRY",
+//	 "price_amount": 1000 or null}
+type interopWishlistAlert struct {
 	CustomerID      string     `json:"customer_id"`
 	VariantID       string     `json:"variant_id"`
+	StockAlert      bool       `json:"stock_alert"`
 	SalesChannelIDs []string   `json:"sales_channel_ids"`
 	ArmedAt         *time.Time `json:"armed_at"`
+
+	PriceAlert           bool       `json:"price_alert"`
+	PriceMarkedAt        *time.Time `json:"price_marked_at"`
+	PriceRegionID        string     `json:"price_region_id,omitempty"`
+	PriceSalesChannelIDs []string   `json:"price_sales_channel_ids"`
+	PriceCurrencyCode    string     `json:"price_currency_code,omitempty"`
+	PriceAmount          *int64     `json:"price_amount"`
 }
 
-// maxStockAlertPage is the most marked items one read returns.
-const maxStockAlertPage = 500
+// maxAlertPage is the most marked items one read returns.
+const maxAlertPage = 500
 
-// StockAlertsJSON pages the marked wishlist items of live customers after the
-// given key, in key order, as a JSON array of [interopStockAlert] (ADR 0215).
-func (s *Service) StockAlertsJSON(
+// WishlistAlertsJSON pages the wishlist items of live customers marked for
+// their stock or their price, after the given key, in key order, as a JSON
+// array of [interopWishlistAlert].
+func (s *Service) WishlistAlertsJSON(
 	ctx context.Context, afterCustomerID, afterVariantID string, limit int,
 ) (json.RawMessage, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	if limit <= 0 || limit > maxStockAlertPage {
+	if limit <= 0 || limit > maxAlertPage {
 		return nil, errors.Invalid(CodeInvalidInput,
-			"a page of stock alerts holds between 1 and %d items, %d asked", maxStockAlertPage, limit)
+			"a page of wishlist alerts holds between 1 and %d items, %d asked", maxAlertPage, limit)
 	}
-	items, err := s.repo.ListStockAlerts(ctx, afterCustomerID, afterVariantID, int32(limit))
+	items, err := s.repo.ListAlerts(ctx, afterCustomerID, afterVariantID, int32(limit))
 	if err != nil {
 		return nil, err
 	}
-	out := make([]interopStockAlert, 0, len(items))
+	out := make([]interopWishlistAlert, 0, len(items))
 	for i := range items {
-		out = append(out, interopStockAlert{
-			CustomerID: items[i].CustomerID, VariantID: items[i].VariantID,
-			SalesChannelIDs: items[i].StockAlertChannels, ArmedAt: items[i].StockAlertArmedAt,
+		item := &items[i]
+		out = append(out, interopWishlistAlert{
+			CustomerID: item.CustomerID, VariantID: item.VariantID,
+			StockAlert: item.StockAlert, SalesChannelIDs: item.StockAlertChannels, ArmedAt: item.StockAlertArmedAt,
+			PriceAlert: item.PriceAlert, PriceMarkedAt: item.PriceAlertMarkedAt,
+			PriceRegionID: item.PriceAlertRegionID, PriceSalesChannelIDs: item.PriceAlertChannels,
+			PriceCurrencyCode: item.PriceAlertCurrency, PriceAmount: item.PriceAlertAmount,
 		})
 	}
 
 	return json.Marshal(out)
+}
+
+// RecordPriceBaseline records the price at the mark named by markedAt, once,
+// and says whether this call did (ADR 0216).
+func (s *Service) RecordPriceBaseline(
+	ctx context.Context, customerID, variantID string, markedAt time.Time, currency string, amount int64,
+) (bool, error) {
+	if err := s.ready(); err != nil {
+		return false, err
+	}
+	return s.repo.RecordPriceBaseline(ctx, customerID, variantID, markedAt, currency, amount)
+}
+
+// ClearPriceAlert takes the price mark off once its mail went, only while it
+// is the mark named by markedAt, and says whether this call did.
+func (s *Service) ClearPriceAlert(ctx context.Context, customerID, variantID string, markedAt time.Time) (bool, error) {
+	if err := s.ready(); err != nil {
+		return false, err
+	}
+	return s.repo.ClearPriceAlert(ctx, customerID, variantID, markedAt)
 }
 
 // ArmStockAlert records that a marked variant was seen out of stock, and says

@@ -123,21 +123,98 @@ func (r *Repo) UnmarkStockAlert(ctx context.Context, customerID, variantID strin
 	})
 }
 
-// ListStockAlerts pages the marked items of live customers after the given
-// key, in key order.
-func (r *Repo) ListStockAlerts(
+// ListAlerts pages the items of live customers marked for their stock or their
+// price after the given key, in key order.
+func (r *Repo) ListAlerts(
 	ctx context.Context, afterCustomerID, afterVariantID string, limit int32,
 ) ([]models.WishlistItem, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
 	}
-	rows, err := r.q.ListStockAlerts(ctx, customerdb.ListStockAlertsParams{
+	rows, err := r.q.ListAlerts(ctx, customerdb.ListAlertsParams{
 		AfterCustomerID: afterCustomerID, AfterVariantID: afterVariantID, RowLimit: limit,
 	})
 	if err != nil {
-		return nil, wrapDB(err, "the stock alerts could not be read")
+		return nil, wrapDB(err, "the wishlist alerts could not be read")
 	}
 	return toWishlistItems(rows), nil
+}
+
+// MarkPriceAlert puts the variant on the list if it is not there, under the
+// same lock and cap as [Repo.SaveToWishlist], and marks its price (ADR 0216).
+func (r *Repo) MarkPriceAlert(
+	ctx context.Context, customerID, variantID, regionID string, channels []string, limit int64, now time.Time,
+) (models.WishlistItem, error) {
+	var out models.WishlistItem
+
+	err := r.inTx(ctx, func(q *customerdb.Queries) error {
+		if _, err := saveUnderLock(ctx, q, customerID, variantID, limit, now); err != nil {
+			return err
+		}
+		row, err := q.MarkPriceAlert(ctx, customerdb.MarkPriceAlertParams{
+			MarkedAt: fromTime(now), RegionID: &regionID, Channels: channels,
+			CustomerID: customerID, VariantID: variantID,
+		})
+		if err != nil {
+			return wrapDB(err, "the price alert could not be set: %s", customerID)
+		}
+		out = toWishlistItem(row)
+
+		return nil
+	})
+	if err != nil {
+		return models.WishlistItem{}, err
+	}
+	return out, nil
+}
+
+// UnmarkPriceAlert clears the price mark and leaves the item on the list.
+func (r *Repo) UnmarkPriceAlert(ctx context.Context, customerID, variantID string) error {
+	return r.inTx(ctx, func(q *customerdb.Queries) error {
+		if _, err := q.GetCustomerForUpdate(ctx, customerID); err != nil {
+			return notFoundOr(err, CodeCustomerNotFound, "customer not found: %s", customerID)
+		}
+		if _, err := q.UnmarkPriceAlert(ctx, customerdb.UnmarkPriceAlertParams{
+			CustomerID: customerID, VariantID: variantID,
+		}); err != nil {
+			return wrapDB(err, "the price alert could not be cleared: %s", customerID)
+		}
+
+		return nil
+	})
+}
+
+// RecordPriceBaseline records the price at the mark named by markedAt, once,
+// and says whether it did.
+func (r *Repo) RecordPriceBaseline(
+	ctx context.Context, customerID, variantID string, markedAt time.Time, currency string, amount int64,
+) (bool, error) {
+	if err := r.ready(); err != nil {
+		return false, err
+	}
+	n, err := r.q.RecordPriceBaseline(ctx, customerdb.RecordPriceBaselineParams{
+		Currency: &currency, Amount: &amount, CustomerID: customerID, VariantID: variantID,
+		MarkedAt: fromTime(markedAt),
+	})
+	if err != nil {
+		return false, wrapDB(err, "the price at the mark could not be recorded: %s", customerID)
+	}
+	return n > 0, nil
+}
+
+// ClearPriceAlert clears a price mark whose mail went, only while it is the
+// mark named by markedAt, and says whether it did.
+func (r *Repo) ClearPriceAlert(ctx context.Context, customerID, variantID string, markedAt time.Time) (bool, error) {
+	if err := r.ready(); err != nil {
+		return false, err
+	}
+	n, err := r.q.ClearPriceAlert(ctx, customerdb.ClearPriceAlertParams{
+		CustomerID: customerID, VariantID: variantID, PriceAlertMarkedAt: fromTime(markedAt),
+	})
+	if err != nil {
+		return false, wrapDB(err, "the price alert could not be cleared: %s", customerID)
+	}
+	return n > 0, nil
 }
 
 // ArmStockAlert records that a marked variant was seen out of stock, and says
@@ -235,7 +312,22 @@ func toWishlistItem(row customerdb.CustomerWishlistItem) models.WishlistItem {
 		StockAlert:         row.StockAlert,
 		StockAlertChannels: row.StockAlertChannels,
 		StockAlertArmedAt:  toTimePtr(row.StockAlertArmedAt),
+
+		PriceAlert:         row.PriceAlert,
+		PriceAlertMarkedAt: toTimePtr(row.PriceAlertMarkedAt),
+		PriceAlertRegionID: derefString(row.PriceAlertRegionID),
+		PriceAlertChannels: row.PriceAlertChannels,
+		PriceAlertCurrency: derefString(row.PriceAlertCurrency),
+		PriceAlertAmount:   row.PriceAlertAmount,
 	}
+}
+
+// derefString reads a nullable text column; NULL is the empty string.
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // toWishlistItems converts generated rows into domain models.

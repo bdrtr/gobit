@@ -77,13 +77,16 @@ var notPersonalColumns = map[string][]string{
 	"customer_group_customer": {
 		"customer_id", "customer_group_id", "created_at",
 	},
-	// The wishlist's variant id and its stock alert are declared and the row is
-	// deleted by an erasure (ADR 0190, ADR 0215); what is left is the owner's
-	// id, the moment it was saved, and the alert's working state — the shop's
-	// sales channels it is judged in and the moment the shop saw the variant
-	// run out — which say nothing the declared mark does not.
+	// The wishlist's variant id and its two alerts are declared and the row is
+	// deleted by an erasure (ADR 0190, ADR 0215, ADR 0216); what is left is the
+	// owner's id, the moment it was saved, and the alerts' working state — the
+	// shop's sales channels and region they are judged in, the moments the shop
+	// armed and marked them, and the shop's own price at the mark — which say
+	// nothing the declared marks do not.
 	"customer_wishlist_item": {
 		"customer_id", "created_at", "stock_alert_channels", "stock_alert_armed_at",
+		"price_alert_marked_at", "price_alert_region_id", "price_alert_channels",
+		"price_alert_currency", "price_alert_amount",
 	},
 }
 
