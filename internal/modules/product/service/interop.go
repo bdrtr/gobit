@@ -159,3 +159,18 @@ func decodeStoreProductsRequest(raw json.RawMessage) (interopStoreProductsReques
 	}
 	return out, nil
 }
+
+// VariantsInStock answers, for each of the given variants, what the storefront
+// would show its shopper in the given sales channels (ADR 0215): true when the
+// variant's product is published and visible in the channels and the variant
+// is in stock by ADR 0040's definition over the warehouses those channels
+// serve.
+//
+// A variant that is unknown, deleted, unpublished or not visible is absent,
+// which reads as false. salesChannelIDs carries the listing's meaning: nil
+// applies no channel, and an empty slice sees nothing.
+func (i *Interop) VariantsInStock(
+	ctx context.Context, variantIDs, salesChannelIDs []string,
+) (map[string]bool, error) {
+	return i.svc.VariantsInStock(ctx, variantIDs, salesChannelIDs)
+}

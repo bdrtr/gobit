@@ -11,6 +11,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const armStockAlert = `-- name: ArmStockAlert :execrows
+UPDATE customer_wishlist_item
+SET stock_alert_armed_at = now()
+WHERE customer_id = $1 AND variant_id = $2 AND stock_alert AND stock_alert_armed_at IS NULL
+`
+
+type ArmStockAlertParams struct {
+	CustomerID string
+	VariantID  string
+}
+
+// ArmStockAlert records that a marked variant was seen out of stock.
+func (q *Queries) ArmStockAlert(ctx context.Context, arg ArmStockAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, armStockAlert, arg.CustomerID, arg.VariantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const clearStockAlert = `-- name: ClearStockAlert :execrows
+UPDATE customer_wishlist_item
+SET stock_alert = false, stock_alert_channels = NULL, stock_alert_armed_at = NULL
+WHERE customer_id = $1 AND variant_id = $2 AND stock_alert_armed_at = $3
+`
+
+type ClearStockAlertParams struct {
+	CustomerID        string
+	VariantID         string
+	StockAlertArmedAt pgtype.Timestamptz
+}
+
+// ClearStockAlert clears a mark once its mail went, only if it is still the
+// arming the mail was sent for.
+func (q *Queries) ClearStockAlert(ctx context.Context, arg ClearStockAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, clearStockAlert, arg.CustomerID, arg.VariantID, arg.StockAlertArmedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countWishlistItems = `-- name: CountWishlistItems :one
 SELECT count(*)::bigint AS item_count FROM customer_wishlist_item
 WHERE customer_id = $1
@@ -57,7 +99,7 @@ func (q *Queries) DeleteWishlistOfCustomer(ctx context.Context, customerID strin
 }
 
 const getWishlistItem = `-- name: GetWishlistItem :one
-SELECT customer_id, variant_id, created_at FROM customer_wishlist_item
+SELECT customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at FROM customer_wishlist_item
 WHERE customer_id = $1 AND variant_id = $2
 `
 
@@ -69,7 +111,14 @@ type GetWishlistItemParams struct {
 func (q *Queries) GetWishlistItem(ctx context.Context, arg GetWishlistItemParams) (CustomerWishlistItem, error) {
 	row := q.db.QueryRow(ctx, getWishlistItem, arg.CustomerID, arg.VariantID)
 	var i CustomerWishlistItem
-	err := row.Scan(&i.CustomerID, &i.VariantID, &i.CreatedAt)
+	err := row.Scan(
+		&i.CustomerID,
+		&i.VariantID,
+		&i.CreatedAt,
+		&i.StockAlert,
+		&i.StockAlertChannels,
+		&i.StockAlertArmedAt,
+	)
 	return i, err
 }
 
@@ -77,7 +126,7 @@ const insertWishlistItem = `-- name: InsertWishlistItem :one
 
 INSERT INTO customer_wishlist_item (customer_id, variant_id, created_at)
 VALUES ($1, $2, $3)
-RETURNING customer_id, variant_id, created_at
+RETURNING customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at
 `
 
 type InsertWishlistItemParams struct {
@@ -93,12 +142,62 @@ type InsertWishlistItemParams struct {
 func (q *Queries) InsertWishlistItem(ctx context.Context, arg InsertWishlistItemParams) (CustomerWishlistItem, error) {
 	row := q.db.QueryRow(ctx, insertWishlistItem, arg.CustomerID, arg.VariantID, arg.CreatedAt)
 	var i CustomerWishlistItem
-	err := row.Scan(&i.CustomerID, &i.VariantID, &i.CreatedAt)
+	err := row.Scan(
+		&i.CustomerID,
+		&i.VariantID,
+		&i.CreatedAt,
+		&i.StockAlert,
+		&i.StockAlertChannels,
+		&i.StockAlertArmedAt,
+	)
 	return i, err
 }
 
+const listStockAlerts = `-- name: ListStockAlerts :many
+SELECT w.customer_id, w.variant_id, w.created_at, w.stock_alert, w.stock_alert_channels, w.stock_alert_armed_at FROM customer_wishlist_item w
+JOIN customer c ON c.id = w.customer_id
+WHERE w.stock_alert AND c.deleted_at IS NULL
+  AND (w.customer_id, w.variant_id) > ($1::text, $2::text)
+ORDER BY w.customer_id, w.variant_id
+LIMIT $3
+`
+
+type ListStockAlertsParams struct {
+	AfterCustomerID string
+	AfterVariantID  string
+	RowLimit        int32
+}
+
+// ListStockAlerts pages the marked items of live customers in key order.
+func (q *Queries) ListStockAlerts(ctx context.Context, arg ListStockAlertsParams) ([]CustomerWishlistItem, error) {
+	rows, err := q.db.Query(ctx, listStockAlerts, arg.AfterCustomerID, arg.AfterVariantID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CustomerWishlistItem{}
+	for rows.Next() {
+		var i CustomerWishlistItem
+		if err := rows.Scan(
+			&i.CustomerID,
+			&i.VariantID,
+			&i.CreatedAt,
+			&i.StockAlert,
+			&i.StockAlertChannels,
+			&i.StockAlertArmedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWishlistForDisclosure = `-- name: ListWishlistForDisclosure :many
-SELECT customer_id, variant_id, created_at FROM customer_wishlist_item
+SELECT customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at FROM customer_wishlist_item
 WHERE customer_id = ANY ($1::text[])
 ORDER BY customer_id, created_at, variant_id
 `
@@ -112,7 +211,14 @@ func (q *Queries) ListWishlistForDisclosure(ctx context.Context, customerIds []s
 	items := []CustomerWishlistItem{}
 	for rows.Next() {
 		var i CustomerWishlistItem
-		if err := rows.Scan(&i.CustomerID, &i.VariantID, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.CustomerID,
+			&i.VariantID,
+			&i.CreatedAt,
+			&i.StockAlert,
+			&i.StockAlertChannels,
+			&i.StockAlertArmedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -124,7 +230,7 @@ func (q *Queries) ListWishlistForDisclosure(ctx context.Context, customerIds []s
 }
 
 const listWishlistItems = `-- name: ListWishlistItems :many
-SELECT customer_id, variant_id, created_at FROM customer_wishlist_item
+SELECT customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at FROM customer_wishlist_item
 WHERE customer_id = $1
 ORDER BY created_at DESC, variant_id
 `
@@ -139,7 +245,14 @@ func (q *Queries) ListWishlistItems(ctx context.Context, customerID string) ([]C
 	items := []CustomerWishlistItem{}
 	for rows.Next() {
 		var i CustomerWishlistItem
-		if err := rows.Scan(&i.CustomerID, &i.VariantID, &i.CreatedAt); err != nil {
+		if err := rows.Scan(
+			&i.CustomerID,
+			&i.VariantID,
+			&i.CreatedAt,
+			&i.StockAlert,
+			&i.StockAlertChannels,
+			&i.StockAlertArmedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -148,4 +261,56 @@ func (q *Queries) ListWishlistItems(ctx context.Context, customerID string) ([]C
 		return nil, err
 	}
 	return items, nil
+}
+
+const markStockAlert = `-- name: MarkStockAlert :one
+
+UPDATE customer_wishlist_item
+SET stock_alert = true,
+    stock_alert_channels = $1::text[],
+    stock_alert_armed_at = NULL
+WHERE customer_id = $2 AND variant_id = $3
+RETURNING customer_id, variant_id, created_at, stock_alert, stock_alert_channels, stock_alert_armed_at
+`
+
+type MarkStockAlertParams struct {
+	Channels   []string
+	CustomerID string
+	VariantID  string
+}
+
+// A wishlist item's stock alert (ADR 0215).
+// MarkStockAlert marks an item and forgets any earlier arming: a mark set again
+// waits again to see the variant run out.
+func (q *Queries) MarkStockAlert(ctx context.Context, arg MarkStockAlertParams) (CustomerWishlistItem, error) {
+	row := q.db.QueryRow(ctx, markStockAlert, arg.Channels, arg.CustomerID, arg.VariantID)
+	var i CustomerWishlistItem
+	err := row.Scan(
+		&i.CustomerID,
+		&i.VariantID,
+		&i.CreatedAt,
+		&i.StockAlert,
+		&i.StockAlertChannels,
+		&i.StockAlertArmedAt,
+	)
+	return i, err
+}
+
+const unmarkStockAlert = `-- name: UnmarkStockAlert :execrows
+UPDATE customer_wishlist_item
+SET stock_alert = false, stock_alert_channels = NULL, stock_alert_armed_at = NULL
+WHERE customer_id = $1 AND variant_id = $2 AND stock_alert
+`
+
+type UnmarkStockAlertParams struct {
+	CustomerID string
+	VariantID  string
+}
+
+func (q *Queries) UnmarkStockAlert(ctx context.Context, arg UnmarkStockAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, unmarkStockAlert, arg.CustomerID, arg.VariantID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

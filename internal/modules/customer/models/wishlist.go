@@ -29,4 +29,11 @@ type WishlistItem struct {
 	// CreatedAt is when the variant was first saved. Saving it again does not
 	// move it.
 	CreatedAt time.Time
+	// StockAlert says the customer asked to be told once when the variant is
+	// back in stock (ADR 0215); StockAlertChannels are the sales channels the
+	// request carried, nil for none, and StockAlertArmedAt is when the variant
+	// was first seen out of stock after the mark.
+	StockAlert         bool
+	StockAlertChannels []string
+	StockAlertArmedAt  *time.Time
 }

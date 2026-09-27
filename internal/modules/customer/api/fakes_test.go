@@ -45,6 +45,8 @@ type stubCustomer struct {
 	saveToWishlistFn     func(ctx context.Context, customerID, variantID string) (models.WishlistItem, error)
 	listWishlistFn       func(ctx context.Context, customerID string) ([]models.WishlistItem, error)
 	removeFromWishlistFn func(ctx context.Context, customerID, variantID string) error
+	markStockAlertFn     func(ctx context.Context, customerID, variantID string, channels []string) (models.WishlistItem, error)
+	unmarkStockAlertFn   func(ctx context.Context, customerID, variantID string) error
 
 	// son çağrının argümanları; handler'ın doğru değerleri ilettiğini kanıtlar.
 	sonCustomerID string

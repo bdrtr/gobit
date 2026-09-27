@@ -115,6 +115,7 @@ var customerRoutes = map[string]struct{}{
 	"/store/v1/customers/{id}/addresses/{address_id}/default-shipping": {},
 	"/store/v1/customers/{id}/wishlist":                                {},
 	"/store/v1/customers/{id}/wishlist/{variant_id}":                   {},
+	"/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert":       {},
 	"/store/v1/b2b/customers/{customer_id}/company":                    {},
 	"/store/v1/b2b/customers/{customer_id}/employee":                   {},
 }

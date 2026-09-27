@@ -323,6 +323,7 @@ func addressValues(a models.CustomerAddress) map[string]any {
 // wishlistValues is what a wishlist row holds, keyed by declared column.
 func wishlistValues(w models.WishlistItem) map[string]any {
 	return map[string]any{
-		columnVariantID: w.VariantID,
+		columnVariantID:  w.VariantID,
+		columnStockAlert: w.StockAlert,
 	}
 }

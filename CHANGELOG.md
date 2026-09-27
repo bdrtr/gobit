@@ -109,6 +109,19 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A wishlist item can ask for its stock** (ADR 0215). **For API consumers:**
+  `PUT /store/v1/customers/{id}/wishlist/{variant_id}/stock-alert` (proven
+  customer) saves the variant if needed and marks it with the request's sales
+  channels; `DELETE` on the same path takes the mark off. Wishlist items carry
+  `stock_alert`. **For operators:** a new `stock-alert` job mails the customer
+  once when the storefront shows a marked variant back in stock after having
+  shown it out, and clears the mark; customer migration 000004 adds the mark,
+  and rolling it back forgets the marks. **For plugin authors:** a notification
+  provider has to know `wishlist.back_in_stock` (data `variant_id`,
+  `variant_title`, `product_id`, `product_title`, `product_handle`), and
+  `product.interop` answers `VariantsInStock`. The mark is declared personal
+  data.
+
 - **A gift card can expire** (ADR 0214). **For operators:**
   `PAYMENT_GIFT_CARD_VALIDITY_DAYS` (default 0, never; at most 36500) gives
   every sold card, and every issued card whose operator names no moment, that

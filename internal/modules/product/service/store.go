@@ -999,3 +999,54 @@ func asRecord(v any) query.Record {
 		return nil
 	}
 }
+
+// VariantsInStock answers, for each variant, the storefront's in-stock badge in
+// the given sales channels (ADR 0215).
+//
+// It is [Service.StoreProductsByIDs] read by variant rather than a rule of its
+// own: the variants' products go through the storefront's one path, so a
+// variant whose product is unpublished or invisible in the channels is absent,
+// and the badge is the one a shopper sees. The products are read [MaxLimit] at
+// a time.
+func (s *Service) VariantsInStock(ctx context.Context, variantIDs, salesChannelIDs []string) (map[string]bool, error) {
+	wanted, err := uniqueIDs("variant_ids", variantIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(wanted))
+	if len(wanted) == 0 {
+		return out, nil
+	}
+	variants, err := s.repo.ListVariantsByIDs(ctx, wanted)
+	if err != nil {
+		return nil, err
+	}
+	asked := make(map[string]bool, len(wanted))
+	for _, id := range wanted {
+		asked[id] = true
+	}
+	var productIDs []string
+	seen := map[string]bool{}
+	for i := range variants {
+		if !seen[variants[i].ProductID] {
+			seen[variants[i].ProductID] = true
+			productIDs = append(productIDs, variants[i].ProductID)
+		}
+	}
+	for start := 0; start < len(productIDs); start += MaxLimit {
+		products, err := s.StoreProductsByIDs(ctx, productIDs[start:min(start+MaxLimit, len(productIDs))],
+			salesChannelIDs)
+		if err != nil {
+			return nil, err
+		}
+		for i := range products {
+			for j := range products[i].Variants {
+				if variant := products[i].Variants[j]; asked[variant.ID] {
+					out[variant.ID] = variant.InStock
+				}
+			}
+		}
+	}
+
+	return out, nil
+}

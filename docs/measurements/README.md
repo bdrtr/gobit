@@ -145,3 +145,4 @@ truth: a report says what was true on the day it was taken.
 | [A delivery that was lost — measured 2026-09-27](0212-a-delivery-that-was-lost.md) | 100 |
 | [A card that was closed — measured 2026-09-27](0213-a-card-that-was-closed.md) | 116 |
 | [A card that ran out — measured 2026-09-27](0214-a-card-that-ran-out.md) | 98 |
+| [A variant that came back — measured 2026-09-27](0215-a-variant-that-came-back.md) | 93 |

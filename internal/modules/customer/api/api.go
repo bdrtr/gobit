@@ -138,6 +138,10 @@ type Customer interface {
 	ListWishlist(ctx context.Context, customerID string) ([]models.WishlistItem, error)
 	// RemoveFromWishlist takes a variant off the customer's wishlist.
 	RemoveFromWishlist(ctx context.Context, customerID, variantID string) error
+	// MarkStockAlert and UnmarkStockAlert set and clear an item's stock alert
+	// (ADR 0215).
+	MarkStockAlert(ctx context.Context, customerID, variantID string, channels []string) (models.WishlistItem, error)
+	UnmarkStockAlert(ctx context.Context, customerID, variantID string) error
 }
 
 // Handler customer modülünün HTTP handler kümesidir.
@@ -264,6 +268,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get("/store/v1/customers/{id}/wishlist", h.storeListWishlist)
 	r.Put("/store/v1/customers/{id}/wishlist/{variant_id}", h.storeSaveToWishlist)
 	r.Delete("/store/v1/customers/{id}/wishlist/{variant_id}", h.storeRemoveFromWishlist)
+	r.Put("/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", h.storeMarkStockAlert)
+	r.Delete("/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", h.storeUnmarkStockAlert)
 }
 
 // itemEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).

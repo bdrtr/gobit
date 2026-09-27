@@ -77,10 +77,13 @@ var notPersonalColumns = map[string][]string{
 	"customer_group_customer": {
 		"customer_id", "customer_group_id", "created_at",
 	},
-	// The wishlist's variant id is declared and its row deleted by an erasure
-	// (ADR 0190); what is left is the owner's id and the moment it was saved.
+	// The wishlist's variant id and its stock alert are declared and the row is
+	// deleted by an erasure (ADR 0190, ADR 0215); what is left is the owner's
+	// id, the moment it was saved, and the alert's working state — the shop's
+	// sales channels it is judged in and the moment the shop saw the variant
+	// run out — which say nothing the declared mark does not.
 	"customer_wishlist_item": {
-		"customer_id", "created_at",
+		"customer_id", "created_at", "stock_alert_channels", "stock_alert_armed_at",
 	},
 }
 

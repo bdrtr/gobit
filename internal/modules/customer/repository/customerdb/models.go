@@ -57,7 +57,10 @@ type CustomerGroupCustomer struct {
 }
 
 type CustomerWishlistItem struct {
-	CustomerID string
-	VariantID  string
-	CreatedAt  pgtype.Timestamptz
+	CustomerID         string
+	VariantID          string
+	CreatedAt          pgtype.Timestamptz
+	StockAlert         bool
+	StockAlertChannels []string
+	StockAlertArmedAt  pgtype.Timestamptz
 }

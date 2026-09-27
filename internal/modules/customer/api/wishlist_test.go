@@ -37,6 +37,22 @@ func (s *stubCustomer) RemoveFromWishlist(ctx context.Context, customerID, varia
 	return s.removeFromWishlistFn(ctx, customerID, variantID)
 }
 
+func (s *stubCustomer) MarkStockAlert(
+	ctx context.Context, customerID, variantID string, channels []string,
+) (models.WishlistItem, error) {
+	if s.markStockAlertFn == nil {
+		return models.WishlistItem{}, unset("MarkStockAlert")
+	}
+	return s.markStockAlertFn(ctx, customerID, variantID, channels)
+}
+
+func (s *stubCustomer) UnmarkStockAlert(ctx context.Context, customerID, variantID string) error {
+	if s.unmarkStockAlertFn == nil {
+		return unset("UnmarkStockAlert")
+	}
+	return s.unmarkStockAlertFn(ctx, customerID, variantID)
+}
+
 // TestAVariantIsSavedForTheProvenCustomer shows the save reaches the service
 // with the proven customer and the variant the path names, and answers with
 // the item.
@@ -67,6 +83,7 @@ func TestAVariantIsSavedForTheProvenCustomer(t *testing.T) {
 		"customer_id": provenCustomer,
 		"variant_id":  "variant_X",
 		"created_at":  "2026-09-26T10:00:00Z",
+		"stock_alert": false,
 	}, body.Data)
 }
 
@@ -157,4 +174,34 @@ func TestTheOperatorReadsAnyWishlist(t *testing.T) {
 	require.Len(t, body.Data, 1)
 	assert.Equal(t, "variant_X", body.Data[0]["variant_id"])
 	assert.Equal(t, int64(1), body.Count)
+}
+
+// TestAStockAlertCarriesTheRequestsChannels is ADR 0215: the mark is set for
+// the proven customer with the sales channels the request's key holds, which
+// is what the variant will be judged in stock over.
+func TestAStockAlertCarriesTheRequestsChannels(t *testing.T) {
+	t.Parallel()
+
+	var askedCustomer, askedVariant string
+	var askedChannels []string
+	svc := &stubCustomer{
+		markStockAlertFn: func(_ context.Context, customerID, variantID string, channels []string) (models.WishlistItem, error) {
+			askedCustomer, askedVariant, askedChannels = customerID, variantID, channels
+			return models.WishlistItem{CustomerID: customerID, VariantID: variantID, StockAlert: true}, nil
+		},
+	}
+	r := routerWithIdentity(svc, &fixedIdentity{customerID: provenCustomer})
+	ctx := corehttp.WithPrincipal(context.Background(), corehttp.Principal{
+		ID: "pk_1", Kind: "publishable_key", SalesChannelIDs: []string{"sc_ours"},
+	})
+	req := httptest.NewRequestWithContext(ctx, http.MethodPut,
+		"/store/v1/customers/"+provenCustomer+"/wishlist/variant_X/stock-alert", http.NoBody)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, provenCustomer, askedCustomer)
+	assert.Equal(t, "variant_X", askedVariant)
+	assert.Equal(t, []string{"sc_ours"}, askedChannels)
+	assert.Contains(t, rec.Body.String(), `"stock_alert":true`)
 }

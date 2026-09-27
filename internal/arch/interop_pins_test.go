@@ -70,6 +70,7 @@ import (
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
+	stockalertwf "github.com/bdrtr/gobit/internal/workflows/stockalert"
 	"github.com/bdrtr/gobit/plugins/searchpg"
 )
 
@@ -162,6 +163,12 @@ var (
 	// (ADR 0212), which the capture's path never did.
 	_ giftcardsalewf.Links  = link.LinkService(nil)
 	_ giftcardsalewf.Reader = query.Query(nil)
+
+	// The stock alert flow (ADR 0215).
+	_ stockalertwf.Customers = (*customersvc.Service)(nil)
+	_ stockalertwf.Catalog   = (*productsvc.Interop)(nil)
+	_ stockalertwf.Notifier  = (*notifsvc.Interop)(nil)
+	_ stockalertwf.Reader    = query.Query(nil)
 )
 
 // A PLUGIN resolving a MODULE's surface, and the CORE resolving one.

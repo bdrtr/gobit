@@ -28,6 +28,7 @@ import (
 	"github.com/bdrtr/gobit/internal/jobs/productimport"
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
 	"github.com/bdrtr/gobit/internal/jobs/scheduledpublish"
+	"github.com/bdrtr/gobit/internal/jobs/stockalert"
 )
 
 // jobsEnv points the binary at a database of its own and gives it the smallest
@@ -265,7 +266,7 @@ func TestEveryJobTheRootDeclaresCanBeBuiltAgainstARealInstallation(t *testing.T)
 
 	for _, name := range []string{
 		sagawatch.Name, paymentrecon.Name, outboxrelay.Name, scheduledpublish.Name, productimport.Name,
-		giftcardsweep.Name, giftcardexpiry.Name,
+		giftcardsweep.Name, giftcardexpiry.Name, stockalert.Name,
 	} {
 		definition, getErr := registry.Get(name)
 		require.NoError(t, getErr,

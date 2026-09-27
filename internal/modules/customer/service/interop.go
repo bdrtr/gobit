@@ -1,6 +1,12 @@
 package service
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+	"time"
+
+	"github.com/bdrtr/gobit/core/errors"
+)
 
 // This file is customer's CROSS-MODULE surface (ADR 0001).
 //
@@ -94,4 +100,65 @@ func (s *Service) RegisterGuestCustomer(ctx context.Context, email, firstName, l
 		return "", err
 	}
 	return customer.ID, nil
+}
+
+// interopStockAlert is one marked wishlist item as the stock alert flow reads
+// it (ADR 0215).
+//
+//	{"customer_id": "cus_...", "variant_id": "variant_...",
+//	 "sales_channel_ids": ["sc_..."] or null, "armed_at": "RFC 3339" or null}
+type interopStockAlert struct {
+	CustomerID      string     `json:"customer_id"`
+	VariantID       string     `json:"variant_id"`
+	SalesChannelIDs []string   `json:"sales_channel_ids"`
+	ArmedAt         *time.Time `json:"armed_at"`
+}
+
+// maxStockAlertPage is the most marked items one read returns.
+const maxStockAlertPage = 500
+
+// StockAlertsJSON pages the marked wishlist items of live customers after the
+// given key, in key order, as a JSON array of [interopStockAlert] (ADR 0215).
+func (s *Service) StockAlertsJSON(
+	ctx context.Context, afterCustomerID, afterVariantID string, limit int,
+) (json.RawMessage, error) {
+	if err := s.ready(); err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > maxStockAlertPage {
+		return nil, errors.Invalid(CodeInvalidInput,
+			"a page of stock alerts holds between 1 and %d items, %d asked", maxStockAlertPage, limit)
+	}
+	items, err := s.repo.ListStockAlerts(ctx, afterCustomerID, afterVariantID, int32(limit))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]interopStockAlert, 0, len(items))
+	for i := range items {
+		out = append(out, interopStockAlert{
+			CustomerID: items[i].CustomerID, VariantID: items[i].VariantID,
+			SalesChannelIDs: items[i].StockAlertChannels, ArmedAt: items[i].StockAlertArmedAt,
+		})
+	}
+
+	return json.Marshal(out)
+}
+
+// ArmStockAlert records that a marked variant was seen out of stock, and says
+// whether this call did.
+func (s *Service) ArmStockAlert(ctx context.Context, customerID, variantID string) (bool, error) {
+	if err := s.ready(); err != nil {
+		return false, err
+	}
+	return s.repo.ArmStockAlert(ctx, customerID, variantID)
+}
+
+// ClearStockAlert takes the mark off once its mail went, only while it is still
+// armed at the given moment, and says whether this call did: a customer who
+// marked the variant again meanwhile keeps the new mark.
+func (s *Service) ClearStockAlert(ctx context.Context, customerID, variantID string, armedAt time.Time) (bool, error) {
+	if err := s.ready(); err != nil {
+		return false, err
+	}
+	return s.repo.ClearStockAlert(ctx, customerID, variantID, armedAt)
 }

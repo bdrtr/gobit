@@ -54,6 +54,7 @@ const (
 	columnPostalCode  = "postal_code"
 	columnCountryCode = "country_code"
 	columnVariantID   = "variant_id"
+	columnStockAlert  = "stock_alert"
 )
 
 // personalDataHoldings is every place this module keeps personal data.
@@ -171,6 +172,11 @@ var personalDataHoldings = []personaldata.Holding{
 		// erasure deletes the row (ADR 0190).
 		Table: TableWishlist, Column: columnVariantID, Kind: personaldata.Named,
 		Why:       "a product variant the person saved to their wishlist; beside their customer id it says what they wanted",
+		OnErasure: personaldata.Emptied,
+	},
+	{
+		Table: TableWishlist, Column: columnStockAlert, Kind: personaldata.Named,
+		Why:       "the person asked to be mailed once when the saved variant is back in stock (ADR 0215)",
 		OnErasure: personaldata.Emptied,
 	},
 }

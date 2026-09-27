@@ -138,6 +138,14 @@ type Repository interface {
 	SaveToWishlist(ctx context.Context, customerID, variantID string, limit int64, now time.Time) (models.WishlistItem, error)
 	ListWishlist(ctx context.Context, customerID string) ([]models.WishlistItem, error)
 	RemoveFromWishlist(ctx context.Context, customerID, variantID string) error
+	// The wishlist's stock alert (ADR 0215).
+	MarkStockAlert(
+		ctx context.Context, customerID, variantID string, channels []string, limit int64, now time.Time,
+	) (models.WishlistItem, error)
+	UnmarkStockAlert(ctx context.Context, customerID, variantID string) error
+	ListStockAlerts(ctx context.Context, afterCustomerID, afterVariantID string, limit int32) ([]models.WishlistItem, error)
+	ArmStockAlert(ctx context.Context, customerID, variantID string) (bool, error)
+	ClearStockAlert(ctx context.Context, customerID, variantID string, armedAt time.Time) (bool, error)
 	WishlistForDisclosure(ctx context.Context, customerIDs []string) ([]models.WishlistItem, error)
 }
 

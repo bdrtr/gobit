@@ -31,6 +31,7 @@ import (
 	"github.com/bdrtr/gobit/internal/jobs/reviewsuggest"
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
 	"github.com/bdrtr/gobit/internal/jobs/scheduledpublish"
+	"github.com/bdrtr/gobit/internal/jobs/stockalert"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 	"github.com/bdrtr/gobit/internal/modules/product"
@@ -38,6 +39,7 @@ import (
 	reviewmodels "github.com/bdrtr/gobit/internal/modules/review/models"
 	reviewservice "github.com/bdrtr/gobit/internal/modules/review/service"
 	giftcardsalewf "github.com/bdrtr/gobit/internal/workflows/giftcardsale"
+	stockalertwf "github.com/bdrtr/gobit/internal/workflows/stockalert"
 )
 
 // paymentReconciler is the payment service as the reconciliation job needs it.
@@ -199,6 +201,16 @@ func registerJobs(
 			"the job runner could not resolve the payment service (%q)", payment.ServiceName)
 	}
 	if err := registry.Add(giftcardexpiry.Definition(expirer, log)); err != nil {
+		return nil, err
+	}
+	// The stock alert job mails the customers whose marked wishlist variant is
+	// back in stock (ADR 0215). It is registered unconditionally: with no mark
+	// it mails nothing, and says so.
+	alerts, err := stockalertwf.FromContainer(c, log)
+	if err != nil {
+		return nil, err
+	}
+	if err := registry.Add(stockalert.Definition(alerts, log)); err != nil {
 		return nil, err
 	}
 

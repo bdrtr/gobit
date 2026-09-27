@@ -57,6 +57,37 @@ func (s *Service) RemoveFromWishlist(ctx context.Context, customerID, variantID 
 	return s.repo.RemoveFromWishlist(ctx, customerID, variantID)
 }
 
+// MarkStockAlert asks for the customer to be told once when the variant is back
+// in stock (ADR 0215).
+//
+// The variant is put on the wishlist if it is not there, under the list's cap,
+// and the mark records the sales channels the storefront request carried:
+// whether the variant is in stock is answered over the warehouses those
+// channels serve. Marking again starts the wait again.
+func (s *Service) MarkStockAlert(
+	ctx context.Context, customerID, variantID string, channels []string,
+) (models.WishlistItem, error) {
+	if err := s.ready(); err != nil {
+		return models.WishlistItem{}, err
+	}
+	if err := requireWishlistIDs(customerID, variantID); err != nil {
+		return models.WishlistItem{}, err
+	}
+	return s.repo.MarkStockAlert(ctx, customerID, variantID, channels, models.MaxWishlistItems, s.clock())
+}
+
+// UnmarkStockAlert takes the mark off and leaves the variant on the list; an
+// item that is not marked is not an error.
+func (s *Service) UnmarkStockAlert(ctx context.Context, customerID, variantID string) error {
+	if err := s.ready(); err != nil {
+		return err
+	}
+	if err := requireWishlistIDs(customerID, variantID); err != nil {
+		return err
+	}
+	return s.repo.UnmarkStockAlert(ctx, customerID, variantID)
+}
+
 // requireWishlistIDs checks the customer id and the form of the variant id.
 //
 // The variant id carries no prefix check: the prefix is the product module's

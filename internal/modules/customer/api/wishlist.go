@@ -19,6 +19,9 @@ type wishlistItemDTO struct {
 	VariantID string `json:"variant_id"`
 	// CreatedAt is when the variant was first saved.
 	CreatedAt time.Time `json:"created_at"`
+	// StockAlert says the shopper asked to be told once when the variant is
+	// back in stock (ADR 0215).
+	StockAlert bool `json:"stock_alert"`
 }
 
 // toWishlistItemDTO converts the domain model into the response body.
@@ -27,6 +30,7 @@ func toWishlistItemDTO(item models.WishlistItem) wishlistItemDTO {
 		CustomerID: item.CustomerID,
 		VariantID:  item.VariantID,
 		CreatedAt:  item.CreatedAt,
+		StockAlert: item.StockAlert,
 	}
 }
 
@@ -94,4 +98,43 @@ func (h *Handler) listWishlist(w http.ResponseWriter, r *http.Request, customerI
 		return
 	}
 	writeItems(w, r, convertAll(items, toWishlistItemDTO))
+}
+
+// storeMarkStockAlert asks for the proven customer to be told once when the
+// variant is back in stock (PUT
+// /store/v1/customers/{id}/wishlist/{variant_id}/stock-alert, ADR 0215).
+//
+// The sales channels are the request's own, read the one way every storefront
+// read takes them: the variant is judged in stock over the warehouses those
+// channels serve, as the shopper's storefront shows it.
+func (h *Handler) storeMarkStockAlert(w http.ResponseWriter, r *http.Request) {
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	item, err := h.svc.MarkStockAlert(r.Context(), customerID, pathParam(r, paramVariantID),
+		corehttp.SalesChannelIDs(r.Context()))
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	writeItem(w, r, http.StatusOK, toWishlistItemDTO(item))
+}
+
+// storeUnmarkStockAlert takes the mark off and leaves the variant on the list
+// (DELETE /store/v1/customers/{id}/wishlist/{variant_id}/stock-alert).
+func (h *Handler) storeUnmarkStockAlert(w http.ResponseWriter, r *http.Request) {
+	customerID, err := h.storeCustomerID(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+
+	if err := h.svc.UnmarkStockAlert(r.Context(), customerID, pathParam(r, paramVariantID)); err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	corehttp.WriteJSON(r.Context(), w, http.StatusNoContent, nil)
 }

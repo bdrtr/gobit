@@ -150,6 +150,7 @@ import (
 	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
 	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
 	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
+	stockalertwf "github.com/bdrtr/gobit/internal/workflows/stockalert"
 )
 
 // postgresImage is the database image the tests share; the SAME version is used
@@ -426,6 +427,10 @@ var workflows *cartwf.Workflows
 // both of them from the same container verifies that production uses the same
 // container too.
 var orderWorkflows *checkoutwf.Workflows
+
+// stockAlerts is the stock alert flow the ground wires (ADR 0215); a scenario
+// runs its pass where production's job would.
+var stockAlerts *stockalertwf.Workflow
 
 // The identifiers of the fixture regions.
 var (
@@ -819,6 +824,11 @@ func setUpHarness(ctx context.Context) error {
 	}
 	if _, setupErr = giftcardsalewf.FromContainer(ctr, nil); setupErr != nil {
 		return fmt.Errorf("could not set up the gift card sale workflow: %w", setupErr)
+	}
+	// The stock alert flow runs on a job in production (ADR 0215); the ground
+	// keeps it to run a pass where a scenario needs one.
+	if stockAlerts, setupErr = stockalertwf.FromContainer(ctr, nil); setupErr != nil {
+		return fmt.Errorf("could not set up the stock alert workflow: %w", setupErr)
 	}
 
 	if err := setUpRegionFixtures(ctx); err != nil {

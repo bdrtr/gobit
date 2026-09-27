@@ -323,6 +323,14 @@ func anlatilanUclar() []ucBeklentisi {
 		ucBeklentisi{
 			metod: http.MethodDelete, yol: "/store/v1/customers/{id}/wishlist/{variant_id}", durum: "204",
 		},
+		// The stock alert (ADR 0215).
+		ucBeklentisi{
+			metod: http.MethodPut, yol: "/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", durum: "200",
+			yanit: wishlistItemDTO{},
+		},
+		ucBeklentisi{
+			metod: http.MethodDelete, yol: "/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", durum: "204",
+		},
 	)
 
 	return uclar
