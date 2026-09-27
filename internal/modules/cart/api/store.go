@@ -637,6 +637,9 @@ func (h *Handler) storeRemoveLineItem(w http.ResponseWriter, r *http.Request) {
 //   - payment_data IS THERE. It is free-form data passed to the provider as it
 //     is (card token, return address); by definition it is the client's
 //     information.
+//   - gift_card_code IS THERE. A gift card is a bearer credential the customer
+//     holds, and presenting it is the customer's choice; the card pays what it
+//     holds and payment_provider_id pays the rest (ADR 0209).
 //   - expected_total IS THERE and is MANDATORY; the reasoning is in the field's
 //     godoc.
 //   - email IS NOT THERE. The cart's contact address is already held on the cart
@@ -657,6 +660,8 @@ type completeCartRequest struct {
 	PaymentProviderID string `json:"payment_provider_id"`
 	// PaymentData is passed to the provider as it is; it is optional.
 	PaymentData json.RawMessage `json:"payment_data"`
+	// GiftCardCode is a gift card that pays first; it is optional (ADR 0209).
+	GiftCardCode string `json:"gift_card_code"`
 	// ExpectedTotal is the grand total the customer APPROVED (minor unit); it is
 	// MANDATORY.
 	//
@@ -690,6 +695,7 @@ type completeCartFlowRequest struct {
 	CartID            string          `json:"cart_id"`
 	PaymentProviderID string          `json:"payment_provider_id"`
 	PaymentData       json.RawMessage `json:"payment_data,omitempty"`
+	GiftCardCode      string          `json:"gift_card_code,omitempty"`
 	Email             string          `json:"email,omitempty"`
 	// SalesChannelIDs are the channels the REQUEST holds, read from the
 	// publishable key rather than from the body.
@@ -789,6 +795,7 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 		CartID:            id,
 		PaymentProviderID: body.PaymentProviderID,
 		PaymentData:       body.PaymentData,
+		GiftCardCode:      body.GiftCardCode,
 		Email:             detail.Email,
 		// The channels come from the IDENTITY, next to the email that comes
 		// from our own service: neither is taken from the body, and for the

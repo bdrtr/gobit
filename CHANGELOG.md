@@ -96,6 +96,16 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A gift card pays first and a provider the rest** (ADR 0209). **For API
+  consumers:** `POST /store/v1/carts/{id}/complete` takes an optional
+  `gift_card_code`: the card holds what it has, up to the total, and
+  `payment_provider_id` pays the rest, which is not asked for when the card
+  covers the order. A code that cannot pay is refused before the order opens,
+  and `payment_provider_id` cannot be `gift_card` beside a code. A gift card now
+  holds what it has instead of declining: alone, a card short of the total is
+  answered 409 `checkout_workflow_payment_underauthorized` and its hold is
+  released. A refund of a split order goes back onto the card first.
+
 - **A gift card is a code with a balance** (ADR 0208). **For API consumers:**
   `POST /admin/v1/gift-cards` (payment:write) issues a card holding an amount in
   one currency, with a required reason, and answers with its code ONCE; `GET

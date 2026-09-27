@@ -32,8 +32,14 @@ type authorizeOutput struct {
 	SessionID string `json:"session_id"`
 	// Status is the session's status as returned by the provider.
 	Status string `json:"status"`
-	// Authorized is the amount actually held (minor unit).
+	// Authorized is the amount actually held (minor unit), the gift card's
+	// included.
 	Authorized int64 `json:"authorized"`
+	// GiftCardSessionID and GiftCardAuthorized are the gift card's session and
+	// what it held, when a card paid first (ADR 0209). SessionID is then the
+	// other provider's session, and empty when the card covered everything.
+	GiftCardSessionID  string `json:"gift_card_session_id,omitempty"`
+	GiftCardAuthorized int64  `json:"gift_card_authorized,omitempty"`
 }
 
 // Name returns the step's name.
@@ -46,13 +52,19 @@ func (s *authorizePaymentStep) Restore(sc *workflow.StepContext, output json.Raw
 		return errors.Wrap(err, errors.KindInternal, CodeSharedStateInvalid,
 			"the output of step %q could not be decoded", StepAuthorizePayment)
 	}
-	if out.CollectionID == "" || out.SessionID == "" {
+	if out.CollectionID == "" || (out.SessionID == "" && out.GiftCardSessionID == "") {
 		return errors.Internal(CodeSharedStateInvalid,
 			"the record of step %q holds no collection or session identifier", StepAuthorizePayment)
 	}
 
 	sc.Shared[sharedCollectionID] = out.CollectionID
-	sc.Shared[sharedSessionID] = out.SessionID
+	if out.SessionID != "" {
+		sc.Shared[sharedSessionID] = out.SessionID
+	}
+	if out.GiftCardSessionID != "" {
+		sc.Shared[sharedGiftCardSessionID] = out.GiftCardSessionID
+		sc.Shared[sharedGiftCardAuthorized] = out.GiftCardAuthorized
+	}
 
 	return nil
 }
@@ -109,60 +121,120 @@ func (s *authorizePaymentStep) Invoke(ctx context.Context, sc *workflow.StepCont
 		return nil, err
 	}
 
+	out := authorizeOutput{CollectionID: collectionID}
+	if s.plan.GiftCardCode != "" {
+		cardSession, cardHeld, err := s.authorizeGiftCard(ctx, sc, collectionID)
+		if err != nil {
+			return nil, err
+		}
+		out.GiftCardSessionID, out.GiftCardAuthorized, out.Authorized = cardSession, cardHeld, cardHeld
+		if cardHeld == s.plan.Amount {
+			s.w.log.InfoContext(ctx, "payment authorized on a gift card",
+				"cart_id", s.plan.CartID, "collection_id", collectionID, "gift_card_session_id", cardSession,
+				"authorized", cardHeld, "amount", s.plan.Amount)
+
+			return out, nil
+		}
+	}
+
+	// The provider's session is opened for what is left: the payment module
+	// takes the collection's amount less what the card holds.
+	rest := s.plan.Amount - out.GiftCardAuthorized
 	sessionID, err := s.w.payments.OpenSessionWithData(ctx,
 		collectionID, s.plan.PaymentProviderID, sc.ExecutionID, s.plan.PaymentData)
 	if err != nil {
-		return nil, err
+		return nil, s.releaseHold(ctx, err, out.GiftCardSessionID)
 	}
 	if sessionID == "" {
-		return nil, errors.Internal(CodeEmptyIdentifier,
+		return nil, s.releaseHold(ctx, errors.Internal(CodeEmptyIdentifier,
 			"the payment module returned an EMPTY session identifier: %s (collection %s)",
-			s.plan.CartID, collectionID)
+			s.plan.CartID, collectionID), out.GiftCardSessionID)
 	}
 	sc.Shared[sharedSessionID] = sessionID
 
 	status, authorized, err := s.w.payments.Authorize(ctx, sessionID)
 	if err != nil {
-		return nil, s.releaseHold(ctx, sessionID, err)
+		return nil, s.releaseHold(ctx, err, sessionID, out.GiftCardSessionID)
 	}
-	if authorized < s.plan.Amount {
-		return nil, s.releaseHold(ctx, sessionID, errors.Conflict(CodePaymentUnderauthorized,
+	if authorized < rest {
+		return nil, s.releaseHold(ctx, errors.Conflict(CodePaymentUnderauthorized,
 			"the amount held does not cover what must be collected: %d < %d (session %s, status %q)",
-			authorized, s.plan.Amount, sessionID, status))
+			authorized, rest, sessionID, status), sessionID, out.GiftCardSessionID)
 	}
 
 	s.w.log.InfoContext(ctx, "payment authorized",
 		"cart_id", s.plan.CartID, "collection_id", collectionID, "session_id", sessionID,
-		"authorized", authorized, "amount", s.plan.Amount)
+		"authorized", authorized, "gift_card_authorized", out.GiftCardAuthorized, "amount", s.plan.Amount)
 
-	return authorizeOutput{
-		CollectionID: collectionID,
-		SessionID:    sessionID,
-		Status:       status,
-		Authorized:   authorized,
-	}, nil
+	out.SessionID, out.Status, out.Authorized = sessionID, status, out.Authorized+authorized
+
+	return out, nil
 }
 
-// releaseHold frees the hold of a half-finished authorization.
+// authorizeGiftCard opens the gift card's session for the whole amount and has
+// the card hold what it can (ADR 0209).
+//
+// The card is a PARTIAL tender: it holds its balance up to the amount, and an
+// empty card declines. The decline comes back as an error and stops the payment
+// here rather than passing the card over — the customer named it, and paying
+// everything with the other provider instead would be a different payment from
+// the one they chose.
+func (s *authorizePaymentStep) authorizeGiftCard(
+	ctx context.Context, sc *workflow.StepContext, collectionID string,
+) (sessionID string, held int64, err error) {
+	sessionID, err = s.w.payments.OpenSessionWithData(ctx,
+		collectionID, GiftCardProviderID, sc.ExecutionID, giftCardData(s.plan.GiftCardCode))
+	if err != nil {
+		return "", 0, err
+	}
+	if sessionID == "" {
+		return "", 0, errors.Internal(CodeEmptyIdentifier,
+			"the payment module returned an EMPTY gift card session identifier: %s (collection %s)",
+			s.plan.CartID, collectionID)
+	}
+	sc.Shared[sharedGiftCardSessionID] = sessionID
+
+	_, held, err = s.w.payments.Authorize(ctx, sessionID)
+	if err != nil {
+		return "", 0, s.releaseHold(ctx, err, sessionID)
+	}
+	sc.Shared[sharedGiftCardAuthorized] = held
+
+	return sessionID, held, nil
+}
+
+// releaseHold frees the holds of a half-finished authorization, in the order
+// given; an empty id is skipped.
 //
 // The cancellation is retried with the SAME policy as the engine's compensation
 // (see [retryCleanup]): leaving the hold on the customer's card dangling because
 // of a transient fault is an outcome that would not have happened had the same
-// fault been caught in the compensation chain.
-func (s *authorizePaymentStep) releaseHold(ctx context.Context, sessionID string, cause error) error {
+// fault been caught in the compensation chain. Every session is tried even when
+// one cannot be canceled.
+func (s *authorizePaymentStep) releaseHold(ctx context.Context, cause error, sessionIDs ...string) error {
 	cctx, cancel := cleanupContext(ctx)
 	defer cancel()
 
-	if err := retryCleanup(cctx, func() error {
-		return s.w.payments.Cancel(cctx, sessionID)
-	}); err != nil {
-		s.w.log.ErrorContext(ctx, "the half-finished payment session could not be canceled; manual intervention is required",
-			"cart_id", s.plan.CartID, "session_id", sessionID, "error", err)
-
-		return errors.Wrap(errors.Join(cause, err, workflow.ErrUncompensated),
-			errors.KindInternal, CodePaymentUnderauthorized,
-			"the hold of session %s could not be freed", sessionID)
+	var failed []error
+	for _, sessionID := range sessionIDs {
+		if sessionID == "" {
+			continue
+		}
+		if err := retryCleanup(cctx, func() error {
+			return s.w.payments.Cancel(cctx, sessionID)
+		}); err != nil {
+			s.w.log.ErrorContext(ctx, "the half-finished payment session could not be canceled; manual intervention is required",
+				"cart_id", s.plan.CartID, "session_id", sessionID, "error", err)
+			failed = append(failed, errors.Wrap(err, errors.KindOf(err), CodePaymentUnderauthorized,
+				"the hold of session %s could not be freed", sessionID))
+		}
 	}
+	if len(failed) > 0 {
+		return errors.Wrap(errors.Join(append([]error{cause, workflow.ErrUncompensated}, failed...)...),
+			errors.KindInternal, CodePaymentUnderauthorized,
+			"a hold of cart %s could not be freed", s.plan.CartID)
+	}
+
 	return cause
 }
 
@@ -233,19 +305,26 @@ func (s *authorizePaymentStep) Compensate(ctx context.Context, sc *workflow.Step
 		return nil
 	}
 
-	sessionID, err := sharedText(sc, sharedSessionID)
-	if err != nil {
-		return err
-	}
-	if sessionID == "" {
-		return nil
+	// The provider's session first, then the gift card's: the order they were
+	// opened in, undone backwards. Both are tried; one that cannot be canceled
+	// does not leave the other's hold standing.
+	var failed []error
+	for _, key := range []string{sharedSessionID, sharedGiftCardSessionID} {
+		sessionID, err := sharedText(sc, key)
+		if err != nil {
+			return err
+		}
+		if sessionID == "" {
+			continue
+		}
+		if cancelErr := s.w.payments.Cancel(ctx, sessionID); cancelErr != nil {
+			failed = append(failed, cancelErr)
+
+			continue
+		}
+		s.w.log.InfoContext(ctx, "compensation: payment session canceled",
+			"cart_id", s.plan.CartID, "session_id", sessionID)
 	}
 
-	if cancelErr := s.w.payments.Cancel(ctx, sessionID); cancelErr != nil {
-		return cancelErr
-	}
-
-	s.w.log.InfoContext(ctx, "compensation: payment session canceled",
-		"cart_id", s.plan.CartID, "session_id", sessionID)
-	return nil
+	return errors.Join(failed...)
 }

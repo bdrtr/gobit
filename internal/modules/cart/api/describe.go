@@ -163,7 +163,13 @@ func Describe(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPost, "/store/v1/carts/{id}/complete", openapi.Operation{
-		Summary:     "Turns the cart into an order: stock is reserved, the payment is captured, the cart is closed.",
+		Summary: "Turns the cart into an order: stock is reserved, the payment is captured, the cart is closed.",
+		Description: "gift_card_code, when given, names a gift card that pays FIRST: it holds what it " +
+			"has, up to the whole total, and payment_provider_id pays the rest, which it is not asked " +
+			"for when the card covers everything. A code that opens no card (422 " +
+			"payment_gift_card_unknown) or a card in another currency (409 payment_gift_card_currency) " +
+			"is refused before the order is opened, and a card that holds nothing is refused at the " +
+			"payment step. payment_provider_id cannot be gift_card beside a gift_card_code (ADR 0209).",
 		RequestBody: d.RequestBody(completeCartRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The resulting order and the captured amount", d.Item(completeCartDTO{})),

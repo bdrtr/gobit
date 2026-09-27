@@ -106,7 +106,10 @@ func New(store Store, log *slog.Logger) *Provider {
 			InvalidState: CodeInvalidState,
 		},
 		NewSessionID: models.NewGiftCardSessionID,
-		Owner:        cardOf(store),
+		// A card pays what it holds and leaves the rest to another tender
+		// (ADR 0209); an empty card declines.
+		Partial: true,
+		Owner:   cardOf(store),
 	}, log)}
 }
 

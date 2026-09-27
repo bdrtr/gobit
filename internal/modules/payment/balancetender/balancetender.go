@@ -137,6 +137,12 @@ type Identity struct {
 	Codes Codes
 	// NewSessionID mints the tender's own session identifier.
 	NewSessionID func() string
+	// Partial makes a balance smaller than the session a partial authorization
+	// of what it holds, rather than a decline; an empty balance still declines
+	// (ADR 0209). The core contract allows it (AuthResult.AuthorizedAmount), and
+	// the payment module leaves the rest of the collection open to another
+	// session.
+	Partial bool
 	// Owner resolves whose balance a session spends, and refuses a session no
 	// balance can pay. Nil means the customer the collection names, refused when
 	// there is none ([Machine.CheckOwner]).
@@ -325,7 +331,13 @@ func (m *Machine) Authorize(
 			return err
 		}
 
-		if balance < session.Amount {
+		held := session.Amount
+		if balance < held && m.id.Partial && balance > 0 {
+			// A tender that pays what it holds takes the balance and leaves the
+			// rest of the session to another tender (ADR 0209).
+			held = balance
+		}
+		if balance < held {
 			updated, updateErr := m.store.UpdateSessionState(ctx, session.ID,
 				models.SessionFailed, 0, session.CapturedAmount, session.RefundedAmount,
 				m.insufficientReason(balance, session))
@@ -348,14 +360,14 @@ func (m *Machine) Authorize(
 			Movement:     Hold,
 			// NEGATIVE: from this moment the amount is not spendable by anything
 			// else, which is what makes the balance above safe to act on.
-			Amount:    -session.Amount,
+			Amount:    -held,
 			SessionID: session.ID,
 		}); err != nil {
 			return err
 		}
 
 		updated, err := m.store.UpdateSessionState(ctx, session.ID,
-			models.SessionAuthorized, session.Amount, session.CapturedAmount,
+			models.SessionAuthorized, held, session.CapturedAmount,
 			session.RefundedAmount, "")
 		if err != nil {
 			return err

@@ -54,9 +54,10 @@ func TestACardIsSpentByItsCode(t *testing.T) {
 	assert.Equal(t, []string{"gcard_1"}, store.locked, "the card's balance was locked before it was read")
 }
 
-// TestACardThatDoesNotCoverTheSessionDeclines: too small a balance is a
-// decline, as for any balance tender.
-func TestACardThatDoesNotCoverTheSessionDeclines(t *testing.T) {
+// TestACardHoldsWhatItHas is ADR 0209: a card smaller than the session is a
+// partial authorization of its balance, and the rest of the collection is left
+// to another tender.
+func TestACardHoldsWhatItHas(t *testing.T) {
 	t.Parallel()
 
 	store := newMemStore()
@@ -66,10 +67,29 @@ func TestACardThatDoesNotCoverTheSessionDeclines(t *testing.T) {
 	result, err := p.Authorize(context.Background(), session(t, p, "k1", testCode, 6_000).ID)
 	require.NoError(t, err)
 
-	assert.Equal(t, coreprovider.SessionFailed, result.Status)
+	assert.Equal(t, coreprovider.SessionAuthorized, result.Status)
+	assert.Equal(t, int64(1_000), result.AuthorizedAmount, "the card held what it had")
 	balance, err := store.GiftCardBalance(context.Background(), "gcard_1")
 	require.NoError(t, err)
-	assert.Equal(t, int64(1_000), balance)
+	assert.Zero(t, balance)
+}
+
+// TestAnEmptyCardDeclines: a card with nothing on it holds nothing, and says
+// so as a decline rather than as an authorization of zero.
+func TestAnEmptyCardDeclines(t *testing.T) {
+	t.Parallel()
+
+	store := newMemStore()
+	store.issue("gcard_1", testCode, "TRY", 1_000)
+	p := newProvider(store)
+	_, err := p.Authorize(context.Background(), session(t, p, "k1", testCode, 1_000).ID)
+	require.NoError(t, err)
+
+	result, err := p.Authorize(context.Background(), session(t, p, "k2", testCode, 500).ID)
+	require.NoError(t, err)
+
+	assert.Equal(t, coreprovider.SessionFailed, result.Status)
+	assert.Zero(t, result.AuthorizedAmount)
 }
 
 // TestACodeThatOpensNoCardIsOneAnswer: a malformed code, an unissued one and

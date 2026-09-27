@@ -33,6 +33,7 @@ import (
 	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	"github.com/bdrtr/gobit/internal/modules/payment/giftcard"
 	paymentmodels "github.com/bdrtr/gobit/internal/modules/payment/models"
 	paymentservice "github.com/bdrtr/gobit/internal/modules/payment/service"
 	"github.com/bdrtr/gobit/internal/modules/pricing"
@@ -43,6 +44,7 @@ import (
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 	cartflow "github.com/bdrtr/gobit/internal/workflows/cart"
+	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
 
 // TestTheProviderRegistryNamesAgree verifies that the plugin package and the
@@ -223,6 +225,17 @@ func TestTheReceivableAccountAgrees(t *testing.T) {
 
 	assert.Equal(t, string(paymentmodels.AccountReceivable), string(ordermodels.AccountReceivable),
 		"the payment and order journals must spell receivable alike")
+}
+
+// TestTheGiftCardNamesAgree binds the checkout's spelling of the gift card
+// provider and of its code's key to the payment module's (ADR 0209). A drift is
+// silent until a card is spent: the checkout would open the card's session at a
+// provider nobody registered, or send a code the provider never reads.
+func TestTheGiftCardNamesAgree(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, paymentmodels.GiftCardTenderID, checkoutwf.GiftCardProviderID)
+	assert.Equal(t, giftcard.DataCode, checkoutwf.GiftCardDataCode)
 }
 
 // TestTheBuyerAttributeNamesAgree binds the two spellings of the attributes that

@@ -6,6 +6,7 @@ currency, and whoever presents the code pays with it at checkout through a
 
 - **Status:** Accepted
 - **Date:** 2026-09-27
+- **Amended by:** [0209](0209-a-gift-card-pays-first-and-a-provider-the-rest.md): a card holds what it has rather than declining, and a provider pays the rest
 
 Measurement: [measurements/0208](../measurements/0208-a-code-with-a-balance.md)
 

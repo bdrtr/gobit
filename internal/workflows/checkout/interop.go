@@ -71,6 +71,8 @@ type completeCartRequest struct {
 	// PaymentData is the free-form JSON passed to the provider as is; it is
 	// optional (card token, return address).
 	PaymentData json.RawMessage `json:"payment_data,omitempty"`
+	// GiftCardCode is a gift card that pays first; it is optional (ADR 0209).
+	GiftCardCode string `json:"gift_card_code,omitempty"`
 	// Email is the order's contact address; it is optional.
 	Email string `json:"email,omitempty"`
 	// SalesChannelIDs are the channels the order is placed on; they are
@@ -155,6 +157,7 @@ func (i *Interop) CompleteCartJSON(ctx context.Context, request json.RawMessage)
 		CartID:            req.CartID,
 		PaymentProviderID: req.PaymentProviderID,
 		PaymentData:       req.PaymentData,
+		GiftCardCode:      req.GiftCardCode,
 		Email:             req.Email,
 		SalesChannelIDs:   req.SalesChannelIDs,
 		ExpectedTotal:     req.ExpectedTotal,

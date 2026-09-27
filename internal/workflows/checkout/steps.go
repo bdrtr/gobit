@@ -19,6 +19,13 @@ const (
 	sharedCollectionID = "checkout.collection_id"
 	sharedSessionID    = "checkout.session_id"
 	sharedPaymentID    = "checkout.payment_id"
+	// sharedGiftCardSessionID and sharedGiftCardPaymentID are the gift card's
+	// session and capture when the order is paid partly by a card (ADR 0209);
+	// sharedSessionID and sharedPaymentID are then the other provider's.
+	sharedGiftCardSessionID = "checkout.gift_card_session_id"
+	sharedGiftCardPaymentID = "checkout.gift_card_payment_id"
+	// sharedGiftCardAuthorized is what the card held.
+	sharedGiftCardAuthorized = "checkout.gift_card_authorized"
 	// sharedCaptureAttempted reports that the capture call was STARTED and is the
 	// real trigger of the pivot guard (see [Workflows.skipAfterCapture]).
 	//
@@ -88,6 +95,20 @@ func sharedText(sc *workflow.StepContext, key string) (string, error) {
 	value, ok := raw.(string)
 	if !ok {
 		return "", errors.Internal(CodeSharedStateInvalid,
+			"key %q has an unexpected type: %T", key, raw)
+	}
+	return value, nil
+}
+
+// sharedAmount reads an amount from the shared map; a missing key is zero.
+func sharedAmount(sc *workflow.StepContext, key string) (int64, error) {
+	raw, exists := sc.Shared[key]
+	if !exists {
+		return 0, nil
+	}
+	value, ok := raw.(int64)
+	if !ok {
+		return 0, errors.Internal(CodeSharedStateInvalid,
 			"key %q has an unexpected type: %T", key, raw)
 	}
 	return value, nil

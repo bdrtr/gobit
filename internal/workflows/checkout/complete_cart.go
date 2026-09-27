@@ -162,6 +162,14 @@ type CompleteCartInput struct {
 	// It is NOT written into the execution record; for the rationale see
 	// [checkoutPlan].
 	PaymentData json.RawMessage
+	// GiftCardCode is a gift card that pays FIRST; it is optional (ADR 0209).
+	//
+	// The card pays what it holds, up to the whole amount, and the provider
+	// above pays the rest; when the card covers everything the provider is not
+	// asked. The provider is still required: the customer cannot know how much
+	// the card holds at the moment it is spent. Like PaymentData, the code is a
+	// credential and is NOT written into the execution record.
+	GiftCardCode string
 	// Email is the order's contact address; it is optional.
 	//
 	// The cart's own email cannot be used here: the cart module's cross-module
@@ -468,6 +476,17 @@ func (in *CompleteCartInput) normalize() error {
 	}
 	if err := requireID("payment_provider_id", in.PaymentProviderID, maxIDLen); err != nil {
 		return err
+	}
+	if in.GiftCardCode != "" {
+		if len(in.GiftCardCode) > maxIDLen {
+			return errors.Invalid(CodeInvalidInput,
+				"gift_card_code can be at most %d bytes: %d", maxIDLen, len(in.GiftCardCode))
+		}
+		if in.PaymentProviderID == GiftCardProviderID {
+			return errors.Invalid(CodeInvalidInput,
+				"gift_card_code pays first and payment_provider_id pays the rest, so the rest cannot be %q too",
+				GiftCardProviderID)
+		}
 	}
 	if in.ExpectedTotal < 0 {
 		return errors.Invalid(CodeInvalidInput,

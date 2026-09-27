@@ -202,6 +202,16 @@ type checkoutPlan struct {
 	// carried along, which is why the field is EXCLUDED from JSON and lives
 	// only in memory, up to the step's call.
 	PaymentData json.RawMessage `json:"-"`
+	// GiftCardCode is the card that pays first (ADR 0209). It is a bearer
+	// credential and is NOT WRITTEN TO THE RECORD, for PaymentData's reason.
+	GiftCardCode string `json:"-"`
+}
+
+// giftCardData is the payment data a gift card's session is opened with.
+func giftCardData(code string) json.RawMessage {
+	data, _ := json.Marshal(map[string]string{GiftCardDataCode: code}) //nolint:errchkjson // a map of strings always encodes
+
+	return data
 }
 
 // planPromotion is one promotion the cart's discount rests on.
@@ -342,6 +352,14 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		in.PaymentData); err != nil {
 		return nil, err
 	}
+	// A gift card that cannot pay is refused here as well, and first: a code
+	// that opens no card, or one in another currency (ADR 0208, ADR 0209).
+	if in.GiftCardCode != "" {
+		if err := w.payments.CheckTender(ctx, GiftCardProviderID, snap.CustomerID, snap.CurrencyCode,
+			giftCardData(in.GiftCardCode)); err != nil {
+			return nil, err
+		}
+	}
 
 	lines, err := w.planLines(ctx, snap, totals)
 	if err != nil {
@@ -367,6 +385,7 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		Lines:             lines,
 		Promotions:        planPromotionsOf(totals),
 		PaymentData:       in.PaymentData,
+		GiftCardCode:      in.GiftCardCode,
 		ShippingAddress:   snap.ShippingAddress,
 		BillingAddress:    snap.BillingAddress,
 		ShippingMethods:   snap.ShippingMethods,

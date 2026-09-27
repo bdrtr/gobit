@@ -57,6 +57,15 @@ const (
 	ServiceWorkflow = "core.workflow"
 )
 
+// The payment module's gift card provider and the key its code travels under
+// in the payment's data (ADR 0208). They are spelled here because this package
+// cannot import the module (ADR 0006); internal/arch holds both to the module's
+// own constants.
+const (
+	GiftCardProviderID = "gift_card"
+	GiftCardDataCode   = "code"
+)
+
 // Cross-module CONTRACT constants.
 //
 // The values are defined in the product module as well and are REPEATED here:
