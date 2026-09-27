@@ -211,7 +211,14 @@ func jobPackages(t *testing.T) map[string]struct{} {
 }
 
 // jobPackagesRegistered maps the import path of every job package whose
-// constructor the composition root CALLS.
+// constructor the composition root hands to the registry's Add.
+//
+// A call alone is not a registration (D147). The gate used to count any call
+// to a job package's Definition, and a mutation that built the gift card sweep
+// and discarded it — `_ = giftcardsweep.Definition(...)` — left it green: the
+// job ran in no deployment and the audit named it registered. Only the
+// Definition that is Add's argument puts a job where the runner and `gobit
+// jobs` read it.
 func jobPackagesRegistered(t *testing.T) map[string]bool {
 	t.Helper()
 
@@ -221,21 +228,30 @@ func jobPackagesRegistered(t *testing.T) map[string]bool {
 	registered := map[string]bool{}
 	for _, file := range parseDir(t, fset, dir, false) {
 		ast.Inspect(file.tree, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
+			add, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true
 			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok || sel.Sel.Name != jobDefinitionName {
+			addSel, ok := add.Fun.(*ast.SelectorExpr)
+			if !ok || addSel.Sel.Name != "Add" {
 				return true
 			}
-			pkg, ok := sel.X.(*ast.Ident)
-			if !ok {
-				return true
-			}
-
-			if path := file.imports[pkg.Name]; strings.HasPrefix(path, modulePath+"/"+jobsDirName+"/") {
-				registered[path] = true
+			for _, arg := range add.Args {
+				call, ok := arg.(*ast.CallExpr)
+				if !ok {
+					continue
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok || sel.Sel.Name != jobDefinitionName {
+					continue
+				}
+				pkg, ok := sel.X.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				if path := file.imports[pkg.Name]; strings.HasPrefix(path, modulePath+"/"+jobsDirName+"/") {
+					registered[path] = true
+				}
 			}
 
 			return true

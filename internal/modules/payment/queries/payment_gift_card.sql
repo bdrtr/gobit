@@ -17,6 +17,12 @@ RETURNING *;
 SELECT * FROM payment_gift_cards
 WHERE source_reference = $1;
 
+-- SoldGiftCardReferences returns which of the sales already made their card
+-- (ADR 0212), through the unique index on the sale.
+-- name: SoldGiftCardReferences :many
+SELECT source_reference::text FROM payment_gift_cards
+WHERE source_reference = ANY(sqlc.arg('refs')::text[]);
+
 -- ReplaceGiftCardCode gives a card a new code; the balance stays with the card.
 -- name: ReplaceGiftCardCode :one
 UPDATE payment_gift_cards

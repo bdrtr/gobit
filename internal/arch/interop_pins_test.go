@@ -40,6 +40,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/adminui"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
@@ -157,6 +158,10 @@ var (
 	_ giftcardsalewf.Payments = (*paymentsvc.Interop)(nil)
 	_ giftcardsalewf.Orders   = (*ordersvc.Interop)(nil)
 	_ giftcardsalewf.Notifier = (*notifsvc.Interop)(nil)
+	// Its sweep reads orders' collections through the link's forward direction
+	// (ADR 0212), which the capture's path never did.
+	_ giftcardsalewf.Links  = link.LinkService(nil)
+	_ giftcardsalewf.Reader = query.Query(nil)
 )
 
 // A PLUGIN resolving a MODULE's surface, and the CORE resolving one.

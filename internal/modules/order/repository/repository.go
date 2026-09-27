@@ -515,6 +515,7 @@ func (r *Repository) ListLineItemsFiltered(
 	rows, err := r.queries(ctx).ListOrderLineItemsFiltered(ctx, orderdb.ListOrderLineItemsFilteredParams{
 		OrderID:    filter.OrderID,
 		VariantID:  filter.VariantID,
+		IsGiftcard: filter.IsGiftcard,
 		PlacedFrom: fromTimePtr(filter.PlacedFrom),
 		PlacedTo:   fromTimePtr(filter.PlacedTo),
 		RowLimit:   filter.Limit,

@@ -23,6 +23,9 @@ type ListLineItemsInput struct {
 	OrderID *string
 	// VariantID, when given, returns only the lines of that product variant.
 	VariantID *string
+	// IsGiftcard, when given, returns only the lines that did, or did not,
+	// sell gift cards (ADR 0212).
+	IsGiftcard *bool
 	// PlacedFrom is the INCLUSIVE lower bound of the order's placed_at, and
 	// PlacedTo the EXCLUSIVE upper bound.
 	//
@@ -92,6 +95,7 @@ func (s *Service) ListLineItems(
 	}
 	filter.PlacedFrom = in.PlacedFrom
 	filter.PlacedTo = in.PlacedTo
+	filter.IsGiftcard = in.IsGiftcard
 
 	return s.store.ListLineItemsFiltered(ctx, filter)
 }

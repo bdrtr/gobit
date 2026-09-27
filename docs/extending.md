@@ -305,7 +305,10 @@ The gift card sale flow issues the cards an order sold once its collection is
 fully captured, and mails each code through the notification module with the
 template `gift_card.issued`, whose data is `code`, `amount` (minor units),
 `currency_code` and `order_id`. A notification provider has to know that
-template to deliver the code; the code is in no other record.
+template to deliver the code; the code is in no other record. The capture's
+delivery is not the only way in: the `gift-card-sweep` job issues, every five
+minutes, the cards that the paid orders of the last week sold and no delivery
+issued, and mails them the same way (ADR 0212).
 
 **Notification** listens to `order.placed` and sends the order confirmation
 through the selected `NotificationProvider`. The recipient address is read

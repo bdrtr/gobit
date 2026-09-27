@@ -187,6 +187,26 @@ func TestASoldCardIsIssuedOnce(t *testing.T) {
 	assert.True(t, errors.IsInvalid(err), "a sale is named by its line and its order")
 }
 
+// TestTheSoldReferencesAreTheSalesThatMadeACard is the sweep's question
+// (ADR 0212): of these sales, which made a card.
+func TestTheSoldReferencesAreTheSalesThatMadeACard(t *testing.T) {
+	t.Parallel()
+
+	svc, _ := giftCardService(t)
+	_, _, err := svc.IssueSoldGiftCard(context.Background(), service.SoldGiftCardInput{
+		Reference: "oline_1:1", OrderID: "order_1", CurrencyCode: "TRY", Amount: 5_000,
+	})
+	require.NoError(t, err)
+
+	found, err := svc.SoldGiftCardReferences(context.Background(), []string{"oline_1:1", "oline_1:2"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"oline_1:1"}, found)
+
+	none, err := svc.SoldGiftCardReferences(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Empty(t, none)
+}
+
 // TestAReplacedCodeOpensTheSameCard: the old code's digest is gone, the balance
 // stays, and the new code is handed out once.
 func TestAReplacedCodeOpensTheSameCard(t *testing.T) {

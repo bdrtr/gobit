@@ -194,17 +194,19 @@ SELECT li.id, li.order_id, li.variant_id, li.title, li.quantity, li.unit_price, 
     JOIN orders o ON o.id = li.order_id
 WHERE ($1::text IS NULL OR li.order_id = $1::text)
   AND ($2::text IS NULL OR li.variant_id = $2::text)
-  AND ($3::timestamptz IS NULL
-       OR o.placed_at >= $3::timestamptz)
+  AND ($3::boolean IS NULL OR li.is_giftcard = $3::boolean)
   AND ($4::timestamptz IS NULL
-       OR o.placed_at < $4::timestamptz)
+       OR o.placed_at >= $4::timestamptz)
+  AND ($5::timestamptz IS NULL
+       OR o.placed_at < $5::timestamptz)
 ORDER BY o.placed_at DESC, li.id DESC
-LIMIT $6::bigint OFFSET $5::bigint
+LIMIT $7::bigint OFFSET $6::bigint
 `
 
 type ListOrderLineItemsFilteredParams struct {
 	OrderID    *string
 	VariantID  *string
+	IsGiftcard *bool
 	PlacedFrom pgtype.Timestamptz
 	PlacedTo   pgtype.Timestamptz
 	RowOffset  int64
@@ -236,6 +238,7 @@ func (q *Queries) ListOrderLineItemsFiltered(ctx context.Context, arg ListOrderL
 	rows, err := q.db.Query(ctx, listOrderLineItemsFiltered,
 		arg.OrderID,
 		arg.VariantID,
+		arg.IsGiftcard,
 		arg.PlacedFrom,
 		arg.PlacedTo,
 		arg.RowOffset,

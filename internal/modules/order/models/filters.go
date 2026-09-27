@@ -57,6 +57,8 @@ type OrderLineItemFilter struct {
 	OrderID *string
 	// VariantID, when given, returns only the lines of that product variant.
 	VariantID *string
+	// IsGiftcard, when given, returns only the lines whose flag has that value.
+	IsGiftcard *bool
 	// PlacedFrom is the INCLUSIVE lower bound of the order's placed_at.
 	PlacedFrom *time.Time
 	// PlacedTo is the EXCLUSIVE upper bound of the order's placed_at.

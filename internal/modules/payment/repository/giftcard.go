@@ -64,6 +64,16 @@ func (r *Repository) GiftCardBySourceReference(ctx context.Context, reference st
 	return toGiftCard(row), nil
 }
 
+// SoldGiftCardReferences returns which of the references a card was sold as.
+func (r *Repository) SoldGiftCardReferences(ctx context.Context, references []string) ([]string, error) {
+	found, err := r.queries(ctx).SoldGiftCardReferences(ctx, references)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the sold gift cards could not be read")
+	}
+
+	return found, nil
+}
+
 // ReplaceGiftCardCode gives a card a new code's digest and tail.
 func (r *Repository) ReplaceGiftCardCode(ctx context.Context, id, digest, tail string) (models.GiftCard, error) {
 	row, err := r.queries(ctx).ReplaceGiftCardCode(ctx, paymentdb.ReplaceGiftCardCodeParams{

@@ -88,6 +88,12 @@ func (i *Interop) IssueSoldGiftCard(
 	return issued.Card.ID, issued.Code, nil
 }
 
+// SoldGiftCardReferences returns which of the given sale references a card
+// was already issued for (ADR 0212).
+func (i *Interop) SoldGiftCardReferences(ctx context.Context, references []string) ([]string, error) {
+	return i.svc.SoldGiftCardReferences(ctx, references)
+}
+
 // CreateCollection opens a payment collection for a reference and returns its
 // identifier.
 //

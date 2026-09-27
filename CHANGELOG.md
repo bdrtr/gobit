@@ -12,6 +12,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A job built and never registered passed the registration gate** (D147).
+  **For contributors:** `TestEveryJobIsRegisteredInTheCompositionRoot` now
+  counts a job only when its `Definition` is handed to the registry's `Add`.
+
 - **A flow could be dropped from production with every test green** (D146).
   The end-to-end ground wires its flows by hand. **For contributors:** an arch
   gate now fails when the ground wires a flow `internal/app` does not.
@@ -99,6 +103,15 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A sweep issues the gift cards a lost delivery did not** (ADR 0212). **For
+  operators:** a new job, `gift-card-sweep`, runs every five minutes and issues
+  the cards that the paid orders of the last week sold and no capture delivery
+  issued, mailing their codes as the capture does; its line in `gobit jobs`
+  counts the cards issued and the orders still waiting for their capture. Order
+  migration 000029 adds a partial index on the gift card lines. A late capture
+  or a sweep no longer issues cards for a canceled order. **For plugin
+  authors:** the read layer's `order_line_item` accepts an `is_giftcard` filter.
 
 - **An order books a sold gift card as a debt** (ADR 0211). **For API
   consumers:** order lines carry `is_giftcard`, copied from the product when

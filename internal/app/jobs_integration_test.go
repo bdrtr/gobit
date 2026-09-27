@@ -21,6 +21,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
+	"github.com/bdrtr/gobit/internal/jobs/giftcardsweep"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
 	"github.com/bdrtr/gobit/internal/jobs/productimport"
@@ -263,6 +264,7 @@ func TestEveryJobTheRootDeclaresCanBeBuiltAgainstARealInstallation(t *testing.T)
 
 	for _, name := range []string{
 		sagawatch.Name, paymentrecon.Name, outboxrelay.Name, scheduledpublish.Name, productimport.Name,
+		giftcardsweep.Name,
 	} {
 		definition, getErr := registry.Get(name)
 		require.NoError(t, getErr,

@@ -44,6 +44,7 @@ SELECT li.* FROM order_line_items li
     JOIN orders o ON o.id = li.order_id
 WHERE (sqlc.narg('order_id')::text IS NULL OR li.order_id = sqlc.narg('order_id')::text)
   AND (sqlc.narg('variant_id')::text IS NULL OR li.variant_id = sqlc.narg('variant_id')::text)
+  AND (sqlc.narg('is_giftcard')::boolean IS NULL OR li.is_giftcard = sqlc.narg('is_giftcard')::boolean)
   AND (sqlc.narg('placed_from')::timestamptz IS NULL
        OR o.placed_at >= sqlc.narg('placed_from')::timestamptz)
   AND (sqlc.narg('placed_to')::timestamptz IS NULL

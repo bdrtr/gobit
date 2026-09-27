@@ -839,6 +839,9 @@ func (f *fakeStore) ListLineItemsFiltered(
 		if filter.VariantID != nil && line.VariantID != *filter.VariantID {
 			continue
 		}
+		if filter.IsGiftcard != nil && line.IsGiftcard != *filter.IsGiftcard {
+			continue
+		}
 		// [from, to): the lower bound is inclusive and the upper one is not.
 		if filter.PlacedFrom != nil && order.PlacedAt.Before(*filter.PlacedFrom) {
 			continue

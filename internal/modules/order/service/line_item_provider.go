@@ -181,8 +181,8 @@ func (p *LineItemQueryProvider) Entity() string { return LineItemEntity }
 // List returns the root records.
 //
 // Supported filters: "id" (text or a list of text), "order_id" (text),
-// "variant_id" (text), "placed_from" and "placed_to" (RFC 3339 text or a
-// time.Time). Any other filter, or an unrecognized field, is rejected with
+// "variant_id" (text), "is_giftcard" (a bool; ADR 0212), "placed_from" and
+// "placed_to" (RFC 3339 text or a time.Time). Any other filter, or an unrecognized field, is rejected with
 // errors.Invalid (ADR 0004).
 //
 // The two date filters are the reason this entity exists; they select on the
@@ -239,6 +239,13 @@ func (p *LineItemQueryProvider) List(
 				return nil, err
 			}
 			in.VariantID = &id
+		case FieldLineItemIsGiftcard:
+			flag, ok := value.(bool)
+			if !ok {
+				return nil, errors.Invalid(CodeInvalidInput,
+					"filter %q has to be a bool, %T given", name, value)
+			}
+			in.IsGiftcard = &flag
 		case FilterPlacedFrom:
 			at, err := timeFilter(name, value)
 			if err != nil {

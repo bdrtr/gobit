@@ -23,6 +23,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/jobs/giftcardsweep"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
 	"github.com/bdrtr/gobit/internal/jobs/productimport"
@@ -35,6 +36,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/review"
 	reviewmodels "github.com/bdrtr/gobit/internal/modules/review/models"
 	reviewservice "github.com/bdrtr/gobit/internal/modules/review/service"
+	giftcardsalewf "github.com/bdrtr/gobit/internal/workflows/giftcardsale"
 )
 
 // paymentReconciler is the payment service as the reconciliation job needs it.
@@ -105,6 +107,10 @@ type reviewSuggester interface {
 // shopper sees: a draft goes live. It falls on the permitted side because it
 // does what an operator scheduled at the moment they named — nothing is undone,
 // and nothing is decided that a person did not decide (ADR 0177).
+//
+// The gift card sweep writes for the relay's reason: it issues the cards a
+// paid order bought when the capture's delivery did not (ADR 0212), and undoes
+// nothing.
 func registerJobs(
 	c *container.Container, host *coreplugin.Host, log *slog.Logger,
 ) (*job.Registry, error) {
@@ -164,6 +170,16 @@ func registerJobs(
 	// The catalog import is registered unconditionally for the same reason: an
 	// import nothing applied looks exactly like one still waiting (ADR 0205).
 	if err := registry.Add(productimport.Definition(products, log)); err != nil {
+		return nil, err
+	}
+	// The gift card sweep is registered unconditionally too: a sweep that never
+	// runs looks exactly like one that found nothing missing (ADR 0212). It is
+	// built from the same flow the capture runs, without its subscription.
+	giftCards, err := giftcardsalewf.SweeperFromContainer(c, log)
+	if err != nil {
+		return nil, err
+	}
+	if err := registry.Add(giftcardsweep.Definition(giftCards, log)); err != nil {
 		return nil, err
 	}
 

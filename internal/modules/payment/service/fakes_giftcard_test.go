@@ -52,6 +52,20 @@ func (f *fakeStore) GiftCardBySourceReference(_ context.Context, reference strin
 	return models.GiftCard{}, errors.NotFound("payment_gift_card_not_found", "no gift card was sold as %s", reference)
 }
 
+func (f *fakeStore) SoldGiftCardReferences(_ context.Context, references []string) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var found []string
+	for id := range f.giftCards {
+		if slices.Contains(references, f.giftCards[id].SourceReference) {
+			found = append(found, f.giftCards[id].SourceReference)
+		}
+	}
+
+	return found, nil
+}
+
 func (f *fakeStore) ReplaceGiftCardCode(_ context.Context, id, digest, tail string) (models.GiftCard, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

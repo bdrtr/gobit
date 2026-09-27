@@ -109,6 +109,16 @@ func (s *Service) IssueSoldGiftCard(ctx context.Context, in SoldGiftCardInput) (
 	}, in.Amount)
 }
 
+// SoldGiftCardReferences returns which of the sales already made their card
+// (ADR 0212), so a caller that looks for missed cards issues only those.
+func (s *Service) SoldGiftCardReferences(ctx context.Context, references []string) ([]string, error) {
+	if len(references) == 0 {
+		return []string{}, nil
+	}
+
+	return s.store.SoldGiftCardReferences(ctx, references)
+}
+
 // issueGiftCard writes a card with a new code and its issue row in one
 // transaction, and reports whether it wrote them.
 func (s *Service) issueGiftCard(

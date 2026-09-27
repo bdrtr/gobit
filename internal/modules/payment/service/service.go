@@ -190,6 +190,9 @@ type Store interface {
 	InsertGiftCard(ctx context.Context, card models.GiftCard, digest string) (models.GiftCard, bool, error)
 	// GiftCardBySourceReference returns the card a sale made, or NotFound.
 	GiftCardBySourceReference(ctx context.Context, reference string) (models.GiftCard, error)
+	// SoldGiftCardReferences returns which of the references a card was sold
+	// as (ADR 0212).
+	SoldGiftCardReferences(ctx context.Context, references []string) ([]string, error)
 	// ReplaceGiftCardCode gives a card a new code's digest and tail.
 	ReplaceGiftCardCode(ctx context.Context, id, digest, tail string) (models.GiftCard, error)
 	// AppendGiftCardEntry appends ONE event to a card's ledger; the service

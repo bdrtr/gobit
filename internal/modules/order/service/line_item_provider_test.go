@@ -221,6 +221,38 @@ func TestLineItemQueryProviderFilters(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
+// TestLineItemQueryProviderFiltersTheGiftCardLines is the read the gift card
+// sweep makes (ADR 0212): the lines that sold cards, or the ones that did not.
+func TestLineItemQueryProviderFiltersTheGiftCardLines(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	p := service.NewLineItemQueryProvider(e.svc)
+
+	input := validInput()
+	input.Items = append(input.Items, service.CreateOrderItemInput{
+		VariantID: secondVariantID, Title: "Gift card", Quantity: 1, UnitPrice: 2_500,
+		Subtotal: 2_500, Total: 2_500, IsGiftcard: true,
+	})
+	input.Subtotal += 2_500
+	input.Total += 2_500
+	_, err := e.svc.CreateOrder(ctx, input)
+	require.NoError(t, err)
+
+	for flag, variant := range map[bool]string{true: secondVariantID, false: testVariantID} {
+		records, err := p.List(ctx, query.ListOptions{
+			Filters: map[string]any{service.FieldLineItemIsGiftcard: flag},
+			Fields:  []string{service.FieldLineItemVariantID},
+		})
+		require.NoError(t, err)
+		require.Len(t, records, 1, "is_giftcard %v", flag)
+		assert.Equal(t, variant, records[0][service.FieldLineItemVariantID])
+	}
+
+	_, err = p.List(ctx, query.ListOptions{Filters: map[string]any{service.FieldLineItemIsGiftcard: "true"}})
+	require.Error(t, err, "a flag written as text is not a flag")
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+}
+
 // TestLineItemQueryProviderDateRangeSelectsOnTheOrdersPlacedAt is the test of
 // the capability the entity was built for: "which variants sold in a period".
 //

@@ -484,6 +484,33 @@ func (q *Queries) ReplaceGiftCardCode(ctx context.Context, arg ReplaceGiftCardCo
 	return i, err
 }
 
+const soldGiftCardReferences = `-- name: SoldGiftCardReferences :many
+SELECT source_reference::text FROM payment_gift_cards
+WHERE source_reference = ANY($1::text[])
+`
+
+// SoldGiftCardReferences returns which of the sales already made their card
+// (ADR 0212), through the unique index on the sale.
+func (q *Queries) SoldGiftCardReferences(ctx context.Context, refs []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, soldGiftCardReferences, refs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var source_reference string
+		if err := rows.Scan(&source_reference); err != nil {
+			return nil, err
+		}
+		items = append(items, source_reference)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateGiftCardSessionState = `-- name: UpdateGiftCardSessionState :one
 UPDATE payment_gift_card_sessions
 SET status            = $2,

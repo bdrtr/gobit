@@ -265,7 +265,7 @@ func TestLineItemMigrationBringsItsIndexes(t *testing.T) {
 		`SELECT indexname, indexdef FROM pg_indexes
          WHERE schemaname = current_schema()
            AND indexname = ANY($1)`,
-		[]string{"orders_placed_at_idx", "order_line_items_variant_idx"})
+		[]string{"orders_placed_at_idx", "order_line_items_variant_idx", "order_line_items_giftcard_idx"})
 	require.NoError(t, err)
 	defer rows.Close()
 
@@ -290,6 +290,11 @@ func TestLineItemMigrationBringsItsIndexes(t *testing.T) {
 		"the variant filter is the half of the question this index serves")
 	assert.Contains(t, variant, "order_id",
 		"the join key is the second column so the discarded rows never reach the heap")
+
+	giftcard, ok := definitions["order_line_items_giftcard_idx"]
+	require.True(t, ok, "migration 000029 was not applied: order_line_items_giftcard_idx is missing")
+	assert.Contains(t, giftcard, "(order_id)", "the sweep joins its lines to their orders (ADR 0212)")
+	assert.Contains(t, giftcard, "WHERE is_giftcard", "the index holds the gift card lines only")
 }
 
 // TestLineItemFilterTreatsANilCriterionAsNotGiven is the test of the
@@ -655,4 +660,33 @@ func TestLineItemProviderIsRegisteredInTheContainer(t *testing.T) {
 	assert.Equal(t, detail.Items[0].ID, records[0][query.IDField])
 	assert.Equal(t, "variant_A", records[0][service.FieldLineItemVariantID])
 	assert.Equal(t, int64(3600), records[0][service.FieldLineItemTotal])
+}
+
+// TestLineItemFilterSelectsTheGiftCardLines is the gift card sweep's read on
+// the real query (ADR 0212): true selects the lines that sold cards, false the
+// others, and the criterion applies together with the window.
+func TestLineItemFilterSelectsTheGiftCardLines(t *testing.T) {
+	ctx := context.Background()
+	world := newLineItemWorld(ctx, t, "GIFTCARD", time.Date(2019, 3, 11, 0, 0, 0, 0, time.UTC))
+	card := writeLineItem(ctx, t, world.repo, models.OrderLineItem{
+		OrderID: world.inside.id, VariantID: world.variant, Title: "Gift card",
+		Quantity: 1, UnitPrice: 3000, Subtotal: 3000, Total: 3000, IsGiftcard: true,
+	})
+
+	cards := readLineIDs(ctx, t, world.repo, models.OrderLineItemFilter{
+		VariantID: ptr(world.variant), IsGiftcard: ptr(true), Limit: lineItemReadLimit,
+	})
+	assert.Equal(t, []string{card.ID}, cards)
+
+	others := readLineIDs(ctx, t, world.repo, models.OrderLineItemFilter{
+		VariantID: ptr(world.variant), IsGiftcard: ptr(false), Limit: lineItemReadLimit,
+	})
+	slices.Sort(others)
+	assert.Equal(t, world.allIDs(), others, "false is a criterion, not the absence of one")
+
+	outside := readLineIDs(ctx, t, world.repo, models.OrderLineItemFilter{
+		VariantID: ptr(world.variant), IsGiftcard: ptr(true), PlacedFrom: ptr(world.dayTwo),
+		Limit: lineItemReadLimit,
+	})
+	assert.Empty(t, outside, "the card's order was placed before the window")
 }

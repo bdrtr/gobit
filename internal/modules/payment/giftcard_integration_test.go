@@ -343,6 +343,26 @@ func TestTwoDeliveriesOfOneSaleMakeOneCard(t *testing.T) {
 	assert.Equal(t, 1, issues, "one issue row")
 }
 
+// TestTheSoldReferencesAreReadOnTheRealSchema: the sweep's read names the
+// sales that made a card and only them, an operator's card included in none
+// (ADR 0212).
+func TestTheSoldReferencesAreReadOnTheRealSchema(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := giftCardServiceOn(t, "")
+	sold := "oline_" + models.NewGiftCardID() + ":1"
+	_, _, err := svc.IssueSoldGiftCard(ctx, service.SoldGiftCardInput{
+		Reference: sold, OrderID: "order_refs", CurrencyCode: testCurrency, Amount: 1_000,
+	})
+	require.NoError(t, err)
+	_, err = svc.IssueGiftCard(ctx, service.IssueGiftCardInput{CurrencyCode: testCurrency, Amount: 1_000, Reason: "refs"})
+	require.NoError(t, err)
+
+	found, err := svc.SoldGiftCardReferences(ctx, []string{sold, "oline_nobody:1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{sold}, found)
+}
+
 // TestASoldCardIsTheOrdersAndNotTheJournals: the payment journal books an
 // issued card's cost and not a sold card's sale (ADR 0210).
 func TestASoldCardIsTheOrdersAndNotTheJournals(t *testing.T) {
