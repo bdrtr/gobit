@@ -123,7 +123,75 @@ func bindings() []binding {
 		},
 		{schemaType: "Tag", goType: reflect.TypeOf(models.Tag{}), leftOut: taxonomyLeftOut},
 		{schemaType: "Category", goType: reflect.TypeOf(models.Category{}), leftOut: taxonomyLeftOut},
+		// ADR 0219's two types were bound in gqlgen.yml and missing here until
+		// the list's population was derived from the schema (D153).
+		{
+			schemaType: "ProductAttribute",
+			goType:     reflect.TypeOf(models.ProductAttributeValue{}),
+			leftOut: map[string]string{
+				"AttributeID": "a filter names an attribute by its handle; the id is the admin surface's",
+			},
+		},
+		{
+			schemaType: "AttributeOption",
+			goType:     reflect.TypeOf(models.AttributeOption{}),
+			leftOut: map[string]string{
+				"ID":          "a filter names an option by its handle; the id is the admin surface's",
+				"AttributeID": "the option is read under its attribute, which the client already holds",
+				"Rank":        "the options come in their rank order; the number itself orders nothing more",
+			},
+		},
+		// The vocabulary (ADR 0225).
+		{
+			schemaType: "Collection",
+			goType:     reflect.TypeOf(models.Collection{}),
+			leftOut: withLeftOut(taxonomyLeftOut, map[string]string{
+				"Metadata": "the operator's free-form bag; the REST vocabulary answers it, the schema does not promise it",
+			}),
+		},
+		{
+			schemaType: "Attribute",
+			goType:     reflect.TypeOf(models.Attribute{}),
+			leftOut: map[string]string{
+				"CreatedAt": "the storefront client does not use the attribute's creation time",
+				"UpdatedAt": "the storefront client does not use the attribute's update time",
+			},
+		},
+		{schemaType: "ProductList", goType: reflect.TypeOf(graph.ProductList{})},
+		{schemaType: "CollectionList", goType: reflect.TypeOf(graph.CollectionList{}), leftOut: offsetPagesOnly},
+		{schemaType: "CategoryList", goType: reflect.TypeOf(graph.CategoryList{}), leftOut: offsetPagesOnly},
+		{schemaType: "TagList", goType: reflect.TypeOf(graph.TagList{}), leftOut: offsetPagesOnly},
 	}
+}
+
+// offsetPagesOnly is the vocabulary pages' left-out field: they page by offset,
+// and a short list of names has no deep page a cursor would make cheap.
+var offsetPagesOnly = map[string]string{
+	"NextCursor": "the vocabulary pages by offset; its lists are short and have no deep page",
+}
+
+// TestEveryObjectTypeIsBound derives the population of the field gates from the
+// schema the server speaks (D153): every object type but Query is in
+// [bindings], so a type bound in gqlgen.yml cannot escape both field checks by
+// being left out of a list written by hand.
+func TestEveryObjectTypeIsBound(t *testing.T) {
+	t.Parallel()
+
+	bound := map[string]bool{}
+	for _, b := range bindings() {
+		bound[b.schemaType] = true
+	}
+	checked := 0
+	for name, definition := range compiledSchema(t).Types {
+		if definition.Kind != ast.Object || name == "Query" || strings.HasPrefix(name, "__") {
+			continue
+		}
+		checked++
+		assert.True(t, bound[name],
+			"%s is an object type of the schema and bindings() does not name it; neither field "+
+				"gate reads it (D153)", name)
+	}
+	require.GreaterOrEqual(t, checked, len(bound), "the schema reading has gone blind")
 }
 
 // TestSchemaFieldsExistOnTheServiceType verifies that every field in the schema

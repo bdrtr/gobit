@@ -105,7 +105,10 @@ curl -s localhost:9000/store/v1/graphql \
   -d '{"query":"{ products(limit: 5, q: \"t-shirt\") { count items { handle variants { sku priceSet } } } }"}'
 ```
 
-The surface is kept **narrow**: the `products` and `product` queries, and **no
+The surface is kept **narrow**: the `products` and `product` queries, the
+catalog's vocabulary — `collections`, `categories`, `tags` and
+`productAttributes`, the same service reads as the REST vocabulary endpoints
+([ADR 0225](adr/0225-the-graphql-storefront-reads-the-vocabulary.md)) — and **no
 mutation**. The contract is the file
 `internal/modules/product/graph/schema.graphqls` — an inspectable artifact just
 like the OpenAPI document; the Go side is **generated** from it (`make gen`,

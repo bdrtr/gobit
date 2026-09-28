@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Three GraphQL types escaped the schema's field gates** (D153). The gates
+  read a list of types written by hand, and `ProductList`, `ProductAttribute`
+  and `AttributeOption` were never on it. **For contributors:** every object
+  type of the storefront schema must now be named in `bindings()` in
+  `internal/modules/product/graph/schema_test.go`, with the Go fields it leaves
+  out and why.
+
 - **A cart line's note never reached the order** (D152). The storefront's
   add-line `metadata`, described as a gift note or a personalization, was
   dropped by the checkout: its order snapshot had no field for it. Each line's
@@ -118,6 +125,15 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **The GraphQL storefront reads the vocabulary** (ADR 0225). **For storefront
+  clients:** the schema answers `collections`, `categories(parentId:)`, `tags`
+  and `productAttributes`, the same reads as `GET /store/v1/collections`,
+  `/categories`, `/tags` and `/product-attributes`, so the ids and handles the
+  `products` filters take can be read without leaving GraphQL. The pages go by
+  offset with `count`, `offset` and `limit`; each query costs its page size
+  times its selection against the complexity ceiling, and the attributes the
+  catalog's ceiling of 100.
 
 - **A plugin names the releases it works with** (ADR 0224). **For plugin
   authors:** a plugin may implement `core/plugin.CoreRequirement`, returning a

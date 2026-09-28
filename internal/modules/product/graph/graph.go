@@ -10,9 +10,10 @@
 //
 // # The scope is NARROW
 //
-// Read only: products and product. There is NO mutation and no admin surface
-// (the rationale is at the top of schema.graphqls). Keeping it narrow is about
-// seeing the pattern settle correctly on a small surface first.
+// Read only: products and product, and since ADR 0225 the catalog's vocabulary
+// — collections, categories, tags and attributes. There is NO mutation and no
+// admin surface (the rationale is at the top of schema.graphqls). Keeping it
+// narrow is about seeing the pattern settle correctly on a small surface first.
 //
 // # It REACHES the service, NOT the repository
 //
@@ -84,6 +85,12 @@ type Storefront interface {
 		kind models.RelationType,
 		salesChannelIDs []string,
 	) ([]service.StoreProduct, error)
+
+	// The vocabulary (ADR 0225): the storefront REST reads' own methods.
+	ListCollections(ctx context.Context, limit, offset int) (service.ListResult[models.Collection], error)
+	ListCategories(ctx context.Context, opts service.ListCategoriesOptions) (service.ListResult[models.Category], error)
+	ListTags(ctx context.Context, limit, offset int) (service.ListResult[models.Tag], error)
+	ListAttributes(ctx context.Context) ([]models.Attribute, error)
 }
 
 // ProductList is the GraphQL counterpart of the storefront list.
@@ -95,6 +102,16 @@ type Storefront interface {
 // not show it (a field not written into the schema is invisible), but if a
 // field name changes the generated code DOES NOT COMPILE.
 type ProductList = service.ListResult[service.StoreProduct]
+
+// The vocabulary's pages (ADR 0225) are aliases for [ProductList]'s reason.
+type (
+	// CollectionList is a page of collections.
+	CollectionList = service.ListResult[models.Collection]
+	// CategoryList is a page of categories.
+	CategoryList = service.ListResult[models.Category]
+	// TagList is a page of tags.
+	TagList = service.ListResult[models.Tag]
+)
 
 // SalesChannelIDsFromContext reads the sales channels the request is bound to
 // from the VERIFIED IDENTITY.

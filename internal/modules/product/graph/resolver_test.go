@@ -40,6 +40,51 @@ type fakeStorefront struct {
 	single  service.StoreProduct
 	related []service.StoreProduct
 	err     error
+
+	// The vocabulary's calls and answers (ADR 0225).
+	vocabularyPages [][2]int
+	categoryOptions []service.ListCategoriesOptions
+	collections     []models.Collection
+	categories      []models.Category
+	tags            []models.Tag
+	attributes      []models.Attribute
+}
+
+// vocabularyPage is a page of one of the vocabulary's lists.
+func vocabularyPage[T any](items []T, limit, offset int) service.ListResult[T] {
+	count := len(items)
+	return service.ListResult[T]{Items: items, Count: &count, Limit: limit, Offset: offset}
+}
+
+// ListCollections records the page and returns the prepared collections.
+func (s *fakeStorefront) ListCollections(_ context.Context, limit, offset int) (service.ListResult[models.Collection], error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.vocabularyPages = append(s.vocabularyPages, [2]int{limit, offset})
+	return vocabularyPage(s.collections, limit, offset), s.err
+}
+
+// ListCategories records the options and returns the prepared categories.
+func (s *fakeStorefront) ListCategories(
+	_ context.Context, opts service.ListCategoriesOptions,
+) (service.ListResult[models.Category], error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.categoryOptions = append(s.categoryOptions, opts)
+	return vocabularyPage(s.categories, opts.Limit, opts.Offset), s.err
+}
+
+// ListTags records the page and returns the prepared tags.
+func (s *fakeStorefront) ListTags(_ context.Context, limit, offset int) (service.ListResult[models.Tag], error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.vocabularyPages = append(s.vocabularyPages, [2]int{limit, offset})
+	return vocabularyPage(s.tags, limit, offset), s.err
+}
+
+// ListAttributes returns the prepared attributes.
+func (s *fakeStorefront) ListAttributes(context.Context) ([]models.Attribute, error) {
+	return s.attributes, s.err
 }
 
 // relatedCall is one recorded StoreRelatedProducts call.

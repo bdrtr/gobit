@@ -1040,6 +1040,23 @@ func complexityCosts(costs *ComplexityRoot) {
 	costs.Product.Related = func(child int, _ models.RelationType) int {
 		return rootQueryCost + collectionCost(child)
 	}
+	// The vocabulary (ADR 0225) pages as the listing does, from its limit, and
+	// the attributes are at most models.MaxAttributes, which is what they are
+	// charged: the whole vocabulary is one read.
+	costs.Query.Collections = func(child int, limit, _ *int) int {
+		return rootQueryCost + pageSize(limit)*child
+	}
+	costs.Query.Categories = func(child int, _ *string, limit, _ *int) int {
+		return rootQueryCost + pageSize(limit)*child
+	}
+	costs.Query.Tags = func(child int, limit, _ *int) int {
+		return rootQueryCost + pageSize(limit)*child
+	}
+	costs.Query.ProductAttributes = func(child int) int {
+		return rootQueryCost + models.MaxAttributes*child
+	}
+	costs.Attribute.Options = collectionCost
+
 	costs.Product.Variants = collectionCost
 	costs.Product.Options = collectionCost
 	costs.Product.Images = collectionCost

@@ -184,6 +184,77 @@ type Query {
   different error would pierce the hiding itself.
   """
   product(id: ID, handle: String): Product
+
+  """
+  The catalog's vocabulary (ADR 0225): what a storefront names in a filter
+  and prints in a menu, read through the same service methods as
+  GET /store/v1/collections, /categories, /tags and /product-attributes.
+
+  None of the four varies by sales channel on either surface: a collection, a
+  category, a tag or an attribute is the shop's, and which of its products a
+  channel sells is the listing's question.
+  """
+  collections(limit: Int, offset: Int): CollectionList!
+
+  """
+  The categories a storefront shows: active and not internal, in rank order.
+  parentId walks the tree one level at a time; without it the tree comes back
+  flat.
+  """
+  categories(parentId: ID, limit: Int, offset: Int): CategoryList!
+
+  "The tags, one page at a time."
+  tags(limit: Int, offset: Int): TagList!
+
+  "The attributes the listing filters on, with their options, in the operator's order (ADR 0219)."
+  productAttributes: [Attribute!]!
+}
+
+"A group of products an operator curates."
+type Collection {
+  id: ID!
+  title: String!
+  handle: String!
+}
+
+"A page of collections."
+type CollectionList {
+  items: [Collection!]!
+  "The TOTAL number of collections."
+  count: Int!
+  offset: Int!
+  limit: Int!
+}
+
+"A page of categories."
+type CategoryList {
+  items: [Category!]!
+  "The TOTAL number of categories the arguments select."
+  count: Int!
+  offset: Int!
+  limit: Int!
+}
+
+"A page of tags."
+type TagList {
+  items: [Tag!]!
+  "The TOTAL number of tags."
+  count: Int!
+  offset: Int!
+  limit: Int!
+}
+
+"A store-wide attribute a product may carry a value of (ADR 0219)."
+type Attribute {
+  id: ID!
+  "How a filter names it."
+  handle: String!
+  title: String!
+  "number, boolean or select."
+  kind: String!
+  rank: Int!
+  "A select attribute's choices, in their order; empty for the other kinds."
+  options: [AttributeOption!]!
 }
 
 """

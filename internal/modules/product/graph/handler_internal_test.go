@@ -267,3 +267,28 @@ func TestResponseCounterLetsThroughWhatIsUnderTheLimit(t *testing.T) {
 	assert.Equal(t, 33, n)
 	assert.Equal(t, `{"data":{"products":{"count":0}}}`, rec.Body.String())
 }
+
+// ListCollections returns an empty page.
+func (silentStorefront) ListCollections(context.Context, int, int) (service.ListResult[models.Collection], error) {
+	zero := 0
+	return service.ListResult[models.Collection]{Count: &zero}, nil
+}
+
+// ListCategories returns an empty page.
+func (silentStorefront) ListCategories(
+	context.Context, service.ListCategoriesOptions,
+) (service.ListResult[models.Category], error) {
+	zero := 0
+	return service.ListResult[models.Category]{Count: &zero}, nil
+}
+
+// ListTags returns an empty page.
+func (silentStorefront) ListTags(context.Context, int, int) (service.ListResult[models.Tag], error) {
+	zero := 0
+	return service.ListResult[models.Tag]{Count: &zero}, nil
+}
+
+// ListAttributes returns none.
+func (silentStorefront) ListAttributes(context.Context) ([]models.Attribute, error) {
+	return nil, nil
+}

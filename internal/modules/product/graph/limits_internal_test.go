@@ -15,6 +15,9 @@ import (
 var unpricedLists = map[string]string{
 	"ProductList.items": "the page size is priced on Query.products, from its limit argument; " +
 		"pricing the items too would charge the square of the page",
+	"CollectionList.items": "priced on Query.collections from its limit, as ProductList.items is",
+	"CategoryList.items":   "priced on Query.categories from its limit, as ProductList.items is",
+	"TagList.items":        "priced on Query.tags from its limit, as ProductList.items is",
 }
 
 // TestEveryListFieldIsPriced derives its population from the schema.

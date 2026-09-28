@@ -103,6 +103,17 @@ models:
     model: github.com/bdrtr/gobit/internal/modules/product/models.Tag
   Category:
     model: github.com/bdrtr/gobit/internal/modules/product/models.Category
+  # The vocabulary (ADR 0225), bound as the product types are.
+  Collection:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.Collection
+  Attribute:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.Attribute
+  CollectionList:
+    model: github.com/bdrtr/gobit/internal/modules/product/graph.CollectionList
+  CategoryList:
+    model: github.com/bdrtr/gobit/internal/modules/product/graph.CategoryList
+  TagList:
+    model: github.com/bdrtr/gobit/internal/modules/product/graph.TagList
   ProductOrder:
     model: github.com/bdrtr/gobit/internal/modules/product/models.ProductOrder
   RelationType:
