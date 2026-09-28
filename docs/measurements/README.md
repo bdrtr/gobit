@@ -160,3 +160,4 @@ truth: a report says what was true on the day it was taken.
 | [A line past the ceiling — measured 2026-09-28](0227-a-line-past-the-ceiling.md) | 74 |
 | [The words a ring takes — measured 2026-09-28](0228-the-words-a-ring-takes.md) | 95 |
 | [An engraving and its ring — measured 2026-09-29](0229-an-engraving-and-its-ring.md) | 92 |
+| [The engraving comes back too — measured 2026-09-29](0230-the-engraving-comes-back-too.md) | 53 |

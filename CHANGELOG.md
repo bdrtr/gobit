@@ -148,6 +148,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **An add-on goes back with its line** (ADR 0230). **For storefront clients
+  and operators:** a return request naming a line that carries add-ons has to
+  name each add-on at the same quantity, and an add-on only beside its line;
+  otherwise it is refused with `422` and `order_add_on_follows_its_line`. The
+  refund of each line stays the operator's, nothing included. A write-off
+  (`POST /admin/v1/orders/{id}/line-cancellations`) of a line writes off its
+  add-ons too, each with its own record and `order.line_canceled` event, and an
+  add-on cannot be written off alone.
+
 - **An add-on is a line of its own** (ADR 0229). **For storefront clients:**
   `POST /store/v1/carts/{id}/line-items` (and the admin add) takes
   `"add_ons": [{"variant_id": ..., "properties": {...}}]`, each a variant the

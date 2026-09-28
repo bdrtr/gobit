@@ -96,12 +96,15 @@ func (s *Service) CancelOrderLine(
 		return models.OrderLineCancellation{}, err
 	}
 
-	var (
-		created   models.OrderLineCancellation
-		variantID string
-		before    int64
-		bought    int64
-	)
+	// written is one cancellation the transaction made, kept to publish after
+	// the commit: the line asked for and, since ADR 0230, each of its add-ons.
+	type written struct {
+		cancellation models.OrderLineCancellation
+		variantID    string
+		before       int64
+		bought       int64
+	}
+	var done []written
 
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		if _, lockErr := s.requireLiveOrder(ctx, orderID, "a line cancellation"); lockErr != nil {
@@ -112,16 +115,26 @@ func (s *Service) CancelOrderLine(
 		if listErr != nil {
 			return listErr
 		}
-		if err := refuseGiftCardLines(lines, []string{in.OrderLineItemID}, "written off"); err != nil {
+		// An add-on is written off with its line and never alone (ADR 0230):
+		// an engraving for a ring that is not coming is not coming either.
+		targets, err := cancellationTargets(lines, in.OrderLineItemID)
+		if err != nil {
+			return err
+		}
+		if err := refuseGiftCardLines(lines, targets, "written off"); err != nil {
 			return err
 		}
 
-		spokenFor, sumErr := s.unitsSpokenFor(ctx, []string{in.OrderLineItemID})
+		spokenFor, sumErr := s.unitsSpokenFor(ctx, targets)
 		if sumErr != nil {
 			return sumErr
 		}
-		if err := checkCancelQuantity(lines, spokenFor, in); err != nil {
-			return err
+		for _, id := range targets {
+			if err := checkCancelQuantity(lines, spokenFor, CancelOrderLineInput{
+				OrderLineItemID: id, Quantity: in.Quantity,
+			}); err != nil {
+				return err
+			}
 		}
 
 		// The CANCELED sum alone, not [Service.unitsSpokenFor]'s total.
@@ -131,42 +144,47 @@ func (s *Service) CancelOrderLine(
 		// total that included RETURNS would be the wrong ruler: returned goods are
 		// restocked by the returns flow when they physically arrive, and counting
 		// them here would make every cancellation after a return give back too few.
-		canceledBefore, sumErr := s.store.CanceledQuantities(ctx, []string{in.OrderLineItemID})
+		canceledBefore, sumErr := s.store.CanceledQuantities(ctx, targets)
 		if sumErr != nil {
 			return sumErr
 		}
 
-		var createErr error
-		created, createErr = s.store.CreateLineCancellation(ctx, models.OrderLineCancellation{
-			ID:              models.NewLineCancellationID(),
-			OrderLineItemID: in.OrderLineItemID,
-			Quantity:        in.Quantity,
-			Reason:          reason,
-			Note:            in.Note,
-		})
-		if createErr != nil {
-			return createErr
+		for _, id := range targets {
+			created, createErr := s.store.CreateLineCancellation(ctx, models.OrderLineCancellation{
+				ID:              models.NewLineCancellationID(),
+				OrderLineItemID: id,
+				Quantity:        in.Quantity,
+				Reason:          reason,
+				Note:            in.Note,
+			})
+			if createErr != nil {
+				return createErr
+			}
+
+			line, found := lineByID(lines, id)
+			if !found {
+				// checkCancelQuantity has already refused a line that is not on
+				// the order, so reaching here means the two disagree — which is a
+				// bug in this function rather than a caller's mistake.
+				return errors.Internal(CodeInconsistentState,
+					"line %s passed the cancellation ceiling and is not on order %s", id, orderID)
+			}
+			w := written{
+				cancellation: created, variantID: line.VariantID,
+				before: canceledBefore[id], bought: line.Quantity,
+			}
+
+			// The outbox row is written INSIDE this transaction, so a cancellation
+			// cannot commit without its promise to say so (ADR 0134). A failure
+			// here fails the write-off, because a write-off with no event is stock
+			// that stays deducted forever with nothing anywhere saying it should
+			// not be.
+			if err := s.recordLineCanceled(ctx, orderID, w.cancellation, w.variantID, w.before, w.bought); err != nil {
+				return err
+			}
+			done = append(done, w)
 		}
-
-		line, found := lineByID(lines, in.OrderLineItemID)
-		if !found {
-			// checkCancelQuantity has already refused a line that is not on the
-			// order, so reaching here means the two disagree — which is a bug in
-			// this function rather than a caller's mistake.
-			return errors.Internal(CodeInconsistentState,
-				"line %s passed the cancellation ceiling and is not on order %s",
-				in.OrderLineItemID, orderID)
-		}
-
-		variantID = line.VariantID
-		before = canceledBefore[in.OrderLineItemID]
-		bought = line.Quantity
-
-		// The outbox row is written INSIDE this transaction, so a cancellation
-		// cannot commit without its promise to say so (ADR 0134). A failure here
-		// fails the write-off, because a write-off with no event is stock that
-		// stays deducted forever with nothing anywhere saying it should not be.
-		return s.recordLineCanceled(ctx, orderID, created, variantID, before, bought)
+		return nil
 	})
 	if err != nil {
 		return models.OrderLineCancellation{}, err
@@ -174,9 +192,25 @@ func (s *Service) CancelOrderLine(
 
 	// Published AFTER the commit, so a subscriber cannot read a cancellation that
 	// is not there yet. The outbox row covers a lost publish; this is the fast path.
-	s.publishLineCanceled(ctx, orderID, created, variantID, before, bought)
+	for i := range done {
+		s.publishLineCanceled(ctx, orderID, done[i].cancellation, done[i].variantID, done[i].before, done[i].bought)
+	}
 
-	return created, nil
+	return done[0].cancellation, nil
+}
+
+// cancellationTargets is the line a write-off names followed by its add-ons,
+// which go with it (ADR 0230); an add-on named alone is refused.
+func cancellationTargets(lines []models.OrderLineItem, lineID string) ([]string, error) {
+	if line, found := lineByID(lines, lineID); found && line.ParentLineItemID != nil {
+		return nil, addOnFollows(lineID, *line.ParentLineItemID)
+	}
+	targets := []string{lineID}
+	addOns := addOnsOf(lines, lineID)
+	for i := range addOns {
+		targets = append(targets, addOns[i].ID)
+	}
+	return targets, nil
 }
 
 // lineByID finds a line on the order.

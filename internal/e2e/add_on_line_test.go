@@ -16,7 +16,8 @@ import (
 // engraving, which opens as a line bound to it at its own price, is refused a
 // wrap the ring does not take, raises the ring and sees the engraving follow,
 // is refused a write to the engraving alone, and the order placed keeps the
-// engraving bound to its ring.
+// engraving bound to its ring; after the sale the ring comes back and is
+// written off only with its engraving (ADR 0230).
 func TestAnEngravingIsALineOfItsRingsOwn(t *testing.T) {
 	ctx := t.Context()
 	ring, _ := newStockedVariant(ctx, t, "E2E Add-on Ring", map[string]int64{taxedCurrency: 20_000}, 10)
@@ -108,4 +109,41 @@ func TestAnEngravingIsALineOfItsRingsOwn(t *testing.T) {
 	rec := adminCartRequest(t, http.MethodGet, "/admin/v1/orders/"+orderID, "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), `"parent_line_item_id":"`+ringOrderLine+`"`)
+
+	// After the sale (ADR 0230): the ring comes back only with its engraving,
+	// and a ring written off takes its engraving with it.
+	var engravingOrderLine string
+	for _, line := range order.Items {
+		if line.VariantID == engraving {
+			engravingOrderLine = line.ID
+		}
+	}
+	askBack := func(lines string) (int, string) {
+		rec := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+orderID+"/returns",
+			`{"reason":"too small","lines":[`+lines+`]}`)
+		return rec.Code, rec.Body.String()
+	}
+	code, body = askBack(`{"order_line_item_id":"` + ringOrderLine + `","quantity":1}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, code, body)
+	assert.Contains(t, body, "order_add_on_follows_its_line")
+	code, body = askBack(`{"order_line_item_id":"` + ringOrderLine + `","quantity":1},` +
+		`{"order_line_item_id":"` + engravingOrderLine + `","quantity":1}`)
+	assert.Equal(t, http.StatusCreated, code, body)
+
+	offAlone, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+orderID+"/line-cancellations",
+		map[string]any{"order_line_item_id": engravingOrderLine, "quantity": 1, "reason": "no longer wanted"})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, offAlone.Code, offAlone.Body.String())
+	written, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+orderID+"/line-cancellations",
+		map[string]any{"order_line_item_id": ringOrderLine, "quantity": 1, "reason": "out of stock"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, written.Code, written.Body.String())
+	cancellations, err := orderSvc.ListLineCancellations(ctx, orderID)
+	require.NoError(t, err)
+	byLine := map[string]int64{}
+	for _, c := range cancellations {
+		byLine[c.OrderLineItemID] += c.Quantity
+	}
+	assert.Equal(t, map[string]int64{ringOrderLine: 1, engravingOrderLine: 1}, byLine,
+		"the engraving is written off with its ring")
 }

@@ -119,6 +119,9 @@ func (s *Service) CreateReturn(ctx context.Context, in CreateReturnInput) (model
 		if err := refuseGiftCardLines(lines, lineIDsOf(in.Lines), "returned"); err != nil {
 			return err
 		}
+		if err := checkAddOnReturn(lines, in.Lines); err != nil {
+			return err
+		}
 		spokenFor, err := s.unitsSpokenFor(ctx, lineIDsOf(in.Lines))
 		if err != nil {
 			return err
