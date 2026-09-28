@@ -178,7 +178,7 @@ func describeAdminRevisions(d *openapi.Doc) {
 			"id elsewhere. What the revision names that was removed since is left out and listed " +
 			"in `dropped`; a handle another product has taken since is refused with 409. The " +
 			"restore gets the product.updated event an edit gets.",
-		Parameters: []openapi.Parameter{versionPathParameter()},
+		Parameters: []openapi.Parameter{ifMatchParameter(), versionPathParameter()},
 		Responses: map[string]any{
 			"200": openapi.Response("The restored product", d.Item(restoreResponse{})),
 		},

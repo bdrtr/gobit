@@ -1282,8 +1282,9 @@ type fakeProductWriter struct {
 	title string
 	// handle and status are recorded so a test can prove the form's values
 	// reach the surface unchanged.
-	handle string
-	status string
+	handle  string
+	status  string
+	version int64
 
 	// scheduled and unscheduled record the schedule calls; scheduleErr is what
 	// ScheduleProduct answers.
@@ -1303,9 +1304,9 @@ func (f *fakeProductWriter) SetProductRelations(_ context.Context, _ string, lis
 	return f.relatedErr
 }
 
-func (f *fakeProductWriter) UpdateProductBasics(_ context.Context, id, title, handle, status string) error {
+func (f *fakeProductWriter) UpdateProductBasics(_ context.Context, id, title, handle, status string, version int64) error {
 	f.calls++
-	f.id, f.title, f.handle, f.status = id, title, handle, status
+	f.id, f.title, f.handle, f.status, f.version = id, title, handle, status, version
 
 	return f.err
 }
@@ -1349,8 +1350,11 @@ func editRouter(panel *UI) chi.Router {
 	return r
 }
 
-// postEdit submits the edit form.
+// postEdit submits the edit form, at version 3 when the form names none.
 func postEdit(panel *UI, id string, form url.Values) *httptest.ResponseRecorder {
+	if !form.Has("version") {
+		form.Set("version", "3")
+	}
 	req := httptest.NewRequest(http.MethodPost, ProductsPath+"/"+id+"/edit",
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

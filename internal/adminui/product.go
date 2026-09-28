@@ -113,6 +113,7 @@ func productRowOf(rec query.Record) productRow {
 		UpdatedAt: recordTime(rec, fieldUpdatedAt),
 		PublishAt: recordMoment(rec, fieldPublishAt),
 		ArchiveAt: recordMoment(rec, fieldArchiveAt),
+		Version:   recordInt(rec, fieldVersion),
 	}
 }
 

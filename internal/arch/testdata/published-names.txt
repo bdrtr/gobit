@@ -116,6 +116,7 @@ core/errors IsConflict
 core/errors IsForbidden
 core/errors IsInvalid
 core/errors IsNotFound
+core/errors IsPreconditionFailed
 core/errors IsTooManyRequests
 core/errors IsUnauthorized
 core/errors Join
@@ -127,11 +128,13 @@ core/errors KindInternal
 core/errors KindInvalid
 core/errors KindNotFound
 core/errors KindOf
+core/errors KindPreconditionFailed
 core/errors KindTooManyRequests
 core/errors KindUnauthorized
 core/errors KindUnavailable
 core/errors New
 core/errors NotFound
+core/errors PreconditionFailed
 core/errors TooManyRequests
 core/errors Unauthorized
 core/errors Unavailable
@@ -242,6 +245,7 @@ core/http ErrorBody
 core/http ErrorResponse
 core/http GatingChecks
 core/http GuardOptions
+core/http HeaderOnSuccess
 core/http HealthCheck
 core/http Idempotency
 core/http IdempotencyKeyHeader

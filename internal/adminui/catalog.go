@@ -139,7 +139,9 @@ const (
 	// fieldPublishAt is a draft's scheduled moment (ADR 0177, ADR 0178).
 	fieldPublishAt = "publish_at"
 	// fieldArchiveAt is a product's scheduled moment to leave (ADR 0179).
-	fieldArchiveAt   = "archive_at"
+	fieldArchiveAt = "archive_at"
+	// fieldVersion is the version the edit form is read at (ADR 0222).
+	fieldVersion     = "version"
 	fieldSKU         = "sku"
 	fieldPrices      = "prices"
 	fieldAmount      = "amount"
@@ -318,6 +320,9 @@ type productRow struct {
 	ArchiveAt *time.Time
 	// ArchiveAtTyped is PublishAtTyped's counterpart.
 	ArchiveAtTyped *string
+	// Version is the product's version, which the edit form sends back
+	// (ADR 0222).
+	Version int64
 }
 
 // ArchiveAtUTC is the moment to leave as the product page prints it, or empty.

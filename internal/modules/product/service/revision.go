@@ -17,6 +17,43 @@ import (
 // read back; it is a fault of this module, not of the caller.
 const codeRevisionInvalid = "product_revision_invalid"
 
+// CodeVersionMismatch reports a write asked on a version of the product that is
+// no longer its latest (ADR 0222).
+const CodeVersionMismatch = "product_version_mismatch"
+
+// expectedVersionKey and versionSinkKey carry a write's precondition in and the
+// product's version after it out (ADR 0222).
+type (
+	expectedVersionKey struct{}
+	versionSinkKey     struct{}
+)
+
+// versionSink holds the version a product is at after a revising write.
+type versionSink struct {
+	version int64
+	set     bool
+}
+
+// ExpectVersion returns a context under which a write to a product's content is
+// refused with [CodeVersionMismatch] unless the product is at the given version
+// when its row lock is taken (ADR 0222).
+func ExpectVersion(ctx context.Context, version int64) context.Context {
+	return context.WithValue(ctx, expectedVersionKey{}, version)
+}
+
+// ExpectedVersion returns the version a context's write was asked on, if any.
+func ExpectedVersion(ctx context.Context) (int64, bool) {
+	version, ok := ctx.Value(expectedVersionKey{}).(int64)
+	return version, ok
+}
+
+// WithVersionSink returns a context a revising write reports the product's
+// version to, and the function that reads it once the write returned.
+func WithVersionSink(ctx context.Context) (withSink context.Context, read func() (int64, bool)) {
+	sink := &versionSink{}
+	return context.WithValue(ctx, versionSinkKey{}, sink), func() (int64, bool) { return sink.version, sink.set }
+}
+
 // volatileFields are the keys a revision's snapshot leaves out, at every depth:
 // a write stamps them whether or not it changed anything.
 var volatileFields = []string{"created_at", "updated_at", "deleted_at"}
@@ -46,50 +83,63 @@ func (s *Service) revise(
 		if err != nil {
 			return err
 		}
+		if expected, ok := ExpectedVersion(ctx); ok && product.Version != expected {
+			return errors.PreconditionFailed(CodeVersionMismatch,
+				"product %s is at version %d and the write was asked on version %d; read it again",
+				productID, product.Version, expected)
+		}
 		if product.Version == 0 {
-			if err := s.recordRevision(ctx, tx, productID); err != nil {
+			if _, err := s.recordRevision(ctx, tx, productID); err != nil {
 				return err
 			}
 		}
 		if err := write(ctx, tx); err != nil {
 			return err
 		}
-		return s.recordRevision(ctx, tx, productID)
+		version, err := s.recordRevision(ctx, tx, productID)
+		if err != nil {
+			return err
+		}
+		if sink, ok := ctx.Value(versionSinkKey{}).(*versionSink); ok {
+			sink.version, sink.set = version, true
+		}
+		return nil
 	})
 }
 
 // recordRevision reads the product's admin view in the transaction and
-// appends it as the next revision, unless it is the latest one's.
-func (s *Service) recordRevision(ctx context.Context, tx repository.Store, productID string) error {
+// appends it as the next revision, unless it is the latest one's; it returns
+// the version the product is at after it.
+func (s *Service) recordRevision(ctx context.Context, tx repository.Store, productID string) (int64, error) {
 	product, err := tx.GetProduct(ctx, productID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	products := []models.Product{product}
 	if err := s.attachRelationsFrom(ctx, tx, products); err != nil {
-		return err
+		return 0, err
 	}
 	snapshot, err := revisionSnapshot(products[0])
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	latest, ok, err := tx.LatestProductRevision(ctx, productID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	version, changed := int64(1), []string{}
 	if ok {
 		previous, err := canonicalJSON(latest.Snapshot)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if bytes.Equal(previous, snapshot) {
-			return nil
+			return latest.Version, nil
 		}
 		version = latest.Version + 1
 		if changed, err = changedFields(previous, snapshot); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
@@ -100,7 +150,10 @@ func (s *Service) recordRevision(ctx context.Context, tx repository.Store, produ
 	if id := corehttp.RequestIDFromContext(ctx); id != "" {
 		rev.RequestID = &id
 	}
-	return tx.AppendProductRevision(ctx, rev)
+	if err := tx.AppendProductRevision(ctx, rev); err != nil {
+		return 0, err
+	}
+	return version, nil
 }
 
 // revisionSnapshot is the product's admin view as a revision keeps it: JSON

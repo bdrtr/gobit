@@ -365,7 +365,8 @@ func (s *Service) CreateProduct(ctx context.Context, in CreateProductInput) (mod
 			}
 		}
 		// The product's first revision is what it was created as (ADR 0221).
-		return s.recordRevision(ctx, tx, product.ID)
+		_, err := s.recordRevision(ctx, tx, product.ID)
+		return err
 	})
 	if err != nil {
 		return models.Product{}, err

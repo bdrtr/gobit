@@ -837,6 +837,7 @@ func productRecord(p models.Product) query.Record {
 		"metadata":         p.Metadata,
 		fieldPublishAt:     momentOrNil(p.PublishAt),
 		fieldArchiveAt:     momentOrNil(p.ArchiveAt),
+		fieldVersion:       p.Version,
 		fieldCreatedAt:     p.CreatedAt,
 		fieldUpdatedAt:     p.UpdatedAt,
 	}
@@ -852,6 +853,11 @@ const fieldPublishAt = "publish_at"
 // fieldArchiveAt is the moment a product is to be archived (ADR 0179), offered
 // for fieldPublishAt's reason.
 const fieldArchiveAt = "archive_at"
+
+// fieldVersion is the product's version (ADR 0221), offered for fieldPublishAt's
+// reason: the panel's edit form sends it back as the version it was read at
+// (ADR 0222).
+const fieldVersion = "version"
 
 // momentOrNil is the moment, or nil when there is none; the record holds the
 // value rather than a pointer, as every other moment in it does.

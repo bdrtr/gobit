@@ -509,6 +509,7 @@ func describeAdminProducts(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPatch, "/admin/v1/products/{id}", openapi.Operation{
+		Parameters:  []openapi.Parameter{ifMatchParameter()},
 		Summary:     "Updates only the given fields of the product.",
 		RequestBody: d.RequestBody(updateProductRequest{}),
 		Responses: map[string]any{
@@ -661,6 +662,7 @@ func describeAdminSchedule(d *openapi.Doc) {
 // describeAdminVariants describes the /admin/v1 variant endpoints.
 func describeAdminVariants(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/products/{id}/variants", openapi.Operation{
+		Parameters:  []openapi.Parameter{ifMatchParameter()},
 		Summary:     "Adds a new variant to the product.",
 		RequestBody: d.RequestBody(createVariantRequest{}),
 		Responses: map[string]any{
@@ -687,6 +689,7 @@ func describeAdminVariants(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPatch, "/admin/v1/variants/{id}", openapi.Operation{
+		Parameters:  []openapi.Parameter{ifMatchParameter()},
 		Summary:     "Updates only the given fields of the variant.",
 		RequestBody: d.RequestBody(updateVariantRequest{}),
 		Responses: map[string]any{
@@ -695,7 +698,8 @@ func describeAdminVariants(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/variants/{id}", openapi.Operation{
-		Summary: "Deletes the variant.",
+		Parameters: []openapi.Parameter{ifMatchParameter()},
+		Summary:    "Deletes the variant.",
 		Responses: map[string]any{
 			"200": openapi.Response("Deletion record", d.Item(deleted{})),
 		},
@@ -706,6 +710,7 @@ func describeAdminVariants(d *openapi.Doc) {
 // endpoints.
 func describeAdminOptions(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/products/{id}/options", openapi.Operation{
+		Parameters:  []openapi.Parameter{ifMatchParameter()},
 		Summary:     "Adds a new option axis to the product.",
 		RequestBody: d.RequestBody(createOptionRequest{}),
 		Responses: map[string]any{
@@ -726,6 +731,7 @@ func describeAdminOptions(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/product-options/{id}/values", openapi.Operation{
+		Parameters:  []openapi.Parameter{ifMatchParameter()},
 		Summary:     "Adds a new value to the option.",
 		RequestBody: d.RequestBody(optionValueRequest{}),
 		Responses: map[string]any{
@@ -734,14 +740,16 @@ func describeAdminOptions(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/product-options/{id}", openapi.Operation{
-		Summary: "Deletes the option together with its values.",
+		Parameters: []openapi.Parameter{ifMatchParameter()},
+		Summary:    "Deletes the option together with its values.",
 		Responses: map[string]any{
 			"200": openapi.Response("Deletion record", d.Item(deleted{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/product-option-values/{id}", openapi.Operation{
-		Summary: "Deletes a single option value.",
+		Parameters: []openapi.Parameter{ifMatchParameter()},
+		Summary:    "Deletes a single option value.",
 		Description: "A value carried by a living variant is refused with 409; change " +
 			"those variants first. The id in the path is the VALUE's own id, not the " +
 			"option's.",
@@ -821,7 +829,8 @@ func describeAdminLinks(d *openapi.Doc) {
 // describeAdminImages describes the per-image writes.
 func describeAdminImages(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/products/{id}/images", openapi.Operation{
-		Summary: "Adds one image to a product that already exists.",
+		Parameters: []openapi.Parameter{ifMatchParameter()},
+		Summary:    "Adds one image to a product that already exists.",
 		// Where the image lands is stated because the natural guess is wrong:
 		// a client sending rank 0 means "I did not choose" and would otherwise
 		// expect the picture to stay at the front.
@@ -837,7 +846,8 @@ func describeAdminImages(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPatch, "/admin/v1/products/{id}/images/{imageId}", openapi.Operation{
-		Summary: "Corrects one image's alt text, rank or metadata.",
+		Parameters: []openapi.Parameter{ifMatchParameter()},
+		Summary:    "Corrects one image's alt text, rank or metadata.",
 		// The absent field is the one worth describing: a client looking for a
 		// way to swap the picture has to be told it is two calls, not a patch.
 		Description: "A field left out DOES NOT CHANGE. An empty \"alt_text\" is a value " +
@@ -854,7 +864,8 @@ func describeAdminImages(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/products/{id}/images/{imageId}", openapi.Operation{
-		Summary: "Removes one image from a product.",
+		Parameters: []openapi.Parameter{ifMatchParameter()},
+		Summary:    "Removes one image from a product.",
 		Description: "The upload BINDING goes with it and the FILE does not: the file " +
 			"belongs to the file module and may back another product's image. What the " +
 			"removal of the binding protects is the reverse read — an image no storefront " +

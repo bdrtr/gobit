@@ -258,8 +258,11 @@ past and is not corrected retroactively.
   price write is lossless and writes the prices it does not see back
   UNCHANGED, but it does not let them be edited.
 
-  There are two more write limits. Concurrent editing is last-writer-wins: there
-  is no version field in the form and no optimistic lock under it. And editing
+  There are two more write limits. Concurrent editing of a price or a stock
+  level is last-writer-wins: those forms carry no version and nothing checks one
+  under them. The product form carries the product's version since
+  [ADR 0222](adr/0222-a-product-write-names-the-version-it-read.md), and a save
+  made after somebody else's is refused and shown again. And editing
   one price regenerates ALL the price identifiers in that set, because the
   writer underneath does not update the set, it rewrites it; those identifiers
   are named only by pricing's own `price_rule` rows, so the effect stays inside

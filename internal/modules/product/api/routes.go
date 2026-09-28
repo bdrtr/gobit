@@ -77,6 +77,9 @@ const (
 func (h *Handler) Routes(r chi.Router) {
 	read := r.With(corehttp.RequireScope(ScopeRead))
 	write := r.With(corehttp.RequireScope(ScopeWrite))
+	// A write that revises a product takes the version it was asked on and
+	// answers the version after it (ADR 0222).
+	revising := write.With(productPreconditions)
 
 	// --- Store API (customer) ---
 	//
@@ -125,7 +128,7 @@ func (h *Handler) Routes(r chi.Router) {
 	// read as well as this module's.
 	read.With(corehttp.RequireScope(scopePricingRead)).Get(pathAdminProductExport, h.adminExportProducts)
 	read.Get("/admin/v1/products/{id}", h.adminGetProduct)
-	write.Patch("/admin/v1/products/{id}", h.adminUpdateProduct)
+	revising.Patch("/admin/v1/products/{id}", h.adminUpdateProduct)
 	write.Delete("/admin/v1/products/{id}", h.adminDeleteProduct)
 	// The moment a draft is published (ADR 0177); a sub-resource because the
 	// PATCH above cannot set a field back to empty.
@@ -134,26 +137,26 @@ func (h *Handler) Routes(r chi.Router) {
 	// A product's revisions (ADR 0221): read them, and write one back.
 	read.Get(pathProductRevisions, h.adminListRevisions)
 	read.Get(pathProductRevision, h.adminGetRevision)
-	write.Post(pathProductRevisionRestore, h.adminRestoreRevision)
+	revising.Post(pathProductRevisionRestore, h.adminRestoreRevision)
 	// A product's relations (ADR 0180): read them all, replace one kind.
 	read.Get(pathProductRelations, h.adminListRelations)
 	write.Put(pathProductRelationsOfType, h.adminSetRelations)
 
 	// --- Admin API: variants ---
-	write.Post("/admin/v1/products/{id}/variants", h.adminCreateVariant)
+	revising.Post("/admin/v1/products/{id}/variants", h.adminCreateVariant)
 	read.Get("/admin/v1/products/{id}/variants", h.adminListVariants)
 	read.Get("/admin/v1/variants/{id}", h.adminGetVariant)
-	write.Patch("/admin/v1/variants/{id}", h.adminUpdateVariant)
-	write.Delete("/admin/v1/variants/{id}", h.adminDeleteVariant)
+	revising.Patch("/admin/v1/variants/{id}", h.adminUpdateVariant)
+	revising.Delete("/admin/v1/variants/{id}", h.adminDeleteVariant)
 
 	// --- Admin API: options ---
-	write.Post("/admin/v1/products/{id}/options", h.adminCreateOption)
+	revising.Post("/admin/v1/products/{id}/options", h.adminCreateOption)
 	read.Get("/admin/v1/products/{id}/options", h.adminListOptions)
-	write.Post("/admin/v1/product-options/{id}/values", h.adminAddOptionValue)
-	write.Delete("/admin/v1/product-options/{id}", h.adminDeleteOption)
+	revising.Post("/admin/v1/product-options/{id}/values", h.adminAddOptionValue)
+	revising.Delete("/admin/v1/product-options/{id}", h.adminDeleteOption)
 	// The value's own delete takes the VALUE's id, not the option's; see
 	// [Handler.adminDeleteOptionValue] for why it is not nested.
-	write.Delete("/admin/v1/product-option-values/{id}", h.adminDeleteOptionValue)
+	revising.Delete("/admin/v1/product-option-values/{id}", h.adminDeleteOptionValue)
 
 	// --- Admin API: cross-module links ---
 	// The price and stock records are produced by pricing/inventory; the link
@@ -186,9 +189,9 @@ func (h *Handler) Routes(r chi.Router) {
 	// else's picture (ADR 0108). The patch reaches the alt text, the rank and
 	// the metadata; it does NOT reach the address, for the reason the paragraph
 	// above gives about the binding.
-	write.Post("/admin/v1/products/{id}/images", h.adminAddProductImage)
-	write.Patch("/admin/v1/products/{id}/images/{imageId}", h.adminUpdateProductImage)
-	write.Delete("/admin/v1/products/{id}/images/{imageId}", h.adminRemoveProductImage)
+	revising.Post("/admin/v1/products/{id}/images", h.adminAddProductImage)
+	revising.Patch("/admin/v1/products/{id}/images/{imageId}", h.adminUpdateProductImage)
+	revising.Delete("/admin/v1/products/{id}/images/{imageId}", h.adminRemoveProductImage)
 
 	write.Post("/admin/v1/products/{id}/sales-channels", h.adminAddSalesChannel)
 	write.Delete("/admin/v1/products/{id}/sales-channels/{sales_channel_id}", h.adminRemoveSalesChannel)
@@ -218,7 +221,7 @@ func (h *Handler) Routes(r chi.Router) {
 	write.Delete("/admin/v1/product-attributes/{id}", h.adminDeleteAttribute)
 	write.Post("/admin/v1/product-attributes/{id}/options", h.adminAddAttributeOption)
 	write.Delete("/admin/v1/product-attribute-options/{id}", h.adminDeleteAttributeOption)
-	write.Put("/admin/v1/products/{id}/attributes", h.adminSetProductAttributes)
+	revising.Put("/admin/v1/products/{id}/attributes", h.adminSetProductAttributes)
 	write.Post("/admin/v1/product-tags", h.adminCreateTag)
 	read.Get("/admin/v1/product-tags", h.adminListTags)
 	write.Delete("/admin/v1/product-tags/{id}", h.adminDeleteTag)

@@ -97,6 +97,8 @@ var writerSafeMethods = map[string]bool{
 var safeWriterTakingCalls = map[string]string{
 	netHTTPPath + ".MaxBytesReader": "takes the writer only to close the connection once the " +
 		"limit is exceeded; it writes not a single byte to the body",
+	coreHTTPPath + ".HeaderOnSuccess": "wraps the writer to set a header just before a 2xx status " +
+		"(ADR 0222); the handler still writes its body and its errors through the core",
 }
 
 // errorPathExemption is a single call, with a discussed rationale, that writes

@@ -175,6 +175,7 @@ func (h *Handler) adminCreateProduct(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
+	w.Header().Set(headerETag, etagOf(product.Version))
 	writeItem(w, r, http.StatusCreated, toAdminProduct(product))
 }
 
@@ -231,6 +232,7 @@ func (h *Handler) adminGetProduct(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(r.Context(), w, err)
 		return
 	}
+	w.Header().Set(headerETag, etagOf(product.Version))
 	writeItem(w, r, http.StatusOK, toAdminProduct(product))
 }
 

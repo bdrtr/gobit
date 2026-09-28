@@ -175,7 +175,7 @@ func TestNoErrorIsOfAnyKind(t *testing.T) {
 	for _, kind := range []errors.Kind{
 		errors.KindInternal, errors.KindNotFound, errors.KindInvalid, errors.KindConflict,
 		errors.KindUnauthorized, errors.KindForbidden, errors.KindUnavailable,
-		errors.KindTooManyRequests,
+		errors.KindTooManyRequests, errors.KindPreconditionFailed,
 	} {
 		if errors.HasKind(nil, kind) {
 			t.Errorf("HasKind(nil, %v) is true; no error is of any kind", kind)

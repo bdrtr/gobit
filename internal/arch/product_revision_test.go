@@ -241,3 +241,76 @@ func mapKeys(set map[string]bool) func(func(string) bool) {
 		}
 	}
 }
+
+// productAPIPkg is where the admin routes are mounted.
+const productAPIPkg = "github.com/bdrtr/gobit/internal/modules/product/api"
+
+// productRevisingRouter is the router group whose middleware reads If-Match
+// (ADR 0222).
+const productRevisingRouter = "revising"
+
+// TestEveryRevisingWriteTakesTheVersion holds ADR 0222 in the source: every
+// service method that reaches revise, directly or through one helper, is served
+// by handlers mounted on the revising group, so a version asked on any of them
+// is checked and the version after it is answered.
+func TestEveryRevisingWriteTakesTheVersion(t *testing.T) {
+	t.Parallel()
+
+	tree := scanProductionSource(t)
+	methods := map[string]bool{}
+	for _, site := range tree.sitesIn("revise", productServicePkg) {
+		name := site.fn.Name.Name
+		if name == "revise" {
+			continue
+		}
+		if ast.IsExported(name) {
+			methods[name] = true
+			continue
+		}
+		for _, caller := range tree.sitesIn(name, productServicePkg) {
+			if ast.IsExported(caller.fn.Name.Name) {
+				methods[caller.fn.Name.Name] = true
+			}
+		}
+	}
+	require.GreaterOrEqualf(t, len(methods), 12, "only %d revising methods were found: %v", len(methods), methods)
+
+	mounted := map[string]string{}
+	for _, verb := range []string{"Post", "Put", "Patch", "Delete"} {
+		for _, site := range tree.sitesIn(verb, productAPIPkg) {
+			selector, ok := site.call.Fun.(*ast.SelectorExpr)
+			if !ok || len(site.call.Args) != 2 {
+				continue
+			}
+			router, ok := selector.X.(*ast.Ident)
+			handler, isHandler := site.call.Args[1].(*ast.SelectorExpr)
+			if ok && isHandler {
+				mounted[handler.Sel.Name] = router.Name
+			}
+		}
+	}
+
+	served := 0
+	for _, method := range slices.Sorted(mapKeys(methods)) {
+		for _, site := range tree.sitesIn(method, productAPIPkg) {
+			selector, ok := site.call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				continue
+			}
+			if inner, ok := selector.X.(*ast.SelectorExpr); !ok || inner.Sel.Name != "svc" {
+				continue
+			}
+			handler := site.fn.Name.Name
+			router, ok := mounted[handler]
+			if !ok {
+				continue
+			}
+			served++
+			assert.Equalf(t, productRevisingRouter, router,
+				"%s serves %s, which revises a product, on the %q router; mount it on %q so If-Match is "+
+					"checked and the ETag answered (ADR 0222)",
+				tree.location(site.file, site.call.Pos()), method, router, productRevisingRouter)
+		}
+	}
+	require.GreaterOrEqualf(t, served, 12, "only %d handlers of revising methods were found mounted", served)
+}

@@ -337,6 +337,8 @@ func policyForKind(kind coreerrors.Kind) kindPolicy {
 		return kindPolicy{status: http.StatusServiceUnavailable, clientSafe: true}
 	case coreerrors.KindTooManyRequests:
 		return kindPolicy{status: http.StatusTooManyRequests, clientSafe: true}
+	case coreerrors.KindPreconditionFailed:
+		return kindPolicy{status: http.StatusPreconditionFailed, clientSafe: true}
 	case coreerrors.KindInternal:
 		return kindPolicy{status: http.StatusInternalServerError, clientSafe: false}
 	default:
@@ -384,3 +386,44 @@ func replayCallback(w http.ResponseWriter, record *IdempotentResponse) {
 	w.WriteHeader(record.Status)
 	_, _ = w.Write(record.Body)
 }
+
+// HeaderOnSuccess returns a writer that sets a response header just before a
+// 2xx status goes out, when value reports one; a status written without a
+// value, or any other status, goes out without it (ADR 0222).
+//
+// A value that is only known once the handler has done its work, such as the
+// version a write moved a record to, cannot be set before the handler runs and
+// must not be set on an answer that failed after it.
+func HeaderOnSuccess(w http.ResponseWriter, name string, value func() (string, bool)) http.ResponseWriter {
+	return &headerOnSuccess{ResponseWriter: w, name: name, value: value}
+}
+
+// headerOnSuccess is [HeaderOnSuccess]'s writer.
+type headerOnSuccess struct {
+	http.ResponseWriter
+	name        string
+	value       func() (string, bool)
+	wroteHeader bool
+}
+
+// WriteHeader sets the header on a 2xx status that has a value.
+func (h *headerOnSuccess) WriteHeader(status int) {
+	if !h.wroteHeader {
+		h.wroteHeader = true
+		if value, ok := h.value(); ok && status >= 200 && status < 300 {
+			h.Header().Set(h.name, value)
+		}
+	}
+	h.ResponseWriter.WriteHeader(status)
+}
+
+// Write sends the implicit 200 through WriteHeader first.
+func (h *headerOnSuccess) Write(body []byte) (int, error) {
+	if !h.wroteHeader {
+		h.WriteHeader(http.StatusOK)
+	}
+	return h.ResponseWriter.Write(body)
+}
+
+// Unwrap lets http.ResponseController reach the writer underneath.
+func (h *headerOnSuccess) Unwrap() http.ResponseWriter { return h.ResponseWriter }

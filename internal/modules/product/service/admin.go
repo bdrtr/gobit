@@ -127,7 +127,13 @@ func (a *AdminSurface) SetProductRelations(ctx context.Context, id string, lists
 // handle already taken by another product — is the service's rule and is left
 // to it. Repeating those checks here would create a second place to keep in
 // step with the first.
-func (a *AdminSurface) UpdateProductBasics(ctx context.Context, id, title, handle, status string) error {
+//
+// # The version
+//
+// The version is the one the form was read at, and the write is refused with
+// [CodeVersionMismatch] when the product was written since: two operators
+// saving one product no longer overwrite each other (ADR 0222).
+func (a *AdminSurface) UpdateProductBasics(ctx context.Context, id, title, handle, status string, version int64) error {
 	if a == nil || a.svc == nil {
 		return errors.Unavailable(codeNotReady, "the product service is not set up")
 	}
@@ -142,7 +148,7 @@ func (a *AdminSurface) UpdateProductBasics(ctx context.Context, id, title, handl
 	trimmedTitle := strings.TrimSpace(title)
 	trimmedHandle := strings.TrimSpace(handle)
 
-	_, err := a.svc.UpdateProduct(ctx, id, UpdateProductInput{
+	_, err := a.svc.UpdateProduct(ExpectVersion(ctx, version), id, UpdateProductInput{
 		Title:  &trimmedTitle,
 		Handle: &trimmedHandle,
 		Status: &parsed,

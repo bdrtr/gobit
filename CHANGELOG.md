@@ -114,6 +114,17 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A product write names the version it read** (ADR 0222). **For API
+  consumers:** `GET`, `POST` and every write that revises a product (its
+  PATCH, restore, variants, options, option values, images and attribute
+  values) answer the product's version as `ETag`; such a write sent with
+  `If-Match: "7"` is refused with 412 `product_version_mismatch` when the
+  product has moved on. No header, or `*`, asks nothing. A malformed
+  `If-Match` is refused with 422. **For Go callers:** `core/errors` gains
+  `KindPreconditionFailed`, `PreconditionFailed` and `IsPreconditionFailed`,
+  answered as 412, and `core/http` gains `HeaderOnSuccess`. **For panel users:** the edit form saves at the version it
+  was opened at and says so when somebody saved first.
+
 - **A product keeps its revisions** (ADR 0221). **For API consumers:** an admin
   product carries `version`; `GET /admin/v1/products/{id}/revisions` lists its
   revisions newest first with `changed` and `request_id`, `GET

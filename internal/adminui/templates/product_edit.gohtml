@@ -17,6 +17,9 @@ could have been spared.
 
 The publication moment is a datetime-local input, which carries no zone; the
 label says UTC because the panel reads it as UTC (ADR 0178).
+
+The version is the one the form was read at; the module refuses the save when
+somebody saved the product since (ADR 0222).
 */ -}}
 {{ define "body" }}
 <p><a href="{{ .CancelPath }}">← Back to the product</a></p>
@@ -25,6 +28,7 @@ label says UTC because the panel reads it as UTC (ADR 0178).
 {{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
 
 <form method="post" action="{{ .ActionPath }}">
+  <input type="hidden" name="version" value="{{ .Product.Version }}">
   <label>Title
     <input type="text" name="title" value="{{ .Product.Title }}" required>
   </label>

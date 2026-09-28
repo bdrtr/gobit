@@ -44,6 +44,10 @@ const (
 	KindUnavailable
 	// KindTooManyRequests reports that the client exceeded the rate limit.
 	KindTooManyRequests
+	// KindPreconditionFailed reports that a condition the caller stated about
+	// the current state, such as the version it read, no longer holds
+	// (ADR 0222).
+	KindPreconditionFailed
 )
 
 // String returns the Kind's readable name.
@@ -67,6 +71,8 @@ func (k Kind) String() string {
 		return "unavailable"
 	case KindTooManyRequests:
 		return "too_many_requests"
+	case KindPreconditionFailed:
+		return "precondition_failed"
 	case KindInternal:
 		return "internal"
 	default:
@@ -170,6 +176,12 @@ func TooManyRequests(code, format string, a ...any) *Error {
 	return newError(KindTooManyRequests, code, format, a...)
 }
 
+// PreconditionFailed reports that a condition the caller stated about the
+// current state no longer holds.
+func PreconditionFailed(code, format string, a ...any) *Error {
+	return newError(KindPreconditionFailed, code, format, a...)
+}
+
 // Unavailable reports that a subsystem is temporarily unreachable.
 func Unavailable(code, format string, a ...any) *Error {
 	return newError(KindUnavailable, code, format, a...)
@@ -235,6 +247,10 @@ func IsConflict(err error) bool { return HasKind(err, KindConflict) }
 
 // IsUnauthorized reports whether the error is of class KindUnauthorized.
 func IsUnauthorized(err error) bool { return HasKind(err, KindUnauthorized) }
+
+// IsPreconditionFailed reports whether the error is of class
+// KindPreconditionFailed.
+func IsPreconditionFailed(err error) bool { return HasKind(err, KindPreconditionFailed) }
 
 // IsForbidden reports whether the error is of class KindForbidden.
 func IsForbidden(err error) bool { return HasKind(err, KindForbidden) }

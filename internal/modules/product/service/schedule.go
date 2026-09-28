@@ -171,7 +171,7 @@ func (s *Service) applyDue(
 			return err
 		}
 		for _, id := range changed {
-			if err := s.recordRevision(ctx, tx, id); err != nil {
+			if _, err := s.recordRevision(ctx, tx, id); err != nil {
 				return err
 			}
 		}

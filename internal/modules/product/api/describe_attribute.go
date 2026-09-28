@@ -126,7 +126,8 @@ func describeAttributes(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPut, "/admin/v1/products/{id}/attributes", openapi.Operation{
-		Summary: "Replaces a product's attribute values.",
+		Parameters: []openapi.Parameter{ifMatchParameter()},
+		Summary:    "Replaces a product's attribute values.",
 		Description: "Each value names its attribute by handle and matches its kind: the " +
 			"option handles of a select attribute, one number, or one boolean. The body " +
 			"replaces every value the product had; an empty list clears them. An attribute " +

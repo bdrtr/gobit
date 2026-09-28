@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -53,8 +54,10 @@ func ProductStatuses() []string { return slices.Clone(productStatuses) }
 // cannot import the product module; see the module's admin surface for the full
 // reason.
 type ProductWriter interface {
-	// UpdateProductBasics updates a product's title, handle and status.
-	UpdateProductBasics(ctx context.Context, id, title, handle, status string) error
+	// UpdateProductBasics updates a product's title, handle and status, refusing
+	// the write when the product is no longer at the version the form was read
+	// at (ADR 0222).
+	UpdateProductBasics(ctx context.Context, id, title, handle, status string, version int64) error
 	// ScheduleProduct replaces a product's schedule: when it is published and
 	// when it is archived, either of which may be nil (ADR 0177, ADR 0179).
 	ScheduleProduct(ctx context.Context, id string, publishAt, archiveAt *time.Time) error
@@ -126,6 +129,12 @@ func (u *UI) submitProductEdit(w http.ResponseWriter, r *http.Request) {
 	title := r.PostFormValue("title")
 	handle := r.PostFormValue("handle")
 	status := r.PostFormValue("status")
+	version, err := strconv.ParseInt(r.PostFormValue("version"), 10, 64)
+	if err != nil {
+		u.errorPage(w, r, http.StatusBadRequest, "Bad request",
+			"The form does not say which version of the product it was opened at; open the product again.")
+		return
+	}
 	typed := typedSchedule{
 		publishAt: strings.TrimSpace(r.PostFormValue("publish_at")),
 		archiveAt: strings.TrimSpace(r.PostFormValue("archive_at")),
@@ -140,7 +149,7 @@ func (u *UI) submitProductEdit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := u.products.UpdateProductBasics(r.Context(), id, title, handle, status)
+	err = u.products.UpdateProductBasics(r.Context(), id, title, handle, status, version)
 	// An archived product carries no schedule; the module's status write took
 	// it off. Anything else is scheduled as typed, or unscheduled when both
 	// fields were left empty.
@@ -159,6 +168,12 @@ func (u *UI) submitProductEdit(w http.ResponseWriter, r *http.Request) {
 	// Only a rejection the operator can act on is shown on the form. Anything
 	// else — the database unreachable, the surface misconfigured — becomes the
 	// panel's error page and the real cause goes to the log.
+	if errors.IsPreconditionFailed(err) {
+		// The form comes back at the version now stored, with what the operator
+		// typed: saving it again is a choice made after reading this.
+		u.rerenderEdit(w, r, id, title, handle, status, typed, staleEditMessage)
+		return
+	}
 	if !errors.IsInvalid(err) && !errors.IsConflict(err) {
 		u.unexpectedFailure(w, r, err, "The product could not be saved")
 		return
@@ -166,6 +181,11 @@ func (u *UI) submitProductEdit(w http.ResponseWriter, r *http.Request) {
 
 	u.rerenderEdit(w, r, id, title, handle, status, typed, messageFor(err))
 }
+
+// staleEditMessage answers an edit of a product somebody saved after the form
+// was opened (ADR 0222).
+const staleEditMessage = "Somebody saved this product after you opened it, so your change was not saved. " +
+	"Open the product to see what changed; saving this form again writes your values over it."
 
 // rerenderEdit shows the form again with what the operator typed and why it
 // was refused.

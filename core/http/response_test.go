@@ -30,6 +30,7 @@ func TestStatusForMapsEveryKind(t *testing.T) {
 		{"unauthorized", coreerrors.Unauthorized("no_token", "no token"), http.StatusUnauthorized},
 		{"forbidden", coreerrors.Forbidden("no_scope", "not permitted"), http.StatusForbidden},
 		{"unavailable", coreerrors.Unavailable("db_down", "the database is down"), http.StatusServiceUnavailable},
+		{"precondition failed", coreerrors.PreconditionFailed("stale", "the version is stale"), http.StatusPreconditionFailed},
 		{"internal", coreerrors.Internal("boom", "it blew up"), http.StatusInternalServerError},
 		{"untyped error", coreerrors.New("an ordinary error"), http.StatusInternalServerError},
 		{"nil error", nil, http.StatusInternalServerError},
@@ -195,6 +196,7 @@ func TestWriteErrorPassesTheMessageThroughForOtherKinds(t *testing.T) {
 		{"unauthorized", coreerrors.Unauthorized("token_expired", "the token has expired"), http.StatusUnauthorized, "token_expired"},
 		{"forbidden", coreerrors.Forbidden("scope_missing", "you are not permitted to do this"), http.StatusForbidden, "scope_missing"},
 		{"unavailable", coreerrors.Unavailable("payment_provider_down", "the payment provider is unreachable"), http.StatusServiceUnavailable, "payment_provider_down"},
+		{"precondition failed", coreerrors.PreconditionFailed("product_version_mismatch", "product prod_1 is at version 4"), http.StatusPreconditionFailed, "product_version_mismatch"},
 	}
 
 	for _, tt := range tests {

@@ -29,7 +29,7 @@ func TestAdminSurfaceRejectsAnUnknownStatus(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = surface.UpdateProductBasics(context.Background(), created.ID, "Coffee", "coffee", "on-sale")
+	err = surface.UpdateProductBasics(context.Background(), created.ID, "Coffee", "coffee", "on-sale", created.Version)
 
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err), "an unknown status must be Invalid, got %v", errors.KindOf(err))
@@ -70,7 +70,7 @@ func TestAdminSurfaceGoesThroughTheService(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, surface.UpdateProductBasics(
-		context.Background(), first.ID, "Filter Coffee", "filter-coffee", "published"))
+		context.Background(), first.ID, "Filter Coffee", "filter-coffee", "published", first.Version))
 
 	assert.NotEmpty(t, bus.byName(service.EventProductUpdated),
 		"a write through the admin surface must publish the module's own event; "+
@@ -78,7 +78,7 @@ func TestAdminSurfaceGoesThroughTheService(t *testing.T) {
 
 	// The handle check belongs to the service too: reaching the repository
 	// would let the second product take the first one's handle.
-	err = surface.UpdateProductBasics(context.Background(), second.ID, "Tea", "filter-coffee", "draft")
+	err = surface.UpdateProductBasics(context.Background(), second.ID, "Tea", "filter-coffee", "draft", second.Version)
 
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err),
@@ -99,7 +99,7 @@ func TestAdminSurfaceUpdatesTheBasics(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, surface.UpdateProductBasics(
-		context.Background(), created.ID, "  Filter Coffee  ", " filter-coffee ", "published"))
+		context.Background(), created.ID, "  Filter Coffee  ", " filter-coffee ", "published", created.Version))
 
 	updated, err := svc.GetProduct(context.Background(), created.ID)
 	require.NoError(t, err)
@@ -115,7 +115,7 @@ func TestAdminSurfaceIsNilSafe(t *testing.T) {
 
 	var surface *service.AdminSurface
 
-	err := surface.UpdateProductBasics(context.Background(), "prod_1", "Coffee", "coffee", "draft")
+	err := surface.UpdateProductBasics(context.Background(), "prod_1", "Coffee", "coffee", "draft", 1)
 
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable))
