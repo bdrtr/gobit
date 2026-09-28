@@ -18,6 +18,8 @@ var unpricedLists = map[string]string{
 	"CollectionList.items": "priced on Query.collections from its limit, as ProductList.items is",
 	"CategoryList.items":   "priced on Query.categories from its limit, as ProductList.items is",
 	"TagList.items":        "priced on Query.tags from its limit, as ProductList.items is",
+	"OptionValuePairList.items": "priced on Query.optionValues from its limit, as " +
+		"ProductList.items is",
 }
 
 // TestEveryListFieldIsPriced derives its population from the schema.

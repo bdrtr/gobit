@@ -85,6 +85,24 @@ type ComplexityRoot struct {
 		Offset func(childComplexity int) int
 	}
 
+	Facet struct {
+		False    func(childComplexity int) int
+		Handle   func(childComplexity int) int
+		Kind     func(childComplexity int) int
+		Max      func(childComplexity int) int
+		Min      func(childComplexity int) int
+		Options  func(childComplexity int) int
+		Products func(childComplexity int) int
+		Title    func(childComplexity int) int
+		True     func(childComplexity int) int
+	}
+
+	FacetOption struct {
+		Handle   func(childComplexity int) int
+		Products func(childComplexity int) int
+		Value    func(childComplexity int) int
+	}
+
 	Image struct {
 		AltText   func(childComplexity int) int
 		ID        func(childComplexity int) int
@@ -108,6 +126,18 @@ type ComplexityRoot struct {
 		OptionTitle func(childComplexity int) int
 		Rank        func(childComplexity int) int
 		Value       func(childComplexity int) int
+	}
+
+	OptionValuePair struct {
+		OptionTitle func(childComplexity int) int
+		Value       func(childComplexity int) int
+	}
+
+	OptionValuePairList struct {
+		Count  func(childComplexity int) int
+		Items  func(childComplexity int) int
+		Limit  func(childComplexity int) int
+		Offset func(childComplexity int) int
 	}
 
 	Product struct {
@@ -160,8 +190,10 @@ type ComplexityRoot struct {
 	Query struct {
 		Categories        func(childComplexity int, parentID *string, limit *int, offset *int) int
 		Collections       func(childComplexity int, limit *int, offset *int) int
+		OptionValues      func(childComplexity int, limit *int, offset *int) int
 		Product           func(childComplexity int, id *string, handle *string) int
 		ProductAttributes func(childComplexity int) int
+		ProductFacets     func(childComplexity int, q *string, collectionID *string, categoryID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion) int
 		Products          func(childComplexity int, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion, inStock *bool, price *service.PriceBracket) int
 		Tags              func(childComplexity int, limit *int, offset *int) int
 	}
@@ -214,6 +246,8 @@ type QueryResolver interface {
 	Categories(ctx context.Context, parentID *string, limit *int, offset *int) (*service.ListResult[models.Category], error)
 	Tags(ctx context.Context, limit *int, offset *int) (*service.ListResult[models.Tag], error)
 	ProductAttributes(ctx context.Context) ([]models.Attribute, error)
+	ProductFacets(ctx context.Context, q *string, collectionID *string, categoryID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion) ([]service.Facet, error)
+	OptionValues(ctx context.Context, limit *int, offset *int) (*service.ListResult[models.OptionValuePair], error)
 }
 type VariantResolver interface {
 	PriceSet(ctx context.Context, obj *service.StoreVariant) (map[string]any, error)
@@ -406,6 +440,80 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.CollectionList.Offset(childComplexity), true
 
+	case "Facet.false":
+		if e.ComplexityRoot.Facet.False == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Facet.False(childComplexity), true
+	case "Facet.handle":
+		if e.ComplexityRoot.Facet.Handle == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Facet.Handle(childComplexity), true
+	case "Facet.kind":
+		if e.ComplexityRoot.Facet.Kind == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Facet.Kind(childComplexity), true
+	case "Facet.max":
+		if e.ComplexityRoot.Facet.Max == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Facet.Max(childComplexity), true
+	case "Facet.min":
+		if e.ComplexityRoot.Facet.Min == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Facet.Min(childComplexity), true
+	case "Facet.options":
+		if e.ComplexityRoot.Facet.Options == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Facet.Options(childComplexity), true
+	case "Facet.products":
+		if e.ComplexityRoot.Facet.Products == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Facet.Products(childComplexity), true
+	case "Facet.title":
+		if e.ComplexityRoot.Facet.Title == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Facet.Title(childComplexity), true
+	case "Facet.true":
+		if e.ComplexityRoot.Facet.True == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Facet.True(childComplexity), true
+
+	case "FacetOption.handle":
+		if e.ComplexityRoot.FacetOption.Handle == nil {
+			break
+		}
+
+		return e.ComplexityRoot.FacetOption.Handle(childComplexity), true
+	case "FacetOption.products":
+		if e.ComplexityRoot.FacetOption.Products == nil {
+			break
+		}
+
+		return e.ComplexityRoot.FacetOption.Products(childComplexity), true
+	case "FacetOption.value":
+		if e.ComplexityRoot.FacetOption.Value == nil {
+			break
+		}
+
+		return e.ComplexityRoot.FacetOption.Value(childComplexity), true
+
 	case "Image.altText":
 		if e.ComplexityRoot.Image.AltText == nil {
 			break
@@ -504,6 +612,44 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.OptionValue.Value(childComplexity), true
+
+	case "OptionValuePair.optionTitle":
+		if e.ComplexityRoot.OptionValuePair.OptionTitle == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OptionValuePair.OptionTitle(childComplexity), true
+	case "OptionValuePair.value":
+		if e.ComplexityRoot.OptionValuePair.Value == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OptionValuePair.Value(childComplexity), true
+
+	case "OptionValuePairList.count":
+		if e.ComplexityRoot.OptionValuePairList.Count == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OptionValuePairList.Count(childComplexity), true
+	case "OptionValuePairList.items":
+		if e.ComplexityRoot.OptionValuePairList.Items == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OptionValuePairList.Items(childComplexity), true
+	case "OptionValuePairList.limit":
+		if e.ComplexityRoot.OptionValuePairList.Limit == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OptionValuePairList.Limit(childComplexity), true
+	case "OptionValuePairList.offset":
+		if e.ComplexityRoot.OptionValuePairList.Offset == nil {
+			break
+		}
+
+		return e.ComplexityRoot.OptionValuePairList.Offset(childComplexity), true
 
 	case "Product.attributes":
 		if e.ComplexityRoot.Product.Attributes == nil {
@@ -764,6 +910,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.Query.Collections(childComplexity, args["limit"].(*int), args["offset"].(*int)), true
 
+	case "Query.optionValues":
+		if e.ComplexityRoot.Query.OptionValues == nil {
+			break
+		}
+
+		args, err := ec.field_Query_optionValues_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.OptionValues(childComplexity, args["limit"].(*int), args["offset"].(*int)), true
 	case "Query.product":
 		if e.ComplexityRoot.Query.Product == nil {
 			break
@@ -781,6 +938,17 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Query.ProductAttributes(childComplexity), true
+	case "Query.productFacets":
+		if e.ComplexityRoot.Query.ProductFacets == nil {
+			break
+		}
+
+		args, err := ec.field_Query_productFacets_args(ctx, rawArgs)
+		if err != nil {
+			return 0, false
+		}
+
+		return e.ComplexityRoot.Query.ProductFacets(childComplexity, args["q"].(*string), args["collectionId"].(*string), args["categoryId"].(*string), args["tagId"].(*string), args["optionValue"].(*string), args["variantIds"].([]string), args["attributes"].([]service.AttributeCriterion)), true
 	case "Query.products":
 		if e.ComplexityRoot.Query.Products == nil {
 			break
@@ -1130,6 +1298,42 @@ func (ec *executionContext) childFields_CollectionList(ctx context.Context, fiel
 	return nil, fmt.Errorf("no field named %q was found under type CollectionList", field.Name)
 }
 
+func (ec *executionContext) childFields_Facet(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "handle":
+		return ec.fieldContext_Facet_handle(ctx, field)
+	case "title":
+		return ec.fieldContext_Facet_title(ctx, field)
+	case "kind":
+		return ec.fieldContext_Facet_kind(ctx, field)
+	case "options":
+		return ec.fieldContext_Facet_options(ctx, field)
+	case "true":
+		return ec.fieldContext_Facet_true(ctx, field)
+	case "false":
+		return ec.fieldContext_Facet_false(ctx, field)
+	case "products":
+		return ec.fieldContext_Facet_products(ctx, field)
+	case "min":
+		return ec.fieldContext_Facet_min(ctx, field)
+	case "max":
+		return ec.fieldContext_Facet_max(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type Facet", field.Name)
+}
+
+func (ec *executionContext) childFields_FacetOption(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "handle":
+		return ec.fieldContext_FacetOption_handle(ctx, field)
+	case "value":
+		return ec.fieldContext_FacetOption_value(ctx, field)
+	case "products":
+		return ec.fieldContext_FacetOption_products(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type FacetOption", field.Name)
+}
+
 func (ec *executionContext) childFields_Image(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "id":
@@ -1178,6 +1382,30 @@ func (ec *executionContext) childFields_OptionValue(ctx context.Context, field g
 		return ec.fieldContext_OptionValue_optionTitle(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type OptionValue", field.Name)
+}
+
+func (ec *executionContext) childFields_OptionValuePair(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "optionTitle":
+		return ec.fieldContext_OptionValuePair_optionTitle(ctx, field)
+	case "value":
+		return ec.fieldContext_OptionValuePair_value(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OptionValuePair", field.Name)
+}
+
+func (ec *executionContext) childFields_OptionValuePairList(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "items":
+		return ec.fieldContext_OptionValuePairList_items(ctx, field)
+	case "count":
+		return ec.fieldContext_OptionValuePairList_count(ctx, field)
+	case "offset":
+		return ec.fieldContext_OptionValuePairList_offset(ctx, field)
+	case "limit":
+		return ec.fieldContext_OptionValuePairList_limit(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type OptionValuePairList", field.Name)
 }
 
 func (ec *executionContext) childFields_Product(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -1533,6 +1761,90 @@ func (ec *executionContext) field_Query_collections_args(ctx context.Context, ra
 		return nil, err
 	}
 	args["offset"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_optionValues_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "limit",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["limit"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "offset",
+		func(ctx context.Context, v any) (*int, error) {
+			return ec.unmarshalOInt2ᚖint(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["offset"] = arg1
+	return args, nil
+}
+
+func (ec *executionContext) field_Query_productFacets_args(ctx context.Context, rawArgs map[string]any) (map[string]any, error) {
+	var err error
+	args := map[string]any{}
+	arg0, err := graphql.ProcessArgField(ctx, rawArgs, "q",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["q"] = arg0
+	arg1, err := graphql.ProcessArgField(ctx, rawArgs, "collectionId",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOID2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["collectionId"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "categoryId",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOID2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["categoryId"] = arg2
+	arg3, err := graphql.ProcessArgField(ctx, rawArgs, "tagId",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOID2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["tagId"] = arg3
+	arg4, err := graphql.ProcessArgField(ctx, rawArgs, "optionValue",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOString2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["optionValue"] = arg4
+	arg5, err := graphql.ProcessArgField(ctx, rawArgs, "variantIds",
+		func(ctx context.Context, v any) ([]string, error) {
+			return ec.unmarshalOID2ᚕstringᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["variantIds"] = arg5
+	arg6, err := graphql.ProcessArgField(ctx, rawArgs, "attributes",
+		func(ctx context.Context, v any) ([]service.AttributeCriterion, error) {
+			return ec.unmarshalOAttributeFilter2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐAttributeCriterionᚄ(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["attributes"] = arg6
 	return args, nil
 }
 
@@ -2398,6 +2710,291 @@ func (ec *executionContext) fieldContext_CollectionList_limit(_ context.Context,
 	return graphql.NewScalarFieldContext("CollectionList", field, false, false, errors.New("field of type Int does not have child fields"))
 }
 
+func (ec *executionContext) _Facet_handle(ctx context.Context, field graphql.CollectedField, obj *service.Facet) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Facet_handle(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Handle, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Facet_handle(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Facet", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Facet_title(ctx context.Context, field graphql.CollectedField, obj *service.Facet) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Facet_title(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Title, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Facet_title(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Facet", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Facet_kind(ctx context.Context, field graphql.CollectedField, obj *service.Facet) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Facet_kind(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Kind, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Facet_kind(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Facet", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _Facet_options(ctx context.Context, field graphql.CollectedField, obj *service.Facet) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Facet_options(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Options, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []service.FacetOption) graphql.Marshaler {
+			return ec.marshalNFacetOption2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐFacetOptionᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Facet_options(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Facet",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_FacetOption(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Facet_true(ctx context.Context, field graphql.CollectedField, obj *service.Facet) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Facet_true(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.True, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Facet_true(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Facet", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _Facet_false(ctx context.Context, field graphql.CollectedField, obj *service.Facet) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Facet_false(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.False, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Facet_false(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Facet", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _Facet_products(ctx context.Context, field graphql.CollectedField, obj *service.Facet) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Facet_products(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Products, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Facet_products(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Facet", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _Facet_min(ctx context.Context, field graphql.CollectedField, obj *service.Facet) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Facet_min(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Min, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *float64) graphql.Marshaler {
+			return ec.marshalOFloat2ᚖfloat64(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Facet_min(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Facet", field, false, false, errors.New("field of type Float does not have child fields"))
+}
+
+func (ec *executionContext) _Facet_max(ctx context.Context, field graphql.CollectedField, obj *service.Facet) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Facet_max(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Max, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *float64) graphql.Marshaler {
+			return ec.marshalOFloat2ᚖfloat64(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Facet_max(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Facet", field, false, false, errors.New("field of type Float does not have child fields"))
+}
+
+func (ec *executionContext) _FacetOption_handle(ctx context.Context, field graphql.CollectedField, obj *service.FacetOption) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_FacetOption_handle(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Handle, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_FacetOption_handle(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("FacetOption", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _FacetOption_value(ctx context.Context, field graphql.CollectedField, obj *service.FacetOption) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_FacetOption_value(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Value, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_FacetOption_value(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("FacetOption", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _FacetOption_products(ctx context.Context, field graphql.CollectedField, obj *service.FacetOption) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_FacetOption_products(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Products, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int64) graphql.Marshaler {
+			return ec.marshalNInt2int64(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_FacetOption_products(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("FacetOption", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
 func (ec *executionContext) _Image_id(ctx context.Context, field graphql.CollectedField, obj *models.Image) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -2773,6 +3370,153 @@ func (ec *executionContext) _OptionValue_optionTitle(ctx context.Context, field 
 }
 func (ec *executionContext) fieldContext_OptionValue_optionTitle(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("OptionValue", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _OptionValuePair_optionTitle(ctx context.Context, field graphql.CollectedField, obj *models.OptionValuePair) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OptionValuePair_optionTitle(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.OptionTitle, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OptionValuePair_optionTitle(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OptionValuePair", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _OptionValuePair_value(ctx context.Context, field graphql.CollectedField, obj *models.OptionValuePair) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OptionValuePair_value(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Value, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNString2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OptionValuePair_value(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OptionValuePair", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _OptionValuePairList_items(ctx context.Context, field graphql.CollectedField, obj *service.ListResult[models.OptionValuePair]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OptionValuePairList_items(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Items, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.OptionValuePair) graphql.Marshaler {
+			return ec.marshalNOptionValuePair2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐOptionValuePairᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OptionValuePairList_items(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "OptionValuePairList",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OptionValuePair(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _OptionValuePairList_count(ctx context.Context, field graphql.CollectedField, obj *service.ListResult[models.OptionValuePair]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OptionValuePairList_count(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Count, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *int) graphql.Marshaler {
+			return ec.marshalNInt2ᚖint(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OptionValuePairList_count(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OptionValuePairList", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _OptionValuePairList_offset(ctx context.Context, field graphql.CollectedField, obj *service.ListResult[models.OptionValuePair]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OptionValuePairList_offset(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Offset, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OptionValuePairList_offset(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OptionValuePairList", field, false, false, errors.New("field of type Int does not have child fields"))
+}
+
+func (ec *executionContext) _OptionValuePairList_limit(ctx context.Context, field graphql.CollectedField, obj *service.ListResult[models.OptionValuePair]) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_OptionValuePairList_limit(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Limit, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int) graphql.Marshaler {
+			return ec.marshalNInt2int(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_OptionValuePairList_limit(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("OptionValuePairList", field, false, false, errors.New("field of type Int does not have child fields"))
 }
 
 func (ec *executionContext) _Product_id(ctx context.Context, field graphql.CollectedField, obj *service.StoreProduct) (ret graphql.Marshaler) {
@@ -3990,6 +4734,94 @@ func (ec *executionContext) fieldContext_Query_productAttributes(_ context.Conte
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return ec.childFields_Attribute(ctx, field)
 		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_productFacets(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_productFacets(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().ProductFacets(ctx, fc.Args["q"].(*string), fc.Args["collectionId"].(*string), fc.Args["categoryId"].(*string), fc.Args["tagId"].(*string), fc.Args["optionValue"].(*string), fc.Args["variantIds"].([]string), fc.Args["attributes"].([]service.AttributeCriterion))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []service.Facet) graphql.Marshaler {
+			return ec.marshalNFacet2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐFacetᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_productFacets(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Facet(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_productFacets_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Query_optionValues(ctx context.Context, field graphql.CollectedField) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Query_optionValues(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			fc := graphql.GetFieldContext(ctx)
+			return ec.Resolvers.Query().OptionValues(ctx, fc.Args["limit"].(*int), fc.Args["offset"].(*int))
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *service.ListResult[models.OptionValuePair]) graphql.Marshaler {
+			return ec.marshalNOptionValuePairList2ᚖgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐListResult(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Query_optionValues(ctx context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Query",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_OptionValuePairList(ctx, field)
+		},
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = ec.Recover(ctx, r)
+			ec.Error(ctx, err)
+		}
+	}()
+	ctx = graphql.WithFieldContext(ctx, fc)
+	if fc.Args, err = ec.field_Query_optionValues_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
+		ec.Error(ctx, err)
+		return fc, err
 	}
 	return fc, nil
 }
@@ -6142,6 +6974,132 @@ func (ec *executionContext) _CollectionList(ctx context.Context, sel ast.Selecti
 	return out
 }
 
+var facetImplementors = []string{"Facet"}
+
+func (ec *executionContext) _Facet(ctx context.Context, sel ast.SelectionSet, obj *service.Facet) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, facetImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("Facet")
+		case "handle":
+			out.Values[i] = ec._Facet_handle(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "title":
+			out.Values[i] = ec._Facet_title(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "kind":
+			out.Values[i] = ec._Facet_kind(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "options":
+			out.Values[i] = ec._Facet_options(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "true":
+			out.Values[i] = ec._Facet_true(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "false":
+			out.Values[i] = ec._Facet_false(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "products":
+			out.Values[i] = ec._Facet_products(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "min":
+			out.Values[i] = ec._Facet_min(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		case "max":
+			out.Values[i] = ec._Facet_max(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var facetOptionImplementors = []string{"FacetOption"}
+
+func (ec *executionContext) _FacetOption(ctx context.Context, sel ast.SelectionSet, obj *service.FacetOption) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, facetOptionImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("FacetOption")
+		case "handle":
+			out.Values[i] = ec._FacetOption_handle(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "value":
+			out.Values[i] = ec._FacetOption_value(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "products":
+			out.Values[i] = ec._FacetOption_products(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var imageImplementors = []string{"Image"}
 
 func (ec *executionContext) _Image(ctx context.Context, sel ast.SelectionSet, obj *models.Image) graphql.Marshaler {
@@ -6297,6 +7255,102 @@ func (ec *executionContext) _OptionValue(ctx context.Context, sel ast.SelectionS
 			}
 		case "optionTitle":
 			out.Values[i] = ec._OptionValue_optionTitle(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var optionValuePairImplementors = []string{"OptionValuePair"}
+
+func (ec *executionContext) _OptionValuePair(ctx context.Context, sel ast.SelectionSet, obj *models.OptionValuePair) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, optionValuePairImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OptionValuePair")
+		case "optionTitle":
+			out.Values[i] = ec._OptionValuePair_optionTitle(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "value":
+			out.Values[i] = ec._OptionValuePair_value(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var optionValuePairListImplementors = []string{"OptionValuePairList"}
+
+func (ec *executionContext) _OptionValuePairList(ctx context.Context, sel ast.SelectionSet, obj *service.ListResult[models.OptionValuePair]) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, optionValuePairListImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("OptionValuePairList")
+		case "items":
+			out.Values[i] = ec._OptionValuePairList_items(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "count":
+			out.Values[i] = ec._OptionValuePairList_count(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "offset":
+			out.Values[i] = ec._OptionValuePairList_offset(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "limit":
+			out.Values[i] = ec._OptionValuePairList_limit(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -6783,6 +7837,50 @@ func (ec *executionContext) _Query(ctx context.Context, sel ast.SelectionSet) gr
 					}
 				}()
 				res = ec._Query_productAttributes(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "productFacets":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_productFacets(ctx, field)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			rrm := func(ctx context.Context) graphql.Marshaler {
+				return ec.OperationContext.RootResolverMiddleware(ctx,
+					func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return rrm(innerCtx) })
+		case "optionValues":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Query_optionValues(ctx, field)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -7636,6 +8734,46 @@ func (ec *executionContext) marshalNCollectionList2ᚖgithubᚗcomᚋbdrtrᚋgob
 	return ec._CollectionList(ctx, sel, v)
 }
 
+func (ec *executionContext) marshalNFacet2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐFacet(ctx context.Context, sel ast.SelectionSet, v service.Facet) graphql.Marshaler {
+	return ec._Facet(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNFacet2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐFacetᚄ(ctx context.Context, sel ast.SelectionSet, v []service.Facet) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNFacet2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐFacet(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNFacetOption2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐFacetOption(ctx context.Context, sel ast.SelectionSet, v service.FacetOption) graphql.Marshaler {
+	return ec._FacetOption(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNFacetOption2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐFacetOptionᚄ(ctx context.Context, sel ast.SelectionSet, v []service.FacetOption) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNFacetOption2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐFacetOption(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
 func (ec *executionContext) unmarshalNID2string(ctx context.Context, v any) (string, error) {
 	res, err := graphql.UnmarshalID(v)
 	return res, graphql.ErrorOnPath(ctx, err)
@@ -7704,6 +8842,22 @@ func (ec *executionContext) marshalNInt2int32(ctx context.Context, sel ast.Selec
 	return res
 }
 
+func (ec *executionContext) unmarshalNInt2int64(ctx context.Context, v any) (int64, error) {
+	res, err := graphql.UnmarshalInt64(v)
+	return res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalNInt2int64(ctx context.Context, sel ast.SelectionSet, v int64) graphql.Marshaler {
+	_ = sel
+	res := graphql.MarshalInt64(v)
+	if res == graphql.Null {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+	}
+	return res
+}
+
 func (ec *executionContext) unmarshalNInt2ᚖint(ctx context.Context, v any) (*int, error) {
 	res, err := graphql.UnmarshalInt(v)
 	return &res, graphql.ErrorOnPath(ctx, err)
@@ -7764,6 +8918,40 @@ func (ec *executionContext) marshalNOptionValue2ᚕgithubᚗcomᚋbdrtrᚋgobit�
 	}
 
 	return ret
+}
+
+func (ec *executionContext) marshalNOptionValuePair2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐOptionValuePair(ctx context.Context, sel ast.SelectionSet, v models.OptionValuePair) graphql.Marshaler {
+	return ec._OptionValuePair(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNOptionValuePair2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐOptionValuePairᚄ(ctx context.Context, sel ast.SelectionSet, v []models.OptionValuePair) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNOptionValuePair2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐOptionValuePair(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
+
+func (ec *executionContext) marshalNOptionValuePairList2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐListResult(ctx context.Context, sel ast.SelectionSet, v service.ListResult[models.OptionValuePair]) graphql.Marshaler {
+	return ec._OptionValuePairList(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNOptionValuePairList2ᚖgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐListResult(ctx context.Context, sel ast.SelectionSet, v *service.ListResult[models.OptionValuePair]) graphql.Marshaler {
+	if v == nil {
+		if !graphql.HasFieldError(ctx, graphql.GetFieldContext(ctx)) {
+			graphql.AddErrorf(ctx, "the requested element is null which the schema does not allow")
+		}
+		return graphql.Null
+	}
+	return ec._OptionValuePairList(ctx, sel, v)
 }
 
 func (ec *executionContext) marshalNProduct2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐStoreProduct(ctx context.Context, sel ast.SelectionSet, v service.StoreProduct) graphql.Marshaler {

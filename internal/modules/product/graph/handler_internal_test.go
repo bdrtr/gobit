@@ -292,3 +292,16 @@ func (silentStorefront) ListTags(context.Context, int, int) (service.ListResult[
 func (silentStorefront) ListAttributes(context.Context) ([]models.Attribute, error) {
 	return nil, nil
 }
+
+// StoreFacets returns none.
+func (silentStorefront) StoreFacets(context.Context, service.StoreListOptions) ([]service.Facet, error) {
+	return nil, nil
+}
+
+// ListOptionValues returns an empty page.
+func (silentStorefront) ListOptionValues(
+	context.Context, service.ListOptionValuesOptions,
+) (service.ListResult[models.OptionValuePair], error) {
+	zero := 0
+	return service.ListResult[models.OptionValuePair]{Count: &zero}, nil
+}

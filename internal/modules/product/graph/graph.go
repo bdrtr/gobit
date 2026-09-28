@@ -10,8 +10,9 @@
 //
 // # The scope is NARROW
 //
-// Read only: products and product, and since ADR 0225 the catalog's vocabulary
-// — collections, categories, tags and attributes. There is NO mutation and no
+// Read only: products and product, since ADR 0225 the catalog's vocabulary —
+// collections, categories, tags and attributes — and since ADR 0226 the
+// listing's facet counts and its option words. There is NO mutation and no
 // admin surface (the rationale is at the top of schema.graphqls). Keeping it
 // narrow is about seeing the pattern settle correctly on a small surface first.
 //
@@ -91,6 +92,14 @@ type Storefront interface {
 	ListCategories(ctx context.Context, opts service.ListCategoriesOptions) (service.ListResult[models.Category], error)
 	ListTags(ctx context.Context, limit, offset int) (service.ListResult[models.Tag], error)
 	ListAttributes(ctx context.Context) ([]models.Attribute, error)
+
+	// The listing's counts and its option words (ADR 0226): the channel-scoped
+	// REST reads' own methods.
+	StoreFacets(ctx context.Context, opts service.StoreListOptions) ([]service.Facet, error)
+	ListOptionValues(
+		ctx context.Context,
+		opts service.ListOptionValuesOptions,
+	) (service.ListResult[models.OptionValuePair], error)
 }
 
 // ProductList is the GraphQL counterpart of the storefront list.
@@ -111,6 +120,8 @@ type (
 	CategoryList = service.ListResult[models.Category]
 	// TagList is a page of tags.
 	TagList = service.ListResult[models.Tag]
+	// OptionValuePairList is a page of the option vocabulary (ADR 0226).
+	OptionValuePairList = service.ListResult[models.OptionValuePair]
 )
 
 // SalesChannelIDsFromContext reads the sales channels the request is bound to

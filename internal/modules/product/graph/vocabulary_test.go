@@ -10,6 +10,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
+	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
 // TestTheVocabularyIsTheRESTReadsOwn is ADR 0225: the four root queries call
@@ -76,6 +77,8 @@ func TestTheVocabularyIsPricedByItsPage(t *testing.T) {
 		"collections": `{ items { id title handle } }`,
 		"categories":  `{ items { id name handle } }`,
 		"tags":        `{ items { id value } }`,
+		// ADR 0226's vocabulary pages as the other three do.
+		"optionValues": `{ items { optionTitle value } }`,
 	} {
 		cheap := &fakeStorefront{}
 		response, _ := runQueryWithOptions(t, identityWith([]string{"sc_1"}), cheap,
@@ -89,6 +92,7 @@ func TestTheVocabularyIsPricedByItsPage(t *testing.T) {
 		assert.Contains(t, response.Errors[0].Message, "complexity", name)
 		assert.Empty(t, expensive.vocabularyPages, name)
 		assert.Empty(t, expensive.categoryOptions, name)
+		assert.Empty(t, expensive.optionValueOptions, name)
 	}
 }
 
@@ -103,10 +107,15 @@ func TestAFailedVocabularyReadIsAnError(t *testing.T) {
 		"categories":        `{ categories { items { id } } }`,
 		"tags":              `{ tags { items { id } } }`,
 		"productAttributes": `{ productAttributes { id } }`,
+		// The two channel-scoped reads (ADR 0226).
+		"productFacets": `{ productFacets { handle } }`,
+		"optionValues":  `{ optionValues { items { value } } }`,
 	} {
 		svc := &fakeStorefront{
-			tags: []models.Tag{{ID: "ptag_1", Value: "linen"}},
-			err:  coreerrors.Unavailable("catalog_unavailable", "the catalog cannot be read"),
+			tags:         []models.Tag{{ID: "ptag_1", Value: "linen"}},
+			facets:       []service.Facet{{Handle: "material"}},
+			optionValues: []models.OptionValuePair{{OptionTitle: "Color", Value: "red"}},
+			err:          coreerrors.Unavailable("catalog_unavailable", "the catalog cannot be read"),
 		}
 		response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc, query)
 

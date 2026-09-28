@@ -69,8 +69,9 @@ func (s *benchStorefront) StoreRelatedProducts(
 	return s.list.Items, nil
 }
 
-// ListCollections completes the surface with ListCategories, ListTags and
-// ListAttributes; the benchmark reads products only.
+// ListCollections completes the surface with ListCategories, ListTags,
+// ListAttributes, StoreFacets and ListOptionValues; the benchmark reads
+// products only.
 func (s *benchStorefront) ListCollections(context.Context, int, int) (service.ListResult[models.Collection], error) {
 	return service.ListResult[models.Collection]{}, nil
 }
@@ -87,6 +88,16 @@ func (s *benchStorefront) ListTags(context.Context, int, int) (service.ListResul
 
 func (s *benchStorefront) ListAttributes(context.Context) ([]models.Attribute, error) {
 	return nil, nil
+}
+
+func (s *benchStorefront) StoreFacets(context.Context, service.StoreListOptions) ([]service.Facet, error) {
+	return nil, nil
+}
+
+func (s *benchStorefront) ListOptionValues(
+	context.Context, service.ListOptionValuesOptions,
+) (service.ListResult[models.OptionValuePair], error) {
+	return service.ListResult[models.OptionValuePair]{}, nil
 }
 
 // benchCatalogue builds the page the benchmark serves.

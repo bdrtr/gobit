@@ -1056,6 +1056,22 @@ func complexityCosts(costs *ComplexityRoot) {
 		return rootQueryCost + models.MaxAttributes*child
 	}
 	costs.Attribute.Options = collectionCost
+	// The facets (ADR 0226) are one facet per attribute, so the catalog's
+	// ceiling as the attributes are; the count takes a round trip of its own
+	// for every attribute the filters name (service.Service.StoreFacets), each
+	// priced as a root query is. The option vocabulary pages as the others do.
+	costs.Query.ProductFacets = func(
+		child int,
+		_, _, _, _, _ *string,
+		_ []string,
+		attributes []service.AttributeCriterion,
+	) int {
+		return rootQueryCost*(1+len(attributes)) + models.MaxAttributes*child
+	}
+	costs.Facet.Options = collectionCost
+	costs.Query.OptionValues = func(child int, limit, _ *int) int {
+		return rootQueryCost + pageSize(limit)*child
+	}
 
 	costs.Product.Variants = collectionCost
 	costs.Product.Options = collectionCost

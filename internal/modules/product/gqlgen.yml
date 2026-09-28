@@ -114,6 +114,15 @@ models:
     model: github.com/bdrtr/gobit/internal/modules/product/graph.CategoryList
   TagList:
     model: github.com/bdrtr/gobit/internal/modules/product/graph.TagList
+  # The listing's counts and its option words (ADR 0226).
+  Facet:
+    model: github.com/bdrtr/gobit/internal/modules/product/service.Facet
+  FacetOption:
+    model: github.com/bdrtr/gobit/internal/modules/product/service.FacetOption
+  OptionValuePair:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.OptionValuePair
+  OptionValuePairList:
+    model: github.com/bdrtr/gobit/internal/modules/product/graph.OptionValuePairList
   ProductOrder:
     model: github.com/bdrtr/gobit/internal/modules/product/models.ProductOrder
   RelationType:

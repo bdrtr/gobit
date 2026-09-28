@@ -81,14 +81,16 @@ type Query {
     sort: ProductOrder
     collectionId: ID
     """
-    Narrows the listing to a category. The id comes from /store/v1/categories:
-    a storefront has the word a shopper clicked, not an id.
+    Narrows the listing to a category. The id comes from the categories query
+    or /store/v1/categories: a storefront has the word a shopper clicked, not an
+    id.
 
     A product in several categories is still returned ONCE.
     """
     categoryId: ID
     """
-    Narrows the listing to a tag. The id comes from /store/v1/tags.
+    Narrows the listing to a tag. The id comes from the tags query or
+    /store/v1/tags.
 
     A product carrying several tags is still returned ONCE.
     """
@@ -96,10 +98,11 @@ type Query {
     """
     Narrows the listing to the products offering one option VALUE ("red").
 
-    The value comes from the option vocabulary endpoint, which is the one
-    vocabulary that returns text rather than ids: an option belongs to exactly
-    one product, so an option-value id would name a single product's single
-    value and filtering a catalog by one would return at most one product.
+    The value comes from the option vocabulary, the optionValues query or its
+    REST endpoint, which is the one vocabulary that returns text rather than
+    ids: an option belongs to exactly one product, so an option-value id would
+    name a single product's single value and filtering a catalog by one would
+    return at most one product.
 
     The match is on the FOLDED form and the fold is Go's, never the cluster's
     (ADR 0039): two spellings of one value meet, two DIFFERENT values do not,
@@ -128,7 +131,7 @@ type Query {
     """
     Narrows the listing by typed attributes (ADR 0219): a product is kept when
     it holds a matching value of EVERY attribute named. The handles come from
-    /store/v1/product-attributes, and a handle, an option or a value the catalog
+    the productAttributes query or /store/v1/product-attributes, and a handle, an option or a value the catalog
     does not have is refused rather than answered with an empty page.
     """
     attributes: [AttributeFilter!]
@@ -208,6 +211,97 @@ type Query {
 
   "The attributes the listing filters on, with their options, in the operator's order (ADR 0219)."
   productAttributes: [Attribute!]!
+
+  """
+  How many of the products a listing with these filters holds, per value of
+  every attribute (ADR 0219, ADR 0226), read through the same service method as
+  GET /store/v1/sales-channels/{sales_channel_id}/product-facets.
+
+  The filters are the products query's and mean what they mean there, and the
+  catalog counted is the request's sales channels, as the listing's is. An
+  attribute the filters name is counted without its own filter, so a shopper
+  sees what its other options would give; every other attribute is counted
+  within all of them.
+
+  The listing's page, order, inStock and price are not arguments: a count
+  covers the whole filtered catalog, and inStock and price are answered after
+  the catalog is read, so they cannot narrow a count.
+  """
+  productFacets(
+    q: String
+    collectionId: ID
+    categoryId: ID
+    tagId: ID
+    optionValue: String
+    variantIds: [ID!]
+    attributes: [AttributeFilter!]
+  ): [Facet!]!
+
+  """
+  The option vocabulary (ADR 0226): the distinct option titles and values the
+  published products in the request's sales channels offer, the words the
+  products query's optionValue takes, read through the same service method as
+  GET /store/v1/sales-channels/{sales_channel_id}/option-values.
+
+  It is the one vocabulary that varies by sales channel: every entry exists
+  because a product carries it, so an unscoped list would name what the
+  listing hides.
+  """
+  optionValues(limit: Int, offset: Int): OptionValuePairList!
+}
+
+"""
+How many of a listing's products hold each value of one attribute (ADR 0219).
+"""
+type Facet {
+  handle: String!
+  title: String!
+  "number, boolean or select."
+  kind: String!
+  """
+  A select attribute's options in their order, every one listed, with a zero
+  where no product holds it; empty for the other kinds.
+  """
+  options: [FacetOption!]!
+  "The products holding true, on a boolean attribute; zero on the other kinds."
+  true: Int!
+  "The products holding false, on a boolean attribute; zero on the other kinds."
+  false: Int!
+  """
+  The holdings counted: a number attribute's products holding a value, a
+  boolean's true and false added, a select's options' counts added, so a
+  product holding two options counts twice.
+  """
+  products: Int!
+  "The smallest value the counted products hold, on a number attribute; null otherwise."
+  min: Float
+  "The largest value the counted products hold, on a number attribute; null otherwise."
+  max: Float
+}
+
+"One option of a select facet and how many products hold it."
+type FacetOption {
+  handle: String!
+  value: String!
+  products: Int!
+}
+
+"""
+An option title with one value some product in the catalog offers under it:
+"Color" and "red". Two products offering it are one entry.
+"""
+type OptionValuePair {
+  optionTitle: String!
+  value: String!
+}
+
+"A page of the option vocabulary."
+type OptionValuePairList {
+  items: [OptionValuePair!]!
+  "The TOTAL number of entries."
+  count: Int!
+  offset: Int!
+  limit: Int!
 }
 
 "A group of products an operator curates."

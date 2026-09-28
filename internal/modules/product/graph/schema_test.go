@@ -161,6 +161,15 @@ func bindings() []binding {
 		{schemaType: "CollectionList", goType: reflect.TypeOf(graph.CollectionList{}), leftOut: offsetPagesOnly},
 		{schemaType: "CategoryList", goType: reflect.TypeOf(graph.CategoryList{}), leftOut: offsetPagesOnly},
 		{schemaType: "TagList", goType: reflect.TypeOf(graph.TagList{}), leftOut: offsetPagesOnly},
+		// The listing's counts and its option words (ADR 0226).
+		{schemaType: "Facet", goType: reflect.TypeOf(service.Facet{})},
+		{schemaType: "FacetOption", goType: reflect.TypeOf(service.FacetOption{})},
+		{schemaType: "OptionValuePair", goType: reflect.TypeOf(models.OptionValuePair{})},
+		{
+			schemaType: "OptionValuePairList",
+			goType:     reflect.TypeOf(graph.OptionValuePairList{}),
+			leftOut:    offsetPagesOnly,
+		},
 	}
 }
 
@@ -374,6 +383,53 @@ func TestProductsArgumentsMatchWhatTheServiceReads(t *testing.T) {
 		"the products arguments must be the same as the options the service reads")
 }
 
+// TestProductFacetsTakesTheListingsFilters holds ADR 0226's argument rule:
+// every productFacets argument is a products argument of the same type, so a
+// storefront hands the count the filters it listed with, unchanged, and every
+// products argument the count does not take is declared here with its reason.
+// A filter added to the listing tomorrow is a filter the count takes, or a
+// decision written down.
+func TestProductFacetsTakesTheListingsFilters(t *testing.T) {
+	t.Parallel()
+
+	noPage := "a count covers the whole filtered catalog; it has no page"
+	enriched := "answered after the catalog is read, so service.StoreFacets refuses it"
+	notCounted := map[string]string{
+		"limit":   noPage,
+		"offset":  noPage,
+		"after":   noPage,
+		"sort":    "a count has no order",
+		"inStock": enriched,
+		"price":   enriched,
+	}
+
+	query := compiledSchema(t).Query
+	products := query.Fields.ForName("products")
+	facets := query.Fields.ForName("productFacets")
+	require.NotNil(t, products)
+	require.NotNil(t, facets)
+
+	for _, arg := range facets.Arguments {
+		listing := products.Arguments.ForName(arg.Name)
+		if assert.NotNil(t, listing,
+			"productFacets(%s) is not a products argument; the count takes the listing's filters", arg.Name) {
+			assert.Equal(t, listing.Type.String(), arg.Type.String(),
+				"productFacets(%s) must be the listing's %s", arg.Name, listing.Type)
+		}
+		_, declared := notCounted[arg.Name]
+		assert.False(t, declared, "productFacets takes %q, which notCounted says it does not", arg.Name)
+	}
+	for _, arg := range products.Arguments {
+		if facets.Arguments.ForName(arg.Name) != nil {
+			continue
+		}
+		reason, declared := notCounted[arg.Name]
+		assert.True(t, declared,
+			"products(%s) is not a productFacets argument and notCounted gives no reason", arg.Name)
+		assert.NotEmpty(t, reason)
+	}
+}
+
 // textScalars holds the schema scalars that bind to *string on the Go side.
 //
 // ID is a scalar separate from String but its carrier is the same, and the
@@ -394,8 +450,9 @@ var textScalars = map[string]bool{"String": true, "ID": true}
 // every row and never touches the result.
 //
 // The test walks the SCHEMA rather than individual arguments; its real work
-// will be done tomorrow: a new text filter added to products is inside this
-// claim too, and an addition that forgets to normalize fails here.
+// will be done tomorrow: a new text filter added to products or to
+// productFacets is inside this claim too, and an addition that forgets to
+// normalize fails here.
 func TestEmptyTextArgumentBuildsNoFilter(t *testing.T) {
 	t.Parallel()
 
@@ -419,35 +476,51 @@ func TestEmptyTextArgumentBuildsNoFilter(t *testing.T) {
 	// TestAnUnreadableCursorIsRefused covers that half.
 	notFilters := map[string]bool{"after": true}
 
-	for _, arg := range compiledSchema(t).Query.Fields.ForName("products").Arguments {
-		if !textScalars[arg.Type.NamedType] || notFilters[arg.Name] {
-			continue
+	// Every root that takes the listing's filters (ADR 0226), with the
+	// selection it is asked for and the options its service call recorded.
+	roots := map[string]struct {
+		selection string
+		recorded  func(*fakeStorefront, *testing.T) service.StoreListOptions
+	}{
+		"products":      {"{ count }", (*fakeStorefront).lastList},
+		"productFacets": {"{ handle }", (*fakeStorefront).lastFacets},
+	}
+
+	for root, call := range roots {
+		field := compiledSchema(t).Query.Fields.ForName(root)
+		require.NotNil(t, field, "the schema has no %s query", root)
+
+		for _, arg := range field.Arguments {
+			if !textScalars[arg.Type.NamedType] || notFilters[arg.Name] {
+				continue
+			}
+
+			t.Run(root+"/"+arg.Name, func(t *testing.T) {
+				t.Parallel()
+
+				name, known := fields[arg.Name]
+				require.True(t, known,
+					"the StoreListOptions counterpart of the text argument %q is unknown; if a new "+
+						"filter was added it must be added to the mapping too", arg.Name)
+
+				svc := &fakeStorefront{}
+
+				// A value made up only of whitespace is given: it exercises
+				// both the "empty" and the "empty after trimming" case in one
+				// case.
+				response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+					fmt.Sprintf(`{ %s(%s: "   ") %s }`, root, arg.Name, call.selection))
+
+				require.Empty(t, response.Errors)
+
+				value := reflect.ValueOf(call.recorded(svc, t)).FieldByName(name)
+				require.Equal(t, reflect.Pointer, value.Kind(),
+					"%s must be a pointer; the only thing carrying the 'not given' distinction is nil",
+					name)
+				assert.True(t, value.IsNil(),
+					"an empty %q argument must build no filter; nil must reach the service", arg.Name)
+			})
 		}
-
-		t.Run(arg.Name, func(t *testing.T) {
-			t.Parallel()
-
-			name, known := fields[arg.Name]
-			require.True(t, known,
-				"the StoreListOptions counterpart of the text argument %q is unknown; if a new "+
-					"filter was added it must be added to the mapping too", arg.Name)
-
-			svc := &fakeStorefront{}
-
-			// A value made up only of whitespace is given: it exercises both
-			// the "empty" and the "empty after trimming" case in one case.
-			response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
-				fmt.Sprintf(`{ products(%s: "   ") { count } }`, arg.Name))
-
-			require.Empty(t, response.Errors)
-
-			value := reflect.ValueOf(svc.lastList(t)).FieldByName(name)
-			require.Equal(t, reflect.Pointer, value.Kind(),
-				"%s must be a pointer; the only thing carrying the 'not given' distinction is nil",
-				name)
-			assert.True(t, value.IsNil(),
-				"an empty %q argument must build no filter; nil must reach the service", arg.Name)
-		})
 	}
 }
 

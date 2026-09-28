@@ -126,6 +126,17 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **The GraphQL storefront counts what it lists** (ADR 0226). **For storefront
+  clients:** the schema answers `productFacets`, which takes the `products`
+  filters `q`, `collectionId`, `categoryId`, `tagId`, `optionValue`,
+  `variantIds` and `attributes` and answers per attribute what
+  `GET /store/v1/sales-channels/{sales_channel_id}/product-facets` answers, and
+  `optionValues(limit:, offset:)`, the page of
+  `/store/v1/sales-channels/{sales_channel_id}/option-values`. Both read the
+  channels the publishable key carries, as `products` does. Every attribute a
+  facet count filters on costs as much as a root query against the complexity
+  ceiling.
+
 - **The GraphQL storefront reads the vocabulary** (ADR 0225). **For storefront
   clients:** the schema answers `collections`, `categories(parentId:)`, `tags`
   and `productAttributes`, the same reads as `GET /store/v1/collections`,

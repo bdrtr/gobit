@@ -48,6 +48,12 @@ type fakeStorefront struct {
 	categories      []models.Category
 	tags            []models.Tag
 	attributes      []models.Attribute
+
+	// The channel-scoped reads' calls and answers (ADR 0226).
+	facetOptions       []service.StoreListOptions
+	optionValueOptions []service.ListOptionValuesOptions
+	facets             []service.Facet
+	optionValues       []models.OptionValuePair
 }
 
 // vocabularyPage is a page of one of the vocabulary's lists.
@@ -85,6 +91,36 @@ func (s *fakeStorefront) ListTags(_ context.Context, limit, offset int) (service
 // ListAttributes returns the prepared attributes.
 func (s *fakeStorefront) ListAttributes(context.Context) ([]models.Attribute, error) {
 	return s.attributes, s.err
+}
+
+// StoreFacets records the options and returns the prepared facets.
+func (s *fakeStorefront) StoreFacets(_ context.Context, opts service.StoreListOptions) ([]service.Facet, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.facetOptions = append(s.facetOptions, opts)
+	return s.facets, s.err
+}
+
+// ListOptionValues records the options and returns the prepared values.
+func (s *fakeStorefront) ListOptionValues(
+	_ context.Context, opts service.ListOptionValuesOptions,
+) (service.ListResult[models.OptionValuePair], error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.optionValueOptions = append(s.optionValueOptions, opts)
+	return vocabularyPage(s.optionValues, opts.Limit, opts.Offset), s.err
+}
+
+// lastFacets returns the options of the one recorded StoreFacets call.
+func (s *fakeStorefront) lastFacets(t *testing.T) service.StoreListOptions {
+	t.Helper()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	require.Len(t, s.facetOptions, 1, "the service should have been called EXACTLY once")
+
+	return s.facetOptions[0]
 }
 
 // relatedCall is one recorded StoreRelatedProducts call.

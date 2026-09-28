@@ -108,7 +108,10 @@ curl -s localhost:9000/store/v1/graphql \
 The surface is kept **narrow**: the `products` and `product` queries, the
 catalog's vocabulary — `collections`, `categories`, `tags` and
 `productAttributes`, the same service reads as the REST vocabulary endpoints
-([ADR 0225](adr/0225-the-graphql-storefront-reads-the-vocabulary.md)) — and **no
+([ADR 0225](adr/0225-the-graphql-storefront-reads-the-vocabulary.md)) — the
+listing's `productFacets` and the `optionValues` its filter takes, the same
+reads as the channel-scoped `product-facets` and `option-values` endpoints
+([ADR 0226](adr/0226-the-graphql-storefront-counts-what-it-lists.md)), and **no
 mutation**. The contract is the file
 `internal/modules/product/graph/schema.graphqls` — an inspectable artifact just
 like the OpenAPI document; the Go side is **generated** from it (`make gen`,
