@@ -29,6 +29,10 @@ func New() *Plugin { return &Plugin{} }
 // Name identifies the plugin to the host.
 func (p *Plugin) Name() string { return "havale" }
 
+// RequiresCore names the gobit releases the plugin works with; the host refuses
+// to install it with any other (core/plugin.CoreRequirement).
+func (p *Plugin) RequiresCore() string { return ">=v0.9.0" }
+
 // Setup registers the provider, a route, an event subscription and a job.
 func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	account, ok := h.Setting("account")

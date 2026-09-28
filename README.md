@@ -94,11 +94,12 @@ are in [`docs/operating.md`](./docs/operating.md).
 ```
 gobit.go              # the PUBLISHED facade: New().Version().Add().Use().Main()
                       # plus InProcess() (ADR 0150)
-core                  # the PUBLISHED contracts — nineteen packages (ADR 0026,
-                      # widened by ADR 0069): errors, db, container, module,
-                      # eventbus (+outbox), link, query, provider (+providertest),
-                      # plugin, http (+redisguard), identitytest, audit,
-                      # errorreport, personaldata, openapi, jobreport
+core                  # the PUBLISHED contracts — twenty packages (ADR 0026,
+                      # widened by ADR 0069 and 0224): errors, db, container,
+                      # module, eventbus (+outbox), link, query, provider
+                      # (+providertest), plugin, http (+redisguard), identitytest,
+                      # audit, errorreport, personaldata, openapi, jobreport,
+                      # version
 internal/app          # the COMPOSITION ROOT (ADR 0027): config -> logger ->
                       # container -> router -> listen; the operator subcommands
                       # (migrate, stuck, recover, jobs, deadletters, seed,
@@ -250,7 +251,7 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 222 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 223 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
 | [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: fifty-nine items in seven groups — identity and authorization, sales channel scope, the category tree, a product's history, tax, installation and operation, the limit of the invariants |

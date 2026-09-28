@@ -44,6 +44,8 @@ import (
 	"slices"
 	"strings"
 	"text/template"
+
+	"github.com/bdrtr/gobit/core/version"
 )
 
 //go:embed templates
@@ -133,7 +135,7 @@ type values struct {
 }
 
 // GobitModule is the import path of the library a generated project embeds.
-const GobitModule = "github.com/bdrtr/gobit"
+const GobitModule = version.Module
 
 // Write generates the project.
 //

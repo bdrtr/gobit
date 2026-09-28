@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/mod/semver"
+	"github.com/bdrtr/gobit/core/version"
 )
 
 // The version a generated go.mod can require, and why it is usually not a tag.
@@ -123,49 +123,9 @@ func parseSemver(tag string) (major, minor, patch int, ok bool) {
 }
 
 // Stamped returns the library version the Go toolchain recorded in a binary's
-// build information, or "" when that version is not one the module proxy serves.
-//
-// Since Go 1.24 `go build` stamps the main module's version from version control
-// — the tag when the commit carries one, the pseudo-version of the commit
-// otherwise — and `go install <path>@<version>` stamps the version it fetched.
-// That second route is the one no Makefile runs, so it is the one that injects
-// no build facts. The library is looked up by its own path, whether this binary
-// IS gobit (the main module) or embeds it (a dependency); in the second case the
-// dependency's version is exactly the library the embedded templates came from.
-//
-// Three stamps are refused rather than used, and each was measured:
-//   - "(devel)", which `go run` and `go test` write: no version at all;
-//   - a version with build metadata, "+dirty" for a tree with uncommitted
-//     changes: the proxy serves no such version, and the templates are not
-//     those of any commit;
-//   - a dependency a `replace` points elsewhere: its version names what was
-//     required, not the code that was compiled.
+// build information, or "" when that version is not one the module proxy
+// serves; the rule is [version.Of]'s, which the plugin registry reads as well
+// (ADR 0224).
 func Stamped(info *debug.BuildInfo) string {
-	if info == nil {
-		return ""
-	}
-
-	library := &info.Main
-	if library.Path != GobitModule {
-		library = nil
-		for _, dep := range info.Deps {
-			if dep.Path == GobitModule {
-				library = dep
-
-				break
-			}
-		}
-	}
-	if library == nil || library.Replace != nil {
-		return ""
-	}
-
-	// Canonical drops build metadata and completes a shorthand, so a version
-	// that survives it unchanged is one the proxy can be asked for.
-	version := library.Version
-	if version == "" || semver.Canonical(version) != version {
-		return ""
-	}
-
-	return version
+	return version.Of(info)
 }

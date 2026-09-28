@@ -154,3 +154,4 @@ truth: a report says what was true on the day it was taken.
 | [What a product was — measured 2026-09-28](0221-what-a-product-was.md) | 119 |
 | [Two operators, one product — measured 2026-09-28](0222-two-operators-one-product.md) | 92 |
 | [The words on a line — measured 2026-09-28](0223-the-words-on-a-line.md) | 91 |
+| [The release a plugin expects — measured 2026-09-28](0224-the-release-a-plugin-expects.md) | 57 |

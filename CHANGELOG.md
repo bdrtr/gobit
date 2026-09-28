@@ -119,6 +119,17 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A plugin names the releases it works with** (ADR 0224). **For plugin
+  authors:** a plugin may implement `core/plugin.CoreRequirement`, returning a
+  range such as `">=v0.9.0 <v0.11.0"`; `Registry.Install` refuses it with
+  `plugin_core_unsupported` when the binary was built with a release outside
+  the range, and with `plugin_core_range_invalid` when the range cannot be read,
+  before any plugin is set up. An unstamped build (`go run`, `go test`, a
+  `replace`) installs it and logs that the range was not checked. **For Go
+  callers:** the new published package `core/version` reads the library's
+  release from the build (`Library`, `Of`, `Module`); `core/plugin` now imports
+  `golang.org/x/mod`, which a module requiring gobit already has in its graph.
+
 - **A cart line carries what the shopper wrote** (ADR 0223). **For API
   consumers:** the storefront and admin add-line bodies take `properties`, up to
   ten names with texts (a name up to 64 characters, a text up to 500), refused

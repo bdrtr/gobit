@@ -128,6 +128,10 @@ const (
 	codeRouteConflict   = "plugin_route_conflict"
 	codeRouteInvalid    = "plugin_route_invalid"
 	codeRouteReserved   = "plugin_route_reserved"
+	// codeCoreRangeInvalid and codeCoreUnsupported refuse a plugin's range of
+	// core releases (ADR 0224).
+	codeCoreRangeInvalid = "plugin_core_range_invalid"
+	codeCoreUnsupported  = "plugin_core_unsupported"
 )
 
 // Plugin is a plugin adding a capability to the core.
@@ -813,8 +817,15 @@ func (r *Registry) Plugins() []string {
 //
 // It must be called BEFORE THE MODULES COME UP: whether a module added by a
 // plugin can go through the Register/migration/route cycle depends on it.
+//
+// A plugin that names the core releases it works with ([CoreRequirement]) is
+// refused before any plugin's Setup runs when this binary's release is outside
+// them (ADR 0224).
 func (r *Registry) Install(ctx context.Context, h *Host) error {
 	if err := r.validateNames(); err != nil {
+		return err
+	}
+	if err := r.checkCore(ctx); err != nil {
 		return err
 	}
 

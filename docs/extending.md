@@ -44,6 +44,22 @@ module a plugin brings can go through the lifecycle too), and `Start` runs
 **after** them (a provider registration only exists once the payment module is
 up). An unknown plugin name or a missing setting fails at startup.
 
+A plugin that lives in a module of its own can name the gobit releases it works
+with by implementing `core/plugin.CoreRequirement`
+([ADR 0224](adr/0224-a-plugin-names-the-releases-it-works-with.md)):
+
+```go
+func (p *Plugin) RequiresCore() string { return ">=v0.9.0 <v0.11.0" }
+```
+
+`Install` refuses it, before any plugin is set up, when the binary was built
+with a release outside the range, and refuses a range it cannot read. Go's
+`require` already sets the lowest release; the range adds the highest, which a
+release before 1.0.0 may need, since a minor version may break a plugin. A build
+that does not stamp its release — `go run`, `go test`, a `replace`, a tree with
+uncommitted changes — installs the plugin and logs that the range was not
+checked; `core/version.Library` says what a build was stamped with.
+
 The plugins show four different ways of extending:
 
 | Plugin | What it does | Which extension points |

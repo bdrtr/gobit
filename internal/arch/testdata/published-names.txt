@@ -422,6 +422,8 @@ core/personaldata Unresolvable
 core/plugin AIProviderName
 core/plugin AdminPage
 core/plugin CallbacksName
+core/plugin CoreRequirement
+core/plugin CoreRequirement.RequiresCore
 core/plugin ErrorReporterName
 core/plugin FileProvidersName
 core/plugin FulfillmentProvidersName
@@ -538,3 +540,6 @@ core/query ProviderSuffix
 core/query Query
 core/query Query.Graph
 core/query Record
+core/version Library
+core/version Module
+core/version Of
