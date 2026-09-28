@@ -23,3 +23,10 @@ WHERE a.product_id = sqlc.arg('product_id')::text
 -- name: DeleteAddOnsOfVariant :exec
 -- Removes every entry naming a variant; its deletion calls this.
 DELETE FROM product_add_on WHERE variant_id = $1;
+
+-- name: ListProductAddOnsOfProducts :many
+-- Every add-on of the given products in one statement, for the read layer's
+-- batch (ADR 0229).
+SELECT product_id, variant_id FROM product_add_on
+WHERE product_id = ANY(sqlc.arg('product_ids')::text[])
+ORDER BY product_id, rank;

@@ -248,6 +248,7 @@ type fakePricing struct {
 	gotQuantity   int64
 	gotMetadata   json.RawMessage
 	gotProperties map[string]string
+	gotAddOns     json.RawMessage
 	calls         int
 }
 
@@ -261,10 +262,12 @@ func (f *fakePricing) AddPricedLineItem(
 	quantity int64,
 	metadata json.RawMessage,
 	properties map[string]string,
+	addOns json.RawMessage,
 ) (string, error) {
 	f.calls++
 	f.gotCartID, f.gotVariantID, f.gotQuantity, f.gotMetadata = cartID, variantID, quantity, metadata
 	f.gotProperties = properties
+	f.gotAddOns = addOns
 	return f.lineID, f.err
 }
 

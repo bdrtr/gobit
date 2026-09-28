@@ -84,3 +84,36 @@ func (q *Queries) ListProductAddOns(ctx context.Context, productID string) ([]st
 	}
 	return items, nil
 }
+
+const listProductAddOnsOfProducts = `-- name: ListProductAddOnsOfProducts :many
+SELECT product_id, variant_id FROM product_add_on
+WHERE product_id = ANY($1::text[])
+ORDER BY product_id, rank
+`
+
+type ListProductAddOnsOfProductsRow struct {
+	ProductID string
+	VariantID string
+}
+
+// Every add-on of the given products in one statement, for the read layer's
+// batch (ADR 0229).
+func (q *Queries) ListProductAddOnsOfProducts(ctx context.Context, productIds []string) ([]ListProductAddOnsOfProductsRow, error) {
+	rows, err := q.db.Query(ctx, listProductAddOnsOfProducts, productIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProductAddOnsOfProductsRow{}
+	for rows.Next() {
+		var i ListProductAddOnsOfProductsRow
+		if err := rows.Scan(&i.ProductID, &i.VariantID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

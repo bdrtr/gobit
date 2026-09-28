@@ -96,7 +96,15 @@ type Store interface {
 	GetLineItem(ctx context.Context, cartID, lineID string) (models.LineItem, error)
 	// GetLineItemByVariant returns the living line of the variant with the
 	// given properties in the cart (ADR 0223).
-	GetLineItemByVariant(ctx context.Context, cartID, variantID string, properties map[string]string) (models.LineItem, error)
+	GetLineItemByVariant(
+		ctx context.Context, cartID, variantID string, properties map[string]string, addOnKey string,
+	) (models.LineItem, error)
+	// ListAddOnLines, SetAddOnQuantities and SoftDeleteAddOnLines are a line's
+	// add-ons (ADR 0229): read them, make them follow its quantity, remove them
+	// with it.
+	ListAddOnLines(ctx context.Context, cartID, parentID string) ([]models.LineItem, error)
+	SetAddOnQuantities(ctx context.Context, cartID, parentID string, quantity int64) error
+	SoftDeleteAddOnLines(ctx context.Context, cartID, parentID string) error
 	// ListLineItems returns the cart's lines in creation order.
 	ListLineItems(ctx context.Context, cartID string) ([]models.LineItem, error)
 	// CountLineItems returns how many living lines the cart holds.

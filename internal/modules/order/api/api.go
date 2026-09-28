@@ -494,8 +494,11 @@ type lineItemDTO struct {
 	// Properties are what the shopper wrote on the line — an engraving, a gift
 	// message — as the cart line carried them (ADR 0223).
 	Properties map[string]string `json:"properties,omitempty"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
+	// ParentLineItemID is the line of this order the line is an add-on of, the
+	// ring an engraving was sold for (ADR 0229); absent on a line of its own.
+	ParentLineItemID *string   `json:"parent_line_item_id,omitempty"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // linePriceOriginDTO is which of a variant's prices a line was charged.
@@ -701,24 +704,25 @@ func toOrderAddressDTO(address *models.OrderAddress) *orderAddressDTO {
 // toLineItemDTO converts the model to the external representation.
 func toLineItemDTO(item models.OrderLineItem) lineItemDTO {
 	return lineItemDTO{
-		ID:            item.ID,
-		OrderID:       item.OrderID,
-		VariantID:     item.VariantID,
-		Title:         item.Title,
-		Quantity:      item.Quantity,
-		UnitPrice:     item.UnitPrice,
-		Subtotal:      item.Subtotal,
-		DiscountTotal: item.DiscountTotal,
-		TaxTotal:      item.TaxTotal,
-		TaxRateBps:    item.TaxRateBps,
-		TaxComponents: toLineTaxDTOs(item.TaxComponents),
-		Total:         item.Total,
-		Metadata:      item.Metadata,
-		PriceOrigin:   toLinePriceOriginDTO(item.PriceOrigin),
-		IsGiftcard:    item.IsGiftcard,
-		Properties:    item.Properties,
-		CreatedAt:     item.CreatedAt,
-		UpdatedAt:     item.UpdatedAt,
+		ID:               item.ID,
+		OrderID:          item.OrderID,
+		VariantID:        item.VariantID,
+		Title:            item.Title,
+		Quantity:         item.Quantity,
+		UnitPrice:        item.UnitPrice,
+		Subtotal:         item.Subtotal,
+		DiscountTotal:    item.DiscountTotal,
+		TaxTotal:         item.TaxTotal,
+		TaxRateBps:       item.TaxRateBps,
+		TaxComponents:    toLineTaxDTOs(item.TaxComponents),
+		Total:            item.Total,
+		Metadata:         item.Metadata,
+		PriceOrigin:      toLinePriceOriginDTO(item.PriceOrigin),
+		IsGiftcard:       item.IsGiftcard,
+		Properties:       item.Properties,
+		ParentLineItemID: item.ParentLineItemID,
+		CreatedAt:        item.CreatedAt,
+		UpdatedAt:        item.UpdatedAt,
 	}
 }
 

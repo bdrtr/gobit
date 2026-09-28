@@ -106,6 +106,10 @@ func TestTheChannelContractNamesAgree(t *testing.T) {
 	assert.Equal(t, productsvc.EntityVariant, cartwf.EntityVariant,
 		"the entity name the workflow asks for has to be the same as the name product "+
 			"offers; if they drift, Query never finds the provider")
+	// The add-on list (ADR 0229): a drifted name is a field the provider
+	// refuses, which would refuse every add at the till rather than here.
+	assert.Equal(t, productsvc.FieldAddOnVariantIDs, cartwf.FieldAddOnVariantIDs,
+		"the add-on field the cart workflow reads has to be the one the product provider offers")
 }
 
 // variantReadExemption is a variant read that DELIBERATELY does not make a channel decision.

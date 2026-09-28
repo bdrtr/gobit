@@ -351,6 +351,9 @@ type OrderLineItem struct {
 	// Properties are what the shopper wrote on the cart line, an engraving or a
 	// gift message, kept as what was sold (ADR 0223); nil when there are none.
 	Properties map[string]string
+	// ParentLineItemID is the line of the same order this line is an add-on of,
+	// the ring an engraving was sold for (ADR 0229); nil for a line of its own.
+	ParentLineItemID *string
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

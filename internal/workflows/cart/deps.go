@@ -77,6 +77,11 @@ const (
 	// it at all: a cart line knows its VARIANT, and every tax rule is written
 	// about a PRODUCT.
 	FieldProductID = "product_id"
+	// FieldAddOnVariantIDs is the product record's list of the variants its
+	// lines accept as add-ons (ADR 0228); the flow checks an add-on against it
+	// before it opens the line (ADR 0229). An arch test binds it to the product
+	// module's spelling.
+	FieldAddOnVariantIDs = "add_on_variant_ids"
 	// FilterSalesChannelIDs is the sales channel filter key of the variant query;
 	// the product module declares its definition (productsvc.FilterSalesChannelIDs).
 	//
@@ -147,6 +152,9 @@ const (
 	// be read or did not line up with the request, and no line's amount is
 	// trustworthy.
 	CodePriceResponseInvalid = "cart_workflow_price_response_invalid"
+	// CodeAddOnNotAccepted reports an add-on the line's product does not
+	// accept, or one named twice (ADR 0229).
+	CodeAddOnNotAccepted = "cart_workflow_add_on_not_accepted"
 	// CodeCartCompleted reports that a computation was requested on a completed
 	// cart.
 	CodeCartCompleted = "cart_workflow_cart_completed"
@@ -289,12 +297,16 @@ type Carts interface {
 	//
 	// properties are what the shopper wrote on the line (ADR 0223); the same
 	// variant with other properties is another line.
+	//
+	// addOns are the add-on lines opened with it (ADR 0229), a JSON array of
+	// variant_id, title, unit_price and properties as this flow decided them.
 	AddCartLineItem(
 		ctx context.Context,
 		cartID, variantID, title string,
 		quantity, unitPrice int64,
 		metadata json.RawMessage,
 		properties map[string]string,
+		addOns json.RawMessage,
 	) (lineItemID string, err error)
 
 	// SetCartLineItemQuantity writes the line's quantity as an ABSOLUTE value; the

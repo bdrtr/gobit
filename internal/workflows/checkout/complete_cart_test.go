@@ -221,10 +221,12 @@ func TestOrderSnapshotIsBuiltFromTotalsAndCatalog(t *testing.T) {
 	assert.Equal(t, orderSnapshotItem{
 		VariantID: testVariantA, Title: testTitleA, Quantity: 2,
 		UnitPrice: 1000, Subtotal: 2000, TaxTotal: 400, Total: 2400,
+		LineKey: testLineA,
 	}, placed.Items[0])
 	assert.Equal(t, orderSnapshotItem{
 		VariantID: testVariantB, Title: testTitleB, Quantity: 1,
 		UnitPrice: 500, Subtotal: 500, TaxTotal: 100, Total: 600,
+		LineKey: testLineB,
 	}, placed.Items[1])
 
 	// The capture is made with an EXPLICIT amount; zero would have meant "all of

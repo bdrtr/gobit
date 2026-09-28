@@ -29,14 +29,16 @@ func (r *Repository) CreateLineItem(ctx context.Context, item models.LineItem) (
 	}
 
 	row, err := r.queries(ctx).CreateLineItem(ctx, cartdb.CreateLineItemParams{
-		ID:         item.ID,
-		CartID:     item.CartID,
-		VariantID:  item.VariantID,
-		Title:      item.Title,
-		Quantity:   item.Quantity,
-		UnitPrice:  item.UnitPrice,
-		Metadata:   meta,
-		Properties: properties,
+		ID:           item.ID,
+		CartID:       item.CartID,
+		VariantID:    item.VariantID,
+		Title:        item.Title,
+		Quantity:     item.Quantity,
+		UnitPrice:    item.UnitPrice,
+		Metadata:     meta,
+		Properties:   properties,
+		ParentLineID: item.ParentLineID,
+		AddOnKey:     item.AddOnKey,
 	})
 	if err != nil {
 		return models.LineItem{}, classify(err, codeQueryFailed, "the cart line item could not be created")
@@ -62,10 +64,11 @@ func (r *Repository) GetLineItem(ctx context.Context, cartID, lineID string) (mo
 	return toLineItem(row)
 }
 
-// GetLineItemByVariant returns the living line item of the variant with the
-// given properties in the cart; NotFound if there is none (ADR 0223).
+// GetLineItemByVariant returns the living line item standing on its own of the
+// variant with the given properties and add-ons in the cart; NotFound if there
+// is none (ADR 0223, ADR 0229).
 func (r *Repository) GetLineItemByVariant(
-	ctx context.Context, cartID, variantID string, properties map[string]string,
+	ctx context.Context, cartID, variantID string, properties map[string]string, addOnKey string,
 ) (models.LineItem, error) {
 	raw, err := fromProperties(properties)
 	if err != nil {
@@ -75,6 +78,7 @@ func (r *Repository) GetLineItemByVariant(
 		CartID:     cartID,
 		VariantID:  variantID,
 		Properties: raw,
+		AddOnKey:   addOnKey,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -93,6 +97,38 @@ func (r *Repository) ListLineItems(ctx context.Context, cartID string) ([]models
 		return nil, classify(err, codeQueryFailed, "the cart line items could not be listed")
 	}
 	return toLineItems(rows)
+}
+
+// ListAddOnLines returns the living add-ons of a line in creation order
+// (ADR 0229).
+func (r *Repository) ListAddOnLines(ctx context.Context, cartID, parentID string) ([]models.LineItem, error) {
+	rows, err := r.queries(ctx).ListAddOnLines(ctx, cartdb.ListAddOnLinesParams{
+		CartID: cartID, ParentLineID: &parentID,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the line's add-ons could not be listed")
+	}
+	return toLineItems(rows)
+}
+
+// SetAddOnQuantities writes a line's quantity onto its add-ons (ADR 0229).
+func (r *Repository) SetAddOnQuantities(ctx context.Context, cartID, parentID string, quantity int64) error {
+	if err := r.queries(ctx).SetAddOnQuantities(ctx, cartdb.SetAddOnQuantitiesParams{
+		CartID: cartID, ParentLineID: &parentID, Quantity: quantity,
+	}); err != nil {
+		return classify(err, codeQueryFailed, "the line's add-ons could not follow its quantity")
+	}
+	return nil
+}
+
+// SoftDeleteAddOnLines removes a line's add-ons (ADR 0229).
+func (r *Repository) SoftDeleteAddOnLines(ctx context.Context, cartID, parentID string) error {
+	if err := r.queries(ctx).SoftDeleteAddOnLines(ctx, cartdb.SoftDeleteAddOnLinesParams{
+		CartID: cartID, ParentLineID: &parentID,
+	}); err != nil {
+		return classify(err, codeQueryFailed, "the line's add-ons could not be removed")
+	}
+	return nil
 }
 
 // CountLineItems returns how many living line items the cart holds.

@@ -129,25 +129,26 @@ type OrderLineCancellation struct {
 }
 
 type OrderLineItem struct {
-	ID            string
-	OrderID       string
-	VariantID     string
-	Title         string
-	Quantity      int64
-	UnitPrice     int64
-	Subtotal      int64
-	DiscountTotal int64
-	TaxTotal      int64
-	Total         int64
-	Metadata      []byte
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
-	TaxRateBps    int32
-	PriceID       *string
-	PriceListID   *string
-	PriceListType *string
-	IsGiftcard    bool
-	Properties    []byte
+	ID               string
+	OrderID          string
+	VariantID        string
+	Title            string
+	Quantity         int64
+	UnitPrice        int64
+	Subtotal         int64
+	DiscountTotal    int64
+	TaxTotal         int64
+	Total            int64
+	Metadata         []byte
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	TaxRateBps       int32
+	PriceID          *string
+	PriceListID      *string
+	PriceListType    *string
+	IsGiftcard       bool
+	Properties       []byte
+	ParentLineItemID *string
 }
 
 type OrderLineTax struct {

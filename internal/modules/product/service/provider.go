@@ -430,6 +430,11 @@ func (p *productProvider) recordsWithMembership(
 			return nil, err
 		}
 	}
+	if len(fields) == 0 || slices.Contains(fields, FieldAddOnVariantIDs) {
+		if err := p.fillAddOns(ctx, ids, built); err != nil {
+			return nil, err
+		}
+	}
 	if !wantsMembership(fields) {
 		return built, nil
 	}
@@ -476,6 +481,27 @@ func (p *productProvider) fillRelations(ctx context.Context, ids []string, built
 		}
 	}
 
+	return nil
+}
+
+// fillAddOns fills the add-on field with one batch read for every product in
+// the page (ADR 0229), in the products' order as [productProvider.fillRelations]
+// does.
+func (p *productProvider) fillAddOns(ctx context.Context, ids []string, built []query.Record) error {
+	addOns, err := p.repo.ListProductAddOnsOfProducts(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range built {
+		if _, asked := built[i][FieldAddOnVariantIDs]; !asked {
+			continue
+		}
+		variants := addOns[ids[i]]
+		if variants == nil {
+			variants = []string{}
+		}
+		built[i][FieldAddOnVariantIDs] = variants
+	}
 	return nil
 }
 
@@ -792,6 +818,12 @@ const (
 	FieldSubstituteIDs = "substitute_ids"
 )
 
+// FieldAddOnVariantIDs carries a product's add-on variants in the operator's
+// order (ADR 0228), an empty list when it has none. It is published for the
+// cart workflow, which checks an add-on against it before it opens the line
+// (ADR 0229), and internal/arch binds the workflow's spelling to this one.
+const FieldAddOnVariantIDs = "add_on_variant_ids"
+
 // RelationFields is the read layer's field for every kind of relation.
 func RelationFields() map[models.RelationType]string {
 	return map[models.RelationType]string{
@@ -815,31 +847,32 @@ func RelationFields() map[models.RelationType]string {
 // path and a known one on another.
 func productRecord(p models.Product) query.Record {
 	return query.Record{
-		fieldCategoryIDs:   []string{},
-		fieldTagIDs:        []string{},
-		FieldCrossSellIDs:  []string{},
-		FieldUpSellIDs:     []string{},
-		FieldSubstituteIDs: []string{},
-		"id":               p.ID,
-		"handle":           p.Handle,
-		"title":            p.Title,
-		"subtitle":         deref(p.Subtitle),
-		"description":      deref(p.Description),
-		"thumbnail":        deref(p.Thumbnail),
-		"status":           p.Status.String(),
-		"is_giftcard":      p.IsGiftcard,
-		"discountable":     p.Discountable,
-		"weight":           derefInt32(p.Weight),
-		"collection_id":    deref(p.CollectionID),
-		"type_id":          deref(p.TypeID),
-		"material":         deref(p.Material),
-		"origin_country":   deref(p.OriginCountry),
-		"metadata":         p.Metadata,
-		fieldPublishAt:     momentOrNil(p.PublishAt),
-		fieldArchiveAt:     momentOrNil(p.ArchiveAt),
-		fieldVersion:       p.Version,
-		fieldCreatedAt:     p.CreatedAt,
-		fieldUpdatedAt:     p.UpdatedAt,
+		fieldCategoryIDs:     []string{},
+		fieldTagIDs:          []string{},
+		FieldCrossSellIDs:    []string{},
+		FieldUpSellIDs:       []string{},
+		FieldSubstituteIDs:   []string{},
+		FieldAddOnVariantIDs: []string{},
+		"id":                 p.ID,
+		"handle":             p.Handle,
+		"title":              p.Title,
+		"subtitle":           deref(p.Subtitle),
+		"description":        deref(p.Description),
+		"thumbnail":          deref(p.Thumbnail),
+		"status":             p.Status.String(),
+		"is_giftcard":        p.IsGiftcard,
+		"discountable":       p.Discountable,
+		"weight":             derefInt32(p.Weight),
+		"collection_id":      deref(p.CollectionID),
+		"type_id":            deref(p.TypeID),
+		"material":           deref(p.Material),
+		"origin_country":     deref(p.OriginCountry),
+		"metadata":           p.Metadata,
+		fieldPublishAt:       momentOrNil(p.PublishAt),
+		fieldArchiveAt:       momentOrNil(p.ArchiveAt),
+		fieldVersion:         p.Version,
+		fieldCreatedAt:       p.CreatedAt,
+		fieldUpdatedAt:       p.UpdatedAt,
 	}
 }
 

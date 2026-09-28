@@ -92,7 +92,7 @@ func (q *Queries) ListOrderExchangesForDisclosure(ctx context.Context, orderIds 
 }
 
 const listOrderLineItemsForDisclosure = `-- name: ListOrderLineItemsForDisclosure :many
-SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties FROM order_line_items
+SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id FROM order_line_items
 WHERE order_id = ANY ($1::text[])
 ORDER BY order_id, created_at, id
 `
@@ -137,6 +137,7 @@ func (q *Queries) ListOrderLineItemsForDisclosure(ctx context.Context, orderIds 
 			&i.PriceListType,
 			&i.IsGiftcard,
 			&i.Properties,
+			&i.ParentLineItemID,
 		); err != nil {
 			return nil, err
 		}

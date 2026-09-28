@@ -78,6 +78,7 @@ var _ api.LinePricing = (*channelRecordingPricing)(nil)
 // AddPricedLineItem records the identity and the arguments.
 func (f *channelRecordingPricing) AddPricedLineItem(
 	ctx context.Context, cartID, variantID string, quantity int64, _ json.RawMessage, properties map[string]string,
+	_ json.RawMessage,
 ) (string, error) {
 	f.calls++
 	f.gotProperties = properties

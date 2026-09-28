@@ -235,6 +235,10 @@ type interopOrderItem struct {
 	// Properties are the shopper's words on the cart line (ADR 0223); the
 	// checkout sends them in the change this schema learns them.
 	Properties map[string]string `json:"properties,omitempty"`
+	// LineKey and ParentLineKey bind an add-on line to its parent (ADR 0229);
+	// they changed together with the sender, for TaxComponents' reason.
+	LineKey       string `json:"line_key,omitempty"`
+	ParentLineKey string `json:"parent_line_key,omitempty"`
 }
 
 // interopLineTax is one rate inside a stacked line's tax, on the wire.
@@ -280,6 +284,8 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 			PriceListType: incoming.Items[k].PriceListType,
 			IsGiftcard:    incoming.Items[k].IsGiftcard,
 			Properties:    incoming.Items[k].Properties,
+			LineKey:       incoming.Items[k].LineKey,
+			ParentLineKey: incoming.Items[k].ParentLineKey,
 		})
 	}
 

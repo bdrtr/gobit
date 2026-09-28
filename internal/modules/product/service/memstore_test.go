@@ -985,6 +985,21 @@ func (m *memStore) ListProductAddOns(_ context.Context, productID string) ([]str
 	return slices.Clone(m.addOns[productID]), nil
 }
 
+func (m *memStore) ListProductAddOnsOfProducts(_ context.Context, productIDs []string) (map[string][]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListProductAddOnsOfProducts"); err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, id := range productIDs {
+		if ids := m.addOns[id]; len(ids) > 0 {
+			out[id] = slices.Clone(ids)
+		}
+	}
+	return out, nil
+}
+
 func (m *memStore) ReplaceProductAddOns(_ context.Context, productID string, variantIDs []string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

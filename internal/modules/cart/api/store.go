@@ -430,6 +430,19 @@ type addLineItemRequest struct {
 	// reach the order. At most 10, a name up to 64 characters and a text up to
 	// 500.
 	Properties map[string]string `json:"properties"`
+	// AddOns are the add-on lines opened with this one — an engraving, a gift
+	// wrap — each a variant the line's product accepts (ADR 0228) with the
+	// shopper's words on it (ADR 0229). The server prices them; their quantity
+	// is the line's, they are part of what the line is, and they go with it.
+	AddOns []addOnRequest `json:"add_ons"`
+}
+
+// addOnRequest is one add-on of an added line (ADR 0229).
+type addOnRequest struct {
+	// VariantID is the add-on variant.
+	VariantID string `json:"variant_id"`
+	// Properties are the shopper's words on the add-on, as on a line.
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // storeAddLineItem adds a line item to the cart; the SERVER decides the price.
@@ -462,8 +475,14 @@ func (h *Handler) storeAddLineItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	addOns, err := encodeAddOns(body.AddOns)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
 	id := cartID(r)
-	lineID, err := flow.AddPricedLineItem(ctx, id, body.VariantID, *body.Quantity, metadata, body.Properties)
+	lineID, err := flow.AddPricedLineItem(ctx, id, body.VariantID, *body.Quantity, metadata, body.Properties, addOns)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -610,6 +629,20 @@ func encodeMetadata(metadata map[string]any) (json.RawMessage, error) {
 	if err != nil {
 		return nil, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
 			"metadata could not be converted into JSON")
+	}
+	return raw, nil
+}
+
+// encodeAddOns carries an added line's add-ons to the flow as JSON; none is
+// nil.
+func encodeAddOns(addOns []addOnRequest) (json.RawMessage, error) {
+	if len(addOns) == 0 {
+		return nil, nil
+	}
+	raw, err := json.Marshal(addOns)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
+			"the add-ons could not be converted into JSON")
 	}
 	return raw, nil
 }

@@ -66,6 +66,8 @@ type CartLineItem struct {
 	UpdatedAt     pgtype.Timestamptz
 	DeletedAt     pgtype.Timestamptz
 	Properties    []byte
+	ParentLineID  *string
+	AddOnKey      string
 }
 
 type CartPromotionCode struct {

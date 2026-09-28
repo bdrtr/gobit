@@ -181,6 +181,12 @@ func mergeable(source, target models.Cart) error {
 
 // foldLines carries the source's lines onto the target and reports how many
 // moved.
+//
+// It walks twice (ADR 0229): the lines standing on their own first, each merged
+// by its identity — variant, properties and the add-ons it carries — and then
+// the add-ons, each following its line. A line merged into one the target
+// already holds brings the same add-ons, which are already there and follow the
+// summed quantity; a line opened on the target opens its add-ons under it.
 func (s *Service) foldLines(
 	ctx context.Context, source, target models.Cart,
 ) (int, error) {
@@ -195,10 +201,17 @@ func (s *Service) foldLines(
 		return 0, err
 	}
 
+	// opened maps a source line to the target line it opened; raised holds the
+	// source lines merged into a target line, whose add-ons are already there.
+	opened := map[string]string{}
+	raised := map[string]bool{}
 	for i := range lines {
 		line := lines[i]
+		if line.ParentLineID != nil {
+			continue
+		}
 
-		existing, err := s.store.GetLineItemByVariant(ctx, target.ID, line.VariantID, line.Properties)
+		existing, err := s.store.GetLineItemByVariant(ctx, target.ID, line.VariantID, line.Properties, line.AddOnKey)
 		switch {
 		case err == nil:
 			if existing.Quantity > models.MaxQuantity-line.Quantity {
@@ -206,10 +219,16 @@ func (s *Service) foldLines(
 					"the line quantity exceeds the limit once merged: %d + %d > %d",
 					existing.Quantity, line.Quantity, models.MaxQuantity)
 			}
-			if _, err := s.store.SetLineItemQuantity(ctx, target.ID, existing.ID,
-				existing.Quantity+line.Quantity); err != nil {
+			summed := existing.Quantity + line.Quantity
+			if _, err := s.store.SetLineItemQuantity(ctx, target.ID, existing.ID, summed); err != nil {
 				return 0, err
 			}
+			if line.AddOnKey != "" {
+				if err := s.store.SetAddOnQuantities(ctx, target.ID, existing.ID, summed); err != nil {
+					return 0, err
+				}
+			}
+			raised[line.ID] = true
 		case errors.IsNotFound(err):
 			// The title, the unit price, the metadata and the properties travel
 			// with the line; the properties are also what it merged by (ADR 0223).
@@ -217,7 +236,7 @@ func (s *Service) foldLines(
 			// of the same region and currency, and the next totals round
 			// reprices it exactly as it reprices a line that had been sitting in
 			// the target all along.
-			if _, err := s.openLine(ctx, models.LineItem{
+			created, err := s.openLine(ctx, models.LineItem{
 				ID:         models.NewLineItemID(),
 				CartID:     target.ID,
 				VariantID:  line.VariantID,
@@ -226,13 +245,46 @@ func (s *Service) foldLines(
 				UnitPrice:  line.UnitPrice,
 				Metadata:   line.Metadata,
 				Properties: line.Properties,
-			}, held); err != nil {
+				AddOnKey:   line.AddOnKey,
+			}, held)
+			if err != nil {
 				return 0, err
 			}
 			held++
+			opened[line.ID] = created.ID
 		default:
 			return 0, err
 		}
+	}
+
+	for i := range lines {
+		line := lines[i]
+		if line.ParentLineID == nil {
+			continue
+		}
+		parent := *line.ParentLineID
+		if raised[parent] {
+			continue
+		}
+		targetParent, ok := opened[parent]
+		if !ok {
+			return 0, errors.Internal(CodeInvalidInput,
+				"the add-on line %s names %s, which the merge did not carry", line.ID, parent)
+		}
+		if _, err := s.openLine(ctx, models.LineItem{
+			ID:           models.NewLineItemID(),
+			CartID:       target.ID,
+			VariantID:    line.VariantID,
+			Title:        line.Title,
+			Quantity:     line.Quantity,
+			UnitPrice:    line.UnitPrice,
+			Metadata:     line.Metadata,
+			Properties:   line.Properties,
+			ParentLineID: &targetParent,
+		}, held); err != nil {
+			return 0, err
+		}
+		held++
 	}
 
 	return len(lines), nil

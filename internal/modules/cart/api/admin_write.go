@@ -92,6 +92,9 @@ type adminAddLineItemRequest struct {
 	// Properties are the words written on the line, as on the storefront
 	// (ADR 0223).
 	Properties map[string]string `json:"properties"`
+	// AddOns are the add-on lines opened with it, as on the storefront
+	// (ADR 0229).
+	AddOns []addOnRequest `json:"add_ons"`
 }
 
 // adminCreateCart opens a cart an operator is building
@@ -183,7 +186,12 @@ func (h *Handler) adminAddLineItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := cartID(r)
-	lineID, err := flow.AddPricedLineItem(scoped, id, body.VariantID, *body.Quantity, metadata, body.Properties)
+	addOns, err := encodeAddOns(body.AddOns)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	lineID, err := flow.AddPricedLineItem(scoped, id, body.VariantID, *body.Quantity, metadata, body.Properties, addOns)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 

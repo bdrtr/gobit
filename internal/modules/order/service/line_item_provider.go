@@ -89,6 +89,9 @@ const (
 	// (ADR 0223). Unlike the metadata they have a shape this module states:
 	// names and texts the cart bounded.
 	FieldLineItemProperties = "properties"
+	// FieldLineItemParentLineItemID is the line of the same order the line is
+	// an add-on of (ADR 0229); an empty string on a line of its own.
+	FieldLineItemParentLineItemID = "parent_line_item_id"
 )
 
 // The filter names this provider accepts that are NOT fields.
@@ -141,6 +144,12 @@ var lineItemFieldGetters = map[string]func(models.OrderLineItem) any{
 	FieldLineItemCreatedAt:     func(l models.OrderLineItem) any { return l.CreatedAt },
 	FieldLineItemIsGiftcard:    func(l models.OrderLineItem) any { return l.IsGiftcard },
 	FieldLineItemProperties:    func(l models.OrderLineItem) any { return propertiesOrEmpty(l.Properties) },
+	FieldLineItemParentLineItemID: func(l models.OrderLineItem) any {
+		if l.ParentLineItemID == nil {
+			return ""
+		}
+		return *l.ParentLineItemID
+	},
 }
 
 // LineItemQueryProvider offers the ORDER LINE to the cross-module read layer.

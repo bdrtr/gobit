@@ -16,29 +16,30 @@ const createOrderLineItem = `-- name: CreateOrderLineItem :one
 INSERT INTO order_line_items (
     id, order_id, variant_id, title, quantity,
     unit_price, subtotal, discount_total, tax_total, tax_rate_bps, total, metadata,
-    price_id, price_list_id, price_list_type, is_giftcard, properties
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-RETURNING id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties
+    price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+RETURNING id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id
 `
 
 type CreateOrderLineItemParams struct {
-	ID            string
-	OrderID       string
-	VariantID     string
-	Title         string
-	Quantity      int64
-	UnitPrice     int64
-	Subtotal      int64
-	DiscountTotal int64
-	TaxTotal      int64
-	TaxRateBps    int32
-	Total         int64
-	Metadata      []byte
-	PriceID       *string
-	PriceListID   *string
-	PriceListType *string
-	IsGiftcard    bool
-	Properties    []byte
+	ID               string
+	OrderID          string
+	VariantID        string
+	Title            string
+	Quantity         int64
+	UnitPrice        int64
+	Subtotal         int64
+	DiscountTotal    int64
+	TaxTotal         int64
+	TaxRateBps       int32
+	Total            int64
+	Metadata         []byte
+	PriceID          *string
+	PriceListID      *string
+	PriceListType    *string
+	IsGiftcard       bool
+	Properties       []byte
+	ParentLineItemID *string
 }
 
 // order_line_items queries.
@@ -66,6 +67,7 @@ func (q *Queries) CreateOrderLineItem(ctx context.Context, arg CreateOrderLineIt
 		arg.PriceListType,
 		arg.IsGiftcard,
 		arg.Properties,
+		arg.ParentLineItemID,
 	)
 	var i OrderLineItem
 	err := row.Scan(
@@ -88,12 +90,13 @@ func (q *Queries) CreateOrderLineItem(ctx context.Context, arg CreateOrderLineIt
 		&i.PriceListType,
 		&i.IsGiftcard,
 		&i.Properties,
+		&i.ParentLineItemID,
 	)
 	return i, err
 }
 
 const getOrderLineItemsByIDs = `-- name: GetOrderLineItemsByIDs :many
-SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties FROM order_line_items
+SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id FROM order_line_items
 WHERE id = ANY ($1::text[])
 ORDER BY id
 `
@@ -137,6 +140,7 @@ func (q *Queries) GetOrderLineItemsByIDs(ctx context.Context, ids []string) ([]O
 			&i.PriceListType,
 			&i.IsGiftcard,
 			&i.Properties,
+			&i.ParentLineItemID,
 		); err != nil {
 			return nil, err
 		}
@@ -149,7 +153,7 @@ func (q *Queries) GetOrderLineItemsByIDs(ctx context.Context, ids []string) ([]O
 }
 
 const listOrderLineItems = `-- name: ListOrderLineItems :many
-SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties FROM order_line_items
+SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id FROM order_line_items
 WHERE order_id = $1
 ORDER BY created_at, id
 `
@@ -183,6 +187,7 @@ func (q *Queries) ListOrderLineItems(ctx context.Context, orderID string) ([]Ord
 			&i.PriceListType,
 			&i.IsGiftcard,
 			&i.Properties,
+			&i.ParentLineItemID,
 		); err != nil {
 			return nil, err
 		}
@@ -195,7 +200,7 @@ func (q *Queries) ListOrderLineItems(ctx context.Context, orderID string) ([]Ord
 }
 
 const listOrderLineItemsFiltered = `-- name: ListOrderLineItemsFiltered :many
-SELECT li.id, li.order_id, li.variant_id, li.title, li.quantity, li.unit_price, li.subtotal, li.discount_total, li.tax_total, li.total, li.metadata, li.created_at, li.updated_at, li.tax_rate_bps, li.price_id, li.price_list_id, li.price_list_type, li.is_giftcard, li.properties FROM order_line_items li
+SELECT li.id, li.order_id, li.variant_id, li.title, li.quantity, li.unit_price, li.subtotal, li.discount_total, li.tax_total, li.total, li.metadata, li.created_at, li.updated_at, li.tax_rate_bps, li.price_id, li.price_list_id, li.price_list_type, li.is_giftcard, li.properties, li.parent_line_item_id FROM order_line_items li
     JOIN orders o ON o.id = li.order_id
 WHERE ($1::text IS NULL OR li.order_id = $1::text)
   AND ($2::text IS NULL OR li.variant_id = $2::text)
@@ -276,6 +281,7 @@ func (q *Queries) ListOrderLineItemsFiltered(ctx context.Context, arg ListOrderL
 			&i.PriceListType,
 			&i.IsGiftcard,
 			&i.Properties,
+			&i.ParentLineItemID,
 		); err != nil {
 			return nil, err
 		}

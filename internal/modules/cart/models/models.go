@@ -209,6 +209,14 @@ type LineItem struct {
 	// message; they are part of what the line is, so the same variant with
 	// other properties is another line (ADR 0223). Nil when there are none.
 	Properties map[string]string
+	// ParentLineID is the line of the same cart this line is an add-on of, an
+	// engraving's ring (ADR 0229); nil on a line standing on its own. An
+	// add-on's quantity is its parent's.
+	ParentLineID *string
+	// AddOnKey is, on a line standing on its own, the digest of the add-ons it
+	// carries ([AddOnKey]), part of what the line is; empty on an add-on and on
+	// a line carrying none.
+	AddOnKey string
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

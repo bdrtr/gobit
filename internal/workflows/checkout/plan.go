@@ -96,6 +96,9 @@ type SnapshotItem struct {
 	// the checkout reads neither and hands both to the order line (ADR 0223).
 	Metadata   map[string]any    `json:"metadata,omitempty"`
 	Properties map[string]string `json:"properties,omitempty"`
+	// ParentLineID is the cart line this line is an add-on of (ADR 0229);
+	// empty on a line of its own.
+	ParentLineID string `json:"parent_line_id,omitempty"`
 }
 
 // VariantIDs returns the variant identities of the lines WITHOUT DUPLICATES and
@@ -310,6 +313,10 @@ type planLine struct {
 	// IsGiftcard reports that the line's product is a gift card, read when
 	// the plan was made and copied onto the order line (ADR 0211).
 	IsGiftcard bool `json:"is_giftcard"`
+	// ParentLineItemID is the cart line this one is an add-on of (ADR 0229);
+	// the order snapshot names both by their cart ids and the order maps them
+	// to its own.
+	ParentLineItemID string `json:"parent_line_item_id,omitempty"`
 }
 
 // prepare builds the input of the saga and leaves NO reversible side effect.
@@ -502,26 +509,27 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 		}
 
 		lines = append(lines, planLine{
-			LineItemID:      item.ID,
-			VariantID:       item.VariantID,
-			InventoryItemID: items[item.VariantID],
-			Title:           facts[item.VariantID].Title,
-			Quantity:        item.Quantity,
-			UnitPrice:       amounts.UnitPrice,
-			Subtotal:        amounts.Subtotal,
-			DiscountTotal:   amounts.DiscountTotal,
-			TaxTotal:        amounts.TaxTotal,
-			TaxRateBps:      amounts.TaxRateBps,
-			TaxComponents:   amounts.TaxComponents,
-			Total:           amounts.Total,
-			Unmanaged:       facts[item.VariantID].Unmanaged,
-			AllowBackorder:  facts[item.VariantID].AllowBackorder,
-			PriceID:         amounts.PriceID,
-			PriceListID:     amounts.PriceListID,
-			PriceListType:   amounts.PriceListType,
-			Metadata:        item.Metadata,
-			Properties:      item.Properties,
-			IsGiftcard:      facts[item.VariantID].IsGiftcard,
+			LineItemID:       item.ID,
+			VariantID:        item.VariantID,
+			InventoryItemID:  items[item.VariantID],
+			Title:            facts[item.VariantID].Title,
+			Quantity:         item.Quantity,
+			UnitPrice:        amounts.UnitPrice,
+			Subtotal:         amounts.Subtotal,
+			DiscountTotal:    amounts.DiscountTotal,
+			TaxTotal:         amounts.TaxTotal,
+			TaxRateBps:       amounts.TaxRateBps,
+			TaxComponents:    amounts.TaxComponents,
+			Total:            amounts.Total,
+			Unmanaged:        facts[item.VariantID].Unmanaged,
+			AllowBackorder:   facts[item.VariantID].AllowBackorder,
+			PriceID:          amounts.PriceID,
+			PriceListID:      amounts.PriceListID,
+			PriceListType:    amounts.PriceListType,
+			Metadata:         item.Metadata,
+			Properties:       item.Properties,
+			IsGiftcard:       facts[item.VariantID].IsGiftcard,
+			ParentLineItemID: item.ParentLineID,
 		})
 	}
 	return lines, nil
@@ -810,6 +818,9 @@ func (p *checkoutPlan) validate() error {
 		return errors.Conflict(CodeCartEmpty,
 			"cannot create an order from a cart with no lines: %s", p.CartID)
 	}
+	if err := p.validateAddOns(); err != nil {
+		return err
+	}
 
 	var subtotal int64
 	for i := range p.Lines {
@@ -993,6 +1004,11 @@ type orderSnapshotItem struct {
 	// (ADR 0223).
 	Metadata   map[string]any    `json:"metadata,omitempty"`
 	Properties map[string]string `json:"properties,omitempty"`
+	// LineKey is the cart line's id and ParentLineKey its parent's, which the
+	// order maps to the ids it makes (ADR 0229); they land in the change the
+	// order learns them, for TaxComponents' reason.
+	LineKey       string `json:"line_key,omitempty"`
+	ParentLineKey string `json:"parent_line_key,omitempty"`
 }
 
 // orderSnapshotTaxComponent is one rate inside a stacked line's tax, on the wire
@@ -1005,6 +1021,46 @@ type orderSnapshotTaxComponent struct {
 	TaxAmount     int64  `json:"tax_amount"`
 }
 
+// lineOrder is the lines' indexes with every line standing on its own before
+// every add-on, each group in the plan's order.
+func (p *checkoutPlan) lineOrder() []int {
+	order := make([]int, 0, len(p.Lines))
+	for i := range p.Lines {
+		if p.Lines[i].ParentLineItemID == "" {
+			order = append(order, i)
+		}
+	}
+	for i := range p.Lines {
+		if p.Lines[i].ParentLineItemID != "" {
+			order = append(order, i)
+		}
+	}
+	return order
+}
+
+// validateAddOns holds every add-on to a parent line of the same plan that is
+// not itself an add-on (ADR 0229). The order refuses anything else, and it is
+// asked after the money is authorized; the plan is checked before any side
+// effect, so the refusal costs nothing here.
+func (p *checkoutPlan) validateAddOns() error {
+	roots := make(map[string]bool, len(p.Lines))
+	for i := range p.Lines {
+		roots[p.Lines[i].LineItemID] = p.Lines[i].ParentLineItemID == ""
+	}
+	for i := range p.Lines {
+		parent := p.Lines[i].ParentLineItemID
+		if parent == "" {
+			continue
+		}
+		if !roots[parent] {
+			return errors.Internal(CodeSnapshotInvalid,
+				"the add-on line %s names %s, which is no line of its own in the cart",
+				p.Lines[i].LineItemID, parent)
+		}
+	}
+	return nil
+}
+
 // orderSnapshotJSON converts the plan into the body the order expects.
 //
 // idempotencyKey is the identity of the execution: a call repeated within the
@@ -1012,8 +1068,10 @@ type orderSnapshotTaxComponent struct {
 // existing order. A new execution gets a new identity, which means a flow
 // started after a compensated attempt may open a new order.
 func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage, error) {
+	// The lines standing on their own go first and the add-ons after them, so
+	// the order meets each parent before the lines that name it (ADR 0229).
 	items := make([]orderSnapshotItem, 0, len(p.Lines))
-	for i := range p.Lines {
+	for _, i := range p.lineOrder() {
 		items = append(items, orderSnapshotItem{
 			VariantID:     p.Lines[i].VariantID,
 			Title:         p.Lines[i].Title,
@@ -1031,6 +1089,8 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 			IsGiftcard:    p.Lines[i].IsGiftcard,
 			Metadata:      p.Lines[i].Metadata,
 			Properties:    p.Lines[i].Properties,
+			LineKey:       p.Lines[i].LineItemID,
+			ParentLineKey: p.Lines[i].ParentLineItemID,
 		})
 	}
 

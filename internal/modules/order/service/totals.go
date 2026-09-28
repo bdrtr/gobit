@@ -180,6 +180,10 @@ func validateOrderItems(in CreateOrderInput) error {
 		sum = next
 	}
 
+	if err := validateLineKeys(in.Items); err != nil {
+		return err
+	}
+
 	// The subtotal of the order is the SUM of the subtotals of the lines.
 	// Because a discount and a tax can also arise at the order level (a
 	// campaign, shipping tax) only the subtotal is subject to this rule.
@@ -192,6 +196,39 @@ func validateOrderItems(in CreateOrderInput) error {
 		return errors.Invalid(CodeTotalsInconsistent,
 			"the subtotal of the order has to equal the sum of the line subtotals: %d was given, the lines add up to %d",
 			in.Subtotal, sum)
+	}
+	return nil
+}
+
+// CodeAddOnInvalid reports an add-on line that names no parent it can have
+// (ADR 0229).
+const CodeAddOnInvalid = "order_add_on_invalid"
+
+// validateLineKeys holds the add-on keys to what the write can map: every key
+// named once, and an add-on's parent an EARLIER line that is not itself an
+// add-on, so its id is made before the add-on's and no chain forms.
+func validateLineKeys(items []CreateOrderItemInput) error {
+	roots := make(map[string]bool, len(items))
+	for i := range items {
+		key, parent := items[i].LineKey, items[i].ParentLineKey
+		if parent != "" {
+			isRoot, seen := roots[parent]
+			switch {
+			case !seen:
+				return errors.Invalid(CodeAddOnInvalid,
+					"line %d is an add-on of %q, which no earlier line is", i, parent)
+			case !isRoot:
+				return errors.Invalid(CodeAddOnInvalid,
+					"line %d is an add-on of %q, which is itself an add-on", i, parent)
+			}
+		}
+		if key == "" {
+			continue
+		}
+		if _, taken := roots[key]; taken {
+			return errors.Invalid(CodeAddOnInvalid, "the line key %q is named twice", key)
+		}
+		roots[key] = parent == ""
 	}
 	return nil
 }

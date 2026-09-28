@@ -539,11 +539,13 @@ func (f *fakeStore) CreateLineItem(_ context.Context, item models.LineItem) (mod
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// The (cart_id, variant_id, properties) uniqueness: the counterpart of the
-	// partial index in the migrations (ADR 0223).
+	// The identity uniqueness: the counterpart of the partial index in the
+	// migrations — the variant, its properties (ADR 0223), its parent and the
+	// add-ons it carries (ADR 0229).
 	for id := range f.items {
 		if f.items[id].CartID == item.CartID && f.items[id].VariantID == item.VariantID &&
-			maps.Equal(f.items[id].Properties, item.Properties) {
+			maps.Equal(f.items[id].Properties, item.Properties) &&
+			parentOf(f.items[id]) == parentOf(item) && f.items[id].AddOnKey == item.AddOnKey {
 			return models.LineItem{}, errors.Conflict("cart_line_item_exists",
 				"this variant is already in the cart")
 		}
@@ -569,14 +571,15 @@ func (f *fakeStore) GetLineItem(ctx context.Context, cartID, lineID string) (mod
 
 // GetLineItemByVariant returns the line of the variant in the cart.
 func (f *fakeStore) GetLineItemByVariant(
-	ctx context.Context, cartID, variantID string, properties map[string]string,
+	ctx context.Context, cartID, variantID string, properties map[string]string, addOnKey string,
 ) (models.LineItem, error) {
 	view := f.view(ctx)
 	defer view.release()
 
 	for id := range view.items {
 		if view.items[id].CartID == cartID && view.items[id].VariantID == variantID &&
-			maps.Equal(view.items[id].Properties, properties) {
+			maps.Equal(view.items[id].Properties, properties) &&
+			view.items[id].ParentLineID == nil && view.items[id].AddOnKey == addOnKey {
 			return view.items[id], nil
 		}
 	}
@@ -604,6 +607,54 @@ func (f *fakeStore) ListLineItems(ctx context.Context, cartID string) ([]models.
 		return a.CreatedAt.Compare(b.CreatedAt)
 	})
 	return out, nil
+}
+
+// parentOf reads a line's parent, empty for a line standing on its own.
+func parentOf(item models.LineItem) string {
+	if item.ParentLineID == nil {
+		return ""
+	}
+	return *item.ParentLineID
+}
+
+// ListAddOnLines returns a line's add-ons in creation order.
+func (f *fakeStore) ListAddOnLines(ctx context.Context, cartID, parentID string) ([]models.LineItem, error) {
+	view := f.view(ctx)
+	defer view.release()
+
+	var out []models.LineItem
+	for id := range view.items {
+		if view.items[id].CartID == cartID && parentOf(view.items[id]) == parentID {
+			out = append(out, view.items[id])
+		}
+	}
+	slices.SortFunc(out, func(a, b models.LineItem) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	return out, nil
+}
+
+// SetAddOnQuantities writes a line's quantity onto its add-ons.
+func (f *fakeStore) SetAddOnQuantities(_ context.Context, cartID, parentID string, quantity int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id := range f.items {
+		if item := f.items[id]; item.CartID == cartID && parentOf(item) == parentID {
+			item.Quantity = quantity
+			f.items[id] = item
+		}
+	}
+	return nil
+}
+
+// SoftDeleteAddOnLines removes a line's add-ons.
+func (f *fakeStore) SoftDeleteAddOnLines(_ context.Context, cartID, parentID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id := range f.items {
+		if f.items[id].CartID == cartID && parentOf(f.items[id]) == parentID {
+			delete(f.items, id)
+		}
+	}
+	return nil
 }
 
 // CountLineItems counts the cart's lines in the caller's view.

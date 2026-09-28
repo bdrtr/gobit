@@ -73,6 +73,13 @@ type CreateOrderItemInput struct {
 	IsGiftcard bool
 	// Properties are the shopper's words on the line (ADR 0223).
 	Properties map[string]string
+	// LineKey names the line inside this input, and ParentLineKey names the
+	// line it is an add-on of (ADR 0229). The order makes its own line ids, so
+	// the key is how an add-on finds its parent's; the checkout sends the cart
+	// line's id. A parent comes before its add-ons and is not itself one; both
+	// are empty on a line that stands alone.
+	LineKey       string
+	ParentLineKey string
 }
 
 // CreateOrderLineTaxInput is one rate applied inside a line's tax stack.
@@ -360,27 +367,39 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 		}
 
 		// The loop is walked by index: the line input is large and copying it by
-		// value would carry a few hundred bytes for nothing on every turn.
+		// value would carry a few hundred bytes for nothing on every turn. A
+		// parent comes before its add-ons (validateLineKeys), so its id is known
+		// when theirs are written.
+		lineIDs := make(map[string]string, len(in.Items))
 		for i := range in.Items {
+			var parent *string
+			if key := in.Items[i].ParentLineKey; key != "" {
+				id := lineIDs[key]
+				parent = &id
+			}
 			line, err := s.store.CreateLineItem(ctx, models.OrderLineItem{
-				ID:            models.NewLineItemID(),
-				OrderID:       order.ID,
-				VariantID:     in.Items[i].VariantID,
-				Title:         in.Items[i].Title,
-				Quantity:      in.Items[i].Quantity,
-				UnitPrice:     in.Items[i].UnitPrice,
-				Subtotal:      in.Items[i].Subtotal,
-				DiscountTotal: in.Items[i].DiscountTotal,
-				TaxTotal:      in.Items[i].TaxTotal,
-				TaxRateBps:    in.Items[i].TaxRateBps,
-				Total:         in.Items[i].Total,
-				Metadata:      in.Items[i].Metadata,
-				PriceOrigin:   priceOriginOf(in.Items[i]),
-				IsGiftcard:    in.Items[i].IsGiftcard,
-				Properties:    in.Items[i].Properties,
+				ID:               models.NewLineItemID(),
+				OrderID:          order.ID,
+				VariantID:        in.Items[i].VariantID,
+				Title:            in.Items[i].Title,
+				Quantity:         in.Items[i].Quantity,
+				UnitPrice:        in.Items[i].UnitPrice,
+				Subtotal:         in.Items[i].Subtotal,
+				DiscountTotal:    in.Items[i].DiscountTotal,
+				TaxTotal:         in.Items[i].TaxTotal,
+				TaxRateBps:       in.Items[i].TaxRateBps,
+				Total:            in.Items[i].Total,
+				Metadata:         in.Items[i].Metadata,
+				PriceOrigin:      priceOriginOf(in.Items[i]),
+				IsGiftcard:       in.Items[i].IsGiftcard,
+				Properties:       in.Items[i].Properties,
+				ParentLineItemID: parent,
 			})
 			if err != nil {
 				return err
+			}
+			if key := in.Items[i].LineKey; key != "" {
+				lineIDs[key] = line.ID
 			}
 
 			// The breakdown goes in the SAME transaction as its line, for the

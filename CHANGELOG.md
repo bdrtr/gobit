@@ -148,6 +148,17 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **An add-on is a line of its own** (ADR 0229). **For storefront clients:**
+  `POST /store/v1/carts/{id}/line-items` (and the admin add) takes
+  `"add_ons": [{"variant_id": ..., "properties": {...}}]`, each a variant the
+  line's product accepts (ADR 0228), refused with
+  `cart_workflow_add_on_not_accepted` otherwise. Each opens a line with
+  `parent_line_id`, priced by its own price set; the add-ons are part of the
+  line, follow its quantity and are removed with it, and writing or removing an
+  add-on alone is refused with `422` and `cart_line_is_an_add_on`. An order line
+  carries `parent_line_item_id`. **For order consumers:** the order line entity
+  has a `parent_line_item_id` field.
+
 - **A product names the add-ons its lines take** (ADR 0228). **For operators
   and storefronts:** `PUT /admin/v1/products/{id}/add-ons` with
   `{"variant_ids": [...]}` sets up to 20 variants of other products — an

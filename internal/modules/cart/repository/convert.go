@@ -284,6 +284,8 @@ func toLineItem(row cartdb.CartLineItem) (models.LineItem, error) {
 		Total:         row.Total,
 		Metadata:      meta,
 		Properties:    properties,
+		ParentLineID:  row.ParentLineID,
+		AddOnKey:      row.AddOnKey,
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
 	}, nil

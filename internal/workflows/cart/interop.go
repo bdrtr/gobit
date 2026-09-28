@@ -127,13 +127,19 @@ func (i *Interop) AddPricedLineItem(
 	quantity int64,
 	metadata json.RawMessage,
 	properties map[string]string,
+	addOns json.RawMessage,
 ) (string, error) {
+	requested, err := decodeAddOnRequests(addOns)
+	if err != nil {
+		return "", err
+	}
 	result, err := i.w.AddLineItem(ctx, AddLineItemInput{
 		CartID:     cartID,
 		VariantID:  variantID,
 		Quantity:   quantity,
 		Metadata:   metadata,
 		Properties: properties,
+		AddOns:     requested,
 	})
 	if err != nil {
 		return "", err

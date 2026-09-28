@@ -16,6 +16,23 @@ func (r *Repo) ListProductAddOns(ctx context.Context, productID string) ([]strin
 	return ids, nil
 }
 
+// ListProductAddOnsOfProducts returns the add-ons of every given product in one
+// statement, each list in the operator's order; a product with none is absent.
+func (r *Repo) ListProductAddOnsOfProducts(ctx context.Context, productIDs []string) (map[string][]string, error) {
+	out := make(map[string][]string)
+	if len(productIDs) == 0 {
+		return out, nil
+	}
+	rows, err := r.q.ListProductAddOnsOfProducts(ctx, productIDs)
+	if err != nil {
+		return nil, wrapDB(err, "could not read the add-ons of %d products", len(productIDs))
+	}
+	for _, row := range rows {
+		out[row.ProductID] = append(out[row.ProductID], row.VariantID)
+	}
+	return out, nil
+}
+
 // ReplaceProductAddOns writes a product's add-on list: the old one is deleted
 // and the new one written with the position as the rank. It has to run inside a
 // transaction, or a reader between the two statements sees an empty list.

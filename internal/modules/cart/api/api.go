@@ -354,12 +354,16 @@ type LinePricing interface {
 	// pricing, the title from the catalog. metadata is the free-form JSON object
 	// the caller attaches to the line item and it can be left empty; properties
 	// are the shopper's words on the line, part of what the line is (ADR 0223).
+	// addOns are the add-on lines opened with it (ADR 0229), a JSON array of
+	// variant_id and properties; the flow prices them and checks them against
+	// the list the line's product accepts.
 	AddPricedLineItem(
 		ctx context.Context,
 		cartID, variantID string,
 		quantity int64,
 		metadata json.RawMessage,
 		properties map[string]string,
+		addOns json.RawMessage,
 	) (lineItemID string, err error)
 
 	// SetLineItemQuantity writes the line item's quantity as an ABSOLUTE value,
@@ -787,8 +791,11 @@ type lineItemDTO struct {
 	Metadata      map[string]any `json:"metadata,omitempty"`
 	// Properties are what the shopper wrote on the line (ADR 0223).
 	Properties map[string]string `json:"properties,omitempty"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
+	// ParentLineID is the line this one is an add-on of (ADR 0229); absent on
+	// a line of its own. An add-on's quantity is its line's.
+	ParentLineID *string   `json:"parent_line_id,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // addressDTO is the cart address's outward representation.
@@ -894,6 +901,7 @@ func toLineItemDTO(item models.LineItem) lineItemDTO {
 		Total:         item.Total,
 		Metadata:      item.Metadata,
 		Properties:    item.Properties,
+		ParentLineID:  item.ParentLineID,
 		CreatedAt:     item.CreatedAt,
 		UpdatedAt:     item.UpdatedAt,
 	}

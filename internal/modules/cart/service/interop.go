@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 
@@ -155,6 +156,19 @@ type interopItem struct {
 	// a promise the storefront made and nothing kept.
 	Metadata   map[string]any    `json:"metadata,omitempty"`
 	Properties map[string]string `json:"properties,omitempty"`
+	// ParentLineID is the line this one is an add-on of (ADR 0229); the
+	// checkout hands it to the order so the engraving stays with its ring.
+	ParentLineID string `json:"parent_line_id,omitempty"`
+}
+
+// interopAddOn is one add-on line on the wire from the add-line flow
+// (ADR 0229): the variant, its title and price as the flow decided them, and
+// the shopper's words.
+type interopAddOn struct {
+	VariantID  string            `json:"variant_id"`
+	Title      string            `json:"title"`
+	UnitPrice  int64             `json:"unit_price"`
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // interopShippingMethod is the JSON schema of a shipping method.
@@ -258,13 +272,17 @@ func (i *Interop) CartSnapshotJSON(ctx context.Context, cartID string) (json.Raw
 		Metadata:        detail.Metadata,
 	}
 	for i := range detail.Items {
-		snapshot.Items = append(snapshot.Items, interopItem{
+		item := interopItem{
 			ID:         detail.Items[i].ID,
 			VariantID:  detail.Items[i].VariantID,
 			Quantity:   detail.Items[i].Quantity,
 			Metadata:   detail.Items[i].Metadata,
 			Properties: detail.Items[i].Properties,
-		})
+		}
+		if parent := detail.Items[i].ParentLineID; parent != nil {
+			item.ParentLineID = *parent
+		}
+		snapshot.Items = append(snapshot.Items, item)
 	}
 	for i := range detail.ShippingMethods {
 		snapshot.ShippingMethods = append(snapshot.ShippingMethods, interopShippingMethod{
@@ -284,14 +302,23 @@ func (i *Interop) CartSnapshotJSON(ctx context.Context, cartID string) (json.Raw
 // be left empty. A malformed body is errors.Invalid and the line IS NOT
 // WRITTEN: throwing it away silently would leave a field the client thinks it
 // sent but which is nowhere to be found.
+//
+// addOns are the add-on lines opened with it (ADR 0229), a JSON array of
+// [interopAddOn]; empty for none. A field this schema does not know refuses the
+// call, for the metadata's reason.
 func (i *Interop) AddCartLineItem(
 	ctx context.Context,
 	cartID, variantID, title string,
 	quantity, unitPrice int64,
 	metadata json.RawMessage,
 	properties map[string]string,
+	addOns json.RawMessage,
 ) (string, error) {
 	extra, err := decodeInteropMetadata(metadata)
+	if err != nil {
+		return "", err
+	}
+	lines, err := decodeInteropAddOns(addOns)
 	if err != nil {
 		return "", err
 	}
@@ -303,11 +330,31 @@ func (i *Interop) AddCartLineItem(
 		UnitPrice:  unitPrice,
 		Metadata:   extra,
 		Properties: properties,
+		AddOns:     lines,
 	})
 	if err != nil {
 		return "", err
 	}
 	return line.ID, nil
+}
+
+// decodeInteropAddOns parses the add-on lines of an add; an empty body is none.
+func decodeInteropAddOns(raw json.RawMessage) ([]AddOnInput, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var wire []interopAddOn
+	if err := decoder.Decode(&wire); err != nil {
+		return nil, errors.Wrap(err, errors.KindInvalid, CodeAddOnInvalid,
+			"the add-ons must be a JSON array of variant_id, title, unit_price and properties")
+	}
+	out := make([]AddOnInput, 0, len(wire))
+	for _, addOn := range wire {
+		out = append(out, AddOnInput(addOn))
+	}
+	return out, nil
 }
 
 // decodeInteropMetadata parses the free-form extra data; an empty body returns

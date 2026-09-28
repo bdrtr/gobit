@@ -77,6 +77,9 @@ var notPersonalColumns = map[string][]string{
 	"cart_line_items": {
 		"id", "cart_id", "variant_id", "title", "quantity", "unit_price",
 		"subtotal", "discount_total", "tax_total", "total",
+		// The add-on bond (ADR 0229): a line id and a digest of variant ids
+		// and the add-ons' words, which the declared properties already are.
+		"parent_line_id", "add_on_key",
 		"created_at", "updated_at", "deleted_at",
 	},
 	"cart_addresses": {

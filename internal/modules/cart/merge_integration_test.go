@@ -92,8 +92,9 @@ func TestTwoMergesRunningOppositeWaysDoNotDeadlock(t *testing.T) {
 // TestTheMergeSurvivesTheRealUniqueIndex is the constraint the fold could have
 // tripped.
 //
-// `cart_line_items_cart_variant_properties_uniq` refuses a second living line
-// for the same variant and properties of one cart (ADR 0223). A merge that INSERTED the source's line instead of adding
+// `cart_line_items_identity_uniq` refuses a second living line for the same
+// variant, properties (ADR 0223) and add-ons (ADR 0229) of one cart. A merge
+// that INSERTED the source's line instead of adding
 // its quantity to the existing one would hit it, and the fake cannot say which
 // of the two happened because it enforces the same rule from Go.
 func TestTheMergeSurvivesTheRealUniqueIndex(t *testing.T) {

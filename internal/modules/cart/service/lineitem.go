@@ -50,6 +50,28 @@ func (s *Service) openLine(ctx context.Context, item models.LineItem, lines int)
 	return s.store.CreateLineItem(ctx, item)
 }
 
+// MaxLineAddOns is how many add-ons one line carries (ADR 0229).
+const MaxLineAddOns = 10
+
+// The refusals of an add-on line (ADR 0229).
+const (
+	// CodeAddOnInvalid reports add-ons a line cannot carry: too many, one
+	// named twice, or one without its variant, title or price.
+	CodeAddOnInvalid = "cart_line_add_on_invalid"
+	// CodeAddOnFollows reports a write to an add-on alone: its quantity is its
+	// line's, and it goes when the line goes.
+	CodeAddOnFollows = "cart_line_is_an_add_on"
+)
+
+// AddOnInput is one add-on line opened with the line it belongs to
+// (ADR 0229). Its price is the flow's, as the line's is.
+type AddOnInput struct {
+	VariantID  string
+	Title      string
+	UnitPrice  int64
+	Properties map[string]string
+}
+
 // AddLineItemInput holds the fields of the line to be added to the cart.
 type AddLineItemInput struct {
 	// VariantID is the product variant being added; it is REQUIRED. It belongs
@@ -81,6 +103,10 @@ type AddLineItemInput struct {
 	// Properties are what the shopper wrote on the line (ADR 0223); they are
 	// checked by [models.NormalizeLineProperties].
 	Properties map[string]string
+	// AddOns are the add-on lines opened with this one, bound to it
+	// (ADR 0229); their quantity is the line's. They are part of what the line
+	// is, so they are given with it and never attached later.
+	AddOns []AddOnInput
 }
 
 // AddLineItem adds a line to the cart.
@@ -102,9 +128,8 @@ type AddLineItemInput struct {
 //     the impression that the products are different.
 //
 // The decision is enforced at the database level too: the
-// cart_line_items_cart_variant_properties_uniq partial unique index prevents
-// even a write path that somehow gets around the cart lock from opening the
-// second line.
+// cart_line_items_identity_uniq partial unique index prevents even a write path
+// that somehow gets around the cart lock from opening the second line.
 //
 // In the merge only the QUANTITY is carried over; the existing line's title,
 // unit price and metadata are PRESERVED.
@@ -134,10 +159,14 @@ func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItem
 	if err != nil {
 		return models.LineItem{}, err
 	}
+	addOns, key, err := normalizeAddOns(in.AddOns)
+	if err != nil {
+		return models.LineItem{}, err
+	}
 
 	var item models.LineItem
 	_, err = s.mutate(ctx, cartID, func(ctx context.Context, cart models.Cart) error {
-		existing, err := s.store.GetLineItemByVariant(ctx, cart.ID, in.VariantID, properties)
+		existing, err := s.store.GetLineItemByVariant(ctx, cart.ID, in.VariantID, properties, key)
 		switch {
 		case err == nil:
 			// The sum is checked without overflow: even if the sum of the two
@@ -149,7 +178,11 @@ func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItem
 					existing.Quantity, in.Quantity, models.MaxQuantity)
 			}
 			item, err = s.store.SetLineItemQuantity(ctx, cart.ID, existing.ID, existing.Quantity+in.Quantity)
-			return err
+			if err != nil || key == "" {
+				return err
+			}
+			// The same add-ons are already under the line: they follow it.
+			return s.store.SetAddOnQuantities(ctx, cart.ID, existing.ID, item.Quantity)
 		case errors.IsNotFound(err):
 			lines, err := s.store.CountLineItems(ctx, cart.ID)
 			if err != nil {
@@ -164,8 +197,30 @@ func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItem
 				UnitPrice:  in.UnitPrice,
 				Metadata:   in.Metadata,
 				Properties: properties,
+				AddOnKey:   key,
 			}, lines)
-			return err
+			if err != nil {
+				return err
+			}
+			// Each add-on is a line of its own against the ceiling; one past it
+			// refuses the whole add, the line included, since the transaction
+			// rolls back.
+			for i := range addOns {
+				parent := item.ID
+				if _, err := s.openLine(ctx, models.LineItem{
+					ID:           models.NewLineItemID(),
+					CartID:       cart.ID,
+					VariantID:    addOns[i].VariantID,
+					Title:        addOns[i].Title,
+					Quantity:     in.Quantity,
+					UnitPrice:    addOns[i].UnitPrice,
+					Properties:   addOns[i].Properties,
+					ParentLineID: &parent,
+				}, lines+1+i); err != nil {
+					return err
+				}
+			}
+			return nil
 		default:
 			return err
 		}
@@ -193,9 +248,19 @@ func (s *Service) UpdateLineItemQuantity(ctx context.Context, cartID, lineID str
 
 	var item models.LineItem
 	_, err := s.mutate(ctx, cartID, func(ctx context.Context, cart models.Cart) error {
-		var err error
+		line, err := s.store.GetLineItem(ctx, cart.ID, lineID)
+		if err != nil {
+			return err
+		}
+		if line.ParentLineID != nil {
+			return addOnFollows(lineID)
+		}
 		item, err = s.store.SetLineItemQuantity(ctx, cart.ID, lineID, quantity)
-		return err
+		if err != nil || line.AddOnKey == "" {
+			return err
+		}
+		// A line's add-ons follow its quantity (ADR 0229).
+		return s.store.SetAddOnQuantities(ctx, cart.ID, lineID, quantity)
 	})
 	if err != nil {
 		return models.LineItem{}, err
@@ -210,7 +275,70 @@ func (s *Service) RemoveLineItem(ctx context.Context, cartID, lineID string) err
 		return err
 	}
 	_, err := s.mutate(ctx, cartID, func(ctx context.Context, cart models.Cart) error {
+		line, err := s.store.GetLineItem(ctx, cart.ID, lineID)
+		if err != nil {
+			return err
+		}
+		if line.ParentLineID != nil {
+			return addOnFollows(lineID)
+		}
+		// A line's add-ons go with it (ADR 0229).
+		if line.AddOnKey != "" {
+			if err := s.store.SoftDeleteAddOnLines(ctx, cart.ID, lineID); err != nil {
+				return err
+			}
+		}
 		return s.store.SoftDeleteLineItem(ctx, cart.ID, lineID)
 	})
 	return err
+}
+
+// addOnFollows refuses a write to an add-on alone (ADR 0229). The add-ons are
+// part of what their line is, so dropping one would make the line another; the
+// line is removed and added again with the add-ons wanted.
+func addOnFollows(lineID string) error {
+	return errors.Invalid(CodeAddOnFollows,
+		"line %s is an add-on: its quantity is its line's and it is removed with it", lineID)
+}
+
+// normalizeAddOns checks the add-ons given with a line and returns them with
+// their properties normalized, and the digest they make the line's identity
+// with ([models.AddOnKey]).
+func normalizeAddOns(in []AddOnInput) ([]AddOnInput, string, error) {
+	if len(in) == 0 {
+		return nil, "", nil
+	}
+	if len(in) > MaxLineAddOns {
+		return nil, "", errors.Invalid(CodeAddOnInvalid,
+			"a line carries at most %d add-ons, %d given", MaxLineAddOns, len(in))
+	}
+	out := make([]AddOnInput, 0, len(in))
+	identities := make([]models.AddOn, 0, len(in))
+	for i := range in {
+		addOn := in[i]
+		if err := requireID("add_on variant_id", addOn.VariantID); err != nil {
+			return nil, "", errors.Invalid(CodeAddOnInvalid, "add-on %d names no variant", i)
+		}
+		addOn.Title = strings.TrimSpace(addOn.Title)
+		if err := requireText("add_on title", addOn.Title); err != nil {
+			return nil, "", err
+		}
+		if err := checkAmount("add_on unit_price", addOn.UnitPrice, models.MaxAmount); err != nil {
+			return nil, "", err
+		}
+		properties, err := models.NormalizeLineProperties(addOn.Properties)
+		if err != nil {
+			return nil, "", err
+		}
+		addOn.Properties = properties
+		for _, earlier := range out {
+			if earlier.VariantID == addOn.VariantID {
+				return nil, "", errors.Invalid(CodeAddOnInvalid,
+					"the add-on %s is named twice on one line", addOn.VariantID)
+			}
+		}
+		out = append(out, addOn)
+		identities = append(identities, models.AddOn{VariantID: addOn.VariantID, Properties: properties})
+	}
+	return out, models.AddOnKey(identities), nil
 }

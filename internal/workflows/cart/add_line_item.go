@@ -1,10 +1,13 @@
 package cart
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/query"
 )
 
 // AddLineItemInput is the input of the line to be added to the cart.
@@ -35,6 +38,25 @@ type AddLineItemInput struct {
 	// Properties are what the shopper wrote on the line (ADR 0223): the same
 	// variant with other properties is another line, and they reach the order.
 	Properties map[string]string
+	// AddOns are the add-on lines opened with this one (ADR 0229): each a
+	// variant the line's product accepts (ADR 0228), with the shopper's words
+	// on it. The flow prices each as it prices the line.
+	AddOns []AddOnRequest
+}
+
+// AddOnRequest is one add-on of an added line (ADR 0229).
+type AddOnRequest struct {
+	VariantID  string            `json:"variant_id"`
+	Properties map[string]string `json:"properties,omitempty"`
+}
+
+// pricedAddOn is one add-on on the wire to the cart module, as this flow
+// decided its title and price.
+type pricedAddOn struct {
+	VariantID  string            `json:"variant_id"`
+	Title      string            `json:"title"`
+	UnitPrice  int64             `json:"unit_price"`
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // AddLineItemResult is the result of the added line and of the recalculated
@@ -124,7 +146,17 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 	if err != nil {
 		return AddLineItemResult{}, err
 	}
-	priceSets, err := w.priceSetsFor(ctx, []string{in.VariantID})
+	// The add-ons are checked against the line's product before anything is
+	// priced, which also bounds what is read: each is on the product's list,
+	// and none twice.
+	if err := w.checkAddOns(ctx, in.VariantID, in.AddOns); err != nil {
+		return AddLineItemResult{}, err
+	}
+	variants := []string{in.VariantID}
+	for _, addOn := range in.AddOns {
+		variants = append(variants, addOn.VariantID)
+	}
+	priceSets, err := w.priceSetsFor(ctx, variants)
 	if err != nil {
 		return AddLineItemResult{}, err
 	}
@@ -154,9 +186,13 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 	if err := checkAmount("unit_price", unitPrice, MaxAmount); err != nil {
 		return AddLineItemResult{}, err
 	}
+	addOns, err := w.priceAddOns(ctx, in.AddOns, priceSets, snap.CurrencyCode, quantity, attributes)
+	if err != nil {
+		return AddLineItemResult{}, err
+	}
 
 	lineID, err := w.carts.AddCartLineItem(ctx, in.CartID, in.VariantID, title, in.Quantity, unitPrice,
-		in.Metadata, in.Properties)
+		in.Metadata, in.Properties, addOns)
 	if err != nil {
 		return AddLineItemResult{}, err
 	}
@@ -173,6 +209,109 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 		UnitPrice:  unitPrice,
 		Totals:     totals,
 	}, nil
+}
+
+// checkAddOns holds the add-ons of an added line to the list its product
+// accepts (ADR 0228, ADR 0229), each named once. The product is read through the
+// channel the request is scoped to, as the line's variant is.
+func (w *Workflows) checkAddOns(ctx context.Context, variantID string, addOns []AddOnRequest) error {
+	if len(addOns) == 0 {
+		return nil
+	}
+	products, err := w.productIDsFor(ctx, []string{variantID})
+	if err != nil {
+		return err
+	}
+	productID, ok := products[variantID]
+	if !ok {
+		return errors.NotFound(CodeVariantUnknown, "variant %s is not in the catalog", variantID)
+	}
+	records, err := w.catalog.Graph(ctx, query.GraphSpec{
+		Entity:  EntityProduct,
+		Fields:  []string{query.IDField, FieldAddOnVariantIDs},
+		Filters: map[string]any{FilterIDs: []string{productID}},
+		Limit:   1,
+	})
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), CodeCatalogReadFailed,
+			"could not read the add-ons product %s accepts", productID)
+	}
+	var accepted []string
+	if len(records) > 0 {
+		accepted = stringList(records[0][FieldAddOnVariantIDs])
+	}
+	seen := make(map[string]bool, len(addOns))
+	for _, addOn := range addOns {
+		if seen[addOn.VariantID] {
+			return errors.Invalid(CodeAddOnNotAccepted,
+				"the add-on %s is named twice on one line", addOn.VariantID)
+		}
+		seen[addOn.VariantID] = true
+		if !slices.Contains(accepted, addOn.VariantID) {
+			return errors.Invalid(CodeAddOnNotAccepted,
+				"variant %s is not an add-on the lines of product %s take", addOn.VariantID, productID)
+		}
+	}
+	return nil
+}
+
+// priceAddOns prices each add-on as the line is priced — its own price set, at
+// the line's quantity, in the cart's currency, under the same rule context —
+// and reads its title from the catalog, and returns them as the cart module
+// takes them; none is nil.
+func (w *Workflows) priceAddOns(
+	ctx context.Context,
+	addOns []AddOnRequest,
+	priceSets map[string]string,
+	currency string,
+	quantity int32,
+	attributes map[string]string,
+) (json.RawMessage, error) {
+	if len(addOns) == 0 {
+		return nil, nil
+	}
+	priced := make([]pricedAddOn, 0, len(addOns))
+	for _, addOn := range addOns {
+		title, err := w.variantTitle(ctx, addOn.VariantID)
+		if err != nil {
+			return nil, err
+		}
+		amount, err := w.prices.CalculateAmount(ctx, priceSets[addOn.VariantID], currency, quantity, attributes)
+		if err != nil {
+			if errors.IsNotFound(err) {
+				return nil, errors.Wrap(err, errors.KindInvalid, CodePriceUnavailable,
+					"add-on %s has no price in currency %s at quantity %d", addOn.VariantID, currency, quantity)
+			}
+			return nil, err
+		}
+		if err := checkAmount("add_on unit_price", amount, MaxAmount); err != nil {
+			return nil, err
+		}
+		priced = append(priced, pricedAddOn{
+			VariantID: addOn.VariantID, Title: title, UnitPrice: amount, Properties: addOn.Properties,
+		})
+	}
+	raw, err := json.Marshal(priced)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, CodeAddOnNotAccepted, "the add-ons could not be encoded")
+	}
+	return raw, nil
+}
+
+// decodeAddOnRequests reads the add-ons an add-line call carries; a field this
+// schema does not know refuses it.
+func decodeAddOnRequests(raw json.RawMessage) ([]AddOnRequest, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var out []AddOnRequest
+	if err := decoder.Decode(&out); err != nil {
+		return nil, errors.Wrap(err, errors.KindInvalid, CodeAddOnNotAccepted,
+			"the add-ons must be a JSON array of variant_id and properties")
+	}
+	return out, nil
 }
 
 // totalsAfterChange wraps the error of the calculation that blew up AFTER the

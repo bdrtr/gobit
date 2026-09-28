@@ -6,24 +6,46 @@
 
 -- name: CreateLineItem :one
 INSERT INTO cart_line_items (
-    id, cart_id, variant_id, title, quantity, unit_price, metadata, properties
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    id, cart_id, variant_id, title, quantity, unit_price, metadata, properties,
+    parent_line_id, add_on_key
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: GetLineItem :one
 SELECT * FROM cart_line_items
 WHERE id = $1 AND cart_id = $2 AND deleted_at IS NULL;
 
--- GetLineItemByVariant returns the LIVING line of a variant with the given
--- properties in the cart.
+-- GetLineItemByVariant returns the LIVING line standing on its own of a
+-- variant with the given properties and add-ons in the cart.
 --
 -- AddLineItem uses it: when the same variant is added a second time with the
--- same properties it raises the quantity of the existing line instead of
--- opening a new one (see service.AddLineItem); other properties are another
--- line (ADR 0223). JSONB equality ignores the order the keys were written in.
+-- same properties and add-ons it raises the quantity of the existing line
+-- instead of opening a new one (see service.AddLineItem); other properties
+-- (ADR 0223) or other add-ons (ADR 0229) are another line. JSONB equality
+-- ignores the order the keys were written in.
 -- name: GetLineItemByVariant :one
 SELECT * FROM cart_line_items
-WHERE cart_id = $1 AND variant_id = $2 AND properties = sqlc.arg('properties')::jsonb AND deleted_at IS NULL;
+WHERE cart_id = $1 AND variant_id = $2 AND properties = sqlc.arg('properties')::jsonb
+  AND parent_line_id IS NULL AND add_on_key = sqlc.arg('add_on_key')::text AND deleted_at IS NULL;
+
+-- ListAddOnLines returns the living add-ons of a line (ADR 0229).
+-- name: ListAddOnLines :many
+SELECT * FROM cart_line_items
+WHERE cart_id = $1 AND parent_line_id = $2 AND deleted_at IS NULL
+ORDER BY created_at, id;
+
+-- SetAddOnQuantities writes a line's quantity onto its add-ons, which follow it
+-- (ADR 0229).
+-- name: SetAddOnQuantities :exec
+UPDATE cart_line_items
+SET quantity = $3, updated_at = now()
+WHERE cart_id = $1 AND parent_line_id = $2 AND deleted_at IS NULL;
+
+-- SoftDeleteAddOnLines removes a line's add-ons with it (ADR 0229).
+-- name: SoftDeleteAddOnLines :exec
+UPDATE cart_line_items
+SET deleted_at = now(), updated_at = now()
+WHERE cart_id = $1 AND parent_line_id = $2 AND deleted_at IS NULL;
 
 -- name: ListLineItems :many
 SELECT * FROM cart_line_items

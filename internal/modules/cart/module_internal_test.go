@@ -32,7 +32,7 @@ var _ api.LinePricing = (*stubPricing)(nil)
 
 // AddPricedLineItem returns the line's id.
 func (s *stubPricing) AddPricedLineItem(
-	_ context.Context, _, _ string, _ int64, _ json.RawMessage, _ map[string]string,
+	_ context.Context, _, _ string, _ int64, _ json.RawMessage, _ map[string]string, _ json.RawMessage,
 ) (string, error) {
 	s.calls++
 	return s.lineID, nil
@@ -66,7 +66,7 @@ func TestLinePricingFlowIsResolvedByName(t *testing.T) {
 	require.NoError(t, c.Provide(CartFlowsName, flow))
 
 	wrapper := &linePricing{c: c, log: silentLog()}
-	lineID, err := wrapper.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil, nil)
+	lineID, err := wrapper.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil, nil, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "li_1", lineID)
@@ -86,7 +86,7 @@ func TestLinePricingFlowFailsClosedWhenMissing(t *testing.T) {
 
 	wrapper := &linePricing{c: container.New(nil), log: silentLog()}
 
-	lineID, err := wrapper.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil, nil)
+	lineID, err := wrapper.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil, nil, nil)
 	require.Error(t, err, "an unresolvable flow must return an error")
 	assert.Empty(t, lineID)
 	assert.Equal(t, codeSetupFailed, coreerrors.CodeOf(err))
@@ -121,7 +121,7 @@ func TestLinePricingFlowRejectsIncompatibleType(t *testing.T) {
 	require.NoError(t, c.Provide(CartFlowsName, foreignType{}))
 
 	wrapper := &linePricing{c: c, log: silentLog()}
-	_, err := wrapper.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil, nil)
+	_, err := wrapper.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil, nil, nil)
 
 	require.Error(t, err)
 	assert.Equal(t, codeSetupFailed, coreerrors.CodeOf(err))
@@ -145,13 +145,13 @@ func TestLinePricingDecisionIsMadeOnce(t *testing.T) {
 	c := container.New(nil)
 	wrapper := &linePricing{c: c, log: silentLog()}
 
-	_, err := wrapper.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil, nil)
+	_, err := wrapper.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil, nil, nil)
 	require.Error(t, err)
 
 	// Even if the flow is registered LATER, the decision does not change.
 	require.NoError(t, c.Provide(CartFlowsName, &stubPricing{lineID: "li_1"}))
 
-	_, err = wrapper.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil, nil)
+	_, err = wrapper.AddPricedLineItem(t.Context(), "cart_1", "var_1", 3, nil, nil, nil)
 	assert.Error(t, err, "the decision is made once and stored")
 }
 

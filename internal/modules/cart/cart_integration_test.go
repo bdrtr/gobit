@@ -862,14 +862,14 @@ func TestDatabaseEnforcesLineUniqueness(t *testing.T) {
          VALUES ($1, $2, 'variant_UNIQ', 'Copy', 1)`,
 		models.NewLineItemID(), cart.ID)
 	require.Error(t, err, "a second line for the same variant must not be openable")
-	assert.Contains(t, err.Error(), `"cart_line_items_cart_variant_properties_uniq"`)
+	assert.Contains(t, err.Error(), `"cart_line_items_identity_uniq"`)
 
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO cart_line_items (id, cart_id, variant_id, title, quantity, properties)
          VALUES ($1, $2, 'variant_UNIQ', 'Copy', 1, '{"Font": "Serif", "Engraving": "Ada"}')`,
 		models.NewLineItemID(), cart.ID)
 	require.Error(t, err, "the same properties written in another order are the same line")
-	assert.Contains(t, err.Error(), `"cart_line_items_cart_variant_properties_uniq"`)
+	assert.Contains(t, err.Error(), `"cart_line_items_identity_uniq"`)
 
 	again, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
 		VariantID: "variant_UNIQ", Title: "T-Shirt", Quantity: 2,
@@ -883,6 +883,48 @@ func TestDatabaseEnforcesLineUniqueness(t *testing.T) {
 		`UPDATE cart_line_items SET properties = '[]' WHERE id = $1`, engraved.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `"cart_line_items_properties_is_object"`)
+}
+
+// TestTheDatabaseKeepsAddOnsWithTheirLine is ADR 0229's schema: the same
+// variant carrying other add-ons is another line, an add-on is bound to a line
+// of its own cart and to no line of another, and it carries no add-ons itself.
+func TestTheDatabaseKeepsAddOnsWithTheirLine(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
+	other := newCart(ctx, t, svc)
+
+	plain, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_RING", Title: "Ring", Quantity: 1, UnitPrice: 1000,
+	})
+	require.NoError(t, err)
+	wrapped, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_RING", Title: "Ring", Quantity: 1, UnitPrice: 1000,
+		AddOns: []service.AddOnInput{{VariantID: "variant_WRAP", Title: "Wrap", UnitPrice: 100}},
+	})
+	require.NoError(t, err)
+	assert.NotEqual(t, plain.ID, wrapped.ID, "the same ring with a wrap is another line")
+
+	_, err = testPool.Pool().Exec(ctx,
+		`INSERT INTO cart_line_items (id, cart_id, variant_id, title, quantity, parent_line_id)
+         VALUES ($1, $2, 'variant_WRAP', 'Wrap', 1, $3)`,
+		models.NewLineItemID(), other.ID, wrapped.ID)
+	require.Error(t, err, "an add-on cannot belong to another cart's line")
+	assert.Contains(t, err.Error(), `"cart_line_items_parent_fk"`)
+
+	_, err = testPool.Pool().Exec(ctx,
+		`INSERT INTO cart_line_items (id, cart_id, variant_id, title, quantity, parent_line_id, add_on_key)
+         VALUES ($1, $2, 'variant_WRAP', 'Wrap', 1, $3, 'nested')`,
+		models.NewLineItemID(), cart.ID, wrapped.ID)
+	require.Error(t, err, "an add-on carries no add-ons")
+	assert.Contains(t, err.Error(), `"cart_line_items_add_on_key_on_roots"`)
+
+	_, err = testPool.Pool().Exec(ctx,
+		`INSERT INTO cart_line_items (id, cart_id, variant_id, title, quantity, parent_line_id)
+         VALUES ($1, $2, 'variant_WRAP', 'Wrap', 1, $3)`,
+		models.NewLineItemID(), cart.ID, wrapped.ID)
+	require.Error(t, err, "the same add-on twice under one line is one line")
+	assert.Contains(t, err.Error(), `"cart_line_items_identity_uniq"`)
 }
 
 // TestSoftDeleteDropsOutOfReads verifies that a soft-deleted cart is not read
