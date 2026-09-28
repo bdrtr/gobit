@@ -269,12 +269,8 @@ func TestAddLineItemRejectsMalformedIdentifier(t *testing.T) {
 	}
 }
 
-// linesUpToCeiling fills the cart with the given number of lines.
-//
-// All of the lines look at the SAME variant; the ceiling check looks at the
-// line COUNT and at whether the variant to be added is already in the cart, not
-// at the variety of the variants.
-func linesUpToCeiling(variantID string, count int) []SnapshotItem {
+// linesOf fills a snapshot with the given number of lines of one variant.
+func linesOf(variantID string, count int) []SnapshotItem {
 	items := make([]SnapshotItem, 0, count)
 	for i := range count {
 		items = append(items, SnapshotItem{
@@ -286,89 +282,43 @@ func linesUpToCeiling(variantID string, count int) []SnapshotItem {
 	return items
 }
 
-// TestAddLineItemRejectsNewLineBeyondTheLineCeiling verifies that NO new line
-// can be opened on a cart that has reached the ceiling.
-//
-// The ceiling is not silent: the request is rejected, it is not clamped, and
-// the message writes the ceiling out.
-func TestAddLineItemRejectsNewLineBeyondTheLineCeiling(t *testing.T) {
+// TestAddLineItemAnswersTheCartsLineCeiling holds that the flow asks no line
+// ceiling of its own (ADR 0227): the cart module refuses a line past its
+// ceiling where it decides the line is new, and the flow hands that refusal to
+// its caller with its code and runs no totals round on a cart it did not
+// change.
+func TestAddLineItemAnswersTheCartsLineCeiling(t *testing.T) {
 	h := newHarness(t)
-	serveSnapshot(h.carts, snapshotOf(1, linesUpToCeiling(testVariantA, MaxLineItems), nil))
+	serveSnapshot(h.carts, snapshotOf(1, linesOf(testVariantA, 100), nil))
+	refusal := errors.Invalid("cart_workflow_line_limit_reached", "a cart can carry at most 100 lines")
+	h.carts.addLineFn = func(
+		context.Context, string, string, string, int64, int64, json.RawMessage,
+	) (string, error) {
+		return "", refusal
+	}
 
 	_, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
 		CartID: testCartID, VariantID: testVariantB, Quantity: 1,
 	})
 
-	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "expected Invalid: %v", err)
-	assert.Equal(t, CodeCartLineLimit, errors.CodeOf(err))
-	assert.Contains(t, err.Error(), strconv.Itoa(MaxLineItems), "the ceiling must be visible to the operator")
-	assert.Empty(t, h.catalog.specs, "a decided request must not busy the catalog")
-	assert.Empty(t, h.prices.seen, "a decided request must not busy pricing")
-	assert.Empty(t, h.carts.written)
+	require.ErrorIs(t, err, refusal)
+	assert.Equal(t, 1, h.carts.snapshotCalls, "no totals round follows a refused add")
 }
 
-// TestAddLineItemOpensANewLineJustBelowTheCeiling verifies that on a cart ONE
-// BELOW the ceiling a new line can still be opened.
-//
-// The PLACE of the bound is as much a contract as the bound itself: an
-// off-by-one comparison would silently reject the last line the customer is
-// allowed to add.
-func TestAddLineItemOpensANewLineJustBelowTheCeiling(t *testing.T) {
+// TestCalculateTotalsPricesEveryLineItHolds holds that the totals round asks no
+// line count: a cart past the cart module's line ceiling, one opened before the
+// ceiling was put in place, is priced line by line, since refusing it would
+// leave the customer's existing cart unpayable.
+func TestCalculateTotalsPricesEveryLineItHolds(t *testing.T) {
 	h := newHarness(t)
-	full := linesUpToCeiling(testVariantA, MaxLineItems-1)
-	seen := recordAddLine(h.carts, testLineB)
-	serveSnapshot(h.carts,
-		snapshotOf(1, full, nil),
-		snapshotOf(2, append(full, SnapshotItem{ID: testLineB, VariantID: testVariantB, Quantity: 1}), nil),
-	)
-
-	out, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
-		CartID: testCartID, VariantID: testVariantB, Quantity: 1,
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, testLineB, out.LineItemID)
-	assert.Equal(t, 1, seen.calls)
-	assert.Len(t, out.Totals.Lines, MaxLineItems)
-}
-
-// TestAddLineItemGrowsAnExistingLineOnACartAtTheCeiling verifies that MERGING
-// is not rejected on a cart that has reached the ceiling.
-//
-// A merge opens no new line; had it been rejected, the owner of a full cart
-// could not even raise the quantity of their own line.
-func TestAddLineItemGrowsAnExistingLineOnACartAtTheCeiling(t *testing.T) {
-	h := newHarness(t)
-	full := linesUpToCeiling(testVariantA, MaxLineItems)
-	seen := recordAddLine(h.carts, full[0].ID)
-	serveSnapshot(h.carts, snapshotOf(1, full, nil), snapshotOf(2, full, nil))
-
-	out, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
-		CartID: testCartID, VariantID: testVariantA, Quantity: 2,
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, full[0].ID, out.LineItemID)
-	assert.Equal(t, 1, seen.calls, "the merge must be written")
-}
-
-// TestCalculateTotalsCanComputeACartAboveTheCeiling verifies that a cart which
-// was opened BEFORE the ceiling was put in place, and carries more lines than
-// the ceiling, can still have its totals computed.
-//
-// Rejecting the computation would make the customer's existing cart unpayable;
-// the ceiling is applied only on the path that OPENS a line.
-func TestCalculateTotalsCanComputeACartAboveTheCeiling(t *testing.T) {
-	h := newHarness(t)
-	large := linesUpToCeiling(testVariantA, MaxLineItems+5)
+	large := linesOf(testVariantA, 105)
 	serveSnapshot(h.carts, snapshotOf(9, large, nil))
 
 	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
 
 	require.NoError(t, err)
-	assert.Len(t, totals.Lines, MaxLineItems+5)
-	assert.Equal(t, int64(1000)*int64(MaxLineItems+5), totals.Subtotal)
+	assert.Len(t, totals.Lines, len(large))
+	assert.Equal(t, int64(1000)*int64(len(large)), totals.Subtotal)
 	requireIdentity(t, totals)
 }
 

@@ -606,6 +606,20 @@ func (f *fakeStore) ListLineItems(ctx context.Context, cartID string) ([]models.
 	return out, nil
 }
 
+// CountLineItems counts the cart's lines in the caller's view.
+func (f *fakeStore) CountLineItems(ctx context.Context, cartID string) (int, error) {
+	view := f.view(ctx)
+	defer view.release()
+
+	count := 0
+	for id := range view.items {
+		if view.items[id].CartID == cartID {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // SetLineItemQuantity writes the line's quantity.
 func (f *fakeStore) SetLineItemQuantity(_ context.Context, cartID, lineID string, quantity int64) (models.LineItem, error) {
 	f.mu.Lock()

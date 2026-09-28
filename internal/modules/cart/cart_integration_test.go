@@ -678,6 +678,80 @@ func TestConcurrentDifferentVariantAdditions(t *testing.T) {
 	assert.Len(t, detail.Items, racers, "every variant must get its own line")
 }
 
+// TestConcurrentAdditionsStopAtTheLineCeiling holds the ceiling under the
+// cart's lock (ADR 0227): racers each opening a line on a cart one line below
+// the ceiling, and exactly one of them opens it.
+func TestConcurrentAdditionsStopAtTheLineCeiling(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
+	for i := range service.MaxLineItems - 1 {
+		_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+			VariantID: fmt.Sprintf("variant_%03d", i), Title: "Filler", Quantity: 1, UnitPrice: 1000,
+		})
+		require.NoError(t, err)
+	}
+
+	const racers = 8
+	start := make(chan struct{})
+	results := make([]error, racers)
+	var wg sync.WaitGroup
+	for i := range racers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			_, results[i] = svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+				VariantID: fmt.Sprintf("variant_RACE_%d", i), Title: "Racer", Quantity: 1, UnitPrice: 1000,
+			})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	opened := 0
+	for _, err := range results {
+		if err == nil {
+			opened++
+			continue
+		}
+		assert.Equal(t, service.CodeLineLimit, errors.CodeOf(err))
+	}
+	assert.Equal(t, 1, opened, "exactly one racer opens the last line")
+	detail, err := svc.GetCart(ctx, cart.ID)
+	require.NoError(t, err)
+	assert.Len(t, detail.Items, service.MaxLineItems)
+}
+
+// TestARemovedLineFreesItsPlace holds that the ceiling counts the LIVING lines
+// (ADR 0227): a full cart whose line was removed opens one more, and the next
+// is refused.
+func TestARemovedLineFreesItsPlace(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
+	var first models.LineItem
+	for i := range service.MaxLineItems {
+		line, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+			VariantID: fmt.Sprintf("variant_%03d", i), Title: "Filler", Quantity: 1, UnitPrice: 1000,
+		})
+		require.NoError(t, err)
+		if i == 0 {
+			first = line
+		}
+	}
+	require.NoError(t, svc.RemoveLineItem(ctx, cart.ID, first.ID))
+
+	add := func(variant string) error {
+		_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+			VariantID: variant, Title: "Late", Quantity: 1, UnitPrice: 1000,
+		})
+		return err
+	}
+	require.NoError(t, add("variant_LATE_1"), "the removed line's place is free")
+	assert.Equal(t, service.CodeLineLimit, errors.CodeOf(add("variant_LATE_2")))
+}
+
 // TestWritingToCompletedCartIsRejected verifies that on a completed cart all
 // the write paths are rejected at the database level too.
 func TestWritingToCompletedCartIsRejected(t *testing.T) {

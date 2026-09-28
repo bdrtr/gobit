@@ -383,10 +383,11 @@ past and is not corrected retroactively.
   there is no way to shorten that at this layer.
 
   Today's protection is a CEILING: a cart carries at most 100 distinct lines and
-  anything beyond that is refused with `cart_workflow_line_limit_reached`. The
-  ceiling looks at the snapshot taken outside the cart's lock, so two concurrent
-  additions can exceed it by a few lines; it is not a hard upper bound but a
-  gate that cuts off unbounded growth.
+  opening one beyond that is refused with `cart_workflow_line_limit_reached`, on
+  an add and on a merge alike. The cart module counts the lines under the cart's
+  lock where it decides a line is new ([ADR 0227](adr/0227-the-cart-counts-the-lines-it-opens.md)),
+  so it is a hard upper bound; a cart opened before the ceiling with more lines
+  keeps them and is still priced.
 - **An interrupted payment leaves reserved stock waiting for MANUAL
   intervention.** The cart flow runs synchronously inside the HTTP request; if
   the process dies in the middle (a deploy, an OOM, a pod eviction) the

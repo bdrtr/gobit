@@ -148,7 +148,7 @@ type LineTotals struct {
 // Measured (local container, TCP round trip ~30 µs, a 100-line cart, from the
 // taking of the lock to the return of the LAST WRITE, p50): one UPDATE per line
 // 8.0 ms, a single statement 0.55 ms. The number of lines, up to the ceiling
-// (workflows/cart.MaxLineItems, today 100), now barely lengthens the lock
+// ([MaxLineItems], today 100), now barely lengthens the lock
 // duration at all: 0.28 ms at 10 lines, 0.55 ms at 100 lines.
 //
 // These numbers DO NOT INCLUDE THE COMMIT'S WAL FLUSH, and they mislead unless

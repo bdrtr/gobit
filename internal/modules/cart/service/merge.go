@@ -58,6 +58,10 @@ const CodeAdditionMismatch = "cart_addition_mismatch"
 //
 // A completed cart on either side (409), because a completed cart is the record
 // an order rests on.
+//
+// A fold that would open lines past [MaxLineItems] (422, ADR 0227), refused
+// whole: the ceiling holds on the merged cart as it does on an add, and a
+// merged cart past it would cost what the ceiling exists to bound.
 func (s *Service) MergeCart(ctx context.Context, sourceID, targetID string) (models.Cart, error) {
 	if err := requireID("source_cart_id", sourceID); err != nil {
 		return models.Cart{}, err
@@ -184,6 +188,12 @@ func (s *Service) foldLines(
 	if err != nil {
 		return 0, err
 	}
+	// The target's lines are counted once; every line the fold opens adds one,
+	// and the ceiling refuses the whole merge rather than half of it.
+	held, err := s.store.CountLineItems(ctx, target.ID)
+	if err != nil {
+		return 0, err
+	}
 
 	for i := range lines {
 		line := lines[i]
@@ -207,7 +217,7 @@ func (s *Service) foldLines(
 			// of the same region and currency, and the next totals round
 			// reprices it exactly as it reprices a line that had been sitting in
 			// the target all along.
-			if _, err := s.store.CreateLineItem(ctx, models.LineItem{
+			if _, err := s.openLine(ctx, models.LineItem{
 				ID:         models.NewLineItemID(),
 				CartID:     target.ID,
 				VariantID:  line.VariantID,
@@ -216,9 +226,10 @@ func (s *Service) foldLines(
 				UnitPrice:  line.UnitPrice,
 				Metadata:   line.Metadata,
 				Properties: line.Properties,
-			}); err != nil {
+			}, held); err != nil {
 				return 0, err
 			}
+			held++
 		default:
 			return 0, err
 		}

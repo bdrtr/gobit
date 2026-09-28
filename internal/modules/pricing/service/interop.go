@@ -142,8 +142,9 @@ func (s *Service) CalculateAmount(
 // the limit and the number of items that arrived. Truncating would mean leaving
 // part of the caller's cart unpriced and presenting the result as "successful".
 //
-// The value is TEN TIMES the ceiling of the cart total calculation, its only
-// consumer (MaxLineItems in workflows/cart, 100 today). The two not being equal
+// The value is TEN TIMES the cart's line ceiling, the lines of the cart total
+// calculation that is its only consumer (the cart service's MaxLineItems, 100
+// today, asked on both paths that open a line, ADR 0227). The two not being equal
 // is deliberate: a cart opened BEFORE that ceiling was put in place, and carrying
 // more lines than it, must still be calculable — rejecting the calculation would
 // render the customer's existing cart unpayable. The gap covers those old carts;

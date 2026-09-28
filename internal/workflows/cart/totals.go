@@ -569,10 +569,12 @@ type linePrice struct {
 //
 // All the cart's lines go in a single request. If pricing's own item ceiling
 // (MaxCalculateItems, 1000 today) is exceeded the request is rejected and that
-// cart's total CANNOT be calculated at all. Today it is an unreachable state:
-// the only path that opens a line is subject to the [MaxLineItems] (100) ceiling
-// and the only way to go above 1000 is to grow that constant — if it is grown,
-// pricing's ceiling has to be grown along with it. Before growing it, the plan
+// cart's total CANNOT be calculated at all. It is unreachable while the cart
+// module refuses a line past its ceiling (the cart service's MaxLineItems, 100)
+// on both paths that open one, the add and the merge (ADR 0227; before it the
+// ceiling looked at the variant alone and the merge not at all, D154), and the
+// only way to go above 1000 is to grow that constant — if it is grown, pricing's
+// ceiling has to be grown along with it. Before growing it, the plan
 // table in the MaxCalculateItems godoc must be looked at: pricing's bulk read
 // abandons the index and turns to scanning the table somewhere between 280 and
 // 300 ids, meaning the cost is not linear up to 1000.

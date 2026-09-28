@@ -99,6 +99,8 @@ type Store interface {
 	GetLineItemByVariant(ctx context.Context, cartID, variantID string, properties map[string]string) (models.LineItem, error)
 	// ListLineItems returns the cart's lines in creation order.
 	ListLineItems(ctx context.Context, cartID string) ([]models.LineItem, error)
+	// CountLineItems returns how many living lines the cart holds.
+	CountLineItems(ctx context.Context, cartID string) (int, error)
 	// SetLineItemQuantity writes the line's quantity as an ABSOLUTE value.
 	SetLineItemQuantity(ctx context.Context, cartID, lineID string, quantity int64) (models.LineItem, error)
 	// SetLineItemTotals writes ALL of the line amounts of one calculation round

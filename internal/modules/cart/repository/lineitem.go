@@ -95,6 +95,15 @@ func (r *Repository) ListLineItems(ctx context.Context, cartID string) ([]models
 	return toLineItems(rows)
 }
 
+// CountLineItems returns how many living line items the cart holds.
+func (r *Repository) CountLineItems(ctx context.Context, cartID string) (int, error) {
+	count, err := r.queries(ctx).CountLineItems(ctx, cartID)
+	if err != nil {
+		return 0, classify(err, codeQueryFailed, "the cart line items could not be counted")
+	}
+	return int(count), nil
+}
+
 // LineItemsByCartIDs returns the line items of several carts in a SINGLE query
 // (no N+1).
 func (r *Repository) LineItemsByCartIDs(ctx context.Context, cartIDs []string) ([]models.LineItem, error) {
@@ -150,8 +159,8 @@ func (r *Repository) SetLineItemQuantity(ctx context.Context, cartID, lineID str
 //
 // There is NO SEPARATE ceiling for the slice size and none was added: since the
 // caller has to give all of the cart's line items (see service.SetTotals) the
-// size is the cart's line item count and workflows/cart.MaxLineItems (100 today)
-// bounds that.
+// size is the cart's line item count and models.MaxLineItems (100 today) bounds
+// that on both paths that open a line (ADR 0227).
 //
 // # A missing write round DROPS everything
 //

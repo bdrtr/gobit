@@ -9,6 +9,20 @@ import (
 	"context"
 )
 
+const countLineItems = `-- name: CountLineItems :one
+SELECT count(*) FROM cart_line_items
+WHERE cart_id = $1 AND deleted_at IS NULL
+`
+
+// CountLineItems counts the cart's living lines; the service asks it under the
+// cart lock before it opens one, against the line ceiling (ADR 0227).
+func (q *Queries) CountLineItems(ctx context.Context, cartID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countLineItems, cartID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createLineItem = `-- name: CreateLineItem :one
 
 INSERT INTO cart_line_items (

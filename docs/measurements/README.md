@@ -157,3 +157,4 @@ truth: a report says what was true on the day it was taken.
 | [The release a plugin expects — measured 2026-09-28](0224-the-release-a-plugin-expects.md) | 57 |
 | [A filter and its words — measured 2026-09-28](0225-a-filter-and-its-words.md) | 67 |
 | [The count beside the listing — measured 2026-09-28](0226-the-count-beside-the-listing.md) | 89 |
+| [A line past the ceiling — measured 2026-09-28](0227-a-line-past-the-ceiling.md) | 74 |

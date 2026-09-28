@@ -250,10 +250,9 @@ const (
 //
 // AddLineItem is absent FOR THE SAME REASON and that is not a gap: the endpoint
 // that adds a line item calls the [LinePricing] flow, because the SERVER decides
-// the price and the flow applies the CEILING on the cart's line count
-// (MaxLineItems inside workflows/cart). Had the method stayed on the surface, a
-// handler bound to it would SILENTLY skip both the pricing and the ceiling; the
-// service method itself is still there, the flow calls it.
+// the price. Had the method stayed on the surface, a handler bound to it would
+// SILENTLY skip the pricing; the service method itself is still there, the flow
+// calls it, and it holds the line ceiling itself (ADR 0227).
 //
 // AddShippingMethod was removed for THE SAME REASON, later and after the cost
 // had been paid. It stayed on this surface while the sentence above was already

@@ -30,6 +30,12 @@ SELECT * FROM cart_line_items
 WHERE cart_id = $1 AND deleted_at IS NULL
 ORDER BY created_at, id;
 
+-- CountLineItems counts the cart's living lines; the service asks it under the
+-- cart lock before it opens one, against the line ceiling (ADR 0227).
+-- name: CountLineItems :one
+SELECT count(*) FROM cart_line_items
+WHERE cart_id = $1 AND deleted_at IS NULL;
+
 -- ListLineItemsByCartIDs returns the lines of several carts in ONE query; no
 -- per-cart query (N+1) is made.
 -- name: ListLineItemsByCartIDs :many

@@ -8,6 +8,48 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
 )
 
+// MaxLineItems is the largest number of DISTINCT lines a cart may carry
+// (ADR 0227).
+//
+// # Why there is a ceiling
+//
+// Every write that changes a cart reprices ALL its lines and rewrites the
+// amount of all of them, so building an N-line cart costs N² line amount
+// writes: 5,050 for 100 lines and 500,500 for 1,000. Pricing's bulk read, the
+// totals round's one request for every line, refuses more than its own ceiling
+// (1,000 today, pricing's MaxCalculateItems); a cart past it could never be
+// priced again and so never bought. The value is the page size ceiling of this
+// module's lists, so a full cart's lines fit on one page.
+//
+// # Where it is asked
+//
+// In [Service.openLine], the one place a line is created, which both paths that
+// open one call: [Service.AddLineItem] and the merge. It is asked there because
+// that is where a line's identity is decided — a variant and its properties
+// (ADR 0223) — and under the cart's lock, so two concurrent additions cannot
+// both pass it. A write that raises the quantity of an existing line opens
+// nothing and is never refused: the owner of a full cart can still change their
+// own lines, and a cart opened before the ceiling with more lines than it stays
+// priceable and payable.
+const MaxLineItems = 100
+
+// CodeLineLimit is the refusal of a line past [MaxLineItems]. The code is the
+// one the cart workflow answered while it held the ceiling, kept so that a
+// client handling it does not have to change (ADR 0227).
+const CodeLineLimit = "cart_workflow_line_limit_reached"
+
+// openLine creates a line on a cart holding lines living lines, unless the cart
+// is at [MaxLineItems]. The caller holds the cart's lock and has decided the
+// line is a new one; every line this service creates is created here.
+func (s *Service) openLine(ctx context.Context, item models.LineItem, lines int) (models.LineItem, error) {
+	if lines >= MaxLineItems {
+		return models.LineItem{}, errors.Invalid(CodeLineLimit,
+			"a cart can carry at most %d lines; cart %s has %d lines (the quantity of an existing line can be increased)",
+			MaxLineItems, item.CartID, lines)
+	}
+	return s.store.CreateLineItem(ctx, item)
+}
+
 // AddLineItemInput holds the fields of the line to be added to the cart.
 type AddLineItemInput struct {
 	// VariantID is the product variant being added; it is REQUIRED. It belongs
@@ -109,7 +151,11 @@ func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItem
 			item, err = s.store.SetLineItemQuantity(ctx, cart.ID, existing.ID, existing.Quantity+in.Quantity)
 			return err
 		case errors.IsNotFound(err):
-			item, err = s.store.CreateLineItem(ctx, models.LineItem{
+			lines, err := s.store.CountLineItems(ctx, cart.ID)
+			if err != nil {
+				return err
+			}
+			item, err = s.openLine(ctx, models.LineItem{
 				ID:         models.NewLineItemID(),
 				CartID:     cart.ID,
 				VariantID:  in.VariantID,
@@ -118,7 +164,7 @@ func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItem
 				UnitPrice:  in.UnitPrice,
 				Metadata:   in.Metadata,
 				Properties: properties,
-			})
+			}, lines)
 			return err
 		default:
 			return err

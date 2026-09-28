@@ -12,6 +12,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A cart could grow past its line ceiling** (D154). The ceiling of 100 lines
+  asked whether the added variant was already in the cart, so the same variant
+  with new `properties` (ADR 0223) opened a line past it, and a merge opened
+  lines with no ceiling at all; a cart past pricing's 1,000 lines could never be
+  priced again. **For storefront clients:** adding a new line to a full cart is
+  refused with `422` and `cart_workflow_line_limit_reached` whatever the line's
+  properties, and a merge that would pass the ceiling is refused with the same
+  code and moves nothing (ADR 0227).
+
 - **Three GraphQL types escaped the schema's field gates** (D153). The gates
   read a list of types written by hand, and `ProductList`, `ProductAttribute`
   and `AttributeOption` were never on it. **For contributors:** every object
@@ -125,6 +134,12 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **The cart counts the lines it opens** (ADR 0227). **For contributors:** the
+  line ceiling is `MaxLineItems` in `internal/modules/cart/service`, asked in
+  `openLine` under the cart's lock by both paths that open a line; the cart
+  workflow's `MaxLineItems`, `CodeCartLineLimit` and snapshot check are gone,
+  and a test refuses a line created anywhere but `openLine`.
 
 - **The GraphQL storefront counts what it lists** (ADR 0226). **For storefront
   clients:** the schema answers `productFacets`, which takes the `products`

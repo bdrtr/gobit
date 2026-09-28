@@ -147,8 +147,6 @@ const (
 	// be read or did not line up with the request, and no line's amount is
 	// trustworthy.
 	CodePriceResponseInvalid = "cart_workflow_price_response_invalid"
-	// CodeCartLineLimit reports that the cart reached its line count ceiling.
-	CodeCartLineLimit = "cart_workflow_line_limit_reached"
 	// CodeCartCompleted reports that a computation was requested on a completed
 	// cart.
 	CodeCartCompleted = "cart_workflow_cart_completed"
@@ -275,9 +273,10 @@ type Carts interface {
 
 	// AddCartLineItem adds a line to the cart and returns THE LINE'S ID.
 	//
-	// If the same variant is already in the cart no new line is opened, the
-	// quantity of the existing line is increased and that line's id is returned.
-	// Its counterpart in the cart service is AddLineItem.
+	// If the same variant with the same properties is already in the cart no new
+	// line is opened, the quantity of the existing line is increased and that
+	// line's id is returned; a new line past the cart's line ceiling is refused
+	// (ADR 0227). Its counterpart in the cart service is AddLineItem.
 	//
 	// metadata is the FREE-FORM data (a JSON object) the caller attaches to the
 	// line and may be left empty. This package DOES NOT READ it, it only carries
