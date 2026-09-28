@@ -132,6 +132,10 @@ type Store interface {
 	) (map[string]map[models.RelationType][]string, error)
 	ListProductRelationsOfType(ctx context.Context, productID string, kind models.RelationType) ([]string, error)
 	ReplaceProductRelations(ctx context.Context, productID string, kind models.RelationType, relatedIDs []string) error
+	// ListProductAddOns and ReplaceProductAddOns are the variants a product's
+	// lines may carry as add-ons (ADR 0228); see add_on.go.
+	ListProductAddOns(ctx context.Context, productID string) ([]string, error)
+	ReplaceProductAddOns(ctx context.Context, productID string, variantIDs []string) error
 	SoftDeleteProduct(ctx context.Context, id string) error
 	SoftDeleteProductChildren(ctx context.Context, productID string) error
 	ListVariantIDsByProduct(ctx context.Context, productID string) ([]string, error)

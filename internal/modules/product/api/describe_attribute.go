@@ -55,6 +55,7 @@ func describeAttributes(d *openapi.Doc) {
 			"enriched and are refused here.",
 		Tags: []string{tagProducts},
 		Parameters: []openapi.Parameter{
+			salesChannelPathParameter(),
 			queryParameter("collection_id", typeString, "The listing's collection filter."),
 			queryParameter("category_id", typeString, "The listing's category filter."),
 			queryParameter("tag_id", typeString, "The listing's tag filter."),
@@ -67,8 +68,11 @@ func describeAttributes(d *openapi.Doc) {
 			queryParameter("min_price", typeInteger, "Refused: the price is not a catalog column."),
 			queryParameter("max_price", typeInteger, "Refused: the price is not a catalog column."),
 		},
+		// The body is one envelope around every attribute, not a page: the
+		// handler writes no count, offset or limit (D155).
 		Responses: map[string]any{
-			"200": openapi.Response("Every attribute with its counts", d.List(service.Facet{})),
+			"200": openapi.Response("Every attribute with its counts", d.Item([]service.Facet{})),
+			"403": channelRefusedResponse(),
 		},
 	})
 

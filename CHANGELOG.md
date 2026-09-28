@@ -12,6 +12,19 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The channel audit never saw the related products' route** (D156). It read
+  a route's path only from a literal, and the route was registered on a
+  concatenation. **For contributors:** a route path in a module or a plugin is a
+  whole string literal or a constant of one; anything else fails
+  `TestEveryRoutePathIsReadByTheAudit` in `internal/arch`.
+
+- **The facet counts' document described a body the read never writes**
+  (D155). `GET /store/v1/sales-channels/{sales_channel_id}/product-facets` was
+  described as a page with `count`, `offset` and `limit` required while it
+  answers only `data`, and its channel segment and `403` were not described.
+  **For API clients:** a client generated from the document gets a list
+  envelope of `data` alone.
+
 - **A cart could grow past its line ceiling** (D154). The ceiling of 100 lines
   asked whether the added variant was already in the cart, so the same variant
   with new `properties` (ADR 0223) opened a line past it, and a merge opened
@@ -134,6 +147,14 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A product names the add-ons its lines take** (ADR 0228). **For operators
+  and storefronts:** `PUT /admin/v1/products/{id}/add-ons` with
+  `{"variant_ids": [...]}` sets up to 20 variants of other products — an
+  engraving, a gift wrap — that the product's cart lines may carry;
+  `GET /store/v1/sales-channels/{sales_channel_id}/products/{id}/add-ons`
+  answers each visible one's `variant_id` and `product`. A cart line does not
+  carry an add-on yet; the decision binding one to its line follows.
 
 - **The cart counts the lines it opens** (ADR 0227). **For contributors:** the
   line ceiling is `MaxLineItems` in `internal/modules/cart/service`, asked in

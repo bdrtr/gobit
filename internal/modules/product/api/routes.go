@@ -68,8 +68,8 @@ const (
 // there would be putting a condition no store client could ever satisfy.
 //
 // That does not mean the storefront makes no authorization decision. Since
-// ADR 0044 the three channel-scoped catalog reads take a sales channel from the
-// PATH and refuse a channel the request's key does not hold, so those three can
+// ADR 0044 the channel-scoped catalog reads take a sales channel from the PATH
+// and refuse a channel the request's key does not hold, so those reads can
 // answer 403. The check is in the handler rather than in a middleware because
 // the answer depends on the key's channel set and not on the route, and because
 // a middleware would have to know which routes carry the segment — a second
@@ -94,6 +94,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get(pathStoreOptionValues, h.storeListOptionValues)
 	// A product's neighbors, under the same channel segment (ADR 0180).
 	r.Get(pathStoreRelated, h.storeRelatedProducts)
+	// The add-ons a product's lines may carry, under it too (ADR 0228).
+	r.Get(pathStoreAddOns, h.storeAddOns)
 
 	// The vocabulary a storefront needs to use the catalog filters: it has the
 	// word a shopper clicked, and the listing takes an id.
@@ -141,6 +143,10 @@ func (h *Handler) Routes(r chi.Router) {
 	// A product's relations (ADR 0180): read them all, replace one kind.
 	read.Get(pathProductRelations, h.adminListRelations)
 	write.Put(pathProductRelationsOfType, h.adminSetRelations)
+	// A product's add-ons (ADR 0228): read and replace the list. They are not
+	// in the revision view, as relations are not (ADR 0221).
+	read.Get(pathProductAddOns, h.adminListAddOns)
+	write.Put(pathProductAddOns, h.adminSetAddOns)
 
 	// --- Admin API: variants ---
 	revising.Post("/admin/v1/products/{id}/variants", h.adminCreateVariant)

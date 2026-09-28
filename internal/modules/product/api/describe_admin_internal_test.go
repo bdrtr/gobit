@@ -278,6 +278,14 @@ func adminEndpoints() []adminEndpoint {
 			request: setRelationsRequest{}, record: filledRelations(),
 		},
 		{
+			method: http.MethodGet, path: pathProductAddOns, status: "200",
+			record: addOnsDTO{VariantIDs: []string{"variant_2"}},
+		},
+		{
+			method: http.MethodPut, path: pathProductAddOns, status: "200",
+			request: setAddOnsRequest{}, record: addOnsDTO{VariantIDs: []string{"variant_2"}},
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/products/{id}/variants", status: "201",
 			request: createVariantRequest{}, record: filledAdminVariant(),
 		},

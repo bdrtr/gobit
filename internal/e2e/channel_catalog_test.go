@@ -12,9 +12,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -761,29 +763,43 @@ func TestTheCatalogPathNarrowsAndNeverBroadens(t *testing.T) {
 		decodeStorefrontEnvelope(t, served).kimlikler())
 }
 
-// TestAllThreeChannelScopedReadsRefuseAForeignChannel verifies that the rule is
+// TestEveryChannelScopedReadRefusesAForeignChannel verifies that the rule is
 // on every read that carries the segment, not only on the listing.
 //
-// Two of the three are the ones an omission would be quietest on: the single
-// product is the easiest address to guess because storefront URLs carry handles,
-// and the option vocabulary names the colors and sizes of the very products the
-// listing refuses to show.
-func TestAllThreeChannelScopedReadsRefuseAForeignChannel(t *testing.T) {
+// The single product is the easiest address to guess because storefront URLs
+// carry handles, and the option vocabulary names the colors and sizes of the
+// very products the listing refuses to show.
+//
+// # The population is the ROUTER's
+//
+// The reads are walked off the router under the channel segment. The list was
+// written by hand as the three ADR 0044 moved, and the related products, the
+// facet counts and the add-ons joined the segment without joining it (D155).
+func TestEveryChannelScopedReadRefusesAForeignChannel(t *testing.T) {
 	ground := channelCatalogFixture(t)
+	const segment = "/store/v1/sales-channels/{sales_channel_id}"
 
-	addresses := map[string]string{
-		"the listing":           "/products",
-		"the single product":    "/products/" + ground.secondChannelProduct.handle,
-		"the option vocabulary": "/option-values",
-	}
+	var suffixes []string
+	err := chi.Walk(testRouter, func(
+		method, pattern string, _ http.Handler, _ ...func(http.Handler) http.Handler,
+	) error {
+		if method == http.MethodGet && strings.HasPrefix(pattern, segment+"/") {
+			suffixes = append(suffixes, strings.TrimPrefix(pattern, segment))
+		}
+		return nil
+	})
+	require.NoError(t, err, "the router could not be walked")
+	require.GreaterOrEqual(t, len(suffixes), 6, "the channel-scoped reads could not be read off the router")
 
-	for name, suffix := range addresses {
-		t.Run(name, func(t *testing.T) {
-			recorder := magazaIstegi(t, catalogPath(ground.secondChannelID, suffix), publishableKey)
+	for _, suffix := range suffixes {
+		t.Run(suffix, func(t *testing.T) {
+			path := strings.ReplaceAll(suffix, "{id}", ground.secondChannelProduct.handle)
+			require.NotContains(t, path, "{", "a path parameter this test does not fill: %s", suffix)
+			recorder := magazaIstegi(t, catalogPath(ground.secondChannelID, path), publishableKey)
 
 			assert.Equal(t, http.StatusForbidden, recorder.Code,
 				"%s has to refuse a channel the key does not hold; body: %s",
-				name, recorder.Body.String())
+				suffix, recorder.Body.String())
 		})
 	}
 }

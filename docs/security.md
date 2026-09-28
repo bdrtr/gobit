@@ -113,13 +113,15 @@ vocabulary (`/store/v1/sales-channels/{sales_channel_id}/option-values`) carry
 the same segment and the same rule, and a hidden product returns the **same**
 error code as a product that never existed. The search plugin's
 `GET /store/v1/sales-channels/{sales_channel_id}/search` carries the segment too,
-and its narrowing is not a second implementation: all four routes reach one
-published helper, `corehttp.SalesChannelScope`, and `internal/arch` refuses any
-other way of reading the segment.
+and its narrowing is not a second implementation: every route carrying the
+segment — the three above, a product's related products and add-ons, the facet
+counts and the search — reaches one published helper,
+`corehttp.SalesChannelScope`, and `internal/arch` refuses any other way of
+reading the segment.
 
 **A cacheable catalog moves the gate, and that is a setting rather than a
 default.** Since [ADR 0151](adr/0151-the-catalog-says-how-long-it-may-be-reused.md)
-the three channel-scoped REST reads carry `Cache-Control` when
+the channel-scoped REST reads carry `Cache-Control` when
 `STOREFRONT_CATALOG_CACHE_TTL` is positive — nothing by default. The second
 setting is the one that matters here: `STOREFRONT_CATALOG_CACHE_SHARED` writes
 `public` instead of `private`, and because the key influences these bodies in no

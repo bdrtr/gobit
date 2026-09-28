@@ -97,6 +97,24 @@ func (f *scopeCatalog) StoreRelatedProducts(
 	return nil, nil
 }
 
+// ProductAddOns counts the call.
+func (f *scopeCatalog) ProductAddOns(context.Context, string) ([]string, error) {
+	f.count()
+	return []string{}, nil
+}
+
+// SetProductAddOns counts the call.
+func (f *scopeCatalog) SetProductAddOns(context.Context, string, []string) ([]string, error) {
+	f.count()
+	return []string{}, nil
+}
+
+// StoreProductAddOns counts the call.
+func (f *scopeCatalog) StoreProductAddOns(context.Context, string, []string) ([]service.StoreAddOn, error) {
+	f.count()
+	return nil, nil
+}
+
 // SetSchedule counts the call.
 func (f *scopeCatalog) SetSchedule(context.Context, string, service.Schedule) (models.Product, error) {
 	f.count()

@@ -150,6 +150,11 @@ func (r *Repo) SoftDeleteVariant(ctx context.Context, id string) error {
 	if n == 0 {
 		return notFound("variant", id)
 	}
+	// The entries naming the variant as an add-on go with it (ADR 0228): a list
+	// naming a deleted variant would offer the storefront a line it cannot sell.
+	if err := r.q.DeleteAddOnsOfVariant(ctx, id); err != nil {
+		return wrapDB(err, "could not delete the add-on entries of variant: %s", id)
+	}
 	return nil
 }
 

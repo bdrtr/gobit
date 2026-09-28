@@ -35,6 +35,13 @@ type Product struct {
 	Version       int64
 }
 
+type ProductAddOn struct {
+	ProductID string
+	VariantID string
+	Rank      int32
+	CreatedAt pgtype.Timestamptz
+}
+
 type ProductAttribute struct {
 	ID        string
 	Handle    string

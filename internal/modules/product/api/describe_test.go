@@ -3,6 +3,7 @@ package api_test
 import (
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +38,27 @@ const (
 	describedOptionValuesPath = "/store/v1/sales-channels/{sales_channel_id}/option-values"
 	// describedRelatedPath is the pattern of a product's related products.
 	describedRelatedPath = "/store/v1/sales-channels/{sales_channel_id}/products/{id}/related"
+	// describedFacetsPath is the pattern of the facet counts (ADR 0219).
+	describedFacetsPath = "/store/v1/sales-channels/{sales_channel_id}/product-facets"
+	// describedAddOnsPath is the pattern of a product's add-ons (ADR 0228).
+	describedAddOnsPath = "/store/v1/sales-channels/{sales_channel_id}/products/{id}/add-ons"
 )
+
+// channelScopedPaths derives the channel-scoped reads from the document: every
+// storefront path under the channel segment. The gates reading them used to
+// name four by hand, and the facet counts (ADR 0219) were never among them.
+func channelScopedPaths(t *testing.T, paths map[string]any) []string {
+	t.Helper()
+	var out []string
+	for path := range paths {
+		if strings.HasPrefix(path, "/store/v1/sales-channels/{sales_channel_id}/") {
+			out = append(out, path)
+		}
+	}
+	slices.Sort(out)
+	require.GreaterOrEqual(t, len(out), 6, "the channel-scoped reads could not be read off the document")
+	return out
+}
 
 // storefrontDoc produces Describe's output against the REAL route tree and
 // returns it as read back from JSON.
@@ -329,6 +350,26 @@ func assertProductSchema(t *testing.T, components, schema map[string]any) {
 		"required has to be the same as the keys encoding/json ALWAYS writes")
 }
 
+// TestTheUnpagedReadsDescribeOnlyTheirData holds that a read answering one
+// envelope around a list describes that envelope and no page (D155): the facet
+// counts were described as a page, count, offset and limit required, while the
+// handler writes only data.
+func TestTheUnpagedReadsDescribeOnlyTheirData(t *testing.T) {
+	t.Parallel()
+
+	paths, components := storefrontDoc(t)
+	for _, path := range []string{describedRelatedPath, describedFacetsPath, describedAddOnsPath} {
+		op := storefrontOperation(t, paths, http.MethodGet, path)
+		responses, ok := op["responses"].(map[string]any)
+		require.True(t, ok, path)
+		definition, ok := responses["200"].(map[string]any)
+		require.True(t, ok, path)
+		envelope := responseSchema(t, definition)
+		assert.ElementsMatch(t, []string{"data"}, storefrontFields(t, components, envelope), path)
+		assert.Equal(t, "array", property(t, components, envelope, "data")["type"], path)
+	}
+}
+
 // TestTheRelatedReadDescribesItsBodyAndKind verifies the storefront read of a
 // product's relations (ADR 0180): a single envelope around a LIST of storefront
 // products, and the kind as a required query parameter whose values are the
@@ -607,9 +648,7 @@ func TestTheChannelScopedReadsDescribeTheirSegment(t *testing.T) {
 
 	paths, _ := storefrontDoc(t)
 
-	for _, path := range []string{
-		describedProductsPath, describedProductPath, describedOptionValuesPath, describedRelatedPath,
-	} {
+	for _, path := range channelScopedPaths(t, paths) {
 		t.Run(path, func(t *testing.T) {
 			op := storefrontOperation(t, paths, http.MethodGet, path)
 
@@ -653,12 +692,17 @@ func TestTheChannelScopedReadsKeepTheirOwnTag(t *testing.T) {
 
 	paths, _ := storefrontDoc(t)
 
-	for path, tag := range map[string]string{
+	tags := map[string]string{
 		describedProductsPath:     "products",
 		describedProductPath:      "products",
 		describedOptionValuesPath: "option-values",
 		describedRelatedPath:      "products",
-	} {
+		describedFacetsPath:       "products",
+		describedAddOnsPath:       "products",
+	}
+	for _, path := range channelScopedPaths(t, paths) {
+		tag, known := tags[path]
+		require.True(t, known, "%s is a channel-scoped read the tag table does not name", path)
 		t.Run(path, func(t *testing.T) {
 			op := storefrontOperation(t, paths, http.MethodGet, path)
 
@@ -726,17 +770,18 @@ func TestEveryStoreEndpointIsDescribed(t *testing.T) {
 	}
 
 	assert.ElementsMatch(t, []string{
-		// The three CHANNEL-SCOPED reads. Their addresses carry the sales
-		// channel because their bodies vary with it (ADR 0044), and the list
+		// The three CHANNEL-SCOPED reads ADR 0044 moved. Their addresses carry
+		// the sales channel because their bodies vary with it, and the list
 		// being written out is what makes the split visible: a reader comparing
-		// these entries against the four below can see which storefront
-		// endpoints differ per channel and which do not.
+		// these entries against the unscoped vocabulary below can see which
+		// storefront endpoints differ per channel and which do not.
 		"GET " + describedProductsPath,
 		"GET " + describedProductPath,
 		"GET " + describedOptionValuesPath,
-		// A product's related products (ADR 0180), under the product they
-		// start from and scoped the same way.
+		// A product's related products (ADR 0180) and its add-ons (ADR 0228),
+		// under the product they start from and scoped the same way.
 		"GET " + describedRelatedPath,
+		"GET " + describedAddOnsPath,
 		// The GraphQL endpoint is part of the storefront too and it is
 		// described; OpenAPI cannot describe its SCHEMA but it does describe its
 		// path, its body and where the contract is (see
@@ -754,7 +799,7 @@ func TestEveryStoreEndpointIsDescribed(t *testing.T) {
 		// The attribute filter's vocabulary, unscoped like the tags, and its
 		// counts, over the channel's catalog like the listing (ADR 0219).
 		"GET /store/v1/product-attributes",
-		"GET /store/v1/sales-channels/{sales_channel_id}/product-facets",
+		"GET " + describedFacetsPath,
 	}, found)
 }
 

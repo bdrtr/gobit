@@ -159,14 +159,109 @@ func TestNothingOutsideCoreReadsTheChannelSegment(t *testing.T) {
 	assert.Zero(t, found)
 }
 
+// TestEveryRoutePathIsReadByTheAudit holds the convention the scan rests on:
+// a route's path is a string literal, or a constant whose value is one (D156).
+//
+// A concatenation reads back as unknown and the route drops out of the
+// population without a word; ADR 0180's related products were registered on
+// `pathStoreProduct + "/related"` and the coverage half above never saw them.
+// So a registration whose path is a concatenation, or a package constant the
+// scan cannot resolve, is a failure here rather than a route the audit skips.
+func TestEveryRoutePathIsReadByTheAudit(t *testing.T) {
+	t.Parallel()
+
+	registrations := 0
+	for _, tree := range []string{modulesDir, "plugins"} {
+		byPackage := map[string][]*ast.File{}
+		names := map[string]map[string]bool{}
+		for _, file := range productionFiles(t, filepath.Join(repoRoot, tree)) {
+			parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+			require.NoError(t, err, "%s could not be parsed", file)
+			pkg := filepath.ToSlash(strings.TrimPrefix(filepath.Dir(file), repoRoot+"/"))
+			byPackage[pkg] = append(byPackage[pkg], parsed)
+			if names[pkg] == nil {
+				names[pkg] = map[string]bool{}
+			}
+			for name := range declaredConstants(parsed) {
+				names[pkg][name] = true
+			}
+		}
+		for pkg, files := range byPackage {
+			consts := map[string]string{}
+			for _, file := range files {
+				for name, value := range channelFileConstants(file) {
+					consts[name] = value
+				}
+			}
+			for _, file := range files {
+				ast.Inspect(file, func(node ast.Node) bool {
+					call, ok := node.(*ast.CallExpr)
+					if !ok || len(call.Args) < 2 {
+						return true
+					}
+					selector, ok := call.Fun.(*ast.SelectorExpr)
+					if !ok {
+						return true
+					}
+					switch selector.Sel.Name {
+					case "Get", "Post", "Put", "Patch", "Delete":
+					default:
+						return true
+					}
+					if _, handler := call.Args[1].(*ast.SelectorExpr); !handler {
+						return true
+					}
+					pathShaped := false
+					switch path := call.Args[0].(type) {
+					case *ast.BinaryExpr, *ast.BasicLit:
+						pathShaped = true
+					case *ast.Ident:
+						pathShaped = names[pkg][path.Name]
+					}
+					if !pathShaped {
+						return true
+					}
+					registrations++
+					_, known := channelStringValue(call.Args[0], consts)
+					assert.True(t, known,
+						"%s registers a %s route on a path the channel audit cannot read; write "+
+							"it as a whole string literal or a constant of one", pkg, selector.Sel.Name)
+					return true
+				})
+			}
+		}
+	}
+	require.Positive(t, registrations, "the walk found no route registration at all; it is reading the tree wrongly")
+}
+
+// declaredConstants names the file's constants.
+func declaredConstants(file *ast.File) map[string]bool {
+	out := map[string]bool{}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			if value, ok := spec.(*ast.ValueSpec); ok {
+				for _, name := range value.Names {
+					out[name.Name] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
 // TestTheChannelSegmentIsSpelledOnce checks the routes' segment against the
 // published constant.
 //
 // The paths are whole string literals on purpose — the route audits resolve a
 // path from a literal or from a constant whose value is one, and a
 // concatenation reads back as unknown, which would drop the route out of their
-// population. The cost of that choice is that the spelling is typed again in
-// every path, and this is what pays it.
+// population; [TestEveryRoutePathIsReadByTheAudit] refuses one. The cost of that
+// choice is that the spelling is typed again in every path, and this is what
+// pays it.
 func TestTheChannelSegmentIsSpelledOnce(t *testing.T) {
 	t.Parallel()
 
@@ -186,7 +281,7 @@ func TestTheChannelSegmentIsSpelledOnce(t *testing.T) {
 // function in the packages that register them, the names it calls.
 //
 // The walk covers the module api packages AND plugins. Both halves are load
-// bearing: three of the four routes are a module's and the fourth is a
+// bearing: the catalog's routes are a module's and the search route is a
 // plugin's, and a scan of internal/modules alone would have reported full
 // coverage of a rule the plugin was breaking — which is the same blindness
 // D30 found in the personal-data audit and D28 in the case-folding one.

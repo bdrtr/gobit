@@ -17,8 +17,10 @@ const (
 	// pathProductRelationsOfType replaces one kind of them.
 	pathProductRelationsOfType = "/admin/v1/products/{id}/relations/{type}"
 	// pathStoreRelated reads one kind of them on the storefront, under the
-	// channel segment like every other catalog read (ADR 0044).
-	pathStoreRelated = pathStoreProduct + "/related"
+	// channel segment like every other catalog read (ADR 0044). It is a whole
+	// literal because the channel audit reads a path from one; built from
+	// pathStoreProduct it was invisible to it (D156).
+	pathStoreRelated = "/store/v1/sales-channels/{sales_channel_id}/products/{id}/related"
 )
 
 // relationsDTO is a product's relations: every kind, each in the operator's

@@ -34,6 +34,11 @@ type Catalog interface {
 	StoreRelatedProducts(
 		ctx context.Context, idOrHandle string, kind models.RelationType, salesChannelIDs []string,
 	) ([]service.StoreProduct, error)
+	// ProductAddOns, SetProductAddOns and StoreProductAddOns are the variants
+	// a product's lines may carry as add-ons (ADR 0228).
+	ProductAddOns(ctx context.Context, id string) ([]string, error)
+	SetProductAddOns(ctx context.Context, id string, variantIDs []string) ([]string, error)
+	StoreProductAddOns(ctx context.Context, idOrHandle string, salesChannelIDs []string) ([]service.StoreAddOn, error)
 	// SetSchedule and ClearSchedule replace and take off a product's schedule
 	// (ADR 0177, ADR 0179).
 	SetSchedule(ctx context.Context, id string, schedule service.Schedule) (models.Product, error)

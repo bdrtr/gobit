@@ -49,6 +49,9 @@ type memStore struct {
 	productCats   map[string][]string
 	// relations is the product -> kind -> related ids mapping, in rank order.
 	relations map[string]map[models.RelationType][]string
+	// addOns is the product -> add-on variant ids mapping, in rank order
+	// (ADR 0228).
+	addOns map[string][]string
 	// imports are the catalog imports (ADR 0205), made on first use.
 	imports map[string]*memImport
 	// attributeState is the typed attributes (ADR 0219), made on first use.
@@ -96,6 +99,7 @@ func newMemStore() *memStore {
 		productTags:   map[string][]string{},
 		productCats:   map[string][]string{},
 		relations:     map[string]map[models.RelationType][]string{},
+		addOns:        map[string][]string{},
 		calls:         map[string]int{},
 		failOn:        map[string]error{},
 	}
@@ -661,6 +665,14 @@ func (m *memStore) SoftDeleteProductChildren(_ context.Context, productID string
 			m.variants[id] = v
 		}
 	}
+	// The add-on list and the entries naming one of the product's variants go,
+	// as DeleteProductAddOnsTouching takes them.
+	delete(m.addOns, productID)
+	for owner, ids := range m.addOns {
+		m.addOns[owner] = slices.DeleteFunc(ids, func(id string) bool {
+			return m.variants[id].ProductID == productID
+		})
+	}
 	// The relations go in both directions, as DeleteProductRelationsTouching
 	// takes them.
 	delete(m.relations, productID)
@@ -958,6 +970,28 @@ func (m *memStore) SoftDeleteVariant(_ context.Context, id string) error {
 	}
 	v.DeletedAt = &deletionTime
 	m.variants[id] = v
+	for owner, ids := range m.addOns {
+		m.addOns[owner] = slices.DeleteFunc(ids, func(added string) bool { return added == id })
+	}
+	return nil
+}
+
+func (m *memStore) ListProductAddOns(_ context.Context, productID string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListProductAddOns"); err != nil {
+		return nil, err
+	}
+	return slices.Clone(m.addOns[productID]), nil
+}
+
+func (m *memStore) ReplaceProductAddOns(_ context.Context, productID string, variantIDs []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ReplaceProductAddOns"); err != nil {
+		return err
+	}
+	m.addOns[productID] = slices.Clone(variantIDs)
 	return nil
 }
 

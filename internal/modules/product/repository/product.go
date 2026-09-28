@@ -286,6 +286,11 @@ func (r *Repo) SoftDeleteProductChildren(ctx context.Context, productID string) 
 	if err := r.q.DeleteProductRelationsTouching(ctx, productID); err != nil {
 		return wrapDB(err, "could not delete the product's relations: %s", productID)
 	}
+	// Its add-on list and every entry naming one of its variants go with it
+	// (ADR 0228), for the relations' reason.
+	if err := r.q.DeleteProductAddOnsTouching(ctx, productID); err != nil {
+		return wrapDB(err, "could not delete the product's add-on entries: %s", productID)
+	}
 	return nil
 }
 

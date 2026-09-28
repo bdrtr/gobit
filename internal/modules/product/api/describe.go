@@ -239,13 +239,7 @@ func Describe(d *openapi.Doc) {
 		// pattern.
 		Parameters: []openapi.Parameter{
 			salesChannelPathParameter(),
-			{
-				Name:        "id",
-				In:          inPath,
-				Required:    true,
-				Schema:      map[string]any{schemaType: typeString},
-				Description: "Product id (prod_…) or the handle in the storefront address.",
-			},
+			storeProductParameter(),
 		},
 		Responses: map[string]any{
 			"200": openapi.Response("Storefront product", d.Item(service.StoreProduct{})),
@@ -254,6 +248,7 @@ func Describe(d *openapi.Doc) {
 	})
 
 	describeStorefrontRelated(d)
+	describeStorefrontAddOns(d)
 	describeStorefrontVocabulary(d)
 	describeStorefrontGraphQL(d)
 	describeAdminProducts(d)
@@ -527,6 +522,7 @@ func describeAdminProducts(d *openapi.Doc) {
 	describeAdminSchedule(d)
 	describeAdminRevisions(d)
 	describeAdminRelations(d)
+	describeAdminAddOns(d)
 }
 
 // describeStorefrontRelated describes the storefront read of a product's
@@ -546,13 +542,7 @@ func describeStorefrontRelated(d *openapi.Doc) {
 			"The body is a function of the URL alone and may be cached.",
 		Parameters: []openapi.Parameter{
 			salesChannelPathParameter(),
-			{
-				Name:        "id",
-				In:          inPath,
-				Required:    true,
-				Schema:      map[string]any{schemaType: typeString},
-				Description: "Product id (prod_…) or the handle in the storefront address.",
-			},
+			storeProductParameter(),
 			relationTypeParameter(),
 		},
 		Responses: map[string]any{
@@ -625,6 +615,67 @@ func describeAdminRelations(d *openapi.Doc) {
 		RequestBody: d.RequestBody(setRelationsRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The product's relations after the write", d.Item(relationsDTO{})),
+		},
+	})
+}
+
+// storeProductParameter is the storefront product the path names, by id or by
+// the handle in its address.
+func storeProductParameter() openapi.Parameter {
+	return openapi.Parameter{
+		Name:        "id",
+		In:          inPath,
+		Required:    true,
+		Schema:      map[string]any{schemaType: typeString},
+		Description: "Product id (prod_…) or the handle in the storefront address.",
+	}
+}
+
+// describeStorefrontAddOns describes the storefront read of a product's
+// add-ons (ADR 0228).
+func describeStorefrontAddOns(d *openapi.Doc) {
+	d.Describe(http.MethodGet, pathStoreAddOns, openapi.Operation{
+		Summary: "Lists the add-ons a product's cart lines may carry, as the storefront shows them.",
+		Tags:    []string{tagProducts},
+		Description: "Each entry is an add-on variant — an engraving, a gift wrap — and its product, " +
+			"enriched the way the single product endpoint enriches it, in the operator's order. " +
+			"The product named in the path has to be one the storefront may show, or the answer " +
+			"is 404. An add-on whose product is not published or not visible in the channel is " +
+			"LEFT OUT without a gap. The body is a function of the URL alone and may be cached.",
+		Parameters: []openapi.Parameter{
+			salesChannelPathParameter(),
+			storeProductParameter(),
+		},
+		Responses: map[string]any{
+			"200": openapi.Response("The product's add-ons", d.Item([]service.StoreAddOn{})),
+			"403": channelRefusedResponse(),
+		},
+	})
+}
+
+// describeAdminAddOns describes a product's add-ons on the admin surface
+// (ADR 0228).
+func describeAdminAddOns(d *openapi.Doc) {
+	d.Describe(http.MethodGet, pathProductAddOns, openapi.Operation{
+		Summary: "Returns the variants a product's cart lines may carry as add-ons, in the operator's order.",
+		Description: "The ids are what the operator wrote: an add-on whose product is a draft or " +
+			"bound to another channel is listed here and left out on the storefront.",
+		Responses: map[string]any{
+			"200": openapi.Response("The product's add-ons", d.Item(addOnsDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPut, pathProductAddOns, openapi.Operation{
+		Summary: "Replaces the variants a product's cart lines may carry as add-ons.",
+		Description: "The body is the WHOLE list, in the order the storefront shows it; an empty list " +
+			"takes every add-on off. Every id has to name a variant that exists and is not deleted, " +
+			"at most once, of ANOTHER product; a list breaking any of that is refused with 422, " +
+			"naming what it refused, and nothing is written. A product holds at most " +
+			strconv.Itoa(service.MaxAddOns) + ". The add-on's product does NOT have to be published. " +
+			"Deleting the variant or either product takes the entry off.",
+		RequestBody: d.RequestBody(setAddOnsRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The product's add-ons after the write", d.Item(addOnsDTO{})),
 		},
 	})
 }
