@@ -114,6 +114,8 @@ func (i *Interop) OpenCartForCountry(
 // would have stood in the way of the caller filling it in.
 //
 // metadata is the free JSON object to attach to the line; it may be left empty.
+// properties are what the shopper wrote on the line (ADR 0223): the same variant
+// with other properties is another line.
 //
 // After the line is added the cart totals are RECOMPUTED. If the computation blows
 // up, the line stays written and the error is returned with the
@@ -124,12 +126,14 @@ func (i *Interop) AddPricedLineItem(
 	cartID, variantID string,
 	quantity int64,
 	metadata json.RawMessage,
+	properties map[string]string,
 ) (string, error) {
 	result, err := i.w.AddLineItem(ctx, AddLineItemInput{
-		CartID:    cartID,
-		VariantID: variantID,
-		Quantity:  quantity,
-		Metadata:  metadata,
+		CartID:     cartID,
+		VariantID:  variantID,
+		Quantity:   quantity,
+		Metadata:   metadata,
+		Properties: properties,
 	})
 	if err != nil {
 		return "", err

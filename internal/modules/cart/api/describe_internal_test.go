@@ -286,7 +286,7 @@ func filledCart(now time.Time) cartDTO {
 // filledLineItem produces a line item record whose omitempty fields are written
 // too.
 func filledLineItem() lineItemDTO {
-	return lineItemDTO{Metadata: map[string]any{"k": "v"}}
+	return lineItemDTO{Metadata: map[string]any{"k": "v"}, Properties: map[string]string{"Engraving": "A"}}
 }
 
 // filledAddress produces an address record whose omitempty fields are written

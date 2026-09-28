@@ -94,8 +94,9 @@ type Store interface {
 	// GetLineItem returns the line by its identifier; another cart's line is
 	// NotFound.
 	GetLineItem(ctx context.Context, cartID, lineID string) (models.LineItem, error)
-	// GetLineItemByVariant returns the living line of the variant in the cart.
-	GetLineItemByVariant(ctx context.Context, cartID, variantID string) (models.LineItem, error)
+	// GetLineItemByVariant returns the living line of the variant with the
+	// given properties in the cart (ADR 0223).
+	GetLineItemByVariant(ctx context.Context, cartID, variantID string, properties map[string]string) (models.LineItem, error)
 	// ListLineItems returns the cart's lines in creation order.
 	ListLineItems(ctx context.Context, cartID string) ([]models.LineItem, error)
 	// SetLineItemQuantity writes the line's quantity as an ABSOLUTE value.

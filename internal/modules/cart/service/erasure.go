@@ -52,8 +52,9 @@ import (
 //     for personal data that lives in the other two tables.
 //
 // The honest cost of choosing anonymize is that the open columns survive it:
-// carts.metadata, cart_line_items.metadata, cart_addresses.metadata and
-// cart_shipping_methods.data are still there afterwards, and a delete is the
+// carts.metadata, cart_line_items.metadata and properties,
+// cart_addresses.metadata and cart_shipping_methods.data are still there
+// afterwards, and a delete is the
 // only answer that would clear them. That is the strongest argument the other
 // side has and it does not carry, because clearing them by dropping the row is
 // blanking a metadata column with extra steps — the thing ADR 0033 rejected by
@@ -105,6 +106,9 @@ const (
 // fourth calls its own "data". Naming it once keeps the declaration's rows
 // short enough to read as a table.
 const columnMetadata = "metadata"
+
+// columnProperties is a line's words (ADR 0223).
+const columnProperties = "properties"
 
 // columnShippingData is that fourth column's name.
 //
@@ -201,6 +205,14 @@ var personalColumns = []personaldata.Holding{
 	{
 		Table: tableCartLineItems, Column: columnMetadata, Kind: personaldata.Open,
 		Why:       "the caller's own data on a line — a personalisation, an engraving, a gift note",
+		OnErasure: personaldata.Kept,
+	},
+	{
+		// The shopper's own words on a line (ADR 0223). gobit bounds their size
+		// and never reads them, so it cannot tell a monogram from a name; like
+		// the metadata beside them they are named, not blanked.
+		Table: tableCartLineItems, Column: columnProperties, Kind: personaldata.Open,
+		Why:       "what the shopper wrote on a line — an engraving, a gift message; it may name somebody",
 		OnErasure: personaldata.Kept,
 	},
 	{

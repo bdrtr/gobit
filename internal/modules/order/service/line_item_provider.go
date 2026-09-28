@@ -85,6 +85,10 @@ const (
 	// FieldLineItemIsGiftcard says the line sold gift cards, as the product was
 	// flagged at the moment of sale (ADR 0211).
 	FieldLineItemIsGiftcard = "is_giftcard"
+	// FieldLineItemProperties are what the shopper wrote on the line
+	// (ADR 0223). Unlike the metadata they have a shape this module states:
+	// names and texts the cart bounded.
+	FieldLineItemProperties = "properties"
 )
 
 // The filter names this provider accepts that are NOT fields.
@@ -136,6 +140,7 @@ var lineItemFieldGetters = map[string]func(models.OrderLineItem) any{
 	FieldLineItemTotal:         func(l models.OrderLineItem) any { return l.Total },
 	FieldLineItemCreatedAt:     func(l models.OrderLineItem) any { return l.CreatedAt },
 	FieldLineItemIsGiftcard:    func(l models.OrderLineItem) any { return l.IsGiftcard },
+	FieldLineItemProperties:    func(l models.OrderLineItem) any { return propertiesOrEmpty(l.Properties) },
 }
 
 // LineItemQueryProvider offers the ORDER LINE to the cross-module read layer.
@@ -369,4 +374,13 @@ func timeFilter(name string, value any) (time.Time, error) {
 		return time.Time{}, errors.Invalid(CodeInvalidInput,
 			"filter %q has to be a date, %T given", name, value)
 	}
+}
+
+// propertiesOrEmpty is a line's properties, an empty map rather than nil so a
+// consumer reading one key needs no nil check.
+func propertiesOrEmpty(properties map[string]string) map[string]string {
+	if properties == nil {
+		return map[string]string{}
+	}
+	return properties
 }

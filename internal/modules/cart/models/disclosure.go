@@ -94,4 +94,6 @@ type PersonalNote struct {
 	CartID string
 	// Data is the free-form document the row holds.
 	Data map[string]any
+	// Properties are a line's words (ADR 0223); nil for any other row.
+	Properties map[string]string
 }

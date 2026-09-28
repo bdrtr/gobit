@@ -424,6 +424,12 @@ type addLineItemRequest struct {
 	// computation; that is why it stays in the body and is carried over to the
 	// flow as it is.
 	Metadata map[string]any `json:"metadata"`
+	// Properties are what the shopper wrote on the line — an engraving, a gift
+	// message — as names and texts (ADR 0223). They are part of what the line
+	// is: the same variant with other properties is another line, and they
+	// reach the order. At most 10, a name up to 64 characters and a text up to
+	// 500.
+	Properties map[string]string `json:"properties"`
 }
 
 // storeAddLineItem adds a line item to the cart; the SERVER decides the price.
@@ -457,7 +463,7 @@ func (h *Handler) storeAddLineItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := cartID(r)
-	lineID, err := flow.AddPricedLineItem(ctx, id, body.VariantID, *body.Quantity, metadata)
+	lineID, err := flow.AddPricedLineItem(ctx, id, body.VariantID, *body.Quantity, metadata, body.Properties)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return

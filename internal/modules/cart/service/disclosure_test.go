@@ -65,7 +65,7 @@ func newDisclosureCart(ctx context.Context, t *testing.T, svc *service.Service, 
 
 	_, err = svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
 		VariantID: variantA, Title: "T-shirt", Quantity: 1, UnitPrice: 500,
-		Metadata: noteMetadata,
+		Metadata: noteMetadata, Properties: map[string]string{"Engraving": "For Anna"},
 	})
 	require.NoError(t, err)
 	// A second line WITHOUT a note: a row that holds nothing about the person

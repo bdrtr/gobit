@@ -166,7 +166,13 @@ func (r *Repository) CartLineItemNotesForDisclosure(
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, models.PersonalNote{ID: rows[i].ID, CartID: rows[i].CartID, Data: data})
+		properties, err := toProperties(rows[i].Properties)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, models.PersonalNote{
+			ID: rows[i].ID, CartID: rows[i].CartID, Data: data, Properties: properties,
+		})
 	}
 
 	return out, nil

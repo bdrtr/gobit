@@ -56,6 +56,9 @@ import (
 // shipping method: the two Open columns, holding a name somebody typed.
 var disclosureNote = map[string]any{"engraving": "Ay\u015fe"}
 
+// disclosureWords are the words the tests write on the same line (ADR 0223).
+var disclosureWords = map[string]string{"Engraving": "For Anna"}
+
 // newDisclosureCart opens a cart carrying something in EVERY declared column —
 // the contact on the header, both addresses, a line with a note and a shipping
 // method with provider data — so that a column the disclosure forgets is visible
@@ -69,7 +72,7 @@ func newDisclosureCart(
 
 	_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
 		VariantID: "variant_DISCLOSURE", Title: "T-shirt", Quantity: 1, UnitPrice: 500,
-		Metadata: disclosureNote,
+		Metadata: disclosureNote, Properties: disclosureWords,
 	})
 	require.NoError(t, err)
 	_, err = svc.AddShippingMethod(ctx, cart.ID, service.AddShippingMethodInput{
@@ -127,6 +130,7 @@ func TestDisclosureCarriesEveryDeclaredColumnFromTheDatabase(t *testing.T) {
 	assert.Equal(t, "Ba\u011fdat Caddesi 100", values["cart_addresses.address_1"])
 	assert.Equal(t, "TR", values["cart_addresses.country_code"])
 	assert.Equal(t, disclosureNote, values["cart_line_items.metadata"])
+	assert.Equal(t, disclosureWords, values["cart_line_items.properties"])
 	assert.Equal(t, disclosureNote, values["cart_shipping_methods.data"])
 
 	// One record per row: the cart, its two addresses, the one noted line and the

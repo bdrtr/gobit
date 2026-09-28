@@ -188,7 +188,7 @@ func (s *Service) foldLines(
 	for i := range lines {
 		line := lines[i]
 
-		existing, err := s.store.GetLineItemByVariant(ctx, target.ID, line.VariantID)
+		existing, err := s.store.GetLineItemByVariant(ctx, target.ID, line.VariantID, line.Properties)
 		switch {
 		case err == nil:
 			if existing.Quantity > models.MaxQuantity-line.Quantity {
@@ -201,19 +201,21 @@ func (s *Service) foldLines(
 				return 0, err
 			}
 		case errors.IsNotFound(err):
-			// The title, the unit price and the metadata travel with the line.
+			// The title, the unit price, the metadata and the properties travel
+			// with the line; the properties are also what it merged by (ADR 0223).
 			// The price is the snapshot the source's session was quoted; it is
 			// of the same region and currency, and the next totals round
 			// reprices it exactly as it reprices a line that had been sitting in
 			// the target all along.
 			if _, err := s.store.CreateLineItem(ctx, models.LineItem{
-				ID:        models.NewLineItemID(),
-				CartID:    target.ID,
-				VariantID: line.VariantID,
-				Title:     line.Title,
-				Quantity:  line.Quantity,
-				UnitPrice: line.UnitPrice,
-				Metadata:  line.Metadata,
+				ID:         models.NewLineItemID(),
+				CartID:     target.ID,
+				VariantID:  line.VariantID,
+				Title:      line.Title,
+				Quantity:   line.Quantity,
+				UnitPrice:  line.UnitPrice,
+				Metadata:   line.Metadata,
+				Properties: line.Properties,
 			}); err != nil {
 				return 0, err
 			}

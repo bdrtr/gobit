@@ -85,6 +85,8 @@ const (
 	columnMetadata = "metadata"
 	columnNote     = "note"
 	columnReason   = "reason"
+	// columnProperties is a line's words (ADR 0223).
+	columnProperties = "properties"
 )
 
 // Where this module keeps personal data, and whether an erasure rewrites each
@@ -170,6 +172,14 @@ var personalColumns = []personaldata.Holding{
 	{
 		Table: tableOrderLineItems, Column: columnMetadata, Kind: personaldata.Open,
 		Why:       "the caller's own data on a line — a personalisation, an engraving, a gift note",
+		OnErasure: personaldata.Kept,
+	},
+	{
+		// The shopper's own words on a line (ADR 0223): gobit bounds them in the
+		// cart and never reads them, so like the metadata beside them they are
+		// named rather than blanked; they are also what was made and sold.
+		Table: tableOrderLineItems, Column: columnProperties, Kind: personaldata.Open,
+		Why:       "what the shopper wrote on a line — an engraving, a gift message; it may name somebody",
 		OnErasure: personaldata.Kept,
 	},
 	{

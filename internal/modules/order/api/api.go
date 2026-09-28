@@ -490,9 +490,12 @@ type lineItemDTO struct {
 	// every line sold before the order kept it.
 	PriceOrigin *linePriceOriginDTO `json:"price_origin,omitempty"`
 	// IsGiftcard says the line sold gift cards (ADR 0211).
-	IsGiftcard bool      `json:"is_giftcard"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	IsGiftcard bool `json:"is_giftcard"`
+	// Properties are what the shopper wrote on the line — an engraving, a gift
+	// message — as the cart line carried them (ADR 0223).
+	Properties map[string]string `json:"properties,omitempty"`
+	CreatedAt  time.Time         `json:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
 }
 
 // linePriceOriginDTO is which of a variant's prices a line was charged.
@@ -713,6 +716,7 @@ func toLineItemDTO(item models.OrderLineItem) lineItemDTO {
 		Metadata:      item.Metadata,
 		PriceOrigin:   toLinePriceOriginDTO(item.PriceOrigin),
 		IsGiftcard:    item.IsGiftcard,
+		Properties:    item.Properties,
 		CreatedAt:     item.CreatedAt,
 		UpdatedAt:     item.UpdatedAt,
 	}

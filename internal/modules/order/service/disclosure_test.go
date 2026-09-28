@@ -31,6 +31,7 @@ func disclosableInput(customerID, email string) service.CreateOrderInput {
 	in.IdempotencyKey = "checkout-" + customerID
 	in.Metadata = map[string]any{"channel": "web"}
 	in.Items[0].Metadata = map[string]any{"engraving": "for Ayse"}
+	in.Items[0].Properties = map[string]string{"Engraving": "For Anna"}
 	in.Addresses = []models.OrderAddress{{
 		Type:            models.AddressShipping,
 		SourceAddressID: "addr_SHIP",
@@ -147,6 +148,9 @@ func TestPersonalDataOfDisclosesTheOrderItsAddressAndTheTextTheShopTyped(t *test
 	engraving, present := fieldValue(lines[0], "metadata")
 	require.True(t, present)
 	assert.Equal(t, map[string]any{"engraving": "for Ayse"}, engraving)
+	words, present := fieldValue(lines[0], "properties")
+	require.True(t, present)
+	assert.Equal(t, map[string]string{"Engraving": "For Anna"}, words, "the shopper's words on the line (ADR 0223)")
 
 	returns := recordsOf(disclosure, "order_returns")
 	require.Len(t, returns, 1)
@@ -397,6 +401,7 @@ func TestPersonalDataOfLeavesOutARowThatHoldsNothing(t *testing.T) {
 
 	in := disclosableInput(testCustomerID, "ayse@example.com")
 	in.Items[0].Metadata = nil
+	in.Items[0].Properties = nil
 	in.Addresses[0] = models.OrderAddress{Type: models.AddressShipping}
 	ord, err := e.svc.CreateOrder(ctx, in)
 	require.NoError(t, err)
@@ -409,7 +414,7 @@ func TestPersonalDataOfLeavesOutARowThatHoldsNothing(t *testing.T) {
 	require.Equal(t, personaldata.Disclosed, disclosure.State)
 
 	assert.Empty(t, recordsOf(disclosure, "order_line_items"),
-		"the line's only declared column is the metadata and nobody wrote any")
+		"the line's declared columns are the metadata and the properties, and nobody wrote either")
 	assert.Empty(t, recordsOf(disclosure, "order_exchanges"),
 		"an exchange with no note and no metadata holds nothing about anybody")
 	assert.Len(t, recordsOf(disclosure, "orders"), 1)

@@ -363,6 +363,10 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 	if err != nil {
 		return models.OrderLineItem{}, err
 	}
+	properties, err := toProperties(row.Properties)
+	if err != nil {
+		return models.OrderLineItem{}, err
+	}
 	return models.OrderLineItem{
 		ID:            row.ID,
 		OrderID:       row.OrderID,
@@ -378,6 +382,7 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 		Metadata:      meta,
 		PriceOrigin:   toPriceOrigin(row.PriceID, row.PriceListID, row.PriceListType),
 		IsGiftcard:    row.IsGiftcard,
+		Properties:    properties,
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
 	}, nil
@@ -694,4 +699,31 @@ func textValue(v *string) string {
 	}
 
 	return *v
+}
+
+// toProperties reads a line's properties (ADR 0223); an empty object is nil.
+func toProperties(raw []byte) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeQueryFailed, "the line's properties could not be read")
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// fromProperties writes a line's properties; none is an empty object.
+func fromProperties(properties map[string]string) ([]byte, error) {
+	if len(properties) == 0 {
+		return []byte("{}"), nil
+	}
+	raw, err := json.Marshal(properties)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeQueryFailed, "the line's properties could not be written")
+	}
+	return raw, nil
 }

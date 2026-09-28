@@ -153,8 +153,9 @@ func TestEveryDeclaredColumnHasAReader(t *testing.T) {
 	require.NoError(t, err)
 	assertCoversTable(t, tableCartAddresses, columnsOf(addressFieldList))
 
-	lineNote, err := noteRecord(tableCartLineItems, columnMetadata,
-		models.PersonalNote{ID: "li_1", CartID: "cart_1", Data: note})
+	lineNote, err := lineRecord(models.PersonalNote{
+		ID: "li_1", CartID: "cart_1", Data: note, Properties: map[string]string{"Engraving": "A"},
+	})
 	require.NoError(t, err)
 	assertCoversTable(t, tableCartLineItems, columnsOf(lineNote.Fields))
 

@@ -45,11 +45,13 @@ type stubCarts struct {
 	openedAddsTo string
 	snapshotFn   func(ctx context.Context, cartID string) (json.RawMessage, error)
 	addLineFn    func(ctx context.Context, cartID, variantID, title string, quantity, unitPrice int64, metadata json.RawMessage) (string, error)
-	setQtyFn     func(ctx context.Context, cartID, lineItemID string, quantity int64) error
-	removeFn     func(ctx context.Context, cartID, lineItemID string) error
-	setTotalsFn  func(ctx context.Context, cartID string, totals json.RawMessage) error
-	addCodeFn    func(ctx context.Context, cartID, code string) error
-	removeCodeFn func(ctx context.Context, cartID, code string) error
+	// addedProperties are the properties of every AddCartLineItem call, in order.
+	addedProperties []map[string]string
+	setQtyFn        func(ctx context.Context, cartID, lineItemID string, quantity int64) error
+	removeFn        func(ctx context.Context, cartID, lineItemID string) error
+	setTotalsFn     func(ctx context.Context, cartID string, totals json.RawMessage) error
+	addCodeFn       func(ctx context.Context, cartID, code string) error
+	removeCodeFn    func(ctx context.Context, cartID, code string) error
 
 	// codes are the coupon codes the fake cart holds, per cart and in order.
 	// They are STATE and not a script: the flow writes a code and then reads the
@@ -110,7 +112,9 @@ func (s *stubCarts) AddCartLineItem(
 	cartID, variantID, title string,
 	quantity, unitPrice int64,
 	metadata json.RawMessage,
+	properties map[string]string,
 ) (string, error) {
+	s.addedProperties = append(s.addedProperties, properties)
 	if s.addLineFn == nil {
 		return "", errUnexpected("AddCartLineItem")
 	}

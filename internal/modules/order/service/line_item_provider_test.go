@@ -135,18 +135,20 @@ func TestLineItemQueryProviderARequestWithoutFieldsReturnsAllFields(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 
-	for _, field := range []string{
+	offered := []string{
 		service.FieldID, service.FieldLineItemOrderID, service.FieldLineItemVariantID,
 		service.FieldLineItemTitle, service.FieldLineItemQuantity, service.FieldLineItemUnitPrice,
 		service.FieldLineItemSubtotal, service.FieldLineItemDiscountTotal,
 		service.FieldLineItemTaxTotal, service.FieldLineItemTaxRateBps,
 		service.FieldLineItemTotal, service.FieldLineItemCreatedAt, service.FieldLineItemIsGiftcard,
-	} {
+		service.FieldLineItemProperties,
+	}
+	for _, field := range offered {
 		assert.Contains(t, records[0], field)
 	}
 	assert.NotContains(t, records[0], "metadata",
 		"the free-form bag is deliberately not offered; see lineItemFieldGetters")
-	assert.Len(t, records[0], 13, "the offered set is exactly the fields listed above")
+	assert.Len(t, records[0], len(offered), "the offered set is exactly the fields listed above")
 }
 
 // TestLineItemQueryProviderRejectsAnUndefinedField validates that a field that

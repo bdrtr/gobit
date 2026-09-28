@@ -65,6 +65,11 @@ type SnapshotItem struct {
 	VariantID string `json:"variant_id"`
 	// Quantity is the count on the line.
 	Quantity int64 `json:"quantity"`
+	// Metadata and Properties are the line's note and the shopper's words; the
+	// totals do not read them, the checkout hands them to the order line
+	// (ADR 0223).
+	Metadata   map[string]any    `json:"metadata,omitempty"`
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // SnapshotShippingMethod is the set of fields of a shipping method that enter

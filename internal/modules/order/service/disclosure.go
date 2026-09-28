@@ -113,7 +113,8 @@ var (
 	}
 
 	lineItemValues = disclosureValues[models.OrderLineItem]{
-		columnMetadata: func(i models.OrderLineItem) any { return jsonValue(i.Metadata) },
+		columnMetadata:   func(i models.OrderLineItem) any { return jsonValue(i.Metadata) },
+		columnProperties: func(i models.OrderLineItem) any { return propertiesValue(i.Properties) },
 	}
 
 	addressValues = disclosureValues[models.OrderAddress]{
@@ -529,4 +530,14 @@ func jsonValue(m map[string]any) any {
 	}
 
 	return m
+}
+
+// propertiesValue carries a line's words (ADR 0223), or nothing when it has
+// none.
+func propertiesValue(properties map[string]string) any {
+	if len(properties) == 0 {
+		return nil
+	}
+
+	return properties
 }

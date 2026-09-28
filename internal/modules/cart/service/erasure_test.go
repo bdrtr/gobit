@@ -125,6 +125,7 @@ func TestEraseNamesEveryColumnItLeft(t *testing.T) {
 		"carts.customer_id",
 		"carts.metadata",
 		"cart_line_items.metadata",
+		"cart_line_items.properties",
 		"cart_addresses.country_code",
 		"cart_addresses.metadata",
 		"cart_shipping_methods.data",

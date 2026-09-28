@@ -89,6 +89,9 @@ type adminAddLineItemRequest struct {
 	Quantity *int64 `json:"quantity"`
 	// Metadata is the free-form object attached to the line.
 	Metadata map[string]any `json:"metadata"`
+	// Properties are the words written on the line, as on the storefront
+	// (ADR 0223).
+	Properties map[string]string `json:"properties"`
 }
 
 // adminCreateCart opens a cart an operator is building
@@ -180,7 +183,7 @@ func (h *Handler) adminAddLineItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := cartID(r)
-	lineID, err := flow.AddPricedLineItem(scoped, id, body.VariantID, *body.Quantity, metadata)
+	lineID, err := flow.AddPricedLineItem(scoped, id, body.VariantID, *body.Quantity, metadata, body.Properties)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 

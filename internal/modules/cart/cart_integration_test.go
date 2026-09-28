@@ -765,7 +765,9 @@ func TestDatabaseEnforcesTotalsIdentity(t *testing.T) {
 }
 
 // TestDatabaseEnforcesLineUniqueness verifies that a second line for the same
-// variant cannot be opened at the database level either.
+// variant and properties cannot be opened at the database level either, the
+// properties compared whatever order their names were written in, and that
+// other properties are another line (ADR 0223).
 func TestDatabaseEnforcesLineUniqueness(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -775,14 +777,38 @@ func TestDatabaseEnforcesLineUniqueness(t *testing.T) {
 		VariantID: "variant_UNIQ", Title: "T-Shirt", Quantity: 1,
 	})
 	require.NoError(t, err)
+	engraved, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_UNIQ", Title: "T-Shirt", Quantity: 1,
+		Properties: map[string]string{"Engraving": "Ada", "Font": "Serif"},
+	})
+	require.NoError(t, err, "the same variant with other properties is another line")
 
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO cart_line_items (id, cart_id, variant_id, title, quantity)
          VALUES ($1, $2, 'variant_UNIQ', 'Copy', 1)`,
 		models.NewLineItemID(), cart.ID)
-
 	require.Error(t, err, "a second line for the same variant must not be openable")
-	assert.Contains(t, err.Error(), "cart_line_items_cart_variant_uniq")
+	assert.Contains(t, err.Error(), `"cart_line_items_cart_variant_properties_uniq"`)
+
+	_, err = testPool.Pool().Exec(ctx,
+		`INSERT INTO cart_line_items (id, cart_id, variant_id, title, quantity, properties)
+         VALUES ($1, $2, 'variant_UNIQ', 'Copy', 1, '{"Font": "Serif", "Engraving": "Ada"}')`,
+		models.NewLineItemID(), cart.ID)
+	require.Error(t, err, "the same properties written in another order are the same line")
+	assert.Contains(t, err.Error(), `"cart_line_items_cart_variant_properties_uniq"`)
+
+	again, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_UNIQ", Title: "T-Shirt", Quantity: 2,
+		Properties: map[string]string{"Font": "Serif", "Engraving": "Ada"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, engraved.ID, again.ID, "the service finds the line by its properties")
+	assert.Equal(t, int64(3), again.Quantity)
+
+	_, err = testPool.Pool().Exec(ctx,
+		`UPDATE cart_line_items SET properties = '[]' WHERE id = $1`, engraved.ID)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `"cart_line_items_properties_is_object"`)
 }
 
 // TestSoftDeleteDropsOutOfReads verifies that a soft-deleted cart is not read
@@ -1232,4 +1258,41 @@ func TestSetLineItemTotalsCannotWriteTheSameLineTwice(t *testing.T) {
 	assert.True(t, errors.IsInvalid(err), "the kind must be Invalid: %v", err)
 	assert.Equal(t, before, lineAmounts(ctx, t, item.ID),
 		"a rejected round must write nothing")
+}
+
+// TestTheRollbackOfPropertiesRefusesToChooseALine is ADR 0223's down file: a
+// cart holding one variant on two lines with different properties cannot go
+// back to one line per variant, so the rollback stops and changes nothing.
+func TestTheRollbackOfPropertiesRefusesToChooseALine(t *testing.T) {
+	ctx := context.Background()
+	src := cartmod.New(cartmod.Options{}).Migrations()
+	dsn := testdb.New(t, testDSN, "cart_properties_rollback")
+	require.NoError(t, db.Migrate(ctx, dsn, src, cartmod.ModuleName))
+	require.NoError(t, db.Migrate(ctx, dsn, outbox.Migrations(), outbox.MigrationOwner))
+	pool, err := db.New(ctx, db.DefaultConfig(dsn), nil)
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	svc, err := service.New(service.Options{Repo: repository.New(pool.Pool()), Events: eventbus.NewInMemory(nil)})
+	require.NoError(t, err)
+	cart, err := svc.CreateCart(ctx, service.CreateCartInput{RegionID: testRegionID, CurrencyCode: testCurrency})
+	require.NoError(t, err)
+	for _, words := range []string{"Ada", "Bo"} {
+		_, err = svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+			VariantID: "variant_ROLLBACK", Title: "Ring", Quantity: 1, Properties: map[string]string{"Engraving": words},
+		})
+		require.NoError(t, err)
+	}
+
+	err = db.MigrateDown(ctx, dsn, src, cartmod.ModuleName, 3)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SQLSTATE P0001", "the down file's own refusal, raised by the server")
+	var properties bool
+	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM information_schema.columns WHERE table_name = 'cart_line_items' AND column_name = 'properties')`,
+	).Scan(&properties))
+	assert.True(t, properties, "the refused rollback dropped nothing")
+	var lines int
+	require.NoError(t, pool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM cart_line_items WHERE cart_id = $1 AND deleted_at IS NULL`, cart.ID).Scan(&lines))
+	assert.Equal(t, 2, lines, "both lines stay")
 }

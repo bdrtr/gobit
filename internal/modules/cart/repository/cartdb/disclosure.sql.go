@@ -102,17 +102,19 @@ func (q *Queries) ListCartAddressesForDisclosure(ctx context.Context, cartIds []
 const listCartLineItemNotesForDisclosure = `-- name: ListCartLineItemNotesForDisclosure :many
 SELECT id,
        cart_id,
-       metadata
+       metadata,
+       properties
 FROM cart_line_items
 WHERE cart_id = ANY ($1::text[])
-  AND metadata <> '{}'::jsonb
+  AND (metadata <> '{}'::jsonb OR properties <> '{}'::jsonb)
 ORDER BY cart_id, created_at, id
 `
 
 type ListCartLineItemNotesForDisclosureRow struct {
-	ID       string
-	CartID   string
-	Metadata []byte
+	ID         string
+	CartID     string
+	Metadata   []byte
+	Properties []byte
 }
 
 // ListCartLineItemNotesForDisclosure returns the lines that carry a note.
@@ -130,6 +132,9 @@ type ListCartLineItemNotesForDisclosureRow struct {
 // note, so this is the difference between carrying every line of every cart
 // across the wire and carrying the few that hold anything; and a record whose
 // only field is an empty object tells the reader of a dossier nothing at all.
+//
+// The line's properties (ADR 0223) are the shopper's own words and are
+// disclosed beside the note for the same reason.
 func (q *Queries) ListCartLineItemNotesForDisclosure(ctx context.Context, cartIds []string) ([]ListCartLineItemNotesForDisclosureRow, error) {
 	rows, err := q.db.Query(ctx, listCartLineItemNotesForDisclosure, cartIds)
 	if err != nil {
@@ -139,7 +144,12 @@ func (q *Queries) ListCartLineItemNotesForDisclosure(ctx context.Context, cartId
 	items := []ListCartLineItemNotesForDisclosureRow{}
 	for rows.Next() {
 		var i ListCartLineItemNotesForDisclosureRow
-		if err := rows.Scan(&i.ID, &i.CartID, &i.Metadata); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.CartID,
+			&i.Metadata,
+			&i.Properties,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

@@ -242,12 +242,13 @@ type fakePricing struct {
 	err     error
 
 	// The arguments of the last call.
-	gotCartID    string
-	gotVariantID string
-	gotLineID    string
-	gotQuantity  int64
-	gotMetadata  json.RawMessage
-	calls        int
+	gotCartID     string
+	gotVariantID  string
+	gotLineID     string
+	gotQuantity   int64
+	gotMetadata   json.RawMessage
+	gotProperties map[string]string
+	calls         int
 }
 
 // The fake satisfying the surface the handler expects is verified at compile time.
@@ -259,9 +260,11 @@ func (f *fakePricing) AddPricedLineItem(
 	cartID, variantID string,
 	quantity int64,
 	metadata json.RawMessage,
+	properties map[string]string,
 ) (string, error) {
 	f.calls++
 	f.gotCartID, f.gotVariantID, f.gotQuantity, f.gotMetadata = cartID, variantID, quantity, metadata
+	f.gotProperties = properties
 	return f.lineID, f.err
 }
 
@@ -733,10 +736,12 @@ func TestAddLineItemReturns201(t *testing.T) {
 	h := newServerWithFlows(t, svc, api.Flows{Pricing: flow})
 
 	rec := doRequest(t, h, http.MethodPost, "/store/v1/carts/cart_1/line-items",
-		`{"variant_id":"var_1","quantity":3,"metadata":{"note":"gift"}}`)
+		`{"variant_id":"var_1","quantity":3,"metadata":{"note":"gift"},"properties":{"Engraving":"For Anna"}}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	assert.Equal(t, 1, flow.calls, "the line item has to be written by the flow")
+	assert.Equal(t, map[string]string{"Engraving": "For Anna"}, flow.gotProperties,
+		"the shopper's words reach the flow (ADR 0223)")
 	assert.Equal(t, "cart_1", flow.gotCartID)
 	assert.Equal(t, "var_1", flow.gotVariantID)
 	assert.Equal(t, int64(3), flow.gotQuantity)

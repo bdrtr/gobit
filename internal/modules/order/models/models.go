@@ -348,6 +348,9 @@ type OrderLineItem struct {
 	// IsGiftcard says the line sold gift cards: the product's flag at the
 	// moment of sale (ADR 0211). The books hold such a line's price as a debt.
 	IsGiftcard bool
+	// Properties are what the shopper wrote on the cart line, an engraving or a
+	// gift message, kept as what was sold (ADR 0223); nil when there are none.
+	Properties map[string]string
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

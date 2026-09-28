@@ -48,7 +48,7 @@ const (
 // Constraint names; they are used to turn a driver error into a meaningful typed
 // error. The names are EXACTLY the ones in the migration.
 const (
-	constraintLineVariantUniq = "cart_line_items_cart_variant_uniq"
+	constraintLineVariantUniq = "cart_line_items_cart_variant_properties_uniq"
 	constraintAddressTypeUniq = "cart_addresses_cart_type_uniq"
 	constraintShippingOptUniq = "cart_shipping_methods_cart_option_uniq"
 	constraintCartTotals      = "carts_totals_consistent"
@@ -267,6 +267,10 @@ func toLineItem(row cartdb.CartLineItem) (models.LineItem, error) {
 	if err != nil {
 		return models.LineItem{}, err
 	}
+	properties, err := toProperties(row.Properties)
+	if err != nil {
+		return models.LineItem{}, err
+	}
 	return models.LineItem{
 		ID:            row.ID,
 		CartID:        row.CartID,
@@ -279,9 +283,37 @@ func toLineItem(row cartdb.CartLineItem) (models.LineItem, error) {
 		TaxTotal:      row.TaxTotal,
 		Total:         row.Total,
 		Metadata:      meta,
+		Properties:    properties,
 		CreatedAt:     toTime(row.CreatedAt),
 		UpdatedAt:     toTime(row.UpdatedAt),
 	}, nil
+}
+
+// toProperties reads a line's properties; an empty object is nil.
+func toProperties(raw []byte) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var out map[string]string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeQueryFailed, "the line's properties could not be read")
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// fromProperties writes a line's properties; none is an empty object.
+func fromProperties(properties map[string]string) ([]byte, error) {
+	if len(properties) == 0 {
+		return []byte("{}"), nil
+	}
+	raw, err := json.Marshal(properties)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeQueryFailed, "the line's properties could not be written")
+	}
+	return raw, nil
 }
 
 // toLineItems converts a row slice into a domain model slice.

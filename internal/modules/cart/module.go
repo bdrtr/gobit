@@ -501,12 +501,13 @@ func (p *linePricing) AddPricedLineItem(
 	cartID, variantID string,
 	quantity int64,
 	metadata json.RawMessage,
+	properties map[string]string,
 ) (string, error) {
 	p.once.Do(func() { p.resolve(ctx) })
 	if p.err != nil {
 		return "", p.err
 	}
-	return p.svc.AddPricedLineItem(ctx, cartID, variantID, quantity, metadata)
+	return p.svc.AddPricedLineItem(ctx, cartID, variantID, quantity, metadata, properties)
 }
 
 // SetLineItemQuantity writes the line's quantity and reports whether the line

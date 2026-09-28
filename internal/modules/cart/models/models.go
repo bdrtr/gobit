@@ -205,6 +205,10 @@ type LineItem struct {
 	Total int64
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
+	// Properties are what the shopper wrote on the line, an engraving or a gift
+	// message; they are part of what the line is, so the same variant with
+	// other properties is another line (ADR 0223). Nil when there are none.
+	Properties map[string]string
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

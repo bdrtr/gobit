@@ -70,6 +70,9 @@ type AddLineItemInput struct {
 	// the cart module only increases the quantity and preserves the existing
 	// line's metadata (see AddLineItem in the cart service).
 	Metadata json.RawMessage
+	// Properties are what the shopper wrote on the line (ADR 0223): the same
+	// variant with other properties is another line, and they reach the order.
+	Properties map[string]string
 }
 
 // AddLineItemResult is the result of the added line and of the recalculated
@@ -190,7 +193,8 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 		return AddLineItemResult{}, err
 	}
 
-	lineID, err := w.carts.AddCartLineItem(ctx, in.CartID, in.VariantID, title, in.Quantity, unitPrice, in.Metadata)
+	lineID, err := w.carts.AddCartLineItem(ctx, in.CartID, in.VariantID, title, in.Quantity, unitPrice,
+		in.Metadata, in.Properties)
 	if err != nil {
 		return AddLineItemResult{}, err
 	}

@@ -203,7 +203,7 @@ func (s *stubCarts) OpenCart(
 // AddCartLineItem completes the surface of the cart workflows; this package
 // never calls it.
 func (s *stubCarts) AddCartLineItem(
-	_ context.Context, _, _, _ string, _, _ int64, _ json.RawMessage,
+	_ context.Context, _, _, _ string, _, _ int64, _ json.RawMessage, _ map[string]string,
 ) (string, error) {
 	return "", errUnexpected("AddCartLineItem")
 }

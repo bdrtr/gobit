@@ -287,11 +287,15 @@ type Carts interface {
 	// field the client sent would silently be dropped, and a "setting believed to
 	// have been sent but never applied" is exactly the reason why this API rejects
 	// the fields it does not recognize.
+	//
+	// properties are what the shopper wrote on the line (ADR 0223); the same
+	// variant with other properties is another line.
 	AddCartLineItem(
 		ctx context.Context,
 		cartID, variantID, title string,
 		quantity, unitPrice int64,
 		metadata json.RawMessage,
+		properties map[string]string,
 	) (lineItemID string, err error)
 
 	// SetCartLineItemQuantity writes the line's quantity as an ABSOLUTE value; the

@@ -12,6 +12,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A cart line's note never reached the order** (D152). The storefront's
+  add-line `metadata`, described as a gift note or a personalization, was
+  dropped by the checkout: its order snapshot had no field for it. Each line's
+  metadata now reaches the order line.
+
 - **The product service's fake store dropped most of an edit** (D151). It
   applied five of the product patch's sixteen fields, so a service test of an
   edit to the material, the weight, the collection or the type passed against a
@@ -113,6 +118,16 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A cart line carries what the shopper wrote** (ADR 0223). **For API
+  consumers:** the storefront and admin add-line bodies take `properties`, up to
+  ten names with texts (a name up to 64 characters, a text up to 500), refused
+  with 422 `cart_line_properties_invalid` otherwise; the same variant with other
+  properties is another line, and the same properties raise the line already
+  there. Cart lines and order lines answer `properties`, and the
+  `order_line_item` read entity offers them. **For operators:** cart migration
+  000004 re-keys the one-line-per-variant index and refuses to roll back while a
+  cart holds one variant on two lines; order migration 000030 adds the column.
 
 - **A product write names the version it read** (ADR 0222). **For API
   consumers:** `GET`, `POST` and every write that revises a product (its

@@ -447,3 +447,23 @@ func TestAddLineItemCartBuildCostIsLinear(t *testing.T) {
 	// is seen in the last round carrying the whole cart in a single question.
 	assert.Len(t, h.prices.requests[lineCount-1].Items, lineCount)
 }
+
+// TestAddLineItemCarriesThePropertiesToTheCart: the shopper's words reach the
+// cart module, which decides by them whether the line is another (ADR 0223).
+func TestAddLineItemCarriesThePropertiesToTheCart(t *testing.T) {
+	h := newHarness(t)
+	recordAddLine(h.carts, testLineA)
+	serveSnapshot(h.carts,
+		snapshotOf(0, nil, nil),
+		snapshotOf(1, []SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}}, nil),
+	)
+
+	_, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
+		CartID: testCartID, VariantID: testVariantA, Quantity: 1,
+		Properties: map[string]string{"Engraving": "For Anna"},
+	})
+	require.NoError(t, err)
+
+	require.Len(t, h.carts.addedProperties, 1)
+	assert.Equal(t, map[string]string{"Engraving": "For Anna"}, h.carts.addedProperties[0])
+}

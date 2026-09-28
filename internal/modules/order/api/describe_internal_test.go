@@ -616,7 +616,7 @@ func describedEndpoints() []endpointExpectation {
 func filledOrderDetail() orderDetailDTO {
 	return orderDetailDTO{
 		orderDTO: filledOrder(),
-		Items:    []lineItemDTO{{Metadata: map[string]any{"k": "v"}}},
+		Items:    []lineItemDTO{{Metadata: map[string]any{"k": "v"}, Properties: map[string]string{"Engraving": "A"}}},
 		Summary:  summaryDTO{},
 		ShippingMethods: []shippingMethodDTO{
 			{ID: "oship_1", ShippingOptionID: "so_1", Name: "Standard", Amount: 2500,

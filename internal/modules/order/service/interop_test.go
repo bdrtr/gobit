@@ -44,7 +44,8 @@ const snapshotJSON = `{
       "discount_total": 0,
       "tax_total":      600,
       "total":          3600,
-      "metadata":       {"line": 1}
+      "metadata":       {"line": 1},
+      "properties":     {"Engraving": "For Anna"}
     }
   ]
 }`
@@ -89,6 +90,7 @@ func TestPlaceOrderJSONReadsTheSchema(t *testing.T) {
 	assert.Equal(t, int64(600), line.TaxTotal)
 	assert.Equal(t, int64(3600), line.Total)
 	assert.Equal(t, map[string]any{"line": float64(1)}, line.Metadata)
+	assert.Equal(t, map[string]string{"Engraving": "For Anna"}, line.Properties, "ADR 0223")
 }
 
 // TestPlaceOrderJSONIgnoresUnknownFields validates that the consumer can pass a

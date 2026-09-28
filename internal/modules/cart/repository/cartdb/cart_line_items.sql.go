@@ -12,19 +12,20 @@ import (
 const createLineItem = `-- name: CreateLineItem :one
 
 INSERT INTO cart_line_items (
-    id, cart_id, variant_id, title, quantity, unit_price, metadata
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at
+    id, cart_id, variant_id, title, quantity, unit_price, metadata, properties
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, properties
 `
 
 type CreateLineItemParams struct {
-	ID        string
-	CartID    string
-	VariantID string
-	Title     string
-	Quantity  int64
-	UnitPrice int64
-	Metadata  []byte
+	ID         string
+	CartID     string
+	VariantID  string
+	Title      string
+	Quantity   int64
+	UnitPrice  int64
+	Metadata   []byte
+	Properties []byte
 }
 
 // cart_line_items queries.
@@ -41,6 +42,7 @@ func (q *Queries) CreateLineItem(ctx context.Context, arg CreateLineItemParams) 
 		arg.Quantity,
 		arg.UnitPrice,
 		arg.Metadata,
+		arg.Properties,
 	)
 	var i CartLineItem
 	err := row.Scan(
@@ -58,12 +60,13 @@ func (q *Queries) CreateLineItem(ctx context.Context, arg CreateLineItemParams) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Properties,
 	)
 	return i, err
 }
 
 const getLineItem = `-- name: GetLineItem :one
-SELECT id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at FROM cart_line_items
+SELECT id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, properties FROM cart_line_items
 WHERE id = $1 AND cart_id = $2 AND deleted_at IS NULL
 `
 
@@ -90,27 +93,31 @@ func (q *Queries) GetLineItem(ctx context.Context, arg GetLineItemParams) (CartL
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Properties,
 	)
 	return i, err
 }
 
 const getLineItemByVariant = `-- name: GetLineItemByVariant :one
-SELECT id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at FROM cart_line_items
-WHERE cart_id = $1 AND variant_id = $2 AND deleted_at IS NULL
+SELECT id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, properties FROM cart_line_items
+WHERE cart_id = $1 AND variant_id = $2 AND properties = $3::jsonb AND deleted_at IS NULL
 `
 
 type GetLineItemByVariantParams struct {
-	CartID    string
-	VariantID string
+	CartID     string
+	VariantID  string
+	Properties []byte
 }
 
-// GetLineItemByVariant returns the LIVING line of a variant in the cart.
+// GetLineItemByVariant returns the LIVING line of a variant with the given
+// properties in the cart.
 //
-// AddLineItem uses it: when the same variant is added a second time it raises
-// the quantity of the existing line instead of opening a new one (see
-// service.AddLineItem).
+// AddLineItem uses it: when the same variant is added a second time with the
+// same properties it raises the quantity of the existing line instead of
+// opening a new one (see service.AddLineItem); other properties are another
+// line (ADR 0223). JSONB equality ignores the order the keys were written in.
 func (q *Queries) GetLineItemByVariant(ctx context.Context, arg GetLineItemByVariantParams) (CartLineItem, error) {
-	row := q.db.QueryRow(ctx, getLineItemByVariant, arg.CartID, arg.VariantID)
+	row := q.db.QueryRow(ctx, getLineItemByVariant, arg.CartID, arg.VariantID, arg.Properties)
 	var i CartLineItem
 	err := row.Scan(
 		&i.ID,
@@ -127,12 +134,13 @@ func (q *Queries) GetLineItemByVariant(ctx context.Context, arg GetLineItemByVar
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Properties,
 	)
 	return i, err
 }
 
 const listLineItems = `-- name: ListLineItems :many
-SELECT id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at FROM cart_line_items
+SELECT id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, properties FROM cart_line_items
 WHERE cart_id = $1 AND deleted_at IS NULL
 ORDER BY created_at, id
 `
@@ -161,6 +169,7 @@ func (q *Queries) ListLineItems(ctx context.Context, cartID string) ([]CartLineI
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Properties,
 		); err != nil {
 			return nil, err
 		}
@@ -173,7 +182,7 @@ func (q *Queries) ListLineItems(ctx context.Context, cartID string) ([]CartLineI
 }
 
 const listLineItemsByCartIDs = `-- name: ListLineItemsByCartIDs :many
-SELECT id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at FROM cart_line_items
+SELECT id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, properties FROM cart_line_items
 WHERE cart_id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY cart_id, created_at, id
 `
@@ -204,6 +213,7 @@ func (q *Queries) ListLineItemsByCartIDs(ctx context.Context, cartIds []string) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Properties,
 		); err != nil {
 			return nil, err
 		}
@@ -219,7 +229,7 @@ const setLineItemQuantity = `-- name: SetLineItemQuantity :one
 UPDATE cart_line_items
 SET quantity = $3, updated_at = now()
 WHERE id = $1 AND cart_id = $2 AND deleted_at IS NULL
-RETURNING id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at
+RETURNING id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, properties
 `
 
 type SetLineItemQuantityParams struct {
@@ -246,6 +256,7 @@ func (q *Queries) SetLineItemQuantity(ctx context.Context, arg SetLineItemQuanti
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Properties,
 	)
 	return i, err
 }

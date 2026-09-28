@@ -36,6 +36,9 @@ type AddLineItemInput struct {
 	UnitPrice int64
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
+	// Properties are what the shopper wrote on the line (ADR 0223); they are
+	// checked by [models.NormalizeLineProperties].
+	Properties map[string]string
 }
 
 // AddLineItem adds a line to the cart.
@@ -57,14 +60,20 @@ type AddLineItemInput struct {
 //     the impression that the products are different.
 //
 // The decision is enforced at the database level too: the
-// cart_line_items_cart_variant_uniq partial unique index prevents even a write
-// path that somehow gets around the cart lock from opening the second line.
+// cart_line_items_cart_variant_properties_uniq partial unique index prevents
+// even a write path that somehow gets around the cart lock from opening the
+// second line.
 //
 // In the merge only the QUANTITY is carried over; the existing line's title,
-// unit price and metadata are PRESERVED. Per-line customization (for example a
-// different gift note on the same variant) is not supported in this phase; if it
-// were, the merge criterion would have to be "variant + customization" rather
-// than the variant.
+// unit price and metadata are PRESERVED.
+//
+// # Properties make another line
+//
+// Since ADR 0223 the criterion is the variant AND its properties: the same
+// variant with another engraving is another line, and with the same engraving
+// the quantity goes up. A variant split across lines by its properties is priced
+// at each line's quantity and reserved line by line; that is the price of two
+// different things being made from one variant.
 func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItemInput) (models.LineItem, error) {
 	if err := requireID("variant_id", in.VariantID); err != nil {
 		return models.LineItem{}, err
@@ -79,10 +88,14 @@ func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItem
 	if err := checkAmount("unit_price", in.UnitPrice, models.MaxAmount); err != nil {
 		return models.LineItem{}, err
 	}
+	properties, err := models.NormalizeLineProperties(in.Properties)
+	if err != nil {
+		return models.LineItem{}, err
+	}
 
 	var item models.LineItem
-	_, err := s.mutate(ctx, cartID, func(ctx context.Context, cart models.Cart) error {
-		existing, err := s.store.GetLineItemByVariant(ctx, cart.ID, in.VariantID)
+	_, err = s.mutate(ctx, cartID, func(ctx context.Context, cart models.Cart) error {
+		existing, err := s.store.GetLineItemByVariant(ctx, cart.ID, in.VariantID, properties)
 		switch {
 		case err == nil:
 			// The sum is checked without overflow: even if the sum of the two
@@ -97,13 +110,14 @@ func (s *Service) AddLineItem(ctx context.Context, cartID string, in AddLineItem
 			return err
 		case errors.IsNotFound(err):
 			item, err = s.store.CreateLineItem(ctx, models.LineItem{
-				ID:        models.NewLineItemID(),
-				CartID:    cart.ID,
-				VariantID: in.VariantID,
-				Title:     title,
-				Quantity:  in.Quantity,
-				UnitPrice: in.UnitPrice,
-				Metadata:  in.Metadata,
+				ID:         models.NewLineItemID(),
+				CartID:     cart.ID,
+				VariantID:  in.VariantID,
+				Title:      title,
+				Quantity:   in.Quantity,
+				UnitPrice:  in.UnitPrice,
+				Metadata:   in.Metadata,
+				Properties: properties,
 			})
 			return err
 		default:

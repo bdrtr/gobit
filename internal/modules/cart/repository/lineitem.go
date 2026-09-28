@@ -23,15 +23,20 @@ func (r *Repository) CreateLineItem(ctx context.Context, item models.LineItem) (
 	if err != nil {
 		return models.LineItem{}, err
 	}
+	properties, err := fromProperties(item.Properties)
+	if err != nil {
+		return models.LineItem{}, err
+	}
 
 	row, err := r.queries(ctx).CreateLineItem(ctx, cartdb.CreateLineItemParams{
-		ID:        item.ID,
-		CartID:    item.CartID,
-		VariantID: item.VariantID,
-		Title:     item.Title,
-		Quantity:  item.Quantity,
-		UnitPrice: item.UnitPrice,
-		Metadata:  meta,
+		ID:         item.ID,
+		CartID:     item.CartID,
+		VariantID:  item.VariantID,
+		Title:      item.Title,
+		Quantity:   item.Quantity,
+		UnitPrice:  item.UnitPrice,
+		Metadata:   meta,
+		Properties: properties,
 	})
 	if err != nil {
 		return models.LineItem{}, classify(err, codeQueryFailed, "the cart line item could not be created")
@@ -57,12 +62,19 @@ func (r *Repository) GetLineItem(ctx context.Context, cartID, lineID string) (mo
 	return toLineItem(row)
 }
 
-// GetLineItemByVariant returns the living line item of the variant in the cart;
-// NotFound if there is none.
-func (r *Repository) GetLineItemByVariant(ctx context.Context, cartID, variantID string) (models.LineItem, error) {
+// GetLineItemByVariant returns the living line item of the variant with the
+// given properties in the cart; NotFound if there is none (ADR 0223).
+func (r *Repository) GetLineItemByVariant(
+	ctx context.Context, cartID, variantID string, properties map[string]string,
+) (models.LineItem, error) {
+	raw, err := fromProperties(properties)
+	if err != nil {
+		return models.LineItem{}, err
+	}
 	row, err := r.queries(ctx).GetLineItemByVariant(ctx, cartdb.GetLineItemByVariantParams{
-		CartID:    cartID,
-		VariantID: variantID,
+		CartID:     cartID,
+		VariantID:  variantID,
+		Properties: raw,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

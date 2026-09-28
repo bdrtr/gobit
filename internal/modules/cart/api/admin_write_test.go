@@ -65,20 +65,22 @@ func (f *channelRecordingOpening) OpenCartForCountry(
 type channelRecordingPricing struct {
 	lineID string
 
-	gotChannels []string
-	gotCartID   string
-	gotVariant  string
-	gotQuantity int64
-	calls       int
+	gotChannels   []string
+	gotCartID     string
+	gotVariant    string
+	gotQuantity   int64
+	gotProperties map[string]string
+	calls         int
 }
 
 var _ api.LinePricing = (*channelRecordingPricing)(nil)
 
 // AddPricedLineItem records the identity and the arguments.
 func (f *channelRecordingPricing) AddPricedLineItem(
-	ctx context.Context, cartID, variantID string, quantity int64, _ json.RawMessage,
+	ctx context.Context, cartID, variantID string, quantity int64, _ json.RawMessage, properties map[string]string,
 ) (string, error) {
 	f.calls++
+	f.gotProperties = properties
 	f.gotChannels = corehttp.SalesChannelIDs(ctx)
 	f.gotCartID, f.gotVariant, f.gotQuantity = cartID, variantID, quantity
 
@@ -187,9 +189,10 @@ func TestAnAdminLineIsPricedUnderTheChannelTheRequestNames(t *testing.T) {
 
 	rec := doRequestAs(t, h, &adminWriter, http.MethodPost,
 		"/admin/v1/carts/cart_1/line-items",
-		`{"sales_channel_id":"sc_phone","variant_id":"var_1","quantity":2}`)
+		`{"sales_channel_id":"sc_phone","variant_id":"var_1","quantity":2,"properties":{"Engraving":"B"}}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, map[string]string{"Engraving": "B"}, pricing.gotProperties, "ADR 0223")
 	assert.Equal(t, []string{"sc_phone"}, pricing.gotChannels)
 	assert.Equal(t, "cart_1", pricing.gotCartID)
 	assert.Equal(t, "var_1", pricing.gotVariant)

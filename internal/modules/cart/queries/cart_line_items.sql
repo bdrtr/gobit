@@ -6,22 +6,24 @@
 
 -- name: CreateLineItem :one
 INSERT INTO cart_line_items (
-    id, cart_id, variant_id, title, quantity, unit_price, metadata
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    id, cart_id, variant_id, title, quantity, unit_price, metadata, properties
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: GetLineItem :one
 SELECT * FROM cart_line_items
 WHERE id = $1 AND cart_id = $2 AND deleted_at IS NULL;
 
--- GetLineItemByVariant returns the LIVING line of a variant in the cart.
+-- GetLineItemByVariant returns the LIVING line of a variant with the given
+-- properties in the cart.
 --
--- AddLineItem uses it: when the same variant is added a second time it raises
--- the quantity of the existing line instead of opening a new one (see
--- service.AddLineItem).
+-- AddLineItem uses it: when the same variant is added a second time with the
+-- same properties it raises the quantity of the existing line instead of
+-- opening a new one (see service.AddLineItem); other properties are another
+-- line (ADR 0223). JSONB equality ignores the order the keys were written in.
 -- name: GetLineItemByVariant :one
 SELECT * FROM cart_line_items
-WHERE cart_id = $1 AND variant_id = $2 AND deleted_at IS NULL;
+WHERE cart_id = $1 AND variant_id = $2 AND properties = sqlc.arg('properties')::jsonb AND deleted_at IS NULL;
 
 -- name: ListLineItems :many
 SELECT * FROM cart_line_items

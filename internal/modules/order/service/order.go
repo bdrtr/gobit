@@ -71,6 +71,8 @@ type CreateOrderItemInput struct {
 	PriceListType string
 	// IsGiftcard says the line sells gift cards (ADR 0211).
 	IsGiftcard bool
+	// Properties are the shopper's words on the line (ADR 0223).
+	Properties map[string]string
 }
 
 // CreateOrderLineTaxInput is one rate applied inside a line's tax stack.
@@ -375,6 +377,7 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 				Metadata:      in.Items[i].Metadata,
 				PriceOrigin:   priceOriginOf(in.Items[i]),
 				IsGiftcard:    in.Items[i].IsGiftcard,
+				Properties:    in.Items[i].Properties,
 			})
 			if err != nil {
 				return err

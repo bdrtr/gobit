@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"sync"
 	"time"
@@ -538,10 +539,11 @@ func (f *fakeStore) CreateLineItem(_ context.Context, item models.LineItem) (mod
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// The (cart_id, variant_id) uniqueness: the counterpart of the partial index
-	// in the migration.
+	// The (cart_id, variant_id, properties) uniqueness: the counterpart of the
+	// partial index in the migrations (ADR 0223).
 	for id := range f.items {
-		if f.items[id].CartID == item.CartID && f.items[id].VariantID == item.VariantID {
+		if f.items[id].CartID == item.CartID && f.items[id].VariantID == item.VariantID &&
+			maps.Equal(f.items[id].Properties, item.Properties) {
 			return models.LineItem{}, errors.Conflict("cart_line_item_exists",
 				"this variant is already in the cart")
 		}
@@ -566,12 +568,15 @@ func (f *fakeStore) GetLineItem(ctx context.Context, cartID, lineID string) (mod
 }
 
 // GetLineItemByVariant returns the line of the variant in the cart.
-func (f *fakeStore) GetLineItemByVariant(ctx context.Context, cartID, variantID string) (models.LineItem, error) {
+func (f *fakeStore) GetLineItemByVariant(
+	ctx context.Context, cartID, variantID string, properties map[string]string,
+) (models.LineItem, error) {
 	view := f.view(ctx)
 	defer view.release()
 
 	for id := range view.items {
-		if view.items[id].CartID == cartID && view.items[id].VariantID == variantID {
+		if view.items[id].CartID == cartID && view.items[id].VariantID == variantID &&
+			maps.Equal(view.items[id].Properties, properties) {
 			return view.items[id], nil
 		}
 	}
@@ -1008,10 +1013,12 @@ func (f *fakeStore) CartLineItemNotesForDisclosure(
 	out := make([]models.PersonalNote, 0, len(view.items))
 	for id := range view.items {
 		item := view.items[id]
-		if !wanted[item.CartID] || len(item.Metadata) == 0 {
+		if !wanted[item.CartID] || (len(item.Metadata) == 0 && len(item.Properties) == 0) {
 			continue
 		}
-		out = append(out, models.PersonalNote{ID: item.ID, CartID: item.CartID, Data: item.Metadata})
+		out = append(out, models.PersonalNote{
+			ID: item.ID, CartID: item.CartID, Data: item.Metadata, Properties: item.Properties,
+		})
 	}
 	sortNotes(out)
 

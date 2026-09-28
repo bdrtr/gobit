@@ -421,6 +421,10 @@ func (r *Repository) CreateLineItem(ctx context.Context, item models.OrderLineIt
 	if err != nil {
 		return models.OrderLineItem{}, err
 	}
+	properties, err := fromProperties(item.Properties)
+	if err != nil {
+		return models.OrderLineItem{}, err
+	}
 
 	row, err := r.queries(ctx).CreateOrderLineItem(ctx, orderdb.CreateOrderLineItemParams{
 		ID:            item.ID,
@@ -439,6 +443,7 @@ func (r *Repository) CreateLineItem(ctx context.Context, item models.OrderLineIt
 		PriceListID:   priceOriginPart(item.PriceOrigin, func(o models.LinePriceOrigin) string { return o.PriceListID }),
 		PriceListType: priceOriginPart(item.PriceOrigin, func(o models.LinePriceOrigin) string { return o.PriceListType }),
 		IsGiftcard:    item.IsGiftcard,
+		Properties:    properties,
 	})
 	if err != nil {
 		return models.OrderLineItem{}, classify(err, codeQueryFailed, "could not create the order line")

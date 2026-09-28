@@ -92,6 +92,10 @@ type SnapshotItem struct {
 	VariantID string `json:"variant_id"`
 	// Quantity is the count on the line.
 	Quantity int64 `json:"quantity"`
+	// Metadata is the line's note and Properties the shopper's words on it;
+	// the checkout reads neither and hands both to the order line (ADR 0223).
+	Metadata   map[string]any    `json:"metadata,omitempty"`
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // VariantIDs returns the variant identities of the lines WITHOUT DUPLICATES and
@@ -299,6 +303,10 @@ type planLine struct {
 	PriceID       string  `json:"price_id,omitempty"`
 	PriceListID   *string `json:"price_list_id,omitempty"`
 	PriceListType string  `json:"price_list_type,omitempty"`
+	// Metadata and Properties are the cart line's note and words, carried to
+	// the order line (ADR 0223).
+	Metadata   map[string]any    `json:"metadata,omitempty"`
+	Properties map[string]string `json:"properties,omitempty"`
 	// IsGiftcard reports that the line's product is a gift card, read when
 	// the plan was made and copied onto the order line (ADR 0211).
 	IsGiftcard bool `json:"is_giftcard"`
@@ -511,6 +519,8 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 			PriceID:         amounts.PriceID,
 			PriceListID:     amounts.PriceListID,
 			PriceListType:   amounts.PriceListType,
+			Metadata:        item.Metadata,
+			Properties:      item.Properties,
 			IsGiftcard:      facts[item.VariantID].IsGiftcard,
 		})
 	}
@@ -977,6 +987,12 @@ type orderSnapshotItem struct {
 	// IsGiftcard says the line sold gift cards; the order books it as a debt
 	// (ADR 0211).
 	IsGiftcard bool `json:"is_giftcard"`
+	// Metadata is the cart line's note, which the order always took and the
+	// checkout never handed it (D152), and Properties the shopper's words on
+	// the line; both land in the change the order learns properties
+	// (ADR 0223).
+	Metadata   map[string]any    `json:"metadata,omitempty"`
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // orderSnapshotTaxComponent is one rate inside a stacked line's tax, on the wire
@@ -1013,6 +1029,8 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 			PriceListID:   p.Lines[i].PriceListID,
 			PriceListType: p.Lines[i].PriceListType,
 			IsGiftcard:    p.Lines[i].IsGiftcard,
+			Metadata:      p.Lines[i].Metadata,
+			Properties:    p.Lines[i].Properties,
 		})
 	}
 

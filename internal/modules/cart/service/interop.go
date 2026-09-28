@@ -150,6 +150,11 @@ type interopItem struct {
 	ID        string `json:"id"`
 	VariantID string `json:"variant_id"`
 	Quantity  int64  `json:"quantity"`
+	// Metadata and Properties cross so the checkout can hand them to the order
+	// line (ADR 0223): a gift note or an engraving the order never received was
+	// a promise the storefront made and nothing kept.
+	Metadata   map[string]any    `json:"metadata,omitempty"`
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // interopShippingMethod is the JSON schema of a shipping method.
@@ -254,9 +259,11 @@ func (i *Interop) CartSnapshotJSON(ctx context.Context, cartID string) (json.Raw
 	}
 	for i := range detail.Items {
 		snapshot.Items = append(snapshot.Items, interopItem{
-			ID:        detail.Items[i].ID,
-			VariantID: detail.Items[i].VariantID,
-			Quantity:  detail.Items[i].Quantity,
+			ID:         detail.Items[i].ID,
+			VariantID:  detail.Items[i].VariantID,
+			Quantity:   detail.Items[i].Quantity,
+			Metadata:   detail.Items[i].Metadata,
+			Properties: detail.Items[i].Properties,
 		})
 	}
 	for i := range detail.ShippingMethods {
@@ -282,6 +289,7 @@ func (i *Interop) AddCartLineItem(
 	cartID, variantID, title string,
 	quantity, unitPrice int64,
 	metadata json.RawMessage,
+	properties map[string]string,
 ) (string, error) {
 	extra, err := decodeInteropMetadata(metadata)
 	if err != nil {
@@ -289,11 +297,12 @@ func (i *Interop) AddCartLineItem(
 	}
 
 	line, err := i.svc.AddLineItem(ctx, cartID, AddLineItemInput{
-		VariantID: variantID,
-		Title:     title,
-		Quantity:  quantity,
-		UnitPrice: unitPrice,
-		Metadata:  extra,
+		VariantID:  variantID,
+		Title:      title,
+		Quantity:   quantity,
+		UnitPrice:  unitPrice,
+		Metadata:   extra,
+		Properties: properties,
 	})
 	if err != nil {
 		return "", err

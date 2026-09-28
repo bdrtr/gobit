@@ -256,7 +256,7 @@ func disclosureRecords(
 		}
 
 		for _, note := range lineNotesByCart[carts[i].ID] {
-			record, err := noteRecord(tableCartLineItems, columnMetadata, note)
+			record, err := lineRecord(note)
 			if err != nil {
 				return nil, err
 			}
@@ -405,6 +405,29 @@ func noteRecord(table, column string, note models.PersonalNote) (personaldata.Re
 	}
 
 	return personaldata.Record{Table: table, ID: note.ID, Fields: fields}, nil
+}
+
+// lineRecord builds the record of a line: its note and its properties, the two
+// columns of the table the declaration names (ADR 0223).
+func lineRecord(note models.PersonalNote) (personaldata.Record, error) {
+	fields, err := declaredFields(tableCartLineItems, func(declared string) (any, bool, error) {
+		switch declared {
+		case columnMetadata:
+			return openField(note.Data)
+		case columnProperties:
+			if len(note.Properties) == 0 {
+				return nil, false, nil
+			}
+			return note.Properties, true, nil
+		default:
+			return nil, false, unreadableColumn(tableCartLineItems, declared)
+		}
+	})
+	if err != nil {
+		return personaldata.Record{}, err
+	}
+
+	return personaldata.Record{Table: tableCartLineItems, ID: note.ID, Fields: fields}, nil
 }
 
 // textField carries a text column, or reports that it holds nothing.
