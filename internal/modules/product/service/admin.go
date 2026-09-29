@@ -105,6 +105,25 @@ func (a *AdminSurface) SetProductRelations(ctx context.Context, id string, lists
 	return err
 }
 
+// SetProductAddOns replaces a product's add-on list (ADR 0232).
+//
+// Each reference is a variant id or a SKU, in the storefront's order: an
+// operator knows the SKU, and the panel should not have to look each one up
+// before it can save. The rules are the service's (ADR 0228), and a refusal
+// names what it refused as the operator typed it.
+func (a *AdminSurface) SetProductAddOns(ctx context.Context, id string, refs []string) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeNotReady, "the product service is not set up")
+	}
+	ids, err := a.svc.ResolveVariantRefs(ctx, refs)
+	if err != nil {
+		return err
+	}
+	_, err = a.svc.SetProductAddOns(ctx, id, ids)
+
+	return err
+}
+
 // UpdateProductBasics updates a product's title, handle and status.
 //
 // # Why these three and not a patch document

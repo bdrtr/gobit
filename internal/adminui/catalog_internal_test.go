@@ -1295,6 +1295,11 @@ type fakeProductWriter struct {
 	// related records the relation saves; relatedErr is what they answer.
 	related    []map[string][]string
 	relatedErr error
+
+	// addOns records the add-on saves; addOnsErr is what they answer
+	// (ADR 0232).
+	addOns    [][]string
+	addOnsErr error
 }
 
 // SetProductRelations records the lists.
@@ -1302,6 +1307,12 @@ func (f *fakeProductWriter) SetProductRelations(_ context.Context, _ string, lis
 	f.related = append(f.related, lists)
 
 	return f.relatedErr
+}
+
+func (f *fakeProductWriter) SetProductAddOns(_ context.Context, _ string, refs []string) error {
+	f.addOns = append(f.addOns, refs)
+
+	return f.addOnsErr
 }
 
 func (f *fakeProductWriter) UpdateProductBasics(_ context.Context, id, title, handle, status string, version int64) error {

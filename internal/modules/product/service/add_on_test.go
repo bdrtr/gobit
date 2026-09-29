@@ -150,3 +150,32 @@ func TestTheStorefrontShowsTheAddOnsItMayShow(t *testing.T) {
 	_, err = fx.svc.StoreProductAddOns(ctx, hidden.ID, []string{"sc_a"})
 	assert.True(t, errors.IsNotFound(err), "a draft's list is not the storefront's to read: %v", err)
 }
+
+// TestThePanelNamesAnAddOnByItsSKU is ADR 0232 on the admin surface: the
+// panel's references, a SKU or a variant id, resolve in the order typed, and a
+// SKU no live variant carries is refused naming it, writing nothing.
+func TestThePanelNamesAnAddOnByItsSKU(t *testing.T) {
+	fx := newChannelFixture(t)
+	ctx := context.Background()
+	ring := seedProduct(t, fx.svc, "ring", "Ring")
+	engravingSKU := "ENG-1"
+	engraving := seedProductInput(t, fx.svc, service.CreateProductInput{
+		Handle: "engraving", Title: "Engraving", Status: models.StatusPublished,
+		Variants: []service.CreateVariantInput{{Title: "Script", SKU: &engravingSKU}},
+	}).Variants[0].ID
+	wrap := seedProduct(t, fx.svc, "wrap", "Wrap").Variants[0].ID
+	surface := service.NewAdminSurface(fx.svc)
+
+	require.NoError(t, surface.SetProductAddOns(ctx, ring.ID, []string{wrap, engravingSKU}))
+	read, err := fx.svc.ProductAddOns(ctx, ring.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{wrap, engraving}, read, "the SKU resolves in the order typed")
+
+	err = surface.SetProductAddOns(ctx, ring.ID, []string{"ENG-9"})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err))
+	assert.Contains(t, err.Error(), "ENG-9", "the refusal names what was typed")
+	read, err = fx.svc.ProductAddOns(ctx, ring.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{wrap, engraving}, read, "a refused save writes nothing")
+}

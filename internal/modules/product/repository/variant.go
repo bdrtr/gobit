@@ -114,6 +114,19 @@ func (r *Repo) ListVariantsByIDs(ctx context.Context, ids []string) ([]models.Va
 	return toVariants(rows)
 }
 
+// ListVariantsBySKUs returns the live variants carrying the given SKUs in a
+// SINGLE query.
+func (r *Repo) ListVariantsBySKUs(ctx context.Context, skus []string) ([]models.Variant, error) {
+	if len(skus) == 0 {
+		return []models.Variant{}, nil
+	}
+	rows, err := r.q.ListVariantsBySKUs(ctx, skus)
+	if err != nil {
+		return nil, wrapDB(err, "could not read variants by SKU (%d SKUs)", len(skus))
+	}
+	return toVariants(rows)
+}
+
 // UpdateVariant updates the variant partially.
 func (r *Repo) UpdateVariant(ctx context.Context, id string, patch VariantPatch) (models.Variant, error) {
 	meta, err := patchMetadata(patch.Metadata)

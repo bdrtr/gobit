@@ -44,11 +44,11 @@ func ProductStatuses() []string { return slices.Clone(productStatuses) }
 // ProductWriter is the narrow write surface the panel needs, declared on the
 // CONSUMER side (ADR 0001).
 //
-// The panel edits a product's basics, its schedule and its related products,
-// and nothing else. Each method is a decision someone made: an interface that
+// The panel edits a product's basics, its schedule, its related products and
+// its add-ons, and nothing else. Each method is a decision someone made: an interface that
 // offered more would let a future screen delete a product without that decision
 // being made anywhere. The schedule joined in ADR 0178, the related products in
-// ADR 0181.
+// ADR 0181, the add-ons in ADR 0232.
 //
 // The signatures speak only in primitives and stdlib types because this package
 // cannot import the product module; see the module's admin surface for the full
@@ -68,6 +68,9 @@ type ProductWriter interface {
 	// products, all of them or none; each list is handles or ids in the
 	// storefront's order (ADR 0181).
 	SetProductRelations(ctx context.Context, id string, lists map[string][]string) error
+	// SetProductAddOns replaces a product's add-ons, each a variant's SKU or
+	// id, in the storefront's order (ADR 0232).
+	SetProductAddOns(ctx context.Context, id string, refs []string) error
 }
 
 // publishAtLayout is how the form's moment is written and read: the value of
@@ -276,12 +279,12 @@ func (u *UI) renderEditForm(
 	w http.ResponseWriter, r *http.Request, status int, product productRow, message string,
 ) {
 	u.templates.render(w, r, status, "product_edit.gohtml", map[string]any{
-		titleKey:     "Edit " + product.Title,
-		productKey:   product,
-		"Statuses":   productStatuses,
-		errorKey:     message,
-		"ActionPath": ProductsPath + "/" + product.ID + "/edit",
-		"CancelPath": ProductsPath + "/" + product.ID,
+		titleKey:      "Edit " + product.Title,
+		productKey:    product,
+		"Statuses":    productStatuses,
+		errorKey:      message,
+		actionPathKey: ProductsPath + "/" + product.ID + "/edit",
+		cancelPathKey: ProductsPath + "/" + product.ID,
 	})
 }
 

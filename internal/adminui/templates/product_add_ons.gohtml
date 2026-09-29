@@ -1,0 +1,28 @@
+{{- /*
+product_add_ons.gohtml edits a product's add-ons (ADR 0232).
+
+The list is a textarea holding one variant per line, by its SKU or its id, in
+the order the storefront shows them. A SKU is what an operator knows; a picker
+over every variant would not fit a catalog of fifty thousand. The module
+replaces the list whole and refuses it whole, and the form comes back with what
+was typed and the module's sentence naming the line to fix.
+*/ -}}
+{{ define "body" }}
+<p><a href="{{ .CancelPath }}">← Back to the product</a></p>
+
+<h1>Add-ons of {{ .Product.Title }}</h1>
+{{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
+
+<form method="post" action="{{ .ActionPath }}">
+  <label>Add-ons (one variant per line)
+    <textarea name="add_ons" rows="8">{{ .Text }}</textarea>
+  </label>
+  <p>Each line is a variant of another product — an engraving, a gift wrap — by
+  its SKU or its id, in the order the storefront shows them; at most {{ .Limit }}.
+  A variant of a draft, or of a product sold in another channel, can be listed:
+  the storefront leaves it out until it can show it. An empty list takes every
+  add-on off.</p>
+  <button type="submit">Save</button>
+  <a href="{{ .CancelPath }}">Cancel</a>
+</form>
+{{ end }}

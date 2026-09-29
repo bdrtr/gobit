@@ -69,10 +69,12 @@ func builtInScopes() map[string]string {
 		ProductEditPath: scopeProductWrite,
 		// Editing the related products is a product write like any other.
 		ProductRelationsPath: scopeProductWrite,
-		VariantPricePath:     scopePricingWrite,
-		VariantStockPath:     scopeInventoryWrite,
-		OrdersPath:           scopeOrderRead,
-		OrderPath:            scopeOrderRead,
+		// And so is editing the add-ons (ADR 0232).
+		ProductAddOnsPath: scopeProductWrite,
+		VariantPricePath:  scopePricingWrite,
+		VariantStockPath:  scopeInventoryWrite,
+		OrdersPath:        scopeOrderRead,
+		OrderPath:         scopeOrderRead,
 		// The sales report is made of order lines and shows what they sold for.
 		// It names no scope of its own because it holds no data of its own: an
 		// operator who may read the orders may read their total.

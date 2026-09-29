@@ -110,26 +110,27 @@ func (l relatedList) Text() string {
 
 // loadRelations reads a product and its related products: the product record,
 // which carries the three lists of ids, then the related products themselves in
-// ONE read for all three lists.
+// ONE read for all three lists. The record is returned too, for the add-ons the
+// product page reads off it (ADR 0232).
 //
 // A related id the second read does not return is left out. The module takes a
 // deleted product off every list in the deletion's own transaction, so this is
 // the gap between two reads, not a state the lists are kept in.
 func (u *UI) loadRelations(
 	w http.ResponseWriter, r *http.Request, id string,
-) (product productRow, lists []relatedList, ok bool) {
+) (product productRow, record query.Record, lists []relatedList, ok bool) {
 	if strings.TrimSpace(id) == "" {
 		u.errorPage(w, r, http.StatusNotFound, "Not found", "No product was named.")
-		return productRow{}, nil, false
+		return productRow{}, nil, nil, false
 	}
 	products, err := u.catalog.Graph(r.Context(), productByID(id))
 	if err != nil {
 		u.catalogFailure(w, r, err, "The product could not be read.")
-		return productRow{}, nil, false
+		return productRow{}, nil, nil, false
 	}
 	if len(products) == 0 {
 		u.errorPage(w, r, http.StatusNotFound, "Not found", "There is no product with that id.")
-		return productRow{}, nil, false
+		return productRow{}, nil, nil, false
 	}
 
 	var every []string
@@ -146,7 +147,7 @@ func (u *UI) loadRelations(
 		})
 		if err != nil {
 			u.catalogFailure(w, r, err, "The related products could not be read.")
-			return productRow{}, nil, false
+			return productRow{}, nil, nil, false
 		}
 		for _, rec := range related {
 			p := relatedProduct{
@@ -170,12 +171,12 @@ func (u *UI) loadRelations(
 		lists = append(lists, list)
 	}
 
-	return productRowOf(products[0]), lists, true
+	return productRowOf(products[0]), products[0], lists, true
 }
 
 // editRelations renders the form.
 func (u *UI) editRelations(w http.ResponseWriter, r *http.Request) {
-	product, lists, ok := u.loadRelations(w, r, chi.URLParam(r, "id"))
+	product, _, lists, ok := u.loadRelations(w, r, chi.URLParam(r, "id"))
 	if !ok {
 		return
 	}
@@ -222,7 +223,7 @@ func (u *UI) submitRelations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	product, stored, ok := u.loadRelations(w, r, id)
+	product, _, stored, ok := u.loadRelations(w, r, id)
 	if !ok {
 		return
 	}
@@ -238,13 +239,13 @@ func (u *UI) renderRelationsForm(
 	w http.ResponseWriter, r *http.Request, status int, product productRow, lists []relatedList, message string,
 ) {
 	u.templates.render(w, r, status, "product_relations.gohtml", map[string]any{
-		titleKey:     "Related products of " + product.Title,
-		productKey:   product,
-		"Lists":      lists,
-		"Limit":      RelationLimit,
-		errorKey:     message,
-		"ActionPath": ProductsPath + "/" + product.ID + "/relations",
-		"CancelPath": ProductsPath + "/" + product.ID,
+		titleKey:      "Related products of " + product.Title,
+		productKey:    product,
+		"Lists":       lists,
+		"Limit":       RelationLimit,
+		errorKey:      message,
+		actionPathKey: ProductsPath + "/" + product.ID + "/relations",
+		cancelPathKey: ProductsPath + "/" + product.ID,
 	})
 }
 

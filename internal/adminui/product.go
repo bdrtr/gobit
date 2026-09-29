@@ -44,8 +44,13 @@ type variantRow struct {
 // layer's no-N+1 rule exists to prevent.
 func (u *UI) showProduct(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	product, relations, ok := u.loadRelations(w, r, id)
+	product, record, relations, ok := u.loadRelations(w, r, id)
 	if !ok {
+		return
+	}
+	addOns, err := u.loadAddOns(r, record)
+	if err != nil {
+		u.catalogFailure(w, r, err, "The add-ons could not be read.")
 		return
 	}
 
@@ -83,6 +88,8 @@ func (u *UI) showProduct(w http.ResponseWriter, r *http.Request) {
 		"ProductsPath":  ProductsPath,
 		"EditPath":      ProductsPath + "/" + product.ID + "/edit",
 		"RelationsPath": ProductsPath + "/" + product.ID + "/relations",
+		"AddOns":        addOns,
+		"AddOnsPath":    ProductsPath + "/" + product.ID + "/add-ons",
 	})
 }
 

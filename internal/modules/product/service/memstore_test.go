@@ -895,6 +895,23 @@ func (m *memStore) ListVariantsByIDs(_ context.Context, ids []string) ([]models.
 	return out, nil
 }
 
+func (m *memStore) ListVariantsBySKUs(_ context.Context, skus []string) ([]models.Variant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListVariantsBySKUs"); err != nil {
+		return nil, err
+	}
+
+	all := m.liveVariants()
+	out := make([]models.Variant, 0, len(all))
+	for i := range all {
+		if all[i].SKU != nil && slices.Contains(skus, *all[i].SKU) {
+			out = append(out, all[i])
+		}
+	}
+	return out, nil
+}
+
 // VisibleVariantIDs computes the variant visibility with the PRODUCT rule
 // itself.
 //

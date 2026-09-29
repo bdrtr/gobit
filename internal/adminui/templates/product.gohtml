@@ -57,6 +57,18 @@ Three printing decisions are visible here and all are about not lying:
 <p>This product has no variants.</p>
 {{ end }}
 
+<h2>Add-ons</h2>
+<p><a href="{{ .AddOnsPath }}">Edit add-ons</a></p>
+{{ if .AddOns }}
+<ol>
+  {{ range .AddOns }}
+  <li><a href="{{ $.ProductsPath }}/{{ .ProductID }}">{{ .ProductTitle }}</a> — {{ .VariantTitle }}{{ if .SKU }} ({{ .SKU }}){{ end }}{{ if .Hidden }} — {{ .Status }}; the storefront leaves it out{{ end }}</li>
+  {{ end }}
+</ol>
+{{ else }}
+<p>None.</p>
+{{ end }}
+
 <h2>Related products</h2>
 <p><a href="{{ .RelationsPath }}">Edit related products</a></p>
 {{ range .Relations }}

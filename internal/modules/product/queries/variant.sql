@@ -22,6 +22,12 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT * FROM product_variant
 WHERE sku = $1 AND deleted_at IS NULL;
 
+-- name: ListVariantsBySKUs :many
+-- The live variants carrying the given SKUs, for the panel's add-on form, which
+-- names a variant the way an operator knows it (ADR 0232).
+SELECT * FROM product_variant
+WHERE sku = ANY(sqlc.arg('skus')::text[]) AND deleted_at IS NULL;
+
 -- name: ListVariants :many
 SELECT * FROM product_variant
 WHERE deleted_at IS NULL

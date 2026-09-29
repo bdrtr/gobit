@@ -162,3 +162,4 @@ truth: a report says what was true on the day it was taken.
 | [An engraving and its ring — measured 2026-09-29](0229-an-engraving-and-its-ring.md) | 92 |
 | [The engraving comes back too — measured 2026-09-29](0230-the-engraving-comes-back-too.md) | 53 |
 | [An add-on on a product page — measured 2026-09-29](0231-an-add-on-on-a-product-page.md) | 34 |
+| [An operator names an engraving — measured 2026-09-29](0232-an-operator-names-an-engraving.md) | 43 |

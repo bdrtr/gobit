@@ -148,6 +148,7 @@ type Store interface {
 	CountVariants(ctx context.Context, f VariantFilter) (int, error)
 	ListVariantsByProductIDs(ctx context.Context, productIDs []string) ([]models.Variant, error)
 	ListVariantsByIDs(ctx context.Context, ids []string) ([]models.Variant, error)
+	ListVariantsBySKUs(ctx context.Context, skus []string) ([]models.Variant, error)
 	// VisibleVariantIDs returns, out of the given variants, the ones visible
 	// in the channels in a SINGLE query.
 	//

@@ -148,6 +148,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **The panel edits a product's add-ons** (ADR 0232). **For operators:** the
+  product page lists the add-ons its lines take, and "Edit add-ons" replaces
+  the list, one variant per line by its SKU or its id; a SKU no variant carries
+  is refused by name and nothing is saved. The form needs the product write
+  privilege.
+
 - **The GraphQL storefront reads a product's add-ons** (ADR 0231). **For
   storefront clients:** `Product.addOns { variantId product { ... } }` answers
   what `GET /store/v1/sales-channels/{sales_channel_id}/products/{id}/add-ons`

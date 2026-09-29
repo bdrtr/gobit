@@ -635,6 +635,49 @@ func (q *Queries) ListVariantsByProductIDs(ctx context.Context, dollar_1 []strin
 	return items, nil
 }
 
+const listVariantsBySKUs = `-- name: ListVariantsBySKUs :many
+SELECT id, product_id, title, sku, barcode, ean, upc, manage_inventory, allow_backorder, weight, rank, metadata, created_at, updated_at, deleted_at FROM product_variant
+WHERE sku = ANY($1::text[]) AND deleted_at IS NULL
+`
+
+// The live variants carrying the given SKUs, for the panel's add-on form, which
+// names a variant the way an operator knows it (ADR 0232).
+func (q *Queries) ListVariantsBySKUs(ctx context.Context, skus []string) ([]ProductVariant, error) {
+	rows, err := q.db.Query(ctx, listVariantsBySKUs, skus)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProductVariant{}
+	for rows.Next() {
+		var i ProductVariant
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProductID,
+			&i.Title,
+			&i.Sku,
+			&i.Barcode,
+			&i.Ean,
+			&i.Upc,
+			&i.ManageInventory,
+			&i.AllowBackorder,
+			&i.Weight,
+			&i.Rank,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setOptionValueFolded = `-- name: SetOptionValueFolded :execrows
 UPDATE product_option_value
 SET value_folded = $1::text

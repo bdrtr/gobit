@@ -45,6 +45,15 @@ const errorKey = "Error"
 // with a blank product rather than fail.
 const productKey = "Product"
 
+// actionPathKey and cancelPathKey carry where a product form posts and where
+// its cancel link leads. They are constants for errorKey's reason: the edit,
+// the related-products and the add-ons forms fill them, and a typo in one would
+// render a form that posts nowhere rather than fail.
+const (
+	actionPathKey = "ActionPath"
+	cancelPathKey = "CancelPath"
+)
+
 // pages lists the panel pages that are looked up BY NAME at runtime.
 //
 // The list is maintained by hand, deliberately. A page name is a STRING: a typo
@@ -62,6 +71,7 @@ var pages = []string{
 	"product.gohtml",
 	"product_edit.gohtml",
 	"product_relations.gohtml",
+	"product_add_ons.gohtml",
 	"variant.gohtml",
 	"orders.gohtml",
 	"order.gohtml",

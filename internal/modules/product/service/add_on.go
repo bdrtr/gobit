@@ -81,6 +81,57 @@ func (s *Service) SetProductAddOns(ctx context.Context, id string, variantIDs []
 	return s.ProductAddOns(ctx, id)
 }
 
+// ResolveVariantRefs turns references an operator typed — a variant id, or a
+// SKU — into variant ids, in the given order (ADR 0232).
+//
+// A reference starting with the variant id prefix is an id, and anything else a
+// SKU, which is how an operator knows a variant; a SKU no live variant carries
+// is refused, naming it as it was typed, and so is an empty reference. An id is
+// passed through: whether it names a live variant is the write's question.
+func (s *Service) ResolveVariantRefs(ctx context.Context, refs []string) ([]string, error) {
+	var skus []string
+	for _, ref := range refs {
+		if _, err := requireID("variant", ref); err != nil {
+			return nil, err
+		}
+		if !strings.HasPrefix(ref, prefixVariant) {
+			skus = append(skus, ref)
+		}
+	}
+
+	bySKU := make(map[string]string, len(skus))
+	if len(skus) > 0 {
+		found, err := s.repo.ListVariantsBySKUs(ctx, skus)
+		if err != nil {
+			return nil, err
+		}
+		for i := range found {
+			if found[i].SKU != nil {
+				bySKU[*found[i].SKU] = found[i].ID
+			}
+		}
+	}
+
+	out := make([]string, 0, len(refs))
+	var missing []string
+	for _, ref := range refs {
+		if strings.HasPrefix(ref, prefixVariant) {
+			out = append(out, ref)
+			continue
+		}
+		id, ok := bySKU[ref]
+		if !ok {
+			missing = append(missing, ref)
+			continue
+		}
+		out = append(out, id)
+	}
+	if len(missing) > 0 {
+		return nil, invalid("no variant has the SKU: %s", strings.Join(missing, ", "))
+	}
+	return out, nil
+}
+
 // requireAddOnVariants refuses, naming them, the ids no live variant carries
 // and the variants of the product itself: a line cannot carry its own product
 // as an add-on.
