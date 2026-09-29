@@ -47,6 +47,21 @@ func (q *Queries) GetPriceList(ctx context.Context, id string) (PriceList, error
 	return i, err
 }
 
+const getPriceListForUpdate = `-- name: GetPriceListForUpdate :one
+SELECT id FROM price_list
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE
+`
+
+// GetPriceListForUpdate locks a live list's row, so an update reads its clock
+// after any update that holds it (ADR 0242).
+func (q *Queries) GetPriceListForUpdate(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, getPriceListForUpdate, id)
+	var id_2 string
+	err := row.Scan(&id_2)
+	return id_2, err
+}
+
 const insertPriceList = `-- name: InsertPriceList :one
 
 INSERT INTO price_list (

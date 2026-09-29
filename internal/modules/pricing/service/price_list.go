@@ -97,7 +97,7 @@ func (s *Service) UpdatePriceList(ctx context.Context, id string, in PriceListIn
 	}
 
 	list.ID = id
-	return s.repo.UpdatePriceList(ctx, list, s.clock())
+	return s.repo.UpdatePriceList(ctx, list, s.clock)
 }
 
 // DeletePriceList listeyi soft delete ile siler.

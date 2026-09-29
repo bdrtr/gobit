@@ -8,6 +8,7 @@ not more.
 - **Status:** Accepted
 - **Date:** 2026-09-08
 - **Amended by:** [0241](0241-a-row-written-under-a-lock-is-stamped-when-written.md): a moment written under a lock whose order decides what the rows say is the write's, `clock_timestamp()`
+- **Amended by:** [0242](0242-a-moment-the-process-reads-is-read-after-the-lock.md): a moment the process reads under a lock is read after it; the invoice reads its year before and its moment after, in one year
 
 ## Context
 

@@ -4,6 +4,7 @@ package pricing_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -307,4 +308,159 @@ func TestAReductionIsReadFromTheRealHistory(t *testing.T) {
 	lowest, ok := timeline.Lowest(timeline.From, timeline.To)
 	require.True(t, ok)
 	assert.Equal(t, int64(8_000), lowest.Amount, "the last thirty days' lowest is the sale itself")
+}
+
+// tickingClock is one wall clock two services share: every reading is a
+// second after the one before.
+type tickingClock struct {
+	mu   sync.Mutex
+	next time.Time
+}
+
+// Now returns the next moment.
+func (c *tickingClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.next
+	c.next = c.next.Add(time.Second)
+
+	return now
+}
+
+// pausingReader reads the shared clock and, at its at-th reading, holds its
+// caller until released: the shape of a writer that read its moment and then
+// waited. A zero at holds the first reading.
+type pausingReader struct {
+	clock    *tickingClock
+	at       int
+	mu       sync.Mutex
+	readings int
+	read     chan struct{}
+	release  chan struct{}
+}
+
+// Now reads the clock, and holds the reader at the chosen reading.
+func (p *pausingReader) Now() time.Time {
+	now := p.clock.Now()
+	p.mu.Lock()
+	p.readings++
+	hold := p.readings == max(p.at, 1)
+	p.mu.Unlock()
+	if hold {
+		close(p.read)
+		<-p.release
+	}
+
+	return now
+}
+
+// TestThePricesWrittenLastAreTheStandingOnes is ADR 0242 on the price history:
+// a replacement that read the clock and waited is written after the one that
+// held the set's lock, and its prices are the live ones. Its snapshot was
+// stamped with the moment read before the wait, earlier than the other's, and
+// the history, whose latest snapshot is the standing price, answered with the
+// prices that had been replaced.
+func TestThePricesWrittenLastAreTheStandingOnes(t *testing.T) {
+	ctx := context.Background()
+	clock := &tickingClock{next: time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)}
+	repo := repository.New(testPool.Pool())
+	plain := service.New(repo, service.Options{Now: clock.Now})
+	set, err := plain.CreatePriceSet(ctx, []service.PriceInput{{CurrencyCode: "TRY", Amount: 10_000}})
+	require.NoError(t, err)
+
+	// The replacement reads the clock twice: the service for the prices' ids,
+	// and the repository for the stamp. The second reading is held, since the
+	// stamp is what has to come after the lock.
+	reader := &pausingReader{clock: clock, at: 2, read: make(chan struct{}), release: make(chan struct{})}
+	waiting := service.New(repo, service.Options{Now: reader.Now})
+	waited := make(chan error, 1)
+	go func() {
+		_, err := waiting.SetPrices(ctx, set.ID, []service.PriceInput{{CurrencyCode: "TRY", Amount: 9_000}})
+		waited <- err
+	}()
+	select {
+	case <-reader.read:
+	case err := <-waited:
+		t.Fatalf("the replacement read the clock once and finished (%v); its stamp was read before the lock", err)
+	}
+
+	other := make(chan error, 1)
+	go func() {
+		_, err := plain.SetPrices(ctx, set.ID, []service.PriceInput{{CurrencyCode: "TRY", Amount: 8_000}})
+		other <- err
+	}()
+	// The other replacement finishes unless the held one already has the set's
+	// lock; the wait is bounded so that shape cannot hang the test.
+	select {
+	case err := <-other:
+		require.NoError(t, err)
+		other <- nil
+	case <-time.After(500 * time.Millisecond):
+	}
+	close(reader.release)
+	require.NoError(t, <-waited)
+	require.NoError(t, <-other)
+
+	live, err := plain.ListPrices(ctx, set.ID)
+	require.NoError(t, err)
+	snapshots := setSnapshots(ctx, t, repo, set.ID)
+	require.NotEmpty(t, snapshots)
+	var liveBase int64
+	for _, p := range live {
+		if p.PriceListID == nil {
+			liveBase = p.Amount
+		}
+	}
+	assert.Equal(t, liveBase, basePrice(t, snapshots[len(snapshots)-1]).Amount,
+		"the latest snapshot holds the prices the set holds")
+}
+
+// TestTheListUpdateWrittenLastIsTheStandingOne is ADR 0242 on a price list: an
+// update that read the clock and waited is written after the one that held the
+// list, and its status is the live one, which the history's latest snapshot
+// has to say.
+func TestTheListUpdateWrittenLastIsTheStandingOne(t *testing.T) {
+	ctx := context.Background()
+	clock := &tickingClock{next: time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)}
+	repo := repository.New(testPool.Pool())
+	plain := service.New(repo, service.Options{Now: clock.Now})
+	list, err := plain.CreatePriceList(ctx, service.PriceListInput{
+		Title: "Raced sale", Type: models.PriceListSale, Status: models.PriceListDraft,
+	})
+	require.NoError(t, err)
+
+	reader := &pausingReader{clock: clock, read: make(chan struct{}), release: make(chan struct{})}
+	waiting := service.New(repo, service.Options{Now: reader.Now})
+	waited := make(chan error, 1)
+	go func() {
+		_, err := waiting.UpdatePriceList(ctx, list.ID, service.PriceListInput{
+			Title: "Raced sale", Type: models.PriceListSale, Status: models.PriceListActive,
+		})
+		waited <- err
+	}()
+	<-reader.read
+
+	other := make(chan error, 1)
+	go func() {
+		_, err := plain.UpdatePriceList(ctx, list.ID, service.PriceListInput{
+			Title: "Raced sale", Type: models.PriceListSale, Status: models.PriceListDraft,
+		})
+		other <- err
+	}()
+	select {
+	case err := <-other:
+		require.NoError(t, err)
+		other <- nil
+	case <-time.After(500 * time.Millisecond):
+	}
+	close(reader.release)
+	require.NoError(t, <-waited)
+	require.NoError(t, <-other)
+
+	live, err := plain.GetPriceList(ctx, list.ID)
+	require.NoError(t, err)
+	snapshots := listSnapshots(ctx, t, repo, list.ID)
+	require.NotEmpty(t, snapshots)
+	assert.Equal(t, live.Status, snapshots[len(snapshots)-1].Info.Status,
+		"the latest snapshot holds the list's status")
 }

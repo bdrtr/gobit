@@ -290,3 +290,31 @@ func TestADigitInThePrefixIsAccepted(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "A1B2026000000001", issued.Number)
 }
+
+// TestAYearThatTurnsDuringTheWaitIsIssuedInTheNewYear keeps ADR 0053's pair
+// under ADR 0242: the moment read after the series' lock is in the new year,
+// so the document is not numbered in the old year and dated in the new one;
+// it is issued again, numbered and dated in the new year.
+func TestAYearThatTurnsDuringTheWaitIsIssuedInTheNewYear(t *testing.T) {
+	t.Parallel()
+
+	readings := []time.Time{
+		time.Date(2026, 12, 31, 23, 59, 59, 900_000_000, time.UTC),
+		time.Date(2027, 1, 1, 0, 0, 0, 100_000_000, time.UTC),
+		time.Date(2027, 1, 1, 0, 0, 0, 200_000_000, time.UTC),
+		time.Date(2027, 1, 1, 0, 0, 0, 300_000_000, time.UTC),
+	}
+	next := 0
+	svc := service.New(newFakeRepo(), service.Options{Now: func() time.Time {
+		now := readings[next]
+		next++
+		return now
+	}})
+
+	issued, err := svc.Issue(context.Background(), validIssue())
+	require.NoError(t, err)
+
+	assert.Equal(t, "GBT2027000000001", issued.Number)
+	assert.Equal(t, 2027, issued.IssuedAt.Year())
+	assert.Equal(t, 4, next, "the year was read twice for each of two attempts")
+}

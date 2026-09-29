@@ -573,3 +573,84 @@ func TestTheSeriesListingReadsWhatTheNumberingWrote(t *testing.T) {
 			previous.Prefix, previous.Year, current.Prefix, current.Year)
 	}
 }
+
+// sharedClock is one wall clock two services share: every reading is a
+// millisecond after the one before.
+type sharedClock struct {
+	mu   sync.Mutex
+	next time.Time
+}
+
+// Now returns the next moment.
+func (c *sharedClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.next
+	c.next = c.next.Add(time.Millisecond)
+
+	return now
+}
+
+// heldReader reads the shared clock and, the first time, holds its caller
+// until released: an issue that read its moment and then waited.
+type heldReader struct {
+	clock   *sharedClock
+	once    sync.Once
+	read    chan struct{}
+	release chan struct{}
+}
+
+// Now reads the clock, and holds the first reader.
+func (h *heldReader) Now() time.Time {
+	now := h.clock.Now()
+	h.once.Do(func() {
+		close(h.read)
+		<-h.release
+	})
+
+	return now
+}
+
+// TestANumberIsNeverDatedBeforeTheOneBeforeIt is ADR 0242 on the invoice: an
+// issue that read the clock and then waited for the series' lock took the
+// number after the one that held it and kept the moment it read before the
+// wait, so the later number was dated earlier.
+func TestANumberIsNeverDatedBeforeTheOneBeforeIt(t *testing.T) {
+	ctx := context.Background()
+	clock := &sharedClock{next: time.Now().UTC().Add(-time.Hour)}
+	repo := repository.New(testPool.Pool())
+	plain := service.New(repo, service.Options{Now: clock.Now})
+	reader := &heldReader{clock: clock, read: make(chan struct{}), release: make(chan struct{})}
+	waiting := service.New(repo, service.Options{Now: reader.Now})
+	const prefix = "DTS"
+
+	later := make(chan models.Invoice, 1)
+	failed := make(chan error, 1)
+	go func() {
+		issued, err := waiting.Issue(ctx, issueFor(prefix))
+		if err != nil {
+			failed <- err
+			return
+		}
+		later <- issued
+	}()
+	select {
+	case <-reader.read:
+	case err := <-failed:
+		t.Fatalf("the waiting issue failed before it read the clock: %v", err)
+	}
+
+	first, err := plain.Issue(ctx, issueFor(prefix))
+	require.NoError(t, err)
+	close(reader.release)
+	var second models.Invoice
+	select {
+	case second = <-later:
+	case err := <-failed:
+		t.Fatalf("the waiting issue failed: %v", err)
+	}
+
+	require.Less(t, first.Number, second.Number, "precondition: the waiting issue took the next number")
+	assert.False(t, second.IssuedAt.Before(first.IssuedAt),
+		"number %s is dated %s, before number %s's %s", second.Number, second.IssuedAt, first.Number, first.IssuedAt)
+}

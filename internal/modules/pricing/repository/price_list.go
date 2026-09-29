@@ -85,9 +85,13 @@ func (r *Repo) ListPriceLists(ctx context.Context, limit, offset int32) ([]model
 	return lists, total, nil
 }
 
-// UpdatePriceList listenin tüm güncellenebilir alanlarını yazar;
-// yoksa errors.NotFound.
-func (r *Repo) UpdatePriceList(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error) {
+// UpdatePriceList writes every updatable field of the list; errors.NotFound
+// when there is none.
+//
+// The list's row is locked first and the clock read after the lock (ADR 0242):
+// the update and its snapshot are stamped with the moment of the write, so an
+// update that waited for another is recorded after it.
+func (r *Repo) UpdatePriceList(ctx context.Context, list models.PriceList, clock func() time.Time) (models.PriceList, error) {
 	if err := r.ready(); err != nil {
 		return models.PriceList{}, err
 	}
@@ -99,6 +103,11 @@ func (r *Repo) UpdatePriceList(ctx context.Context, list models.PriceList, now t
 
 	var row pricingdb.PriceList
 	err = r.inTx(ctx, func(q *pricingdb.Queries) error {
+		if _, err := q.GetPriceListForUpdate(ctx, list.ID); err != nil {
+			return notFoundOr(err, CodePriceListNotFound, "price list not found: %s", list.ID)
+		}
+		now := clock()
+
 		var err error
 		row, err = q.UpdatePriceList(ctx, pricingdb.UpdatePriceListParams{
 			ID:          list.ID,
@@ -112,7 +121,7 @@ func (r *Repo) UpdatePriceList(ctx context.Context, list models.PriceList, now t
 			UpdatedAt:   fromTime(now),
 		})
 		if err != nil {
-			return notFoundOr(err, CodePriceListNotFound, "fiyat listesi bulunamadı: %s", list.ID)
+			return notFoundOr(err, CodePriceListNotFound, "price list not found: %s", list.ID)
 		}
 
 		// Status and window are what the ladder reads of a list; a sale that

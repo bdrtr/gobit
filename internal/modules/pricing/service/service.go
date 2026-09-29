@@ -92,7 +92,8 @@ type Repository interface {
 	ListPrices(ctx context.Context, priceSetID string) ([]models.Price, error)
 	ListPriceCandidatesBySets(ctx context.Context, priceSetIDs []string) (map[string][]models.PriceCandidate, error)
 	ListPriceCandidates(ctx context.Context, priceSetID string) ([]models.PriceCandidate, error)
-	ReplacePrices(ctx context.Context, priceSetID string, prices []models.Price, now time.Time) ([]models.Price, error)
+	// ReplacePrices reads the clock after it locks the set (ADR 0242).
+	ReplacePrices(ctx context.Context, priceSetID string, prices []models.Price, clock func() time.Time) ([]models.Price, error)
 	GetPrice(ctx context.Context, id string) (models.Price, error)
 
 	CreatePriceRule(ctx context.Context, rule models.PriceRule, now time.Time) (models.PriceRule, error)
@@ -103,7 +104,8 @@ type Repository interface {
 	CreatePriceList(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error)
 	GetPriceList(ctx context.Context, id string) (models.PriceList, error)
 	ListPriceLists(ctx context.Context, limit, offset int32) ([]models.PriceList, int64, error)
-	UpdatePriceList(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error)
+	// UpdatePriceList reads the clock after it locks the list (ADR 0242).
+	UpdatePriceList(ctx context.Context, list models.PriceList, clock func() time.Time) (models.PriceList, error)
 	DeletePriceList(ctx context.Context, id string, now time.Time) error
 
 	// PriceSetHistory and PriceListHistory return every snapshot of the given
@@ -280,7 +282,7 @@ func (s *Service) SetPrices(ctx context.Context, priceSetID string, prices []Pri
 		return nil, err
 	}
 
-	written, err := s.repo.ReplacePrices(ctx, priceSetID, toWrite, now)
+	written, err := s.repo.ReplacePrices(ctx, priceSetID, toWrite, s.clock)
 	if err != nil {
 		return nil, err
 	}

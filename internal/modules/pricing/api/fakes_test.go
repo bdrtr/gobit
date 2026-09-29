@@ -52,7 +52,7 @@ func (m *memRepo) CreatePriceSet(
 
 	// Gerçek depo kabı ve fiyatlarını TEK işlemde yazar; sahte depo aynı sözü
 	// fiyat yazımı hata verdiğinde kabı geri alarak tutar.
-	if _, err := m.ReplacePrices(ctx, id, prices, now); err != nil {
+	if _, err := m.ReplacePrices(ctx, id, prices, func() time.Time { return now }); err != nil {
 		delete(m.sets, id)
 		return models.PriceSet{}, err
 	}
@@ -147,8 +147,9 @@ func (m *memRepo) ReplacePrices(
 	_ context.Context,
 	priceSetID string,
 	prices []models.Price,
-	now time.Time,
+	clock func() time.Time,
 ) ([]models.Price, error) {
+	now := clock()
 	if _, ok := m.sets[priceSetID]; !ok {
 		return nil, errors.NotFound("price_set_not_found", "price set bulunamadı: %s", priceSetID)
 	}
@@ -254,8 +255,9 @@ func (m *memRepo) ListPriceLists(_ context.Context, limit, offset int32) ([]mode
 func (m *memRepo) UpdatePriceList(
 	_ context.Context,
 	list models.PriceList,
-	now time.Time,
+	clock func() time.Time,
 ) (models.PriceList, error) {
+	now := clock()
 	existing, ok := m.lists[list.ID]
 	if !ok {
 		return models.PriceList{}, errors.NotFound("price_list_not_found", "fiyat listesi bulunamadı: %s", list.ID)

@@ -12,6 +12,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A price or an invoice written after a wait was dated before the write it
+  waited for** (D165, ADR 0242). **For operators:** of two price replacements
+  made at once, the price history's latest entry is now the price the set
+  holds, so the storefront's reduction compares against the right one; the
+  same holds for a price list's status; and an invoice number is never dated
+  before the number before it. An invoice issued across midnight on the 31st
+  is numbered and dated in the new year.
+
 - **A write that waited for a lock was stamped before the write it waited
   for** (D164, ADR 0241). **For operators:** of two delivery changes made at
   once, the one written last is now the order's delivery, which the parcel

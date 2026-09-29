@@ -136,13 +136,13 @@ func (s *stubRepo) ReplacePrices(
 	ctx context.Context,
 	priceSetID string,
 	prices []models.Price,
-	now time.Time,
+	clock func() time.Time,
 ) ([]models.Price, error) {
 	s.record("ReplacePrices")
 	if s.replacePricesFn == nil {
 		return nil, unset("ReplacePrices")
 	}
-	return s.replacePricesFn(ctx, priceSetID, prices, now)
+	return s.replacePricesFn(ctx, priceSetID, prices, clock())
 }
 
 func (s *stubRepo) GetPrice(ctx context.Context, id string) (models.Price, error) {
@@ -209,7 +209,8 @@ func (s *stubRepo) ListPriceLists(ctx context.Context, limit, offset int32) ([]m
 	return s.listPriceListsFn(ctx, limit, offset)
 }
 
-func (s *stubRepo) UpdatePriceList(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error) {
+func (s *stubRepo) UpdatePriceList(ctx context.Context, list models.PriceList, clock func() time.Time) (models.PriceList, error) {
+	now := clock()
 	s.record("UpdatePriceList")
 	if s.updatePriceListFn == nil {
 		return models.PriceList{}, unset("UpdatePriceList")

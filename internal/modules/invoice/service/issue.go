@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	stderrors "errors"
 	"strings"
 	"time"
 
@@ -130,16 +131,40 @@ func (s *Service) Issue(ctx context.Context, in IssueInput) (models.Invoice, err
 		return models.Invoice{}, err
 	}
 
-	now := s.now().UTC()
-
-	var issued models.Invoice
-
-	year := yearOf(now)
-	if year == 0 {
-		return models.Invoice{}, errors.Internal(CodeNumbering,
-			"the clock reports a year the number format cannot carry: %d", now.Year())
+	// A year that turns while the issue waits for its series is issued again
+	// under the new year's series, once: the wait is a lock's, never a year's.
+	issued, err := s.issueOnce(ctx, in)
+	if stderrors.Is(err, errYearTurned) {
+		issued, err = s.issueOnce(ctx, in)
 	}
 
+	return issued, err
+}
+
+// errYearTurned reports that the clock read after the series' lock is in
+// another year than the series the number was taken from.
+var errYearTurned = stderrors.New("the year turned while the issue waited for its series")
+
+// issueOnce takes the number and writes the document in one transaction.
+//
+// # The moment is read after the series' lock
+//
+// The series is locked by the number it hands out, so one issue waits for
+// another. The year the series is chosen by is read before the lock, and the
+// moment the document carries is read AFTER it (ADR 0242): a moment read before
+// the wait would date the later number before the one that held the lock. The
+// two readings have to agree on the year, since a document numbered in one year
+// and dated in the next is what ADR 0053 kept one reading for; when they do
+// not, nothing is written and the caller tries again.
+func (s *Service) issueOnce(ctx context.Context, in IssueInput) (models.Invoice, error) {
+	chosen := s.now().UTC()
+	year := yearOf(chosen)
+	if year == 0 {
+		return models.Invoice{}, errors.Internal(CodeNumbering,
+			"the clock reports a year the number format cannot carry: %d", chosen.Year())
+	}
+
+	var issued models.Invoice
 	err := s.repo.WithTx(ctx, func(ctx context.Context) error {
 		// Opening the series and taking the number are ONE statement, so a year
 		// whose first two documents are issued at the same moment cannot make
@@ -157,6 +182,11 @@ func (s *Service) Issue(ctx context.Context, in IssueInput) (models.Invoice, err
 			return errors.Conflict(CodeNumbering,
 				"series %s%d has reached its ceiling of %d documents for the year",
 				series.Prefix, series.Year, maxSequence)
+		}
+
+		now := s.now().UTC()
+		if yearOf(now) != year {
+			return errYearTurned
 		}
 
 		issued, err = s.repo.CreateInvoice(ctx, in.document(series, series.LastNumber, now))

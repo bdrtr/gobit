@@ -126,53 +126,59 @@ func (r *Repo) ListPriceCandidates(ctx context.Context, priceSetID string) ([]mo
 	return candidates, nil
 }
 
-// ReplacePrices bir price set'in fiyatlarını TOPLUCA ve ATOMİK olarak yazar.
+// ReplacePrices writes a price set's prices WHOLESALE and ATOMICALLY.
 //
-// Eski fiyatlar SİLİNİR — damgalanmaz, satırdan kaldırılır — ve verilen
-// fiyatlar (ve kuralları) eklenir; hepsi tek işlemdedir. Herhangi bir fiyat ya
-// da kural reddedilirse HİÇBİRİ yazılmaz ve kap eski fiyat kümesiyle kalır.
+// The old prices are DELETED — not stamped, removed from the row — and the given
+// prices (and their rules) are inserted, all in one transaction. If any price or
+// rule is refused NONE is written and the set keeps its old prices.
 //
-// Silmenin sert olması ADR 0047'nin kararıdır. Damganın geride bıraktığı
-// satırlar bir fiyat geçmişi DEĞİLDİ: her yerine koyma yeni bir kimlik ürettiği
-// için ardışık kuşaklar arasında izlenecek bir iplik yoktu, satırda neden
-// emekliye ayrıldığı yazmıyordu (yerine konmuş bir fiyatla silinmiş bir kabın
-// fiyatı bire bir aynı görünür) ve tablonun iki indeksi de deleted_at IS NULL
-// üzerinde kısmi olduğu için hiçbir indeks o satırları içermiyordu. Müşterinin
-// ÖDEDİĞİ tutarı sepet ve sipariş satırı kendi kopyasında zaten kalıcı olarak
-// tutar; burada birikense kimsenin alışveriş yapmadığı bir günün fiyatıydı.
+// The hard delete is ADR 0047's decision. The rows a stamp left behind were not
+// a price history: each replacement made a new id, so there was no thread to
+// follow between generations, the row did not say why it was retired (a replaced
+// price and the price of a deleted set look alike) and both of the table's
+// indexes are partial on deleted_at IS NULL, so no index held those rows. The
+// amount a customer PAID is kept by the cart and the order line in their own
+// copy; what piled up here was the price of a day nobody shopped on.
 //
-// Silme, damganın taşıdığı canlılık koşulunu KORUR. Kısmi bir indeks ancak
-// kendi koşulunu ima eden bir ifadeye hizmet edebilir ve price_set_id_idx tam
-// olarak bu koşul üzerinde kısmidir: ölçüldü, koşullu silme bu indeksi kullanan
-// bir index scan, koşulsuzu ise tablonun tamamını gezen bir sequential scan
-// planı üretir. Bedeli, kodun eski sürümünün çoktan damgaladığı satırlara
-// erişememesidir; onların temizliği operatörün bir defalık işidir.
+// The delete KEEPS the liveness condition the stamp carried. A partial index can
+// only serve an expression that implies its own condition, and price_set_id_idx
+// is partial on exactly that condition: measured, the conditional delete plans
+// an index scan over it and the unconditional one a sequential scan of the whole
+// table. The cost is that rows an old version of the code already stamped are
+// out of reach; cleaning them is an operator's one-off job.
 //
-// Fiyatın kuralları price_rule.price_id üzerindeki ON DELETE CASCADE ile
-// birlikte gider; damga bu cascade'i hiç tetiklemediği için her eski kuşağın
-// kuralları, artık okunamayan bir ebeveynin arkasında canlı kalıyordu.
+// A price's rules go with it through the ON DELETE CASCADE on
+// price_rule.price_id; the stamp never fired that cascade, so every old
+// generation's rules stayed alive behind a parent nobody could read any more.
 //
-// Verilen dilim boşsa çağrı kabın tüm fiyatlarını silmek anlamına gelir; bu
-// geçerli bir istektir (fiyatı kaldırılmış varyant).
+// An empty slice means deleting every price of the set, which is a valid request
+// (a variant whose price was removed).
 //
-// İşlemin ilk adımı kabın satırını KİLİTLER: aynı kaba yapılan eşzamanlı
-// yazımlar böylece seri hâle gelir ve "yerine koyma" sözü korunur (bkz.
-// GetPriceSetForUpdate). Kilitsiz bir varlık denetiminde iki yazımın fiyatları
-// kapta birleşir ve ikisi de başarı dönerdi.
+// The transaction's first step LOCKS the set's row, so concurrent writes to one
+// set are serialized and the promise of a "replacement" holds (see
+// GetPriceSetForUpdate). With an unlocked existence check the prices of two
+// writes would merge in the set and both would report success.
+//
+// The clock is read AFTER that lock (ADR 0242): the prices' creation and the
+// snapshot are stamped with the moment of the write, so a write that waited for
+// the lock is recorded after the one that held it, and the history's latest
+// snapshot holds the set's prices.
 func (r *Repo) ReplacePrices(
 	ctx context.Context,
 	priceSetID string,
 	prices []models.Price,
-	now time.Time,
+	clock func() time.Time,
 ) ([]models.Price, error) {
 	var written []models.Price
 
 	err := r.inTx(ctx, func(q *pricingdb.Queries) error {
-		// Kabın varlığı işlem İÇİNDE ve KİLİTLE doğrulanır: aksi hâlde
-		// eşzamanlı bir silme ile yazma arasında fiyatlar yetim kalabilirdi.
+		// The set's existence is checked INSIDE the transaction and UNDER THE
+		// LOCK: otherwise a concurrent delete could orphan the prices between the
+		// check and the write.
 		if _, err := q.GetPriceSetForUpdate(ctx, priceSetID); err != nil {
-			return notFoundOr(err, CodePriceSetNotFound, "price set bulunamadı: %s", priceSetID)
+			return notFoundOr(err, CodePriceSetNotFound, "price set not found: %s", priceSetID)
 		}
+		now := clock()
 
 		if err := q.DeletePricesBySet(ctx, priceSetID); err != nil {
 			return wrapDB(err, "eski fiyatlar silinemedi: %s", priceSetID)

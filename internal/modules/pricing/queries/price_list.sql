@@ -40,3 +40,10 @@ UPDATE price_list
 SET deleted_at = $2, updated_at = $2
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id;
+
+-- GetPriceListForUpdate locks a live list's row, so an update reads its clock
+-- after any update that holds it (ADR 0242).
+-- name: GetPriceListForUpdate :one
+SELECT id FROM price_list
+WHERE id = $1 AND deleted_at IS NULL
+FOR UPDATE;
