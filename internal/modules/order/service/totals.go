@@ -299,7 +299,62 @@ func validateOrderItem(index int, item CreateOrderItemInput) error {
 		return err
 	}
 
+	if err := validateLineComponents(index, item); err != nil {
+		return err
+	}
+
 	return validateLineTaxComponents(index, item)
+}
+
+// MaxLineComponents and MaxLineComponentQuantity bound a bundle line's
+// composition (ADR 0235). They are the product module's own bounds (ADR 0234),
+// repeated rather than imported because this module reads no other; a
+// composition past them is one the catalog could not have written.
+const (
+	MaxLineComponents        = 20
+	MaxLineComponentQuantity = 100
+)
+
+// validateLineComponents holds a bundle line's composition to a shape the
+// put-back acts can multiply by (ADR 0235): at most MaxLineComponents variants,
+// each named once, none the line's own, each held 1 to
+// MaxLineComponentQuantity times.
+func validateLineComponents(index int, item CreateOrderItemInput) error {
+	if len(item.Components) > MaxLineComponents {
+		return errors.Invalid(CodeInvalidInput,
+			"a line holds at most %d components (line %d, %s: %d)",
+			MaxLineComponents, index, item.VariantID, len(item.Components))
+	}
+	seen := make(map[string]bool, len(item.Components))
+	for _, c := range item.Components {
+		if err := requireID("items[].components[].variant_id", c.VariantID); err != nil {
+			return err
+		}
+		if c.VariantID == item.VariantID || seen[c.VariantID] {
+			return errors.Invalid(CodeInvalidInput,
+				"a line's components name each variant once and not the line's own (line %d, %s: %s)",
+				index, item.VariantID, c.VariantID)
+		}
+		seen[c.VariantID] = true
+		if c.Quantity < 1 || c.Quantity > MaxLineComponentQuantity {
+			return errors.Invalid(CodeInvalidInput,
+				"a component is held 1 to %d times (line %d, %s: %s x %d)",
+				MaxLineComponentQuantity, index, item.VariantID, c.VariantID, c.Quantity)
+		}
+	}
+	return nil
+}
+
+// lineComponentsOf is the stored form of a line's components; none is nil.
+func lineComponentsOf(in []CreateOrderLineComponentInput) []models.OrderLineComponent {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]models.OrderLineComponent, 0, len(in))
+	for _, c := range in {
+		out = append(out, models.OrderLineComponent{VariantID: c.VariantID, Quantity: c.Quantity})
+	}
+	return out
 }
 
 // validateLinePriceOrigin holds a line's price origin together (ADR 0168).

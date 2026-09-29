@@ -170,13 +170,63 @@ func variantInStock(variant models.Variant, extra enrichment, served map[string]
 		return true
 	}
 
-	if len(served) > 0 {
-		return sellableAt(extra.sellableByLocation, served) > 0
+	return unitsAvailable(extra, served) > 0
+}
+
+// variantBadge is the badge of any variant: a bundle's from its components,
+// every other variant's by ADR 0040's rule.
+func variantBadge(
+	variant models.Variant, extras map[string]enrichment,
+	parts map[string]models.Variant, served map[string]bool,
+) bool {
+	if len(variant.BundleComponents) > 0 {
+		return bundleInStock(variant.BundleComponents, parts, extras, served)
 	}
+	return variantInStock(variant, extras[variant.ID], served)
+}
 
+// bundleInStock is ADR 0040's badge for a bundle variant (ADR 0235).
+//
+// A bundle counts no stock of its own: it is counted and linked to no item
+// (ADR 0234), so [variantInStock] alone would always answer false. Its stock is
+// its components', and it is in stock when every component can supply its
+// units for ONE bundle. A component answers by ADR 0040's clauses counted in
+// units: one not counted or sold past zero never limits the bundle, a counted
+// one supplies what [variantInStock] would read -- narrowed to the channel's
+// warehouses when the read is -- and a counted one with no inventory record, or
+// one the read did not find, supplies nothing. The failure is on the side of
+// hiding stock, as the variant rule's is.
+func bundleInStock(
+	components []models.BundleComponent, parts map[string]models.Variant,
+	extras map[string]enrichment, served map[string]bool,
+) bool {
+	for _, c := range components {
+		part, ok := parts[c.VariantID]
+		if !ok {
+			return false
+		}
+		if !part.ManageInventory || part.AllowBackorder {
+			continue
+		}
+		if unitsAvailable(extras[c.VariantID], served) < int64(c.Quantity) {
+			return false
+		}
+	}
+	return true
+}
+
+// unitsAvailable is how many units a counted variant can supply: the channel's
+// warehouses when the read is narrowed, the item's available quantity when it
+// is not, and zero when there is no readable record.
+func unitsAvailable(extra enrichment, served map[string]bool) int64 {
+	if len(served) > 0 {
+		return sellableAt(extra.sellableByLocation, served)
+	}
 	quantity, ok := recordInt(extra.inventory, foreignAvailableQuantity)
-
-	return ok && quantity > 0
+	if !ok {
+		return 0
+	}
+	return quantity
 }
 
 // sellableAt sums the warehouses the read is allowed to count.

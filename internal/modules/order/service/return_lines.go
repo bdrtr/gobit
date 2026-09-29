@@ -21,6 +21,9 @@ type ReturnLine struct {
 	VariantID string
 	// Quantity is how many units are coming back.
 	Quantity int64
+	// Components are what one unit of a bundle line held when it was sold
+	// (ADR 0235); nil for any other line.
+	Components []models.OrderLineComponent
 }
 
 // ReturnDetail is a return with everything a flow needs to act on it.
@@ -71,8 +74,10 @@ func (s *Service) ReturnDetailJSON(ctx context.Context, returnID string) (json.R
 	}
 
 	variantOf := make(map[string]string, len(lines))
+	componentsOf := make(map[string][]interopLineComponent, len(lines))
 	for i := range lines {
 		variantOf[lines[i].ID] = lines[i].VariantID
+		componentsOf[lines[i].ID] = interopLineComponents(lines[i].Components)
 	}
 
 	detail := returnDetailJSON{
@@ -97,6 +102,7 @@ func (s *Service) ReturnDetailJSON(ctx context.Context, returnID string) (json.R
 			OrderLineItemID: items[i].OrderLineItemID,
 			VariantID:       variantID,
 			Quantity:        items[i].Quantity,
+			Components:      componentsOf[items[i].OrderLineItemID],
 		})
 	}
 
@@ -117,6 +123,9 @@ type returnLineJSON struct {
 	OrderLineItemID string `json:"order_line_item_id"`
 	VariantID       string `json:"variant_id"`
 	Quantity        int64  `json:"quantity"`
+	// Components are what one unit of a bundle line held when it was sold
+	// (ADR 0235); the receipt restocks these parts rather than the bundle.
+	Components []interopLineComponent `json:"components,omitempty"`
 }
 
 // ClaimDetailJSON returns what a flow needs to settle a claim.

@@ -6,6 +6,7 @@ own, so until its stock is read from its parts it reads out of stock.
 
 - **Status:** Accepted
 - **Date:** 2026-09-29
+- **Amended by:** [0235](0235-a-bundle-sells-from-its-parts.md): a bundle reads in stock from its parts and sells, each component reserved and put back
 
 Measurement: [measurements/0234](../measurements/0234-a-gift-box-of-three.md)
 

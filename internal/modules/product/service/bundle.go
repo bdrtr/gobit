@@ -272,6 +272,24 @@ func attachBundleComponents(ctx context.Context, store repository.Store, variant
 	return nil
 }
 
+// bundleParts reads the component variants of the bundles on a storefront page
+// in ONE query, keyed by id, for their stock flags (ADR 0235); none is an empty
+// map and no query.
+func (s *Service) bundleParts(ctx context.Context, componentIDs []string) (map[string]models.Variant, error) {
+	parts := make(map[string]models.Variant, len(componentIDs))
+	if len(componentIDs) == 0 {
+		return parts, nil
+	}
+	variants, err := s.repo.ListVariantsByIDs(ctx, componentIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range variants {
+		parts[variants[i].ID] = variants[i]
+	}
+	return parts, nil
+}
+
 // valueOr is the value a patch field would write: the given one, or the current
 // one when the patch leaves the field out.
 func valueOr[T any](given *T, current T) T {

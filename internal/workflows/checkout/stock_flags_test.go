@@ -285,9 +285,12 @@ func TestTheStockFlagsRideOnTheTitleQuery(t *testing.T) {
 	require.Len(t, specs, 2, "the whole checkout reads the variants once and their products once")
 	assert.Equal(t, EntityVariant, specs[0].Entity)
 	assert.Equal(t,
-		[]string{query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder, FieldProductID},
+		[]string{
+			query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder, FieldProductID,
+			FieldBundleComponents,
+		},
 		specs[0].Fields,
-		"the two flags are two more names in the field list the title already pays for")
+		"the two flags and the composition are more names in the field list the title already pays for")
 	assert.Equal(t, EntityProduct, specs[1].Entity)
 	assert.ElementsMatch(t, []string{productOf(testVariantA), productOf(testVariantB)}, specs[1].Filters[FilterIDs],
 		"every product of the cart in one batch")
@@ -304,11 +307,12 @@ func TestAFlagThatIsNotABoolIsRefused(t *testing.T) {
 	h := newHarness(t)
 	h.catalog.graphFn = func(context.Context, query.GraphSpec) ([]query.Record, error) {
 		return []query.Record{{
-			query.IDField:        testVariantA,
-			FieldTitle:           testTitleA,
-			FieldManageInventory: "true",
-			FieldAllowBackorder:  false,
-			FieldProductID:       productOf(testVariantA),
+			query.IDField:         testVariantA,
+			FieldTitle:            testTitleA,
+			FieldManageInventory:  "true",
+			FieldAllowBackorder:   false,
+			FieldProductID:        productOf(testVariantA),
+			FieldBundleComponents: []query.Record{},
 		}}, nil
 	}
 

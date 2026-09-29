@@ -113,6 +113,14 @@ const (
 	FieldProductID  = "product_id"
 	EntityProduct   = "product"
 	FieldIsGiftcard = "is_giftcard"
+	// FieldBundleComponents is the variant record's composition: a list of
+	// records naming a component variant and how many of it one unit of the
+	// bundle holds, empty for a variant that is no bundle (ADR 0235). A bundle
+	// line reserves these rather than the bundle, which counts no stock of its
+	// own (ADR 0234).
+	FieldBundleComponents         = "bundle_components"
+	FieldBundleComponentVariantID = "variant_id"
+	FieldBundleComponentQuantity  = "quantity"
 	// FilterIDs is the BATCH identifier filter of the variant provider; thanks to
 	// this filter a separate query per line (N+1) is not needed.
 	FilterIDs = "ids"

@@ -297,6 +297,9 @@ func newHarness(t *testing.T) *harness {
 		},
 		committed: map[string]int64{},
 		held:      map[string]int64{},
+		// The order's answer carries the canceled line as a line of its own;
+		// the write-off reads it for what the line is made of (ADR 0235).
+		lines: orderLinesJSON(5, 0),
 		links: map[string]map[string][]string{
 			linkOrderFulfillment: {testOrderID: {testFulfillmentID}},
 			linkVariantInventory: {testVariantID: {testItemID}},
@@ -400,8 +403,12 @@ type fakeInventory struct {
 	// references records which act wrote each movement, in order.
 	references []string
 	// returnedPerLine is the ledger's per-line sum, which is what the real module
-	// reads under the level's lock before deciding what to move.
+	// reads under the level's lock before deciding what to move. It is keyed by
+	// the line AND the item, as the module's is: a bundle line puts back more
+	// than one item, each to a target of its own (ADR 0235).
 	returnedPerLine map[string]int64
+	// returnedPerItem is what reached each item's shelf.
+	returnedPerItem map[string]int64
 }
 
 // SaleLocations answers where the units left from.
@@ -415,7 +422,7 @@ func (f *fakeInventory) SaleLocations(context.Context, string) (map[string]strin
 
 // ReturnCanceled records the units.
 func (f *fakeInventory) ReturnCanceled(
-	_ context.Context, _, _, lineItemID string, target int64, reference string,
+	_ context.Context, itemID, _, lineItemID string, target int64, reference string,
 ) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -431,12 +438,15 @@ func (f *fakeInventory) ReturnCanceled(
 	// a producer that does not behave like the producer (ADR 0142).
 	if f.returnedPerLine == nil {
 		f.returnedPerLine = map[string]int64{}
+		f.returnedPerItem = map[string]int64{}
 	}
-	quantity := target - f.returnedPerLine[lineItemID]
+	key := lineItemID + "|" + itemID
+	quantity := target - f.returnedPerLine[key]
 	if quantity <= 0 {
 		return true, nil
 	}
-	f.returnedPerLine[lineItemID] = target
+	f.returnedPerLine[key] = target
+	f.returnedPerItem[itemID] += quantity
 
 	f.calls = append(f.calls, quantity)
 	f.references = append(f.references, reference)

@@ -838,6 +838,8 @@ type variantScript struct {
 	// giftcard is the flag of the variant's product, which is named after the
 	// variant by [productOf].
 	giftcard bool
+	// components are what one unit of a bundle variant holds (ADR 0235).
+	components []bundlePart
 }
 
 // productOf is the product a scripted variant belongs to.
@@ -850,15 +852,26 @@ func productOf(variantID string) string { return "prod_" + variantID }
 // provider refuses a field it does not publish and fills every field it does,
 // so a fake that omitted a key would let a consumer defaulting a missing flag
 // pass a test it must not pass.
-func catalogRecords(scripts map[string]variantScript) []query.Record {
+func catalogRecords(scripts map[string]variantScript, ids []string) []query.Record {
 	out := make([]query.Record, 0, len(scripts))
 	for id, script := range scripts {
+		if ids != nil && !slices.Contains(ids, id) {
+			continue
+		}
+		components := make([]query.Record, 0, len(script.components))
+		for _, part := range script.components {
+			components = append(components, query.Record{
+				FieldBundleComponentVariantID: part.VariantID,
+				FieldBundleComponentQuantity:  part.Quantity,
+			})
+		}
 		out = append(out, query.Record{
-			query.IDField:        id,
-			FieldTitle:           script.title,
-			FieldManageInventory: script.manageInventory,
-			FieldAllowBackorder:  script.allowBackorder,
-			FieldProductID:       productOf(id),
+			query.IDField:         id,
+			FieldTitle:            script.title,
+			FieldManageInventory:  script.manageInventory,
+			FieldAllowBackorder:   script.allowBackorder,
+			FieldProductID:        productOf(id),
+			FieldBundleComponents: components,
 		})
 	}
 	return out
@@ -868,7 +881,11 @@ func catalogRecords(scripts map[string]variantScript) []query.Record {
 // as the read layer does.
 func catalogAnswer(scripts map[string]variantScript, spec query.GraphSpec) []query.Record {
 	if spec.Entity != EntityProduct {
-		return catalogRecords(scripts)
+		// Only the variants asked for, as the provider answers: a bundle's
+		// components are read in a round of their own, and a fake that handed
+		// them back with the cart's variants would hide that round.
+		ids, _ := spec.Filters[FilterIDs].([]string)
+		return catalogRecords(scripts, ids)
 	}
 	out := make([]query.Record, 0, len(scripts))
 	for id, script := range scripts {

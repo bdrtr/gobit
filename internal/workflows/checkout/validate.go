@@ -24,6 +24,13 @@ const (
 	MinQuantity int64 = 1
 	// MaxQuantity is the largest quantity of a line.
 	MaxQuantity int64 = 1_000_000
+	// MaxComponents is the most components a bundle holds, the product
+	// module's own bound (ADR 0234).
+	MaxComponents = 20
+	// MaxComponentQuantity is the most units of one component a bundle's unit
+	// holds, the product module's own bound (ADR 0234); a line reserves its
+	// quantity times this at most.
+	MaxComponentQuantity int64 = 100
 	// MaxAmount is the largest unit amount allowed (minor unit).
 	MaxAmount int64 = 1_000_000_000_000
 	// MaxTotal is the largest value of a total field (minor unit).

@@ -3,6 +3,7 @@ package checkout
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -317,6 +318,27 @@ type planLine struct {
 	// the order snapshot names both by their cart ids and the order maps them
 	// to its own.
 	ParentLineItemID string `json:"parent_line_item_id,omitempty"`
+	// Components are what one unit of a bundle line holds (ADR 0235). A bundle
+	// counts no stock of its own, so such a line carries no inventory item and
+	// the reserve step reserves each component instead; the order keeps them as
+	// what the line was made of. A plan written before the field decodes it
+	// empty, which is every line it had.
+	Components []planComponent `json:"components,omitempty"`
+}
+
+// planComponent is one component of a bundle line, with what the reserve step
+// needs to reserve it as it would reserve a line of its own.
+type planComponent struct {
+	// VariantID is the component variant.
+	VariantID string `json:"variant_id"`
+	// Quantity is how many of it ONE unit of the line holds; the reservation
+	// is the line's quantity times this.
+	Quantity int64 `json:"quantity"`
+	// InventoryItemID, Unmanaged and AllowBackorder are the component's, read
+	// and paired as [planLine]'s are.
+	InventoryItemID string `json:"inventory_item_id,omitempty"`
+	Unmanaged       bool   `json:"unmanaged"`
+	AllowBackorder  bool   `json:"allow_backorder"`
 }
 
 // prepare builds the input of the saga and leaves NO reversible side effect.
@@ -494,7 +516,7 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 	if err != nil {
 		return nil, err
 	}
-	items, err := w.inventoryItems(ctx, variantIDs, facts)
+	items, err := w.inventoryItems(ctx, stockVariantIDs(variantIDs, facts), facts)
 	if err != nil {
 		return nil, err
 	}
@@ -530,9 +552,54 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 			Properties:       item.Properties,
 			IsGiftcard:       facts[item.VariantID].IsGiftcard,
 			ParentLineItemID: item.ParentLineID,
+			Components:       planComponentsOf(facts[item.VariantID].Components, facts, items),
 		})
 	}
 	return lines, nil
+}
+
+// stockVariantIDs is the variants whose stock the lines reserve: every line's
+// variant that is no bundle, and every bundle's components in its place (ADR
+// 0235), each once.
+func stockVariantIDs(variantIDs []string, facts map[string]variantFacts) []string {
+	out := make([]string, 0, len(variantIDs))
+	add := func(id string) {
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	for _, id := range variantIDs {
+		parts := facts[id].Components
+		if len(parts) == 0 {
+			add(id)
+			continue
+		}
+		for _, part := range parts {
+			add(part.VariantID)
+		}
+	}
+	return out
+}
+
+// planComponentsOf is a bundle line's components as the reserve step needs
+// them; nil for a line that is no bundle.
+func planComponentsOf(
+	parts []bundlePart, facts map[string]variantFacts, items map[string]string,
+) []planComponent {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]planComponent, 0, len(parts))
+	for _, part := range parts {
+		out = append(out, planComponent{
+			VariantID:       part.VariantID,
+			Quantity:        part.Quantity,
+			InventoryItemID: items[part.VariantID],
+			Unmanaged:       facts[part.VariantID].Unmanaged,
+			AllowBackorder:  facts[part.VariantID].AllowBackorder,
+		})
+	}
+	return out
 }
 
 // variantFacts is what one catalog read answers about a variant.
@@ -555,6 +622,15 @@ type variantFacts struct {
 	// (ADR 0211).
 	ProductID  string
 	IsGiftcard bool
+	// Components are what one unit of a bundle variant holds (ADR 0235); empty
+	// for a variant that is no bundle.
+	Components []bundlePart
+}
+
+// bundlePart is one component of a bundle as the catalog names it.
+type bundlePart struct {
+	VariantID string
+	Quantity  int64
 }
 
 // variantTitles reads the catalog facts of the variants in a SINGLE query.
@@ -594,54 +670,165 @@ type variantFacts struct {
 // that as false would decide "do not count this variant" out of a type error
 // and sell goods nobody reserved, so it is errors.Internal instead.
 func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map[string]variantFacts, error) {
-	if len(variantIDs) == 0 {
-		return map[string]variantFacts{}, nil
-	}
+	facts := make(map[string]variantFacts, len(variantIDs))
 
-	records, err := w.catalog.Graph(ctx, query.GraphSpec{
-		Entity:  EntityVariant,
-		Fields:  []string{query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder, FieldProductID},
-		Filters: map[string]any{FilterIDs: variantIDs},
-		Limit:   len(variantIDs),
-	})
-	if err != nil {
-		// An infrastructure fault is not reported as a BUSINESS state: "the
-		// variant is not in the catalog" is a permanent state and the client
-		// branches on it, whereas a transient read fault can be retried. The
-		// kind of the underlying error is PRESERVED.
-		return nil, errors.Wrap(err, errors.KindOf(err), CodeCatalogReadFailed,
-			"the variants could not be read from the catalog (%d variants)", len(variantIDs))
-	}
-
-	facts := make(map[string]variantFacts, len(records))
-	for i := range records {
-		id, idOK := records[i][query.IDField].(string)
-		title, titleOK := records[i][FieldTitle].(string)
-		managed, managedOK := records[i][FieldManageInventory].(bool)
-		backorder, backorderOK := records[i][FieldAllowBackorder].(bool)
-		product, productOK := records[i][FieldProductID].(string)
-		if !idOK || !titleOK || title == "" || !managedOK || !backorderOK || !productOK || product == "" {
-			return nil, errors.Internal(CodeVariantUnknown,
-				"the catalog record could not be read: %v", records[i])
+	// The first round reads the cart's variants; the second the components of
+	// its bundles the first did not already read (ADR 0235). A component is
+	// never a bundle (ADR 0234), so there is no third, and a component that
+	// reads as one is refused rather than expanded.
+	for round, ids := 0, variantIDs; len(ids) > 0; round++ {
+		records, err := w.catalog.Graph(ctx, query.GraphSpec{
+			Entity: EntityVariant,
+			Fields: []string{
+				query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder, FieldProductID,
+				FieldBundleComponents,
+			},
+			Filters: map[string]any{FilterIDs: ids},
+			Limit:   len(ids),
+		})
+		if err != nil {
+			// An infrastructure fault is not reported as a BUSINESS state: "the
+			// variant is not in the catalog" is a permanent state and the client
+			// branches on it, whereas a transient read fault can be retried. The
+			// kind of the underlying error is PRESERVED.
+			return nil, errors.Wrap(err, errors.KindOf(err), CodeCatalogReadFailed,
+				"the variants could not be read from the catalog (%d variants)", len(ids))
 		}
-		facts[id] = variantFacts{
-			Title:          title,
-			Unmanaged:      !managed,
-			AllowBackorder: backorder,
-			ProductID:      product,
-		}
-	}
 
-	for _, variantID := range variantIDs {
-		if facts[variantID].Title == "" {
+		for i := range records {
+			id, fact, err := readVariantFacts(records[i])
+			if err != nil {
+				return nil, err
+			}
+			if round > 0 && len(fact.Components) > 0 {
+				return nil, errors.Internal(CodeVariantUnknown,
+					"variant %s is a bundle's component and a bundle itself; a bundle holds no bundle", id)
+			}
+			facts[id] = fact
+		}
+
+		for _, variantID := range ids {
+			if facts[variantID].Title != "" {
+				continue
+			}
+			if round > 0 {
+				return nil, errors.NotFound(CodeVariantUnknown,
+					"variant %s is a bundle's component and is not in the catalog; its stock cannot be reserved", variantID)
+			}
 			return nil, errors.NotFound(CodeVariantUnknown,
 				"variant %s is not in the catalog; an order line cannot be written without a title", variantID)
 		}
+
+		ids = nil
+		if round == 0 {
+			ids = unreadParts(facts)
+		}
 	}
+
 	if err := w.giftCardFlags(ctx, facts); err != nil {
 		return nil, err
 	}
 	return facts, nil
+}
+
+// readVariantFacts reads one catalog record. Every field is required and typed:
+// a record that does not read is a contract violation and not a default (see
+// [Workflows.variantTitles]).
+func readVariantFacts(record query.Record) (string, variantFacts, error) {
+	id, idOK := record[query.IDField].(string)
+	title, titleOK := record[FieldTitle].(string)
+	managed, managedOK := record[FieldManageInventory].(bool)
+	backorder, backorderOK := record[FieldAllowBackorder].(bool)
+	product, productOK := record[FieldProductID].(string)
+	components, componentsOK := readBundleParts(record[FieldBundleComponents])
+	if !idOK || !titleOK || title == "" || !managedOK || !backorderOK || !productOK || product == "" || !componentsOK {
+		return "", variantFacts{}, errors.Internal(CodeVariantUnknown,
+			"the catalog record could not be read: %v", record)
+	}
+	return id, variantFacts{
+		Title:          title,
+		Unmanaged:      !managed,
+		AllowBackorder: backorder,
+		ProductID:      product,
+		Components:     components,
+	}, nil
+}
+
+// readBundleParts reads a variant record's composition (ADR 0235). The list is
+// required -- the provider fills it for every variant, empty for one that is no
+// bundle -- and each entry names a variant once, held 1 to
+// [MaxComponentQuantity] times. Anything else does not read: a composition
+// guessed at would reserve the wrong parts or none.
+func readBundleParts(value any) ([]bundlePart, bool) {
+	var entries []map[string]any
+	switch list := value.(type) {
+	case []query.Record:
+		for _, entry := range list {
+			entries = append(entries, entry)
+		}
+	case []map[string]any:
+		entries = list
+	case []any:
+		for _, raw := range list {
+			entry, ok := raw.(map[string]any)
+			if !ok {
+				if record, isRecord := raw.(query.Record); isRecord {
+					entry, ok = record, true
+				}
+			}
+			if !ok {
+				return nil, false
+			}
+			entries = append(entries, entry)
+		}
+	default:
+		return nil, false
+	}
+
+	parts := make([]bundlePart, 0, len(entries))
+	for _, entry := range entries {
+		id, idOK := entry[FieldBundleComponentVariantID].(string)
+		quantity, quantityOK := wholeNumber(entry[FieldBundleComponentQuantity])
+		if !idOK || id == "" || !quantityOK || quantity < 1 || quantity > MaxComponentQuantity ||
+			slices.ContainsFunc(parts, func(p bundlePart) bool { return p.VariantID == id }) {
+			return nil, false
+		}
+		parts = append(parts, bundlePart{VariantID: id, Quantity: quantity})
+	}
+	return parts, true
+}
+
+// wholeNumber reads an integer that may have crossed a JSON boundary.
+func wholeNumber(value any) (int64, bool) {
+	switch n := value.(type) {
+	case int64:
+		return n, true
+	case int:
+		return int64(n), true
+	case int32:
+		return int64(n), true
+	case float64:
+		if n != float64(int64(n)) {
+			return 0, false
+		}
+		return int64(n), true
+	default:
+		return 0, false
+	}
+}
+
+// unreadParts is the component variants the facts name and do not hold yet,
+// in the order they are first named.
+func unreadParts(facts map[string]variantFacts) []string {
+	var out []string
+	for _, id := range slices.Sorted(maps.Keys(facts)) {
+		for _, part := range facts[id].Components {
+			if _, read := facts[part.VariantID]; !read && !slices.Contains(out, part.VariantID) {
+				out = append(out, part.VariantID)
+			}
+		}
+	}
+	return out
 }
 
 // giftCardFlags reads, in one query, whether the variants' products are gift
@@ -787,6 +974,32 @@ func (w *Workflows) inventoryItems(
 	return out, nil
 }
 
+// validateComponents holds a bundle line's components to what the reserve step
+// branches on (ADR 0235): the pairing [checkoutPlan.validate] asks of a line,
+// asked of each component, and a unit count the product module could have
+// written. The line's own item is empty -- a bundle has none -- and is not
+// asked about.
+func (l *planLine) validateComponents() error {
+	if len(l.Components) > MaxComponents {
+		return errors.Internal(CodeVariantNotStocked,
+			"the bundle line names %d components, more than %d: %s (variant %s)",
+			len(l.Components), MaxComponents, l.LineItemID, l.VariantID)
+	}
+	for _, c := range l.Components {
+		if c.Quantity < 1 || c.Quantity > MaxComponentQuantity {
+			return errors.Internal(CodeVariantNotStocked,
+				"the bundle line holds %d of component %s, outside [1, %d]: %s",
+				c.Quantity, c.VariantID, MaxComponentQuantity, l.LineItemID)
+		}
+		if !c.Unmanaged && !c.AllowBackorder && c.InventoryItemID == "" {
+			return errors.Internal(CodeVariantNotStocked,
+				"the bundle line's component is counted, refuses backorder and carries no inventory item: %s (variant %s, component %s)",
+				l.LineItemID, l.VariantID, c.VariantID)
+		}
+	}
+	return nil
+}
+
 // validate verifies the arithmetic and the bounds of the plan.
 //
 // The validation is done in the order module as well and the repetition is
@@ -825,7 +1038,11 @@ func (p *checkoutPlan) validate() error {
 	var subtotal int64
 	for i := range p.Lines {
 		line := p.Lines[i]
-		if !line.Unmanaged && !line.AllowBackorder && line.InventoryItemID == "" {
+		if len(line.Components) > 0 {
+			if err := line.validateComponents(); err != nil {
+				return err
+			}
+		} else if !line.Unmanaged && !line.AllowBackorder && line.InventoryItemID == "" {
 			// The pairing is what the reserve step branches on, and the two
 			// halves are decided in two different reads: the flags come from the
 			// catalog, the item from the link layer. If they ever disagree the
@@ -1009,6 +1226,30 @@ type orderSnapshotItem struct {
 	// order learns them, for TaxComponents' reason.
 	LineKey       string `json:"line_key,omitempty"`
 	ParentLineKey string `json:"parent_line_key,omitempty"`
+	// Components are what one unit of a bundle line holds (ADR 0235); the
+	// order keeps them as what the line was made of, and the flows that put
+	// stock back read them there. They land in the change the order learns
+	// them, for TaxComponents' reason.
+	Components []orderSnapshotComponent `json:"components,omitempty"`
+}
+
+// orderSnapshotComponent is one component of a bundle line, on the wire to the
+// order.
+type orderSnapshotComponent struct {
+	VariantID string `json:"variant_id"`
+	Quantity  int64  `json:"quantity"`
+}
+
+// snapshotPartsOf is a line's components on the wire; none is nil.
+func snapshotPartsOf(components []planComponent) []orderSnapshotComponent {
+	if len(components) == 0 {
+		return nil
+	}
+	out := make([]orderSnapshotComponent, 0, len(components))
+	for _, c := range components {
+		out = append(out, orderSnapshotComponent{VariantID: c.VariantID, Quantity: c.Quantity})
+	}
+	return out
 }
 
 // orderSnapshotTaxComponent is one rate inside a stacked line's tax, on the wire
@@ -1091,6 +1332,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 			Properties:    p.Lines[i].Properties,
 			LineKey:       p.Lines[i].LineItemID,
 			ParentLineKey: p.Lines[i].ParentLineItemID,
+			Components:    snapshotPartsOf(p.Lines[i].Components),
 		})
 	}
 

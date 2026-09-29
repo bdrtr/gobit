@@ -162,6 +162,20 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A bundle sells from its parts** (ADR 0235). **For storefront clients:** a
+  bundle variant's `in_stock` (and GraphQL `inStock`) is true when every
+  component can supply its units for one bundle, and a bundle can be ordered.
+  An order line that sold a bundle carries `components`
+  (`[{"variant_id": ..., "quantity": 2}]`, one bundle's parts) on the admin and
+  storefront order reads. **For operators:** checkout reserves each component
+  for the line's quantity times its units; writing off a bundle line,
+  canceling its parcel and receiving it back put each component back in the
+  same multiple, as the line was sold. Order migration 000033 adds
+  `order_line_items.components`. **For contributors:** the variant record
+  publishes `bundle_components`, and the checkout's execution record names a
+  component's reservation by `variant_id` and a component it left unreserved
+  under `unreserved_components`.
+
 - **A variant names what it is made of** (ADR 0234). **For operators:**
   `PUT /admin/v1/variants/{id}/bundle` with
   `{"components": [{"variant_id": ..., "quantity": 2}]}` makes a variant a

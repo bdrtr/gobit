@@ -496,9 +496,18 @@ type lineItemDTO struct {
 	Properties map[string]string `json:"properties,omitempty"`
 	// ParentLineItemID is the line of this order the line is an add-on of, the
 	// ring an engraving was sold for (ADR 0229); absent on a line of its own.
-	ParentLineItemID *string   `json:"parent_line_item_id,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ParentLineItemID *string `json:"parent_line_item_id,omitempty"`
+	// Components are what one unit of the line held when it was sold, for a
+	// line that sold a bundle (ADR 0235); absent on any other line.
+	Components []lineComponentDTO `json:"components,omitempty"`
+	CreatedAt  time.Time          `json:"created_at"`
+	UpdatedAt  time.Time          `json:"updated_at"`
+}
+
+// lineComponentDTO is one variant a bundle line's unit held, and how many.
+type lineComponentDTO struct {
+	VariantID string `json:"variant_id"`
+	Quantity  int64  `json:"quantity"`
 }
 
 // linePriceOriginDTO is which of a variant's prices a line was charged.
@@ -721,9 +730,22 @@ func toLineItemDTO(item models.OrderLineItem) lineItemDTO {
 		IsGiftcard:       item.IsGiftcard,
 		Properties:       item.Properties,
 		ParentLineItemID: item.ParentLineItemID,
+		Components:       toLineComponentDTOs(item.Components),
 		CreatedAt:        item.CreatedAt,
 		UpdatedAt:        item.UpdatedAt,
 	}
+}
+
+// toLineComponentDTOs converts a bundle line's components; none is nil.
+func toLineComponentDTOs(components []models.OrderLineComponent) []lineComponentDTO {
+	if len(components) == 0 {
+		return nil
+	}
+	out := make([]lineComponentDTO, 0, len(components))
+	for _, c := range components {
+		out = append(out, lineComponentDTO{VariantID: c.VariantID, Quantity: c.Quantity})
+	}
+	return out
 }
 
 // toLinePriceOriginDTO converts a line's price origin; nil when unknown.

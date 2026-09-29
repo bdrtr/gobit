@@ -25,6 +25,35 @@ type returnLine struct {
 	OrderLineItemID string `json:"order_line_item_id"`
 	VariantID       string `json:"variant_id"`
 	Quantity        int64  `json:"quantity"`
+	// Components are what one unit of a bundle line held when it was sold
+	// (ADR 0235); empty for any other line.
+	Components []returnLineComponent `json:"components,omitempty"`
+}
+
+// returnLineComponent is one component of a bundle line coming back.
+type returnLineComponent struct {
+	VariantID string `json:"variant_id"`
+	Quantity  int64  `json:"quantity"`
+}
+
+// stockPart is one variant a returned line's units are made of, and how many
+// of it ONE unit holds: the line's own variant once, or each component of a
+// line that sold a bundle (ADR 0235).
+type stockPart struct {
+	variantID string
+	perUnit   int64
+}
+
+// stockParts is what the line's units are made of.
+func (l returnLine) stockParts() []stockPart {
+	if len(l.Components) == 0 {
+		return []stockPart{{variantID: l.VariantID, perUnit: 1}}
+	}
+	parts := make([]stockPart, 0, len(l.Components))
+	for _, c := range l.Components {
+		parts = append(parts, stockPart{variantID: c.VariantID, perUnit: c.Quantity})
+	}
+	return parts
 }
 
 // ReceiveResult reports what receiving the return did.
@@ -156,7 +185,9 @@ func (w *Workflows) restock(
 ) {
 	variantIDs := make([]string, 0, len(detail.Lines))
 	for i := range detail.Lines {
-		variantIDs = append(variantIDs, detail.Lines[i].VariantID)
+		for _, part := range detail.Lines[i].stockParts() {
+			variantIDs = append(variantIDs, part.variantID)
+		}
 	}
 
 	items, err := w.inventoryItems(ctx, variantIDs)
@@ -172,36 +203,56 @@ func (w *Workflows) restock(
 	}
 
 	for i := range detail.Lines {
-		line := detail.Lines[i]
-
-		itemID, known := items[line.VariantID]
-		if !known {
-			w.log.ErrorContext(ctx,
-				"a returned variant has no inventory item; its stock was NOT put back",
-				"return_id", detail.ReturnID, "variant_id", line.VariantID,
-				"quantity", line.Quantity)
-			result.Warnings = append(result.Warnings,
-				"variant "+line.VariantID+" has no inventory item; its stock was not put back")
-
-			continue
+		// A bundle line is its components: a returned gift box puts back a
+		// towel and two soaps per box (ADR 0235), and the line counts as
+		// restocked when every part of it was.
+		restocked := true
+		for _, part := range detail.Lines[i].stockParts() {
+			quantity := detail.Lines[i].Quantity * part.perUnit
+			if w.restockPart(ctx, detail, part.variantID, items, locationID, quantity, result) {
+				result.RestockedUnits += quantity
+			} else {
+				restocked = false
+			}
 		}
-
-		if err := w.inventory.Restock(ctx, itemID, locationID, line.Quantity); err != nil {
-			w.log.ErrorContext(ctx,
-				"the stock of a returned line could not be put back; the goods ARE HERE and "+
-					"the count is short",
-				"return_id", detail.ReturnID, "variant_id", line.VariantID,
-				"inventory_item_id", itemID, "location_id", locationID,
-				"quantity", line.Quantity, "error", err)
-			result.Warnings = append(result.Warnings,
-				"the stock of variant "+line.VariantID+" could not be put back: "+err.Error())
-
-			continue
+		if restocked {
+			result.RestockedLines++
 		}
-
-		result.RestockedLines++
-		result.RestockedUnits += line.Quantity
 	}
+}
+
+// restockPart puts one variant's units back and reports whether it did; what
+// it could not do is a warning, for [Workflows.restock]'s reasons.
+func (w *Workflows) restockPart(
+	ctx context.Context, detail returnDetail, variantID string, items map[string]string,
+	locationID string, quantity int64, result *ReceiveResult,
+) bool {
+	itemID, known := items[variantID]
+	if !known {
+		w.log.ErrorContext(ctx,
+			"a returned variant has no inventory item; its stock was NOT put back",
+			"return_id", detail.ReturnID, "variant_id", variantID,
+			"quantity", quantity)
+		result.Warnings = append(result.Warnings,
+			"variant "+variantID+" has no inventory item; its stock was not put back")
+
+		return false
+	}
+
+	if err := w.inventory.Restock(ctx, itemID, locationID, quantity); err != nil {
+		w.log.ErrorContext(ctx,
+			"the stock of a returned line could not be put back; the goods ARE HERE and "+
+				"the count is short",
+			"return_id", detail.ReturnID, "variant_id", variantID,
+			"inventory_item_id", itemID, "location_id", locationID,
+			"quantity", quantity, "error", err)
+		result.Warnings = append(result.Warnings,
+			"the stock of variant "+variantID+" could not be put back: "+err.Error())
+
+		return false
+	}
+
+	return true
 }
 
 // inventoryItems resolves every variant to its inventory item in ONE query.

@@ -259,6 +259,23 @@ func TestTheGiftCardNamesAgree(t *testing.T) {
 	assert.Equal(t, giftcard.DataCode, checkoutwf.GiftCardDataCode)
 }
 
+// TestTheBundleNamesAgree binds the checkout's spelling of a bundle's
+// composition to the product module's (ADR 0235), and its bounds to the ones
+// the product module writes under (ADR 0234). A drift is silent until a bundle
+// sells: the provider refuses a field it does not publish, and the checkout
+// would refuse every cart, or read a composition it cannot parse as none.
+func TestTheBundleNamesAgree(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, productsvc.FieldBundleComponents, checkoutwf.FieldBundleComponents)
+	assert.Equal(t, productsvc.FieldBundleComponentVariantID, checkoutwf.FieldBundleComponentVariantID)
+	assert.Equal(t, productsvc.FieldBundleComponentQuantity, checkoutwf.FieldBundleComponentQuantity)
+	assert.Equal(t, productsvc.MaxBundleComponents, checkoutwf.MaxComponents)
+	assert.Equal(t, int64(productsvc.MaxBundleComponentQuantity), checkoutwf.MaxComponentQuantity)
+	assert.Equal(t, productsvc.MaxBundleComponents, ordersvc.MaxLineComponents)
+	assert.Equal(t, productsvc.MaxBundleComponentQuantity, ordersvc.MaxLineComponentQuantity)
+}
+
 // TestTheBuyerAttributeNamesAgree binds the two spellings of the attributes that
 // name the buyer (ADR 0185).
 //

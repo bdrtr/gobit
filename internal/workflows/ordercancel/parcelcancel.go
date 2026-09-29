@@ -120,7 +120,7 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 			continue
 		}
 
-		if err := w.putBack(ctx, orderID, line.VariantID, lineItemID, target,
+		if err := w.putBack(ctx, orderID, line.stockParts(), lineItemID, target,
 			parcelReleaseReference(fulfillmentID, lineItemID)); err != nil {
 			return err
 		}
@@ -155,6 +155,28 @@ type orderLine struct {
 	Bought     int64  `json:"bought"`
 	Canceled   int64  `json:"canceled"`
 	VariantID  string `json:"variant_id"`
+	// Components are what one unit of a bundle line held when it was sold
+	// (ADR 0235); empty for any other line.
+	Components []lineComponent `json:"components,omitempty"`
+}
+
+// lineComponent is one component of a bundle line, as the order answers it.
+type lineComponent struct {
+	VariantID string `json:"variant_id"`
+	Quantity  int64  `json:"quantity"`
+}
+
+// stockParts is what the line's units are made of: its own variant, or its
+// components.
+func (l orderLine) stockParts() []stockPart {
+	if len(l.Components) == 0 {
+		return []stockPart{{variantID: l.VariantID, perUnit: 1}}
+	}
+	parts := make([]stockPart, 0, len(l.Components))
+	for _, c := range l.Components {
+		parts = append(parts, stockPart{variantID: c.VariantID, perUnit: c.Quantity})
+	}
+	return parts
 }
 
 // orderLines reads what the order sold and what it wrote off, per line.
@@ -285,23 +307,45 @@ func (w *Workflow) committedQuantities(
 //
 // It is the tail [Workflow.HandleLineCanceled] runs too, lifted out so the two
 // acts cannot disagree about which shelf or about what a repeated delivery means.
+//
+// The target is in the LINE's units and each part is brought up to it times
+// its units per line unit (ADR 0235): a written-off gift box puts back one
+// towel and two soaps. The inventory module keeps each part's total per line
+// AND item, so the parts of one line are separate targets and a redelivery
+// finds each already there. A part that tracks no stock is skipped as a line
+// that tracks none is; an error stops the act and the bus delivers it again,
+// which the parts already back answer as done.
 func (w *Workflow) putBack(
-	ctx context.Context, orderID, variantID, lineItemID string, target int64, reference string,
+	ctx context.Context, orderID string, parts []stockPart, lineItemID string, target int64, reference string,
 ) error {
-	itemID, locationID, found, err := w.shelf(ctx, orderID, variantID)
-	if err != nil || !found {
-		return err
-	}
+	for _, part := range parts {
+		itemID, locationID, found, err := w.shelf(ctx, orderID, part.variantID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			continue
+		}
 
-	alreadyBack, err := w.inventory.ReturnCanceled(
-		ctx, itemID, locationID, lineItemID, target, reference)
-	if err != nil {
-		return errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
-			"the shelf could not be brought up to %d for %s", target, reference)
-	}
-	if alreadyBack {
-		w.log.DebugContext(ctx, "the line was already at its target on the shelf",
-			"reference", reference, "target", target)
+		partTarget := target * part.perUnit
+		alreadyBack, err := w.inventory.ReturnCanceled(
+			ctx, itemID, locationID, lineItemID, partTarget, reference)
+		if err != nil {
+			return errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
+				"the shelf could not be brought up to %d of item %s for %s", partTarget, itemID, reference)
+		}
+		if alreadyBack {
+			// A second delivery, or the other act having got there first:
+			// nothing is owed and nothing was written.
+			w.log.DebugContext(ctx, "the line was already at its target on the shelf",
+				"reference", reference, "inventory_item_id", itemID, "target", partTarget)
+
+			continue
+		}
+
+		w.log.InfoContext(ctx, "the stock of a canceled line was brought up to its target",
+			"reference", reference, "order_line_item_id", lineItemID,
+			"inventory_item_id", itemID, "location_id", locationID, "target", partTarget)
 	}
 
 	return nil

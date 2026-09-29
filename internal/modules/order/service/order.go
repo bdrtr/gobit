@@ -80,6 +80,15 @@ type CreateOrderItemInput struct {
 	// are empty on a line that stands alone.
 	LineKey       string
 	ParentLineKey string
+	// Components are what one unit of a bundle line holds (ADR 0235), as the
+	// checkout read them from the catalog; empty on any other line.
+	Components []CreateOrderLineComponentInput
+}
+
+// CreateOrderLineComponentInput is one variant a bundle line's unit holds.
+type CreateOrderLineComponentInput struct {
+	VariantID string
+	Quantity  int64
 }
 
 // CreateOrderLineTaxInput is one rate applied inside a line's tax stack.
@@ -394,6 +403,7 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 				IsGiftcard:       in.Items[i].IsGiftcard,
 				Properties:       in.Items[i].Properties,
 				ParentLineItemID: parent,
+				Components:       lineComponentsOf(in.Items[i].Components),
 			})
 			if err != nil {
 				return err

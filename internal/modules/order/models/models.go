@@ -277,6 +277,13 @@ type OrderDetail struct {
 	CreditedTotal int64
 }
 
+// OrderLineComponent is one variant a bundle line's unit held, and how many of
+// it (ADR 0235). VariantID belongs to the product module, as the line's does.
+type OrderLineComponent struct {
+	VariantID string
+	Quantity  int64
+}
+
 // OrderLineItem is one line on the order.
 //
 // Title and UnitPrice are COPIED from the cart: even if the catalog changes
@@ -354,6 +361,11 @@ type OrderLineItem struct {
 	// ParentLineItemID is the line of the same order this line is an add-on of,
 	// the ring an engraving was sold for (ADR 0229); nil for a line of its own.
 	ParentLineItemID *string
+	// Components are what one unit of the line held when it was sold, for a
+	// line that sold a bundle (ADR 0235); nil for any other line. A write-off, a
+	// canceled parcel and a return put these parts back, whatever the bundle is
+	// made of by then.
+	Components []OrderLineComponent
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

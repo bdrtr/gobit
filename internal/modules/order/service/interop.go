@@ -239,6 +239,30 @@ type interopOrderItem struct {
 	// they changed together with the sender, for TaxComponents' reason.
 	LineKey       string `json:"line_key,omitempty"`
 	ParentLineKey string `json:"parent_line_key,omitempty"`
+	// Components are what one unit of a bundle line holds (ADR 0235); they
+	// changed together with the sender, for TaxComponents' reason.
+	Components []interopLineComponent `json:"components,omitempty"`
+}
+
+// interopLineComponent is one variant a bundle line's unit holds, on the wire:
+// into the order with the snapshot, and out of it to the flows that put the
+// parts back (ADR 0235).
+type interopLineComponent struct {
+	VariantID string `json:"variant_id"`
+	Quantity  int64  `json:"quantity"`
+}
+
+// interopLineComponents is the wire form of a line's components; none is nil,
+// which the omitempty tags leave out.
+func interopLineComponents(components []models.OrderLineComponent) []interopLineComponent {
+	if len(components) == 0 {
+		return nil
+	}
+	out := make([]interopLineComponent, 0, len(components))
+	for _, c := range components {
+		out = append(out, interopLineComponent{VariantID: c.VariantID, Quantity: c.Quantity})
+	}
+	return out
 }
 
 // interopLineTax is one rate inside a stacked line's tax, on the wire.
@@ -286,6 +310,7 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 			Properties:    incoming.Items[k].Properties,
 			LineKey:       incoming.Items[k].LineKey,
 			ParentLineKey: incoming.Items[k].ParentLineKey,
+			Components:    componentInputsOf(incoming.Items[k].Components),
 		})
 	}
 
@@ -1145,6 +1170,22 @@ type interopDispatchableLine struct {
 	// event, for the same reason: a subscriber reaches the inventory item without
 	// reading the order's own tables (ADR 0139).
 	VariantID string `json:"variant_id"`
+	// Components are what one unit of the line held, for a line that sold a
+	// bundle (ADR 0235): its variant tracks no stock of its own, and the units
+	// that go back are these parts', as they were at the sale.
+	Components []interopLineComponent `json:"components,omitempty"`
+}
+
+// componentInputsOf reads a snapshot line's components.
+func componentInputsOf(in []interopLineComponent) []CreateOrderLineComponentInput {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]CreateOrderLineComponentInput, 0, len(in))
+	for _, c := range in {
+		out = append(out, CreateOrderLineComponentInput(c))
+	}
+	return out
 }
 
 // DispatchableLinesJSON answers, per line, what a parcel may still be filled with.
@@ -1184,6 +1225,7 @@ func (i *Interop) DispatchableLinesJSON(ctx context.Context, orderID string) (js
 			Bought:     detail.Items[i].Quantity,
 			Canceled:   canceled[detail.Items[i].ID],
 			VariantID:  detail.Items[i].VariantID,
+			Components: interopLineComponents(detail.Items[i].Components),
 		})
 	}
 

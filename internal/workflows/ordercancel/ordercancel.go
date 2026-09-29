@@ -211,35 +211,43 @@ func (w *Workflow) HandleLineCanceled(ctx context.Context, e eventbus.Event) err
 		return nil
 	}
 
-	itemID, locationID, found, err := w.shelf(ctx, in.orderID, in.variantID)
+	parts, err := w.lineStock(ctx, in.orderID, in.lineItemID, in.variantID)
 	if err != nil {
 		return err
 	}
-	if !found {
-		return nil
-	}
 
-	alreadyBack, err := w.inventory.ReturnCanceled(
-		ctx, itemID, locationID, in.lineItemID, target, in.cancellationID)
+	return w.putBack(ctx, in.orderID, parts, in.lineItemID, target, in.cancellationID)
+}
+
+// stockPart is one variant a line's units are made of, and how many of it ONE
+// unit of the line holds: the line's own variant once, or each component of a
+// line that sold a bundle (ADR 0235).
+type stockPart struct {
+	variantID string
+	perUnit   int64
+}
+
+// lineStock answers what a written-off line's units are made of.
+//
+// The composition is the ORDER's, as the line was sold (ADR 0235), read from
+// the answer the parcel act reads too: the bundle may have been edited since,
+// and the parts to put back are the ones the sale took. A line the answer does
+// not carry is read as the event names it, its own variant once — the shape
+// every line had before bundles, and the one a bundle line cannot have.
+func (w *Workflow) lineStock(ctx context.Context, orderID, lineItemID, variantID string) ([]stockPart, error) {
+	lines, err := w.orderLines(ctx, orderID)
 	if err != nil {
-		return errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
-			"the stock of canceled line %s could not be put back", in.lineItemID)
+		return nil, err
 	}
-	if alreadyBack {
-		// The line is already at or above the target: a second delivery of this
-		// event, or the parcel act having got there first. Either way nothing is
-		// owed and nothing was written.
-		w.log.DebugContext(ctx, "the canceled units were already back on the shelf",
-			"cancellation_id", in.cancellationID, "target", target)
+	line, ok := lines[lineItemID]
+	if !ok {
+		w.log.WarnContext(ctx, "a canceled line is missing from its order's lines; its own variant is put back",
+			"order_id", orderID, "order_line_item_id", lineItemID)
 
-		return nil
+		return []stockPart{{variantID: variantID, perUnit: 1}}, nil
 	}
 
-	w.log.InfoContext(ctx, "the stock of a canceled line was brought up to its target",
-		"cancellation_id", in.cancellationID, "order_line_item_id", in.lineItemID,
-		"inventory_item_id", itemID, "location_id", locationID, "target", target)
-
-	return nil
+	return line.stockParts(), nil
 }
 
 // targetOnShelf is how many of a line's written-off units belong on the shelf.

@@ -33,6 +33,54 @@ type reservationRef struct {
 	// question from the execution record; without the field the answer could only
 	// be found by asking the inventory module one line at a time.
 	LocationID string `json:"location_id"`
+	// VariantID is the component the reservation holds, for a bundle line
+	// (ADR 0235); empty for a line's own stock. A bundle line takes one
+	// reservation per component, and without it the record could not say which
+	// part a reservation of that line is.
+	VariantID string `json:"variant_id,omitempty"`
+}
+
+// componentRef names one component of a bundle line (ADR 0235).
+type componentRef struct {
+	LineItemID string `json:"line_item_id"`
+	VariantID  string `json:"variant_id"`
+}
+
+// reservationUnit is one reservation the step owes: a line's own stock, or
+// one component of a bundle line (ADR 0235).
+type reservationUnit struct {
+	// line is the line as the reservation sees it. For a component it is the
+	// line with the component's variant, item, flags and quantity in place of
+	// the bundle's, so choosing the location, reserving and unwinding read it
+	// exactly as they read a line of its own.
+	line planLine
+	// component is the component's variant; empty for a line's own stock.
+	component string
+}
+
+// reservationUnits is what the step reserves, in the plan's order: a line of
+// its own is one unit, a bundle line one unit per component, holding the
+// line's quantity times the component's units.
+func (p *checkoutPlan) reservationUnits() []reservationUnit {
+	units := make([]reservationUnit, 0, len(p.Lines))
+	for i := range p.Lines {
+		line := p.Lines[i]
+		if len(line.Components) == 0 {
+			units = append(units, reservationUnit{line: line})
+			continue
+		}
+		for _, c := range line.Components {
+			part := line
+			part.VariantID = c.VariantID
+			part.InventoryItemID = c.InventoryItemID
+			part.Quantity = line.Quantity * c.Quantity
+			part.Unmanaged = c.Unmanaged
+			part.AllowBackorder = c.AllowBackorder
+			part.Components = nil
+			units = append(units, reservationUnit{line: part, component: c.VariantID})
+		}
+	}
+	return units
 }
 
 // reserveInventoryStep reserves stock for every line of the cart.
@@ -69,6 +117,11 @@ type reserveOutput struct {
 	// unreserved; a reservation that was never taken leaves no
 	// [reservationRef] to look for.
 	Unreserved []string `json:"unreserved,omitempty"`
+	// UnreservedComponents names the components of bundle lines that finished
+	// the step with no reservation, for Unreserved's reasons (ADR 0235). A
+	// bundle line is traced per component: one part can be reserved while
+	// another is not counted.
+	UnreservedComponents []componentRef `json:"unreserved_components,omitempty"`
 }
 
 // Name returns the step's name.
@@ -112,11 +165,12 @@ func (s *reserveInventoryStep) Restore(sc *workflow.StepContext, output json.Raw
 		return errors.Wrap(err, errors.KindInternal, CodeSharedStateInvalid,
 			"the output of step %q could not be decoded", StepReserveInventory)
 	}
-	if len(out.Reservations)+len(out.Unreserved) != len(s.plan.Lines) {
+	accounted := len(out.Reservations) + len(out.Unreserved) + len(out.UnreservedComponents)
+	if owed := len(s.plan.reservationUnits()); accounted != owed {
 		return errors.Internal(CodeSharedStateInvalid,
-			"the record of step %q accounts for %d of the plan's %d lines (%d reserved, %d deliberately not); compensation cannot know what to release",
-			StepReserveInventory, len(out.Reservations)+len(out.Unreserved), len(s.plan.Lines),
-			len(out.Reservations), len(out.Unreserved))
+			"the record of step %q accounts for %d of the plan's %d reservation units (%d reserved, %d deliberately not); compensation cannot know what to release",
+			StepReserveInventory, accounted, owed,
+			len(out.Reservations), len(out.Unreserved)+len(out.UnreservedComponents))
 	}
 
 	sc.Shared[sharedReservations] = out.Reservations
@@ -217,17 +271,29 @@ func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepCont
 	}
 	s.served = served
 
-	refs := make([]reservationRef, 0, len(s.plan.Lines))
+	units := s.plan.reservationUnits()
+	refs := make([]reservationRef, 0, len(units))
 	unreserved := make([]string, 0, len(s.plan.Lines))
+	var unreservedParts []componentRef
+	skip := func(unit *reservationUnit) {
+		if unit.component == "" {
+			unreserved = append(unreserved, unit.line.LineItemID)
+			return
+		}
+		unreservedParts = append(unreservedParts, componentRef{
+			LineItemID: unit.line.LineItemID, VariantID: unit.component,
+		})
+	}
 
-	for i := range s.plan.Lines {
-		line := s.plan.Lines[i]
+	for i := range units {
+		unit := &units[i]
+		line := unit.line
 
 		if line.Unmanaged {
 			s.w.log.DebugContext(ctx, "the variant is not counted; the line takes no reservation",
 				"cart_id", s.plan.CartID, "line_item_id", line.LineItemID,
 				"variant_id", line.VariantID)
-			unreserved = append(unreserved, line.LineItemID)
+			skip(unit)
 			continue
 		}
 		if line.AllowBackorder && line.InventoryItemID == "" {
@@ -243,7 +309,7 @@ func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepCont
 			s.w.log.InfoContext(ctx, "the variant is counted but linked to no inventory item; backorder is permitted so the order stands",
 				"cart_id", s.plan.CartID, "line_item_id", line.LineItemID,
 				"variant_id", line.VariantID, "quantity", line.Quantity)
-			unreserved = append(unreserved, line.LineItemID)
+			skip(unit)
 			continue
 		}
 
@@ -260,7 +326,7 @@ func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepCont
 					"cart_id", s.plan.CartID, "line_item_id", line.LineItemID,
 					"variant_id", line.VariantID, "inventory_item_id", line.InventoryItemID,
 					"quantity", line.Quantity, "error", err)
-				unreserved = append(unreserved, line.LineItemID)
+				skip(unit)
 				continue
 			}
 			return nil, s.unwind(ctx, sc, refs, line, locationID, err)
@@ -277,13 +343,14 @@ func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepCont
 			LineItemID:    line.LineItemID,
 			ReservationID: reservationID,
 			LocationID:    locationID,
+			VariantID:     unit.component,
 		})
 		sc.Shared[sharedReservations] = refs
 	}
 
 	s.w.log.DebugContext(ctx, "stock reserved",
-		"cart_id", s.plan.CartID, "lines", len(refs), "unreserved", len(unreserved))
-	return reserveOutput{Reservations: refs, Unreserved: unreserved}, nil
+		"cart_id", s.plan.CartID, "lines", len(refs), "unreserved", len(unreserved)+len(unreservedParts))
+	return reserveOutput{Reservations: refs, Unreserved: unreserved, UnreservedComponents: unreservedParts}, nil
 }
 
 // locationFor returns the CANDIDATE locations the line's stock can be reserved

@@ -702,7 +702,7 @@ func (v *variantProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 	if err != nil {
 		return nil, err
 	}
-	return records(variants, variantRecord, opts.Fields, EntityVariant)
+	return v.recordsWithBundles(ctx, variants, opts.Fields)
 }
 
 // fetch reads the variants by the narrowest criterion.
@@ -772,7 +772,64 @@ func (v *variantProvider) FetchByIDs(ctx context.Context, ids, fields []string) 
 	if err != nil {
 		return nil, err
 	}
-	return records(variants, variantRecord, fields, EntityVariant)
+	return v.recordsWithBundles(ctx, variants, fields)
+}
+
+// recordsWithBundles builds the records and fills the composition field when
+// the caller asked for it, with one batch read for every variant in the page
+// (ADR 0235), in the variants' order as [productProvider.fillAddOns] does.
+func (v *variantProvider) recordsWithBundles(
+	ctx context.Context, variants []models.Variant, fields []string,
+) ([]query.Record, error) {
+	built, err := records(variants, variantRecord, fields, EntityVariant)
+	if err != nil {
+		return nil, err
+	}
+	if len(variants) == 0 || (len(fields) > 0 && !slices.Contains(fields, FieldBundleComponents)) {
+		return built, nil
+	}
+
+	ids := make([]string, 0, len(variants))
+	for i := range variants {
+		ids = append(ids, variants[i].ID)
+	}
+	byBundle, err := v.repo.ListBundleComponents(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range built {
+		built[i][FieldBundleComponents] = bundleComponentRecords(byBundle[ids[i]])
+	}
+
+	return built, nil
+}
+
+// FieldBundleComponents carries what a bundle variant is made of, in the
+// operator's order: one record per component with its "variant_id" and the
+// "quantity" one bundle holds, an empty list for a variant that is no bundle
+// (ADR 0235). It is published for the checkout, which reserves a bundle's
+// components rather than the bundle, and internal/arch binds the workflow's
+// spelling to this one.
+const FieldBundleComponents = "bundle_components"
+
+// The keys of one component record inside [FieldBundleComponents].
+const (
+	FieldBundleComponentVariantID = "variant_id"
+	FieldBundleComponentQuantity  = "quantity"
+)
+
+// bundleComponentRecords turns a composition into the field's value; none is an
+// empty list, never nil, so a consumer reads "no components" rather than a
+// missing field.
+func bundleComponentRecords(components []models.BundleComponent) []query.Record {
+	out := make([]query.Record, 0, len(components))
+	for _, c := range components {
+		out = append(out, query.Record{
+			FieldBundleComponentVariantID: c.VariantID,
+			FieldBundleComponentQuantity:  int64(c.Quantity),
+		})
+	}
+	return out
 }
 
 // The record keys that MORE THAN ONE of this module's entities offers.
@@ -914,11 +971,15 @@ func variantRecord(v models.Variant) query.Record {
 		"upc":              deref(v.UPC),
 		"manage_inventory": v.ManageInventory,
 		"allow_backorder":  v.AllowBackorder,
-		"weight":           derefInt32(v.Weight),
-		"rank":             v.Rank,
-		"metadata":         v.Metadata,
-		fieldCreatedAt:     v.CreatedAt,
-		fieldUpdatedAt:     v.UpdatedAt,
+		// Empty here and filled by [variantProvider.recordsWithBundles] when
+		// asked, for productRecord's reason: [project] refuses a key the record
+		// does not carry.
+		FieldBundleComponents: []query.Record{},
+		"weight":              derefInt32(v.Weight),
+		"rank":                v.Rank,
+		"metadata":            v.Metadata,
+		fieldCreatedAt:        v.CreatedAt,
+		fieldUpdatedAt:        v.UpdatedAt,
 	}
 }
 

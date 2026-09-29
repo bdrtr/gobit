@@ -367,6 +367,10 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 	if err != nil {
 		return models.OrderLineItem{}, err
 	}
+	components, err := toComponents(row.Components)
+	if err != nil {
+		return models.OrderLineItem{}, err
+	}
 	return models.OrderLineItem{
 		ID:               row.ID,
 		OrderID:          row.OrderID,
@@ -384,6 +388,7 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 		IsGiftcard:       row.IsGiftcard,
 		Properties:       properties,
 		ParentLineItemID: row.ParentLineItemID,
+		Components:       components,
 		CreatedAt:        toTime(row.CreatedAt),
 		UpdatedAt:        toTime(row.UpdatedAt),
 	}, nil
@@ -715,6 +720,44 @@ func toProperties(raw []byte) (map[string]string, error) {
 		return nil, nil
 	}
 	return out, nil
+}
+
+// lineComponentJSON is one component as the column stores it (ADR 0235).
+type lineComponentJSON struct {
+	VariantID string `json:"variant_id"`
+	Quantity  int64  `json:"quantity"`
+}
+
+// toComponents reads a bundle line's components; an empty array is nil.
+func toComponents(raw []byte) ([]models.OrderLineComponent, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var stored []lineComponentJSON
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeQueryFailed, "the line's components could not be read")
+	}
+	if len(stored) == 0 {
+		return nil, nil
+	}
+	out := make([]models.OrderLineComponent, 0, len(stored))
+	for _, c := range stored {
+		out = append(out, models.OrderLineComponent{VariantID: c.VariantID, Quantity: c.Quantity})
+	}
+	return out, nil
+}
+
+// fromComponents writes a line's components; none is an empty array.
+func fromComponents(components []models.OrderLineComponent) ([]byte, error) {
+	stored := make([]lineComponentJSON, 0, len(components))
+	for _, c := range components {
+		stored = append(stored, lineComponentJSON{VariantID: c.VariantID, Quantity: c.Quantity})
+	}
+	raw, err := json.Marshal(stored)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeQueryFailed, "the line's components could not be written")
+	}
+	return raw, nil
 }
 
 // fromProperties writes a line's properties; none is an empty object.

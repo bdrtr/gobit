@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -853,10 +854,16 @@ func (s *Service) toStoreProducts(
 	ctx context.Context, products []models.Product, salesChannelIDs []string,
 ) ([]StoreProduct, error) {
 	variantIDs := make([]string, 0, len(products))
+	var componentIDs []string
 	for i := range products {
 		variants := products[i].Variants
 		for j := range variants {
 			variantIDs = append(variantIDs, variants[j].ID)
+			for _, c := range variants[j].BundleComponents {
+				if !slices.Contains(componentIDs, c.VariantID) {
+					componentIDs = append(componentIDs, c.VariantID)
+				}
+			}
 		}
 	}
 
@@ -864,7 +871,13 @@ func (s *Service) toStoreProducts(
 	// set belongs to the request's channels, not to a variant.
 	served := s.locationsServingChannels(ctx, salesChannelIDs)
 
-	extras, err := s.enrichVariants(ctx, variantIDs, len(served) > 0)
+	// A bundle's components ride on the same graph call as the page's variants
+	// (ADR 0235): their stock records are what the bundle's badge reads.
+	extras, err := s.enrichVariants(ctx, append(slices.Clone(variantIDs), componentIDs...), len(served) > 0)
+	if err != nil {
+		return nil, err
+	}
+	parts, err := s.bundleParts(ctx, componentIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -884,7 +897,7 @@ func (s *Service) toStoreProducts(
 				// body takes, rather than in the handler that happens to need
 				// it: a definition that lives in one endpoint is the state gap
 				// A17 was filed against.
-				InStock: variantInStock(variant, extra, served),
+				InStock: variantBadge(variant, extras, parts, served),
 			})
 		}
 		// The variant slice of the embedded product is emptied: carrying the

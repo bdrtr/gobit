@@ -150,6 +150,7 @@ type OrderLineItem struct {
 	Properties       []byte
 	ParentLineItemID *string
 	Seq              *int64
+	Components       []byte
 }
 
 type OrderLineTax struct {
