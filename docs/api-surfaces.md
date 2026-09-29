@@ -159,17 +159,18 @@ base (one database round trip; it does not get cheaper when fewer fields are
 selected).
 
 The calibration is **measured** and pinned in the `calibrationDocuments` table
-inside `graph/limits_test.go`; the byte column was taken with the measurement
-fixture in the same file (a product with a 4 KiB description, three variants,
+inside `graph/limits_test.go`, and a test holds this table's complexity column
+to it (D158); the byte columns were taken with the measurement fixture in
+`graph/handler_test.go` (a product with a 4 KiB description, three variants,
 price and stock records):
 
 | document | request | complexity | response | outcome |
 |---|---:|---:|---:|---|
-| product page (PDP, everything included) | 675 B | 2,390 | 6.9 KiB | passes |
-| product page with its three `related` lists (four cards each) | 1,014 B | 6,440 | 13.2 KiB | passes |
+| product page (PDP, everything included) | 823 B | 2,840 | 6.9 KiB | passes |
+| product page with its three `related` lists (four cards each) | 1,162 B | 6,890 | 13.2 KiB | passes |
 | category list (24 products, card + price) | 118 B | 2,344 | 15.1 KiB | passes |
-| ALL fields on the default page (20 products x whole tree) | 686 B | 28,880 | 137 KiB | passes |
-| ALL fields with `limit=100` | 698 B | 140,400 | 685 KiB | complexity |
+| ALL fields on the default page (20 products x whole tree) | 832 B | 37,880 | 138.6 KiB | passes |
+| ALL fields with `limit=100` | 844 B | 185,400 | 693.1 KiB | complexity |
 | `related` on every product of a page of 50 | 73 B | 51,600 | 4.6 KiB | complexity |
 | a chain of three `related` lists | 118 B | 113,000 | 1.3 KiB | complexity |
 | `products { count }` with 400 aliases | 9.7 KiB | 408,000 | 8.5 KiB | field repetition |
@@ -190,7 +191,7 @@ complexity of the fragment bomb cannot be calculated at all. Counting fields was
 never asking about the very dimension it missed.
 
 The comparison point is the `limit=100` row: pulling the same hundred products
-with all their fields is **686 KiB**, and asking REST for it with
+with all their fields is **693.1 KiB**, and asking REST for it with
 `GET /store/v1/sales-channels/{sales_channel_id}/products?limit=100` is of the
 same order. What produces 204.9 MiB
 is not more *records* but **the same record serialized 489 times** — and a REST

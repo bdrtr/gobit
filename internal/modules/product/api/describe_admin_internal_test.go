@@ -286,6 +286,15 @@ func adminEndpoints() []adminEndpoint {
 			request: setAddOnsRequest{}, record: addOnsDTO{VariantIDs: []string{"variant_2"}},
 		},
 		{
+			method: http.MethodGet, path: pathVariantBundle, status: "200",
+			record: bundleDTO{Components: []models.BundleComponent{{VariantID: "variant_2", Quantity: 2}}},
+		},
+		{
+			method: http.MethodPut, path: pathVariantBundle, status: "200",
+			request: setBundleRequest{},
+			record:  bundleDTO{Components: []models.BundleComponent{{VariantID: "variant_2", Quantity: 2}}},
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/products/{id}/variants", status: "201",
 			request: createVariantRequest{}, record: filledAdminVariant(),
 		},
@@ -504,14 +513,15 @@ func filledAdminVariant() models.Variant {
 	now := time.Now().UTC()
 
 	return models.Variant{
-		SKU:          &text,
-		Barcode:      &text,
-		EAN:          &text,
-		UPC:          &text,
-		Weight:       &number,
-		Metadata:     map[string]any{"k": "v"},
-		DeletedAt:    &now,
-		OptionValues: []models.OptionValue{{}},
+		SKU:              &text,
+		Barcode:          &text,
+		EAN:              &text,
+		UPC:              &text,
+		Weight:           &number,
+		Metadata:         map[string]any{"k": "v"},
+		DeletedAt:        &now,
+		OptionValues:     []models.OptionValue{{}},
+		BundleComponents: []models.BundleComponent{{VariantID: "variant_2", Quantity: 2}},
 	}
 }
 

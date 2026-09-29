@@ -565,6 +565,11 @@ type Variant {
   inStock: Boolean!
   "The values that place the variant in the option space (e.g. Size: S)."
   optionValues: [OptionValue!]!
+  """
+  The variants one unit of this bundle holds, in the shop's order (ADR 0234);
+  empty on a variant that is no bundle.
+  """
+  bundleComponents: [BundleComponent!]!
 
   """
   The variant's price set — it is the PRICING module's record.
@@ -592,6 +597,12 @@ type Variant {
   The rationale for it being untyped is the same as for priceSet.
   """
   inventoryItem: JSON
+}
+
+"One variant a bundle is made of, and how many of it one bundle holds (ADR 0234)."
+type BundleComponent {
+  variantId: ID!
+  quantity: Int!
 }
 
 "The product's option axis (e.g. Size)."

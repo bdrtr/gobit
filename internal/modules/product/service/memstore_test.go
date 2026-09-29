@@ -52,6 +52,9 @@ type memStore struct {
 	// addOns is the product -> add-on variant ids mapping, in rank order
 	// (ADR 0228).
 	addOns map[string][]string
+	// bundles is the bundle variant -> components mapping, in rank order
+	// (ADR 0234).
+	bundles map[string][]models.BundleComponent
 	// imports are the catalog imports (ADR 0205), made on first use.
 	imports map[string]*memImport
 	// attributeState is the typed attributes (ADR 0219), made on first use.
@@ -100,6 +103,7 @@ func newMemStore() *memStore {
 		productCats:   map[string][]string{},
 		relations:     map[string]map[models.RelationType][]string{},
 		addOns:        map[string][]string{},
+		bundles:       map[string][]models.BundleComponent{},
 		calls:         map[string]int{},
 		failOn:        map[string]error{},
 	}
@@ -665,6 +669,13 @@ func (m *memStore) SoftDeleteProductChildren(_ context.Context, productID string
 			m.variants[id] = v
 		}
 	}
+	// The product's bundle compositions go, as DeleteBundleComponentsOfProduct
+	// takes them.
+	for id := range m.variants {
+		if m.variants[id].ProductID == productID {
+			delete(m.bundles, id)
+		}
+	}
 	// The add-on list and the entries naming one of the product's variants go,
 	// as DeleteProductAddOnsTouching takes them.
 	delete(m.addOns, productID)
@@ -990,7 +1001,87 @@ func (m *memStore) SoftDeleteVariant(_ context.Context, id string) error {
 	for owner, ids := range m.addOns {
 		m.addOns[owner] = slices.DeleteFunc(ids, func(added string) bool { return added == id })
 	}
+	delete(m.bundles, id)
 	return nil
+}
+
+func (m *memStore) ListBundleComponents(
+	_ context.Context, bundleIDs []string,
+) (map[string][]models.BundleComponent, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListBundleComponents"); err != nil {
+		return nil, err
+	}
+	out := map[string][]models.BundleComponent{}
+	for _, id := range bundleIDs {
+		if components := m.bundles[id]; len(components) > 0 {
+			out[id] = slices.Clone(components)
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) ReplaceBundleComponents(
+	_ context.Context, bundleID string, components []models.BundleComponent,
+) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ReplaceBundleComponents"); err != nil {
+		return err
+	}
+	if len(components) == 0 {
+		delete(m.bundles, bundleID)
+		return nil
+	}
+	m.bundles[bundleID] = slices.Clone(components)
+	return nil
+}
+
+func (m *memStore) LockLiveVariantsForBundle(
+	_ context.Context, ids []string,
+) (map[string]repository.BundleCandidate, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("LockLiveVariantsForBundle"); err != nil {
+		return nil, err
+	}
+	out := map[string]repository.BundleCandidate{}
+	for _, id := range ids {
+		v, ok := m.variants[id]
+		if !ok || v.DeletedAt != nil {
+			continue
+		}
+		p, ok := m.products[v.ProductID]
+		if !ok || p.DeletedAt != nil {
+			continue
+		}
+		out[id] = repository.BundleCandidate{
+			ID: id, ProductID: v.ProductID, ManageInventory: v.ManageInventory,
+			AllowBackorder: v.AllowBackorder, IsGiftcard: p.IsGiftcard,
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) ListBundlesContaining(_ context.Context, componentIDs []string) (map[string][]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListBundlesContaining"); err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for bundle, components := range m.bundles {
+		for _, c := range components {
+			if slices.Contains(componentIDs, c.VariantID) {
+				out[c.VariantID] = append(out[c.VariantID], bundle)
+			}
+		}
+	}
+	for id := range out {
+		slices.Sort(out[id])
+	}
+	return out, nil
 }
 
 func (m *memStore) ListProductAddOns(_ context.Context, productID string) ([]string, error) {

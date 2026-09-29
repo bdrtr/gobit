@@ -59,6 +59,11 @@ type ComplexityRoot struct {
 		Value  func(childComplexity int) int
 	}
 
+	BundleComponent struct {
+		Quantity  func(childComplexity int) int
+		VariantID func(childComplexity int) int
+	}
+
 	Category struct {
 		Description func(childComplexity int) int
 		Handle      func(childComplexity int) int
@@ -217,24 +222,25 @@ type ComplexityRoot struct {
 	}
 
 	Variant struct {
-		AllowBackorder  func(childComplexity int) int
-		Barcode         func(childComplexity int) int
-		CreatedAt       func(childComplexity int) int
-		EAN             func(childComplexity int) int
-		ID              func(childComplexity int) int
-		InStock         func(childComplexity int) int
-		InventoryItem   func(childComplexity int) int
-		ManageInventory func(childComplexity int) int
-		Metadata        func(childComplexity int) int
-		OptionValues    func(childComplexity int) int
-		PriceSet        func(childComplexity int) int
-		ProductID       func(childComplexity int) int
-		Rank            func(childComplexity int) int
-		SKU             func(childComplexity int) int
-		Title           func(childComplexity int) int
-		UPC             func(childComplexity int) int
-		UpdatedAt       func(childComplexity int) int
-		Weight          func(childComplexity int) int
+		AllowBackorder   func(childComplexity int) int
+		Barcode          func(childComplexity int) int
+		BundleComponents func(childComplexity int) int
+		CreatedAt        func(childComplexity int) int
+		EAN              func(childComplexity int) int
+		ID               func(childComplexity int) int
+		InStock          func(childComplexity int) int
+		InventoryItem    func(childComplexity int) int
+		ManageInventory  func(childComplexity int) int
+		Metadata         func(childComplexity int) int
+		OptionValues     func(childComplexity int) int
+		PriceSet         func(childComplexity int) int
+		ProductID        func(childComplexity int) int
+		Rank             func(childComplexity int) int
+		SKU              func(childComplexity int) int
+		Title            func(childComplexity int) int
+		UPC              func(childComplexity int) int
+		UpdatedAt        func(childComplexity int) int
+		Weight           func(childComplexity int) int
 	}
 }
 
@@ -341,6 +347,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.AttributeOption.Value(childComplexity), true
+
+	case "BundleComponent.quantity":
+		if e.ComplexityRoot.BundleComponent.Quantity == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BundleComponent.Quantity(childComplexity), true
+	case "BundleComponent.variantId":
+		if e.ComplexityRoot.BundleComponent.VariantID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.BundleComponent.VariantID(childComplexity), true
 
 	case "Category.description":
 		if e.ComplexityRoot.Category.Description == nil {
@@ -1048,6 +1067,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Variant.Barcode(childComplexity), true
+	case "Variant.bundleComponents":
+		if e.ComplexityRoot.Variant.BundleComponents == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Variant.BundleComponents(childComplexity), true
 	case "Variant.createdAt":
 		if e.ComplexityRoot.Variant.CreatedAt == nil {
 			break
@@ -1270,6 +1295,16 @@ func (ec *executionContext) childFields_AttributeOption(ctx context.Context, fie
 		return ec.fieldContext_AttributeOption_value(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type AttributeOption", field.Name)
+}
+
+func (ec *executionContext) childFields_BundleComponent(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "variantId":
+		return ec.fieldContext_BundleComponent_variantId(ctx, field)
+	case "quantity":
+		return ec.fieldContext_BundleComponent_quantity(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type BundleComponent", field.Name)
 }
 
 func (ec *executionContext) childFields_Category(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
@@ -1598,6 +1633,8 @@ func (ec *executionContext) childFields_Variant(ctx context.Context, field graph
 		return ec.fieldContext_Variant_inStock(ctx, field)
 	case "optionValues":
 		return ec.fieldContext_Variant_optionValues(ctx, field)
+	case "bundleComponents":
+		return ec.fieldContext_Variant_bundleComponents(ctx, field)
 	case "priceSet":
 		return ec.fieldContext_Variant_priceSet(ctx, field)
 	case "inventoryItem":
@@ -2346,6 +2383,52 @@ func (ec *executionContext) _AttributeOption_value(ctx context.Context, field gr
 }
 func (ec *executionContext) fieldContext_AttributeOption_value(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
 	return graphql.NewScalarFieldContext("AttributeOption", field, false, false, errors.New("field of type String does not have child fields"))
+}
+
+func (ec *executionContext) _BundleComponent_variantId(ctx context.Context, field graphql.CollectedField, obj *models.BundleComponent) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BundleComponent_variantId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.VariantID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BundleComponent_variantId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BundleComponent", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _BundleComponent_quantity(ctx context.Context, field graphql.CollectedField, obj *models.BundleComponent) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_BundleComponent_quantity(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Quantity, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v int32) graphql.Marshaler {
+			return ec.marshalNInt2int32(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_BundleComponent_quantity(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("BundleComponent", field, false, false, errors.New("field of type Int does not have child fields"))
 }
 
 func (ec *executionContext) _Category_id(ctx context.Context, field graphql.CollectedField, obj *models.Category) (ret graphql.Marshaler) {
@@ -5551,6 +5634,38 @@ func (ec *executionContext) fieldContext_Variant_optionValues(_ context.Context,
 	return fc, nil
 }
 
+func (ec *executionContext) _Variant_bundleComponents(ctx context.Context, field graphql.CollectedField, obj *service.StoreVariant) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Variant_bundleComponents(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.BundleComponents, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []models.BundleComponent) graphql.Marshaler {
+			return ec.marshalNBundleComponent2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐBundleComponentᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Variant_bundleComponents(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Variant",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_BundleComponent(ctx, field)
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _Variant_priceSet(ctx context.Context, field graphql.CollectedField, obj *service.StoreVariant) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -6891,6 +7006,49 @@ func (ec *executionContext) _AttributeOption(ctx context.Context, sel ast.Select
 			}
 		case "value":
 			out.Values[i] = ec._AttributeOption_value(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
+var bundleComponentImplementors = []string{"BundleComponent"}
+
+func (ec *executionContext) _BundleComponent(ctx context.Context, sel ast.SelectionSet, obj *models.BundleComponent) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, bundleComponentImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("BundleComponent")
+		case "variantId":
+			out.Values[i] = ec._BundleComponent_variantId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "quantity":
+			out.Values[i] = ec._BundleComponent_quantity(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}
@@ -8322,6 +8480,11 @@ func (ec *executionContext) _Variant(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "bundleComponents":
+			out.Values[i] = ec._Variant_bundleComponents(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
 		case "priceSet":
 			field := field
 
@@ -8890,6 +9053,26 @@ func (ec *executionContext) marshalNBoolean2bool(ctx context.Context, sel ast.Se
 		}
 	}
 	return res
+}
+
+func (ec *executionContext) marshalNBundleComponent2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐBundleComponent(ctx context.Context, sel ast.SelectionSet, v models.BundleComponent) graphql.Marshaler {
+	return ec._BundleComponent(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNBundleComponent2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐBundleComponentᚄ(ctx context.Context, sel ast.SelectionSet, v []models.BundleComponent) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNBundleComponent2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐBundleComponent(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
 }
 
 func (ec *executionContext) marshalNCategory2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐCategory(ctx context.Context, sel ast.SelectionSet, v models.Category) graphql.Marshaler {

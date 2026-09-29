@@ -109,6 +109,20 @@ func (f *scopeCatalog) SetProductAddOns(context.Context, string, []string) ([]st
 	return []string{}, nil
 }
 
+// VariantBundle counts the call.
+func (f *scopeCatalog) VariantBundle(context.Context, string) ([]models.BundleComponent, error) {
+	f.count()
+	return []models.BundleComponent{}, nil
+}
+
+// SetVariantBundle counts the call.
+func (f *scopeCatalog) SetVariantBundle(
+	context.Context, string, []models.BundleComponent,
+) ([]models.BundleComponent, error) {
+	f.count()
+	return []models.BundleComponent{}, nil
+}
+
 // StoreProductAddOns counts the call.
 func (f *scopeCatalog) StoreProductAddOns(context.Context, string, []string) ([]service.StoreAddOn, error) {
 	f.count()

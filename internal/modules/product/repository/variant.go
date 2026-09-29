@@ -168,6 +168,11 @@ func (r *Repo) SoftDeleteVariant(ctx context.Context, id string) error {
 	if err := r.q.DeleteAddOnsOfVariant(ctx, id); err != nil {
 		return wrapDB(err, "could not delete the add-on entries of variant: %s", id)
 	}
+	// A bundle's composition goes with it (ADR 0234); a variant that is a live
+	// bundle's component is refused by the service before it gets here.
+	if err := r.q.DeleteBundleComponents(ctx, id); err != nil {
+		return wrapDB(err, "could not delete the components of variant: %s", id)
+	}
 	return nil
 }
 

@@ -442,7 +442,12 @@ func (s *Service) ClearVariantPriceSet(ctx context.Context, variantID string) er
 }
 
 // SetVariantInventoryItem links the variant to a stock item.
+//
+// A bundle variant takes none (ADR 0234): its stock is its components'.
 func (s *Service) SetVariantInventoryItem(ctx context.Context, variantID, itemID string) error {
+	if err := s.requireNotBundle(ctx, variantID); err != nil {
+		return err
+	}
 	return s.setVariantLink(ctx, LinkVariantInventory, variantID, itemID, "inventory_item_id")
 }
 

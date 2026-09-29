@@ -137,6 +137,13 @@ type Store interface {
 	// the read layer's batch of them (ADR 0229); see add_on.go.
 	ListProductAddOns(ctx context.Context, productID string) ([]string, error)
 	ListProductAddOnsOfProducts(ctx context.Context, productIDs []string) (map[string][]string, error)
+	// ListBundleComponents, ReplaceBundleComponents, ListBundlesContaining and
+	// LockLiveVariantsForBundle are a variant's composition as a bundle
+	// (ADR 0234); see bundle.go.
+	ListBundleComponents(ctx context.Context, bundleIDs []string) (map[string][]models.BundleComponent, error)
+	ReplaceBundleComponents(ctx context.Context, bundleID string, components []models.BundleComponent) error
+	ListBundlesContaining(ctx context.Context, componentIDs []string) (map[string][]string, error)
+	LockLiveVariantsForBundle(ctx context.Context, ids []string) (map[string]BundleCandidate, error)
 	ReplaceProductAddOns(ctx context.Context, productID string, variantIDs []string) error
 	SoftDeleteProduct(ctx context.Context, id string) error
 	SoftDeleteProductChildren(ctx context.Context, productID string) error

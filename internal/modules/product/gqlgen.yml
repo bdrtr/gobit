@@ -129,6 +129,9 @@ models:
   # A product's add-ons (ADR 0231).
   AddOn:
     model: github.com/bdrtr/gobit/internal/modules/product/service.StoreAddOn
+  # What a bundle variant is made of (ADR 0234).
+  BundleComponent:
+    model: github.com/bdrtr/gobit/internal/modules/product/models.BundleComponent
   ProductOrder:
     model: github.com/bdrtr/gobit/internal/modules/product/models.ProductOrder
   RelationType:

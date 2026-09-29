@@ -262,14 +262,15 @@ func filledStoreVariant() service.StoreVariant {
 
 	return service.StoreVariant{
 		Variant: models.Variant{
-			SKU:          &text,
-			Barcode:      &text,
-			EAN:          &text,
-			UPC:          &text,
-			Weight:       &number,
-			Metadata:     map[string]any{"k": "v"},
-			DeletedAt:    &now,
-			OptionValues: []models.OptionValue{{}},
+			SKU:              &text,
+			Barcode:          &text,
+			EAN:              &text,
+			UPC:              &text,
+			Weight:           &number,
+			Metadata:         map[string]any{"k": "v"},
+			DeletedAt:        &now,
+			OptionValues:     []models.OptionValue{{}},
+			BundleComponents: []models.BundleComponent{{VariantID: "variant_2", Quantity: 2}},
 		},
 		PriceSet:      query.Record{"id": "pset_1"},
 		InventoryItem: query.Record{"id": "iitem_1"},

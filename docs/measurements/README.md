@@ -164,3 +164,4 @@ truth: a report says what was true on the day it was taken.
 | [An add-on on a product page — measured 2026-09-29](0231-an-add-on-on-a-product-page.md) | 34 |
 | [An operator names an engraving — measured 2026-09-29](0232-an-operator-names-an-engraving.md) | 43 |
 | [Twelve lines in a row — measured 2026-09-29](0233-twelve-lines-in-a-row.md) | 33 |
+| [A gift box of three — measured 2026-09-29](0234-a-gift-box-of-three.md) | 120 |

@@ -751,8 +751,43 @@ func describeAdminVariants(d *openapi.Doc) {
 	d.Describe(http.MethodDelete, "/admin/v1/variants/{id}", openapi.Operation{
 		Parameters: []openapi.Parameter{ifMatchParameter()},
 		Summary:    "Deletes the variant.",
+		Description: "A variant a bundle that is not deleted holds as a component is refused with 409; " +
+			"take it out of the bundle first. Deleting a bundle takes its composition with it.",
 		Responses: map[string]any{
 			"200": openapi.Response("Deletion record", d.Item(deleted{})),
+		},
+	})
+
+	describeAdminBundle(d)
+}
+
+// describeAdminBundle describes what a bundle variant is made of (ADR 0234).
+func describeAdminBundle(d *openapi.Doc) {
+	d.Describe(http.MethodGet, pathVariantBundle, openapi.Operation{
+		Summary: "Returns the variants one unit of a bundle holds, in the operator's order.",
+		Description: "An empty list is a variant that is no bundle. The product and variant reads " +
+			"carry the same list as \"bundle_components\".",
+		Responses: map[string]any{
+			"200": openapi.Response("The variant's components", d.Item(bundleDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPut, pathVariantBundle, openapi.Operation{
+		Parameters: []openapi.Parameter{ifMatchParameter()},
+		Summary:    "Replaces the variants one unit of a bundle holds.",
+		Description: "The body is the WHOLE composition, in the order the storefront shows it; an " +
+			"empty list makes the variant a plain one again. Every component names a variant that " +
+			"exists and is not deleted, at most once, of ANOTHER product, not a gift card, with a " +
+			"quantity from 1 to " + strconv.Itoa(service.MaxBundleComponentQuantity) + "; a bundle " +
+			"holds at most " + strconv.Itoa(service.MaxBundleComponents) + ". A composition breaking " +
+			"any of that is refused with 422 and nothing is written. The catalog's state is refused " +
+			"with 409: a component that is itself a bundle, a bundle that is some bundle's " +
+			"component, a bundle not counted (\"manage_inventory\" false) or sold past zero " +
+			"(\"allow_backorder\" true), and a bundle linked to an inventory item of its own. The " +
+			"write is a revision of the variant's product and takes If-Match.",
+		RequestBody: d.RequestBody(setBundleRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The variant's components after the write", d.Item(bundleDTO{})),
 		},
 	})
 }

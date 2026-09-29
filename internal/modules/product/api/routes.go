@@ -154,6 +154,10 @@ func (h *Handler) Routes(r chi.Router) {
 	read.Get("/admin/v1/variants/{id}", h.adminGetVariant)
 	revising.Patch("/admin/v1/variants/{id}", h.adminUpdateVariant)
 	revising.Delete("/admin/v1/variants/{id}", h.adminDeleteVariant)
+	// What a bundle variant is made of (ADR 0234): a revision of its product,
+	// like the variant's own update.
+	read.Get(pathVariantBundle, h.adminGetBundle)
+	revising.Put(pathVariantBundle, h.adminSetBundle)
 
 	// --- Admin API: options ---
 	revising.Post("/admin/v1/products/{id}/options", h.adminCreateOption)

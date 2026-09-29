@@ -33,6 +33,7 @@ const (
 var productViewTables = []string{
 	"product", "product_variant", "product_option", "product_option_value", "product_variant_option_value",
 	"product_image", "product_tag_map", "product_category_map", "product_attribute_value",
+	"product_bundle_component",
 }
 
 // productRevisionFrames are the service functions whose function literal a

@@ -71,6 +71,14 @@ type ProductAttributeValue struct {
 	BooleanValue *bool
 }
 
+type ProductBundleComponent struct {
+	BundleVariantID    string
+	ComponentVariantID string
+	Quantity           int32
+	Rank               int32
+	CreatedAt          pgtype.Timestamptz
+}
+
 type ProductCategory struct {
 	ID          string
 	Name        string

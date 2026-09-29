@@ -586,7 +586,8 @@ func (s *Service) UpdateProduct(ctx context.Context, id string, in UpdateProduct
 // record that does not exist. The link cleanup is OUTSIDE the database
 // transaction (the link tables belong to the core); that is why its failure does
 // not undo the deletion, it is logged as a warning and the orphan links are
-// harmless — ids are never reused.
+// harmless — ids are never reused. A product one of whose variants a live
+// bundle holds is refused (ADR 0234).
 func (s *Service) DeleteProduct(ctx context.Context, id string) error {
 	if _, err := requireID("id", id); err != nil {
 		return err
@@ -606,6 +607,19 @@ func (s *Service) DeleteProduct(ctx context.Context, id string) error {
 	}
 
 	err = s.repo.InTx(ctx, func(ctx context.Context, tx repository.Store) error {
+		// The variants are read again under the product's lock, which a new
+		// variant's revision waits on: the refusal has to cover every one the
+		// soft delete takes.
+		if _, err := tx.GetProductForUpdate(ctx, id); err != nil {
+			return err
+		}
+		live, err := tx.ListVariantIDsByProduct(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := requireNotComponent(ctx, tx, live); err != nil {
+			return err
+		}
 		if err := tx.SoftDeleteProduct(ctx, id); err != nil {
 			return err
 		}
@@ -854,6 +868,9 @@ func (s *Service) attachRelationsFrom(ctx context.Context, store repository.Stor
 		return err
 	}
 	if err := attachVariantOptionValues(ctx, store, variants); err != nil {
+		return err
+	}
+	if err := attachBundleComponents(ctx, store, variants); err != nil {
 		return err
 	}
 

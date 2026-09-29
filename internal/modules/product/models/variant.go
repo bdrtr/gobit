@@ -28,6 +28,18 @@ type Variant struct {
 	// OptionValues are the values that place the variant in the option space
 	// (e.g. "Size: S", "Color: Red"); filled only when asked for.
 	OptionValues []OptionValue `json:"option_values,omitempty"`
+
+	// BundleComponents are the variants a bundle variant is made of, in the
+	// operator's order (ADR 0234); empty on a variant that is no bundle, and
+	// absent from the JSON then, so a product without bundles reads as before.
+	BundleComponents []BundleComponent `json:"bundle_components,omitempty"`
+}
+
+// BundleComponent is one variant a bundle is made of, and how many of it one
+// bundle holds (ADR 0234).
+type BundleComponent struct {
+	VariantID string `json:"variant_id"`
+	Quantity  int32  `json:"quantity"`
 }
 
 // OptionValuePair is one entry of the storefront's option vocabulary: an option

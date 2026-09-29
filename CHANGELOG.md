@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The complexity table's copies had kept numbers ADR 0219 moved** (D158).
+  The `DefaultMaxComplexity` godoc and `docs/api-surfaces.md` printed the
+  calibration from before the attributes. **For contributors:** a copy of the
+  table is held to the pinned one by
+  `TestTheComplexityTableCopiesMatchThePinnedOne`; a field added to the schema
+  and the calibration moves the copies in the same change.
+
 - **An order's lines were read in an order nobody wrote** (D157). Lines written
   together — an order's lines, a cart line and its add-ons, a merge — share a
   moment, and the tie was broken by the random end of their ids, so the order
@@ -154,6 +161,16 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A variant names what it is made of** (ADR 0234). **For operators:**
+  `PUT /admin/v1/variants/{id}/bundle` with
+  `{"components": [{"variant_id": ..., "quantity": 2}]}` makes a variant a
+  bundle of up to 20 variants of other products; the bundle has to be counted,
+  not sold past zero and linked to no inventory item, and a component cannot be
+  deleted while a bundle holds it (`409`). **For storefront clients:** a
+  variant carries `bundle_components`, and GraphQL `bundleComponents`. A bundle
+  reads out of stock and checkout refuses it until its stock is read from its
+  parts.
 
 - **An order keeps the order of its lines** (ADR 0233). **For contributors:**
   `order_line_items` and `cart_line_items` carry `seq`, an identity the database

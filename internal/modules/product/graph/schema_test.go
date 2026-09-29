@@ -163,6 +163,8 @@ func bindings() []binding {
 		{schemaType: "TagList", goType: reflect.TypeOf(graph.TagList{}), leftOut: offsetPagesOnly},
 		// A product's add-ons (ADR 0231).
 		{schemaType: "AddOn", goType: reflect.TypeOf(service.StoreAddOn{})},
+		// What a bundle variant is made of (ADR 0234).
+		{schemaType: "BundleComponent", goType: reflect.TypeOf(models.BundleComponent{})},
 		// The listing's counts and its option words (ADR 0226).
 		{schemaType: "Facet", goType: reflect.TypeOf(service.Facet{})},
 		{schemaType: "FacetOption", goType: reflect.TypeOf(service.FacetOption{})},

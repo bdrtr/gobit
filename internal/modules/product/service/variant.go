@@ -131,6 +131,9 @@ func (s *Service) GetVariant(ctx context.Context, id string) (models.Variant, er
 	if err := attachVariantOptionValues(ctx, s.repo, variants); err != nil {
 		return models.Variant{}, err
 	}
+	if err := attachBundleComponents(ctx, s.repo, variants); err != nil {
+		return models.Variant{}, err
+	}
 	return variants[0], nil
 }
 
@@ -189,6 +192,15 @@ func (s *Service) UpdateVariant(ctx context.Context, id string, in UpdateVariant
 		return models.Variant{}, err
 	}
 	err = s.revise(ctx, variant.ProductID, func(ctx context.Context, tx repository.Store) error {
+		current, err := tx.GetVariant(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := requireBundleCounted(ctx, tx, id,
+			valueOr(in.ManageInventory, current.ManageInventory),
+			valueOr(in.AllowBackorder, current.AllowBackorder)); err != nil {
+			return err
+		}
 		updated, err := tx.UpdateVariant(ctx, id, patch)
 		if err != nil {
 			return err
@@ -205,7 +217,8 @@ func (s *Service) UpdateVariant(ctx context.Context, id string, in UpdateVariant
 	return s.GetVariant(ctx, id)
 }
 
-// DeleteVariant SOFT deletes the variant and cleans up its price/stock links.
+// DeleteVariant SOFT deletes the variant and cleans up its price/stock links. A
+// variant a live bundle holds is refused (ADR 0234).
 func (s *Service) DeleteVariant(ctx context.Context, id string) error {
 	if _, err := requireID("id", id); err != nil {
 		return err
@@ -215,6 +228,9 @@ func (s *Service) DeleteVariant(ctx context.Context, id string) error {
 		return err
 	}
 	if err := s.revise(ctx, variant.ProductID, func(ctx context.Context, tx repository.Store) error {
+		if err := requireNotComponent(ctx, tx, []string{id}); err != nil {
+			return err
+		}
 		return tx.SoftDeleteVariant(ctx, id)
 	}); err != nil {
 		return err

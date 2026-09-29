@@ -39,6 +39,12 @@ type Catalog interface {
 	ProductAddOns(ctx context.Context, id string) ([]string, error)
 	SetProductAddOns(ctx context.Context, id string, variantIDs []string) ([]string, error)
 	StoreProductAddOns(ctx context.Context, idOrHandle string, salesChannelIDs []string) ([]service.StoreAddOn, error)
+	// VariantBundle and SetVariantBundle are what a bundle variant is made of
+	// (ADR 0234).
+	VariantBundle(ctx context.Context, variantID string) ([]models.BundleComponent, error)
+	SetVariantBundle(
+		ctx context.Context, variantID string, components []models.BundleComponent,
+	) ([]models.BundleComponent, error)
 	// SetSchedule and ClearSchedule replace and take off a product's schedule
 	// (ADR 0177, ADR 0179).
 	SetSchedule(ctx context.Context, id string, schedule service.Schedule) (models.Product, error)

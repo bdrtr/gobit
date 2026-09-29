@@ -291,6 +291,10 @@ func (r *Repo) SoftDeleteProductChildren(ctx context.Context, productID string) 
 	if err := r.q.DeleteProductAddOnsTouching(ctx, productID); err != nil {
 		return wrapDB(err, "could not delete the product's add-on entries: %s", productID)
 	}
+	// Its bundle variants' compositions go with it (ADR 0234).
+	if err := r.q.DeleteBundleComponentsOfProduct(ctx, productID); err != nil {
+		return wrapDB(err, "could not delete the product's bundle components: %s", productID)
+	}
 	return nil
 }
 
