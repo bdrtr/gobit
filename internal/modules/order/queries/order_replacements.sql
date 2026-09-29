@@ -72,3 +72,24 @@ WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = sqlc.arg('
    OR order_exchange_id IN (SELECT id FROM order_exchanges WHERE order_id = sqlc.arg('order_id')::text)
 ORDER BY created_at, id
 LIMIT sqlc.arg('row_limit')::bigint;
+
+-- GetOrderReplacementByFulfillment finds the replacement a parcel carries, if
+-- any (ADR 0239). One parcel carries at most one: its key names the record.
+-- name: GetOrderReplacementByFulfillment :many
+SELECT * FROM order_replacements
+WHERE fulfillment_id = sqlc.arg('fulfillment_id')::text
+ORDER BY created_at, id;
+
+-- RecallOrderReplacement sends a dispatched replacement whose parcel was
+-- canceled back to 'requested' (ADR 0239): the moment and the parcel are
+-- cleared together, as the schema pairs them with the status, and the recall
+-- is counted for the next parcel's key.
+-- name: RecallOrderReplacement :one
+UPDATE order_replacements
+SET status = 'requested',
+    dispatched_at = NULL,
+    fulfillment_id = NULL,
+    recalls = recalls + 1,
+    updated_at = now()
+WHERE id = $1 AND status = 'dispatched'
+RETURNING *;

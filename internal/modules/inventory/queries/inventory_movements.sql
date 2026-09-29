@@ -51,6 +51,16 @@ WHERE reason = 'cancellation'
   AND line_item_id = sqlc.arg('line_item_id')
   AND inventory_item_id = sqlc.arg('inventory_item_id');
 
+-- CancellationRecorded reports whether a cancellation naming the reference is
+-- already in the ledger. A recalled replacement promise is its own reference
+-- (ADR 0239), and it is read under the reservation's lock, so two recalls of
+-- one promise cannot both find none.
+-- name: CancellationRecorded :one
+SELECT EXISTS (
+    SELECT 1 FROM inventory_movements
+    WHERE reason = 'cancellation' AND reference = sqlc.arg('reference')::text
+) AS recorded;
+
 -- ListMovementsForItem pages one item's movements, newest first.
 --
 -- This is the operator's question — "what happened to this item" — and

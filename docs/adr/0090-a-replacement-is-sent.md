@@ -5,6 +5,7 @@ movement that takes them out carries a reason of its own.
 
 - **Status:** Accepted
 - **Date:** 2026-09-09
+- **Amended by:** [0239](0239-a-canceled-parcel-recalls-its-replacement.md): a canceled parcel puts its units back and sends the replacement back to waiting
 
 ## Context
 

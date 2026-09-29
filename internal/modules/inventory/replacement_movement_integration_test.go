@@ -205,3 +205,31 @@ func TestUnitsLeavingAgainstAPromiseNameIt(t *testing.T) {
 // that has nothing to point at, which the service refuses — it is how this file
 // found the pairing check.
 const noSaleOrder = ""
+
+// TestARecalledReplacementGoesBackOnceAgainstTheDatabase is ADR 0239 on the
+// real ledger: with no unique index on a cancellation's reference (ADR 0142),
+// the reservation's lock and the ledger's answer are what make the second
+// call write nothing.
+func TestARecalledReplacementGoesBackOnceAgainstTheDatabase(t *testing.T) {
+	ctx := context.Background()
+	svc := replacementService(t)
+	reservation, item := heldForAClaim(ctx, t, svc)
+	require.NoError(t, svc.ConfirmReservation(ctx, reservation.ID, noSaleOrder))
+
+	level, err := svc.RecallReplacementUnits(ctx, reservation.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(10), level.StockedQuantity)
+	_, err = svc.RecallReplacementUnits(ctx, reservation.ID)
+	require.ErrorIs(t, err, models.ErrMovementAlreadyRecorded)
+
+	var rows int
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM inventory_movements
+		  WHERE inventory_item_id = $1 AND reason = 'cancellation' AND reference = $2`,
+		item.ID, reservation.ID).Scan(&rows))
+	assert.Equal(t, 1, rows)
+	levels, err := svc.ListInventoryLevels(ctx, item.ID)
+	require.NoError(t, err)
+	require.Len(t, levels, 1)
+	assert.Equal(t, int64(10), levels[0].StockedQuantity, "the count grew once")
+}

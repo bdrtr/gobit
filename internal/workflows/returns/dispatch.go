@@ -3,6 +3,7 @@ package returns
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/bdrtr/gobit/core/errors"
 )
@@ -30,13 +31,16 @@ type replacementDetail struct {
 	// closed at all". An exchange whose difference is neither zero nor funded
 	// cannot, and this flow does not second-guess it: the rule belongs to that
 	// module.
-	SourceSettleable bool              `json:"source_settleable"`
-	OrderID          string            `json:"order_id"`
-	Status           string            `json:"status"`
-	ShippingOptionID string            `json:"shipping_option_id"`
-	LocationID       string            `json:"location_id"`
-	FulfillmentID    string            `json:"fulfillment_id"`
-	Lines            []replacementLine `json:"lines"`
+	SourceSettleable bool   `json:"source_settleable"`
+	OrderID          string `json:"order_id"`
+	Status           string `json:"status"`
+	ShippingOptionID string `json:"shipping_option_id"`
+	LocationID       string `json:"location_id"`
+	FulfillmentID    string `json:"fulfillment_id"`
+	// Recalls counts the parcels canceled under the replacement (ADR 0239); the
+	// next parcel's key names it.
+	Recalls int               `json:"recalls"`
+	Lines   []replacementLine `json:"lines"`
 }
 
 // replacementLine is one line being sent.
@@ -334,13 +338,15 @@ func (w *Workflows) releaseHeldStock(
 //
 // The idempotency key is DERIVED from the replacement's id rather than stored
 // beside it: the row is the key (migration 000011), so a retry names the same
-// parcel without a column that could disagree with the record.
+// parcel without a column that could disagree with the record. A replacement
+// whose parcel was canceled names the recall in its next key, since a key that
+// resolves to a canceled parcel is refused (ADR 0088, ADR 0239).
 func (w *Workflows) openParcel(
 	ctx context.Context, detail replacementDetail,
 ) (fulfillmentID string, alreadyOpen bool, err error) {
 	request, err := json.Marshal(map[string]string{
 		"shipping_option_id": detail.ShippingOptionID,
-		"idempotency_key":    "replacement-" + detail.ReplacementID,
+		"idempotency_key":    parcelKey(detail),
 	})
 	if err != nil {
 		return "", false, errors.Internal(CodeParcelNotOpened,
@@ -355,6 +361,16 @@ func (w *Workflows) openParcel(
 	}
 
 	return fulfillmentID, alreadyOpen, nil
+}
+
+// parcelKey is the idempotency key of the replacement's current parcel: its id,
+// and the number of parcels canceled under it once there is one.
+func parcelKey(detail replacementDetail) string {
+	if detail.Recalls == 0 {
+		return "replacement-" + detail.ReplacementID
+	}
+
+	return fmt.Sprintf("replacement-%s-%d", detail.ReplacementID, detail.Recalls)
 }
 
 // refuseUnfundedExchange stops a dispatch whose exchange no longer holds the

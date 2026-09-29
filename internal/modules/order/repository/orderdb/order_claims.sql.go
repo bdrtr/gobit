@@ -222,3 +222,32 @@ func (q *Queries) LockOrderClaim(ctx context.Context, id string) (OrderClaim, er
 	)
 	return i, err
 }
+
+const reopenOrderClaim = `-- name: ReopenOrderClaim :one
+UPDATE order_claims
+SET status = 'requested', completed_at = NULL, updated_at = now()
+WHERE id = $1 AND status = 'completed'
+RETURNING id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at
+`
+
+// ReopenOrderClaim takes a completed claim back to 'requested' when the goods
+// that completed it did not leave: their parcel was canceled (ADR 0239).
+func (q *Queries) ReopenOrderClaim(ctx context.Context, id string) (OrderClaim, error) {
+	row := q.db.QueryRow(ctx, reopenOrderClaim, id)
+	var i OrderClaim
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.ClaimType,
+		&i.Status,
+		&i.RefundAmount,
+		&i.Reason,
+		&i.Note,
+		&i.Metadata,
+		&i.CompletedAt,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

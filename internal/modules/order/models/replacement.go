@@ -18,7 +18,8 @@ const (
 	// ReplacementCanceled means the request was withdrawn.
 	ReplacementCanceled ReplacementStatus = "canceled"
 	// ReplacementDispatched means the goods left the warehouse: the stock was
-	// deducted and a parcel names them.
+	// deducted and a parcel names them. A canceled parcel sends the record back
+	// to requested with its units on the shelf (ADR 0239).
 	ReplacementDispatched ReplacementStatus = "dispatched"
 )
 
@@ -99,6 +100,11 @@ type Replacement struct {
 	// database requires it on a dispatched row, because a dispatch with no
 	// parcel would be goods leaving with nothing to carry them.
 	FulfillmentID string
+	// Recalls counts the parcels canceled under this replacement (ADR 0239).
+	// Each sent the record back to 'requested' with its units on the shelf, and
+	// the next parcel is opened under a key that names the count, since a key
+	// that resolves to a canceled parcel is refused (ADR 0088).
+	Recalls int
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time

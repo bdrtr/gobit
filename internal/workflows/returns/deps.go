@@ -30,6 +30,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
 )
 
 // Service names in the container (ADR 0006). The concrete types are resolved by
@@ -46,6 +47,8 @@ const (
 	// ServiceShipping is the fulfilling FLOW's cross-flow surface. The value is
 	// repeated here for [LinkVariantInventory]'s reason.
 	ServiceShipping = "workflows.fulfilling.interop"
+	// ServiceEventBus is the bus the flow hears a canceled parcel on (ADR 0239).
+	ServiceEventBus = "core.eventbus"
 )
 
 // LinkOrderPayment binds an order to the payment collection opened for it.
@@ -136,6 +139,13 @@ type Orders interface {
 	// CancelReplacement withdraws a replacement that has not left; it writes the
 	// record only (ADR 0237).
 	CancelReplacement(ctx context.Context, replacementID string) error
+	// ReplacementOfParcel answers which replacement a parcel carries, "" when
+	// none (ADR 0239).
+	ReplacementOfParcel(ctx context.Context, fulfillmentID string) (string, error)
+	// RecallReplacement sends a replacement whose parcel was canceled back to
+	// 'requested' and reopens its source; it writes the record only, and a
+	// replacement that parcel no longer carries is left as it stands.
+	RecallReplacement(ctx context.Context, replacementID, fulfillmentID string) error
 }
 
 // Payments is the surface of the payment module used by this flow.
@@ -184,6 +194,16 @@ type Inventory interface {
 	ConfirmReservation(ctx context.Context, reservationID, orderID string) error
 	// ReleaseReservation gives the units back. It is idempotent.
 	ReleaseReservation(ctx context.Context, reservationID string) error
+	// RecallReplacement puts back the units a confirmed replacement promise took
+	// out of the count, once its parcel is canceled; true means they were
+	// already back (ADR 0239).
+	RecallReplacement(ctx context.Context, reservationID string) (alreadyBack bool, err error)
+}
+
+// Subscriber is the event bus as far as this flow listens to it.
+type Subscriber interface {
+	// Subscribe registers the handler for the named event.
+	Subscribe(eventName string, h eventbus.Handler) error
 }
 
 // Shipping is the surface of the FULFILLING FLOW used by this flow.
@@ -235,7 +255,10 @@ type Deps struct {
 	// was never opened is a promise the shop cannot keep, and dispatching
 	// without one would deduct stock for goods nobody is carrying.
 	Shipping Shipping
-	// Logger discards the logs when nil.
+	// Logger falls back to slog.Default when nil, as the other flows' does.
+	//
+	// It discarded the logs until D162, and the wiring passed none, so every
+	// "a human has to finish it" this flow logged went nowhere in production.
 	Logger *slog.Logger
 }
 
@@ -270,7 +293,7 @@ func New(deps Deps) (*Workflows, error) {
 
 	log := deps.Logger
 	if log == nil {
-		log = slog.New(slog.DiscardHandler)
+		log = slog.Default().With("workflow", "returns")
 	}
 
 	return &Workflows{
@@ -314,13 +337,30 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 		return nil, err
 	}
 
-	return New(Deps{
+	bus, err := resolve[Subscriber](c, ServiceEventBus)
+	if err != nil {
+		return nil, err
+	}
+
+	w, err := New(Deps{
 		Orders:    orders,
 		Inventory: inventory,
 		Payments:  payments,
 		Links:     links,
 		Shipping:  shipping,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	// A flow built and not subscribed would hear no canceled parcel, which is
+	// the silence ADR 0239 removes, so building it subscribes it.
+	if err := bus.Subscribe(topicFulfillmentCanceled, w.HandleFulfillmentCanceled); err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeNotReady,
+			"the return flow could not subscribe to %q", topicFulfillmentCanceled)
+	}
+
+	return w, nil
 }
 
 // resolve reads one surface from the container and wraps the failure with its

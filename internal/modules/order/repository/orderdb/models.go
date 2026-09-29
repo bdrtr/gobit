@@ -180,6 +180,7 @@ type OrderReplacement struct {
 	DispatchedAt     pgtype.Timestamptz
 	FulfillmentID    *string
 	OrderExchangeID  *string
+	Recalls          int32
 }
 
 type OrderReplacementItem struct {

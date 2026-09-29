@@ -169,3 +169,4 @@ truth: a report says what was true on the day it was taken.
 | [An operator fills a box — measured 2026-09-29](0236-an-operator-fills-a-box.md) | 71 |
 | [A promise nobody could name — measured 2026-09-29](0237-a-promise-nobody-could-name.md) | 49 |
 | [A crushed box sent again — measured 2026-09-29](0238-a-crushed-box-sent-again.md) | 144 |
+| [A box that never left — measured 2026-09-29](0239-a-box-that-never-left.md) | 112 |

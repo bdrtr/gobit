@@ -461,6 +461,21 @@ func (i *Interop) RecordReplacementReservation(
 	return i.svc.RecordReplacementReservation(ctx, replacementID, itemID, variantID, reservationID)
 }
 
+// ReplacementOfParcel answers which replacement a parcel carries, "" when none
+// (ADR 0239).
+func (i *Interop) ReplacementOfParcel(ctx context.Context, fulfillmentID string) (string, error) {
+	return i.svc.ReplacementOfParcel(ctx, fulfillmentID)
+}
+
+// RecallReplacement sends a replacement whose parcel was canceled back to
+// 'requested' and reopens its source (ADR 0239). It writes the record only: the
+// returns flow puts the units back before it calls this.
+func (i *Interop) RecallReplacement(ctx context.Context, replacementID, fulfillmentID string) error {
+	_, err := i.svc.RecallReplacement(ctx, replacementID, fulfillmentID)
+
+	return err
+}
+
 // MarkReplacementDispatched records that the goods left, in the parcel named.
 //
 // It says they left and nothing about how: deducting the stock and opening the

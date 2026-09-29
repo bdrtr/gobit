@@ -79,6 +79,13 @@ type stubOrders struct {
 	reservationCalls []reservationCall
 	dispatchErr      error
 	dispatchCalls    []dispatchCall
+
+	// The recall half (ADR 0239): which replacement a parcel carries, and the
+	// recalls the flow wrote.
+	parcelReplacement string
+	parcelErr         error
+	recalls           []dispatchCall
+	recallErr         error
 }
 
 // reservationCall is one RecordReplacementReservation call.
@@ -114,6 +121,18 @@ func (s *stubOrders) RecordReplacementReservation(
 	})
 
 	return s.reservationErr
+}
+
+// ReplacementOfParcel answers the scripted replacement.
+func (s *stubOrders) ReplacementOfParcel(_ context.Context, _ string) (string, error) {
+	return s.parcelReplacement, s.parcelErr
+}
+
+// RecallReplacement records the recall of the record (ADR 0239).
+func (s *stubOrders) RecallReplacement(_ context.Context, replacementID, fulfillmentID string) error {
+	s.recalls = append(s.recalls, dispatchCall{replacementID: replacementID, fulfillmentID: fulfillmentID})
+
+	return s.recallErr
 }
 
 // CancelReplacement records the withdrawal of the record (ADR 0237).
@@ -246,6 +265,12 @@ type stubInventory struct {
 	releaseErr     error
 	released       []string
 	reserveCounter int
+
+	// recalled names the promises whose units were put back (ADR 0239);
+	// alreadyBack marks the ones the inventory answers as already back.
+	recalled    []string
+	alreadyBack map[string]bool
+	recallErr   error
 }
 
 // reserveCall is one ReserveForReplacement call.
@@ -289,6 +314,13 @@ func (s *stubInventory) ConfirmReservation(_ context.Context, reservationID, _ s
 	s.confirmed = append(s.confirmed, reservationID)
 
 	return s.confirmErr
+}
+
+// RecallReplacement records the recall and applies the scripted behavior.
+func (s *stubInventory) RecallReplacement(_ context.Context, reservationID string) (bool, error) {
+	s.recalled = append(s.recalled, reservationID)
+
+	return s.alreadyBack[reservationID], s.recallErr
 }
 
 // ReleaseReservation records the release and applies the scripted behavior.

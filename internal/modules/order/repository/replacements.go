@@ -140,6 +140,50 @@ func (r *Repository) ListReplacementsByExchange(
 	return toReplacements(rows), nil
 }
 
+// ReplacementsByFulfillment returns the replacements a parcel carries, at most
+// one in practice (ADR 0239).
+func (r *Repository) ReplacementsByFulfillment(
+	ctx context.Context, fulfillmentID string,
+) ([]models.Replacement, error) {
+	rows, err := r.queries(ctx).GetOrderReplacementByFulfillment(ctx, fulfillmentID)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed,
+			"could not find the replacement parcel %s carries", fulfillmentID)
+	}
+
+	return toReplacements(rows), nil
+}
+
+// RecallReplacement sends a dispatched replacement back to 'requested'.
+func (r *Repository) RecallReplacement(ctx context.Context, id string) (models.Replacement, error) {
+	row, err := r.queries(ctx).RecallOrderReplacement(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Replacement{}, coreerrors.Conflict(codeStateChanged,
+				"replacement %s is no longer dispatched", id)
+		}
+
+		return models.Replacement{}, classify(err, codeQueryFailed, "could not recall replacement %s", id)
+	}
+
+	return toReplacement(row), nil
+}
+
+// ClearReplacementReservations forgets every promise a replacement's lines and
+// parts held.
+func (r *Repository) ClearReplacementReservations(ctx context.Context, replacementID string) error {
+	if err := r.queries(ctx).ClearOrderReplacementItemReservations(ctx, replacementID); err != nil {
+		return classify(err, codeQueryFailed,
+			"could not clear the promises of replacement %s", replacementID)
+	}
+	if err := r.queries(ctx).ClearOrderReplacementItemPartReservations(ctx, replacementID); err != nil {
+		return classify(err, codeQueryFailed,
+			"could not clear the part promises of replacement %s", replacementID)
+	}
+
+	return nil
+}
+
 // CreateReplacementItem writes one line of a replacement.
 func (r *Repository) CreateReplacementItem(
 	ctx context.Context, in models.ReplacementItem,
@@ -297,6 +341,7 @@ func toReplacement(row orderdb.OrderReplacement) models.Replacement {
 		LocationID:       row.LocationID,
 		Note:             stringValue(row.Note),
 		FulfillmentID:    stringValue(row.FulfillmentID),
+		Recalls:          int(row.Recalls),
 		CanceledAt:       toTimePtr(row.CanceledAt),
 		DispatchedAt:     toTimePtr(row.DispatchedAt),
 		CreatedAt:        toTime(row.CreatedAt),

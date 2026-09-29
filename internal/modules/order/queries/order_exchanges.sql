@@ -66,6 +66,17 @@ SET status = 'completed', completed_at = now(), updated_at = now()
 WHERE id = $1 AND status IN ('requested', 'funded')
 RETURNING *;
 
+-- ReopenOrderExchange takes a completed exchange back to where it stood before
+-- its goods left, when their parcel was canceled (ADR 0239): 'funded' when its
+-- difference was collected, 'requested' otherwise.
+-- name: ReopenOrderExchange :one
+UPDATE order_exchanges
+SET status = CASE WHEN funded_at IS NOT NULL THEN 'funded' ELSE 'requested' END,
+    completed_at = NULL,
+    updated_at = now()
+WHERE id = $1 AND status = 'completed'
+RETURNING *;
+
 -- WithdrawFundedOrderExchange takes back an exchange whose difference was
 -- funded and whose money has been sent back.
 --

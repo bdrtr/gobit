@@ -698,7 +698,9 @@ const (
 	// longer simply be withdrawn.
 	ExchangeFunded ExchangeStatus = "funded"
 	// ExchangeCompleted means the exchange was settled: its goods left and it
-	// owed nothing, or what it owed was funded.
+	// owed nothing, or what it owed was funded. It goes back to funded or
+	// requested when their parcel is canceled and no other replacement of it
+	// left (ADR 0239).
 	ExchangeCompleted ExchangeStatus = "completed"
 	// ExchangeCanceled means the exchange request was withdrawn.
 	ExchangeCanceled ExchangeStatus = "canceled"
@@ -841,7 +843,9 @@ type ClaimStatus string
 const (
 	// ClaimRequested means the claim was opened.
 	ClaimRequested ClaimStatus = "requested"
-	// ClaimCompleted means the claim was settled.
+	// ClaimCompleted means the claim was settled. A claim settled by goods goes
+	// back to requested when their parcel is canceled and no other replacement
+	// of it left (ADR 0239): the goods that met it did not go.
 	ClaimCompleted ClaimStatus = "completed"
 	// ClaimCanceled means the claim was canceled.
 	ClaimCanceled ClaimStatus = "canceled"

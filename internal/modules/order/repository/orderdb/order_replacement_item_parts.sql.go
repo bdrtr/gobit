@@ -9,6 +9,22 @@ import (
 	"context"
 )
 
+const clearOrderReplacementItemPartReservations = `-- name: ClearOrderReplacementItemPartReservations :exec
+UPDATE order_replacement_item_parts AS p
+SET reservation_id = NULL, updated_at = now()
+FROM order_replacement_items AS i
+WHERE i.id = p.order_replacement_item_id
+  AND i.order_replacement_id = $1::text
+  AND p.reservation_id IS NOT NULL
+`
+
+// ClearOrderReplacementItemPartReservations forgets the promises a recalled
+// replacement's parts held (ADR 0239).
+func (q *Queries) ClearOrderReplacementItemPartReservations(ctx context.Context, replacementID string) error {
+	_, err := q.db.Exec(ctx, clearOrderReplacementItemPartReservations, replacementID)
+	return err
+}
+
 const createOrderReplacementItemParts = `-- name: CreateOrderReplacementItemParts :exec
 
 INSERT INTO order_replacement_item_parts (order_replacement_item_id, variant_id, quantity, rank)

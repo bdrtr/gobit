@@ -346,3 +346,100 @@ func TestSentGoodsStillCountAgainstWhatWasBought(t *testing.T) {
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, service.CodeReplacementQuantityExceeded, errors.CodeOf(err))
 }
+
+// TestARecallPassesTheSchemasPairings is ADR 0239 on the real rows: the status,
+// the moment and the parcel are cleared in one statement the CHECKs accept,
+// the promises go, the claim reopens with its moment cleared, and a funded
+// exchange goes back to funded with its collection still named.
+func TestARecallPassesTheSchemasPairings(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	// A parcel of its own: the fixture's shared "ful_integration" names every
+	// replacement dispatchedReplacement sent in this database, where a real
+	// parcel's key names one.
+	claim, lineID := replaceableClaim(ctx, t, svc)
+	record, err := svc.CreateReplacement(ctx, requestOf(claim.ID, lineID, 1))
+	require.NoError(t, err)
+	parcel := "ful_recall_" + record.ID
+	require.NoError(t, svc.RecordReplacementReservation(ctx, record.ID, record.Items[0].ID, "variant_A", "invres_recall"))
+	_, err = svc.MarkReplacementDispatched(ctx, record.ID, parcel)
+	require.NoError(t, err)
+	_, err = svc.CompleteClaim(ctx, claim.ID)
+	require.NoError(t, err)
+
+	carried, err := svc.ReplacementOfParcel(ctx, parcel)
+	require.NoError(t, err)
+	require.Equal(t, record.ID, carried)
+
+	recalled, err := svc.RecallReplacement(ctx, record.ID, parcel)
+	require.NoError(t, err)
+	assert.Equal(t, models.ReplacementRequested, recalled.Status)
+	assert.Equal(t, 1, recalled.Recalls)
+
+	var (
+		status       string
+		dispatchedAt *time.Time
+		storedParcel *string
+		reservation  *string
+	)
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT r.status, r.dispatched_at, r.fulfillment_id, i.reservation_id
+		   FROM order_replacements r JOIN order_replacement_items i ON i.order_replacement_id = r.id
+		  WHERE r.id = $1`, record.ID).Scan(&status, &dispatchedAt, &storedParcel, &reservation))
+	assert.Equal(t, "requested", status)
+	assert.Nil(t, dispatchedAt)
+	assert.Nil(t, storedParcel)
+	assert.Nil(t, reservation)
+
+	reopened, err := svc.GetClaim(ctx, claim.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ClaimRequested, reopened.Status)
+	assert.Nil(t, reopened.CompletedAt)
+
+	carried, err = svc.ReplacementOfParcel(ctx, parcel)
+	require.NoError(t, err)
+	assert.Empty(t, carried)
+
+	// Sent again and recalled again: the count is the next key's.
+	require.NoError(t, svc.RecordReplacementReservation(ctx, record.ID, record.Items[0].ID, "variant_A", "invres_again"))
+	_, err = svc.MarkReplacementDispatched(ctx, record.ID, parcel+"_2")
+	require.NoError(t, err)
+	again, err := svc.RecallReplacement(ctx, record.ID, parcel+"_2")
+	require.NoError(t, err)
+	assert.Equal(t, 2, again.Recalls)
+}
+
+// TestARecalledFundedExchangeKeepsItsCollection reopens a completed exchange
+// whose difference was collected as funded, on the real CHECKs that pair the
+// moment with the collection.
+func TestARecalledFundedExchangeKeepsItsCollection(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	ord, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+	exchange, err := svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: ord.ID, DifferenceDue: 1500})
+	require.NoError(t, err)
+	record, err := svc.CreateReplacement(ctx, service.CreateReplacementInput{
+		ExchangeID: exchange.ID, ShippingOptionID: "so_integration", LocationID: "sloc_integration",
+		Lines: []service.ReplacementLineInput{{OrderLineItemID: detail.Items[0].ID, Quantity: 1}},
+	})
+	require.NoError(t, err)
+	_, err = svc.FundExchange(ctx, exchange.ID, "paycol_integration")
+	require.NoError(t, err)
+	require.NoError(t, svc.RecordReplacementReservation(ctx, record.ID, record.Items[0].ID, "variant_A", "invres_exchange"))
+	_, err = svc.MarkReplacementDispatched(ctx, record.ID, "ful_recall_"+record.ID)
+	require.NoError(t, err)
+	_, err = svc.CompleteExchange(ctx, exchange.ID)
+	require.NoError(t, err)
+
+	_, err = svc.RecallReplacement(ctx, record.ID, "ful_recall_"+record.ID)
+	require.NoError(t, err)
+
+	reopened, err := svc.GetExchange(ctx, exchange.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ExchangeFunded, reopened.Status)
+	assert.Equal(t, "paycol_integration", reopened.PaymentCollectionID)
+	assert.Nil(t, reopened.CompletedAt)
+}

@@ -354,6 +354,22 @@ func (r *Repository) CompleteExchange(ctx context.Context, id string) (models.Ex
 	return toExchange(row)
 }
 
+// ReopenExchange takes a completed exchange back to where it stood before its
+// goods left (ADR 0239).
+func (r *Repository) ReopenExchange(ctx context.Context, id string) (models.Exchange, error) {
+	row, err := r.queries(ctx).ReopenOrderExchange(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Exchange{}, coreerrors.Conflict(codeStateChanged,
+				"the exchange record is not completed: %s", id)
+		}
+
+		return models.Exchange{}, classify(err, codeQueryFailed, "could not reopen the exchange record")
+	}
+
+	return toExchange(row)
+}
+
 // WithdrawFundedExchange takes back a funded exchange whose money went back.
 func (r *Repository) WithdrawFundedExchange(ctx context.Context, id string) (models.Exchange, error) {
 	row, err := r.queries(ctx).WithdrawFundedOrderExchange(ctx, id)
@@ -406,6 +422,21 @@ func (r *Repository) LockClaim(ctx context.Context, id string) (models.Claim, er
 		}
 
 		return models.Claim{}, classify(err, codeQueryFailed, "could not lock the claim record")
+	}
+
+	return toClaim(row)
+}
+
+// ReopenClaim takes a completed claim back to 'requested' (ADR 0239).
+func (r *Repository) ReopenClaim(ctx context.Context, id string) (models.Claim, error) {
+	row, err := r.queries(ctx).ReopenOrderClaim(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Claim{}, coreerrors.Conflict(codeStateChanged,
+				"the claim record is not completed: %s", id)
+		}
+
+		return models.Claim{}, classify(err, codeQueryFailed, "could not reopen the claim record")
 	}
 
 	return toClaim(row)

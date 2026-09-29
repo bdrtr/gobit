@@ -130,6 +130,23 @@ func (r *Repository) SaleLocations(ctx context.Context, reference string) (map[s
 	return out, nil
 }
 
+// CancellationRecorded reports whether a cancellation naming the reference is
+// already in the ledger (ADR 0239). It is read inside the transaction that holds
+// the reservation's lock, for [Repository.ReturnedForLine]'s reason.
+func (r *Repository) CancellationRecorded(ctx context.Context, reference string) (bool, error) {
+	if err := requireTx(ctx, "CancellationRecorded"); err != nil {
+		return false, err
+	}
+
+	recorded, err := r.queries(ctx).CancellationRecorded(ctx, reference)
+	if err != nil {
+		return false, classify(err, codeQueryFailed,
+			"whether %s was already put back could not be read", reference)
+	}
+
+	return recorded, nil
+}
+
 // ReturnedForLine sums the units a line's write-offs have already put back.
 //
 // It is read INSIDE the transaction that holds the level's lock, which is what

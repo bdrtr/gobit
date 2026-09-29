@@ -320,6 +320,38 @@ func (q *Queries) LockOrderExchange(ctx context.Context, id string) (OrderExchan
 	return i, err
 }
 
+const reopenOrderExchange = `-- name: ReopenOrderExchange :one
+UPDATE order_exchanges
+SET status = CASE WHEN funded_at IS NOT NULL THEN 'funded' ELSE 'requested' END,
+    completed_at = NULL,
+    updated_at = now()
+WHERE id = $1 AND status = 'completed'
+RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
+`
+
+// ReopenOrderExchange takes a completed exchange back to where it stood before
+// its goods left, when their parcel was canceled (ADR 0239): 'funded' when its
+// difference was collected, 'requested' otherwise.
+func (q *Queries) ReopenOrderExchange(ctx context.Context, id string) (OrderExchange, error) {
+	row := q.db.QueryRow(ctx, reopenOrderExchange, id)
+	var i OrderExchange
+	err := row.Scan(
+		&i.ID,
+		&i.OrderID,
+		&i.Status,
+		&i.DifferenceDue,
+		&i.Note,
+		&i.Metadata,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CompletedAt,
+		&i.PaymentCollectionID,
+		&i.FundedAt,
+	)
+	return i, err
+}
+
 const withdrawFundedOrderExchange = `-- name: WithdrawFundedOrderExchange :one
 UPDATE order_exchanges
 SET status      = 'canceled',

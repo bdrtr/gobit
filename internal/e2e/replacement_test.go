@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -200,6 +201,97 @@ func TestAClaimSettledWithGoodsTakesThemOffTheShelfAndPutsThemInAParcel(t *testi
 
 	assert.Equal(t, stockAfterDispatch, stockLevel(ctx, t, inventoryItemID).StockedQuantity,
 		"a second press must not take a second unit off the shelf")
+}
+
+// TestACanceledReplacementParcelPutsItsGoodsBack is ADR 0239 on the production
+// wiring. The replacement's parcel is canceled after it left: the unit it took
+// off the shelf comes back, the replacement waits again with its recall
+// counted, and the claim the goods had settled is open. Dispatching it again
+// opens a second parcel under a key of its own, since the first key resolves
+// to the canceled one, and settles the claim again.
+func TestACanceledReplacementParcelPutsItsGoodsBack(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, inventoryItemID := newStockedVariant(ctx, t, "E2E Recalled Product",
+		map[string]int64{taxedCurrency: happyUnitPrice}, happyInitialStock)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, happyQuantity)
+	placed, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     happyTotal,
+	})
+	require.NoError(t, err)
+	order, err := orderSvc.GetOrder(ctx, placed.OrderID)
+	require.NoError(t, err)
+	optionID := newShippingOption(ctx, t, newShippingProfile(ctx, t, "E2E Recall Profile"),
+		"E2E Recall Shipping", 0, false)
+
+	claimed, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+placed.OrderID+"/claims",
+		map[string]any{"type": "replace", "reason": "the box was crushed"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, claimed.Code, claimed.Body.String())
+	var claim afterSalesRecordResponse
+	require.NoError(t, json.Unmarshal(claimed.Body.Bytes(), &claim))
+	base := "/admin/v1/orders/" + placed.OrderID + "/claims/" + claim.Data.ID + "/replacements"
+	recorded, err := adminRequestWithBody(http.MethodPost, base, map[string]any{
+		"shipping_option_id": optionID,
+		"location_id":        stockLocationID,
+		"lines":              []map[string]any{{"order_line_item_id": order.Items[0].ID, "quantity": replacedQuantity}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, recorded.Code, recorded.Body.String())
+	var replacement replacementResponseBody
+	require.NoError(t, json.Unmarshal(recorded.Body.Bytes(), &replacement))
+	one := base + "/" + replacement.Data.ID
+
+	dispatch := func() dispatchResponseBody {
+		t.Helper()
+		sent, err := adminRequestWithBody(http.MethodPost, one+"/dispatch", nil)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, sent.Code, sent.Body.String())
+		var out dispatchResponseBody
+		require.NoError(t, json.Unmarshal(sent.Body.Bytes(), &out))
+		return out
+	}
+	first := dispatch()
+	require.Equal(t, stockAfterDispatch, stockLevel(ctx, t, inventoryItemID).StockedQuantity)
+
+	canceled, err := adminRequestWithBody(http.MethodPost, "/admin/v1/fulfillments/"+first.Data.FulfillmentID+"/cancel", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, canceled.Code, canceled.Body.String())
+
+	requireStockEventually(ctx, t, inventoryItemID, happyRemainingStock,
+		"the canceled parcel's unit is back on the shelf")
+	var waiting struct {
+		Data struct {
+			Status  string `json:"status"`
+			Recalls int    `json:"recalls"`
+		} `json:"data"`
+	}
+	require.Eventually(t, func() bool {
+		read, err := adminRequestWithBody(http.MethodGet, one, nil)
+		if err != nil || read.Code != http.StatusOK {
+			return false
+		}
+		return json.Unmarshal(read.Body.Bytes(), &waiting) == nil && waiting.Data.Status == "requested"
+	}, 10*time.Second, 50*time.Millisecond, "the replacement waits again; last read %+v", waiting)
+	assert.Equal(t, 1, waiting.Data.Recalls)
+	reopened, err := orderSvc.GetClaim(ctx, claim.Data.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "requested", reopened.Status.String(), "the goods that settled the claim did not leave")
+
+	second := dispatch()
+	assert.NotEqual(t, first.Data.FulfillmentID, second.Data.FulfillmentID,
+		"a second parcel, since the first key resolves to the canceled one")
+	assert.False(t, second.Data.AlreadySent)
+	assert.Equal(t, stockAfterDispatch, stockLevel(ctx, t, inventoryItemID).StockedQuantity)
+	settled, err := orderSvc.GetClaim(ctx, claim.Data.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "completed", settled.Status.String())
 }
 
 // newestMovement returns the item's most recent ledger row.

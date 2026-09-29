@@ -13,7 +13,7 @@ const cancelOrderReplacement = `-- name: CancelOrderReplacement :one
 UPDATE order_replacements
 SET status = 'canceled', canceled_at = now(), updated_at = now()
 WHERE id = $1
-RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id
+RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls
 `
 
 func (q *Queries) CancelOrderReplacement(ctx context.Context, id string) (OrderReplacement, error) {
@@ -32,6 +32,7 @@ func (q *Queries) CancelOrderReplacement(ctx context.Context, id string) (OrderR
 		&i.DispatchedAt,
 		&i.FulfillmentID,
 		&i.OrderExchangeID,
+		&i.Recalls,
 	)
 	return i, err
 }
@@ -41,7 +42,7 @@ const createOrderReplacement = `-- name: CreateOrderReplacement :one
 INSERT INTO order_replacements
     (id, order_claim_id, order_exchange_id, shipping_option_id, location_id, note)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id
+RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls
 `
 
 type CreateOrderReplacementParams struct {
@@ -84,6 +85,7 @@ func (q *Queries) CreateOrderReplacement(ctx context.Context, arg CreateOrderRep
 		&i.DispatchedAt,
 		&i.FulfillmentID,
 		&i.OrderExchangeID,
+		&i.Recalls,
 	)
 	return i, err
 }
@@ -95,7 +97,7 @@ SET status = 'dispatched',
     fulfillment_id = $1::text,
     updated_at = now()
 WHERE id = $2::text
-RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id
+RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls
 `
 
 type DispatchOrderReplacementParams struct {
@@ -125,12 +127,13 @@ func (q *Queries) DispatchOrderReplacement(ctx context.Context, arg DispatchOrde
 		&i.DispatchedAt,
 		&i.FulfillmentID,
 		&i.OrderExchangeID,
+		&i.Recalls,
 	)
 	return i, err
 }
 
 const getOrderReplacement = `-- name: GetOrderReplacement :one
-SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id FROM order_replacements
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls FROM order_replacements
 WHERE id = $1
 `
 
@@ -150,12 +153,55 @@ func (q *Queries) GetOrderReplacement(ctx context.Context, id string) (OrderRepl
 		&i.DispatchedAt,
 		&i.FulfillmentID,
 		&i.OrderExchangeID,
+		&i.Recalls,
 	)
 	return i, err
 }
 
+const getOrderReplacementByFulfillment = `-- name: GetOrderReplacementByFulfillment :many
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls FROM order_replacements
+WHERE fulfillment_id = $1::text
+ORDER BY created_at, id
+`
+
+// GetOrderReplacementByFulfillment finds the replacement a parcel carries, if
+// any (ADR 0239). One parcel carries at most one: its key names the record.
+func (q *Queries) GetOrderReplacementByFulfillment(ctx context.Context, fulfillmentID string) ([]OrderReplacement, error) {
+	rows, err := q.db.Query(ctx, getOrderReplacementByFulfillment, fulfillmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderReplacement{}
+	for rows.Next() {
+		var i OrderReplacement
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderClaimID,
+			&i.Status,
+			&i.ShippingOptionID,
+			&i.LocationID,
+			&i.Note,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DispatchedAt,
+			&i.FulfillmentID,
+			&i.OrderExchangeID,
+			&i.Recalls,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getOrderReplacementForUpdate = `-- name: GetOrderReplacementForUpdate :one
-SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id FROM order_replacements
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls FROM order_replacements
 WHERE id = $1
 FOR UPDATE
 `
@@ -181,12 +227,13 @@ func (q *Queries) GetOrderReplacementForUpdate(ctx context.Context, id string) (
 		&i.DispatchedAt,
 		&i.FulfillmentID,
 		&i.OrderExchangeID,
+		&i.Recalls,
 	)
 	return i, err
 }
 
 const listOrderReplacementsByClaim = `-- name: ListOrderReplacementsByClaim :many
-SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id FROM order_replacements
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls FROM order_replacements
 WHERE order_claim_id = $1
 ORDER BY created_at DESC, id DESC
 `
@@ -214,6 +261,7 @@ func (q *Queries) ListOrderReplacementsByClaim(ctx context.Context, orderClaimID
 			&i.DispatchedAt,
 			&i.FulfillmentID,
 			&i.OrderExchangeID,
+			&i.Recalls,
 		); err != nil {
 			return nil, err
 		}
@@ -226,7 +274,7 @@ func (q *Queries) ListOrderReplacementsByClaim(ctx context.Context, orderClaimID
 }
 
 const listOrderReplacementsByExchange = `-- name: ListOrderReplacementsByExchange :many
-SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id FROM order_replacements
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls FROM order_replacements
 WHERE order_exchange_id = $1
 ORDER BY created_at DESC, id DESC
 `
@@ -255,6 +303,7 @@ func (q *Queries) ListOrderReplacementsByExchange(ctx context.Context, orderExch
 			&i.DispatchedAt,
 			&i.FulfillmentID,
 			&i.OrderExchangeID,
+			&i.Recalls,
 		); err != nil {
 			return nil, err
 		}
@@ -267,7 +316,7 @@ func (q *Queries) ListOrderReplacementsByExchange(ctx context.Context, orderExch
 }
 
 const listOrderReplacementsByOrder = `-- name: ListOrderReplacementsByOrder :many
-SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id FROM order_replacements
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls FROM order_replacements
 WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = $1::text)
    OR order_exchange_id IN (SELECT id FROM order_exchanges WHERE order_id = $1::text)
 ORDER BY created_at, id
@@ -306,6 +355,7 @@ func (q *Queries) ListOrderReplacementsByOrder(ctx context.Context, arg ListOrde
 			&i.DispatchedAt,
 			&i.FulfillmentID,
 			&i.OrderExchangeID,
+			&i.Recalls,
 		); err != nil {
 			return nil, err
 		}
@@ -315,4 +365,40 @@ func (q *Queries) ListOrderReplacementsByOrder(ctx context.Context, arg ListOrde
 		return nil, err
 	}
 	return items, nil
+}
+
+const recallOrderReplacement = `-- name: RecallOrderReplacement :one
+UPDATE order_replacements
+SET status = 'requested',
+    dispatched_at = NULL,
+    fulfillment_id = NULL,
+    recalls = recalls + 1,
+    updated_at = now()
+WHERE id = $1 AND status = 'dispatched'
+RETURNING id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls
+`
+
+// RecallOrderReplacement sends a dispatched replacement whose parcel was
+// canceled back to 'requested' (ADR 0239): the moment and the parcel are
+// cleared together, as the schema pairs them with the status, and the recall
+// is counted for the next parcel's key.
+func (q *Queries) RecallOrderReplacement(ctx context.Context, id string) (OrderReplacement, error) {
+	row := q.db.QueryRow(ctx, recallOrderReplacement, id)
+	var i OrderReplacement
+	err := row.Scan(
+		&i.ID,
+		&i.OrderClaimID,
+		&i.Status,
+		&i.ShippingOptionID,
+		&i.LocationID,
+		&i.Note,
+		&i.CanceledAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DispatchedAt,
+		&i.FulfillmentID,
+		&i.OrderExchangeID,
+		&i.Recalls,
+	)
+	return i, err
 }

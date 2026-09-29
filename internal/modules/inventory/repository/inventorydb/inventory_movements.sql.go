@@ -78,6 +78,24 @@ func (q *Queries) AppendMovement(ctx context.Context, arg AppendMovementParams) 
 	return i, err
 }
 
+const cancellationRecorded = `-- name: CancellationRecorded :one
+SELECT EXISTS (
+    SELECT 1 FROM inventory_movements
+    WHERE reason = 'cancellation' AND reference = $1::text
+) AS recorded
+`
+
+// CancellationRecorded reports whether a cancellation naming the reference is
+// already in the ledger. A recalled replacement promise is its own reference
+// (ADR 0239), and it is read under the reservation's lock, so two recalls of
+// one promise cannot both find none.
+func (q *Queries) CancellationRecorded(ctx context.Context, reference string) (bool, error) {
+	row := q.db.QueryRow(ctx, cancellationRecorded, reference)
+	var recorded bool
+	err := row.Scan(&recorded)
+	return recorded, err
+}
+
 const listMovementsForItem = `-- name: ListMovementsForItem :many
 SELECT id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after, created_at, reference, line_item_id FROM inventory_movements
 WHERE inventory_item_id = $1::text

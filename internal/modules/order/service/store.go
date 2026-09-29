@@ -283,6 +283,15 @@ type Store interface {
 	ListReplacementsByOrder(ctx context.Context, orderID string, limit int64) ([]models.Replacement, error)
 	// ListReplacementsByClaim returns a claim's replacements, newest first.
 	ListReplacementsByClaim(ctx context.Context, claimID string) ([]models.Replacement, error)
+	// ReplacementsByFulfillment returns the replacements a parcel carries
+	// (ADR 0239).
+	ReplacementsByFulfillment(ctx context.Context, fulfillmentID string) ([]models.Replacement, error)
+	// RecallReplacement sends a dispatched replacement back to 'requested',
+	// clearing its parcel and moment and counting the recall.
+	RecallReplacement(ctx context.Context, id string) (models.Replacement, error)
+	// ClearReplacementReservations forgets every promise a replacement's lines
+	// and parts held.
+	ClearReplacementReservations(ctx context.Context, replacementID string) error
 	// DispatchReplacement records that the goods left, in the parcel named.
 	DispatchReplacement(
 		ctx context.Context, id, fulfillmentID string,
@@ -330,6 +339,9 @@ type Store interface {
 	// FundExchange names the payment collection answering the exchange's
 	// difference and dates the moment; the database refuses a second one.
 	FundExchange(ctx context.Context, id, collectionID string) (models.Exchange, error)
+	// ReopenExchange takes a completed exchange back to 'funded' or 'requested'
+	// when its goods did not leave (ADR 0239).
+	ReopenExchange(ctx context.Context, id string) (models.Exchange, error)
 	// CompleteExchange records that the exchange was settled; the database
 	// refuses one that owes money it has not collected.
 	CompleteExchange(ctx context.Context, id string) (models.Exchange, error)
@@ -348,6 +360,9 @@ type Store interface {
 	LockClaim(ctx context.Context, id string) (models.Claim, error)
 	// CompleteClaim records that the claim was settled.
 	CompleteClaim(ctx context.Context, id string) (models.Claim, error)
+	// ReopenClaim takes a completed claim back to 'requested' when its goods did
+	// not leave (ADR 0239).
+	ReopenClaim(ctx context.Context, id string) (models.Claim, error)
 	// CancelClaim withdraws the claim.
 	CancelClaim(ctx context.Context, id string) (models.Claim, error)
 

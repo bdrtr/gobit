@@ -618,7 +618,10 @@ func describeClaims(d *openapi.Doc) {
 				"withdrawn, when a variant to send has no inventory item, and when there is " +
 				"not enough stock to send. \n\n" +
 				"Repeating it sends nothing a second time: already_sent then reports that " +
-				"the goods had gone, and fulfillment_id names the parcel they left in.",
+				"the goods had gone, and fulfillment_id names the parcel they left in. \n\n" +
+				"Canceling that parcel puts its units back and sends the replacement back to " +
+				"requested, with recalls counting it, and reopens the claim; dispatching it " +
+				"again opens a new parcel.",
 			Responses: map[string]any{
 				"200": openapi.Response("What was sent", d.Item(dispatchReplacementResponse{})),
 			},

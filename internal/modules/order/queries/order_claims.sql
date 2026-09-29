@@ -32,6 +32,14 @@ SET status = 'completed', completed_at = now(), updated_at = now()
 WHERE id = $1
 RETURNING *;
 
+-- ReopenOrderClaim takes a completed claim back to 'requested' when the goods
+-- that completed it did not leave: their parcel was canceled (ADR 0239).
+-- name: ReopenOrderClaim :one
+UPDATE order_claims
+SET status = 'requested', completed_at = NULL, updated_at = now()
+WHERE id = $1 AND status = 'completed'
+RETURNING *;
+
 -- CancelOrderClaim withdraws the claim.
 -- name: CancelOrderClaim :one
 UPDATE order_claims

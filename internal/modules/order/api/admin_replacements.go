@@ -88,8 +88,11 @@ type replacementDTO struct {
 	CanceledAt    *time.Time           `json:"canceled_at,omitempty"`
 	// DispatchedAt is the moment the goods left; it is absent until they do.
 	DispatchedAt *time.Time `json:"dispatched_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	// Recalls counts the parcels canceled under this replacement, each of which
+	// put its units back and sent it back to waiting (ADR 0239).
+	Recalls   int       `json:"recalls"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // adminCreateReplacement records what a claim will send.
@@ -234,6 +237,7 @@ func toReplacementSummaryDTO(record models.Replacement) replacementDTO {
 		FulfillmentID:    record.FulfillmentID,
 		CanceledAt:       record.CanceledAt,
 		DispatchedAt:     record.DispatchedAt,
+		Recalls:          record.Recalls,
 		CreatedAt:        record.CreatedAt,
 		UpdatedAt:        record.UpdatedAt,
 	}

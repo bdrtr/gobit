@@ -68,6 +68,7 @@ func (s *Service) ReplacementDetailJSON(
 		ShippingOptionID: record.ShippingOptionID,
 		LocationID:       record.LocationID,
 		FulfillmentID:    record.FulfillmentID,
+		Recalls:          record.Recalls,
 		Lines:            make([]replacementLineJSON, 0, len(items)),
 	}
 	for i := range items {
@@ -139,13 +140,16 @@ type replacementDetailJSON struct {
 	// consumer to judge. The rule is this module's, and a flow that re-derived it
 	// would hold a second copy — one that goes on saying yes on the day the rule
 	// changes.
-	SourceSettleable bool                  `json:"source_settleable"`
-	OrderID          string                `json:"order_id"`
-	Status           string                `json:"status"`
-	ShippingOptionID string                `json:"shipping_option_id"`
-	LocationID       string                `json:"location_id"`
-	FulfillmentID    string                `json:"fulfillment_id"`
-	Lines            []replacementLineJSON `json:"lines"`
+	SourceSettleable bool   `json:"source_settleable"`
+	OrderID          string `json:"order_id"`
+	Status           string `json:"status"`
+	ShippingOptionID string `json:"shipping_option_id"`
+	LocationID       string `json:"location_id"`
+	FulfillmentID    string `json:"fulfillment_id"`
+	// Recalls counts the parcels canceled under this replacement (ADR 0239);
+	// the flow names it in the next parcel's key.
+	Recalls int                   `json:"recalls"`
+	Lines   []replacementLineJSON `json:"lines"`
 }
 
 // replacementSourceOf reads the record a replacement settles and returns the

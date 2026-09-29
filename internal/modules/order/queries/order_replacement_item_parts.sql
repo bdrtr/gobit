@@ -20,3 +20,13 @@ ORDER BY p.order_replacement_item_id, p.rank;
 UPDATE order_replacement_item_parts
 SET reservation_id = sqlc.arg('reservation_id')::text, updated_at = now()
 WHERE order_replacement_item_id = sqlc.arg('item_id')::text AND variant_id = sqlc.arg('variant_id')::text;
+
+-- ClearOrderReplacementItemPartReservations forgets the promises a recalled
+-- replacement's parts held (ADR 0239).
+-- name: ClearOrderReplacementItemPartReservations :exec
+UPDATE order_replacement_item_parts AS p
+SET reservation_id = NULL, updated_at = now()
+FROM order_replacement_items AS i
+WHERE i.id = p.order_replacement_item_id
+  AND i.order_replacement_id = sqlc.arg('replacement_id')::text
+  AND p.reservation_id IS NOT NULL;

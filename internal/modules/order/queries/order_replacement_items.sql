@@ -60,3 +60,11 @@ SET reservation_id = sqlc.arg('reservation_id')::text,
     updated_at = now()
 WHERE id = sqlc.arg('id')::text
 RETURNING *;
+
+-- ClearOrderReplacementItemReservations forgets the promises a recalled
+-- replacement's lines held (ADR 0239): their units are back on the shelf, and
+-- the next dispatch makes new ones.
+-- name: ClearOrderReplacementItemReservations :exec
+UPDATE order_replacement_items
+SET reservation_id = NULL, updated_at = now()
+WHERE order_replacement_id = $1 AND reservation_id IS NOT NULL;

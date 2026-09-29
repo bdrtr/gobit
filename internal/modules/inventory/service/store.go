@@ -159,6 +159,9 @@ type Store interface {
 	// what makes bringing the total up to a target safe against two acts arriving
 	// at once.
 	ReturnedForLine(ctx context.Context, itemID, lineItemID string) (int64, error)
+	// CancellationRecorded reports whether a cancellation naming the reference
+	// is already in the ledger; read under the reservation's lock (ADR 0239).
+	CancellationRecorded(ctx context.Context, reference string) (bool, error)
 	// SaleLocations answers where an order's units were deducted from, as
 	// inventory item to location.
 	//

@@ -2521,3 +2521,112 @@ func (f *fakeStore) ReplacedQuantities(
 
 	return out, nil
 }
+
+// ReplacementsByFulfillment returns the replacements a parcel carries.
+func (f *fakeStore) ReplacementsByFulfillment(
+	_ context.Context, fulfillmentID string,
+) ([]models.Replacement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := make([]models.Replacement, 0)
+	for id := range f.replaces {
+		if f.replaces[id].FulfillmentID == fulfillmentID {
+			out = append(out, f.replaces[id])
+		}
+	}
+	slices.SortFunc(out, func(a, b models.Replacement) int { return strings.Compare(a.ID, b.ID) })
+
+	return out, nil
+}
+
+// RecallReplacement sends a dispatched replacement back to 'requested', as
+// the query's WHERE does: anything else is a changed state.
+func (f *fakeStore) RecallReplacement(ctx context.Context, id string) (models.Replacement, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	record, ok := f.replaces[id]
+	if !ok {
+		return models.Replacement{}, notFound(id)
+	}
+	if record.Status != models.ReplacementDispatched {
+		return models.Replacement{}, errors.Conflict("order_state_changed",
+			"replacement %s is no longer dispatched", id)
+	}
+	record.Status = models.ReplacementRequested
+	record.DispatchedAt = nil
+	record.FulfillmentID = ""
+	record.Recalls++
+	record.UpdatedAt = f.nextStamp()
+	f.recordUndo(ctx, undoEntry(f.replaces, id))
+	f.replaces[id] = record
+
+	return record, nil
+}
+
+// ClearReplacementReservations forgets the promises of a replacement's lines
+// and parts; the parts are copied before the write, for
+// [fakeStore.SetReplacementItemPartReservation]'s reason.
+func (f *fakeStore) ClearReplacementReservations(ctx context.Context, replacementID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for id := range f.replItems {
+		item := f.replItems[id]
+		if item.ReplacementID != replacementID {
+			continue
+		}
+		parts := slices.Clone(item.Parts)
+		for i := range parts {
+			parts[i].ReservationID = ""
+		}
+		item.Parts = parts
+		item.ReservationID = ""
+		f.recordUndo(ctx, undoEntry(f.replItems, id))
+		f.replItems[id] = item
+	}
+
+	return nil
+}
+
+// ReopenClaim takes a completed claim back to 'requested'.
+func (f *fakeStore) ReopenClaim(ctx context.Context, id string) (models.Claim, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	claim, ok := f.claims[id]
+	if !ok || claim.Status != models.ClaimCompleted {
+		return models.Claim{}, errors.Conflict("order_state_changed", "the claim record is not completed: %s", id)
+	}
+	claim.Status = models.ClaimRequested
+	claim.CompletedAt = nil
+	claim.UpdatedAt = f.nextStamp()
+	f.recordUndo(ctx, undoEntry(f.claims, id))
+	f.claims[id] = claim
+
+	return claim, nil
+}
+
+// ReopenExchange takes a completed exchange back to 'funded' when its
+// difference was collected and to 'requested' otherwise, written out rather
+// than taken from a helper the code under test uses.
+func (f *fakeStore) ReopenExchange(ctx context.Context, id string) (models.Exchange, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	exchange, ok := f.exchanges[id]
+	if !ok || exchange.Status != models.ExchangeCompleted {
+		return models.Exchange{}, errors.Conflict("order_state_changed", "the exchange record is not completed: %s", id)
+	}
+	exchange.Status = models.ExchangeRequested
+	if exchange.FundedAt != nil {
+		exchange.Status = models.ExchangeFunded
+	}
+	exchange.CompletedAt = nil
+	exchange.UpdatedAt = f.nextStamp()
+	f.recordUndo(ctx, undoEntry(f.exchanges, id))
+	f.exchanges[id] = exchange
+
+	return exchange, nil
+}

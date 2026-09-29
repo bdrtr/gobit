@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The returns flow's error lines went nowhere** (D162). Built with no logger,
+  it fell back to a discard handler, so "the refund was made only in part; a
+  human has to finish it" and its other error lines were never written in a
+  running installation. **For operators:** they now reach the application's log,
+  under `workflow=returns`.
+
 - **Rows an order writes together came back in an order nobody wrote**
   (D161). A return's lines, a replacement's lines, a line's write-off with its
   add-ons' and an order's deliveries are each written in one transaction and
@@ -187,6 +193,19 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A canceled parcel recalls its replacement** (ADR 0239). **For operators:**
+  canceling the parcel a replacement left in (`POST
+  /admin/v1/fulfillments/{id}/cancel`) puts the units it took off the shelf back
+  where they left from, sends the replacement back to `requested` and reopens
+  the claim, or the exchange, which goes back to `funded` when its difference
+  was collected; a source another replacement settled stays settled.
+  Dispatching the replacement again opens a new parcel. The replacement read
+  carries `recalls`, how many of its parcels were canceled. Order migration
+  000036 adds `order_replacements.recalls`. **For contributors:** the inventory
+  interop gains `RecallReplacement(reservationID)`, the order interop
+  `ReplacementOfParcel` and `RecallReplacement`, and the returns flow subscribes
+  to `fulfillment.canceled`.
 
 - **A bundle is replaced from its parts** (ADR 0238). **For operators:** a
   replacement of an order line that sold a bundle is dispatched from the parts

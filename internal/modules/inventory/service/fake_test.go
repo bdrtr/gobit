@@ -696,9 +696,13 @@ func (f *fakeStore) AppendMovement(ctx context.Context, mv models.Movement) (mod
 	// grows, and a fake that refused the second write would prove a rule the
 	// database no longer has.
 	//
-	// What the schema DOES still tie to a cancellation is the line, and the fake
-	// imitates that instead.
-	if (mv.LineItemID != "") != (mv.Reason == models.MovementCancellation) {
+	// What the schema DOES still tie to a cancellation is the line, one way:
+	// inventory_movements_line_only_on_cancellation allows a line on a
+	// cancellation and on nothing else, and a cancellation with none. This check
+	// held both ways until a replacement's recall wrote the first such row
+	// (ADR 0239), and a fake stricter than its schema refuses a write the
+	// database takes.
+	if mv.LineItemID != "" && mv.Reason != models.MovementCancellation {
 		return models.Movement{}, errors.Invalid("fake_movement_line_mismatch",
 			"the schema's CHECK sets line_item_id on a cancellation and on nothing else")
 	}
@@ -735,6 +739,25 @@ func (f *fakeStore) ReturnedForLine(
 	}
 
 	return returned, nil
+}
+
+// CancellationRecorded reports whether a cancellation names the reference,
+// refusing outside a transaction for [fakeStore.ReturnedForLine]'s reason.
+func (f *fakeStore) CancellationRecorded(ctx context.Context, reference string) (bool, error) {
+	if err := requireTx(ctx, "CancellationRecorded"); err != nil {
+		return false, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for i := range f.movements {
+		if f.movements[i].Reason == models.MovementCancellation && f.movements[i].Reference == reference {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 // SaleLocations answers where an order's units were deducted from, the way the

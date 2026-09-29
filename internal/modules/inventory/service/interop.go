@@ -222,6 +222,22 @@ func (i *Interop) ReturnCanceled(
 	return false, err
 }
 
+// RecallReplacement puts back the units a confirmed replacement promise took
+// out of the count, once the parcel that was to carry them is canceled
+// (ADR 0239).
+//
+// True means the units were ALREADY back and this call wrote nothing, for
+// [Interop.ReturnCanceled]'s reason: a redelivered event is not a failure, and a
+// named error cannot cross this boundary.
+func (i *Interop) RecallReplacement(ctx context.Context, reservationID string) (alreadyBack bool, err error) {
+	_, err = i.svc.RecallReplacementUnits(ctx, reservationID)
+	if errors.Is(err, models.ErrMovementAlreadyRecorded) {
+		return true, nil
+	}
+
+	return false, err
+}
+
 // SaleLocations answers where an order's units were deducted from, per inventory
 // item.
 //
