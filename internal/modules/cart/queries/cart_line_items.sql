@@ -32,7 +32,7 @@ WHERE cart_id = $1 AND variant_id = $2 AND properties = sqlc.arg('properties')::
 -- name: ListAddOnLines :many
 SELECT * FROM cart_line_items
 WHERE cart_id = $1 AND parent_line_id = $2 AND deleted_at IS NULL
-ORDER BY created_at, id;
+ORDER BY created_at, seq;
 
 -- SetAddOnQuantities writes a line's quantity onto its add-ons, which follow it
 -- (ADR 0229).
@@ -50,7 +50,7 @@ WHERE cart_id = $1 AND parent_line_id = $2 AND deleted_at IS NULL;
 -- name: ListLineItems :many
 SELECT * FROM cart_line_items
 WHERE cart_id = $1 AND deleted_at IS NULL
-ORDER BY created_at, id;
+ORDER BY created_at, seq;
 
 -- CountLineItems counts the cart's living lines; the service asks it under the
 -- cart lock before it opens one, against the line ceiling (ADR 0227).
@@ -63,7 +63,7 @@ WHERE cart_id = $1 AND deleted_at IS NULL;
 -- name: ListLineItemsByCartIDs :many
 SELECT * FROM cart_line_items
 WHERE cart_id = ANY (sqlc.arg('cart_ids')::text[]) AND deleted_at IS NULL
-ORDER BY cart_id, created_at, id;
+ORDER BY cart_id, created_at, seq;
 
 -- name: SetLineItemQuantity :one
 UPDATE cart_line_items

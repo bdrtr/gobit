@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An order's lines were read in an order nobody wrote** (D157). Lines written
+  together — an order's lines, a cart line and its add-ons, a merge — share a
+  moment, and the tie was broken by the random end of their ids, so the order
+  read, the invoice and the cart listed them shuffled. **For API clients:** an
+  order's and a cart's `items` now come back in the order they were written
+  (ADR 0233).
+
 - **The channel audit never saw the related products' route** (D156). It read
   a route's path only from a literal, and the route was registered on a
   concatenation. **For contributors:** a route path in a module or a plugin is a
@@ -147,6 +154,10 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **An order keeps the order of its lines** (ADR 0233). **For contributors:**
+  `order_line_items` and `cart_line_items` carry `seq`, an identity the database
+  fills; a read of a cart's or an order's lines orders by `created_at, seq`.
 
 - **The panel edits a product's add-ons** (ADR 0232). **For operators:** the
   product page lists the add-ons its lines take, and "Edit add-ons" replaces

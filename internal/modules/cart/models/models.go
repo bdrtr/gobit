@@ -154,7 +154,7 @@ func (c Cart) TotalsConsistent() bool {
 type CartDetail struct {
 	// Cart is the cart itself.
 	Cart
-	// Items are the cart's lines; they are in creation order.
+	// Items are the cart's lines, in the order they were written (ADR 0233).
 	Items []LineItem
 	// ShippingAddress is the cart's shipping address; nil if there is none.
 	ShippingAddress *CartAddress

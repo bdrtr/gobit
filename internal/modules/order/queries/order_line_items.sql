@@ -13,10 +13,13 @@ INSERT INTO order_line_items (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 RETURNING *;
 
+-- ListOrderLineItems reads an order's lines in the order they were written:
+-- by the moment of their transaction, then the order the database took them in
+-- (ADR 0233).
 -- name: ListOrderLineItems :many
 SELECT * FROM order_line_items
 WHERE order_id = $1
-ORDER BY created_at, id;
+ORDER BY created_at, seq;
 
 -- ListOrderLineItemsFiltered is the cross-module read of the LINE as an entity
 -- of its own (the "order_line_item" Query provider).

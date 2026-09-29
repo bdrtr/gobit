@@ -68,6 +68,7 @@ type CartLineItem struct {
 	Properties    []byte
 	ParentLineID  *string
 	AddOnKey      string
+	Seq           *int64
 }
 
 type CartPromotionCode struct {

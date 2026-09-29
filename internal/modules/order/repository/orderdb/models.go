@@ -149,6 +149,7 @@ type OrderLineItem struct {
 	IsGiftcard       bool
 	Properties       []byte
 	ParentLineItemID *string
+	Seq              *int64
 }
 
 type OrderLineTax struct {

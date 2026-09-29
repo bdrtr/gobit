@@ -340,6 +340,43 @@ func TestOrderLifecycle(t *testing.T) {
 	assert.True(t, errors.IsConflict(err), "got: %v", err)
 }
 
+// TestAnOrderKeepsTheOrderOfItsLines is D157: twelve lines written in one
+// transaction share a created_at, and their ids' random tails ordered them on
+// read, so the order, its invoice and every read of it listed them in an order
+// nobody wrote. They come back in the order the order was given them
+// (ADR 0233).
+func TestAnOrderKeepsTheOrderOfItsLines(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	in := validInput()
+	in.CartID = "cart_ORDERED"
+	base := in.Items[0]
+	in.Items = nil
+	in.Subtotal, in.TaxTotal, in.Total = 0, 0, in.ShippingTotal
+	var want []string
+	for i := range 12 {
+		item := base
+		item.VariantID = fmt.Sprintf("variant_%02d", 11-i)
+		item.Title = item.VariantID
+		in.Items = append(in.Items, item)
+		in.Subtotal += item.Subtotal
+		in.TaxTotal += item.TaxTotal
+		in.Total += item.Total
+		want = append(want, item.VariantID)
+	}
+
+	ord, err := svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+	got := make([]string, 0, len(detail.Items))
+	for i := range detail.Items {
+		got = append(got, detail.Items[i].VariantID)
+	}
+	assert.Equal(t, want, got, "the lines come back in the order they were written")
+}
+
 // TestConcurrentOrderNumbersAreUnique proves the DoD's most critical claim
 // under a real race.
 //

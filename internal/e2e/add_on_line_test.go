@@ -90,6 +90,7 @@ func TestAnEngravingIsALineOfItsRingsOwn(t *testing.T) {
 	order, err := orderSvc.GetOrder(ctx, orderID)
 	require.NoError(t, err)
 	require.Len(t, order.Items, 2)
+	assert.Equal(t, ring, order.Items[0].VariantID, "the ring is listed before its engraving (ADR 0233)")
 	var ringOrderLine string
 	for _, line := range order.Items {
 		if line.VariantID == ring {

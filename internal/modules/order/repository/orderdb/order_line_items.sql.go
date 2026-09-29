@@ -18,7 +18,7 @@ INSERT INTO order_line_items (
     unit_price, subtotal, discount_total, tax_total, tax_rate_bps, total, metadata,
     price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-RETURNING id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id
+RETURNING id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, seq
 `
 
 type CreateOrderLineItemParams struct {
@@ -91,12 +91,13 @@ func (q *Queries) CreateOrderLineItem(ctx context.Context, arg CreateOrderLineIt
 		&i.IsGiftcard,
 		&i.Properties,
 		&i.ParentLineItemID,
+		&i.Seq,
 	)
 	return i, err
 }
 
 const getOrderLineItemsByIDs = `-- name: GetOrderLineItemsByIDs :many
-SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id FROM order_line_items
+SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, seq FROM order_line_items
 WHERE id = ANY ($1::text[])
 ORDER BY id
 `
@@ -141,6 +142,7 @@ func (q *Queries) GetOrderLineItemsByIDs(ctx context.Context, ids []string) ([]O
 			&i.IsGiftcard,
 			&i.Properties,
 			&i.ParentLineItemID,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}
@@ -153,11 +155,14 @@ func (q *Queries) GetOrderLineItemsByIDs(ctx context.Context, ids []string) ([]O
 }
 
 const listOrderLineItems = `-- name: ListOrderLineItems :many
-SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id FROM order_line_items
+SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, seq FROM order_line_items
 WHERE order_id = $1
-ORDER BY created_at, id
+ORDER BY created_at, seq
 `
 
+// ListOrderLineItems reads an order's lines in the order they were written:
+// by the moment of their transaction, then the order the database took them in
+// (ADR 0233).
 func (q *Queries) ListOrderLineItems(ctx context.Context, orderID string) ([]OrderLineItem, error) {
 	rows, err := q.db.Query(ctx, listOrderLineItems, orderID)
 	if err != nil {
@@ -188,6 +193,7 @@ func (q *Queries) ListOrderLineItems(ctx context.Context, orderID string) ([]Ord
 			&i.IsGiftcard,
 			&i.Properties,
 			&i.ParentLineItemID,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}
@@ -200,7 +206,7 @@ func (q *Queries) ListOrderLineItems(ctx context.Context, orderID string) ([]Ord
 }
 
 const listOrderLineItemsFiltered = `-- name: ListOrderLineItemsFiltered :many
-SELECT li.id, li.order_id, li.variant_id, li.title, li.quantity, li.unit_price, li.subtotal, li.discount_total, li.tax_total, li.total, li.metadata, li.created_at, li.updated_at, li.tax_rate_bps, li.price_id, li.price_list_id, li.price_list_type, li.is_giftcard, li.properties, li.parent_line_item_id FROM order_line_items li
+SELECT li.id, li.order_id, li.variant_id, li.title, li.quantity, li.unit_price, li.subtotal, li.discount_total, li.tax_total, li.total, li.metadata, li.created_at, li.updated_at, li.tax_rate_bps, li.price_id, li.price_list_id, li.price_list_type, li.is_giftcard, li.properties, li.parent_line_item_id, li.seq FROM order_line_items li
     JOIN orders o ON o.id = li.order_id
 WHERE ($1::text IS NULL OR li.order_id = $1::text)
   AND ($2::text IS NULL OR li.variant_id = $2::text)
@@ -282,6 +288,7 @@ func (q *Queries) ListOrderLineItemsFiltered(ctx context.Context, arg ListOrderL
 			&i.IsGiftcard,
 			&i.Properties,
 			&i.ParentLineItemID,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}

@@ -90,7 +90,8 @@ func (r *Repository) GetLineItemByVariant(
 	return toLineItem(row)
 }
 
-// ListLineItems returns the cart's line items in creation order.
+// ListLineItems returns the cart's line items in the order they were written
+// (ADR 0233).
 func (r *Repository) ListLineItems(ctx context.Context, cartID string) ([]models.LineItem, error) {
 	rows, err := r.queries(ctx).ListLineItems(ctx, cartID)
 	if err != nil {
@@ -99,8 +100,8 @@ func (r *Repository) ListLineItems(ctx context.Context, cartID string) ([]models
 	return toLineItems(rows)
 }
 
-// ListAddOnLines returns the living add-ons of a line in creation order
-// (ADR 0229).
+// ListAddOnLines returns the living add-ons of a line in the order they were
+// written (ADR 0229, ADR 0233).
 func (r *Repository) ListAddOnLines(ctx context.Context, cartID, parentID string) ([]models.LineItem, error) {
 	rows, err := r.queries(ctx).ListAddOnLines(ctx, cartdb.ListAddOnLinesParams{
 		CartID: cartID, ParentLineID: &parentID,

@@ -94,7 +94,7 @@ ORDER BY id;
 -- name: ListOrderLineItemsForDisclosure :many
 SELECT * FROM order_line_items
 WHERE order_id = ANY (sqlc.arg('order_ids')::text[])
-ORDER BY order_id, created_at, id;
+ORDER BY order_id, created_at, seq;
 
 -- ListOrderReturnsForDisclosure reads the return records of the given orders.
 --

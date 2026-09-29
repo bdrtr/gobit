@@ -105,7 +105,8 @@ type Store interface {
 	ListAddOnLines(ctx context.Context, cartID, parentID string) ([]models.LineItem, error)
 	SetAddOnQuantities(ctx context.Context, cartID, parentID string, quantity int64) error
 	SoftDeleteAddOnLines(ctx context.Context, cartID, parentID string) error
-	// ListLineItems returns the cart's lines in creation order.
+	// ListLineItems returns the cart's lines in the order they were written
+	// (ADR 0233).
 	ListLineItems(ctx context.Context, cartID string) ([]models.LineItem, error)
 	// CountLineItems returns how many living lines the cart holds.
 	CountLineItems(ctx context.Context, cartID string) (int, error)

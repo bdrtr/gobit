@@ -752,6 +752,35 @@ func TestARemovedLineFreesItsPlace(t *testing.T) {
 	assert.Equal(t, service.CodeLineLimit, errors.CodeOf(add("variant_LATE_2")))
 }
 
+// TestACartKeepsTheOrderOfItsLines is D157 on the cart: a ring and its five
+// add-ons are written in one transaction and share a created_at, and their ids'
+// random tails ordered them on read. They come back as they were written, the
+// ring first (ADR 0233).
+func TestACartKeepsTheOrderOfItsLines(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
+	addOns := make([]service.AddOnInput, 0, 5)
+	want := []string{"variant_RING"}
+	for i := range 5 {
+		variant := fmt.Sprintf("variant_ADDON_%d", 4-i)
+		addOns = append(addOns, service.AddOnInput{VariantID: variant, Title: "Add-on", UnitPrice: 100})
+		want = append(want, variant)
+	}
+	_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_RING", Title: "Ring", Quantity: 1, UnitPrice: 1000, AddOns: addOns,
+	})
+	require.NoError(t, err)
+
+	detail, err := svc.GetCart(ctx, cart.ID)
+	require.NoError(t, err)
+	got := make([]string, 0, len(detail.Items))
+	for i := range detail.Items {
+		got = append(got, detail.Items[i].VariantID)
+	}
+	assert.Equal(t, want, got, "the lines come back in the order they were written")
+}
+
 // TestWritingToCompletedCartIsRejected verifies that on a completed cart all
 // the write paths are rejected at the database level too.
 func TestWritingToCompletedCartIsRejected(t *testing.T) {

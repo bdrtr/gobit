@@ -187,7 +187,9 @@ type Store interface {
 	CanceledQuantities(ctx context.Context, lineItemIDs []string) (map[string]int64, error)
 	// CreateLineTax records one component of a line's tax stack.
 	CreateLineTax(ctx context.Context, component models.OrderLineTax) (models.OrderLineTax, error)
-	// ListLineItems returns the lines of the order in creation order.
+	// ListLineItems returns the lines of the order in the order they were
+	// written: by their transaction's moment, then the order the database took
+	// them in (ADR 0233).
 	ListLineItems(ctx context.Context, orderID string) ([]models.OrderLineItem, error)
 	// ListLineItemsFiltered lists lines ACROSS orders, filtered and paged.
 	//

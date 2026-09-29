@@ -80,6 +80,8 @@ var notPersonalColumns = map[string][]string{
 		// The add-on bond (ADR 0229): a line id and a digest of variant ids
 		// and the add-ons' words, which the declared properties already are.
 		"parent_line_id", "add_on_key",
+		// The order the database took the row in (ADR 0233).
+		"seq",
 		"created_at", "updated_at", "deleted_at",
 	},
 	"cart_addresses": {

@@ -252,7 +252,7 @@ func (o Order) DiscountWithinSubtotal() bool {
 type OrderDetail struct {
 	// Order is the order itself.
 	Order
-	// Items are the order's lines; they are in creation order.
+	// Items are the order's lines, in the order they were written (ADR 0233).
 	Items []OrderLineItem
 	// ShippingAddress is where the order went; nil when none was recorded.
 	ShippingAddress *OrderAddress
