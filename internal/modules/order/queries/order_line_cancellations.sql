@@ -5,7 +5,9 @@ INSERT INTO order_line_cancellations (id, order_line_item_id, quantity, reason, 
 VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
--- ListOrderLineCancellations returns an order's cancellations, oldest first.
+-- ListOrderLineCancellations returns an order's cancellations, oldest first,
+-- and a line's before its add-ons': those are written in one transaction and
+-- share a created_at, and seq is the order the database took them in (D161).
 --
 -- The order is reached through the LINE: the cancellation names the line and the
 -- line names the order, so nothing here can disagree with anything.
@@ -13,7 +15,7 @@ RETURNING *;
 SELECT c.* FROM order_line_cancellations c
 JOIN order_line_items l ON l.id = c.order_line_item_id
 WHERE l.order_id = $1
-ORDER BY c.created_at, c.id;
+ORDER BY c.created_at, c.seq;
 
 -- SumCanceledQuantities reports how many units of each of the given order lines
 -- have already been written off.

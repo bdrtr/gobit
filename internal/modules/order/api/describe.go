@@ -612,9 +612,11 @@ func describeClaims(d *openapi.Doc) {
 			Description: "The units are set aside at the replacement's location, a parcel is " +
 				"opened on the order with the replacement's shipping option, the units come " +
 				"OUT of the physical count as a movement of their own reason, and the claim " +
-				"is marked settled. It is refused with 409 when the record was withdrawn, " +
-				"when a line's variant has no inventory item, and when there is not enough " +
-				"stock to send. \n\n" +
+				"is marked settled. A line that sold a bundle is sent as the parts it was " +
+				"sold with, each set aside for the line's quantity times its units, and " +
+				"sent_units counts those parts. It is refused with 409 when the record was " +
+				"withdrawn, when a variant to send has no inventory item, and when there is " +
+				"not enough stock to send. \n\n" +
 				"Repeating it sends nothing a second time: already_sent then reports that " +
 				"the goods had gone, and fulfillment_id names the parcel they left in.",
 			Responses: map[string]any{

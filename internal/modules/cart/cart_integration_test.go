@@ -781,6 +781,43 @@ func TestACartKeepsTheOrderOfItsLines(t *testing.T) {
 	assert.Equal(t, want, got, "the lines come back in the order they were written")
 }
 
+// TestADisclosureKeepsTheOrderOfACartsLines is D161 on the cart's dossier: a
+// ring and its five add-ons, each with the shopper's words, are written in one
+// transaction, and the disclosure read ordered them by id after created_at,
+// the tie ADR 0233 broke for every other read of the lines.
+func TestADisclosureKeepsTheOrderOfACartsLines(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	cart := newCart(ctx, t, svc)
+	words := map[string]string{"engraving": "for Ada"}
+	addOns := make([]service.AddOnInput, 0, 5)
+	want := []string{"variant_NOTED_RING"}
+	for i := range 5 {
+		variant := fmt.Sprintf("variant_NOTED_ADDON_%d", 4-i)
+		addOns = append(addOns, service.AddOnInput{VariantID: variant, Title: "Add-on", UnitPrice: 100, Properties: words})
+		want = append(want, variant)
+	}
+	_, err := svc.AddLineItem(ctx, cart.ID, service.AddLineItemInput{
+		VariantID: "variant_NOTED_RING", Title: "Ring", Quantity: 1, UnitPrice: 1000,
+		Properties: words, AddOns: addOns,
+	})
+	require.NoError(t, err)
+	detail, err := svc.GetCart(ctx, cart.ID)
+	require.NoError(t, err)
+	variantOf := make(map[string]string, len(detail.Items))
+	for i := range detail.Items {
+		variantOf[detail.Items[i].ID] = detail.Items[i].VariantID
+	}
+
+	notes, err := repository.New(testPool.Pool()).CartLineItemNotesForDisclosure(ctx, []string{cart.ID})
+	require.NoError(t, err)
+	got := make([]string, 0, len(notes))
+	for i := range notes {
+		got = append(got, variantOf[notes[i].ID])
+	}
+	assert.Equal(t, want, got, "the dossier lists the lines in the order they were written")
+}
+
 // TestWritingToCompletedCartIsRejected verifies that on a completed cart all
 // the write paths are rejected at the database level too.
 func TestWritingToCompletedCartIsRejected(t *testing.T) {

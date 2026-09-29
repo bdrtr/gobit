@@ -13,7 +13,7 @@ const createOrderLineCancellation = `-- name: CreateOrderLineCancellation :one
 
 INSERT INTO order_line_cancellations (id, order_line_item_id, quantity, reason, note)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, order_line_item_id, quantity, reason, note, created_at, updated_at
+RETURNING id, order_line_item_id, quantity, reason, note, created_at, updated_at, seq
 `
 
 type CreateOrderLineCancellationParams struct {
@@ -42,18 +42,21 @@ func (q *Queries) CreateOrderLineCancellation(ctx context.Context, arg CreateOrd
 		&i.Note,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Seq,
 	)
 	return i, err
 }
 
 const listOrderLineCancellations = `-- name: ListOrderLineCancellations :many
-SELECT c.id, c.order_line_item_id, c.quantity, c.reason, c.note, c.created_at, c.updated_at FROM order_line_cancellations c
+SELECT c.id, c.order_line_item_id, c.quantity, c.reason, c.note, c.created_at, c.updated_at, c.seq FROM order_line_cancellations c
 JOIN order_line_items l ON l.id = c.order_line_item_id
 WHERE l.order_id = $1
-ORDER BY c.created_at, c.id
+ORDER BY c.created_at, c.seq
 `
 
-// ListOrderLineCancellations returns an order's cancellations, oldest first.
+// ListOrderLineCancellations returns an order's cancellations, oldest first,
+// and a line's before its add-ons': those are written in one transaction and
+// share a created_at, and seq is the order the database took them in (D161).
 //
 // The order is reached through the LINE: the cancellation names the line and the
 // line names the order, so nothing here can disagree with anything.
@@ -74,6 +77,7 @@ func (q *Queries) ListOrderLineCancellations(ctx context.Context, orderID string
 			&i.Note,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}

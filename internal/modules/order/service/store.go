@@ -264,7 +264,8 @@ type Store interface {
 
 	// CreateReplacement writes what a claim promises to send.
 	CreateReplacement(ctx context.Context, in models.Replacement) (models.Replacement, error)
-	// CreateReplacementItem writes one line of a replacement.
+	// CreateReplacementItem writes one line of a replacement, and its parts
+	// when it has any.
 	CreateReplacementItem(
 		ctx context.Context, item models.ReplacementItem,
 	) (models.ReplacementItem, error)
@@ -291,7 +292,10 @@ type Store interface {
 	SetReplacementItemReservation(
 		ctx context.Context, itemID, reservationID string,
 	) (models.ReplacementItem, error)
-	// ListReplacementItems returns a replacement's lines.
+	// SetReplacementItemPartReservation writes the promise one part of a line
+	// holds its units under (ADR 0238).
+	SetReplacementItemPartReservation(ctx context.Context, itemID, variantID, reservationID string) error
+	// ListReplacementItems returns a replacement's lines, each with its parts.
 	ListReplacementItems(
 		ctx context.Context, replacementID string,
 	) ([]models.ReplacementItem, error)

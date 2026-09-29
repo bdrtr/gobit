@@ -51,9 +51,22 @@ type replacementItemDTO struct {
 	VariantID       string `json:"variant_id,omitempty"`
 	Quantity        int64  `json:"quantity"`
 	// ReservationID is the promise the units are held under; it is empty until
-	// something sets them aside.
-	ReservationID string    `json:"reservation_id,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	// something sets them aside, and on an item with parts.
+	ReservationID string `json:"reservation_id,omitempty"`
+	// Parts are what one unit holds when the item replaces a line that sold a
+	// bundle (ADR 0238), each held under its own promise; absent otherwise.
+	Parts     []replacementPartDTO `json:"parts,omitempty"`
+	CreatedAt time.Time            `json:"created_at"`
+}
+
+// replacementPartDTO is one part of a replacement item in a response.
+type replacementPartDTO struct {
+	VariantID string `json:"variant_id"`
+	// Quantity is how many of it one unit of the item holds.
+	Quantity int64 `json:"quantity"`
+	// ReservationID is the promise this part's units are held under; it is
+	// empty until something sets them aside.
+	ReservationID string `json:"reservation_id,omitempty"`
 }
 
 // replacementDTO is a replacement in a response.
@@ -237,8 +250,23 @@ func toReplacementDTO(record service.ReplacementRecord) replacementDTO {
 			VariantID:       record.Items[i].VariantID,
 			Quantity:        record.Items[i].Quantity,
 			ReservationID:   record.Items[i].ReservationID,
+			Parts:           toReplacementPartDTOs(record.Items[i].Parts),
 			CreatedAt:       record.Items[i].CreatedAt,
 		})
+	}
+
+	return out
+}
+
+// toReplacementPartDTOs converts an item's parts; none is nil, so the field is
+// left out.
+func toReplacementPartDTOs(parts []models.ReplacementItemPart) []replacementPartDTO {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]replacementPartDTO, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, replacementPartDTO{VariantID: p.VariantID, Quantity: p.Quantity, ReservationID: p.ReservationID})
 	}
 
 	return out

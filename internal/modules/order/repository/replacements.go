@@ -157,7 +157,30 @@ func (r *Repository) CreateReplacementItem(
 			"could not write the replacement line %s", in.Names())
 	}
 
-	return toReplacementItem(row), nil
+	out := toReplacementItem(row)
+	if len(in.Parts) == 0 {
+		return out, nil
+	}
+
+	variantIDs := make([]string, 0, len(in.Parts))
+	quantities := make([]int64, 0, len(in.Parts))
+	for _, p := range in.Parts {
+		variantIDs = append(variantIDs, p.VariantID)
+		quantities = append(quantities, p.Quantity)
+	}
+	if err := r.queries(ctx).CreateOrderReplacementItemParts(ctx,
+		orderdb.CreateOrderReplacementItemPartsParams{
+			ItemID: in.ID, VariantIds: variantIDs, Quantities: quantities,
+		}); err != nil {
+		return models.ReplacementItem{}, classify(err, codeQueryFailed,
+			"could not write the parts of replacement line %s", in.Names())
+	}
+	out.Parts = make([]models.ReplacementItemPart, 0, len(in.Parts))
+	for _, p := range in.Parts {
+		out.Parts = append(out.Parts, models.ReplacementItemPart{VariantID: p.VariantID, Quantity: p.Quantity})
+	}
+
+	return out, nil
 }
 
 // SetReplacementItemReservation writes the promise a line's units are held
@@ -177,8 +200,29 @@ func (r *Repository) SetReplacementItemReservation(
 	return toReplacementItem(row), nil
 }
 
+// SetReplacementItemPartReservation writes the promise one part's units are
+// held under (ADR 0238).
+func (r *Repository) SetReplacementItemPartReservation(
+	ctx context.Context, itemID, variantID, reservationID string,
+) error {
+	n, err := r.queries(ctx).SetOrderReplacementItemPartReservation(ctx,
+		orderdb.SetOrderReplacementItemPartReservationParams{
+			ItemID: itemID, VariantID: variantID, ReservationID: reservationID,
+		})
+	if err != nil {
+		return classify(err, codeQueryFailed,
+			"the reservation of part %s of replacement line %s could not be written", variantID, itemID)
+	}
+	if n == 0 {
+		return coreerrors.NotFound(codeReplacementNotFound,
+			"replacement line %s has no part %s", itemID, variantID)
+	}
+
+	return nil
+}
+
 // ListReplacementItems returns a replacement's lines in the order they were
-// written.
+// written, each with its parts in their rank.
 func (r *Repository) ListReplacementItems(
 	ctx context.Context, replacementID string,
 ) ([]models.ReplacementItem, error) {
@@ -187,10 +231,26 @@ func (r *Repository) ListReplacementItems(
 		return nil, classify(err, codeQueryFailed,
 			"could not list the lines of replacement %s", replacementID)
 	}
+	partRows, err := r.queries(ctx).ListOrderReplacementItemParts(ctx, replacementID)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed,
+			"could not list the parts of replacement %s", replacementID)
+	}
+
+	parts := make(map[string][]models.ReplacementItemPart, len(rows))
+	for _, p := range partRows {
+		parts[p.OrderReplacementItemID] = append(parts[p.OrderReplacementItemID], models.ReplacementItemPart{
+			VariantID:     p.VariantID,
+			Quantity:      p.Quantity,
+			ReservationID: stringValue(p.ReservationID),
+		})
+	}
 
 	out := make([]models.ReplacementItem, 0, len(rows))
 	for i := range rows {
-		out = append(out, toReplacementItem(rows[i]))
+		item := toReplacementItem(rows[i])
+		item.Parts = parts[item.ID]
+		out = append(out, item)
 	}
 
 	return out, nil

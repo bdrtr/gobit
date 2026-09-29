@@ -158,7 +158,7 @@ SELECT id,
 FROM cart_line_items
 WHERE cart_id = ANY (sqlc.arg('cart_ids')::text[])
   AND (metadata <> '{}'::jsonb OR properties <> '{}'::jsonb)
-ORDER BY cart_id, created_at, id;
+ORDER BY cart_id, created_at, seq;
 
 -- ListCartShippingNotesForDisclosure returns the shipping methods that carry
 -- provider data.

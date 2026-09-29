@@ -107,7 +107,7 @@ SELECT id,
 FROM cart_line_items
 WHERE cart_id = ANY ($1::text[])
   AND (metadata <> '{}'::jsonb OR properties <> '{}'::jsonb)
-ORDER BY cart_id, created_at, id
+ORDER BY cart_id, created_at, seq
 `
 
 type ListCartLineItemNotesForDisclosureRow struct {

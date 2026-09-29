@@ -55,7 +55,7 @@ var moduleTables = []string{
 	"order_returns", "order_return_items", "order_exchanges", "order_claims",
 	"order_replacements", "order_replacement_items", "order_addresses",
 	"order_credit_lines", "order_claim_evidence", "order_line_cancellations",
-	"order_shipping_methods", "order_delivery_changes",
+	"order_shipping_methods", "order_delivery_changes", "order_replacement_item_parts",
 }
 
 // Constants used in the test data. The region, customer and variant ids belong
@@ -375,6 +375,131 @@ func TestAnOrderKeepsTheOrderOfItsLines(t *testing.T) {
 		got = append(got, detail.Items[i].VariantID)
 	}
 	assert.Equal(t, want, got, "the lines come back in the order they were written")
+}
+
+// TestAReturnAndAReplacementKeepTheOrderOfTheirLines is D161: the lines of a
+// return or a replacement are written in one transaction, and their ids'
+// random tails ordered them on read, so a replacement's dispatch set its lines
+// aside in an order nobody wrote. Twelve lines named in reverse come back as
+// they were named.
+func TestAReturnAndAReplacementKeepTheOrderOfTheirLines(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	store := repository.New(testPool.Pool())
+
+	in := validInput()
+	in.CartID = "cart_AFTER_SALES_ORDERED"
+	base := in.Items[0]
+	in.Items = nil
+	in.Subtotal, in.TaxTotal, in.Total = 0, 0, in.ShippingTotal
+	for i := range 12 {
+		item := base
+		item.VariantID = fmt.Sprintf("variant_%02d", i)
+		item.Title = item.VariantID
+		in.Items = append(in.Items, item)
+		in.Subtotal += item.Subtotal
+		in.TaxTotal += item.TaxTotal
+		in.Total += item.Total
+	}
+	ord, err := svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+
+	var want []string
+	returned := service.CreateReturnInput{OrderID: ord.ID}
+	replaced := service.CreateReplacementInput{ShippingOptionID: "so_integration", LocationID: "sloc_integration"}
+	for i := len(detail.Items) - 1; i >= 0; i-- {
+		want = append(want, detail.Items[i].ID)
+		returned.Lines = append(returned.Lines, service.ReturnLineInput{OrderLineItemID: detail.Items[i].ID, Quantity: 1})
+		replaced.Lines = append(replaced.Lines, service.ReplacementLineInput{OrderLineItemID: detail.Items[i].ID, Quantity: 1})
+	}
+
+	ret, err := svc.CreateReturn(ctx, returned)
+	require.NoError(t, err)
+	returnItems, err := store.ListReturnItems(ctx, ret.ID)
+	require.NoError(t, err)
+	got := make([]string, 0, len(returnItems))
+	for i := range returnItems {
+		got = append(got, returnItems[i].OrderLineItemID)
+	}
+	assert.Equal(t, want, got, "a return's lines come back in the order they were written")
+
+	claim, err := svc.CreateClaim(ctx, service.CreateClaimInput{OrderID: ord.ID, Type: models.ClaimReplace})
+	require.NoError(t, err)
+	replaced.ClaimID = claim.ID
+	record, err := svc.CreateReplacement(ctx, replaced)
+	require.NoError(t, err)
+	read, err := svc.GetReplacement(ctx, record.ID)
+	require.NoError(t, err)
+	got = got[:0]
+	for i := range read.Items {
+		got = append(got, read.Items[i].OrderLineItemID)
+	}
+	assert.Equal(t, want, got, "a replacement's lines come back in the order they were written")
+}
+
+// TestAnOrdersDeliveriesAndAWriteOffsAddOnsKeepTheirOrder is D161 on the two
+// other tables an order writes several rows of at once: five deliveries come
+// back in the order the cart held them, and a ring written off with its five
+// add-ons lists the ring's cancellation first and the add-ons' in their order.
+func TestAnOrdersDeliveriesAndAWriteOffsAddOnsKeepTheirOrder(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	in := validInput()
+	in.CartID = "cart_WRITTEN_TOGETHER"
+	ring := in.Items[0]
+	ring.LineKey = "ring"
+	in.Items = []service.CreateOrderItemInput{ring}
+	for i := range 5 {
+		addOn := ring
+		addOn.LineKey, addOn.ParentLineKey = "", "ring"
+		addOn.VariantID = fmt.Sprintf("variant_addon_%02d", 4-i)
+		addOn.Title = addOn.VariantID
+		in.Items = append(in.Items, addOn)
+		in.Subtotal += addOn.Subtotal
+		in.TaxTotal += addOn.TaxTotal
+		in.Total += addOn.Total
+	}
+	in.ShippingMethods = nil
+	var deliveries []string
+	for i := range 5 {
+		name := fmt.Sprintf("Delivery %02d", 4-i)
+		amount := int64(0)
+		if i == 0 {
+			amount = in.ShippingTotal
+		}
+		in.ShippingMethods = append(in.ShippingMethods,
+			service.CreateShippingMethodInput{ShippingOptionID: fmt.Sprintf("so_%02d", 4-i), Name: name, Amount: amount})
+		deliveries = append(deliveries, name)
+	}
+
+	ord, err := svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+	var got []string
+	for i := range detail.ShippingMethods {
+		got = append(got, detail.ShippingMethods[i].Name)
+	}
+	assert.Equal(t, deliveries, got, "the deliveries come back in the order the cart held them")
+
+	var lines []string
+	for i := range detail.Items {
+		lines = append(lines, detail.Items[i].ID)
+	}
+	_, err = svc.CancelOrderLine(ctx, ord.ID, service.CancelOrderLineInput{
+		OrderLineItemID: detail.Items[0].ID, Quantity: 1, Reason: "the ring was never made",
+	})
+	require.NoError(t, err)
+	cancellations, err := svc.ListLineCancellations(ctx, ord.ID)
+	require.NoError(t, err)
+	got = got[:0]
+	for i := range cancellations {
+		got = append(got, cancellations[i].OrderLineItemID)
+	}
+	assert.Equal(t, lines, got, "the ring's write-off first, then its add-ons' in their order")
 }
 
 // TestConcurrentOrderNumbersAreUnique proves the DoD's most critical claim

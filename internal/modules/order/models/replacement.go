@@ -128,10 +128,9 @@ func (r Replacement) SourceID() string {
 
 // ReplacementItem is one line of a replacement: which line, and how many.
 //
-// It carries no variant and no amount, and both absences have the same reason
-// as their counterparts on [ReturnItem]: the order line already holds the
-// variant and is immutable, and a replacement is settled with goods rather than
-// money.
+// It carries no amount, for the reason its counterpart on [ReturnItem] gives: a
+// replacement is settled with goods rather than money. An item naming a line
+// carries no variant either, since the line holds it and is immutable.
 type ReplacementItem struct {
 	// ID is the identifier with the "oreplitem_" prefix.
 	ID string
@@ -158,10 +157,44 @@ type ReplacementItem struct {
 	// It is what makes a dispatch retryable: a second attempt reuses the
 	// promise the first one made instead of setting the same units aside
 	// twice, and the confirm behind it is idempotent.
+	//
+	// It stays empty on an item with [ReplacementItem.Parts]: those units are
+	// held part by part, under each part's own promise.
 	ReservationID string
+	// Parts are what one unit of the item holds when it replaces a line that
+	// sold a bundle (ADR 0238), copied from the line when the item was written;
+	// nil for any other item. The goods that leave are these parts, as the sale
+	// took them, whatever the bundle is made of by then.
+	Parts []ReplacementItemPart
 	// CreatedAt and UpdatedAt are UTC.
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// ReplacementItemPart is one variant a unit of a replacement item holds, how
+// many of it, and the promise its units are held under (ADR 0238).
+//
+// VariantID belongs to the product module and ReservationID to the inventory
+// module; neither is a foreign key here, as on the item.
+type ReplacementItemPart struct {
+	VariantID     string
+	Quantity      int64
+	ReservationID string
+}
+
+// Held reports whether every promise the item's units need is written: each
+// part's for an item with parts, its own for any other.
+func (i ReplacementItem) Held() bool {
+	if len(i.Parts) == 0 {
+		return i.ReservationID != ""
+	}
+	for _, p := range i.Parts {
+		if p.ReservationID == "" {
+			return false
+		}
+	}
+
+	return true
 }
 
 // Names answers what the item is sending, for a message.

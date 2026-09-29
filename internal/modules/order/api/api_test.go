@@ -1638,6 +1638,35 @@ func TestAdminReplacementRoutesReadTheReplacementIdentifier(t *testing.T) {
 	}
 }
 
+// TestAdminReplacementReadCarriesABoxsParts pins ADR 0238's field on the
+// read: an item that replaces a box lists its parts, a held one with its
+// promise, and an item of its own has no parts key.
+func TestAdminReplacementReadCarriesABoxsParts(t *testing.T) {
+	record := sampleReplacement()
+	record.Items = append(record.Items, models.ReplacementItem{
+		ID: "oreplitem_box", ReplacementID: "orepl_1", OrderLineItemID: "oli_box", Quantity: 1,
+		Parts: []models.ReplacementItemPart{
+			{VariantID: "var_towel", Quantity: 1, ReservationID: "invres_towel"},
+			{VariantID: "var_soap", Quantity: 2},
+		},
+	})
+	r := newRouter(&fakeOrders{replacement: record})
+
+	rec := doRequest(t, r, http.MethodGet, "/admin/v1/orders/order_1/claims/clm_1/replacements/orepl_1", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var body struct {
+		Data struct {
+			Items []map[string]json.RawMessage `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Data.Items, 2)
+	assert.NotContains(t, body.Data.Items[0], "parts", "an item of its own names no parts")
+	assert.JSONEq(t, `[{"variant_id":"var_towel","quantity":1,"reservation_id":"invres_towel"},`+
+		`{"variant_id":"var_soap","quantity":2}]`, string(body.Data.Items[1]["parts"]))
+}
+
 // TestAdminListReplacementsAnswersAnArray pins the shape of the listing.
 //
 // It is the plain envelope with an ARRAY in it: no paging fields, because a

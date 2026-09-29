@@ -375,7 +375,7 @@ func TestDispatchingRecordsTheParcelAndTheMoment(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, record.Items, 1)
 	require.NoError(t, e.svc.RecordReplacementReservation(
-		ctx, record.ID, record.Items[0].ID, "invres_1"))
+		ctx, record.ID, record.Items[0].ID, testVariantID, "invres_1"))
 
 	sent, err := e.svc.MarkReplacementDispatched(ctx, record.ID, "ful_1")
 	require.NoError(t, err)
@@ -421,7 +421,7 @@ func TestDispatchingTwiceKeepsTheFirstParcel(t *testing.T) {
 	record, err := e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 1))
 	require.NoError(t, err)
 	require.NoError(t, e.svc.RecordReplacementReservation(
-		ctx, record.ID, record.Items[0].ID, "invres_1"))
+		ctx, record.ID, record.Items[0].ID, testVariantID, "invres_1"))
 
 	first, err := e.svc.MarkReplacementDispatched(ctx, record.ID, "ful_1")
 	require.NoError(t, err)
@@ -447,7 +447,7 @@ func TestASentReplacementCannotBeWithdrawn(t *testing.T) {
 	record, err := e.svc.CreateReplacement(ctx, replacementOf(claim.ID, lineID, 1))
 	require.NoError(t, err)
 	require.NoError(t, e.svc.RecordReplacementReservation(
-		ctx, record.ID, record.Items[0].ID, "invres_1"))
+		ctx, record.ID, record.Items[0].ID, testVariantID, "invres_1"))
 	_, err = e.svc.MarkReplacementDispatched(ctx, record.ID, "ful_1")
 	require.NoError(t, err)
 
@@ -469,15 +469,15 @@ func TestAPromiseIsWrittenOnceAndOnlyOnItsOwnLine(t *testing.T) {
 	require.NoError(t, err)
 	itemID := record.Items[0].ID
 
-	require.NoError(t, e.svc.RecordReplacementReservation(ctx, record.ID, itemID, "invres_1"))
-	require.NoError(t, e.svc.RecordReplacementReservation(ctx, record.ID, itemID, "invres_1"),
+	require.NoError(t, e.svc.RecordReplacementReservation(ctx, record.ID, itemID, testVariantID, "invres_1"))
+	require.NoError(t, e.svc.RecordReplacementReservation(ctx, record.ID, itemID, testVariantID, "invres_1"),
 		"the same promise written again is a retry saying what it already said")
 
-	err = e.svc.RecordReplacementReservation(ctx, record.ID, itemID, "invres_2")
+	err = e.svc.RecordReplacementReservation(ctx, record.ID, itemID, testVariantID, "invres_2")
 	require.Error(t, err, "a second promise would leave the first with nothing to release it")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 
-	err = e.svc.RecordReplacementReservation(ctx, record.ID, "oreplitem_ELSEWHERE", "invres_3")
+	err = e.svc.RecordReplacementReservation(ctx, record.ID, "oreplitem_ELSEWHERE", testVariantID, "invres_3")
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	assert.Equal(t, service.CodeReplacementLineUnknown, errors.CodeOf(err))
@@ -495,7 +495,7 @@ func TestUnitsAreNotSetAsideForAWithdrawnReplacement(t *testing.T) {
 	_, err = e.svc.CancelReplacement(ctx, record.ID)
 	require.NoError(t, err)
 
-	err = e.svc.RecordReplacementReservation(ctx, record.ID, record.Items[0].ID, "invres_1")
+	err = e.svc.RecordReplacementReservation(ctx, record.ID, record.Items[0].ID, testVariantID, "invres_1")
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
@@ -556,7 +556,7 @@ func TestTheReplacementDetailCarriesWhatAFlowNeedsToSendIt(t *testing.T) {
 	assert.Empty(t, detail.Lines[0].ReservationID, "nothing is held yet")
 
 	require.NoError(t, e.svc.RecordReplacementReservation(
-		ctx, record.ID, record.Items[0].ID, "invres_1"))
+		ctx, record.ID, record.Items[0].ID, testVariantID, "invres_1"))
 
 	raw, err = e.svc.ReplacementDetailJSON(ctx, record.ID)
 	require.NoError(t, err)

@@ -85,6 +85,7 @@ type stubOrders struct {
 type reservationCall struct {
 	replacementID string
 	itemID        string
+	variantID     string
 	reservationID string
 }
 
@@ -106,10 +107,10 @@ func (s *stubOrders) ReplacementDetailJSON(_ context.Context, _ string) (json.Ra
 // RecordReplacementReservation records the promise and applies the scripted
 // behavior.
 func (s *stubOrders) RecordReplacementReservation(
-	_ context.Context, replacementID, itemID, reservationID string,
+	_ context.Context, replacementID, itemID, variantID, reservationID string,
 ) error {
 	s.reservationCalls = append(s.reservationCalls, reservationCall{
-		replacementID: replacementID, itemID: itemID, reservationID: reservationID,
+		replacementID: replacementID, itemID: itemID, variantID: variantID, reservationID: reservationID,
 	})
 
 	return s.reservationErr

@@ -13,7 +13,7 @@ const createOrderShippingMethod = `-- name: CreateOrderShippingMethod :one
 
 INSERT INTO order_shipping_methods (id, order_id, shipping_option_id, name, amount)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, order_id, shipping_option_id, name, amount, created_at
+RETURNING id, order_id, shipping_option_id, name, amount, created_at, seq
 `
 
 type CreateOrderShippingMethodParams struct {
@@ -45,17 +45,21 @@ func (q *Queries) CreateOrderShippingMethod(ctx context.Context, arg CreateOrder
 		&i.Name,
 		&i.Amount,
 		&i.CreatedAt,
+		&i.Seq,
 	)
 	return i, err
 }
 
 const listOrderShippingMethods = `-- name: ListOrderShippingMethods :many
-SELECT id, order_id, shipping_option_id, name, amount, created_at FROM order_shipping_methods
+SELECT id, order_id, shipping_option_id, name, amount, created_at, seq FROM order_shipping_methods
 WHERE order_id = ANY ($1::text[])
-ORDER BY order_id, created_at, id
+ORDER BY order_id, created_at, seq
 `
 
-// ListOrderShippingMethods reads the methods of several orders in ONE query.
+// ListOrderShippingMethods reads the methods of several orders in ONE query,
+// each order's in the order the cart held them: they are written in the order's
+// transaction and share a created_at, and seq is the order the database took
+// them in (D161).
 func (q *Queries) ListOrderShippingMethods(ctx context.Context, orderIds []string) ([]OrderShippingMethod, error) {
 	rows, err := q.db.Query(ctx, listOrderShippingMethods, orderIds)
 	if err != nil {
@@ -72,6 +76,7 @@ func (q *Queries) ListOrderShippingMethods(ctx context.Context, orderIds []strin
 			&i.Name,
 			&i.Amount,
 			&i.CreatedAt,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}

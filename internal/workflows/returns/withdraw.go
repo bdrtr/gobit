@@ -10,7 +10,8 @@ import (
 type WithdrawResult struct {
 	// ReplacementID is the replacement taken back.
 	ReplacementID string
-	// ReleasedPromises is how many of its lines' promises were given back.
+	// ReleasedPromises is how many of its lines' promises were given back, one
+	// per part of a line that replaces a bundle.
 	ReleasedPromises int
 }
 
@@ -51,21 +52,26 @@ func (w *Workflows) WithdrawReplacement(ctx context.Context, replacementID strin
 	out := WithdrawResult{ReplacementID: replacementID}
 	for i := range detail.Lines {
 		line := detail.Lines[i]
-		if line.ReservationID == "" {
-			continue
-		}
-		if err := w.inventory.ReleaseReservation(ctx, line.ReservationID); err != nil {
-			if errors.IsConflict(err) {
-				return WithdrawResult{}, errors.Wrap(err, errors.KindConflict, CodeStockNotReleased,
-					"the units of line %s were already taken out of the count for a parcel; "+
-						"dispatch the replacement again to finish it rather than withdrawing it",
-					line.ReplacementItemID)
+		// A line that replaces a bundle holds one promise per part (ADR 0238),
+		// and every one of them goes back.
+		for _, promise := range line.promises() {
+			if promise.reservationID == "" {
+				continue
 			}
-			return WithdrawResult{}, errors.Wrap(err, errors.KindOf(err), CodeStockNotReleased,
-				"the units of line %s could not be given back; nothing was withdrawn",
-				line.ReplacementItemID)
+			if err := w.inventory.ReleaseReservation(ctx, promise.reservationID); err != nil {
+				if errors.IsConflict(err) {
+					return WithdrawResult{}, errors.Wrap(err, errors.KindConflict, CodeStockNotReleased,
+						"the units of %s on line %s were already taken out of the count for a "+
+							"parcel; dispatch the replacement again to finish it rather than "+
+							"withdrawing it",
+						promise.variantID, line.ReplacementItemID)
+				}
+				return WithdrawResult{}, errors.Wrap(err, errors.KindOf(err), CodeStockNotReleased,
+					"the units of %s on line %s could not be given back; nothing was withdrawn",
+					promise.variantID, line.ReplacementItemID)
+			}
+			out.ReleasedPromises++
 		}
-		out.ReleasedPromises++
 	}
 
 	if err := w.orders.CancelReplacement(ctx, replacementID); err != nil {

@@ -14,7 +14,7 @@ const createOrderReplacementItem = `-- name: CreateOrderReplacementItem :one
 INSERT INTO order_replacement_items
     (id, order_replacement_id, order_line_item_id, variant_id, quantity)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id
+RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq
 `
 
 type CreateOrderReplacementItemParams struct {
@@ -46,18 +46,20 @@ func (q *Queries) CreateOrderReplacementItem(ctx context.Context, arg CreateOrde
 		&i.UpdatedAt,
 		&i.ReservationID,
 		&i.VariantID,
+		&i.Seq,
 	)
 	return i, err
 }
 
 const listOrderReplacementItems = `-- name: ListOrderReplacementItems :many
-SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id FROM order_replacement_items
+SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq FROM order_replacement_items
 WHERE order_replacement_id = $1
-ORDER BY created_at, id
+ORDER BY created_at, seq
 `
 
 // ListOrderReplacementItems returns a replacement's lines in the order they
-// were written.
+// were written: they share a created_at, and seq is the order the database
+// took them in (D161). The dispatch sets their units aside in this order.
 func (q *Queries) ListOrderReplacementItems(ctx context.Context, orderReplacementID string) ([]OrderReplacementItem, error) {
 	rows, err := q.db.Query(ctx, listOrderReplacementItems, orderReplacementID)
 	if err != nil {
@@ -76,6 +78,7 @@ func (q *Queries) ListOrderReplacementItems(ctx context.Context, orderReplacemen
 			&i.UpdatedAt,
 			&i.ReservationID,
 			&i.VariantID,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}
@@ -92,7 +95,7 @@ UPDATE order_replacement_items
 SET reservation_id = $1::text,
     updated_at = now()
 WHERE id = $2::text
-RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id
+RETURNING id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq
 `
 
 type SetOrderReplacementItemReservationParams struct {
@@ -117,6 +120,7 @@ func (q *Queries) SetOrderReplacementItemReservation(ctx context.Context, arg Se
 		&i.UpdatedAt,
 		&i.ReservationID,
 		&i.VariantID,
+		&i.Seq,
 	)
 	return i, err
 }

@@ -234,7 +234,7 @@ func dispatchedReplacement(
 	record, err := svc.CreateReplacement(ctx, requestOf(claim.ID, lineID, 1))
 	require.NoError(t, err)
 	require.NoError(t, svc.RecordReplacementReservation(
-		ctx, record.ID, record.Items[0].ID, "invres_integration"))
+		ctx, record.ID, record.Items[0].ID, "variant_A", "invres_integration"))
 	_, err = svc.MarkReplacementDispatched(ctx, record.ID, "ful_integration")
 	require.NoError(t, err)
 
@@ -336,7 +336,7 @@ func TestSentGoodsStillCountAgainstWhatWasBought(t *testing.T) {
 	record, err := svc.CreateReplacement(ctx, requestOf(claim.ID, lineID, 3))
 	require.NoError(t, err)
 	require.NoError(t, svc.RecordReplacementReservation(
-		ctx, record.ID, record.Items[0].ID, "invres_integration"))
+		ctx, record.ID, record.Items[0].ID, "variant_A", "invres_integration"))
 	_, err = svc.MarkReplacementDispatched(ctx, record.ID, "ful_integration")
 	require.NoError(t, err)
 

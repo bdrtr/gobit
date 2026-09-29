@@ -6,6 +6,7 @@ made of, and a write-off, a canceled parcel and a return put each part back.
 
 - **Status:** Accepted
 - **Date:** 2026-09-29
+- **Amended by:** [0238](0238-a-bundle-is-replaced-from-its-parts.md): a line that sold a bundle is replaced from its parts, each part held under its own promise
 
 Measurement: [measurements/0235](../measurements/0235-three-boxes-sold-one-sent-back.md)
 

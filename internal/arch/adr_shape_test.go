@@ -121,6 +121,47 @@ func TestTheADRIndexNamesEveryRecord(t *testing.T) {
 	}
 }
 
+// adrAmendment matches a header line naming the later record that amends or
+// supersedes this one, and captures that record: the FIRST one the line links,
+// since the rest of the line may cite others for its reason.
+var adrAmendment = regexp.MustCompile(`(?m)^- \*\*(?:Amended|Superseded) by:\*\* \[(\d{4})\]`)
+
+// TestTheADRIndexNamesEveryAmendment keeps the index's status column true to
+// the records it lists (D160).
+//
+// A record amended or superseded by a later one says so in its header, and the
+// index is the page a reader trusts instead of opening the file. A row that
+// answers "current" for a record whose own header names its successor sends
+// the reader to a decision that no longer stands whole; five rows did.
+func TestTheADRIndexNamesEveryAmendment(t *testing.T) {
+	t.Parallel()
+
+	index := readADR(t, filepath.Join(append([]string{repoRoot}, append(adrDir, "README.md")...)...))
+	status := make(map[string]string)
+	for _, row := range regexp.MustCompile(`(?m)^\| \[(\d{4})\]\(.*\|([^|]*)\|$`).FindAllStringSubmatch(index, -1) {
+		status[row[1]] = row[2]
+	}
+	require.NotEmpty(t, status, "no row of the index was read; the scan has gone BLIND")
+
+	amendments := 0
+	for _, path := range adrFiles(t) {
+		number := adrNumber.FindStringSubmatch(filepath.Base(path))
+		if number == nil {
+			continue
+		}
+		header, _, _ := strings.Cut(readADR(t, path), "\n## ")
+		for _, by := range adrAmendment.FindAllStringSubmatch(header, -1) {
+			amendments++
+			assert.Contains(t, status[number[1]], "["+by[1]+"]",
+				"%s says in its header that %s amends or supersedes it, and its row in "+
+					"docs/adr/README.md does not name %s. The index is read instead of the "+
+					"record, so its status has to say what the record says.",
+				short(path), by[1], by[1])
+		}
+	}
+	require.NotZero(t, amendments, "no record names an amendment; the scan has gone BLIND")
+}
+
 // TestEveryADRCarriesASummary checks the two-line summary every record takes.
 //
 // It applies to ALL of them, governed or not: the summary is what makes an

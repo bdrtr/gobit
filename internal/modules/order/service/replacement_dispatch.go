@@ -93,6 +93,7 @@ func (s *Service) ReplacementDetailJSON(
 			VariantID:         variantID,
 			Quantity:          items[i].Quantity,
 			ReservationID:     items[i].ReservationID,
+			Parts:             replacementPartsJSON(items[i].Parts),
 		})
 	}
 
@@ -207,10 +208,38 @@ type replacementLineJSON struct {
 	// EMPTY until something sets them aside. A flow reads it to know whether it
 	// has to make the promise or already made it.
 	ReservationID string `json:"reservation_id"`
+	// Parts are what one unit holds when the line sold a bundle (ADR 0238);
+	// absent otherwise. A line with parts is held part by part, and its own
+	// ReservationID stays empty.
+	Parts []replacementPartJSON `json:"parts,omitempty"`
 }
 
-// RecordReplacementReservation writes the promise a line's units are held
-// under.
+// replacementPartJSON is one part of a replacement line on the wire.
+type replacementPartJSON struct {
+	VariantID string `json:"variant_id"`
+	// Quantity is how many of it ONE unit of the line holds.
+	Quantity int64 `json:"quantity"`
+	// ReservationID is the promise this part's units are held under, empty
+	// until something sets them aside.
+	ReservationID string `json:"reservation_id"`
+}
+
+// replacementPartsJSON is the wire form of an item's parts; none is nil, so
+// the field is left out.
+func replacementPartsJSON(parts []models.ReplacementItemPart) []replacementPartJSON {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]replacementPartJSON, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, replacementPartJSON{VariantID: p.VariantID, Quantity: p.Quantity, ReservationID: p.ReservationID})
+	}
+
+	return out
+}
+
+// RecordReplacementReservation writes the promise a line's units of one
+// variant are held under.
 //
 // # Why it takes the replacement as well as the line
 //
@@ -219,6 +248,13 @@ type replacementLineJSON struct {
 // and the line has to belong to it. A signature taking only the line id could
 // check neither without reading its way back to the record anyway.
 //
+// # Why it names the variant
+//
+// A line that replaces a bundle is held part by part, one promise per part
+// (ADR 0238), and the variant says which part this promise is for. Any other
+// line has one promise, and the variant has to be the one it sends: a flow
+// that set aside units of something else is refused rather than recorded.
+//
 // # Why a second, different promise is refused
 //
 // A line already holding units under one promise and told to hold them under
@@ -226,12 +262,15 @@ type replacementLineJSON struct {
 // repetition of the SAME id is accepted, because that is a retry saying what it
 // already said.
 func (s *Service) RecordReplacementReservation(
-	ctx context.Context, replacementID, itemID, reservationID string,
+	ctx context.Context, replacementID, itemID, variantID, reservationID string,
 ) error {
 	if err := requireID("replacement_id", replacementID); err != nil {
 		return err
 	}
 	if err := requireID("item_id", itemID); err != nil {
+		return err
+	}
+	if err := requireID("variant_id", variantID); err != nil {
 		return err
 	}
 	if err := requireID("reservation_id", reservationID); err != nil {
@@ -257,24 +296,81 @@ func (s *Service) RecordReplacementReservation(
 			if items[i].ID != itemID {
 				continue
 			}
-			if items[i].ReservationID == reservationID {
-				return nil
-			}
-			if items[i].ReservationID != "" {
-				return errors.Conflict(CodeReplacementNotOpen,
-					"line %s already holds its units under promise %s; a second promise "+
-						"would leave the first standing with nothing to release it",
-					itemID, items[i].ReservationID)
+			if len(items[i].Parts) > 0 {
+				return s.recordPartReservation(ctx, items[i], variantID, reservationID)
 			}
 
-			_, err = s.store.SetReplacementItemReservation(ctx, itemID, reservationID)
-
-			return err
+			return s.recordItemReservation(ctx, items[i], variantID, reservationID)
 		}
 
 		return errors.Invalid(CodeReplacementLineUnknown,
 			"line %s is not a line of replacement %s", itemID, replacementID)
 	})
+}
+
+// recordItemReservation writes the one promise of a line that is not held
+// part by part, once the variant is the one it sends.
+func (s *Service) recordItemReservation(
+	ctx context.Context, item models.ReplacementItem, variantID, reservationID string,
+) error {
+	sends := item.VariantID
+	if !item.SendsAVariant() {
+		lines, err := s.store.LineItemsByIDs(ctx, []string{item.OrderLineItemID})
+		if err != nil {
+			return err
+		}
+		if len(lines) != 1 {
+			return errors.Internal(CodeInconsistentState,
+				"replacement line %s names order line %s, which could not be read",
+				item.ID, item.OrderLineItemID)
+		}
+		sends = lines[0].VariantID
+	}
+	if sends != variantID {
+		return errors.Invalid(CodeReplacementLineUnknown,
+			"line %s sends %s, so units of %s are not what it holds", item.ID, sends, variantID)
+	}
+
+	if item.ReservationID == reservationID {
+		return nil
+	}
+	if item.ReservationID != "" {
+		return errors.Conflict(CodeReplacementNotOpen,
+			"line %s already holds its units under promise %s; a second promise "+
+				"would leave the first standing with nothing to release it",
+			item.ID, item.ReservationID)
+	}
+
+	_, err := s.store.SetReplacementItemReservation(ctx, item.ID, reservationID)
+
+	return err
+}
+
+// recordPartReservation writes the promise of one part of a line that
+// replaces a bundle (ADR 0238), under the rules the line's own promise
+// follows.
+func (s *Service) recordPartReservation(
+	ctx context.Context, item models.ReplacementItem, variantID, reservationID string,
+) error {
+	for _, p := range item.Parts {
+		if p.VariantID != variantID {
+			continue
+		}
+		if p.ReservationID == reservationID {
+			return nil
+		}
+		if p.ReservationID != "" {
+			return errors.Conflict(CodeReplacementNotOpen,
+				"part %s of line %s already holds its units under promise %s; a second "+
+					"promise would leave the first standing with nothing to release it",
+				variantID, item.ID, p.ReservationID)
+		}
+
+		return s.store.SetReplacementItemPartReservation(ctx, item.ID, variantID, reservationID)
+	}
+
+	return errors.Invalid(CodeReplacementLineUnknown,
+		"line %s replaces a bundle that holds no %s", item.ID, variantID)
 }
 
 // MarkReplacementDispatched records that the goods left, in the parcel named.
@@ -283,8 +379,9 @@ func (s *Service) RecordReplacementReservation(
 //
 // The stock and the parcel are the flow's half, because both reach modules this
 // one does not know. What this says is that they happened — and it refuses to
-// say so unless every line names the promise its units left against, which is
-// the one part of the claim this module can check for itself.
+// say so unless every line names the promise its units left against — each
+// part's, for a line that replaces a bundle — which is the one part of the
+// claim this module can check for itself.
 //
 // # Repeating it is answered rather than refused
 //
@@ -339,10 +436,10 @@ func (s *Service) MarkReplacementDispatched(
 				replacementID)
 		}
 		for i := range items {
-			if items[i].ReservationID == "" {
+			if !items[i].Held() {
 				return errors.Conflict(CodeReplacementNotHeld,
-					"line %s of replacement %s names no promise, so nothing says its units "+
-						"left the warehouse", items[i].ID, replacementID)
+					"line %s of replacement %s names no promise for some of its units, so "+
+						"nothing says they left the warehouse", items[i].ID, replacementID)
 			}
 		}
 

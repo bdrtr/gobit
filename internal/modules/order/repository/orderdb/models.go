@@ -126,6 +126,7 @@ type OrderLineCancellation struct {
 	Note            string
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	Seq             *int64
 }
 
 type OrderLineItem struct {
@@ -190,6 +191,17 @@ type OrderReplacementItem struct {
 	UpdatedAt          pgtype.Timestamptz
 	ReservationID      *string
 	VariantID          *string
+	Seq                *int64
+}
+
+type OrderReplacementItemPart struct {
+	OrderReplacementItemID string
+	VariantID              string
+	Quantity               int64
+	Rank                   int32
+	ReservationID          *string
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
 }
 
 type OrderReturn struct {
@@ -215,6 +227,7 @@ type OrderReturnItem struct {
 	RefundAmount    int64
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	Seq             *int64
 }
 
 type OrderShippingMethod struct {
@@ -224,6 +237,7 @@ type OrderShippingMethod struct {
 	Name             string
 	Amount           int64
 	CreatedAt        pgtype.Timestamptz
+	Seq              *int64
 }
 
 type OrderSummary struct {

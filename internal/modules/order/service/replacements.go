@@ -151,6 +151,7 @@ func (s *Service) CreateReplacement(
 				OrderLineItemID: in.Lines[i].OrderLineItemID,
 				VariantID:       in.Lines[i].VariantID,
 				Quantity:        in.Lines[i].Quantity,
+				Parts:           replacementPartsOf(lines, in.Lines[i].OrderLineItemID),
 			})
 			if itemErr != nil {
 				return itemErr
@@ -343,6 +344,29 @@ func checkReplacementQuantities(
 				requested[i].OrderLineItemID, requested[i].Quantity,
 				alreadyPromised[requested[i].OrderLineItemID], bought)
 		}
+	}
+
+	return nil
+}
+
+// replacementPartsOf is what one unit of a replacement item holds: the
+// components the line sold (ADR 0238), or nothing for a line that sold no
+// bundle and for an item that names a variant.
+//
+// They are copied from the LINE rather than read from the catalog, for the
+// reason ADR 0235 gives the put-back flows: a bundle edited after the sale
+// would otherwise send parts the customer never bought.
+func replacementPartsOf(lines []models.OrderLineItem, lineID string) []models.ReplacementItemPart {
+	for i := range lines {
+		if lines[i].ID != lineID || len(lines[i].Components) == 0 {
+			continue
+		}
+		parts := make([]models.ReplacementItemPart, 0, len(lines[i].Components))
+		for _, c := range lines[i].Components {
+			parts = append(parts, models.ReplacementItemPart{VariantID: c.VariantID, Quantity: c.Quantity})
+		}
+
+		return parts
 	}
 
 	return nil

@@ -13,7 +13,7 @@ const createOrderReturnItem = `-- name: CreateOrderReturnItem :one
 
 INSERT INTO order_return_items (id, order_return_id, order_line_item_id, quantity, refund_amount)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, order_return_id, order_line_item_id, quantity, refund_amount, created_at, updated_at
+RETURNING id, order_return_id, order_line_item_id, quantity, refund_amount, created_at, updated_at, seq
 `
 
 type CreateOrderReturnItemParams struct {
@@ -42,17 +42,20 @@ func (q *Queries) CreateOrderReturnItem(ctx context.Context, arg CreateOrderRetu
 		&i.RefundAmount,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Seq,
 	)
 	return i, err
 }
 
 const listOrderReturnItems = `-- name: ListOrderReturnItems :many
-SELECT id, order_return_id, order_line_item_id, quantity, refund_amount, created_at, updated_at FROM order_return_items
+SELECT id, order_return_id, order_line_item_id, quantity, refund_amount, created_at, updated_at, seq FROM order_return_items
 WHERE order_return_id = $1
-ORDER BY created_at, id
+ORDER BY created_at, seq
 `
 
-// ListOrderReturnItems returns a return's lines in the order they were written.
+// ListOrderReturnItems returns a return's lines in the order they were written:
+// they share a created_at, and seq is the order the database took them in
+// (D161).
 func (q *Queries) ListOrderReturnItems(ctx context.Context, orderReturnID string) ([]OrderReturnItem, error) {
 	rows, err := q.db.Query(ctx, listOrderReturnItems, orderReturnID)
 	if err != nil {
@@ -70,6 +73,7 @@ func (q *Queries) ListOrderReturnItems(ctx context.Context, orderReturnID string
 			&i.RefundAmount,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}

@@ -127,9 +127,10 @@ type Orders interface {
 
 	// ReplacementDetailJSON returns what a flow needs to send a replacement.
 	ReplacementDetailJSON(ctx context.Context, replacementID string) (json.RawMessage, error)
-	// RecordReplacementReservation writes the promise a line's units are held
-	// under; repeating it with the same promise is a no-op.
-	RecordReplacementReservation(ctx context.Context, replacementID, itemID, reservationID string) error
+	// RecordReplacementReservation writes the promise a line's units of one
+	// variant are held under — the line's own, or one part's of a line that
+	// replaces a bundle (ADR 0238); repeating it with the same promise is a no-op.
+	RecordReplacementReservation(ctx context.Context, replacementID, itemID, variantID, reservationID string) error
 	// MarkReplacementDispatched records that the goods left, in the parcel named.
 	MarkReplacementDispatched(ctx context.Context, replacementID, fulfillmentID string) error
 	// CancelReplacement withdraws a replacement that has not left; it writes the

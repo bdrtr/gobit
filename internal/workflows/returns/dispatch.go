@@ -46,6 +46,41 @@ type replacementLine struct {
 	VariantID         string `json:"variant_id"`
 	Quantity          int64  `json:"quantity"`
 	ReservationID     string `json:"reservation_id"`
+	// Parts are what one unit holds when the line replaces a bundle
+	// (ADR 0238); empty for any other line. Such a line is held part by part
+	// and its own ReservationID stays empty.
+	Parts []replacementPart `json:"parts,omitempty"`
+}
+
+// replacementPart is one variant a unit of a bundle line holds, and the
+// promise its units are held under.
+type replacementPart struct {
+	VariantID     string `json:"variant_id"`
+	Quantity      int64  `json:"quantity"`
+	ReservationID string `json:"reservation_id"`
+}
+
+// linePromise is one set of units a line needs held: which variant, how many
+// of it for the whole line, and the promise already made for them, if any.
+type linePromise struct {
+	variantID     string
+	units         int64
+	reservationID string
+}
+
+// promises is what the line's units are held under: the line's own promise,
+// or one per part of a line that replaces a bundle, for the line's quantity
+// times the part's units (ADR 0238).
+func (l replacementLine) promises() []linePromise {
+	if len(l.Parts) == 0 {
+		return []linePromise{{variantID: l.VariantID, units: l.Quantity, reservationID: l.ReservationID}}
+	}
+	out := make([]linePromise, 0, len(l.Parts))
+	for _, p := range l.Parts {
+		out = append(out, linePromise{variantID: p.VariantID, units: l.Quantity * p.Quantity, reservationID: p.ReservationID})
+	}
+
+	return out
 }
 
 // The order module's names for the states this flow reads.
@@ -69,7 +104,8 @@ type DispatchResult struct {
 	OrderID       string
 	// FulfillmentID is the parcel the goods left in.
 	FulfillmentID string
-	// SentUnits is how many units left the warehouse.
+	// SentUnits is how many units left the warehouse: a line that replaces a
+	// bundle counts its parts' units, as a received return does (ADR 0238).
 	SentUnits int64
 	// AlreadySent reports that the replacement had already been dispatched and
 	// nothing moved this time.
@@ -172,9 +208,9 @@ func (w *Workflows) DispatchReplacement(
 		// shelf its units left. There is no such line here.
 		if err := w.inventory.ConfirmReservation(ctx, held[i].reservationID, ""); err != nil {
 			return DispatchResult{}, errors.Wrap(err, errors.KindOf(err), CodeStockNotTaken,
-				"the units of line %s could not be taken out of the count; parcel %s is open "+
-					"and the replacement is NOT recorded as sent",
-				held[i].orderLineItemID, fulfillmentID)
+				"the units of %s on line %s could not be taken out of the count; parcel %s is "+
+					"open and the replacement is NOT recorded as sent",
+				held[i].variantID, held[i].orderLineItemID, fulfillmentID)
 		}
 		result.SentUnits += held[i].quantity
 	}
@@ -189,17 +225,20 @@ func (w *Workflows) DispatchReplacement(
 	return result, nil
 }
 
-// heldLine is one line whose units are set aside.
+// heldLine is one set of a line's units that is set aside: the line's own, or
+// one part's of a line that replaces a bundle.
 type heldLine struct {
 	orderLineItemID string
+	variantID       string
 	reservationID   string
 	quantity        int64
 }
 
-// holdStock sets aside the units of every line and records the promises.
+// holdStock sets aside the units of every line and records the promises: one
+// per line, or one per part of a line that replaces a bundle (ADR 0238).
 //
-// A line that already names one is left alone: that is the retry reading what
-// the earlier attempt wrote. A promise that is made but cannot be RECORDED is
+// A promise already named is left alone: that is the retry reading what the
+// earlier attempt wrote. A promise that is made but cannot be RECORDED is
 // released again before the error is returned — it is the one failure here that
 // would otherwise hold stock nothing could name.
 func (w *Workflows) holdStock(
@@ -207,7 +246,9 @@ func (w *Workflows) holdStock(
 ) ([]heldLine, error) {
 	variantIDs := make([]string, 0, len(detail.Lines))
 	for i := range detail.Lines {
-		variantIDs = append(variantIDs, detail.Lines[i].VariantID)
+		for _, p := range detail.Lines[i].promises() {
+			variantIDs = append(variantIDs, p.variantID)
+		}
 	}
 
 	items, err := w.inventoryItems(ctx, variantIDs)
@@ -215,54 +256,58 @@ func (w *Workflows) holdStock(
 		return nil, err
 	}
 
-	held := make([]heldLine, 0, len(detail.Lines))
+	held := make([]heldLine, 0, len(variantIDs))
 	for i := range detail.Lines {
 		line := detail.Lines[i]
 
-		if line.ReservationID != "" {
+		for _, promise := range line.promises() {
+			if promise.reservationID != "" {
+				held = append(held, heldLine{
+					orderLineItemID: line.OrderLineItemID,
+					variantID:       promise.variantID,
+					reservationID:   promise.reservationID,
+					quantity:        promise.units,
+				})
+
+				continue
+			}
+
+			itemID, tracked := items[promise.variantID]
+			if !tracked {
+				// Receiving warns and carries on here; dispatching cannot. Goods
+				// with no inventory item are goods no warehouse can be asked for,
+				// and sending them would deduct nothing while the parcel claims
+				// they left.
+				return nil, errors.Conflict(CodeNoInventoryItem,
+					"variant %s has no inventory item, so line %s cannot be sent",
+					promise.variantID, line.OrderLineItemID)
+			}
+
+			reservationID, err := w.inventory.ReserveForReplacement(
+				ctx, itemID, detail.LocationID, promise.units, line.OrderLineItemID)
+			if err != nil {
+				return nil, errors.Wrap(err, errors.KindOf(err), CodeStockNotHeld,
+					"the units of %s on line %s could not be set aside at location %s",
+					promise.variantID, line.OrderLineItemID, detail.LocationID)
+			}
+
+			if err := w.orders.RecordReplacementReservation(
+				ctx, detail.ReplacementID, line.ReplacementItemID, promise.variantID, reservationID); err != nil {
+				w.releaseHeldStock(ctx, detail, reservationID)
+
+				return nil, errors.Wrap(err, errors.KindOf(err), CodeStockNotHeld,
+					"the units of %s on line %s were set aside and the record of that could not "+
+						"be written; the promise was released again",
+					promise.variantID, line.OrderLineItemID)
+			}
+
 			held = append(held, heldLine{
 				orderLineItemID: line.OrderLineItemID,
-				reservationID:   line.ReservationID,
-				quantity:        line.Quantity,
+				variantID:       promise.variantID,
+				reservationID:   reservationID,
+				quantity:        promise.units,
 			})
-
-			continue
 		}
-
-		itemID, tracked := items[line.VariantID]
-		if !tracked {
-			// Receiving warns and carries on here; dispatching cannot. Goods
-			// with no inventory item are goods no warehouse can be asked for,
-			// and sending them would deduct nothing while the parcel claims
-			// they left.
-			return nil, errors.Conflict(CodeNoInventoryItem,
-				"variant %s has no inventory item, so line %s cannot be sent",
-				line.VariantID, line.OrderLineItemID)
-		}
-
-		reservationID, err := w.inventory.ReserveForReplacement(
-			ctx, itemID, detail.LocationID, line.Quantity, line.OrderLineItemID)
-		if err != nil {
-			return nil, errors.Wrap(err, errors.KindOf(err), CodeStockNotHeld,
-				"the units of line %s could not be set aside at location %s",
-				line.OrderLineItemID, detail.LocationID)
-		}
-
-		if err := w.orders.RecordReplacementReservation(
-			ctx, detail.ReplacementID, line.ReplacementItemID, reservationID); err != nil {
-			w.releaseHeldStock(ctx, detail, reservationID)
-
-			return nil, errors.Wrap(err, errors.KindOf(err), CodeStockNotHeld,
-				"the units of line %s were set aside and the record of that could not be "+
-					"written; the promise was released again",
-				line.OrderLineItemID)
-		}
-
-		held = append(held, heldLine{
-			orderLineItemID: line.OrderLineItemID,
-			reservationID:   reservationID,
-			quantity:        line.Quantity,
-		})
 	}
 
 	return held, nil

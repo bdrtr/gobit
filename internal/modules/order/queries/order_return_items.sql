@@ -5,11 +5,13 @@ INSERT INTO order_return_items (id, order_return_id, order_line_item_id, quantit
 VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
--- ListOrderReturnItems returns a return's lines in the order they were written.
+-- ListOrderReturnItems returns a return's lines in the order they were written:
+-- they share a created_at, and seq is the order the database took them in
+-- (D161).
 -- name: ListOrderReturnItems :many
 SELECT * FROM order_return_items
 WHERE order_return_id = $1
-ORDER BY created_at, id;
+ORDER BY created_at, seq;
 
 -- SumReturnedQuantities reports how many units of each of the given order lines
 -- have ALREADY been asked back, across every live return of the order.

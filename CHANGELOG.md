@@ -12,6 +12,23 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Rows an order writes together came back in an order nobody wrote**
+  (D161). A return's lines, a replacement's lines, a line's write-off with its
+  add-ons' and an order's deliveries are each written in one transaction and
+  were read by their creation time and then their id, whose tail is random; a
+  replacement's dispatch sets its lines aside in that order, so which line a
+  dispatch refused half way had already held was chance. **For operators:**
+  these list as they were written, the ring's write-off before its add-ons' and
+  the deliveries as the cart held them, and a cart's personal-data dossier lists
+  its lines the same way. Order migration 000035 gives the four tables `seq`,
+  as ADR 0233 gave an order's lines.
+
+- **The ADR index said "current" for five amended or superseded records**
+  (D160). 0022 had been superseded by 0121, and 0057, 0085, 0174 and 0234 were
+  amended or partly superseded, each saying so in its own header. **For
+  contributors:** a gate now requires every record a header names on an
+  `Amended by` or `Superseded by` line in that record's index status.
+
 - **A withdrawn replacement kept the units it had set aside** (D159, ADR 0237).
   A dispatch refused on a later line left the earlier lines' units reserved,
   and withdrawing the replacement released none of them. **For operators:**
@@ -170,6 +187,18 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A bundle is replaced from its parts** (ADR 0238). **For operators:** a
+  replacement of an order line that sold a bundle is dispatched from the parts
+  the line sold, whatever the bundle is made of by then: each part is set aside
+  from its own stock for the boxes times its units, and withdrawing the
+  replacement gives every part back. The replacement read carries `parts`
+  (`[{"variant_id": ..., "quantity": 2, "reservation_id": ...}]`) on such an
+  item, and the dispatch's `sent_units` counts the parts' units. An item that
+  names a bundle variant instead of a line is still refused. Order migration
+  000034 adds `order_replacement_item_parts`. **For contributors:** the order
+  interop's `RecordReplacementReservation` takes the variant whose units the
+  promise holds.
 
 - **The panel edits a variant's bundle** (ADR 0236). **For operators:** a
   variant's page in the admin panel lists what a bundle is made of, and

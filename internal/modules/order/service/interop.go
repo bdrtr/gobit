@@ -450,14 +450,15 @@ func (i *Interop) CancelReplacement(ctx context.Context, replacementID string) e
 }
 
 // RecordReplacementReservation writes the promise a replacement line's units
-// are held under.
+// of one variant are held under: the variant it sends, or one of its parts when
+// it replaces a bundle (ADR 0238).
 //
 // Repeating it with the SAME promise is a no-op, so a retried flow does not
 // have to remember whether it got this far.
 func (i *Interop) RecordReplacementReservation(
-	ctx context.Context, replacementID, itemID, reservationID string,
+	ctx context.Context, replacementID, itemID, variantID, reservationID string,
 ) error {
-	return i.svc.RecordReplacementReservation(ctx, replacementID, itemID, reservationID)
+	return i.svc.RecordReplacementReservation(ctx, replacementID, itemID, variantID, reservationID)
 }
 
 // MarkReplacementDispatched records that the goods left, in the parcel named.

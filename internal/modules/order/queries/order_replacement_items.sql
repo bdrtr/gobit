@@ -9,11 +9,12 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- ListOrderReplacementItems returns a replacement's lines in the order they
--- were written.
+-- were written: they share a created_at, and seq is the order the database
+-- took them in (D161). The dispatch sets their units aside in this order.
 -- name: ListOrderReplacementItems :many
 SELECT * FROM order_replacement_items
 WHERE order_replacement_id = $1
-ORDER BY created_at, id;
+ORDER BY created_at, seq;
 
 -- SumReplacedQuantities reports how many units of each of the given order lines
 -- have ALREADY been promised, across every live replacement of the order.

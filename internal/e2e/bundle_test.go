@@ -153,3 +153,110 @@ func TestAGiftBoxSellsFromItsParts(t *testing.T) {
 	assert.Equal(t, int64(9), stockLevel(ctx, t, towelItem).StockedQuantity, "a returned box puts its towel back")
 	assert.Equal(t, int64(8), stockLevel(ctx, t, soapItem).StockedQuantity, "and its two soaps")
 }
+
+// TestAGiftBoxIsReplacedFromItsParts is ADR 0238 on the production wiring. A
+// claim on two sold boxes asks for both again from a shelf short of soap: the
+// dispatch holds the towels, is refused on the soaps, and the withdrawal gives
+// the towels back. The box is then remade of three soaps in the catalog, and a
+// replacement of one box still sends the towel and two soaps it was sold with.
+func TestAGiftBoxIsReplacedFromItsParts(t *testing.T) {
+	ctx := t.Context()
+	customerID, email := newCustomer(ctx, t)
+	box := newVariant(ctx, t, "E2E Replaced Gift Box", map[string]int64{taxedCurrency: 30_000})
+	towel, towelItem := newStockedVariant(ctx, t, "E2E Replaced Towel", map[string]int64{taxedCurrency: 8_000}, 10)
+	soap, soapItem := newStockedVariant(ctx, t, "E2E Replaced Soap", map[string]int64{taxedCurrency: 5_000}, 10)
+	_, err := productSvc.SetVariantBundle(ctx, box, []productmodels.BundleComponent{
+		{VariantID: towel, Quantity: 1}, {VariantID: soap, Quantity: 2},
+	})
+	require.NoError(t, err)
+
+	cartID, totals := prepareCart(ctx, t, customerID, box, 2)
+	placed, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     totals.Total,
+	})
+	require.NoError(t, err)
+	order, err := orderSvc.GetOrder(ctx, placed.OrderID)
+	require.NoError(t, err)
+	lineID := order.Items[0].ID
+	optionID := newShippingOption(ctx, t, newShippingProfile(ctx, t, "E2E Box Replacement Profile"),
+		"E2E Box Replacement Shipping", 0, false)
+
+	claimed, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+placed.OrderID+"/claims",
+		map[string]any{"type": "replace", "reason": "both boxes arrived crushed"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, claimed.Code, claimed.Body.String())
+	var claim afterSalesRecordResponse
+	require.NoError(t, json.Unmarshal(claimed.Body.Bytes(), &claim))
+	base := "/admin/v1/orders/" + placed.OrderID + "/claims/" + claim.Data.ID + "/replacements"
+	replace := func(boxes int64) string {
+		t.Helper()
+		recorded, err := adminRequestWithBody(http.MethodPost, base, map[string]any{
+			"shipping_option_id": optionID,
+			"location_id":        stockLocationID,
+			"lines":              []map[string]any{{"order_line_item_id": lineID, "quantity": boxes}},
+		})
+		require.NoError(t, err)
+		require.Equal(t, http.StatusCreated, recorded.Code, recorded.Body.String())
+		var replacement replacementResponseBody
+		require.NoError(t, json.Unmarshal(recorded.Body.Bytes(), &replacement))
+		return replacement.Data.ID
+	}
+
+	_, err = inventorySvc.SetInventoryLevel(ctx, soapItem, stockLocationID, 3)
+	require.NoError(t, err)
+	short := replace(2)
+	sent, err := adminRequestWithBody(http.MethodPost, base+"/"+short+"/dispatch", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusConflict, sent.Code, sent.Body.String())
+	assert.Contains(t, sent.Body.String(), "returns_workflow_stock_not_held")
+	require.Equal(t, int64(6), sellableQuantity(ctx, t, towelItem),
+		"precondition: two towels are held for two boxes by the refused dispatch")
+
+	read, err := adminRequestWithBody(http.MethodGet, base+"/"+short, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	var held struct {
+		Data struct {
+			Items []struct {
+				Parts []struct {
+					VariantID     string `json:"variant_id"`
+					Quantity      int64  `json:"quantity"`
+					ReservationID string `json:"reservation_id"`
+				} `json:"parts"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(read.Body.Bytes(), &held))
+	require.Len(t, held.Data.Items, 1)
+	require.Len(t, held.Data.Items[0].Parts, 2, read.Body.String())
+	assert.Equal(t, towel, held.Data.Items[0].Parts[0].VariantID)
+	assert.NotEmpty(t, held.Data.Items[0].Parts[0].ReservationID, "the towel's promise is on its part")
+	assert.Equal(t, soap, held.Data.Items[0].Parts[1].VariantID)
+	assert.Empty(t, held.Data.Items[0].Parts[1].ReservationID, "no soap was set aside")
+
+	withdrawn, err := adminRequestWithBody(http.MethodPost, base+"/"+short+"/cancel", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, withdrawn.Code, withdrawn.Body.String())
+	assert.Equal(t, int64(8), sellableQuantity(ctx, t, towelItem), "the withdrawal gives the towels back")
+
+	_, err = inventorySvc.SetInventoryLevel(ctx, soapItem, stockLocationID, 6)
+	require.NoError(t, err)
+	_, err = productSvc.SetVariantBundle(ctx, box, []productmodels.BundleComponent{{VariantID: soap, Quantity: 3}})
+	require.NoError(t, err)
+
+	one := replace(1)
+	sent, err = adminRequestWithBody(http.MethodPost, base+"/"+one+"/dispatch", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, sent.Code, sent.Body.String())
+	var dispatched dispatchResponseBody
+	require.NoError(t, json.Unmarshal(sent.Body.Bytes(), &dispatched))
+	assert.Equal(t, int64(3), dispatched.Data.SentUnits, "a towel and two soaps left the warehouse")
+	assert.Equal(t, int64(7), stockLevel(ctx, t, towelItem).StockedQuantity,
+		"the box sent is the one sold: its towel leaves, though the catalog's box holds none now")
+	assert.Equal(t, int64(4), stockLevel(ctx, t, soapItem).StockedQuantity, "and two soaps, not three")
+}

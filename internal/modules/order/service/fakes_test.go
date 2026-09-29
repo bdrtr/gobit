@@ -2305,6 +2305,7 @@ func (f *fakeStore) CreateReplacementItem(
 
 	stamp := f.nextStamp()
 	item.CreatedAt, item.UpdatedAt = stamp, stamp
+	item.Parts = slices.Clone(item.Parts)
 	f.recordUndo(ctx, undoEntry(f.replItems, item.ID))
 	f.replItems[item.ID] = item
 
@@ -2427,6 +2428,35 @@ func (f *fakeStore) SetReplacementItemReservation(
 	f.replItems[itemID] = item
 
 	return item, nil
+}
+
+// SetReplacementItemPartReservation writes the promise one part of a line
+// holds its units under.
+//
+// The parts are copied before the write: the undo entry keeps the item as it
+// was, and a write through the shared slice would change that copy too.
+func (f *fakeStore) SetReplacementItemPartReservation(
+	ctx context.Context, itemID, variantID, reservationID string,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	item, ok := f.replItems[itemID]
+	if !ok {
+		return notFound(itemID)
+	}
+	parts := slices.Clone(item.Parts)
+	at := slices.IndexFunc(parts, func(p models.ReplacementItemPart) bool { return p.VariantID == variantID })
+	if at < 0 {
+		return notFound(itemID + "/" + variantID)
+	}
+	parts[at].ReservationID = reservationID
+	item.Parts = parts
+	item.UpdatedAt = f.nextStamp()
+	f.recordUndo(ctx, undoEntry(f.replItems, itemID))
+	f.replItems[itemID] = item
+
+	return nil
 }
 
 // ListReplacementItems returns a replacement's lines in write order.
