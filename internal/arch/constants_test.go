@@ -274,6 +274,13 @@ func TestTheBundleNamesAgree(t *testing.T) {
 	assert.Equal(t, int64(productsvc.MaxBundleComponentQuantity), checkoutwf.MaxComponentQuantity)
 	assert.Equal(t, productsvc.MaxBundleComponents, ordersvc.MaxLineComponents)
 	assert.Equal(t, productsvc.MaxBundleComponentQuantity, ordersvc.MaxLineComponentQuantity)
+	// The order module reads a bundle variant's composition for a replacement
+	// that names it (ADR 0244).
+	assert.Equal(t, productsvc.EntityVariant, ordersvc.CatalogEntityVariant)
+	assert.Equal(t, productsvc.FieldBundleComponents, ordersvc.CatalogFieldBundleComponents)
+	assert.Equal(t, productsvc.FieldBundleComponentVariantID, ordersvc.CatalogFieldBundleComponentVariantID)
+	assert.Equal(t, productsvc.FieldBundleComponentQuantity, ordersvc.CatalogFieldBundleComponentQuantity)
+	assert.Equal(t, checkoutwf.FilterIDs, ordersvc.CatalogFilterIDs)
 }
 
 // TestTheBuyerAttributeNamesAgree binds the two spellings of the attributes that

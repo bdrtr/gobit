@@ -260,3 +260,65 @@ func TestAGiftBoxIsReplacedFromItsParts(t *testing.T) {
 		"the box sent is the one sold: its towel leaves, though the catalog's box holds none now")
 	assert.Equal(t, int64(4), stockLevel(ctx, t, soapItem).StockedQuantity, "and two soaps, not three")
 }
+
+// TestAnExchangeSendsAGiftBoxFromItsParts is ADR 0244 on the production
+// wiring: an exchange sends a gift box the order never sold, the replacement
+// records the box as the catalog makes it when it is recorded, and the
+// dispatch takes a towel and two soaps off the shelf, though the catalog's box
+// is remade before the parcel leaves.
+func TestAnExchangeSendsAGiftBoxFromItsParts(t *testing.T) {
+	ctx := t.Context()
+	customerID, email := newCustomer(ctx, t)
+	shirt, _ := newStockedVariant(ctx, t, "E2E Exchanged Shirt", map[string]int64{taxedCurrency: happyUnitPrice}, 10)
+	box := newVariant(ctx, t, "E2E Exchanged Gift Box", map[string]int64{taxedCurrency: 30_000})
+	towel, towelItem := newStockedVariant(ctx, t, "E2E Exchanged Towel", map[string]int64{taxedCurrency: 8_000}, 10)
+	soap, soapItem := newStockedVariant(ctx, t, "E2E Exchanged Soap", map[string]int64{taxedCurrency: 5_000}, 10)
+	_, err := productSvc.SetVariantBundle(ctx, box, []productmodels.BundleComponent{
+		{VariantID: towel, Quantity: 1}, {VariantID: soap, Quantity: 2},
+	})
+	require.NoError(t, err)
+
+	cartID, totals := prepareCart(ctx, t, customerID, shirt, 1)
+	placed, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     totals.Total,
+	})
+	require.NoError(t, err)
+	optionID := newShippingOption(ctx, t, newShippingProfile(ctx, t, "E2E Box Exchange Profile"),
+		"E2E Box Exchange Shipping", 0, false)
+
+	opened, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+placed.OrderID+"/exchanges",
+		map[string]any{"difference_due": 0, "note": "the shirt for a gift box"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, opened.Code, opened.Body.String())
+	var exchange afterSalesRecordResponse
+	require.NoError(t, json.Unmarshal(opened.Body.Bytes(), &exchange))
+	base := "/admin/v1/orders/" + placed.OrderID + "/exchanges/" + exchange.Data.ID + "/replacements"
+
+	recorded, err := adminRequestWithBody(http.MethodPost, base, map[string]any{
+		"shipping_option_id": optionID,
+		"location_id":        stockLocationID,
+		"lines":              []map[string]any{{"variant_id": box, "quantity": 1}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, recorded.Code, recorded.Body.String())
+	assert.Contains(t, recorded.Body.String(), `"parts"`, "the box is recorded with its parts")
+	var replacement replacementResponseBody
+	require.NoError(t, json.Unmarshal(recorded.Body.Bytes(), &replacement))
+
+	_, err = productSvc.SetVariantBundle(ctx, box, []productmodels.BundleComponent{{VariantID: soap, Quantity: 3}})
+	require.NoError(t, err)
+
+	sent, err := adminRequestWithBody(http.MethodPost, base+"/"+replacement.Data.ID+"/dispatch", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, sent.Code, sent.Body.String())
+	var dispatched dispatchResponseBody
+	require.NoError(t, json.Unmarshal(sent.Body.Bytes(), &dispatched))
+	assert.Equal(t, int64(3), dispatched.Data.SentUnits, "a towel and two soaps")
+	assert.Equal(t, int64(9), stockLevel(ctx, t, towelItem).StockedQuantity, "the box recorded is the box sent")
+	assert.Equal(t, int64(8), stockLevel(ctx, t, soapItem).StockedQuantity, "two soaps, not three")
+}

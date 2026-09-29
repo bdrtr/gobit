@@ -107,9 +107,15 @@ func (s *Service) CreateReplacement(
 	if err := checkReplacementLines(in.Lines); err != nil {
 		return ReplacementRecord{}, err
 	}
+	// Read before the transaction: the catalog is another module's, and no
+	// lock of this one is held while it answers (ADR 0244).
+	bundles, err := s.variantBundleParts(ctx, replacementVariantIDs(in.Lines))
+	if err != nil {
+		return ReplacementRecord{}, err
+	}
 
 	var out ReplacementRecord
-	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+	err = s.store.WithTx(ctx, func(ctx context.Context) error {
 		orderID, err := s.openReplacementSource(ctx, in)
 		if err != nil {
 			return err
@@ -151,7 +157,7 @@ func (s *Service) CreateReplacement(
 				OrderLineItemID: in.Lines[i].OrderLineItemID,
 				VariantID:       in.Lines[i].VariantID,
 				Quantity:        in.Lines[i].Quantity,
-				Parts:           replacementPartsOf(lines, in.Lines[i].OrderLineItemID),
+				Parts:           replacementParts(lines, bundles, in.Lines[i]),
 			})
 			if itemErr != nil {
 				return itemErr
@@ -349,9 +355,34 @@ func checkReplacementQuantities(
 	return nil
 }
 
-// replacementPartsOf is what one unit of a replacement item holds: the
-// components the line sold (ADR 0238), or nothing for a line that sold no
-// bundle and for an item that names a variant.
+// replacementParts is what one unit of a replacement item holds: the parts of
+// the line it replaces, or of the bundle variant it names as the catalog makes
+// it now (ADR 0244); nothing for anything else.
+func replacementParts(
+	lines []models.OrderLineItem, bundles map[string][]models.ReplacementItemPart, line ReplacementLineInput,
+) []models.ReplacementItemPart {
+	if line.VariantID != "" {
+		return bundles[line.VariantID]
+	}
+
+	return replacementPartsOf(lines, line.OrderLineItemID)
+}
+
+// replacementVariantIDs is the variants the request names instead of lines.
+func replacementVariantIDs(lines []ReplacementLineInput) []string {
+	out := make([]string, 0, len(lines))
+	for i := range lines {
+		if lines[i].VariantID != "" {
+			out = append(out, lines[i].VariantID)
+		}
+	}
+
+	return out
+}
+
+// replacementPartsOf is what one unit of a replacement item that names a line
+// holds: the components the line sold (ADR 0238), or nothing for a line that
+// sold no bundle.
 //
 // They are copied from the LINE rather than read from the catalog, for the
 // reason ADR 0235 gives the put-back flows: a bundle edited after the sale

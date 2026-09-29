@@ -229,6 +229,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **A bundle variant is replaced from its catalog parts** (ADR 0244). **For
+  operators:** an exchange's replacement that names a bundle variant, a gift box
+  the order never sold, is recorded with the parts the catalog gives the box at
+  that moment and sent from them, where it used to be refused for having no
+  inventory item. A failed catalog read records nothing and answers with
+  `order_catalog_read_failed`. Without the query layer the old refusal stands.
+
 - **A failing handler is called again** (ADR 0240). **For plugin authors:** an
   event handler that returns an error is called at most twice more, after a
   quarter of a second and then a second, in both bus backends, before the error

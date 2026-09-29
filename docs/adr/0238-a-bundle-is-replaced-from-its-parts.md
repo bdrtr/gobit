@@ -7,6 +7,7 @@ promise of its own.
 - **Status:** Accepted
 - **Date:** 2026-09-29
 - **Amends:** [0235](0235-a-bundle-sells-from-its-parts.md), which left a bundle's replacement refused
+- **Amended by:** [0244](0244-a-bundle-variant-is-replaced-from-its-catalog-parts.md): an item naming a bundle variant is recorded with the catalog's parts and sent from them
 
 Measurement: [measurements/0238](../measurements/0238-a-crushed-box-sent-again.md)
 
