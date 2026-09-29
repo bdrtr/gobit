@@ -185,7 +185,7 @@ func (u *UI) renderVariant(
 
 	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
 		Entity:  EntityVariant,
-		Fields:  []string{fieldID, fieldTitle, fieldSKU},
+		Fields:  []string{fieldID, fieldTitle, fieldSKU, FieldBundleComponents},
 		Filters: map[string]any{filterID: []string{variantID}},
 		Expand: []query.Expansion{
 			{Link: LinkVariantPriceSet, As: keyPriceSet, Fields: []string{fieldID, fieldPrices}},
@@ -206,21 +206,30 @@ func (u *UI) renderVariant(
 	itemID, _ := recordChildID(record, keyInventory)
 
 	editable, others := variantPrices(record, u.currencyScales(r.Context()))
+	parts, err := u.loadBundle(r, record)
+	if err != nil {
+		u.catalogFailure(w, r, err, "The variant's bundle could not be read.")
+		return
+	}
 
 	u.templates.render(w, r, status, "variant.gohtml", map[string]any{
-		titleKey:      recordString(record, fieldTitle),
-		"Variant":     variantRow{ID: recordString(record, fieldID), Title: recordString(record, fieldTitle), SKU: recordString(record, fieldSKU)},
-		"Prices":      editable,
-		"OtherPrices": others,
-		"PriceSetID":  priceSetID,
-		"ItemID":      itemID,
-		"Levels":      u.stockRows(r.Context(), itemID),
-		errorKey:      message,
-		"PricePath":   variantURL(productID, variantID) + "/price",
-		"StockPath":   variantURL(productID, variantID) + "/stock",
-		"ProductPath": ProductsPath + "/" + productID,
-		"CanEdit":     u.prices != nil,
-		"CanStock":    u.stock != nil,
+		titleKey:       recordString(record, fieldTitle),
+		"Variant":      variantRow{ID: recordString(record, fieldID), Title: recordString(record, fieldTitle), SKU: recordString(record, fieldSKU)},
+		"Prices":       editable,
+		"OtherPrices":  others,
+		"PriceSetID":   priceSetID,
+		"ItemID":       itemID,
+		"Levels":       u.stockRows(r.Context(), itemID),
+		errorKey:       message,
+		"PricePath":    variantURL(productID, variantID) + "/price",
+		"StockPath":    variantURL(productID, variantID) + "/stock",
+		"ProductPath":  ProductsPath + "/" + productID,
+		"CanEdit":      u.prices != nil,
+		"CanStock":     u.stock != nil,
+		"Parts":        parts,
+		"ProductsPath": ProductsPath,
+		"BundlePath":   variantURL(productID, variantID) + "/bundle",
+		"CanBundle":    u.products != nil,
 	})
 }
 

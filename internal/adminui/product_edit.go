@@ -45,10 +45,10 @@ func ProductStatuses() []string { return slices.Clone(productStatuses) }
 // CONSUMER side (ADR 0001).
 //
 // The panel edits a product's basics, its schedule, its related products and
-// its add-ons, and nothing else. Each method is a decision someone made: an interface that
+// its add-ons and a variant's bundle, and nothing else. Each method is a decision someone made: an interface that
 // offered more would let a future screen delete a product without that decision
 // being made anywhere. The schedule joined in ADR 0178, the related products in
-// ADR 0181, the add-ons in ADR 0232.
+// ADR 0181, the add-ons in ADR 0232, the bundle in ADR 0236.
 //
 // The signatures speak only in primitives and stdlib types because this package
 // cannot import the product module; see the module's admin surface for the full
@@ -71,6 +71,10 @@ type ProductWriter interface {
 	// SetProductAddOns replaces a product's add-ons, each a variant's SKU or
 	// id, in the storefront's order (ADR 0232).
 	SetProductAddOns(ctx context.Context, id string, refs []string) error
+	// SetVariantBundle replaces what a variant is made of: each part a
+	// variant's SKU or id with how many one bundle holds, refused when the
+	// product is no longer at the version the form was read at (ADR 0236).
+	SetVariantBundle(ctx context.Context, variantID string, refs []string, quantities []int64, version int64) error
 }
 
 // publishAtLayout is how the form's moment is written and read: the value of

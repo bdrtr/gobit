@@ -73,6 +73,8 @@ func builtInScopes() map[string]string {
 		ProductAddOnsPath: scopeProductWrite,
 		VariantPricePath:  scopePricingWrite,
 		VariantStockPath:  scopeInventoryWrite,
+		// A variant's bundle is a revision of its product (ADR 0236).
+		VariantBundlePath: scopeProductWrite,
 		OrdersPath:        scopeOrderRead,
 		OrderPath:         scopeOrderRead,
 		// The sales report is made of order lines and shows what they sold for.

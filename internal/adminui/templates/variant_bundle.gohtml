@@ -1,0 +1,32 @@
+{{- /*
+variant_bundle.gohtml edits what a variant is made of (ADR 0236).
+
+The parts are a textarea holding one variant per line, by its SKU or its id,
+then how many one bundle holds; a line with no number holds one. It reads as
+the add-ons form does, for the add-ons form's reason: a SKU is what an operator
+knows. The module replaces the parts whole and refuses them whole, and the form
+comes back with what was typed and the module's sentence. The form carries the
+product's version, because the parts are a revision of the product: a save made
+after somebody else saved it comes back rather than writing over them.
+*/ -}}
+{{ define "body" }}
+<p><a href="{{ .CancelPath }}">← Back to the variant</a></p>
+
+<h1>Parts of {{ .Variant.Title }}</h1>
+<p>{{ .Product.Title }}{{ if .Variant.SKU }} — {{ .Variant.SKU }}{{ end }}</p>
+{{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
+
+<form method="post" action="{{ .ActionPath }}">
+  <input type="hidden" name="version" value="{{ .Product.Version }}">
+  <label>Parts (one variant per line, then how many)
+    <textarea name="parts" rows="8">{{ .Text }}</textarea>
+  </label>
+  <p>Each line is a variant of another product by its SKU or its id, then how
+  many of it one bundle holds, from 1 to {{ .QuantityLimit }}; at most
+  {{ .Limit }} lines. The bundle has to be counted, not sold past zero and linked
+  to no inventory item: its stock is its parts'. An empty list makes it a
+  variant of its own again.</p>
+  <button type="submit">Save</button>
+  <a href="{{ .CancelPath }}">Cancel</a>
+</form>
+{{ end }}

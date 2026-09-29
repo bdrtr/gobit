@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
@@ -223,4 +224,64 @@ func TestTheVariantRecordNamesWhatABundleIsMadeOf(t *testing.T) {
 	plain, err := provider.FetchByIDs(ctx, []string{box}, []string{query.IDField})
 	require.NoError(t, err)
 	assert.NotContains(t, plain[0], service.FieldBundleComponents, "a field not asked for is not read")
+}
+
+// TestThePanelNamesABundlesPartsBySKU is ADR 0236's admin surface: parts typed
+// as a SKU or an id with their units resolve in the order typed, on the
+// version the form was read at; a quantity past the bound or a SKU nobody
+// carries is refused naming what was typed, and a save on a stale version is
+// refused as the product's own form is.
+func TestThePanelNamesABundlesPartsBySKU(t *testing.T) {
+	fx := newBundleFixture(t)
+	ctx := context.Background()
+	box := fx.box.Variants[0].ID
+	towel, soap := fx.towel.Variants[0].ID, fx.soap.Variants[0].ID
+	soapSKU := "SOAP-1"
+	_, err := fx.svc.UpdateVariant(ctx, soap, service.UpdateVariantInput{SKU: &soapSKU})
+	require.NoError(t, err)
+	surface := service.NewAdminSurface(fx.svc)
+	version := func() int64 {
+		product, err := fx.svc.GetProduct(ctx, fx.box.ID)
+		require.NoError(t, err)
+		return product.Version
+	}
+
+	require.NoError(t, surface.SetVariantBundle(ctx, box, []string{towel, soapSKU}, []int64{1, 2}, version()))
+	read, err := fx.svc.VariantBundle(ctx, box)
+	require.NoError(t, err)
+	assert.Equal(t, []models.BundleComponent{{VariantID: towel, Quantity: 1}, {VariantID: soap, Quantity: 2}}, read,
+		"the SKU resolves in the order typed, with its units")
+
+	for name, call := range map[string]func() error{
+		"a quantity past the bound": func() error {
+			return surface.SetVariantBundle(ctx, box, []string{soapSKU}, []int64{service.MaxBundleComponentQuantity + 1}, version())
+		},
+		"no units": func() error {
+			return surface.SetVariantBundle(ctx, box, []string{soapSKU}, []int64{0}, version())
+		},
+		"units that wrap the column to one": func() error {
+			return surface.SetVariantBundle(ctx, box, []string{soapSKU}, []int64{1<<32 + 1}, version())
+		},
+		"a SKU nobody carries": func() error {
+			return surface.SetVariantBundle(ctx, box, []string{"SOAP-9"}, []int64{1}, version())
+		},
+		"parts and units that do not pair": func() error {
+			return surface.SetVariantBundle(ctx, box, []string{soapSKU, towel}, []int64{1}, version())
+		},
+	} {
+		err := call()
+		require.Error(t, err, name)
+		assert.True(t, errors.IsInvalid(err), "%s: %v", name, err)
+	}
+	err = surface.SetVariantBundle(ctx, box, []string{soapSKU}, []int64{service.MaxBundleComponentQuantity + 1}, version())
+	assert.Contains(t, err.Error(), soapSKU, "the refusal names the part as typed")
+
+	err = surface.SetVariantBundle(ctx, box, []string{soapSKU}, []int64{1}, version()-1)
+	require.Error(t, err)
+	assert.True(t, errors.IsPreconditionFailed(err), "a save on a stale version is refused: %v", err)
+
+	read, err = fx.svc.VariantBundle(ctx, box)
+	require.NoError(t, err)
+	assert.Equal(t, []models.BundleComponent{{VariantID: towel, Quantity: 1}, {VariantID: soap, Quantity: 2}}, read,
+		"a refused save writes nothing")
 }

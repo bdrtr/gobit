@@ -45,6 +45,11 @@ const errorKey = "Error"
 // with a blank product rather than fail.
 const productKey = "Product"
 
+// limitKey carries the longest list a form's module keeps, which the form
+// prints. It is a constant for errorKey's reason: the related products, the
+// add-ons and the bundle forms fill it.
+const limitKey = "Limit"
+
 // actionPathKey and cancelPathKey carry where a product form posts and where
 // its cancel link leads. They are constants for errorKey's reason: the edit,
 // the related-products and the add-ons forms fill them, and a typo in one would
@@ -73,6 +78,7 @@ var pages = []string{
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
+	"variant_bundle.gohtml",
 	"orders.gohtml",
 	"order.gohtml",
 	"customers.gohtml",

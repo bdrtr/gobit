@@ -33,9 +33,10 @@ const AddOnLimit = 20
 // fieldVariantProductID is a variant record's product.
 const fieldVariantProductID = "product_id"
 
-// addOn is one entry of a product's add-on list as the panel shows it: the
-// variant, and the product it belongs to.
-type addOn struct {
+// namedVariant is a variant as the panel names it to an operator: the variant,
+// and the product it belongs to. An add-on is one (ADR 0232), and so is a
+// bundle's part (ADR 0236).
+type namedVariant struct {
 	VariantID    string
 	VariantTitle string
 	SKU          string
@@ -46,25 +47,30 @@ type addOn struct {
 
 // Hidden reports that the storefront leaves the add-on out: it shows one only
 // once its product is published.
-func (a addOn) Hidden() bool { return a.Status != statusPublished }
+func (a namedVariant) Hidden() bool { return a.Status != statusPublished }
 
 // Ref is how the form names the add-on: its SKU, which is what an operator
 // knows, or its id when it carries none.
-func (a addOn) Ref() string {
+func (a namedVariant) Ref() string {
 	if a.SKU != "" {
 		return a.SKU
 	}
 	return a.VariantID
 }
 
-// loadAddOns reads the add-ons a product record names: the variants in ONE
-// read, then their products in ONE read, in the list's order. An id either read
-// does not return is left out; the module takes a deleted variant off every
-// list in the deletion's own transaction, so this is the gap between two reads.
-func (u *UI) loadAddOns(r *http.Request, product query.Record) ([]addOn, error) {
-	ids := recordStrings(product, FieldAddOnVariantIDs)
+// loadAddOns reads the add-ons a product record names, in the list's order.
+func (u *UI) loadAddOns(r *http.Request, product query.Record) ([]namedVariant, error) {
+	return u.namedVariants(r, recordStrings(product, FieldAddOnVariantIDs))
+}
+
+// namedVariants reads the given variants: the variants in ONE read, then their
+// products in ONE read, in the ids' order. An id either read does not return is
+// left out; the module takes a deleted variant off every list in the deletion's
+// own transaction, and refuses to delete a bundle's part, so this is the gap
+// between two reads.
+func (u *UI) namedVariants(r *http.Request, ids []string) ([]namedVariant, error) {
 	if len(ids) == 0 {
-		return []addOn{}, nil
+		return []namedVariant{}, nil
 	}
 	variants, err := u.catalog.Graph(r.Context(), query.GraphSpec{
 		Entity:  EntityVariant,
@@ -75,10 +81,10 @@ func (u *UI) loadAddOns(r *http.Request, product query.Record) ([]addOn, error) 
 	if err != nil {
 		return nil, err
 	}
-	byVariant := make(map[string]addOn, len(variants))
+	byVariant := make(map[string]namedVariant, len(variants))
 	var productIDs []string
 	for _, rec := range variants {
-		a := addOn{
+		a := namedVariant{
 			VariantID:    recordString(rec, fieldID),
 			VariantTitle: recordString(rec, fieldTitle),
 			SKU:          recordString(rec, fieldSKU),
@@ -103,7 +109,7 @@ func (u *UI) loadAddOns(r *http.Request, product query.Record) ([]addOn, error) 
 		byProduct[recordString(rec, fieldID)] = rec
 	}
 
-	out := make([]addOn, 0, len(ids))
+	out := make([]namedVariant, 0, len(ids))
 	for _, id := range ids {
 		a, found := byVariant[id]
 		if !found {
@@ -168,7 +174,7 @@ func (u *UI) submitAddOns(w http.ResponseWriter, r *http.Request) {
 // productWithAddOns reads a product and its add-ons for the form.
 func (u *UI) productWithAddOns(
 	w http.ResponseWriter, r *http.Request, id string,
-) (productRow, []addOn, bool) {
+) (productRow, []namedVariant, bool) {
 	if strings.TrimSpace(id) == "" {
 		u.errorPage(w, r, http.StatusNotFound, "Not found", "No product was named.")
 		return productRow{}, nil, false
@@ -191,7 +197,7 @@ func (u *UI) productWithAddOns(
 }
 
 // addOnsText is the form's value: one reference per line, in the list's order.
-func addOnsText(addOns []addOn) string {
+func addOnsText(addOns []namedVariant) string {
 	refs := make([]string, 0, len(addOns))
 	for _, a := range addOns {
 		refs = append(refs, a.Ref())
@@ -207,7 +213,7 @@ func (u *UI) renderAddOnsForm(
 		titleKey:      "Add-ons of " + product.Title,
 		productKey:    product,
 		"Text":        text,
-		"Limit":       AddOnLimit,
+		limitKey:      AddOnLimit,
 		errorKey:      message,
 		actionPathKey: ProductsPath + "/" + product.ID + "/add-ons",
 		cancelPathKey: ProductsPath + "/" + product.ID,

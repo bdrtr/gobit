@@ -162,6 +162,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **The panel edits a variant's bundle** (ADR 0236). **For operators:** a
+  variant's page in the admin panel lists what a bundle is made of, and
+  `/admin/ui/products/{id}/variants/{variantID}/bundle` replaces its parts, one
+  per line as a SKU or an id followed by how many one bundle holds (one when
+  the line says nothing). The form needs the product write privilege and
+  carries the product's version: a save made after somebody else saved the
+  product comes back unsaved.
+
 - **A bundle sells from its parts** (ADR 0235). **For storefront clients:** a
   bundle variant's `in_stock` (and GraphQL `inStock`) is true when every
   component can supply its units for one bundle, and a bundle can be ordered.

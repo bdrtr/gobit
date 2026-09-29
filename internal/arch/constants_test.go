@@ -936,6 +936,16 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the panel's add-on field name must match the product module")
 	assert.Equal(t, productsvc.MaxAddOns, adminui.AddOnLimit,
 		"the add-on limit the panel prints must be the one the product module keeps")
+	// A variant's bundle (ADR 0236): the field the variant page reads its parts
+	// from, the keys of one part, and the limits the form prints.
+	assert.Equal(t, productsvc.FieldBundleComponents, adminui.FieldBundleComponents,
+		"the panel's bundle field name must match the product module")
+	assert.Equal(t, productsvc.FieldBundleComponentVariantID, adminui.FieldBundleComponentVariantID)
+	assert.Equal(t, productsvc.FieldBundleComponentQuantity, adminui.FieldBundleComponentQuantity)
+	assert.Equal(t, productsvc.MaxBundleComponents, adminui.BundleLimit,
+		"the part limit the panel prints must be the one the product module keeps")
+	assert.Equal(t, productsvc.MaxBundleComponentQuantity, adminui.BundleQuantityLimit,
+		"the unit limit the panel prints must be the one the product module keeps")
 	moduleKinds := make([]string, 0, len(productmodels.RelationTypes()))
 	for _, kind := range productmodels.RelationTypes() {
 		moduleKinds = append(moduleKinds, string(kind))

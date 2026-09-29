@@ -124,6 +124,44 @@ func (a *AdminSurface) SetProductAddOns(ctx context.Context, id string, refs []s
 	return err
 }
 
+// SetVariantBundle replaces what a variant is made of (ADR 0236): each part a
+// variant id or a SKU with the units one bundle holds, in the operator's
+// order, refused when the product is no longer at the version the form was read
+// at.
+//
+// The quantities travel beside the references rather than inside them because
+// the panel cannot name this module's types; the two lists are refused unless
+// they are as long as each other. A quantity outside ADR 0234's bound is refused
+// naming the reference as typed, before it is narrowed to the column's width.
+// The rest are the service's rules.
+func (a *AdminSurface) SetVariantBundle(
+	ctx context.Context, variantID string, refs []string, quantities []int64, version int64,
+) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeNotReady, "the product service is not set up")
+	}
+	if len(refs) != len(quantities) {
+		return invalid("%d parts were named with %d quantities", len(refs), len(quantities))
+	}
+	ids, err := a.svc.ResolveVariantRefs(ctx, refs)
+	if err != nil {
+		return err
+	}
+	components := make([]models.BundleComponent, 0, len(ids))
+	for i, id := range ids {
+		// The bound is checked where the value is narrowed, so the conversion
+		// below is one the checker can see is safe.
+		quantity := quantities[i]
+		if quantity < 1 || quantity > MaxBundleComponentQuantity {
+			return invalid("a part is held 1 to %d times (%s: %d)", MaxBundleComponentQuantity, refs[i], quantity)
+		}
+		components = append(components, models.BundleComponent{VariantID: id, Quantity: int32(quantity)})
+	}
+	_, err = a.svc.SetVariantBundle(ExpectVersion(ctx, version), variantID, components)
+
+	return err
+}
+
 // UpdateProductBasics updates a product's title, handle and status.
 //
 // # Why these three and not a patch document

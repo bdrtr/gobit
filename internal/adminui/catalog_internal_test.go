@@ -1300,6 +1300,28 @@ type fakeProductWriter struct {
 	// (ADR 0232).
 	addOns    [][]string
 	addOnsErr error
+
+	// bundles records the bundle saves; bundleErr is what they answer
+	// (ADR 0236).
+	bundles   []bundleCall
+	bundleErr error
+}
+
+// bundleCall is one SetVariantBundle call.
+type bundleCall struct {
+	variantID  string
+	refs       []string
+	quantities []int64
+	version    int64
+}
+
+// SetVariantBundle records the parts.
+func (f *fakeProductWriter) SetVariantBundle(
+	_ context.Context, variantID string, refs []string, quantities []int64, version int64,
+) error {
+	f.bundles = append(f.bundles, bundleCall{variantID: variantID, refs: refs, quantities: quantities, version: version})
+
+	return f.bundleErr
 }
 
 // SetProductRelations records the lists.

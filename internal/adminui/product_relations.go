@@ -242,7 +242,7 @@ func (u *UI) renderRelationsForm(
 		titleKey:      "Related products of " + product.Title,
 		productKey:    product,
 		"Lists":       lists,
-		"Limit":       RelationLimit,
+		limitKey:      RelationLimit,
 		errorKey:      message,
 		actionPathKey: ProductsPath + "/" + product.ID + "/relations",
 		cancelPathKey: ProductsPath + "/" + product.ID,

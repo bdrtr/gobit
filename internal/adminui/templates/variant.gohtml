@@ -16,6 +16,9 @@ stop a rejection from looking arbitrary:
 
 Every location is listed, including the ones holding nothing: a location that
 only appeared once it had stock could never be stocked from this form.
+
+A bundle (ADR 0236) lists its parts, each linked to the part's own page where its
+stock is kept, and says it counts none of its own in place of the stock table.
 */ -}}
 {{ define "body" }}
 <p><a href="{{ .ProductPath }}">← Back to the product</a></p>
@@ -63,8 +66,25 @@ only appeared once it had stock could never be stocked from this form.
   <p>This variant is not linked to a price set.</p>
 {{ end }}
 
+<h2>Bundle</h2>
+{{ if .Parts }}
+  <p>One of this variant holds these parts. Its stock is theirs: the storefront
+  shows it in stock while every part can supply its units for one, and a sale
+  reserves the parts.</p>
+  <ol>
+  {{ range .Parts }}
+    <li>{{ .Quantity }} × <a href="{{ $.ProductsPath }}/{{ .ProductID }}/variants/{{ .VariantID }}">{{ .ProductTitle }} — {{ .VariantTitle }}</a>{{ if .SKU }} ({{ .SKU }}){{ end }}</li>
+  {{ end }}
+  </ol>
+{{ else }}
+  <p>This variant is no bundle.</p>
+{{ end }}
+{{ if .CanBundle }}<p><a href="{{ .BundlePath }}">Edit the parts</a></p>{{ end }}
+
 <h2>Stock</h2>
-{{ if .ItemID }}
+{{ if .Parts }}
+  <p>A bundle counts no stock of its own; its parts' pages hold theirs.</p>
+{{ else if .ItemID }}
   {{ if .Levels }}
     {{ $canStock := .CanStock }}
     {{ $stockPath := .StockPath }}
