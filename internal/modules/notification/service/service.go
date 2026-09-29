@@ -28,6 +28,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/notification/models"
@@ -91,9 +92,10 @@ type Store interface {
 		status models.DeliveryStatus,
 		failure string,
 	) (models.Delivery, error)
-	// ReopenFailedDelivery takes a failed record back to pending for a resend,
-	// naming the provider; the second return value is whether it was failed.
-	ReopenFailedDelivery(ctx context.Context, id, providerID string) (models.Delivery, bool, error)
+	// ReopenForResend takes a failed record, or one left pending longer than
+	// staleAfter, back to pending for a resend, naming the provider; the second
+	// return value is whether it was reopened.
+	ReopenForResend(ctx context.Context, id, providerID string, staleAfter time.Duration) (models.Delivery, bool, error)
 	// GetDelivery returns the record by its identifier; NotFound when absent.
 	GetDelivery(ctx context.Context, id string) (models.Delivery, error)
 	// ListDeliveries filters and pages the records; the second value is the

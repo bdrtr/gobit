@@ -107,14 +107,18 @@ func (s *fakeStore) FinishDelivery(
 	return record, nil
 }
 
-// ReopenFailedDelivery takes a failed record back to pending, as the query's
-// WHERE does; any other status is a false.
-func (s *fakeStore) ReopenFailedDelivery(_ context.Context, id, providerID string) (models.Delivery, bool, error) {
+// ReopenForResend takes a failed record, or a pending one older than
+// staleAfter, back to pending, as the query's WHERE does; anything else is a
+// false.
+func (s *fakeStore) ReopenForResend(
+	_ context.Context, id, providerID string, staleAfter time.Duration,
+) (models.Delivery, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	record, ok := s.records[id]
-	if !ok || record.Status != models.DeliveryFailed || s.reopenLost {
+	stale := record.Status == models.DeliveryPending && record.UpdatedAt.Before(time.Now().Add(-staleAfter))
+	if !ok || (record.Status != models.DeliveryFailed && !stale) || s.reopenLost {
 		return models.Delivery{}, false, nil
 	}
 	record.Status = models.DeliveryPending

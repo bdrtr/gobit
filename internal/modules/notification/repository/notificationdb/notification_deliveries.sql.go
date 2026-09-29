@@ -208,21 +208,28 @@ SET status      = 'pending',
     error       = '',
     provider_id = $2,
     updated_at  = now()
-WHERE id = $1 AND status = 'failed'
+WHERE id = $1
+  AND (status = 'failed'
+       OR (status = 'pending'
+           AND updated_at < now() - make_interval(secs => $3::float8)))
 RETURNING id, template, channel, reference, provider_id, status, error, created_at, updated_at
 `
 
 type ReopenFailedNotificationDeliveryParams struct {
-	ID         string
-	ProviderID string
+	ID           string
+	ProviderID   string
+	StaleSeconds float64
 }
 
 // ReopenFailedNotificationDelivery takes a FAILED record back to 'pending' for
-// an operator's resend (ADR 0243), naming the provider it will be sent through.
-// A record in any other status returns no row: a sent one is not sent twice by
-// this path, and two resends of one failure cannot both reopen it.
+// an operator's resend (ADR 0243), naming the provider it will be sent through,
+// and a record left 'pending' by an attempt older than stale_seconds, which can
+// no longer be running (ADR 0245). A record in any other state returns no row:
+// a sent one is not sent twice by this path, an attempt still in flight is not
+// raced, and two resends of one record cannot both reopen it. The age is read on
+// the database's clock, which stamped updated_at.
 func (q *Queries) ReopenFailedNotificationDelivery(ctx context.Context, arg ReopenFailedNotificationDeliveryParams) (NotificationDelivery, error) {
-	row := q.db.QueryRow(ctx, reopenFailedNotificationDelivery, arg.ID, arg.ProviderID)
+	row := q.db.QueryRow(ctx, reopenFailedNotificationDelivery, arg.ID, arg.ProviderID, arg.StaleSeconds)
 	var i NotificationDelivery
 	err := row.Scan(
 		&i.ID,

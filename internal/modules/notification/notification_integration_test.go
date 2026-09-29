@@ -323,16 +323,43 @@ func TestTwoResendsOfOneFailureReopenItOnce(t *testing.T) {
 	require.Len(t, records, 1)
 	repo := repository.New(testPool.Pool())
 
-	first, reopened, err := repo.ReopenFailedDelivery(ctx, records[0].ID, "other_provider")
+	first, reopened, err := repo.ReopenForResend(ctx, records[0].ID, "other_provider", time.Minute)
 	require.NoError(t, err)
 	require.True(t, reopened)
 	assert.Equal(t, models.DeliveryPending, first.Status)
 	assert.Empty(t, first.Error)
 	assert.Equal(t, "other_provider", first.ProviderID, "the resend names the provider it goes through")
 
-	_, reopened, err = repo.ReopenFailedDelivery(ctx, records[0].ID, "other_provider")
+	_, reopened, err = repo.ReopenForResend(ctx, records[0].ID, "other_provider", time.Minute)
 	require.NoError(t, err)
 	assert.False(t, reopened, "a record already reopened is not reopened by a second resend")
+}
+
+// TestAnAttemptThatDiedIsReopenedAndOneInFlightIsNot is ADR 0245 on the real
+// table: a record an attempt left pending is reopened once it is older than an
+// attempt can live, on the database's clock, and not while it is younger.
+func TestAnAttemptThatDiedIsReopenedAndOneInFlightIsNot(t *testing.T) {
+	ctx := context.Background()
+	repo := repository.New(testPool.Pool())
+	claimed, isNew, err := repo.ClaimDelivery(ctx, models.Delivery{
+		ID: models.NewDeliveryID(time.Now()), Template: testTemplate, Channel: coreprovider.ChannelEmail,
+		Reference: uniqueReference(t), ProviderID: "log", Status: models.DeliveryPending,
+	})
+	require.NoError(t, err)
+	require.True(t, isNew)
+
+	_, reopened, err := repo.ReopenForResend(ctx, claimed.ID, "log", time.Minute)
+	require.NoError(t, err)
+	assert.False(t, reopened, "an attempt that claimed the record a moment ago may still be sending")
+
+	_, err = testPool.Pool().Exec(ctx,
+		`UPDATE notification_deliveries SET updated_at = now() - interval '2 minutes' WHERE id = $1`, claimed.ID)
+	require.NoError(t, err)
+	record, reopened, err := repo.ReopenForResend(ctx, claimed.ID, "log", time.Minute)
+	require.NoError(t, err)
+	assert.True(t, reopened, "an attempt older than an attempt can live has died")
+	assert.Equal(t, models.DeliveryPending, record.Status)
+	assert.WithinDuration(t, time.Now(), record.UpdatedAt, time.Minute, "and the reopen is its new moment")
 }
 
 // TestTheLogCarriesNORecipientAddressCOLUMN verifies at the SCHEMA level that

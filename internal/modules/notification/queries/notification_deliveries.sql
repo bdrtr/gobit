@@ -36,16 +36,22 @@ WHERE id = $1
 RETURNING *;
 
 -- ReopenFailedNotificationDelivery takes a FAILED record back to 'pending' for
--- an operator's resend (ADR 0243), naming the provider it will be sent through.
--- A record in any other status returns no row: a sent one is not sent twice by
--- this path, and two resends of one failure cannot both reopen it.
+-- an operator's resend (ADR 0243), naming the provider it will be sent through,
+-- and a record left 'pending' by an attempt older than stale_seconds, which can
+-- no longer be running (ADR 0245). A record in any other state returns no row:
+-- a sent one is not sent twice by this path, an attempt still in flight is not
+-- raced, and two resends of one record cannot both reopen it. The age is read on
+-- the database's clock, which stamped updated_at.
 -- name: ReopenFailedNotificationDelivery :one
 UPDATE notification_deliveries
 SET status      = 'pending',
     error       = '',
     provider_id = $2,
     updated_at  = now()
-WHERE id = $1 AND status = 'failed'
+WHERE id = $1
+  AND (status = 'failed'
+       OR (status = 'pending'
+           AND updated_at < now() - make_interval(secs => sqlc.arg('stale_seconds')::float8)))
 RETURNING *;
 
 -- name: GetNotificationDelivery :one

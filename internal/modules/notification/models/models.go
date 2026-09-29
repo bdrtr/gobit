@@ -16,7 +16,8 @@ const (
 	// A row left permanently in this status is the proof of a FAULT: the send
 	// happened but its result could not be written (or the process died in
 	// between). Such a row cannot answer the question "did it go out?" and
-	// has to be examined by hand.
+	// has to be examined by hand; once it is older than an attempt can live,
+	// the operator who examined it can send it again (ADR 0245).
 	DeliveryPending DeliveryStatus = "pending"
 	// DeliverySent means the provider accepted the notification.
 	//

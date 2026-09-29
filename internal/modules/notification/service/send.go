@@ -200,7 +200,9 @@ func (s *Service) deliver(
 }
 
 // ResendDelivery sends a FAILED order confirmation again, on an operator's
-// decision (ADR 0243).
+// decision (ADR 0243), or one a dead attempt left PENDING (ADR 0245): such a
+// record cannot say whether the mail went, as a failed one cannot, and the
+// operator who examined it has this to act with.
 //
 // # Why an operator, and why only this template
 //
@@ -224,9 +226,10 @@ func (s *Service) ResendDelivery(ctx context.Context, deliveryID string) (models
 		return models.Delivery{}, errors.Conflict(CodeNotResendable,
 			"delivery %s is a %q notification, which the module that sent it resends", deliveryID, record.Template)
 	}
-	if record.Status != models.DeliveryFailed {
+	if !resendable(record) {
 		return models.Delivery{}, errors.Conflict(CodeNotResendable,
-			"delivery %s is %s; only a failed one is sent again", deliveryID, record.Status)
+			"delivery %s is %s; only a failed one, or one an attempt left pending more than %s ago, "+
+				"is sent again", deliveryID, record.Status, staleAttempt)
 	}
 
 	in, err := s.orderConfirmation(ctx, record.Reference)
@@ -242,13 +245,13 @@ func (s *Service) ResendDelivery(ctx context.Context, deliveryID string) (models
 		return models.Delivery{}, err
 	}
 
-	reopened, ok, err := s.store.ReopenFailedDelivery(ctx, deliveryID, provider.ID())
+	reopened, ok, err := s.store.ReopenForResend(ctx, deliveryID, provider.ID(), staleAttempt)
 	if err != nil {
 		return models.Delivery{}, err
 	}
 	if !ok {
 		return models.Delivery{}, errors.Conflict(CodeNotResendable,
-			"delivery %s is no longer failed; another resend reached it first", deliveryID)
+			"delivery %s is no longer waiting to be sent again; another resend reached it first", deliveryID)
 	}
 
 	sendErr := s.deliver(ctx, reopened, provider, in)
@@ -258,6 +261,25 @@ func (s *Service) ResendDelivery(ctx context.Context, deliveryID string) (models
 	}
 
 	return after, sendErr
+}
+
+// staleAttempt is how long an attempt can still be running after it claimed
+// its record: the provider's call and the outcome's write are each bounded by
+// [sendTimeout] (ADR 0245). A record pending for longer is an attempt that died.
+const staleAttempt = 2 * sendTimeout
+
+// resendable reports whether an operator may send the record again: a failed
+// one, or one a dead attempt left pending (ADR 0245). The store's reopen holds
+// the same rule on its own clock; this is the read that answers why not.
+func resendable(record models.Delivery) bool {
+	switch record.Status {
+	case models.DeliveryFailed:
+		return true
+	case models.DeliveryPending:
+		return time.Since(record.UpdatedAt) > staleAttempt
+	default:
+		return false
+	}
 }
 
 // send calls the provider with a TIME-BOUNDED context.

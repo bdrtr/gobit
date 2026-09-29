@@ -175,3 +175,4 @@ truth: a report says what was true on the day it was taken.
 | [A price that came back — measured 2026-09-29](0242-a-price-that-came-back.md) | 58 |
 | [The mail nobody could send — measured 2026-09-29](0243-the-mail-nobody-could-send.md) | 58 |
 | [A box the order never sold — measured 2026-09-30](0244-a-box-the-order-never-sold.md) | 47 |
+| [The record that never finished — measured 2026-09-30](0245-the-record-that-never-finished.md) | 46 |

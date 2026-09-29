@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A notification an attempt left pending could never be sent again**
+  (D168, ADR 0245). **For operators:** the resend endpoint also takes an order
+  confirmation left pending for longer than thirty seconds, which is an attempt
+  that died before it could write its outcome; a younger one answers 409, since
+  it may still be sending.
+
 - **The defect ledger counted the files that cite it, and the count was five
   times stale** (D167). **For contributors:** `docs/gaps.md` no longer states a
   number nothing recomputes.

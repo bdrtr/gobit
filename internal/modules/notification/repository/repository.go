@@ -122,16 +122,19 @@ func (r *Repo) ClaimDelivery(ctx context.Context, d models.Delivery) (models.Del
 	return toDelivery(row), true, nil
 }
 
-// ReopenFailedDelivery takes a failed record back to pending for a resend
-// (ADR 0243). The second return value is whether it was failed and so
-// reopened; false is not an error, it is a record that is no longer failed.
-func (r *Repo) ReopenFailedDelivery(ctx context.Context, id, providerID string) (models.Delivery, bool, error) {
+// ReopenForResend takes a record back to pending for a resend: a failed one
+// (ADR 0243), or one left pending by an attempt older than staleAfter
+// (ADR 0245). The second return value is whether it was reopened; false is not
+// an error, it is a record in neither state.
+func (r *Repo) ReopenForResend(
+	ctx context.Context, id, providerID string, staleAfter time.Duration,
+) (models.Delivery, bool, error) {
 	if err := r.ready(); err != nil {
 		return models.Delivery{}, false, err
 	}
 
 	row, err := r.q.ReopenFailedNotificationDelivery(ctx, notificationdb.ReopenFailedNotificationDeliveryParams{
-		ID: id, ProviderID: providerID,
+		ID: id, ProviderID: providerID, StaleSeconds: staleAfter.Seconds(),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -6,6 +6,7 @@ it is failed and rebuilds the message from the order.
 
 - **Status:** Accepted
 - **Date:** 2026-09-29
+- **Amended by:** [0245](0245-a-delivery-a-dead-attempt-left-pending-is-sent-again.md): a record a dead attempt left pending is sent again too
 
 Measurement: [measurements/0243](../measurements/0243-the-mail-nobody-could-send.md)
 
