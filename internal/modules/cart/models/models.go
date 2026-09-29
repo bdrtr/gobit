@@ -197,7 +197,8 @@ type LineItem struct {
 	// UnitPrice is the unit price (minor unit); it comes from pricing and the
 	// workflow writes it.
 	UnitPrice int64
-	// Subtotal is the line's subtotal (minor unit): UnitPrice × Quantity.
+	// Subtotal is the line's subtotal (minor unit): UnitPrice × Quantity, less
+	// TaxTotal where [Cart.PricesIncludeTax] is set (ADR 0246).
 	Subtotal int64
 	// DiscountTotal is the discount falling on the line (minor unit); it is
 	// stored positive.

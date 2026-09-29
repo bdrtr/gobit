@@ -129,7 +129,8 @@ type LineTotals struct {
 //  3. Shape: [Totals.Revision] must equal the cart's current shape.
 //  4. Coverage: every line of the cart must have been given EXACTLY ONCE; an
 //     unknown, repeated or skipped line is rejected.
-//  5. Line subtotal: Subtotal = UnitPrice x Quantity. Because the quantity is
+//  5. Line subtotal: Subtotal = UnitPrice x Quantity, or Subtotal + TaxTotal
+//     where [Totals.PricesIncludeTax] is set (ADR 0246). Because the quantity is
 //     the cart's own data, this is the only place that can validate this
 //     multiplication; a line priced with the wrong quantity would be caught at
 //     no other gate.

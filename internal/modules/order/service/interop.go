@@ -686,7 +686,8 @@ type interopInvoiceItem struct {
 	Quantity int64 `json:"quantity"`
 	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64 `json:"unit_price"`
-	// Subtotal is UnitPrice x Quantity.
+	// Subtotal is UnitPrice x Quantity, less TaxTotal where the order's prices
+	// include their tax (ADR 0246).
 	Subtotal int64 `json:"subtotal"`
 	// DiscountTotal is the discount on the line, carried positive.
 	DiscountTotal int64 `json:"discount_total"`

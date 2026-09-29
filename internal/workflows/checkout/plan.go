@@ -1015,10 +1015,11 @@ func (l *planLine) validateComponents() error {
 // not be stock that is reserved and released again plus an execution record
 // opened for nothing.
 //
-// The identities checked are these: line subtotal = unit price x quantity, line
-// total = subtotal - discount + tax, the cart subtotal is the sum of the line
+// The identities checked are these: line subtotal = unit price x quantity, or
+// that less the line's tax where the prices include it (ADR 0246), line total =
+// subtotal - discount + tax, the cart subtotal is the sum of the line
 // subtotals, and the amount to be collected = subtotal - discount + tax +
-// shipping.
+// shipping. A gift card line carries no tax (ADR 0247).
 //
 // # Every term is clamped to its range BEFORE the identity is tested
 //
