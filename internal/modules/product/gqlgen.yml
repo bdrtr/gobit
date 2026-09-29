@@ -75,6 +75,9 @@ models:
     fields:
       related:
         resolver: true
+      # addOns is a read of its own too (ADR 0231).
+      addOns:
+        resolver: true
   Variant:
     model: github.com/bdrtr/gobit/internal/modules/product/service.StoreVariant
   ProductList:
@@ -123,6 +126,9 @@ models:
     model: github.com/bdrtr/gobit/internal/modules/product/models.OptionValuePair
   OptionValuePairList:
     model: github.com/bdrtr/gobit/internal/modules/product/graph.OptionValuePairList
+  # A product's add-ons (ADR 0231).
+  AddOn:
+    model: github.com/bdrtr/gobit/internal/modules/product/service.StoreAddOn
   ProductOrder:
     model: github.com/bdrtr/gobit/internal/modules/product/models.ProductOrder
   RelationType:

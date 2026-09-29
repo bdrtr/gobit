@@ -70,8 +70,8 @@ func (s *benchStorefront) StoreRelatedProducts(
 }
 
 // ListCollections completes the surface with ListCategories, ListTags,
-// ListAttributes, StoreFacets and ListOptionValues; the benchmark reads
-// products only.
+// ListAttributes, StoreProductAddOns, StoreFacets and ListOptionValues; the
+// benchmark reads products only.
 func (s *benchStorefront) ListCollections(context.Context, int, int) (service.ListResult[models.Collection], error) {
 	return service.ListResult[models.Collection]{}, nil
 }
@@ -87,6 +87,10 @@ func (s *benchStorefront) ListTags(context.Context, int, int) (service.ListResul
 }
 
 func (s *benchStorefront) ListAttributes(context.Context) ([]models.Attribute, error) {
+	return nil, nil
+}
+
+func (s *benchStorefront) StoreProductAddOns(context.Context, string, []string) ([]service.StoreAddOn, error) {
 	return nil, nil
 }
 

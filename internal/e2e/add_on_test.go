@@ -18,7 +18,8 @@ import (
 
 // TestAProductNamesTheAddOnsItsLinesTake is ADR 0228 on the production wiring:
 // the operator names an engraving and a draft wrap as a ring's add-ons, the
-// storefront reads the engraving with its product and not the draft, the ring's
+// storefront reads the engraving with its product and not the draft, over REST
+// and GraphQL (ADR 0231), the ring's
 // own variant is refused, and deleting the engraving, then the wrap's product,
 // takes each off the list.
 func TestAProductNamesTheAddOnsItsLinesTake(t *testing.T) {
@@ -77,6 +78,14 @@ func TestAProductNamesTheAddOnsItsLinesTake(t *testing.T) {
 	require.Len(t, store.Data, 1, "the draft wrap is not shown: %s", shown.Body.String())
 	assert.Equal(t, engraving, store.Data[0].VariantID)
 	assert.Equal(t, "engraving", store.Data[0].Product.Title)
+
+	// The GraphQL storefront answers the same list (ADR 0231).
+	graph := gqlRequest(t, publishableKey, `query($handle: String) {
+		product(handle: $handle) { addOns { variantId product { title } } }
+	}`, map[string]any{"handle": ring.Handle})
+	require.Equal(t, http.StatusOK, graph.Code, graph.Body.String())
+	assert.JSONEq(t, `{"data":{"product":{"addOns":[{"variantId":"`+engraving+`","product":{"title":"engraving"}}]}}}`,
+		graph.Body.String())
 
 	rec, err := adminRequestWithBody(http.MethodDelete, "/admin/v1/variants/"+engraving, nil)
 	require.NoError(t, err)

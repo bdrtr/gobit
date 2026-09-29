@@ -59,6 +59,7 @@ const deepestDataQuery = `{ products { items { variants { optionValues { optionT
 // acyclicLeftOut are the fields allProductFields deliberately does not select.
 var acyclicLeftOut = map[string]string{
 	"Product.related": "it leads back into Product, so selecting everything under it has no end",
+	"Product.addOns":  "an add-on's product leads back into Product, for the related products' reason",
 }
 
 // relatedCard is what a product page asks of each related product: the card a

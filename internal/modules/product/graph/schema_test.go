@@ -101,7 +101,7 @@ func bindings() []binding {
 				"Version": "how many times the merchant revised the product is the admin " +
 					"surface's (ADR 0221)",
 			},
-			readBy: map[string]string{"related": "StoreRelatedProducts"},
+			readBy: map[string]string{"related": "StoreRelatedProducts", "addOns": "StoreProductAddOns"},
 		},
 		{
 			schemaType: "Variant",
@@ -161,6 +161,8 @@ func bindings() []binding {
 		{schemaType: "CollectionList", goType: reflect.TypeOf(graph.CollectionList{}), leftOut: offsetPagesOnly},
 		{schemaType: "CategoryList", goType: reflect.TypeOf(graph.CategoryList{}), leftOut: offsetPagesOnly},
 		{schemaType: "TagList", goType: reflect.TypeOf(graph.TagList{}), leftOut: offsetPagesOnly},
+		// A product's add-ons (ADR 0231).
+		{schemaType: "AddOn", goType: reflect.TypeOf(service.StoreAddOn{})},
 		// The listing's counts and its option words (ADR 0226).
 		{schemaType: "Facet", goType: reflect.TypeOf(service.Facet{})},
 		{schemaType: "FacetOption", goType: reflect.TypeOf(service.FacetOption{})},

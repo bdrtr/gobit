@@ -49,6 +49,10 @@ type fakeStorefront struct {
 	tags            []models.Tag
 	attributes      []models.Attribute
 
+	// A product's add-ons (ADR 0231): the calls and the answer.
+	addOnCalls []relatedCall
+	addOns     []service.StoreAddOn
+
 	// The channel-scoped reads' calls and answers (ADR 0226).
 	facetOptions       []service.StoreListOptions
 	optionValueOptions []service.ListOptionValuesOptions
@@ -91,6 +95,20 @@ func (s *fakeStorefront) ListTags(_ context.Context, limit, offset int) (service
 // ListAttributes returns the prepared attributes.
 func (s *fakeStorefront) ListAttributes(context.Context) ([]models.Attribute, error) {
 	return s.attributes, s.err
+}
+
+// StoreProductAddOns records the product and the channels of the call and
+// returns the prepared add-ons.
+func (s *fakeStorefront) StoreProductAddOns(
+	_ context.Context, idOrHandle string, salesChannelIDs []string,
+) ([]service.StoreAddOn, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.addOnCalls = append(s.addOnCalls, relatedCall{parent: idOrHandle, channels: salesChannelIDs})
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.addOns, nil
 }
 
 // StoreFacets records the options and returns the prepared facets.

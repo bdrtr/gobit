@@ -40,6 +40,11 @@ type DirectiveRoot struct {
 }
 
 type ComplexityRoot struct {
+	AddOn struct {
+		Product   func(childComplexity int) int
+		VariantID func(childComplexity int) int
+	}
+
 	Attribute struct {
 		Handle  func(childComplexity int) int
 		ID      func(childComplexity int) int
@@ -141,6 +146,7 @@ type ComplexityRoot struct {
 	}
 
 	Product struct {
+		AddOns        func(childComplexity int) int
 		Attributes    func(childComplexity int) int
 		Categories    func(childComplexity int) int
 		CollectionID  func(childComplexity int) int
@@ -238,6 +244,7 @@ type ComplexityRoot struct {
 
 type ProductResolver interface {
 	Related(ctx context.Context, obj *service.StoreProduct, typeArg models.RelationType) ([]service.StoreProduct, error)
+	AddOns(ctx context.Context, obj *service.StoreProduct) ([]service.StoreAddOn, error)
 }
 type QueryResolver interface {
 	Products(ctx context.Context, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion, inStock *bool, price *service.PriceBracket) (*service.ListResult[service.StoreProduct], error)
@@ -271,6 +278,19 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 	ec := newExecutionContext(nil, e, nil)
 	_ = ec
 	switch typeName + "." + field {
+
+	case "AddOn.product":
+		if e.ComplexityRoot.AddOn.Product == nil {
+			break
+		}
+
+		return e.ComplexityRoot.AddOn.Product(childComplexity), true
+	case "AddOn.variantId":
+		if e.ComplexityRoot.AddOn.VariantID == nil {
+			break
+		}
+
+		return e.ComplexityRoot.AddOn.VariantID(childComplexity), true
 
 	case "Attribute.handle":
 		if e.ComplexityRoot.Attribute.Handle == nil {
@@ -651,6 +671,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 
 		return e.ComplexityRoot.OptionValuePairList.Offset(childComplexity), true
 
+	case "Product.addOns":
+		if e.ComplexityRoot.Product.AddOns == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Product.AddOns(childComplexity), true
 	case "Product.attributes":
 		if e.ComplexityRoot.Product.Attributes == nil {
 			break
@@ -1208,6 +1234,16 @@ var parsedSchema = gqlparser.MustLoadSchema(sources...)
 // Each function is generated once per unique object type, deduplicating the
 // switch statements that were previously inlined in every fieldContext_* function.
 
+func (ec *executionContext) childFields_AddOn(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+	switch field.Name {
+	case "variantId":
+		return ec.fieldContext_AddOn_variantId(ctx, field)
+	case "product":
+		return ec.fieldContext_AddOn_product(ctx, field)
+	}
+	return nil, fmt.Errorf("no field named %q was found under type AddOn", field.Name)
+}
+
 func (ec *executionContext) childFields_Attribute(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 	switch field.Name {
 	case "id":
@@ -1464,6 +1500,8 @@ func (ec *executionContext) childFields_Product(ctx context.Context, field graph
 		return ec.fieldContext_Product_attributes(ctx, field)
 	case "related":
 		return ec.fieldContext_Product_related(ctx, field)
+	case "addOns":
+		return ec.fieldContext_Product_addOns(ctx, field)
 	}
 	return nil, fmt.Errorf("no field named %q was found under type Product", field.Name)
 }
@@ -2061,6 +2099,61 @@ func (ec *executionContext) field___Type_fields_args(ctx context.Context, rawArg
 // endregion ***************************** args.gotpl *****************************
 
 // region    **************************** field.gotpl *****************************
+
+func (ec *executionContext) _AddOn_variantId(ctx context.Context, field graphql.CollectedField, obj *service.StoreAddOn) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_AddOn_variantId(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.VariantID, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v string) graphql.Marshaler {
+			return ec.marshalNID2string(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_AddOn_variantId(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("AddOn", field, false, false, errors.New("field of type ID does not have child fields"))
+}
+
+func (ec *executionContext) _AddOn_product(ctx context.Context, field graphql.CollectedField, obj *service.StoreAddOn) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_AddOn_product(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.Product, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v service.StoreProduct) graphql.Marshaler {
+			return ec.marshalNProduct2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐStoreProduct(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_AddOn_product(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "AddOn",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_Product(ctx, field)
+		},
+	}
+	return fc, nil
+}
 
 func (ec *executionContext) _Attribute_id(ctx context.Context, field graphql.CollectedField, obj *models.Attribute) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
@@ -4211,6 +4304,38 @@ func (ec *executionContext) fieldContext_Product_related(ctx context.Context, fi
 	if fc.Args, err = ec.field_Product_related_args(ctx, field.ArgumentMap(ec.Variables)); err != nil {
 		ec.Error(ctx, err)
 		return fc, err
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _Product_addOns(ctx context.Context, field graphql.CollectedField, obj *service.StoreProduct) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Product_addOns(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return ec.Resolvers.Product().AddOns(ctx, obj)
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v []service.StoreAddOn) graphql.Marshaler {
+			return ec.marshalNAddOn2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐStoreAddOnᚄ(ctx, selections, v)
+		},
+		true,
+		true,
+	)
+}
+func (ec *executionContext) fieldContext_Product_addOns(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "Product",
+		Field:      field,
+		IsMethod:   true,
+		IsResolver: true,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.childFields_AddOn(ctx, field)
+		},
 	}
 	return fc, nil
 }
@@ -6641,6 +6766,49 @@ func (ec *executionContext) unmarshalInputPriceFilter(ctx context.Context, obj a
 
 // region    **************************** object.gotpl ****************************
 
+var addOnImplementors = []string{"AddOn"}
+
+func (ec *executionContext) _AddOn(ctx context.Context, sel ast.SelectionSet, obj *service.StoreAddOn) graphql.Marshaler {
+	fields := graphql.CollectFields(ec.OperationContext, sel, addOnImplementors)
+
+	out := graphql.NewFieldSet(fields)
+	deferredFieldSet := graphql.NewFieldSet(nil)
+	deferLabelToView := make(map[string]*graphql.FieldSetView)
+	for i, field := range fields {
+		switch field.Name {
+		case "__typename":
+			out.Values[i] = graphql.MarshalString("AddOn")
+		case "variantId":
+			out.Values[i] = ec._AddOn_variantId(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "product":
+			out.Values[i] = ec._AddOn_product(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		default:
+			panic("unknown field " + strconv.Quote(field.Name))
+		}
+	}
+	out.Dispatch(ctx)
+	if out.Invalids > 0 {
+		return graphql.Null
+	}
+
+	atomic.AddInt32(&ec.Deferred, int32(min(len(deferLabelToView), math.MaxInt32)))
+
+	ec.ProcessDeferredGroup(graphql.DeferredGroup{
+		Defers:   deferLabelToView,
+		Path:     graphql.GetPath(ctx),
+		FieldSet: deferredFieldSet,
+		Context:  ctx,
+	})
+
+	return out
+}
+
 var attributeImplementors = []string{"Attribute"}
 
 func (ec *executionContext) _Attribute(ctx context.Context, sel ast.SelectionSet, obj *models.Attribute) graphql.Marshaler {
@@ -7527,6 +7695,44 @@ func (ec *executionContext) _Product(ctx context.Context, sel ast.SelectionSet, 
 					}
 				}()
 				res = ec._Product_related(ctx, field, obj)
+				if res == graphql.Null {
+					atomic.AddUint32(&fs.Invalids, 1)
+				}
+				return res
+			}
+
+			if field.IsDeferred() {
+				deferredFieldSet.AddField(field)
+				fieldIndex := len(deferredFieldSet.Values) - 1
+				deferredFieldSet.Concurrently(fieldIndex, func(ctx context.Context) graphql.Marshaler {
+					return innerFunc(ctx, deferredFieldSet)
+				})
+
+				for _, deferrable := range field.Deferrables {
+					view, ok := deferLabelToView[deferrable.Label]
+					if !ok {
+						view = deferredFieldSet.NewView()
+						deferLabelToView[deferrable.Label] = view
+					}
+					view.AddIndices(fieldIndex)
+				}
+
+				// don't run the out.Concurrently() call below
+				out.Values[i] = graphql.Null
+				continue
+			}
+
+			out.Concurrently(i, func(ctx context.Context) graphql.Marshaler { return innerFunc(ctx, out) })
+		case "addOns":
+			field := field
+
+			innerFunc := func(ctx context.Context, fs *graphql.FieldSet) (res graphql.Marshaler) {
+				defer func() {
+					if r := recover(); r != nil {
+						ec.Error(ctx, ec.Recover(ctx, r))
+					}
+				}()
+				res = ec._Product_addOns(ctx, field, obj)
 				if res == graphql.Null {
 					atomic.AddUint32(&fs.Invalids, 1)
 				}
@@ -8604,6 +8810,26 @@ func (ec *executionContext) ___Type(ctx context.Context, sel ast.SelectionSet, o
 // endregion **************************** object.gotpl ****************************
 
 // region    ***************************** type.gotpl *****************************
+
+func (ec *executionContext) marshalNAddOn2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐStoreAddOn(ctx context.Context, sel ast.SelectionSet, v service.StoreAddOn) graphql.Marshaler {
+	return ec._AddOn(ctx, sel, &v)
+}
+
+func (ec *executionContext) marshalNAddOn2ᚕgithubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐStoreAddOnᚄ(ctx context.Context, sel ast.SelectionSet, v []service.StoreAddOn) graphql.Marshaler {
+	ret := graphql.MarshalSliceConcurrently(ctx, len(v), 0, false, func(ctx context.Context, i int) graphql.Marshaler {
+		fc := graphql.GetFieldContext(ctx)
+		fc.Result = &v[i]
+		return ec.marshalNAddOn2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋserviceᚐStoreAddOn(ctx, sel, v[i])
+	})
+
+	for _, e := range ret {
+		if e == graphql.Null {
+			return graphql.Null
+		}
+	}
+
+	return ret
+}
 
 func (ec *executionContext) marshalNAttribute2githubᚗcomᚋbdrtrᚋgobitᚋinternalᚋmodulesᚋproductᚋmodelsᚐAttribute(ctx context.Context, sel ast.SelectionSet, v models.Attribute) graphql.Marshaler {
 	return ec._Attribute(ctx, sel, &v)

@@ -1040,6 +1040,11 @@ func complexityCosts(costs *ComplexityRoot) {
 	costs.Product.Related = func(child int, _ models.RelationType) int {
 		return rootQueryCost + collectionCost(child)
 	}
+	// A product's add-ons are a read of their own for the related products'
+	// reason (ADR 0231).
+	costs.Product.AddOns = func(child int) int {
+		return rootQueryCost + collectionCost(child)
+	}
 	// The vocabulary (ADR 0225) pages as the listing does, from its limit, and
 	// the attributes are at most models.MaxAttributes, which is what they are
 	// charged: the whole vocabulary is one read.

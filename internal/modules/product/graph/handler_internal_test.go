@@ -305,3 +305,8 @@ func (silentStorefront) ListOptionValues(
 	zero := 0
 	return service.ListResult[models.OptionValuePair]{Count: &zero}, nil
 }
+
+// StoreProductAddOns returns none.
+func (silentStorefront) StoreProductAddOns(context.Context, string, []string) ([]service.StoreAddOn, error) {
+	return nil, nil
+}

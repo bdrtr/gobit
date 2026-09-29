@@ -87,6 +87,14 @@ type Storefront interface {
 		salesChannelIDs []string,
 	) ([]service.StoreProduct, error)
 
+	// StoreProductAddOns is a product's add-ons (ADR 0231), the REST read's
+	// own method.
+	StoreProductAddOns(
+		ctx context.Context,
+		idOrHandle string,
+		salesChannelIDs []string,
+	) ([]service.StoreAddOn, error)
+
 	// The vocabulary (ADR 0225): the storefront REST reads' own methods.
 	ListCollections(ctx context.Context, limit, offset int) (service.ListResult[models.Collection], error)
 	ListCategories(ctx context.Context, opts service.ListCategoriesOptions) (service.ListResult[models.Category], error)

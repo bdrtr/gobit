@@ -511,6 +511,25 @@ type Product {
   limit is what stops a chain of it.
   """
   related(type: RelationType!): [Product!]!
+  """
+  The add-ons the product's cart lines may carry, in the operator's order
+  (ADR 0228, ADR 0231): each a variant of another product, an engraving or a
+  gift wrap, with that product as the storefront shows it.
+
+  An add-on whose product is not published, or not visible in the request's
+  sales channels, is left out without saying so. It is a read of its own for
+  every product that selects it, priced as the related products are.
+  """
+  addOns: [AddOn!]!
+}
+
+"""
+One add-on a product's cart lines may carry (ADR 0228): the variant a line
+names in its add_ons, and its product.
+"""
+type AddOn {
+  variantId: ID!
+  product: Product!
 }
 
 "The sellable unit: the thing that enters the cart, is kept in stock and is priced is the variant."

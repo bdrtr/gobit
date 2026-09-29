@@ -148,6 +148,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kararlar
 
+- **The GraphQL storefront reads a product's add-ons** (ADR 0231). **For
+  storefront clients:** `Product.addOns { variantId product { ... } }` answers
+  what `GET /store/v1/sales-channels/{sales_channel_id}/products/{id}/add-ons`
+  answers; each product selecting it costs as much as a root query against the
+  complexity ceiling, as `related` does.
+
 - **An add-on goes back with its line** (ADR 0230). **For storefront clients
   and operators:** a return request naming a line that carries add-ons has to
   name each add-on at the same quantity, and an add-on only beside its line;

@@ -217,6 +217,14 @@ func (r *productResolver) Related(
 	return r.svc.StoreRelatedProducts(ctx, obj.ID, kind, SalesChannelIDsFromContext(ctx))
 }
 
+// AddOns returns the product's add-ons as the storefront shows them (ADR 0231):
+// the REST read's service call, [service.Service.StoreProductAddOns], with the
+// product this field hangs off and the channels of the request's verified
+// identity, for [productResolver.Related]'s reason.
+func (r *productResolver) AddOns(ctx context.Context, obj *service.StoreProduct) ([]service.StoreAddOn, error) {
+	return r.svc.StoreProductAddOns(ctx, obj.ID, SalesChannelIDsFromContext(ctx))
+}
+
 // PriceSet returns the variant's price set (the pricing module's record).
 //
 // Why the field is resolved BY HAND: the record arrives in this module as a
