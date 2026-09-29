@@ -38,6 +38,10 @@ type Totals struct {
 	// Total is the amount payable:
 	// Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
 	Total int64
+	// PricesIncludeTax says the market's prices included their tax, so every
+	// line's Subtotal is its UnitPrice x Quantity less its TaxTotal (ADR 0086)
+	// and is held to that rather than to UnitPrice x Quantity (ADR 0246).
+	PricesIncludeTax bool
 	// Lines are the amounts calculated per line and they MUST COVER ALL of the
 	// cart's lines; each line is given EXACTLY ONCE.
 	//
@@ -57,7 +61,8 @@ type LineTotals struct {
 	LineItemID string
 	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64
-	// Subtotal is the line's subtotal: UnitPrice x Quantity.
+	// Subtotal is the line's subtotal: UnitPrice x Quantity, or, where
+	// [Totals.PricesIncludeTax] is set, UnitPrice x Quantity - TaxTotal.
 	Subtotal int64
 	// DiscountTotal is the discount falling on the line; it is given as a
 	// positive number.
@@ -194,7 +199,7 @@ func (s *Service) SetTotals(ctx context.Context, cartID string, in Totals) error
 		if err != nil {
 			return err
 		}
-		applied, err := applyLineTotals(stored, in.Lines)
+		applied, err := applyLineTotals(stored, in.Lines, in.PricesIncludeTax)
 		if err != nil {
 			return err
 		}
@@ -213,12 +218,13 @@ func (s *Service) SetTotals(ctx context.Context, cartID string, in Totals) error
 		}
 
 		_, err = s.store.UpdateCartTotals(ctx, cart.ID, models.CartTotals{
-			Subtotal:      in.Subtotal,
-			DiscountTotal: in.DiscountTotal,
-			TaxTotal:      in.TaxTotal,
-			ShippingTotal: in.ShippingTotal,
-			Total:         in.Total,
-			Revision:      in.Revision,
+			Subtotal:         in.Subtotal,
+			DiscountTotal:    in.DiscountTotal,
+			TaxTotal:         in.TaxTotal,
+			ShippingTotal:    in.ShippingTotal,
+			Total:            in.Total,
+			Revision:         in.Revision,
+			PricesIncludeTax: in.PricesIncludeTax,
 		})
 		return err
 	})
@@ -311,7 +317,7 @@ func validateCartTotals(in Totals) error {
 // amount was never given, is caught here — before the write begins. Rejecting a
 // skipped line is the essence of the contract; trusting its stored amount would
 // count an unpriced line as valid with a zero amount (see [Service.SetTotals]).
-func applyLineTotals(stored []models.LineItem, updates []LineTotals) ([]models.LineItem, error) {
+func applyLineTotals(stored []models.LineItem, updates []LineTotals, pricesIncludeTax bool) ([]models.LineItem, error) {
 	byID := make(map[string]int, len(stored))
 	for i := range stored {
 		byID[stored[i].ID] = i
@@ -336,7 +342,7 @@ func applyLineTotals(stored []models.LineItem, updates []LineTotals) ([]models.L
 			return nil, errors.NotFound(CodeLineItemNotFound,
 				"the line the amount is to be written to is not in the cart: %s", line.LineItemID)
 		}
-		if err := validateLineTotals(line, applied[idx].Quantity); err != nil {
+		if err := validateLineTotals(line, applied[idx].Quantity, pricesIncludeTax); err != nil {
 			return nil, err
 		}
 
@@ -373,7 +379,13 @@ func missingIDs(stored []models.LineItem, seen map[string]struct{}) []string {
 }
 
 // validateLineTotals validates the amounts of a single line.
-func validateLineTotals(line LineTotals, quantity int64) error {
+//
+// The unit price and the quantity are what the shopper was quoted, and the
+// subtotal is held to them: it is their product, or, where the prices included
+// their tax, their product less the line's tax (ADR 0246). A line whose tax was
+// counted on top of an inclusive price, or taken out of an exclusive one, is
+// refused either way.
+func validateLineTotals(line LineTotals, quantity int64, pricesIncludeTax bool) error {
 	if err := checkAmount("unit_price", line.UnitPrice, models.MaxAmount); err != nil {
 		return err
 	}
@@ -391,14 +403,20 @@ func validateLineTotals(line LineTotals, quantity int64) error {
 		}
 	}
 
-	expectedSubtotal, err := multiplyAmount(line.UnitPrice, quantity)
+	quoted, err := multiplyAmount(line.UnitPrice, quantity)
 	if err != nil {
 		return err
 	}
-	if line.Subtotal != expectedSubtotal {
+	if pricesIncludeTax {
+		if line.Subtotal+line.TaxTotal != quoted {
+			return errors.Invalid(CodeTotalsInconsistent,
+				"the line subtotal is inconsistent (%s): subtotal=%d + tax_total=%d given, the prices include their tax and unit_price(%d) x quantity(%d) = %d",
+				line.LineItemID, line.Subtotal, line.TaxTotal, line.UnitPrice, quantity, quoted)
+		}
+	} else if line.Subtotal != quoted {
 		return errors.Invalid(CodeTotalsInconsistent,
 			"the line subtotal is inconsistent (%s): subtotal=%d given, unit_price(%d) x quantity(%d) = %d",
-			line.LineItemID, line.Subtotal, line.UnitPrice, quantity, expectedSubtotal)
+			line.LineItemID, line.Subtotal, line.UnitPrice, quantity, quoted)
 	}
 
 	// At the line level too the discount cannot exceed the subtotal; the same

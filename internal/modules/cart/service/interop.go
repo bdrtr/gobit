@@ -184,13 +184,15 @@ type interopShippingMethod struct {
 
 // interopTotals is the JSON schema of the computed cart totals.
 type interopTotals struct {
-	Revision      int64               `json:"revision"`
-	Subtotal      int64               `json:"subtotal"`
-	DiscountTotal int64               `json:"discount_total"`
-	TaxTotal      int64               `json:"tax_total"`
-	ShippingTotal int64               `json:"shipping_total"`
-	Total         int64               `json:"total"`
-	Lines         []interopLineTotals `json:"lines"`
+	Revision      int64 `json:"revision"`
+	Subtotal      int64 `json:"subtotal"`
+	DiscountTotal int64 `json:"discount_total"`
+	TaxTotal      int64 `json:"tax_total"`
+	ShippingTotal int64 `json:"shipping_total"`
+	Total         int64 `json:"total"`
+	// PricesIncludeTax is the flag the totals were computed under (ADR 0246).
+	PricesIncludeTax bool                `json:"prices_include_tax"`
+	Lines            []interopLineTotals `json:"lines"`
 }
 
 // interopLineTotals is the JSON schema of the amounts computed per line.
@@ -455,13 +457,14 @@ func (i *Interop) SetCartTotalsJSON(ctx context.Context, cartID string, totals j
 	}
 
 	return i.svc.SetTotals(ctx, cartID, Totals{
-		Revision:      incoming.Revision,
-		Subtotal:      incoming.Subtotal,
-		DiscountTotal: incoming.DiscountTotal,
-		TaxTotal:      incoming.TaxTotal,
-		ShippingTotal: incoming.ShippingTotal,
-		Total:         incoming.Total,
-		Lines:         lines,
+		Revision:         incoming.Revision,
+		Subtotal:         incoming.Subtotal,
+		DiscountTotal:    incoming.DiscountTotal,
+		TaxTotal:         incoming.TaxTotal,
+		ShippingTotal:    incoming.ShippingTotal,
+		Total:            incoming.Total,
+		PricesIncludeTax: incoming.PricesIncludeTax,
+		Lines:            lines,
 	})
 }
 

@@ -476,6 +476,7 @@ func (f *fakeStore) UpdateCartTotals(_ context.Context, id string, totals models
 	cart.ShippingTotal = totals.ShippingTotal
 	cart.Total = totals.Total
 	cart.TotalsRevision = totals.Revision
+	cart.PricesIncludeTax = totals.PricesIncludeTax
 	cart.UpdatedAt = f.nextStamp()
 	f.carts[id] = cart
 	return cart, nil

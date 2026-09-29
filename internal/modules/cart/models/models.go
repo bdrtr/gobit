@@ -100,6 +100,10 @@ type Cart struct {
 	Revision int64
 	// TotalsRevision stamps which shape the totals were computed for.
 	TotalsRevision int64
+	// PricesIncludeTax says the totals were computed in a market whose prices
+	// include their tax: each line's Subtotal is its UnitPrice x Quantity less
+	// its TaxTotal (ADR 0246). It is written with the totals.
+	PricesIncludeTax bool
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 	// CompletedAt is the moment the cart was completed; if it is set, the cart
@@ -250,6 +254,9 @@ type CartTotals struct {
 	// Revision is which cart shape the totals were computed for; it is stamped
 	// onto the record as totals_revision.
 	Revision int64
+	// PricesIncludeTax says the totals were computed in a market whose prices
+	// include their tax ([Cart.PricesIncludeTax]).
+	PricesIncludeTax bool
 }
 
 // Consistent reports that the totals identity holds:

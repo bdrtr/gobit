@@ -12,6 +12,17 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Nothing could be sold in a market whose prices include their tax** (D169,
+  ADR 0246). The cart refused to write the totals of every such cart with a
+  non-zero rate, since each line's subtotal is the sticker less its tax and
+  three checks held it to unit price times quantity. **For operators:** a tax
+  region with `prices_include_tax` now sells, and the shopper pays the sticker.
+  **For integrators:** the cart and the order answer `prices_include_tax`;
+  where it is true, a line's `unit_price` is the sticker and its `subtotal` is
+  what is left of `unit_price` times `quantity` once its `tax_total` is taken
+  out. The promotion trial and a new delivery's quote read the goods as unit
+  price times quantity. Migrations: cart `000007`, order `000038`.
+
 - **A notification an attempt left pending could never be sent again**
   (D168, ADR 0245). **For operators:** the resend endpoint also takes an order
   confirmation left pending for longer than thirty seconds, which is an attempt

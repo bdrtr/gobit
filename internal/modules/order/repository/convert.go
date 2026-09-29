@@ -330,6 +330,7 @@ func toOrder(row orderdb.Order) (models.Order, error) {
 		TaxTotal:             row.TaxTotal,
 		ShippingTotal:        row.ShippingTotal,
 		Total:                row.Total,
+		PricesIncludeTax:     row.PricesIncludeTax,
 		Metadata:             meta,
 		PlacedAt:             toTime(row.PlacedAt),
 		CompletedAt:          toTimePtr(row.CompletedAt),

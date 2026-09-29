@@ -185,6 +185,54 @@ func TestSetTotalsEnforcesTheLineSubtotalMultiplication(t *testing.T) {
 	assert.Contains(t, err.Error(), "quantity", "the error must say which multiplication did not hold")
 }
 
+// TestSetTotalsHoldsAnInclusiveLineToItsStickerLessItsTax verifies the subtotal
+// check in a market whose prices include their tax (ADR 0246, D169): the
+// subtotal is the sticker less the line's tax, which the cart refused before,
+// and the flag is written with the totals.
+//
+// The same figures are refused without the flag, and a line whose tax was
+// counted on top of an inclusive sticker is refused with it: the flag chooses
+// which identity holds, it does not relax either.
+func TestSetTotalsHoldsAnInclusiveLineToItsStickerLessItsTax(t *testing.T) {
+	svc, _ := newService(t)
+	ctx := context.Background()
+	cart, first, second := cartWithTotals(ctx, t, svc)
+
+	// Stickers 3 x 1200 = 3600 and 2 x 2400 = 4800 at 20% inside: 600 and 800
+	// of tax, 3000 and 4000 left.
+	inclusive := service.Totals{
+		Revision: cart.Revision, PricesIncludeTax: true,
+		Subtotal: 7000, TaxTotal: 1400, Total: 8400,
+		Lines: []service.LineTotals{
+			{LineItemID: first.ID, UnitPrice: 1200, Subtotal: 3000, TaxTotal: 600, Total: 3600},
+			{LineItemID: second.ID, UnitPrice: 2400, Subtotal: 4000, TaxTotal: 800, Total: 4800},
+		},
+	}
+
+	withoutFlag := inclusive
+	withoutFlag.PricesIncludeTax = false
+	err := svc.SetTotals(ctx, cart.ID, withoutFlag)
+	require.Error(t, err, "without the flag the subtotal is unit price x quantity")
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+
+	counted := inclusive
+	counted.Subtotal, counted.Total = 8400, 9800
+	counted.Lines = []service.LineTotals{
+		{LineItemID: first.ID, UnitPrice: 1200, Subtotal: 3600, TaxTotal: 600, Total: 4200},
+		{LineItemID: second.ID, UnitPrice: 2400, Subtotal: 4800, TaxTotal: 800, Total: 5600},
+	}
+	err = svc.SetTotals(ctx, cart.ID, counted)
+	require.Error(t, err, "a tax counted on top of a sticker that includes it is refused")
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+	assert.Contains(t, err.Error(), "include their tax")
+
+	require.NoError(t, svc.SetTotals(ctx, cart.ID, inclusive))
+	detail, err := svc.GetCart(ctx, cart.ID)
+	require.NoError(t, err)
+	assert.True(t, detail.PricesIncludeTax, "the flag is written with the totals")
+	assert.Equal(t, int64(8400), detail.Total)
+}
+
 // TestSetTotalsSubtotalMustBeTheSumOfTheLines verifies that the cart subtotal is
 // forced to equal the sum of the line subtotals.
 func TestSetTotalsSubtotalMustBeTheSumOfTheLines(t *testing.T) {

@@ -556,6 +556,21 @@ func TestStoreGetOrderReturnsSameEnvelope(t *testing.T) {
 	assert.Equal(t, []string{"GetOrder"}, svc.calls)
 }
 
+// TestAnOrderSaysWhetherItsPricesIncludeTax holds the flag on the record both
+// surfaces share (ADR 0246): a reader of a line's unit price and subtotal needs
+// it to tell a sticker whose tax is inside from one whose tax was added.
+func TestAnOrderSaysWhetherItsPricesIncludeTax(t *testing.T) {
+	detail := sampleDetail()
+	detail.PricesIncludeTax = true
+	for _, path := range []string{"/store/v1/orders/order_1", "/admin/v1/orders/order_1"} {
+		rec := doRequest(t, newRouter(&fakeOrders{detail: detail}), http.MethodGet, path, "")
+		require.Equal(t, http.StatusOK, rec.Code, path)
+		data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, true, data["prices_include_tax"], path)
+	}
+}
+
 // TestAnAdditionSaysWhatItAddsTo holds the one field an addition carries beyond
 // an ordinary order, on the record both surfaces share (ADR 0192), and keeps it
 // off an order that adds to nothing.

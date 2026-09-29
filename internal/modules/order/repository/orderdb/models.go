@@ -33,6 +33,7 @@ type Order struct {
 	ArchivedAt           pgtype.Timestamptz
 	PersonalDataErasedAt pgtype.Timestamptz
 	AddsToOrderID        *string
+	PricesIncludeTax     bool
 }
 
 type OrderAddress struct {

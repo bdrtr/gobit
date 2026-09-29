@@ -170,7 +170,7 @@ func validateOrderItems(in CreateOrderInput) error {
 	// The loop is walked by index: the line input is large and copying it by
 	// value would carry a few hundred bytes for nothing on every turn.
 	for i := range in.Items {
-		if err := validateOrderItem(i, in.Items[i]); err != nil {
+		if err := validateOrderItem(i, in.Items[i], in.PricesIncludeTax); err != nil {
 			return err
 		}
 		next, err := addAmount(sum, in.Items[i].Subtotal)
@@ -239,7 +239,7 @@ func validateLineKeys(items []CreateOrderItemInput) error {
 // do not have identifiers yet — the identifiers are produced at the moment of
 // the write — and the only answer to the question "which line" is the order in
 // which the caller sent them.
-func validateOrderItem(index int, item CreateOrderItemInput) error {
+func validateOrderItem(index int, item CreateOrderItemInput, pricesIncludeTax bool) error {
 	if err := requireID("items[].variant_id", item.VariantID); err != nil {
 		return err
 	}
@@ -266,17 +266,24 @@ func validateOrderItem(index int, item CreateOrderItemInput) error {
 		}
 	}
 
-	// The line subtotal = the unit price x the quantity. This is the only place
-	// where the quantity and the price stand together; a line priced with the
-	// wrong quantity would be caught at no other gate.
-	expectedSubtotal, err := multiplyAmount(item.UnitPrice, item.Quantity)
+	// The line subtotal = the unit price x the quantity, or, where the prices
+	// included their tax, that less the line's tax (ADR 0246). This is the only
+	// place where the quantity and the price stand together; a line priced with
+	// the wrong quantity would be caught at no other gate.
+	quoted, err := multiplyAmount(item.UnitPrice, item.Quantity)
 	if err != nil {
 		return err
 	}
-	if item.Subtotal != expectedSubtotal {
+	if pricesIncludeTax {
+		if item.Subtotal+item.TaxTotal != quoted {
+			return errors.Invalid(CodeTotalsInconsistent,
+				"the line subtotal is inconsistent (line %d, %s): subtotal=%d + tax_total=%d was given, the prices include their tax and unit_price(%d) x quantity(%d) = %d",
+				index, item.VariantID, item.Subtotal, item.TaxTotal, item.UnitPrice, item.Quantity, quoted)
+		}
+	} else if item.Subtotal != quoted {
 		return errors.Invalid(CodeTotalsInconsistent,
 			"the line subtotal is inconsistent (line %d, %s): subtotal=%d was given, unit_price(%d) x quantity(%d) = %d",
-			index, item.VariantID, item.Subtotal, item.UnitPrice, item.Quantity, expectedSubtotal)
+			index, item.VariantID, item.Subtotal, item.UnitPrice, item.Quantity, quoted)
 	}
 
 	// At the line level too the discount cannot exceed the subtotal; the same

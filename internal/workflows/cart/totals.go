@@ -59,6 +59,12 @@ type Totals struct {
 	// comes out 0, "the rate was zero" and "there was no configuration" are told
 	// apart only here.
 	TaxSource string `json:"tax_source"`
+	// PricesIncludeTax says the market's prices included their tax, so each
+	// line's Subtotal is what is left of UnitPrice x Quantity once its TaxTotal
+	// is taken out (ADR 0086). The cart and the order record it with the
+	// amounts, because it is what a line's subtotal is checked against
+	// (ADR 0246).
+	PricesIncludeTax bool `json:"prices_include_tax"`
 	// Lines are the amounts calculated per line and they cover ALL the lines of
 	// the cart.
 	Lines []LineTotals `json:"lines"`
@@ -95,7 +101,8 @@ type LineTotals struct {
 	LineItemID string `json:"line_item_id"`
 	// UnitPrice is the unit price pricing selected.
 	UnitPrice int64 `json:"unit_price"`
-	// Subtotal is the line's subtotal: UnitPrice x Quantity.
+	// Subtotal is the line's subtotal: UnitPrice x Quantity, or, where
+	// [Totals.PricesIncludeTax] is set, UnitPrice x Quantity - TaxTotal.
 	Subtotal int64 `json:"subtotal"`
 	// DiscountTotal is the discount falling on the line; it NEVER exceeds the
 	// line's subtotal.
@@ -316,15 +323,16 @@ func (w *Workflows) computeTotals(ctx context.Context, snap Snapshot) (Totals, e
 	if err != nil {
 		return Totals{}, err
 	}
-	taxSource, err := w.applyTaxes(ctx, snap, shippingTotal, lines, facts)
+	tax, err := w.applyTaxes(ctx, snap, shippingTotal, lines, facts)
 	if err != nil {
 		return Totals{}, err
 	}
-	totals, err := assembleTotals(snap, lines, shippingTotal, taxSource)
+	totals, err := assembleTotals(snap, lines, shippingTotal, tax.source)
 	if err != nil {
 		return Totals{}, err
 	}
 	totals.Applied = applied
+	totals.PricesIncludeTax = tax.pricesIncludeTax
 
 	return totals, nil
 }

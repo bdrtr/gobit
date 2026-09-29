@@ -337,13 +337,14 @@ func (r *Repository) UpdateCartContact(ctx context.Context, id string, contact m
 // Conflict is returned.
 func (r *Repository) UpdateCartTotals(ctx context.Context, id string, totals models.CartTotals) (models.Cart, error) {
 	row, err := r.queries(ctx).UpdateCartTotals(ctx, cartdb.UpdateCartTotalsParams{
-		ID:             id,
-		Subtotal:       totals.Subtotal,
-		DiscountTotal:  totals.DiscountTotal,
-		TaxTotal:       totals.TaxTotal,
-		ShippingTotal:  totals.ShippingTotal,
-		Total:          totals.Total,
-		TotalsRevision: totals.Revision,
+		ID:               id,
+		Subtotal:         totals.Subtotal,
+		DiscountTotal:    totals.DiscountTotal,
+		TaxTotal:         totals.TaxTotal,
+		ShippingTotal:    totals.ShippingTotal,
+		Total:            totals.Total,
+		TotalsRevision:   totals.Revision,
+		PricesIncludeTax: totals.PricesIncludeTax,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

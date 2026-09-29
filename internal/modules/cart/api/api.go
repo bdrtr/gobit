@@ -747,17 +747,21 @@ type cartDTO struct {
 	CurrencyCode string `json:"currency_code"`
 	// AddsToOrderID is the order the cart was opened to add to; absent when it
 	// adds to nothing (ADR 0192).
-	AddsToOrderID string         `json:"adds_to_order_id,omitempty"`
-	Subtotal      int64          `json:"subtotal"`
-	DiscountTotal int64          `json:"discount_total"`
-	TaxTotal      int64          `json:"tax_total"`
-	ShippingTotal int64          `json:"shipping_total"`
-	Total         int64          `json:"total"`
-	TotalsStale   bool           `json:"totals_stale"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
-	CompletedAt   *time.Time     `json:"completed_at,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	AddsToOrderID string `json:"adds_to_order_id,omitempty"`
+	Subtotal      int64  `json:"subtotal"`
+	DiscountTotal int64  `json:"discount_total"`
+	TaxTotal      int64  `json:"tax_total"`
+	ShippingTotal int64  `json:"shipping_total"`
+	Total         int64  `json:"total"`
+	TotalsStale   bool   `json:"totals_stale"`
+	// PricesIncludeTax says the totals were computed in a market whose prices
+	// include their tax: a line's unit_price is the sticker and its subtotal is
+	// what is left of it once its tax_total is taken out (ADR 0246).
+	PricesIncludeTax bool           `json:"prices_include_tax"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	CompletedAt      *time.Time     `json:"completed_at,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
 // cartDetailDTO is the cart's outward representation together with its children.
@@ -837,22 +841,23 @@ type shippingMethodDTO struct {
 // toCartDTO converts the model into the outward representation.
 func toCartDTO(cart models.Cart) cartDTO {
 	return cartDTO{
-		ID:            cart.ID,
-		RegionID:      cart.RegionID,
-		CustomerID:    cart.CustomerID,
-		Email:         cart.Email,
-		CurrencyCode:  cart.CurrencyCode,
-		AddsToOrderID: cart.AddsToOrderID,
-		Subtotal:      cart.Subtotal,
-		DiscountTotal: cart.DiscountTotal,
-		TaxTotal:      cart.TaxTotal,
-		ShippingTotal: cart.ShippingTotal,
-		Total:         cart.Total,
-		TotalsStale:   cart.TotalsStale(),
-		Metadata:      cart.Metadata,
-		CompletedAt:   cart.CompletedAt,
-		CreatedAt:     cart.CreatedAt,
-		UpdatedAt:     cart.UpdatedAt,
+		ID:               cart.ID,
+		RegionID:         cart.RegionID,
+		CustomerID:       cart.CustomerID,
+		Email:            cart.Email,
+		CurrencyCode:     cart.CurrencyCode,
+		AddsToOrderID:    cart.AddsToOrderID,
+		Subtotal:         cart.Subtotal,
+		DiscountTotal:    cart.DiscountTotal,
+		TaxTotal:         cart.TaxTotal,
+		ShippingTotal:    cart.ShippingTotal,
+		Total:            cart.Total,
+		TotalsStale:      cart.TotalsStale(),
+		PricesIncludeTax: cart.PricesIncludeTax,
+		Metadata:         cart.Metadata,
+		CompletedAt:      cart.CompletedAt,
+		CreatedAt:        cart.CreatedAt,
+		UpdatedAt:        cart.UpdatedAt,
 	}
 }
 

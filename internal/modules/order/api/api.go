@@ -374,20 +374,24 @@ type orderDTO struct {
 	CartID       string `json:"cart_id,omitempty"`
 	// AddsToOrderID is the order this one adds to; absent on an order that
 	// adds to nothing (ADR 0192). The amounts beside it are this order's own.
-	AddsToOrderID string         `json:"adds_to_order_id,omitempty"`
-	Subtotal      int64          `json:"subtotal"`
-	DiscountTotal int64          `json:"discount_total"`
-	TaxTotal      int64          `json:"tax_total"`
-	ShippingTotal int64          `json:"shipping_total"`
-	Total         int64          `json:"total"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
-	PlacedAt      time.Time      `json:"placed_at"`
-	CompletedAt   *time.Time     `json:"completed_at,omitempty"`
-	CanceledAt    *time.Time     `json:"canceled_at,omitempty"`
-	ArchivedAt    *time.Time     `json:"archived_at,omitempty"`
-	CancelReason  string         `json:"cancel_reason,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	AddsToOrderID string `json:"adds_to_order_id,omitempty"`
+	Subtotal      int64  `json:"subtotal"`
+	DiscountTotal int64  `json:"discount_total"`
+	TaxTotal      int64  `json:"tax_total"`
+	ShippingTotal int64  `json:"shipping_total"`
+	Total         int64  `json:"total"`
+	// PricesIncludeTax says the order was sold in a market whose prices
+	// include their tax: a line's unit_price is the sticker and its subtotal is
+	// what is left of it once its tax_total is taken out (ADR 0246).
+	PricesIncludeTax bool           `json:"prices_include_tax"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	PlacedAt         time.Time      `json:"placed_at"`
+	CompletedAt      *time.Time     `json:"completed_at,omitempty"`
+	CanceledAt       *time.Time     `json:"canceled_at,omitempty"`
+	ArchivedAt       *time.Time     `json:"archived_at,omitempty"`
+	CancelReason     string         `json:"cancel_reason,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
 // orderDetailDTO is the external representation of the order with its line
@@ -624,28 +628,29 @@ type claimDTO struct {
 // toOrderDTO converts the model to the external representation.
 func toOrderDTO(order models.Order) orderDTO {
 	return orderDTO{
-		ID:            order.ID,
-		DisplayID:     order.DisplayID,
-		Status:        order.Status.String(),
-		RegionID:      order.RegionID,
-		CustomerID:    order.CustomerID,
-		Email:         order.Email,
-		CurrencyCode:  order.CurrencyCode,
-		CartID:        order.CartID,
-		AddsToOrderID: order.AddsToOrderID,
-		Subtotal:      order.Subtotal,
-		DiscountTotal: order.DiscountTotal,
-		TaxTotal:      order.TaxTotal,
-		ShippingTotal: order.ShippingTotal,
-		Total:         order.Total,
-		Metadata:      order.Metadata,
-		PlacedAt:      order.PlacedAt,
-		CompletedAt:   order.CompletedAt,
-		CanceledAt:    order.CanceledAt,
-		ArchivedAt:    order.ArchivedAt,
-		CancelReason:  order.CancelReason,
-		CreatedAt:     order.CreatedAt,
-		UpdatedAt:     order.UpdatedAt,
+		ID:               order.ID,
+		DisplayID:        order.DisplayID,
+		Status:           order.Status.String(),
+		RegionID:         order.RegionID,
+		CustomerID:       order.CustomerID,
+		Email:            order.Email,
+		CurrencyCode:     order.CurrencyCode,
+		CartID:           order.CartID,
+		AddsToOrderID:    order.AddsToOrderID,
+		Subtotal:         order.Subtotal,
+		DiscountTotal:    order.DiscountTotal,
+		TaxTotal:         order.TaxTotal,
+		ShippingTotal:    order.ShippingTotal,
+		Total:            order.Total,
+		PricesIncludeTax: order.PricesIncludeTax,
+		Metadata:         order.Metadata,
+		PlacedAt:         order.PlacedAt,
+		CompletedAt:      order.CompletedAt,
+		CanceledAt:       order.CanceledAt,
+		ArchivedAt:       order.ArchivedAt,
+		CancelReason:     order.CancelReason,
+		CreatedAt:        order.CreatedAt,
+		UpdatedAt:        order.UpdatedAt,
 	}
 }
 

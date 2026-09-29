@@ -197,7 +197,7 @@ func (q *Queries) ListOrderReturnsForDisclosure(ctx context.Context, orderIds []
 
 const listOrdersForDisclosure = `-- name: ListOrdersForDisclosure :many
 
-SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id FROM orders
+SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax FROM orders
 WHERE ($1::text IS NOT NULL AND customer_id = $1::text)
    OR ($2::text IS NOT NULL AND email = $2::text)
 ORDER BY id
@@ -317,6 +317,7 @@ func (q *Queries) ListOrdersForDisclosure(ctx context.Context, arg ListOrdersFor
 			&i.ArchivedAt,
 			&i.PersonalDataErasedAt,
 			&i.AddsToOrderID,
+			&i.PricesIncludeTax,
 		); err != nil {
 			return nil, err
 		}

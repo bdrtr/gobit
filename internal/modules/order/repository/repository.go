@@ -213,21 +213,22 @@ func (r *Repository) CreateOrder(ctx context.Context, order models.Order) (model
 	}
 
 	row, err := r.queries(ctx).CreateOrder(ctx, orderdb.CreateOrderParams{
-		ID:             order.ID,
-		Status:         order.Status.String(),
-		RegionID:       order.RegionID,
-		CustomerID:     nullString(order.CustomerID),
-		Email:          nullString(order.Email),
-		CurrencyCode:   order.CurrencyCode,
-		CartID:         nullString(order.CartID),
-		IdempotencyKey: nullString(order.IdempotencyKey),
-		Subtotal:       order.Subtotal,
-		DiscountTotal:  order.DiscountTotal,
-		TaxTotal:       order.TaxTotal,
-		ShippingTotal:  order.ShippingTotal,
-		Total:          order.Total,
-		Metadata:       meta,
-		AddsToOrderID:  nullString(order.AddsToOrderID),
+		ID:               order.ID,
+		Status:           order.Status.String(),
+		RegionID:         order.RegionID,
+		CustomerID:       nullString(order.CustomerID),
+		Email:            nullString(order.Email),
+		CurrencyCode:     order.CurrencyCode,
+		CartID:           nullString(order.CartID),
+		IdempotencyKey:   nullString(order.IdempotencyKey),
+		Subtotal:         order.Subtotal,
+		DiscountTotal:    order.DiscountTotal,
+		TaxTotal:         order.TaxTotal,
+		ShippingTotal:    order.ShippingTotal,
+		Total:            order.Total,
+		Metadata:         meta,
+		AddsToOrderID:    nullString(order.AddsToOrderID),
+		PricesIncludeTax: order.PricesIncludeTax,
 	})
 	if err != nil {
 		return models.Order{}, classify(err, codeQueryFailed, "could not create the order")

@@ -281,6 +281,19 @@ const (
 	unconfiguredRegionRateBps int32 = 1800
 )
 
+// The fixture constants of the market whose prices INCLUDE their tax
+// (ADR 0086, ADR 0246).
+//
+// The region's own rate is zero and its automatic tax is on, so a cart the tax
+// module was not asked about comes out with no tax at all, and the currency is
+// [taxedCurrency] so the catalog's prices apply.
+const (
+	// inclusiveTaxCountry is the country bound to the tax-inclusive region.
+	inclusiveTaxCountry = "AT"
+	// inclusiveTaxRateBps is the country's rate in the TAX module: 20%.
+	inclusiveTaxRateBps int32 = 2000
+)
+
 // The ground the tests share. TestMain fills it, the tests only read it.
 var (
 	// testPool is the connection pool all modules share.
@@ -1207,6 +1220,18 @@ func setUpRegionFixtures(ctx context.Context) error {
 	}
 	multiCountryRegionID = multiCountry.ID
 
+	inclusive, err := regionSvc.CreateRegion(ctx, regionsvc.CreateRegionInput{
+		Name:           "E2E Tax-Inclusive Region",
+		CurrencyCode:   taxedCurrency,
+		AutomaticTaxes: true,
+	})
+	if err != nil {
+		return fmt.Errorf("could not create the tax-inclusive region: %w", err)
+	}
+	if _, err := regionSvc.AddCountryToRegion(ctx, inclusive.ID, inclusiveTaxCountry); err != nil {
+		return fmt.Errorf("could not add country %s to the tax-inclusive region: %w", inclusiveTaxCountry, err)
+	}
+
 	return nil
 }
 
@@ -1229,6 +1254,7 @@ func setUpRegionFixtures(ctx context.Context) error {
 //     from here.
 //   - [unconfiguredCountry] -> NOTHING. What a country without a region does can
 //     only be exercised through the absence of configuration.
+//   - [inclusiveTaxCountry] -> 20%, with prices that INCLUDE it (ADR 0246).
 //
 // The regions' provider is left empty: an empty provider on a root region means
 // "local computation", and an external tax service is not the subject of this
@@ -1259,6 +1285,23 @@ func setUpTaxFixtures(ctx context.Context) error {
 		TaxRegionID: secondRoot.ID,
 		Name:        "E2E TVA",
 		RateBps:     secondTaxRateBps,
+		IsDefault:   true,
+	}); err != nil {
+		return err
+	}
+
+	included := true
+	inclusiveRoot, err := taxSvc.CreateTaxRegion(ctx, taxsvc.CreateTaxRegionInput{
+		CountryCode:      inclusiveTaxCountry,
+		PricesIncludeTax: &included,
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := taxSvc.CreateTaxRate(ctx, taxsvc.CreateTaxRateInput{
+		TaxRegionID: inclusiveRoot.ID,
+		Name:        "E2E USt",
+		RateBps:     inclusiveTaxRateBps,
 		IsDefault:   true,
 	}); err != nil {
 		return err

@@ -123,20 +123,23 @@ func NewInterop(svc *Service) *Interop { return &Interop{svc: svc} }
 // the other hand, are not ignored: the absence of the required fields returns
 // errors.Invalid from the validation of [Service.CreateOrder].
 type interopSnapshot struct {
-	CartID         string             `json:"cart_id"`
-	RegionID       string             `json:"region_id"`
-	CustomerID     string             `json:"customer_id"`
-	Email          string             `json:"email"`
-	CurrencyCode   string             `json:"currency_code"`
-	IdempotencyKey string             `json:"idempotency_key"`
-	AddsToOrderID  string             `json:"adds_to_order_id"`
-	Subtotal       int64              `json:"subtotal"`
-	DiscountTotal  int64              `json:"discount_total"`
-	TaxTotal       int64              `json:"tax_total"`
-	ShippingTotal  int64              `json:"shipping_total"`
-	Total          int64              `json:"total"`
-	Metadata       map[string]any     `json:"metadata"`
-	Items          []interopOrderItem `json:"items"`
+	CartID         string `json:"cart_id"`
+	RegionID       string `json:"region_id"`
+	CustomerID     string `json:"customer_id"`
+	Email          string `json:"email"`
+	CurrencyCode   string `json:"currency_code"`
+	IdempotencyKey string `json:"idempotency_key"`
+	AddsToOrderID  string `json:"adds_to_order_id"`
+	Subtotal       int64  `json:"subtotal"`
+	DiscountTotal  int64  `json:"discount_total"`
+	TaxTotal       int64  `json:"tax_total"`
+	ShippingTotal  int64  `json:"shipping_total"`
+	Total          int64  `json:"total"`
+	// PricesIncludeTax is the flag the cart's totals were computed under
+	// (ADR 0246).
+	PricesIncludeTax bool               `json:"prices_include_tax"`
+	Metadata         map[string]any     `json:"metadata"`
+	Items            []interopOrderItem `json:"items"`
 	// The addresses the cart carried, if any. They are written in the SAME
 	// transaction as the order: an order that exists without the address it was
 	// placed with is an order nobody can ship or invoice.
@@ -315,22 +318,23 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 	}
 
 	order, err := i.svc.CreateOrder(ctx, CreateOrderInput{
-		RegionID:        incoming.RegionID,
-		CustomerID:      incoming.CustomerID,
-		Email:           incoming.Email,
-		CurrencyCode:    incoming.CurrencyCode,
-		CartID:          incoming.CartID,
-		IdempotencyKey:  incoming.IdempotencyKey,
-		AddsToOrderID:   incoming.AddsToOrderID,
-		Subtotal:        incoming.Subtotal,
-		DiscountTotal:   incoming.DiscountTotal,
-		TaxTotal:        incoming.TaxTotal,
-		ShippingTotal:   incoming.ShippingTotal,
-		Total:           incoming.Total,
-		Items:           items,
-		Metadata:        incoming.Metadata,
-		Addresses:       incomingAddresses(incoming),
-		ShippingMethods: incomingShippingMethods(incoming.ShippingMethods),
+		RegionID:         incoming.RegionID,
+		CustomerID:       incoming.CustomerID,
+		Email:            incoming.Email,
+		CurrencyCode:     incoming.CurrencyCode,
+		CartID:           incoming.CartID,
+		IdempotencyKey:   incoming.IdempotencyKey,
+		AddsToOrderID:    incoming.AddsToOrderID,
+		Subtotal:         incoming.Subtotal,
+		DiscountTotal:    incoming.DiscountTotal,
+		TaxTotal:         incoming.TaxTotal,
+		ShippingTotal:    incoming.ShippingTotal,
+		Total:            incoming.Total,
+		PricesIncludeTax: incoming.PricesIncludeTax,
+		Items:            items,
+		Metadata:         incoming.Metadata,
+		Addresses:        incomingAddresses(incoming),
+		ShippingMethods:  incomingShippingMethods(incoming.ShippingMethods),
 	})
 	if err != nil {
 		return "", err
@@ -1007,26 +1011,36 @@ type interopDeliveryFacts struct {
 // on, in the schema of [interopDeliveryFacts] (ADR 0199).
 //
 // They are the sale's, as the cart's quote read them: the goods after discount
-// and the units sold. The country is the current shipping address's rather
-// than the region's, since it is where the parcel goes, and ADR 0195 holds it
-// to the country the order was placed in.
+// and the units sold. The goods are the lines' unit prices times their
+// quantities, which is what the quote read before any tax was worked out; the
+// order's subtotal is that only where the prices did not include their tax
+// (ADR 0246). The country is the current shipping address's rather than the
+// region's, since it is where the parcel goes, and ADR 0195 holds it to the
+// country the order was placed in.
 func (i *Interop) DeliveryFactsJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
 	detail, err := i.svc.GetOrder(ctx, orderID)
 	if err != nil {
 		return nil, err
 	}
 
-	var units int64
+	var units, goods int64
 	for j := range detail.Items {
 		units, err = addAmount(units, detail.Items[j].Quantity)
 		if err != nil {
+			return nil, err
+		}
+		quoted, err := multiplyAmount(detail.Items[j].UnitPrice, detail.Items[j].Quantity)
+		if err != nil {
+			return nil, err
+		}
+		if goods, err = addAmount(goods, quoted); err != nil {
 			return nil, err
 		}
 	}
 	facts := interopDeliveryFacts{
 		RegionID:     detail.RegionID,
 		CurrencyCode: detail.CurrencyCode,
-		Subtotal:     detail.Subtotal - detail.DiscountTotal,
+		Subtotal:     goods - detail.DiscountTotal,
 		ItemCount:    units,
 	}
 	if detail.ShippingAddress != nil {

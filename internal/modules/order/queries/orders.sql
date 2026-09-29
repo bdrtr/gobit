@@ -20,12 +20,12 @@ INSERT INTO orders (
     id, status, region_id, customer_id, email, currency_code,
     cart_id, idempotency_key,
     subtotal, discount_total, tax_total, shipping_total, total,
-    metadata, adds_to_order_id, placed_at
+    metadata, adds_to_order_id, prices_include_tax, placed_at
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8,
     $9, $10, $11, $12, $13,
-    $14, $15, now()
+    $14, $15, $16, now()
 )
 RETURNING *;
 

@@ -133,7 +133,9 @@ type TrialCurrency struct {
 	OrdersPriced int `json:"orders_priced"`
 	// OrdersDiscounted are the ones it would have taken something off.
 	OrdersDiscounted int `json:"orders_discounted"`
-	// Subtotal is the priced orders' goods before any discount.
+	// Subtotal is the priced orders' goods before any discount: their lines'
+	// unit prices times their quantities, which is what a promotion is asked
+	// about whether or not the prices included their tax (ADR 0246).
 	Subtotal int64 `json:"subtotal"`
 	// DiscountTotal is what the priced orders were actually discounted.
 	DiscountTotal int64 `json:"discount_total"`
@@ -153,6 +155,11 @@ type TrialOrder struct {
 }
 
 // trialLine is one sold line as the trial reads it.
+//
+// Its subtotal is the unit price times the quantity, what the cart handed the
+// promotion engine, rather than the order line's subtotal: where the prices
+// included their tax the order keeps the line's subtotal net of it (ADR 0246),
+// and a promotion never saw that figure.
 type trialLine struct {
 	id            string
 	variantID     string
@@ -451,7 +458,7 @@ func (w *Workflows) trialOrders(ctx context.Context, from, to time.Time) ([]tria
 	for offset := 0; ; offset += trialPageSize {
 		records, err := w.catalog.Graph(ctx, query.GraphSpec{
 			Entity: trialLineEntity,
-			Fields: []string{"id", "order_id", "variant_id", "quantity", "unit_price", "subtotal", "discount_total"},
+			Fields: []string{"id", "order_id", "variant_id", "quantity", "unit_price", "discount_total"},
 			Filters: map[string]any{
 				"placed_from": from,
 				"placed_to":   to,
@@ -479,6 +486,9 @@ func (w *Workflows) trialOrders(ctx context.Context, from, to time.Time) ([]tria
 				sequence = append(sequence, orderID)
 			}
 			order.lines = append(order.lines, line)
+			if order.subtotal, err = addAmount(order.subtotal, line.subtotal); err != nil {
+				return nil, err
+			}
 		}
 		if len(records) < trialPageSize {
 			break
@@ -491,7 +501,7 @@ func (w *Workflows) trialOrders(ctx context.Context, from, to time.Time) ([]tria
 			Entity: trialOrderEntity,
 			Fields: []string{
 				"id", "display_id", "status", "region_id", "customer_id", "cart_id",
-				"currency_code", "placed_at", "subtotal", "discount_total",
+				"currency_code", "placed_at", "discount_total",
 			},
 			Filters: map[string]any{"id": batch},
 			Limit:   len(batch),
@@ -535,8 +545,8 @@ func trialLineOf(record query.Record) (trialLine, string, error) {
 		func() (e error) { line.variantID, e = recordText(record, "variant_id"); return },
 		func() (e error) { line.quantity, e = recordAmount(record, "quantity"); return },
 		func() (e error) { line.unitPrice, e = recordAmount(record, "unit_price"); return },
-		func() (e error) { line.subtotal, e = recordAmount(record, "subtotal"); return },
 		func() (e error) { line.discountTotal, e = recordAmount(record, "discount_total"); return },
+		func() (e error) { line.subtotal, e = mulAmount(line.unitPrice, line.quantity); return },
 	} {
 		if err := read(); err != nil {
 			return trialLine{}, "", err
@@ -565,7 +575,6 @@ func fillTrialOrder(record query.Record, byID map[string]*trialOrder) error {
 		func() (e error) { order.cartID, e = recordOptionalText(record, "cart_id"); return },
 		func() (e error) { order.currencyCode, e = recordText(record, "currency_code"); return },
 		func() (e error) { order.placedAt, e = recordTime(record, "placed_at"); return },
-		func() (e error) { order.subtotal, e = recordAmount(record, "subtotal"); return },
 		func() (e error) { order.discountTotal, e = recordAmount(record, "discount_total"); return },
 	} {
 		if err := read(); err != nil {

@@ -34,7 +34,8 @@ type CreateOrderItemInput struct {
 	Quantity int64
 	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64
-	// Subtotal is the subtotal of the line: UnitPrice x Quantity.
+	// Subtotal is the subtotal of the line: UnitPrice x Quantity, less
+	// TaxTotal where [CreateOrderInput.PricesIncludeTax] is set.
 	Subtotal int64
 	// DiscountTotal is the discount falling on the line; it is given as a
 	// POSITIVE number and it is subtracted.
@@ -166,6 +167,10 @@ type CreateOrderInput struct {
 	// Total is the amount to be paid:
 	// Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
 	Total int64
+	// PricesIncludeTax says the cart was priced in a market whose prices
+	// include their tax, so every line's Subtotal is its UnitPrice x Quantity
+	// less its TaxTotal (ADR 0246).
+	PricesIncludeTax bool
 	// Items are the lines of the order; AT LEAST ONE line is required.
 	Items []CreateOrderItemInput
 	// Addresses are where the order ships and who it is billed to. At most one
@@ -194,7 +199,8 @@ type CreateOrderInput struct {
 //     (overflow protection).
 //  3. Scope: the order has to carry AT LEAST ONE line. What is born out of an
 //     order without lines is an order in which nothing was sold.
-//  4. Line subtotal: Subtotal = UnitPrice x Quantity. A line priced with the
+//  4. Line subtotal: Subtotal = UnitPrice x Quantity, or Subtotal + TaxTotal
+//     where the prices include their tax (ADR 0246). A line priced with the
 //     wrong quantity would be caught at no other gate.
 //  5. Line identity: Total = Subtotal - DiscountTotal + TaxTotal and the line
 //     discount cannot exceed the subtotal.
@@ -350,21 +356,22 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 		}
 
 		order, err := s.store.CreateOrder(ctx, models.Order{
-			ID:             models.NewOrderID(),
-			Status:         models.OrderPending,
-			RegionID:       in.RegionID,
-			CustomerID:     in.CustomerID,
-			Email:          in.Email,
-			CurrencyCode:   in.CurrencyCode,
-			CartID:         in.CartID,
-			IdempotencyKey: in.IdempotencyKey,
-			AddsToOrderID:  in.AddsToOrderID,
-			Subtotal:       in.Subtotal,
-			DiscountTotal:  in.DiscountTotal,
-			TaxTotal:       in.TaxTotal,
-			ShippingTotal:  in.ShippingTotal,
-			Total:          in.Total,
-			Metadata:       in.Metadata,
+			ID:               models.NewOrderID(),
+			Status:           models.OrderPending,
+			RegionID:         in.RegionID,
+			CustomerID:       in.CustomerID,
+			Email:            in.Email,
+			CurrencyCode:     in.CurrencyCode,
+			CartID:           in.CartID,
+			IdempotencyKey:   in.IdempotencyKey,
+			AddsToOrderID:    in.AddsToOrderID,
+			Subtotal:         in.Subtotal,
+			DiscountTotal:    in.DiscountTotal,
+			TaxTotal:         in.TaxTotal,
+			ShippingTotal:    in.ShippingTotal,
+			Total:            in.Total,
+			PricesIncludeTax: in.PricesIncludeTax,
+			Metadata:         in.Metadata,
 		})
 		if err != nil {
 			return err

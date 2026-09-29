@@ -88,6 +88,7 @@ SET subtotal        = $2,
     shipping_total  = $5,
     total           = $6,
     totals_revision = $7,
+    prices_include_tax = $8,
     updated_at      = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
 RETURNING *;

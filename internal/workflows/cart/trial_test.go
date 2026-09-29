@@ -84,6 +84,33 @@ func TestATrialAddsWhatThePromotionWouldHaveAddedAndNoMore(t *testing.T) {
 	assert.Equal(t, int64(200), report.Orders[0].TrialDiscount)
 }
 
+// TestATrialPricesAnInclusiveOrderAtItsStickers verifies that a line sold in a
+// market whose prices include their tax is priced as the cart priced it
+// (ADR 0246). The order keeps that line's subtotal net of its tax, 1000 of a
+// 1200 sticker; the cart handed the promotion engine 1200, which is what the
+// engine holds against the unit price and what caps the line's discount.
+func TestATrialPricesAnInclusiveOrderAtItsStickers(t *testing.T) {
+	line := trialLineRecord("li_inc", "order_inc", testVariantA, 1, 1200, 0)
+	line["subtotal"] = int64(1000)
+	h := newTrialHarness(t,
+		[]query.Record{line},
+		[]query.Record{trialOrderRecord("order_inc", "pending", "", 1000, 0)},
+		map[string]int64{"li_inc": 1100},
+	)
+
+	report, err := h.wf.TrialPromotion(context.Background(), "promo_1", trialFrom, trialTo)
+	require.NoError(t, err)
+
+	require.Len(t, h.discounts.trials, 1)
+	item := h.discounts.trials[0].Entries[0].Request.Items[0]
+	assert.Equal(t, int64(1200), item.Amount, "the promotion is asked about the sticker")
+	assert.Equal(t, int64(1200), item.UnitAmount)
+	require.Len(t, report.Currencies, 1)
+	assert.Equal(t, int64(1200), report.Currencies[0].Subtotal)
+	assert.Equal(t, int64(1100), report.Currencies[0].TrialDiscountTotal,
+		"the line's discount is bounded by its sticker, not by the net the order keeps")
+}
+
 // TestATrialLeavesOutWhatItMustNotPrice verifies the three kinds of order the
 // sums do not include: a canceled one, one the promotion was already redeemed
 // on, and one the promotion would not apply to — each counted where the report

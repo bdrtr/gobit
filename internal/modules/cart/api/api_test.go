@@ -664,6 +664,22 @@ func TestUpdateCartPassesTheFieldsToTheService(t *testing.T) {
 	assert.Empty(t, *svc.updateInput.Email)
 }
 
+// TestACartSaysWhetherItsPricesIncludeTax verifies that the cart says whether
+// its totals were computed with prices that include their tax (ADR 0246): a
+// storefront showing a line's unit price beside its subtotal cannot tell a
+// sticker whose tax is inside from one whose tax was added without it.
+func TestACartSaysWhetherItsPricesIncludeTax(t *testing.T) {
+	svc := &fakeCarts{detail: models.CartDetail{
+		Cart: models.Cart{ID: "cart_1", RegionID: "reg_1", CurrencyCode: "TRY", PricesIncludeTax: true},
+	}}
+	h := newServer(t, svc)
+
+	rec := doRequest(t, h, http.MethodGet, "/store/v1/carts/cart_1", "")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, true, object(t, bodyMap(t, rec)["data"])["prices_include_tax"])
+}
+
 // TestGetCartReturnsItsChildren verifies that the cart detail returns the line
 // item, the address and the shipping method together.
 func TestGetCartReturnsItsChildren(t *testing.T) {

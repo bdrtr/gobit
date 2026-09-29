@@ -183,7 +183,7 @@ type taxResponseComponent struct {
 }
 
 // applyTaxes computes the tax of the lines, WRITES it onto the lines and returns
-// the SOURCE that was used.
+// the SOURCE that was used, with whether the market's prices included the tax.
 //
 // The discount must already have been computed: the tax base is the line's
 // subtotal MINUS the line's discount (see the package comment, "Tax contract").
@@ -225,14 +225,14 @@ func (w *Workflows) applyTaxes(
 	shippingTotal int64,
 	lines []LineTotals,
 	facts map[string]productFacts,
-) (string, error) {
+) (taxOutcome, error) {
 	if w.taxes == nil {
-		return TaxSourceRegion, w.applyRegionTax(ctx, snap, lines)
+		return taxOutcome{source: TaxSourceRegion}, w.applyRegionTax(ctx, snap, lines)
 	}
 
 	country, reason, err := w.countryForRegion(ctx, snap.RegionID)
 	if err != nil {
-		return "", err
+		return taxOutcome{}, err
 	}
 	if reason != "" {
 		w.log.WarnContext(ctx, "the cart's region did not resolve to a single country; the tax is being computed with the region rate",
@@ -241,9 +241,18 @@ func (w *Workflows) applyTaxes(
 			slog.String("reason", reason),
 			slog.String("tax_source", TaxSourceRegion),
 		)
-		return TaxSourceRegion, w.applyRegionTax(ctx, snap, lines)
+		return taxOutcome{source: TaxSourceRegion}, w.applyRegionTax(ctx, snap, lines)
 	}
 	return w.applyModuleTax(ctx, snap, country, shippingTotal, lines, facts)
+}
+
+// taxOutcome is what a round's tax step reports beside the amounts it wrote:
+// which authority the tax came from, and whether the market's prices included
+// it, which is what a line's subtotal is checked against (ADR 0246). The
+// region's flat rate is always added on top.
+type taxOutcome struct {
+	source           string
+	pricesIncludeTax bool
 }
 
 // applyRegionTax computes the tax with the region's flat rate (the Phase 5 path).
@@ -293,7 +302,7 @@ func (w *Workflows) applyModuleTax(
 	shippingTotal int64,
 	lines []LineTotals,
 	facts map[string]productFacts,
-) (string, error) {
+) (taxOutcome, error) {
 	// The PRODUCT of each line is resolved before the request is built. A cart
 	// line knows its variant and every tax rule is written about a product, so
 	// without this the module has nothing to match on and falls every line
@@ -310,7 +319,7 @@ func (w *Workflows) applyModuleTax(
 
 	productIDs, err := w.productIDsFor(ctx, variantIDs)
 	if err != nil {
-		return "", err
+		return taxOutcome{}, err
 	}
 
 	// The TYPE comes from the facts the round already read, keyed by VARIANT.
@@ -338,7 +347,7 @@ func (w *Workflows) applyModuleTax(
 		Shipping: taxRequestShipping{Amount: shippingTotal, Taxable: false},
 	})
 	if err != nil {
-		return "", errors.Wrap(err, errors.KindInternal, CodeTaxFailed,
+		return taxOutcome{}, errors.Wrap(err, errors.KindInternal, CodeTaxFailed,
 			"the tax request could not be converted to JSON: %s", snap.ID)
 	}
 
@@ -347,17 +356,17 @@ func (w *Workflows) applyModuleTax(
 		// The class is PRESERVED: an invalid country code must stay Invalid, a
 		// database outage must stay Unavailable; turning them all into Internal
 		// would make a fixable setup error look like a server fault.
-		return "", errors.Wrap(err, errors.KindOf(err), CodeTaxFailed,
+		return taxOutcome{}, errors.Wrap(err, errors.KindOf(err), CodeTaxFailed,
 			"the cart tax could not be computed: %s (%q, %d lines)", snap.ID, countryCode, len(lines))
 	}
 
 	var resp taxResponse
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return "", errors.Wrap(err, errors.KindInternal, CodeTaxInvalid,
+		return taxOutcome{}, errors.Wrap(err, errors.KindInternal, CodeTaxInvalid,
 			"the tax result could not be decoded: %s", snap.ID)
 	}
 	if err := applyTaxResponse(snap, lines, resp); err != nil {
-		return "", err
+		return taxOutcome{}, err
 	}
 
 	if !resp.RegionFound {
@@ -366,9 +375,9 @@ func (w *Workflows) applyModuleTax(
 			slog.String("country_code", countryCode),
 			slog.String("tax_source", TaxSourceTaxUnconfigured),
 		)
-		return TaxSourceTaxUnconfigured, nil
+		return taxOutcome{source: TaxSourceTaxUnconfigured, pricesIncludeTax: resp.PricesIncludeTax}, nil
 	}
-	return TaxSourceTax, nil
+	return taxOutcome{source: TaxSourceTax, pricesIncludeTax: resp.PricesIncludeTax}, nil
 }
 
 // applyTaxResponse VALIDATES the response and writes it onto the lines.

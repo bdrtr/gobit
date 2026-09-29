@@ -1,6 +1,7 @@
 package cart
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -152,4 +153,43 @@ func TestATaxInclusiveDiscountLeavesTheIdentityExact(t *testing.T) {
 		"a discounted tax-inclusive cart has to charge the discounted sticker")
 	assert.Equal(t, int64(16_900), totals.Subtotal, "base + discount")
 	assert.Equal(t, discount, totals.DiscountTotal, "the discount stays as it was entered")
+}
+
+// TestATaxInclusiveRoundTellsTheCartItsPricesIncludeTax verifies that a round
+// priced in a tax-inclusive market carries the flag into the body written to
+// the cart and the totals handed to the checkout (ADR 0246, D169).
+//
+// Without it the cart module held each line's subtotal to unit price x
+// quantity, which a subtotal net of an included tax never is, and refused every
+// such round. With it, each line's subtotal and tax make its sticker again:
+// 2 x 1000 holds 333 at 20% and 3 x 250 holds 125.
+func TestATaxInclusiveRoundTellsTheCartItsPricesIncludeTax(t *testing.T) {
+	h := newModuleHarness(t)
+	h.taxes.fn = func(req taxRequest) (taxResponse, error) {
+		resp := taxResponse{RegionFound: true, PricesIncludeTax: true, Shipping: taxResponseLine{ID: "_shipping"}}
+		for _, item := range req.Items {
+			tax := item.Amount * 2000 / (BpsScale + 2000)
+			resp.Items = append(resp.Items, taxResponseLine{
+				ID: item.ID, RateBps: 2000, TaxableAmount: item.Amount - tax, TaxAmount: tax,
+			})
+			resp.TaxTotal += tax
+		}
+		return resp, nil
+	}
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	assert.True(t, totals.PricesIncludeTax)
+	require.NotEmpty(t, h.carts.written)
+	assert.True(t, h.carts.written[len(h.carts.written)-1].PricesIncludeTax,
+		"the body written to the cart says its prices include their tax")
+	assert.Equal(t, int64(2_750), totals.Total, "the stickers are what is charged")
+	quantities := map[string]int64{testLineA: 2, testLineB: 3}
+	for _, line := range totals.Lines {
+		assert.Equal(t, line.UnitPrice*quantities[line.LineItemID], line.Subtotal+line.TaxTotal,
+			"line %s: the subtotal and the tax make the sticker", line.LineItemID)
+	}
+	assert.Equal(t, int64(458), totals.TaxTotal, "333 + 125")
 }

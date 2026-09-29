@@ -9,24 +9,25 @@ import (
 )
 
 type Cart struct {
-	ID             string
-	RegionID       string
-	CustomerID     *string
-	Email          *string
-	CurrencyCode   string
-	Subtotal       int64
-	DiscountTotal  int64
-	TaxTotal       int64
-	ShippingTotal  int64
-	Total          int64
-	Revision       int64
-	TotalsRevision int64
-	Metadata       []byte
-	CompletedAt    pgtype.Timestamptz
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
-	DeletedAt      pgtype.Timestamptz
-	AddsToOrderID  *string
+	ID               string
+	RegionID         string
+	CustomerID       *string
+	Email            *string
+	CurrencyCode     string
+	Subtotal         int64
+	DiscountTotal    int64
+	TaxTotal         int64
+	ShippingTotal    int64
+	Total            int64
+	Revision         int64
+	TotalsRevision   int64
+	Metadata         []byte
+	CompletedAt      pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	DeletedAt        pgtype.Timestamptz
+	AddsToOrderID    *string
+	PricesIncludeTax bool
 }
 
 type CartAddress struct {

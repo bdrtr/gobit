@@ -57,7 +57,8 @@ import (
 //     module declares and erases its own contact (ADR 0192).
 //   - The money, the quantities and the currency describe the basket. What
 //     somebody put in it and what it came to is a fact about the sale, and a
-//     line's title is a copy of the catalog's own words.
+//     line's title is a copy of the catalog's own words. Whether the prices
+//     included their tax is the market's, not the shopper's (ADR 0246).
 //   - cart_shipping_methods.name is the label of the delivery service the shop
 //     offers ("standard", "next day"): written about the service, not about the
 //     shopper. Its free-form data column is NOT exempt and is declared Open.
@@ -71,7 +72,7 @@ var notPersonalColumns = map[string][]string{
 	"carts": {
 		"id", "region_id", "currency_code", "adds_to_order_id",
 		"subtotal", "discount_total", "tax_total", "shipping_total", "total",
-		"revision", "totals_revision",
+		"prices_include_tax", "revision", "totals_revision",
 		"completed_at", "created_at", "updated_at", "deleted_at",
 	},
 	"cart_line_items": {

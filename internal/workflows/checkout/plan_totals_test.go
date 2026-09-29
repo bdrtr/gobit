@@ -116,3 +116,38 @@ func TestAPlanAtTheCeilingIsStillAccepted(t *testing.T) {
 		t.Fatalf("a cart discounted to exactly its subtotal was refused: %v", err)
 	}
 }
+
+// TestAnInclusivePlanIsHeldToItsStickerLessItsTax verifies the plan's subtotal
+// check where the prices include their tax (ADR 0246, D169): the line's
+// subtotal and its tax make the sticker. The same plan without the flag is
+// refused, and so is a line whose tax was counted on top of the sticker.
+func TestAnInclusivePlanIsHeldToItsStickerLessItsTax(t *testing.T) {
+	t.Parallel()
+
+	// A sticker of 1200 at 20% inside: 200 of tax, 1000 left.
+	inclusive := func(subtotal int64) *checkoutPlan {
+		plan := planWithin(subtotal, 0, 0)
+		plan.PricesIncludeTax = true
+		plan.Lines[0].UnitPrice = 1200
+		plan.Lines[0].TaxTotal = 200
+		plan.Lines[0].Total = plan.Lines[0].Subtotal + plan.Lines[0].TaxTotal
+		plan.TaxTotal = 200
+		plan.Amount = plan.Subtotal - plan.DiscountTotal + plan.TaxTotal + plan.ShippingTotal
+
+		return plan
+	}
+
+	if err := inclusive(1000).validate(); err != nil {
+		t.Fatalf("a line whose subtotal and tax make its sticker was refused: %v", err)
+	}
+
+	withoutFlag := inclusive(1000)
+	withoutFlag.PricesIncludeTax = false
+	if err := withoutFlag.validate(); err == nil {
+		t.Fatal("without the flag a subtotal of 1000 was accepted for a sticker of 1200")
+	}
+
+	if err := inclusive(1200).validate(); err == nil {
+		t.Fatal("a tax counted on top of a sticker that includes it was accepted")
+	}
+}

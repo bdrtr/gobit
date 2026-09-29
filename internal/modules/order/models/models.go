@@ -168,6 +168,11 @@ type Order struct {
 	// Total is the amount to be paid (minor unit):
 	// Subtotal - DiscountTotal + TaxTotal + ShippingTotal.
 	Total int64
+	// PricesIncludeTax says the order was sold in a market whose prices
+	// include their tax: each line's UnitPrice is the sticker and its Subtotal
+	// is what is left of UnitPrice x Quantity once its TaxTotal is taken out
+	// (ADR 0246).
+	PricesIncludeTax bool
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 	// PlacedAt is the moment the order was placed (UTC).

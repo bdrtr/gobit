@@ -1465,7 +1465,20 @@ func TestTheRollbackOfPropertiesRefusesToChooseALine(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	err = db.MigrateDown(ctx, dsn, src, cartmod.ModuleName, 3)
+	// The rollback has to reach ADR 0223's migration however many were written
+	// after it, so the steps are counted from the files rather than written down:
+	// a seventh migration left a written three short of it.
+	ups, err := fs.Glob(src, "*.up.sql")
+	require.NoError(t, err)
+	steps := 0
+	for _, name := range ups {
+		if name >= "000004_a_cart_line_carries_its_properties.up.sql" {
+			steps++
+		}
+	}
+	require.GreaterOrEqual(t, steps, 1, "the properties migration is not among the files")
+
+	err = db.MigrateDown(ctx, dsn, src, cartmod.ModuleName, steps)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "SQLSTATE P0001", "the down file's own refusal, raised by the server")
 	var properties bool

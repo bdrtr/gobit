@@ -177,6 +177,11 @@ type checkoutPlan struct {
 	TaxTotal int64 `json:"tax_total"`
 	// ShippingTotal is the total shipping amount.
 	ShippingTotal int64 `json:"shipping_total"`
+	// PricesIncludeTax says the round priced a market whose prices include
+	// their tax, so every line's Subtotal is its UnitPrice x Quantity less its
+	// TaxTotal (ADR 0246). A plan recorded before the field reads false, and
+	// no such plan held an inclusive line: the cart refused to write one.
+	PricesIncludeTax bool `json:"prices_include_tax,omitempty"`
 	// Lines are the lines that will enter the order and the reservation.
 	Lines []planLine `json:"lines"`
 	// Promotions are the promotions the cart's discount rests on, and what each
@@ -248,7 +253,8 @@ type planLine struct {
 	Quantity int64 `json:"quantity"`
 	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64 `json:"unit_price"`
-	// Subtotal is the subtotal of the line: UnitPrice x Quantity.
+	// Subtotal is the subtotal of the line: UnitPrice x Quantity, less
+	// TaxTotal where [checkoutPlan.PricesIncludeTax] is set.
 	Subtotal int64 `json:"subtotal"`
 	// DiscountTotal is the discount falling on the line; carried positive.
 	DiscountTotal int64 `json:"discount_total"`
@@ -423,6 +429,7 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		DiscountTotal:     totals.DiscountTotal,
 		TaxTotal:          totals.TaxTotal,
 		ShippingTotal:     totals.ShippingTotal,
+		PricesIncludeTax:  totals.PricesIncludeTax,
 		Lines:             lines,
 		Promotions:        planPromotionsOf(totals),
 		PaymentData:       in.PaymentData,
@@ -1091,11 +1098,20 @@ func (p *checkoutPlan) validate() error {
 				line.LineItemID, line.DiscountTotal, line.Subtotal)
 		}
 
+		// The shopper was quoted unit price x quantity; where the prices
+		// included their tax, the subtotal is what is left of that once the
+		// line's tax is taken out (ADR 0246).
 		expected, err := mulAmount(line.UnitPrice, line.Quantity)
 		if err != nil {
 			return err
 		}
-		if expected != line.Subtotal {
+		if p.PricesIncludeTax {
+			if expected != line.Subtotal+line.TaxTotal {
+				return errors.Internal(CodeAmountInvalid,
+					"the line subtotal and tax are not unit price x quantity, though the prices include their tax: %s (%d x %d ≠ %d + %d)",
+					line.LineItemID, line.UnitPrice, line.Quantity, line.Subtotal, line.TaxTotal)
+			}
+		} else if expected != line.Subtotal {
 			return errors.Internal(CodeAmountInvalid,
 				"the line subtotal is not unit price x quantity: %s (%d x %d ≠ %d)",
 				line.LineItemID, line.UnitPrice, line.Quantity, line.Subtotal)
@@ -1163,19 +1179,22 @@ func (p *checkoutPlan) validate() error {
 // check the match, and the match can only be proven with an integration test
 // (the accepted price of ADR 0006).
 type orderSnapshot struct {
-	CartID         string              `json:"cart_id"`
-	RegionID       string              `json:"region_id"`
-	CustomerID     string              `json:"customer_id"`
-	Email          string              `json:"email"`
-	CurrencyCode   string              `json:"currency_code"`
-	IdempotencyKey string              `json:"idempotency_key"`
-	AddsToOrderID  string              `json:"adds_to_order_id,omitempty"`
-	Subtotal       int64               `json:"subtotal"`
-	DiscountTotal  int64               `json:"discount_total"`
-	TaxTotal       int64               `json:"tax_total"`
-	ShippingTotal  int64               `json:"shipping_total"`
-	Total          int64               `json:"total"`
-	Items          []orderSnapshotItem `json:"items"`
+	CartID         string `json:"cart_id"`
+	RegionID       string `json:"region_id"`
+	CustomerID     string `json:"customer_id"`
+	Email          string `json:"email"`
+	CurrencyCode   string `json:"currency_code"`
+	IdempotencyKey string `json:"idempotency_key"`
+	AddsToOrderID  string `json:"adds_to_order_id,omitempty"`
+	Subtotal       int64  `json:"subtotal"`
+	DiscountTotal  int64  `json:"discount_total"`
+	TaxTotal       int64  `json:"tax_total"`
+	ShippingTotal  int64  `json:"shipping_total"`
+	Total          int64  `json:"total"`
+	// PricesIncludeTax lands with the order in the same change the order
+	// learns it, for TaxComponents' reason (ADR 0246).
+	PricesIncludeTax bool                `json:"prices_include_tax"`
+	Items            []orderSnapshotItem `json:"items"`
 	// The addresses the cart carried. They are omitted when there are none: a
 	// download has neither, and an order for one is not incomplete.
 	ShippingAddress *SnapshotAddress `json:"shipping_address,omitempty"`
@@ -1337,19 +1356,20 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 	}
 
 	payload, err := json.Marshal(orderSnapshot{
-		CartID:         p.CartID,
-		RegionID:       p.RegionID,
-		CustomerID:     p.CustomerID,
-		Email:          p.Email,
-		CurrencyCode:   p.CurrencyCode,
-		IdempotencyKey: idempotencyKey,
-		AddsToOrderID:  p.AddsToOrderID,
-		Subtotal:       p.Subtotal,
-		DiscountTotal:  p.DiscountTotal,
-		TaxTotal:       p.TaxTotal,
-		ShippingTotal:  p.ShippingTotal,
-		Total:          p.Amount,
-		Items:          items,
+		CartID:           p.CartID,
+		RegionID:         p.RegionID,
+		CustomerID:       p.CustomerID,
+		Email:            p.Email,
+		CurrencyCode:     p.CurrencyCode,
+		IdempotencyKey:   idempotencyKey,
+		AddsToOrderID:    p.AddsToOrderID,
+		Subtotal:         p.Subtotal,
+		DiscountTotal:    p.DiscountTotal,
+		TaxTotal:         p.TaxTotal,
+		ShippingTotal:    p.ShippingTotal,
+		Total:            p.Amount,
+		PricesIncludeTax: p.PricesIncludeTax,
+		Items:            items,
 		// The addresses travel WITH the order snapshot rather than being
 		// written afterwards: the order module puts them in the same
 		// transaction as the header and the lines, so an order cannot exist
