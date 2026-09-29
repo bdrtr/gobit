@@ -216,3 +216,75 @@ func newestMovement(
 
 	return movements[0]
 }
+
+// TestAWithdrawnReplacementGivesBackTheUnitsItHeld is D159's reproduction on
+// the production wiring (ADR 0237). A replacement names a line of the order and
+// a variant nothing stocks; its dispatch sets the line's units aside, is then
+// refused on the second line, and leaves the promise standing for a retry.
+// Withdrawing the replacement used to write the record alone, and the units
+// stayed held for ever; they now go back before the record is withdrawn.
+func TestAWithdrawnReplacementGivesBackTheUnitsItHeld(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, inventoryItemID := newStockedVariant(ctx, t, "E2E Withdrawn Product",
+		map[string]int64{taxedCurrency: happyUnitPrice}, happyInitialStock)
+	unstocked := newVariant(ctx, t, "E2E Nothing Stocks This", map[string]int64{taxedCurrency: happyUnitPrice})
+
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, happyQuantity)
+	placed, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     happyTotal,
+	})
+	require.NoError(t, err)
+	order, err := orderSvc.GetOrder(ctx, placed.OrderID)
+	require.NoError(t, err)
+	lineID := order.Items[0].ID
+	optionID := newShippingOption(ctx, t, newShippingProfile(ctx, t, "E2E Withdrawal Profile"),
+		"E2E Withdrawal Shipping", 0, false)
+
+	claimed, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+placed.OrderID+"/claims",
+		map[string]any{"type": "replace", "reason": "the wrong thing arrived"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, claimed.Code, claimed.Body.String())
+	var claim afterSalesRecordResponse
+	require.NoError(t, json.Unmarshal(claimed.Body.Bytes(), &claim))
+	base := "/admin/v1/orders/" + placed.OrderID + "/claims/" + claim.Data.ID + "/replacements"
+
+	recorded, err := adminRequestWithBody(http.MethodPost, base, map[string]any{
+		"shipping_option_id": optionID,
+		"location_id":        stockLocationID,
+		"lines": []map[string]any{
+			{"order_line_item_id": lineID, "quantity": replacedQuantity},
+			{"variant_id": unstocked, "quantity": 1},
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, recorded.Code, recorded.Body.String())
+	var replacement replacementResponseBody
+	require.NoError(t, json.Unmarshal(recorded.Body.Bytes(), &replacement))
+	before := sellableQuantity(ctx, t, inventoryItemID)
+
+	sent, err := adminRequestWithBody(http.MethodPost, base+"/"+replacement.Data.ID+"/dispatch", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusConflict, sent.Code, sent.Body.String())
+	assert.Contains(t, sent.Body.String(), "returns_workflow_no_inventory_item")
+	require.Equal(t, before-replacedQuantity, sellableQuantity(ctx, t, inventoryItemID),
+		"precondition: the first line's units are held under a promise the refused dispatch left")
+
+	withdrawn, err := adminRequestWithBody(http.MethodPost, base+"/"+replacement.Data.ID+"/cancel", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, withdrawn.Code, withdrawn.Body.String())
+	assert.Contains(t, withdrawn.Body.String(), `"status":"canceled"`)
+	assert.Equal(t, before, sellableQuantity(ctx, t, inventoryItemID),
+		"a withdrawn replacement holds nothing: the units it set aside are sellable again")
+
+	again, err := adminRequestWithBody(http.MethodPost, base+"/"+replacement.Data.ID+"/cancel", nil)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, again.Code, "a second withdrawal answers the first: %s", again.Body.String())
+	assert.Equal(t, before, sellableQuantity(ctx, t, inventoryItemID))
+}

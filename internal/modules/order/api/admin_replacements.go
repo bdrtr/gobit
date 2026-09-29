@@ -176,18 +176,35 @@ func (h *Handler) adminListExchangeReplacements(w http.ResponseWriter, r *http.R
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: out})
 }
 
-// adminCancelReplacement withdraws a request that has not been acted on.
+// adminCancelReplacement withdraws a request that has not left.
+//
+// It goes through the returns flow because a dispatch that stopped half way has
+// set units aside under the request's lines, and the record alone cannot give
+// them back (ADR 0237). Without the flow it fails closed, as a dispatch does:
+// withdrawing the record alone is what kept those units held (D159).
 func (h *Handler) adminCancelReplacement(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	id := chi.URLParam(r, paramReplacementID)
 
-	record, err := h.svc.CancelReplacement(ctx, chi.URLParam(r, paramReplacementID))
+	flow, err := h.returnReceiving()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+	if err := flow.WithdrawReplacement(ctx, id); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+	record, err := h.svc.GetReplacement(ctx, id)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 
 		return
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK,
-		singleEnvelope{Data: toReplacementSummaryDTO(record)})
+		singleEnvelope{Data: toReplacementSummaryDTO(record.Replacement)})
 }
 
 // toReplacementSummaryDTO converts a replacement without its lines.

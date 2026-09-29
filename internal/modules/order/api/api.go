@@ -258,6 +258,11 @@ type ReturnReceiving interface {
 	DispatchReplacement(ctx context.Context, replacementID string) (
 		fulfillmentID string, sentUnits int64, alreadySent bool, err error,
 	)
+
+	// WithdrawReplacement takes back a replacement that has not left and
+	// gives back the units its lines set aside (ADR 0237). The record alone
+	// cannot: the units belong to the inventory module.
+	WithdrawReplacement(ctx context.Context, replacementID string) error
 }
 
 // Handler is the HTTP handler set of the order module.

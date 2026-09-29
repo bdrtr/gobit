@@ -167,3 +167,4 @@ truth: a report says what was true on the day it was taken.
 | [A gift box of three — measured 2026-09-29](0234-a-gift-box-of-three.md) | 120 |
 | [Three boxes sold, one sent back — measured 2026-09-29](0235-three-boxes-sold-one-sent-back.md) | 122 |
 | [An operator fills a box — measured 2026-09-29](0236-an-operator-fills-a-box.md) | 71 |
+| [A promise nobody could name — measured 2026-09-29](0237-a-promise-nobody-could-name.md) | 49 |

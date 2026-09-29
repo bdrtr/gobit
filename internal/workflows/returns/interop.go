@@ -89,6 +89,14 @@ func (i *Interop) DispatchReplacement(
 	return out.FulfillmentID, out.SentUnits, out.AlreadySent, nil
 }
 
+// WithdrawReplacement takes back a replacement that has not left and gives
+// back the units it set aside (ADR 0237).
+func (i *Interop) WithdrawReplacement(ctx context.Context, replacementID string) error {
+	_, err := i.w.WithdrawReplacement(ctx, replacementID)
+
+	return err
+}
+
 // FundExchangeDifference records WHICH payment collection answers an exchange's
 // difference.
 //

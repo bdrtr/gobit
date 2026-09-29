@@ -12,6 +12,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A withdrawn replacement kept the units it had set aside** (D159, ADR 0237).
+  A dispatch refused on a later line left the earlier lines' units reserved,
+  and withdrawing the replacement released none of them. **For operators:**
+  `POST .../replacements/{replacementId}/cancel` now gives those units back
+  before it withdraws the record, and answers `409
+  returns_workflow_stock_not_released` when the units already left for a
+  parcel (dispatch again to finish it). Without the returns flow bound the
+  endpoint fails closed, as the dispatch does.
+
 - **The complexity table's copies had kept numbers ADR 0219 moved** (D158).
   The `DefaultMaxComplexity` godoc and `docs/api-surfaces.md` printed the
   calibration from before the attributes. **For contributors:** a copy of the

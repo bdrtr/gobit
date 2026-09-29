@@ -438,6 +438,17 @@ func (i *Interop) ReplacementDetailJSON(
 	return i.svc.ReplacementDetailJSON(ctx, replacementID)
 }
 
+// CancelReplacement withdraws a replacement that has not left (ADR 0237).
+//
+// It writes the record only. The units its lines set aside belong to the
+// inventory module, which this one cannot reach; the returns flow releases them
+// before it calls this, so a withdrawal leaves nothing held.
+func (i *Interop) CancelReplacement(ctx context.Context, replacementID string) error {
+	_, err := i.svc.CancelReplacement(ctx, replacementID)
+
+	return err
+}
+
 // RecordReplacementReservation writes the promise a replacement line's units
 // are held under.
 //

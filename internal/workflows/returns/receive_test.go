@@ -30,6 +30,10 @@ const (
 
 // stubOrders is the scriptable order surface.
 type stubOrders struct {
+	// canceled and cancelErr script CancelReplacement (ADR 0237).
+	canceled  []string
+	cancelErr error
+
 	detail    returnDetail
 	detailErr error
 	receiveFn func(ctx context.Context, returnID, locationID string) error
@@ -109,6 +113,13 @@ func (s *stubOrders) RecordReplacementReservation(
 	})
 
 	return s.reservationErr
+}
+
+// CancelReplacement records the withdrawal of the record (ADR 0237).
+func (s *stubOrders) CancelReplacement(_ context.Context, replacementID string) error {
+	s.canceled = append(s.canceled, replacementID)
+
+	return s.cancelErr
 }
 
 // MarkReplacementDispatched records the stamp and applies the scripted

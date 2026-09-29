@@ -1199,6 +1199,12 @@ func TestAnOrderWithNoPaymentIsNotTheSameAsNoOrder(t *testing.T) {
 
 // fakeReceiving is the return flow's stand-in.
 type fakeReceiving struct {
+	// withdrawCalls, gotWithdrawID and withdrawErr script WithdrawReplacement
+	// (ADR 0237).
+	withdrawCalls int
+	gotWithdrawID string
+	withdrawErr   error
+
 	lines    int
 	units    int64
 	warnings []string
@@ -1245,6 +1251,14 @@ func (f *fakeReceiving) DispatchReplacement(
 	}
 
 	return f.dispatchParcel, f.dispatchUnits, f.dispatchAlready, nil
+}
+
+// WithdrawReplacement records the call and returns the scripted outcome.
+func (f *fakeReceiving) WithdrawReplacement(_ context.Context, replacementID string) error {
+	f.withdrawCalls++
+	f.gotWithdrawID = replacementID
+
+	return f.withdrawErr
 }
 
 // SettleClaim records the call and returns the scripted outcome.
@@ -1595,20 +1609,27 @@ func TestAdminReplacementRoutesReadTheReplacementIdentifier(t *testing.T) {
 		"withdraw": {
 			method: http.MethodPost,
 			path:   "/admin/v1/orders/order_1/claims/clm_1/replacements/orepl_1/cancel",
-			call:   "CancelReplacement",
+			// The withdrawal is the flow's (ADR 0237); the module is only
+			// asked for the record it answers with.
+			call: "GetReplacement",
 		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			svc := &fakeOrders{replacement: sampleReplacement()}
-			r := newRouter(svc)
+			flow := &fakeReceiving{}
+			r := newRouterWithFlow(svc, flow)
 
 			rec := doRequest(t, r, tc.method, tc.path, "")
 
 			require.Equal(t, http.StatusOK, rec.Code)
 			assert.Equal(t, []string{tc.call}, svc.calls)
 			assert.Equal(t, "orepl_1", svc.gotReplacementID)
+			if name == "withdraw" {
+				assert.Equal(t, 1, flow.withdrawCalls, "the withdrawal goes through the flow")
+				assert.Equal(t, "orepl_1", flow.gotWithdrawID)
+			}
 
 			data, ok := decodeResponse(t, rec)["data"].(map[string]any)
 			require.True(t, ok)
@@ -1923,4 +1944,30 @@ func TestTheOperatorReadsWhereTheOrderWent(t *testing.T) {
 	require.True(t, ok)
 	assert.NotContains(t, data, "shipping_address", "the storefront read carries no address")
 	assert.NotContains(t, data, "billing_address")
+}
+
+// TestAdminWithdrawReplacementFailsClosedWithoutTheFlow holds ADR 0237's
+// wiring: without the returns flow the record is not withdrawn at all, since
+// withdrawing it alone is what left its units held (D159).
+func TestAdminWithdrawReplacementFailsClosedWithoutTheFlow(t *testing.T) {
+	svc := &fakeOrders{replacement: sampleReplacement()}
+	r := newRouterWithFlow(svc, nil)
+
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/claims/clm_1/replacements/orepl_1/cancel", "")
+
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Empty(t, svc.calls, "nothing is withdrawn without the flow")
+}
+
+// TestAdminWithdrawReplacementReportsTheFlowsRefusal passes a refusal on: units
+// that already left with a parcel are not withdrawn.
+func TestAdminWithdrawReplacementReportsTheFlowsRefusal(t *testing.T) {
+	svc := &fakeOrders{replacement: sampleReplacement()}
+	flow := &fakeReceiving{withdrawErr: errors.Conflict("returns_workflow_stock_not_released", "gone")}
+	r := newRouterWithFlow(svc, flow)
+
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/claims/clm_1/replacements/orepl_1/cancel", "")
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Empty(t, svc.calls)
 }

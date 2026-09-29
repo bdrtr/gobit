@@ -85,6 +85,9 @@ const (
 	CodeStockNotHeld = "returns_workflow_stock_not_held"
 	// CodeParcelNotOpened reports that no parcel could be opened for the goods.
 	CodeParcelNotOpened = "returns_workflow_parcel_not_opened"
+	// CodeStockNotReleased reports that the units a replacement set aside could
+	// not be given back, so it was not withdrawn (ADR 0237).
+	CodeStockNotReleased = "returns_workflow_stock_not_released"
 	// CodeStockNotTaken reports that the promised units could not be deducted.
 	CodeStockNotTaken = "returns_workflow_stock_not_taken"
 )
@@ -129,6 +132,9 @@ type Orders interface {
 	RecordReplacementReservation(ctx context.Context, replacementID, itemID, reservationID string) error
 	// MarkReplacementDispatched records that the goods left, in the parcel named.
 	MarkReplacementDispatched(ctx context.Context, replacementID, fulfillmentID string) error
+	// CancelReplacement withdraws a replacement that has not left; it writes the
+	// record only (ADR 0237).
+	CancelReplacement(ctx context.Context, replacementID string) error
 }
 
 // Payments is the surface of the payment module used by this flow.

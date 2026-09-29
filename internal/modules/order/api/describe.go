@@ -587,11 +587,14 @@ func describeClaims(d *openapi.Doc) {
 	d.Describe(http.MethodPost,
 		"/admin/v1/orders/{id}/claims/{claimId}/replacements/{replacementId}/cancel",
 		openapi.Operation{
-			Summary: "Withdraws a replacement that has not been acted on.",
-			Description: "A second call on an already withdrawn replacement succeeds and " +
-				"keeps the first moment. While a replacement is open the claim it belongs " +
-				"to cannot be withdrawn (409): the promise would otherwise outlive the " +
-				"record that made it.",
+			Summary: "Withdraws a replacement that has not left, and gives back the units it held.",
+			Description: "A dispatch that stopped half way leaves the units of its first lines " +
+				"set aside; withdrawing RELEASES them before the record is withdrawn. Units a " +
+				"dispatch already took out of the count for a parcel cannot go back, and the " +
+				"withdrawal is refused (409) — dispatch again to finish it. A second call on an " +
+				"already withdrawn replacement succeeds and keeps the first moment. While a " +
+				"replacement is open the claim it belongs to cannot be withdrawn (409): the " +
+				"promise would otherwise outlive the record that made it.",
 			Responses: map[string]any{
 				"200": openapi.Response("The withdrawn replacement", d.Item(replacementDTO{})),
 			},
@@ -778,9 +781,10 @@ func describeCreditLines(d *openapi.Doc) {
 	d.Describe(http.MethodPost,
 		"/admin/v1/orders/{id}/exchanges/{exchangeId}/replacements/{replacementId}/cancel",
 		openapi.Operation{
-			Summary: "Withdraws a replacement that has not been acted on.",
-			Description: "A second call succeeds and keeps the first moment, as on the " +
-				"claim's path.",
+			Summary: "Withdraws a replacement that has not left, and gives back the units it held.",
+			Description: "The units a stopped dispatch set aside are released first, and units " +
+				"already taken out for a parcel refuse the withdrawal (409), as on the claim's " +
+				"path. A second call succeeds and keeps the first moment.",
 			Responses: map[string]any{
 				"200": openapi.Response("The withdrawn replacement", d.Item(replacementDTO{})),
 			},

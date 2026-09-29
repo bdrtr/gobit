@@ -556,6 +556,17 @@ func (p *returnReceiving) DispatchReplacement(
 	return p.svc.DispatchReplacement(ctx, replacementID)
 }
 
+// WithdrawReplacement takes back a replacement that has not left and gives
+// back the units it set aside (ADR 0237).
+func (p *returnReceiving) WithdrawReplacement(ctx context.Context, replacementID string) error {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return p.err
+	}
+
+	return p.svc.WithdrawReplacement(ctx, replacementID)
+}
+
 // resolve looks the flow up in the container and remembers the outcome.
 func (p *returnReceiving) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.ReturnReceiving](p.c, returnFlowName)

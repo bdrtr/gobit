@@ -98,9 +98,9 @@ type DispatchResult struct {
 //
 // The confirm comes AFTER the parcel because it is the irreversible half: a
 // confirmed reservation cannot be released, while a promise that no parcel ever
-// carried is released by hand or expires with the record. Between "units held
-// for goods that never shipped" and "units gone with nothing carrying them",
-// the first is the one a person can fix.
+// carried is released by withdrawing the replacement ([Workflows.WithdrawReplacement],
+// ADR 0237). Between "units held for goods that never shipped" and "units gone
+// with nothing carrying them", the first is the one a person can fix.
 //
 // # The claim is settled last
 //
