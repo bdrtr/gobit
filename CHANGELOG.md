@@ -12,6 +12,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The defect ledger counted the files that cite it, and the count was five
+  times stale** (D167). **For contributors:** `docs/gaps.md` no longer states a
+  number nothing recomputes.
+
 - **A failed order confirmation could not be sent again** (D166, ADR 0243).
   The module said resending was an operator's decision and gave the operator no
   way to make it. **For operators:** `POST
