@@ -58,6 +58,9 @@ const (
 	// CodeNotReady reports that the service was constructed with a missing
 	// dependency.
 	CodeNotReady = "notification_service_not_ready"
+	// CodeNotResendable reports a resend of a delivery this module cannot
+	// rebuild, or of one that did not fail (ADR 0243).
+	CodeNotResendable = "notification_not_resendable"
 )
 
 // Pagination bounds (plan Section 8: limit/offset).
@@ -88,6 +91,9 @@ type Store interface {
 		status models.DeliveryStatus,
 		failure string,
 	) (models.Delivery, error)
+	// ReopenFailedDelivery takes a failed record back to pending for a resend,
+	// naming the provider; the second return value is whether it was failed.
+	ReopenFailedDelivery(ctx context.Context, id, providerID string) (models.Delivery, bool, error)
 	// GetDelivery returns the record by its identifier; NotFound when absent.
 	GetDelivery(ctx context.Context, id string) (models.Delivery, error)
 	// ListDeliveries filters and pages the records; the second value is the

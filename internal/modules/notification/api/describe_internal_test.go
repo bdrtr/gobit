@@ -128,12 +128,14 @@ func TestDescribeDoesNotDescribeARecipientAddressInTheBody(t *testing.T) {
 	assert.Contains(t, text, `"reference"`, "the field that binds the record to the order must be described")
 }
 
-// TestTheRouteMethodIsREADONLY verifies that the module opens no write
-// endpoint.
+// TestTheOnlyWriteIsAResendOfARecord verifies that the module opens no
+// "send a notification" endpoint.
 //
-// A "send a notification" endpoint would make the same job doable over a second
-// path and would make the idempotency key selectable from outside.
-func TestTheRouteMethodIsREADONLY(t *testing.T) {
+// Such an endpoint would make the same job doable over a second path and would
+// make the idempotency key selectable from outside. The one write is the resend
+// of a failed record (ADR 0243): it takes the record's id from the path and no
+// body, and rebuilds the message from the record under the record's own key.
+func TestTheOnlyWriteIsAResendOfARecord(t *testing.T) {
 	r := chi.NewRouter()
 	New(nil).Routes(r)
 
@@ -145,5 +147,8 @@ func TestTheRouteMethodIsREADONLY(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, map[string]bool{http.MethodGet + " " + pathAdminDeliveries: true}, methods)
+	assert.Equal(t, map[string]bool{
+		http.MethodGet + " " + pathAdminDeliveries: true,
+		http.MethodPost + " " + pathAdminResend:    true,
+	}, methods)
 }

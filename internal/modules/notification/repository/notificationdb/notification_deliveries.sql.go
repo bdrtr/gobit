@@ -201,3 +201,39 @@ func (q *Queries) ListNotificationDeliveries(ctx context.Context, arg ListNotifi
 	}
 	return items, nil
 }
+
+const reopenFailedNotificationDelivery = `-- name: ReopenFailedNotificationDelivery :one
+UPDATE notification_deliveries
+SET status      = 'pending',
+    error       = '',
+    provider_id = $2,
+    updated_at  = now()
+WHERE id = $1 AND status = 'failed'
+RETURNING id, template, channel, reference, provider_id, status, error, created_at, updated_at
+`
+
+type ReopenFailedNotificationDeliveryParams struct {
+	ID         string
+	ProviderID string
+}
+
+// ReopenFailedNotificationDelivery takes a FAILED record back to 'pending' for
+// an operator's resend (ADR 0243), naming the provider it will be sent through.
+// A record in any other status returns no row: a sent one is not sent twice by
+// this path, and two resends of one failure cannot both reopen it.
+func (q *Queries) ReopenFailedNotificationDelivery(ctx context.Context, arg ReopenFailedNotificationDeliveryParams) (NotificationDelivery, error) {
+	row := q.db.QueryRow(ctx, reopenFailedNotificationDelivery, arg.ID, arg.ProviderID)
+	var i NotificationDelivery
+	err := row.Scan(
+		&i.ID,
+		&i.Template,
+		&i.Channel,
+		&i.Reference,
+		&i.ProviderID,
+		&i.Status,
+		&i.Error,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

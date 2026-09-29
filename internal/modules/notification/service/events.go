@@ -104,21 +104,32 @@ func (s *Service) OrderPlaced(ctx context.Context, e eventbus.Event) error {
 		return err
 	}
 
+	in, err := s.orderConfirmation(ctx, orderID)
+	if err != nil {
+		return err
+	}
+
+	return s.Notify(ctx, in)
+}
+
+// orderConfirmation builds an order's confirmation from the order record, the
+// same way for the event and for an operator's resend (ADR 0243).
+func (s *Service) orderConfirmation(ctx context.Context, orderID string) (NotifyInput, error) {
 	raw, err := s.contacts.OrderContactJSON(ctx, orderID)
 	if err != nil {
 		// The KIND is PRESERVED: when the order cannot be found NotFound comes,
 		// when the surface is absent Unavailable comes, and the two are
 		// different faults.
-		return errors.Wrap(err, errors.KindOf(err), CodeContactUnavailable,
-			"the order contact information for the %q event could not be read: %s", e.Name, orderID)
+		return NotifyInput{}, errors.Wrap(err, errors.KindOf(err), CodeContactUnavailable,
+			"the order contact information could not be read: %s", orderID)
 	}
 
 	contact, err := decodeContact(raw, orderID)
 	if err != nil {
-		return err
+		return NotifyInput{}, err
 	}
 
-	return s.Notify(ctx, NotifyInput{
+	return NotifyInput{
 		Template:  TemplateOrderPlaced,
 		Channel:   coreprovider.ChannelEmail,
 		Reference: orderID,
@@ -130,7 +141,7 @@ func (s *Service) OrderPlaced(ctx context.Context, e eventbus.Event) error {
 			dataKeyTotal:        contact.Total,
 			dataKeyItemCount:    contact.ItemCount,
 		},
-	})
+	}, nil
 }
 
 // eventOrderID reads the order identifier from the event payload.

@@ -12,6 +12,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A failed order confirmation could not be sent again** (D166, ADR 0243).
+  The module said resending was an operator's decision and gave the operator no
+  way to make it. **For operators:** `POST
+  /admin/v1/notifications/{id}/resend` (scope `notification:write`) sends a
+  failed order confirmation again, rebuilt from the order; a sent one, or
+  another template, answers 409 `notification_not_resendable`. The log line of
+  a skipped repeat now says the notification was attempted before rather than
+  that it was sent.
+
 - **A price or an invoice written after a wait was dated before the write it
   waited for** (D165, ADR 0242). **For operators:** of two price replacements
   made at once, the price history's latest entry is now the price the set

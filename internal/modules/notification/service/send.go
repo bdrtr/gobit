@@ -150,11 +150,25 @@ func (s *Service) Notify(ctx context.Context, in NotifyInput) error {
 		return err
 	}
 	if !isNew {
-		s.log.InfoContext(ctx, "the notification has already been sent; skipped",
+		// The record may be sent, skipped, failed or still pending: any of them
+		// is an earlier attempt, and a failed one is sent again only by an
+		// operator (ADR 0243). The bus's second call after a failure lands here.
+		s.log.InfoContext(ctx, "the notification was attempted before; skipped",
 			"template", in.Template, "reference", in.Reference)
 		return nil
 	}
 
+	return s.deliver(ctx, record, provider, in)
+}
+
+// deliver sends a claimed record's notification and writes the outcome: the
+// half of [Service.Notify] after the claim, shared with [Service.ResendDelivery].
+func (s *Service) deliver(
+	ctx context.Context,
+	record models.Delivery,
+	provider coreprovider.NotificationProvider,
+	in NotifyInput,
+) error {
 	if in.To == "" {
 		s.finish(ctx, record, models.DeliverySkipped, messageNoAddress)
 		s.log.InfoContext(ctx, "the notification was skipped: there is no address",
@@ -183,6 +197,67 @@ func (s *Service) Notify(ctx context.Context, in NotifyInput) error {
 		"reference", in.Reference,
 		"provider_id", provider.ID())
 	return nil
+}
+
+// ResendDelivery sends a FAILED order confirmation again, on an operator's
+// decision (ADR 0243).
+//
+// # Why an operator, and why only this template
+//
+// A provider's error does not say the message did not go out (see [Service.Notify]),
+// so a failure is not sent again by itself: that would be a second e-mail for
+// every timeout the provider did process. This module said the resend was a
+// person's decision and gave the person no way to make it. It rebuilds the
+// message from the record, as the event does, which it can do for the order
+// confirmation it sends itself; the other templates are sent through its
+// interop by the modules that hold their content — an invitation, a gift card's
+// code, a stock alert — and are resent by them.
+//
+// The record is reopened only while it is failed, so a sent one is not sent
+// again here and two operators pressing at once send it once.
+func (s *Service) ResendDelivery(ctx context.Context, deliveryID string) (models.Delivery, error) {
+	record, err := s.store.GetDelivery(ctx, deliveryID)
+	if err != nil {
+		return models.Delivery{}, err
+	}
+	if record.Template != TemplateOrderPlaced {
+		return models.Delivery{}, errors.Conflict(CodeNotResendable,
+			"delivery %s is a %q notification, which the module that sent it resends", deliveryID, record.Template)
+	}
+	if record.Status != models.DeliveryFailed {
+		return models.Delivery{}, errors.Conflict(CodeNotResendable,
+			"delivery %s is %s; only a failed one is sent again", deliveryID, record.Status)
+	}
+
+	in, err := s.orderConfirmation(ctx, record.Reference)
+	if err != nil {
+		return models.Delivery{}, err
+	}
+	in, err = in.normalize()
+	if err != nil {
+		return models.Delivery{}, err
+	}
+	provider, err := s.providers.Get(s.providerID)
+	if err != nil {
+		return models.Delivery{}, err
+	}
+
+	reopened, ok, err := s.store.ReopenFailedDelivery(ctx, deliveryID, provider.ID())
+	if err != nil {
+		return models.Delivery{}, err
+	}
+	if !ok {
+		return models.Delivery{}, errors.Conflict(CodeNotResendable,
+			"delivery %s is no longer failed; another resend reached it first", deliveryID)
+	}
+
+	sendErr := s.deliver(ctx, reopened, provider, in)
+	after, err := s.store.GetDelivery(ctx, deliveryID)
+	if err != nil {
+		return models.Delivery{}, err
+	}
+
+	return after, sendErr
 }
 
 // send calls the provider with a TIME-BOUNDED context.

@@ -307,6 +307,34 @@ func TestAProviderErrorWritesFAILEDIntoTheLog(t *testing.T) {
 	assert.Len(t, failed, 1)
 }
 
+// TestTwoResendsOfOneFailureReopenItOnce is ADR 0243's guard on the real
+// table: a failed record is reopened by one resend and not by the second, and
+// a record that is not failed is not reopened at all.
+func TestTwoResendsOfOneFailureReopenItOnce(t *testing.T) {
+	prov := &fakeProvider{err: coreerrors.Unavailable("smtp_down", "the provider could not be reached")}
+	svc := newService(t, prov, &fakeOrders{})
+	ctx := context.Background()
+	reference := uniqueReference(t)
+	require.Error(t, svc.Notify(ctx, service.NotifyInput{
+		Template: testTemplate, Channel: coreprovider.ChannelEmail, Reference: reference, To: testEmail,
+	}))
+	records, _, err := svc.ListDeliveries(ctx, service.ListDeliveriesInput{Reference: &reference})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	repo := repository.New(testPool.Pool())
+
+	first, reopened, err := repo.ReopenFailedDelivery(ctx, records[0].ID, "other_provider")
+	require.NoError(t, err)
+	require.True(t, reopened)
+	assert.Equal(t, models.DeliveryPending, first.Status)
+	assert.Empty(t, first.Error)
+	assert.Equal(t, "other_provider", first.ProviderID, "the resend names the provider it goes through")
+
+	_, reopened, err = repo.ReopenFailedDelivery(ctx, records[0].ID, "other_provider")
+	require.NoError(t, err)
+	assert.False(t, reopened, "a record already reopened is not reopened by a second resend")
+}
+
 // TestTheLogCarriesNORecipientAddressCOLUMN verifies at the SCHEMA level that
 // the record carries no personal data.
 //

@@ -38,6 +38,9 @@ type fakeStore struct {
 	finishErr error
 	// listErr, when set, makes ListDeliveries return this error.
 	listErr error
+	// reopenLost, when set, makes ReopenFailedDelivery find the record no
+	// longer failed: another resend reached it between the read and the reopen.
+	reopenLost bool
 }
 
 // newFakeStore produces an empty fake store.
@@ -102,6 +105,25 @@ func (s *fakeStore) FinishDelivery(
 	s.records[id] = record
 
 	return record, nil
+}
+
+// ReopenFailedDelivery takes a failed record back to pending, as the query's
+// WHERE does; any other status is a false.
+func (s *fakeStore) ReopenFailedDelivery(_ context.Context, id, providerID string) (models.Delivery, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	record, ok := s.records[id]
+	if !ok || record.Status != models.DeliveryFailed || s.reopenLost {
+		return models.Delivery{}, false, nil
+	}
+	record.Status = models.DeliveryPending
+	record.Error = ""
+	record.ProviderID = providerID
+	record.UpdatedAt = time.Now().UTC()
+	s.records[id] = record
+
+	return record, true, nil
 }
 
 func (s *fakeStore) GetDelivery(_ context.Context, id string) (models.Delivery, error) {

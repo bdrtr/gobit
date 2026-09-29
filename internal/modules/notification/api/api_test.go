@@ -34,6 +34,18 @@ type fakeDeliveries struct {
 	// lastInput is the input of the last call; it is what proves that the query
 	// parameters reach the service UNCORRUPTED.
 	lastInput service.ListDeliveriesInput
+
+	// resent is the record a resend answers with, resendErr its error, and
+	// resentID the identifier it was asked for (ADR 0243).
+	resent    models.Delivery
+	resendErr error
+	resentID  string
+}
+
+func (f *fakeDeliveries) ResendDelivery(_ context.Context, deliveryID string) (models.Delivery, error) {
+	f.resentID = deliveryID
+
+	return f.resent, f.resendErr
 }
 
 func (f *fakeDeliveries) ListDeliveries(
@@ -231,4 +243,56 @@ func TestReadScopeIsEnough(t *testing.T) {
 	rec := doRequestAs(t, newRouter(&fakeDeliveries{}), "/admin/v1/notifications", narrow)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// postAs sends a POST with the stated identity.
+func postAs(t *testing.T, r chi.Router, path string, principal corehttp.Principal) *httptest.ResponseRecorder {
+	t.Helper()
+
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(""))
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), principal))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	return rec
+}
+
+// TestAResendAnswersWithTheRecord is ADR 0243's endpoint: the delivery comes
+// from the path and the answer is the record the attempt left.
+func TestAResendAnswersWithTheRecord(t *testing.T) {
+	svc := &fakeDeliveries{resent: models.Delivery{
+		ID: "ndel_1", Template: "order.placed", Channel: "email", Reference: "order_1",
+		ProviderID: "log", Status: models.DeliverySent,
+	}}
+
+	rec := postAs(t, newRouter(svc), "/admin/v1/notifications/ndel_1/resend", adminPrincipal())
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "ndel_1", svc.resentID)
+	assert.Contains(t, rec.Body.String(), `"status":"sent"`)
+}
+
+// TestAResendNeedsTheWriteScope keeps a reader of the log from sending mail.
+func TestAResendNeedsTheWriteScope(t *testing.T) {
+	svc := &fakeDeliveries{}
+	reader := corehttp.Principal{ID: "user_reader", Kind: "user", Scopes: []string{api.ScopeRead}}
+
+	rec := postAs(t, newRouter(svc), "/admin/v1/notifications/ndel_1/resend", reader)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Empty(t, svc.resentID, "nothing was sent")
+
+	writer := corehttp.Principal{ID: "user_writer", Kind: "user", Scopes: []string{api.ScopeWrite}}
+	rec = postAs(t, newRouter(svc), "/admin/v1/notifications/ndel_1/resend", writer)
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+// TestARefusedResendIsAConflict carries the service's refusal to the caller.
+func TestARefusedResendIsAConflict(t *testing.T) {
+	svc := &fakeDeliveries{resendErr: errors.Conflict(service.CodeNotResendable, "only a failed one is sent again")}
+
+	rec := postAs(t, newRouter(svc), "/admin/v1/notifications/ndel_1/resend", adminPrincipal())
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), service.CodeNotResendable)
 }

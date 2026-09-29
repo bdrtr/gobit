@@ -173,3 +173,4 @@ truth: a report says what was true on the day it was taken.
 | [Thirteen handlers and one try — measured 2026-09-29](0240-thirteen-handlers-and-one-try.md) | 75 |
 | [The change that waited — measured 2026-09-29](0241-the-change-that-waited.md) | 72 |
 | [A price that came back — measured 2026-09-29](0242-a-price-that-came-back.md) | 58 |
+| [The mail nobody could send — measured 2026-09-29](0243-the-mail-nobody-could-send.md) | 58 |

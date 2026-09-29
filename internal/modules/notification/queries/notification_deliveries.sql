@@ -35,6 +35,19 @@ SET status     = $2,
 WHERE id = $1
 RETURNING *;
 
+-- ReopenFailedNotificationDelivery takes a FAILED record back to 'pending' for
+-- an operator's resend (ADR 0243), naming the provider it will be sent through.
+-- A record in any other status returns no row: a sent one is not sent twice by
+-- this path, and two resends of one failure cannot both reopen it.
+-- name: ReopenFailedNotificationDelivery :one
+UPDATE notification_deliveries
+SET status      = 'pending',
+    error       = '',
+    provider_id = $2,
+    updated_at  = now()
+WHERE id = $1 AND status = 'failed'
+RETURNING *;
+
 -- name: GetNotificationDelivery :one
 SELECT * FROM notification_deliveries
 WHERE id = $1;

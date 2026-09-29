@@ -19,10 +19,10 @@
 //
 // # Authorization
 //
-// The single endpoint requires [ScopeRead]. A write scope IS NOT DEFINED:
-// there is no endpoint it could be given to, and defining it already would
-// mean putting a scope nobody can see the counterpart of into the scope
-// dictionary.
+// The listing requires [ScopeRead] and the resend [ScopeWrite] (ADR 0243). The
+// write scope arrived with the one endpoint it could be given to; before it,
+// defining it would have put a scope nobody could see the counterpart of into
+// the scope dictionary.
 //
 // The scope check comes AFTER THE IDENTITY: with no identity it returns 401,
 // with an identity whose scope is not enough it returns 403.
@@ -50,6 +50,9 @@ import (
 // and would collide with the other modules that use the same prefix.
 const pathAdminDeliveries = "/admin/v1/notifications"
 
+// pathAdminResend sends a failed order confirmation again (ADR 0243).
+const pathAdminResend = "/admin/v1/notifications/{id}/resend"
+
 // codeInvalidQuery is the error code returned when a query parameter could not
 // be parsed.
 const codeInvalidQuery = "notification_invalid_query"
@@ -62,14 +65,14 @@ const (
 	queryOffset    = "offset"
 )
 
-// The scope dictionary consists of a SINGLE ENTRY; there is no write scope (see
-// the package documentation).
-
 // ScopeRead is the scope for reading the delivery log.
 //
 // corehttp.ScopeAdmin is a SUPERIOR SCOPE and satisfies this one too; it does
 // not need to be listed as well, corehttp.Principal.HasScope already does that.
 const ScopeRead = "notification:read"
+
+// ScopeWrite is the scope for sending a failed notification again (ADR 0243).
+const ScopeWrite = "notification:write"
 
 // Deliveries is the NARROW surface the handler asks of the service.
 //
@@ -80,6 +83,7 @@ const ScopeRead = "notification:read"
 // database.
 type Deliveries interface {
 	ListDeliveries(ctx context.Context, in service.ListDeliveriesInput) ([]models.Delivery, int64, error)
+	ResendDelivery(ctx context.Context, deliveryID string) (models.Delivery, error)
 }
 
 // Handler holds notification's HTTP handlers.
@@ -100,6 +104,27 @@ func New(svc Deliveries) *Handler { return &Handler{svc: svc} }
 // that is, it is the timeline of the order flow.
 func (h *Handler) Routes(r chi.Router) {
 	r.With(corehttp.RequireScope(ScopeRead)).Get(pathAdminDeliveries, h.listDeliveries)
+	r.With(corehttp.RequireScope(ScopeWrite)).Post(pathAdminResend, h.resendDelivery)
+}
+
+// resendDelivery is the POST /admin/v1/notifications/{id}/resend handler: it
+// sends a failed order confirmation again and answers with the record as it
+// stands, or with the error the provider gave, which the record now carries.
+func (h *Handler) resendDelivery(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	record, err := h.svc.ResendDelivery(ctx, chi.URLParam(r, "id"))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toDeliveryDTO(record)})
+}
+
+// singleEnvelope is the envelope of a single record.
+type singleEnvelope struct {
+	Data deliveryDTO `json:"data"`
 }
 
 // listDeliveries is the GET /admin/v1/notifications handler.

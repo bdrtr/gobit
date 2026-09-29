@@ -19,7 +19,7 @@ const (
 	typeInteger = "integer"
 )
 
-// Describe records notification's endpoint into the OpenAPI document.
+// Describe records notification's endpoints into the OpenAPI document.
 //
 // # Why in this package
 //
@@ -54,6 +54,19 @@ func Describe(d *openapi.Doc) {
 		},
 		Responses: map[string]any{
 			"200": openapi.Response("The delivery log records", d.List(deliveryDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPost, pathAdminResend, openapi.Operation{
+		Summary: "Sends a failed order confirmation again.",
+		Description: "A provider's error does not say the message did not go out, so a " +
+			"failed delivery is not retried by itself; this is the operator's decision " +
+			"to send it again (ADR 0243). The message is rebuilt from the order. Only a " +
+			"FAILED order confirmation is sent again: another status, or another " +
+			"template, whose content the module that sent it holds, is refused with " +
+			"409. The answer is the record as it stands after the attempt.",
+		Responses: map[string]any{
+			"200": openapi.Response("The delivery record after the attempt", d.Item(deliveryDTO{})),
 		},
 	})
 }
