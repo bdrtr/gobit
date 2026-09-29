@@ -10,14 +10,12 @@ import (
 
 // This file holds the three subscribers.
 //
-// # The error policy: an error IS returned, and it is NOT a retry request
+// # The error policy: an error IS returned, and the bus tries twice more
 //
-// The bus's contract is explicit: a handler that returns an error has its error
-// LOGGED and the event counts as processed — no backend redelivers it. So the
-// sentence "returning the error makes the bus try again" is false in this
-// framework. The error is returned anyway, because swallowing it is the only
-// option with a real cost: a funnel falling behind the shop would otherwise be
-// visible nowhere.
+// The bus calls a handler that returns an error twice more within a second and
+// a quarter, and then logs the error and counts the event as processed
+// (ADR 0240). Returning the error asks for those calls, and it is what makes a
+// funnel falling behind the shop visible anywhere.
 //
 // There is no retry inside the handler either. A handler that waits while the
 // database is unreachable blocks the single consumer loop on the Redis backend

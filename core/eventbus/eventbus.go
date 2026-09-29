@@ -46,12 +46,21 @@
 //
 // If a handler panics, the panic is recovered, logged with a stack trace and
 // the bus stays up; the other handlers are unaffected. If a handler returns an
-// error, the error is logged and the event counts as processed — NO backend
-// retries automatically. This is a deliberate decision: without a dead letter
-// queue, redelivery lets a broken event (a poison pill) lock the consumer in
-// an endless loop. Work needing retries and compensation belongs to
-// internal/core/workflow's saga engine (plan Phase 3); a handler is of course free to
-// retry inside itself.
+// error, THAT handler is called again, twice at most, a quarter of a second and
+// then a second later, in both backends (ADR 0240); an error of
+// errors.KindInvalid is not tried again, since the event itself cannot succeed.
+// The last error is logged and the event counts as processed. A handler
+// therefore returns an error for a fault that may pass and nil for one that
+// never will.
+//
+// The bound is the decision. Until ADR 0240 a returned error was only logged,
+// for fear that redelivery would let a broken event (a poison pill) lock the
+// consumer in an endless loop; handlers said "the bus tries again" and it did
+// not, and a transient fault lost what they were for (D163). Three calls in a
+// second and a quarter cover a dropped connection or a lock that timed out; an
+// outage is not waited out, there is still no dead letter for a handler, and
+// work that must survive one belongs to internal/core/workflow's saga engine
+// or to a sweep that derives the effect again.
 //
 // There is exactly one reason a message is delivered twice, and a handler's
 // outcome is not it: the consumer that read it stopped without ACKing, which in
@@ -162,7 +171,8 @@ type Event struct {
 // correlation that works in both backends see "Context and observability" in
 // the package comment.
 //
-// The returned error never reaches the caller, it is only logged.
+// The returned error never reaches the caller: the bus calls the handler again,
+// twice at most, and then logs it (ADR 0240).
 type Handler func(ctx context.Context, e Event) error
 
 // EventBus is the event publication and subscription contract.
@@ -281,11 +291,54 @@ func deliverable(e Event) Event {
 	return e
 }
 
-// invokeHandler calls the handler in a panic- and error-safe way.
+// handlerRetryDelays are the waits between a failing handler's attempts: a
+// handler is called at most once more than there are delays (ADR 0240).
 //
-// A panic is recovered and logged with a stack trace, an error is only logged;
-// neither stops the bus nor leads to a retry (see the package comment).
+// They are short on purpose. The Redis backend runs a stream's messages one
+// after another in one loop, so a handler's retries hold the messages behind
+// it; a second and a quarter covers a dropped connection, a lock that timed
+// out and a module that was restarting, and a longer outage is not waited out
+// here.
+var handlerRetryDelays = []time.Duration{250 * time.Millisecond, time.Second}
+
+// invokeHandler calls the handler in a panic- and error-safe way, and calls it
+// again when it returns an error that may pass (ADR 0240).
+//
+// A handler returns an error for a fault that may pass and nil for one that
+// never will, which is what its callers have been told; the bus now acts on
+// that. An error of [errors.KindInvalid] is not tried again, since the event
+// itself cannot succeed, and neither is a panic, which is a bug rather than a
+// fault. The last error is logged with the number of attempts; nothing else
+// keeps it.
 func invokeHandler(ctx context.Context, log *slog.Logger, e Event, h Handler) {
+	for attempt := 1; ; attempt++ {
+		panicked, err := callHandler(ctx, log, e, h)
+		if err == nil || panicked {
+			return
+		}
+		if errors.KindOf(err) == errors.KindInvalid || attempt > len(handlerRetryDelays) {
+			log.ErrorContext(ctx, "the event handler returned an error",
+				attrEvent, e.Name,
+				attrEventID, e.ID,
+				attrError, err,
+				"attempts", attempt,
+			)
+
+			return
+		}
+		log.WarnContext(ctx, "the event handler returned an error and is called again",
+			attrEvent, e.Name,
+			attrEventID, e.ID,
+			attrError, err,
+			"attempt", attempt,
+		)
+		time.Sleep(handlerRetryDelays[attempt-1])
+	}
+}
+
+// callHandler calls the handler once with its own copy of the event, and
+// recovers a panic, which it logs with a stack trace.
+func callHandler(ctx context.Context, log *slog.Logger, e Event, h Handler) (panicked bool, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.ErrorContext(ctx, "the event handler panicked",
@@ -294,16 +347,11 @@ func invokeHandler(ctx context.Context, log *slog.Logger, e Event, h Handler) {
 				"panic", r,
 				"stack", string(debug.Stack()),
 			)
+			panicked = true
 		}
 	}()
 
-	if err := h(ctx, deliverable(e)); err != nil {
-		log.ErrorContext(ctx, "the event handler returned an error",
-			attrEvent, e.Name,
-			attrEventID, e.ID,
-			attrError, err,
-		)
-	}
+	return false, h(ctx, deliverable(e))
 }
 
 // awaitHandlers waits for the running handlers to finish, bounded by ctx.

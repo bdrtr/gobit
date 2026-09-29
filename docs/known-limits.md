@@ -681,9 +681,10 @@ past and is not corrected retroactively.
 
 - **A missed cart event leaves the funnel one short, forever.** Since
   [ADR 0153](adr/0153-a-shop-can-see-where-its-carts-go.md) the cart publishes
-  what happened to it and `plugins/analytics` counts it, but the bus does not
-  redeliver on a handler error and there is no repair path: the outbox relay
-  covers the ordinary loss and nothing covers the rest. A reconciliation job that
+  what happened to it and `plugins/analytics` counts it, but the bus calls a
+  failing handler only twice more, within a second and a quarter (ADR 0240),
+  and there is no repair path: the outbox relay covers the ordinary loss and
+  nothing covers a longer outage. A reconciliation job that
   re-derived the counts from the modules' own tables was refused — it would be a
   second history of the same facts, over rows a shop is allowed to delete.
 

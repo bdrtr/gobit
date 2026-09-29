@@ -11,20 +11,18 @@ import (
 
 // This file holds the subscribers that keep the index FRESH.
 //
-// # The error policy: an error IS returned, but it is NOT a "retry" request
+// # The error policy: an error IS returned, and the bus tries twice more
 //
-// The [eventbus.EventBus] contract is explicit: if a handler returns an error,
-// the error is logged and the event COUNTS AS PROCESSED; no backend redelivers
-// it. The Redis backend ACKs the message INDEPENDENTLY of the handler's result
-// (see the deferred ack inside redisBus.dispatch). So the sentence "if I return
-// the error the bus will try again" is FALSE in this framework, and a handler
-// relying on it would miss a missed event forever.
+// The [eventbus.EventBus] contract: a handler that returns an error is called
+// again, twice at most within a second and a quarter, and then its error is
+// logged and the event COUNTS AS PROCESSED (ADR 0240). A catalog read lost to a
+// dropped connection is read again; a fault that outlasts the retries leaves the
+// index behind the record.
 //
-// Why return an error at all, then? Because SWALLOWING it (returning nil) is the
-// only option with a real cost: the bus logs a handler that returns an error at
-// ERROR level together with the event name, the event id and the error chain.
-// Had we returned nil, the index falling behind the record would be visible
-// nowhere.
+// Returning the error is what asks for the retries, and it is what makes a lost
+// event visible: the bus logs the last error at ERROR level together with the
+// event name, the event id and the error chain. Had we returned nil, the index
+// falling behind the record would be visible nowhere.
 //
 // Nor is there a retry inside the handler. The contract allows one but it would
 // be wrong here: a handler waiting while the catalog is unreachable piles up

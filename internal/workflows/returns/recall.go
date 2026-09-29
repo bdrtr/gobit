@@ -30,8 +30,9 @@ type RecallResult struct {
 //
 // Every canceled parcel is heard, a sale's too; one that carried no replacement
 // is left to the cancellation flow, which puts a sale's written-off units back.
-// The error a recall returns is logged by the bus and not retried, as every
-// handler's is; the log line here names the parcel and the replacement.
+// The error a recall returns has the bus call it again, twice at most, and is
+// then logged, as every handler's is (ADR 0240); the log line here names the
+// parcel and the replacement.
 func (w *Workflows) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Event) error {
 	fulfillmentID, _ := e.Data[fieldFulfillmentID].(string)
 	if fulfillmentID == "" {

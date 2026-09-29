@@ -409,9 +409,10 @@ func (m *webhookModule) Routes(r chi.Router) {
 //
 // # It does the LEAST it can on the bus
 //
-// One statement, and no HTTP. The bus's contract is explicit that a handler's
-// error is logged and the event counts as processed — no backend retries — so
-// anything this handler does not finish is lost for good. Sending here would
+// One statement, and no HTTP. The bus calls a failing handler twice more within
+// a second and a quarter and then logs the error and counts the event as
+// processed (ADR 0240), so anything this handler does not finish by then is lost
+// for good. Sending here would
 // mean a receiver's outage holding a bus consumer for ten seconds per delivery,
 // on the Redis backend a single consumer loop, delaying every other event on
 // the same stream.
@@ -421,8 +422,9 @@ func (m *webhookModule) Routes(r chi.Router) {
 //
 // # What is still lost, said plainly
 //
-// If the database is unreachable at this instant, the enqueue fails, the error
-// is logged at ERROR by the bus, and that event is never delivered to anyone. No
+// If the database is unreachable for longer than the bus's retries, the enqueue
+// fails, the error is logged at ERROR by the bus, and that event is never
+// delivered to anyone. No
 // repair pass exists, and building one out of event_outbox was measured and
 // refused: it does not carry every topic, so a repair built on it would cover
 // SOME of them while looking like it covered all.
@@ -430,10 +432,11 @@ func (m *webhookModule) Routes(r chi.Router) {
 // The measurement behind that refusal has MOVED and the refusal has not. When it
 // was made, "order.placed" was the only topic written to the outbox and the
 // coverage would have been one in four. ADR 0121 put the payment module's
-// capture and refund there as well, so it is now three of the six this plugin
-// forwards — half, and the product events are still published directly. Half is
-// still partial and the shape of the objection is unchanged, which is why the
-// refusal stands; the number is corrected here because a record whose stated
+// capture and refund there as well, and the order's write-offs, the parcel's
+// cancellation and the cart's two events followed, so it is now seven of the ten
+// this plugin forwards; the three product events are still published directly.
+// Seven in ten is still partial and the shape of the objection is unchanged,
+// which is why the refusal stands; the number is corrected here because a record whose stated
 // reason has quietly halved in force is the kind that gets rebuilt on.
 func (m *webhookModule) onEvent(ctx context.Context, e eventbus.Event) error {
 	if m.store == nil {

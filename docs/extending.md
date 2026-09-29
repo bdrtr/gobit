@@ -354,9 +354,11 @@ personal data is not put into a durable stream. The default provider is `log`
 and it really does not send — it says so plainly at WARN level; real delivery is
 a plugin's job (`Host.RegisterNotificationProvider`).
 
-> If a handler returns an error the event is considered **handled**; no backend
-> redelivers it (Redis ACKs regardless of the handler's result). Returning an
-> error is not a "retry" request, it provides **visibility**.
+> If a handler returns an error the bus calls it **twice more** within a second
+> and a quarter, and then logs the error and considers the event **handled**
+> ([ADR 0240](adr/0240-a-failing-handler-is-called-again.md)). Return an error
+> for a fault that may pass and nil for one that never will; a handler must be
+> idempotent, since the second call may follow a first that did part of the work.
 
 ---
 

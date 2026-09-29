@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A handler's error was dropped while four handlers said it was retried**
+  (D163, ADR 0240). A fault during a write-off's put-back, a payment summary's
+  update, an order confirmation or a search index write was logged and lost.
+  **For operators:** such a fault is now tried twice more within a second and a
+  quarter before it is logged.
+
 - **The returns flow's error lines went nowhere** (D162). Built with no logger,
   it fell back to a discard handler, so "the refund was made only in part; a
   human has to finish it" and its other error lines were never written in a
@@ -193,6 +199,15 @@ Sabitlenme `1.0.0` ile olur.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Kararlar
+
+- **A failing handler is called again** (ADR 0240). **For plugin authors:** an
+  event handler that returns an error is called at most twice more, after a
+  quarter of a second and then a second, in both bus backends, before the error
+  is logged and the event counted as processed; an error of
+  `errors.KindInvalid` and a panic are not repeated. Return an error for a fault
+  that may pass and nil for one that never will, and keep the handler
+  idempotent: the second call may follow a first that did part of the work. On
+  the Redis backend the stream's next message waits for the retries.
 
 - **A canceled parcel recalls its replacement** (ADR 0239). **For operators:**
   canceling the parcel a replacement left in (`POST

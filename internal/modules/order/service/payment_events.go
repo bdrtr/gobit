@@ -71,8 +71,9 @@ const CodeMoneyEventUnusable = "order_money_event_unusable"
 //
 // A collection that no order is bound to is a real and ordinary thing: a cart
 // that never became an order has one, and so does an exchange's difference. The
-// handler returns nil for those. Returning an error would put the bus into a
-// retry loop over an event that will never become actionable.
+// handler returns nil for those. Returning an error would have the bus call it
+// again for an event that will never become actionable (ADR 0240), and log a
+// failure that is none.
 func (s *Service) HandleMoneyMoved(ctx context.Context, e eventbus.Event) error {
 	collectionID, _ := e.Data[EventFieldPaymentCollectionID].(string)
 	if collectionID == "" {

@@ -46,7 +46,8 @@ const linkOrderFulfillment = "order_fulfillment"
 //
 // A parcel whose order has no cancellation releases nothing and returns nil. What
 // DOES return an error is a fault that may pass — a module unreachable, an
-// inventory write failing — because those the bus should try again.
+// inventory write failing — because those the bus tries again, twice within a
+// second and a quarter (ADR 0240).
 func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Event) error {
 	fulfillmentID := text(e, fieldFulfillmentID)
 	if fulfillmentID == "" {

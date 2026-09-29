@@ -172,8 +172,9 @@ func (m *webpushModule) Routes(r chi.Router) {
 //
 // # It never fails the event
 //
-// A subscriber that returns an error makes the event bus retry, and a retry
-// re-pushes to every device that already received the message. The push is a
+// A subscriber that returns an error makes the event bus call it again
+// (ADR 0240), and a second call re-pushes to every device that already received
+// the message. The push is a
 // courtesy on top of an order that is already written; nothing about it is
 // worth replaying an event for. Faults are logged with counts instead.
 func (m *webpushModule) onOrderPlaced(ctx context.Context, e eventbus.Event) error {

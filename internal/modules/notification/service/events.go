@@ -12,14 +12,14 @@ import (
 
 // This file holds the subscribers that TRIGGER the notifications.
 //
-// # Error policy: an error IS RETURNED, but that is NOT a "retry" request
+// # Error policy: an error IS RETURNED, and the bus tries twice more
 //
-// The decision and its reasoning are in the file documentation of
-// plugins/searchpg/events.go; they are not repeated here. The summary:
-// [eventbus.EventBus] DOES NOT REDELIVER a handler that returns an error, it
-// counts the event as processed and logs the error at the ERROR level —
-// therefore returning the error is not asking for a retry, it is making the
-// fault VISIBLE.
+// The reasoning is in the file documentation of plugins/searchpg/events.go; it
+// is not repeated here. The summary: [eventbus.EventBus] calls a handler that
+// returns an error twice more within a second and a quarter, then logs the error
+// at ERROR level and counts the event as processed (ADR 0240). A second call
+// sends no second e-mail: the delivery row is claimed before the send, and a
+// claimed row is answered as already handled.
 //
 // The handler does not retry inside itself either, and there is a second reason
 // for that here: trying the same notification again can produce a SECOND e-mail

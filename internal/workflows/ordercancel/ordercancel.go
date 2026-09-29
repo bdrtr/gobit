@@ -182,12 +182,13 @@ func New(
 //
 // The handler returns nil for everything that will never become actionable: a
 // variant that tracks no stock, an order whose checkout never deducted anything, a
-// cancellation whose units had all shipped. Returning an error would put the bus
-// into a retry loop over an event that cannot succeed, and the retries would bury
-// the failures that are real.
+// cancellation whose units had all shipped. Returning an error would have the bus
+// call it again for an event that cannot succeed and log a failure that is none,
+// burying the failures that are real.
 //
 // What DOES return an error is a fault that may pass: the fulfillment module being
-// unreachable, the inventory write failing. Those the bus should try again.
+// unreachable, the inventory write failing. Those the bus tries again, twice
+// within a second and a quarter (ADR 0240); a longer outage is logged and lost.
 func (w *Workflow) HandleLineCanceled(ctx context.Context, e eventbus.Event) error {
 	in, err := readCanceledEvent(e)
 	if err != nil {

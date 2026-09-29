@@ -7,6 +7,7 @@ exchange it had settled, so it can be sent again or withdrawn.
 - **Status:** Accepted
 - **Date:** 2026-09-29
 - **Amends:** [0090](0090-a-replacement-is-sent.md), whose dispatch had no way back from a canceled parcel
+- **Amended by:** [0240](0240-a-failing-handler-is-called-again.md): the bus calls a failing recall twice more before it logs it
 
 Measurement: [measurements/0239](../measurements/0239-a-box-that-never-left.md)
 
