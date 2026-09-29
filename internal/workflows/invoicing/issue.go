@@ -133,7 +133,10 @@ type document struct {
 	DiscountTotal int64          `json:"discount_total"`
 	TaxTotal      int64          `json:"tax_total"`
 	Total         int64          `json:"total"`
-	Metadata      map[string]any `json:"metadata"`
+	// PricesIncludeTax is the order's, and the invoice holds each row to it
+	// (ADR 0248).
+	PricesIncludeTax bool           `json:"prices_include_tax"`
+	Metadata         map[string]any `json:"metadata"`
 }
 
 // IssueForOrder issues the document for an order, or returns the one it has.
@@ -209,7 +212,10 @@ func (w *Workflows) IssueForOrder(ctx context.Context, in IssueInput) (IssueResu
 		DiscountTotal: order.DiscountTotal,
 		TaxTotal:      order.TaxTotal,
 		Total:         order.Total,
-		Metadata:      in.Metadata,
+		// The carriage row carries no tax, so it multiplies under either
+		// reading of the flag.
+		PricesIncludeTax: order.PricesIncludeTax,
+		Metadata:         in.Metadata,
 	})
 	if err != nil {
 		return IssueResult{}, errors.Internal(CodeInvalidInput,
@@ -310,17 +316,22 @@ func (w *Workflows) existingInvoice(
 
 // invoiceOrder is the order as this flow reads it over the interop surface.
 type invoiceOrder struct {
-	OrderID       string             `json:"order_id"`
-	DisplayID     int64              `json:"display_id"`
-	CurrencyCode  string             `json:"currency_code"`
-	Email         string             `json:"email"`
-	Status        string             `json:"status"`
-	Subtotal      int64              `json:"subtotal"`
-	DiscountTotal int64              `json:"discount_total"`
-	TaxTotal      int64              `json:"tax_total"`
-	ShippingTotal int64              `json:"shipping_total"`
-	Total         int64              `json:"total"`
-	Items         []invoiceOrderItem `json:"items"`
+	OrderID       string `json:"order_id"`
+	DisplayID     int64  `json:"display_id"`
+	CurrencyCode  string `json:"currency_code"`
+	Email         string `json:"email"`
+	Status        string `json:"status"`
+	Subtotal      int64  `json:"subtotal"`
+	DiscountTotal int64  `json:"discount_total"`
+	TaxTotal      int64  `json:"tax_total"`
+	ShippingTotal int64  `json:"shipping_total"`
+	Total         int64  `json:"total"`
+	// PricesIncludeTax says a line's unit price is the sticker and its
+	// subtotal is what is left once its tax is taken out (ADR 0246). This
+	// decode ignores unknown fields, so the order's schema and this one learn
+	// it together (ADR 0248).
+	PricesIncludeTax bool               `json:"prices_include_tax"`
+	Items            []invoiceOrderItem `json:"items"`
 	// BillingAddress is whom the order was billed to; nil when it recorded
 	// none (ADR 0193).
 	BillingAddress *invoiceAddress `json:"billing_address"`

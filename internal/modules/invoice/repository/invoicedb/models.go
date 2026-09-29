@@ -39,6 +39,7 @@ type Invoice struct {
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
 	BuyerEmailFolded  string
+	PricesIncludeTax  bool
 }
 
 type InvoiceLine struct {

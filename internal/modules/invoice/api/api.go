@@ -161,26 +161,30 @@ type lineTaxDTO struct {
 
 // invoiceDTO is the external representation of the document.
 type invoiceDTO struct {
-	ID            string         `json:"id"`
-	Number        string         `json:"number"`
-	SeriesID      string         `json:"series_id"`
-	Kind          string         `json:"kind"`
-	Status        string         `json:"status"`
-	CurrencyCode  string         `json:"currency_code"`
-	Seller        partyDTO       `json:"seller"`
-	Buyer         partyDTO       `json:"buyer"`
-	Subtotal      int64          `json:"subtotal"`
-	DiscountTotal int64          `json:"discount_total"`
-	TaxTotal      int64          `json:"tax_total"`
-	Total         int64          `json:"total"`
-	IssuedAt      time.Time      `json:"issued_at"`
-	ProviderID    string         `json:"provider_id"`
-	ExternalID    string         `json:"external_id"`
-	StatusReason  string         `json:"status_reason"`
-	Lines         []lineDTO      `json:"lines"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	ID            string   `json:"id"`
+	Number        string   `json:"number"`
+	SeriesID      string   `json:"series_id"`
+	Kind          string   `json:"kind"`
+	Status        string   `json:"status"`
+	CurrencyCode  string   `json:"currency_code"`
+	Seller        partyDTO `json:"seller"`
+	Buyer         partyDTO `json:"buyer"`
+	Subtotal      int64    `json:"subtotal"`
+	DiscountTotal int64    `json:"discount_total"`
+	TaxTotal      int64    `json:"tax_total"`
+	Total         int64    `json:"total"`
+	// PricesIncludeTax says a row's unit_price is the sticker and its subtotal
+	// what is left of unit_price x quantity once its tax_total is taken out
+	// (ADR 0248).
+	PricesIncludeTax bool           `json:"prices_include_tax"`
+	IssuedAt         time.Time      `json:"issued_at"`
+	ProviderID       string         `json:"provider_id"`
+	ExternalID       string         `json:"external_id"`
+	StatusReason     string         `json:"status_reason"`
+	Lines            []lineDTO      `json:"lines"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	CreatedAt        time.Time      `json:"created_at"`
+	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
 // seriesDTO is the external representation of a series.
@@ -225,26 +229,27 @@ func toInvoiceDTO(in models.Invoice) invoiceDTO {
 	}
 
 	return invoiceDTO{
-		ID:            in.ID,
-		Number:        in.Number,
-		SeriesID:      in.SeriesID,
-		Kind:          in.Kind.String(),
-		Status:        in.Status.String(),
-		CurrencyCode:  in.CurrencyCode,
-		Seller:        toPartyDTO(in.Seller),
-		Buyer:         toPartyDTO(in.Buyer),
-		Subtotal:      in.Subtotal,
-		DiscountTotal: in.DiscountTotal,
-		TaxTotal:      in.TaxTotal,
-		Total:         in.Total,
-		IssuedAt:      in.IssuedAt,
-		ProviderID:    in.ProviderID,
-		ExternalID:    in.ExternalID,
-		StatusReason:  in.StatusReason,
-		Lines:         lines,
-		Metadata:      in.Metadata,
-		CreatedAt:     in.CreatedAt,
-		UpdatedAt:     in.UpdatedAt,
+		ID:               in.ID,
+		Number:           in.Number,
+		SeriesID:         in.SeriesID,
+		Kind:             in.Kind.String(),
+		Status:           in.Status.String(),
+		CurrencyCode:     in.CurrencyCode,
+		Seller:           toPartyDTO(in.Seller),
+		Buyer:            toPartyDTO(in.Buyer),
+		Subtotal:         in.Subtotal,
+		DiscountTotal:    in.DiscountTotal,
+		TaxTotal:         in.TaxTotal,
+		Total:            in.Total,
+		PricesIncludeTax: in.PricesIncludeTax,
+		IssuedAt:         in.IssuedAt,
+		ProviderID:       in.ProviderID,
+		ExternalID:       in.ExternalID,
+		StatusReason:     in.StatusReason,
+		Lines:            lines,
+		Metadata:         in.Metadata,
+		CreatedAt:        in.CreatedAt,
+		UpdatedAt:        in.UpdatedAt,
 	}
 }
 

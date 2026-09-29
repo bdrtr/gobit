@@ -12,6 +12,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An invoice filed a row that did not multiply, and could not say its prices
+  included their tax** (D171, ADR 0248). **For operators:** a tax-inclusive
+  order's invoice says `prices_include_tax`, and its rows keep the sticker as
+  the unit price and the net as the subtotal. **For integrators:** `POST
+  /admin/v1/invoices` takes `prices_include_tax` and now refuses a row whose
+  subtotal is not its unit price times its quantity (less its tax where the
+  flag is set), which it filed before. Migration: invoice `000005`.
+
 - **A gift card was taxed when it was sold, and the goods it bought were taxed
   again** (D170, ADR 0247). **For operators:** a gift card line carries no tax,
   so a card costs its value; the goods it pays for are taxed as before. A

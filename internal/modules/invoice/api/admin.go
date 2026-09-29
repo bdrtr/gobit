@@ -58,7 +58,10 @@ type issueRequest struct {
 	DiscountTotal int64              `json:"discount_total"`
 	TaxTotal      int64              `json:"tax_total"`
 	Total         int64              `json:"total"`
-	Metadata      map[string]any     `json:"metadata"`
+	// PricesIncludeTax says a row's unit price is the sticker, so its subtotal
+	// is unit price x quantity less its tax (ADR 0248).
+	PricesIncludeTax bool           `json:"prices_include_tax"`
+	Metadata         map[string]any `json:"metadata"`
 }
 
 // statusRequest is the body of a status move.
@@ -115,17 +118,18 @@ func (h *Handler) adminIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	issued, err := h.svc.Issue(ctx, service.IssueInput{
-		SeriesPrefix:  body.SeriesPrefix,
-		Kind:          models.Kind(body.Kind),
-		CurrencyCode:  body.CurrencyCode,
-		Seller:        body.Seller.toParty(),
-		Buyer:         body.Buyer.toParty(),
-		Lines:         lines,
-		Subtotal:      body.Subtotal,
-		DiscountTotal: body.DiscountTotal,
-		TaxTotal:      body.TaxTotal,
-		Total:         body.Total,
-		Metadata:      body.Metadata,
+		SeriesPrefix:     body.SeriesPrefix,
+		Kind:             models.Kind(body.Kind),
+		CurrencyCode:     body.CurrencyCode,
+		Seller:           body.Seller.toParty(),
+		Buyer:            body.Buyer.toParty(),
+		Lines:            lines,
+		Subtotal:         body.Subtotal,
+		DiscountTotal:    body.DiscountTotal,
+		TaxTotal:         body.TaxTotal,
+		Total:            body.Total,
+		PricesIncludeTax: body.PricesIncludeTax,
+		Metadata:         body.Metadata,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)

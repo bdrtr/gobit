@@ -756,6 +756,10 @@ type interopInvoiceOrder struct {
 	TaxTotal      int64 `json:"tax_total"`
 	ShippingTotal int64 `json:"shipping_total"`
 	Total         int64 `json:"total"`
+	// PricesIncludeTax says each line's unit price is the sticker and its
+	// subtotal what is left once its tax is taken out (ADR 0246); the document
+	// prints its rows by it (ADR 0248).
+	PricesIncludeTax bool `json:"prices_include_tax"`
 	// Items are the lines, in the order they were written.
 	Items []interopInvoiceItem `json:"items"`
 	// BillingAddress is whom the order was billed to; absent when the order
@@ -813,18 +817,19 @@ func (i *Interop) OrderInvoiceJSON(ctx context.Context, orderID string) (json.Ra
 	}
 
 	return json.Marshal(interopInvoiceOrder{
-		OrderID:        detail.ID,
-		DisplayID:      detail.DisplayID,
-		CurrencyCode:   detail.CurrencyCode,
-		Email:          detail.Email,
-		Status:         detail.Status.String(),
-		Subtotal:       detail.Subtotal,
-		DiscountTotal:  detail.DiscountTotal,
-		TaxTotal:       detail.TaxTotal,
-		ShippingTotal:  detail.ShippingTotal,
-		Total:          detail.Total,
-		Items:          items,
-		BillingAddress: interopInvoiceAddressOf(detail.BillingAddress),
+		OrderID:          detail.ID,
+		DisplayID:        detail.DisplayID,
+		CurrencyCode:     detail.CurrencyCode,
+		Email:            detail.Email,
+		Status:           detail.Status.String(),
+		Subtotal:         detail.Subtotal,
+		DiscountTotal:    detail.DiscountTotal,
+		TaxTotal:         detail.TaxTotal,
+		ShippingTotal:    detail.ShippingTotal,
+		Total:            detail.Total,
+		PricesIncludeTax: detail.PricesIncludeTax,
+		Items:            items,
+		BillingAddress:   interopInvoiceAddressOf(detail.BillingAddress),
 	})
 }
 

@@ -19,17 +19,20 @@ type fakeOrders struct {
 
 // fakeOrder is the body the surface returns.
 type fakeOrder struct {
-	OrderID       string     `json:"order_id"`
-	DisplayID     int64      `json:"display_id"`
-	CurrencyCode  string     `json:"currency_code"`
-	Email         string     `json:"email"`
-	Status        string     `json:"status"`
-	Subtotal      int64      `json:"subtotal"`
-	DiscountTotal int64      `json:"discount_total"`
-	TaxTotal      int64      `json:"tax_total"`
-	ShippingTotal int64      `json:"shipping_total"`
-	Total         int64      `json:"total"`
-	Items         []fakeItem `json:"items"`
+	OrderID       string `json:"order_id"`
+	DisplayID     int64  `json:"display_id"`
+	CurrencyCode  string `json:"currency_code"`
+	Email         string `json:"email"`
+	Status        string `json:"status"`
+	Subtotal      int64  `json:"subtotal"`
+	DiscountTotal int64  `json:"discount_total"`
+	TaxTotal      int64  `json:"tax_total"`
+	ShippingTotal int64  `json:"shipping_total"`
+	Total         int64  `json:"total"`
+	// PricesIncludeTax is written by the producer's name, for BillingAddress's
+	// reason below.
+	PricesIncludeTax bool       `json:"prices_include_tax,omitempty"`
+	Items            []fakeItem `json:"items"`
 	// BillingAddress is keyed by the PRODUCER's field names, written out as
 	// strings: a map is what lets a misspelled tag on the flow's side read as
 	// an absent field instead of agreeing with it (ADR 0193).

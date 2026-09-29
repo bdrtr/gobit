@@ -222,6 +222,7 @@ func (r *Repository) CreateInvoice(ctx context.Context, in models.Invoice) (mode
 		Total:            in.Total,
 		IssuedAt:         fromTime(in.IssuedAt),
 		Metadata:         metadata,
+		PricesIncludeTax: in.PricesIncludeTax,
 	})
 	if err != nil {
 		return models.Invoice{}, wrapDB(err, codeQueryFailed, "the invoice could not be written")

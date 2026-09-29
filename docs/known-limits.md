@@ -206,11 +206,6 @@ past and is not corrected retroactively.
   "net minus net". The alternative — extracting a net discount too — needs a
   second rounding that has to cancel the first exactly, and ADR 0086 refuses to
   depend on that.
-- **An invoice of a tax-inclusive order prints the sticker as the line's unit
-  price beside its net subtotal.** The invoicing flow copies the order line as
-  it is, so the printed row's quantity times unit price is the subtotal plus
-  the tax rather than the subtotal. The order says which it is
-  (`prices_include_tax`, ADR 0246); the document does not yet.
 
 ## Installation and operation
 

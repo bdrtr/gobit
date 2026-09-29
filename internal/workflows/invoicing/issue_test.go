@@ -62,6 +62,22 @@ func TestTheDocumentAddsUpAfterCarriageBecomesALine(t *testing.T) {
 		"the document's identity has to hold after the move")
 }
 
+// TestTheDocumentSaysWhetherItsPricesIncludeTax is ADR 0248: the order's flag
+// reaches the document, which holds each row to it; an order that does not
+// carry it is invoiced as tax-exclusive.
+func TestTheDocumentSaysWhetherItsPricesIncludeTax(t *testing.T) {
+	t.Parallel()
+
+	for _, included := range []bool{true, false} {
+		h := newHarness(t)
+		h.orders.order.PricesIncludeTax = included
+
+		_, err := h.flow.IssueForOrder(context.Background(), validIssue())
+		require.NoError(t, err)
+		assert.Equal(t, included, h.invoices.lastDocument(t).PricesIncludeTax)
+	}
+}
+
 // TestTheLineTaxRateReachesTheDocument is why the rate was put on the order
 // line in the first place.
 //
@@ -266,6 +282,8 @@ type issuedDocument struct {
 	DiscountTotal int64  `json:"discount_total"`
 	TaxTotal      int64  `json:"tax_total"`
 	Total         int64  `json:"total"`
+	// PricesIncludeTax is the flag the invoice module holds each row to.
+	PricesIncludeTax bool `json:"prices_include_tax"`
 }
 
 // party is one side of that body.

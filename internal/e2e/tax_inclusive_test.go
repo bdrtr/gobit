@@ -3,6 +3,8 @@
 package e2e
 
 import (
+	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -78,4 +80,39 @@ func TestATaxInclusiveStickerIsWhatTheOrderCharges(t *testing.T) {
 	collection, err := paymentSvc.GetPaymentCollection(ctx, placed.PaymentCollectionID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(23_998), collection.Amount, "the shopper pays the sticker")
+
+	// The document holds its rows to the flag, so without the flag the order
+	// would not be invoiced at all (ADR 0248).
+	writeStoreProfile(t)
+	recorder, err := adminRequestWithBody(http.MethodPost,
+		"/admin/v1/orders/"+placed.OrderID+"/invoice", issueInvoiceBody())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, recorder.Code, recorder.Body.String())
+	var issued invoiceIssueResponse
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &issued))
+
+	read, err := adminRequestWithBody(http.MethodGet, "/admin/v1/invoices/"+issued.Data.InvoiceID, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	var document struct {
+		Data struct {
+			PricesIncludeTax bool  `json:"prices_include_tax"`
+			Subtotal         int64 `json:"subtotal"`
+			TaxTotal         int64 `json:"tax_total"`
+			Total            int64 `json:"total"`
+			Lines            []struct {
+				UnitPrice int64 `json:"unit_price"`
+				Subtotal  int64 `json:"subtotal"`
+				TaxTotal  int64 `json:"tax_total"`
+			} `json:"lines"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(read.Body.Bytes(), &document))
+	assert.True(t, document.Data.PricesIncludeTax, "the document says how its rows are read")
+	assert.Equal(t, int64(23_998), document.Data.Total)
+	assert.Equal(t, int64(19_999), document.Data.Subtotal)
+	assert.Equal(t, int64(3_999), document.Data.TaxTotal)
+	require.Len(t, document.Data.Lines, 1)
+	assert.Equal(t, int64(11_999), document.Data.Lines[0].UnitPrice)
+	assert.Equal(t, int64(19_999), document.Data.Lines[0].Subtotal)
 }

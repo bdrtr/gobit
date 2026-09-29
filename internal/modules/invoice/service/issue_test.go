@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,70 @@ func TestADocumentThatDoesNotAddUpIsRefused(t *testing.T) {
 			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 		})
 	}
+}
+
+// TestARowIsHeldToItsQuote verifies ADR 0248's check: a row's subtotal is its
+// unit price times its quantity, or that less its tax where the document's
+// prices include their tax, and the flag is kept on the document. The same
+// inclusive row is refused without the flag, a row that does not multiply is
+// refused either way, and a product an int64 cannot carry is refused rather
+// than wrapped.
+func TestARowIsHeldToItsQuote(t *testing.T) {
+	t.Parallel()
+
+	// A sticker of 1200, twice, at 20% inside: 400 of tax, 2000 left.
+	inclusive := func() service.IssueInput {
+		in := validIssue()
+		in.PricesIncludeTax = true
+		in.Lines[0].UnitPrice = 1200
+
+		return in
+	}
+
+	repo := newFakeRepo()
+	issued, err := newService(repo).Issue(context.Background(), inclusive())
+	require.NoError(t, err)
+	assert.True(t, issued.PricesIncludeTax, "the document keeps the flag its rows were checked under")
+
+	for name, in := range map[string]service.IssueInput{
+		"an inclusive row without the flag": func() service.IssueInput {
+			in := inclusive()
+			in.PricesIncludeTax = false
+			return in
+		}(),
+		"a row that does not multiply": func() service.IssueInput {
+			in := validIssue()
+			in.Lines[0].UnitPrice = 999
+			return in
+		}(),
+		"a tax counted on top of an inclusive row": func() service.IssueInput {
+			in := validIssue()
+			in.PricesIncludeTax = true
+			return in
+		}(),
+		// Each of the three below would pass the comparison had the product
+		// been taken plainly in int64: the subtotal is what that product would
+		// be, wrapped or negative.
+		"a product that wraps 64 bits to zero": untaxedRow(1<<62, 4, 0),
+		"a product past int64":                 untaxedRow(1<<62, 2, math.MinInt64),
+		"a negative unit price":                untaxedRow(-1000, 2, -2000),
+	} {
+		_, err := newService(newFakeRepo()).Issue(context.Background(), in)
+		require.Error(t, err, name)
+		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), name)
+		assert.Contains(t, err.Error(), "line 1", name)
+	}
+}
+
+// untaxedRow is a one-row document with no tax whose row and totals all say
+// subtotal.
+func untaxedRow(unitPrice, quantity, subtotal int64) service.IssueInput {
+	in := validIssue()
+	in.Lines[0].UnitPrice, in.Lines[0].Quantity = unitPrice, quantity
+	in.Lines[0].Subtotal, in.Lines[0].TaxTotal, in.Lines[0].Total = subtotal, 0, subtotal
+	in.Subtotal, in.TaxTotal, in.Total = subtotal, 0, subtotal
+
+	return in
 }
 
 // TestAnUnprintableRequestIsRefused covers the fields without which the

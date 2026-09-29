@@ -235,6 +235,28 @@ func TestAnIssuedDocumentComesBackWithItsNumber(t *testing.T) {
 		"the printed order starts at row 1, not at row 0")
 }
 
+// TestADocumentSaysWhetherItsPricesIncludeTax verifies ADR 0248 on the admin
+// endpoint: the flag reaches the check and comes back on the document. A row
+// of stickers of 1200 whose 400 of tax is inside them is filed with the flag,
+// and the same flag on a row whose tax was added on top is refused.
+func TestADocumentSaysWhetherItsPricesIncludeTax(t *testing.T) {
+	t.Parallel()
+
+	r, _ := newTestRouter(t)
+	flag := `, "prices_include_tax": true`
+
+	inclusive := strings.Replace(issueBodyWith("GBT", documentTotal, flag),
+		`"unit_price": 1000`, `"unit_price": 1200`, 1)
+	rec := do(t, r, http.MethodPost, "/admin/v1/invoices", inclusive)
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, true, decodeItem(t, rec)["prices_include_tax"])
+
+	rec = do(t, r, http.MethodPost, "/admin/v1/invoices", issueBodyWith("GBT", documentTotal, flag))
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, "invoice_invalid_input", errorCode(t, rec))
+	assert.Contains(t, rec.Body.String(), "include their tax")
+}
+
 // TestAFieldTheServerDoesNotKnowIsRefusedRatherThanIgnored is why the decoder
 // disallows unknown fields.
 //

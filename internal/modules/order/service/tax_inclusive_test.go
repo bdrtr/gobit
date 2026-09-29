@@ -103,3 +103,23 @@ func TestTheDeliveryFactsReadTheGoodsAsTheCartQuotedThem(t *testing.T) {
 	assert.JSONEq(t, `{"region_id":"`+testRegionID+`","currency_code":"TRY","country_code":"TR",
 		"subtotal":3300,"item_count":3}`, string(raw))
 }
+
+// TestTheInvoiceSurfaceSaysWhetherThePricesIncludeTax is ADR 0248 at the
+// order's end: the document holds its rows to the flag, and the invoicing
+// flow ignores fields it does not know, so the name has to be the one it reads.
+func TestTheInvoiceSurfaceSaysWhetherThePricesIncludeTax(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
+
+	for _, in := range []service.CreateOrderInput{inclusiveInput(), validInput()} {
+		order, err := e.svc.CreateOrder(ctx, in)
+		require.NoError(t, err)
+
+		raw, err := interop.OrderInvoiceJSON(ctx, order.ID)
+		require.NoError(t, err)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(raw, &body))
+		assert.Equal(t, in.PricesIncludeTax, body["prices_include_tax"])
+	}
+}

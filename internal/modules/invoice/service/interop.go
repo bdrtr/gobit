@@ -47,7 +47,9 @@ type interopIssue struct {
 	DiscountTotal int64              `json:"discount_total"`
 	TaxTotal      int64              `json:"tax_total"`
 	Total         int64              `json:"total"`
-	Metadata      map[string]any     `json:"metadata"`
+	// PricesIncludeTax is ADR 0248's flag; absent reads false.
+	PricesIncludeTax bool           `json:"prices_include_tax"`
+	Metadata         map[string]any `json:"metadata"`
 }
 
 // interopParty is one side of the document on the way in.
@@ -126,17 +128,18 @@ func (i *Interop) IssueJSON(
 	}
 
 	issued, err := i.svc.Issue(ctx, IssueInput{
-		SeriesPrefix:  body.SeriesPrefix,
-		Kind:          models.Kind(body.Kind),
-		CurrencyCode:  body.CurrencyCode,
-		Seller:        body.Seller.toParty(),
-		Buyer:         body.Buyer.toParty(),
-		Lines:         lines,
-		Subtotal:      body.Subtotal,
-		DiscountTotal: body.DiscountTotal,
-		TaxTotal:      body.TaxTotal,
-		Total:         body.Total,
-		Metadata:      body.Metadata,
+		SeriesPrefix:     body.SeriesPrefix,
+		Kind:             models.Kind(body.Kind),
+		CurrencyCode:     body.CurrencyCode,
+		Seller:           body.Seller.toParty(),
+		Buyer:            body.Buyer.toParty(),
+		Lines:            lines,
+		Subtotal:         body.Subtotal,
+		DiscountTotal:    body.DiscountTotal,
+		TaxTotal:         body.TaxTotal,
+		Total:            body.Total,
+		PricesIncludeTax: body.PricesIncludeTax,
+		Metadata:         body.Metadata,
 	})
 	if err != nil {
 		return "", "", err

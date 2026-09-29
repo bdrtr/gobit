@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	stderrors "errors"
+	"math"
 	"strings"
 	"time"
 
@@ -18,7 +19,8 @@ type LineInput struct {
 	Quantity int64
 	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64
-	// Subtotal is UnitPrice x Quantity.
+	// Subtotal is UnitPrice x Quantity, less TaxTotal where
+	// [IssueInput.PricesIncludeTax] is set; the service holds the row to it.
 	Subtotal int64
 	// DiscountTotal is the discount on the row, carried POSITIVE.
 	DiscountTotal int64
@@ -87,6 +89,10 @@ type IssueInput struct {
 	DiscountTotal int64
 	TaxTotal      int64
 	Total         int64
+	// PricesIncludeTax says the prices on the document include their tax: a
+	// row's UnitPrice is the sticker and its Subtotal is what is left of UnitPrice
+	// x Quantity once its TaxTotal is taken out (ADR 0248).
+	PricesIncludeTax bool
 	// Metadata is free structured context.
 	Metadata map[string]any
 }
@@ -203,20 +209,21 @@ func (s *Service) issueOnce(ctx context.Context, in IssueInput) (models.Invoice,
 // document builds the record from the request and the number it was given.
 func (in IssueInput) document(series models.Series, sequence int64, now time.Time) models.Invoice {
 	doc := models.Invoice{
-		ID:            models.NewInvoiceID(),
-		Number:        FormatNumber(series.Prefix, series.Year, sequence),
-		SeriesID:      series.ID,
-		Kind:          in.Kind,
-		Status:        models.StatusIssued,
-		CurrencyCode:  in.CurrencyCode,
-		Seller:        in.Seller,
-		Buyer:         in.Buyer,
-		Subtotal:      in.Subtotal,
-		DiscountTotal: in.DiscountTotal,
-		TaxTotal:      in.TaxTotal,
-		Total:         in.Total,
-		IssuedAt:      now,
-		Metadata:      in.Metadata,
+		ID:               models.NewInvoiceID(),
+		Number:           FormatNumber(series.Prefix, series.Year, sequence),
+		SeriesID:         series.ID,
+		Kind:             in.Kind,
+		Status:           models.StatusIssued,
+		CurrencyCode:     in.CurrencyCode,
+		Seller:           in.Seller,
+		Buyer:            in.Buyer,
+		Subtotal:         in.Subtotal,
+		DiscountTotal:    in.DiscountTotal,
+		TaxTotal:         in.TaxTotal,
+		Total:            in.Total,
+		PricesIncludeTax: in.PricesIncludeTax,
+		IssuedAt:         now,
+		Metadata:         in.Metadata,
 	}
 
 	doc.Lines = make([]models.Line, 0, len(in.Lines))
@@ -316,6 +323,9 @@ func (in IssueInput) validateAmounts() error {
 				i+1, line.Subtotal, line.DiscountTotal, line.TaxTotal, line.Total)
 		}
 
+		if err := in.validateLineQuote(i, line); err != nil {
+			return err
+		}
 		if err := validateLineTaxComponents(i, line); err != nil {
 			return err
 		}
@@ -345,6 +355,37 @@ func (in IssueInput) validateAmounts() error {
 	case in.Total != total:
 		return errors.Invalid(CodeInvalidInput,
 			"the total does not match the lines: given %d, the lines add to %d", in.Total, total)
+	}
+
+	return nil
+}
+
+// validateLineQuote holds a row's subtotal to its unit price and quantity: it
+// is their product, or, where the document's prices include their tax, their
+// product less the row's tax (ADR 0248). It runs after the row's quantity is
+// known to be positive. A row that does not multiply is not a
+// narrower row but a wrong one, and a provider transmitting the document reads
+// the unit price by the same rule.
+func (in IssueInput) validateLineQuote(i int, line LineInput) error {
+	// The quantity is already known to be positive, so the quotient is the whole
+	// overflow test, and a negative unit price fails it too: its quotient is
+	// below zero.
+	if line.UnitPrice != 0 && line.Quantity > math.MaxInt64/line.UnitPrice {
+		return errors.Invalid(CodeInvalidInput,
+			"line %d: a unit price of %d times %d cannot be carried", i+1, line.UnitPrice, line.Quantity)
+	}
+	quoted := line.UnitPrice * line.Quantity
+
+	if in.PricesIncludeTax {
+		if line.Subtotal+line.TaxTotal != quoted {
+			return errors.Invalid(CodeInvalidInput,
+				"line %d does not multiply: %d + %d is not %d x %d, and the prices include their tax",
+				i+1, line.Subtotal, line.TaxTotal, line.UnitPrice, line.Quantity)
+		}
+	} else if line.Subtotal != quoted {
+		return errors.Invalid(CodeInvalidInput,
+			"line %d does not multiply: %d is not %d x %d",
+			i+1, line.Subtotal, line.UnitPrice, line.Quantity)
 	}
 
 	return nil

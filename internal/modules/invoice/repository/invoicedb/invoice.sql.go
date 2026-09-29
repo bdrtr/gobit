@@ -72,15 +72,15 @@ INSERT INTO invoices (
     buyer_name, buyer_tax_number, buyer_tax_office,
     buyer_email, buyer_email_folded, buyer_address, buyer_country_code,
     subtotal, discount_total, tax_total, total,
-    issued_at, metadata
+    issued_at, metadata, prices_include_tax
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12,
     $13, $14, $15, $16, $17, $18, $19,
     $20, $21, $22, $23,
-    $24, $25
+    $24, $25, $26
 )
-RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded
+RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax
 `
 
 type CreateInvoiceParams struct {
@@ -109,6 +109,7 @@ type CreateInvoiceParams struct {
 	Total             int64
 	IssuedAt          pgtype.Timestamptz
 	Metadata          []byte
+	PricesIncludeTax  bool
 }
 
 // invoices queries.
@@ -143,6 +144,7 @@ func (q *Queries) CreateInvoice(ctx context.Context, arg CreateInvoiceParams) (I
 		arg.Total,
 		arg.IssuedAt,
 		arg.Metadata,
+		arg.PricesIncludeTax,
 	)
 	var i Invoice
 	err := row.Scan(
@@ -176,6 +178,7 @@ func (q *Queries) CreateInvoice(ctx context.Context, arg CreateInvoiceParams) (I
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuyerEmailFolded,
+		&i.PricesIncludeTax,
 	)
 	return i, err
 }
@@ -281,7 +284,7 @@ func (q *Queries) CreateInvoiceLineTax(ctx context.Context, arg CreateInvoiceLin
 }
 
 const getInvoice = `-- name: GetInvoice :one
-SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded FROM invoices WHERE id = $1
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax FROM invoices WHERE id = $1
 `
 
 func (q *Queries) GetInvoice(ctx context.Context, id string) (Invoice, error) {
@@ -318,12 +321,13 @@ func (q *Queries) GetInvoice(ctx context.Context, id string) (Invoice, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuyerEmailFolded,
+		&i.PricesIncludeTax,
 	)
 	return i, err
 }
 
 const getInvoiceByNumber = `-- name: GetInvoiceByNumber :one
-SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded FROM invoices WHERE number = $1
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax FROM invoices WHERE number = $1
 `
 
 func (q *Queries) GetInvoiceByNumber(ctx context.Context, number string) (Invoice, error) {
@@ -360,6 +364,7 @@ func (q *Queries) GetInvoiceByNumber(ctx context.Context, number string) (Invoic
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuyerEmailFolded,
+		&i.PricesIncludeTax,
 	)
 	return i, err
 }
@@ -535,7 +540,7 @@ func (q *Queries) ListInvoiceLinesForInvoices(ctx context.Context, invoiceIds []
 }
 
 const listInvoices = `-- name: ListInvoices :many
-SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded FROM invoices
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax FROM invoices
 WHERE ($1::text IS NULL OR status = $1::text)
   AND ($2::text IS NULL OR kind = $2::text)
   AND (created_at, id) < (
@@ -608,6 +613,7 @@ func (q *Queries) ListInvoices(ctx context.Context, arg ListInvoicesParams) ([]I
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.BuyerEmailFolded,
+			&i.PricesIncludeTax,
 		); err != nil {
 			return nil, err
 		}
@@ -719,7 +725,7 @@ SET status        = $1::text,
     updated_at    = now()
 WHERE id = $5::text
   AND status = $6::text
-RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded
+RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax
 `
 
 type SetInvoiceStatusParams struct {
@@ -777,6 +783,7 @@ func (q *Queries) SetInvoiceStatus(ctx context.Context, arg SetInvoiceStatusPara
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.BuyerEmailFolded,
+		&i.PricesIncludeTax,
 	)
 	return i, err
 }

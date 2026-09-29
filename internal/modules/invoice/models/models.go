@@ -165,7 +165,8 @@ type Line struct {
 	Quantity int64
 	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64
-	// Subtotal is UnitPrice x Quantity.
+	// Subtotal is UnitPrice x Quantity, less TaxTotal where the document's
+	// prices include their tax ([Invoice.PricesIncludeTax]).
 	Subtotal int64
 	// DiscountTotal is the discount falling on the line, carried POSITIVE.
 	DiscountTotal int64
@@ -251,6 +252,11 @@ type Invoice struct {
 	DiscountTotal int64
 	TaxTotal      int64
 	Total         int64
+	// PricesIncludeTax says the document's prices include their tax: a row's
+	// UnitPrice is the sticker and its Subtotal is what is left of UnitPrice x
+	// Quantity once its TaxTotal is taken out (ADR 0248). A provider
+	// transmitting the document reads the rows by it.
+	PricesIncludeTax bool
 	// IssuedAt is the moment the document came into being.
 	IssuedAt time.Time
 	// ProviderID is the transmission provider that handled it; empty until one
