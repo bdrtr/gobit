@@ -32,6 +32,13 @@ import (
 func newGiftCardVariant(ctx context.Context, t *testing.T, price int64) string {
 	t.Helper()
 
+	return newGiftCardVariantStocked(ctx, t, price, 10)
+}
+
+// newGiftCardVariantStocked is [newGiftCardVariant] with the stock given.
+func newGiftCardVariantStocked(ctx context.Context, t *testing.T, price, stock int64) string {
+	t.Helper()
+
 	seq := fixtureCounter.Add(1)
 	product, err := productSvc.CreateProduct(ctx, productsvc.CreateProductInput{
 		Handle: fmt.Sprintf("e2e-gift-card-%d", seq), Title: "E2E Gift Card",
@@ -50,7 +57,7 @@ func newGiftCardVariant(ctx context.Context, t *testing.T, price int64) string {
 	})
 	require.NoError(t, err)
 	require.NoError(t, productSvc.SetVariantInventoryItem(ctx, variant.ID, item.ID))
-	_, err = inventorySvc.SetInventoryLevel(ctx, item.ID, stockLocationID, 10)
+	_, err = inventorySvc.SetInventoryLevel(ctx, item.ID, stockLocationID, stock)
 	require.NoError(t, err)
 
 	return variant.ID

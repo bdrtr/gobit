@@ -27,6 +27,9 @@ coverage.html
 cpu.out
 mem.out
 trace.out
+# A property that fails writes its draws under testdata/rapid/ (ADR 0249).
+# They are printed with the failure; the file only replays them locally.
+**/testdata/rapid/
 
 # --- ortam ve sırlar ---
 #

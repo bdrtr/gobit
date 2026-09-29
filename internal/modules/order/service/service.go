@@ -463,12 +463,14 @@ func normalizeEmail(email string) (string, error) {
 // arrives with an abnormal quantity or price. An overflowing product silently
 // produces a negative subtotal and could pass the consistency check BY MISTAKE.
 func multiplyAmount(unitPrice, quantity int64) (int64, error) {
-	if unitPrice == 0 || quantity == 0 {
-		return 0, nil
-	}
+	// The sign is checked before the shortcut for zero, or a zero price would
+	// let a negative quantity through (ADR 0249).
 	if quantity < 0 || unitPrice < 0 {
 		return 0, errors.Invalid(CodeInvalidInput,
 			"the unit price and the quantity cannot be negative: %d x %d", unitPrice, quantity)
+	}
+	if unitPrice == 0 || quantity == 0 {
+		return 0, nil
 	}
 	if quantity > models.MaxTotal/unitPrice {
 		return 0, errors.Invalid(CodeInvalidInput,

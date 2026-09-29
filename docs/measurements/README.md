@@ -179,3 +179,4 @@ truth: a report says what was true on the day it was taken.
 | [The market that could not sell — measured 2026-09-30](0246-the-market-that-could-not-sell.md) | 98 |
 | [A card taxed twice — measured 2026-09-30](0247-a-card-taxed-twice.md) | 65 |
 | [A row that did not multiply — measured 2026-09-30](0248-a-row-that-did-not-multiply.md) | 71 |
+| [A cart drawn a hundred times — measured 2026-09-30](0249-a-cart-drawn-a-hundred-times.md) | 55 |

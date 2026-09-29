@@ -25,6 +25,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.45.0
 	golang.org/x/crypto v0.55.0
 	golang.org/x/mod v0.38.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (

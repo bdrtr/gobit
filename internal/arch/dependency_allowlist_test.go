@@ -66,6 +66,9 @@ var directDependencyReasons = map[string]string{
 	"github.com/prometheus/client_golang": "the metrics registry the scrape endpoint " +
 		"serves; ADR 0046 chose scrape over push and this is what it cost",
 	"github.com/redis/go-redis/v9": "the event bus's and the rate limiter's backend",
+	"pgregory.net/rapid": "draws the inputs of the property-based tests (ADR 0249). It was " +
+		"in an embedder's graph before it was required here, through the Docker API module " +
+		"testcontainers requires; the require raised its version and gave it this line",
 	"github.com/stretchr/testify": "assertions in tests. It reaches an embedder's graph " +
 		"even so, because a module graph does not separate test dependencies — which is " +
 		"the argument core/providertest uses for asserting by hand instead",

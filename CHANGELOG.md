@@ -12,6 +12,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Every sale a shopper can build is now checked as a property** (ADR 0249,
+  D172). **For contributors:** property-based tests draw their inputs with
+  `pgregory.net/rapid` on every ordinary run; a failure prints its draws,
+  shrunk, and `-rapid.failfile` replays the file it writes under
+  `testdata/rapid/`. The first property found the cart's and the order's
+  multiplication accepting a zero price times a negative quantity, which no
+  caller reached. **For embedders:** `pgregory.net/rapid` moves from v1.2.0,
+  already in the module graph, to v1.3.0.
+
 - **An invoice filed a row that did not multiply, and could not say its prices
   included their tax** (D171, ADR 0248). **For operators:** a tax-inclusive
   order's invoice says `prices_include_tax`, and its rows keep the sticker as
