@@ -707,7 +707,9 @@ func (f *fakeStore) AppendMovement(ctx context.Context, mv models.Movement) (mod
 			"the schema's CHECK sets line_item_id on a cancellation and on nothing else")
 	}
 
-	mv.CreatedAt = time.Now().UTC()
+	if mv.CreatedAt.IsZero() {
+		mv.CreatedAt = time.Now().UTC()
+	}
 	f.movements = append(f.movements, mv)
 
 	return mv, nil

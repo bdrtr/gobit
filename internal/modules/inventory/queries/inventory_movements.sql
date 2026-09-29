@@ -17,11 +17,14 @@
 -- longer what an act computes — it brings the line's total UP TO a target read
 -- under the level's lock — so the same reference can legitimately appear twice
 -- and a redelivered event writes nothing because the target is already met.
+-- The moment is the level write's, passed in rather than taken from the column's
+-- default (ADR 0241): the default is the transaction's start, which a write
+-- that waited for the level's lock carries from before the write it followed.
 -- name: AppendMovement :one
 INSERT INTO inventory_movements (
     id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after,
-    reference, line_item_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    reference, line_item_id, created_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, sqlc.arg('created_at')::timestamptz)
 RETURNING *;
 
 -- ReturnedForLine sums the units a line's write-offs have already put back, for

@@ -11,7 +11,7 @@ import (
 
 const cancelOrderExchange = `-- name: CancelOrderExchange :one
 UPDATE order_exchanges
-SET status = 'canceled', canceled_at = now(), updated_at = now()
+SET status = 'canceled', canceled_at = clock_timestamp(), updated_at = clock_timestamp()
 WHERE id = $1
 RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
 `
@@ -43,7 +43,7 @@ func (q *Queries) CancelOrderExchange(ctx context.Context, id string) (OrderExch
 
 const completeOrderExchange = `-- name: CompleteOrderExchange :one
 UPDATE order_exchanges
-SET status = 'completed', completed_at = now(), updated_at = now()
+SET status = 'completed', completed_at = clock_timestamp(), updated_at = clock_timestamp()
 WHERE id = $1 AND status IN ('requested', 'funded')
 RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
 `
@@ -93,6 +93,7 @@ func (q *Queries) CountOrderExchanges(ctx context.Context, orderID string) (int6
 
 const createOrderExchange = `-- name: CreateOrderExchange :one
 
+
 INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
@@ -116,6 +117,12 @@ type CreateOrderExchangeParams struct {
 // recorded on the row (ADR 0120). The completion is still bounded by a CHECK
 // rather than offered for every record, because an exchange whose difference has
 // NOT been collected has had only half of it answered.
+// Every moment an exchange's transition writes is the moment of the write,
+// clock_timestamp(), not the transaction's start (ADR 0241): each transition
+// holds the row's lock, an exchange keeps two moments side by side (funded and
+// completed, or funded and canceled), and the order's history takes the later
+// one as the status. A completion that waited on the funding's lock was stamped
+// before it.
 func (q *Queries) CreateOrderExchange(ctx context.Context, arg CreateOrderExchangeParams) (OrderExchange, error) {
 	row := q.db.QueryRow(ctx, createOrderExchange,
 		arg.ID,
@@ -175,8 +182,8 @@ const fundOrderExchange = `-- name: FundOrderExchange :one
 UPDATE order_exchanges
 SET status                = 'funded',
     payment_collection_id = $2,
-    funded_at             = now(),
-    updated_at            = now()
+    funded_at             = clock_timestamp(),
+    updated_at            = clock_timestamp()
 WHERE id = $1 AND status = 'requested'
 RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
 `
@@ -324,7 +331,7 @@ const reopenOrderExchange = `-- name: ReopenOrderExchange :one
 UPDATE order_exchanges
 SET status = CASE WHEN funded_at IS NOT NULL THEN 'funded' ELSE 'requested' END,
     completed_at = NULL,
-    updated_at = now()
+    updated_at = clock_timestamp()
 WHERE id = $1 AND status = 'completed'
 RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
 `
@@ -355,8 +362,8 @@ func (q *Queries) ReopenOrderExchange(ctx context.Context, id string) (OrderExch
 const withdrawFundedOrderExchange = `-- name: WithdrawFundedOrderExchange :one
 UPDATE order_exchanges
 SET status      = 'canceled',
-    canceled_at = now(),
-    updated_at  = now()
+    canceled_at = clock_timestamp(),
+    updated_at  = clock_timestamp()
 WHERE id = $1 AND status = 'funded'
 RETURNING id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at
 `

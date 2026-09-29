@@ -189,8 +189,9 @@ type Movement struct {
 	// (item, location) pair carries what stocked_quantity should read.
 	StockedAfter int64
 	// CreatedAt is when it happened, from the DATABASE clock — the same moment
-	// as the updated_at of the level it explains, because both are that
-	// transaction's start (ADR 0053).
+	// as the updated_at of the level it explains (ADR 0053). It is the moment of
+	// the level's write under its lock rather than the transaction's start, so a
+	// write that waited for the lock reads after the one that held it (ADR 0241).
 	CreatedAt time.Time
 }
 

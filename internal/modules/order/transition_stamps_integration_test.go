@@ -12,13 +12,16 @@ package order_test
 
 import (
 	"context"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
+	"github.com/bdrtr/gobit/internal/modules/order/repository"
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
@@ -411,4 +414,64 @@ func TestAClaimCanBeWithdrawnOnTheRealDatabase(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err), "got: %v", err)
 	assert.Equal(t, service.CodeAfterSalesTransition, errors.CodeOf(err))
+}
+
+// heldExchangeStore holds the first exchange lock asked for until it is
+// released, after the transaction asking for it has begun.
+type heldExchangeStore struct {
+	*repository.Repository
+	holding sync.Once
+	arrived chan struct{}
+	release chan struct{}
+}
+
+// LockExchange holds the first call, then takes the lock.
+func (s *heldExchangeStore) LockExchange(ctx context.Context, id string) (models.Exchange, error) {
+	s.holding.Do(func() {
+		close(s.arrived)
+		<-s.release
+	})
+
+	return s.Repository.LockExchange(ctx, id)
+}
+
+// TestAnExchangeCompletedAfterItsFundingReadsCompleted is ADR 0241 on the
+// exchange's two moments: a completion whose transaction began first and waited
+// on the lock the funding held was stamped before the funding, and the order's
+// history, where the latest moment is the status, read the exchange as funded
+// for good.
+func TestAnExchangeCompletedAfterItsFundingReadsCompleted(t *testing.T) {
+	ctx := context.Background()
+	plain, _ := newService(t)
+	ord, err := plain.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+	exchange, err := plain.CreateExchange(ctx, service.CreateExchangeInput{OrderID: ord.ID, DifferenceDue: 1500})
+	require.NoError(t, err)
+	held := &heldExchangeStore{
+		Repository: repository.New(testPool.Pool()),
+		arrived:    make(chan struct{}), release: make(chan struct{}),
+	}
+	waiting, _ := newServiceWithStore(t, held)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := waiting.CompleteExchange(ctx, exchange.ID)
+		done <- err
+	}()
+	<-held.arrived
+	_, err = plain.FundExchange(ctx, exchange.ID, "paycol_stamps")
+	require.NoError(t, err)
+	close(held.release)
+	require.NoError(t, <-done, "the completion finds the exchange funded once the lock is free")
+
+	// The history reads the latest moment as the status (asof.go's
+	// appendRecord); the row is where the two moments are, and the query layer
+	// that assembles the history is not wired in this module's database.
+	var fundedAt, completedAt time.Time
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT funded_at, completed_at FROM order_exchanges WHERE id = $1`, exchange.ID).
+		Scan(&fundedAt, &completedAt))
+	assert.False(t, completedAt.Before(fundedAt),
+		"the completion was written after the funding, so its moment is not before it: funded %s, completed %s",
+		fundedAt, completedAt)
 }

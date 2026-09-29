@@ -15,15 +15,19 @@ SELECT * FROM inventory_levels
 WHERE inventory_item_id = $1 AND location_id = $2 AND deleted_at IS NULL
 FOR UPDATE;
 
+-- A level's writes are stamped with the moment of the write, clock_timestamp(),
+-- not the transaction's start (ADR 0241): they are made under the level's lock,
+-- and the movement that explains a write carries the same moment, so a write
+-- that waited for the lock reads after the one that held it.
 -- name: CreateInventoryLevel :one
 INSERT INTO inventory_levels (
-    id, inventory_item_id, location_id, stocked_quantity, reserved_quantity
-) VALUES ($1, $2, $3, $4, $5)
+    id, inventory_item_id, location_id, stocked_quantity, reserved_quantity, created_at, updated_at
+) VALUES ($1, $2, $3, $4, $5, clock_timestamp(), clock_timestamp())
 RETURNING *;
 
 -- name: UpdateInventoryLevelQuantities :one
 UPDATE inventory_levels
-SET stocked_quantity = $2, reserved_quantity = $3, updated_at = now()
+SET stocked_quantity = $2, reserved_quantity = $3, updated_at = clock_timestamp()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 

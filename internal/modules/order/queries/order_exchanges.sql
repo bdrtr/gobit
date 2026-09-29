@@ -8,6 +8,13 @@
 -- rather than offered for every record, because an exchange whose difference has
 -- NOT been collected has had only half of it answered.
 
+-- Every moment an exchange's transition writes is the moment of the write,
+-- clock_timestamp(), not the transaction's start (ADR 0241): each transition
+-- holds the row's lock, an exchange keeps two moments side by side (funded and
+-- completed, or funded and canceled), and the order's history takes the later
+-- one as the status. A completion that waited on the funding's lock was stamped
+-- before it.
+
 -- name: CreateOrderExchange :one
 INSERT INTO order_exchanges (id, order_id, status, difference_due, note, metadata)
 VALUES ($1, $2, $3, $4, $5, $6)
@@ -45,7 +52,7 @@ FOR UPDATE;
 -- makes the ordering of two records depend on which machine wrote them.
 -- name: CancelOrderExchange :one
 UPDATE order_exchanges
-SET status = 'canceled', canceled_at = now(), updated_at = now()
+SET status = 'canceled', canceled_at = clock_timestamp(), updated_at = clock_timestamp()
 WHERE id = $1
 RETURNING *;
 
@@ -62,7 +69,7 @@ RETURNING *;
 -- every writer.
 -- name: CompleteOrderExchange :one
 UPDATE order_exchanges
-SET status = 'completed', completed_at = now(), updated_at = now()
+SET status = 'completed', completed_at = clock_timestamp(), updated_at = clock_timestamp()
 WHERE id = $1 AND status IN ('requested', 'funded')
 RETURNING *;
 
@@ -73,7 +80,7 @@ RETURNING *;
 UPDATE order_exchanges
 SET status = CASE WHEN funded_at IS NOT NULL THEN 'funded' ELSE 'requested' END,
     completed_at = NULL,
-    updated_at = now()
+    updated_at = clock_timestamp()
 WHERE id = $1 AND status = 'completed'
 RETURNING *;
 
@@ -94,8 +101,8 @@ RETURNING *;
 -- name: WithdrawFundedOrderExchange :one
 UPDATE order_exchanges
 SET status      = 'canceled',
-    canceled_at = now(),
-    updated_at  = now()
+    canceled_at = clock_timestamp(),
+    updated_at  = clock_timestamp()
 WHERE id = $1 AND status = 'funded'
 RETURNING *;
 
@@ -114,8 +121,8 @@ RETURNING *;
 UPDATE order_exchanges
 SET status                = 'funded',
     payment_collection_id = $2,
-    funded_at             = now(),
-    updated_at            = now()
+    funded_at             = clock_timestamp(),
+    updated_at            = clock_timestamp()
 WHERE id = $1 AND status = 'requested'
 RETURNING *;
 

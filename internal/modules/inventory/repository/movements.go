@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/inventory/models"
 	"github.com/bdrtr/gobit/internal/modules/inventory/repository/inventorydb"
 )
@@ -33,6 +34,12 @@ func (r *Repository) AppendMovement(ctx context.Context, mv models.Movement) (mo
 	if err := requireTx(ctx, "AppendMovement"); err != nil {
 		return models.Movement{}, err
 	}
+	// The moment is the caller's, the level write's (ADR 0241); a movement with
+	// none would be written at the year one and sort before everything.
+	if mv.CreatedAt.IsZero() {
+		return models.Movement{}, coreerrors.Internal(codeQueryFailed,
+			"movement %s names no moment; it carries the moment of the level write it explains", mv.ID)
+	}
 
 	row, err := r.queries(ctx).AppendMovement(ctx, inventorydb.AppendMovementParams{
 		ID:              mv.ID,
@@ -44,6 +51,7 @@ func (r *Repository) AppendMovement(ctx context.Context, mv models.Movement) (mo
 		StockedAfter:    mv.StockedAfter,
 		Reference:       nullString(mv.Reference),
 		LineItemID:      nullString(mv.LineItemID),
+		CreatedAt:       pgtype.Timestamptz{Time: mv.CreatedAt, Valid: true},
 	})
 	// The ON CONFLICT that used to sit in this query is gone (migration 000007),
 	// and with it the no-row answer this branch reads. It is kept because the

@@ -12,6 +12,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A write that waited for a lock was stamped before the write it waited
+  for** (D164, ADR 0241). **For operators:** of two delivery changes made at
+  once, the one written last is now the order's delivery, which the parcel
+  opens with; two address corrections made at once no longer answer the second
+  with a 500; an exchange completed right after its funding reads as completed
+  in the order's history; and the stock ledger's newest movement again carries
+  what the level counts. Order migration 000037 changes two column defaults.
+
 - **A handler's error was dropped while four handlers said it was retried**
   (D163, ADR 0240). A fault during a write-off's put-back, a payment summary's
   update, an order confirmation or a search index write was logged and lost.

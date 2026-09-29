@@ -15,8 +15,8 @@ const appendMovement = `-- name: AppendMovement :one
 
 INSERT INTO inventory_movements (
     id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after,
-    reference, line_item_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    reference, line_item_id, created_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::timestamptz)
 RETURNING id, inventory_item_id, location_id, reservation_id, reason, delta, stocked_after, created_at, reference, line_item_id
 `
 
@@ -30,6 +30,7 @@ type AppendMovementParams struct {
 	StockedAfter    int64
 	Reference       *string
 	LineItemID      *string
+	CreatedAt       pgtype.Timestamptz
 }
 
 // inventory_movements queries.
@@ -50,6 +51,9 @@ type AppendMovementParams struct {
 // longer what an act computes — it brings the line's total UP TO a target read
 // under the level's lock — so the same reference can legitimately appear twice
 // and a redelivered event writes nothing because the target is already met.
+// The moment is the level write's, passed in rather than taken from the column's
+// default (ADR 0241): the default is the transaction's start, which a write
+// that waited for the level's lock carries from before the write it followed.
 func (q *Queries) AppendMovement(ctx context.Context, arg AppendMovementParams) (InventoryMovement, error) {
 	row := q.db.QueryRow(ctx, appendMovement,
 		arg.ID,
@@ -61,6 +65,7 @@ func (q *Queries) AppendMovement(ctx context.Context, arg AppendMovementParams) 
 		arg.StockedAfter,
 		arg.Reference,
 		arg.LineItemID,
+		arg.CreatedAt,
 	)
 	var i InventoryMovement
 	err := row.Scan(

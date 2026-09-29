@@ -171,3 +171,4 @@ truth: a report says what was true on the day it was taken.
 | [A crushed box sent again — measured 2026-09-29](0238-a-crushed-box-sent-again.md) | 144 |
 | [A box that never left — measured 2026-09-29](0239-a-box-that-never-left.md) | 112 |
 | [Thirteen handlers and one try — measured 2026-09-29](0240-thirteen-handlers-and-one-try.md) | 75 |
+| [The change that waited — measured 2026-09-29](0241-the-change-that-waited.md) | 72 |

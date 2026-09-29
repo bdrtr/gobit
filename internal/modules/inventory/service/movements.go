@@ -140,6 +140,9 @@ func (s *Service) recordMovement(
 		StockedAfter:    level.StockedQuantity,
 		Reference:       reference,
 		LineItemID:      lineItemID,
+		// The level's own moment, written under its lock (ADR 0241): the
+		// movement and the level it explains carry one moment (ADR 0053).
+		CreatedAt: level.UpdatedAt,
 	})
 
 	return err

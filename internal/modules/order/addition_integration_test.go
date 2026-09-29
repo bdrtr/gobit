@@ -313,3 +313,44 @@ func TestASecondCorrectionLeavesTheFirstDated(t *testing.T) {
 	assert.True(t, first.Equal(again),
 		"the second correction re-dated the first: %s became %s", first, again)
 }
+
+// TestTwoCorrectionsAtOnceLeaveTheLastOneCurrent is ADR 0241 on the address: a
+// correction that waited on the order's lock supersedes the one that held it.
+// Both rows were stamped with the moment their transaction BEGAN, so the
+// waiting one's supersede moment fell before the other's creation, the CHECK
+// that a row is not superseded before it was written refused it, and the
+// operator got a 500.
+func TestTwoCorrectionsAtOnceLeaveTheLastOneCurrent(t *testing.T) {
+	ctx := context.Background()
+	plain, _ := newService(t)
+	placed := correctableOrder(ctx, t, plain)
+	held := &heldLockStore{
+		Repository: repository.New(testPool.Pool()),
+		arrived:    make(chan struct{}), release: make(chan struct{}),
+	}
+	waiting, _ := newServiceWithStore(t, held)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := waiting.CorrectShippingAddress(ctx, placed.ID, models.OrderAddress{Address1: "2 Last St"})
+		done <- err
+	}()
+	<-held.arrived
+	_, err := plain.CorrectShippingAddress(ctx, placed.ID, models.OrderAddress{Address1: "1 First St"})
+	require.NoError(t, err)
+	close(held.release)
+	require.NoError(t, <-done, "the waiting correction is written after the one it waited for")
+
+	var current string
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT address_1 FROM order_addresses
+		  WHERE order_id = $1 AND address_type = 'shipping' AND superseded_at IS NULL`,
+		placed.ID).Scan(&current))
+	assert.Equal(t, "2 Last St", current)
+
+	var newest string
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT address_1 FROM order_addresses WHERE order_id = $1 AND address_type = 'shipping'
+		  ORDER BY created_at DESC, id DESC LIMIT 1`, placed.ID).Scan(&newest))
+	assert.Equal(t, "2 Last St", newest, "the history reads the correction written last as the newest")
+}

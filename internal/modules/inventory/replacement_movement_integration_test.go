@@ -15,6 +15,7 @@ package inventory_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -232,4 +233,62 @@ func TestARecalledReplacementGoesBackOnceAgainstTheDatabase(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, levels, 1)
 	assert.Equal(t, int64(10), levels[0].StockedQuantity, "the count grew once")
+}
+
+// heldLevelStore holds the first level lock asked for until it is released,
+// after the transaction asking for it has begun.
+type heldLevelStore struct {
+	*repository.Repository
+	holding sync.Once
+	arrived chan struct{}
+	release chan struct{}
+}
+
+// LockInventoryLevel holds the first call, then takes the lock.
+func (s *heldLevelStore) LockInventoryLevel(ctx context.Context, itemID, locationID string) (models.InventoryLevel, error) {
+	s.holding.Do(func() {
+		close(s.arrived)
+		<-s.release
+	})
+
+	return s.Repository.LockInventoryLevel(ctx, itemID, locationID)
+}
+
+// TestTheNewestMovementCarriesTheCount is ADR 0241 on the ledger: a movement
+// whose transaction began first and waited on the level's lock is written after
+// the one that held it, and it is the newest. Stamped with its transaction's
+// start, it read as the older one, and the newest movement no longer carried
+// what the level counts, the one-row drift check the ledger is built for.
+func TestTheNewestMovementCarriesTheCount(t *testing.T) {
+	ctx := context.Background()
+	plain := replacementService(t)
+	item, loc := stockedAt(ctx, t, plain, 10)
+	held := &heldLevelStore{
+		Repository: repository.New(testPool.Pool()),
+		arrived:    make(chan struct{}), release: make(chan struct{}),
+	}
+	waiting := service.New(held, nil)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := waiting.AdjustInventory(ctx, item.ID, loc.ID, -3)
+		done <- err
+	}()
+	<-held.arrived
+	_, err := plain.AdjustInventory(ctx, item.ID, loc.ID, -2)
+	require.NoError(t, err)
+	close(held.release)
+	require.NoError(t, <-done)
+
+	levels, err := plain.ListInventoryLevels(ctx, item.ID)
+	require.NoError(t, err)
+	require.Len(t, levels, 1)
+	require.Equal(t, int64(5), levels[0].StockedQuantity)
+	ledger, err := plain.ListMovements(ctx, service.ListMovementsInput{InventoryItemID: item.ID})
+	require.NoError(t, err)
+	require.NotEmpty(t, ledger)
+	assert.Equal(t, levels[0].StockedQuantity, ledger[0].StockedAfter,
+		"the newest movement carries what the level counts")
+	assert.Equal(t, levels[0].UpdatedAt, ledger[0].CreatedAt,
+		"and it carries the moment the level was written (ADR 0053)")
 }

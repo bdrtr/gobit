@@ -7,6 +7,7 @@ not more.
 
 - **Status:** Accepted
 - **Date:** 2026-09-08
+- **Amended by:** [0241](0241-a-row-written-under-a-lock-is-stamped-when-written.md): a moment written under a lock whose order decides what the rows say is the write's, `clock_timestamp()`
 
 ## Context
 

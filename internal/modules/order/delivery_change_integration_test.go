@@ -5,6 +5,7 @@ package order_test
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -346,4 +347,71 @@ func TestAChangeRefusesACollectionAnExchangeTook(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, service.CodeCollectionTaken, errors.CodeOf(err))
+}
+
+// heldLockStore holds the first order lock asked for until it is released,
+// AFTER the transaction asking for it has begun: the shape of a change that
+// waited on the lock another change held.
+type heldLockStore struct {
+	*repository.Repository
+	holding sync.Once
+	arrived chan struct{}
+	release chan struct{}
+}
+
+// LockOrder holds the first call, then takes the lock.
+func (s *heldLockStore) LockOrder(ctx context.Context, id string) (models.Order, error) {
+	s.holding.Do(func() {
+		close(s.arrived)
+		<-s.release
+	})
+
+	return s.Repository.LockOrder(ctx, id)
+}
+
+// TestTheChangeMadeLastIsTheCurrentDelivery is the reproduction of ADR 0241:
+// a change whose transaction began first and waited on the order's lock is
+// written after the change that held it, and it is the current delivery. Its
+// row was stamped with the moment its transaction BEGAN, before the other's,
+// so the reads put it first and took the other for the current one, while the
+// money the waiting change booked was reckoned from the other's amount.
+func TestTheChangeMadeLastIsTheCurrentDelivery(t *testing.T) {
+	ctx := context.Background()
+	plain, _ := newService(t)
+	placed, methodID := soldExpressOn(ctx, t, plain)
+
+	held := &heldLockStore{
+		Repository: repository.New(testPool.Pool()),
+		arrived:    make(chan struct{}), release: make(chan struct{}),
+	}
+	waiting, _ := newServiceWithStore(t, held)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := waiting.ChangeDelivery(ctx, placed.ID, changeTo(methodID, "so_last", 1000))
+		done <- err
+	}()
+	<-held.arrived
+
+	_, err := plain.ChangeDelivery(ctx, placed.ID, changeTo(methodID, "so_first", 1500))
+	require.NoError(t, err, "the other change holds the lock and finishes")
+	close(held.release)
+	require.NoError(t, <-done)
+
+	detail, err := plain.GetOrder(ctx, placed.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.DeliveryChanges, 2)
+	assert.Equal(t, "so_first", detail.DeliveryChanges[0].ShippingOptionID, "the changes read in the order they were made")
+	assert.Equal(t, "so_last", detail.DeliveryChanges[1].ShippingOptionID)
+	current := models.CurrentDeliveries(detail.ShippingMethods, detail.DeliveryChanges)
+	require.Len(t, current, 1)
+	assert.Equal(t, "so_last", current[0].ShippingOptionID, "the change made last is the delivery")
+	var last models.DeliveryChange
+	for _, change := range detail.DeliveryChanges {
+		if change.ShippingOptionID == "so_last" {
+			last = change
+		}
+	}
+	require.Equal(t, int64(-500), last.Difference,
+		"precondition: the waiting change reckoned its difference from the other's amount")
 }

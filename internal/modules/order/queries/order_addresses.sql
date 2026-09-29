@@ -32,10 +32,13 @@ ORDER BY order_id, address_type, created_at, id;
 -- It runs under the order's lock, followed in the same transaction by the
 -- corrected row (ADR 0195). It touches the current row only, so a second
 -- correction closes the first correction and not the original.
+-- The moment is the write's rather than the transaction's (ADR 0241): the
+-- correction holds the order's lock, and one that waited for it supersedes a row
+-- written after its own transaction began.
 -- name: SupersedeOrderAddress :execrows
 UPDATE order_addresses
-SET superseded_at = now(),
-    updated_at    = now()
+SET superseded_at = clock_timestamp(),
+    updated_at    = clock_timestamp()
 WHERE order_id = $1
   AND address_type = $2
   AND superseded_at IS NULL;

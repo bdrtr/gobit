@@ -13,6 +13,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -54,7 +55,7 @@ func TestTheLedgerAndTheCountCommitTogether(t *testing.T) {
 		level, lockErr := repo.LockInventoryLevel(txCtx, item.ID, loc.ID)
 		require.NoError(t, lockErr)
 
-		_, updateErr := repo.UpdateInventoryLevelQuantities(txCtx, level.ID, 4, 0)
+		updated, updateErr := repo.UpdateInventoryLevelQuantities(txCtx, level.ID, 4, 0)
 		require.NoError(t, updateErr)
 
 		_, appendErr := repo.AppendMovement(txCtx, models.Movement{
@@ -64,6 +65,7 @@ func TestTheLedgerAndTheCountCommitTogether(t *testing.T) {
 			Reason:          models.MovementAdjustment,
 			Delta:           -6,
 			StockedAfter:    4,
+			CreatedAt:       updated.UpdatedAt,
 		})
 		require.NoError(t, appendErr)
 
@@ -79,6 +81,27 @@ func TestTheLedgerAndTheCountCommitTogether(t *testing.T) {
 	require.Len(t, levels, 1)
 	assert.Equal(t, int64(10), levels[0].StockedQuantity,
 		"the level has to roll back too, or this test proved nothing")
+}
+
+// TestAMovementWithNoMomentIsRefusedByTheRepository keeps a movement from being
+// written at the year one: its moment is the level write's, passed in
+// (ADR 0241), and a caller that passed none is a programming error.
+func TestAMovementWithNoMomentIsRefusedByTheRepository(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	repo := newRepo()
+	item, loc := addItem(ctx, t, svc), addLocation(ctx, t, svc)
+
+	err := repo.WithTx(ctx, func(txCtx context.Context) error {
+		_, err := repo.AppendMovement(txCtx, models.Movement{
+			ID: models.NewMovementID(), InventoryItemID: item.ID, LocationID: loc.ID,
+			Reason: models.MovementAdjustment, Delta: 1, StockedAfter: 1,
+		})
+		return err
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, errors.KindInternal, errors.KindOf(err))
 }
 
 // TestAMovementOutsideATransactionIsRefusedByTheRepository drives the guard
@@ -238,11 +261,12 @@ func TestAConfirmedReservationLeavesASaleThatNamesIt(t *testing.T) {
 // TestTwoMovementsInOneTransactionArePagedApart is why the id is in the index
 // and in the keyset.
 //
-// created_at comes from now(), which is transaction START, so two movements
-// written in one transaction share it EXACTLY. With the moment alone as the
-// position, a page boundary landing between them would drop one or repeat it —
-// and this is not a rare shape: it is what every confirm does when a level is
-// opened and sold in the same call.
+// Two movements can carry the same moment: the moment is the level write's
+// (ADR 0241), and until then it was the transaction's start, which every
+// movement of one transaction shared. With the moment alone as the position, a
+// page boundary landing between them would drop one or repeat it; the fixture
+// writes two with one moment, as a confirm that opened and sold a level in one
+// call used to.
 func TestTwoMovementsInOneTransactionArePagedApart(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -251,6 +275,7 @@ func TestTwoMovementsInOneTransactionArePagedApart(t *testing.T) {
 	_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, 10)
 	require.NoError(t, err)
 
+	moment := time.Now().UTC().Add(time.Second).Truncate(time.Microsecond)
 	require.NoError(t, repo.WithTx(ctx, func(txCtx context.Context) error {
 		for _, delta := range []int64{1, 2} {
 			if _, err := repo.AppendMovement(txCtx, models.Movement{
@@ -260,6 +285,7 @@ func TestTwoMovementsInOneTransactionArePagedApart(t *testing.T) {
 				Reason:          models.MovementAdjustment,
 				Delta:           delta,
 				StockedAfter:    10 + delta,
+				CreatedAt:       moment,
 			}); err != nil {
 				return err
 			}
