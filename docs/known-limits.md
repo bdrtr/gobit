@@ -557,6 +557,18 @@ past and is not corrected retroactively.
   the order either, such as the buyer's IP, the carrier's checkpoints or what
   the customer was sent
   ([measurement 0170](measurements/0170-what-the-timeline-left-out.md)).
+- **A read at the edge of "now" can miss a row that commits a moment later.**
+  A row's moment is taken when it is written and its transaction commits after
+  it. [ADR 0241](adr/0241-a-row-written-under-a-lock-is-stamped-when-written.md)
+  and [ADR 0242](adr/0242-a-moment-the-process-reads-is-read-after-the-lock.md)
+  took the moments that order state after the lock, which narrowed the gap to
+  the rest of the write and did not close it
+  ([measurement 0241](measurements/0241-the-change-that-waited.md)). A reader
+  paging the stock ledger, the invoices or the orders newest first, or
+  exporting a journal window that ends at the present, can pass a moment whose
+  row is not committed yet, and the next page or window starts after it. The
+  row is there once it commits: read a window that ended a few seconds ago, or
+  read it again.
 
 ## The limit of the invariants
 
