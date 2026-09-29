@@ -227,7 +227,7 @@ func (w *Workflows) applyTaxes(
 	facts map[string]productFacts,
 ) (taxOutcome, error) {
 	if w.taxes == nil {
-		return taxOutcome{source: TaxSourceRegion}, w.applyRegionTax(ctx, snap, lines)
+		return taxOutcome{source: TaxSourceRegion}, w.applyRegionTax(ctx, snap, lines, facts)
 	}
 
 	country, reason, err := w.countryForRegion(ctx, snap.RegionID)
@@ -241,9 +241,24 @@ func (w *Workflows) applyTaxes(
 			slog.String("reason", reason),
 			slog.String("tax_source", TaxSourceRegion),
 		)
-		return taxOutcome{source: TaxSourceRegion}, w.applyRegionTax(ctx, snap, lines)
+		return taxOutcome{source: TaxSourceRegion}, w.applyRegionTax(ctx, snap, lines, facts)
 	}
-	return w.applyModuleTax(ctx, snap, country, shippingTotal, lines, facts)
+	return w.applyModuleTax(ctx, snap, country, shippingTotal, lines, facts, giftCardLines(snap, facts))
+}
+
+// giftCardLines names the lines whose product is a gift card, which carry no
+// tax (ADR 0247): a card is money its holder spends later, and the goods it
+// buys are taxed then. A line whose product could not be read is priced as any
+// line; the checkout reads the flag strictly and refuses a card that was taxed.
+func giftCardLines(snap Snapshot, facts map[string]productFacts) map[string]bool {
+	cards := make(map[string]bool)
+	for i := range snap.Items {
+		if facts[snap.Items[i].VariantID].IsGiftcard {
+			cards[snap.Items[i].ID] = true
+		}
+	}
+
+	return cards
 }
 
 // taxOutcome is what a round's tax step reports beside the amounts it wrote:
@@ -256,13 +271,31 @@ type taxOutcome struct {
 }
 
 // applyRegionTax computes the tax with the region's flat rate (the Phase 5 path).
-func (w *Workflows) applyRegionTax(ctx context.Context, snap Snapshot, lines []LineTotals) error {
+// A gift card line is left untaxed ([giftCardLines]).
+//
+// The round reads no product when neither module wants one (ADR 0009), and a
+// rate that taxes is then the one consumer left: it reads the products itself,
+// once, to know which lines are cards. A zero rate taxes nothing and reads
+// nothing.
+func (w *Workflows) applyRegionTax(ctx context.Context, snap Snapshot, lines []LineTotals, facts map[string]productFacts) error {
 	rateBps, err := w.taxRate(ctx, snap.RegionID)
 	if err != nil {
 		return err
 	}
+	if rateBps > 0 && facts == nil {
+		read, factsErr := w.lineProductFacts(ctx, snap)
+		if factsErr != nil {
+			w.log.WarnContext(ctx, "the products' facts could not be read; taxing every line",
+				"error", factsErr, "cart_id", snap.ID, "lines", len(lines))
+		}
+		facts = read
+	}
+	cards := giftCardLines(snap, facts)
 
 	for i := range lines {
+		if cards[lines[i].LineItemID] {
+			continue
+		}
 		tax, taxErr := taxOf(lines[i].Subtotal-lines[i].DiscountTotal, rateBps)
 		if taxErr != nil {
 			return taxErr
@@ -302,6 +335,7 @@ func (w *Workflows) applyModuleTax(
 	shippingTotal int64,
 	lines []LineTotals,
 	facts map[string]productFacts,
+	cards map[string]bool,
 ) (taxOutcome, error) {
 	// The PRODUCT of each line is resolved before the request is built. A cart
 	// line knows its variant and every tax rule is written about a product, so
@@ -326,8 +360,17 @@ func (w *Workflows) applyModuleTax(
 	// It is not read again here: the same product row carries the discount
 	// engine's two flags and this type, and the totals path reads it once
 	// ([Workflows.computeTotals]).
-	items := make([]taxRequestItem, 0, len(lines))
+	//
+	// A gift card line is not sent at all ([giftCardLines]); the answer is
+	// matched against the lines that were, and a card keeps no tax.
+	taxed := make([]int, 0, len(lines))
 	for i := range lines {
+		if !cards[lines[i].LineItemID] {
+			taxed = append(taxed, i)
+		}
+	}
+	items := make([]taxRequestItem, 0, len(taxed))
+	for _, i := range taxed {
 		variantID := lineVariant[lines[i].LineItemID]
 		items = append(items, taxRequestItem{
 			ID:            lines[i].LineItemID,
@@ -365,8 +408,15 @@ func (w *Workflows) applyModuleTax(
 		return taxOutcome{}, errors.Wrap(err, errors.KindInternal, CodeTaxInvalid,
 			"the tax result could not be decoded: %s", snap.ID)
 	}
-	if err := applyTaxResponse(snap, lines, resp); err != nil {
+	sent := make([]LineTotals, len(taxed))
+	for k, i := range taxed {
+		sent[k] = lines[i]
+	}
+	if err := applyTaxResponse(snap, sent, resp); err != nil {
 		return taxOutcome{}, err
+	}
+	for k, i := range taxed {
+		lines[i] = sent[k]
 	}
 
 	if !resp.RegionFound {

@@ -9,6 +9,7 @@ the same flag.
 - **Date:** 2026-09-27
 - **Amends:** [0210](0210-a-sold-gift-card-is-issued-when-its-order-is-paid.md), whose flow read the catalog and whose order books counted a card as a sale
 - **Amended by:** [0213](0213-an-operator-closes-a-gift-card-and-a-card-line-is-final.md): a card line is not returned or written off, and a closed card's balance is voided
+- **Amended by:** [0247](0247-a-gift-card-is-not-taxed-when-it-is-sold.md): a card line carries no tax
 
 Measurement: [measurements/0211](../measurements/0211-a-card-is-owed.md)
 

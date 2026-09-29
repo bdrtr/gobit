@@ -67,7 +67,7 @@
 //
 // Tax is computed by the tax module ([Taxes.CalculateTaxJSON]); in Phase 5 this job
 // temporarily lived in region, and region's godoc had already flagged the handover.
-// The three decisions of the contract are UNAFFECTED by the handover:
+// The decisions of the contract are UNAFFECTED by the handover:
 //
 //  1. BASE: tax is computed over the POST-DISCOUNT line subtotal and SHIPPING does
 //     not enter the base. Tax follows the amount actually paid; taxing the
@@ -88,6 +88,9 @@
 //     chosen, because it overcharges the customer and leaves the question "where did
 //     the excess come from" to reconciliation; a floating point rate is, per plan
 //     Section 8, never even considered.
+//  4. GIFT CARDS: a line whose product is a gift card is not taxed on either
+//     path (ADR 0247). The card is money its holder spends later and the goods it
+//     buys are taxed then; taxing the card as well taxed that money twice.
 //
 // # Where the tax COUNTRY comes from
 //

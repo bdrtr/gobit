@@ -85,6 +85,8 @@ func TestABoughtGiftCardIsMailedAndSpent(t *testing.T) {
 	customerID, address := newCustomer(ctx, t)
 	cardVariant := newGiftCardVariant(ctx, t, 5_000)
 	cartID, totals := prepareCart(ctx, t, customerID, cardVariant, 1)
+	assert.Zero(t, totals.TaxTotal, "a card is not taxed when it is sold (ADR 0247)")
+	assert.Equal(t, int64(5_000), totals.Total, "a 5,000 card costs 5,000")
 
 	bought, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
 		CartID: cartID, LocationID: stockLocationID, PaymentProviderID: manual.ID,
@@ -95,6 +97,7 @@ func TestABoughtGiftCardIsMailedAndSpent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, order.Items, 1)
 	assert.True(t, order.Items[0].IsGiftcard, "the line knows it sold a card")
+	assert.Zero(t, order.Items[0].TaxTotal)
 
 	mail := issuedCardMail(t, bought.OrderID)
 	assert.Equal(t, address, mail.To, "the code goes to the order's address")

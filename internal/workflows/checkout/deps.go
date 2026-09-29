@@ -154,6 +154,10 @@ const (
 	CodeTotalsInvalid = "checkout_workflow_totals_invalid"
 	// CodeAmountInvalid reports that the amount to be captured is invalid.
 	CodeAmountInvalid = "checkout_workflow_amount_invalid"
+	// CodeGiftCardTaxed reports that the cart's totals taxed a gift card line,
+	// which they do only when the catalog could not be read for them
+	// (ADR 0247); the next attempt computes them again.
+	CodeGiftCardTaxed = "checkout_workflow_gift_card_taxed"
 	// CodeLinkReadFailed reports that the link layer COULD NOT BE READ; "there is
 	// no inventory item" and "we could not find out whether there is one" are
 	// different situations.

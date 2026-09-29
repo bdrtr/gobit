@@ -1098,6 +1098,16 @@ func (p *checkoutPlan) validate() error {
 				line.LineItemID, line.DiscountTotal, line.Subtotal)
 		}
 
+		// A gift card carries no tax (ADR 0247). The cart's round prices a
+		// line whose product it could not read as any line, and this plan
+		// read the flag strictly, so a taxed card is a round that could not
+		// tell; the order is refused before anything is reserved or charged.
+		if line.IsGiftcard && line.TaxTotal != 0 {
+			return errors.Unavailable(CodeGiftCardTaxed,
+				"the cart's totals taxed gift card line %s (%d), since its product could not be read; they are computed again on the next attempt",
+				line.LineItemID, line.TaxTotal)
+		}
+
 		// The shopper was quoted unit price x quantity; where the prices
 		// included their tax, the subtotal is what is left of that once the
 		// line's tax is taken out (ADR 0246).

@@ -580,8 +580,13 @@ func TestAFlagOfTheWrongTypeIsNotGuessed(t *testing.T) {
 // rate rule matches on. The question this test asks changed with it — no longer
 // "is the promotion module installed" but "does anybody want the product row" —
 // and [TestTheFactsAreReadForTheTaxTypeAlone] is the other half.
+//
+// ADR 0247 gave it a THIRD: a region rate that taxes has to know which lines
+// are gift cards, so the region here taxes nothing, and
+// [TestARegionRateLeavesAGiftCardUntaxed] is the rate that does.
 func TestTheFactsAreNotReadWithoutAConsumer(t *testing.T) {
 	h := newHarnessWith(t, nil, nil)
+	h.regions.rateBps = 0
 	catalog := installProductCatalog(h, defaultProductFlags())
 	serveSnapshot(h.carts, twoLineCart(1))
 
@@ -589,7 +594,29 @@ func TestTheFactsAreNotReadWithoutAConsumer(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Empty(t, catalog.asked,
-		"with neither module installed the products are not read at all")
+		"with neither module installed and nothing to tax the products are not read at all")
+}
+
+// TestARegionRateLeavesAGiftCardUntaxed is ADR 0247 on the region's flat rate:
+// with neither module installed the round read no product, and a rate that
+// taxes reads them once to leave the card line untaxed.
+func TestARegionRateLeavesAGiftCardUntaxed(t *testing.T) {
+	h := newHarnessWith(t, nil, nil)
+	catalog := installProductCatalog(h, map[string]productFacts{
+		testProductA: {Discountable: true},
+		testProductB: {IsGiftcard: true},
+	})
+	serveSnapshot(h.carts, twoLineCart(1))
+
+	totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	assert.Len(t, catalog.asked, 1, "the rate reads the products once")
+	require.Len(t, totals.Lines, 2)
+	assert.Equal(t, int64(400), totals.Lines[0].TaxTotal, "2000 at the region's 20%")
+	assert.Zero(t, totals.Lines[1].TaxTotal, "a gift card carries no tax")
+	assert.Zero(t, totals.Lines[1].TaxRateBps)
+	assert.Equal(t, int64(400), totals.TaxTotal)
 }
 
 // TestTheFactsAreReadForTheTaxTypeAlone is the second consumer, on its own.

@@ -12,6 +12,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A gift card was taxed when it was sold, and the goods it bought were taxed
+  again** (D170, ADR 0247). **For operators:** a gift card line carries no tax,
+  so a card costs its value; the goods it pays for are taxed as before. A
+  checkout whose cart taxed a card, which happens only when the catalog could
+  not be read for the totals, answers `checkout_workflow_gift_card_taxed` and
+  the next attempt computes them again. Orders placed before keep their taxed
+  card lines.
+
 - **Nothing could be sold in a market whose prices include their tax** (D169,
   ADR 0246). The cart refused to write the totals of every such cart with a
   non-zero rate, since each line's subtotal is the sticker less its tax and

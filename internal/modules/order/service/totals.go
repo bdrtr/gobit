@@ -302,6 +302,14 @@ func validateOrderItem(index int, item CreateOrderItemInput, pricesIncludeTax bo
 			index, item.VariantID, item.Total, item.Subtotal, item.DiscountTotal, item.TaxTotal, expectedTotal)
 	}
 
+	// A gift card carries no tax (ADR 0247): it is money its holder spends
+	// later, and the goods it buys are taxed then.
+	if item.IsGiftcard && item.TaxTotal != 0 {
+		return errors.Invalid(CodeTotalsInconsistent,
+			"a gift card line carries no tax (line %d, %s): tax_total=%d was given",
+			index, item.VariantID, item.TaxTotal)
+	}
+
 	if err := validateLinePriceOrigin(index, item); err != nil {
 		return err
 	}

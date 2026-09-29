@@ -526,3 +526,48 @@ func TestALineWithoutATypeStillPrices(t *testing.T) {
 		"a product with no type sends an empty reference rather than a guess")
 	assert.Positive(t, totals.TaxTotal, "and the line is still taxed")
 }
+
+// TestATaxModuleIsNotAskedAboutAGiftCard is ADR 0247 on the tax module's path:
+// the card line is not sent, the answer is matched against the line that was,
+// and the card keeps no tax. In a market whose prices include their tax the
+// card's subtotal stays its sticker, which is the value it is issued at and
+// the debt the order books.
+func TestATaxModuleIsNotAskedAboutAGiftCard(t *testing.T) {
+	for _, inclusive := range []bool{false, true} {
+		h := newModuleHarness(t)
+		installProductCatalog(h, map[string]productFacts{
+			testProductA: {Discountable: true},
+			testProductB: {IsGiftcard: true},
+		})
+		h.taxes.fn = func(req taxRequest) (taxResponse, error) {
+			resp := taxResponse{RegionFound: true, PricesIncludeTax: inclusive, Shipping: taxResponseLine{ID: "_shipping"}}
+			for _, item := range req.Items {
+				tax := item.Amount * 2000 / BpsScale
+				if inclusive {
+					tax = item.Amount * 2000 / (BpsScale + 2000)
+				}
+				taxable := item.Amount
+				if inclusive {
+					taxable -= tax
+				}
+				resp.Items = append(resp.Items, taxResponseLine{ID: item.ID, RateBps: 2000, TaxableAmount: taxable, TaxAmount: tax})
+				resp.TaxTotal += tax
+			}
+			return resp, nil
+		}
+		serveSnapshot(h.carts, twoLineCart(1))
+
+		totals, err := h.wf.CalculateTotals(context.Background(), testCartID)
+		require.NoError(t, err)
+
+		require.Len(t, h.taxes.requests, 1)
+		require.Len(t, h.taxes.requests[0].Items, 1, "inclusive=%v: the card line is not sent", inclusive)
+		assert.Equal(t, testLineA, h.taxes.requests[0].Items[0].ID)
+		require.Len(t, totals.Lines, 2)
+		assert.Positive(t, totals.Lines[0].TaxTotal)
+		assert.Zero(t, totals.Lines[1].TaxTotal, "inclusive=%v: a gift card carries no tax", inclusive)
+		assert.Equal(t, int64(750), totals.Lines[1].Subtotal, "inclusive=%v: the card's subtotal is its sticker", inclusive)
+		assert.Equal(t, totals.Lines[0].TaxTotal, totals.TaxTotal)
+		requireIdentity(t, totals)
+	}
+}
