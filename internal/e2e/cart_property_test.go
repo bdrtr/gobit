@@ -12,6 +12,7 @@ import (
 	"pgregory.net/rapid"
 
 	paymentmanual "github.com/bdrtr/gobit/internal/modules/payment/manual"
+	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
@@ -31,18 +32,56 @@ import (
 // a 15% promotion on half the pool puts a discount beside either kind of tax,
 // and the pool's last variant is a gift card, which carries no tax (ADR 0247).
 // A shopper may also choose a paid or a free delivery in their market and type
-// a 10% coupon that covers the other half of the pool.
+// a 10% coupon that covers the other half of the pool. One variant is a gift
+// box sold from two of the pool's variants (ADR 0234), and one takes an
+// engraving as an add-on line of its own (ADR 0229).
 func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 	ctx := t.Context()
 
 	prices := []int64{1, 7, 999, 11_999, 19_900, 123_457}
 	pool := make([]string, len(prices))
+	items := map[string]string{}
 	for i, price := range prices {
-		pool[i], _ = newStockedVariant(ctx, t, fmt.Sprintf("E2E Property Product %d", i),
+		var item string
+		pool[i], item = newStockedVariant(ctx, t, fmt.Sprintf("E2E Property Product %d", i),
 			map[string]int64{taxedCurrency: price}, 1_000_000)
+		items[pool[i]] = item
 	}
 	card := newGiftCardVariantStocked(ctx, t, 5_000, 1_000_000)
 	pool = append(pool, card)
+	box := newVariant(ctx, t, "E2E Property Gift Box", map[string]int64{taxedCurrency: 19_900})
+	_, err := productSvc.SetVariantBundle(ctx, box, []productmodels.BundleComponent{
+		{VariantID: pool[2], Quantity: 1}, {VariantID: pool[4], Quantity: 2},
+	})
+	require.NoError(t, err)
+	pool = append(pool, box)
+	engraving, engravingItem := newStockedVariant(ctx, t, "E2E Property Engraving", map[string]int64{taxedCurrency: 4_999}, 1_000_000)
+	items[engraving] = engravingItem
+	// parts is what one unit of a variant takes off the shelf, per stocked
+	// variant: itself, or the box's parts.
+	parts := func(variant string) map[string]int64 {
+		if variant == box {
+			return map[string]int64{pool[2]: 1, pool[4]: 2}
+		}
+		if _, stocked := items[variant]; stocked {
+			return map[string]int64{variant: 1}
+		}
+		return nil
+	}
+	shelf := func(rt *rapid.T) map[string]int64 {
+		out := map[string]int64{}
+		for variant, item := range items {
+			levels, err := inventorySvc.ListInventoryLevels(ctx, item)
+			require.NoError(rt, err)
+			require.Len(rt, levels, 1)
+			out[variant] = levels[0].StockedQuantity
+		}
+		return out
+	}
+	ring, err := productSvc.GetVariant(ctx, pool[3])
+	require.NoError(t, err)
+	_, err = productSvc.SetProductAddOns(ctx, ring.ProductID, []string{engraving})
+	require.NoError(t, err)
 	newAutomaticPercentagePromotion(ctx, t, "E2E-PROPERTY-15", 1_500, []string{pool[1], pool[3], pool[5]})
 	const coupon = "E2E-PROPERTY-COUPON"
 	newCouponPromotion(ctx, t, coupon, 1_000, []string{pool[0], pool[2], pool[4]})
@@ -64,11 +103,17 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 		cart, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: country, CustomerID: customerID})
 		require.NoError(rt, err)
 		for range rapid.IntRange(1, 4).Draw(rt, "lines") {
-			_, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
+			line := cartwf.AddLineItemInput{
 				CartID:    cart.CartID,
 				VariantID: pool[rapid.IntRange(0, len(pool)-1).Draw(rt, "variant")],
 				Quantity:  rapid.Int64Range(1, 5).Draw(rt, "quantity"),
-			})
+			}
+			if line.VariantID == pool[3] && rapid.Bool().Draw(rt, "engraved") {
+				line.AddOns = []cartwf.AddOnRequest{{VariantID: engraving, Properties: map[string]string{
+					"Text": rapid.SampledFrom([]string{"Ada", "Bo"}).Draw(rt, "engraving"),
+				}}}
+			}
+			_, err := workflows.AddLineItem(ctx, line)
 			require.NoError(rt, err, "every line a shopper adds has its cart's totals written")
 		}
 		fee := int64(0)
@@ -114,6 +159,16 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 		}
 		require.Equal(rt, charged, stored.Total, "the shopper pays the stickers, less the discount, plus any tax added on")
 
+		// What the sale takes off the shelf: each line's units, a box's as its
+		// parts.
+		taken := map[string]int64{}
+		for _, line := range stored.Items {
+			for variant, per := range parts(line.VariantID) {
+				taken[variant] += per * line.Quantity
+			}
+		}
+		before := shelf(rt)
+
 		// The order, its payment and its document.
 		placed, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
 			CartID:            cart.CartID,
@@ -124,6 +179,10 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 			ExpectedTotal:     stored.Total,
 		})
 		require.NoError(rt, err, "every cart a shopper can build becomes an order")
+		after := shelf(rt)
+		for variant := range items {
+			require.Equal(rt, taken[variant], before[variant]-after[variant], "the sale takes %s off the shelf", variant)
+		}
 		order, err := orderSvc.GetOrder(ctx, placed.OrderID)
 		require.NoError(rt, err)
 		require.Equal(rt, stored.Total, order.Total)
