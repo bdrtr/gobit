@@ -68,8 +68,8 @@ WHERE customer_id = $1 AND currency_code = $2;
 -- the conflict is handled in one statement.
 -- name: InsertLoyaltySessionIfAbsent :one
 INSERT INTO payment_loyalty_sessions (
-    id, idempotency_key, reference, customer_id, amount, currency_code, status
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    id, idempotency_key, reference, customer_id, amount, currency_code, status, partial
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (idempotency_key) DO NOTHING
 RETURNING *;
 

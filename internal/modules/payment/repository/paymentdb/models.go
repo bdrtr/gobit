@@ -99,6 +99,7 @@ type PaymentLoyaltySession struct {
 	DeclineReason    *string
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	Partial          bool
 }
 
 type PaymentManualSession struct {
@@ -159,6 +160,7 @@ type PaymentStoreCreditSession struct {
 	DeclineReason    *string
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
+	Partial          bool
 }
 
 type Refund struct {

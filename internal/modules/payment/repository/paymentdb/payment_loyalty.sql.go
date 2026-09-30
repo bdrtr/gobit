@@ -28,7 +28,7 @@ func (q *Queries) CountLoyaltyEntries(ctx context.Context, arg CountLoyaltyEntri
 }
 
 const getLoyaltySession = `-- name: GetLoyaltySession :one
-SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at FROM payment_loyalty_sessions
+SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at, partial FROM payment_loyalty_sessions
 WHERE id = $1
 `
 
@@ -49,12 +49,13 @@ func (q *Queries) GetLoyaltySession(ctx context.Context, id string) (PaymentLoya
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Partial,
 	)
 	return i, err
 }
 
 const getLoyaltySessionByIdempotencyKey = `-- name: GetLoyaltySessionByIdempotencyKey :one
-SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at FROM payment_loyalty_sessions
+SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at, partial FROM payment_loyalty_sessions
 WHERE idempotency_key = $1
 `
 
@@ -75,6 +76,7 @@ func (q *Queries) GetLoyaltySessionByIdempotencyKey(ctx context.Context, idempot
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Partial,
 	)
 	return i, err
 }
@@ -135,10 +137,10 @@ func (q *Queries) InsertLoyaltyEntry(ctx context.Context, arg InsertLoyaltyEntry
 
 const insertLoyaltySessionIfAbsent = `-- name: InsertLoyaltySessionIfAbsent :one
 INSERT INTO payment_loyalty_sessions (
-    id, idempotency_key, reference, customer_id, amount, currency_code, status
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    id, idempotency_key, reference, customer_id, amount, currency_code, status, partial
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (idempotency_key) DO NOTHING
-RETURNING id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at
+RETURNING id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at, partial
 `
 
 type InsertLoyaltySessionIfAbsentParams struct {
@@ -149,6 +151,7 @@ type InsertLoyaltySessionIfAbsentParams struct {
 	Amount         int64
 	CurrencyCode   string
 	Status         string
+	Partial        bool
 }
 
 // InsertLoyaltySessionIfAbsent writes the provider's session only if that
@@ -163,6 +166,7 @@ func (q *Queries) InsertLoyaltySessionIfAbsent(ctx context.Context, arg InsertLo
 		arg.Amount,
 		arg.CurrencyCode,
 		arg.Status,
+		arg.Partial,
 	)
 	var i PaymentLoyaltySession
 	err := row.Scan(
@@ -179,6 +183,7 @@ func (q *Queries) InsertLoyaltySessionIfAbsent(ctx context.Context, arg InsertLo
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Partial,
 	)
 	return i, err
 }
@@ -232,7 +237,7 @@ func (q *Queries) ListLoyaltyEntries(ctx context.Context, arg ListLoyaltyEntries
 }
 
 const lockLoyaltySession = `-- name: LockLoyaltySession :one
-SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at FROM payment_loyalty_sessions
+SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at, partial FROM payment_loyalty_sessions
 WHERE id = $1
 FOR UPDATE
 `
@@ -257,6 +262,7 @@ func (q *Queries) LockLoyaltySession(ctx context.Context, id string) (PaymentLoy
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Partial,
 	)
 	return i, err
 }
@@ -322,7 +328,7 @@ SET status            = $2,
     decline_reason    = $6,
     updated_at        = now()
 WHERE id = $1
-RETURNING id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at
+RETURNING id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at, partial
 `
 
 type UpdateLoyaltySessionStateParams struct {
@@ -361,6 +367,7 @@ func (q *Queries) UpdateLoyaltySessionState(ctx context.Context, arg UpdateLoyal
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Partial,
 	)
 	return i, err
 }

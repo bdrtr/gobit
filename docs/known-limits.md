@@ -643,19 +643,19 @@ past and is not corrected retroactively.
   person and not about credit or points. A shop that needs both has no answer
   here.
 
-- **At the storefront a person-bound tender pays for the whole order or for
-  none of it.** The checkout opens ONE session for the collection's whole
-  remaining amount and fails the step when the hold falls short, and the store
-  session endpoint deliberately carries no amount — a client-chosen amount was
-  a 1-unit session on a 50,000 order. So store credit and loyalty points pay for
-  an order the balance covers entirely, and a shortfall is a decline the
-  customer answers with another tender for the same cart. The payment module
-  itself splits a collection across sessions and the admin surface exposes it
-  (`POST /admin/v1/payment-collections/{id}/payment-sessions` takes an amount);
-  "part in points, the rest by card" at the storefront is a checkout decision
-  no record has made
-  ([ADR 0165](adr/0165-a-customer-can-pay-with-their-points.md),
-  [measurement 0165](measurements/0165-what-a-point-buys.md)).
+- **At the storefront the tenders that pay first come in one order, and an
+  order has one gift card.** Since
+  [ADR 0269](adr/0269-a-balance-pays-part-of-an-order.md) a completion names
+  the customer's store credit and points in `pay_first_with` beside a
+  `gift_card_code`, and each holds what it has of what is still unpaid before
+  `payment_provider_id` pays the rest. The card always pays before the
+  balances, the balances pay in the order named, and `payment_provider_id`
+  cannot be `gift_card` beside a code, so two cards cannot share an order. The
+  payment module itself splits a collection across any sessions an operator
+  opens (`POST /admin/v1/payment-collections/{id}/payment-sessions` takes an
+  amount, and a balance's session holds part when its data says
+  `partial: true`)
+  ([ADR 0209](adr/0209-a-gift-card-pays-first-and-a-provider-the-rest.md)).
 
 - **A balance of points can be negative.** A refund reverses the points the
   refunded capture earned, and the customer may have spent them already; the

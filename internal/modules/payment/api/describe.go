@@ -135,7 +135,9 @@ func describeSessions(d *openapi.Doc) {
 		Description: amountNote + " If amount is not given, the session is opened for " +
 			"the whole REMAINING amount of the collection. idempotency_key is required: " +
 			"a second request with the same key does NOT open a new session, it returns " +
-			"the existing one.",
+			"the existing one. A store_credit or loyalty_points session whose data says " +
+			"\"partial\": true holds what the customer's balance has when it is smaller " +
+			"than the amount, rather than declining (ADR 0269).",
 		RequestBody: d.RequestBody(createSessionRequest{}),
 		Responses: map[string]any{
 			// The handler writes 201 (see handlers.go); a new session is

@@ -224,7 +224,9 @@ func TestTheMigrationIsReversibleWithDataInIt(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 1),
+	// Every step, not one: the table this pins is 000001's, and one step back
+	// would be whichever migration is newest (D185).
+	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 0),
 		"the rollback has to work with rows in the table, not only on an empty one")
 }
 

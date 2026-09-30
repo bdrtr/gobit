@@ -202,6 +202,23 @@ func isolatedDatabase(ctx context.Context, t *testing.T, prefix string) (string,
 	return dsn, pool
 }
 
+// rollBackThrough rolls the module's schema back through the given migration,
+// the newest first, and returns what the rollback answered.
+//
+// MigrateDown counts STEPS, and a count written as a number is the size of the
+// tree the day it was written: every later migration moves where it stops
+// (D185). The count is derived from the version the database is at.
+func rollBackThrough(ctx context.Context, t *testing.T, dsn string, version uint) error {
+	t.Helper()
+
+	current, dirty, err := db.Version(ctx, dsn, order.ModuleName)
+	require.NoError(t, err)
+	require.False(t, dirty)
+	require.GreaterOrEqual(t, current, version)
+
+	return db.MigrateDown(ctx, dsn, order.New().Migrations(), order.ModuleName, int(current-version)+1)
+}
+
 // tableExistsIn reports whether the table exists in the pool's database.
 func tableExistsIn(ctx context.Context, t *testing.T, pool *db.Pool, table string) bool {
 	t.Helper()
@@ -335,7 +352,7 @@ func TestARollbackRefusesADatabaseHoldingACorrection(t *testing.T) {
 	_, err := svc.CorrectShippingAddress(ctx, placed.ID, models.OrderAddress{Address1: "12 Right St"})
 	require.NoError(t, err)
 
-	err = db.MigrateDown(ctx, dsn, order.New().Migrations(), order.ModuleName, 22)
+	err = rollBackThrough(ctx, t, dsn, 23)
 
 	require.Error(t, err, "the rollback dropped the address the order was placed with")
 	// The server's report quotes the index; the bare name is also in the

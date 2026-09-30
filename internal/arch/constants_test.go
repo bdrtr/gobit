@@ -33,6 +33,7 @@ import (
 	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	"github.com/bdrtr/gobit/internal/modules/payment/balancetender"
 	"github.com/bdrtr/gobit/internal/modules/payment/giftcard"
 	paymentmodels "github.com/bdrtr/gobit/internal/modules/payment/models"
 	paymentservice "github.com/bdrtr/gobit/internal/modules/payment/service"
@@ -257,6 +258,19 @@ func TestTheGiftCardNamesAgree(t *testing.T) {
 
 	assert.Equal(t, paymentmodels.GiftCardTenderID, checkoutwf.GiftCardProviderID)
 	assert.Equal(t, giftcard.DataCode, checkoutwf.GiftCardDataCode)
+}
+
+// TestTheBalanceNamesAgree binds the checkout's spelling of the customer's
+// balances and of the key that asks one to hold part (ADR 0269). A drift is
+// silent until a balance pays first: the checkout would open a session at a
+// provider nobody registered, or ask for a partial hold the machine never
+// reads and see a shortfall decline.
+func TestTheBalanceNamesAgree(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, paymentmodels.StoreCreditTenderID, checkoutwf.StoreCreditProviderID)
+	assert.Equal(t, paymentmodels.LoyaltyTenderID, checkoutwf.LoyaltyPointsProviderID)
+	assert.Equal(t, balancetender.DataPartial, checkoutwf.BalanceDataPartial)
 }
 
 // TestTheBundleNamesAgree binds the checkout's spelling of a bundle's

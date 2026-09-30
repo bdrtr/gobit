@@ -169,7 +169,12 @@ func Describe(d *openapi.Doc) {
 			"for when the card covers everything. A code that opens no card (422 " +
 			"payment_gift_card_unknown) or a card in another currency (409 payment_gift_card_currency) " +
 			"is refused before the order is opened, and a card that holds nothing is refused at the " +
-			"payment step. payment_provider_id cannot be gift_card beside a gift_card_code (ADR 0209).",
+			"payment step. payment_provider_id cannot be gift_card beside a gift_card_code (ADR 0209). " +
+			"pay_first_with names the customer's own balances, store_credit, loyalty_points or both, " +
+			"which pay after the card and before payment_provider_id, in the order named: each holds " +
+			"what it has of what is still unpaid, and one that holds nothing is refused at the payment " +
+			"step. A balance of a cart that names no customer is refused before the order is opened, " +
+			"and payment_provider_id cannot be a balance pay_first_with names (ADR 0269).",
 		RequestBody: d.RequestBody(completeCartRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The resulting order and the captured amount", d.Item(completeCartDTO{})),

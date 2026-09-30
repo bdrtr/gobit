@@ -679,6 +679,10 @@ func (h *Handler) storeRemoveLineItem(w http.ResponseWriter, r *http.Request) {
 //   - gift_card_code IS THERE. A gift card is a bearer credential the customer
 //     holds, and presenting it is the customer's choice; the card pays what it
 //     holds and payment_provider_id pays the rest (ADR 0209).
+//   - pay_first_with IS THERE. Spending one's own store credit or points
+//     before the provider is the customer's choice, and it raises no authority
+//     problem: the balance spent is the cart's customer's, never one the body
+//     names (ADR 0269).
 //   - expected_total IS THERE and is MANDATORY; the reasoning is in the field's
 //     godoc.
 //   - email IS NOT THERE. The cart's contact address is already held on the cart
@@ -701,6 +705,9 @@ type completeCartRequest struct {
 	PaymentData json.RawMessage `json:"payment_data"`
 	// GiftCardCode is a gift card that pays first; it is optional (ADR 0209).
 	GiftCardCode string `json:"gift_card_code"`
+	// PayFirstWith names the customer's balances that pay after the gift card
+	// and before the provider, in this order; it is optional (ADR 0269).
+	PayFirstWith []string `json:"pay_first_with"`
 	// ExpectedTotal is the grand total the customer APPROVED (minor unit); it is
 	// MANDATORY.
 	//
@@ -735,6 +742,7 @@ type completeCartFlowRequest struct {
 	PaymentProviderID string          `json:"payment_provider_id"`
 	PaymentData       json.RawMessage `json:"payment_data,omitempty"`
 	GiftCardCode      string          `json:"gift_card_code,omitempty"`
+	PayFirstWith      []string        `json:"pay_first_with,omitempty"`
 	Email             string          `json:"email,omitempty"`
 	// SalesChannelIDs are the channels the REQUEST holds, read from the
 	// publishable key rather than from the body.
@@ -835,6 +843,7 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 		PaymentProviderID: body.PaymentProviderID,
 		PaymentData:       body.PaymentData,
 		GiftCardCode:      body.GiftCardCode,
+		PayFirstWith:      body.PayFirstWith,
 		Email:             detail.Email,
 		// The channels come from the IDENTITY, next to the email that comes
 		// from our own service: neither is taken from the body, and for the

@@ -200,16 +200,18 @@ func TestTheGiftCardCodeIsNotRecorded(t *testing.T) {
 	assert.NotContains(t, string(recorded), "token")
 }
 
-// TestASplitPaymentIsRestoredFromTheRecord: the record of the two steps brings
-// back the card's session, what it held and its capture, so a compensation
-// built from the record cancels both holds and a stop names both captures.
+// TestASplitPaymentIsRestoredFromTheRecord: the record of the authorization
+// brings back every hold that paid first, so a compensation built from the
+// record cancels them all; a record written before ADR 0269 names its card in
+// the older fields and is read the same way.
 func TestASplitPaymentIsRestoredFromTheRecord(t *testing.T) {
+	balance := firstHold{ProviderID: StoreCreditProviderID, SessionID: "scrses_1", Authorized: 500}
 	authorize, err := json.Marshal(authorizeOutput{
 		CollectionID: testCollectionID, SessionID: testSessionID, Status: "authorized", Authorized: testAmount,
-		GiftCardSessionID: testCardSessionID, GiftCardAuthorized: 1_000,
+		FirstHolds: []firstHold{{ProviderID: GiftCardProviderID, SessionID: testCardSessionID, Authorized: 1_000}, balance},
 	})
 	require.NoError(t, err)
-	capture, err := json.Marshal(captureOutput{PaymentID: testPaymentID, GiftCardPaymentID: "pay_card", Captured: testAmount})
+	capture, err := json.Marshal(captureOutput{PaymentID: testPaymentID, OtherPaymentIDs: []string{"pay_card"}, Captured: testAmount})
 	require.NoError(t, err)
 	sc := &workflow.StepContext{Shared: map[string]any{}}
 
@@ -217,12 +219,21 @@ func TestASplitPaymentIsRestoredFromTheRecord(t *testing.T) {
 	require.NoError(t, (&capturePaymentStep{}).Restore(sc, capture))
 
 	assert.Equal(t, testSessionID, sc.Shared[sharedSessionID])
-	assert.Equal(t, testCardSessionID, sc.Shared[sharedGiftCardSessionID])
-	assert.Equal(t, int64(1_000), sc.Shared[sharedGiftCardAuthorized])
-	assert.Equal(t, "pay_card", sc.Shared[sharedGiftCardPaymentID])
+	assert.Equal(t, []firstHold{{ProviderID: GiftCardProviderID, SessionID: testCardSessionID, Authorized: 1_000}, balance},
+		sc.Shared[sharedFirstHolds])
+	assert.Equal(t, testPaymentID, sc.Shared[sharedPaymentID])
+
+	older := []byte(`{"collection_id":"` + testCollectionID + `","session_id":"` + testSessionID +
+		`","status":"authorized","authorized":3000,"gift_card_session_id":"` + testCardSessionID +
+		`","gift_card_authorized":1000}`)
+	before := &workflow.StepContext{Shared: map[string]any{}}
+	require.NoError(t, (&authorizePaymentStep{}).Restore(before, older))
+	assert.Equal(t, []firstHold{{ProviderID: GiftCardProviderID, SessionID: testCardSessionID, Authorized: 1_000}},
+		before.Shared[sharedFirstHolds], "a record written before ADR 0269 still finds its card")
 
 	cardOnly, err := json.Marshal(authorizeOutput{
-		CollectionID: testCollectionID, GiftCardSessionID: testCardSessionID, GiftCardAuthorized: testAmount,
+		CollectionID: testCollectionID,
+		FirstHolds:   []firstHold{{ProviderID: GiftCardProviderID, SessionID: testCardSessionID, Authorized: testAmount}},
 	})
 	require.NoError(t, err)
 	fresh := &workflow.StepContext{Shared: map[string]any{}}

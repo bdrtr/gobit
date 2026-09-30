@@ -212,6 +212,7 @@ func TestAnExpiringCreditHoldsBackTheRollback(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	rollBackTo(ctx, t, dsn, 13)
 	err = db.MigrateDown(ctx, dsn, payment.New().Migrations(), payment.ModuleName, 1)
 	assertRefusedBy(t, err, "payment_store_credit_entries_none_expiring_on_rollback")
 }

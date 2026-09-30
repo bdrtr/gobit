@@ -25,11 +25,11 @@ type capturePaymentStep struct {
 // captureOutput is the capture step's output written to the execution record.
 type captureOutput struct {
 	// PaymentID is the identifier of the capture that was made: the provider's,
-	// or the gift card's when the card paid everything.
+	// or the first tender's when the tenders that pay first paid everything.
 	PaymentID string `json:"payment_id"`
-	// GiftCardPaymentID is the gift card's capture when a card paid part of
-	// the order (ADR 0209).
-	GiftCardPaymentID string `json:"gift_card_payment_id,omitempty"`
+	// OtherPaymentIDs are the order's other captures, in the order they were
+	// made, when more than one tender paid it (ADR 0209, ADR 0269).
+	OtherPaymentIDs []string `json:"other_payment_ids,omitempty"`
 	// Captured is the collection's captured total (minor unit).
 	Captured int64 `json:"captured"`
 }
@@ -69,9 +69,6 @@ func (s *capturePaymentStep) Restore(sc *workflow.StepContext, output json.RawMe
 	sc.Shared[sharedCaptureAttempted] = true
 	if out.PaymentID != "" {
 		sc.Shared[sharedPaymentID] = out.PaymentID
-	}
-	if out.GiftCardPaymentID != "" {
-		sc.Shared[sharedGiftCardPaymentID] = out.GiftCardPaymentID
 	}
 
 	return nil
@@ -123,19 +120,19 @@ func (s *capturePaymentStep) Invoke(ctx context.Context, sc *workflow.StepContex
 	if err != nil {
 		return nil, err
 	}
-	cardSession, err := sharedText(sc, sharedGiftCardSessionID)
+	holds, err := sharedHolds(sc)
 	if err != nil {
 		return nil, err
 	}
-	cardHeld, err := sharedAmount(sc, sharedGiftCardAuthorized)
-	if err != nil {
-		return nil, err
+	var heldFirst int64
+	for _, hold := range holds {
+		heldFirst += hold.Authorized
 	}
 	collectionID, err := sharedText(sc, sharedCollectionID)
 	if err != nil {
 		return nil, err
 	}
-	if (sessionID == "" && cardSession == "") || collectionID == "" {
+	if (sessionID == "" && len(holds) == 0) || collectionID == "" {
 		return nil, errors.Internal(CodeSharedStateInvalid,
 			"the capture step could not find the payment session: %s", s.plan.CartID)
 	}
@@ -145,32 +142,34 @@ func (s *capturePaymentStep) Invoke(ctx context.Context, sc *workflow.StepContex
 	// guard is in force. The flag is cleared only on a proven zero capture.
 	sc.Shared[sharedCaptureAttempted] = true
 
-	// # Two captures, the uncertain one first (ADR 0209)
+	// # Several captures, the uncertain one first (ADR 0209, ADR 0269)
 	//
-	// When a gift card paid part of the order, the other provider's hold is
-	// captured FIRST. It is the capture that can be ambiguous; taken first, a
-	// failure with no movement still rolls everything back, the card's hold
-	// included. The card's capture is this installation's own ledger and comes
-	// second; if it fails after the provider's money was taken, the collection
-	// shows a capture and the execution stops for a person, as any capture that
-	// cannot be verified does.
+	// When tenders paid part of the order before the provider, the provider's
+	// hold is captured FIRST. It is the capture that can be ambiguous; taken
+	// first, a failure with no movement still rolls everything back, the other
+	// holds included. The gift card's and the balances' captures are this
+	// installation's own ledgers and follow in the order they held; if one
+	// fails after money was taken, the collection shows a capture and the
+	// execution stops for a person, as any capture that cannot be verified
+	// does.
 	var paymentID string
 	if sessionID != "" {
-		if paymentID, err = s.capture(ctx, sc, sessionID, collectionID, s.plan.Amount-cardHeld); err != nil {
+		if paymentID, err = s.capture(ctx, sc, sessionID, collectionID, s.plan.Amount-heldFirst); err != nil {
 			return nil, err
 		}
 		sc.Shared[sharedPaymentID] = paymentID
 	}
-	var cardPaymentID string
-	if cardSession != "" {
-		if cardPaymentID, err = s.capture(ctx, sc, cardSession, collectionID, cardHeld); err != nil {
+	var others []string
+	for _, hold := range holds {
+		var holdPaymentID string
+		if holdPaymentID, err = s.capture(ctx, sc, hold.SessionID, collectionID, hold.Authorized); err != nil {
 			return nil, err
 		}
 		if paymentID == "" {
-			paymentID = cardPaymentID
+			paymentID = holdPaymentID
 			sc.Shared[sharedPaymentID] = paymentID
 		} else {
-			sc.Shared[sharedGiftCardPaymentID] = cardPaymentID
+			others = append(others, holdPaymentID)
 		}
 	}
 
@@ -207,12 +206,7 @@ func (s *capturePaymentStep) Invoke(ctx context.Context, sc *workflow.StepContex
 		"cart_id", s.plan.CartID, "payment_id", paymentID,
 		"captured", captured, "amount", amount)
 
-	out := captureOutput{PaymentID: paymentID, Captured: captured}
-	if cardPaymentID != paymentID {
-		out.GiftCardPaymentID = cardPaymentID
-	}
-
-	return out, nil
+	return captureOutput{PaymentID: paymentID, OtherPaymentIDs: others, Captured: captured}, nil
 }
 
 // capture takes one session's hold and returns the capture's id; a failed call

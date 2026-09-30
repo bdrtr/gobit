@@ -228,11 +228,16 @@ func TestTheNarrowingRollsBackAndItsReceiversStay(t *testing.T) {
 		topicFilters{topicCartCreated: {"region_id": {"reg_1"}}}, nil, "narrowed")
 	require.NoError(t, err)
 
-	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 1))
+	// Back to 000001 whatever came after 000002: a step count written as a
+	// number would roll back the newest migration instead (D185).
+	current, _, err := db.Version(ctx, dsn, ModuleName)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, current, uint(2))
+	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, int(current)-1))
 
 	version, _, err := db.Version(ctx, dsn, ModuleName)
 	require.NoError(t, err)
-	assert.Equal(t, uint(upMigrations(t)-1), version)
+	assert.Equal(t, uint(1), version)
 	var receivers, columns int
 	require.NoError(t, pool.Pool().QueryRow(ctx, `SELECT count(*) FROM webhook_endpoint`).Scan(&receivers))
 	require.NoError(t, pool.Pool().QueryRow(ctx, `

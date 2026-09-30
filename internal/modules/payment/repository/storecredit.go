@@ -113,6 +113,7 @@ func (r *Repository) InsertStoreCreditSessionIfAbsent(
 			Amount:         session.Amount,
 			CurrencyCode:   session.CurrencyCode,
 			Status:         session.Status.String(),
+			Partial:        session.Partial,
 		})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.TenderSession{}, false, nil
@@ -268,6 +269,7 @@ func toStoreCreditSession(row paymentdb.PaymentStoreCreditSession) models.Tender
 		Amount:           row.Amount,
 		CurrencyCode:     row.CurrencyCode,
 		Status:           models.SessionStatus(row.Status),
+		Partial:          row.Partial,
 		AuthorizedAmount: row.AuthorizedAmount,
 		CapturedAmount:   row.CapturedAmount,
 		RefundedAmount:   row.RefundedAmount,

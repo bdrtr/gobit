@@ -166,6 +166,7 @@ func (r *Repository) InsertLoyaltySessionIfAbsent(
 			Amount:         session.Amount,
 			CurrencyCode:   session.CurrencyCode,
 			Status:         session.Status.String(),
+			Partial:        session.Partial,
 		})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.TenderSession{}, false, nil
@@ -266,6 +267,7 @@ func toLoyaltySession(row paymentdb.PaymentLoyaltySession) models.TenderSession 
 		Amount:           row.Amount,
 		CurrencyCode:     row.CurrencyCode,
 		Status:           models.SessionStatus(row.Status),
+		Partial:          row.Partial,
 		AuthorizedAmount: row.AuthorizedAmount,
 		CapturedAmount:   row.CapturedAmount,
 		RefundedAmount:   row.RefundedAmount,

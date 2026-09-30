@@ -13,9 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/db"
 	"github.com/bdrtr/gobit/core/errors"
-	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/repository"
 	"github.com/bdrtr/gobit/internal/modules/order/service"
@@ -323,7 +321,7 @@ func TestARollbackRefusesADatabaseHoldingAPaidDelivery(t *testing.T) {
 	_, err := svc.ChangeDelivery(ctx, placed.ID, paidChangeTo(methodID, "so_same_day", 4000, "pay_col_rollback", 1500))
 	require.NoError(t, err)
 
-	err = db.MigrateDown(ctx, dsn, order.New().Migrations(), order.ModuleName, 25)
+	err = rollBackThrough(ctx, t, dsn, 26)
 
 	require.Error(t, err, "the rollback dropped the collection a change was paid with")
 	// The server's report quotes the constraint; the bare name is also in the

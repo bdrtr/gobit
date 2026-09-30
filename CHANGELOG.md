@@ -24,6 +24,18 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A balance pays part of an order** (ADR 0269). **For integrators:** the
+  storefront completion takes `pay_first_with`, naming `store_credit`,
+  `loyalty_points` or both: after the gift card, each holds what the
+  customer's balance has of what is still unpaid, and `payment_provider_id`
+  pays the rest or is not asked. A balance paying alone still declines a
+  shortfall. A store credit or points session holds part of its amount when
+  its payment data says `"partial": true`. **For operators:** the checkout's
+  execution record names every hold that paid first in `first_holds` and the
+  other captures in `other_payment_ids`, where it named a gift card's in
+  `gift_card_session_id` and `gift_card_payment_id`. Migration 000014 of the
+  payment module adds `partial` to the store credit and points session tables.
+
 - **The panel shows a person's sessions** (ADR 0268). **For operators:** the
   panel's Sessions screen, open to everybody who can sign in, lists your open
   sessions with the current one marked and closes one or every other.

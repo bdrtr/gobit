@@ -4,7 +4,7 @@
 provider: the card holds what it has, up to the total, and the provider pays the
 rest. The provider's hold is captured before the card's.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0269](0269-a-balance-pays-part-of-an-order.md), which lets the customer's store credit and points pay first after the card
 - **Date:** 2026-09-27
 - **Amends:** [0208](0208-a-gift-card-is-a-code-with-a-balance.md), whose card declined a payment it could not cover
 

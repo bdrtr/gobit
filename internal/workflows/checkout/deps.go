@@ -66,6 +66,16 @@ const (
 	GiftCardDataCode   = "code"
 )
 
+// The payment module's two tenders that spend the customer's own balance, and
+// the key of a payment's data that asks one of them to hold part of a session
+// (ADR 0269). They are spelled here for [GiftCardProviderID]'s reason, and
+// internal/arch holds them to the module's constants.
+const (
+	StoreCreditProviderID   = "store_credit"
+	LoyaltyPointsProviderID = "loyalty_points"
+	BalanceDataPartial      = "partial"
+)
+
 // Cross-module CONTRACT constants.
 //
 // The values are defined in the product module as well and are REPEATED here:

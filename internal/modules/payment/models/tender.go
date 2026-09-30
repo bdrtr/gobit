@@ -53,6 +53,10 @@ type TenderSession struct {
 	CurrencyCode string
 	// Status is the session's status on the provider side.
 	Status SessionStatus
+	// Partial says whoever opened the session asked for a partial hold: a
+	// balance smaller than the amount holds what it has rather than declining
+	// (ADR 0269). A gift card holds part of every session and leaves it false.
+	Partial bool
 	// AuthorizedAmount, CapturedAmount and RefundedAmount are the provider's own
 	// amounts.
 	AuthorizedAmount int64

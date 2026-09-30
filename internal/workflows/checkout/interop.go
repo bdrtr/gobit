@@ -73,6 +73,9 @@ type completeCartRequest struct {
 	PaymentData json.RawMessage `json:"payment_data,omitempty"`
 	// GiftCardCode is a gift card that pays first; it is optional (ADR 0209).
 	GiftCardCode string `json:"gift_card_code,omitempty"`
+	// PayFirstWith names the customer's balances that pay after the card and
+	// before the provider; it is optional (ADR 0269).
+	PayFirstWith []string `json:"pay_first_with,omitempty"`
 	// Email is the order's contact address; it is optional.
 	Email string `json:"email,omitempty"`
 	// SalesChannelIDs are the channels the order is placed on; they are
@@ -158,6 +161,7 @@ func (i *Interop) CompleteCartJSON(ctx context.Context, request json.RawMessage)
 		PaymentProviderID: req.PaymentProviderID,
 		PaymentData:       req.PaymentData,
 		GiftCardCode:      req.GiftCardCode,
+		PayFirstWith:      req.PayFirstWith,
 		Email:             req.Email,
 		SalesChannelIDs:   req.SalesChannelIDs,
 		ExpectedTotal:     req.ExpectedTotal,

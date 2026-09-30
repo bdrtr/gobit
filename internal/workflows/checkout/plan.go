@@ -219,6 +219,40 @@ type checkoutPlan struct {
 	// GiftCardCode is the card that pays first (ADR 0209). It is a bearer
 	// credential and is NOT WRITTEN TO THE RECORD, for PaymentData's reason.
 	GiftCardCode string `json:"-"`
+	// PayFirstWith are the customer's balances that pay after the card and
+	// before the provider (ADR 0269). They name tenders, not credentials, and
+	// are recorded for [checkoutPlan.SalesChannelIDs]'s reason.
+	PayFirstWith []string `json:"pay_first_with,omitempty"`
+}
+
+// firstTender is a tender that pays before the provider, and the data its
+// session is opened with.
+type firstTender struct {
+	providerID string
+	data       json.RawMessage
+}
+
+// firstTenders are the plan's tenders that pay before the provider, in the
+// order they pay: the gift card, then the customer's balances as named. Each
+// balance is opened asking for a partial hold, which a gift card always makes
+// (ADR 0209, ADR 0269).
+func (p *checkoutPlan) firstTenders() []firstTender {
+	tenders := make([]firstTender, 0, 1+len(p.PayFirstWith))
+	if p.GiftCardCode != "" {
+		tenders = append(tenders, firstTender{providerID: GiftCardProviderID, data: giftCardData(p.GiftCardCode)})
+	}
+	for _, balance := range p.PayFirstWith {
+		tenders = append(tenders, firstTender{providerID: balance, data: partialData()})
+	}
+
+	return tenders
+}
+
+// partialData is the payment data a balance that pays first is opened with.
+func partialData() json.RawMessage {
+	data, _ := json.Marshal(map[string]bool{BalanceDataPartial: true}) //nolint:errchkjson // a map of booleans always encodes
+
+	return data
 }
 
 // giftCardData is the payment data a gift card's session is opened with.
@@ -407,6 +441,13 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 			return nil, err
 		}
 	}
+	// So is a balance of a cart that names nobody (ADR 0269).
+	for _, balance := range in.PayFirstWith {
+		if err := w.payments.CheckTender(ctx, balance, snap.CustomerID, snap.CurrencyCode,
+			partialData()); err != nil {
+			return nil, err
+		}
+	}
 
 	lines, err := w.planLines(ctx, snap, totals)
 	if err != nil {
@@ -434,6 +475,7 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		Promotions:        planPromotionsOf(totals),
 		PaymentData:       in.PaymentData,
 		GiftCardCode:      in.GiftCardCode,
+		PayFirstWith:      in.PayFirstWith,
 		ShippingAddress:   snap.ShippingAddress,
 		BillingAddress:    snap.BillingAddress,
 		ShippingMethods:   snap.ShippingMethods,

@@ -333,3 +333,67 @@ func mustBalance(t *testing.T, store *memStore) int64 {
 
 	return balance
 }
+
+// TestASessionOpenedToHoldPartHoldsWhatTheBalanceHas is ADR 0269 at the
+// machine: a session whose opener asked for a partial hold takes a smaller
+// balance whole, while one that did not ask declines against the same balance
+// and writes nothing, and an empty balance declines either way.
+func TestASessionOpenedToHoldPartHoldsWhatTheBalanceHas(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	openWith := func(machine *balancetender.Machine, key string, data map[string]any) coreprovider.Session {
+		session, err := machine.CreateSession(ctx, coreprovider.CreateSessionInput{
+			Amount: 5_000, CurrencyCode: "TRY", Reference: "paycol_1", IdempotencyKey: key, CustomerID: "cus_1",
+			Data: data,
+		})
+		require.NoError(t, err)
+
+		return session
+	}
+
+	machine, store := newMachine(2_000)
+	asked := openWith(machine, "k1", map[string]any{balancetender.DataPartial: true})
+	result, err := machine.Authorize(ctx, asked.ID)
+	require.NoError(t, err)
+	assert.Equal(t, coreprovider.SessionAuthorized, result.Status)
+	assert.Equal(t, int64(2_000), result.AuthorizedAmount, "the balance is held whole")
+	assert.Zero(t, mustBalance(t, store))
+
+	machine, store = newMachine(2_000)
+	for key, data := range map[string]map[string]any{
+		"unasked": nil,
+		"false":   {balancetender.DataPartial: false},
+	} {
+		session := openWith(machine, key, data)
+		result, err = machine.Authorize(ctx, session.ID)
+		require.NoError(t, err)
+		assert.Equal(t, coreprovider.SessionFailed, result.Status, "%s: a shortfall is a decline", key)
+		assert.Zero(t, result.AuthorizedAmount, key)
+	}
+	assert.Empty(t, store.entries, "a decline writes nothing")
+
+	machine, store = newMachine(0)
+	empty := openWith(machine, "k1", map[string]any{balancetender.DataPartial: true})
+	result, err = machine.Authorize(ctx, empty.ID)
+	require.NoError(t, err)
+	assert.Equal(t, coreprovider.SessionFailed, result.Status, "an empty balance holds nothing and declines")
+	assert.Empty(t, store.entries)
+}
+
+// TestAPartialRequestThatIsNotABooleanIsRefused: a string "true" is not read
+// as either answer, so a client's typo cannot decide how much is held.
+func TestAPartialRequestThatIsNotABooleanIsRefused(t *testing.T) {
+	t.Parallel()
+
+	machine, store := newMachine(2_000)
+	_, err := machine.CreateSession(context.Background(), coreprovider.CreateSessionInput{
+		Amount: 5_000, CurrencyCode: "TRY", Reference: "paycol_1", IdempotencyKey: "k1", CustomerID: "cus_1",
+		Data: map[string]any{balancetender.DataPartial: "true"},
+	})
+
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsInvalid(err))
+	assert.Equal(t, codes.InvalidInput, coreerrors.CodeOf(err))
+	assert.Empty(t, store.sessions)
+}

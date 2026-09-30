@@ -30,7 +30,7 @@ func (q *Queries) CountStoreCreditEntries(ctx context.Context, arg CountStoreCre
 }
 
 const getStoreCreditSession = `-- name: GetStoreCreditSession :one
-SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at FROM payment_store_credit_sessions
+SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at, partial FROM payment_store_credit_sessions
 WHERE id = $1
 `
 
@@ -51,12 +51,13 @@ func (q *Queries) GetStoreCreditSession(ctx context.Context, id string) (Payment
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Partial,
 	)
 	return i, err
 }
 
 const getStoreCreditSessionByIdempotencyKey = `-- name: GetStoreCreditSessionByIdempotencyKey :one
-SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at FROM payment_store_credit_sessions
+SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at, partial FROM payment_store_credit_sessions
 WHERE idempotency_key = $1
 `
 
@@ -77,6 +78,7 @@ func (q *Queries) GetStoreCreditSessionByIdempotencyKey(ctx context.Context, ide
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Partial,
 	)
 	return i, err
 }
@@ -140,10 +142,10 @@ func (q *Queries) InsertStoreCreditEntry(ctx context.Context, arg InsertStoreCre
 
 const insertStoreCreditSessionIfAbsent = `-- name: InsertStoreCreditSessionIfAbsent :one
 INSERT INTO payment_store_credit_sessions (
-    id, idempotency_key, reference, customer_id, amount, currency_code, status
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    id, idempotency_key, reference, customer_id, amount, currency_code, status, partial
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (idempotency_key) DO NOTHING
-RETURNING id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at
+RETURNING id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at, partial
 `
 
 type InsertStoreCreditSessionIfAbsentParams struct {
@@ -154,6 +156,7 @@ type InsertStoreCreditSessionIfAbsentParams struct {
 	Amount         int64
 	CurrencyCode   string
 	Status         string
+	Partial        bool
 }
 
 // InsertStoreCreditSessionIfAbsent writes the provider's session only if that
@@ -168,6 +171,7 @@ func (q *Queries) InsertStoreCreditSessionIfAbsent(ctx context.Context, arg Inse
 		arg.Amount,
 		arg.CurrencyCode,
 		arg.Status,
+		arg.Partial,
 	)
 	var i PaymentStoreCreditSession
 	err := row.Scan(
@@ -184,6 +188,7 @@ func (q *Queries) InsertStoreCreditSessionIfAbsent(ctx context.Context, arg Inse
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Partial,
 	)
 	return i, err
 }
@@ -239,7 +244,7 @@ func (q *Queries) ListStoreCreditEntries(ctx context.Context, arg ListStoreCredi
 }
 
 const lockStoreCreditSession = `-- name: LockStoreCreditSession :one
-SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at FROM payment_store_credit_sessions
+SELECT id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at, partial FROM payment_store_credit_sessions
 WHERE id = $1
 FOR UPDATE
 `
@@ -264,6 +269,7 @@ func (q *Queries) LockStoreCreditSession(ctx context.Context, id string) (Paymen
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Partial,
 	)
 	return i, err
 }
@@ -387,7 +393,7 @@ SET status            = $2,
     decline_reason    = $6,
     updated_at        = now()
 WHERE id = $1
-RETURNING id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at
+RETURNING id, idempotency_key, reference, customer_id, amount, currency_code, status, authorized_amount, captured_amount, refunded_amount, decline_reason, created_at, updated_at, partial
 `
 
 type UpdateStoreCreditSessionStateParams struct {
@@ -426,6 +432,7 @@ func (q *Queries) UpdateStoreCreditSessionState(ctx context.Context, arg UpdateS
 		&i.DeclineReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Partial,
 	)
 	return i, err
 }

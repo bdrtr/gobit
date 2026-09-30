@@ -19,13 +19,10 @@ const (
 	sharedCollectionID = "checkout.collection_id"
 	sharedSessionID    = "checkout.session_id"
 	sharedPaymentID    = "checkout.payment_id"
-	// sharedGiftCardSessionID and sharedGiftCardPaymentID are the gift card's
-	// session and capture when the order is paid partly by a card (ADR 0209);
-	// sharedSessionID and sharedPaymentID are then the other provider's.
-	sharedGiftCardSessionID = "checkout.gift_card_session_id"
-	sharedGiftCardPaymentID = "checkout.gift_card_payment_id"
-	// sharedGiftCardAuthorized is what the card held.
-	sharedGiftCardAuthorized = "checkout.gift_card_authorized"
+	// sharedFirstHolds are the tenders that paid before the provider, as
+	// []firstHold in the order they held (ADR 0209, ADR 0269);
+	// sharedSessionID and sharedPaymentID are then the provider's.
+	sharedFirstHolds = "checkout.first_holds"
 	// sharedCaptureAttempted reports that the capture call was STARTED and is the
 	// real trigger of the pivot guard (see [Workflows.skipAfterCapture]).
 	//
@@ -100,16 +97,17 @@ func sharedText(sc *workflow.StepContext, key string) (string, error) {
 	return value, nil
 }
 
-// sharedAmount reads an amount from the shared map; a missing key is zero.
-func sharedAmount(sc *workflow.StepContext, key string) (int64, error) {
-	raw, exists := sc.Shared[key]
+// sharedHolds reads the tenders that paid before the provider from the shared
+// map; a missing key is none.
+func sharedHolds(sc *workflow.StepContext) ([]firstHold, error) {
+	raw, exists := sc.Shared[sharedFirstHolds]
 	if !exists {
-		return 0, nil
+		return nil, nil
 	}
-	value, ok := raw.(int64)
+	value, ok := raw.([]firstHold)
 	if !ok {
-		return 0, errors.Internal(CodeSharedStateInvalid,
-			"key %q has an unexpected type: %T", key, raw)
+		return nil, errors.Internal(CodeSharedStateInvalid,
+			"key %q has an unexpected type: %T", sharedFirstHolds, raw)
 	}
 	return value, nil
 }

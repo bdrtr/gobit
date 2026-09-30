@@ -11,6 +11,7 @@ package checkout
 import (
 	"context"
 	"encoding/json"
+	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/core/workflow"
@@ -32,14 +33,50 @@ type authorizeOutput struct {
 	SessionID string `json:"session_id"`
 	// Status is the session's status as returned by the provider.
 	Status string `json:"status"`
-	// Authorized is the amount actually held (minor unit), the gift card's
-	// included.
+	// Authorized is the amount actually held (minor unit), what the tenders
+	// that paid first held included.
 	Authorized int64 `json:"authorized"`
-	// GiftCardSessionID and GiftCardAuthorized are the gift card's session and
-	// what it held, when a card paid first (ADR 0209). SessionID is then the
-	// other provider's session, and empty when the card covered everything.
+	// FirstHolds are the tenders that paid before the provider, in the order
+	// they held: the gift card, then the customer's balances (ADR 0209, ADR
+	// 0269). SessionID is then the provider's session, and empty when they
+	// covered everything.
+	FirstHolds []firstHold `json:"first_holds,omitempty"`
+	// GiftCardSessionID and GiftCardAuthorized are how a record written before
+	// ADR 0269 names the gift card's hold. They are read so an execution
+	// recovered across the change still finds its card, and never written.
 	GiftCardSessionID  string `json:"gift_card_session_id,omitempty"`
 	GiftCardAuthorized int64  `json:"gift_card_authorized,omitempty"`
+}
+
+// firstHold is a tender that paid before the provider: its session and what it
+// held.
+type firstHold struct {
+	ProviderID string `json:"provider_id"`
+	SessionID  string `json:"session_id"`
+	Authorized int64  `json:"authorized"`
+}
+
+// holdsOf reads the record's first holds, the gift card of a record written
+// before ADR 0269 first among them.
+func (o authorizeOutput) holdsOf() []firstHold {
+	if o.GiftCardSessionID == "" {
+		return o.FirstHolds
+	}
+
+	return append([]firstHold{{
+		ProviderID: GiftCardProviderID, SessionID: o.GiftCardSessionID, Authorized: o.GiftCardAuthorized,
+	}}, o.FirstHolds...)
+}
+
+// backwards lists the holds' sessions in the reverse of the order they were
+// opened in, which is the order they are released in.
+func backwards(holds []firstHold) []string {
+	ids := make([]string, 0, len(holds))
+	for i := len(holds) - 1; i >= 0; i-- {
+		ids = append(ids, holds[i].SessionID)
+	}
+
+	return ids
 }
 
 // Name returns the step's name.
@@ -52,7 +89,8 @@ func (s *authorizePaymentStep) Restore(sc *workflow.StepContext, output json.Raw
 		return errors.Wrap(err, errors.KindInternal, CodeSharedStateInvalid,
 			"the output of step %q could not be decoded", StepAuthorizePayment)
 	}
-	if out.CollectionID == "" || (out.SessionID == "" && out.GiftCardSessionID == "") {
+	holds := out.holdsOf()
+	if out.CollectionID == "" || (out.SessionID == "" && len(holds) == 0) {
 		return errors.Internal(CodeSharedStateInvalid,
 			"the record of step %q holds no collection or session identifier", StepAuthorizePayment)
 	}
@@ -61,9 +99,8 @@ func (s *authorizePaymentStep) Restore(sc *workflow.StepContext, output json.Raw
 	if out.SessionID != "" {
 		sc.Shared[sharedSessionID] = out.SessionID
 	}
-	if out.GiftCardSessionID != "" {
-		sc.Shared[sharedGiftCardSessionID] = out.GiftCardSessionID
-		sc.Shared[sharedGiftCardAuthorized] = out.GiftCardAuthorized
+	if len(holds) > 0 {
+		sc.Shared[sharedFirstHolds] = holds
 	}
 
 	return nil
@@ -122,85 +159,91 @@ func (s *authorizePaymentStep) Invoke(ctx context.Context, sc *workflow.StepCont
 	}
 
 	out := authorizeOutput{CollectionID: collectionID}
-	if s.plan.GiftCardCode != "" {
-		cardSession, cardHeld, err := s.authorizeGiftCard(ctx, sc, collectionID)
+	for _, tender := range s.plan.firstTenders() {
+		holds, err := s.authorizeFirst(ctx, sc, collectionID, tender, out.FirstHolds)
 		if err != nil {
 			return nil, err
 		}
-		out.GiftCardSessionID, out.GiftCardAuthorized, out.Authorized = cardSession, cardHeld, cardHeld
-		if cardHeld == s.plan.Amount {
-			s.w.log.InfoContext(ctx, "payment authorized on a gift card",
-				"cart_id", s.plan.CartID, "collection_id", collectionID, "gift_card_session_id", cardSession,
-				"authorized", cardHeld, "amount", s.plan.Amount)
+		out.FirstHolds = holds
+		out.Authorized += holds[len(holds)-1].Authorized
+		if out.Authorized == s.plan.Amount {
+			s.w.log.InfoContext(ctx, "payment authorized before the provider",
+				"cart_id", s.plan.CartID, "collection_id", collectionID, "first_holds", len(holds),
+				"authorized", out.Authorized, "amount", s.plan.Amount)
 
 			return out, nil
 		}
 	}
 
 	// The provider's session is opened for what is left: the payment module
-	// takes the collection's amount less what the card holds.
-	rest := s.plan.Amount - out.GiftCardAuthorized
+	// takes the collection's amount less what the first tenders hold.
+	rest := s.plan.Amount - out.Authorized
+	held := backwards(out.FirstHolds)
 	sessionID, err := s.w.payments.OpenSessionWithData(ctx,
 		collectionID, s.plan.PaymentProviderID, sc.ExecutionID, s.plan.PaymentData)
 	if err != nil {
-		return nil, s.releaseHold(ctx, err, out.GiftCardSessionID)
+		return nil, s.releaseHold(ctx, err, held...)
 	}
 	if sessionID == "" {
 		return nil, s.releaseHold(ctx, errors.Internal(CodeEmptyIdentifier,
 			"the payment module returned an EMPTY session identifier: %s (collection %s)",
-			s.plan.CartID, collectionID), out.GiftCardSessionID)
+			s.plan.CartID, collectionID), held...)
 	}
 	sc.Shared[sharedSessionID] = sessionID
 
 	status, authorized, err := s.w.payments.Authorize(ctx, sessionID)
 	if err != nil {
-		return nil, s.releaseHold(ctx, err, sessionID, out.GiftCardSessionID)
+		return nil, s.releaseHold(ctx, err, append([]string{sessionID}, held...)...)
 	}
 	if authorized < rest {
 		return nil, s.releaseHold(ctx, errors.Conflict(CodePaymentUnderauthorized,
 			"the amount held does not cover what must be collected: %d < %d (session %s, status %q)",
-			authorized, rest, sessionID, status), sessionID, out.GiftCardSessionID)
+			authorized, rest, sessionID, status), append([]string{sessionID}, held...)...)
 	}
 
 	s.w.log.InfoContext(ctx, "payment authorized",
 		"cart_id", s.plan.CartID, "collection_id", collectionID, "session_id", sessionID,
-		"authorized", authorized, "gift_card_authorized", out.GiftCardAuthorized, "amount", s.plan.Amount)
+		"authorized", authorized, "held_first", out.Authorized, "amount", s.plan.Amount)
 
 	out.SessionID, out.Status, out.Authorized = sessionID, status, out.Authorized+authorized
 
 	return out, nil
 }
 
-// authorizeGiftCard opens the gift card's session for the whole amount and has
-// the card hold what it can (ADR 0209).
+// authorizeFirst opens the session of a tender that pays before the provider,
+// for what is still unpaid, and has it hold what it can; it returns the holds
+// so far with this one last.
 //
-// The card is a PARTIAL tender: it holds its balance up to the amount, and an
-// empty card declines. The decline comes back as an error and stops the payment
-// here rather than passing the card over — the customer named it, and paying
-// everything with the other provider instead would be a different payment from
+// Every such tender is PARTIAL: a gift card always, a customer's balance
+// because its session is opened asking (ADR 0209, ADR 0269). It holds its
+// balance up to the amount, and an empty one declines. The decline comes back
+// as an error and stops the payment here, releasing what the tenders before it
+// held, rather than passing the tender over — the customer named it, and
+// paying its part with the provider instead would be a different payment from
 // the one they chose.
-func (s *authorizePaymentStep) authorizeGiftCard(
-	ctx context.Context, sc *workflow.StepContext, collectionID string,
-) (sessionID string, held int64, err error) {
-	sessionID, err = s.w.payments.OpenSessionWithData(ctx,
-		collectionID, GiftCardProviderID, sc.ExecutionID, giftCardData(s.plan.GiftCardCode))
+func (s *authorizePaymentStep) authorizeFirst(
+	ctx context.Context, sc *workflow.StepContext, collectionID string, tender firstTender, before []firstHold,
+) ([]firstHold, error) {
+	sessionID, err := s.w.payments.OpenSessionWithData(ctx,
+		collectionID, tender.providerID, sc.ExecutionID, tender.data)
 	if err != nil {
-		return "", 0, err
+		return nil, s.releaseHold(ctx, err, backwards(before)...)
 	}
 	if sessionID == "" {
-		return "", 0, errors.Internal(CodeEmptyIdentifier,
-			"the payment module returned an EMPTY gift card session identifier: %s (collection %s)",
-			s.plan.CartID, collectionID)
+		return nil, s.releaseHold(ctx, errors.Internal(CodeEmptyIdentifier,
+			"the payment module returned an EMPTY %s session identifier: %s (collection %s)",
+			tender.providerID, s.plan.CartID, collectionID), backwards(before)...)
 	}
-	sc.Shared[sharedGiftCardSessionID] = sessionID
+	holds := append(slices.Clone(before), firstHold{ProviderID: tender.providerID, SessionID: sessionID})
+	sc.Shared[sharedFirstHolds] = holds
 
-	_, held, err = s.w.payments.Authorize(ctx, sessionID)
+	_, held, err := s.w.payments.Authorize(ctx, sessionID)
 	if err != nil {
-		return "", 0, s.releaseHold(ctx, err, sessionID)
+		return nil, s.releaseHold(ctx, err, backwards(holds)...)
 	}
-	sc.Shared[sharedGiftCardAuthorized] = held
+	holds[len(holds)-1].Authorized = held
 
-	return sessionID, held, nil
+	return holds, nil
 }
 
 // releaseHold frees the holds of a half-finished authorization, in the order
@@ -305,15 +348,20 @@ func (s *authorizePaymentStep) Compensate(ctx context.Context, sc *workflow.Step
 		return nil
 	}
 
-	// The provider's session first, then the gift card's: the order they were
-	// opened in, undone backwards. Both are tried; one that cannot be canceled
-	// does not leave the other's hold standing.
+	// The provider's session first, then the first tenders' from the last to
+	// the first: the order they were opened in, undone backwards. Every one is
+	// tried; one that cannot be canceled does not leave another's hold
+	// standing.
+	providerSession, err := sharedText(sc, sharedSessionID)
+	if err != nil {
+		return err
+	}
+	holds, err := sharedHolds(sc)
+	if err != nil {
+		return err
+	}
 	var failed []error
-	for _, key := range []string{sharedSessionID, sharedGiftCardSessionID} {
-		sessionID, err := sharedText(sc, key)
-		if err != nil {
-			return err
-		}
+	for _, sessionID := range append([]string{providerSession}, backwards(holds)...) {
 		if sessionID == "" {
 			continue
 		}

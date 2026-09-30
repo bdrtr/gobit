@@ -142,12 +142,22 @@ type Identity struct {
 	// (ADR 0209). The core contract allows it (AuthResult.AuthorizedAmount), and
 	// the payment module leaves the rest of the collection open to another
 	// session.
+	//
+	// A tender without it holds part of a session only when the session's
+	// opener asks, with [DataPartial] (ADR 0269).
 	Partial bool
 	// Owner resolves whose balance a session spends, and refuses a session no
 	// balance can pay. Nil means the customer the collection names, refused when
 	// there is none ([Machine.CheckOwner]).
 	Owner func(ctx context.Context, in coreprovider.CreateSessionInput) (string, error)
 }
+
+// DataPartial is the key of a payment's data that asks for a partial hold: a
+// session opened with it true holds what the balance has when the balance is
+// smaller than the amount, rather than declining (ADR 0269). The checkout asks
+// for it on a balance that pays first; a balance paying alone is not asked,
+// so a shortfall stays a decline.
+const DataPartial = "partial"
 
 // Codes are the four error codes a tender declares.
 type Codes struct {
@@ -249,6 +259,10 @@ func (m *Machine) CreateSession(
 		return coreprovider.Session{}, errors.Invalid(m.id.Codes.InvalidInput,
 			"the idempotency key is required")
 	}
+	partial, err := m.partial(in.Data)
+	if err != nil {
+		return coreprovider.Session{}, err
+	}
 
 	session := models.TenderSession{
 		ID:             m.id.NewSessionID(),
@@ -258,6 +272,7 @@ func (m *Machine) CreateSession(
 		Amount:         in.Amount,
 		CurrencyCode:   in.CurrencyCode,
 		Status:         models.SessionPending,
+		Partial:        partial,
 	}
 
 	written, inserted, err := m.store.InsertSessionIfAbsent(ctx, session)
@@ -281,6 +296,22 @@ func (m *Machine) CreateSession(
 	}, nil
 }
 
+// partial reads the opener's request for a partial hold from the payment's
+// data; a value that is not a boolean is refused rather than read as no.
+func (m *Machine) partial(data map[string]any) (bool, error) {
+	raw, ok := data[DataPartial]
+	if !ok {
+		return false, nil
+	}
+	asked, ok := raw.(bool)
+	if !ok {
+		return false, errors.Invalid(m.id.Codes.InvalidInput,
+			"%s in the payment's data has to be true or false, %T given", DataPartial, raw)
+	}
+
+	return asked, nil
+}
+
 // Authorize holds the amount against the customer's balance.
 //
 // # The lock is the whole correctness argument
@@ -296,6 +327,10 @@ func (m *Machine) CreateSession(
 // The session moves to "failed" with a reason, exactly as a declined card does.
 // Returning an error instead would make the saga treat an ordinary outcome as a
 // fault and compensate a checkout that simply needs another tender.
+//
+// A session that holds part ([Identity.Partial], [DataPartial]) declines only
+// an empty balance; a smaller one is held whole and the session's authorized
+// amount says how much that was.
 func (m *Machine) Authorize(
 	ctx context.Context, sessionID string,
 ) (coreprovider.AuthResult, error) {
@@ -332,9 +367,10 @@ func (m *Machine) Authorize(
 		}
 
 		held := session.Amount
-		if balance < held && m.id.Partial && balance > 0 {
-			// A tender that pays what it holds takes the balance and leaves the
-			// rest of the session to another tender (ADR 0209).
+		if balance < held && (m.id.Partial || session.Partial) && balance > 0 {
+			// A tender that pays what it holds, or a session opened to, takes
+			// the balance and leaves the rest of the session to another tender
+			// (ADR 0209, ADR 0269).
 			held = balance
 		}
 		if balance < held {

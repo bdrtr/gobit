@@ -170,6 +170,15 @@ type CompleteCartInput struct {
 	// the card holds at the moment it is spent. Like PaymentData, the code is a
 	// credential and is NOT written into the execution record.
 	GiftCardCode string
+	// PayFirstWith names the customer's own balances that pay after the gift
+	// card and before the provider, in this order: store_credit,
+	// loyalty_points or both; it is optional (ADR 0269).
+	//
+	// Each holds what it has of what is still unpaid, and the provider above
+	// pays the rest or is not asked; a balance that holds nothing stops the
+	// payment, as an empty gift card does. A balance of a cart that names no
+	// customer is refused before the order is opened.
+	PayFirstWith []string
 	// Email is the order's contact address; it is optional.
 	//
 	// The cart's own email cannot be used here: the cart module's cross-module
@@ -488,6 +497,9 @@ func (in *CompleteCartInput) normalize() error {
 				GiftCardProviderID)
 		}
 	}
+	if err := validatePayFirstWith(in.PayFirstWith, in.PaymentProviderID); err != nil {
+		return err
+	}
 	if in.ExpectedTotal < 0 {
 		return errors.Invalid(CodeInvalidInput,
 			"expected_total cannot be negative: %d", in.ExpectedTotal)
@@ -502,5 +514,31 @@ func (in *CompleteCartInput) normalize() error {
 		return errors.Invalid(CodeInvalidInput,
 			"email can be at most %d bytes: %d", maxIDLen, len(in.Email))
 	}
+	return nil
+}
+
+// validatePayFirstWith holds the balances that pay first to the customer's
+// own, each named once and none of them the provider that pays the rest
+// (ADR 0269).
+func validatePayFirstWith(balances []string, providerID string) error {
+	seen := make(map[string]bool, len(balances))
+	for _, balance := range balances {
+		if balance != StoreCreditProviderID && balance != LoyaltyPointsProviderID {
+			return errors.Invalid(CodeInvalidInput,
+				"pay_first_with names the customer's own balances, %q or %q: %q",
+				StoreCreditProviderID, LoyaltyPointsProviderID, balance)
+		}
+		if seen[balance] {
+			return errors.Invalid(CodeInvalidInput,
+				"pay_first_with names %q twice", balance)
+		}
+		if balance == providerID {
+			return errors.Invalid(CodeInvalidInput,
+				"pay_first_with pays first and payment_provider_id pays the rest, so the rest cannot be %q too",
+				balance)
+		}
+		seen[balance] = true
+	}
+
 	return nil
 }
