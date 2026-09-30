@@ -19,6 +19,7 @@ type Price struct {
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
 	DeletedAt    pgtype.Timestamptz
+	Seq          *int64
 }
 
 type PriceList struct {
@@ -56,6 +57,7 @@ type PriceRule struct {
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
 	DeletedAt  pgtype.Timestamptz
+	Seq        *int64
 }
 
 type PriceSet struct {

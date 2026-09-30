@@ -89,7 +89,7 @@ func TestIDIsUnique(t *testing.T) {
 //
 // Sortability is the only ground for getting natural creation order with
 // "ORDER BY id"; had the timestamp not been at the START of the body, the order
-// would be random.
+// would be random. Within one millisecond it is random anyway (D175).
 func TestIDSortsByTime(t *testing.T) {
 	earlier := models.NewCustomerID(time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC))
 	later := models.NewCustomerID(time.Date(2026, 8, 23, 12, 0, 1, 0, time.UTC))

@@ -4,6 +4,9 @@ package pricing_test
 
 import (
 	"context"
+	"io/fs"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -181,6 +184,18 @@ func ruledPrice(t *testing.T, snapshot models.PriceSetSnapshot, id string) model
 	return models.Price{}
 }
 
+// pricesByID returns the prices and each price's rules sorted by id, the order
+// the history's seed records them in.
+func pricesByID(prices []models.Price) []models.Price {
+	out := slices.Clone(prices)
+	for i := range out {
+		out[i].Rules = slices.Clone(out[i].Rules)
+		slices.SortFunc(out[i].Rules, func(a, b models.PriceRule) int { return strings.Compare(a.ID, b.ID) })
+	}
+	slices.SortFunc(out, func(a, b models.Price) int { return strings.Compare(a.ID, b.ID) })
+	return out
+}
+
 // TestTheSeedIsReadAsTheWriterWrites rolls the history back over live data and
 // forward again, so the migration's seed runs on real prices.
 //
@@ -220,13 +235,28 @@ func TestTheSeedIsReadAsTheWriterWrites(t *testing.T) {
 	written := setSnapshots(ctx, t, repo, set.ID)
 	require.Len(t, written, 1)
 
-	require.NoError(t, db.MigrateDown(ctx, dsn, src, pricing.Name, 1),
+	// The history's own migration and every one after it roll back, so the seed
+	// runs again; the count is read from the set, since newer migrations sit
+	// above it.
+	ups, err := fs.Glob(src, "*.up.sql")
+	require.NoError(t, err)
+	steps := 0
+	for _, name := range ups {
+		if name >= "000004_a_price_keeps_its_history.up.sql" {
+			steps++
+		}
+	}
+	require.Positive(t, steps, "the history's migration is in the set")
+	require.NoError(t, db.MigrateDown(ctx, dsn, src, pricing.Name, steps),
 		"the history's own migration rolls back and leaves the prices")
 	require.NoError(t, db.Migrate(ctx, dsn, src, pricing.Name))
 
+	// The seed runs before seq exists (D175), so it cannot know the order the
+	// prices were written in and records them by id; what it has to agree with
+	// the writer on is the content.
 	seeded := setSnapshots(ctx, t, repo, set.ID)
 	require.Len(t, seeded, 1, "the seed records every live set once")
-	assert.Equal(t, written[0].Prices, seeded[0].Prices,
+	assert.Equal(t, pricesByID(written[0].Prices), pricesByID(seeded[0].Prices),
 		"the seed's JSON decodes to exactly what the writer records, rules and bounds included")
 
 	lists := listSnapshots(ctx, t, repo, list.ID)

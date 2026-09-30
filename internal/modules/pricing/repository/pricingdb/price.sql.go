@@ -49,7 +49,7 @@ func (q *Queries) DeletePricesBySet(ctx context.Context, priceSetID string) erro
 }
 
 const getPrice = `-- name: GetPrice :one
-SELECT id, price_set_id, price_list_id, currency_code, amount, min_quantity, max_quantity, created_at, updated_at, deleted_at FROM price
+SELECT id, price_set_id, price_list_id, currency_code, amount, min_quantity, max_quantity, created_at, updated_at, deleted_at, seq FROM price
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -67,6 +67,7 @@ func (q *Queries) GetPrice(ctx context.Context, id string) (Price, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Seq,
 	)
 	return i, err
 }
@@ -77,7 +78,7 @@ INSERT INTO price (
     amount, min_quantity, max_quantity, created_at, updated_at
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-RETURNING id, price_set_id, price_list_id, currency_code, amount, min_quantity, max_quantity, created_at, updated_at, deleted_at
+RETURNING id, price_set_id, price_list_id, currency_code, amount, min_quantity, max_quantity, created_at, updated_at, deleted_at, seq
 `
 
 type InsertPriceParams struct {
@@ -114,13 +115,14 @@ func (q *Queries) InsertPrice(ctx context.Context, arg InsertPriceParams) (Price
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Seq,
 	)
 	return i, err
 }
 
 const listPriceCandidates = `-- name: ListPriceCandidates :many
 SELECT
-    p.id, p.price_set_id, p.price_list_id, p.currency_code, p.amount, p.min_quantity, p.max_quantity, p.created_at, p.updated_at, p.deleted_at,
+    p.id, p.price_set_id, p.price_list_id, p.currency_code, p.amount, p.min_quantity, p.max_quantity, p.created_at, p.updated_at, p.deleted_at, p.seq,
     pl.id        AS list_id,
     pl.type      AS list_type,
     pl.status    AS list_status,
@@ -130,7 +132,7 @@ FROM price p
 LEFT JOIN price_list pl
        ON pl.id = p.price_list_id AND pl.deleted_at IS NULL
 WHERE p.price_set_id = $1 AND p.deleted_at IS NULL
-ORDER BY p.id
+ORDER BY p.created_at, p.seq
 `
 
 type ListPriceCandidatesRow struct {
@@ -144,6 +146,7 @@ type ListPriceCandidatesRow struct {
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
 	DeletedAt    pgtype.Timestamptz
+	Seq          *int64
 	ListID       *string
 	ListType     *string
 	ListStatus   *string
@@ -180,6 +183,7 @@ func (q *Queries) ListPriceCandidates(ctx context.Context, priceSetID string) ([
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Seq,
 			&i.ListID,
 			&i.ListType,
 			&i.ListStatus,
@@ -198,7 +202,7 @@ func (q *Queries) ListPriceCandidates(ctx context.Context, priceSetID string) ([
 
 const listPriceCandidatesBySets = `-- name: ListPriceCandidatesBySets :many
 SELECT
-    p.id, p.price_set_id, p.price_list_id, p.currency_code, p.amount, p.min_quantity, p.max_quantity, p.created_at, p.updated_at, p.deleted_at,
+    p.id, p.price_set_id, p.price_list_id, p.currency_code, p.amount, p.min_quantity, p.max_quantity, p.created_at, p.updated_at, p.deleted_at, p.seq,
     pl.id        AS list_id,
     pl.type      AS list_type,
     pl.status    AS list_status,
@@ -208,7 +212,7 @@ FROM price p
 LEFT JOIN price_list pl
        ON pl.id = p.price_list_id AND pl.deleted_at IS NULL
 WHERE p.price_set_id = ANY($1::text[]) AND p.deleted_at IS NULL
-ORDER BY p.price_set_id, p.id
+ORDER BY p.price_set_id, p.created_at, p.seq
 `
 
 type ListPriceCandidatesBySetsRow struct {
@@ -222,6 +226,7 @@ type ListPriceCandidatesBySetsRow struct {
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
 	DeletedAt    pgtype.Timestamptz
+	Seq          *int64
 	ListID       *string
 	ListType     *string
 	ListStatus   *string
@@ -257,6 +262,7 @@ func (q *Queries) ListPriceCandidatesBySets(ctx context.Context, priceSetIds []s
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Seq,
 			&i.ListID,
 			&i.ListType,
 			&i.ListStatus,
@@ -274,11 +280,14 @@ func (q *Queries) ListPriceCandidatesBySets(ctx context.Context, priceSetIds []s
 }
 
 const listPricesBySet = `-- name: ListPricesBySet :many
-SELECT id, price_set_id, price_list_id, currency_code, amount, min_quantity, max_quantity, created_at, updated_at, deleted_at FROM price
+SELECT id, price_set_id, price_list_id, currency_code, amount, min_quantity, max_quantity, created_at, updated_at, deleted_at, seq FROM price
 WHERE price_set_id = $1 AND deleted_at IS NULL
-ORDER BY id
+ORDER BY created_at, seq
 `
 
+// ListPricesBySet returns a set's live prices in the order they were written:
+// a set's prices share one stamp, and seq is the order the write loop gave them
+// (D175, the rule ADR 0233 gave an order's lines).
 func (q *Queries) ListPricesBySet(ctx context.Context, priceSetID string) ([]Price, error) {
 	rows, err := q.db.Query(ctx, listPricesBySet, priceSetID)
 	if err != nil {
@@ -299,6 +308,7 @@ func (q *Queries) ListPricesBySet(ctx context.Context, priceSetID string) ([]Pri
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}

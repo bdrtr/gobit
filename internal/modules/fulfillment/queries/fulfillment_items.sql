@@ -8,18 +8,22 @@ INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)
 VALUES ($1, $2, $3, $4)
 RETURNING *;
 
+-- ListFulfillmentItems returns a parcel's items in the order they were written:
+-- they share a created_at, and seq is the order the write loop gave them
+-- (D175, the rule ADR 0233 gave an order's lines).
 -- name: ListFulfillmentItems :many
 SELECT * FROM fulfillment_items
 WHERE fulfillment_id = $1
-ORDER BY id;
+ORDER BY created_at, seq;
 
 -- ListFulfillmentItemsByFulfillments returns the items for MULTIPLE
 -- fulfillments in a single round trip; the list endpoints do not issue a query
--- per fulfillment (no N+1).
+-- per fulfillment (no N+1). Each parcel's items come in the order
+-- ListFulfillmentItems gives them.
 -- name: ListFulfillmentItemsByFulfillments :many
 SELECT * FROM fulfillment_items
 WHERE fulfillment_id = ANY (sqlc.arg('fulfillment_ids')::text[])
-ORDER BY fulfillment_id, id;
+ORDER BY fulfillment_id, created_at, seq;
 
 -- CommittedQuantitiesForFulfillments sums, per order line, the units of that
 -- line that a live parcel holds.

@@ -16,7 +16,10 @@ package fulfillment_test
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -325,10 +328,36 @@ func TestMigrationRollsBackWithDataPresent(t *testing.T) {
 	version, dirty, err := db.Version(ctx, dsn, fulfillment.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "there must be no half-finished migration")
-	assert.Equal(t, uint(4), version,
-		"the version is the NUMBER of migrations in the module; when a new file is added "+
-			"this goes up too. Were it held constant, an unapplied migration would "+
-			"silently go unnoticed")
+	assert.Equal(t, highestMigrationVersion(t, src), version,
+		"every migration in the module's set has to be applied again")
+}
+
+// highestMigrationVersion is the version of the newest migration in the set.
+//
+// It is read from the set rather than written out, as the cart, order and
+// customer modules' tests read it: the literal this replaced was the count of
+// the day's migrations, and every new migration had to remember to raise it.
+func highestMigrationVersion(t *testing.T, src fs.FS) uint {
+	t.Helper()
+
+	entries, err := fs.ReadDir(src, ".")
+	require.NoError(t, err)
+
+	var highest uint
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".up.sql") {
+			continue
+		}
+
+		digits, _, _ := strings.Cut(name, "_")
+		n, convErr := strconv.ParseUint(digits, 10, 32)
+		require.NoError(t, convErr, "%s does not start with a version number", name)
+		highest = max(highest, uint(n))
+	}
+
+	require.Positive(t, highest, "the embedded migration set looks empty")
+	return highest
 }
 
 // TestNoCrossModuleForeignKeys verifies that ALL the foreign keys in the
@@ -505,6 +534,55 @@ func TestEndToEndShipmentFlow(t *testing.T) {
 	err = svc.CancelFulfillment(ctx, ful.ID)
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err), "the error must be errors.Conflict: %v", err)
+}
+
+// TestAParcelKeepsTheOrderOfItsItems is D175: a parcel's items are written in
+// one transaction and share a created_at, and the random tails of their ids
+// ordered every read of them. Twelve items named in reverse come back as they
+// were given, through the single read, the batch read and an idempotent replay.
+func TestAParcelKeepsTheOrderOfItsItems(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
+
+	const reference = "order_PARCEL_ORDERED"
+	in := service.CreateFulfillmentInput{
+		Reference:        reference,
+		ShippingOptionID: option.ID,
+		IdempotencyKey:   "ordered-" + option.ID,
+	}
+	var want []string
+	for i := range 12 {
+		line := fmt.Sprintf("line_%02d", 11-i)
+		in.Items = append(in.Items, service.FulfillmentItemInput{LineItemID: line, Quantity: 1})
+		want = append(want, line)
+	}
+	lines := func(ful models.Fulfillment) []string {
+		out := make([]string, 0, len(ful.Items))
+		for i := range ful.Items {
+			out = append(out, ful.Items[i].LineItemID)
+		}
+		return out
+	}
+
+	created, err := svc.CreateFulfillment(ctx, in)
+	require.NoError(t, err)
+	assert.Equal(t, want, lines(created), "the parcel as it was written")
+
+	read, err := svc.GetFulfillment(ctx, created.ID)
+	require.NoError(t, err)
+	assert.Equal(t, want, lines(read), "the parcel read back")
+
+	replayed, err := svc.CreateFulfillment(ctx, in)
+	require.NoError(t, err)
+	require.Equal(t, created.ID, replayed.ID)
+	assert.Equal(t, want, lines(replayed), "the parcel a replay answers with")
+
+	listed, _, err := svc.ListFulfillments(ctx, service.ListFulfillmentsInput{Reference: ptr(reference)})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, want, lines(listed[0]), "the parcel in a list")
 }
 
 // TestConcurrentCreatesProduceOneShipment exercises the idempotency claim with

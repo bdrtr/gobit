@@ -10,10 +10,13 @@ RETURNING *;
 SELECT * FROM price
 WHERE id = $1 AND deleted_at IS NULL;
 
+-- ListPricesBySet returns a set's live prices in the order they were written:
+-- a set's prices share one stamp, and seq is the order the write loop gave them
+-- (D175, the rule ADR 0233 gave an order's lines).
 -- name: ListPricesBySet :many
 SELECT * FROM price
 WHERE price_set_id = $1 AND deleted_at IS NULL
-ORDER BY id;
+ORDER BY created_at, seq;
 
 -- SoftDeletePricesBySet hides a set's prices behind deleted_at.
 --
@@ -81,7 +84,7 @@ FROM price p
 LEFT JOIN price_list pl
        ON pl.id = p.price_list_id AND pl.deleted_at IS NULL
 WHERE p.price_set_id = $1 AND p.deleted_at IS NULL
-ORDER BY p.id;
+ORDER BY p.created_at, p.seq;
 
 -- ListPriceCandidatesBySets returns the same rows for MORE THAN ONE set in a
 -- single round trip.
@@ -103,4 +106,4 @@ FROM price p
 LEFT JOIN price_list pl
        ON pl.id = p.price_list_id AND pl.deleted_at IS NULL
 WHERE p.price_set_id = ANY(@price_set_ids::text[]) AND p.deleted_at IS NULL
-ORDER BY p.price_set_id, p.id;
+ORDER BY p.price_set_id, p.created_at, p.seq;

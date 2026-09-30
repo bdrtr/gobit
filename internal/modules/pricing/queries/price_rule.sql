@@ -9,15 +9,17 @@ RETURNING *;
 SELECT * FROM price_rule
 WHERE id = $1 AND deleted_at IS NULL;
 
+-- ListPriceRulesByPrice returns a price's live rules in the order they were
+-- written, for the reason ListPricesBySet gives (D175).
 -- name: ListPriceRulesByPrice :many
 SELECT * FROM price_rule
 WHERE price_id = $1 AND deleted_at IS NULL
-ORDER BY id;
+ORDER BY created_at, seq;
 
 -- name: ListPriceRulesByPrices :many
 SELECT * FROM price_rule
 WHERE price_id = ANY(@price_ids::text[]) AND deleted_at IS NULL
-ORDER BY price_id, id;
+ORDER BY price_id, created_at, seq;
 
 -- name: SoftDeletePriceRule :one
 UPDATE price_rule

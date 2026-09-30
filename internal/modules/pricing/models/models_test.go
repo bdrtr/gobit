@@ -68,7 +68,7 @@ func TestIDsAreUnique(t *testing.T) {
 }
 
 // TestIDsSortByTime proves that the LEXICOGRAPHIC order of ids preserves time
-// order; "ORDER BY id" yields creation order because of this.
+// order between milliseconds; within one, the random tail decides (D175).
 func TestIDsSortByTime(t *testing.T) {
 	base := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 

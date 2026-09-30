@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A parcel's items, a price set's prices and a price's rules come back in the
+  order they were written** (D175). **For integrators:**
+  `GET /admin/v1/fulfillments/{id}`, the fulfillment list, the price set and
+  price reads on both surfaces and the price history listed them in an order
+  set by their ids' random tails. Migrations: fulfillment `000005`, pricing
+  `000005`.
+
 - **An order's page in the panel lists what was sold** (ADR 0250, D174). **For
   operators:** the order page prints the order's lines with their quantities and
   amounts, the shopper's words and a gift card mark, in the order they were

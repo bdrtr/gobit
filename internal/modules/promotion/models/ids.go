@@ -45,7 +45,10 @@ const idBodyLen = 26
 // idEncoding is the unpadded encoding over the Crockford Base32 alphabet. Because
 // the alphabet is in ascending order in ASCII, the encoded string preserves the same
 // lexicographic order as the bytes it encodes; identifiers therefore stay sortable
-// by time and "ORDER BY id" naturally yields creation order.
+// by time.
+// "ORDER BY id" yields creation order only between ids of different
+// milliseconds: two ids of one millisecond fall to their random tails, so rows
+// written together are ordered by seq (D175).
 //
 // Sortability is NOT DECORATION in this module: the application order inside
 // [github.com/bdrtr/gobit/internal/modules/promotion/service.ComputeResult] is

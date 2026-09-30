@@ -27,7 +27,10 @@ const idBodyLen = 26
 // idEncoding is padding-free encoding over the Crockford Base32 alphabet. Since
 // the alphabet is in ascending ASCII order, the encoded string keeps the same
 // lexicographic order as the bytes it encodes; ids stay sortable by time
-// because of this, and "ORDER BY id" naturally yields creation order.
+// because of this.
+// "ORDER BY id" yields creation order only between ids of different
+// milliseconds: two ids of one millisecond fall to their random tails, so rows
+// written together are ordered by seq (D175).
 var idEncoding = base32.NewEncoding("0123456789ABCDEFGHJKMNPQRSTVWXYZ").WithPadding(base32.NoPadding)
 
 // NewID produces a time-ordered, unique id with the given prefix.

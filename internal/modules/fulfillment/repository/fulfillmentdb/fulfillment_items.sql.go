@@ -61,7 +61,7 @@ const createFulfillmentItem = `-- name: CreateFulfillmentItem :one
 
 INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)
 VALUES ($1, $2, $3, $4)
-RETURNING id, fulfillment_id, line_item_id, quantity, created_at, updated_at
+RETURNING id, fulfillment_id, line_item_id, quantity, created_at, updated_at, seq
 `
 
 type CreateFulfillmentItemParams struct {
@@ -90,16 +90,20 @@ func (q *Queries) CreateFulfillmentItem(ctx context.Context, arg CreateFulfillme
 		&i.Quantity,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Seq,
 	)
 	return i, err
 }
 
 const listFulfillmentItems = `-- name: ListFulfillmentItems :many
-SELECT id, fulfillment_id, line_item_id, quantity, created_at, updated_at FROM fulfillment_items
+SELECT id, fulfillment_id, line_item_id, quantity, created_at, updated_at, seq FROM fulfillment_items
 WHERE fulfillment_id = $1
-ORDER BY id
+ORDER BY created_at, seq
 `
 
+// ListFulfillmentItems returns a parcel's items in the order they were written:
+// they share a created_at, and seq is the order the write loop gave them
+// (D175, the rule ADR 0233 gave an order's lines).
 func (q *Queries) ListFulfillmentItems(ctx context.Context, fulfillmentID string) ([]FulfillmentItem, error) {
 	rows, err := q.db.Query(ctx, listFulfillmentItems, fulfillmentID)
 	if err != nil {
@@ -116,6 +120,7 @@ func (q *Queries) ListFulfillmentItems(ctx context.Context, fulfillmentID string
 			&i.Quantity,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}
@@ -128,14 +133,15 @@ func (q *Queries) ListFulfillmentItems(ctx context.Context, fulfillmentID string
 }
 
 const listFulfillmentItemsByFulfillments = `-- name: ListFulfillmentItemsByFulfillments :many
-SELECT id, fulfillment_id, line_item_id, quantity, created_at, updated_at FROM fulfillment_items
+SELECT id, fulfillment_id, line_item_id, quantity, created_at, updated_at, seq FROM fulfillment_items
 WHERE fulfillment_id = ANY ($1::text[])
-ORDER BY fulfillment_id, id
+ORDER BY fulfillment_id, created_at, seq
 `
 
 // ListFulfillmentItemsByFulfillments returns the items for MULTIPLE
 // fulfillments in a single round trip; the list endpoints do not issue a query
-// per fulfillment (no N+1).
+// per fulfillment (no N+1). Each parcel's items come in the order
+// ListFulfillmentItems gives them.
 func (q *Queries) ListFulfillmentItemsByFulfillments(ctx context.Context, fulfillmentIds []string) ([]FulfillmentItem, error) {
 	rows, err := q.db.Query(ctx, listFulfillmentItemsByFulfillments, fulfillmentIds)
 	if err != nil {
@@ -152,6 +158,7 @@ func (q *Queries) ListFulfillmentItemsByFulfillments(ctx context.Context, fulfil
 			&i.Quantity,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}

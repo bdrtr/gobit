@@ -12,7 +12,7 @@ import (
 )
 
 const getPriceRule = `-- name: GetPriceRule :one
-SELECT id, price_id, attribute, operator, rule_values, created_at, updated_at, deleted_at FROM price_rule
+SELECT id, price_id, attribute, operator, rule_values, created_at, updated_at, deleted_at, seq FROM price_rule
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -28,6 +28,7 @@ func (q *Queries) GetPriceRule(ctx context.Context, id string) (PriceRule, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Seq,
 	)
 	return i, err
 }
@@ -36,7 +37,7 @@ const insertPriceRule = `-- name: InsertPriceRule :one
 
 INSERT INTO price_rule (id, price_id, attribute, operator, rule_values, created_at, updated_at)
 VALUES ($1, $2, $3, $4, $5, $6, $6)
-RETURNING id, price_id, attribute, operator, rule_values, created_at, updated_at, deleted_at
+RETURNING id, price_id, attribute, operator, rule_values, created_at, updated_at, deleted_at, seq
 `
 
 type InsertPriceRuleParams struct {
@@ -68,16 +69,19 @@ func (q *Queries) InsertPriceRule(ctx context.Context, arg InsertPriceRuleParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Seq,
 	)
 	return i, err
 }
 
 const listPriceRulesByPrice = `-- name: ListPriceRulesByPrice :many
-SELECT id, price_id, attribute, operator, rule_values, created_at, updated_at, deleted_at FROM price_rule
+SELECT id, price_id, attribute, operator, rule_values, created_at, updated_at, deleted_at, seq FROM price_rule
 WHERE price_id = $1 AND deleted_at IS NULL
-ORDER BY id
+ORDER BY created_at, seq
 `
 
+// ListPriceRulesByPrice returns a price's live rules in the order they were
+// written, for the reason ListPricesBySet gives (D175).
 func (q *Queries) ListPriceRulesByPrice(ctx context.Context, priceID string) ([]PriceRule, error) {
 	rows, err := q.db.Query(ctx, listPriceRulesByPrice, priceID)
 	if err != nil {
@@ -96,6 +100,7 @@ func (q *Queries) ListPriceRulesByPrice(ctx context.Context, priceID string) ([]
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}
@@ -108,9 +113,9 @@ func (q *Queries) ListPriceRulesByPrice(ctx context.Context, priceID string) ([]
 }
 
 const listPriceRulesByPrices = `-- name: ListPriceRulesByPrices :many
-SELECT id, price_id, attribute, operator, rule_values, created_at, updated_at, deleted_at FROM price_rule
+SELECT id, price_id, attribute, operator, rule_values, created_at, updated_at, deleted_at, seq FROM price_rule
 WHERE price_id = ANY($1::text[]) AND deleted_at IS NULL
-ORDER BY price_id, id
+ORDER BY price_id, created_at, seq
 `
 
 func (q *Queries) ListPriceRulesByPrices(ctx context.Context, priceIds []string) ([]PriceRule, error) {
@@ -131,6 +136,7 @@ func (q *Queries) ListPriceRulesByPrices(ctx context.Context, priceIds []string)
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}

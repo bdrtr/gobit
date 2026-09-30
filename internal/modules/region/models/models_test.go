@@ -141,7 +141,9 @@ func TestRegionPatchEmpty(t *testing.T) {
 // right length, unique and TIME ORDERED.
 //
 // The sortability claim is not an empty one: because "ORDER BY id" yields
-// creation order, listing queries do not sort by a separate time column.
+// creation order between milliseconds, listing queries of records written one
+// at a time do not sort by a separate time column. Within one millisecond the
+// random tail decides (D175).
 func TestNewRegionIDIsPrefixedAndSortable(t *testing.T) {
 	base := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 
