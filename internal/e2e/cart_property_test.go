@@ -11,10 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 
+	"github.com/bdrtr/gobit/core/errors"
+	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	paymentmanual "github.com/bdrtr/gobit/internal/modules/payment/manual"
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
+	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
 )
 
 // TestEveryCartAShopperCanBuildIsSoldAsQuoted is ADR 0249's property across
@@ -95,6 +98,8 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 	}
 	customerID, email := newCustomer(ctx, t)
 	writeStoreProfile(t)
+	returnsFlow, err := returnswf.FromContainer(ctr)
+	require.NoError(t, err)
 
 	rapid.Check(t, func(rt *rapid.T) {
 		country := rapid.SampledFrom([]string{taxedCountry, inclusiveTaxCountry}).Draw(rt, "country")
@@ -202,5 +207,71 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 		var invoice invoiceDocumentResponse
 		require.NoError(rt, json.Unmarshal(document.Body.Bytes(), &invoice))
 		require.Equal(rt, stored.Total, invoice.Data.Total)
+
+		// Some of it comes back: lines drawn from the order at any quantity it
+		// sold, an add-on with its line, received at the warehouse and refunded
+		// in part. A gift card line is final (ADR 0213) and is asked back only
+		// to be refused.
+		if !rapid.Bool().Draw(rt, "a return") {
+			return
+		}
+		request := ordersvc.CreateReturnInput{OrderID: order.ID, Reason: "property"}
+		back := map[string]int64{}
+		askedForACard := false
+		for _, line := range order.Items {
+			if line.ParentLineItemID != nil || !rapid.Bool().Draw(rt, "returned line") {
+				continue
+			}
+			if line.IsGiftcard {
+				askedForACard = true
+			}
+			quantity := rapid.Int64Range(1, line.Quantity).Draw(rt, "returned units")
+			request.Lines = append(request.Lines, ordersvc.ReturnLineInput{OrderLineItemID: line.ID, Quantity: quantity})
+			back[line.ID] = quantity
+			for _, addOn := range order.Items {
+				if addOn.ParentLineItemID != nil && *addOn.ParentLineItemID == line.ID {
+					request.Lines = append(request.Lines, ordersvc.ReturnLineInput{OrderLineItemID: addOn.ID, Quantity: quantity})
+					back[addOn.ID] = quantity
+				}
+			}
+		}
+		if len(request.Lines) == 0 {
+			return
+		}
+		opened, err := orderSvc.CreateReturn(ctx, request)
+		if askedForACard {
+			require.Error(rt, err)
+			require.Equal(rt, ordersvc.CodeGiftCardLineFinal, errors.CodeOf(err), "%v", err)
+			return
+		}
+		require.NoError(rt, err, "a return of what was sold is opened")
+
+		restocked := map[string]int64{}
+		var units int64
+		for _, line := range order.Items {
+			for variant, per := range parts(line.VariantID) {
+				restocked[variant] += per * back[line.ID]
+				units += per * back[line.ID]
+			}
+		}
+		beforeReceipt := shelf(rt)
+		receipt, err := returnsFlow.ReceiveReturn(ctx, opened.ID, stockLocationID)
+		require.NoError(rt, err)
+		require.Empty(rt, receipt.Warnings)
+		require.Equal(rt, units, receipt.RestockedUnits)
+		afterReceipt := shelf(rt)
+		for variant := range items {
+			require.Equal(rt, restocked[variant], afterReceipt[variant]-beforeReceipt[variant], "the return puts %s back", variant)
+		}
+
+		amount := rapid.Int64Range(1, stored.Total).Draw(rt, "refunded")
+		refund, err := returnsFlow.RefundReturn(ctx, opened.ID, amount, "property")
+		require.NoError(rt, err)
+		require.Empty(rt, refund.Warnings)
+		require.Equal(rt, amount, refund.RefundedAmount)
+		collection, err = paymentSvc.GetPaymentCollection(ctx, placed.PaymentCollectionID)
+		require.NoError(rt, err)
+		require.Equal(rt, amount, collection.RefundedAmount, "the refund is the collection's")
+		require.LessOrEqual(rt, collection.RefundedAmount, collection.CapturedAmount)
 	})
 }
