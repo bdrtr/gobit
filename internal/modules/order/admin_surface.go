@@ -3,7 +3,9 @@ package order
 import (
 	"context"
 
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/order/api"
+	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
@@ -14,11 +16,11 @@ const AdminName = ModuleName + ".admin"
 // AfterSalesSurface is what the admin panel acts on an order's after-sales
 // records through (ADR 0271).
 //
-// Every method is the order API's own: the three withdrawals of a request are
-// the service's, and everything that moves stock, money or a parcel is the
-// flow the API calls, so the panel acts under the API's conditions and fails
-// closed where the API does. It speaks in primitives, as a cross-module
-// surface does (ADR 0006).
+// Every method is the order API's own: opening a record and the three
+// withdrawals of a request are the service's (ADR 0272), and everything that
+// moves stock, money or a parcel is the flow the API calls, so the panel acts
+// under the API's conditions and fails closed where the API does. It speaks in
+// primitives, as a cross-module surface does (ADR 0006).
 type AfterSalesSurface struct {
 	svc  *service.Service
 	flow api.ReturnReceiving
@@ -92,4 +94,73 @@ func (s *AfterSalesSurface) DispatchReplacement(
 // back the units it set aside.
 func (s *AfterSalesSurface) WithdrawReplacement(ctx context.Context, replacementID string) error {
 	return s.flow.WithdrawReplacement(ctx, replacementID)
+}
+
+// OpenReturn opens a return on the order naming the lines that come back, a
+// quantity for each, and the refund it plans; it returns the record's id.
+func (s *AfterSalesSurface) OpenReturn(
+	ctx context.Context, orderID string, lineIDs []string, quantities []int64, refundAmount int64, reason string,
+) (string, error) {
+	if len(lineIDs) != len(quantities) {
+		return "", paired(len(lineIDs), len(quantities))
+	}
+	lines := make([]service.ReturnLineInput, 0, len(lineIDs))
+	for i := range lineIDs {
+		lines = append(lines, service.ReturnLineInput{OrderLineItemID: lineIDs[i], Quantity: quantities[i]})
+	}
+	ret, err := s.svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: orderID, RefundAmount: refundAmount, Reason: reason, Lines: lines,
+	})
+
+	return ret.ID, err
+}
+
+// OpenClaim opens a claim on the order, settled by "refund" or "replace".
+func (s *AfterSalesSurface) OpenClaim(
+	ctx context.Context, orderID, claimType string, refundAmount int64, reason string,
+) (string, error) {
+	claim, err := s.svc.CreateClaim(ctx, service.CreateClaimInput{
+		OrderID: orderID, Type: models.ClaimType(claimType), RefundAmount: refundAmount, Reason: reason,
+	})
+
+	return claim.ID, err
+}
+
+// OpenExchange opens an exchange on the order; a negative difference is paid
+// to the customer.
+func (s *AfterSalesSurface) OpenExchange(
+	ctx context.Context, orderID string, differenceDue int64, note string,
+) (string, error) {
+	exchange, err := s.svc.CreateExchange(ctx, service.CreateExchangeInput{
+		OrderID: orderID, DifferenceDue: differenceDue, Note: note,
+	})
+
+	return exchange.ID, err
+}
+
+// OpenReplacement records what a claim or an exchange will send: the order's
+// lines and a quantity for each, how and from where.
+func (s *AfterSalesSurface) OpenReplacement(
+	ctx context.Context, claimID, exchangeID string, lineIDs []string, quantities []int64,
+	shippingOptionID, locationID string,
+) (string, error) {
+	if len(lineIDs) != len(quantities) {
+		return "", paired(len(lineIDs), len(quantities))
+	}
+	lines := make([]service.ReplacementLineInput, 0, len(lineIDs))
+	for i := range lineIDs {
+		lines = append(lines, service.ReplacementLineInput{OrderLineItemID: lineIDs[i], Quantity: quantities[i]})
+	}
+	record, err := s.svc.CreateReplacement(ctx, service.CreateReplacementInput{
+		ClaimID: claimID, ExchangeID: exchangeID, ShippingOptionID: shippingOptionID,
+		LocationID: locationID, Lines: lines,
+	})
+
+	return record.ID, err
+}
+
+// paired refuses lines and quantities that do not come in pairs.
+func paired(lines, quantities int) error {
+	return errors.Invalid(service.CodeInvalidInput,
+		"every line needs a quantity: %d lines, %d quantities", lines, quantities)
 }

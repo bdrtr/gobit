@@ -523,6 +523,24 @@ func (a recordingAfterSales) WithdrawReplacement(context.Context, string) error 
 	return a.surfaces.reach(ServiceOrderAdmin)
 }
 
+func (a recordingAfterSales) OpenReturn(context.Context, string, []string, []int64, int64, string) (string, error) {
+	return "", a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) OpenClaim(context.Context, string, string, int64, string) (string, error) {
+	return "", a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) OpenExchange(context.Context, string, int64, string) (string, error) {
+	return "", a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) OpenReplacement(
+	context.Context, string, string, []string, []int64, string, string,
+) (string, error) {
+	return "", a.surfaces.reach(ServiceOrderAdmin)
+}
+
 // walkForms is a form each write accepts, so the walk reaches the surface
 // behind it. A write the panel binds with no entry here fails the walk.
 var walkForms = map[string]url.Values{
@@ -540,6 +558,8 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, VariantBundlePath): {"parts": {""}, "version": {"1"}},
 	// The walk withdraws a return; every act reaches the same surface.
 	routeKey(http.MethodPost, OrderAfterSalePath): {},
+	// And opens one (ADR 0272).
+	routeKey(http.MethodPost, OrderAfterSaleOpenPath): {},
 }
 
 // panelWalk is one panel built on the recording doubles.

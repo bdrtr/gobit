@@ -24,6 +24,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel opens an order's after-sales records, and an operator's return
+  names its lines** (ADR 0272, D186). **For operators:** with `order:write` the
+  order page opens a return with a quantity per line, a claim, an exchange and
+  a replacement. A return opened through `POST /admin/v1/orders/{id}/returns`
+  used to name no goods and restocked nothing when received; it now takes
+  `lines`. **For integrators:** the admin return body takes
+  `lines: [{order_line_item_id, quantity, refund_amount}]`.
+
 - **The panel acts on an order's after-sales records** (ADR 0271). **For
   operators:** with `order:write`, the order page receives a return at a
   location, refunds it, settles a refund claim, funds or refunds an exchange,

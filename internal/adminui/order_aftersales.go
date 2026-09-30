@@ -64,6 +64,32 @@ type orderAfterSale struct {
 	Since []string
 	// Forms are the acts it offers in its status (ADR 0271).
 	Forms []afterSaleForm
+	// ClaimType is how a claim is settled; empty for the other kinds.
+	ClaimType string
+}
+
+// afterSaleSource is a record a replacement can be opened for (ADR 0272).
+type afterSaleSource struct {
+	// Value is "claim:<id>" or "exchange:<id>", what the form posts.
+	Value string
+	Label string
+}
+
+// replacementSources are the records a replacement can be opened for: a
+// requested claim settled by goods, and an exchange that is requested or
+// funded. The module decides; this keeps the page from offering the others.
+func replacementSources(sales []orderAfterSale) []afterSaleSource {
+	var out []afterSaleSource
+	for i := range sales {
+		sale := sales[i]
+		switch {
+		case sale.Kind == kindClaim && sale.Status == recordRequested && sale.ClaimType == "replace",
+			sale.Kind == kindExchange && (sale.Status == recordRequested || sale.Status == "funded"):
+			out = append(out, afterSaleSource{Value: sale.Kind + ":" + sale.ID, Label: sale.Kind + " " + sale.ID})
+		}
+	}
+
+	return out
 }
 
 // afterSalesOf reads the order's returns, claims, exchanges and replacements,
@@ -94,7 +120,7 @@ func (u *UI) afterSalesOf(
 				fieldRefundAmount, fieldReceivedAt, fieldReceivedLocationID, fieldItems,
 			},
 			view: func(rec query.Record) orderAfterSale {
-				sale := afterSaleOf("return", rec)
+				sale := afterSaleOf(kindReturn, rec)
 				sale.Detail = nonEmpty(recordString(rec, fieldReason))
 				sale.Goods = afterSaleGoods(rec[fieldItems], titles)
 				sale.Money = refundOf(rec, currency, scales)
@@ -112,7 +138,7 @@ func (u *UI) afterSalesOf(
 				fieldClaimType, fieldRefundAmount, fieldCompletedAt,
 			},
 			view: func(rec query.Record) orderAfterSale {
-				sale := afterSaleOf("claim", rec)
+				sale := afterSaleOf(kindClaim, rec)
 				sale.Detail = nonEmpty("settled by "+recordString(rec, fieldClaimType), recordString(rec, fieldReason))
 				sale.Money = refundOf(rec, currency, scales)
 				sale.Since = moments(
@@ -129,7 +155,7 @@ func (u *UI) afterSalesOf(
 				fieldDifferenceDue, fieldPaymentCollectionID,
 			},
 			view: func(rec query.Record) orderAfterSale {
-				sale := afterSaleOf("exchange", rec)
+				sale := afterSaleOf(kindExchange, rec)
 				if collection := recordString(rec, fieldPaymentCollectionID); collection != "" {
 					sale.Detail = []string{"paid through " + collection}
 				}
@@ -146,7 +172,7 @@ func (u *UI) afterSalesOf(
 				fieldLocationID, fieldDispatchedAt, fieldFulfillmentID, fieldItems,
 			},
 			view: func(rec query.Record) orderAfterSale {
-				sale := afterSaleOf("replacement", rec)
+				sale := afterSaleOf(kindReplacement, rec)
 				source := "for claim " + recordString(rec, fieldClaimID)
 				if exchange := recordString(rec, fieldExchangeID); exchange != "" {
 					source = "for exchange " + exchange
@@ -173,7 +199,10 @@ func (u *UI) afterSalesOf(
 		more = more || len(records) >= afterSalesPerKind
 		for _, rec := range records {
 			sale := kind.view(rec)
-			sale.Forms = afterSaleForms(sale.Kind, sale.Status, recordString(rec, fieldClaimType))
+			if sale.Kind == kindClaim {
+				sale.ClaimType = recordString(rec, fieldClaimType)
+			}
+			sale.Forms = afterSaleForms(sale.Kind, sale.Status, sale.ClaimType)
 			out = append(out, sale)
 		}
 	}

@@ -4,7 +4,7 @@
 claim, exchange or replacement, through an `order.admin` surface whose methods
 are the API's own, under `order:write`.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0272](0272-the-panel-opens-an-orders-after-sales.md), which lets the panel open the records too
 - **Date:** 2026-09-30
 
 ## Context

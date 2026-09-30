@@ -413,6 +413,7 @@ func (u *UI) renderOrder(
 		"PaymentPrivilege":     scopePaymentRead,
 		"FulfillmentPrivilege": scopeFulfillmentRead,
 		"AfterSalesPerKind":    afterSalesPerKind,
+		"ReplacementSources":   replacementSources(detail.AfterSales),
 	})
 }
 

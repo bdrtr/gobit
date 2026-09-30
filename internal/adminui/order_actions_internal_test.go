@@ -29,6 +29,9 @@ type fakeAfterSales struct {
 	text   string
 	amount int64
 	reason string
+	// lines and quantities are what an opening named.
+	lines      []string
+	quantities []int64
 }
 
 func (f *fakeAfterSales) note(act, id, text string, amount int64, reason string) {
@@ -93,6 +96,34 @@ func (f *fakeAfterSales) WithdrawReplacement(_ context.Context, id string) error
 	return f.err
 }
 
+func (f *fakeAfterSales) OpenReturn(
+	_ context.Context, orderID string, lines []string, quantities []int64, amount int64, reason string,
+) (string, error) {
+	f.note("open-return", orderID, "", amount, reason)
+	f.lines, f.quantities = lines, quantities
+	return "ret_new", f.err
+}
+
+func (f *fakeAfterSales) OpenClaim(
+	_ context.Context, orderID, claimType string, amount int64, reason string,
+) (string, error) {
+	f.note("open-claim", orderID, claimType, amount, reason)
+	return "claim_new", f.err
+}
+
+func (f *fakeAfterSales) OpenExchange(_ context.Context, orderID string, due int64, note string) (string, error) {
+	f.note("open-exchange", orderID, "", due, note)
+	return "exch_new", f.err
+}
+
+func (f *fakeAfterSales) OpenReplacement(
+	_ context.Context, claimID, exchangeID string, lines []string, quantities []int64, option, location string,
+) (string, error) {
+	f.note("open-replacement", claimID+"|"+exchangeID, option+"|"+location, 0, "")
+	f.lines, f.quantities = lines, quantities
+	return "orepl_new", f.err
+}
+
 // act posts one act as an operator holding the given privileges.
 func act(t *testing.T, surface AfterSalesAdmin, catalog *fakeCatalog, path string, form url.Values, scopes ...string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -102,6 +133,7 @@ func act(t *testing.T, surface AfterSalesAdmin, catalog *fakeCatalog, path strin
 	r := chi.NewRouter()
 	r.Get(OrderPath, panel.showOrder)
 	r.Post(OrderAfterSalePath, panel.submitAfterSale)
+	r.Post(OrderAfterSaleOpenPath, panel.submitAfterSaleOpen)
 
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

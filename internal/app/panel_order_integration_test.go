@@ -266,3 +266,81 @@ func TestThePanelActsOnARealOrdersAfterSales(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.ReturnReceived, still.Status)
 }
+
+// TestThePanelOpensARealOrdersAfterSales is ADR 0272's gate: the real
+// assembly opens a return naming the line and units that come back, a claim
+// settled by goods, and the replacement that settles it.
+func TestThePanelOpensARealOrdersAfterSales(t *testing.T) {
+	ctx := context.Background()
+
+	dsn := migrateDSN(t)
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", dsn)
+	t.Setenv("JWT_SECRET", "panel-order-test-secret-32-bytes-long!")
+	t.Setenv("LOG_LEVEL", "warn")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	app, closeApp, err := openApplication(ctx, cfg, slog.New(slog.DiscardHandler), errorreport.NewSink(),
+		Options{}, publishesOnly)
+	require.NoError(t, err)
+	defer closeApp()
+
+	svc, err := container.Resolve[*ordersvc.Service](app.container, order.ServiceName)
+	require.NoError(t, err)
+	placed, err := svc.CreateOrder(ctx, ordersvc.CreateOrderInput{
+		RegionID: "reg_panel", CustomerID: "cus_panel", CurrencyCode: "TRY",
+		Subtotal: 2000, TaxTotal: 400, Total: 2400,
+		Items: []ordersvc.CreateOrderItemInput{{
+			VariantID: "variant_panel", Title: "Panel item", Quantity: 2,
+			UnitPrice: 1000, Subtotal: 2000, TaxTotal: 400, Total: 2400,
+		}},
+	})
+	require.NoError(t, err)
+	detail, err := svc.GetOrder(ctx, placed.ID)
+	require.NoError(t, err)
+	lineID := detail.Items[0].ID
+
+	panel, err := adminui.FromContainer(app.container, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	open := func(kind string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequest(http.MethodPost, adminui.OrdersPath+"/"+placed.ID+"/after-sales/"+kind,
+			strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_panel", Kind: "user", Scopes: []string{"order:read", "order:write"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		return rec
+	}
+
+	page := open("return", url.Values{"line_id": {lineID}, "quantity": {"1"}, "reason": {"too big"}})
+	returns, _, err := svc.ListReturns(ctx, placed.ID, ordersvc.Page{Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, returns, 1)
+	assert.Contains(t, page.Body.String(), "The return "+returns[0].ID+" was opened.")
+	assert.Contains(t, page.Body.String(), "Panel item × 1",
+		"the page read back through the return's entity names the line that comes back")
+
+	open("claim", url.Values{"type": {"replace"}, "reason": {"crushed"}})
+	claims, _, err := svc.ListClaims(ctx, placed.ID, ordersvc.Page{Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	assert.Equal(t, models.ClaimReplace, claims[0].Type)
+
+	page = open("replacement", url.Values{
+		"source": {"claim:" + claims[0].ID}, "line_id": {lineID}, "quantity": {"1"},
+		"shipping_option_id": {"so_panel"}, "location_id": {"sloc_panel"},
+	})
+	assert.Contains(t, page.Body.String(), "The replacement orepl_")
+	sent, err := svc.ListReplacementsOfClaim(ctx, claims[0].ID)
+	require.NoError(t, err)
+	require.Len(t, sent, 1)
+	assert.Equal(t, "sloc_panel", sent[0].LocationID)
+}

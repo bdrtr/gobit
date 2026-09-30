@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +16,10 @@ import (
 // spelled by hand, as every surface name the panel resolves is, and pinned
 // against the module's constant in internal/arch.
 const ServiceOrderAdmin = "order.admin"
+
+// OrderAfterSaleOpenPath opens an after-sales record of one kind on the order
+// (ADR 0272).
+const OrderAfterSaleOpenPath = OrderPath + "/after-sales/{kind}"
 
 // OrderAfterSalePath takes one act on one after-sales record of the order: the
 // kind is "return", "claim", "exchange" or "replacement", and the acts each
@@ -52,7 +57,34 @@ type AfterSalesAdmin interface {
 		fulfillmentID string, sentUnits int64, alreadySent bool, err error)
 	// WithdrawReplacement takes back a replacement that has not left.
 	WithdrawReplacement(ctx context.Context, replacementID string) error
+
+	// OpenReturn opens a return naming its lines and a quantity for each.
+	OpenReturn(ctx context.Context, orderID string, lineIDs []string, quantities []int64,
+		refundAmount int64, reason string) (string, error)
+	// OpenClaim opens a claim settled by "refund" or "replace".
+	OpenClaim(ctx context.Context, orderID, claimType string, refundAmount int64, reason string) (string, error)
+	// OpenExchange opens an exchange; a negative difference is paid to the
+	// customer.
+	OpenExchange(ctx context.Context, orderID string, differenceDue int64, note string) (string, error)
+	// OpenReplacement records what a claim or an exchange will send.
+	OpenReplacement(ctx context.Context, claimID, exchangeID string, lineIDs []string, quantities []int64,
+		shippingOptionID, locationID string) (string, error)
 }
+
+// The repeated fields of a form that names order lines: each line's id and the
+// quantity typed beside it, in the same order.
+const (
+	formLineID   = "line_id"
+	formQuantity = "quantity"
+)
+
+// The kinds of after-sales record, as the routes and the page name them.
+const (
+	kindReturn      = "return"
+	kindClaim       = "claim"
+	kindExchange    = "exchange"
+	kindReplacement = "replacement"
+)
 
 // The act names and the status the table and the forms share.
 const (
@@ -94,7 +126,7 @@ type afterSaleAct func(ctx context.Context, u *UI, r *http.Request, recordID str
 // order API's after-sales writes on a record, but for opening one and a
 // claim's evidence.
 var afterSaleActs = map[string]map[string]afterSaleAct{
-	"return": {
+	kindReturn: {
 		"receive": func(ctx context.Context, u *UI, r *http.Request, id string) (string, []string, error) {
 			lines, units, warnings, err := u.afterSales.ReceiveReturn(ctx, id,
 				strings.TrimSpace(r.PostFormValue("location_id")))
@@ -114,7 +146,7 @@ var afterSaleActs = map[string]map[string]afterSaleAct{
 			return "The return was withdrawn.", nil, u.afterSales.CancelReturn(ctx, id)
 		},
 	},
-	"claim": {
+	kindClaim: {
 		"settle": func(ctx context.Context, u *UI, r *http.Request, id string) (string, []string, error) {
 			amount, currency, err := u.formAmount(r)
 			if err != nil {
@@ -128,7 +160,7 @@ var afterSaleActs = map[string]map[string]afterSaleAct{
 			return "The claim was withdrawn.", nil, u.afterSales.CancelClaim(ctx, id)
 		},
 	},
-	"exchange": {
+	kindExchange: {
 		"fund": func(ctx context.Context, u *UI, r *http.Request, id string) (string, []string, error) {
 			collection := strings.TrimSpace(r.PostFormValue("collection_id"))
 			return "The exchange's difference is answered by " + collection + ".", nil,
@@ -142,7 +174,7 @@ var afterSaleActs = map[string]map[string]afterSaleAct{
 			return "The exchange was withdrawn.", nil, u.afterSales.CancelExchange(ctx, id)
 		},
 	},
-	"replacement": {
+	kindReplacement: {
 		"dispatch": func(ctx context.Context, u *UI, _ *http.Request, id string) (string, []string, error) {
 			parcel, units, already, err := u.afterSales.DispatchReplacement(ctx, id)
 			if already {
@@ -163,7 +195,7 @@ var afterSaleActs = map[string]map[string]afterSaleAct{
 func afterSaleForms(kind, status, claimType string) []afterSaleForm {
 	cancel := afterSaleForm{Act: actCancel, Label: "Withdraw"}
 	switch kind {
-	case "return":
+	case kindReturn:
 		switch status {
 		case recordRequested:
 			return []afterSaleForm{{Act: "receive", Label: "Receive", Location: true}, cancel}
@@ -173,7 +205,7 @@ func afterSaleForms(kind, status, claimType string) []afterSaleForm {
 				AmountHint: "empty: everything the collection has left",
 			}}
 		}
-	case "claim":
+	case kindClaim:
 		if status != recordRequested {
 			return nil
 		}
@@ -184,14 +216,14 @@ func afterSaleForms(kind, status, claimType string) []afterSaleForm {
 			}, cancel}
 		}
 		return []afterSaleForm{cancel}
-	case "exchange":
+	case kindExchange:
 		switch status {
 		case recordRequested:
 			return []afterSaleForm{{Act: "fund", Label: "Fund", Collection: true}, cancel}
 		case "funded":
 			return []afterSaleForm{{Act: actRefund, Label: "Refund and withdraw", Reason: true}}
 		}
-	case "replacement":
+	case kindReplacement:
 		if status == recordRequested {
 			return []afterSaleForm{{Act: "dispatch", Label: "Dispatch"}, {Act: "withdraw", Label: "Withdraw"}}
 		}
@@ -278,4 +310,116 @@ func refusalOf(err error) string {
 	}
 
 	return "The after-sales record could not be changed."
+}
+
+// afterSaleOpener opens one kind of record on the order and returns its id.
+type afterSaleOpener func(ctx context.Context, u *UI, r *http.Request, orderID string) (string, error)
+
+// afterSaleOpeners are the records the panel opens, by kind (ADR 0272). They
+// are the order API's openings, the replacement's limited to the order's own
+// lines.
+var afterSaleOpeners = map[string]afterSaleOpener{
+	kindReturn: func(ctx context.Context, u *UI, r *http.Request, orderID string) (string, error) {
+		lineIDs, quantities, err := formOrderLines(r)
+		if err != nil {
+			return "", err
+		}
+		amount, _, err := u.formAmount(r)
+		if err != nil {
+			return "", err
+		}
+		return u.afterSales.OpenReturn(ctx, orderID, lineIDs, quantities, amount,
+			strings.TrimSpace(r.PostFormValue("reason")))
+	},
+	kindClaim: func(ctx context.Context, u *UI, r *http.Request, orderID string) (string, error) {
+		amount, _, err := u.formAmount(r)
+		if err != nil {
+			return "", err
+		}
+		return u.afterSales.OpenClaim(ctx, orderID, r.PostFormValue("type"), amount,
+			strings.TrimSpace(r.PostFormValue("reason")))
+	},
+	kindExchange: func(ctx context.Context, u *UI, r *http.Request, orderID string) (string, error) {
+		amount, _, err := u.formAmount(r)
+		if err != nil {
+			return "", err
+		}
+		return u.afterSales.OpenExchange(ctx, orderID, amount, strings.TrimSpace(r.PostFormValue("note")))
+	},
+	kindReplacement: func(ctx context.Context, u *UI, r *http.Request, _ string) (string, error) {
+		lineIDs, quantities, err := formOrderLines(r)
+		if err != nil {
+			return "", err
+		}
+		kind, sourceID, _ := strings.Cut(r.PostFormValue("source"), ":")
+		claimID, exchangeID := "", ""
+		switch kind {
+		case kindClaim:
+			claimID = sourceID
+		case kindExchange:
+			exchangeID = sourceID
+		default:
+			return "", errors.Invalid(CodeAmountInvalid, "Choose the claim or the exchange the replacement settles.")
+		}
+		return u.afterSales.OpenReplacement(ctx, claimID, exchangeID, lineIDs, quantities,
+			strings.TrimSpace(r.PostFormValue("shipping_option_id")),
+			strings.TrimSpace(r.PostFormValue("location_id")))
+	},
+}
+
+// submitAfterSaleOpen opens one after-sales record on the order and draws the
+// page again with it, as an act does (ADR 0272).
+func (u *UI) submitAfterSaleOpen(w http.ResponseWriter, r *http.Request) {
+	orderID := chi.URLParam(r, "id")
+	kind := chi.URLParam(r, "kind")
+	open, ok := afterSaleOpeners[kind]
+	if !ok {
+		u.errorPage(w, r, http.StatusNotFound, "Not found", "No such after-sales record is opened.")
+		return
+	}
+	if u.afterSales == nil {
+		u.errorPage(w, r, http.StatusServiceUnavailable, "Acting unavailable",
+			"The order module's panel surface is not registered in this installation.")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		u.errorPage(w, r, http.StatusBadRequest, "Bad request", "The form could not be read.")
+		return
+	}
+
+	id, err := open(r.Context(), u, r, orderID)
+	if err != nil {
+		if errors.IsInvalid(err) || errors.IsConflict(err) || errors.IsNotFound(err) {
+			u.renderOrder(w, r, http.StatusUnprocessableEntity, orderID,
+				&afterSaleOutcome{Refused: refusalOf(err)})
+			return
+		}
+		u.unexpectedFailure(w, r, err, "The after-sales record could not be opened")
+		return
+	}
+
+	u.renderOrder(w, r, http.StatusOK, orderID, &afterSaleOutcome{Done: "The " + kind + " " + id + " was opened."})
+}
+
+// formOrderLines reads the order lines a form names, each with the quantity typed
+// beside it; a line left empty or at zero is not named.
+func formOrderLines(r *http.Request) (lineIDs []string, quantities []int64, err error) {
+	ids, typed := r.PostForm[formLineID], r.PostForm[formQuantity]
+	if len(ids) != len(typed) {
+		return nil, nil, errors.Invalid(CodeAmountInvalid, "Every line needs its quantity box.")
+	}
+	for i := range ids {
+		text := strings.TrimSpace(typed[i])
+		if text == "" || text == "0" {
+			continue
+		}
+		quantity, convErr := strconv.ParseInt(text, 10, 64)
+		if convErr != nil || quantity < 0 {
+			return nil, nil, errors.Invalid(CodeAmountInvalid, "A quantity must be a whole number: %q.", text)
+		}
+		lineIDs = append(lineIDs, ids[i])
+		quantities = append(quantities, quantity)
+	}
+
+	return lineIDs, quantities, nil
 }

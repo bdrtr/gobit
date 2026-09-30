@@ -227,6 +227,54 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
 <p class="muted">No return, claim, exchange or replacement has been opened for this order.</p>
 {{ end }}
 
+{{ if and .CanAct (not .Order.AfterSalesUnread) }}
+<h3>Open a record</h3>
+
+{{ if .Order.Lines }}
+<form method="post" action="{{ .OrdersPath }}/{{ .Order.ID }}/after-sales/return">
+  <p>A return: the units coming back.</p>
+  {{ template "order-line-quantities" . }}
+  <input name="amount" inputmode="decimal" placeholder="refund planned (optional)" aria-label="refund planned">
+  <input type="hidden" name="currency" value="{{ .Order.Currency }}">{{ if .Order.Minor }}<input type="hidden" name="minor" value="1">{{ end }}
+  <input name="reason" placeholder="reason" aria-label="reason">
+  <button type="submit">Open a return</button>
+</form>
+{{ end }}
+
+<form method="post" action="{{ .OrdersPath }}/{{ .Order.ID }}/after-sales/claim">
+  <p>A claim: goods that arrived damaged or short.</p>
+  <select name="type" aria-label="settled by">
+    <option value="refund">settled by a refund</option>
+    <option value="replace">settled by a replacement</option>
+  </select>
+  <input name="amount" inputmode="decimal" placeholder="refund (a refund claim)" aria-label="refund">
+  <input type="hidden" name="currency" value="{{ .Order.Currency }}">{{ if .Order.Minor }}<input type="hidden" name="minor" value="1">{{ end }}
+  <input name="reason" placeholder="reason" aria-label="reason">
+  <button type="submit">Open a claim</button>
+</form>
+
+<form method="post" action="{{ .OrdersPath }}/{{ .Order.ID }}/after-sales/exchange">
+  <p>An exchange: the difference, negative when the customer is paid.</p>
+  <input name="amount" inputmode="decimal" placeholder="difference" aria-label="difference" required>
+  <input type="hidden" name="currency" value="{{ .Order.Currency }}">{{ if .Order.Minor }}<input type="hidden" name="minor" value="1">{{ end }}
+  <input name="note" placeholder="note" aria-label="note">
+  <button type="submit">Open an exchange</button>
+</form>
+
+{{ if and .ReplacementSources .Order.Lines }}
+<form method="post" action="{{ .OrdersPath }}/{{ .Order.ID }}/after-sales/replacement">
+  <p>A replacement: what a claim or an exchange sends.</p>
+  <select name="source" aria-label="settles">
+    {{ range .ReplacementSources }}<option value="{{ .Value }}">{{ .Label }}</option>{{ end }}
+  </select>
+  {{ template "order-line-quantities" . }}
+  <input name="shipping_option_id" placeholder="shipping option" aria-label="shipping option" required>
+  <input name="location_id" placeholder="stock location" aria-label="stock location" required>
+  <button type="submit">Open a replacement</button>
+</form>
+{{ end }}
+{{ end }}
+
 <h2>Additions</h2>
 
 {{ if .Order.AdditionsUnread }}
@@ -249,4 +297,15 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
 {{ end }}
 
 <p><a href="{{ .OrdersPath }}">Back to orders</a></p>
+{{ end }}
+
+{{/* order-line-quantities is a quantity box for each of the order's lines, for a
+return or a replacement to name what it moves (ADR 0272). */}}
+{{ define "order-line-quantities" }}
+{{ range .Order.Lines }}
+<label>{{ .Title }} <span class="muted">of {{ .Quantity }}</span>
+  <input type="hidden" name="line_id" value="{{ .ID }}">
+  <input name="quantity" inputmode="numeric" placeholder="0" aria-label="units of {{ .Title }}">
+</label>
+{{ end }}
 {{ end }}

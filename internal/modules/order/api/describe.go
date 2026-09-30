@@ -351,8 +351,9 @@ func describeReturns(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/returns", openapi.Operation{
-		Summary:     "Opens a return record on the order.",
-		Description: amountNote,
+		Summary: "Opens a return record on the order.",
+		Description: amountNote + " lines name the order lines coming back, a quantity and the part of " +
+			"the refund for each; a return that names none cannot be restocked when it is received.",
 		RequestBody: d.RequestBody(createReturnRequest{}),
 		Responses: map[string]any{
 			// The handler writes 201 (see admin.go); a new record is born.

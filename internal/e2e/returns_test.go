@@ -411,3 +411,52 @@ func TestAClaimSettledWithAReplacementIsRefused(t *testing.T) {
 		"the refused claim has to still be open; anything else would record a settlement "+
 			"that never reached the customer")
 }
+
+// TestAReturnAnOperatorOpensComesBackToStock is D186: the admin door opens a
+// return naming its lines, as the storefront's does, so the unit an operator
+// took back over the phone is restocked when it arrives.
+func TestAReturnAnOperatorOpensComesBackToStock(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, inventoryItemID := newStockedVariant(ctx, t, "E2E Phone Returned Product", map[string]int64{
+		taxedCurrency: happyUnitPrice,
+	}, happyInitialStock)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, happyQuantity)
+	placed, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     happyTotal,
+	})
+	require.NoError(t, err)
+	order, err := orderSvc.GetOrder(ctx, placed.OrderID)
+	require.NoError(t, err)
+	lineID := order.Items[0].ID
+
+	opened, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+placed.OrderID+"/returns",
+		map[string]any{
+			"reason": "called in: one arrived scratched", "refund_amount": returnRefundAmount,
+			"lines": []map[string]any{{
+				"order_line_item_id": lineID, "quantity": returnedQuantity, "refund_amount": returnRefundAmount,
+			}},
+		})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusCreated, opened.Code, opened.Body.String())
+	var record afterSalesRecordResponse
+	require.NoError(t, json.Unmarshal(opened.Body.Bytes(), &record))
+
+	received, err := adminRequestWithBody(http.MethodPost,
+		"/admin/v1/orders/"+placed.OrderID+"/returns/"+record.Data.ID+"/receive",
+		map[string]any{"location_id": stockLocationID})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, received.Code, received.Body.String())
+	var receipt receiveReturnResponseBody
+	require.NoError(t, json.Unmarshal(received.Body.Bytes(), &receipt))
+
+	assert.Equal(t, 1, receipt.Data.RestockedLines, "the line the operator named is restocked")
+	assert.Equal(t, returnedQuantity, receipt.Data.RestockedUnits)
+	assert.Equal(t, stockAfterReceipt, stockLevel(ctx, t, inventoryItemID).StockedQuantity)
+}

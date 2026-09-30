@@ -193,6 +193,18 @@ type createReturnRequest struct {
 	Reason       string         `json:"reason"`
 	Note         string         `json:"note"`
 	Metadata     map[string]any `json:"metadata"`
+	// Lines are the order lines coming back; they may be left out, and a
+	// return that names none cannot be restocked when it is received (D186).
+	Lines []adminReturnLineRequest `json:"lines"`
+}
+
+// adminReturnLineRequest is one line of the order coming back. Unlike the
+// storefront's it names the part of the refund falling on the line: the shop
+// decides what a return is worth.
+type adminReturnLineRequest struct {
+	OrderLineItemID string `json:"order_line_item_id"`
+	Quantity        int64  `json:"quantity"`
+	RefundAmount    int64  `json:"refund_amount"`
 }
 
 // adminCreateReturn opens a return record on the order.
@@ -205,12 +217,22 @@ func (h *Handler) adminCreateReturn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	lines := make([]service.ReturnLineInput, 0, len(body.Lines))
+	for i := range body.Lines {
+		lines = append(lines, service.ReturnLineInput{
+			OrderLineItemID: body.Lines[i].OrderLineItemID,
+			Quantity:        body.Lines[i].Quantity,
+			RefundAmount:    body.Lines[i].RefundAmount,
+		})
+	}
+
 	ret, err := h.svc.CreateReturn(ctx, service.CreateReturnInput{
 		OrderID:      orderID(r),
 		RefundAmount: body.RefundAmount,
 		Reason:       body.Reason,
 		Note:         body.Note,
 		Metadata:     body.Metadata,
+		Lines:        lines,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)

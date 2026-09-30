@@ -890,11 +890,14 @@ func TestAdminCreateReturn(t *testing.T) {
 	r := newRouter(svc)
 
 	rec := doRequest(t, r, http.MethodPost, "/admin/v1/orders/order_1/returns",
-		`{"refund_amount":3600,"reason":"the size did not fit","note":"","metadata":{"channel":"support"}}`)
+		`{"refund_amount":3600,"reason":"the size did not fit","note":"","metadata":{"channel":"support"},`+
+			`"lines":[{"order_line_item_id":"oli_1","quantity":2,"refund_amount":3600}]}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code)
 	assert.Equal(t, "order_1", svc.returnInput.OrderID)
 	assert.Equal(t, int64(3600), svc.returnInput.RefundAmount)
+	assert.Equal(t, []service.ReturnLineInput{{OrderLineItemID: "oli_1", Quantity: 2, RefundAmount: 3600}},
+		svc.returnInput.Lines, "an operator's return names what comes back, as the shopper's does (D186)")
 	assert.Equal(t, "the size did not fit", svc.returnInput.Reason)
 	assert.Equal(t, map[string]any{"channel": "support"}, svc.returnInput.Metadata)
 
