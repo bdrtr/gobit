@@ -178,7 +178,10 @@ type UI struct {
 	// It is the panel's ONE authority on the question: the route binding reads it
 	// to wrap a handler and the frame reads it to drop a menu entry, so a link
 	// the operator is offered and a screen the router opens cannot disagree.
-	scopes map[string]string
+	// secondFactor is the person's own second factor (ADR 0266); nil when the
+	// installation registers none.
+	secondFactor SecondFactorAdmin
+	scopes       map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -232,6 +235,12 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// The second factor is optional for the same reason: an installation that
+	// binds its own identity may offer none, and the screen then says so.
+	secondFactor, err := optionalService[SecondFactorAdmin](c, ServiceSecondFactor)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -255,6 +264,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		products:      products,
 		prices:        prices,
 		stock:         stock,
+		secondFactor:  secondFactor,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

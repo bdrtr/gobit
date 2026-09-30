@@ -5,7 +5,7 @@ who has not proven an authenticator holds no privilege until they do, while
 every endpoint that asks for identity alone, enrolling included, stays open;
 the user listing says who still owes one.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0266](0266-the-panel-enrolls-a-second-factor.md) for the panel, which now enrolls a factor and sends an owing person to it
 - **Date:** 2026-09-30
 
 ## Context

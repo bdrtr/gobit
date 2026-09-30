@@ -601,12 +601,11 @@ past and is not corrected retroactively.
   pricing read and a decision about which price applies to a replacement, and
   neither has been made.
 
-- **The panel cannot enrol a second factor.** Since
-  [ADR 0265](adr/0265-an-installation-can-require-a-second-factor.md) an
-  installation can require one from a moment, and a person who owes it holds no
-  privilege until they enrol, which they do through `POST /admin/v1/auth/mfa`;
-  the panel shows them the refusal it shows anyone holding no privilege.
-  Recovery codes are absent: the way back from a lost phone is
+- **A lost authenticator is answered only at the machine.** A person enrolls,
+  replaces and removes their own factor in the panel
+  ([ADR 0266](adr/0266-the-panel-enrolls-a-second-factor.md)) or through the
+  API, and replacing or removing a proven one takes its current code. Recovery
+  codes are absent: the way back from a lost phone is
   `gobit mfa-reset <email> -confirm <email>`, which needs shell access and
   answers the case in one act, so a second readable secret would be a second
   thing to store and re-issue for nothing.

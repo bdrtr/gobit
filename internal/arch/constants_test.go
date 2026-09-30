@@ -975,6 +975,15 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the panel's second-factor code must match the auth module")
 	assert.Equal(t, authsvc.CodeMFACodeWrong, adminui.CodeMFACodeWrong,
 		"the panel's wrong-code code must match the auth module")
+
+	// The second factor screen's surface and the two refusals it words for
+	// itself beside those (ADR 0266).
+	assert.Equal(t, auth.AdminName, adminui.ServiceSecondFactor,
+		"the panel's second factor surface name must match the auth module")
+	assert.Equal(t, authsvc.CodeMFALocked, adminui.CodeMFALocked,
+		"the panel's locked-account code must match the auth module")
+	assert.Equal(t, authsvc.CodeMFAUnavailable, adminui.CodeMFAUnavailable,
+		"the panel's unavailable-factor code must match the auth module")
 }
 
 // productServiceDirName is the directory holding the product module's service

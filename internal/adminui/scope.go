@@ -85,6 +85,14 @@ func builtInScopes() map[string]string {
 		routeKey(post, LoginPath):     "",
 		routeKey(post, LogoutPath):    "",
 		routeKey(get, URLPrefix):      "",
+		// A person's own second factor asks for a session and no privilege
+		// (ADR 0264): a person who can sign in may protect their account, and
+		// one the installation requires a factor of holds none until they do
+		// (ADR 0265).
+		routeKey(get, SecondFactorPath):         "",
+		routeKey(post, SecondFactorEnrollPath):  "",
+		routeKey(post, SecondFactorConfirmPath): "",
+		routeKey(post, SecondFactorRemovePath):  "",
 
 		routeKey(get, ProductsPath):     scopeProductRead,
 		routeKey(get, ProductPath):      scopeProductRead,

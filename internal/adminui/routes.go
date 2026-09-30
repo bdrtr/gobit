@@ -73,6 +73,10 @@ func (u *UI) routes(r chi.Router) {
 	r.Get(CustomersPath, u.needs(http.MethodGet, CustomersPath, u.listCustomers))
 	r.Get(CustomerPath, u.needs(http.MethodGet, CustomerPath, u.showCustomer))
 	r.Get(InventoryPath, u.needs(http.MethodGet, InventoryPath, u.listInventory))
+	r.Get(SecondFactorPath, u.needs(http.MethodGet, SecondFactorPath, u.showSecondFactor))
+	r.Post(SecondFactorEnrollPath, u.needs(http.MethodPost, SecondFactorEnrollPath, u.submitSecondFactorEnroll))
+	r.Post(SecondFactorConfirmPath, u.needs(http.MethodPost, SecondFactorConfirmPath, u.submitSecondFactorConfirm))
+	r.Post(SecondFactorRemovePath, u.needs(http.MethodPost, SecondFactorRemovePath, u.submitSecondFactorRemove))
 
 	// The registered screens come LAST, after every path the panel ships, so a
 	// plugin cannot shadow one by registration order — and it could not anyway:
@@ -96,15 +100,25 @@ func (u *UI) routes(r chi.Router) {
 // read the panel does not yet make, and a page of empty boxes suggests the data
 // is missing rather than that the screen was never written.
 //
-// # When NOTHING is open
+// # When no PRIVILEGE opens a screen
 //
-// 403 with the panel's page. An operator whose grants open no screen has a
-// misconfigured account, and saying so once at the door is kinder than an empty
-// menu that looks like an outage.
+// The person's own second factor is open to everybody (ADR 0266), so the door
+// sends them there: it is the one thing an account holding no privilege can
+// still do, it is what an account the installation requires a factor of has to
+// do (ADR 0265), and the screen says that no other screen opens. A privileged
+// screen is always preferred, so an operator granted anything lands on it.
+//
+// 403 is left for a menu with nothing in it at all.
 func (u *UI) home(w http.ResponseWriter, r *http.Request) {
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
 
 	items := allowedItems(u.menu(), u.scopes, principal)
+	for _, item := range items {
+		if u.scopes[routeKey(http.MethodGet, item.Path)] != "" {
+			corehttp.WriteRedirect(r.Context(), w, item.Path)
+			return
+		}
+	}
 	if len(items) == 0 {
 		u.errorPage(w, r, http.StatusForbidden, "Not permitted",
 			"This account carries no privilege that opens a panel screen. An "+

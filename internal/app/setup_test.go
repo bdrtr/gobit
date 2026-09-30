@@ -1694,19 +1694,27 @@ var pathParamPattern = regexp.MustCompile(`\{[^}]+\}`)
 //
 // # What is exempt, and why the list is a literal
 //
-// Four paths, named here rather than read from the panel: the login page and its
+// Eight paths, named here rather than read from the panel: the login page and its
 // submission (a privilege cannot be required of an identity that does not exist
 // yet), the sign-out (an operator granted nothing must still be able to clear
-// their own session) and the stylesheet (install-identical bytes the login page
-// needs). Reading the exemptions from the same table the routes were bound from
-// would make this check agree with any mistake in it.
+// their own session), the stylesheet (install-identical bytes the login page
+// needs), the person's own second factor on its four paths (ADR 0266: an act of
+// identity, holding only the person's own record) and the entry point, which
+// holds no data and sends an operator granted nothing to that screen. Reading
+// the exemptions from the same table the routes were bound from would make this
+// check agree with any mistake in it.
 func TestEveryPanelScreenRefusesAnOperatorWithoutThePrivilege(t *testing.T) {
 	t.Parallel()
 
 	exempt := map[string]bool{
-		adminui.LoginPath:      true,
-		adminui.LogoutPath:     true,
-		adminui.StylesheetPath: true,
+		adminui.LoginPath:               true,
+		adminui.LogoutPath:              true,
+		adminui.StylesheetPath:          true,
+		adminui.URLPrefix:               true,
+		adminui.SecondFactorPath:        true,
+		adminui.SecondFactorEnrollPath:  true,
+		adminui.SecondFactorConfirmPath: true,
+		adminui.SecondFactorRemovePath:  true,
 	}
 
 	identity := panelIdentity{token: "a-valid-admin-token"}
@@ -1784,10 +1792,10 @@ func TestEveryPanelScreenRefusesAnOperatorWithoutThePrivilege(t *testing.T) {
 	// The subtests above ARE the audited population, so the count is asserted
 	// rather than left to whatever the exemption map happened to remove: an
 	// exemption added for one path would otherwise quietly shrink the audit.
-	// Four ROUTES, not three paths: the login page is bound on both GET and POST.
-	const exemptRoutes = 4
+	// Nine ROUTES, not eight paths: the login page is bound on both GET and POST.
+	const exemptRoutes = 9
 	assert.Equal(t, len(routes)-exemptRoutes, audited,
-		"the exemptions removed %d routes rather than the four named ones (%d walked, %d "+
+		"the exemptions removed %d routes rather than the nine named ones (%d walked, %d "+
 			"audited). An exemption added for one path would otherwise quietly shrink this "+
 			"audit to whatever is left", len(routes)-audited, len(routes), audited)
 }

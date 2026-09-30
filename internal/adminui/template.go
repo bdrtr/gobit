@@ -85,6 +85,7 @@ var pages = []string{
 	"customer.gohtml",
 	"inventory.gohtml",
 	"sales.gohtml",
+	"second_factor.gohtml",
 	"reviews.gohtml",
 	"plugin_page.gohtml",
 }
@@ -268,6 +269,10 @@ func sections() []navItem {
 		// operator meeting a section that behaves differently meets it at the
 		// end of a menu whose other five behave alike.
 		{Label: reviewsLabel, Path: ReviewsPath},
+		// The person's own second factor comes after every section a privilege
+		// opens: it is open to everybody, so the door reaches it only when no
+		// section is (ADR 0266).
+		{Label: secondFactorLabel, Path: SecondFactorPath},
 	}
 }
 

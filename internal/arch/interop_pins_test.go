@@ -216,6 +216,8 @@ var (
 	_ adminui.ProductWriter = (*productsvc.AdminSurface)(nil)
 	_ adminui.PriceWriter   = (*pricingsvc.AdminSurface)(nil)
 	_ adminui.StockAdmin    = (*inventorysvc.AdminSurface)(nil)
+	// The person's own second factor (ADR 0266), optional at resolution too.
+	_ adminui.SecondFactorAdmin = (*authsvc.SecondFactorSurface)(nil)
 )
 
 // A FLOW resolving another FLOW's surface.

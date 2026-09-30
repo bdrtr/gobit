@@ -1,0 +1,66 @@
+{{- /*
+second_factor.gohtml is the signed-in person's own second factor (ADR 0266).
+
+It is open to everybody who can sign in: enrolling is an act of identity
+(ADR 0264), and a person the installation requires a factor of holds no
+privilege until they enrol (ADR 0265), so this is where the door sends them.
+
+The secret is printed ONCE, right after it was drawn, as text and as an
+otpauth link a phone's authenticator can open; there is no QR code, because
+drawing one would take a dependency the panel does not carry. Changing or
+removing a proven factor takes the code it shows now, as the API does.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
+
+{{ if .Owed }}
+<p role="alert">This installation requires a second factor, and this account has not proven one. Until it does, no other screen opens.</p>
+{{ else if and .Unprivileged (not .Proven) }}
+<p class="muted">This account holds no privilege that opens another screen. It can still protect itself here.</p>
+{{ end }}
+
+{{ with .Enrollment }}
+<h2>Add this key to your authenticator</h2>
+<p>It is shown this once. Type it into the app, or open the link on the phone that holds the app.</p>
+<p><code>{{ .Secret }}</code></p>
+{{ if .Link }}<p><a href="{{ .Link }}">Open in the authenticator</a></p>{{ end }}
+{{ end }}
+
+{{ if .Proven }}
+<p>This account is protected by an authenticator.</p>
+{{ else }}
+<p>This account has no second factor.</p>
+{{ end }}
+
+{{ if .Waiting }}
+<h2>Prove the new authenticator</h2>
+<form method="post" action="{{ .ConfirmPath }}">
+  <label>The six digits it shows
+    <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" required>
+  </label>
+  <button type="submit">Confirm</button>
+</form>
+{{ end }}
+
+<h2>{{ if .Proven }}Move to a new authenticator{{ else }}Add an authenticator{{ end }}</h2>
+<form method="post" action="{{ .EnrollPath }}">
+  {{ if .Proven }}
+  <label>The six digits your current authenticator shows
+    <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" required>
+  </label>
+  {{ end }}
+  <button type="submit">Draw a new key</button>
+</form>
+
+{{ if .Proven }}
+<h2>Remove the authenticator</h2>
+<form method="post" action="{{ .RemovePath }}">
+  <label>The six digits it shows
+    <input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" required>
+  </label>
+  <button type="submit">Remove</button>
+</form>
+{{ end }}
+{{ end }}

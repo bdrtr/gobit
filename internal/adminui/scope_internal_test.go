@@ -168,9 +168,11 @@ func TestTheEntryPointSendsTheOperatorToAScreenTheyCanOpen(t *testing.T) {
 
 		rec := get(r, URLPrefix)
 
-		assert.Equal(t, http.StatusForbidden, rec.Code,
-			"an account no grant opens a screen for is misconfigured, and saying so at the "+
-				"door is kinder than an empty menu that looks like an outage")
+		// An account no grant opens a screen for can still protect itself, and
+		// it is the one thing an account that owes a second factor has to do
+		// (ADR 0266); the screen tells it no other screen opens.
+		require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+		assert.Equal(t, SecondFactorPath, rec.Header().Get("Location"))
 	})
 }
 
@@ -254,14 +256,15 @@ func TestEachRouteDemandsThePrivilegeItsOwnPathIsListedUnder(t *testing.T) {
 		})
 	}
 
-	// FIVE routes carry none, and each is deliberate: the login page on both
+	// NINE routes carry none, and each is deliberate: the login page on both
 	// verbs, the sign-out, the stylesheet and the panel's entry point (which
-	// holds no data and refuses by having nowhere to send the operator). An
-	// exact count rather than a floor: a sixth open route would otherwise join
-	// them silently.
-	const openRoutes = 5
+	// holds no data and refuses by having nowhere to send the operator), and
+	// the person's own second factor on its four (ADR 0266), which asks for a
+	// session and no privilege. An exact count rather than a floor: a tenth
+	// open route would otherwise join them silently.
+	const openRoutes = 9
 	assert.Equal(t, len(routes)-openRoutes, checked,
-		"%d of %d routes carry a privilege; %d are open, and only five are meant to be",
+		"%d of %d routes carry a privilege; %d are open, and only nine are meant to be",
 		checked, len(routes), len(routes)-checked)
 
 	// And the table lists nothing the router does not bind: a stale entry would

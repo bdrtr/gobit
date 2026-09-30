@@ -13,15 +13,23 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/errorreport"
+	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
+	"github.com/bdrtr/gobit/internal/modules/auth"
+	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 )
 
 // secondFactorAdmin is the bootstrap administrator this file signs in as.
@@ -156,4 +164,73 @@ func totpCode(t *testing.T, secret string, at time.Time) string {
 	value := binary.BigEndian.Uint32(sum[offset:offset+4]) & 0x7fffffff
 
 	return fmt.Sprintf("%06d", value%1_000_000)
+}
+
+// TestAnOperatorEnrollsTheirFactorInThePanel is ADR 0266 on the production
+// wiring: the panel, built from the installation's container, reaches the auth
+// module's surface, and an operator granted the catalog alone enrolls, proves,
+// is refused a removal with a wrong code, and removes the factor with the
+// right one.
+func TestAnOperatorEnrollsTheirFactorInThePanel(t *testing.T) {
+	ctx := context.Background()
+
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", migrateDSN(t))
+	t.Setenv("JWT_SECRET", "panel-second-factor-secret-32-bytes-long")
+	t.Setenv("MFA_SECRET_KEY", "panel-second-factor-mfa-key")
+	t.Setenv("LOG_LEVEL", "warn")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	app, closeApp, err := openApplication(ctx, cfg, slog.New(slog.DiscardHandler), errorreport.NewSink(),
+		Options{}, publishesOnly)
+	require.NoError(t, err)
+	defer closeApp()
+
+	users, err := container.Resolve[*authsvc.Service](app.container, auth.ServiceName)
+	require.NoError(t, err)
+	operator, err := users.CreateUser(ctx, authsvc.CreateUserInput{
+		Email: "panel-factor@gobit.test", FirstName: "Panel", LastName: "Factor", Scopes: []string{"product:read"},
+	}, "panel-factor-password-42")
+	require.NoError(t, err)
+
+	panel, err := adminui.FromContainer(app.container, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: operator.ID, Kind: "user", Scopes: []string{"product:read"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	assert.Contains(t, send(http.MethodGet, adminui.SecondFactorPath, nil).Body.String(),
+		"This account has no second factor.")
+
+	enrolled := send(http.MethodPost, adminui.SecondFactorEnrollPath, url.Values{})
+	require.Equal(t, http.StatusOK, enrolled.Code, enrolled.Body.String())
+	match := regexp.MustCompile(`<code>([A-Z2-7]+)</code>`).FindStringSubmatch(enrolled.Body.String())
+	require.NotNil(t, match, "the page shows the secret once: %s", enrolled.Body.String())
+	secret := match[1]
+	assert.Contains(t, enrolled.Body.String(), `action="`+adminui.SecondFactorConfirmPath+`"`,
+		"the surface reports the enrolment as waiting, so the page asks for its code")
+
+	confirmed := send(http.MethodPost, adminui.SecondFactorConfirmPath, url.Values{"code": {totpCode(t, secret, time.Now())}})
+	require.Equal(t, http.StatusSeeOther, confirmed.Code, confirmed.Body.String())
+	assert.Contains(t, send(http.MethodGet, adminui.SecondFactorPath, nil).Body.String(),
+		"This account is protected by an authenticator.")
+
+	wrong := send(http.MethodPost, adminui.SecondFactorRemovePath, url.Values{"code": {"000000"}})
+	assert.Equal(t, http.StatusForbidden, wrong.Code)
+	assert.Contains(t, wrong.Body.String(), "That code is not the one the authenticator shows now.")
+
+	removed := send(http.MethodPost, adminui.SecondFactorRemovePath, url.Values{"code": {totpCode(t, secret, time.Now())}})
+	require.Equal(t, http.StatusSeeOther, removed.Code, removed.Body.String())
+	assert.Contains(t, send(http.MethodGet, adminui.SecondFactorPath, nil).Body.String(),
+		"This account has no second factor.")
 }

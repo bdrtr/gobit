@@ -24,6 +24,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel enrolls a second factor** (ADR 0266). **For operators:** the
+  panel's Second factor screen, open to everybody who can sign in, enrolls an
+  authenticator (the key is shown once, with an `otpauth://` link), proves it,
+  and replaces or removes it with its current code; an account no privilege
+  opens a screen for lands there. **For integrators:** the auth module
+  registers `auth.admin`, the panel's surface for the person's own factor.
+
 - **An installation can require a second factor** (ADR 0265). **For
   operators:** `ADMIN_SECOND_FACTOR_REQUIRED_FROM` takes an RFC 3339 moment;
   from it, an administrator who has not proven an authenticator signs in but
