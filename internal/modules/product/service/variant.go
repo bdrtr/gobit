@@ -169,10 +169,6 @@ func (s *Service) UpdateVariant(ctx context.Context, id string, in UpdateVariant
 	}
 
 	patch := repository.VariantPatch{
-		SKU:             in.SKU,
-		Barcode:         in.Barcode,
-		EAN:             in.EAN,
-		UPC:             in.UPC,
 		ManageInventory: in.ManageInventory,
 		AllowBackorder:  in.AllowBackorder,
 		Weight:          in.Weight,
@@ -185,6 +181,25 @@ func (s *Service) UpdateVariant(ctx context.Context, id string, in UpdateVariant
 			return models.Variant{}, err
 		}
 		patch.Title = &title
+	}
+	// The codes are trimmed as a create trims them, and an empty one clears
+	// the code (ADR 0256): it used to be written as an empty string, which the
+	// SKU index counted as a SKU (D177).
+	for _, code := range []struct {
+		name  string
+		given *string
+		into  **string
+	}{
+		{"sku", in.SKU, &patch.SKU},
+		{"barcode", in.Barcode, &patch.Barcode},
+		{"ean", in.EAN, &patch.EAN},
+		{"upc", in.UPC, &patch.UPC},
+	} {
+		value, err := trimForUpdate(code.given, code.name, maxValueLen)
+		if err != nil {
+			return models.Variant{}, err
+		}
+		*code.into = value
 	}
 
 	variant, err := s.repo.GetVariant(ctx, id)

@@ -212,29 +212,44 @@ func (r *Repo) UpdateProduct(ctx context.Context, id string, patch ProductPatch)
 		return models.Product{}, err
 	}
 
-	row, err := r.q.UpdateProduct(ctx, productdb.UpdateProductParams{
-		ID:            id,
-		Handle:        patch.Handle,
-		Title:         patch.Title,
-		Subtitle:      patch.Subtitle,
-		Description:   patch.Description,
-		Thumbnail:     patch.Thumbnail,
-		Status:        patch.Status,
-		Discountable:  patch.Discountable,
-		Weight:        patch.Weight,
-		Length:        patch.Length,
-		Height:        patch.Height,
-		Width:         patch.Width,
-		Material:      patch.Material,
-		OriginCountry: patch.OriginCountry,
-		CollectionID:  patch.CollectionID,
-		TypeID:        patch.TypeID,
-		Metadata:      meta,
-	})
+	params := productdb.UpdateProductParams{
+		ID:           id,
+		Handle:       patch.Handle,
+		Title:        patch.Title,
+		Status:       patch.Status,
+		Discountable: patch.Discountable,
+		Weight:       patch.Weight,
+		Length:       patch.Length,
+		Height:       patch.Height,
+		Width:        patch.Width,
+		CollectionID: patch.CollectionID,
+		TypeID:       patch.TypeID,
+		Metadata:     meta,
+	}
+	params.SetSubtitle, params.Subtitle = optionalText(patch.Subtitle)
+	params.SetDescription, params.Description = optionalText(patch.Description)
+	params.SetThumbnail, params.Thumbnail = optionalText(patch.Thumbnail)
+	params.SetMaterial, params.Material = optionalText(patch.Material)
+	params.SetOriginCountry, params.OriginCountry = optionalText(patch.OriginCountry)
+	row, err := r.q.UpdateProduct(ctx, params)
 	if err != nil {
 		return models.Product{}, wrapDB(err, "could not update product: %s", id)
 	}
 	return toProduct(row)
+}
+
+// optionalText splits a patch's optional text into the flag and the value an
+// update writes (ADR 0256): nil keeps the field, and an empty string clears it
+// to NULL rather than writing an empty string.
+func optionalText(v *string) (set bool, value *string) {
+	switch {
+	case v == nil:
+		return false, nil
+	case *v == "":
+		return true, nil
+	default:
+		return true, v
+	}
 }
 
 // SoftDeleteProduct deletes the product (stamps deleted_at).

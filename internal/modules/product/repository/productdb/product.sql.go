@@ -824,65 +824,74 @@ const updateProduct = `-- name: UpdateProduct :one
 UPDATE product SET
     handle         = COALESCE($1::text, handle),
     title          = COALESCE($2::text, title),
-    subtitle       = COALESCE($3::text, subtitle),
-    description    = COALESCE($4::text, description),
-    thumbnail      = COALESCE($5::text, thumbnail),
-    status         = COALESCE($6::text, status),
-    discountable   = COALESCE($7::boolean, discountable),
-    weight         = COALESCE($8::int, weight),
-    length         = COALESCE($9::int, length),
-    height         = COALESCE($10::int, height),
-    width          = COALESCE($11::int, width),
-    material       = COALESCE($12::text, material),
-    origin_country = COALESCE($13::text, origin_country),
-    collection_id  = COALESCE($14::text, collection_id),
-    type_id        = COALESCE($15::text, type_id),
-    metadata       = COALESCE($16::jsonb, metadata),
+    subtitle       = CASE WHEN $3::boolean THEN $4::text ELSE subtitle END,
+    description    = CASE WHEN $5::boolean THEN $6::text ELSE description END,
+    thumbnail      = CASE WHEN $7::boolean THEN $8::text ELSE thumbnail END,
+    status         = COALESCE($9::text, status),
+    discountable   = COALESCE($10::boolean, discountable),
+    weight         = COALESCE($11::int, weight),
+    length         = COALESCE($12::int, length),
+    height         = COALESCE($13::int, height),
+    width          = COALESCE($14::int, width),
+    material       = CASE WHEN $15::boolean THEN $16::text ELSE material END,
+    origin_country = CASE WHEN $17::boolean THEN $18::text ELSE origin_country END,
+    collection_id  = COALESCE($19::text, collection_id),
+    type_id        = COALESCE($20::text, type_id),
+    metadata       = COALESCE($21::jsonb, metadata),
     -- A schedule belongs to a draft (ADR 0177): a status change that leaves the
     -- draft state takes the schedule with it, in this statement, so publishing
     -- or archiving a scheduled draft by hand does not trip the constraint. The
     -- SET expressions read the OLD row, so the resulting status is spelled out.
-    publish_at     = CASE WHEN COALESCE($6::text, status) = 'draft'
+    publish_at     = CASE WHEN COALESCE($9::text, status) = 'draft'
                           THEN publish_at ELSE NULL END,
     -- The moment to leave survives a draft being published and nothing else
     -- (ADR 0179): archiving the product by hand spends it.
-    archive_at     = CASE WHEN COALESCE($6::text, status) IN ('draft', 'published')
+    archive_at     = CASE WHEN COALESCE($9::text, status) IN ('draft', 'published')
                           THEN archive_at ELSE NULL END,
     updated_at     = now()
-WHERE id = $17 AND deleted_at IS NULL
+WHERE id = $22 AND deleted_at IS NULL
 RETURNING id, handle, title, subtitle, description, thumbnail, status, is_giftcard, discountable, weight, length, height, width, material, origin_country, collection_id, metadata, created_at, updated_at, deleted_at, type_id, publish_at, archive_at, version
 `
 
 type UpdateProductParams struct {
-	Handle        *string
-	Title         *string
-	Subtitle      *string
-	Description   *string
-	Thumbnail     *string
-	Status        *string
-	Discountable  *bool
-	Weight        *int32
-	Length        *int32
-	Height        *int32
-	Width         *int32
-	Material      *string
-	OriginCountry *string
-	CollectionID  *string
-	TypeID        *string
-	Metadata      []byte
-	ID            string
+	Handle           *string
+	Title            *string
+	SetSubtitle      bool
+	Subtitle         *string
+	SetDescription   bool
+	Description      *string
+	SetThumbnail     bool
+	Thumbnail        *string
+	Status           *string
+	Discountable     *bool
+	Weight           *int32
+	Length           *int32
+	Height           *int32
+	Width            *int32
+	SetMaterial      bool
+	Material         *string
+	SetOriginCountry bool
+	OriginCountry    *string
+	CollectionID     *string
+	TypeID           *string
+	Metadata         []byte
+	ID               string
 }
 
-// The COALESCE pattern: a field passed as NULL DOES NOT CHANGE. Its known limit
-// is that setting a field back to NULL (clearing the subtitle, say) cannot be
-// done through this endpoint; the PATCH contract is documented as "a field that
-// is not supplied is preserved".
+// The COALESCE pattern: a field passed as NULL DOES NOT CHANGE. The optional
+// texts (subtitle, description, thumbnail, material, origin_country) carry a
+// set_ flag beside the value instead (ADR 0256): a flag that is false keeps the
+// field, and a true one writes the value, NULL included, so a field the client
+// sent empty is cleared rather than ignored.
 func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (Product, error) {
 	row := q.db.QueryRow(ctx, updateProduct,
 		arg.Handle,
 		arg.Title,
+		arg.SetSubtitle,
 		arg.Subtitle,
+		arg.SetDescription,
 		arg.Description,
+		arg.SetThumbnail,
 		arg.Thumbnail,
 		arg.Status,
 		arg.Discountable,
@@ -890,7 +899,9 @@ func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (P
 		arg.Length,
 		arg.Height,
 		arg.Width,
+		arg.SetMaterial,
 		arg.Material,
+		arg.SetOriginCountry,
 		arg.OriginCountry,
 		arg.CollectionID,
 		arg.TypeID,

@@ -209,17 +209,18 @@ const categoryReparentLockKey int64 = categoryReparentLockClass << 32
 func (r *Repo) updateCategoryRow(
 	ctx context.Context, id string, in UpdateCategory,
 ) (models.Category, error) {
-	row, err := r.q.UpdateCategory(ctx, productdb.UpdateCategoryParams{
+	params := productdb.UpdateCategoryParams{
 		ID:          id,
 		Name:        in.Name,
 		Handle:      in.Handle,
-		Description: in.Description,
 		ClearParent: in.ClearParent,
 		ParentID:    in.ParentID,
 		IsActive:    in.IsActive,
 		IsInternal:  in.IsInternal,
 		Rank:        in.Rank,
-	})
+	}
+	params.SetDescription, params.Description = optionalText(in.Description)
+	row, err := r.q.UpdateCategory(ctx, params)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return models.Category{}, errors.Wrap(err, errors.KindInvalid, codeCategoryCycle,
 			"the category (%s) could not be moved: the new parent is the category itself "+

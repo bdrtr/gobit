@@ -311,6 +311,26 @@ func trimOptional(v *string, field string, maxLen int) (*string, error) {
 	return &trimmed, nil
 }
 
+// trimForUpdate prepares an optional text an update was given (ADR 0256): nil
+// keeps the field, a value that is empty once trimmed CLEARS it, and any other
+// is trimmed and held to its length.
+//
+// It is [trimOptional]'s counterpart for an update, and the two differ on
+// purpose. On a create an empty value and an absent one both mean "none"; on
+// an update the absent one means "leave it" and only the empty one can say
+// "take it away". Reading an empty value as absent, as the updates did, made
+// clearing a field impossible (D177).
+func trimForUpdate(v *string, field string, maxLen int) (*string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*v)
+	if len(trimmed) > maxLen {
+		return nil, invalid("%s can be at most %d characters (given: %d)", field, maxLen, len(trimmed))
+	}
+	return &trimmed, nil
+}
+
 // uniqueIDs validates a slice of ids and deduplicates it, preserving the order.
 func uniqueIDs(field string, ids []string) ([]string, error) {
 	out := make([]string, 0, len(ids))

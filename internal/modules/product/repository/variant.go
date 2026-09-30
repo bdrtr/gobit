@@ -134,19 +134,20 @@ func (r *Repo) UpdateVariant(ctx context.Context, id string, patch VariantPatch)
 		return models.Variant{}, err
 	}
 
-	row, err := r.q.UpdateVariant(ctx, productdb.UpdateVariantParams{
+	params := productdb.UpdateVariantParams{
 		ID:              id,
 		Title:           patch.Title,
-		Sku:             patch.SKU,
-		Barcode:         patch.Barcode,
-		Ean:             patch.EAN,
-		Upc:             patch.UPC,
 		ManageInventory: patch.ManageInventory,
 		AllowBackorder:  patch.AllowBackorder,
 		Weight:          patch.Weight,
 		Rank:            patch.Rank,
 		Metadata:        meta,
-	})
+	}
+	params.SetSku, params.Sku = optionalText(patch.SKU)
+	params.SetBarcode, params.Barcode = optionalText(patch.Barcode)
+	params.SetEan, params.Ean = optionalText(patch.EAN)
+	params.SetUpc, params.Upc = optionalText(patch.UPC)
+	row, err := r.q.UpdateVariant(ctx, params)
 	if err != nil {
 		return models.Variant{}, wrapDB(err, "could not update variant: %s", id)
 	}

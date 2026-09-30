@@ -504,8 +504,11 @@ func describeAdminProducts(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPatch, "/admin/v1/products/{id}", openapi.Operation{
-		Parameters:  []openapi.Parameter{ifMatchParameter()},
-		Summary:     "Updates only the given fields of the product.",
+		Parameters: []openapi.Parameter{ifMatchParameter()},
+		Summary:    "Updates only the given fields of the product.",
+		Description: "A field left out does not change. An empty subtitle, description, " +
+			"thumbnail, material or origin_country CLEARS the field, and any other value " +
+			"is trimmed (ADR 0256).",
 		RequestBody: d.RequestBody(updateProductRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The updated product", d.Item(adminProduct{})),
@@ -740,8 +743,11 @@ func describeAdminVariants(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPatch, "/admin/v1/variants/{id}", openapi.Operation{
-		Parameters:  []openapi.Parameter{ifMatchParameter()},
-		Summary:     "Updates only the given fields of the variant.",
+		Parameters: []openapi.Parameter{ifMatchParameter()},
+		Summary:    "Updates only the given fields of the variant.",
+		Description: "A field left out does not change. An empty sku, barcode, ean or upc " +
+			"CLEARS the code, and any other value is trimmed, as a create trims it " +
+			"(ADR 0256).",
 		RequestBody: d.RequestBody(updateVariantRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The updated variant", d.Item(models.Variant{})),
@@ -1077,7 +1083,8 @@ func describeAdminTaxonomy(d *openapi.Doc) {
 
 	d.Describe(http.MethodPatch, "/admin/v1/product-categories/{id}", openapi.Operation{
 		Summary: "Changes a category and can move it in the tree.",
-		Description: "A field that is not supplied is preserved. Sending clear_parent makes " +
+		Description: "A field that is not supplied is preserved, and an empty description " +
+			"clears it (ADR 0256). Sending clear_parent makes " +
 			"the category a root, and it may not be sent together with parent_id. A move " +
 			"that would place the category under itself or under one of its own " +
 			"descendants is refused with 422.",

@@ -263,7 +263,7 @@ func (s *Service) UpdateCategory(
 		}
 		update.Handle = &handle
 	}
-	description, err := trimOptional(in.Description, "description", maxDescriptionLen)
+	description, err := trimForUpdate(in.Description, "description", maxDescriptionLen)
 	if err != nil {
 		return models.Category{}, err
 	}

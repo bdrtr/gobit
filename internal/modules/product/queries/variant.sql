@@ -51,12 +51,17 @@ WHERE id = ANY($1::text[]) AND deleted_at IS NULL
 ORDER BY product_id, rank, id;
 
 -- name: UpdateVariant :one
+-- The codes (sku, barcode, ean, upc) carry a set_ flag beside the value
+-- (ADR 0256): false keeps the code and true writes the value, NULL included, so
+-- a code the client sent empty is cleared. An empty code used to be written as
+-- an empty string, which the SKU index, partial on sku IS NOT NULL, counted:
+-- clearing a second variant's SKU was refused as a duplicate (D177).
 UPDATE product_variant SET
     title            = COALESCE(sqlc.narg('title')::text, title),
-    sku              = COALESCE(sqlc.narg('sku')::text, sku),
-    barcode          = COALESCE(sqlc.narg('barcode')::text, barcode),
-    ean              = COALESCE(sqlc.narg('ean')::text, ean),
-    upc              = COALESCE(sqlc.narg('upc')::text, upc),
+    sku              = CASE WHEN sqlc.arg('set_sku')::boolean THEN sqlc.narg('sku')::text ELSE sku END,
+    barcode          = CASE WHEN sqlc.arg('set_barcode')::boolean THEN sqlc.narg('barcode')::text ELSE barcode END,
+    ean              = CASE WHEN sqlc.arg('set_ean')::boolean THEN sqlc.narg('ean')::text ELSE ean END,
+    upc              = CASE WHEN sqlc.arg('set_upc')::boolean THEN sqlc.narg('upc')::text ELSE upc END,
     manage_inventory = COALESCE(sqlc.narg('manage_inventory')::boolean, manage_inventory),
     allow_backorder  = COALESCE(sqlc.narg('allow_backorder')::boolean, allow_backorder),
     weight           = COALESCE(sqlc.narg('weight')::int, weight),

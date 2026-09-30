@@ -532,13 +532,15 @@ func (m *memStore) UpdateProduct(_ context.Context, id string, patch repository.
 		}
 	}
 	// Every other field follows the statement's COALESCE: a nil one is kept.
-	p.Subtitle = cmp.Or(patch.Subtitle, p.Subtitle)
-	p.Description = cmp.Or(patch.Description, p.Description)
-	p.Thumbnail = cmp.Or(patch.Thumbnail, p.Thumbnail)
+	// The optional texts follow its set_ flags instead (ADR 0256): an empty one
+	// clears the field.
+	p.Subtitle = setText(patch.Subtitle, p.Subtitle)
+	p.Description = setText(patch.Description, p.Description)
+	p.Thumbnail = setText(patch.Thumbnail, p.Thumbnail)
 	p.Weight, p.Length = cmp.Or(patch.Weight, p.Weight), cmp.Or(patch.Length, p.Length)
 	p.Height, p.Width = cmp.Or(patch.Height, p.Height), cmp.Or(patch.Width, p.Width)
-	p.Material = cmp.Or(patch.Material, p.Material)
-	p.OriginCountry = cmp.Or(patch.OriginCountry, p.OriginCountry)
+	p.Material = setText(patch.Material, p.Material)
+	p.OriginCountry = setText(patch.OriginCountry, p.OriginCountry)
 	p.CollectionID = cmp.Or(patch.CollectionID, p.CollectionID)
 	p.TypeID = cmp.Or(patch.TypeID, p.TypeID)
 	if patch.Discountable != nil {
@@ -976,9 +978,7 @@ func (m *memStore) UpdateVariant(_ context.Context, id string, patch repository.
 	if patch.Title != nil {
 		v.Title = *patch.Title
 	}
-	if patch.SKU != nil {
-		v.SKU = patch.SKU
-	}
+	v.SKU = setText(patch.SKU, v.SKU)
 	if patch.Rank != nil {
 		v.Rank = *patch.Rank
 	}
@@ -1518,9 +1518,7 @@ func (m *memStore) UpdateCategory(
 	if in.Handle != nil {
 		current.Handle = *in.Handle
 	}
-	if in.Description != nil {
-		current.Description = in.Description
-	}
+	current.Description = setText(in.Description, current.Description)
 	switch {
 	case in.ClearParent:
 		current.ParentID = nil
@@ -2225,4 +2223,17 @@ func (m *memStore) ClearProductTypeProducts(_ context.Context, typeID string) (i
 	}
 
 	return released, nil
+}
+
+// setText applies an update's optional text the way the statements' set_ flags
+// do (ADR 0256): nil keeps the current value and an empty string clears it.
+func setText(given, current *string) *string {
+	switch {
+	case given == nil:
+		return current
+	case *given == "":
+		return nil
+	default:
+		return given
+	}
 }

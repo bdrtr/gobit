@@ -708,16 +708,14 @@ func (s *Service) buildProduct(in CreateProductInput) (models.Product, error) {
 // buildProductPatch validates the update input and turns it into a repository patch.
 func buildProductPatch(in UpdateProductInput) (repository.ProductPatch, error) {
 	patch := repository.ProductPatch{
-		Discountable:  in.Discountable,
-		Weight:        in.Weight,
-		Length:        in.Length,
-		Height:        in.Height,
-		Width:         in.Width,
-		Material:      in.Material,
-		OriginCountry: in.OriginCountry,
-		CollectionID:  in.CollectionID,
-		TypeID:        in.TypeID,
-		Metadata:      in.Metadata,
+		Discountable: in.Discountable,
+		Weight:       in.Weight,
+		Length:       in.Length,
+		Height:       in.Height,
+		Width:        in.Width,
+		CollectionID: in.CollectionID,
+		TypeID:       in.TypeID,
+		Metadata:     in.Metadata,
 	}
 
 	if in.Title != nil {
@@ -743,21 +741,23 @@ func buildProductPatch(in UpdateProductInput) (repository.ProductPatch, error) {
 		patch.Status = &value
 	}
 
-	subtitle, err := trimOptional(in.Subtitle, "subtitle", maxValueLen)
-	if err != nil {
+	// The optional texts: an empty one clears the field (ADR 0256).
+	var err error
+	if patch.Subtitle, err = trimForUpdate(in.Subtitle, "subtitle", maxValueLen); err != nil {
 		return repository.ProductPatch{}, err
 	}
-	description, err := trimOptional(in.Description, "description", maxDescriptionLen)
-	if err != nil {
+	if patch.Description, err = trimForUpdate(in.Description, "description", maxDescriptionLen); err != nil {
 		return repository.ProductPatch{}, err
 	}
-	thumbnail, err := trimOptional(in.Thumbnail, "thumbnail", maxURLLen)
-	if err != nil {
+	if patch.Thumbnail, err = trimForUpdate(in.Thumbnail, "thumbnail", maxURLLen); err != nil {
 		return repository.ProductPatch{}, err
 	}
-	patch.Subtitle = subtitle
-	patch.Description = description
-	patch.Thumbnail = thumbnail
+	if patch.Material, err = trimForUpdate(in.Material, "material", maxValueLen); err != nil {
+		return repository.ProductPatch{}, err
+	}
+	if patch.OriginCountry, err = trimForUpdate(in.OriginCountry, "origin_country", maxValueLen); err != nil {
+		return repository.ProductPatch{}, err
+	}
 
 	return patch, nil
 }

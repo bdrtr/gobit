@@ -12,6 +12,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An empty text on an update clears the field** (ADR 0256, D177). **For
+  integrators:** on `PATCH /admin/v1/products/{id}`, `PATCH /admin/v1/variants/{id}`
+  and `PATCH /admin/v1/product-categories/{id}`, an empty `subtitle`,
+  `description`, `thumbnail`, `material`, `origin_country`, `sku`, `barcode`,
+  `ean` or `upc` now clears the field. It used to be ignored, or written as an
+  empty string, which made a second variant's emptied SKU a duplicate. A client
+  that sent an empty string to mean "no change" has to leave the field out.
+  Every other value is trimmed.
+
 - **A panel route is its method and its path** (ADR 0255). **For contributors:**
   the panel's scope table names each route by method and path and lists the
   open ones with no privilege; binding a route it does not list stops the panel

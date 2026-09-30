@@ -153,7 +153,7 @@ WITH RECURSIVE ancestry(id, parent_id, depth) AS (
 UPDATE product_category SET
     name        = COALESCE(sqlc.narg('name')::text, name),
     handle      = COALESCE(sqlc.narg('handle')::text, handle),
-    description = COALESCE(sqlc.narg('description')::text, description),
+    description = CASE WHEN sqlc.arg('set_description')::boolean THEN sqlc.narg('description')::text ELSE description END,
     parent_id   = CASE
                       WHEN sqlc.arg('clear_parent')::boolean THEN NULL
                       ELSE COALESCE(sqlc.narg('parent_id')::text, parent_id)

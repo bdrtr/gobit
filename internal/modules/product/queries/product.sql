@@ -67,24 +67,25 @@ SELECT * FROM product
 WHERE handle = ANY(sqlc.arg('handles')::text[]) AND deleted_at IS NULL;
 
 -- name: UpdateProduct :one
--- The COALESCE pattern: a field passed as NULL DOES NOT CHANGE. Its known limit
--- is that setting a field back to NULL (clearing the subtitle, say) cannot be
--- done through this endpoint; the PATCH contract is documented as "a field that
--- is not supplied is preserved".
+-- The COALESCE pattern: a field passed as NULL DOES NOT CHANGE. The optional
+-- texts (subtitle, description, thumbnail, material, origin_country) carry a
+-- set_ flag beside the value instead (ADR 0256): a flag that is false keeps the
+-- field, and a true one writes the value, NULL included, so a field the client
+-- sent empty is cleared rather than ignored.
 UPDATE product SET
     handle         = COALESCE(sqlc.narg('handle')::text, handle),
     title          = COALESCE(sqlc.narg('title')::text, title),
-    subtitle       = COALESCE(sqlc.narg('subtitle')::text, subtitle),
-    description    = COALESCE(sqlc.narg('description')::text, description),
-    thumbnail      = COALESCE(sqlc.narg('thumbnail')::text, thumbnail),
+    subtitle       = CASE WHEN sqlc.arg('set_subtitle')::boolean THEN sqlc.narg('subtitle')::text ELSE subtitle END,
+    description    = CASE WHEN sqlc.arg('set_description')::boolean THEN sqlc.narg('description')::text ELSE description END,
+    thumbnail      = CASE WHEN sqlc.arg('set_thumbnail')::boolean THEN sqlc.narg('thumbnail')::text ELSE thumbnail END,
     status         = COALESCE(sqlc.narg('status')::text, status),
     discountable   = COALESCE(sqlc.narg('discountable')::boolean, discountable),
     weight         = COALESCE(sqlc.narg('weight')::int, weight),
     length         = COALESCE(sqlc.narg('length')::int, length),
     height         = COALESCE(sqlc.narg('height')::int, height),
     width          = COALESCE(sqlc.narg('width')::int, width),
-    material       = COALESCE(sqlc.narg('material')::text, material),
-    origin_country = COALESCE(sqlc.narg('origin_country')::text, origin_country),
+    material       = CASE WHEN sqlc.arg('set_material')::boolean THEN sqlc.narg('material')::text ELSE material END,
+    origin_country = CASE WHEN sqlc.arg('set_origin_country')::boolean THEN sqlc.narg('origin_country')::text ELSE origin_country END,
     collection_id  = COALESCE(sqlc.narg('collection_id')::text, collection_id),
     type_id        = COALESCE(sqlc.narg('type_id')::text, type_id),
     metadata       = COALESCE(sqlc.narg('metadata')::jsonb, metadata),

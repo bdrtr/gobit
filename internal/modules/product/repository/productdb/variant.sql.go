@@ -821,25 +821,29 @@ func (q *Queries) SoftDeleteVariant(ctx context.Context, id string) (int64, erro
 const updateVariant = `-- name: UpdateVariant :one
 UPDATE product_variant SET
     title            = COALESCE($1::text, title),
-    sku              = COALESCE($2::text, sku),
-    barcode          = COALESCE($3::text, barcode),
-    ean              = COALESCE($4::text, ean),
-    upc              = COALESCE($5::text, upc),
-    manage_inventory = COALESCE($6::boolean, manage_inventory),
-    allow_backorder  = COALESCE($7::boolean, allow_backorder),
-    weight           = COALESCE($8::int, weight),
-    rank             = COALESCE($9::int, rank),
-    metadata         = COALESCE($10::jsonb, metadata),
+    sku              = CASE WHEN $2::boolean THEN $3::text ELSE sku END,
+    barcode          = CASE WHEN $4::boolean THEN $5::text ELSE barcode END,
+    ean              = CASE WHEN $6::boolean THEN $7::text ELSE ean END,
+    upc              = CASE WHEN $8::boolean THEN $9::text ELSE upc END,
+    manage_inventory = COALESCE($10::boolean, manage_inventory),
+    allow_backorder  = COALESCE($11::boolean, allow_backorder),
+    weight           = COALESCE($12::int, weight),
+    rank             = COALESCE($13::int, rank),
+    metadata         = COALESCE($14::jsonb, metadata),
     updated_at       = now()
-WHERE id = $11 AND deleted_at IS NULL
+WHERE id = $15 AND deleted_at IS NULL
 RETURNING id, product_id, title, sku, barcode, ean, upc, manage_inventory, allow_backorder, weight, rank, metadata, created_at, updated_at, deleted_at
 `
 
 type UpdateVariantParams struct {
 	Title           *string
+	SetSku          bool
 	Sku             *string
+	SetBarcode      bool
 	Barcode         *string
+	SetEan          bool
 	Ean             *string
+	SetUpc          bool
 	Upc             *string
 	ManageInventory *bool
 	AllowBackorder  *bool
@@ -849,12 +853,21 @@ type UpdateVariantParams struct {
 	ID              string
 }
 
+// The codes (sku, barcode, ean, upc) carry a set_ flag beside the value
+// (ADR 0256): false keeps the code and true writes the value, NULL included, so
+// a code the client sent empty is cleared. An empty code used to be written as
+// an empty string, which the SKU index, partial on sku IS NOT NULL, counted:
+// clearing a second variant's SKU was refused as a duplicate (D177).
 func (q *Queries) UpdateVariant(ctx context.Context, arg UpdateVariantParams) (ProductVariant, error) {
 	row := q.db.QueryRow(ctx, updateVariant,
 		arg.Title,
+		arg.SetSku,
 		arg.Sku,
+		arg.SetBarcode,
 		arg.Barcode,
+		arg.SetEan,
 		arg.Ean,
+		arg.SetUpc,
 		arg.Upc,
 		arg.ManageInventory,
 		arg.AllowBackorder,

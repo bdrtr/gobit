@@ -862,7 +862,7 @@ const updateCategory = `-- name: UpdateCategory :one
 WITH RECURSIVE ancestry(id, parent_id, depth) AS (
     SELECT c.id, c.parent_id, 0
       FROM product_category c
-     WHERE c.id = $5::text
+     WHERE c.id = $6::text
        AND c.deleted_at IS NULL
     UNION ALL
     SELECT c.id, c.parent_id, a.depth + 1
@@ -874,35 +874,36 @@ WITH RECURSIVE ancestry(id, parent_id, depth) AS (
 UPDATE product_category SET
     name        = COALESCE($1::text, name),
     handle      = COALESCE($2::text, handle),
-    description = COALESCE($3::text, description),
+    description = CASE WHEN $3::boolean THEN $4::text ELSE description END,
     parent_id   = CASE
-                      WHEN $4::boolean THEN NULL
-                      ELSE COALESCE($5::text, parent_id)
+                      WHEN $5::boolean THEN NULL
+                      ELSE COALESCE($6::text, parent_id)
                   END,
-    is_active   = COALESCE($6::boolean, is_active),
-    is_internal = COALESCE($7::boolean, is_internal),
-    rank        = COALESCE($8::int, rank),
+    is_active   = COALESCE($7::boolean, is_active),
+    is_internal = COALESCE($8::boolean, is_internal),
+    rank        = COALESCE($9::int, rank),
     updated_at  = now()
-WHERE id = $9::text
+WHERE id = $10::text
   AND deleted_at IS NULL
   AND NOT EXISTS (
       SELECT 1 FROM ancestry
-       WHERE ancestry.id = $9::text
+       WHERE ancestry.id = $10::text
           OR ancestry.depth >= 64
   )
 RETURNING id, name, handle, description, parent_id, is_active, is_internal, rank, created_at, updated_at, deleted_at
 `
 
 type UpdateCategoryParams struct {
-	Name        *string
-	Handle      *string
-	Description *string
-	ClearParent bool
-	ParentID    *string
-	IsActive    *bool
-	IsInternal  *bool
-	Rank        *int32
-	ID          string
+	Name           *string
+	Handle         *string
+	SetDescription bool
+	Description    *string
+	ClearParent    bool
+	ParentID       *string
+	IsActive       *bool
+	IsInternal     *bool
+	Rank           *int32
+	ID             string
 }
 
 // UpdateCategory rewrites the fields a merchant may change, and REFUSES a
@@ -938,6 +939,7 @@ func (q *Queries) UpdateCategory(ctx context.Context, arg UpdateCategoryParams) 
 	row := q.db.QueryRow(ctx, updateCategory,
 		arg.Name,
 		arg.Handle,
+		arg.SetDescription,
 		arg.Description,
 		arg.ClearParent,
 		arg.ParentID,

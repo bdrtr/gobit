@@ -174,10 +174,6 @@ past and is not corrected retroactively.
   closes would be written. Sixty-four is far past any catalog a person maintains,
   and the trade is stated in ADR 0085.
 
-- **A description cannot be emptied through the category PATCH.** A field that is
-  not supplied is preserved, which leaves no way to say "make this NULL" — the
-  same limit the product update carries and for the same reason.
-
 ## A product's history
 
 - **A product's revisions are its admin view, not everything about it.** Since
