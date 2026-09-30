@@ -99,6 +99,15 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 		exempt, judged := notPersonalColumns[table]
 		require.True(t, judged, "%s is created by the migrations and appears in no judgement", table)
 
+		// An exemption names a column the schema has (D187): one that names
+		// nothing is a reason nobody reads, and it is what fails when the
+		// scanner stops reading the statement that adds a column.
+		for _, column := range exempt {
+			assert.Contains(t, columns, column,
+				"%s.%s is listed as holding nothing about a person and the migrations "+
+					"hold no such column", table, column)
+		}
+
 		for _, column := range columns {
 			key := table + "." + column
 			if slices.Contains(exempt, column) {
@@ -244,5 +253,61 @@ func tablesOf(t *testing.T, schema string) map[string][]string {
 				"parser is reading nothing and every assertion below it is vacuous", name)
 		tables[name] = columns
 	}
+
+	for table, columns := range addedColumns(schema) {
+		tables[table] = append(tables[table], columns...)
+	}
 	return tables
+}
+
+// addedColumns returns the columns every ALTER TABLE ... ADD COLUMN adds, keyed
+// by table (D187).
+//
+// Reading the CREATE blocks alone is how the auth module's audit went two
+// migrations without judging a column: a table that already exists can grow
+// no other way, so a scanner blind to ALTER is blind to every column after the
+// first migration.
+func addedColumns(schema string) map[string][]string {
+	added := map[string][]string{}
+	for _, statement := range strings.Split(schema, ";") {
+		fields := strings.Fields(statement)
+		for i := 0; i+2 < len(fields); i++ {
+			if fields[i] != "ALTER" || fields[i+1] != "TABLE" {
+				continue
+			}
+			table := fields[i+2]
+			for j := i + 3; j+1 < len(fields); j++ {
+				if fields[j] != "ADD" || fields[j+1] != "COLUMN" {
+					continue
+				}
+				k := j + 2
+				if k+2 < len(fields) && fields[k] == "IF" && fields[k+1] == "NOT" && fields[k+2] == "EXISTS" {
+					k += 3
+				}
+				if k < len(fields) {
+					added[table] = append(added[table], strings.TrimSuffix(fields[k], ","))
+				}
+			}
+		}
+	}
+	return added
+}
+
+// TestTheScannerReadsTheColumnsAnAlterAdds holds the reading the module's own
+// migrations do not exercise yet: none of them alters a table, so the audit
+// above would pass with the ALTER reading gone until the first one does.
+func TestTheScannerReadsTheColumnsAnAlterAdds(t *testing.T) {
+	schema := "CREATE TABLE IF NOT EXISTS b2b_company (\n" +
+		"    id TEXT PRIMARY KEY,\n" +
+		"    name TEXT NOT NULL\n" +
+		");\n" +
+		"ALTER TABLE b2b_company ADD COLUMN IF NOT EXISTS tax_office TEXT;\n" +
+		"ALTER TABLE b2b_company\n" +
+		"    ADD COLUMN phone TEXT,\n" +
+		"    ADD COLUMN fax TEXT,\n" +
+		"    ADD CONSTRAINT b2b_company_phone_not_blank CHECK (phone <> '');\n"
+
+	assert.Equal(t, map[string][]string{
+		"b2b_company": {"id", "name", "tax_office", "phone", "fax"},
+	}, tablesOf(t, schema))
 }

@@ -3,6 +3,9 @@ package identitypasskey_test
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -30,7 +33,9 @@ import (
 // declaration is invisible to every sweep from then on, and the report still looks
 // complete.
 //
-// The population comes from the migration rather than from a list in this test.
+// The population comes from the migrations rather than from a list in this test:
+// every column the table is created with or later given is either declared or
+// named in notPersonal, and never both (D187).
 func TestADeclarationNamesEveryColumnOfTheTable(t *testing.T) {
 	t.Parallel()
 
@@ -41,14 +46,63 @@ func TestADeclarationNamesEveryColumnOfTheTable(t *testing.T) {
 		declared[holding.Column] = true
 	}
 
-	// rp_id is deliberately absent: it is the installation's configuration copied
-	// onto the row, the same for everybody, and declaring it would send a
+	// rp_id is deliberately undeclared: it is the installation's configuration
+	// copied onto the row, the same for everybody, and declaring it would send a
 	// controller looking for a person in a column that describes the shop.
-	assert.Equal(t, map[string]bool{
-		"customer_id": true, "credential_id": true, "credential": true,
-		"created_at": true, "last_used_at": true,
-	}, declared)
+	notPersonal := map[string]bool{"rp_id": true}
+
+	columns := credentialColumns(t)
+	require.Contains(t, columns, "credential_id", "the scanner read no column out of the migrations")
+	for column := range columns {
+		assert.NotEqual(t, declared[column], notPersonal[column],
+			"passkey_credentials.%s must be either declared or judged to hold nobody, and not both", column)
+	}
+	for column := range declared {
+		assert.True(t, columns[column], "%s is declared and no migration creates it", column)
+	}
+	for column := range notPersonal {
+		assert.True(t, columns[column], "%s is judged to hold nobody and no migration creates it", column)
+	}
 }
+
+// credentialColumns reads every column of passkey_credentials out of the
+// migrations the module ships: the lower-case first word of each line of the
+// CREATE TABLE body, and the name after every ADD COLUMN.
+func credentialColumns(t *testing.T) map[string]bool {
+	t.Helper()
+
+	migrations := identitypasskey.New(identitypasskey.Options{}).Migrations()
+	names, err := fs.Glob(migrations, "*.up.sql")
+	require.NoError(t, err)
+	require.NotEmpty(t, names)
+
+	columns := map[string]bool{}
+	for _, name := range names {
+		raw, err := fs.ReadFile(migrations, name)
+		require.NoError(t, err)
+		schema := string(raw)
+
+		if _, body, found := strings.Cut(schema, "CREATE TABLE IF NOT EXISTS passkey_credentials ("); found {
+			body, _, _ = strings.Cut(body, "\n);")
+			for _, line := range strings.Split(body, "\n") {
+				if fields := strings.Fields(line); len(fields) > 1 && lowerIdentifier.MatchString(fields[0]) {
+					columns[fields[0]] = true
+				}
+			}
+		}
+		for _, match := range addColumn.FindAllStringSubmatch(schema, -1) {
+			columns[match[1]] = true
+		}
+	}
+	return columns
+}
+
+// lowerIdentifier is a column name; a constraint, a CHECK or a comment opens
+// with something else.
+var lowerIdentifier = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
+// addColumn is a column an ALTER TABLE adds.
+var addColumn = regexp.MustCompile(`ADD COLUMN (?:IF NOT EXISTS )?([a-z_][a-z0-9_]*)`)
 
 // TestAStoreThatCannotEraseSaysSOAndSaysWhat holds the answer an LDAP-backed
 // installation gets.

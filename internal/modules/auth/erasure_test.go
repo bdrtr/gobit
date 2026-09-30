@@ -99,10 +99,12 @@ var notPersonalColumns = map[string][]string{
 	// CIPHERTEXT of a TOTP seed: it describes nobody — it is a random twenty bytes
 	// that happens to be shared with a phone — and it is declared nowhere because
 	// an auditor sent to it would find a value with no meaning outside the
-	// algorithm. What IS declared is confirmed_at, because "this person proved a
+	// algorithm. pending_secret is the same ciphertext for a replacement not yet
+	// proven (ADR 0264), added by ALTER TABLE and unread by this audit until
+	// D187. What IS declared is confirmed_at, because "this person proved a
 	// second factor, and when" is a fact about them.
 	"auth_mfa_credential": {
-		"user_id", "secret", "created_at",
+		"user_id", "secret", "created_at", "pending_secret",
 	},
 	// id is a random identifier the token names and user_id a join key;
 	// expires_at is created_at plus the token's lifetime and says nothing
@@ -155,8 +157,22 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 				"columns in notPersonalColumns with the reason each one holds nothing "+
 				"about a person, and put the rest in Module.PersonalData.", table)
 
-		columns := columnsOf(t, schema, table)
+		// The columns a later ALTER TABLE adds count as much as the ones the
+		// table was created with (D187): reading the CREATE block alone left
+		// every added column out of the audit, declared or not.
+		columns := append(columnsOf(t, schema, table), addedColumnsOf(schema, table)...)
 		require.NotEmpty(t, columns, "no column was read out of %s; the scanner has gone blind", table)
+
+		// An exemption names a column the schema has, or it is a reason nobody
+		// reads for a column nobody sees: the mirror of a declaration pointing
+		// at nothing, and the assertion that fails when the scanner stops
+		// reading a kind of statement.
+		for _, column := range exempt {
+			assert.True(t, contains(columns, column),
+				"%s.%s is listed as holding nothing about a person and the audit read no "+
+					"such column; either the schema dropped it or the scanner no longer "+
+					"reads the statement that adds it", table, column)
+		}
 
 		for _, column := range columns {
 			key := table + "." + column
@@ -317,6 +333,35 @@ func columnsOf(t *testing.T, schema, table string) []string {
 			continue
 		}
 		columns = append(columns, strings.TrimSuffix(fields[0], ","))
+	}
+	return columns
+}
+
+// addedColumnsOf returns the columns an ALTER TABLE adds to the table, one
+// statement at a time and whatever the statement's layout, IF NOT EXISTS or
+// not (D187). It is the reading the cart, customer, inventory and review
+// audits already made.
+func addedColumnsOf(schema, table string) []string {
+	var columns []string
+	for _, statement := range strings.Split(schema, ";") {
+		fields := strings.Fields(statement)
+		for i := 0; i+2 < len(fields); i++ {
+			if fields[i] != "ALTER" || fields[i+1] != "TABLE" || fields[i+2] != table {
+				continue
+			}
+			for j := i + 3; j+1 < len(fields); j++ {
+				if fields[j] != "ADD" || fields[j+1] != "COLUMN" {
+					continue
+				}
+				k := j + 2
+				if k+2 < len(fields) && fields[k] == "IF" && fields[k+1] == "NOT" && fields[k+2] == "EXISTS" {
+					k += 3
+				}
+				if k < len(fields) {
+					columns = append(columns, strings.TrimSuffix(fields[k], ","))
+				}
+			}
+		}
 	}
 	return columns
 }
