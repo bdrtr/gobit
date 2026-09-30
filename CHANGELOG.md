@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An order's page in the panel shows its payment and its parcels** (ADR 0251).
+  **For operators:** the order page prints the payment collection's status,
+  amounts and when its money moved, and each parcel's status, tracking and
+  moments. An operator without `payment:read` or `fulfillment:read` is told which
+  privilege shows them; the page reads neither without it.
+
 - **A parcel's items, a price set's prices and a price's rules come back in the
   order they were written** (D175). **For integrators:**
   `GET /admin/v1/fulfillments/{id}`, the fulfillment list, the price set and

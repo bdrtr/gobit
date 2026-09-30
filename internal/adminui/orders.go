@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/query"
 )
 
@@ -55,6 +56,27 @@ const (
 	fieldIsGiftcard       = "is_giftcard"
 	fieldProperties       = "properties"
 	fieldParentLineItemID = "parent_line_item_id"
+)
+
+// The links the order page expands to reach the order's payment and its
+// parcels, and the fields it reads from each. They are the payment and
+// fulfillment modules' names, repeated for the reason [EntityOrder] is.
+const (
+	linkOrderPayment     = "order_payment"
+	linkOrderFulfillment = "order_fulfillment"
+
+	fieldAuthorizedAmount = "authorized_amount"
+	fieldCapturedAmount   = "captured_amount"
+	fieldRefundedAmount   = "refunded_amount"
+	fieldFirstCapturedAt  = "first_captured_at"
+	fieldLastRefundedAt   = "last_refunded_at"
+
+	fieldTrackingNumber = "tracking_number"
+	fieldTrackingURL    = "tracking_url"
+	fieldShippedAt      = "shipped_at"
+	fieldDeliveredAt    = "delivered_at"
+	fieldCanceledAt     = "canceled_at"
+	fieldReturnedAt     = "returned_at"
 )
 
 // linesPerOrder is how many lines the order page reads. It is the line
@@ -123,6 +145,48 @@ type orderDetail struct {
 	// page reads.
 	LinesUnread bool
 	LinesMore   bool
+
+	// Payment is the order's payment collection; nil when none is linked or
+	// it was not read. Parcels are its parcels, oldest first.
+	Payment *orderPayment
+	Parcels []orderParcel
+	// PaymentHidden and ParcelsHidden say the operator lacks the privilege to
+	// read them (ADR 0251); PaymentUnread and ParcelsUnread that the read
+	// failed.
+	PaymentHidden bool
+	PaymentUnread bool
+	ParcelsHidden bool
+	ParcelsUnread bool
+}
+
+// orderPayment is the order's payment collection as the page prints it.
+type orderPayment struct {
+	Status string
+	// The amounts, each formatted the way the order's are, in the
+	// collection's own currency.
+	Amount     string
+	Authorized string
+	Captured   string
+	Refunded   string
+	Currency   string
+	// FirstCapturedAt and LastRefundedAt are when the money moved; nil when
+	// it has not.
+	FirstCapturedAt *time.Time
+	LastRefundedAt  *time.Time
+}
+
+// orderParcel is one parcel of the order.
+type orderParcel struct {
+	ID             string
+	Status         string
+	TrackingNumber string
+	TrackingURL    string
+	CreatedAt      time.Time
+	// The moments of the parcel's life; nil for one that has not happened.
+	ShippedAt   *time.Time
+	DeliveredAt *time.Time
+	CanceledAt  *time.Time
+	ReturnedAt  *time.Time
 }
 
 // orderLine is one line of the order page.
@@ -287,11 +351,23 @@ func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 	detail.Additions, detail.AdditionsUnread = u.additionsOf(r, detail.ID, scales)
 	detail.Lines, detail.LinesMore, detail.LinesUnread = u.linesOf(r, detail.ID, detail.Currency, scales)
 
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	detail.PaymentHidden = !principal.HasScope(scopePaymentRead)
+	if !detail.PaymentHidden {
+		detail.Payment, detail.PaymentUnread = u.paymentOf(r, detail.ID, scales)
+	}
+	detail.ParcelsHidden = !principal.HasScope(scopeFulfillmentRead)
+	if !detail.ParcelsHidden {
+		detail.Parcels, detail.ParcelsUnread = u.parcelsOf(r, detail.ID)
+	}
+
 	u.templates.render(w, r, http.StatusOK, "order.gohtml", map[string]any{
-		titleKey:        "Order " + detail.DisplayID,
-		"Order":         detail,
-		"OrdersPath":    OrdersPath,
-		"LinesPerOrder": linesPerOrder,
+		titleKey:               "Order " + detail.DisplayID,
+		"Order":                detail,
+		"OrdersPath":           OrdersPath,
+		"LinesPerOrder":        linesPerOrder,
+		"PaymentPrivilege":     scopePaymentRead,
+		"FulfillmentPrivilege": scopeFulfillmentRead,
 	})
 }
 
@@ -472,6 +548,138 @@ func propertyLines(value any) []string {
 	}
 
 	return out
+}
+
+// linkedTo reads what one link of the order reaches.
+//
+// The order is read again by its id with that one expansion, so a failure costs
+// the section it feeds and not the page: the main read carries no expansion
+// for the same reason the additions have a read of their own.
+func (u *UI) linkedTo(r *http.Request, orderID string, expansion query.Expansion) (any, error) {
+	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+		Entity:  EntityOrder,
+		Fields:  []string{fieldID},
+		Filters: map[string]any{filterID: []string{orderID}},
+		Limit:   1,
+		Expand:  []query.Expansion{expansion},
+	})
+	if err != nil || len(records) == 0 {
+		return nil, err
+	}
+
+	return records[0][expansion.Link], nil
+}
+
+// paymentOf reads the order's payment collection through the order_payment
+// link; the second value reports a read that failed.
+//
+// The collection is linked rather than filtered: its reference is the cart the
+// checkout opened it for, and the link is what binds it to the order.
+func (u *UI) paymentOf(r *http.Request, orderID string, scales map[string]int) (*orderPayment, bool) {
+	linked, err := u.linkedTo(r, orderID, query.Expansion{
+		Link: linkOrderPayment,
+		Fields: []string{
+			fieldStatus, fieldAmount, fieldCurrencyCod, fieldAuthorizedAmount,
+			fieldCapturedAmount, fieldRefundedAmount, fieldFirstCapturedAt, fieldLastRefundedAt,
+		},
+	})
+	if err != nil {
+		return nil, true
+	}
+	records := linkedRecords(linked)
+	if len(records) == 0 {
+		return nil, false
+	}
+
+	record := records[0]
+	payment := orderPayment{
+		Status:          recordString(record, fieldStatus),
+		Currency:        recordString(record, fieldCurrencyCod),
+		FirstCapturedAt: recordAt(record, fieldFirstCapturedAt),
+		LastRefundedAt:  recordAt(record, fieldLastRefundedAt),
+	}
+	payment.Amount, _ = amountField(record, fieldAmount, payment.Currency, scales)
+	payment.Authorized, _ = amountField(record, fieldAuthorizedAmount, payment.Currency, scales)
+	payment.Captured, _ = amountField(record, fieldCapturedAmount, payment.Currency, scales)
+	payment.Refunded, _ = amountField(record, fieldRefundedAmount, payment.Currency, scales)
+
+	return &payment, false
+}
+
+// parcelsOf reads the order's parcels through the order_fulfillment link,
+// oldest first; the second value reports a read that failed.
+func (u *UI) parcelsOf(r *http.Request, orderID string) ([]orderParcel, bool) {
+	linked, err := u.linkedTo(r, orderID, query.Expansion{
+		Link: linkOrderFulfillment,
+		Fields: []string{
+			fieldID, fieldStatus, fieldTrackingNumber, fieldTrackingURL, fieldCreatedAt,
+			fieldShippedAt, fieldDeliveredAt, fieldCanceledAt, fieldReturnedAt,
+		},
+	})
+	if err != nil {
+		return nil, true
+	}
+
+	records := linkedRecords(linked)
+	parcels := make([]orderParcel, 0, len(records))
+	for _, record := range records {
+		parcels = append(parcels, orderParcel{
+			ID:             recordString(record, fieldID),
+			Status:         recordString(record, fieldStatus),
+			TrackingNumber: recordString(record, fieldTrackingNumber),
+			TrackingURL:    recordString(record, fieldTrackingURL),
+			CreatedAt:      recordTime(record, fieldCreatedAt),
+			ShippedAt:      recordAt(record, fieldShippedAt),
+			DeliveredAt:    recordAt(record, fieldDeliveredAt),
+			CanceledAt:     recordAt(record, fieldCanceledAt),
+			ReturnedAt:     recordAt(record, fieldReturnedAt),
+		})
+	}
+	// The link promises no order, so the page gives its own: oldest first, the
+	// id breaking a tie between two parcels of one moment.
+	slices.SortStableFunc(parcels, func(a, b orderParcel) int {
+		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	return parcels, false
+}
+
+// linkedRecords reads an expansion's value as records: a one-ended link
+// writes a record or nil, a many-ended one a slice.
+func linkedRecords(value any) []query.Record {
+	switch typed := value.(type) {
+	case query.Record:
+		if typed == nil {
+			return nil
+		}
+		return []query.Record{typed}
+	case []query.Record:
+		return typed
+	default:
+		return nil
+	}
+}
+
+// recordAt reads a moment that may be absent, whether the provider hands it
+// over as a time or as a pointer to one; nil when absent or zero.
+func recordAt(rec query.Record, field string) *time.Time {
+	var at time.Time
+	switch typed := rec[field].(type) {
+	case time.Time:
+		at = typed
+	case *time.Time:
+		if typed != nil {
+			at = *typed
+		}
+	}
+	if at.IsZero() {
+		return nil
+	}
+
+	return &at
 }
 
 // orderRowOf turns an order record into a row.

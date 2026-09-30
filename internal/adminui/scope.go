@@ -33,6 +33,12 @@ const (
 	scopeInventoryRead  = "inventory:read"
 	scopeInventoryWrite = "inventory:write"
 	scopeReviewRead     = "review:read"
+
+	// The order page reads an order's payment and parcels only for an operator
+	// holding these as well (ADR 0251): the order's privilege opens the page,
+	// and each module's own opens its data on it.
+	scopePaymentRead     = "payment:read"
+	scopeFulfillmentRead = "fulfillment:read"
 )
 
 // builtInScopes is the privilege each path the panel SHIPS requires.

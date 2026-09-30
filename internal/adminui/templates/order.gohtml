@@ -108,6 +108,78 @@ timeline and in the person's file, not here.
   </tbody>
 </table>
 
+{{/*
+The payment and the parcels are other modules' data, reached through the
+order's links. Each is read and printed only for an operator holding that
+module's own privilege (ADR 0251); the order's privilege opens the page.
+*/}}
+<h2>Payment</h2>
+
+{{ if .Order.PaymentHidden }}
+<p class="muted">Reading the payment needs the {{ .PaymentPrivilege }} privilege.</p>
+{{ else if .Order.PaymentUnread }}
+<p class="muted">The payment of this order could not be read.</p>
+{{ else if .Order.Payment }}
+{{ with .Order.Payment }}
+<table>
+  <tbody>
+    <tr><th>Status</th><td><span class="pill">{{ .Status }}</span></td></tr>
+    <tr><th>Amount</th><td class="num">{{ .Amount }} {{ .Currency }}</td></tr>
+    <tr><th>Authorized</th><td class="num">{{ .Authorized }} {{ .Currency }}</td></tr>
+    <tr>
+      <th>Captured</th>
+      <td class="num">
+        {{ .Captured }} {{ .Currency }}
+        {{ with .FirstCapturedAt }}<span class="muted">first {{ .Format "2006-01-02 15:04" }} UTC</span>{{ end }}
+      </td>
+    </tr>
+    <tr>
+      <th>Refunded</th>
+      <td class="num">
+        {{ .Refunded }} {{ .Currency }}
+        {{ with .LastRefundedAt }}<span class="muted">last {{ .Format "2006-01-02 15:04" }} UTC</span>{{ end }}
+      </td>
+    </tr>
+  </tbody>
+</table>
+{{ end }}
+{{ else }}
+<p class="muted">No payment is linked to this order.</p>
+{{ end }}
+
+<h2>Parcels</h2>
+
+{{ if .Order.ParcelsHidden }}
+<p class="muted">Reading the parcels needs the {{ .FulfillmentPrivilege }} privilege.</p>
+{{ else if .Order.ParcelsUnread }}
+<p class="muted">The parcels of this order could not be read.</p>
+{{ else if .Order.Parcels }}
+<table>
+  <thead><tr><th>Status</th><th>Tracking</th><th>Opened</th><th>Moments</th></tr></thead>
+  <tbody>
+    {{ range .Order.Parcels }}
+    <tr>
+      <td><span class="pill">{{ .Status }}</span></td>
+      <td>
+        {{ if and .TrackingNumber .TrackingURL }}<a href="{{ .TrackingURL }}" rel="noopener noreferrer">{{ .TrackingNumber }}</a>
+        {{ else if .TrackingNumber }}{{ .TrackingNumber }}
+        {{ else }}<span class="muted">no tracking</span>{{ end }}
+      </td>
+      <td>{{ if not .CreatedAt.IsZero }}{{ .CreatedAt.Format "2006-01-02 15:04" }}{{ end }}</td>
+      <td>
+        {{ with .ShippedAt }}shipped {{ .Format "2006-01-02 15:04" }}<br>{{ end }}
+        {{ with .DeliveredAt }}delivered {{ .Format "2006-01-02 15:04" }}<br>{{ end }}
+        {{ with .CanceledAt }}canceled {{ .Format "2006-01-02 15:04" }}<br>{{ end }}
+        {{ with .ReturnedAt }}returned {{ .Format "2006-01-02 15:04" }}{{ end }}
+      </td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p class="muted">No parcel has been opened for this order.</p>
+{{ end }}
+
 <h2>Additions</h2>
 
 {{ if .Order.AdditionsUnread }}

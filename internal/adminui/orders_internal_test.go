@@ -525,3 +525,182 @@ func TestNestingAddOnsDropsNoLine(t *testing.T) {
 	assert.Equal(t, []string{"box", "ribbon", "right"}, addOns,
 		"only a line printed under its parent is marked as an add-on")
 }
+
+// getOrderPageAs sends a GET as the given principal.
+func getOrderPageAs(panel *UI, path string, principal corehttp.Principal) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+	request = request.WithContext(corehttp.WithPrincipal(request.Context(), principal))
+
+	rec := httptest.NewRecorder()
+	orderRouter(panel).ServeHTTP(rec, request)
+
+	return rec
+}
+
+// linkedOrderCatalog answers the order read, and the order read again with
+// one expansion by what that link reaches; failing names links whose read
+// fails.
+func linkedOrderCatalog(failing ...string) *fakeCatalog {
+	captured := time.Date(2026, 9, 4, 9, 20, 0, 0, time.UTC)
+	return &fakeCatalog{
+		byEntity: map[string][]query.Record{EntityRegion: {currencyRecord("TRY", 2)}},
+		answer: func(spec query.GraphSpec) ([]query.Record, error, bool) {
+			if spec.Entity != EntityOrder {
+				return nil, nil, false
+			}
+			if spec.Filters[fieldAddsToOrderID] != nil {
+				return nil, nil, true
+			}
+			if len(spec.Expand) == 0 {
+				return []query.Record{orderRecord()}, nil, true
+			}
+			link := spec.Expand[0].Link
+			if slices.Contains(failing, link) {
+				return nil, errors.New("read layer down"), true
+			}
+			record := query.Record{"id": "order_1"}
+			switch link {
+			case linkOrderPayment:
+				record[link] = query.Record{
+					"status": "partially_refunded", "amount": int64(108_000), "currency_code": "TRY",
+					"authorized_amount": int64(108_000), "captured_amount": int64(108_000),
+					"refunded_amount": int64(20_000), "first_captured_at": &captured,
+					"last_refunded_at": (*time.Time)(nil),
+				}
+			case linkOrderFulfillment:
+				record[link] = []query.Record{
+					{
+						"id": "ful_late", "status": "pending", "tracking_number": "",
+						"tracking_url": "", "created_at": captured.Add(2 * time.Hour),
+					},
+					{
+						"id": "ful_early", "status": "delivered", "tracking_number": "TK-1",
+						"tracking_url": "https://carrier.example/TK-1", "created_at": captured,
+						"shipped_at": ptrTo(captured.Add(time.Hour)), "delivered_at": ptrTo(captured.Add(26 * time.Hour)),
+					},
+					{
+						"id": "ful_same_b", "status": "pending", "tracking_number": "TK-B",
+						"created_at": captured.Add(time.Hour),
+					},
+					{
+						"id": "ful_same_a", "status": "pending", "tracking_number": "TK-A",
+						"created_at": captured.Add(time.Hour),
+					},
+				}
+			}
+			return []query.Record{record}, nil, true
+		},
+	}
+}
+
+// ptrTo returns a pointer to the value.
+func ptrTo[T any](value T) *T { return &value }
+
+// TestTheOrderPageShowsItsPaymentAndParcels prints the collection's amounts
+// and when its money moved, and the parcels oldest first with their tracking.
+func TestTheOrderPageShowsItsPaymentAndParcels(t *testing.T) {
+	t.Parallel()
+
+	catalog := linkedOrderCatalog()
+	rec := getOrderPageAs(newCatalogPanel(t, catalog), OrdersPath+"/order_1",
+		corehttp.Principal{ID: "user_1", Kind: "user", Scopes: []string{scopePaymentRead, scopeFulfillmentRead}})
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	for _, want := range []string{
+		"partially_refunded", "1080.00 TRY", "200.00 TRY", "first 2026-09-04 09:20 UTC",
+		`<a href="https://carrier.example/TK-1" rel="noopener noreferrer">TK-1</a>`,
+		"shipped 2026-09-04 10:20", "delivered 2026-09-05 11:20", "no tracking",
+	} {
+		assert.Contains(t, body, want)
+	}
+	assert.NotContains(t, body, "last ", "a refund moment that is absent is not printed")
+	printed := []int{
+		strings.Index(body, "TK-1"), strings.Index(body, "TK-A"), strings.Index(body, "TK-B"),
+		strings.Index(body, "no tracking"),
+	}
+	assert.True(t, slices.IsSorted(printed) && printed[0] >= 0,
+		"the parcels are printed oldest first, the id breaking a tie, not in the order the link "+
+			"gave them: %v", printed)
+
+	var links []string
+	for _, spec := range catalog.specs {
+		for _, expansion := range spec.Expand {
+			links = append(links, expansion.Link)
+			assert.Equal(t, []string{"order_1"}, spec.Filters[filterID],
+				"the %s link is read from this order", expansion.Link)
+		}
+	}
+	assert.ElementsMatch(t, []string{linkOrderPayment, linkOrderFulfillment}, links)
+}
+
+// TestTheOrderPageReadsWhatItsOperatorMayRead reads and prints the payment
+// and the parcels only for an operator holding each module's own privilege,
+// and does not read what it will not print.
+func TestTheOrderPageReadsWhatItsOperatorMayRead(t *testing.T) {
+	t.Parallel()
+
+	for name, scopes := range map[string][]string{
+		"neither":          {scopeOrderRead},
+		"the payment only": {scopeOrderRead, scopePaymentRead},
+		"the parcels only": {scopeOrderRead, scopeFulfillmentRead},
+		"both":             {scopeOrderRead, scopePaymentRead, scopeFulfillmentRead},
+		"an administrator": {corehttp.ScopeAdmin},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			principal := corehttp.Principal{ID: "user_1", Kind: "user", Scopes: scopes}
+			catalog := linkedOrderCatalog()
+			rec := getOrderPageAs(newCatalogPanel(t, catalog), OrdersPath+"/order_1", principal)
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			body := rec.Body.String()
+			read := map[string]bool{}
+			for _, spec := range catalog.specs {
+				for _, expansion := range spec.Expand {
+					read[expansion.Link] = true
+				}
+			}
+
+			payment, parcels := principal.HasScope(scopePaymentRead), principal.HasScope(scopeFulfillmentRead)
+			assert.Equal(t, payment, read[linkOrderPayment], "the payment is read only when it may be")
+			assert.Equal(t, parcels, read[linkOrderFulfillment], "the parcels are read only when they may be")
+			assert.Equal(t, payment, strings.Contains(body, "partially_refunded"))
+			assert.Equal(t, !payment, strings.Contains(body, "Reading the payment needs the payment:read privilege."))
+			assert.Equal(t, parcels, strings.Contains(body, "TK-1"))
+			assert.Equal(t, !parcels, strings.Contains(body, "Reading the parcels needs the fulfillment:read privilege."))
+		})
+	}
+}
+
+// TestAnOrderPageSurvivesItsLinksFailing keeps the order and the other
+// section on screen when one link's read fails.
+func TestAnOrderPageSurvivesItsLinksFailing(t *testing.T) {
+	t.Parallel()
+
+	both := corehttp.Principal{ID: "user_1", Kind: "user", Scopes: []string{corehttp.ScopeAdmin}}
+
+	rec := getOrderPageAs(newCatalogPanel(t, linkedOrderCatalog(linkOrderPayment)), OrdersPath+"/order_1", both)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "The payment of this order could not be read.")
+	assert.Contains(t, rec.Body.String(), "TK-1")
+
+	rec = getOrderPageAs(newCatalogPanel(t, linkedOrderCatalog(linkOrderFulfillment)), OrdersPath+"/order_1", both)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "The parcels of this order could not be read.")
+	assert.Contains(t, rec.Body.String(), "partially_refunded")
+}
+
+// TestAnOrderWithoutAPaymentOrParcelsSaysSo prints the absence.
+func TestAnOrderWithoutAPaymentOrParcelsSaysSo(t *testing.T) {
+	t.Parallel()
+
+	catalog := linedOrderCatalog(func(query.GraphSpec) ([]query.Record, error) { return nil, nil })
+	rec := getOrderPageAs(newCatalogPanel(t, catalog), OrdersPath+"/order_1",
+		corehttp.Principal{ID: "user_1", Kind: "user", Scopes: []string{corehttp.ScopeAdmin}})
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "No payment is linked to this order.")
+	assert.Contains(t, rec.Body.String(), "No parcel has been opened for this order.")
+}

@@ -102,6 +102,9 @@ func TestThePanelRendersAgainstARealDatabase(t *testing.T) {
 	require.Contains(t, order, fmt.Sprintf(`<td class="num">%d</td>`, storefrontQuantity),
 		"the line's quantity reaches the page as a number")
 	require.NotContains(t, order, "could not be read")
+	require.Contains(t, order, "<th>Authorized</th>",
+		"the checkout links its payment collection to the order, and the page prints it")
+	require.Contains(t, order, "No parcel has been opened for this order.")
 	require.Contains(t, open(adminui.SalesPath), storefrontVariantTitle)
 	customers := open(adminui.CustomersPath)
 	require.Contains(t, customers, customerEmail)

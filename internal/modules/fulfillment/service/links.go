@@ -38,13 +38,12 @@ const LinkOrderFulfillment = "order_fulfillment"
 // FulfillmentEntity is the name of the shipment record on the link's far side.
 //
 // It is NOT [EntityName]: that is the module's Query entity, the shipping
-// option, and this end is the shipment. The distinction matters in one concrete
-// way — the Query layer looks up an expansion's target under
-// "<Entity>.query", and this module registers no provider under "fulfillment".
-// So the binding is readable through the link service (ListMany), which is what
-// the flow and the order's admin endpoints use, and NOT expandable through a
-// Query request. Giving the shipment a Query provider is the step the order
-// timeline will need; it is not needed to bind the two records.
+// option, and this end is the shipment. The Query layer looks up an
+// expansion's target under "<Entity>.query", and [ShipmentQueryProvider] is
+// registered under this name (D8), so the binding is expandable through a
+// Query request as well as readable through the link service (ListMany). The
+// panel's order page expands it (ADR 0251); the flows and the order's admin
+// endpoints read it through the link service.
 const FulfillmentEntity = "fulfillment"
 
 // Definitions are the link definitions this module declares.
