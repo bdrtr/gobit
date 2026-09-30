@@ -115,7 +115,18 @@ func relayedPass(t *testing.T, dsn string, events ...eventbus.Event) scheduled {
 	require.NoError(t, err, "the composition root could not start the jobs it declares")
 
 	store := jobpg.New(pool)
-	names := []string{sagawatch.Name, paymentrecon.Name, outboxrelay.Name}
+
+	// The wait covers every job the runner was given, read from the same
+	// registration startJobs performs. It used to name three jobs by hand while
+	// the listing test asserts over every row, so once more jobs were
+	// registered the runner could be stopped after the third and leave a later
+	// one unstarted or canceled mid-run (D173).
+	registry, err := registerJobs(app.container, app.host, log)
+	require.NoError(t, err)
+	names := make([]string, 0, registry.Len())
+	for _, definition := range registry.Definitions() {
+		names = append(names, definition.Name)
+	}
 
 	// The wait is a loop rather than require.Eventually because the failure
 	// message has to carry the ledger AS IT ENDED UP: Eventually formats its
