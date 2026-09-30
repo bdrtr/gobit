@@ -144,6 +144,16 @@ const ProviderName = service.EntityName + query.ProviderSuffix
 // in a period.
 const LineItemProviderName = service.LineItemProviderName
 
+// The after-sales providers' names in the container: an order's returns,
+// claims, exchanges and replacements, each an entity read per order
+// (ADR 0270).
+const (
+	ReturnProviderName      = service.ReturnProviderName
+	ClaimProviderName       = service.ClaimProviderName
+	ExchangeProviderName    = service.ExchangeProviderName
+	ReplacementProviderName = service.ReplacementProviderName
+)
+
 // The names of the core services resolved from the container.
 const (
 	svcDB       = "core.db"
@@ -326,6 +336,22 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// and an order has many lines; without its own entity the variant, the
 	// quantity and the amount of a sale are reachable only one order at a time.
 	if err := c.Provide(LineItemProviderName, service.NewLineItemQueryProvider(svc)); err != nil {
+		return err
+	}
+	// The after-sales records, one entity each, read per order (ADR 0270).
+	// Each is its own call with its constant: the admin panel's owner walk
+	// reads who provides a name from the call, and a name held in a loop
+	// variable is one it cannot read.
+	if err := c.Provide(ReturnProviderName, service.NewReturnQueryProvider(svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(ClaimProviderName, service.NewClaimQueryProvider(svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(ExchangeProviderName, service.NewExchangeQueryProvider(svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(ReplacementProviderName, service.NewReplacementQueryProvider(svc)); err != nil {
 		return err
 	}
 

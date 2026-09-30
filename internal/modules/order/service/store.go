@@ -312,6 +312,20 @@ type Store interface {
 	// promised across the order's live replacements.
 	ReplacedQuantities(ctx context.Context, lineItemIDs []string) (map[string]int64, error)
 
+	// ReturnsByIDs, ClaimsByIDs, ExchangesByIDs and ReplacementsByIDs return
+	// the given records, newest first, leaving out an identifier with none;
+	// PageReplacementsOfOrder pages an order's replacements newest first; and
+	// ReturnItemsOf and ReplacementItemsOf read the lines of a page of records
+	// by record, without the replacement lines' parts. They are the read
+	// layer's after-sales reads (ADR 0270).
+	ReturnsByIDs(ctx context.Context, ids []string) ([]models.Return, error)
+	ClaimsByIDs(ctx context.Context, ids []string) ([]models.Claim, error)
+	ExchangesByIDs(ctx context.Context, ids []string) ([]models.Exchange, error)
+	ReplacementsByIDs(ctx context.Context, ids []string) ([]models.Replacement, error)
+	PageReplacementsOfOrder(ctx context.Context, filter models.ChildFilter) ([]models.Replacement, error)
+	ReturnItemsOf(ctx context.Context, returnIDs []string) (map[string][]models.ReturnItem, error)
+	ReplacementItemsOf(ctx context.Context, replacementIDs []string) (map[string][]models.ReplacementItem, error)
+
 	// CreateExchange opens a new exchange record.
 	CreateExchange(ctx context.Context, exchange models.Exchange) (models.Exchange, error)
 	// GetExchange returns the exchange record by its identifier; NotFound when

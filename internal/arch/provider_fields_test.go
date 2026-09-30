@@ -71,11 +71,15 @@ import (
 // panelDecodedProviderFields names every Query-provider field the admin panel
 // decodes by name, and the module that publishes it.
 //
-// One entry today, and it arrived with ADR 0040: the "in stock" definition is
-// computed over inventory's available quantity, and the panel already showed that
-// number on the variant screen before the definition existed.
+// The first entry arrived with ADR 0040: the "in stock" definition is computed
+// over inventory's available quantity, and the panel already showed that number
+// on the variant screen before the definition existed. The second with ADR 0270.
 var panelDecodedProviderFields = map[string]string{
 	"available_quantity": "inventory",
+	// The order page prints where a replacement is sent from (ADR 0270). The
+	// scan finds the name through the variant screen's form contract, which
+	// spells it the same way; the entry holds the order module to it either way.
+	"location_id": "order",
 }
 
 // # The second consumer, and it is not an API client

@@ -183,6 +183,31 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
 <p class="muted">No parcel has been opened for this order.</p>
 {{ end }}
 
+<h2>After-sales</h2>
+
+{{ if .Order.AfterSalesUnread }}
+<p class="muted">The after-sales records of this order could not be read.</p>
+{{ else if .Order.AfterSales }}
+<table>
+  <thead><tr><th>Record</th><th>Status</th><th>Goods</th><th>Money</th><th>Opened</th><th>Since</th></tr></thead>
+  <tbody>
+    {{ range .Order.AfterSales }}
+    <tr>
+      <td>{{ .Kind }} <span class="muted">{{ .ID }}</span>{{ range .Detail }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
+      <td><span class="pill">{{ .Status }}</span></td>
+      <td>{{ range .Goods }}{{ . }}<br>{{ else }}<span class="muted">none listed</span>{{ end }}</td>
+      <td>{{ if .Money }}{{ .Money }}{{ else }}<span class="muted">none</span>{{ end }}</td>
+      <td>{{ if not .OpenedAt.IsZero }}{{ .OpenedAt.Format "2006-01-02 15:04" }}{{ end }}</td>
+      <td>{{ range .Since }}{{ . }}<br>{{ end }}</td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ if .Order.AfterSalesMore }}<p class="muted">Only the latest {{ .AfterSalesPerKind }} records of each kind are shown.</p>{{ end }}
+{{ else }}
+<p class="muted">No return, claim, exchange or replacement has been opened for this order.</p>
+{{ end }}
+
 <h2>Additions</h2>
 
 {{ if .Order.AdditionsUnread }}

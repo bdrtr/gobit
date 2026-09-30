@@ -54,3 +54,10 @@ UPDATE order_returns
 SET status = 'canceled', canceled_at = now(), updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- ListOrderReturnsByIDs reads the given returns for the read layer's batch
+-- path (ADR 0270), newest first like the order's own listing.
+-- name: ListOrderReturnsByIDs :many
+SELECT * FROM order_returns
+WHERE id = ANY (sqlc.arg('ids')::text[])
+ORDER BY created_at DESC, id DESC;

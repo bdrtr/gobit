@@ -85,6 +85,44 @@ func (q *Queries) ListOrderReturnItems(ctx context.Context, orderReturnID string
 	return items, nil
 }
 
+const listOrderReturnItemsOfReturns = `-- name: ListOrderReturnItemsOfReturns :many
+SELECT id, order_return_id, order_line_item_id, quantity, refund_amount, created_at, updated_at, seq FROM order_return_items
+WHERE order_return_id = ANY ($1::text[])
+ORDER BY order_return_id, created_at, seq
+`
+
+// ListOrderReturnItemsOfReturns reads the lines of the given returns in one
+// query, each return's in the order they were written, for the read layer
+// (ADR 0270).
+func (q *Queries) ListOrderReturnItemsOfReturns(ctx context.Context, returnIds []string) ([]OrderReturnItem, error) {
+	rows, err := q.db.Query(ctx, listOrderReturnItemsOfReturns, returnIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderReturnItem{}
+	for rows.Next() {
+		var i OrderReturnItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderReturnID,
+			&i.OrderLineItemID,
+			&i.Quantity,
+			&i.RefundAmount,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Seq,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sumReturnedQuantities = `-- name: SumReturnedQuantities :many
 SELECT i.order_line_item_id, SUM(i.quantity)::bigint AS returned
 FROM order_return_items i

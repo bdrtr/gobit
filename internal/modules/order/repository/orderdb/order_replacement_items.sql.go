@@ -104,6 +104,45 @@ func (q *Queries) ListOrderReplacementItems(ctx context.Context, orderReplacemen
 	return items, nil
 }
 
+const listOrderReplacementItemsOfReplacements = `-- name: ListOrderReplacementItemsOfReplacements :many
+SELECT id, order_replacement_id, order_line_item_id, quantity, created_at, updated_at, reservation_id, variant_id, seq FROM order_replacement_items
+WHERE order_replacement_id = ANY ($1::text[])
+ORDER BY order_replacement_id, created_at, seq
+`
+
+// ListOrderReplacementItemsOfReplacements reads the lines of the given
+// replacements in one query, each replacement's in the order they were
+// written, for the read layer (ADR 0270).
+func (q *Queries) ListOrderReplacementItemsOfReplacements(ctx context.Context, replacementIds []string) ([]OrderReplacementItem, error) {
+	rows, err := q.db.Query(ctx, listOrderReplacementItemsOfReplacements, replacementIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderReplacementItem{}
+	for rows.Next() {
+		var i OrderReplacementItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderReplacementID,
+			&i.OrderLineItemID,
+			&i.Quantity,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ReservationID,
+			&i.VariantID,
+			&i.Seq,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setOrderReplacementItemReservation = `-- name: SetOrderReplacementItemReservation :one
 UPDATE order_replacement_items
 SET reservation_id = $1::text,

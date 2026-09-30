@@ -170,6 +170,47 @@ func (q *Queries) ListOrderReturns(ctx context.Context, arg ListOrderReturnsPara
 	return items, nil
 }
 
+const listOrderReturnsByIDs = `-- name: ListOrderReturnsByIDs :many
+SELECT id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, received_location_id FROM order_returns
+WHERE id = ANY ($1::text[])
+ORDER BY created_at DESC, id DESC
+`
+
+// ListOrderReturnsByIDs reads the given returns for the read layer's batch
+// path (ADR 0270), newest first like the order's own listing.
+func (q *Queries) ListOrderReturnsByIDs(ctx context.Context, ids []string) ([]OrderReturn, error) {
+	rows, err := q.db.Query(ctx, listOrderReturnsByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderReturn{}
+	for rows.Next() {
+		var i OrderReturn
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.Status,
+			&i.RefundAmount,
+			&i.Reason,
+			&i.Note,
+			&i.Metadata,
+			&i.ReceivedAt,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ReceivedLocationID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockOrderReturn = `-- name: LockOrderReturn :one
 SELECT id, order_id, status, refund_amount, reason, note, metadata, received_at, canceled_at, created_at, updated_at, received_location_id FROM order_returns
 WHERE id = $1

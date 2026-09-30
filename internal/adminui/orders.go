@@ -164,6 +164,13 @@ type orderDetail struct {
 	PaymentUnread bool
 	ParcelsHidden bool
 	ParcelsUnread bool
+
+	// AfterSales are the order's returns, claims, exchanges and replacements,
+	// newest first (ADR 0270); AfterSalesMore says a kind has more than the
+	// page reads and AfterSalesUnread that a read failed.
+	AfterSales       []orderAfterSale
+	AfterSalesMore   bool
+	AfterSalesUnread bool
 }
 
 // orderPayment is the order's payment collection as the page prints it.
@@ -374,6 +381,8 @@ func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 	if !detail.ParcelsHidden {
 		detail.Parcels, detail.ParcelsUnread = u.parcelsOf(r, detail.ID, detail.Lines)
 	}
+	detail.AfterSales, detail.AfterSalesMore, detail.AfterSalesUnread = u.afterSalesOf(
+		r, detail.ID, detail.Currency, scales, detail.Lines)
 
 	u.templates.render(w, r, http.StatusOK, "order.gohtml", map[string]any{
 		titleKey:               "Order " + detail.DisplayID,
@@ -382,6 +391,7 @@ func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 		"LinesPerOrder":        linesPerOrder,
 		"PaymentPrivilege":     scopePaymentRead,
 		"FulfillmentPrivilege": scopeFulfillmentRead,
+		"AfterSalesPerKind":    afterSalesPerKind,
 	})
 }
 

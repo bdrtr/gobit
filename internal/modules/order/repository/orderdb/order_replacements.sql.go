@@ -315,6 +315,48 @@ func (q *Queries) ListOrderReplacementsByExchange(ctx context.Context, orderExch
 	return items, nil
 }
 
+const listOrderReplacementsByIDs = `-- name: ListOrderReplacementsByIDs :many
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls FROM order_replacements
+WHERE id = ANY ($1::text[])
+ORDER BY created_at DESC, id DESC
+`
+
+// ListOrderReplacementsByIDs reads the given replacements for the read
+// layer's batch path (ADR 0270), newest first.
+func (q *Queries) ListOrderReplacementsByIDs(ctx context.Context, ids []string) ([]OrderReplacement, error) {
+	rows, err := q.db.Query(ctx, listOrderReplacementsByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderReplacement{}
+	for rows.Next() {
+		var i OrderReplacement
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderClaimID,
+			&i.Status,
+			&i.ShippingOptionID,
+			&i.LocationID,
+			&i.Note,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DispatchedAt,
+			&i.FulfillmentID,
+			&i.OrderExchangeID,
+			&i.Recalls,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrderReplacementsByOrder = `-- name: ListOrderReplacementsByOrder :many
 SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls FROM order_replacements
 WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = $1::text)
@@ -335,6 +377,58 @@ type ListOrderReplacementsByOrderParams struct {
 // claim or the exchange, and both are this module's own tables.
 func (q *Queries) ListOrderReplacementsByOrder(ctx context.Context, arg ListOrderReplacementsByOrderParams) ([]OrderReplacement, error) {
 	rows, err := q.db.Query(ctx, listOrderReplacementsByOrder, arg.OrderID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderReplacement{}
+	for rows.Next() {
+		var i OrderReplacement
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderClaimID,
+			&i.Status,
+			&i.ShippingOptionID,
+			&i.LocationID,
+			&i.Note,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DispatchedAt,
+			&i.FulfillmentID,
+			&i.OrderExchangeID,
+			&i.Recalls,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrderReplacementsOfOrder = `-- name: ListOrderReplacementsOfOrder :many
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls FROM order_replacements
+WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = $1::text)
+   OR order_exchange_id IN (SELECT id FROM order_exchanges WHERE order_id = $1::text)
+ORDER BY created_at DESC, id DESC
+LIMIT $3::bigint OFFSET $2::bigint
+`
+
+type ListOrderReplacementsOfOrderParams struct {
+	OrderID   string
+	RowOffset int64
+	RowLimit  int64
+}
+
+// ListOrderReplacementsOfOrder pages the replacements an order's claims and
+// exchanges promised, newest first like the order's other after-sales
+// listings, for the read layer (ADR 0270). The order is reached through the
+// source, as in ListOrderReplacementsByOrder.
+func (q *Queries) ListOrderReplacementsOfOrder(ctx context.Context, arg ListOrderReplacementsOfOrderParams) ([]OrderReplacement, error) {
+	rows, err := q.db.Query(ctx, listOrderReplacementsOfOrder, arg.OrderID, arg.RowOffset, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

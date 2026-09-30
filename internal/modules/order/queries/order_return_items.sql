@@ -13,6 +13,14 @@ SELECT * FROM order_return_items
 WHERE order_return_id = $1
 ORDER BY created_at, seq;
 
+-- ListOrderReturnItemsOfReturns reads the lines of the given returns in one
+-- query, each return's in the order they were written, for the read layer
+-- (ADR 0270).
+-- name: ListOrderReturnItemsOfReturns :many
+SELECT * FROM order_return_items
+WHERE order_return_id = ANY (sqlc.arg('return_ids')::text[])
+ORDER BY order_return_id, created_at, seq;
+
 -- SumReturnedQuantities reports how many units of each of the given order lines
 -- have ALREADY been asked back, across every live return of the order.
 --

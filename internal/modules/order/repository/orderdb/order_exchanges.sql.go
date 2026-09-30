@@ -295,6 +295,47 @@ func (q *Queries) ListOrderExchanges(ctx context.Context, arg ListOrderExchanges
 	return items, nil
 }
 
+const listOrderExchangesByIDs = `-- name: ListOrderExchangesByIDs :many
+SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at FROM order_exchanges
+WHERE id = ANY ($1::text[])
+ORDER BY created_at DESC, id DESC
+`
+
+// ListOrderExchangesByIDs reads the given exchanges for the read layer's batch
+// path (ADR 0270), newest first like the order's own listing.
+func (q *Queries) ListOrderExchangesByIDs(ctx context.Context, ids []string) ([]OrderExchange, error) {
+	rows, err := q.db.Query(ctx, listOrderExchangesByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderExchange{}
+	for rows.Next() {
+		var i OrderExchange
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.Status,
+			&i.DifferenceDue,
+			&i.Note,
+			&i.Metadata,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.CompletedAt,
+			&i.PaymentCollectionID,
+			&i.FundedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockOrderExchange = `-- name: LockOrderExchange :one
 SELECT id, order_id, status, difference_due, note, metadata, canceled_at, created_at, updated_at, completed_at, payment_collection_id, funded_at FROM order_exchanges
 WHERE id = $1

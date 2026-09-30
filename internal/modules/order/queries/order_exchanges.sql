@@ -132,3 +132,10 @@ RETURNING *;
 SELECT id FROM order_exchanges
 WHERE payment_collection_id = sqlc.arg('payment_collection_id')
 LIMIT 1;
+
+-- ListOrderExchangesByIDs reads the given exchanges for the read layer's batch
+-- path (ADR 0270), newest first like the order's own listing.
+-- name: ListOrderExchangesByIDs :many
+SELECT * FROM order_exchanges
+WHERE id = ANY (sqlc.arg('ids')::text[])
+ORDER BY created_at DESC, id DESC;

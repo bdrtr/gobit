@@ -16,6 +16,14 @@ SELECT * FROM order_replacement_items
 WHERE order_replacement_id = $1
 ORDER BY created_at, seq;
 
+-- ListOrderReplacementItemsOfReplacements reads the lines of the given
+-- replacements in one query, each replacement's in the order they were
+-- written, for the read layer (ADR 0270).
+-- name: ListOrderReplacementItemsOfReplacements :many
+SELECT * FROM order_replacement_items
+WHERE order_replacement_id = ANY (sqlc.arg('replacement_ids')::text[])
+ORDER BY order_replacement_id, created_at, seq;
+
 -- SumReplacedQuantities reports how many units of each of the given order lines
 -- have ALREADY been promised, across every live replacement of the order.
 --

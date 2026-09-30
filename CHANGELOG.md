@@ -24,6 +24,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An order's after-sales records are read like its lines** (ADR 0270).
+  **For operators:** the panel's order page lists the order's returns, claims,
+  exchanges and replacements, newest first, with their status, money, lines
+  and moments. **For integrators:** the read layer answers `order_return`,
+  `order_claim`, `order_exchange` and `order_replacement`, each with the
+  `order_id` filter required.
+
 - **A balance pays part of an order** (ADR 0269). **For integrators:** the
   storefront completion takes `pay_first_with`, naming `store_credit`,
   `loyalty_points` or both: after the gift card, each holds what the

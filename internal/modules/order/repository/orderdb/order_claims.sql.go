@@ -196,6 +196,47 @@ func (q *Queries) ListOrderClaims(ctx context.Context, arg ListOrderClaimsParams
 	return items, nil
 }
 
+const listOrderClaimsByIDs = `-- name: ListOrderClaimsByIDs :many
+SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at FROM order_claims
+WHERE id = ANY ($1::text[])
+ORDER BY created_at DESC, id DESC
+`
+
+// ListOrderClaimsByIDs reads the given claims for the read layer's batch path
+// (ADR 0270), newest first like the order's own listing.
+func (q *Queries) ListOrderClaimsByIDs(ctx context.Context, ids []string) ([]OrderClaim, error) {
+	rows, err := q.db.Query(ctx, listOrderClaimsByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderClaim{}
+	for rows.Next() {
+		var i OrderClaim
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.ClaimType,
+			&i.Status,
+			&i.RefundAmount,
+			&i.Reason,
+			&i.Note,
+			&i.Metadata,
+			&i.CompletedAt,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockOrderClaim = `-- name: LockOrderClaim :one
 SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at FROM order_claims
 WHERE id = $1

@@ -932,6 +932,12 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the panel's region entity name must match the region module")
 	assert.Equal(t, ordersvc.LineItemEntity, adminui.EntityOrderLineItem,
 		"the panel's order line entity name must match the order module")
+	// The order page's after-sales records (ADR 0270): a drift reads as "could
+	// not be read" on every order, so the names are held here.
+	assert.Equal(t, ordersvc.ReturnEntity, adminui.EntityOrderReturn)
+	assert.Equal(t, ordersvc.ClaimEntity, adminui.EntityOrderClaim)
+	assert.Equal(t, ordersvc.ExchangeEntity, adminui.EntityOrderExchange)
+	assert.Equal(t, ordersvc.ReplacementEntity, adminui.EntityOrderReplacement)
 
 	assert.Equal(t, productsvc.LinkVariantPriceSet, adminui.LinkVariantPriceSet,
 		"the panel's price link name must match the product module")

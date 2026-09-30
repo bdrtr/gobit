@@ -93,3 +93,21 @@ SET status = 'requested',
     updated_at = now()
 WHERE id = $1 AND status = 'dispatched'
 RETURNING *;
+
+-- ListOrderReplacementsOfOrder pages the replacements an order's claims and
+-- exchanges promised, newest first like the order's other after-sales
+-- listings, for the read layer (ADR 0270). The order is reached through the
+-- source, as in ListOrderReplacementsByOrder.
+-- name: ListOrderReplacementsOfOrder :many
+SELECT * FROM order_replacements
+WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = sqlc.arg('order_id')::text)
+   OR order_exchange_id IN (SELECT id FROM order_exchanges WHERE order_id = sqlc.arg('order_id')::text)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
+
+-- ListOrderReplacementsByIDs reads the given replacements for the read
+-- layer's batch path (ADR 0270), newest first.
+-- name: ListOrderReplacementsByIDs :many
+SELECT * FROM order_replacements
+WHERE id = ANY (sqlc.arg('ids')::text[])
+ORDER BY created_at DESC, id DESC;
