@@ -223,7 +223,24 @@ func TestReconciliationListingUsesItsIndex(t *testing.T) {
 		backdateSession(ctx, t, authorized.ID, time.Duration(i+1)*time.Hour)
 	}
 
-	_, err := testPool.Pool().Exec(ctx, `ANALYZE payment_sessions`)
+	// The 400 rows above go through the service, and each is written three or
+	// four times, so the table's physical size moves with when its dead rows
+	// were pruned. At that size the planner's choice sat on the margin: one run
+	// in four chose a sequential scan (D176). A real ledger is not 400 rows with
+	// eight open, so the table is grown to one: twenty thousand settled sessions
+	// written in one statement, which leaves the choice nowhere near the margin.
+	bulk := reconCollection(ctx, t, svc)
+	prefix := fmt.Sprintf("payses_bulk%d_", time.Now().UnixNano())
+	_, err := testPool.Pool().Exec(ctx, `
+		INSERT INTO payment_sessions (id, payment_collection_id, provider_id, external_id,
+			status, amount, authorized_amount, currency_code, idempotency_key, updated_at)
+		SELECT $1 || g, $2, $3, $1 || g, 'captured', $4, $4, $5, $1 || g,
+			now() - make_interval(hours => g)
+		FROM generate_series(1, 20000) AS g`,
+		prefix, bulk.ID, manual.ID, reconAmount, reconCurrency)
+	require.NoError(t, err)
+
+	_, err = testPool.Pool().Exec(ctx, `ANALYZE payment_sessions`)
 	require.NoError(t, err)
 
 	rows, err := testPool.Pool().Query(ctx,
