@@ -222,24 +222,29 @@ past and is not corrected retroactively.
       of itself still looks like a limit.
 - **The admin panel writes the EDITABLE part of the catalog, not the creatable
   part.** The panel under `/admin/ui`
-  ([ADR 0011](adr/0011-yonetim-paneli-dorduncu-agac.md)) carries login, logout,
-  the product list, the product page, the variant page, the order list, the
-  order page, the sales report, the customer list, the customer page, the
-  inventory list and the moderation queue. Of those, THREE forms WRITE
-  ([ADR 0013](adr/0013-panel-write-surface.md)): a product's
-  title/handle/status, a variant's BASE price per currency, and PHYSICAL stock
-  per location. Every other screen is read-only; and there is no single-item
-  page for inventory or for a sold line at all — the detail of a stock item IS
-  its per-location levels on the variant page, and the context of a sold line IS
-  the order the line is attached to.
+  ([ADR 0011](adr/0011-yonetim-paneli-dorduncu-agac.md)) names its screens in its
+  package doc (`internal/adminui/doc.go`), and its forms write what exists: a
+  product's title, handle, status and schedule
+  ([ADR 0013](adr/0013-panel-write-surface.md),
+  [ADR 0177](adr/0177-a-draft-can-be-scheduled.md),
+  [ADR 0179](adr/0179-a-product-can-be-scheduled-to-leave.md)), its related products
+  ([ADR 0181](adr/0181-the-panel-edits-a-products-neighbors.md)), its add-ons
+  ([ADR 0232](adr/0232-the-panel-edits-a-products-add-ons.md)), a variant's bundle
+  ([ADR 0236](adr/0236-the-panel-edits-a-variants-bundle.md)), a variant's BASE price per
+  currency, PHYSICAL stock per location, and the signed-in person's own second
+  factor and sessions ([ADR 0266](adr/0266-the-panel-enrolls-a-second-factor.md),
+  [ADR 0268](adr/0268-the-panel-shows-a-persons-sessions.md)). There is no
+  single-item page for inventory or for a sold line — the detail of a stock item
+  IS its per-location levels on the variant page, and the context of a sold line
+  IS the order the line is attached to.
 
   **The moderation queue is the exception to the sentence above, and to the
   paragraph's whole shape** ([ADR 0076](adr/0076-the-panels-migration-begins-with-the-review-screen.md)).
   It writes — approving and rejecting a review — and it writes through NO panel
   form and no module admin surface: it is a client of `/admin/v1`, which is what
   [ADR 0030](adr/0030-the-panel-becomes-an-admin-api-client.md) decided every
-  screen becomes. It is the first, the other eleven are still rendered on the
-  server, and the order they move in is not decided. Until they do, the panel
+  screen becomes. It is the first, the others are still rendered on the server,
+  and the order they move in is not decided. Until they do, the panel
   carries two shapes and this entry describes both.
 
   Creating something that does not exist and deleting something that does still
