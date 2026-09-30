@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A category promotion can reach the subcategories** (ADR 0259). **For
+  operators:** a target rule on `category_tree_ids` with `any_in` matches a
+  product filed under any of the named categories or their subcategories; a
+  rule on `category_ids` still matches direct membership only. **For
+  integrators:** the product read-layer record publishes `category_tree_ids`.
+
 - **Store credit can expire** (ADR 0258). **For operators:**
   `POST /admin/v1/store-credits` takes `expires_at`. From that moment the
   balance no longer counts what the credit still holds, and the

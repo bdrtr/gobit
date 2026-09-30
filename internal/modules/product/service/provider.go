@@ -448,9 +448,23 @@ func (p *productProvider) recordsWithMembership(
 		return nil, err
 	}
 
+	lineage := map[string][]string{}
+	if len(fields) == 0 || slices.Contains(fields, FieldCategoryTreeIDs) {
+		var filed []string
+		for _, rows := range categories {
+			filed = append(filed, categoryIDsOf(rows)...)
+		}
+		if lineage, err = p.repo.CategoryLineage(ctx, filed); err != nil {
+			return nil, err
+		}
+	}
+
 	for i := range built {
 		if _, asked := built[i][fieldCategoryIDs]; asked {
 			built[i][fieldCategoryIDs] = categoryIDsOf(categories[products[i].ID])
+		}
+		if _, asked := built[i][FieldCategoryTreeIDs]; asked {
+			built[i][FieldCategoryTreeIDs] = categoryTreeOf(categories[products[i].ID], lineage)
 		}
 		if _, asked := built[i][fieldTagIDs]; asked {
 			built[i][fieldTagIDs] = tagIDsOf(tags[products[i].ID])
@@ -528,7 +542,8 @@ func wantsMembership(fields []string) bool {
 		return true
 	}
 
-	return slices.Contains(fields, fieldCategoryIDs) || slices.Contains(fields, fieldTagIDs)
+	return slices.Contains(fields, fieldCategoryIDs) || slices.Contains(fields, fieldTagIDs) ||
+		slices.Contains(fields, FieldCategoryTreeIDs)
 }
 
 // categoryIDsOf reduces the category rows to their ids, in the order the read
@@ -543,6 +558,24 @@ func categoryIDsOf(categories []models.Category) []string {
 	out := make([]string, 0, len(categories))
 	for i := range categories {
 		out = append(out, categories[i].ID)
+	}
+
+	return out
+}
+
+// categoryTreeOf returns the product's categories and each one's ancestors, in
+// the merchant's rank order and nearest ancestor first, every id once
+// (ADR 0259).
+func categoryTreeOf(categories []models.Category, lineage map[string][]string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for i := range categories {
+		for _, id := range lineage[categories[i].ID] {
+			if !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
 	}
 
 	return out
@@ -855,11 +888,16 @@ const (
 // the two map tables rather than from the product row. They are published because
 // a promotion rule cannot ask "is this line's product in any of these categories"
 // about data nothing publishes (ADR 0148), and the answer this record gives is
-// the same one the provider's `category_id` FILTER gives: DIRECT membership. A
-// category is a tree and neither side walks it.
+// the same one the provider's `category_id` FILTER gives: DIRECT membership.
+//
+// FieldCategoryTreeIDs walks the tree (ADR 0259): the product's categories and
+// every ancestor of them, each once, so a rule naming "Shirts" reaches a
+// product filed only under "Shirts > Linen". The listing filter still matches
+// direct membership.
 const (
-	fieldCategoryIDs = "category_ids"
-	fieldTagIDs      = "tag_ids"
+	fieldCategoryIDs     = "category_ids"
+	fieldTagIDs          = "tag_ids"
+	FieldCategoryTreeIDs = "category_tree_ids"
 )
 
 // The fields carrying a product's relations (ADR 0181), one per kind: the
@@ -905,6 +943,7 @@ func RelationFields() map[models.RelationType]string {
 func productRecord(p models.Product) query.Record {
 	return query.Record{
 		fieldCategoryIDs:     []string{},
+		FieldCategoryTreeIDs: []string{},
 		fieldTagIDs:          []string{},
 		FieldCrossSellIDs:    []string{},
 		FieldUpSellIDs:       []string{},

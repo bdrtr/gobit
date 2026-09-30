@@ -103,6 +103,16 @@ func newCategoryTargetedPromotion(
 ) string {
 	t.Helper()
 
+	return newListTargetedPromotion(ctx, t, code, rateBps, "category_ids", categoryIDs)
+}
+
+// newListTargetedPromotion is [newCategoryTargetedPromotion] over any list the
+// cart hands the engine: `category_ids`, or `category_tree_ids` (ADR 0259).
+func newListTargetedPromotion(
+	ctx context.Context, t *testing.T, code string, rateBps int64, attribute string, values []string,
+) string {
+	t.Helper()
+
 	promotion, err := promotionSvc.CreatePromotion(ctx, promotionsvc.PromotionInput{
 		Code:        code,
 		IsAutomatic: true,
@@ -123,9 +133,9 @@ func newCategoryTargetedPromotion(
 	// LIST and the operator is the one that reads one.
 	_, err = promotionSvc.AddPromotionRule(ctx, promotion.ID, promotionsvc.RuleInput{
 		RuleType:  promotionmodels.RuleTarget,
-		Attribute: "category_ids",
+		Attribute: attribute,
 		Operator:  promotionmodels.OpAnyIn,
-		Values:    categoryIDs,
+		Values:    values,
 	})
 	require.NoError(t, err, "the category target rule could not be written")
 
@@ -190,6 +200,54 @@ func TestACategoryPromotionDiscountsOnlyTheLinesInIt(t *testing.T) {
 		"the line whose product is in NO category must be untouched; a discount here "+
 			"means the rule matched everything rather than reading the list")
 	assert.Equal(t, categoryTaxOut, untouched.TaxTotal)
+}
+
+// TestACategoryTreePromotionReachesTheSubcategories is ADR 0259 through the
+// production wiring: a rule on `category_tree_ids` naming "Shirts" discounts a
+// product filed only under "Shirts > Linen", which a rule on `category_ids`
+// would not reach, and leaves a product in an unrelated category alone.
+func TestACategoryTreePromotionReachesTheSubcategories(t *testing.T) {
+	ctx := t.Context()
+
+	seq := fixtureCounter.Add(1)
+	shirts, err := productSvc.CreateCategory(ctx, productsvc.CreateCategoryInput{
+		Name: "E2E Tree Shirts", Handle: fmt.Sprintf("e2e-tree-shirts-%d", seq),
+	})
+	require.NoError(t, err)
+	linen, err := productSvc.CreateCategory(ctx, productsvc.CreateCategoryInput{
+		Name: "E2E Tree Linen", Handle: fmt.Sprintf("e2e-tree-linen-%d", seq), ParentID: &shirts.ID,
+	})
+	require.NoError(t, err)
+	shoes, err := productSvc.CreateCategory(ctx, productsvc.CreateCategoryInput{
+		Name: "E2E Tree Shoes", Handle: fmt.Sprintf("e2e-tree-shoes-%d", seq),
+	})
+	require.NoError(t, err)
+
+	underChild := newCategorisedVariant(ctx, t, "E2E Linen Shirt", categoryPriceIn, []string{linen.ID})
+	elsewhere := newCategorisedVariant(ctx, t, "E2E Shoe", categoryPriceOut, []string{shoes.ID})
+
+	newListTargetedPromotion(ctx, t, fmt.Sprintf("E2E-TREE-%d", seq),
+		categoryRateBps, "category_tree_ids", []string{shirts.ID})
+
+	cart, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: taxedCountry})
+	require.NoError(t, err)
+	lineChild, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
+		CartID: cart.CartID, VariantID: underChild, Quantity: 1,
+	})
+	require.NoError(t, err)
+	result, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
+		CartID: cart.CartID, VariantID: elsewhere, Quantity: 1,
+	})
+	require.NoError(t, err)
+
+	lines := lineTotalsByID(t, result.Totals)
+	discounted, found := lines[lineChild.LineItemID]
+	require.True(t, found)
+	assert.Equal(t, categoryDiscountIn, discounted.DiscountTotal,
+		"the product filed under a child of the named category takes the discount")
+	untouched, found := lines[result.LineItemID]
+	require.True(t, found)
+	assert.Zero(t, untouched.DiscountTotal, "a product in an unrelated category is untouched")
 }
 
 // TestATagPromotionDiscountsOnlyTheLinesCarryingIt covers the second list.

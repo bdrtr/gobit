@@ -1784,6 +1784,29 @@ func (m *memStore) ListCategoriesByProductIDs(_ context.Context, productIDs []st
 	return out, nil
 }
 
+// CategoryLineage walks each category up through its live parents, the way
+// the statement does.
+func (m *memStore) CategoryLineage(_ context.Context, categoryIDs []string) (map[string][]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("CategoryLineage"); err != nil {
+		return nil, err
+	}
+
+	out := map[string][]string{}
+	for _, id := range categoryIDs {
+		at, ok := m.categories[id]
+		for depth := 0; ok && depth <= 64; depth++ {
+			out[id] = append(out[id], at.ID)
+			if at.ParentID == nil {
+				break
+			}
+			at, ok = m.categories[*at.ParentID]
+		}
+	}
+	return out, nil
+}
+
 func (m *memStore) CreateImage(_ context.Context, img models.Image) (models.Image, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -242,6 +242,9 @@ type Store interface {
 	SetProductCategories(ctx context.Context, productID string, categoryIDs []string) error
 	ListTagsByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Tag, error)
 	ListCategoriesByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Category, error)
+	// CategoryLineage returns each given category's id followed by its live
+	// ancestors', nearest first (ADR 0259).
+	CategoryLineage(ctx context.Context, categoryIDs []string) (map[string][]string, error)
 
 	CreateImage(ctx context.Context, img models.Image) (models.Image, error)
 	// GetImageOfProduct, UpdateImage and SoftDeleteImage all take BOTH

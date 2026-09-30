@@ -81,6 +81,10 @@ const (
 	// string doing two jobs beats two spellings of one concept.
 	attrCategoryIDs = "category_ids"
 	attrTagIDs      = "tag_ids"
+	// attrCategoryTreeIDs is the product's categories with every ancestor of
+	// them (ADR 0259), so a rule naming a parent category reaches a product
+	// filed only under one of its children.
+	attrCategoryTreeIDs = "category_tree_ids"
 )
 
 // EntityProduct is the entity name of products in the Query layer; the product
@@ -122,6 +126,8 @@ type productFacts struct {
 	// reason: the same record, the same read.
 	CategoryIDs []string
 	TagIDs      []string
+	// CategoryTreeIDs are CategoryIDs with every ancestor of them (ADR 0259).
+	CategoryTreeIDs []string
 	// TypeID is the product's TYPE, and its consumer is the TAX module rather
 	// than the promotion engine: a rate rule matches on it (ADR 0101).
 	//
@@ -625,6 +631,9 @@ func lineLists(variantID string, flags map[string]productFacts) map[string][]str
 	if len(flag.TagIDs) > 0 {
 		lists[attrTagIDs] = flag.TagIDs
 	}
+	if len(flag.CategoryTreeIDs) > 0 {
+		lists[attrCategoryTreeIDs] = flag.CategoryTreeIDs
+	}
 	if len(lists) == 0 {
 		return nil
 	}
@@ -749,7 +758,7 @@ func (w *Workflows) productFactsFor(ctx context.Context, productIDs []string) (m
 		Entity: EntityProduct,
 		Fields: []string{
 			query.IDField, attrIsGiftcard, attrDiscountable, attrTypeID, attrCollectionID,
-			attrCategoryIDs, attrTagIDs,
+			attrCategoryIDs, attrTagIDs, attrCategoryTreeIDs,
 		},
 		Filters: map[string]any{FilterIDs: productIDs},
 		Limit:   len(productIDs),
@@ -784,6 +793,8 @@ func (w *Workflows) productFactsFor(ctx context.Context, productIDs []string) (m
 			TypeID:       typeID,
 			CategoryIDs:  stringList(records[i][attrCategoryIDs]),
 			TagIDs:       stringList(records[i][attrTagIDs]),
+			// The tree is read beside the direct memberships (ADR 0259).
+			CategoryTreeIDs: stringList(records[i][attrCategoryTreeIDs]),
 		}
 	}
 	return out, nil

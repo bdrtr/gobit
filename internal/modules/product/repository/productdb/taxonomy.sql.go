@@ -41,6 +41,54 @@ func (q *Queries) AddProductTag(ctx context.Context, arg AddProductTagParams) er
 	return err
 }
 
+const categoryLineage = `-- name: CategoryLineage :many
+WITH RECURSIVE lineage AS (
+    SELECT id AS category_id, id AS ancestor_id, parent_id, 0 AS depth
+      FROM product_category
+     WHERE id = ANY($1::text[]) AND deleted_at IS NULL
+    UNION ALL
+    SELECT l.category_id, c.id, c.parent_id, l.depth + 1
+      FROM lineage l
+      JOIN product_category c ON c.id = l.parent_id
+     WHERE c.deleted_at IS NULL
+       AND l.depth < 64
+)
+SELECT category_id, ancestor_id FROM lineage
+ORDER BY category_id, depth
+`
+
+type CategoryLineageRow struct {
+	CategoryID string
+	AncestorID string
+}
+
+// CategoryLineage returns each given category with every live ancestor, the
+// category itself first and then upward by depth (ADR 0259).
+//
+// It walks up, as the reparent's cycle check does, and stops at the same
+// sixty-four levels: an ancestry that holds a ring would not otherwise end. A
+// deleted category ends the walk, since a product is not filed under what no
+// longer exists.
+func (q *Queries) CategoryLineage(ctx context.Context, categoryIds []string) ([]CategoryLineageRow, error) {
+	rows, err := q.db.Query(ctx, categoryLineage, categoryIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CategoryLineageRow{}
+	for rows.Next() {
+		var i CategoryLineageRow
+		if err := rows.Scan(&i.CategoryID, &i.AncestorID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const clearCollectionProducts = `-- name: ClearCollectionProducts :execrows
 UPDATE product SET collection_id = NULL, updated_at = now()
 WHERE collection_id = $1 AND deleted_at IS NULL

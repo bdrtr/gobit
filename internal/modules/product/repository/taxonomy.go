@@ -477,6 +477,25 @@ func (r *Repo) ListTagsByProductIDs(ctx context.Context, productIDs []string) (m
 	return out, nil
 }
 
+// CategoryLineage returns each given category's id followed by its live
+// ancestors', nearest first, in a SINGLE query (ADR 0259).
+func (r *Repo) CategoryLineage(ctx context.Context, categoryIDs []string) (map[string][]string, error) {
+	if len(categoryIDs) == 0 {
+		return map[string][]string{}, nil
+	}
+	rows, err := r.q.CategoryLineage(ctx, categoryIDs)
+	if err != nil {
+		return nil, wrapDB(err, "could not read the categories' lineage (%d categories)", len(categoryIDs))
+	}
+
+	out := make(map[string][]string, len(categoryIDs))
+	for _, row := range rows {
+		out[row.CategoryID] = append(out[row.CategoryID], row.AncestorID)
+	}
+
+	return out, nil
+}
+
 // ListCategoriesByProductIDs returns the categories of the given products in a
 // SINGLE query.
 func (r *Repo) ListCategoriesByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Category, error) {
