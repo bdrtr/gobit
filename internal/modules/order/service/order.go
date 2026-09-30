@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
@@ -811,6 +812,8 @@ func (s *Service) CancelOrder(ctx context.Context, orderID, reason string) error
 	if err := requireID("order_id", orderID); err != nil {
 		return err
 	}
+	// Trimmed, so a reason of spaces is stored as none (D178).
+	reason = strings.TrimSpace(reason)
 	if err := checkTextLen("reason", reason); err != nil {
 		return err
 	}

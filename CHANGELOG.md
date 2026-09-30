@@ -12,6 +12,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An order's address correction is trimmed as the cart's address is** (D178).
+  **For operators:** `PUT /admin/v1/orders/{id}/shipping-address` trims each
+  field and refuses one over 512 bytes, so a change of whitespace alone no
+  longer writes a correction; a cancellation's reason is trimmed too.
+
 - **An empty text on an update clears the field** (ADR 0256, D177). **For
   integrators:** on `PATCH /admin/v1/products/{id}`, `PATCH /admin/v1/variants/{id}`
   and `PATCH /admin/v1/product-categories/{id}`, an empty `subtitle`,

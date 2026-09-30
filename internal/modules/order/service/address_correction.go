@@ -54,6 +54,29 @@ func (s *Service) CorrectShippingAddress(
 	if err := requireID("order_id", orderID); err != nil {
 		return models.OrderAddress{}, err
 	}
+	// The text is trimmed and held to its length as the cart holds the address
+	// the order copied (D178). It used to be written as given, so a field of
+	// spaces was stored where the cart stores nothing, and a change of
+	// whitespace alone wrote a new row.
+	for _, field := range []struct {
+		label string
+		value *string
+	}{
+		{"first_name", &corrected.FirstName},
+		{"last_name", &corrected.LastName},
+		{"company", &corrected.Company},
+		{"address_1", &corrected.Address1},
+		{"address_2", &corrected.Address2},
+		{"city", &corrected.City},
+		{"province", &corrected.Province},
+		{"postal_code", &corrected.PostalCode},
+		{"phone", &corrected.Phone},
+	} {
+		*field.value = strings.TrimSpace(*field.value)
+		if err := checkTextLen(field.label, *field.value); err != nil {
+			return models.OrderAddress{}, err
+		}
+	}
 
 	var current models.OrderAddress
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {

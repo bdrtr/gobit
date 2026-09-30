@@ -4,6 +4,7 @@ package order_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -268,6 +269,60 @@ func TestACorrectionKeepsWhatTheOrderHeld(t *testing.T) {
          WHERE order_id = $1 AND superseded_at IS NOT NULL`, placed.ID)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "order_addresses_superseded_after_written")
+}
+
+// TestACorrectionIsTrimmedAsTheCartTrimsIt is D178: the address a correction
+// writes is trimmed and held to its length the way the cart holds the address
+// it came from. A change of whitespace alone is not a correction, a field of
+// spaces is stored as nothing, and an over-long one is refused. A cancellation's
+// reason is trimmed the same way.
+func TestACorrectionIsTrimmedAsTheCartTrimsIt(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	placed := correctableOrder(ctx, t, svc)
+
+	superseded := func() int {
+		var n int
+		require.NoError(t, testPool.Pool().QueryRow(ctx,
+			`SELECT count(*) FROM order_addresses
+             WHERE order_id = $1 AND address_type = 'shipping' AND superseded_at IS NOT NULL`,
+			placed.ID).Scan(&n))
+		return n
+	}
+
+	_, err := svc.CorrectShippingAddress(ctx, placed.ID, models.OrderAddress{
+		FirstName: "  Ada ", Company: "   ", Address1: " 12 Wrong St ", City: "Springfield ",
+		PostalCode: " 62701",
+	})
+	require.NoError(t, err)
+	assert.Zero(t, superseded(), "a change of whitespace alone wrote a correction")
+
+	corrected, err := svc.CorrectShippingAddress(ctx, placed.ID, models.OrderAddress{
+		FirstName: "Ada", Company: "   ", Address1: "  12 Right St  ", City: "Springfield",
+		PostalCode: "62701",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "12 Right St", corrected.Address1)
+	assert.Equal(t, 1, superseded())
+	var companyIsNull bool
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT company IS NULL FROM order_addresses
+         WHERE order_id = $1 AND address_type = 'shipping' AND superseded_at IS NULL`,
+		placed.ID).Scan(&companyIsNull))
+	assert.True(t, companyIsNull, "a company of spaces is stored as nothing")
+
+	_, err = svc.CorrectShippingAddress(ctx, placed.ID, models.OrderAddress{
+		Address1: strings.Repeat("x", 513),
+	})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "error: %v", err)
+
+	canceled := correctableOrder(ctx, t, svc)
+	require.NoError(t, svc.CancelOrder(ctx, canceled.ID, "  the customer changed their mind  "))
+	var reason string
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT cancel_reason FROM orders WHERE id = $1`, canceled.ID).Scan(&reason))
+	assert.Equal(t, "the customer changed their mind", reason)
 }
 
 // TestARollbackRefusesADatabaseHoldingACorrection holds 000023's down file to
