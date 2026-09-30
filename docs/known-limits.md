@@ -657,8 +657,9 @@ past and is not corrected retroactively.
   `loyalty_points` tender declines against it until it is filled. The balance
   endpoint reports it as a negative number, and that is the decision rather
   than a defect ([ADR 0165](adr/0165-a-customer-can-pay-with-their-points.md)).
-  Store credit has no analogue: an issue is never reversed, and its only
-  negative row is written under the lock that read the balance.
+  Store credit has no analogue: an issue is never reversed, and its negative
+  rows, a hold and an expiry (ADR 0258), are written under the lock that read
+  the balance.
 
 - **A missed cart event leaves the funnel one short, forever.** Since
   [ADR 0153](adr/0153-a-shop-can-see-where-its-carts-go.md) the cart publishes

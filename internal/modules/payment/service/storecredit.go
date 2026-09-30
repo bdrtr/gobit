@@ -22,8 +22,9 @@ import (
 //
 // # The service WRITES the ledger, the provider SPENDS it
 //
-// The two methods here are the operator's acts: give credit, read the balance.
-// The hold, release and refund rows are written by the store-credit PROVIDER
+// The operator's acts are here: give credit and read the balance. So is the
+// expiry, which carries out the term an issue was given with (ADR 0258). The
+// hold, release and refund rows are written by the store-credit PROVIDER
 // (payment/storecredit), because what produces them is the payment session's state
 // machine and that machine belongs to the core contract.
 
