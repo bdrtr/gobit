@@ -40,6 +40,9 @@ const (
 	// and each module's own opens its data on it.
 	scopePaymentRead     = "payment:read"
 	scopeFulfillmentRead = "fulfillment:read"
+	// The product and variant pages read a variant's prices under this one and
+	// its stock under [scopeInventoryRead] (ADR 0260).
+	scopePricingRead = "pricing:read"
 )
 
 // routeKey is how the scope table names a route: its method and its path.

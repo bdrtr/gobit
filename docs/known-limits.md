@@ -125,13 +125,13 @@ past and is not corrected retroactively.
   region or channel. The read layer the screens go through knows nothing about
   principals, so there is nowhere below the route for a narrower answer to come
   from.
-- **Nothing proves a panel screen asks for the RIGHT privilege.** The panel
-  spells its scopes itself (it imports no module, and core knows none), and
-  `internal/arch` reads both sides from source to refuse a value no module
-  declares. That catches a misspelling. A screen listed under a plausible but
-  wrong privilege — one module's scope over another module's data — compiles,
-  passes and is caught by nothing; the judgment is written in the table's godoc
-  and nowhere else.
+- **A panel screen is held to its privilege's module only as far as a walk
+  reaches.** Since [ADR 0260](adr/0260-a-panel-screen-reads-only-what-its-privilege-owns.md)
+  a test requests every route the panel ships as an operator holding exactly
+  its privilege and holds everything it reads and writes to the module that
+  declares the privilege. A plugin's screen is the plugin's own code and is
+  walked by nothing, and a path a screen takes only for a particular value in a
+  record is walked only as far as a record holding every asked-for field goes.
 
 ## Sales channel scope
 

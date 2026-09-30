@@ -14,6 +14,10 @@ Three printing decisions are visible here and all are about not lying:
   - A related product the storefront leaves out, a draft or an archived one,
     says so beside its name (ADR 0181): the list reads as the operator wrote
     it, and a shopper sees a shorter one.
+
+The prices and the stock columns are read and printed only for an operator
+holding pricing:read and inventory:read (ADR 0260); without the grant the page
+names it under the table.
 */ -}}
 {{ define "body" }}
 <p><a href="{{ .ProductsPath }}">← Products</a></p>
@@ -32,13 +36,14 @@ Three printing decisions are visible here and all are about not lying:
 {{ if .Variants }}
 <table>
   <thead>
-    <tr><th>Title</th><th>SKU</th><th>Prices</th><th>Stock</th></tr>
+    <tr><th>Title</th><th>SKU</th>{{ if not $.Access.PricesHidden }}<th>Prices</th>{{ end }}{{ if not $.Access.StockHidden }}<th>Stock</th>{{ end }}</tr>
   </thead>
   <tbody>
   {{ range .Variants }}
     <tr>
       <td><a href="{{ $.ProductsPath }}/{{ $.Product.ID }}/variants/{{ .ID }}">{{ .Title }}</a></td>
       <td>{{ .SKU }}</td>
+      {{ if not $.Access.PricesHidden }}
       <td>
         {{ if .Prices }}
           {{ range .Prices }}
@@ -48,11 +53,14 @@ Three printing decisions are visible here and all are about not lying:
           <span>No price</span>
         {{ end }}
       </td>
-      <td>{{ if .Stock }}{{ .Stock }}{{ else }}—{{ end }}</td>
+      {{ end }}
+      {{ if not $.Access.StockHidden }}<td>{{ if .Stock }}{{ .Stock }}{{ else }}—{{ end }}</td>{{ end }}
     </tr>
   {{ end }}
   </tbody>
 </table>
+{{ if .Access.PricesHidden }}<p class="muted">Reading the prices needs the {{ .Access.PricingPrivilege }} privilege.</p>{{ end }}
+{{ if .Access.StockHidden }}<p class="muted">Reading the stock needs the {{ .Access.InventoryPrivilege }} privilege.</p>{{ end }}
 {{ else }}
 <p>This product has no variants.</p>
 {{ end }}

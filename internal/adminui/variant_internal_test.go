@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/query"
 )
 
@@ -37,6 +38,9 @@ func (f *fakePriceWriter) SetBasePriceAmount(_ context.Context, setID, currency 
 type fakeStockAdmin struct {
 	levels json.RawMessage
 	readIn error
+	// reads counts the per-location reads, which a page must not make for an
+	// operator it will not show them to.
+	reads int
 
 	calls      int
 	itemID     string
@@ -46,6 +50,7 @@ type fakeStockAdmin struct {
 }
 
 func (f *fakeStockAdmin) StockLevelsJSON(_ context.Context, itemID string) (json.RawMessage, error) {
+	f.reads++
 	if f.readIn != nil {
 		return nil, f.readIn
 	}
@@ -110,10 +115,10 @@ const stockJSON = `[{"location_id":"sloc_1","location_name":"Main warehouse",` +
 // variantURLFor is the path the tests request.
 func variantURLFor() string { return ProductsPath + "/prod_1/variants/var_1" }
 
-// getVariant loads the variant page.
+// getVariant loads the variant page as a catalog reader.
 func getVariant(panel *UI) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	variantRouter(panel).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, variantURLFor(), http.NoBody))
+	variantRouter(panel).ServeHTTP(rec, asCatalogReader(httptest.NewRequest(http.MethodGet, variantURLFor(), http.NoBody)))
 
 	return rec
 }
@@ -124,7 +129,7 @@ func postForm(panel *UI, suffix string, form url.Values) *httptest.ResponseRecor
 		strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
-	variantRouter(panel).ServeHTTP(rec, req)
+	variantRouter(panel).ServeHTTP(rec, asCatalogReader(req))
 
 	return rec
 }
@@ -530,4 +535,105 @@ func TestTwoPricesAtOneUnitAreShownNotEdited(t *testing.T) {
 	assert.Contains(t, body, "1 to 5")
 	assert.Contains(t, body, "1 or more")
 	assert.Contains(t, body, "no single base price at one unit to edit here")
+}
+
+// TestTheVariantPagesReadWhatTheirOperatorMayRead reads and prints a variant's
+// prices only for an operator holding pricing:read and its stock only for one
+// holding inventory:read, on the product page and on the variant page, and
+// names the privilege otherwise (ADR 0260).
+//
+// The read layer here answers with the prices and the stock whether or not it
+// was asked, so the page is held both ways: to what it asks for and to what it
+// prints.
+func TestTheVariantPagesReadWhatTheirOperatorMayRead(t *testing.T) {
+	t.Parallel()
+
+	for name, scopes := range map[string][]string{
+		"the product only": {scopeProductRead},
+		"the prices too":   {scopeProductRead, scopePricingRead},
+		"the stock too":    {scopeProductRead, scopeInventoryRead},
+		"all three":        {scopeProductRead, scopePricingRead, scopeInventoryRead},
+		"an administrator": {corehttp.ScopeAdmin},
+	} {
+		for page, path := range map[string]string{
+			"product": ProductsPath + "/prod_1",
+			"variant": variantURLFor(),
+		} {
+			t.Run(name+" on the "+page+" page", func(t *testing.T) {
+				t.Parallel()
+
+				principal := corehttp.Principal{ID: "user_1", Kind: "user", Scopes: scopes}
+				catalog := variantCatalog(2)
+				catalog.byEntity[EntityProduct] = []query.Record{{"id": "prod_1", "title": "Coffee"}}
+				stock := &fakeStockAdmin{levels: json.RawMessage(stockJSON)}
+				panel := newVariantPanel(t, catalog, &fakePriceWriter{}, stock)
+
+				r := chi.NewRouter()
+				r.Get(ProductPath, panel.showProduct)
+				r.Get(VariantPath, panel.showVariant)
+				req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+				rec := httptest.NewRecorder()
+				r.ServeHTTP(rec, req.WithContext(corehttp.WithPrincipal(req.Context(), principal)))
+
+				require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+				body := rec.Body.String()
+				read := map[string]bool{}
+				for _, spec := range catalog.specs {
+					read[spec.Entity] = true
+					for _, expansion := range spec.Expand {
+						read[expansion.Link] = true
+					}
+				}
+
+				prices, stocked := principal.HasScope(scopePricingRead), principal.HasScope(scopeInventoryRead)
+				assert.Equal(t, prices, read[LinkVariantPriceSet], "the prices are read only when they may be")
+				assert.Equal(t, prices, read[EntityRegion], "the currency scales serve only the prices")
+				assert.Equal(t, stocked, read[LinkVariantInventory], "the stock is read only when it may be")
+				assert.Equal(t, prices, strings.Contains(body, "199.90"))
+				assert.Equal(t, !prices, strings.Contains(body, "Reading the prices needs the pricing:read privilege."))
+				assert.Equal(t, !stocked, strings.Contains(body, "Reading the stock needs the inventory:read privilege."))
+				if page == "product" {
+					assert.Equal(t, stocked, strings.Contains(body, "<td>42</td>"))
+					assert.Equal(t, prices, strings.Contains(body, "<th>Prices</th>"))
+					assert.Equal(t, stocked, strings.Contains(body, "<th>Stock</th>"))
+					assert.NotContains(t, body, "No price",
+						"a price the operator may not read is not a missing price")
+					return
+				}
+				assert.Equal(t, stocked, stock.reads == 1, "the locations are read only when they may be")
+				assert.Equal(t, stocked, strings.Contains(body, "Main warehouse"))
+			})
+		}
+	}
+}
+
+// TestARefusedFormReadsNothingForAnOperatorWhoCannotOpenThePage keeps a
+// refused price or stock write from drawing the variant page for an operator
+// holding the write alone (ADR 0260): neither write opens that page.
+func TestARefusedFormReadsNothingForAnOperatorWhoCannotOpenThePage(t *testing.T) {
+	t.Parallel()
+
+	for form, values := range map[string]url.Values{
+		"/price": {"price_set_id": {"pset_1"}, "currency": {"TRY"}, "amount": {"not a number"}},
+		"/stock": {"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"1.5"}},
+	} {
+		t.Run(form, func(t *testing.T) {
+			t.Parallel()
+
+			catalog := variantCatalog(2)
+			panel := newVariantPanel(t, catalog, &fakePriceWriter{}, &fakeStockAdmin{})
+			req := httptest.NewRequest(http.MethodPost, variantURLFor()+form, strings.NewReader(values.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			writer := map[string]string{"/price": scopePricingWrite, "/stock": scopeInventoryWrite}[form]
+			rec := httptest.NewRecorder()
+			variantRouter(panel).ServeHTTP(rec, req.WithContext(corehttp.WithPrincipal(req.Context(),
+				corehttp.Principal{ID: "user_1", Kind: "user", Scopes: []string{writer}})))
+
+			require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+			_, variantRead := catalog.specFor(EntityVariant)
+			assert.False(t, variantRead, "the variant was read for an operator holding only %q", writer)
+			assert.NotContains(t, rec.Body.String(), "COF-250", "the page was drawn anyway")
+			assert.Contains(t, rec.Body.String(), "Not saved", "the operator is told the write was refused")
+		})
+	}
 }

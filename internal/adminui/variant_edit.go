@@ -183,14 +183,22 @@ func (u *UI) renderVariant(
 		return
 	}
 
+	// A refused price or stock form lands here under pricing:write or
+	// inventory:write, and neither opens the variant page (ADR 0260). An
+	// operator holding only the write is told why the write was refused and
+	// reads nothing of the product module's.
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	if !principal.HasScope(scopeProductRead) {
+		u.errorPage(w, r, status, "Not saved", message)
+		return
+	}
+
+	access := variantAccessOf(r)
 	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
 		Entity:  EntityVariant,
 		Fields:  []string{fieldID, fieldTitle, fieldSKU, FieldBundleComponents},
 		Filters: map[string]any{filterID: []string{variantID}},
-		Expand: []query.Expansion{
-			{Link: LinkVariantPriceSet, As: keyPriceSet, Fields: []string{fieldID, fieldPrices}},
-			{Link: LinkVariantInventory, As: keyInventory, Fields: []string{fieldID, fieldAvailable}},
-		},
+		Expand:  access.expansions(),
 	})
 	if err != nil {
 		u.catalogFailure(w, r, err, "The variant could not be read.")
@@ -201,11 +209,20 @@ func (u *UI) renderVariant(
 		return
 	}
 
+	// A hidden section is not drawn from the record either, so a read layer
+	// that answered with more than it was asked for still prints nothing the
+	// operator may not read.
 	record := records[0]
-	priceSetID, _ := recordChildID(record, keyPriceSet)
-	itemID, _ := recordChildID(record, keyInventory)
-
-	editable, others := variantPrices(record, u.currencyScales(r.Context()))
+	var priceSetID, itemID string
+	var editable []priceRow
+	var others []otherPriceRow
+	if !access.PricesHidden {
+		priceSetID, _ = recordChildID(record, keyPriceSet)
+		editable, others = variantPrices(record, u.currencyScales(r.Context()))
+	}
+	if !access.StockHidden {
+		itemID, _ = recordChildID(record, keyInventory)
+	}
 	parts, err := u.loadBundle(r, record)
 	if err != nil {
 		u.catalogFailure(w, r, err, "The variant's bundle could not be read.")
@@ -220,6 +237,7 @@ func (u *UI) renderVariant(
 		"PriceSetID":   priceSetID,
 		"ItemID":       itemID,
 		"Levels":       u.stockRows(r.Context(), itemID),
+		"Access":       access,
 		errorKey:       message,
 		"PricePath":    variantURL(productID, variantID) + "/price",
 		"StockPath":    variantURL(productID, variantID) + "/stock",

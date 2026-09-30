@@ -12,6 +12,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A panel page shows another module's data only under that module's
+  privilege** (ADR 0260, D179). **For operators:** the product and variant pages
+  show a variant's prices only to an operator holding `pricing:read` and its
+  stock only to one holding `inventory:read`, and name the missing privilege
+  otherwise; an operator who held `product:read` alone saw both before and needs
+  the two grants to see them again. A refused price or stock form draws the
+  variant page only for an operator holding `product:read`.
+
 - **A category promotion can reach the subcategories** (ADR 0259). **For
   operators:** a target rule on `category_tree_ids` with `any_in` matches a
   product filed under any of the named categories or their subcategories; a

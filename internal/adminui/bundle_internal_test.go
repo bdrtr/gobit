@@ -78,7 +78,7 @@ func bundleRequest(panel *UI, method, path, typed string) *httptest.ResponseReco
 		req = httptest.NewRequest(method, path, body)
 	}
 	rec := httptest.NewRecorder()
-	bundleRouter(panel).ServeHTTP(rec, req)
+	bundleRouter(panel).ServeHTTP(rec, asCatalogReader(req))
 	return rec
 }
 

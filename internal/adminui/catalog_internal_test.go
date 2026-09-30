@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/query"
 )
 
@@ -98,12 +99,22 @@ func catalogRouter(panel *UI) chi.Router {
 	return r
 }
 
-// getPage sends a GET and returns the recorder.
+// getPage sends a GET as a catalog reader and returns the recorder.
 func getPage(panel *UI, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
-	catalogRouter(panel).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, http.NoBody))
+	catalogRouter(panel).ServeHTTP(rec, asCatalogReader(httptest.NewRequest(http.MethodGet, path, http.NoBody)))
 
 	return rec
+}
+
+// asCatalogReader signs a request in as an operator who may read all three
+// modules a variant's row draws on: the product's privilege opens the page, and
+// the prices and the stock are read only for one holding theirs as well
+// (ADR 0260).
+func asCatalogReader(req *http.Request) *http.Request {
+	return req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+		ID: "user_1", Kind: "user", Scopes: []string{scopeProductRead, scopePricingRead, scopeInventoryRead},
+	}))
 }
 
 // TestProductListRendersRows proves the list reads through the read layer and

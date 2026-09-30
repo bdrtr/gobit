@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/query"
 )
 
@@ -26,6 +27,53 @@ type variantRow struct {
 	// Stock is the sellable quantity across all locations, or an empty string
 	// when the variant has no inventory item.
 	Stock string
+}
+
+// variantAccess says which of a variant's two other modules the operator may
+// read on the product and variant pages (ADR 0260).
+//
+// The prices are the pricing module's and the stock the inventory module's, and
+// the API hands them out under pricing:read and inventory:read. The product's
+// privilege opens the page; expanding them for everybody it admits would make
+// the page a second door into both, which is the rule the order page follows
+// for its payment and parcels (ADR 0251).
+type variantAccess struct {
+	// PricesHidden reports that the operator lacks pricing:read, so the page
+	// neither reads nor prints a price.
+	PricesHidden bool
+	// StockHidden reports that the operator lacks inventory:read.
+	StockHidden bool
+	// PricingPrivilege and InventoryPrivilege are what the page names when it
+	// hides a section, so an operator can tell a missing grant from a missing
+	// price.
+	PricingPrivilege   string
+	InventoryPrivilege string
+}
+
+// variantAccessOf reads the operator's grants off the request.
+func variantAccessOf(r *http.Request) variantAccess {
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+
+	return variantAccess{
+		PricesHidden:       !principal.HasScope(scopePricingRead),
+		StockHidden:        !principal.HasScope(scopeInventoryRead),
+		PricingPrivilege:   scopePricingRead,
+		InventoryPrivilege: scopeInventoryRead,
+	}
+}
+
+// expansions is what a variant read expands for the operator: nothing they
+// may not read is asked for.
+func (a variantAccess) expansions() []query.Expansion {
+	var out []query.Expansion
+	if !a.PricesHidden {
+		out = append(out, query.Expansion{Link: LinkVariantPriceSet, As: keyPriceSet, Fields: []string{fieldID, fieldPrices}})
+	}
+	if !a.StockHidden {
+		out = append(out, query.Expansion{Link: LinkVariantInventory, As: keyInventory, Fields: []string{fieldID, fieldAvailable}})
+	}
+
+	return out
 }
 
 // showProduct renders one product together with its variants, prices and stock.
@@ -41,7 +89,8 @@ type variantRow struct {
 // The prices and the stock DO come through links, in the same call: one
 // expansion each, both batched by the read layer. A screen that fetched them
 // per variant would issue a query per row, which is exactly what the read
-// layer's no-N+1 rule exists to prevent.
+// layer's no-N+1 rule exists to prevent. Each is expanded only for an operator
+// who may read it ([variantAccess]).
 func (u *UI) showProduct(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	product, record, relations, ok := u.loadRelations(w, r, id)
@@ -54,36 +103,43 @@ func (u *UI) showProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	access := variantAccessOf(r)
 	variants, err := u.catalog.Graph(r.Context(), query.GraphSpec{
 		Entity:  EntityVariant,
 		Fields:  []string{fieldID, fieldTitle, fieldSKU},
 		Filters: map[string]any{filterProductID: []string{id}},
-		Expand: []query.Expansion{
-			{Link: LinkVariantPriceSet, As: keyPriceSet, Fields: []string{fieldID, fieldPrices}},
-			{Link: LinkVariantInventory, As: keyInventory, Fields: []string{fieldID, fieldAvailable}},
-		},
+		Expand:  access.expansions(),
 	})
 	if err != nil {
 		u.catalogFailure(w, r, err, "The variants could not be read.")
 		return
 	}
 
-	scales := u.currencyScales(r.Context())
+	var scales map[string]int
+	if !access.PricesHidden {
+		scales = u.currencyScales(r.Context())
+	}
 	rows := make([]variantRow, 0, len(variants))
 	for _, rec := range variants {
-		rows = append(rows, variantRow{
-			ID:     recordString(rec, fieldID),
-			Title:  recordString(rec, fieldTitle),
-			SKU:    recordString(rec, fieldSKU),
-			Prices: pricesOf(rec, scales),
-			Stock:  stockOf(rec),
-		})
+		row := variantRow{
+			ID:    recordString(rec, fieldID),
+			Title: recordString(rec, fieldTitle),
+			SKU:   recordString(rec, fieldSKU),
+		}
+		if !access.PricesHidden {
+			row.Prices = pricesOf(rec, scales)
+		}
+		if !access.StockHidden {
+			row.Stock = stockOf(rec)
+		}
+		rows = append(rows, row)
 	}
 
 	u.templates.render(w, r, http.StatusOK, "product.gohtml", map[string]any{
 		titleKey:        product.Title,
 		productKey:      product,
 		"Variants":      rows,
+		"Access":        access,
 		"Relations":     relations,
 		"ProductsPath":  ProductsPath,
 		"EditPath":      ProductsPath + "/" + product.ID + "/edit",

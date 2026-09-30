@@ -19,6 +19,10 @@ only appeared once it had stock could never be stocked from this form.
 
 A bundle (ADR 0236) lists its parts, each linked to the part's own page where its
 stock is kept, and says it counts none of its own in place of the stock table.
+
+The prices are read and printed only for an operator holding pricing:read, and
+the stock only for one holding inventory:read (ADR 0260); without the grant the
+section names it.
 */ -}}
 {{ define "body" }}
 <p><a href="{{ .ProductPath }}">← Back to the product</a></p>
@@ -29,7 +33,9 @@ stock is kept, and says it counts none of its own in place of the stock table.
 {{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
 
 <h2>Prices</h2>
-{{ if .PriceSetID }}
+{{ if .Access.PricesHidden }}
+  <p class="muted">Reading the prices needs the {{ .Access.PricingPrivilege }} privilege.</p>
+{{ else if .PriceSetID }}
   {{ if .Prices }}
     {{ $canEdit := .CanEdit }}
     {{ $path := .PricePath }}
@@ -84,6 +90,8 @@ stock is kept, and says it counts none of its own in place of the stock table.
 <h2>Stock</h2>
 {{ if .Parts }}
   <p>A bundle counts no stock of its own; its parts' pages hold theirs.</p>
+{{ else if .Access.StockHidden }}
+  <p class="muted">Reading the stock needs the {{ .Access.InventoryPrivilege }} privilege.</p>
 {{ else if .ItemID }}
   {{ if .Levels }}
     {{ $canStock := .CanStock }}
