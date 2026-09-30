@@ -47,16 +47,39 @@ type createRequest struct {
 	Filters topicFilters `json:"filters"`
 	// Fields are, per topic, the payload fields the receiver is sent.
 	Fields topicFields `json:"fields"`
+	// MaxPerMinute is how many deliveries a minute the receiver takes at most;
+	// left out or zero, it takes whatever a pass can send (ADR 0275).
+	MaxPerMinute int64 `json:"max_per_minute"`
 }
 
 // updateRequest changes a receiver (ADR 0218). A field left out is kept, and a
 // field given replaces the whole of it; the URL and the secret are not changed.
+// A max_per_minute of zero lifts the cap (ADR 0275).
 type updateRequest struct {
-	Topics      *[]string     `json:"topics"`
-	Filters     *topicFilters `json:"filters"`
-	Fields      *topicFields  `json:"fields"`
-	Description *string       `json:"description"`
+	Topics       *[]string     `json:"topics"`
+	Filters      *topicFilters `json:"filters"`
+	Fields       *topicFields  `json:"fields"`
+	Description  *string       `json:"description"`
+	MaxPerMinute *int64        `json:"max_per_minute"`
 }
+
+// maxRate bounds a receiver's cap: a pass sends at most [deliveryLimit]
+// deliveries in all, and a cap far above it is a typo rather than a rate.
+const maxRate = 10_000
+
+// validateRate refuses a cap that is no rate (ADR 0275).
+func validateRate(maxPerMinute int64) error {
+	if maxPerMinute < 0 || maxPerMinute > maxRate {
+		return coreerrors.Invalid(codeInvalidRequest,
+			"max_per_minute is how many deliveries a minute the receiver takes, from 1 to %d, "+
+				"or 0 for no cap: %d", maxRate, maxPerMinute)
+	}
+
+	return nil
+}
+
+// rateField renders a receiver's cap: null when it has none.
+func rateField(maxPerMinute int64) *int64 { return rateColumn(maxPerMinute) }
 
 // createResponse is the ONLY time the secret is returned.
 type createResponse struct {
@@ -66,7 +89,9 @@ type createResponse struct {
 	Filters     topicFilters `json:"filters"`
 	Fields      topicFields  `json:"fields"`
 	Description string       `json:"description"`
-	CreatedAt   time.Time    `json:"created_at"`
+	// MaxPerMinute is the receiver's cap; null when it has none (ADR 0275).
+	MaxPerMinute *int64    `json:"max_per_minute"`
+	CreatedAt    time.Time `json:"created_at"`
 	// Secret is the signing key. It is returned here and NOWHERE else — not by
 	// the listing, not by any other endpoint — so it has to be stored by
 	// whoever registered the receiver at this moment.
@@ -86,14 +111,16 @@ type endpointResponse struct {
 	Filters     topicFilters `json:"filters"`
 	Fields      topicFields  `json:"fields"`
 	Description string       `json:"description"`
-	CreatedAt   time.Time    `json:"created_at"`
+	// MaxPerMinute is the receiver's cap; null when it has none (ADR 0275).
+	MaxPerMinute *int64    `json:"max_per_minute"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 // toEndpointResponse renders a receiver without its secret.
 func toEndpointResponse(e *endpoint) endpointResponse {
 	return endpointResponse{
 		ID: e.ID, URL: e.URL, Topics: e.Topics, Filters: e.Filters, Fields: e.Fields,
-		Description: e.Description, CreatedAt: e.CreatedAt,
+		Description: e.Description, MaxPerMinute: rateField(e.MaxPerMinute), CreatedAt: e.CreatedAt,
 	}
 }
 
@@ -233,7 +260,14 @@ func (m *webhookModule) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	created, err := m.store.createEndpoint(ctx, target, topics, filters, fields, strings.TrimSpace(req.Description))
+	if err := validateRate(req.MaxPerMinute); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	created, err := m.store.createEndpoint(ctx, target, topics, filters, fields, strings.TrimSpace(req.Description),
+		req.MaxPerMinute)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 
@@ -244,14 +278,15 @@ func (m *webhookModule) handleCreate(w http.ResponseWriter, r *http.Request) {
 		"endpoint_id", created.ID, "url", created.URL, "topics", strings.Join(topics, ","))
 
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: createResponse{
-		ID:          created.ID,
-		URL:         created.URL,
-		Topics:      created.Topics,
-		Filters:     created.Filters,
-		Fields:      created.Fields,
-		Description: created.Description,
-		CreatedAt:   created.CreatedAt,
-		Secret:      created.Secret,
+		ID:           created.ID,
+		URL:          created.URL,
+		Topics:       created.Topics,
+		Filters:      created.Filters,
+		Fields:       created.Fields,
+		Description:  created.Description,
+		MaxPerMinute: rateField(created.MaxPerMinute),
+		CreatedAt:    created.CreatedAt,
+		Secret:       created.Secret,
 		SecretNote: "this is the only time the secret is returned; " +
 			"store it now, there is no endpoint that shows it again",
 	}})
@@ -295,11 +330,19 @@ func (m *webhookModule) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	if req.Topics == nil && req.Filters == nil && req.Fields == nil && req.Description == nil {
+	if req.Topics == nil && req.Filters == nil && req.Fields == nil && req.Description == nil &&
+		req.MaxPerMinute == nil {
 		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
-			"the request changes nothing; it names topics, filters, fields or description"))
+			"the request changes nothing; it names topics, filters, fields, description or max_per_minute"))
 
 		return
+	}
+	if req.MaxPerMinute != nil {
+		if err := validateRate(*req.MaxPerMinute); err != nil {
+			corehttp.WriteError(ctx, w, err)
+
+			return
+		}
 	}
 
 	updated, found, err := m.store.updateEndpoint(ctx, id, func(current endpoint) (endpoint, error) {
@@ -319,6 +362,9 @@ func (m *webhookModule) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Description != nil {
 			next.Description = strings.TrimSpace(*req.Description)
+		}
+		if req.MaxPerMinute != nil {
+			next.MaxPerMinute = *req.MaxPerMinute
 		}
 		filters, fields, err := validateNarrowing(next.Topics, next.Filters, next.Fields)
 		if err != nil {

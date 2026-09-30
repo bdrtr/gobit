@@ -691,8 +691,10 @@ past and is not corrected retroactively.
   included.** Its own gate fails the build in both directions. A receiver is
   owed only the topics it registered for, only the events its filters match, and
   only the fields it lists (ADR 0218), so a receiver of `cart.created` is still
-  owed one delivery per opened cart in the regions it names. There is no rate
-  limit.
+  owed one delivery per opened cart in the regions it names. Its rate is per
+  minute and nothing finer: `max_per_minute` caps what one pass sends it, and
+  the pass runs once a minute
+  ([ADR 0275](adr/0275-a-webhook-receiver-sets-its-rate.md)).
 
 - **No lane proves a generated project works at the version it PINS.** Every
   out-of-tree proof rewrites the generated `go.mod` to point at the checkout, so

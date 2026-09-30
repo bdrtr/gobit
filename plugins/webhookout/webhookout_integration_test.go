@@ -242,7 +242,7 @@ func register(t *testing.T, m *webhookModule, target string, topics ...string) e
 	validated, err := validateTopics(topics)
 	require.NoError(t, err)
 
-	e, err := m.store.createEndpoint(t.Context(), target, validated, nil, nil, "an integration test")
+	e, err := m.store.createEndpoint(t.Context(), target, validated, nil, nil, "an integration test", 0)
 	require.NoError(t, err)
 
 	return e
@@ -324,7 +324,7 @@ func TestTheMigrationIsReversibleWithDataInIt(t *testing.T) {
 	st := newStore(testPoolFor(t, dsn).Pool())
 	e, err := st.createEndpoint(ctx, "https://receiver.test/hook",
 		[]string{topicOrderPlaced}, topicFilters{topicOrderPlaced: {"region_id": {"reg_1"}}},
-		topicFields{topicOrderPlaced: {"order_id"}}, "with data")
+		topicFields{topicOrderPlaced: {"order_id"}}, "with data", 0)
 	require.NoError(t, err)
 	_, err = st.enqueue(ctx, "evt_1", topicOrderPlaced, time.Now(),
 		map[string]any{"order_id": "ord_1"}, nil)
@@ -828,4 +828,68 @@ func testPoolFor(t *testing.T, dsn string) *db.Pool {
 	t.Cleanup(pool.Close)
 
 	return pool
+}
+
+// TestAReceiverIsSentNoMoreThanItsRate is ADR 0275: a receiver capped at two a
+// minute is sent its two oldest in a pass while an uncapped one is sent all of
+// its own, the rest wait with no attempt counted, and the next pass sends the
+// next two.
+func TestAReceiverIsSentNoMoreThanItsRate(t *testing.T) {
+	m := freshModule(t)
+
+	var cappedSecret, freeSecret string
+	capped := newReceiver(t, func() string { return cappedSecret })
+	free := newReceiver(t, func() string { return freeSecret })
+	validated, err := validateTopics([]string{topicOrderPlaced})
+	require.NoError(t, err)
+	cappedEndpoint, err := m.store.createEndpoint(t.Context(), capped.server.URL, validated, nil, nil, "capped", 2)
+	require.NoError(t, err)
+	cappedSecret = cappedEndpoint.Secret
+	freeSecret = register(t, m, free.server.URL, topicOrderPlaced).Secret
+
+	for i := range 5 {
+		require.NoError(t, m.onEvent(t.Context(), eventbus.Event{
+			ID: fmt.Sprintf("order.placed:ord_rate_%d", i), Name: topicOrderPlaced,
+			Data: map[string]any{"order_id": fmt.Sprintf("ord_rate_%d", i)},
+		}))
+	}
+
+	// A pass sends concurrently, so what is asserted is WHICH deliveries a
+	// pass sent, not the order they arrived in.
+	orders := func(seen []receivedRequest) []string {
+		out := make([]string, 0, len(seen))
+		for _, d := range seen {
+			var sent struct {
+				Data struct {
+					OrderID string `json:"order_id"`
+				} `json:"data"`
+			}
+			require.NoError(t, json.Unmarshal(d.Body, &sent))
+			out = append(out, sent.Data.OrderID)
+		}
+		return out
+	}
+
+	require.NoError(t, runPass(t, m))
+	require.Len(t, capped.seen(), 2, "a pass sends a capped receiver its cap")
+	assert.Len(t, free.seen(), 5, "an uncapped receiver is sent everything due")
+	assert.ElementsMatch(t, []string{"ord_rate_0", "ord_rate_1"}, orders(capped.seen()), "the oldest first")
+
+	var waiting, attempted int
+	require.NoError(t, testPool.Pool().QueryRow(t.Context(), `
+		SELECT count(*) FILTER (WHERE delivered_at IS NULL), count(*) FILTER (WHERE delivered_at IS NULL AND attempts > 0)
+		FROM webhook_delivery WHERE endpoint_id = $1`, cappedEndpoint.ID).Scan(&waiting, &attempted))
+	assert.Equal(t, 3, waiting, "the rest wait for the next pass")
+	assert.Zero(t, attempted, "waiting is not an attempt")
+
+	require.NoError(t, runPass(t, m))
+	require.Len(t, capped.seen(), 4, "the next pass sends the next two")
+	assert.ElementsMatch(t, []string{"ord_rate_2", "ord_rate_3"}, orders(capped.seen()[2:]))
+
+	// The raw write is the witness: the API refuses a cap of zero before the
+	// schema is asked, so only the schema can say it would too.
+	_, err = testPool.Pool().Exec(t.Context(),
+		`UPDATE webhook_endpoint SET max_per_minute = 0 WHERE id = $1`, cappedEndpoint.ID)
+	require.Error(t, err, "a cap of zero is no rate")
+	assert.Contains(t, err.Error(), "webhook_endpoint_rate_positive")
 }

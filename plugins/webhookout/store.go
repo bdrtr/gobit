@@ -59,7 +59,28 @@ type endpoint struct {
 	Filters     topicFilters
 	Fields      topicFields
 	Description string
-	CreatedAt   time.Time
+	// MaxPerMinute is how many deliveries a pass sends it at most; zero is no
+	// cap (ADR 0275).
+	MaxPerMinute int64
+	CreatedAt    time.Time
+}
+
+// rateColumn is a receiver's cap as the column holds it: NULL for none.
+func rateColumn(maxPerMinute int64) *int64 {
+	if maxPerMinute <= 0 {
+		return nil
+	}
+
+	return &maxPerMinute
+}
+
+// rateOf reads the column back: zero for none.
+func rateOf(column *int64) int64 {
+	if column == nil {
+		return 0
+	}
+
+	return *column
 }
 
 // delivery is one delivery owed to one receiver.
@@ -121,6 +142,7 @@ func newStore(pool *pgxpool.Pool) *store { return &store{pool: pool} }
 // accepts a weak key is the surface that gets one.
 func (s *store) createEndpoint(
 	ctx context.Context, url string, topics []string, filters topicFilters, fields topicFields, description string,
+	maxPerMinute int64,
 ) (endpoint, error) {
 	id, err := newID(endpointPrefix)
 	if err != nil {
@@ -140,12 +162,13 @@ func (s *store) createEndpoint(
 	}
 	row := endpoint{
 		ID: id, URL: url, Secret: secret, Topics: topics, Filters: filters, Fields: fields, Description: description,
+		MaxPerMinute: maxPerMinute,
 	}
 	err = s.pool.QueryRow(ctx, `
-		INSERT INTO webhook_endpoint (id, url, secret, topics, filters, fields, description)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO webhook_endpoint (id, url, secret, topics, filters, fields, description, max_per_minute)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at`,
-		id, url, secret, topics, filters, fields, description).Scan(&row.CreatedAt)
+		id, url, secret, topics, filters, fields, description, rateColumn(maxPerMinute)).Scan(&row.CreatedAt)
 	if err != nil {
 		return endpoint{}, wrapDB(err, "the webhook endpoint could not be registered")
 	}
@@ -160,7 +183,7 @@ func (s *store) createEndpoint(
 // an admin response, and the only thing needing it is the sender.
 func (s *store) listEndpoints(ctx context.Context) ([]endpoint, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, url, topics, filters, fields, description, created_at
+		SELECT id, url, topics, filters, fields, description, max_per_minute, created_at
 		FROM webhook_endpoint
 		ORDER BY created_at, id`)
 	if err != nil {
@@ -170,10 +193,15 @@ func (s *store) listEndpoints(ctx context.Context) ([]endpoint, error) {
 
 	var out []endpoint
 	for rows.Next() {
-		var e endpoint
-		if err := rows.Scan(&e.ID, &e.URL, &e.Topics, &e.Filters, &e.Fields, &e.Description, &e.CreatedAt); err != nil {
+		var (
+			e    endpoint
+			rate *int64
+		)
+		if err := rows.Scan(&e.ID, &e.URL, &e.Topics, &e.Filters, &e.Fields, &e.Description, &rate,
+			&e.CreatedAt); err != nil {
 			return nil, wrapDB(err, "a webhook endpoint row could not be read")
 		}
+		e.MaxPerMinute = rateOf(rate)
 		out = append(out, e)
 	}
 
@@ -195,10 +223,13 @@ func (s *store) updateEndpoint(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	current := endpoint{ID: id}
+	var rate *int64
 	err = tx.QueryRow(ctx, `
-		SELECT url, topics, filters, fields, description, created_at
+		SELECT url, topics, filters, fields, description, max_per_minute, created_at
 		FROM webhook_endpoint WHERE id = $1 FOR UPDATE`, id).
-		Scan(&current.URL, &current.Topics, &current.Filters, &current.Fields, &current.Description, &current.CreatedAt)
+		Scan(&current.URL, &current.Topics, &current.Filters, &current.Fields, &current.Description, &rate,
+			&current.CreatedAt)
+	current.MaxPerMinute = rateOf(rate)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return endpoint{}, false, nil
 	}
@@ -211,8 +242,9 @@ func (s *store) updateEndpoint(
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE webhook_endpoint
-		SET topics = $2, filters = $3, fields = $4, description = $5, updated_at = now()
-		WHERE id = $1`, id, next.Topics, next.Filters, next.Fields, next.Description); err != nil {
+		SET topics = $2, filters = $3, fields = $4, description = $5, max_per_minute = $6, updated_at = now()
+		WHERE id = $1`, id, next.Topics, next.Filters, next.Fields, next.Description,
+		rateColumn(next.MaxPerMinute)); err != nil {
 		return endpoint{}, true, wrapDB(err, "the webhook endpoint could not be updated")
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -337,21 +369,38 @@ func (s *store) enqueue(
 // instance's claim; the advisory lock the scheduler takes already makes two
 // concurrent passes unlikely, and "unlikely" is not "impossible" (a process
 // partitioned from the database after taking the lock is the documented case).
+//
+// # A receiver's rate (ADR 0275)
+//
+// A receiver that set max_per_minute is offered at most that many of its due
+// deliveries in a pass, oldest first: the window numbers each receiver's due
+// rows and the claim takes only the ones inside its cap. The rest are not
+// leased, so they wait for the next pass with no attempt counted. The window
+// runs before the lock, over the due rows only; a row another pass holds is
+// skipped as before, which can leave a receiver a pass short of its cap and
+// never over it.
 const claimSQL = `
-UPDATE webhook_delivery d
-SET next_attempt_at = now() + make_interval(secs => $2)
-FROM (
+WITH due AS (
+    SELECT d.id, d.created_at, e.max_per_minute,
+           row_number() OVER (PARTITION BY d.endpoint_id ORDER BY d.created_at, d.id) AS place
+    FROM webhook_delivery d
+    JOIN webhook_endpoint e ON e.id = d.endpoint_id
+    WHERE d.delivered_at IS NULL
+      AND d.dead_lettered_at IS NULL
+      AND d.next_attempt_at <= now()
+), allowed AS (
     SELECT id
     FROM webhook_delivery
-    WHERE delivered_at IS NULL
-      AND dead_lettered_at IS NULL
-      AND next_attempt_at <= now()
+    WHERE id IN (SELECT id FROM due WHERE max_per_minute IS NULL OR place <= max_per_minute)
     ORDER BY created_at, id
     LIMIT $1
     FOR UPDATE SKIP LOCKED
-) due
+)
+UPDATE webhook_delivery d
+SET next_attempt_at = now() + make_interval(secs => $2)
+FROM allowed
 JOIN webhook_endpoint e ON TRUE
-WHERE d.id = due.id AND e.id = d.endpoint_id
+WHERE d.id = allowed.id AND e.id = d.endpoint_id
 RETURNING d.id, d.endpoint_id, d.url, e.secret, d.event_id, d.event_name,
           d.occurred_at, d.payload, d.redacted, d.attempts`
 

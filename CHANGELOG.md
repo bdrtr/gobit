@@ -24,6 +24,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A webhook receiver sets its rate** (ADR 0275). **For operators:**
+  `POST /admin/v1/webhooks` and `PATCH /admin/v1/webhooks/{id}` take
+  `max_per_minute` (1 to 10000; zero on a change lifts it), the listing shows
+  it, and each delivery pass sends a receiver at most that many of its due
+  deliveries, oldest first; the rest wait for the next pass with no attempt
+  counted. Migration 000003 of `plugins/webhookout` adds the column.
+
 - **A store credit names the order it compensates** (ADR 0274). **For
   operators:** `POST /admin/v1/store-credits` takes an optional `order_id`,
   every history row carries it, and `GET /admin/v1/store-credits` takes

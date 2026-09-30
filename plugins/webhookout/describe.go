@@ -54,6 +54,13 @@ const narrowing = "\"filters\" names, per topic, payload fields and the values o
 	"fields those topics carry, and \"topic_fields\" on the listing lists them; a redacted " +
 	"field is none of them."
 
+// rate describes a receiver's cap (ADR 0275).
+const rate = "\"max_per_minute\" is how many deliveries a minute the receiver takes at most, " +
+	"from 1 to 10000; the delivery job runs once a minute, so a pass sends it at most that many " +
+	"of its due deliveries, oldest first, and the rest wait for the next pass with no attempt " +
+	"counted. Left out or zero at registration, and zero on a change, it takes whatever a pass " +
+	"can send."
+
 // describeReceivers records the registration surface.
 func (m *webhookModule) describeReceivers(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathReceivers, openapi.Operation{
@@ -72,6 +79,7 @@ func (m *webhookModule) describeReceivers(d *openapi.Doc) {
 			"present to be told. Read \"forwarded_topics\" on the listing for the set that " +
 			"is accepted." +
 			"\n\n" + narrowing +
+			"\n\n" + rate +
 			"\n\n" +
 			"Requires the " + ScopeWrite + " scope.",
 		RequestBody: d.RequestBody(createRequest{}),
@@ -99,7 +107,7 @@ func (m *webhookModule) describeReceivers(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPatch, pathReceiver, openapi.Operation{
-		Summary: "Changes a receiver's topics, filters, fields or description.",
+		Summary: "Changes a receiver's topics, filters, fields, description or rate.",
 		Description: "A field left out of the body is kept; a field given replaces the whole " +
 			"of it. The URL and the secret are not changed here: a new URL is a new receiver, " +
 			"with a new secret. A topic taken away while a filter or a field list still names " +
@@ -107,6 +115,7 @@ func (m *webhookModule) describeReceivers(d *openapi.Doc) {
 			"to the events after it; the deliveries already queued are sent as they were " +
 			"written." +
 			"\n\n" + narrowing +
+			"\n\n" + rate +
 			"\n\n" +
 			"Requires the " + ScopeWrite + " scope.",
 		RequestBody: d.RequestBody(updateRequest{}),

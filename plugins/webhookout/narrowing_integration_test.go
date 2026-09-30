@@ -46,7 +46,7 @@ func registerNarrowed(
 	require.NoError(t, err)
 	filters, fields, err = validateNarrowing(validated, filters, fields)
 	require.NoError(t, err)
-	e, err := m.store.createEndpoint(t.Context(), target, validated, filters, fields, "narrowed")
+	e, err := m.store.createEndpoint(t.Context(), target, validated, filters, fields, "narrowed", 0)
 	require.NoError(t, err)
 
 	return e
@@ -225,7 +225,7 @@ func TestTheNarrowingRollsBackAndItsReceiversStay(t *testing.T) {
 	pool := testPoolFor(t, dsn)
 	st := newStore(pool.Pool())
 	_, err := st.createEndpoint(ctx, "https://narrowed.test/hook", []string{topicCartCreated},
-		topicFilters{topicCartCreated: {"region_id": {"reg_1"}}}, nil, "narrowed")
+		topicFilters{topicCartCreated: {"region_id": {"reg_1"}}}, nil, "narrowed", 0)
 	require.NoError(t, err)
 
 	// Back to 000001 whatever came after 000002: a step count written as a
@@ -330,4 +330,57 @@ func TestTheNarrowingColumnsHoldObjects(t *testing.T) {
 		require.ErrorAs(t, err, &pgErr, constraint)
 		assert.Equal(t, constraint, pgErr.ConstraintName)
 	}
+}
+
+// TestAReceiversRateIsSetChangedAndLifted is ADR 0275 at the door: a rate
+// given at registration is kept and listed, a change replaces it, zero lifts
+// it to null, and a rate that is no rate is refused.
+func TestAReceiversRateIsSetChangedAndLifted(t *testing.T) {
+	m := freshModule(t)
+	h := adminRouter(m)
+
+	created := call(t, h, http.MethodPost, "/admin/v1/webhooks",
+		`{"url":"https://rate.test/hook","topics":["order.placed"],"max_per_minute":30}`)
+	require.Equal(t, http.StatusCreated, created.Code, created.Body.String())
+	var registered struct {
+		Data createResponse `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(created.Body.Bytes(), &registered))
+	require.NotNil(t, registered.Data.MaxPerMinute)
+	assert.Equal(t, int64(30), *registered.Data.MaxPerMinute)
+	id := registered.Data.ID
+
+	rate := func() *int64 {
+		listed := call(t, h, http.MethodGet, "/admin/v1/webhooks/", "")
+		require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+		var listing endpointListResponse
+		require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &listing))
+		require.Len(t, listing.Data, 1)
+		return listing.Data[0].MaxPerMinute
+	}
+	require.NotNil(t, rate())
+	assert.Equal(t, int64(30), *rate())
+
+	changed := call(t, h, http.MethodPatch, "/admin/v1/webhooks/"+id, `{"max_per_minute":5}`)
+	require.Equal(t, http.StatusOK, changed.Code, changed.Body.String())
+	require.NotNil(t, rate())
+	assert.Equal(t, int64(5), *rate())
+
+	described := call(t, h, http.MethodPatch, "/admin/v1/webhooks/"+id, `{"description":"kept rate"}`)
+	require.Equal(t, http.StatusOK, described.Code, described.Body.String())
+	require.NotNil(t, rate(), "a change that names no rate keeps it")
+	assert.Equal(t, int64(5), *rate())
+
+	lifted := call(t, h, http.MethodPatch, "/admin/v1/webhooks/"+id, `{"max_per_minute":0}`)
+	require.Equal(t, http.StatusOK, lifted.Code, lifted.Body.String())
+	assert.Nil(t, rate(), "zero lifts the cap")
+	assert.Contains(t, lifted.Body.String(), `"max_per_minute":null`)
+
+	for _, body := range []string{`{"max_per_minute":-1}`, `{"max_per_minute":10001}`} {
+		refused := call(t, h, http.MethodPatch, "/admin/v1/webhooks/"+id, body)
+		assert.Equal(t, http.StatusUnprocessableEntity, refused.Code, body)
+	}
+	refused := call(t, h, http.MethodPost, "/admin/v1/webhooks",
+		`{"url":"https://rate.test/other","topics":["order.placed"],"max_per_minute":-3}`)
+	assert.Equal(t, http.StatusUnprocessableEntity, refused.Code)
 }
