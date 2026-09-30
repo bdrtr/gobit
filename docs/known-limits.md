@@ -117,8 +117,10 @@ past and is not corrected retroactively.
   [`docs/commerce-flows.md`](commerce-flows.md).
 - **An admin session names no device.** Since
   [ADR 0267](adr/0267-a-session-can-be-closed-alone.md) a person lists their
-  sessions and closes one or all the others, but a session is shown by when it
-  began and when it ends, not by the browser or the place it was opened from.
+  sessions and closes one or all the others, through the API or the panel
+  ([ADR 0268](adr/0268-the-panel-shows-a-persons-sessions.md)), but a session is
+  shown by when it began and when it ends, not by the browser or the place it
+  was opened from.
 - **The panel's privileges are per SCREEN, not per record or per field.** Since
   [ADR 0156](adr/0156-a-panel-screen-costs-a-privilege.md) every panel path is
   listed with the scope it requires, and the scope decides whether the screen

@@ -234,3 +234,69 @@ func TestAnOperatorEnrollsTheirFactorInThePanel(t *testing.T) {
 	assert.Contains(t, send(http.MethodGet, adminui.SecondFactorPath, nil).Body.String(),
 		"This account has no second factor.")
 }
+
+// TestAnOperatorClosesAnotherSessionInThePanel is ADR 0268 on the production
+// wiring: an operator signed in twice sees both sessions in the panel, the one
+// the request is made with marked, closes the other there, and that other
+// token is refused from then on while the current one goes on.
+func TestAnOperatorClosesAnotherSessionInThePanel(t *testing.T) {
+	ctx := context.Background()
+
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", migrateDSN(t))
+	t.Setenv("JWT_SECRET", "panel-sessions-secret-32-bytes-long-ok")
+	t.Setenv("LOG_LEVEL", "warn")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	app, closeApp, err := openApplication(ctx, cfg, slog.New(slog.DiscardHandler), errorreport.NewSink(),
+		Options{}, publishesOnly)
+	require.NoError(t, err)
+	defer closeApp()
+
+	users, err := container.Resolve[*authsvc.Service](app.container, auth.ServiceName)
+	require.NoError(t, err)
+	const password = "panel-sessions-password-42"
+	operator, err := users.CreateUser(ctx, authsvc.CreateUserInput{
+		Email: "panel-sessions@gobit.test", FirstName: "Two", LastName: "Devices", Scopes: []string{"product:read"},
+	}, password)
+	require.NoError(t, err)
+	interop, err := container.Resolve[*authsvc.Interop](app.container, auth.InteropName)
+	require.NoError(t, err)
+
+	laptopToken, _, err := users.Login(ctx, operator.Email, password, "")
+	require.NoError(t, err)
+	phoneToken, _, err := users.Login(ctx, operator.Email, password, "")
+	require.NoError(t, err)
+	laptop, err := interop.AuthenticateAdmin(ctx, "Bearer", laptopToken)
+	require.NoError(t, err)
+	phone, err := interop.AuthenticateAdmin(ctx, "Bearer", phoneToken)
+	require.NoError(t, err)
+
+	panel, err := adminui.FromContainer(app.container, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), phone))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	page := send(http.MethodGet, adminui.SessionsPath, nil)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), "this session")
+	assert.Contains(t, page.Body.String(), `value="`+laptop.SessionID+`"`, "the other session can be closed")
+	assert.NotContains(t, page.Body.String(), `value="`+phone.SessionID+`"`)
+
+	closed := send(http.MethodPost, adminui.SessionsRevokePath, url.Values{"id": {laptop.SessionID}})
+	require.Equal(t, http.StatusSeeOther, closed.Code, closed.Body.String())
+	_, err = interop.AuthenticateAdmin(ctx, "Bearer", laptopToken)
+	require.Error(t, err, "the closed session's token is refused")
+	_, err = interop.AuthenticateAdmin(ctx, "Bearer", phoneToken)
+	require.NoError(t, err, "the current one goes on")
+	assert.Contains(t, send(http.MethodGet, adminui.SessionsPath, nil).Body.String(), "No other session is open.")
+}

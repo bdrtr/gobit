@@ -181,7 +181,10 @@ type UI struct {
 	// secondFactor is the person's own second factor (ADR 0266); nil when the
 	// installation registers none.
 	secondFactor SecondFactorAdmin
-	scopes       map[string]string
+	// sessions is the person's own sessions (ADR 0268); nil when the
+	// installation registers none.
+	sessions SessionAdmin
+	scopes   map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -237,7 +240,11 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	}
 	// The second factor is optional for the same reason: an installation that
 	// binds its own identity may offer none, and the screen then says so.
-	secondFactor, err := optionalService[SecondFactorAdmin](c, ServiceSecondFactor)
+	secondFactor, err := optionalService[SecondFactorAdmin](c, ServiceAuthAdmin)
+	if err != nil {
+		return nil, err
+	}
+	sessions, err := optionalService[SessionAdmin](c, ServiceAuthAdmin)
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +272,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		prices:        prices,
 		stock:         stock,
 		secondFactor:  secondFactor,
+		sessions:      sessions,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

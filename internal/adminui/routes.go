@@ -77,6 +77,9 @@ func (u *UI) routes(r chi.Router) {
 	r.Post(SecondFactorEnrollPath, u.needs(http.MethodPost, SecondFactorEnrollPath, u.submitSecondFactorEnroll))
 	r.Post(SecondFactorConfirmPath, u.needs(http.MethodPost, SecondFactorConfirmPath, u.submitSecondFactorConfirm))
 	r.Post(SecondFactorRemovePath, u.needs(http.MethodPost, SecondFactorRemovePath, u.submitSecondFactorRemove))
+	r.Get(SessionsPath, u.needs(http.MethodGet, SessionsPath, u.showSessions))
+	r.Post(SessionsRevokePath, u.needs(http.MethodPost, SessionsRevokePath, u.submitSessionRevoke))
+	r.Post(SessionsRevokeOthersPath, u.needs(http.MethodPost, SessionsRevokeOthersPath, u.submitSessionsRevokeOthers))
 
 	// The registered screens come LAST, after every path the panel ships, so a
 	// plugin cannot shadow one by registration order — and it could not anyway:

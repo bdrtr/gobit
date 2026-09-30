@@ -24,6 +24,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel shows a person's sessions** (ADR 0268). **For operators:** the
+  panel's Sessions screen, open to everybody who can sign in, lists your open
+  sessions with the current one marked and closes one or every other.
+
 - **An admin session can be closed alone** (ADR 0267). **For operators:**
   `GET /admin/v1/auth/sessions` lists your open sessions with the current one
   marked; `POST /admin/v1/auth/sessions/{id}/revoke` closes one and

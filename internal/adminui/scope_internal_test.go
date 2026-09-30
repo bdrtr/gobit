@@ -256,15 +256,16 @@ func TestEachRouteDemandsThePrivilegeItsOwnPathIsListedUnder(t *testing.T) {
 		})
 	}
 
-	// NINE routes carry none, and each is deliberate: the login page on both
+	// TWELVE routes carry none, and each is deliberate: the login page on both
 	// verbs, the sign-out, the stylesheet and the panel's entry point (which
-	// holds no data and refuses by having nowhere to send the operator), and
-	// the person's own second factor on its four (ADR 0266), which asks for a
-	// session and no privilege. An exact count rather than a floor: a tenth
-	// open route would otherwise join them silently.
-	const openRoutes = 9
+	// holds no data and refuses by having nowhere to send the operator), the
+	// person's own second factor on its four (ADR 0266) and their own sessions
+	// on three (ADR 0268), which ask for a session and no privilege. An exact
+	// count rather than a floor: a thirteenth open route would otherwise join
+	// them silently.
+	const openRoutes = 12
 	assert.Equal(t, len(routes)-openRoutes, checked,
-		"%d of %d routes carry a privilege; %d are open, and only nine are meant to be",
+		"%d of %d routes carry a privilege; %d are open, and only twelve are meant to be",
 		checked, len(routes), len(routes)-checked)
 
 	// And the table lists nothing the router does not bind: a stale entry would

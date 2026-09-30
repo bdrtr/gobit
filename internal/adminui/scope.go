@@ -93,6 +93,10 @@ func builtInScopes() map[string]string {
 		routeKey(post, SecondFactorEnrollPath):  "",
 		routeKey(post, SecondFactorConfirmPath): "",
 		routeKey(post, SecondFactorRemovePath):  "",
+		// So are the person's own sessions (ADR 0268).
+		routeKey(get, SessionsPath):              "",
+		routeKey(post, SessionsRevokePath):       "",
+		routeKey(post, SessionsRevokeOthersPath): "",
 
 		routeKey(get, ProductsPath):     scopeProductRead,
 		routeKey(get, ProductPath):      scopeProductRead,

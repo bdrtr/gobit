@@ -86,6 +86,7 @@ var pages = []string{
 	"inventory.gohtml",
 	"sales.gohtml",
 	"second_factor.gohtml",
+	"sessions.gohtml",
 	"reviews.gohtml",
 	"plugin_page.gohtml",
 }
@@ -273,6 +274,7 @@ func sections() []navItem {
 		// opens: it is open to everybody, so the door reaches it only when no
 		// section is (ADR 0266).
 		{Label: secondFactorLabel, Path: SecondFactorPath},
+		{Label: sessionsLabel, Path: SessionsPath},
 	}
 }
 

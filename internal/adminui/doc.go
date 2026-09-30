@@ -69,8 +69,9 @@
 // # The sections, and what the sales report does not print
 //
 // The menu holds the catalog, the orders, the sales report, the customers, the
-// inventory, the reviews and the person's own second factor, in that order; the
-// last is open to everybody who can sign in (ADR 0266). The list lives in one
+// inventory, the reviews, and the person's own second factor and sessions, in
+// that order; the last two are open to everybody who can sign in (ADR 0266,
+// ADR 0268). The list lives in one
 // place next to
 // the routes that serve it, so a section enters the menu by being added there
 // rather than by being written into a template nobody edits when adding a

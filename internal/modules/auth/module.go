@@ -105,7 +105,8 @@ const (
 	// (Principle 2.4).
 	InteropName = ModuleName + ".interop"
 	// AdminName is the name of the module's surface for the admin panel, in
-	// primitives (ADR 0013): today the person's own second factor (ADR 0266).
+	// primitives (ADR 0013): the person's own second factor (ADR 0266) and
+	// sessions (ADR 0268).
 	AdminName = ModuleName + ".admin"
 	// ProviderName is the name of the query provider in the container
 	// (ADR 0004).
@@ -316,7 +317,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := c.Provide(InteropName, service.NewInterop(m.svc)); err != nil {
 		return err
 	}
-	if err := c.Provide(AdminName, service.NewSecondFactorSurface(m.svc, m.opts.MFAIssuer)); err != nil {
+	if err := c.Provide(AdminName, service.NewAccountSurface(m.svc, m.opts.MFAIssuer)); err != nil {
 		return err
 	}
 	if err := c.Provide(ProviderName, service.NewQueryProvider(m.svc)); err != nil {

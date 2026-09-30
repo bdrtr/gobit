@@ -1,0 +1,46 @@
+{{- /*
+sessions.gohtml is the signed-in person's own open sessions (ADR 0268).
+
+One row per sign-in that is neither closed, nor expired, nor older than the
+last sign-out everywhere or password change. A session is shown by when it
+began and when it ends; nothing names the device it was opened on. The one this
+page was requested with is marked and has no close button: signing out closes
+it, and every other.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ if .Error }}<p role="alert">{{ .Error }}</p>{{ end }}
+
+<table>
+  <thead>
+    <tr><th>Signed in</th><th>Ends</th><th></th></tr>
+  </thead>
+  <tbody>
+  {{ range .Sessions }}
+    <tr>
+      <td>{{ .CreatedAt.UTC.Format "2006-01-02 15:04 UTC" }}</td>
+      <td>{{ .ExpiresAt.UTC.Format "2006-01-02 15:04 UTC" }}</td>
+      <td>
+        {{ if .Current }}
+          <span class="pill">this session</span>
+        {{ else }}
+          <form method="post" action="{{ $.RevokePath }}">
+            <input type="hidden" name="id" value="{{ .ID }}">
+            <button type="submit">Close</button>
+          </form>
+        {{ end }}
+      </td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+
+{{ if .Others }}
+<form method="post" action="{{ .RevokeOthersPath }}">
+  <button type="submit">Close every other session</button>
+</form>
+{{ else }}
+<p class="muted">No other session is open.</p>
+{{ end }}
+{{ end }}

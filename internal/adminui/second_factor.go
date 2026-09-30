@@ -17,10 +17,11 @@ import (
 // requires a factor of holds no privilege until they enroll (ADR 0265), so this
 // is the screen the panel's door sends them to.
 
-// ServiceSecondFactor is the container name of the auth module's surface for a
-// person's own second factor. It is spelled by hand, as the other surfaces'
-// names are, and pinned against the module's constant in internal/arch.
-const ServiceSecondFactor = "auth.admin"
+// ServiceAuthAdmin is the container name of the auth module's surface for a
+// person's own account: their second factor and their sessions (ADR 0268).
+// It is spelled by hand, as the other surfaces' names are, and pinned against
+// the module's constant in internal/arch.
+const ServiceAuthAdmin = "auth.admin"
 
 // The second factor's screen and its three forms.
 const (
