@@ -209,10 +209,11 @@ func (f *fakeAuth) AcceptInvitation(_ context.Context, token, password string) e
 
 // EnrolMFA records the request and answers a fixed enrolment.
 func (f *fakeAuth) EnrolMFA(
-	_ context.Context, userID, issuer string,
+	_ context.Context, userID, issuer, currentCode string,
 ) (service.MFAEnrollment, error) {
 	f.mfaEnrolFor = userID
 	f.mfaIssuer = issuer
+	f.mfaCode = currentCode
 	if f.mfaErr != nil {
 		return service.MFAEnrollment{}, f.mfaErr
 	}
@@ -231,9 +232,10 @@ func (f *fakeAuth) ConfirmMFA(_ context.Context, userID, code string) error {
 	return f.mfaErr
 }
 
-// RemoveMFA records whose factor was taken off.
-func (f *fakeAuth) RemoveMFA(_ context.Context, userID string) (bool, error) {
+// RemoveOwnMFA records whose factor was taken off, with what code.
+func (f *fakeAuth) RemoveOwnMFA(_ context.Context, userID, code string) (bool, error) {
 	f.mfaRemovedFor = userID
+	f.mfaCode = code
 
 	return true, f.mfaErr
 }

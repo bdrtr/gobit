@@ -135,7 +135,7 @@ func TestRemovingActsOnTheCALLERAndNobodyElse(t *testing.T) {
 	svc := &fakeAuth{}
 	router := mfaRouter(t, svc, "")
 
-	rec := mfaRequestWithMethod(t, router, http.MethodDelete, api.MFAEnrolPath, "",
+	rec := mfaRequestWithMethod(t, router, http.MethodPost, api.MFARemovePath, "",
 		"usr_01CALLER0000000000", "user")
 
 	require.Equal(t, http.StatusNoContent, rec.Code, "body: %s", rec.Body.String())
@@ -153,7 +153,7 @@ func TestAnAPIKeyCannotRemoveASecondFactor(t *testing.T) {
 	svc := &fakeAuth{}
 	router := mfaRouter(t, svc, "")
 
-	rec := mfaRequestWithMethod(t, router, http.MethodDelete, api.MFAEnrolPath, "",
+	rec := mfaRequestWithMethod(t, router, http.MethodPost, api.MFARemovePath, "",
 		"key_01MACHINE00000000", "api_key")
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())

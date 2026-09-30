@@ -213,9 +213,21 @@ func describeIdentity(d *openapi.Doc) {
 			"no secret at all.\n\n" +
 			"A LOST phone cannot be fixed here, because its owner cannot sign in to " +
 			"ask: that is `gobit mfa-reset`, run at the machine.\n\n" +
-			"The credential does not count until POST " + MFAConfirmPath + " succeeds.",
+			"The credential does not count until POST " + MFAConfirmPath + " succeeds.\n\n" +
+			"When the account already holds a CONFIRMED factor, the body has to carry " +
+			"the code that factor shows now as \"code\" (ADR 0264): the session alone is " +
+			"what a stolen token is, and with it alone a thief could put their own " +
+			"authenticator in the owner's place. The first enrollment takes no body. " +
+			"It needs an identity and no privilege: anybody who can sign in may protect " +
+			"their own account.",
+		RequestBody: optionalCodeBody(d),
 		Responses: map[string]any{
 			"200": openapi.Response("The enrollment, readable once", d.Item(mfaEnrollmentDTO{})),
+			"403": openapi.ErrorResponse(
+				"The account holds a confirmed factor and the code was missing, wrong, or " +
+					"refused because wrong codes locked the account. Code " +
+					"\"auth_mfa_required\", \"auth_mfa_code_wrong\" or \"auth_mfa_locked\"; a " +
+					"wrong code counts against the account's sign-in lock."),
 			"422": openapi.ErrorResponse(
 				"The request was made with an API key. Code \"auth_mfa_not_a_person\"; " +
 					"a machine holds no authenticator."),
@@ -253,7 +265,7 @@ func describeIdentity(d *openapi.Doc) {
 		},
 	})
 
-	d.Describe(http.MethodDelete, MFAEnrolPath, openapi.Operation{
+	d.Describe(http.MethodPost, MFARemovePath, openapi.Operation{
 		Summary: "Takes the CALLER's second factor off their account.",
 		Description: "It names no user for the enrollment endpoint's reason turned " +
 			"around: an endpoint that took an identifier would let one administrator " +
@@ -262,9 +274,17 @@ func describeIdentity(d *openapi.Doc) {
 			"So this is not the answer for a lost phone — its owner cannot sign in to " +
 			"call it. That is `gobit mfa-reset`, run by somebody at the machine.\n\n" +
 			"An account that holds no factor is answered the same way: the state the " +
-			"caller asked for is the state they end up in.",
+			"caller asked for is the state they end up in.\n\n" +
+			"A CONFIRMED factor is removed only with the code it shows now, sent as " +
+			"\"code\" (ADR 0264): switched off by the session alone, it would protect " +
+			"the account from nobody who stole the session.",
+		RequestBody: optionalCodeBody(d),
 		Responses: map[string]any{
 			"204": emptyResponse("The account holds no second factor"),
+			"403": openapi.ErrorResponse(
+				"The code was missing, wrong, or refused because wrong codes locked the " +
+					"account. Code \"auth_mfa_required\", \"auth_mfa_code_wrong\" or " +
+					"\"auth_mfa_locked\"."),
 			"422": openapi.ErrorResponse(
 				"The request was made with an API key. Code \"auth_mfa_not_a_person\"."),
 		},
@@ -612,4 +632,14 @@ func queryParameter(name, typ, description string) openapi.Parameter {
 // body to read.
 func emptyResponse(description string) map[string]any {
 	return map[string]any{"description": description}
+}
+
+// optionalCodeBody is the body that carries a confirmed factor's code when a
+// change to it needs one (ADR 0264). It is OPTIONAL: the first enrollment and
+// the removal of an unconfirmed one send none.
+func optionalCodeBody(d *openapi.Doc) map[string]any {
+	body := d.RequestBody(confirmMFARequest{})
+	body["required"] = false
+
+	return body
 }

@@ -27,6 +27,9 @@ var identityOnlyOperations = map[string]string{
 	"post /admin/v1/auth/login":             "establishes an identity; nobody holds a privilege yet",
 	"post /admin/v1/auth/accept-invitation": "establishes an identity from an invitation",
 	"post /admin/v1/auth/logout":            "closes the caller's own sessions",
+	"post /admin/v1/auth/mfa":               "enrolls the caller's own second factor (ADR 0264)",
+	"post /admin/v1/auth/mfa/confirm":       "proves the caller's own second factor (ADR 0264)",
+	"post /admin/v1/auth/mfa/remove":        "removes the caller's own second factor, given its code (ADR 0264)",
 }
 
 // refusedPrivilege reads the privilege a 403 names.

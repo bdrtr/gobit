@@ -53,7 +53,7 @@ func TestAnEnrollmentHandsBackASecretThatIsNotStoredInTheClear(t *testing.T) {
 	svc, repo := newMFAService(t, time.Unix(1111111111, 0).UTC())
 	user := testUser
 
-	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme Shop")
+	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme Shop", "")
 	require.NoError(t, err)
 
 	require.NotEmpty(t, enrollment.Secret)
@@ -79,7 +79,7 @@ func TestAnInstallationWithNoKeyREFUSESRatherThanStoringPlaintext(t *testing.T) 
 	svc := service.New(repo, service.Options{JWTSecret: "a-signing-secret-that-is-long"})
 	user := testUser
 
-	_, err := svc.EnrolMFA(t.Context(), user, "Acme")
+	_, err := svc.EnrolMFA(t.Context(), user, "Acme", "")
 
 	require.Error(t, err)
 	assert.Equal(t, coreerrors.KindInternal, coreerrors.KindOf(err))
@@ -99,7 +99,7 @@ func TestACredentialCountsOnlyAfterTheFirstCorrectCode(t *testing.T) {
 	svc, _ := newMFAService(t, now)
 	user := testUser
 
-	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme")
+	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme", "")
 	require.NoError(t, err)
 
 	confirmed, err := svc.HasConfirmedMFA(t.Context(), user)
@@ -122,7 +122,7 @@ func TestAWrongCodeConfirmsNothing(t *testing.T) {
 	svc, _ := newMFAService(t, now)
 	user := testUser
 
-	_, err := svc.EnrolMFA(t.Context(), user, "Acme")
+	_, err := svc.EnrolMFA(t.Context(), user, "Acme", "")
 	require.NoError(t, err)
 
 	err = svc.ConfirmMFA(t.Context(), user, "000000")
@@ -156,11 +156,11 @@ func TestReEnrollingKeepsTheProvenFactorUntilTheNewOneIsScanned(t *testing.T) {
 	svc, _ := newMFAService(t, now)
 	user := testUser
 
-	first, err := svc.EnrolMFA(t.Context(), user, "Acme")
+	first, err := svc.EnrolMFA(t.Context(), user, "Acme", "")
 	require.NoError(t, err)
 	require.NoError(t, svc.ConfirmMFA(t.Context(), user, codeFor(t, first.Secret, now)))
 
-	second, err := svc.EnrolMFA(t.Context(), user, "Acme")
+	second, err := svc.EnrolMFA(t.Context(), user, "Acme", codeFor(t, first.Secret, now))
 	require.NoError(t, err)
 	require.NotEqual(t, first.Secret, second.Secret, "a second enrollment draws a NEW secret")
 
@@ -198,7 +198,7 @@ func TestRemovingTheFactorLeavesTheAccountWithNone(t *testing.T) {
 	svc, _ := newMFAService(t, now)
 	user := testUser
 
-	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme")
+	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme", "")
 	require.NoError(t, err)
 	require.NoError(t, svc.ConfirmMFA(t.Context(), user, codeFor(t, enrollment.Secret, now)))
 
@@ -223,7 +223,7 @@ func TestConfirmingTwiceIsRefusedRatherThanSilent(t *testing.T) {
 	svc, _ := newMFAService(t, now)
 	user := testUser
 
-	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme")
+	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme", "")
 	require.NoError(t, err)
 	code := codeFor(t, enrollment.Secret, now)
 	require.NoError(t, svc.ConfirmMFA(t.Context(), user, code))
@@ -260,7 +260,7 @@ func TestAStoredSecretSealedWithAnotherKeyIsAnERROR(t *testing.T) {
 	svc, repo := newMFAService(t, now)
 	user := testUser
 
-	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme")
+	enrollment, err := svc.EnrolMFA(t.Context(), user, "Acme", "")
 	require.NoError(t, err)
 
 	// The same repository, a service whose key is a different one.

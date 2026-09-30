@@ -5,7 +5,7 @@ proves it with one code; the secret is encrypted with a key the installation
 supplies and enrollment is refused without one. It costs a variable an operator
 must set, and it does not yet change how anybody signs in.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0264](0264-a-second-factor-is-changed-only-with-itself.md) for who may enrol: the three endpoints on the caller's own factor need an identity and no privilege, and a confirmed factor is replaced only with its code
 - **Date:** 2026-09-12
 
 ## Context

@@ -215,9 +215,10 @@ func TestRemovingTheFactorGivesTheAccountBack(t *testing.T) {
 	secret := enrolSecondFactor(t, jetonAl(t, email, mfaTestPassword))
 	token := tokenFrom(t, tokenRequest(t, email, mfaTestPassword, totpCodeAt(t, secret, time.Now())))
 
-	removed := tokenedRequest(t, http.MethodDelete, authapi.MFAEnrolPath, token, "")
+	removed := tokenedRequest(t, http.MethodPost, authapi.MFARemovePath, token,
+		`{"code":"`+totpCodeAt(t, secret, time.Now())+`"}`)
 	require.Equal(t, http.StatusNoContent, removed.Code,
-		"the owner may switch their own factor off; body: %s", removed.Body.String())
+		"the owner may switch their own factor off with its code; body: %s", removed.Body.String())
 
 	again := tokenRequest(t, email, mfaTestPassword, "")
 	assert.Equal(t, http.StatusOK, again.Code,
@@ -234,7 +235,8 @@ func TestASecondEnrolmentLeavesTheProvenPhoneWorking(t *testing.T) {
 	token := tokenFrom(t, tokenRequest(t, email, mfaTestPassword, totpCodeAt(t, first, time.Now())))
 
 	// A new phone is scanned and the person is interrupted before proving it.
-	started := tokenedRequest(t, http.MethodPost, authapi.MFAEnrolPath, token, "")
+	started := tokenedRequest(t, http.MethodPost, authapi.MFAEnrolPath, token,
+		`{"code":"`+totpCodeAt(t, first, time.Now())+`"}`)
 	require.Equal(t, http.StatusOK, started.Code, "body: %s", started.Body.String())
 
 	stillDemanded := tokenRequest(t, email, mfaTestPassword, "")
@@ -245,6 +247,62 @@ func TestASecondEnrolmentLeavesTheProvenPhoneWorking(t *testing.T) {
 	working := tokenRequest(t, email, mfaTestPassword, totpCodeAt(t, first, time.Now()))
 	assert.Equal(t, http.StatusOK, working.Code,
 		"the proven phone keeps signing them in; body: %s", working.Body.String())
+}
+
+// TestAnOperatorGrantedOnlyTheCatalogCanProtectTheirAccount is D182 on the
+// production wiring: enrolling and confirming one's own factor asks for an
+// identity and no privilege, so an operator holding product:read alone signs
+// in with a code afterwards.
+func TestAnOperatorGrantedOnlyTheCatalogCanProtectTheirAccount(t *testing.T) {
+	ctx := t.Context()
+	email := fmt.Sprintf("mfa-catalog-%d@gobit.test", fixtureCounter.Add(1))
+	_, err := authSvc.CreateUser(ctx, authsvc.CreateUserInput{
+		Email: email, FirstName: "Catalog", LastName: "Only", Scopes: []string{"product:read"},
+	}, mfaTestPassword)
+	require.NoError(t, err)
+
+	secret := enrolSecondFactor(t, jetonAl(t, email, mfaTestPassword))
+
+	demanded := tokenRequest(t, email, mfaTestPassword, "")
+	assert.Equal(t, http.StatusUnauthorized, demanded.Code,
+		"the factor the catalog operator enrolled protects their sign-in; body: %s", demanded.Body.String())
+	tokenFrom(t, tokenRequest(t, email, mfaTestPassword, totpCodeAt(t, secret, time.Now())))
+}
+
+// TestASessionAloneCannotChangeTheFactor is D183 on the production wiring: a
+// token is what a thief holds, and with it alone neither the removal nor a
+// replacement goes through, while the owner's code does.
+func TestASessionAloneCannotChangeTheFactor(t *testing.T) {
+	ctx := t.Context()
+	email := newMFAAdministrator(ctx, t)
+
+	secret := enrolSecondFactor(t, jetonAl(t, email, mfaTestPassword))
+	token := tokenFrom(t, tokenRequest(t, email, mfaTestPassword, totpCodeAt(t, secret, time.Now())))
+
+	for name, path := range map[string]string{"removing": authapi.MFARemovePath, "replacing": authapi.MFAEnrolPath} {
+		refused := tokenedRequest(t, http.MethodPost, path, token, "")
+		assert.Equal(t, http.StatusForbidden, refused.Code, "%s with the session alone; body: %s", name, refused.Body.String())
+		assert.Contains(t, refused.Body.String(), authsvc.CodeMFARequired, name)
+
+		wrong := tokenedRequest(t, http.MethodPost, path, token, `{"code":"000000"}`)
+		assert.Equal(t, http.StatusForbidden, wrong.Code, "%s with a wrong code; body: %s", name, wrong.Body.String())
+		assert.Contains(t, wrong.Body.String(), authsvc.CodeMFACodeWrong, name)
+	}
+
+	stillDemanded := tokenRequest(t, email, mfaTestPassword, "")
+	assert.Equal(t, http.StatusUnauthorized, stillDemanded.Code,
+		"the refused changes left the factor in place; body: %s", stillDemanded.Body.String())
+
+	// The three need no privilege, and still an identity: they are exempt from
+	// the authorization audit, so their refusal of a caller nobody signed in is
+	// asserted here.
+	for _, path := range []string{authapi.MFAEnrolPath, authapi.MFAConfirmPath, authapi.MFARemovePath} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}"))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		testRouter.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, "%s answered a caller nobody signed in", path)
+	}
 }
 
 // tokenFrom reads the session token out of a successful login response.

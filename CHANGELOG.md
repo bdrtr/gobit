@@ -10,6 +10,18 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [Yayımlanmamış]
 
+### Kırıcı değişiklikler
+
+- **A second factor is changed only with itself** (ADR 0264, D182, D183).
+  **For integrators:** `DELETE /admin/v1/auth/mfa` is gone; the removal is
+  `POST /admin/v1/auth/mfa/remove`. It and `POST /admin/v1/auth/mfa` on an
+  account that holds a confirmed factor take `{"code": "..."}`, the six digits
+  the confirmed factor shows now; without it they answer 403
+  `auth_mfa_required`, with a wrong one `auth_mfa_code_wrong`, and a wrong code
+  counts toward the account's lock (`auth_mfa_locked`). **For operators:** the
+  three endpoints on one's own factor no longer need `auth:read`, so every
+  operator who can sign in can protect their account.
+
 ### Düzeltmeler
 
 - **The OpenAPI document names each operation's privilege** (ADR 0263). **For

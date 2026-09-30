@@ -61,6 +61,14 @@ every administrator out at once. The way back for a lost phone is
 endpoint, because an administrator who could remove a colleague's factor would
 make one stolen session enough to reach every other account.
 
+**Changing a factor takes the factor.** Since
+[ADR 0264](adr/0264-a-second-factor-is-changed-only-with-itself.md), replacing or
+removing a confirmed factor over HTTP takes `code`, the six digits it shows now, so
+a stolen session can neither switch it off nor park the thief's authenticator in
+the owner's place; a wrong code counts toward the same lock as a wrong sign-in
+code. Enrolling, confirming and removing one's own factor need an identity and no
+privilege, so every person who can sign in can protect their account.
+
 The order of the guard stack is deliberate:
 
 1. **Rate limit** — *before* authentication. Otherwise an attacker trying

@@ -30,10 +30,24 @@ type mfaEnrollmentDTO struct {
 	OtpauthURI string `json:"otpauth_uri"`
 }
 
-// confirmMFARequest is the body that proves the app holds the secret.
+// confirmMFARequest is the body that carries a code: the new authenticator's
+// when confirming it, the confirmed one's when replacing or removing it
+// (ADR 0264).
 type confirmMFARequest struct {
 	// Code is the six digits the authenticator shows right now.
 	Code string `json:"code"`
+}
+
+// decodeOptionalBody reads a body that may be absent: an empty body leaves the
+// destination as it is, and anything else is held to [decodeBody]. Enrolling
+// the first factor and removing an unconfirmed one carry no code, and a client
+// that sends no body for them is not wrong.
+func decodeOptionalBody(w http.ResponseWriter, r *http.Request, dst any) error {
+	if r.Body == nil || r.Body == http.NoBody || r.ContentLength == 0 {
+		return nil
+	}
+
+	return decodeBody(w, r, dst)
 }
 
 // adminEnrolMFA draws a second factor for the CALLER
@@ -57,7 +71,14 @@ func (h *Handler) adminEnrolMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	enrollment, err := h.svc.EnrolMFA(ctx, userID, h.mfaIssuer)
+	var body confirmMFARequest
+	if err := decodeOptionalBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	enrollment, err := h.svc.EnrolMFA(ctx, userID, h.mfaIssuer, body.Code)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 
@@ -101,7 +122,7 @@ func (h *Handler) adminConfirmMFA(w http.ResponseWriter, r *http.Request) {
 }
 
 // adminRemoveMFA takes the CALLER's second factor off their account
-// (DELETE /admin/v1/auth/mfa).
+// (POST /admin/v1/auth/mfa/remove).
 //
 // # Why it names no user either
 //
@@ -129,7 +150,14 @@ func (h *Handler) adminRemoveMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.svc.RemoveMFA(ctx, userID); err != nil {
+	var body confirmMFARequest
+	if err := decodeOptionalBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	if _, err := h.svc.RemoveOwnMFA(ctx, userID, body.Code); err != nil {
 		corehttp.WriteError(ctx, w, err)
 
 		return

@@ -186,6 +186,9 @@ type endpointExpectation struct {
 	// request is a sample carrying ALL the fields of the request body; if nil
 	// the endpoint READS NO body.
 	request any
+	// optionalBody reports a body the endpoint reads when it is sent and does
+	// without when it is not (ADR 0264).
+	optionalBody bool
 	// response is a sample carrying all the fields of the RECORD in the
 	// successful response; if nil the response has no body (204).
 	response any
@@ -221,14 +224,15 @@ func adminEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodPost, path: MFAEnrolPath, status: "200",
-			response: mfaEnrollmentDTO{},
+			request: confirmMFARequest{}, optionalBody: true, response: mfaEnrollmentDTO{},
 		},
 		{
 			method: http.MethodPost, path: MFAConfirmPath, status: "204",
 			request: confirmMFARequest{},
 		},
 		{
-			method: http.MethodDelete, path: MFAEnrolPath, status: "204",
+			method: http.MethodPost, path: MFARemovePath, status: "204",
+			request: confirmMFARequest{}, optionalBody: true,
 		},
 		{
 			method: http.MethodGet, path: "/admin/v1/auth/me", status: "200",
@@ -377,8 +381,8 @@ func TestAdminEndpointsDescribeTheirBodies(t *testing.T) {
 				"an endpoint that READS a body has to have a requestBody, one that does not must not")
 
 			if ep.request != nil {
-				assert.Equal(t, true, requestDefinition["required"],
-					"the body of a write endpoint is mandatory")
+				assert.Equal(t, !ep.optionalBody, requestDefinition["required"],
+					"the body of a write endpoint is mandatory unless the endpoint does without it")
 				assert.ElementsMatch(t, jsonKeys(t, ep.request),
 					fields(t, components, bodySchemaOf(t, requestDefinition)),
 					"the fields of the request body have to overlap with the DTO")

@@ -146,7 +146,7 @@ func setupMFALogin(t *testing.T) (*service.Service, *mfaLoginRepo, *sessionClock
 func enrolAndConfirm(t *testing.T, svc *service.Service, at time.Time) string {
 	t.Helper()
 
-	enrollment, err := svc.EnrolMFA(t.Context(), sessionUserID, "Acme")
+	enrollment, err := svc.EnrolMFA(t.Context(), sessionUserID, "Acme", "")
 	require.NoError(t, err, "the enrollment has to succeed")
 	require.NoError(t, svc.ConfirmMFA(t.Context(), sessionUserID, codeFor(t, enrollment.Secret, at)),
 		"the confirmation has to succeed")
@@ -201,7 +201,7 @@ func TestAnEnrolmentNobodyProvedDemandsNothing(t *testing.T) {
 	t.Parallel()
 
 	svc, _, _ := setupMFALogin(t)
-	_, err := svc.EnrolMFA(t.Context(), sessionUserID, "Acme")
+	_, err := svc.EnrolMFA(t.Context(), sessionUserID, "Acme", "")
 	require.NoError(t, err)
 
 	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "")
@@ -323,7 +323,7 @@ func TestTheOldPhoneSignsInUntilTheNewOneIsProven(t *testing.T) {
 	svc, _, clock := setupMFALogin(t)
 	oldSecret := enrolAndConfirm(t, svc, clock.moment)
 
-	replacement, err := svc.EnrolMFA(t.Context(), sessionUserID, "Acme")
+	replacement, err := svc.EnrolMFA(t.Context(), sessionUserID, "Acme", codeFor(t, oldSecret, clock.moment))
 	require.NoError(t, err)
 
 	// The new app is scanned and then the person is interrupted. Until they prove
@@ -348,4 +348,87 @@ func TestTheOldPhoneSignsInUntilTheNewOneIsProven(t *testing.T) {
 	_, _, err = svc.Login(t.Context(), sessionEmail, sessionPassword,
 		codeFor(t, oldSecret, clock.moment))
 	require.Error(t, err, "the replaced secret must stop working the moment the new one is proven")
+}
+
+// TestAConfirmedFactorIsChangedOnlyWithItsCode is ADR 0264: replacing or
+// removing a proven factor through the owner's own session takes the code it
+// shows now, so the token alone, which is what a thief holds, changes nothing.
+func TestAConfirmedFactorIsChangedOnlyWithItsCode(t *testing.T) {
+	t.Parallel()
+
+	for name, change := range map[string]func(*service.Service, string) error{
+		"replacing it": func(svc *service.Service, code string) error {
+			_, err := svc.EnrolMFA(t.Context(), sessionUserID, "Acme", code)
+			return err
+		},
+		"removing it": func(svc *service.Service, code string) error {
+			_, err := svc.RemoveOwnMFA(t.Context(), sessionUserID, code)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			svc, repo, clock := setupMFALogin(t)
+			secret := enrolAndConfirm(t, svc, clock.moment)
+			proven := repo.mfa.Secret
+
+			err := change(svc, "")
+			require.Error(t, err)
+			assert.Equal(t, service.CodeMFARequired, coreerrors.CodeOf(err))
+			assert.True(t, coreerrors.IsForbidden(err), "a signed-in caller is refused, not asked who they are")
+			assert.Zero(t, repo.identities[0].FailedAttempts, "a change that only lacks the code is not an attempt")
+
+			err = change(svc, "000000")
+			require.Error(t, err)
+			assert.Equal(t, service.CodeMFACodeWrong, coreerrors.CodeOf(err))
+			assert.Equal(t, 1, repo.identities[0].FailedAttempts,
+				"a wrong code counts as a sign-in's does; it is the only bound on guessing six digits")
+			require.NotNil(t, repo.mfa, "a refused change leaves the factor in place")
+			assert.Equal(t, proven, repo.mfa.Secret)
+			assert.Nil(t, repo.mfa.PendingSecret, "a refused replacement leaves nothing waiting to be confirmed")
+
+			require.NoError(t, change(svc, codeFor(t, secret, clock.moment)))
+		})
+	}
+}
+
+// TestWrongCodesLockTheChangeAsTheyLockTheSignIn holds the counter to its
+// bound: guessing through a session locks the account, and a locked account
+// is refused even the right code until the lock runs out.
+func TestWrongCodesLockTheChangeAsTheyLockTheSignIn(t *testing.T) {
+	t.Parallel()
+
+	svc, repo, clock := setupMFALogin(t)
+	secret := enrolAndConfirm(t, svc, clock.moment)
+
+	for range service.DefaultLoginFailureThreshold {
+		_, err := svc.RemoveOwnMFA(t.Context(), sessionUserID, "000000")
+		require.Error(t, err)
+	}
+
+	_, err := svc.RemoveOwnMFA(t.Context(), sessionUserID, codeFor(t, secret, clock.moment))
+	require.Error(t, err)
+	assert.Equal(t, service.CodeMFALocked, coreerrors.CodeOf(err))
+	require.NotNil(t, repo.mfa, "the locked account keeps its factor")
+
+	_, _, err = svc.Login(t.Context(), sessionEmail, sessionPassword, codeFor(t, secret, clock.moment))
+	require.Error(t, err, "the sign-in is locked by the same count")
+}
+
+// TestAnUnprovenEnrolmentTakesNoCode keeps the first enrolment and an
+// abandoned one free: nothing proven protects the account yet, so there is
+// nothing a code could prove.
+func TestAnUnprovenEnrolmentTakesNoCode(t *testing.T) {
+	t.Parallel()
+
+	svc, repo, _ := setupMFALogin(t)
+	_, err := svc.EnrolMFA(t.Context(), sessionUserID, "Acme", "")
+	require.NoError(t, err)
+	_, err = svc.EnrolMFA(t.Context(), sessionUserID, "Acme", "")
+	require.NoError(t, err, "an enrolment nobody proved is replaced without a code")
+	removed, err := svc.RemoveOwnMFA(t.Context(), sessionUserID, "")
+	require.NoError(t, err)
+	assert.True(t, removed)
+	assert.Nil(t, repo.mfa)
 }

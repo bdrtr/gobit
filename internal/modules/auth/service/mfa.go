@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/auth/models"
 	"github.com/bdrtr/gobit/internal/modules/auth/repository"
 )
 
@@ -45,6 +46,10 @@ const (
 	// that cannot tell this apart from a wrong password has no way to ask for the
 	// six digits.
 	CodeMFARequired = "auth_mfa_required"
+	// CodeMFALocked is a change to a second factor asked of an account that too
+	// many wrong codes have locked (ADR 0264). The account's sign-in is locked
+	// by the same counter.
+	CodeMFALocked = "auth_mfa_locked"
 )
 
 // MFAEnrollment is what an enrollment hands back, once.
@@ -84,11 +89,13 @@ type MFAEnrollment struct {
 // old phone keeps signing the person in until they prove the new one. The reason
 // is the demand: since a login refuses without the code, an enrollment that cleared
 // the confirmation and was then abandoned would turn the demand off — a way out of
-// the second factor that needs no secret at all.
+// the second factor that needs no secret at all. Parking one at all takes
+// currentCode, the confirmed factor's code now (ADR 0264), or a stolen session
+// could park and confirm the thief's authenticator in the owner's place.
 //
 // A lost phone therefore cannot be fixed from here any more: its owner cannot sign
 // in to ask. That case belongs to the operator (`gobit mfa-reset`).
-func (s *Service) EnrolMFA(ctx context.Context, userID, issuer string) (MFAEnrollment, error) {
+func (s *Service) EnrolMFA(ctx context.Context, userID, issuer, currentCode string) (MFAEnrollment, error) {
 	if strings.TrimSpace(userID) == "" {
 		return MFAEnrollment{}, coreerrors.Invalid(CodeMFANotEnrolled,
 			"a second factor belongs to a person, and this request names none")
@@ -101,6 +108,9 @@ func (s *Service) EnrolMFA(ctx context.Context, userID, issuer string) (MFAEnrol
 
 	user, err := s.repo.GetUser(ctx, userID)
 	if err != nil {
+		return MFAEnrollment{}, err
+	}
+	if err := s.proveOwnFactor(ctx, userID, currentCode); err != nil {
 		return MFAEnrollment{}, err
 	}
 
@@ -244,9 +254,10 @@ func (s *Service) promoteWaiting(ctx context.Context, userID string) error {
 //
 // # Who may call it
 //
-// The owner, through the endpoint above this — which acts on whoever the request
-// proved, like the rest of this file — and the operator at the machine, through
-// `gobit mfa-reset`. There is deliberately NO endpoint that removes a colleague's
+// The operator at the machine, through `gobit mfa-reset`, and the owner through
+// [Service.RemoveOwnMFA], which proves the factor's code first (ADR 0264) and
+// acts on whoever the request proved. There is deliberately NO endpoint that
+// removes a colleague's
 // factor: an administrator who could would be one stolen session away from turning
 // off somebody else's second factor, and the point of the factor is that a stolen
 // session is not enough.
@@ -268,6 +279,82 @@ func (s *Service) RemoveMFA(ctx context.Context, userID string) (bool, error) {
 		slog.String("user_id", userID), slog.Bool("had_one", removed))
 
 	return removed, nil
+}
+
+// RemoveOwnMFA takes a person's own second factor off their account, over
+// HTTP (ADR 0264).
+//
+// Unlike [Service.RemoveMFA], which the operator runs at the machine, it asks
+// for the code the confirmed factor shows now: the owner of a session is
+// whoever holds its token, and a factor a stolen token could switch off would
+// protect the account from nobody who had one.
+func (s *Service) RemoveOwnMFA(ctx context.Context, userID, code string) (bool, error) {
+	if strings.TrimSpace(userID) == "" {
+		return false, coreerrors.Invalid(CodeMFANotEnrolled,
+			"a second factor belongs to a person, and this request names none")
+	}
+	if err := s.proveOwnFactor(ctx, userID, code); err != nil {
+		return false, err
+	}
+
+	return s.RemoveMFA(ctx, userID)
+}
+
+// proveOwnFactor holds a change to an account's second factor to the factor
+// it changes (ADR 0264).
+//
+// With no confirmed factor there is nothing to prove, and an enrolment nobody
+// finished is not one. With one, the request has to carry the code it shows
+// now. A wrong code counts against the account's password identity exactly as
+// a wrong code at sign-in does, so guessing through a stolen session locks the
+// account rather than walking the code space, and a locked account is refused
+// before the code is read.
+func (s *Service) proveOwnFactor(ctx context.Context, userID, code string) error {
+	credential, err := s.repo.GetMFACredential(ctx, userID)
+	if errors.Is(err, repository.ErrNoMFACredential) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !credential.Confirmed() {
+		return nil
+	}
+
+	now := s.clock()
+	identity, err := s.repo.GetIdentity(ctx, userID, models.ProviderEmailPass)
+	counted := err == nil
+	if err != nil && !coreerrors.IsNotFound(err) {
+		return err
+	}
+	if counted && identity.IsLocked(now) {
+		return coreerrors.Forbidden(CodeMFALocked,
+			"too many wrong codes have locked this account; wait and try again")
+	}
+	if strings.TrimSpace(code) == "" {
+		return coreerrors.Forbidden(CodeMFARequired,
+			"this account is protected by an authenticator; changing or removing it takes "+
+				"the six digits it shows now, sent as \"code\"")
+	}
+
+	secret, err := s.secrets.open(credential.Secret)
+	if err != nil {
+		return err
+	}
+	matches, err := totpMatches(string(secret), code, now)
+	if err != nil {
+		return err
+	}
+	if !matches {
+		if counted {
+			s.registerFailure(ctx, identity.ID, now)
+		}
+
+		return coreerrors.Forbidden(CodeMFACodeWrong,
+			"that code is not the one this authenticator produces right now")
+	}
+
+	return nil
 }
 
 // HasConfirmedMFA reports whether a user has proven a second factor.

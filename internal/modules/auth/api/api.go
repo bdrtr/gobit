@@ -119,13 +119,14 @@ type Auth interface {
 	CreateUser(ctx context.Context, in service.CreateUserInput, password string) (models.User, error)
 
 	// EnrolMFA draws a second factor for the given user and stores it
-	// UNCONFIRMED, answering the secret exactly once.
-	EnrolMFA(ctx context.Context, userID, issuer string) (service.MFAEnrollment, error)
+	// UNCONFIRMED, answering the secret exactly once; replacing a confirmed one
+	// takes the code it shows now (ADR 0264).
+	EnrolMFA(ctx context.Context, userID, issuer, currentCode string) (service.MFAEnrollment, error)
 	// ConfirmMFA proves that the authenticator holds the stored secret.
 	ConfirmMFA(ctx context.Context, userID, code string) error
-	// RemoveMFA takes the second factor off the given user's account and reports
-	// whether there was one to take.
-	RemoveMFA(ctx context.Context, userID string) (bool, error)
+	// RemoveOwnMFA takes the second factor off the given user's own account,
+	// given the code it shows now, and reports whether there was one to take.
+	RemoveOwnMFA(ctx context.Context, userID, code string) (bool, error)
 	// GetUser returns the user by their identifier.
 	GetUser(ctx context.Context, id string) (models.User, error)
 	// ListUsers filters and pages the users.
@@ -211,16 +212,21 @@ const LoginPath = "/admin/v1/auth/login"
 // admin request.
 const AcceptInvitationPath = "/admin/v1/auth/accept-invitation"
 
-// MFAEnrolPath and MFAConfirmPath are where a person enrolls and proves a second
-// factor.
+// MFAEnrolPath, MFAConfirmPath and MFARemovePath are where a person enrolls,
+// proves and removes their own second factor.
 //
 // Both are under `/admin/v1/auth/` rather than under `/admin/v1/users/{id}/`,
 // and the address is the argument: there is no id to put there. The endpoints act
 // on whoever the request proved, because an administrator who could enroll a factor
 // for a colleague would hold the secret of that colleague's phone.
+//
+// The removal is a POST rather than a DELETE on MFAEnrolPath because it
+// carries the confirmed factor's code in its body (ADR 0264), and a DELETE in
+// this API picks its resource from its path and reads no body.
 const (
 	MFAEnrolPath   = "/admin/v1/auth/mfa"
 	MFAConfirmPath = "/admin/v1/auth/mfa/confirm"
+	MFARemovePath  = "/admin/v1/auth/mfa/remove"
 )
 
 // The scope dictionary: the scopes auth's admin endpoints ask for.
@@ -314,21 +320,21 @@ func (h *Handler) Routes(r chi.Router) {
 
 	// --- the caller's own second factor ---
 	//
-	// Under the READ scope, and that is not an oversight. The scope dictionary
-	// answers "may this caller change OTHER PEOPLE's records", and these two
-	// change only the caller's own: a person who can sign in may enroll their own
-	// authenticator, and requiring the write scope would mean an installation
-	// could hand somebody an account they cannot protect. The endpoints name no
-	// user id for the same reason (see mfa.go).
-	read.Post(MFAEnrolPath, h.adminEnrolMFA)
-	read.Post(MFAConfirmPath, h.adminConfirmMFA)
-	// Turning it OFF is the same act on the same record and asks for the same
-	// scope. There is deliberately no endpoint that removes somebody ELSE's
-	// factor: an administrator who could would be one stolen session away from
-	// switching off a colleague's, and the whole point of the factor is that a
-	// stolen session is not enough (ADR 0147). The answer for a lost phone is
+	// IDENTITY only, as /me and /logout (ADR 0264). The scope dictionary answers
+	// "may this caller read or change OTHER PEOPLE's records", and these change
+	// only the caller's own: a person who can sign in may protect their account,
+	// and asking for auth:read meant an operator granted the catalog alone could
+	// not. The endpoints name no user id for the same reason (see mfa.go).
+	r.Post(MFAEnrolPath, h.adminEnrolMFA)
+	r.Post(MFAConfirmPath, h.adminConfirmMFA)
+	// Turning it OFF is the same act on the same record. There is deliberately
+	// no endpoint that removes somebody ELSE's factor: an administrator who
+	// could would be one stolen session away from switching off a colleague's,
+	// and the whole point of the factor is that a stolen session is not enough
+	// (ADR 0147). For the same reason removing or replacing one's OWN confirmed
+	// factor takes the code it shows now. The answer for a lost phone is
 	// `gobit mfa-reset`, at the machine.
-	read.Delete(MFAEnrolPath, h.adminRemoveMFA)
+	r.Post(MFARemovePath, h.adminRemoveMFA)
 
 	// --- api keys ---
 	write.Post("/admin/v1/api-keys", h.adminCreateAPIKey)

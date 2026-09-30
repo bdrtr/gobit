@@ -4,7 +4,7 @@
 session token from a password alone. It costs a way back that only an operator at
 the machine can walk, and it buys a second factor that means something.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0264](0264-a-second-factor-is-changed-only-with-itself.md) for the owner's removal, which takes the code the confirmed factor shows now
 - **Date:** 2026-09-12
 
 ## Context

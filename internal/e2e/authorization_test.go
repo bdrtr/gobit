@@ -59,11 +59,18 @@ import (
 // the composition root's AdminExempt entry, so unlike the three above it never
 // reaches RequireAdmin at all — and it is still inside the audit ring and the rate
 // limit, which is what keeps "unauthenticated" from meaning "unwatched".
+//
+// The three on the caller's own second factor ask for identity and nothing
+// else (ADR 0264): a person who can sign in may protect their own account, and
+// a privilege there left an operator granted the catalog alone unable to.
 var unauthorizedExemptPaths = map[string]struct{}{
 	authapi.LoginPath:            {},
 	authapi.AcceptInvitationPath: {},
 	"/admin/v1/auth/me":          {},
 	"/admin/v1/auth/logout":      {},
+	authapi.MFAEnrolPath:         {},
+	authapi.MFAConfirmPath:       {},
+	authapi.MFARemovePath:        {},
 }
 
 // pathParamRe captures the {param} and {param:regex} pieces of a chi route
