@@ -181,3 +181,4 @@ truth: a report says what was true on the day it was taken.
 | [A row that did not multiply — measured 2026-09-30](0248-a-row-that-did-not-multiply.md) | 71 |
 | [A cart drawn a hundred times — measured 2026-09-30](0249-a-cart-drawn-a-hundred-times.md) | 55 |
 | [The subtree a plan could not see — measured 2026-09-30](0261-subtree-filter.md) | 94 |
+| [The reaper a package found stopping — measured 2026-09-30](0262-the-reaper-a-package-found-stopping.md) | 82 |

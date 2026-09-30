@@ -7,6 +7,7 @@ machine, and closes a race that failed the lane twice in one day.
 
 - **Status:** Accepted
 - **Date:** 2026-09-11
+- **Amended by:** [0262](0262-the-local-reaper-waits-out-the-gap.md): the local lane keeps the reaper alive five minutes after its last client, so the race kept here moves past any gap between two packages
 
 ## Context
 

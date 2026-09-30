@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The local integration lane no longer fails on a stopping reaper**
+  (ADR 0262). **For contributors:** every Makefile recipe that starts
+  containers sets `TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=5m`, so the next
+  package finds the shared reaper running; a lane's leftover containers are
+  removed five minutes after it ends.
+
 - **A storefront category lists its subcategories** (ADR 0261). **For
   integrators:** the storefront product listing and its facets take
   `category_tree_id`, and GraphQL's `products` and `productFacets` take

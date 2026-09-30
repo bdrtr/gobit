@@ -96,6 +96,15 @@ build: ## Binary'yi bin/gobit olarak derle
 # için yükleyen testler etkilenmiyor.
 NO_AMBIENT_SERVICES := DATABASE_URL='postgres://gobit:gobit@127.0.0.1:1/gobit?sslmode=disable' REDIS_URL='redis://:gobit@127.0.0.1:1/0'
 
+# Every package process of one `go test` shares ONE testcontainers reaper, and
+# the reaper stops ten seconds after its last client leaves. A package that
+# looks it up while it is stopping waits sixty seconds for a port that never
+# opens (ADR 0138). In CI the reaper is off; here it is kept alive for five
+# minutes after the last client, far past any gap between two packages of a
+# lane, so the next package finds it running (ADR 0262). internal/arch holds
+# every recipe that starts containers to carrying it.
+REAPER_WAITS_OUT_THE_GAP := TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=5m
+
 test: ## Birim testlerini çalıştır (race + coverage)
 	# -coverpkg olmadan yalnızca test edilen paketin KENDİ kodu sayılır; bir
 	# paketi başka paketin testi kapsadığında görünmez. Buradaki sayı YALNIZCA
@@ -104,7 +113,7 @@ test: ## Birim testlerini çalıştır (race + coverage)
 	$(NO_AMBIENT_SERVICES) go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
 
 test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerektirir)
-	$(NO_AMBIENT_SERVICES) go test -race -tags=integration -count=1 -coverpkg=./... \
+	$(NO_AMBIENT_SERVICES) $(REAPER_WAITS_OUT_THE_GAP) go test -race -tags=integration -count=1 -coverpkg=./... \
 		-coverprofile=coverage-integration.out -covermode=atomic ./...
 	@go tool cover -func=coverage-integration.out | tail -1
 
@@ -119,7 +128,7 @@ test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerekti
 # Zaman aşımı açıkça verilir: varsayılan 10 dakika, konteyner çekme +
 # derleme + beş senaryonun toplamı için soğuk bir makinede dar kalabilir.
 smoke: ## Smoke testleri: gerçek ikiliyi açıp süreç davranışını sınar (Docker gerektirir)
-	$(NO_AMBIENT_SERVICES) go test -tags=smoke -count=1 -timeout 20m ./internal/smoke/
+	$(NO_AMBIENT_SERVICES) $(REAPER_WAITS_OUT_THE_GAP) go test -tags=smoke -count=1 -timeout 20m ./internal/smoke/
 
 # Benchmark'lar veritabanına DOKUNMAZ: hepsi saf fonksiyonlar ya da sahte
 # servisler üzerinde koşar. Deponun geri kalan ölçümü SQL tarafındaydı
@@ -194,7 +203,7 @@ seed: ## Ölçüm kataloğunu kur (URUNLER/COKLU ile boyutlandırılır)
 load-test: ## Temel yük testini çalıştır (REQUESTS/CONCURRENCY ile ayarlanır)
 	GOBIT_LOAD_REQUESTS=$(or $(REQUESTS),5000) \
 	GOBIT_LOAD_CONCURRENCY=$(or $(CONCURRENCY),32) \
-	go test -tags=integration -count=1 -v -run TestStaysCorrectUnderBaselineLoad ./internal/e2e/
+	$(REAPER_WAITS_OUT_THE_GAP) go test -tags=integration -count=1 -v -run TestStaysCorrectUnderBaselineLoad ./internal/e2e/
 
 lint: $(GOLANGCI) ## golangci-lint çalıştır (kök + ayrı modüller)
 	$(GOLANGCI) run ./...
@@ -298,7 +307,7 @@ test-modules-integration: ## Ayrı modüllerin entegrasyon testlerini koştur (D
 		[ -f "$$mod/go.mod" ] || continue; \
 		if ! grep -rqls '//go:build integration' "$$mod"; then continue; fi; \
 		echo "  $$mod: go test -tags=integration"; \
-		(cd "$$mod" && go test -tags=integration -count=1 ./...) || exit 1; \
+		(cd "$$mod" && $(REAPER_WAITS_OUT_THE_GAP) go test -tags=integration -count=1 ./...) || exit 1; \
 		found=$$((found+1)); \
 	done; \
 	if [ "$$found" -lt 1 ]; then \

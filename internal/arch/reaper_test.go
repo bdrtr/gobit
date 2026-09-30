@@ -3,8 +3,10 @@ package arch_test
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -195,6 +197,58 @@ func TestTheReaperIsNotDisabledOnAMachineThatKeepsWhatItLeaks(t *testing.T) {
 	require.Positive(t, scanned,
 		"no file that sets environment variables was found, so this gate read nothing; "+
 			"%s alone should have matched", makefileName)
+}
+
+// reaperGapVar is how long the shared reaper outlives its last client, which
+// ADR 0262 sets for every local run that starts containers.
+const reaperGapVar = "TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT"
+
+// containerTag matches a `go test` that builds the tests which start
+// containers.
+var containerTag = regexp.MustCompile(`-tags[= ](integration|smoke)\b`)
+
+// TestEveryLocalContainerRunWaitsOutTheGap holds ADR 0262 to its recipes.
+//
+// A lane's package processes share one reaper, and with the library's ten
+// seconds a package that starts about ten seconds after the previous one ended
+// finds it stopping and waits a minute for nothing. The Makefile names the
+// longer timeout once; every recipe line that runs `go test` under a tag that
+// starts containers has to carry it, and the value has to be minutes. A recipe
+// added without it would fail the way b2b failed four times on 2026-09-30.
+func TestEveryLocalContainerRunWaitsOutTheGap(t *testing.T) {
+	t.Parallel()
+
+	body, err := os.ReadFile(filepath.Join(repoRoot, makefileName))
+	require.NoError(t, err)
+
+	setting := regexp.MustCompile(`(?m)^([A-Z_]+)\s*:=\s*` + reaperGapVar + `=(\S+)\s*$`).FindStringSubmatch(string(body))
+	require.NotNil(t, setting, "%s names no variable carrying %s", makefileName, reaperGapVar)
+	timeout, err := time.ParseDuration(setting[2])
+	require.NoError(t, err, "%s=%s is not a duration testcontainers reads", reaperGapVar, setting[2])
+	assert.GreaterOrEqual(t, timeout, time.Minute,
+		"the reaper outlives its last client by %s; a gap between two packages of a lane is "+
+			"seconds long, and a timeout of seconds is where the stopping reaper is found", timeout)
+
+	carried := "$(" + setting[1] + ")"
+	runs := 0
+	for number, line := range strings.Split(string(body), "\n") {
+		command, found := strings.CutPrefix(line, "\t")
+		if !found || !strings.Contains(command, "go test") || !containerTag.MatchString(command) {
+			continue
+		}
+		if strings.Contains(command, "echo ") {
+			continue
+		}
+		runs++
+		before, _, _ := strings.Cut(command, "go test")
+		assert.Contains(t, before, carried,
+			"%s:%d runs tests that start containers without %s. Its packages share one "+
+				"reaper, and the one that looks it up as it stops waits sixty seconds for a port "+
+				"that never opens (ADR 0262).", makefileName, number+1, carried)
+	}
+	require.GreaterOrEqual(t, runs, 4,
+		"only %d recipe line(s) run tests that start containers; the integration, smoke, "+
+			"load and separate-module recipes all do, so the scan has gone blind", runs)
 }
 
 // scanWorkflowJobs reads the workflow files by indentation.
