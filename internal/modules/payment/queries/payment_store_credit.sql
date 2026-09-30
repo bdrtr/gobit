@@ -13,8 +13,8 @@
 -- "a money record is kept").
 -- name: InsertStoreCreditEntry :one
 INSERT INTO payment_store_credit_entries (
-    id, customer_id, currency_code, amount, kind, reference, reason, expires_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, sqlc.narg('expires_at'))
+    id, customer_id, currency_code, amount, kind, reference, reason, expires_at, order_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, sqlc.narg('expires_at'), sqlc.narg('order_id'))
 RETURNING *;
 
 -- StoreCreditExpiryFigures reads the four sums the expiry of one balance is
@@ -70,17 +70,20 @@ WHERE LEAST(GREATEST(balance - unexpired, 0), expired - written) > 0
 ORDER BY customer_id, currency_code
 LIMIT sqlc.arg('row_limit')::bigint;
 
--- ListStoreCreditEntries returns one customer's history, newest first.
+-- ListStoreCreditEntries returns one customer's history, newest first, or
+-- only the credits issued for one order when order_id is given (ADR 0274).
 -- name: ListStoreCreditEntries :many
 SELECT * FROM payment_store_credit_entries
-WHERE customer_id = $1 AND currency_code = $2
+WHERE customer_id = sqlc.arg('customer_id') AND currency_code = sqlc.arg('currency_code')
+  AND (sqlc.narg('order_id')::text IS NULL OR order_id = sqlc.narg('order_id')::text)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
 -- CountStoreCreditEntries counts them for the listing's envelope.
 -- name: CountStoreCreditEntries :one
 SELECT COUNT(*) FROM payment_store_credit_entries
-WHERE customer_id = $1 AND currency_code = $2;
+WHERE customer_id = sqlc.arg('customer_id') AND currency_code = sqlc.arg('currency_code')
+  AND (sqlc.narg('order_id')::text IS NULL OR order_id = sqlc.narg('order_id')::text);
 
 -- InsertStoreCreditSessionIfAbsent writes the provider's session only if that
 -- idempotency key has not been used yet; see InsertManualSessionIfAbsent for why

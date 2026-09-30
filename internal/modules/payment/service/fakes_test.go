@@ -974,20 +974,23 @@ func (f *fakeStore) StoreCreditExpiryFigures(
 	return creditFigures(f.credit[creditKey(balance.CustomerID, balance.CurrencyCode)], at), nil
 }
 
-// ListStoreCreditEntries geçmişi yeniden eskiye döner.
+// ListStoreCreditEntries returns the history newest first, only the credits
+// issued for orderID when it is given (ADR 0274).
 func (f *fakeStore) ListStoreCreditEntries(
-	_ context.Context, customerID, currencyCode string, limit, offset int64,
+	_ context.Context, customerID, currencyCode, orderID string, limit, offset int64,
 ) ([]models.StoreCreditEntry, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	all := f.credit[creditKey(customerID, currencyCode)]
-	total := int64(len(all))
-
 	out := make([]models.StoreCreditEntry, 0, len(all))
 	for i := len(all) - 1; i >= 0; i-- {
+		if orderID != "" && all[i].OrderID != orderID {
+			continue
+		}
 		out = append(out, all[i])
 	}
+	total := int64(len(out))
 
 	if int(offset) >= len(out) {
 		return nil, total, nil

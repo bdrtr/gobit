@@ -39,6 +39,8 @@ type fakePayments struct {
 	lastCreditInput service.IssueCreditInput
 	// lastCreditQuery bakiyenin hangi müşteri ve para birimi için sorulduğudur.
 	lastCreditQuery [2]string
+	// lastCreditList is the whole input the history was read with (ADR 0274).
+	lastCreditList service.ListStoreCreditInput
 
 	// loyaltyBalance ve loyaltyHistory sadakat puanı uçlarının senaryolandırılmış
 	// cevaplarıdır (ADR 0164).
@@ -261,11 +263,12 @@ func (f *fakePayments) StoreCreditBalance(
 	return f.creditBalance, nil
 }
 
-// ListStoreCredit geçmişi döner.
+// ListStoreCredit records what the history was read with and returns it.
 func (f *fakePayments) ListStoreCredit(
 	_ context.Context, in service.ListStoreCreditInput,
 ) ([]models.StoreCreditEntry, int64, error) {
 	f.lastCreditQuery = [2]string{in.CustomerID, in.CurrencyCode}
+	f.lastCreditList = in
 	if f.err != nil {
 		return nil, 0, f.err
 	}

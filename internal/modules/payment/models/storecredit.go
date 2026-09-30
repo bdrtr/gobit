@@ -73,6 +73,10 @@ type StoreCreditEntry struct {
 	// ExpiresAt is when an issue's credit expires; nil for credit that does
 	// not, and for every other kind (ADR 0258).
 	ExpiresAt *time.Time
+	// OrderID is the order an issue compensates; empty when it names none, and
+	// for every other kind (ADR 0274). It is another module's identifier and
+	// is not a foreign key (Principle 2.2).
+	OrderID string
 	// CreatedAt is when it happened (UTC).
 	CreatedAt time.Time
 }

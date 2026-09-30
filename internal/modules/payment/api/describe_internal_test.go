@@ -304,7 +304,7 @@ func anlatilanUclar() []ucBeklentisi {
 		// Mağaza kredisinin üç ucu (ADR 0152).
 		{
 			metod: http.MethodPost, yol: pathAdminStoreCredits, durum: "201",
-			istek: issueCreditRequest{ExpiresAt: doluKrediSatiri().ExpiresAt}, yanit: doluKrediSatiri(),
+			istek: issueCreditRequest{ExpiresAt: doluKrediSatiri().ExpiresAt, OrderID: "order_1"}, yanit: doluKrediSatiri(),
 		},
 		{
 			metod: http.MethodGet, yol: pathAdminStoreCredits, durum: "200",
@@ -391,6 +391,7 @@ func doluKrediSatiri() storeCreditEntryDTO {
 		Reference: "ret_1",
 		Reason:    "iade yerine kredi",
 		ExpiresAt: &expires,
+		OrderID:   "order_1",
 		CreatedAt: time.Now().UTC(),
 	}
 }

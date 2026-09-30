@@ -144,6 +144,7 @@ type PaymentStoreCreditEntry struct {
 	Reason       string
 	CreatedAt    pgtype.Timestamptz
 	ExpiresAt    pgtype.Timestamptz
+	OrderID      *string
 }
 
 type PaymentStoreCreditSession struct {

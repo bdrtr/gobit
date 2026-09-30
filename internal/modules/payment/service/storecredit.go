@@ -68,6 +68,10 @@ type IssueCreditInput struct {
 	// ExpiresAt is when the credit expires; nil for credit that does not. It
 	// has to be in the future (ADR 0258).
 	ExpiresAt *time.Time
+	// OrderID is the order the credit compensates; it may be empty (ADR 0274).
+	// It is another module's identifier and is not checked here (Principle
+	// 2.2); what the listing filters on is what was written.
+	OrderID string
 }
 
 // ReasonCreditExpired is the reason an expire row carries.
@@ -116,6 +120,12 @@ func (s *Service) IssueCredit(
 		expiresAt = &at
 	}
 
+	orderID := strings.TrimSpace(in.OrderID)
+	if len(orderID) > maxOrderIDLen {
+		return models.StoreCreditEntry{}, errors.Invalid(CodeStoreCreditInvalidInput,
+			"order_id can be at most %d bytes: %d", maxOrderIDLen, len(orderID))
+	}
+
 	entry, err := s.store.AppendStoreCreditEntry(ctx, models.StoreCreditEntry{
 		ID:           models.NewStoreCreditEntryID(),
 		CustomerID:   customerID,
@@ -125,6 +135,7 @@ func (s *Service) IssueCredit(
 		Reference:    strings.TrimSpace(in.Reference),
 		Reason:       reason,
 		ExpiresAt:    expiresAt,
+		OrderID:      orderID,
 	})
 	if err != nil {
 		return models.StoreCreditEntry{}, err
@@ -164,9 +175,16 @@ type ListStoreCreditInput struct {
 	// CustomerID and CurrencyCode say which ledger is read.
 	CustomerID   string
 	CurrencyCode string
+	// OrderID narrows the history to the credits issued for one order; empty
+	// reads all of it (ADR 0274).
+	OrderID string
 	// Page holds the paging parameters.
 	Page Page
 }
+
+// maxOrderIDLen bounds the order a credit names; an identifier is short, and
+// a text of any length there would be a note in the wrong field.
+const maxOrderIDLen = 128
 
 // ListStoreCredit returns a customer's credit history, newest first.
 //
@@ -192,7 +210,7 @@ func (s *Service) ListStoreCredit(
 	}
 
 	return s.store.ListStoreCreditEntries(ctx, customerID, currency,
-		page.Limit, page.Offset)
+		strings.TrimSpace(in.OrderID), page.Limit, page.Offset)
 }
 
 // ExpireStoreCredit takes back what expired store credit still holds, for at

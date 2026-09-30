@@ -14,16 +14,18 @@ import (
 const countStoreCreditEntries = `-- name: CountStoreCreditEntries :one
 SELECT COUNT(*) FROM payment_store_credit_entries
 WHERE customer_id = $1 AND currency_code = $2
+  AND ($3::text IS NULL OR order_id = $3::text)
 `
 
 type CountStoreCreditEntriesParams struct {
 	CustomerID   string
 	CurrencyCode string
+	OrderID      *string
 }
 
 // CountStoreCreditEntries counts them for the listing's envelope.
 func (q *Queries) CountStoreCreditEntries(ctx context.Context, arg CountStoreCreditEntriesParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countStoreCreditEntries, arg.CustomerID, arg.CurrencyCode)
+	row := q.db.QueryRow(ctx, countStoreCreditEntries, arg.CustomerID, arg.CurrencyCode, arg.OrderID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -86,9 +88,9 @@ func (q *Queries) GetStoreCreditSessionByIdempotencyKey(ctx context.Context, ide
 const insertStoreCreditEntry = `-- name: InsertStoreCreditEntry :one
 
 INSERT INTO payment_store_credit_entries (
-    id, customer_id, currency_code, amount, kind, reference, reason, expires_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, customer_id, currency_code, amount, kind, reference, reason, created_at, expires_at
+    id, customer_id, currency_code, amount, kind, reference, reason, expires_at, order_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, customer_id, currency_code, amount, kind, reference, reason, created_at, expires_at, order_id
 `
 
 type InsertStoreCreditEntryParams struct {
@@ -100,6 +102,7 @@ type InsertStoreCreditEntryParams struct {
 	Reference    string
 	Reason       string
 	ExpiresAt    pgtype.Timestamptz
+	OrderID      *string
 }
 
 // payment_store_credit queries — the ledger and the provider's own sessions.
@@ -124,6 +127,7 @@ func (q *Queries) InsertStoreCreditEntry(ctx context.Context, arg InsertStoreCre
 		arg.Reference,
 		arg.Reason,
 		arg.ExpiresAt,
+		arg.OrderID,
 	)
 	var i PaymentStoreCreditEntry
 	err := row.Scan(
@@ -136,6 +140,7 @@ func (q *Queries) InsertStoreCreditEntry(ctx context.Context, arg InsertStoreCre
 		&i.Reason,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.OrderID,
 	)
 	return i, err
 }
@@ -194,24 +199,28 @@ func (q *Queries) InsertStoreCreditSessionIfAbsent(ctx context.Context, arg Inse
 }
 
 const listStoreCreditEntries = `-- name: ListStoreCreditEntries :many
-SELECT id, customer_id, currency_code, amount, kind, reference, reason, created_at, expires_at FROM payment_store_credit_entries
+SELECT id, customer_id, currency_code, amount, kind, reference, reason, created_at, expires_at, order_id FROM payment_store_credit_entries
 WHERE customer_id = $1 AND currency_code = $2
+  AND ($3::text IS NULL OR order_id = $3::text)
 ORDER BY created_at DESC, id DESC
-LIMIT $4::bigint OFFSET $3::bigint
+LIMIT $5::bigint OFFSET $4::bigint
 `
 
 type ListStoreCreditEntriesParams struct {
 	CustomerID   string
 	CurrencyCode string
+	OrderID      *string
 	RowOffset    int64
 	RowLimit     int64
 }
 
-// ListStoreCreditEntries returns one customer's history, newest first.
+// ListStoreCreditEntries returns one customer's history, newest first, or
+// only the credits issued for one order when order_id is given (ADR 0274).
 func (q *Queries) ListStoreCreditEntries(ctx context.Context, arg ListStoreCreditEntriesParams) ([]PaymentStoreCreditEntry, error) {
 	rows, err := q.db.Query(ctx, listStoreCreditEntries,
 		arg.CustomerID,
 		arg.CurrencyCode,
+		arg.OrderID,
 		arg.RowOffset,
 		arg.RowLimit,
 	)
@@ -232,6 +241,7 @@ func (q *Queries) ListStoreCreditEntries(ctx context.Context, arg ListStoreCredi
 			&i.Reason,
 			&i.CreatedAt,
 			&i.ExpiresAt,
+			&i.OrderID,
 		); err != nil {
 			return nil, err
 		}

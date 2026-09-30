@@ -24,6 +24,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A store credit names the order it compensates** (ADR 0274). **For
+  operators:** `POST /admin/v1/store-credits` takes an optional `order_id`,
+  every history row carries it, and `GET /admin/v1/store-credits` takes
+  `order_id` to list the credits issued for one order. Migration 000015 of the
+  payment module adds the column.
+
 - **The bus keeps the message it gives up on** (ADR 0273). **For operators:**
   on the Redis bus, a message that emptied every consumer that took it is kept
   in the stream `<prefix>-dead-letters` instead of being dropped with a log

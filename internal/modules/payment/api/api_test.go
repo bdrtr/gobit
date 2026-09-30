@@ -1085,3 +1085,31 @@ func TestTheLoyaltyReadsAreOpenToTheReadScope(t *testing.T) {
 		})
 	}
 }
+
+// TestACreditNamesTheOrderItCompensates is ADR 0274 at the door: the issue
+// carries the order to the service, the row says which order it names, and
+// the history is read for one order.
+func TestACreditNamesTheOrderItCompensates(t *testing.T) {
+	svc := &fakePayments{creditEntry: models.StoreCreditEntry{
+		ID: "scredit_1", CustomerID: "cus_1", CurrencyCode: "TRY", Amount: 5_000,
+		Kind: models.StoreCreditIssue, Reason: "a late delivery", OrderID: "order_7",
+	}}
+	r := yeniRouter(svc)
+
+	rec := istek(t, r, http.MethodPost, "/admin/v1/store-credits",
+		`{"customer_id":"cus_1","currency_code":"TRY","amount":5000,"reason":"a late delivery","order_id":"order_7"}`)
+
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, "order_7", svc.lastCreditInput.OrderID)
+	var envelope struct {
+		Data struct {
+			OrderID string `json:"order_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
+	assert.Equal(t, "order_7", envelope.Data.OrderID)
+
+	rec = istek(t, r, http.MethodGet, "/admin/v1/store-credits?customer_id=cus_1&currency_code=TRY&order_id=order_7", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "order_7", svc.lastCreditList.OrderID, "the history is read for the order named")
+}

@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -427,4 +428,48 @@ func TestKrediGecmisiYenidenEskiyeDoner(t *testing.T) {
 	assert.Equal(t, int64(2), total)
 	require.Len(t, entries, 2)
 	assert.Equal(t, "ikinci", entries[0].Reason, "en yeni satır başta")
+}
+
+// TestACreditIsReadForTheOrderItCompensates is ADR 0274: an issue keeps the
+// order it names, and the history narrowed to that order holds its credits
+// alone.
+func TestACreditIsReadForTheOrderItCompensates(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+	ctx := context.Background()
+
+	named, err := svc.IssueCredit(ctx, service.IssueCreditInput{
+		CustomerID: "cus_1", CurrencyCode: "TRY", Amount: 5_000, Reason: "a late delivery", OrderID: " order_7 ",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "order_7", named.OrderID)
+	_, err = svc.IssueCredit(ctx, service.IssueCreditInput{
+		CustomerID: "cus_1", CurrencyCode: "TRY", Amount: 1_000, Reason: "goodwill",
+	})
+	require.NoError(t, err)
+
+	forOrder, count, err := svc.ListStoreCredit(ctx, service.ListStoreCreditInput{
+		CustomerID: "cus_1", CurrencyCode: "TRY", OrderID: "order_7",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
+	require.Len(t, forOrder, 1)
+	assert.Equal(t, named.ID, forOrder[0].ID)
+
+	all, count, err := svc.ListStoreCredit(ctx, service.ListStoreCreditInput{CustomerID: "cus_1", CurrencyCode: "TRY"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count)
+	assert.Len(t, all, 2)
+}
+
+// TestAnOrderIDThatIsNoIdentifierIsRefused bounds the field to an id's size.
+func TestAnOrderIDThatIsNoIdentifierIsRefused(t *testing.T) {
+	svc, _, _ := yeniServis(t)
+
+	_, err := svc.IssueCredit(context.Background(), service.IssueCreditInput{
+		CustomerID: "cus_1", CurrencyCode: "TRY", Amount: 5_000, Reason: "a late delivery",
+		OrderID: strings.Repeat("o", 129),
+	})
+
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "error: %v", err)
 }

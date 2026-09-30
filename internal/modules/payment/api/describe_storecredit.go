@@ -29,7 +29,11 @@ func describeStoreCredits(d *openapi.Doc) {
 			"expires_at, when given, is the moment the credit stops paying; it has to be " +
 			"in the future. From that moment the balance no longer counts what the credit " +
 			"still holds, and a job writes an expire row that takes it back; credit is " +
-			"taken to be spent soonest-expiring first (ADR 0258). " + amountNote,
+			"taken to be spent soonest-expiring first (ADR 0258). " +
+			"\n\n" +
+			"order_id, when given, names the order the credit compensates; the history " +
+			"filters on it. The order is not looked up: it is another module's record " +
+			"(ADR 0274). " + amountNote,
 		RequestBody: d.RequestBody(issueCreditRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The ledger row that was written",
@@ -83,6 +87,11 @@ func describeStoreCredits(d *openapi.Doc) {
 				Name: paramCurrencyCode, In: inQuery, Required: true,
 				Schema:      map[string]any{schemaType: typeString},
 				Description: "Which currency's ledger is read.",
+			},
+			{
+				Name: paramOrderID, In: inQuery,
+				Schema:      map[string]any{schemaType: typeString},
+				Description: "Only the credits issued for this order (ADR 0274).",
 			},
 		}, pagingParameters()...),
 		Responses: map[string]any{

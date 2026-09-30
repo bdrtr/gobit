@@ -429,6 +429,15 @@ var storefrontStoredClaims = map[string]claimVerdict{
 			"provider, from the session it is acting on. The session's own owner is " +
 			"payment_collections.customer_id, judged above",
 	},
+	"payment.payment_store_credit_entries.order_id": {
+		limb: limbInert,
+		why: "the order an issue compensates (ADR 0274), and no storefront write can store one: " +
+			"an issue is written by an ADMIN endpoint, and the storefront reaches this table " +
+			"only through the tender's holds and releases, rows on which the schema refuses an " +
+			"order (payment_store_credit_entries_order_on_issue). The column moves no money — " +
+			"the balance is the rows' sum whatever they name — and the one endpoint that reads " +
+			"it, the history's order filter, is admin-only and scoped",
+	},
 	"payment.payment_loyalty_entries.customer_id": {
 		limb: limbConfined,
 		why: "whose points the ledger row moves, and it is never a value a request carried: " +

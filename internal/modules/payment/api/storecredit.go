@@ -43,6 +43,9 @@ type issueCreditRequest struct {
 	// ExpiresAt is when the credit expires; left out, it does not. It has to
 	// be in the future (ADR 0258).
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	// OrderID is the order the credit compensates; it may be left out
+	// (ADR 0274). The history filters on it.
+	OrderID string `json:"order_id,omitempty"`
 }
 
 // storeCreditEntryDTO is the outward shape of a ledger row.
@@ -60,7 +63,10 @@ type storeCreditEntryDTO struct {
 	// ExpiresAt is when an issue's credit expires; absent when it does not
 	// (ADR 0258).
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	// OrderID is the order an issue compensates; absent when it names none
+	// (ADR 0274).
+	OrderID   string    `json:"order_id,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // storeCreditBalanceDTO is the body of the balance answer.
@@ -93,6 +99,7 @@ func (h *Handler) issueStoreCredit(w http.ResponseWriter, r *http.Request) {
 		Reason:       body.Reason,
 		Reference:    body.Reference,
 		ExpiresAt:    body.ExpiresAt,
+		OrderID:      body.OrderID,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
@@ -147,6 +154,7 @@ func (h *Handler) listStoreCredit(w http.ResponseWriter, r *http.Request) {
 	entries, total, err := h.svc.ListStoreCredit(ctx, service.ListStoreCreditInput{
 		CustomerID:   r.URL.Query().Get("customer_id"),
 		CurrencyCode: r.URL.Query().Get("currency_code"),
+		OrderID:      r.URL.Query().Get(paramOrderID),
 		Page:         page,
 	})
 	if err != nil {
@@ -179,6 +187,7 @@ func toStoreCreditEntryDTO(entry models.StoreCreditEntry) storeCreditEntryDTO {
 		Reference:    entry.Reference,
 		Reason:       entry.Reason,
 		ExpiresAt:    entry.ExpiresAt,
+		OrderID:      entry.OrderID,
 		CreatedAt:    entry.CreatedAt,
 	}
 }

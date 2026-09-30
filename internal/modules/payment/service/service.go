@@ -190,9 +190,10 @@ type Store interface {
 		ctx context.Context, balance models.StoreCreditBalanceRef, at time.Time,
 	) (models.StoreCreditExpiryFigures, error)
 
-	// ListStoreCreditEntries pages a customer's history, newest first.
+	// ListStoreCreditEntries pages a customer's history, newest first, or only
+	// the credits issued for orderID when it is not empty (ADR 0274).
 	ListStoreCreditEntries(
-		ctx context.Context, customerID, currencyCode string, limit, offset int64,
+		ctx context.Context, customerID, currencyCode, orderID string, limit, offset int64,
 	) ([]models.StoreCreditEntry, int64, error)
 
 	// InsertGiftCard writes a card with its code's digest (ADR 0208) and reports

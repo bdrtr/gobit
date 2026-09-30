@@ -35,6 +35,7 @@ func (r *Repository) AppendStoreCreditEntry(
 		Reference:    entry.Reference,
 		Reason:       entry.Reason,
 		ExpiresAt:    fromTimePtr(entry.ExpiresAt),
+		OrderID:      nullText(entry.OrderID),
 	})
 	if err != nil {
 		return models.StoreCreditEntry{}, classify(err, codeQueryFailed,
@@ -66,13 +67,15 @@ func (r *Repository) StoreCreditBalance(
 	return figures.Balance - figures.Due(), nil
 }
 
-// ListStoreCreditEntries returns a customer's history, newest first.
+// ListStoreCreditEntries returns a customer's history, newest first, or only
+// the credits issued for orderID when it is not empty (ADR 0274).
 func (r *Repository) ListStoreCreditEntries(
-	ctx context.Context, customerID, currencyCode string, limit, offset int64,
+	ctx context.Context, customerID, currencyCode, orderID string, limit, offset int64,
 ) ([]models.StoreCreditEntry, int64, error) {
 	rows, err := r.queries(ctx).ListStoreCreditEntries(ctx, paymentdb.ListStoreCreditEntriesParams{
 		CustomerID:   customerID,
 		CurrencyCode: currencyCode,
+		OrderID:      nullText(orderID),
 		RowLimit:     limit,
 		RowOffset:    offset,
 	})
@@ -84,6 +87,7 @@ func (r *Repository) ListStoreCreditEntries(
 	total, err := r.queries(ctx).CountStoreCreditEntries(ctx, paymentdb.CountStoreCreditEntriesParams{
 		CustomerID:   customerID,
 		CurrencyCode: currencyCode,
+		OrderID:      nullText(orderID),
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed,
@@ -215,6 +219,7 @@ func toStoreCreditEntry(row paymentdb.PaymentStoreCreditEntry) models.StoreCredi
 		Reference:    row.Reference,
 		Reason:       row.Reason,
 		ExpiresAt:    toTimePtr(row.ExpiresAt),
+		OrderID:      derefText(row.OrderID),
 		CreatedAt:    toTime(row.CreatedAt),
 	}
 }

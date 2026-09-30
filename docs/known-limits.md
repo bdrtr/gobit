@@ -628,9 +628,12 @@ past and is not corrected retroactively.
   shopper ever seeing the total — but a shop whose callers cannot open a link is
   not served by this.
 
-- **Store credit names no cause.** `reference` is free text, so "this is the
-  compensation for return R-19" is a convention rather than a link. Credit can
-  expire since [ADR 0258](adr/0258-store-credit-can-expire.md).
+- **Store credit names its order, not the finer cause.** Since
+  [ADR 0274](adr/0274-a-store-credit-names-the-order-it-compensates.md) an
+  issue can name the order it compensates and the history is read for one
+  order; the order is not looked up, and "this is for return R-19" is still a
+  convention in `reference`. Credit can expire since
+  [ADR 0258](adr/0258-store-credit-can-expire.md).
 
 - **An installation that trusts an unproven customer claim has neither store
   credit nor loyalty points as a tender.** With

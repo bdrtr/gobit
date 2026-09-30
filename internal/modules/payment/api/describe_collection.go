@@ -28,6 +28,7 @@ const (
 	// and the server never reads.
 	paramCustomerID   = "customer_id"
 	paramCurrencyCode = "currency_code"
+	paramOrderID      = "order_id"
 )
 
 // pagingParameters are the two parameters every paged listing in this module
