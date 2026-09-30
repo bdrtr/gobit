@@ -151,12 +151,12 @@ func TestTheScreenRendersItsShellAndServesItsScript(t *testing.T) {
 	require.NoError(t, err)
 	templates.extra = navItemsOf(screens)
 
-	ui := &UI{templates: templates, pages: screens}
+	ui := &UI{templates: templates, pages: screens, scopes: screenScopes(screens)}
 	r := chi.NewRouter()
 	ui.Routes(r)
 
 	shell := httptest.NewRecorder()
-	r.ServeHTTP(shell, httptest.NewRequest(http.MethodGet, testPage().Path, http.NoBody))
+	r.ServeHTTP(shell, signedInRequest(testPage().Path))
 	require.Equal(t, http.StatusOK, shell.Code, shell.Body.String())
 	assert.Contains(t, shell.Body.String(), "Funnel", "the shell carries the screen's label")
 	assert.Contains(t, shell.Body.String(), testPage().Path+scriptSuffix,
@@ -165,8 +165,7 @@ func TestTheScreenRendersItsShellAndServesItsScript(t *testing.T) {
 		"a page whose content arrives by script must say so when the script does not run")
 
 	script := httptest.NewRecorder()
-	r.ServeHTTP(script, httptest.NewRequest(
-		http.MethodGet, testPage().Path+scriptSuffix, http.NoBody))
+	r.ServeHTTP(script, signedInRequest(testPage().Path+scriptSuffix))
 	require.Equal(t, http.StatusOK, script.Code)
 	assert.Equal(t, "// hi\n", script.Body.String())
 	assert.True(t, strings.HasPrefix(script.Header().Get("Content-Type"), "text/javascript"),

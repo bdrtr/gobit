@@ -230,7 +230,7 @@ func TestEachRouteDemandsThePrivilegeItsOwnPathIsListedUnder(t *testing.T) {
 
 	checked := 0
 	for _, bound := range routes {
-		scope := ui.scopes[bound.pattern]
+		scope := ui.scopes[routeKey(bound.method, bound.pattern)]
 		if scope == "" {
 			continue
 		}
@@ -263,6 +263,36 @@ func TestEachRouteDemandsThePrivilegeItsOwnPathIsListedUnder(t *testing.T) {
 	assert.Equal(t, len(routes)-openRoutes, checked,
 		"%d of %d routes carry a privilege; %d are open, and only five are meant to be",
 		checked, len(routes), len(routes)-checked)
+
+	// And the table lists nothing the router does not bind: a stale entry would
+	// read as a decision about a route that no longer exists (ADR 0255).
+	walked := make(map[string]bool, len(routes))
+	for _, bound := range routes {
+		walked[routeKey(bound.method, bound.pattern)] = true
+	}
+	for key := range ui.scopes {
+		assert.True(t, walked[key], "the scope table lists %s, which the panel does not bind", key)
+	}
+}
+
+// TestARouteTheTableDoesNotListCannotBeBound is ADR 0255: a route is its
+// method and its path, and one the table does not list stops the panel from
+// being built. A POST on a read path therefore inherits nothing — neither the
+// read privilege nor an open door.
+func TestARouteTheTableDoesNotListCannotBeBound(t *testing.T) {
+	t.Parallel()
+
+	ui := &UI{scopes: builtInScopes()}
+	handler := func(http.ResponseWriter, *http.Request) {}
+
+	assert.PanicsWithValue(t,
+		"adminui: POST "+OrdersPath+" is bound with no entry in the scope table; "+
+			"list it in builtInScopes with the privilege it needs, or with none",
+		func() { ui.needs(http.MethodPost, OrdersPath, handler) },
+		"a POST on the orders' read path was bound without a decision")
+	assert.NotPanics(t, func() { ui.needs(http.MethodGet, OrdersPath, handler) })
+	assert.NotPanics(t, func() { ui.needs(http.MethodPost, LogoutPath, handler) },
+		"an open route is listed, with no privilege, and binds")
 }
 
 // TestSigningOutNeedsNoPrivilege is the counterpart of every refusal above.

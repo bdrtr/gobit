@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A panel route is its method and its path** (ADR 0255). **For contributors:**
+  the panel's scope table names each route by method and path and lists the
+  open ones with no privilege; binding a route it does not list stops the panel
+  from being built, so a POST added to a read path no longer inherits the read
+  privilege.
+
 - **A program built on gobit calls itself by its own name** (ADR 0254). **For
   embedders:** `gobit.New().Name("shop")` makes the usage text and the command
   lines the operator subcommands print say `shop migrate status` rather than

@@ -99,7 +99,7 @@ func (u *UI) writeAsset(
 	r *http.Request, w http.ResponseWriter, path, contentType, stamp string, body []byte,
 ) {
 	etag := etagOf(stamp)
-	if u.scopes[path] == "" {
+	if u.scopes[routeKey(http.MethodGet, path)] == "" {
 		corehttp.WriteAsset(r.Context(), w, contentType, etag, body)
 
 		return

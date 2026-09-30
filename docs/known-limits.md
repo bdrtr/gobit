@@ -125,12 +125,6 @@ past and is not corrected retroactively.
   region or channel. The read layer the screens go through knows nothing about
   principals, so there is nowhere below the route for a narrower answer to come
   from.
-- **The panel's scope table is keyed by path, not by method and path.** The two
-  paths bound on both verbs want one privilege each — an edit form an operator
-  cannot submit is a screen that wastes their time — but a POST added later to
-  a read path would inherit the read privilege, and the router walk that audits
-  the table cannot tell the two apart because both answer the unprivileged
-  operator correctly.
 - **Nothing proves a panel screen asks for the RIGHT privilege.** The panel
   spells its scopes itself (it imports no module, and core knows none), and
   `internal/arch` reads both sides from source to refuse a value no module

@@ -171,7 +171,7 @@ func TestOnlyAnUnprivilegedAssetIsPubliclyCacheable(t *testing.T) {
 			directive := rec.Header().Get("Cache-Control")
 			require.NotEmpty(t, directive)
 
-			if ui.scopes[pattern] == "" {
+			if ui.scopes[routeKey(http.MethodGet, pattern)] == "" {
 				assert.Contains(t, directive, "public",
 					"%s carries no privilege and is not publicly cacheable; the login page "+
 						"needs the stylesheet before anybody is signed in", pattern)
@@ -183,7 +183,7 @@ func TestOnlyAnUnprivilegedAssetIsPubliclyCacheable(t *testing.T) {
 				"%s is behind the %q privilege and is served %q. `public` lets a shared "+
 					"cache hand these bytes to a caller this panel refused — the rule a "+
 					"privileged endpoint states is not a rule if something in front of it "+
-					"can answer instead", pattern, ui.scopes[pattern], directive)
+					"can answer instead", pattern, ui.scopes[routeKey(http.MethodGet, pattern)], directive)
 			assert.NotContains(t, directive, "public")
 		})
 	}

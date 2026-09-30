@@ -151,8 +151,8 @@ func validatePages(pages []Page) ([]pageScreen, error) {
 func (u *UI) pageRoutes(r chi.Router) {
 	for i := range u.pages {
 		screen := u.pages[i]
-		r.Get(screen.page.Path, u.needs(screen.page.Path, u.showPage(screen)))
-		r.Get(screen.scriptPath(), u.needs(screen.scriptPath(), u.servePageScript(screen)))
+		r.Get(screen.page.Path, u.needs(http.MethodGet, screen.page.Path, u.showPage(screen)))
+		r.Get(screen.scriptPath(), u.needs(http.MethodGet, screen.scriptPath(), u.servePageScript(screen)))
 	}
 }
 

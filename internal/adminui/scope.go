@@ -1,6 +1,7 @@
 package adminui
 
 import (
+	"fmt"
 	"net/http"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
@@ -41,7 +42,10 @@ const (
 	scopeFulfillmentRead = "fulfillment:read"
 )
 
-// builtInScopes is the privilege each path the panel SHIPS requires.
+// routeKey is how the scope table names a route: its method and its path.
+func routeKey(method, path string) string { return method + " " + path }
+
+// builtInScopes is the privilege each route the panel SHIPS requires.
 //
 // # One table, read twice
 //
@@ -50,53 +54,62 @@ const (
 // promise a screen the route refuses — the panel has already paid for the mirror
 // image of that split (see [UI.pageRoutes]).
 //
-// # It is keyed by PATH, not by method and path
+// # It is keyed by METHOD and path (ADR 0255)
 //
-// The two paths that take both verbs need the same privilege for each: an edit
-// form an operator cannot submit is a screen that wastes their time and teaches
-// them the panel is broken. The cost is written down in docs/known-limits.md —
-// a POST added later to a read path would inherit the read privilege.
+// It used to be keyed by path, and a POST added later to a read path would
+// have inherited the read privilege. Now a route is its method and its path,
+// and binding one the table does not list stops the panel from being built
+// ([UI.needs]), so a new verb on an old path arrives with a decision or not at
+// all. The paths that take both verbs list both, with the same privilege: an
+// edit form an operator cannot submit is a screen that wastes their time.
 //
-// # What is deliberately ABSENT
+// # Open routes are LISTED, with no privilege
 //
-// The login page, its submission, the sign-out and the stylesheet. The first two
-// establish identity and cannot require a privilege carried by an identity that
-// does not exist yet; signing out must work for anyone who can sign in, or an
-// operator granted nothing could not clear their own session; and the stylesheet
-// is install-identical bytes the login page itself needs. Everything else is
-// covered, and internal/app asserts it by WALKING the router rather than by
-// reading this map — a path that fell out of here would otherwise become a
-// screen with no check at all.
+// The login page, its submission, the sign-out, the stylesheet and the entry
+// point. The first two establish identity and cannot require a privilege
+// carried by an identity that does not exist yet; signing out must work for
+// anyone who can sign in; the stylesheet is install-identical bytes the login
+// page itself needs; and the entry point holds no data and redirects to the
+// first screen the operator can open, answering 403 only when none is open
+// (see [UI.home]). They are written down rather than left out, so an absence
+// can only ever mean a route nobody decided about.
 func builtInScopes() map[string]string {
+	get, post := http.MethodGet, http.MethodPost
+
 	return map[string]string{
-		ProductsPath:    scopeProductRead,
-		ProductPath:     scopeProductRead,
-		VariantPath:     scopeProductRead,
-		ProductEditPath: scopeProductWrite,
+		routeKey(get, StylesheetPath): "",
+		routeKey(get, LoginPath):      "",
+		routeKey(post, LoginPath):     "",
+		routeKey(post, LogoutPath):    "",
+		routeKey(get, URLPrefix):      "",
+
+		routeKey(get, ProductsPath):     scopeProductRead,
+		routeKey(get, ProductPath):      scopeProductRead,
+		routeKey(get, VariantPath):      scopeProductRead,
+		routeKey(get, ProductEditPath):  scopeProductWrite,
+		routeKey(post, ProductEditPath): scopeProductWrite,
 		// Editing the related products is a product write like any other.
-		ProductRelationsPath: scopeProductWrite,
+		routeKey(get, ProductRelationsPath):  scopeProductWrite,
+		routeKey(post, ProductRelationsPath): scopeProductWrite,
 		// And so is editing the add-ons (ADR 0232).
-		ProductAddOnsPath: scopeProductWrite,
-		VariantPricePath:  scopePricingWrite,
-		VariantStockPath:  scopeInventoryWrite,
+		routeKey(get, ProductAddOnsPath):  scopeProductWrite,
+		routeKey(post, ProductAddOnsPath): scopeProductWrite,
+		routeKey(post, VariantPricePath):  scopePricingWrite,
+		routeKey(post, VariantStockPath):  scopeInventoryWrite,
 		// A variant's bundle is a revision of its product (ADR 0236).
-		VariantBundlePath: scopeProductWrite,
-		OrdersPath:        scopeOrderRead,
-		OrderPath:         scopeOrderRead,
+		routeKey(get, VariantBundlePath):  scopeProductWrite,
+		routeKey(post, VariantBundlePath): scopeProductWrite,
+		routeKey(get, OrdersPath):         scopeOrderRead,
+		routeKey(get, OrderPath):          scopeOrderRead,
 		// The sales report is made of order lines and shows what they sold for.
 		// It names no scope of its own because it holds no data of its own: an
 		// operator who may read the orders may read their total.
-		SalesPath:         scopeOrderRead,
-		CustomersPath:     scopeCustomerRead,
-		CustomerPath:      scopeCustomerRead,
-		InventoryPath:     scopeInventoryRead,
-		ReviewsPath:       scopeReviewRead,
-		ReviewsScriptPath: scopeReviewRead,
-		// The panel's entry point holds no data and redirects to the first
-		// screen the operator can open, so a privilege here would refuse them
-		// the door rather than the room. It answers 403 only when NO room is
-		// open — see [UI.home].
-		URLPrefix: "",
+		routeKey(get, SalesPath):         scopeOrderRead,
+		routeKey(get, CustomersPath):     scopeCustomerRead,
+		routeKey(get, CustomerPath):      scopeCustomerRead,
+		routeKey(get, InventoryPath):     scopeInventoryRead,
+		routeKey(get, ReviewsPath):       scopeReviewRead,
+		routeKey(get, ReviewsScriptPath): scopeReviewRead,
 	}
 }
 
@@ -109,14 +122,14 @@ func builtInScopes() map[string]string {
 func screenScopes(screens []pageScreen) map[string]string {
 	scopes := builtInScopes()
 	for i := range screens {
-		scopes[screens[i].page.Path] = screens[i].page.Scope
-		scopes[screens[i].scriptPath()] = screens[i].page.Scope
+		scopes[routeKey(http.MethodGet, screens[i].page.Path)] = screens[i].page.Scope
+		scopes[routeKey(http.MethodGet, screens[i].scriptPath())] = screens[i].page.Scope
 	}
 
 	return scopes
 }
 
-// needs wraps a handler with the privilege the given PATH is listed under.
+// needs wraps a handler with the privilege its route is listed under.
 //
 // It takes the path rather than the scope so that a route's binding and its
 // privilege are one lookup instead of two facts a reader keeps in step: the line
@@ -129,14 +142,19 @@ func screenScopes(screens []pageScreen) map[string]string {
 // one person who could ask for the missing grant. The page keeps the menu, so
 // the operator lands somewhere they can leave.
 //
-// # A path with no entry carries no privilege
+// # A route listed with no privilege is open, and an unlisted one is refused
 //
-// The handler is returned unwrapped. That is how the entry point, the login and
-// the stylesheet stay open, and it is the ONE way a route can end up unchecked —
-// which is why the router walk in internal/app requires a refusal from every
-// path that is not on that short list.
-func (u *UI) needs(path string, next http.HandlerFunc) http.HandlerFunc {
-	scope := u.scopes[path]
+// The handler is returned unwrapped for a route the table lists with no
+// privilege; that is how the entry point, the login and the stylesheet stay
+// open. A route the table does not list at all PANICS, while the panel is being
+// built: an absence is a route nobody decided about, and binding it either
+// open or under a neighbour's privilege is the silent choice ADR 0255 removed.
+func (u *UI) needs(method, path string, next http.HandlerFunc) http.HandlerFunc {
+	scope, listed := u.scopes[routeKey(method, path)]
+	if !listed {
+		panic(fmt.Sprintf("adminui: %s %s is bound with no entry in the scope table; "+
+			"list it in builtInScopes with the privilege it needs, or with none", method, path))
+	}
 	if scope == "" {
 		return next
 	}
@@ -172,7 +190,7 @@ func (u *UI) needs(path string, next http.HandlerFunc) http.HandlerFunc {
 func allowedItems(items []navItem, scopes map[string]string, principal corehttp.Principal) []navItem {
 	out := make([]navItem, 0, len(items))
 	for i := range items {
-		scope := scopes[items[i].Path]
+		scope := scopes[routeKey(http.MethodGet, items[i].Path)]
 		if scope == "" || principal.HasScope(scope) {
 			out = append(out, items[i])
 		}
