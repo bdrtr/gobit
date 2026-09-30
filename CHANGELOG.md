@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A secret is compared in constant time, and a gate says so** (ADR 0257).
+  **For contributors:** in a file that imports `crypto/hmac`, `crypto/subtle`,
+  a SHA package, `crypto/rand` or argon2, comparing two values with `==` or
+  `bytes.Equal` fails `internal/arch` unless the comparison is listed as
+  holding no secret; compare a secret with `hmac.Equal` or
+  `subtle.ConstantTimeCompare`.
+
 - **An order's address correction is trimmed as the cart's address is** (D178).
   **For operators:** `PUT /admin/v1/orders/{id}/shipping-address` trims each
   field and refuses one over 512 bytes, so a change of whitespace alone no

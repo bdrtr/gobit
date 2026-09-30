@@ -586,18 +586,13 @@ past and is not corrected retroactively.
   deliberately — but the sentence "startup fails closed" does NOT FOLLOW from
   this invariant. The scope is written in
   `internal/arch/registration_test.go`.
-- **Nothing checks that a secret comparison is CONSTANT TIME.** There are five
-  such comparisons in the tree — a TOTP code, an argon2id derived key, two cookie
-  MACs and a token digest — and every one of them uses `hmac.Equal` or
-  `subtle.ConstantTimeCompare` because somebody wrote it that way, not because
-  anything refuses the alternative. A mutation that replaced the TOTP comparison
-  with `==` broke NO test, and no test could: timing is not observable from a unit
-  test, and a test that measured it would be the flakiest one in the suite.
-
-  What defends the six-digit case is therefore two things, neither of them a
-  gate: the shape of the code, and the rate limit in front of the endpoint. A
-  million possibilities against an early-exit compare is sixty tries; the rate
-  limit is what makes sixty tries not free.
+- **The constant-time gate sees the files that make a secret, not the ones that
+  only hold one.** Since
+  [ADR 0257](adr/0257-a-secret-is-compared-in-constant-time.md) a file importing
+  a MAC, digest, derived-key or randomness package compares no two values with
+  `==` or `bytes.Equal` unless the comparison is listed as holding no secret. A
+  secret read from storage and compared in a file that imports none of those
+  packages is not seen, and timing itself is still observed by no test.
 
 - **An exchange's goods and its money are related only by a human.**
   `order_exchanges` carries no items and its `difference_due` is a figure the
