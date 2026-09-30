@@ -779,9 +779,5 @@ past and is not corrected retroactively.
   in the ledger. The document is a published artifact every API client reads; the
   ledger may only shrink, so the number moves in one direction on its own.
 
-- **No lane boots the panel against a real server.** Its gates run over a real
-  router with fake services; `make smoke` starts the binary and never opens
-  `/admin/ui`. "The panel renders against a real database" is proven by nothing.
-
 - **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
   correctness under load, it does not produce a capacity plan.
