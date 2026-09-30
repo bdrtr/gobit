@@ -133,6 +133,12 @@ type Auth interface {
 	// SecondFactorHolders returns those of the given users who have proven an
 	// authenticator.
 	SecondFactorHolders(ctx context.Context, userIDs []string) (map[string]bool, error)
+	// ListSessions returns the caller's open sessions (ADR 0267).
+	ListSessions(ctx context.Context, principal corehttp.Principal) ([]service.SessionView, error)
+	// CloseSession closes one of the person's own sessions.
+	CloseSession(ctx context.Context, userID, sessionID string) error
+	// CloseOtherSessions closes every session of the caller but the current one.
+	CloseOtherSessions(ctx context.Context, principal corehttp.Principal) (int64, error)
 	// GetUser returns the user by their identifier.
 	GetUser(ctx context.Context, id string) (models.User, error)
 	// ListUsers filters and pages the users.
@@ -341,6 +347,15 @@ func (h *Handler) Routes(r chi.Router) {
 	// factor takes the code it shows now. The answer for a lost phone is
 	// `gobit mfa-reset`, at the machine.
 	r.Post(MFARemovePath, h.adminRemoveMFA)
+
+	// --- the caller's own sessions (ADR 0267) ---
+	//
+	// IDENTITY only, as logging out is: closing one's own session is not a
+	// privilege, and an operator whose privileges were taken away must still be
+	// able to close the session a stolen laptop holds.
+	r.Get(SessionsPath, h.adminListSessions)
+	r.Post(SessionsRevokeOthersPath, h.adminRevokeOtherSessions)
+	r.Post(SessionRevokePath, h.adminRevokeSession)
 
 	// --- api keys ---
 	write.Post("/admin/v1/api-keys", h.adminCreateAPIKey)

@@ -40,7 +40,7 @@ type tokenClaims struct {
 // If there is no signing secret errors.Unavailable is returned: producing no
 // token at all is right, rather than producing an unsigned one or one with a
 // fixed secret.
-func (s *Service) issueToken(userID string, scopes []string, now time.Time) (string, time.Time, error) {
+func (s *Service) issueToken(userID string, scopes []string, now time.Time, sessionID string) (string, time.Time, error) {
 	if len(s.secret) == 0 {
 		return "", time.Time{}, errors.Unavailable(CodeSecretMissing,
 			"the JWT signing secret is not configured; a session token cannot be produced")
@@ -50,7 +50,10 @@ func (s *Service) issueToken(userID string, scopes []string, now time.Time) (str
 	claims := tokenClaims{
 		Scopes: scopes,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   userID,
+			Subject: userID,
+			// ID names the session row the sign-in wrote, so this one token
+			// can be closed without the others (ADR 0267).
+			ID:        sessionID,
 			Issuer:    s.issuer,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(expiresAt),
@@ -78,6 +81,9 @@ type parsedToken struct {
 	// are rejected (see [parsedToken.issuedBefore] and
 	// [Service.principalFromToken]). Its resolution is SECONDS.
 	IssuedAt time.Time
+	// SessionID is the session row the token names ("jti", ADR 0267); empty
+	// for a token signed before sessions were recorded.
+	SessionID string
 }
 
 // issuedBefore reports that the token was DEFINITELY produced before the given
@@ -106,7 +112,15 @@ type parsedToken struct {
 // would have had to obtain the token WITHIN the second in which the victim
 // changed the password.
 func (p parsedToken) issuedBefore(moment time.Time) bool {
-	return !p.IssuedAt.Add(jwt.TimePrecision).After(moment)
+	return signedBefore(p.IssuedAt, moment)
+}
+
+// signedBefore is the anchor's rule for a moment of signing, at the token's
+// resolution: the token's "iat" and a session row's created_at, which is the
+// same moment before the claim truncated it, are judged by it alike, so the
+// sessions a person is listed are the ones the verification accepts (ADR 0267).
+func signedBefore(signedAt, moment time.Time) bool {
+	return !signedAt.Truncate(jwt.TimePrecision).Add(jwt.TimePrecision).After(moment)
 }
 
 // parseToken verifies the token and returns its claims.
@@ -186,8 +200,9 @@ func (s *Service) parseToken(raw string) (parsedToken, error) {
 	}
 
 	return parsedToken{
-		Subject:  claims.Subject,
-		Scopes:   claims.Scopes,
-		IssuedAt: claims.IssuedAt.UTC(),
+		Subject:   claims.Subject,
+		Scopes:    claims.Scopes,
+		IssuedAt:  claims.IssuedAt.UTC(),
+		SessionID: claims.ID,
 	}, nil
 }

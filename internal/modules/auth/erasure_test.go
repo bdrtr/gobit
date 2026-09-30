@@ -104,6 +104,13 @@ var notPersonalColumns = map[string][]string{
 	"auth_mfa_credential": {
 		"user_id", "secret", "created_at",
 	},
+	// id is a random identifier the token names and user_id a join key;
+	// expires_at is created_at plus the token's lifetime and says nothing
+	// created_at does not. What IS declared is created_at and revoked_at: when
+	// a person signed in, and when they closed one sign-in by itself.
+	"auth_session": {
+		"id", "user_id", "expires_at",
+	},
 	"sales_channel": {
 		"id", "is_disabled", "created_at", "updated_at", "deleted_at",
 	},

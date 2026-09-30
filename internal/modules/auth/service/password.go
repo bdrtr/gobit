@@ -304,8 +304,12 @@ func (s *Service) Login(
 			slog.String("user_id", user.ID), slog.Any("error", err))
 	}
 
-	token, expiresAt, err := s.issueToken(user.ID, user.Scopes, now)
+	sessionID := models.NewID(models.SessionIDPrefix, now)
+	token, expiresAt, err := s.issueToken(user.ID, user.Scopes, now, sessionID)
 	if err != nil {
+		return "", time.Time{}, err
+	}
+	if err := s.recordSession(ctx, user.ID, sessionID, now, expiresAt); err != nil {
 		return "", time.Time{}, err
 	}
 

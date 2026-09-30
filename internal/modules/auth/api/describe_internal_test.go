@@ -235,6 +235,17 @@ func adminEndpoints() []endpointExpectation {
 			request: confirmMFARequest{}, optionalBody: true,
 		},
 		{
+			method: http.MethodGet, path: SessionsPath, status: "200",
+			response: sessionDTO{}, list: true,
+		},
+		{
+			method: http.MethodPost, path: SessionRevokePath, status: "204",
+		},
+		{
+			method: http.MethodPost, path: SessionsRevokeOthersPath, status: "200",
+			response: revokedSessionsDTO{},
+		},
+		{
 			method: http.MethodGet, path: "/admin/v1/auth/me", status: "200",
 			response: fullPrincipal(),
 		},

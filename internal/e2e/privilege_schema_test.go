@@ -23,13 +23,16 @@ import (
 // caller's own, and a privilege there would lock an operator out of their own
 // session.
 var identityOnlyOperations = map[string]string{
-	"get /admin/v1/auth/me":                 "reads back the caller's own identity",
-	"post /admin/v1/auth/login":             "establishes an identity; nobody holds a privilege yet",
-	"post /admin/v1/auth/accept-invitation": "establishes an identity from an invitation",
-	"post /admin/v1/auth/logout":            "closes the caller's own sessions",
-	"post /admin/v1/auth/mfa":               "enrolls the caller's own second factor (ADR 0264)",
-	"post /admin/v1/auth/mfa/confirm":       "proves the caller's own second factor (ADR 0264)",
-	"post /admin/v1/auth/mfa/remove":        "removes the caller's own second factor, given its code (ADR 0264)",
+	"get /admin/v1/auth/me":                      "reads back the caller's own identity",
+	"post /admin/v1/auth/login":                  "establishes an identity; nobody holds a privilege yet",
+	"post /admin/v1/auth/accept-invitation":      "establishes an identity from an invitation",
+	"post /admin/v1/auth/logout":                 "closes the caller's own sessions",
+	"post /admin/v1/auth/mfa":                    "enrolls the caller's own second factor (ADR 0264)",
+	"post /admin/v1/auth/mfa/confirm":            "proves the caller's own second factor (ADR 0264)",
+	"post /admin/v1/auth/mfa/remove":             "removes the caller's own second factor, given its code (ADR 0264)",
+	"get /admin/v1/auth/sessions":                "lists the caller's own sessions (ADR 0267)",
+	"post /admin/v1/auth/sessions/{id}/revoke":   "closes one of the caller's own sessions (ADR 0267)",
+	"post /admin/v1/auth/sessions/revoke-others": "closes the caller's other sessions (ADR 0267)",
 }
 
 // refusedPrivilege reads the privilege a 403 names.

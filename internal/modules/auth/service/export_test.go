@@ -17,3 +17,19 @@ func TOTPCodeAt(secret string, at time.Time) (string, error) {
 
 	return totpCode(secret, counter)
 }
+
+// IssueLegacyToken signs a token that names no session, as a token signed
+// before sessions were recorded does (ADR 0267).
+func IssueLegacyToken(s *Service, userID string, scopes []string, now time.Time) (string, error) {
+	token, _, err := s.issueToken(userID, scopes, now, "")
+
+	return token, err
+}
+
+// IssueTokenNaming signs a token for the user that names the given session,
+// which only a signer holding the secret could produce (ADR 0267).
+func IssueTokenNaming(s *Service, userID string, scopes []string, now time.Time, sessionID string) (string, error) {
+	token, _, err := s.issueToken(userID, scopes, now, sessionID)
+
+	return token, err
+}

@@ -223,6 +223,7 @@ const (
 	tableIdentity     = "auth_identity"
 	tableInvitation   = "auth_user_invitation"
 	tableMFA          = "auth_mfa_credential"
+	tableSession      = "auth_session"
 	tableSalesChannel = "sales_channel"
 	tableAPIKey       = "api_key"
 )
@@ -497,6 +498,16 @@ func (m *Module) PersonalData() personaldata.Declaration {
 			{
 				Table: tableMFA, Column: "confirmed_at", Kind: personaldata.Named,
 				Why:       "when this staff member proved a second factor, which is a fact about how they sign in; the secret beside it is a random seed that describes nobody, and the row's absence is itself the answer for somebody who never enrolled",
+				OnErasure: personaldata.Kept,
+			},
+			{
+				Table: tableSession, Column: "created_at", Kind: personaldata.Named,
+				Why:       "when this staff member signed in, one row per sign-in (ADR 0267); the rows are forgotten at their next sign-in once they have expired",
+				OnErasure: personaldata.Kept,
+			},
+			{
+				Table: tableSession, Column: "revoked_at", Kind: personaldata.Named,
+				Why:       "when this staff member closed one of their sessions by itself (ADR 0267)",
 				OnErasure: personaldata.Kept,
 			},
 			{

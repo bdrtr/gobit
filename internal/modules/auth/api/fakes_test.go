@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/auth/api"
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 	"github.com/bdrtr/gobit/internal/modules/auth/service"
@@ -21,6 +22,13 @@ type fakeAuth struct {
 	// factorOwed and factorHolders are the second factor answers (ADR 0265).
 	factorOwed    bool
 	factorHolders map[string]bool
+
+	// The session calls (ADR 0267).
+	sessions      []service.SessionView
+	sessionsFor   corehttp.Principal
+	closedFor     string
+	closedSession string
+	sessionErr    error
 
 	// The second-factor calls, recorded: which user each acted for is the whole
 	// claim the endpoints make, because they take no id from the caller.
@@ -234,6 +242,24 @@ func (f *fakeAuth) ConfirmMFA(_ context.Context, userID, code string) error {
 	f.mfaCode = code
 
 	return f.mfaErr
+}
+
+// ListSessions answers the fake's fixed sessions.
+func (f *fakeAuth) ListSessions(_ context.Context, principal corehttp.Principal) ([]service.SessionView, error) {
+	f.sessionsFor = principal
+	return f.sessions, nil
+}
+
+// CloseSession records which session was closed.
+func (f *fakeAuth) CloseSession(_ context.Context, userID, sessionID string) error {
+	f.closedFor, f.closedSession = userID, sessionID
+	return f.sessionErr
+}
+
+// CloseOtherSessions records whose others were closed.
+func (f *fakeAuth) CloseOtherSessions(_ context.Context, principal corehttp.Principal) (int64, error) {
+	f.sessionsFor = principal
+	return 2, f.sessionErr
 }
 
 // SecondFactorOwed answers the fake's fixed verdict.

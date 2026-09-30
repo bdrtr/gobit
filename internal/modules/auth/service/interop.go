@@ -260,6 +260,9 @@ func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.
 		return corehttp.Principal{}, errors.Unauthorized(CodeTokenInvalid,
 			"the token was produced before a logout or a password change: %s", user.ID)
 	}
+	if err := s.checkSession(ctx, parsed); err != nil {
+		return corehttp.Principal{}, err
+	}
 
 	// A person who owes a second factor holds no privilege until they prove one
 	// (ADR 0265). It is decided here, on every request, rather than when the
@@ -276,9 +279,10 @@ func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.
 	}
 
 	return corehttp.Principal{
-		ID:     user.ID,
-		Kind:   PrincipalKindUser,
-		Scopes: scopes,
+		ID:        user.ID,
+		Kind:      PrincipalKindUser,
+		Scopes:    scopes,
+		SessionID: parsed.SessionID,
 	}, nil
 }
 

@@ -19,6 +19,9 @@ const (
 	APIKeyIDPrefix = "apikey_"
 	// SalesChannelIDPrefix is the prefix of sales channel identifiers.
 	SalesChannelIDPrefix = "sc_"
+	// SessionIDPrefix is the prefix of a signed-in session's identifier
+	// (ADR 0267).
+	SessionIDPrefix = "sess_"
 )
 
 // idEncoding is unpadded encoding over the Crockford Base32 alphabet. Because

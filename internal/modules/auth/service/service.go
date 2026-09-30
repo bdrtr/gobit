@@ -164,6 +164,14 @@ type Repository interface {
 	// SecondFactorHolders returns those of the given users who have proven an
 	// authenticator (ADR 0265).
 	SecondFactorHolders(ctx context.Context, userIDs []string) (map[string]bool, error)
+
+	// The sessions a sign-in opens (ADR 0267).
+	InsertSession(ctx context.Context, session models.Session) error
+	GetSession(ctx context.Context, id string) (models.Session, error)
+	ListUnclosedSessions(ctx context.Context, userID string, now time.Time) ([]models.Session, error)
+	CloseSession(ctx context.Context, userID, id string, now time.Time) (bool, error)
+	CloseOtherSessions(ctx context.Context, userID, keep string, now time.Time) (int64, error)
+	PruneSessions(ctx context.Context, userID string, now time.Time) error
 	// ConfirmMFACredential stamps the first correct code. A credential that is
 	// already confirmed matches nothing and answers the same sentinel.
 	ConfirmMFACredential(ctx context.Context, userID string) (models.MFACredential, error)

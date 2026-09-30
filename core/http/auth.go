@@ -44,6 +44,10 @@ type Principal struct {
 	// SalesChannelIDs are the sales channels a publishable key is bound to;
 	// catalog filtering on the store surface rests on them.
 	SalesChannelIDs []string
+	// SessionID names the session a person's token belongs to, so an endpoint
+	// can tell the caller's own session from their others (ADR 0267). It is
+	// empty for a key and for a token signed before sessions were recorded.
+	SessionID string
 }
 
 // HasScope reports whether the caller holds the given privilege.

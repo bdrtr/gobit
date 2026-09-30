@@ -53,6 +53,14 @@ type AuthMfaCredential struct {
 	PendingSecret []byte
 }
 
+type AuthSession struct {
+	ID        string
+	UserID    string
+	CreatedAt pgtype.Timestamptz
+	ExpiresAt pgtype.Timestamptz
+	RevokedAt pgtype.Timestamptz
+}
+
 type AuthUser struct {
 	ID        string
 	Email     string

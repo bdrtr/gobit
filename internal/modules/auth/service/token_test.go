@@ -68,6 +68,9 @@ func (s *sessionClock) advance(d time.Duration) { s.moment = s.moment.Add(d) }
 // queries/identities.sql).
 type sessionRepo struct {
 	service.Repository
+	// sessions keeps the session rows; the methods below name it explicitly,
+	// because the embedded interface declares the same ones.
+	sessions memSessions
 
 	user models.User
 	// identities are the user's identity rows: AT MOST ONE per provider. The
@@ -503,4 +506,28 @@ func TestTokenOfDeletedLoginIdentityIsRejected(t *testing.T) {
 
 	_, err := resolveSessionPrincipal(interop, token)
 	requireSessionRejected(t, err, "the token of a user whose login identity was deleted must not be accepted")
+}
+
+func (d *sessionRepo) InsertSession(ctx context.Context, session models.Session) error {
+	return d.sessions.InsertSession(ctx, session)
+}
+
+func (d *sessionRepo) GetSession(ctx context.Context, id string) (models.Session, error) {
+	return d.sessions.GetSession(ctx, id)
+}
+
+func (d *sessionRepo) ListUnclosedSessions(ctx context.Context, userID string, now time.Time) ([]models.Session, error) {
+	return d.sessions.ListUnclosedSessions(ctx, userID, now)
+}
+
+func (d *sessionRepo) CloseSession(ctx context.Context, userID, id string, now time.Time) (bool, error) {
+	return d.sessions.CloseSession(ctx, userID, id, now)
+}
+
+func (d *sessionRepo) CloseOtherSessions(ctx context.Context, userID, keep string, now time.Time) (int64, error) {
+	return d.sessions.CloseOtherSessions(ctx, userID, keep, now)
+}
+
+func (d *sessionRepo) PruneSessions(ctx context.Context, userID string, now time.Time) error {
+	return d.sessions.PruneSessions(ctx, userID, now)
 }

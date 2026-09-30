@@ -24,6 +24,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An admin session can be closed alone** (ADR 0267). **For operators:**
+  `GET /admin/v1/auth/sessions` lists your open sessions with the current one
+  marked; `POST /admin/v1/auth/sessions/{id}/revoke` closes one and
+  `POST /admin/v1/auth/sessions/revoke-others` closes all but the one you are
+  using. **For integrators:** a session token now carries `jti`, the session
+  it names, and `corehttp.Principal` carries `SessionID`; a token signed before
+  this change names none and is accepted until it expires. Migration 000005 of
+  the auth module adds `auth_session`.
+
 - **The panel enrolls a second factor** (ADR 0266). **For operators:** the
   panel's Second factor screen, open to everybody who can sign in, enrolls an
   authenticator (the key is shown once, with an `otpauth://` link), proves it,

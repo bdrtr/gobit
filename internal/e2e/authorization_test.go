@@ -71,6 +71,11 @@ var unauthorizedExemptPaths = map[string]struct{}{
 	authapi.MFAEnrolPath:         {},
 	authapi.MFAConfirmPath:       {},
 	authapi.MFARemovePath:        {},
+	// The caller's own sessions ask for identity alone, as the sign-out does
+	// (ADR 0267).
+	authapi.SessionsPath:             {},
+	authapi.SessionRevokePath:        {},
+	authapi.SessionsRevokeOthersPath: {},
 }
 
 // pathParamRe captures the {param} and {param:regex} pieces of a chi route

@@ -290,6 +290,45 @@ func describeIdentity(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodGet, SessionsPath, openapi.Operation{
+		Summary: "Lists the CALLER's open sessions, newest first.",
+		Description: "One per sign-in that is neither closed, nor expired, nor older than the " +
+			"last logout or password change (ADR 0267). `current` marks the session the " +
+			"request was made with. It names no user: when another administrator signs in " +
+			"is theirs to know. A token signed before sessions were recorded has no row and " +
+			"is not listed.",
+		Responses: map[string]any{
+			"200": openapi.Response("The caller's open sessions", d.List(sessionDTO{})),
+			"422": openapi.ErrorResponse(
+				"The request was made with an API key. Code \"auth_sessions_not_a_person\"."),
+		},
+	})
+
+	d.Describe(http.MethodPost, SessionRevokePath, openapi.Operation{
+		Summary: "Closes one of the CALLER's sessions.",
+		Description: "Only that session's token stops being accepted; the others, the " +
+			"current one included unless it is the one named, go on (ADR 0267). Closing " +
+			"every session at once is POST /admin/v1/auth/logout.",
+		Responses: map[string]any{
+			"204": emptyResponse("The session is closed"),
+			"404": openapi.ErrorResponse(
+				"The caller has no open session of that id. Code \"auth_session_not_open\"."),
+			"422": openapi.ErrorResponse(
+				"The request was made with an API key. Code \"auth_sessions_not_a_person\"."),
+		},
+	})
+
+	d.Describe(http.MethodPost, SessionsRevokeOthersPath, openapi.Operation{
+		Summary: "Closes every session of the CALLER but the one the request is made with.",
+		Description: "The answer to a device left signed in somewhere, from the one in hand " +
+			"(ADR 0267). The response says how many were closed.",
+		Responses: map[string]any{
+			"200": openapi.Response("How many sessions were closed", d.Item(revokedSessionsDTO{})),
+			"422": openapi.ErrorResponse(
+				"The request was made with an API key. Code \"auth_sessions_not_a_person\"."),
+		},
+	})
+
 	d.Describe(http.MethodGet, "/admin/v1/auth/me", openapi.Operation{
 		Summary: "Returns the authenticated caller's identity and scopes.",
 		Responses: map[string]any{

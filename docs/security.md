@@ -371,10 +371,14 @@ in shared environments, and only produces a warning in local development (the
 promise of `make up && make run` without a `.env` is kept there). The distinction is
 the same as `JWT_SECRET`'s.
 
-**Session revocation** happens two ways and both are **wholesale**: a password
-change and `POST /admin/v1/auth/logout`. There is no way to drop a single device —
-that would need a jti-based blacklist read on every request. An API key has no
-session; it is closed with `POST /admin/v1/api-keys/{id}/revoke`.
+**Session revocation** is wholesale or single. A password change and
+`POST /admin/v1/auth/logout` close every session; since
+[ADR 0267](adr/0267-a-session-can-be-closed-alone.md) every sign-in writes a row
+its token names, `GET /admin/v1/auth/sessions` lists the caller's open ones, and
+closing one (`POST /admin/v1/auth/sessions/{id}/revoke`) or all the others
+(`POST /admin/v1/auth/sessions/revoke-others`) refuses those tokens alone, at the
+cost of one read of the row per admin request. An API key has no session; it is
+closed with `POST /admin/v1/api-keys/{id}/revoke`.
 
 If `JWT_SECRET` is not given, a **startup-specific random** secret is generated in
 development (sessions drop on restart) and a warning is logged; in shared

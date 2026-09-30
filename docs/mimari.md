@@ -543,7 +543,6 @@ of them is edited, which has happened.
 | Limit | Effect | Way out |
 |---|---|---|
 | The cross-module JSON SCHEMA is not checked at compile time | A drifted FIELD NAME leaves both packages' unit tests green and fails at run time | An integration test for every interop surface. The SIGNATURE is a different question and is no longer a limit: since [ADR 0136](adr/0136-the-compiler-checks-every-interop-pair.md) a pin file assigns every container-resolved producer to its consumer's interface, so a changed method set fails the BUILD |
-| Session revocation is only **wholesale** | No dropping a single device | A jti-based blacklist — which means a new store read on every request |
 | Load testing is in-process | Does not produce a capacity plan | An external load tool against a real deployment |
 | Rollback is for ONE owner and does not know the order | An operator who wants to roll back modules together repeats the command per owner; the command does not say in which order to roll back | Because there are no cross-module FKs, order is not a constraint today; a definition of order is added when it is genuinely needed |
 | There is no command that REPAIRS a half-finished migration | `migrate down` refuses a dirty ledger and sends you to a manual repair; there is no "force" surface | Deliberate: the only party that knows the version correctly is the human looking at the half schema |

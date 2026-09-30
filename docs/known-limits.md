@@ -78,7 +78,8 @@ past and is not corrected retroactively.
   limits:
     - **A signed cookie cannot be revoked before it expires.** That is the price of
       keeping the identity off the read path of fifteen storefront routes, and it is
-      the same wholesale-only shape the admin side has one bullet down. Rotating the
+      the shape an admin session had until
+      [ADR 0267](adr/0267-a-session-can-be-closed-alone.md). Rotating the
       signing key does NOT log anybody out (`RetiredSecrets`, ADR 0129) — which is
       the point, and therefore not a revocation either. A key that LEAKED is dropped
       outright, which logs everybody out and is the correct price.
@@ -114,9 +115,10 @@ past and is not corrected retroactively.
   endpoint would turn knowing one identifier into reading every cart. The rules
   of the model, and what it does NOT cover, are written with the cart flows in
   [`docs/commerce-flows.md`](commerce-flows.md).
-- **Session revocation is wholesale only.** `POST /admin/v1/auth/logout` and a
-  password change drop ALL of the caller's sessions; there is no endpoint that
-  drops a single device (see `internal/modules/auth/api`).
+- **An admin session names no device.** Since
+  [ADR 0267](adr/0267-a-session-can-be-closed-alone.md) a person lists their
+  sessions and closes one or all the others, but a session is shown by when it
+  began and when it ends, not by the browser or the place it was opened from.
 - **The panel's privileges are per SCREEN, not per record or per field.** Since
   [ADR 0156](adr/0156-a-panel-screen-costs-a-privilege.md) every panel path is
   listed with the scope it requires, and the scope decides whether the screen

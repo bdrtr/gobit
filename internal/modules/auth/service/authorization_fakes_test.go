@@ -19,6 +19,8 @@ import (
 // scope list has to pass through as it is. A real in-memory repository would
 // add nothing to these two claims and would make the test unreadable.
 type fakeRepo struct {
+	memSessions
+
 	// userEmail is what GetUser answers with, because an otpauth label carries
 	// the account name a person sees in their authenticator.
 	userEmail string
