@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A storefront category lists its subcategories** (ADR 0261). **For
+  integrators:** the storefront product listing and its facets take
+  `category_tree_id`, and GraphQL's `products` and `productFacets` take
+  `categoryTreeId`: a category's products and those of every category below
+  it, each once. `category_id` still lists what is filed directly.
+
 - **A panel page shows another module's data only under that module's
   privilege** (ADR 0260, D179). **For operators:** the product and variant pages
   show a variant's prices only to an operator holding `pricing:read` and its

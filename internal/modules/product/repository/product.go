@@ -23,6 +23,15 @@ type ProductFilter struct {
 	// EXISTS subqueries rather than joins (see productFilterSQL).
 	CategoryID *string
 	TagID      *string
+	// CategoryTreeIDs keeps the products filed under any of these categories,
+	// which are one category's subtree as [Repo.CategorySubtree] reads it
+	// (ADR 0261). Nil is no criterion; an empty slice keeps nothing, which is
+	// what a subtree of a category that does not exist is.
+	//
+	// A statement carrying it is planned for its own ids on every call (see
+	// [plannedArgs]): the subtree's size is the whole story of its cost, and a
+	// cached generic plan cannot see it.
+	CategoryTreeIDs []string
 	// OptionValueFolded narrows the listing to the products that offer ONE
 	// option value, and it is the FOLDED form of that value rather than the
 	// text a shopper typed.

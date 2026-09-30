@@ -91,6 +91,12 @@ func Describe(d *openapi.Doc) {
 					"GET /store/v1/categories — a storefront has the word a shopper clicked, "+
 					"not an id. A product that belongs to SEVERAL categories is returned "+
 					"once, and the count counts products rather than memberships."),
+			queryParameter("category_tree_id", typeString,
+				"Restricts the products to a category and every category below it: the "+
+					"products whose category_tree_ids name it. A product filed only in a "+
+					"subcategory is in its parent's listing, a deleted category ends the "+
+					"walk down, and a category that does not exist lists no product. It "+
+					"may be given beside category_id, and then both hold."),
 			queryParameter("tag_id", typeString,
 				"Restricts the products to a single tag. The id comes from "+
 					"GET /store/v1/tags. A product carrying SEVERAL tags is returned once."),

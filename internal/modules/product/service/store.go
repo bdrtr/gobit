@@ -115,6 +115,9 @@ type StoreListOptions struct {
 	// the ids come from the vocabulary endpoints, which is what those exist for.
 	CategoryID *string
 	TagID      *string
+	// CategoryTreeID narrows the catalog to a category's products and its
+	// subcategories' (ADR 0261); see [ListProductsOptions.CategoryTreeID].
+	CategoryTreeID *string
 	// OptionValue narrows the catalog to the products offering one option
 	// value ("red"), matched on the FOLDED form (ADR 0039). The value comes
 	// from the option vocabulary endpoint, which is the third of the four
@@ -416,6 +419,7 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 		Status:          &published,
 		CollectionID:    opts.CollectionID,
 		CategoryID:      opts.CategoryID,
+		CategoryTreeID:  opts.CategoryTreeID,
 		TagID:           opts.TagID,
 		OptionValue:     opts.OptionValue,
 		VariantIDs:      opts.VariantIDs,
@@ -592,6 +596,7 @@ func (s *Service) scanStoreProducts(
 			Status:          &published,
 			CollectionID:    opts.CollectionID,
 			CategoryID:      opts.CategoryID,
+			CategoryTreeID:  opts.CategoryTreeID,
 			TagID:           opts.TagID,
 			OptionValue:     opts.OptionValue,
 			VariantIDs:      opts.VariantIDs,

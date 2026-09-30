@@ -1021,7 +1021,7 @@ func complexityCosts(costs *ComplexityRoot) {
 		limit, _ *int,
 		_, _ *string,
 		_ *models.ProductOrder,
-		_, _, _, _ *string,
+		_, _, _, _, _ *string,
 		_ []string,
 		_ []service.AttributeCriterion,
 		_ *bool,
@@ -1069,7 +1069,7 @@ func complexityCosts(costs *ComplexityRoot) {
 	// priced as a root query is. The option vocabulary pages as the others do.
 	costs.Query.ProductFacets = func(
 		child int,
-		_, _, _, _, _ *string,
+		_, _, _, _, _, _ *string,
 		_ []string,
 		attributes []service.AttributeCriterion,
 	) int {

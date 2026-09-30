@@ -18,13 +18,14 @@ import (
 // filtered catalog and refuses the two enriched filters.
 func (r *queryResolver) ProductFacets(
 	ctx context.Context,
-	q, collectionID, categoryID, tagID, optionValue *string,
+	q, collectionID, categoryID, categoryTreeID, tagID, optionValue *string,
 	variantIDs []string,
 	attributes []service.AttributeCriterion,
 ) ([]service.Facet, error) {
 	return r.svc.StoreFacets(ctx, service.StoreListOptions{
 		CollectionID:    trimmedPointer(collectionID),
 		CategoryID:      trimmedPointer(categoryID),
+		CategoryTreeID:  trimmedPointer(categoryTreeID),
 		TagID:           trimmedPointer(tagID),
 		OptionValue:     trimmedPointer(optionValue),
 		VariantIDs:      variantIDs,

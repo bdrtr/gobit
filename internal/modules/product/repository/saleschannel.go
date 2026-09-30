@@ -434,6 +434,17 @@ const (
       AND product_category_map.category_id = %s::text
   )`
 
+	// categoryTreeFilterSQL is the category filter over a set of categories
+	// (ADR 0261). With one id its plans and buffers are the single category's,
+	// measured on the rig; what differs is the size of the set a plan cannot
+	// see unless it is made for these ids.
+	categoryTreeFilterSQL = `
+  AND EXISTS (
+    SELECT 1 FROM product_category_map
+    WHERE product_category_map.product_id = product.id
+      AND product_category_map.category_id = ANY(%s::text[])
+  )`
+
 	tagFilterSQL = `
   AND EXISTS (
     SELECT 1 FROM product_tag_map
@@ -556,6 +567,9 @@ func productFilterSQL(f ProductFilter) (body string, args []any) {
 	}
 	if f.CategoryID != nil {
 		fmt.Fprintf(&clauses, categoryFilterSQL, param(f.CategoryID))
+	}
+	if f.CategoryTreeIDs != nil {
+		fmt.Fprintf(&clauses, categoryTreeFilterSQL, param(f.CategoryTreeIDs))
 	}
 	if f.TagID != nil {
 		fmt.Fprintf(&clauses, tagFilterSQL, param(f.TagID))
@@ -853,6 +867,26 @@ WHERE v.id = ANY($1::text[]) AND v.deleted_at IS NULL AND ` +
 // hiding completely meaningless.
 var productVisibleSQL = `SELECT ` + salesChannelVisible("$1", "$2")
 
+// plannedArgs is the argument list a statement built from f is run with.
+//
+// A statement carrying [ProductFilter.CategoryTreeIDs] runs as an unnamed
+// statement, which PostgreSQL plans for the values it is given, so no generic
+// plan is ever cached for it (ADR 0261). pgx reads the mode off the first
+// argument. Every other statement keeps the connection's statement cache.
+//
+// The generic plan was measured to be adopted, and to be wrong: counting a
+// subtree that holds the whole catalog under the channel filter took 152 ms
+// with the plan auto mode settled on and 87 ms planned for the ids, and a
+// generic plan forced on a subtree of 52 products listed them in 21 ms rather
+// than 0.24. The numbers are in docs/measurements/0261-subtree-filter.md.
+func plannedArgs(f ProductFilter, args []any) []any {
+	if f.CategoryTreeIDs == nil {
+		return args
+	}
+
+	return append([]any{pgx.QueryExecModeCacheDescribe}, args...)
+}
+
 // ListProducts returns the products matching the criteria, paginated.
 //
 // Rows are resolved BY POSITION (pgx.RowToStructByPos). Resolving by name would
@@ -864,7 +898,7 @@ var productVisibleSQL = `SELECT ` + salesChannelVisible("$1", "$2")
 func (r *Repo) ListProducts(ctx context.Context, f ProductFilter) ([]models.Product, error) {
 	query, args := listProductsSQL(f)
 
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := r.db.Query(ctx, query, plannedArgs(f, args)...)
 	if err != nil {
 		return nil, wrapDB(err, "could not list products")
 	}
@@ -889,7 +923,7 @@ func (r *Repo) CountProducts(ctx context.Context, f ProductFilter) (int, error) 
 	query, args := countProductsSQL(f)
 
 	var n int64
-	err := r.db.QueryRow(ctx, query, args...).Scan(&n)
+	err := r.db.QueryRow(ctx, query, plannedArgs(f, args)...).Scan(&n)
 	if err != nil {
 		return 0, wrapDB(err, "could not read product count")
 	}

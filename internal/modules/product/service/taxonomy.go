@@ -604,3 +604,15 @@ func (s *Service) DeleteProductType(ctx context.Context, id string) error {
 
 	return nil
 }
+
+// categoryTree resolves a category_tree_id into the categories it stands for
+// (ADR 0261): nil when none was asked for, and otherwise the category with
+// every live category below it, which is empty for a category that does not
+// exist, so the listing then keeps nothing rather than everything.
+func (s *Service) categoryTree(ctx context.Context, id *string) ([]string, error) {
+	if id == nil {
+		return nil, nil
+	}
+
+	return s.repo.CategorySubtree(ctx, *id)
+}

@@ -58,6 +58,7 @@ func describeAttributes(d *openapi.Doc) {
 			salesChannelPathParameter(),
 			queryParameter("collection_id", typeString, "The listing's collection filter."),
 			queryParameter("category_id", typeString, "The listing's category filter."),
+			queryParameter("category_tree_id", typeString, "The listing's category tree filter."),
 			queryParameter("tag_id", typeString, "The listing's tag filter."),
 			queryParameter("option_value", typeString, "The listing's option value filter."),
 			queryParameter("q", typeString, "The listing's text search."),

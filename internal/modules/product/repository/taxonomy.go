@@ -496,6 +496,22 @@ func (r *Repo) CategoryLineage(ctx context.Context, categoryIDs []string) (map[s
 	return out, nil
 }
 
+// CategorySubtree returns the category and every live category below it,
+// nearest first, in a SINGLE query (ADR 0261).
+//
+// A category that does not exist or is deleted has an empty subtree, and it
+// comes back EMPTY rather than nil because the module's sqlc configuration
+// emits empty slices: a nil here would be read as "no criterion" and list the
+// whole catalog. The integration test lists a category that does not exist.
+func (r *Repo) CategorySubtree(ctx context.Context, categoryID string) ([]string, error) {
+	ids, err := r.q.CategorySubtree(ctx, categoryID)
+	if err != nil {
+		return nil, wrapDB(err, "could not read the subtree of category %s", categoryID)
+	}
+
+	return ids, nil
+}
+
 // ListCategoriesByProductIDs returns the categories of the given products in a
 // SINGLE query.
 func (r *Repo) ListCategoriesByProductIDs(ctx context.Context, productIDs []string) (map[string][]models.Category, error) {

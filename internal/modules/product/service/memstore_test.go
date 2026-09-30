@@ -264,6 +264,10 @@ func (m *memStore) matches(p *models.Product, f repository.ProductFilter) bool {
 		return false
 	case f.CategoryID != nil && !slices.Contains(m.productCats[p.ID], *f.CategoryID):
 		return false
+	case f.CategoryTreeIDs != nil && !slices.ContainsFunc(m.productCats[p.ID], func(id string) bool {
+		return slices.Contains(f.CategoryTreeIDs, id)
+	}):
+		return false
 	case f.TagID != nil && !slices.Contains(m.productTags[p.ID], *f.TagID):
 		return false
 	case f.OptionValueFolded != nil && !m.offersOptionValue(p.ID, *f.OptionValueFolded):
@@ -1803,6 +1807,34 @@ func (m *memStore) CategoryLineage(_ context.Context, categoryIDs []string) (map
 			}
 			at, ok = m.categories[*at.ParentID]
 		}
+	}
+	return out, nil
+}
+
+// CategorySubtree walks down from the category through its live children,
+// the way the statement does.
+func (m *memStore) CategorySubtree(_ context.Context, categoryID string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("CategorySubtree"); err != nil {
+		return nil, err
+	}
+
+	out := []string{}
+	if _, ok := m.categories[categoryID]; !ok {
+		return out, nil
+	}
+	level := []string{categoryID}
+	for depth := 0; len(level) > 0 && depth <= 64; depth++ {
+		out = append(out, level...)
+		var next []string
+		for id := range m.categories {
+			if parent := m.categories[id].ParentID; parent != nil && slices.Contains(level, *parent) {
+				next = append(next, id)
+			}
+		}
+		slices.Sort(next)
+		level = next
 	}
 	return out, nil
 }

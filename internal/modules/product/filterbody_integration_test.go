@@ -245,6 +245,17 @@ func TestEachCriterionAloneSelectsItsOwnSet(t *testing.T) {
 		assert.ElementsMatch(t, []string{fx.both, fx.catOnly}, fx.ids(t, f))
 	})
 
+	t.Run("category tree", func(t *testing.T) {
+		f := fx.filter()
+		f.CategoryTreeIDs = []string{"pcat_" + uniqueHandle("absent"), fx.categoryID}
+		assert.ElementsMatch(t, []string{fx.both, fx.catOnly}, fx.ids(t, f))
+
+		// An empty set is a subtree of nothing and keeps nothing; nil is no
+		// criterion at all.
+		f.CategoryTreeIDs = []string{}
+		assert.Empty(t, fx.ids(t, f))
+	})
+
 	t.Run("tag", func(t *testing.T) {
 		f := fx.filter()
 		f.TagID = &fx.tagID
@@ -317,6 +328,13 @@ func TestSeveralCriteriaTogetherIntersect(t *testing.T) {
 		assert.ElementsMatch(t, []string{fx.both, fx.catOnly}, fx.ids(t, f))
 	})
 
+	t.Run("category tree and tag", func(t *testing.T) {
+		f := fx.filter()
+		f.CategoryTreeIDs = []string{fx.categoryID}
+		f.TagID = &fx.tagID
+		assert.Equal(t, []string{fx.both}, fx.ids(t, f))
+	})
+
 	t.Run("tag and the foreign channel", func(t *testing.T) {
 		f := fx.filter()
 		f.TagID = &fx.tagID
@@ -344,6 +362,7 @@ func TestSeveralCriteriaTogetherIntersect(t *testing.T) {
 		f.Handle = &handle
 		f.Search = &handle
 		f.CategoryID = &fx.categoryID
+		f.CategoryTreeIDs = []string{fx.categoryID}
 		f.TagID = &fx.tagID
 		f.OptionValueFolded = &folded
 		f.SalesChannelIDs = []string{fx.channelA}

@@ -89,6 +89,51 @@ func (q *Queries) CategoryLineage(ctx context.Context, categoryIds []string) ([]
 	return items, nil
 }
 
+const categorySubtree = `-- name: CategorySubtree :many
+WITH RECURSIVE subtree AS (
+    SELECT id, 0 AS depth
+      FROM product_category
+     WHERE id = $1::text AND deleted_at IS NULL
+    UNION ALL
+    SELECT c.id, s.depth + 1
+      FROM subtree s
+      JOIN product_category c ON c.parent_id = s.id
+     WHERE c.deleted_at IS NULL
+       AND s.depth < 64
+)
+SELECT id FROM (
+    SELECT DISTINCT ON (id) id, depth FROM subtree ORDER BY id, depth
+) firsts
+ORDER BY depth, id
+`
+
+// CategorySubtree returns a category with every live category below it, the
+// category itself first and then downward by depth (ADR 0261).
+//
+// It is CategoryLineage walked the other way, with its rules: a deleted
+// category ends the walk, and the walk stops at sixty-four levels, so a
+// category is in the subtree of exactly the categories its lineage names. A
+// ring would repeat ids until the bound, and DISTINCT ON keeps each once.
+func (q *Queries) CategorySubtree(ctx context.Context, categoryID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, categorySubtree, categoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const clearCollectionProducts = `-- name: ClearCollectionProducts :execrows
 UPDATE product SET collection_id = NULL, updated_at = now()
 WHERE collection_id = $1 AND deleted_at IS NULL

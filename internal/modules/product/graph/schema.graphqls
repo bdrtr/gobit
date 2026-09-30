@@ -89,6 +89,13 @@ type Query {
     """
     categoryId: ID
     """
+    Narrows the listing to a category and every category below it: the
+    products whose category_tree_ids name it. A product filed in a
+    subcategory is in its parent's listing, and a product in several of the
+    subtree's categories is still returned ONCE.
+    """
+    categoryTreeId: ID
+    """
     Narrows the listing to a tag. The id comes from the tags query or
     /store/v1/tags.
 
@@ -231,6 +238,7 @@ type Query {
     q: String
     collectionId: ID
     categoryId: ID
+    categoryTreeId: ID
     tagId: ID
     optionValue: String
     variantIds: [ID!]

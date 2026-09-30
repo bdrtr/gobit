@@ -322,14 +322,15 @@ func TestProductsArgumentsMatchWhatTheServiceReads(t *testing.T) {
 	// the free-text search is "q" in the schema (kept the same as its name in
 	// REST), while the service field is Search.
 	mapping := map[string]string{
-		"CollectionID": "collectionId",
-		"CategoryID":   "categoryId",
-		"TagID":        "tagId",
-		"OptionValue":  "optionValue",
-		"VariantIDs":   "variantIds",
-		"Attributes":   "attributes",
-		"Search":       "q",
-		"InStock":      "inStock",
+		"CollectionID":   "collectionId",
+		"CategoryID":     "categoryId",
+		"CategoryTreeID": "categoryTreeId",
+		"TagID":          "tagId",
+		"OptionValue":    "optionValue",
+		"VariantIDs":     "variantIds",
+		"Attributes":     "attributes",
+		"Search":         "q",
+		"InStock":        "inStock",
 		// The price bracket is ONE argument and one option field, which is
 		// what an input object buys: three flat arguments would map one field
 		// to three names and the pair below would stop being a mapping.
@@ -465,11 +466,12 @@ func TestEmptyTextArgumentBuildsNoFilter(t *testing.T) {
 	// [TestProductsArgumentsMatchWhatTheServiceReads] (the names do not overlap
 	// one to one).
 	fields := map[string]string{
-		"collectionId": "CollectionID",
-		"categoryId":   "CategoryID",
-		"tagId":        "TagID",
-		"optionValue":  "OptionValue",
-		"q":            "Search",
+		"collectionId":   "CollectionID",
+		"categoryId":     "CategoryID",
+		"categoryTreeId": "CategoryTreeID",
+		"tagId":          "TagID",
+		"optionValue":    "OptionValue",
+		"q":              "Search",
 	}
 
 	// Text arguments that are NOT filters. A cursor names a POSITION: its

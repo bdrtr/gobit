@@ -77,7 +77,7 @@ WHERE pav.product_id IN (SELECT id FROM product
 GROUP BY pav.attribute_id, pav.option_id, pav.boolean_value
 ORDER BY pav.attribute_id, pav.option_id, pav.boolean_value`
 
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := r.db.Query(ctx, query, plannedArgs(f, args)...)
 	if err != nil {
 		return nil, wrapDB(err, "could not count the attribute facets")
 	}

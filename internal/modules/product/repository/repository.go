@@ -245,6 +245,9 @@ type Store interface {
 	// CategoryLineage returns each given category's id followed by its live
 	// ancestors', nearest first (ADR 0259).
 	CategoryLineage(ctx context.Context, categoryIDs []string) (map[string][]string, error)
+	// CategorySubtree returns the category and every live category below it,
+	// nearest first; empty when the category does not exist (ADR 0261).
+	CategorySubtree(ctx context.Context, categoryID string) ([]string, error)
 
 	CreateImage(ctx context.Context, img models.Image) (models.Image, error)
 	// GetImageOfProduct, UpdateImage and SoftDeleteImage all take BOTH

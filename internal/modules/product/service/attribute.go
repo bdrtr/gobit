@@ -368,6 +368,9 @@ func (s *Service) StoreFacets(ctx context.Context, opts StoreListOptions) ([]Fac
 		VariantIDs: opts.VariantIDs, Search: opts.Search, SalesChannelIDs: opts.SalesChannelIDs,
 		Attributes: resolved,
 	}
+	if base.CategoryTreeIDs, err = s.categoryTree(ctx, opts.CategoryTreeID); err != nil {
+		return nil, err
+	}
 	if opts.OptionValue != nil {
 		folded := models.FoldOptionValue(*opts.OptionValue)
 		base.OptionValueFolded = &folded

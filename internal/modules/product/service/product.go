@@ -143,6 +143,11 @@ type ListProductsOptions struct {
 	// may belong to several of either and is still returned ONCE.
 	CategoryID *string
 	TagID      *string
+	// CategoryTreeID narrows the listing to the products filed under a
+	// category or under any category below it (ADR 0261): exactly the products
+	// whose category_tree_ids name it. It may be given beside CategoryID, and
+	// then both hold.
+	CategoryTreeID *string
 	// OptionValue narrows the listing to the products offering one option
 	// value, and it is the value AS THE CALLER RECEIVED IT: the folding is done
 	// here, once, on the way to the repository.
@@ -467,6 +472,9 @@ func (s *Service) ListProducts(ctx context.Context, opts ListProductsOptions) (L
 		return ListResult[models.Product]{}, err
 	}
 	filter.Attributes = attributes
+	if filter.CategoryTreeIDs, err = s.categoryTree(ctx, opts.CategoryTreeID); err != nil {
+		return ListResult[models.Product]{}, err
+	}
 	if opts.Status != nil {
 		status, err := normalizeStatus(*opts.Status)
 		if err != nil {

@@ -245,6 +245,7 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		Order:           order,
 		CollectionID:    stringParam(r, "collection_id"),
 		CategoryID:      stringParam(r, "category_id"),
+		CategoryTreeID:  stringParam(r, "category_tree_id"),
 		TagID:           stringParam(r, "tag_id"),
 		OptionValue:     stringParam(r, "option_value"),
 		VariantIDs:      variantIDsParam(r),

@@ -2,8 +2,8 @@ package repository
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -47,7 +47,8 @@ var allCriteria = []struct {
 	{"collection", func(f *ProductFilter) { v := "pcol_1"; f.CollectionID = &v }, "AND collection_id = "},
 	{"handle", func(f *ProductFilter) { v := "a-handle"; f.Handle = &v }, "AND handle = "},
 	{"search", func(f *ProductFilter) { v := "shirt"; f.Search = &v }, "AND title ILIKE "},
-	{"category", func(f *ProductFilter) { v := "pcat_1"; f.CategoryID = &v }, "FROM product_category_map"},
+	{"category", func(f *ProductFilter) { v := "pcat_1"; f.CategoryID = &v }, "category_id = $"},
+	{"category tree", func(f *ProductFilter) { f.CategoryTreeIDs = []string{"pcat_1"} }, "category_id = ANY("},
 	{"tag", func(f *ProductFilter) { v := "ptag_1"; f.TagID = &v }, "FROM product_tag_map"},
 	{
 		"option value",
@@ -134,6 +135,11 @@ func TestSeveralCriteriaTogetherWriteAllOfTheirClauses(t *testing.T) {
 	}
 }
 
+// placeholder matches the n-th placeholder and no longer one that starts with it.
+func placeholder(n int) *regexp.Regexp {
+	return regexp.MustCompile(`\$` + strconv.Itoa(n) + `(\D|$)`)
+}
+
 // TestEveryPlaceholderHasExactlyOneArgument is the numbering claim.
 //
 // A body carrying $3 while args holds two values is not an error pgx reports as
@@ -144,11 +150,14 @@ func TestEveryPlaceholderHasExactlyOneArgument(t *testing.T) {
 	for mask := range 1 << len(allCriteria) {
 		body, args := productFilterSQL(filterWith(mask))
 
+		// A placeholder is matched up to the next non-digit: counted as a
+		// substring, $1 was also found inside $10 the day a tenth criterion
+		// arrived (D180).
 		for n := 1; n <= len(args); n++ {
-			assert.Equal(t, 1, strings.Count(body, "$"+strconv.Itoa(n)),
+			assert.Len(t, placeholder(n).FindAllString(body, -1), 1,
 				"mask %d: $%d must appear exactly once", mask, n)
 		}
-		assert.NotContains(t, body, "$"+strconv.Itoa(len(args)+1),
+		assert.False(t, placeholder(len(args)+1).MatchString(body),
 			"mask %d: the body reaches past its own arguments", mask)
 	}
 }
