@@ -118,3 +118,23 @@ func TestAnInstallationWithoutTheSessionSurfaceSaysSo(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	assert.Contains(t, rec.Body.String(), "session surface is not registered")
 }
+
+// TestTheScreenNamesEachSessionsBrowser prints the browser each session was
+// opened from, and says so when a session was opened before it was kept
+// (ADR 0276).
+func TestTheScreenNamesEachSessionsBrowser(t *testing.T) {
+	t.Parallel()
+
+	surface := &fakeSessions{raw: json.RawMessage(`[
+ {"session_id":"sess_here","signed_in_at":"2026-09-30T10:00:00Z","ends_at":"2026-09-30T22:00:00Z","current":true,"browser":"Mozilla/5.0 Firefox/131.0"},
+ {"session_id":"sess_old","signed_in_at":"2026-09-29T08:00:00Z","ends_at":"2026-09-29T20:00:00Z","current":false,"browser":""},
+ {"session_id":"sess_odd","signed_in_at":"2026-09-28T08:00:00Z","ends_at":"2026-09-28T20:00:00Z","current":false,"browser":"<b>curl</b>"}
+]`)}
+	body := sessionsRequest(t, surface, http.MethodGet, SessionsPath, nil).Body.String()
+
+	assert.Contains(t, body, "Mozilla/5.0 Firefox/131.0")
+	assert.Contains(t, body, "not recorded")
+	// The label is whatever the client sent, so it is printed as text.
+	assert.Contains(t, body, "&lt;b&gt;curl&lt;/b&gt;")
+	assert.NotContains(t, body, "<b>curl</b>")
+}

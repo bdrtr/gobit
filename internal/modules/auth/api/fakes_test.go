@@ -56,6 +56,8 @@ type fakeAuth struct {
 	// lastLoginCode is the authenticator code the handler passed through; a
 	// handler that dropped it would look exactly like an account with no factor.
 	lastLoginCode string
+	// lastUserAgent is the browser the handler passed through (ADR 0276).
+	lastUserAgent string
 	// mfaRemovedFor is whose second factor the handler asked to remove; the
 	// endpoint takes no user id, so this is the only place the caller it acted on
 	// is visible.
@@ -84,9 +86,10 @@ var logoutMoment = time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 // hit counts one service call.
 func (f *fakeAuth) hit() { f.callCount++ }
 
-func (f *fakeAuth) Login(_ context.Context, _, _, code string) (string, time.Time, error) {
+func (f *fakeAuth) Login(_ context.Context, _, _, code, userAgent string) (string, time.Time, error) {
 	f.hit()
 	f.lastLoginCode = code
+	f.lastUserAgent = userAgent
 
 	return "token", time.Unix(0, 0).UTC(), nil
 }

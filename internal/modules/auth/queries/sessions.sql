@@ -1,8 +1,8 @@
 -- A session a sign-in opened (ADR 0267).
 
 -- name: InsertSession :exec
-INSERT INTO auth_session (id, user_id, created_at, expires_at)
-VALUES ($1, $2, $3, $4);
+INSERT INTO auth_session (id, user_id, created_at, expires_at, user_agent)
+VALUES ($1, $2, $3, $4, $5);
 
 -- name: GetSession :one
 SELECT * FROM auth_session WHERE id = $1;

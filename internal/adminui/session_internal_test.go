@@ -24,13 +24,16 @@ type fakeSession struct {
 	// gotCode is the authenticator code the form sent through, recorded because
 	// the panel dropping it would look exactly like an account with no factor.
 	gotCode string
+	// gotUserAgent is the browser the form's request came from (ADR 0276).
+	gotUserAgent string
 
 	logoutCalled      bool
 	logoutPrincipalID string
 }
 
-func (f *fakeSession) Login(_ context.Context, _, _, code string) (string, time.Time, error) {
+func (f *fakeSession) Login(_ context.Context, _, _, code, userAgent string) (string, time.Time, error) {
 	f.gotCode = code
+	f.gotUserAgent = userAgent
 	if f.err != nil {
 		return "", time.Time{}, f.err
 	}
@@ -434,4 +437,21 @@ func TestAnUnexpectedSignInFailureIsAPageNotJSON(t *testing.T) {
 	assert.NotContains(t, body, `"error"`, "the JSON envelope must not be written here")
 	assert.NotContains(t, body, "10.0.0.5", "the underlying error must not reach the page")
 	assert.Nil(t, sessionCookie(rec), "a failed sign-in writes no cookie")
+}
+
+// TestThePanelSignInHandsTheServiceItsBrowser is ADR 0276 on the panel's door:
+// the session a panel sign-in opens names the browser it came from.
+func TestThePanelSignInHandsTheServiceItsBrowser(t *testing.T) {
+	t.Parallel()
+
+	session := &fakeSession{token: "t", expiresAt: time.Now().Add(time.Hour)}
+	panel := newTestPanel(t, session, fakeAuthenticator{}, true)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, LoginPath, strings.NewReader("email=a@b.c&password=x"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "Mozilla/5.0 Safari/17")
+	panel.submitLogin(rec, req)
+
+	assert.Equal(t, "Mozilla/5.0 Safari/17", session.gotUserAgent)
 }

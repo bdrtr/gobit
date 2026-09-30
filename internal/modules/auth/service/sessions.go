@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
@@ -21,6 +24,9 @@ type SessionView struct {
 	ExpiresAt time.Time
 	// Current reports that this is the session the request was made with.
 	Current bool
+	// UserAgent is what the browser said it was at the sign-in; empty for a
+	// session opened before it was kept (ADR 0276).
+	UserAgent string
 }
 
 // recordSession writes the row a sign-in's token names (ADR 0267). The token
@@ -31,7 +37,9 @@ type SessionView struct {
 // can still be used and no job has to sweep it; a failure to forget is logged
 // and does not refuse the sign-in. A failure to record is: a token naming a
 // row that does not exist would be refused on its first request.
-func (s *Service) recordSession(ctx context.Context, userID, sessionID string, now, expiresAt time.Time) error {
+func (s *Service) recordSession(
+	ctx context.Context, userID, sessionID string, now, expiresAt time.Time, userAgent string,
+) error {
 	if err := s.repo.PruneSessions(ctx, userID, now); err != nil {
 		s.log.WarnContext(ctx, "the expired sessions could not be forgotten",
 			slog.String("user_id", userID), slog.Any("error", err))
@@ -39,7 +47,29 @@ func (s *Service) recordSession(ctx context.Context, userID, sessionID string, n
 
 	return s.repo.InsertSession(ctx, models.Session{
 		ID: sessionID, UserID: userID, CreatedAt: now, ExpiresAt: expiresAt,
+		UserAgent: boundedUserAgent(userAgent),
 	})
+}
+
+// boundedUserAgent keeps at most [models.MaxUserAgent] bytes of what the
+// browser said, cut at a character rather than inside one, with its control
+// characters dropped so the label prints on one line (ADR 0276).
+func boundedUserAgent(userAgent string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == utf8.RuneError {
+			return -1
+		}
+		return r
+	}, strings.TrimSpace(userAgent))
+	if len(cleaned) <= models.MaxUserAgent {
+		return cleaned
+	}
+	cut := models.MaxUserAgent
+	for cut > 0 && !utf8.RuneStart(cleaned[cut]) {
+		cut--
+	}
+
+	return cleaned[:cut]
 }
 
 // checkSession holds a token that names a session to that session: it has to
@@ -96,6 +126,7 @@ func (s *Service) ListSessions(ctx context.Context, principal corehttp.Principal
 			CreatedAt: sessions[i].CreatedAt,
 			ExpiresAt: sessions[i].ExpiresAt,
 			Current:   sessions[i].ID == principal.SessionID,
+			UserAgent: sessions[i].UserAgent,
 		})
 	}
 

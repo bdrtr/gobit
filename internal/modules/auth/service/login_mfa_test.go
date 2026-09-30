@@ -165,7 +165,7 @@ func TestAPasswordAloneDoesNotOpenAnAccountWithAFactor(t *testing.T) {
 	svc, _, clock := setupMFALogin(t)
 	secret := enrolAndConfirm(t, svc, clock.moment)
 
-	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "")
+	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "", "")
 
 	require.Error(t, err, "the password alone must not produce a token")
 	assert.Empty(t, token)
@@ -175,7 +175,7 @@ func TestAPasswordAloneDoesNotOpenAnAccountWithAFactor(t *testing.T) {
 	// And the same request WITH the code does open it: without this half the test
 	// above would pass on an implementation that refused every login.
 	withCode, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword,
-		codeFor(t, secret, clock.moment))
+		codeFor(t, secret, clock.moment), "")
 	require.NoError(t, err, "the code the authenticator shows has to open the account")
 	assert.NotEmpty(t, withCode)
 }
@@ -189,7 +189,7 @@ func TestAnAccountWithNoFactorIsUnchanged(t *testing.T) {
 
 	svc, _, _ := setupMFALogin(t)
 
-	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "")
+	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "", "")
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, token)
@@ -208,7 +208,7 @@ func TestAnEnrolmentNobodyProvedDemandsNothing(t *testing.T) {
 	_, err := svc.EnrolMFA(t.Context(), sessionUserID, "Acme", "")
 	require.NoError(t, err)
 
-	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "")
+	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "", "")
 
 	require.NoError(t, err, "an unconfirmed enrollment is not a factor yet")
 	assert.NotEmpty(t, token)
@@ -233,12 +233,12 @@ func TestAWrongCodeCountsAsAnAttemptAndAnAbsentOneDoesNot(t *testing.T) {
 	svc, repo, clock := setupMFALogin(t)
 	enrolAndConfirm(t, svc, clock.moment)
 
-	_, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "")
+	_, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "", "")
 	require.Error(t, err)
 	assert.Zero(t, repo.identities[0].FailedAttempts,
 		"a login that only lacks the code is not a failed attempt")
 
-	_, _, err = svc.Login(t.Context(), sessionEmail, sessionPassword, "000000")
+	_, _, err = svc.Login(t.Context(), sessionEmail, sessionPassword, "000000", "")
 	require.Error(t, err)
 	assert.Equal(t, service.CodeMFACodeWrong, coreerrors.CodeOf(err))
 	assert.Equal(t, 1, repo.identities[0].FailedAttempts,
@@ -257,14 +257,14 @@ func TestTheCounterIsClearedOnlyWhenTheWholeLoginSucceeded(t *testing.T) {
 	secret := enrolAndConfirm(t, svc, clock.moment)
 
 	for range 3 {
-		_, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "000000")
+		_, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "000000", "")
 		require.Error(t, err)
 	}
 	require.Equal(t, 3, repo.identities[0].FailedAttempts,
 		"three guesses have to leave three attempts, not one")
 
 	_, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword,
-		codeFor(t, secret, clock.moment))
+		codeFor(t, secret, clock.moment), "")
 	require.NoError(t, err)
 	assert.Zero(t, repo.identities[0].FailedAttempts,
 		"a whole successful login clears the counter")
@@ -289,7 +289,7 @@ func TestAnInstallationThatLostItsKeyRefusesRatherThanLettingThePasswordThrough(
 		BcryptCost: bcrypt.MinCost,
 	})
 
-	token, _, err := keyless.Login(t.Context(), sessionEmail, sessionPassword, "123456")
+	token, _, err := keyless.Login(t.Context(), sessionEmail, sessionPassword, "123456", "")
 
 	require.Error(t, err, "a login must not succeed while the stored factor cannot be read")
 	assert.Empty(t, token)
@@ -307,14 +307,14 @@ func TestRemovingTheFactorOpensTheAccountToThePasswordAgain(t *testing.T) {
 	svc, _, clock := setupMFALogin(t)
 	enrolAndConfirm(t, svc, clock.moment)
 
-	_, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "")
+	_, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "", "")
 	require.Error(t, err, "the factor stands before the reset")
 
 	removed, err := svc.RemoveMFA(t.Context(), sessionUserID)
 	require.NoError(t, err)
 	require.True(t, removed)
 
-	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "")
+	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "", "")
 	require.NoError(t, err, "after the reset the password alone signs in again")
 	assert.NotEmpty(t, token)
 }
@@ -333,11 +333,11 @@ func TestTheOldPhoneSignsInUntilTheNewOneIsProven(t *testing.T) {
 	// The new app is scanned and then the person is interrupted. Until they prove
 	// it, the account is neither unprotected nor locked: the old phone still works.
 	_, _, err = svc.Login(t.Context(), sessionEmail, sessionPassword,
-		codeFor(t, replacement.Secret, clock.moment))
+		codeFor(t, replacement.Secret, clock.moment), "")
 	require.Error(t, err, "an unproven secret must not sign anybody in")
 
 	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword,
-		codeFor(t, oldSecret, clock.moment))
+		codeFor(t, oldSecret, clock.moment), "")
 	require.NoError(t, err, "the proven phone keeps working until the new one is confirmed")
 	assert.NotEmpty(t, token)
 
@@ -346,11 +346,11 @@ func TestTheOldPhoneSignsInUntilTheNewOneIsProven(t *testing.T) {
 
 	// And now they have swapped: the new one signs in and the old one does not.
 	_, _, err = svc.Login(t.Context(), sessionEmail, sessionPassword,
-		codeFor(t, replacement.Secret, clock.moment))
+		codeFor(t, replacement.Secret, clock.moment), "")
 	require.NoError(t, err)
 
 	_, _, err = svc.Login(t.Context(), sessionEmail, sessionPassword,
-		codeFor(t, oldSecret, clock.moment))
+		codeFor(t, oldSecret, clock.moment), "")
 	require.Error(t, err, "the replaced secret must stop working the moment the new one is proven")
 }
 
@@ -416,7 +416,7 @@ func TestWrongCodesLockTheChangeAsTheyLockTheSignIn(t *testing.T) {
 	assert.Equal(t, service.CodeMFALocked, coreerrors.CodeOf(err))
 	require.NotNil(t, repo.mfa, "the locked account keeps its factor")
 
-	_, _, err = svc.Login(t.Context(), sessionEmail, sessionPassword, codeFor(t, secret, clock.moment))
+	_, _, err = svc.Login(t.Context(), sessionEmail, sessionPassword, codeFor(t, secret, clock.moment), "")
 	require.Error(t, err, "the sign-in is locked by the same count")
 }
 
@@ -448,7 +448,7 @@ func TestAPersonWhoOwesAFactorHoldsNoPrivilege(t *testing.T) {
 	svc, _, clock := setupMFALogin(t, func(o *service.Options) { o.SecondFactorRequiredFrom = requiredFrom })
 	interop := service.NewInterop(svc)
 
-	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "")
+	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "", "")
 	require.NoError(t, err, "before the moment a password alone signs in")
 	principal, err := interop.AuthenticateAdmin(t.Context(), "Bearer", token)
 	require.NoError(t, err)

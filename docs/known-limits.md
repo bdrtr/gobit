@@ -115,12 +115,13 @@ past and is not corrected retroactively.
   endpoint would turn knowing one identifier into reading every cart. The rules
   of the model, and what it does NOT cover, are written with the cart flows in
   [`docs/commerce-flows.md`](commerce-flows.md).
-- **An admin session names no device.** Since
-  [ADR 0267](adr/0267-a-session-can-be-closed-alone.md) a person lists their
-  sessions and closes one or all the others, through the API or the panel
-  ([ADR 0268](adr/0268-the-panel-shows-a-persons-sessions.md)), but a session is
-  shown by when it began and when it ends, not by the browser or the place it
-  was opened from.
+- **An admin session names its browser, not its place.** Since
+  [ADR 0276](adr/0276-a-session-names-the-browser-that-opened-it.md) a session
+  lists the `User-Agent` of the sign-in that opened it, as the browser gave it,
+  beside when it began and ends. It keeps no address and no place: the client's
+  address is resolved by the rate limiter's proxy trust, which the auth module
+  does not see, and a place would need a geolocation database gobit does not
+  ship.
 - **The panel's privileges are per SCREEN, not per record or per field.** Since
   [ADR 0156](adr/0156-a-panel-screen-costs-a-privilege.md) every panel path is
   listed with the scope it requires, and the scope decides whether the screen

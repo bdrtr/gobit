@@ -59,6 +59,7 @@ type AuthSession struct {
 	CreatedAt pgtype.Timestamptz
 	ExpiresAt pgtype.Timestamptz
 	RevokedAt pgtype.Timestamptz
+	UserAgent string
 }
 
 type AuthUser struct {

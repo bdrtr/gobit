@@ -54,7 +54,7 @@ func (q *Queries) CloseSession(ctx context.Context, arg CloseSessionParams) (int
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, user_id, created_at, expires_at, revoked_at FROM auth_session WHERE id = $1
+SELECT id, user_id, created_at, expires_at, revoked_at, user_agent FROM auth_session WHERE id = $1
 `
 
 func (q *Queries) GetSession(ctx context.Context, id string) (AuthSession, error) {
@@ -66,14 +66,15 @@ func (q *Queries) GetSession(ctx context.Context, id string) (AuthSession, error
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.UserAgent,
 	)
 	return i, err
 }
 
 const insertSession = `-- name: InsertSession :exec
 
-INSERT INTO auth_session (id, user_id, created_at, expires_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO auth_session (id, user_id, created_at, expires_at, user_agent)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type InsertSessionParams struct {
@@ -81,6 +82,7 @@ type InsertSessionParams struct {
 	UserID    string
 	CreatedAt pgtype.Timestamptz
 	ExpiresAt pgtype.Timestamptz
+	UserAgent string
 }
 
 // A session a sign-in opened (ADR 0267).
@@ -90,12 +92,13 @@ func (q *Queries) InsertSession(ctx context.Context, arg InsertSessionParams) er
 		arg.UserID,
 		arg.CreatedAt,
 		arg.ExpiresAt,
+		arg.UserAgent,
 	)
 	return err
 }
 
 const listUnclosedSessions = `-- name: ListUnclosedSessions :many
-SELECT id, user_id, created_at, expires_at, revoked_at FROM auth_session
+SELECT id, user_id, created_at, expires_at, revoked_at, user_agent FROM auth_session
 WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > $2
 ORDER BY created_at DESC, id DESC
 `
@@ -123,6 +126,7 @@ func (q *Queries) ListUnclosedSessions(ctx context.Context, arg ListUnclosedSess
 			&i.CreatedAt,
 			&i.ExpiresAt,
 			&i.RevokedAt,
+			&i.UserAgent,
 		); err != nil {
 			return nil, err
 		}

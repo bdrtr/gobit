@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,4 +146,33 @@ func TestATokenNamingAnotherPersonsSessionIsRefused(t *testing.T) {
 		_, err = resolveSessionPrincipal(interop, token)
 		requireSessionRejected(t, err, name)
 	}
+}
+
+// TestASessionKeepsTheBrowserThatOpenedIt is ADR 0276: the listing shows what
+// each browser said it was, on one line, and a description longer than a
+// session keeps is cut at a character, never inside one.
+func TestASessionKeepsTheBrowserThatOpenedIt(t *testing.T) {
+	t.Parallel()
+
+	svc, interop, _, clock := setupSession(t)
+	laptop, _, err := svc.Login(context.Background(), sessionEmail, sessionPassword, "",
+		" Mozilla/5.0 (X11; Linux x86_64)\r\n Firefox/131.0 ")
+	require.NoError(t, err)
+	clock.moment = clock.moment.Add(time.Minute)
+	long := strings.Repeat("a", models.MaxUserAgent-1) + "日" + "tail"
+	phone, _, err := svc.Login(context.Background(), sessionEmail, sessionPassword, "", long)
+	require.NoError(t, err)
+
+	onPhone, err := resolveSessionPrincipal(interop, phone)
+	require.NoError(t, err)
+	_, err = resolveSessionPrincipal(interop, laptop)
+	require.NoError(t, err)
+
+	listed, err := svc.ListSessions(context.Background(), onPhone)
+	require.NoError(t, err)
+	require.Len(t, listed, 2)
+	assert.Equal(t, strings.Repeat("a", models.MaxUserAgent-1), listed[0].UserAgent,
+		"cut before the character that would not fit, not inside it")
+	assert.Equal(t, "Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0", listed[1].UserAgent,
+		"control characters are dropped so the label prints on one line")
 }

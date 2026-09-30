@@ -122,7 +122,7 @@ type Session interface {
 	// code is the six digits an authenticator shows and is EMPTY for an account
 	// that holds none. An account that holds a proven one is refused without it,
 	// with [CodeMFARequired] (ADR 0147).
-	Login(ctx context.Context, email, password, code string) (string, time.Time, error)
+	Login(ctx context.Context, email, password, code, userAgent string) (string, time.Time, error)
 	// Logout drops ALL of the caller's sessions and returns the cut-off instant.
 	Logout(ctx context.Context, principalID, principalKind string) (time.Time, error)
 }

@@ -83,7 +83,7 @@ func (u *UI) submitLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token, expiresAt, err := u.session.Login(r.Context(),
-		r.PostFormValue("email"), r.PostFormValue("password"), r.PostFormValue("code"))
+		r.PostFormValue("email"), r.PostFormValue("password"), r.PostFormValue("code"), r.UserAgent())
 	if err != nil {
 		if hint := mfaMessage(err); hint != "" {
 			u.loginPage(w, r, http.StatusUnauthorized, hint)

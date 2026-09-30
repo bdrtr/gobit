@@ -7,6 +7,7 @@ password change still move the anchor.
 
 - **Status:** Accepted
 - **Date:** 2026-09-30
+- **Amended by:** [0276](0276-a-session-names-the-browser-that-opened-it.md): a sign-in hands the service its browser's `User-Agent` as a string, and the session keeps it
 
 ## Context
 

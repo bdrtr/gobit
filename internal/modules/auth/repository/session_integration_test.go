@@ -4,6 +4,7 @@ package repository_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,4 +81,30 @@ func TestTheSessionStatementsKeepEachSessionApart(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "auth_session_expires_after_it_begins")
+}
+
+// TestASessionKeepsItsBrowser is ADR 0276 over the real schema: the row keeps
+// the browser it was opened from, and the schema refuses a description longer
+// than a session keeps.
+func TestASessionKeepsItsBrowser(t *testing.T) {
+	ctx := context.Background()
+	repo := newRepo(t)
+	owner := newUser(ctx, t, repo)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	require.NoError(t, repo.InsertSession(ctx, models.Session{
+		ID: owner.ID + "_browser", UserID: owner.ID, CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		UserAgent: "Mozilla/5.0 Firefox/131.0",
+	}))
+	listed, err := repo.ListUnclosedSessions(ctx, owner.ID, now)
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, "Mozilla/5.0 Firefox/131.0", listed[0].UserAgent)
+
+	err = repo.InsertSession(ctx, models.Session{
+		ID: owner.ID + "_long", UserID: owner.ID, CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		UserAgent: strings.Repeat("a", models.MaxUserAgent+1),
+	})
+	require.Error(t, err, "the schema bounds the description the service bounds")
+	assert.Contains(t, err.Error(), "auth_session_user_agent_bounded")
 }

@@ -78,6 +78,8 @@ type panelSession struct {
 	CreatedAt time.Time `json:"signed_in_at"`
 	ExpiresAt time.Time `json:"ends_at"`
 	Current   bool      `json:"current"`
+	// UserAgent is the browser the session was opened from (ADR 0276).
+	UserAgent string `json:"browser"`
 }
 
 // SessionsJSON returns the person's open sessions, newest first, with the one

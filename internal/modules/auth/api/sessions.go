@@ -33,6 +33,9 @@ type sessionDTO struct {
 	ExpiresAt time.Time `json:"expires_at"`
 	// Current reports that this is the session the request was made with.
 	Current bool `json:"current"`
+	// UserAgent is what the browser said it was at the sign-in; empty for a
+	// session opened before it was kept (ADR 0276).
+	UserAgent string `json:"user_agent"`
 }
 
 // revokedSessionsDTO says how many sessions a revocation closed.
@@ -99,7 +102,9 @@ func (h *Handler) adminRevokeOtherSessions(w http.ResponseWriter, r *http.Reques
 
 // toSessionDTO converts a session into its response body.
 func toSessionDTO(s service.SessionView) sessionDTO {
-	return sessionDTO{ID: s.ID, CreatedAt: s.CreatedAt, ExpiresAt: s.ExpiresAt, Current: s.Current}
+	return sessionDTO{
+		ID: s.ID, CreatedAt: s.CreatedAt, ExpiresAt: s.ExpiresAt, Current: s.Current, UserAgent: s.UserAgent,
+	}
 }
 
 // sessionHolder is the person the request proved, or a refusal: a key has no

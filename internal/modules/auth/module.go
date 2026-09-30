@@ -512,6 +512,11 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				OnErasure: personaldata.Kept,
 			},
 			{
+				Table: tableSession, Column: "user_agent", Kind: personaldata.Named,
+				Why:       "what the browser this staff member signed in from said it was, so they can tell their sessions apart (ADR 0276)",
+				OnErasure: personaldata.Kept,
+			},
+			{
 				Table: tableSalesChannel, Column: "name", Kind: personaldata.Open,
 				Why:       "the name an operator gives a sales channel; it is usually a route to market such as 'Web', but a channel opened for a single dealer carries that dealer's name or their trading name",
 				OnErasure: personaldata.Kept,

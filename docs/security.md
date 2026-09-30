@@ -374,10 +374,13 @@ the same as `JWT_SECRET`'s.
 **Session revocation** is wholesale or single. A password change and
 `POST /admin/v1/auth/logout` close every session; since
 [ADR 0267](adr/0267-a-session-can-be-closed-alone.md) every sign-in writes a row
-its token names, `GET /admin/v1/auth/sessions` lists the caller's open ones, and
-closing one (`POST /admin/v1/auth/sessions/{id}/revoke`) or all the others
-(`POST /admin/v1/auth/sessions/revoke-others`) refuses those tokens alone, at the
-cost of one read of the row per admin request. An API key has no session; it is
+its token names, `GET /admin/v1/auth/sessions` lists the caller's open ones,
+each with the `User-Agent` its sign-in sent
+([ADR 0276](adr/0276-a-session-names-the-browser-that-opened-it.md)) — a label
+the client chose, which nothing decides on — and closing one
+(`POST /admin/v1/auth/sessions/{id}/revoke`) or all the others
+(`POST /admin/v1/auth/sessions/revoke-others`) refuses those tokens alone, at
+the cost of one read of the row per admin request. An API key has no session; it is
 closed with `POST /admin/v1/api-keys/{id}/revoke`.
 
 If `JWT_SECRET` is not given, a **startup-specific random** secret is generated in

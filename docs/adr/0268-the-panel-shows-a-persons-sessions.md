@@ -6,6 +6,7 @@ one or all the others through the auth module's panel surface.
 
 - **Status:** Accepted
 - **Date:** 2026-09-30
+- **Amended by:** [0276](0276-a-session-names-the-browser-that-opened-it.md): the screen names each session's browser
 
 ## Context
 

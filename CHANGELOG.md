@@ -24,6 +24,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A session names the browser that opened it** (ADR 0276). **For
+  operators:** `GET /admin/v1/auth/sessions` lists each session's
+  `user_agent`, and the panel's Sessions screen shows it as the Browser
+  column, so the session a lost laptop holds can be told from the others. A
+  session opened before the upgrade shows none until it expires. Migration
+  000006 of the auth module adds the column.
+
 - **A webhook receiver sets its rate** (ADR 0275). **For operators:**
   `POST /admin/v1/webhooks` and `PATCH /admin/v1/webhooks/{id}` take
   `max_per_minute` (1 to 10000; zero on a change lifts it), the listing shows

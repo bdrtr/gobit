@@ -107,7 +107,7 @@ type Auth interface {
 	// account holds a proven second factor — the code its authenticator shows
 	// (ADR 0147). An empty code from such an account is refused with
 	// service.CodeMFARequired.
-	Login(ctx context.Context, email, password, code string) (string, time.Time, error)
+	Login(ctx context.Context, email, password, code, userAgent string) (string, time.Time, error)
 	// Logout drops ALL of the caller's sessions and returns the revocation
 	// moment.
 	//

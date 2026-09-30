@@ -26,6 +26,7 @@ func (r *Repo) InsertSession(ctx context.Context, session models.Session) error 
 		UserID:    session.UserID,
 		CreatedAt: fromTime(session.CreatedAt),
 		ExpiresAt: fromTime(session.ExpiresAt),
+		UserAgent: session.UserAgent,
 	})
 
 	return wrapDB(err, "could not record the session of user %s", session.UserID)
@@ -114,5 +115,6 @@ func toSession(row authdb.AuthSession) models.Session {
 		CreatedAt: toTime(row.CreatedAt),
 		ExpiresAt: toTime(row.ExpiresAt),
 		RevokedAt: toTimePtr(row.RevokedAt),
+		UserAgent: row.UserAgent,
 	}
 }

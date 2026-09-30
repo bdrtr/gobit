@@ -36,7 +36,7 @@ func (h *Handler) adminLogin(w http.ResponseWriter, r *http.Request) {
 
 	// The plaintext password is converted to a plain string only here; the
 	// conversion standing out is deliberate (see [secret]).
-	token, expiresAt, err := h.svc.Login(ctx, req.Email, string(req.Password), req.Code)
+	token, expiresAt, err := h.svc.Login(ctx, req.Email, string(req.Password), req.Code, r.UserAgent())
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return

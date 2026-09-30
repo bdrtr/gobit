@@ -352,7 +352,7 @@ func setupSession(t *testing.T) (*service.Service, *service.Interop, *sessionRep
 func obtainSessionToken(t *testing.T, svc *service.Service, password string) string {
 	t.Helper()
 
-	token, _, err := svc.Login(context.Background(), sessionEmail, password, "")
+	token, _, err := svc.Login(context.Background(), sessionEmail, password, "", "")
 	require.NoError(t, err, "the login has to succeed")
 	require.NotEmpty(t, token, "the login has to return a token")
 	return token
@@ -442,7 +442,7 @@ func TestFailedLoginAttemptDoesNotDropTheSession(t *testing.T) {
 	token := obtainSessionToken(t, svc, sessionPassword)
 
 	clock.advance(5 * time.Second)
-	_, _, err := svc.Login(ctx, sessionEmail, sessionWrongPassword, "")
+	_, _, err := svc.Login(ctx, sessionEmail, sessionWrongPassword, "", "")
 	require.Error(t, err, "a wrong password has to be rejected")
 
 	_, err = resolveSessionPrincipal(interop, token)

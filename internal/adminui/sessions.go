@@ -48,6 +48,9 @@ type sessionRow struct {
 	CreatedAt time.Time `json:"signed_in_at"`
 	ExpiresAt time.Time `json:"ends_at"`
 	Current   bool      `json:"current"`
+	// Browser is what the browser said it was at the sign-in; empty for a
+	// session opened before it was kept (ADR 0276).
+	Browser string `json:"browser"`
 }
 
 // showSessions draws the person's open sessions.

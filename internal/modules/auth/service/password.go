@@ -230,8 +230,12 @@ func (s *Service) SetPassword(ctx context.Context, userID, password string) erro
 //
 // The token and the expiry moment are returned. The token IS A SECRET; the
 // caller must not log it, only pass it on in the response body.
+//
+// userAgent is what the browser said it was; the session keeps it as a label
+// the person recognizes their sessions by (ADR 0276), and nothing decides on
+// it.
 func (s *Service) Login(
-	ctx context.Context, email, password, code string,
+	ctx context.Context, email, password, code, userAgent string,
 ) (string, time.Time, error) {
 	if err := s.ready(); err != nil {
 		return "", time.Time{}, err
@@ -309,7 +313,7 @@ func (s *Service) Login(
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	if err := s.recordSession(ctx, user.ID, sessionID, now, expiresAt); err != nil {
+	if err := s.recordSession(ctx, user.ID, sessionID, now, expiresAt, userAgent); err != nil {
 		return "", time.Time{}, err
 	}
 

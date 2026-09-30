@@ -236,9 +236,10 @@ func TestAnOperatorEnrollsTheirFactorInThePanel(t *testing.T) {
 }
 
 // TestAnOperatorClosesAnotherSessionInThePanel is ADR 0268 on the production
-// wiring: an operator signed in twice sees both sessions in the panel, the one
-// the request is made with marked, closes the other there, and that other
-// token is refused from then on while the current one goes on.
+// wiring: an operator signed in twice sees both sessions in the panel, each
+// named by the browser that opened it (ADR 0276) and the one the request is
+// made with marked, closes the other there, and that other token is refused
+// from then on while the current one goes on.
 func TestAnOperatorClosesAnotherSessionInThePanel(t *testing.T) {
 	ctx := context.Background()
 
@@ -264,9 +265,10 @@ func TestAnOperatorClosesAnotherSessionInThePanel(t *testing.T) {
 	interop, err := container.Resolve[*authsvc.Interop](app.container, auth.InteropName)
 	require.NoError(t, err)
 
-	laptopToken, _, err := users.Login(ctx, operator.Email, password, "")
+	const laptopBrowser, phoneBrowser = "Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0", "Mozilla/5.0 (iPhone) Safari/17"
+	laptopToken, _, err := users.Login(ctx, operator.Email, password, "", laptopBrowser)
 	require.NoError(t, err)
-	phoneToken, _, err := users.Login(ctx, operator.Email, password, "")
+	phoneToken, _, err := users.Login(ctx, operator.Email, password, "", phoneBrowser)
 	require.NoError(t, err)
 	laptop, err := interop.AuthenticateAdmin(ctx, "Bearer", laptopToken)
 	require.NoError(t, err)
@@ -291,6 +293,10 @@ func TestAnOperatorClosesAnotherSessionInThePanel(t *testing.T) {
 	assert.Contains(t, page.Body.String(), "this session")
 	assert.Contains(t, page.Body.String(), `value="`+laptop.SessionID+`"`, "the other session can be closed")
 	assert.NotContains(t, page.Body.String(), `value="`+phone.SessionID+`"`)
+	// Each row names the browser that opened it, through the real surface's
+	// JSON (ADR 0276).
+	assert.Contains(t, page.Body.String(), laptopBrowser)
+	assert.Contains(t, page.Body.String(), phoneBrowser)
 
 	closed := send(http.MethodPost, adminui.SessionsRevokePath, url.Values{"id": {laptop.SessionID}})
 	require.Equal(t, http.StatusSeeOther, closed.Code, closed.Body.String())
