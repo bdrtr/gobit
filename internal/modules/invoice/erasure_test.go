@@ -10,6 +10,7 @@ import (
 	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/invoice"
 	"github.com/bdrtr/gobit/internal/modules/invoice/service"
+	"github.com/bdrtr/gobit/internal/schemaaudit"
 )
 
 // TestTheHolderNameIsTheModuleName pins two constants that cannot see each
@@ -97,15 +98,56 @@ func TestADeclaredColumnTheRefusalNeverReachesSaysSo(t *testing.T) {
 	}, unsearched, "the seller half is the only half this module cannot resolve a subject through")
 }
 
-// TestTheDeclarationNamesEveryPersonalColumnOfTheSchema reads the declaration
-// against migration 000001 rather than against itself.
+// notPersonalColumns lists, per table, the columns that hold nothing about a
+// person; with the declaration it has to judge every column the migrations
+// leave (D189).
+//
+//   - IDENTIFIERS AND NUMBERING (id, series_id, invoice_id, invoice_line_id,
+//     rate_id, number, position, the series' prefix, year and last_number,
+//     the provider's id and its external id). They name a document, a line or
+//     a series, and the person is in the party columns beside them.
+//   - MONEY AND TAX (every amount, total, quantity, rate and compound flag,
+//     currency_code, prices_include_tax). They describe the sale.
+//   - STATE AND STAMPS (kind, status and every *_at). What the document is and
+//     when it moved.
+var notPersonalColumns = map[string][]string{
+	"invoices": {
+		"id", "number", "series_id", "kind", "status", "currency_code", "subtotal",
+		"discount_total", "tax_total", "total", "issued_at", "provider_id", "external_id",
+		"created_at", "updated_at", "prices_include_tax",
+	},
+	"invoice_lines": {
+		"id", "invoice_id", "position", "quantity", "unit_price", "subtotal", "discount_total",
+		"tax_total", "total", "tax_rate_bps",
+	},
+	"invoice_line_taxes": {
+		"id", "invoice_line_id", "position", "rate_id", "rate_bps", "compound",
+		"taxable_amount", "tax_amount",
+	},
+	"invoice_series": {
+		"id", "prefix", "year", "last_number", "created_at", "updated_at",
+	},
+}
+
+// TestTheDeclarationCoversEveryColumnOfTheSchema holds the declaration to the
+// columns the migrations leave, not to a list read off one of them: until D189
+// the list below was the whole audit, and it had been read off 000001 while
+// 000003 added the column Erase matches a person by.
+func TestTheDeclarationCoversEveryColumnOfTheSchema(t *testing.T) {
+	t.Parallel()
+
+	module := invoice.New(invoice.Options{})
+	schemaaudit.Cover(t, module.Migrations(), module.PersonalData(), notPersonalColumns)
+}
+
+// TestTheDeclarationNamesEveryPersonalColumnOfTheSchema pins the KIND of each
+// declared column.
 //
 // The list is written out here on purpose. Deriving it from the same slice the
-// declaration is built from would prove the declaration equals itself and
-// nothing about the schema, which is the failure mode this repository has
-// already met more than once. These fifteen are read off the CREATE TABLE
-// statements in 000001: twelve party columns, the two jsonb-or-free-text fields
-// and the operator's status_reason.
+// declaration is built from would prove the declaration equals itself; which
+// columns exist is held by [TestTheDeclarationCoversEveryColumnOfTheSchema],
+// and what this adds is the judgement on each: the party columns and the
+// folded address are Named, the free text is Open.
 func TestTheDeclarationNamesEveryPersonalColumnOfTheSchema(t *testing.T) {
 	t.Parallel()
 
@@ -114,6 +156,7 @@ func TestTheDeclarationNamesEveryPersonalColumnOfTheSchema(t *testing.T) {
 		"invoices.buyer_tax_number":    personaldata.Named,
 		"invoices.buyer_tax_office":    personaldata.Named,
 		"invoices.buyer_email":         personaldata.Named,
+		"invoices.buyer_email_folded":  personaldata.Named,
 		"invoices.buyer_address":       personaldata.Named,
 		"invoices.buyer_country_code":  personaldata.Named,
 		"invoices.seller_name":         personaldata.Named,

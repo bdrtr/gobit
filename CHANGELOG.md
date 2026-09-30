@@ -24,6 +24,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The invoice declaration names the address an erasure matches** (D189).
+  **For operators:** `invoices.buyer_email_folded` is declared, and an
+  invoice's refusal of erasure lists it among what it kept.
+
 - **An order's later records are in its personal-data answers** (D188).
   **For operators:** the order module declares a replacement's note, a
   credit's reason and note, a claim photograph's caption and a line

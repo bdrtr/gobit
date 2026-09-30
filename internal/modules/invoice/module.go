@@ -99,7 +99,7 @@ const codeNotRegistered = "invoice_module_not_registered"
 
 // The two tables the personal data declaration is read off.
 //
-// They are constants rather than fifteen repeated literals because a typo in
+// They are constants rather than repeated literals because a typo in
 // one entry of a STATIC declaration produces a holding that points at a table
 // which does not exist, and nothing about a static value would ever notice: it
 // compiles, it serializes, and an embedder goes looking in the wrong place.
@@ -255,15 +255,11 @@ func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldat
 
 // PersonalData declares where this module keeps something about a person.
 //
-// ~~It declares EVERY such place.~~ **Corrected 2026-09-07: it declares every
-// place migration 000001 created, and 000003 added one that never reached the
-// list.** invoices.buyer_email_folded — a buyer's e-mail address, written by Go
-// on every issue, and the one column [service.Service.Erase] resolves a person
-// BY — is not named in the Declaration below. The exhaustiveness test
-// (erasure_test.go) checks the Declaration against a list a human read off the
-// CREATE TABLE statements of 000001 alone, so the gap is invisible from there
-// too: closing it takes a sixteenth Holding here and a sixteenth entry in that
-// hand-written list.
+// It declares every such place the migrations leave, and erasure_test.go
+// holds it to them column by column. From 2026-09-07 until D189 it did not:
+// invoices.buyer_email_folded, which migration 000003 added and which
+// [service.Service.Erase] resolves a person by, was in no holding, and the
+// audit compared the declaration with a list read off migration 000001 alone.
 //
 // It lives on the module rather than on the service and takes no database,
 // because a declaration is a property of the CODE: it is the same sentence on
@@ -272,16 +268,15 @@ func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldat
 //
 // # What is declared, and why the list is longer than the refusal's
 //
-// Fifteen columns across two tables, and [Module.Erase] can reach nine of them.
-// Twelve are the two PARTIES the document prints, copied in full at the moment
-// it was issued (migration 000001) and never updated afterwards.
+// Most of the columns are the two PARTIES the document prints, copied in full
+// at the moment it was issued (migration 000001) and never updated afterwards.
 //
 // The BUYER half is the reachable half. The buyer's address is the only handle
 // this module has on a person — invoices carries no customer_id and no order_id
-// — so those six columns are what a Retained answer names as kept. The handle
-// is buyer_email_folded, written by Go beside the printed address; ADR 0038 has
-// why it is a column of its own rather than a lower() in the predicate, which is
-// what it was until 2026-09-07.
+// — so the buyer columns are what a Retained answer names as kept. The handle
+// is buyer_email_folded, written by Go beside the printed address and declared
+// beside it; ADR 0038 has why it is a column of its own rather than a lower()
+// in the predicate, which is what it was until 2026-09-07.
 //
 // The SELLER half is declared, is never searched and is never reported, and
 // each of its six entries says that in its own Why rather than leaving a reader
@@ -302,7 +297,7 @@ func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldat
 // [service.RetainedColumns] does not list must SAY that Erase never searches
 // it.
 //
-// The remaining three are [personaldata.Open]: metadata is a jsonb the caller fills
+// The remaining ones are [personaldata.Open]: metadata is a jsonb the caller fills
 // and nothing validates, invoice_lines.description is caller text, and
 // status_reason is a sentence an operator typed. gobit does not read them and
 // does not guess what is in them, and ADR 0032 states the consequence as a rule
@@ -329,7 +324,12 @@ func (m *Module) PersonalData() personaldata.Declaration {
 			},
 			{
 				Table: tableInvoices, Column: "buyer_email", Kind: personaldata.Named,
-				Why:       "the buyer's e-mail address; that address is also the ONLY handle by which this module can find a person at all, though the column a search matches is its folded copy in buyer_email_folded, which migration 000003 added and this declaration does not name (ADR 0038)",
+				Why:       "the buyer's e-mail address as printed on the document; its folded copy in buyer_email_folded is the ONLY handle by which this module can find a person at all",
+				OnErasure: personaldata.Kept,
+			},
+			{
+				Table: tableInvoices, Column: "buyer_email_folded", Kind: personaldata.Named,
+				Why:       "the buyer's e-mail address trimmed and lower-cased by Go, which is the column an erasure request is matched against (ADR 0038, D189)",
 				OnErasure: personaldata.Kept,
 			},
 			{

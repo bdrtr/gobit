@@ -27,6 +27,7 @@ var buyerColumns = []string{
 	"invoices.buyer_tax_number",
 	"invoices.buyer_tax_office",
 	"invoices.buyer_email",
+	"invoices.buyer_email_folded",
 	"invoices.buyer_address",
 	"invoices.buyer_country_code",
 }
@@ -142,7 +143,7 @@ const whyUnresolved = "the only handle an invoice has on a person is the buyer a
 // The empty Kept is deliberate and is worth defending, because [personaldata.Result]
 // calls Kept required with Retained. That requirement is there to stop a
 // refusal that cannot say what it kept. This refusal kept nothing OF THIS
-// PERSON: naming nine columns that hold nobody in order to satisfy the rule
+// PERSON: naming the kept columns, which hold nobody, in order to satisfy the rule
 // would be the dishonest way to obey a rule written to force honesty, and the
 // sentence in Why is what a controller repeats instead.
 func (s *Service) Erase(ctx context.Context, subject personaldata.Subject) (personaldata.Result, error) {

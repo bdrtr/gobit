@@ -136,7 +136,8 @@ func TestTheRefusalNamesTheFreeFormColumnsItLeft(t *testing.T) {
 	}, "the free-form columns gobit never rewrites have to be named")
 	assert.Subset(t, result.Kept, []string{
 		"invoices.buyer_name", "invoices.buyer_tax_number", "invoices.buyer_tax_office",
-		"invoices.buyer_email", "invoices.buyer_address", "invoices.buyer_country_code",
+		"invoices.buyer_email", "invoices.buyer_email_folded", "invoices.buyer_address",
+		"invoices.buyer_country_code",
 	}, "the columns that still name the buyer have to be named")
 
 	require.NotEmpty(t, result.Why, "Kept without Why is a refusal a controller cannot repeat")

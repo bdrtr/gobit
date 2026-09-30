@@ -84,12 +84,11 @@ func TestNoProductionFileImportsATestPackage(t *testing.T) {
 					// A package nothing in production imports is test support,
 					// whatever it is called. core/identitytest is the published
 					// one — a conformance suite an embedder runs against its own
-					// verifier — and internal/benchbudget and internal/testdb
-					// (ADR 0201) are local ones. All three would be on a
-					// hand-written exemption list; deriving it
-					// instead means the next such package needs no edit here, and
-					// a package that STOPS being test-only is caught the day
-					// production first imports it.
+					// verifier — and internal/benchbudget, internal/testdb
+					// (ADR 0201) and internal/schemaaudit (D189) are local ones.
+					// Deriving the exemption is what catches a package that
+					// STOPS being test-only the day production first imports
+					// it; the list below names who takes it.
 					continue
 				}
 
@@ -102,17 +101,28 @@ func TestNoProductionFileImportsATestPackage(t *testing.T) {
 		}
 	}
 
-	// The exemption is load-bearing, so its SIZE is checked in both directions.
-	// Broken so that every package looked like test support, the derivation would
-	// swallow a real violation and this gate would pass while auditing nothing —
-	// which a mutation proved it does. Three files take it today: the published
-	// conformance suite, the benchmark budget and the test database (ADR 0201).
-	assert.Len(t, exempted, 3,
-		"%d files took the test-support exemption and three were expected (%v).\n"+
-			"More means the derivation has widened and a real import is being "+
-			"swallowed; fewer means a test-support package started being reached from "+
-			"production, and what it carries now travels into the server binary.",
-		len(exempted), exempted)
+	// The exemption is load-bearing, so WHO takes it is checked in both
+	// directions. Broken so that every package looked like test support, the
+	// derivation would swallow a real violation and this gate would pass while
+	// auditing nothing — which a mutation proved it does. The files are named
+	// rather than counted, so a new one says what it is.
+	taken := make([]string, 0, len(exempted))
+	for path := range exempted {
+		rel, err := filepath.Rel(repoRoot, path)
+		require.NoError(t, err)
+		taken = append(taken, filepath.ToSlash(rel))
+	}
+	assert.ElementsMatch(t, []string{
+		"core/identitytest/identitytest.go",
+		"internal/benchbudget/benchbudget.go",
+		"internal/testdb/testdb.go",
+		"internal/schemaaudit/schemaaudit.go",
+	}, taken,
+		"the files that took the test-support exemption are not the expected ones.\n"+
+			"An extra one means the derivation has widened and a real import is being "+
+			"swallowed, or a new test-support package arrived and belongs here; a missing "+
+			"one means a test-support package started being reached from production, and "+
+			"what it carries now travels into the server binary.")
 }
 
 // importedByProduction is every in-repository package path a NON-test file
