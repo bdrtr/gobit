@@ -127,6 +127,12 @@ type Auth interface {
 	// RemoveOwnMFA takes the second factor off the given user's own account,
 	// given the code it shows now, and reports whether there was one to take.
 	RemoveOwnMFA(ctx context.Context, userID, code string) (bool, error)
+	// SecondFactorOwed reports whether the installation requires a second
+	// factor now and the user has not proven one (ADR 0265).
+	SecondFactorOwed(ctx context.Context, userID string) (bool, error)
+	// SecondFactorHolders returns those of the given users who have proven an
+	// authenticator.
+	SecondFactorHolders(ctx context.Context, userIDs []string) (map[string]bool, error)
 	// GetUser returns the user by their identifier.
 	GetUser(ctx context.Context, id string) (models.User, error)
 	// ListUsers filters and pages the users.

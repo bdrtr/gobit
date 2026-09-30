@@ -258,6 +258,18 @@ func (d *sessionRepo) RegisterLoginSuccess(_ context.Context, identityID string,
 	return nil
 }
 
+// SecondFactorHolders reads whether the one user holds a confirmed factor.
+func (d *sessionRepo) SecondFactorHolders(_ context.Context, userIDs []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, id := range userIDs {
+		if d.mfa != nil && d.mfa.UserID == id && d.mfa.Confirmed() {
+			out[id] = true
+		}
+	}
+
+	return out, nil
+}
+
 // GetMFACredential answers the user's second factor, or says there is none.
 func (d *sessionRepo) GetMFACredential(
 	_ context.Context, userID string,

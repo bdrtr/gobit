@@ -24,6 +24,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An installation can require a second factor** (ADR 0265). **For
+  operators:** `ADMIN_SECOND_FACTOR_REQUIRED_FROM` takes an RFC 3339 moment;
+  from it, an administrator who has not proven an authenticator signs in but
+  holds no privilege until they enrol through `POST /admin/v1/auth/mfa`, and
+  `GET /admin/v1/users?second_factor=false` lists who still owes one. **For
+  integrators:** every user record carries `second_factor`, and
+  `GET /admin/v1/auth/me` carries `second_factor_owed`.
+
 - **The OpenAPI document names each operation's privilege** (ADR 0263). **For
   integrators:** every admin operation's security requirement lists the scopes
   its route demands, for example `bearerAuth: ["product:read"]`, and the `mcp`

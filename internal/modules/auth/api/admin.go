@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
@@ -72,12 +73,54 @@ func (h *Handler) adminWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	owed := false
+	if principal.Kind == service.PrincipalKindUser {
+		var err error
+		if owed, err = h.svc.SecondFactorOwed(ctx, principal.ID); err != nil {
+			corehttp.WriteError(ctx, w, err)
+			return
+		}
+	}
+
 	writeItem(w, r, http.StatusOK, principalResponse{
-		ID:              principal.ID,
-		Kind:            principal.Kind,
-		Scopes:          orEmpty(principal.Scopes),
-		SalesChannelIDs: principal.SalesChannelIDs,
+		ID:               principal.ID,
+		Kind:             principal.Kind,
+		Scopes:           orEmpty(principal.Scopes),
+		SalesChannelIDs:  principal.SalesChannelIDs,
+		SecondFactorOwed: owed,
 	})
+}
+
+// userDTOs converts users into response bodies, each saying whether the user
+// has proven an authenticator, read in one query for all of them (ADR 0265).
+func (h *Handler) userDTOs(ctx context.Context, users ...models.User) ([]userDTO, error) {
+	ids := make([]string, 0, len(users))
+	for i := range users {
+		ids = append(ids, users[i].ID)
+	}
+	holders, err := h.svc.SecondFactorHolders(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]userDTO, 0, len(users))
+	for i := range users {
+		dto := toUserDTO(users[i])
+		dto.SecondFactor = holders[users[i].ID]
+		out = append(out, dto)
+	}
+
+	return out, nil
+}
+
+// writeUser writes one user as its response body.
+func (h *Handler) writeUser(w http.ResponseWriter, r *http.Request, status int, user models.User) {
+	dtos, err := h.userDTOs(r.Context(), user)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+		return
+	}
+	writeItem(w, r, status, dtos[0])
 }
 
 // adminLogout closes the caller's sessions (POST /admin/v1/auth/logout).
@@ -158,7 +201,7 @@ func (h *Handler) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	writeItem(w, r, http.StatusCreated, toUserDTO(created))
+	h.writeUser(w, r, http.StatusCreated, created)
 }
 
 // adminListUsers lists the users, filtering and paging them
@@ -174,17 +217,33 @@ func (h *Handler) adminListUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	secondFactor, err := boolParam(r, "second_factor")
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
 	page, err := h.svc.ListUsers(ctx, service.ListUsersInput{
-		Email:  stringParam(r, "email"),
-		Scope:  stringParam(r, "scope"),
-		Limit:  limit,
-		Offset: offset,
+		Email:        stringParam(r, "email"),
+		Scope:        stringParam(r, "scope"),
+		SecondFactor: secondFactor,
+		Limit:        limit,
+		Offset:       offset,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	writePage(w, r, page, toUserDTO)
+	dtos, err := h.userDTOs(ctx, page.Items...)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	byID := make(map[string]userDTO, len(dtos))
+	for i := range dtos {
+		byID[dtos[i].ID] = dtos[i]
+	}
+	writePage(w, r, page, func(u models.User) userDTO { return byID[u.ID] })
 }
 
 // adminGetUser returns a single user (GET /admin/v1/users/{id}).
@@ -196,7 +255,7 @@ func (h *Handler) adminGetUser(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	writeItem(w, r, http.StatusOK, toUserDTO(user))
+	h.writeUser(w, r, http.StatusOK, user)
 }
 
 // adminUpdateUser updates the given fields of the user
@@ -218,7 +277,7 @@ func (h *Handler) adminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	writeItem(w, r, http.StatusOK, toUserDTO(updated))
+	h.writeUser(w, r, http.StatusOK, updated)
 }
 
 // adminDeleteUser soft-deletes the user and their login credentials

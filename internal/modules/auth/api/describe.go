@@ -331,10 +331,14 @@ func describeUsers(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/users", openapi.Operation{
 		Summary: "Lists the admin users, filtering and paging them.",
 		// The parameters are the ones the handler READS, not the ones we could
-		// wish for: [Handler.adminListUsers] reads only these four.
+		// wish for: [Handler.adminListUsers] reads only these five.
 		Parameters: append(pageParameters(),
 			queryParameter("email", typeString, "Limits the users to a single email."),
 			queryParameter("scope", typeString, "Returns the users carrying the given scope."),
+			queryParameter("second_factor", typeBoolean,
+				"true returns the users who have proven an authenticator and false the ones "+
+					"who have not, which is who owes one when the installation requires it "+
+					"(ADR 0265). An enrolment nobody confirmed is not one."),
 		),
 		Responses: map[string]any{
 			"200": openapi.Response("A page of users", d.List(userDTO{})),

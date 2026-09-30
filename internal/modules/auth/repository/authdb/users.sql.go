@@ -41,15 +41,20 @@ SELECT count(*) FROM auth_user
 WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR email = $1::text)
   AND ($2::text IS NULL OR $2::text = ANY(scopes))
+  AND ($3::boolean IS NULL OR EXISTS (
+        SELECT 1 FROM auth_mfa_credential m
+         WHERE m.user_id = auth_user.id AND m.confirmed_at IS NOT NULL
+      ) = $3::boolean)
 `
 
 type CountUsersParams struct {
-	Email *string
-	Scope *string
+	Email        *string
+	Scope        *string
+	SecondFactor *bool
 }
 
 func (q *Queries) CountUsers(ctx context.Context, arg CountUsersParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countUsers, arg.Email, arg.Scope)
+	row := q.db.QueryRow(ctx, countUsers, arg.Email, arg.Scope, arg.SecondFactor)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -192,21 +197,30 @@ SELECT id, email, first_name, last_name, avatar_url, scopes, metadata, created_a
 WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR email = $1::text)
   AND ($2::text IS NULL OR $2::text = ANY(scopes))
+  AND ($3::boolean IS NULL OR EXISTS (
+        SELECT 1 FROM auth_mfa_credential m
+         WHERE m.user_id = auth_user.id AND m.confirmed_at IS NOT NULL
+      ) = $3::boolean)
 ORDER BY created_at DESC, id DESC
-LIMIT $4::int OFFSET $3::int
+LIMIT $5::int OFFSET $4::int
 `
 
 type ListUsersParams struct {
-	Email *string
-	Scope *string
-	Off   int32
-	Lim   int32
+	Email        *string
+	Scope        *string
+	SecondFactor *bool
+	Off          int32
+	Lim          int32
 }
 
+// second_factor keeps the users who have (true) or have not (false) proven an
+// authenticator, which is how an operator finds who still owes one before the
+// installation requires it (ADR 0265). An enrolment nobody confirmed is not one.
 func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]AuthUser, error) {
 	rows, err := q.db.Query(ctx, listUsers,
 		arg.Email,
 		arg.Scope,
+		arg.SecondFactor,
 		arg.Off,
 		arg.Lim,
 	)
@@ -417,6 +431,33 @@ func (q *Queries) PutPendingMFASecret(ctx context.Context, arg PutPendingMFASecr
 		&i.PendingSecret,
 	)
 	return i, err
+}
+
+const secondFactorHolders = `-- name: SecondFactorHolders :many
+SELECT user_id FROM auth_mfa_credential
+WHERE user_id = ANY($1::text[]) AND confirmed_at IS NOT NULL
+`
+
+// SecondFactorHolders returns those of the given users who have proven an
+// authenticator, in one query for a page of users (ADR 0265).
+func (q *Queries) SecondFactorHolders(ctx context.Context, userIds []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, secondFactorHolders, userIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var user_id string
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const softDeleteIdentitiesOfUser = `-- name: SoftDeleteIdentitiesOfUser :exec

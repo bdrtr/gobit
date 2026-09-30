@@ -161,6 +161,9 @@ type Repository interface {
 	PromotePendingMFASecret(ctx context.Context, userID string) (models.MFACredential, error)
 	// GetMFACredential reads one user's credential, or repository.ErrNoMFACredential.
 	GetMFACredential(ctx context.Context, userID string) (models.MFACredential, error)
+	// SecondFactorHolders returns those of the given users who have proven an
+	// authenticator (ADR 0265).
+	SecondFactorHolders(ctx context.Context, userIDs []string) (map[string]bool, error)
 	// ConfirmMFACredential stamps the first correct code. A credential that is
 	// already confirmed matches nothing and answers the same sentinel.
 	ConfirmMFACredential(ctx context.Context, userID string) (models.MFACredential, error)
@@ -250,6 +253,15 @@ type Options struct {
 	// variable. A TOTP secret cannot be hashed, so there is nowhere safe to put one
 	// without a key (ADR 0143).
 	MFASecretKey string
+	// SecondFactorRequiredFrom is the moment from which a person holds no
+	// privilege until they have proven an authenticator (ADR 0265); the zero
+	// time requires nothing.
+	//
+	// It is a MOMENT rather than a switch so an installation can announce it and
+	// let people enroll before it arrives: from then on every session of somebody
+	// who owes a factor reaches only the endpoints that ask for identity alone,
+	// which include enrolling one (ADR 0264).
+	SecondFactorRequiredFrom time.Time
 
 	// JWTIssuer is the token's "iss" claim; [DefaultIssuer] if empty.
 	JWTIssuer string
@@ -285,6 +297,9 @@ type Service struct {
 	threshold int
 	lockFor   time.Duration
 	throttle  time.Duration
+
+	// factorRequiredFrom is [Options.SecondFactorRequiredFrom].
+	factorRequiredFrom time.Time
 
 	// secrets seals and opens the one value this module cannot hash: a TOTP
 	// secret. A zero box means the installation set no key, and enrolling is
@@ -345,6 +360,8 @@ func New(repo Repository, opts Options) *Service {
 		lockFor:      orDuration(opts.LoginLockDuration, DefaultLoginLockDuration),
 		throttle:     orDuration(opts.UsageThrottle, DefaultUsageThrottle),
 		secrets:      secrets,
+
+		factorRequiredFrom: opts.SecondFactorRequiredFrom,
 	}
 	svc.dummyHash = newDummyHash(cost)
 	return svc

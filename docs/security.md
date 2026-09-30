@@ -54,9 +54,12 @@ is the first half of an ordinary two-step sign-in.
 
 The demand reaches PEOPLE. A secret key holds no authenticator and nobody could
 scan a code for one, so machine access is unchanged; enrolling with a key is
-refused for the same reason. Nothing is required shop-wide: an account with no
-factor signs in exactly as before, which is what keeps an upgrade from locking
-every administrator out at once. The way back for a lost phone is
+refused for the same reason. Nothing is required shop-wide unless
+`ADMIN_SECOND_FACTOR_REQUIRED_FROM` names a moment
+([ADR 0265](adr/0265-an-installation-can-require-a-second-factor.md)): from it, a
+person who has not proven a factor still signs in but holds no privilege until
+they enrol, which keeps the requirement from locking anybody out, and
+`GET /admin/v1/users?second_factor=false` lists who still owes one. The way back for a lost phone is
 `gobit mfa-reset <email> -confirm <email>`, at the machine — deliberately not an
 endpoint, because an administrator who could remove a colleague's factor would
 make one stolen session enough to reach every other account.

@@ -159,6 +159,10 @@ type Options struct {
 	MFASecretKey string
 	// MFAIssuer is the name an authenticator app shows beside the account.
 	MFAIssuer string
+	// SecondFactorRequiredFrom is the moment from which a person without a
+	// proven authenticator holds no privilege; the zero time requires nothing.
+	// See service.Options.SecondFactorRequiredFrom (ADR 0265).
+	SecondFactorRequiredFrom time.Time
 	// BcryptCost is the cost parameter of the password hash; if 0,
 	// service.DefaultBcryptCost. It has to be raised as hardware gets faster.
 	BcryptCost int
@@ -297,6 +301,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// have registered yet (ADR 0137).
 		InvitationSender: newInvitationSender(c, m.log),
 		MFASecretKey:     m.opts.MFASecretKey,
+
+		SecondFactorRequiredFrom: m.opts.SecondFactorRequiredFrom,
 	})
 	m.handler = api.New(m.svc).WithMFAIssuer(m.opts.MFAIssuer)
 

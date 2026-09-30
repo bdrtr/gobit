@@ -42,11 +42,18 @@ SELECT * FROM auth_user
 WHERE id = $1 AND deleted_at IS NULL
 FOR SHARE;
 
+-- second_factor keeps the users who have (true) or have not (false) proven an
+-- authenticator, which is how an operator finds who still owes one before the
+-- installation requires it (ADR 0265). An enrolment nobody confirmed is not one.
 -- name: ListUsers :many
 SELECT * FROM auth_user
 WHERE deleted_at IS NULL
   AND (sqlc.narg('email')::text IS NULL OR email = sqlc.narg('email')::text)
   AND (sqlc.narg('scope')::text IS NULL OR sqlc.narg('scope')::text = ANY(scopes))
+  AND (sqlc.narg('second_factor')::boolean IS NULL OR EXISTS (
+        SELECT 1 FROM auth_mfa_credential m
+         WHERE m.user_id = auth_user.id AND m.confirmed_at IS NOT NULL
+      ) = sqlc.narg('second_factor')::boolean)
 ORDER BY created_at DESC, id DESC
 LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
 
@@ -54,7 +61,17 @@ LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
 SELECT count(*) FROM auth_user
 WHERE deleted_at IS NULL
   AND (sqlc.narg('email')::text IS NULL OR email = sqlc.narg('email')::text)
-  AND (sqlc.narg('scope')::text IS NULL OR sqlc.narg('scope')::text = ANY(scopes));
+  AND (sqlc.narg('scope')::text IS NULL OR sqlc.narg('scope')::text = ANY(scopes))
+  AND (sqlc.narg('second_factor')::boolean IS NULL OR EXISTS (
+        SELECT 1 FROM auth_mfa_credential m
+         WHERE m.user_id = auth_user.id AND m.confirmed_at IS NOT NULL
+      ) = sqlc.narg('second_factor')::boolean);
+
+-- SecondFactorHolders returns those of the given users who have proven an
+-- authenticator, in one query for a page of users (ADR 0265).
+-- name: SecondFactorHolders :many
+SELECT user_id FROM auth_mfa_credential
+WHERE user_id = ANY(sqlc.arg('user_ids')::text[]) AND confirmed_at IS NOT NULL;
 
 -- UpdateUser leaves the fields that were not supplied AS THEY ARE.
 --

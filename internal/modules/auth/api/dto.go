@@ -189,6 +189,10 @@ type principalResponse struct {
 	// SalesChannelIDs are the channels the publishable key is attached to; on
 	// an admin identity it is empty.
 	SalesChannelIDs []string `json:"sales_channel_ids,omitempty"`
+	// SecondFactorOwed reports that the installation requires a second factor
+	// and the caller has not proven one, which is why their scopes are empty:
+	// enrolling is open to them (ADR 0265).
+	SecondFactorOwed bool `json:"second_factor_owed"`
 }
 
 // userDTO is the response body of an admin user.
@@ -207,6 +211,9 @@ type userDTO struct {
 	AvatarURL string `json:"avatar_url"`
 	// Scopes are the user's scopes.
 	Scopes []string `json:"scopes"`
+	// SecondFactor reports that the user has proven an authenticator; an
+	// enrolment nobody confirmed is not one (ADR 0265).
+	SecondFactor bool `json:"second_factor"`
 	// Metadata is free structured context; if empty it does not appear in the
 	// body.
 	Metadata map[string]any `json:"metadata,omitempty"`

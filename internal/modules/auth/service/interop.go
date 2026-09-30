@@ -261,10 +261,24 @@ func (s *Service) principalFromToken(ctx context.Context, raw string) (corehttp.
 			"the token was produced before a logout or a password change: %s", user.ID)
 	}
 
+	// A person who owes a second factor holds no privilege until they prove one
+	// (ADR 0265). It is decided here, on every request, rather than when the
+	// token was signed: a session opened before the requirement began is held
+	// to it the moment it does, and the endpoints that ask for identity alone,
+	// enrolling included, stay open to them.
+	scopes := user.Scopes
+	owed, err := s.SecondFactorOwed(ctx, user.ID)
+	if err != nil {
+		return corehttp.Principal{}, err
+	}
+	if owed {
+		scopes = []string{}
+	}
+
 	return corehttp.Principal{
 		ID:     user.ID,
 		Kind:   PrincipalKindUser,
-		Scopes: user.Scopes,
+		Scopes: scopes,
 	}, nil
 }
 

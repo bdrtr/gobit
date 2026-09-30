@@ -18,6 +18,10 @@ import (
 // looking only at the status code could not notice a handler that returns the
 // error after having performed the write.
 type fakeAuth struct {
+	// factorOwed and factorHolders are the second factor answers (ADR 0265).
+	factorOwed    bool
+	factorHolders map[string]bool
+
 	// The second-factor calls, recorded: which user each acted for is the whole
 	// claim the endpoints make, because they take no id from the caller.
 	mfaEnrolFor   string
@@ -230,6 +234,23 @@ func (f *fakeAuth) ConfirmMFA(_ context.Context, userID, code string) error {
 	f.mfaCode = code
 
 	return f.mfaErr
+}
+
+// SecondFactorOwed answers the fake's fixed verdict.
+func (f *fakeAuth) SecondFactorOwed(context.Context, string) (bool, error) {
+	return f.factorOwed, nil
+}
+
+// SecondFactorHolders answers the fake's fixed holders.
+func (f *fakeAuth) SecondFactorHolders(_ context.Context, userIDs []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, id := range userIDs {
+		if f.factorHolders[id] {
+			out[id] = true
+		}
+	}
+
+	return out, nil
 }
 
 // RemoveOwnMFA records whose factor was taken off, with what code.

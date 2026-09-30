@@ -103,7 +103,7 @@ func (d *mfaLoginRepo) DeleteMFACredential(_ context.Context, _ string) (bool, e
 
 // setupMFALogin builds a service whose single user can enroll, and returns the
 // service, the repository and the fixed clock.
-func setupMFALogin(t *testing.T) (*service.Service, *mfaLoginRepo, *sessionClock) {
+func setupMFALogin(t *testing.T, adjust ...func(*service.Options)) (*service.Service, *mfaLoginRepo, *sessionClock) {
 	t.Helper()
 
 	start := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
@@ -131,12 +131,16 @@ func setupMFALogin(t *testing.T) (*service.Service, *mfaLoginRepo, *sessionClock
 		}},
 	}}
 
-	svc := service.New(repo, service.Options{
+	options := service.Options{
 		Now:          clock.now,
 		JWTSecret:    sessionSecret,
 		MFASecretKey: testMFAKey,
 		BcryptCost:   bcrypt.MinCost,
-	})
+	}
+	for _, change := range adjust {
+		change(&options)
+	}
+	svc := service.New(repo, options)
 
 	return svc, repo, clock
 }
@@ -431,4 +435,67 @@ func TestAnUnprovenEnrolmentTakesNoCode(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, removed)
 	assert.Nil(t, repo.mfa)
+}
+
+// TestAPersonWhoOwesAFactorHoldsNoPrivilege is ADR 0265: from the moment the
+// installation requires a second factor, every session of somebody who has not
+// proven one resolves to no privilege, including one signed before the moment,
+// and proving one gives the privileges back to the next request.
+func TestAPersonWhoOwesAFactorHoldsNoPrivilege(t *testing.T) {
+	t.Parallel()
+
+	requiredFrom := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	svc, _, clock := setupMFALogin(t, func(o *service.Options) { o.SecondFactorRequiredFrom = requiredFrom })
+	interop := service.NewInterop(svc)
+
+	token, _, err := svc.Login(t.Context(), sessionEmail, sessionPassword, "")
+	require.NoError(t, err, "before the moment a password alone signs in")
+	principal, err := interop.AuthenticateAdmin(t.Context(), "Bearer", token)
+	require.NoError(t, err)
+	assert.Equal(t, []string{models.ScopeAdmin}, principal.Scopes, "before the moment nothing is owed")
+	owed, err := svc.SecondFactorOwed(t.Context(), sessionUserID)
+	require.NoError(t, err)
+	assert.False(t, owed)
+
+	clock.moment = requiredFrom
+	principal, err = interop.AuthenticateAdmin(t.Context(), "Bearer", token)
+	require.NoError(t, err, "the session stays an identity")
+	assert.Equal(t, []string{}, principal.Scopes,
+		"from the moment, a session of somebody who owes a factor holds no privilege, "+
+			"even one signed before it")
+	owed, err = svc.SecondFactorOwed(t.Context(), sessionUserID)
+	require.NoError(t, err)
+	assert.True(t, owed)
+
+	// Enrolling is an identity's act (ADR 0264), so the owed session can do it.
+	enrolAndConfirm(t, svc, clock.moment)
+	principal, err = interop.AuthenticateAdmin(t.Context(), "Bearer", token)
+	require.NoError(t, err)
+	assert.Equal(t, []string{models.ScopeAdmin}, principal.Scopes, "a proven factor gives the privileges back")
+}
+
+// TestAnEnrolmentNobodyConfirmedDoesNotPayTheDebt keeps a half-scanned phone
+// from counting: only a proven factor opens the privileges.
+func TestAnEnrolmentNobodyConfirmedDoesNotPayTheDebt(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := setupMFALogin(t, func(o *service.Options) {
+		o.SecondFactorRequiredFrom = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	})
+	_, err := svc.EnrolMFA(t.Context(), sessionUserID, "Acme", "")
+	require.NoError(t, err)
+
+	owed, err := svc.SecondFactorOwed(t.Context(), sessionUserID)
+	require.NoError(t, err)
+	assert.True(t, owed, "an unconfirmed enrolment is not a factor")
+}
+
+// TestNothingIsOwedWhereNothingIsRequired is the default: no moment, no debt.
+func TestNothingIsOwedWhereNothingIsRequired(t *testing.T) {
+	t.Parallel()
+
+	svc, _, _ := setupMFALogin(t)
+	owed, err := svc.SecondFactorOwed(t.Context(), sessionUserID)
+	require.NoError(t, err)
+	assert.False(t, owed)
 }

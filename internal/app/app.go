@@ -640,6 +640,8 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 		MFASecretKey: cfg.MFASecretKey,
 		MFAIssuer:    cfg.ServiceName,
 		Logger:       log,
+
+		SecondFactorRequiredFrom: cfg.SecondFactorRequiredFrom,
 	}))
 	// Section 10: B2B. The installation where the buyer is not an individual
 	// but an EMPLOYEE with a limited spending authority. The module touches no

@@ -165,6 +165,9 @@ type ListUsersInput struct {
 	Email *string
 	// Scope, if given, restricts the result to users holding this scope.
 	Scope *string
+	// SecondFactor, if given, restricts the result to the users who have
+	// (true) or have not (false) proven an authenticator (ADR 0265).
+	SecondFactor *bool
 	// Limit is the page size; [DefaultLimit] is applied if it is 0.
 	Limit int64
 	// Offset is the number of records to skip.
@@ -197,6 +200,7 @@ func (s *Service) ListUsers(ctx context.Context, in ListUsersInput) (Page[models
 		}
 		filter.Scope = &scopes[0]
 	}
+	filter.SecondFactor = in.SecondFactor
 
 	items, total, err := s.repo.ListUsers(ctx, filter, limit, offset)
 	if err != nil {

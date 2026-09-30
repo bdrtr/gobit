@@ -400,6 +400,18 @@ type Config struct {
 	// visibly absent.
 	MFASecretKey string `env:"MFA_SECRET_KEY"`
 
+	// SecondFactorRequiredFrom is the moment, RFC 3339, from which an
+	// administrator who has not proven an authenticator holds no privilege
+	// until they do (ADR 0265). Empty requires nothing.
+	//
+	// It is a MOMENT rather than a switch because the first effect of a switch
+	// would be locking out everybody who has not enrolled yet: set it ahead, list
+	// who still owes one with GET /admin/v1/users?second_factor=false, and from
+	// that moment a session of somebody who owes one reaches only the endpoints
+	// that ask for identity alone, enrolling included. A secret key is a
+	// machine and is not affected.
+	SecondFactorRequiredFrom time.Time `env:"ADMIN_SECOND_FACTOR_REQUIRED_FROM"`
+
 	// AdminBootstrapEmail is the e-mail of the FIRST admin user to be created at startup.
 	//
 	// A server coming up on an empty database has no administrator, and because the

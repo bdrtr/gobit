@@ -249,7 +249,7 @@ func adminEndpoints() []endpointExpectation {
 		{
 			method: http.MethodGet, path: "/admin/v1/users", status: "200",
 			response: fullUser(), list: true,
-			query: append(pageQuery, "email", "scope"),
+			query: append(pageQuery, "email", "scope", "second_factor"),
 		},
 		{
 			method: http.MethodGet, path: "/admin/v1/users/{id}", status: "200",

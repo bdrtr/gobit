@@ -35,7 +35,7 @@ var envKeys = []string{
 	"GRAPHQL_MAX_DEPTH", "GRAPHQL_MAX_COMPLEXITY", "GRAPHQL_INTROSPECTION",
 	"STOREFRONT_CATALOG_CACHE_TTL", "STOREFRONT_CATALOG_CACHE_SHARED",
 	"PAYMENT_LOYALTY_EARN_BASIS_POINTS", "PAYMENT_GIFT_CARD_VALIDITY_DAYS",
-	"DB_MAX_CONNS", "DB_MIN_CONNS",
+	"DB_MAX_CONNS", "DB_MIN_CONNS", "ADMIN_SECOND_FACTOR_REQUIRED_FROM",
 }
 
 // productionJWTSecret is the 32-character signing secret used in production scenarios.
@@ -124,15 +124,16 @@ func TestLoadInvalidEnv(t *testing.T) {
 	tests := map[string]struct {
 		key, value string
 	}{
-		"an unknown environment": {"APP_ENV", "staging-2"},
-		"a zero port":            {"APP_PORT", "0"},
-		"a port out of range":    {"APP_PORT", "70000"},
-		"an unknown level":       {"LOG_LEVEL", "trace"},
-		"an unknown format":      {"LOG_FORMAT", "logfmt"},
-		"an unknown bus":         {"EVENT_BUS", "kafka"},
-		"negatif timeout":        {"SHUTDOWN_TIMEOUT", "-1s"},
-		"a zero probe budget":    {"READINESS_DEGRADED_TIMEOUT", "0s"},
-		"a non-numeric port":     {"APP_PORT", "abc"},
+		"an unknown environment":        {"APP_ENV", "staging-2"},
+		"a zero port":                   {"APP_PORT", "0"},
+		"a port out of range":           {"APP_PORT", "70000"},
+		"an unknown level":              {"LOG_LEVEL", "trace"},
+		"an unknown format":             {"LOG_FORMAT", "logfmt"},
+		"an unknown bus":                {"EVENT_BUS", "kafka"},
+		"negatif timeout":               {"SHUTDOWN_TIMEOUT", "-1s"},
+		"a zero probe budget":           {"READINESS_DEGRADED_TIMEOUT", "0s"},
+		"a non-numeric port":            {"APP_PORT", "abc"},
+		"a moment that is not RFC 3339": {"ADMIN_SECOND_FACTOR_REQUIRED_FROM", "2026-11-01"},
 	}
 
 	for name, tt := range tests {
@@ -1441,4 +1442,21 @@ func TestAProfilingAddressBeyondLoopbackIsRefused(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.environment, "the error message has to say which environment is enforcing it")
 		})
 	}
+}
+
+// TestTheSecondFactorMomentIsReadAsRFC3339 is ADR 0265's setting: left empty,
+// as the example environment ships it, nothing is required; given, it is the
+// moment written.
+func TestTheSecondFactorMomentIsReadAsRFC3339(t *testing.T) {
+	clearEnv(t)
+
+	t.Setenv("ADMIN_SECOND_FACTOR_REQUIRED_FROM", "")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.True(t, cfg.SecondFactorRequiredFrom.IsZero(), "an empty value requires nothing")
+
+	t.Setenv("ADMIN_SECOND_FACTOR_REQUIRED_FROM", "2026-11-01T00:00:00Z")
+	cfg, err = config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), cfg.SecondFactorRequiredFrom.UTC())
 }

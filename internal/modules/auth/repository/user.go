@@ -129,18 +129,20 @@ func (r *Repo) ListUsers(
 	}
 
 	rows, err := r.q.ListUsers(ctx, authdb.ListUsersParams{
-		Email: filter.Email,
-		Scope: filter.Scope,
-		Lim:   toInt32(limit),
-		Off:   toInt32(offset),
+		Email:        filter.Email,
+		Scope:        filter.Scope,
+		SecondFactor: filter.SecondFactor,
+		Lim:          toInt32(limit),
+		Off:          toInt32(offset),
 	})
 	if err != nil {
 		return nil, 0, wrapDB(err, "could not read the user list")
 	}
 
 	total, err := r.q.CountUsers(ctx, authdb.CountUsersParams{
-		Email: filter.Email,
-		Scope: filter.Scope,
+		Email:        filter.Email,
+		Scope:        filter.Scope,
+		SecondFactor: filter.SecondFactor,
 	})
 	if err != nil {
 		return nil, 0, wrapDB(err, "could not read the user count")
@@ -459,6 +461,28 @@ func (r *Repo) GetMFACredential(ctx context.Context, userID string) (models.MFAC
 	}
 
 	return toMFACredential(row), nil
+}
+
+// SecondFactorHolders returns those of the given users who have proven an
+// authenticator, in one query (ADR 0265).
+func (r *Repo) SecondFactorHolders(ctx context.Context, userIDs []string) (map[string]bool, error) {
+	if err := r.ready(); err != nil {
+		return nil, err
+	}
+	out := make(map[string]bool, len(userIDs))
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+
+	holders, err := r.q.SecondFactorHolders(ctx, userIDs)
+	if err != nil {
+		return nil, wrapDB(err, "could not read who holds a second factor")
+	}
+	for _, id := range holders {
+		out[id] = true
+	}
+
+	return out, nil
 }
 
 // ConfirmMFACredential stamps the moment the first correct code arrived.

@@ -13,6 +13,9 @@ type UserFilter struct {
 	Email *string
 	// Scope, when given, returns only the users holding that scope.
 	Scope *string
+	// SecondFactor, when given, returns only the users who have (true) or have
+	// not (false) proven an authenticator (ADR 0265).
+	SecondFactor *bool
 }
 
 // UserPatch is the partial update of a user.

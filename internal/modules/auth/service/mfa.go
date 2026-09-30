@@ -357,6 +357,31 @@ func (s *Service) proveOwnFactor(ctx context.Context, userID, code string) error
 	return nil
 }
 
+// SecondFactorOwed reports whether the installation requires a second factor
+// now and the user has not proven one (ADR 0265). Such a person holds no
+// privilege until they do.
+func (s *Service) SecondFactorOwed(ctx context.Context, userID string) (bool, error) {
+	if s.factorRequiredFrom.IsZero() || s.clock().Before(s.factorRequiredFrom) {
+		return false, nil
+	}
+	confirmed, err := s.HasConfirmedMFA(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+
+	return !confirmed, nil
+}
+
+// SecondFactorHolders returns those of the given users who have proven an
+// authenticator, for an operator looking for who still owes one (ADR 0265).
+func (s *Service) SecondFactorHolders(ctx context.Context, userIDs []string) (map[string]bool, error) {
+	if err := s.ready(); err != nil {
+		return nil, err
+	}
+
+	return s.repo.SecondFactorHolders(ctx, userIDs)
+}
+
 // HasConfirmedMFA reports whether a user has proven a second factor.
 //
 // It is the question [Service.Login] asks before it issues a token, and the shape

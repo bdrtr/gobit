@@ -357,6 +357,18 @@ func (d *fakeRepo) DeleteMFACredential(_ context.Context, userID string) (bool, 
 	return ok, nil
 }
 
+// SecondFactorHolders reads who of the given users holds a confirmed factor.
+func (d *fakeRepo) SecondFactorHolders(_ context.Context, userIDs []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	for _, id := range userIDs {
+		if credential, ok := d.mfa[id]; ok && credential.Confirmed() {
+			out[id] = true
+		}
+	}
+
+	return out, nil
+}
+
 // GetMFACredential reads one, or says there is none.
 func (d *fakeRepo) GetMFACredential(
 	_ context.Context, userID string,
