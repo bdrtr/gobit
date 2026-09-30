@@ -211,6 +211,14 @@ allocation budgets are counts taken under one release, and they refuse to be
 judged under another: run `go test` directly with `GOTOOLCHAIN` set to the same
 release, or through make.
 
+**Property tests** (ADR 0249) run in the ordinary lanes, `make test` and
+`make test-integration`, and draw a new seed on every run, so a later run can
+find what an earlier one missed. A failing property prints its draws, shrunk to
+the smallest it could find, and the command that reproduces them
+(`-rapid.seed=…`); it also writes them under `testdata/rapid/`, which git
+ignores, for `-rapid.failfile=…`. To search harder than the lanes do, run one
+with `-rapid.checks=100000` and, for a sequence of calls, `-rapid.steps=60`.
+
 **Smoke tests** (`internal/smoke`) go one step further: they compile the server
 binary and run it **as a process**. The end-to-end tests drive the router with
 `httptest`, which means they SKIP `main.go`'s wiring, the migrations at start-up,
