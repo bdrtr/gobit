@@ -24,6 +24,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The payment module answers for what it keeps about a customer**
+  (ADR 0277). **For operators:** `GET /admin/v1/personal-data` lists the
+  payment module's holdings, a disclosure carries a customer's payment
+  collections with their sessions and refunds, and their store credit and
+  loyalty entries and sessions, and an erasure reports the payment module as
+  retained with what it kept and why. A request with an e-mail address and no
+  customer id is answered as unresolvable there, since a guest's payment names
+  nobody.
+
 - **The invoice declaration names the address an erasure matches** (D189).
   **For operators:** `invoices.buyer_email_folded` is declared, and an
   invoice's refusal of erasure lists it among what it kept.

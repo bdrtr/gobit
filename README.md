@@ -177,7 +177,8 @@ holds a person, `POST /admin/v1/personal-data/disclosure` assembles one person's
 file from every holder, and `POST /admin/v1/personal-data/erasure` erases them
 and reports what each module did. Every module answers an erasure with
 **deleted**, **anonymized** or **retained**, and one that retained says what it
-kept and why: an issued invoice is a legal document.
+kept and why: an issued invoice is a legal document, and a store credit
+balance is money the shop owes the person.
 
 **None of it runs by itself, and that is deliberate.** gobit is not the data
 controller; the application embedding it is
@@ -251,7 +252,7 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 275 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 276 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
 | [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: fifty-four items in seven groups — identity and authorization, sales channel scope, the category tree, a product's history, tax, installation and operation, the limit of the invariants |

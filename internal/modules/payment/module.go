@@ -128,13 +128,16 @@ var migrationFiles embed.FS
 // db.Migrate kaynağı kökten okur.
 var migrationsRoot = mustSub(migrationFiles, "migrations")
 
-// Module payment modülünün çekirdeğe sunduğu uygulamadır.
+// Module is the payment module as the core sees it.
 type Module struct {
-	// opts kurulumun verdiği ayarlardır; sıfır değeri güvenli tarafı seçer.
+	// opts are the installation's settings; the zero value picks the safe side.
 	opts      Options
 	svc       *service.Service
 	providers *service.ProviderRegistry
 	handler   *api.Handler
+	// personal answers what the module keeps about a person (ADR 0277); nil
+	// until Register.
+	personal *service.PersonalData
 }
 
 // Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
@@ -328,6 +331,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 
 	m.svc = svc
 	m.providers = providers
+	m.personal = service.NewPersonalData(repo, log)
 	m.handler = api.New(svc).WithIdentity(&identityBinding{c: c, log: log})
 
 	log.DebugContext(ctx, "payment modülü kaydedildi",
