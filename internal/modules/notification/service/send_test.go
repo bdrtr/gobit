@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -127,6 +128,52 @@ func TestNotifyWritesFailedOnAProviderError(t *testing.T) {
 	assert.Equal(t, models.DeliveryFailed, records[0].Status)
 	assert.Contains(t, records[0].Error, "the provider could not be reached",
 		"the provider's message has to be written into the record for diagnosis")
+}
+
+// TestAFailedSendKeepsNoAddress holds the log to the promise its migration
+// makes, that no recipient address is stored (D191): a provider's error that
+// quotes the address, folded, beside another address or as a reformatted
+// phone number keeps its diagnosis and loses every address.
+func TestAFailedSendKeepsNoAddress(t *testing.T) {
+	for name, c := range map[string]struct {
+		to, providerSays, stays string
+	}{
+		"the address as sent, in another case": {
+			"ayse@example.com", "550 5.1.1 <AYSE@Example.COM>: recipient rejected", "recipient rejected",
+		},
+		"another address beside it": {
+			"ayse@example.com", "bounced to postmaster@example.org for ayse@example.com", "bounced to",
+		},
+		"a phone number spaced differently": {
+			"+905550000000", "invalid destination +90 555 000 00 00 (code 21211)", "invalid destination",
+		},
+		"a recipient of no known shape, quoted in another case": {
+			"Device-Token-AYSE-77", "unregistered token device-token-ayse-77", "unregistered token",
+		},
+		"an address the length limit would cut in half": {
+			// The cut falls three letters into the address's local part, after
+			// the code the error opens with.
+			"qzqzqz@example.com",
+			strings.Repeat("x", 512-len(errors.Unavailable("smtp_refused", "%s", "").Error())-4) +
+				" qzqzqz@example.com",
+			"xxxx",
+		},
+	} {
+		svc, store, prov := setup(t)
+		prov.err = errors.Unavailable("smtp_refused", "%s", c.providerSays)
+		in := testInput()
+		in.To = c.to
+
+		require.Error(t, svc.Notify(context.Background(), in), name)
+
+		records := store.allRecords()
+		require.Len(t, records, 1, name)
+		stored := records[0].Error
+		assert.Contains(t, stored, c.stays, "%s: the diagnosis has to survive", name)
+		for _, address := range []string{"ayse", "postmaster", "555 000", "5550000000", "qzq"} {
+			assert.NotContains(t, strings.ToLower(stored), address, "%s: an address was kept: %q", name, stored)
+		}
+	}
 }
 
 // TestNotifyDOESNOTRESENDAfterAFailedRecord verifies that triggering a failed

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"time"
 
@@ -180,7 +181,7 @@ func (s *Service) deliver(
 
 	status, message := models.DeliverySent, ""
 	if sendErr != nil {
-		status, message = models.DeliveryFailed, truncate(sendErr.Error(), maxErrorLen)
+		status, message = models.DeliveryFailed, truncate(withoutAddresses(sendErr.Error(), in.To), maxErrorLen)
 	}
 	s.finish(ctx, record, status, message)
 
@@ -339,6 +340,36 @@ func (s *Service) finish(
 			"error", err)
 	}
 }
+
+// withoutAddresses takes the recipient out of a provider's error before the log
+// keeps it (D191).
+//
+// The table keeps no address on purpose — the order holds it, and a second
+// copy is a place an erasure has to know about — and a provider's error
+// routinely quotes the address it refused ("550 5.1.1 <ayse@example.com>:
+// recipient rejected"). The recipient is removed as sent, then anything that
+// reads as an e-mail address or a phone number, since a provider may quote it
+// folded, reformatted or beside another one. It runs before the text is
+// truncated, so a cut cannot leave half an address behind. What a provider
+// writes about a person in other words is not recognized here.
+func withoutAddresses(text, recipient string) string {
+	if recipient = strings.TrimSpace(recipient); recipient != "" {
+		text = regexp.MustCompile(`(?i)`+regexp.QuoteMeta(recipient)).ReplaceAllString(text, redactedAddress)
+	}
+	text = emailInText.ReplaceAllString(text, redactedAddress)
+
+	return numberInText.ReplaceAllString(text, redactedAddress)
+}
+
+// redactedAddress stands where an address was taken out.
+const redactedAddress = "<address>"
+
+// The shapes of an address in a provider's words: an e-mail address, and a
+// phone number of seven digits or more however it is spaced.
+var (
+	emailInText  = regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+`)
+	numberInText = regexp.MustCompile(`\+?\d(?:[\s\-().]*\d){6,}`)
+)
 
 // truncate clips the text to the given length.
 //

@@ -24,6 +24,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A failed notification keeps no address in its log** (D191). **For
+  operators:** the error of a failed delivery reads as the provider wrote it
+  with the recipient and any e-mail address or phone number replaced by
+  `<address>`.
+
 - **The payment module answers for what it keeps about a customer**
   (ADR 0277). **For operators:** `GET /admin/v1/personal-data` lists the
   payment module's holdings, a disclosure carries a customer's payment
