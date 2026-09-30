@@ -60,7 +60,7 @@ timeline and in the person's file, not here.
     <tr>
       <th>Item</th><th class="num">Quantity</th><th class="num">Unit price</th>
       <th class="num">Subtotal</th><th class="num">Discount</th><th class="num">Tax</th>
-      <th class="num">Total</th>
+      <th class="num">Total</th><th class="num">Asked back</th><th class="num">Canceled</th>
     </tr>
   </thead>
   <tbody>
@@ -78,6 +78,8 @@ timeline and in the person's file, not here.
       <td class="num">{{ .Discount }}</td>
       <td class="num">{{ .Tax }}</td>
       <td class="num">{{ .Total }}</td>
+      <td class="num">{{ .AskedBack }}</td>
+      <td class="num">{{ .Canceled }}</td>
     </tr>
     {{ end }}
   </tbody>
@@ -155,11 +157,12 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
 <p class="muted">The parcels of this order could not be read.</p>
 {{ else if .Order.Parcels }}
 <table>
-  <thead><tr><th>Status</th><th>Tracking</th><th>Opened</th><th>Moments</th></tr></thead>
+  <thead><tr><th>Status</th><th>Holds</th><th>Tracking</th><th>Opened</th><th>Moments</th></tr></thead>
   <tbody>
     {{ range .Order.Parcels }}
     <tr>
       <td><span class="pill">{{ .Status }}</span></td>
+      <td>{{ range .Holds }}{{ . }}<br>{{ else }}<span class="muted">nothing listed</span>{{ end }}</td>
       <td>
         {{ if and .TrackingNumber .TrackingURL }}<a href="{{ .TrackingURL }}" rel="noopener noreferrer">{{ .TrackingNumber }}</a>
         {{ else if .TrackingNumber }}{{ .TrackingNumber }}

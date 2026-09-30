@@ -143,6 +143,7 @@ func TestLineItemQueryProviderARequestWithoutFieldsReturnsAllFields(t *testing.T
 		service.FieldLineItemTotal, service.FieldLineItemCreatedAt, service.FieldLineItemIsGiftcard,
 		service.FieldLineItemProperties,
 		service.FieldLineItemParentLineItemID,
+		service.FieldLineItemAskedBackQuantity, service.FieldLineItemCanceledQuantity,
 	}
 	for _, field := range offered {
 		assert.Contains(t, records[0], field)

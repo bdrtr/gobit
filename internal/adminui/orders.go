@@ -56,6 +56,8 @@ const (
 	fieldIsGiftcard       = "is_giftcard"
 	fieldProperties       = "properties"
 	fieldParentLineItemID = "parent_line_item_id"
+	fieldAskedBack        = "asked_back_quantity"
+	fieldCanceledQuantity = "canceled_quantity"
 )
 
 // The links the order page expands to reach the order's payment and its
@@ -77,6 +79,11 @@ const (
 	fieldDeliveredAt    = "delivered_at"
 	fieldCanceledAt     = "canceled_at"
 	fieldReturnedAt     = "returned_at"
+	fieldItems          = "items"
+
+	// The keys of one of a parcel's items.
+	itemLineItemID = "line_item_id"
+	itemQuantity   = "quantity"
 )
 
 // linesPerOrder is how many lines the order page reads. It is the line
@@ -187,6 +194,9 @@ type orderParcel struct {
 	DeliveredAt *time.Time
 	CanceledAt  *time.Time
 	ReturnedAt  *time.Time
+	// Holds is what the parcel carries, one "title × quantity" per line
+	// (ADR 0252).
+	Holds []string
 }
 
 // orderLine is one line of the order page.
@@ -209,6 +219,10 @@ type orderLine struct {
 	// AddOn says the line is printed under the line it is an add-on of
 	// (ADR 0229).
 	AddOn bool
+	// AskedBack is how many units a live return asks back and Canceled how
+	// many were written off (ADR 0252).
+	AskedBack int64
+	Canceled  int64
 }
 
 // addressLines lays an address record out the way a label reads: the name, the
@@ -358,7 +372,7 @@ func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	detail.ParcelsHidden = !principal.HasScope(scopeFulfillmentRead)
 	if !detail.ParcelsHidden {
-		detail.Parcels, detail.ParcelsUnread = u.parcelsOf(r, detail.ID)
+		detail.Parcels, detail.ParcelsUnread = u.parcelsOf(r, detail.ID, detail.Lines)
 	}
 
 	u.templates.render(w, r, http.StatusOK, "order.gohtml", map[string]any{
@@ -433,6 +447,7 @@ func (u *UI) linesOf(
 			fieldID, fieldTitle, fieldVariantID, fieldQuantity, fieldUnitPrice,
 			fieldSubtotal, fieldDiscount, fieldTax, fieldTotal,
 			fieldIsGiftcard, fieldProperties, fieldParentLineItemID,
+			fieldAskedBack, fieldCanceledQuantity,
 		},
 		Filters: map[string]any{fieldOrderID: orderID},
 		Limit:   linesPerOrder,
@@ -463,6 +478,8 @@ func (u *UI) linesOf(
 			Quantity:   recordInt(record, fieldQuantity),
 			GiftCard:   recordBool(record, fieldIsGiftcard),
 			Properties: propertyLines(record[fieldProperties]),
+			AskedBack:  recordInt(record, fieldAskedBack),
+			Canceled:   recordInt(record, fieldCanceledQuantity),
 		}
 		line.UnitPrice, _ = amountField(record, fieldUnitPrice, currency, scales)
 		line.Subtotal, _ = amountField(record, fieldSubtotal, currency, scales)
@@ -608,16 +625,25 @@ func (u *UI) paymentOf(r *http.Request, orderID string, scales map[string]int) (
 
 // parcelsOf reads the order's parcels through the order_fulfillment link,
 // oldest first; the second value reports a read that failed.
-func (u *UI) parcelsOf(r *http.Request, orderID string) ([]orderParcel, bool) {
+//
+// A parcel's items name order lines, and the lines already read give their
+// titles. A line the page did not read — a parent's line in a parcel an
+// addition joined, or one past the page's hundred — is named by its id.
+func (u *UI) parcelsOf(r *http.Request, orderID string, lines []orderLine) ([]orderParcel, bool) {
 	linked, err := u.linkedTo(r, orderID, query.Expansion{
 		Link: linkOrderFulfillment,
 		Fields: []string{
 			fieldID, fieldStatus, fieldTrackingNumber, fieldTrackingURL, fieldCreatedAt,
-			fieldShippedAt, fieldDeliveredAt, fieldCanceledAt, fieldReturnedAt,
+			fieldShippedAt, fieldDeliveredAt, fieldCanceledAt, fieldReturnedAt, fieldItems,
 		},
 	})
 	if err != nil {
 		return nil, true
+	}
+
+	titles := make(map[string]string, len(lines))
+	for i := range lines {
+		titles[lines[i].ID] = lines[i].Title
 	}
 
 	records := linkedRecords(linked)
@@ -633,6 +659,7 @@ func (u *UI) parcelsOf(r *http.Request, orderID string) ([]orderParcel, bool) {
 			DeliveredAt:    recordAt(record, fieldDeliveredAt),
 			CanceledAt:     recordAt(record, fieldCanceledAt),
 			ReturnedAt:     recordAt(record, fieldReturnedAt),
+			Holds:          parcelHolds(record[fieldItems], titles),
 		})
 	}
 	// The link promises no order, so the page gives its own: oldest first, the
@@ -645,6 +672,24 @@ func (u *UI) parcelsOf(r *http.Request, orderID string) ([]orderParcel, bool) {
 	})
 
 	return parcels, false
+}
+
+// parcelHolds reads a parcel's items as "title × quantity", in the order the
+// parcel lists them.
+func parcelHolds(value any, titles map[string]string) []string {
+	items, _ := value.([]map[string]any)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		line := stringValue(item[itemLineItemID])
+		name := titles[line]
+		if name == "" {
+			name = line
+		}
+		quantity, _ := intValue(item[itemQuantity])
+		out = append(out, name+" × "+strconv.Itoa(quantity))
+	}
+
+	return out
 }
 
 // linkedRecords reads an expansion's value as records: a one-ended link

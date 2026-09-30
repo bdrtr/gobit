@@ -730,8 +730,17 @@ func (s *Service) ListFulfillments(
 	if err != nil {
 		return nil, 0, err
 	}
+	if err := s.attachItems(ctx, list); err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
+
+// attachItems gives each fulfillment its items with ONE query for all of
+// them; there is no query per fulfillment (N+1).
+func (s *Service) attachItems(ctx context.Context, list []models.Fulfillment) error {
 	if len(list) == 0 {
-		return list, total, nil
+		return nil
 	}
 
 	ids := make([]string, 0, len(list))
@@ -740,7 +749,7 @@ func (s *Service) ListFulfillments(
 	}
 	items, err := s.store.FulfillmentItemsByFulfillments(ctx, ids)
 	if err != nil {
-		return nil, 0, err
+		return err
 	}
 
 	byFulfillment := make(map[string][]models.FulfillmentItem, len(list))
@@ -750,7 +759,7 @@ func (s *Service) ListFulfillments(
 	for i := range list {
 		list[i].Items = byFulfillment[list[i].ID]
 	}
-	return list, total, nil
+	return nil
 }
 
 // withItems attaches its items to the fulfillment.

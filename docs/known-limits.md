@@ -745,13 +745,12 @@ past and is not corrected retroactively.
   registered screen now declares the privilege it requires and a registration
   without one is refused at startup.
 
-- **The panel's order screen does not say what became of each line.** It lists
-  the lines ([ADR 0250](adr/0250-an-orders-page-lists-what-was-sold.md)) and,
-  for an operator who may read them, the payment and the parcels
-  ([ADR 0251](adr/0251-an-orders-page-shows-its-payment-and-parcels-to-who-may-read-them.md)).
-  It does not show which lines a parcel holds, because the shipment entity
-  offers no items, nor the quantities returned, canceled or exchanged per line,
-  because the order module offers its after-sales records to no read.
+- **The panel's order screen shows the after-sales sums, not the records.** It
+  prints each line's units asked back and written off and what each parcel holds
+  ([ADR 0252](adr/0252-an-order-line-says-what-became-of-it.md)), but no return,
+  claim, replacement or exchange as a record: not whether a return's goods
+  arrived, not a claim's status, not a replacement's parcel. The order module
+  offers those records to no read.
 
 - **The in-process harness consumes events like a server.** `InProcess` opens the
   whole application, so its modules subscribe — which is what a test wants, and

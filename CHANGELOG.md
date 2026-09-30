@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An order line says what became of it** (ADR 0252). **For operators:** the
+  order page prints each line's units asked back and written off, and what each
+  parcel holds. **For integrators:** the `order_line_item` read-layer entity
+  offers `asked_back_quantity` and `canceled_quantity`, and the `fulfillment`
+  entity offers `items`; a read asking for every field now carries them.
+
 - **An order's page in the panel shows its payment and its parcels** (ADR 0251).
   **For operators:** the order page prints the payment collection's status,
   amounts and when its money moved, and each parcel's status, tracking and

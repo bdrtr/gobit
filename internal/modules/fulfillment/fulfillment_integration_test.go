@@ -17,7 +17,9 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -854,6 +856,69 @@ func TestQueryProviderWorksOnTheRealSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, filtered, 1)
 	assert.Equal(t, option.ID, filtered[0]["id"])
+}
+
+// TestTheShipmentEntitySaysWhatAParcelHolds reads a parcel's items through
+// the read layer on the real schema (ADR 0252): the expansion's batch read and
+// the filtered listing both carry them, in the order they were written, and a
+// read that does not ask for them does not carry them.
+func TestTheShipmentEntitySaysWhatAParcelHolds(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	provider := service.NewShipmentQueryProvider(svc)
+	profile := newProfile(ctx, t, svc)
+	option := newOption(ctx, t, svc, profile.ID, 2_500)
+
+	const reference = "order_PARCEL_HOLDS"
+	parcel, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
+		Reference:        reference,
+		ShippingOptionID: option.ID,
+		IdempotencyKey:   "holds-" + option.ID,
+		Items: []service.FulfillmentItemInput{
+			{LineItemID: "line_ring", Quantity: 1},
+			{LineItemID: "line_box", Quantity: 3},
+			{LineItemID: "line_card", Quantity: 2},
+		},
+	})
+	require.NoError(t, err)
+	want := []map[string]any{
+		{service.ItemLineItemID: "line_ring", service.ItemQuantity: int64(1)},
+		{service.ItemLineItemID: "line_box", service.ItemQuantity: int64(3)},
+		{service.ItemLineItemID: "line_card", service.ItemQuantity: int64(2)},
+	}
+
+	fetched, err := provider.FetchByIDs(ctx, []string{parcel.ID},
+		[]string{service.FieldShipmentID, service.FieldShipmentItems})
+	require.NoError(t, err)
+	require.Len(t, fetched, 1)
+	assert.Equal(t, want, fetched[0][service.FieldShipmentItems], "the expansion's read")
+
+	listed, err := provider.List(ctx, query.ListOptions{
+		Fields:  []string{service.FieldShipmentID, service.FieldShipmentItems},
+		Filters: map[string]any{service.FieldReference: reference},
+	})
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	assert.Equal(t, want, listed[0][service.FieldShipmentItems], "the filtered listing")
+
+	bare, err := provider.FetchByIDs(ctx, []string{parcel.ID}, []string{service.FieldShipmentID})
+	require.NoError(t, err)
+	require.Len(t, bare, 1)
+	assert.NotContains(t, bare[0], service.FieldShipmentItems)
+
+	// A read naming no field asks for every one, and the set is the entity's
+	// published contract.
+	all, err := provider.FetchByIDs(ctx, []string{parcel.ID}, nil)
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.ElementsMatch(t, []string{
+		service.FieldShipmentID, service.FieldReference, service.FieldShipmentOptionID,
+		service.FieldShipmentProviderID, service.FieldExternalID, service.FieldShipmentStatus,
+		service.FieldTrackingNumber, service.FieldTrackingURL, service.FieldShippedAt,
+		service.FieldDeliveredAt, service.FieldCanceledAt, service.FieldReturnedAt,
+		service.FieldShipmentCreatedAt, service.FieldShipmentItems,
+	}, slices.Collect(maps.Keys(all[0])), "the offered set is exactly these fields")
+	assert.Equal(t, want, all[0][service.FieldShipmentItems], "a read of every field carries the items")
 }
 
 // TestSameLineItemCannotAppearTwiceInAShipment verifies that the unique index

@@ -55,6 +55,20 @@ const (
 	FieldReturnedAt  = "returned_at"
 	// FieldShipmentCreatedAt is when the shipment was opened.
 	FieldShipmentCreatedAt = "created_at"
+	// FieldShipmentItems is what the parcel holds: one entry per order line
+	// it carries, in the order the items were written (D175), each keyed by
+	// [ItemLineItemID] and [ItemQuantity]. It is read only when asked for,
+	// in one query for every parcel of the call (ADR 0252).
+	FieldShipmentItems = "items"
+)
+
+// The keys of one entry of [FieldShipmentItems].
+const (
+	// ItemLineItemID is the order line the item carries; another module's
+	// identifier, not validated here (Principle 2.2).
+	ItemLineItemID = "line_item_id"
+	// ItemQuantity is how many of the line's units the parcel holds.
+	ItemQuantity = "quantity"
 )
 
 // shipmentFieldGetters maps a field name to the value it reads off the model.
@@ -76,6 +90,27 @@ var shipmentFieldGetters = map[string]func(models.Fulfillment) any{
 	FieldCanceledAt:         func(f models.Fulfillment) any { return f.CanceledAt },
 	FieldReturnedAt:         func(f models.Fulfillment) any { return f.ReturnedAt },
 	FieldShipmentCreatedAt:  func(f models.Fulfillment) any { return f.CreatedAt },
+	FieldShipmentItems:      func(f models.Fulfillment) any { return shipmentItemRecords(f.Items) },
+}
+
+// shipmentItemRecords turns a parcel's items into the entries of
+// [FieldShipmentItems].
+func shipmentItemRecords(items []models.FulfillmentItem) []map[string]any {
+	out := make([]map[string]any, 0, len(items))
+	for i := range items {
+		out = append(out, map[string]any{
+			ItemLineItemID: items[i].LineItemID,
+			ItemQuantity:   items[i].Quantity,
+		})
+	}
+
+	return out
+}
+
+// wantsShipmentItems reports whether the parcels' items were asked for; an
+// empty field list asks for every field.
+func wantsShipmentItems(fields []string) bool {
+	return len(fields) == 0 || slices.Contains(fields, FieldShipmentItems)
 }
 
 // ShipmentProviderName is the shipment provider's name in the container.
@@ -170,6 +205,11 @@ func (p *ShipmentQueryProvider) FetchByIDs(
 	shipments, err := p.svc.ListFulfillmentsByIDs(ctx, ids)
 	if err != nil {
 		return nil, err
+	}
+	if wantsShipmentItems(fields) {
+		if err := p.svc.attachItems(ctx, shipments); err != nil {
+			return nil, err
+		}
 	}
 
 	return shipmentRecords(shipments, fields), nil

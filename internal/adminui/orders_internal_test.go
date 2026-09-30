@@ -383,14 +383,14 @@ func TestTheOrderPageListsItsLines(t *testing.T) {
 				"quantity": int64(1), "unit_price": int64(60_000), "subtotal": int64(60_000),
 				"discount_total": int64(6_000), "tax_total": int64(10_800), "total": int64(64_800),
 				"is_giftcard": false, "properties": map[string]string{"Size": "54"},
-				"parent_line_item_id": "",
+				"parent_line_item_id": "", "asked_back_quantity": int64(1), "canceled_quantity": int64(0),
 			},
 			{
 				"id": "oli_card", "title": "Gift card", "variant_id": "variant_card",
 				"quantity": int64(2), "unit_price": int64(5_000), "subtotal": int64(10_000),
 				"discount_total": int64(0), "tax_total": int64(0), "total": int64(10_000),
 				"is_giftcard": true, "properties": map[string]string{},
-				"parent_line_item_id": "",
+				"parent_line_item_id": "", "asked_back_quantity": int64(0), "canceled_quantity": int64(2),
 			},
 			{
 				"id": "oli_engraving", "title": "Engraving", "variant_id": "variant_engraving",
@@ -427,6 +427,10 @@ func TestTheOrderPageListsItsLines(t *testing.T) {
 	assert.True(t, slices.IsSorted(printed) && printed[0] >= 0,
 		"the properties are printed in name order: %v", printed)
 	assert.NotContains(t, body, "Only the first")
+	assert.Regexp(t, `648\.00</td>\s*<td class="num">1</td>\s*<td class="num">0</td>`, body,
+		"the ring: one unit asked back, none canceled")
+	assert.Regexp(t, `100\.00</td>\s*<td class="num">0</td>\s*<td class="num">2</td>`, body,
+		"the card: none asked back, two canceled")
 
 	spec, ok := catalog.specFor(EntityOrderLineItem)
 	require.True(t, ok, "the page did not read the line entity")
@@ -435,6 +439,7 @@ func TestTheOrderPageListsItsLines(t *testing.T) {
 	for _, field := range []string{
 		fieldTitle, fieldVariantID, fieldQuantity, fieldUnitPrice, fieldSubtotal, fieldDiscount,
 		fieldTax, fieldTotal, fieldIsGiftcard, fieldProperties, fieldParentLineItemID,
+		fieldAskedBack, fieldCanceledQuantity,
 	} {
 		assert.Contains(t, spec.Fields, field, "the line read did not ask for %s", field)
 	}
@@ -543,7 +548,10 @@ func getOrderPageAs(panel *UI, path string, principal corehttp.Principal) *httpt
 func linkedOrderCatalog(failing ...string) *fakeCatalog {
 	captured := time.Date(2026, 9, 4, 9, 20, 0, 0, time.UTC)
 	return &fakeCatalog{
-		byEntity: map[string][]query.Record{EntityRegion: {currencyRecord("TRY", 2)}},
+		byEntity: map[string][]query.Record{
+			EntityRegion:        {currencyRecord("TRY", 2)},
+			EntityOrderLineItem: {{"id": "oli_ring", "title": "Silver ring", "quantity": int64(1)}},
+		},
 		answer: func(spec query.GraphSpec) ([]query.Record, error, bool) {
 			if spec.Entity != EntityOrder {
 				return nil, nil, false
@@ -577,6 +585,10 @@ func linkedOrderCatalog(failing ...string) *fakeCatalog {
 						"id": "ful_early", "status": "delivered", "tracking_number": "TK-1",
 						"tracking_url": "https://carrier.example/TK-1", "created_at": captured,
 						"shipped_at": ptrTo(captured.Add(time.Hour)), "delivered_at": ptrTo(captured.Add(26 * time.Hour)),
+						"items": []map[string]any{
+							{"line_item_id": "oli_ring", "quantity": int64(1)},
+							{"line_item_id": "oli_parents", "quantity": int64(2)},
+						},
 					},
 					{
 						"id": "ful_same_b", "status": "pending", "tracking_number": "TK-B",
@@ -611,6 +623,7 @@ func TestTheOrderPageShowsItsPaymentAndParcels(t *testing.T) {
 		"partially_refunded", "1080.00 TRY", "200.00 TRY", "first 2026-09-04 09:20 UTC",
 		`<a href="https://carrier.example/TK-1" rel="noopener noreferrer">TK-1</a>`,
 		"shipped 2026-09-04 10:20", "delivered 2026-09-05 11:20", "no tracking",
+		"Silver ring × 1<br>oli_parents × 2<br>", "nothing listed",
 	} {
 		assert.Contains(t, body, want)
 	}
@@ -629,6 +642,9 @@ func TestTheOrderPageShowsItsPaymentAndParcels(t *testing.T) {
 			links = append(links, expansion.Link)
 			assert.Equal(t, []string{"order_1"}, spec.Filters[filterID],
 				"the %s link is read from this order", expansion.Link)
+			if expansion.Link == linkOrderFulfillment {
+				assert.Contains(t, expansion.Fields, fieldItems, "the parcels are read with what they hold")
+			}
 		}
 	}
 	assert.ElementsMatch(t, []string{linkOrderPayment, linkOrderFulfillment}, links)

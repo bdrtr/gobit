@@ -92,6 +92,17 @@ const (
 	// FieldLineItemParentLineItemID is the line of the same order the line is
 	// an add-on of (ADR 0229); an empty string on a line of its own.
 	FieldLineItemParentLineItemID = "parent_line_item_id"
+	// FieldLineItemAskedBackQuantity is how many of the line's units a live
+	// return asks back, requested or received; a canceled return releases
+	// its units (ADR 0252).
+	FieldLineItemAskedBackQuantity = "asked_back_quantity"
+	// FieldLineItemCanceledQuantity is how many of the line's units were
+	// written off (ADR 0252).
+	//
+	// The two are the sums the order's own ceiling reads under its lock, and
+	// they are not columns of the line: they are read only when asked for, in
+	// one query each for every line of the call.
+	FieldLineItemCanceledQuantity = "canceled_quantity"
 )
 
 // The filter names this provider accepts that are NOT fields.
@@ -284,7 +295,7 @@ func (p *LineItemQueryProvider) List(
 		return nil, err
 	}
 
-	return lineItemRecords(lines, opts.Fields), nil
+	return p.records(ctx, lines, opts.Fields)
 }
 
 // FetchByIDs returns the records of the given identifiers as a BATCH.
@@ -307,15 +318,58 @@ func (p *LineItemQueryProvider) FetchByIDs(
 		return nil, err
 	}
 
-	return lineItemRecords(lines, fields), nil
+	return p.records(ctx, lines, fields)
+}
+
+// lineItemQuantities are the derived fields' values, by line id; a nil map is
+// a field that was not asked for.
+type lineItemQuantities struct {
+	askedBack map[string]int64
+	canceled  map[string]int64
+}
+
+// records reads the derived fields that were asked for and turns the lines
+// into records.
+func (p *LineItemQueryProvider) records(
+	ctx context.Context, lines []models.OrderLineItem, fields []string,
+) ([]query.Record, error) {
+	var quantities lineItemQuantities
+	if len(lines) > 0 && (wantsLineItemField(fields, FieldLineItemAskedBackQuantity) ||
+		wantsLineItemField(fields, FieldLineItemCanceledQuantity)) {
+		ids := make([]string, 0, len(lines))
+		for i := range lines {
+			ids = append(ids, lines[i].ID)
+		}
+		var err error
+		if wantsLineItemField(fields, FieldLineItemAskedBackQuantity) {
+			if quantities.askedBack, err = p.svc.store.ReturnedQuantities(ctx, ids); err != nil {
+				return nil, err
+			}
+		}
+		if wantsLineItemField(fields, FieldLineItemCanceledQuantity) {
+			if quantities.canceled, err = p.svc.store.CanceledQuantities(ctx, ids); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return lineItemRecords(lines, fields, quantities), nil
+}
+
+// wantsLineItemField reports whether the field was asked for; an empty field
+// list asks for every field.
+func wantsLineItemField(fields []string, name string) bool {
+	return len(fields) == 0 || slices.Contains(fields, name)
 }
 
 // lineItemRecords turns the lines into records with the requested fields.
 // If fields is empty, ALL offered fields are returned.
-func lineItemRecords(lines []models.OrderLineItem, fields []string) []query.Record {
+func lineItemRecords(
+	lines []models.OrderLineItem, fields []string, quantities lineItemQuantities,
+) []query.Record {
 	selected := fields
 	if len(selected) == 0 {
-		selected = slices.Sorted(maps.Keys(lineItemFieldGetters))
+		selected = offeredLineItemFields()
 	}
 
 	out := make([]query.Record, 0, len(lines))
@@ -324,7 +378,14 @@ func lineItemRecords(lines []models.OrderLineItem, fields []string) []query.Reco
 	for i := range lines {
 		record := make(query.Record, len(selected))
 		for _, name := range selected {
-			record[name] = lineItemFieldGetters[name](lines[i])
+			switch name {
+			case FieldLineItemAskedBackQuantity:
+				record[name] = quantities.askedBack[lines[i].ID]
+			case FieldLineItemCanceledQuantity:
+				record[name] = quantities.canceled[lines[i].ID]
+			default:
+				record[name] = lineItemFieldGetters[name](lines[i])
+			}
 		}
 		out = append(out, record)
 	}
@@ -332,13 +393,26 @@ func lineItemRecords(lines []models.OrderLineItem, fields []string) []query.Reco
 	return out
 }
 
+// offeredLineItemFields is every field the entity offers, in name order: the
+// columns and the two derived quantities.
+func offeredLineItemFields() []string {
+	return slices.Sorted(slices.Values(append(
+		slices.Collect(maps.Keys(lineItemFieldGetters)),
+		FieldLineItemAskedBackQuantity, FieldLineItemCanceledQuantity,
+	)))
+}
+
 // validateLineItemFields verifies that all the requested fields are offered.
 func validateLineItemFields(fields []string) error {
 	for _, name := range fields {
-		if _, ok := lineItemFieldGetters[name]; !ok {
-			return errors.Invalid(CodeInvalidInput,
-				"entity %q does not offer the field %q", LineItemEntity, name)
+		if _, ok := lineItemFieldGetters[name]; ok {
+			continue
 		}
+		if name == FieldLineItemAskedBackQuantity || name == FieldLineItemCanceledQuantity {
+			continue
+		}
+		return errors.Invalid(CodeInvalidInput,
+			"entity %q does not offer the field %q", LineItemEntity, name)
 	}
 
 	return nil

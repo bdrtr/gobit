@@ -421,6 +421,72 @@ func TestTheLineEntityListsAnOrdersLinesInTheOrderTheyWereWritten(t *testing.T) 
 	assert.Equal(t, want, got, "the line entity lists an order's lines in the order they were written")
 }
 
+// TestTheLineEntitySaysWhatWasAskedBackAndCanceled reads a line's derived
+// quantities on the real schema (ADR 0252): a live return asks a unit back, a
+// canceled one releases its unit, and a write-off cancels one; a line nothing
+// touched reads zero for both.
+func TestTheLineEntitySaysWhatWasAskedBackAndCanceled(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	in := validInput()
+	in.CartID = "cart_LINE_ENTITY_QUANTITIES"
+	ord, err := svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+	line := detail.Items[0].ID
+
+	// The line bought three: a withdrawn return of one, a live return of two
+	// and a write-off of one, which the ceiling admits only because the
+	// withdrawn return released its unit.
+	withdrawn, err := svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: ord.ID, Lines: []service.ReturnLineInput{{OrderLineItemID: line, Quantity: 1}},
+	})
+	require.NoError(t, err)
+	_, err = svc.CancelReturn(ctx, withdrawn.ID)
+	require.NoError(t, err)
+	_, err = svc.CreateReturn(ctx, service.CreateReturnInput{
+		OrderID: ord.ID, Lines: []service.ReturnLineInput{{OrderLineItemID: line, Quantity: 2}},
+	})
+	require.NoError(t, err)
+	_, err = svc.CancelOrderLine(ctx, ord.ID, service.CancelOrderLineInput{
+		OrderLineItemID: line, Quantity: 1, Reason: "damaged in the warehouse",
+	})
+	require.NoError(t, err)
+
+	untouched, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+
+	provider := service.NewLineItemQueryProvider(svc)
+	fields := []string{
+		service.FieldID, service.FieldLineItemAskedBackQuantity, service.FieldLineItemCanceledQuantity,
+	}
+	for _, tc := range []struct {
+		order              string
+		askedBack, written int64
+	}{
+		{order: ord.ID, askedBack: 2, written: 1},
+		{order: untouched.ID},
+	} {
+		records, err := provider.List(ctx, query.ListOptions{
+			Fields: fields, Filters: map[string]any{service.FieldLineItemOrderID: tc.order},
+		})
+		require.NoError(t, err)
+		require.Len(t, records, 1)
+		assert.Equal(t, tc.askedBack, records[0][service.FieldLineItemAskedBackQuantity],
+			"the units a live return asks back, on %s", tc.order)
+		assert.Equal(t, tc.written, records[0][service.FieldLineItemCanceledQuantity],
+			"the units written off, on %s", tc.order)
+	}
+
+	fetched, err := provider.FetchByIDs(ctx, []string{line}, fields)
+	require.NoError(t, err)
+	require.Len(t, fetched, 1)
+	assert.Equal(t, int64(2), fetched[0][service.FieldLineItemAskedBackQuantity], "the expansion reads the same")
+	assert.Equal(t, int64(1), fetched[0][service.FieldLineItemCanceledQuantity], "the expansion reads the same")
+}
+
 // TestAReturnAndAReplacementKeepTheOrderOfTheirLines is D161: the lines of a
 // return or a replacement are written in one transaction, and their ids'
 // random tails ordered them on read, so a replacement's dispatch set its lines
