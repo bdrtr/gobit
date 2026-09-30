@@ -262,6 +262,75 @@ func TestEveryEraserAlsoDeclares(t *testing.T) {
 	}
 }
 
+// modulesThatHoldNobody names each registered module that ships a schema and
+// declares nothing, with what its tables hold (ADR 0278).
+//
+// A module that holds a person and declares nothing is absent from every
+// answer the data-subject sweep gives — the disclosure lists every holder but
+// it, the erasure report never mentions it — and nothing raises it: the
+// payment module kept customers' balances that way until ADR 0277. An entry
+// here is the judgement that the module's rows describe the shop rather than
+// a person; the name floor in [TestEveryPersonColumnIsDeclared] still checks
+// its columns.
+var modulesThatHoldNobody = map[string]string{
+	"pricing": "prices, price lists and the rules that choose them: what the catalog costs, the same " +
+		"for every buyer",
+	"product": "the catalog — products, variants, options, categories, collections and images — " +
+		"written by the shop about goods",
+	"promotion": "promotions, campaigns, their rules and their redemptions; a redemption names the " +
+		"cart or order it applied to, and a rule's values are identifiers resolved elsewhere",
+	"region": "the regions, countries and currencies the shop sells in",
+	"tax":    "tax rates, their rules and the regions they apply in",
+}
+
+// TestEveryModuleWithASchemaAnswersOrSaysWhyNot holds every registered module
+// that ships migrations to one of two answers: it declares what it keeps, or
+// it is named in modulesThatHoldNobody with what its tables hold (ADR 0278).
+// The population is the registry, not a list, so a new module is asked the
+// day it is registered.
+func TestEveryModuleWithASchemaAnswersOrSaysWhyNot(t *testing.T) {
+	t.Parallel()
+
+	mods := registeredModules(t)
+	if len(mods) == 0 {
+		t.Fatal("no module was registered; the audit has gone blind")
+	}
+
+	registered := map[string]bool{}
+	for _, mod := range mods {
+		registered[mod.Name()] = true
+		reason, listed := modulesThatHoldNobody[mod.Name()]
+
+		if _, declares := mod.(personaldata.Declarer); declares {
+			if listed {
+				t.Errorf("the %s module declares what it keeps and is also listed as holding "+
+					"nobody; the entry is stale", mod.Name())
+			}
+
+			continue
+		}
+		if len(schemaOfModule(t, mod)) == 0 {
+			if listed {
+				t.Errorf("the %s module ships no schema and needs no entry", mod.Name())
+			}
+
+			continue
+		}
+		if !listed || strings.TrimSpace(reason) == "" {
+			t.Errorf("the %s module ships a schema, declares nothing and is not named in "+
+				"modulesThatHoldNobody.\nEither it keeps something about a person — then it "+
+				"implements personaldata.Declarer, and every data-subject answer names it — or "+
+				"its rows describe the shop, and the entry says what they hold.", mod.Name())
+		}
+	}
+
+	for name := range modulesThatHoldNobody {
+		if !registered[name] {
+			t.Errorf("%s is listed in modulesThatHoldNobody and no such module is registered", name)
+		}
+	}
+}
+
 // TestTheSchemaReaderIsNotBlind is the positive control for the parser above.
 //
 // The two audits are only as good as the column reader, and a reader that

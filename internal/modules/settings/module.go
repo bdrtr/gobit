@@ -211,6 +211,11 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Why:       "the shop's postal address as printed; for a sole trader working from home that is a person's home address",
 				OnErasure: personaldata.Kept,
 			},
+			{
+				Table: table, Column: "country_code", Kind: personaldata.Named,
+				Why:       "the country of the shop's address, which is part of a sole trader's home address as the invoice's seller_country_code is (D192)",
+				OnErasure: personaldata.Kept,
+			},
 		},
 	}
 }

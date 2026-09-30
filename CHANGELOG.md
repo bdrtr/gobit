@@ -24,6 +24,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Every module with a schema answers for what it keeps** (ADR 0278, D192).
+  **For operators:** `GET /admin/v1/personal-data` lists the file module's
+  upload names and addresses, the fulfillment module's parcel data, metadata,
+  replay keys and tracking numbers and links, the notification module's
+  failed-send errors, and the shop profile's country; a disclosure reports
+  those three modules as unable to attribute their rows, and an erasure as
+  keeping them.
+
 - **A failed notification keeps no address in its log** (D191). **For
   operators:** the error of a failed delivery reads as the provider wrote it
   with the recipient and any e-mail address or phone number replaced by
