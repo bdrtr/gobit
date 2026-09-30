@@ -54,6 +54,7 @@ import (
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
 	invoicesvc "github.com/bdrtr/gobit/internal/modules/invoice/service"
 	notifsvc "github.com/bdrtr/gobit/internal/modules/notification/service"
+	"github.com/bdrtr/gobit/internal/modules/order"
 	orderapi "github.com/bdrtr/gobit/internal/modules/order/api"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
@@ -220,6 +221,8 @@ var (
 	_ adminui.SecondFactorAdmin = (*authsvc.AccountSurface)(nil)
 	// And their own sessions (ADR 0268), from the same surface.
 	_ adminui.SessionAdmin = (*authsvc.AccountSurface)(nil)
+	// The acts on an order's after-sales records (ADR 0271).
+	_ adminui.AfterSalesAdmin = (*order.AfterSalesSurface)(nil)
 )
 
 // A FLOW resolving another FLOW's surface.

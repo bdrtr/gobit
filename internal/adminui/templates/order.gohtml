@@ -10,6 +10,11 @@ be read says it is in minor units instead of being divided by a guessed hundred.
 {{ define "body" }}
 <h1>Order #{{ .Order.DisplayID }}</h1>
 
+{{ with .Outcome }}
+{{ if .Refused }}<p role="alert">{{ .Refused }}</p>{{ else }}<p role="status">{{ .Done }}</p>{{ end }}
+{{ range .Warnings }}<p role="alert">{{ . }}</p>{{ end }}
+{{ end }}
+
 <div class="panel">
   <p>
     <span class="pill">{{ .Order.Status }}</span>
@@ -189,9 +194,9 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
 <p class="muted">The after-sales records of this order could not be read.</p>
 {{ else if .Order.AfterSales }}
 <table>
-  <thead><tr><th>Record</th><th>Status</th><th>Goods</th><th>Money</th><th>Opened</th><th>Since</th></tr></thead>
+  <thead><tr><th>Record</th><th>Status</th><th>Goods</th><th>Money</th><th>Opened</th><th>Since</th>{{ if $.CanAct }}<th>Act</th>{{ end }}</tr></thead>
   <tbody>
-    {{ range .Order.AfterSales }}
+    {{ range $sale := .Order.AfterSales }}
     <tr>
       <td>{{ .Kind }} <span class="muted">{{ .ID }}</span>{{ range .Detail }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
       <td><span class="pill">{{ .Status }}</span></td>
@@ -199,6 +204,20 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
       <td>{{ if .Money }}{{ .Money }}{{ else }}<span class="muted">none</span>{{ end }}</td>
       <td>{{ if not .OpenedAt.IsZero }}{{ .OpenedAt.Format "2006-01-02 15:04" }}{{ end }}</td>
       <td>{{ range .Since }}{{ . }}<br>{{ end }}</td>
+      {{ if $.CanAct }}
+      <td>
+        {{ range .Forms }}
+        <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/after-sales/{{ $sale.Kind }}/{{ $sale.ID }}/{{ .Act }}">
+          {{ if .Location }}<input name="location_id" placeholder="stock location" aria-label="stock location" required>{{ end }}
+          {{ if .Collection }}<input name="collection_id" placeholder="payment collection" aria-label="payment collection" required>{{ end }}
+          {{ if .Amount }}<input name="amount" inputmode="decimal" placeholder="{{ .AmountHint }}" aria-label="amount{{ if $.Order.Minor }} in minor units{{ end }}">
+          <input type="hidden" name="currency" value="{{ $.Order.Currency }}">{{ if $.Order.Minor }}<input type="hidden" name="minor" value="1">{{ end }}{{ end }}
+          {{ if .Reason }}<input name="reason" placeholder="reason" aria-label="reason">{{ end }}
+          <button type="submit">{{ .Label }}</button>
+        </form>
+        {{ end }}
+      </td>
+      {{ end }}
     </tr>
     {{ end }}
   </tbody>

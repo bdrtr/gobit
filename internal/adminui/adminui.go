@@ -184,7 +184,10 @@ type UI struct {
 	// sessions is the person's own sessions (ADR 0268); nil when the
 	// installation registers none.
 	sessions SessionAdmin
-	scopes   map[string]string
+	// afterSales acts on an order's after-sales records (ADR 0271); nil when
+	// the installation registers none.
+	afterSales AfterSalesAdmin
+	scopes     map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -248,6 +251,12 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// The after-sales acts are optional like every write surface: without the
+	// order module's the order page offers none (ADR 0271).
+	afterSales, err := optionalService[AfterSalesAdmin](c, ServiceOrderAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -273,6 +282,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		stock:         stock,
 		secondFactor:  secondFactor,
 		sessions:      sessions,
+		afterSales:    afterSales,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

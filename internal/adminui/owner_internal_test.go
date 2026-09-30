@@ -471,6 +471,58 @@ func (s recordingStock) SetStockLevel(context.Context, string, string, int64) er
 	return s.surfaces.reach(ServiceInventoryAdmin)
 }
 
+// recordingAfterSales is the order module's panel surface (ADR 0271); the walk
+// takes one act, and every act reaches the same surface.
+type recordingAfterSales struct{ surfaces *recordingSurfaces }
+
+func (a recordingAfterSales) ReceiveReturn(
+	context.Context, string, string,
+) (lines int, units int64, warnings []string, err error) {
+	return 0, 0, nil, a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) RefundReturn(
+	context.Context, string, int64, string,
+) (refunded int64, recorded bool, warnings []string, err error) {
+	return 0, true, nil, a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) CancelReturn(context.Context, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) SettleClaim(
+	context.Context, string, int64, string,
+) (refunded int64, recorded bool, warnings []string, err error) {
+	return 0, true, nil, a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) CancelClaim(context.Context, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) FundExchange(context.Context, string, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) RefundExchange(context.Context, string, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) CancelExchange(context.Context, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) DispatchReplacement(
+	context.Context, string,
+) (parcel string, units int64, already bool, err error) {
+	return "", 0, false, a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) WithdrawReplacement(context.Context, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
 // walkForms is a form each write accepts, so the walk reaches the surface
 // behind it. A write the panel binds with no entry here fails the walk.
 var walkForms = map[string]url.Values{
@@ -486,6 +538,8 @@ var walkForms = map[string]url.Values{
 		"inventory_item_id": {"walk"}, "location_id": {"walk"}, "quantity": {"1"},
 	},
 	routeKey(http.MethodPost, VariantBundlePath): {"parts": {""}, "version": {"1"}},
+	// The walk withdraws a return; every act reaches the same surface.
+	routeKey(http.MethodPost, OrderAfterSalePath): {},
 }
 
 // panelWalk is one panel built on the recording doubles.
@@ -510,6 +564,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServiceProductAdmin, ProductWriter(walk.surfaces)))
 	require.NoError(t, c.Provide(ServicePricingAdmin, PriceWriter(recordingPrices{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceInventoryAdmin, StockAdmin(recordingStock{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceOrderAdmin, AfterSalesAdmin(recordingAfterSales{walk.surfaces})))
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
 	ui, err := FromContainer(c, false, nil)
@@ -551,7 +606,8 @@ func (w *panelWalk) request(t *testing.T, key string, walk walkCase, scopes ...s
 	form := walk.form
 
 	method, pattern, _ := strings.Cut(key, " ")
-	path := strings.NewReplacer("{id}", "walk", "{variantID}", "walk").Replace(pattern)
+	path := strings.NewReplacer("{id}", "walk", "{variantID}", "walk",
+		"{kind}", "return", "{record}", "walk", "{act}", "cancel").Replace(pattern)
 
 	var req *http.Request
 	if method == http.MethodPost {

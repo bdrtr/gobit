@@ -30,6 +30,7 @@ const (
 	scopeProductWrite   = "product:write"
 	scopePricingWrite   = "pricing:write"
 	scopeOrderRead      = "order:read"
+	scopeOrderWrite     = "order:write"
 	scopeCustomerRead   = "customer:read"
 	scopeInventoryRead  = "inventory:read"
 	scopeInventoryWrite = "inventory:write"
@@ -116,6 +117,8 @@ func builtInScopes() map[string]string {
 		routeKey(post, VariantBundlePath): scopeProductWrite,
 		routeKey(get, OrdersPath):         scopeOrderRead,
 		routeKey(get, OrderPath):          scopeOrderRead,
+		// An act on an after-sales record is an order write (ADR 0271).
+		routeKey(post, OrderAfterSalePath): scopeOrderWrite,
 		// The sales report is made of order lines and shows what they sold for.
 		// It names no scope of its own because it holds no data of its own: an
 		// operator who may read the orders may read their total.

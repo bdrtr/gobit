@@ -722,14 +722,13 @@ past and is not corrected retroactively.
   registered screen now declares the privilege it requires and a registration
   without one is refused at startup.
 
-- **The panel's order screen shows the after-sales records but cannot act on
-  them.** It lists the order's returns, claims, exchanges and replacements with
-  their status, money, lines and moments
+- **The panel acts on an order's after-sales records but does not open them.**
+  It lists the order's returns, claims, exchanges and replacements
   ([ADR 0270](adr/0270-an-orders-after-sales-are-read-like-its-lines.md)), at
-  most 25 of each kind, beside each line's units asked back and written off
-  ([ADR 0252](adr/0252-an-order-line-says-what-became-of-it.md)). Receiving a
-  return, settling a claim, dispatching a replacement or funding an exchange is
-  still an `/admin/v1` call, and a claim's evidence is read there too.
+  most 25 of each kind, and takes every act the API takes on an existing one
+  ([ADR 0271](adr/0271-the-panel-acts-on-an-orders-after-sales.md)). Opening a
+  return, a claim, an exchange or a replacement is still an `/admin/v1` call,
+  and a claim's evidence is attached and read there too.
 
 - **The in-process harness consumes events like a server.** `InProcess` opens the
   whole application, so its modules subscribe — which is what a test wants, and

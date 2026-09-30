@@ -30,6 +30,7 @@ import (
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
 	"github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
+	"github.com/bdrtr/gobit/internal/modules/order"
 	ordermodels "github.com/bdrtr/gobit/internal/modules/order/models"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	"github.com/bdrtr/gobit/internal/modules/payment"
@@ -1000,6 +1001,9 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	// itself beside those (ADR 0266).
 	assert.Equal(t, auth.AdminName, adminui.ServiceAuthAdmin,
 		"the panel's second factor surface name must match the auth module")
+	// The order module's panel surface (ADR 0271).
+	assert.Equal(t, order.AdminName, adminui.ServiceOrderAdmin,
+		"the panel's after-sales surface name must match the order module")
 	assert.Equal(t, authsvc.CodeMFALocked, adminui.CodeMFALocked,
 		"the panel's locked-account code must match the auth module")
 	assert.Equal(t, authsvc.CodeMFAUnavailable, adminui.CodeMFAUnavailable,

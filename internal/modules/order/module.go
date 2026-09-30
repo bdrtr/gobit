@@ -371,10 +371,16 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// The return flow is resolved at REQUEST TIME for the reason the spending
 	// rule is: a flow is born after the whole Register loop has finished, while
 	// the handler is built inside it.
+	receiving := &returnReceiving{c: c, log: log}
 	m.handler = api.New(svc,
-		&returnReceiving{c: c, log: log},
+		receiving,
 		&invoicingFlow{c: c, log: log},
 		&fulfillingFlow{c: c, log: log})
+	// The panel acts on the after-sales records through the same flow the
+	// API does (ADR 0271), so the two surfaces refuse and fail alike.
+	if err := c.Provide(AdminName, &AfterSalesSurface{svc: svc, flow: receiving}); err != nil {
+		return err
+	}
 	slog.Default().DebugContext(ctx, "order module registered",
 		"service", ServiceName, "interop", InteropName, "provider", ProviderName,
 		"line_item_provider", LineItemProviderName)

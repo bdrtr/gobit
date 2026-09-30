@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -181,4 +183,86 @@ func TestThePanelShowsARealOrdersAfterSales(t *testing.T) {
 	} {
 		assert.Contains(t, body, want)
 	}
+}
+
+// TestThePanelActsOnARealOrdersAfterSales is ADR 0271's gate: the panel built
+// from a real installation receives a return through the returns flow the API
+// uses and withdraws another through the service, and the records say so.
+func TestThePanelActsOnARealOrdersAfterSales(t *testing.T) {
+	ctx := context.Background()
+
+	dsn := migrateDSN(t)
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", dsn)
+	t.Setenv("JWT_SECRET", "panel-order-test-secret-32-bytes-long!")
+	t.Setenv("LOG_LEVEL", "warn")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	app, closeApp, err := openApplication(ctx, cfg, slog.New(slog.DiscardHandler), errorreport.NewSink(),
+		Options{}, publishesOnly)
+	require.NoError(t, err)
+	defer closeApp()
+
+	svc, err := container.Resolve[*ordersvc.Service](app.container, order.ServiceName)
+	require.NoError(t, err)
+	placed, err := svc.CreateOrder(ctx, ordersvc.CreateOrderInput{
+		RegionID: "reg_panel", CustomerID: "cus_panel", CurrencyCode: "TRY",
+		Subtotal: 2000, TaxTotal: 400, Total: 2400,
+		Items: []ordersvc.CreateOrderItemInput{{
+			VariantID: "variant_panel", Title: "Panel item", Quantity: 2,
+			UnitPrice: 1000, Subtotal: 2000, TaxTotal: 400, Total: 2400,
+		}},
+	})
+	require.NoError(t, err)
+	detail, err := svc.GetOrder(ctx, placed.ID)
+	require.NoError(t, err)
+	lineID := detail.Items[0].ID
+	received, err := svc.CreateReturn(ctx, ordersvc.CreateReturnInput{
+		OrderID: placed.ID, Lines: []ordersvc.ReturnLineInput{{OrderLineItemID: lineID, Quantity: 1}},
+	})
+	require.NoError(t, err)
+	withdrawn, err := svc.CreateReturn(ctx, ordersvc.CreateReturnInput{OrderID: placed.ID})
+	require.NoError(t, err)
+
+	panel, err := adminui.FromContainer(app.container, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	post := func(kind, record, act string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequest(http.MethodPost,
+			adminui.OrdersPath+"/"+placed.ID+"/after-sales/"+kind+"/"+record+"/"+act,
+			strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_panel", Kind: "user", Scopes: []string{"order:read", "order:write"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	page := post("return", received.ID, "receive", url.Values{"location_id": {"sloc_panel"}})
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), "The return was received")
+	back, err := svc.GetReturn(ctx, received.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ReturnReceived, back.Status)
+	assert.Equal(t, "sloc_panel", back.ReceivedLocationID)
+
+	page = post("return", withdrawn.ID, "cancel", nil)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), "The return was withdrawn.")
+	gone, err := svc.GetReturn(ctx, withdrawn.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ReturnCanceled, gone.Status)
+
+	page = post("return", received.ID, "cancel", nil)
+	assert.Equal(t, http.StatusUnprocessableEntity, page.Code, "a received return is not withdrawn")
+	assert.Contains(t, page.Body.String(), `<p role="alert">`)
+	still, err := svc.GetReturn(ctx, received.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.ReturnReceived, still.Status)
 }

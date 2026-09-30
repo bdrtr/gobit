@@ -62,6 +62,8 @@ type orderAfterSale struct {
 	// Since are what happened to it after it was opened, each printed with its
 	// moment.
 	Since []string
+	// Forms are the acts it offers in its status (ADR 0271).
+	Forms []afterSaleForm
 }
 
 // afterSalesOf reads the order's returns, claims, exchanges and replacements,
@@ -170,7 +172,9 @@ func (u *UI) afterSalesOf(
 		}
 		more = more || len(records) >= afterSalesPerKind
 		for _, rec := range records {
-			out = append(out, kind.view(rec))
+			sale := kind.view(rec)
+			sale.Forms = afterSaleForms(sale.Kind, sale.Status, recordString(rec, fieldClaimType))
+			out = append(out, sale)
 		}
 	}
 

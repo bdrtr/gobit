@@ -327,7 +327,27 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 // sales report in this package reads (D96), filtered to this order. They used
 // to be absent, and the reason this comment gave for it was false.
 func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	u.renderOrder(w, r, http.StatusOK, chi.URLParam(r, "id"), nil)
+}
+
+// renderOrder reads the order and writes its page, with what an act on one of
+// its after-sales records reported when one was taken (ADR 0271).
+func (u *UI) renderOrder(
+	w http.ResponseWriter, r *http.Request, status int, id string, outcome *afterSaleOutcome,
+) {
+	// An act lands here under order:write, which does not open the order page
+	// (ADR 0260): an operator holding only the write is told what happened and
+	// reads nothing of the order.
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	if outcome != nil && !principal.HasScope(scopeOrderRead) {
+		title, message := "Done", outcome.Done
+		if outcome.Refused != "" {
+			title, message = "Not done", outcome.Refused
+		}
+		u.errorPage(w, r, status, title, strings.Join(append([]string{message}, outcome.Warnings...), " "))
+		return
+	}
+
 	if strings.TrimSpace(id) == "" {
 		u.errorPage(w, r, http.StatusNotFound, "Not found", "No order was named.")
 
@@ -372,7 +392,6 @@ func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 	detail.Additions, detail.AdditionsUnread = u.additionsOf(r, detail.ID, scales)
 	detail.Lines, detail.LinesMore, detail.LinesUnread = u.linesOf(r, detail.ID, detail.Currency, scales)
 
-	principal, _ := corehttp.PrincipalFromContext(r.Context())
 	detail.PaymentHidden = !principal.HasScope(scopePaymentRead)
 	if !detail.PaymentHidden {
 		detail.Payment, detail.PaymentUnread = u.paymentOf(r, detail.ID, scales)
@@ -384,8 +403,10 @@ func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 	detail.AfterSales, detail.AfterSalesMore, detail.AfterSalesUnread = u.afterSalesOf(
 		r, detail.ID, detail.Currency, scales, detail.Lines)
 
-	u.templates.render(w, r, http.StatusOK, "order.gohtml", map[string]any{
+	u.templates.render(w, r, status, "order.gohtml", map[string]any{
 		titleKey:               "Order " + detail.DisplayID,
+		"Outcome":              outcome,
+		"CanAct":               u.afterSales != nil && principal.HasScope(scopeOrderWrite),
 		"Order":                detail,
 		"OrdersPath":           OrdersPath,
 		"LinesPerOrder":        linesPerOrder,

@@ -24,6 +24,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel acts on an order's after-sales records** (ADR 0271). **For
+  operators:** with `order:write`, the order page receives a return at a
+  location, refunds it, settles a refund claim, funds or refunds an exchange,
+  dispatches a replacement and withdraws any of them, each under the API's own
+  conditions. **For integrators:** the order module registers `order.admin`.
+
 - **An order's after-sales records are read like its lines** (ADR 0270).
   **For operators:** the panel's order page lists the order's returns, claims,
   exchanges and replacements, newest first, with their status, money, lines

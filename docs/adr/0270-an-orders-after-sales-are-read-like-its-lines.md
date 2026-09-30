@@ -4,7 +4,7 @@
 replacements to the read layer as four entities read per order, and the admin
 panel's order page lists them.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0271](0271-the-panel-acts-on-an-orders-after-sales.md), which lets the panel act on the records
 - **Date:** 2026-09-30
 
 ## Context

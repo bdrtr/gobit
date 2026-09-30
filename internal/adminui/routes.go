@@ -69,6 +69,7 @@ func (u *UI) routes(r chi.Router) {
 	r.Post(VariantBundlePath, u.needs(http.MethodPost, VariantBundlePath, u.submitBundle))
 	r.Get(OrdersPath, u.needs(http.MethodGet, OrdersPath, u.listOrders))
 	r.Get(OrderPath, u.needs(http.MethodGet, OrderPath, u.showOrder))
+	r.Post(OrderAfterSalePath, u.needs(http.MethodPost, OrderAfterSalePath, u.submitAfterSale))
 	r.Get(SalesPath, u.needs(http.MethodGet, SalesPath, u.listSales))
 	r.Get(CustomersPath, u.needs(http.MethodGet, CustomersPath, u.listCustomers))
 	r.Get(CustomerPath, u.needs(http.MethodGet, CustomerPath, u.showCustomer))
