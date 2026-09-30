@@ -409,13 +409,26 @@ func newShippingOption(
 ) string {
 	t.Helper()
 
+	return newShippingOptionIn(ctx, t, taxedRegionID, profileID, name, fee, adminOnly)
+}
+
+// newShippingOptionIn is [newShippingOption] in the region given.
+func newShippingOptionIn(
+	ctx context.Context,
+	t *testing.T,
+	regionID, profileID, name string,
+	fee int64,
+	adminOnly bool,
+) string {
+	t.Helper()
+
 	option, err := shippingSvc.CreateShippingOption(ctx, fulfillmentsvc.CreateOptionInput{
 		Name:              fmt.Sprintf("%s %d", name, fixtureCounter.Add(1)),
 		ProviderID:        fulfillmentmanual.ID,
 		ShippingProfileID: profileID,
 		Amount:            fee,
 		CurrencyCode:      taxedCurrency,
-		RegionID:          taxedRegionID,
+		RegionID:          regionID,
 		AdminOnly:         adminOnly,
 	})
 	require.NoError(t, err, "the fixture shipping option could not be created")

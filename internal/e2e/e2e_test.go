@@ -456,6 +456,9 @@ var (
 	untaxedRegionID string
 	// secondTaxRegionID is the second region whose tax comes from the tax module.
 	secondTaxRegionID string
+	// inclusiveRegionID is the region whose prices include their tax
+	// ([inclusiveTaxCountry]).
+	inclusiveRegionID string
 	// unconfiguredRegionID is the region whose country HAS NO tax region in the
 	// tax module.
 	unconfiguredRegionID string
@@ -1231,6 +1234,7 @@ func setUpRegionFixtures(ctx context.Context) error {
 	if _, err := regionSvc.AddCountryToRegion(ctx, inclusive.ID, inclusiveTaxCountry); err != nil {
 		return fmt.Errorf("could not add country %s to the tax-inclusive region: %w", inclusiveTaxCountry, err)
 	}
+	inclusiveRegionID = inclusive.ID
 
 	return nil
 }

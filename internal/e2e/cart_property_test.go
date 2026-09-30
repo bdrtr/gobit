@@ -30,6 +30,8 @@ import (
 // The prices are chosen so a 20% tax, taken out or added on, rounds every way,
 // a 15% promotion on half the pool puts a discount beside either kind of tax,
 // and the pool's last variant is a gift card, which carries no tax (ADR 0247).
+// A shopper may also choose a paid or a free delivery in their market and type
+// a 10% coupon that covers the other half of the pool.
 func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 	ctx := t.Context()
 
@@ -42,6 +44,16 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 	card := newGiftCardVariantStocked(ctx, t, 5_000, 1_000_000)
 	pool = append(pool, card)
 	newAutomaticPercentagePromotion(ctx, t, "E2E-PROPERTY-15", 1_500, []string{pool[1], pool[3], pool[5]})
+	const coupon = "E2E-PROPERTY-COUPON"
+	newCouponPromotion(ctx, t, coupon, 1_000, []string{pool[0], pool[2], pool[4]})
+	profileID := newShippingProfile(ctx, t, "E2E Property Profile")
+	deliveries := map[string]map[string]string{}
+	for country, regionID := range map[string]string{taxedCountry: taxedRegionID, inclusiveTaxCountry: inclusiveRegionID} {
+		deliveries[country] = map[string]string{
+			"paid": newShippingOptionIn(ctx, t, regionID, profileID, "E2E Property Paid", 2_490, false),
+			"free": newShippingOptionIn(ctx, t, regionID, profileID, "E2E Property Free", 0, false),
+		}
+	}
 	customerID, email := newCustomer(ctx, t)
 	writeStoreProfile(t)
 
@@ -51,16 +63,27 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 
 		cart, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: country, CustomerID: customerID})
 		require.NoError(rt, err)
-		var totals cartwf.Totals
 		for range rapid.IntRange(1, 4).Draw(rt, "lines") {
-			added, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
+			_, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
 				CartID:    cart.CartID,
 				VariantID: pool[rapid.IntRange(0, len(pool)-1).Draw(rt, "variant")],
 				Quantity:  rapid.Int64Range(1, 5).Draw(rt, "quantity"),
 			})
 			require.NoError(rt, err, "every line a shopper adds has its cart's totals written")
-			totals = added.Totals
 		}
+		fee := int64(0)
+		if delivery := rapid.SampledFrom([]string{"none", "paid", "free"}).Draw(rt, "delivery"); delivery != "none" {
+			_, err := workflows.AddQuotedShippingMethod(ctx, cart.CartID, deliveries[country][delivery], nil)
+			require.NoError(rt, err, "a delivery of the shopper's market can be chosen")
+			if delivery == "paid" {
+				fee = 2_490
+			}
+		}
+		if rapid.Bool().Draw(rt, "coupon") {
+			require.NoError(rt, workflows.ApplyPromotionCode(ctx, cart.CartID, coupon))
+		}
+		totals, err := workflows.CalculateTotals(ctx, cart.CartID)
+		require.NoError(rt, err, "every cart a shopper can build has its totals written")
 		require.Equal(rt, inclusive, totals.PricesIncludeTax)
 
 		// The cart as stored: its lines against the quote, and its total
@@ -69,6 +92,7 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 		require.NoError(rt, err)
 		require.False(rt, stored.TotalsStale())
 		require.Equal(rt, totals.Total, stored.Total)
+		require.Equal(rt, fee, stored.ShippingTotal, "the delivery costs what its option says")
 		var quoted int64
 		for _, line := range stored.Items {
 			sticker := line.UnitPrice * line.Quantity
