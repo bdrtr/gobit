@@ -1,9 +1,6 @@
 package auth_test
 
 import (
-	"io/fs"
-	"regexp"
-	"strings"
 	"testing"
 	"unicode"
 	"unicode/utf8"
@@ -13,6 +10,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/auth"
+	"github.com/bdrtr/gobit/internal/schemaaudit"
 )
 
 // These tests need NO database and no setup. A declaration is a property of the
@@ -24,16 +22,6 @@ import (
 // A test that walked the declaration and checked it was well-formed would pass
 // on the day somebody adds a "phone" column and declares nothing, which is the
 // only failure worth catching here.
-
-// upMigrations matches every forward migration the module ships.
-//
-// It used to be one file name in a constant, with a comment calling it "the
-// module's only migration". The module gained a second one and this audit did not
-// notice: its population was a NAME rather than the directory, so a table created
-// by 000002 was invisible and the declaration covering it failed as "a column
-// nobody can find". A list that decides what gets verified has to be checked
-// against the world — the sixth time this repository has closed that shape.
-var upMigrations = regexp.MustCompile(`\.up\.sql$`)
 
 // notPersonalColumns lists, per table, the columns that hold nothing about a
 // person, and it is the load-bearing half of
@@ -136,66 +124,11 @@ var notPersonalColumns = map[string][]string{
 // column that does not exist is the mirror fault: it sends somebody answering a
 // data-subject request hunting for data nobody holds.
 func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
-	declaration := auth.New(auth.Options{}).PersonalData()
-
-	declared := map[string]bool{}
-	for _, holding := range declaration.Holdings {
-		key := holding.Table + "." + holding.Column
-		assert.False(t, declared[key], "%s is declared twice", key)
-		declared[key] = true
-	}
-
-	schema := readMigration(t)
-	tables := tablesOf(t, schema)
-	require.NotEmpty(t, tables, "no table was read out of the migration; the scanner has gone blind")
-
-	for _, table := range tables {
-		exempt, known := notPersonalColumns[table]
-		require.True(t, known,
-			"%s is created in the migration and this test knows nothing about it. "+
-				"A new table is where an undeclared personal column hides: list its "+
-				"columns in notPersonalColumns with the reason each one holds nothing "+
-				"about a person, and put the rest in Module.PersonalData.", table)
-
-		// The columns a later ALTER TABLE adds count as much as the ones the
-		// table was created with (D187): reading the CREATE block alone left
-		// every added column out of the audit, declared or not.
-		columns := append(columnsOf(t, schema, table), addedColumnsOf(schema, table)...)
-		require.NotEmpty(t, columns, "no column was read out of %s; the scanner has gone blind", table)
-
-		// An exemption names a column the schema has, or it is a reason nobody
-		// reads for a column nobody sees: the mirror of a declaration pointing
-		// at nothing, and the assertion that fails when the scanner stops
-		// reading a kind of statement.
-		for _, column := range exempt {
-			assert.True(t, contains(columns, column),
-				"%s.%s is listed as holding nothing about a person and the audit read no "+
-					"such column; either the schema dropped it or the scanner no longer "+
-					"reads the statement that adds it", table, column)
-		}
-
-		for _, column := range columns {
-			key := table + "." + column
-			if contains(exempt, column) {
-				assert.False(t, declared[key],
-					"%s is declared as personal data and is at the same time listed as "+
-						"holding nothing about a person; the two cannot both be true", key)
-				continue
-			}
-			assert.True(t, declared[key],
-				"%s is in the migration and NOT in the declaration.\n"+
-					"Either it holds something about the staff member — then it belongs "+
-					"in Module.PersonalData with a sentence a controller can repeat to "+
-					"them — or it does not, and it belongs in notPersonalColumns with "+
-					"the reason written down.", key)
-			delete(declared, key)
-		}
-	}
-
-	assert.Empty(t, declared,
-		"these holdings name columns that are not in the migration; a declaration "+
-			"pointing at a column nobody can find sends an auditor searching for data "+
-			"that does not exist")
+	// internal/schemaaudit replays every migration, the ALTER TABLE this
+	// audit's own reader once missed included (D187), and holds every
+	// exemption to a column the schema has.
+	module := auth.New(auth.Options{})
+	schemaaudit.Cover(t, module.Migrations(), module.PersonalData(), notPersonalColumns)
 }
 
 // TestTheDeclarationReadsAsAnAnswerToAPerson checks the shape of the text
@@ -255,123 +188,4 @@ func TestTheAuthModuleOffersNoErasure(t *testing.T) {
 
 	_, ok = module.(personaldata.Declarer)
 	assert.True(t, ok, "the module has to declare, or its staff accounts are invisible in every report")
-}
-
-// readMigration reads the migration through the same embedded file system the
-// migrator uses, so this test cannot pass against a file the module does not
-// actually ship.
-func readMigration(t *testing.T) string {
-	t.Helper()
-
-	migrations := auth.New(auth.Options{}).Migrations()
-
-	entries, err := fs.ReadDir(migrations, ".")
-	require.NoError(t, err)
-
-	var schema strings.Builder
-	read := 0
-	for _, entry := range entries {
-		if entry.IsDir() || !upMigrations.MatchString(entry.Name()) {
-			continue
-		}
-		raw, readErr := fs.ReadFile(migrations, entry.Name())
-		require.NoError(t, readErr)
-		schema.Write(raw)
-		schema.WriteString("\n")
-		read++
-	}
-
-	require.NotZero(t, read,
-		"no forward migration was read, so the audit has gone blind and would pass "+
-			"whatever this module's schema held")
-
-	return schema.String()
-}
-
-// createTable matches every table the migration creates.
-var createTable = regexp.MustCompile(`(?m)^CREATE TABLE IF NOT EXISTS (\w+) \(`)
-
-// tablesOf returns every table name the migration creates.
-//
-// The audit walks THIS list rather than the exemption map's keys, which is the
-// difference between a test that notices a new table and one that does not.
-func tablesOf(t *testing.T, schema string) []string {
-	t.Helper()
-
-	var tables []string
-	for _, match := range createTable.FindAllStringSubmatch(schema, -1) {
-		tables = append(tables, match[1])
-	}
-	return tables
-}
-
-// columnsOf returns the column names of one CREATE TABLE block.
-//
-// The parser is deliberately small: it reads the lines between the table's
-// opening parenthesis and its closing one, drops comments and constraint lines,
-// and takes the first word of what is left. That is enough because this
-// repository writes one column per line, and it fails loudly rather than
-// quietly — a block it cannot find yields no columns at all, which the caller
-// asserts against.
-func columnsOf(t *testing.T, schema, table string) []string {
-	t.Helper()
-
-	header := "CREATE TABLE IF NOT EXISTS " + table + " ("
-	start := strings.Index(schema, header)
-	require.GreaterOrEqual(t, start, 0, "%s is not created in the migration", table)
-
-	body := schema[start+len(header):]
-	if end := strings.Index(body, "\n);"); end >= 0 {
-		body = body[:end]
-	}
-
-	var columns []string
-	for _, line := range strings.Split(body, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 || strings.HasPrefix(fields[0], "--") ||
-			fields[0] == "CONSTRAINT" || fields[0] == "PRIMARY" || fields[0] == "UNIQUE" {
-			continue
-		}
-		columns = append(columns, strings.TrimSuffix(fields[0], ","))
-	}
-	return columns
-}
-
-// addedColumnsOf returns the columns an ALTER TABLE adds to the table, one
-// statement at a time and whatever the statement's layout, IF NOT EXISTS or
-// not (D187). It is the reading the cart, customer, inventory and review
-// audits already made.
-func addedColumnsOf(schema, table string) []string {
-	var columns []string
-	for _, statement := range strings.Split(schema, ";") {
-		fields := strings.Fields(statement)
-		for i := 0; i+2 < len(fields); i++ {
-			if fields[i] != "ALTER" || fields[i+1] != "TABLE" || fields[i+2] != table {
-				continue
-			}
-			for j := i + 3; j+1 < len(fields); j++ {
-				if fields[j] != "ADD" || fields[j+1] != "COLUMN" {
-					continue
-				}
-				k := j + 2
-				if k+2 < len(fields) && fields[k] == "IF" && fields[k+1] == "NOT" && fields[k+2] == "EXISTS" {
-					k += 3
-				}
-				if k < len(fields) {
-					columns = append(columns, strings.TrimSuffix(fields[k], ","))
-				}
-			}
-		}
-	}
-	return columns
-}
-
-// contains keeps the assertions above readable.
-func contains(list []string, want string) bool {
-	for _, item := range list {
-		if item == want {
-			return true
-		}
-	}
-	return false
 }

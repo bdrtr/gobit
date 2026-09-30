@@ -1,17 +1,14 @@
 package customer_test
 
 import (
-	"io/fs"
-	"sort"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/customer"
 	"github.com/bdrtr/gobit/internal/modules/customer/service"
+	"github.com/bdrtr/gobit/internal/schemaaudit"
 )
 
 // These tests need NO database. A declaration is a property of the code and not
@@ -106,60 +103,19 @@ var notPersonalColumns = map[string][]string{
 // added to the table without a line here fails this test, which is the only
 // moment anybody is thinking about that column at all.
 func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
-	declaration := customer.New(nil).PersonalData()
-	assert.Equal(t, customer.ModuleName, declaration.Holder,
-		"the holder is what a controller reads off the report to know who still holds something")
-
-	declared := map[string]bool{}
-	for _, holding := range declaration.Holdings {
+	module := customer.New(nil)
+	for _, holding := range module.PersonalData().Holdings {
 		key := holding.Table + "." + holding.Column
-		assert.False(t, declared[key], "%s is declared twice", key)
-		declared[key] = true
-
 		assert.Contains(t, []personaldata.Kind{personaldata.Named, personaldata.Open}, holding.Kind,
 			"%s: a holding with no kind says nothing about who wrote it", key)
 		assert.NotEmpty(t, holding.Why,
 			"%s: a column named without a reason cannot be repeated to a data subject", key)
 	}
 
-	schema := readMigrations(t)
-	tables := tablesOf(t, schema)
-	require.Len(t, tables, len(notPersonalColumns),
-		"the audit reads %v; the migration creates %v. A table the map does not name "+
-			"is a table nothing checks, and the migration→declaration direction is "+
-			"unaudited for every column in it",
-		keysOf(notPersonalColumns), tables)
-
-	for _, table := range tables {
-		exempt, known := notPersonalColumns[table]
-		require.True(t, known,
-			"%s is created by the migration and is not in notPersonalColumns; every "+
-				"table has to be looked at, even one whose columns all turn out to be "+
-				"exempt — that is what the next column added to it will be measured against", table)
-		columns := append(columnsOf(t, schema, table), addedColumnsOf(schema, table)...)
-		require.NotEmpty(t, columns, "no column was read out of %s; the scanner has gone blind", table)
-
-		for _, column := range columns {
-			key := table + "." + column
-			if slicesContains(exempt, column) {
-				assert.False(t, declared[key],
-					"%s is declared as personal data but is listed as holding nothing", key)
-				continue
-			}
-			assert.True(t, declared[key],
-				"%s is in the migration and NOT in the declaration.\n"+
-					"Either it holds something about the person — then it belongs in "+
-					"Module.PersonalData, and Service.Erase has to decide whether it is "+
-					"overwritten or reported in Result.Kept — or it does not, and it "+
-					"belongs in notPersonalColumns with the reason written down.", key)
-			delete(declared, key)
-		}
-	}
-
-	assert.Empty(t, declared,
-		"these holdings name columns that are not in the migration; a declaration "+
-			"that points at a column nobody can find sends an auditor searching for "+
-			"data that does not exist")
+	// The schema is read by internal/schemaaudit, which replays every
+	// migration — the ALTER TABLE this audit once read with a copy of its own
+	// included (D187, D189).
+	schemaaudit.Cover(t, module.Migrations(), module.PersonalData(), notPersonalColumns)
 }
 
 // TestTheHolderIsTheModuleName pins the one thing the service cannot check for
@@ -172,134 +128,4 @@ func TestPersonalDataCoversEveryPersonalColumn(t *testing.T) {
 // looking for a module by that name has to find this one.
 func TestTheHolderIsTheModuleName(t *testing.T) {
 	assert.Equal(t, customer.ModuleName, service.ErasureHolder)
-}
-
-// readMigrations reads every up migration the module ships, in the order the
-// migrator applies them, through the same embedded file system it uses, so this
-// test cannot pass against a file the module does not actually ship.
-func readMigrations(t *testing.T) string {
-	t.Helper()
-
-	migrations := customer.New(nil).Migrations()
-	names, err := fs.Glob(migrations, "*.up.sql")
-	require.NoError(t, err)
-	require.NotEmpty(t, names, "no up migration was found; the reader has gone blind")
-	sort.Strings(names)
-
-	var schema strings.Builder
-	for _, name := range names {
-		raw, err := fs.ReadFile(migrations, name)
-		require.NoError(t, err)
-		schema.Write(raw)
-		schema.WriteString("\n")
-	}
-	return schema.String()
-}
-
-// addedColumnsOf returns the columns later migrations add to a table with
-// ALTER TABLE ... ADD COLUMN, the statement a CREATE TABLE block cannot show.
-//
-// The statement is read up to its semicolon, so an ADD COLUMN written on the
-// line after the ALTER TABLE, as this repository writes it, is found.
-func addedColumnsOf(schema, table string) []string {
-	var columns []string
-	for _, statement := range strings.Split(schema, ";") {
-		fields := strings.Fields(statement)
-		for i := 0; i+2 < len(fields); i++ {
-			if fields[i] != "ALTER" || fields[i+1] != "TABLE" || fields[i+2] != table {
-				continue
-			}
-			for j := i + 3; j+1 < len(fields); j++ {
-				if fields[j] != "ADD" || fields[j+1] != "COLUMN" {
-					continue
-				}
-				k := j + 2
-				if k+2 < len(fields) && fields[k] == "IF" && fields[k+1] == "NOT" && fields[k+2] == "EXISTS" {
-					k += 3
-				}
-				if k < len(fields) {
-					columns = append(columns, fields[k])
-				}
-			}
-		}
-	}
-	return columns
-}
-
-// tablesOf returns the name of every table the migration creates, in the order
-// the file creates them.
-//
-// It is read out of the SQL rather than listed here for the same reason the
-// columns are: a list kept by hand is a list that stops being true the day
-// somebody adds a table, and the table nobody added to the list is exactly the
-// one whose columns no audit would ever visit.
-func tablesOf(t *testing.T, schema string) []string {
-	t.Helper()
-
-	const header = "CREATE TABLE IF NOT EXISTS "
-
-	var tables []string
-	for _, line := range strings.Split(schema, "\n") {
-		rest, found := strings.CutPrefix(line, header)
-		if !found {
-			continue
-		}
-		name, _, _ := strings.Cut(rest, " ")
-		tables = append(tables, strings.TrimSuffix(name, "("))
-	}
-	require.NotEmpty(t, tables, "no table was read out of the migration; the scanner has gone blind")
-	return tables
-}
-
-// keysOf keeps the failure message above readable; the order is sorted so two
-// runs of a failing test print the same sentence.
-func keysOf(m map[string][]string) []string {
-	names := make([]string, 0, len(m))
-	for name := range m {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
-// columnsOf returns the column names of one CREATE TABLE block.
-//
-// The parser is deliberately small: it reads the lines between the table's
-// opening parenthesis and its closing one, drops comments and CONSTRAINT lines,
-// and takes the first word of what is left. It is enough because this
-// repository writes one column per line, and it fails loudly rather than
-// quietly — a block it cannot find yields no columns at all, which the caller
-// asserts against.
-func columnsOf(t *testing.T, schema, table string) []string {
-	t.Helper()
-
-	header := "CREATE TABLE IF NOT EXISTS " + table + " ("
-	start := strings.Index(schema, header)
-	require.GreaterOrEqual(t, start, 0, "%s is not created in the migration", table)
-
-	body := schema[start+len(header):]
-	if end := strings.Index(body, "\n);"); end >= 0 {
-		body = body[:end]
-	}
-
-	var columns []string
-	for _, line := range strings.Split(body, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 || strings.HasPrefix(fields[0], "--") ||
-			fields[0] == "CONSTRAINT" || fields[0] == "PRIMARY" || fields[0] == "UNIQUE" {
-			continue
-		}
-		columns = append(columns, strings.TrimSuffix(fields[0], ","))
-	}
-	return columns
-}
-
-// slicesContains keeps the assertions above readable.
-func slicesContains(list []string, want string) bool {
-	for _, item := range list {
-		if item == want {
-			return true
-		}
-	}
-	return false
 }

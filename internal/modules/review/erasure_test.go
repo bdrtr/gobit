@@ -1,9 +1,6 @@
 package review_test
 
 import (
-	"io/fs"
-	"slices"
-	"strings"
 	"testing"
 	"unicode"
 	"unicode/utf8"
@@ -13,6 +10,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/review"
+	"github.com/bdrtr/gobit/internal/schemaaudit"
 )
 
 // The tests in this file need NO database and carry no build tag on purpose.
@@ -72,10 +70,12 @@ const reviewsTable = "reviews"
 //     reason the model gave is a different matter and IS declared, for the same
 //     reason the moderation note is — it is free text about the author's own
 //     free text, and a reason for rejecting a review quotes the review.
-var notPersonalColumns = []string{
-	"id", "product_id", "rating", "status", "moderated_at",
-	"created_at", "updated_at",
-	"suggested_status", "suggested_at", "suggestion_model",
+var notPersonalColumns = map[string][]string{
+	reviewsTable: {
+		"id", "product_id", "rating", "status", "moderated_at",
+		"created_at", "updated_at",
+		"suggested_status", "suggested_at", "suggestion_model",
+	},
 }
 
 // TestTheDeclarationCoversEveryPersonalColumn walks the declaration and the
@@ -90,49 +90,16 @@ var notPersonalColumns = []string{
 func TestTheDeclarationCoversEveryPersonalColumn(t *testing.T) {
 	t.Parallel()
 
-	declared := map[string]personaldata.Kind{}
-
-	for _, holding := range review.New(review.Options{}).PersonalData().Holdings {
+	module := review.New(review.Options{})
+	for _, holding := range module.PersonalData().Holdings {
 		key := holding.Table + "." + holding.Column
-
-		_, twice := declared[key]
-		assert.False(t, twice, "%s is declared twice", key)
-
 		assert.Equal(t, reviewsTable, holding.Table,
 			"%s: this module owns one table and can only be declaring about that one", key)
 		assert.Contains(t, []personaldata.Kind{personaldata.Named, personaldata.Open}, holding.Kind,
 			"%s: a holding with no kind says nothing about whether gobit knows what is in it", key)
-
-		declared[key] = holding.Kind
 	}
 
-	for _, column := range columnsOfReviews(t) {
-		key := reviewsTable + "." + column
-
-		if slices.Contains(notPersonalColumns, column) {
-			_, found := declared[key]
-			assert.False(t, found,
-				"%s is declared as personal data and is also listed as holding nothing about anybody; "+
-					"one of the two is wrong", key)
-
-			continue
-		}
-
-		_, found := declared[key]
-		assert.True(t, found,
-			"%s is in the migration and NOT in the declaration.\n"+
-				"Either it holds something about a person — then it belongs in "+
-				"Module.PersonalData, with a Why a controller could repeat to a data "+
-				"subject — or it does not, and it belongs in notPersonalColumns with "+
-				"the reason written down there.", key)
-
-		delete(declared, key)
-	}
-
-	assert.Empty(t, declared,
-		"these holdings name columns the migration does not create; a declaration that "+
-			"points at a column nobody can find sends an auditor searching for data that "+
-			"does not exist")
+	schemaaudit.Cover(t, module.Migrations(), module.PersonalData(), notPersonalColumns)
 }
 
 // TestEveryWhyIsASentenceThatLandsInSomebodyElsesReport checks the text rather
@@ -206,114 +173,4 @@ func TestTheDeclarationDoesNotNeedRegister(t *testing.T) {
 	t.Parallel()
 
 	assert.NotEmpty(t, review.New(review.Options{}).PersonalData().Holdings)
-}
-
-// columnsOfReviews reads the column names of the reviews table out of the
-// migration, through the same embedded file system the migrator uses — so this
-// test cannot pass against a file the module does not actually ship.
-//
-// The parser is deliberately small: it takes the lines between the CREATE TABLE
-// and its closing parenthesis, drops comments and the constraint clauses, and
-// keeps the first word of what is left. That is enough because this repository
-// writes one column per line, and it fails loudly rather than quietly — a table
-// it cannot find yields no columns at all, which the caller requires against.
-func columnsOfReviews(t *testing.T) []string {
-	t.Helper()
-
-	migrations := review.New(review.Options{}).Migrations()
-
-	entries, err := fs.ReadDir(migrations, ".")
-	require.NoError(t, err)
-
-	var (
-		columns []string
-		created bool
-		read    int
-	)
-
-	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".up.sql") {
-			continue
-		}
-
-		read++
-
-		raw, err := fs.ReadFile(migrations, entry.Name())
-		require.NoError(t, err)
-
-		schema := string(raw)
-
-		if header := "CREATE TABLE " + reviewsTable + " ("; strings.Contains(schema, header) {
-			created = true
-			columns = append(columns, declaredColumns(schema, header)...)
-		}
-
-		columns = append(columns, addedColumns(schema)...)
-	}
-
-	require.Positive(t, read, "no up-migration was read at all; the scanner has gone blind")
-	require.True(t, created, "%s is created by no migration", reviewsTable)
-	require.NotEmpty(t, columns, "no column was read out of %s; the scanner has gone blind", reviewsTable)
-
-	return columns
-}
-
-// declaredColumns reads the columns out of a CREATE TABLE body.
-func declaredColumns(schema, header string) []string {
-	body := schema[strings.Index(schema, header)+len(header):]
-	if end := strings.Index(body, "\n);"); end >= 0 {
-		body = body[:end]
-	}
-
-	var columns []string
-
-	for _, line := range strings.Split(body, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 || strings.HasPrefix(fields[0], "--") || isConstraintWord(fields[0]) {
-			continue
-		}
-
-		columns = append(columns, strings.TrimSuffix(fields[0], ","))
-	}
-
-	return columns
-}
-
-// addedColumns reads the columns an ALTER TABLE adds.
-//
-// It matches on the two words rather than on the statement, so it does not care
-// whether the ALTER names one column or five, and ADD CONSTRAINT lines fall out
-// because they do not begin with those two words.
-//
-// A column DROPPED by a later migration is deliberately not subtracted. The
-// audit would then report a column that no longer exists, the declaration would
-// be asked to account for it, and the test would fail loudly — which is the
-// safe direction. Subtracting silently is the direction that loses a column.
-func addedColumns(schema string) []string {
-	var columns []string
-
-	for _, line := range strings.Split(schema, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 || !strings.EqualFold(fields[0], "ADD") ||
-			!strings.EqualFold(fields[1], "COLUMN") {
-			continue
-		}
-
-		columns = append(columns, strings.TrimSuffix(fields[2], ","))
-	}
-
-	return columns
-}
-
-// isConstraintWord reports whether a line opens a table constraint rather than a
-// column. The CHECK entry is not decorative: this table writes two of them on
-// their own lines, and without it the audit would go looking for a column called
-// "CHECK".
-func isConstraintWord(word string) bool {
-	switch word {
-	case "CONSTRAINT", "CHECK", "PRIMARY", "UNIQUE", "FOREIGN", "EXCLUDE":
-		return true
-	default:
-		return false
-	}
 }

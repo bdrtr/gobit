@@ -10,6 +10,7 @@ import (
 	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/customer"
 	"github.com/bdrtr/gobit/internal/modules/customer/service"
+	"github.com/bdrtr/gobit/internal/schemaaudit"
 )
 
 // These tests need NO database either, and for the same reason the declaration
@@ -141,7 +142,7 @@ func TestTheModuleIsFoundAsADiscloser(t *testing.T) {
 // misspelled name in the other two produces a file that names a table nobody can
 // find, which sends an auditor looking for data that does not exist.
 func TestTheDisclosedTablesAreRealTables(t *testing.T) {
-	tables := tablesOf(t, readMigrations(t))
+	tables := schemaaudit.Schema(t, customer.New(nil).Migrations())
 
 	for _, name := range []string{service.TableCustomer, service.TableAddress, service.TableGroup} {
 		assert.Contains(t, tables, name, "%s is not created by the migration", name)

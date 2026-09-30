@@ -9,9 +9,6 @@
 package inventory_test
 
 import (
-	"io/fs"
-	"regexp"
-	"slices"
 	"strings"
 	"testing"
 	"unicode"
@@ -22,6 +19,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/personaldata"
 	"github.com/bdrtr/gobit/internal/modules/inventory"
+	"github.com/bdrtr/gobit/internal/schemaaudit"
 )
 
 // notPersonalColumns are the columns that hold nothing about a person, table by
@@ -50,9 +48,9 @@ import (
 //     living items, which is to say gobit uses it to tell one product from
 //     another, not one person from another; title and description, the two free
 //     text fields beside it, ARE declared.
-//   - requires_shipping, quantity and status are a boolean, a count and a
-//     CHECK-constrained enum: a sentence about somebody cannot land in any of
-//     them. inventory_movements.reason is the same shape as status — four
+//   - requires_shipping, quantity, status and a reservation's purpose are a
+//     boolean, a count and CHECK-constrained enums: a sentence about somebody
+//     cannot land in any of them. inventory_movements.reason is the same shape as status — four
 //     values, held to them by a CHECK — and delta and stocked_after are counts.
 //   - inventory_movements is exempt WHOLE, and it is the table where that is
 //     worth arguing rather than asserting. It is the ledger that explains the
@@ -60,7 +58,10 @@ import (
 //     operator's movement is recorded with its caller in audit_log, not here,
 //     and the other movements come from a flow with nobody behind them. Its
 //     only free field would have been an actor or a note, and it has neither —
-//     a row is two ids, a reservation id, an enum and two numbers.
+//     a row is ids (its item, its location, its reservation, and the order,
+//     cancellation or order line it moved for), an enum and two numbers. The
+//     reference and the line were added by ALTER statements this audit's own
+//     scanner never matched, and went unjudged until D190.
 //   - The timestamps describe the record's state and are true of the row whether
 //     or not anybody is behind it.
 var notPersonalColumns = map[string][]string{
@@ -76,11 +77,11 @@ var notPersonalColumns = map[string][]string{
 	},
 	"inventory_reservations": {
 		"id", "inventory_item_id", "location_id", "quantity", "line_item_id",
-		"status", "created_at", "updated_at",
+		"status", "created_at", "updated_at", "purpose",
 	},
 	"inventory_movements": {
 		"id", "inventory_item_id", "location_id", "reservation_id", "reason",
-		"delta", "stocked_after", "created_at",
+		"delta", "stocked_after", "created_at", "reference", "line_item_id",
 	},
 }
 
@@ -96,52 +97,8 @@ var notPersonalColumns = map[string][]string{
 func TestTheDeclarationCoversEveryPersonalColumn(t *testing.T) {
 	t.Parallel()
 
-	declared := map[string]bool{}
-	for _, holding := range inventory.New().PersonalData().Holdings {
-		key := holding.Table + "." + holding.Column
-		require.False(t, declared[key], "%s is declared twice", key)
-		declared[key] = true
-	}
-
-	schema := currentSchema(t)
-
-	for table, columns := range schema {
-		exempt, judged := notPersonalColumns[table]
-		require.True(t, judged,
-			"the migrations create %s and nobody has said whether it holds personal "+
-				"data. Add it to notPersonalColumns — every column of it if it holds "+
-				"nothing, the rest to Module.PersonalData.", table)
-
-		for _, column := range columns {
-			key := table + "." + column
-			if slices.Contains(exempt, column) {
-				assert.False(t, declared[key],
-					"%s is declared as personal data and is also listed as holding "+
-						"nothing; the two lists disagree about the same column", key)
-				continue
-			}
-
-			assert.True(t, declared[key],
-				"%s is in the migrations and NOT in the declaration.\n"+
-					"Either it holds something about a person — then it belongs in "+
-					"Module.PersonalData with a Why an embedder can repeat to that "+
-					"person — or it does not, and it belongs in notPersonalColumns "+
-					"with the reason written down.", key)
-			delete(declared, key)
-		}
-
-		for _, column := range exempt {
-			assert.Contains(t, columns, column,
-				"%s.%s is exempted from the declaration and is not in the schema; an "+
-					"exemption for a column that no longer exists is a judgement "+
-					"nobody has to make again", table, column)
-		}
-	}
-
-	assert.Empty(t, declared,
-		"these holdings name columns the migrations do not create; a declaration "+
-			"that points at a column nobody can find sends an auditor searching for "+
-			"data that is not there")
+	module := inventory.New()
+	schemaaudit.Cover(t, module.Migrations(), module.PersonalData(), notPersonalColumns)
 }
 
 // TestTheDeclarationLeavesTheHolderToTheCoordinator pins an EMPTY field.
@@ -204,10 +161,13 @@ func TestTheDeclarationDoesNotNeedRegister(t *testing.T) {
 
 // TestTheSchemaScannerFollowedEveryMigration is the audit auditing itself.
 //
-// The scanner reads CREATE TABLE blocks, and a scanner that stopped there would
-// be describing the schema of 000001 while the module ships two more: 000002
-// DROPS inventory_reservations.deleted_at, and 000003 replaces
-// stock_locations.deleted_at with closed_at (ADR 0055). This module has already
+// The scanner (internal/schemaaudit) replays every migration, and a scanner
+// that stopped at the CREATE TABLE blocks would be describing the schema of
+// 000001: 000002 DROPS inventory_reservations.deleted_at, and 000003 replaces
+// stock_locations.deleted_at with closed_at (ADR 0055). The scanner this audit
+// had before matched an ALTER TABLE only when the table's name and the action
+// shared a line, and so never judged three columns added by statements written
+// across lines (D190). This module has already
 // paid for exactly that mistake once: the audit that was supposed to catch the
 // never-written column matched writes by bare column name and could not see it
 // for as long as another table wrote a column of the same name (the reasoning
@@ -221,115 +181,20 @@ func TestTheDeclarationDoesNotNeedRegister(t *testing.T) {
 func TestTheSchemaScannerFollowedEveryMigration(t *testing.T) {
 	t.Parallel()
 
-	schema := currentSchema(t)
+	schema := schemaaudit.Schema(t, inventory.New().Migrations())
 
-	assert.NotContains(t, schema["inventory_reservations"], "deleted_at",
+	assert.False(t, schema["inventory_reservations"]["deleted_at"],
 		"000002 drops this column; a scanner that still sees it is auditing a "+
 			"schema the module does not ship")
-	assert.NotContains(t, schema["stock_locations"], "deleted_at",
+	assert.False(t, schema["stock_locations"]["deleted_at"],
 		"000003 drops this column; a scanner that still sees it is auditing a "+
 			"schema the module does not ship")
-	assert.Contains(t, schema["stock_locations"], "closed_at",
+	assert.True(t, schema["stock_locations"]["closed_at"],
 		"000003 adds the column that replaces it; without it the drop above reads "+
 			"as a table the scanner stopped following")
-	assert.Contains(t, schema["inventory_items"], "deleted_at",
+	assert.True(t, schema["inventory_items"]["deleted_at"],
 		"the drops applied to the wrong table, or to all of them")
-	assert.Contains(t, schema["inventory_reservations"], "description",
+	assert.True(t, schema["inventory_reservations"]["description"],
 		"the reservation columns stopped being read at all, which would make every "+
 			"assertion about them vacuously true")
-}
-
-// The statement forms the scanner understands. Anything else in a migration
-// makes it fail loudly instead of quietly describing a schema that has moved.
-var (
-	createTableRE = regexp.MustCompile(`(?m)^CREATE TABLE (?:IF NOT EXISTS )?([a-z_]+) \(`)
-	alterTableRE  = regexp.MustCompile(`(?m)^ALTER TABLE ([a-z_]+) ([^;]+);`)
-	dropColumnRE  = regexp.MustCompile(`^DROP COLUMN (?:IF EXISTS )?([a-z_]+)$`)
-	addColumnRE   = regexp.MustCompile(`^ADD COLUMN (?:IF NOT EXISTS )?([a-z_]+)\b`)
-)
-
-// currentSchema returns the module's tables and their columns as they stand
-// after every up migration has been applied, in file order.
-//
-// It reads through the same embedded file system the migrator uses, so this
-// audit cannot pass against a file the module does not actually ship. The parser
-// is deliberately small — this repository writes one column per line — and it is
-// built to fail rather than to shrug: a table whose block it cannot read yields
-// no columns and trips the caller's assertions, and an ALTER TABLE in a form it
-// does not know stops the test with a message saying so.
-func currentSchema(t *testing.T) map[string][]string {
-	t.Helper()
-
-	migrations := inventory.New().Migrations()
-
-	files, err := fs.Glob(migrations, "*.up.sql")
-	require.NoError(t, err)
-	require.NotEmpty(t, files, "the module ships no up migration; the scanner has gone blind")
-	slices.Sort(files)
-
-	schema := map[string][]string{}
-
-	for _, name := range files {
-		raw, err := fs.ReadFile(migrations, name)
-		require.NoError(t, err)
-		sql := string(raw)
-
-		for _, match := range createTableRE.FindAllStringSubmatchIndex(sql, -1) {
-			table := sql[match[2]:match[3]]
-			require.NotContains(t, schema, table, "%s: %s is created twice", name, table)
-			schema[table] = columnsOfBlock(t, sql[match[1]:])
-			require.NotEmpty(t, schema[table], "%s: no column was read out of %s", name, table)
-		}
-
-		for _, match := range alterTableRE.FindAllStringSubmatch(sql, -1) {
-			table, action := match[1], strings.TrimSpace(match[2])
-			require.Contains(t, schema, table, "%s: %s is altered before it is created", name, table)
-
-			switch {
-			case dropColumnRE.MatchString(action):
-				column := dropColumnRE.FindStringSubmatch(action)[1]
-				schema[table] = slices.DeleteFunc(schema[table],
-					func(existing string) bool { return existing == column })
-			case addColumnRE.MatchString(action):
-				schema[table] = append(schema[table], addColumnRE.FindStringSubmatch(action)[1])
-			case strings.HasPrefix(action, "ADD CONSTRAINT"),
-				strings.HasPrefix(action, "DROP CONSTRAINT"):
-				// A constraint changes what may be written, not where a person is.
-			default:
-				require.Fail(t, "the schema scanner cannot follow this migration",
-					"%s: %q is a statement this audit does not understand, so the "+
-						"columns it is about to check are not the columns the module "+
-						"ships. Teach the scanner before trusting the result.", name, action)
-			}
-		}
-	}
-
-	return schema
-}
-
-// columnsOfBlock returns the column names of one CREATE TABLE body.
-//
-// It reads from the opening parenthesis to the closing one, drops comment and
-// constraint lines, and takes the first word of what is left.
-func columnsOfBlock(t *testing.T, body string) []string {
-	t.Helper()
-
-	if end := strings.Index(body, "\n);"); end >= 0 {
-		body = body[:end]
-	}
-
-	var columns []string
-	for _, line := range strings.Split(body, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 || strings.HasPrefix(fields[0], "--") {
-			continue
-		}
-		switch fields[0] {
-		case "CONSTRAINT", "PRIMARY", "UNIQUE", "FOREIGN", "CHECK":
-			continue
-		}
-		columns = append(columns, strings.TrimSuffix(fields[0], ","))
-	}
-
-	return columns
 }

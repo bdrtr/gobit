@@ -2,15 +2,17 @@
 // columns its migrations leave.
 //
 // A declaration is written by hand and its schema grows by migration, and the
-// two came apart three times in one day: the auth audit read CREATE TABLE
+// two came apart four times in one day: the auth audit read CREATE TABLE
 // blocks alone and missed a column an ALTER TABLE added (D187), the order
-// module declared the tables it began with and none added after (D188), and
-// the invoice audit compared the declaration with a list read off its first
-// migration (D189). Each of those audits was the module's own copy of a
-// reader. This package is one reader and one comparison, starting from the
-// schema: every column the migrations leave is declared or judged to hold
-// nobody, never both, and every name on either side exists. The order and
-// invoice audits use it.
+// module declared the tables it began with and none added after (D188), the
+// invoice audit compared the declaration with a list read off its first
+// migration (D189), and the inventory audit's reader skipped every ALTER
+// written across lines (D190). Each was the module's own copy of a reader.
+// This package is one reader and one comparison, starting from the schema:
+// every column the migrations leave is declared or judged to hold nobody,
+// never both, and every name on either side exists. Every module audit under
+// internal/modules uses it; contrib/identity-passkey, a Go module of its own,
+// keeps its own reader.
 package schemaaudit
 
 import (
