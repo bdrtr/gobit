@@ -227,6 +227,14 @@ func fromTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }
 
+// fromTimePtr turns an optional moment into a nullable timestamp.
+func fromTimePtr(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return fromTime(*t)
+}
+
 // nullString boş dizeyi SQL NULL'a çevirir.
 func nullString(s string) *string {
 	if s == "" {

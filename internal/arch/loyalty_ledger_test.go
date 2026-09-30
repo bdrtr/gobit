@@ -79,13 +79,14 @@ type ledgerDoor struct {
 // spends it (ADR 0208). The issue's door is issueGiftCard, which both an
 // operator's issue and a sale's call (ADR 0210); the chain ends there. Its
 // second door is DisableGiftCard, the operator's close, which voids what the
-// card held (ADR 0213).
+// card held (ADR 0213). The credit ledger's second door is ExpireStoreCredit,
+// which takes back what expired credit still holds (ADR 0258).
 var paymentLedgerChokePoints = map[string]ledgerDoor{
 	"InsertLoyaltyEntry":     {onlyFrom: "AppendLoyaltyEntry"},
 	"AppendLoyaltyEntry":     {onlyFrom: "earnLoyaltyPoints", orTheTender: "loyalty_points"},
 	"earnLoyaltyPoints":      {onlyFrom: "writeCollectionTotals"},
 	"InsertStoreCreditEntry": {onlyFrom: "AppendStoreCreditEntry"},
-	"AppendStoreCreditEntry": {onlyFrom: "IssueCredit", orTheTender: "store_credit"},
+	"AppendStoreCreditEntry": {onlyFrom: "IssueCredit", andFrom: "ExpireStoreCredit", orTheTender: "store_credit"},
 	"InsertGiftCardEntry":    {onlyFrom: "AppendGiftCardEntry"},
 	"AppendGiftCardEntry":    {onlyFrom: "issueGiftCard", andFrom: "DisableGiftCard", orTheTender: "gift_card"},
 }

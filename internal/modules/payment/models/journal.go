@@ -60,6 +60,9 @@ const (
 	JournalRefund JournalKind = "refund"
 	// JournalStoreCreditIssue is an issue row of the store credit ledger.
 	JournalStoreCreditIssue JournalKind = "store_credit_issue"
+	// JournalStoreCreditExpire is an expire row of it: credit the shop gave
+	// and no longer owes (ADR 0258).
+	JournalStoreCreditExpire JournalKind = "store_credit_expire" //nolint:gosec // G101: a journal kind, not a credential
 	// JournalLoyaltyEarn is an earn row of the loyalty ledger.
 	JournalLoyaltyEarn JournalKind = "loyalty_earn"
 	// JournalLoyaltyReverse is a reverse row of the loyalty ledger.

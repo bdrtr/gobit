@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
@@ -63,7 +64,13 @@ type IssueCreditInput struct {
 	// Reference is the identifier of the operator's own record (a ticket, a
 	// return); it may be empty.
 	Reference string
+	// ExpiresAt is when the credit expires; nil for credit that does not. It
+	// has to be in the future (ADR 0258).
+	ExpiresAt *time.Time
 }
+
+// ReasonCreditExpired is the reason an expire row carries.
+const ReasonCreditExpired = "the credit's moment came"
 
 // IssueCredit puts store credit on a customer's account and returns the new row.
 //
@@ -98,6 +105,16 @@ func (s *Service) IssueCredit(
 				"if it is not in the record the moment it is asked")
 	}
 
+	var expiresAt *time.Time
+	if in.ExpiresAt != nil {
+		at := in.ExpiresAt.UTC()
+		if !at.After(time.Now()) {
+			return models.StoreCreditEntry{}, errors.Invalid(CodeStoreCreditInvalidInput,
+				"the credit's moment has to be in the future, %s given", at.Format(time.RFC3339))
+		}
+		expiresAt = &at
+	}
+
 	entry, err := s.store.AppendStoreCreditEntry(ctx, models.StoreCreditEntry{
 		ID:           models.NewStoreCreditEntryID(),
 		CustomerID:   customerID,
@@ -106,6 +123,7 @@ func (s *Service) IssueCredit(
 		Kind:         models.StoreCreditIssue,
 		Reference:    strings.TrimSpace(in.Reference),
 		Reason:       reason,
+		ExpiresAt:    expiresAt,
 	})
 	if err != nil {
 		return models.StoreCreditEntry{}, err
@@ -174,4 +192,66 @@ func (s *Service) ListStoreCredit(
 
 	return s.store.ListStoreCreditEntries(ctx, customerID, currency,
 		page.Limit, page.Offset)
+}
+
+// ExpireStoreCredit takes back what expired store credit still holds, for at
+// most limit balances, and reports how many rows it wrote (ADR 0258).
+//
+// Each balance is decided under the lock the tenders take to spend it, so a
+// checkout either held its money before the expiry read the figures, and that
+// money is not taken, or it comes after and finds the expiry already written.
+// The amount is a target the figures compute, not a difference from a count
+// kept anywhere: a balance already settled is written nothing, and money a
+// canceled session gives back after its credit expired is taken on the next
+// run.
+func (s *Service) ExpireStoreCredit(ctx context.Context, limit int64) (int, error) {
+	if limit <= 0 || limit > MaxLimit {
+		return 0, errors.Invalid(CodeStoreCreditInvalidInput,
+			"the expiry pass reads between 1 and %d balances, %d asked", MaxLimit, limit)
+	}
+
+	at := time.Now().UTC()
+	due, err := s.store.StoreCreditExpiryDue(ctx, at, limit)
+	if err != nil {
+		return 0, err
+	}
+
+	written := 0
+	for _, balance := range due {
+		err := s.store.WithTx(ctx, func(ctx context.Context) error {
+			if err := s.store.LockStoreCreditBalance(ctx, balance.CustomerID, balance.CurrencyCode); err != nil {
+				return err
+			}
+			figures, err := s.store.StoreCreditExpiryFigures(ctx, balance, at)
+			if err != nil {
+				return err
+			}
+			amount := figures.Due()
+			if amount == 0 {
+				return nil
+			}
+			entry, err := s.store.AppendStoreCreditEntry(ctx, models.StoreCreditEntry{
+				ID:           models.NewStoreCreditEntryID(),
+				CustomerID:   balance.CustomerID,
+				CurrencyCode: balance.CurrencyCode,
+				Amount:       -amount,
+				Kind:         models.StoreCreditExpire,
+				Reason:       ReasonCreditExpired,
+			})
+			if err != nil {
+				return err
+			}
+			written++
+			s.log.InfoContext(ctx, "store credit expired",
+				"customer", balance.CustomerID, "amount", amount,
+				"currency", balance.CurrencyCode, "entry", entry.ID)
+
+			return nil
+		})
+		if err != nil {
+			return written, err
+		}
+	}
+
+	return written, nil
 }

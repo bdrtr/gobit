@@ -40,6 +40,9 @@ type issueCreditRequest struct {
 	// Reference is the identifier of the operator's own record (a ticket, a
 	// return); it may be empty.
 	Reference string `json:"reference"`
+	// ExpiresAt is when the credit expires; left out, it does not. It has to
+	// be in the future (ADR 0258).
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 // storeCreditEntryDTO is the outward shape of a ledger row.
@@ -50,11 +53,14 @@ type storeCreditEntryDTO struct {
 	// Amount is SIGNED: a hold is negative, an issue and the returns are
 	// positive. The balance is the sum of these fields and a client can read it
 	// the same way.
-	Amount    int64     `json:"amount"`
-	Kind      string    `json:"kind"`
-	Reference string    `json:"reference,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	Amount    int64  `json:"amount"`
+	Kind      string `json:"kind"`
+	Reference string `json:"reference,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	// ExpiresAt is when an issue's credit expires; absent when it does not
+	// (ADR 0258).
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 // storeCreditBalanceDTO is the body of the balance answer.
@@ -86,6 +92,7 @@ func (h *Handler) issueStoreCredit(w http.ResponseWriter, r *http.Request) {
 		Amount:       body.Amount,
 		Reason:       body.Reason,
 		Reference:    body.Reference,
+		ExpiresAt:    body.ExpiresAt,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
@@ -171,6 +178,7 @@ func toStoreCreditEntryDTO(entry models.StoreCreditEntry) storeCreditEntryDTO {
 		Kind:         entry.Kind.String(),
 		Reference:    entry.Reference,
 		Reason:       entry.Reason,
+		ExpiresAt:    entry.ExpiresAt,
 		CreatedAt:    entry.CreatedAt,
 	}
 }

@@ -386,9 +386,9 @@ func (q *Queries) JournalRefunds(ctx context.Context, arg JournalRefundsParams) 
 }
 
 const journalStoreCreditIssues = `-- name: JournalStoreCreditIssues :many
-SELECT id, customer_id, currency_code, amount, created_at
+SELECT id, customer_id, currency_code, amount, kind, created_at
 FROM payment_store_credit_entries
-WHERE kind = 'issue'
+WHERE kind IN ('issue', 'expire')
   AND created_at >= $1 AND created_at < $2
   AND ($3::text IS NULL OR currency_code = $3::text)
 ORDER BY created_at, id
@@ -407,9 +407,12 @@ type JournalStoreCreditIssuesRow struct {
 	CustomerID   string
 	CurrencyCode string
 	Amount       int64
+	Kind         string
 	CreatedAt    pgtype.Timestamptz
 }
 
+// JournalStoreCreditIssues reads the store credit the shop gave, and what an
+// expiry took back of it (ADR 0258); the kind tells the two apart.
 func (q *Queries) JournalStoreCreditIssues(ctx context.Context, arg JournalStoreCreditIssuesParams) ([]JournalStoreCreditIssuesRow, error) {
 	rows, err := q.db.Query(ctx, journalStoreCreditIssues,
 		arg.FromAt,
@@ -429,6 +432,7 @@ func (q *Queries) JournalStoreCreditIssues(ctx context.Context, arg JournalStore
 			&i.CustomerID,
 			&i.CurrencyCode,
 			&i.Amount,
+			&i.Kind,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

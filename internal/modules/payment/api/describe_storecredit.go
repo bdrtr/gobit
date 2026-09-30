@@ -24,7 +24,12 @@ func describeStoreCredits(d *openapi.Doc) {
 			"The currency is normalized to upper case and the balance is held PER " +
 			"CURRENCY: credit in one currency is not credit in another, because " +
 			"converting silently would hand the customer an amount other than the " +
-			"one they were promised. " + amountNote,
+			"one they were promised. " +
+			"\n\n" +
+			"expires_at, when given, is the moment the credit stops paying; it has to be " +
+			"in the future. From that moment the balance no longer counts what the credit " +
+			"still holds, and a job writes an expire row that takes it back; credit is " +
+			"taken to be spent soonest-expiring first (ADR 0258). " + amountNote,
 		RequestBody: d.RequestBody(issueCreditRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The ledger row that was written",
@@ -37,7 +42,8 @@ func describeStoreCredits(d *openapi.Doc) {
 		Description: "The balance is the ledger's SUM, which is to say with open holds " +
 			"already subtracted: while one of the customer's carts is waiting at the " +
 			"payment step the balance looks that much lower, and that is the right " +
-			"answer — the money is promised. " +
+			"answer — the money is promised. Credit whose moment has come is not " +
+			"counted, even before the expiry job writes its row (ADR 0258). " +
 			"\n\n" +
 			"A customer with no rows gets zero rather than a 404: somebody who was " +
 			"never given credit and somebody who spent all of it hold the same amount " +

@@ -13,23 +13,62 @@
 -- "a money record is kept").
 -- name: InsertStoreCreditEntry :one
 INSERT INTO payment_store_credit_entries (
-    id, customer_id, currency_code, amount, kind, reference, reason
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    id, customer_id, currency_code, amount, kind, reference, reason, expires_at
+) VALUES ($1, $2, $3, $4, $5, $6, $7, sqlc.narg('expires_at'))
 RETURNING *;
 
--- StoreCreditBalance sums one customer's entries in one currency.
+-- StoreCreditExpiryFigures reads the four sums the expiry of one balance is
+-- decided from (ADR 0258), at the given moment:
 --
--- COALESCE because a customer with no entries has no rows, and "no rows" is a
--- balance of zero rather than an absence: a shop that has never given somebody
--- credit and a shop that gave and took it back are the same amount of money.
+--   balance    every row;
+--   unexpired  the issues not yet expired, and the refunds, which never expire;
+--   expired    the issues whose moment has come;
+--   written    what expire rows have already taken back, as a positive amount.
 --
--- The lock that makes this sum safe to act on is not a query in this file. A sum
--- has no row to lock, so the tender takes an advisory lock keyed on the customer
--- and the currency before reading it (repository/ledgerlock.go, D118).
--- name: StoreCreditBalance :one
-SELECT COALESCE(SUM(amount), 0)::bigint AS balance
+-- Credit is taken to be spent soonest-expiring first, so the balance is made of
+-- the latest money: whatever of it the unexpired sources cannot account for is
+-- expired credit, up to what the expired issues gave and has not been taken.
+-- The caller holds the balance's lock (LockStoreCreditBalance) while it reads
+-- these and writes the row they decide.
+-- name: StoreCreditExpiryFigures :one
+SELECT
+    COALESCE(SUM(amount), 0)::bigint AS balance,
+    COALESCE(SUM(amount) FILTER (WHERE kind = 'refund'
+        OR (kind = 'issue' AND (expires_at IS NULL OR expires_at > sqlc.arg('at')::timestamptz))), 0)::bigint AS unexpired,
+    COALESCE(SUM(amount) FILTER (WHERE kind = 'issue'
+        AND expires_at <= sqlc.arg('at')::timestamptz), 0)::bigint AS expired,
+    COALESCE(-SUM(amount) FILTER (WHERE kind = 'expire'), 0)::bigint AS written
 FROM payment_store_credit_entries
-WHERE customer_id = $1 AND currency_code = $2;
+WHERE customer_id = sqlc.arg('customer_id') AND currency_code = sqlc.arg('currency_code');
+
+-- StoreCreditExpiryDue lists the balances an expiry is owed from, at the given
+-- moment, at most row_limit of them: those holding an expired issue whose
+-- figures still leave something to take back (StoreCreditExpiryFigures). The
+-- inner read walks the partial index of expiring issues, so a balance that
+-- never had one is never summed.
+-- name: StoreCreditExpiryDue :many
+WITH candidates AS (
+    SELECT DISTINCT customer_id, currency_code
+    FROM payment_store_credit_entries
+    WHERE kind = 'issue' AND expires_at IS NOT NULL
+      AND expires_at <= sqlc.arg('at')::timestamptz
+), figures AS (
+    SELECT e.customer_id, e.currency_code,
+        SUM(e.amount) AS balance,
+        COALESCE(SUM(e.amount) FILTER (WHERE e.kind = 'refund'
+            OR (e.kind = 'issue' AND (e.expires_at IS NULL OR e.expires_at > sqlc.arg('at')::timestamptz))), 0) AS unexpired,
+        COALESCE(SUM(e.amount) FILTER (WHERE e.kind = 'issue'
+            AND e.expires_at <= sqlc.arg('at')::timestamptz), 0) AS expired,
+        COALESCE(-SUM(e.amount) FILTER (WHERE e.kind = 'expire'), 0) AS written
+    FROM payment_store_credit_entries e
+    JOIN candidates c ON c.customer_id = e.customer_id AND c.currency_code = e.currency_code
+    GROUP BY e.customer_id, e.currency_code
+)
+SELECT customer_id, currency_code
+FROM figures
+WHERE LEAST(GREATEST(balance - unexpired, 0), expired - written) > 0
+ORDER BY customer_id, currency_code
+LIMIT sqlc.arg('row_limit')::bigint;
 
 -- ListStoreCreditEntries returns one customer's history, newest first.
 -- name: ListStoreCreditEntries :many

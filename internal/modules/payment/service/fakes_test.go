@@ -60,6 +60,8 @@ type fakeStore struct {
 	// Gerçek tabloda bakiye satırların TOPLAMI; sahte de öyle tutuyor — tek bir
 	// sayı tutsaydı, blokajı eksi yazan bir hata testlerde görünmezdi.
 	credit map[string][]models.StoreCreditEntry
+	// creditLocks are the balances LockStoreCreditBalance was asked for.
+	creditLocks []string
 
 	// loyalty puan defteridir ve müşteri+para birimi başına tutuluyor (ADR 0164).
 	loyalty map[string][]models.LoyaltyEntry
@@ -890,20 +892,86 @@ func (f *fakeStore) AppendStoreCreditEntry(
 	return entry, nil
 }
 
-// StoreCreditBalance satırların toplamını döner.
+// StoreCreditBalance answers what can be spent, the way the statement does
+// (ADR 0258): the sum less what expired credit still holds.
 func (f *fakeStore) StoreCreditBalance(
 	_ context.Context, customerID, currencyCode string,
 ) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	var balance int64
-	entries := f.credit[creditKey(customerID, currencyCode)]
+	figures := creditFigures(f.credit[creditKey(customerID, currencyCode)], time.Now())
+
+	return figures.Balance - figures.Due(), nil
+}
+
+// creditFigures computes a balance's expiry figures at a moment, by the rule
+// StoreCreditExpiryFigures states in SQL.
+func creditFigures(entries []models.StoreCreditEntry, at time.Time) models.StoreCreditExpiryFigures {
+	var figures models.StoreCreditExpiryFigures
 	for i := range entries {
-		balance += entries[i].Amount
+		entry := &entries[i]
+		figures.Balance += entry.Amount
+		expired := entry.ExpiresAt != nil && !entry.ExpiresAt.After(at)
+		switch {
+		case entry.Kind == models.StoreCreditRefund,
+			entry.Kind == models.StoreCreditIssue && !expired:
+			figures.Unexpired += entry.Amount
+		case entry.Kind == models.StoreCreditIssue:
+			figures.Expired += entry.Amount
+		case entry.Kind == models.StoreCreditExpire:
+			figures.Written -= entry.Amount
+		}
 	}
 
-	return balance, nil
+	return figures
+}
+
+// LockStoreCreditBalance refuses outside a transaction and records the lock.
+func (f *fakeStore) LockStoreCreditBalance(ctx context.Context, customerID, currencyCode string) error {
+	if ctx.Value(txMarkerKey{}) == nil {
+		return errors.New("LockStoreCreditBalance called outside a transaction")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.creditLocks = append(f.creditLocks, creditKey(customerID, currencyCode))
+
+	return nil
+}
+
+// StoreCreditExpiryDue lists the balances holding an expired issue whose
+// figures leave something to take back, in key order.
+func (f *fakeStore) StoreCreditExpiryDue(
+	_ context.Context, at time.Time, limit int64,
+) ([]models.StoreCreditBalanceRef, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var out []models.StoreCreditBalanceRef
+	for _, key := range slices.Sorted(maps.Keys(f.credit)) {
+		entries := f.credit[key]
+		if len(entries) == 0 || creditFigures(entries, at).Due() == 0 {
+			continue
+		}
+		out = append(out, models.StoreCreditBalanceRef{
+			CustomerID: entries[0].CustomerID, CurrencyCode: entries[0].CurrencyCode,
+		})
+		if int64(len(out)) == limit {
+			break
+		}
+	}
+
+	return out, nil
+}
+
+// StoreCreditExpiryFigures computes one balance's figures.
+func (f *fakeStore) StoreCreditExpiryFigures(
+	_ context.Context, balance models.StoreCreditBalanceRef, at time.Time,
+) (models.StoreCreditExpiryFigures, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return creditFigures(f.credit[creditKey(balance.CustomerID, balance.CurrencyCode)], at), nil
 }
 
 // ListStoreCreditEntries geçmişi yeniden eskiye döner.

@@ -12,6 +12,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Store credit can expire** (ADR 0258). **For operators:**
+  `POST /admin/v1/store-credits` takes `expires_at`. From that moment the
+  balance no longer counts what the credit still holds, and the
+  `store-credit-expiry` job (every 15 minutes) writes an `expire` row that takes
+  it back. Spending draws on the soonest-expiring credit first, money a session
+  holds is not taken, and a refund into credit never expires. The payment
+  journal books an expiry as `store_credit_expire`. Migration: payment `000013`.
+
 - **A secret is compared in constant time, and a gate says so** (ADR 0257).
   **For contributors:** in a file that imports `crypto/hmac`, `crypto/subtle`,
   a SHA package, `crypto/rand` or argon2, comparing two values with `==` or

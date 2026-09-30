@@ -137,6 +137,12 @@ func journalEntry(m *models.JournalMovement) (models.JournalEntry, error) {
 	case models.JournalStoreCreditIssue:
 		debit = models.JournalLine{Account: models.AccountStoreCreditGranted}
 		credit = models.JournalLine{Account: models.AccountStoreCredit, CustomerID: m.CustomerID}
+	case models.JournalStoreCreditExpire:
+		// The ledger stores an expiry as the negative of what it took back; the
+		// shop no longer owes it, and what the grant cost comes back (ADR 0258).
+		amount = -m.Amount
+		debit = models.JournalLine{Account: models.AccountStoreCredit, CustomerID: m.CustomerID}
+		credit = models.JournalLine{Account: models.AccountStoreCreditGranted}
 	case models.JournalLoyaltyEarn:
 		debit = models.JournalLine{Account: models.AccountLoyaltyGranted}
 		credit = models.JournalLine{Account: models.AccountLoyalty, CustomerID: m.CustomerID}

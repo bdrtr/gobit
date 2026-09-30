@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -33,6 +34,7 @@ func (r *Repository) AppendStoreCreditEntry(
 		Kind:         entry.Kind.String(),
 		Reference:    entry.Reference,
 		Reason:       entry.Reason,
+		ExpiresAt:    fromTimePtr(entry.ExpiresAt),
 	})
 	if err != nil {
 		return models.StoreCreditEntry{}, classify(err, codeQueryFailed,
@@ -50,15 +52,18 @@ func (r *Repository) AppendStoreCreditEntry(
 func (r *Repository) StoreCreditBalance(
 	ctx context.Context, customerID, currencyCode string,
 ) (int64, error) {
-	balance, err := r.queries(ctx).StoreCreditBalance(ctx, paymentdb.StoreCreditBalanceParams{
-		CustomerID:   customerID,
-		CurrencyCode: currencyCode,
-	})
+	// What can be spent: the sum less what expired credit still holds and no
+	// expire row has taken back yet (ADR 0258). The rule is the one the expiry
+	// writes by, read from the same figures, so the balance and the expiry
+	// cannot count expired credit two ways.
+	figures, err := r.StoreCreditExpiryFigures(ctx, models.StoreCreditBalanceRef{
+		CustomerID: customerID, CurrencyCode: currencyCode,
+	}, time.Now())
 	if err != nil {
 		return 0, classify(err, codeQueryFailed, "the store credit balance could not be read")
 	}
 
-	return balance, nil
+	return figures.Balance - figures.Due(), nil
 }
 
 // ListStoreCreditEntries returns a customer's history, newest first.
@@ -208,8 +213,49 @@ func toStoreCreditEntry(row paymentdb.PaymentStoreCreditEntry) models.StoreCredi
 		Kind:         models.StoreCreditKind(row.Kind),
 		Reference:    row.Reference,
 		Reason:       row.Reason,
+		ExpiresAt:    toTimePtr(row.ExpiresAt),
 		CreatedAt:    toTime(row.CreatedAt),
 	}
+}
+
+// StoreCreditExpiryDue lists at most limit balances an expiry is owed from at
+// the given moment (ADR 0258).
+func (r *Repository) StoreCreditExpiryDue(
+	ctx context.Context, at time.Time, limit int64,
+) ([]models.StoreCreditBalanceRef, error) {
+	rows, err := r.queries(ctx).StoreCreditExpiryDue(ctx, paymentdb.StoreCreditExpiryDueParams{
+		At: fromTime(at), RowLimit: limit,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the store credit balances due to expire could not be read")
+	}
+
+	out := make([]models.StoreCreditBalanceRef, 0, len(rows))
+	for i := range rows {
+		out = append(out, models.StoreCreditBalanceRef{
+			CustomerID: rows[i].CustomerID, CurrencyCode: rows[i].CurrencyCode,
+		})
+	}
+
+	return out, nil
+}
+
+// StoreCreditExpiryFigures reads the sums one balance's expiry is decided from
+// at the given moment. The caller holds the balance's lock.
+func (r *Repository) StoreCreditExpiryFigures(
+	ctx context.Context, balance models.StoreCreditBalanceRef, at time.Time,
+) (models.StoreCreditExpiryFigures, error) {
+	row, err := r.queries(ctx).StoreCreditExpiryFigures(ctx, paymentdb.StoreCreditExpiryFiguresParams{
+		At: fromTime(at), CustomerID: balance.CustomerID, CurrencyCode: balance.CurrencyCode,
+	})
+	if err != nil {
+		return models.StoreCreditExpiryFigures{}, classify(err, codeQueryFailed,
+			"the store credit expiry figures could not be read")
+	}
+
+	return models.StoreCreditExpiryFigures{
+		Balance: row.Balance, Unexpired: row.Unexpired, Expired: row.Expired, Written: row.Written,
+	}, nil
 }
 
 // toStoreCreditSession turns a database row into the domain model.

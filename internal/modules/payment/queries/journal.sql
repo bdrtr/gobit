@@ -29,10 +29,12 @@ WHERE r.created_at >= sqlc.arg('from_at') AND r.created_at < sqlc.arg('to_at')
 ORDER BY r.created_at, r.id
 LIMIT sqlc.arg('row_limit');
 
+-- JournalStoreCreditIssues reads the store credit the shop gave, and what an
+-- expiry took back of it (ADR 0258); the kind tells the two apart.
 -- name: JournalStoreCreditIssues :many
-SELECT id, customer_id, currency_code, amount, created_at
+SELECT id, customer_id, currency_code, amount, kind, created_at
 FROM payment_store_credit_entries
-WHERE kind = 'issue'
+WHERE kind IN ('issue', 'expire')
   AND created_at >= sqlc.arg('from_at') AND created_at < sqlc.arg('to_at')
   AND (sqlc.narg('currency_code')::text IS NULL OR currency_code = sqlc.narg('currency_code')::text)
 ORDER BY created_at, id

@@ -33,6 +33,7 @@ import (
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
 	"github.com/bdrtr/gobit/internal/jobs/scheduledpublish"
 	"github.com/bdrtr/gobit/internal/jobs/stockalert"
+	"github.com/bdrtr/gobit/internal/jobs/storecreditexpiry"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 	"github.com/bdrtr/gobit/internal/modules/product"
@@ -60,6 +61,12 @@ type paymentReconciler interface {
 // (ADR 0214).
 type giftCardExpirer interface {
 	ExpireGiftCards(ctx context.Context, limit int64) (closed, held int, err error)
+}
+
+// storeCreditExpirer is the payment service as the store credit expiry needs
+// it (ADR 0258).
+type storeCreditExpirer interface {
+	ExpireStoreCredit(ctx context.Context, limit int64) (int, error)
 }
 
 // productPublisher is the product service as the scheduled publisher needs it.
@@ -203,6 +210,17 @@ func registerJobs(
 			"the job runner could not resolve the payment service (%q)", payment.ServiceName)
 	}
 	if err := registry.Add(giftcardexpiry.Definition(expirer, log)); err != nil {
+		return nil, err
+	}
+	// The store credit expiry takes back what expired credit still holds
+	// (ADR 0258). It is registered unconditionally too: with no credit given a
+	// moment it takes nothing back, and says so.
+	creditExpirer, err := container.Resolve[storeCreditExpirer](c, payment.ServiceName)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"the job runner could not resolve the payment service (%q)", payment.ServiceName)
+	}
+	if err := registry.Add(storecreditexpiry.Definition(creditExpirer, log)); err != nil {
 		return nil, err
 	}
 	// The stock alert job mails the customers whose marked wishlist variant is

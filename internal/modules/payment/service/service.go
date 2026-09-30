@@ -175,9 +175,20 @@ type Store interface {
 	// StoreCreditBalance sums one customer's entries in one currency; a customer
 	// with no entries is zero rather than an absence.
 	StoreCreditBalance(ctx context.Context, customerID, currencyCode string) (int64, error)
-	// The balance LOCKS are not here. The service never reads a balance to act
-	// on it — the tenders do, through their own narrow stores — and a method the
-	// service declares and never calls is a door it holds open for nobody.
+	// LockStoreCreditBalance locks one customer's credit balance in one
+	// currency for the transaction. The tenders take it to spend, and the
+	// expiry takes it to take expired credit back (ADR 0258): both read the
+	// balance and act on it, so they serialize on the one lock. The loyalty
+	// balance's lock is not here; the service never acts on that balance.
+	LockStoreCreditBalance(ctx context.Context, customerID, currencyCode string) error
+	// StoreCreditExpiryDue lists at most limit balances an expiry is owed
+	// from at the given moment.
+	StoreCreditExpiryDue(ctx context.Context, at time.Time, limit int64) ([]models.StoreCreditBalanceRef, error)
+	// StoreCreditExpiryFigures reads the sums one balance's expiry is decided
+	// from; the caller holds the balance's lock.
+	StoreCreditExpiryFigures(
+		ctx context.Context, balance models.StoreCreditBalanceRef, at time.Time,
+	) (models.StoreCreditExpiryFigures, error)
 
 	// ListStoreCreditEntries pages a customer's history, newest first.
 	ListStoreCreditEntries(

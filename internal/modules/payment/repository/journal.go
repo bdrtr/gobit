@@ -83,8 +83,12 @@ func (r *Repository) JournalMovements(
 	}
 	for i := range issues {
 		row := &issues[i]
+		kind := models.JournalStoreCreditIssue
+		if models.StoreCreditKind(row.Kind) == models.StoreCreditExpire {
+			kind = models.JournalStoreCreditExpire
+		}
 		out = append(out, models.JournalMovement{
-			ID: row.ID, Kind: models.JournalStoreCreditIssue, OccurredAt: toTime(row.CreatedAt),
+			ID: row.ID, Kind: kind, OccurredAt: toTime(row.CreatedAt),
 			CurrencyCode: row.CurrencyCode, Amount: row.Amount, CustomerID: row.CustomerID,
 		})
 	}

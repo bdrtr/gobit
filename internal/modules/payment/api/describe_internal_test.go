@@ -304,7 +304,7 @@ func anlatilanUclar() []ucBeklentisi {
 		// Mağaza kredisinin üç ucu (ADR 0152).
 		{
 			metod: http.MethodPost, yol: pathAdminStoreCredits, durum: "201",
-			istek: issueCreditRequest{}, yanit: doluKrediSatiri(),
+			istek: issueCreditRequest{ExpiresAt: doluKrediSatiri().ExpiresAt}, yanit: doluKrediSatiri(),
 		},
 		{
 			metod: http.MethodGet, yol: pathAdminStoreCredits, durum: "200",
@@ -386,9 +386,11 @@ func doluPuanSatiri() loyaltyEntryDTO {
 
 // doluKrediSatiri omitempty alanları da yazılan bir defter satırı üretir.
 func doluKrediSatiri() storeCreditEntryDTO {
+	expires := time.Now().UTC().Add(30 * 24 * time.Hour)
 	return storeCreditEntryDTO{
 		Reference: "ret_1",
 		Reason:    "iade yerine kredi",
+		ExpiresAt: &expires,
 		CreatedAt: time.Now().UTC(),
 	}
 }

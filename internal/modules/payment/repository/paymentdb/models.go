@@ -142,6 +142,7 @@ type PaymentStoreCreditEntry struct {
 	Reference    string
 	Reason       string
 	CreatedAt    pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
 }
 
 type PaymentStoreCreditSession struct {

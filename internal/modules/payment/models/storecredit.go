@@ -13,7 +13,7 @@ import "time"
 // unreadable, which is the half a ledger exists for.
 type StoreCreditKind string
 
-// The four things that can happen to store credit.
+// The five things that can happen to store credit.
 const (
 	// StoreCreditIssue is an operator giving the customer money; the amount is
 	// positive.
@@ -29,12 +29,15 @@ const (
 	StoreCreditRelease StoreCreditKind = "release"
 	// StoreCreditRefund is a captured payment repaid into the credit; positive.
 	StoreCreditRefund StoreCreditKind = "refund"
+	// StoreCreditExpire is what expired credit still held, taken back; the
+	// amount is NEGATIVE (ADR 0258).
+	StoreCreditExpire StoreCreditKind = "expire"
 )
 
-// Valid reports whether the kind is one of the four.
+// Valid reports whether the kind is one of the five.
 func (k StoreCreditKind) Valid() bool {
 	switch k {
-	case StoreCreditIssue, StoreCreditHold, StoreCreditRelease, StoreCreditRefund:
+	case StoreCreditIssue, StoreCreditHold, StoreCreditRelease, StoreCreditRefund, StoreCreditExpire:
 		return true
 	default:
 		return false
@@ -67,6 +70,41 @@ type StoreCreditEntry struct {
 	// Reason is why an operator issued the credit — the half a balance column
 	// cannot keep.
 	Reason string
+	// ExpiresAt is when an issue's credit expires; nil for credit that does
+	// not, and for every other kind (ADR 0258).
+	ExpiresAt *time.Time
 	// CreatedAt is when it happened (UTC).
 	CreatedAt time.Time
+}
+
+// StoreCreditBalanceRef names one balance: a customer's credit in a currency.
+type StoreCreditBalanceRef struct {
+	CustomerID   string
+	CurrencyCode string
+}
+
+// StoreCreditExpiryFigures are the sums the expiry of one balance is decided
+// from (ADR 0258), all in minor units.
+type StoreCreditExpiryFigures struct {
+	// Balance is every row's sum.
+	Balance int64
+	// Unexpired is the issues not yet expired and the refunds, which never do.
+	Unexpired int64
+	// Expired is the issues whose moment has come.
+	Expired int64
+	// Written is what expire rows have already taken back, as a positive
+	// amount.
+	Written int64
+}
+
+// Due is what an expiry takes back now, never negative.
+//
+// Credit is taken to be spent soonest-expiring first, so the balance is made
+// of the latest money: what of it the unexpired sources cannot account for is
+// expired credit, up to what the expired issues gave and has not been taken
+// back. It is a TARGET computed from the figures, so running it again after
+// its row is written answers zero, and a hold released after the expiry is
+// taken back by the next run.
+func (f StoreCreditExpiryFigures) Due() int64 {
+	return max(min(f.Balance-f.Unexpired, f.Expired-f.Written), 0)
 }

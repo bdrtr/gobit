@@ -624,11 +624,9 @@ past and is not corrected retroactively.
   shopper ever seeing the total — but a shop whose callers cannot open a link is
   not served by this.
 
-- **Store credit does not expire and names no cause.** A credit issued today is
-  spendable forever, and `reference` is free text, so "this is the compensation
-  for return R-19" is a convention rather than a link. Expiry is a scheduled job
-  writing negative rows, and what it must not do is race a checkout holding the
-  same money.
+- **Store credit names no cause.** `reference` is free text, so "this is the
+  compensation for return R-19" is a convention rather than a link. Credit can
+  expire since [ADR 0258](adr/0258-store-credit-can-expire.md).
 
 - **An installation that trusts an unproven customer claim has neither store
   credit nor loyalty points as a tender.** With
