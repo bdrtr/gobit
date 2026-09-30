@@ -28,7 +28,7 @@ import (
 // from the module's own declaration rather than from this file — see
 // service.PersonalDataHoldings.
 //
-// The four child reads take an ARRAY of order ids for the reason
+// The child reads take an ARRAY of order ids for the reason
 // OrderAddressesByOrderIDs does: a person with two hundred orders is two hundred
 // round trips otherwise, and the person with the most orders is the one whose
 // dossier costs the most to build.
@@ -39,7 +39,7 @@ import (
 // It takes NO lock and opens no transaction of its own, which is the difference
 // from [Repository.OrdersForErasure] that matters most: this read answers a
 // question a person asked and must not make the shop's checkout wait behind it.
-// A caller that needs the six reads of a dossier to agree with each other wraps
+// A caller that needs the reads of a dossier to agree with each other wraps
 // them in [Repository.WithReadTx], which gives one snapshot and still takes
 // nothing.
 //
@@ -128,4 +128,87 @@ func (r *Repository) ClaimsForDisclosure(
 	}
 
 	return toClaims(rows)
+}
+
+// ReplacementsForDisclosure reads the replacements the given orders' claims
+// and exchanges promised (D188).
+func (r *Repository) ReplacementsForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.Replacement, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+
+	rows, err := r.queries(ctx).ListOrderReplacementsForDisclosure(ctx, orderIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the replacements for disclosure")
+	}
+
+	return toReplacements(rows), nil
+}
+
+// CreditLinesForDisclosure reads the credits granted on the given orders
+// (D188).
+func (r *Repository) CreditLinesForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.OrderCreditLine, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+
+	rows, err := r.queries(ctx).ListOrderCreditLinesForDisclosure(ctx, orderIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the credit lines for disclosure")
+	}
+
+	out := make([]models.OrderCreditLine, 0, len(rows))
+	for i := range rows {
+		out = append(out, toCreditLine(rows[i]))
+	}
+
+	return out, nil
+}
+
+// ClaimEvidenceForDisclosure reads the evidence attached to the given orders'
+// claims (D188).
+func (r *Repository) ClaimEvidenceForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.ClaimEvidence, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+
+	rows, err := r.queries(ctx).ListOrderClaimEvidenceForDisclosure(ctx, orderIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the claim evidence for disclosure")
+	}
+
+	out := make([]models.ClaimEvidence, 0, len(rows))
+	for i := range rows {
+		out = append(out, toClaimEvidence(rows[i]))
+	}
+
+	return out, nil
+}
+
+// LineCancellationsForDisclosure reads the units written off the given
+// orders' lines (D188).
+func (r *Repository) LineCancellationsForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.OrderLineCancellation, error) {
+	if len(orderIDs) == 0 {
+		return nil, nil
+	}
+
+	rows, err := r.queries(ctx).ListOrderLineCancellationsForDisclosure(ctx, orderIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not read the line cancellations for disclosure")
+	}
+
+	out := make([]models.OrderLineCancellation, 0, len(rows))
+	for i := range rows {
+		out = append(out, toLineCancellation(rows[i]))
+	}
+
+	return out, nil
 }

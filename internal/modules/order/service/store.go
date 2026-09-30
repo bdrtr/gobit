@@ -139,6 +139,18 @@ type Store interface {
 	// ClaimsForDisclosure reads the damage and shortage records of the given
 	// orders.
 	ClaimsForDisclosure(ctx context.Context, orderIDs []string) ([]models.Claim, error)
+	// ReplacementsForDisclosure reads the replacements the given orders'
+	// claims and exchanges promised (D188).
+	ReplacementsForDisclosure(ctx context.Context, orderIDs []string) ([]models.Replacement, error)
+	// CreditLinesForDisclosure reads the credits granted on the given orders
+	// (D188).
+	CreditLinesForDisclosure(ctx context.Context, orderIDs []string) ([]models.OrderCreditLine, error)
+	// ClaimEvidenceForDisclosure reads the evidence attached to the given
+	// orders' claims (D188).
+	ClaimEvidenceForDisclosure(ctx context.Context, orderIDs []string) ([]models.ClaimEvidence, error)
+	// LineCancellationsForDisclosure reads the units written off the given
+	// orders' lines (D188).
+	LineCancellationsForDisclosure(ctx context.Context, orderIDs []string) ([]models.OrderLineCancellation, error)
 
 	// LockCustomerSpending locks the SUM of the customer's spend until the end
 	// of the transaction and can only be called inside [Store.WithTx].

@@ -453,6 +453,71 @@ func TestPersonalDataOfNamesTheOrderOnEveryChildRecord(t *testing.T) {
 	}
 }
 
+// TestPersonalDataOfHangsTheLaterRecordsOnTheirOrder is D188: the free text of
+// a replacement, a credit, a claim's evidence and a line's cancellation is in
+// the dossier, and the three that name no order are hung on the one their
+// claim, exchange or line belongs to.
+func TestPersonalDataOfHangsTheLaterRecordsOnTheirOrder(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	e := newEnv(t)
+
+	first, err := e.svc.CreateOrder(ctx, disclosableInput(testCustomerID, "ayse@example.com"))
+	require.NoError(t, err)
+	secondInput := disclosableInput(testCustomerID, "ayse@example.com")
+	secondInput.IdempotencyKey = "checkout-second"
+	second, err := e.svc.CreateOrder(ctx, secondInput)
+	require.NoError(t, err)
+
+	claim, err := e.svc.CreateClaim(ctx, service.CreateClaimInput{
+		OrderID: first.ID, Type: models.ClaimRefund, Reason: "the parcel arrived crushed",
+	})
+	require.NoError(t, err)
+	_, err = e.store.CreateClaimEvidence(ctx, models.ClaimEvidence{
+		ID: "clev_1", OrderClaimID: claim.ID, UploadID: "upl_1", Caption: "the corner Ayse photographed",
+	})
+	require.NoError(t, err)
+	_, err = e.store.CreateCreditLine(ctx, models.OrderCreditLine{
+		ID: "ocl_1", OrderID: first.ID, Amount: 100, Reason: "goodwill", Note: "promised to Ayse on the phone",
+	})
+	require.NoError(t, err)
+	detail, err := e.svc.GetOrder(ctx, first.ID)
+	require.NoError(t, err)
+	_, err = e.store.CreateLineCancellation(ctx, models.OrderLineCancellation{
+		ID: "olc_1", OrderLineItemID: detail.Items[0].ID, Quantity: 1, Reason: "out_of_stock",
+		Note: "Ayse agreed to wait for the rest",
+	})
+	require.NoError(t, err)
+	exchange, err := e.svc.CreateExchange(ctx, service.CreateExchangeInput{OrderID: second.ID})
+	require.NoError(t, err)
+	_, err = e.store.CreateReplacement(ctx, models.Replacement{
+		ID: "orepl_1", ExchangeID: exchange.ID, Note: "the larger size, as Ayse asked",
+	})
+	require.NoError(t, err)
+
+	disclosure, err := e.svc.PersonalDataOf(ctx, personaldata.Subject{CustomerID: testCustomerID})
+	require.NoError(t, err)
+
+	for table, want := range map[string]struct {
+		id     string
+		column string
+		value  string
+	}{
+		"order_claim_evidence":     {first.ID + "/clev_1", "caption", "the corner Ayse photographed"},
+		"order_credit_lines":       {first.ID + "/ocl_1", "note", "promised to Ayse on the phone"},
+		"order_line_cancellations": {first.ID + "/olc_1", "note", "Ayse agreed to wait for the rest"},
+		"order_replacements":       {second.ID + "/orepl_1", "note", "the larger size, as Ayse asked"},
+	} {
+		records := recordsOf(disclosure, table)
+		require.Len(t, records, 1, "the dossier holds no %s record", table)
+		assert.Equal(t, want.id, records[0].ID, "the %s record hangs on the wrong order", table)
+		value, present := fieldValue(records[0], want.column)
+		require.True(t, present, "%s.%s is not in its record", table, want.column)
+		assert.Equal(t, want.value, value)
+	}
+}
+
 // TestPersonalDataOfWritesNothingAndLocksNothing is the property the whole file
 // rests on.
 //

@@ -24,6 +24,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An order's later records are in its personal-data answers** (D188).
+  **For operators:** the order module declares a replacement's note, a
+  credit's reason and note, a claim photograph's caption and a line
+  cancellation's reason and note as open text; a data subject's disclosure
+  now carries them under their order, and an erasure report lists them among
+  what it kept.
+
 - **A session names the browser that opened it** (ADR 0276). **For
   operators:** `GET /admin/v1/auth/sessions` lists each session's
   `user_agent`, and the panel's Sessions screen shows it as the Browser

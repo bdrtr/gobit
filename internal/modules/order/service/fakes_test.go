@@ -2148,7 +2148,7 @@ func (f *fakeStore) AnonymizeOrderAddresses(ctx context.Context, orderIDs []stri
 func (f *fakeStore) OrdersForDisclosure(
 	ctx context.Context, customerID, email string,
 ) ([]models.Order, error) {
-	// Through the view: inside a read transaction the six reads of one dossier
+	// Through the view: inside a read transaction the reads of one dossier
 	// have to see one instant, and a reader that went to the live map would be
 	// the one that broke it.
 	stored := f.view(ctx).orders
@@ -2247,6 +2247,105 @@ func (f *fakeStore) ClaimsForDisclosure(
 		func(c models.Claim) time.Time { return c.CreatedAt })
 
 	return out, nil
+}
+
+// ReplacementsForDisclosure returns the replacements the given orders'
+// claims and exchanges promised, oldest first, reached through the source as
+// the real query reaches them.
+func (f *fakeStore) ReplacementsForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.Replacement, error) {
+	snapshot := f.view(ctx)
+
+	out := make([]models.Replacement, 0)
+	for id := range snapshot.replaces {
+		replacement := snapshot.replaces[id]
+		claim, byClaim := snapshot.claims[replacement.ClaimID]
+		exchange, byExchange := snapshot.exchanges[replacement.ExchangeID]
+		if (byClaim && slices.Contains(orderIDs, claim.OrderID)) ||
+			(byExchange && slices.Contains(orderIDs, exchange.OrderID)) {
+			out = append(out, replacement)
+		}
+	}
+	sortCreated(out,
+		func(r models.Replacement) string { return r.ID },
+		func(r models.Replacement) time.Time { return r.CreatedAt })
+
+	return out, nil
+}
+
+// CreditLinesForDisclosure returns the credits granted on the given orders.
+func (f *fakeStore) CreditLinesForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.OrderCreditLine, error) {
+	stored := f.view(ctx).credits
+
+	out := make([]models.OrderCreditLine, 0)
+	for id := range stored {
+		if slices.Contains(orderIDs, stored[id].OrderID) {
+			out = append(out, stored[id])
+		}
+	}
+	sortChildRows(out,
+		func(c models.OrderCreditLine) string { return c.OrderID },
+		func(c models.OrderCreditLine) string { return c.ID },
+		func(c models.OrderCreditLine) time.Time { return c.CreatedAt })
+
+	return out, nil
+}
+
+// ClaimEvidenceForDisclosure returns the evidence of the given orders' claims,
+// reached through the claim.
+func (f *fakeStore) ClaimEvidenceForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.ClaimEvidence, error) {
+	snapshot := f.view(ctx)
+
+	out := make([]models.ClaimEvidence, 0)
+	for id := range snapshot.evidence {
+		evidence := snapshot.evidence[id]
+		if claim, ok := snapshot.claims[evidence.OrderClaimID]; ok && slices.Contains(orderIDs, claim.OrderID) {
+			out = append(out, evidence)
+		}
+	}
+	sortCreated(out,
+		func(e models.ClaimEvidence) string { return e.ID },
+		func(e models.ClaimEvidence) time.Time { return e.CreatedAt })
+
+	return out, nil
+}
+
+// LineCancellationsForDisclosure returns the units written off the given
+// orders' lines, reached through the line.
+func (f *fakeStore) LineCancellationsForDisclosure(
+	ctx context.Context, orderIDs []string,
+) ([]models.OrderLineCancellation, error) {
+	snapshot := f.view(ctx)
+
+	out := make([]models.OrderLineCancellation, 0)
+	for id := range snapshot.cancels {
+		cancellation := snapshot.cancels[id]
+		if line, ok := snapshot.items[cancellation.OrderLineItemID]; ok && slices.Contains(orderIDs, line.OrderID) {
+			out = append(out, cancellation)
+		}
+	}
+	sortCreated(out,
+		func(c models.OrderLineCancellation) string { return c.ID },
+		func(c models.OrderLineCancellation) time.Time { return c.CreatedAt })
+
+	return out, nil
+}
+
+// sortCreated puts rows that name no order in the order their disclosure
+// queries return them: by creation, then by identifier.
+func sortCreated[T any](rows []T, id func(T) string, createdAt func(T) time.Time) {
+	slices.SortFunc(rows, func(a, b T) int {
+		if !createdAt(a).Equal(createdAt(b)) {
+			return createdAt(a).Compare(createdAt(b))
+		}
+
+		return strings.Compare(id(a), id(b))
+	})
 }
 
 // sortChildRows puts a child table's rows in the order the disclosure queries

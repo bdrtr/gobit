@@ -166,6 +166,12 @@ const (
 	// of a column its own declaration promises looks exactly like the dossier
 	// of a person who has nothing in that column.
 	CodeDisclosureColumnUnread = "order_disclosure_column_unread"
+	// CodeDisclosureRowUnplaced: a disclosure read a row that names no order
+	// (a replacement, a claim's evidence, a line's cancellation) and the
+	// snapshot held no parent row to hang it on (D188). The two reads come from
+	// one snapshot, so it is an internal fault; placing the row nowhere would
+	// leave it out of the dossier with nothing saying so.
+	CodeDisclosureRowUnplaced = "order_disclosure_row_unplaced"
 )
 
 // Pagination limits (plan Section 8: limit/offset).

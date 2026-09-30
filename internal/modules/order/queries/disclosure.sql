@@ -119,3 +119,38 @@ ORDER BY order_id, created_at, id;
 SELECT * FROM order_claims
 WHERE order_id = ANY (sqlc.arg('order_ids')::text[])
 ORDER BY order_id, created_at, id;
+
+-- ListOrderReplacementsForDisclosure reads the replacements the given orders'
+-- claims and exchanges promised (D188). The row names its source, not its
+-- order, so the order is reached through the claim or the exchange, as in
+-- ListOrderReplacementsByOrder; the service reads those in the same snapshot
+-- and hangs each replacement on its order through them.
+-- name: ListOrderReplacementsForDisclosure :many
+SELECT * FROM order_replacements
+WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = ANY (sqlc.arg('order_ids')::text[]))
+   OR order_exchange_id IN (SELECT id FROM order_exchanges WHERE order_id = ANY (sqlc.arg('order_ids')::text[]))
+ORDER BY created_at, id;
+
+-- ListOrderCreditLinesForDisclosure reads the credits granted on the given
+-- orders (D188): reason and note are the merchant's words, often about the
+-- customer.
+-- name: ListOrderCreditLinesForDisclosure :many
+SELECT * FROM order_credit_lines
+WHERE order_id = ANY (sqlc.arg('order_ids')::text[])
+ORDER BY order_id, created_at, id;
+
+-- ListOrderClaimEvidenceForDisclosure reads the evidence attached to the given
+-- orders' claims (D188). The caption is disclosed; the upload is the file
+-- module's record and answers for itself.
+-- name: ListOrderClaimEvidenceForDisclosure :many
+SELECT * FROM order_claim_evidence
+WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = ANY (sqlc.arg('order_ids')::text[]))
+ORDER BY created_at, id;
+
+-- ListOrderLineCancellationsForDisclosure reads the units written off the
+-- given orders' lines (D188), reached through the line as the row names no
+-- order.
+-- name: ListOrderLineCancellationsForDisclosure :many
+SELECT * FROM order_line_cancellations
+WHERE order_line_item_id IN (SELECT id FROM order_line_items WHERE order_id = ANY (sqlc.arg('order_ids')::text[]))
+ORDER BY created_at, seq;

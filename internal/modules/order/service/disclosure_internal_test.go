@@ -29,12 +29,16 @@ import (
 // agree with the declaration by construction and would prove nothing.
 func tableAccessors() map[string][]string {
 	return map[string][]string{
-		tableOrders:         columnsOf(orderValues),
-		tableOrderLineItems: columnsOf(lineItemValues),
-		tableOrderAddresses: columnsOf(addressValues),
-		tableOrderReturns:   columnsOf(returnValues),
-		tableOrderExchanges: columnsOf(exchangeValues),
-		tableOrderClaims:    columnsOf(claimValues),
+		tableOrders:                 columnsOf(orderValues),
+		tableOrderLineItems:         columnsOf(lineItemValues),
+		tableOrderAddresses:         columnsOf(addressValues),
+		tableOrderReturns:           columnsOf(returnValues),
+		tableOrderExchanges:         columnsOf(exchangeValues),
+		tableOrderClaims:            columnsOf(claimValues),
+		tableOrderReplacements:      columnsOf(replacementValues),
+		tableOrderCreditLines:       columnsOf(creditLineValues),
+		tableOrderClaimEvidence:     columnsOf(claimEvidenceValues),
+		tableOrderLineCancellations: columnsOf(lineCancellationValues),
 	}
 }
 
@@ -188,6 +192,10 @@ func TestAnEmptyRowIsDisclosedOnlyWhereGobitWritesThePersonItself(t *testing.T) 
 	assert.False(t, rowIsDisclosed(tableOrderReturns))
 	assert.False(t, rowIsDisclosed(tableOrderExchanges))
 	assert.False(t, rowIsDisclosed(tableOrderClaims))
+	assert.False(t, rowIsDisclosed(tableOrderReplacements))
+	assert.False(t, rowIsDisclosed(tableOrderCreditLines))
+	assert.False(t, rowIsDisclosed(tableOrderClaimEvidence))
+	assert.False(t, rowIsDisclosed(tableOrderLineCancellations))
 
 	// An address with every declared column empty is still a record, and every
 	// one of its fields says "nothing is held here" rather than being absent.
@@ -222,4 +230,50 @@ func TestAnEmptyValueIsNilAndNotTheEmptyString(t *testing.T) {
 	assert.Nil(t, jsonValue(nil))
 	assert.Nil(t, jsonValue(map[string]any{}))
 	assert.Equal(t, map[string]any{"channel": "web"}, jsonValue(map[string]any{"channel": "web"}))
+}
+
+// TestARowWithNoParentInTheSnapshotIsRefused holds the guard of D188's
+// placement: a replacement, a claim's evidence or a line's cancellation names
+// no order, and one whose parent the snapshot did not read is an error rather
+// than a record left out of the dossier.
+func TestARowWithNoParentInTheSnapshotIsRefused(t *testing.T) {
+	t.Parallel()
+
+	for name, rows := range map[string]dossierRows{
+		"a replacement":  {replacements: []models.Replacement{{ID: "orepl_1", ClaimID: "oclm_gone", Note: "x"}}},
+		"evidence":       {evidence: []models.ClaimEvidence{{ID: "clev_1", OrderClaimID: "oclm_gone", Caption: "x"}}},
+		"a cancellation": {cancellations: []models.OrderLineCancellation{{ID: "olc_1", OrderLineItemID: "oli_gone"}}},
+	} {
+		rows.orders = []models.Order{{ID: "order_1", Email: "person@example.com"}}
+
+		_, err := disclosureRecords(&rows)
+		require.Error(t, err, name)
+		assert.Equal(t, CodeDisclosureRowUnplaced, errors.CodeOf(err), name)
+		assert.Equal(t, errors.KindInternal, errors.KindOf(err), name)
+	}
+}
+
+// TestAnUnreadColumnStopsTheWholeDossier holds the collector's error to the
+// answer: a declared column with no accessor on a later table refuses the
+// dossier rather than returning the records built before it.
+//
+// It is not parallel because it swaps a package accessor table for the length
+// of the test; parallel tests in this package resume only after the
+// sequential ones have finished, so none of them sees the swap.
+func TestAnUnreadColumnStopsTheWholeDossier(t *testing.T) {
+	crippled := maps.Clone(lineCancellationValues)
+	delete(crippled, columnNote)
+	saved := lineCancellationValues
+	lineCancellationValues = crippled
+	t.Cleanup(func() { lineCancellationValues = saved })
+
+	records, err := disclosureRecords(&dossierRows{
+		orders:        []models.Order{{ID: "order_1", Email: "person@example.com"}},
+		lines:         []models.OrderLineItem{{ID: "oli_1", OrderID: "order_1"}},
+		cancellations: []models.OrderLineCancellation{{ID: "olc_1", OrderLineItemID: "oli_1", Reason: "gone"}},
+	})
+
+	require.Error(t, err)
+	assert.Equal(t, CodeDisclosureColumnUnread, errors.CodeOf(err))
+	assert.Nil(t, records, "a dossier short of a column is refused whole, not handed over in part")
 }

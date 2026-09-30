@@ -65,22 +65,25 @@ const ErasureHolder = EntityName
 // scope of a pagination cursor, and two meanings behind one constant is how the
 // day comes that renaming one breaks the other.
 const (
-	tableOrders         = "orders"
-	tableOrderLineItems = "order_line_items"
-	tableOrderAddresses = "order_addresses"
-	tableOrderReturns   = "order_returns"
-	tableOrderExchanges = "order_exchanges"
-	tableOrderClaims    = "order_claims"
+	tableOrders                 = "orders"
+	tableOrderLineItems         = "order_line_items"
+	tableOrderAddresses         = "order_addresses"
+	tableOrderReturns           = "order_returns"
+	tableOrderExchanges         = "order_exchanges"
+	tableOrderClaims            = "order_claims"
+	tableOrderReplacements      = "order_replacements"
+	tableOrderCreditLines       = "order_credit_lines"
+	tableOrderClaimEvidence     = "order_claim_evidence"
+	tableOrderLineCancellations = "order_line_cancellations"
 )
 
 // The column names that appear on more than one table.
 //
-// Six of this module's eight tables carry a metadata jsonb; order_summaries and
-// order_return_items carry none, and that is half of why the declaration below
-// leaves those two tables out entirely — nobody can have typed anything into a
-// table that has no open column. Three tables carry a free note and two a typed
-// reason; naming the columns once keeps the declaration's rows short enough to
-// read as a table.
+// A metadata jsonb, a free note and a typed reason each recur across the
+// module's tables; naming the columns once keeps the declaration's rows short
+// enough to read as a table. A table with no open column at all is one nobody
+// can have typed anything into, which is half of why the declaration below
+// leaves several tables out entirely.
 const (
 	columnMetadata = "metadata"
 	columnNote     = "note"
@@ -116,10 +119,18 @@ const (
 //     stable handle for the PERSON, while a cart id names one shopping session.
 //   - order_addresses.address_type, orders.display_id and every amount and
 //     stamp: they describe the sale.
-//   - order_summaries and order_return_items in their entirety: they carry
-//     money and quantities and nothing that names anybody. Saying so is worth
-//     more than saying nothing, which is why they are named here rather than
-//     silently absent.
+//   - order_summaries, order_return_items, order_replacement_items,
+//     order_replacement_item_parts, order_line_taxes, order_shipping_methods
+//     and order_delivery_changes in their entirety: they carry money,
+//     quantities, rates, identifiers and the name of a shipping option, and
+//     nothing that names anybody. Saying so is worth more than saying nothing,
+//     which is why they are named here rather than silently absent.
+//   - order_claim_evidence.upload_id: the file module's identifier of the
+//     photograph, which that module answers for as it answers for every file.
+//
+// The module's schema audit (internal/modules/order's erasure_test.go) holds
+// this list and the declaration to every column the migrations create, which
+// is what the tables added after it were missing until D188.
 //
 // The order of the entries is the order they appear in the report, so it is
 // stable and readable: table by table, in the order the migrations created the
@@ -286,6 +297,36 @@ var personalColumns = []personaldata.Holding{
 		Why:       "the caller's own data on the claim",
 		OnErasure: personaldata.Kept,
 	},
+	{
+		Table: tableOrderReplacements, Column: columnNote, Kind: personaldata.Open,
+		Why:       "a free note on the replacement sent for a claim or an exchange (D188)",
+		OnErasure: personaldata.Kept,
+	},
+	{
+		Table: tableOrderCreditLines, Column: columnReason, Kind: personaldata.Open,
+		Why:       "why the merchant lowered what the order owes, in their own word (D188)",
+		OnErasure: personaldata.Kept,
+	},
+	{
+		Table: tableOrderCreditLines, Column: columnNote, Kind: personaldata.Open,
+		Why:       "the merchant's free detail on a credit, often what was agreed with the customer (D188)",
+		OnErasure: personaldata.Kept,
+	},
+	{
+		Table: tableOrderClaimEvidence, Column: "caption", Kind: personaldata.Open,
+		Why:       "what the operator says a photograph attached to a claim shows (D188)",
+		OnErasure: personaldata.Kept,
+	},
+	{
+		Table: tableOrderLineCancellations, Column: columnReason, Kind: personaldata.Open,
+		Why:       "why units of a line will not be delivered, in the merchant's word (D188)",
+		OnErasure: personaldata.Kept,
+	},
+	{
+		Table: tableOrderLineCancellations, Column: columnNote, Kind: personaldata.Open,
+		Why:       "the merchant's free detail on a line's cancellation (D188)",
+		OnErasure: personaldata.Kept,
+	},
 }
 
 // PersonalDataHoldings returns everything this module says it keeps about
@@ -319,10 +360,8 @@ func keptWhenRetained() []string {
 // It is one sentence in three clauses because the list has three groups, and a
 // controller repeating this to a data subject has to be able to say what each
 // group is. The free-form clause is the one that must not be dropped: without
-// it "anonymized" would cover the THIRTEEN columns of [personalColumns] that
-// are declared [personaldata.Open] and that no statement rewrites. It is not to be
-// confused with the other count in this file: eleven is how many columns the
-// erasure nulls.
+// it "anonymized" would cover every column of [personalColumns] that is
+// declared [personaldata.Open], none of which any statement rewrites.
 const whyAnonymized = "the name, address, phone and e-mail on the order were set to NULL, together " +
 	"with the pointer that recorded which entry of the buyer's address book the order address was " +
 	"copied from, and what is " +
@@ -493,13 +532,13 @@ func erasureResult(
 //
 // The kept list of a retained answer is EVERY declared column
 // ([keptWhenRetained]) and the sentence has to split it in two, because the two
-// halves have different futures. Eleven of the columns are the ones the
+// halves have different futures. Some of the columns are the ones the
 // anonymizing statements null, and those really do stay only until the order
-// settles. The other fifteen are the free-form columns gobit never rewrites,
-// plus orders.customer_id and order_addresses.country_code, which the erasure
-// keeps on purpose; settlement changes nothing for them. Saying "everything
-// listed stays until it settles" would promise the person that thirteen
-// metadata blobs and notes disappear on a day that will never come — the same
+// settles. The rest are the free-form columns gobit never rewrites, plus
+// orders.customer_id and order_addresses.country_code, which the erasure keeps
+// on purpose; settlement changes nothing for them. Saying "everything listed
+// stays until it settles" would promise the person that the metadata blobs and
+// notes disappear on a day that will never come — the same
 // over-claim in the opposite direction to the one [whyAnonymized]'s free-form
 // clause exists to prevent.
 func whyRetained(

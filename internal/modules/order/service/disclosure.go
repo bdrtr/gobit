@@ -34,11 +34,11 @@ import (
 // that is refused loudly rather than dropped quietly, because a dossier missing
 // a field looks exactly like a dossier of somebody who has no such field.
 //
-// The Kind travels ON the field for the reason ADR 0034 gives: thirteen of this
+// The Kind travels ON the field for the reason ADR 0034 gives: most of this
 // module's holdings are [personaldata.Open] free text — the metadata blobs, the
-// cancellation reason, the three after-sales reason and note columns — and
-// whoever reads the dossier has to know which values gobit can vouch for and
-// which are the embedder's own, unread.
+// cancellation reason, the reason, note and caption columns of the after-sales
+// records — and whoever reads the dossier has to know which values gobit can
+// vouch for and which are the embedder's own, unread.
 //
 // # An order that was already erased is still disclosed
 //
@@ -70,7 +70,9 @@ import (
 // the erased-order case above. The line, the return, the exchange and the claim
 // declare nothing but free text, so a row where every declared column is empty
 // holds nothing about anybody, and emitting it would bury the one note that has
-// content under twenty records that say nothing. The day somebody declares a
+// content under twenty records that say nothing. The same holds for the
+// replacement, the credit, the claim's evidence and the line's cancellation,
+// declared since D188. The day somebody declares a
 // Named column on order_returns, its rows start being disclosed unconditionally
 // with no edit here.
 //
@@ -78,7 +80,7 @@ import (
 //
 // It is a READ. It takes no lock, writes nothing, has no side effect, and the
 // one transaction it opens is [Store.WithReadTx] — read-only, lock-free, and
-// there only so that the six queries of one dossier see ONE instant. Without it
+// there only so that the queries of one dossier see ONE instant. Without it
 // an erasure landing between the second query and the fifth would produce a
 // document that contradicts itself, and a person comparing two halves of her own
 // file cannot be told that the difference is a scheduling accident.
@@ -95,7 +97,7 @@ import (
 // are written by hand, so that is the seam the test holds shut.
 type disclosureValues[T any] map[string]func(T) any
 
-// The accessors for the six tables this module discloses.
+// The accessors for the tables this module discloses.
 //
 // Every one of them returns nil for a column that holds nothing, and nil is the
 // answer to two questions at once: the column is SQL NULL, or it holds the empty
@@ -147,6 +149,24 @@ var (
 		columnReason:   func(c models.Claim) any { return textValue(c.Reason) },
 		columnNote:     func(c models.Claim) any { return textValue(c.Note) },
 		columnMetadata: func(c models.Claim) any { return jsonValue(c.Metadata) },
+	}
+
+	replacementValues = disclosureValues[models.Replacement]{
+		columnNote: func(r models.Replacement) any { return textValue(r.Note) },
+	}
+
+	creditLineValues = disclosureValues[models.OrderCreditLine]{
+		columnReason: func(c models.OrderCreditLine) any { return textValue(c.Reason) },
+		columnNote:   func(c models.OrderCreditLine) any { return textValue(c.Note) },
+	}
+
+	claimEvidenceValues = disclosureValues[models.ClaimEvidence]{
+		"caption": func(e models.ClaimEvidence) any { return textValue(e.Caption) },
+	}
+
+	lineCancellationValues = disclosureValues[models.OrderLineCancellation]{
+		columnReason: func(c models.OrderLineCancellation) any { return textValue(c.Reason) },
+		columnNote:   func(c models.OrderLineCancellation) any { return textValue(c.Note) },
 	}
 )
 
@@ -221,51 +241,28 @@ func (s *Service) PersonalDataOf(
 		return personaldata.Disclosure{}, err
 	}
 
-	var (
-		orders    []models.Order
-		addresses map[string][]models.OrderAddress
-		lines     []models.OrderLineItem
-		returns   []models.Return
-		exchanges []models.Exchange
-		claims    []models.Claim
-	)
-
+	var rows dossierRows
 	err = s.store.WithReadTx(ctx, func(ctx context.Context) error {
 		var readErr error
-		if orders, readErr = s.store.OrdersForDisclosure(ctx, customerID, email); readErr != nil {
+		if rows.orders, readErr = s.store.OrdersForDisclosure(ctx, customerID, email); readErr != nil {
 			return readErr
 		}
-		// The person has no order here, so the five child reads have nothing to
+		// The person has no order here, so the child reads have nothing to
 		// look for. Skipping them is not an optimization: called with an empty
 		// list they would either scan or have to be given an "everything"
 		// meaning, and the second is how a dossier ends up holding somebody
 		// else's rows.
-		if len(orders) == 0 {
+		if len(rows.orders) == 0 {
 			return nil
 		}
 
-		ids := orderIDsOf(orders)
-		if addresses, readErr = s.store.OrderAddressesByOrderIDs(ctx, ids); readErr != nil {
-			return readErr
-		}
-		if lines, readErr = s.store.LineItemsForDisclosure(ctx, ids); readErr != nil {
-			return readErr
-		}
-		if returns, readErr = s.store.ReturnsForDisclosure(ctx, ids); readErr != nil {
-			return readErr
-		}
-		if exchanges, readErr = s.store.ExchangesForDisclosure(ctx, ids); readErr != nil {
-			return readErr
-		}
-		claims, readErr = s.store.ClaimsForDisclosure(ctx, ids)
-
-		return readErr
+		return s.readDossierChildren(ctx, orderIDsOf(rows.orders), &rows)
 	})
 	if err != nil {
 		return personaldata.Disclosure{}, err
 	}
 
-	if len(orders) == 0 {
+	if len(rows.orders) == 0 {
 		s.log.InfoContext(ctx, "a disclosure request was answered",
 			"holder", ErasureHolder, "state", string(personaldata.Nothing), "records", 0)
 
@@ -276,14 +273,14 @@ func (s *Service) PersonalDataOf(
 		}, nil
 	}
 
-	records, err := disclosureRecords(orders, addresses, lines, returns, exchanges, claims)
+	records, err := disclosureRecords(&rows)
 	if err != nil {
 		return personaldata.Disclosure{}, err
 	}
 
 	s.log.InfoContext(ctx, "a disclosure request was answered",
 		"holder", ErasureHolder, "state", string(personaldata.Disclosed),
-		"orders", len(orders), "records", len(records))
+		"orders", len(rows.orders), "records", len(records))
 
 	// Why stays empty. The contract reserves it for a state that needs
 	// explaining, and what would be said here — that the Open values were never
@@ -317,82 +314,192 @@ func (s *Service) PersonalDataOf(
 // and it names it in a way that says where the row hangs. Nothing new about the
 // person is disclosed by it: the order id is already the identifier of another
 // record in the same dossier.
-func disclosureRecords(
-	orders []models.Order,
-	addresses map[string][]models.OrderAddress,
-	lines []models.OrderLineItem,
-	returns []models.Return,
-	exchanges []models.Exchange,
-	claims []models.Claim,
-) ([]personaldata.Record, error) {
-	linesByOrder := groupByOrder(lines, func(i models.OrderLineItem) string { return i.OrderID })
-	returnsByOrder := groupByOrder(returns, func(r models.Return) string { return r.OrderID })
-	exchangesByOrder := groupByOrder(exchanges, func(e models.Exchange) string { return e.OrderID })
-	claimsByOrder := groupByOrder(claims, func(c models.Claim) string { return c.OrderID })
+func disclosureRecords(rows *dossierRows) ([]personaldata.Record, error) {
+	linesByOrder := groupByOrder(rows.lines, func(i models.OrderLineItem) string { return i.OrderID })
+	returnsByOrder := groupByOrder(rows.returns, func(r models.Return) string { return r.OrderID })
+	exchangesByOrder := groupByOrder(rows.exchanges, func(e models.Exchange) string { return e.OrderID })
+	claimsByOrder := groupByOrder(rows.claims, func(c models.Claim) string { return c.OrderID })
+	creditsByOrder := groupByOrder(rows.creditLines, func(c models.OrderCreditLine) string { return c.OrderID })
 
-	records := make([]personaldata.Record, 0, len(orders))
-	for i := range orders {
-		id := orders[i].ID
+	// A replacement, a claim's evidence and a line's cancellation name no
+	// order; each hangs on it through the parent the same snapshot read.
+	orderOfClaim := orderOfParent(rows.claims, func(c models.Claim) (string, string) { return c.ID, c.OrderID })
+	orderOfExchange := orderOfParent(rows.exchanges,
+		func(e models.Exchange) (string, string) { return e.ID, e.OrderID })
+	orderOfLine := orderOfParent(rows.lines,
+		func(l models.OrderLineItem) (string, string) { return l.ID, l.OrderID })
 
-		record, disclosed, err := recordOf(tableOrders, id, orders[i], orderValues)
-		if err != nil {
-			return nil, err
-		}
-		if disclosed {
-			records = append(records, record)
-		}
-
-		var appendErr error
-		records, appendErr = appendRecords(records, tableOrderLineItems, id,
-			linesByOrder[id], lineItemValues, func(l models.OrderLineItem) string { return l.ID })
-		if appendErr != nil {
-			return nil, appendErr
-		}
-		records, appendErr = appendRecords(records, tableOrderAddresses, id,
-			addresses[id], addressValues, func(a models.OrderAddress) string { return a.ID })
-		if appendErr != nil {
-			return nil, appendErr
-		}
-		records, appendErr = appendRecords(records, tableOrderReturns, id,
-			returnsByOrder[id], returnValues, func(r models.Return) string { return r.ID })
-		if appendErr != nil {
-			return nil, appendErr
-		}
-		records, appendErr = appendRecords(records, tableOrderExchanges, id,
-			exchangesByOrder[id], exchangeValues, func(e models.Exchange) string { return e.ID })
-		if appendErr != nil {
-			return nil, appendErr
-		}
-		records, appendErr = appendRecords(records, tableOrderClaims, id,
-			claimsByOrder[id], claimValues, func(c models.Claim) string { return c.ID })
-		if appendErr != nil {
-			return nil, appendErr
-		}
+	replacementsByOrder, err := groupThroughParent(tableOrderReplacements, rows.replacements,
+		func(r models.Replacement) string {
+			if r.ClaimID != "" {
+				return orderOfClaim[r.ClaimID]
+			}
+			return orderOfExchange[r.ExchangeID]
+		},
+		func(r models.Replacement) string { return r.ID })
+	if err != nil {
+		return nil, err
+	}
+	evidenceByOrder, err := groupThroughParent(tableOrderClaimEvidence, rows.evidence,
+		func(e models.ClaimEvidence) string { return orderOfClaim[e.OrderClaimID] },
+		func(e models.ClaimEvidence) string { return e.ID })
+	if err != nil {
+		return nil, err
+	}
+	cancellationsByOrder, err := groupThroughParent(tableOrderLineCancellations, rows.cancellations,
+		func(c models.OrderLineCancellation) string { return orderOfLine[c.OrderLineItemID] },
+		func(c models.OrderLineCancellation) string { return c.ID })
+	if err != nil {
+		return nil, err
 	}
 
-	return records, nil
+	dossier := &dossierRecords{records: make([]personaldata.Record, 0, len(rows.orders))}
+	for i := range rows.orders {
+		id := rows.orders[i].ID
+
+		appendRecords(dossier, tableOrders, "", []models.Order{rows.orders[i]}, orderValues,
+			func(o models.Order) string { return o.ID })
+		appendRecords(dossier, tableOrderLineItems, id,
+			linesByOrder[id], lineItemValues, func(l models.OrderLineItem) string { return l.ID })
+		appendRecords(dossier, tableOrderAddresses, id,
+			rows.addresses[id], addressValues, func(a models.OrderAddress) string { return a.ID })
+		appendRecords(dossier, tableOrderReturns, id,
+			returnsByOrder[id], returnValues, func(r models.Return) string { return r.ID })
+		appendRecords(dossier, tableOrderExchanges, id,
+			exchangesByOrder[id], exchangeValues, func(e models.Exchange) string { return e.ID })
+		appendRecords(dossier, tableOrderClaims, id,
+			claimsByOrder[id], claimValues, func(c models.Claim) string { return c.ID })
+		appendRecords(dossier, tableOrderReplacements, id,
+			replacementsByOrder[id], replacementValues, func(r models.Replacement) string { return r.ID })
+		appendRecords(dossier, tableOrderCreditLines, id,
+			creditsByOrder[id], creditLineValues, func(c models.OrderCreditLine) string { return c.ID })
+		appendRecords(dossier, tableOrderClaimEvidence, id,
+			evidenceByOrder[id], claimEvidenceValues, func(e models.ClaimEvidence) string { return e.ID })
+		appendRecords(dossier, tableOrderLineCancellations, id,
+			cancellationsByOrder[id], lineCancellationValues,
+			func(c models.OrderLineCancellation) string { return c.ID })
+	}
+	if dossier.err != nil {
+		return nil, dossier.err
+	}
+
+	return dossier.records, nil
 }
 
-// appendRecords adds the disclosable rows of one child table to the dossier.
-//
-// The identifier of each row is qualified with the order's, which is the
-// decision argued on [disclosureRecords].
-func appendRecords[T any](
-	records []personaldata.Record, table, orderID string,
-	rows []T, values disclosureValues[T], rowID func(T) string,
-) ([]personaldata.Record, error) {
+// dossierRows is everything one disclosure read, in one snapshot.
+type dossierRows struct {
+	orders        []models.Order
+	addresses     map[string][]models.OrderAddress
+	lines         []models.OrderLineItem
+	returns       []models.Return
+	exchanges     []models.Exchange
+	claims        []models.Claim
+	replacements  []models.Replacement
+	creditLines   []models.OrderCreditLine
+	evidence      []models.ClaimEvidence
+	cancellations []models.OrderLineCancellation
+}
+
+// readDossierChildren reads every child table of the given orders into rows.
+func (s *Service) readDossierChildren(ctx context.Context, ids []string, rows *dossierRows) error {
+	var err error
+	if rows.addresses, err = s.store.OrderAddressesByOrderIDs(ctx, ids); err != nil {
+		return err
+	}
+	if rows.lines, err = s.store.LineItemsForDisclosure(ctx, ids); err != nil {
+		return err
+	}
+	if rows.returns, err = s.store.ReturnsForDisclosure(ctx, ids); err != nil {
+		return err
+	}
+	if rows.exchanges, err = s.store.ExchangesForDisclosure(ctx, ids); err != nil {
+		return err
+	}
+	if rows.claims, err = s.store.ClaimsForDisclosure(ctx, ids); err != nil {
+		return err
+	}
+	if rows.replacements, err = s.store.ReplacementsForDisclosure(ctx, ids); err != nil {
+		return err
+	}
+	if rows.creditLines, err = s.store.CreditLinesForDisclosure(ctx, ids); err != nil {
+		return err
+	}
+	if rows.evidence, err = s.store.ClaimEvidenceForDisclosure(ctx, ids); err != nil {
+		return err
+	}
+	rows.cancellations, err = s.store.LineCancellationsForDisclosure(ctx, ids)
+
+	return err
+}
+
+// orderOfParent maps each parent row's id to the order it belongs to.
+func orderOfParent[T any](rows []T, ids func(T) (string, string)) map[string]string {
+	out := make(map[string]string, len(rows))
 	for i := range rows {
-		record, disclosed, err := recordOf(table, orderID+"/"+rowID(rows[i]), rows[i], values)
-		if err != nil {
-			return nil, err
-		}
-		if !disclosed {
-			continue
-		}
-		records = append(records, record)
+		id, orderID := ids(rows[i])
+		out[id] = orderID
 	}
 
-	return records, nil
+	return out
+}
+
+// groupThroughParent indexes rows that name no order by the order their parent
+// names, keeping the order the query returned them in (D188).
+//
+// A row whose parent the snapshot did not hold is refused rather than placed
+// nowhere: leaving it out would hand the person a dossier short of a record
+// with nothing in it saying so.
+func groupThroughParent[T any](
+	table string, rows []T, orderOf, rowID func(T) string,
+) (map[string][]T, error) {
+	out := make(map[string][]T)
+	for i := range rows {
+		orderID := orderOf(rows[i])
+		if orderID == "" {
+			return nil, errors.Internal(CodeDisclosureRowUnplaced,
+				"the disclosure read %s row %s and none of the orders it read holds its parent; "+
+					"the dossier would be short of it", table, rowID(rows[i]))
+		}
+		out[orderID] = append(out[orderID], rows[i])
+	}
+
+	return out, nil
+}
+
+// dossierRecords is the dossier as it is built, with the first error that
+// stopped it: once err is set every later append does nothing, so the walk
+// reads as the list of tables it is and is checked once at the end.
+type dossierRecords struct {
+	records []personaldata.Record
+	err     error
+}
+
+// appendRecords adds the disclosable rows of one table to the dossier.
+//
+// The identifier of a child row is qualified with the order's, which is the
+// decision argued on [disclosureRecords]; the order itself passes an empty
+// orderID and is named by its own id.
+func appendRecords[T any](
+	dossier *dossierRecords, table, orderID string,
+	rows []T, values disclosureValues[T], rowID func(T) string,
+) {
+	for i := range rows {
+		if dossier.err != nil {
+			return
+		}
+		id := rowID(rows[i])
+		if orderID != "" {
+			id = orderID + "/" + id
+		}
+		record, disclosed, err := recordOf(table, id, rows[i], values)
+		if err != nil {
+			dossier.err = err
+			return
+		}
+		if disclosed {
+			dossier.records = append(dossier.records, record)
+		}
+	}
 }
 
 // recordOf builds one row's record from the DECLARATION, and reports whether it

@@ -9,6 +9,42 @@ import (
 	"context"
 )
 
+const listOrderClaimEvidenceForDisclosure = `-- name: ListOrderClaimEvidenceForDisclosure :many
+SELECT id, order_claim_id, upload_id, caption, created_at, updated_at FROM order_claim_evidence
+WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = ANY ($1::text[]))
+ORDER BY created_at, id
+`
+
+// ListOrderClaimEvidenceForDisclosure reads the evidence attached to the given
+// orders' claims (D188). The caption is disclosed; the upload is the file
+// module's record and answers for itself.
+func (q *Queries) ListOrderClaimEvidenceForDisclosure(ctx context.Context, orderIds []string) ([]OrderClaimEvidence, error) {
+	rows, err := q.db.Query(ctx, listOrderClaimEvidenceForDisclosure, orderIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderClaimEvidence{}
+	for rows.Next() {
+		var i OrderClaimEvidence
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderClaimID,
+			&i.UploadID,
+			&i.Caption,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOrderClaimsForDisclosure = `-- name: ListOrderClaimsForDisclosure :many
 SELECT id, order_id, claim_type, status, refund_amount, reason, note, metadata, completed_at, canceled_at, created_at, updated_at FROM order_claims
 WHERE order_id = ANY ($1::text[])
@@ -37,6 +73,43 @@ func (q *Queries) ListOrderClaimsForDisclosure(ctx context.Context, orderIds []s
 			&i.Metadata,
 			&i.CompletedAt,
 			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrderCreditLinesForDisclosure = `-- name: ListOrderCreditLinesForDisclosure :many
+SELECT id, order_id, amount, reason, note, created_at, updated_at FROM order_credit_lines
+WHERE order_id = ANY ($1::text[])
+ORDER BY order_id, created_at, id
+`
+
+// ListOrderCreditLinesForDisclosure reads the credits granted on the given
+// orders (D188): reason and note are the merchant's words, often about the
+// customer.
+func (q *Queries) ListOrderCreditLinesForDisclosure(ctx context.Context, orderIds []string) ([]OrderCreditLine, error) {
+	rows, err := q.db.Query(ctx, listOrderCreditLinesForDisclosure, orderIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderCreditLine{}
+	for rows.Next() {
+		var i OrderCreditLine
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderID,
+			&i.Amount,
+			&i.Reason,
+			&i.Note,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -80,6 +153,44 @@ func (q *Queries) ListOrderExchangesForDisclosure(ctx context.Context, orderIds 
 			&i.CompletedAt,
 			&i.PaymentCollectionID,
 			&i.FundedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrderLineCancellationsForDisclosure = `-- name: ListOrderLineCancellationsForDisclosure :many
+SELECT id, order_line_item_id, quantity, reason, note, created_at, updated_at, seq FROM order_line_cancellations
+WHERE order_line_item_id IN (SELECT id FROM order_line_items WHERE order_id = ANY ($1::text[]))
+ORDER BY created_at, seq
+`
+
+// ListOrderLineCancellationsForDisclosure reads the units written off the
+// given orders' lines (D188), reached through the line as the row names no
+// order.
+func (q *Queries) ListOrderLineCancellationsForDisclosure(ctx context.Context, orderIds []string) ([]OrderLineCancellation, error) {
+	rows, err := q.db.Query(ctx, listOrderLineCancellationsForDisclosure, orderIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderLineCancellation{}
+	for rows.Next() {
+		var i OrderLineCancellation
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderLineItemID,
+			&i.Quantity,
+			&i.Reason,
+			&i.Note,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Seq,
 		); err != nil {
 			return nil, err
 		}
@@ -140,6 +251,52 @@ func (q *Queries) ListOrderLineItemsForDisclosure(ctx context.Context, orderIds 
 			&i.ParentLineItemID,
 			&i.Seq,
 			&i.Components,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOrderReplacementsForDisclosure = `-- name: ListOrderReplacementsForDisclosure :many
+SELECT id, order_claim_id, status, shipping_option_id, location_id, note, canceled_at, created_at, updated_at, dispatched_at, fulfillment_id, order_exchange_id, recalls FROM order_replacements
+WHERE order_claim_id IN (SELECT id FROM order_claims WHERE order_id = ANY ($1::text[]))
+   OR order_exchange_id IN (SELECT id FROM order_exchanges WHERE order_id = ANY ($1::text[]))
+ORDER BY created_at, id
+`
+
+// ListOrderReplacementsForDisclosure reads the replacements the given orders'
+// claims and exchanges promised (D188). The row names its source, not its
+// order, so the order is reached through the claim or the exchange, as in
+// ListOrderReplacementsByOrder; the service reads those in the same snapshot
+// and hangs each replacement on its order through them.
+func (q *Queries) ListOrderReplacementsForDisclosure(ctx context.Context, orderIds []string) ([]OrderReplacement, error) {
+	rows, err := q.db.Query(ctx, listOrderReplacementsForDisclosure, orderIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderReplacement{}
+	for rows.Next() {
+		var i OrderReplacement
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrderClaimID,
+			&i.Status,
+			&i.ShippingOptionID,
+			&i.LocationID,
+			&i.Note,
+			&i.CanceledAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DispatchedAt,
+			&i.FulfillmentID,
+			&i.OrderExchangeID,
+			&i.Recalls,
 		); err != nil {
 			return nil, err
 		}

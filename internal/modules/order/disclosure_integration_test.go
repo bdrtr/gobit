@@ -26,6 +26,7 @@ package order_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,15 +104,47 @@ func TestDisclosureShowsEveryDeclaredColumnOfEveryRow(t *testing.T) {
 		Metadata:     map[string]any{"channel": "phone"},
 	})
 	require.NoError(t, err)
-	_, err = svc.CreateClaim(ctx, service.CreateClaimInput{
+	claim, err := svc.CreateClaim(ctx, service.CreateClaimInput{
 		OrderID: ord.ID,
 		Type:    models.ClaimRefund,
 		Reason:  "one shirt was missing from the parcel",
 	})
 	require.NoError(t, err)
-	_, err = svc.CreateExchange(ctx, service.CreateExchangeInput{
+	exchange, err := svc.CreateExchange(ctx, service.CreateExchangeInput{
 		OrderID: ord.ID,
 		Note:    "she wants the same shirt one size larger",
+	})
+	require.NoError(t, err)
+
+	// The records the declaration named only from D188 on; the replacements
+	// hang on the order through a claim and through an exchange.
+	detail, err := svc.GetOrder(ctx, ord.ID)
+	require.NoError(t, err)
+	lineID := detail.Items[0].ID
+	_, err = svc.AttachClaimEvidence(ctx, claim.ID, service.AttachClaimEvidenceInput{
+		UploadID: "upl_crushed", Caption: "the corner Ayse photographed",
+	})
+	require.NoError(t, err)
+	replaceClaim, err := svc.CreateClaim(ctx, service.CreateClaimInput{OrderID: ord.ID, Type: models.ClaimReplace})
+	require.NoError(t, err)
+	_, err = svc.CreateReplacement(ctx, service.CreateReplacementInput{
+		ClaimID: replaceClaim.ID, ShippingOptionID: "so_standard", LocationID: "sloc_main",
+		Note:  "the larger size, as Ayse asked",
+		Lines: []service.ReplacementLineInput{{OrderLineItemID: lineID, Quantity: 1}},
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateReplacement(ctx, service.CreateReplacementInput{
+		ExchangeID: exchange.ID, ShippingOptionID: "so_standard", LocationID: "sloc_main",
+		Note:  "the exchange's shirt, gift wrapped for Ayse",
+		Lines: []service.ReplacementLineInput{{OrderLineItemID: lineID, Quantity: 1}},
+	})
+	require.NoError(t, err)
+	_, err = svc.CreateCreditLine(ctx, ord.ID, service.CreateCreditLineInput{
+		Amount: 50, Reason: "goodwill", Note: "promised to Ayse on the phone",
+	})
+	require.NoError(t, err)
+	_, err = svc.CancelOrderLine(ctx, ord.ID, service.CancelOrderLineInput{
+		OrderLineItemID: lineID, Quantity: 1, Reason: "out_of_stock", Note: "Ayse agreed to wait for the rest",
 	})
 	require.NoError(t, err)
 
@@ -152,6 +185,7 @@ func TestDisclosureShowsEveryDeclaredColumnOfEveryRow(t *testing.T) {
 	for _, table := range []string{
 		"orders", "order_line_items", "order_addresses",
 		"order_returns", "order_exchanges", "order_claims",
+		"order_replacements", "order_credit_lines", "order_claim_evidence", "order_line_cancellations",
 	} {
 		assert.Contains(t, seen, table,
 			"the person has a row in %s and the dossier does not mention it", table)
@@ -174,6 +208,29 @@ func TestDisclosureShowsEveryDeclaredColumnOfEveryRow(t *testing.T) {
 	require.True(t, present)
 	assert.Equal(t, map[string]any{"delivery_note": "leave with the doorman"}, instructions,
 		"the caller's own document is handed over whole; gobit never inspected it")
+
+	// Each later record hangs on the order and carries what was typed.
+	for table, want := range map[string]struct {
+		column string
+		values []any
+	}{
+		"order_replacements": {"note", []any{
+			"the larger size, as Ayse asked", "the exchange's shirt, gift wrapped for Ayse",
+		}},
+		"order_credit_lines":       {"note", []any{"promised to Ayse on the phone"}},
+		"order_claim_evidence":     {"caption", []any{"the corner Ayse photographed"}},
+		"order_line_cancellations": {"note", []any{"Ayse agreed to wait for the rest"}},
+	} {
+		records := disclosureRecordsOf(disclosure, table)
+		values := make([]any, 0, len(records))
+		for _, record := range records {
+			assert.True(t, strings.HasPrefix(record.ID, ord.ID+"/"), "%s hangs on %q", table, record.ID)
+			value, present := disclosedField(record, want.column)
+			require.True(t, present, "%s.%s", table, want.column)
+			values = append(values, value)
+		}
+		assert.ElementsMatch(t, want.values, values, table)
+	}
 
 	returns := disclosureRecordsOf(disclosure, "order_returns")
 	require.Len(t, returns, 1)
