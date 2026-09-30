@@ -680,7 +680,7 @@ func TestTutarTasiyanUclarBirimiYaziyor(t *testing.T) {
 			aciklama, _ := op["description"].(string)
 			assert.Contains(t, aciklama, "MINOR UNIT",
 				"tutar taşıyan uç birimini söylemeli")
-			assert.Contains(t, aciklama, "kuruş/cent",
+			assert.Contains(t, aciklama, "kurus/cent",
 				"birim istemci geliştiricisinin bildiği sözcükle yazılmalı")
 		})
 	}

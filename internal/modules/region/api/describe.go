@@ -6,266 +6,272 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names used in parameter schemas.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's counterparts are unexported, and the reason they are repeated
+// here is not cost but SILENCE: a type name spelled "strig" compiles, the
+// document is built, and the mistake surfaces only when a client that reads
+// the schema generates the parameter with the wrong type.
 const (
-	semaTip    = "type"
-	tipDize    = "string"
-	tipTamSayi = "integer"
+	schemaType  = "type"
+	typeString  = "string"
+	typeInteger = "integer"
 )
 
-// referansVeriNotu para birimi ve ülke uçlarının yazma yüzeyi OLMADIĞINI
-// söyleyen açıklamadır.
+// referenceDataNote is the description that says the currency and country
+// endpoints have NO write surface.
 //
-// Ayrım şemaya yazılır çünkü tek başına yol listesi onu göstermez: istemci
-// geliştiricisi GET /admin/v1/currencies'i görüp "demek ki POST da vardır"
-// diye düşünür ve olmayan bir ucu bekler. Notun tek yerde durması da
-// bilinçlidir — üç uçta üç kez yazılsaydı biri güncellenip ötekiler
-// eskirdi.
-const referansVeriNotu = "REFERANS VERİDİR ve yalnızca OKUNUR: kayıtlar " +
-	"migration ile tohumlanır (ISO 4217 / ISO 3166-1 kopyası) ve HTTP " +
-	"üzerinden oluşturulamaz, değiştirilemez, silinemez. Bu modülün yazma " +
-	"yüzeyi yalnızca BÖLGEDEDİR; ülkede değişebilen tek şey hangi bölgeye " +
-	"ait olduğudur ve o da bölgenin alt kaynağından yönetilir " +
-	"(POST/DELETE /admin/v1/regions/{id}/countries)."
+// The distinction is written into the schema because the path list alone does
+// not show it: a client developer sees GET /admin/v1/currencies, thinks "so
+// there is a POST too", and expects an endpoint that does not exist. Keeping
+// the note in one place is also deliberate — written three times on three
+// endpoints, one would be updated and the others would go stale.
+const referenceDataNote = "ARE REFERENCE DATA and READ-ONLY: they are " +
+	"seeded by a migration (a copy of ISO 4217 / ISO 3166-1) and cannot be " +
+	"created, changed or deleted over HTTP. This module's write surface is " +
+	"on the REGION only; the one thing about a country that can change is " +
+	"which region it belongs to, and that is managed through the region's " +
+	"subresource (POST/DELETE /admin/v1/regions/{id}/countries)."
 
-// Describe region'ın uçlarını OpenAPI belgesine işler.
+// Describe writes region's endpoints into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why in this package
 //
-// Anlatılan gövdeler bu paketin DIŞA KAPALI DTO'larıdır (createRegionRequest,
-// regionDTO …) ve şema onlardan yansımayla türetilir. Tipleri anlatabilmek
-// için dışa açmak, yalnızca belge üretmek uğruna modülün yüzeyini
-// genişletmek olurdu: dışa açık bir tip sözleşmedir ve dışarıdan kurulabilir
-// hâle gelirdi. Sorgu parametreleri de burada durmalıdır, çünkü onları
-// GERÇEKTEN okuyan kod ([pageParams], [optionalParam]) bu pakettedir;
-// anlatım başka bir pakette dursaydı ikisi sessizce ayrışırdı. Modülün
-// [openapi.Describer] uygulaması bu yüzden buraya delege eder.
+// The bodies described are this package's UNEXPORTED DTOs
+// (createRegionRequest, regionDTO …) and the schema is derived from them by
+// reflection. Exporting the types to describe them would widen the module's
+// surface only to produce a document: an exported type is a contract, and it
+// would become buildable from outside. The query parameters belong here too,
+// because the code that REALLY reads them ([pageParams], [optionalParam]) is
+// in this package; a description kept in another package would drift from it
+// in silence. The module's [openapi.Describer] implementation therefore
+// delegates here.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir. Metodu
-// [API]'ye bağlamak, belgenin servis kurulmuş olmasına bağlı OLDUĞUNU
-// söylerdi; oysa Register hiç çalışmamışken de belge üretilebilir ve
-// üretilmelidir.
+// The description looks at no runtime state — the schema comes from TYPES.
+// Binding the method to [API] would say the document DEPENDS on a built
+// service; yet the document can and must be built even when Register has
+// never run.
 //
-// # Yazma yüzeyi yalnızca bölgededir
+// # The write surface is on the region only
 //
-// Para birimi ve ülke uçları OKUMADIR; gerekçesi paket belgesindedir ve
-// istemcinin görebilmesi için [referansVeriNotu] ile şemaya da yazılır.
+// The currency and country endpoints are READS; the reason is in the package
+// doc, and it is also written into the schema through [referenceDataNote] so
+// the client can see it.
 //
-// # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
+// # Known limit: the "required" set of request bodies is WIDE
 //
-// Çekirdek "required"ı encoding/json'un HER ZAMAN yazdığı alanlardan türetir
-// ([openapi.Doc.SchemaOf]) ve bu, YANIT gövdeleri için doğru cevaptır. İstek
-// gövdesinde ise "required" istemcinin GÖNDERMEK ZORUNDA olduğu alan demektir
-// ve bunu tip bilemez: [createRegionRequest] omitempty taşımadığı için
-// varsayılanı kabul edilebilen automatic_taxes ve tax_rate_bps de zorunlu
-// görünür. Alan ADLARI ve TİPLERİ doğrudur, yani şema yanlış bir alan
-// uydurmaz; yalnızca fazla şey ister. Doğru çözüm ÇEKİRDEKTEDİR (istek
-// gövdeleri için ayrı bir "required" politikası); tag'lere omitempty
-// serpiştirmek zorunluluğu servisin doğrulamasından json etiketine taşır ve
-// ikisi sessizce ayrışırdı.
+// The core derives "required" from the fields encoding/json ALWAYS writes
+// ([openapi.Doc.SchemaOf]), which is the right answer for RESPONSE bodies. In
+// a request body, "required" means a field the client MUST SEND, and the type
+// cannot know that: because [createRegionRequest] carries no omitempty,
+// automatic_taxes and tax_rate_bps, whose defaults are acceptable, look
+// required too. Field NAMES and TYPES are right, so the schema invents no
+// wrong field; it only asks for too much. The right fix is in the CORE (a
+// separate "required" policy for request bodies); sprinkling omitempty on the
+// tags would move the obligation from the service's validation to a json tag,
+// and the two would drift in silence.
 func Describe(d *openapi.Doc) {
-	describeBolgeler(d)
-	describeBolgeUlkeleri(d)
-	describeReferansVeri(d)
-	describeVitrin(d)
+	describeRegions(d)
+	describeRegionCountries(d)
+	describeReferenceData(d)
+	describeStorefront(d)
 }
 
-// describeBolgeler bölgenin yönetim uçlarını anlatır.
-func describeBolgeler(d *openapi.Doc) {
+// describeRegions describes the region's admin endpoints.
+func describeRegions(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminRegions, openapi.Operation{
-		Summary:     "Yeni bölge oluşturur.",
+		Summary:     "Creates a new region.",
 		RequestBody: d.RequestBody(createRegionRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan bölge", d.Item(regionDTO{})),
+			"201": openapi.Response("The created region", d.Item(regionDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminRegions, openapi.Operation{
-		Summary:    "Bölgeleri sayfalayarak listeler.",
-		Parameters: sayfalamaParametreleri(),
+		Summary:    "Lists the regions, paged.",
+		Parameters: pageParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Bölge sayfası", d.List(regionDTO{})),
+			"200": openapi.Response("A page of regions", d.List(regionDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminRegion, openapi.Operation{
-		Summary: "Tek bir bölgeyi kimliğiyle döner.",
+		Summary: "Returns a single region by its ID.",
 		Responses: map[string]any{
-			"200": openapi.Response("Bölge", d.Item(regionDTO{})),
+			"200": openapi.Response("The region", d.Item(regionDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, pathAdminRegion, openapi.Operation{
-		Summary: "Bölgenin verilen alanlarını günceller.",
-		Description: "Yöntem PUT olsa da semantik KISMİDİR: gövdede olmayan " +
-			"alan değişmez. Tam gövde istenseydi tax_rate_bps göndermeyi " +
-			"unutan bir istemci oranı sessizce sıfırlardı.",
+		Summary: "Updates the given fields of the region.",
+		Description: "The method is PUT, but the semantics are PARTIAL: a field " +
+			"absent from the body does not change. Were a full body required, a " +
+			"client that forgot to send tax_rate_bps would silently zero the rate.",
 		RequestBody: d.RequestBody(updateRegionRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen bölge", d.Item(regionDTO{})),
+			"200": openapi.Response("The updated region", d.Item(regionDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathAdminRegion, openapi.Operation{
-		Summary: "Bölgeyi siler.",
+		Summary: "Deletes the region.",
 		Responses: map[string]any{
-			"204": bosYanit("Bölge silindi"),
+			"204": emptyResponse("Region deleted"),
 		},
 	})
 }
 
-// describeBolgeUlkeleri bölge-ülke bağının uçlarını anlatır.
+// describeRegionCountries describes the endpoints of the region-country link.
 //
-// Bunlar ülkenin KENDİSİNİ yazmaz, yalnızca hangi bölgeye ait olduğunu
-// değiştirir; referans verinin yazılamazlığıyla çelişmezler (bkz.
-// [referansVeriNotu]).
-func describeBolgeUlkeleri(d *openapi.Doc) {
-	// 201 döner çünkü oluşan şey BAĞDIR ve yanıt gövdesi bağın yeni hâlini
-	// taşıyan ülke kaydıdır (bkz. [API.addCountry]). 200 yazmak, istemci
-	// üretecinde yanlış dallanma üretirdi.
+// They do not write the country ITSELF, only which region it belongs to; they
+// do not contradict the reference data being unwritable (see
+// [referenceDataNote]).
+func describeRegionCountries(d *openapi.Doc) {
+	// It returns 201 because what is created is the LINK, and the response
+	// body is the country record carrying the link's new state (see
+	// [API.addCountry]). Writing 200 would produce the wrong branch in a
+	// client generator.
 	d.Describe(http.MethodPost, pathAdminRegionCountries, openapi.Operation{
-		Summary: "Bölgeye ülke ekler.",
-		Description: "Ülke başka bir bölgeye aitse 409 döner; bir ülke aynı " +
-			"anda yalnızca tek bir bölgeye bağlı olabilir.",
+		Summary: "Adds a country to the region.",
+		Description: "Returns 409 if the country belongs to another region; a " +
+			"country can be linked to only one region at a time.",
 		RequestBody: d.RequestBody(addCountryRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Bölgeye bağlanan ülke", d.Item(countryDTO{})),
+			"201": openapi.Response("The country linked to the region", d.Item(countryDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminRegionCountries, openapi.Operation{
-		Summary:     "Bölgeye bağlı ülkeleri sayfalayarak listeler.",
-		Description: "Ülke kayıtları " + referansVeriNotu,
-		Parameters:  sayfalamaParametreleri(),
+		Summary:     "Lists the countries linked to the region, paged.",
+		Description: "Country records " + referenceDataNote,
+		Parameters:  pageParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Bölgenin ülkeleri", d.List(countryDTO{})),
+			"200": openapi.Response("The region's countries", d.List(countryDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathAdminRegionCountry, openapi.Operation{
-		Summary: "Ülkeyi bölgeden çıkarır.",
-		Description: "Ülke kaydı SİLİNMEZ; yalnızca bölge bağı kaldırılır ve " +
-			"region_id null olur.",
+		Summary: "Removes the country from the region.",
+		Description: "The country record is NOT DELETED; only the region link " +
+			"is removed and region_id becomes null.",
 		Responses: map[string]any{
-			"204": bosYanit("Ülke bölgeden çıkarıldı"),
+			"204": emptyResponse("Country removed from the region"),
 		},
 	})
 }
 
-// describeReferansVeri para birimi ve ülke OKUMA uçlarını anlatır.
-func describeReferansVeri(d *openapi.Doc) {
+// describeReferenceData describes the currency and country READ endpoints.
+func describeReferenceData(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathAdminCountries, openapi.Operation{
-		Summary:     "Ülkeleri sayfalayarak listeler.",
-		Description: "Ülke kayıtları " + referansVeriNotu,
-		// "region_id" GERÇEKTEN okunur ([API.listCountries], [optionalParam])
-		// ve boş dize ile "hiç verilmedi" AYRIDIR: boş bir kimlik istemcinin
-		// hatasıdır ve servis onu reddeder, sessizce "süzme yok"a dönüşmez.
-		Parameters: append(sayfalamaParametreleri(),
-			sorguParametresi("region_id", tipDize,
-				"Ülkeleri tek bir bölgeyle sınırlar. Verilip BOŞ bırakılırsa "+
-					"süzgeç kalkmaz; istek 422 ile reddedilir.")),
+		Summary:     "Lists the countries, paged.",
+		Description: "Country records " + referenceDataNote,
+		// "region_id" is REALLY read ([API.listCountries], [optionalParam]),
+		// and an empty string is DISTINCT from "not given": an empty ID is the
+		// client's mistake and the service rejects it; it does not silently
+		// turn into "no filter".
+		Parameters: append(pageParameters(),
+			queryParameter("region_id", typeString,
+				"Limits the countries to a single region. If it is given but "+
+					"left EMPTY, the filter is not dropped; the request is "+
+					"rejected with 422.")),
 		Responses: map[string]any{
-			"200": openapi.Response("Ülke sayfası", d.List(countryDTO{})),
+			"200": openapi.Response("A page of countries", d.List(countryDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminCurrencies, openapi.Operation{
-		Summary:     "Para birimlerini sayfalayarak listeler.",
-		Description: "Para birimi kayıtları " + referansVeriNotu,
-		Parameters:  sayfalamaParametreleri(),
+		Summary:     "Lists the currencies, paged.",
+		Description: "Currency records " + referenceDataNote,
+		Parameters:  pageParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Para birimi sayfası", d.List(currencyDTO{})),
+			"200": openapi.Response("A page of currencies", d.List(currencyDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminCurrency, openapi.Operation{
-		Summary:     "Tek bir para birimini ISO kodundan döner.",
-		Description: "Para birimi kayıtları " + referansVeriNotu,
-		// Yol parametresi desenden de türetilir; ELLE yazılmasının tek sebebi
-		// açıklamasıdır. Kodun ISO 4217 olduğunu ve büyük harfe
-		// normalleştirildiğini yalnızca handler bilir.
+		Summary:     "Returns a single currency by its ISO code.",
+		Description: "Currency records " + referenceDataNote,
+		// The path parameter is also derived from the pattern; the only reason
+		// it is written BY HAND is its description. Only the handler knows
+		// that the code is ISO 4217 and is normalized to upper case.
 		Parameters: []openapi.Parameter{{
 			Name:        "code",
 			In:          "path",
 			Required:    true,
-			Schema:      map[string]any{semaTip: tipDize},
-			Description: "ISO 4217 para birimi kodu (örn. TRY).",
+			Schema:      map[string]any{schemaType: typeString},
+			Description: "ISO 4217 currency code (e.g. TRY).",
 		}},
 		Responses: map[string]any{
-			"200": openapi.Response("Para birimi", d.Item(currencyDTO{})),
+			"200": openapi.Response("The currency", d.Item(currencyDTO{})),
 		},
 	})
 }
 
-// describeVitrin bölgenin vitrin uçlarını anlatır.
+// describeStorefront describes the region's storefront endpoints.
 //
-// Vitrin gövdesi yönetim gövdesinden FARKLIDIR ve iki ayrı bileşen olarak
-// görünmesi bilinçlidir: müşteriye giden kayıt para biriminin sembolünü ve
-// ondalık basamağını taşır ama vergi oranını taşımaz. Tek bir bileşen
-// kullanılsaydı istemci, vitrinde hiç dönmeyen tax_rate_bps alanını okuyabilir
-// sanırdı.
-func describeVitrin(d *openapi.Doc) {
+// The storefront body is DIFFERENT from the admin body, and showing them as
+// two separate components is deliberate: the record sent to the customer
+// carries the currency's symbol and decimal digits but not the tax rate. Were
+// a single component used, the client would believe it could read the
+// tax_rate_bps field, which the storefront never returns.
+func describeStorefront(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathStoreRegions, openapi.Operation{
-		Summary: "Vitrinin seçebileceği bölgeleri para birimi ve ülkeleriyle listeler.",
-		Description: "Tutarlar minor unit TAM SAYIDIR; istemci bölme " +
-			"çarpanını (10^decimal_digits) aynı yanıttaki para biriminden " +
-			"öğrenir. Sabit 100 varsayan bir istemci yen tutarlarını yüz kat " +
-			"küçük gösterir.",
-		Parameters: sayfalamaParametreleri(),
+		Summary: "Lists the regions the storefront can choose from, with their currency and countries.",
+		Description: "Amounts are minor-unit INTEGERS; the client learns the " +
+			"divisor (10^decimal_digits) from the currency in the same " +
+			"response. A client that assumes a fixed 100 shows yen amounts a " +
+			"hundred times too small.",
+		Parameters: pageParameters(),
 		Responses: map[string]any{
-			"200": openapi.Response("Vitrin bölgeleri", d.List(storeRegionDTO{})),
+			"200": openapi.Response("Storefront regions", d.List(storeRegionDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathStoreRegion, openapi.Operation{
-		Summary: "Tek bir vitrin bölgesini kimliğiyle döner.",
+		Summary: "Returns a single storefront region by its ID.",
 		Responses: map[string]any{
-			"200": openapi.Response("Vitrin bölgesi", d.Item(storeRegionDTO{})),
+			"200": openapi.Response("The storefront region", d.Item(storeRegionDTO{})),
 		},
 	})
 }
 
-// sayfalamaParametreleri limit ve offset sorgu parametrelerini döner.
+// pageParameters returns the limit and offset query parameters.
 //
-// İkisi de her sayfalanan uçta AYNI anlamı taşır ([pageParams]); tek yerde
-// durmaları, açıklamalardan birinin güncellenip ötekilerin eskimesini
-// engeller. Dilim her çağrıda YENİDEN kurulur: çağıran ona ek parametre
-// ekleyebiliyor (bkz. [describeReferansVeri]) ve paylaşılan bir dilime append
-// etmek öteki uçların parametre listesini de değiştirebilirdi.
-func sayfalamaParametreleri() []openapi.Parameter {
+// Both carry the SAME meaning on every paged endpoint ([pageParams]); keeping
+// them in one place prevents one description from being updated while the
+// others go stale. The slice is built ANEW on every call: a caller may append
+// extra parameters to it (see [describeReferenceData]), and appending to a
+// shared slice could change the other endpoints' parameter lists as well.
+func pageParameters() []openapi.Parameter {
 	return []openapi.Parameter{
-		sorguParametresi("limit", tipTamSayi,
-			"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-		sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+		queryParameter("limit", typeInteger,
+			"Page size; if it is not given, the service's default applies."),
+		queryParameter("offset", typeInteger, "Number of records to skip."),
 	}
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
+// queryParameter declares a parameter read from the query string.
 //
-// Hiçbiri zorunlu DEĞİLDİR: verilmediklerinde handler süzgeci uygulamaz ya da
-// servisin varsayılanıyla devam eder (bkz. [pageParams], [optionalParam]).
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+// None of them is REQUIRED: when one is not given, the handler does not apply
+// the filter or proceeds with the service's default (see [pageParams],
+// [optionalParam]).
+func queryParameter(name, typ, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: typ},
+		Description: description,
 	}
 }
 
-// bosYanit GÖVDESİZ bir yanıt tanımı üretir.
+// emptyResponse builds a response definition with NO body.
 //
-// [openapi.Response] her zaman bir gövde şeması yazar; 204'ün gövdesi ise
-// YOKTUR (bkz. corehttp.WriteJSON'a nil verilen çağrılar). Boş bir şema
-// yazmak "bir şey dönüyor ama şekli bilinmiyor" demek olurdu ve istemci
-// üreteci okunacak bir gövde bekleyen bir metot üretirdi.
-func bosYanit(aciklama string) map[string]any {
-	return map[string]any{"description": aciklama}
+// [openapi.Response] always writes a body schema, while a 204 HAS no body (see
+// the calls that hand corehttp.WriteJSON a nil). Writing an empty schema would
+// say "something comes back but its shape is unknown", and the client
+// generator would produce a method that expects a body to read.
+func emptyResponse(description string) map[string]any {
+	return map[string]any{"description": description}
 }

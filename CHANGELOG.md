@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The published API document was partly Turkish.** **For integrators:** the
+  summaries and descriptions `/openapi.json` carries for the b2b, customer,
+  payment, promotion, region and tax routes are now English — 276 strings,
+  which include the tool descriptions a model client reads (ADR 0161). No path,
+  operation, parameter name or schema changed.
+
 - **Every sale a shopper can build is now checked as a property** (ADR 0249,
   D172). **For contributors:** property-based tests draw their inputs with
   `pgregory.net/rapid` on every ordinary run; a failure prints its draws,

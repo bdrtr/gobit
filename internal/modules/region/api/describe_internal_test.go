@@ -449,7 +449,7 @@ func TestReferansVeriUclariYazmaVaatEtmez(t *testing.T) {
 			"%s referans veridir; yalnızca GET taşımalı", yol)
 
 		aciklama, _ := islem(t, yollar, http.MethodGet, yol)["description"].(string)
-		assert.Contains(t, aciklama, "yalnızca OKUNUR",
+		assert.Contains(t, aciklama, "READ-ONLY",
 			"%s açıklaması referans veri olduğunu söylemeli", yol)
 	}
 }

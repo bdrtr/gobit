@@ -882,6 +882,70 @@ func TestSchemaContainsNoRawRecordIDs(t *testing.T) {
 		"there must be no string in the schema shaped like a prefixed record ID")
 }
 
+// schemaTurkishLetters are the letters Turkish has and English does not,
+// written as escapes so that this file stays ASCII (the language gate's
+// escape-over-exemption preference, ADR 0012).
+const schemaTurkishLetters = "\u00e7\u011f\u0131\u00f6\u015f\u00fc\u00c7\u011e\u0130\u00d6\u015e\u00dc"
+
+// schemaStrings collects every string in a decoded document, object keys
+// included, by its JSON path.
+func schemaStrings(value any, path string, into map[string]string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			into[path+" key "+key] = key
+			schemaStrings(child, path+"."+key, into)
+		}
+	case []any:
+		for i, child := range typed {
+			schemaStrings(child, fmt.Sprintf("%s[%d]", path, i), into)
+		}
+	case string:
+		into[path] = typed
+	}
+}
+
+// TestTheSchemaProseIsEnglish verifies that the document the server publishes
+// carries no Turkish letter.
+//
+// The language gate (ADR 0012) reads FILES, and a file in its ledger may still
+// hold Turkish. A describe block in such a file writes that Turkish into
+// /openapi.json, which every API client and every model client (ADR 0161)
+// reads, and the file gate stays green. This gate's subject is the served
+// document, so a Turkish letter fails here whichever file it came from.
+//
+// It reads letters and not words. Transliterated Turkish passes it; the word
+// list that would catch it lives in the language gate's own file, which is the
+// one file allowed to carry it, and that gate reads every file outside the
+// ledger.
+func TestTheSchemaProseIsEnglish(t *testing.T) {
+	_, doc := schemaDocument(t)
+
+	texts := map[string]string{}
+	schemaStrings(doc, "$", texts)
+
+	descriptions := 0
+	for path := range texts {
+		if strings.HasSuffix(path, ".description") {
+			descriptions++
+		}
+	}
+	// A walk that found no prose would pass an empty document.
+	require.Positive(t, descriptions, "precondition: the schema must carry descriptions")
+
+	var offenders []string
+	for path, text := range texts {
+		if strings.ContainsAny(text, schemaTurkishLetters) {
+			offenders = append(offenders, fmt.Sprintf("%s: %q", path, text))
+		}
+	}
+	sort.Strings(offenders)
+
+	assert.Empty(t, offenders,
+		"the published schema must be English; these strings are Turkish (%d of %d descriptions)",
+		len(offenders), descriptions)
+}
+
 // TestSchemaMatchesRealResponses verifies that the described schema overlaps
 // with the body the server ACTUALLY writes.
 //

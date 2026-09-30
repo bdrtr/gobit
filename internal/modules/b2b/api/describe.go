@@ -6,179 +6,184 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names parameter schemas use.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's own constants are unexported, and the reason they are repeated
+// here is not cost but SILENCE: a type name spelled "strig" compiles, the
+// document is built, and it surfaces only when a client that reads the schema
+// generates the parameter with the wrong type.
 const (
-	semaTip      = "type"
-	tipDize      = "string"
-	tipTamSayi   = "integer"
-	tipMantiksal = "boolean"
+	schemaType  = "type"
+	typeString  = "string"
+	typeInteger = "integer"
+	typeBoolean = "boolean"
 )
 
-// Describe b2b'nin uçlarını OpenAPI belgesine işler.
+// Describe writes b2b's endpoints into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why in this package
 //
-// Anlatılan gövdeler bu paketin DIŞA KAPALI DTO'larıdır (companyRequest,
-// employeeDTO …) ve şema onlardan yansımayla türetilir. Tipleri anlatabilmek
-// için dışa açmak, yalnızca belge üretmek uğruna modülün yüzeyini genişletmek
-// olurdu. Sorgu parametreleri de burada durmalıdır, çünkü onları GERÇEKTEN
-// okuyan kod ([pageParams], [boolParam], [stringParam]) bu pakettedir;
-// anlatım başka bir pakette dursaydı ikisi sessizce ayrışırdı.
+// The bodies described are this package's UNEXPORTED DTOs (companyRequest,
+// employeeDTO …) and the schema is derived from them by reflection. Exporting
+// the types to describe them would widen the module's surface only to produce
+// a document. The query parameters belong here too, because the code that
+// REALLY reads them ([pageParams], [boolParam], [stringParam]) is in this
+// package; a description kept in another package would drift from it in
+// silence.
 //
-// # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
+// # Known limit: the "required" set of request bodies is WIDE
 //
-// Çekirdek "required"ı encoding/json'un HER ZAMAN yazdığı alanlardan türetir ve
-// bu, YANIT gövdeleri için doğru cevaptır. İstek gövdesinde ise "required"
-// istemcinin GÖNDERMEK ZORUNDA olduğu alan demektir ve bunu tip bilemez: bu
-// paketin istek DTO'ları omitempty taşımadığı için hepsi zorunlu görünür —
-// örneğin POST /admin/v1/b2b/companies, boş bırakılabilen adres alanlarını da
-// ister. Alan ADLARI ve TİPLERİ doğrudur; şema yalnızca fazla şey ister. Doğru
-// çözüm ÇEKİRDEKTEDİR (istek gövdeleri için ayrı bir "required" politikası);
-// tag'lere omitempty serpiştirmek zorunluluğu servisin doğrulamasından json
-// etiketine taşır ve ikisi sessizce ayrışırdı.
+// The core derives "required" from the fields encoding/json ALWAYS writes, and
+// that is the right answer for RESPONSE bodies. In a request body "required"
+// means a field the client MUST SEND, which a type cannot know: this package's
+// request DTOs carry no omitempty, so every field looks required — for
+// instance, POST /admin/v1/b2b/companies also asks for the address fields that
+// may be left empty. Field NAMES and TYPES are right; the schema only asks for
+// too much. The right fix is in the CORE (a separate "required" policy for
+// request bodies); sprinkling omitempty on tags would move the obligation from
+// the service's validation to a json tag, and the two would drift in silence.
 func Describe(d *openapi.Doc) {
-	describeSirketler(d)
-	describeCalisanlar(d)
-	describeVitrin(d)
+	describeCompanies(d)
+	describeEmployees(d)
+	describeStore(d)
 }
 
-// describeSirketler şirketin yönetim uçlarını anlatır.
-func describeSirketler(d *openapi.Doc) {
+// describeCompanies describes the company admin endpoints.
+func describeCompanies(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/b2b/companies", openapi.Operation{
-		Summary: "Yeni şirket oluşturur.",
-		Description: "Para birimi ZORUNLUDUR: çalışanların harcama limitleri " +
-			"o para biriminde ifade edilir. E-posta benzersiz DEĞİLDİR.",
+		Summary: "Creates a new company.",
+		Description: "The currency is REQUIRED: employees' spending limits are " +
+			"expressed in that currency. The email is NOT unique.",
 		RequestBody: d.RequestBody(companyRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan şirket", d.Item(companyDTO{})),
+			"201": openapi.Response("The created company", d.Item(companyDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/b2b/companies", openapi.Operation{
-		Summary: "Şirketleri süzerek ve sayfalayarak listeler.",
-		// Parametreler handler'ın OKUDUKLARIDIR, isteyebileceklerimiz değil:
-		// [Handler.adminListCompanies] tam olarak bu üçünü okur.
+		Summary: "Lists the companies, filtered and paged.",
+		// The parameters are what the handler READS, not what we might want:
+		// [Handler.adminListCompanies] reads exactly these three.
 		Parameters: []openapi.Parameter{
-			sorguParametresi("email", tipDize,
-				"E-postaya göre süzer; e-posta benzersiz olmadığı için birden çok kayıt dönebilir."),
-			sorguParametresi("limit", tipTamSayi,
-				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+			queryParameter("email", typeString,
+				"Filters by email; the email is not unique, so more than one record can come back."),
+			queryParameter("limit", typeInteger,
+				"The page size; the service's default when absent."),
+			queryParameter("offset", typeInteger, "How many records to skip."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Şirket sayfası", d.List(companyDTO{})),
+			"200": openapi.Response("A page of companies", d.List(companyDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/b2b/companies/{id}", openapi.Operation{
-		Summary: "Tek bir şirketi kimliğiyle döner.",
+		Summary: "Returns one company by its identifier.",
 		Responses: map[string]any{
-			"200": openapi.Response("Şirket", d.Item(companyDTO{})),
+			"200": openapi.Response("The company", d.Item(companyDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, "/admin/v1/b2b/companies/{id}", openapi.Operation{
-		Summary: "Şirketin verilen alanlarını günceller.",
-		Description: "Semantik KISMİDİR: gövdede olmayan alan değişmez, " +
-			"adres alanlarında verilen boş dize gerçek bir temizlemedir.",
+		Summary: "Updates the given fields of the company.",
+		Description: "The semantics are PARTIAL: a field absent from the body " +
+			"does not change, and an empty string given for an address field " +
+			"really clears it.",
 		RequestBody: d.RequestBody(updateCompanyRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen şirket", d.Item(companyDTO{})),
+			"200": openapi.Response("The updated company", d.Item(companyDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/b2b/companies/{id}", openapi.Operation{
-		Summary: "Şirketi ve ÇALIŞANLARINI yumuşak siler.",
-		Description: "Çalışan kayıtları da silinir ve müşteri bağları kaldırılır: " +
-			"canlı bir çalışan kaydı daima canlı bir şirkete aittir.",
+		Summary: "Soft-deletes the company and its EMPLOYEES.",
+		Description: "The employee records are deleted too and their customer " +
+			"links are removed: a live employee record always belongs to a " +
+			"live company.",
 		Responses: map[string]any{
-			"204": bosYanit("Şirket silindi"),
+			"204": emptyResponse("The company was deleted"),
 		},
 	})
 }
 
-// describeCalisanlar çalışanın yönetim uçlarını anlatır.
-func describeCalisanlar(d *openapi.Doc) {
+// describeEmployees describes the employee admin endpoints.
+func describeEmployees(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/b2b/employees", openapi.Operation{
-		Summary: "Şirkete çalışan ekler.",
-		Description: "Bir müşteri en fazla BİR şirketin çalışanı olabilir; " +
-			"zaten bağlı bir müşteri için 409 döner. spending_limit boş " +
-			"bırakılırsa çalışan sınırsız harcayabilir.",
+		Summary: "Adds an employee to a company.",
+		Description: "A customer can be the employee of at most ONE company; " +
+			"for a customer already linked the answer is 409. When " +
+			"spending_limit is left empty, the employee can spend without limit.",
 		RequestBody: d.RequestBody(employeeRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan çalışan", d.Item(employeeDTO{})),
+			"201": openapi.Response("The created employee", d.Item(employeeDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/b2b/employees", openapi.Operation{
-		Summary: "Çalışanları süzerek ve sayfalayarak listeler.",
+		Summary: "Lists the employees, filtered and paged.",
 		Parameters: []openapi.Parameter{
-			sorguParametresi("company_id", tipDize, "Çalışanları tek bir şirketle sınırlar."),
-			sorguParametresi("is_company_admin", tipMantiksal,
-				"true yalnızca şirket yöneticilerini, false yalnızca diğerlerini getirir."),
-			sorguParametresi("limit", tipTamSayi,
-				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+			queryParameter("company_id", typeString, "Limits the employees to one company."),
+			queryParameter("is_company_admin", typeBoolean,
+				"true returns only the company admins, false only the others."),
+			queryParameter("limit", typeInteger,
+				"The page size; the service's default when absent."),
+			queryParameter("offset", typeInteger, "How many records to skip."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Çalışan sayfası", d.List(employeeDTO{})),
+			"200": openapi.Response("A page of employees", d.List(employeeDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/b2b/employees/{id}", openapi.Operation{
-		Summary: "Tek bir çalışanı kimliğiyle döner.",
+		Summary: "Returns one employee by its identifier.",
 		Responses: map[string]any{
-			"200": openapi.Response("Çalışan", d.Item(employeeDTO{})),
+			"200": openapi.Response("The employee", d.Item(employeeDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, "/admin/v1/b2b/employees/{id}", openapi.Operation{
-		Summary: "Çalışanın harcama yetkisini günceller.",
-		Description: "Limiti KALDIRMAK için clear_spending_limit gönderilir: " +
-			"JSON'da null ile alanın hiç gönderilmemesi ayırt edilemez.",
+		Summary: "Updates the employee's spending authority.",
+		Description: "To REMOVE the limit, send clear_spending_limit: in JSON, " +
+			"a null cannot be told apart from a field that was never sent.",
 		RequestBody: d.RequestBody(updateEmployeeRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen çalışan", d.Item(employeeDTO{})),
+			"200": openapi.Response("The updated employee", d.Item(employeeDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/b2b/employees/{id}", openapi.Operation{
-		Summary: "Çalışanı yumuşak siler ve müşteri bağını kaldırır.",
-		Description: "Bağın kaldırılması şarttır: kalsaydı müşteri bir daha " +
-			"hiçbir şirkete çalışan olarak eklenemezdi.",
+		Summary: "Soft-deletes the employee and removes the customer link.",
+		Description: "Removing the link is necessary: if it stayed, the customer " +
+			"could never again be added to any company as an employee.",
 		Responses: map[string]any{
-			"204": bosYanit("Çalışan silindi"),
+			"204": emptyResponse("The employee was deleted"),
 		},
 	})
 }
 
-// describeVitrin müşterinin kendi şirketiyle ilgili vitrin uçlarını anlatır.
-func describeVitrin(d *openapi.Doc) {
+// describeStore describes the storefront endpoints about the customer's own
+// company.
+func describeStore(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/store/v1/b2b/customers/{customer_id}/company", openapi.Operation{
-		Summary: "Müşterinin KENDİ şirketini döner.",
-		Description: "Şirket, müşterinin kendi çalışan kaydından türetilir; " +
-			"şirket kimliğiyle çağrılabilen bir uç YOKTUR. Müşteri hiçbir " +
-			"şirketin çalışanı değilse 404 döner. Where this installation has " +
-			"bound a customer identity, a path naming a customer that identity " +
-			"CONTRADICTS is refused.",
+		Summary: "Returns the customer's OWN company.",
+		Description: "The company is derived from the customer's own employee " +
+			"record; there is NO endpoint that can be called with a company " +
+			"identifier. When the customer is the employee of no company, the " +
+			"answer is 404. Where this installation has bound a customer " +
+			"identity, a path naming a customer that identity CONTRADICTS is " +
+			"refused.",
 		Responses: storefrontClaimResponses("200",
-			openapi.Response("Müşterinin şirketi", d.Item(companyDTO{}))),
+			openapi.Response("The customer's company", d.Item(companyDTO{}))),
 	})
 
 	d.Describe(http.MethodGet, "/store/v1/b2b/customers/{customer_id}/employee", openapi.Operation{
-		Summary: "Müşterinin KENDİ çalışan kaydını döner.",
-		Description: "Harcama limitini, sıfırlanma aralığını ve geçerli " +
-			"pencerenin başlangıcını taşır. KALAN hak hesaplanmaz: pencere " +
-			"içindeki sipariş toplamı order modülünün verisidir. Where this " +
-			"installation has bound a customer identity, a path naming a " +
-			"customer that identity CONTRADICTS is refused.",
+		Summary: "Returns the customer's OWN employee record.",
+		Description: "It carries the spending limit, the reset interval and the " +
+			"start of the current window. The REMAINING allowance is not " +
+			"computed: the order total inside the window is the order module's " +
+			"data. Where this installation has bound a customer identity, a " +
+			"path naming a customer that identity CONTRADICTS is refused.",
 		Responses: storefrontClaimResponses("200",
-			openapi.Response("Müşterinin çalışan kaydı", d.Item(storeEmployeeDTO{}))),
+			openapi.Response("The customer's employee record", d.Item(storeEmployeeDTO{}))),
 	})
 }
 
@@ -242,26 +247,26 @@ func storefrontClaimResponses(success string, response any) map[string]any {
 	}
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
+// queryParameter describes a parameter read from the query string.
 //
-// Hiçbiri zorunlu DEĞİLDİR: verilmediklerinde handler süzgeci uygulamaz ya da
-// servisin varsayılanıyla devam eder (bkz. [pageParams], [boolParam],
+// None of them is REQUIRED: when absent, the handler applies no filter or
+// carries on with the service's default (see [pageParams], [boolParam],
 // [stringParam]).
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+func queryParameter(name, typ, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: typ},
+		Description: description,
 	}
 }
 
-// bosYanit GÖVDESİZ bir yanıt tanımı üretir.
+// emptyResponse builds a response definition with NO body.
 //
-// [openapi.Response] her zaman bir gövde şeması yazar; 204'ün gövdesi ise
-// YOKTUR (bkz. corehttp.WriteJSON'a nil verilen çağrılar). Boş bir şema yazmak
-// "bir şey dönüyor ama şekli bilinmiyor" demek olurdu ve istemci üreteci
-// okunacak bir gövde bekleyen bir metot üretirdi.
-func bosYanit(aciklama string) map[string]any {
-	return map[string]any{"description": aciklama}
+// [openapi.Response] always writes a body schema, and a 204 has NO body (see
+// the calls that hand corehttp.WriteJSON nil). Writing an empty schema would
+// say "something comes back but its shape is unknown", and a client generator
+// would produce a method that waits for a body to read.
+func emptyResponse(description string) map[string]any {
+	return map[string]any{"description": description}
 }

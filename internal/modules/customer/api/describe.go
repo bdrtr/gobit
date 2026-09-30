@@ -6,75 +6,65 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names used in the parameter schemas.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's counterparts are unexported, and the reason they are repeated here
+// is not cost but SILENCE: a type name written as "strig" compiles, the
+// document is produced, and the mistake surfaces only when a client reading the
+// schema produces the parameter with the wrong type.
 const (
-	semaTip      = "type"
-	tipDize      = "string"
-	tipTamSayi   = "integer"
-	tipMantiksal = "boolean"
+	schemaType  = "type"
+	typeString  = "string"
+	typeInteger = "integer"
+	typeBoolean = "boolean"
 )
 
-// Describe customer'ın uçlarını OpenAPI belgesine işler.
+// Describe records customer's endpoints into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why it is in this package
 //
-// Anlatılan gövdeler bu paketin DIŞA KAPALI DTO'larıdır (customerRequest,
-// customerDTO …) ve şema onlardan yansımayla türetilir. Tipleri anlatabilmek
-// için dışa açmak, yalnızca belge üretmek uğruna modülün yüzeyini
-// genişletmek olurdu: dışa açık bir tip sözleşmedir ve dışarıdan kurulabilir
-// hâle gelirdi. Sorgu parametreleri de burada durmalıdır, çünkü onları
-// GERÇEKTEN okuyan kod ([pageParams], [boolParam], [stringParam]) bu
-// pakettedir; anlatım başka bir pakette dursaydı ikisi sessizce ayrışırdı.
-// Modülün [openapi.Describer] uygulaması bu yüzden buraya delege eder.
+// The bodies being described are this package's UNEXPORTED DTOs
+// (customerRequest, customerDTO …), and the schema is derived from them by
+// reflection. Exporting the types so that they can be described would widen
+// the module's surface merely to produce a document: an exported type is a
+// contract and would become constructible from outside. The query parameters
+// belong here too, because the code that ACTUALLY reads them ([pageParams],
+// [boolParam], [stringParam]) is in this package; were the description in
+// another package, the two would drift apart silently. That is why the
+// module's [openapi.Describer] implementation delegates here.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir. Metodu
-// [Handler]'a bağlamak, belgenin servis kurulmuş olmasına bağlı OLDUĞUNU
-// söylerdi; oysa Register hiç çalışmamışken de belge üretilebilir ve
-// üretilmelidir.
+// The description looks at no run-time state — the schema comes from the
+// TYPES. Attaching the method to [Handler] would say the document DEPENDS on
+// the service having been set up; yet the document can be produced, and has to
+// be, even when Register has never run.
 //
-// # ADRES UÇLARI ANLATILMADI — bileşen adı çakışması
+// # The address endpoints are described in describe_address.go
 //
-// Şema bileşeninin adı Go tip adından türetilir (baş harf büyür, "DTO" soneki
-// düşer; bkz. çekirdekteki bilesenAdi). Bu paketteki [addressDTO] ile
-// [addressRequest], cart/api'deki AYNI ADLI tiplerle aynı bileşen adını
-// ("Address", "AddressRequest") ister. İki farklı tip aynı adı istediğinde
-// [openapi.Doc.Build] hata döner ve belge TÜMDEN üretilemez — yani anlatılmış
-// öteki uçlar da kaybolurdu.
+// They went undescribed until ADR 0036: this package's [addressDTO] and
+// [addressRequest] asked for the same component names as the same-named types
+// in cart/api, and a clash stops the whole document from building. ADR 0036
+// prefixes every component name with its module, and describe_address.go
+// describes the twelve.
 //
-// Tipi yeniden adlandırmak bu paketin tek başına verebileceği bir karar
-// DEĞİLDİR: ad, istemci üreteçlerinin sınıf adı olarak kullandığı YAYIMLANAN
-// sözleşmedir ve cart tarafındaki "Address" istemcilerde çoktan üretilmiş
-// olabilir. Bu yüzden adres uçlarının hiçbiri anlatılmadı; belgede yolları,
-// metotları ve güvenlikleriyle görünürler, yalnızca gövdeleri olmaz. Çözüm
-// bir ad alanı kararıdır (örn. bileşen adına modül önekinin girmesi) ve
-// çekirdekte verilmelidir.
+// # A known limit: the "required" set of the request bodies is TOO WIDE
 //
-// Eksiğin yazılması bilinçlidir: eksik olduğunu bilmek, eksik olduğunu
-// sanmamaktan iyidir.
-//
-// # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
-//
-// Çekirdek "required"ı encoding/json'un HER ZAMAN yazdığı alanlardan türetir
-// ([openapi.Doc.SchemaOf]) ve bu, YANIT gövdeleri için doğru cevaptır. İstek
-// gövdesinde ise "required" istemcinin GÖNDERMEK ZORUNDA olduğu alan demektir
-// ve bunu tip bilemez: bu paketin istek DTO'ları omitempty taşımadığı için
-// hepsi zorunlu görünür — örneğin POST /store/v1/customers, boş
-// bırakılabilen phone ve metadata'yı da ister. Alan ADLARI ve TİPLERİ
-// doğrudur, yani şema yanlış bir alan uydurmaz; yalnızca fazla şey ister.
-// Doğru çözüm ÇEKİRDEKTEDİR (istek gövdeleri için ayrı bir "required"
-// politikası); tag'lere omitempty serpiştirmek zorunluluğu servisin
-// doğrulamasından json etiketine taşır ve ikisi sessizce ayrışırdı.
+// The core derives "required" from the fields encoding/json ALWAYS writes
+// ([openapi.Doc.SchemaOf]), and that is the correct answer for RESPONSE bodies.
+// On a request body, however, "required" means a field the client HAS TO SEND,
+// and the type cannot know that: because this package's request DTOs carry no
+// omitempty, they all look mandatory — for example POST /store/v1/customers
+// also asks for phone and metadata, which may be left empty. The field NAMES
+// and TYPES are correct, so the schema does not invent a wrong field; it merely
+// asks for too much. The correct fix is IN THE CORE (a separate "required"
+// policy for request bodies); sprinkling omitempty over the tags would move the
+// requirement from the service's validation to the json tag, and the two would
+// drift apart silently.
 func Describe(d *openapi.Doc) {
-	describeMusteriler(d)
-	describeGruplar(d)
-	describeVitrin(d)
+	describeCustomers(d)
+	describeGroups(d)
+	describeStorefront(d)
 
 	// The twelve address endpoints; see describe_address.go for why they are in
 	// a file of their own and why they were undescribed until ADR 0036.
@@ -83,211 +73,212 @@ func Describe(d *openapi.Doc) {
 	describeSegments(d)
 }
 
-// describeMusteriler müşterinin yönetim uçlarını anlatır.
-func describeMusteriler(d *openapi.Doc) {
+// describeCustomers describes the customer admin endpoints.
+func describeCustomers(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/customers", openapi.Operation{
-		Summary: "Kayıtlı müşteri hesabı oluşturur.",
-		Description: "Yönetim ucu daima HESAP açar; misafir kaydı vitrin " +
-			"akışının parçasıdır (POST /store/v1/customers).",
+		Summary: "Creates a registered customer account.",
+		Description: "The admin endpoint always opens an ACCOUNT; a guest record is " +
+			"part of the storefront flow (POST /store/v1/customers).",
 		RequestBody: d.RequestBody(customerRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan müşteri", d.Item(customerDTO{})),
+			"201": openapi.Response("The created customer", d.Item(customerDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/customers", openapi.Operation{
-		Summary: "Müşterileri süzerek ve sayfalayarak listeler.",
-		// Parametreler handler'ın OKUDUKLARIDIR, isteyebileceklerimiz değil:
-		// [Handler.adminListCustomers] tam olarak bu beşini okur.
+		Summary: "Lists customers, filtered and paginated.",
+		// The parameters are the ones the handler READS, not the ones we might
+		// want: [Handler.adminListCustomers] reads exactly these six.
 		Parameters: []openapi.Parameter{
-			sorguParametresi("email", tipDize,
-				"E-postaya göre süzer; MİSAFİR kayıtları da getirir, "+
-					"dolayısıyla birden çok satır dönebilir."),
-			sorguParametresi("has_account", tipMantiksal,
-				"true yalnızca kayıtlı hesapları, false yalnızca misafirleri getirir."),
-			sorguParametresi("group_id", tipDize, "Müşterileri tek bir grupla sınırlar."),
-			sorguParametresi("limit", tipTamSayi,
-				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
-			sorguParametresi("after", tipDize,
-				"Bir önceki sayfanın \"next_cursor\" değeri. Derin sayfalarda \"offset\"ten "+
-					"ucuzdur: offset, veritabanına atladığı her satırı yürütüp ATTIRIR ve "+
-					"maliyeti derinlikle büyür; cursor ise indeks koşuluna girer ve düz kalır. "+
-					"\"after\" ile \"offset\" iki ayrı konum adlandırır ve birlikte "+
-					"REDDEDİLİR. Yanıt \"next_cursor\" taşımıyorsa liste tükenmiştir."),
+			queryParameter("email", typeString,
+				"Filters by email; also returns GUEST records, "+
+					"so more than one row may come back."),
+			queryParameter("has_account", typeBoolean,
+				"true returns only registered accounts, false only guests."),
+			queryParameter("group_id", typeString, "Limits the customers to a single group."),
+			queryParameter("limit", typeInteger,
+				"The page size; when omitted, the service's default applies."),
+			queryParameter("offset", typeInteger, "The number of records to skip."),
+			queryParameter("after", typeString,
+				"The previous page's \"next_cursor\" value. Cheaper than \"offset\" "+
+					"for deep pages: offset makes the database walk and DISCARD every row "+
+					"it skips, so its cost grows with depth, while a cursor becomes an index "+
+					"condition and stays flat. \"after\" and \"offset\" name two different "+
+					"positions and are REFUSED together. When the response carries no "+
+					"\"next_cursor\" the listing is exhausted."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Müşteri sayfası",
+			"200": openapi.Response("A page of customers",
 				d.List(customerDTO{}, openapi.WithCursor())),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/customers/{id}", openapi.Operation{
-		Summary: "Tek bir müşteriyi kimliğiyle döner.",
+		Summary: "Returns a single customer by ID.",
 		Responses: map[string]any{
-			"200": openapi.Response("Müşteri", d.Item(customerDTO{})),
+			"200": openapi.Response("The customer", d.Item(customerDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, "/admin/v1/customers/{id}", openapi.Operation{
-		Summary: "Müşterinin verilen alanlarını günceller.",
-		Description: "Semantik KISMİDİR: gövdede olmayan alan değişmez, " +
-			"verilen boş dize ise gerçek bir temizlemedir.",
+		Summary: "Updates the given fields of a customer.",
+		Description: "The semantics are PARTIAL: a field absent from the body does " +
+			"not change, and an empty string that is given is a real clear.",
 		RequestBody: d.RequestBody(updateCustomerRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen müşteri", d.Item(customerDTO{})),
+			"200": openapi.Response("The updated customer", d.Item(customerDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/customers/{id}", openapi.Operation{
-		Summary: "Müşteriyi ve adreslerini yumuşak siler.",
+		Summary: "Soft-deletes the customer and its addresses.",
 		Responses: map[string]any{
-			"204": emptyResponse("Müşteri silindi"),
+			"204": emptyResponse("The customer was deleted"),
 		},
 	})
 
-	// Uç bir gövde OKUMAZ (bkz. [Handler.adminConvertGuest]); requestBody
-	// yazmak, istemci üretecinin metoda doldurulacak bir argüman koyması ve
-	// sunucunun onu sessizce yok sayması demekti.
+	// The endpoint READS no body (see [Handler.adminConvertGuest]); writing a
+	// requestBody would mean the client generator putting an argument on the
+	// method to be filled in and the server silently ignoring it.
 	d.Describe(http.MethodPost, "/admin/v1/customers/{id}/convert-to-account", openapi.Operation{
-		Summary: "Misafir kaydını kayıtlı hesaba çevirir.",
-		Description: "Yanıt kaydın DÖNÜŞÜM SONRASI hâlidir; istemcinin " +
-			"has_account alanını görmek için ikinci bir istek yapması gerekmez.",
+		Summary: "Converts a guest record into a registered account.",
+		Description: "The response is the record AFTER CONVERSION; the client does " +
+			"not need a second request to see the has_account field.",
 		Responses: map[string]any{
-			"200": openapi.Response("Hesaba çevrilmiş müşteri", d.Item(customerDTO{})),
+			"200": openapi.Response("The customer converted into an account",
+				d.Item(customerDTO{})),
 		},
 	})
 
-	// Sayfalanmayan bir listedir ve sorgu dizesini OKUMAZ; zarf yine de liste
-	// zarfıdır (bkz. [writeItems]), böylece istemcinin gördüğü zarf şekli uç
-	// noktaya göre değişmez.
+	// It is an unpaginated list and READS no query string; the envelope is
+	// still the list envelope (see [writeItems]), so the envelope shape the
+	// client sees does not change from one endpoint to another.
 	d.Describe(http.MethodGet, "/admin/v1/customers/{id}/groups", openapi.Operation{
-		Summary: "Müşterinin üye olduğu grupları döner.",
+		Summary: "Returns the groups the customer is a member of.",
 		Responses: map[string]any{
-			"200": openapi.Response("Müşterinin grupları", d.List(customerGroupDTO{})),
+			"200": openapi.Response("The customer's groups", d.List(customerGroupDTO{})),
 		},
 	})
 }
 
-// describeGruplar müşteri grubu uçlarını anlatır.
-func describeGruplar(d *openapi.Doc) {
+// describeGroups describes the customer group endpoints.
+func describeGroups(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/customer-groups", openapi.Operation{
-		Summary:     "Yeni müşteri grubu oluşturur.",
+		Summary:     "Creates a new customer group.",
 		RequestBody: d.RequestBody(groupRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan grup", d.Item(customerGroupDTO{})),
+			"201": openapi.Response("The created group", d.Item(customerGroupDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/customer-groups", openapi.Operation{
-		Summary: "Müşteri gruplarını sayfalayarak listeler.",
+		Summary: "Lists customer groups, paginated.",
 		Parameters: []openapi.Parameter{
-			sorguParametresi("limit", tipTamSayi,
-				"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-			sorguParametresi("offset", tipTamSayi, "Atlanacak kayıt sayısı."),
+			queryParameter("limit", typeInteger,
+				"The page size; when omitted, the service's default applies."),
+			queryParameter("offset", typeInteger, "The number of records to skip."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Grup sayfası", d.List(customerGroupDTO{})),
+			"200": openapi.Response("A page of groups", d.List(customerGroupDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/admin/v1/customer-groups/{id}", openapi.Operation{
-		Summary: "Tek bir müşteri grubunu kimliğiyle döner.",
+		Summary: "Returns a single customer group by ID.",
 		Responses: map[string]any{
-			"200": openapi.Response("Grup", d.Item(customerGroupDTO{})),
+			"200": openapi.Response("The group", d.Item(customerGroupDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, "/admin/v1/customer-groups/{id}", openapi.Operation{
-		Summary:     "Grubun verilen alanlarını günceller.",
+		Summary:     "Updates the given fields of a group.",
 		RequestBody: d.RequestBody(updateGroupRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen grup", d.Item(customerGroupDTO{})),
+			"200": openapi.Response("The updated group", d.Item(customerGroupDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/customer-groups/{id}", openapi.Operation{
-		Summary: "Müşteri grubunu yumuşak siler.",
+		Summary: "Soft-deletes the customer group.",
 		Responses: map[string]any{
-			"204": emptyResponse("Grup silindi"),
+			"204": emptyResponse("The group was deleted"),
 		},
 	})
 
-	// Gövde ALIR ama gövde DÖNMEZ: üyelik bir kayıt değil bir bağdır ve
-	// handler 204 yazar. Item/List kullanmak, istemcinin okuyacağı bir gövde
-	// beklemesine yol açardı.
+	// It TAKES a body but RETURNS none: a membership is a link, not a record,
+	// and the handler writes 204. Using Item/List would lead the client to
+	// expect a body to read.
 	d.Describe(http.MethodPost, "/admin/v1/customer-groups/{id}/customers", openapi.Operation{
-		Summary:     "Müşteriyi gruba ekler.",
-		Description: "İşlem idempotenttir; zaten üye olan müşteri için de 204 döner.",
+		Summary: "Adds a customer to the group.",
+		Description: "The operation is idempotent; it also returns 204 for a " +
+			"customer who is already a member.",
 		RequestBody: d.RequestBody(groupMemberRequest{}),
 		Responses: map[string]any{
-			"204": emptyResponse("Müşteri gruba eklendi"),
+			"204": emptyResponse("The customer was added to the group"),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/admin/v1/customer-groups/{id}/customers/{customer_id}",
 		openapi.Operation{
-			Summary: "Müşteriyi gruptan çıkarır.",
+			Summary: "Removes a customer from the group.",
 			Responses: map[string]any{
-				"204": emptyResponse("Müşteri gruptan çıkarıldı"),
+				"204": emptyResponse("The customer was removed from the group"),
 			},
 		})
 }
 
-// describeVitrin müşterinin kendi profiliyle ilgili vitrin uçlarını anlatır.
-//
-// Adres uçları burada YOKTUR; gerekçesi [Describe] belgesindeki bileşen adı
-// çakışmasıdır.
-func describeVitrin(d *openapi.Doc) {
+// describeStorefront describes the storefront endpoints for the customer's own
+// profile. The address endpoints are in describe_address.go.
+func describeStorefront(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/customers", openapi.Operation{
-		Summary: "Misafir müşteri kaydı açar.",
-		Description: "Aynı e-postayla birden çok misafir kaydı olabilir: " +
-			"misafir kaydı bir kimlik değil, tek seferlik bir alışverişin " +
-			"iletişim bilgisidir.",
+		Summary: "Opens a guest customer record.",
+		Description: "There can be more than one guest record with the same email: " +
+			"a guest record is not an identity but the contact details of a " +
+			"one-off purchase.",
 		RequestBody: d.RequestBody(customerRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan misafir", d.Item(customerDTO{})),
+			"201": openapi.Response("The created guest", d.Item(customerDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, "/store/v1/customers/{id}", openapi.Operation{
-		Summary: "Müşterinin kendi profilini döner.",
+		Summary: "Returns the customer's own profile.",
 		Description: "The customer named in the path has to be the customer the " +
 			"request proves; see the refusal codes below.",
 		Responses: answers(storefrontIdentityRefusals(), "200",
-			openapi.Response("Müşteri profili", d.Item(customerDTO{}))),
+			openapi.Response("The customer profile", d.Item(customerDTO{}))),
 	})
 
 	d.Describe(http.MethodPut, "/store/v1/customers/{id}", openapi.Operation{
-		Summary: "Müşterinin kendi profilini günceller.",
+		Summary: "Updates the customer's own profile.",
 		Description: "The customer named in the path has to be the customer the " +
 			"request proves; see the refusal codes below.",
 		RequestBody: d.RequestBody(updateCustomerRequest{}),
 		Responses: answers(storefrontIdentityRefusals(), "200",
-			openapi.Response("Güncellenen profil", d.Item(customerDTO{}))),
+			openapi.Response("The updated profile", d.Item(customerDTO{}))),
 	})
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
+// queryParameter defines a parameter read from the query string.
 //
-// Hiçbiri zorunlu DEĞİLDİR: verilmediklerinde handler süzgeci uygulamaz ya da
-// servisin varsayılanıyla devam eder (bkz. [pageParams], [boolParam],
-// [stringParam]).
-func sorguParametresi(ad, tip, aciklama string) openapi.Parameter {
+// None of them is REQUIRED: when they are omitted, the handler applies no
+// filter or continues with the service's default (see [pageParams],
+// [boolParam], [stringParam]).
+func queryParameter(name, typ, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Schema:      map[string]any{schemaType: typ},
+		Description: description,
 	}
 }
 
-// emptyResponse GÖVDESİZ bir yanıt tanımı üretir.
+// emptyResponse builds a response definition WITHOUT a body.
 //
-// [openapi.Response] her zaman bir gövde şeması yazar; 204'ün gövdesi ise
-// YOKTUR (bkz. corehttp.WriteJSON'a nil verilen çağrılar). Boş bir şema
-// yazmak "bir şey dönüyor ama şekli bilinmiyor" demek olurdu ve istemci
-// üreteci okunacak bir gövde bekleyen bir metot üretirdi.
-func emptyResponse(aciklama string) map[string]any {
-	return map[string]any{"description": aciklama}
+// [openapi.Response] always writes a body schema, whereas a 204 HAS no body
+// (see the calls that pass nil to corehttp.WriteJSON). Writing an empty schema
+// would say "something comes back but its shape is unknown", and the client
+// generator would produce a method that expects a body to read.
+func emptyResponse(description string) map[string]any {
+	return map[string]any{"description": description}
 }

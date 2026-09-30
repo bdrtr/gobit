@@ -773,11 +773,6 @@ past and is not corrected retroactively.
   reach, and a refusal arrives as the API's own error envelope — which does name
   the missing privilege, after the call rather than before it
   ([ADR 0161](adr/0161-a-model-client-can-ask-this-installation-questions.md)).
-- **Part of the served OpenAPI document is Turkish.** Forty-three of the tool
-  descriptions and twenty-six of the parameter descriptions, because ADR 0012
-  makes language a property of the FILE and the describe blocks carrying them are
-  in the ledger. The document is a published artifact every API client reads; the
-  ledger may only shrink, so the number moves in one direction on its own.
 
 - **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
   correctness under load, it does not produce a capacity plan.

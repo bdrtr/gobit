@@ -6,308 +6,316 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
-// Parametre şemalarında geçen JSON Schema adları.
+// The JSON Schema names that parameter schemas use.
 //
-// Çekirdeğin karşılıkları dışa kapalıdır ve burada tekrarlanmalarının sebebi
-// maliyet değil SESSİZLİK: "strig" yazılmış bir tip adı derlenir, belge
-// üretilir ve yalnızca şemayı okuyan istemci parametreyi yanlış tiple
-// ürettiğinde ortaya çıkar.
+// The core's counterparts are unexported, and the reason they are repeated
+// here is not cost but SILENCE: a type name spelled "strig" compiles, the
+// document is built, and the mistake surfaces only when a client that reads
+// the schema generates the parameter with the wrong type.
 const (
-	semaTip    = "type"
-	tipDize    = "string"
-	tipTamSayi = "integer"
+	schemaType  = "type"
+	typeString  = "string"
+	typeInteger = "integer"
 )
 
-// Describe tax'ın uçlarını OpenAPI belgesine işler.
+// Describe writes tax's endpoints into the OpenAPI document.
 //
-// # Neden bu pakette
+// # Why in this package
 //
-// Anlatılan gövdeler bu paketin DIŞA KAPALI DTO'larıdır (createTaxRateRequest,
-// taxRateDTO …) ve şema onlardan yansımayla türetilir. Tipleri anlatabilmek
-// için dışa açmak, yalnızca belge üretmek uğruna modülün yüzeyini genişletmek
-// olurdu: dışa açık bir tip sözleşmedir ve dışarıdan kurulabilir hâle
-// gelirdi. Sorgu parametreleri de aynı sebeple burada durur — hangi
-// parametrenin GERÇEKTEN okunduğunu bilen kod admin.go içindedir; anlatım
-// başka bir pakete taşınsaydı ikisi sessizce ayrışırdı. Modülün
-// [openapi.Describer] uygulaması bu yüzden buraya delege eder.
+// The bodies described are this package's UNEXPORTED DTOs (createTaxRateRequest,
+// taxRateDTO …) and the schema is derived from them by reflection. Exporting
+// the types in order to describe them would widen the module's surface only
+// to produce a document: an exported type is a contract, and it would become
+// constructible from outside. The query parameters stay here for the same
+// reason — the code that knows which parameter is REALLY read is in admin.go;
+// had the description moved to another package, the two would drift apart in
+// silence. The module's [openapi.Describer] implementation therefore
+// delegates here.
 //
-// # Neden paket düzeyinde bir fonksiyon
+// # Why a package-level function
 //
-// Anlatım hiçbir çalışma zamanı durumuna bakmaz — şema TİPLERDEN gelir. Metodu
-// [API]'ye bağlamak, belgenin servis kurulmuş olmasına bağlı OLDUĞUNU
-// söylerdi; oysa [API.Routes] hiç çağrılmamışken de belge üretilebilir ve
-// üretilmelidir.
+// The description looks at no runtime state — the schema comes from TYPES.
+// Binding the method to [API] would say the document DOES depend on a built
+// service; yet the document can and must be built even when [API.Routes] has
+// never been called.
 //
-// # Neden yalnızca /admin/v1
+// # Why only /admin/v1
 //
-// Modülün vitrin yüzeyi YOKTUR (bkz. paket belgesi): vergi müşteriye doğrudan
-// açılmaz, sepetin hesaplanmış vergi satırı üzerinden gider. Belgede
-// olmayan bir uç uydurmak, istemci üretecine hiç çağrılamayacak bir metot
-// yazdırırdı.
+// The module has NO storefront surface (see the package doc): tax is not
+// exposed to the customer directly; it travels through the cart's computed
+// tax line. Inventing an endpoint that is not in the doc would make the client
+// generator write a method that can never be called.
 //
-// # Bilinen sınır: istek gövdelerinin "required" kümesi GENİŞTİR
+// # Known limit: the "required" set of request bodies is WIDE
 //
-// Çekirdek "required"ı encoding/json'un HER ZAMAN yazdığı alanlardan türetir
-// ([openapi.Doc.SchemaOf]) ve bu, YANIT gövdeleri için doğru cevaptır. İstek
-// gövdesinde ise "required" istemcinin GÖNDERMEK ZORUNDA olduğu alan demektir
-// ve bunu tip bilemez: bu paketin oluşturma DTO'ları omitempty taşımadığı için
-// hepsi zorunlu görünür — örneğin POST /admin/v1/tax-regions, ülke kökü
-// oluştururken boş bırakılan province_code ve parent_id'yi de ister. Alan
-// ADLARI ve TİPLERİ doğrudur, yani şema yanlış bir alan uydurmaz; yalnızca
-// fazla şey ister. Güncelleme gövdesi ([updateTaxRateRequest]) bu sınırın
-// dışındadır: alanları işaretçidir ve şemada null kabul ederek "verilmeyen
-// alan değişmez" davranışını doğru anlatır. Doğru çözüm ÇEKİRDEKTEDİR (istek
-// gövdeleri için ayrı bir "required" politikası); tag'lere omitempty
-// serpiştirmek zorunluluğu servisin doğrulamasından json etiketine taşır ve
-// ikisi sessizce ayrışırdı.
+// The core derives "required" from the fields encoding/json ALWAYS writes
+// ([openapi.Doc.SchemaOf]), which is the right answer for RESPONSE bodies. In a
+// request body "required" means a field the client MUST SEND, which a type
+// cannot know: this package's create DTOs carry no omitempty, so every field
+// looks required — POST /admin/v1/tax-regions, for instance, also asks for the
+// province_code and parent_id that are left empty when a country root is
+// created. Field NAMES and TYPES are right, so the schema invents no field; it
+// only asks for too much. The update body ([updateTaxRateRequest]) is outside
+// this limit: its fields are pointers and, by accepting null in the schema,
+// they describe the "a field not given does not change" behavior correctly.
+// The right fix is in the CORE (a separate "required" policy for request
+// bodies); sprinkling omitempty on the tags would move the obligation from the
+// service's validation to a json tag, and the two would drift apart in
+// silence.
 func Describe(d *openapi.Doc) {
-	describeBolgeler(d)
-	describeOranlar(d)
-	describeKurallar(d)
-	describeSiniflar(d)
+	describeRegions(d)
+	describeRates(d)
+	describeRules(d)
+	describeClasses(d)
 }
 
-// describeBolgeler vergi bölgesi uçlarını anlatır.
-func describeBolgeler(d *openapi.Doc) {
+// describeRegions describes the tax region endpoints.
+func describeRegions(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminRegions, openapi.Operation{
-		Summary: "Yeni bir vergi bölgesi oluşturur.",
-		Description: "province_code boş bırakılırsa ÜLKE KÖKÜ oluşturulur; dolu " +
-			"verilirse parent_id de zorunludur.",
+		Summary: "Creates a new tax region.",
+		Description: "When province_code is left empty a COUNTRY ROOT is created; when it " +
+			"is given, parent_id is required too.",
 		RequestBody: d.RequestBody(createTaxRegionRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan vergi bölgesi", d.Item(taxRegionDTO{})),
+			"201": openapi.Response("The tax region created", d.Item(taxRegionDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminRegions, openapi.Operation{
-		Summary: "Vergi bölgelerini sayfalayarak listeler.",
-		Parameters: append(sayfaParametreleri(),
-			sorguParametresi("country_code", tipDize, false,
-				"Listeyi tek bir ülkeyle sınırlar; verilmezse tüm bölgeler döner.")),
+		Summary: "Lists the tax regions, paged.",
+		Parameters: append(pageParameters(),
+			queryParameter("country_code", typeString, false,
+				"Limits the list to a single country; when absent, every region is returned.")),
 		Responses: map[string]any{
-			"200": openapi.Response("Vergi bölgeleri", d.List(taxRegionDTO{})),
+			"200": openapi.Response("The tax regions", d.List(taxRegionDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminRegion, openapi.Operation{
-		Summary: "Vergi bölgesini kimliğiyle döner.",
+		Summary: "Returns a tax region by its ID.",
 		Responses: map[string]any{
-			"200": openapi.Response("Vergi bölgesi", d.Item(taxRegionDTO{})),
+			"200": openapi.Response("The tax region", d.Item(taxRegionDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathAdminRegion, openapi.Operation{
-		Summary: "Vergi bölgesini AĞACIYLA birlikte yumuşak siler.",
-		Description: "Silme alt bölgeleri, onların oranlarını ve o oranların " +
-			"kurallarını da kapsar. Yanıtın gövdesi YOKTUR: silinen ağacın " +
-			"dökümünü döndürmek, istemcinin ihtiyacı olmayan bir listeyi her " +
-			"çağrıda üretmek olurdu.",
+		Summary: "Soft-deletes a tax region TOGETHER WITH its tree.",
+		Description: "The delete also covers the child regions, their rates and the " +
+			"rules of those rates. The response HAS NO body: returning a listing of " +
+			"the deleted tree would build, on every call, a list the client does " +
+			"not need.",
 		Responses: map[string]any{
-			"204": bosYanit("Vergi bölgesi ve ağacı silindi"),
+			"204": emptyResponse("The tax region and its tree were deleted"),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminRegionRates, openapi.Operation{
-		Summary: "Vergi bölgesinin oranlarını listeler.",
-		// Sayfalama parametresi YOKTUR: liste [writeAll] ile yazılır ve handler
-		// sorgu dizesini hiç okumaz. Yazmak, istemciye çalışmayan bir sayfalama
-		// vaat etmek olurdu.
+		Summary: "Lists the rates of a tax region.",
+		// There are NO paging parameters: the list is written with [writeAll]
+		// and the handler never reads the query string. Writing them would
+		// promise the client paging that does not work.
 		Responses: map[string]any{
-			"200": openapi.Response("Bölgenin vergi oranları", d.List(taxRateDTO{})),
+			"200": openapi.Response("The region's tax rates", d.List(taxRateDTO{})),
 		},
 	})
 }
 
-// describeOranlar vergi oranı uçlarını anlatır.
-func describeOranlar(d *openapi.Doc) {
+// describeRates describes the tax rate endpoints.
+func describeRates(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminRates, openapi.Operation{
-		Summary: "Yeni bir vergi oranı oluşturur.",
-		Description: "Oranın bölgesi GÖVDEDE taşınır (tax_region_id); oran " +
-			"yalnızca bu uçtan YAZILIR, bölgenin altındaki uç yalnızca okumadır. " +
+		Summary: "Creates a new tax rate.",
+		Description: "The rate's region is carried in the BODY (tax_region_id); a rate " +
+			"is WRITTEN only through this endpoint, and the endpoint under the region " +
+			"is read-only." +
 			"\n\n" +
-			"stacks_on_id verilirse oran, aynı bölgedeki başka bir oranın ÜSTÜNDE " +
-			"durur: satıra önce taban oran, sonra bu oran uygulanır ve compound " +
-			"true ise bu oranın tabanı, altındakilerin vergisini de içerir. Üstte " +
-			"duran oran hiçbir zaman SEÇİLMEZ, dolayısıyla varsayılan olamaz ve " +
-			"kural taşıyamaz; yığının kapsamını TABAN belirler. Fiyatların vergi " +
-			"DAHİL yazıldığı bir bölgede yığın kurulamaz (ADR 0086) ve yığının " +
-			"oranları toplamda satırı aşamaz.",
+			"When stacks_on_id is given, the rate sits ON TOP OF another rate in the " +
+			"same region: the base rate is applied to the line first, then this rate, " +
+			"and when compound is true this rate's base also includes the tax of the " +
+			"rates beneath it. A rate on top is never SELECTED, so it cannot be the " +
+			"default and cannot carry rules; the BASE sets the stack's scope. A stack " +
+			"cannot be built in a region whose prices are written tax INCLUSIVE " +
+			"(ADR 0086), and the stack's rates together cannot exceed the line.",
 		RequestBody: d.RequestBody(createTaxRateRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Oluşturulan vergi oranı", d.Item(taxRateDTO{})),
+			"201": openapi.Response("The tax rate created", d.Item(taxRateDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminRates, openapi.Operation{
-		Summary: "Bir bölgenin vergi oranlarını listeler.",
-		// "tax_region_id" ZORUNLUDUR ve eksikse handler 422 döner; limit/offset
-		// ise HİÇ OKUNMAZ (liste [writeAll] ile yazılır). İkisini de yazmak,
-		// istemciye çalışmayan bir sayfalama vaat etmek olurdu.
+		Summary: "Lists the tax rates of a region.",
+		// "tax_region_id" is REQUIRED and the handler returns 422 when it is
+		// missing; limit/offset, on the other hand, are NEVER READ (the list is
+		// written with [writeAll]). Writing them would promise the client
+		// paging that does not work.
 		Parameters: []openapi.Parameter{
-			sorguParametresi("tax_region_id", tipDize, true,
-				"Oranların okunacağı vergi bölgesi; zorunludur."),
+			queryParameter("tax_region_id", typeString, true,
+				"The tax region whose rates are read; required."),
 		},
 		Responses: map[string]any{
-			"200": openapi.Response("Vergi oranları", d.List(taxRateDTO{})),
+			"200": openapi.Response("The tax rates", d.List(taxRateDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminRate, openapi.Operation{
-		Summary: "Vergi oranını kimliğiyle döner.",
+		Summary: "Returns a tax rate by its ID.",
 		Responses: map[string]any{
-			"200": openapi.Response("Vergi oranı", d.Item(taxRateDTO{})),
+			"200": openapi.Response("The tax rate", d.Item(taxRateDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPut, pathAdminRate, openapi.Operation{
-		Summary: "Vergi oranının verilen alanlarını günceller.",
-		Description: "Yöntem PUT olsa da semantik KISMİDİR: gövdede verilmeyen " +
-			"alan değişmez. Kodu KALDIRMAK için code alanına boş dize gönderilir.",
+		Summary: "Updates the given fields of a tax rate.",
+		Description: "The method is PUT but the semantics are PARTIAL: a field not given " +
+			"in the body does not change. To REMOVE the code, send an empty string in " +
+			"the code field.",
 		RequestBody: d.RequestBody(updateTaxRateRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("Güncellenen vergi oranı", d.Item(taxRateDTO{})),
+			"200": openapi.Response("The tax rate updated", d.Item(taxRateDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathAdminRate, openapi.Operation{
-		Summary: "Vergi oranını yumuşak siler.",
+		Summary: "Soft-deletes a tax rate.",
 		Responses: map[string]any{
-			"204": bosYanit("Vergi oranı silindi"),
+			"204": emptyResponse("The tax rate was deleted"),
 		},
 	})
 }
 
-// describeKurallar vergi oranı kuralı uçlarını anlatır.
-func describeKurallar(d *openapi.Doc) {
+// describeRules describes the tax rate rule endpoints.
+func describeRules(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminRateRules, openapi.Operation{
-		Summary: "Vergi oranına bir kural ekler.",
-		Description: "Oran kimliği YOLDAN alınır; gövdede ikinci kez taşınsaydı " +
-			"yol ile gövde çelişebilirdi. reference_id BAŞKA bir modülün " +
-			"kimliğidir ve bu modül varlığını doğrulamaz.",
+		Summary: "Adds a rule to a tax rate.",
+		Description: "The rate ID is taken from the PATH; carried a second time in the " +
+			"body, the path and the body could contradict each other. reference_id " +
+			"is ANOTHER module's ID and this module does not verify that it exists.",
 		RequestBody: d.RequestBody(createTaxRateRuleRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Eklenen kural", d.Item(taxRateRuleDTO{})),
+			"201": openapi.Response("The rule added", d.Item(taxRateRuleDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminRateRules, openapi.Operation{
-		Summary: "Vergi oranının kurallarını listeler.",
+		Summary: "Lists the rules of a tax rate.",
 		Responses: map[string]any{
-			"200": openapi.Response("Oranın kuralları", d.List(taxRateRuleDTO{})),
+			"200": openapi.Response("The rate's rules", d.List(taxRateRuleDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathAdminRateRule, openapi.Operation{
-		Summary: "Vergi oranı kuralını yumuşak siler.",
+		Summary: "Soft-deletes a tax rate rule.",
 		Responses: map[string]any{
-			"204": bosYanit("Kural silindi"),
+			"204": emptyResponse("The rule was deleted"),
 		},
 	})
 }
 
-// sayfaParametreleri limit/offset sorgu parametrelerini üretir.
+// pageParameters builds the limit/offset query parameters.
 //
-// Yalnızca [pageParams] çağıran uçlarda kullanılır; bu modülde tek böyle uç
-// bölge listelemesidir. Oran ve kural listeleri sayfalanmaz.
-func sayfaParametreleri() []openapi.Parameter {
+// It is used only on endpoints that call [pageParams]; in this module the only
+// such endpoint is the region listing. Rate and rule lists are not paged.
+func pageParameters() []openapi.Parameter {
 	return []openapi.Parameter{
-		sorguParametresi("limit", tipTamSayi, false,
-			"Sayfa boyutu; verilmezse servisin varsayılanı uygulanır."),
-		sorguParametresi("offset", tipTamSayi, false, "Atlanacak kayıt sayısı."),
+		queryParameter("limit", typeInteger, false,
+			"The page size; when absent, the service's default applies."),
+		queryParameter("offset", typeInteger, false, "How many records to skip."),
 	}
 }
 
-// sorguParametresi sorgu dizesinden okunan bir parametreyi tanımlar.
+// queryParameter declares a parameter read from the query string.
 //
-// zorunlu bayrağı BİLİNÇLİ olarak parametredir: bu modülde tek bir zorunlu
-// sorgu parametresi vardır (GET /admin/v1/tax-rates'in tax_region_id'si) ve
-// onu isteğe bağlı göstermek, istemci üretecinin çağrılabilir sandığı ama her
-// zaman 422 dönen bir metot üretmesi demekti.
-func sorguParametresi(ad, tip string, zorunlu bool, aciklama string) openapi.Parameter {
+// The required flag is a parameter ON PURPOSE: this module has a single
+// required query parameter (tax_region_id of GET /admin/v1/tax-rates), and
+// showing it as optional would mean the client generator producing a method
+// it takes to be callable but that always returns 422.
+func queryParameter(name, typ string, required bool, description string) openapi.Parameter {
 	return openapi.Parameter{
-		Name:        ad,
+		Name:        name,
 		In:          "query",
-		Required:    zorunlu,
-		Schema:      map[string]any{semaTip: tip},
-		Description: aciklama,
+		Required:    required,
+		Schema:      map[string]any{schemaType: typ},
+		Description: description,
 	}
 }
 
-// bosYanit GÖVDESİZ bir yanıt tanımı üretir.
+// emptyResponse builds a response definition with NO body.
 //
-// [openapi.Response] her zaman bir gövde şeması yazar; 204'ün gövdesi ise
-// YOKTUR (bkz. admin.go, corehttp.WriteJSON'a nil verilen çağrılar). Boş bir
-// şema yazmak "bir şey dönüyor ama şekli bilinmiyor" demek olurdu ve istemci
-// üreteci okunacak bir gövde bekleyen bir metot üretirdi.
-func bosYanit(aciklama string) map[string]any {
-	return map[string]any{"description": aciklama}
+// [openapi.Response] always writes a body schema, and a 204 HAS NO body (see
+// admin.go, the calls that hand corehttp.WriteJSON nil). Writing an empty
+// schema would say "something comes back but its shape is unknown", and the
+// client generator would produce a method that expects a body to read.
+func emptyResponse(description string) map[string]any {
+	return map[string]any{"description": description}
 }
 
-// describeSiniflar vergi sınıfı uçlarını anlatır.
-func describeSiniflar(d *openapi.Doc) {
-	const anlam = "Vergi sınıfı, tacirin AYNI ŞEKİLDE vergilendirdiği ürün kümesidir " +
-		"(kitap, gıda, elektronik). Bir kural sınıfa yazılır ve sınıfa konan her ürüne " +
-		"uygulanır; ürüne yazılmış kural sınıfa yazılanı YENER, sınıf da ürün tipini."
+// describeClasses describes the tax class endpoints.
+func describeClasses(d *openapi.Doc) {
+	const meaning = "A tax class is a set of products the merchant taxes THE SAME WAY " +
+		"(books, food, electronics). A rule is written to a class and applies to every " +
+		"product put in the class; a rule written to a product BEATS one written to the " +
+		"class, and the class beats the product type."
 
 	d.Describe(http.MethodPost, pathAdminClasses, openapi.Operation{
-		Summary:     "Yeni bir vergi sınıfı açar.",
-		Description: anlam + " Ad zorunludur ve CANLI sınıflar arasında tekildir.",
+		Summary:     "Creates a new tax class.",
+		Description: meaning + " The name is required and unique among LIVE classes.",
 		RequestBody: d.RequestBody(createTaxClassRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Açılan sınıf", d.Item(taxClassDTO{})),
+			"201": openapi.Response("The class created", d.Item(taxClassDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminClasses, openapi.Operation{
-		Summary: "Vergi sınıflarını ada göre listeler.",
-		Description: "Sayfalanmaz: bir dükkânın vergi sınıfları onlarla sayılır — kataloğu " +
-			"değil, tacirin kendi sözlüğüdür.",
+		Summary: "Lists the tax classes in name order.",
+		Description: "Not paged: a shop's tax classes number in the tens — they are the " +
+			"merchant's own vocabulary, not its catalog.",
 		Responses: map[string]any{
-			"200": openapi.Response("Vergi sınıfları", d.List(taxClassDTO{})),
+			"200": openapi.Response("The tax classes", d.List(taxClassDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminClass, openapi.Operation{
-		Summary: "Vergi sınıfını kimliğiyle döner.",
+		Summary: "Returns a tax class by its ID.",
 		Responses: map[string]any{
-			"200": openapi.Response("Vergi sınıfı", d.Item(taxClassDTO{})),
+			"200": openapi.Response("The tax class", d.Item(taxClassDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathAdminClass, openapi.Operation{
-		Summary: "Ürün taşımayan vergi sınıfını yumuşak siler.",
-		Description: "Ürün taşıyan sınıf 409 ile REDDEDİLİR: silinseydi o ürünler, sınıfını " +
-			"kimsenin adlandıramadığı bir kuralla eşleşmeye devam ederdi.",
+		Summary: "Soft-deletes a tax class that holds no products.",
+		Description: "A class that holds products is REFUSED with 409: had it been deleted, " +
+			"those products would keep matching a rule whose class nobody could name.",
 		Responses: map[string]any{
-			"204": bosYanit("Sınıf silindi"),
+			"204": emptyResponse("The class was deleted"),
 		},
 	})
 
 	d.Describe(http.MethodGet, pathAdminClassProducts, openapi.Operation{
-		Summary: "Sınıftaki ürünleri listeler.",
+		Summary: "Lists the products in a class.",
 		Responses: map[string]any{
-			"200": openapi.Response("Sınıfın ürünleri", d.List(taxClassMemberDTO{})),
+			"200": openapi.Response("The class's products", d.List(taxClassMemberDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, pathAdminClassProducts, openapi.Operation{
-		Summary: "Ürünü sınıfa koyar.",
-		Description: "Ürün bir BAŞKA sınıftaysa TAŞINIR, reddedilmez: yeniden sınıflandırmak " +
-			"olağan bir işlemdir ve reddetmek, operatörü önce eski üyeliği silmeye zorlayıp " +
-			"ürünün hiçbir sınıfta olmadığı bir aralık bırakırdı. product_id BAŞKA bir " +
-			"modülün kimliğidir ve bu modül varlığını doğrulamaz.",
+		Summary: "Puts a product in a class.",
+		Description: "When the product is in ANOTHER class it is MOVED, not refused: " +
+			"reclassifying is an ordinary operation, and refusing would force the operator " +
+			"to delete the old membership first, leaving a window in which the product is " +
+			"in no class. product_id is ANOTHER module's ID and this module does not " +
+			"verify that it exists.",
 		RequestBody: d.RequestBody(taxClassMemberRequest{}),
 		Responses: map[string]any{
-			"201": openapi.Response("Üyelik", d.Item(taxClassMemberDTO{})),
+			"201": openapi.Response("The membership", d.Item(taxClassMemberDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodDelete, pathAdminClassProduct, openapi.Operation{
-		Summary: "Ürünü sınıfından çıkarır.",
-		Description: "Yoldaki sınıf ile ürünün sınıfı KARŞILAŞTIRILMAZ: bir ürün en fazla bir " +
-			"sınıfta olduğu için iki cümlenin sonucu ayrılamaz.",
+		Summary: "Removes a product from its class.",
+		Description: "The class in the path is NOT COMPARED with the product's class: since " +
+			"a product is in at most one class, the two statements cannot have different " +
+			"outcomes.",
 		Responses: map[string]any{
-			"204": bosYanit("Ürün sınıftan çıkarıldı"),
+			"204": emptyResponse("The product was removed from the class"),
 		},
 	})
 }
