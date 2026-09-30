@@ -141,11 +141,11 @@ func runDeadLetters(args []string, out io.Writer, opts Options) error {
 
 	switch verb {
 	case "":
-		return runDeadLetterList(rest, out)
+		return runDeadLetterList(opts.name(), rest, out)
 	case cmdRedrive, cmdDiscard:
-		return runDeadLetterAction(verb, rest, out)
+		return runDeadLetterAction(opts.name(), verb, rest, out)
 	default:
-		if err := writeReport(out, usageText(opts.version())); err != nil {
+		if err := writeReport(out, usageText(opts.name(), opts.version())); err != nil {
 			return err
 		}
 
@@ -166,8 +166,8 @@ func runDeadLetters(args []string, out io.Writer, opts Options) error {
 // server watches: an operator who hits Ctrl-C during an incident expects the
 // query to stop, and a background context would leave it running until the
 // database answered. This is the shape [runStuck] uses, for the same reasons.
-func runDeadLetterList(args []string, out io.Writer) error {
-	limit, err := parseDeadLetterListFlags(args)
+func runDeadLetterList(name string, args []string, out io.Writer) error {
+	limit, err := parseDeadLetterListFlags(name, args)
 	switch {
 	case errors.Is(err, flag.ErrHelp):
 		// The flag set has already printed the usage. Asking what a command
@@ -187,12 +187,12 @@ func runDeadLetterList(args []string, out io.Writer) error {
 	}
 	defer closeStore()
 
-	return listDeadLetters(ctx, store, out, limit, time.Now().UTC())
+	return listDeadLetters(ctx, name, store, out, limit, time.Now().UTC())
 }
 
 // runDeadLetterAction redrives or discards ONE named event.
-func runDeadLetterAction(verb string, args []string, out io.Writer) error {
-	action, err := parseDeadLetterAction(verb, args)
+func runDeadLetterAction(name, verb string, args []string, out io.Writer) error {
+	action, err := parseDeadLetterAction(name, verb, args)
 	if err != nil {
 		return err
 	}
@@ -206,7 +206,7 @@ func runDeadLetterAction(verb string, args []string, out io.Writer) error {
 	}
 	defer closeStore()
 
-	return actOnDeadLetter(ctx, store, out, action)
+	return actOnDeadLetter(ctx, name, store, out, action)
 }
 
 // openOutboxStore opens the installation's own pool and builds the store over
@@ -254,19 +254,19 @@ func openOutboxStore(ctx context.Context) (*outbox.Store, func(), error) {
 // everything above it is the environment, everything here is what the operator
 // sees.
 func listDeadLetters(
-	ctx context.Context, reader deadLetterReader, out io.Writer, limit int32, now time.Time,
+	ctx context.Context, name string, reader deadLetterReader, out io.Writer, limit int32, now time.Time,
 ) error {
 	report, err := reader.DeadLetters(ctx, limit)
 	if err != nil {
 		return err
 	}
 
-	return writeDeadLetters(out, report, limit, now)
+	return writeDeadLetters(name, out, report, limit, now)
 }
 
 // parseDeadLetterListFlags turns the command line into a page size.
-func parseDeadLetterListFlags(args []string) (int32, error) {
-	flags := flag.NewFlagSet(binaryName+" "+deadLettersCommand, flag.ContinueOnError)
+func parseDeadLetterListFlags(name string, args []string) (int32, error) {
+	flags := flag.NewFlagSet(name+" "+deadLettersCommand, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr,
@@ -278,10 +278,10 @@ func parseDeadLetterListFlags(args []string) (int32, error) {
 				"  %s %s %s <event-id> -%s <event-id>\n"+
 				"  %s %s %s <event-id> -%s <event-id>\n\n"+
 				"flags:\n",
-			binaryName, deadLettersCommand,
-			outboxrelay.Name, binaryName, jobsCommand,
-			binaryName, deadLettersCommand, cmdRedrive, flagConfirm,
-			binaryName, deadLettersCommand, cmdDiscard, flagConfirm)
+			name, deadLettersCommand,
+			outboxrelay.Name, name, jobsCommand,
+			name, deadLettersCommand, cmdRedrive, flagConfirm,
+			name, deadLettersCommand, cmdDiscard, flagConfirm)
 		flags.PrintDefaults()
 	}
 
@@ -298,8 +298,8 @@ func parseDeadLetterListFlags(args []string) (int32, error) {
 
 		return 0, errors.Invalid(codeDeadLetterRefused,
 			"%s %s takes no positional arguments, got %q; did you mean `%s %s %s %s -%s %s`?",
-			binaryName, deadLettersCommand, flags.Arg(0),
-			binaryName, deadLettersCommand, cmdRedrive, flags.Arg(0), flagConfirm, flags.Arg(0))
+			name, deadLettersCommand, flags.Arg(0),
+			name, deadLettersCommand, cmdRedrive, flags.Arg(0), flagConfirm, flags.Arg(0))
 	}
 	// The bound is the store's parameter type, not a policy. A number above it
 	// cannot reach the query as itself, and a limit that silently became
@@ -399,7 +399,7 @@ type deadLetterAction struct {
 // not pretend otherwise. What it removes is the case that was actually
 // stopping people — one event, one decision, one line — which is every dead
 // letter that is not an outage.
-func parseDeadLetterAction(verb string, args []string) (deadLetterAction, error) {
+func parseDeadLetterAction(name, verb string, args []string) (deadLetterAction, error) {
 	// The id is required to be the FIRST argument, exactly as the owner is for
 	// `migrate down` and the execution id is for `recover`: the flag package
 	// stops at the first non-flag argument, so an id written after the flags
@@ -409,11 +409,11 @@ func parseDeadLetterAction(verb string, args []string) (deadLetterAction, error)
 			"%s %s needs the event id as its FIRST argument "+
 				"(%s %s %s <event-id> -%s <event-id>); find it with `%s %s`",
 			deadLettersCommand, verb,
-			binaryName, deadLettersCommand, verb, flagConfirm,
-			binaryName, deadLettersCommand)
+			name, deadLettersCommand, verb, flagConfirm,
+			name, deadLettersCommand)
 	}
 
-	flags := flag.NewFlagSet(binaryName+" "+deadLettersCommand+" "+verb, flag.ContinueOnError)
+	flags := flag.NewFlagSet(name+" "+deadLettersCommand+" "+verb, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 
 	confirm := flags.String(flagConfirm, "",
@@ -459,7 +459,7 @@ func deadLetterStakes(verb string) string {
 // process: everything above it is the environment, everything here is the
 // decision and the report.
 func actOnDeadLetter(
-	ctx context.Context, store deadLetterStore, out io.Writer, action deadLetterAction,
+	ctx context.Context, name string, store deadLetterStore, out io.Writer, action deadLetterAction,
 ) error {
 	var (
 		affected int64
@@ -495,7 +495,7 @@ func actOnDeadLetter(
 				"relay never gave up on that event (a pending or published row is deliberately "+
 				"out of reach of both verbs), or somebody has already handled it. `%s %s` says "+
 				"which.",
-			action.eventID, binaryName, deadLettersCommand)
+			action.eventID, name, deadLettersCommand)
 	}
 
 	report, err := store.DeadLetters(ctx, 1)
@@ -503,7 +503,7 @@ func actOnDeadLetter(
 		return err
 	}
 
-	return writeReport(out, deadLetterOutcomeText(action, report.Count))
+	return writeReport(out, deadLetterOutcomeText(name, action, report.Count))
 }
 
 // deadLetterOutcomeText renders what the verb did and what is left.
@@ -512,7 +512,7 @@ func actOnDeadLetter(
 // actually arrived with. They came from a FAILED `gobit jobs` row; "one event
 // was redriven" does not tell them whether that row will go green, and a
 // second command to find out is a second command during an incident.
-func deadLetterOutcomeText(action deadLetterAction, remaining int64) string {
+func deadLetterOutcomeText(name string, action deadLetterAction, remaining int64) string {
 	buf := &strings.Builder{}
 
 	if action.verb == cmdRedrive {
@@ -526,7 +526,7 @@ func deadLetterOutcomeText(action deadLetterAction, remaining int64) string {
 	if remaining == 0 {
 		fmt.Fprintf(buf,
 			"the pile is now EMPTY, so the next %s pass records a success and `%s %s` clears.\n",
-			outboxrelay.Name, binaryName, jobsCommand)
+			outboxrelay.Name, name, jobsCommand)
 
 		return buf.String()
 	}
@@ -534,7 +534,7 @@ func deadLetterOutcomeText(action deadLetterAction, remaining int64) string {
 	fmt.Fprintf(buf,
 		"%d dead letter(s) are still waiting; the %s job keeps FAILING until the pile is "+
 			"empty. `%s %s` lists what is left.\n",
-		remaining, outboxrelay.Name, binaryName, deadLettersCommand)
+		remaining, outboxrelay.Name, name, deadLettersCommand)
 
 	return buf.String()
 }
@@ -548,14 +548,14 @@ func deadLetterOutcomeText(action deadLetterAction, remaining int64) string {
 // test; taking it from the clock inside would make the output untestable line
 // for line.
 func writeDeadLetters(
-	out io.Writer, report outbox.DeadLetterReport, limit int32, now time.Time,
+	name string, out io.Writer, report outbox.DeadLetterReport, limit int32, now time.Time,
 ) error {
 	buf := &strings.Builder{}
 
 	fmt.Fprintf(buf,
 		"%s %s: promised events the outbox relay has GIVEN UP on. "+
 			"READ ONLY — nothing below was changed.\n",
-		binaryName, deadLettersCommand)
+		name, deadLettersCommand)
 
 	if report.Empty() {
 		fmt.Fprintf(buf,
@@ -576,7 +576,7 @@ func writeDeadLetters(
 		writeDeadLetter(buf, &report.Oldest[i], now)
 	}
 
-	writeDeadLetterFooter(buf, report, limit)
+	writeDeadLetterFooter(name, buf, report, limit)
 
 	_, err := io.WriteString(out, buf.String())
 
@@ -618,7 +618,7 @@ func deadLetterErrorLabel(cause string) string {
 }
 
 // writeDeadLetterFooter prints what the page did not say and what to do next.
-func writeDeadLetterFooter(buf *strings.Builder, report outbox.DeadLetterReport, limit int32) {
+func writeDeadLetterFooter(name string, buf *strings.Builder, report outbox.DeadLetterReport, limit int32) {
 	// Said out loud, because an operator deciding whether anybody is owed this
 	// event will look for the payload and has to know it was withheld rather
 	// than lost. The store leaves it out on purpose: an event's data can carry
@@ -644,7 +644,7 @@ func writeDeadLetterFooter(buf *strings.Builder, report outbox.DeadLetterReport,
 			"Both take ONE id and both refuse anything that is not already dead. The %s job "+
 			"keeps FAILING while this pile is not empty, and that is the design: see "+
 			"internal/jobs/outboxrelay.\n",
-		binaryName, deadLettersCommand, cmdRedrive, flagConfirm,
-		binaryName, deadLettersCommand, cmdDiscard, flagConfirm,
+		name, deadLettersCommand, cmdRedrive, flagConfirm,
+		name, deadLettersCommand, cmdDiscard, flagConfirm,
 		outboxrelay.Name)
 }

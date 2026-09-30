@@ -47,6 +47,7 @@ func main() {
 	shopAccounts := accounts.New(nil)
 
 	shop := gobit.New().
+		Name("starter").
 		Version(version).
 		Add(loyalty.New()).
 		// The secret comes from the environment and has no default, which is the

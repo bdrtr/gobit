@@ -3,6 +3,7 @@ package arch_test
 import (
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -126,6 +127,13 @@ func TestAGeneratedProjectCompilesAndRuns(t *testing.T) {
 				"That surface comes from the composition root, so its absence means the "+
 				"generated main links and does nothing.", verb)
 	}
+
+	// The program calls itself by the project's name (ADR 0254): the last
+	// element of its module path, which is what `go build` names the binary.
+	binary := path.Base(generatedModule)
+	assert.Contains(t, string(helpOut), binary+" migrate status",
+		"the generated program's help names a binary its operator does not have")
+	assert.NotContains(t, string(helpOut), "gobit migrate")
 }
 
 // TestTheGeneratedEnvNamesOnlySettingsGobitReads keeps the template honest.

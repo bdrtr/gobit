@@ -224,7 +224,7 @@ func TestHelpPrintsTheUsageAndSucceeds(t *testing.T) {
 func TestUsageNamesEveryVerbTheDispatchAccepts(t *testing.T) {
 	t.Parallel()
 
-	usage := usageText("dev")
+	usage := usageText(binaryName, "dev")
 
 	fset := token.NewFileSet()
 	files := productionFiles(t, fset)
@@ -562,7 +562,7 @@ func TestAnUnknownOwnerIsNamedWithTheKnownOnes(t *testing.T) {
 	sources := []migrationSource{{owner: "cart"}, {owner: "order"}}
 
 	var out bytes.Buffer
-	err := migrateDown(t.Context(), &out, "postgres://unused", sources, []string{"crat"}, "dev")
+	err := migrateDown(t.Context(), binaryName, &out, "postgres://unused", sources, []string{"crat"}, "dev")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "crat")
@@ -582,7 +582,7 @@ func TestAnUnknownOwnerIsNamedWithTheKnownOnes(t *testing.T) {
 func TestTheRollbackPlanNamesTheConfirmationThatWouldRunIt(t *testing.T) {
 	t.Parallel()
 
-	plan := downPlanText(ownerState{owner: "cart", version: 4}, 2)
+	plan := downPlanText(binaryName, ownerState{owner: "cart", version: 4}, 2)
 
 	assert.Contains(t, plan, "cart")
 	assert.Contains(t, plan, "4", "the plan must state the version it starts from")

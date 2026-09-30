@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A program built on gobit calls itself by its own name** (ADR 0254). **For
+  embedders:** `gobit.New().Name("shop")` makes the usage text and the command
+  lines the operator subcommands print say `shop migrate status` rather than
+  `gobit migrate status`; left empty it is `gobit`. A project `gobit new`
+  writes names itself after the last element of its module path.
+
 - **A customer reads their own store credit and points** (ADR 0253). **For
   integrators:** `GET /store/v1/customers/{id}/store-credit/balance` and
   `GET /store/v1/customers/{id}/loyalty-points/balance` answer the balance for

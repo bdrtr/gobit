@@ -2,7 +2,9 @@ package gobit
 
 import (
 	"context"
+	"io"
 	"io/fs"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -28,9 +30,10 @@ func TestTheFacadeCarriesWhatItIsGiven(t *testing.T) {
 	first, second := &fakeModule{name: "loyalty"}, &fakeModule{name: "gift-cards"}
 	plugin := &fakePlugin{}
 
-	app := New().Version("1.2.3").Add(first).Use(plugin).Add(second)
+	app := New().Version("1.2.3").Name("shop").Add(first).Use(plugin).Add(second)
 
 	require.Equal(t, "1.2.3", app.opts.Version, "the version did not reach the options")
+	require.Equal(t, "shop", app.opts.Name, "the name did not reach the options")
 	require.Equal(t, []string{"loyalty", "gift-cards"}, names(app.opts.Modules),
 		"the modules did not reach the options IN ORDER; registration order decides "+
 			"which of two modules claiming one name is refused")
@@ -50,6 +53,27 @@ func TestTheFacadeStartsEmpty(t *testing.T) {
 	require.Empty(t, app.opts.Modules, "a new App already carries a module")
 	require.Empty(t, app.opts.Plugins, "a new App already carries a plugin")
 	require.Empty(t, app.opts.Version, "a new App already carries a version")
+	require.Empty(t, app.opts.Name, "a new App already carries a name")
+}
+
+// TestANamedProgramCallsItselfByItsName holds ADR 0254 at the facade: the usage
+// text and a subcommand's own refusal name the program the embedder named, and
+// an unnamed one is still gobit.
+func TestANamedProgramCallsItselfByItsName(t *testing.T) {
+	t.Parallel()
+
+	var help strings.Builder
+	require.NoError(t, New().Name("shop").Main([]string{"help"}, &help))
+	require.Contains(t, help.String(), "shop migrate status")
+	require.NotContains(t, help.String(), "gobit migrate", "the usage text still names gobit")
+
+	err := New().Name("shop").Main([]string{"new"}, io.Discard)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "shop new <dir>", "a refusal names the command to type")
+
+	var unnamed strings.Builder
+	require.NoError(t, New().Main([]string{"help"}, &unnamed))
+	require.Contains(t, unnamed.String(), "gobit migrate status")
 }
 
 // names is the module names in registration order.

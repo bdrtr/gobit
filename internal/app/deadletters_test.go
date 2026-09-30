@@ -67,7 +67,7 @@ func renderDeadLetters(t *testing.T, report outbox.DeadLetterReport, limit int32
 	t.Helper()
 
 	var buf strings.Builder
-	require.NoError(t, writeDeadLetters(&buf, report, limit, deadLetterFixture))
+	require.NoError(t, writeDeadLetters(binaryName, &buf, report, limit, deadLetterFixture))
 
 	return buf.String()
 }
@@ -217,7 +217,7 @@ func TestTheDeadLetterVerbsNeedTheEventIDRepeated(t *testing.T) {
 			t.Run(verb+"/"+name, func(t *testing.T) {
 				t.Parallel()
 
-				_, err := parseDeadLetterAction(verb, args)
+				_, err := parseDeadLetterAction(binaryName, verb, args)
 
 				require.Error(t, err, "nothing may run without the id repeated")
 				assert.True(t, coreerrors.IsInvalid(err), "error: %v", err)
@@ -236,12 +236,12 @@ func TestTheDeadLetterVerbsNeedTheEventIDRepeated(t *testing.T) {
 func TestTheDeadLetterRefusalSaysWhatIsAtSTAKE(t *testing.T) {
 	t.Parallel()
 
-	_, discardErr := parseDeadLetterAction(cmdDiscard, []string{"evt_1"})
+	_, discardErr := parseDeadLetterAction(binaryName, cmdDiscard, []string{"evt_1"})
 	require.Error(t, discardErr)
 	assert.Contains(t, discardErr.Error(), "DELETES")
 	assert.Contains(t, discardErr.Error(), "nothing can bring it back")
 
-	_, redriveErr := parseDeadLetterAction(cmdRedrive, []string{"evt_1"})
+	_, redriveErr := parseDeadLetterAction(binaryName, cmdRedrive, []string{"evt_1"})
 	require.Error(t, redriveErr)
 	assert.Contains(t, redriveErr.Error(), "publishes the event again")
 	assert.Contains(t, redriveErr.Error(), "erases the record of its death")
@@ -256,7 +256,7 @@ func TestTheDeadLetterVerbsAcceptTheRepeatedID(t *testing.T) {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
 
-			action, err := parseDeadLetterAction(verb, []string{"evt_1", "-" + flagConfirm, "evt_1"})
+			action, err := parseDeadLetterAction(binaryName, verb, []string{"evt_1", "-" + flagConfirm, "evt_1"})
 
 			require.NoError(t, err)
 			assert.Equal(t, "evt_1", action.eventID)
@@ -276,7 +276,7 @@ func TestTheDeadLetterVerbsAcceptTheRepeatedID(t *testing.T) {
 func TestADeadLetterVerbRefusesALeftoverArgument(t *testing.T) {
 	t.Parallel()
 
-	_, err := parseDeadLetterAction(cmdDiscard,
+	_, err := parseDeadLetterAction(binaryName, cmdDiscard,
 		[]string{"evt_1", "-" + flagConfirm, "evt_1", "evt_2"})
 
 	require.Error(t, err)
@@ -294,7 +294,7 @@ func TestTheVerbPassesExactlyONEID(t *testing.T) {
 	t.Parallel()
 
 	store := &fakeDeadLetters{affected: 1}
-	require.NoError(t, actOnDeadLetter(t.Context(), store, io.Discard,
+	require.NoError(t, actOnDeadLetter(t.Context(), binaryName, store, io.Discard,
 		deadLetterAction{verb: cmdDiscard, eventID: "evt_1"}))
 
 	assert.Equal(t, []string{"evt_1"}, store.discarded)
@@ -312,14 +312,14 @@ func TestTheOutcomeSaysWhetherTheALARMWillClear(t *testing.T) {
 
 	emptied := &fakeDeadLetters{affected: 1}
 	var cleared strings.Builder
-	require.NoError(t, actOnDeadLetter(t.Context(), emptied, &cleared,
+	require.NoError(t, actOnDeadLetter(t.Context(), binaryName, emptied, &cleared,
 		deadLetterAction{verb: cmdRedrive, eventID: "evt_1"}))
 	assert.Contains(t, cleared.String(), "the pile is now EMPTY")
 	assert.Contains(t, cleared.String(), "evt_1 is back in the queue")
 
 	standing := &fakeDeadLetters{affected: 1, remaining: outbox.DeadLetterReport{Count: 41}}
 	var remaining strings.Builder
-	require.NoError(t, actOnDeadLetter(t.Context(), standing, &remaining,
+	require.NoError(t, actOnDeadLetter(t.Context(), binaryName, standing, &remaining,
 		deadLetterAction{verb: cmdDiscard, eventID: "evt_1"}))
 	assert.Contains(t, remaining.String(), "41 dead letter(s) are still waiting")
 	assert.Contains(t, remaining.String(), "keeps FAILING")
@@ -337,7 +337,7 @@ func TestAVerbThatChangedNOTHINGIsAnError(t *testing.T) {
 	store := &fakeDeadLetters{affected: 0}
 	var out strings.Builder
 
-	err := actOnDeadLetter(t.Context(), store, &out,
+	err := actOnDeadLetter(t.Context(), binaryName, store, &out,
 		deadLetterAction{verb: cmdDiscard, eventID: "evt_typo"})
 
 	require.Error(t, err)
@@ -356,13 +356,13 @@ func TestTheListingLimitIsBoundedByTheStoresParameter(t *testing.T) {
 	t.Parallel()
 
 	for _, bad := range []string{"0", "-3", "2147483648"} {
-		_, err := parseDeadLetterListFlags([]string{"-" + flagLimit, bad})
+		_, err := parseDeadLetterListFlags(binaryName, []string{"-" + flagLimit, bad})
 
 		require.Error(t, err, "-%s %s must be refused", flagLimit, bad)
 		assert.True(t, coreerrors.IsInvalid(err), "error: %v", err)
 	}
 
-	limit, err := parseDeadLetterListFlags(nil)
+	limit, err := parseDeadLetterListFlags(binaryName, nil)
 	require.NoError(t, err)
 	assert.Equal(t, int32(defaultDeadLetterLimit), limit)
 }
@@ -375,7 +375,7 @@ func TestTheListingLimitIsBoundedByTheStoresParameter(t *testing.T) {
 func TestTheListingRefusesAPositionalArgument(t *testing.T) {
 	t.Parallel()
 
-	_, err := parseDeadLetterListFlags([]string{"evt_1"})
+	_, err := parseDeadLetterListFlags(binaryName, []string{"evt_1"})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), cmdRedrive,
@@ -391,7 +391,7 @@ func TestDeadLettersHelpIsNotAFailure(t *testing.T) {
 	t.Parallel()
 
 	out := &strings.Builder{}
-	require.NoError(t, runDeadLetterList([]string{"-h"}, out))
+	require.NoError(t, runDeadLetterList(binaryName, []string{"-h"}, out))
 	assert.Empty(t, out.String(), "usage belongs on stderr; stdout is the listing")
 }
 
@@ -429,7 +429,7 @@ func TestDeadLettersIsRoutedByTheDispatcher(t *testing.T) {
 func TestUsageTextNamesTheDeadLetterCommand(t *testing.T) {
 	t.Parallel()
 
-	text := usageText("dev")
+	text := usageText(binaryName, "dev")
 
 	for _, want := range []string{
 		deadLettersCommand,

@@ -38,9 +38,10 @@ const (
 	cmdDown = "down"
 )
 
-// binaryName is what the usage text and the rollback plan call this program.
+// binaryName is what the usage text and the rollback plan call this program
+// when the embedder named it nothing else ([Options.Name], ADR 0254).
 //
-// It is a constant rather than os.Args[0]: the plan prints a command line the
+// It is a name rather than os.Args[0]: the plan prints a command line the
 // operator is meant to COPY, and os.Args[0] is whatever path the process was
 // launched with — "/tmp/go-build.../server" under `go run`, "./bin/gobit" from
 // the Makefile. A copied line carrying a build cache path is worse than a name
@@ -157,7 +158,7 @@ func migrationSources(ctx context.Context, cfg config.Config,
 // "unknown migrate command", not a complaint about DATABASE_URL.
 func runMigrate(args []string, out io.Writer, opts Options) error {
 	if len(args) == 0 {
-		if err := writeReport(out, usageText(opts.version())); err != nil {
+		if err := writeReport(out, usageText(opts.name(), opts.version())); err != nil {
 			return err
 		}
 
@@ -166,7 +167,7 @@ func runMigrate(args []string, out io.Writer, opts Options) error {
 
 	verb, rest := args[0], args[1:]
 	if verb != cmdStatus && verb != cmdDown {
-		if err := writeReport(out, usageText(opts.version())); err != nil {
+		if err := writeReport(out, usageText(opts.name(), opts.version())); err != nil {
 			return err
 		}
 
@@ -213,7 +214,7 @@ func runMigrate(args []string, out io.Writer, opts Options) error {
 		return migrateStatus(ctx, out, cfg.DatabaseURL, sources)
 	}
 
-	return migrateDown(ctx, out, cfg.DatabaseURL, sources, rest, opts.version())
+	return migrateDown(ctx, opts.name(), out, cfg.DatabaseURL, sources, rest, opts.version())
 }
 
 // ownerState is one owner's line in the status report.
@@ -448,7 +449,7 @@ func readOwnerState(ctx context.Context, databaseURL, owner string) (ownerState,
 // the schema does not have. If the version did not move at all, that is
 // reported as a failure.
 func migrateDown(
-	ctx context.Context,
+	ctx context.Context, name string,
 	out io.Writer,
 	databaseURL string,
 	sources []migrationSource,
@@ -457,7 +458,7 @@ func migrateDown(
 ) error {
 	owner, flags, err := parseDownArgs(args)
 	if err != nil {
-		if writeErr := writeReport(out, usageText(version)); writeErr != nil {
+		if writeErr := writeReport(out, usageText(name, version)); writeErr != nil {
 			return writeErr
 		}
 
@@ -491,7 +492,7 @@ func migrateDown(
 	}
 
 	if flags.confirm != owner {
-		if writeErr := writeReport(out, downPlanText(before, flags.steps)); writeErr != nil {
+		if writeErr := writeReport(out, downPlanText(name, before, flags.steps)); writeErr != nil {
 			return writeErr
 		}
 
@@ -609,7 +610,7 @@ func parseDownArgs(args []string) (owner string, parsed downFlags, err error) {
 }
 
 // downPlanText renders what the rollback WOULD do. It is the operator's dry run.
-func downPlanText(before ownerState, steps int) string {
+func downPlanText(name string, before ownerState, steps int) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "%s %s: REFUSED — no confirmation given. Nothing was changed.\n",
@@ -621,7 +622,7 @@ func downPlanText(before ownerState, steps int) string {
 		"  created. The rows they hold go with them and rolling forward again\n"+
 		"  does not bring them back.\n")
 	fmt.Fprintf(&b, "  To go ahead, repeat the owner name:\n      %s %s %s %s -%s %d -%s %s\n",
-		binaryName, cmdMigrate, cmdDown, before.owner, flagSteps, steps, flagConfirm, before.owner)
+		name, cmdMigrate, cmdDown, before.owner, flagSteps, steps, flagConfirm, before.owner)
 
 	return b.String()
 }
@@ -663,7 +664,7 @@ func pluralOwners(n int) string {
 // on, so a verb cannot be renamed without the help text following. The one
 // thing spelled out in prose is the sentence that matters most and cannot be
 // derived: the server starts with NO arguments.
-func usageText(version string) string {
+func usageText(name, version string) string {
 	return fmt.Sprintf(`%s %s — headless commerce, one binary.
 
 Usage:
@@ -711,22 +712,22 @@ The server starts when there are NO arguments and in no other way; no
 subcommand starts one. Forward migrations stay automatic at startup —
 there is deliberately no "migrate up", so a deploy cannot forget it.
 `,
-		binaryName, version,
-		binaryName, "",
-		binaryName, cmdMigrate+" "+cmdStatus,
-		binaryName, cmdMigrate+" "+cmdDown+" <owner> [flags]",
-		binaryName, stuckCommand+" [flags]",
-		binaryName, recoverCommand+" <execution-id> [flags]",
-		binaryName, jobsCommand,
-		binaryName, deadLettersCommand+" [flags]",
-		binaryName, deadLettersCommand+" "+cmdRedrive+" <id> [flags]",
-		binaryName, deadLettersCommand+" "+cmdDiscard+" <id> [flags]",
-		binaryName, seedCommand+" [flags]",
-		binaryName, refoldInvoicesCommand,
-		binaryName, mfaResetCommand+" <email> [flags]",
-		binaryName, newCommand+" <dir> [flags]",
-		binaryName, mcpCommand,
-		binaryName, cmdHelp,
+		name, version,
+		name, "",
+		name, cmdMigrate+" "+cmdStatus,
+		name, cmdMigrate+" "+cmdDown+" <owner> [flags]",
+		name, stuckCommand+" [flags]",
+		name, recoverCommand+" <execution-id> [flags]",
+		name, jobsCommand,
+		name, deadLettersCommand+" [flags]",
+		name, deadLettersCommand+" "+cmdRedrive+" <id> [flags]",
+		name, deadLettersCommand+" "+cmdDiscard+" <id> [flags]",
+		name, seedCommand+" [flags]",
+		name, refoldInvoicesCommand,
+		name, mfaResetCommand+" <email> [flags]",
+		name, newCommand+" <dir> [flags]",
+		name, mcpCommand,
+		name, cmdHelp,
 		cmdMigrate, cmdDown,
 		flagSteps+" N", defaultDownSteps,
 		flagConfirm+" OWNER",

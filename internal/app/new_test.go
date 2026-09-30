@@ -124,7 +124,7 @@ func TestNewNeedsTheDirectoryFirst(t *testing.T) {
 		"argument after flag": {"shop", "-" + flagReplace, ".", "extra"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := parseNewFlags(args)
+			_, err := parseNewFlags(binaryName, args)
 
 			require.Error(t, err)
 			assert.Equal(t, codeNewInvalidInput, coreerrors.CodeOf(err))
@@ -137,14 +137,14 @@ func TestNewNeedsTheDirectoryFirst(t *testing.T) {
 // example.com is reserved for documentation, so a project whose module path was
 // never chosen cannot resolve to somebody's real module.
 func TestTheDefaultModulePathIsReserved(t *testing.T) {
-	parsed, err := parseNewFlags([]string{filepath.Join("some", "where", "my-shop")})
+	parsed, err := parseNewFlags(binaryName, []string{filepath.Join("some", "where", "my-shop")})
 	require.NoError(t, err)
 
 	assert.Equal(t, "example.com/my-shop", parsed.module,
 		"the default module path is derived from the directory's LAST element and sits "+
 			"under the reserved domain")
 
-	chosen, err := parseNewFlags([]string{"shop", "-" + flagModule, "github.com/acme/shop"})
+	chosen, err := parseNewFlags(binaryName, []string{"shop", "-" + flagModule, "github.com/acme/shop"})
 	require.NoError(t, err)
 	assert.Equal(t, "github.com/acme/shop", chosen.module)
 }

@@ -48,7 +48,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := gobit.New().Add(shop).Main(os.Args[1:], os.Stdout); err != nil {
+	if err := gobit.New().Name("storefront").Add(shop).Main(os.Args[1:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "storefront:", err)
 		os.Exit(1)
 	}

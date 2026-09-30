@@ -34,7 +34,7 @@ const reportPrefix = "seed: database \"gobit_prod\"\n"
 func TestAForgottenFlagIsNotReportedAsAWrongDatabase(t *testing.T) {
 	t.Parallel()
 
-	out := resetPlanText(connectedDatabase, "", reportPrefix)
+	out := resetPlanText(binaryName, connectedDatabase, "", reportPrefix)
 
 	assert.Contains(t, out, "no confirmation given",
 		"a missing -confirm has to be reported as a missing flag")
@@ -54,7 +54,7 @@ func TestAForgottenFlagIsNotReportedAsAWrongDatabase(t *testing.T) {
 func TestAConfirmationForAnotherDatabaseNamesBothSides(t *testing.T) {
 	t.Parallel()
 
-	out := resetPlanText(connectedDatabase, otherDatabase, reportPrefix)
+	out := resetPlanText(binaryName, connectedDatabase, otherDatabase, reportPrefix)
 
 	assert.Contains(t, out, otherDatabase, "the refusal has to repeat what the operator typed")
 	assert.Contains(t, out, connectedDatabase, "and the database this connection actually reached")
@@ -75,7 +75,7 @@ func TestAConfirmationForAnotherDatabaseNamesBothSides(t *testing.T) {
 func TestTheRefusalRepeatsTheConnectionsOwnName(t *testing.T) {
 	t.Parallel()
 
-	out := resetPlanText(connectedDatabase, otherDatabase, reportPrefix)
+	out := resetPlanText(binaryName, connectedDatabase, otherDatabase, reportPrefix)
 
 	command := lineContaining(t, out, "-"+flagConfirm)
 	assert.Contains(t, command, "-"+flagConfirm+" "+connectedDatabase,
@@ -98,7 +98,7 @@ func TestARefusalSaysNothingWasChanged(t *testing.T) {
 	t.Parallel()
 
 	for _, confirm := range []string{"", otherDatabase} {
-		out := resetPlanText(connectedDatabase, confirm, reportPrefix)
+		out := resetPlanText(binaryName, connectedDatabase, confirm, reportPrefix)
 
 		assert.Contains(t, out, "REFUSED")
 		assert.Contains(t, out, "Nothing was changed.",
@@ -118,7 +118,7 @@ func TestARefusalSaysNothingWasChanged(t *testing.T) {
 func TestTheRefusalKeepsWhatTheReportAlreadySaid(t *testing.T) {
 	t.Parallel()
 
-	out := resetPlanText(connectedDatabase, "", reportPrefix)
+	out := resetPlanText(binaryName, connectedDatabase, "", reportPrefix)
 
 	require.True(t, strings.HasPrefix(out, reportPrefix),
 		"the report written so far has to stay at the top of the refusal, and first:\n%s", out)
@@ -134,7 +134,7 @@ func TestTheRefusalKeepsWhatTheReportAlreadySaid(t *testing.T) {
 func TestTheResetPromisesToSpareTheIdentities(t *testing.T) {
 	t.Parallel()
 
-	out := resetPlanText(connectedDatabase, "", reportPrefix)
+	out := resetPlanText(binaryName, connectedDatabase, "", reportPrefix)
 
 	assert.Contains(t, out, "Sales channels and API keys",
 		"the plan has to say which identities the deletion leaves alone")
@@ -171,7 +171,7 @@ func lineContaining(t *testing.T, text, needle string) string {
 func TestAConfirmationWithoutTheResetFlagIsRefused(t *testing.T) {
 	t.Parallel()
 
-	_, err := parseSeedFlags([]string{"-" + flagConfirm, connectedDatabase})
+	_, err := parseSeedFlags(binaryName, []string{"-" + flagConfirm, connectedDatabase})
 
 	require.Error(t, err, "a confirmation that guards nothing must not be accepted quietly")
 	assert.True(t, errors.IsInvalid(err), "error: %v", err)
@@ -189,7 +189,7 @@ func TestAConfirmationWithoutTheResetFlagIsRefused(t *testing.T) {
 func TestTheResetFlagAloneIsAcceptedByTheParser(t *testing.T) {
 	t.Parallel()
 
-	flags, err := parseSeedFlags([]string{"-" + flagReset})
+	flags, err := parseSeedFlags(binaryName, []string{"-" + flagReset})
 
 	require.NoError(t, err)
 	assert.True(t, flags.reset)

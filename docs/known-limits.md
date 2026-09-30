@@ -709,11 +709,11 @@ past and is not corrected retroactively.
   "works at the pinned version" from "works at HEAD", and the two differ for any
   binary built after the tag it would pin.
 
-- **A generated project's own help calls itself `gobit`.** The binary name is a
-  constant in the composition root, so a project named `shop` tells its operator
-  to run `gobit migrate status`. And the generated project is GUEST-ONLY: the
-  signed-in-customer adapter the starter example carries is not in the template,
-  and the module it needs has no released tag at all.
+- **A generated project is GUEST-ONLY.** The signed-in-customer adapter the
+  starter example carries is not in the template, and the module it needs has no
+  released tag at all, so the storefront routes that name a customer refuse
+  until the embedder binds an identity. It does call itself by its own name
+  ([ADR 0254](adr/0254-a-program-calls-itself-by-its-own-name.md)).
 
 - **A plugin's admin screen is not sandboxed from the panel.** Since
   [ADR 0155](adr/0155-a-plugin-can-put-a-screen-in-the-panel.md) a plugin can put

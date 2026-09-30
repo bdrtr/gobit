@@ -189,7 +189,7 @@ func TestTheMCPVerbIsInTheDispatchAndTheUsage(t *testing.T) {
 	assert.Contains(t, string(body), "case mcpCommand:",
 		"the mcp verb is not in the dispatch; the binary would print the usage and refuse")
 
-	usage := usageText("test")
+	usage := usageText(binaryName, "test")
 	assert.Contains(t, usage, binaryName+" "+mcpCommand,
 		"the usage text has no line for the mcp verb")
 }

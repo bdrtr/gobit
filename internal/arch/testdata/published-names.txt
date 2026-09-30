@@ -16,6 +16,7 @@
 . App.Add
 . App.InProcess
 . App.Main
+. App.Name
 . App.Use
 . App.Version
 . New

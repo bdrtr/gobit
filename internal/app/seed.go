@@ -146,7 +146,7 @@ type seedFlags struct {
 // thing this verb exists for. Nothing here starts a listener and nothing starts
 // the job runner — [serve] does both, and it is the only branch that can.
 func runSeed(args []string, out io.Writer, opts Options) error {
-	flags, err := parseSeedFlags(args)
+	flags, err := parseSeedFlags(opts.name(), args)
 	switch {
 	case errors.Is(err, flag.ErrHelp):
 		// The flag set has already printed the usage. Asking what a command
@@ -178,14 +178,14 @@ func runSeed(args []string, out io.Writer, opts Options) error {
 	}
 	defer closeApp()
 
-	return seedCatalog(ctx, app.container, out, flags)
+	return seedCatalog(ctx, opts.name(), app.container, out, flags)
 }
 
 // seedCatalog performs the rebuild against an application that is already up.
 //
 // The split from [runSeed] is [recoverExecution]'s: everything above is the
 // environment, everything here is the decision.
-func seedCatalog(ctx context.Context, c *container.Container, out io.Writer, flags seedFlags) error {
+func seedCatalog(ctx context.Context, name string, c *container.Container, out io.Writer, flags seedFlags) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSeedFailed,
@@ -203,7 +203,7 @@ func seedCatalog(ctx context.Context, c *container.Container, out io.Writer, fla
 	if flags.reset {
 		if flags.confirm != database {
 			if writeErr := writeReport(out,
-				resetPlanText(database, flags.confirm, report.String())); writeErr != nil {
+				resetPlanText(name, database, flags.confirm, report.String())); writeErr != nil {
 				return writeErr
 			}
 
@@ -340,7 +340,7 @@ store endpoints.
 // run, and it is a REFUSAL rather than a preview that exits zero: a script that
 // forgot the flag would otherwise report success over a deletion that never
 // happened.
-func resetPlanText(database, confirm, prefix string) string {
+func resetPlanText(name, database, confirm, prefix string) string {
 	var b strings.Builder
 
 	// The two refusals are told apart, because they are different mistakes. An
@@ -361,7 +361,7 @@ func resetPlanText(database, confirm, prefix string) string {
 		"  warehouse and the rig's categories and tags. Sales channels and API keys\n"+
 		"  are NOT touched.\n", flagReset, database)
 	fmt.Fprintf(&b, "  To go ahead, repeat the database name:\n      %s %s -%s -%s %s\n",
-		binaryName, seedCommand, flagReset, flagConfirm, database)
+		name, seedCommand, flagReset, flagConfirm, database)
 
 	return b.String()
 }
@@ -379,8 +379,8 @@ func resetPlanText(database, confirm, prefix string) string {
 // the repository's figures were measured on, and the two skewed categories were
 // not in it. Asking for them is how the small-category case becomes
 // reproducible by running a command instead of by hand on a scratch database.
-func parseSeedFlags(args []string) (seedFlags, error) {
-	flags := flag.NewFlagSet(binaryName+" "+seedCommand, flag.ContinueOnError)
+func parseSeedFlags(name string, args []string) (seedFlags, error) {
+	flags := flag.NewFlagSet(name+" "+seedCommand, flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
 
 	spec := rig.DefaultSpec()

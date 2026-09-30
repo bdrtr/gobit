@@ -71,6 +71,19 @@ func (a *App) Version(v string) *App {
 	return a
 }
 
+// Name sets what this program calls itself in the text it prints: the usage
+// text and the command lines the operator subcommands hand an operator to copy
+// (ADR 0254).
+//
+// Left empty, it is "gobit". A project built on gobit is its own program, and
+// a plan telling its operator to run `gobit migrate down` names a binary that
+// operator does not have.
+func (a *App) Name(n string) *App {
+	a.opts.Name = n
+
+	return a
+}
+
 // Add registers a module of the caller's own.
 //
 // The module is registered AFTER the ones gobit ships, and the registry refuses

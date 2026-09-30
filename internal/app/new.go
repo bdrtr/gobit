@@ -81,12 +81,12 @@ type newFlags struct {
 
 // runNew parses the flags and writes the project.
 func runNew(args []string, out io.Writer, opts Options) error {
-	parsed, err := parseNewFlags(args)
+	parsed, err := parseNewFlags(opts.name(), args)
 	switch {
 	case errors.Is(err, flag.ErrHelp):
 		// The flag set's output is discarded, so the caller is told what the
 		// command takes rather than left with nothing.
-		return writeReport(out, usageText(opts.version()))
+		return writeReport(out, usageText(opts.name(), opts.version()))
 	case err != nil:
 		return err
 	}
@@ -177,15 +177,15 @@ func requiredVersion(replace string) (string, error) {
 // `recover` and the owner for `migrate down`: the flag package stops at the
 // first non-flag argument, so a directory written after the flags would be
 // swallowed as a leftover.
-func parseNewFlags(args []string) (newFlags, error) {
+func parseNewFlags(program string, args []string) (newFlags, error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return newFlags{}, coreerrors.Invalid(codeNewInvalidInput,
 			"%s needs the directory to create as its FIRST argument "+
 				"(%s %s <dir> [-%s PATH] [-%s DIR])",
-			newCommand, binaryName, newCommand, flagModule, flagReplace)
+			newCommand, program, newCommand, flagModule, flagReplace)
 	}
 
-	set := flag.NewFlagSet(binaryName+" "+newCommand, flag.ContinueOnError)
+	set := flag.NewFlagSet(program+" "+newCommand, flag.ContinueOnError)
 	set.SetOutput(io.Discard)
 	module := set.String(flagModule, "",
 		"the generated project's module path (default example.com/<dir>)")

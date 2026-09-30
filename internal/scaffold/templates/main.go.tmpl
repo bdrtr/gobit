@@ -6,7 +6,8 @@
 // plugins are installed, which is the one decision a framework cannot make for
 // you.
 //
-// Add a module of your own with .Add(), and a plugin with .Use().
+// Add a module of your own with .Add(), and a plugin with .Use(). .Name() is
+// what the operator subcommands' help and plans call this program.
 package main
 
 import (
@@ -22,7 +23,7 @@ import (
 var version string
 
 func main() {
-	if err := gobit.New().Version(version).Main(os.Args[1:], os.Stdout); err != nil {
+	if err := gobit.New().Name("{{ .Binary }}").Version(version).Main(os.Args[1:], os.Stdout); err != nil {
 		// The error must be visible even when the logger was never built.
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)

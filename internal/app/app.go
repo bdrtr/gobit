@@ -107,6 +107,18 @@ type Options struct {
 	// Plugins are the caller's own plugins. They are installed after the ones
 	// the configuration names, in the order given.
 	Plugins []coreplugin.Plugin
+	// Name is what the usage text and the plans the operator subcommands print
+	// call this program (ADR 0254). Empty means "gobit".
+	Name string
+}
+
+// name reports what the program calls itself in the text it prints.
+func (o Options) name() string {
+	if o.Name != "" {
+		return o.Name
+	}
+
+	return binaryName
 }
 
 // version reports what to call this build.
@@ -182,7 +194,7 @@ func Main(args []string, out io.Writer, opts Options) error {
 
 	switch args[0] {
 	case cmdHelp, "-h", "-help", "--help":
-		return writeReport(out, usageText(opts.version()))
+		return writeReport(out, usageText(opts.name(), opts.version()))
 	case cmdMigrate:
 		return runMigrate(args[1:], out, opts)
 	case stuckCommand:
@@ -204,7 +216,7 @@ func Main(args []string, out io.Writer, opts Options) error {
 	case mcpCommand:
 		return runMCP(args[1:], out, opts)
 	default:
-		if err := writeReport(out, usageText(opts.version())); err != nil {
+		if err := writeReport(out, usageText(opts.name(), opts.version())); err != nil {
 			return err
 		}
 

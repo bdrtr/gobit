@@ -152,7 +152,7 @@ func TestTheResetNeedsTheAddressRepeated(t *testing.T) {
 func TestTheResetIsInTheUsageText(t *testing.T) {
 	t.Parallel()
 
-	text := usageText("test")
+	text := usageText(binaryName, "test")
 
 	assert.Contains(t, text, mfaResetCommand)
 	assert.True(t, strings.Contains(text, "second factor"),
