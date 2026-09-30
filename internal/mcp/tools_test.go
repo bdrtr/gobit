@@ -24,6 +24,7 @@ func sampleDocument() map[string]any {
 				"get": map[string]any{
 					"operationId": "listOrders",
 					"summary":     "Pages the orders.",
+					"security":    []any{map[string]any{"bearerAuth": []any{"order:read"}}},
 					"parameters": []any{
 						map[string]any{
 							"name": "limit", "in": "query", "required": false,
@@ -176,4 +177,22 @@ func TestAQueryParameterReachesTheAddress(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "/admin/v1/orders", bare,
 		"an absent optional parameter must not appear in the address at all")
+}
+
+// TestAToolSaysThePrivilegeItsRouteDemands is ADR 0263 as a model sees it: the
+// scope the document names ends the description, and an operation naming none
+// says nothing about privileges rather than something empty.
+func TestAToolSaysThePrivilegeItsRouteDemands(t *testing.T) {
+	t.Parallel()
+
+	tools, err := toolsFrom(sampleDocument())
+	require.NoError(t, err)
+
+	byName := map[string]tool{}
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+	}
+
+	assert.Equal(t, "Pages the orders.\n\nRequires the order:read privilege.", byName["listOrders"].Description)
+	assert.Equal(t, "Reads one order.", byName["get_orders_id"].Description)
 }

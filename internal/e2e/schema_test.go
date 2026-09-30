@@ -838,8 +838,9 @@ func TestLoginEndpointIsExplicitlyUnsecuredInSchema(t *testing.T) {
 	assert.Contains(t, responses, "401", "an unsecured endpoint must report credential errors too")
 
 	admin := findOperation(t, doc, http.MethodGet, "/admin/v1/users")
-	assert.Equal(t, []any{map[string]any{"bearerAuth": []any{}}}, admin["security"],
-		"the admin endpoint must ask for a session token")
+	assert.Equal(t, []any{map[string]any{"bearerAuth": []any{authapi.ScopeRead}}}, admin["security"],
+		"the admin endpoint must ask for a session token, naming the privilege its route "+
+			"demands (ADR 0263)")
 
 	store := findOperation(t, doc, http.MethodGet,
 		"/store/v1/sales-channels/{sales_channel_id}/products")

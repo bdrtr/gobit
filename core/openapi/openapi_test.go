@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
@@ -170,4 +171,45 @@ func TestAHandGivenEmptySecurityIsKept(t *testing.T) {
 	schema := buildSchema(t, doc, buildRouter(t))
 
 	assert.Equal(t, []any{}, operationOf(t, schema, "/store/v1/products", "get")["security"])
+}
+
+// TestAnOperationNamesThePrivilegeItsRouteDemands is ADR 0263: the privilege
+// comes from the guard on the route, through a group, an inline With and
+// nested guards alike, and a route with no guard names none.
+func TestAnOperationNamesThePrivilegeItsRouteDemands(t *testing.T) {
+	t.Parallel()
+
+	noop := func(http.ResponseWriter, *http.Request) {}
+	r := chi.NewRouter()
+	r.Get("/admin/v1/auth/me", noop)
+	r.With(corehttp.RequireScope("product:read")).Get("/admin/v1/products", noop)
+	r.Group(func(g chi.Router) {
+		g.Use(corehttp.RequireScope("order:write"))
+		g.With(corehttp.RequireScope("payment:write")).Post("/admin/v1/orders/{id}/refunds", noop)
+	})
+	r.Route("/admin/v1/regions", func(sub chi.Router) {
+		sub.With(corehttp.RequireScope("region:read")).Get("/{id}", noop)
+	})
+
+	doc := openapi.New("test", "v1")
+	// A describe block's own requirement is copied, not written into: two
+	// operations described with ONE requirement value keep their own
+	// privileges, and two builds agree.
+	shared := []map[string][]string{{"bearerAuth": {}}}
+	doc.Describe(http.MethodGet, "/admin/v1/products", openapi.Operation{Security: shared})
+	doc.Describe(http.MethodGet, "/admin/v1/regions/{id}", openapi.Operation{Security: shared})
+	for range 2 {
+		schema := buildSchema(t, doc, r)
+
+		assert.Equal(t, []any{map[string]any{"bearerAuth": []any{"product:read"}}},
+			operationOf(t, schema, "/admin/v1/products", "get")["security"])
+		assert.Equal(t, []any{map[string]any{"bearerAuth": []any{"order:write", "payment:write"}}},
+			operationOf(t, schema, "/admin/v1/orders/{id}/refunds", "post")["security"],
+			"every guard on the route is required, in the order they run")
+		assert.Equal(t, []any{map[string]any{"bearerAuth": []any{"region:read"}}},
+			operationOf(t, schema, "/admin/v1/regions/{id}", "get")["security"])
+		assert.Equal(t, []any{map[string]any{"bearerAuth": []any{}}},
+			operationOf(t, schema, "/admin/v1/auth/me", "get")["security"],
+			"a route that asks for identity alone names no privilege")
+	}
 }

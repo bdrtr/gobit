@@ -226,23 +226,49 @@ const PublishableKeyHeader = "x-publishable-api-key"
 // allowed".
 func RequireScope(scope string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ctx := r.Context()
-
-			principal, ok := PrincipalFromContext(ctx)
-			if !ok {
-				unauthorized(ctx, w, "authentication is required")
-				return
-			}
-			if !principal.HasScope(scope) {
-				WriteError(ctx, w, coreerrors.Forbidden(CodeForbidden,
-					"this operation requires the %q privilege", scope))
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
+		return scopeGuard{scope: scope, next: next}
 	}
+}
+
+// scopeGuard is the handler [RequireScope] puts in front of a route.
+//
+// It is a named type rather than a closure so that the privilege a route
+// demands can be read off the route's own middleware ([ScopeDemandedBy]), and
+// the OpenAPI document states it without anybody writing it a second time
+// (ADR 0263).
+type scopeGuard struct {
+	scope string
+	next  http.Handler
+}
+
+func (g scopeGuard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	principal, ok := PrincipalFromContext(ctx)
+	if !ok {
+		unauthorized(ctx, w, "authentication is required")
+		return
+	}
+	if !principal.HasScope(g.scope) {
+		WriteError(ctx, w, coreerrors.Forbidden(CodeForbidden,
+			"this operation requires the %q privilege", g.scope))
+		return
+	}
+
+	g.next.ServeHTTP(w, r)
+}
+
+// ScopeDemandedBy reports the privilege a middleware demands when it is one
+// [RequireScope] returned (ADR 0263).
+//
+// It learns it by wrapping a handler that does nothing and looking at what
+// comes back, so it may only be asked of middleware that builds a handler and
+// does nothing else when applied, which is what a chi middleware does; the
+// ones this module ships all build their state before they are applied.
+func ScopeDemandedBy(mw func(http.Handler) http.Handler) (string, bool) {
+	guard, ok := mw(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).(scopeGuard)
+
+	return guard.scope, ok
 }
 
 // bearerCredential splits the Authorization header into scheme and credential.

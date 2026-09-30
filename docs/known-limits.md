@@ -737,13 +737,5 @@ past and is not corrected retroactively.
   The log line is the dead letter: nothing stores it, nothing counts it and no
   endpoint lists it, so an operator who is not watching the log learns nothing.
 
-- **A tool the model client is offered cannot say which privilege it needs.** The
-  generated document carries no scope: its security schemes are `http/bearer` and
-  `apiKey`, neither of which names one, and no operation states the privilege its
-  route requires. So the `mcp` verb's credential decides what a question can
-  reach, and a refusal arrives as the API's own error envelope — which does name
-  the missing privilege, after the call rather than before it
-  ([ADR 0161](adr/0161-a-model-client-can-ask-this-installation-questions.md)).
-
 - **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
   correctness under load, it does not produce a capacity plan.

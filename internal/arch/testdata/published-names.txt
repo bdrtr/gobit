@@ -295,6 +295,7 @@ core/http SalesChannelIDs
 core/http SalesChannelScope
 core/http SchemeBearer
 core/http ScopeAdmin
+core/http ScopeDemandedBy
 core/http Scoped
 core/http Server
 core/http Server.Run

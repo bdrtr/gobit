@@ -12,6 +12,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The OpenAPI document names each operation's privilege** (ADR 0263). **For
+  integrators:** every admin operation's security requirement lists the scopes
+  its route demands, for example `bearerAuth: ["product:read"]`, and the `mcp`
+  verb's tools end their description with them. `core/http` publishes
+  `ScopeDemandedBy`, which reads the privilege off a `RequireScope` guard.
+
 - **The local integration lane no longer fails on a stopping reaper**
   (ADR 0262). **For contributors:** every Makefile recipe that starts
   containers sets `TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=5m`, so the next

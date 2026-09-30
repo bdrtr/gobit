@@ -33,6 +33,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -310,7 +311,7 @@ func (d *Doc) build(r chi.Routes) (map[string]any, error) {
 	seen := map[string]struct{}{}
 
 	err := chi.Walk(r, func(
-		method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler,
+		method, route string, _ http.Handler, middlewares ...func(http.Handler) http.Handler,
 	) error {
 		path := normalizePath(route)
 		if !included(path) {
@@ -320,6 +321,7 @@ func (d *Doc) build(r chi.Routes) (map[string]any, error) {
 		seen[key(method, path)] = struct{}{}
 
 		operation := d.operation(method, path)
+		operation.Security = withScopes(operation.Security, demandedScopes(middlewares))
 
 		existing, _ := paths[path].(map[string]any)
 		if existing == nil {
@@ -571,6 +573,48 @@ func security(path string) []map[string][]string {
 		// landing here the right answer is "unprotected" too, not "unspecified".
 		return []map[string][]string{}
 	}
+}
+
+// demandedScopes returns the privileges a route's middleware demands, in the
+// order they are applied (ADR 0263).
+//
+// They are read off the route itself, the guards [corehttp.RequireScope]
+// returned, so the document names the privilege the router enforces rather
+// than one a describe block repeats.
+func demandedScopes(middlewares []func(http.Handler) http.Handler) []string {
+	var scopes []string
+	for _, mw := range middlewares {
+		if scope, ok := corehttp.ScopeDemandedBy(mw); ok && !slices.Contains(scopes, scope) {
+			scopes = append(scopes, scope)
+		}
+	}
+
+	return scopes
+}
+
+// withScopes names the privileges in every scheme of a security requirement.
+//
+// OpenAPI 3.1 lets a requirement of any scheme list the roles an operation
+// needs, and all of them are required, which is what several guards on one
+// route mean. The requirement is COPIED: the one [Doc.operation] returns may
+// be a describe block's own, and writing into it would change what the next
+// build starts from. An explicitly unprotected operation has no scheme to name
+// a privilege in and stays so.
+func withScopes(requirement []map[string][]string, scopes []string) []map[string][]string {
+	if len(scopes) == 0 {
+		return requirement
+	}
+
+	out := make([]map[string][]string, 0, len(requirement))
+	for _, alternative := range requirement {
+		named := make(map[string][]string, len(alternative))
+		for scheme := range alternative {
+			named[scheme] = slices.Clone(scopes)
+		}
+		out = append(out, named)
+	}
+
+	return out
 }
 
 // The frequently repeated key and type names of JSON Schema.

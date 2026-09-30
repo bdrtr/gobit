@@ -1,6 +1,8 @@
 package http_test
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,4 +48,29 @@ func TestTheAdminScopeCoversEveryModuleScope(t *testing.T) {
 		"a principal with one scope was granted another; the scope check is not a check")
 	assert.False(t, corehttp.Principal{}.HasScope("review:read"),
 		"a principal with NO scope was granted one")
+}
+
+// TestAScopeGuardSaysWhatItDemands is the reading ADR 0263's document relies
+// on: the guard RequireScope returns names its privilege, still guards, and
+// no other middleware is taken for one.
+func TestAScopeGuardSaysWhatItDemands(t *testing.T) {
+	t.Parallel()
+
+	guard := corehttp.RequireScope("product:read")
+	scope, ok := corehttp.ScopeDemandedBy(guard)
+	assert.True(t, ok)
+	assert.Equal(t, "product:read", scope)
+
+	_, ok = corehttp.ScopeDemandedBy(func(next http.Handler) http.Handler { return next })
+	assert.False(t, ok, "a middleware that is not a guard demands nothing")
+
+	reached := false
+	handler := guard(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	handler.ServeHTTP(rec, req.WithContext(corehttp.WithPrincipal(req.Context(),
+		corehttp.Principal{ID: "usr_1", Kind: "user", Scopes: []string{"order:read"}})))
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Contains(t, rec.Body.String(), "product:read")
+	assert.False(t, reached, "the guard still refuses the principal without the privilege")
 }

@@ -3,6 +3,7 @@ package mcp
 import (
 	"fmt"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -148,8 +149,20 @@ func toolName(path string, operation map[string]any) string {
 	return "get_" + trimmed
 }
 
-// description is what the client shows about the tool.
+// description is what the client shows about the tool: the operation's own
+// words, then the privilege its route demands when it demands one (ADR 0263),
+// so a model can tell before calling that its credential will be refused.
 func description(operation map[string]any) string {
+	text := prose(operation)
+	if scopes := privileges(operation); len(scopes) > 0 {
+		text += "\n\nRequires the " + strings.Join(scopes, ", ") + " privilege."
+	}
+
+	return text
+}
+
+// prose is the operation's summary and description.
+func prose(operation map[string]any) string {
 	summary, _ := operation["summary"].(string)
 	detail, _ := operation["description"].(string)
 
@@ -165,6 +178,26 @@ func description(operation map[string]any) string {
 	// An endpoint with neither is a gap in its own describe block rather than in
 	// this list, and saying so is more useful to a model than an empty string.
 	return "This endpoint carries no description in the served schema."
+}
+
+// privileges reads the scopes the operation's security requirement names, each
+// once, in the order the document gives them.
+func privileges(operation map[string]any) []string {
+	requirements, _ := operation["security"].([]any)
+	var out []string
+	for _, raw := range requirements {
+		requirement, _ := raw.(map[string]any)
+		for _, listed := range requirement {
+			scopes, _ := listed.([]any)
+			for _, scope := range scopes {
+				if name, ok := scope.(string); ok && name != "" && !slices.Contains(out, name) {
+					out = append(out, name)
+				}
+			}
+		}
+	}
+
+	return out
 }
 
 // parameters reads the operation's parameter list.

@@ -735,6 +735,7 @@ func TestLoginEndpointStaysUnprotectedInTheSchema(t *testing.T) {
 
 	// For the empty array to mean anything, a full one has to be seen as well.
 	protected := operation(t, paths, http.MethodGet, "/admin/v1/users")
-	assert.Equal(t, []any{map[string]any{"bearerAuth": []any{}}}, protected["security"],
-		"the other admin endpoints have to ask for a session token")
+	assert.Equal(t, []any{map[string]any{"bearerAuth": []any{ScopeRead}}}, protected["security"],
+		"the other admin endpoints have to ask for a session token, naming the privilege "+
+			"their route demands (ADR 0263)")
 }
