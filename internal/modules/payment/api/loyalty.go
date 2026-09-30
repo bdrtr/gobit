@@ -25,11 +25,9 @@ import (
 // number that is derived, and it would make the module's own sentence about
 // what a payment write means — that it is a MONEY MOVEMENT — false.
 //
-// There is no storefront endpoint either, and that is this slice's boundary
-// rather than an oversight: a customer reading their own balance needs the
-// customer claim in the request to be PROVEN, and that proof is a surface this
-// module is not wired to today. ADR 0152 wrote it down for store credit and the
-// same sentence holds here.
+// A customer reads their own points, and only the balance, on the storefront
+// (storefront_balance.go, ADR 0253), where the request has to prove the
+// customer it names; the history stays on the admin surface.
 
 // loyaltyEntryDTO is the outward shape of a ledger row.
 type loyaltyEntryDTO struct {

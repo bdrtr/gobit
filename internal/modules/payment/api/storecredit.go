@@ -17,11 +17,10 @@ import (
 // {data, count, offset, limit}, and a fifth field there would make every client
 // that reads that envelope write a branch specific to this one endpoint.
 //
-// There is NO storefront endpoint, and that is this slice's boundary rather than
-// an oversight: a customer reading their own balance needs the customer claim in
-// the request to be PROVEN (the comparison in ADR 0057/0125), and that proof is a
-// surface this module is not wired to today. ADR 0152 writes it down among the
-// things it does not close.
+// A customer reads their own balance, and only the balance, on the storefront
+// (storefront_balance.go, ADR 0253), where the request has to prove the
+// customer it names. The history stays here: its rows carry the operator's
+// reason and reference.
 
 // issueCreditRequest is the body that gives credit.
 type issueCreditRequest struct {

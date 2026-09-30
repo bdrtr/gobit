@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A customer reads their own store credit and points** (ADR 0253). **For
+  integrators:** `GET /store/v1/customers/{id}/store-credit/balance` and
+  `GET /store/v1/customers/{id}/loyalty-points/balance` answer the balance for
+  a `currency_code` when the request proves the customer in the path; with no
+  customer identity bound they refuse with 401, and naming somebody else is
+  refused with 403.
+
 - **An order line says what became of it** (ADR 0252). **For operators:** the
   order page prints each line's units asked back and written off, and what each
   parcel holds. **For integrators:** the `order_line_item` read-layer entity

@@ -117,8 +117,11 @@ var customerRoutes = map[string]struct{}{
 	"/store/v1/customers/{id}/wishlist/{variant_id}":                   {},
 	"/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert":       {},
 	"/store/v1/customers/{id}/wishlist/{variant_id}/price-alert":       {},
-	"/store/v1/b2b/customers/{customer_id}/company":                    {},
-	"/store/v1/b2b/customers/{customer_id}/employee":                   {},
+	// A customer's own balances (ADR 0253).
+	"/store/v1/customers/{id}/store-credit/balance":   {},
+	"/store/v1/customers/{id}/loyalty-points/balance": {},
+	"/store/v1/b2b/customers/{customer_id}/company":   {},
+	"/store/v1/b2b/customers/{customer_id}/employee":  {},
 }
 
 // matrixRoutes walks the router and classifies every endpoint.

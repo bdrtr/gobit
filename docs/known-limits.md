@@ -639,17 +639,6 @@ past and is not corrected retroactively.
   shopper ever seeing the total — but a shop whose callers cannot open a link is
   not served by this.
 
-- **A customer cannot see their own store credit or their own points.** Since
-  [ADR 0152](adr/0152-a-shop-can-hold-money-for-a-customer.md) a shop can hold
-  money for a customer, since
-  [ADR 0164](adr/0164-a-capture-earns-the-customer-points.md) it can hold
-  points for them, and since
-  [ADR 0165](adr/0165-a-customer-can-pay-with-their-points.md) the customer can
-  spend either at checkout — but the only way to READ a balance is an admin
-  endpoint: a storefront read needs the customer claim in the request proven,
-  and the payment module is not wired to the surface that proves it. A shopper
-  learns what they have when an operator tells them, or when the total drops.
-
 - **Store credit does not expire and names no cause.** A credit issued today is
   spendable forever, and `reference` is free text, so "this is the compensation
   for return R-19" is a convention rather than a link. Expiry is a scheduled job

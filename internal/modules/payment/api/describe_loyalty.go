@@ -91,4 +91,23 @@ func describeLoyaltyPoints(d *openapi.Doc) {
 			"200": openapi.Response("A page of ledger rows", d.List(loyaltyEntryDTO{})),
 		},
 	})
+
+	d.Describe(http.MethodGet, pathStoreOwnLoyalty, openapi.Operation{
+		Summary: "Reads how many points the signed-in customer holds.",
+		Description: "The customer in the path has to be the one the request proves: an " +
+			"installation that bound no customer identity refuses with 401, and a request " +
+			"naming somebody else is refused with 403 (ADR 0253). The balance is the one the " +
+			"admin surface reads and it can be negative (ADR 0165); the history is not offered " +
+			"here. A point is one minor unit of the currency: " + amountNote,
+		Parameters: []openapi.Parameter{
+			{
+				Name: paramCurrencyCode, In: inQuery, Required: true,
+				Schema:      map[string]any{schemaType: typeString},
+				Description: "Which currency's ledger is read; the answer repeats it normalized.",
+			},
+		},
+		Responses: map[string]any{
+			"200": openapi.Response("The points held", d.Item(loyaltyBalanceDTO{})),
+		},
+	})
 }

@@ -191,6 +191,9 @@ type Payments interface {
 // Handler payment modülünün HTTP handler kümesidir.
 type Handler struct {
 	svc Payments
+	// identity proves the customer a storefront balance read names; nil
+	// refuses every such read (ADR 0253).
+	identity corehttp.Identity
 }
 
 // New verilen servis üzerinde çalışan handler kümesini üretir.
@@ -303,6 +306,10 @@ func (h *Handler) Routes(r chi.Router) {
 	// tutarı ve sağlayıcı davranışını istemciye bırakmaz.
 	r.Post(pathStoreCollectSess, h.createStoreSession)
 	r.Post(pathStoreSessionCancel, h.cancelStoreSession)
+
+	// A customer reads their own balances, and only their own (ADR 0253).
+	r.Get(pathStoreOwnStoreCredit, h.ownStoreCreditBalance)
+	r.Get(pathStoreOwnLoyalty, h.ownLoyaltyBalance)
 }
 
 // --- zarflar ve DTO'lar ------------------------------------------------------

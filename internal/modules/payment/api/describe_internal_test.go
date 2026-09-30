@@ -323,6 +323,15 @@ func anlatilanUclar() []ucBeklentisi {
 			metod: http.MethodGet, yol: pathAdminLoyaltyPointsBalance, durum: "200",
 			yanit: loyaltyBalanceDTO{},
 		},
+		// A customer's own balances on the storefront (ADR 0253).
+		{
+			metod: http.MethodGet, yol: pathStoreOwnStoreCredit, durum: "200",
+			yanit: storeCreditBalanceDTO{},
+		},
+		{
+			metod: http.MethodGet, yol: pathStoreOwnLoyalty, durum: "200",
+			yanit: loyaltyBalanceDTO{},
+		},
 		// The payment journal (ADR 0186).
 		{
 			metod: http.MethodGet, yol: pathAdminPaymentJournal, durum: "200",
