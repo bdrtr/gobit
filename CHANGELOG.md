@@ -24,6 +24,16 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The bus keeps the message it gives up on** (ADR 0273). **For operators:**
+  on the Redis bus, a message that emptied every consumer that took it is kept
+  in the stream `<prefix>-dead-letters` instead of being dropped with a log
+  line; the `outbox-relay` job fails while that pile is not empty, and
+  `gobit deadletters` lists it after the outbox's pile and redrives or discards
+  a letter named by its stream id (`-confirm` repeats it). **For integrators:**
+  `core/eventbus` publishes `RedisConfig.DeadLetterStream`,
+  `ReadRedisDeadLetters`, `RedriveRedisDeadLetter`, `DiscardRedisDeadLetter`,
+  `RedisDeadLetter`, `RedisDeadLetterReport` and `CodeDeadLetterFailed`.
+
 - **The panel opens an order's after-sales records, and an operator's return
   names its lines** (ADR 0272, D186). **For operators:** with `order:write` the
   order page opens a return with a quantity per line, a claim, an exchange and

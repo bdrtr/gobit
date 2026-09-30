@@ -67,8 +67,9 @@
 // this bus means the process died mid-dispatch. The Redis backend hands such a
 // message to another consumer after an idle threshold. The poison pill is
 // bounded there as well — a message that has been delivered three times without
-// an ACK has emptied three consumers, and it is ACKed and logged at error level
-// rather than handed to a fourth.
+// an ACK has emptied three consumers, and it is kept in the dead-letter stream
+// and ACKed rather than handed to a fourth (ADR 0273); an operator reads,
+// redrives or discards it with `gobit deadletters`.
 //
 // # Context and observability
 //

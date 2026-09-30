@@ -78,6 +78,9 @@ const (
 	svcDB       = "core.db"
 	svcRedis    = "core.redis"
 	svcEventBus = "core.eventbus"
+	// svcBusDeadLetters reads the Redis bus's dead letters (ADR 0273); it is
+	// registered only when the bus is Redis.
+	svcBusDeadLetters = "core.eventbus.dead_letters"
 	// svcWorkflow is the saga engine; the cross-module workflows run from here.
 	svcWorkflow = "core.workflow"
 	// svcWorkflowStore is the durable store of the execution state.
@@ -823,9 +826,7 @@ func setupEventBus(
 		return roleBus(eventbus.NewInMemory(log), log, role), nil
 	}
 
-	busCfg := eventbus.RedisConfig{
-		Consumer: eventbus.ConsumerName(cfg.EventBusConsumer),
-	}.WithNamespace(cfg.RedisKeyPrefix)
+	busCfg := busConfig(cfg)
 
 	bus, err := eventbus.NewRedisStream(client, busCfg, log)
 	if err != nil {
@@ -838,6 +839,15 @@ func setupEventBus(
 		"consumer", busCfg.Consumer)
 
 	return roleBus(bus, log, role), nil
+}
+
+// busConfig is the Redis bus's configuration for the installation: the
+// consumer name and the namespace every process and command derives alike,
+// so `gobit deadletters` reads the pile the server's bus keeps (ADR 0273).
+func busConfig(cfg config.Config) eventbus.RedisConfig {
+	return eventbus.RedisConfig{
+		Consumer: eventbus.ConsumerName(cfg.EventBusConsumer),
+	}.WithNamespace(cfg.RedisKeyPrefix)
 }
 
 // roleBus returns the bus as it is for the server, and publish-only for a

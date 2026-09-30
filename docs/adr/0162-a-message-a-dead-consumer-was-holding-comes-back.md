@@ -4,7 +4,7 @@
 another consumer's name once it has been idle past a threshold, which is what
 makes at-least-once true for the case durability exists for.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0273](0273-the-bus-keeps-the-message-it-gives-up-on.md), which keeps the message in a dead-letter stream instead of a log line
 - **Date:** 2026-09-12
 
 Measurement: [measurements/0162](../measurements/0162-what-a-killed-consumer-leaves-behind.md)

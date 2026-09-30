@@ -739,12 +739,15 @@ past and is not corrected retroactively.
   nothing; pointed at a Redis installation it takes messages the server is owed,
   the way every verb did before
   [ADR 0160](adr/0160-a-command-does-not-take-the-servers-events.md).
-- **A dropped event is announced to a human and to nothing else.** A message
-  that has been delivered three times without an acknowledgement is ACKed and
-  logged at error level rather than handed to a fourth consumer
-  ([ADR 0162](adr/0162-a-message-a-dead-consumer-was-holding-comes-back.md)).
-  The log line is the dead letter: nothing stores it, nothing counts it and no
-  endpoint lists it, so an operator who is not watching the log learns nothing.
+- **The bus keeps a message only when it kills its consumers.** A message
+  that has been delivered three times without an acknowledgement is kept in the
+  Redis bus's dead-letter stream, stands on the outbox relay's alarm and is
+  listed, redriven or discarded by `gobit deadletters`
+  ([ADR 0273](adr/0273-the-bus-keeps-the-message-it-gives-up-on.md)). A
+  handler that returns an error three times is logged and the event counts as
+  processed ([ADR 0240](adr/0240-a-failing-handler-is-called-again.md)), and a
+  message trimmed by `MaxLen` while it was pending is gone before it can be
+  kept. The pile has no bound; a human empties it.
 
 - **The load test is in-process** (`make load-test`, `internal/e2e`): it tests
   correctness under load, it does not produce a capacity plan.

@@ -161,8 +161,17 @@ type publisher interface {
 	Publish(ctx context.Context, e eventbus.Event) error
 }
 
-// Definition builds the job.
-func Definition(r relay, bus publisher, log *slog.Logger) job.Definition {
+// BusPile reads the event bus's own dead letters: the messages the Redis bus
+// kept after they emptied every consumer that took them (ADR 0273). It is nil
+// where the bus keeps none, as the in-memory bus does.
+type BusPile interface {
+	// Read returns how many letters the bus keeps and the oldest, at most
+	// limit.
+	Read(ctx context.Context, limit int64) (eventbus.RedisDeadLetterReport, error)
+}
+
+// Definition builds the job; pile may be nil.
+func Definition(r relay, bus publisher, pile BusPile, log *slog.Logger) job.Definition {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
@@ -171,7 +180,7 @@ func Definition(r relay, bus publisher, log *slog.Logger) job.Definition {
 		Name:   Name,
 		Every:  Every,
 		MaxRun: MaxRun,
-		Run:    func(ctx context.Context) error { return run(ctx, r, bus, log) },
+		Run:    func(ctx context.Context) error { return run(ctx, r, bus, pile, log) },
 	}
 }
 
@@ -182,7 +191,7 @@ func Definition(r relay, bus publisher, log *slog.Logger) job.Definition {
 // row, and an operator would then have to correlate two listings to learn that
 // the relay is fine and the events are not. The relay is the only thing that
 // creates dead letters; it is the right thing to report them.
-func run(ctx context.Context, r relay, bus publisher, log *slog.Logger) error {
+func run(ctx context.Context, r relay, bus publisher, pile BusPile, log *slog.Logger) error {
 	result, err := r.Relay(ctx, limit,
 		func(ctx context.Context, event outbox.Pending) error {
 			return bus.Publish(ctx, event.Event())
@@ -215,11 +224,24 @@ func run(ctx context.Context, r relay, bus publisher, log *slog.Logger) error {
 			"the outbox dead letters could not be read; the relay cannot say whether "+
 				"anything has been given up on")
 	}
-	if deadLetters.Empty() {
+
+	// The bus's own pile stands on the same alarm (ADR 0273). The relay does
+	// not make those letters — the bus does, after the relay's delivery — but
+	// a second job would be a second listing to correlate, the argument this
+	// function's godoc makes for keeping the report here.
+	var busLetters eventbus.RedisDeadLetterReport
+	if pile != nil {
+		if busLetters, err = pile.Read(ctx, deadLetterSample); err != nil {
+			return coreerrors.Wrap(err, coreerrors.KindOf(err), codeRelayFailed,
+				"the event bus's dead letters could not be read; the relay cannot say whether "+
+					"a delivered event was given up on")
+		}
+	}
+	if deadLetters.Empty() && busLetters.Empty() {
 		return nil
 	}
 
-	return deadLetterError{report: deadLetters}
+	return deadLetterError{report: deadLetters, bus: busLetters}
 }
 
 // summarize renders one pass as the single line `gobit jobs` prints.
@@ -321,14 +343,27 @@ func reportPass(ctx context.Context, result outbox.RelayResult, log *slog.Logger
 // Discard on the store.
 type deadLetterError struct {
 	report outbox.DeadLetterReport
+	// bus is the event bus's own pile (ADR 0273).
+	bus eventbus.RedisDeadLetterReport
 }
 
-// Error states the pile and names the oldest of it.
+// Error states the piles and names the oldest of each.
 func (e deadLetterError) Error() string {
-	return fmt.Sprintf(
-		"%d promised event(s) have been given up on and are waiting for a human "+
-			"(redrive them once the receiver is fixed, or discard them): %s",
-		e.report.Count, describe(e.report.Oldest))
+	var parts []string
+	if !e.report.Empty() {
+		parts = append(parts, fmt.Sprintf(
+			"%d promised event(s) have been given up on and are waiting for a human "+
+				"(redrive them once the receiver is fixed, or discard them): %s",
+			e.report.Count, describe(e.report.Oldest)))
+	}
+	if !e.bus.Empty() {
+		parts = append(parts, fmt.Sprintf(
+			"%d delivered event(s) emptied every consumer that took them and are kept by the "+
+				"bus (redrive them once the handler is fixed, or discard them): %s",
+			e.bus.Count, describeBus(e.bus.Oldest)))
+	}
+
+	return strings.Join(parts, "; and ")
 }
 
 // JobDetail is the one line `gobit jobs` prints in its DETAIL column.
@@ -340,7 +375,31 @@ func (e deadLetterError) Error() string {
 // print. The payload, which can hold an address or a phone number, never
 // leaves the row.
 func (e deadLetterError) JobDetail() string {
-	return fmt.Sprintf("%d dead-lettered; oldest %s", e.report.Count, describe(e.report.Oldest))
+	var parts []string
+	if !e.report.Empty() {
+		parts = append(parts, fmt.Sprintf("%d dead-lettered; oldest %s", e.report.Count, describe(e.report.Oldest)))
+	}
+	if !e.bus.Empty() {
+		parts = append(parts, fmt.Sprintf("%d kept by the bus; oldest %s", e.bus.Count, describeBus(e.bus.Oldest)))
+	}
+
+	return strings.Join(parts, "; ")
+}
+
+// describeBus renders the bus's sample on one line: the event, and how many
+// consumers it emptied.
+func describeBus(letters []eventbus.RedisDeadLetter) string {
+	if len(letters) == 0 {
+		return "(no sample available)"
+	}
+
+	parts := make([]string, 0, len(letters))
+	for i := range letters {
+		parts = append(parts, fmt.Sprintf("%s %s after %d deliveries (letter %s)",
+			letters[i].EventName, letters[i].EventID, letters[i].Deliveries, letters[i].ID))
+	}
+
+	return strings.Join(parts, "; ")
 }
 
 // describe renders the sample on one line.

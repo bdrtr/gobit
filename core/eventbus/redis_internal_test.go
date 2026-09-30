@@ -57,6 +57,12 @@ type fakeStreamClient struct {
 	pendingArgs  []*redis.XPendingExtArgs
 	claimArgs    []*redis.XClaimArgs
 
+	// ranged are the messages XRange answers by id, and rangeErr its error;
+	// addErr fails every XAdd (ADR 0273).
+	ranged   map[string]redis.XMessage
+	rangeErr error
+	addErr   error
+
 	// swept closes after the first XPendingExt call. It is the only signal from
 	// the outside that the takeover sweep ran at all, and the scenarios that
 	// assert NOTHING was taken over have nothing else to wait for.
@@ -85,9 +91,30 @@ func (f *fakeStreamClient) XAdd(ctx context.Context, a *redis.XAddArgs) *redis.S
 
 	f.mu.Lock()
 	f.added = append(f.added, a)
+	err := f.addErr
 	f.mu.Unlock()
 
+	if err != nil {
+		cmd.SetErr(err)
+		return cmd
+	}
 	cmd.SetVal("1-0")
+	return cmd
+}
+
+// XRange answers the one message a range from an id to itself asks for.
+func (f *fakeStreamClient) XRange(ctx context.Context, _, start, _ string) *redis.XMessageSliceCmd {
+	cmd := redis.NewXMessageSliceCmd(ctx)
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.rangeErr != nil {
+		cmd.SetErr(f.rangeErr)
+		return cmd
+	}
+	if msg, ok := f.ranged[start]; ok {
+		cmd.SetVal([]redis.XMessage{msg})
+	}
 	return cmd
 }
 
@@ -903,7 +930,7 @@ func TestReclaimLeavesThisConsumersOwnPendingMessagesAlone(t *testing.T) {
 	}
 }
 
-func TestReclaimDropsAMessageThatEmptiedEveryConsumer(t *testing.T) {
+func TestReclaimKeepsAMessageThatEmptiedEveryConsumer(t *testing.T) {
 	cfg := fakeConfig()
 	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
 
@@ -917,6 +944,7 @@ func TestReclaimDropsAMessageThatEmptiedEveryConsumer(t *testing.T) {
 	fake.claimReturns = []redis.XMessage{
 		eventMessage("5-0", "evt_poison", testEventName, when, `{}`),
 	}
+	fake.ranged = map[string]redis.XMessage{"5-0": eventMessage("5-0", "evt_poison", testEventName, when, `{}`)}
 
 	bus := newRedisBus(fake, cfg, quietLogger())
 
@@ -931,13 +959,39 @@ func TestReclaimDropsAMessageThatEmptiedEveryConsumer(t *testing.T) {
 	shutdownBus(t, bus)
 
 	if claims := fake.claimRequests(); len(claims) != 0 {
-		t.Errorf("a message that has emptied %d consumers was handed to one more; without a "+
-			"dead letter queue that is the endless loop the package comment refuses to build",
-			maxDeliveries)
+		t.Errorf("a message that has emptied %d consumers was handed to one more; that is "+
+			"the endless loop the package comment refuses to build", maxDeliveries)
 	}
 	if acked := fake.ackedIDs(); !slices.Contains(acked, "5-0") {
-		t.Errorf("ACKed ids = %v. A dropped message that is not ACKed is swept again every "+
+		t.Errorf("ACKed ids = %v. A kept message that is not ACKed is swept again every "+
 			"round forever", acked)
+	}
+
+	// It is kept, not dropped (ADR 0273): the message's own fields and where
+	// it came from, in the dead-letter stream.
+	added := fake.addedArgs()
+	if len(added) != 1 {
+		t.Fatalf("XAdd calls = %d, expected the one dead letter", len(added))
+	}
+	kept := added[0]
+	if kept.Stream != cfg.DeadLetterStream() {
+		t.Errorf("the dead letter went to %q, expected %q", kept.Stream, cfg.DeadLetterStream())
+	}
+	values, ok := kept.Values.(map[string]any)
+	if !ok {
+		t.Fatalf("the dead letter's values are %T", kept.Values)
+	}
+	for field, want := range map[string]any{
+		fieldID: "evt_poison", fieldName: testEventName, fieldData: `{}`,
+		fieldStream: cfg.StreamName(testEventName), fieldMessageID: "5-0",
+		fieldConsumer: "consumer-that-died", fieldDeliveries: int64(maxDeliveries),
+	} {
+		if values[field] != want {
+			t.Errorf("the dead letter's %s = %v, expected %v", field, values[field], want)
+		}
+	}
+	if values[fieldDroppedAt] == "" || values[fieldOccurredAt] == "" {
+		t.Errorf("the dead letter carries no moment: %v", values)
 	}
 	select {
 	case id := <-seen:
@@ -1045,5 +1099,76 @@ func TestReclaimDoesNotEvenLookAtMessagesInsideTheThreshold(t *testing.T) {
 	case id := <-seen:
 		t.Errorf("the event %q was delivered while another consumer is holding it", id)
 	default:
+	}
+}
+
+// sweepPoison runs one takeover sweep over a message that emptied every
+// consumer, with the fake scripted by setup, and returns the fake.
+func sweepPoison(t *testing.T, setup func(*fakeStreamClient)) *fakeStreamClient {
+	t.Helper()
+
+	fake := newFakeStreamClient()
+	fake.pendingOnce = []redis.XPendingExt{{
+		ID: "5-0", Consumer: "consumer-that-died", Idle: 2 * time.Minute, RetryCount: maxDeliveries,
+	}}
+	setup(fake)
+
+	bus := newRedisBus(fake, fakeConfig(), quietLogger())
+	if err := bus.Subscribe(testEventName, func(context.Context, Event) error { return nil }); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+	waitClosed(t, fake.swept, "the takeover sweep never ran")
+	shutdownBus(t, bus)
+
+	return fake
+}
+
+// TestAMessageThatCouldNotBeKeptStaysPending: the ACK waits for the copy, so a
+// Redis that refused the read or the write loses nothing — the next sweep
+// tries again (ADR 0273).
+func TestAMessageThatCouldNotBeKeptStaysPending(t *testing.T) {
+	when := time.Date(2026, 8, 23, 12, 30, 0, 0, time.UTC)
+
+	for name, setup := range map[string]func(*fakeStreamClient){
+		"the read failed": func(f *fakeStreamClient) { f.rangeErr = errors.New("connection reset") },
+		"the copy failed": func(f *fakeStreamClient) {
+			f.ranged = map[string]redis.XMessage{"5-0": eventMessage("5-0", "evt_poison", testEventName, when, `{}`)}
+			f.addErr = errors.New("OOM command not allowed")
+		},
+	} {
+		fake := sweepPoison(t, setup)
+		if acked := fake.ackedIDs(); slices.Contains(acked, "5-0") {
+			t.Errorf("%s: ACKed ids = %v; a message ACKed before it was kept is lost", name, acked)
+		}
+	}
+}
+
+// TestAMessageTheStreamNoLongerHoldsIsLetGo: trimmed while it was pending,
+// there is nothing to keep, and holding the entry would sweep it for ever.
+func TestAMessageTheStreamNoLongerHoldsIsLetGo(t *testing.T) {
+	fake := sweepPoison(t, func(*fakeStreamClient) {})
+
+	if acked := fake.ackedIDs(); !slices.Contains(acked, "5-0") {
+		t.Errorf("ACKed ids = %v; an entry with no message is swept again every round", acked)
+	}
+	if added := fake.addedArgs(); len(added) != 0 {
+		t.Errorf("XAdd calls = %d; a letter with nothing in it was kept", len(added))
+	}
+}
+
+// TestTheDeadLetterStreamIsNoEventsStream: an event's stream has a colon after
+// the prefix and the pile a hyphen, so no event name lands on it, and a
+// namespace keeps its own.
+func TestTheDeadLetterStreamIsNoEventsStream(t *testing.T) {
+	cfg := RedisConfig{}.WithNamespace("shop")
+
+	if got := cfg.DeadLetterStream(); got != "shop:events-dead-letters" {
+		t.Errorf("DeadLetterStream = %q", got)
+	}
+	if cfg.StreamName("dead-letters") == cfg.DeadLetterStream() {
+		t.Error("an event named dead-letters would publish into the pile")
+	}
+	if (RedisConfig{}).DeadLetterStream() == cfg.DeadLetterStream() {
+		t.Error("two namespaces share one pile")
 	}
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/workflow"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
@@ -517,6 +518,13 @@ func openApplication(
 	}
 	if err := c.Provide(svcEventBus, bus); err != nil {
 		return nil, nil, err
+	}
+	// The pile the Redis bus keeps, for the relay's alarm (ADR 0273).
+	if cfg.EventBus == config.BackendRedis {
+		pile := outboxrelay.BusPile(redisPile{client: redisClient, cfg: busConfig(cfg)})
+		if err := c.Provide(svcBusDeadLetters, pile); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// The authenticator is born when the auth module registers, while the guard

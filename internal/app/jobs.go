@@ -170,7 +170,14 @@ func registerJobs(
 			"the job runner could not resolve the event bus (%q)", svcEventBus)
 	}
 
-	if err := registry.Add(outboxrelay.Definition(outbox.NewStore(pool.Pool()), bus, log)); err != nil {
+	// The bus's own pile rides on the relay's alarm when the bus keeps one
+	// (ADR 0273); an installation on the in-memory bus registers none.
+	var pile outboxrelay.BusPile
+	if found, resolveErr := container.Resolve[outboxrelay.BusPile](c, svcBusDeadLetters); resolveErr == nil {
+		pile = found
+	}
+
+	if err := registry.Add(outboxrelay.Definition(outbox.NewStore(pool.Pool()), bus, pile, log)); err != nil {
 		return nil, err
 	}
 

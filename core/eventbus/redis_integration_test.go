@@ -582,3 +582,146 @@ func TestRedisIntegrationDoesNotTakeAMessageStillWithinTheThreshold(t *testing.T
 	case <-time.After(3 * time.Second):
 	}
 }
+
+// TestRedisIntegrationKeepsAMessageThatEmptiedEveryConsumer is ADR 0273 over a
+// real Redis: a message three consumers took and never acknowledged is kept in
+// the dead-letter stream rather than handed to a fourth or dropped, the pile
+// reads it back, and a redrive delivers it whole.
+func TestRedisIntegrationKeepsAMessageThatEmptiedEveryConsumer(t *testing.T) {
+	ctx := t.Context()
+	client := startRedis(t)
+	cfg := testConfig(t, "successor")
+	cfg.ClaimMinIdle = 300 * time.Millisecond
+	stream := cfg.StreamName("order.placed")
+
+	if err := client.XGroupCreateMkStream(ctx, stream, cfg.Group, "0").Err(); err != nil {
+		t.Fatalf("the consumer group could not be created: %v", err)
+	}
+	publisher, err := eventbus.NewRedisStream(client, cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("NewRedisStream returned an error: %v", err)
+	}
+	defer func() { _ = publisher.Shutdown(context.Background()) }()
+	if err := publisher.Publish(ctx, eventbus.Event{
+		Name: "order.placed", ID: "evt_poison", Data: map[string]any{"order_id": "order_1"},
+	}); err != nil {
+		t.Fatalf("Publish returned an error: %v", err)
+	}
+
+	// Three consumers take it and die holding it: the read is the first
+	// delivery and each claim another.
+	taken, err := client.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group: cfg.Group, Consumer: "killed-1", Streams: []string{stream, ">"}, Count: 1,
+	}).Result()
+	if err != nil || len(taken) != 1 || len(taken[0].Messages) != 1 {
+		t.Fatalf("the first consumer read %v, %v", taken, err)
+	}
+	messageID := taken[0].Messages[0].ID
+	for _, consumer := range []string{"killed-2", "killed-3"} {
+		if err := client.XClaim(ctx, &redis.XClaimArgs{
+			Stream: stream, Group: cfg.Group, Consumer: consumer, Messages: []string{messageID},
+		}).Err(); err != nil {
+			t.Fatalf("%s could not claim: %v", consumer, err)
+		}
+	}
+
+	successor, err := eventbus.NewRedisStream(client, cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("NewRedisStream returned an error: %v", err)
+	}
+	defer func() { _ = successor.Shutdown(context.Background()) }()
+	got := make(chan eventbus.Event, 4)
+	if err := successor.Subscribe("order.placed", func(_ context.Context, e eventbus.Event) error {
+		got <- e
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+
+	var report eventbus.RedisDeadLetterReport
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		if report, err = eventbus.ReadRedisDeadLetters(ctx, client, cfg, 10); err == nil && !report.Empty() {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if report.Count != 1 || len(report.Oldest) != 1 {
+		t.Fatalf("the pile = %+v (%v); the message that emptied three consumers was not kept", report, err)
+	}
+	letter := report.Oldest[0]
+	if letter.EventID != "evt_poison" || letter.EventName != "order.placed" || letter.Stream != stream ||
+		letter.MessageID != messageID || letter.Consumer != "killed-3" || letter.Deliveries != 3 ||
+		letter.DroppedAt.IsZero() {
+		t.Errorf("the letter = %+v", letter)
+	}
+	select {
+	case e := <-got:
+		t.Fatalf("the poison was handed to a fourth consumer: %s", e.ID)
+	case <-time.After(500 * time.Millisecond):
+	}
+	pending, err := client.XPending(ctx, stream, cfg.Group).Result()
+	if err != nil {
+		t.Fatalf("XPending returned an error: %v", err)
+	}
+	if pending.Count != 0 {
+		t.Errorf("%d messages are still pending; a kept letter is ACKed", pending.Count)
+	}
+
+	redriven, err := eventbus.RedriveRedisDeadLetter(ctx, client, cfg, letter.ID)
+	if err != nil || !redriven {
+		t.Fatalf("the redrive = %v, %v", redriven, err)
+	}
+	select {
+	case e := <-got:
+		if e.ID != "evt_poison" || e.Data["order_id"] != "order_1" {
+			t.Errorf("the redriven event = %+v; it has to come back as it was published", e)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("the redriven message never reached the group")
+	}
+	after, err := eventbus.ReadRedisDeadLetters(ctx, client, cfg, 10)
+	if err != nil || !after.Empty() {
+		t.Errorf("the pile after the redrive = %+v, %v", after, err)
+	}
+	if again, err := eventbus.RedriveRedisDeadLetter(ctx, client, cfg, letter.ID); err != nil || again {
+		t.Errorf("a second redrive of the same letter = %v, %v; it is gone", again, err)
+	}
+}
+
+// TestRedisIntegrationDiscardsADeadLetter deletes one letter and says when
+// there was none.
+func TestRedisIntegrationDiscardsADeadLetter(t *testing.T) {
+	ctx := t.Context()
+	client := startRedis(t)
+	cfg := testConfig(t, "operator")
+
+	id, err := client.XAdd(ctx, &redis.XAddArgs{Stream: cfg.DeadLetterStream(), Values: map[string]any{
+		"id": "evt_1", "name": "order.placed", "stream": cfg.StreamName("order.placed"),
+	}}).Result()
+	if err != nil {
+		t.Fatalf("the letter could not be written: %v", err)
+	}
+
+	second, err := client.XAdd(ctx, &redis.XAddArgs{Stream: cfg.DeadLetterStream(), Values: map[string]any{
+		"id": "evt_2", "name": "order.canceled", "stream": cfg.StreamName("order.canceled"),
+	}}).Result()
+	if err != nil {
+		t.Fatalf("the second letter could not be written: %v", err)
+	}
+	sample, err := eventbus.ReadRedisDeadLetters(ctx, client, cfg, 1)
+	if err != nil || sample.Count != 2 || len(sample.Oldest) != 1 || sample.Oldest[0].ID != id {
+		t.Errorf("a sample of one = %+v, %v; the count is the whole pile and the sample its oldest", sample, err)
+	}
+
+	if discarded, err := eventbus.DiscardRedisDeadLetter(ctx, client, cfg, id); err != nil || !discarded {
+		t.Fatalf("the discard = %v, %v", discarded, err)
+	}
+	if report, err := eventbus.ReadRedisDeadLetters(ctx, client, cfg, 10); err != nil || report.Count != 1 ||
+		report.Oldest[0].ID != second {
+		t.Errorf("the pile after the discard = %+v, %v; only the named letter goes", report, err)
+	}
+	if discarded, err := eventbus.DiscardRedisDeadLetter(ctx, client, cfg, id); err != nil || discarded {
+		t.Errorf("discarding it again = %v, %v; there was no such letter", discarded, err)
+	}
+}

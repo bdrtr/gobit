@@ -85,8 +85,8 @@ const (
 	// error and a handler's panic are both ACKed (see [redisBus.dispatch]). So a
 	// message that has emptied this many consumers is one that kills the process
 	// that reads it, and handing it to a third would be the endless loop the
-	// package comment refuses to build without a dead letter queue. It is ACKed
-	// and logged at error level instead; the log line is the dead letter.
+	// package comment refuses. It is copied to the dead-letter stream
+	// ([RedisConfig.DeadLetterStream]) and only then ACKed (ADR 0273).
 	maxDeliveries = 3
 )
 
@@ -96,6 +96,20 @@ const (
 	fieldName       = "name"
 	fieldOccurredAt = "occurred_at"
 	fieldData       = "data"
+)
+
+// The fields a dead letter carries besides the message's own: where it came
+// from, who held it last, how often it was handed over and when it was given
+// up on (ADR 0273).
+const (
+	fieldStream     = "stream"
+	fieldMessageID  = "message_id"
+	fieldConsumer   = "consumer"
+	fieldDeliveries = "deliveries"
+	fieldDroppedAt  = "dropped_at"
+
+	// deadLetterSegment names the dead-letter stream after the prefix.
+	deadLetterSegment = "dead-letters"
 )
 
 // RedisConfig holds the settings of the Redis Streams backend.
@@ -172,6 +186,17 @@ type RedisConfig struct {
 // key by hand.
 func (c RedisConfig) StreamName(eventName string) string {
 	return c.withDefaults().StreamPrefix + ":" + eventName
+}
+
+// DeadLetterStream returns the key of the stream that keeps the messages the
+// bus gave up on (ADR 0273).
+//
+// It hangs off the stream prefix with a hyphen where an event's stream has a
+// colon, so no event name can land on it, and a namespace's dead letters stay
+// its own. Nothing consumes it: it is a pile a human reads and empties
+// ([ReadRedisDeadLetters], [RedriveRedisDeadLetter], [DiscardRedisDeadLetter]).
+func (c RedisConfig) DeadLetterStream() string {
+	return c.withDefaults().StreamPrefix + "-" + deadLetterSegment
 }
 
 // WithNamespace returns a copy whose stream prefix and consumer group name are
@@ -275,6 +300,7 @@ type streamClient interface {
 	XGroupCreateMkStream(ctx context.Context, stream, group, start string) *redis.StatusCmd
 	XPendingExt(ctx context.Context, a *redis.XPendingExtArgs) *redis.XPendingExtCmd
 	XClaim(ctx context.Context, a *redis.XClaimArgs) *redis.XMessageSliceCmd
+	XRange(ctx context.Context, stream, start, stop string) *redis.XMessageSliceCmd
 }
 
 var _ streamClient = (*redis.Client)(nil)
@@ -584,7 +610,8 @@ func (b *redisBus) consume(eventName string) {
 //     claim skips it rather than delivering it twice.
 //   - ONLY WHILE A CONSUMER COULD STILL SURVIVE IT. A message delivered
 //     [maxDeliveries] times without an ACK has emptied that many consumers; it
-//     is ACKed and logged instead of being handed to the next one.
+//     is kept as a dead letter and ACKed instead of being handed to the next
+//     one ([redisBus.keepDeadLetter]).
 func (b *redisBus) reclaim(stream, eventName string) {
 	ctx, cancel := context.WithTimeout(b.ctx, controlTimeout)
 	defer cancel()
@@ -609,13 +636,12 @@ func (b *redisBus) reclaim(stream, eventName string) {
 		case entry.Consumer == b.cfg.Consumer:
 			continue
 		case entry.RetryCount >= maxDeliveries:
-			// The dead letter is this log line. Dropping it is the same
-			// decision the bus makes for a handler's error, for the same
-			// reason: there is nowhere to put it that something reads.
-			b.log.ErrorContext(ctx, "the event message was dropped after emptying every consumer that took it",
-				attrStream, stream, attrMessageID, entry.ID, attrConsumer, entry.Consumer,
-				"deliveries", entry.RetryCount)
-			b.ack(stream, entry.ID)
+			// Handed on no more: kept where a human reads it, and ACKed only
+			// once it is kept, so a copy that failed is tried on the next sweep
+			// rather than lost (ADR 0273).
+			if b.keepDeadLetter(ctx, stream, entry) {
+				b.ack(stream, entry.ID)
+			}
 		default:
 			ids = append(ids, entry.ID)
 		}
@@ -646,6 +672,58 @@ func (b *redisBus) reclaim(stream, eventName string) {
 	for _, msg := range msgs {
 		b.dispatch(stream, eventName, msg)
 	}
+}
+
+// keepDeadLetter copies a message that emptied every consumer that took it to
+// the dead-letter stream, and reports whether it may be ACKed (ADR 0273).
+//
+// The copy carries the message's own fields, so a redrive puts back what was
+// published, and where it came from, who held it last, how often it was
+// handed over and when it was given up on. A message the stream no longer
+// holds — trimmed by MAXLEN while it was pending — has nothing to keep and is
+// ACKed with a line that says so. A copy that fails is NOT ACKed: the message
+// stays pending and the next sweep tries again, which is the difference
+// between a pile and a log line. An ACK that fails after the copy can leave a
+// second copy on the next sweep; a human reading the pile sees the same
+// message twice, which is the cheaper error.
+func (b *redisBus) keepDeadLetter(ctx context.Context, stream string, entry redis.XPendingExt) bool {
+	msgs, err := b.client.XRange(ctx, stream, entry.ID, entry.ID).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		b.log.ErrorContext(ctx, "the event message that emptied every consumer could not be read; it stays pending",
+			attrStream, stream, attrMessageID, entry.ID, attrError, err)
+
+		return false
+	}
+	if len(msgs) == 0 {
+		b.log.ErrorContext(ctx, "the event message that emptied every consumer is no longer in its stream; there is nothing to keep",
+			attrStream, stream, attrMessageID, entry.ID, attrConsumer, entry.Consumer,
+			"deliveries", entry.RetryCount)
+
+		return true
+	}
+
+	values := map[string]any{
+		fieldStream:     stream,
+		fieldMessageID:  entry.ID,
+		fieldConsumer:   entry.Consumer,
+		fieldDeliveries: entry.RetryCount,
+		fieldDroppedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	for _, key := range []string{fieldID, fieldName, fieldOccurredAt, fieldData} {
+		values[key] = stringField(msgs[0].Values, key)
+	}
+	if err := b.client.XAdd(ctx, &redis.XAddArgs{Stream: b.cfg.DeadLetterStream(), Values: values}).Err(); err != nil {
+		b.log.ErrorContext(ctx, "the event message that emptied every consumer could not be kept; it stays pending",
+			attrStream, stream, attrMessageID, entry.ID, attrError, err)
+
+		return false
+	}
+
+	b.log.ErrorContext(ctx, "the event message emptied every consumer that took it and was kept as a dead letter",
+		attrStream, stream, attrMessageID, entry.ID, attrConsumer, entry.Consumer,
+		"deliveries", entry.RetryCount, "dead_letter_stream", b.cfg.DeadLetterStream())
+
+	return true
 }
 
 // dispatch decodes a single message, gives it to the handlers and ACKs it.

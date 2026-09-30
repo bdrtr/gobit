@@ -98,7 +98,7 @@ func runRelay(t *testing.T, r *fakeRelay, bus *fakeBus) (string, error) {
 
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	err := outboxrelay.Definition(r, bus, log).Run(context.Background())
+	err := outboxrelay.Definition(r, bus, nil, log).Run(context.Background())
 
 	return buf.String(), err
 }
@@ -180,7 +180,7 @@ func TestTheRelayIsBounded(t *testing.T) {
 // for an order already paid for — so here the delay IS the damage, unlike the
 // reporting jobs whose subjects have already been wrong for a while.
 func TestDefinitionRunsOftenEnoughToMatter(t *testing.T) {
-	def := outboxrelay.Definition(&fakeRelay{}, &fakeBus{}, nil)
+	def := outboxrelay.Definition(&fakeRelay{}, &fakeBus{}, nil, nil)
 
 	assert.Equal(t, outboxrelay.Name, def.Name)
 	assert.LessOrEqual(t, def.Every.Minutes(), 1.0)
@@ -325,7 +325,7 @@ func reportedBy(t *testing.T, r *fakeRelay, bus *fakeBus) (string, error) {
 	t.Helper()
 
 	ctx := jobreport.WithReporter(context.Background())
-	err := outboxrelay.Definition(r, bus, slog.New(slog.DiscardHandler)).Run(ctx)
+	err := outboxrelay.Definition(r, bus, nil, slog.New(slog.DiscardHandler)).Run(ctx)
 
 	return jobreport.Detail(ctx), err
 }
@@ -437,4 +437,74 @@ func TestAStandingPileStillFailsAndKeepsItsOwnDetail(t *testing.T) {
 	assert.Contains(t, noted.JobDetail(), "3 dead-lettered")
 	assert.NotContains(t, noted.JobDetail(), "published",
 		"the pile must not be diluted with throughput in the one cell an operator reads")
+}
+
+// pileFunc is a BusPile made of a function.
+type pileFunc func(ctx context.Context, limit int64) (eventbus.RedisDeadLetterReport, error)
+
+func (f pileFunc) Read(ctx context.Context, limit int64) (eventbus.RedisDeadLetterReport, error) {
+	return f(ctx, limit)
+}
+
+// busPile answers the bus's pile as scripted and records the sample asked for.
+func busPile(report eventbus.RedisDeadLetterReport, err error, asked *int64) outboxrelay.BusPile {
+	return pileFunc(func(_ context.Context, limit int64) (eventbus.RedisDeadLetterReport, error) {
+		*asked = limit
+		return report, err
+	})
+}
+
+// TestTheBusPileStandsOnTheRelaysAlarm is ADR 0273: a message the bus kept
+// fails the pass as a dead-lettered event does, naming the event and how many
+// consumers it emptied, while the outbox's own pile is empty.
+func TestTheBusPileStandsOnTheRelaysAlarm(t *testing.T) {
+	var asked int64
+	pile := busPile(eventbus.RedisDeadLetterReport{Count: 2, Oldest: []eventbus.RedisDeadLetter{{
+		ID: "1727-0", EventID: "evt_poison", EventName: "order.placed", Deliveries: 3,
+	}}}, nil, &asked)
+
+	err := outboxrelay.Definition(&fakeRelay{}, &fakeBus{}, pile, nil).Run(context.Background())
+
+	require.Error(t, err, "a kept message is an alarm like a dead-lettered one")
+	assert.Contains(t, err.Error(), "2 delivered event(s) emptied every consumer")
+	assert.Contains(t, err.Error(), "order.placed evt_poison after 3 deliveries (letter 1727-0)")
+	assert.NotContains(t, err.Error(), "promised event(s)", "the outbox's pile is empty and says nothing")
+	var detailed interface{ JobDetail() string }
+	require.ErrorAs(t, err, &detailed)
+	assert.Equal(t, "2 kept by the bus; oldest order.placed evt_poison after 3 deliveries (letter 1727-0)",
+		detailed.JobDetail())
+	assert.Positive(t, asked, "a sample is asked for")
+}
+
+// TestAnEmptyBusPileLeavesThePassClean leaves a pass with nothing kept green,
+// and fails one whose pile cannot be read: the relay cannot say nothing was
+// given up on.
+func TestAnEmptyBusPileLeavesThePassClean(t *testing.T) {
+	var asked int64
+
+	err := outboxrelay.Definition(&fakeRelay{}, &fakeBus{},
+		busPile(eventbus.RedisDeadLetterReport{}, nil, &asked), nil).Run(context.Background())
+	require.NoError(t, err)
+
+	err = outboxrelay.Definition(&fakeRelay{}, &fakeBus{},
+		busPile(eventbus.RedisDeadLetterReport{}, errors.New("redis down"), &asked), nil).Run(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the event bus's dead letters could not be read")
+}
+
+// TestBothPilesAreNamed: an alarm with both says both.
+func TestBothPilesAreNamed(t *testing.T) {
+	var asked int64
+	relay := &fakeRelay{report: outbox.DeadLetterReport{Count: 1, Oldest: []outbox.DeadLetter{{
+		ID: "evt_1", Name: "order.placed", Attempts: 10, LastError: "receiver down",
+	}}}}
+	pile := busPile(eventbus.RedisDeadLetterReport{Count: 1, Oldest: []eventbus.RedisDeadLetter{{
+		ID: "1727-0", EventID: "evt_2", EventName: "order.canceled", Deliveries: 3,
+	}}}, nil, &asked)
+
+	err := outboxrelay.Definition(relay, &fakeBus{}, pile, nil).Run(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "1 promised event(s)")
+	assert.Contains(t, err.Error(), "1 delivered event(s)")
 }

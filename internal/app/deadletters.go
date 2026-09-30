@@ -160,7 +160,8 @@ func runDeadLetters(args []string, out io.Writer, opts Options) error {
 // It reuses [config.Load], so it needs the SAME environment as the server —
 // which is the point: run inside the running container, it is configured
 // already and cannot be pointed at the wrong database by accident. Nothing
-// here migrates, opens Redis, or starts a listener.
+// here migrates or starts a listener; Redis is opened only when the bus is
+// Redis, to read the pile the bus keeps (ADR 0273).
 //
 // The context is built HERE rather than handed down, from the same signals the
 // server watches: an operator who hits Ctrl-C during an incident expects the
@@ -181,13 +182,32 @@ func runDeadLetterList(name string, args []string, out io.Writer) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store, closeStore, err := openOutboxStore(ctx)
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	store, closeStore, err := openOutboxStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
 	defer closeStore()
 
-	return listDeadLetters(ctx, name, store, out, limit, time.Now().UTC())
+	now := time.Now().UTC()
+	if err := listDeadLetters(ctx, name, store, out, limit, now); err != nil {
+		return err
+	}
+
+	// The bus's own pile, when the bus keeps one (ADR 0273).
+	pile, closePile, err := openBusPile(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer closePile()
+	if pile == nil {
+		return nil
+	}
+
+	return listBusDeadLetters(ctx, name, pile, out, int64(limit), now)
 }
 
 // runDeadLetterAction redrives or discards ONE named event.
@@ -200,7 +220,24 @@ func runDeadLetterAction(name, verb string, args []string, out io.Writer) error 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store, closeStore, err := openOutboxStore(ctx)
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	// A stream entry id names a letter the bus keeps (ADR 0273); an event id
+	// names one of the outbox's.
+	if streamEntryID.MatchString(action.eventID) {
+		pile, closePile, err := openBusPile(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer closePile()
+
+		return actOnBusDeadLetter(ctx, name, pile, out, action)
+	}
+
+	store, closeStore, err := openOutboxStore(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -232,12 +269,7 @@ func runDeadLetterAction(name, verb string, args []string, out io.Writer) error 
 // and a log line landing in the middle of it would break the first grep. The
 // level is Warn so that the startup checks which warn about THIS database
 // still get to speak.
-func openOutboxStore(ctx context.Context) (*outbox.Store, func(), error) {
-	cfg, err := config.Load()
-	if err != nil {
-		return nil, nil, err
-	}
-
+func openOutboxStore(ctx context.Context, cfg config.Config) (*outbox.Store, func(), error) {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	pool, err := db.New(ctx, dbConfig(cfg), log)
@@ -271,8 +303,9 @@ func parseDeadLetterListFlags(name string, args []string) (int32, error) {
 	flags.Usage = func() {
 		fmt.Fprintf(os.Stderr,
 			"usage: %s %s [flags]\n\n"+
-				"Lists the promised events the outbox relay has GIVEN UP on. This is the\n"+
-				"pile that fails the %s job and keeps `%s %s` red.\n"+
+				"Lists the promised events the outbox relay has GIVEN UP on and, when the bus\n"+
+				"is Redis, the delivered ones the bus KEPT after they emptied every consumer.\n"+
+				"These piles fail the %s job and keep `%s %s` red.\n"+
 				"READ ONLY: it redrives nothing and deletes nothing. Acting on one letter\n"+
 				"is a separate verb that names it:\n"+
 				"  %s %s %s <event-id> -%s <event-id>\n"+
