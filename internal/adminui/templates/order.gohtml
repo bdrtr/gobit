@@ -232,8 +232,8 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
 
 {{ if .Order.Lines }}
 <form method="post" action="{{ .OrdersPath }}/{{ .Order.ID }}/after-sales/return">
-  <p>A return: the units coming back.</p>
-  {{ template "order-line-quantities" . }}
+  <p>A return: the units coming back, and each line's part of the refund.</p>
+  {{ template "order-return-lines" . }}
   <input name="amount" inputmode="decimal" placeholder="refund planned (optional)" aria-label="refund planned">
   <input type="hidden" name="currency" value="{{ .Order.Currency }}">{{ if .Order.Minor }}<input type="hidden" name="minor" value="1">{{ end }}
   <input name="reason" placeholder="reason" aria-label="reason">
@@ -268,6 +268,10 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
     {{ range .ReplacementSources }}<option value="{{ .Value }}">{{ .Label }}</option>{{ end }}
   </select>
   {{ template "order-line-quantities" . }}
+  <label>another variant
+    <input name="variant_id" placeholder="variant id" aria-label="another variant to send">
+    <input name="variant_quantity" inputmode="numeric" placeholder="0" aria-label="units of that variant">
+  </label>
   <input name="shipping_option_id" placeholder="shipping option" aria-label="shipping option" required>
   <input name="location_id" placeholder="stock location" aria-label="stock location" required>
   <button type="submit">Open a replacement</button>
@@ -299,8 +303,21 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
 <p><a href="{{ .OrdersPath }}">Back to orders</a></p>
 {{ end }}
 
+{{/* order-return-lines is a quantity box for each of the order's lines and
+the line's part of the refund beside it, for a return to name what comes back
+(ADR 0272, ADR 0279). */}}
+{{ define "order-return-lines" }}
+{{ range .Order.Lines }}
+<label>{{ .Title }} <span class="muted">of {{ .Quantity }}</span>
+  <input type="hidden" name="line_id" value="{{ .ID }}">
+  <input name="quantity" inputmode="numeric" placeholder="0" aria-label="units of {{ .Title }}">
+  <input name="line_refund" inputmode="decimal" placeholder="its refund" aria-label="refund of {{ .Title }}{{ if $.Order.Minor }} in minor units{{ end }}">
+</label>
+{{ end }}
+{{ end }}
+
 {{/* order-line-quantities is a quantity box for each of the order's lines, for a
-return or a replacement to name what it moves (ADR 0272). */}}
+replacement to name which of them it sends more of (ADR 0272). */}}
 {{ define "order-line-quantities" }}
 {{ range .Order.Lines }}
 <label>{{ .Title }} <span class="muted">of {{ .Quantity }}</span>

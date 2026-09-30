@@ -523,7 +523,9 @@ func (a recordingAfterSales) WithdrawReplacement(context.Context, string) error 
 	return a.surfaces.reach(ServiceOrderAdmin)
 }
 
-func (a recordingAfterSales) OpenReturn(context.Context, string, []string, []int64, int64, string) (string, error) {
+func (a recordingAfterSales) OpenReturn(
+	context.Context, string, []string, []int64, []int64, int64, string,
+) (string, error) {
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }
 
@@ -536,7 +538,7 @@ func (a recordingAfterSales) OpenExchange(context.Context, string, int64, string
 }
 
 func (a recordingAfterSales) OpenReplacement(
-	context.Context, string, string, []string, []int64, string, string,
+	context.Context, string, string, []string, []int64, []string, []int64, string, string,
 ) (string, error) {
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }

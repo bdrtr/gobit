@@ -71,6 +71,58 @@ func TestEachOpeningReachesItsOwnMethod(t *testing.T) {
 	}
 }
 
+// TestEachLineCarriesWhatIsTypedBesideIt is ADR 0279: a return hands each
+// named line's part of the refund to the module, read off the same row as the
+// line's quantity, and a line with no quantity takes nothing typed beside it;
+// a replacement sends a variant the order never sold as a pair of its own.
+func TestEachLineCarriesWhatIsTypedBesideIt(t *testing.T) {
+	t.Parallel()
+
+	lines := url.Values{"line_id": {"oli_ring", "oli_card", "oli_box"}, "quantity": {"2", "", "1"}}
+
+	surface := &fakeAfterSales{}
+	rec := act(t, surface, afterSalesCatalog(nil), openPath("return"), merged(lines, url.Values{
+		"line_refund": {"12.50", "9.99", ""}, "amount": {"12.50"}, "currency": {"TRY"},
+	}), "order:read", "order:write")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, []string{"oli_ring", "oli_box"}, surface.lines)
+	assert.Equal(t, []int64{1_250, 0}, surface.lineRefunds, "the card had no quantity; the box no refund")
+
+	surface = &fakeAfterSales{}
+	rec = act(t, surface, afterSalesCatalog(nil), openPath("replacement"), merged(lines, url.Values{
+		"variant_id": {" variant_ring_gold ", ""}, "variant_quantity": {"2", ""}, "source": {"claim:claim_3"},
+		"shipping_option_id": {"so_std"}, "location_id": {"sloc_main"},
+	}), "order:read", "order:write")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, []string{"oli_ring", "oli_box"}, surface.lines)
+	assert.Equal(t, []string{"variant_ring_gold"}, surface.variantIDs, "an empty pair names nothing")
+	assert.Equal(t, []int64{2}, surface.variantQuantities)
+
+	for name, tc := range map[string]struct {
+		kind string
+		form url.Values
+		says string
+	}{
+		"a refund box missing": {"return", merged(lines, url.Values{"line_refund": {"1", "2"}}),
+			"Every line needs its line refund box."},
+		"a refund that is no amount": {"return", merged(lines, url.Values{"line_refund": {"a lot", "", ""},
+			"currency": {"TRY"}}), "a lot"},
+		"a variant with no units": {"replacement", merged(lines, url.Values{"variant_id": {"variant_ring_gold"},
+			"variant_quantity": {""}, "source": {"claim:claim_3"}}), "Another variant needs its id"},
+		"units of no variant": {"replacement", merged(lines, url.Values{"variant_id": {""},
+			"variant_quantity": {"2"}, "source": {"claim:claim_3"}}), "Another variant needs its id"},
+		"a variant box missing": {"replacement", merged(lines, url.Values{"variant_id": {"v", "w"},
+			"variant_quantity": {"1"}, "source": {"claim:claim_3"}}), "Every variant needs its quantity box."},
+	} {
+		surface := &fakeAfterSales{}
+		rec := act(t, surface, afterSalesCatalog(nil), openPath(tc.kind), tc.form, "order:read", "order:write")
+
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, name)
+		assert.Contains(t, rec.Body.String(), tc.says, name)
+		assert.Empty(t, surface.acted, name)
+	}
+}
+
 // merged puts two forms together.
 func merged(a, b url.Values) url.Values {
 	out := url.Values{}
@@ -152,6 +204,7 @@ func TestTheOrderPageOffersTheOpenings(t *testing.T) {
 		assert.Contains(t, body, `action="`+openPath(kind)+`"`)
 	}
 	assert.Contains(t, body, `<input type="hidden" name="line_id" value="oli_ring">`)
+	assert.Contains(t, body, `name="line_refund"`, "a return names each line's part of the refund (ADR 0279)")
 	assert.NotContains(t, body, `action="`+openPath("replacement")+`"`, "nothing to settle yet")
 
 	with := newCatalogPanel(t, afterSalesCatalog(map[string][]query.Record{
@@ -167,6 +220,7 @@ func TestTheOrderPageOffersTheOpenings(t *testing.T) {
 	with.afterSales = &fakeAfterSales{}
 	body = getOrderPageAs(with, OrdersPath+"/order_1", operator).Body.String()
 	assert.Contains(t, body, `action="`+openPath("replacement")+`"`)
+	assert.Contains(t, body, `name="variant_id"`, "a replacement names what it sends (ADR 0279)")
 	assert.Contains(t, body, `<option value="claim:claim_goods">`)
 	assert.Contains(t, body, `<option value="exchange:exch_paid">`, "a funded exchange still sends its goods")
 	assert.NotContains(t, body, `value="claim:claim_money"`, "a refund claim sends nothing")

@@ -733,10 +733,12 @@ past and is not corrected retroactively.
   ([ADR 0270](adr/0270-an-orders-after-sales-are-read-like-its-lines.md)), at
   most 25 of each kind, takes every act the API takes on one
   ([ADR 0271](adr/0271-the-panel-acts-on-an-orders-after-sales.md)) and opens
-  each kind ([ADR 0272](adr/0272-the-panel-opens-an-orders-after-sales.md)).
-  A replacement that sends another variant than the line sold, a line's own
-  part of a return's refund and a claim's evidence are still `/admin/v1`
-  calls.
+  each kind ([ADR 0272](adr/0272-the-panel-opens-an-orders-after-sales.md)),
+  a return with each line's part of the refund and a replacement with one
+  variant the order never sold
+  ([ADR 0279](adr/0279-the-panel-opens-a-return-and-a-replacement-with-their-detail.md)).
+  A replacement that sends more than one such variant, and a claim's evidence,
+  are still `/admin/v1` calls.
 
 - **The in-process harness consumes events like a server.** `InProcess` opens the
   whole application, so its modules subscribe — which is what a test wants, and

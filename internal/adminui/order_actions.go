@@ -58,24 +58,32 @@ type AfterSalesAdmin interface {
 	// WithdrawReplacement takes back a replacement that has not left.
 	WithdrawReplacement(ctx context.Context, replacementID string) error
 
-	// OpenReturn opens a return naming its lines and a quantity for each.
-	OpenReturn(ctx context.Context, orderID string, lineIDs []string, quantities []int64,
+	// OpenReturn opens a return naming its lines, a quantity for each and each
+	// line's part of the refund (ADR 0279).
+	OpenReturn(ctx context.Context, orderID string, lineIDs []string, quantities, lineRefunds []int64,
 		refundAmount int64, reason string) (string, error)
 	// OpenClaim opens a claim settled by "refund" or "replace".
 	OpenClaim(ctx context.Context, orderID, claimType string, refundAmount int64, reason string) (string, error)
 	// OpenExchange opens an exchange; a negative difference is paid to the
 	// customer.
 	OpenExchange(ctx context.Context, orderID string, differenceDue int64, note string) (string, error)
-	// OpenReplacement records what a claim or an exchange will send.
+	// OpenReplacement records what a claim or an exchange will send: more of
+	// the order's lines, a quantity for each, and variants the order never
+	// sold, a quantity for each (ADR 0145, ADR 0279).
 	OpenReplacement(ctx context.Context, claimID, exchangeID string, lineIDs []string, quantities []int64,
-		shippingOptionID, locationID string) (string, error)
+		variantIDs []string, variantQuantities []int64, shippingOptionID, locationID string) (string, error)
 }
 
 // The repeated fields of a form that names order lines: each line's id and the
-// quantity typed beside it, in the same order.
+// quantity typed beside it, in the same order, and beside those a return
+// line's part of the refund (ADR 0279). A replacement names a variant the order
+// never sold in a pair of its own, not beside a line (ADR 0145).
 const (
-	formLineID   = "line_id"
-	formQuantity = "quantity"
+	formLineID          = "line_id"
+	formQuantity        = "quantity"
+	formLineRefund      = "line_refund"
+	formVariantID       = "variant_id"
+	formVariantQuantity = "variant_quantity"
 )
 
 // The kinds of after-sales record, as the routes and the page name them.
@@ -320,15 +328,30 @@ type afterSaleOpener func(ctx context.Context, u *UI, r *http.Request, orderID s
 // lines.
 var afterSaleOpeners = map[string]afterSaleOpener{
 	kindReturn: func(ctx context.Context, u *UI, r *http.Request, orderID string) (string, error) {
-		lineIDs, quantities, err := formOrderLines(r)
+		lineIDs, quantities, rows, err := formOrderLines(r)
 		if err != nil {
 			return "", err
 		}
-		amount, _, err := u.formAmount(r)
+		amount, currency, err := u.formAmount(r)
 		if err != nil {
 			return "", err
 		}
-		return u.afterSales.OpenReturn(ctx, orderID, lineIDs, quantities, amount,
+		typed, err := formLineField(r, formLineRefund, rows)
+		if err != nil {
+			return "", err
+		}
+		lineRefunds := make([]int64, len(typed))
+		for i, text := range typed {
+			if text == "" {
+				continue
+			}
+			if lineRefunds[i], err = parseAmount(text, u.currencyScales(ctx)[currency],
+				r.PostFormValue("minor") == "1"); err != nil {
+				return "", errors.Invalid(CodeAmountInvalid,
+					"The refund beside line %s must be an amount: %q.", lineIDs[i], text)
+			}
+		}
+		return u.afterSales.OpenReturn(ctx, orderID, lineIDs, quantities, lineRefunds, amount,
 			strings.TrimSpace(r.PostFormValue("reason")))
 	},
 	kindClaim: func(ctx context.Context, u *UI, r *http.Request, orderID string) (string, error) {
@@ -347,7 +370,11 @@ var afterSaleOpeners = map[string]afterSaleOpener{
 		return u.afterSales.OpenExchange(ctx, orderID, amount, strings.TrimSpace(r.PostFormValue("note")))
 	},
 	kindReplacement: func(ctx context.Context, u *UI, r *http.Request, _ string) (string, error) {
-		lineIDs, quantities, err := formOrderLines(r)
+		lineIDs, quantities, _, err := formOrderLines(r)
+		if err != nil {
+			return "", err
+		}
+		variantIDs, variantQuantities, err := formVariants(r)
 		if err != nil {
 			return "", err
 		}
@@ -362,7 +389,7 @@ var afterSaleOpeners = map[string]afterSaleOpener{
 			return "", errors.Invalid(CodeAmountInvalid, "Choose the claim or the exchange the replacement settles.")
 		}
 		return u.afterSales.OpenReplacement(ctx, claimID, exchangeID, lineIDs, quantities,
-			strings.TrimSpace(r.PostFormValue("shipping_option_id")),
+			variantIDs, variantQuantities, strings.TrimSpace(r.PostFormValue("shipping_option_id")),
 			strings.TrimSpace(r.PostFormValue("location_id")))
 	},
 }
@@ -402,11 +429,13 @@ func (u *UI) submitAfterSaleOpen(w http.ResponseWriter, r *http.Request) {
 }
 
 // formOrderLines reads the order lines a form names, each with the quantity typed
-// beside it; a line left empty or at zero is not named.
-func formOrderLines(r *http.Request) (lineIDs []string, quantities []int64, err error) {
+// beside it; a line left empty or at zero is not named. rows says which of the
+// form's rows each named line came from, so a field typed beside it is read
+// off the same row ([formLineField]).
+func formOrderLines(r *http.Request) (lineIDs []string, quantities []int64, rows []int, err error) {
 	ids, typed := r.PostForm[formLineID], r.PostForm[formQuantity]
 	if len(ids) != len(typed) {
-		return nil, nil, errors.Invalid(CodeAmountInvalid, "Every line needs its quantity box.")
+		return nil, nil, nil, errors.Invalid(CodeAmountInvalid, "Every line needs its quantity box.")
 	}
 	for i := range ids {
 		text := strings.TrimSpace(typed[i])
@@ -415,11 +444,56 @@ func formOrderLines(r *http.Request) (lineIDs []string, quantities []int64, err 
 		}
 		quantity, convErr := strconv.ParseInt(text, 10, 64)
 		if convErr != nil || quantity < 0 {
-			return nil, nil, errors.Invalid(CodeAmountInvalid, "A quantity must be a whole number: %q.", text)
+			return nil, nil, nil, errors.Invalid(CodeAmountInvalid, "A quantity must be a whole number: %q.", text)
 		}
 		lineIDs = append(lineIDs, ids[i])
 		quantities = append(quantities, quantity)
+		rows = append(rows, i)
 	}
 
-	return lineIDs, quantities, nil
+	return lineIDs, quantities, rows, nil
+}
+
+// formVariants reads the variants a replacement sends that the order never
+// sold, each with its quantity; a pair left empty or at zero names nothing, and
+// a variant with no quantity, or a quantity with no variant, is refused.
+func formVariants(r *http.Request) (variantIDs []string, quantities []int64, err error) {
+	ids, typed := r.PostForm[formVariantID], r.PostForm[formVariantQuantity]
+	if len(ids) != len(typed) {
+		return nil, nil, errors.Invalid(CodeAmountInvalid, "Every variant needs its quantity box.")
+	}
+	for i := range ids {
+		id, text := strings.TrimSpace(ids[i]), strings.TrimSpace(typed[i])
+		if id == "" && (text == "" || text == "0") {
+			continue
+		}
+		quantity, convErr := strconv.ParseInt(text, 10, 64)
+		if id == "" || convErr != nil || quantity <= 0 {
+			return nil, nil, errors.Invalid(CodeAmountInvalid,
+				"Another variant needs its id and a whole number of units: %q, %q.", id, text)
+		}
+		variantIDs = append(variantIDs, id)
+		quantities = append(quantities, quantity)
+	}
+
+	return variantIDs, quantities, nil
+}
+
+// formLineField reads the field typed beside each named line, trimmed and in
+// the lines' order. A form that carries no such field names none; one that
+// carries it for some rows and not others cannot be paired and is refused.
+func formLineField(r *http.Request, field string, rows []int) ([]string, error) {
+	values := r.PostForm[field]
+	out := make([]string, len(rows))
+	if len(values) == 0 {
+		return out, nil
+	}
+	if len(values) != len(r.PostForm[formLineID]) {
+		return nil, errors.Invalid(CodeAmountInvalid, "Every line needs its %s box.", strings.ReplaceAll(field, "_", " "))
+	}
+	for i, row := range rows {
+		out[i] = strings.TrimSpace(values[row])
+	}
+
+	return out, nil
 }

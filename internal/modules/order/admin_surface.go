@@ -99,14 +99,17 @@ func (s *AfterSalesSurface) WithdrawReplacement(ctx context.Context, replacement
 // OpenReturn opens a return on the order naming the lines that come back, a
 // quantity for each, and the refund it plans; it returns the record's id.
 func (s *AfterSalesSurface) OpenReturn(
-	ctx context.Context, orderID string, lineIDs []string, quantities []int64, refundAmount int64, reason string,
+	ctx context.Context, orderID string, lineIDs []string, quantities, lineRefunds []int64,
+	refundAmount int64, reason string,
 ) (string, error) {
-	if len(lineIDs) != len(quantities) {
-		return "", paired(len(lineIDs), len(quantities))
+	if len(lineIDs) != len(quantities) || len(lineIDs) != len(lineRefunds) {
+		return "", paired(len(lineIDs), len(quantities), len(lineRefunds))
 	}
 	lines := make([]service.ReturnLineInput, 0, len(lineIDs))
 	for i := range lineIDs {
-		lines = append(lines, service.ReturnLineInput{OrderLineItemID: lineIDs[i], Quantity: quantities[i]})
+		lines = append(lines, service.ReturnLineInput{
+			OrderLineItemID: lineIDs[i], Quantity: quantities[i], RefundAmount: lineRefunds[i],
+		})
 	}
 	ret, err := s.svc.CreateReturn(ctx, service.CreateReturnInput{
 		OrderID: orderID, RefundAmount: refundAmount, Reason: reason, Lines: lines,
@@ -139,17 +142,26 @@ func (s *AfterSalesSurface) OpenExchange(
 }
 
 // OpenReplacement records what a claim or an exchange will send: the order's
-// lines and a quantity for each, how and from where.
+// lines and a quantity for each, variants the order never sold and a quantity
+// for each (ADR 0279), how and from where.
 func (s *AfterSalesSurface) OpenReplacement(
 	ctx context.Context, claimID, exchangeID string, lineIDs []string, quantities []int64,
-	shippingOptionID, locationID string,
+	variantIDs []string, variantQuantities []int64, shippingOptionID, locationID string,
 ) (string, error) {
 	if len(lineIDs) != len(quantities) {
-		return "", paired(len(lineIDs), len(quantities))
+		return "", paired(len(lineIDs), len(quantities), len(lineIDs))
 	}
-	lines := make([]service.ReplacementLineInput, 0, len(lineIDs))
+	if len(variantIDs) != len(variantQuantities) {
+		return "", paired(len(variantIDs), len(variantQuantities), len(variantIDs))
+	}
+	lines := make([]service.ReplacementLineInput, 0, len(lineIDs)+len(variantIDs))
 	for i := range lineIDs {
 		lines = append(lines, service.ReplacementLineInput{OrderLineItemID: lineIDs[i], Quantity: quantities[i]})
+	}
+	// A variant the order never sold is an item of its own, naming no line
+	// (ADR 0145).
+	for i := range variantIDs {
+		lines = append(lines, service.ReplacementLineInput{VariantID: variantIDs[i], Quantity: variantQuantities[i]})
 	}
 	record, err := s.svc.CreateReplacement(ctx, service.CreateReplacementInput{
 		ClaimID: claimID, ExchangeID: exchangeID, ShippingOptionID: shippingOptionID,
@@ -159,8 +171,10 @@ func (s *AfterSalesSurface) OpenReplacement(
 	return record.ID, err
 }
 
-// paired refuses lines and quantities that do not come in pairs.
-func paired(lines, quantities int) error {
+// paired refuses lines whose fields do not come in step: every line needs a
+// quantity and the field typed beside it.
+func paired(lines, quantities, beside int) error {
 	return errors.Invalid(service.CodeInvalidInput,
-		"every line needs a quantity: %d lines, %d quantities", lines, quantities)
+		"every line needs a quantity and the field beside it: %d lines, %d quantities, %d beside",
+		lines, quantities, beside)
 }

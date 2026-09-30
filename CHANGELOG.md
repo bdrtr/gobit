@@ -24,6 +24,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel opens a return and a replacement with their detail**
+  (ADR 0279). **For operators:** the order page's return form takes each
+  line's part of the refund beside its quantity, and its replacement form
+  takes a variant the order never sold with its units, sent as an item of its
+  own.
+
 - **Every module with a schema answers for what it keeps** (ADR 0278, D192).
   **For operators:** `GET /admin/v1/personal-data` lists the file module's
   upload names and addresses, the fulfillment module's parcel data, metadata,

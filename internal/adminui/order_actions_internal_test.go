@@ -29,9 +29,13 @@ type fakeAfterSales struct {
 	text   string
 	amount int64
 	reason string
-	// lines and quantities are what an opening named.
-	lines      []string
-	quantities []int64
+	// lines and quantities are what an opening named, beside them a return's
+	// line refunds, and a replacement's variants with theirs (ADR 0279).
+	lines             []string
+	quantities        []int64
+	lineRefunds       []int64
+	variantIDs        []string
+	variantQuantities []int64
 }
 
 func (f *fakeAfterSales) note(act, id, text string, amount int64, reason string) {
@@ -97,10 +101,10 @@ func (f *fakeAfterSales) WithdrawReplacement(_ context.Context, id string) error
 }
 
 func (f *fakeAfterSales) OpenReturn(
-	_ context.Context, orderID string, lines []string, quantities []int64, amount int64, reason string,
+	_ context.Context, orderID string, lines []string, quantities, lineRefunds []int64, amount int64, reason string,
 ) (string, error) {
 	f.note("open-return", orderID, "", amount, reason)
-	f.lines, f.quantities = lines, quantities
+	f.lines, f.quantities, f.lineRefunds = lines, quantities, lineRefunds
 	return "ret_new", f.err
 }
 
@@ -117,10 +121,12 @@ func (f *fakeAfterSales) OpenExchange(_ context.Context, orderID string, due int
 }
 
 func (f *fakeAfterSales) OpenReplacement(
-	_ context.Context, claimID, exchangeID string, lines []string, quantities []int64, option, location string,
+	_ context.Context, claimID, exchangeID string, lines []string, quantities []int64,
+	variantIDs []string, variantQuantities []int64, option, location string,
 ) (string, error) {
 	f.note("open-replacement", claimID+"|"+exchangeID, option+"|"+location, 0, "")
 	f.lines, f.quantities = lines, quantities
+	f.variantIDs, f.variantQuantities = variantIDs, variantQuantities
 	return "orepl_new", f.err
 }
 
