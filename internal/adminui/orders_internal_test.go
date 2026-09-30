@@ -2,8 +2,11 @@ package adminui
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -343,4 +346,182 @@ func TestAnOrderWithNoAddressesSaysSo(t *testing.T) {
 	assert.Contains(t, body, "no billing address")
 	assert.Contains(t, body, "Nothing has been added to this order.")
 	assert.NotContains(t, body, "Adds to")
+}
+
+// linedOrderCatalog answers the order page's reads with the given lines: the
+// order and nothing else from the order entity, and lines(spec) for the line
+// entity.
+func linedOrderCatalog(lines func(spec query.GraphSpec) ([]query.Record, error)) *fakeCatalog {
+	return &fakeCatalog{
+		byEntity: map[string][]query.Record{EntityRegion: {currencyRecord("TRY", 2)}},
+		answer: func(spec query.GraphSpec) ([]query.Record, error, bool) {
+			switch {
+			case spec.Entity == EntityOrderLineItem:
+				records, err := lines(spec)
+				return records, err, true
+			case spec.Entity != EntityOrder:
+				return nil, nil, false
+			case spec.Filters[fieldAddsToOrderID] != nil:
+				return nil, nil, true
+			default:
+				return []query.Record{orderRecord()}, nil, true
+			}
+		},
+	}
+}
+
+// TestTheOrderPageListsItsLines prints each line with its amounts, in the
+// order the line entity gave them, with an add-on under its own line even when
+// it was written after another.
+func TestTheOrderPageListsItsLines(t *testing.T) {
+	t.Parallel()
+
+	catalog := linedOrderCatalog(func(query.GraphSpec) ([]query.Record, error) {
+		return []query.Record{
+			{
+				"id": "oli_ring", "title": "Silver ring", "variant_id": "variant_ring",
+				"quantity": int64(1), "unit_price": int64(60_000), "subtotal": int64(60_000),
+				"discount_total": int64(6_000), "tax_total": int64(10_800), "total": int64(64_800),
+				"is_giftcard": false, "properties": map[string]string{"Size": "54"},
+				"parent_line_item_id": "",
+			},
+			{
+				"id": "oli_card", "title": "Gift card", "variant_id": "variant_card",
+				"quantity": int64(2), "unit_price": int64(5_000), "subtotal": int64(10_000),
+				"discount_total": int64(0), "tax_total": int64(0), "total": int64(10_000),
+				"is_giftcard": true, "properties": map[string]string{},
+				"parent_line_item_id": "",
+			},
+			{
+				"id": "oli_engraving", "title": "Engraving", "variant_id": "variant_engraving",
+				"quantity": int64(1), "unit_price": int64(20_000), "subtotal": int64(20_000),
+				"discount_total": int64(0), "tax_total": int64(3_600), "total": int64(23_600),
+				"is_giftcard": false, "properties": map[string]string{
+					"Text": "For Anna", "Font": "Serif", "Case": "Upper", "Depth": "Shallow", "Align": "Center",
+				},
+				"parent_line_item_id": "oli_ring",
+			},
+		}, nil
+	})
+	rec := getOrderPage(newCatalogPanel(t, catalog), OrdersPath+"/order_1")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Silver ring", "variant_ring", "Size: 54",
+		"600.00", "60.00", "108.00", "648.00",
+		"Gift card", `<span class="pill">gift card</span>`, "50.00", "100.00",
+		"add-on:</span> Engraving", "Font: Serif", "Text: For Anna", "236.00",
+	} {
+		assert.Contains(t, body, want)
+	}
+	ring, engraving, card := strings.Index(body, "Silver ring"),
+		strings.Index(body, "add-on:</span> Engraving"), strings.Index(body, "variant_card")
+	assert.Less(t, ring, engraving, "the add-on follows its line")
+	assert.Less(t, engraving, card, "the add-on is under its line, not where it was written")
+	printed := []int{
+		strings.Index(body, "Align: Center"), strings.Index(body, "Case: Upper"),
+		strings.Index(body, "Depth: Shallow"), strings.Index(body, "Font: Serif"),
+		strings.Index(body, "Text: For Anna"),
+	}
+	assert.True(t, slices.IsSorted(printed) && printed[0] >= 0,
+		"the properties are printed in name order: %v", printed)
+	assert.NotContains(t, body, "Only the first")
+
+	spec, ok := catalog.specFor(EntityOrderLineItem)
+	require.True(t, ok, "the page did not read the line entity")
+	assert.Equal(t, "order_1", spec.Filters[fieldOrderID], "the lines are read by the order's own id")
+	assert.Equal(t, linesPerOrder, spec.Limit)
+	for _, field := range []string{
+		fieldTitle, fieldVariantID, fieldQuantity, fieldUnitPrice, fieldSubtotal, fieldDiscount,
+		fieldTax, fieldTotal, fieldIsGiftcard, fieldProperties, fieldParentLineItemID,
+	} {
+		assert.Contains(t, spec.Fields, field, "the line read did not ask for %s", field)
+	}
+}
+
+// TestAnOrderPageSurvivesItsLinesFailing keeps the order on screen when its
+// lines cannot be read, and says what is missing.
+func TestAnOrderPageSurvivesItsLinesFailing(t *testing.T) {
+	t.Parallel()
+
+	catalog := linedOrderCatalog(func(query.GraphSpec) ([]query.Record, error) {
+		return nil, errors.New("read layer down")
+	})
+	rec := getOrderPage(newCatalogPanel(t, catalog), OrdersPath+"/order_1")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "1080.00 TRY")
+	assert.Contains(t, rec.Body.String(), "The lines of this order could not be read.")
+}
+
+// TestAnOrderPageSaysWhenItShowsOnlyTheFirstLines reads one row past a full
+// page, and says the order has more only when that row exists or cannot be
+// read.
+func TestAnOrderPageSaysWhenItShowsOnlyTheFirstLines(t *testing.T) {
+	t.Parallel()
+
+	full := make([]query.Record, linesPerOrder)
+	for i := range full {
+		full[i] = query.Record{"id": fmt.Sprintf("oli_%03d", i), "title": fmt.Sprintf("Line %03d", i)}
+	}
+	for name, beyond := range map[string]struct {
+		records []query.Record
+		err     error
+		more    bool
+	}{
+		"exactly a page":        {more: false},
+		"one more line":         {records: []query.Record{{"id": "oli_extra"}}, more: true},
+		"the probe cannot read": {err: errors.New("read layer down"), more: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			catalog := linedOrderCatalog(func(spec query.GraphSpec) ([]query.Record, error) {
+				if spec.Offset == 0 {
+					return full, nil
+				}
+				assert.Equal(t, linesPerOrder, spec.Offset, "the probe reads past the page")
+				assert.Equal(t, 1, spec.Limit, "the probe reads one row")
+				return beyond.records, beyond.err
+			})
+			rec := getOrderPage(newCatalogPanel(t, catalog), OrdersPath+"/order_1")
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			body := rec.Body.String()
+			assert.Contains(t, body, fmt.Sprintf("Line %03d", linesPerOrder-1))
+			assert.NotContains(t, body, "The lines of this order could not be read.")
+			if beyond.more {
+				assert.Contains(t, body, fmt.Sprintf("Only the first %d lines are shown.", linesPerOrder))
+			} else {
+				assert.NotContains(t, body, "Only the first")
+			}
+		})
+	}
+}
+
+// TestNestingAddOnsDropsNoLine places an add-on of an add-on under it, leaves
+// an add-on whose line was not read where it was written, and loses nothing,
+// not even two lines whose parents point at each other.
+func TestNestingAddOnsDropsNoLine(t *testing.T) {
+	t.Parallel()
+
+	lines := []orderLine{
+		{ID: "gift"}, {ID: "ribbon"}, {ID: "orphan"}, {ID: "ring"}, {ID: "box"}, {ID: "loop"},
+		{ID: "left"}, {ID: "right"},
+	}
+	parents := []string{"", "box", "unread", "", "ring", "loop", "right", "left"}
+
+	got := nestAddOns(lines, parents)
+	ids := make([]string, 0, len(got))
+	addOns := make([]string, 0, len(got))
+	for _, line := range got {
+		ids = append(ids, line.ID)
+		if line.AddOn {
+			addOns = append(addOns, line.ID)
+		}
+	}
+	assert.Equal(t, []string{"gift", "orphan", "ring", "box", "ribbon", "loop", "left", "right"}, ids)
+	assert.Equal(t, []string{"box", "ribbon", "right"}, addOns,
+		"only a line printed under its parent is marked as an add-on")
 }

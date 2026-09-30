@@ -220,7 +220,7 @@ WHERE ($1::text IS NULL OR li.order_id = $1::text)
        OR o.placed_at >= $4::timestamptz)
   AND ($5::timestamptz IS NULL
        OR o.placed_at < $5::timestamptz)
-ORDER BY o.placed_at DESC, li.id DESC
+ORDER BY o.placed_at DESC, li.order_id DESC, li.created_at, li.seq
 LIMIT $7::bigint OFFSET $6::bigint
 `
 
@@ -251,10 +251,13 @@ type ListOrderLineItemsFilteredParams struct {
 // the six columns are gone (ADR 0054). What replaced the condition is nothing,
 // because there is nothing left for it to hide.
 //
-// The ORDER BY is o.placed_at DESC, li.id DESC: the analytics reader wants the
-// most recent sales first, and li.id breaks the tie so a page boundary does not
-// move between two calls. orders_placed_at_idx (migration 000006) serves both
-// the range and the ordering.
+// The ORDER BY is o.placed_at DESC, li.order_id DESC, li.created_at, li.seq:
+// the analytics reader wants the most recent sales first, and one order's lines
+// follow in the order ListOrderLineItems gives them (ADR 0233). The tie used to
+// be broken by li.id DESC, whose random tail listed an order's lines in an
+// order nobody wrote (D174). seq is an identity, so a page boundary still does
+// not move between two calls. orders_placed_at_idx (migration 000006) serves
+// the range and the first key.
 func (q *Queries) ListOrderLineItemsFiltered(ctx context.Context, arg ListOrderLineItemsFilteredParams) ([]OrderLineItem, error) {
 	rows, err := q.db.Query(ctx, listOrderLineItemsFiltered,
 		arg.OrderID,

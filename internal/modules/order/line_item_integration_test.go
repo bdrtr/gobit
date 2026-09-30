@@ -121,7 +121,7 @@ type lineItemWorld struct {
 	dayTwo time.Time
 
 	// atFrom is placed exactly at dayOne and carries TWO lines, so that the
-	// `li.id DESC` tie-break inside a single order has something to break.
+	// tie-break inside a single order has something to break.
 	atFrom lineItemOrder
 	// inside is placed within the window.
 	inside lineItemOrder
@@ -551,12 +551,13 @@ func TestLineItemsByIDsReadTheWholeBatchInOneStatement(t *testing.T) {
 // second of today.
 //
 // The second is the tie-break. Two lines of the SAME order share one placed_at
-// exactly, and without `li.id DESC` their relative order is whatever the plan
-// happens to produce; a page boundary drawn through them would then move
-// between two calls over unchanged data, which shows up as a row read twice or
-// not at all. The expected sequence is derived from the identifiers the
-// database handed back rather than written out, because the identifier carries
-// a random component and cannot be predicted.
+// exactly, and they follow in the order they were written (D174); without a
+// tie-break their relative order is whatever the plan happens to produce, and
+// a page boundary drawn through them would then move between two calls over
+// unchanged data, which shows up as a row read twice or not at all. It used to
+// be the line id descending, whose random tail is no order anybody wrote; two
+// lines give that a coin's chance of passing, so
+// TestTheLineEntityListsAnOrdersLinesInTheOrderTheyWereWritten writes twelve.
 func TestLineItemListingReturnsTheNewestSaleFirst(t *testing.T) {
 	ctx := context.Background()
 	world := newLineItemWorld(ctx, t, "ORDERING", time.Date(2019, 6, 10, 0, 0, 0, 0, time.UTC))
@@ -571,14 +572,10 @@ func TestLineItemListingReturnsTheNewestSaleFirst(t *testing.T) {
 		Limit:      lineItemReadLimit,
 	})
 
-	tieBroken := world.atFrom.ids()
-	slices.Sort(tieBroken)
-	slices.Reverse(tieBroken)
-
-	expected := slices.Concat(world.atTo.ids(), world.inside.ids(), tieBroken)
+	expected := slices.Concat(world.atTo.ids(), world.inside.ids(), world.atFrom.ids())
 	assert.Equal(t, expected, listed,
-		"the newest sale comes first and the line identifier breaks the tie inside "+
-			"one order")
+		"the newest sale comes first and one order's lines follow in the order they "+
+			"were written")
 }
 
 // TestLineItemProviderIsRegisteredInTheContainer verifies the LAST link of the

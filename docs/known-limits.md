@@ -745,12 +745,11 @@ past and is not corrected retroactively.
   registered screen now declares the privilege it requires and a registration
   without one is refused at startup.
 
-- **The panel's order screen shows the order and not its lines.** Eight values —
-  the display id, the status, the date, the email and five amounts — and nothing
-  about what was bought, paid or shipped. Nothing prevents the lines: the order
-  line is a read-layer entity accepting an `order_id` filter and the sales report
-  reads it already. What the screen is missing is work, not a mechanism, and the
-  reason previously written in its own comment was false (D96).
+- **The panel's order screen shows what was sold, not what became of it.** Since
+  [ADR 0250](adr/0250-an-orders-page-lists-what-was-sold.md) it lists the order's
+  lines with their amounts, but not the payments taken or refunded against the
+  order, its deliveries, or the quantities returned or canceled per line. Each is
+  a record of another module or table, and the page reads none of them yet.
 
 - **The in-process harness consumes events like a server.** `InProcess` opens the
   whole application, so its modules subscribe — which is what a test wants, and

@@ -3,6 +3,7 @@
 package smoke
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -95,7 +96,12 @@ func TestThePanelRendersAgainstARealDatabase(t *testing.T) {
 	product := open(panelLink(t, products, "products"))
 	require.Contains(t, product, storefrontVariantTitle)
 	orders := open(adminui.OrdersPath)
-	require.Contains(t, open(panelLink(t, orders, "orders")), orderEmail)
+	order := open(panelLink(t, orders, "orders"))
+	require.Contains(t, order, orderEmail)
+	require.Contains(t, order, storefrontVariantTitle, "the order page lists the line it sold")
+	require.Contains(t, order, fmt.Sprintf(`<td class="num">%d</td>`, storefrontQuantity),
+		"the line's quantity reaches the page as a number")
+	require.NotContains(t, order, "could not be read")
 	require.Contains(t, open(adminui.SalesPath), storefrontVariantTitle)
 	customers := open(adminui.CustomersPath)
 	require.Contains(t, customers, customerEmail)

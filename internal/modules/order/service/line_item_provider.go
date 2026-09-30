@@ -204,8 +204,9 @@ func (p *LineItemQueryProvider) Entity() string { return LineItemEntity }
 //
 // The limit is CLAMPED to [MaxLimit], silently; see [providerLimit]. That makes
 // this a PAGED read of a table that is the module's largest — a report covering
-// a month has to walk the pages, and the ordering (newest sale first, ties
-// broken by the line id) is stable enough for that to terminate.
+// a month has to walk the pages, and the ordering (newest sale first, one
+// order's lines in the order they were written, D174) is stable enough for
+// that to terminate.
 func (p *LineItemQueryProvider) List(
 	ctx context.Context, opts query.ListOptions,
 ) ([]query.Record, error) {

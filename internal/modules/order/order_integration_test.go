@@ -36,6 +36,7 @@ import (
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/core/eventbus/outbox"
+	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/repository"
@@ -375,6 +376,49 @@ func TestAnOrderKeepsTheOrderOfItsLines(t *testing.T) {
 		got = append(got, detail.Items[i].VariantID)
 	}
 	assert.Equal(t, want, got, "the lines come back in the order they were written")
+}
+
+// TestTheLineEntityListsAnOrdersLinesInTheOrderTheyWereWritten is D174: the
+// read layer's line entity, filtered to one order, broke the tie between that
+// order's lines on the line id, so its random tail ordered them. Twelve lines
+// named in reverse come back as the order was given them, the same order
+// [TestAnOrderKeepsTheOrderOfItsLines] reads through the service.
+func TestTheLineEntityListsAnOrdersLinesInTheOrderTheyWereWritten(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	in := validInput()
+	in.CartID = "cart_LINE_ENTITY_ORDERED"
+	base := in.Items[0]
+	in.Items = nil
+	in.Subtotal, in.TaxTotal, in.Total = 0, 0, in.ShippingTotal
+	var want []string
+	for i := range 12 {
+		item := base
+		item.VariantID = fmt.Sprintf("variant_%02d", 11-i)
+		item.Title = item.VariantID
+		in.Items = append(in.Items, item)
+		in.Subtotal += item.Subtotal
+		in.TaxTotal += item.TaxTotal
+		in.Total += item.Total
+		want = append(want, item.VariantID)
+	}
+
+	ord, err := svc.CreateOrder(ctx, in)
+	require.NoError(t, err)
+
+	records, err := service.NewLineItemQueryProvider(svc).List(ctx, query.ListOptions{
+		Fields:  []string{service.FieldID, service.FieldLineItemVariantID},
+		Filters: map[string]any{service.FieldLineItemOrderID: ord.ID},
+	})
+	require.NoError(t, err)
+	got := make([]string, 0, len(records))
+	for _, record := range records {
+		variant, ok := record[service.FieldLineItemVariantID].(string)
+		require.True(t, ok, "the variant id has to be text: %v", record)
+		got = append(got, variant)
+	}
+	assert.Equal(t, want, got, "the line entity lists an order's lines in the order they were written")
 }
 
 // TestAReturnAndAReplacementKeepTheOrderOfTheirLines is D161: the lines of a

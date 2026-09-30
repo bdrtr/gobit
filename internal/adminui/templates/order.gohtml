@@ -1,12 +1,8 @@
 {{- /*
 order.gohtml is one order's page.
 
-The LINES are absent because nobody has written them yet. The reason this comment
-used to give — that the read layer joins across links and not within a module —
-was false, and the sales report in this same package disproves it by reading the
-order line entity through the same surface (D96). What this screen answers today
-is the question an operator opens an order for: who, when, how much, and where it
-stands.
+The lines come from the order module's line entity, the surface the sales report
+reads (D96), in the order they were written, each add-on under its line.
 
 Every amount is printed with its currency, and an amount whose scale could not
 be read says it is in minor units instead of being divided by a guessed hundred.
@@ -53,6 +49,46 @@ timeline and in the person's file, not here.
     </tr>
   </tbody>
 </table>
+
+<h2>Lines</h2>
+
+{{ if .Order.LinesUnread }}
+<p class="muted">The lines of this order could not be read.</p>
+{{ else if .Order.Lines }}
+<table>
+  <thead>
+    <tr>
+      <th>Item</th><th class="num">Quantity</th><th class="num">Unit price</th>
+      <th class="num">Subtotal</th><th class="num">Discount</th><th class="num">Tax</th>
+      <th class="num">Total</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{ range .Order.Lines }}
+    <tr>
+      <td>
+        {{ if .AddOn }}<span class="muted">add-on:</span> {{ end }}{{ .Title }}
+        {{ if .GiftCard }}<span class="pill">gift card</span>{{ end }}
+        <br><span class="muted">{{ .VariantID }}</span>
+        {{ range .Properties }}<br><span class="muted">{{ . }}</span>{{ end }}
+      </td>
+      <td class="num">{{ .Quantity }}</td>
+      <td class="num">{{ .UnitPrice }}</td>
+      <td class="num">{{ .Subtotal }}</td>
+      <td class="num">{{ .Discount }}</td>
+      <td class="num">{{ .Tax }}</td>
+      <td class="num">{{ .Total }}</td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+<p class="muted">
+  Amounts in {{ .Order.Currency }}{{ if .Order.Minor }}, in minor units{{ end }}.
+  {{ if .Order.LinesMore }}Only the first {{ $.LinesPerOrder }} lines are shown.{{ end }}
+</p>
+{{ else }}
+<p class="muted">This order has no lines.</p>
+{{ end }}
 
 <h2>Amounts</h2>
 

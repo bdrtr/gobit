@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An order's page in the panel lists what was sold** (ADR 0250, D174). **For
+  operators:** the order page prints the order's lines with their quantities and
+  amounts, the shopper's words and a gift card mark, in the order they were
+  written, each add-on under its line. **For integrators:** the
+  `order_line_item` read-layer entity lists one order's lines in the order they
+  were written; it listed them in the order of their ids' random tails.
+
 - **The published API document was partly Turkish.** **For integrators:** the
   summaries and descriptions `/openapi.json` carries for the b2b, customer,
   payment, promotion, region and tax routes are now English — 276 strings,

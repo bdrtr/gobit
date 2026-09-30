@@ -38,10 +38,13 @@ ORDER BY created_at, seq;
 -- the six columns are gone (ADR 0054). What replaced the condition is nothing,
 -- because there is nothing left for it to hide.
 --
--- The ORDER BY is o.placed_at DESC, li.id DESC: the analytics reader wants the
--- most recent sales first, and li.id breaks the tie so a page boundary does not
--- move between two calls. orders_placed_at_idx (migration 000006) serves both
--- the range and the ordering.
+-- The ORDER BY is o.placed_at DESC, li.order_id DESC, li.created_at, li.seq:
+-- the analytics reader wants the most recent sales first, and one order's lines
+-- follow in the order ListOrderLineItems gives them (ADR 0233). The tie used to
+-- be broken by li.id DESC, whose random tail listed an order's lines in an
+-- order nobody wrote (D174). seq is an identity, so a page boundary still does
+-- not move between two calls. orders_placed_at_idx (migration 000006) serves
+-- the range and the first key.
 -- name: ListOrderLineItemsFiltered :many
 SELECT li.* FROM order_line_items li
     JOIN orders o ON o.id = li.order_id
@@ -52,7 +55,7 @@ WHERE (sqlc.narg('order_id')::text IS NULL OR li.order_id = sqlc.narg('order_id'
        OR o.placed_at >= sqlc.narg('placed_from')::timestamptz)
   AND (sqlc.narg('placed_to')::timestamptz IS NULL
        OR o.placed_at < sqlc.narg('placed_to')::timestamptz)
-ORDER BY o.placed_at DESC, li.id DESC
+ORDER BY o.placed_at DESC, li.order_id DESC, li.created_at, li.seq
 LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 
 -- GetOrderLineItemsByIDs satisfies the Query layer's FetchByIDs call in a

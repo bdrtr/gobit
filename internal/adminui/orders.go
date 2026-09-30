@@ -1,7 +1,9 @@
 package adminui
 
 import (
+	"maps"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -45,6 +47,21 @@ const (
 // additionsPerOrder is how many additions the order page lists. An order with
 // more has been added to more often than a screen should have to show.
 const additionsPerOrder = 25
+
+// The order line fields the order page reads beside the ones the sales report
+// already names. They are the order module's line entity names, repeated for
+// the reason [EntityOrder] is.
+const (
+	fieldIsGiftcard       = "is_giftcard"
+	fieldProperties       = "properties"
+	fieldParentLineItemID = "parent_line_item_id"
+)
+
+// linesPerOrder is how many lines the order page reads. It is the line
+// entity's own ceiling — the provider clamps a larger limit to it — and the
+// most distinct lines a cart may carry, so only an order grown by exchanges
+// reaches it, and the page says so.
+const linesPerOrder = 100
 
 // ordersLabel is what the section is called on screen.
 //
@@ -97,6 +114,37 @@ type orderDetail struct {
 	// AdditionsUnread says the additions could not be read. The page still
 	// shows the order: a secondary read failing is not the order failing.
 	AdditionsUnread bool
+
+	// Lines are the order's lines in the order they were written, each add-on
+	// under the line it belongs to.
+	Lines []orderLine
+	// LinesUnread says the lines could not be read, for the reason
+	// AdditionsUnread gives; LinesMore that the order has more lines than the
+	// page reads.
+	LinesUnread bool
+	LinesMore   bool
+}
+
+// orderLine is one line of the order page.
+type orderLine struct {
+	ID        string
+	Title     string
+	VariantID string
+	Quantity  int64
+	// The amounts, each formatted the way the order's are.
+	UnitPrice string
+	Subtotal  string
+	Discount  string
+	Tax       string
+	Total     string
+	// GiftCard says the line sold gift cards (ADR 0211).
+	GiftCard bool
+	// Properties are what the shopper wrote on the line (ADR 0223), as
+	// "name: text" in name order.
+	Properties []string
+	// AddOn says the line is printed under the line it is an add-on of
+	// (ADR 0229).
+	AddOn bool
 }
 
 // addressLines lays an address record out the way a label reads: the name, the
@@ -190,17 +238,9 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 
 // showOrder renders one order.
 //
-// The LINES are absent, and the reason written here used to be that "the read
-// layer joins across LINKS, not within a module — so showing them would need the
-// panel to hold the order module's service". That was FALSE in both halves and
-// this screen's own neighbor disproves it: the order line is a read-layer ENTITY
-// of its own, it accepts an "order_id" filter, and the sales report in this very
-// package reads it through the same [Catalog] surface (D96).
-//
-// What is true is smaller: nothing has been written yet. What this screen answers
-// today is the question an operator opens an order for — who, when, how much, and
-// where it stands — and the lines are an opening rather than a boundary, which is
-// where docs/known-limits.md now records them.
+// The lines are read through the order module's line entity, the surface the
+// sales report in this package reads (D96), filtered to this order. They used
+// to be absent, and the reason this comment gave for it was false.
 func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if strings.TrimSpace(id) == "" {
@@ -245,11 +285,13 @@ func (u *UI) showOrder(w http.ResponseWriter, r *http.Request) {
 	detail.CorrectedAt = recordTime(record, fieldShippingAddressCorrectedAt)
 	detail.Parent = u.parentOrder(r, recordString(record, fieldAddsToOrderID))
 	detail.Additions, detail.AdditionsUnread = u.additionsOf(r, detail.ID, scales)
+	detail.Lines, detail.LinesMore, detail.LinesUnread = u.linesOf(r, detail.ID, detail.Currency, scales)
 
 	u.templates.render(w, r, http.StatusOK, "order.gohtml", map[string]any{
-		titleKey:     "Order " + detail.DisplayID,
-		"Order":      detail,
-		"OrdersPath": OrdersPath,
+		titleKey:        "Order " + detail.DisplayID,
+		"Order":         detail,
+		"OrdersPath":    OrdersPath,
+		"LinesPerOrder": linesPerOrder,
 	})
 }
 
@@ -297,6 +339,139 @@ func (u *UI) additionsOf(r *http.Request, orderID string, scales map[string]int)
 	}
 
 	return rows, false
+}
+
+// linesOf reads an order's lines; the second value reports more lines than
+// were read and the third a read that failed.
+//
+// The line entity lists one order's lines in the order they were written
+// (D174) and reads at most [linesPerOrder] at a time, so a full read is
+// followed by a one-row read past it. When that second read fails the page
+// says only the first lines are shown, which is true either way.
+func (u *UI) linesOf(
+	r *http.Request, orderID, currency string, scales map[string]int,
+) ([]orderLine, bool, bool) {
+	spec := query.GraphSpec{
+		Entity: EntityOrderLineItem,
+		Fields: []string{
+			fieldID, fieldTitle, fieldVariantID, fieldQuantity, fieldUnitPrice,
+			fieldSubtotal, fieldDiscount, fieldTax, fieldTotal,
+			fieldIsGiftcard, fieldProperties, fieldParentLineItemID,
+		},
+		Filters: map[string]any{fieldOrderID: orderID},
+		Limit:   linesPerOrder,
+	}
+	records, err := u.catalog.Graph(r.Context(), spec)
+	if err != nil {
+		return nil, false, true
+	}
+
+	more := false
+	if len(records) >= linesPerOrder {
+		records = records[:linesPerOrder]
+		probe := spec
+		probe.Fields = []string{fieldID}
+		probe.Offset = linesPerOrder
+		probe.Limit = 1
+		beyond, err := u.catalog.Graph(r.Context(), probe)
+		more = err != nil || len(beyond) > 0
+	}
+
+	lines := make([]orderLine, 0, len(records))
+	parents := make([]string, 0, len(records))
+	for _, record := range records {
+		line := orderLine{
+			ID:         recordString(record, fieldID),
+			Title:      recordString(record, fieldTitle),
+			VariantID:  recordString(record, fieldVariantID),
+			Quantity:   recordInt(record, fieldQuantity),
+			GiftCard:   recordBool(record, fieldIsGiftcard),
+			Properties: propertyLines(record[fieldProperties]),
+		}
+		line.UnitPrice, _ = amountField(record, fieldUnitPrice, currency, scales)
+		line.Subtotal, _ = amountField(record, fieldSubtotal, currency, scales)
+		line.Discount, _ = amountField(record, fieldDiscount, currency, scales)
+		line.Tax, _ = amountField(record, fieldTax, currency, scales)
+		line.Total, _ = amountField(record, fieldTotal, currency, scales)
+		lines = append(lines, line)
+		parents = append(parents, recordString(record, fieldParentLineItemID))
+	}
+
+	return nestAddOns(lines, parents), more, false
+}
+
+// nestAddOns prints each add-on under the line it belongs to and keeps the
+// written order otherwise; parents[i] is the parent of lines[i], empty for a
+// line of its own.
+//
+// An add-on whose line was not read stays where it was written, and no line is
+// dropped: lines whose parents point at each other, which nothing places under
+// a root, are appended in written order.
+func nestAddOns(lines []orderLine, parents []string) []orderLine {
+	read := make(map[string]bool, len(lines))
+	for i := range lines {
+		read[lines[i].ID] = true
+	}
+
+	children := make(map[string][]int)
+	var roots []int
+	for i, parent := range parents {
+		if parent != "" && parent != lines[i].ID && read[parent] {
+			children[parent] = append(children[parent], i)
+			continue
+		}
+		roots = append(roots, i)
+	}
+
+	out := make([]orderLine, 0, len(lines))
+	placed := make([]bool, len(lines))
+	var place func(i int, addOn bool)
+	place = func(i int, addOn bool) {
+		if placed[i] {
+			return
+		}
+		placed[i] = true
+		line := lines[i]
+		line.AddOn = addOn
+		out = append(out, line)
+		for _, child := range children[line.ID] {
+			place(child, true)
+		}
+	}
+	for _, i := range roots {
+		place(i, false)
+	}
+	for i := range lines {
+		place(i, false)
+	}
+
+	return out
+}
+
+// propertyLines reads a line's properties as "name: text" in name order.
+//
+// In process the line entity hands them over as map[string]string; a map of
+// any is read too, since that is the shape a record takes once it has been
+// through JSON.
+func propertyLines(value any) []string {
+	properties := map[string]string{}
+	switch typed := value.(type) {
+	case map[string]string:
+		properties = typed
+	case map[string]any:
+		for name, text := range typed {
+			if text, ok := text.(string); ok {
+				properties[name] = text
+			}
+		}
+	}
+
+	out := make([]string, 0, len(properties))
+	for _, name := range slices.Sorted(maps.Keys(properties)) {
+		out = append(out, name+": "+properties[name])
+	}
+
+	return out
 }
 
 // orderRowOf turns an order record into a row.
