@@ -171,6 +171,30 @@ func (i *Interop) ShippingOptionsJSON(ctx context.Context, cartID string) (json.
 		return nil, err
 	}
 
+	return listedOptionsJSON(cartID, options)
+}
+
+// OperatorShippingOptionsJSON is [Interop.ShippingOptionsJSON] for an
+// operator: the admin-only options are listed too (ADR 0295).
+func (i *Interop) OperatorShippingOptionsJSON(ctx context.Context, cartID string) (json.RawMessage, error) {
+	options, err := i.w.OperatorShippingOptionsFor(ctx, cartID)
+	if err != nil {
+		return nil, err
+	}
+
+	return listedOptionsJSON(cartID, options)
+}
+
+// AddOperatorShippingMethod is [Interop.AddQuotedShippingMethod] for an
+// operator, who may choose an admin-only option (ADR 0295).
+func (i *Interop) AddOperatorShippingMethod(
+	ctx context.Context, cartID, shippingOptionID string, data json.RawMessage,
+) (string, error) {
+	return i.w.AddOperatorShippingMethod(ctx, cartID, shippingOptionID, data)
+}
+
+// listedOptionsJSON encodes a listing as {"options": [...]}.
+func listedOptionsJSON(cartID string, options []ListedOption) (json.RawMessage, error) {
 	raw, err := json.Marshal(struct {
 		Options []ListedOption `json:"options"`
 	}{Options: options})

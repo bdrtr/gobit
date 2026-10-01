@@ -121,7 +121,7 @@ func (h *Handler) Routes(r chi.Router) {
 	// that day.
 	readOnly.Get("/admin/v1/carts", h.adminListCarts)
 	readOnly.Get("/admin/v1/carts/{id}", h.adminGetCart)
-	readOnly.Get("/admin/v1/carts/{id}/shipping-options", h.listShippingOptions)
+	readOnly.Get("/admin/v1/carts/{id}/shipping-options", h.adminListShippingOptions)
 
 	writable := r.With(corehttp.RequireScope(ScopeWrite))
 	writable.Post(AdminCartsPath, h.adminCreateCart)
@@ -132,7 +132,7 @@ func (h *Handler) Routes(r chi.Router) {
 	// same, and only the door differs. The completion is the operator's own.
 	writable.Put("/admin/v1/carts/{id}/shipping-address", h.storeSetShippingAddress)
 	writable.Put("/admin/v1/carts/{id}/billing-address", h.storeSetBillingAddress)
-	writable.Post("/admin/v1/carts/{id}/shipping-methods", h.storeAddShippingMethod)
+	writable.Post("/admin/v1/carts/{id}/shipping-methods", h.adminAddShippingMethod)
 	writable.Delete("/admin/v1/carts/{id}/shipping-methods/{shipping_method_id}", h.storeRemoveShippingMethod)
 	writable.Post("/admin/v1/carts/{id}/complete", h.adminCompleteCart)
 }

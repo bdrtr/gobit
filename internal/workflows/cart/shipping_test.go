@@ -301,3 +301,37 @@ func TestNoOptionIsListedWithoutTheShippingSurface(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, CodeShippingUnavailable, coreerrors.CodeOf(err))
 }
+
+// TestAnOperatorMayChooseAnAdminOnlyOption is ADR 0295: the operator's
+// listing asks the fulfillment module for the admin-only options and keeps
+// them, the operator's write accepts one, and a return option is still
+// neither; the shopper's paths ask for none and accept none.
+func TestAnOperatorMayChooseAnAdminOnlyOption(t *testing.T) {
+	h := shippingHarness(t)
+	h.shipping.options = []quotedOption{
+		{ID: "so_std", Name: "Standard", Amount: 2500, CurrencyCode: testCurrency},
+		{ID: "so_desk", Name: "Collect at the desk", Amount: 0, CurrencyCode: testCurrency, AdminOnly: true},
+		{ID: "so_back", Name: "Return", Amount: 100, CurrencyCode: testCurrency, IsReturn: true},
+	}
+	ctx := context.Background()
+
+	operator, err := h.wf.OperatorShippingOptionsFor(ctx, testCartID)
+	require.NoError(t, err)
+	assert.True(t, h.shipping.gotRequest.IncludeAdminOnly, "the operator's quote asks for them")
+	ids := make([]string, 0, len(operator))
+	for _, option := range operator {
+		ids = append(ids, option.ID)
+	}
+	assert.Equal(t, []string{"so_std", "so_desk"}, ids)
+	_, err = h.wf.AddOperatorShippingMethod(ctx, testCartID, "so_desk", nil)
+	require.NoError(t, err)
+	_, err = h.wf.AddOperatorShippingMethod(ctx, testCartID, "so_back", nil)
+	assert.Equal(t, CodeShippingOptionUnknown, coreerrors.CodeOf(err), "a return option is no operator's either")
+
+	shopper, err := h.wf.ShippingOptionsFor(ctx, testCartID)
+	require.NoError(t, err)
+	assert.False(t, h.shipping.gotRequest.IncludeAdminOnly, "the shopper's quote asks for none")
+	assert.Len(t, shopper, 1)
+	_, err = h.wf.AddQuotedShippingMethod(ctx, testCartID, "so_desk", nil)
+	assert.Equal(t, CodeShippingOptionUnknown, coreerrors.CodeOf(err))
+}

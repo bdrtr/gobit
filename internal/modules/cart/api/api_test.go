@@ -218,6 +218,9 @@ type fakeShipping struct {
 	err      error
 	// options is the answer of the listing (ADR 0292).
 	options json.RawMessage
+	// operator reports whether the last call came through an operator's door
+	// (ADR 0295).
+	operator bool
 
 	gotCartID   string
 	gotOptionID string
@@ -225,10 +228,29 @@ type fakeShipping struct {
 	calls       int
 }
 
+// OperatorShippingOptionsJSON is the listing through the operator's door.
+func (f *fakeShipping) OperatorShippingOptionsJSON(ctx context.Context, cartID string) (json.RawMessage, error) {
+	raw, err := f.ShippingOptionsJSON(ctx, cartID)
+	f.operator = true
+
+	return raw, err
+}
+
+// AddOperatorShippingMethod is the write through the operator's door.
+func (f *fakeShipping) AddOperatorShippingMethod(
+	ctx context.Context, cartID, shippingOptionID string, data json.RawMessage,
+) (string, error) {
+	id, err := f.AddQuotedShippingMethod(ctx, cartID, shippingOptionID, data)
+	f.operator = true
+
+	return id, err
+}
+
 // ShippingOptionsJSON answers the scripted listing and records the cart.
 func (f *fakeShipping) ShippingOptionsJSON(_ context.Context, cartID string) (json.RawMessage, error) {
 	f.calls++
 	f.gotCartID = cartID
+	f.operator = false
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -242,6 +264,7 @@ func (f *fakeShipping) AddQuotedShippingMethod(
 ) (string, error) {
 	f.calls++
 	f.gotCartID, f.gotOptionID, f.gotData = cartID, shippingOptionID, data
+	f.operator = false
 	if f.err != nil {
 		return "", f.err
 	}

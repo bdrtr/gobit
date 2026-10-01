@@ -5,7 +5,7 @@ the options a cart can take, each priced for the cart's own facts by the flow
 that prices the shipping method write. The panel's telephone order offers them
 as a list.
 
-- **Status:** Accepted
+- **Status:** Accepted — amended by [0295](0295-an-operator-may-choose-an-admin-only-shipping-option.md)
 - **Date:** 2026-10-01
 
 ## Context

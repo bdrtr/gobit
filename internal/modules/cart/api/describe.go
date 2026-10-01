@@ -333,8 +333,8 @@ func describeAdmin(d *openapi.Doc) {
 
 	d.Describe(http.MethodGet, "/admin/v1/carts/{id}/shipping-options", openapi.Operation{
 		Summary: "Lists the shipping options the cart can take, each priced for the cart, " +
-			"as the storefront's listing does; an operator building a telephone order " +
-			"chooses from it (ADR 0292).",
+			"as the storefront's listing does, with the admin-only options too: an operator " +
+			"building a telephone order chooses from it (ADR 0292, ADR 0295).",
 		Responses: map[string]any{
 			"200": openapi.Response("The options, all on one page", d.List(shippingOptionDTO{})),
 		},
@@ -413,8 +413,8 @@ func describeAdminCompletion(d *openapi.Doc) {
 	})
 	d.Describe(http.MethodPost, "/admin/v1/carts/{id}/shipping-methods", openapi.Operation{
 		Summary: "Adds a shipping option to the cart at the price quoted for it; the amount " +
-			"cannot be sent.",
-		Description: sameAct,
+			"cannot be sent. An admin-only option is accepted here and not on the storefront " +
+			"(ADR 0295).",
 		RequestBody: d.RequestBody(addShippingMethodRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The added shipping method", d.Item(shippingMethodDTO{})),

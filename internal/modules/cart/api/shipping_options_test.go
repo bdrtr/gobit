@@ -93,3 +93,36 @@ func TestThePanelListsTheCartsOptions(t *testing.T) {
 	assert.Equal(t, []string{"Free over 500", "Standard"}, names)
 	assert.Equal(t, []int64{0, 2500}, amounts)
 }
+
+// TestTheOperatorsDoorsOpenTheAdminOnlyOptions is ADR 0295: the admin
+// listing, the admin write and the panel's surface go through the operator's
+// path, and the storefront's two go through the shopper's.
+func TestTheOperatorsDoorsOpenTheAdminOnlyOptions(t *testing.T) {
+	for _, tc := range []struct {
+		method, path, body string
+		operator           bool
+	}{
+		{http.MethodGet, "/store/v1/carts/cart_1/shipping-options", "", false},
+		{http.MethodGet, "/admin/v1/carts/cart_1/shipping-options", "", true},
+		{http.MethodPost, "/store/v1/carts/cart_1/shipping-methods", `{"shipping_option_id":"so_desk"}`, false},
+		{http.MethodPost, "/admin/v1/carts/cart_1/shipping-methods", `{"shipping_option_id":"so_desk"}`, true},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			shipping := &fakeShipping{options: twoOptions, methodID: "sm_1"}
+			h := newServerWithFlows(t, &fakeCarts{}, api.Flows{Shipping: shipping})
+
+			doRequest(t, h, tc.method, tc.path, tc.body)
+
+			assert.Equal(t, tc.operator, shipping.operator)
+		})
+	}
+
+	shipping := &fakeShipping{options: twoOptions, methodID: "sm_1"}
+	surface := surfaceOver(api.Flows{Shipping: shipping}, &fakeCarts{})
+	_, _, _, err := surface.ShippingOptions(operator(), "cart_1")
+	require.NoError(t, err)
+	assert.True(t, shipping.operator, "the panel lists as an operator")
+	_, err = surface.AddShippingMethod(operator(), "cart_1", "so_desk")
+	require.NoError(t, err)
+	assert.True(t, shipping.operator, "the panel writes as an operator")
+}

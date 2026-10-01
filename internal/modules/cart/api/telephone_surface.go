@@ -102,7 +102,7 @@ func (s *TelephoneSurface) ShippingOptions(
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	options, err := shippingOptionsOf(ctx, flow, cartID)
+	options, err := shippingOptionsOf(ctx, flow, cartID, true)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -124,7 +124,7 @@ func (s *TelephoneSurface) AddShippingMethod(ctx context.Context, cartID, shippi
 		return "", err
 	}
 
-	return flow.AddQuotedShippingMethod(ctx, cartID, shippingOptionID, nil)
+	return flow.AddOperatorShippingMethod(ctx, cartID, shippingOptionID, nil)
 }
 
 // Complete completes the cart in the named channel with an offline method,

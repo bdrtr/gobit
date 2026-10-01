@@ -966,6 +966,18 @@ type addShippingMethodRequest struct {
 
 // storeAddShippingMethod adds a shipping method to the cart.
 func (h *Handler) storeAddShippingMethod(w http.ResponseWriter, r *http.Request) {
+	h.addShippingMethod(w, r, false)
+}
+
+// adminAddShippingMethod adds a shipping method to a cart an operator builds;
+// an admin-only option is one they may choose (ADR 0295).
+func (h *Handler) adminAddShippingMethod(w http.ResponseWriter, r *http.Request) {
+	h.addShippingMethod(w, r, true)
+}
+
+// addShippingMethod adds the option the body names at its quoted price; the
+// operator's door opens the admin-only options.
+func (h *Handler) addShippingMethod(w http.ResponseWriter, r *http.Request, operator bool) {
 	ctx := r.Context()
 
 	var body addShippingMethodRequest
@@ -986,7 +998,11 @@ func (h *Handler) storeAddShippingMethod(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	methodID, err := flow.AddQuotedShippingMethod(ctx, cartID(r), body.ShippingOptionID, data)
+	add := flow.AddQuotedShippingMethod
+	if operator {
+		add = flow.AddOperatorShippingMethod
+	}
+	methodID, err := add(ctx, cartID(r), body.ShippingOptionID, data)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -1069,6 +1085,17 @@ type shippingOptionDTO struct {
 // when the cart meets the rule, and every option it lists is one the shipping
 // method write accepts.
 func (h *Handler) listShippingOptions(w http.ResponseWriter, r *http.Request) {
+	h.writeShippingOptions(w, r, false)
+}
+
+// adminListShippingOptions lists them for an operator, admin-only options
+// included (ADR 0295).
+func (h *Handler) adminListShippingOptions(w http.ResponseWriter, r *http.Request) {
+	h.writeShippingOptions(w, r, true)
+}
+
+// writeShippingOptions answers the listing for the audience.
+func (h *Handler) writeShippingOptions(w http.ResponseWriter, r *http.Request, operator bool) {
 	ctx := r.Context()
 
 	flow, err := h.shipping()
@@ -1076,7 +1103,7 @@ func (h *Handler) listShippingOptions(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	options, err := shippingOptionsOf(ctx, flow, cartID(r))
+	options, err := shippingOptionsOf(ctx, flow, cartID(r), operator)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
@@ -1088,10 +1115,16 @@ func (h *Handler) listShippingOptions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// shippingOptionsOf reads the flow's answer; never nil, so a cart no option
-// serves answers an empty list.
-func shippingOptionsOf(ctx context.Context, flow ShippingPricing, id string) ([]shippingOptionDTO, error) {
-	raw, err := flow.ShippingOptionsJSON(ctx, id)
+// shippingOptionsOf reads the flow's answer for the audience; never nil, so a
+// cart no option serves answers an empty list.
+func shippingOptionsOf(
+	ctx context.Context, flow ShippingPricing, id string, operator bool,
+) ([]shippingOptionDTO, error) {
+	list := flow.ShippingOptionsJSON
+	if operator {
+		list = flow.OperatorShippingOptionsJSON
+	}
+	raw, err := list(ctx, id)
 	if err != nil {
 		return nil, err
 	}

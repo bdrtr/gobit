@@ -432,6 +432,13 @@ type ShippingPricing interface {
 	// ShippingOptionsJSON lists the options the cart can take, each priced for
 	// the cart's own facts, as {"options": [...]} (ADR 0292).
 	ShippingOptionsJSON(ctx context.Context, cartID string) (json.RawMessage, error)
+	// OperatorShippingOptionsJSON and AddOperatorShippingMethod are the two
+	// above for an operator, to whom the admin-only options are open (ADR
+	// 0295).
+	OperatorShippingOptionsJSON(ctx context.Context, cartID string) (json.RawMessage, error)
+	AddOperatorShippingMethod(
+		ctx context.Context, cartID, shippingOptionID string, data json.RawMessage,
+	) (shippingMethodID string, err error)
 }
 
 // CartRepricing is the surface used by this package of the flow that recomputes

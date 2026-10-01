@@ -669,6 +669,28 @@ func (p *shippingPricing) ShippingOptionsJSON(ctx context.Context, cartID string
 	return p.svc.ShippingOptionsJSON(ctx, cartID)
 }
 
+// OperatorShippingOptionsJSON lists them for an operator (ADR 0295).
+func (p *shippingPricing) OperatorShippingOptionsJSON(ctx context.Context, cartID string) (json.RawMessage, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return p.svc.OperatorShippingOptionsJSON(ctx, cartID)
+}
+
+// AddOperatorShippingMethod adds an option for an operator (ADR 0295).
+func (p *shippingPricing) AddOperatorShippingMethod(
+	ctx context.Context, cartID, shippingOptionID string, data json.RawMessage,
+) (string, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return "", p.err
+	}
+
+	return p.svc.AddOperatorShippingMethod(ctx, cartID, shippingOptionID, data)
+}
+
 // resolve looks the flow up in the container and remembers the outcome.
 func (p *shippingPricing) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.ShippingPricing](p.c, CartFlowsName)

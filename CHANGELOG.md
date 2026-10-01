@@ -31,6 +31,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An operator may choose an admin-only shipping option** (ADR 0295). **For
+  operators:** the telephone order's shipping list includes the options marked
+  admin-only, such as a pick-up at the desk. **For integrators:**
+  `GET /admin/v1/carts/{id}/shipping-options` lists them and
+  `POST /admin/v1/carts/{id}/shipping-methods` accepts them; the storefront's
+  listing and write still do neither.
+
 - **The order list filters the orders awaiting their payment** (ADR 0294).
   **For operators:** the panel's order list has a box for the orders still
   awaiting their payment — not canceled, and collected below their total less

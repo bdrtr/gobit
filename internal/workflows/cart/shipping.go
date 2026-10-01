@@ -29,6 +29,9 @@ type quoteRequest struct {
 	Subtotal     int64  `json:"subtotal"`
 	ItemCount    int64  `json:"item_count"`
 	TotalWeight  int64  `json:"total_weight"`
+	// IncludeAdminOnly asks for the options only an operator may choose; the
+	// operator's paths set it, a shopper's never does (ADR 0295).
+	IncludeAdminOnly bool `json:"include_admin_only"`
 }
 
 // quotedOption is one option as the fulfillment module priced it.
@@ -91,6 +94,23 @@ type quoteResponse struct {
 func (w *Workflows) AddQuotedShippingMethod(
 	ctx context.Context, cartID, shippingOptionID string, data json.RawMessage,
 ) (string, error) {
+	return w.addQuotedShippingMethod(ctx, cartID, shippingOptionID, data, false)
+}
+
+// AddOperatorShippingMethod is [Workflows.AddQuotedShippingMethod] for an
+// operator building a telephone order: an admin-only option is one they may
+// choose (ADR 0295). A return option is still refused.
+func (w *Workflows) AddOperatorShippingMethod(
+	ctx context.Context, cartID, shippingOptionID string, data json.RawMessage,
+) (string, error) {
+	return w.addQuotedShippingMethod(ctx, cartID, shippingOptionID, data, true)
+}
+
+// addQuotedShippingMethod adds the option at its quoted price; operator opens
+// the admin-only options.
+func (w *Workflows) addQuotedShippingMethod(
+	ctx context.Context, cartID, shippingOptionID string, data json.RawMessage, operator bool,
+) (string, error) {
 	if cartID == "" {
 		return "", errors.Invalid(CodeInvalidInput, "the cart id is required")
 	}
@@ -114,7 +134,7 @@ func (w *Workflows) AddQuotedShippingMethod(
 		return "", err
 	}
 
-	option, err := w.quoteOption(ctx, snap, shippingOptionID)
+	option, err := w.quoteOption(ctx, snap, shippingOptionID, operator)
 	if err != nil {
 		return "", err
 	}
@@ -153,9 +173,9 @@ func (w *Workflows) AddQuotedShippingMethod(
 // this cart" are the same fact, and reaching past it to fetch the option by id
 // would price something the rules had already excluded.
 func (w *Workflows) quoteOption(
-	ctx context.Context, snap Snapshot, shippingOptionID string,
+	ctx context.Context, snap Snapshot, shippingOptionID string, operator bool,
 ) (quotedOption, error) {
-	answer, err := w.quote(ctx, snap)
+	answer, err := w.quote(ctx, snap, operator)
 	if err != nil {
 		return quotedOption{}, err
 	}
@@ -166,8 +186,9 @@ func (w *Workflows) quoteOption(
 		}
 		// An admin-only or return option that reached the listing is still not
 		// something a shopper may choose. The request never asks for them, so
-		// this is a second lock on the same door rather than the only one.
-		if answer.Options[i].AdminOnly || answer.Options[i].IsReturn {
+		// this is a second lock on the same door rather than the only one. An
+		// operator may choose an admin-only one (ADR 0295).
+		if (answer.Options[i].AdminOnly && !operator) || answer.Options[i].IsReturn {
 			break
 		}
 
@@ -180,11 +201,12 @@ func (w *Workflows) quoteOption(
 
 // quote asks the fulfillment module for every option the cart's own facts
 // qualify for, each priced for them.
-func (w *Workflows) quote(ctx context.Context, snap Snapshot) (quoteResponse, error) {
+func (w *Workflows) quote(ctx context.Context, snap Snapshot, operator bool) (quoteResponse, error) {
 	request, err := w.quoteRequestFor(ctx, snap)
 	if err != nil {
 		return quoteResponse{}, err
 	}
+	request.IncludeAdminOnly = operator
 
 	body, err := json.Marshal(request)
 	if err != nil {
@@ -228,6 +250,18 @@ type ListedOption struct {
 // meets it; the storefront's eligibility endpoint, which takes those facts from
 // the client, leaves such options out.
 func (w *Workflows) ShippingOptionsFor(ctx context.Context, cartID string) ([]ListedOption, error) {
+	return w.shippingOptions(ctx, cartID, false)
+}
+
+// OperatorShippingOptionsFor is [Workflows.ShippingOptionsFor] for an
+// operator: the admin-only options are listed too, as the operator's write
+// accepts them (ADR 0295).
+func (w *Workflows) OperatorShippingOptionsFor(ctx context.Context, cartID string) ([]ListedOption, error) {
+	return w.shippingOptions(ctx, cartID, true)
+}
+
+// shippingOptions lists the options the write would accept for the audience.
+func (w *Workflows) shippingOptions(ctx context.Context, cartID string, operator bool) ([]ListedOption, error) {
 	if w.shipping == nil {
 		return nil, errors.Internal(CodeShippingUnavailable,
 			"the fulfillment surface (%q) is not wired, so no shipping option can be priced",
@@ -238,14 +272,14 @@ func (w *Workflows) ShippingOptionsFor(ctx context.Context, cartID string) ([]Li
 	if err != nil {
 		return nil, err
 	}
-	answer, err := w.quote(ctx, snap)
+	answer, err := w.quote(ctx, snap, operator)
 	if err != nil {
 		return nil, err
 	}
 
 	out := make([]ListedOption, 0, len(answer.Options))
 	for _, option := range answer.Options {
-		if option.AdminOnly || option.IsReturn {
+		if (option.AdminOnly && !operator) || option.IsReturn {
 			continue
 		}
 		if option.CurrencyCode != "" && option.CurrencyCode != snap.CurrencyCode {

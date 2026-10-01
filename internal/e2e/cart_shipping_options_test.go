@@ -72,3 +72,30 @@ func TestACartListsTheOptionItsSubtotalOpens(t *testing.T) {
 	require.Equal(t, http.StatusCreated, added.Code, "what the cart listed, the write accepts: %s",
 		added.Body.String())
 }
+
+// TestAnOperatorChoosesAnAdminOnlyOption is ADR 0295 on the production
+// wiring: an admin-only option is listed and accepted through the operator's
+// doors, and neither listed nor accepted through the storefront's, on the
+// same cart.
+func TestAnOperatorChoosesAnAdminOnlyOption(t *testing.T) {
+	ctx := t.Context()
+	variantID, _ := newStockedVariant(ctx, t, "E2E Admin Only Shipping",
+		map[string]int64{taxedCurrency: adminCartUnitPrice}, adminCartStock)
+	cartID := openAdminCartID(t)
+	added := addAdminLine(t, cartID, testChannelID, variantID, 1)
+	require.Equal(t, http.StatusCreated, added.Code, added.Body.String())
+	desk := newShippingOption(ctx, t, newShippingProfile(ctx, t, "Desk profile"), "Collect at the desk", 0, true)
+
+	adminList := adminCartRequest(t, http.MethodGet, "/admin/v1/carts/"+cartID+"/shipping-options", "")
+	require.Equal(t, http.StatusOK, adminList.Code, adminList.Body.String())
+	assert.Contains(t, adminList.Body.String(), desk, "the operator sees the admin-only option")
+	storeList := storefrontRequest(t, http.MethodGet, "/store/v1/carts/"+cartID+"/shipping-options", "")
+	require.Equal(t, http.StatusOK, storeList.Code, storeList.Body.String())
+	assert.NotContains(t, storeList.Body.String(), desk, "the shopper does not")
+
+	body := fmt.Sprintf(`{"shipping_option_id":%q}`, desk)
+	byShopper := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/shipping-methods", body)
+	assert.Equal(t, http.StatusUnprocessableEntity, byShopper.Code, byShopper.Body.String())
+	byOperator := adminCartRequest(t, http.MethodPost, "/admin/v1/carts/"+cartID+"/shipping-methods", body)
+	assert.Equal(t, http.StatusCreated, byOperator.Code, byOperator.Body.String())
+}
