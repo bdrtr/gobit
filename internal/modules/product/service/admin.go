@@ -213,3 +213,44 @@ func (a *AdminSurface) UpdateProductBasics(ctx context.Context, id, title, handl
 
 	return err
 }
+
+// CreateProduct creates a DRAFT product with the title and the handle — the
+// title's slug when the handle is empty — and returns its id (ADR 0307).
+//
+// A draft is the only status a new product takes here: the storefront does not
+// show it until the operator publishes it on its edit form, by which time it
+// has its variants, prices and stock.
+func (a *AdminSurface) CreateProduct(ctx context.Context, title, handle string) (string, error) {
+	if a == nil || a.svc == nil {
+		return "", errors.Unavailable(codeNotReady, "the product service is not set up")
+	}
+
+	// The service trims the title and the handle and derives the handle when
+	// it is empty, as it does for the admin API.
+	product, err := a.svc.CreateProduct(ctx, CreateProductInput{
+		Title:  title,
+		Handle: handle,
+		Status: models.StatusDraft,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return product.ID, nil
+}
+
+// AddVariant adds a variant with the title and the SKU — none when empty — to
+// the product and returns its id (ADR 0307).
+func (a *AdminSurface) AddVariant(ctx context.Context, productID, title, sku string) (string, error) {
+	if a == nil || a.svc == nil {
+		return "", errors.Unavailable(codeNotReady, "the product service is not set up")
+	}
+
+	// The service trims the SKU and takes an empty one for none.
+	variant, err := a.svc.CreateVariant(ctx, productID, CreateVariantInput{Title: title, SKU: &sku})
+	if err != nil {
+		return "", err
+	}
+
+	return variant.ID, nil
+}

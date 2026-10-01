@@ -114,6 +114,11 @@ func builtInScopes() map[string]string {
 		routeKey(get, VariantPath):      scopeProductRead,
 		routeKey(get, ProductEditPath):  scopeProductWrite,
 		routeKey(post, ProductEditPath): scopeProductWrite,
+		// Creating a product and adding a variant are product writes (ADR
+		// 0307).
+		routeKey(get, ProductNewPath):       scopeProductWrite,
+		routeKey(post, ProductNewPath):      scopeProductWrite,
+		routeKey(post, ProductVariantsPath): scopeProductWrite,
 		// Editing the related products is a product write like any other.
 		routeKey(get, ProductRelationsPath):  scopeProductWrite,
 		routeKey(post, ProductRelationsPath): scopeProductWrite,

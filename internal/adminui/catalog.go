@@ -531,8 +531,11 @@ func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		titleKey:          "Products",
-		"Products":        rows,
+		titleKey:   "Products",
+		"Products": rows,
+		// The link to the form that creates a product, to an operator who may
+		// write products (ADR 0307).
+		"CanCreate":       u.canCreate(r),
 		categoryFilterKey: categoryFilterOf(chosen, subtree, u.categoryList(r.Context())),
 		// The TRIMMED term goes to the screen, not the raw parameter: the box
 		// is refilled from this value, and refilling it with the spaces the

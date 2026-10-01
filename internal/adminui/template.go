@@ -35,6 +35,14 @@ const titleKey = "Title"
 // reason, printed as an alert.
 const refusedKey = "Refused"
 
+// typedKey is the template data key carrying what a refused form was sent
+// with, to draw it again.
+const typedKey = "Typed"
+
+// productsPathKey is the template data key carrying the product list's path,
+// which every catalog page links back to.
+const productsPathKey = "ProductsPath"
+
 // errorKey is the template key carrying a message meant for the operator.
 //
 // It is a constant for the same reason titleKey is: three pages fill it and a
@@ -79,6 +87,7 @@ var pages = []string{
 	"products.gohtml",
 	"product.gohtml",
 	"product_edit.gohtml",
+	"product_new.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",

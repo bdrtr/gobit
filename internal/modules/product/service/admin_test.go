@@ -120,3 +120,54 @@ func TestAdminSurfaceIsNilSafe(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable))
 }
+
+// TestTheAdminSurfaceCreatesADraftAndAddsItsVariants is ADR 0307: the panel
+// creates a draft whose handle is the title's slug when none is given, with a
+// handle of its own when one is, and adds a variant with and without a SKU;
+// a taken handle is refused as the service refuses it.
+func TestTheAdminSurfaceCreatesADraftAndAddsItsVariants(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc := newService(t, newMemStore(), newFakeLinker(), nil)
+	surface := service.NewAdminSurface(svc)
+
+	id, err := surface.CreateProduct(ctx, " Linen Shirt ", "")
+	require.NoError(t, err)
+	product, err := svc.GetProduct(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "Linen Shirt", product.Title)
+	assert.Equal(t, "linen-shirt", product.Handle, "the handle is the title's slug")
+	assert.Equal(t, "draft", string(product.Status), "a new product is a draft")
+
+	named, err := surface.CreateProduct(ctx, "Coffee", " house-blend ")
+	require.NoError(t, err)
+	product, err = svc.GetProduct(ctx, named)
+	require.NoError(t, err)
+	assert.Equal(t, "house-blend", product.Handle)
+
+	_, err = surface.CreateProduct(ctx, "Another", "house-blend")
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err) || errors.IsInvalid(err), "a taken handle is refused: %v", err)
+
+	medium, err := surface.AddVariant(ctx, id, " M ", " SH-M ")
+	require.NoError(t, err)
+	plain, err := surface.AddVariant(ctx, id, "L", "")
+	require.NoError(t, err)
+	variants, err := svc.ListVariants(ctx, service.ListVariantsOptions{ProductID: &id, Limit: 10})
+	require.NoError(t, err)
+	byID := map[string]string{}
+	for i := range variants.Items {
+		sku := ""
+		if variants.Items[i].SKU != nil {
+			sku = *variants.Items[i].SKU
+		}
+		byID[variants.Items[i].ID] = variants.Items[i].Title + "|" + sku
+	}
+	assert.Equal(t, map[string]string{medium: "M|SH-M", plain: "L|"}, byID)
+	for i := range variants.Items {
+		if variants.Items[i].ID == plain {
+			assert.Nil(t, variants.Items[i].SKU, "an empty SKU is no SKU, not an empty one")
+		}
+	}
+}

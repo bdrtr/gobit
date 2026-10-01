@@ -222,8 +222,8 @@ past and is not corrected retroactively.
       because one request makes the shop send mail to an address a stranger chose;
       the published description says what it is, because a limit that is a fraction
       of itself still looks like a limit.
-- **The admin panel writes the EDITABLE part of the catalog, not the creatable
-  part.** The panel under `/admin/ui`
+- **The admin panel creates a product and its variants, and writes the
+  EDITABLE part of the rest of the catalog.** The panel under `/admin/ui`
   ([ADR 0011](adr/0011-yonetim-paneli-dorduncu-agac.md)) names its screens in its
   package doc (`internal/adminui/doc.go`), and its forms write what exists: a
   product's title, handle, status and schedule
@@ -249,9 +249,12 @@ past and is not corrected retroactively.
   and the order they move in is not decided. Until they do, the panel
   carries two shapes and this entry describes both.
 
-  Creating something that does not exist and deleting something that does still
-  happens over `/admin/v1`, with `Authorization: Bearer`: product, variant,
-  price set, stock item, stock location, links. Campaign prices and prices
+  A draft product and its variants are created in the panel since
+  [ADR 0307](adr/0307-the-panel-creates-a-product-and-its-variants.md). Creating
+  anything else and deleting anything still happens over `/admin/v1`, with
+  `Authorization: Bearer`: price set, stock item, stock location, links — so a
+  new variant is priced and stocked there before the panel's price and stock
+  forms show it. Campaign prices and prices
   carrying a RULE are not shown in the panel and cannot be edited there either —
   the form knows only the base price. This is not a presentation preference: the
   price write is lossless and writes the prices it does not see back

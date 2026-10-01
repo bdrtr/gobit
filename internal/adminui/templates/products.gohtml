@@ -55,6 +55,7 @@ submitting.
 */ -}}
 {{ define "body" }}
 <h1>Products</h1>
+{{ if .CanCreate }}<p><a href="{{ .Path }}/new">New product</a></p>{{ end }}
 
 <form method="get" action="{{ .Path }}">
   <label for="search">Search</label>

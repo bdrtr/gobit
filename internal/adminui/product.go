@@ -141,11 +141,15 @@ func (u *UI) showProduct(w http.ResponseWriter, r *http.Request) {
 		"Variants":      rows,
 		"Access":        access,
 		"Relations":     relations,
-		"ProductsPath":  ProductsPath,
+		productsPathKey: ProductsPath,
 		"EditPath":      ProductsPath + "/" + product.ID + "/edit",
 		"RelationsPath": ProductsPath + "/" + product.ID + "/relations",
 		"AddOns":        addOns,
 		"AddOnsPath":    ProductsPath + "/" + product.ID + "/add-ons",
+		// The form that adds a variant, to an operator who may write products
+		// (ADR 0307).
+		"CanAddVariant": u.canCreate(r),
+		"VariantsPath":  ProductsPath + "/" + product.ID + "/variants",
 	})
 }
 

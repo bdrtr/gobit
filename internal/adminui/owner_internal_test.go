@@ -427,6 +427,14 @@ func (s *recordingSurfaces) reach(name string) error {
 	return nil
 }
 
+func (s *recordingSurfaces) CreateProduct(context.Context, string, string) (string, error) {
+	return "", s.reach(ServiceProductAdmin)
+}
+
+func (s *recordingSurfaces) AddVariant(context.Context, string, string, string) (string, error) {
+	return "", s.reach(ServiceProductAdmin)
+}
+
 func (s *recordingSurfaces) UpdateProductBasics(context.Context, string, string, string, string, int64) error {
 	return s.reach(ServiceProductAdmin)
 }
@@ -606,7 +614,10 @@ var walkForms = map[string]url.Values{
 		"title": {"Walk"}, "handle": {"walk"}, "status": {statusDraft}, "version": {"1"},
 	},
 	routeKey(http.MethodPost, ProductRelationsPath): {FieldCrossSellIDs: {""}},
-	routeKey(http.MethodPost, ProductAddOnsPath):    {"add_ons": {""}},
+	// Creating a product and adding a variant (ADR 0307).
+	routeKey(http.MethodPost, ProductNewPath):      {"title": {"Walk"}},
+	routeKey(http.MethodPost, ProductVariantsPath): {"variant_title": {"Walk"}},
+	routeKey(http.MethodPost, ProductAddOnsPath):   {"add_ons": {""}},
 	routeKey(http.MethodPost, VariantPricePath): {
 		"price_set_id": {"walk"}, "currency": {"TRY"}, "amount": {"1"}, "read_amount": {"1"}, "minor": {"1"},
 	},

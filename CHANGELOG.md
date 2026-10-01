@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel creates a product and its variants** (ADR 0307). **For
+  operators:** the product list links to a form that creates a draft product,
+  and the product page adds a variant with a title and an optional SKU; a new
+  variant's prices and stock are still set up over the admin API.
+
 - **A telephone order chooses its offline method from a list** (ADR 0306).
   **For operators:** the telephone order's completion offers the shop's
   offline methods as a list to an operator holding `payment:read`; without it

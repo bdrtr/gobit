@@ -64,6 +64,14 @@ names it under the table.
 {{ else }}
 <p>This product has no variants.</p>
 {{ end }}
+{{ if .CanAddVariant }}
+{{/* A variant is added here and priced and stocked on its own page (ADR 0307). */}}
+<form method="post" action="{{ .VariantsPath }}">
+  <input name="variant_title" placeholder="variant title, e.g. M / Red" aria-label="variant title" required>
+  <input name="variant_sku" placeholder="SKU (optional)" aria-label="variant SKU">
+  <button type="submit">Add a variant</button>
+</form>
+{{ end }}
 
 <h2>Add-ons</h2>
 <p><a href="{{ .AddOnsPath }}">Edit add-ons</a></p>

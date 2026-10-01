@@ -1,0 +1,22 @@
+{{- /*
+product_new.gohtml creates a draft product (ADR 0307).
+
+The handle is the title's slug when it is left empty. The product is a draft,
+which the storefront does not show, until it is published on its edit form.
+*/ -}}
+{{ define "body" }}
+<p><a href="{{ .ProductsPath }}">← Products</a></p>
+
+<h1>New product</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+
+<form method="post" action="{{ .NewPath }}">
+  <label for="title">Title</label>
+  <input id="title" name="title" value="{{ .Typed.Get "title" }}" required>
+  <label for="handle">Handle</label>
+  <input id="handle" name="handle" value="{{ .Typed.Get "handle" }}" placeholder="from the title when empty">
+  <p class="muted">The product is created as a draft; add its variants, prices and stock, then publish it.</p>
+  <button type="submit">Create the product</button>
+</form>
+{{ end }}
