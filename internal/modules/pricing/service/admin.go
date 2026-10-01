@@ -50,15 +50,15 @@ const CodeUnitPriceAmbiguous = "pricing_unit_price_ambiguous"
 //
 // # What it costs
 //
-// The write goes through [Service.SetPrices], so every price on the set is
-// rewritten and the price IDs are REGENERATED. That is contained: a price id is
+// The write replaces the set whole, so every price on the set is rewritten and
+// the price IDs are REGENERATED. That is contained: a price id is
 // referenced only by pricing's own price_rule rows, which are rewritten with
 // it, and no other module or table holds one. It is written down because it is
 // a real side effect of an edit that looks local.
 //
-// Two operators saving the same set at the same time is last-write-wins. There
-// is no version on the form and no optimistic check underneath it; the same
-// limit ADR 0013 names for the product form.
+// Two saves of the same set, each changing its own currency, both land: the set
+// is read under its lock and written back from what it holds (D193). Two saves
+// of the same currency are last-write-wins; there is no version on the form.
 func (a *AdminSurface) SetBasePriceAmount(
 	ctx context.Context, priceSetID, currencyCode string, amount int64,
 ) error {
@@ -78,7 +78,7 @@ func (a *AdminSurface) SetBasePriceAmount(
 // leaves every other price on the set as it is, and reports whether it wrote.
 // The panel's surface and the interop's [Service.SetUnitBasePrices] share it.
 //
-// The currency code is normalized but NOT checked for emptiness here. SetPrices
+// The currency code is normalized but NOT checked for emptiness here. buildPrices
 // below refuses an empty currency with the same Kind and writes nothing, so a
 // guard here would be a branch no test could distinguish from its absence.
 func (s *Service) setUnitBasePrices(
@@ -93,14 +93,44 @@ func (s *Service) setUnitBasePrices(
 		amounts[currency] = amount
 	}
 
-	// ListPrices returns EVERY price, including the ones with rules and the
-	// ones on a price list. Reading through the storefront-facing list would
-	// hand back a filtered set and the write below would delete the rest.
-	existing, err := s.ListPrices(ctx, priceSetID)
+	if err := s.ready(); err != nil {
+		return false, err
+	}
+	if err := requireID(priceSetID, models.PriceSetIDPrefix, "price set id"); err != nil {
+		return false, err
+	}
+
+	// The prices are read UNDER the set's lock, in the transaction that writes
+	// them back (D193): read before it, two writes to one set each wrote back
+	// the other's currency as it was, and one change was lost. The read is of
+	// EVERY price, the ones with rules and the ones on a price list included;
+	// a filtered read would have the write below delete the rest.
+	changed := false
+	_, err := s.repo.RevisePrices(ctx, priceSetID, func(existing []models.Price) ([]models.Price, bool, error) {
+		inputs, write, err := unitBaseInputs(priceSetID, existing, amounts)
+		if err != nil || !write {
+			return nil, false, err
+		}
+		built, err := s.buildPrices(priceSetID, inputs, s.clock())
+		if err != nil {
+			return nil, false, err
+		}
+		changed = true
+
+		return built, true, nil
+	}, s.clock)
 	if err != nil {
 		return false, err
 	}
 
+	return changed, nil
+}
+
+// unitBaseInputs is the set's prices with the base price at one unit set in
+// each named currency, and whether that changes anything.
+func unitBaseInputs(
+	priceSetID string, existing []models.Price, amounts map[string]int64,
+) ([]PriceInput, bool, error) {
 	inputs := make([]PriceInput, 0, len(existing)+len(amounts))
 	for i := range existing {
 		inputs = append(inputs, PriceInput{
@@ -131,13 +161,13 @@ func (s *Service) setUnitBasePrices(
 				changed = true
 			}
 		default:
-			return false, errors.Conflict(CodeUnitPriceAmbiguous,
+			return nil, false, errors.Conflict(CodeUnitPriceAmbiguous,
 				"the price set %s has %d base prices at one unit in %s; which one to change is not this write's to guess",
 				priceSetID, len(at), currency)
 		}
 	}
 	if !changed {
-		return false, nil
+		return nil, false, nil
 	}
 
 	// The order is pinned so the same edit writes the same rows every time and
@@ -146,11 +176,7 @@ func (s *Service) setUnitBasePrices(
 		return strings.Compare(a.CurrencyCode, b.CurrencyCode)
 	})
 
-	if _, err := s.SetPrices(ctx, priceSetID, inputs); err != nil {
-		return false, err
-	}
-
-	return true, nil
+	return inputs, true, nil
 }
 
 // unitBasePrices returns the indexes of the base prices at one unit in a

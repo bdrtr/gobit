@@ -24,6 +24,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Two price edits to one set no longer lose one of them** (D193). **For
+  operators:** saving a variant's price in one currency while another currency
+  of the same variant is saved, from the panel or a catalog import, keeps both
+  changes; before, one of the two was silently written back.
+
 - **The panel opens a return and a replacement with their detail**
   (ADR 0279). **For operators:** the order page's return form takes each
   line's part of the refund beside its quantity, and its replacement form

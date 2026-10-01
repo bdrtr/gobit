@@ -94,6 +94,14 @@ type Repository interface {
 	ListPriceCandidates(ctx context.Context, priceSetID string) ([]models.PriceCandidate, error)
 	// ReplacePrices reads the clock after it locks the set (ADR 0242).
 	ReplacePrices(ctx context.Context, priceSetID string, prices []models.Price, clock func() time.Time) ([]models.Price, error)
+	// RevisePrices locks the set, reads its prices and replaces them with what
+	// revise makes of them, all in one transaction, so a write that changes
+	// part of a set cannot write back a stale rest (D193).
+	RevisePrices(
+		ctx context.Context, priceSetID string,
+		revise func(current []models.Price) (next []models.Price, write bool, err error),
+		clock func() time.Time,
+	) ([]models.Price, error)
 	GetPrice(ctx context.Context, id string) (models.Price, error)
 
 	CreatePriceRule(ctx context.Context, rule models.PriceRule, now time.Time) (models.PriceRule, error)

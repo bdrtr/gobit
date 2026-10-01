@@ -145,6 +145,27 @@ func (s *stubRepo) ReplacePrices(
 	return s.replacePricesFn(ctx, priceSetID, prices, clock())
 }
 
+// RevisePrices reads through ListPrices and writes through ReplacePrices, so a
+// test that scripts those two scripts a revision, and the record says both ran.
+func (s *stubRepo) RevisePrices(
+	ctx context.Context,
+	priceSetID string,
+	revise func(current []models.Price) ([]models.Price, bool, error),
+	clock func() time.Time,
+) ([]models.Price, error) {
+	s.record("RevisePrices")
+	current, err := s.ListPrices(ctx, priceSetID)
+	if err != nil {
+		return nil, err
+	}
+	next, write, err := revise(current)
+	if err != nil || !write {
+		return current, err
+	}
+
+	return s.ReplacePrices(ctx, priceSetID, next, clock)
+}
+
 func (s *stubRepo) GetPrice(ctx context.Context, id string) (models.Price, error) {
 	s.record("GetPrice")
 	if s.getPriceFn == nil {

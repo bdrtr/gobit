@@ -178,22 +178,11 @@ func (r *Repo) ReplacePrices(
 		if _, err := q.GetPriceSetForUpdate(ctx, priceSetID); err != nil {
 			return notFoundOr(err, CodePriceSetNotFound, "price set not found: %s", priceSetID)
 		}
-		now := clock()
-
-		if err := q.DeletePricesBySet(ctx, priceSetID); err != nil {
-			return wrapDB(err, "eski fiyatlar silinemedi: %s", priceSetID)
-		}
 
 		var err error
-		written, err = insertPrices(ctx, q, priceSetID, prices, now)
-		if err != nil {
-			return err
-		}
+		written, err = replaceLocked(ctx, q, priceSetID, prices, clock())
 
-		// The replaced prices are deleted above, as ADR 0047 decided; what they
-		// were is kept in the snapshot before this one, and what replaced them
-		// in this one (ADR 0167).
-		return recordSetHistory(ctx, q, priceSetID, now)
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -275,6 +264,12 @@ func (r *Repo) GetPrice(ctx context.Context, id string) (models.Price, error) {
 // Fiyat başına sorgu açılmaz; maliyet fiyat sayısıyla değil, sabit bir gidiş
 // dönüşle sınırlıdır.
 func (r *Repo) attachRules(ctx context.Context, prices []models.Price) error {
+	return attachRulesWith(ctx, r.q, prices)
+}
+
+// attachRulesWith attaches the prices' rules read through q, so a read inside a
+// transaction sees the transaction's rows (D193).
+func attachRulesWith(ctx context.Context, q *pricingdb.Queries, prices []models.Price) error {
 	if len(prices) == 0 {
 		return nil
 	}
@@ -284,9 +279,9 @@ func (r *Repo) attachRules(ctx context.Context, prices []models.Price) error {
 		ids = append(ids, prices[i].ID)
 	}
 
-	rows, err := r.q.ListPriceRulesByPrices(ctx, ids)
+	rows, err := q.ListPriceRulesByPrices(ctx, ids)
 	if err != nil {
-		return wrapDB(err, "fiyat kuralları alınamadı")
+		return wrapDB(err, "the price rules could not be read")
 	}
 
 	byPrice := make(map[string][]models.PriceRule, len(prices))

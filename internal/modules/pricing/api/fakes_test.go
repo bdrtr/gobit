@@ -143,6 +143,25 @@ func (m *memRepo) ListPriceCandidates(_ context.Context, priceSetID string) ([]m
 	return out, nil
 }
 
+// RevisePrices reads and writes the set as ListPrices and ReplacePrices do.
+func (m *memRepo) RevisePrices(
+	ctx context.Context,
+	priceSetID string,
+	revise func(current []models.Price) ([]models.Price, bool, error),
+	clock func() time.Time,
+) ([]models.Price, error) {
+	current, err := m.ListPrices(ctx, priceSetID)
+	if err != nil {
+		return nil, err
+	}
+	next, write, err := revise(current)
+	if err != nil || !write {
+		return current, err
+	}
+
+	return m.ReplacePrices(ctx, priceSetID, next, clock)
+}
+
 func (m *memRepo) ReplacePrices(
 	_ context.Context,
 	priceSetID string,
