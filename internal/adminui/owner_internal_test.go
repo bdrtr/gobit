@@ -502,6 +502,13 @@ func (p recordingPayments) RecordReceived(
 	return "", 0, "", p.surfaces.reach(ServicePaymentAdmin)
 }
 
+// recordingPromotions records the promotion module's surface (ADR 0311).
+type recordingPromotions struct{ surfaces *recordingSurfaces }
+
+func (p recordingPromotions) PromotionsJSON(context.Context, string, int32, int32) (json.RawMessage, int64, error) {
+	return json.RawMessage(`[]`), 0, p.surfaces.reach(ServicePromotionAdmin)
+}
+
 // recordingCarts records the cart module's surface (ADR 0290).
 type recordingCarts struct{ surfaces *recordingSurfaces }
 
@@ -701,6 +708,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServiceOrderAdmin, AfterSalesAdmin(recordingAfterSales{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))
+	require.NoError(t, c.Provide(ServicePromotionAdmin, PromotionLister(recordingPromotions{walk.surfaces})))
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
 	ui, err := FromContainer(c, false, nil)

@@ -1,47 +1,50 @@
-// Package promotion promosyon modülüdür (plan Bölüm 6, Faz 7).
+// Package promotion is the promotion module (plan Section 6, Phase 7).
 //
-// Sorumluluğu tek cümleyle: bir sepetin hangi indirimleri hak ettiğini
-// hesaplamak ve kuponların kaç kez kullanıldığını saymak. Modül Campaign,
-// Promotion, ApplicationMethod, PromotionRule ve kullanım defteri verisinin TEK
-// yazma yetkilisidir (Prensip 2.3).
+// Its responsibility in one sentence: to compute which discounts a cart is
+// entitled to and to count how many times a coupon was used. The module is the
+// ONLY writer of the Campaign, Promotion, ApplicationMethod, PromotionRule and
+// usage ledger data (Principle 2.3).
 //
-// # Devraldığı iş
+// # The job it took over
 //
-// Faz 5'te sepet toplamının indirim alanı DAİMA SIFIRDI ve
-// internal/workflows/cart bunu "Faz 7'de promotion devralacak" notuyla
-// bırakmıştı. Devralma bu modülün [service.Service.ComputeDiscounts]
-// metoduyla olur; sepet akışı onu "promotion.interop" adıyla çözer ve
-// ComputeDiscountsJSON üzerinden çağırır.
+// In Phase 5 the discount field of the cart total was ALWAYS ZERO and
+// internal/workflows/cart left it with the note "promotion takes over in Phase
+// 7". The takeover is this module's [service.Service.ComputeDiscounts]; the
+// cart flow resolves it by the name "promotion.interop" and calls it through
+// ComputeDiscountsJSON.
 //
-// Vergi tabanı Faz 5'te BUGÜNDEN indirim sonrası tanımlanmıştı
-// (internal/workflows/cart paket yorumu, "Vergi sözleşmesi"), yani indirim
-// devreye girdiğinde vergi kendiliğinden doğru tabana oturur.
+// The tax base was defined in Phase 5 as AFTER the discount from the start
+// (the internal/workflows/cart package comment, "Tax contract"), so when the
+// discount comes into play the tax settles on the right base by itself.
 //
-// # Hesap ile kullanım AYRIDIR
+// # The computation and the usage are SEPARATE
 //
-// [service.Service.ComputeDiscounts] YAN ETKİSİZDİR: sepet her değiştiğinde
-// çağrılır ve hiçbir sayacı tüketmez. Kuponu fiilen harcayan
-// [service.Service.RedeemPromotion]'dır ve o idempotenttir; telafisi
-// [service.Service.ReleasePromotion] da öyledir (plan Bölüm 5.5).
+// [service.Service.ComputeDiscounts] HAS NO SIDE EFFECTS: it is called every
+// time the cart changes and consumes no counter. The one that actually spends
+// a coupon is [service.Service.RedeemPromotion], and it is idempotent; its
+// compensation [service.Service.ReleasePromotion] is too (plan Section 5.5).
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// promotion hiçbir modülü import etmez. Bir kullanımın hangi siparişe ait
-// olduğu serbest bir "reference" metnidir, foreign key DEĞİLDİR (Prensip 2.2)
-// ve varlığı burada doğrulanmaz; bağ, siparişin bildireceği link ile kurulur.
-// Bu yüzden bu modül HİÇBİR link tanımı bildirmez: bağın sahibi promosyon
-// değil, promosyona ihtiyaç duyan taraftır.
+// promotion imports no module. Which order a usage belongs to is a free
+// "reference" text, NOT a foreign key (Principle 2.2), and its existence is
+// not verified here; the bond is made by the link the order declares. That is
+// why this module declares NO link definition: the bond's owner is not the
+// promotion but the side that needs the promotion.
 //
-// # Dışarıya açtığı yüzeyler
+// # The surfaces it opens
 //
-//   - "promotion.service" — modül içi zengin yüzey (domain tipleriyle).
-//   - "promotion.interop" — modüller arası İLKEL yüzey (ADR 0001/0006); sepet
-//     akışı ve sipariş saga'sı indirimi buradan hesaplatır.
-//   - "promotion.query" — Query katmanına açılan okuma sağlayıcısı (ADR 0004);
-//     YALNIZCA aktif promosyonları ve dar bir alan kümesini döner.
-//   - /admin/v1/promotions, /admin/v1/campaigns … — yönetim API'si.
-//   - /store/v1/promotions/{code} — kupon doğrulama; taslak/pasif promosyonu ve
-//     kural koşullarını SIZDIRMAZ.
+//   - "promotion.service" — the rich in-module surface (with domain types).
+//   - "promotion.interop" — the cross-module PRIMITIVE surface (ADR
+//     0001/0006); the cart flow and the order saga compute the discount here.
+//   - "promotion.query" — the read provider opened to the Query layer (ADR
+//     0004); it returns ONLY active promotions and a narrow field set.
+//   - "promotion.admin" — the panel's surface (ADR 0311): the promotions in a
+//     status with their usage, which the read provider keeps out because it
+//     cannot tell a storefront from an operator.
+//   - /admin/v1/promotions, /admin/v1/campaigns … — the admin API.
+//   - /store/v1/promotions/{code} — coupon validation; it does NOT LEAK a
+//     draft/inactive promotion or the rule conditions.
 package promotion
 
 import (
@@ -63,57 +66,61 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/service"
 )
 
-// Container'daki adlar.
+// The names in the container.
 const (
-	// ModuleName modülün benzersiz adıdır; migration sürüm tablosunun öneki de
-	// budur.
+	// ModuleName is the module's unique name; it is also the prefix of the
+	// migration version table.
 	ModuleName = "promotion"
-	// ServiceName servisin container'daki adıdır.
+	// ServiceName is the service's name in the container.
 	//
-	// Başka modüller ve workflow'lar (ADR 0001/0006 gereği bu paketi import
-	// ETMEDEN) servise bu adla ulaşır ve KENDİ paketlerinde tanımladıkları dar
-	// bir arayüzle kullanır.
+	// Other modules and workflows (WITHOUT importing this package, as ADR
+	// 0001/0006 require) reach the service by this name and use it through a
+	// narrow interface they define in THEIR OWN package.
 	ServiceName = ModuleName + ".service"
-	// InteropName modüller arası ilkel yüzeyin container'daki adıdır (ADR 0006).
+	// InteropName is the container name of the cross-module primitive surface
+	// (ADR 0006).
 	//
-	// Servisin kendisinden AYRI kaydedilir: servis promotion'ın zengin
-	// tipleriyle konuşur, bu yüzey yalnızca ilkel ve stdlib tipleriyle.
+	// It is registered SEPARATELY from the service itself: the service speaks
+	// in promotion's rich types, this surface only in primitive and stdlib
+	// types.
 	InteropName = ModuleName + ".interop"
-	// ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
+	// ProviderName is the container name of the Query provider (ADR 0004).
 	ProviderName = service.Entity + query.ProviderSuffix
-	// dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
+	// AdminName is the container name of the panel's surface (ADR 0311).
+	AdminName = ModuleName + ".admin"
+	// dbServiceName is the container name of the core database pool.
 	dbServiceName = "core.db"
 )
 
-// codeSetupFailed modül kurulumunun başarısız olduğunu bildirir.
+// codeSetupFailed reports that the module's setup failed.
 const codeSetupFailed = "promotion_module_setup_failed"
 
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// Module promotion modülünün [module.Module] uygulamasıdır.
+// Module is the promotion module's [module.Module] implementation.
 type Module struct {
 	svc     *service.Service
 	handler *api.API
 	log     *slog.Logger
 }
 
-// Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
+// That the core contract is satisfied is pinned at compile time.
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe the document is pinned at compile time too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca promosyon uçları belgeden sessizce düşerdi. Bu satır o
-// sessizliği kapatır.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it with a TYPE ASSERTION; were the method's name or signature to drift,
+// nothing would break at compile time, the promotion endpoints would only drop
+// silently out of the document. This line closes that silence.
 var _ openapi.Describer = (*Module)(nil)
 
-// New kaydedilmeye hazır bir promotion modülü üretir; servis [Module.Register]
-// içinde kurulur. log nil ise loglar atılır.
+// New produces a promotion module ready to be registered; the service is built
+// in [Module.Register]. If log is nil the logs are discarded.
 //
-// Bağımlılıklar burada değil Register sırasında çözülür: container o ana kadar
-// çekirdek servisleri kurmuş olmayabilir.
+// Dependencies are resolved during Register, not here: the container may not
+// have set up the core services by this moment.
 func New(log *slog.Logger) *Module {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -121,38 +128,39 @@ func New(log *slog.Logger) *Module {
 	return &Module{log: log}
 }
 
-// Name modülün adını döner.
+// Name returns the module's name.
 func (m *Module) Name() string { return ModuleName }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 //
-// Kök dizin "migrations" alt klasörüne indirilir; golang-migrate dosyaları
-// kaynağın KÖKÜNDE arar ve embed.FS onları klasör adıyla birlikte taşırdı.
+// The root is moved down into the "migrations" subfolder; golang-migrate looks
+// for the files at the ROOT of the source, and embed.FS would carry them with
+// the folder's name.
 func (m *Module) Migrations() fs.FS {
 	sub, err := fs.Sub(migrationFiles, "migrations")
 	if err != nil {
-		// embed yolu derleme zamanında sabittir; buraya düşmek, migrations
-		// klasörünün gömülmediği anlamına gelir ve sessiz geçilemez.
-		panic("promotion: migration kaynağı açılamadı: " + err.Error())
+		// The embed path is fixed at compile time; landing here means the
+		// migrations folder was not embedded, and that cannot pass silently.
+		panic("promotion: the migration source could not be opened: " + err.Error())
 	}
 	return sub
 }
 
-// Register servisi, modüller arası yüzeyi ve Query sağlayıcısını container'a
-// kaydeder.
+// Register registers the service, the cross-module surface, the Query
+// provider and the panel's surface in the container.
 //
-// promotion hiçbir MODÜLÜN servisine ihtiyaç duymaz; yalnızca çekirdek havuzunu
-// çözer. Havuz Bootstrap'tan ÖNCE kaydedildiği için burada doğrudan çözmek
-// güvenlidir — modül sırasına bağımlılık yaratan tek şey başka bir MODÜLÜN
-// servisini çözmek olurdu ve bu yapılmaz.
+// promotion needs no MODULE's service; it resolves only the core pool. The pool
+// is registered BEFORE Bootstrap, so resolving it directly here is safe — the
+// only thing that would create a dependency on the module order is resolving
+// another MODULE's service, and that is not done.
 //
-// Link tanımı bildirilmez: bir siparişin hangi promosyonu kullandığı bağının
-// sahibi sipariş tarafıdır (bkz. paket yorumu).
+// No link definition is declared: the owner of the bond of which promotion an
+// order used is the order side (see the package comment).
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, dbServiceName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, dbServiceName)
+			"the %s module could not resolve the database pool (%q)", ModuleName, dbServiceName)
 	}
 
 	svc := service.New(repository.New(pool.Pool()), service.Options{Logger: m.log})
@@ -163,29 +171,33 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
 		return err
 	}
-	// Sağlayıcı adı "<entity>.query" biçimindedir; Query onu bu adla arar ve
-	// Entity() ile adın örtüştüğünü doğrular (ADR 0004).
+	// The provider's name is "<entity>.query"; Query looks for it by this name
+	// and verifies through Entity() that the name matches (ADR 0004).
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(AdminName, NewAdminSurface(svc)); err != nil {
 		return err
 	}
 
 	m.svc = svc
 	m.handler = api.New(svc).WithTrial(&promotionTrial{c: c, log: m.log})
 
-	m.log.InfoContext(ctx, "promotion modülü kaydedildi",
-		slog.String("servis", ServiceName),
+	m.log.InfoContext(ctx, "promotion module registered",
+		slog.String("service", ServiceName),
 		slog.String("interop", InteropName),
-		slog.String("saglayici", ProviderName),
+		slog.String("provider", ProviderName),
+		slog.String("admin", AdminName),
 	)
 	return nil
 }
 
-// Routes modülün admin ve store route'larını router'a bağlar.
+// Routes binds the module's admin and store routes to the router.
 //
-// Register'dan SONRA çağrılır (bkz. module.Registry.Bootstrap); handler bu
-// yüzden kurulmuş olur. Yine de nil kontrolü vardır: Register hata verip
-// Bootstrap yarıda kesilirse Routes hiç çağrılmaz, ama modül elle kullanılırsa
-// panik yerine sessiz bir no-op daha güvenlidir.
+// It is called AFTER Register (see module.Registry.Bootstrap), so the handler
+// is built. There is a nil check all the same: if Register fails and Bootstrap
+// is cut short Routes is never called, but if the module is used by hand a
+// silent no-op is safer than a panic.
 func (m *Module) Routes(r chi.Router) {
 	if m.handler == nil {
 		return
@@ -193,19 +205,20 @@ func (m *Module) Routes(r chi.Router) {
 	m.handler.Routes(r)
 }
 
-// Describe modülün uçlarını OpenAPI belgesine işler.
+// Describe writes the module's endpoints into the OpenAPI document.
 //
-// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
-// DTO'larından türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
-// yüzeyini genişletirdi.
+// The description itself is in [api.Describe]: the body schemas are derived
+// from that package's unexported DTOs, and exporting the types for the
+// document's sake alone would widen the module's surface.
 //
-// [Module.Routes]'un tersine handler kontrolü YOKTUR ve gerekmez: şema
-// tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
-// belgesini de sessizce boşaltırdı.
+// Unlike [Module.Routes] there is NO handler check, and none is needed: the
+// schema comes from the types, not from the service. A check would also
+// silently empty the document of a module that was not set up.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// Service kurulmuş servisi döner; Register çağrılmadıysa nil.
+// Service returns the built service; nil if Register was not called.
 //
-// Modülü doğrudan kullanan testler ve gömen uygulamalar içindir; normal akışta
-// servis container'dan [ServiceName] adıyla çözülür.
+// It is for the tests and the embedding applications that use the module
+// directly; in the normal flow the service is resolved from the container by
+// the name [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }

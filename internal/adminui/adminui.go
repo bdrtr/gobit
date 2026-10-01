@@ -192,8 +192,11 @@ type UI struct {
 	payments PaymentReceiver
 	// carts builds a telephone order (ADR 0290); nil when the installation
 	// registers none.
-	carts  TelephoneCarts
-	scopes map[string]string
+	carts TelephoneCarts
+	// promotions lists the shop's promotions (ADR 0311); nil when the
+	// installation registers none.
+	promotions PromotionLister
+	scopes     map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -275,6 +278,12 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And so is the promotions screen: without the promotion module's surface
+	// it answers 503 (ADR 0311).
+	promotions, err := optionalService[PromotionLister](c, ServicePromotionAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -303,6 +312,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		afterSales:    afterSales,
 		payments:      payments,
 		carts:         carts,
+		promotions:    promotions,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

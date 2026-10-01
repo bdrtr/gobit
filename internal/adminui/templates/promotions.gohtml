@@ -1,0 +1,47 @@
+{{- /*
+promotions.gohtml lists the shop's promotions in one status (ADR 0311).
+
+The rows come from the promotion module's panel surface: its read provider
+keeps drafts, inactive promotions and usage out, because the read layer cannot
+tell a storefront from an operator. A promotion with no code is applied by
+itself and says so.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+<nav aria-label="Status">
+  {{ range .Statuses }}
+  <a href="{{ $.Path }}?status={{ . }}"{{ if eq . $.Status }} aria-current="page"{{ end }}>{{ . }}</a>
+  {{ end }}
+</nav>
+
+<p class="muted">{{ .Total }} {{ .Status }}.</p>
+
+{{ if .Promotions }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Code</th><th>Type</th><th class="num">Used</th><th>Created</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Promotions }}
+    <tr>
+      <td>{{ if .IsAutomatic }}<span class="pill">automatic</span>{{ else }}{{ .Code }}{{ end }}</td>
+      <td>{{ .Type }}</td>
+      <td class="num">{{ .UsageCount }}{{ with .UsageLimit }} of {{ . }}{{ end }}</td>
+      <td>{{ if not .CreatedAt.IsZero }}{{ .CreatedAt.Format "2006-01-02" }}{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No promotion is {{ .Status }}.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?status={{ .Status }}&amp;page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?status={{ .Status }}&amp;page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

@@ -164,11 +164,13 @@ func builtInScopes() map[string]string {
 		// The sales report is made of order lines and shows what they sold for.
 		// It names no scope of its own because it holds no data of its own: an
 		// operator who may read the orders may read their total.
-		routeKey(get, SalesPath):         scopeOrderRead,
-		routeKey(get, CustomersPath):     scopeCustomerRead,
-		routeKey(get, CustomerPath):      scopeCustomerRead,
-		routeKey(get, InventoryPath):     scopeInventoryRead,
-		routeKey(get, ReviewsPath):       scopeReviewRead,
+		routeKey(get, SalesPath):     scopeOrderRead,
+		routeKey(get, CustomersPath): scopeCustomerRead,
+		routeKey(get, CustomerPath):  scopeCustomerRead,
+		routeKey(get, InventoryPath): scopeInventoryRead,
+		routeKey(get, ReviewsPath):   scopeReviewRead,
+		// The promotions are the promotion module's (ADR 0311).
+		routeKey(get, PromotionsPath):    scopePromotionRead,
 		routeKey(get, ReviewsScriptPath): scopeReviewRead,
 	}
 }

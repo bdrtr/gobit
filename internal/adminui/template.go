@@ -88,6 +88,7 @@ var pages = []string{
 	"product.gohtml",
 	"product_edit.gohtml",
 	"product_new.gohtml",
+	"promotions.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -280,6 +281,8 @@ func sections() []navItem {
 		// wants the period around it should not have to cross the whole menu to
 		// get there.
 		{Label: salesLabel, Path: SalesPath},
+		// The promotions sit beside the sales they discount (ADR 0311).
+		{Label: promotionsLabel, Path: PromotionsPath},
 		{Label: customersLabel, Path: CustomersPath},
 		{Label: inventoryLabel, Path: InventoryPath},
 		// The reviews sit LAST, and not because they matter least: they are

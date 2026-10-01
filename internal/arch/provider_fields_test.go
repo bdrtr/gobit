@@ -834,6 +834,16 @@ func publishedProviderFields(t *testing.T) map[string][]string {
 	return out
 }
 
+// panelSurfaceContracts are the panel files whose struct tags spell a module
+// SURFACE's JSON, not the read layer's fields, and the reason each is not read
+// through the read layer. Their tags are a contract with that surface, held
+// end to end; their record indexes are still read.
+var panelSurfaceContracts = map[string]string{
+	// The read provider returns only active promotions and leaves the usage
+	// out, so the panel lists them through promotion.admin (ADR 0311).
+	"promotions.go": "promotion.admin's listing",
+}
+
 // panelReadFields returns every field name the admin panel names in its own
 // production source.
 func panelReadFields(t *testing.T) []string {
@@ -855,9 +865,12 @@ func panelReadFields(t *testing.T) []string {
 			return readErr
 		}
 
+		_, surfaceJSON := panelSurfaceContracts[filepath.Base(path)]
 		for _, match := range panelFieldReference.FindAllStringSubmatch(string(body), -1) {
-			for _, name := range match[1:] {
-				if name != "" {
+			for i, name := range match[1:] {
+				// The first group is a struct tag, which in a surface's
+				// contract names that surface's JSON.
+				if name != "" && (i > 0 || !surfaceJSON) {
 					seen[name] = true
 				}
 			}
@@ -875,4 +888,15 @@ func panelReadFields(t *testing.T) []string {
 	sort.Strings(out)
 
 	return out
+}
+
+// TestEverySurfaceContractFileExists keeps the exemption honest: a file named
+// above that no longer exists would excuse whatever file takes its name.
+func TestEverySurfaceContractFileExists(t *testing.T) {
+	t.Parallel()
+
+	for name, why := range panelSurfaceContracts {
+		_, err := os.Stat(filepath.Join(repoRoot, "internal", "adminui", name))
+		assert.NoError(t, err, "%s is exempted as %s and does not exist", name, why)
+	}
 }

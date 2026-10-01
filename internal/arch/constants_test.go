@@ -46,6 +46,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
+	"github.com/bdrtr/gobit/internal/modules/promotion"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 	cartflow "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
@@ -1016,6 +1017,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	assert.Equal(t, moduleKinds, adminui.RelationKinds(),
 		"the panel must offer every kind of relation the product module keeps, in its order")
 
+	assert.Equal(t, promotion.AdminName, adminui.ServicePromotionAdmin,
+		"the panel's promotion surface name must match the promotion module (ADR 0311)")
 	assert.Equal(t, product.AdminName, adminui.ServiceProductAdmin,
 		"the panel's product write surface name must match the product module")
 	assert.Equal(t, pricing.AdminName, adminui.ServicePricingAdmin,

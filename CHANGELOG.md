@@ -39,6 +39,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel lists the promotions** (ADR 0311). **For operators:** a
+  Promotions screen lists the active, draft and inactive promotions with how
+  often each was used against its limit, under `promotion:read`.
+
 - **A variant begins to keep its stock in the panel** (ADR 0310). **For
   operators:** a variant without an inventory item offers a button that has
   one made and linked, after which the stock form counts it at each location;

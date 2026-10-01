@@ -110,6 +110,12 @@
 // aggregate, and that surface belongs to the module rather than to a loop in a
 // handler.
 //
+// The Promotions screen ([UI.listPromotions]) lists the shop's promotions in
+// one status at a time with their usage, and it reads them through the
+// promotion module's panel surface rather than the read layer: the read
+// provider returns only active promotions and leaves the usage out, because it
+// cannot tell a storefront from an operator (ADR 0311).
+//
 // # Response bodies go through core's writer
 //
 // HTML is never STREAMED to the writer. The template is rendered into memory
