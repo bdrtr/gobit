@@ -519,6 +519,14 @@ func (p recordingPromotions) CreateCoupon(
 	return "promo_walk", p.surfaces.reach(ServicePromotionAdmin)
 }
 
+func (p recordingPromotions) AddPromotionRule(context.Context, string, string, string, string, []string) error {
+	return p.surfaces.reach(ServicePromotionAdmin)
+}
+
+func (p recordingPromotions) RemovePromotionRule(context.Context, string, string) error {
+	return p.surfaces.reach(ServicePromotionAdmin)
+}
+
 func (p recordingPromotions) PromotionJSON(context.Context, string) (json.RawMessage, error) {
 	return json.RawMessage(`{"rules":[],"latest_uses":[]}`), p.surfaces.reach(ServicePromotionAdmin)
 }
@@ -697,6 +705,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, CartDiscardPath):    {},
 	// Switching a promotion's status (ADR 0312).
 	routeKey(http.MethodPost, PromotionStatusPath): {formStatusFrom: {"active"}, formStatusTo: {"inactive"}},
+	// A promotion's rules (ADR 0315).
+	routeKey(http.MethodPost, PromotionRulesPath):      {formCategory: {"pcat_walk"}},
+	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
 	// Writing a coupon (ADR 0314).
 	routeKey(http.MethodPost, PromotionsPath): {
 		formCouponCode: {"WALK"}, formCouponMeasure: {"percentage"}, formCouponAmount: {"10"}, formCouponTarget: {"order"},

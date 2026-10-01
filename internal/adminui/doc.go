@@ -121,7 +121,9 @@
 // page ([UI.showPromotion]): its discount, rules, campaign and latest uses,
 // read through the same surface (ADR 0313). Its form writes a draft coupon
 // with its discount ([UI.createCoupon]), which the module writes in one
-// transaction (ADR 0314).
+// transaction (ADR 0314). The page limits a discount on items to categories
+// and removes a rule ([UI.addCategoryRule], [UI.removeRule]); the categories
+// are the product module's, read only for an operator who may (ADR 0315).
 //
 // # Response bodies go through core's writer
 //

@@ -25,6 +25,10 @@ func NewAdminSurface(svc *service.Service) *AdminSurface { return &AdminSurface{
 // codeAdminReadFailed reports a listing that could not be encoded.
 const codeAdminReadFailed = "promotion_admin_read_failed"
 
+// codeRuleNotOnPromotion refuses removing a rule through a promotion it is
+// not on (ADR 0315).
+const codeRuleNotOnPromotion = "promotion_rule_not_on_promotion"
+
 // adminPromotion is one promotion as the panel lists it; the json tags are the
 // contract with the panel, which cannot import this package.
 type adminPromotion struct {
@@ -109,6 +113,7 @@ type adminMethod struct {
 
 // adminRule is one condition a promotion holds to.
 type adminRule struct {
+	ID        string   `json:"id"`
 	Type      string   `json:"type"`
 	Attribute string   `json:"attribute"`
 	Operator  string   `json:"operator"`
@@ -183,7 +188,7 @@ func (a *AdminSurface) PromotionJSON(ctx context.Context, id string) (json.RawMe
 	}
 	for i := range rules {
 		page.Rules = append(page.Rules, adminRule{
-			Type: string(rules[i].RuleType), Attribute: rules[i].Attribute,
+			ID: rules[i].ID, Type: string(rules[i].RuleType), Attribute: rules[i].Attribute,
 			Operator: string(rules[i].Operator), Values: rules[i].Values,
 		})
 	}
@@ -232,4 +237,38 @@ func (a *AdminSurface) CreateCoupon(
 	}
 
 	return promo.ID, nil
+}
+
+// AddPromotionRule adds a rule to the promotion (ADR 0315): ruleType is
+// "context", "target" or "buy", and operator one of the module's operators.
+func (a *AdminSurface) AddPromotionRule(
+	ctx context.Context, promotionID, ruleType, attribute, operator string, values []string,
+) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
+	}
+
+	_, err := a.svc.AddPromotionRule(ctx, promotionID, service.RuleInput{
+		RuleType: models.RuleType(ruleType), Attribute: attribute,
+		Operator: models.RuleOperator(operator), Values: values,
+	})
+	return err
+}
+
+// RemovePromotionRule removes the rule from the promotion (ADR 0315); a rule
+// of another promotion is not found, so a page can remove only what it shows.
+func (a *AdminSurface) RemovePromotionRule(ctx context.Context, promotionID, ruleID string) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
+	}
+
+	rule, err := a.svc.GetPromotionRule(ctx, ruleID)
+	if err != nil {
+		return err
+	}
+	if rule.PromotionID != promotionID {
+		return errors.NotFound(codeRuleNotOnPromotion, "promotion %s has no rule %s", promotionID, ruleID)
+	}
+
+	return a.svc.DeletePromotionRule(ctx, ruleID)
 }

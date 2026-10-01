@@ -5,10 +5,18 @@ Everything on it comes from the promotion module's panel surface: what the
 promotion gives, the rules a cart must meet, the campaign it belongs to and
 its latest uses, newest first. A promotion with no discount applies nothing,
 and the page says so rather than leaving the section out.
+
+An operator who may write promotions removes a rule here, and limits a
+discount that lands on items to categories (ADR 0315): one target rule that
+matches an item filed under any of the chosen categories or under one of
+their descendants. The categories are offered, and named in the rules, only
+to an operator who may read the catalog.
 */ -}}
 {{ define "body" }}
 <p><a href="{{ .Path }}?status={{ .Promotion.Status }}">Promotions</a></p>
 <h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
 
 <table>
   <tbody>
@@ -35,19 +43,40 @@ and the page says so rather than leaving the section out.
 {{ end }}
 
 <h2>Rules</h2>
-{{ if .Promotion.Rules }}
+{{ if .Rules }}
+<p class="muted">The promotion applies only where every rule holds.</p>
 <div class="scroll">
 <table>
-  <thead><tr><th>Kind</th><th>Attribute</th><th>Operator</th><th>Values</th></tr></thead>
+  <thead><tr><th>Kind</th><th>Attribute</th><th>Operator</th><th>Values</th>{{ if .CanEditRules }}<th></th>{{ end }}</tr></thead>
   <tbody>
-  {{ range .Promotion.Rules }}
-    <tr><td>{{ .Type }}</td><td>{{ .Attribute }}</td><td>{{ .Operator }}</td><td>{{ range $i, $v := .Values }}{{ if $i }}, {{ end }}{{ $v }}{{ end }}</td></tr>
+  {{ range .Rules }}
+    <tr><td>{{ .Type }}</td><td>{{ .Attribute }}</td><td>{{ .Operator }}</td><td>{{ .Values }}</td>
+      {{ if $.CanEditRules }}<td>
+        <form method="post" action="{{ $.Path }}/{{ $.Promotion.ID }}/rules/{{ .ID }}/remove">
+          <button type="submit">Remove</button>
+        </form>
+      </td>{{ end }}
+    </tr>
   {{ end }}
   </tbody>
 </table>
 </div>
 {{ else }}
 <p class="muted">No rule is set.</p>
+{{ end }}
+
+{{ with .Categories }}
+<form method="post" action="{{ $.Path }}/{{ $.Promotion.ID }}/rules">
+  <p>Only on items in these categories, or in a category under them:</p>
+  {{ if .Unavailable }}
+  <p class="muted">The categories could not be read.</p>
+  {{ else }}
+  <select name="category" multiple aria-label="categories" size="6">
+    {{ range .Options }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+  </select>
+  <button type="submit">Limit the discount</button>
+  {{ end }}
+</form>
 {{ end }}
 
 <h2>Campaign</h2>

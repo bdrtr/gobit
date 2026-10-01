@@ -175,7 +175,10 @@ func builtInScopes() map[string]string {
 		routeKey(post, PromotionStatusPath): scopePromotionWrite,
 		routeKey(get, PromotionPath):        scopePromotionRead,
 		routeKey(post, PromotionsPath):      scopePromotionWrite,
-		routeKey(get, ReviewsScriptPath):    scopeReviewRead,
+		// A promotion's rules (ADR 0315).
+		routeKey(post, PromotionRulesPath):      scopePromotionWrite,
+		routeKey(post, PromotionRuleRemovePath): scopePromotionWrite,
+		routeKey(get, ReviewsScriptPath):        scopeReviewRead,
 	}
 }
 

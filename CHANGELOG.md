@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A promotion is limited to categories in the panel** (ADR 0315). **For
+  operators:** a promotion's page limits a discount on items to chosen
+  categories and their subcategories, names the categories of its rules, and
+  removes a rule, under `promotion:write`; choosing categories needs
+  `product:read` as well.
+
 - **The panel writes a coupon** (ADR 0314). **For operators:** the Promotions
   screen writes a draft coupon worth a percentage or an amount off, with an
   optional usage limit, under `promotion:write`, and opens its page; the
