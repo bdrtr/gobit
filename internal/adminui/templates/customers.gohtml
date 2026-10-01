@@ -9,9 +9,19 @@ session.
 
 A shop's GUEST records outnumber its accounts, so the two are told apart in
 their own column: it is the first thing an operator looks for on this screen.
+
+The search finds the records holding one e-mail, as the customer module
+stores it (ADR 0302).
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
+
+<form method="get" action="{{ .Path }}" role="search">
+  <input name="email" value="{{ .Email }}" placeholder="e-mail" aria-label="find a customer by e-mail" type="email">
+  <button type="submit">Find</button>
+  {{ if .Email }}<a href="{{ .Path }}">All customers</a>{{ end }}
+</form>
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
 
 {{ if .Customers }}
 <div class="scroll">
@@ -41,13 +51,15 @@ their own column: it is the first thing an operator looks for on this screen.
   </tbody>
 </table>
 </div>
+{{ else if .Email }}
+{{ if not .Refused }}<p class="muted">No customer holds {{ .Email }}.</p>{{ end }}
 {{ else }}
 <p class="muted">No customers on this page.</p>
 {{ end }}
 
 <nav>
-  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ with .Email }}&amp;email={{ . }}{{ end }}">Previous</a>{{ end }}
   <span class="muted">Page {{ .Page }}</span>
-  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ with .Email }}&amp;email={{ . }}{{ end }}">Next</a>{{ end }}
 </nav>
 {{ end }}

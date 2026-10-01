@@ -39,6 +39,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The customer list finds a customer by e-mail** (ADR 0302). **For
+  operators:** the panel's customer list takes an e-mail, in any case, and
+  lists the account and the guest records holding it.
+
 - **An abandoned cart is deleted after the shop's period** (ADR 0301). **For
   operators:** `CART_RETENTION_DAYS` names how many days an open cart is kept
   after its last change; the hourly `cart-retention` job then deletes it for

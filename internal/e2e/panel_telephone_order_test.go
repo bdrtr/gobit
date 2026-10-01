@@ -302,3 +302,28 @@ func TestAnOperatorCorrectsATelephoneCartInThePanel(t *testing.T) {
 	gone := send(http.MethodGet, cartPath, nil)
 	assert.Equal(t, http.StatusNotFound, gone.Code, gone.Body.String())
 }
+
+// TestAnOperatorFindsACustomerByEmailInThePanel is ADR 0302 on the
+// production wiring: the customer list finds the customer an e-mail spelled
+// in any case names, through the real customer provider, and lists no other.
+func TestAnOperatorFindsACustomerByEmailInThePanel(t *testing.T) {
+	ctx := t.Context()
+	customerID, email := newCustomer(ctx, t)
+	otherID, _ := newCustomer(ctx, t)
+
+	panel, err := adminui.FromContainer(ctr, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+
+	req := httptest.NewRequest(http.MethodGet, adminui.CustomersPath+"?email="+url.QueryEscape(strings.ToUpper(email)), http.NoBody)
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+		ID: "usr_desk", Kind: "user", Scopes: []string{"customer:read"},
+	}))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), adminui.CustomersPath+"/"+customerID)
+	assert.NotContains(t, rec.Body.String(), otherID, "only the records holding the e-mail are listed")
+}

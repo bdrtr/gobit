@@ -437,7 +437,7 @@ func (u *UI) renderOpenForm(w http.ResponseWriter, r *http.Request, status int, 
 	u.templates.render(w, r, status, "carts.gohtml", map[string]any{
 		titleKey:    telephoneLabel,
 		"CartsPath": CartsPath,
-		"Refused":   refused,
+		refusedKey:  refused,
 		"Typed":     typed,
 		"CanList":   canList,
 		"Open":      open,
@@ -559,7 +559,7 @@ func (u *UI) renderCart(
 		"Search":      search,
 		"Found":       found,
 		"FindFailed":  findFailed,
-		"Refused":     refused,
+		refusedKey:    refused,
 		"Typed":       typed,
 		// AddressFields orders the address form (ADR 0291).
 		"AddressFields": addressFields,

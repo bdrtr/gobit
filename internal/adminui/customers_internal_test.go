@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/query"
 )
@@ -144,4 +145,57 @@ func TestTheMenuCarriesEverySection(t *testing.T) {
 	}
 
 	assert.Contains(t, body, `href="`+CustomersPath+`" aria-current="page"`)
+}
+
+// TestTheCustomerListFindsACustomerByEmail is ADR 0302: the search asks the
+// customer module for the records holding the e-mail, keeps it in the box
+// and in the paging, and says when none holds it or the address is not one;
+// without a search nothing is filtered.
+func TestTheCustomerListFindsACustomerByEmail(t *testing.T) {
+	t.Parallel()
+
+	rows := make([]query.Record, customersPerPage+1)
+	for i := range rows {
+		rows[i] = query.Record{"id": "cus_" + string(rune('a'+i%26)), "email": "ada@example.test", "has_account": i == 0}
+	}
+	catalog := &fakeCatalog{byEntity: map[string][]query.Record{EntityCustomer: rows}}
+	rec := getCustomerPage(newCatalogPanel(t, catalog), CustomersPath+"?email=+Ada%40Example.test+")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotEmpty(t, catalog.specs)
+	assert.Equal(t, map[string]any{filterCustomerEmail: "Ada@Example.test"}, catalog.specs[0].Filters,
+		"the address is trimmed and handed to the module, which normalizes it")
+	assert.Contains(t, rec.Body.String(), `name="email" value="Ada@Example.test"`)
+	assert.Contains(t, rec.Body.String(), `?page=2&amp;email=Ada%40Example.test"`, "the next page keeps the search")
+
+	none := &fakeCatalog{byEntity: map[string][]query.Record{}}
+	rec = getCustomerPage(newCatalogPanel(t, none), CustomersPath+"?email=nobody%40example.test")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "No customer holds nobody@example.test.")
+
+	invalid := &fakeCatalog{errByEntity: map[string]error{
+		EntityCustomer: errors.Invalid("customer_invalid_input", "not an address"),
+	}}
+	rec = getCustomerPage(newCatalogPanel(t, invalid), CustomersPath+"?email=not-an-address")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "That is not an e-mail address.")
+	assert.NotContains(t, rec.Body.String(), "No customer holds")
+
+	plain := &fakeCatalog{byEntity: map[string][]query.Record{EntityCustomer: {}}}
+	rec = getCustomerPage(newCatalogPanel(t, plain), CustomersPath)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, plain.specs[0].Filters)
+	assert.NotContains(t, rec.Body.String(), "All customers")
+}
+
+// TestABrokenCustomerReadIsStillTheScreensFault: an invalid read with no
+// search is the screen asking for what the module does not offer, as before.
+func TestABrokenCustomerReadIsStillTheScreensFault(t *testing.T) {
+	t.Parallel()
+
+	broken := &fakeCatalog{errByEntity: map[string]error{
+		EntityCustomer: errors.Invalid("customer_invalid_input", "no such field"),
+	}}
+	rec := getCustomerPage(newCatalogPanel(t, broken), CustomersPath)
+	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
 }

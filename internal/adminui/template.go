@@ -31,6 +31,10 @@ const layoutFile = "templates/layout.gohtml"
 // data map would render that page with an empty <title> and nothing would fail.
 const titleKey = "Title"
 
+// refusedKey is the template data key carrying a refused write's or search's
+// reason, printed as an alert.
+const refusedKey = "Refused"
+
 // errorKey is the template key carrying a message meant for the operator.
 //
 // It is a constant for the same reason titleKey is: three pages fill it and a

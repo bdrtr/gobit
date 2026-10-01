@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
 )
 
@@ -24,6 +25,10 @@ const (
 	fieldHasAccount = "has_account"
 	fieldCreatedAt  = "created_at"
 )
+
+// paramCustomerEmail is the customer list's search: an e-mail, matched
+// exactly as the customer module stores it (ADR 0302).
+const paramCustomerEmail = "email"
 
 // customersLabel is what the section is called on screen.
 const customersLabel = "Customers"
@@ -56,6 +61,13 @@ type customerRow struct {
 // and for the same reason (ADR 0011).
 func (u *UI) listCustomers(w http.ResponseWriter, r *http.Request) {
 	page := pageNumber(r.URL.Query().Get("page"))
+	// The search finds the records holding one e-mail, the account and the
+	// guest records alike (ADR 0302).
+	email := strings.TrimSpace(r.URL.Query().Get(paramCustomerEmail))
+	var filters map[string]any
+	if email != "" {
+		filters = map[string]any{filterCustomerEmail: email}
+	}
 
 	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
 		Entity: EntityCustomer,
@@ -63,10 +75,18 @@ func (u *UI) listCustomers(w http.ResponseWriter, r *http.Request) {
 			fieldID, fieldEmail, fieldFirstName, fieldLastName,
 			fieldHasAccount, fieldCreatedAt,
 		},
-		Limit:  customersPerPage + 1,
-		Offset: (page - 1) * customersPerPage,
+		Filters: filters,
+		Limit:   customersPerPage + 1,
+		Offset:  (page - 1) * customersPerPage,
 	})
-	if err != nil {
+	refused := ""
+	switch {
+	case err != nil && email != "" && errors.IsInvalid(err):
+		// The provider refuses an address it cannot normalize; that is the
+		// operator's typing, not the screen's bug.
+		refused = "That is not an e-mail address."
+		records = nil
+	case err != nil:
 		u.catalogFailure(w, r, err, "The customer list could not be read.")
 
 		return
@@ -85,6 +105,8 @@ func (u *UI) listCustomers(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		titleKey:    customersLabel,
 		"Customers": rows,
+		"Email":     email,
+		refusedKey:  refused,
 	}
 	addPaging(data, page, hasNext, CustomersPath)
 
