@@ -147,14 +147,15 @@ past and is not corrected retroactively.
   every storefront. `status` is what hides it. The single source of the rule is
   the SQL template in
   `internal/modules/product/repository/saleschannel.go`.
-- **The scope is enforced ON ENTRY; the quantity of a line already in the cart
-  can be raised afterwards.** The path that updates a line quantity
-  (`internal/workflows/cart/update_line_item.go`) and the completion flow do not
-  ask the scope again. The consequence: even after a product has been moved to
-  another channel, a client that already has a line for it in its cart can buy
-  MORE of that product. This is the price of the decision whose justification is
-  written with the sales channel rule in [`docs/security.md`](security.md) — the
-  alternative was a catalog edit making a customer's full cart unpayable.
+- **The scope is enforced when units enter the cart, not at completion.** A line
+  is scoped when it is added and again when its quantity rises
+  ([ADR 0281](adr/0281-raising-a-line-asks-the-channel-again.md)); lowering it,
+  removing it and completing the cart ask nothing. So a product moved to another
+  channel after it entered a cart can still be bought in the quantity the cart
+  holds, and no more of it. Asking at completion too was refused: a catalog edit
+  would make a customer's full cart unpayable, the alternative whose
+  justification is written with the sales channel rule in
+  [`docs/security.md`](security.md).
 
 ## The category tree
 

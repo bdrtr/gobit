@@ -24,6 +24,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **Raising a line asks the channel again** (ADR 0281). **For integrators:**
+  `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` raising the quantity
+  of a line whose product is no longer in the key's sales channels answers 404,
+  as adding it would; lowering it, removing it and completing the cart are
+  unchanged.
+
 - **A price and a count name what they were drawn with** (ADR 0280). **For
   operators:** saving a variant's price or a location's physical count in the
   panel over a value that changed since the page was drawn — another

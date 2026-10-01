@@ -335,3 +335,53 @@ func TestAnOutOfScopeVariantDoesNotRevealItsExistence(t *testing.T) {
 	assert.Equal(t, errorSummary(t, missing)[0], errorSummary(t, hidden)[0],
 		"an out-of-scope variant and a nonexistent variant must return the SAME error code")
 }
+
+// TestALineWhoseProductLeftTheChannelCannotGrow is ADR 0281 through the
+// storefront: a line added while its product was in the key's channel cannot
+// be raised once the product has moved to another channel — the same 404 an
+// add gets — and can still be kept as it is.
+func TestALineWhoseProductLeftTheChannelCannotGrow(t *testing.T) {
+	ctx := t.Context()
+	catalog := channelCatalogFixture(t)
+
+	variantID, err := setUpChannelCartVariant(ctx, "leaving", testChannelID)
+	require.NoError(t, err)
+	cartID := openCartWithKey(t, publishableKey)
+	require.Equal(t, http.StatusCreated, tryAddLineItem(t, publishableKey, cartID, variantID).Code)
+	lineID := firstLineID(t, publishableKey, cartID)
+
+	variant, err := productSvc.GetVariant(ctx, variantID)
+	require.NoError(t, err)
+	require.NoError(t, bindChannel(variant.ProductID, catalog.secondChannelID))
+	unbound, err := adminRequestWithBody(http.MethodDelete,
+		"/admin/v1/products/"+variant.ProductID+"/sales-channels/"+testChannelID, nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, unbound.Code, unbound.Body.String())
+
+	path := "/store/v1/carts/" + cartID + "/line-items/" + lineID
+	raised := keyedStorefrontRequest(t, publishableKey, http.MethodPatch, path, `{"quantity":2}`)
+	assert.Equal(t, http.StatusNotFound, raised.Code,
+		"no more of a product the key's channel no longer sells; body: %s", raised.Body.String())
+
+	kept := keyedStorefrontRequest(t, publishableKey, http.MethodPatch, path, `{"quantity":1}`)
+	assert.Equal(t, http.StatusOK, kept.Code, "the line as it is stays payable; body: %s", kept.Body.String())
+}
+
+// firstLineID reads the identity of the cart's first line.
+func firstLineID(t *testing.T, key, cartID string) string {
+	t.Helper()
+
+	recorder := keyedStorefrontRequest(t, key, http.MethodGet, "/store/v1/carts/"+cartID, "")
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var envelope struct {
+		Data struct {
+			Items []struct {
+				ID string `json:"id"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
+	require.NotEmpty(t, envelope.Data.Items)
+
+	return envelope.Data.Items[0].ID
+}

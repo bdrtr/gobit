@@ -111,6 +111,8 @@ func TestUpdateLineItemRejectsQuantityAboveCap(t *testing.T) {
 // cannot be written the calculation never runs at all.
 func TestUpdateLineItemWriteFailureDoesNotAttemptTotals(t *testing.T) {
 	h := newHarness(t)
+	serveSnapshot(h.carts,
+		snapshotOf(4, []SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 2}}, nil))
 	h.carts.setQtyFn = func(_ context.Context, _, lineItemID string, _ int64) error {
 		return errors.NotFound("cart_line_item_not_found", "line item not in cart: %s", lineItemID)
 	}
@@ -122,7 +124,8 @@ func TestUpdateLineItemWriteFailureDoesNotAttemptTotals(t *testing.T) {
 	assert.True(t, errors.IsNotFound(err))
 	assert.NotEqual(t, CodeTotalsAfterChange, errors.CodeOf(err),
 		"the cart did NOT change; the error must not be tagged 'applied but not computed'")
-	assert.Zero(t, h.carts.snapshotCalls)
+	assert.Equal(t, 1, h.carts.snapshotCalls,
+		"the snapshot is read once, to ask whether the quantity rises (ADR 0281), and never for the totals")
 }
 
 // TestUpdateLineItemQuantityRemainsWhenTotalsFail verifies that a failure of the second
@@ -162,4 +165,52 @@ func TestUpdateLineItemRejectsInvalidIDs(t *testing.T) {
 			assert.Empty(t, h.carts.removed)
 		})
 	}
+}
+
+// TestRaisingALineAsksTheScopeAgain is ADR 0281: a line whose product left the
+// request's channels after it entered the cart is refused a higher quantity
+// with the not-found an add gets, and nothing is written; lowering it, or
+// keeping it, asks nothing and is written.
+func TestRaisingALineAsksTheScopeAgain(t *testing.T) {
+	ctx := storefrontContext([]string{testChannelB})
+
+	h := newHarness(t)
+	h.catalog.scopedOut = map[string]bool{testVariantA: true}
+	serveSnapshot(h.carts,
+		snapshotOf(4, []SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 3}}, nil))
+
+	_, err := h.wf.UpdateLineItem(ctx, UpdateLineItemInput{CartID: testCartID, LineItemID: testLineA, Quantity: 4})
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "the same refusal an add of the variant gets: %v", err)
+	assert.Empty(t, h.carts.quantities, "no quantity is written for a raise the scope refuses")
+
+	out, err := h.wf.UpdateLineItem(ctx, UpdateLineItemInput{CartID: testCartID, LineItemID: testLineA, Quantity: 2})
+	require.NoError(t, err, "a line can always be lowered")
+	assert.Equal(t, int64(2), out.Quantity)
+
+	_, err = h.wf.UpdateLineItem(ctx, UpdateLineItemInput{CartID: testCartID, LineItemID: testLineA, Quantity: 3})
+	require.NoError(t, err, "a quantity that does not rise past the line's asks nothing")
+
+	inScope := newHarness(t)
+	serveSnapshot(inScope.carts,
+		snapshotOf(4, []SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 3}}, nil))
+	_, err = inScope.wf.UpdateLineItem(ctx, UpdateLineItemInput{CartID: testCartID, LineItemID: testLineA, Quantity: 9})
+	require.NoError(t, err, "a product still in the channel can be raised")
+	assert.Equal(t, map[string]int64{testLineA: 9}, inScope.carts.quantities)
+}
+
+// TestARaiseThatCannotReadTheCartWritesNothing: whether the quantity rises is
+// read off the cart, and a cart that cannot be read refuses the update rather
+// than writing a raise nobody asked the scope about (ADR 0281).
+func TestARaiseThatCannotReadTheCartWritesNothing(t *testing.T) {
+	h := newHarness(t)
+	h.carts.snapshotFn = func(context.Context, string) (json.RawMessage, error) {
+		return nil, errors.Unavailable("cart_unavailable", "the cart could not be read")
+	}
+
+	_, err := h.wf.UpdateLineItem(context.Background(), UpdateLineItemInput{
+		CartID: testCartID, LineItemID: testLineA, Quantity: 4,
+	})
+	require.Error(t, err)
+	assert.Empty(t, h.carts.quantities)
 }

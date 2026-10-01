@@ -56,27 +56,19 @@ type UpdateLineItemResult struct {
 // intent whatsoever, and rounding it to zero would make a request carrying a
 // sign error delete a line.
 //
-// # The sales channel scope is NOT asked again here
+// # The sales channel scope is asked again when the quantity RISES
 //
 // The scope check is at the entry gate ([Workflows.AddLineItem]): a variant that
-// does not appear in the identity's channels can NEVER enter the cart. This
-// method cannot slip a new variant in, it only writes the quantity of a line
-// ALREADY sitting in the cart.
+// does not appear in the identity's channels can NEVER enter the cart. A raise
+// asks for more units of a line, and that is an entry of more units, so it asks
+// the gate's question again (ADR 0281): a line whose product was moved out of
+// the request's channels after it entered the cart is refused a higher
+// quantity with the same 404 an add gets, and nothing is written.
 //
-// That has a measured consequence and it is not being hidden: if a product is
-// moved to another channel from the admin end AFTER it entered the cart, the
-// customer can keep increasing that line's quantity and completing the cart.
-// ADDING the same variant again, however, is rejected (404) — the entry gate is
-// closed.
-//
-// This is not a hole, it is the consequence of the cart being a SNAPSHOT, and it
-// is deliberate: the alternative is an administrator's catalog edit making
-// customers' full carts impossible to pay for. There is also nothing an attacker
-// gains from it — for the line to be able to enter the cart it MUST HAVE been in
-// scope at that moment, and the party doing the move is not an attacker but the
-// operator. An installation that wants the scope enforced continuously
-// throughout the line's lifetime may choose to put the scope check on the
-// completion step as well; the price paid then is the sentence above.
+// Lowering the quantity, removing the line and completing the cart as it is ask
+// nothing: the cart is a SNAPSHOT, and an administrator's catalog edit must not
+// make a customer's full cart impossible to pay for. What it can stop is the
+// cart asking for more of what the shop no longer sells there.
 //
 // # If the totals calculation blows up
 //
@@ -100,6 +92,11 @@ func (w *Workflows) UpdateLineItem(ctx context.Context, in UpdateLineItemInput) 
 	}
 
 	removed := in.Quantity == 0
+	if !removed {
+		if err := w.mayRaise(ctx, in); err != nil {
+			return UpdateLineItemResult{}, err
+		}
+	}
 	var err error
 	if removed {
 		err = w.carts.RemoveLineItem(ctx, in.CartID, in.LineItemID)
@@ -126,4 +123,28 @@ func (w *Workflows) UpdateLineItem(ctx context.Context, in UpdateLineItemInput) 
 		Removed:    removed,
 		Totals:     totals,
 	}, nil
+}
+
+// mayRaise asks the entry gate's question again when the quantity rises
+// (ADR 0281); a quantity that stays or falls asks nothing. A line the cart does
+// not hold is left to the write, which refuses it as not found.
+func (w *Workflows) mayRaise(ctx context.Context, in UpdateLineItemInput) error {
+	snap, err := w.snapshot(ctx, in.CartID)
+	if err != nil {
+		return err
+	}
+	for i := range snap.Items {
+		item := &snap.Items[i]
+		if item.ID != in.LineItemID {
+			continue
+		}
+		if in.Quantity <= item.Quantity {
+			return nil
+		}
+		_, err := w.variantTitle(ctx, item.VariantID)
+
+		return err
+	}
+
+	return nil
 }
