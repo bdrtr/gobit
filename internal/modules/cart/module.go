@@ -659,6 +659,16 @@ func (p *shippingPricing) AddQuotedShippingMethod(
 	return p.svc.AddQuotedShippingMethod(ctx, cartID, shippingOptionID, data)
 }
 
+// ShippingOptionsJSON lists the options the cart can take (ADR 0292).
+func (p *shippingPricing) ShippingOptionsJSON(ctx context.Context, cartID string) (json.RawMessage, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return p.svc.ShippingOptionsJSON(ctx, cartID)
+}
+
 // resolve looks the flow up in the container and remembers the outcome.
 func (p *shippingPricing) resolve(ctx context.Context) {
 	svc, err := container.Resolve[api.ShippingPricing](p.c, CartFlowsName)

@@ -55,6 +55,9 @@ type TelephoneCarts interface {
 	// SetShippingAddress writes the shipping address from the address keys
 	// and reprices the cart.
 	SetShippingAddress(ctx context.Context, cartID string, address map[string]string) error
+	// ShippingOptions lists the options the cart can take, each its id, name
+	// and amount in the cart's currency (ADR 0292).
+	ShippingOptions(ctx context.Context, cartID string) (ids, names []string, amounts []int64, err error)
 	// AddShippingMethod prices the shipping option for the cart and adds it.
 	AddShippingMethod(ctx context.Context, cartID, shippingOptionID string) (string, error)
 	// Complete completes the cart in the named channel with an offline method
@@ -134,6 +137,29 @@ type cartPage struct {
 // cartMethod is one chosen shipping method.
 type cartMethod struct {
 	Name, Amount string
+}
+
+// cartOption is one shipping option the cart can take, as the form offers it.
+type cartOption struct {
+	ID, Name, Amount string
+}
+
+// shippingOptionsOf lists the options the cart can take for its form, and
+// whether they could be read; a page whose listing failed offers the option's
+// id as a text box instead (ADR 0292).
+func (u *UI) shippingOptionsOf(r *http.Request, page cartPage, scales map[string]int) ([]cartOption, bool) {
+	ids, names, amounts, err := u.carts.ShippingOptions(r.Context(), page.ID)
+	if err != nil || len(names) != len(ids) || len(amounts) != len(ids) {
+		return nil, false
+	}
+
+	out := make([]cartOption, 0, len(ids))
+	for i := range ids {
+		amount, known := formatAmount(amounts[i], page.Currency, scales)
+		out = append(out, cartOption{ID: ids[i], Name: names[i], Amount: withCurrency(amount, page.Currency, known)})
+	}
+
+	return out, true
 }
 
 // newTelephoneOrder renders the form that opens a cart.
@@ -233,13 +259,24 @@ func (u *UI) renderCart(
 		return
 	}
 
+	scales := u.currencyScales(r.Context())
+	page := cartPageOf(records[0], scales)
+	canWrite := u.carts != nil && principal.HasScope(scopeCartWrite)
+	var options []cartOption
+	optionsRead := false
+	if canWrite && !page.Completed {
+		options, optionsRead = u.shippingOptionsOf(r, page, scales)
+	}
+
 	u.templates.render(w, r, status, "cart.gohtml", map[string]any{
-		titleKey:    telephoneLabel,
-		"Cart":      cartPageOf(records[0], u.currencyScales(r.Context())),
-		"CartsPath": CartsPath,
-		"CanWrite":  u.carts != nil && principal.HasScope(scopeCartWrite),
-		"Refused":   refused,
-		"Typed":     typed,
+		titleKey:      telephoneLabel,
+		"Cart":        page,
+		"CartsPath":   CartsPath,
+		"CanWrite":    canWrite,
+		"Options":     options,
+		"OptionsRead": optionsRead,
+		"Refused":     refused,
+		"Typed":       typed,
 		// AddressFields orders the address form (ADR 0291).
 		"AddressFields": addressFields,
 	})

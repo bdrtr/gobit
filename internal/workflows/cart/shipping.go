@@ -155,30 +155,9 @@ func (w *Workflows) AddQuotedShippingMethod(
 func (w *Workflows) quoteOption(
 	ctx context.Context, snap Snapshot, shippingOptionID string,
 ) (quotedOption, error) {
-	request, err := w.quoteRequestFor(ctx, snap)
+	answer, err := w.quote(ctx, snap)
 	if err != nil {
 		return quotedOption{}, err
-	}
-
-	body, err := json.Marshal(request)
-	if err != nil {
-		return quotedOption{}, errors.Wrap(err, errors.KindInternal, CodeShippingQuoteFailed,
-			"the shipping quote request could not be built")
-	}
-
-	raw, err := w.shipping.ListOptionsJSON(ctx, body)
-	if err != nil {
-		// NOT swallowed, and this is the opposite choice from the discount and
-		// tax surfaces. There, a failure has a defined fallback. Here the only
-		// fallback is the caller's number.
-		return quotedOption{}, errors.Wrap(err, errors.KindOf(err), CodeShippingQuoteFailed,
-			"the shipping options could not be quoted for cart %s", snap.ID)
-	}
-
-	var answer quoteResponse
-	if err := json.Unmarshal(raw, &answer); err != nil {
-		return quotedOption{}, errors.Wrap(err, errors.KindInternal, CodeShippingQuoteFailed,
-			"the shipping quote answer could not be parsed for cart %s", snap.ID)
 	}
 
 	for i := range answer.Options {
@@ -197,6 +176,87 @@ func (w *Workflows) quoteOption(
 
 	return quotedOption{}, errors.Invalid(CodeShippingOptionUnknown,
 		"the shipping option %q is not available for cart %s", shippingOptionID, snap.ID)
+}
+
+// quote asks the fulfillment module for every option the cart's own facts
+// qualify for, each priced for them.
+func (w *Workflows) quote(ctx context.Context, snap Snapshot) (quoteResponse, error) {
+	request, err := w.quoteRequestFor(ctx, snap)
+	if err != nil {
+		return quoteResponse{}, err
+	}
+
+	body, err := json.Marshal(request)
+	if err != nil {
+		return quoteResponse{}, errors.Wrap(err, errors.KindInternal, CodeShippingQuoteFailed,
+			"the shipping quote request could not be built")
+	}
+
+	raw, err := w.shipping.ListOptionsJSON(ctx, body)
+	if err != nil {
+		// NOT swallowed, and this is the opposite choice from the discount and
+		// tax surfaces. There, a failure has a defined fallback. Here the only
+		// fallback is the caller's number.
+		return quoteResponse{}, errors.Wrap(err, errors.KindOf(err), CodeShippingQuoteFailed,
+			"the shipping options could not be quoted for cart %s", snap.ID)
+	}
+
+	var answer quoteResponse
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		return quoteResponse{}, errors.Wrap(err, errors.KindInternal, CodeShippingQuoteFailed,
+			"the shipping quote answer could not be parsed for cart %s", snap.ID)
+	}
+
+	return answer, nil
+}
+
+// ListedOption is one shipping option a cart can take, priced for it.
+type ListedOption struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Amount       int64  `json:"amount"`
+	CurrencyCode string `json:"currency_code"`
+}
+
+// ShippingOptionsFor lists the shipping options the cart can take, each priced
+// by the fulfillment module for the cart's own facts (ADR 0292): the options
+// [Workflows.AddQuotedShippingMethod] accepts, and no other — no admin-only
+// option, no return option, none priced in another currency.
+//
+// The facts are the server's, read from the cart, so an option whose rule
+// reads the subtotal, the item count or the weight is listed when the cart
+// meets it; the storefront's eligibility endpoint, which takes those facts from
+// the client, leaves such options out.
+func (w *Workflows) ShippingOptionsFor(ctx context.Context, cartID string) ([]ListedOption, error) {
+	if w.shipping == nil {
+		return nil, errors.Internal(CodeShippingUnavailable,
+			"the fulfillment surface (%q) is not wired, so no shipping option can be priced",
+			ServiceFulfillment)
+	}
+
+	snap, err := w.snapshot(ctx, cartID)
+	if err != nil {
+		return nil, err
+	}
+	answer, err := w.quote(ctx, snap)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]ListedOption, 0, len(answer.Options))
+	for _, option := range answer.Options {
+		if option.AdminOnly || option.IsReturn {
+			continue
+		}
+		if option.CurrencyCode != "" && option.CurrencyCode != snap.CurrencyCode {
+			continue
+		}
+		out = append(out, ListedOption{
+			ID: option.ID, Name: option.Name, Amount: option.Amount, CurrencyCode: snap.CurrencyCode,
+		})
+	}
+
+	return out, nil
 }
 
 // quoteRequestFor builds the quote request from the cart's own facts.

@@ -216,11 +216,24 @@ func (f *fakeOpening) OpenCartForCountry(
 type fakeShipping struct {
 	methodID string
 	err      error
+	// options is the answer of the listing (ADR 0292).
+	options json.RawMessage
 
 	gotCartID   string
 	gotOptionID string
 	gotData     json.RawMessage
 	calls       int
+}
+
+// ShippingOptionsJSON answers the scripted listing and records the cart.
+func (f *fakeShipping) ShippingOptionsJSON(_ context.Context, cartID string) (json.RawMessage, error) {
+	f.calls++
+	f.gotCartID = cartID
+	if f.err != nil {
+		return nil, f.err
+	}
+
+	return f.options, nil
 }
 
 // AddQuotedShippingMethod records the call and returns the scripted id.

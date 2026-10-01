@@ -495,6 +495,10 @@ func (c recordingCarts) SetShippingAddress(context.Context, string, map[string]s
 	return c.surfaces.reach(ServiceCartAdmin)
 }
 
+func (c recordingCarts) ShippingOptions(context.Context, string) (ids, names []string, amounts []int64, err error) {
+	return nil, nil, nil, c.surfaces.reach(ServiceCartAdmin)
+}
+
 func (c recordingCarts) AddShippingMethod(context.Context, string, string) (string, error) {
 	return "", c.surfaces.reach(ServiceCartAdmin)
 }

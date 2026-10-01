@@ -258,3 +258,46 @@ func TestTheFreeFormDataIsCarriedUntouched(t *testing.T) {
 
 	assert.JSONEq(t, string(blob), string(gotData))
 }
+
+// TestTheCartListsTheOptionsItCanTake is ADR 0292: the listing asks with the
+// cart's own facts and keeps exactly what the shipping method write accepts —
+// no admin-only option, no return option, none priced in another currency —
+// each named and priced as quoted, in the cart's currency.
+func TestTheCartListsTheOptionsItCanTake(t *testing.T) {
+	h := shippingHarness(t)
+	h.shipping.options = []quotedOption{
+		{ID: "so_free", Name: "Free over 500", Amount: 0, CurrencyCode: testCurrency},
+		{ID: "so_desk", Name: "Desk only", Amount: 100, CurrencyCode: testCurrency, AdminOnly: true},
+		{ID: "so_back", Name: "Return", Amount: 100, CurrencyCode: testCurrency, IsReturn: true},
+		{ID: "so_euro", Name: "Abroad", Amount: 900, CurrencyCode: "XXX"},
+		{ID: "so_std", Name: "Standard", Amount: 2500},
+	}
+
+	options, err := h.wf.ShippingOptionsFor(context.Background(), testCartID)
+	require.NoError(t, err)
+
+	assert.Equal(t, []ListedOption{
+		{ID: "so_free", Name: "Free over 500", Amount: 0, CurrencyCode: testCurrency},
+		{ID: "so_std", Name: "Standard", Amount: 2500, CurrencyCode: testCurrency},
+	}, options)
+	assert.Equal(t, testRegionID, h.shipping.gotRequest.RegionID, "the facts are the cart's")
+	assert.Equal(t, int64(2), h.shipping.gotRequest.ItemCount)
+
+	for _, option := range options {
+		_, err := h.wf.AddQuotedShippingMethod(context.Background(), testCartID, option.ID, nil)
+		require.NoError(t, err, "every option listed is one the write accepts: %s", option.ID)
+	}
+}
+
+// TestNoOptionIsListedWithoutTheShippingSurface: an installation without the
+// fulfillment surface answers an error, not an empty list that reads as "this
+// cart cannot be shipped".
+func TestNoOptionIsListedWithoutTheShippingSurface(t *testing.T) {
+	h := shippingHarness(t)
+	h.wf.shipping = nil
+
+	_, err := h.wf.ShippingOptionsFor(context.Background(), testCartID)
+
+	require.Error(t, err)
+	assert.Equal(t, CodeShippingUnavailable, coreerrors.CodeOf(err))
+}

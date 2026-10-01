@@ -129,6 +129,10 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 		"first_name": {"Tele"}, "last_name": {"Phone"}, "address_1": {"Street 1"},
 		"city": {"City"}, "postal_code": {"00000"}, "country_code": {taxedCountry},
 	})))
+	choosing := send(http.MethodGet, cartPath, nil)
+	require.Equal(t, http.StatusOK, choosing.Code, choosing.Body.String())
+	assert.Contains(t, choosing.Body.String(), `<option value="`+optionID+`">`,
+		"the operator chooses from the options the cart can take (ADR 0292)")
 	redirected(send(http.MethodPost, cartPath+"/shipping", url.Values{"shipping_option_id": {optionID}}))
 
 	page := send(http.MethodGet, cartPath, nil)

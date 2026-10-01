@@ -247,6 +247,16 @@ func describeAddresses(d *openapi.Doc) {
 
 // describeShipping describes the shipping method endpoints.
 func describeShipping(d *openapi.Doc) {
+	d.Describe(http.MethodGet, "/store/v1/carts/{id}/shipping-options", openapi.Operation{
+		Summary: "Lists the shipping options the cart can take, each priced for the cart. " +
+			"The subtotal, the item count and the weight are the server's, read from the cart, " +
+			"so an option whose rule reads them is listed when the cart meets it; every option " +
+			"listed is one the shipping method write accepts (ADR 0292).",
+		Responses: map[string]any{
+			"200": openapi.Response("The options, all on one page", d.List(shippingOptionDTO{})),
+		},
+	})
+
 	d.Describe(http.MethodPost, "/store/v1/carts/{id}/shipping-methods", openapi.Operation{
 		Summary: "Adds a shipping option to the cart at the price quoted for it. " +
 			"The body names WHICH option; the amount is decided by the server and " +
@@ -318,6 +328,15 @@ func describeAdmin(d *openapi.Doc) {
 		Summary: "Returns a single cart with its line items, addresses and shipping methods.",
 		Responses: map[string]any{
 			"200": openapi.Response("The cart and its children", d.Item(cartDetailDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/admin/v1/carts/{id}/shipping-options", openapi.Operation{
+		Summary: "Lists the shipping options the cart can take, each priced for the cart, " +
+			"as the storefront's listing does; an operator building a telephone order " +
+			"chooses from it (ADR 0292).",
+		Responses: map[string]any{
+			"200": openapi.Response("The options, all on one page", d.List(shippingOptionDTO{})),
 		},
 	})
 

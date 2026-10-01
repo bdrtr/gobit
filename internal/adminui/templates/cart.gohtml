@@ -95,10 +95,22 @@ be read says it is in minor units.
 </form>
 
 <h3>Shipping method</h3>
+{{ if and .OptionsRead (not .Options) }}
+<p class="muted">No shipping option serves this cart.</p>
+{{ else }}
 <form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/shipping">
+  {{ if .OptionsRead }}
+  {{/* The options the cart can take, each priced for it (ADR 0292). */}}
+  <select name="shipping_option_id" aria-label="shipping option" required>
+    {{ range .Options }}<option value="{{ .ID }}"{{ if eq .ID ($.Typed.Get "shipping_option_id") }} selected{{ end }}>{{ .Name }} — {{ .Amount }}</option>{{ end }}
+  </select>
+  {{ else }}
+  <span class="muted">The options could not be read; type the option's id.</span>
   <input name="shipping_option_id" value="{{ .Typed.Get "shipping_option_id" }}" placeholder="shipping option id" aria-label="shipping option" required>
+  {{ end }}
   <button type="submit">Choose</button>
 </form>
+{{ end }}
 
 {{ if .Cart.Lines }}
 <h3>Complete</h3>

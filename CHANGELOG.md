@@ -31,6 +31,16 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A cart lists the shipping options it can take** (ADR 0292). **For
+  integrators:** `GET /store/v1/carts/{id}/shipping-options` lists the options
+  the cart can take, each priced for the cart's own subtotal, item count and
+  weight, so an option with a rule such as "free over 500" is listed when the
+  cart meets it — the fulfillment module's eligibility endpoint, which takes
+  those facts from the client, leaves such options out. Every option listed is
+  one the shipping method write accepts. `GET /admin/v1/carts/{id}/shipping-options`
+  is the same list under `cart:read`. **For operators:** the telephone order's
+  shipping form is a list of those options with their prices.
+
 - **The operator's completion compares a total of zero** (D199). **For
   integrators:** `POST /admin/v1/carts/{id}/complete` with `expected_total: 0`
   on a cart that does not total zero is refused with 409

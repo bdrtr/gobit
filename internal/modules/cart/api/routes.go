@@ -101,6 +101,8 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Put("/store/v1/carts/{id}/shipping-address", h.storeSetShippingAddress)
 	r.Put("/store/v1/carts/{id}/billing-address", h.storeSetBillingAddress)
 
+	// The options the cart can take, priced for its own facts (ADR 0292).
+	r.Get("/store/v1/carts/{id}/shipping-options", h.listShippingOptions)
 	r.Post("/store/v1/carts/{id}/shipping-methods", h.storeAddShippingMethod)
 	r.Delete("/store/v1/carts/{id}/shipping-methods/{shipping_method_id}", h.storeRemoveShippingMethod)
 
@@ -119,6 +121,7 @@ func (h *Handler) Routes(r chi.Router) {
 	// that day.
 	readOnly.Get("/admin/v1/carts", h.adminListCarts)
 	readOnly.Get("/admin/v1/carts/{id}", h.adminGetCart)
+	readOnly.Get("/admin/v1/carts/{id}/shipping-options", h.listShippingOptions)
 
 	writable := r.With(corehttp.RequireScope(ScopeWrite))
 	writable.Post(AdminCartsPath, h.adminCreateCart)

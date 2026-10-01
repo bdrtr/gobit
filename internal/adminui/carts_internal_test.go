@@ -23,12 +23,15 @@ import (
 // fakeCarts records what reached the cart module's surface and answers as
 // scripted.
 type fakeCarts struct {
-	opened    []string
-	added     []string
-	addressed []map[string]string
-	shipped   []string
-	completed []string
-	err       error
+	// options is the cart's listing (ADR 0292); optionsErr fails it.
+	options    [][3]string
+	optionsErr error
+	opened     []string
+	added      []string
+	addressed  []map[string]string
+	shipped    []string
+	completed  []string
+	err        error
 }
 
 func (f *fakeCarts) OpenCart(_ context.Context, countryCode, customerID, email string) (string, error) {
@@ -50,6 +53,18 @@ func (f *fakeCarts) AddLine(
 	}
 
 	return "line_1", nil
+}
+
+func (f *fakeCarts) ShippingOptions(_ context.Context, _ string) (ids, names []string, amounts []int64, err error) {
+	if f.optionsErr != nil {
+		return nil, nil, nil, f.optionsErr
+	}
+	for _, option := range f.options {
+		amount, _ := strconv.ParseInt(option[2], 10, 64)
+		ids, names, amounts = append(ids, option[0]), append(names, option[1]), append(amounts, amount)
+	}
+
+	return ids, names, amounts, nil
 }
 
 func (f *fakeCarts) SetShippingAddress(_ context.Context, cartID string, address map[string]string) error {
@@ -359,4 +374,45 @@ func TestARefusedCompletionSaysWhy(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, moved.Code, moved.Body.String())
 	assert.Contains(t, moved.Body.String(), "the total moved since it was read")
 	assert.Contains(t, moved.Body.String(), `value="bank_transfer"`)
+}
+
+// TestTheShippingFormOffersTheCartsOptions is ADR 0292 on the page: the
+// options the cart can take are a list, each named and priced; a listing that
+// could not be read leaves the id box, and a cart nothing ships says so.
+func TestTheShippingFormOffersTheCartsOptions(t *testing.T) {
+	t.Parallel()
+
+	shippingForm := `action="` + CartsPath + `/cart_phone/shipping"`
+	for name, tc := range map[string]struct {
+		carts    *fakeCarts
+		contains []string
+		form     bool
+	}{
+		"a list": {
+			&fakeCarts{options: [][3]string{{"so_free", "Free over 500", "0"}, {"so_std", "Standard", "4900"}}},
+			[]string{`<select name="shipping_option_id"`, `<option value="so_free">Free over 500 — 0 TRY`,
+				`<option value="so_std">Standard — 4900 TRY`},
+			true,
+		},
+		"an unread listing": {
+			&fakeCarts{optionsErr: errors.Unavailable("fulfillment_down", "the fulfillment module did not answer")},
+			[]string{"The options could not be read", `<input name="shipping_option_id"`},
+			true,
+		},
+		"no option": {&fakeCarts{}, []string{"No shipping option serves this cart."}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			panel := newCatalogPanel(t, phoneCatalog(false))
+			panel.carts = tc.carts
+			rec := phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+			for _, want := range tc.contains {
+				assert.Contains(t, rec.Body.String(), want)
+			}
+			assert.Equal(t, tc.form, strings.Contains(rec.Body.String(), shippingForm))
+		})
+	}
 }

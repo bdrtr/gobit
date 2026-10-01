@@ -429,6 +429,9 @@ type ShippingPricing interface {
 		cartID, shippingOptionID string,
 		data json.RawMessage,
 	) (shippingMethodID string, err error)
+	// ShippingOptionsJSON lists the options the cart can take, each priced for
+	// the cart's own facts, as {"options": [...]} (ADR 0292).
+	ShippingOptionsJSON(ctx context.Context, cartID string) (json.RawMessage, error)
 }
 
 // CartRepricing is the surface used by this package of the flow that recomputes

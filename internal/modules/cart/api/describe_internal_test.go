@@ -189,6 +189,9 @@ type endpointExpectation struct {
 	// response is a sample carrying all the fields of the RECORD in the
 	// successful response; if it is nil the response has no body (204).
 	response any
+	// list is a response in the list envelope, every record of it the
+	// response's shape (ADR 0292's options are the storefront's first).
+	list bool
 }
 
 // key returns the operation's "METHOD path" identity.
@@ -255,6 +258,11 @@ func storeEndpoints() []endpointExpectation {
 		{
 			method: http.MethodPut, path: "/store/v1/carts/{id}/billing-address", status: "200",
 			request: addressRequest{}, response: filledAddress(),
+		},
+		{
+			method: http.MethodGet, path: "/store/v1/carts/{id}/shipping-options", status: "200",
+			response: shippingOptionDTO{ID: "so_1", Name: "Courier", Amount: 4_900, CurrencyCode: "TRY"},
+			list:     true,
 		},
 		{
 			method: http.MethodPost, path: "/store/v1/carts/{id}/shipping-methods", status: "201",
@@ -365,10 +373,19 @@ func TestStoreEndpointsDescribeTheirBodies(t *testing.T) {
 			}
 
 			envelope := bodySchema(t, definition)
-			assert.ElementsMatch(t, []string{"data"}, fields(t, components, envelope),
-				"single responses are returned in a {\"data\": …} envelope")
+			var record map[string]any
+			if endpoint.list {
+				assert.ElementsMatch(t, []string{"data", "count", "offset", "limit"},
+					fields(t, components, envelope), "a list is returned in the list envelope")
+				items, ok := envelopeRecord(t, components, envelope)["items"].(map[string]any)
+				require.True(t, ok, "the list's data has to be an array of records")
+				record = items
+			} else {
+				assert.ElementsMatch(t, []string{"data"}, fields(t, components, envelope),
+					"single responses are returned in a {\"data\": …} envelope")
+				record = envelopeRecord(t, components, envelope)
+			}
 
-			record := envelopeRecord(t, components, envelope)
 			assert.ElementsMatch(t, jsonKeys(t, endpoint.response), fields(t, components, record),
 				"the response record's fields have to overlap with the DTO")
 			assert.ElementsMatch(t, jsonKeys(t, zeroValue(endpoint.response)),
@@ -571,17 +588,17 @@ func parameterNames(t *testing.T, op map[string]any, location string) []string {
 }
 
 // TestEveryAdminEndpointIsDescribed verifies that no admin endpoint has been left
-// undescribed, and that the surface is still the four endpoints it was decided
-// to be.
+// undescribed, and that the surface is still the endpoints it was decided to
+// be.
 //
 // The two halves are not the same check. The summary assertion is the one that
 // catches an undescribed endpoint — the document is built from the ROUTER, so
 // every registered route appears here whether it was described or not. The list
-// is the second half and it is a claim about the SHAPE of the surface: two
-// reads, plus the two writes an operator taking an order over the telephone
-// needs (ADR 0146). Everything else a cart goes through — the addresses, the
-// shipping method, the payment — stays on the storefront surface, and a fifth
-// endpoint here is a decision rather than an addition.
+// is the second half and it is a claim about the SHAPE of the surface: the
+// reads, and the writes an operator taking an order over the telephone needs
+// (ADR 0146, ADR 0286, ADR 0292). Quantity changes, line removals, coupons and
+// merges stay on the storefront surface, and another endpoint here is a
+// decision rather than an addition.
 func TestEveryAdminEndpointIsDescribed(t *testing.T) {
 	t.Parallel()
 
@@ -609,6 +626,7 @@ func TestEveryAdminEndpointIsDescribed(t *testing.T) {
 	assert.ElementsMatch(t, []string{
 		"GET /admin/v1/carts",
 		"GET /admin/v1/carts/{id}",
+		"GET /admin/v1/carts/{id}/shipping-options",
 		"POST /admin/v1/carts",
 		"POST /admin/v1/carts/{id}/line-items",
 		"PUT /admin/v1/carts/{id}/shipping-address",

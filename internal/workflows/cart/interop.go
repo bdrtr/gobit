@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/bdrtr/gobit/core/errors"
 )
 
 // InteropName is the name of the cart workflows in the container (ADR 0001/0006).
@@ -158,6 +160,26 @@ func (i *Interop) AddQuotedShippingMethod(
 	data json.RawMessage,
 ) (string, error) {
 	return i.w.AddQuotedShippingMethod(ctx, cartID, shippingOptionID, data)
+}
+
+// ShippingOptionsJSON lists the shipping options the cart can take, each
+// priced for it, as {"options": [...]} (ADR 0292); the rationale is in the
+// [Workflows.ShippingOptionsFor] godoc.
+func (i *Interop) ShippingOptionsJSON(ctx context.Context, cartID string) (json.RawMessage, error) {
+	options, err := i.w.ShippingOptionsFor(ctx, cartID)
+	if err != nil {
+		return nil, err
+	}
+
+	raw, err := json.Marshal(struct {
+		Options []ListedOption `json:"options"`
+	}{Options: options})
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, CodeShippingQuoteFailed,
+			"the cart's shipping options could not be encoded: %s", cartID)
+	}
+
+	return raw, nil
 }
 
 // SetLineItemQuantity writes the line's quantity as an ABSOLUTE value and

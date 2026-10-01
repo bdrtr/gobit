@@ -93,6 +93,29 @@ func (s *TelephoneSurface) SetShippingAddress(ctx context.Context, cartID string
 	})
 }
 
+// ShippingOptions lists the shipping options the cart can take, each its id,
+// name and amount in the cart's currency (ADR 0292).
+func (s *TelephoneSurface) ShippingOptions(
+	ctx context.Context, cartID string,
+) (ids, names []string, amounts []int64, err error) {
+	flow, err := s.h.shipping()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	options, err := shippingOptionsOf(ctx, flow, cartID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	for _, option := range options {
+		ids = append(ids, option.ID)
+		names = append(names, option.Name)
+		amounts = append(amounts, option.Amount)
+	}
+
+	return ids, names, amounts, nil
+}
+
 // AddShippingMethod prices the shipping option for the cart and adds it,
 // returning the method's id.
 func (s *TelephoneSurface) AddShippingMethod(ctx context.Context, cartID, shippingOptionID string) (string, error) {

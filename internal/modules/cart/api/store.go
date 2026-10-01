@@ -1050,3 +1050,62 @@ func (h *Handler) writeRepricedCart(ctx context.Context, w http.ResponseWriter, 
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toCartDTO(detail.Cart)})
 }
+
+// shippingOptionDTO is one shipping option a cart can take, priced for it.
+type shippingOptionDTO struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Amount       int64  `json:"amount"`
+	CurrencyCode string `json:"currency_code"`
+}
+
+// listShippingOptions lists the shipping options the cart can take
+// (GET /store/v1/carts/{id}/shipping-options and its admin twin).
+//
+// The flow prices each option for the cart's own subtotal, item count and
+// weight, which the server reads from the cart (ADR 0292). The fulfillment
+// module's storefront eligibility endpoint takes those facts from the client
+// and so leaves out every option whose rule reads them; this read lists them
+// when the cart meets the rule, and every option it lists is one the shipping
+// method write accepts.
+func (h *Handler) listShippingOptions(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	flow, err := h.shipping()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	options, err := shippingOptionsOf(ctx, flow, cartID(r))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	// Every option the cart can take is on the one page.
+	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
+		Data: options, Count: int64(len(options)), Limit: int64(len(options)),
+	})
+}
+
+// shippingOptionsOf reads the flow's answer; never nil, so a cart no option
+// serves answers an empty list.
+func shippingOptionsOf(ctx context.Context, flow ShippingPricing, id string) ([]shippingOptionDTO, error) {
+	raw, err := flow.ShippingOptionsJSON(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var answer struct {
+		Options []shippingOptionDTO `json:"options"`
+	}
+	if err := json.Unmarshal(raw, &answer); err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindInternal, codeFlowResultInvalid,
+			"the cart's shipping options could not be decoded: %s", id)
+	}
+	if answer.Options == nil {
+		answer.Options = []shippingOptionDTO{}
+	}
+
+	return answer.Options, nil
+}
