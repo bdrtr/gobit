@@ -126,6 +126,10 @@ func builtInScopes() map[string]string {
 		routeKey(get, ProductAddOnsPath):  scopeProductWrite,
 		routeKey(post, ProductAddOnsPath): scopeProductWrite,
 		routeKey(post, VariantPricePath):  scopePricingWrite,
+		// Adding a price goes through the product module's surface, which
+		// links the price set; the handler asks for the price's own write as
+		// well (ADR 0309).
+		routeKey(post, VariantPricesPath): scopeProductWrite,
 		routeKey(post, VariantStockPath):  scopeInventoryWrite,
 		// A variant's bundle is a revision of its product (ADR 0236).
 		routeKey(get, VariantBundlePath):  scopeProductWrite,

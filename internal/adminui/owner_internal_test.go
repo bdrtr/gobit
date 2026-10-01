@@ -427,6 +427,10 @@ func (s *recordingSurfaces) reach(name string) error {
 	return nil
 }
 
+func (s *recordingSurfaces) PriceVariant(context.Context, string, string, int64) error {
+	return s.reach(ServiceProductAdmin)
+}
+
 func (s *recordingSurfaces) CreateProduct(context.Context, string, string) (string, error) {
 	return "", s.reach(ServiceProductAdmin)
 }
@@ -607,6 +611,22 @@ func (a recordingAfterSales) OpenReplacement(
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }
 
+// walkRequires are the privileges a write asks for beside its route's, in its
+// handler. Adding a variant's price reaches the product module's surface,
+// which links the price set, and writes pricing's price, so it asks for
+// pricing:write as the import does (ADR 0207, ADR 0309). The walk holds them
+// with the route's privilege; what the write reaches is still held to the
+// route's owner.
+var walkRequires = map[string][]string{
+	routeKey(http.MethodPost, VariantPricesPath): {scopePricingWrite},
+}
+
+// walkScopes is the route's privilege with those its handler asks for beside
+// it, and any given after them.
+func walkScopes(key, scope string, more ...string) []string {
+	return append(append([]string{scope}, walkRequires[key]...), more...)
+}
+
 // walkForms is a form each write accepts, so the walk reaches the surface
 // behind it. A write the panel binds with no entry here fails the walk.
 var walkForms = map[string]url.Values{
@@ -617,7 +637,9 @@ var walkForms = map[string]url.Values{
 	// Creating a product and adding a variant (ADR 0307).
 	routeKey(http.MethodPost, ProductNewPath):      {"title": {"Walk"}},
 	routeKey(http.MethodPost, ProductVariantsPath): {"variant_title": {"Walk"}},
-	routeKey(http.MethodPost, ProductAddOnsPath):   {"add_ons": {""}},
+	// Adding a variant's price (ADR 0309).
+	routeKey(http.MethodPost, VariantPricesPath): {"currency": {"TRY"}, "amount": {"1"}},
+	routeKey(http.MethodPost, ProductAddOnsPath): {"add_ons": {""}},
 	routeKey(http.MethodPost, VariantPricePath): {
 		"price_set_id": {"walk"}, "currency": {"TRY"}, "amount": {"1"}, "read_amount": {"1"}, "minor": {"1"},
 	},
@@ -813,7 +835,7 @@ func TestEachScreenReadsOnlyWhatItsPrivilegesModuleOwns(t *testing.T) {
 		owner := ownerOf(t, owners, scope)
 
 		for _, walkCase := range walkCases(t, key) {
-			status, reads := walk.request(t, key, walkCase, scope)
+			status, reads := walk.request(t, key, walkCase, walkScopes(key, scope)...)
 			switch {
 			case walkCase.form == nil:
 				require.Equal(t, http.StatusOK, status,
@@ -880,17 +902,17 @@ func TestAPrivilegeAddsOnlyItsOwnModulesData(t *testing.T) {
 	for _, key := range scopedRoutes() {
 		scope := builtInScopes()[key]
 		for _, walkCase := range walkCases(t, key) {
-			_, alone := walk.request(t, key, walkCase, scope)
+			_, alone := walk.request(t, key, walkCase, walkScopes(key, scope)...)
 			base := map[string]bool{}
 			for _, read := range alone {
 				base[read.what] = true
 			}
 
 			for _, extra := range declared {
-				if extra == scope || len(owners.scopes[extra]) != 1 {
+				if slices.Contains(walkScopes(key, scope), extra) || len(owners.scopes[extra]) != 1 {
 					continue
 				}
-				_, with := walk.request(t, key, walkCase, scope, extra)
+				_, with := walk.request(t, key, walkCase, walkScopes(key, scope, extra)...)
 				for _, read := range with {
 					if base[read.what] || read.published >= 0 {
 						continue

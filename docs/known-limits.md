@@ -250,11 +250,13 @@ past and is not corrected retroactively.
   carries two shapes and this entry describes both.
 
   A draft product and its variants are created in the panel since
-  [ADR 0307](adr/0307-the-panel-creates-a-product-and-its-variants.md). Creating
+  [ADR 0307](adr/0307-the-panel-creates-a-product-and-its-variants.md), and a
+  variant takes a base price in a new currency there, its price set created and
+  linked when it has none
+  ([ADR 0309](adr/0309-a-variant-takes-a-price-in-the-panel.md)). Creating
   anything else and deleting anything still happens over `/admin/v1`, with
-  `Authorization: Bearer`: price set, stock item, stock location, links — so a
-  new variant is priced and stocked there before the panel's price and stock
-  forms show it. Campaign prices and prices
+  `Authorization: Bearer`: stock item, stock location, their links — so a new
+  variant is stocked there before the panel's stock form shows it. Campaign prices and prices
   carrying a RULE are not shown in the panel and cannot be edited there either —
   the form knows only the base price. This is not a presentation preference: the
   price write is lossless and writes the prices it does not see back

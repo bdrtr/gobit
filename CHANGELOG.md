@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A variant takes a price in the panel** (ADR 0309). **For operators:** the
+  variant page adds a base price in a currency the variant has none in,
+  creating and linking its price set when it has none; it needs
+  `product:write` and `pricing:write`.
+
 - **The customer page lists the customer's addresses** (ADR 0308). **For
   operators:** the panel's customer page lists the customer's addresses and
   marks the defaults. **For integrators:** the `customer` query provider

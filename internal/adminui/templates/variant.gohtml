@@ -72,6 +72,16 @@ section names it.
 {{ else }}
   <p>This variant is not linked to a price set.</p>
 {{ end }}
+{{ if and .CanAddPrice .NewCurrencies }}
+{{/* A base price in a currency the variant has none in; its price set is created and linked first when it has none (ADR 0309). */}}
+<form method="post" action="{{ .PricesPath }}">
+  <select name="currency" aria-label="currency" required>
+    {{ range .NewCurrencies }}<option value="{{ . }}">{{ . }}</option>{{ end }}
+  </select>
+  <input type="text" name="amount" placeholder="amount" aria-label="amount" required>
+  <button type="submit">Add the price</button>
+</form>
+{{ end }}
 
 <h2>Bundle</h2>
 {{ if .Parts }}

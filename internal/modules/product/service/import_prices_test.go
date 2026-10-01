@@ -240,3 +240,42 @@ func TestAnUnchangedExportWithPricesWritesNothing(t *testing.T) {
 	assert.Zero(t, done.RowsUpdated)
 	assert.Equal(t, writes, prices.writes, "nothing was written")
 }
+
+// TestThePanelPricesAVariant is ADR 0309: a variant without a price set is
+// given one, linked, with its base price; a second currency lands on the same
+// set; a variant that does not exist is refused before pricing is asked; and
+// an installation without pricing says so.
+func TestThePanelPricesAVariant(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	links, prices := newFakeLinker(), newFakePrices()
+	svc := newImportService(t, newMemStore(), links, &exportGraph{}, prices)
+	surface := service.NewAdminSurface(svc)
+	id, err := surface.CreateProduct(ctx, "Linen Shirt", "")
+	require.NoError(t, err)
+	variant, err := surface.AddVariant(ctx, id, "M", "")
+	require.NoError(t, err)
+
+	require.NoError(t, surface.PriceVariant(ctx, variant, "TRY", 25_000))
+	assert.Equal(t, map[string]int64{"TRY": 25_000}, pricesOf(t, links, prices, variant))
+	require.NoError(t, surface.PriceVariant(ctx, variant, "EUR", 900))
+	assert.Equal(t, map[string]int64{"TRY": 25_000, "EUR": 900}, pricesOf(t, links, prices, variant),
+		"the second currency lands on the same set")
+
+	created := prices.next
+	err = surface.PriceVariant(ctx, "variant_missing", "TRY", 1)
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err))
+	assert.Equal(t, created, prices.next, "no price set is made for a variant that does not exist")
+
+	bare := newService(t, newMemStore(), newFakeLinker(), nil)
+	bareSurface := service.NewAdminSurface(bare)
+	bareID, err := bareSurface.CreateProduct(ctx, "Coffee", "")
+	require.NoError(t, err)
+	bareVariant, err := bareSurface.AddVariant(ctx, bareID, "Bag", "")
+	require.NoError(t, err)
+	err = bareSurface.PriceVariant(ctx, bareVariant, "TRY", 1)
+	require.Error(t, err)
+	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "an installation without pricing says so: %v", err)
+}

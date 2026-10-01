@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -33,6 +34,10 @@ const (
 	VariantPricePath = VariantPath + "/price"
 	// VariantStockPath takes the stock form.
 	VariantStockPath = VariantPath + "/stock"
+	// VariantPricesPath takes the form that adds a base price in a currency
+	// the variant has none in, its price set created and linked first when it
+	// has none (ADR 0309).
+	VariantPricesPath = VariantPath + "/prices"
 )
 
 // PriceWriter is the narrow price surface the panel needs (ADR 0001).
@@ -242,9 +247,13 @@ func (u *UI) renderVariant(
 	var priceSetID, itemID string
 	var editable []priceRow
 	var others []otherPriceRow
+	// The scales serve only the prices, so they are read only where the
+	// prices are shown.
+	var scales map[string]int
 	if !access.PricesHidden {
+		scales = u.currencyScales(r.Context())
 		priceSetID, _ = recordChildID(record, keyPriceSet)
-		editable, others = variantPrices(record, u.currencyScales(r.Context()))
+		editable, others = variantPrices(record, scales)
 	}
 	if !access.StockHidden {
 		itemID, _ = recordChildID(record, keyInventory)
@@ -274,7 +283,90 @@ func (u *UI) renderVariant(
 		productsPathKey: ProductsPath,
 		"BundlePath":    variantURL(productID, variantID) + "/bundle",
 		"CanBundle":     u.products != nil,
+		// The form that adds a base price, in the currencies the variant has
+		// none in (ADR 0309).
+		"CanAddPrice":   !access.PricesHidden && u.canPriceVariant(r),
+		"NewCurrencies": unpricedCurrencies(scales, editable),
+		"PricesPath":    variantURL(productID, variantID) + "/prices",
 	})
+}
+
+// VariantPricer is the narrow surface a variant's first price, or a price in a
+// new currency, is written through: the product module's, which creates and
+// links the price set the way an import does (ADR 0207, ADR 0309).
+type VariantPricer interface {
+	// PriceVariant sets the variant's base price at one unit in the currency,
+	// creating and linking its price set first when it has none.
+	PriceVariant(ctx context.Context, variantID, currencyCode string, amount int64) error
+}
+
+// canPriceVariant reports whether the operator may add a price here: the
+// price is pricing's and the link to it the product's, so both writes are
+// needed, and the product module's surface must be able to do it.
+func (u *UI) canPriceVariant(r *http.Request) bool {
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	_, ok := u.products.(VariantPricer)
+
+	return ok && principal.HasScope(scopePricingWrite) && principal.HasScope(scopeProductWrite)
+}
+
+// unpricedCurrencies are the shop's currencies, sorted, that the variant has
+// no base price in.
+func unpricedCurrencies(scales map[string]int, priced []priceRow) []string {
+	have := map[string]bool{}
+	for _, row := range priced {
+		have[row.Currency] = true
+	}
+	var out []string
+	for code := range scales {
+		if !have[code] {
+			out = append(out, code)
+		}
+	}
+	slices.Sort(out)
+
+	return out
+}
+
+// addVariantPrice adds a base price in a currency the variant has none in and
+// returns to the variant's page; a refusal is printed there.
+func (u *UI) addVariantPrice(w http.ResponseWriter, r *http.Request) {
+	productID := chi.URLParam(r, "id")
+	variantID := chi.URLParam(r, "variantID")
+
+	pricer, ok := u.products.(VariantPricer)
+	if !ok {
+		u.errorPage(w, r, http.StatusServiceUnavailable, "Pricing unavailable",
+			"The product module's admin surface cannot price a variant in this installation.")
+		return
+	}
+	// The route asks for the product's privilege, whose surface links the
+	// price set; the price is pricing's, so its privilege is asked here as
+	// well, as the import asks for both (ADR 0207).
+	if principal, _ := corehttp.PrincipalFromContext(r.Context()); !principal.HasScope(scopePricingWrite) {
+		u.errorPage(w, r, http.StatusForbidden, "Not allowed",
+			"Adding a price writes the variant's prices, which needs the "+scopePricingWrite+" privilege as well.")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		u.errorPage(w, r, http.StatusBadRequest, "Bad request", "The form could not be read.")
+		return
+	}
+
+	currency := strings.ToUpper(strings.TrimSpace(r.PostFormValue("currency")))
+	scale, known := u.currencyScales(r.Context())[currency]
+	amount, err := parseAmount(r.PostFormValue("amount"), scale, !known)
+	if err != nil {
+		u.renderVariant(w, r, http.StatusUnprocessableEntity, productID, variantID, err.Error())
+		return
+	}
+
+	if err := pricer.PriceVariant(r.Context(), variantID, currency, amount); err != nil {
+		u.afterWrite(w, r, err, productID, variantID, "The price could not be added")
+		return
+	}
+
+	corehttp.WriteRedirect(r.Context(), w, variantURL(productID, variantID))
 }
 
 // The price sub-record's fields that say when a price applies. Like the amount

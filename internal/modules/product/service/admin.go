@@ -254,3 +254,21 @@ func (a *AdminSurface) AddVariant(ctx context.Context, productID, title, sku str
 
 	return variant.ID, nil
 }
+
+// PriceVariant sets the variant's base price at one unit in the currency,
+// creating its price set and linking it first when the variant has none — the
+// import's own act (ADR 0207, ADR 0309). Other prices on the set are left as
+// they are; a base price already in the currency is replaced.
+func (a *AdminSurface) PriceVariant(ctx context.Context, variantID, currencyCode string, amount int64) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeNotReady, "the product service is not set up")
+	}
+	if _, err := a.svc.GetVariant(ctx, variantID); err != nil {
+		return err
+	}
+
+	// Pricing trims and upper-cases the currency, as it does for an import.
+	_, err := a.svc.importPrices(ctx, variantID, map[string]int64{currencyCode: amount})
+
+	return err
+}

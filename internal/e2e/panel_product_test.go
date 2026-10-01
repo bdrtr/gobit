@@ -37,7 +37,9 @@ func TestAnOperatorCreatesAProductInThePanel(t *testing.T) {
 		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-			ID: "usr_catalog", Kind: "user", Scopes: []string{"product:read", "product:write"},
+			ID: "usr_catalog", Kind: "user", Scopes: []string{
+				"product:read", "product:write", "pricing:read", "pricing:write",
+			},
 		}))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -71,4 +73,15 @@ func TestAnOperatorCreatesAProductInThePanel(t *testing.T) {
 	page := send(http.MethodGet, productPath, nil)
 	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
 	assert.Contains(t, page.Body.String(), "Medium", "the product page lists its new variant")
+
+	// The new variant takes its first price: its price set is created and
+	// linked by the product module, as an import does (ADR 0309).
+	priced := send(http.MethodPost, variantPath+"/prices", url.Values{
+		"currency": {taxedCurrency}, "amount": {"250.00"},
+	})
+	require.Equal(t, http.StatusSeeOther, priced.Code, priced.Body.String())
+	variantPage := send(http.MethodGet, variantPath, nil)
+	require.Equal(t, http.StatusOK, variantPage.Code, variantPage.Body.String())
+	assert.Contains(t, variantPage.Body.String(), `name="amount" value="250.00"`,
+		"the variant page reads the price through the real link and price set")
 }
