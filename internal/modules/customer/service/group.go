@@ -8,33 +8,34 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
-// GroupInput bir müşteri grubunun yazma girdisidir.
+// GroupInput is the write input of a customer group.
 type GroupInput struct {
-	// Name grubun görünen adıdır; zorunludur ve canlı gruplar arasında
-	// benzersizdir.
+	// Name is the group's display name; it is required and unique among live
+	// groups.
 	Name string
-	// Rank gruplar arasındaki sıradır; KÜÇÜK olan kazanır, varsayılan 0.
+	// Rank is the order over groups; the SMALLER value wins, the default is 0.
 	//
-	// Birden çok gruba üye bir müşteri için hangi grubun konuştuğuna bu karar
-	// verir: sepet en yüksek sıralı grubu fiyat kural bağlamına yazar (ADR 0049).
+	// It decides which group speaks for a customer who belongs to several
+	// groups: the cart writes the highest-ranked group into the pricing rule
+	// context (ADR 0049).
 	Rank int32
-	// Metadata serbest yapısal bağlamdır; boş bırakılabilir.
+	// Metadata is free structural context; it can be empty.
 	Metadata map[string]any
 }
 
-// CreateGroup yeni bir müşteri grubu oluşturur.
+// CreateGroup creates a new customer group.
 //
-// Aynı adda canlı bir grup varsa errors.Conflict döner; kural veritabanındaki
-// kısmi benzersiz indekstedir.
+// A live group with the same name returns errors.Conflict; the rule lives in
+// the partial unique index in the database.
 func (s *Service) CreateGroup(ctx context.Context, in GroupInput) (models.CustomerGroup, error) {
 	if err := s.ready(); err != nil {
 		return models.CustomerGroup{}, err
 	}
-	if err := requireText("grup adı", in.Name); err != nil {
+	if err := requireText("group name", in.Name); err != nil {
 		return models.CustomerGroup{}, err
 	}
 	name := strings.TrimSpace(in.Name)
-	if err := checkLen("grup adı", name, models.MaxNameLen); err != nil {
+	if err := checkLen("group name", name, models.MaxNameLen); err != nil {
 		return models.CustomerGroup{}, err
 	}
 
@@ -51,28 +52,29 @@ func (s *Service) CreateGroup(ctx context.Context, in GroupInput) (models.Custom
 	})
 }
 
-// UpdateGroupInput bir müşteri grubunun kısmi güncelleme girdisidir.
+// UpdateGroupInput is the partial update input of a customer group.
 //
-// nil alan "dokunma", dolu alan "bu değeri yaz" demektir.
+// A nil field means "leave it alone", a set field means "write this value".
 type UpdateGroupInput struct {
-	// Name grubun yeni adıdır; verilirse boş olamaz ve canlı gruplar arasında
-	// benzersizdir.
+	// Name is the group's new name; if given it cannot be empty, and it is
+	// unique among live groups.
 	Name *string
-	// Rank yeni sıradır; nil verilirse DOKUNULMAZ.
+	// Rank is the new order; if nil it is NOT TOUCHED.
 	//
-	// İşaretçi olması, saticinin belirlediği sıranın bir ad düzeltmesiyle
-	// sessizce sıfırlanmamasını sağlar: "verilmedi" ile "sıfır yapıldı" ayrı
-	// şeylerdir (ADR 0049).
+	// Being a pointer keeps the order the merchant set from being reset to zero
+	// silently by a correction of the name: "not given" and "set to zero" are
+	// different things (ADR 0049).
 	Rank *int32
-	// Metadata yeni metadata haritasıdır; sütunun tamamını değiştirir.
+	// Metadata is the new metadata map; it replaces the whole column.
 	Metadata map[string]any
 }
 
-// UpdateGroup grubun verilen alanlarını günceller; yoksa errors.NotFound.
+// UpdateGroup updates the given fields of the group; errors.NotFound if it does
+// not exist.
 //
-// Aynı adda başka bir canlı grup varsa errors.Conflict döner. Ad verilirse BOŞ
-// OLAMAZ: kısmi güncelleme bir alanı atlayabilir ama var olan bir zorunluluğu
-// kaldıramaz.
+// Another live group with the same name returns errors.Conflict. A name, if
+// given, CANNOT BE EMPTY: a partial update can skip a field but cannot lift a
+// requirement that is already there.
 func (s *Service) UpdateGroup(ctx context.Context, id string, in UpdateGroupInput) (models.CustomerGroup, error) {
 	if err := s.ready(); err != nil {
 		return models.CustomerGroup{}, err
@@ -83,11 +85,11 @@ func (s *Service) UpdateGroup(ctx context.Context, id string, in UpdateGroupInpu
 
 	patch := models.CustomerGroupPatch{Rank: in.Rank, Metadata: in.Metadata}
 	if in.Name != nil {
-		if err := requireText("grup adı", *in.Name); err != nil {
+		if err := requireText("group name", *in.Name); err != nil {
 			return models.CustomerGroup{}, err
 		}
 		name := strings.TrimSpace(*in.Name)
-		if err := checkLen("grup adı", name, models.MaxNameLen); err != nil {
+		if err := checkLen("group name", name, models.MaxNameLen); err != nil {
 			return models.CustomerGroup{}, err
 		}
 		patch.Name = &name
@@ -96,16 +98,16 @@ func (s *Service) UpdateGroup(ctx context.Context, id string, in UpdateGroupInpu
 	return s.repo.UpdateGroup(ctx, id, patch, s.clock())
 }
 
-// DeleteGroup grubu soft delete ile siler; yoksa errors.NotFound.
+// DeleteGroup soft-deletes the group; errors.NotFound if it does not exist.
 //
-// Üyelik satırları KALDIRILMAZ ama silinen grup hiçbir okumada görünmez:
-// [Service.ListGroups], [Service.GetGroup], [Service.ListGroupsOf], Query
-// sağlayıcısının grup kimlikleri ve grup süzgeçli müşteri listelemesi silinmiş
-// grubu ATLAR. Grubun adı da serbest kalır; benzersizlik indeksi yalnızca canlı
-// grupları kapsar.
+// The membership rows are NOT REMOVED, but the deleted group appears in no
+// read: [Service.ListGroups], [Service.GetGroup], [Service.ListGroupsOf], the
+// Query provider's group ids and the group-filtered customer listing all SKIP
+// the deleted group. The group's name is freed as well; the uniqueness index
+// covers only live groups.
 //
-// Silme, üyelerin fiyat segmentini değiştirir: pricing'in kural bağlamına
-// artık bu grubun kimliği taşınmaz.
+// The delete changes the members' price segment: this group's id is no longer
+// carried into pricing's rule context.
 func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
@@ -118,13 +120,13 @@ func (s *Service) DeleteGroup(ctx context.Context, id string) error {
 		return err
 	}
 
-	s.log.InfoContext(ctx, "müşteri grubu silindi",
+	s.log.InfoContext(ctx, "customer group deleted",
 		slog.String("customer_group_id", id),
 	)
 	return nil
 }
 
-// GetGroup kimliğe göre grup döner; yoksa errors.NotFound.
+// GetGroup returns the group by id; errors.NotFound if it does not exist.
 func (s *Service) GetGroup(ctx context.Context, id string) (models.CustomerGroup, error) {
 	if err := s.ready(); err != nil {
 		return models.CustomerGroup{}, err
@@ -135,7 +137,7 @@ func (s *Service) GetGroup(ctx context.Context, id string) (models.CustomerGroup
 	return s.repo.GetGroup(ctx, id)
 }
 
-// ListGroups sayfalanmış grup listesini döner.
+// ListGroups returns the paginated list of groups.
 func (s *Service) ListGroups(ctx context.Context, limit, offset int64) (Page[models.CustomerGroup], error) {
 	if err := s.ready(); err != nil {
 		return Page[models.CustomerGroup]{}, err
@@ -152,12 +154,12 @@ func (s *Service) ListGroups(ctx context.Context, limit, offset int64) (Page[mod
 	return Page[models.CustomerGroup]{Items: items, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// AddToGroup müşteriyi gruba ekler.
+// AddToGroup adds the customer to the group.
 //
-// İşlem idempotenttir: zaten üye olan bir müşteri için ikinci çağrı hata
-// vermez, çünkü üyelik bir kümedir ve aynı çağrının tekrarı (yeniden deneme,
-// çift tıklama) aynı sonucu vermelidir. Müşteri ya da grup yoksa
-// errors.NotFound döner.
+// The operation is idempotent: a second call for a customer who is already a
+// member returns no error, because membership is a set and a repeat of the same
+// call (a retry, a double click) must give the same result. A customer or group
+// that does not exist returns errors.NotFound.
 func (s *Service) AddToGroup(ctx context.Context, customerID, groupID string) error {
 	if err := s.ready(); err != nil {
 		return err
@@ -173,18 +175,20 @@ func (s *Service) AddToGroup(ctx context.Context, customerID, groupID string) er
 		return err
 	}
 
-	s.log.DebugContext(ctx, "müşteri gruba eklendi",
+	s.log.DebugContext(ctx, "customer added to group",
 		slog.String("customer_id", customerID),
 		slog.String("customer_group_id", groupID),
 	)
 	return nil
 }
 
-// RemoveFromGroup müşteriyi gruptan çıkarır; üyelik yoksa errors.NotFound.
+// RemoveFromGroup removes the customer from the group; errors.NotFound if there
+// is no membership.
 //
-// Ekleme idempotent, çıkarma değildir. Ayrım bilinçlidir: olmayan bir üyeliği
-// kaldırmak istemcinin yanlış kimlikle çağırdığının en yaygın işaretidir ve
-// sessizce başarı dönmek o hatayı gizlerdi.
+// Adding is idempotent, removing is not. The difference is deliberate: removing
+// a membership that does not exist is the most common sign that the client
+// called with the wrong id, and returning success silently would hide that
+// mistake.
 func (s *Service) RemoveFromGroup(ctx context.Context, customerID, groupID string) error {
 	if err := s.ready(); err != nil {
 		return err
@@ -198,10 +202,11 @@ func (s *Service) RemoveFromGroup(ctx context.Context, customerID, groupID strin
 	return s.repo.RemoveFromGroup(ctx, customerID, groupID)
 }
 
-// ListGroupsOf müşterinin üyesi olduğu grupları döner.
+// ListGroupsOf returns the groups the customer is a member of.
 //
-// Müşterinin varlığı ÖNCE doğrulanır: olmayan bir müşteri için boş liste
-// dönseydi istemci 404 yerine "hiç grubu yok" sanırdı.
+// The customer's existence is checked FIRST: if an empty list came back for a
+// customer that does not exist, the client would take it for "has no groups"
+// instead of a 404.
 func (s *Service) ListGroupsOf(ctx context.Context, customerID string) ([]models.CustomerGroup, error) {
 	if err := s.ready(); err != nil {
 		return nil, err

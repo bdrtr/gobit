@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel puts a customer into groups** (ADR 0322). **For operators:** a
+  customer's page names their groups, and an operator holding
+  `customer:write` puts the customer into a group or takes them out. **For
+  integrators:** the customer module registers a `customer.admin` surface.
+
 - **The panel limits a promotion to customer groups** (ADR 0321). **For
   operators:** a promotion's page offers the customer groups to an operator
   who may read the customers and writes a `customer_group_id any_in` rule

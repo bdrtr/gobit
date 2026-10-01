@@ -201,7 +201,10 @@ type UI struct {
 	// notifications lists the delivery log (ADR 0317); nil when the
 	// installation registers none.
 	notifications NotificationLister
-	scopes        map[string]string
+	// memberships puts a customer into a group and takes them out (ADR
+	// 0322); nil when the installation registers no customer surface.
+	memberships GroupMembership
+	scopes      map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -294,6 +297,11 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And a customer's groups (ADR 0322).
+	memberships, err := optionalService[GroupMembership](c, ServiceCustomerAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -324,6 +332,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		carts:         carts,
 		promotions:    promotions,
 		notifications: notifications,
+		memberships:   memberships,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

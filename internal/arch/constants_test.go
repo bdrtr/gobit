@@ -25,6 +25,7 @@ import (
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	"github.com/bdrtr/gobit/internal/modules/cart"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
+	"github.com/bdrtr/gobit/internal/modules/customer"
 	customersvc "github.com/bdrtr/gobit/internal/modules/customer/service"
 	"github.com/bdrtr/gobit/internal/modules/file"
 	"github.com/bdrtr/gobit/internal/modules/file/local"
@@ -1028,6 +1029,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the attribute the panel's group rule names must be the one the cart flow fills (ADR 0321)")
 	assert.Equal(t, customersvc.EntityGroup, adminui.EntityCustomerGroup,
 		"the group entity the panel reads must be the one the customer module opens (ADR 0321)")
+	assert.Equal(t, customer.AdminName, adminui.ServiceCustomerAdmin,
+		"the panel's customer surface name must match the customer module (ADR 0322)")
 	assert.Equal(t, product.AdminName, adminui.ServiceProductAdmin,
 		"the panel's product write surface name must match the product module")
 	assert.Equal(t, pricing.AdminName, adminui.ServicePricingAdmin,

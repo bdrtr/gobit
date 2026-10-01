@@ -10,10 +10,10 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/repository/customerdb"
 )
 
-// CodeGroupNameTaken grup adının zaten kullanıldığını bildirir.
+// CodeGroupNameTaken reports that the group name is already in use.
 const CodeGroupNameTaken = "customer_group_name_taken"
 
-// CreateGroup yeni bir müşteri grubu yazar.
+// CreateGroup writes a new customer group.
 func (r *Repo) CreateGroup(ctx context.Context, g models.CustomerGroup) (models.CustomerGroup, error) {
 	if err := r.ready(); err != nil {
 		return models.CustomerGroup{}, err
@@ -34,14 +34,14 @@ func (r *Repo) CreateGroup(ctx context.Context, g models.CustomerGroup) (models.
 	if err != nil {
 		if ConstraintName(err) == IndexGroupName {
 			return models.CustomerGroup{}, errors.Wrap(err, errors.KindConflict, CodeGroupNameTaken,
-				"%q adında bir müşteri grubu zaten var", g.Name)
+				"a customer group named %q already exists", g.Name)
 		}
-		return models.CustomerGroup{}, wrapDB(err, "müşteri grubu oluşturulamadı")
+		return models.CustomerGroup{}, wrapDB(err, "the customer group could not be created")
 	}
 	return toGroup(row)
 }
 
-// GetGroup kimliğe göre grup döner; yoksa errors.NotFound.
+// GetGroup returns the group by id; errors.NotFound if it does not exist.
 func (r *Repo) GetGroup(ctx context.Context, id string) (models.CustomerGroup, error) {
 	if err := r.ready(); err != nil {
 		return models.CustomerGroup{}, err
@@ -49,12 +49,12 @@ func (r *Repo) GetGroup(ctx context.Context, id string) (models.CustomerGroup, e
 
 	row, err := r.q.GetCustomerGroup(ctx, id)
 	if err != nil {
-		return models.CustomerGroup{}, notFoundOr(err, CodeGroupNotFound, "müşteri grubu bulunamadı: %s", id)
+		return models.CustomerGroup{}, notFoundOr(err, CodeGroupNotFound, "customer group not found: %s", id)
 	}
 	return toGroup(row)
 }
 
-// ListGroups sayfalanmış grup listesini ve TOPLAM kayıt sayısını döner.
+// ListGroups returns the paginated list of groups and the TOTAL record count.
 func (r *Repo) ListGroups(ctx context.Context, limit, offset int64) ([]models.CustomerGroup, int64, error) {
 	if err := r.ready(); err != nil {
 		return nil, 0, err
@@ -65,12 +65,12 @@ func (r *Repo) ListGroups(ctx context.Context, limit, offset int64) ([]models.Cu
 		Off: toInt32(offset),
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "müşteri grubu listesi alınamadı")
+		return nil, 0, wrapDB(err, "the customer groups could not be read")
 	}
 
 	total, err := r.q.CountCustomerGroups(ctx)
 	if err != nil {
-		return nil, 0, wrapDB(err, "müşteri grubu sayısı alınamadı")
+		return nil, 0, wrapDB(err, "the customer groups could not be counted")
 	}
 
 	groups, err := toGroups(rows)
@@ -80,11 +80,12 @@ func (r *Repo) ListGroups(ctx context.Context, limit, offset int64) ([]models.Cu
 	return groups, total, nil
 }
 
-// UpdateGroup grubun verilen alanlarını günceller; yoksa errors.NotFound.
+// UpdateGroup updates the given fields of the group; errors.NotFound if it does
+// not exist.
 //
-// Yeni ad başka bir CANLI grup tarafından kullanılıyorsa errors.Conflict döner;
-// kural veritabanındaki kısmi benzersiz indekstedir (bkz. [IndexGroupName]) ve
-// uygulama tarafında tekrarlanmaz.
+// A new name already used by another LIVE group returns errors.Conflict; the
+// rule lives in the partial unique index in the database (see [IndexGroupName])
+// and is not repeated on the application side.
 func (r *Repo) UpdateGroup(
 	ctx context.Context,
 	id string,
@@ -112,20 +113,20 @@ func (r *Repo) UpdateGroup(
 	if err != nil {
 		if ConstraintName(err) == IndexGroupName {
 			return models.CustomerGroup{}, errors.Wrap(err, errors.KindConflict, CodeGroupNameTaken,
-				"bu adda bir müşteri grubu zaten var")
+				"a customer group with this name already exists")
 		}
 		return models.CustomerGroup{}, notFoundOr(err, CodeGroupNotFound,
-			"müşteri grubu bulunamadı: %s", id)
+			"customer group not found: %s", id)
 	}
 	return toGroup(row)
 }
 
-// DeleteGroup grubu soft delete ile siler; yoksa errors.NotFound.
+// DeleteGroup soft-deletes the group; errors.NotFound if it does not exist.
 //
-// Üyelik satırları BIRAKILIR ve bu bilinçlidir: grubu okuyan her sorgu
-// deleted_at IS NULL süzer, dolayısıyla silinmiş bir grup ne müşterinin
-// gruplarında ne de grup süzgeçli müşteri listelemesinde görünür. Satırlar,
-// kayıt bir gün gerçekten silindiğinde cascade ile gider.
+// The membership rows are LEFT BEHIND, and deliberately so: every query that
+// reads a group filters on deleted_at IS NULL, so a deleted group shows up
+// neither among the customer's groups nor in the group-filtered customer
+// listing. The rows go by cascade when the record is one day really deleted.
 func (r *Repo) DeleteGroup(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -135,42 +136,46 @@ func (r *Repo) DeleteGroup(ctx context.Context, id string, now time.Time) error 
 		ID:        id,
 		DeletedAt: fromTime(now),
 	}); err != nil {
-		return notFoundOr(err, CodeGroupNotFound, "müşteri grubu bulunamadı: %s", id)
+		return notFoundOr(err, CodeGroupNotFound, "customer group not found: %s", id)
 	}
 	return nil
 }
 
-// AddToGroup müşteriyi gruba ekler; üyelik zaten varsa hiçbir şey yapmaz.
+// AddToGroup adds the customer to the group; if the membership already exists
+// it does nothing.
 //
-// Müşteri ve grup varlığı AYNI işlemde, üyelik yazımından önce doğrulanır:
-// foreign key ihlali de aynı sonucu verirdi ama hangi tarafın (müşteri mi grup
-// mu) eksik olduğunu söylemezdi ve istemciye 422 olarak dönerdi; eksik bir
-// kaynak için doğru sınıf errors.NotFound'dur.
+// The existence of the customer and of the group is checked in the SAME
+// transaction, before the membership is written: a foreign key violation would
+// give the same result, but it would not say which side (the customer or the
+// group) is missing, and it would reach the client as a 422; for a missing
+// resource the right class is errors.NotFound.
 //
-// # "Aynı işlemde" burada KORUMA DEĞİLDİR
+// # "In the same transaction" is NOT PROTECTION here
 //
-// Denetimler kilitsizdir ve bu bilinçli. Bir işlem, tek başına, READ COMMITTED
-// altında hiçbir şeyi korumaz: her deyim taze bir anlık görüntü alır, yani
-// araya giren bir [Repo.DeleteCustomer] ya da [Repo.DeleteGroup] denetimden
-// sonra commit ederse üyelik yine yazılır ve foreign key itiraz etmez, çünkü
-// silme YUMUŞAKTIR. Bu, tax modülünde paraya mal olan şeklin ta kendisidir —
-// ama buradaki SONUCU sıfırdır ve fark ölçüldü (2026-09-06): silinmiş bir
-// grubun üyelik satırları zaten BIRAKILIYOR ([Repo.DeleteGroup]) ve silinmiş
-// bir müşterininki de öyle ([Repo.DeleteCustomer]), çünkü grubu ya da müşteriyi
-// okuyan her sorgu deleted_at IS NULL süzer. Yarışın ürettiği satır, modülün
-// normal işleyişte zaten ürettiği satırdan AYIRT EDİLEMEZ.
+// The checks take no lock, and deliberately. A transaction, on its own, under
+// READ COMMITTED protects nothing: every statement takes a fresh snapshot, so
+// if a [Repo.DeleteCustomer] or a [Repo.DeleteGroup] slips in and commits after
+// the check, the membership is still written and the foreign key does not
+// object, because the delete is SOFT. This is the very shape that costs money
+// in the tax module — but its CONSEQUENCE here is zero, and the difference was
+// measured (2026-09-06): the membership rows of a deleted group are already
+// LEFT BEHIND ([Repo.DeleteGroup]) and so are those of a deleted customer
+// ([Repo.DeleteCustomer]), because every query that reads a group or a
+// customer filters on deleted_at IS NULL. The row the race produces CANNOT BE
+// TOLD APART from the row the module already produces in normal operation.
 //
-// Kilit eklemek, dolayısıyla, hiçbir gözlenebilir farkı kapatmaz; eklenirse
-// [customerdb.Queries.GetCustomerForUpdate] ile eklenmelidir, çünkü bu modülde
-// müşteri satırı HER ZAMAN ilk kilitlenir (bkz. queries/customer.sql).
+// Adding a lock, therefore, closes no observable difference; if one is added,
+// it must be added with [customerdb.Queries.GetCustomerForUpdate], because in
+// this module the customer row is ALWAYS locked first (see
+// queries/customer.sql).
 func (r *Repo) AddToGroup(ctx context.Context, customerID, groupID string, now time.Time) error {
 	return r.inTx(ctx, func(q *customerdb.Queries) error {
 		if _, err := q.GetCustomer(ctx, customerID); err != nil {
-			return notFoundOr(err, CodeCustomerNotFound, "müşteri bulunamadı: %s", customerID)
+			return notFoundOr(err, CodeCustomerNotFound, "customer not found: %s", customerID)
 		}
 		group, err := q.GetCustomerGroup(ctx, groupID)
 		if err != nil {
-			return notFoundOr(err, CodeGroupNotFound, "müşteri grubu bulunamadı: %s", groupID)
+			return notFoundOr(err, CodeGroupNotFound, "customer group not found: %s", groupID)
 		}
 		if group.Segment != nil {
 			return segmentManaged(groupID)
@@ -181,17 +186,18 @@ func (r *Repo) AddToGroup(ctx context.Context, customerID, groupID string, now t
 			CustomerGroupID: groupID,
 			CreatedAt:       fromTime(now),
 		}); err != nil {
-			return wrapDB(err, "müşteri gruba eklenemedi")
+			return wrapDB(err, "the customer could not be added to the group")
 		}
 		return nil
 	})
 }
 
-// RemoveFromGroup müşteriyi gruptan çıkarır; üyelik yoksa errors.NotFound.
+// RemoveFromGroup removes the customer from the group; errors.NotFound if there
+// is no membership.
 //
-// Silinen satır sayısı olmadan bu ayrım yapılamazdı: DELETE hiçbir satıra
-// dokunmadığında da hatasız döner ve çağıran, hiç var olmamış bir üyeliği
-// kaldırdığını sanırdı.
+// Without the count of deleted rows this distinction could not be made: DELETE
+// also returns without an error when it touches no row, and the caller would
+// believe it had removed a membership that never existed.
 func (r *Repo) RemoveFromGroup(ctx context.Context, customerID, groupID string) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -207,16 +213,16 @@ func (r *Repo) RemoveFromGroup(ctx context.Context, customerID, groupID string) 
 		CustomerGroupID: groupID,
 	})
 	if err != nil {
-		return wrapDB(err, "müşteri gruptan çıkarılamadı")
+		return wrapDB(err, "the customer could not be removed from the group")
 	}
 	if affected == 0 {
 		return errors.NotFound(CodeMembershipNotFound,
-			"%s müşterisi %s grubunun üyesi değil", customerID, groupID)
+			"customer %s is not a member of group %s", customerID, groupID)
 	}
 	return nil
 }
 
-// ListGroupsOf müşterinin üyesi olduğu grupları döner.
+// ListGroupsOf returns the groups the customer is a member of.
 func (r *Repo) ListGroupsOf(ctx context.Context, customerID string) ([]models.CustomerGroup, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -224,18 +230,17 @@ func (r *Repo) ListGroupsOf(ctx context.Context, customerID string) ([]models.Cu
 
 	rows, err := r.q.ListGroupsOfCustomer(ctx, customerID)
 	if err != nil {
-		return nil, wrapDB(err, "müşterinin grupları alınamadı: %s", customerID)
+		return nil, wrapDB(err, "the customer's groups could not be read: %s", customerID)
 	}
 	return toGroups(rows)
 }
 
-// GroupIDsOfCustomers birden çok müşterinin grup kimliklerini TEK sorguda
-// döner.
+// GroupIDsOfCustomers returns the group ids of several customers in ONE query.
 //
-// Sonuç, customer idnden grup kimliklerine bir haritadır. Hiç grubu olmayan
-// müşteri için ANAHTAR BULUNMAZ; çağıran nil dilimi boş dilim gibi
-// kullanabilir. Query sağlayıcısı bunu batch olarak çağırır ve müşteri başına
-// ayrı sorgu yapmaz (ADR 0004'ün N+1 yasağı).
+// The result is a map from customer id to group ids. A customer with no group
+// has NO KEY; the caller can use the nil slice as an empty slice. The Query
+// provider calls this as a batch and runs no separate query per customer
+// (ADR 0004's N+1 ban).
 func (r *Repo) GroupIDsOfCustomers(ctx context.Context, customerIDs []string) (map[string][]string, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -246,7 +251,7 @@ func (r *Repo) GroupIDsOfCustomers(ctx context.Context, customerIDs []string) (m
 
 	rows, err := r.q.ListGroupIDsOfCustomers(ctx, customerIDs)
 	if err != nil {
-		return nil, wrapDB(err, "müşterilerin grup kimlikleri alınamadı")
+		return nil, wrapDB(err, "the customers' group ids could not be read")
 	}
 
 	out := make(map[string][]string, len(customerIDs))
@@ -256,7 +261,7 @@ func (r *Repo) GroupIDsOfCustomers(ctx context.Context, customerIDs []string) (m
 	return out, nil
 }
 
-// toGroup üretilen satırı domain modeline çevirir.
+// toGroup converts a group row into the domain model.
 func toGroup(row customerdb.CustomerGroup) (models.CustomerGroup, error) {
 	meta, err := toMetadata(row.Metadata)
 	if err != nil {
@@ -284,7 +289,7 @@ func toGroup(row customerdb.CustomerGroup) (models.CustomerGroup, error) {
 	}, nil
 }
 
-// toGroups satır dilimini domain modellerine çevirir.
+// toGroups converts a slice of group rows into domain models.
 func toGroups(rows []customerdb.CustomerGroup) ([]models.CustomerGroup, error) {
 	out := make([]models.CustomerGroup, 0, len(rows))
 	for i := range rows {

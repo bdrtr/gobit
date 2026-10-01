@@ -126,7 +126,9 @@
 // are the product module's, read only for an operator who may (ADR 0315).
 // It limits a promotion to customer groups as well ([UI.addGroupRule]), the
 // groups read through the customer module's group entity only for an operator
-// who may read the customers (ADR 0321).
+// who may read the customers (ADR 0321). A customer's page names their groups
+// and puts them into one or takes them out ([UI.addToGroup],
+// [UI.removeFromGroup]) through the customer module's surface (ADR 0322).
 //
 // The Campaigns screen ([UI.listCampaigns]) lists the windows and budgets the
 // promotions share, with how much of each budget is used, and its form writes

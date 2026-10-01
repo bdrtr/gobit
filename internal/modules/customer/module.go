@@ -92,6 +92,9 @@ const (
 	// GroupProviderName is the customer groups' query provider's name in the
 	// container (ADR 0321).
 	GroupProviderName = service.EntityGroup + query.ProviderSuffix
+	// AdminName is the module's panel surface's name in the container (ADR
+	// 0322): a customer's membership of the groups.
+	AdminName = ModuleName + ".admin"
 	// dbServiceName is the core database pool's name in the container.
 	dbServiceName = "core.db"
 )
@@ -200,6 +203,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(GroupProviderName, service.NewGroupProvider(m.svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(AdminName, service.NewAdminSurface(m.svc)); err != nil {
 		return err
 	}
 

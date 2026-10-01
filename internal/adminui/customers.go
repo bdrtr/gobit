@@ -2,12 +2,14 @@ package adminui
 
 import (
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/query"
 )
 
@@ -124,9 +126,21 @@ type customerAddress struct {
 	DefaultShipping, DefaultBilling bool
 }
 
-// showCustomer renders one customer with their addresses (ADR 0308).
+// showCustomer renders one customer with their addresses (ADR 0308) and
+// groups (ADR 0322).
 func (u *UI) showCustomer(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	u.renderCustomer(w, r, http.StatusOK, chi.URLParam(r, "id"), "")
+}
+
+// renderCustomer reads the customer and writes their page, with a refused
+// write's reason. An operator who may write and not read the customers is
+// told the reason alone (ADR 0260).
+func (u *UI) renderCustomer(w http.ResponseWriter, r *http.Request, code int, id, refused string) {
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	if refused != "" && !principal.HasScope(scopeCustomerRead) {
+		u.errorPage(w, r, code, "Not done", refused)
+		return
+	}
 	if strings.TrimSpace(id) == "" {
 		u.errorPage(w, r, http.StatusNotFound, "Not found", "No customer was named.")
 
@@ -137,7 +151,7 @@ func (u *UI) showCustomer(w http.ResponseWriter, r *http.Request) {
 		Entity: EntityCustomer,
 		Fields: []string{
 			fieldID, fieldEmail, fieldFirstName, fieldLastName, fieldPhone,
-			fieldHasAccount, fieldCreatedAt, fieldCustomerAddresses,
+			fieldHasAccount, fieldCreatedAt, fieldCustomerAddresses, fieldCustomerGroupIDs,
 		},
 		Filters: map[string]any{filterID: []string{id}},
 		Limit:   1,
@@ -163,12 +177,33 @@ func (u *UI) showCustomer(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	u.templates.render(w, r, http.StatusOK, "customer.gohtml", map[string]any{
+	memberOf := recordStrings(records[0], fieldCustomerGroupIDs)
+	groups, groupsUnread := u.customerGroupsOf(r.Context(), memberOf)
+	data := map[string]any{
 		titleKey:        customerRowOf(records[0]).display(),
 		"Customer":      customerRowOf(records[0]),
 		"Addresses":     addresses,
 		"CustomersPath": CustomersPath,
-	})
+		"Groups":        groups,
+		"GroupsUnread":  groupsUnread,
+		refusedKey:      refused,
+	}
+	// The groups to join are offered only to an operator who may write them:
+	// a reader is not read the whole list for a form they cannot send.
+	if u.canEditMemberships(r) {
+		data["CanEditGroups"] = true
+		offered := u.groupList(r.Context())
+		joinable := offered.Options[:0:0]
+		for _, option := range offered.Options {
+			if !slices.Contains(memberOf, option.ID) {
+				joinable = append(joinable, option)
+			}
+		}
+		offered.Options = joinable
+		data["GroupChoices"] = offered
+	}
+
+	u.templates.render(w, r, code, "customer.gohtml", data)
 }
 
 // customerRowOf turns a customer record into a row.

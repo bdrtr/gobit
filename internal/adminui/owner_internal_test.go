@@ -535,6 +535,17 @@ func (p recordingPromotions) RemovePromotionRule(context.Context, string, string
 	return p.surfaces.reach(ServicePromotionAdmin)
 }
 
+// recordingMemberships records the customer module's surface (ADR 0322).
+type recordingMemberships struct{ surfaces *recordingSurfaces }
+
+func (m recordingMemberships) AddCustomerToGroup(context.Context, string, string) error {
+	return m.surfaces.reach(ServiceCustomerAdmin)
+}
+
+func (m recordingMemberships) RemoveCustomerFromGroup(context.Context, string, string) error {
+	return m.surfaces.reach(ServiceCustomerAdmin)
+}
+
 // recordingNotifications records the notification module's surface (ADR 0317).
 type recordingNotifications struct{ surfaces *recordingSurfaces }
 
@@ -741,6 +752,9 @@ var walkForms = map[string]url.Values{
 	// A promotion's rules (ADR 0315).
 	routeKey(http.MethodPost, PromotionRulesPath):      {formCategory: {"pcat_walk"}},
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
+	// A customer's groups (ADR 0322).
+	routeKey(http.MethodPost, CustomerGroupsPath):      {formCustomerGroup: {"custgrp_walk"}},
+	routeKey(http.MethodPost, CustomerGroupRemovePath): {},
 	// Limiting a promotion to customer groups (ADR 0321).
 	routeKey(http.MethodPost, PromotionGroupRulesPath): {formGroup: {"custgrp_walk"}},
 	// Putting a promotion into a campaign (ADR 0320).
@@ -784,6 +798,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePromotionAdmin, PromotionLister(recordingPromotions{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceNotificationAdmin, NotificationLister(recordingNotifications{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceCustomerAdmin, GroupMembership(recordingMemberships{walk.surfaces})))
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
 	ui, err := FromContainer(c, false, nil)

@@ -3,9 +3,17 @@ customer.gohtml is one customer's page.
 
 The addresses are the customer provider's list-valued field, in the order they
 were written, each marked when it is a default (ADR 0308).
+
+The groups are the customer's, in the order their rank gives them, named
+through the customer module's group entity. A promotion or a price limited to
+a group reaches the customer through them (ADR 0321). An operator who may
+write the customers puts the customer into a group or takes them out (ADR
+0322).
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
 
 <div class="panel">
   <p>
@@ -51,6 +59,41 @@ were written, each marked when it is a default (ADR 0308).
 </table>
 {{ else }}
 <p class="muted">No address is kept for this customer.</p>
+{{ end }}
+
+<h2>Groups</h2>
+{{ if .GroupsUnread }}<p class="muted">The groups' names could not be read; they are shown by id.</p>{{ end }}
+{{ if .Groups }}
+<table>
+  <tbody>
+    {{ range .Groups }}
+    <tr>
+      <td>{{ .Name }}</td>
+      {{ if $.CanEditGroups }}<td>
+        <form method="post" action="{{ $.CustomersPath }}/{{ $.Customer.ID }}/groups/{{ .ID }}/remove">
+          <button type="submit">Take out of the group</button>
+        </form>
+      </td>{{ end }}
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p class="muted">The customer is in no group.</p>
+{{ end }}
+
+{{ with .GroupChoices }}
+{{ if .Unavailable }}
+<p class="muted">The customer groups could not be read, so none is offered.</p>
+{{ else if .Options }}
+<form method="post" action="{{ $.CustomersPath }}/{{ $.Customer.ID }}/groups">
+  <select name="group_id" aria-label="customer group">
+    {{ range .Options }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+  </select>
+  <button type="submit">Put into the group</button>
+</form>
+{{ if .Truncated }}<p class="muted">Only the newest {{ .Offered }} groups are offered.</p>{{ end }}
+{{ end }}
 {{ end }}
 
 <p><a href="{{ .CustomersPath }}">Back to customers</a></p>
