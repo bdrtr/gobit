@@ -119,7 +119,7 @@ func newAdminWriteServer(
 
 	svc := &fakeCarts{
 		detail: models.CartDetail{
-			Cart:  models.Cart{ID: "cart_1"},
+			Cart:  models.Cart{ID: "cart_1", OpenedBy: "user_operator"},
 			Items: []models.LineItem{{ID: "item_1", Title: "A shirt"}},
 		},
 	}

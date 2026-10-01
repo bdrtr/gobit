@@ -5,7 +5,7 @@ priced line — so an order can be taken over the telephone. It costs a channel
 claim the server did not prove, and buys an order priced by the same rules a
 shopper's goes through.
 
-- **Status:** Accepted — amended by [0286](0286-an-operator-completes-a-telephone-order.md)
+- **Status:** Accepted — amended by [0286](0286-an-operator-completes-a-telephone-order.md), [0299](0299-an-operators-writes-reach-only-an-operators-cart.md)
 - **Date:** 2026-09-12
 
 ## Context

@@ -109,7 +109,7 @@ func TestTheOperatorsDoorsOpenTheAdminOnlyOptions(t *testing.T) {
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			shipping := &fakeShipping{options: twoOptions, methodID: "sm_1"}
-			h := newServerWithFlows(t, &fakeCarts{}, api.Flows{Shipping: shipping})
+			h := newServerWithFlows(t, operatorsCarts(), api.Flows{Shipping: shipping})
 
 			doRequest(t, h, tc.method, tc.path, tc.body)
 
@@ -118,7 +118,7 @@ func TestTheOperatorsDoorsOpenTheAdminOnlyOptions(t *testing.T) {
 	}
 
 	shipping := &fakeShipping{options: twoOptions, methodID: "sm_1"}
-	surface := surfaceOver(api.Flows{Shipping: shipping}, &fakeCarts{})
+	surface := surfaceOver(api.Flows{Shipping: shipping}, operatorsCarts())
 	_, _, _, err := surface.ShippingOptions(operator(), "cart_1")
 	require.NoError(t, err)
 	assert.True(t, shipping.operator, "the panel lists as an operator")

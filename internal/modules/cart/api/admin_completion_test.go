@@ -27,7 +27,7 @@ const (
 // contact address, and the answer says what the order owes.
 func TestAnOperatorCompletesATelephoneOrder(t *testing.T) {
 	flow := &fakeCheckout{response: json.RawMessage(offlineFlowAnswer)}
-	h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+	h := newServerWithFlows(t, withOperatorsLineItem(), api.Flows{Checkout: flow})
 
 	rec := doRequestAs(t, h, &adminWriter, http.MethodPost, "/admin/v1/carts/cart_1/complete", telephoneCompletion)
 
@@ -76,7 +76,7 @@ func TestAnOperatorsCompletionNamesItsChannelAndItsTotal(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			flow := &fakeCheckout{response: json.RawMessage(offlineFlowAnswer)}
-			h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+			h := newServerWithFlows(t, withOperatorsLineItem(), api.Flows{Checkout: flow})
 
 			rec := doRequestAs(t, h, &adminWriter, http.MethodPost, "/admin/v1/carts/cart_1/complete", body)
 
@@ -97,7 +97,7 @@ func TestAnOperatorsCompletionTakesNoTenderOfTheCustomers(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			flow := &fakeCheckout{response: json.RawMessage(offlineFlowAnswer)}
-			h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+			h := newServerWithFlows(t, withOperatorsLineItem(), api.Flows{Checkout: flow})
 
 			rec := doRequestAs(t, h, &adminWriter, http.MethodPost, "/admin/v1/carts/cart_1/complete",
 				`{"sales_channel_id":"sc_phone","payment_provider_id":"bank_transfer","expected_total":3600,`+field+`}`)
@@ -122,7 +122,7 @@ func TestTheTelephoneOrderWritesAskForTheWriteScope(t *testing.T) {
 		{http.MethodPost, "/admin/v1/carts/cart_1/complete", telephoneCompletion},
 	} {
 		flow := &fakeCheckout{response: json.RawMessage(offlineFlowAnswer)}
-		h := newServerWithFlows(t, withLineItem(), api.Flows{Checkout: flow})
+		h := newServerWithFlows(t, withOperatorsLineItem(), api.Flows{Checkout: flow})
 
 		rec := doRequestAs(t, h, &reader, tc.method, tc.path, tc.body)
 

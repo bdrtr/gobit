@@ -48,7 +48,7 @@ func operator() context.Context {
 // the e-mail reach the flow the API holds, and its cart comes back.
 func TestThePanelOpensACartThroughTheOpeningFlow(t *testing.T) {
 	opening := &fakeOpening{cartID: "cart_phone"}
-	surface := surfaceOver(api.Flows{Opening: opening}, &fakeCarts{})
+	surface := surfaceOver(api.Flows{Opening: opening}, operatorsCarts())
 
 	id, err := surface.OpenCart(operator(), "TR", "cus_1", "caller@example.com")
 
@@ -65,7 +65,7 @@ func TestThePanelOpensACartThroughTheOpeningFlow(t *testing.T) {
 // wiring fault, and no cart is opened that names nobody (ADR 0296).
 func TestThePanelOpensNoCartForNobody(t *testing.T) {
 	opening := &fakeOpening{cartID: "cart_phone"}
-	surface := surfaceOver(api.Flows{Opening: opening}, &fakeCarts{})
+	surface := surfaceOver(api.Flows{Opening: opening}, operatorsCarts())
 
 	for name, ctx := range map[string]context.Context{
 		"no principal": context.Background(),
@@ -85,7 +85,7 @@ func TestThePanelOpensNoCartForNobody(t *testing.T) {
 // catalog the flow reads is that shopfront's.
 func TestThePanelPricesALineInTheChannelItNames(t *testing.T) {
 	pricing := &channelPricing{fakePricing: fakePricing{lineID: "line_1"}}
-	surface := surfaceOver(api.Flows{Pricing: pricing}, &fakeCarts{})
+	surface := surfaceOver(api.Flows{Pricing: pricing}, operatorsCarts())
 
 	id, err := surface.AddLine(operator(), "cart_phone", " sc_shop ", "variant_1", 2)
 
@@ -103,7 +103,7 @@ func TestThePanelPricesALineInTheChannelItNames(t *testing.T) {
 // of products assigned to none, and the flow is not reached.
 func TestALineWithoutAChannelIsRefused(t *testing.T) {
 	pricing := &channelPricing{}
-	surface := surfaceOver(api.Flows{Pricing: pricing}, &fakeCarts{})
+	surface := surfaceOver(api.Flows{Pricing: pricing}, operatorsCarts())
 
 	_, err := surface.AddLine(operator(), "cart_phone", "  ", "variant_1", 1)
 
@@ -115,7 +115,7 @@ func TestALineWithoutAChannelIsRefused(t *testing.T) {
 // TestTheSurfaceWithoutItsFlowsRefuses: an installation whose flows are not
 // bound answers an error rather than a cart nobody priced.
 func TestTheSurfaceWithoutItsFlowsRefuses(t *testing.T) {
-	surface := surfaceOver(api.Flows{}, &fakeCarts{})
+	surface := surfaceOver(api.Flows{}, operatorsCarts())
 
 	_, err := surface.OpenCart(operator(), "TR", "", "caller@example.com")
 	require.Error(t, err)
@@ -129,7 +129,7 @@ func TestTheSurfaceWithoutItsFlowsRefuses(t *testing.T) {
 // TestThePanelWritesTheAddressAndRepricesTheCart: the address keys reach the
 // service as the address endpoint's body would, inside the repricing flow.
 func TestThePanelWritesTheAddressAndRepricesTheCart(t *testing.T) {
-	carts := &fakeCarts{}
+	carts := operatorsCarts()
 	repricing := &fakeRepricing{}
 	surface := surfaceOver(api.Flows{Repricing: repricing}, carts)
 
@@ -156,7 +156,7 @@ func TestThePanelWritesTheAddressAndRepricesTheCart(t *testing.T) {
 // priced by the flow the API holds and its method comes back.
 func TestThePanelChoosesTheShippingOptionThroughTheShippingFlow(t *testing.T) {
 	shipping := &fakeShipping{methodID: "sm_1"}
-	surface := surfaceOver(api.Flows{Shipping: shipping}, &fakeCarts{})
+	surface := surfaceOver(api.Flows{Shipping: shipping}, operatorsCarts())
 
 	id, err := surface.AddShippingMethod(operator(), "cart_phone", "so_courier")
 
@@ -173,7 +173,7 @@ func TestThePanelChoosesTheShippingOptionThroughTheShippingFlow(t *testing.T) {
 func TestThePanelCompletesWithTheOperatorsClaims(t *testing.T) {
 	checkout := &fakeCheckout{response: json.RawMessage(
 		`{"order_id":"order_1","cart_id":"cart_phone","currency_code":"TRY","amount":60000,"outstanding":60000}`)}
-	carts := &fakeCarts{}
+	carts := operatorsCarts()
 	carts.detail.Email = "caller@example.com"
 	surface := surfaceOver(api.Flows{Checkout: checkout}, carts)
 
@@ -198,7 +198,7 @@ func TestThePanelCompletesWithTheOperatorsClaims(t *testing.T) {
 // checkout is reached.
 func TestACompletionWithoutAChannelIsRefused(t *testing.T) {
 	checkout := &fakeCheckout{}
-	surface := surfaceOver(api.Flows{Checkout: checkout}, &fakeCarts{})
+	surface := surfaceOver(api.Flows{Checkout: checkout}, operatorsCarts())
 
 	_, _, err := surface.Complete(operator(), "cart_phone", "", "bank_transfer", 60_000)
 

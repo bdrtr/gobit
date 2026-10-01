@@ -98,7 +98,7 @@ func phoneCatalog(completed bool) *fakeCatalog {
 		fieldID: "cart_phone", fieldCurrencyCod: "TRY", fieldEmail: "caller@example.com",
 		fieldCartCustomerID: "", fieldSubtotal: int64(32_000), fieldTax: int64(6_400),
 		fieldShipping: int64(0), fieldTotal: int64(38_400), fieldCartTotalsStale: false,
-		fieldCartCompleted: completed,
+		fieldCartCompleted: completed, FieldCartOpenedBy: "usr_phone",
 		fieldCartShippingAddress: map[string]any{
 			"first_name": "Ada", "last_name": "Lovelace", "address_1": "12 Right St",
 			"city": "Ankara", "postal_code": "06000", "country_code": "TR", "phone": "",
@@ -685,4 +685,41 @@ func TestACallerSearchThatFindsNothingSaysSo(t *testing.T) {
 		assert.Contains(t, rec.Body.String(), tc.says, name)
 		assert.Contains(t, rec.Body.String(), `<input name="customer_id"`, name)
 	}
+}
+
+// TestAShoppersCartIsOnlyRead is ADR 0299 on the page: a cart a shopper
+// opened is drawn with what it holds and offers no form, and the page says
+// why; an operator's cart names its opener.
+func TestAShoppersCartIsOnlyRead(t *testing.T) {
+	t.Parallel()
+
+	catalog := phoneCatalog(false)
+	catalog.byEntity[EntityCart][0][FieldCartOpenedBy] = ""
+	panel := newCatalogPanel(t, catalog)
+	panel.carts = &fakeCarts{}
+
+	rec := phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, "A shopper opened this cart; the panel reads it and changes nothing in it.")
+	assert.Contains(t, body, "Shirt", "the cart is still drawn")
+	assert.NotContains(t, body, `action="`+CartsPath+`/cart_phone/`, "no form writes to a shopper's cart")
+	spec, ok := catalog.specFor(EntityCart)
+	require.True(t, ok)
+	assert.Contains(t, spec.Fields, FieldCartOpenedBy, "the page asks who opened the cart")
+
+	rec = phoneRequest(newPhonePanel(t), http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "opened by operator usr_phone")
+	assert.Contains(t, rec.Body.String(), `action="`+CartsPath+`/cart_phone/lines"`)
+}
+
+// newPhonePanel is a panel over [phoneCatalog]'s operator's cart.
+func newPhonePanel(t *testing.T) *UI {
+	t.Helper()
+
+	panel := newCatalogPanel(t, phoneCatalog(false))
+	panel.carts = &fakeCarts{}
+
+	return panel
 }

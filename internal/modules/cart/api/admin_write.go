@@ -159,6 +159,9 @@ func (h *Handler) adminCreateCart(w http.ResponseWriter, r *http.Request) {
 // operator sell at a price nothing in the catalog says.
 func (h *Handler) adminAddLineItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	if h.shoppersCartRefused(w, r) {
+		return
+	}
 
 	var body adminAddLineItemRequest
 	if err := decodeBody(w, r, &body); err != nil {
@@ -252,6 +255,64 @@ func (h *Handler) channelScoped(
 	return scoped, true
 }
 
+// operatorsCart refuses a cart no operator opened. A cart a shopper opened is
+// the one they are looking at, and an operator's write would change the amount
+// in front of them behind their back; the opener never changes, so the answer
+// cannot go stale between this read and the write (ADR 0299, D200).
+func (h *Handler) operatorsCart(ctx context.Context, cartID string) error {
+	detail, err := h.svc.GetCart(ctx, cartID)
+	if err != nil {
+		return err
+	}
+	if detail.OpenedBy == "" {
+		return coreerrors.Conflict(codeShoppersCart,
+			"cart %s was opened by a shopper; an operator changes only the carts an operator "+
+				"opened", cartID)
+	}
+
+	return nil
+}
+
+// shoppersCartRefused answers an admin write on the cart in the path with
+// [Handler.operatorsCart]'s refusal, and reports whether it did.
+func (h *Handler) shoppersCartRefused(w http.ResponseWriter, r *http.Request) bool {
+	ctx := r.Context()
+	if err := h.operatorsCart(ctx, cartID(r)); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return true
+	}
+
+	return false
+}
+
+// adminSetShippingAddress is the storefront's address write on an operator's
+// cart (ADR 0286, ADR 0299).
+func (h *Handler) adminSetShippingAddress(w http.ResponseWriter, r *http.Request) {
+	if h.shoppersCartRefused(w, r) {
+		return
+	}
+	h.storeSetShippingAddress(w, r)
+}
+
+// adminSetBillingAddress is the storefront's billing address write on an
+// operator's cart (ADR 0286, ADR 0299).
+func (h *Handler) adminSetBillingAddress(w http.ResponseWriter, r *http.Request) {
+	if h.shoppersCartRefused(w, r) {
+		return
+	}
+	h.storeSetBillingAddress(w, r)
+}
+
+// adminRemoveShippingMethod is the storefront's shipping method removal on an
+// operator's cart (ADR 0286, ADR 0299).
+func (h *Handler) adminRemoveShippingMethod(w http.ResponseWriter, r *http.Request) {
+	if h.shoppersCartRefused(w, r) {
+		return
+	}
+	h.storeRemoveShippingMethod(w, r)
+}
+
 // operatorOf names the operator an admin door's cart is opened by (ADR 0296)
 // and its order placed by (ADR 0298): the caller's identity, a user or an API
 // key, kept as free text the way the file module keeps an upload's.
@@ -316,6 +377,9 @@ type adminCompleteCartRequest struct {
 // the customer is not there to present one (ADR 0286).
 func (h *Handler) adminCompleteCart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	if h.shoppersCartRefused(w, r) {
+		return
+	}
 
 	var body adminCompleteCartRequest
 	if err := decodeBody(w, r, &body); err != nil {

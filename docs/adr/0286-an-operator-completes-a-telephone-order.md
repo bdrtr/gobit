@@ -5,7 +5,7 @@ method and completes the cart with an offline method. An operator can take a
 telephone order to the end; the total they read to the customer is the one the
 completion compares.
 
-- **Status:** Accepted — amended by [0295](0295-an-operator-may-choose-an-admin-only-shipping-option.md)
+- **Status:** Accepted — amended by [0295](0295-an-operator-may-choose-an-admin-only-shipping-option.md), [0299](0299-an-operators-writes-reach-only-an-operators-cart.md)
 - **Date:** 2026-10-01
 
 ## Context

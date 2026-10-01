@@ -20,6 +20,8 @@ be read says it is in minor units.
     {{ if .Cart.Email }}{{ .Cart.Email }}{{ else }}<span class="muted">no address on this cart</span>{{ end }}
     {{ with .Cart.CustomerID }}<span class="muted">customer {{ . }}</span>{{ end }}
   </p>
+  {{ with .Cart.OpenedBy }}<p class="muted">opened by operator {{ . }}</p>{{ else }}
+  <p class="muted">A shopper opened this cart; the panel reads it and changes nothing in it.</p>{{ end }}
 </div>
 
 <h2>Lines</h2>

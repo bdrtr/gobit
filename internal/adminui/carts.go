@@ -127,6 +127,9 @@ type cartPage struct {
 	Subtotal, Tax, Shipping, Total   string
 	TotalsStale, Completed, Unscaled bool
 	Lines                            []cartLine
+	// OpenedBy is the operator who opened the cart; empty on a shopper's,
+	// which the page only reads (ADR 0296, ADR 0299).
+	OpenedBy string
 	// TotalMinor is the total in minor units, carried by the completion form.
 	TotalMinor int64
 	// ShipTo is the shipping address, a line a part; Address its fields, to
@@ -479,7 +482,7 @@ func (u *UI) renderCart(
 			fieldID, fieldCurrencyCod, fieldEmail, fieldCartCustomerID,
 			fieldSubtotal, fieldTax, fieldShipping, fieldTotal,
 			fieldCartTotalsStale, fieldCartCompleted, fieldCartLines,
-			fieldCartShippingAddress, fieldCartShippingMethods,
+			fieldCartShippingAddress, fieldCartShippingMethods, FieldCartOpenedBy,
 		},
 		Filters: map[string]any{filterID: []string{id}},
 		Limit:   1,
@@ -495,7 +498,9 @@ func (u *UI) renderCart(
 
 	scales := u.currencyScales(r.Context())
 	page := cartPageOf(records[0], scales)
-	canWrite := u.carts != nil && principal.HasScope(scopeCartWrite)
+	// A cart a shopper opened is read here and changed by no form: the
+	// surface refuses an operator's write to it (ADR 0299).
+	canWrite := u.carts != nil && principal.HasScope(scopeCartWrite) && page.OpenedBy != ""
 	var options []cartOption
 	optionsRead := false
 	if canWrite && !page.Completed {
@@ -541,6 +546,7 @@ func cartPageOf(record query.Record, scales map[string]int) cartPage {
 		CustomerID:  recordString(record, fieldCartCustomerID),
 		TotalsStale: record[fieldCartTotalsStale] == true,
 		Completed:   record[fieldCartCompleted] == true,
+		OpenedBy:    recordString(record, FieldCartOpenedBy),
 	}
 	var known bool
 	page.Total, known = amountField(record, fieldTotal, page.Currency, scales)

@@ -9,15 +9,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/cart/service"
 )
 
-// This file is the admin side's READS. Its writes are in admin_write.go, and
-// there are two of them (ADR 0146).
+// This file is the admin side's READS. Its writes are in admin_write.go and in
+// the completion beside them (ADR 0146, ADR 0286).
 //
-// What is not there is the whole rule: a cart the shopper is holding cannot be
-// CHANGED from the panel, because that would alter the amount they are looking
-// at behind their back. Opening a cart and adding a priced line cannot produce
-// that outcome — an opened cart is nobody's yet, and the money is taken on the
-// storefront with the totals in front of the shopper. Order corrections are the
-// job of the order module (Return/Exchange/Claim).
+// A cart the shopper is holding is not CHANGED from the admin side, because
+// that would alter the amount they are looking at behind their back. Every
+// admin write on a cart in the path asks first who opened it and refuses a
+// shopper's (ADR 0299, D200): opening a cart and pricing its lines are an
+// operator's acts on the operator's own cart, and the shopper who receives its
+// link pays the totals in front of them. Order corrections are the job of the
+// order module (Return/Exchange/Claim).
 
 // adminListCarts returns the carts in pages.
 //

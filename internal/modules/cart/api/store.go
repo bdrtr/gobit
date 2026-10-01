@@ -975,6 +975,9 @@ func (h *Handler) storeAddShippingMethod(w http.ResponseWriter, r *http.Request)
 // adminAddShippingMethod adds a shipping method to a cart an operator builds;
 // an admin-only option is one they may choose (ADR 0295).
 func (h *Handler) adminAddShippingMethod(w http.ResponseWriter, r *http.Request) {
+	if h.shoppersCartRefused(w, r) {
+		return
+	}
 	h.addShippingMethod(w, r, true)
 }
 

@@ -380,14 +380,14 @@ func describeAdmin(d *openapi.Doc) {
 			"quantity is mandatory and has to be positive. The unit price and the title " +
 			"are the server's.",
 		RequestBody: d.RequestBody(adminAddLineItemRequest{}),
-		Responses: map[string]any{
+		Responses: operatorsCartOnly(map[string]any{
 			"201": openapi.Response("The added line item", d.Item(lineItemDTO{})),
 			"404": openapi.ErrorResponse(
 				"No such cart, or the named channel's catalog does not carry that variant."),
 			"422": openapi.ErrorResponse(
 				"The body could not be read, sales_channel_id or quantity is missing, or " +
 					"the quantity is not positive."),
-		},
+		}),
 	})
 
 	describeAdminCompletion(d)
@@ -402,34 +402,34 @@ func describeAdminCompletion(d *openapi.Doc) {
 		Summary:     "Writes the cart's shipping address.",
 		Description: sameAct,
 		RequestBody: d.RequestBody(addressRequest{}),
-		Responses: map[string]any{
+		Responses: operatorsCartOnly(map[string]any{
 			"200": openapi.Response("The written shipping address", d.Item(addressDTO{})),
-		},
+		}),
 	})
 	d.Describe(http.MethodPut, "/admin/v1/carts/{id}/billing-address", openapi.Operation{
 		Summary:     "Writes the cart's billing address.",
 		Description: sameAct,
 		RequestBody: d.RequestBody(addressRequest{}),
-		Responses: map[string]any{
+		Responses: operatorsCartOnly(map[string]any{
 			"200": openapi.Response("The written billing address", d.Item(addressDTO{})),
-		},
+		}),
 	})
 	d.Describe(http.MethodPost, "/admin/v1/carts/{id}/shipping-methods", openapi.Operation{
 		Summary: "Adds a shipping option to the cart at the price quoted for it; the amount " +
 			"cannot be sent. An admin-only option is accepted here and not on the storefront " +
 			"(ADR 0295).",
 		RequestBody: d.RequestBody(addShippingMethodRequest{}),
-		Responses: map[string]any{
+		Responses: operatorsCartOnly(map[string]any{
 			"201": openapi.Response("The added shipping method", d.Item(shippingMethodDTO{})),
-		},
+		}),
 	})
 	d.Describe(http.MethodDelete, "/admin/v1/carts/{id}/shipping-methods/{shipping_method_id}",
 		openapi.Operation{
 			Summary:     "Removes the shipping method from the cart.",
 			Description: sameAct,
-			Responses: map[string]any{
+			Responses: operatorsCartOnly(map[string]any{
 				"204": emptyResponse("The shipping method was removed"),
-			},
+			}),
 		})
 	d.Describe(http.MethodPost, "/admin/v1/carts/{id}/complete", openapi.Operation{
 		Summary: "Completes a cart an operator built, paid later through an offline method.",
@@ -449,11 +449,26 @@ func describeAdminCompletion(d *openapi.Doc) {
 		Responses: map[string]any{
 			"200": openapi.Response("The resulting order, its total and what it still owes",
 				d.Item(completeCartDTO{})),
+			"409": openapi.ErrorResponse(
+				"The cart's total moved since the operator read it " +
+					"(\"checkout_workflow_total_mismatch\"), or a shopper opened the cart " +
+					"(\"" + codeShoppersCart + "\", ADR 0299)."),
 			"422": openapi.ErrorResponse(
 				"The body could not be read, sales_channel_id or expected_total is missing, or " +
 					"the provider is not an offline method."),
 		},
 	})
+}
+
+// operatorsCartOnly adds the refusal every admin write on a cart in the path
+// can give: the cart was opened by a shopper, and an operator changes only the
+// carts an operator opened (ADR 0299).
+func operatorsCartOnly(responses map[string]any) map[string]any {
+	responses["409"] = openapi.ErrorResponse(
+		"A shopper opened the cart: code \"" + codeShoppersCart + "\". An operator writes only " +
+			"to the carts an operator opened (ADR 0299).")
+
+	return responses
 }
 
 // queryParameter defines a parameter read from the query string.

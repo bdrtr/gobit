@@ -2,14 +2,15 @@
 //
 // There are two surfaces: the customer side (/store/v1/carts …) builds and
 // changes the cart, and the admin side (/admin/v1/carts) reads every cart and
-// writes exactly two things — it OPENS a cart and ADDS a priced line to one
-// (ADR 0146), which is what taking an order over the telephone needs.
+// writes what taking an order over the telephone needs: it OPENS a cart, ADDS
+// priced lines to it (ADR 0146), writes its addresses and shipping method and
+// completes it with an offline method (ADR 0286).
 //
-// What the admin side still cannot do is CHANGE a cart the shopper is holding:
-// no quantity, no removal, no address, no shipping method, no completion. Those
-// would alter the figure the customer is looking at behind their back, and the
-// party that alters it is the customer. Order corrections remain the order
-// module's job (Return/Exchange/Claim).
+// What the admin side cannot do is CHANGE a cart the shopper is holding: every
+// admin write on a cart in the path refuses a cart no operator opened (ADR
+// 0299, D200). Those writes would alter the figure the customer is looking at
+// behind their back, and the party that alters it is the customer. Order
+// corrections remain the order module's job (Return/Exchange/Claim).
 //
 // # Surfaces not opened to HTTP
 //
@@ -214,6 +215,10 @@ const codeShippingMethodMissing = "cart_shipping_method_missing"
 // the cart, the other for the line item. Had the two been reduced to a single
 // code, the diagnosis could not be made without reading the log.
 const codeCartMissing = "cart_missing_after_create"
+
+// codeShoppersCart refuses an operator's write to a cart a shopper opened: an
+// operator changes only the carts an operator opened (ADR 0299, D200).
+const codeShoppersCart = "cart_opened_by_shopper"
 
 // codeFlowResultInvalid reports that the body returned from the flow could not
 // be decoded.

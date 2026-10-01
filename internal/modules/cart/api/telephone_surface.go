@@ -66,6 +66,9 @@ func (s *TelephoneSurface) AddLine(
 	if err != nil {
 		return "", err
 	}
+	if err := s.h.operatorsCart(ctx, cartID); err != nil {
+		return "", err
+	}
 	flow, err := s.h.pricing()
 	if err != nil {
 		return "", err
@@ -89,6 +92,9 @@ func (s *TelephoneSurface) SetShippingAddress(ctx context.Context, cartID string
 		PostalCode:  address[AddressPostalCode],
 		CountryCode: address[AddressCountryCode],
 		Phone:       address[AddressPhone],
+	}
+	if err := s.h.operatorsCart(ctx, cartID); err != nil {
+		return err
 	}
 
 	return s.h.repriced(ctx, cartID, func() error {
@@ -123,6 +129,9 @@ func (s *TelephoneSurface) ShippingOptions(
 // AddShippingMethod prices the shipping option for the cart and adds it,
 // returning the method's id.
 func (s *TelephoneSurface) AddShippingMethod(ctx context.Context, cartID, shippingOptionID string) (string, error) {
+	if err := s.h.operatorsCart(ctx, cartID); err != nil {
+		return "", err
+	}
 	flow, err := s.h.shipping()
 	if err != nil {
 		return "", err
@@ -144,6 +153,9 @@ func (s *TelephoneSurface) Complete(
 	}
 	placedBy, err := operatorOf(scoped)
 	if err != nil {
+		return "", 0, err
+	}
+	if err := s.h.operatorsCart(ctx, cartID); err != nil {
 		return "", 0, err
 	}
 

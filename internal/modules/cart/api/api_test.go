@@ -781,6 +781,20 @@ func withLineItem() *fakeCarts {
 	}}
 }
 
+// withOperatorsLineItem is [withLineItem] on a cart an operator opened, the
+// only cart an operator's write reaches (ADR 0299).
+func withOperatorsLineItem() *fakeCarts {
+	carts := withLineItem()
+	carts.detail.OpenedBy = "user_operator"
+
+	return carts
+}
+
+// operatorsCarts is an empty cart service whose cart an operator opened.
+func operatorsCarts() *fakeCarts {
+	return &fakeCarts{detail: models.CartDetail{Cart: models.Cart{ID: "cart_1", OpenedBy: "user_operator"}}}
+}
+
 // TestAddLineItemReturns201 verifies that adding a line item returns a 201 and
 // hands the request over TO THE FLOW.
 //
@@ -1297,10 +1311,11 @@ func TestAdminListDefaultLimit(t *testing.T) {
 // The admin surface was read only, on the argument that a correction made from
 // the panel changes the amount the customer saw behind their back. Taking an
 // order over the telephone needs two of those writes — opening a cart and adding
-// a priced line — and they are the two that cannot produce that outcome: an
-// opened cart is nobody's yet, and a line the shopper has not seen is a line
-// they have not agreed to pay for either, because the money is taken through the
-// storefront's own completion with the totals in front of them.
+// a priced line — and they are the two that cannot produce that outcome on the
+// operator's own cart: an opened cart is nobody's yet, and a line the shopper
+// has not seen is a line they have not agreed to pay for either, because the
+// money is taken through the storefront's own completion with the totals in
+// front of them.
 //
 // Everything in the list below would produce it. Changing a quantity, dropping a
 // line, taking a coupon off, merging another cart in, deleting the cart — each
@@ -1312,7 +1327,9 @@ func TestAdminListDefaultLimit(t *testing.T) {
 // telephone order the operator completes with an offline method: the operator
 // reads the total to the customer, and a completion that does not send the
 // cart's current total is refused rather than charged, on either surface. They
-// are proved bound by [TestAnOperatorCompletesATelephoneOrder].
+// are proved bound by [TestAnOperatorCompletesATelephoneOrder]. They reached a
+// shopper's cart as well until ADR 0299 (D200), which holds every admin write
+// to the carts an operator opened: [TestTheAdminWritesRefuseAShoppersCart].
 func TestAdminCannotUndoWhatTheShopperSaw(t *testing.T) {
 	h := newServer(t, &fakeCarts{})
 

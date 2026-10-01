@@ -12,6 +12,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kırıcı değişiklikler
 
+- **An operator's writes reach only an operator's cart** (ADR 0299, D200).
+  **For integrators:** `POST /admin/v1/carts/{id}/line-items`, the two address
+  writes, the shipping method writes and `POST /admin/v1/carts/{id}/complete`
+  answer 409 `cart_opened_by_shopper` on a cart the storefront opened, and on
+  every cart opened before ADR 0296. **For operators:** the panel's cart page
+  offers no form on a shopper's cart; a telephone order in progress across the
+  upgrade is opened again.
+
 - **Production registers no manual provider** (ADR 0283, D194). **For
   operators:** with `APP_ENV=production` the `manual` payment provider, which
   authorizes and captures whatever the caller names, is no longer registered: a
