@@ -845,6 +845,9 @@ var panelSurfaceContracts = map[string]string{
 	// And one promotion's page, with its discount, rules, campaign and uses,
 	// which no read provider publishes (ADR 0313).
 	"promotion.go": "promotion.admin's promotion page",
+	// The delivery log is the notification module's, which publishes no read
+	// provider (ADR 0317).
+	"notifications.go": "notification.admin's delivery log",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

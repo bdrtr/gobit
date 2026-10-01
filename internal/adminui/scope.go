@@ -178,6 +178,10 @@ func builtInScopes() map[string]string {
 		routeKey(post, PromotionStatusPath): scopePromotionWrite,
 		routeKey(get, PromotionPath):        scopePromotionRead,
 		routeKey(post, PromotionsPath):      scopePromotionWrite,
+		// The delivery log and a resend are the notification module's (ADR
+		// 0317).
+		routeKey(get, NotificationsPath):       scopeNotificationRead,
+		routeKey(post, NotificationResendPath): scopeNotificationWrite,
 		// A promotion's rules (ADR 0315).
 		routeKey(post, PromotionRulesPath):      scopePromotionWrite,
 		routeKey(post, PromotionRuleRemovePath): scopePromotionWrite,

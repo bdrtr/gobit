@@ -535,6 +535,17 @@ func (p recordingPromotions) RemovePromotionRule(context.Context, string, string
 	return p.surfaces.reach(ServicePromotionAdmin)
 }
 
+// recordingNotifications records the notification module's surface (ADR 0317).
+type recordingNotifications struct{ surfaces *recordingSurfaces }
+
+func (n recordingNotifications) DeliveriesJSON(context.Context, string, string, int32, int32) (json.RawMessage, int64, error) {
+	return json.RawMessage(`[]`), 0, n.surfaces.reach(ServiceNotificationAdmin)
+}
+
+func (n recordingNotifications) ResendDelivery(context.Context, string) (string, error) {
+	return "sent", n.surfaces.reach(ServiceNotificationAdmin)
+}
+
 func (p recordingPromotions) PromotionJSON(context.Context, string) (json.RawMessage, error) {
 	return json.RawMessage(`{"rules":[],"latest_uses":[]}`), p.surfaces.reach(ServicePromotionAdmin)
 }
@@ -716,6 +727,8 @@ var walkForms = map[string]url.Values{
 	// A promotion's rules (ADR 0315).
 	routeKey(http.MethodPost, PromotionRulesPath):      {formCategory: {"pcat_walk"}},
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
+	// Sending a notification again (ADR 0317).
+	routeKey(http.MethodPost, NotificationResendPath): {"status": {"failed"}},
 	// Restoring a product's revision (ADR 0316).
 	routeKey(http.MethodPost, ProductRevisionRestorePath): {fieldVersion: {"3"}},
 	// Writing a coupon (ADR 0314).
@@ -750,6 +763,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePromotionAdmin, PromotionLister(recordingPromotions{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceNotificationAdmin, NotificationLister(recordingNotifications{walk.surfaces})))
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
 	ui, err := FromContainer(c, false, nil)

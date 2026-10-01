@@ -1019,6 +1019,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 
 	assert.Equal(t, promotion.AdminName, adminui.ServicePromotionAdmin,
 		"the panel's promotion surface name must match the promotion module (ADR 0311)")
+	assert.Equal(t, notification.AdminName, adminui.ServiceNotificationAdmin,
+		"the panel's notification surface name must match the notification module (ADR 0317)")
 	assert.Equal(t, cartflow.AttrCategoryTreeIDs, adminui.RuleAttributeCategoryTree,
 		"the attribute the panel's category rule names must be the one the cart flow fills (ADR 0315)")
 	assert.Equal(t, product.AdminName, adminui.ServiceProductAdmin,

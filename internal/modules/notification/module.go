@@ -94,6 +94,10 @@ const ProvidersName = ModuleName + ".providers"
 // (ADR 0137).
 const InteropName = ModuleName + ".interop"
 
+// AdminName is the container name of the module's panel surface (ADR 0317):
+// the delivery log and the resend of a failed order confirmation.
+const AdminName = ModuleName + ".admin"
+
 // DefaultProviderID is the id used when no provider is selected.
 //
 // The value comes from the logonly package: if the config's default ("log") and
@@ -229,6 +233,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(AdminName, service.NewAdminSurface(svc)); err != nil {
 		return err
 	}
 

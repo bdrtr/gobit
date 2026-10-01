@@ -196,7 +196,10 @@ type UI struct {
 	// promotions lists the shop's promotions (ADR 0311); nil when the
 	// installation registers none.
 	promotions PromotionLister
-	scopes     map[string]string
+	// notifications lists the delivery log (ADR 0317); nil when the
+	// installation registers none.
+	notifications NotificationLister
+	scopes        map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -284,6 +287,11 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And the notifications screen (ADR 0317).
+	notifications, err := optionalService[NotificationLister](c, ServiceNotificationAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -313,6 +321,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		payments:      payments,
 		carts:         carts,
 		promotions:    promotions,
+		notifications: notifications,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

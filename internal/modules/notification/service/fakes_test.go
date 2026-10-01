@@ -38,6 +38,9 @@ type fakeStore struct {
 	finishErr error
 	// listErr, when set, makes ListDeliveries return this error.
 	listErr error
+	// listed is the filter ListDeliveries was last called with; the fake
+	// does not page, so a page is asserted as what reached the store.
+	listed models.DeliveryFilter
 	// reopenLost, when set, makes ReopenFailedDelivery find the record no
 	// longer failed: another resend reached it between the read and the reopen.
 	reopenLost bool
@@ -148,6 +151,7 @@ func (s *fakeStore) ListDeliveries(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.listed = filter
 	if s.listErr != nil {
 		return nil, 0, s.listErr
 	}

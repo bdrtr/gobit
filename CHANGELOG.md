@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel lists the notifications** (ADR 0317). **For operators:** a
+  Notifications screen lists the failed deliveries first with the provider's
+  reason, finds an order's by its id, and sends a failed order confirmation
+  again under `notification:write`.
+
 - **The panel shows a product's history** (ADR 0316). **For operators:** the
   product page links to its revisions, newest first with what each changed,
   and an older one is restored under `product:write`; a product written since

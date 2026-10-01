@@ -160,7 +160,7 @@ func (u *UI) renderRevisions(w http.ResponseWriter, r *http.Request, code int, r
 		productsPathKey: ProductsPath,
 		"Version":       recordInt(records[0], fieldVersion),
 		"Revisions":     rows,
-		"Total":         total,
+		totalKey:        total,
 		"CanRestore":    canRestore && principal.HasScope(scopeProductWrite),
 		refusedKey:      refused,
 		"Restored":      r.URL.Query().Get(paramRestored),

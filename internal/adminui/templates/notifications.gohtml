@@ -1,0 +1,69 @@
+{{- /*
+notifications.gohtml is the notification module's delivery log (ADR 0317).
+
+A delivery is one attempt to tell somebody something: an order's confirmation,
+an invitation, a gift card's code. The failed ones come first, because the
+screen exists for the customer who says no e-mail arrived. An order's
+deliveries are found by its id, in every status. An operator who may write
+notifications sends a failed order confirmation again; the module rebuilds it
+from the order, and the other kinds are sent again by the modules that hold
+their content, so they offer no button.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ with .Resent }}<p role="status">{{ if eq $.Outcome "sent" }}Delivery {{ . }} was sent again.{{ else }}Delivery {{ . }} was tried again and is {{ $.Outcome }}; its row says why.{{ end }}</p>{{ end }}
+
+<form method="get" action="{{ .Path }}" role="search">
+  <input name="reference" value="{{ .Reference }}" placeholder="order id" aria-label="the order's id">
+  <button type="submit">Find the order's notifications</button>
+</form>
+
+{{ if .Reference }}
+<p class="muted">{{ .Total }} for {{ .Reference }}. <a href="{{ .Path }}">Every order</a></p>
+{{ else }}
+<nav aria-label="Status">
+  {{ range .Statuses }}
+  <a href="{{ $.Path }}?status={{ . }}"{{ if eq . $.Status }} aria-current="page"{{ end }}>{{ . }}</a>
+  {{ end }}
+</nav>
+<p class="muted">{{ .Total }} {{ .Status }}.</p>
+{{ end }}
+
+{{ if .Deliveries }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Notification</th><th>Channel</th><th>For</th><th>Status</th><th>Last change (UTC)</th>{{ if .CanResend }}<th></th>{{ end }}</tr>
+  </thead>
+  <tbody>
+  {{ range .Deliveries }}
+    <tr>
+      <td>{{ .Template }}</td>
+      <td>{{ .Channel }}</td>
+      <td>{{ .Reference }}</td>
+      <td>{{ .Status }}{{ with .Error }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
+      <td>{{ .UpdatedAt.UTC.Format "2006-01-02 15:04" }}</td>
+      {{ if $.CanResend }}<td>{{ if .Resendable }}
+        <form method="post" action="{{ $.Path }}/{{ .ID }}/resend">
+          <input type="hidden" name="status" value="{{ $.Status }}">
+          <input type="hidden" name="reference" value="{{ $.Reference }}">
+          <button type="submit">Send again</button>
+        </form>
+      {{ end }}</td>{{ end }}
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No notification here.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?status={{ .Status }}&amp;reference={{ .Reference }}&amp;page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?status={{ .Status }}&amp;reference={{ .Reference }}&amp;page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

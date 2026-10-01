@@ -284,8 +284,8 @@ func (u *UI) renderPromotions(
 		titleKey:     promotionsLabel,
 		"Promotions": rows,
 		"Status":     status,
-		"Statuses":   promotionStatuses,
-		"Total":      total,
+		statusesKey:  promotionStatuses,
+		totalKey:     total,
 		refusedKey:   refused,
 		typedKey:     typed,
 	}

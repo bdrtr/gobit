@@ -125,6 +125,11 @@
 // and removes a rule ([UI.addCategoryRule], [UI.removeRule]); the categories
 // are the product module's, read only for an operator who may (ADR 0315).
 //
+// The Notifications screen ([UI.listNotifications]) lists the notification
+// module's delivery log, the failed ones first or one order's, and sends a
+// failed order confirmation again ([UI.resendNotification]) through the
+// module's panel surface (ADR 0317).
+//
 // A product's history ([UI.showRevisions]) lists the revisions the product
 // module records for its writes, and restores an older one at the version the
 // page was read at ([UI.restoreRevision]), refused as an edit is when the

@@ -39,6 +39,13 @@ const refusedKey = "Refused"
 // with, to draw it again.
 const typedKey = "Typed"
 
+// statusesKey and totalKey carry a list screen's status tabs and the count in
+// the chosen one.
+const (
+	statusesKey = "Statuses"
+	totalKey    = "Total"
+)
+
 // productsPathKey is the template data key carrying the product list's path,
 // which every catalog page links back to.
 const productsPathKey = "ProductsPath"
@@ -91,6 +98,7 @@ var pages = []string{
 	"promotions.gohtml",
 	"promotion.gohtml",
 	"product_revisions.gohtml",
+	"notifications.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -286,6 +294,9 @@ func sections() []navItem {
 		// The promotions sit beside the sales they discount (ADR 0311).
 		{Label: promotionsLabel, Path: PromotionsPath},
 		{Label: customersLabel, Path: CustomersPath},
+		// The notifications sit beside the customers they were sent to (ADR
+		// 0317).
+		{Label: notificationsLabel, Path: NotificationsPath},
 		{Label: inventoryLabel, Path: InventoryPath},
 		// The reviews sit LAST, and not because they matter least: they are
 		// the panel's first screen of the shape ADR 0030 decided on, so an

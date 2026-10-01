@@ -285,7 +285,7 @@ func (u *UI) renderEditForm(
 	u.templates.render(w, r, status, "product_edit.gohtml", map[string]any{
 		titleKey:      "Edit " + product.Title,
 		productKey:    product,
-		"Statuses":    productStatuses,
+		statusesKey:   productStatuses,
 		errorKey:      message,
 		actionPathKey: ProductsPath + "/" + product.ID + "/edit",
 		cancelPathKey: ProductsPath + "/" + product.ID,
