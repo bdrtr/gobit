@@ -111,11 +111,16 @@
 // buffer reach corehttp.WriteHTML. Streaming would leave a HALF-written page
 // carrying a 200 status when a template fails midway.
 //
-// # The session stays inside this tree
+// # The session reaches the admin API only with the panel's own origin
 //
-// The panel session travels in an HttpOnly cookie scoped to this tree only. The
-// admin API does not accept it: that API's CSRF immunity comes not from a
-// defense but from the token living in a header browsers never attach
-// automatically, and admitting the cookie there would destroy it (ADR 0011,
-// Decision 3).
+// The panel session travels in an HttpOnly cookie under [CookiePath], which
+// covers this tree and the admin API's. On `/admin/v1` [UI.APISession] moves it
+// into the header the core reads, and a state change authenticated that way
+// must carry the panel's own Origin. The API's CSRF immunity used to be the
+// header a browser never attaches by itself; ADR 0030 spent it for a single
+// admin surface and ADR 0076 replaced it with that check.
+//
+// This section used to say the admin API does not accept the cookie, which
+// was ADR 0011's rule and stopped being true when ADR 0076 widened the cookie
+// (D196). [CookiePath] carries the reasoning.
 package adminui

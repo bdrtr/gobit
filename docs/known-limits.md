@@ -272,9 +272,11 @@ past and is not corrected retroactively.
   import a module, so the write path has to go through the surface the module
   publishes.
 
-  The panel's session cookie is NOT ACCEPTED by the admin API, and that is a
-  decision rather than a shortcoming: the API's CSRF immunity comes from the
-  token living in a header the browser does not add by itself.
+  The panel's session cookie reaches the admin API since
+  [ADR 0076](adr/0076-the-panels-migration-begins-with-the-review-screen.md),
+  and a state change it authenticates there must carry the panel's own Origin.
+  The moderation queue below writes that way; the server-rendered forms still
+  write through a module's surface.
 
   The catalog screen shows a price as a raw minor-unit integer, and says so,
   when the currency's number of decimal places is NOT KNOWN. The scale is read
