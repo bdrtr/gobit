@@ -621,14 +621,19 @@ past and is not corrected retroactively.
   answers the case in one act, so a second readable secret would be a second
   thing to store and re-issue for nothing.
 
-- **An operator can build a telephone order but cannot finish it.** Since
-  [ADR 0146](adr/0146-an-operator-can-build-a-cart.md) the cart's admin surface
-  opens a cart and adds priced lines to it, and that is all it does: the shipping
-  address, the shipping method and the payment are the storefront's endpoints, so
-  the shopper has to complete the cart themselves. Completing it from the admin
-  side was refused rather than missed — the money would be taken without the
-  shopper ever seeing the total — but a shop whose callers cannot open a link is
-  not served by this.
+- **An operator finishes a telephone order only with an offline method.** Since
+  [ADR 0286](adr/0286-an-operator-completes-a-telephone-order.md) the cart's
+  admin surface writes the addresses and the shipping method and completes the
+  cart, and the checkout refuses that completion unless its provider is an
+  offline method ([ADR 0284](adr/0284-an-offline-method-is-paid-when-the-shop-says-so.md)).
+  A card payment taken over the telephone is not offered, because the operator
+  would hold the card; a caller who pays by card is sent the cart's link.
+
+- **An offline order that is never paid stays until the shop cancels it.** An
+  order placed with an offline method owes its total and holds its stock; nothing
+  cancels it after a deadline. The shop's cancel gives the stock back
+  ([ADR 0285](adr/0285-the-shops-cancel-gives-the-stock-back.md)) and leaves the
+  payment session authorized, which the admin's session cancel closes.
 
 - **Store credit names its order, not the finer cause.** Since
   [ADR 0274](adr/0274-a-store-credit-names-the-order-it-compensates.md) an

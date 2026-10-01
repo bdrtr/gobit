@@ -99,6 +99,9 @@ type completeCartRequest struct {
 	// the server computed, it only loses the chance to warn the customer if the
 	// price has changed.
 	ExpectedTotal int64 `json:"expected_total"`
+	// OfflineOnly refuses a provider the checkout would capture; the operator's
+	// completion sets it (ADR 0286), and a storefront's never does.
+	OfflineOnly bool `json:"offline_only,omitempty"`
 
 	// THE LOCATION IS NOT HERE and will not be. [CompleteCartInput.LocationID]
 	// pins which WAREHOUSE the goods leave from; that is a shipping decision and
@@ -169,6 +172,7 @@ func (i *Interop) CompleteCartJSON(ctx context.Context, request json.RawMessage)
 		Email:             req.Email,
 		SalesChannelIDs:   req.SalesChannelIDs,
 		ExpectedTotal:     req.ExpectedTotal,
+		OfflineOnly:       req.OfflineOnly,
 	})
 	if err != nil {
 		return nil, err

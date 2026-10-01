@@ -195,6 +195,10 @@ type CompleteCartInput struct {
 	// otherwise lead to an amount different from the one the customer saw being
 	// charged silently.
 	ExpectedTotal int64
+	// OfflineOnly refuses a provider whose money the checkout would capture: an
+	// operator completing a telephone order holds no shopper's card, so the
+	// order is paid later through an offline method (ADR 0286).
+	OfflineOnly bool
 }
 
 // CompleteCartResult holds the fields of the completed order that concern the

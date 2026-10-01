@@ -259,3 +259,55 @@ func (h *Handler) channelScoped(
 
 	return corehttp.WithPrincipal(ctx, principal), true
 }
+
+// adminCompleteCartRequest is the body an operator sends to complete a cart
+// they built over the telephone (ADR 0286).
+type adminCompleteCartRequest struct {
+	// SalesChannelID is the shopfront the order belongs to, REQUIRED for the
+	// line write's reason: it narrows the warehouses the order is reserved from,
+	// and the operator's claim is made per request.
+	SalesChannelID string `json:"sales_channel_id"`
+	// PaymentProviderID is an offline method (ADR 0284). A provider the
+	// checkout would capture is refused: it needs the shopper's own payment
+	// details, which an operator does not hold.
+	PaymentProviderID string `json:"payment_provider_id"`
+	// ExpectedTotal is the total the operator read to the customer (minor
+	// unit); it is MANDATORY, for the storefront's reason.
+	ExpectedTotal *int64 `json:"expected_total"`
+}
+
+// adminCompleteCart completes a cart an operator built
+// (POST /admin/v1/carts/{id}/complete).
+//
+// It is the storefront's completion with three differences: the channel is
+// the operator's claim, the payment is an offline method whose money the shop
+// captures when it arrives, and neither a gift card nor a balance is taken —
+// the customer is not there to present one (ADR 0286).
+func (h *Handler) adminCompleteCart(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var body adminCompleteCartRequest
+	if err := decodeBody(w, r, &body); err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+	if body.ExpectedTotal == nil {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+			"expected_total is mandatory; the total read to the customer has to be declared"))
+
+		return
+	}
+	scoped, ok := h.channelScoped(ctx, w, body.SalesChannelID)
+	if !ok {
+		return
+	}
+
+	h.completeCart(scoped, w, completeCartFlowRequest{
+		CartID:            cartID(r),
+		PaymentProviderID: body.PaymentProviderID,
+		SalesChannelIDs:   corehttp.SalesChannelIDs(scoped),
+		ExpectedTotal:     *body.ExpectedTotal,
+		OfflineOnly:       true,
+	})
+}

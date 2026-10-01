@@ -611,6 +611,11 @@ func TestEveryAdminEndpointIsDescribed(t *testing.T) {
 		"GET /admin/v1/carts/{id}",
 		"POST /admin/v1/carts",
 		"POST /admin/v1/carts/{id}/line-items",
+		"PUT /admin/v1/carts/{id}/shipping-address",
+		"PUT /admin/v1/carts/{id}/billing-address",
+		"POST /admin/v1/carts/{id}/shipping-methods",
+		"DELETE /admin/v1/carts/{id}/shipping-methods/{shipping_method_id}",
+		"POST /admin/v1/carts/{id}/complete",
 	}, found)
 }
 

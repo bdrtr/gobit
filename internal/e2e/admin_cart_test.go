@@ -27,13 +27,14 @@ import (
 // published, is priced, and is still refused because it belongs to another
 // shopfront.
 //
-// # Why the last step goes back to the storefront
+// # Why the first test's last step goes back to the storefront
 //
-// Because that is the decision: the admin surface can open a cart and put priced
-// lines in it, and nothing else. The money is taken through the endpoint the
-// shopper's own session uses, with the totals the server computed in front of
-// them. A test that completed the order from the admin side would be proving a
-// surface that deliberately does not exist.
+// Because that was ADR 0146's decision: the admin surface opened a cart and put
+// priced lines in it, and the money was taken through the endpoint the shopper's
+// own session uses, with the totals the server computed in front of them. ADR
+// 0286 added the operator's own completion for an order paid later through an
+// offline method, with the total the operator read to the customer;
+// [TestAnOperatorCompletesATelephoneOrderPaidLater] walks it.
 
 const (
 	// adminCartUnitPrice is the price the catalog holds for the telephone
@@ -172,6 +173,68 @@ func TestAnOperatorBuildsACartTheShopperPaysFor(t *testing.T) {
 
 	assert.Equal(t, adminCartStock-adminCartQuantity, sellableQuantity(ctx, t, stockItemID),
 		"the capture must move the stock the operator's line asked for")
+}
+
+// TestAnOperatorCompletesATelephoneOrderPaidLater is ADR 0286 end to end: the
+// operator opens a cart for a customer, adds a line, writes the address and
+// the shipping method, reads the total to the customer and completes the cart
+// with a bank transfer. A provider the checkout would capture is refused
+// first, and the order that comes out owes its total with its stock deducted.
+func TestAnOperatorCompletesATelephoneOrderPaidLater(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, stockItemID := newStockedVariant(ctx, t, "E2E Telephone Order Paid Later", map[string]int64{
+		taxedCurrency: adminCartUnitPrice,
+	}, adminCartStock)
+	optionID := newShippingOption(ctx, t, newShippingProfile(ctx, t, "Telephone profile"),
+		"Telephone delivery", 4_900, false)
+
+	opened := openAdminCart(t, customerID, email)
+	require.Equal(t, http.StatusCreated, opened.Code, "body: %s", opened.Body.String())
+	cartID, ok := storefrontData(t, opened)["id"].(string)
+	require.True(t, ok, opened.Body.String())
+	added := addAdminLine(t, cartID, testChannelID, variantID, adminCartQuantity)
+	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
+
+	addressed := adminCartRequest(t, http.MethodPut, "/admin/v1/carts/"+cartID+"/shipping-address",
+		fmt.Sprintf(`{"first_name":"Tele","last_name":"Phone","address_1":"Street 1",`+
+			`"city":"City","postal_code":"00000","country_code":%q}`, taxedCountry))
+	require.Equal(t, http.StatusOK, addressed.Code, "body: %s", addressed.Body.String())
+	shipped := adminCartRequest(t, http.MethodPost, "/admin/v1/carts/"+cartID+"/shipping-methods",
+		fmt.Sprintf(`{"shipping_option_id":%q}`, optionID))
+	require.Equal(t, http.StatusCreated, shipped.Code, "body: %s", shipped.Body.String())
+
+	// The total the operator reads to the customer is the cart's own, repriced
+	// after each write.
+	read := adminCartRequest(t, http.MethodGet, "/admin/v1/carts/"+cartID, "")
+	require.Equal(t, http.StatusOK, read.Code, "body: %s", read.Body.String())
+	total, ok := storefrontData(t, read)["total"].(float64)
+	require.True(t, ok, read.Body.String())
+	require.Greater(t, int64(total), adminCartTotal, "the shipping is in the total")
+
+	byCard := adminCartRequest(t, http.MethodPost, "/admin/v1/carts/"+cartID+"/complete",
+		fmt.Sprintf(`{"sales_channel_id":%q,"payment_provider_id":"manual","expected_total":%d}`,
+			testChannelID, int64(total)))
+	require.Equal(t, http.StatusUnprocessableEntity, byCard.Code, "body: %s", byCard.Body.String())
+	assert.Contains(t, byCard.Body.String(), "checkout_workflow_offline_method_required")
+
+	done := adminCartRequest(t, http.MethodPost, "/admin/v1/carts/"+cartID+"/complete",
+		fmt.Sprintf(`{"sales_channel_id":%q,"payment_provider_id":%q,"expected_total":%d}`,
+			testChannelID, offlineMethod, int64(total)))
+	require.Equal(t, http.StatusOK, done.Code, "body: %s", done.Body.String())
+	result := storefrontData(t, done)
+	assert.InDelta(t, total, result["total"], 0)
+	assert.InDelta(t, total, result["outstanding"], 0, "the order owes its whole total")
+	orderID, _ := result["order_id"].(string)
+	require.NotEmpty(t, orderID)
+
+	order, err := orderSvc.GetOrder(ctx, orderID)
+	require.NoError(t, err)
+	assert.Equal(t, customerID, order.CustomerID, "the order is the customer's the operator named")
+	assert.Zero(t, order.Summary.PaidTotal)
+	assert.Equal(t, adminCartStock-adminCartQuantity, sellableQuantity(ctx, t, stockItemID),
+		"the order's stock is deducted")
 }
 
 // TestAnOperatorsLineIsPricedInTheChannelItNames verifies that the claim in the

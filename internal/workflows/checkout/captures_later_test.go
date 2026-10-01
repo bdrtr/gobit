@@ -147,3 +147,44 @@ func TestTheAnswerIsRecordedForRecovery(t *testing.T) {
 	require.NotNil(t, step)
 	assert.True(t, step.plan.CapturesLater)
 }
+
+// TestAnOfflineOnlyCompletionRefusesAProviderItWouldCapture is ADR 0286: the
+// operator's completion names a provider the checkout would capture, and it is
+// refused before an order is opened — the operator holds no shopper's card.
+func TestAnOfflineOnlyCompletionRefusesAProviderItWouldCapture(t *testing.T) {
+	h := newHarness(t)
+	in := h.input()
+	in.OfflineOnly = true
+
+	_, err := h.wf.CompleteCart(context.Background(), in)
+	require.Error(t, err)
+
+	assert.True(t, hasCode(err, CodeOfflineMethodRequired), "error: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid))
+	assert.Zero(t, h.rec.count("order:place"))
+	assert.Zero(t, h.rec.count("payment:collection"))
+}
+
+// TestAnOfflineOnlyCompletionTakesAnOfflineMethod: the same completion with an
+// offline method places the order owing its total.
+func TestAnOfflineOnlyCompletionTakesAnOfflineMethod(t *testing.T) {
+	h := laterHarness(t, 0)
+	in := h.input()
+	in.OfflineOnly = true
+
+	result, err := h.wf.CompleteCart(context.Background(), in)
+	require.NoError(t, err)
+	assert.Equal(t, testAmount, result.Outstanding)
+}
+
+// TestTheInteropCarriesOfflineOnly: the flag the cart module sends reaches the
+// flow through the JSON boundary, which the compiler does not check.
+func TestTheInteropCarriesOfflineOnly(t *testing.T) {
+	h := newHarness(t)
+
+	_, err := NewInterop(h.wf).CompleteCartJSON(context.Background(), json.RawMessage(
+		`{"cart_id":"`+testCartID+`","payment_provider_id":"`+testProviderID+`","offline_only":true}`))
+	require.Error(t, err)
+	assert.True(t, hasCode(err, CodeOfflineMethodRequired), "error: %v", err)
+	assert.Zero(t, h.rec.count("order:place"))
+}

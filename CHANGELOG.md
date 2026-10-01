@@ -31,6 +31,16 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An operator completes a telephone order** (ADR 0286). **For operators:** the
+  cart's admin surface now writes the shipping and billing addresses
+  (`PUT /admin/v1/carts/{id}/shipping-address`, `…/billing-address`), adds and
+  removes the shipping method (`POST`/`DELETE …/shipping-methods`) and completes
+  the cart (`POST /admin/v1/carts/{id}/complete` with `sales_channel_id`,
+  `payment_provider_id` and `expected_total`), all under `cart:write`. The
+  completion takes only an offline method (ADR 0284) and answers 422
+  `checkout_workflow_offline_method_required` for any other; the order is
+  placed owing its total.
+
 - **The shop's cancel gives the stock back** (ADR 0285, D195). **For
   operators:** `POST /admin/v1/orders/{id}/cancel` now writes off every unit of
   the order not yet returned or written off, as line cancellations under the

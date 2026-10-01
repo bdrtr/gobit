@@ -461,6 +461,11 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 	if err != nil {
 		return nil, err
 	}
+	if in.OfflineOnly && !capturesLater {
+		return nil, errors.Invalid(CodeOfflineMethodRequired,
+			"this completion is paid later, through an offline method; %q is captured at the checkout "+
+				"and needs the shopper's own payment details (ADR 0286)", in.PaymentProviderID)
+	}
 
 	lines, err := w.planLines(ctx, snap, totals)
 	if err != nil {

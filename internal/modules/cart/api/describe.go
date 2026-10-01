@@ -270,12 +270,12 @@ func describeShipping(d *openapi.Doc) {
 //
 // # What an operator may do here, and what they may not
 //
-// The surface reads every cart and writes exactly two things: it OPENS a cart
-// and it ADDS a priced line to one (ADR 0146), which is what taking an order
-// over the telephone needs. Everything after that — the addresses, the shipping
-// method, the payment — is the storefront's own surface, used with the cart's
-// id, so there is one implementation of each act rather than an admin copy that
-// drifts.
+// The surface reads every cart, OPENS one and ADDS a priced line to it
+// (ADR 0146), writes its addresses and its shipping method, and completes it
+// with an offline method (ADR 0286): what taking an order over the telephone
+// needs. The address and shipping writes are the storefront's own handlers
+// behind the write scope, so there is one implementation of each act rather
+// than an admin copy that drifts.
 //
 // Neither write takes an amount or a title. A surface that accepted them would
 // let an operator sell at a price nothing in the catalog says, and the whole
@@ -365,6 +365,70 @@ func describeAdmin(d *openapi.Doc) {
 			"422": openapi.ErrorResponse(
 				"The body could not be read, sales_channel_id or quantity is missing, or " +
 					"the quantity is not positive."),
+		},
+	})
+
+	describeAdminCompletion(d)
+}
+
+// describeAdminCompletion describes the rest of a telephone order (ADR 0286).
+func describeAdminCompletion(d *openapi.Doc) {
+	const sameAct = "The storefront's own act behind cart:write, for an order taken over the telephone " +
+		"(ADR 0286); the cart is repriced after it, and a completion that does not send the new " +
+		"total is refused rather than charged."
+	d.Describe(http.MethodPut, "/admin/v1/carts/{id}/shipping-address", openapi.Operation{
+		Summary:     "Writes the cart's shipping address.",
+		Description: sameAct,
+		RequestBody: d.RequestBody(addressRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The written shipping address", d.Item(addressDTO{})),
+		},
+	})
+	d.Describe(http.MethodPut, "/admin/v1/carts/{id}/billing-address", openapi.Operation{
+		Summary:     "Writes the cart's billing address.",
+		Description: sameAct,
+		RequestBody: d.RequestBody(addressRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The written billing address", d.Item(addressDTO{})),
+		},
+	})
+	d.Describe(http.MethodPost, "/admin/v1/carts/{id}/shipping-methods", openapi.Operation{
+		Summary: "Adds a shipping option to the cart at the price quoted for it; the amount " +
+			"cannot be sent.",
+		Description: sameAct,
+		RequestBody: d.RequestBody(addShippingMethodRequest{}),
+		Responses: map[string]any{
+			"201": openapi.Response("The added shipping method", d.Item(shippingMethodDTO{})),
+		},
+	})
+	d.Describe(http.MethodDelete, "/admin/v1/carts/{id}/shipping-methods/{shipping_method_id}",
+		openapi.Operation{
+			Summary:     "Removes the shipping method from the cart.",
+			Description: sameAct,
+			Responses: map[string]any{
+				"204": emptyResponse("The shipping method was removed"),
+			},
+		})
+	d.Describe(http.MethodPost, "/admin/v1/carts/{id}/complete", openapi.Operation{
+		Summary: "Completes a cart an operator built, paid later through an offline method.",
+		Description: "The storefront's completion with three differences. sales_channel_id is " +
+			"MANDATORY and is the operator's claim, as on the line write; it narrows the " +
+			"warehouses the order is reserved from. payment_provider_id has to be an offline " +
+			"method (ADR 0284): a provider the checkout would capture needs the shopper's own " +
+			"payment details and is refused with 422 checkout_workflow_offline_method_required. " +
+			"No gift card or balance is taken, because the customer is not there to present one. " +
+			"\n\n" +
+			"expected_total is MANDATORY: the total the operator read to the customer, and a " +
+			"cart whose total moved since is refused with 409. The order is placed owing the " +
+			"total, which outstanding reports, and the shop captures the session when the money " +
+			"arrives (ADR 0286).",
+		RequestBody: d.RequestBody(adminCompleteCartRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The resulting order, its total and what it still owes",
+				d.Item(completeCartDTO{})),
+			"422": openapi.ErrorResponse(
+				"The body could not be read, sales_channel_id or expected_total is missing, or " +
+					"the provider is not an offline method."),
 		},
 	})
 }

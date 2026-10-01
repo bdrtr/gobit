@@ -123,4 +123,13 @@ func (h *Handler) Routes(r chi.Router) {
 	writable := r.With(corehttp.RequireScope(ScopeWrite))
 	writable.Post(AdminCartsPath, h.adminCreateCart)
 	writable.Post(AdminCartLineItemsPath, h.adminAddLineItem)
+
+	// The rest of a telephone order (ADR 0286). The address and shipping writes
+	// are the storefront's own handlers behind the write scope: the act is the
+	// same, and only the door differs. The completion is the operator's own.
+	writable.Put("/admin/v1/carts/{id}/shipping-address", h.storeSetShippingAddress)
+	writable.Put("/admin/v1/carts/{id}/billing-address", h.storeSetBillingAddress)
+	writable.Post("/admin/v1/carts/{id}/shipping-methods", h.storeAddShippingMethod)
+	writable.Delete("/admin/v1/carts/{id}/shipping-methods/{shipping_method_id}", h.storeRemoveShippingMethod)
+	writable.Post("/admin/v1/carts/{id}/complete", h.adminCompleteCart)
 }

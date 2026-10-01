@@ -1262,11 +1262,16 @@ func TestAdminListDefaultLimit(t *testing.T) {
 // storefront's own completion with the totals in front of them.
 //
 // Everything in the list below would produce it. Changing a quantity, dropping a
-// line, writing an address, choosing a shipping method, taking a coupon off,
-// merging another cart in, deleting the cart — each one changes a cart the
-// shopper is holding into a different one while they look at the old figure. The
-// party that does those is the shopper, on the storefront surface, and that is
-// why the admin has no route for them.
+// line, taking a coupon off, merging another cart in, deleting the cart — each
+// one changes a cart the shopper is holding into a different one while they look
+// at the old figure. The party that does those is the shopper, on the storefront
+// surface, and that is why the admin has no route for them.
+//
+// ADR 0286 opened the addresses, the shipping method and the completion, for a
+// telephone order the operator completes with an offline method: the operator
+// reads the total to the customer, and a completion that does not send the
+// cart's current total is refused rather than charged, on either surface. They
+// are proved bound by [TestAnOperatorCompletesATelephoneOrder].
 func TestAdminCannotUndoWhatTheShopperSaw(t *testing.T) {
 	h := newServer(t, &fakeCarts{})
 
@@ -1276,9 +1281,6 @@ func TestAdminCannotUndoWhatTheShopperSaw(t *testing.T) {
 		{http.MethodPut, "/admin/v1/carts/cart_1"},
 		{http.MethodPatch, "/admin/v1/carts/cart_1/line-items/item_1"},
 		{http.MethodDelete, "/admin/v1/carts/cart_1/line-items/item_1"},
-		{http.MethodPut, "/admin/v1/carts/cart_1/shipping-address"},
-		{http.MethodPut, "/admin/v1/carts/cart_1/billing-address"},
-		{http.MethodPost, "/admin/v1/carts/cart_1/shipping-methods"},
 		{http.MethodPost, "/admin/v1/carts/cart_1/merge"},
 		{http.MethodPost, "/admin/v1/carts/cart_1/promotions"},
 		{http.MethodDelete, "/admin/v1/carts/cart_1/promotions/SUMMER"},
@@ -1296,20 +1298,19 @@ func TestAdminCannotUndoWhatTheShopperSaw(t *testing.T) {
 // route: had they been open, a client could write the cart's amount itself or
 // close the cart without paying.
 //
-// The storefront's /complete is NOT an exception to this rule and that is why it
-// is not in the list: that endpoint does not stamp the cart "completed", it runs
-// the complete_cart saga — stock is reserved, the order is opened, the payment is
-// captured and only AFTER THAT is the cart closed, by the flow. The authority to
-// close still sits not in HTTP but in the flow
-// (see [TestCompleteCartProducesAnOrder]). There is no counterpart on the admin
-// side: the party that completes the cart is the customer.
+// The two /complete endpoints are NOT exceptions to this rule and that is why
+// they are not in the list: neither stamps the cart "completed", both run the
+// complete_cart saga — stock is reserved, the order is opened, the payment is
+// captured or, for an offline method, authorized, and only AFTER THAT is the
+// cart closed, by the flow. The authority to close still sits not in HTTP but
+// in the flow (see [TestCompleteCartProducesAnOrder] and
+// [TestAnOperatorCompletesATelephoneOrder]).
 func TestTotalsEndpointsAreNotOpenedToHTTP(t *testing.T) {
 	h := newServer(t, &fakeCarts{})
 
 	for _, path := range []string{
 		"/store/v1/carts/cart_1/totals",
 		"/admin/v1/carts/cart_1/totals",
-		"/admin/v1/carts/cart_1/complete",
 	} {
 		rec := doRequest(t, h, http.MethodPost, path, `{}`)
 		assert.Contains(t, []int{http.StatusNotFound, http.StatusMethodNotAllowed}, rec.Code,

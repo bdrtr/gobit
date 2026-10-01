@@ -157,6 +157,9 @@ const (
 	// CodeTotalMismatch reports that the amount the caller confirmed does not
 	// match the computed amount.
 	CodeTotalMismatch = "checkout_workflow_total_mismatch"
+	// CodeOfflineMethodRequired reports a completion that may only be paid
+	// later naming a provider the checkout would capture (ADR 0286).
+	CodeOfflineMethodRequired = "checkout_workflow_offline_method_required"
 	// CodeSnapshotInvalid reports that the cart snapshot could not be read.
 	CodeSnapshotInvalid = "checkout_workflow_snapshot_invalid"
 	// CodeTotalsInvalid reports that the totals do not cover the lines of the

@@ -754,6 +754,9 @@ type completeCartFlowRequest struct {
 	// proved.
 	SalesChannelIDs []string `json:"sales_channel_ids,omitempty"`
 	ExpectedTotal   int64    `json:"expected_total"`
+	// OfflineOnly is set by the operator's completion, which may only be paid
+	// later (ADR 0286).
+	OfflineOnly bool `json:"offline_only,omitempty"`
 }
 
 // completeCartFlowResult is the schema of the JSON returned from the completion
@@ -827,28 +830,13 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 			"expected_total is mandatory; the total approved by the customer has to be declared"))
 		return
 	}
-	flow, err := h.checkout()
-	if err != nil {
-		corehttp.WriteError(ctx, w, err)
-		return
-	}
 
-	// The cart's contact address is read from OUR OWN service; it is not taken
-	// from the client.
-	id := cartID(r)
-	detail, err := h.svc.GetCart(ctx, id)
-	if err != nil {
-		corehttp.WriteError(ctx, w, err)
-		return
-	}
-
-	request, err := json.Marshal(completeCartFlowRequest{
-		CartID:            id,
+	h.completeCart(ctx, w, completeCartFlowRequest{
+		CartID:            cartID(r),
 		PaymentProviderID: body.PaymentProviderID,
 		PaymentData:       body.PaymentData,
 		GiftCardCode:      body.GiftCardCode,
 		PayFirstWith:      body.PayFirstWith,
-		Email:             detail.Email,
 		// The channels come from the IDENTITY, next to the email that comes
 		// from our own service: neither is taken from the body, and for the
 		// same reason — a client must not be able to widen what the request
@@ -856,6 +844,29 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 		SalesChannelIDs: corehttp.SalesChannelIDs(ctx),
 		ExpectedTotal:   *body.ExpectedTotal,
 	})
+}
+
+// completeCart hands a completion to the flow and answers with the order; the
+// storefront's and the operator's completions differ only in the request they
+// build (ADR 0286).
+//
+// The cart's contact address is read from OUR OWN service here, for both: it is
+// not taken from either body.
+func (h *Handler) completeCart(ctx context.Context, w http.ResponseWriter, in completeCartFlowRequest) {
+	flow, err := h.checkout()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	detail, err := h.svc.GetCart(ctx, in.CartID)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	in.Email = detail.Email
+
+	request, err := json.Marshal(in)
 	if err != nil {
 		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInternal, codeInvalidRequest,
 			"the order completion request could not be encoded"))
@@ -871,7 +882,7 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 	var result completeCartFlowResult
 	if err := json.Unmarshal(response, &result); err != nil {
 		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInternal, codeFlowResultInvalid,
-			"the order completion result could not be decoded: %s", id))
+			"the order completion result could not be decoded: %s", in.CartID))
 		return
 	}
 
