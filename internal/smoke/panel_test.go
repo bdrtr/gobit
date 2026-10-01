@@ -21,7 +21,9 @@ import (
 func panelLink(t *testing.T, page, kind string) string {
 	t.Helper()
 
-	found := regexp.MustCompile(`href="(` + regexp.QuoteMeta(adminui.URLPrefix) + `/` + kind + `/[A-Za-z0-9_]+)"`).FindStringSubmatch(page)
+	// A record's id carries its prefix's underscore; a list also links to a
+	// form of its own (the product list's "new", ADR 0307), which is no record.
+	found := regexp.MustCompile(`href="(` + regexp.QuoteMeta(adminui.URLPrefix) + `/` + kind + `/[A-Za-z0-9]+_[A-Za-z0-9_]+)"`).FindStringSubmatch(page)
 	require.NotNil(t, found, "the page links to no %s; it renders an empty list", kind)
 
 	return found[1]
