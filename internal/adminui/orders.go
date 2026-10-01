@@ -191,6 +191,15 @@ type orderDetail struct {
 	AfterSales       []orderAfterSale
 	AfterSalesMore   bool
 	AfterSalesUnread bool
+
+	// Notifications are what the notification module sent for the order,
+	// newest first (ADR 0318); NotificationsHidden says the operator lacks
+	// the privilege to read them, NotificationsUnread that the read failed,
+	// and NotificationsMore that the order has more than the page reads.
+	Notifications       []deliveryRow
+	NotificationsHidden bool
+	NotificationsUnread bool
+	NotificationsMore   bool
 }
 
 // orderPayment is the order's payment collection as the page prints it.
@@ -444,19 +453,27 @@ func (u *UI) renderOrder(
 	}
 	detail.AfterSales, detail.AfterSalesMore, detail.AfterSalesUnread = u.afterSalesOf(
 		r, detail.ID, detail.Currency, scales, detail.Lines)
+	detail.NotificationsHidden = !principal.HasScope(scopeNotificationRead)
+	if u.notifications != nil && !detail.NotificationsHidden {
+		detail.Notifications, detail.NotificationsMore, detail.NotificationsUnread = u.notificationsOf(r, detail.ID)
+	}
 
 	u.templates.render(w, r, status, "order.gohtml", map[string]any{
-		titleKey:               "Order " + detail.DisplayID,
-		"Outcome":              outcome,
-		"CanAct":               u.afterSales != nil && principal.HasScope(scopeOrderWrite),
-		"CanRecordPayment":     u.payments != nil && principal.HasScope(scopePaymentWrite),
-		"Order":                detail,
-		"OrdersPath":           OrdersPath,
-		"LinesPerOrder":        linesPerOrder,
-		"PaymentPrivilege":     scopePaymentRead,
-		"FulfillmentPrivilege": scopeFulfillmentRead,
-		"AfterSalesPerKind":    afterSalesPerKind,
-		"ReplacementSources":   replacementSources(detail.AfterSales),
+		titleKey:                "Order " + detail.DisplayID,
+		"Outcome":               outcome,
+		"CanAct":                u.afterSales != nil && principal.HasScope(scopeOrderWrite),
+		"CanRecordPayment":      u.payments != nil && principal.HasScope(scopePaymentWrite),
+		"Order":                 detail,
+		"OrdersPath":            OrdersPath,
+		"LinesPerOrder":         linesPerOrder,
+		"PaymentPrivilege":      scopePaymentRead,
+		"FulfillmentPrivilege":  scopeFulfillmentRead,
+		"NotificationsShown":    u.notifications != nil,
+		"NotificationPrivilege": scopeNotificationRead,
+		"NotificationsPath":     NotificationsPath,
+		"NotificationsPerOrder": notificationsPerOrder,
+		"AfterSalesPerKind":     afterSalesPerKind,
+		"ReplacementSources":    replacementSources(detail.AfterSales),
 	})
 }
 

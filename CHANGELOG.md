@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The order page lists the order's notifications** (ADR 0318). **For
+  operators:** with `notification:read`, an order's page lists what was sent
+  for it with the provider's reason, and links to the Notifications screen on
+  the order, where a failed confirmation is sent again.
+
 - **The panel lists the notifications** (ADR 0317). **For operators:** a
   Notifications screen lists the failed deliveries first with the provider's
   reason, finds an order's by its id, and sends a failed order confirmation

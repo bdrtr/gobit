@@ -200,6 +200,41 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
 <p class="muted">No parcel has been opened for this order.</p>
 {{ end }}
 
+{{ if .NotificationsShown }}
+{{/*
+What the notification module sent for the order (ADR 0318), read only for an
+operator holding its privilege; a failed confirmation is sent again on the
+Notifications screen, which the link opens on this order.
+*/}}
+<h2>Notifications</h2>
+
+{{ if .Order.NotificationsHidden }}
+<p class="muted">Reading the notifications needs the {{ .NotificationPrivilege }} privilege.</p>
+{{ else if .Order.NotificationsUnread }}
+<p class="muted">The notifications of this order could not be read.</p>
+{{ else }}
+{{ if .Order.Notifications }}
+<table>
+  <thead><tr><th>Notification</th><th>Channel</th><th>Status</th><th>Last change (UTC)</th></tr></thead>
+  <tbody>
+    {{ range .Order.Notifications }}
+    <tr>
+      <td>{{ .Template }}</td>
+      <td>{{ .Channel }}</td>
+      <td><span class="pill">{{ .Status }}</span>{{ with .Error }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
+      <td>{{ .UpdatedAt.UTC.Format "2006-01-02 15:04" }}</td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ if .Order.NotificationsMore }}<p class="muted">Only the latest {{ .NotificationsPerOrder }} are shown.</p>{{ end }}
+{{ else }}
+<p class="muted">Nothing has been sent for this order.</p>
+{{ end }}
+<p><a href="{{ .NotificationsPath }}?reference={{ .Order.ID }}">The order's notifications</a>, where a failed confirmation is sent again.</p>
+{{ end }}
+{{ end }}
+
 <h2>After-sales</h2>
 
 {{ if .Order.AfterSalesUnread }}

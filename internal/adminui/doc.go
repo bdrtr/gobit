@@ -74,8 +74,8 @@
 // # The sections, and what the sales report does not print
 //
 // The menu holds the catalog, the orders, the telephone order, the sales
-// report, the customers, the inventory, the reviews, and the person's own
-// second factor and sessions, in
+// report, the promotions, the customers, the notifications, the inventory,
+// the reviews, and the person's own second factor and sessions, in
 // that order; the last two are open to everybody who can sign in (ADR 0266,
 // ADR 0268). The list lives in one
 // place next to
@@ -128,7 +128,9 @@
 // The Notifications screen ([UI.listNotifications]) lists the notification
 // module's delivery log, the failed ones first or one order's, and sends a
 // failed order confirmation again ([UI.resendNotification]) through the
-// module's panel surface (ADR 0317).
+// module's panel surface (ADR 0317). The order's page lists what was sent for
+// it, for an operator who may read the log, and links to that screen on the
+// order (ADR 0318).
 //
 // A product's history ([UI.showRevisions]) lists the revisions the product
 // module records for its writes, and restores an older one at the version the

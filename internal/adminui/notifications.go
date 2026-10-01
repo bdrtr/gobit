@@ -58,6 +58,10 @@ const (
 // deliveriesPerPage is the list's page size, the other lists'.
 const deliveriesPerPage = 25
 
+// notificationsPerOrder is how many of an order's deliveries the order's page
+// lists (ADR 0318); the Notifications screen lists them all.
+const notificationsPerOrder = 10
+
 // NotificationLister is the narrow surface the screen reads through.
 type NotificationLister interface {
 	// DeliveriesJSON lists the deliveries in the status, or of the order the
@@ -124,6 +128,25 @@ func (u *UI) resendNotification(w http.ResponseWriter, r *http.Request) {
 	default:
 		u.unexpectedFailure(w, r, err, "The notification could not be sent again")
 	}
+}
+
+// notificationsOf reads the order's deliveries for its page, newest first,
+// and whether it has more than the page lists; unread says the read failed,
+// which leaves the order on screen (ADR 0318).
+func (u *UI) notificationsOf(r *http.Request, orderID string) (rows []deliveryRow, more, unread bool) {
+	ctx := r.Context()
+	raw, total, err := u.notifications.DeliveriesJSON(ctx, "", orderID, notificationsPerOrder, 0)
+	if err == nil {
+		err = json.Unmarshal(raw, &rows)
+	}
+	if err != nil {
+		corehttp.LoggerFromContext(ctx).WarnContext(ctx,
+			"the panel could not read the order's notifications", "error", err, "order_id", orderID)
+
+		return nil, false, true
+	}
+
+	return rows, total > int64(len(rows)), false
 }
 
 // renderNotifications lists the deliveries with a refused resend's reason.

@@ -25,7 +25,8 @@ const panelDeliveryFailure = "e2e: the mail server did not answer"
 // module when the order was placed, is found on the Notifications screen by
 // the order's id through the module's registered surface; once it has failed
 // it carries the reason and a button, and the button sends it again and
-// returns to the order's list, which says so.
+// returns to the order's list, which says so. The order's own page lists it
+// too (ADR 0318).
 func TestAnOperatorSendsAnOrdersConfirmationAgainInThePanel(t *testing.T) {
 	ctx := t.Context()
 	token := jetonAl(t, adminEmail, adminPassword)
@@ -36,17 +37,22 @@ func TestAnOperatorSendsAnOrdersConfirmationAgainInThePanel(t *testing.T) {
 	require.NoError(t, err)
 	router := chi.NewRouter()
 	panel.Routes(router)
-	send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+	support := []string{"notification:read", "notification:write"}
+	sendAs := func(scopes []string, method, path string, form url.Values) *httptest.ResponseRecorder {
 		t.Helper()
 
 		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-			ID: "usr_support", Kind: "user", Scopes: []string{"notification:read", "notification:write"},
+			ID: "usr_support", Kind: "user", Scopes: scopes,
 		}))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
 		return rec
+	}
+	send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+		return sendAs(support, method, path, form)
 	}
 
 	ordersList := adminui.NotificationsPath + "?reference=" + orderID
@@ -82,4 +88,10 @@ func TestAnOperatorSendsAnOrdersConfirmationAgainInThePanel(t *testing.T) {
 	assert.Contains(t, after, "Delivery "+record.ID+" was sent again.")
 	assert.Contains(t, after, "<td>sent</td>")
 	assert.NotContains(t, after, button)
+
+	order := sendAs([]string{"order:read", "notification:read"}, http.MethodGet, adminui.OrdersPath+"/"+orderID, nil)
+	require.Equal(t, http.StatusOK, order.Code, order.Body.String())
+	assert.Contains(t, order.Body.String(), "<td>order.placed</td>", "the order's page lists it (ADR 0318)")
+	assert.Contains(t, order.Body.String(), `<span class="pill">sent</span>`)
+	assert.Contains(t, order.Body.String(), `href="`+ordersList+`"`)
 }

@@ -26,12 +26,13 @@ type fakeDeliveries struct {
 	resent    []string
 	outcome   string
 	resendErr error
+	listErr   error
 }
 
 func (f *fakeDeliveries) DeliveriesJSON(_ context.Context, status, reference string, limit, offset int32) (json.RawMessage, int64, error) {
 	f.asked = append(f.asked, status+"|"+reference)
 	f.pages = append(f.pages, [2]int32{limit, offset})
-	return json.RawMessage(f.body), f.total, nil
+	return json.RawMessage(f.body), f.total, f.listErr
 }
 
 func (f *fakeDeliveries) ResendDelivery(_ context.Context, id string) (string, error) {
@@ -181,4 +182,54 @@ func TestAResendReturnsToItsTabSayingHowItWent(t *testing.T) {
 	rec = notificationsRequest(panel, http.MethodPost, NotificationsPath+"/ndel_1/resend",
 		url.Values{"status": {"failed"}}, scopeNotificationRead, scopeNotificationWrite)
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+// TestTheOrderPageListsItsNotifications is ADR 0318: the order's page lists
+// what was sent for it, newest first with the provider's reason, and links to
+// the Notifications screen on the order; the surface is asked only for an
+// operator who may read it, a failed read leaves the order on screen, and an
+// installation without the surface has no section.
+func TestTheOrderPageListsItsNotifications(t *testing.T) {
+	t.Parallel()
+
+	reader := corehttp.Principal{ID: "user_1", Kind: "user", Scopes: []string{scopeOrderRead, scopeNotificationRead}}
+	deliveries := &fakeDeliveries{body: twoDeliveries, total: notificationsPerOrder + 1}
+	panel := newCatalogPanel(t, linkedOrderCatalog())
+	panel.notifications = deliveries
+
+	rec := getOrderPageAs(panel, OrdersPath+"/order_1", reader)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Equal(t, []string{"|order_1"}, deliveries.asked, "the order's deliveries in every status")
+	assert.Equal(t, [][2]int32{{notificationsPerOrder, 0}}, deliveries.pages)
+	assert.Contains(t, body, "<td>order.placed</td>")
+	assert.Contains(t, body, "the mail server did not answer")
+	assert.Contains(t, body, "2026-10-01 09:30")
+	assert.Contains(t, body, `href="`+NotificationsPath+`?reference=order_1"`)
+	assert.Contains(t, body, "Only the latest 10 are shown.")
+	assert.NotContains(t, body, "/resend", "the resend is on the Notifications screen")
+
+	deliveries.total = 2
+	rec = getOrderPageAs(panel, OrdersPath+"/order_1", reader)
+	assert.NotContains(t, rec.Body.String(), "Only the latest", "every delivery is listed")
+
+	orderOnly := corehttp.Principal{ID: "user_1", Kind: "user", Scopes: []string{scopeOrderRead}}
+	rec = getOrderPageAs(panel, OrdersPath+"/order_1", orderOnly)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "Reading the notifications needs the notification:read privilege.")
+	assert.Len(t, deliveries.asked, 2, "the surface is not asked for an operator who may not read it")
+
+	failing := newCatalogPanel(t, linkedOrderCatalog())
+	failing.notifications = &fakeDeliveries{listErr: errors.Unavailable("db_down", "no answer")}
+	rec = getOrderPageAs(failing, OrdersPath+"/order_1", reader)
+	require.Equal(t, http.StatusOK, rec.Code, "the order stands when its notifications cannot be read")
+	assert.Contains(t, rec.Body.String(), "The notifications of this order could not be read.")
+	failing.notifications = &fakeDeliveries{body: `{"id":`}
+	rec = getOrderPageAs(failing, OrdersPath+"/order_1", reader)
+	assert.Contains(t, rec.Body.String(), "The notifications of this order could not be read.",
+		"a body the panel cannot read is not an order with nothing sent")
+
+	rec = getOrderPageAs(newCatalogPanel(t, linkedOrderCatalog()), OrdersPath+"/order_1", reader)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "<h2>Notifications</h2>", "no surface, no section")
 }
