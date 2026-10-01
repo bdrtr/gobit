@@ -278,3 +278,70 @@ func TestTheLatestUsesAreTheNewest(t *testing.T) {
 	assert.Equal(t, "order_24", uses[0].Reference)
 	assert.Equal(t, "order_05", uses[19].Reference, "the five oldest are left out")
 }
+
+// TestThePanelWritesAndListsCampaigns is ADR 0319 against a real PostgreSQL:
+// the surface writes a campaign with its window and budget, lists the
+// campaigns in the order they were written with how much of each budget a
+// use consumed, refuses an identifier a live campaign holds by naming it, and
+// a budget the module does not accept.
+func TestThePanelWritesAndListsCampaigns(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	surface := promotion.NewAdminSurface(svc)
+
+	starts := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	ends := starts.Add(96 * time.Hour)
+	limit, uses := int64(500000), int64(100)
+	sale, loyalty := "bf-"+uniqueCode(), "loyal-"+uniqueCode()
+	saleID, err := surface.CreateCampaign(ctx, "Black Friday", sale, "the November sale",
+		&starts, &ends, "spend", &limit, "TRY")
+	require.NoError(t, err)
+	loyaltyID, err := surface.CreateCampaign(ctx, "Loyalty", loyalty, "", nil, nil, "usage", &uses, "")
+	require.NoError(t, err)
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &saleID})
+	_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
+		PromotionID: promo.ID, Reference: "order_" + uniqueCode(), Amount: 1250, CurrencyCode: "TRY",
+	})
+	require.NoError(t, err)
+
+	_, total, err := surface.CampaignsJSON(ctx, 1, 0)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, total, int64(2))
+	raw, _, err := surface.CampaignsJSON(ctx, 2, int32(total-2))
+	require.NoError(t, err)
+	var rows []struct {
+		ID                 string     `json:"id"`
+		Name               string     `json:"name"`
+		CampaignIdentifier string     `json:"campaign_identifier"`
+		Description        string     `json:"description"`
+		StartsAt           *time.Time `json:"starts_at"`
+		EndsAt             *time.Time `json:"ends_at"`
+		BudgetType         string     `json:"budget_type"`
+		BudgetLimit        *int64     `json:"budget_limit"`
+		BudgetUsed         int64      `json:"budget_used"`
+		BudgetCurrencyCode string     `json:"budget_currency_code"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &rows))
+	require.Len(t, rows, 2)
+	assert.Equal(t, []string{saleID, loyaltyID}, []string{rows[0].ID, rows[1].ID}, "in the order they were written")
+	first := rows[0]
+	assert.Equal(t, "Black Friday|"+sale+"|the November sale", first.Name+"|"+first.CampaignIdentifier+"|"+first.Description)
+	require.NotNil(t, first.StartsAt)
+	require.NotNil(t, first.EndsAt)
+	assert.True(t, starts.Equal(*first.StartsAt) && ends.Equal(*first.EndsAt), "the window as written")
+	require.NotNil(t, first.BudgetLimit)
+	assert.Equal(t, "spend|500000|1250|TRY", fmt.Sprintf("%s|%d|%d|%s",
+		first.BudgetType, *first.BudgetLimit, first.BudgetUsed, first.BudgetCurrencyCode))
+	assert.Nil(t, rows[1].StartsAt, "an open window")
+	assert.Equal(t, "usage", rows[1].BudgetType)
+
+	_, err = surface.CreateCampaign(ctx, "Again", sale, "", nil, nil, "none", nil, "")
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "a live campaign's identifier: %v", err)
+	assert.Contains(t, err.Error(), "a campaign with the identifier "+sale+" exists")
+	assert.NotContains(t, err.Error(), "campaign_identifier_uniq", "the constraint's name is not the operator's")
+
+	_, err = surface.CreateCampaign(ctx, "No currency", "nc-"+uniqueCode(), "", nil, nil, "spend", &limit, "")
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "a money budget without its currency: %v", err)
+}

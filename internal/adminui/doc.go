@@ -74,8 +74,8 @@
 // # The sections, and what the sales report does not print
 //
 // The menu holds the catalog, the orders, the telephone order, the sales
-// report, the promotions, the customers, the notifications, the inventory,
-// the reviews, and the person's own second factor and sessions, in
+// report, the promotions, the campaigns, the customers, the notifications, the
+// inventory, the reviews, and the person's own second factor and sessions, in
 // that order; the last two are open to everybody who can sign in (ADR 0266,
 // ADR 0268). The list lives in one
 // place next to
@@ -124,6 +124,10 @@
 // transaction (ADR 0314). The page limits a discount on items to categories
 // and removes a rule ([UI.addCategoryRule], [UI.removeRule]); the categories
 // are the product module's, read only for an operator who may (ADR 0315).
+//
+// The Campaigns screen ([UI.listCampaigns]) lists the windows and budgets the
+// promotions share, with how much of each budget is used, and its form writes
+// a campaign ([UI.createCampaign]) through the same surface (ADR 0319).
 //
 // The Notifications screen ([UI.listNotifications]) lists the notification
 // module's delivery log, the failed ones first or one order's, and sends a

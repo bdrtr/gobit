@@ -848,6 +848,8 @@ var panelSurfaceContracts = map[string]string{
 	// The delivery log is the notification module's, which publishes no read
 	// provider (ADR 0317).
 	"notifications.go": "notification.admin's delivery log",
+	// The campaigns, which the read provider does not publish (ADR 0319).
+	"campaigns.go": "promotion.admin's campaigns",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

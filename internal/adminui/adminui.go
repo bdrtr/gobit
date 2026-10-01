@@ -94,6 +94,8 @@ const (
 	CodeTemplateInvalid = "adminui_template_invalid"
 	// CodeAmountInvalid reports an amount the panel could not read.
 	CodeAmountInvalid = "adminui_amount_invalid"
+	// CodeMomentInvalid reports a moment the panel could not read.
+	CodeMomentInvalid = "adminui_moment_invalid"
 	// CodeNotBound reports that the guard ring has not been bound to a panel
 	// yet; such a request is REJECTED (see [Ring]).
 	CodeNotBound = "adminui_not_bound"

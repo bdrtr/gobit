@@ -87,10 +87,13 @@ func (a *AdminSurface) SwitchPromotionStatus(ctx context.Context, id, from, to s
 // latestUses is how many of a promotion's uses its page shows.
 const latestUses = 20
 
-// adminCampaign is the campaign a promotion belongs to, as its page shows it.
+// adminCampaign is a campaign as the panel shows it: on the page of a
+// promotion that belongs to it, and on the campaigns' list (ADR 0319).
 type adminCampaign struct {
 	ID                 string     `json:"id"`
 	Name               string     `json:"name"`
+	CampaignIdentifier string     `json:"campaign_identifier"`
+	Description        string     `json:"description"`
 	StartsAt           *time.Time `json:"starts_at"`
 	EndsAt             *time.Time `json:"ends_at"`
 	BudgetType         string     `json:"budget_type"`
@@ -172,11 +175,7 @@ func (a *AdminSurface) PromotionJSON(ctx context.Context, id string) (json.RawMe
 	if p.CampaignID != nil {
 		switch c, err := a.svc.GetCampaign(ctx, *p.CampaignID); {
 		case err == nil:
-			page.Campaign = &adminCampaign{
-				ID: c.ID, Name: c.Name, StartsAt: c.StartsAt, EndsAt: c.EndsAt,
-				BudgetType: string(c.BudgetType), BudgetLimit: c.BudgetLimit,
-				BudgetUsed: c.BudgetUsed, BudgetCurrencyCode: c.BudgetCurrencyCode,
-			}
+			page.Campaign = campaignOf(&c)
 		case !errors.IsNotFound(err):
 			return nil, err
 		}
@@ -271,4 +270,63 @@ func (a *AdminSurface) RemovePromotionRule(ctx context.Context, promotionID, rul
 	}
 
 	return a.svc.DeletePromotionRule(ctx, ruleID)
+}
+
+// campaignOf is the campaign as the panel shows it.
+func campaignOf(c *models.Campaign) *adminCampaign {
+	return &adminCampaign{
+		ID: c.ID, Name: c.Name, CampaignIdentifier: c.CampaignIdentifier, Description: c.Description,
+		StartsAt: c.StartsAt, EndsAt: c.EndsAt,
+		BudgetType: string(c.BudgetType), BudgetLimit: c.BudgetLimit,
+		BudgetUsed: c.BudgetUsed, BudgetCurrencyCode: c.BudgetCurrencyCode,
+	}
+}
+
+// CampaignsJSON lists the live campaigns in the order they were created, a
+// page at a time, with the total (ADR 0319).
+func (a *AdminSurface) CampaignsJSON(ctx context.Context, limit, offset int32) (json.RawMessage, int64, error) {
+	if a == nil || a.svc == nil {
+		return nil, 0, errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
+	}
+
+	page, err := a.svc.ListCampaigns(ctx, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+	out := make([]*adminCampaign, 0, len(page.Items))
+	for i := range page.Items {
+		out = append(out, campaignOf(&page.Items[i]))
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, 0, errors.Wrap(err, errors.KindInternal, codeAdminReadFailed,
+			"the campaigns could not be encoded")
+	}
+
+	return body, page.Count, nil
+}
+
+// CreateCampaign writes a campaign and returns its id (ADR 0319): budgetType
+// is "none", "usage", whose limit counts uses, or "spend", whose limit is in
+// the currency's minor units; a nil moment leaves that end of the window
+// open.
+func (a *AdminSurface) CreateCampaign(
+	ctx context.Context, name, identifier, description string, startsAt, endsAt *time.Time,
+	budgetType string, budgetLimit *int64, currency string,
+) (string, error) {
+	if a == nil || a.svc == nil {
+		return "", errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
+	}
+
+	campaign, err := a.svc.CreateCampaign(ctx, service.CampaignInput{
+		Name: name, CampaignIdentifier: identifier, Description: description,
+		StartsAt: startsAt, EndsAt: endsAt,
+		BudgetType: models.CampaignBudgetType(budgetType), BudgetLimit: budgetLimit,
+		BudgetCurrencyCode: currency,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return campaign.ID, nil
 }

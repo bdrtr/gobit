@@ -1,0 +1,71 @@
+{{- /*
+campaigns.gohtml lists the promotion module's campaigns (ADR 0319).
+
+A campaign is a window and a budget its promotions share: the budget counts
+uses, or money spent in one currency, and a promotion stops applying when its
+campaign's window is closed or its budget is used up. The rows come in the
+order the campaigns were written.
+
+An operator who may write promotions writes a campaign here. The moments are
+datetime-local inputs, which carry no zone; the labels say UTC because the
+panel reads them as UTC, as it reads a product's schedule (ADR 0178). A
+budget in money is typed in its currency's decimals, or in minor units when
+the panel cannot read the currency's scale.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ with .Created }}<p role="status">Campaign {{ . }} was written.</p>{{ end }}
+
+{{ if .CanCreate }}
+<details{{ if .Typed }} open{{ end }}>
+  <summary>New campaign</summary>
+  <form method="post" action="{{ .Path }}">
+    <input name="name" value="{{ .Typed.Get "name" }}" placeholder="name, e.g. Black Friday" aria-label="name" required>
+    <input name="campaign_identifier" value="{{ .Typed.Get "campaign_identifier" }}" placeholder="identifier, e.g. BLACKFRIDAY-2026" aria-label="identifier" required>
+    <input name="description" value="{{ .Typed.Get "description" }}" placeholder="description (optional)" aria-label="description">
+    <label>From (UTC) <input type="datetime-local" name="starts_at" value="{{ .Typed.Get "starts_at" }}"></label>
+    <label>Until (UTC) <input type="datetime-local" name="ends_at" value="{{ .Typed.Get "ends_at" }}"></label>
+    <select name="budget_type" aria-label="budget">
+      <option value="none"{{ if eq (.Typed.Get "budget_type") "none" }} selected{{ end }}>no budget</option>
+      <option value="usage"{{ if eq (.Typed.Get "budget_type") "usage" }} selected{{ end }}>a budget in uses</option>
+      <option value="spend"{{ if eq (.Typed.Get "budget_type") "spend" }} selected{{ end }}>a budget in money</option>
+    </select>
+    <input name="budget_limit" value="{{ .Typed.Get "budget_limit" }}" placeholder="100 uses or 5000.00" aria-label="budget limit">
+    <input name="budget_currency" value="{{ .Typed.Get "budget_currency" }}" placeholder="currency, for money" aria-label="budget currency" maxlength="3">
+    <button type="submit">Write the campaign</button>
+  </form>
+</details>
+{{ end }}
+
+<p class="muted">{{ .Total }} campaigns.</p>
+
+{{ if .Campaigns }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Campaign</th><th>From (UTC)</th><th>Until (UTC)</th><th>Budget used</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Campaigns }}
+    <tr>
+      <td>{{ .Name }} <span class="muted">{{ .CampaignIdentifier }}</span>{{ with .Description }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
+      <td>{{ with .StartsAt }}{{ .UTC.Format "2006-01-02 15:04" }}{{ else }}<span class="muted">always</span>{{ end }}</td>
+      <td>{{ with .EndsAt }}{{ .UTC.Format "2006-01-02 15:04" }}{{ else }}<span class="muted">open</span>{{ end }}</td>
+      <td class="num">{{ with .Budget }}{{ . }}{{ else }}<span class="muted">no budget</span>{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No campaign has been written.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

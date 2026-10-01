@@ -546,6 +546,16 @@ func (n recordingNotifications) ResendDelivery(context.Context, string) (string,
 	return "sent", n.surfaces.reach(ServiceNotificationAdmin)
 }
 
+func (p recordingPromotions) CampaignsJSON(context.Context, int32, int32) (json.RawMessage, int64, error) {
+	return json.RawMessage(`[]`), 0, p.surfaces.reach(ServicePromotionAdmin)
+}
+
+func (p recordingPromotions) CreateCampaign(
+	context.Context, string, string, string, *time.Time, *time.Time, string, *int64, string,
+) (string, error) {
+	return "camp_walk", p.surfaces.reach(ServicePromotionAdmin)
+}
+
 func (p recordingPromotions) PromotionJSON(context.Context, string) (json.RawMessage, error) {
 	return json.RawMessage(`{"rules":[],"latest_uses":[]}`), p.surfaces.reach(ServicePromotionAdmin)
 }
@@ -727,6 +737,8 @@ var walkForms = map[string]url.Values{
 	// A promotion's rules (ADR 0315).
 	routeKey(http.MethodPost, PromotionRulesPath):      {formCategory: {"pcat_walk"}},
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
+	// Writing a campaign (ADR 0319).
+	routeKey(http.MethodPost, CampaignsPath): {formCampaignName: {"Walk"}, formCampaignIdentifier: {"WALK"}},
 	// Sending a notification again (ADR 0317).
 	routeKey(http.MethodPost, NotificationResendPath): {"status": {"failed"}},
 	// Restoring a product's revision (ADR 0316).

@@ -99,6 +99,7 @@ var pages = []string{
 	"promotion.gohtml",
 	"product_revisions.gohtml",
 	"notifications.gohtml",
+	"campaigns.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -293,6 +294,8 @@ func sections() []navItem {
 		{Label: salesLabel, Path: SalesPath},
 		// The promotions sit beside the sales they discount (ADR 0311).
 		{Label: promotionsLabel, Path: PromotionsPath},
+		// The campaigns hold the promotions' windows and budgets (ADR 0319).
+		{Label: campaignsLabel, Path: CampaignsPath},
 		{Label: customersLabel, Path: CustomersPath},
 		// The notifications sit beside the customers they were sent to (ADR
 		// 0317).

@@ -112,14 +112,12 @@ internal/modules/promotion/api/fakes_test.go
 internal/modules/promotion/api/store.go
 internal/modules/promotion/promotion_integration_test.go
 internal/modules/promotion/repository/application_method.go
-internal/modules/promotion/repository/campaign.go
 internal/modules/promotion/repository/promotion.go
 internal/modules/promotion/repository/promotion_rule.go
 internal/modules/promotion/repository/redemption.go
 internal/modules/promotion/repository/repository.go
 internal/modules/promotion/service/allocate.go
 internal/modules/promotion/service/allocate_test.go
-internal/modules/promotion/service/campaign.go
 internal/modules/promotion/service/compute.go
 internal/modules/promotion/service/compute_test.go
 internal/modules/promotion/service/fakes_test.go

@@ -178,6 +178,10 @@ func builtInScopes() map[string]string {
 		routeKey(post, PromotionStatusPath): scopePromotionWrite,
 		routeKey(get, PromotionPath):        scopePromotionRead,
 		routeKey(post, PromotionsPath):      scopePromotionWrite,
+		// The campaigns and the form that writes one are the promotion
+		// module's (ADR 0319).
+		routeKey(get, CampaignsPath):  scopePromotionRead,
+		routeKey(post, CampaignsPath): scopePromotionWrite,
 		// The delivery log and a resend are the notification module's (ADR
 		// 0317).
 		routeKey(get, NotificationsPath):       scopeNotificationRead,

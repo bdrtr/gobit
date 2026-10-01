@@ -56,6 +56,8 @@ func (u *UI) routes(r chi.Router) {
 	r.Get(URLPrefix, u.needs(http.MethodGet, URLPrefix, u.home))
 	r.Get(ProductsPath, u.needs(http.MethodGet, ProductsPath, u.listProducts))
 	r.Get(PromotionsPath, u.needs(http.MethodGet, PromotionsPath, u.listPromotions))
+	r.Get(CampaignsPath, u.needs(http.MethodGet, CampaignsPath, u.listCampaigns))
+	r.Post(CampaignsPath, u.needs(http.MethodPost, CampaignsPath, u.createCampaign))
 	r.Get(NotificationsPath, u.needs(http.MethodGet, NotificationsPath, u.listNotifications))
 	r.Post(NotificationResendPath, u.needs(http.MethodPost, NotificationResendPath, u.resendNotification))
 	r.Post(PromotionStatusPath, u.needs(http.MethodPost, PromotionStatusPath, u.switchPromotion))

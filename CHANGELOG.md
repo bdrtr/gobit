@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel writes and lists the campaigns** (ADR 0319). **For operators:** a
+  Campaigns screen lists each campaign's window and how much of its budget is
+  used, and writes one under `promotion:write`. **For integrators:** the
+  campaign service's and repository's messages are in English, and a taken
+  campaign identifier is refused as "a campaign with the identifier … exists"
+  rather than with the constraint's name.
+
 - **The order page lists the order's notifications** (ADR 0318). **For
   operators:** with `notification:read`, an order's page lists what was sent
   for it with the provider's reason, and links to the Notifications screen on

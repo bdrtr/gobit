@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -69,16 +68,8 @@ type PromotionReader interface {
 // tags are the contract with that surface, exercised end to end.
 type promotionPage struct {
 	promotionRow
-	Campaign *struct {
-		Name               string     `json:"name"`
-		StartsAt           *time.Time `json:"starts_at"`
-		EndsAt             *time.Time `json:"ends_at"`
-		BudgetType         string     `json:"budget_type"`
-		BudgetLimit        *int64     `json:"budget_limit"`
-		BudgetUsed         int64      `json:"budget_used"`
-		BudgetCurrencyCode string     `json:"budget_currency_code"`
-	} `json:"campaign"`
-	Method *struct {
+	Campaign *campaignRow `json:"campaign"`
+	Method   *struct {
 		Type            string `json:"type"`
 		TargetType      string `json:"target_type"`
 		Allocation      string `json:"allocation"`
@@ -217,13 +208,7 @@ func (u *UI) renderPromotion(w http.ResponseWriter, r *http.Request, code int, r
 	}
 
 	scales := u.currencyScales(r.Context())
-	money := func(minor int64, currency string) string {
-		text, exact := formatAmount(minor, currency, scales)
-		if !exact {
-			return text + " " + currency + " (minor units)"
-		}
-		return text + " " + currency
-	}
+	money := func(minor int64, currency string) string { return minorText(minor, currency, scales) }
 
 	title := page.Code
 	if page.IsAutomatic {
@@ -243,13 +228,8 @@ func (u *UI) renderPromotion(w http.ResponseWriter, r *http.Request, code int, r
 		data["Gives"] = gives
 		data["Target"] = promotionTargets[m.TargetType]
 	}
-	if c := page.Campaign; c != nil && c.BudgetLimit != nil {
-		switch c.BudgetType {
-		case "usage":
-			data["Budget"] = strconv.FormatInt(c.BudgetUsed, 10) + " of " + strconv.FormatInt(*c.BudgetLimit, 10) + " uses"
-		case "spend":
-			data["Budget"] = money(c.BudgetUsed, c.BudgetCurrencyCode) + " of " + money(*c.BudgetLimit, c.BudgetCurrencyCode)
-		}
+	if page.Campaign != nil {
+		data["Budget"] = page.Campaign.budgetText(scales)
 	}
 	uses := make([]map[string]any, 0, len(page.Uses))
 	for _, use := range page.Uses {
