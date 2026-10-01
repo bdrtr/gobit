@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A telephone order chooses its channel by name** (ADR 0305). **For
+  operators:** the telephone order's line and completion forms offer the
+  enabled sales channels by name to an operator holding `auth:read`; without
+  it the channel's id is typed as before.
+
 - **A customer's cart starts from their default address** (ADR 0304). **For
   operators:** a telephone cart opened for a customer draws its address forms
   with the customer's default shipping address until one is saved. **For

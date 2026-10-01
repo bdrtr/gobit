@@ -917,3 +917,71 @@ func TestACustomersCartStartsFromTheirDefaultAddress(t *testing.T) {
 	assert.Contains(t, page.Body.String(), `name="address_1" value=""`, "a failed read draws the form empty")
 	assert.NotContains(t, page.Body.String(), "Drawn with the customer")
 }
+
+// TestTheTelephoneOrderChoosesAChannelByName is ADR 0305 on the page: an
+// operator who may read the sales channels chooses the line's and the
+// completion's channel from the enabled ones by name, the typed one chosen
+// again after a refusal; one who may not keeps the id box and reads nothing
+// of the channels.
+func TestTheTelephoneOrderChoosesAChannelByName(t *testing.T) {
+	t.Parallel()
+
+	withChannels := func() *fakeCatalog {
+		catalog := phoneCatalog(false)
+		catalog.byEntity[EntitySalesChannel] = []query.Record{
+			{fieldID: "sc_web", fieldChannelName: "Web shop"},
+			{fieldID: "sc_phone", fieldChannelName: "Call center"},
+		}
+
+		return catalog
+	}
+	channelReads := func(catalog *fakeCatalog) []query.GraphSpec {
+		var out []query.GraphSpec
+		for _, spec := range catalog.specs {
+			if spec.Entity == EntitySalesChannel {
+				out = append(out, spec)
+			}
+		}
+
+		return out
+	}
+
+	catalog := withChannels()
+	panel := newCatalogPanel(t, catalog)
+	panel.carts = &fakeCarts{}
+	page := phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite, scopeAuthRead)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	body := page.Body.String()
+	assert.Equal(t, 2, strings.Count(body, `<select name="sales_channel_id"`), "the line form and the completion form")
+	call := strings.Index(body, `<option value="sc_phone">Call center</option>`)
+	web := strings.Index(body, `<option value="sc_web">Web shop</option>`)
+	require.Positive(t, call)
+	assert.Less(t, call, web, "by name")
+	reads := channelReads(catalog)
+	require.Len(t, reads, 1)
+	assert.Equal(t, map[string]any{filterChannelOff: false}, reads[0].Filters, "the enabled channels only")
+
+	refusing := newCatalogPanel(t, withChannels())
+	refusing.carts = &fakeCarts{err: errors.NotFound("cart_variant_unknown", "no such variant")}
+	rec := phoneRequest(refusing, http.MethodPost, CartsPath+"/cart_phone/lines", url.Values{
+		formSalesChannelID: {"sc_web"}, formVariantID: {"v_x"}, formQuantity: {"1"},
+	}, scopeCartRead, scopeCartWrite, scopeAuthRead)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `<option value="sc_web" selected>Web shop</option>`, "the typed channel is chosen again")
+
+	blind := withChannels()
+	panel = newCatalogPanel(t, blind)
+	panel.carts = &fakeCarts{}
+	page = phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Empty(t, channelReads(blind), "the channels are read under auth:read alone")
+	assert.Equal(t, 2, strings.Count(page.Body.String(), `<input name="sales_channel_id"`))
+
+	failing := withChannels()
+	failing.errByEntity = map[string]error{EntitySalesChannel: errors.Unavailable("auth_down", "no answer")}
+	panel = newCatalogPanel(t, failing)
+	panel.carts = &fakeCarts{}
+	page = phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite, scopeAuthRead)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Equal(t, 2, strings.Count(page.Body.String(), `<input name="sales_channel_id"`), "a failed read keeps the id box")
+}

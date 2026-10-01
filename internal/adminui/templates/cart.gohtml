@@ -7,6 +7,20 @@ address (ADR 0303).
 Every amount is printed with its currency, and an amount whose scale could not
 be read says it is in minor units.
 */ -}}
+{{/*
+channel is the sales channel a line or the completion claims: a list by name
+to an operator who may read the channels, the id box otherwise (ADR 0305).
+*/}}
+{{ define "channel" }}
+  {{ if .Channels }}
+  <select name="sales_channel_id" aria-label="sales channel" required>
+    {{ range .Channels }}<option value="{{ .ID }}"{{ if eq .ID ($.Typed.Get "sales_channel_id") }} selected{{ end }}>{{ .Name }}</option>
+    {{ end }}
+  </select>
+  {{ else }}
+  <input name="sales_channel_id" value="{{ .Typed.Get "sales_channel_id" }}" placeholder="sales channel id" aria-label="sales channel" required>
+  {{ end }}
+{{ end }}
 {{ define "body" }}
 <h1>Telephone order</h1>
 
@@ -106,7 +120,7 @@ be read says it is in minor units.
 {{ else if and .Search (not .Found) }}<p class="muted">No product's title matches "{{ .Search }}".</p>{{ end }}
 {{ end }}
 <form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/lines">
-  <input name="sales_channel_id" value="{{ .Typed.Get "sales_channel_id" }}" placeholder="sales channel id" aria-label="sales channel" required>
+  {{ template "channel" . }}
   {{ if .Found }}
   <select name="variant_id" aria-label="variant" required>
     {{ range .Found }}<option value="{{ .ID }}">{{ .Label }}</option>{{ end }}
@@ -159,7 +173,7 @@ be read says it is in minor units.
 <form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/complete">
   <p>Read the total to the caller first: the order is placed for {{ .Cart.Total }} {{ .Cart.Currency }} and owes it until the money arrives.</p>
   <input type="hidden" name="read_total" value="{{ .Cart.TotalMinor }}">
-  <input name="sales_channel_id" value="{{ .Typed.Get "sales_channel_id" }}" placeholder="sales channel id" aria-label="sales channel" required>
+  {{ template "channel" . }}
   <input name="payment_provider_id" value="{{ .Typed.Get "payment_provider_id" }}" placeholder="offline method, e.g. bank_transfer" aria-label="offline method" required>
   <button type="submit">Place the order</button>
 </form>

@@ -122,7 +122,7 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-			ID: "usr_phone", Kind: "user", Scopes: []string{"cart:read", "cart:write", "order:read"},
+			ID: "usr_phone", Kind: "user", Scopes: []string{"cart:read", "cart:write", "order:read", "auth:read"},
 		}))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -154,6 +154,8 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 	require.Equal(t, http.StatusOK, choosing.Code, choosing.Body.String())
 	assert.Contains(t, choosing.Body.String(), `<option value="`+optionID+`">`,
 		"the operator chooses from the options the cart can take (ADR 0292)")
+	assert.Contains(t, choosing.Body.String(), `<option value="`+testChannelID+`"`,
+		"the channel is chosen by name from the real sales channels (ADR 0305)")
 	redirected(send(http.MethodPost, cartPath+"/shipping", url.Values{"shipping_option_id": {optionID}}))
 
 	page := send(http.MethodGet, cartPath, nil)

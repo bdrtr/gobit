@@ -969,6 +969,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	// drift reads as "could not be read" on the telephone order's page and on
 	// the order list, so the names are held here.
 	assert.Equal(t, cartsvc.FieldOpenedBy, adminui.FieldCartOpenedBy)
+	// The telephone order's channel list (ADR 0305).
+	assert.Equal(t, authsvc.Entity, adminui.EntitySalesChannel)
 	assert.Equal(t, cartsvc.FilterOpenedByOperator, adminui.FilterOpenedByOperator)
 	assert.Equal(t, ordersvc.FieldPlacedBy, adminui.FieldPlacedBy)
 	assert.Equal(t, ordersvc.FilterPlacedByOperator, adminui.FilterPlacedByOperator)

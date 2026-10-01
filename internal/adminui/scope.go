@@ -51,6 +51,9 @@ const (
 	// The product and variant pages read a variant's prices under this one and
 	// its stock under [scopeInventoryRead] (ADR 0260).
 	scopePricingRead = "pricing:read"
+	// The sales channels are the auth module's, read under its privilege for
+	// the telephone order's channel list (ADR 0305).
+	scopeAuthRead = "auth:read"
 )
 
 // routeKey is how the scope table names a route: its method and its path.

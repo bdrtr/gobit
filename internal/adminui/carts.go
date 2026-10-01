@@ -344,6 +344,44 @@ func boolRank(b bool) int {
 	return 0
 }
 
+// EntitySalesChannel is the auth module's sales channel entity in the read
+// layer, pinned against the module's in internal/arch (ADR 0305).
+const EntitySalesChannel = "sales_channel"
+
+// The sales channel's fields and filter the channel list reads.
+const (
+	fieldChannelName     = "name"
+	filterChannelOff     = "is_disabled"
+	channelsListedAtMost = 50
+)
+
+// channelOption is one sales channel the forms offer.
+type channelOption struct {
+	ID, Name string
+}
+
+// channelsOf reads the enabled sales channels, by name, for the forms that
+// claim one, and whether they could be read (ADR 0305).
+func (u *UI) channelsOf(r *http.Request) ([]channelOption, bool) {
+	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+		Entity:  EntitySalesChannel,
+		Fields:  []string{fieldID, fieldChannelName},
+		Filters: map[string]any{filterChannelOff: false},
+		Limit:   channelsListedAtMost,
+	})
+	if err != nil {
+		return nil, false
+	}
+
+	out := make([]channelOption, 0, len(records))
+	for _, record := range records {
+		out = append(out, channelOption{ID: recordString(record, fieldID), Name: recordString(record, fieldChannelName)})
+	}
+	slices.SortStableFunc(out, func(a, b channelOption) int { return strings.Compare(a.Name, b.Name) })
+
+	return out, true
+}
+
 // cartOption is one shipping option the cart can take, as the form offers it.
 type cartOption struct {
 	ID, Name, Amount string
@@ -563,6 +601,12 @@ func (u *UI) renderCart(
 	if canWrite && !page.Completed {
 		options, optionsRead = u.shippingOptionsOf(r, page, scales)
 	}
+	// The channel the line and the completion claim is offered by name to an
+	// operator who may read the sales channels (ADR 0260, ADR 0305).
+	var channels []channelOption
+	if canWrite && !page.Completed && principal.HasScope(scopeAuthRead) {
+		channels, _ = u.channelsOf(r)
+	}
 	// The search reads the product module's catalog, so it is offered only to
 	// an operator who may read it (ADR 0260, ADR 0293).
 	canSearch := canWrite && !page.Completed && principal.HasScope(scopeProductRead)
@@ -590,6 +634,7 @@ func (u *UI) renderCart(
 		refusedKey:    refused,
 		"Typed":       typed,
 		"Prefilled":   prefilled,
+		"Channels":    channels,
 		// AddressFields orders the address forms (ADR 0291, ADR 0303).
 		"AddressFields": addressFields,
 		"BillingPrefix": billingPrefix,
