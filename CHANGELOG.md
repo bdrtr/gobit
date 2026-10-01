@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A variant begins to keep its stock in the panel** (ADR 0310). **For
+  operators:** a variant without an inventory item offers a button that has
+  one made and linked, after which the stock form counts it at each location;
+  it needs `product:write` and `inventory:write`.
+
 - **A variant takes a price in the panel** (ADR 0309). **For operators:** the
   variant page adds a base price in a currency the variant has none in,
   creating and linking its price set when it has none; it needs

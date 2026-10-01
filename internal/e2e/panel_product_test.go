@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -39,6 +40,7 @@ func TestAnOperatorCreatesAProductInThePanel(t *testing.T) {
 		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
 			ID: "usr_catalog", Kind: "user", Scopes: []string{
 				"product:read", "product:write", "pricing:read", "pricing:write",
+				"inventory:read", "inventory:write",
 			},
 		}))
 		rec := httptest.NewRecorder()
@@ -84,4 +86,20 @@ func TestAnOperatorCreatesAProductInThePanel(t *testing.T) {
 	require.Equal(t, http.StatusOK, variantPage.Code, variantPage.Body.String())
 	assert.Contains(t, variantPage.Body.String(), `name="amount" value="250.00"`,
 		"the variant page reads the price through the real link and price set")
+
+	// And keeps its stock: inventory makes the item, the product module links
+	// it, and the existing stock form sets a location's count (ADR 0310).
+	kept := send(http.MethodPost, variantPath+"/stock-item", nil)
+	require.Equal(t, http.StatusSeeOther, kept.Code, kept.Body.String())
+	variantPage = send(http.MethodGet, variantPath, nil)
+	require.Equal(t, http.StatusOK, variantPage.Code, variantPage.Body.String())
+	item := regexp.MustCompile(`name="inventory_item_id" value="([^"]+)"`).FindStringSubmatch(variantPage.Body.String())
+	require.Len(t, item, 2, "the stock form names the variant's new item")
+	location := regexp.MustCompile(`name="location_id" value="([^"]+)"`).FindStringSubmatch(variantPage.Body.String())
+	require.Len(t, location, 2, "an open location is offered")
+	counted := send(http.MethodPost, variantPath+"/stock", url.Values{
+		"inventory_item_id": {item[1]}, "location_id": {location[1]}, "read_quantity": {"0"}, "quantity": {"7"},
+	})
+	require.Equal(t, http.StatusSeeOther, counted.Code, counted.Body.String())
+	assert.Equal(t, int64(7), sellableQuantity(ctx, t, item[1]), "the new variant holds the stock counted")
 }

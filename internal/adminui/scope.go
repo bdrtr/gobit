@@ -130,7 +130,10 @@ func builtInScopes() map[string]string {
 		// links the price set; the handler asks for the price's own write as
 		// well (ADR 0309).
 		routeKey(post, VariantPricesPath): scopeProductWrite,
-		routeKey(post, VariantStockPath):  scopeInventoryWrite,
+		// And so is keeping a variant's stock, whose item is inventory's (ADR
+		// 0310).
+		routeKey(post, VariantStockItemPath): scopeProductWrite,
+		routeKey(post, VariantStockPath):     scopeInventoryWrite,
 		// A variant's bundle is a revision of its product (ADR 0236).
 		routeKey(get, VariantBundlePath):  scopeProductWrite,
 		routeKey(post, VariantBundlePath): scopeProductWrite,

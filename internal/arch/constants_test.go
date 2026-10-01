@@ -1644,3 +1644,14 @@ func modulesOpeningAProviderRegistry(t *testing.T) []string {
 
 	return opened
 }
+
+// TestTheProductModuleResolvesItsWritersByTheirOwnersNames binds the names the
+// product module resolves pricing's and inventory's services by to the names
+// those modules register them under (ADR 0207, ADR 0310). A drift reads as
+// "not installed": an import's price columns refused, a variant not stocked.
+func TestTheProductModuleResolvesItsWritersByTheirOwnersNames(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, pricing.ServiceName, product.PricesName)
+	assert.Equal(t, inventory.ServiceName, product.StockName)
+}

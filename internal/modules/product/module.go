@@ -127,6 +127,12 @@ const UploadReaderName = "file.interop"
 // refused when it is sent. The single source of truth is pricing's ServiceName.
 const PricesName = "pricing.service"
 
+// StockName is the container name of inventory's service, which creates a
+// variant's inventory item (ADR 0310). It is repeated here as a string for
+// [PricesName]'s reason; inventory's ServiceName is its source and internal/arch
+// holds the two together.
+const StockName = "inventory.service"
+
 // Error codes.
 const (
 	codeSetupFailed = "product_module_setup_failed"
@@ -271,6 +277,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		Uploads: &uploadReader{c: c, log: log},
 		// Pricing is resolved the same way, for the import's price columns.
 		Prices: &importPrices{c: c, log: log},
+		// And inventory, for a variant's inventory item (ADR 0310).
+		Stock:  &variantStock{c: c, log: log},
 		Logger: log,
 	})
 	if err != nil {
@@ -517,3 +525,46 @@ func mustSub(files embed.FS, dir string) fs.FS {
 	}
 	return sub
 }
+
+// variantStock resolves inventory's surface on first use, as [importPrices]
+// resolves pricing's (ADR 0310).
+type variantStock struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  service.StockItemWriter
+	err  error
+}
+
+// That the wrapper satisfies the surface the service expects is pinned at
+// compile time.
+var _ service.VariantStock = (*variantStock)(nil)
+
+// Installed answers nil when inventory's surface is bound.
+func (v *variantStock) Installed(ctx context.Context) error {
+	v.once.Do(func() {
+		svc, err := container.Resolve[service.StockItemWriter](v.c, StockName)
+		if err != nil {
+			v.err = errors.Wrap(err, errors.KindUnavailable, codeStockUnavailable,
+				"inventory's surface (%q) is not bound; a variant is not stocked here", StockName)
+			v.log.InfoContext(ctx, "variant stock unbound", "provider", StockName, "error", err)
+
+			return
+		}
+		v.svc = svc
+	})
+
+	return v.err
+}
+
+// CreateItemForStock creates the variant's inventory item through inventory.
+func (v *variantStock) CreateItemForStock(ctx context.Context, sku, title string) (string, error) {
+	if err := v.Installed(ctx); err != nil {
+		return "", err
+	}
+
+	return v.svc.CreateItemForStock(ctx, sku, title)
+}
+
+// codeStockUnavailable reports an installation whose inventory is not bound.
+const codeStockUnavailable = "product_stock_unavailable"

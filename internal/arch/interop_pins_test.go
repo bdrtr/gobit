@@ -112,6 +112,7 @@ var (
 var (
 	_ productsvc.UploadReader     = (*filesvc.Interop)(nil)
 	_ productsvc.PriceSetWriter   = (*pricingsvc.Service)(nil)
+	_ productsvc.StockItemWriter  = (*inventorysvc.Service)(nil)
 	_ ordersvc.SpendingPolicy     = (*b2bsvc.Interop)(nil)
 	_ ordersvc.CausedRefunds      = (*paymentsvc.Interop)(nil)
 	_ notifsvc.OrderContactReader = (*ordersvc.Interop)(nil)

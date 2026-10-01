@@ -136,5 +136,11 @@ section names it.
   {{ end }}
 {{ else }}
   <p>This variant is not linked to an inventory item.</p>
+  {{ if .CanKeepStock }}
+  {{/* The item is made by inventory and linked by the product module; its levels are then set above (ADR 0310). */}}
+  <form method="post" action="{{ .StockItemPath }}">
+    <button type="submit">Keep this variant's stock</button>
+  </form>
+  {{ end }}
 {{ end }}
 {{ end }}

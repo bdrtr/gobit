@@ -38,6 +38,9 @@ const (
 	// the variant has none in, its price set created and linked first when it
 	// has none (ADR 0309).
 	VariantPricesPath = VariantPath + "/prices"
+	// VariantStockItemPath gives a variant without one its inventory item
+	// (ADR 0310).
+	VariantStockItemPath = VariantPath + "/stock-item"
 )
 
 // PriceWriter is the narrow price surface the panel needs (ADR 0001).
@@ -288,7 +291,57 @@ func (u *UI) renderVariant(
 		"CanAddPrice":   !access.PricesHidden && u.canPriceVariant(r),
 		"NewCurrencies": unpricedCurrencies(scales, editable),
 		"PricesPath":    variantURL(productID, variantID) + "/prices",
+		// The button that gives a variant its inventory item (ADR 0310); the
+		// template draws it only where the page says the variant has none.
+		"CanKeepStock":  u.canStockVariant(r),
+		"StockItemPath": variantURL(productID, variantID) + "/stock-item",
 	})
+}
+
+// VariantStocker is the narrow surface a variant's inventory item is made
+// through: the product module's, which has inventory create it and links it
+// (ADR 0310).
+type VariantStocker interface {
+	// StockVariant gives the variant an inventory item and returns its id.
+	StockVariant(ctx context.Context, variantID string) (string, error)
+}
+
+// canStockVariant reports whether the operator may give a variant its item:
+// the item is inventory's and the link the product's, so both writes are
+// needed, and the product module's surface must be able to do it.
+func (u *UI) canStockVariant(r *http.Request) bool {
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	_, ok := u.products.(VariantStocker)
+
+	return ok && principal.HasScope(scopeInventoryWrite) && principal.HasScope(scopeProductWrite)
+}
+
+// keepVariantStock gives the variant its inventory item and returns to the
+// variant's page, where its levels are set by location (ADR 0310).
+func (u *UI) keepVariantStock(w http.ResponseWriter, r *http.Request) {
+	productID := chi.URLParam(r, "id")
+	variantID := chi.URLParam(r, "variantID")
+
+	stocker, ok := u.products.(VariantStocker)
+	if !ok {
+		u.errorPage(w, r, http.StatusServiceUnavailable, "Stock unavailable",
+			"The product module's admin surface cannot stock a variant in this installation.")
+		return
+	}
+	// The route asks for the product's privilege, whose surface links the
+	// item; the item is inventory's, so its privilege is asked here as well.
+	if principal, _ := corehttp.PrincipalFromContext(r.Context()); !principal.HasScope(scopeInventoryWrite) {
+		u.errorPage(w, r, http.StatusForbidden, "Not allowed",
+			"Keeping a variant's stock creates its inventory item, which needs the "+scopeInventoryWrite+" privilege as well.")
+		return
+	}
+
+	if _, err := stocker.StockVariant(r.Context(), variantID); err != nil {
+		u.afterWrite(w, r, err, productID, variantID, "The variant's stock could not be kept")
+		return
+	}
+
+	corehttp.WriteRedirect(r.Context(), w, variantURL(productID, variantID))
 }
 
 // VariantPricer is the narrow surface a variant's first price, or a price in a

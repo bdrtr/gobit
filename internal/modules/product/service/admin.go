@@ -272,3 +272,14 @@ func (a *AdminSurface) PriceVariant(ctx context.Context, variantID, currencyCode
 
 	return err
 }
+
+// StockVariant gives the variant an inventory item, created by inventory and
+// linked here, and returns its id; a variant that has one returns it (ADR
+// 0310). Its levels are then set on the stock form, location by location.
+func (a *AdminSurface) StockVariant(ctx context.Context, variantID string) (string, error) {
+	if a == nil || a.svc == nil {
+		return "", errors.Unavailable(codeNotReady, "the product service is not set up")
+	}
+
+	return a.svc.stockVariant(ctx, variantID)
+}

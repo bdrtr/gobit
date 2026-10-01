@@ -107,3 +107,70 @@ func TestAVariantTakesAPriceInANewCurrency(t *testing.T) {
 	assert.NotEqual(t, http.StatusSeeOther, rec.Code, "a write the module could not make is not reported as made")
 	assert.Contains(t, rec.Body.String(), "The price could not be added")
 }
+
+// fakeStocker is the product writer that also stocks a variant (ADR 0310).
+type fakeStocker struct {
+	fakeProductWriter
+	stocked []string
+	err     error
+}
+
+func (f *fakeStocker) StockVariant(_ context.Context, variantID string) (string, error) {
+	f.stocked = append(f.stocked, variantID)
+
+	return "iitem_1", f.err
+}
+
+// TestAVariantBeginsToKeepItsStock is ADR 0310: a variant with no inventory
+// item offers the operator holding both writes a button that has the product
+// module make and link one and returns to the variant; one holding the
+// product's write alone is let through neither the button nor the route; a
+// variant with an item offers none.
+func TestAVariantBeginsToKeepItsStock(t *testing.T) {
+	t.Parallel()
+
+	unstocked := variantCatalog(int64(2))
+	delete(unstocked.byEntity[EntityVariant][0], keyInventory)
+	stocker := &fakeStocker{}
+	panel := newVariantPanel(t, unstocked, &fakePriceWriter{}, &fakeStockAdmin{})
+	panel.products = stocker
+	both := []string{scopeProductRead, scopeInventoryRead, scopeInventoryWrite, scopeProductWrite}
+	r := func(method, path string, scopes ...string) *httptest.ResponseRecorder {
+		router := chi.NewRouter()
+		router.Get(VariantPath, panel.showVariant)
+		router.Post(VariantStockItemPath, panel.keepVariantStock)
+		req := httptest.NewRequest(method, path, http.NoBody)
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(),
+			corehttp.Principal{ID: "user_1", Kind: "user", Scopes: scopes}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+
+		return rec
+	}
+
+	page := r(http.MethodGet, variantURLFor(), both...)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), `action="`+variantURLFor()+`/stock-item"`)
+	rec := r(http.MethodPost, variantURLFor()+"/stock-item", both...)
+	assert.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	assert.Equal(t, variantURLFor(), rec.Header().Get("Location"))
+	assert.Equal(t, []string{"var_1"}, stocker.stocked)
+
+	productOnly := []string{scopeProductRead, scopeInventoryRead, scopeProductWrite}
+	page = r(http.MethodGet, variantURLFor(), productOnly...)
+	assert.NotContains(t, page.Body.String(), `/stock-item"`)
+	rec = r(http.MethodPost, variantURLFor()+"/stock-item", productOnly...)
+	assert.Equal(t, http.StatusForbidden, rec.Code, "inventory's write is asked for too")
+	assert.Len(t, stocker.stocked, 1)
+
+	stocked := newVariantPanel(t, variantCatalog(int64(2)), &fakePriceWriter{}, &fakeStockAdmin{})
+	stocked.products = &fakeStocker{}
+	router := chi.NewRouter()
+	router.Get(VariantPath, stocked.showVariant)
+	req := httptest.NewRequest(http.MethodGet, variantURLFor(), http.NoBody)
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(),
+		corehttp.Principal{ID: "user_1", Kind: "user", Scopes: both}))
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	assert.NotContains(t, rec.Body.String(), `/stock-item"`, "a variant with an item keeps it")
+}

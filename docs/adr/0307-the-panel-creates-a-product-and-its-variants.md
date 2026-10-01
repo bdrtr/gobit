@@ -5,7 +5,7 @@ adds a variant to a product, and the panel offers both to an operator who
 holds `product:write`: a form under the product list and one on the product's
 page. A new product's prices and stock are still set up over the admin API.
 
-- **Status:** Accepted — amended by [0309](0309-a-variant-takes-a-price-in-the-panel.md)
+- **Status:** Accepted — amended by [0309](0309-a-variant-takes-a-price-in-the-panel.md), [0310](0310-a-variant-begins-to-keep-its-stock-in-the-panel.md)
 - **Date:** 2026-10-01
 
 ## Context

@@ -427,6 +427,10 @@ func (s *recordingSurfaces) reach(name string) error {
 	return nil
 }
 
+func (s *recordingSurfaces) StockVariant(context.Context, string) (string, error) {
+	return "", s.reach(ServiceProductAdmin)
+}
+
 func (s *recordingSurfaces) PriceVariant(context.Context, string, string, int64) error {
 	return s.reach(ServiceProductAdmin)
 }
@@ -619,6 +623,8 @@ func (a recordingAfterSales) OpenReplacement(
 // route's owner.
 var walkRequires = map[string][]string{
 	routeKey(http.MethodPost, VariantPricesPath): {scopePricingWrite},
+	// And keeping a variant's stock asks for inventory's write (ADR 0310).
+	routeKey(http.MethodPost, VariantStockItemPath): {scopeInventoryWrite},
 }
 
 // walkScopes is the route's privilege with those its handler asks for beside
@@ -639,7 +645,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, ProductVariantsPath): {"variant_title": {"Walk"}},
 	// Adding a variant's price (ADR 0309).
 	routeKey(http.MethodPost, VariantPricesPath): {"currency": {"TRY"}, "amount": {"1"}},
-	routeKey(http.MethodPost, ProductAddOnsPath): {"add_ons": {""}},
+	// Keeping a variant's stock (ADR 0310).
+	routeKey(http.MethodPost, VariantStockItemPath): {},
+	routeKey(http.MethodPost, ProductAddOnsPath):    {"add_ons": {""}},
 	routeKey(http.MethodPost, VariantPricePath): {
 		"price_set_id": {"walk"}, "currency": {"TRY"}, "amount": {"1"}, "read_amount": {"1"}, "minor": {"1"},
 	},

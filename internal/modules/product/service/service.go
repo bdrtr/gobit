@@ -116,6 +116,9 @@ type Options struct {
 	// Prices is pricing's surface an import's price columns are written
 	// through (ADR 0207); if nil is given, a file with price columns is refused.
 	Prices ImportPrices
+	// Stock is inventory's surface a variant's inventory item is created
+	// through (ADR 0310); if nil is given, a variant is not stocked here.
+	Stock VariantStock
 	// Events is the bus the catalog events are published on; if nil is given, the
 	// events are silently skipped (rationale: [Service.publishProductEvent]).
 	Events EventPublisher
@@ -137,6 +140,7 @@ type Service struct {
 	graph   Grapher
 	uploads UploadReader
 	prices  ImportPrices
+	stock   VariantStock
 	events  EventPublisher
 	log     *slog.Logger
 	now     func() time.Time
@@ -165,6 +169,7 @@ func New(opts Options) (*Service, error) {
 		graph:   opts.Query,
 		uploads: opts.Uploads,
 		prices:  opts.Prices,
+		stock:   opts.Stock,
 		events:  opts.Events,
 		log:     log,
 		now:     now,
