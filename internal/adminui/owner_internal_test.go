@@ -474,6 +474,12 @@ func (s recordingStock) SetStockLevel(context.Context, string, string, int64, in
 // recordingPayments records the payment module's surface (ADR 0287).
 type recordingPayments struct{ surfaces *recordingSurfaces }
 
+func (p recordingPayments) OfflineMethods(context.Context) []string {
+	_ = p.surfaces.reach(ServicePaymentAdmin)
+
+	return nil
+}
+
 func (p recordingPayments) RecordReceived(
 	context.Context, string,
 ) (paymentID string, amount int64, currencyCode string, err error) {

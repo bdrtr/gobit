@@ -35,6 +35,19 @@ func TestAnOfflineMethodCapturesLater(t *testing.T) {
 	assert.Equal(t, service.CodeProviderNotFound, coreerrors.CodeOf(err))
 }
 
+// TestTheOfflineMethodsAreListed is ADR 0306: the methods an operator's
+// completion takes are the registered ones whose money comes later, and a
+// card is not one of them.
+func TestTheOfflineMethodsAreListed(t *testing.T) {
+	transfer, err := offline.New("bank_transfer")
+	require.NoError(t, err)
+	cod, err := offline.New("cash_on_delivery")
+	require.NoError(t, err)
+	svc, _ := reconcileFixture(t, newFakeProvider(providerID), transfer, cod)
+
+	assert.ElementsMatch(t, []string{"bank_transfer", "cash_on_delivery"}, svc.OfflineMethods())
+}
+
 // TestReconcileLeavesOutAProviderWhoseMoneyComesLater is ADR 0284's other
 // half: an offline session stays authorized until the customer pays, which is
 // the provider working and not a capture in flight. It is neither examined nor

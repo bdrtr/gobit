@@ -985,3 +985,50 @@ func TestTheTelephoneOrderChoosesAChannelByName(t *testing.T) {
 	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
 	assert.Equal(t, 2, strings.Count(page.Body.String(), `<input name="sales_channel_id"`), "a failed read keeps the id box")
 }
+
+// TestTheCompletionOffersTheOfflineMethods is ADR 0306 on the page: an
+// operator who may read the payment module's data chooses the completion's
+// method from its offline methods, the typed one chosen again after a
+// refusal; one who may not keeps the box and asks the payment module nothing.
+func TestTheCompletionOffersTheOfflineMethods(t *testing.T) {
+	t.Parallel()
+
+	receiver := &fakeReceiver{methods: []string{"bank_transfer", "cash_on_delivery"}}
+	panel := newCatalogPanel(t, phoneCatalog(false))
+	panel.carts = &fakeCarts{}
+	panel.payments = receiver
+	page := phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite, scopePaymentRead)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), `<select name="payment_provider_id"`)
+	assert.Contains(t, page.Body.String(), `<option value="cash_on_delivery">cash_on_delivery</option>`)
+
+	refusing := newCatalogPanel(t, phoneCatalog(false))
+	refusing.carts = &fakeCarts{err: errors.Conflict("checkout_workflow_total_mismatch", "the total moved")}
+	refusing.payments = receiver
+	rec := phoneRequest(refusing, http.MethodPost, CartsPath+"/cart_phone/complete", url.Values{
+		formSalesChannelID: {"sc_1"}, formPaymentMethod: {"cash_on_delivery"}, formReadTotal: {"1"},
+	}, scopeCartRead, scopeCartWrite, scopePaymentRead)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `<option value="cash_on_delivery" selected>cash_on_delivery</option>`)
+
+	blind := &countingReceiver{}
+	panel = newCatalogPanel(t, phoneCatalog(false))
+	panel.carts = &fakeCarts{}
+	panel.payments = blind
+	page = phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), `<input name="payment_provider_id"`)
+	assert.Zero(t, blind.asked, "the payment module is asked under payment:read alone")
+}
+
+// countingReceiver counts the offline method listings it was asked for.
+type countingReceiver struct {
+	fakeReceiver
+	asked int
+}
+
+func (c *countingReceiver) OfflineMethods(context.Context) []string {
+	c.asked++
+
+	return []string{"bank_transfer"}
+}

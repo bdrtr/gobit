@@ -17,6 +17,12 @@ type ReceivingSurface struct {
 	svc *service.Service
 }
 
+// OfflineMethods lists the methods whose money comes after the order is
+// placed, the ones a telephone order's completion takes (ADR 0306).
+func (s *ReceivingSurface) OfflineMethods(context.Context) []string {
+	return s.svc.OfflineMethods()
+}
+
 // RecordReceived captures the session's awaited money whole and returns the
 // capture, its amount and its currency; a second call returns the first
 // capture. A session whose provider moves its money at the checkout is refused.

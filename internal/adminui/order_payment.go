@@ -27,6 +27,9 @@ type PaymentReceiver interface {
 	// the checkout is refused.
 	RecordReceived(ctx context.Context, sessionID string) (
 		paymentID string, amount int64, currencyCode string, err error)
+	// OfflineMethods lists the methods whose money comes after the order is
+	// placed, for the telephone order's completion (ADR 0306).
+	OfflineMethods(ctx context.Context) []string
 }
 
 // The payment field the order page reads for what it awaits, and the keys of

@@ -122,7 +122,9 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-			ID: "usr_phone", Kind: "user", Scopes: []string{"cart:read", "cart:write", "order:read", "auth:read"},
+			ID: "usr_phone", Kind: "user", Scopes: []string{
+				"cart:read", "cart:write", "order:read", "auth:read", "payment:read",
+			},
 		}))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -156,6 +158,10 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 		"the operator chooses from the options the cart can take (ADR 0292)")
 	assert.Contains(t, choosing.Body.String(), `<option value="`+testChannelID+`"`,
 		"the channel is chosen by name from the real sales channels (ADR 0305)")
+	assert.Contains(t, choosing.Body.String(), `<option value="`+offlineMethod+`">`,
+		"the method is chosen from the payment module's offline methods (ADR 0306)")
+	assert.NotContains(t, choosing.Body.String(), `<option value="manual">`,
+		"a method whose money moves at the checkout is not offered")
 	redirected(send(http.MethodPost, cartPath+"/shipping", url.Values{"shipping_option_id": {optionID}}))
 
 	page := send(http.MethodGet, cartPath, nil)

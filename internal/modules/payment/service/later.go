@@ -43,6 +43,11 @@ func capturesLater(provider any) bool {
 	return ok && later.CapturesLater()
 }
 
+// OfflineMethods lists the registered providers whose money comes after the
+// order is placed, in the registry's order: the methods an operator's
+// completion accepts (ADR 0306).
+func (s *Service) OfflineMethods() []string { return s.laterCapturing() }
+
 // laterCapturing lists the registered providers whose money comes later, in
 // the registry's order.
 func (s *Service) laterCapturing() []string {

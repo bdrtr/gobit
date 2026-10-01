@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A telephone order chooses its offline method from a list** (ADR 0306).
+  **For operators:** the telephone order's completion offers the shop's
+  offline methods as a list to an operator holding `payment:read`; without it
+  the method is typed as before.
+
 - **A telephone order chooses its channel by name** (ADR 0305). **For
   operators:** the telephone order's line and completion forms offer the
   enabled sales channels by name to an operator holding `auth:read`; without

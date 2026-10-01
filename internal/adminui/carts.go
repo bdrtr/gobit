@@ -607,6 +607,12 @@ func (u *UI) renderCart(
 	if canWrite && !page.Completed && principal.HasScope(scopeAuthRead) {
 		channels, _ = u.channelsOf(r)
 	}
+	// The offline methods the completion takes are the payment module's,
+	// offered under its privilege (ADR 0306).
+	var methods []string
+	if canWrite && !page.Completed && u.payments != nil && principal.HasScope(scopePaymentRead) {
+		methods = u.payments.OfflineMethods(r.Context())
+	}
 	// The search reads the product module's catalog, so it is offered only to
 	// an operator who may read it (ADR 0260, ADR 0293).
 	canSearch := canWrite && !page.Completed && principal.HasScope(scopeProductRead)
@@ -635,6 +641,7 @@ func (u *UI) renderCart(
 		"Typed":       typed,
 		"Prefilled":   prefilled,
 		"Channels":    channels,
+		"Methods":     methods,
 		// AddressFields orders the address forms (ADR 0291, ADR 0303).
 		"AddressFields": addressFields,
 		"BillingPrefix": billingPrefix,

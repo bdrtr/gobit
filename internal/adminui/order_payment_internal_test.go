@@ -22,7 +22,11 @@ import (
 type fakeReceiver struct {
 	got []string
 	err error
+	// methods are the offline methods it lists (ADR 0306).
+	methods []string
 }
+
+func (f *fakeReceiver) OfflineMethods(context.Context) []string { return f.methods }
 
 func (f *fakeReceiver) RecordReceived(
 	_ context.Context, sessionID string,

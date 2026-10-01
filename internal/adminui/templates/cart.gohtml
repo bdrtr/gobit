@@ -174,7 +174,15 @@ to an operator who may read the channels, the id box otherwise (ADR 0305).
   <p>Read the total to the caller first: the order is placed for {{ .Cart.Total }} {{ .Cart.Currency }} and owes it until the money arrives.</p>
   <input type="hidden" name="read_total" value="{{ .Cart.TotalMinor }}">
   {{ template "channel" . }}
+  {{ if .Methods }}
+  {{- /* The offline methods, to an operator who may read the payment module's (ADR 0306). */ -}}
+  <select name="payment_provider_id" aria-label="offline method" required>
+    {{ range .Methods }}<option value="{{ . }}"{{ if eq . ($.Typed.Get "payment_provider_id") }} selected{{ end }}>{{ . }}</option>
+    {{ end }}
+  </select>
+  {{ else }}
   <input name="payment_provider_id" value="{{ .Typed.Get "payment_provider_id" }}" placeholder="offline method, e.g. bank_transfer" aria-label="offline method" required>
+  {{ end }}
   <button type="submit">Place the order</button>
 </form>
 {{ end }}
