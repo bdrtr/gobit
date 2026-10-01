@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel publishes and ends a price list** (ADR 0328). **For
+  operators:** a price list's row publishes a draft, ends an active list or
+  reopens an ended one under `pricing:write`; a list another operator moved
+  meanwhile is refused rather than moved back.
+
 - **The panel prices a variant on a list** (ADR 0327). **For operators:** a
   variant's page lists its prices on price lists with the customers each is
   for, and adds a price on a list for every customer or for some customer

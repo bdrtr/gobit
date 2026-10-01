@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,12 @@ type fakePriceLists struct {
 	written  []string
 	windows  [][2]*time.Time
 	writeErr error
+	switched []string
+}
+
+func (f *fakePriceLists) SwitchPriceListStatus(_ context.Context, id, from, to string) error {
+	f.switched = append(f.switched, id+"|"+from+"|"+to)
+	return f.writeErr
 }
 
 func (f *fakePriceLists) PriceListsJSON(_ context.Context, limit, offset int32) (json.RawMessage, int64, error) {
@@ -137,5 +144,55 @@ func TestThePriceListFormWritesWhatWasTyped(t *testing.T) {
 
 	lists.writeErr = errors.Unavailable("db_down", "no answer")
 	rec = campaignsRequest(panel, http.MethodPost, PriceListsPath, url.Values{formPriceListTitle: {"Odd"}}, writer...)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+// TestAPriceListIsPublishedEndedAndReopened is ADR 0328: each row offers its
+// status's one move, carrying the status it was drawn in, to a writer; the
+// surface is asked to move the list from that status, and the list comes
+// back; a list another operator moved first is refused on the list; a reader
+// is offered no move.
+func TestAPriceListIsPublishedEndedAndReopened(t *testing.T) {
+	t.Parallel()
+
+	lists := &fakePriceLists{body: `[
+		{"id":"plist_1","title":"Wholesale","type":"override","status":"active","created_at":"2026-01-01T00:00:00Z"},
+		{"id":"plist_2","title":"Spring","type":"sale","status":"draft","created_at":"2026-03-01T00:00:00Z"},
+		{"id":"plist_3","title":"Winter","type":"sale","status":"expired","created_at":"2025-12-01T00:00:00Z"}]`, total: 3}
+	panel := priceListsPanel(t, lists)
+	writer := []string{scopePricingRead, scopePricingWrite}
+
+	rec := campaignsRequest(panel, http.MethodGet, PriceListsPath, nil, writer...)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	for id, move := range map[string][2]string{
+		"plist_1": {"End", "expired"}, "plist_2": {"Publish", "active"}, "plist_3": {"Reopen", "active"},
+	} {
+		_, row, found := strings.Cut(body, `action="`+PriceListsPath+"/"+id+`/status"`)
+		require.True(t, found, "%s offers its move", id)
+		row, _, _ = strings.Cut(row, "</form>")
+		assert.Contains(t, row, ">"+move[0]+"</button>", id)
+		assert.Contains(t, row, `name="to" value="`+move[1]+`"`, id)
+	}
+	assert.Contains(t, body, `<input type="hidden" name="from" value="draft">`)
+	rec = campaignsRequest(panel, http.MethodGet, PriceListsPath, nil, scopePricingRead)
+	assert.NotContains(t, rec.Body.String(), `/status"`, "a reader moves nothing")
+
+	rec = campaignsRequest(panel, http.MethodPost, PriceListsPath+"/plist_2/status",
+		url.Values{formStatusFrom: {"draft"}, formStatusTo: {"active"}}, writer...)
+	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	assert.Equal(t, PriceListsPath, rec.Header().Get("Location"))
+	assert.Equal(t, []string{"plist_2|draft|active"}, lists.switched)
+
+	lists.writeErr = errors.Conflict("pricing_price_list_moved", "price list plist_2 is active now, not draft; draw the list again")
+	rec = campaignsRequest(panel, http.MethodPost, PriceListsPath+"/plist_2/status",
+		url.Values{formStatusFrom: {"draft"}, formStatusTo: {"active"}}, writer...)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "draw the list again")
+	assert.Contains(t, rec.Body.String(), "Wholesale", "the refusal is drawn on the list")
+
+	lists.writeErr = errors.Unavailable("db_down", "no answer")
+	rec = campaignsRequest(panel, http.MethodPost, PriceListsPath+"/plist_2/status",
+		url.Values{formStatusFrom: {"draft"}, formStatusTo: {"active"}}, writer...)
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }

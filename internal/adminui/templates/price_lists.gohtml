@@ -43,16 +43,26 @@ datetime-local inputs read as UTC, as a campaign's are (ADR 0319).
 <div class="scroll">
 <table>
   <thead>
-    <tr><th>Price list</th><th>Type</th><th>Status</th><th>From (UTC)</th><th>Until (UTC)</th></tr>
+    <tr><th>Price list</th><th>Type</th><th>Status</th><th>From (UTC)</th><th>Until (UTC)</th>{{ if .Moves }}<th></th>{{ end }}</tr>
   </thead>
   <tbody>
-  {{ range .PriceLists }}
+  {{ range $row := .PriceLists }}
     <tr>
       <td>{{ .Title }} <span class="muted">{{ .ID }}</span>{{ with .Description }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
       <td>{{ .Type }}</td>
       <td><span class="pill">{{ .Status }}</span></td>
       <td>{{ with .StartsAt }}{{ .UTC.Format "2006-01-02 15:04" }}{{ else }}<span class="muted">always</span>{{ end }}</td>
       <td>{{ with .EndsAt }}{{ .UTC.Format "2006-01-02 15:04" }}{{ else }}<span class="muted">open</span>{{ end }}</td>
+      {{ if $.Moves }}<td>{{ with index $.Moves $row.Status }}
+        {{/* The status the row was drawn in travels with the move, so a list
+        another operator moved first is refused rather than moved back (ADR
+        0328). */}}
+        <form method="post" action="{{ $.Path }}/{{ $row.ID }}/status">
+          <input type="hidden" name="from" value="{{ $row.Status }}">
+          <input type="hidden" name="to" value="{{ .To }}">
+          <button type="submit">{{ .Label }}</button>
+        </form>
+      {{ end }}</td>{{ end }}
     </tr>
   {{ end }}
   </tbody>

@@ -68,3 +68,10 @@ func (a *AdminSurface) CreatePriceList(
 
 	return list.ID, nil
 }
+
+// SwitchPriceListStatus moves the list from the status the operator read to
+// another, and refuses when it is no longer in the first (ADR 0328).
+func (a *AdminSurface) SwitchPriceListStatus(ctx context.Context, id, from, to string) error {
+	_, err := a.svc.SwitchPriceListStatus(ctx, id, models.PriceListStatus(from), models.PriceListStatus(to))
+	return err
+}

@@ -115,6 +115,11 @@ type Repository interface {
 	// UpdatePriceList reads the clock after it locks the list (ADR 0242).
 	UpdatePriceList(ctx context.Context, list models.PriceList, clock func() time.Time) (models.PriceList, error)
 	DeletePriceList(ctx context.Context, id string, now time.Time) error
+	// SwitchPriceListStatus moves the list from one status to another if it
+	// is still in the first, and reports whether it did (ADR 0328).
+	SwitchPriceListStatus(
+		ctx context.Context, id string, from, to models.PriceListStatus, clock func() time.Time,
+	) (models.PriceList, bool, error)
 
 	// PriceSetHistory and PriceListHistory return every snapshot of the given
 	// sets and lists, oldest first (ADR 0167).

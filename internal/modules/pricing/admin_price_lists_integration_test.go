@@ -67,3 +67,77 @@ func TestThePanelWritesAndListsPriceLists(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err), "a window that ends before it starts: %v", err)
 }
+
+// TestThePanelSwitchesAPriceListFromTheStatusItRead is ADR 0328 against a
+// real PostgreSQL: a draft is published and keeps its other fields, the
+// switch is recorded in the list's history as an edit is (ADR 0167), and a
+// switch from a status the list is no longer in is refused and changes
+// nothing.
+func TestThePanelSwitchesAPriceListFromTheStatusItRead(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	surface := service.NewAdminSurface(svc)
+
+	id, err := surface.CreatePriceList(ctx, "Spring", "the spring sale", "sale", "draft", nil, nil)
+	require.NoError(t, err)
+	var before int
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM price_list_history WHERE price_list_id = $1`, id).Scan(&before))
+
+	require.NoError(t, surface.SwitchPriceListStatus(ctx, id, "draft", "active"))
+	list, err := svc.GetPriceList(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "active|Spring|the spring sale|sale", string(list.Status)+"|"+list.Title+"|"+list.Description+"|"+string(list.Type))
+	var after int
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM price_list_history WHERE price_list_id = $1`, id).Scan(&after))
+	assert.Equal(t, before+1, after, "the switch is recorded in the list's history")
+
+	err = surface.SwitchPriceListStatus(ctx, id, "draft", "active")
+	require.Error(t, err)
+	assert.Equal(t, service.CodePriceListMoved, errors.CodeOf(err), "read as a draft, it is active now: %v", err)
+	require.NoError(t, testPool.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM price_list_history WHERE price_list_id = $1`, id).Scan(&before))
+	assert.Equal(t, after, before, "a refused switch records nothing")
+
+	require.NoError(t, surface.SwitchPriceListStatus(ctx, id, "active", "expired"))
+	list, err = svc.GetPriceList(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "expired", string(list.Status))
+}
+
+// TestASwitchReadsTheListUnderItsLock is ADR 0328's lock: while another
+// transaction holds the list and publishes it, a switch from draft waits, and
+// once it is let through it reads the list as the other left it and is
+// refused. Read before the lock, it would have taken the list for a draft and
+// written it over the other's write.
+func TestASwitchReadsTheListUnderItsLock(t *testing.T) {
+	ctx := context.Background()
+	surface := service.NewAdminSurface(newService(t))
+	id, err := surface.CreatePriceList(ctx, "Locked", "", "sale", "draft", nil, nil)
+	require.NoError(t, err)
+
+	other, err := testPool.Pool().Begin(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = other.Rollback(context.Background()) })
+	_, err = other.Exec(ctx, `SELECT 1 FROM price_list WHERE id = $1 FOR UPDATE`, id)
+	require.NoError(t, err)
+
+	done := make(chan error, 1)
+	go func() { done <- surface.SwitchPriceListStatus(ctx, id, "draft", "active") }()
+	require.Eventually(t, func() bool {
+		var waiting int
+		err := testPool.Pool().QueryRow(ctx,
+			`SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND datname = current_database()`).
+			Scan(&waiting)
+		return err == nil && waiting > 0
+	}, 5*time.Second, 10*time.Millisecond, "the switch waits for the list")
+
+	_, err = other.Exec(ctx, `UPDATE price_list SET status = 'active' WHERE id = $1`, id)
+	require.NoError(t, err)
+	require.NoError(t, other.Commit(ctx))
+
+	err = <-done
+	require.Error(t, err, "the switch read the list after the other published it")
+	assert.Equal(t, service.CodePriceListMoved, errors.CodeOf(err))
+}

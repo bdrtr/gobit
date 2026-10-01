@@ -27,7 +27,9 @@ var priceListsTotal = regexp.MustCompile(`(\d+) price lists\.`)
 // wiring: the Price lists form writes an override list with its window
 // through the pricing module's registered surface, the list's last page
 // names it with its type, status and window, and a window that ends before
-// it starts is refused by the module in the panel's language.
+// it starts is refused by the module in the panel's language. The row's move
+// ends the list from the status it was read in, and the same form sent again
+// is refused (ADR 0328).
 func TestAnOperatorWritesAPriceListInThePanel(t *testing.T) {
 	panel, err := adminui.FromContainer(ctr, false, nil)
 	require.NoError(t, err)
@@ -66,6 +68,19 @@ func TestAnOperatorWritesAPriceListInThePanel(t *testing.T) {
 	for _, want := range []string{"<td>override</td>", `<span class="pill">active</span>`, "2027-01-01 00:00", "2027-12-31 23:59"} {
 		assert.Contains(t, row, want)
 	}
+
+	// ADR 0328: the row's move ends the list, from the status it was read in.
+	id := regexp.MustCompile(`action="` + regexp.QuoteMeta(adminui.PriceListsPath) + `/(plist_[0-9A-Z]+)/status"`).
+		FindStringSubmatch(row)
+	require.Len(t, id, 2, "the row offers its move")
+	ended := send(http.MethodPost, adminui.PriceListsPath+"/"+id[1]+"/status", url.Values{"from": {"active"}, "to": {"expired"}})
+	require.Equal(t, http.StatusSeeOther, ended.Code, ended.Body.String())
+	list, err := pricingSvc.GetPriceList(t.Context(), id[1])
+	require.NoError(t, err)
+	assert.Equal(t, "expired", string(list.Status))
+	stale := send(http.MethodPost, adminui.PriceListsPath+"/"+id[1]+"/status", url.Values{"from": {"active"}, "to": {"expired"}})
+	require.Equal(t, http.StatusUnprocessableEntity, stale.Code, stale.Body.String())
+	assert.Contains(t, stale.Body.String(), "draw the list again", "a form read before the move is refused")
 
 	backwards := send(http.MethodPost, adminui.PriceListsPath, url.Values{
 		"title": {title + " backwards"}, "type": {"sale"}, "status": {"draft"},
