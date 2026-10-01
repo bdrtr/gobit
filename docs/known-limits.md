@@ -630,11 +630,23 @@ past and is not corrected retroactively.
   offline method ([ADR 0284](adr/0284-an-offline-method-is-paid-when-the-shop-says-so.md)).
   The panel takes the whole order
   ([ADR 0290](adr/0290-the-panel-opens-a-telephone-order.md),
-  [ADR 0291](adr/0291-the-panel-completes-a-telephone-order.md)), with the
-  channel and the offline method typed by id; the variant is found by its
-  product's title for an operator who may read the catalog
-  ([ADR 0293](adr/0293-a-telephone-order-finds-a-variant-by-its-title.md)), and the
-  shipping option is chosen from the options the cart can take
+  [ADR 0291](adr/0291-the-panel-completes-a-telephone-order.md)), billing address
+  included ([ADR 0303](adr/0303-a-telephone-order-takes-a-billing-address.md)),
+  and corrects the operator's own cart
+  ([ADR 0300](adr/0300-an-operator-corrects-their-own-cart.md)); an operator
+  writes only to a cart an operator opened
+  ([ADR 0299](adr/0299-an-operators-writes-reach-only-an-operators-cart.md)).
+  What the page offers by name depends on the operator's other privileges, and
+  each falls back to a typed id: the variant by its product's title under
+  `product:read` ([ADR 0293](adr/0293-a-telephone-order-finds-a-variant-by-its-title.md)),
+  the caller by e-mail and their default address under `customer:read`
+  ([ADR 0297](adr/0297-a-telephone-order-finds-the-caller-by-email.md),
+  [ADR 0304](adr/0304-a-customers-cart-starts-from-their-default-address.md)),
+  the channel under `auth:read`
+  ([ADR 0305](adr/0305-a-telephone-order-chooses-its-channel-by-name.md)) and the
+  offline method under `payment:read`
+  ([ADR 0306](adr/0306-a-telephone-order-chooses-its-offline-method-from-a-list.md));
+  the shipping option is always chosen from the options the cart can take
   ([ADR 0292](adr/0292-a-cart-lists-the-shipping-options-it-can-take.md)).
   A card payment taken over the telephone is not offered, because the operator
   would hold the card; a caller who pays by card is sent the cart's link.
