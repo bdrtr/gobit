@@ -843,3 +843,77 @@ func TestTheTelephoneOrderWritesTheBillingAddress(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `name="billing_address_1" value="Typed St 9"`)
 	assert.Contains(t, rec.Body.String(), `name="address_1" value="12 Right St"`)
 }
+
+// TestACustomersCartStartsFromTheirDefaultAddress is ADR 0304 on the page: a
+// customer's cart with no shipping address draws both address forms with the
+// customer's default shipping address and says so; an operator without
+// customer:read, or a cart with an address, reads nothing of the customer; a
+// failed read draws the form empty.
+func TestACustomersCartStartsFromTheirDefaultAddress(t *testing.T) {
+	t.Parallel()
+
+	unaddressed := func(customerErr error) *fakeCatalog {
+		catalog := phoneCatalog(false)
+		catalog.byEntity[EntityCart][0][fieldCartCustomerID] = "cus_1"
+		catalog.byEntity[EntityCart][0][fieldCartShippingAddress] = nil
+		catalog.byEntity[EntityCustomer] = []query.Record{{
+			fieldID: "cus_1",
+			fieldCustomerDefaultShippingAddress: map[string]any{
+				"first_name": "Ada", "company": "Engines Ltd", "address_1": "Home St 4", "city": "Ankara", "country_code": "TR",
+			},
+		}}
+		if customerErr != nil {
+			catalog.errByEntity = map[string]error{EntityCustomer: customerErr}
+		}
+
+		return catalog
+	}
+	customerReads := func(catalog *fakeCatalog) []query.GraphSpec {
+		var out []query.GraphSpec
+		for _, spec := range catalog.specs {
+			if spec.Entity == EntityCustomer {
+				out = append(out, spec)
+			}
+		}
+
+		return out
+	}
+
+	catalog := unaddressed(nil)
+	panel := newCatalogPanel(t, catalog)
+	panel.carts = &fakeCarts{}
+	page := phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite, scopeCustomerRead)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), `name="address_1" value="Home St 4"`)
+	assert.Contains(t, page.Body.String(), `name="billing_address_1" value="Home St 4"`)
+	assert.Contains(t, page.Body.String(), "Drawn with the customer's default shipping address")
+	reads := customerReads(catalog)
+	require.Len(t, reads, 1)
+	assert.Equal(t, map[string]any{filterID: []string{"cus_1"}}, reads[0].Filters)
+	assert.Contains(t, reads[0].Fields, fieldCustomerDefaultShippingAddress)
+
+	blind := unaddressed(nil)
+	panel = newCatalogPanel(t, blind)
+	panel.carts = &fakeCarts{}
+	page = phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Empty(t, customerReads(blind), "the customer is read under customer:read alone")
+	assert.NotContains(t, page.Body.String(), "Home St 4")
+
+	addressed := phoneCatalog(false)
+	addressed.byEntity[EntityCart][0][fieldCartCustomerID] = "cus_1"
+	panel = newCatalogPanel(t, addressed)
+	panel.carts = &fakeCarts{}
+	page = phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite, scopeCustomerRead)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Empty(t, customerReads(addressed), "a cart with an address keeps its own")
+	assert.Contains(t, page.Body.String(), `name="address_1" value="12 Right St"`)
+
+	failing := unaddressed(errors.Unavailable("customers_down", "the customers did not answer"))
+	panel = newCatalogPanel(t, failing)
+	panel.carts = &fakeCarts{}
+	page = phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite, scopeCustomerRead)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), `name="address_1" value=""`, "a failed read draws the form empty")
+	assert.NotContains(t, page.Body.String(), "Drawn with the customer")
+}

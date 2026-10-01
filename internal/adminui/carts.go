@@ -543,6 +543,21 @@ func (u *UI) renderCart(
 	// A cart a shopper opened is read here and changed by no form: the
 	// surface refuses an operator's write to it (ADR 0299).
 	canWrite := u.carts != nil && principal.HasScope(scopeCartWrite) && page.OpenedBy != ""
+	// A customer's cart with no shipping address draws its address form with
+	// the customer's default shipping address, read under the customer
+	// module's privilege (ADR 0260, ADR 0304). Nothing is written until the
+	// operator saves it.
+	prefilled := false
+	if canWrite && !page.Completed && page.CustomerID != "" && len(page.ShipTo) == 0 &&
+		principal.HasScope(scopeCustomerRead) {
+		if address := u.customerDefaultAddress(r, page.CustomerID); len(address) > 0 {
+			page.Address = address
+			if len(page.BillTo) == 0 {
+				page.Billing = address
+			}
+			prefilled = true
+		}
+	}
 	var options []cartOption
 	optionsRead := false
 	if canWrite && !page.Completed {
@@ -574,6 +589,7 @@ func (u *UI) renderCart(
 		"FindFailed":  findFailed,
 		refusedKey:    refused,
 		"Typed":       typed,
+		"Prefilled":   prefilled,
 		// AddressFields orders the address forms (ADR 0291, ADR 0303).
 		"AddressFields": addressFields,
 		"BillingPrefix": billingPrefix,
@@ -625,6 +641,27 @@ func cartPageOf(record query.Record, scales map[string]int) cartPage {
 	}
 
 	return page
+}
+
+// fieldCustomerDefaultShippingAddress is the customer provider's default
+// shipping address, keyed as a cart's address is (ADR 0304).
+const fieldCustomerDefaultShippingAddress = "default_shipping_address"
+
+// customerDefaultAddress reads the customer's default shipping address into the
+// form's fields; empty when they have none or it could not be read, and the
+// form is then drawn empty as before.
+func (u *UI) customerDefaultAddress(r *http.Request, customerID string) map[string]string {
+	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+		Entity:  EntityCustomer,
+		Fields:  []string{fieldID, fieldCustomerDefaultShippingAddress},
+		Filters: map[string]any{filterID: []string{customerID}},
+		Limit:   1,
+	})
+	if err != nil || len(records) == 0 || records[0][fieldCustomerDefaultShippingAddress] == nil {
+		return nil
+	}
+
+	return addressValues(records[0][fieldCustomerDefaultShippingAddress])
 }
 
 // addressValues reads an address field into the form's fields; empty when the

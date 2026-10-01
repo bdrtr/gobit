@@ -17,6 +17,7 @@ import (
 
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/adminui"
+	customersvc "github.com/bdrtr/gobit/internal/modules/customer/service"
 )
 
 // TestAnOperatorOpensATelephoneOrderInThePanel is ADR 0290 on the production
@@ -211,6 +212,12 @@ func TestAnOperatorFindsTheCallerInThePanel(t *testing.T) {
 	// A second customer, made after the first, is one an unfiltered read
 	// would offer as well.
 	otherID, _ := newCustomer(ctx, t)
+	// The caller's default shipping address draws the cart's form (ADR 0304).
+	_, err := customerSvc.CreateAddress(ctx, customerID, customersvc.AddressInput{
+		FirstName: "Caller", Address1: "Default Street 7", City: "Ankara", CountryCode: taxedCountry,
+		IsDefaultShipping: true,
+	})
+	require.NoError(t, err)
 
 	panel, err := adminui.FromContainer(ctr, false, nil)
 	require.NoError(t, err)
@@ -242,6 +249,8 @@ func TestAnOperatorFindsTheCallerInThePanel(t *testing.T) {
 	page := send(http.MethodGet, opened.Header().Get("Location"), nil)
 	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
 	assert.Contains(t, page.Body.String(), "customer "+customerID, "the cart is the found customer's")
+	assert.Contains(t, page.Body.String(), `name="address_1" value="Default Street 7"`,
+		"the form is drawn with the customer's default shipping address through the real provider")
 }
 
 // TestAnOperatorCorrectsATelephoneCartInThePanel is ADR 0300 on the production

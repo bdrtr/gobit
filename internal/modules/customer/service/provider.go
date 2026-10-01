@@ -26,6 +26,11 @@ const (
 	fieldMetadata   = "metadata"
 	fieldCreatedAt  = "created_at"
 	fieldUpdatedAt  = "updated_at"
+	// fieldDefaultShippingAddress is the customer's default shipping address,
+	// keyed as an order's and a cart's address is, or nil when none is set
+	// (ADR 0304). It costs one read for a page of customers, made only when
+	// asked for.
+	fieldDefaultShippingAddress = "default_shipping_address"
 )
 
 // The filter names the provider recognizes.
@@ -42,6 +47,7 @@ const (
 var supportedFields = []string{
 	fieldID, fieldEmail, fieldFirstName, fieldLastName, fieldPhone,
 	fieldHasAccount, fieldGroupIDs, fieldMetadata, fieldCreatedAt, fieldUpdatedAt,
+	fieldDefaultShippingAddress,
 }
 
 // supportedFilters are the filters the provider recognizes.
@@ -175,6 +181,22 @@ func (p *QueryProvider) records(
 		}
 	}
 
+	defaults := map[string]models.CustomerAddress{}
+	if slices.Contains(fields, fieldDefaultShippingAddress) {
+		ids := make([]string, 0, len(customers))
+		for i := range customers {
+			ids = append(ids, customers[i].ID)
+		}
+
+		addresses, err := p.svc.repo.DefaultShippingAddresses(ctx, ids)
+		if err != nil {
+			return nil, err
+		}
+		for i := range addresses {
+			defaults[addresses[i].CustomerID] = addresses[i]
+		}
+	}
+
 	for i := range customers {
 		c := &customers[i]
 		record := make(query.Record, len(fields))
@@ -200,11 +222,28 @@ func (p *QueryProvider) records(
 				record[fieldCreatedAt] = c.CreatedAt
 			case fieldUpdatedAt:
 				record[fieldUpdatedAt] = c.UpdatedAt
+			case fieldDefaultShippingAddress:
+				record[fieldDefaultShippingAddress] = addressRecord(defaults, c.ID)
 			}
 		}
 		records = append(records, record)
 	}
 	return records, nil
+}
+
+// addressRecord is a customer's default shipping address as the field's value,
+// under the order's address keys, or nil when none is set.
+func addressRecord(addresses map[string]models.CustomerAddress, customerID string) map[string]any {
+	a, ok := addresses[customerID]
+	if !ok {
+		return nil
+	}
+
+	return map[string]any{
+		"first_name": a.FirstName, "last_name": a.LastName, "company": a.Company,
+		"address_1": a.Address1, "address_2": a.Address2, "city": a.City,
+		"postal_code": a.PostalCode, "country_code": a.CountryCode, "phone": a.Phone,
+	}
 }
 
 // groupIDs prepares the group ids for the record.

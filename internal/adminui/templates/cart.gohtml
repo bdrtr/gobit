@@ -119,6 +119,7 @@ be read says it is in minor units.
 </form>
 
 <h3>Ship to</h3>
+{{ if .Prefilled }}<p class="muted">Drawn with the customer's default shipping address; save it to use it.</p>{{ end }}
 <form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/address">
   {{ range $name := .AddressFields }}
   <input name="{{ $name }}" value="{{ with $.Typed.Get $name }}{{ . }}{{ else }}{{ index $.Cart.Address $name }}{{ end }}" placeholder="{{ $name }}" aria-label="{{ $name }}">

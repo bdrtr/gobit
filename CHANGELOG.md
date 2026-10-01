@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A customer's cart starts from their default address** (ADR 0304). **For
+  operators:** a telephone cart opened for a customer draws its address forms
+  with the customer's default shipping address until one is saved. **For
+  integrators:** the `customer` query provider offers the
+  `default_shipping_address` field.
+
 - **A telephone order takes a billing address** (ADR 0303). **For
   operators:** the telephone order's cart page writes the billing address,
   drawn with the shipping address until one is written, and both address
