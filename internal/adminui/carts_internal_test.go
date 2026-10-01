@@ -567,3 +567,122 @@ func TestTheOpenCartsListSaysWhenItIsEmptyOrUnread(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "The open carts could not be read.")
 	assert.Contains(t, rec.Body.String(), `action="`+CartsPath+`"`)
 }
+
+// callerCatalog holds a guest record and an account under one e-mail, the
+// guest first, as the provider may answer.
+func callerCatalog() *fakeCatalog {
+	return &fakeCatalog{byEntity: map[string][]query.Record{EntityCustomer: {
+		{fieldID: "cus_guest", fieldEmail: "ada@example.com", fieldFirstName: "", fieldLastName: "", fieldHasAccount: false},
+		{fieldID: "cus_account", fieldEmail: "ada@example.com", fieldFirstName: "Ada", fieldLastName: "Lovelace", fieldHasAccount: true},
+	}}}
+}
+
+// TestTheTelephoneOrderFindsTheCallerByEmail is ADR 0297: an operator who may
+// read customers finds the caller's records by e-mail, the account first and
+// chosen, the guest's choice beside them, and the e-mail written into the
+// form; one who may not keeps the id box and nothing of the customers is read
+// for them.
+func TestTheTelephoneOrderFindsTheCallerByEmail(t *testing.T) {
+	t.Parallel()
+
+	catalog := callerCatalog()
+	panel := newCatalogPanel(t, catalog)
+	panel.carts = &fakeCarts{}
+
+	rec := phoneRequest(panel, http.MethodGet, CartsPath+"?caller=+Ada%40example.com+", nil,
+		scopeCartWrite, scopeCustomerRead)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	account := `<option value="cus_account" selected>Ada Lovelace — account (cus_account)</option>`
+	guest := `<option value="cus_guest">ada@example.com — guest record (cus_guest)</option>`
+	assert.Contains(t, body, `<select name="customer_id"`)
+	assert.Contains(t, body, `<option value="">a guest</option>`)
+	require.Contains(t, body, account)
+	require.Contains(t, body, guest)
+	assert.Less(t, strings.Index(body, account), strings.Index(body, guest), "the account comes first")
+	assert.Contains(t, body, `name="email" value="Ada@example.com"`)
+	assert.Contains(t, body, `<input type="hidden" name="caller" value="Ada@example.com">`)
+	var asked []query.GraphSpec
+	for _, spec := range catalog.specs {
+		if spec.Entity == EntityCustomer {
+			asked = append(asked, spec)
+		}
+	}
+	require.Len(t, asked, 1)
+	assert.Equal(t, map[string]any{filterCustomerEmail: "Ada@example.com"}, asked[0].Filters)
+	assert.Equal(t, callersFound, asked[0].Limit)
+
+	blind := callerCatalog()
+	panel = newCatalogPanel(t, blind)
+	panel.carts = &fakeCarts{}
+	rec = phoneRequest(panel, http.MethodGet, CartsPath+"?caller=ada%40example.com", nil, scopeCartWrite)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), `name="caller"`)
+	assert.Contains(t, rec.Body.String(), `<input name="customer_id"`)
+	for _, spec := range blind.specs {
+		assert.NotEqual(t, EntityCustomer, spec.Entity, "the customers are read under customer:read alone")
+	}
+}
+
+// TestTheCallersChoiceReachesTheSurface: the record the operator chose is the
+// cart's customer, and a refused form keeps the choice, a guest included.
+func TestTheCallersChoiceReachesTheSurface(t *testing.T) {
+	t.Parallel()
+
+	carts := &fakeCarts{}
+	panel := newCatalogPanel(t, callerCatalog())
+	panel.carts = carts
+	rec := phoneRequest(panel, http.MethodPost, CartsPath, url.Values{
+		paramCaller: {"ada@example.com"}, formCountryCode: {"TR"},
+		formEmail: {"ada@example.com"}, formCustomerID: {"cus_guest"},
+	}, scopeCartWrite, scopeCustomerRead)
+	assert.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	assert.Equal(t, []string{"TR|cus_guest|ada@example.com"}, carts.opened)
+
+	panel = newCatalogPanel(t, callerCatalog())
+	panel.carts = &fakeCarts{err: errors.NotFound("region_country_unserved", "no region serves XX")}
+	rec = phoneRequest(panel, http.MethodPost, CartsPath, url.Values{
+		paramCaller: {"ada@example.com"}, formCountryCode: {"XX"},
+		formEmail: {"ada@example.com"}, formCustomerID: {""},
+	}, scopeCartWrite, scopeCustomerRead)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `<select name="customer_id"`, "the search is drawn again")
+	assert.NotContains(t, rec.Body.String(), " selected>", "the guest the operator chose stays chosen")
+}
+
+// TestACallerSearchThatFindsNothingSaysSo: no record, an address that is not
+// one, and a failed read are each said, and the form keeps the id box.
+func TestACallerSearchThatFindsNothingSaysSo(t *testing.T) {
+	t.Parallel()
+
+	for name, tc := range map[string]struct {
+		catalog *fakeCatalog
+		says    string
+	}{
+		"no record": {
+			catalog: &fakeCatalog{byEntity: map[string][]query.Record{}},
+			says:    "No customer holds nobody@example.com; the cart opens as a guest's.",
+		},
+		"not an address": {
+			catalog: &fakeCatalog{errByEntity: map[string]error{
+				EntityCustomer: errors.Invalid("customer_invalid_input", "not an e-mail"),
+			}},
+			says: "That is not an e-mail address.",
+		},
+		"a failed read": {
+			catalog: &fakeCatalog{errByEntity: map[string]error{
+				EntityCustomer: errors.Unavailable("customers_down", "the customers did not answer"),
+			}},
+			says: "The customers could not be read.",
+		},
+	} {
+		panel := newCatalogPanel(t, tc.catalog)
+		panel.carts = &fakeCarts{}
+		rec := phoneRequest(panel, http.MethodGet, CartsPath+"?caller=nobody%40example.com", nil,
+			scopeCartWrite, scopeCustomerRead)
+		require.Equal(t, http.StatusOK, rec.Code, name)
+		assert.Contains(t, rec.Body.String(), tc.says, name)
+		assert.Contains(t, rec.Body.String(), `<input name="customer_id"`, name)
+	}
+}

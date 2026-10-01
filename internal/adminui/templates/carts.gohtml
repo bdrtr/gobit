@@ -6,17 +6,38 @@ customer id is optional, and a guest's cart carries the caller's e-mail.
 
 Below the form, an operator who may read carts sees the carts operators opened
 and nobody completed, the newest first (ADR 0296).
+
+An operator who may read customers finds the caller by e-mail, and the form
+then offers the customer records holding it, the account chosen (ADR 0297).
 */ -}}
 {{ define "body" }}
 <h1>Telephone order</h1>
 
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
 
+{{ if .CanFind }}
+<form method="get" action="{{ .CartsPath }}" role="search">
+  <input name="caller" value="{{ .Caller }}" placeholder="caller's e-mail" aria-label="find the caller by e-mail" type="email">
+  <button type="submit">Find the caller</button>
+</form>
+{{ with .FindRefused }}<p class="muted">{{ . }}</p>{{ end }}
+{{ if and .Caller (not .FindRefused) (not .Callers) }}<p class="muted">No customer holds {{ .Caller }}; the cart opens as a guest's.</p>{{ end }}
+{{ end }}
+
 <form method="post" action="{{ .CartsPath }}">
   <p>Open a cart for the caller. Its lines are priced by the catalog, as a shopper's are.</p>
+  {{ if .CanFind }}{{ with .Caller }}<input type="hidden" name="caller" value="{{ . }}">{{ end }}{{ end }}
   <input name="country_code" value="{{ .Typed.Get "country_code" }}" placeholder="country, e.g. TR" aria-label="country" maxlength="2" required>
   <input name="email" value="{{ .Typed.Get "email" }}" placeholder="caller's e-mail" aria-label="e-mail" type="email">
+  {{ if .Callers }}
+  <select name="customer_id" aria-label="customer">
+    <option value="">a guest</option>
+    {{ range .Callers }}<option value="{{ .ID }}"{{ if eq .ID $.Selected }} selected{{ end }}>{{ .Label }}</option>
+    {{ end }}
+  </select>
+  {{ else }}
   <input name="customer_id" value="{{ .Typed.Get "customer_id" }}" placeholder="customer id (optional)" aria-label="customer id">
+  {{ end }}
   <button type="submit">Open a cart</button>
 </form>
 

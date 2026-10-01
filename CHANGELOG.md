@@ -31,6 +31,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A telephone order finds the caller by e-mail** (ADR 0297). **For
+  operators:** the telephone order's page finds the customer records holding
+  the e-mail a caller gives, in any case, and the form that opens the cart
+  offers them by name, the account first and chosen; it needs `customer:read`
+  beside the cart's write, and without it the customer's id is typed as before.
+
 - **A cart names the operator who opened it** (ADR 0296). **For operators:**
   the telephone order's page lists the open carts operators opened, the twenty
   newest, each with its caller, its opener and its total, to an operator who

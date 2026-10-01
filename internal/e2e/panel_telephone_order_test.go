@@ -184,3 +184,45 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 	assert.NotContains(t, listed.Body.String(), `href="`+cartPath+`"`,
 		"a completed cart is no longer open (ADR 0296)")
 }
+
+// TestAnOperatorFindsTheCallerInThePanel is ADR 0297 on the production wiring:
+// the panel finds a customer by the e-mail the caller spells, in any case,
+// through the real customer provider, and the cart it opens is that customer's.
+func TestAnOperatorFindsTheCallerInThePanel(t *testing.T) {
+	ctx := t.Context()
+	customerID, email := newCustomer(ctx, t)
+	// A second customer, made after the first, is one an unfiltered read
+	// would offer as well.
+	otherID, _ := newCustomer(ctx, t)
+
+	panel, err := adminui.FromContainer(ctr, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_phone", Kind: "user", Scopes: []string{"cart:read", "cart:write", "customer:read"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	found := send(http.MethodGet, adminui.CartsPath+"?caller="+url.QueryEscape(strings.ToUpper(email)), nil)
+	require.Equal(t, http.StatusOK, found.Code, found.Body.String())
+	assert.Contains(t, found.Body.String(), `<option value="`+customerID+`"`,
+		"the customer provider normalizes the address the operator typed")
+	assert.NotContains(t, found.Body.String(), otherID, "only the records holding the e-mail are offered")
+
+	opened := send(http.MethodPost, adminui.CartsPath, url.Values{
+		"country_code": {taxedCountry}, "email": {email}, "customer_id": {customerID},
+	})
+	require.Equal(t, http.StatusSeeOther, opened.Code, opened.Body.String())
+	page := send(http.MethodGet, opened.Header().Get("Location"), nil)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), "customer "+customerID, "the cart is the found customer's")
+}

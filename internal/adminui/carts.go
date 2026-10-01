@@ -1,9 +1,11 @@
 package adminui
 
 import (
+	"cmp"
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -257,6 +259,67 @@ func (u *UI) openCarts(r *http.Request) ([]openCart, bool) {
 	return out, true
 }
 
+// paramCaller is the telephone order page's search: the caller's e-mail, whose
+// customer records the open form then offers (ADR 0297).
+const paramCaller = "caller"
+
+// callersFound is how many customer records one search reads.
+const callersFound = 10
+
+// filterCustomerEmail is the customer provider's e-mail filter, an exact match
+// on the address as the customer module normalizes it.
+const filterCustomerEmail = "email"
+
+// caller is one customer record the search found, as the open form offers it.
+type caller struct {
+	ID, Label  string
+	HasAccount bool
+}
+
+// findCallers reads the customer records holding the e-mail, the account
+// before the guest records, each labeled with its name, its kind and its id.
+func (u *UI) findCallers(r *http.Request, email string) ([]caller, error) {
+	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+		Entity:  EntityCustomer,
+		Fields:  []string{fieldID, fieldEmail, fieldFirstName, fieldLastName, fieldHasAccount},
+		Filters: map[string]any{filterCustomerEmail: email},
+		Limit:   callersFound,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]caller, 0, len(records))
+	for _, record := range records {
+		row := customerRowOf(record)
+		kind := "guest record"
+		if row.HasAccount {
+			kind = "account"
+		}
+		out = append(out, caller{
+			ID: row.ID, HasAccount: row.HasAccount,
+			Label: row.display() + " — " + kind + " (" + row.ID + ")",
+		})
+	}
+	// An e-mail holds one account and any number of guest records (the
+	// customer module's unique index), and the account is the one a caller
+	// who signs in would see the order under.
+	slices.SortStableFunc(out, func(a, b caller) int {
+		return -cmp.Compare(boolRank(a.HasAccount), boolRank(b.HasAccount))
+	})
+
+	return out, nil
+}
+
+// boolRank orders true before false.
+func boolRank(b bool) int {
+	if b {
+		return 1
+	}
+
+	return 0
+}
+
 // cartOption is one shipping option the cart can take, as the form offers it.
 type cartOption struct {
 	ID, Name, Amount string
@@ -280,9 +343,15 @@ func (u *UI) shippingOptionsOf(r *http.Request, page cartPage, scales map[string
 	return out, true
 }
 
-// newTelephoneOrder renders the form that opens a cart.
+// newTelephoneOrder renders the form that opens a cart, with the caller's
+// e-mail when the page was asked to find them (ADR 0297).
 func (u *UI) newTelephoneOrder(w http.ResponseWriter, r *http.Request) {
-	u.renderOpenForm(w, r, http.StatusOK, "", url.Values{})
+	typed := url.Values{}
+	if term := strings.TrimSpace(r.URL.Query().Get(paramCaller)); term != "" {
+		typed.Set(paramCaller, term)
+		typed.Set(formEmail, term)
+	}
+	u.renderOpenForm(w, r, http.StatusOK, "", typed)
 }
 
 // openTelephoneOrder opens a cart and goes to its page; a refusal comes back
@@ -314,8 +383,10 @@ func (u *UI) openTelephoneOrder(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// renderOpenForm writes the form with a refusal and what was typed, and the
-// open operator carts to an operator who may read carts (ADR 0260, ADR 0296).
+// renderOpenForm writes the form with a refusal and what was typed, the open
+// operator carts to an operator who may read carts (ADR 0296), and the
+// caller's customer records to one who may read customers (ADR 0297); each
+// module's data is read under that module's privilege (ADR 0260).
 func (u *UI) renderOpenForm(w http.ResponseWriter, r *http.Request, status int, refused string, typed url.Values) {
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
 	canList := principal.HasScope(scopeCartRead)
@@ -323,6 +394,32 @@ func (u *UI) renderOpenForm(w http.ResponseWriter, r *http.Request, status int, 
 	openRead := false
 	if canList {
 		open, openRead = u.openCarts(r)
+	}
+
+	canFind := principal.HasScope(scopeCustomerRead)
+	term := strings.TrimSpace(typed.Get(paramCaller))
+	var callers []caller
+	findRefused := ""
+	if canFind && term != "" {
+		var err error
+		callers, err = u.findCallers(r, term)
+		switch {
+		case errors.IsInvalid(err):
+			findRefused = "That is not an e-mail address."
+		case err != nil:
+			findRefused = "The customers could not be read."
+		}
+	}
+	// The account is chosen until the operator chooses otherwise; a refused
+	// form keeps what they chose, a guest included.
+	selected := typed.Get(formCustomerID)
+	if !typed.Has(formCustomerID) {
+		for _, found := range callers {
+			if found.HasAccount {
+				selected = found.ID
+				break
+			}
+		}
 	}
 
 	u.templates.render(w, r, status, "carts.gohtml", map[string]any{
@@ -334,6 +431,12 @@ func (u *UI) renderOpenForm(w http.ResponseWriter, r *http.Request, status int, 
 		"Open":      open,
 		"OpenRead":  openRead,
 		"OpenShown": openCartsShown,
+		// The caller's search (ADR 0297).
+		"CanFind":     canFind,
+		"Caller":      term,
+		"Callers":     callers,
+		"FindRefused": findRefused,
+		"Selected":    selected,
 	})
 }
 
