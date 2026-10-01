@@ -119,6 +119,9 @@ type Repository interface {
 	CreateGroup(ctx context.Context, g models.CustomerGroup) (models.CustomerGroup, error)
 	GetGroup(ctx context.Context, id string) (models.CustomerGroup, error)
 	ListGroups(ctx context.Context, limit, offset int64) ([]models.CustomerGroup, int64, error)
+	// GetGroupsByIDs returns the live groups of the ids in one round (ADR
+	// 0321).
+	GetGroupsByIDs(ctx context.Context, ids []string) ([]models.CustomerGroup, error)
 	UpdateGroup(ctx context.Context, id string, patch models.CustomerGroupPatch, now time.Time) (models.CustomerGroup, error)
 	DeleteGroup(ctx context.Context, id string, now time.Time) error
 	AddToGroup(ctx context.Context, customerID, groupID string, now time.Time) error

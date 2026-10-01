@@ -33,7 +33,7 @@ func TestTheRuleContextCarriesTheHighestRankedGroup(t *testing.T) {
 		Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
 
 	require.NoError(t, err)
-	assert.Equal(t, "wholesale", attributes[attrCustomerGroupID],
+	assert.Equal(t, "wholesale", attributes[AttrCustomerGroupID],
 		"the HEAD of the ordered slice is the group the merchant ranked first")
 	assert.Equal(t, "reg_1", attributes[attrRegionID],
 		"the region the context already carried must survive")
@@ -58,7 +58,7 @@ func TestAGuestCartOmitsTheGroupAttributeEntirely(t *testing.T) {
 	attributes, _, err := flows.ruleContext(context.Background(), Snapshot{RegionID: "reg_1"})
 
 	require.NoError(t, err)
-	assert.NotContains(t, attributes, attrCustomerGroupID,
+	assert.NotContains(t, attributes, AttrCustomerGroupID,
 		"a guest has no segment, and an empty one is not the same as none")
 }
 
@@ -75,7 +75,7 @@ func TestACustomerInNoGroupAlsoOmitsIt(t *testing.T) {
 		Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
 
 	require.NoError(t, err)
-	assert.NotContains(t, attributes, attrCustomerGroupID)
+	assert.NotContains(t, attributes, AttrCustomerGroupID)
 }
 
 // TestAFailedGroupReadStillPricesTheCart is the availability decision.
@@ -96,7 +96,7 @@ func TestAFailedGroupReadStillPricesTheCart(t *testing.T) {
 	require.Error(t, err, "the caller has to be able to log that the segment was not applied")
 	assert.Equal(t, "reg_1", attributes[attrRegionID],
 		"the cart is still priced; only the segment is missing")
-	assert.NotContains(t, attributes, attrCustomerGroupID)
+	assert.NotContains(t, attributes, AttrCustomerGroupID)
 }
 
 // TestEVERYGroupReachesTheWireAndTheHeadStaysWhereItWas is the witness the
@@ -118,10 +118,10 @@ func TestEVERYGroupReachesTheWireAndTheHeadStaysWhereItWas(t *testing.T) {
 		Snapshot{RegionID: "reg_1", CustomerID: "cus_1"})
 	require.NoError(t, err)
 
-	assert.Equal(t, "retail", attributes[attrCustomerGroupID],
+	assert.Equal(t, "retail", attributes[AttrCustomerGroupID],
 		"the single-valued context keeps the merchant-ranked HEAD, because every rule "+
 			"shipped before this read it there and `eq retail` has to keep its answer")
-	assert.Equal(t, []string{"retail", "vip"}, lists[attrCustomerGroupID],
+	assert.Equal(t, []string{"retail", "vip"}, lists[AttrCustomerGroupID],
 		"and the list carries ALL of them, which is the only thing that lets a rule "+
 			"written for vip reach a customer whose head is retail")
 }
@@ -139,7 +139,7 @@ func TestACustomerWithNoGroupsSendsNoList(t *testing.T) {
 		Snapshot{RegionID: "reg_1", CustomerID: "cus_1"})
 	require.NoError(t, err)
 
-	assert.NotContains(t, attributes, attrCustomerGroupID)
+	assert.NotContains(t, attributes, AttrCustomerGroupID)
 	assert.Empty(t, lists)
 }
 
@@ -238,6 +238,6 @@ func TestAnUnreadableCompanyStillPricesTheCart(t *testing.T) {
 	require.ErrorIs(t, err, failure)
 	assert.NotContains(t, attributes, AttrCompanyID)
 	assert.Equal(t, "cus_1", attributes[AttrCustomerID])
-	assert.Equal(t, "wholesale", attributes[attrCustomerGroupID], "the groups were read and stay")
-	assert.Equal(t, []string{"wholesale"}, lists[attrCustomerGroupID])
+	assert.Equal(t, "wholesale", attributes[AttrCustomerGroupID], "the groups were read and stay")
+	assert.Equal(t, []string{"wholesale"}, lists[AttrCustomerGroupID])
 }

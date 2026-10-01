@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel limits a promotion to customer groups** (ADR 0321). **For
+  operators:** a promotion's page offers the customer groups to an operator
+  who may read the customers and writes a `customer_group_id any_in` rule
+  over the chosen. **For integrators:** the customer module opens a
+  `customer_group` read entity (id, name, rank), and the customer module's
+  registration file is in English.
+
 - **The panel puts a promotion into a campaign** (ADR 0320). **For
   operators:** a promotion's page offers the live campaigns and puts the
   promotion into one, or out of any, under `promotion:write`; a promotion

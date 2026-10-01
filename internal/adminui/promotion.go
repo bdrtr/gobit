@@ -17,14 +17,16 @@ import (
 // campaign, and its latest uses, read through the promotion module's panel
 // surface under promotion:read.
 
-// PromotionPath is one promotion's page; PromotionRulesPath adds a rule to
-// it and PromotionRuleRemovePath removes one (ADR 0315), and
-// PromotionCampaignPath puts it into a campaign (ADR 0320).
+// PromotionPath is one promotion's page; PromotionRulesPath adds a category
+// rule to it and PromotionRuleRemovePath removes a rule (ADR 0315),
+// PromotionCampaignPath puts it into a campaign (ADR 0320), and
+// PromotionGroupRulesPath adds a customer group rule (ADR 0321).
 const (
 	PromotionPath           = PromotionsPath + "/{id}"
 	PromotionRulesPath      = PromotionPath + "/rules"
 	PromotionRuleRemovePath = PromotionRulesPath + "/{ruleID}/remove"
 	PromotionCampaignPath   = PromotionPath + "/campaign"
+	PromotionGroupRulesPath = PromotionRulesPath + "/customer-groups"
 )
 
 // RuleAttributeCategoryTree is the line attribute the cart flow fills with a
@@ -41,6 +43,19 @@ const (
 
 // formCategory is the category form's field, one value per category chosen.
 const formCategory = "category"
+
+// RuleAttributeCustomerGroup is the context attribute the cart flow fills
+// with the customer's groups, the whole set in its list (ADR 0144), spelled by
+// hand and pinned against the cart flow's constant in internal/arch (ADR
+// 0321).
+const RuleAttributeCustomerGroup = "customer_group_id"
+
+// ruleTypeContext is the rule the group form writes: a context rule, so it
+// decides whether the promotion applies to the cart at all.
+const ruleTypeContext = "context"
+
+// formGroup is the group form's field, one value per group chosen.
+const formGroup = "customer_group"
 
 // RuleEditor is the narrow surface a promotion's rules are written through
 // (ADR 0315).
@@ -118,18 +133,41 @@ func (u *UI) showPromotion(w http.ResponseWriter, r *http.Request) {
 // descendants. A refusal is drawn on the page.
 func (u *UI) addCategoryRule(w http.ResponseWriter, r *http.Request) {
 	u.ruleWrite(w, r, func(ctx context.Context, editor RuleEditor, promotionID string) error {
-		var chosen []string
-		for _, category := range r.PostForm[formCategory] {
-			if category = strings.TrimSpace(category); category != "" {
-				chosen = append(chosen, category)
-			}
-		}
+		chosen := chosenValues(r.PostForm[formCategory])
 		if len(chosen) == 0 {
 			return errors.Invalid(codeNoCategory, "Choose at least one category.")
 		}
 
 		return editor.AddPromotionRule(ctx, promotionID, ruleTypeTarget, RuleAttributeCategoryTree, ruleOpAnyIn, chosen)
 	})
+}
+
+// addGroupRule limits the promotion to the customers in any of the chosen
+// groups and returns to its page (ADR 0321): one context rule, matching a cart
+// whose customer is in one of them, whichever of their groups ranks first. A
+// guest's cart carries no group and does not match.
+func (u *UI) addGroupRule(w http.ResponseWriter, r *http.Request) {
+	u.ruleWrite(w, r, func(ctx context.Context, editor RuleEditor, promotionID string) error {
+		chosen := chosenValues(r.PostForm[formGroup])
+		if len(chosen) == 0 {
+			return errors.Invalid(codeNoGroup, "Choose at least one customer group.")
+		}
+
+		return editor.AddPromotionRule(ctx, promotionID, ruleTypeContext, RuleAttributeCustomerGroup, ruleOpAnyIn, chosen)
+	})
+}
+
+// chosenValues is a multiple choice's values, trimmed, the empty ones left
+// out.
+func chosenValues(values []string) []string {
+	var chosen []string
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			chosen = append(chosen, value)
+		}
+	}
+
+	return chosen
 }
 
 // removeRule removes the rule in the path from the promotion and returns to
@@ -140,8 +178,12 @@ func (u *UI) removeRule(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// codeNoCategory refuses the category form submitted with none chosen.
-const codeNoCategory = "adminui_no_category"
+// codeNoCategory refuses the category form submitted with none chosen, and
+// codeNoGroup the group form.
+const (
+	codeNoCategory = "adminui_no_category"
+	codeNoGroup    = "adminui_no_customer_group"
+)
 
 // ruleWrite runs one of the page's rule writes and returns to the page; a
 // refusal is drawn on it.
@@ -337,10 +379,22 @@ func (u *UI) renderPromotion(w http.ResponseWriter, r *http.Request, code int, r
 			data["Categories"] = categories
 		}
 	}
+	// The groups are the customer module's, read only for an operator who may
+	// read the customers (ADR 0321), to name a group rule's values and to
+	// offer the group form.
+	if principal.HasScope(scopeCustomerRead) {
+		groups := u.groupList(r.Context())
+		for _, option := range groups.Options {
+			names[option.ID] = option.Name
+		}
+		if u.canEditRules(r) {
+			data["Groups"] = groups
+		}
+	}
 	rules := make([]ruleView, 0, len(page.Rules))
 	for _, rule := range page.Rules {
 		values := rule.Values
-		if rule.Attribute == RuleAttributeCategoryTree {
+		if rule.Attribute == RuleAttributeCategoryTree || rule.Attribute == RuleAttributeCustomerGroup {
 			values = make([]string, 0, len(rule.Values))
 			for _, id := range rule.Values {
 				if name := names[id]; name != "" {

@@ -186,7 +186,7 @@ func TestATrialResolvesEachCustomersSegmentOnce(t *testing.T) {
 
 	assert.Equal(t, 1, reads, "three orders of one customer read the customer's groups once")
 	for _, entry := range h.discounts.trials[0].Entries {
-		assert.Equal(t, "vip", entry.Request.Context[attrCustomerGroupID],
+		assert.Equal(t, "vip", entry.Request.Context[AttrCustomerGroupID],
 			"every order of the customer carries the segment the cart would have")
 	}
 }

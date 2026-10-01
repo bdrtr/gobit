@@ -184,6 +184,8 @@ func builtInScopes() map[string]string {
 		routeKey(post, CampaignsPath): scopePromotionWrite,
 		// And putting a promotion into one (ADR 0320).
 		routeKey(post, PromotionCampaignPath): scopePromotionWrite,
+		// And limiting one to customer groups (ADR 0321).
+		routeKey(post, PromotionGroupRulesPath): scopePromotionWrite,
 		// The delivery log and a resend are the notification module's (ADR
 		// 0317).
 		routeKey(get, NotificationsPath):       scopeNotificationRead,

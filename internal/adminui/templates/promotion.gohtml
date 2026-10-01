@@ -79,6 +79,23 @@ to an operator who may read the catalog.
 </form>
 {{ end }}
 
+{{ with .Groups }}
+<form method="post" action="{{ $.Path }}/{{ $.Promotion.ID }}/rules/customer-groups">
+  <p>Only for customers in one of these groups:</p>
+  {{ if .Unavailable }}
+  <p class="muted">The customer groups could not be read.</p>
+  {{ else if .Options }}
+  <select name="customer_group" multiple aria-label="customer groups" size="6">
+    {{ range .Options }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+  </select>
+  <button type="submit">Limit the promotion</button>
+  {{ if .Truncated }}<p class="muted">Only the newest {{ .Offered }} groups are offered.</p>{{ end }}
+  {{ else }}
+  <p class="muted">No customer group exists.</p>
+  {{ end }}
+</form>
+{{ end }}
+
 <h2>Campaign</h2>
 {{ with .Promotion.Campaign }}
 <table>

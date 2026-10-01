@@ -124,6 +124,9 @@
 // transaction (ADR 0314). The page limits a discount on items to categories
 // and removes a rule ([UI.addCategoryRule], [UI.removeRule]); the categories
 // are the product module's, read only for an operator who may (ADR 0315).
+// It limits a promotion to customer groups as well ([UI.addGroupRule]), the
+// groups read through the customer module's group entity only for an operator
+// who may read the customers (ADR 0321).
 //
 // The Campaigns screen ([UI.listCampaigns]) lists the windows and budgets the
 // promotions share, with how much of each budget is used, and its form writes

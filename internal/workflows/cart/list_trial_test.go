@@ -103,7 +103,7 @@ func TestAListTrialReadsEachCustomersContextOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 1, reads)
 	for _, entry := range h.prices.compared[0].Entries {
-		assert.Equal(t, "vip", entry.Attributes[attrCustomerGroupID])
+		assert.Equal(t, "vip", entry.Attributes[AttrCustomerGroupID])
 	}
 }
 

@@ -741,6 +741,8 @@ var walkForms = map[string]url.Values{
 	// A promotion's rules (ADR 0315).
 	routeKey(http.MethodPost, PromotionRulesPath):      {formCategory: {"pcat_walk"}},
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
+	// Limiting a promotion to customer groups (ADR 0321).
+	routeKey(http.MethodPost, PromotionGroupRulesPath): {formGroup: {"custgrp_walk"}},
 	// Putting a promotion into a campaign (ADR 0320).
 	routeKey(http.MethodPost, PromotionCampaignPath): {formCampaignTo: {"camp_walk"}},
 	// Writing a campaign (ADR 0319).

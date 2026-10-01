@@ -30,7 +30,7 @@ func TestAQuoteIsTheCartsOwnPriceForOne(t *testing.T) {
 	req := h.prices.requests[0]
 	assert.Equal(t, testCurrency, req.CurrencyCode)
 	assert.Equal(t, map[string]string{
-		attrRegionID: testRegionID, AttrCustomerID: testCustomerID, attrCustomerGroupID: "cgrp_vip",
+		attrRegionID: testRegionID, AttrCustomerID: testCustomerID, AttrCustomerGroupID: "cgrp_vip",
 	}, req.Attributes, "the cart's rule context, head group included")
 	for _, item := range req.Items {
 		assert.Equal(t, int32(1), item.Quantity)

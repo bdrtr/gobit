@@ -34,7 +34,6 @@ internal/modules/customer/api/fakes_test.go
 internal/modules/customer/api/store.go
 internal/modules/customer/migrations/000001_customer_init.down.sql
 internal/modules/customer/migrations/000001_customer_init.up.sql
-internal/modules/customer/module.go
 internal/modules/customer/queries/customer.sql
 internal/modules/customer/queries/customer_address.sql
 internal/modules/customer/queries/customer_group.sql

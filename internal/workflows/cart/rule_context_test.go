@@ -65,16 +65,16 @@ func TestTheCartsDataCannotShadowTheNamesTheFlowDecides(t *testing.T) {
 	h.customers.emails = map[string]string{}
 	serveCartWithMetadata(h.carts, map[string]any{
 		attrRegionID:        "reg_SOMEWHERE_CHEAPER",
-		attrCustomerGroupID: "grp_WHOLESALE",
+		AttrCustomerGroupID: "grp_WHOLESALE",
 	})
 
 	attributes := contextOf(t, h)
 
 	assert.Equal(t, testRegionID, attributes[attrRegionID],
 		"the region is the flow's to decide")
-	assert.NotContains(t, attributes, attrCustomerGroupID,
+	assert.NotContains(t, attributes, AttrCustomerGroupID,
 		"a cart with no customer names no group, whatever its metadata says")
-	assert.Equal(t, "grp_WHOLESALE", attributes[CartAttributePrefix+attrCustomerGroupID],
+	assert.Equal(t, "grp_WHOLESALE", attributes[CartAttributePrefix+AttrCustomerGroupID],
 		"the claim is carried, under a name that cannot be mistaken for the real one")
 }
 

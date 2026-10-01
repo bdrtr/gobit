@@ -17,16 +17,18 @@ import (
 // and the base price chosen instead (see pricing matchRule).
 const attrRegionID = "region_id"
 
-// attrCustomerGroupID is the name of the attribute that carries the customer's
-// segment in pricing's rule context.
+// AttrCustomerGroupID is the name of the attribute that carries the customer's
+// segment in the rule context, under which [Workflows.ruleContext] writes the
+// customer's groups twice.
 //
-// It is a SINGLE value, and that is the decision rather than a limitation of the
-// map it goes into. A rule context is one value per attribute — matchRule reads
-// the context's value for an attribute and asks whether the rule's value list
-// contains it — so "any of my groups" is not expressible, and the SET lives on
-// the rule while the single value lives here. ADR 0049 chose which single value:
-// the head of the customer's ordered groups.
-const attrCustomerGroupID = "customer_group_id"
+// The attribute map holds a SINGLE value: a rule context is one value per
+// attribute, and ADR 0049 chose which one, the head of the customer's ordered
+// groups, so an `eq vip` rule means "the group we picked is vip". The list map
+// holds the whole SET under the same name, where an `any_in` rule reads it, so
+// "any of my groups" is expressible there (ADR 0144). It is exported because
+// the panel writes promotion rules naming it and spells it by hand, pinned in
+// internal/arch (ADR 0321).
+const AttrCustomerGroupID = "customer_group_id"
 
 // AttrCustomerID is the name of the attribute that carries the customer's own id
 // in the rule context (ADR 0185).
@@ -305,8 +307,8 @@ func (w *Workflows) ruleContext(
 	// Without it a customer in {retail, vip} whose head is retail did not match a
 	// rule written for vip — a segment discount silently not applying to somebody
 	// who IS in the segment (ADR 0144).
-	attributes[attrCustomerGroupID] = groups[0]
-	lists = map[string][]string{attrCustomerGroupID: groups}
+	attributes[AttrCustomerGroupID] = groups[0]
+	lists = map[string][]string{AttrCustomerGroupID: groups}
 
 	return attributes, lists, companyErr
 }
