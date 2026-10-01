@@ -33,6 +33,9 @@ func TestThePanelListsThePromotionsInAStatus(t *testing.T) {
 	})
 	require.NoError(t, err)
 	active := activePromotion(ctx, t, svc, service.PromotionInput{IsAutomatic: true})
+	// An active automatic promotion applies to every cart the package's other
+	// tests compute in this shared database; it is not left behind (D203).
+	t.Cleanup(func() { require.NoError(t, svc.DeletePromotion(context.Background(), active.ID)) })
 	_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
 		PromotionID: active.ID, Reference: "order_admin_surface", Amount: 100, CurrencyCode: "TRY",
 	})
