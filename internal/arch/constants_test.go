@@ -23,6 +23,8 @@ import (
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/modules/auth"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
+	"github.com/bdrtr/gobit/internal/modules/cart"
+	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	"github.com/bdrtr/gobit/internal/modules/file"
 	"github.com/bdrtr/gobit/internal/modules/file/local"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
@@ -948,6 +950,9 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	assert.Equal(t, ordersvc.ClaimEntity, adminui.EntityOrderClaim)
 	assert.Equal(t, ordersvc.ExchangeEntity, adminui.EntityOrderExchange)
 	assert.Equal(t, ordersvc.ReplacementEntity, adminui.EntityOrderReplacement)
+	// The telephone order's cart (ADR 0290).
+	assert.Equal(t, cartsvc.EntityName, adminui.EntityCart,
+		"the panel's cart entity name must match the cart module")
 
 	assert.Equal(t, productsvc.LinkVariantPriceSet, adminui.LinkVariantPriceSet,
 		"the panel's price link name must match the product module")
@@ -1016,6 +1021,9 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	// The payment module's panel surface (ADR 0287).
 	assert.Equal(t, payment.AdminName, adminui.ServicePaymentAdmin,
 		"the panel's payment surface name must match the payment module")
+	// The cart module's panel surface (ADR 0290).
+	assert.Equal(t, cart.AdminName, adminui.ServiceCartAdmin,
+		"the panel's cart surface name must match the cart module")
 	assert.Equal(t, authsvc.CodeMFALocked, adminui.CodeMFALocked,
 		"the panel's locked-account code must match the auth module")
 	assert.Equal(t, authsvc.CodeMFAUnavailable, adminui.CodeMFAUnavailable,

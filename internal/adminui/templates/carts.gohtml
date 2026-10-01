@@ -1,0 +1,19 @@
+{{- /*
+carts.gohtml opens a telephone order's cart (ADR 0290).
+
+The country decides the region and its currency, as on the storefront; a
+customer id is optional, and a guest's cart carries the caller's e-mail.
+*/ -}}
+{{ define "body" }}
+<h1>Telephone order</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+
+<form method="post" action="{{ .CartsPath }}">
+  <p>Open a cart for the caller. Its lines are priced by the catalog, as a shopper's are.</p>
+  <input name="country_code" value="{{ .Typed.Get "country_code" }}" placeholder="country, e.g. TR" aria-label="country" maxlength="2" required>
+  <input name="email" value="{{ .Typed.Get "email" }}" placeholder="caller's e-mail" aria-label="e-mail" type="email">
+  <input name="customer_id" value="{{ .Typed.Get "customer_id" }}" placeholder="customer id (optional)" aria-label="customer id">
+  <button type="submit">Open a cart</button>
+</form>
+{{ end }}

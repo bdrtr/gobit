@@ -31,6 +31,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel opens a telephone order** (ADR 0290, D198). **For operators:**
+  the panel's telephone order section opens a cart for a country and a caller
+  and adds lines the catalog prices in the sales channel the operator names;
+  the cart's page shows its lines and totals. The address, the shipping method
+  and the completion are still on the admin API. **For integrators:** the
+  `cart` query provider offers `lines` and takes an `id` filter.
+
 - **An unpaid offline order expires by its method's wait** (ADR 0289). **For
   operators:** `PAYMENT_OFFLINE_WAIT_DAYS=bank_transfer:3` gives an offline
   method a wait, and the `offline-order-expiry` job cancels, every quarter hour,

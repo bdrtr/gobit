@@ -6,7 +6,7 @@
 // panel becomes a single-page application served as static assets, where "every
 // read and every write goes over the same admin API an external client would
 // use". That decision stands and it is NOT BUILT: what follows describes today's
-// package, twelve server-rendered templates reading the Query layer in process.
+// package, server-rendered templates reading the Query layer in process.
 //
 // So a new section built the way the existing ones are built is more of the
 // thing that was decided away — which is a reason to weigh it, not a refusal.
@@ -40,13 +40,13 @@
 // either — it reads an API — so the sentence above it stays true and the
 // mechanism under it does not.
 //
-// It reads through that interface and writes through THREE narrow surfaces, each
-// published by its owning module and registered under a name of its own:
-// "product.admin" (product basics), "pricing.admin" (a variant's price) and
-// "inventory.admin" (a variant's stock). Only primitives cross those
-// boundaries, and every one goes through the owning SERVICE rather than its
-// repository, so the uniqueness checks run and the module's events are
-// published (ADR 0013).
+// It reads through that interface and writes through narrow surfaces, one per
+// module it writes to, each published by its owning module under the module's
+// name and ".admin"; the Service...Admin constants name them, [FromContainer]
+// resolves them, and internal/arch pins each to its module. Only primitives
+// cross those boundaries, and every one goes through the owning SERVICE rather
+// than its repository, so the uniqueness checks run and the module's events
+// are published (ADR 0013).
 //
 // The write surfaces are resolved OPTIONALLY. An installation without the
 // product module still gets a panel; the edit form answers 503 with a sentence
@@ -54,11 +54,10 @@
 // fails at STARTUP, because that is a wiring mistake rather than a missing
 // module.
 //
-// The panel's read and write surface together cover ONE module, out of the
-// eighteen modules of internal/modules. Nothing here is a general admin
-// surface, and no module gets an admin-facing contract until a panel screen
-// needs it: an unused compiler-unchecked contract is the error class ADR 0009
-// names.
+// Of the eighteen modules of internal/modules, the panel writes to the ones a
+// screen needed. Nothing here is a general admin surface, and no module gets
+// an admin-facing contract until a panel screen needs it: an unused
+// compiler-unchecked contract is the error class ADR 0009 names.
 //
 // The count sits on ONE LINE with the noun and the path, and that is not
 // formatting. It used to read "covers ONE of the fifteen / modules", wrapped —
@@ -66,10 +65,17 @@
 // TestTheCountsInTheProseAreTrue, which reads a LINE and admits a sentence that
 // names its population by path. Written this way the gate holds it true.
 //
+// The surface paragraph above, this one and the package's opening used to
+// count as well: three surfaces, ONE module, twelve templates. Each count was
+// true when written and none had a gate, and by ADR 0290 the panel wrote
+// through seven surfaces, each a different module's (D198). The surfaces are
+// named by constants a test pins, so the prose no longer repeats their number.
+//
 // # The sections, and what the sales report does not print
 //
-// The menu holds the catalog, the orders, the sales report, the customers, the
-// inventory, the reviews, and the person's own second factor and sessions, in
+// The menu holds the catalog, the orders, the telephone order, the sales
+// report, the customers, the inventory, the reviews, and the person's own
+// second factor and sessions, in
 // that order; the last two are open to everybody who can sign in (ADR 0266,
 // ADR 0268). The list lives in one
 // place next to

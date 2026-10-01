@@ -128,6 +128,10 @@ const ServiceName = ModuleName + ".service"
 // flows resolve it with the narrow interface they define themselves.
 const InteropName = ModuleName + ".interop"
 
+// AdminName is the container name of the module's panel surface: an operator
+// opens a telephone order's cart and adds its lines (ADR 0290).
+const AdminName = ModuleName + ".admin"
+
 // ProviderName is the Query provider's name in the container (ADR 0004).
 const ProviderName = service.EntityName + query.ProviderSuffix
 
@@ -307,14 +311,20 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// [shippingPricing], [cartRepricing] and [cartCompletion]); the order module
 	// applies the same pattern for its spending limit rule.
 	//
-	m.handler = api.New(svc, api.Flows{
+	flows := api.Flows{
 		Opening:    &cartOpening{c: c, log: log},
 		Pricing:    &linePricing{c: c, log: log},
 		Checkout:   &cartCompletion{c: c, log: log},
 		Shipping:   &shippingPricing{c: c, log: log},
 		Promotions: &cartPromotions{c: c, log: log},
 		Repricing:  &cartRepricing{c: c, log: log},
-	},
+	}
+	// The panel builds a telephone order through the same flows the admin API
+	// holds, so the two refuse alike (ADR 0290).
+	if err := c.Provide(AdminName, api.NewTelephoneSurface(flows)); err != nil {
+		return err
+	}
+	m.handler = api.New(svc, flows,
 		// The customer identity is resolved the same way and for the same
 		// reason, one layer further out: it comes from the EMBEDDER's module,
 		// which the composition root adds after everything in the box. Unlike

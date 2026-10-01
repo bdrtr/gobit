@@ -46,6 +46,31 @@ const (
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt is the time of the last update.
 	FieldUpdatedAt = "updated_at"
+	// FieldLines is the cart's living lines in the order they were written,
+	// each a record keyed by the Line* names below (ADR 0290); an empty list
+	// for a cart with none. It costs a read only when asked for, like the
+	// payment collection's movements.
+	FieldLines = "lines"
+)
+
+// The keys of one entry of [FieldLines], part of the entity's contract for the
+// lines' reason.
+const (
+	// LineID is the line's identifier.
+	LineID = "id"
+	// LineVariantID is the variant the line sells.
+	LineVariantID = "variant_id"
+	// LineTitle is the line's title.
+	LineTitle = "title"
+	// LineQuantity is how many units it holds.
+	LineQuantity = "quantity"
+	// LineUnitPrice is one unit's price (minor unit).
+	LineUnitPrice = "unit_price"
+	// LineTotal is the line's total (minor unit).
+	LineTotal = "total"
+	// LineParentID is the line an add-on follows; empty for a line standing
+	// on its own (ADR 0229).
+	LineParentID = "parent_line_id"
 )
 
 // cartFieldGetters are the extractors of the offered fields.
@@ -80,10 +105,13 @@ var cartFieldGetters = map[string]func(cart models.Cart) any{
 // QueryProvider is the read surface the cart module opens to the Query layer.
 //
 // It is registered in the container under the name "cart.query"; Query resolves
-// it BY NAME (ADR 0004). The provider DOES NOT OFFER THE LINES: a cart's lines
-// are an unpaginated set of variable length per cart, and embedding them into a
-// Record would not obey Query's join key contract (a single "id" field). The
-// lines are read with [Service.GetCart].
+// it BY NAME (ADR 0004).
+//
+// It offers the lines as one list-valued field since ADR 0290. This comment used
+// to refuse them, as an unpaginated set of variable length that a Record could
+// not carry under Query's single join key. A list is a field and not a join, as
+// the payment collection's movements had shown (ADR 0170), and since ADR 0227 a
+// cart holds at most [MaxLineItems] lines.
 type QueryProvider struct {
 	svc *Service
 }
@@ -104,14 +132,33 @@ func (p *QueryProvider) Entity() string {
 
 // List returns the root records.
 //
-// The supported filters: "customer_id" (string), "region_id" (string) and
-// "completed" (bool). Any other filter or an unrecognized field is rejected with
-// errors.Invalid (ADR 0004).
+// The supported filters: "id" (text or a list of text), "customer_id" (string),
+// "region_id" (string) and "completed" (bool). Any other filter or an
+// unrecognized field is rejected with errors.Invalid (ADR 0004).
+//
+// The id filter is the order provider's, for the reason it gives: a caller
+// holding a cart's id reads that cart through a root query, and the panel's
+// cart page found the filter missing the way the order page had (ADR 0290).
 //
 // The limit is CLAMPED to [MaxLimit]; see [providerLimit].
 func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]query.Record, error) {
 	if err := validateFields(opts.Fields); err != nil {
 		return nil, err
+	}
+
+	// An id filter is the batch read, and it selects by identity alone.
+	if raw, ok := opts.Filters[FieldID]; ok {
+		if len(opts.Filters) > 1 {
+			return nil, errors.Invalid(CodeInvalidInput,
+				"the %q filter selects records by identity and cannot be combined with another "+
+					"filter", FieldID)
+		}
+		ids, err := idFilter(raw)
+		if err != nil {
+			return nil, err
+		}
+
+		return p.FetchByIDs(ctx, ids, opts.Fields)
 	}
 
 	in := ListCartsInput{
@@ -154,7 +201,36 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	if err != nil {
 		return nil, err
 	}
-	return records(result.Items, opts.Fields), nil
+	lines, err := p.lines(ctx, result.Items, opts.Fields)
+	if err != nil {
+		return nil, err
+	}
+	return records(result.Items, opts.Fields, lines), nil
+}
+
+// idFilter reads the id filter's value: one id, or a list of them.
+func idFilter(raw any) ([]string, error) {
+	switch value := raw.(type) {
+	case string:
+		return []string{value}, nil
+	case []string:
+		return value, nil
+	case []any:
+		out := make([]string, 0, len(value))
+		for _, item := range value {
+			id, ok := item.(string)
+			if !ok {
+				return nil, errors.Invalid(CodeInvalidInput,
+					"the values of filter %q have to be text, %T given", FieldID, item)
+			}
+			out = append(out, id)
+		}
+
+		return out, nil
+	default:
+		return nil, errors.Invalid(CodeInvalidInput,
+			"filter %q has to be text or a list of text, %T given", FieldID, raw)
+	}
 }
 
 // FetchByIDs returns the records of the given identifiers as a BATCH.
@@ -172,14 +248,41 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	if err != nil {
 		return nil, err
 	}
-	return records(carts, fields), nil
+	lines, err := p.lines(ctx, carts, fields)
+	if err != nil {
+		return nil, err
+	}
+	return records(carts, fields, lines), nil
+}
+
+// lines reads the carts' lines in one read, ONLY when [FieldLines] was asked
+// for — a read that names no field asks for every field.
+func (p *QueryProvider) lines(
+	ctx context.Context, carts []models.Cart, fields []string,
+) (map[string][]models.LineItem, error) {
+	if len(carts) == 0 || (len(fields) > 0 && !slices.Contains(fields, FieldLines)) {
+		return nil, nil
+	}
+
+	ids := make([]string, 0, len(carts))
+	for i := range carts {
+		ids = append(ids, carts[i].ID)
+	}
+
+	return p.svc.LinesOfCarts(ctx, ids)
+}
+
+// offeredFields is every field this entity offers, sorted: the getters PLUS
+// the lines, which do not come off the cart row.
+func offeredFields() []string {
+	return slices.Sorted(slices.Values(append(slices.Collect(maps.Keys(cartFieldGetters)), FieldLines)))
 }
 
 // records converts the carts into records with the requested fields.
-func records(carts []models.Cart, fields []string) []query.Record {
+func records(carts []models.Cart, fields []string, lines map[string][]models.LineItem) []query.Record {
 	selected := fields
 	if len(selected) == 0 {
-		selected = slices.Sorted(maps.Keys(cartFieldGetters))
+		selected = offeredFields()
 	}
 
 	out := make([]query.Record, 0, len(carts))
@@ -188,10 +291,37 @@ func records(carts []models.Cart, fields []string) []query.Record {
 	for i := range carts {
 		record := make(query.Record, len(selected))
 		for _, name := range selected {
+			if name == FieldLines {
+				record[name] = lineRecords(lines[carts[i].ID])
+				continue
+			}
 			record[name] = cartFieldGetters[name](carts[i])
 		}
 		out = append(out, record)
 	}
+	return out
+}
+
+// lineRecords turns one cart's lines into the field's value; never nil, so a
+// cart with no line answers an empty list rather than nothing.
+func lineRecords(list []models.LineItem) []map[string]any {
+	out := make([]map[string]any, 0, len(list))
+	for i := range list {
+		parent := ""
+		if list[i].ParentLineID != nil {
+			parent = *list[i].ParentLineID
+		}
+		out = append(out, map[string]any{
+			LineID:        list[i].ID,
+			LineVariantID: list[i].VariantID,
+			LineTitle:     list[i].Title,
+			LineQuantity:  list[i].Quantity,
+			LineUnitPrice: list[i].UnitPrice,
+			LineTotal:     list[i].Total,
+			LineParentID:  parent,
+		})
+	}
+
 	return out
 }
 
@@ -215,6 +345,10 @@ func providerLimit(limit int) int64 {
 // validateFields verifies that all of the requested fields are offered.
 func validateFields(fields []string) error {
 	for _, name := range fields {
+		if name == FieldLines {
+			// The lines have no getter: they do not come off the cart row.
+			continue
+		}
 		if _, ok := cartFieldGetters[name]; !ok {
 			return errors.Invalid(CodeInvalidInput,
 				"the %q entity does not offer the %q field", EntityName, name)

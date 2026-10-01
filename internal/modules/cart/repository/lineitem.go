@@ -100,6 +100,16 @@ func (r *Repository) ListLineItems(ctx context.Context, cartID string) ([]models
 	return toLineItems(rows)
 }
 
+// ListLineItemsOfCarts returns the living lines of the given carts, each
+// cart's in the order they were written (ADR 0290).
+func (r *Repository) ListLineItemsOfCarts(ctx context.Context, cartIDs []string) ([]models.LineItem, error) {
+	rows, err := r.queries(ctx).ListLineItemsOfCarts(ctx, cartIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the lines of the carts could not be listed")
+	}
+	return toLineItems(rows)
+}
+
 // ListAddOnLines returns the living add-ons of a line in the order they were
 // written (ADR 0229, ADR 0233).
 func (r *Repository) ListAddOnLines(ctx context.Context, cartID, parentID string) ([]models.LineItem, error) {

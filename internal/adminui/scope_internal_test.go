@@ -316,3 +316,38 @@ func TestSigningOutNeedsNoPrivilege(t *testing.T) {
 	assert.NotEqual(t, http.StatusForbidden, rec.Code,
 		"an operator with no privilege could not sign out")
 }
+
+// TestTheTelephoneOrderAsksForTheCartsPrivileges pins the four routes of ADR
+// 0290: the form that opens a cart and both writes ask for cart:write, and the
+// cart's page asks for cart:read. The walk of ADR 0260 cannot tell the two
+// apart, because both belong to the cart module.
+func TestTheTelephoneOrderAsksForTheCartsPrivileges(t *testing.T) {
+	t.Parallel()
+
+	post := func(r chi.Router, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.ServeHTTP(rec, req)
+
+		return rec
+	}
+	cartPage := CartsPath + "/cart_phone"
+
+	_, reader := panelFor(t, nil, scopeCartRead)
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"the opening form": get(reader, CartsPath),
+		"the opening":      post(reader, CartsPath),
+		"a line":           post(reader, cartPage+"/lines"),
+	} {
+		assert.Equal(t, http.StatusForbidden, rec.Code, "%s opened for a reader", name)
+		assert.Contains(t, rec.Body.String(), scopeCartWrite, name)
+	}
+	assert.NotEqual(t, http.StatusForbidden, get(reader, cartPage).Code, "a reader reads the cart")
+
+	_, writer := panelFor(t, nil, scopeCartWrite)
+	assert.Equal(t, http.StatusOK, get(writer, CartsPath).Code, "a writer opens the form")
+	page := get(writer, cartPage)
+	assert.Equal(t, http.StatusForbidden, page.Code, "the page is the read's")
+	assert.Contains(t, page.Body.String(), scopeCartRead)
+}

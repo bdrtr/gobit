@@ -318,6 +318,54 @@ func (q *Queries) ListLineItemsByCartIDs(ctx context.Context, cartIds []string) 
 	return items, nil
 }
 
+const listLineItemsOfCarts = `-- name: ListLineItemsOfCarts :many
+SELECT id, cart_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, deleted_at, properties, parent_line_id, add_on_key, seq FROM cart_line_items
+WHERE cart_id = ANY($1::text[]) AND deleted_at IS NULL
+ORDER BY cart_id, created_at, seq
+`
+
+// ListLineItemsOfCarts is ListLineItems for many carts in one read, each
+// cart's lines in the order they were written; the query provider's lines
+// field reads it (ADR 0290).
+func (q *Queries) ListLineItemsOfCarts(ctx context.Context, cartIds []string) ([]CartLineItem, error) {
+	rows, err := q.db.Query(ctx, listLineItemsOfCarts, cartIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CartLineItem{}
+	for rows.Next() {
+		var i CartLineItem
+		if err := rows.Scan(
+			&i.ID,
+			&i.CartID,
+			&i.VariantID,
+			&i.Title,
+			&i.Quantity,
+			&i.UnitPrice,
+			&i.Subtotal,
+			&i.DiscountTotal,
+			&i.TaxTotal,
+			&i.Total,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.Properties,
+			&i.ParentLineID,
+			&i.AddOnKey,
+			&i.Seq,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const setAddOnQuantities = `-- name: SetAddOnQuantities :exec
 UPDATE cart_line_items
 SET quantity = $3, updated_at = now()

@@ -190,7 +190,10 @@ type UI struct {
 	// payments records an offline method's money as received (ADR 0287); nil
 	// when the installation registers none.
 	payments PaymentReceiver
-	scopes   map[string]string
+	// carts builds a telephone order (ADR 0290); nil when the installation
+	// registers none.
+	carts  TelephoneCarts
+	scopes map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -266,6 +269,12 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And so is a telephone order: without the cart module's surface the forms
+	// answer 503 (ADR 0290).
+	carts, err := optionalService[TelephoneCarts](c, ServiceCartAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -293,6 +302,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		sessions:      sessions,
 		afterSales:    afterSales,
 		payments:      payments,
+		carts:         carts,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

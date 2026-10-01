@@ -589,8 +589,9 @@ type channelAssertionGrant struct {
 var channelAssertionGrants = []channelAssertionGrant{
 	{
 		file:     "internal/modules/cart/api/admin_write.go",
-		function: "channelScoped",
-		why: "an administrator taking an order over the telephone DECLARES which " +
+		function: "scopeToChannel",
+		why: "an administrator taking an order over the telephone, through the admin API " +
+			"or the panel's surface (ADR 0290), DECLARES which " +
 			"shopfront the sale belongs to, which a multi-channel shop has to be able " +
 			"to say (ADR 0146). The claim is written into the principal so that the " +
 			"cart's scope rule runs unchanged rather than being skipped, the rest of " +

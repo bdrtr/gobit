@@ -628,6 +628,9 @@ past and is not corrected retroactively.
   admin surface writes the addresses and the shipping method and completes the
   cart, and the checkout refuses that completion unless its provider is an
   offline method ([ADR 0284](adr/0284-an-offline-method-is-paid-when-the-shop-says-so.md)).
+  The panel opens the cart and adds its lines
+  ([ADR 0290](adr/0290-the-panel-opens-a-telephone-order.md)); the address, the
+  shipping method and the completion are still taken over the admin API.
   A card payment taken over the telephone is not offered, because the operator
   would hold the card; a caller who pays by card is sent the cart's link.
 

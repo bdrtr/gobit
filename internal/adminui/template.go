@@ -81,6 +81,8 @@ var pages = []string{
 	"variant_bundle.gohtml",
 	"orders.gohtml",
 	"order.gohtml",
+	"carts.gohtml",
+	"cart.gohtml",
 	"customers.gohtml",
 	"customer.gohtml",
 	"inventory.gohtml",
@@ -258,6 +260,8 @@ func sections() []navItem {
 	return []navItem{
 		{Label: catalogLabel, Path: ProductsPath},
 		{Label: ordersLabel, Path: OrdersPath},
+		// The telephone order sits under the orders it makes (ADR 0290).
+		{Label: telephoneLabel, Path: CartsPath},
 		// The report sits next to the orders it is made of rather than at the
 		// end of the menu: an operator who has just looked at one order and now
 		// wants the period around it should not have to cross the whole menu to

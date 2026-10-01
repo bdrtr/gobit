@@ -610,11 +610,17 @@ func (h *Handler) provenCustomer(r *http.Request, claimed string) (string, error
 // default would reopen exactly the privilege door that was closed. If the flow
 // cannot be resolved, the cart is NOT OPENED AT ALL.
 func (h *Handler) opening() (CartOpening, error) {
-	if h.flows.Opening == nil {
+	return h.flows.opening()
+}
+
+// opening is [Handler.opening] for every holder of the flows: the handler and
+// the panel's surface (ADR 0290).
+func (f Flows) opening() (CartOpening, error) {
+	if f.Opening == nil {
 		return nil, coreerrors.Internal(codeFlowUnavailable,
 			"the cart-opening flow is not bound; a cart cannot be opened without the server deriving the region")
 	}
-	return h.flows.Opening, nil
+	return f.Opening, nil
 }
 
 // pricing returns the line item pricing flow; if it is not bound it returns an
@@ -631,11 +637,16 @@ func (h *Handler) opening() (CartOpening, error) {
 // client gave, nor with zero) would be silently selling goods for free. The only
 // correct outcome of a missing pricer is the line item NOT BEING ADDED AT ALL.
 func (h *Handler) pricing() (LinePricing, error) {
-	if h.flows.Pricing == nil {
+	return h.flows.pricing()
+}
+
+// pricing is [Handler.pricing] for every holder of the flows.
+func (f Flows) pricing() (LinePricing, error) {
+	if f.Pricing == nil {
 		return nil, coreerrors.Internal(codeFlowUnavailable,
 			"the line pricing flow is not bound; a line item cannot be added without the server deciding the price")
 	}
-	return h.flows.Pricing, nil
+	return f.Pricing, nil
 }
 
 // promotions returns the coupon flow; if it is not bound it returns an ERROR.

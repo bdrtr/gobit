@@ -108,6 +108,9 @@ type Store interface {
 	// ListLineItems returns the cart's lines in the order they were written
 	// (ADR 0233).
 	ListLineItems(ctx context.Context, cartID string) ([]models.LineItem, error)
+	// ListLineItemsOfCarts returns the living lines of the given carts in one
+	// read, each cart's in the order they were written (ADR 0290).
+	ListLineItemsOfCarts(ctx context.Context, cartIDs []string) ([]models.LineItem, error)
 	// CountLineItems returns how many living lines the cart holds.
 	CountLineItems(ctx context.Context, cartID string) (int, error)
 	// SetLineItemQuantity writes the line's quantity as an ABSOLUTE value.

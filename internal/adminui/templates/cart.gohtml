@@ -1,0 +1,73 @@
+{{- /*
+cart.gohtml is a telephone order's cart (ADR 0290): its lines as the catalog
+priced them, its totals, and the form that adds a line.
+
+Every amount is printed with its currency, and an amount whose scale could not
+be read says it is in minor units.
+*/ -}}
+{{ define "body" }}
+<h1>Telephone order</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+
+<div class="panel">
+  <p>
+    <span class="pill">{{ if .Cart.Completed }}completed{{ else }}open{{ end }}</span>
+    <span class="muted">{{ .Cart.ID }}</span>
+  </p>
+  <p>
+    {{ if .Cart.Email }}{{ .Cart.Email }}{{ else }}<span class="muted">no address on this cart</span>{{ end }}
+    {{ with .Cart.CustomerID }}<span class="muted">customer {{ . }}</span>{{ end }}
+  </p>
+</div>
+
+<h2>Lines</h2>
+
+{{ if .Cart.Lines }}
+<table>
+  <thead>
+    <tr><th>Item</th><th class="num">Quantity</th><th class="num">Unit price</th><th class="num">Total</th></tr>
+  </thead>
+  <tbody>
+    {{ range .Cart.Lines }}
+    <tr>
+      <td>{{ if .AddOn }}&nbsp;&nbsp;+ {{ end }}{{ .Title }}<br><span class="muted">{{ .VariantID }}</span></td>
+      <td class="num">{{ .Quantity }}</td>
+      <td class="num">{{ .UnitPrice }}</td>
+      <td class="num">{{ .Total }}</td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p class="muted">The cart holds no line yet.</p>
+{{ end }}
+
+<h2>Amounts</h2>
+
+<table>
+  <tbody>
+    <tr><th>Subtotal</th><td class="num">{{ .Cart.Subtotal }} {{ .Cart.Currency }}</td></tr>
+    <tr><th>Tax</th><td class="num">{{ .Cart.Tax }} {{ .Cart.Currency }}</td></tr>
+    <tr><th>Shipping</th><td class="num">{{ .Cart.Shipping }} {{ .Cart.Currency }}</td></tr>
+    <tr>
+      <th>Total</th>
+      <td class="num">
+        <strong>{{ .Cart.Total }} {{ .Cart.Currency }}</strong>
+        {{ if .Cart.Unscaled }}<span class="muted">(minor units)</span>{{ end }}
+        {{ if .Cart.TotalsStale }}<span class="muted">(not yet priced for the latest change)</span>{{ end }}
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+{{ if and .CanWrite (not .Cart.Completed) }}
+<h3>Add a line</h3>
+<form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/lines">
+  <input name="sales_channel_id" value="{{ .Typed.Get "sales_channel_id" }}" placeholder="sales channel id" aria-label="sales channel" required>
+  <input name="variant_id" value="{{ .Typed.Get "variant_id" }}" placeholder="variant id" aria-label="variant" required>
+  <input name="quantity" value="{{ with .Typed.Get "quantity" }}{{ . }}{{ else }}1{{ end }}" inputmode="numeric" aria-label="quantity" required>
+  <button type="submit">Add</button>
+</form>
+{{ end }}
+{{ end }}

@@ -235,13 +235,24 @@ func (h *Handler) adminAddLineItem(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) channelScoped(
 	ctx context.Context, w http.ResponseWriter, channelID string,
 ) (scoped context.Context, ok bool) {
-	if strings.TrimSpace(channelID) == "" {
-		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
-			"sales_channel_id is mandatory: an administrator's write says which "+
-				"shopfront the sale belongs to, and without it the catalog would answer "+
-				"with the products assigned to no channel at all"))
+	scoped, err := scopeToChannel(ctx, channelID)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
 
 		return ctx, false
+	}
+
+	return scoped, true
+}
+
+// scopeToChannel is [Handler.channelScoped] for a caller that answers its own
+// errors: the panel's surface (ADR 0290) asserts the channel the same way.
+func scopeToChannel(ctx context.Context, channelID string) (context.Context, error) {
+	if strings.TrimSpace(channelID) == "" {
+		return ctx, coreerrors.Invalid(codeInvalidRequest,
+			"sales_channel_id is mandatory: an administrator's write says which "+
+				"shopfront the sale belongs to, and without it the catalog would answer "+
+				"with the products assigned to no channel at all")
 	}
 
 	principal, found := corehttp.PrincipalFromContext(ctx)
@@ -249,15 +260,13 @@ func (h *Handler) channelScoped(
 		// The guard ring already refused an unauthenticated request, so reaching
 		// here without one means the rings are wired wrongly rather than that the
 		// caller did something.
-		corehttp.WriteError(ctx, w, coreerrors.Internal(codeInvalidRequest,
-			"the caller could not be identified, so no channel claim can be recorded"))
-
-		return ctx, false
+		return ctx, coreerrors.Internal(codeInvalidRequest,
+			"the caller could not be identified, so no channel claim can be recorded")
 	}
 
 	principal.SalesChannelIDs = []string{strings.TrimSpace(channelID)}
 
-	return corehttp.WithPrincipal(ctx, principal), true
+	return corehttp.WithPrincipal(ctx, principal), nil
 }
 
 // adminCompleteCartRequest is the body an operator sends to complete a cart

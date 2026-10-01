@@ -480,6 +480,17 @@ func (p recordingPayments) RecordReceived(
 	return "", 0, "", p.surfaces.reach(ServicePaymentAdmin)
 }
 
+// recordingCarts records the cart module's surface (ADR 0290).
+type recordingCarts struct{ surfaces *recordingSurfaces }
+
+func (c recordingCarts) OpenCart(context.Context, string, string, string) (string, error) {
+	return "", c.surfaces.reach(ServiceCartAdmin)
+}
+
+func (c recordingCarts) AddLine(context.Context, string, string, string, int64) (string, error) {
+	return "", c.surfaces.reach(ServiceCartAdmin)
+}
+
 // recordingAfterSales is the order module's panel surface (ADR 0271); the walk
 // takes one act, and every act reaches the same surface.
 type recordingAfterSales struct{ surfaces *recordingSurfaces }
@@ -573,6 +584,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, OrderAfterSaleOpenPath): {},
 	// And records an offline payment (ADR 0287).
 	routeKey(http.MethodPost, OrderPaymentReceivedPath): {},
+	// The telephone order opens a cart and adds a line (ADR 0290).
+	routeKey(http.MethodPost, CartsPath):     {formCountryCode: {"TR"}, formEmail: {"caller@example.com"}},
+	routeKey(http.MethodPost, CartLinesPath): {formSalesChannelID: {"sc_1"}, formVariantID: {"variant_1"}, formQuantity: {"1"}},
 }
 
 // panelWalk is one panel built on the recording doubles.
@@ -599,6 +613,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServiceInventoryAdmin, StockAdmin(recordingStock{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceOrderAdmin, AfterSalesAdmin(recordingAfterSales{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
 	ui, err := FromContainer(c, false, nil)

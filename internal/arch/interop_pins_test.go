@@ -225,6 +225,8 @@ var (
 	// The acts on an order's after-sales records (ADR 0271).
 	_ adminui.AfterSalesAdmin = (*order.AfterSalesSurface)(nil)
 	_ adminui.PaymentReceiver = (*payment.ReceivingSurface)(nil)
+	// The telephone order's cart (ADR 0290).
+	_ adminui.TelephoneCarts = (*cartapi.TelephoneSurface)(nil)
 )
 
 // A FLOW resolving another FLOW's surface.

@@ -52,6 +52,14 @@ SELECT * FROM cart_line_items
 WHERE cart_id = $1 AND deleted_at IS NULL
 ORDER BY created_at, seq;
 
+-- ListLineItemsOfCarts is ListLineItems for many carts in one read, each
+-- cart's lines in the order they were written; the query provider's lines
+-- field reads it (ADR 0290).
+-- name: ListLineItemsOfCarts :many
+SELECT * FROM cart_line_items
+WHERE cart_id = ANY(sqlc.arg(cart_ids)::text[]) AND deleted_at IS NULL
+ORDER BY cart_id, created_at, seq;
+
 -- CountLineItems counts the cart's living lines; the service asks it under the
 -- cart lock before it opens one, against the line ceiling (ADR 0227).
 -- name: CountLineItems :one

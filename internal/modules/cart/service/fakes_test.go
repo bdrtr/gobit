@@ -610,6 +610,21 @@ func (f *fakeStore) ListLineItems(ctx context.Context, cartID string) ([]models.
 	return out, nil
 }
 
+// ListLineItemsOfCarts returns the lines of the given carts, grouped by cart
+// and each cart's in [fakeStore.ListLineItems]' order, as the real query does.
+func (f *fakeStore) ListLineItemsOfCarts(ctx context.Context, cartIDs []string) ([]models.LineItem, error) {
+	var out []models.LineItem
+	for _, cartID := range slices.Sorted(slices.Values(cartIDs)) {
+		lines, err := f.ListLineItems(ctx, cartID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, lines...)
+	}
+
+	return out, nil
+}
+
 // parentOf reads a line's parent, empty for a line standing on its own.
 func parentOf(item models.LineItem) string {
 	if item.ParentLineID == nil {

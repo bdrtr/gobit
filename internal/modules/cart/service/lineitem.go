@@ -342,3 +342,19 @@ func normalizeAddOns(in []AddOnInput) ([]AddOnInput, string, error) {
 	}
 	return out, models.AddOnKey(identities), nil
 }
+
+// LinesOfCarts returns the living lines of the given carts in one read, by
+// cart, each cart's in the order they were written (ADR 0290).
+func (s *Service) LinesOfCarts(ctx context.Context, cartIDs []string) (map[string][]models.LineItem, error) {
+	lines, err := s.store.ListLineItemsOfCarts(ctx, cartIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string][]models.LineItem, len(cartIDs))
+	for i := range lines {
+		out[lines[i].CartID] = append(out[lines[i].CartID], lines[i])
+	}
+
+	return out, nil
+}

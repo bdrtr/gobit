@@ -42,7 +42,11 @@ const (
 	scopePaymentRead = "payment:read"
 	// Recording an offline method's money as received is a payment write
 	// (ADR 0287).
-	scopePaymentWrite    = "payment:write"
+	scopePaymentWrite = "payment:write"
+	// A telephone order's cart is read under the cart's privilege and built
+	// under its write (ADR 0290).
+	scopeCartRead        = "cart:read"
+	scopeCartWrite       = "cart:write"
 	scopeFulfillmentRead = "fulfillment:read"
 	// The product and variant pages read a variant's prices under this one and
 	// its stock under [scopeInventoryRead] (ADR 0260).
@@ -127,6 +131,13 @@ func builtInScopes() map[string]string {
 		// Recording an offline payment is the payment module's write
 		// (ADR 0287).
 		routeKey(post, OrderPaymentReceivedPath): scopePaymentWrite,
+		// The telephone order (ADR 0290). The form that opens a cart is the
+		// write's own screen, so it asks for the write; the cart's page asks
+		// for the read, and offers its form only to a writer.
+		routeKey(get, CartsPath):      scopeCartWrite,
+		routeKey(post, CartsPath):     scopeCartWrite,
+		routeKey(get, CartPath):       scopeCartRead,
+		routeKey(post, CartLinesPath): scopeCartWrite,
 		// The sales report is made of order lines and shows what they sold for.
 		// It names no scope of its own because it holds no data of its own: an
 		// operator who may read the orders may read their total.
