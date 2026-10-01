@@ -127,7 +127,9 @@
 //
 // The Campaigns screen ([UI.listCampaigns]) lists the windows and budgets the
 // promotions share, with how much of each budget is used, and its form writes
-// a campaign ([UI.createCampaign]) through the same surface (ADR 0319).
+// a campaign ([UI.createCampaign]) through the same surface (ADR 0319). A
+// promotion's page puts the promotion into one of them, or out of any, from
+// the campaign it was read in ([UI.placeInCampaign], ADR 0320).
 //
 // The Notifications screen ([UI.listNotifications]) lists the notification
 // module's delivery log, the failed ones first or one order's, and sends a

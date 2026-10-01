@@ -286,7 +286,13 @@ func TestTheLatestUsesAreTheNewest(t *testing.T) {
 // a budget the module does not accept.
 func TestThePanelWritesAndListsCampaigns(t *testing.T) {
 	ctx := context.Background()
-	svc := newService(t)
+	// A campaign's id is ordered to the millisecond, so two written in one
+	// would be listed in either order; the clock moves a millisecond a call.
+	clock := time.Now().UTC()
+	svc := service.New(repository.New(testPool.Pool()), service.Options{Now: func() time.Time {
+		clock = clock.Add(time.Millisecond)
+		return clock
+	}})
 	surface := promotion.NewAdminSurface(svc)
 
 	starts := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
@@ -344,4 +350,71 @@ func TestThePanelWritesAndListsCampaigns(t *testing.T) {
 	_, err = surface.CreateCampaign(ctx, "No currency", "nc-"+uniqueCode(), "", nil, nil, "spend", &limit, "")
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err), "a money budget without its currency: %v", err)
+}
+
+// TestThePanelPutsAPromotionIntoACampaign is ADR 0320 against a real
+// PostgreSQL: the promotion moves into a campaign, to another and out of any,
+// each from the one the operator read and writing the campaign alone; a
+// promotion moved since and a deleted campaign are refused, each by its code.
+func TestThePanelPutsAPromotionIntoACampaign(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	surface := promotion.NewAdminSurface(svc)
+
+	spring, err := svc.CreateCampaign(ctx, service.CampaignInput{Name: "Spring", CampaignIdentifier: "spring-" + uniqueCode()})
+	require.NoError(t, err)
+	summer, err := svc.CreateCampaign(ctx, service.CampaignInput{Name: "Summer", CampaignIdentifier: "summer-" + uniqueCode()})
+	require.NoError(t, err)
+	limit := int64(7)
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{UsageLimit: &limit})
+	campaignOf := func() *string {
+		t.Helper()
+		current, err := svc.GetPromotion(ctx, promo.ID)
+		require.NoError(t, err)
+		require.NotNil(t, current.UsageLimit, "the promotion's other fields are kept")
+		assert.Equal(t, limit, *current.UsageLimit)
+		return current.CampaignID
+	}
+
+	require.NoError(t, surface.SetPromotionCampaign(ctx, promo.ID, "", spring.ID))
+	require.NotNil(t, campaignOf())
+	assert.Equal(t, spring.ID, *campaignOf())
+
+	err = surface.SetPromotionCampaign(ctx, promo.ID, "", summer.ID)
+	require.Error(t, err)
+	assert.Equal(t, service.CodeCampaignMoved, errors.CodeOf(err), "read out of none, it is in spring: %v", err)
+	assert.Equal(t, spring.ID, *campaignOf(), "a refused move leaves it where it was")
+
+	require.NoError(t, surface.SetPromotionCampaign(ctx, promo.ID, spring.ID, summer.ID))
+	assert.Equal(t, summer.ID, *campaignOf())
+
+	require.NoError(t, svc.DeleteCampaign(ctx, spring.ID))
+	err = surface.SetPromotionCampaign(ctx, promo.ID, summer.ID, spring.ID)
+	require.Error(t, err)
+	assert.Equal(t, service.CodeCampaignGone, errors.CodeOf(err), "a deleted campaign is not live: %v", err)
+	assert.Equal(t, summer.ID, *campaignOf())
+
+	// D205: the promotion still names a campaign deleted under it, its page
+	// says which, and the move out of it starts from that campaign.
+	require.NoError(t, svc.DeleteCampaign(ctx, summer.ID))
+	raw, err := surface.PromotionJSON(ctx, promo.ID)
+	require.NoError(t, err)
+	var page struct {
+		CampaignID *string         `json:"campaign_id"`
+		Campaign   json.RawMessage `json:"campaign"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &page))
+	require.NotNil(t, page.CampaignID, "the page carries the campaign the promotion names")
+	assert.Equal(t, summer.ID, *page.CampaignID)
+	assert.JSONEq(t, "null", string(page.Campaign), "a deleted campaign reads as null")
+
+	require.NoError(t, surface.SetPromotionCampaign(ctx, promo.ID, summer.ID, ""))
+	assert.Nil(t, campaignOf(), "out of any campaign")
+
+	autumn, err := svc.CreateCampaign(ctx, service.CampaignInput{Name: "Autumn", CampaignIdentifier: "autumn-" + uniqueCode()})
+	require.NoError(t, err)
+	require.NoError(t, svc.DeletePromotion(ctx, promo.ID))
+	err = surface.SetPromotionCampaign(ctx, promo.ID, "", autumn.ID)
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "a deleted promotion is not moved: %v", err)
 }

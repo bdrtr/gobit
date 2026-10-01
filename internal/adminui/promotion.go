@@ -18,11 +18,13 @@ import (
 // surface under promotion:read.
 
 // PromotionPath is one promotion's page; PromotionRulesPath adds a rule to
-// it and PromotionRuleRemovePath removes one (ADR 0315).
+// it and PromotionRuleRemovePath removes one (ADR 0315), and
+// PromotionCampaignPath puts it into a campaign (ADR 0320).
 const (
 	PromotionPath           = PromotionsPath + "/{id}"
 	PromotionRulesPath      = PromotionPath + "/rules"
 	PromotionRuleRemovePath = PromotionRulesPath + "/{ruleID}/remove"
+	PromotionCampaignPath   = PromotionPath + "/campaign"
 )
 
 // RuleAttributeCategoryTree is the line attribute the cart flow fills with a
@@ -68,8 +70,11 @@ type PromotionReader interface {
 // tags are the contract with that surface, exercised end to end.
 type promotionPage struct {
 	promotionRow
-	Campaign *campaignRow `json:"campaign"`
-	Method   *struct {
+	// CampaignID is the promotion's own reference, kept when the campaign it
+	// names was deleted and Campaign is null (D205).
+	CampaignID *string      `json:"campaign_id"`
+	Campaign   *campaignRow `json:"campaign"`
+	Method     *struct {
 		Type            string `json:"type"`
 		TargetType      string `json:"target_type"`
 		Allocation      string `json:"allocation"`
@@ -155,15 +160,94 @@ func (u *UI) ruleWrite(
 	}
 
 	id := chi.URLParam(r, "id")
-	err := write(r.Context(), editor, id)
+	u.backToPromotion(w, r, id, write(r.Context(), editor, id), "The rule could not be written")
+}
+
+// backToPromotion answers one of the page's writes: the page again when it
+// was made, the refusal drawn on the page, anything else a failure.
+func (u *UI) backToPromotion(w http.ResponseWriter, r *http.Request, id string, err error, failure string) {
 	switch {
 	case err == nil:
 		corehttp.WriteRedirect(r.Context(), w, PromotionsPath+"/"+id)
 	case errors.IsInvalid(err) || errors.IsNotFound(err) || errors.IsConflict(err):
 		u.renderPromotion(w, r, http.StatusUnprocessableEntity, messageFor(err))
 	default:
-		u.unexpectedFailure(w, r, err, "The rule could not be written")
+		u.unexpectedFailure(w, r, err, failure)
 	}
+}
+
+// CampaignPlacer is the narrow surface a promotion is put into a campaign
+// through (ADR 0320).
+type CampaignPlacer interface {
+	// SetPromotionCampaign puts the promotion into the campaign to, or out of
+	// any when it is empty, if it is still in the campaign from, empty for
+	// none.
+	SetPromotionCampaign(ctx context.Context, id, from, to string) error
+}
+
+// The campaign form's fields: the campaign the page was drawn with, and the
+// one chosen.
+const (
+	formCampaignFrom = "from"
+	formCampaignTo   = "campaign_id"
+)
+
+// campaignChoices is how many campaigns the page offers, the module's page
+// ceiling.
+const campaignChoices = 100
+
+// canPlaceInCampaigns reports whether the operator may put the promotion into
+// a campaign here: the surface can list the campaigns and set one, and the
+// operator holds the module's write privilege.
+func (u *UI) canPlaceInCampaigns(r *http.Request) bool {
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	_, places := u.promotions.(CampaignPlacer)
+	_, lists := u.promotions.(CampaignLister)
+
+	return places && lists && principal.HasScope(scopePromotionWrite)
+}
+
+// placeInCampaign puts the promotion in the path into the chosen campaign, or
+// out of any, from the one its page was drawn with, and returns to the page;
+// a promotion moved since or a campaign gone is refused on the page (ADR
+// 0320).
+func (u *UI) placeInCampaign(w http.ResponseWriter, r *http.Request) {
+	placer, ok := u.promotions.(CampaignPlacer)
+	if !ok {
+		u.errorPage(w, r, http.StatusServiceUnavailable, "Promotions unavailable",
+			"The promotion module's panel surface cannot put a promotion into a campaign in this installation.")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		u.errorPage(w, r, http.StatusBadRequest, "Bad request", "The form could not be read.")
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	err := placer.SetPromotionCampaign(r.Context(), id,
+		strings.TrimSpace(r.PostFormValue(formCampaignFrom)), strings.TrimSpace(r.PostFormValue(formCampaignTo)))
+	u.backToPromotion(w, r, id, err, "The promotion's campaign could not be set")
+}
+
+// campaignOptions reads the campaigns the page offers, whether there are more,
+// and whether the read failed, which leaves the page without the form.
+func (u *UI) campaignOptions(r *http.Request) (options []campaignRow, more, unread bool) {
+	lister, ok := u.promotions.(CampaignLister)
+	if !ok {
+		return nil, false, true
+	}
+	raw, total, err := lister.CampaignsJSON(r.Context(), campaignChoices, 0)
+	if err == nil {
+		err = json.Unmarshal(raw, &options)
+	}
+	if err != nil {
+		corehttp.LoggerFromContext(r.Context()).WarnContext(r.Context(),
+			"the panel could not read the campaigns to offer", "error", err)
+
+		return nil, false, true
+	}
+
+	return options, total > int64(len(options)), false
 }
 
 // ruleView is one rule as the page prints it: a category rule names its
@@ -272,6 +356,19 @@ func (u *UI) renderPromotion(w http.ResponseWriter, r *http.Request, code int, r
 	}
 	data["Rules"] = rules
 	data["CanEditRules"] = u.canEditRules(r)
+	if u.canPlaceInCampaigns(r) {
+		data["CanPlace"] = true
+		data["CampaignChoices"], data["CampaignsMore"], data["CampaignsUnread"] = u.campaignOptions(r)
+		// The promotion's own reference, not the campaign read with it: a
+		// deleted campaign reads as none and the promotion still names it
+		// (D205).
+		current := ""
+		if page.CampaignID != nil {
+			current = *page.CampaignID
+		}
+		data["CurrentCampaign"] = current
+		data["CampaignChoiceCount"] = campaignChoices
+	}
 
 	u.templates.render(w, r, code, "promotion.gohtml", data)
 }

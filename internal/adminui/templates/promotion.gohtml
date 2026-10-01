@@ -89,8 +89,26 @@ to an operator who may read the catalog.
     <tr><th>Budget</th><td>{{ with $.Budget }}{{ . }}{{ else }}<span class="muted">none</span>{{ end }}</td></tr>
   </tbody>
 </table>
+{{ else }}{{ with .Promotion.CampaignID }}
+<p role="alert">The promotion's campaign {{ . }} was deleted, so the promotion applies nothing until it is put into another campaign or out of any.</p>
 {{ else }}
 <p class="muted">The promotion belongs to no campaign.</p>
+{{ end }}{{ end }}
+{{ if .CanPlace }}
+{{ if .CampaignsUnread }}
+<p class="muted">The campaigns could not be read, so none is offered.</p>
+{{ else }}
+<form method="post" action="{{ $.Path }}/{{ $.Promotion.ID }}/campaign">
+  <input type="hidden" name="from" value="{{ .CurrentCampaign }}">
+  <select name="campaign_id" aria-label="campaign">
+    <option value="">no campaign</option>
+    {{ range .CampaignChoices }}<option value="{{ .ID }}"{{ if eq .ID $.CurrentCampaign }} selected{{ end }}>{{ .Name }} ({{ .CampaignIdentifier }})</option>
+    {{ end }}
+  </select>
+  <button type="submit">Set the campaign</button>
+</form>
+{{ if .CampaignsMore }}<p class="muted">Only the first {{ .CampaignChoiceCount }} campaigns are offered.</p>{{ end }}
+{{ end }}
 {{ end }}
 
 <h2>Latest uses</h2>

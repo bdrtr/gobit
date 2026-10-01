@@ -105,6 +105,10 @@ type Repository interface {
 	SwitchPromotionStatus(
 		ctx context.Context, id string, from, to models.PromotionStatus, now time.Time,
 	) (models.Promotion, bool, error)
+	// SetPromotionCampaign puts the promotion into a live campaign, or out of
+	// any, if it is still in the one read, and reports whether it did (ADR
+	// 0320).
+	SetPromotionCampaign(ctx context.Context, id string, from, to *string, now time.Time) (models.Promotion, bool, error)
 	DeletePromotion(ctx context.Context, id string, now time.Time) error
 	ListCandidates(ctx context.Context, codes []string) ([]models.PromotionCandidate, error)
 	// ListCandidatesForDiagnosis returns the same set WITHOUT the status filter;

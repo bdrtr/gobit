@@ -133,13 +133,16 @@ type adminUse struct {
 }
 
 // adminPromotionPage is one promotion as its page shows it: the list's row,
-// what it gives, to whom, under which campaign, and its latest uses.
+// what it gives, to whom, under which campaign, and its latest uses. The
+// campaign's id is the promotion's own reference, kept when the campaign it
+// names was deleted and so reads as null (D205).
 type adminPromotionPage struct {
 	adminPromotion
-	Campaign *adminCampaign `json:"campaign"`
-	Method   *adminMethod   `json:"application_method"`
-	Rules    []adminRule    `json:"rules"`
-	Uses     []adminUse     `json:"latest_uses"`
+	CampaignID *string        `json:"campaign_id"`
+	Campaign   *adminCampaign `json:"campaign"`
+	Method     *adminMethod   `json:"application_method"`
+	Rules      []adminRule    `json:"rules"`
+	Uses       []adminUse     `json:"latest_uses"`
 }
 
 // PromotionJSON reads one promotion for its page (ADR 0313): its discount, or
@@ -158,7 +161,7 @@ func (a *AdminSurface) PromotionJSON(ctx context.Context, id string) (json.RawMe
 		ID: p.ID, Code: p.Code, IsAutomatic: p.IsAutomatic, Type: string(p.Type),
 		Status: string(p.Status), UsageCount: p.UsageCount, UsageLimit: p.UsageLimit,
 		CreatedAt: p.CreatedAt,
-	}, Rules: []adminRule{}, Uses: []adminUse{}}
+	}, CampaignID: p.CampaignID, Rules: []adminRule{}, Uses: []adminUse{}}
 
 	switch method, err := a.svc.GetApplicationMethod(ctx, id); {
 	case err == nil:
@@ -282,8 +285,9 @@ func campaignOf(c *models.Campaign) *adminCampaign {
 	}
 }
 
-// CampaignsJSON lists the live campaigns in the order they were created, a
-// page at a time, with the total (ADR 0319).
+// CampaignsJSON lists the live campaigns oldest first, as their time-ordered
+// ids sort them (to the millisecond), a page at a time, with the total (ADR
+// 0319).
 func (a *AdminSurface) CampaignsJSON(ctx context.Context, limit, offset int32) (json.RawMessage, int64, error) {
 	if a == nil || a.svc == nil {
 		return nil, 0, errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
@@ -329,4 +333,25 @@ func (a *AdminSurface) CreateCampaign(
 	}
 
 	return campaign.ID, nil
+}
+
+// SetPromotionCampaign puts the promotion into the campaign to, or out of any
+// when to is empty, if it is still in the campaign from the operator read,
+// empty for none (ADR 0320).
+func (a *AdminSurface) SetPromotionCampaign(ctx context.Context, id, from, to string) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
+	}
+
+	_, err := a.svc.SetPromotionCampaign(ctx, id, campaignRef(from), campaignRef(to))
+	return err
+}
+
+// campaignRef is the campaign the panel names, nil for none.
+func campaignRef(id string) *string {
+	if id == "" {
+		return nil
+	}
+
+	return &id
 }

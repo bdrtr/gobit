@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel puts a promotion into a campaign** (ADR 0320). **For
+  operators:** a promotion's page offers the live campaigns and puts the
+  promotion into one, or out of any, under `promotion:write`; a promotion
+  another operator moved meanwhile is refused rather than moved back.
+
 - **The panel writes and lists the campaigns** (ADR 0319). **For operators:** a
   Campaigns screen lists each campaign's window and how much of its budget is
   used, and writes one under `promotion:write`. **For integrators:** the

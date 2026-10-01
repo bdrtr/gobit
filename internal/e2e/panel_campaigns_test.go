@@ -18,6 +18,8 @@ import (
 
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/adminui"
+	promotionmodels "github.com/bdrtr/gobit/internal/modules/promotion/models"
+	promotionsvc "github.com/bdrtr/gobit/internal/modules/promotion/service"
 )
 
 // campaignsTotal reads the count the campaigns' list prints.
@@ -72,4 +74,63 @@ func TestAnOperatorWritesACampaignInThePanel(t *testing.T) {
 	refused := send(http.MethodPost, adminui.CampaignsPath, form)
 	require.Equal(t, http.StatusUnprocessableEntity, refused.Code, refused.Body.String())
 	assert.Contains(t, refused.Body.String(), "a campaign with the identifier "+identifier+" exists")
+}
+
+// TestAnOperatorPutsACouponIntoACampaignInThePanel is ADR 0320 on the
+// production wiring: a coupon written in the panel is offered the live
+// campaigns on its page, put into one from none, and its page then shows the
+// campaign with its budget and carries it as the campaign it was read in.
+func TestAnOperatorPutsACouponIntoACampaignInThePanel(t *testing.T) {
+	ctx := t.Context()
+	seq := fixtureCounter.Add(1)
+	limit := int64(500000)
+	campaign, err := promotionSvc.CreateCampaign(ctx, promotionsvc.CampaignInput{
+		Name: "E2E Winter", CampaignIdentifier: fmt.Sprintf("E2E-WINTER-%d", seq),
+		BudgetType: promotionmodels.BudgetSpend, BudgetLimit: &limit, BudgetCurrencyCode: taxedCurrency,
+	})
+	require.NoError(t, err)
+
+	panel, err := adminui.FromContainer(ctr, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_marketing", Kind: "user", Scopes: []string{"promotion:read", "promotion:write"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	written := send(http.MethodPost, adminui.PromotionsPath, url.Values{
+		"code": {fmt.Sprintf("E2EWINTER%d", seq)}, "measure": {"percentage"}, "amount": {"10"},
+		"target": {"order"}, "allocation": {"across"},
+	})
+	require.Equal(t, http.StatusSeeOther, written.Code, written.Body.String())
+	pagePath := written.Header().Get("Location")
+
+	offered := send(http.MethodGet, pagePath, nil).Body.String()
+	assert.Contains(t, offered, `<option value="`+campaign.ID+`">E2E Winter (`+campaign.CampaignIdentifier+`)</option>`)
+	assert.Contains(t, offered, `<input type="hidden" name="from" value="">`, "read in no campaign")
+
+	placed := send(http.MethodPost, pagePath+"/campaign", url.Values{"from": {""}, "campaign_id": {campaign.ID}})
+	require.Equal(t, http.StatusSeeOther, placed.Code, placed.Body.String())
+	promo, err := promotionSvc.GetPromotion(ctx, strings.TrimPrefix(pagePath, adminui.PromotionsPath+"/"))
+	require.NoError(t, err)
+	require.NotNil(t, promo.CampaignID)
+	assert.Equal(t, campaign.ID, *promo.CampaignID)
+
+	page := send(http.MethodGet, pagePath, nil).Body.String()
+	assert.Contains(t, page, "<td>E2E Winter</td>")
+	assert.Contains(t, page, "0.00 "+taxedCurrency+" of 5000.00 "+taxedCurrency)
+	assert.Contains(t, page, `<input type="hidden" name="from" value="`+campaign.ID+`">`, "read in the campaign now")
+
+	stale := send(http.MethodPost, pagePath+"/campaign", url.Values{"from": {""}, "campaign_id": {campaign.ID}})
+	require.Equal(t, http.StatusUnprocessableEntity, stale.Code, stale.Body.String())
+	assert.Contains(t, stale.Body.String(), "draw the page again", "a form read before the move is refused")
 }

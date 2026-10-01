@@ -39,6 +39,21 @@ func (m *memRepo) SwitchPromotionStatus(
 	return p, true, nil
 }
 
+// SetPromotionCampaign moves the promotion's campaign from the one read; the
+// API tests do not reach it, and the service's own fake holds the rule.
+func (m *memRepo) SetPromotionCampaign(
+	_ context.Context, id string, from, to *string, now time.Time,
+) (models.Promotion, bool, error) {
+	p, ok := m.promotions[id]
+	if !ok || (p.CampaignID == nil) != (from == nil) || (from != nil && *p.CampaignID != *from) {
+		return models.Promotion{}, false, nil
+	}
+	p.CampaignID = to
+	p.UpdatedAt = now
+	m.promotions[id] = p
+	return p, true, nil
+}
+
 // ListLatestRedemptions returns the promotion's uses, newest id first.
 func (m *memRepo) ListLatestRedemptions(_ context.Context, promotionID string, limit int32) ([]models.Redemption, error) {
 	var out []models.Redemption

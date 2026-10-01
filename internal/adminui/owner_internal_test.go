@@ -556,6 +556,10 @@ func (p recordingPromotions) CreateCampaign(
 	return "camp_walk", p.surfaces.reach(ServicePromotionAdmin)
 }
 
+func (p recordingPromotions) SetPromotionCampaign(context.Context, string, string, string) error {
+	return p.surfaces.reach(ServicePromotionAdmin)
+}
+
 func (p recordingPromotions) PromotionJSON(context.Context, string) (json.RawMessage, error) {
 	return json.RawMessage(`{"rules":[],"latest_uses":[]}`), p.surfaces.reach(ServicePromotionAdmin)
 }
@@ -737,6 +741,8 @@ var walkForms = map[string]url.Values{
 	// A promotion's rules (ADR 0315).
 	routeKey(http.MethodPost, PromotionRulesPath):      {formCategory: {"pcat_walk"}},
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
+	// Putting a promotion into a campaign (ADR 0320).
+	routeKey(http.MethodPost, PromotionCampaignPath): {formCampaignTo: {"camp_walk"}},
 	// Writing a campaign (ADR 0319).
 	routeKey(http.MethodPost, CampaignsPath): {formCampaignName: {"Walk"}, formCampaignIdentifier: {"WALK"}},
 	// Sending a notification again (ADR 0317).

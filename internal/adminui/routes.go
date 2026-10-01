@@ -63,6 +63,7 @@ func (u *UI) routes(r chi.Router) {
 	r.Post(PromotionStatusPath, u.needs(http.MethodPost, PromotionStatusPath, u.switchPromotion))
 	r.Post(PromotionsPath, u.needs(http.MethodPost, PromotionsPath, u.createCoupon))
 	r.Get(PromotionPath, u.needs(http.MethodGet, PromotionPath, u.showPromotion))
+	r.Post(PromotionCampaignPath, u.needs(http.MethodPost, PromotionCampaignPath, u.placeInCampaign))
 	r.Post(PromotionRulesPath, u.needs(http.MethodPost, PromotionRulesPath, u.addCategoryRule))
 	r.Post(PromotionRuleRemovePath, u.needs(http.MethodPost, PromotionRuleRemovePath, u.removeRule))
 	r.Get(ProductNewPath, u.needs(http.MethodGet, ProductNewPath, u.newProduct))
