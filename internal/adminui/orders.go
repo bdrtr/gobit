@@ -453,6 +453,7 @@ func (u *UI) renderOrder(
 	}
 	detail.AfterSales, detail.AfterSalesMore, detail.AfterSalesUnread = u.afterSalesOf(
 		r, detail.ID, detail.Currency, scales, detail.Lines)
+	u.withClaimEvidence(r, detail.AfterSales)
 	detail.NotificationsHidden = !principal.HasScope(scopeNotificationRead)
 	if u.notifications != nil && !detail.NotificationsHidden {
 		detail.Notifications, detail.NotificationsMore, detail.NotificationsUnread = u.notificationsOf(r, detail.ID)
@@ -471,6 +472,8 @@ func (u *UI) renderOrder(
 		"ParcelMoves":           parcelMoves,
 		"CanMoveParcels":        u.canMoveParcels(r),
 		"ParcelKey":             u.parcelKeyFor(r),
+		"CanAttachEvidence":     u.canAttachEvidence(r),
+		"CanDetachEvidence":     u.canDetachEvidence(r),
 		"NotificationsShown":    u.notifications != nil,
 		"NotificationPrivilege": scopeNotificationRead,
 		"NotificationsPath":     NotificationsPath,

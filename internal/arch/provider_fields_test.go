@@ -850,6 +850,8 @@ var panelSurfaceContracts = map[string]string{
 	"notifications.go": "notification.admin's delivery log",
 	// The campaigns, which the read provider does not publish (ADR 0319).
 	"campaigns.go": "promotion.admin's campaigns",
+	// A claim's evidence, which no read provider publishes (ADR 0325).
+	"claim_evidence.go": "order.admin's claim evidence",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

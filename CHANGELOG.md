@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel attaches evidence to a claim** (ADR 0325). **For operators:**
+  a claim on the order's page lists its evidence, and a photograph sent from
+  the page is stored and bound to the claim under `order:write` and
+  `file:write`. **For integrators:** the file module registers a
+  `file.admin` surface, and `order.admin` reads, binds and removes a claim's
+  evidence.
+
 - **The panel ships an order** (ADR 0324). **For operators:** an order's page
   opens a parcel on the delivery the order was sold under `order:write`, and
   marks a parcel shipped with its tracking, delivered, back undelivered or

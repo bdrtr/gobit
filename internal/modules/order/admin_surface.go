@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/order/api"
@@ -203,4 +204,54 @@ func paired(lines, quantities, beside int) error {
 	return errors.Invalid(service.CodeInvalidInput,
 		"every line needs a quantity and the field beside it: %d lines, %d quantities, %d beside",
 		lines, quantities, beside)
+}
+
+// adminEvidence is one piece of a claim's evidence as the panel lists it; the
+// json tags are the contract with the panel, which cannot import this package.
+type adminEvidence struct {
+	ID        string    `json:"id"`
+	UploadID  string    `json:"upload_id"`
+	Caption   string    `json:"caption"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ClaimEvidenceJSON lists the claim's evidence, oldest first (ADR 0325): the
+// upload each names, by id, and what the operator said it shows.
+func (s *AfterSalesSurface) ClaimEvidenceJSON(ctx context.Context, claimID string) (json.RawMessage, error) {
+	evidence, err := s.svc.ListClaimEvidence(ctx, claimID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]adminEvidence, 0, len(evidence))
+	for i := range evidence {
+		out = append(out, adminEvidence{
+			ID: evidence[i].ID, UploadID: evidence[i].UploadID,
+			Caption: evidence[i].Caption, CreatedAt: evidence[i].CreatedAt,
+		})
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeSetupFailed, "the evidence could not be encoded")
+	}
+
+	return body, nil
+}
+
+// AttachClaimEvidence binds an upload to the claim with the operator's caption
+// and returns the evidence's id (ADR 0325).
+func (s *AfterSalesSurface) AttachClaimEvidence(ctx context.Context, claimID, uploadID, caption string) (string, error) {
+	evidence, err := s.svc.AttachClaimEvidence(ctx, claimID, service.AttachClaimEvidenceInput{
+		UploadID: uploadID, Caption: caption,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return evidence.ID, nil
+}
+
+// DetachClaimEvidence removes a piece of evidence from its claim; the file is
+// left to the file module (ADR 0325).
+func (s *AfterSalesSurface) DetachClaimEvidence(ctx context.Context, evidenceID string) error {
+	return s.svc.DetachClaimEvidence(ctx, evidenceID)
 }

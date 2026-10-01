@@ -66,6 +66,10 @@ type orderAfterSale struct {
 	Forms []afterSaleForm
 	// ClaimType is how a claim is settled; empty for the other kinds.
 	ClaimType string
+	// Evidence are a claim's files, oldest first (ADR 0325);
+	// EvidenceUnread says they could not be read.
+	Evidence       []evidenceRow
+	EvidenceUnread bool
 }
 
 // afterSaleSource is a record a replacement can be opened for (ADR 0272).

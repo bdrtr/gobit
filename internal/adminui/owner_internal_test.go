@@ -1,11 +1,14 @@
 package adminui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -686,6 +689,35 @@ func (a recordingAfterSales) OpenParcel(context.Context, string, string) (parcel
 	return "ful_walk", false, a.surfaces.reach(ServiceOrderAdmin)
 }
 
+func (a recordingAfterSales) ClaimEvidenceJSON(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage(`[]`), a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) AttachClaimEvidence(context.Context, string, string, string) (string, error) {
+	return "cev_walk", a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) DetachClaimEvidence(context.Context, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
+// recordingFiles records the file module's surface (ADR 0325).
+type recordingFiles struct{ surfaces *recordingSurfaces }
+
+func (f recordingFiles) MaxUploadBytes() int64 { return 1 << 20 }
+
+func (f recordingFiles) UploadFile(context.Context, string, string, string, io.Reader) (id, address string, err error) {
+	return "upl_walk", "/files/walk", f.surfaces.reach(ServiceFileAdmin)
+}
+
+func (f recordingFiles) UploadURL(context.Context, string) (string, error) {
+	return "/files/walk", f.surfaces.reach(ServiceFileAdmin)
+}
+
+func (f recordingFiles) DeleteUpload(context.Context, string) error {
+	return f.surfaces.reach(ServiceFileAdmin)
+}
+
 // recordingParcels records the fulfillment module's surface (ADR 0324).
 type recordingParcels struct{ surfaces *recordingSurfaces }
 
@@ -725,6 +757,59 @@ var walkRequires = map[string][]string{
 	routeKey(http.MethodPost, VariantPricesPath): {scopePricingWrite},
 	// And keeping a variant's stock asks for inventory's write (ADR 0310).
 	routeKey(http.MethodPost, VariantStockItemPath): {scopeInventoryWrite},
+	// And attaching a claim's evidence stores a file (ADR 0325).
+	routeKey(http.MethodPost, OrderClaimEvidencePath): {scopeFileWrite},
+}
+
+// requiredOwners are the modules whose write privilege the route's handler
+// asks for beside the route's own (walkRequires). A write that holds an
+// operator to another module's privilege may reach that module's surface: the
+// API's two calls, each behind its own module's privilege, made by the panel
+// in one form (ADR 0325).
+func requiredOwners(t *testing.T, owners ownership, key string) []string {
+	t.Helper()
+
+	var out []string
+	for _, scope := range walkRequires[key] {
+		out = append(out, ownerOf(t, owners, scope))
+	}
+
+	return out
+}
+
+// mayReach reports whether the route may reach what the module owner owns:
+// the route's privilege's module, or one whose write privilege the route's
+// handler asks for beside it (ADR 0325).
+func mayReach(t *testing.T, owners ownership, key, routeOwner, owner string) bool {
+	t.Helper()
+
+	return owner == routeOwner || slices.Contains(requiredOwners(t, owners, key), owner)
+}
+
+// TestAWriteReachesOnlyTheModulesItsHandlerAsksFor holds the walk's one
+// exemption to what it asks of it: attaching evidence may reach the file
+// module, whose write its handler asks for, and no third module; a write
+// whose handler asks for nothing more reaches its route's module alone.
+func TestAWriteReachesOnlyTheModulesItsHandlerAsksFor(t *testing.T) {
+	t.Parallel()
+
+	owners := readOwnership(t)
+	evidence := routeKey(http.MethodPost, OrderClaimEvidencePath)
+	order, file, customer := ownerOf(t, owners, scopeOrderWrite), ownerOf(t, owners, scopeFileWrite),
+		ownerOf(t, owners, scopeCustomerWrite)
+	require.NotEqual(t, order, file)
+
+	assert.True(t, mayReach(t, owners, evidence, order, order))
+	assert.True(t, mayReach(t, owners, evidence, order, file), "the file its handler asks to write")
+	assert.False(t, mayReach(t, owners, evidence, order, customer), "a module nobody asked for")
+	assert.False(t, mayReach(t, owners, routeKey(http.MethodPost, OrderParcelsPath), order, file),
+		"a write whose handler asks for nothing more")
+}
+
+// walkMultipart are the writes whose form is a multipart body, sent with a
+// file under its file field (ADR 0325).
+var walkMultipart = map[string]string{
+	routeKey(http.MethodPost, OrderClaimEvidencePath): formEvidenceFile,
 }
 
 // walkScopes is the route's privilege with those its handler asks for beside
@@ -781,6 +866,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
 	// Writing a customer group (ADR 0323).
 	routeKey(http.MethodPost, CustomerGroupListPath): {formGroupName: {"Walk"}},
+	// A claim's evidence (ADR 0325).
+	routeKey(http.MethodPost, OrderClaimEvidencePath):       {formEvidenceCaption: {"walk"}},
+	routeKey(http.MethodPost, OrderClaimEvidenceDetachPath): {},
 	// An order's parcels (ADR 0324).
 	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}},
 	routeKey(http.MethodPost, OrderParcelActPath): {},
@@ -827,6 +915,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServiceInventoryAdmin, StockAdmin(recordingStock{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceOrderAdmin, AfterSalesAdmin(recordingAfterSales{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceFulfillmentAdmin, ParcelMover(recordingParcels{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceFileAdmin, FileUploader(recordingFiles{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePromotionAdmin, PromotionLister(recordingPromotions{walk.surfaces})))
@@ -875,10 +964,26 @@ func (w *panelWalk) request(t *testing.T, key string, walk walkCase, scopes ...s
 	method, pattern, _ := strings.Cut(key, " ")
 	path := strings.NewReplacer("{id}", "walk", "{variantID}", "walk",
 		"{kind}", "return", "{record}", "walk", "{act}", "cancel", "{line}", "walk",
-		"{ruleID}", "walk", "{revision}", "2", "{parcel}", "walk").Replace(pattern)
+		"{ruleID}", "walk", "{revision}", "2", "{parcel}", "walk", "{claim}", "walk",
+		"{evidence}", "walk").Replace(pattern)
 
 	var req *http.Request
-	if method == http.MethodPost {
+	if fileField, multi := walkMultipart[key]; multi {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		for name, values := range form {
+			for _, value := range values {
+				require.NoError(t, writer.WriteField(name, value))
+			}
+		}
+		part, err := writer.CreateFormFile(fileField, "walk.txt")
+		require.NoError(t, err)
+		_, err = part.Write([]byte("the walk's evidence"))
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+		req = httptest.NewRequest(method, path, &body)
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+	} else if method == http.MethodPost {
 		req = httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	} else {
@@ -999,7 +1104,7 @@ func TestEachScreenReadsOnlyWhatItsPrivilegesModuleOwns(t *testing.T) {
 				require.NotEmpty(t, read.owner,
 					"%s reached %s, and no tree registers it. Either the source reader has gone "+
 						"blind or the panel reads something nothing provides", key, read.what)
-				assert.Equal(t, owner, read.owner,
+				assert.True(t, mayReach(t, owners, key, owner, read.owner),
 					"%s asks for %q, which %s declares, and reaches %s, which %s owns.\n"+
 						"The API keeps that data behind %s's own privilege; a screen that "+
 						"shows it under another is a second door the first one does not know "+

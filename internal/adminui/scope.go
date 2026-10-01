@@ -174,6 +174,11 @@ func builtInScopes() map[string]string {
 		// fulfillment module (ADR 0324).
 		routeKey(post, OrderParcelsPath):   scopeOrderWrite,
 		routeKey(post, OrderParcelActPath): scopeFulfillmentWrite,
+		// A claim's evidence is bound by the order module, the file stored by
+		// the file module under its own write, asked in the handler (ADR
+		// 0325).
+		routeKey(post, OrderClaimEvidencePath):       scopeOrderWrite,
+		routeKey(post, OrderClaimEvidenceDetachPath): scopeOrderWrite,
 		// A customer's groups are the customer module's (ADR 0322), and so
 		// are the groups and the form that writes one (ADR 0323).
 		routeKey(get, CustomerGroupListPath):    scopeCustomerRead,

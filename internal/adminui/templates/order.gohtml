@@ -266,7 +266,15 @@ Notifications screen, which the link opens on this order.
   <tbody>
     {{ range $sale := .Order.AfterSales }}
     <tr>
-      <td>{{ .Kind }} <span class="muted">{{ .ID }}</span>{{ range .Detail }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
+      <td>{{ .Kind }} <span class="muted">{{ .ID }}</span>{{ range .Detail }}<br><span class="muted">{{ . }}</span>{{ end }}
+        {{ if .EvidenceUnread }}<br><span class="muted">The evidence could not be read.</span>{{ end }}
+        {{ range .Evidence }}
+        <br>evidence: {{ if .URL }}<a href="{{ .URL }}" rel="noopener noreferrer">{{ with .Caption }}{{ . }}{{ else }}the file{{ end }}</a>{{ else }}{{ with .Caption }}{{ . }}{{ else }}a file{{ end }} <span class="muted">{{ .UploadID }}</span>{{ end }}
+        {{ if $.CanDetachEvidence }}<form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/claims/{{ $sale.ID }}/evidence/{{ .ID }}/detach">
+          <button type="submit">Remove the evidence</button>
+        </form>{{ end }}
+        {{ end }}
+      </td>
       <td><span class="pill">{{ .Status }}</span></td>
       <td>{{ range .Goods }}{{ . }}<br>{{ else }}<span class="muted">none listed</span>{{ end }}</td>
       <td>{{ if .Money }}{{ .Money }}{{ else }}<span class="muted">none</span>{{ end }}</td>
@@ -282,6 +290,15 @@ Notifications screen, which the link opens on this order.
           <input type="hidden" name="currency" value="{{ $.Order.Currency }}">{{ if $.Order.Minor }}<input type="hidden" name="minor" value="1">{{ end }}{{ end }}
           {{ if .Reason }}<input name="reason" placeholder="reason" aria-label="reason">{{ end }}
           <button type="submit">{{ .Label }}</button>
+        </form>
+        {{ end }}
+        {{ if and (eq $sale.Kind "claim") $.CanAttachEvidence }}
+        {{/* A photograph of the damage or the short delivery (ADR 0325); the file
+        module checks its type and size. */}}
+        <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/claims/{{ $sale.ID }}/evidence" enctype="multipart/form-data">
+          <input name="caption" placeholder="what it shows" aria-label="what the file shows">
+          <input type="file" name="file" aria-label="evidence file" required>
+          <button type="submit">Attach evidence</button>
         </form>
         {{ end }}
       </td>

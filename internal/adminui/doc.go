@@ -148,7 +148,9 @@
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, and moves one ([UI.moveParcel]) —
 // shipped, delivered, back undelivered, canceled — through the fulfillment
-// module's surface (ADR 0324).
+// module's surface (ADR 0324). A claim on it lists its evidence and takes a
+// file ([UI.attachEvidence]), stored by the file module's surface and bound by
+// the order module's, each under its own write privilege (ADR 0325).
 //
 // A product's history ([UI.showRevisions]) lists the revisions the product
 // module records for its writes, and restores an older one at the version the

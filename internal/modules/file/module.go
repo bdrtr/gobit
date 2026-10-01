@@ -119,6 +119,10 @@ const ServiceName = ModuleName + ".service"
 // its single source of truth.
 const InteropName = ModuleName + ".interop"
 
+// AdminName is the panel surface's name in the container (ADR 0325): an
+// upload from the panel's form.
+const AdminName = ModuleName + ".admin"
+
 // ProvidersName is the name of the provider registry in the container.
 //
 // The plugin system adds its own FileProvider by resolving this registry; it
@@ -261,6 +265,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// itself returns the module's own types, which no consumer can name
 	// (ADR 0006).
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(AdminName, service.NewAdminSurface(svc)); err != nil {
 		return err
 	}
 	if err := c.Provide(ProvidersName, providers); err != nil {

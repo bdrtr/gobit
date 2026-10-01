@@ -96,6 +96,8 @@ const (
 	CodeAmountInvalid = "adminui_amount_invalid"
 	// CodeMomentInvalid reports a moment the panel could not read.
 	CodeMomentInvalid = "adminui_moment_invalid"
+	// CodeEvidenceInvalid reports an evidence form the panel could not read.
+	CodeEvidenceInvalid = "adminui_evidence_invalid"
 	// CodeNotBound reports that the guard ring has not been bound to a panel
 	// yet; such a request is REJECTED (see [Ring]).
 	CodeNotBound = "adminui_not_bound"
@@ -207,7 +209,10 @@ type UI struct {
 	// parcels moves an order's parcels (ADR 0324); nil when the installation
 	// registers no fulfillment surface.
 	parcels ParcelMover
-	scopes  map[string]string
+	// files stores a claim's evidence (ADR 0325); nil when the installation
+	// registers no file surface.
+	files  FileUploader
+	scopes map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -310,6 +315,11 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And a claim's evidence (ADR 0325).
+	files, err := optionalService[FileUploader](c, ServiceFileAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -342,6 +352,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		notifications: notifications,
 		memberships:   memberships,
 		parcels:       parcels,
+		files:         files,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,
