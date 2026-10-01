@@ -38,6 +38,10 @@ const (
 	filterCategoryID = "category_id"
 	filterTagID      = "tag_id"
 
+	// filterCategoryTreeID is a category with every category below it, the
+	// storefront's word since ADR 0261, and the read layer's since ADR 0282.
+	filterCategoryTreeID = "category_tree_id"
+
 	// filterSearch is the product provider's free-text search over the title,
 	// and it carries the storefront's spelling for the same reason its two
 	// neighbors do: "q".

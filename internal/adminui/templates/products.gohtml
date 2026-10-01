@@ -81,8 +81,10 @@ submitting.
     <option value="{{ .ID }}"{{ if .Selected }} selected{{ end }}>{{ .Name }}</option>
     {{- end }}
   </select>
+  <label><input type="checkbox" name="subcategories" value="1"{{ if .Subtree }} checked{{ end }}> with its subcategories</label>
   {{- else if .Applied }}
   <input type="hidden" name="category" value="{{ .ID }}">
+  {{- if .Subtree }}<input type="hidden" name="subcategories" value="1">{{ end }}
   {{- end }}
   {{ end }}
   <button type="submit">Show</button>
@@ -183,8 +185,8 @@ because it is the narrowing the operator just typed.
 {{ end }}
 
 <nav>
-  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ if .CategoryFilter.Applied }}&amp;category={{ .CategoryFilter.ID }}{{ end }}{{ if .SearchFilter.Applied }}&amp;search={{ .SearchFilter.Term }}{{ end }}">Previous</a>{{ end }}
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ if .CategoryFilter.Applied }}&amp;category={{ .CategoryFilter.ID }}{{ if .CategoryFilter.Subtree }}&amp;subcategories=1{{ end }}{{ end }}{{ if .SearchFilter.Applied }}&amp;search={{ .SearchFilter.Term }}{{ end }}">Previous</a>{{ end }}
   <span>Page {{ .Page }}</span>
-  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ if .CategoryFilter.Applied }}&amp;category={{ .CategoryFilter.ID }}{{ end }}{{ if .SearchFilter.Applied }}&amp;search={{ .SearchFilter.Term }}{{ end }}">Next</a>{{ end }}
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ if .CategoryFilter.Applied }}&amp;category={{ .CategoryFilter.ID }}{{ if .CategoryFilter.Subtree }}&amp;subcategories=1{{ end }}{{ end }}{{ if .SearchFilter.Applied }}&amp;search={{ .SearchFilter.Term }}{{ end }}">Next</a>{{ end }}
 </nav>
 {{ end }}

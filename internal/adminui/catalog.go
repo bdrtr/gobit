@@ -98,6 +98,11 @@ const (
 	// a rename of this word is invisible until somebody actually types in the
 	// box. It is loud on the first SEARCH, not on the first request.
 	filterSearch = "q"
+
+	// filterCategoryTreeID narrows a product listing to a category and every
+	// category below it, the read layer's word since ADR 0282 and the
+	// storefront's since ADR 0261.
+	filterCategoryTreeID = "category_tree_id"
 )
 
 // paramCategory is the query parameter carrying the chosen category.
@@ -109,6 +114,10 @@ const (
 // link. The two names meet in exactly one place, [UI.listProducts], where the
 // parameter becomes [filterCategoryID].
 const paramCategory = "category"
+
+// paramSubcategories asks the category filter to take the chosen category's
+// subcategories too (ADR 0282); its one value is "1".
+const paramSubcategories = "subcategories"
 
 // paramSearch is the query parameter carrying the text typed in the search box.
 //
@@ -281,6 +290,9 @@ type categoryFilter struct {
 	// Unverified reports that [ID] is not among the entries in hand AND the
 	// vocabulary was truncated, so nothing here can say whether it exists.
 	Unverified bool
+	// Subtree reports that the filter takes the category's subcategories too
+	// (ADR 0282); it is false when no category is applied.
+	Subtree bool
 }
 
 // Applied reports whether the list is narrowed by a category.
@@ -484,12 +496,13 @@ func (p productRow) PublishAtInput() string { return momentInput(p.PublishAtType
 func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 	page := pageNumber(r.URL.Query().Get("page"))
 	chosen := strings.TrimSpace(r.URL.Query().Get(paramCategory))
+	subtree := chosen != "" && r.URL.Query().Get(paramSubcategories) == "1"
 	typed := strings.TrimSpace(r.URL.Query().Get(paramSearch))
 
 	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
 		Entity:  EntityProduct,
 		Fields:  []string{fieldID, fieldTitle, fieldHandle, fieldStatus, fieldThumbnail, fieldUpdatedAt},
-		Filters: productFilters(chosen, typed),
+		Filters: productFilters(chosen, subtree, typed),
 		Limit:   productsPerPage + 1,
 		Offset:  (page - 1) * productsPerPage,
 	})
@@ -520,7 +533,7 @@ func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		titleKey:          "Products",
 		"Products":        rows,
-		categoryFilterKey: categoryFilterOf(chosen, u.categoryList(r.Context())),
+		categoryFilterKey: categoryFilterOf(chosen, subtree, u.categoryList(r.Context())),
 		// The TRIMMED term goes to the screen, not the raw parameter: the box
 		// is refilled from this value, and refilling it with the spaces the
 		// operator happened to type would show a box whose contents no longer
@@ -567,9 +580,12 @@ func (u *UI) listProducts(w http.ResponseWriter, r *http.Request) {
 // test can walk, and because the composition is the part that breaks: a search
 // written into the spec by REPLACING Filters instead of adding to it would drop
 // the category silently and show a wider catalog than the address describes.
-func productFilters(category, search string) map[string]any {
+func productFilters(category string, subtree bool, search string) map[string]any {
 	filters := map[string]any{}
-	if category != "" {
+	switch {
+	case category != "" && subtree:
+		filters[filterCategoryTreeID] = category
+	case category != "":
 		filters[filterCategoryID] = category
 	}
 	if search != "" {
@@ -650,8 +666,8 @@ func (u *UI) categoryList(ctx context.Context) categoryList {
 // The three failing states are kept apart because each of them warrants a
 // different sentence, and the pure function is where they are made exclusive so
 // that no template branch can ever show two of them at once.
-func categoryFilterOf(chosen string, list categoryList) categoryFilter {
-	filter := categoryFilter{ID: chosen, Options: list.Options}
+func categoryFilterOf(chosen string, subtree bool, list categoryList) categoryFilter {
+	filter := categoryFilter{ID: chosen, Options: list.Options, Subtree: subtree && chosen != ""}
 
 	if list.Unavailable {
 		// Nothing here can be said about the identifier: with no vocabulary in

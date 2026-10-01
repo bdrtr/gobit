@@ -972,3 +972,49 @@ func TestTheMembershipIsPerProductAndNotShared(t *testing.T) {
 	assert.Equal(t, []string{fx.shirts.ID}, byID[fx.draft.ID])
 	assert.Empty(t, byID[fx.loose.ID])
 }
+
+// TestProductProviderReadsACategoryWithItsSubcategories is ADR 0282: the read
+// layer answers category_tree_id as the storefront does, the category with
+// every category below it; category_id stays the category alone, an unknown
+// category keeps nothing, and the id path refuses it as it refuses the other
+// taxonomy filters.
+func TestProductProviderReadsACategoryWithItsSubcategories(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := newMemStore()
+	svc := newService(t, store, newFakeLinker(), nil)
+	products := service.NewProductProvider(store)
+
+	clothing, err := svc.CreateCategory(ctx, service.CreateCategoryInput{Name: "Clothing", Handle: "clothing"})
+	require.NoError(t, err)
+	shirts, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Shirts", Handle: "tree-shirts", ParentID: &clothing.ID,
+	})
+	require.NoError(t, err)
+	shirt := seedProductInput(t, svc, service.CreateProductInput{
+		Handle: "tree-shirt", Title: "Tree Shirt", Status: models.StatusPublished, CategoryIDs: []string{shirts.ID},
+	})
+	coat := seedProductInput(t, svc, service.CreateProductInput{
+		Handle: "tree-coat", Title: "Tree Coat", Status: models.StatusPublished, CategoryIDs: []string{clothing.ID},
+	})
+	seedProductInput(t, svc, service.CreateProductInput{Handle: "tree-loose", Title: "Loose", Status: models.StatusPublished})
+
+	tree, err := products.List(ctx, query.ListOptions{Filters: map[string]any{"category_tree_id": clothing.ID}})
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{shirt.ID, coat.ID}, recordIDs(t, tree), "the category and the one below it")
+
+	direct, err := products.List(ctx, query.ListOptions{Filters: map[string]any{"category_id": clothing.ID}})
+	require.NoError(t, err)
+	assert.Equal(t, []string{coat.ID}, recordIDs(t, direct), "category_id is still the category alone")
+
+	unknown, err := products.List(ctx, query.ListOptions{Filters: map[string]any{"category_tree_id": "pcat_none"}})
+	require.NoError(t, err)
+	assert.Empty(t, unknown, "a category that does not exist keeps nothing, not everything")
+
+	_, err = products.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_tree_id": clothing.ID, "ids": []string{shirt.ID}},
+	})
+	require.Error(t, err)
+	assert.True(t, errors.IsInvalid(err), "error: %v", err)
+}

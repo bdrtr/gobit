@@ -24,6 +24,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel lists a category with its subcategories** (ADR 0282). **For
+  operators:** the catalog filter has a "with its subcategories" box beside the
+  category. **For integrators:** the `product` query provider takes
+  `category_tree_id`.
+
 - **Raising a line asks the channel again** (ADR 0281). **For integrators:**
   `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` raising the quantity
   of a line whose product is no longer in the key's sales channels answers 404,

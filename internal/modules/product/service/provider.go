@@ -133,6 +133,9 @@ func (p *productProvider) Entity() string { return EntityProduct }
 // existed the shop could narrow the catalog by category and the read layer could
 // not, so an operator's panel — which reaches the catalog only through Query —
 // had no way to ask the question its customers were already asking.
+// category_tree_id followed for the same reason (ADR 0282): the category with
+// every category below it, resolved here into ids as the storefront's listing
+// resolves it (ADR 0261).
 //
 // # Why the taxonomy filters cannot be COMBINED with id/ids
 //
@@ -351,6 +354,22 @@ func (p *productProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 				return nil, err
 			}
 			filter.TagID = &value
+		case filterCategoryTreeID:
+			value, err := stringFilter(key, raw)
+			if err != nil {
+				return nil, err
+			}
+			// The subtree is resolved here and handed down as ids, as the
+			// storefront's listing does (ADR 0261, ADR 0282); a category that
+			// does not exist resolves to none and the listing keeps nothing.
+			subtree, err := p.repo.CategorySubtree(ctx, value)
+			if err != nil {
+				return nil, err
+			}
+			if subtree == nil {
+				subtree = []string{}
+			}
+			filter.CategoryTreeIDs = subtree
 		case filterID, filterIDs:
 			values, err := stringsFilter(key, raw)
 			if err != nil {
@@ -376,6 +395,8 @@ func (p *productProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 		switch {
 		case filter.CategoryID != nil:
 			return nil, taxonomyWithIDs(filterCategoryID)
+		case filter.CategoryTreeIDs != nil:
+			return nil, taxonomyWithIDs(filterCategoryTreeID)
 		case filter.TagID != nil:
 			return nil, taxonomyWithIDs(filterTagID)
 		case filter.Search != nil:

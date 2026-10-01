@@ -80,3 +80,37 @@ func TestTheProductRecordCarriesItsCategoryTree(t *testing.T) {
 	assert.Len(t, want, 3)
 	assert.Equal(t, []string{}, byID[unfiled.ID][service.FieldCategoryTreeIDs])
 }
+
+// TestTheReadLayerListsACategoryWithItsSubcategories is ADR 0282 on the real
+// schema: the product provider's category_tree_id keeps a product filed only
+// under a subcategory, as the storefront's does, while category_id does not.
+func TestTheReadLayerListsACategoryWithItsSubcategories(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t, nil, nil)
+	provider := service.NewProductProvider(repository.New(testPool.Pool()))
+
+	parent, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Outdoor", Handle: uniqueHandle("reads-outdoor")})
+	require.NoError(t, err)
+	child, err := svc.CreateCategory(ctx, service.CreateCategoryInput{
+		Name: "Tents", Handle: uniqueHandle("reads-tents"), ParentID: &parent.ID})
+	require.NoError(t, err)
+	tent, err := svc.CreateProduct(ctx, service.CreateProductInput{
+		Handle: uniqueHandle("reads-tent"), Title: "Tent", Status: models.StatusPublished,
+		CategoryIDs: []string{child.ID},
+	})
+	require.NoError(t, err)
+
+	tree, err := provider.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_tree_id": parent.ID}, Fields: []string{query.IDField},
+	})
+	require.NoError(t, err)
+	require.Len(t, tree, 1)
+	assert.Equal(t, tent.ID, tree[0][query.IDField])
+
+	direct, err := provider.List(ctx, query.ListOptions{
+		Filters: map[string]any{"category_id": parent.ID}, Fields: []string{query.IDField},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, direct, "category_id is the category alone")
+}

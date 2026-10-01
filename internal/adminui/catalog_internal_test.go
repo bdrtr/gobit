@@ -617,7 +617,7 @@ func TestCategoryFilterOfKeepsItsThreeFailuresApart(t *testing.T) {
 			list := tt.list
 			list.Options = slices.Clone(list.Options)
 
-			got := categoryFilterOf(tt.chosen, list)
+			got := categoryFilterOf(tt.chosen, false, list)
 
 			assert.Equal(t, tt.want, got)
 			exclusive := 0
@@ -803,10 +803,15 @@ func TestProductFiltersLeavesOutWhatIsEmpty(t *testing.T) {
 
 	tests := map[string]struct {
 		category string
+		subtree  bool
 		search   string
 		want     map[string]any
 	}{
-		"neither":            {want: nil},
+		"neither": {want: nil},
+		"a category with its subcategories": {category: "pcat_beans", subtree: true,
+			want: map[string]any{filterCategoryTreeID: "pcat_beans"}},
+		"subcategories of no category": {subtree: true, search: "coffee",
+			want: map[string]any{filterSearch: "coffee"}},
 		"only a category":    {category: "pcat_beans", want: map[string]any{filterCategoryID: "pcat_beans"}},
 		"only a search":      {search: "coffee", want: map[string]any{filterSearch: "coffee"}},
 		"an empty search":    {category: "pcat_beans", search: "", want: map[string]any{filterCategoryID: "pcat_beans"}},
@@ -818,7 +823,7 @@ func TestProductFiltersLeavesOutWhatIsEmpty(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			assert.Equal(t, tt.want, productFilters(tt.category, tt.search))
+			assert.Equal(t, tt.want, productFilters(tt.category, tt.subtree, tt.search))
 		})
 	}
 }
@@ -1558,4 +1563,35 @@ func TestEditFormEscapesOperatorText(t *testing.T) {
 	assert.NotContains(t, body, "ZgotmplZ",
 		"the engine failed to resolve a context: escaping LOOKS like it worked but the "+
 			"data is silently removed")
+}
+
+// TestACategoryWithItsSubcategoriesReachesTheReadLayer is ADR 0282: the box
+// beside the dropdown asks for the category's subcategories too, the read layer
+// is asked category_tree_id instead of category_id, the box is drawn checked,
+// and the paging links keep it.
+func TestACategoryWithItsSubcategoriesReachesTheReadLayer(t *testing.T) {
+	t.Parallel()
+
+	full := make([]query.Record, 0, productsPerPage+1)
+	for i := range productsPerPage + 1 {
+		full = append(full, query.Record{"id": "p" + strconv.Itoa(i), "title": "T"})
+	}
+	catalog := categoryCatalog(categoryVocabulary())
+	catalog.byEntity[EntityProduct] = full
+
+	body := getPage(newCatalogPanel(t, catalog), ProductsPath+"?category=pcat_beans&subcategories=1").Body.String()
+
+	var asked map[string]any
+	for _, spec := range catalog.specs {
+		if spec.Entity == EntityProduct {
+			asked = spec.Filters
+		}
+	}
+	assert.Equal(t, map[string]any{filterCategoryTreeID: "pcat_beans"}, asked)
+	assert.Contains(t, body, `name="subcategories" value="1" checked`)
+	assert.Contains(t, body, "page=2&amp;category=pcat_beans&amp;subcategories=1",
+		"the next page keeps the subcategories")
+
+	alone := getPage(newCatalogPanel(t, catalog), ProductsPath+"?subcategories=1").Body.String()
+	assert.NotContains(t, alone, "&amp;subcategories=1", "subcategories of no category narrow nothing")
 }

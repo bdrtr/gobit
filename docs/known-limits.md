@@ -159,15 +159,15 @@ past and is not corrected retroactively.
 
 ## The category tree
 
-- **The read layer's category filter matches DIRECT membership.** The
-  storefront listing, its facets and the GraphQL listing take
-  `category_tree_id` since
-  [ADR 0261](adr/0261-a-storefront-category-lists-its-subcategories.md), and a
+- **The category listing walks one level.** The storefront listing, its
+  facets and the GraphQL listing take `category_tree_id` since
+  [ADR 0261](adr/0261-a-storefront-category-lists-its-subcategories.md), a
   promotion rule reaches the subtree through `category_tree_ids`
-  ([ADR 0259](adr/0259-a-category-rule-can-reach-the-subcategories.md)). The
-  query layer's product filter, which the panel's catalog filter reads, takes
-  `category_id` alone, and `parent_id` on the category listing walks one level,
-  which is what a menu asks for.
+  ([ADR 0259](adr/0259-a-category-rule-can-reach-the-subcategories.md)), and the
+  query layer's product filter and the panel's catalog filter take it too
+  ([ADR 0282](adr/0282-the-panel-lists-a-category-with-its-subcategories.md)).
+  `parent_id` on the category listing walks one level, which is what a menu
+  asks for.
 
 - **A move whose ancestry is deeper than sixty-four levels is refused, even when
   it would have been legitimate.** The update that reparents a category walks up
