@@ -62,6 +62,7 @@ func (u *UI) routes(r chi.Router) {
 	r.Post(VariantListPriceRemovePath, u.needs(http.MethodPost, VariantListPriceRemovePath, u.removeListPrice))
 	r.Post(PriceListsPath, u.needs(http.MethodPost, PriceListsPath, u.createPriceList))
 	r.Post(PriceListStatusPath, u.needs(http.MethodPost, PriceListStatusPath, u.switchPriceList))
+	r.Post(PriceListRevisePath, u.needs(http.MethodPost, PriceListRevisePath, u.revisePriceList))
 	r.Post(CampaignsPath, u.needs(http.MethodPost, CampaignsPath, u.createCampaign))
 	r.Get(NotificationsPath, u.needs(http.MethodGet, NotificationsPath, u.listNotifications))
 	r.Post(NotificationResendPath, u.needs(http.MethodPost, NotificationResendPath, u.resendNotification))

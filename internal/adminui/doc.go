@@ -139,7 +139,8 @@
 // lists with their type, status and window, and its form writes one
 // ([UI.createPriceList]) through the module's panel surface (ADR 0326); each
 // row publishes, ends or reopens its list from the status it was drawn in
-// ([UI.switchPriceList], ADR 0328). A
+// ([UI.switchPriceList], ADR 0328), and revises its title, description and
+// window from the ones it was drawn with ([UI.revisePriceList], ADR 0330). A
 // variant's page lists its prices on those lists and puts one on a list, for
 // every customer or for some customer groups ([UI.addListPrice],
 // [UI.removeListPrice], ADR 0327).

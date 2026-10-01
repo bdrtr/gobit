@@ -199,8 +199,10 @@ func builtInScopes() map[string]string {
 		// 0327).
 		routeKey(post, VariantListPricesPath):      scopePricingWrite,
 		routeKey(post, VariantListPriceRemovePath): scopePricingWrite,
-		// A price list's status switch is the pricing module's (ADR 0328).
+		// A price list's status switch is the pricing module's (ADR 0328),
+		// and so is revising its terms (ADR 0330).
 		routeKey(post, PriceListStatusPath): scopePricingWrite,
+		routeKey(post, PriceListRevisePath): scopePricingWrite,
 		// The price lists and the form that writes one are the pricing
 		// module's (ADR 0326).
 		routeKey(get, PriceListsPath):  scopePricingRead,

@@ -75,3 +75,17 @@ func (a *AdminSurface) SwitchPriceListStatus(ctx context.Context, id, from, to s
 	_, err := a.svc.SwitchPriceListStatus(ctx, id, models.PriceListStatus(from), models.PriceListStatus(to))
 	return err
 }
+
+// RevisePriceList writes the list's title, description and window from the
+// ones the operator read, and refuses when another writer changed any of them
+// since (ADR 0330); a nil moment is an open end.
+func (a *AdminSurface) RevisePriceList(
+	ctx context.Context, id, readTitle, readDescription string, readStartsAt, readEndsAt *time.Time,
+	title, description string, startsAt, endsAt *time.Time,
+) error {
+	_, err := a.svc.RevisePriceList(ctx, id,
+		models.PriceListTerms{Title: readTitle, Description: readDescription, StartsAt: readStartsAt, EndsAt: readEndsAt},
+		models.PriceListTerms{Title: title, Description: description, StartsAt: startsAt, EndsAt: endsAt})
+
+	return err
+}

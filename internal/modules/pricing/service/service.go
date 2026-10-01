@@ -120,6 +120,11 @@ type Repository interface {
 	SwitchPriceListStatus(
 		ctx context.Context, id string, from, to models.PriceListStatus, clock func() time.Time,
 	) (models.PriceList, bool, error)
+	// RevisePriceList writes the list's terms if they are still the ones read,
+	// and reports whether it did (ADR 0330).
+	RevisePriceList(
+		ctx context.Context, id string, read, next models.PriceListTerms, clock func() time.Time,
+	) (models.PriceList, bool, error)
 
 	// PriceSetHistory and PriceListHistory return every snapshot of the given
 	// sets and lists, oldest first (ADR 0167).

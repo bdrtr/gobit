@@ -173,9 +173,9 @@ func (s *Service) DeletePriceRule(ctx context.Context, id string) error {
 
 // buildPriceList validates the input and converts it into the domain model.
 func buildPriceList(in PriceListInput) (models.PriceList, error) {
-	title := strings.TrimSpace(in.Title)
-	if title == "" {
-		return models.PriceList{}, errors.Invalid(CodeInvalidInput, "the price list title cannot be empty")
+	title, err := listTitle(in.Title)
+	if err != nil {
+		return models.PriceList{}, err
 	}
 	if !in.Type.Valid() {
 		return models.PriceList{}, errors.Invalid(CodeInvalidInput,
@@ -193,11 +193,9 @@ func buildPriceList(in PriceListInput) (models.PriceList, error) {
 			string(in.Status), models.PriceListDraft, models.PriceListActive, models.PriceListExpired)
 	}
 
-	starts, ends := normalizeWindow(in.StartsAt, in.EndsAt)
-	if starts != nil && ends != nil && !starts.Before(*ends) {
-		return models.PriceList{}, errors.Invalid(CodeInvalidInput,
-			"the price list start (%s) has to be before its end (%s)",
-			starts.Format(time.RFC3339), ends.Format(time.RFC3339))
+	starts, ends, err := listWindow(in.StartsAt, in.EndsAt)
+	if err != nil {
+		return models.PriceList{}, err
 	}
 
 	return models.PriceList{
@@ -209,6 +207,29 @@ func buildPriceList(in PriceListInput) (models.PriceList, error) {
 		StartsAt:    starts,
 		EndsAt:      ends,
 	}, nil
+}
+
+// listTitle trims a list's title, which cannot be empty.
+func listTitle(raw string) (string, error) {
+	title := strings.TrimSpace(raw)
+	if title == "" {
+		return "", errors.Invalid(CodeInvalidInput, "the price list title cannot be empty")
+	}
+
+	return title, nil
+}
+
+// listWindow converts a list's window to UTC and refuses one that does not
+// start before it ends; an open end bounds nothing.
+func listWindow(startsAt, endsAt *time.Time) (starts, ends *time.Time, err error) {
+	starts, ends = normalizeWindow(startsAt, endsAt)
+	if starts != nil && ends != nil && !starts.Before(*ends) {
+		return nil, nil, errors.Invalid(CodeInvalidInput,
+			"the price list start (%s) has to be before its end (%s)",
+			starts.Format(time.RFC3339), ends.Format(time.RFC3339))
+	}
+
+	return starts, ends, nil
 }
 
 // normalizeWindow converts the window's ends to UTC and COPIES them; the

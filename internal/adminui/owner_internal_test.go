@@ -496,6 +496,12 @@ func (p recordingPrices) SwitchPriceListStatus(context.Context, string, string, 
 	return p.surfaces.reach(ServicePricingAdmin)
 }
 
+func (p recordingPrices) RevisePriceList(
+	context.Context, string, string, string, *time.Time, *time.Time, string, string, *time.Time, *time.Time,
+) error {
+	return p.surfaces.reach(ServicePricingAdmin)
+}
+
 func (p recordingPrices) ListPricesJSON(context.Context, string) (json.RawMessage, error) {
 	return json.RawMessage(`[]`), p.surfaces.reach(ServicePricingAdmin)
 }
@@ -905,8 +911,10 @@ var walkForms = map[string]url.Values{
 		formListPriceCurrency: {"TRY"}, formListPriceAmount: {"10"},
 	},
 	routeKey(http.MethodPost, VariantListPriceRemovePath): {formPriceSetID: {"pset_walk"}},
-	// Switching a price list's status (ADR 0328).
+	// Switching a price list's status (ADR 0328) and revising its terms (ADR
+	// 0330).
 	routeKey(http.MethodPost, PriceListStatusPath): {formStatusFrom: {"draft"}, formStatusTo: {"active"}},
+	routeKey(http.MethodPost, PriceListRevisePath): {formReadTitle: {"Walk"}, formPriceListTitle: {"Walked"}},
 	// Writing a price list (ADR 0326).
 	routeKey(http.MethodPost, PriceListsPath): {formPriceListTitle: {"Walk"}},
 	// A claim's evidence (ADR 0325).

@@ -80,7 +80,7 @@ func (u *UI) switchPriceList(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		corehttp.WriteRedirect(r.Context(), w, PriceListsPath)
 	case errors.IsInvalid(err) || errors.IsConflict(err) || errors.IsNotFound(err):
-		u.renderPriceLists(w, r, http.StatusUnprocessableEntity, messageFor(err), url.Values{})
+		u.renderPriceLists(w, r, http.StatusUnprocessableEntity, messageFor(err), url.Values{}, "")
 	default:
 		u.unexpectedFailure(w, r, err, "The price list could not be switched")
 	}
@@ -137,7 +137,7 @@ func (u *UI) canCreatePriceLists(r *http.Request) bool {
 
 // listPriceLists renders the price lists.
 func (u *UI) listPriceLists(w http.ResponseWriter, r *http.Request) {
-	u.renderPriceLists(w, r, http.StatusOK, "", url.Values{})
+	u.renderPriceLists(w, r, http.StatusOK, "", url.Values{}, "")
 }
 
 // createPriceList writes the price list the form describes and returns to the
@@ -162,7 +162,7 @@ func (u *UI) createPriceList(w http.ResponseWriter, r *http.Request) {
 		created := url.Values{paramCreated: {title}}
 		corehttp.WriteRedirect(r.Context(), w, PriceListsPath+"?"+created.Encode())
 	case errors.IsInvalid(err) || errors.IsConflict(err):
-		u.renderPriceLists(w, r, http.StatusUnprocessableEntity, messageFor(err), r.PostForm)
+		u.renderPriceLists(w, r, http.StatusUnprocessableEntity, messageFor(err), r.PostForm, "")
 	default:
 		u.unexpectedFailure(w, r, err, "The price list could not be written")
 	}
@@ -186,9 +186,12 @@ func (u *UI) writePriceList(r *http.Request, admin PriceListAdmin, title string)
 }
 
 // renderPriceLists lists the price lists with a refused write's reason and
-// what was typed. An operator who may write and not read the prices is told
-// the reason alone (ADR 0260).
-func (u *UI) renderPriceLists(w http.ResponseWriter, r *http.Request, code int, refused string, typed url.Values) {
+// what was typed: in the new list's form, or in the row of the list revised
+// when one was (ADR 0330). An operator who may write and not read the prices
+// is told the reason alone (ADR 0260).
+func (u *UI) renderPriceLists(
+	w http.ResponseWriter, r *http.Request, code int, refused string, typed url.Values, revised string,
+) {
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
 	if refused != "" && !principal.HasScope(scopePricingRead) {
 		u.errorPage(w, r, code, "Not done", refused)
@@ -217,9 +220,16 @@ func (u *UI) renderPriceLists(w http.ResponseWriter, r *http.Request, code int, 
 		return
 	}
 
+	views := priceListViews(rows, typed, revised)
+	if revised != "" {
+		// What was typed is the row's, not the new list's.
+		typed = url.Values{}
+	}
+
 	data := map[string]any{
 		titleKey:     priceListsLabel,
-		"PriceLists": rows,
+		"PriceLists": views,
+		"CanRevise":  u.canRevisePriceLists(r),
 		totalKey:     total,
 		createdKey:   r.URL.Query().Get(paramCreated),
 		canCreateKey: u.canCreatePriceLists(r),

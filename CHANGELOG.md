@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel revises a price list's title and window** (ADR 0330). **For
+  operators:** each row of the Price lists screen revises its list's title,
+  description and window under `pricing:write`; a list another operator
+  revised meanwhile is refused rather than written over. **For
+  integrators:** `pricing.admin` revises a list from the terms read, refusing
+  `pricing_price_list_moved`.
+
 - **The panel renames and re-ranks a customer group** (ADR 0329). **For
   operators:** each row of the Customer groups screen renames and re-ranks its
   group under `customer:write`; a group another operator revised meanwhile is

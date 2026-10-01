@@ -25,3 +25,21 @@ func (m *memRepo) SwitchPriceListStatus(
 
 	return list, true, nil
 }
+
+// RevisePriceList writes the list's terms if they are the ones read; the API
+// tests do not reach it, and the service's own test holds the rule.
+func (m *memRepo) RevisePriceList(
+	_ context.Context, id string, read, next models.PriceListTerms, _ func() time.Time,
+) (models.PriceList, bool, error) {
+	list, ok := m.lists[id]
+	if !ok {
+		return models.PriceList{}, false, errors.NotFound("price_list_not_found", "price list not found: %s", id)
+	}
+	if !list.Terms().Same(read) {
+		return list, false, nil
+	}
+	list.Title, list.Description, list.StartsAt, list.EndsAt = next.Title, next.Description, next.StartsAt, next.EndsAt
+	m.lists[id] = list
+
+	return list, true, nil
+}

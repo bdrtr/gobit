@@ -8,7 +8,10 @@ contract prices sit on a list, each limited to a customer group by its rule
 (ADR 0049). The rows come in the module's order.
 
 An operator who may write prices writes a list here. The moments are
-datetime-local inputs read as UTC, as a campaign's are (ADR 0319).
+datetime-local inputs read as UTC, as a campaign's are (ADR 0319). Each row's
+form revises its list's title, description and window; it carries them as
+the row was drawn, the moments to the nanosecond, and the module refuses
+when another operator revised the list first (ADR 0330).
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
@@ -43,7 +46,7 @@ datetime-local inputs read as UTC, as a campaign's are (ADR 0319).
 <div class="scroll">
 <table>
   <thead>
-    <tr><th>Price list</th><th>Type</th><th>Status</th><th>From (UTC)</th><th>Until (UTC)</th>{{ if .Moves }}<th></th>{{ end }}</tr>
+    <tr><th>Price list</th><th>Type</th><th>Status</th><th>From (UTC)</th><th>Until (UTC)</th>{{ if .Moves }}<th></th>{{ end }}{{ if .CanRevise }}<th></th>{{ end }}</tr>
   </thead>
   <tbody>
   {{ range $row := .PriceLists }}
@@ -63,6 +66,24 @@ datetime-local inputs read as UTC, as a campaign's are (ADR 0319).
           <button type="submit">{{ .Label }}</button>
         </form>
       {{ end }}</td>{{ end }}
+      {{ if $.CanRevise }}
+      <td>
+        <details{{ if $row.Refused }} open{{ end }}>
+          <summary>Revise</summary>
+          <form method="post" action="{{ $.Path }}/{{ $row.ID }}?page={{ $.Page }}">
+            <input type="hidden" name="read_title" value="{{ $row.Title }}">
+            <input type="hidden" name="read_description" value="{{ $row.Description }}">
+            <input type="hidden" name="read_starts_at" value="{{ $row.ReadStarts }}">
+            <input type="hidden" name="read_ends_at" value="{{ $row.ReadEnds }}">
+            <input name="title" value="{{ $row.FormTitle }}" aria-label="title" required>
+            <textarea name="description" aria-label="description" rows="2">{{ $row.FormDescription }}</textarea>
+            <label>From (UTC) <input type="datetime-local" name="starts_at" value="{{ $row.FormStarts }}"></label>
+            <label>Until (UTC) <input type="datetime-local" name="ends_at" value="{{ $row.FormEnds }}"></label>
+            <button type="submit">Write</button>
+          </form>
+        </details>
+      </td>
+      {{ end }}
     </tr>
   {{ end }}
   </tbody>
