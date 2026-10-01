@@ -219,6 +219,14 @@ func TestAnOperatorCompletesATelephoneOrderPaidLater(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, byCard.Code, "body: %s", byCard.Body.String())
 	assert.Contains(t, byCard.Body.String(), "checkout_workflow_offline_method_required")
 
+	// Zero is a storefront's "do not compare"; the operator's completion
+	// compares it like any other figure (D199).
+	unread := adminCartRequest(t, http.MethodPost, "/admin/v1/carts/"+cartID+"/complete",
+		fmt.Sprintf(`{"sales_channel_id":%q,"payment_provider_id":%q,"expected_total":0}`,
+			testChannelID, offlineMethod))
+	require.Equal(t, http.StatusConflict, unread.Code, "body: %s", unread.Body.String())
+	assert.Contains(t, unread.Body.String(), "checkout_workflow_total_mismatch")
+
 	done := adminCartRequest(t, http.MethodPost, "/admin/v1/carts/"+cartID+"/complete",
 		fmt.Sprintf(`{"sales_channel_id":%q,"payment_provider_id":%q,"expected_total":%d}`,
 			testChannelID, offlineMethod, int64(total)))

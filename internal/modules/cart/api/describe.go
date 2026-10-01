@@ -419,7 +419,8 @@ func describeAdminCompletion(d *openapi.Doc) {
 			"No gift card or balance is taken, because the customer is not there to present one. " +
 			"\n\n" +
 			"expected_total is MANDATORY: the total the operator read to the customer, and a " +
-			"cart whose total moved since is refused with 409. The order is placed owing the " +
+			"cart whose total moved since is refused with 409; zero is compared as well (D199). " +
+			"The order is placed owing the " +
 			"total, which outstanding reports, and the shop captures the session when the money " +
 			"arrives (ADR 0286).",
 		RequestBody: d.RequestBody(adminCompleteCartRequest{}),

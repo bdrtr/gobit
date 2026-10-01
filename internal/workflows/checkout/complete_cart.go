@@ -187,7 +187,9 @@ type CompleteCartInput struct {
 	// here.
 	Email string
 	// ExpectedTotal is the total the caller had the customer CONFIRM (minor
-	// unit); it is optional and zero means "do not check".
+	// unit); it is optional and zero means "do not check" — except on an
+	// [CompleteCartInput.OfflineOnly] completion, which compares zero as well
+	// (D199).
 	//
 	// If given, it is compared with the computed amount and a difference
 	// produces errors.Conflict. The check is necessary because the totals are

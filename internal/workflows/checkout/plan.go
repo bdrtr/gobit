@@ -502,7 +502,11 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 	if err := plan.validate(); err != nil {
 		return nil, err
 	}
-	if in.ExpectedTotal > 0 && in.ExpectedTotal != plan.Amount {
+	// Zero is "do not compare" for a storefront, whose shopper pays the
+	// computed amount at the checkout. The operator's completion compares it
+	// too: the caller is not there to pay, and the total read to them is the
+	// only figure they agreed to (D199).
+	if (in.ExpectedTotal > 0 || in.OfflineOnly) && in.ExpectedTotal != plan.Amount {
 		return nil, errors.Conflict(CodeTotalMismatch,
 			"cart amount differs from the approved amount: approved %d, calculated %d (%s)",
 			in.ExpectedTotal, plan.Amount, plan.CartID)

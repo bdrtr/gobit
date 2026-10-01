@@ -31,6 +31,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The operator's completion compares a total of zero** (D199). **For
+  integrators:** `POST /admin/v1/carts/{id}/complete` with `expected_total: 0`
+  on a cart that does not total zero is refused with 409
+  `checkout_workflow_total_mismatch`; zero used to skip the comparison there as
+  it does on the storefront. The storefront's completion is unchanged.
+
 - **The panel completes a telephone order** (ADR 0291). **For operators:** the
   cart's page writes the caller's shipping address, chooses the shipping option
   and places the order with an offline method against the total the page

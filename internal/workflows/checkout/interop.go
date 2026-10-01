@@ -97,7 +97,8 @@ type completeCartRequest struct {
 	// "do not compare" (see [CompleteCartInput.ExpectedTotal]) and that CANNOT
 	// LOWER the amount — a caller skipping the comparison still pays the amount
 	// the server computed, it only loses the chance to warn the customer if the
-	// price has changed.
+	// price has changed. The operator's offline completion compares zero too
+	// (D199).
 	ExpectedTotal int64 `json:"expected_total"`
 	// OfflineOnly refuses a provider the checkout would capture; the operator's
 	// completion sets it (ADR 0286), and a storefront's never does.

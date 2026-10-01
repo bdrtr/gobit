@@ -171,6 +171,7 @@ func TestAnOfflineOnlyCompletionTakesAnOfflineMethod(t *testing.T) {
 	h := laterHarness(t, 0)
 	in := h.input()
 	in.OfflineOnly = true
+	in.ExpectedTotal = testAmount
 
 	result, err := h.wf.CompleteCart(context.Background(), in)
 	require.NoError(t, err)
@@ -187,4 +188,28 @@ func TestTheInteropCarriesOfflineOnly(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, hasCode(err, CodeOfflineMethodRequired), "error: %v", err)
 	assert.Zero(t, h.rec.count("order:place"))
+}
+
+// TestAnOperatorsCompletionComparesAZeroTotal is D199: zero is a storefront's
+// "do not compare", and an operator's offline completion compares it like any
+// other figure, so the order is not placed for a total nobody read to the
+// caller.
+func TestAnOperatorsCompletionComparesAZeroTotal(t *testing.T) {
+	h := laterHarness(t, 0)
+	in := h.input()
+	in.OfflineOnly = true
+	in.ExpectedTotal = 0
+
+	_, err := h.wf.CompleteCart(context.Background(), in)
+
+	require.Error(t, err)
+	assert.True(t, hasCode(err, CodeTotalMismatch), "error: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict))
+	assert.Zero(t, h.rec.count("order:place"))
+
+	storefront := laterHarness(t, 0)
+	sin := storefront.input()
+	sin.ExpectedTotal = 0
+	_, err = storefront.wf.CompleteCart(context.Background(), sin)
+	require.NoError(t, err, "a storefront's zero still skips the comparison")
 }
