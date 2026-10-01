@@ -137,10 +137,29 @@ func (s *capturePaymentStep) Invoke(ctx context.Context, sc *workflow.StepContex
 			"the capture step could not find the payment session: %s", s.plan.CartID)
 	}
 
+	// # A provider whose money comes later (ADR 0284)
+	//
+	// Its session stays authorized: the order is placed owing that part, and the
+	// operator captures it when the money arrives. The tenders that paid first
+	// are still captured here, and the verification asks for what they held.
+	// When nothing is captured, nothing can have moved, and a fault below rolls
+	// the saga back like any fault before the pivot.
+	owed := s.plan.Amount
+	if s.plan.CapturesLater {
+		owed = heldFirst
+	}
+	capturing := owed > 0
+	fail := s.dangling
+	if !capturing {
+		fail = func(cause error) error { return cause }
+	}
+
 	// The flag is set BEFORE the call: EVERY fault that occurs from here on (an
 	// error, a panic, a timeout) means "the money may have gone" and the pivot
 	// guard is in force. The flag is cleared only on a proven zero capture.
-	sc.Shared[sharedCaptureAttempted] = true
+	if capturing {
+		sc.Shared[sharedCaptureAttempted] = true
+	}
 
 	// # Several captures, the uncertain one first (ADR 0209, ADR 0269)
 	//
@@ -153,7 +172,7 @@ func (s *capturePaymentStep) Invoke(ctx context.Context, sc *workflow.StepContex
 	// execution stops for a person, as any capture that cannot be verified
 	// does.
 	var paymentID string
-	if sessionID != "" {
+	if sessionID != "" && !s.plan.CapturesLater {
 		if paymentID, err = s.capture(ctx, sc, sessionID, collectionID, s.plan.Amount-heldFirst); err != nil {
 			return nil, err
 		}
@@ -175,7 +194,7 @@ func (s *capturePaymentStep) Invoke(ctx context.Context, sc *workflow.StepContex
 
 	_, amount, _, captured, _, err := s.w.payments.Collection(ctx, collectionID)
 	if err != nil {
-		return nil, s.dangling(errors.Wrap(err, errors.KindOf(err), CodePaymentUndercaptured,
+		return nil, fail(errors.Wrap(err, errors.KindOf(err), CodePaymentUndercaptured,
 			"the capture could not be verified: collection %s could not be read", collectionID))
 	}
 	// The verification is anchored to the amount known LOCALLY, NOT to the one
@@ -187,24 +206,24 @@ func (s *capturePaymentStep) Invoke(ctx context.Context, sc *workflow.StepContex
 	// collected, 0 was collected", a 3000-unit order was being written as
 	// successful with ZERO capture. The authorize step's rule (authorized <
 	// s.plan.Amount) is already anchored to the local amount; this is its twin.
-	if captured < s.plan.Amount {
-		return nil, s.dangling(errors.Conflict(CodePaymentUndercaptured,
-			"the amount captured does not cover what must be collected: %d < %d (collection %s)",
-			captured, s.plan.Amount, collectionID))
+	if captured < owed {
+		return nil, fail(errors.Conflict(CodePaymentUndercaptured,
+			"the amount captured does not cover what must be collected now: %d < %d (collection %s)",
+			captured, owed, collectionID))
 	}
 
 	// If the collection's amount has drifted from the plan this is a separate
 	// fault: it means the payment collection was opened with an amount other than
 	// the one the saga opened.
 	if amount != s.plan.Amount {
-		return nil, s.dangling(errors.Internal(CodePaymentUndercaptured,
+		return nil, fail(errors.Internal(CodePaymentUndercaptured,
 			"the payment collection's amount has drifted from the plan: collection %d, plan %d (collection %s)",
 			amount, s.plan.Amount, collectionID))
 	}
 
 	s.w.log.InfoContext(ctx, "payment captured",
 		"cart_id", s.plan.CartID, "payment_id", paymentID,
-		"captured", captured, "amount", amount)
+		"captured", captured, "amount", amount, "captures_later", s.plan.CapturesLater)
 
 	return captureOutput{PaymentID: paymentID, OtherPaymentIDs: others, Captured: captured}, nil
 }

@@ -763,19 +763,23 @@ type completeCartFlowResult struct {
 	CartID       string `json:"cart_id"`
 	CurrencyCode string `json:"currency_code"`
 	Amount       int64  `json:"amount"`
+	Outstanding  int64  `json:"outstanding"`
 }
 
 // completeCartDTO is the completed cart's outward representation.
 //
-// The response carries the order's ID and the captured amount, nothing else: the
-// payment session and reservation ids are internal structure, and the warnings
-// are the operator's business (the flow logs them). The order's detail is read
-// with GET /store/v1/orders/{id}.
+// The response carries the order's ID, its total and what it still owes,
+// nothing else: the payment session and reservation ids are internal
+// structure, and the warnings are the operator's business (the flow logs
+// them). The order's detail is read with GET /store/v1/orders/{id}.
 type completeCartDTO struct {
 	OrderID      string `json:"order_id"`
 	CartID       string `json:"cart_id"`
 	CurrencyCode string `json:"currency_code"`
 	Total        int64  `json:"total"`
+	// Outstanding is what the order still owes: the part of an offline method
+	// the customer pays later, zero when the checkout took the whole (ADR 0284).
+	Outstanding int64 `json:"outstanding"`
 }
 
 // storeCompleteCart turns the cart into an order.
@@ -876,6 +880,7 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 		CartID:       result.CartID,
 		CurrencyCode: result.CurrencyCode,
 		Total:        result.Amount,
+		Outstanding:  result.Outstanding,
 	}})
 }
 

@@ -519,6 +519,10 @@ type stubPayments struct {
 	collectionFn           func(ctx context.Context, collectionID string) (string, int64, int64, int64, int64, error)
 	// checkTenderFn scripts the refusal known before the saga; nil accepts.
 	checkTenderFn func(ctx context.Context, providerID, customerID string) error
+	// later are the providers whose money comes later (ADR 0284); laterErr,
+	// when set, is the answer to every question about it.
+	later    map[string]bool
+	laterErr error
 
 	// checkedTenders keeps, in order, the provider and customer each check was
 	// asked about. It is kept apart from the recorder: the check is a read made
@@ -540,6 +544,15 @@ func (s *stubPayments) CheckTender(
 	}
 
 	return s.checkTenderFn(ctx, providerID, customerID)
+}
+
+// CapturesLater answers from the scripted set.
+func (s *stubPayments) CapturesLater(_ context.Context, providerID string) (bool, error) {
+	if s.laterErr != nil {
+		return false, s.laterErr
+	}
+
+	return s.later[providerID], nil
 }
 
 // CreateCollection applies the scripted collection-opening behavior.

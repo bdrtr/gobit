@@ -215,10 +215,15 @@ type CompleteCartResult struct {
 	PaymentSessionID string `json:"payment_session_id"`
 	// PaymentID is the id of the capture.
 	PaymentID string `json:"payment_id"`
-	// CurrencyCode is the currency that was captured.
+	// CurrencyCode is the order's currency.
 	CurrencyCode string `json:"currency_code"`
-	// Amount is the captured amount (minor unit).
+	// Amount is the order's total (minor unit); the checkout captured it less
+	// Outstanding.
 	Amount int64 `json:"amount"`
+	// Outstanding is what the order still owes after the checkout: the part of
+	// a provider whose money comes later, which the operator captures when it
+	// arrives (ADR 0284). Zero when the checkout captured the whole.
+	Outstanding int64 `json:"outstanding,omitempty"`
 	// ReservationIDs are the reservations allocated to the order.
 	ReservationIDs []string `json:"reservation_ids"`
 	// PaymentTotalsRecorded reports whether what was collected was written onto

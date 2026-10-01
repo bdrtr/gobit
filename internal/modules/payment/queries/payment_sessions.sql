@@ -109,9 +109,16 @@ RETURNING *;
 -- $2 is a WAITING PERIOD, not an optional threshold: a capture in flight stands
 -- in exactly this state for seconds at a time, and counting that as a
 -- divergence would drop every normal payment into the report.
+--
+-- The providers whose money arrives after the order is placed are left out
+-- (ADR 0284): an offline session stays authorized for as long as the customer
+-- takes to pay, which is that provider working rather than a capture in
+-- flight, and the oldest-first page would fill with them and never reach a
+-- card's session.
 -- name: ListSessionsForReconciliation :many
 SELECT * FROM payment_sessions
 WHERE status = 'authorized'
-  AND updated_at < $1
+  AND updated_at < sqlc.arg(unchanged_since)
+  AND provider_id <> ALL(sqlc.arg(excluded_providers)::text[])
 ORDER BY updated_at
-LIMIT $2;
+LIMIT sqlc.arg(row_limit);

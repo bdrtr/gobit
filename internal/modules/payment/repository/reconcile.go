@@ -18,12 +18,19 @@ import (
 func (r *Repository) ListSessionsForReconciliation(
 	ctx context.Context,
 	unchangedSince time.Time,
+	excluded []string,
 	limit int32,
 ) ([]models.PaymentSession, error) {
+	if excluded == nil {
+		// A NULL array makes `<> ALL` unknown for every row; an empty one is
+		// true for every row.
+		excluded = []string{}
+	}
 	rows, err := r.queries(ctx).ListSessionsForReconciliation(ctx,
 		paymentdb.ListSessionsForReconciliationParams{
-			UpdatedAt: fromTime(unchangedSince),
-			Limit:     limit,
+			UnchangedSince:    fromTime(unchangedSince),
+			ExcludedProviders: excluded,
+			RowLimit:          limit,
 		})
 	if err != nil {
 		return nil, classify(err, codeQueryFailed, "the sessions to reconcile could not be listed")

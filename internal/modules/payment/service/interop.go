@@ -68,6 +68,13 @@ func (i *Interop) CheckTender(
 	return i.svc.CheckTender(ctx, providerID, customerID, currencyCode, decoded)
 }
 
+// CapturesLater reports whether a provider's money arrives after the order is
+// placed, so the checkout places the order owing that part rather than
+// capturing it (ADR 0284). A provider that is not registered is refused.
+func (i *Interop) CapturesLater(_ context.Context, providerID string) (bool, error) {
+	return i.svc.CapturesLater(providerID)
+}
+
 // IssueSoldGiftCard issues the gift card a sale made and returns its id and
 // code (ADR 0210).
 //

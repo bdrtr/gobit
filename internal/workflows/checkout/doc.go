@@ -175,6 +175,12 @@
 // is applied after the capture as well: the collection is re-read and
 // captured >= amount is verified.
 //
+// A provider whose money comes later — an offline method — is authorized under
+// the same rule and not captured (ADR 0284): its authorization is the
+// customer's promise, the order is placed owing that part, and the capture is
+// the operator's when the money arrives. The verification then asks for what
+// the tenders that paid before it held.
+//
 // # The point of no return (the pivot)
 //
 // capture_payment is the saga's PIVOT step: once the money has been taken there

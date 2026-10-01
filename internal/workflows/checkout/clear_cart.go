@@ -101,6 +101,16 @@ func (s *clearCartStep) Invoke(ctx context.Context, sc *workflow.StepContext) (a
 	if err != nil {
 		return nil, err
 	}
+	if s.plan.CapturesLater {
+		holds, err := sharedHolds(sc)
+		if err != nil {
+			return nil, err
+		}
+		result.Outstanding = s.plan.Amount
+		for _, hold := range holds {
+			result.Outstanding -= hold.Authorized
+		}
+	}
 
 	// The money is recorded FIRST, before the cart and the reservations. All
 	// three are best-effort here, so the order among them is a priority

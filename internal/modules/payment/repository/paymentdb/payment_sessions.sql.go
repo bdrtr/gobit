@@ -213,13 +213,15 @@ const listSessionsForReconciliation = `-- name: ListSessionsForReconciliation :m
 SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions
 WHERE status = 'authorized'
   AND updated_at < $1
+  AND provider_id <> ALL($2::text[])
 ORDER BY updated_at
-LIMIT $2
+LIMIT $3
 `
 
 type ListSessionsForReconciliationParams struct {
-	UpdatedAt pgtype.Timestamptz
-	Limit     int32
+	UnchangedSince    pgtype.Timestamptz
+	ExcludedProviders []string
+	RowLimit          int32
 }
 
 // ListSessionsForReconciliation returns the sessions the provider has to be
@@ -243,8 +245,14 @@ type ListSessionsForReconciliationParams struct {
 // $2 is a WAITING PERIOD, not an optional threshold: a capture in flight stands
 // in exactly this state for seconds at a time, and counting that as a
 // divergence would drop every normal payment into the report.
+//
+// The providers whose money arrives after the order is placed are left out
+// (ADR 0284): an offline session stays authorized for as long as the customer
+// takes to pay, which is that provider working rather than a capture in
+// flight, and the oldest-first page would fill with them and never reach a
+// card's session.
 func (q *Queries) ListSessionsForReconciliation(ctx context.Context, arg ListSessionsForReconciliationParams) ([]PaymentSession, error) {
-	rows, err := q.db.Query(ctx, listSessionsForReconciliation, arg.UpdatedAt, arg.Limit)
+	rows, err := q.db.Query(ctx, listSessionsForReconciliation, arg.UnchangedSince, arg.ExcludedProviders, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}

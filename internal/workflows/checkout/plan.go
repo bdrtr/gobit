@@ -167,6 +167,12 @@ type checkoutPlan struct {
 	SalesChannelIDs []string `json:"sales_channel_ids"`
 	// PaymentProviderID is the provider the payment is opened at.
 	PaymentProviderID string `json:"payment_provider_id"`
+	// CapturesLater says the provider's money arrives after the order is
+	// placed, so its part is authorized and not captured (ADR 0284). It is on
+	// the plan for [checkoutPlan.SalesChannelIDs]'s reason: a saga resumed
+	// tomorrow captures what it would have captured today. A plan recorded
+	// before the field reads false, and no provider then captured later.
+	CapturesLater bool `json:"captures_later,omitempty"`
 	// Amount is the total to be collected (minor unit).
 	Amount int64 `json:"amount"`
 	// Subtotal is the sum of the line subtotals.
@@ -449,6 +455,13 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		}
 	}
 
+	// Whether the provider's part is captured now or by the operator later is
+	// decided here, once, and recorded (ADR 0284).
+	capturesLater, err := w.payments.CapturesLater(ctx, in.PaymentProviderID)
+	if err != nil {
+		return nil, err
+	}
+
 	lines, err := w.planLines(ctx, snap, totals)
 	if err != nil {
 		return nil, err
@@ -465,6 +478,7 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		LocationID:        in.LocationID,
 		SalesChannelIDs:   in.SalesChannelIDs,
 		PaymentProviderID: in.PaymentProviderID,
+		CapturesLater:     capturesLater,
 		Amount:            totals.Total,
 		Subtotal:          totals.Subtotal,
 		DiscountTotal:     totals.DiscountTotal,

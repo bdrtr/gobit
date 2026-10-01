@@ -22,6 +22,7 @@ import (
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
+	"github.com/bdrtr/gobit/internal/modules/payment/offline"
 	"github.com/bdrtr/gobit/internal/modules/payment/repository"
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
@@ -132,7 +133,7 @@ func TestReconciliationListingSelectsOnlyTheSuspectSet(t *testing.T) {
 	require.NoError(t, svc.CancelPayment(ctx, released.ID))
 	backdateSession(ctx, t, released.ID, 2*time.Hour)
 
-	rows, err := repo.ListSessionsForReconciliation(ctx, time.Now().UTC().Add(-15*time.Minute), 100)
+	rows, err := repo.ListSessionsForReconciliation(ctx, time.Now().UTC().Add(-15*time.Minute), nil, 100)
 	require.NoError(t, err)
 
 	ids := make(map[string]bool, len(rows))
@@ -157,6 +158,52 @@ func TestReconciliationListingSelectsOnlyTheSuspectSet(t *testing.T) {
 	}
 }
 
+// TestReconciliationListingLeavesOutTheExcludedProviders is ADR 0284 against
+// the database: an aged offline session is a suspect until its provider is
+// excluded, and an exclusion of nobody — a nil list — leaves the set whole
+// rather than empty, which is what a NULL array would make of `<> ALL`.
+func TestReconciliationListingLeavesOutTheExcludedProviders(t *testing.T) {
+	ctx := context.Background()
+	repo := repository.New(testPool.Pool())
+	transfer, err := offline.New("bank_transfer")
+	require.NoError(t, err)
+	registry := service.NewProviderRegistry()
+	require.NoError(t, registry.Register(manual.New(repo, nil)))
+	require.NoError(t, registry.Register(transfer))
+	svc, err := service.New(service.Options{Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil)})
+	require.NoError(t, err)
+
+	card := authorizedSession(ctx, t, svc, "recon-card-"+t.Name(), 2*time.Hour)
+	col := reconCollection(ctx, t, svc)
+	opened, err := svc.CreateSession(ctx, col.ID, transfer.ID(), service.CreateSessionInput{
+		IdempotencyKey: "recon-transfer-" + t.Name(),
+	})
+	require.NoError(t, err)
+	promised, err := svc.AuthorizePayment(ctx, opened.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.SessionAuthorized, promised.Status)
+	require.Equal(t, reconAmount, promised.AuthorizedAmount, "the promise covers the session")
+	backdateSession(ctx, t, promised.ID, 3*time.Hour)
+
+	listed := func(excluded []string) map[string]bool {
+		rows, err := repo.ListSessionsForReconciliation(ctx, time.Now().UTC().Add(-time.Hour), excluded, 1_000)
+		require.NoError(t, err)
+		ids := make(map[string]bool, len(rows))
+		for i := range rows {
+			ids[rows[i].ID] = true
+		}
+		return ids
+	}
+
+	all := listed(nil)
+	assert.True(t, all[promised.ID], "excluding nobody keeps the offline session")
+	assert.True(t, all[card.ID])
+
+	without := listed([]string{transfer.ID()})
+	assert.False(t, without[promised.ID], "the excluded provider's session is not a suspect")
+	assert.True(t, without[card.ID], "the card's session still is")
+}
+
 // TestReconciliationListingIsOldestFirst pins the ordering, because the limit
 // reads it.
 //
@@ -172,7 +219,7 @@ func TestReconciliationListingIsOldestFirst(t *testing.T) {
 	mid := authorizedSession(ctx, t, svc, "recon-mid-"+t.Name(), 4*time.Hour)
 	recent := authorizedSession(ctx, t, svc, "recon-recent-"+t.Name(), 2*time.Hour)
 
-	rows, err := repo.ListSessionsForReconciliation(ctx, time.Now().UTC().Add(-time.Hour), 500)
+	rows, err := repo.ListSessionsForReconciliation(ctx, time.Now().UTC().Add(-time.Hour), nil, 500)
 	require.NoError(t, err)
 
 	positions := map[string]int{}
@@ -188,7 +235,7 @@ func TestReconciliationListingIsOldestFirst(t *testing.T) {
 
 	// A limit takes from the old end, which is what makes truncation a backlog
 	// rather than a sample.
-	page, err := repo.ListSessionsForReconciliation(ctx, time.Now().UTC().Add(-5*time.Hour), 1)
+	page, err := repo.ListSessionsForReconciliation(ctx, time.Now().UTC().Add(-5*time.Hour), nil, 1)
 	require.NoError(t, err)
 	require.Len(t, page, 1)
 	assert.Equal(t, old.ID, page[0].ID)
@@ -243,11 +290,15 @@ func TestReconciliationListingUsesItsIndex(t *testing.T) {
 	_, err = testPool.Pool().Exec(ctx, `ANALYZE payment_sessions`)
 	require.NoError(t, err)
 
+	// The statement is the query's own text, the providers whose money comes
+	// later included (ADR 0284), with one of them named, as an installation
+	// with an offline method runs it.
 	rows, err := testPool.Pool().Query(ctx,
 		`EXPLAIN SELECT * FROM payment_sessions
 		 WHERE status = 'authorized' AND updated_at < $1
-		 ORDER BY updated_at LIMIT $2`,
-		time.Now().UTC().Add(-15*time.Minute), int32(50))
+		   AND provider_id <> ALL($2::text[])
+		 ORDER BY updated_at LIMIT $3`,
+		time.Now().UTC().Add(-15*time.Minute), []string{"bank_transfer"}, int32(50))
 	require.NoError(t, err)
 	defer rows.Close()
 

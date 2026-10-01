@@ -477,6 +477,11 @@ type Payments interface {
 	// provider will receive it.
 	CheckTender(ctx context.Context, providerID, customerID, currencyCode string, data json.RawMessage) error
 
+	// CapturesLater reports whether a provider's money arrives after the order
+	// is placed — an offline method — so the saga authorizes it and leaves its
+	// capture to the operator (ADR 0284). An unregistered provider is refused.
+	CapturesLater(ctx context.Context, providerID string) (bool, error)
+
 	// CreateCollection opens a payment collection for a reference and returns its
 	// identifier. The amount must be POSITIVE.
 	//

@@ -308,9 +308,10 @@ type Store interface {
 	// ListSessionsForReconciliation returns the sessions that are authorized
 	// but not captured here and have been in that state since before
 	// unchangedSince — the only set where this module and a provider can
-	// silently disagree about money.
+	// silently disagree about money — leaving out the sessions of the excluded
+	// providers.
 	ListSessionsForReconciliation(
-		ctx context.Context, unchangedSince time.Time, limit int32,
+		ctx context.Context, unchangedSince time.Time, excluded []string, limit int32,
 	) ([]models.PaymentSession, error)
 	// SessionCounts counts the collection's sessions by status in a SINGLE
 	// query.

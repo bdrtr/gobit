@@ -137,8 +137,10 @@ func (s *Service) Reconcile(
 	// Truncated into a warning that the newest sessions went unread — a warning
 	// that fires every pass on a healthy installation is one an operator learns
 	// to skip, which costs the pass the day it is true.
+	// The sessions of a provider whose money comes later are not suspects: an
+	// offline session stays authorized until the customer pays (ADR 0284).
 	suspects, err := s.store.ListSessionsForReconciliation(
-		ctx, time.Now().UTC().Add(-unchangedFor), int32(limit)+1)
+		ctx, time.Now().UTC().Add(-unchangedFor), s.laterCapturing(), int32(limit)+1)
 	if err != nil {
 		return ReconciliationReport{}, errors.Wrap(err, errors.KindOf(err),
 			CodeReconcileFailed, "the sessions to reconcile could not be listed")

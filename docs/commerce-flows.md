@@ -53,8 +53,8 @@ storefront does its work not with its own service but with a cross-module FLOW:
 |---|---|---|
 | `POST /store/v1/carts` | the SERVER derives the region and the currency from `country_code`, validates the customer, opens the cart | `workflows/cart` create_cart |
 | `POST /store/v1/carts/{id}/line-items` | the SERVER decides the price and the title, adds the line — or raises the one of the same variant and `properties` (ADR 0223) — and refreshes the totals | `workflows/cart` add_line_item |
-| `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` | writes the quantity and REPRICES the line; a quantity of zero removes the line (204) | `workflows/cart` update_line_item |
-| `POST /store/v1/carts/{id}/complete` | reserves stock, opens the order, captures the payment, closes the cart | `workflows/checkout` complete_cart |
+| `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` | writes the quantity and REPRICES the line; a quantity of zero removes the line (204); a raise asks the line's channel again (ADR 0281) | `workflows/cart` update_line_item |
+| `POST /store/v1/carts/{id}/complete` | reserves stock, opens the order, captures the payment — an offline method's part is authorized and left for the shop to capture (ADR 0284) — closes the cart | `workflows/checkout` complete_cart |
 
 ### The HTTP owner of a flow is the module
 
@@ -209,9 +209,9 @@ has been left inconsistent.
   Letting the customer pick a warehouse would both leak the stock topology and
   leave it to them to decide where the order ships from.
 
-The response carries the order's identity and the amount captured; the payment
-session, collection and reservation ids and the operator's warnings are NOT
-PUBLISHED.
+The response carries the order's identity, its total and what it still owes
+(`outstanding`, the part of an offline method, ADR 0284); the payment session,
+collection and reservation ids and the operator's warnings are NOT PUBLISHED.
 
 ### Where the same criterion is not applied yet
 

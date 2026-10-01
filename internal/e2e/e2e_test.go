@@ -666,6 +666,7 @@ func setUpHarness(ctx context.Context) error {
 	// nothing runs at the rate where it matters most (ADR 0165).
 	registry.Add(paymentmod.New(paymentmod.Options{
 		ManualProvider:         true,
+		OfflineMethods:         []string{offlineMethod},
 		PersonBoundTenders:     true,
 		LoyaltyEarnBasisPoints: loyaltyEarnBasisPoints,
 	}))

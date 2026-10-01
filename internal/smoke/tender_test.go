@@ -17,7 +17,8 @@ const manualProviderID = "manual"
 
 // TestAProductionInstallationOffersNoManualProvider is ADR 0283 through the
 // real binary: a process started with APP_ENV=production does not offer the
-// manual provider to a shopper.
+// manual provider to a shopper. It offers the offline method it names, which
+// is ADR 0284's setting reaching the payment module through the same root.
 //
 // The manual provider authorizes and captures whatever the caller names, so a
 // shopper who could choose it would place a paid order without paying. The hop
@@ -37,6 +38,7 @@ func TestAProductionInstallationOffersNoManualProvider(t *testing.T) {
 	cfg["REDIS_URL"] = "redis://127.0.0.1:" + strconv.Itoa(freePort(t)) + "/0"
 	cfg["ADMIN_BOOTSTRAP_EMAIL"] = seedEmail
 	cfg["ADMIN_BOOTSTRAP_PASSWORD"] = seedPassword
+	cfg["PAYMENT_OFFLINE_METHODS"] = "bank_transfer"
 
 	s := startServer(t, cfg)
 	s.waitForReady(startupTimeout)
@@ -46,4 +48,7 @@ func TestAProductionInstallationOffersNoManualProvider(t *testing.T) {
 	require.NotEmpty(t, tenders, "the provider list read nothing, so it proves nothing")
 	assert.NotContains(t, tenders, manualProviderID,
 		"a production installation must not offer a tender that places a paid order without payment")
+	assert.Contains(t, tenders, "bank_transfer",
+		"the offline method the installation named is offered; its absence means "+
+			"PAYMENT_OFFLINE_METHODS never reached the payment module")
 }

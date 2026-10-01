@@ -483,10 +483,12 @@ func (f *fakeStore) ListPaymentSessionsByCollection(
 // falsified by any test.
 //
 // There used to be a third condition, "not deleted". The column is gone
-// (ADR 0054) and so is the branch that mirrored it.
+// (ADR 0054) and so is the branch that mirrored it. The excluded providers are
+// the query's third condition since ADR 0284.
 func (f *fakeStore) ListSessionsForReconciliation(
 	_ context.Context,
 	unchangedSince time.Time,
+	excluded []string,
 	limit int32,
 ) ([]models.PaymentSession, error) {
 	f.mu.Lock()
@@ -495,7 +497,7 @@ func (f *fakeStore) ListSessionsForReconciliation(
 	out := []models.PaymentSession{}
 	for _, id := range slices.Sorted(maps.Keys(f.sessions)) {
 		ses := f.sessions[id]
-		if ses.Status != models.SessionAuthorized {
+		if ses.Status != models.SessionAuthorized || slices.Contains(excluded, ses.ProviderID) {
 			continue
 		}
 		if !ses.UpdatedAt.Before(unchangedSince) {

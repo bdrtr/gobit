@@ -131,6 +131,9 @@ func (c Config) Validate() error {
 	if err := c.validatePlugins(); err != nil {
 		return err
 	}
+	if err := c.validatePaymentOfflineMethods(); err != nil {
+		return err
+	}
 	if err := c.validateNotificationProvider(); err != nil {
 		return err
 	}
@@ -344,6 +347,30 @@ func (c Config) validatePlugins() error {
 			return fmt.Errorf("config: %q appears twice in the PLUGINS list", name)
 		}
 		gorulen[name] = struct{}{}
+	}
+	return nil
+}
+
+// validatePaymentOfflineMethods refuses an empty name, a name with surrounding
+// whitespace and a name given twice in PAYMENT_OFFLINE_METHODS (ADR 0284).
+//
+// Whitespace is refused rather than trimmed for [Config.NotificationProvider]'s
+// reason: the name is what a shopper's client sends, and the value the operator
+// wrote and the one the shop answers to must not differ. The rest of a name's
+// shape is the payment module's to check, at startup.
+func (c Config) validatePaymentOfflineMethods() error {
+	seen := make(map[string]struct{}, len(c.PaymentOfflineMethods))
+	for i, name := range c.PaymentOfflineMethods {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("config: there is an empty name at position %d of the PAYMENT_OFFLINE_METHODS list", i+1)
+		}
+		if name != strings.TrimSpace(name) {
+			return fmt.Errorf("config: %q in the PAYMENT_OFFLINE_METHODS list has surrounding whitespace", name)
+		}
+		if _, dup := seen[name]; dup {
+			return fmt.Errorf("config: %q appears twice in the PAYMENT_OFFLINE_METHODS list", name)
+		}
+		seen[name] = struct{}{}
 	}
 	return nil
 }

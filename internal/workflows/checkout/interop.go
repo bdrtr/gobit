@@ -127,10 +127,14 @@ type completeCartResponse struct {
 	OrderID string `json:"order_id"`
 	// CartID is the cart the order was born from.
 	CartID string `json:"cart_id"`
-	// CurrencyCode is the currency that was captured (ISO 4217).
+	// CurrencyCode is the order's currency (ISO 4217).
 	CurrencyCode string `json:"currency_code"`
-	// Amount is the captured amount (minor unit).
+	// Amount is the order's total (minor unit); the checkout captured it less
+	// Outstanding.
 	Amount int64 `json:"amount"`
+	// Outstanding is what the order still owes: the part of an offline
+	// method, paid later (ADR 0284).
+	Outstanding int64 `json:"outstanding"`
 }
 
 // CompleteCartJSON turns the cart into an order.
@@ -175,5 +179,6 @@ func (i *Interop) CompleteCartJSON(ctx context.Context, request json.RawMessage)
 		CartID:       result.CartID,
 		CurrencyCode: result.CurrencyCode,
 		Amount:       result.Amount,
+		Outstanding:  result.Outstanding,
 	})
 }

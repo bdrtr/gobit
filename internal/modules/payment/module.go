@@ -76,6 +76,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/giftcard"
 	"github.com/bdrtr/gobit/internal/modules/payment/loyaltypoints"
 	"github.com/bdrtr/gobit/internal/modules/payment/manual"
+	"github.com/bdrtr/gobit/internal/modules/payment/offline"
 	"github.com/bdrtr/gobit/internal/modules/payment/repository"
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 	"github.com/bdrtr/gobit/internal/modules/payment/storecredit"
@@ -184,6 +185,13 @@ type Options struct {
 	// what an installation without a provider account takes an order end to end
 	// with, and the composition root registers it everywhere but production.
 	ManualProvider bool
+
+	// OfflineMethods are the names of the offline payment methods — a bank
+	// transfer, cash on delivery — each registered as a provider of its own
+	// whose money arrives after the order is placed (ADR 0284). None by
+	// default: a method places orders that owe their total, which a shop
+	// offers only by naming it.
+	OfflineMethods []string
 
 	// PersonBoundTenders bir KİŞİNİN bakiyesini harcayan iki sağlayıcının —
 	// mağaza kredisi (ADR 0152) ve sadakat puanı (ADR 0165) — kaydedilip
@@ -315,6 +323,20 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		if err := providers.Register(loyaltypoints.New(repo, log)); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
 				"%s modülü sadakat puanı sağlayıcısını kaydedemedi", ModuleName)
+		}
+	}
+	// The offline methods come after the providers in the box, so a method
+	// named like one of them is the registration that fails, naming the method
+	// (ADR 0284).
+	for _, method := range m.opts.OfflineMethods {
+		provider, err := offline.New(method)
+		if err != nil {
+			return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
+				"the %s module could not register the offline method %q", ModuleName, method)
+		}
+		if err := providers.Register(provider); err != nil {
+			return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
+				"the %s module could not register the offline method %q", ModuleName, method)
 		}
 	}
 

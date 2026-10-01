@@ -31,6 +31,16 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An offline method is paid when the shop says so** (ADR 0284). **For
+  operators:** `PAYMENT_OFFLINE_METHODS` names the offline methods a shopper may
+  choose — `bank_transfer,cash_on_delivery` — each a payment provider of its
+  own. The checkout authorizes it and does not capture it: the order is placed
+  owing that part, and `POST /admin/v1/payment-sessions/{id}/capture` records
+  the money when it arrives, raising the order's paid total. A gift card or a
+  balance beside it is still captured at the checkout. Reconciliation leaves
+  these sessions out. **For integrators:** the completion's response carries
+  `outstanding`, what the order still owes.
+
 - **The panel lists a category with its subcategories** (ADR 0282). **For
   operators:** the catalog filter has a "with its subcategories" box beside the
   category. **For integrators:** the `product` query provider takes

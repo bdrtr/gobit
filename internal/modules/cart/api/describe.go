@@ -174,10 +174,13 @@ func Describe(d *openapi.Doc) {
 			"which pay after the card and before payment_provider_id, in the order named: each holds " +
 			"what it has of what is still unpaid, and one that holds nothing is refused at the payment " +
 			"step. A balance of a cart that names no customer is refused before the order is opened, " +
-			"and payment_provider_id cannot be a balance pay_first_with names (ADR 0269).",
+			"and payment_provider_id cannot be a balance pay_first_with names (ADR 0269). " +
+			"An offline method the shop names in PAYMENT_OFFLINE_METHODS — a bank transfer, cash on " +
+			"delivery — is authorized and not captured: the order is placed owing its part, which " +
+			"outstanding reports, and the shop captures it when the money arrives (ADR 0284).",
 		RequestBody: d.RequestBody(completeCartRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("The resulting order and the captured amount", d.Item(completeCartDTO{})),
+			"200": openapi.Response("The resulting order, its total and what it still owes", d.Item(completeCartDTO{})),
 		},
 	})
 

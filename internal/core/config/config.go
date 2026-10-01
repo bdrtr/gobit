@@ -956,6 +956,16 @@ type Config struct {
 	// changes the cards made afterwards.
 	GiftCardValidityDays int `env:"PAYMENT_GIFT_CARD_VALIDITY_DAYS" envDefault:"0"`
 
+	// PaymentOfflineMethods are the offline payment methods a shopper may choose,
+	// comma-separated — "bank_transfer,cash_on_delivery" — each a provider of
+	// its own whose money arrives after the order is placed (ADR 0284).
+	//
+	// None is the default, because a method places orders that owe their total
+	// and a shop offers that only by naming it. A name is lower-case letters,
+	// digits and underscores, starting with a letter; one the payment module
+	// cannot register stops the startup, naming the method.
+	PaymentOfflineMethods []string `env:"PAYMENT_OFFLINE_METHODS" envSeparator:","`
+
 	// GraphQLMaxFieldRepetition is the upper bound on how many times the same field
 	// may be selected under the same object.
 	//

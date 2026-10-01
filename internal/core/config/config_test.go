@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -34,7 +35,7 @@ var envKeys = []string{
 	"FILE_PROVIDER", "FILE_ROOT", "FILE_MAX_UPLOAD_BYTES", "FILE_ALLOWED_TYPES",
 	"GRAPHQL_MAX_DEPTH", "GRAPHQL_MAX_COMPLEXITY", "GRAPHQL_INTROSPECTION",
 	"STOREFRONT_CATALOG_CACHE_TTL", "STOREFRONT_CATALOG_CACHE_SHARED",
-	"PAYMENT_LOYALTY_EARN_BASIS_POINTS", "PAYMENT_GIFT_CARD_VALIDITY_DAYS",
+	"PAYMENT_LOYALTY_EARN_BASIS_POINTS", "PAYMENT_GIFT_CARD_VALIDITY_DAYS", "PAYMENT_OFFLINE_METHODS",
 	"DB_MAX_CONNS", "DB_MIN_CONNS", "ADMIN_SECOND_FACTOR_REQUIRED_FROM",
 }
 
@@ -359,6 +360,39 @@ func TestTheGiftCardValidityIsBoundedAtBothEnds(t *testing.T) {
 	t.Setenv("PAYMENT_GIFT_CARD_VALIDITY_DAYS", "36500")
 	if cfg, err = config.Load(); err != nil || cfg.GiftCardValidityDays != config.MaxGiftCardValidityDays {
 		t.Fatalf("the ceiling has to survive: %d, %v", cfg.GiftCardValidityDays, err)
+	}
+}
+
+// TestTheOfflineMethodsAreReadAsWritten pins PAYMENT_OFFLINE_METHODS (ADR
+// 0284): none by default, a list read as written, and a list with an empty
+// name, a name with surrounding whitespace or a name given twice refused.
+func TestTheOfflineMethodsAreReadAsWritten(t *testing.T) {
+	clearEnv(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("the default has to load: %v", err)
+	}
+	if len(cfg.PaymentOfflineMethods) != 0 {
+		t.Fatalf("a shop offers no offline method unless it names one, got %q", cfg.PaymentOfflineMethods)
+	}
+
+	clearEnv(t)
+	t.Setenv("PAYMENT_OFFLINE_METHODS", "bank_transfer,cash_on_delivery")
+	if cfg, err = config.Load(); err != nil {
+		t.Fatalf("two methods have to load: %v", err)
+	}
+	if !slices.Equal(cfg.PaymentOfflineMethods, []string{"bank_transfer", "cash_on_delivery"}) {
+		t.Fatalf("the methods are read as written, got %q", cfg.PaymentOfflineMethods)
+	}
+
+	for _, value := range []string{
+		"bank_transfer, cash_on_delivery", "bank_transfer,,cash_on_delivery", "bank_transfer,bank_transfer",
+	} {
+		clearEnv(t)
+		t.Setenv("PAYMENT_OFFLINE_METHODS", value)
+		if _, err := config.Load(); err == nil {
+			t.Fatalf("Load() should have refused PAYMENT_OFFLINE_METHODS=%q", value)
+		}
 	}
 }
 
