@@ -97,9 +97,13 @@ func TestThePanelEditsARealVariantsPriceAtOneUnit(t *testing.T) {
 	assert.Contains(t, body, `value="19990"`)
 	assert.NotContains(t, body, `value="17990"`, "the tier gets no box")
 	assert.Contains(t, body, "10 or more")
+	// The form carries the amount it was drawn with, and the save sends it back
+	// (ADR 0280).
+	assert.Contains(t, body, `name="read_amount" value="19990"`)
 
 	saved := request(http.MethodPost, variantPath+"/price", url.Values{
-		"price_set_id": {set.ID}, "currency": {"XTS"}, "minor": {"1"}, "amount": {"25000"},
+		"price_set_id": {set.ID}, "currency": {"XTS"}, "minor": {"1"},
+		"read_amount": {"19990"}, "amount": {"25000"},
 	})
 	require.Equal(t, http.StatusSeeOther, saved.Code, saved.Body.String())
 
