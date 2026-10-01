@@ -31,6 +31,16 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An order names the operator who placed it** (ADR 0298). **For
+  operators:** the panel's order list has a box for the orders an operator
+  placed, and an order's page says which operator placed it. **For
+  integrators:** an order completed through `POST /admin/v1/carts/{id}/complete`
+  stores the caller's id; `GET /admin/v1/orders/{id}` returns it as
+  `placed_by`, `GET /admin/v1/orders` and the `order` query provider take
+  `placed_by_operator=true|false`, and the provider offers the `placed_by`
+  field. The storefront's order does not carry it, and an operator's cart a
+  shopper completes names no operator.
+
 - **A telephone order finds the caller by e-mail** (ADR 0297). **For
   operators:** the telephone order's page finds the customer records holding
   the e-mail a caller gives, in any case, and the form that opens the cart

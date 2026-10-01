@@ -752,3 +752,58 @@ func TestTheOrderListFiltersTheOrdersAwaitingTheirPayment(t *testing.T) {
 	assert.Empty(t, plain.specs[0].Filters)
 	assert.NotContains(t, rec.Body.String(), "checked")
 }
+
+// TestTheOrderListFiltersTheOrdersAnOperatorPlaced is ADR 0298 on the panel:
+// the box asks the order module for an operator's orders, narrows together
+// with the awaiting box, stays ticked, and the paging keeps both.
+func TestTheOrderListFiltersTheOrdersAnOperatorPlaced(t *testing.T) {
+	t.Parallel()
+
+	catalog := &fakeCatalog{byEntity: map[string][]query.Record{EntityOrder: make([]query.Record, ordersPerPage+1)}}
+	for i := range catalog.byEntity[EntityOrder] {
+		catalog.byEntity[EntityOrder][i] = query.Record{fieldID: "order_" + strconv.Itoa(i), fieldStatus: "pending"}
+	}
+	panel := newCatalogPanel(t, catalog)
+
+	rec := httptest.NewRecorder()
+	orderRouter(panel).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, OrdersPath+"?placed=1", http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, map[string]any{FilterPlacedByOperator: true}, catalog.specs[0].Filters)
+	assert.Contains(t, rec.Body.String(), `name="placed" value="1" checked`)
+	assert.NotContains(t, rec.Body.String(), `name="awaiting" value="1" checked`)
+	assert.Contains(t, rec.Body.String(), `?page=2&amp;placed=1"`, "the next page keeps the filter")
+
+	both := &fakeCatalog{byEntity: catalog.byEntity}
+	panel = newCatalogPanel(t, both)
+	rec = httptest.NewRecorder()
+	orderRouter(panel).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, OrdersPath+"?placed=1&awaiting=1", http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, map[string]any{FilterPlacedByOperator: true, FilterAwaitingPayment: true}, both.specs[0].Filters)
+	assert.Contains(t, rec.Body.String(), `?page=2&amp;awaiting=1&amp;placed=1"`)
+}
+
+// TestTheOrderPageNamesTheOperatorWhoPlacedIt: the page reads the order's
+// operator and names it; a shopper's order names nobody (ADR 0298).
+func TestTheOrderPageNamesTheOperatorWhoPlacedIt(t *testing.T) {
+	t.Parallel()
+
+	catalog := addressedOrderCatalog(nil)
+	answer := catalog.answer
+	catalog.answer = func(spec query.GraphSpec) ([]query.Record, error, bool) {
+		records, err, handled := answer(spec)
+		if handled && err == nil && len(records) == 1 && records[0]["id"] == "order_1" {
+			records[0][FieldPlacedBy] = "usr_phone"
+		}
+		return records, err, handled
+	}
+	rec := getOrderPage(newCatalogPanel(t, catalog), OrdersPath+"/order_1")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "by operator usr_phone")
+	spec, ok := catalog.specFor(EntityOrder)
+	require.True(t, ok)
+	assert.Contains(t, spec.Fields, FieldPlacedBy)
+
+	rec = getOrderPage(newCatalogPanel(t, addressedOrderCatalog(nil)), OrdersPath+"/order_1")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), "by operator")
+}

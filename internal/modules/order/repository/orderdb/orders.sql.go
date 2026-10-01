@@ -17,7 +17,7 @@ SET status      = 'archived',
     archived_at = now(),
     updated_at  = now()
 WHERE id = $1 AND status = 'completed'
-RETURNING id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax
+RETURNING id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by
 `
 
 // ArchiveOrder takes a completed order into the archive and stamps the moment.
@@ -64,6 +64,7 @@ func (q *Queries) ArchiveOrder(ctx context.Context, id string) (Order, error) {
 		&i.PersonalDataErasedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.PlacedBy,
 	)
 	return i, err
 }
@@ -75,7 +76,7 @@ SET status        = 'canceled',
     cancel_reason = $2,
     updated_at    = now()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax
+RETURNING id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by
 `
 
 type CancelOrderParams struct {
@@ -118,6 +119,7 @@ func (q *Queries) CancelOrder(ctx context.Context, arg CancelOrderParams) (Order
 		&i.PersonalDataErasedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.PlacedBy,
 	)
 	return i, err
 }
@@ -128,7 +130,7 @@ SET status       = 'completed',
     completed_at = now(),
     updated_at   = now()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax
+RETURNING id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by
 `
 
 // CompleteOrder stamps the order as completed.
@@ -161,6 +163,7 @@ func (q *Queries) CompleteOrder(ctx context.Context, id string) (Order, error) {
 		&i.PersonalDataErasedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.PlacedBy,
 	)
 	return i, err
 }
@@ -180,14 +183,17 @@ WHERE ($1::text IS NULL OR customer_id = $1::text)
     AND COALESCE((SELECT s.paid_total FROM order_summaries s WHERE s.order_id = orders.id), 0)
       < orders.total - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
   ) = $5::boolean)
+  AND ($6::boolean IS NULL
+       OR (placed_by IS NOT NULL) = $6::boolean)
 `
 
 type CountOrdersParams struct {
-	CustomerID      *string
-	RegionID        *string
-	Status          *string
-	AddsToOrderID   *string
-	AwaitingPayment *bool
+	CustomerID       *string
+	RegionID         *string
+	Status           *string
+	AddsToOrderID    *string
+	AwaitingPayment  *bool
+	PlacedByOperator *bool
 }
 
 // CountOrders gives the total count of the pagination envelope and applies the
@@ -204,6 +210,7 @@ func (q *Queries) CountOrders(ctx context.Context, arg CountOrdersParams) (int64
 		arg.Status,
 		arg.AddsToOrderID,
 		arg.AwaitingPayment,
+		arg.PlacedByOperator,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -216,14 +223,14 @@ INSERT INTO orders (
     id, status, region_id, customer_id, email, currency_code,
     cart_id, idempotency_key,
     subtotal, discount_total, tax_total, shipping_total, total,
-    metadata, adds_to_order_id, prices_include_tax, placed_at
+    metadata, adds_to_order_id, prices_include_tax, placed_at, placed_by
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8,
     $9, $10, $11, $12, $13,
-    $14, $15, $16, now()
+    $14, $15, $16, now(), $17
 )
-RETURNING id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax
+RETURNING id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by
 `
 
 type CreateOrderParams struct {
@@ -243,6 +250,7 @@ type CreateOrderParams struct {
 	Metadata         []byte
 	AddsToOrderID    *string
 	PricesIncludeTax bool
+	PlacedBy         *string
 }
 
 // orders queries.
@@ -279,6 +287,7 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Order
 		arg.Metadata,
 		arg.AddsToOrderID,
 		arg.PricesIncludeTax,
+		arg.PlacedBy,
 	)
 	var i Order
 	err := row.Scan(
@@ -307,12 +316,13 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Order
 		&i.PersonalDataErasedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.PlacedBy,
 	)
 	return i, err
 }
 
 const getOrder = `-- name: GetOrder :one
-SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax FROM orders
+SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by FROM orders
 WHERE id = $1
 `
 
@@ -345,12 +355,13 @@ func (q *Queries) GetOrder(ctx context.Context, id string) (Order, error) {
 		&i.PersonalDataErasedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.PlacedBy,
 	)
 	return i, err
 }
 
 const getOrderByDisplayID = `-- name: GetOrderByDisplayID :one
-SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax FROM orders
+SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by FROM orders
 WHERE display_id = $1
 `
 
@@ -383,12 +394,13 @@ func (q *Queries) GetOrderByDisplayID(ctx context.Context, displayID int64) (Ord
 		&i.PersonalDataErasedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.PlacedBy,
 	)
 	return i, err
 }
 
 const getOrderByIdempotencyKey = `-- name: GetOrderByIdempotencyKey :one
-SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax FROM orders
+SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by FROM orders
 WHERE idempotency_key = $1
 `
 
@@ -425,12 +437,13 @@ func (q *Queries) GetOrderByIdempotencyKey(ctx context.Context, idempotencyKey *
 		&i.PersonalDataErasedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.PlacedBy,
 	)
 	return i, err
 }
 
 const getOrdersByIDs = `-- name: GetOrdersByIDs :many
-SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax FROM orders
+SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by FROM orders
 WHERE id = ANY ($1::text[])
 ORDER BY id
 `
@@ -472,6 +485,7 @@ func (q *Queries) GetOrdersByIDs(ctx context.Context, ids []string) ([]Order, er
 			&i.PersonalDataErasedAt,
 			&i.AddsToOrderID,
 			&i.PricesIncludeTax,
+			&i.PlacedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -484,7 +498,7 @@ func (q *Queries) GetOrdersByIDs(ctx context.Context, ids []string) ([]Order, er
 }
 
 const listOrders = `-- name: ListOrders :many
-SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax FROM orders
+SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by FROM orders
 WHERE ($1::text IS NULL OR customer_id = $1::text)
   AND ($2::text IS NULL OR region_id = $2::text)
   AND ($3::text IS NULL OR status = $3::text)
@@ -498,24 +512,27 @@ WHERE ($1::text IS NULL OR customer_id = $1::text)
     AND COALESCE((SELECT s.paid_total FROM order_summaries s WHERE s.order_id = orders.id), 0)
       < orders.total - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
   ) = $5::boolean)
+  AND ($6::boolean IS NULL
+       OR (placed_by IS NOT NULL) = $6::boolean)
   AND (created_at, id) < (
-    COALESCE($6::timestamptz, 'infinity'::timestamptz),
-    COALESCE($7::text, '')
+    COALESCE($7::timestamptz, 'infinity'::timestamptz),
+    COALESCE($8::text, '')
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $9::bigint OFFSET $8::bigint
+LIMIT $10::bigint OFFSET $9::bigint
 `
 
 type ListOrdersParams struct {
-	CustomerID      *string
-	RegionID        *string
-	Status          *string
-	AddsToOrderID   *string
-	AwaitingPayment *bool
-	AfterAt         pgtype.Timestamptz
-	AfterID         *string
-	RowOffset       int64
-	RowLimit        int64
+	CustomerID       *string
+	RegionID         *string
+	Status           *string
+	AddsToOrderID    *string
+	AwaitingPayment  *bool
+	PlacedByOperator *bool
+	AfterAt          pgtype.Timestamptz
+	AfterID          *string
+	RowOffset        int64
+	RowLimit         int64
 }
 
 func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]Order, error) {
@@ -525,6 +542,7 @@ func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]Order
 		arg.Status,
 		arg.AddsToOrderID,
 		arg.AwaitingPayment,
+		arg.PlacedByOperator,
 		arg.AfterAt,
 		arg.AfterID,
 		arg.RowOffset,
@@ -563,6 +581,7 @@ func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]Order
 			&i.PersonalDataErasedAt,
 			&i.AddsToOrderID,
 			&i.PricesIncludeTax,
+			&i.PlacedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -575,7 +594,7 @@ func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]Order
 }
 
 const lockOrder = `-- name: LockOrder :one
-SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax FROM orders
+SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by FROM orders
 WHERE id = $1
 FOR UPDATE
 `
@@ -616,12 +635,13 @@ func (q *Queries) LockOrder(ctx context.Context, id string) (Order, error) {
 		&i.PersonalDataErasedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.PlacedBy,
 	)
 	return i, err
 }
 
 const shareLockOrder = `-- name: ShareLockOrder :one
-SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax FROM orders
+SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by FROM orders
 WHERE id = $1
 FOR SHARE
 `
@@ -664,6 +684,7 @@ func (q *Queries) ShareLockOrder(ctx context.Context, id string) (Order, error) 
 		&i.PersonalDataErasedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.PlacedBy,
 	)
 	return i, err
 }

@@ -628,8 +628,8 @@ func filledOrderDetail() orderDetailDTO {
 	}
 }
 
-// filledAdminOrderDetail is [filledOrderDetail] with both addresses, every
-// field written.
+// filledAdminOrderDetail is [filledOrderDetail] with both addresses and the
+// operator who placed it, every field written.
 func filledAdminOrderDetail() adminOrderDetailDTO {
 	address := &orderAddressDTO{
 		FirstName: "A", LastName: "B", Company: "C", Address1: "1", Address2: "2",
@@ -641,6 +641,7 @@ func filledAdminOrderDetail() adminOrderDetailDTO {
 		orderDetailDTO:  filledOrderDetail(),
 		ShippingAddress: address,
 		BillingAddress:  address,
+		PlacedBy:        "user_operator",
 	}
 }
 

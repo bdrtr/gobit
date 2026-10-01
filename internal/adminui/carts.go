@@ -212,10 +212,10 @@ func (u *UI) findVariants(r *http.Request, term string) ([]foundVariant, error) 
 const openCartsShown = 20
 
 // The cart field and filter the open carts' list reads, the cart module's
-// names (ADR 0296).
+// names (ADR 0296), pinned against the module's in internal/arch.
 const (
-	fieldCartOpenedBy      = "opened_by"
-	filterOpenedByOperator = "opened_by_operator"
+	FieldCartOpenedBy      = "opened_by"
+	FilterOpenedByOperator = "opened_by_operator"
 )
 
 // openCart is one cart an operator opened and nobody completed, as the
@@ -231,10 +231,10 @@ func (u *UI) openCarts(r *http.Request) ([]openCart, bool) {
 	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
 		Entity: EntityCart,
 		Fields: []string{
-			fieldID, fieldEmail, fieldCartCustomerID, fieldCartOpenedBy,
+			fieldID, fieldEmail, fieldCartCustomerID, FieldCartOpenedBy,
 			fieldCurrencyCod, fieldTotal, fieldCreatedAt,
 		},
-		Filters: map[string]any{fieldCartCompleted: false, filterOpenedByOperator: true},
+		Filters: map[string]any{fieldCartCompleted: false, FilterOpenedByOperator: true},
 		Limit:   openCartsShown,
 	})
 	if err != nil {
@@ -250,7 +250,7 @@ func (u *UI) openCarts(r *http.Request) ([]openCart, bool) {
 			ID:         recordString(record, fieldID),
 			Email:      recordString(record, fieldEmail),
 			CustomerID: recordString(record, fieldCartCustomerID),
-			OpenedBy:   recordString(record, fieldCartOpenedBy),
+			OpenedBy:   recordString(record, FieldCartOpenedBy),
 			Total:      withCurrency(total, currency, known),
 			OpenedAt:   recordTime(record, fieldCreatedAt),
 		})

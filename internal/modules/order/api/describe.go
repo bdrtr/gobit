@@ -153,6 +153,9 @@ func Describe(d *openapi.Doc) {
 					"collected below their total less their credits — and false only the "+
 					"others. Refunds are not added back, so an order paid and later "+
 					"refunded does not await its payment (ADR 0294)."),
+			queryParameter("placed_by_operator", typeBoolean,
+				"true lists only the orders an operator placed through the admin cart "+
+					"surface or the panel, and false only the shoppers' (ADR 0298)."),
 			queryParameter("limit", typeInteger,
 				"Page size; when it is not given the service's default applies."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),

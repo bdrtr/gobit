@@ -121,7 +121,7 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-			ID: "usr_phone", Kind: "user", Scopes: []string{"cart:read", "cart:write"},
+			ID: "usr_phone", Kind: "user", Scopes: []string{"cart:read", "cart:write", "order:read"},
 		}))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -175,6 +175,13 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, total, order.Total, "the order is placed for the total the operator read")
 	assert.Zero(t, order.Summary.PaidTotal, "it owes its total")
+	assert.Equal(t, "usr_phone", order.PlacedBy, "the order names the operator who placed it (ADR 0298)")
+	orderPage := send(http.MethodGet, orderPath, nil)
+	require.Equal(t, http.StatusOK, orderPage.Code, orderPage.Body.String())
+	assert.Contains(t, orderPage.Body.String(), "by operator usr_phone", "the order page reads it")
+	operators := send(http.MethodGet, adminui.OrdersPath+"?placed=1", nil)
+	require.Equal(t, http.StatusOK, operators.Code, operators.Body.String())
+	assert.Contains(t, operators.Body.String(), `href="`+orderPath+`"`, "the operator's orders list it")
 	assert.Equal(t, adminCartStock-adminCartQuantity, sellableQuantity(ctx, t, stockItemID),
 		"the order's stock is deducted")
 

@@ -34,6 +34,7 @@ type Order struct {
 	PersonalDataErasedAt pgtype.Timestamptz
 	AddsToOrderID        *string
 	PricesIncludeTax     bool
+	PlacedBy             *string
 }
 
 type OrderAddress struct {

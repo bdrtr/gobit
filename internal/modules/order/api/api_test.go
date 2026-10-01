@@ -645,6 +645,26 @@ func TestAdminListOrdersAwaitingTheirPayment(t *testing.T) {
 	assert.Nil(t, svc.listInput.AwaitingPayment, "the service was not asked")
 }
 
+// TestAdminListOrdersPlacedByAnOperator is ADR 0298's parameter: true and false
+// reach the service, nothing leaves the filter off, and anything else is
+// refused before the service is asked.
+func TestAdminListOrdersPlacedByAnOperator(t *testing.T) {
+	for query, want := range map[string]*bool{
+		"?placed_by_operator=true": new(true), "?placed_by_operator=false": new(false), "": nil,
+	} {
+		svc := &fakeOrders{orders: []models.Order{sampleOrder()}, count: 1}
+		rec := doRequest(t, newRouter(svc), http.MethodGet, "/admin/v1/orders"+query, "")
+
+		require.Equal(t, http.StatusOK, rec.Code, query)
+		assert.Equal(t, want, svc.listInput.PlacedByOperator, query)
+	}
+
+	svc := &fakeOrders{}
+	rec := doRequest(t, newRouter(svc), http.MethodGet, "/admin/v1/orders?placed_by_operator=often", "")
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Nil(t, svc.listInput.PlacedByOperator, "the service was not asked")
+}
+
 // TestAdminListOrdersDefaultLimit verifies that on a request without a limit the
 // response shows the limit that is REALLY applied.
 func TestAdminListOrdersDefaultLimit(t *testing.T) {
@@ -2037,4 +2057,30 @@ func TestAdminWithdrawReplacementReportsTheFlowsRefusal(t *testing.T) {
 
 	assert.Equal(t, http.StatusConflict, rec.Code)
 	assert.Empty(t, svc.calls)
+}
+
+// TestTheOperatorReadsWhoPlacedTheOrder holds the operator on the admin
+// record, and off the storefront's, as the addresses are (ADR 0298).
+func TestTheOperatorReadsWhoPlacedTheOrder(t *testing.T) {
+	detail := sampleDetail()
+	detail.PlacedBy = "usr_operator"
+
+	rec := doRequest(t, newRouter(&fakeOrders{detail: detail}), http.MethodGet, "/admin/v1/orders/order_1", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "usr_operator", data["placed_by"])
+
+	rec = doRequest(t, newRouter(&fakeOrders{detail: detail}), http.MethodGet, "/store/v1/orders/order_1", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	data, ok = decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, data, "placed_by", "a shopper does not read the operator's identity")
+
+	shoppers := sampleDetail()
+	rec = doRequest(t, newRouter(&fakeOrders{detail: shoppers}), http.MethodGet, "/admin/v1/orders/order_1", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	data, ok = decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, data, "placed_by", "a shopper's order names no operator")
 }

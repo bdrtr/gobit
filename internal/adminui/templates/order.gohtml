@@ -21,6 +21,7 @@ be read says it is in minor units instead of being divided by a guessed hundred.
     {{ if not .Order.PlacedAt.IsZero }}
     <span class="muted">placed {{ .Order.PlacedAt.Format "2006-01-02 15:04" }}</span>
     {{ end }}
+    {{ with .Order.PlacedBy }}<span class="muted">by operator {{ . }}</span>{{ end }}
   </p>
   <p>
     {{ if .Order.Email }}{{ .Order.Email }}{{ else }}<span class="muted">no address on this order</span>{{ end }}

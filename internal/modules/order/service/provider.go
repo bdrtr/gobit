@@ -67,6 +67,13 @@ const (
 	// FilterAwaitingPayment narrows a listing to the orders that await their
 	// payment, or to the others (ADR 0294). It is a filter and not a field.
 	FilterAwaitingPayment = "awaiting_payment"
+	// FieldPlacedBy is the operator who placed the order through the admin
+	// cart surface or the panel, a user's or an API key's id; empty on a
+	// shopper's order (ADR 0298).
+	FieldPlacedBy = "placed_by"
+	// FilterPlacedByOperator keeps the orders an operator placed when true and
+	// the shoppers' when false (ADR 0298).
+	FilterPlacedByOperator = "placed_by_operator"
 )
 
 // The fields read from the order's addresses rather than from its row
@@ -198,6 +205,7 @@ var orderFieldGetters = map[string]func(order models.Order) any{
 	FieldCreatedAt:     func(o models.Order) any { return o.CreatedAt },
 	FieldUpdatedAt:     func(o models.Order) any { return o.UpdatedAt },
 	FieldAddsToOrderID: func(o models.Order) any { return o.AddsToOrderID },
+	FieldPlacedBy:      func(o models.Order) any { return o.PlacedBy },
 }
 
 // QueryProvider is the read surface the order module opens to the Query layer.
@@ -228,9 +236,10 @@ func (p *QueryProvider) Entity() string {
 // List returns the root records.
 //
 // Supported filters: "id" (string or string slice), "customer_id" (string),
-// "region_id" (string), "status" (string), "adds_to_order_id" (string) and
-// "awaiting_payment" (bool, ADR 0294). Any other filter or an unrecognized
-// field is rejected with errors.Invalid (ADR 0004).
+// "region_id" (string), "status" (string), "adds_to_order_id" (string),
+// "awaiting_payment" (bool, ADR 0294) and "placed_by_operator" (bool, ADR
+// 0298). Any other filter or an unrecognized field is rejected with
+// errors.Invalid (ADR 0004).
 //
 // # Why "id" is a filter and not only a batch fetch
 //
@@ -313,6 +322,13 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 					"filter %q has to be boolean (bool), %T given", name, value)
 			}
 			in.AwaitingPayment = &awaiting
+		case FilterPlacedByOperator:
+			placed, ok := value.(bool)
+			if !ok {
+				return nil, errors.Invalid(CodeInvalidInput,
+					"filter %q has to be boolean (bool), %T given", name, value)
+			}
+			in.PlacedByOperator = &placed
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
 				"%q entity'si %q filtresini desteklemiyor", EntityName, name)

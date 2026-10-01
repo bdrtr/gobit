@@ -49,6 +49,15 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 		}
 		in.AwaitingPayment = &awaiting
 	}
+	if raw := r.URL.Query().Get("placed_by_operator"); raw != "" {
+		placed, err := strconv.ParseBool(raw)
+		if err != nil {
+			corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+				"placed_by_operator has to be true or false: %q", raw))
+			return
+		}
+		in.PlacedByOperator = &placed
+	}
 
 	result, err := h.svc.ListOrders(ctx, in)
 	if err != nil {

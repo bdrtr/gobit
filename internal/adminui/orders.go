@@ -22,6 +22,15 @@ const (
 	FilterAwaitingPayment = "awaiting_payment"
 )
 
+// The order list's filter for the orders an operator placed and the order
+// page's field naming them (ADR 0298), the order module's names, pinned as the
+// awaiting filter is.
+const (
+	paramPlaced            = "placed"
+	FilterPlacedByOperator = "placed_by_operator"
+	FieldPlacedBy          = "placed_by"
+)
+
 // EntityOrder is the order module's entity name in the read layer.
 //
 // It is a STRING and not an import: the panel knows no module (ADR 0011), the
@@ -143,6 +152,9 @@ type orderDetail struct {
 	// CorrectedAt is the latest correction of the shipping address; the zero
 	// time when it was never corrected (ADR 0195).
 	CorrectedAt time.Time
+	// PlacedBy is the operator who placed the order; empty on a shopper's
+	// (ADR 0298).
+	PlacedBy string
 	// Parent is the order this one adds to; nil when it adds to nothing, and
 	// its ID alone when the parent could not be read.
 	Parent *orderRow
@@ -295,11 +307,20 @@ func addressLines(value any) []string {
 // paging through orders does not need to be told there are 41,207 of them.
 func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 	page := pageNumber(r.URL.Query().Get("page"))
-	// The orders awaiting their payment, an offline method's say (ADR 0294).
+	// The orders awaiting their payment, an offline method's say (ADR 0294),
+	// and the ones an operator placed (ADR 0298); the two boxes narrow
+	// together.
 	awaiting := r.URL.Query().Get(paramAwaiting) == "1"
+	placed := r.URL.Query().Get(paramPlaced) == "1"
 	var filters map[string]any
+	if awaiting || placed {
+		filters = map[string]any{}
+	}
 	if awaiting {
-		filters = map[string]any{FilterAwaitingPayment: true}
+		filters[FilterAwaitingPayment] = true
+	}
+	if placed {
+		filters[FilterPlacedByOperator] = true
 	}
 
 	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
@@ -334,6 +355,7 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 		titleKey:   ordersLabel,
 		"Orders":   rows,
 		"Awaiting": awaiting,
+		"Placed":   placed,
 	}
 	addPaging(data, page, hasNext, OrdersPath)
 
@@ -379,7 +401,7 @@ func (u *UI) renderOrder(
 			fieldID, fieldDisplayID, fieldStatus, fieldEmail, fieldCurrencyCod,
 			fieldSubtotal, fieldDiscount, fieldTax, fieldShipping, fieldTotal,
 			fieldPlacedAt, fieldAddsToOrderID, fieldShippingAddress,
-			fieldBillingAddress, fieldShippingAddressCorrectedAt,
+			fieldBillingAddress, fieldShippingAddressCorrectedAt, FieldPlacedBy,
 		},
 		Filters: map[string]any{filterID: []string{id}},
 		Limit:   1,
@@ -407,6 +429,7 @@ func (u *UI) renderOrder(
 	detail.ShipTo = addressLines(record[fieldShippingAddress])
 	detail.BillTo = addressLines(record[fieldBillingAddress])
 	detail.CorrectedAt = recordTime(record, fieldShippingAddressCorrectedAt)
+	detail.PlacedBy = recordString(record, FieldPlacedBy)
 	detail.Parent = u.parentOrder(r, recordString(record, fieldAddsToOrderID))
 	detail.Additions, detail.AdditionsUnread = u.additionsOf(r, detail.ID, scales)
 	detail.Lines, detail.LinesMore, detail.LinesUnread = u.linesOf(r, detail.ID, detail.Currency, scales)

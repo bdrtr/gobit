@@ -191,6 +191,7 @@ func TestThePanelCompletesWithTheOperatorsClaims(t *testing.T) {
 	assert.Equal(t, true, sent["offline_only"], "the operator's completion is paid later or not at all")
 	assert.Equal(t, []any{"sc_shop"}, sent["sales_channel_ids"])
 	assert.Equal(t, "caller@example.com", sent["email"], "the e-mail is the cart's")
+	assert.Equal(t, "usr_panel", sent["placed_by"], "the order names the signed-in operator (ADR 0298)")
 }
 
 // TestACompletionWithoutAChannelIsRefused: no channel is refused before the

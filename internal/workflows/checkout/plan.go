@@ -147,6 +147,9 @@ type checkoutPlan struct {
 	// lock on the parent, in the transaction that writes the order, and a
 	// refusal there comes before any payment (ADR 0192).
 	AddsToOrderID string `json:"adds_to_order_id,omitempty"`
+	// PlacedBy is the operator placing the order; empty on a shopper's
+	// checkout (ADR 0298).
+	PlacedBy string `json:"placed_by,omitempty"`
 	// Revision is the SHARED shape counter of the totals and the snapshot.
 	Revision int64 `json:"revision"`
 	// LocationID is the stock location the caller DECLARED; it may be empty.
@@ -479,6 +482,7 @@ func (w *Workflows) prepare(ctx context.Context, in CompleteCartInput) (*checkou
 		Email:             in.Email,
 		CurrencyCode:      snap.CurrencyCode,
 		AddsToOrderID:     snap.AddsToOrderID,
+		PlacedBy:          in.PlacedBy,
 		Revision:          snap.Revision,
 		LocationID:        in.LocationID,
 		SalesChannelIDs:   in.SalesChannelIDs,
@@ -1262,6 +1266,7 @@ type orderSnapshot struct {
 	CurrencyCode   string `json:"currency_code"`
 	IdempotencyKey string `json:"idempotency_key"`
 	AddsToOrderID  string `json:"adds_to_order_id,omitempty"`
+	PlacedBy       string `json:"placed_by,omitempty"`
 	Subtotal       int64  `json:"subtotal"`
 	DiscountTotal  int64  `json:"discount_total"`
 	TaxTotal       int64  `json:"tax_total"`
@@ -1439,6 +1444,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 		CurrencyCode:     p.CurrencyCode,
 		IdempotencyKey:   idempotencyKey,
 		AddsToOrderID:    p.AddsToOrderID,
+		PlacedBy:         p.PlacedBy,
 		Subtotal:         p.Subtotal,
 		DiscountTotal:    p.DiscountTotal,
 		TaxTotal:         p.TaxTotal,

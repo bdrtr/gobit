@@ -507,7 +507,7 @@ func TestTheTelephoneOrderListsTheOpenOperatorCarts(t *testing.T) {
 
 	catalog := &fakeCatalog{byEntity: map[string][]query.Record{EntityCart: {{
 		fieldID: "cart_open", fieldEmail: "caller@example.com", fieldCartCustomerID: "cus_1",
-		fieldCartOpenedBy: "user_7", fieldCurrencyCod: "TRY", fieldTotal: int64(38_400),
+		FieldCartOpenedBy: "user_7", fieldCurrencyCod: "TRY", fieldTotal: int64(38_400),
 		fieldCreatedAt: time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC),
 	}}}}
 	panel := newCatalogPanel(t, catalog)
@@ -529,9 +529,9 @@ func TestTheTelephoneOrderListsTheOpenOperatorCarts(t *testing.T) {
 		}
 	}
 	require.Len(t, asked, 1)
-	assert.Equal(t, map[string]any{fieldCartCompleted: false, filterOpenedByOperator: true}, asked[0].Filters)
+	assert.Equal(t, map[string]any{fieldCartCompleted: false, FilterOpenedByOperator: true}, asked[0].Filters)
 	assert.Equal(t, openCartsShown, asked[0].Limit)
-	assert.Contains(t, asked[0].Fields, fieldCartOpenedBy)
+	assert.Contains(t, asked[0].Fields, FieldCartOpenedBy)
 
 	blind := &fakeCatalog{byEntity: catalog.byEntity}
 	panel = newCatalogPanel(t, blind)

@@ -956,6 +956,13 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	// The order list's awaiting filter (ADR 0294).
 	assert.Equal(t, ordersvc.FilterAwaitingPayment, adminui.FilterAwaitingPayment,
 		"the panel's awaiting filter must match the order module")
+	// The open carts' list (ADR 0296) and the operator's orders (ADR 0298): a
+	// drift reads as "could not be read" on the telephone order's page and on
+	// the order list, so the names are held here.
+	assert.Equal(t, cartsvc.FieldOpenedBy, adminui.FieldCartOpenedBy)
+	assert.Equal(t, cartsvc.FilterOpenedByOperator, adminui.FilterOpenedByOperator)
+	assert.Equal(t, ordersvc.FieldPlacedBy, adminui.FieldPlacedBy)
+	assert.Equal(t, ordersvc.FilterPlacedByOperator, adminui.FilterPlacedByOperator)
 
 	assert.Equal(t, productsvc.LinkVariantPriceSet, adminui.LinkVariantPriceSet,
 		"the panel's price link name must match the product module")

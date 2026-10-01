@@ -325,6 +325,7 @@ func toOrder(row orderdb.Order) (models.Order, error) {
 		CartID:               stringValue(row.CartID),
 		IdempotencyKey:       stringValue(row.IdempotencyKey),
 		AddsToOrderID:        stringValue(row.AddsToOrderID),
+		PlacedBy:             stringValue(row.PlacedBy),
 		Subtotal:             row.Subtotal,
 		DiscountTotal:        row.DiscountTotal,
 		TaxTotal:             row.TaxTotal,

@@ -45,6 +45,7 @@ func TestAnOperatorCompletesATelephoneOrder(t *testing.T) {
 	assert.Equal(t, []any{"sc_phone"}, sent["sales_channel_ids"], "the operator's claim narrows the warehouses")
 	assert.InDelta(t, 3600, sent["expected_total"], 0.0)
 	assert.Equal(t, "a@b.c", sent["email"], "the contact address is the cart's")
+	assert.Equal(t, adminWriter.ID, sent["placed_by"], "the order names the operator who placed it (ADR 0298)")
 }
 
 // TestTheStorefrontsCompletionIsNotOfflineOnly: a shopper pays with any
@@ -61,6 +62,8 @@ func TestTheStorefrontsCompletionIsNotOfflineOnly(t *testing.T) {
 	require.NoError(t, json.Unmarshal(flow.got, &sent))
 	_, set := sent["offline_only"]
 	assert.False(t, set)
+	_, named := sent["placed_by"]
+	assert.False(t, named, "a shopper's order names no operator (ADR 0298)")
 	assert.InDelta(t, 3600, object(t, bodyMap(t, rec)["data"])["outstanding"], 0.0)
 }
 

@@ -156,6 +156,9 @@ type CreateOrderInput struct {
 	// transaction and the order is not written unless the parent is pending,
 	// of the same customer and currency, and not an addition itself.
 	AddsToOrderID string
+	// PlacedBy is the operator placing the order; empty for a shopper (ADR
+	// 0298). The caller passes the identity the guard ring proved.
+	PlacedBy string
 	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
 	// DiscountTotal is the total discount; it is given as a POSITIVE number and
@@ -366,6 +369,7 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 			CartID:           in.CartID,
 			IdempotencyKey:   in.IdempotencyKey,
 			AddsToOrderID:    in.AddsToOrderID,
+			PlacedBy:         in.PlacedBy,
 			Subtotal:         in.Subtotal,
 			DiscountTotal:    in.DiscountTotal,
 			TaxTotal:         in.TaxTotal,
@@ -663,6 +667,9 @@ type ListOrdersInput struct {
 	// payment — not canceled, and collected below their total less their
 	// credits — or only the ones that do not (ADR 0294).
 	AwaitingPayment *bool
+	// PlacedByOperator, when given, returns only the orders an operator placed,
+	// or only the shoppers' (ADR 0298).
+	PlacedByOperator *bool
 	// Page holds the pagination parameters.
 	Page Page
 }
@@ -706,6 +713,7 @@ func (s *Service) ListOrders(ctx context.Context, in ListOrdersInput) (OrderPage
 		filter.AddsToOrderID = in.AddsToOrderID
 	}
 	filter.AwaitingPayment = in.AwaitingPayment
+	filter.PlacedByOperator = in.PlacedByOperator
 
 	// One row MORE than asked for is fetched and the extra one is dropped
 	// below: that is how "is there a next page" is answered without a second

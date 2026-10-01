@@ -252,9 +252,9 @@ func (h *Handler) channelScoped(
 	return scoped, true
 }
 
-// operatorOf names the operator an admin door's cart is opened by: the caller's
-// identity, a user or an API key, kept as free text the way the file module
-// keeps an upload's (ADR 0296).
+// operatorOf names the operator an admin door's cart is opened by (ADR 0296)
+// and its order placed by (ADR 0298): the caller's identity, a user or an API
+// key, kept as free text the way the file module keeps an upload's.
 func operatorOf(ctx context.Context) (string, error) {
 	principal, found := corehttp.PrincipalFromContext(ctx)
 	if !found || strings.TrimSpace(principal.ID) == "" {
@@ -333,6 +333,12 @@ func (h *Handler) adminCompleteCart(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	placedBy, err := operatorOf(scoped)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
 
 	h.completeCart(scoped, w, completeCartFlowRequest{
 		CartID:            cartID(r),
@@ -340,5 +346,6 @@ func (h *Handler) adminCompleteCart(w http.ResponseWriter, r *http.Request) {
 		SalesChannelIDs:   corehttp.SalesChannelIDs(scoped),
 		ExpectedTotal:     *body.ExpectedTotal,
 		OfflineOnly:       true,
+		PlacedBy:          placedBy,
 	})
 }

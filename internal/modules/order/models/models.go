@@ -156,6 +156,10 @@ type Order struct {
 	// when the addition was written, which the service checks under a lock on
 	// the parent.
 	AddsToOrderID string
+	// PlacedBy is the operator who placed the order through the admin cart
+	// surface or the panel, as the guard ring proved them; empty on a
+	// shopper's order (ADR 0298). It is written once, when the order is placed.
+	PlacedBy string
 	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
 	// DiscountTotal is the total discount (minor unit); it is stored positive

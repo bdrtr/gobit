@@ -89,6 +89,7 @@ func TestAnEngravingIsALineOfItsRingsOwn(t *testing.T) {
 
 	order, err := orderSvc.GetOrder(ctx, orderID)
 	require.NoError(t, err)
+	assert.Empty(t, order.PlacedBy, "a shopper's order names no operator (ADR 0298)")
 	require.Len(t, order.Items, 2)
 	assert.Equal(t, ring, order.Items[0].VariantID, "the ring is listed before its engraving (ADR 0233)")
 	var ringOrderLine string

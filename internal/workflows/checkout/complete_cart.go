@@ -201,6 +201,9 @@ type CompleteCartInput struct {
 	// operator completing a telephone order holds no shopper's card, so the
 	// order is paid later through an offline method (ADR 0286).
 	OfflineOnly bool
+	// PlacedBy is the operator placing the order, as the guard ring proved
+	// them; empty on a shopper's checkout (ADR 0298). The order records it.
+	PlacedBy string
 }
 
 // CompleteCartResult holds the fields of the completed order that concern the

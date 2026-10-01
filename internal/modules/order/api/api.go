@@ -448,6 +448,11 @@ type adminOrderDetailDTO struct {
 	// erasure kept: the country and the free metadata.
 	ShippingAddress *orderAddressDTO `json:"shipping_address,omitempty"`
 	BillingAddress  *orderAddressDTO `json:"billing_address,omitempty"`
+	// PlacedBy is the operator who placed the order through the admin cart
+	// surface or the panel; absent on a shopper's order (ADR 0298). It is the
+	// admin surface's alone, as the addresses are: a shopper reading the order
+	// would read the operator's identity.
+	PlacedBy string `json:"placed_by,omitempty"`
 }
 
 // orderAddressDTO is one address the order was placed with, as the cart
@@ -697,6 +702,7 @@ func toAdminOrderDetailDTO(detail models.OrderDetail) adminOrderDetailDTO {
 		orderDetailDTO:  toOrderDetailDTO(detail),
 		ShippingAddress: toOrderAddressDTO(detail.ShippingAddress),
 		BillingAddress:  toOrderAddressDTO(detail.BillingAddress),
+		PlacedBy:        detail.PlacedBy,
 	}
 }
 

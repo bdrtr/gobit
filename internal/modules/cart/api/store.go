@@ -757,6 +757,9 @@ type completeCartFlowRequest struct {
 	// OfflineOnly is set by the operator's completion, which may only be paid
 	// later (ADR 0286).
 	OfflineOnly bool `json:"offline_only,omitempty"`
+	// PlacedBy is the operator completing the cart, set by the operator's
+	// completion from the caller's identity (ADR 0298).
+	PlacedBy string `json:"placed_by,omitempty"`
 }
 
 // completeCartFlowResult is the schema of the JSON returned from the completion

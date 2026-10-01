@@ -174,6 +174,12 @@ func TestAnOperatorBuildsACartTheShopperPaysFor(t *testing.T) {
 
 	assert.Equal(t, adminCartStock-adminCartQuantity, sellableQuantity(ctx, t, stockItemID),
 		"the capture must move the stock the operator's line asked for")
+
+	// The operator opened the cart and the shopper placed the order, so the
+	// order names no operator: the cart's opener is not its placer (ADR 0298).
+	order, err := orderSvc.GetOrder(ctx, orderID)
+	require.NoError(t, err)
+	assert.Empty(t, order.PlacedBy)
 }
 
 // TestAnOperatorCompletesATelephoneOrderPaidLater is ADR 0286 end to end: the
@@ -252,6 +258,19 @@ func TestAnOperatorCompletesATelephoneOrderPaidLater(t *testing.T) {
 			"/admin/v1/orders?customer_id="+customerID+"&awaiting_payment="+awaiting, "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		assert.Equal(t, listed, strings.Contains(rec.Body.String(), orderID), "awaiting_payment=%s", awaiting)
+	}
+
+	// The order names the key that placed it, on the admin record and in the
+	// operator filter (ADR 0298).
+	assert.NotEmpty(t, order.PlacedBy, "the order names the operator's identity")
+	detail := adminCartRequest(t, http.MethodGet, "/admin/v1/orders/"+orderID, "")
+	require.Equal(t, http.StatusOK, detail.Code, detail.Body.String())
+	assert.Equal(t, order.PlacedBy, storefrontData(t, detail)["placed_by"])
+	for placed, listed := range map[string]bool{"true": true, "false": false} {
+		rec := adminCartRequest(t, http.MethodGet,
+			"/admin/v1/orders?customer_id="+customerID+"&placed_by_operator="+placed, "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.Equal(t, listed, strings.Contains(rec.Body.String(), orderID), "placed_by_operator=%s", placed)
 	}
 }
 

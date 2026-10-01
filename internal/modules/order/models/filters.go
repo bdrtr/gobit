@@ -29,6 +29,9 @@ type OrderFilter struct {
 	// payment, or only the ones that do not: not canceled, and collected below
 	// their total less their credits (ADR 0294).
 	AwaitingPayment *bool
+	// PlacedByOperator, when given, returns only the orders an operator placed,
+	// or only the shoppers' (ADR 0298).
+	PlacedByOperator *bool
 	// Limit is the maximum number of rows to return.
 	Limit int64
 	// Offset is the number of rows to skip.

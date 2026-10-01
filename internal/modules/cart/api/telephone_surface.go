@@ -142,6 +142,10 @@ func (s *TelephoneSurface) Complete(
 	if err != nil {
 		return "", 0, err
 	}
+	placedBy, err := operatorOf(scoped)
+	if err != nil {
+		return "", 0, err
+	}
 
 	result, err := s.h.complete(scoped, completeCartFlowRequest{
 		CartID:            cartID,
@@ -149,6 +153,7 @@ func (s *TelephoneSurface) Complete(
 		SalesChannelIDs:   corehttp.SalesChannelIDs(scoped),
 		ExpectedTotal:     expectedTotal,
 		OfflineOnly:       true,
+		PlacedBy:          placedBy,
 	})
 	if err != nil {
 		return "", 0, err

@@ -465,6 +465,9 @@ func (f *fakeStore) ListOrders(ctx context.Context, filter models.OrderFilter) (
 		if filter.AwaitingPayment != nil && snapshot.awaitsPayment(snapshot.orders[id]) != *filter.AwaitingPayment {
 			continue
 		}
+		if filter.PlacedByOperator != nil && (snapshot.orders[id].PlacedBy != "") != *filter.PlacedByOperator {
+			continue
+		}
 		matched = append(matched, snapshot.orders[id])
 	}
 	// created_at DESC, id DESC — the same ordering as in the query.
