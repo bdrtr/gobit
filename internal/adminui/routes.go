@@ -107,6 +107,8 @@ func (u *UI) routes(r chi.Router) {
 	r.Get(CustomerGroupListPath, u.needs(http.MethodGet, CustomerGroupListPath, u.listCustomerGroups))
 	r.Post(CustomerGroupListPath, u.needs(http.MethodPost, CustomerGroupListPath, u.createCustomerGroup))
 	r.Post(CustomerGroupsPath, u.needs(http.MethodPost, CustomerGroupsPath, u.addToGroup))
+	r.Post(OrderParcelsPath, u.needs(http.MethodPost, OrderParcelsPath, u.openParcel))
+	r.Post(OrderParcelActPath, u.needs(http.MethodPost, OrderParcelActPath, u.moveParcel))
 	r.Post(CustomerGroupRemovePath, u.needs(http.MethodPost, CustomerGroupRemovePath, u.removeFromGroup))
 	r.Get(InventoryPath, u.needs(http.MethodGet, InventoryPath, u.listInventory))
 	r.Get(SecondFactorPath, u.needs(http.MethodGet, SecondFactorPath, u.showSecondFactor))

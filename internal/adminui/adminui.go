@@ -204,7 +204,10 @@ type UI struct {
 	// memberships puts a customer into a group and takes them out (ADR
 	// 0322); nil when the installation registers no customer surface.
 	memberships GroupMembership
-	scopes      map[string]string
+	// parcels moves an order's parcels (ADR 0324); nil when the installation
+	// registers no fulfillment surface.
+	parcels ParcelMover
+	scopes  map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -302,6 +305,11 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And an order's parcels (ADR 0324).
+	parcels, err := optionalService[ParcelMover](c, ServiceFulfillmentAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -333,6 +341,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		promotions:    promotions,
 		notifications: notifications,
 		memberships:   memberships,
+		parcels:       parcels,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

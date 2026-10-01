@@ -1031,6 +1031,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the group entity the panel reads must be the one the customer module opens (ADR 0321)")
 	assert.Equal(t, customer.AdminName, adminui.ServiceCustomerAdmin,
 		"the panel's customer surface name must match the customer module (ADR 0322)")
+	assert.Equal(t, fulfillment.AdminName, adminui.ServiceFulfillmentAdmin,
+		"the panel's fulfillment surface name must match the fulfillment module (ADR 0324)")
 	assert.Equal(t, product.AdminName, adminui.ServiceProductAdmin,
 		"the panel's product write surface name must match the product module")
 	assert.Equal(t, pricing.AdminName, adminui.ServicePricingAdmin,

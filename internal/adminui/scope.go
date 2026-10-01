@@ -170,6 +170,10 @@ func builtInScopes() map[string]string {
 		routeKey(get, SalesPath):     scopeOrderRead,
 		routeKey(get, CustomersPath): scopeCustomerRead,
 		routeKey(get, CustomerPath):  scopeCustomerRead,
+		// An order's parcel is opened by the order module and moved by the
+		// fulfillment module (ADR 0324).
+		routeKey(post, OrderParcelsPath):   scopeOrderWrite,
+		routeKey(post, OrderParcelActPath): scopeFulfillmentWrite,
 		// A customer's groups are the customer module's (ADR 0322), and so
 		// are the groups and the form that writes one (ADR 0323).
 		routeKey(get, CustomerGroupListPath):    scopeCustomerRead,

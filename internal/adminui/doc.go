@@ -145,6 +145,11 @@
 // it, for an operator who may read the log, and links to that screen on the
 // order (ADR 0318).
 //
+// The order's page opens a parcel ([UI.openParcel]) through the order
+// module's surface and the fulfilling flow, and moves one ([UI.moveParcel]) —
+// shipped, delivered, back undelivered, canceled — through the fulfillment
+// module's surface (ADR 0324).
+//
 // A product's history ([UI.showRevisions]) lists the revisions the product
 // module records for its writes, and restores an older one at the version the
 // page was read at ([UI.restoreRevision]), refused as an edit is when the

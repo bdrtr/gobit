@@ -682,6 +682,29 @@ func (a recordingAfterSales) OpenClaim(context.Context, string, string, int64, s
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }
 
+func (a recordingAfterSales) OpenParcel(context.Context, string, string) (parcel string, already bool, err error) {
+	return "ful_walk", false, a.surfaces.reach(ServiceOrderAdmin)
+}
+
+// recordingParcels records the fulfillment module's surface (ADR 0324).
+type recordingParcels struct{ surfaces *recordingSurfaces }
+
+func (p recordingParcels) ShipParcel(context.Context, string, string, string) error {
+	return p.surfaces.reach(ServiceFulfillmentAdmin)
+}
+
+func (p recordingParcels) DeliverParcel(context.Context, string) error {
+	return p.surfaces.reach(ServiceFulfillmentAdmin)
+}
+
+func (p recordingParcels) ReturnParcel(context.Context, string) error {
+	return p.surfaces.reach(ServiceFulfillmentAdmin)
+}
+
+func (p recordingParcels) CancelParcel(context.Context, string) error {
+	return p.surfaces.reach(ServiceFulfillmentAdmin)
+}
+
 func (a recordingAfterSales) OpenExchange(context.Context, string, int64, string) (string, error) {
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }
@@ -758,6 +781,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
 	// Writing a customer group (ADR 0323).
 	routeKey(http.MethodPost, CustomerGroupListPath): {formGroupName: {"Walk"}},
+	// An order's parcels (ADR 0324).
+	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}},
+	routeKey(http.MethodPost, OrderParcelActPath): {},
 	// A customer's groups (ADR 0322).
 	routeKey(http.MethodPost, CustomerGroupsPath):      {formCustomerGroup: {"custgrp_walk"}},
 	routeKey(http.MethodPost, CustomerGroupRemovePath): {},
@@ -800,6 +826,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServicePricingAdmin, PriceWriter(recordingPrices{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceInventoryAdmin, StockAdmin(recordingStock{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceOrderAdmin, AfterSalesAdmin(recordingAfterSales{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceFulfillmentAdmin, ParcelMover(recordingParcels{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePromotionAdmin, PromotionLister(recordingPromotions{walk.surfaces})))
@@ -848,7 +875,7 @@ func (w *panelWalk) request(t *testing.T, key string, walk walkCase, scopes ...s
 	method, pattern, _ := strings.Cut(key, " ")
 	path := strings.NewReplacer("{id}", "walk", "{variantID}", "walk",
 		"{kind}", "return", "{record}", "walk", "{act}", "cancel", "{line}", "walk",
-		"{ruleID}", "walk", "{revision}", "2").Replace(pattern)
+		"{ruleID}", "walk", "{revision}", "2", "{parcel}", "walk").Replace(pattern)
 
 	var req *http.Request
 	if method == http.MethodPost {

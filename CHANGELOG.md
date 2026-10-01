@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel ships an order** (ADR 0324). **For operators:** an order's page
+  opens a parcel on the delivery the order was sold under `order:write`, and
+  marks a parcel shipped with its tracking, delivered, back undelivered or
+  canceled under `fulfillment:write`. **For integrators:** the fulfillment
+  module registers a `fulfillment.admin` surface, and `order.admin` opens a
+  parcel.
+
 - **The panel writes and lists the customer groups** (ADR 0323). **For
   operators:** a Customer groups screen lists the groups newest first with
   their rank and writes one under `customer:write`. **For integrators:** the

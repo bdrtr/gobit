@@ -123,6 +123,10 @@ const ServiceName = ModuleName + ".service"
 // The cart and order flows resolve it with their own narrow interfaces.
 const InteropName = ModuleName + ".interop"
 
+// AdminName is the panel surface's name in the container (ADR 0324): the
+// moves an operator makes on an open parcel.
+const AdminName = ModuleName + ".admin"
+
 // ProvidersName is the provider registry's name in the container.
 //
 // A plugin resolves this registry and adds its own FulfillmentProvider to it
@@ -271,6 +275,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(AdminName, service.NewAdminSurface(svc)); err != nil {
 		return err
 	}
 	if err := c.Provide(ProvidersName, providers); err != nil {

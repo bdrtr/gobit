@@ -2,6 +2,7 @@ package order
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/order/api"
@@ -21,9 +22,34 @@ const AdminName = ModuleName + ".admin"
 // moves stock, money or a parcel is the flow the API calls, so the panel acts
 // under the API's conditions and fails closed where the API does. It speaks in
 // primitives, as a cross-module surface does (ADR 0006).
+//
+// It opens an order's parcel as well (ADR 0324), through the fulfilling flow
+// the API's open endpoint calls.
 type AfterSalesSurface struct {
-	svc  *service.Service
-	flow api.ReturnReceiving
+	svc        *service.Service
+	flow       api.ReturnReceiving
+	fulfilling api.Fulfilling
+}
+
+// OpenParcel opens a parcel for the order on the delivery it was sold, and
+// reports whether the idempotency key had already opened it (ADR 0324): the
+// panel's form carries one key, so a second press, or a reload of the page it
+// landed on, opens nothing new.
+func (s *AfterSalesSurface) OpenParcel(
+	ctx context.Context, orderID, idempotencyKey string,
+) (fulfillmentID string, alreadyOpen bool, err error) {
+	if s == nil || s.fulfilling == nil {
+		return "", false, errors.Unavailable(codeSetupFailed, "the fulfilling flow is not set up")
+	}
+	request, err := json.Marshal(struct {
+		IdempotencyKey string `json:"idempotency_key"`
+	}{idempotencyKey})
+	if err != nil {
+		return "", false, errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the parcel request could not be encoded")
+	}
+
+	return s.fulfilling.OpenForOrder(ctx, orderID, request)
 }
 
 // ReceiveReturn records that a return's goods arrived at the location and puts
