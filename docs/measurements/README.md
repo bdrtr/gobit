@@ -182,3 +182,4 @@ truth: a report says what was true on the day it was taken.
 | [A cart drawn a hundred times — measured 2026-09-30](0249-a-cart-drawn-a-hundred-times.md) | 55 |
 | [The subtree a plan could not see — measured 2026-09-30](0261-subtree-filter.md) | 94 |
 | [The reaper a package found stopping — measured 2026-09-30](0262-the-reaper-a-package-found-stopping.md) | 82 |
+| [The few carts an operator opened — measured 2026-10-01](0296-the-few-carts-an-operator-opened.md) | 49 |

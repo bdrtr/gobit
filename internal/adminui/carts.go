@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -204,6 +205,58 @@ func (u *UI) findVariants(r *http.Request, term string) ([]foundVariant, error) 
 	return out, nil
 }
 
+// openCartsShown is how many open operator carts the telephone order's page
+// lists, the newest first (ADR 0296).
+const openCartsShown = 20
+
+// The cart field and filter the open carts' list reads, the cart module's
+// names (ADR 0296).
+const (
+	fieldCartOpenedBy      = "opened_by"
+	filterOpenedByOperator = "opened_by_operator"
+)
+
+// openCart is one cart an operator opened and nobody completed, as the
+// telephone order's page lists it.
+type openCart struct {
+	ID, Email, CustomerID, OpenedBy, Total string
+	OpenedAt                               time.Time
+}
+
+// openCarts reads the carts operators opened and nobody completed, the newest
+// first, and whether they could be read (ADR 0296).
+func (u *UI) openCarts(r *http.Request) ([]openCart, bool) {
+	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+		Entity: EntityCart,
+		Fields: []string{
+			fieldID, fieldEmail, fieldCartCustomerID, fieldCartOpenedBy,
+			fieldCurrencyCod, fieldTotal, fieldCreatedAt,
+		},
+		Filters: map[string]any{fieldCartCompleted: false, filterOpenedByOperator: true},
+		Limit:   openCartsShown,
+	})
+	if err != nil {
+		return nil, false
+	}
+
+	scales := u.currencyScales(r.Context())
+	out := make([]openCart, 0, len(records))
+	for _, record := range records {
+		currency := recordString(record, fieldCurrencyCod)
+		total, known := amountField(record, fieldTotal, currency, scales)
+		out = append(out, openCart{
+			ID:         recordString(record, fieldID),
+			Email:      recordString(record, fieldEmail),
+			CustomerID: recordString(record, fieldCartCustomerID),
+			OpenedBy:   recordString(record, fieldCartOpenedBy),
+			Total:      withCurrency(total, currency, known),
+			OpenedAt:   recordTime(record, fieldCreatedAt),
+		})
+	}
+
+	return out, true
+}
+
 // cartOption is one shipping option the cart can take, as the form offers it.
 type cartOption struct {
 	ID, Name, Amount string
@@ -261,13 +314,26 @@ func (u *UI) openTelephoneOrder(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// renderOpenForm writes the form with a refusal and what was typed.
+// renderOpenForm writes the form with a refusal and what was typed, and the
+// open operator carts to an operator who may read carts (ADR 0260, ADR 0296).
 func (u *UI) renderOpenForm(w http.ResponseWriter, r *http.Request, status int, refused string, typed url.Values) {
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	canList := principal.HasScope(scopeCartRead)
+	var open []openCart
+	openRead := false
+	if canList {
+		open, openRead = u.openCarts(r)
+	}
+
 	u.templates.render(w, r, status, "carts.gohtml", map[string]any{
 		titleKey:    telephoneLabel,
 		"CartsPath": CartsPath,
 		"Refused":   refused,
 		"Typed":     typed,
+		"CanList":   canList,
+		"Open":      open,
+		"OpenRead":  openRead,
+		"OpenShown": openCartsShown,
 	})
 }
 

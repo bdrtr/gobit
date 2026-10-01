@@ -42,6 +42,7 @@ type channelRecordingOpening struct {
 	gotPrincipal  corehttp.Principal
 	gotCustomerID string
 	gotAddsTo     string
+	gotOpenedBy   string
 	calls         int
 }
 
@@ -49,13 +50,14 @@ var _ api.CartOpening = (*channelRecordingOpening)(nil)
 
 // OpenCartForCountry records the identity and returns the scripted id.
 func (f *channelRecordingOpening) OpenCartForCountry(
-	ctx context.Context, _, customerID, _, addsToOrderID string, _ json.RawMessage,
+	ctx context.Context, _, customerID, _, addsToOrderID, openedBy string, _ json.RawMessage,
 ) (string, error) {
 	f.calls++
 	f.gotChannels = corehttp.SalesChannelIDs(ctx)
 	f.gotPrincipal, _ = corehttp.PrincipalFromContext(ctx)
 	f.gotCustomerID = customerID
 	f.gotAddsTo = addsToOrderID
+	f.gotOpenedBy = openedBy
 
 	return f.cartID, nil
 }
@@ -151,6 +153,22 @@ func TestAnAdminCartOpensForTheCustomerTheOperatorNames(t *testing.T) {
 	// The identity reaches the flow whole, or the audit row would name nobody.
 	assert.Equal(t, "user_operator", opening.gotPrincipal.ID)
 	assert.Equal(t, []string{"cart:write"}, opening.gotPrincipal.Scopes)
+	assert.Equal(t, "user_operator", opening.gotOpenedBy,
+		"the cart names the operator the guard ring proved (ADR 0296)")
+}
+
+// TestAnAdminCartNamesNoOperatorABodyNames verifies that the opener is the
+// caller's identity and nothing the body says: a body that names one is refused
+// rather than believed (ADR 0296).
+func TestAnAdminCartNamesNoOperatorABodyNames(t *testing.T) {
+	opening := &channelRecordingOpening{cartID: "cart_1"}
+	h := newAdminWriteServer(t, opening, &channelRecordingPricing{})
+
+	rec := doRequestAs(t, h, &adminWriter, http.MethodPost, "/admin/v1/carts",
+		`{"country_code":"tr","opened_by":"user_someone_else"}`)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Zero(t, opening.calls, "a refused body opens no cart")
 }
 
 // TestOpeningACartAsksForNoChannel verifies that the claim is NOT made where

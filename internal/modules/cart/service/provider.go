@@ -46,6 +46,13 @@ const (
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt is the time of the last update.
 	FieldUpdatedAt = "updated_at"
+	// FieldOpenedBy is the operator who opened the cart through the admin cart
+	// surface, a user's or an API key's id; empty on a cart a shopper opened
+	// (ADR 0296).
+	FieldOpenedBy = "opened_by"
+	// FilterOpenedByOperator keeps the carts an operator opened when true and
+	// the shoppers' when false (ADR 0296).
+	FilterOpenedByOperator = "opened_by_operator"
 	// FieldLines is the cart's living lines in the order they were written,
 	// each a record keyed by the Line* names below (ADR 0290); an empty list
 	// for a cart with none. It costs a read only when asked for, like the
@@ -134,6 +141,7 @@ var cartFieldGetters = map[string]func(cart models.Cart) any{
 	},
 	FieldCreatedAt: func(c models.Cart) any { return c.CreatedAt },
 	FieldUpdatedAt: func(c models.Cart) any { return c.UpdatedAt },
+	FieldOpenedBy:  func(c models.Cart) any { return c.OpenedBy },
 }
 
 // QueryProvider is the read surface the cart module opens to the Query layer.
@@ -167,8 +175,9 @@ func (p *QueryProvider) Entity() string {
 // List returns the root records.
 //
 // The supported filters: "id" (text or a list of text), "customer_id" (string),
-// "region_id" (string) and "completed" (bool). Any other filter or an
-// unrecognized field is rejected with errors.Invalid (ADR 0004).
+// "region_id" (string), "completed" (bool) and "opened_by_operator" (bool). Any
+// other filter or an unrecognized field is rejected with errors.Invalid (ADR
+// 0004).
 //
 // The id filter is the order provider's, for the reason it gives: a caller
 // holding a cart's id reads that cart through a root query, and the panel's
@@ -225,6 +234,13 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 					"the %q filter must be boolean (bool), %T given", name, value)
 			}
 			in.Completed = &flag
+		case FilterOpenedByOperator:
+			flag, ok := value.(bool)
+			if !ok {
+				return nil, errors.Invalid(CodeInvalidInput,
+					"the %q filter must be boolean (bool), %T given", name, value)
+			}
+			in.OpenedByOperator = &flag
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
 				"the %q entity does not support the %q filter", EntityName, name)

@@ -28,6 +28,7 @@ type Cart struct {
 	DeletedAt        pgtype.Timestamptz
 	AddsToOrderID    *string
 	PricesIncludeTax bool
+	OpenedBy         *string
 }
 
 type CartAddress struct {

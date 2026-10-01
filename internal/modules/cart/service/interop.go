@@ -224,7 +224,7 @@ type interopLineTotals struct {
 // the rationale is the same as the one in the [Interop.AddCartLineItem] godoc.
 func (i *Interop) OpenCart(
 	ctx context.Context,
-	regionID, currencyCode, customerID, email, addsToOrderID string,
+	regionID, currencyCode, customerID, email, addsToOrderID, openedBy string,
 	metadata json.RawMessage,
 ) (string, error) {
 	extra, err := decodeInteropMetadata(metadata)
@@ -238,6 +238,7 @@ func (i *Interop) OpenCart(
 		Email:         email,
 		CurrencyCode:  currencyCode,
 		AddsToOrderID: addsToOrderID,
+		OpenedBy:      openedBy,
 		Metadata:      extra,
 	})
 	if err != nil {

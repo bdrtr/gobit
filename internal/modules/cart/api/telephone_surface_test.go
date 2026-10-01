@@ -58,6 +58,26 @@ func TestThePanelOpensACartThroughTheOpeningFlow(t *testing.T) {
 	assert.Equal(t, "cus_1", opening.gotCustomerID)
 	assert.Equal(t, "caller@example.com", opening.gotEmail)
 	assert.Empty(t, opening.gotAddsTo, "a telephone order adds to no order")
+	assert.Equal(t, "usr_panel", opening.gotOpenedBy, "the cart names the signed-in operator (ADR 0296)")
+}
+
+// TestThePanelOpensNoCartForNobody: a context with no operator in it is a
+// wiring fault, and no cart is opened that names nobody (ADR 0296).
+func TestThePanelOpensNoCartForNobody(t *testing.T) {
+	opening := &fakeOpening{cartID: "cart_phone"}
+	surface := surfaceOver(api.Flows{Opening: opening}, &fakeCarts{})
+
+	for name, ctx := range map[string]context.Context{
+		"no principal": context.Background(),
+		"no id": corehttp.WithPrincipal(context.Background(), corehttp.Principal{
+			Kind: "user", Scopes: []string{"cart:write"},
+		}),
+	} {
+		_, err := surface.OpenCart(ctx, "TR", "", "caller@example.com")
+		require.Error(t, err, name)
+		assert.True(t, errors.HasKind(err, errors.KindInternal), name)
+	}
+	assert.Zero(t, opening.calls, "no cart is opened without its operator")
 }
 
 // TestThePanelPricesALineInTheChannelItNames: the line reaches the pricing

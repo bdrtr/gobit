@@ -15,7 +15,7 @@ const bumpCartRevision = `-- name: BumpCartRevision :one
 UPDATE carts
 SET revision = revision + 1, updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
-RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax
+RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax, opened_by
 `
 
 // BumpCartRevision raises the cart's shape counter by one; it is called in the
@@ -43,6 +43,7 @@ func (q *Queries) BumpCartRevision(ctx context.Context, id string) (Cart, error)
 		&i.DeletedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.OpenedBy,
 	)
 	return i, err
 }
@@ -54,12 +55,15 @@ WHERE deleted_at IS NULL
   AND ($2::text IS NULL OR region_id = $2::text)
   AND ($3::boolean IS NULL
        OR (completed_at IS NOT NULL) = $3::boolean)
+  AND ($4::boolean IS NULL
+       OR (opened_by IS NOT NULL) = $4::boolean)
 `
 
 type CountCartsParams struct {
-	CustomerID *string
-	RegionID   *string
-	Completed  *bool
+	CustomerID       *string
+	RegionID         *string
+	Completed        *bool
+	OpenedByOperator *bool
 }
 
 // CountCarts gives the total count of the pagination envelope and applies the
@@ -70,7 +74,12 @@ type CountCartsParams struct {
 // evaluated and the total would look like 0. The total is the count of the
 // FILTER, not of the page.
 func (q *Queries) CountCarts(ctx context.Context, arg CountCartsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countCarts, arg.CustomerID, arg.RegionID, arg.Completed)
+	row := q.db.QueryRow(ctx, countCarts,
+		arg.CustomerID,
+		arg.RegionID,
+		arg.Completed,
+		arg.OpenedByOperator,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -79,9 +88,9 @@ func (q *Queries) CountCarts(ctx context.Context, arg CountCartsParams) (int64, 
 const createCart = `-- name: CreateCart :one
 
 INSERT INTO carts (
-    id, region_id, customer_id, email, currency_code, metadata, adds_to_order_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax
+    id, region_id, customer_id, email, currency_code, metadata, adds_to_order_id, opened_by
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax, opened_by
 `
 
 type CreateCartParams struct {
@@ -92,6 +101,7 @@ type CreateCartParams struct {
 	CurrencyCode  string
 	Metadata      []byte
 	AddsToOrderID *string
+	OpenedBy      *string
 }
 
 // carts queries.
@@ -109,6 +119,7 @@ func (q *Queries) CreateCart(ctx context.Context, arg CreateCartParams) (Cart, e
 		arg.CurrencyCode,
 		arg.Metadata,
 		arg.AddsToOrderID,
+		arg.OpenedBy,
 	)
 	var i Cart
 	err := row.Scan(
@@ -131,12 +142,13 @@ func (q *Queries) CreateCart(ctx context.Context, arg CreateCartParams) (Cart, e
 		&i.DeletedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.OpenedBy,
 	)
 	return i, err
 }
 
 const getCart = `-- name: GetCart :one
-SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax FROM carts
+SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax, opened_by FROM carts
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -163,12 +175,13 @@ func (q *Queries) GetCart(ctx context.Context, id string) (Cart, error) {
 		&i.DeletedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.OpenedBy,
 	)
 	return i, err
 }
 
 const getCartsByIDs = `-- name: GetCartsByIDs :many
-SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax FROM carts
+SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax, opened_by FROM carts
 WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
@@ -204,6 +217,7 @@ func (q *Queries) GetCartsByIDs(ctx context.Context, ids []string) ([]Cart, erro
 			&i.DeletedAt,
 			&i.AddsToOrderID,
 			&i.PricesIncludeTax,
+			&i.OpenedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -216,28 +230,31 @@ func (q *Queries) GetCartsByIDs(ctx context.Context, ids []string) ([]Cart, erro
 }
 
 const listCarts = `-- name: ListCarts :many
-SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax FROM carts
+SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax, opened_by FROM carts
 WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR customer_id = $1::text)
   AND ($2::text IS NULL OR region_id = $2::text)
   AND ($3::boolean IS NULL
        OR (completed_at IS NOT NULL) = $3::boolean)
+  AND ($4::boolean IS NULL
+       OR (opened_by IS NOT NULL) = $4::boolean)
   AND (created_at, id) < (
-    COALESCE($4::timestamptz, 'infinity'::timestamptz),
-    COALESCE($5::text, '')
+    COALESCE($5::timestamptz, 'infinity'::timestamptz),
+    COALESCE($6::text, '')
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $7::bigint OFFSET $6::bigint
+LIMIT $8::bigint OFFSET $7::bigint
 `
 
 type ListCartsParams struct {
-	CustomerID *string
-	RegionID   *string
-	Completed  *bool
-	AfterAt    pgtype.Timestamptz
-	AfterID    *string
-	RowOffset  int64
-	RowLimit   int64
+	CustomerID       *string
+	RegionID         *string
+	Completed        *bool
+	OpenedByOperator *bool
+	AfterAt          pgtype.Timestamptz
+	AfterID          *string
+	RowOffset        int64
+	RowLimit         int64
 }
 
 func (q *Queries) ListCarts(ctx context.Context, arg ListCartsParams) ([]Cart, error) {
@@ -245,6 +262,7 @@ func (q *Queries) ListCarts(ctx context.Context, arg ListCartsParams) ([]Cart, e
 		arg.CustomerID,
 		arg.RegionID,
 		arg.Completed,
+		arg.OpenedByOperator,
 		arg.AfterAt,
 		arg.AfterID,
 		arg.RowOffset,
@@ -277,6 +295,7 @@ func (q *Queries) ListCarts(ctx context.Context, arg ListCartsParams) ([]Cart, e
 			&i.DeletedAt,
 			&i.AddsToOrderID,
 			&i.PricesIncludeTax,
+			&i.OpenedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -289,7 +308,7 @@ func (q *Queries) ListCarts(ctx context.Context, arg ListCartsParams) ([]Cart, e
 }
 
 const lockCart = `-- name: LockCart :one
-SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax FROM carts
+SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax, opened_by FROM carts
 WHERE id = $1 AND deleted_at IS NULL
 FOR UPDATE
 `
@@ -325,6 +344,7 @@ func (q *Queries) LockCart(ctx context.Context, id string) (Cart, error) {
 		&i.DeletedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.OpenedBy,
 	)
 	return i, err
 }
@@ -333,7 +353,7 @@ const markCartCompleted = `-- name: MarkCartCompleted :one
 UPDATE carts
 SET completed_at = now(), updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
-RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax
+RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax, opened_by
 `
 
 // MarkCartCompleted stamps the cart as completed.
@@ -365,6 +385,7 @@ func (q *Queries) MarkCartCompleted(ctx context.Context, id string) (Cart, error
 		&i.DeletedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.OpenedBy,
 	)
 	return i, err
 }
@@ -389,7 +410,7 @@ SET email       = $2,
     customer_id = $3,
     updated_at  = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
-RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax
+RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax, opened_by
 `
 
 type UpdateCartContactParams struct {
@@ -427,6 +448,7 @@ func (q *Queries) UpdateCartContact(ctx context.Context, arg UpdateCartContactPa
 		&i.DeletedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.OpenedBy,
 	)
 	return i, err
 }
@@ -442,7 +464,7 @@ SET subtotal        = $2,
     prices_include_tax = $8,
     updated_at      = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
-RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax
+RETURNING id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax, opened_by
 `
 
 type UpdateCartTotalsParams struct {
@@ -490,6 +512,7 @@ func (q *Queries) UpdateCartTotals(ctx context.Context, arg UpdateCartTotalsPara
 		&i.DeletedAt,
 		&i.AddsToOrderID,
 		&i.PricesIncludeTax,
+		&i.OpenedBy,
 	)
 	return i, err
 }

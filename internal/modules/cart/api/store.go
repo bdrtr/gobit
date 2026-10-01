@@ -145,7 +145,7 @@ func (h *Handler) storeCreateCart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id, err := flow.OpenCartForCountry(ctx, body.CountryCode, customerID, body.Email,
-		body.AddsToOrderID, metadata)
+		body.AddsToOrderID, "", metadata)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return

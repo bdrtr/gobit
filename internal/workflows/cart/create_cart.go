@@ -33,6 +33,9 @@ type CreateCartInput struct {
 	// [CountryCode]'s — there what was put in the body was the server's data,
 	// here it is not.
 	Metadata json.RawMessage
+	// OpenedBy is the operator opening the cart, as the guard ring proved
+	// them; empty for a shopper (ADR 0296).
+	OpenedBy string
 }
 
 // CreateCartResult holds the fields of the created cart that concern the caller.
@@ -125,7 +128,7 @@ func (w *Workflows) CreateCart(ctx context.Context, in CreateCartInput) (CreateC
 		}
 	}
 
-	cartID, err := w.carts.OpenCart(ctx, regionID, currency, in.CustomerID, email, addsTo, in.Metadata)
+	cartID, err := w.carts.OpenCart(ctx, regionID, currency, in.CustomerID, email, addsTo, in.OpenedBy, in.Metadata)
 	if err != nil {
 		return CreateCartResult{}, err
 	}

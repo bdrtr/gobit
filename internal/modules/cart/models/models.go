@@ -83,6 +83,10 @@ type Cart struct {
 	// nothing. It is written when the cart is opened, never changed, and
 	// carried into the order the cart becomes (ADR 0192).
 	AddsToOrderID string
+	// OpenedBy is the operator who opened the cart through the admin cart
+	// surface, as the guard ring proved them; empty on a cart a shopper opened
+	// (ADR 0296). It is written once, when the cart is opened.
+	OpenedBy string
 	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
 	// DiscountTotal is the total discount (minor unit); it is stored positive

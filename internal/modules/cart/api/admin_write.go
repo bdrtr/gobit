@@ -125,8 +125,15 @@ func (h *Handler) adminCreateCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	openedBy, err := operatorOf(ctx)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
 	id, err := flow.OpenCartForCountry(ctx, body.CountryCode, body.CustomerID,
-		body.Email, body.AddsToOrderID, metadata)
+		body.Email, body.AddsToOrderID, openedBy, metadata)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 
@@ -243,6 +250,21 @@ func (h *Handler) channelScoped(
 	}
 
 	return scoped, true
+}
+
+// operatorOf names the operator an admin door's cart is opened by: the caller's
+// identity, a user or an API key, kept as free text the way the file module
+// keeps an upload's (ADR 0296).
+func operatorOf(ctx context.Context) (string, error) {
+	principal, found := corehttp.PrincipalFromContext(ctx)
+	if !found || strings.TrimSpace(principal.ID) == "" {
+		// The guard ring already refused an anonymous request, so an admin door
+		// reached without an identity is wired wrongly.
+		return "", coreerrors.Internal(codeInvalidRequest,
+			"the caller could not be identified, so the cart cannot name who opened it")
+	}
+
+	return principal.ID, nil
 }
 
 // scopeToChannel is [Handler.channelScoped] for a caller that answers its own

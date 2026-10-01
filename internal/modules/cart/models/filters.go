@@ -19,6 +19,9 @@ type CartFilter struct {
 	RegionID *string
 	// Completed, when given, filters the carts by whether they are completed.
 	Completed *bool
+	// OpenedByOperator, when given, filters the carts by whether an operator
+	// opened them (ADR 0296).
+	OpenedByOperator *bool
 	// Limit is the maximum number of rows to return.
 	Limit int64
 	// Offset is the number of rows to skip.

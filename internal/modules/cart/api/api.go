@@ -325,7 +325,7 @@ type CartOpening interface {
 	// through as they are.
 	OpenCartForCountry(
 		ctx context.Context,
-		countryCode, customerID, email, addsToOrderID string,
+		countryCode, customerID, email, addsToOrderID, openedBy string,
 		metadata json.RawMessage,
 	) (cartID string, err error)
 }

@@ -91,7 +91,7 @@ func NewInterop(w *Workflows) *Interop { return &Interop{w: w} }
 // choice is made in [Interop.AddPricedLineItem].
 func (i *Interop) OpenCartForCountry(
 	ctx context.Context,
-	countryCode, customerID, email, addsToOrderID string,
+	countryCode, customerID, email, addsToOrderID, openedBy string,
 	metadata json.RawMessage,
 ) (string, error) {
 	result, err := i.w.CreateCart(ctx, CreateCartInput{
@@ -99,6 +99,7 @@ func (i *Interop) OpenCartForCountry(
 		CustomerID:    customerID,
 		Email:         email,
 		AddsToOrderID: addsToOrderID,
+		OpenedBy:      openedBy,
 		Metadata:      metadata,
 	})
 	if err != nil {

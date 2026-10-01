@@ -192,12 +192,14 @@ func TestOpenCartForCountryDerivesRegion(t *testing.T) {
 	seen := recordOpenCart(h.carts, testCartID)
 
 	cartID, err := NewInterop(h.wf).OpenCartForCountry(
-		context.Background(), "TR", "", "misafir@example.com", "", nil)
+		context.Background(), "TR", "", "misafir@example.com", "", "usr_operator", nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, testCartID, cartID)
 	assert.Equal(t, []string{testRegionID, testCurrency, "", "misafir@example.com"}, *seen,
 		"the region and the currency must be derived FROM THE COUNTRY")
+	assert.Equal(t, "usr_operator", h.carts.openedBy,
+		"the operator the admin door names must reach the cart module (ADR 0296)")
 }
 
 // TestOpenCartForCountryOpensNoCartForUnknownCountry verifies that the surface
@@ -214,7 +216,7 @@ func TestOpenCartForCountryOpensNoCartForUnknownCountry(t *testing.T) {
 		return testCartID, nil
 	}
 
-	cartID, err := NewInterop(h.wf).OpenCartForCountry(context.Background(), "ZZ", "", "", "", nil)
+	cartID, err := NewInterop(h.wf).OpenCartForCountry(context.Background(), "ZZ", "", "", "", "", nil)
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err))
 	assert.Empty(t, cartID)

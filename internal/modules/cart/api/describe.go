@@ -292,7 +292,7 @@ func describeShipping(d *openapi.Doc) {
 // reason the order is built as a CART is that the cart prices it on the server.
 func describeAdmin(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/carts", openapi.Operation{
-		Summary: "Pages the carts by customer, region and completion state.",
+		Summary: "Pages the carts by customer, region, completion state and opener.",
 		// The parameters are the ONES [Handler.adminListCarts] READS; adding
 		// another one would mean promising the client a filter that does not work.
 		Parameters: []openapi.Parameter{
@@ -302,6 +302,9 @@ func describeAdmin(d *openapi.Doc) {
 				"Limits the carts to a single region."),
 			queryParameter("completed", typeBoolean,
 				"true returns only completed carts, false only open ones."),
+			queryParameter("opened_by_operator", typeBoolean,
+				"true returns only the carts an operator opened through this surface, "+
+					"false only the ones a shopper opened (ADR 0296)."),
 			queryParameter("limit", typeInteger,
 				"Page size; if it is not given the service's default is applied."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),

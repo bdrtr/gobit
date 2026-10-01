@@ -21,9 +21,10 @@ import (
 
 // adminListCarts returns the carts in pages.
 //
-// Supported filters: customer_id, region_id and completed. The rows are NOT
-// LOADED; fetching the children of dozens of carts per page would open the list
-// up to N+1. The detail of a single cart is taken with /admin/v1/carts/{id}.
+// Supported filters: customer_id, region_id, completed and opened_by_operator
+// (ADR 0296). The rows are NOT LOADED; fetching the children of dozens of carts
+// per page would open the list up to N+1. The detail of a single cart is taken
+// with /admin/v1/carts/{id}.
 func (h *Handler) adminListCarts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -48,6 +49,15 @@ func (h *Handler) adminListCarts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		in.Completed = &flag
+	}
+	if raw := r.URL.Query().Get("opened_by_operator"); raw != "" {
+		flag, parseErr := strconv.ParseBool(raw)
+		if parseErr != nil {
+			corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+				"opened_by_operator has to be a boolean value: %q", raw))
+			return
+		}
+		in.OpenedByOperator = &flag
 	}
 
 	result, err := h.svc.ListCarts(ctx, in)

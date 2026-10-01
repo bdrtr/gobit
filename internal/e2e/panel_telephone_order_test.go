@@ -54,6 +54,15 @@ func TestAnOperatorOpensATelephoneOrderInThePanel(t *testing.T) {
 	cartPath := opened.Header().Get("Location")
 	require.True(t, strings.HasPrefix(cartPath, adminui.CartsPath+"/"), cartPath)
 
+	// The cart names the operator who opened it, and the telephone order's page
+	// lists it among the open ones through the real read layer (ADR 0296).
+	listed := send(http.MethodGet, adminui.CartsPath, nil)
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	row := regexp.MustCompile(`(?s)<a href="` + regexp.QuoteMeta(cartPath) + `">.*?</tr>`).FindString(listed.Body.String())
+	require.NotEmpty(t, row, "the open cart is listed")
+	assert.Contains(t, row, "<td>usr_phone</td>")
+	assert.Contains(t, row, "caller@example.com")
+
 	// The operator finds the product by its title and the form offers its
 	// variant (ADR 0293).
 	found := send(http.MethodGet, cartPath+"?find="+url.QueryEscape("Panel Telephone Order"), nil)
@@ -168,4 +177,10 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 	assert.Zero(t, order.Summary.PaidTotal, "it owes its total")
 	assert.Equal(t, adminCartStock-adminCartQuantity, sellableQuantity(ctx, t, stockItemID),
 		"the order's stock is deducted")
+
+	listed := send(http.MethodGet, adminui.CartsPath, nil)
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	assert.Contains(t, listed.Body.String(), "<h2>Open carts</h2>")
+	assert.NotContains(t, listed.Body.String(), `href="`+cartPath+`"`,
+		"a completed cart is no longer open (ADR 0296)")
 }

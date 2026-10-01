@@ -247,10 +247,11 @@ type Carts interface {
 	// not carried the field the client sent would silently be dropped.
 	//
 	// addsToOrderID is the order the cart is opened to add to, or empty; this
-	// package asked [Orders] about it before calling (ADR 0192).
+	// package asked [Orders] about it before calling (ADR 0192). openedBy is the
+	// operator opening it, or empty for a shopper (ADR 0296).
 	OpenCart(
 		ctx context.Context,
-		regionID, currencyCode, customerID, email, addsToOrderID string,
+		regionID, currencyCode, customerID, email, addsToOrderID, openedBy string,
 		metadata json.RawMessage,
 	) (cartID string, err error)
 

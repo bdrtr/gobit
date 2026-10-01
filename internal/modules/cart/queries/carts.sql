@@ -7,8 +7,8 @@
 
 -- name: CreateCart :one
 INSERT INTO carts (
-    id, region_id, customer_id, email, currency_code, metadata, adds_to_order_id
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    id, region_id, customer_id, email, currency_code, metadata, adds_to_order_id, opened_by
+) VALUES ($1, $2, $3, $4, $5, $6, $7, sqlc.narg('opened_by'))
 RETURNING *;
 
 -- name: GetCart :one
@@ -35,6 +35,8 @@ WHERE deleted_at IS NULL
   AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
   AND (sqlc.narg('completed')::boolean IS NULL
        OR (completed_at IS NOT NULL) = sqlc.narg('completed')::boolean)
+  AND (sqlc.narg('opened_by_operator')::boolean IS NULL
+       OR (opened_by IS NOT NULL) = sqlc.narg('opened_by_operator')::boolean)
   AND (created_at, id) < (
     COALESCE(sqlc.narg('after_at')::timestamptz, 'infinity'::timestamptz),
     COALESCE(sqlc.narg('after_id')::text, '')
@@ -55,7 +57,9 @@ WHERE deleted_at IS NULL
   AND (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('customer_id')::text)
   AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
   AND (sqlc.narg('completed')::boolean IS NULL
-       OR (completed_at IS NOT NULL) = sqlc.narg('completed')::boolean);
+       OR (completed_at IS NOT NULL) = sqlc.narg('completed')::boolean)
+  AND (sqlc.narg('opened_by_operator')::boolean IS NULL
+       OR (opened_by IS NOT NULL) = sqlc.narg('opened_by_operator')::boolean);
 
 -- GetCartsByIDs serves the Query layer's FetchByIDs call in ONE round; no per-id
 -- query (N+1) is made.

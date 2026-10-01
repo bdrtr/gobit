@@ -51,7 +51,9 @@ import (
 //     for its own rows. carts.customer_id is the one identifier that IS
 //     declared, because it is the installation's stable handle for the PERSON
 //     rather than for a thing. carts.adds_to_order_id names an ORDER, whose
-//     module declares and erases its own contact (ADR 0192).
+//     module declares and erases its own contact (ADR 0192). carts.opened_by is
+//     a staff member's id, which resolves through the auth module as the file
+//     module's uploaded_by does and is judged there (ADR 0296).
 //   - The money, the quantities and the currency describe the basket. What
 //     somebody put in it and what it came to is a fact about the sale, and a
 //     line's title is a copy of the catalog's own words. Whether the prices
@@ -67,7 +69,7 @@ import (
 //     for billing; it is true of the row with every name in it emptied.
 var notPersonalColumns = map[string][]string{
 	"carts": {
-		"id", "region_id", "currency_code", "adds_to_order_id",
+		"id", "region_id", "currency_code", "adds_to_order_id", "opened_by",
 		"subtotal", "discount_total", "tax_total", "shipping_total", "total",
 		"prices_include_tax", "revision", "totals_revision",
 		"completed_at", "created_at", "updated_at", "deleted_at",

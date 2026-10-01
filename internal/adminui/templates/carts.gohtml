@@ -3,6 +3,9 @@ carts.gohtml opens a telephone order's cart (ADR 0290).
 
 The country decides the region and its currency, as on the storefront; a
 customer id is optional, and a guest's cart carries the caller's e-mail.
+
+Below the form, an operator who may read carts sees the carts operators opened
+and nobody completed, the newest first (ADR 0296).
 */ -}}
 {{ define "body" }}
 <h1>Telephone order</h1>
@@ -16,4 +19,32 @@ customer id is optional, and a guest's cart carries the caller's e-mail.
   <input name="customer_id" value="{{ .Typed.Get "customer_id" }}" placeholder="customer id (optional)" aria-label="customer id">
   <button type="submit">Open a cart</button>
 </form>
+
+{{ if .CanList }}
+<h2>Open carts</h2>
+
+{{ if not .OpenRead }}
+<p class="muted">The open carts could not be read.</p>
+{{ else if .Open }}
+<table>
+  <thead>
+    <tr><th>Cart</th><th>Caller</th><th>Opened by</th><th>Opened</th><th class="num">Total</th></tr>
+  </thead>
+  <tbody>
+    {{ range .Open }}
+    <tr>
+      <td><a href="{{ $.CartsPath }}/{{ .ID }}">{{ .ID }}</a></td>
+      <td>{{ if .Email }}{{ .Email }}{{ else }}<span class="muted">no address</span>{{ end }}{{ with .CustomerID }}<br><span class="muted">customer {{ . }}</span>{{ end }}</td>
+      <td>{{ .OpenedBy }}</td>
+      <td>{{ if not .OpenedAt.IsZero }}{{ .OpenedAt.UTC.Format "2006-01-02 15:04 UTC" }}{{ end }}</td>
+      <td class="num">{{ .Total }}</td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ if eq (len .Open) .OpenShown }}<p class="muted">The {{ .OpenShown }} newest are shown.</p>{{ end }}
+{{ else }}
+<p class="muted">No operator's cart is open.</p>
+{{ end }}
+{{ end }}
 {{ end }}

@@ -31,6 +31,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A cart names the operator who opened it** (ADR 0296). **For operators:**
+  the telephone order's page lists the open carts operators opened, the twenty
+  newest, each with its caller, its opener and its total, to an operator who
+  holds `cart:read`. **For integrators:** a cart opened through
+  `POST /admin/v1/carts` stores the caller's id; `GET /admin/v1/carts` and the
+  `cart` query provider take `opened_by_operator=true|false`, and the provider
+  offers the `opened_by` field. The cart's JSON does not carry it.
+
 - **An operator may choose an admin-only shipping option** (ADR 0295). **For
   operators:** the telephone order's shipping list includes the options marked
   admin-only, such as a pick-up at the desk. **For integrators:**

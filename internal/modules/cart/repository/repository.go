@@ -201,6 +201,7 @@ func (r *Repository) CreateCart(ctx context.Context, cart models.Cart) (models.C
 		CurrencyCode:  cart.CurrencyCode,
 		Metadata:      meta,
 		AddsToOrderID: nullString(cart.AddsToOrderID),
+		OpenedBy:      nullString(cart.OpenedBy),
 	})
 	if err != nil {
 		return models.Cart{}, classify(err, codeQueryFailed, "the cart could not be created")
@@ -263,22 +264,24 @@ func (r *Repository) ListCarts(ctx context.Context, filter models.CartFilter) ([
 	}
 
 	rows, err := r.queries(ctx).ListCarts(ctx, cartdb.ListCartsParams{
-		CustomerID: filter.CustomerID,
-		RegionID:   filter.RegionID,
-		Completed:  filter.Completed,
-		RowLimit:   filter.Limit,
-		RowOffset:  filter.Offset,
-		AfterAt:    afterAt,
-		AfterID:    afterID,
+		CustomerID:       filter.CustomerID,
+		RegionID:         filter.RegionID,
+		Completed:        filter.Completed,
+		OpenedByOperator: filter.OpenedByOperator,
+		RowLimit:         filter.Limit,
+		RowOffset:        filter.Offset,
+		AfterAt:          afterAt,
+		AfterID:          afterID,
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed, "the carts could not be listed")
 	}
 
 	total, err := r.queries(ctx).CountCarts(ctx, cartdb.CountCartsParams{
-		CustomerID: filter.CustomerID,
-		RegionID:   filter.RegionID,
-		Completed:  filter.Completed,
+		CustomerID:       filter.CustomerID,
+		RegionID:         filter.RegionID,
+		Completed:        filter.Completed,
+		OpenedByOperator: filter.OpenedByOperator,
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed, "the carts could not be counted")

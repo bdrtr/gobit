@@ -48,8 +48,12 @@ func (s *TelephoneSurface) OpenCart(ctx context.Context, countryCode, customerID
 	if err != nil {
 		return "", err
 	}
+	openedBy, err := operatorOf(ctx)
+	if err != nil {
+		return "", err
+	}
 
-	return flow.OpenCartForCountry(ctx, countryCode, customerID, email, "", nil)
+	return flow.OpenCartForCountry(ctx, countryCode, customerID, email, "", openedBy, nil)
 }
 
 // AddLine adds a variant priced by the catalog of the named sales channel and

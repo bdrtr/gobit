@@ -181,6 +181,7 @@ type fakeOpening struct {
 	gotCustomerID string
 	gotEmail      string
 	gotAddsTo     string
+	gotOpenedBy   string
 	gotMetadata   json.RawMessage
 	calls         int
 }
@@ -191,12 +192,12 @@ var _ api.CartOpening = (*fakeOpening)(nil)
 // OpenCartForCountry returns the cart's id and records the arguments.
 func (f *fakeOpening) OpenCartForCountry(
 	_ context.Context,
-	countryCode, customerID, email, addsToOrderID string,
+	countryCode, customerID, email, addsToOrderID, openedBy string,
 	metadata json.RawMessage,
 ) (string, error) {
 	f.calls++
 	f.gotCountry, f.gotCustomerID, f.gotEmail, f.gotMetadata = countryCode, customerID, email, metadata
-	f.gotAddsTo = addsToOrderID
+	f.gotAddsTo, f.gotOpenedBy = addsToOrderID, openedBy
 	return f.cartID, f.err
 }
 
@@ -539,6 +540,7 @@ func TestCreateCartReturns201AndSingleEnvelope(t *testing.T) {
 	assert.Equal(t, "cust_1", flow.gotCustomerID)
 	assert.Equal(t, "a@b.c", flow.gotEmail)
 	assert.Equal(t, "order_7", flow.gotAddsTo)
+	assert.Empty(t, flow.gotOpenedBy, "a shopper's cart names no operator (ADR 0296)")
 }
 
 // TestCreateCartRegionComesFromTheFlow verifies that the cart's region comes not
@@ -1255,7 +1257,8 @@ func TestAdminListEnvelope(t *testing.T) {
 	h := newServer(t, svc)
 
 	rec := doRequest(t, h, http.MethodGet,
-		"/admin/v1/carts?limit=2&offset=4&customer_id=cust_1&region_id=reg_1&completed=true", "")
+		"/admin/v1/carts?limit=2&offset=4&customer_id=cust_1&region_id=reg_1&completed=true"+
+			"&opened_by_operator=false", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	payload := bodyMap(t, rec)
@@ -1270,6 +1273,8 @@ func TestAdminListEnvelope(t *testing.T) {
 	assert.Equal(t, "reg_1", *svc.listInput.RegionID)
 	require.NotNil(t, svc.listInput.Completed)
 	assert.True(t, *svc.listInput.Completed)
+	require.NotNil(t, svc.listInput.OpenedByOperator, "the opener filter reaches the service (ADR 0296)")
+	assert.False(t, *svc.listInput.OpenedByOperator)
 }
 
 // TestAdminListDefaultLimit verifies that when no limit is given the bound that
@@ -1441,6 +1446,9 @@ func TestInvalidCompletedParameter(t *testing.T) {
 
 	rec := doRequest(t, h, http.MethodGet, "/admin/v1/carts?completed=maybe", "")
 
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+
+	rec = doRequest(t, h, http.MethodGet, "/admin/v1/carts?opened_by_operator=maybe", "")
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 }
 

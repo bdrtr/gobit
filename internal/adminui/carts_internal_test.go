@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -495,4 +496,74 @@ func TestASearchThatFindsNothingSaysSo(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "The products could not be read")
 	assert.Contains(t, rec.Body.String(), `<input name="variant_id"`)
+}
+
+// TestTheTelephoneOrderListsTheOpenOperatorCarts is ADR 0296 on the page: an
+// operator who may read carts sees the carts operators opened and nobody
+// completed, each linked to its page with its opener; one who may only write
+// carts is shown the form and nothing of the carts is read for them.
+func TestTheTelephoneOrderListsTheOpenOperatorCarts(t *testing.T) {
+	t.Parallel()
+
+	catalog := &fakeCatalog{byEntity: map[string][]query.Record{EntityCart: {{
+		fieldID: "cart_open", fieldEmail: "caller@example.com", fieldCartCustomerID: "cus_1",
+		fieldCartOpenedBy: "user_7", fieldCurrencyCod: "TRY", fieldTotal: int64(38_400),
+		fieldCreatedAt: time.Date(2026, 10, 1, 9, 30, 0, 0, time.UTC),
+	}}}}
+	panel := newCatalogPanel(t, catalog)
+	panel.carts = &fakeCarts{}
+
+	rec := phoneRequest(panel, http.MethodGet, CartsPath, nil, scopeCartRead, scopeCartWrite)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, `<a href="`+CartsPath+`/cart_open">cart_open</a>`)
+	assert.Contains(t, body, "<td>user_7</td>")
+	assert.Contains(t, body, "caller@example.com")
+	assert.Contains(t, body, "customer cus_1")
+	assert.Contains(t, body, "2026-10-01 09:30 UTC")
+	var asked []query.GraphSpec
+	for _, spec := range catalog.specs {
+		if spec.Entity == EntityCart {
+			asked = append(asked, spec)
+		}
+	}
+	require.Len(t, asked, 1)
+	assert.Equal(t, map[string]any{fieldCartCompleted: false, filterOpenedByOperator: true}, asked[0].Filters)
+	assert.Equal(t, openCartsShown, asked[0].Limit)
+	assert.Contains(t, asked[0].Fields, fieldCartOpenedBy)
+
+	blind := &fakeCatalog{byEntity: catalog.byEntity}
+	panel = newCatalogPanel(t, blind)
+	panel.carts = &fakeCarts{}
+	rec = phoneRequest(panel, http.MethodGet, CartsPath, nil, scopeCartWrite)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `action="`+CartsPath+`"`)
+	assert.NotContains(t, rec.Body.String(), "Open carts")
+	for _, spec := range blind.specs {
+		assert.NotEqual(t, EntityCart, spec.Entity, "the carts are read under cart:read alone")
+	}
+}
+
+// TestTheOpenCartsListSaysWhenItIsEmptyOrUnread: no open cart is said, a failed
+// read is said, and neither takes the form away.
+func TestTheOpenCartsListSaysWhenItIsEmptyOrUnread(t *testing.T) {
+	t.Parallel()
+
+	panel := newCatalogPanel(t, &fakeCatalog{byEntity: map[string][]query.Record{}})
+	panel.carts = &fakeCarts{}
+	rec := phoneRequest(panel, http.MethodGet, CartsPath, nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "No operator's cart is open.")
+	assert.Contains(t, rec.Body.String(), `action="`+CartsPath+`"`)
+
+	failing := &fakeCatalog{errByEntity: map[string]error{
+		EntityCart: errors.Unavailable("carts_down", "the carts did not answer"),
+	}}
+	panel = newCatalogPanel(t, failing)
+	panel.carts = &fakeCarts{}
+	rec = phoneRequest(panel, http.MethodGet, CartsPath, nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "The open carts could not be read.")
+	assert.Contains(t, rec.Body.String(), `action="`+CartsPath+`"`)
 }

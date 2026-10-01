@@ -41,6 +41,10 @@ type CreateCartInput struct {
 	// added to is the order module's question, which the workflow asked before
 	// calling, and the order's write asks again.
 	AddsToOrderID string
+	// OpenedBy is the operator opening the cart through the admin cart
+	// surface; empty for a shopper (ADR 0296). The caller passes the identity
+	// the guard ring proved, never one a body named.
+	OpenedBy string
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 }
@@ -62,6 +66,11 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 	}
 	if in.AddsToOrderID != "" {
 		if err := requireID("adds_to_order_id", in.AddsToOrderID); err != nil {
+			return models.Cart{}, err
+		}
+	}
+	if in.OpenedBy != "" {
+		if err := requireID("opened_by", in.OpenedBy); err != nil {
 			return models.Cart{}, err
 		}
 	}
@@ -89,6 +98,7 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 			Email:         email,
 			CurrencyCode:  currency,
 			AddsToOrderID: in.AddsToOrderID,
+			OpenedBy:      in.OpenedBy,
 			Metadata:      in.Metadata,
 		})
 		if createErr != nil {
@@ -270,6 +280,9 @@ type ListCartsInput struct {
 	RegionID *string
 	// Completed, if given, filters the carts by completeness.
 	Completed *bool
+	// OpenedByOperator, if given, filters the carts by whether an operator
+	// opened them through the admin cart surface (ADR 0296).
+	OpenedByOperator *bool
 	// Page holds the pagination parameters.
 	Page Page
 }
@@ -287,10 +300,11 @@ func (s *Service) ListCarts(ctx context.Context, in ListCartsInput) (CartPage, e
 	}
 
 	filter := models.CartFilter{
-		Completed: in.Completed,
-		Limit:     page.Limit,
-		Offset:    page.Offset,
-		After:     in.Page.After,
+		Completed:        in.Completed,
+		OpenedByOperator: in.OpenedByOperator,
+		Limit:            page.Limit,
+		Offset:           page.Offset,
+		After:            in.Page.After,
 	}
 	if in.CustomerID != nil {
 		if err := requireID("customer_id", *in.CustomerID); err != nil {

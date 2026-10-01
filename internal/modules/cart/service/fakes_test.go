@@ -398,6 +398,9 @@ func (f *fakeStore) ListCarts(ctx context.Context, filter models.CartFilter) ([]
 		if filter.Completed != nil && cart.Completed() != *filter.Completed {
 			continue
 		}
+		if filter.OpenedByOperator != nil && (cart.OpenedBy != "") != *filter.OpenedByOperator {
+			continue
+		}
 		matched = append(matched, cart)
 	}
 	slices.SortFunc(matched, func(a, b models.Cart) int {

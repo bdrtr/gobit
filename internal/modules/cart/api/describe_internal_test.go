@@ -552,7 +552,7 @@ func TestAdminListDescribesOnlyTheParametersItReads(t *testing.T) {
 	op := operation(t, paths, http.MethodGet, "/admin/v1/carts")
 
 	assert.ElementsMatch(t,
-		[]string{"customer_id", "region_id", "completed", "limit", "offset", "after"},
+		[]string{"customer_id", "region_id", "completed", "opened_by_operator", "limit", "offset", "after"},
 		parameterNames(t, op, "query"),
 		"the parameters have to be the same as the ones adminListCarts reads")
 
