@@ -140,6 +140,7 @@ func builtInScopes() map[string]string {
 		routeKey(post, CartLinesPath): scopeCartWrite,
 		// The rest of it is the cart's write too (ADR 0291).
 		routeKey(post, CartAddressPath):  scopeCartWrite,
+		routeKey(post, CartBillingPath):  scopeCartWrite,
 		routeKey(post, CartShippingPath): scopeCartWrite,
 		routeKey(post, CartCompletePath): scopeCartWrite,
 		// The operator's corrections (ADR 0300).

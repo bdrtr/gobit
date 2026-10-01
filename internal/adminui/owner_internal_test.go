@@ -503,6 +503,10 @@ func (c recordingCarts) AddShippingMethod(context.Context, string, string) (stri
 	return "", c.surfaces.reach(ServiceCartAdmin)
 }
 
+func (c recordingCarts) SetBillingAddress(context.Context, string, map[string]string) error {
+	return c.surfaces.reach(ServiceCartAdmin)
+}
+
 func (c recordingCarts) RemoveLine(context.Context, string, string) error {
 	return c.surfaces.reach(ServiceCartAdmin)
 }
@@ -615,6 +619,7 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, CartLinesPath): {formSalesChannelID: {"sc_1"}, formVariantID: {"variant_1"}, formQuantity: {"1"}},
 	// And completes it (ADR 0291).
 	routeKey(http.MethodPost, CartAddressPath):  {"first_name": {"Ada"}, "country_code": {"TR"}},
+	routeKey(http.MethodPost, CartBillingPath):  {"billing_first_name": {"Ada"}, "billing_country_code": {"TR"}},
 	routeKey(http.MethodPost, CartShippingPath): {formShippingOption: {"so_1"}},
 	routeKey(http.MethodPost, CartCompletePath): {
 		formSalesChannelID: {"sc_1"}, formPaymentMethod: {"bank_transfer"}, formReadTotal: {"1000"},

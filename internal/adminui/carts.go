@@ -19,7 +19,8 @@ import (
 
 // The telephone order: an operator opens a cart for a caller and adds priced
 // lines to it (ADR 0290), writes its shipping address, chooses its shipping
-// method and completes it with an offline method (ADR 0291), through the cart
+// method and completes it with an offline method (ADR 0291), writes its
+// billing address (ADR 0303) and corrects it (ADR 0300), through the cart
 // module's panel surface — the acts the admin API took since ADR 0146 and ADR
 // 0286.
 
@@ -34,10 +35,12 @@ const EntityCart = "cart"
 // and the forms that add a line, write the address, choose the shipping and
 // complete the cart.
 const (
-	CartsPath        = URLPrefix + "/carts"
-	CartPath         = CartsPath + "/{id}"
-	CartLinesPath    = CartPath + "/lines"
-	CartAddressPath  = CartPath + "/address"
+	CartsPath       = URLPrefix + "/carts"
+	CartPath        = CartsPath + "/{id}"
+	CartLinesPath   = CartPath + "/lines"
+	CartAddressPath = CartPath + "/address"
+	// CartBillingPath writes the cart's billing address (ADR 0303).
+	CartBillingPath  = CartPath + "/billing"
 	CartShippingPath = CartPath + "/shipping"
 	CartCompletePath = CartPath + "/complete"
 	// The operator's corrections of their own cart (ADR 0300): one line
@@ -62,6 +65,9 @@ type TelephoneCarts interface {
 	// SetShippingAddress writes the shipping address from the address keys
 	// and reprices the cart.
 	SetShippingAddress(ctx context.Context, cartID string, address map[string]string) error
+	// SetBillingAddress writes the billing address from the same keys (ADR
+	// 0303).
+	SetBillingAddress(ctx context.Context, cartID string, address map[string]string) error
 	// ShippingOptions lists the options the cart can take, each its id, name
 	// and amount in the cart's currency (ADR 0292).
 	ShippingOptions(ctx context.Context, cartID string) (ids, names []string, amounts []int64, err error)
@@ -96,6 +102,7 @@ const (
 	// The shipping address, keyed as an order's is, and the chosen methods
 	// (ADR 0291).
 	fieldCartShippingAddress = "shipping_address"
+	fieldCartBillingAddress  = "billing_address"
 	fieldCartShippingMethods = "shipping_methods"
 	cartMethodName           = "name"
 	cartMethodAmount         = "amount"
@@ -104,7 +111,7 @@ const (
 // addressFields are the address form's fields, the cart surface's keys, in the
 // order the form asks for them.
 var addressFields = []string{
-	"first_name", "last_name", "address_1", "city", "postal_code", "country_code", "phone",
+	"first_name", "last_name", "company", "address_1", "city", "postal_code", "country_code", "phone",
 }
 
 // The forms' fields beside [formVariantID] and [formQuantity].
@@ -145,6 +152,11 @@ type cartPage struct {
 	// draw the form with what is there.
 	ShipTo  []string
 	Address map[string]string
+	// BillTo is the billing address, a line a part; Billing the fields the
+	// billing form is drawn with: the billing address, or the shipping
+	// address when none was written, for the operator to confirm (ADR 0303).
+	BillTo  []string
+	Billing map[string]string
 	// Methods are the chosen shipping methods, each its name and amount.
 	Methods []cartMethod
 }
@@ -512,6 +524,7 @@ func (u *UI) renderCart(
 			fieldSubtotal, fieldTax, fieldShipping, fieldTotal,
 			fieldCartTotalsStale, fieldCartCompleted, fieldCartLines,
 			fieldCartShippingAddress, fieldCartShippingMethods, FieldCartOpenedBy,
+			fieldCartBillingAddress,
 		},
 		Filters: map[string]any{filterID: []string{id}},
 		Limit:   1,
@@ -561,8 +574,9 @@ func (u *UI) renderCart(
 		"FindFailed":  findFailed,
 		refusedKey:    refused,
 		"Typed":       typed,
-		// AddressFields orders the address form (ADR 0291).
+		// AddressFields orders the address forms (ADR 0291, ADR 0303).
 		"AddressFields": addressFields,
+		"BillingPrefix": billingPrefix,
 	})
 }
 
@@ -582,11 +596,11 @@ func cartPageOf(record query.Record, scales map[string]int) cartPage {
 	page.Unscaled = !known
 	page.TotalMinor = recordInt(record, fieldTotal)
 	page.ShipTo = addressLines(record[fieldCartShippingAddress])
-	page.Address = map[string]string{}
-	if address, ok := record[fieldCartShippingAddress].(map[string]any); ok {
-		for _, name := range addressFields {
-			page.Address[name] = stringValue(address[name])
-		}
+	page.Address = addressValues(record[fieldCartShippingAddress])
+	page.BillTo = addressLines(record[fieldCartBillingAddress])
+	page.Billing = addressValues(record[fieldCartBillingAddress])
+	if len(page.BillTo) == 0 {
+		page.Billing = page.Address
 	}
 	for _, entry := range recordList(record[fieldCartShippingMethods]) {
 		method := cartMethod{Name: recordString(entry, cartMethodName)}
@@ -611,6 +625,19 @@ func cartPageOf(record query.Record, scales map[string]int) cartPage {
 	}
 
 	return page
+}
+
+// addressValues reads an address field into the form's fields; empty when the
+// cart has none.
+func addressValues(value any) map[string]string {
+	out := map[string]string{}
+	if address, ok := value.(map[string]any); ok {
+		for _, name := range addressFields {
+			out[name] = stringValue(address[name])
+		}
+	}
+
+	return out
 }
 
 // recordList reads a list-valued field as the provider built it, or as
@@ -638,6 +665,23 @@ func (u *UI) setCartAddress(w http.ResponseWriter, r *http.Request) {
 		}
 
 		return "", u.carts.SetShippingAddress(ctx, id, address)
+	})
+}
+
+// billingPrefix names the billing form's fields apart from the shipping form's,
+// so a refused billing write draws the shipping form with what it holds.
+const billingPrefix = "billing_"
+
+// setCartBilling writes the billing address and returns to the cart (ADR
+// 0303).
+func (u *UI) setCartBilling(w http.ResponseWriter, r *http.Request) {
+	u.cartWrite(w, r, func(ctx context.Context, id string) (string, error) {
+		address := make(map[string]string, len(addressFields))
+		for _, name := range addressFields {
+			address[name] = strings.TrimSpace(r.PostFormValue(billingPrefix + name))
+		}
+
+		return "", u.carts.SetBillingAddress(ctx, id, address)
 	})
 }
 

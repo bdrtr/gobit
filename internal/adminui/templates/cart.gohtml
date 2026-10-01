@@ -1,7 +1,8 @@
 {{- /*
 cart.gohtml is a telephone order's cart: its lines as the catalog priced them,
 its totals and the form that adds a line (ADR 0290), and its address, its
-shipping and the completion with an offline method (ADR 0291).
+shipping and the completion with an offline method (ADR 0291), and its billing
+address (ADR 0303).
 
 Every amount is printed with its currency, and an amount whose scale could not
 be read says it is in minor units.
@@ -65,6 +66,10 @@ be read says it is in minor units.
       <td>{{ range .Cart.ShipTo }}{{ . }}<br>{{ else }}<span class="muted">no shipping address</span>{{ end }}</td>
     </tr>
     <tr>
+      <th>Bill to</th>
+      <td>{{ range .Cart.BillTo }}{{ . }}<br>{{ else }}<span class="muted">no billing address</span>{{ end }}</td>
+    </tr>
+    <tr>
       <th>Method</th>
       <td>{{ range .Cart.Methods }}{{ .Name }} <span class="num">{{ .Amount }} {{ $.Cart.Currency }}</span><br>{{ else }}<span class="muted">no shipping method</span>{{ end }}</td>
     </tr>
@@ -119,6 +124,15 @@ be read says it is in minor units.
   <input name="{{ $name }}" value="{{ with $.Typed.Get $name }}{{ . }}{{ else }}{{ index $.Cart.Address $name }}{{ end }}" placeholder="{{ $name }}" aria-label="{{ $name }}">
   {{ end }}
   <button type="submit">Save the address</button>
+</form>
+
+{{/* The billing address, drawn with the shipping address until one is written (ADR 0303). */}}
+<h3>Bill to</h3>
+<form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/billing">
+  {{ range $name := .AddressFields }}
+  <input name="{{ $.BillingPrefix }}{{ $name }}" value="{{ with $.Typed.Get (print $.BillingPrefix $name) }}{{ . }}{{ else }}{{ index $.Cart.Billing $name }}{{ end }}" placeholder="{{ $name }}" aria-label="billing {{ $name }}">
+  {{ end }}
+  <button type="submit">Save the billing address</button>
 </form>
 
 <h3>Shipping method</h3>

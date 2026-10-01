@@ -65,10 +65,13 @@ const (
 	// by the Method* names below; an empty list when none was chosen (ADR
 	// 0291).
 	FieldShippingMethods = "shipping_methods"
+	// FieldBillingAddress is the cart's billing address, keyed as the shipping
+	// address is, or nil when none was written (ADR 0303).
+	FieldBillingAddress = "billing_address"
 )
 
-// The keys of [FieldShippingAddress], the order's address keys, so a reader of
-// either reads both.
+// The keys of [FieldShippingAddress] and [FieldBillingAddress], the order's
+// address keys, so a reader of either reads both.
 const (
 	AddressFirstName   = "first_name"
 	AddressLastName    = "last_name"
@@ -309,11 +312,12 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 type cartExtras struct {
 	lines     map[string][]models.LineItem
 	addresses map[string]models.CartAddress
+	billing   map[string]models.CartAddress
 	methods   map[string][]models.ShippingMethod
 }
 
 // extraFields are the fields [cartExtras] carries; none has a getter.
-var extraFields = []string{FieldLines, FieldShippingAddress, FieldShippingMethods}
+var extraFields = []string{FieldLines, FieldShippingAddress, FieldBillingAddress, FieldShippingMethods}
 
 // extras reads each extra field in one read for the carts, and ONLY when it
 // was asked for — a read that names no field asks for every field.
@@ -334,8 +338,9 @@ func (p *QueryProvider) extras(ctx context.Context, carts []models.Cart, fields 
 			return out, err
 		}
 	}
-	if asked(FieldShippingAddress) {
-		if out.addresses, err = p.svc.ShippingAddressesOfCarts(ctx, ids); err != nil {
+	// The two addresses come in one read, whichever was asked for.
+	if asked(FieldShippingAddress) || asked(FieldBillingAddress) {
+		if out.addresses, out.billing, err = p.svc.AddressesOfCarts(ctx, ids); err != nil {
 			return out, err
 		}
 	}
@@ -372,6 +377,8 @@ func records(carts []models.Cart, fields []string, extra cartExtras) []query.Rec
 				record[name] = lineRecords(extra.lines[carts[i].ID])
 			case FieldShippingAddress:
 				record[name] = addressRecord(extra.addresses, carts[i].ID)
+			case FieldBillingAddress:
+				record[name] = addressRecord(extra.billing, carts[i].ID)
 			case FieldShippingMethods:
 				record[name] = methodRecords(extra.methods[carts[i].ID])
 			default:
@@ -383,8 +390,8 @@ func records(carts []models.Cart, fields []string, extra cartExtras) []query.Rec
 	return out
 }
 
-// addressRecord is one cart's shipping address as the field's value, nil
-// when the cart has none.
+// addressRecord is one cart's address of the kind the map holds as the field's
+// value, nil when the cart has none.
 func addressRecord(addresses map[string]models.CartAddress, cartID string) map[string]any {
 	addr, ok := addresses[cartID]
 	if !ok {

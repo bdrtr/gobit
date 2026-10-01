@@ -123,11 +123,13 @@ func TestTheLinesAreReadOnlyWhenAskedFor(t *testing.T) {
 	all, err := provider.List(context.Background(), query.ListOptions{})
 	require.NoError(t, err)
 	require.Len(t, all, 2)
-	for _, field := range []string{service.FieldLines, service.FieldShippingAddress, service.FieldShippingMethods} {
+	for _, field := range []string{
+		service.FieldLines, service.FieldShippingAddress, service.FieldBillingAddress, service.FieldShippingMethods,
+	} {
 		assert.Contains(t, all[0], field, "a read that names no field gets every field the entity offers")
 	}
 	assert.Equal(t, 1, store.reads, "two carts, one read")
-	assert.Equal(t, 1, store.addressReads)
+	assert.Equal(t, 1, store.addressReads, "both addresses come in one read (ADR 0303)")
 	assert.Equal(t, 1, store.methodReads)
 }
 
@@ -184,7 +186,7 @@ func TestTheProviderNamesACartsShippingAddressAndMethods(t *testing.T) {
 	require.NoError(t, err)
 
 	records, err := service.NewQueryProvider(svc).FetchByIDs(ctx, []string{lined, empty},
-		[]string{query.IDField, service.FieldShippingAddress, service.FieldShippingMethods})
+		[]string{query.IDField, service.FieldShippingAddress, service.FieldBillingAddress, service.FieldShippingMethods})
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 	byCart := map[string]query.Record{}
@@ -200,6 +202,12 @@ func TestTheProviderNamesACartsShippingAddressAndMethods(t *testing.T) {
 		service.AddressProvince: "", service.AddressPostalCode: "06000", service.AddressCountryCode: "TR",
 		service.AddressPhone: "+90",
 	}, byCart[lined][service.FieldShippingAddress], "the shipping address, not the billing one")
+	assert.Equal(t, map[string]any{
+		service.AddressFirstName: "Billed", service.AddressLastName: "", service.AddressCompany: "",
+		service.AddressLine1: "1 Ledger Rd", service.AddressLine2: "", service.AddressCity: "Izmir",
+		service.AddressProvince: "", service.AddressPostalCode: "", service.AddressCountryCode: "TR",
+		service.AddressPhone: "",
+	}, byCart[lined][service.FieldBillingAddress], "the billing address, not the shipping one (ADR 0303)")
 	methods, ok := byCart[lined][service.FieldShippingMethods].([]map[string]any)
 	require.True(t, ok)
 	require.Len(t, methods, 1)
@@ -209,8 +217,30 @@ func TestTheProviderNamesACartsShippingAddressAndMethods(t *testing.T) {
 	assert.NotEmpty(t, methods[0][service.MethodID])
 
 	assert.Nil(t, byCart[empty][service.FieldShippingAddress])
+	assert.Nil(t, byCart[empty][service.FieldBillingAddress])
 	none, ok := byCart[empty][service.FieldShippingMethods].([]map[string]any)
 	require.True(t, ok)
 	assert.NotNil(t, none)
 	assert.Empty(t, none)
+}
+
+// TestTheBillingAddressAloneIsReadWhenAskedFor: a read that asks for the
+// billing address alone reads the addresses and answers it (ADR 0303).
+func TestTheBillingAddressAloneIsReadWhenAskedFor(t *testing.T) {
+	svc, store, lined, _ := linedService(t)
+	ctx := context.Background()
+	_, err := svc.SetBillingAddress(ctx, lined, service.AddressInput{
+		Company: "Engines Ltd", Address1: "1 Ledger Rd", CountryCode: "TR",
+	})
+	require.NoError(t, err)
+
+	records, err := service.NewQueryProvider(svc).FetchByIDs(ctx, []string{lined},
+		[]string{query.IDField, service.FieldBillingAddress})
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	billing, ok := records[0][service.FieldBillingAddress].(map[string]any)
+	require.True(t, ok, "the billing address is read when it alone is asked for")
+	assert.Equal(t, "Engines Ltd", billing[service.AddressCompany])
+	assert.Equal(t, 1, store.addressReads)
+	assert.NotContains(t, records[0], service.FieldShippingAddress)
 }

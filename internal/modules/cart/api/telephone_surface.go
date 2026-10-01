@@ -102,7 +102,33 @@ func (s *TelephoneSurface) Discard(ctx context.Context, cartID string) error {
 // keys and reprices the cart, as the address endpoint does; a key it does not
 // name is left out.
 func (s *TelephoneSurface) SetShippingAddress(ctx context.Context, cartID string, address map[string]string) error {
-	body := addressRequest{
+	if err := s.h.operatorsCart(ctx, cartID); err != nil {
+		return err
+	}
+
+	return s.h.repriced(ctx, cartID, func() error {
+		_, err := s.h.svc.SetShippingAddress(ctx, cartID, addressOf(address).toInput())
+		return err
+	})
+}
+
+// SetBillingAddress writes the cart's billing address from the same keys, as
+// the billing address endpoint does (ADR 0303).
+func (s *TelephoneSurface) SetBillingAddress(ctx context.Context, cartID string, address map[string]string) error {
+	if err := s.h.operatorsCart(ctx, cartID); err != nil {
+		return err
+	}
+
+	return s.h.repriced(ctx, cartID, func() error {
+		_, err := s.h.svc.SetBillingAddress(ctx, cartID, addressOf(address).toInput())
+		return err
+	})
+}
+
+// addressOf reads an address from the Address* keys; a key it does not name is
+// left out.
+func addressOf(address map[string]string) addressRequest {
+	return addressRequest{
 		FirstName:   address[AddressFirstName],
 		LastName:    address[AddressLastName],
 		Company:     address[AddressCompany],
@@ -114,14 +140,6 @@ func (s *TelephoneSurface) SetShippingAddress(ctx context.Context, cartID string
 		CountryCode: address[AddressCountryCode],
 		Phone:       address[AddressPhone],
 	}
-	if err := s.h.operatorsCart(ctx, cartID); err != nil {
-		return err
-	}
-
-	return s.h.repriced(ctx, cartID, func() error {
-		_, err := s.h.svc.SetShippingAddress(ctx, cartID, body.toInput())
-		return err
-	})
 }
 
 // ShippingOptions lists the shipping options the cart can take, each its id,

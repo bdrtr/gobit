@@ -152,6 +152,32 @@ func TestThePanelWritesTheAddressAndRepricesTheCart(t *testing.T) {
 	assert.Equal(t, []string{"cart_phone"}, repricing.repriced, "the tax follows the address")
 }
 
+// TestThePanelWritesTheBillingAddress: the address keys reach the service's
+// billing write inside the repricing flow, on the operator's cart only (ADR
+// 0303).
+func TestThePanelWritesTheBillingAddress(t *testing.T) {
+	carts := operatorsCarts()
+	repricing := &fakeRepricing{}
+	surface := surfaceOver(api.Flows{Repricing: repricing}, carts)
+
+	err := surface.SetBillingAddress(operator(), "cart_phone", map[string]string{
+		api.AddressCompany: "Engines Ltd", api.AddressLine1: "1 Office St", api.AddressCountryCode: "TR",
+	})
+
+	require.NoError(t, err)
+	assert.True(t, carts.billing, "it is the billing address")
+	assert.Equal(t, "Engines Ltd", carts.addressInput.Company)
+	assert.Equal(t, "1 Office St", carts.addressInput.Address1)
+	assert.Equal(t, []string{"cart_phone"}, repricing.repriced)
+
+	shoppers := withLineItem()
+	err = surfaceOver(api.Flows{Repricing: &fakeRepricing{}}, shoppers).SetBillingAddress(operator(), "cart_1",
+		map[string]string{api.AddressLine1: "Elsewhere 1"})
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "a shopper's cart is refused (ADR 0299)")
+	assert.Empty(t, shoppers.addressInput.Address1)
+}
+
 // TestThePanelChoosesTheShippingOptionThroughTheShippingFlow: the option is
 // priced by the flow the API holds and its method comes back.
 func TestThePanelChoosesTheShippingOptionThroughTheShippingFlow(t *testing.T) {

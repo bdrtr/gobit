@@ -144,6 +144,11 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 		"first_name": {"Tele"}, "last_name": {"Phone"}, "address_1": {"Street 1"},
 		"city": {"City"}, "postal_code": {"00000"}, "country_code": {taxedCountry},
 	})))
+	// The invoice goes to the caller's company (ADR 0303).
+	assert.Equal(t, cartPath, redirected(send(http.MethodPost, cartPath+"/billing", url.Values{
+		"billing_company": {"Panel Engines Ltd"}, "billing_address_1": {"Office 2"},
+		"billing_city": {"City"}, "billing_country_code": {taxedCountry},
+	})))
 	choosing := send(http.MethodGet, cartPath, nil)
 	require.Equal(t, http.StatusOK, choosing.Code, choosing.Body.String())
 	assert.Contains(t, choosing.Body.String(), `<option value="`+optionID+`">`,
@@ -176,6 +181,11 @@ func TestAnOperatorCompletesATelephoneOrderInThePanel(t *testing.T) {
 	assert.Equal(t, total, order.Total, "the order is placed for the total the operator read")
 	assert.Zero(t, order.Summary.PaidTotal, "it owes its total")
 	assert.Equal(t, "usr_phone", order.PlacedBy, "the order names the operator who placed it (ADR 0298)")
+	require.NotNil(t, order.BillingAddress, "the billing address the panel wrote reaches the order (ADR 0303)")
+	assert.Equal(t, "Panel Engines Ltd", order.BillingAddress.Company)
+	assert.Equal(t, "Office 2", order.BillingAddress.Address1)
+	require.NotNil(t, order.ShippingAddress)
+	assert.Equal(t, "Street 1", order.ShippingAddress.Address1, "the shipping address stays its own")
 	orderPage := send(http.MethodGet, orderPath, nil)
 	require.Equal(t, http.StatusOK, orderPage.Code, orderPage.Body.String())
 	assert.Contains(t, orderPage.Body.String(), "by operator usr_phone", "the order page reads it")

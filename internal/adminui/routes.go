@@ -77,6 +77,7 @@ func (u *UI) routes(r chi.Router) {
 	r.Get(CartPath, u.needs(http.MethodGet, CartPath, u.showCart))
 	r.Post(CartLinesPath, u.needs(http.MethodPost, CartLinesPath, u.addCartLine))
 	r.Post(CartAddressPath, u.needs(http.MethodPost, CartAddressPath, u.setCartAddress))
+	r.Post(CartBillingPath, u.needs(http.MethodPost, CartBillingPath, u.setCartBilling))
 	r.Post(CartShippingPath, u.needs(http.MethodPost, CartShippingPath, u.addCartShipping))
 	r.Post(CartCompletePath, u.needs(http.MethodPost, CartCompletePath, u.completeCart))
 	r.Post(CartLineRemovePath, u.needs(http.MethodPost, CartLineRemovePath, u.removeCartLine))

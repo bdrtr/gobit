@@ -6,7 +6,7 @@ total the page shows, through three more methods of the cart module's surface.
 The cart provider offers a cart's shipping address and shipping methods, so the
 page shows what the forms wrote.
 
-- **Status:** Accepted — amended by [0292](0292-a-cart-lists-the-shipping-options-it-can-take.md)
+- **Status:** Accepted — amended by [0292](0292-a-cart-lists-the-shipping-options-it-can-take.md), [0303](0303-a-telephone-order-takes-a-billing-address.md)
 - **Date:** 2026-10-01
 
 ## Context

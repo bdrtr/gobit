@@ -34,7 +34,14 @@ type fakeCarts struct {
 	completed  []string
 	removed    []string
 	discarded  []string
+	billed     []map[string]string
 	err        error
+}
+
+func (f *fakeCarts) SetBillingAddress(_ context.Context, cartID string, address map[string]string) error {
+	f.billed = append(f.billed, address)
+
+	return f.err
 }
 
 func (f *fakeCarts) RemoveLine(_ context.Context, cartID, lineID string) error {
@@ -143,6 +150,7 @@ func phoneRouter(panel *UI) chi.Router {
 	r.Get(CartPath, panel.showCart)
 	r.Post(CartLinesPath, panel.addCartLine)
 	r.Post(CartAddressPath, panel.setCartAddress)
+	r.Post(CartBillingPath, panel.setCartBilling)
 	r.Post(CartShippingPath, panel.addCartShipping)
 	r.Post(CartCompletePath, panel.completeCart)
 	r.Post(CartLineRemovePath, panel.removeCartLine)
@@ -349,7 +357,7 @@ func TestTheCartsWritesReachTheSurface(t *testing.T) {
 	assert.Equal(t, cart, address.Header().Get("Location"))
 	require.Len(t, carts.addressed, 1)
 	assert.Equal(t, map[string]string{
-		"first_name": "Ada", "last_name": "Lovelace", "address_1": "12 Right St",
+		"first_name": "Ada", "last_name": "Lovelace", "company": "", "address_1": "12 Right St",
 		"city": "Ankara", "postal_code": "06000", "country_code": "TR", "phone": "+90",
 	}, carts.addressed[0])
 
@@ -780,4 +788,58 @@ func TestTheOperatorCorrectsTheirCart(t *testing.T) {
 	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
 	assert.NotContains(t, page.Body.String(), "/remove\"", "a completed cart is not corrected")
 	assert.NotContains(t, page.Body.String(), "/discard\"")
+}
+
+// TestTheTelephoneOrderWritesTheBillingAddress is ADR 0303 on the page: the
+// billing form is drawn with the shipping address until a billing address is
+// written, then with it; its fields reach the surface as the address keys;
+// the page prints the billing address; and a refusal keeps what was typed in
+// the billing form while the shipping form keeps the cart's.
+func TestTheTelephoneOrderWritesTheBillingAddress(t *testing.T) {
+	t.Parallel()
+
+	carts := &fakeCarts{}
+	panel := newCatalogPanel(t, phoneCatalog(false))
+	panel.carts = carts
+
+	page := phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), `name="billing_address_1" value="12 Right St"`,
+		"with no billing address the form offers the shipping address")
+	assert.Contains(t, page.Body.String(), "no billing address")
+	catalog, isFake := panel.catalog.(*fakeCatalog)
+	require.True(t, isFake)
+	spec, ok := catalog.specFor(EntityCart)
+	require.True(t, ok)
+	assert.Contains(t, spec.Fields, fieldCartBillingAddress, "the page asks for the billing address")
+
+	rec := phoneRequest(panel, http.MethodPost, CartsPath+"/cart_phone/billing", url.Values{
+		"billing_company": {" Engines Ltd "}, "billing_address_1": {"1 Office St"}, "billing_country_code": {"TR"},
+		"address_1": {"ignored"},
+	}, scopeCartWrite)
+	assert.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	require.Len(t, carts.billed, 1)
+	assert.Equal(t, "Engines Ltd", carts.billed[0]["company"])
+	assert.Equal(t, "1 Office St", carts.billed[0]["address_1"], "the billing form's fields, not the shipping form's")
+
+	billed := phoneCatalog(false)
+	billed.byEntity[EntityCart][0][fieldCartBillingAddress] = map[string]any{
+		"company": "Engines Ltd", "address_1": "1 Office St", "country_code": "TR",
+	}
+	panel = newCatalogPanel(t, billed)
+	panel.carts = &fakeCarts{}
+	page = phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), "1 Office St<br>", "the page prints the billing address")
+	assert.Contains(t, page.Body.String(), `name="billing_address_1" value="1 Office St"`)
+	assert.Contains(t, page.Body.String(), `name="address_1" value="12 Right St"`, "the shipping form keeps its own")
+
+	refusing := newCatalogPanel(t, phoneCatalog(false))
+	refusing.carts = &fakeCarts{err: errors.Invalid("cart_invalid_input", "the country is not served")}
+	rec = phoneRequest(refusing, http.MethodPost, CartsPath+"/cart_phone/billing", url.Values{
+		"billing_address_1": {"Typed St 9"}, "billing_country_code": {"XX"},
+	}, scopeCartRead, scopeCartWrite)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `name="billing_address_1" value="Typed St 9"`)
+	assert.Contains(t, rec.Body.String(), `name="address_1" value="12 Right St"`)
 }

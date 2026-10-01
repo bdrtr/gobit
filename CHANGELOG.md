@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A telephone order takes a billing address** (ADR 0303). **For
+  operators:** the telephone order's cart page writes the billing address,
+  drawn with the shipping address until one is written, and both address
+  forms ask for the company. **For integrators:** the `cart` query provider
+  offers the `billing_address` field.
+
 - **The customer list finds a customer by e-mail** (ADR 0302). **For
   operators:** the panel's customer list takes an e-mail, in any case, and
   lists the account and the guest records holding it.
