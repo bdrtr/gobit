@@ -279,6 +279,39 @@ func TestEachRouteDemandsThePrivilegeItsOwnPathIsListedUnder(t *testing.T) {
 	}
 }
 
+// TestAWriteRouteAsksAWritePrivilege is D202: a route that changes something
+// is listed under a write privilege, or under none when it changes the
+// operator's own account. The walk above hands each route exactly the scope
+// it is listed under, so a write listed under its module's READ privilege
+// passed it, and every reader could make the write.
+//
+// The population is the router's POST routes, plugins' screens included, and
+// a write privilege is spelled the way the admin API spells one.
+func TestAWriteRouteAsksAWritePrivilege(t *testing.T) {
+	t.Parallel()
+
+	ui, _ := panelFor(t, []Page{testPage()})
+	bound := chi.NewRouter()
+	ui.Routes(bound)
+
+	writes := 0
+	require.NoError(t, chi.Walk(bound, func(
+		method, pattern string, _ http.Handler, _ ...func(http.Handler) http.Handler,
+	) error {
+		if method != http.MethodPost {
+			return nil
+		}
+		writes++
+		scope := ui.scopes[routeKey(method, pattern)]
+		assert.True(t, scope == "" || strings.HasSuffix(scope, ":write"),
+			"POST %s is listed under %q; a write the panel binds asks for a write privilege", pattern, scope)
+
+		return nil
+	}))
+	require.GreaterOrEqual(t, writes, 20,
+		"the walk found %d writes; a blind walk asserts nothing about any of them", writes)
+}
+
 // TestARouteTheTableDoesNotListCannotBeBound is ADR 0255: a route is its
 // method and its path, and one the table does not list stops the panel from
 // being built. A POST on a read path therefore inherits nothing — neither the
