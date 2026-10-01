@@ -32,7 +32,7 @@ another operator moved first is refused rather than moved back.
   <tbody>
   {{ range $row := .Promotions }}
     <tr>
-      <td>{{ if .IsAutomatic }}<span class="pill">automatic</span>{{ else }}{{ .Code }}{{ end }}</td>
+      <td><a href="{{ $.Path }}/{{ $row.ID }}">{{ if .IsAutomatic }}<span class="pill">automatic</span>{{ else }}{{ .Code }}{{ end }}</a></td>
       <td>{{ .Type }}</td>
       <td class="num">{{ .UsageCount }}{{ with .UsageLimit }} of {{ . }}{{ end }}</td>
       <td>{{ if not .CreatedAt.IsZero }}{{ .CreatedAt.Format "2006-01-02" }}{{ end }}</td>

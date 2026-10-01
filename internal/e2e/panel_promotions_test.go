@@ -96,3 +96,64 @@ func TestAnOperatorPublishesADraftInThePanel(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, again.Code, again.Body.String())
 	assert.Contains(t, again.Body.String(), "is active now, not draft")
 }
+
+// TestAnOperatorOpensAPromotionsPage is ADR 0313 on the production wiring:
+// the list links a coupon to its page, and the page shows what the coupon
+// gives, its rule and its use, read through the promotion module's
+// registered surface.
+func TestAnOperatorOpensAPromotionsPage(t *testing.T) {
+	ctx := t.Context()
+	code := fmt.Sprintf("E2EPAGE%d", fixtureCounter.Add(1))
+	promo, err := promotionSvc.CreatePromotion(ctx, promotionsvc.PromotionInput{
+		Code: code, Status: promotionmodels.PromotionActive,
+	})
+	require.NoError(t, err)
+	_, err = promotionSvc.SetApplicationMethod(ctx, promo.ID, promotionsvc.ApplicationMethodInput{
+		Type: promotionmodels.MethodPercentage, TargetType: promotionmodels.TargetOrder,
+		Allocation: promotionmodels.AllocationAcross, Value: 1500,
+	})
+	require.NoError(t, err)
+	_, err = promotionSvc.AddPromotionRule(ctx, promo.ID, promotionsvc.RuleInput{
+		RuleType: promotionmodels.RuleContext, Attribute: "currency_code",
+		Operator: promotionmodels.OpIn, Values: []string{"TRY"},
+	})
+	require.NoError(t, err)
+	_, err = promotionSvc.RedeemPromotion(ctx, promotionsvc.RedeemInput{
+		PromotionID: promo.ID, Reference: "order_e2e_page", Amount: 300, CurrencyCode: "TRY",
+	})
+	require.NoError(t, err)
+	// Paused after its use, so no other test's cart can meet it.
+	_, err = promotionSvc.SwitchPromotionStatus(ctx, promo.ID,
+		promotionmodels.PromotionActive, promotionmodels.PromotionInactive)
+	require.NoError(t, err)
+
+	panel, err := adminui.FromContainer(ctr, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	get := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_marketing", Kind: "user", Scopes: []string{"promotion:read"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	list := get(adminui.PromotionsPath + "?status=inactive")
+	require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+	pagePath := adminui.PromotionsPath + "/" + promo.ID
+	assert.Contains(t, list.Body.String(), `href="`+pagePath+`"`)
+
+	page := get(pagePath)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	body := page.Body.String()
+	assert.Contains(t, body, "<h1>"+code+"</h1>")
+	assert.Contains(t, body, "15% off")
+	assert.Contains(t, body, "the order, spread across them")
+	assert.Contains(t, body, "<td>currency_code</td><td>in</td><td>TRY</td>")
+	assert.Contains(t, body, "order_e2e_page")
+}

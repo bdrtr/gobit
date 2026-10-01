@@ -173,6 +173,7 @@ func builtInScopes() map[string]string {
 		// switching one's status (ADR 0312).
 		routeKey(get, PromotionsPath):       scopePromotionRead,
 		routeKey(post, PromotionStatusPath): scopePromotionWrite,
+		routeKey(get, PromotionPath):        scopePromotionRead,
 		routeKey(get, ReviewsScriptPath):    scopeReviewRead,
 	}
 }

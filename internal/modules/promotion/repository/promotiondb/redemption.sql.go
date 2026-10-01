@@ -105,6 +105,52 @@ func (q *Queries) InsertRedemption(ctx context.Context, arg InsertRedemptionPara
 	return i, err
 }
 
+const listLatestRedemptions = `-- name: ListLatestRedemptions :many
+SELECT id, promotion_id, campaign_id, reference, amount, currency_code, budget_delta, created_at, updated_at, released_at FROM promotion_redemption
+WHERE promotion_id = $1
+ORDER BY id DESC
+LIMIT $2
+`
+
+type ListLatestRedemptionsParams struct {
+	PromotionID string
+	Limit       int32
+}
+
+// ListLatestRedemptions returns a promotion's latest uses, newest first to the
+// millisecond its identifier carries; the (promotion_id, id) index of 000005
+// reads them without walking the other promotions' uses (ADR 0313).
+func (q *Queries) ListLatestRedemptions(ctx context.Context, arg ListLatestRedemptionsParams) ([]PromotionRedemption, error) {
+	rows, err := q.db.Query(ctx, listLatestRedemptions, arg.PromotionID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PromotionRedemption{}
+	for rows.Next() {
+		var i PromotionRedemption
+		if err := rows.Scan(
+			&i.ID,
+			&i.PromotionID,
+			&i.CampaignID,
+			&i.Reference,
+			&i.Amount,
+			&i.CurrencyCode,
+			&i.BudgetDelta,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ReleasedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRedemptions = `-- name: ListRedemptions :many
 SELECT id, promotion_id, campaign_id, reference, amount, currency_code, budget_delta, created_at, updated_at, released_at FROM promotion_redemption
 WHERE promotion_id = $1

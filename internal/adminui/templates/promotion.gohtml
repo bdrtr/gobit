@@ -1,0 +1,87 @@
+{{- /*
+promotion.gohtml is one promotion's page (ADR 0313).
+
+Everything on it comes from the promotion module's panel surface: what the
+promotion gives, the rules a cart must meet, the campaign it belongs to and
+its latest uses, newest first. A promotion with no discount applies nothing,
+and the page says so rather than leaving the section out.
+*/ -}}
+{{ define "body" }}
+<p><a href="{{ .Path }}?status={{ .Promotion.Status }}">Promotions</a></p>
+<h1>{{ .Title }}</h1>
+
+<table>
+  <tbody>
+    <tr><th>Status</th><td>{{ .Promotion.Status }}</td></tr>
+    <tr><th>Type</th><td>{{ .Promotion.Type }}</td></tr>
+    <tr><th>Used</th><td>{{ .Promotion.UsageCount }}{{ with .Promotion.UsageLimit }} of {{ . }}{{ end }}</td></tr>
+    {{ if not .Promotion.CreatedAt.IsZero }}<tr><th>Created</th><td>{{ .Promotion.CreatedAt.Format "2006-01-02" }}</td></tr>{{ end }}
+  </tbody>
+</table>
+
+<h2>Discount</h2>
+{{ with .Promotion.Method }}
+<table>
+  <tbody>
+    <tr><th>Gives</th><td>{{ $.Gives }}</td></tr>
+    <tr><th>On</th><td>{{ $.Target }}{{ if eq .Allocation "across" }}, spread across them{{ else }}, on each{{ end }}</td></tr>
+    {{ with .MaxQuantity }}<tr><th>At most</th><td>{{ . }} units of a line</td></tr>{{ end }}
+    {{ with .BuyQuantity }}<tr><th>Buy</th><td>{{ . }} units</td></tr>{{ end }}
+    {{ with .ApplyToQuantity }}<tr><th>Rewarded</th><td>the {{ . }} cheapest units</td></tr>{{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p class="muted">No discount is defined; the promotion applies nothing.</p>
+{{ end }}
+
+<h2>Rules</h2>
+{{ if .Promotion.Rules }}
+<div class="scroll">
+<table>
+  <thead><tr><th>Kind</th><th>Attribute</th><th>Operator</th><th>Values</th></tr></thead>
+  <tbody>
+  {{ range .Promotion.Rules }}
+    <tr><td>{{ .Type }}</td><td>{{ .Attribute }}</td><td>{{ .Operator }}</td><td>{{ range $i, $v := .Values }}{{ if $i }}, {{ end }}{{ $v }}{{ end }}</td></tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No rule is set.</p>
+{{ end }}
+
+<h2>Campaign</h2>
+{{ with .Promotion.Campaign }}
+<table>
+  <tbody>
+    <tr><th>Name</th><td>{{ .Name }}</td></tr>
+    <tr><th>From</th><td>{{ with .StartsAt }}{{ .Format "2006-01-02 15:04" }}{{ else }}<span class="muted">always</span>{{ end }}</td></tr>
+    <tr><th>Until</th><td>{{ with .EndsAt }}{{ .Format "2006-01-02 15:04" }}{{ else }}<span class="muted">open</span>{{ end }}</td></tr>
+    <tr><th>Budget</th><td>{{ with $.Budget }}{{ . }}{{ else }}<span class="muted">none</span>{{ end }}</td></tr>
+  </tbody>
+</table>
+{{ else }}
+<p class="muted">The promotion belongs to no campaign.</p>
+{{ end }}
+
+<h2>Latest uses</h2>
+{{ if .Uses }}
+<div class="scroll">
+<table>
+  <thead><tr><th>Reference</th><th class="num">Discount</th><th>Used</th><th>Given back</th></tr></thead>
+  <tbody>
+  {{ range .Uses }}
+    <tr>
+      <td>{{ .Reference }}</td>
+      <td class="num">{{ .Amount }}</td>
+      <td>{{ .CreatedAt.Format "2006-01-02 15:04" }}</td>
+      <td>{{ with .ReleasedAt }}{{ .Format "2006-01-02 15:04" }}{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">Not used yet.</p>
+{{ end }}
+{{ end }}

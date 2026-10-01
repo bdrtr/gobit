@@ -5,6 +5,7 @@ package promotion_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/promotion"
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
+	"github.com/bdrtr/gobit/internal/modules/promotion/repository"
 	"github.com/bdrtr/gobit/internal/modules/promotion/service"
 )
 
@@ -136,4 +138,143 @@ func TestThePanelSwitchesAStatusFromTheOneItRead(t *testing.T) {
 	err = surface.SwitchPromotionStatus(ctx, models.NewPromotionID(time.Now()), "active", "inactive")
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "an unknown promotion is not found: %v", err)
+}
+
+// TestThePanelReadsAPromotionsPage is ADR 0313 against a real PostgreSQL: the
+// page carries the promotion's discount, its rules, its campaign and its
+// latest uses newest first, a released one included; a promotion with no
+// discount or campaign carries null for each, and an unknown one is not found.
+func TestThePanelReadsAPromotionsPage(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now().UTC()
+	svc := service.New(repository.New(testPool.Pool()), service.Options{Now: func() time.Time {
+		clock = clock.Add(time.Millisecond)
+		return clock
+	}})
+	surface := promotion.NewAdminSurface(svc)
+
+	limit := int64(100)
+	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
+		Name: "Spring", CampaignIdentifier: "spring-" + uniqueCode(),
+		BudgetType: models.BudgetUsage, BudgetLimit: &limit,
+	})
+	require.NoError(t, err)
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &campaign.ID})
+	_, err = svc.AddPromotionRule(ctx, promo.ID, service.RuleInput{
+		RuleType: models.RuleContext, Attribute: "currency_code", Operator: models.OpIn, Values: []string{"TRY", "EUR"},
+	})
+	require.NoError(t, err)
+	for _, ref := range []string{"order_first", "order_second", "order_third"} {
+		_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
+			PromotionID: promo.ID, Reference: ref, Amount: 250, CurrencyCode: "TRY",
+		})
+		require.NoError(t, err)
+	}
+	released, err := svc.ReleasePromotion(ctx, service.ReleaseInput{PromotionID: promo.ID, Reference: "order_second"})
+	require.NoError(t, err)
+	require.True(t, released)
+
+	type page struct {
+		ID       string `json:"id"`
+		Campaign *struct {
+			Name        string `json:"name"`
+			BudgetType  string `json:"budget_type"`
+			BudgetLimit *int64 `json:"budget_limit"`
+			BudgetUsed  int64  `json:"budget_used"`
+		} `json:"campaign"`
+		Method *struct {
+			Type       string `json:"type"`
+			TargetType string `json:"target_type"`
+			Allocation string `json:"allocation"`
+			Value      int64  `json:"value"`
+		} `json:"application_method"`
+		Rules []struct {
+			Type      string   `json:"type"`
+			Attribute string   `json:"attribute"`
+			Operator  string   `json:"operator"`
+			Values    []string `json:"values"`
+		} `json:"rules"`
+		Uses []struct {
+			Reference  string     `json:"reference"`
+			Amount     int64      `json:"amount"`
+			ReleasedAt *time.Time `json:"released_at"`
+		} `json:"latest_uses"`
+	}
+	read := func(id string) page {
+		t.Helper()
+
+		raw, err := surface.PromotionJSON(ctx, id)
+		require.NoError(t, err)
+		var p page
+		require.NoError(t, json.Unmarshal(raw, &p))
+
+		return p
+	}
+
+	full := read(promo.ID)
+	assert.Equal(t, promo.ID, full.ID)
+	require.NotNil(t, full.Method)
+	assert.Equal(t, "percentage", full.Method.Type)
+	assert.Equal(t, "items", full.Method.TargetType)
+	assert.Equal(t, "each", full.Method.Allocation)
+	assert.Equal(t, int64(2000), full.Method.Value)
+	require.NotNil(t, full.Campaign)
+	assert.Equal(t, "Spring", full.Campaign.Name)
+	assert.Equal(t, "usage", full.Campaign.BudgetType)
+	require.NotNil(t, full.Campaign.BudgetLimit)
+	assert.Equal(t, int64(100), *full.Campaign.BudgetLimit)
+	assert.Equal(t, int64(2), full.Campaign.BudgetUsed, "three uses, one given back")
+	require.Len(t, full.Rules, 1)
+	assert.Equal(t, "context", full.Rules[0].Type)
+	assert.Equal(t, "currency_code", full.Rules[0].Attribute)
+	assert.Equal(t, "in", full.Rules[0].Operator)
+	assert.Equal(t, []string{"TRY", "EUR"}, full.Rules[0].Values)
+	require.Len(t, full.Uses, 3)
+	assert.Equal(t, []string{"order_third", "order_second", "order_first"},
+		[]string{full.Uses[0].Reference, full.Uses[1].Reference, full.Uses[2].Reference}, "newest first")
+	assert.Equal(t, int64(250), full.Uses[0].Amount)
+	assert.Nil(t, full.Uses[0].ReleasedAt)
+	assert.NotNil(t, full.Uses[1].ReleasedAt, "a use given back stays in the history, marked")
+
+	bare, err := svc.CreatePromotion(ctx, service.PromotionInput{Code: uniqueCode()})
+	require.NoError(t, err)
+	empty := read(bare.ID)
+	assert.Nil(t, empty.Method, "a promotion with no discount applies nothing")
+	assert.Nil(t, empty.Campaign)
+	assert.Empty(t, empty.Rules)
+	assert.Empty(t, empty.Uses)
+	raw, err := surface.PromotionJSON(ctx, bare.ID)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"rules":[]`, "an empty list is a list, not null")
+
+	_, err = surface.PromotionJSON(ctx, models.NewPromotionID(time.Now()))
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "an unknown promotion is not found: %v", err)
+}
+
+// TestTheLatestUsesAreTheNewest holds the query's order and its bound on a
+// real PostgreSQL: more uses than the page shows yields the newest ones. An
+// identifier carries the millisecond it was written in, so the clock moves
+// one millisecond per use; two uses in one millisecond have no order.
+func TestTheLatestUsesAreTheNewest(t *testing.T) {
+	ctx := context.Background()
+	clock := time.Now().UTC()
+	svc := service.New(repository.New(testPool.Pool()), service.Options{Now: func() time.Time {
+		clock = clock.Add(time.Millisecond)
+		return clock
+	}})
+
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
+	for i := range 25 {
+		_, err := svc.RedeemPromotion(ctx, service.RedeemInput{
+			PromotionID: promo.ID, Reference: fmt.Sprintf("order_%02d", i), Amount: 1, CurrencyCode: "TRY",
+		})
+		require.NoError(t, err)
+	}
+
+	uses, err := svc.LatestRedemptions(ctx, promo.ID, 20)
+	require.NoError(t, err)
+	require.Len(t, uses, 20)
+	assert.Equal(t, "order_24", uses[0].Reference)
+	assert.Equal(t, "order_05", uses[19].Reference, "the five oldest are left out")
 }

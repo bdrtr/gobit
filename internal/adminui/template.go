@@ -89,6 +89,7 @@ var pages = []string{
 	"product_edit.gohtml",
 	"product_new.gohtml",
 	"promotions.gohtml",
+	"promotion.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",

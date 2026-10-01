@@ -178,7 +178,7 @@ func TestTheMigrationsReallyRollBack(t *testing.T) {
 	// derived number would agree with itself whatever it was, and this line's
 	// job is to make an ADDED migration noticed. The same reason is written
 	// beside the same line in the product module.
-	assert.Equal(t, uint(4), version)
+	assert.Equal(t, uint(5), version)
 }
 
 // TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin

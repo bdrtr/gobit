@@ -842,6 +842,9 @@ var panelSurfaceContracts = map[string]string{
 	// The read provider returns only active promotions and leaves the usage
 	// out, so the panel lists them through promotion.admin (ADR 0311).
 	"promotions.go": "promotion.admin's listing",
+	// And one promotion's page, with its discount, rules, campaign and uses,
+	// which no read provider publishes (ADR 0313).
+	"promotion.go": "promotion.admin's promotion page",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

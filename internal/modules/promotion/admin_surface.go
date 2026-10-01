@@ -79,3 +79,131 @@ func (a *AdminSurface) SwitchPromotionStatus(ctx context.Context, id, from, to s
 	_, err := a.svc.SwitchPromotionStatus(ctx, id, models.PromotionStatus(from), models.PromotionStatus(to))
 	return err
 }
+
+// latestUses is how many of a promotion's uses its page shows.
+const latestUses = 20
+
+// adminCampaign is the campaign a promotion belongs to, as its page shows it.
+type adminCampaign struct {
+	ID                 string     `json:"id"`
+	Name               string     `json:"name"`
+	StartsAt           *time.Time `json:"starts_at"`
+	EndsAt             *time.Time `json:"ends_at"`
+	BudgetType         string     `json:"budget_type"`
+	BudgetLimit        *int64     `json:"budget_limit"`
+	BudgetUsed         int64      `json:"budget_used"`
+	BudgetCurrencyCode string     `json:"budget_currency_code"`
+}
+
+// adminMethod is what a promotion gives.
+type adminMethod struct {
+	Type            string `json:"type"`
+	TargetType      string `json:"target_type"`
+	Allocation      string `json:"allocation"`
+	Value           int64  `json:"value"`
+	MaxQuantity     *int64 `json:"max_quantity"`
+	BuyQuantity     *int64 `json:"buy_quantity"`
+	ApplyToQuantity *int64 `json:"apply_to_quantity"`
+	CurrencyCode    string `json:"currency_code"`
+}
+
+// adminRule is one condition a promotion holds to.
+type adminRule struct {
+	Type      string   `json:"type"`
+	Attribute string   `json:"attribute"`
+	Operator  string   `json:"operator"`
+	Values    []string `json:"values"`
+}
+
+// adminUse is one use of a promotion.
+type adminUse struct {
+	Reference    string     `json:"reference"`
+	Amount       int64      `json:"amount"`
+	CurrencyCode string     `json:"currency_code"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ReleasedAt   *time.Time `json:"released_at"`
+}
+
+// adminPromotionPage is one promotion as its page shows it: the list's row,
+// what it gives, to whom, under which campaign, and its latest uses.
+type adminPromotionPage struct {
+	adminPromotion
+	Campaign *adminCampaign `json:"campaign"`
+	Method   *adminMethod   `json:"application_method"`
+	Rules    []adminRule    `json:"rules"`
+	Uses     []adminUse     `json:"latest_uses"`
+}
+
+// PromotionJSON reads one promotion for its page (ADR 0313): its discount, or
+// null when it has none and so applies nothing; its rules; its campaign, or
+// null; and its latest uses, newest first.
+func (a *AdminSurface) PromotionJSON(ctx context.Context, id string) (json.RawMessage, error) {
+	if a == nil || a.svc == nil {
+		return nil, errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
+	}
+
+	p, err := a.svc.GetPromotion(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	page := adminPromotionPage{adminPromotion: adminPromotion{
+		ID: p.ID, Code: p.Code, IsAutomatic: p.IsAutomatic, Type: string(p.Type),
+		Status: string(p.Status), UsageCount: p.UsageCount, UsageLimit: p.UsageLimit,
+		CreatedAt: p.CreatedAt,
+	}, Rules: []adminRule{}, Uses: []adminUse{}}
+
+	switch method, err := a.svc.GetApplicationMethod(ctx, id); {
+	case err == nil:
+		page.Method = &adminMethod{
+			Type: string(method.Type), TargetType: string(method.TargetType),
+			Allocation: string(method.Allocation), Value: method.Value,
+			MaxQuantity: method.MaxQuantity, BuyQuantity: method.BuyQuantity,
+			ApplyToQuantity: method.ApplyToQuantity, CurrencyCode: method.CurrencyCode,
+		}
+	case !errors.IsNotFound(err):
+		return nil, err
+	}
+
+	if p.CampaignID != nil {
+		switch c, err := a.svc.GetCampaign(ctx, *p.CampaignID); {
+		case err == nil:
+			page.Campaign = &adminCampaign{
+				ID: c.ID, Name: c.Name, StartsAt: c.StartsAt, EndsAt: c.EndsAt,
+				BudgetType: string(c.BudgetType), BudgetLimit: c.BudgetLimit,
+				BudgetUsed: c.BudgetUsed, BudgetCurrencyCode: c.BudgetCurrencyCode,
+			}
+		case !errors.IsNotFound(err):
+			return nil, err
+		}
+	}
+
+	rules, err := a.svc.ListPromotionRules(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rules {
+		page.Rules = append(page.Rules, adminRule{
+			Type: string(rules[i].RuleType), Attribute: rules[i].Attribute,
+			Operator: string(rules[i].Operator), Values: rules[i].Values,
+		})
+	}
+
+	uses, err := a.svc.LatestRedemptions(ctx, id, latestUses)
+	if err != nil {
+		return nil, err
+	}
+	for i := range uses {
+		page.Uses = append(page.Uses, adminUse{
+			Reference: uses[i].Reference, Amount: uses[i].Amount, CurrencyCode: uses[i].CurrencyCode,
+			CreatedAt: uses[i].CreatedAt, ReleasedAt: uses[i].ReleasedAt,
+		})
+	}
+
+	body, err := json.Marshal(page)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeAdminReadFailed,
+			"the promotion could not be encoded")
+	}
+
+	return body, nil
+}

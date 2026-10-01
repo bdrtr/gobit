@@ -513,6 +513,10 @@ func (p recordingPromotions) SwitchPromotionStatus(context.Context, string, stri
 	return p.surfaces.reach(ServicePromotionAdmin)
 }
 
+func (p recordingPromotions) PromotionJSON(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage(`{"rules":[],"latest_uses":[]}`), p.surfaces.reach(ServicePromotionAdmin)
+}
+
 // recordingCarts records the cart module's surface (ADR 0290).
 type recordingCarts struct{ surfaces *recordingSurfaces }
 

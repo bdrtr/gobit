@@ -34,6 +34,15 @@ WHERE promotion_id = $1
 ORDER BY id
 LIMIT $2 OFFSET $3;
 
+-- ListLatestRedemptions returns a promotion's latest uses, newest first to the
+-- millisecond its identifier carries; the (promotion_id, id) index of 000005
+-- reads them without walking the other promotions' uses (ADR 0313).
+-- name: ListLatestRedemptions :many
+SELECT * FROM promotion_redemption
+WHERE promotion_id = $1
+ORDER BY id DESC
+LIMIT $2;
+
 -- name: CountRedemptions :one
 SELECT count(*) FROM promotion_redemption
 WHERE promotion_id = $1;

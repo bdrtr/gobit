@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel shows a promotion** (ADR 0313). **For operators:** each row of
+  the Promotions screen opens a page with the discount, the rules, the
+  campaign and the latest twenty uses, under `promotion:read`. **For
+  integrators:** the promotion module's migration 000005 replaces the index on
+  `promotion_redemption (promotion_id)` with one on `(promotion_id, id)`.
+
 - **An operator switches a promotion's status in the panel** (ADR 0312).
   **For operators:** the Promotions screen publishes a draft, pauses an active
   promotion and resumes an inactive one under `promotion:write`; a promotion

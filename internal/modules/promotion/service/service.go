@@ -119,6 +119,9 @@ type Repository interface {
 	Release(ctx context.Context, promotionID, reference string, now time.Time) (models.Redemption, bool, error)
 	GetRedemption(ctx context.Context, promotionID, reference string) (models.Redemption, error)
 	ListRedemptions(ctx context.Context, promotionID string, limit, offset int32) ([]models.Redemption, int64, error)
+	// ListLatestRedemptions returns the promotion's latest uses, newest first
+	// (ADR 0313).
+	ListLatestRedemptions(ctx context.Context, promotionID string, limit int32) ([]models.Redemption, error)
 }
 
 // Options are the setup settings of the service.

@@ -184,3 +184,4 @@ truth: a report says what was true on the day it was taken.
 | [The reaper a package found stopping — measured 2026-09-30](0262-the-reaper-a-package-found-stopping.md) | 82 |
 | [The few carts an operator opened — measured 2026-10-01](0296-the-few-carts-an-operator-opened.md) | 49 |
 | [The carts nobody came back for — measured 2026-10-01](0301-the-carts-nobody-came-back-for.md) | 30 |
+| [A promotion's latest uses — measured 2026-10-01](0313-latest-uses.md) | 41 |

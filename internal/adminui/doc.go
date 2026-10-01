@@ -117,7 +117,9 @@
 // cannot tell a storefront from an operator (ADR 0311). Each row offers its
 // one move, publish, pause or resume ([UI.switchPromotion]), carrying the
 // status it was drawn in so that a promotion another operator moved first is
-// refused rather than moved back (ADR 0312).
+// refused rather than moved back (ADR 0312), and links to the promotion's
+// page ([UI.showPromotion]): its discount, rules, campaign and latest uses,
+// read through the same surface (ADR 0313).
 //
 // # Response bodies go through core's writer
 //
