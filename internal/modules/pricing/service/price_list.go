@@ -9,22 +9,23 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// PriceListInput bir fiyat listesinin yazma girdisidir.
+// PriceListInput is the write input of a price list.
 type PriceListInput struct {
-	// Title listenin görünen adıdır; zorunludur.
+	// Title is the list's display name; it is required.
 	Title string
-	// Description isteğe bağlı açıklamadır.
+	// Description is the optional description.
 	Description string
-	// Type listenin türüdür (sale | override); zorunludur.
+	// Type is the list's type (sale | override); it is required.
 	Type models.PriceListType
-	// Status listenin durumudur; boş bırakılırsa draft kabul edilir.
+	// Status is the list's status; if left empty it is taken as draft.
 	//
-	// Varsayılanın draft olması bilinçlidir: yanlışlıkla eksik gönderilen bir
-	// durum, kampanyayı istemeden YAYINA almamalıdır.
+	// The default being draft is deliberate: a status left out by mistake must
+	// not PUBLISH the campaign unintentionally.
 	Status models.PriceListStatus
-	// StartsAt geçerlilik penceresinin başıdır; nil ise alt sınır yoktur.
+	// StartsAt is the start of the validity window; if nil there is no lower
+	// bound.
 	StartsAt *time.Time
-	// EndsAt geçerlilik penceresinin sonudur; nil ise üst sınır yoktur.
+	// EndsAt is the end of the validity window; if nil there is no upper bound.
 	EndsAt *time.Time
 	// Metadata is the caller's free-form data; this module never reads it.
 	//
@@ -34,7 +35,7 @@ type PriceListInput struct {
 	Metadata map[string]any
 }
 
-// CreatePriceList yeni bir fiyat listesi oluşturur.
+// CreatePriceList creates a new price list.
 func (s *Service) CreatePriceList(ctx context.Context, in PriceListInput) (models.PriceList, error) {
 	if err := s.ready(); err != nil {
 		return models.PriceList{}, err
@@ -50,18 +51,18 @@ func (s *Service) CreatePriceList(ctx context.Context, in PriceListInput) (model
 	return s.repo.CreatePriceList(ctx, list, now)
 }
 
-// GetPriceList kimliğe göre listeyi döner; yoksa errors.NotFound.
+// GetPriceList returns the list by id; errors.NotFound if there is none.
 func (s *Service) GetPriceList(ctx context.Context, id string) (models.PriceList, error) {
 	if err := s.ready(); err != nil {
 		return models.PriceList{}, err
 	}
-	if err := requireID(id, models.PriceListIDPrefix, "fiyat listesi kimliği"); err != nil {
+	if err := requireID(id, models.PriceListIDPrefix, "price list id"); err != nil {
 		return models.PriceList{}, err
 	}
 	return s.repo.GetPriceList(ctx, id)
 }
 
-// ListPriceLists sayfalanmış fiyat listesi kümesini döner.
+// ListPriceLists returns the paged set of price lists.
 func (s *Service) ListPriceLists(ctx context.Context, limit, offset int32) (Page[models.PriceList], error) {
 	if err := s.ready(); err != nil {
 		return Page[models.PriceList]{}, err
@@ -78,16 +79,16 @@ func (s *Service) ListPriceLists(ctx context.Context, limit, offset int32) (Page
 	return Page[models.PriceList]{Items: lists, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// UpdatePriceList listenin tüm güncellenebilir alanlarını yazar.
+// UpdatePriceList writes every updatable field of the list.
 //
-// Kısmi güncelleme DEĞİLDİR: verilmeyen alanlar sıfırlanır. Bu bilinçlidir —
-// tarih penceresinin bir ucunu "değiştirme" ile "kaldır" arasındaki farkı
-// kısmi güncellemede ayırt etmek mümkün olmazdı.
+// It is NOT a partial update: fields that are not given are reset. This is
+// deliberate — in a partial update there would be no way to tell "leave this
+// end of the date window alone" from "remove it".
 func (s *Service) UpdatePriceList(ctx context.Context, id string, in PriceListInput) (models.PriceList, error) {
 	if err := s.ready(); err != nil {
 		return models.PriceList{}, err
 	}
-	if err := requireID(id, models.PriceListIDPrefix, "fiyat listesi kimliği"); err != nil {
+	if err := requireID(id, models.PriceListIDPrefix, "price list id"); err != nil {
 		return models.PriceList{}, err
 	}
 
@@ -100,26 +101,26 @@ func (s *Service) UpdatePriceList(ctx context.Context, id string, in PriceListIn
 	return s.repo.UpdatePriceList(ctx, list, s.clock)
 }
 
-// DeletePriceList listeyi soft delete ile siler.
+// DeletePriceList deletes the list with a soft delete.
 //
-// Listeye bağlı fiyatlar silinmez ama hesaplamada elenir; gerekçe için bkz.
-// repository.Repo.DeletePriceList.
+// The prices bound to the list are not deleted but are left out of the
+// calculation; for the reasoning see repository.Repo.DeletePriceList.
 func (s *Service) DeletePriceList(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.PriceListIDPrefix, "fiyat listesi kimliği"); err != nil {
+	if err := requireID(id, models.PriceListIDPrefix, "price list id"); err != nil {
 		return err
 	}
 	return s.repo.DeletePriceList(ctx, id, s.clock())
 }
 
-// CreatePriceRule var olan bir fiyata kural ekler.
+// CreatePriceRule adds a rule to an existing price.
 func (s *Service) CreatePriceRule(ctx context.Context, priceID string, in RuleInput) (models.PriceRule, error) {
 	if err := s.ready(); err != nil {
 		return models.PriceRule{}, err
 	}
-	if err := requireID(priceID, models.PriceIDPrefix, "fiyat kimliği"); err != nil {
+	if err := requireID(priceID, models.PriceIDPrefix, "price id"); err != nil {
 		return models.PriceRule{}, err
 	}
 
@@ -131,53 +132,54 @@ func (s *Service) CreatePriceRule(ctx context.Context, priceID string, in RuleIn
 	return s.repo.CreatePriceRule(ctx, rule, now)
 }
 
-// ListPriceRules bir fiyatın kurallarını döner.
+// ListPriceRules returns the rules of a price.
 func (s *Service) ListPriceRules(ctx context.Context, priceID string) ([]models.PriceRule, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
-	if err := requireID(priceID, models.PriceIDPrefix, "fiyat kimliği"); err != nil {
+	if err := requireID(priceID, models.PriceIDPrefix, "price id"); err != nil {
 		return nil, err
 	}
-	// Fiyatın varlığı doğrulanır: olmayan bir fiyatın kuralları boş dilim
-	// olarak dönerse istemci 404 yerine "kuralı yok" sanırdı.
+	// The price's existence is verified: if the rules of a price that does not
+	// exist came back as an empty slice, the client would think "it has no
+	// rule" instead of a 404.
 	if _, err := s.repo.GetPrice(ctx, priceID); err != nil {
 		return nil, err
 	}
 	return s.repo.ListPriceRules(ctx, priceID)
 }
 
-// GetPriceRule kimliğe göre kuralı döner; yoksa errors.NotFound.
+// GetPriceRule returns the rule by id; errors.NotFound if there is none.
 func (s *Service) GetPriceRule(ctx context.Context, id string) (models.PriceRule, error) {
 	if err := s.ready(); err != nil {
 		return models.PriceRule{}, err
 	}
-	if err := requireID(id, models.PriceRuleIDPrefix, "fiyat kuralı kimliği"); err != nil {
+	if err := requireID(id, models.PriceRuleIDPrefix, "price rule id"); err != nil {
 		return models.PriceRule{}, err
 	}
 	return s.repo.GetPriceRule(ctx, id)
 }
 
-// DeletePriceRule kuralı soft delete ile siler.
+// DeletePriceRule deletes the rule with a soft delete.
 func (s *Service) DeletePriceRule(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.PriceRuleIDPrefix, "fiyat kuralı kimliği"); err != nil {
+	if err := requireID(id, models.PriceRuleIDPrefix, "price rule id"); err != nil {
 		return err
 	}
 	return s.repo.DeletePriceRule(ctx, id, s.clock())
 }
 
-// buildPriceList girdiyi doğrular ve domain modeline çevirir.
+// buildPriceList validates the input and converts it into the domain model.
 func buildPriceList(in PriceListInput) (models.PriceList, error) {
 	title := strings.TrimSpace(in.Title)
 	if title == "" {
-		return models.PriceList{}, errors.Invalid(CodeInvalidInput, "fiyat listesi başlığı boş olamaz")
+		return models.PriceList{}, errors.Invalid(CodeInvalidInput, "the price list title cannot be empty")
 	}
 	if !in.Type.Valid() {
 		return models.PriceList{}, errors.Invalid(CodeInvalidInput,
-			"fiyat listesi türü tanımsız: %q (beklenen: %s, %s)",
+			"the price list type is undefined: %q (expected: %s, %s)",
 			string(in.Type), models.PriceListSale, models.PriceListOverride)
 	}
 
@@ -187,14 +189,14 @@ func buildPriceList(in PriceListInput) (models.PriceList, error) {
 	}
 	if !status.Valid() {
 		return models.PriceList{}, errors.Invalid(CodeInvalidInput,
-			"fiyat listesi durumu tanımsız: %q (beklenen: %s, %s, %s)",
+			"the price list status is undefined: %q (expected: %s, %s, %s)",
 			string(in.Status), models.PriceListDraft, models.PriceListActive, models.PriceListExpired)
 	}
 
 	starts, ends := normalizeWindow(in.StartsAt, in.EndsAt)
 	if starts != nil && ends != nil && !starts.Before(*ends) {
 		return models.PriceList{}, errors.Invalid(CodeInvalidInput,
-			"fiyat listesi başlangıcı (%s) bitişinden (%s) önce olmalı",
+			"the price list start (%s) has to be before its end (%s)",
 			starts.Format(time.RFC3339), ends.Format(time.RFC3339))
 	}
 
@@ -209,8 +211,8 @@ func buildPriceList(in PriceListInput) (models.PriceList, error) {
 	}, nil
 }
 
-// normalizeWindow pencere uçlarını UTC'ye çevirir ve KOPYALAR;
-// çağıranın işaretçileri paylaşılmaz.
+// normalizeWindow converts the window's ends to UTC and COPIES them; the
+// caller's pointers are not shared.
 func normalizeWindow(starts, ends *time.Time) (utcStart, utcEnd *time.Time) {
 	var outStart, outEnd *time.Time
 	if starts != nil {

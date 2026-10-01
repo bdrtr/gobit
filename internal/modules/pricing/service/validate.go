@@ -9,66 +9,69 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// currencyCodeLen ISO 4217 alfabetik kodunun uzunluğudur.
+// currencyCodeLen is the length of an ISO 4217 alphabetic code.
 const currencyCodeLen = 3
 
-// maxIDLen kabul edilen kimlik uzunluğu üst sınırıdır. Kimlikler link
-// tablosundaki benzersiz indekse de girdiği için sınır orayla uyumlu tutulur.
+// maxIDLen is the upper bound on the accepted id length. Because ids also go
+// into the unique index of the link table, the bound is kept consistent with
+// that index.
 const maxIDLen = 255
 
-// normalizeCurrency para birimi kodunu doğrular ve BÜYÜK harfe çevirir.
+// normalizeCurrency validates the currency code and converts it to UPPER case.
 //
-// Kabul edilen biçim ISO 4217 alfabetik kodudur: tam üç harf. Baştaki/sondaki
-// boşluklar kırpılır (kod zaten büyük harfe dönüştürülerek normalleştiriliyor;
-// boşluk için ayrı bir katılık tutarsız olurdu), ama harf dışı hiçbir karakter
-// kabul edilmez.
+// The accepted form is the ISO 4217 alphabetic code: exactly three letters.
+// Leading/trailing whitespace is trimmed (the code is already normalized by
+// converting it to upper case; a separate strictness for whitespace would be
+// inconsistent), but no character other than a letter is accepted.
 func normalizeCurrency(code string) (string, error) {
 	trimmed := strings.ToUpper(strings.TrimSpace(code))
 	if len(trimmed) != currencyCodeLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"para birimi kodu tam %d harf olmalı (ISO 4217), %q verildi", currencyCodeLen, code)
+			"the currency code has to be exactly %d letters (ISO 4217), %q given", currencyCodeLen, code)
 	}
 	for _, r := range trimmed {
 		if r < 'A' || r > 'Z' {
 			return "", errors.Invalid(CodeInvalidInput,
-				"para birimi kodu yalnızca harf içerebilir (ISO 4217), %q verildi", code)
+				"the currency code can contain only letters (ISO 4217), %q given", code)
 		}
 	}
 	return trimmed, nil
 }
 
-// validateAmount tutarın izin verilen aralıkta olduğunu doğrular.
+// validateAmount validates that the amount is in the permitted range.
 //
-// Negatif tutar reddedilir: negatif fiyat bir indirim değildir, indirim
-// promotion modülünün işidir. Üst sınır ise taşma korumasıdır — tutar × adet
-// çarpımı int64'e sığmalıdır (bkz. [models.MaxAmount]).
+// A negative amount is rejected: a negative price is not a discount, and
+// discounts are the promotion module's job. The upper bound is overflow
+// protection — the product amount × quantity has to fit in an int64 (see
+// [models.MaxAmount]).
 func validateAmount(amount int64) error {
 	if amount < models.MinAmount {
 		return errors.Invalid(CodeInvalidInput,
-			"tutar negatif olamaz, %d verildi (minor unit)", amount)
+			"the amount cannot be negative, %d given (minor unit)", amount)
 	}
 	if amount > models.MaxAmount {
 		return errors.Invalid(CodeInvalidInput,
-			"tutar en fazla %d olabilir (minor unit), %d verildi", models.MaxAmount, amount)
+			"the amount can be at most %d (minor unit), %d given", models.MaxAmount, amount)
 	}
 	return nil
 }
 
-// normalizeQuantityRange adet aralığını doğrular ve varsayılanı uygular.
+// normalizeQuantityRange validates the quantity range and applies the default.
 //
-// min 0 verilirse 1 kabul edilir: "adet belirtilmedi" ile "her adette geçerli"
-// aynı şeydir. Dönen üst sınır KOPYALANIR; çağıranın işaretçisi paylaşılmaz.
+// A min of 0 is taken as 1: "no quantity given" and "valid at every quantity"
+// are the same thing. The returned upper bound is COPIED; the caller's pointer
+// is not shared.
 func normalizeQuantityRange(minQty int32, maxQty *int32) (outMin int32, outMax *int32, err error) {
 	if minQty == 0 {
 		minQty = models.MinQuantity
 	}
 	if minQty < models.MinQuantity {
 		return 0, nil, errors.Invalid(CodeInvalidInput,
-			"asgari adet en az %d olmalı, %d verildi", models.MinQuantity, minQty)
+			"the minimum quantity has to be at least %d, %d given", models.MinQuantity, minQty)
 	}
 	if minQty > models.MaxQuantity {
 		return 0, nil, errors.Invalid(CodeInvalidInput,
-			"asgari adet en fazla %d olabilir, %d verildi", models.MaxQuantity, minQty)
+			"the minimum quantity can be at most %d, %d given", models.MaxQuantity, minQty)
 	}
 	if maxQty == nil {
 		return minQty, nil, nil
@@ -77,68 +80,69 @@ func normalizeQuantityRange(minQty int32, maxQty *int32) (outMin int32, outMax *
 	limit := *maxQty
 	if limit < models.MinQuantity {
 		return 0, nil, errors.Invalid(CodeInvalidInput,
-			"azami adet en az %d olmalı, %d verildi", models.MinQuantity, limit)
+			"the maximum quantity has to be at least %d, %d given", models.MinQuantity, limit)
 	}
 	if limit > models.MaxQuantity {
 		return 0, nil, errors.Invalid(CodeInvalidInput,
-			"azami adet en fazla %d olabilir, %d verildi", models.MaxQuantity, limit)
+			"the maximum quantity can be at most %d, %d given", models.MaxQuantity, limit)
 	}
 	if limit < minQty {
 		return 0, nil, errors.Invalid(CodeInvalidInput,
-			"azami adet (%d) asgari adetten (%d) küçük olamaz", limit, minQty)
+			"the maximum quantity (%d) cannot be less than the minimum quantity (%d)", limit, minQty)
 	}
 	return minQty, &limit, nil
 }
 
-// validatePriceListRef fiyata verilen liste kimliğini doğrular.
+// validatePriceListRef validates the list id given to a price.
 func validatePriceListRef(id *string) error {
 	if id == nil {
 		return nil
 	}
-	return requireID(*id, models.PriceListIDPrefix, "fiyat listesi kimliği")
+	return requireID(*id, models.PriceListIDPrefix, "price list id")
 }
 
-// validateRule bir kural girdisinin tutarlı olduğunu doğrular.
+// validateRule validates that a rule input is consistent.
 //
-// Değer sayısı işlece bağlıdır: in/nin çok değer alır, diğerleri TEK değer
-// ister. Sayısal işleçlerin (gt/gte/lt/lte) değeri tam sayıya çevrilebilmelidir;
-// aksi hâlde kural hiçbir zaman eşleşmez ve sessizce ölü bir kayıt olurdu.
+// The number of values depends on the operator: in/nin take several values,
+// the others require a SINGLE value. The value of a numeric operator
+// (gt/gte/lt/lte) has to convert to an integer; otherwise the rule would never
+// match and would silently be a dead record.
 func validateRule(in RuleInput) error {
 	if strings.TrimSpace(in.Attribute) == "" {
-		return errors.Invalid(CodeInvalidInput, "kural alan adı (attribute) boş olamaz")
+		return errors.Invalid(CodeInvalidInput, "the rule's field name (attribute) cannot be empty")
 	}
 	if !in.Operator.Valid() {
 		return errors.Invalid(CodeInvalidInput,
-			"kural işleci tanımsız: %q", string(in.Operator))
+			"the rule operator is undefined: %q", string(in.Operator))
 	}
 	if len(in.Values) == 0 {
 		return errors.Invalid(CodeInvalidInput,
-			"%q kuralı en az bir değer içermeli", in.Attribute)
+			"the %q rule has to contain at least one value", in.Attribute)
 	}
 	if !in.Operator.MultiValue() && len(in.Values) != 1 {
 		return errors.Invalid(CodeInvalidInput,
-			"%q işleci tam bir değer alır, %d değer verildi", string(in.Operator), len(in.Values))
+			"the %q operator takes exactly one value, %d values given", string(in.Operator), len(in.Values))
 	}
 	for _, value := range in.Values {
 		if value == "" {
 			return errors.Invalid(CodeInvalidInput,
-				"%q kuralının değerleri boş olamaz", in.Attribute)
+				"the values of the %q rule cannot be empty", in.Attribute)
 		}
 		if in.Operator.Numeric() {
 			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
 				return errors.Invalid(CodeInvalidInput,
-					"%q işleci tam sayı bekler, %q verildi", string(in.Operator), value)
+					"the %q operator expects an integer, %q given", string(in.Operator), value)
 			}
 		}
 	}
 	return nil
 }
 
-// requireID bir kimliğin kullanılabilir ve DOĞRU TÜRDE olduğunu doğrular.
+// requireID validates that an id is usable and OF THE RIGHT TYPE.
 //
-// Önek kontrolü bilinçlidir: önekli kimliklerin varlık sebebi, yanlış türde bir
-// kimliğin (örn. varyant kimliğinin price set yerine geçmesi) "bulunamadı"
-// olarak değil, ne olduğu belli bir doğrulama hatası olarak dönmesidir.
+// The prefix check is deliberate: prefixed ids exist so that an id of the wrong
+// type (e.g. a variant id passed in place of a price set id) comes back not as
+// "not found" but as a validation error that says what it is.
 func requireID(id, prefix, label string) error {
 	if id == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
@@ -148,23 +152,24 @@ func requireID(id, prefix, label string) error {
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir, %d bayt verildi", label, maxIDLen, len(id))
+			"%s can be at most %d bytes, %d bytes given", label, maxIDLen, len(id))
 	}
 	if !strings.HasPrefix(id, prefix) {
 		return errors.Invalid(CodeInvalidInput,
-			"%s %q önekiyle başlamalı, %q verildi", label, prefix, id)
+			"%s has to start with the %q prefix, %q given", label, prefix, id)
 	}
 	return nil
 }
 
-// normalizePaging sayfalama parametrelerini uygulanabilir değerlere çevirir.
+// normalizePaging converts the paging parameters into applicable values.
 //
-// Limit 0 veya negatifse varsayılan, [MaxLimit]'i aşıyorsa azami değer
-// uygulanır; kırpma hata DEĞİLDİR ama uygulanan değer sonuçta geri bildirilir
-// (bkz. [Page]). Negatif offset ise düzeltilemez bir istektir ve reddedilir.
+// If the limit is 0 or negative the default is applied, and if it exceeds
+// [MaxLimit] the maximum is applied; clamping is NOT an error, but the applied
+// value is reported back in the result (see [Page]). A negative offset, on the
+// other hand, is a request that cannot be corrected, and it is rejected.
 func normalizePaging(limit, offset int32) (outLimit, outOffset int32, err error) {
 	if offset < 0 {
-		return 0, 0, errors.Invalid(CodeInvalidInput, "offset negatif olamaz, %d verildi", offset)
+		return 0, 0, errors.Invalid(CodeInvalidInput, "the offset cannot be negative, %d given", offset)
 	}
 	if limit <= 0 {
 		limit = DefaultLimit
@@ -175,12 +180,12 @@ func normalizePaging(limit, offset int32) (outLimit, outOffset int32, err error)
 	return limit, offset, nil
 }
 
-// clampToInt32 bir int değeri int32 aralığına sıkıştırır.
+// clampToInt32 clamps an int value into the int32 range.
 //
-// Query katmanının [query.ListOptions] alanları int'tir; 64 bit bir platformda
-// oradan gelen devasa bir değer int32'ye dönüşürken SARARDI ve negatif bir
-// limit üretebilirdi. Sıkıştırma bu sarmayı imkânsız kılar; sınırın kendisi
-// zaten normalizePaging'de [MaxLimit]'e indirilir.
+// The [query.ListOptions] fields of the Query layer are int; on a 64-bit
+// platform a huge value coming from there would WRAP on its conversion to int32
+// and could produce a negative limit. Clamping makes that wrap impossible; the
+// bound itself is lowered to [MaxLimit] in normalizePaging anyway.
 func clampToInt32(value int) int32 {
 	if value > math.MaxInt32 {
 		return math.MaxInt32
@@ -191,24 +196,25 @@ func clampToInt32(value int) int32 {
 	return int32(value)
 }
 
-// Hata ayrıntısındaki indeks anahtarları.
+// The index keys in an error's details.
 const (
-	// detailIndex kaçıncı FİYATIN reddedildiğini bildirir.
+	// detailIndex reports which PRICE was rejected.
 	detailIndex = "index"
-	// detailRuleIndex o fiyatın kaçıncı KURALININ reddedildiğini bildirir.
+	// detailRuleIndex reports which RULE of that price was rejected.
 	detailRuleIndex = "rule_index"
 )
 
-// withIndex bir doğrulama hatasına kaçıncı girdide oluştuğunu ekler.
+// withIndex adds to a validation error the position of the input it arose at.
 //
-// Toplu yazmada (SetPrices) hangi fiyatın reddedildiğini bilmek, hatayı
-// kullanılabilir kılan tek bilgidir.
+// In a bulk write (SetPrices), knowing which price was rejected is the only
+// piece of information that makes the error usable.
 //
-// Anahtar çağırandan gelir çünkü indeksler İÇ İÇEDİR: bir kural hatası hem
-// fiyatın hem kuralın sırasını taşır. İki seviye aynı anahtarı kullansaydı
-// [errors.Error.WithDetails] onu EZER ve dıştaki fiyat indeksi içteki kural
-// indeksini yok ederdi; istemci "prices[0].rules[3] geçersiz" durumunda yalnızca
-// index=0 görüp hatayı fiyatın kendisinde arardı.
+// The key comes from the caller because the indexes are NESTED: a rule error
+// carries the position of both the price and the rule. If the two levels used
+// the same key, [errors.Error.WithDetails] would OVERWRITE it and the outer
+// price index would wipe out the inner rule index; for "prices[0].rules[3] is
+// invalid" the client would see only index=0 and look for the error in the
+// price itself.
 func withIndex(err error, key string, index int) error {
 	var typed *errors.Error
 	if errors.As(err, &typed) && typed != nil {

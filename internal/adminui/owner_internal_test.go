@@ -482,6 +482,16 @@ func (s *recordingSurfaces) RestoreRevision(context.Context, string, int64, int6
 // set would otherwise have to share a receiver with the product surface's.
 type recordingPrices struct{ surfaces *recordingSurfaces }
 
+func (p recordingPrices) PriceListsJSON(context.Context, int32, int32) (json.RawMessage, int64, error) {
+	return json.RawMessage(`[]`), 0, p.surfaces.reach(ServicePricingAdmin)
+}
+
+func (p recordingPrices) CreatePriceList(
+	context.Context, string, string, string, string, *time.Time, *time.Time,
+) (string, error) {
+	return "plist_walk", p.surfaces.reach(ServicePricingAdmin)
+}
+
 func (p recordingPrices) SetBasePriceAmount(context.Context, string, string, int64, int64) error {
 	return p.surfaces.reach(ServicePricingAdmin)
 }
@@ -866,6 +876,8 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
 	// Writing a customer group (ADR 0323).
 	routeKey(http.MethodPost, CustomerGroupListPath): {formGroupName: {"Walk"}},
+	// Writing a price list (ADR 0326).
+	routeKey(http.MethodPost, PriceListsPath): {formPriceListTitle: {"Walk"}},
 	// A claim's evidence (ADR 0325).
 	routeKey(http.MethodPost, OrderClaimEvidencePath):       {formEvidenceCaption: {"walk"}},
 	routeKey(http.MethodPost, OrderClaimEvidenceDetachPath): {},

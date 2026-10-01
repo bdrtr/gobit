@@ -8,7 +8,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/repository/pricingdb"
 )
 
-// CreatePriceList yeni bir fiyat listesi oluşturur.
+// CreatePriceList creates a new price list.
 func (r *Repo) CreatePriceList(ctx context.Context, list models.PriceList, now time.Time) (models.PriceList, error) {
 	if err := r.ready(); err != nil {
 		return models.PriceList{}, err
@@ -34,7 +34,7 @@ func (r *Repo) CreatePriceList(ctx context.Context, list models.PriceList, now t
 			CreatedAt:   fromTime(now),
 		})
 		if err != nil {
-			return wrapDB(err, "fiyat listesi oluşturulamadı")
+			return wrapDB(err, "the price list could not be created")
 		}
 
 		return recordListHistory(ctx, q, row, false, now)
@@ -45,7 +45,7 @@ func (r *Repo) CreatePriceList(ctx context.Context, list models.PriceList, now t
 	return toPriceList(row)
 }
 
-// GetPriceList kimliğe göre listeyi döner; yoksa errors.NotFound.
+// GetPriceList returns the list by id; errors.NotFound when there is none.
 func (r *Repo) GetPriceList(ctx context.Context, id string) (models.PriceList, error) {
 	if err := r.ready(); err != nil {
 		return models.PriceList{}, err
@@ -53,12 +53,12 @@ func (r *Repo) GetPriceList(ctx context.Context, id string) (models.PriceList, e
 
 	row, err := r.q.GetPriceList(ctx, id)
 	if err != nil {
-		return models.PriceList{}, notFoundOr(err, CodePriceListNotFound, "fiyat listesi bulunamadı: %s", id)
+		return models.PriceList{}, notFoundOr(err, CodePriceListNotFound, "price list not found: %s", id)
 	}
 	return toPriceList(row)
 }
 
-// ListPriceLists sayfalanmış liste kümesini ve TOPLAM kayıt sayısını döner.
+// ListPriceLists returns the paged set of lists and the TOTAL record count.
 func (r *Repo) ListPriceLists(ctx context.Context, limit, offset int32) ([]models.PriceList, int64, error) {
 	if err := r.ready(); err != nil {
 		return nil, 0, err
@@ -66,12 +66,12 @@ func (r *Repo) ListPriceLists(ctx context.Context, limit, offset int32) ([]model
 
 	rows, err := r.q.ListPriceLists(ctx, pricingdb.ListPriceListsParams{Limit: limit, Offset: offset})
 	if err != nil {
-		return nil, 0, wrapDB(err, "fiyat listeleri alınamadı")
+		return nil, 0, wrapDB(err, "the price lists could not be read")
 	}
 
 	total, err := r.q.CountPriceLists(ctx)
 	if err != nil {
-		return nil, 0, wrapDB(err, "fiyat listesi sayısı alınamadı")
+		return nil, 0, wrapDB(err, "the price list count could not be read")
 	}
 
 	lists := make([]models.PriceList, 0, len(rows))
@@ -134,12 +134,14 @@ func (r *Repo) UpdatePriceList(ctx context.Context, list models.PriceList, clock
 	return toPriceList(row)
 }
 
-// DeletePriceList listeyi soft delete ile siler; yoksa errors.NotFound.
+// DeletePriceList deletes the list with a soft delete; errors.NotFound when
+// there is none.
 //
-// Listeye bağlı fiyatlar SİLİNMEZ ama hesaplamada elenir: aday sorgusundaki
-// LEFT JOIN silinmiş listeyi görmez ve servis, listesi kaybolmuş fiyatı hesaba
-// katmaz. Fiyatların kalması bilinçlidir — liste yanlışlıkla silinirse geri
-// yüklemek tek satırlık bir işlemdir.
+// The prices bound to the list are NOT DELETED but are left out of the
+// calculation: the LEFT JOIN in the candidate query does not see the deleted
+// list, and the service does not count a price whose list has gone missing.
+// Keeping the prices is deliberate — if a list is deleted by mistake, restoring
+// it is a one-line operation.
 func (r *Repo) DeletePriceList(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -148,14 +150,14 @@ func (r *Repo) DeletePriceList(ctx context.Context, id string, now time.Time) er
 	return r.inTx(ctx, func(q *pricingdb.Queries) error {
 		list, err := q.GetPriceList(ctx, id)
 		if err != nil {
-			return notFoundOr(err, CodePriceListNotFound, "fiyat listesi bulunamadı: %s", id)
+			return notFoundOr(err, CodePriceListNotFound, "price list not found: %s", id)
 		}
 
 		if _, err := q.SoftDeletePriceList(ctx, pricingdb.SoftDeletePriceListParams{
 			ID:        id,
 			DeletedAt: fromTime(now),
 		}); err != nil {
-			return notFoundOr(err, CodePriceListNotFound, "fiyat listesi bulunamadı: %s", id)
+			return notFoundOr(err, CodePriceListNotFound, "price list not found: %s", id)
 		}
 
 		// Its prices stay, and stop competing; the snapshot says why (ADR 0167).
@@ -163,7 +165,7 @@ func (r *Repo) DeletePriceList(ctx context.Context, id string, now time.Time) er
 	})
 }
 
-// toPriceList üretilen satırı domain modeline çevirir.
+// toPriceList converts the generated row into the domain model.
 func toPriceList(row pricingdb.PriceList) (models.PriceList, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {

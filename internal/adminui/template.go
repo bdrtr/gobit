@@ -45,6 +45,9 @@ const (
 	statusesKey  = "Statuses"
 	totalKey     = "Total"
 	canCreateKey = "CanCreate"
+	// createdKey carries what a screen's form just wrote, named in the
+	// address the form landed on.
+	createdKey = "Created"
 )
 
 // productsPathKey is the template data key carrying the product list's path,
@@ -102,6 +105,7 @@ var pages = []string{
 	"notifications.gohtml",
 	"campaigns.gohtml",
 	"customer_groups.gohtml",
+	"price_lists.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -286,6 +290,9 @@ type navItem struct {
 func sections() []navItem {
 	return []navItem{
 		{Label: catalogLabel, Path: ProductsPath},
+		// The price lists sit beside the catalog whose prices they hold (ADR
+		// 0326).
+		{Label: priceListsLabel, Path: PriceListsPath},
 		{Label: ordersLabel, Path: OrdersPath},
 		// The telephone order sits under the orders it makes (ADR 0290).
 		{Label: telephoneLabel, Path: CartsPath},

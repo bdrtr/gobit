@@ -193,6 +193,10 @@ func builtInScopes() map[string]string {
 		routeKey(post, PromotionStatusPath): scopePromotionWrite,
 		routeKey(get, PromotionPath):        scopePromotionRead,
 		routeKey(post, PromotionsPath):      scopePromotionWrite,
+		// The price lists and the form that writes one are the pricing
+		// module's (ADR 0326).
+		routeKey(get, PriceListsPath):  scopePricingRead,
+		routeKey(post, PriceListsPath): scopePricingWrite,
 		// The campaigns and the form that writes one are the promotion
 		// module's (ADR 0319).
 		routeKey(get, CampaignsPath):  scopePromotionRead,

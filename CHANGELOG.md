@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel writes and lists the price lists** (ADR 0326). **For
+  operators:** a Price lists screen lists the lists with their type, status
+  and window, and writes one under `pricing:write`. **For integrators:** the
+  pricing module's price list service, repository and input checks answer in
+  English.
+
 - **The panel attaches evidence to a claim** (ADR 0325). **For operators:**
   a claim on the order's page lists its evidence, and a photograph sent from
   the page is stored and bound to the claim under `order:write` and

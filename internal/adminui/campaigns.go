@@ -151,11 +151,11 @@ func (u *UI) createCampaign(w http.ResponseWriter, r *http.Request) {
 // currency's minor units, or taken as minor units when the currency's scale is
 // unknown, as a price is.
 func (u *UI) writeCampaign(r *http.Request, creator CampaignCreator) error {
-	startsAt, err := readCampaignMoment(r.PostFormValue(formCampaignStarts), "start")
+	startsAt, err := readWindowMoment(r.PostFormValue(formCampaignStarts), "campaign", "start")
 	if err != nil {
 		return err
 	}
-	endsAt, err := readCampaignMoment(r.PostFormValue(formCampaignEnds), "end")
+	endsAt, err := readWindowMoment(r.PostFormValue(formCampaignEnds), "campaign", "end")
 	if err != nil {
 		return err
 	}
@@ -186,10 +186,10 @@ func (u *UI) writeCampaign(r *http.Request, creator CampaignCreator) error {
 	return err
 }
 
-// readCampaignMoment reads one end of the window in UTC; nil for an empty
-// field, which leaves that end open. A past start is a campaign already
-// running, so no moment is refused for being past.
-func readCampaignMoment(value, end string) (*time.Time, error) {
+// readWindowMoment reads one end of a campaign's or a price list's window in
+// UTC; nil for an empty field, which leaves that end open. A past start is a
+// window already open, so no moment is refused for being past.
+func readWindowMoment(value, whose, end string) (*time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return nil, nil
@@ -197,7 +197,7 @@ func readCampaignMoment(value, end string) (*time.Time, error) {
 	at, err := time.ParseInLocation(publishAtLayout, value, time.UTC)
 	if err != nil {
 		return nil, errors.Invalid(CodeMomentInvalid,
-			"The campaign's %s could not be read; use the date and time picker.", end)
+			"The %s's %s could not be read; use the date and time picker.", whose, end)
 	}
 
 	return &at, nil
@@ -250,7 +250,7 @@ func (u *UI) renderCampaigns(w http.ResponseWriter, r *http.Request, code int, r
 		titleKey:     campaignsLabel,
 		"Campaigns":  views,
 		totalKey:     total,
-		"Created":    r.URL.Query().Get(paramCreated),
+		createdKey:   r.URL.Query().Get(paramCreated),
 		canCreateKey: u.canCreateCampaigns(r),
 		refusedKey:   refused,
 		typedKey:     typed,

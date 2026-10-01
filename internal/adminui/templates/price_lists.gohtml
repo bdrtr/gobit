@@ -1,0 +1,70 @@
+{{- /*
+price_lists.gohtml lists the pricing module's price lists (ADR 0326).
+
+A price list holds prices beside a variant's base price: a sale list's price
+is chosen over the base price, an override list's over both, and a list's
+prices apply only while it is active and inside its window. A segment's
+contract prices sit on a list, each limited to a customer group by its rule
+(ADR 0049). The rows come in the module's order.
+
+An operator who may write prices writes a list here. The moments are
+datetime-local inputs read as UTC, as a campaign's are (ADR 0319).
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ with .Created }}<p role="status">Price list {{ . }} was written.</p>{{ end }}
+
+{{ if .CanCreate }}
+<details{{ if .Typed }} open{{ end }}>
+  <summary>New price list</summary>
+  <form method="post" action="{{ .Path }}">
+    <input name="title" value="{{ .Typed.Get "title" }}" placeholder="title, e.g. Wholesale 2026" aria-label="title" required>
+    <input name="description" value="{{ .Typed.Get "description" }}" placeholder="description (optional)" aria-label="description">
+    <select name="type" aria-label="type">
+      <option value="sale"{{ if eq (.Typed.Get "type") "sale" }} selected{{ end }}>a sale, over the base price</option>
+      <option value="override"{{ if eq (.Typed.Get "type") "override" }} selected{{ end }}>an override, over a sale too</option>
+    </select>
+    <select name="status" aria-label="status">
+      <option value="draft"{{ if eq (.Typed.Get "status") "draft" }} selected{{ end }}>a draft, applying nowhere yet</option>
+      <option value="active"{{ if eq (.Typed.Get "status") "active" }} selected{{ end }}>active</option>
+    </select>
+    <label>From (UTC) <input type="datetime-local" name="starts_at" value="{{ .Typed.Get "starts_at" }}"></label>
+    <label>Until (UTC) <input type="datetime-local" name="ends_at" value="{{ .Typed.Get "ends_at" }}"></label>
+    <button type="submit">Write the price list</button>
+  </form>
+</details>
+{{ end }}
+
+<p class="muted">{{ .Total }} price lists.</p>
+
+{{ if .PriceLists }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Price list</th><th>Type</th><th>Status</th><th>From (UTC)</th><th>Until (UTC)</th></tr>
+  </thead>
+  <tbody>
+  {{ range .PriceLists }}
+    <tr>
+      <td>{{ .Title }} <span class="muted">{{ .ID }}</span>{{ with .Description }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
+      <td>{{ .Type }}</td>
+      <td><span class="pill">{{ .Status }}</span></td>
+      <td>{{ with .StartsAt }}{{ .UTC.Format "2006-01-02 15:04" }}{{ else }}<span class="muted">always</span>{{ end }}</td>
+      <td>{{ with .EndsAt }}{{ .UTC.Format "2006-01-02 15:04" }}{{ else }}<span class="muted">open</span>{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No price list has been written.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

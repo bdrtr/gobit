@@ -73,10 +73,11 @@
 //
 // # The sections, and what the sales report does not print
 //
-// The menu holds the catalog, the orders, the telephone order, the sales
-// report, the promotions, the campaigns, the customers, the customer groups,
-// the notifications, the inventory, the reviews, and the person's own second factor and sessions, in
-// that order; the last two are open to everybody who can sign in (ADR 0266,
+// The menu holds the catalog, the price lists, the orders, the
+// telephone order, the sales report, the promotions, the campaigns, the
+// customers, the customer groups, the notifications, the inventory, the
+// reviews, and the person's own second factor and sessions, in that order;
+// the last two are open to everybody who can sign in (ADR 0266,
 // ADR 0268). The list lives in one
 // place next to
 // the routes that serve it, so a section enters the menu by being added there
@@ -131,6 +132,10 @@
 // [UI.removeFromGroup]) through the customer module's surface (ADR 0322), and
 // the Customer groups screen ([UI.listCustomerGroups]) lists the groups with
 // their rank and writes one ([UI.createCustomerGroup], ADR 0323).
+//
+// The Price lists screen ([UI.listPriceLists]) lists the pricing module's
+// lists with their type, status and window, and its form writes one
+// ([UI.createPriceList]) through the module's panel surface (ADR 0326).
 //
 // The Campaigns screen ([UI.listCampaigns]) lists the windows and budgets the
 // promotions share, with how much of each budget is used, and its form writes

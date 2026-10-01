@@ -153,7 +153,7 @@ func (u *UI) renderCustomerGroups(w http.ResponseWriter, r *http.Request, code i
 	data := map[string]any{
 		titleKey:     customerGroupsLabel,
 		"Groups":     rows,
-		"Created":    r.URL.Query().Get(paramCreated),
+		createdKey:   r.URL.Query().Get(paramCreated),
 		canCreateKey: u.canCreateGroups(r),
 		refusedKey:   refused,
 		typedKey:     typed,
