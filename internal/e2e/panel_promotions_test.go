@@ -157,3 +157,52 @@ func TestAnOperatorOpensAPromotionsPage(t *testing.T) {
 	assert.Contains(t, body, "<td>currency_code</td><td>in</td><td>TRY</td>")
 	assert.Contains(t, body, "order_e2e_page")
 }
+
+// TestAnOperatorWritesACouponInThePanel is ADR 0314 on the production
+// wiring: the form writes a draft coupon with its discount through the
+// promotion module's registered surface and opens its page, and the same
+// code a second time is refused on the drafts' list.
+func TestAnOperatorWritesACouponInThePanel(t *testing.T) {
+	ctx := t.Context()
+	code := fmt.Sprintf("E2ECOUPON%d", fixtureCounter.Add(1))
+
+	panel, err := adminui.FromContainer(ctr, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_marketing", Kind: "user", Scopes: []string{"promotion:read", "promotion:write"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	form := url.Values{
+		"code": {code}, "measure": {"percentage"}, "amount": {"15"}, "target": {"order"},
+		"allocation": {"across"}, "usage_limit": {"100"},
+	}
+	written := send(http.MethodPost, adminui.PromotionsPath, form)
+	require.Equal(t, http.StatusSeeOther, written.Code, written.Body.String())
+	pagePath := written.Header().Get("Location")
+	require.True(t, strings.HasPrefix(pagePath, adminui.PromotionsPath+"/promo_"), pagePath)
+
+	promo, err := promotionSvc.GetPromotion(ctx, strings.TrimPrefix(pagePath, adminui.PromotionsPath+"/"))
+	require.NoError(t, err)
+	assert.Equal(t, code, promo.Code)
+	assert.Equal(t, promotionmodels.PromotionDraft, promo.Status)
+
+	page := send(http.MethodGet, pagePath, nil)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), "15% off")
+	assert.Contains(t, page.Body.String(), "0 of 100")
+
+	again := send(http.MethodPost, adminui.PromotionsPath, form)
+	require.Equal(t, http.StatusUnprocessableEntity, again.Code, again.Body.String())
+	assert.Contains(t, again.Body.String(), "a promotion with the code "+code+" exists")
+}

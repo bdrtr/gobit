@@ -95,6 +95,11 @@ type Repository interface {
 	ListPromotions(ctx context.Context, status, campaignID *string, limit, offset int32) ([]models.Promotion, int64, error)
 	GetPromotionsByIDs(ctx context.Context, ids []string) ([]models.Promotion, error)
 	UpdatePromotion(ctx context.Context, p models.Promotion, now time.Time) (models.Promotion, error)
+	// CreatePromotionWithMethod writes a promotion and its discount in one
+	// transaction (ADR 0314).
+	CreatePromotionWithMethod(
+		ctx context.Context, p models.Promotion, m models.ApplicationMethod, now time.Time,
+	) (models.Promotion, error)
 	// SwitchPromotionStatus moves the promotion from one status to another if
 	// it is still in the first, and reports whether it did (ADR 0312).
 	SwitchPromotionStatus(

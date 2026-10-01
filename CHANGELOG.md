@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel writes a coupon** (ADR 0314). **For operators:** the Promotions
+  screen writes a draft coupon worth a percentage or an amount off, with an
+  optional usage limit, under `promotion:write`, and opens its page; the
+  coupon goes on sale when it is published.
+
 - **The panel shows a promotion** (ADR 0313). **For operators:** each row of
   the Promotions screen opens a page with the discount, the rules, the
   campaign and the latest twenty uses, under `promotion:read`. **For

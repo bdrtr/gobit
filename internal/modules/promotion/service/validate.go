@@ -9,140 +9,144 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
-// currencyCodeLen ISO 4217 alfabetik kodunun uzunluğudur.
+// currencyCodeLen is the length of an ISO 4217 alphabetic code.
 const currencyCodeLen = 3
 
-// maxIDLen kabul edilen kimlik uzunluğu üst sınırıdır. Kimlikler link
-// tablosundaki benzersiz indekse de girdiği için sınır orayla uyumlu tutulur.
+// maxIDLen is the upper bound on the length of an accepted identifier. Because
+// identifiers also enter the unique index on the link table, the bound is kept
+// consistent with it.
 const maxIDLen = 255
 
-// Kupon kodu sınırları.
+// Coupon code bounds.
 //
-// Kod hem müşterinin yazdığı hem operatörün andığı addır; bu yüzden hem insan
-// yazabilecek kadar kısa hem de anlamlı olacak kadar uzun olmalıdır. İzin
-// verilen karakterler harf, rakam, tire ve alt çizgidir: boşluk ve noktalama,
-// kodu telefonda okurken ya da e-postaya yapıştırırken sessizce bozan tek
-// şeydir.
+// The code is the name the customer types and the operator refers to; so it
+// has to be short enough for a person to type and long enough to mean
+// something. The allowed characters are letters, digits, hyphen and underscore:
+// whitespace and punctuation are the one thing that silently breaks a code
+// while it is read out over the phone or pasted into an email.
 const (
-	// MinCodeLen kupon kodunun en kısa uzunluğudur.
+	// MinCodeLen is the shortest length of a coupon code.
 	MinCodeLen = 3
-	// MaxCodeLen kupon kodunun en uzun uzunluğudur.
+	// MaxCodeLen is the longest length of a coupon code.
 	MaxCodeLen = 64
-	// MaxCodesPerCompute tek bir hesapta verilebilecek azami kupon sayısıdır.
+	// MaxCodesPerCompute is the maximum number of coupons a single computation
+	// can be given.
 	//
-	// Sınırın var olması şarttır: her kod veritabanı sorgusuna ve kural
-	// değerlendirmesine girer, sınırsız bir liste tek istekle hesabı
-	// meşgul ederdi.
+	// The bound has to exist: every code enters a database query and a rule
+	// evaluation, and an unbounded list would keep the computation busy with a
+	// single request.
 	MaxCodesPerCompute = 20
 )
 
-// Metin alanı sınırları.
+// Text field bounds.
 const (
-	// MaxNameLen kampanya adının azami uzunluğudur.
+	// MaxNameLen is the maximum length of a campaign name.
 	MaxNameLen = 255
-	// MaxDescriptionLen açıklamanın azami uzunluğudur.
+	// MaxDescriptionLen is the maximum length of a description.
 	MaxDescriptionLen = 2000
-	// MaxIdentifierLen kampanya iş kimliğinin azami uzunluğudur.
+	// MaxIdentifierLen is the maximum length of a campaign's business identifier.
 	MaxIdentifierLen = 128
-	// MaxReferenceLen kullanım referansının azami uzunluğudur.
+	// MaxReferenceLen is the maximum length of a usage reference.
 	MaxReferenceLen = 255
-	// MaxAttributeLen kural alan adının azami uzunluğudur.
+	// MaxAttributeLen is the maximum length of a rule's field name.
 	MaxAttributeLen = 128
-	// MaxRuleValues bir kuralın azami değer sayısıdır.
+	// MaxRuleValues is the maximum number of values a rule can have.
 	MaxRuleValues = 100
-	// MaxMetadataKeys üstverinin azami anahtar sayısıdır.
+	// MaxMetadataKeys is the maximum number of metadata keys.
 	MaxMetadataKeys = 64
-	// MaxMetadataValueLen üstveri değerinin azami uzunluğudur.
+	// MaxMetadataValueLen is the maximum length of a metadata value.
 	MaxMetadataValueLen = 512
 )
 
-// normalizeCode kupon kodunu doğrular ve BÜYÜK harfe çevirir.
+// normalizeCode validates a coupon code and converts it to UPPER case.
 //
-// Büyük harfe çevirme bir SAKLAMA kararıdır: kupon kodları büyük/küçük harf
-// ayrımı yapmamalıdır — "yaz20" yazan müşteriyle "YAZ20" yazan aynı kuponu
-// kullanır. Ayrım korunsaydı, iki kod yalnızca harf durumuyla ayrışabilir ve
-// müşteri yanlış olanı aldığını hiç anlamazdı.
+// Converting to upper case is a STORAGE decision: coupon codes must not be
+// case-sensitive — the customer who types "summer20" and the one who types
+// "SUMMER20" use the same coupon. Had the case been kept, two codes could differ
+// by case alone and the customer would never realize they got the wrong one.
 func normalizeCode(code string) (string, error) {
 	trimmed := strings.ToUpper(strings.TrimSpace(code))
 	if len(trimmed) < MinCodeLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"kupon kodu en az %d karakter olmalı, %q verildi", MinCodeLen, code)
+			"coupon code has to be at least %d characters, %q given", MinCodeLen, code)
 	}
 	if len(trimmed) > MaxCodeLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"kupon kodu en fazla %d karakter olabilir, %d karakter verildi", MaxCodeLen, len(trimmed))
+			"coupon code can be at most %d characters, %d characters given", MaxCodeLen, len(trimmed))
 	}
 	for _, r := range trimmed {
 		switch {
 		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
 		default:
 			return "", errors.Invalid(CodeInvalidInput,
-				"kupon kodu yalnızca harf, rakam, tire ve alt çizgi içerebilir, %q verildi", code)
+				"coupon code can only contain letters, digits, hyphens and underscores, %q given", code)
 		}
 	}
 	return trimmed, nil
 }
 
-// normalizeCurrency para birimi kodunu doğrular ve BÜYÜK harfe çevirir.
+// normalizeCurrency validates a currency code and converts it to UPPER case.
 //
-// Kabul edilen biçim ISO 4217 alfabetik kodudur: tam üç harf.
+// The accepted form is the ISO 4217 alphabetic code: exactly three letters.
 func normalizeCurrency(code string) (string, error) {
 	trimmed := strings.ToUpper(strings.TrimSpace(code))
 	if len(trimmed) != currencyCodeLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"para birimi kodu tam %d harf olmalı (ISO 4217), %q verildi", currencyCodeLen, code)
+			"currency code has to be exactly %d letters (ISO 4217), %q given", currencyCodeLen, code)
 	}
 	for _, r := range trimmed {
 		if r < 'A' || r > 'Z' {
 			return "", errors.Invalid(CodeInvalidInput,
-				"para birimi kodu yalnızca harf içerebilir (ISO 4217), %q verildi", code)
+				"currency code can only contain letters (ISO 4217), %q given", code)
 		}
 	}
 	return trimmed, nil
 }
 
-// validateAmount tutarın izin verilen aralıkta olduğunu doğrular.
+// validateAmount validates that an amount is within the allowed range.
 //
-// Üst sınır taşma korumasıdır: hesabın en büyük ara çarpımı
-// tutar × [models.BasisPointDenominator]'dır ve int64'e sığmalıdır.
+// The upper bound is overflow protection: the largest intermediate product of
+// the computation is amount × [models.BasisPointDenominator] and it has to fit
+// into an int64.
 func validateAmount(label string, amount int64) error {
 	if amount < models.MinAmount {
 		return errors.Invalid(CodeInvalidInput,
-			"%s negatif olamaz, %d verildi (minor unit)", label, amount)
+			"%s cannot be negative, %d given (minor unit)", label, amount)
 	}
 	if amount > models.MaxAmount {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d olabilir (minor unit), %d verildi", label, models.MaxAmount, amount)
+			"%s can be at most %d (minor unit), %d given", label, models.MaxAmount, amount)
 	}
 	return nil
 }
 
-// validateQuantity adedin izin verilen aralıkta olduğunu doğrular.
+// validateQuantity validates that a quantity is within the allowed range.
 func validateQuantity(label string, quantity int64) error {
 	if quantity < models.MinQuantity {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en az %d olmalı, %d verildi", label, models.MinQuantity, quantity)
+			"%s has to be at least %d, %d given", label, models.MinQuantity, quantity)
 	}
 	if quantity > models.MaxQuantity {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d olabilir, %d verildi", label, models.MaxQuantity, quantity)
+			"%s can be at most %d, %d given", label, models.MaxQuantity, quantity)
 	}
 	return nil
 }
 
-// validateUsageLimit kullanım sınırını doğrular; nil sınırsız demektir.
+// validateUsageLimit validates a usage limit; nil means unlimited.
 func validateUsageLimit(limit *int64) error {
 	if limit == nil {
 		return nil
 	}
 	if *limit < 0 {
 		return errors.Invalid(CodeInvalidInput,
-			"kullanım sınırı negatif olamaz, %d verildi", *limit)
+			"usage limit cannot be negative, %d given", *limit)
 	}
 	return nil
 }
 
-// validateText bir metin alanının boş olmadığını ve sınırı aşmadığını doğrular.
+// validateText validates that a text field is not empty and does not exceed its
+// bound.
 func validateText(label, value string, minLen, maxLen int) error {
 	trimmed := strings.TrimSpace(value)
 	if len(trimmed) < minLen {
@@ -150,76 +154,78 @@ func validateText(label, value string, minLen, maxLen int) error {
 	}
 	if len(trimmed) > maxLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir, %d bayt verildi", label, maxLen, len(trimmed))
+			"%s can be at most %d bytes, %d bytes given", label, maxLen, len(trimmed))
 	}
 	return nil
 }
 
-// validateRuleInput bir kural girdisinin tutarlı olduğunu doğrular.
+// validateRuleInput validates that a rule input is consistent.
 //
-// Değer sayısı işlece bağlıdır: in/nin çok değer alır, diğerleri TEK değer
-// ister. Sayısal işleçlerin (gt/gte/lt/lte) değeri tam sayıya çevrilebilmelidir;
-// aksi hâlde kural hiçbir zaman eşleşmez ve sessizce ölü bir kayıt olurdu.
+// The number of values depends on the operator: in/nin take many values, the
+// others require a SINGLE value. The value of a numeric operator
+// (gt/gte/lt/lte) has to be convertible to an integer; otherwise the rule would
+// never match and would silently be a dead record.
 func validateRuleInput(in RuleInput) error {
 	if !in.RuleType.Valid() {
-		return errors.Invalid(CodeInvalidInput, "kural türü tanımsız: %q", string(in.RuleType))
+		return errors.Invalid(CodeInvalidInput, "rule type is undefined: %q", string(in.RuleType))
 	}
-	if err := validateText("kural alan adı (attribute)", in.Attribute, 1, MaxAttributeLen); err != nil {
+	if err := validateText("rule field name (attribute)", in.Attribute, 1, MaxAttributeLen); err != nil {
 		return err
 	}
 	if !in.Operator.Valid() {
-		return errors.Invalid(CodeInvalidInput, "kural işleci tanımsız: %q", string(in.Operator))
+		return errors.Invalid(CodeInvalidInput, "rule operator is undefined: %q", string(in.Operator))
 	}
 	if len(in.Values) == 0 {
-		return errors.Invalid(CodeInvalidInput, "%q kuralı en az bir değer içermeli", in.Attribute)
+		return errors.Invalid(CodeInvalidInput, "the %q rule has to contain at least one value", in.Attribute)
 	}
 	if len(in.Values) > MaxRuleValues {
 		return errors.Invalid(CodeInvalidInput,
-			"%q kuralı en fazla %d değer içerebilir, %d verildi", in.Attribute, MaxRuleValues, len(in.Values))
+			"the %q rule can contain at most %d values, %d given", in.Attribute, MaxRuleValues, len(in.Values))
 	}
 	if !in.Operator.MultiValue() && len(in.Values) != 1 {
 		return errors.Invalid(CodeInvalidInput,
-			"%q işleci tam bir değer alır, %d değer verildi", string(in.Operator), len(in.Values))
+			"the %q operator takes exactly one value, %d values given", string(in.Operator), len(in.Values))
 	}
 	for _, value := range in.Values {
 		if value == "" {
-			return errors.Invalid(CodeInvalidInput, "%q kuralının değerleri boş olamaz", in.Attribute)
+			return errors.Invalid(CodeInvalidInput, "the values of the %q rule cannot be empty", in.Attribute)
 		}
 		if in.Operator.Numeric() {
 			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
 				return errors.Invalid(CodeInvalidInput,
-					"%q işleci tam sayı bekler, %q verildi", string(in.Operator), value)
+					"the %q operator expects an integer, %q given", string(in.Operator), value)
 			}
 		}
 	}
 	return nil
 }
 
-// normalizeMetadata üstveriyi doğrular ve KOPYALAYARAK döner.
+// normalizeMetadata validates the metadata and returns it as a COPY.
 //
-// Kopya şarttır: çağıranın haritası doğrudan modele konsaydı, isteği sonradan
-// değiştiren bir çağıran yazılmış kaydı da değiştirmiş olurdu.
+// The copy is mandatory: had the caller's map been put into the model directly,
+// a caller that later changed the request would have changed the written record
+// as well.
 func normalizeMetadata(md map[string]string) (map[string]string, error) {
 	if len(md) == 0 {
 		return map[string]string{}, nil
 	}
 	if len(md) > MaxMetadataKeys {
 		return nil, errors.Invalid(CodeInvalidInput,
-			"üstveri en fazla %d anahtar içerebilir, %d verildi", MaxMetadataKeys, len(md))
+			"metadata can contain at most %d keys, %d given", MaxMetadataKeys, len(md))
 	}
 
 	out := make(map[string]string, len(md))
 	for key, value := range md {
 		if strings.TrimSpace(key) == "" {
-			return nil, errors.Invalid(CodeInvalidInput, "üstveri anahtarı boş olamaz")
+			return nil, errors.Invalid(CodeInvalidInput, "a metadata key cannot be empty")
 		}
 		if len(key) > MaxAttributeLen {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"üstveri anahtarı en fazla %d bayt olabilir, %q verildi", MaxAttributeLen, key)
+				"a metadata key can be at most %d bytes, %q given", MaxAttributeLen, key)
 		}
 		if len(value) > MaxMetadataValueLen {
 			return nil, errors.Invalid(CodeInvalidInput,
-				"%q üstveri değeri en fazla %d bayt olabilir, %d bayt verildi",
+				"the %q metadata value can be at most %d bytes, %d bytes given",
 				key, MaxMetadataValueLen, len(value))
 		}
 		out[key] = value
@@ -227,11 +233,12 @@ func normalizeMetadata(md map[string]string) (map[string]string, error) {
 	return out, nil
 }
 
-// requireID bir kimliğin kullanılabilir ve DOĞRU TÜRDE olduğunu doğrular.
+// requireID validates that an identifier is usable and OF THE RIGHT KIND.
 //
-// Önek kontrolü bilinçlidir: önekli kimliklerin varlık sebebi, yanlış türde bir
-// kimliğin (örn. campaign idnin promosyon yerine geçmesi) "bulunamadı"
-// olarak değil, ne olduğu belli bir doğrulama hatası olarak dönmesidir.
+// The prefix check is deliberate: prefixed identifiers exist so that an
+// identifier of the wrong kind (e.g. a campaign id standing in for a promotion)
+// comes back not as "not found" but as a validation error that says plainly
+// what is wrong.
 func requireID(id, prefix, label string) error {
 	if id == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
@@ -241,23 +248,24 @@ func requireID(id, prefix, label string) error {
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir, %d bayt verildi", label, maxIDLen, len(id))
+			"%s can be at most %d bytes, %d bytes given", label, maxIDLen, len(id))
 	}
 	if !strings.HasPrefix(id, prefix) {
 		return errors.Invalid(CodeInvalidInput,
-			"%s %q önekiyle başlamalı, %q verildi", label, prefix, id)
+			"%s has to start with the %q prefix, %q given", label, prefix, id)
 	}
 	return nil
 }
 
-// normalizePaging sayfalama parametrelerini uygulanabilir değerlere çevirir.
+// normalizePaging converts the paging parameters into applicable values.
 //
-// Limit 0 veya negatifse varsayılan, [MaxLimit]'i aşıyorsa azami değer
-// uygulanır; kırpma hata DEĞİLDİR ama uygulanan değer sonuçta geri bildirilir
-// (bkz. [Page]). Negatif offset ise düzeltilemez bir istektir ve reddedilir.
+// If the limit is 0 or negative the default is applied, and if it exceeds
+// [MaxLimit] the maximum value is applied; clamping is NOT an error, but the
+// applied value is reported back in the result (see [Page]). A negative offset,
+// however, is a request that cannot be corrected and is refused.
 func normalizePaging(limit, offset int32) (outLimit, outOffset int32, err error) {
 	if offset < 0 {
-		return 0, 0, errors.Invalid(CodeInvalidInput, "offset negatif olamaz, %d verildi", offset)
+		return 0, 0, errors.Invalid(CodeInvalidInput, "the offset cannot be negative, %d given", offset)
 	}
 	if limit <= 0 {
 		limit = DefaultLimit
@@ -268,12 +276,12 @@ func normalizePaging(limit, offset int32) (outLimit, outOffset int32, err error)
 	return limit, offset, nil
 }
 
-// clampToInt32 bir int değeri int32 aralığına sıkıştırır.
+// clampToInt32 clamps an int value into the int32 range.
 //
-// Query katmanının ListOptions alanları int'tir; 64 bit bir platformda oradan
-// gelen devasa bir değer int32'ye dönüşürken SARARDI ve negatif bir limit
-// üretebilirdi. Sıkıştırma bu sarmayı imkânsız kılar; sınırın kendisi zaten
-// normalizePaging'de [MaxLimit]'e indirilir.
+// The ListOptions fields of the Query layer are int; on a 64-bit platform a huge
+// value coming from there would WRAP while being converted to int32 and could
+// produce a negative limit. Clamping makes that wrap impossible; the bound
+// itself is already brought down to [MaxLimit] in normalizePaging.
 func clampToInt32(value int) int32 {
 	if value > math.MaxInt32 {
 		return math.MaxInt32

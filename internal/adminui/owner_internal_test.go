@@ -513,6 +513,12 @@ func (p recordingPromotions) SwitchPromotionStatus(context.Context, string, stri
 	return p.surfaces.reach(ServicePromotionAdmin)
 }
 
+func (p recordingPromotions) CreateCoupon(
+	context.Context, string, string, string, string, int64, string, *int64,
+) (string, error) {
+	return "promo_walk", p.surfaces.reach(ServicePromotionAdmin)
+}
+
 func (p recordingPromotions) PromotionJSON(context.Context, string) (json.RawMessage, error) {
 	return json.RawMessage(`{"rules":[],"latest_uses":[]}`), p.surfaces.reach(ServicePromotionAdmin)
 }
@@ -691,6 +697,10 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, CartDiscardPath):    {},
 	// Switching a promotion's status (ADR 0312).
 	routeKey(http.MethodPost, PromotionStatusPath): {formStatusFrom: {"active"}, formStatusTo: {"inactive"}},
+	// Writing a coupon (ADR 0314).
+	routeKey(http.MethodPost, PromotionsPath): {
+		formCouponCode: {"WALK"}, formCouponMeasure: {"percentage"}, formCouponAmount: {"10"}, formCouponTarget: {"order"},
+	},
 }
 
 // panelWalk is one panel built on the recording doubles.

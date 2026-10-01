@@ -207,3 +207,29 @@ func (a *AdminSurface) PromotionJSON(ctx context.Context, id string) (json.RawMe
 
 	return body, nil
 }
+
+// CreateCoupon writes a draft coupon with its discount and returns its id
+// (ADR 0314): measure is "percentage", whose value is in basis points, or
+// "fixed", whose value is in the currency's minor units; target is "items",
+// "shipping_methods" or "order", and allocation "each" or "across". A nil
+// usage limit leaves the uses unbounded.
+func (a *AdminSurface) CreateCoupon(
+	ctx context.Context, code, measure, target, allocation string, value int64, currency string, usageLimit *int64,
+) (string, error) {
+	if a == nil || a.svc == nil {
+		return "", errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
+	}
+
+	promo, err := a.svc.CreateCoupon(ctx, service.CouponInput{
+		Code: code, UsageLimit: usageLimit,
+		Method: service.ApplicationMethodInput{
+			Type: models.ApplicationMethodType(measure), TargetType: models.ApplicationTargetType(target),
+			Allocation: models.Allocation(allocation), Value: value, CurrencyCode: currency,
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return promo.ID, nil
+}

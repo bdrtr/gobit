@@ -9,7 +9,21 @@ import (
 )
 
 // The double's repository methods that the panel's surface brought: the
-// admin API has no door of its own to either (ADR 0312, ADR 0313).
+// admin API has no door of its own to any of them (ADR 0312, ADR 0313,
+// ADR 0314).
+
+// CreatePromotionWithMethod writes both, the code kept unique.
+func (m *memRepo) CreatePromotionWithMethod(
+	ctx context.Context, p models.Promotion, method models.ApplicationMethod, now time.Time,
+) (models.Promotion, error) {
+	created, err := m.CreatePromotion(ctx, p, now)
+	if err != nil {
+		return models.Promotion{}, err
+	}
+	method.CreatedAt, method.UpdatedAt = now, now
+	m.methods[created.ID] = method
+	return created, nil
+}
 
 // SwitchPromotionStatus moves the status only from the one read.
 func (m *memRepo) SwitchPromotionStatus(

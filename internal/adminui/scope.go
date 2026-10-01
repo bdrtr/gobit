@@ -174,6 +174,7 @@ func builtInScopes() map[string]string {
 		routeKey(get, PromotionsPath):       scopePromotionRead,
 		routeKey(post, PromotionStatusPath): scopePromotionWrite,
 		routeKey(get, PromotionPath):        scopePromotionRead,
+		routeKey(post, PromotionsPath):      scopePromotionWrite,
 		routeKey(get, ReviewsScriptPath):    scopeReviewRead,
 	}
 }

@@ -32,6 +32,7 @@ func (f *fakeSwitcher) SwitchPromotionStatus(_ context.Context, id, from, to str
 func promotionStatusRequest(panel *UI, method, path string, form url.Values, scopes ...string) *httptest.ResponseRecorder {
 	r := chi.NewRouter()
 	r.Get(PromotionsPath, panel.listPromotions)
+	r.Post(PromotionsPath, panel.createCoupon)
 	r.Post(PromotionStatusPath, panel.switchPromotion)
 
 	request := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))

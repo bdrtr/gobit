@@ -127,9 +127,7 @@ internal/modules/promotion/service/interop_test.go
 internal/modules/promotion/service/provider_test.go
 internal/modules/promotion/service/redeem.go
 internal/modules/promotion/service/redeem_test.go
-internal/modules/promotion/service/rule.go
 internal/modules/promotion/service/service_test.go
-internal/modules/promotion/service/validate.go
 internal/modules/region/api/admin.go
 internal/modules/region/api/api.go
 internal/modules/region/api/api_test.go

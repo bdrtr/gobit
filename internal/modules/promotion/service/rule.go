@@ -10,54 +10,57 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
-// RuleInput tek bir promosyon kuralının yazma girdisidir.
+// RuleInput is the write input of a single promotion rule.
 type RuleInput struct {
-	// RuleType kuralın neye baktığıdır (context | target).
+	// RuleType is what the rule looks at (context | target).
 	RuleType models.RuleType
-	// Attribute bağlamda ya da kalemde bakılacak alan adıdır.
+	// Attribute is the name of the field to look at in the context or on the line.
 	Attribute string
-	// Operator karşılaştırma işlecidir.
+	// Operator is the comparison operator.
 	Operator models.RuleOperator
-	// Values karşılaştırmanın sağ tarafıdır; en az bir eleman içermelidir.
+	// Values is the right-hand side of the comparison; it has to contain at least
+	// one element.
 	Values []string
 }
 
-// ApplicationMethodInput bir uygulama yönteminin yazma girdisidir.
+// ApplicationMethodInput is the write input of an application method.
 type ApplicationMethodInput struct {
-	// Type indirimin ölçüsüdür (fixed | percentage).
+	// Type is the measure of the discount (fixed | percentage).
 	Type models.ApplicationMethodType
-	// TargetType indirimin hedefidir (items | shipping_methods | order).
+	// TargetType is the target of the discount (items | shipping_methods | order).
 	TargetType models.ApplicationTargetType
-	// Allocation dağıtım biçimidir; boş verilirse "each" kabul edilir,
-	// hedef "order" ise "across"a zorlanır.
+	// Allocation is the distribution form; if it is given empty "each" is
+	// assumed, and if the target is "order" it is forced to "across".
 	Allocation models.Allocation
-	// Value sabit tutar (minor unit) ya da baz puandır ([Type]'a göre).
+	// Value is a fixed amount (minor unit) or basis points (according to [Type]).
 	Value int64
-	// MaxQuantity sabit tutarın uygulanacağı azami adettir; nil ise sınırsız.
+	// MaxQuantity is the maximum quantity the fixed amount is applied to; if nil,
+	// unlimited.
 	MaxQuantity *int64
-	// BuyQuantity ödülün hak edilmesi için alınması gereken adettir; yalnızca
-	// "buyget" promosyonunda anlamlıdır.
+	// BuyQuantity is the quantity that has to be bought to earn the reward; it is
+	// meaningful only on a "buyget" promotion.
 	BuyQuantity *int64
-	// ApplyToQuantity ödülün ineceği adettir; yalnızca "buyget" promosyonunda
-	// anlamlıdır.
+	// ApplyToQuantity is the quantity the reward lands on; it is meaningful only
+	// on a "buyget" promotion.
 	//
-	// İkisi BİRLİKTE verilir ya da hiç verilmez; gerekçe
-	// [models.ApplicationMethod.RewardsPurchase] godoc'undadır.
+	// The two are given TOGETHER or not at all; the reasoning is in the godoc of
+	// [models.ApplicationMethod.RewardsPurchase].
 	ApplyToQuantity *int64
-	// CurrencyCode "fixed" indirimin para birimidir; "percentage"ta verilmemelidir.
+	// CurrencyCode is the currency of a "fixed" discount; it must not be given on
+	// "percentage".
 	CurrencyCode string
 }
 
-// AddPromotionRule bir promosyona kural ekler; promosyon yoksa ya da silinmişse
-// errors.NotFound döner.
+// AddPromotionRule adds a rule to a promotion; if the promotion does not exist or
+// has been deleted it returns errors.NotFound.
 //
-// Promosyonun CANLI olduğu denetimi burada DEĞİL, yazmayla aynı işlemde ve
-// satır kilidi altında yapılır (bkz. repository.CreatePromotionRule).
-// Reddedilen alternatif — ve bu metodun bir süre yaptığı şey — denetimi burada,
-// ayrı bir okumayla yapmaktı: o biçimde okuma ile yazma iki AYRI autocommit
-// deyimidir ve araya giren bir yumuşak silme, kuralın silinmiş bir promosyonun
-// altına inmesine izin verir. Foreign key bunu durdurmaz; yumuşak silme satırı
-// yerinde bırakır (ölçüldü, 2026-09-06).
+// The check that the promotion is LIVE is NOT made here but in the same
+// transaction as the write, under a row lock (see repository.CreatePromotionRule).
+// The rejected alternative — and what this method did for a while — was to make
+// the check here, with a separate read: in that form the read and the write are
+// two SEPARATE autocommit statements, and a soft delete that slips in between
+// lets the rule land under a deleted promotion. A foreign key does not stop this;
+// a soft delete leaves the row in place (measured, 2026-09-06).
 func (s *Service) AddPromotionRule(
 	ctx context.Context,
 	promotionID string,
@@ -86,22 +89,22 @@ func (s *Service) AddPromotionRule(
 	}, now)
 }
 
-// GetPromotionRule kimliğe göre kuralı döner; yoksa errors.NotFound.
+// GetPromotionRule returns the rule by id; errors.NotFound if there is none.
 func (s *Service) GetPromotionRule(ctx context.Context, id string) (models.PromotionRule, error) {
 	if err := s.ready(); err != nil {
 		return models.PromotionRule{}, err
 	}
-	if err := requireID(id, models.PromotionRuleIDPrefix, "promosyon kuralı kimliği"); err != nil {
+	if err := requireID(id, models.PromotionRuleIDPrefix, "promotion rule id"); err != nil {
 		return models.PromotionRule{}, err
 	}
 	return s.repo.GetPromotionRule(ctx, id)
 }
 
-// ListPromotionRules bir promosyonun kurallarını döner.
+// ListPromotionRules returns the rules of a promotion.
 //
-// YÖNETİM yüzeyi içindir. Kurallar müşteriye SIZDIRILMAZ: bir kuralın sağ
-// tarafı (örn. bir müşteri grubunun kimliği ya da bir segment listesi) iş
-// bilgisidir ve store yüzeyinde hiçbir uç nokta onu dönmez.
+// It is for the ADMIN surface. Rules are NOT LEAKED to the customer: the
+// right-hand side of a rule (e.g. the id of a customer group or a segment list)
+// is business information and no endpoint on the store surface returns it.
 func (s *Service) ListPromotionRules(ctx context.Context, promotionID string) ([]models.PromotionRule, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
@@ -109,30 +112,33 @@ func (s *Service) ListPromotionRules(ctx context.Context, promotionID string) ([
 	if err := requireID(promotionID, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return nil, err
 	}
-	// Promosyonun varlığı doğrulanır: olmayan bir promosyonun kuralları boş
-	// dilim olarak dönerse istemci 404 yerine "kuralı yok" sanırdı.
+	// The promotion's existence is verified: if the rules of a promotion that
+	// does not exist came back as an empty slice, the client would take it for
+	// "it has no rules" instead of a 404.
 	if _, err := s.repo.GetPromotion(ctx, promotionID); err != nil {
 		return nil, err
 	}
 	return s.repo.ListPromotionRules(ctx, promotionID)
 }
 
-// DeletePromotionRule kuralı soft delete ile siler.
+// DeletePromotionRule deletes the rule with a soft delete.
 func (s *Service) DeletePromotionRule(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.PromotionRuleIDPrefix, "promosyon kuralı kimliği"); err != nil {
+	if err := requireID(id, models.PromotionRuleIDPrefix, "promotion rule id"); err != nil {
 		return err
 	}
 	return s.repo.DeletePromotionRule(ctx, id, s.clock())
 }
 
-// SetApplicationMethod promosyonun uygulama yöntemini yazar; varsa üzerine
-// yazar. Promosyon yoksa ya da silinmişse errors.NotFound döner.
+// SetApplicationMethod writes the promotion's application method, overwriting
+// it if one exists. If the promotion does not exist or has been deleted it
+// returns errors.NotFound.
 //
-// Promosyonun canlı olduğu denetimi burada DEĞİL, yazmayla aynı işlemde ve
-// satır kilidi altında yapılır; gerekçe [Service.AddPromotionRule] ile aynıdır.
+// The check that the promotion is live is NOT made here but in the same
+// transaction as the write, under a row lock; the reasoning is the same as for
+// [Service.AddPromotionRule].
 func (s *Service) SetApplicationMethod(
 	ctx context.Context,
 	promotionID string,
@@ -153,8 +159,8 @@ func (s *Service) SetApplicationMethod(
 	return s.repo.SetApplicationMethod(ctx, method, now)
 }
 
-// GetApplicationMethod promosyonun uygulama yöntemini döner; yoksa
-// errors.NotFound.
+// GetApplicationMethod returns the promotion's application method;
+// errors.NotFound if there is none.
 func (s *Service) GetApplicationMethod(ctx context.Context, promotionID string) (models.ApplicationMethod, error) {
 	if err := s.ready(); err != nil {
 		return models.ApplicationMethod{}, err
@@ -165,10 +171,11 @@ func (s *Service) GetApplicationMethod(ctx context.Context, promotionID string) 
 	return s.repo.GetApplicationMethod(ctx, promotionID)
 }
 
-// DeleteApplicationMethod yöntemi soft delete ile siler.
+// DeleteApplicationMethod deletes the method with a soft delete.
 //
-// Yöntemsiz kalan promosyon indirim üretmez ve hesapta atlanır; bu, promosyonu
-// silmeden geçici olarak etkisizleştirmenin yoludur.
+// A promotion left without a method produces no discount and is skipped in the
+// computation; this is the way to disable a promotion temporarily without
+// deleting it.
 func (s *Service) DeleteApplicationMethod(ctx context.Context, promotionID string) error {
 	if err := s.ready(); err != nil {
 		return err
@@ -179,16 +186,17 @@ func (s *Service) DeleteApplicationMethod(ctx context.Context, promotionID strin
 	return s.repo.DeleteApplicationMethod(ctx, promotionID, s.clock())
 }
 
-// buildApplicationMethod girdiyi doğrular ve yazılacak domain modeline çevirir.
+// buildApplicationMethod validates the input and converts it into the domain
+// model to be written.
 //
-// Türe bağlı üç kural zorlanır ve üçü de migration'daki CHECK kısıtlarıyla
-// eşleşir:
+// Three type-dependent rules are enforced, and all three match the CHECK
+// constraints in the migration:
 //
-//   - "fixed" para birimi İSTER ve değeri [models.MaxAmount]'u aşamaz.
-//   - "percentage" para birimi TAŞIMAZ ve değeri
-//     [models.BasisPointDenominator]'ı (yani %100'ü) aşamaz.
-//   - Hedef "order" ise tahsis "across"tır: sipariş tek bir toplamdır ve
-//     "her birine ayrı ayrı" orada anlamsızdır.
+//   - "fixed" REQUIRES a currency and its value cannot exceed [models.MaxAmount].
+//   - "percentage" CARRIES NO currency and its value cannot exceed
+//     [models.BasisPointDenominator] (that is, 100%).
+//   - If the target is "order" the allocation is "across": an order is a single
+//     total and "each one separately" means nothing there.
 func buildApplicationMethod(
 	id, promotionID string,
 	in ApplicationMethodInput,
@@ -196,11 +204,11 @@ func buildApplicationMethod(
 ) (models.ApplicationMethod, error) {
 	if !in.Type.Valid() {
 		return models.ApplicationMethod{}, errors.Invalid(CodeInvalidInput,
-			"uygulama yöntemi türü tanımsız: %q", string(in.Type))
+			"application method type is undefined: %q", string(in.Type))
 	}
 	if !in.TargetType.Valid() {
 		return models.ApplicationMethod{}, errors.Invalid(CodeInvalidInput,
-			"uygulama hedefi tanımsız: %q", string(in.TargetType))
+			"application target is undefined: %q", string(in.TargetType))
 	}
 
 	allocation := in.Allocation
@@ -209,22 +217,23 @@ func buildApplicationMethod(
 	}
 	if !allocation.Valid() {
 		return models.ApplicationMethod{}, errors.Invalid(CodeInvalidInput,
-			"tahsis biçimi tanımsız: %q", string(in.Allocation))
+			"allocation form is undefined: %q", string(in.Allocation))
 	}
 	if in.TargetType == models.TargetOrder {
-		// Sessizce düzeltmek yerine REDDETMEK seçilmiştir: "each" isteyen bir
-		// operatör, siparişin tamamına kalem başına indirim uygulanacağını
-		// sanıyor olabilir ve sessiz düzeltme o yanılgıyı sürdürürdü.
+		// REFUSING rather than silently correcting was chosen: an operator who
+		// asks for "each" may believe a per-line discount will be applied to the
+		// whole order, and a silent correction would keep that misconception
+		// alive.
 		if in.Allocation != "" && in.Allocation != models.AllocationAcross {
 			return models.ApplicationMethod{}, errors.Invalid(CodeInvalidInput,
-				"sipariş hedefli indirim yalnızca %q tahsisiyle uygulanır, %q verildi",
+				"an order-targeted discount is applied only with the %q allocation, %q given",
 				string(models.AllocationAcross), string(in.Allocation))
 		}
 		allocation = models.AllocationAcross
 	}
 
 	if in.MaxQuantity != nil {
-		if err := validateQuantity("azami adet", *in.MaxQuantity); err != nil {
+		if err := validateQuantity("maximum quantity", *in.MaxQuantity); err != nil {
 			return models.ApplicationMethod{}, err
 		}
 	}
@@ -235,7 +244,7 @@ func buildApplicationMethod(
 	currency := ""
 	switch in.Type {
 	case models.MethodFixed:
-		if err := validateAmount("indirim tutarı", in.Value); err != nil {
+		if err := validateAmount("discount amount", in.Value); err != nil {
 			return models.ApplicationMethod{}, err
 		}
 		code, err := normalizeCurrency(in.CurrencyCode)
@@ -246,12 +255,12 @@ func buildApplicationMethod(
 	case models.MethodPercentage:
 		if in.Value < 0 || in.Value > models.BasisPointDenominator {
 			return models.ApplicationMethod{}, errors.Invalid(CodeInvalidInput,
-				"yüzde indirim [0, %d] baz puan aralığında olmalı, %d verildi",
+				"a percentage discount has to be in the [0, %d] basis point range, %d given",
 				models.BasisPointDenominator, in.Value)
 		}
 		if in.CurrencyCode != "" {
 			return models.ApplicationMethod{}, errors.Invalid(CodeInvalidInput,
-				"yüzde indirimde para birimi verilemez, %q verildi", in.CurrencyCode)
+				"a percentage discount cannot be given a currency, %q given", in.CurrencyCode)
 		}
 	}
 
@@ -271,32 +280,33 @@ func buildApplicationMethod(
 	}, nil
 }
 
-// validateRewardQuantities "al X, kazan Y" sayı çiftini doğrular.
+// validateRewardQuantities validates the "buy X, get Y" pair of counts.
 //
-// Çift ya TAM ya da HİÇ verilir. Tek başına bir alım adedi ödülsüz bir koşuldur
-// ve indirim üretmez; tek başına bir ödül adedi ise hak edilmemiş bir indirimdir.
-// Aynı eşleşme migration'da da CHECK olarak durur, yani elle yazılan bir satır da
-// yarım kalamaz.
+// The pair is given either IN FULL or NOT AT ALL. A buy quantity on its own is a
+// condition without a reward and produces no discount; a reward quantity on its
+// own is an unearned discount. The same pairing also stands as a CHECK in the
+// migration, so a row written by hand cannot be left half-done either.
 //
-// Promosyonun TÜRÜNE bakılmaz ve bakılamaz: tür başka bir tablodadır. Türle
-// çiftin uyuşmadığı hâlin sahibi hesaptır — çifti olmayan bir "buyget" indirim
-// üretmez ve nedenini söyler ([SkipRewardMismatch]).
+// The promotion's TYPE is not looked at, and cannot be: the type is in another
+// table. The case where the type and the pair disagree is owned by the
+// computation — a "buyget" without the pair produces no discount and says why
+// ([SkipRewardMismatch]).
 func validateRewardQuantities(buy, apply *int64) error {
 	if (buy == nil) != (apply == nil) {
 		return errors.Invalid(CodeInvalidInput,
-			"alım adedi ile ödül adedi birlikte verilir; biri verilip diğeri boş bırakılamaz")
+			"the buy quantity and the reward quantity are given together; one cannot be given while the other is left empty")
 	}
 	if buy == nil {
 		return nil
 	}
-	if err := validateQuantity("alım adedi", *buy); err != nil {
+	if err := validateQuantity("buy quantity", *buy); err != nil {
 		return err
 	}
-	return validateQuantity("ödül adedi", *apply)
+	return validateQuantity("reward quantity", *apply)
 }
 
-// matchRules verilen kuralların HEPSİNİN bağlamla eşleştiğini bildirir.
-// Kuralsız promosyon koşulsuzdur ve daima eşleşir.
+// matchRules reports whether ALL of the given rules match the context.
+// A promotion without rules is unconditional and always matches.
 func matchRules(
 	rules []models.PromotionRule, attributes map[string]string, lists map[string][]string,
 ) bool {
@@ -308,18 +318,19 @@ func matchRules(
 	return true
 }
 
-// matchRule tek bir kuralın bağlamla eşleştiğini bildirir.
+// matchRule reports whether a single rule matches the context.
 //
-// Kuralın baktığı alan bağlamda YOKSA kural eşleşmez — "ne" (eşit değil) gibi
-// olumsuz işleçlerde bile. Aksi hâlde bağlamı boş bir istek, tüm olumsuz
-// kuralları sağlayarak segment indirimlerini herkese açardı.
+// If the field the rule looks at is ABSENT from the context, the rule does not
+// match — even for negative operators such as "ne" (not equal). Otherwise a
+// request with an empty context would satisfy every negative rule and open the
+// segment discounts to everyone.
 //
-// DEĞERSİZ kural da eşleşmez ve PANİK ÜRETMEZ. Böyle bir kaydı servis
-// doğrulaması üretmez, ama hesaplama veritabanından okuduğu her satıra
-// dayanıklı olmalıdır: doğrudan SQL çalıştıran bir bakım betiği ya da kısmi bir
-// geri yükleme değerleri boş bırakabilir. Gerekçe tanınmayan işleçtekiyle
-// aynıdır — okunamayan bir koşul, kuralı sessizce devre dışı bırakıp indirimi
-// herkese AÇMAMALIDIR.
+// A rule WITHOUT VALUES does not match either and DOES NOT PANIC. Service
+// validation never produces such a record, but the computation has to withstand
+// every row it reads from the database: a maintenance script that runs SQL
+// directly or a partial restore can leave the values empty. The reasoning is the
+// same as for an unrecognized operator — an unreadable condition must NOT
+// silently disable the rule and OPEN the discount to everyone.
 func matchRule(
 	rule models.PromotionRule, attributes map[string]string, lists map[string][]string,
 ) bool {
@@ -327,10 +338,11 @@ func matchRule(
 		return false
 	}
 
-	// LİSTE tarafından okuyan işleç, tek değere HİÇ bakmaz ve tersi de doğrudur.
-	// İkisini karıştırmak, gönderilmiş bir `in` kuralının bir gün listeyi okumaya
-	// başlaması olurdu: sıralı başı vip OLMAYAN bir müşteriye indirim açılır ve
-	// canlı bir indirim, hiçbir şey duyurmadan değişir (ADR 0144).
+	// An operator that reads from the LIST side NEVER looks at the single value,
+	// and the reverse holds too. Mixing the two would mean a shipped `in` rule
+	// one day starting to read the list: a discount opens up for a customer
+	// whose sorted list does NOT start with vip, and a live discount changes
+	// without announcing anything (ADR 0144).
 	if rule.Operator.ReadsAList() {
 		return matchAnyIn(rule, lists[rule.Attribute])
 	}
@@ -352,23 +364,25 @@ func matchRule(
 	case models.OpGt, models.OpGte, models.OpLt, models.OpLte:
 		return matchNumeric(rule, value)
 	default:
-		// Tanınmayan işleç EŞLEŞMEZ: veritabanına sonradan sızmış bir değer,
-		// kuralı sessizce devre dışı bırakıp indirimi herkese açık hâle
-		// getirmemelidir.
+		// An unrecognized operator DOES NOT MATCH: a value that leaked into the
+		// database later must not silently disable the rule and make the
+		// discount open to everyone.
 		return false
 	}
 }
 
-// matchAnyIn bağlamın değer KÜMESİ ile kuralın değerlerinin kesiştiğini bildirir.
+// matchAnyIn reports whether the context's SET of values intersects the rule's
+// values.
 //
-// Boş bir küme eşleşmez, ve bu bir kenar durum değil doğru cevap: liste hiç
-// gönderilmediyse müşterinin hangi gruplarda olduğu BİLİNMİYOR, ve bilinmeyen bir
-// segmenti eşleşmiş saymak segment indirimini herkese açardı — [matchRule]'un
-// bağlamda bulunmayan alan için verdiği cevabın aynısı.
+// An empty set does not match, and that is not an edge case but the right
+// answer: if the list was never sent, which groups the customer is in is
+// UNKNOWN, and counting an unknown segment as matched would open the segment
+// discount to everyone — the same answer [matchRule] gives for a field absent
+// from the context.
 //
-// Karşılaştırma küçük iki liste üzerinde iç içe dönüyor: bir müşteri bir elin
-// parmağı kadar grupta olur ve bir kural bir elin parmağı kadar değer taşır, yani
-// bir küme kurmak kazandığından fazlasını harcardı.
+// The comparison loops nested over two small lists: a customer is in a handful
+// of groups and a rule carries a handful of values, so building a set would
+// cost more than it gains.
 func matchAnyIn(rule models.PromotionRule, values []string) bool {
 	for _, value := range values {
 		if slices.Contains(rule.Values, value) {
@@ -379,14 +393,15 @@ func matchAnyIn(rule models.PromotionRule, values []string) bool {
 	return false
 }
 
-// matchNumeric sayısal işleçleri değerlendirir.
+// matchNumeric evaluates the numeric operators.
 //
-// İki taraf da tam sayıya çevrilebilmelidir; çevrilemeyen bir bağlam değeri
-// kuralı eşleşmez yapar (hata üretmez): bağlam dışarıdan gelir ve tek bir bozuk
-// alan tüm indirim hesabını düşürmemelidir.
+// Both sides have to be convertible to an integer; a context value that cannot
+// be converted makes the rule not match (it produces no error): the context
+// comes from outside, and a single broken field must not bring down the whole
+// discount computation.
 //
-// YALNIZCA matchRule'dan çağrılır ve kuralın en az bir değeri olduğu orada
-// güvence altına alınmıştır; ilk değer bu yüzden doğrudan okunur.
+// It is called ONLY from matchRule, and that the rule has at least one value is
+// guaranteed there; the first value is therefore read directly.
 func matchNumeric(rule models.PromotionRule, value string) bool {
 	left, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {

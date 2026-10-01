@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -93,6 +95,97 @@ type PromotionSwitcher interface {
 	SwitchPromotionStatus(ctx context.Context, id, from, to string) error
 }
 
+// CouponCreator is the narrow surface a coupon is written through (ADR 0314).
+type CouponCreator interface {
+	// CreateCoupon writes a draft coupon with its discount and returns its id.
+	CreateCoupon(
+		ctx context.Context, code, measure, target, allocation string, value int64, currency string, usageLimit *int64,
+	) (string, error)
+}
+
+// The coupon form's fields (ADR 0314).
+const (
+	formCouponCode       = "code"
+	formCouponMeasure    = "measure"
+	formCouponAmount     = "amount"
+	formCouponCurrency   = "currency"
+	formCouponTarget     = "target"
+	formCouponAllocation = "allocation"
+	formCouponLimit      = "usage_limit"
+)
+
+// measureFixed is the measure whose amount is money; the other is a
+// percentage.
+const measureFixed = "fixed"
+
+// canCreateCoupons reports whether the operator may write a coupon here.
+func (u *UI) canCreateCoupons(r *http.Request) bool {
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	_, ok := u.promotions.(CouponCreator)
+
+	return ok && principal.HasScope(scopePromotionWrite)
+}
+
+// createCoupon writes the coupon the form describes and goes to its page; a
+// refusal comes back on the drafts' list with what was typed (ADR 0314).
+func (u *UI) createCoupon(w http.ResponseWriter, r *http.Request) {
+	creator, ok := u.promotions.(CouponCreator)
+	if !ok {
+		u.errorPage(w, r, http.StatusServiceUnavailable, "Promotions unavailable",
+			"The promotion module's panel surface cannot write a coupon in this installation.")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		u.errorPage(w, r, http.StatusBadRequest, "Bad request", "The form could not be read.")
+		return
+	}
+
+	id, err := u.writeCoupon(r, creator)
+	switch {
+	case err == nil:
+		corehttp.WriteRedirect(r.Context(), w, PromotionsPath+"/"+id)
+	case errors.IsInvalid(err) || errors.IsConflict(err):
+		u.renderPromotions(w, r, http.StatusUnprocessableEntity, statusDraft, messageFor(err), r.PostForm)
+	default:
+		u.unexpectedFailure(w, r, err, "The coupon could not be written")
+	}
+}
+
+// writeCoupon reads the form into the surface's terms: a percentage into
+// basis points, a fixed amount into its currency's minor units, or taken as
+// minor units when the currency's scale is unknown, as a price is.
+func (u *UI) writeCoupon(r *http.Request, creator CouponCreator) (string, error) {
+	measure := r.PostFormValue(formCouponMeasure)
+	currency := strings.ToUpper(strings.TrimSpace(r.PostFormValue(formCouponCurrency)))
+
+	var value int64
+	var err error
+	if measure == measureFixed {
+		scale, known := u.currencyScales(r.Context())[currency]
+		value, err = parseAmount(r.PostFormValue(formCouponAmount), scale, !known)
+	} else {
+		value, err = parseAmount(r.PostFormValue(formCouponAmount), 2, false)
+		if err != nil {
+			err = errors.Invalid(CodeAmountInvalid, "A percentage is a number with at most two decimal places, such as 12.5.")
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+
+	var limit *int64
+	if text := strings.TrimSpace(r.PostFormValue(formCouponLimit)); text != "" {
+		n, err := strconv.ParseInt(text, 10, 64)
+		if err != nil {
+			return "", errors.Invalid(CodeAmountInvalid, "The usage limit is a whole number.")
+		}
+		limit = &n
+	}
+
+	return creator.CreateCoupon(r.Context(), r.PostFormValue(formCouponCode), measure,
+		r.PostFormValue(formCouponTarget), r.PostFormValue(formCouponAllocation), value, currency, limit)
+}
+
 // canSwitchPromotions reports whether the operator may switch a status here:
 // the surface can, and the operator holds the module's write privilege.
 func (u *UI) canSwitchPromotions(r *http.Request) bool {
@@ -122,7 +215,7 @@ func (u *UI) listPromotions(w http.ResponseWriter, r *http.Request) {
 			"The promotion module's panel surface is not registered in this installation.")
 		return
 	}
-	u.renderPromotions(w, r, http.StatusOK, r.URL.Query().Get(paramPromotionStatus), "")
+	u.renderPromotions(w, r, http.StatusOK, r.URL.Query().Get(paramPromotionStatus), "", url.Values{})
 }
 
 // switchPromotion moves the promotion in the path from the status its row was
@@ -148,16 +241,19 @@ func (u *UI) switchPromotion(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteRedirect(r.Context(), w,
 			PromotionsPath+"?"+url.Values{paramPromotionStatus: {from}}.Encode())
 	case errors.IsInvalid(err) || errors.IsConflict(err) || errors.IsNotFound(err):
-		u.renderPromotions(w, r, http.StatusUnprocessableEntity, from, messageFor(err))
+		u.renderPromotions(w, r, http.StatusUnprocessableEntity, from, messageFor(err), url.Values{})
 	default:
 		u.unexpectedFailure(w, r, err, "The promotion could not be switched")
 	}
 }
 
 // renderPromotions lists the promotions in the status, the first tab's when
-// it is none of them, with a refused switch's reason. An operator who may
-// switch a status and not read the list is told the reason alone (ADR 0260).
-func (u *UI) renderPromotions(w http.ResponseWriter, r *http.Request, code int, status, refused string) {
+// it is none of them, with a refused write's reason and what was typed. An
+// operator who may write and not read the list is told the reason alone (ADR
+// 0260).
+func (u *UI) renderPromotions(
+	w http.ResponseWriter, r *http.Request, code int, status, refused string, typed url.Values,
+) {
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
 	if refused != "" && !principal.HasScope(scopePromotionRead) {
 		u.errorPage(w, r, code, "Not done", refused)
@@ -191,7 +287,9 @@ func (u *UI) renderPromotions(w http.ResponseWriter, r *http.Request, code int, 
 		"Statuses":   promotionStatuses,
 		"Total":      total,
 		refusedKey:   refused,
+		typedKey:     typed,
 	}
+	data["CanCreate"] = u.canCreateCoupons(r)
 	if u.canSwitchPromotions(r) {
 		data["Switch"] = promotionSwitches[status]
 	}

@@ -9,6 +9,11 @@ itself and says so.
 An operator who may write promotions moves a row to its next status (ADR
 0312). The form carries the status the row was drawn in, so a promotion
 another operator moved first is refused rather than moved back.
+
+The same operator writes a coupon here (ADR 0314): it starts as a draft with
+its discount, and its page opens once it is written. A percentage is typed as
+one; a fixed amount in its currency's decimals, or in minor units when the
+panel cannot read the currency's scale.
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
@@ -20,6 +25,32 @@ another operator moved first is refused rather than moved back.
 </nav>
 
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+
+{{ if .CanCreate }}
+<details{{ if .Typed }} open{{ end }}>
+  <summary>New coupon</summary>
+  <form method="post" action="{{ .Path }}">
+    <input name="code" value="{{ .Typed.Get "code" }}" placeholder="code, e.g. SPRING15" aria-label="code" required>
+    <select name="measure" aria-label="measure">
+      <option value="percentage"{{ if eq (.Typed.Get "measure") "percentage" }} selected{{ end }}>per cent off</option>
+      <option value="fixed"{{ if eq (.Typed.Get "measure") "fixed" }} selected{{ end }}>an amount off</option>
+    </select>
+    <input name="amount" value="{{ .Typed.Get "amount" }}" placeholder="15 or 50.00" aria-label="amount" required>
+    <input name="currency" value="{{ .Typed.Get "currency" }}" placeholder="currency, for an amount" aria-label="currency" maxlength="3">
+    <select name="target" aria-label="applies to">
+      <option value="order"{{ if eq (.Typed.Get "target") "order" }} selected{{ end }}>the order</option>
+      <option value="items"{{ if eq (.Typed.Get "target") "items" }} selected{{ end }}>the items</option>
+      <option value="shipping_methods"{{ if eq (.Typed.Get "target") "shipping_methods" }} selected{{ end }}>the shipping</option>
+    </select>
+    <select name="allocation" aria-label="allocation">
+      <option value="across"{{ if eq (.Typed.Get "allocation") "across" }} selected{{ end }}>spread across them</option>
+      <option value="each"{{ if eq (.Typed.Get "allocation") "each" }} selected{{ end }}>on each</option>
+    </select>
+    <input name="usage_limit" value="{{ .Typed.Get "usage_limit" }}" placeholder="uses allowed, blank for any" aria-label="usage limit" inputmode="numeric">
+    <button type="submit">Write the coupon</button>
+  </form>
+</details>
+{{ end }}
 
 <p class="muted">{{ .Total }} {{ .Status }}.</p>
 
