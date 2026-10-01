@@ -46,3 +46,11 @@ func (a *AdminSurface) CreateGroup(ctx context.Context, name string, rank int32)
 
 	return group.ID, nil
 }
+
+// ReviseGroup renames and re-ranks the group from the name and rank the
+// operator read, and refuses when another writer changed either since (ADR
+// 0329).
+func (a *AdminSurface) ReviseGroup(ctx context.Context, id, readName string, readRank int32, name string, rank int32) error {
+	_, err := a.service().ReviseGroup(ctx, id, readName, readRank, name, rank)
+	return err
+}

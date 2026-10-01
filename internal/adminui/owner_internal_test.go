@@ -579,6 +579,10 @@ func (m recordingMemberships) CreateGroup(context.Context, string, int32) (strin
 	return "custgrp_walk", m.surfaces.reach(ServiceCustomerAdmin)
 }
 
+func (m recordingMemberships) ReviseGroup(context.Context, string, string, int32, string, int32) error {
+	return m.surfaces.reach(ServiceCustomerAdmin)
+}
+
 // recordingNotifications records the notification module's surface (ADR 0317).
 type recordingNotifications struct{ surfaces *recordingSurfaces }
 
@@ -890,8 +894,11 @@ var walkForms = map[string]url.Values{
 	// A promotion's rules (ADR 0315).
 	routeKey(http.MethodPost, PromotionRulesPath):      {formCategory: {"pcat_walk"}},
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
-	// Writing a customer group (ADR 0323).
+	// Writing a customer group (ADR 0323) and revising one (ADR 0329).
 	routeKey(http.MethodPost, CustomerGroupListPath): {formGroupName: {"Walk"}},
+	routeKey(http.MethodPost, CustomerGroupRevisePath): {
+		formReadName: {"Walk"}, formReadRank: {"0"}, formGroupName: {"Walked"}, formGroupRank: {"1"},
+	},
 	// A variant's list prices (ADR 0327).
 	routeKey(http.MethodPost, VariantListPricesPath): {
 		formPriceSetID: {"pset_walk"}, formListPriceList: {"plist_walk"},

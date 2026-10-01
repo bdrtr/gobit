@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,17 +16,24 @@ import (
 	"github.com/bdrtr/gobit/core/query"
 )
 
-// fakeGroupWriter puts customers into groups and writes groups, recording
-// each group written.
+// fakeGroupWriter puts customers into groups and writes and revises groups,
+// recording each group written and revised.
 type fakeGroupWriter struct {
 	fakeMemberships
 	created  []string
 	createEr error
+	revised  []string
+	reviseEr error
 }
 
 func (f *fakeGroupWriter) CreateGroup(_ context.Context, name string, rank int32) (string, error) {
 	f.created = append(f.created, fmt.Sprintf("%s|%d", name, rank))
 	return "custgrp_new", f.createEr
+}
+
+func (f *fakeGroupWriter) ReviseGroup(_ context.Context, id, readName string, readRank int32, name string, rank int32) error {
+	f.revised = append(f.revised, fmt.Sprintf("%s|%s|%d|%s|%d", id, readName, readRank, name, rank))
+	return f.reviseEr
 }
 
 // groupListCatalog holds two groups.
@@ -109,5 +117,101 @@ func TestTheGroupFormWritesWhatWasTyped(t *testing.T) {
 
 	writer.createEr = errors.Unavailable("db_down", "no answer")
 	rec = campaignsRequest(panel, http.MethodPost, CustomerGroupListPath, url.Values{formGroupName: {"Gold"}}, scopes...)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+// groupRowForm is the revise form of the group's row on a page.
+func groupRowForm(t *testing.T, body, id string) string {
+	t.Helper()
+
+	_, form, found := strings.Cut(body, `action="`+CustomerGroupListPath+"/"+id+"?page=")
+	require.True(t, found, "%s offers its form", id)
+	form, _, _ = strings.Cut(form, "</form>")
+
+	return form
+}
+
+// TestAGroupRowRevisesItsGroup is ADR 0329: each row offers a writer the
+// form that renames and re-ranks its group, carrying the name and the rank it
+// was drawn with; the surface is asked to revise the group from those, and
+// the list's page names it; a rank the panel cannot read is not sent, and a
+// refusal, a group another operator revised first included, comes back in
+// the row with what was typed, drawn from the group as it is now.
+func TestAGroupRowRevisesItsGroup(t *testing.T) {
+	t.Parallel()
+
+	writer := &fakeGroupWriter{}
+	panel := membershipPanel(t, groupListCatalog(), writer)
+	scopes := []string{scopeCustomerRead, scopeCustomerWrite}
+
+	rec := campaignsRequest(panel, http.MethodGet, CustomerGroupListPath+"?page=2", nil, scopes...)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	form := groupRowForm(t, rec.Body.String(), "custgrp_vip")
+	assert.True(t, strings.HasPrefix(form, `2">`), "the form returns to the page it was drawn on")
+	for _, want := range []string{
+		`name="read_name" value="VIP"`, `name="read_rank" value="-1"`,
+		`name="name" value="VIP"`, `name="rank" value="-1"`,
+	} {
+		assert.Contains(t, form, want)
+	}
+	assert.Contains(t, groupRowForm(t, rec.Body.String(), "custgrp_trade"), `name="read_rank" value="3"`)
+	assert.NotContains(t, rec.Body.String(), "<details open>", "no row is open until a refusal opens it")
+	rec = campaignsRequest(panel, http.MethodGet, CustomerGroupListPath, nil, scopeCustomerRead)
+	assert.NotContains(t, rec.Body.String(), "Revise", "a reader revises nothing")
+	rec = campaignsRequest(membershipPanel(t, groupListCatalog(), &fakeMemberships{}), http.MethodGet,
+		CustomerGroupListPath, nil, scopes...)
+	assert.NotContains(t, rec.Body.String(), "Revise", "a surface that cannot revise a group offers no form")
+	rec = campaignsRequest(membershipPanel(t, groupListCatalog(), &fakeMemberships{}), http.MethodPost,
+		CustomerGroupListPath+"/custgrp_vip", url.Values{formGroupName: {"X"}}, scopeCustomerWrite)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+
+	sent := url.Values{
+		formReadName: {"VIP"}, formReadRank: {"-1"}, formGroupName: {" Gold "}, formGroupRank: {" -4 "},
+	}
+	rec = campaignsRequest(panel, http.MethodPost, CustomerGroupListPath+"/custgrp_vip?page=2", sent, scopes...)
+	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	assert.Equal(t, CustomerGroupListPath+"?created=Gold&page=2", rec.Header().Get("Location"))
+	assert.Equal(t, []string{"custgrp_vip|VIP|-1|Gold|-4"}, writer.revised)
+	rec = campaignsRequest(panel, http.MethodPost, CustomerGroupListPath+"/custgrp_trade?page=1", url.Values{
+		formReadName: {"Trade"}, formReadRank: {"3"}, formGroupName: {"Retail"}, formGroupRank: {"3"},
+	}, scopes...)
+	assert.Equal(t, CustomerGroupListPath+"?created=Retail", rec.Header().Get("Location"), "the first page is the list")
+	assert.Equal(t, "custgrp_trade|Trade|3|Retail|3", writer.revised[1], "the group in the path is revised")
+
+	for reason, form := range map[string]url.Values{
+		"A rank is a whole number":                          {formReadName: {"VIP"}, formReadRank: {"-1"}, formGroupName: {"Gold"}, formGroupRank: {"first"}},
+		"The rank the row was drawn with could not be read": {formReadName: {"VIP"}, formReadRank: {"x"}, formGroupName: {"Gold"}},
+	} {
+		rec = campaignsRequest(panel, http.MethodPost, CustomerGroupListPath+"/custgrp_vip", form, scopes...)
+		require.Equal(t, http.StatusUnprocessableEntity, rec.Code, reason)
+		assert.Contains(t, rec.Body.String(), reason)
+	}
+	assert.Len(t, writer.revised, 2, "a rank the panel cannot read is not sent")
+
+	writer.reviseEr = errors.Conflict("customer_group_moved",
+		`customer group custgrp_vip is "VIP" at rank -1 now, not "Staff" at rank 0; draw the list again`)
+	rec = campaignsRequest(panel, http.MethodPost, CustomerGroupListPath+"/custgrp_vip", url.Values{
+		formReadName: {"Staff"}, formReadRank: {"0"}, formGroupName: {"Gold"}, formGroupRank: {"7"},
+	}, scopes...)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	body := rec.Body.String()
+	assert.Contains(t, body, "draw the list again")
+	form = groupRowForm(t, body, "custgrp_vip")
+	for _, want := range []string{
+		`name="read_name" value="VIP"`, `name="read_rank" value="-1"`, `name="name" value="Gold"`, `name="rank" value="7"`,
+	} {
+		assert.Contains(t, form, want, "the row carries the group as it is now and what was typed")
+	}
+	assert.Contains(t, body, "<details open>", "the refused row is open")
+	assert.Contains(t, groupRowForm(t, body, "custgrp_trade"), `name="name" value="Trade"`, "another row is as drawn")
+	newGroup, _, _ := strings.Cut(body, "<table>")
+	assert.NotContains(t, newGroup, "Gold", "what was typed is the row's, not the new group's")
+
+	writer.reviseEr = errors.NotFound("customer_group_not_found", "customer group custgrp_vip not found")
+	rec = campaignsRequest(panel, http.MethodPost, CustomerGroupListPath+"/custgrp_vip", sent, scopes...)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "customer group custgrp_vip not found")
+	writer.reviseEr = errors.Unavailable("db_down", "no answer")
+	rec = campaignsRequest(panel, http.MethodPost, CustomerGroupListPath+"/custgrp_vip", sent, scopes...)
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }

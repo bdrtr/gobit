@@ -131,7 +131,9 @@
 // and puts them into one or takes them out ([UI.addToGroup],
 // [UI.removeFromGroup]) through the customer module's surface (ADR 0322), and
 // the Customer groups screen ([UI.listCustomerGroups]) lists the groups with
-// their rank and writes one ([UI.createCustomerGroup], ADR 0323).
+// their rank and writes one ([UI.createCustomerGroup], ADR 0323); each row
+// renames and re-ranks its group from what it was drawn with
+// ([UI.reviseCustomerGroup], ADR 0329).
 //
 // The Price lists screen ([UI.listPriceLists]) lists the pricing module's
 // lists with their type, status and window, and its form writes one

@@ -180,9 +180,11 @@ func builtInScopes() map[string]string {
 		routeKey(post, OrderClaimEvidencePath):       scopeOrderWrite,
 		routeKey(post, OrderClaimEvidenceDetachPath): scopeOrderWrite,
 		// A customer's groups are the customer module's (ADR 0322), and so
-		// are the groups and the form that writes one (ADR 0323).
+		// are the groups, the form that writes one (ADR 0323) and the one
+		// that revises one (ADR 0329).
 		routeKey(get, CustomerGroupListPath):    scopeCustomerRead,
 		routeKey(post, CustomerGroupListPath):   scopeCustomerWrite,
+		routeKey(post, CustomerGroupRevisePath): scopeCustomerWrite,
 		routeKey(post, CustomerGroupsPath):      scopeCustomerWrite,
 		routeKey(post, CustomerGroupRemovePath): scopeCustomerWrite,
 		routeKey(get, InventoryPath):            scopeInventoryRead,

@@ -8,7 +8,10 @@ customer in any of them. The rows come newest first, through the customer
 module's group entity.
 
 An operator who may write the customers writes a group here and puts
-customers into it on their pages (ADR 0322).
+customers into it on their pages (ADR 0322). Each row's form renames and
+re-ranks its group; it carries the name and the rank the row was drawn with,
+and the module refuses when another operator revised the group first (ADR
+0329).
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
@@ -30,13 +33,27 @@ customers into it on their pages (ADR 0322).
 {{ if .Groups }}
 <div class="scroll">
 <table>
-  <thead><tr><th>Group</th><th class="num">Rank</th><th>Created</th></tr></thead>
+  <thead><tr><th>Group</th><th class="num">Rank</th><th>Created</th>{{ if .CanRevise }}<th></th>{{ end }}</tr></thead>
   <tbody>
   {{ range .Groups }}
     <tr>
       <td>{{ .Name }} <span class="muted">{{ .ID }}</span></td>
       <td class="num">{{ .Rank }}</td>
       <td>{{ if not .CreatedAt.IsZero }}{{ .CreatedAt.Format "2006-01-02" }}{{ end }}</td>
+      {{ if $.CanRevise }}
+      <td>
+        <details{{ if .Refused }} open{{ end }}>
+          <summary>Revise</summary>
+          <form method="post" action="{{ $.Path }}/{{ .ID }}?page={{ $.Page }}">
+            <input type="hidden" name="read_name" value="{{ .Name }}">
+            <input type="hidden" name="read_rank" value="{{ .Rank }}">
+            <input name="name" value="{{ .FormName }}" aria-label="name" required>
+            <input name="rank" value="{{ .FormRank }}" aria-label="rank" inputmode="numeric">
+            <button type="submit">Write</button>
+          </form>
+        </details>
+      </td>
+      {{ end }}
     </tr>
   {{ end }}
   </tbody>

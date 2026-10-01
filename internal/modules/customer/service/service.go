@@ -123,6 +123,11 @@ type Repository interface {
 	// 0321).
 	GetGroupsByIDs(ctx context.Context, ids []string) ([]models.CustomerGroup, error)
 	UpdateGroup(ctx context.Context, id string, patch models.CustomerGroupPatch, now time.Time) (models.CustomerGroup, error)
+	// ReviseGroup writes a group's name and rank while they are the ones read,
+	// and reports whether it did (ADR 0329).
+	ReviseGroup(
+		ctx context.Context, id, readName string, readRank int32, name string, rank int32, now time.Time,
+	) (models.CustomerGroup, bool, error)
 	DeleteGroup(ctx context.Context, id string, now time.Time) error
 	AddToGroup(ctx context.Context, customerID, groupID string, now time.Time) error
 	RemoveFromGroup(ctx context.Context, customerID, groupID string) error

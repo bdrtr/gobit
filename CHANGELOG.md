@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel renames and re-ranks a customer group** (ADR 0329). **For
+  operators:** each row of the Customer groups screen renames and re-ranks its
+  group under `customer:write`; a group another operator revised meanwhile is
+  refused rather than written over. **For integrators:** `customer.admin`
+  revises a group from the name and rank read, refusing
+  `customer_group_moved`.
+
 - **The panel publishes and ends a price list** (ADR 0328). **For
   operators:** a price list's row publishes a draft, ends an active list or
   reopens an ended one under `pricing:write`; a list another operator moved
