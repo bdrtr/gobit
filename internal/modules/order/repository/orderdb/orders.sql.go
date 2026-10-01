@@ -171,13 +171,23 @@ WHERE ($1::text IS NULL OR customer_id = $1::text)
   AND ($2::text IS NULL OR region_id = $2::text)
   AND ($3::text IS NULL OR status = $3::text)
   AND ($4::text IS NULL OR adds_to_order_id = $4::text)
+  -- An order awaits its payment when it is not canceled and what was
+  -- collected for it falls short of its total less its credits (ADR 0294).
+  -- Refunds are not added back: money returned for goods returned or written
+  -- off does not make the order owe again.
+  AND ($5::boolean IS NULL OR (
+    orders.status <> 'canceled'
+    AND COALESCE((SELECT s.paid_total FROM order_summaries s WHERE s.order_id = orders.id), 0)
+      < orders.total - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
+  ) = $5::boolean)
 `
 
 type CountOrdersParams struct {
-	CustomerID    *string
-	RegionID      *string
-	Status        *string
-	AddsToOrderID *string
+	CustomerID      *string
+	RegionID        *string
+	Status          *string
+	AddsToOrderID   *string
+	AwaitingPayment *bool
 }
 
 // CountOrders gives the total count of the pagination envelope and applies the
@@ -193,6 +203,7 @@ func (q *Queries) CountOrders(ctx context.Context, arg CountOrdersParams) (int64
 		arg.RegionID,
 		arg.Status,
 		arg.AddsToOrderID,
+		arg.AwaitingPayment,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -478,23 +489,33 @@ WHERE ($1::text IS NULL OR customer_id = $1::text)
   AND ($2::text IS NULL OR region_id = $2::text)
   AND ($3::text IS NULL OR status = $3::text)
   AND ($4::text IS NULL OR adds_to_order_id = $4::text)
+  -- An order awaits its payment when it is not canceled and what was
+  -- collected for it falls short of its total less its credits (ADR 0294).
+  -- Refunds are not added back: money returned for goods returned or written
+  -- off does not make the order owe again.
+  AND ($5::boolean IS NULL OR (
+    orders.status <> 'canceled'
+    AND COALESCE((SELECT s.paid_total FROM order_summaries s WHERE s.order_id = orders.id), 0)
+      < orders.total - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
+  ) = $5::boolean)
   AND (created_at, id) < (
-    COALESCE($5::timestamptz, 'infinity'::timestamptz),
-    COALESCE($6::text, '')
+    COALESCE($6::timestamptz, 'infinity'::timestamptz),
+    COALESCE($7::text, '')
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $8::bigint OFFSET $7::bigint
+LIMIT $9::bigint OFFSET $8::bigint
 `
 
 type ListOrdersParams struct {
-	CustomerID    *string
-	RegionID      *string
-	Status        *string
-	AddsToOrderID *string
-	AfterAt       pgtype.Timestamptz
-	AfterID       *string
-	RowOffset     int64
-	RowLimit      int64
+	CustomerID      *string
+	RegionID        *string
+	Status          *string
+	AddsToOrderID   *string
+	AwaitingPayment *bool
+	AfterAt         pgtype.Timestamptz
+	AfterID         *string
+	RowOffset       int64
+	RowLimit        int64
 }
 
 func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]Order, error) {
@@ -503,6 +524,7 @@ func (q *Queries) ListOrders(ctx context.Context, arg ListOrdersParams) ([]Order
 		arg.RegionID,
 		arg.Status,
 		arg.AddsToOrderID,
+		arg.AwaitingPayment,
 		arg.AfterAt,
 		arg.AfterID,
 		arg.RowOffset,

@@ -953,6 +953,9 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	// The telephone order's cart (ADR 0290).
 	assert.Equal(t, cartsvc.EntityName, adminui.EntityCart,
 		"the panel's cart entity name must match the cart module")
+	// The order list's awaiting filter (ADR 0294).
+	assert.Equal(t, ordersvc.FilterAwaitingPayment, adminui.FilterAwaitingPayment,
+		"the panel's awaiting filter must match the order module")
 
 	assert.Equal(t, productsvc.LinkVariantPriceSet, adminui.LinkVariantPriceSet,
 		"the panel's price link name must match the product module")

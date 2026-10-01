@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
@@ -38,6 +39,15 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	if raw := r.URL.Query().Get("adds_to_order_id"); raw != "" {
 		in.AddsToOrderID = &raw
+	}
+	if raw := r.URL.Query().Get("awaiting_payment"); raw != "" {
+		awaiting, err := strconv.ParseBool(raw)
+		if err != nil {
+			corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+				"awaiting_payment has to be true or false: %q", raw))
+			return
+		}
+		in.AwaitingPayment = &awaiting
 	}
 
 	result, err := h.svc.ListOrders(ctx, in)

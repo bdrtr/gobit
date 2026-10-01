@@ -25,6 +25,10 @@ type OrderFilter struct {
 	// AddsToOrderID, when given, returns only the orders that add to that
 	// order (ADR 0192).
 	AddsToOrderID *string
+	// AwaitingPayment, when given, returns only the orders that await their
+	// payment, or only the ones that do not: not canceled, and collected below
+	// their total less their credits (ADR 0294).
+	AwaitingPayment *bool
 	// Limit is the maximum number of rows to return.
 	Limit int64
 	// Offset is the number of rows to skip.

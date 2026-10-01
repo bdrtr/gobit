@@ -625,6 +625,26 @@ func TestAdminListOrders(t *testing.T) {
 	assert.Equal(t, int64(4), svc.listInput.Page.Offset)
 }
 
+// TestAdminListOrdersAwaitingTheirPayment is ADR 0294's parameter: true and
+// false reach the service, nothing leaves the filter off, and anything else is
+// refused before the service is asked.
+func TestAdminListOrdersAwaitingTheirPayment(t *testing.T) {
+	for query, want := range map[string]*bool{
+		"?awaiting_payment=true": new(true), "?awaiting_payment=false": new(false), "": nil,
+	} {
+		svc := &fakeOrders{orders: []models.Order{sampleOrder()}, count: 1}
+		rec := doRequest(t, newRouter(svc), http.MethodGet, "/admin/v1/orders"+query, "")
+
+		require.Equal(t, http.StatusOK, rec.Code, query)
+		assert.Equal(t, want, svc.listInput.AwaitingPayment, query)
+	}
+
+	svc := &fakeOrders{}
+	rec := doRequest(t, newRouter(svc), http.MethodGet, "/admin/v1/orders?awaiting_payment=soon", "")
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Nil(t, svc.listInput.AwaitingPayment, "the service was not asked")
+}
+
 // TestAdminListOrdersDefaultLimit verifies that on a request without a limit the
 // response shows the limit that is REALLY applied.
 func TestAdminListOrdersDefaultLimit(t *testing.T) {

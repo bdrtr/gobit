@@ -432,6 +432,19 @@ func (f *fakeStore) LockOrder(ctx context.Context, id string) (models.Order, err
 	return order, nil
 }
 
+// awaitsPayment applies the query's rule (ADR 0294): not canceled, and
+// collected below the total less the credits; refunds are not added back.
+func (v fakeSnapshot) awaitsPayment(order models.Order) bool {
+	var credited int64
+	for id := range v.credits {
+		if v.credits[id].OrderID == order.ID {
+			credited += v.credits[id].Amount
+		}
+	}
+
+	return order.Status != models.OrderCanceled && v.summaries[order.ID].PaidTotal < order.Total-credited
+}
+
 // ListOrders filters and pages the orders.
 func (f *fakeStore) ListOrders(ctx context.Context, filter models.OrderFilter) ([]models.Order, int64, error) {
 	snapshot := f.view(ctx)
@@ -447,6 +460,9 @@ func (f *fakeStore) ListOrders(ctx context.Context, filter models.OrderFilter) (
 			continue
 		}
 		if filter.AddsToOrderID != nil && snapshot.orders[id].AddsToOrderID != *filter.AddsToOrderID {
+			continue
+		}
+		if filter.AwaitingPayment != nil && snapshot.awaitsPayment(snapshot.orders[id]) != *filter.AwaitingPayment {
 			continue
 		}
 		matched = append(matched, snapshot.orders[id])

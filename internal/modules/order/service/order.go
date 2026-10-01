@@ -659,6 +659,10 @@ type ListOrdersInput struct {
 	// AddsToOrderID, when given, returns only the orders that add to that
 	// order: its additions (ADR 0192).
 	AddsToOrderID *string
+	// AwaitingPayment, when given, returns only the orders that await their
+	// payment — not canceled, and collected below their total less their
+	// credits — or only the ones that do not (ADR 0294).
+	AwaitingPayment *bool
 	// Page holds the pagination parameters.
 	Page Page
 }
@@ -701,6 +705,7 @@ func (s *Service) ListOrders(ctx context.Context, in ListOrdersInput) (OrderPage
 		}
 		filter.AddsToOrderID = in.AddsToOrderID
 	}
+	filter.AwaitingPayment = in.AwaitingPayment
 
 	// One row MORE than asked for is fetched and the extra one is dropped
 	// below: that is how "is there a next page" is answered without a second

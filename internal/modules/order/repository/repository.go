@@ -330,24 +330,26 @@ func (r *Repository) ListOrders(ctx context.Context, filter models.OrderFilter) 
 	}
 
 	rows, err := r.queries(ctx).ListOrders(ctx, orderdb.ListOrdersParams{
-		CustomerID:    filter.CustomerID,
-		RegionID:      filter.RegionID,
-		Status:        status,
-		AddsToOrderID: filter.AddsToOrderID,
-		RowLimit:      filter.Limit,
-		RowOffset:     filter.Offset,
-		AfterAt:       afterAt,
-		AfterID:       afterID,
+		CustomerID:      filter.CustomerID,
+		RegionID:        filter.RegionID,
+		Status:          status,
+		AddsToOrderID:   filter.AddsToOrderID,
+		AwaitingPayment: filter.AwaitingPayment,
+		RowLimit:        filter.Limit,
+		RowOffset:       filter.Offset,
+		AfterAt:         afterAt,
+		AfterID:         afterID,
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed, "could not list the orders")
 	}
 
 	total, err := r.queries(ctx).CountOrders(ctx, orderdb.CountOrdersParams{
-		CustomerID:    filter.CustomerID,
-		RegionID:      filter.RegionID,
-		Status:        status,
-		AddsToOrderID: filter.AddsToOrderID,
+		CustomerID:      filter.CustomerID,
+		RegionID:        filter.RegionID,
+		Status:          status,
+		AddsToOrderID:   filter.AddsToOrderID,
+		AwaitingPayment: filter.AwaitingPayment,
 	})
 	if err != nil {
 		return nil, 0, classify(err, codeQueryFailed, "could not count the orders")

@@ -16,6 +16,7 @@ const (
 	schemaType  = "type"
 	typeString  = "string"
 	typeInteger = "integer"
+	typeBoolean = "boolean"
 )
 
 // amountNote is the warning added to the description of endpoints that carry an
@@ -133,7 +134,7 @@ func Describe(d *openapi.Doc) {
 	d.Describe(http.MethodGet, "/admin/v1/orders", openapi.Operation{
 		Summary: "Lists orders with filtering and paging.",
 		// The parameters are the ones the handler READS, not the ones we could
-		// wish for: [Handler.adminListOrders] reads exactly these seven. Line
+		// wish for: [Handler.adminListOrders] reads exactly these eight. Line
 		// items are NOT LOADED in the list, which is why there is no parameter
 		// such as "expand" here either — had there been one, it would have
 		// promised a feature the server ignores.
@@ -147,6 +148,11 @@ func Describe(d *openapi.Doc) {
 			queryParameter("adds_to_order_id", typeString,
 				"Limits the orders to the additions of one order: the orders placed from "+
 					"a cart opened to add to it (ADR 0192)."),
+			queryParameter("awaiting_payment", typeBoolean,
+				"true lists only the orders awaiting their payment — not canceled, and "+
+					"collected below their total less their credits — and false only the "+
+					"others. Refunds are not added back, so an order paid and later "+
+					"refunded does not await its payment (ADR 0294)."),
 			queryParameter("limit", typeInteger,
 				"Page size; when it is not given the service's default applies."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),

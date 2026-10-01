@@ -31,6 +31,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The order list filters the orders awaiting their payment** (ADR 0294).
+  **For operators:** the panel's order list has a box for the orders still
+  awaiting their payment — not canceled, and collected below their total less
+  their credits, partly paid ones included. **For integrators:**
+  `GET /admin/v1/orders?awaiting_payment=true|false` and the `order` query
+  provider's `awaiting_payment` filter; refunds are not added back, so an order
+  paid and later refunded is not listed.
+
 - **A telephone order finds a variant by its title** (ADR 0293). **For
   operators:** the telephone order's cart page searches the catalog by product
   title and the add form offers the found variants by name; it needs

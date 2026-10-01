@@ -14,6 +14,14 @@ import (
 	"github.com/bdrtr/gobit/core/query"
 )
 
+// The order list's filter for the orders awaiting their payment (ADR 0294):
+// the box's parameter, and the order module's filter, spelled again for
+// [EntityOrder]'s reason and pinned against the module's in internal/arch.
+const (
+	paramAwaiting         = "awaiting"
+	FilterAwaitingPayment = "awaiting_payment"
+)
+
 // EntityOrder is the order module's entity name in the read layer.
 //
 // It is a STRING and not an import: the panel knows no module (ADR 0011), the
@@ -287,6 +295,12 @@ func addressLines(value any) []string {
 // paging through orders does not need to be told there are 41,207 of them.
 func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 	page := pageNumber(r.URL.Query().Get("page"))
+	// The orders awaiting their payment, an offline method's say (ADR 0294).
+	awaiting := r.URL.Query().Get(paramAwaiting) == "1"
+	var filters map[string]any
+	if awaiting {
+		filters = map[string]any{FilterAwaitingPayment: true}
+	}
 
 	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
 		Entity: EntityOrder,
@@ -294,8 +308,9 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 			fieldID, fieldDisplayID, fieldStatus, fieldEmail,
 			fieldTotal, fieldCurrencyCod, fieldPlacedAt,
 		},
-		Limit:  ordersPerPage + 1,
-		Offset: (page - 1) * ordersPerPage,
+		Filters: filters,
+		Limit:   ordersPerPage + 1,
+		Offset:  (page - 1) * ordersPerPage,
 	})
 	if err != nil {
 		u.catalogFailure(w, r, err, "The order list could not be read.")
@@ -316,8 +331,9 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		titleKey: ordersLabel,
-		"Orders": rows,
+		titleKey:   ordersLabel,
+		"Orders":   rows,
+		"Awaiting": awaiting,
 	}
 	addPaging(data, page, hasNext, OrdersPath)
 

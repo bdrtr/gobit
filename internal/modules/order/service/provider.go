@@ -64,6 +64,9 @@ const (
 	// FieldAddsToOrderID is the order this one adds to; empty when it adds to
 	// nothing (ADR 0192). It is also a filter: the additions of one order.
 	FieldAddsToOrderID = "adds_to_order_id"
+	// FilterAwaitingPayment narrows a listing to the orders that await their
+	// payment, or to the others (ADR 0294). It is a filter and not a field.
+	FilterAwaitingPayment = "awaiting_payment"
 )
 
 // The fields read from the order's addresses rather than from its row
@@ -225,9 +228,9 @@ func (p *QueryProvider) Entity() string {
 // List returns the root records.
 //
 // Supported filters: "id" (string or string slice), "customer_id" (string),
-// "region_id" (string), "status" (string) and "adds_to_order_id" (string).
-// Any other filter or an unrecognized field is rejected with errors.Invalid
-// (ADR 0004).
+// "region_id" (string), "status" (string), "adds_to_order_id" (string) and
+// "awaiting_payment" (bool, ADR 0294). Any other filter or an unrecognized
+// field is rejected with errors.Invalid (ADR 0004).
 //
 // # Why "id" is a filter and not only a batch fetch
 //
@@ -303,6 +306,13 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 					"filter %q has to be text, %T given", name, value)
 			}
 			in.AddsToOrderID = &id
+		case FilterAwaitingPayment:
+			awaiting, ok := value.(bool)
+			if !ok {
+				return nil, errors.Invalid(CodeInvalidInput,
+					"filter %q has to be boolean (bool), %T given", name, value)
+			}
+			in.AwaitingPayment = &awaiting
 		default:
 			return nil, errors.Invalid(CodeInvalidInput,
 				"%q entity'si %q filtresini desteklemiyor", EntityName, name)

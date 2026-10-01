@@ -15,6 +15,12 @@ exist in total.
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
 
+{{/* The orders awaiting their payment (ADR 0294). */}}
+<form method="get" action="{{ .Path }}">
+  <label><input type="checkbox" name="awaiting" value="1"{{ if .Awaiting }} checked{{ end }}> Only the orders awaiting their payment</label>
+  <button type="submit">Show</button>
+</form>
+
 {{ if .Orders }}
 <div class="scroll">
 <table>
@@ -49,8 +55,8 @@ exist in total.
 {{ end }}
 
 <nav>
-  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ if .Awaiting }}&amp;awaiting=1{{ end }}">Previous</a>{{ end }}
   <span class="muted">Page {{ .Page }}</span>
-  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ if .Awaiting }}&amp;awaiting=1{{ end }}">Next</a>{{ end }}
 </nav>
 {{ end }}

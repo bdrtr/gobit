@@ -77,6 +77,15 @@ WHERE (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('custom
   AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
   AND (sqlc.narg('adds_to_order_id')::text IS NULL OR adds_to_order_id = sqlc.narg('adds_to_order_id')::text)
+  -- An order awaits its payment when it is not canceled and what was
+  -- collected for it falls short of its total less its credits (ADR 0294).
+  -- Refunds are not added back: money returned for goods returned or written
+  -- off does not make the order owe again.
+  AND (sqlc.narg('awaiting_payment')::boolean IS NULL OR (
+    orders.status <> 'canceled'
+    AND COALESCE((SELECT s.paid_total FROM order_summaries s WHERE s.order_id = orders.id), 0)
+      < orders.total - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
+  ) = sqlc.narg('awaiting_payment')::boolean)
   AND (created_at, id) < (
     COALESCE(sqlc.narg('after_at')::timestamptz, 'infinity'::timestamptz),
     COALESCE(sqlc.narg('after_id')::text, '')
@@ -96,7 +105,16 @@ SELECT COUNT(*) FROM orders
 WHERE (sqlc.narg('customer_id')::text IS NULL OR customer_id = sqlc.narg('customer_id')::text)
   AND (sqlc.narg('region_id')::text IS NULL OR region_id = sqlc.narg('region_id')::text)
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
-  AND (sqlc.narg('adds_to_order_id')::text IS NULL OR adds_to_order_id = sqlc.narg('adds_to_order_id')::text);
+  AND (sqlc.narg('adds_to_order_id')::text IS NULL OR adds_to_order_id = sqlc.narg('adds_to_order_id')::text)
+  -- An order awaits its payment when it is not canceled and what was
+  -- collected for it falls short of its total less its credits (ADR 0294).
+  -- Refunds are not added back: money returned for goods returned or written
+  -- off does not make the order owe again.
+  AND (sqlc.narg('awaiting_payment')::boolean IS NULL OR (
+    orders.status <> 'canceled'
+    AND COALESCE((SELECT s.paid_total FROM order_summaries s WHERE s.order_id = orders.id), 0)
+      < orders.total - COALESCE((SELECT SUM(c.amount) FROM order_credit_lines c WHERE c.order_id = orders.id), 0)
+  ) = sqlc.narg('awaiting_payment')::boolean);
 
 -- GetOrdersByIDs satisfies the Query layer's FetchByIDs call in a SINGLE round
 -- trip; no per-ID query (N+1) is made.

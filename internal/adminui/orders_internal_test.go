@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -719,4 +720,35 @@ func TestAnOrderWithoutAPaymentOrParcelsSaysSo(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), "No payment is linked to this order.")
 	assert.Contains(t, rec.Body.String(), "No parcel has been opened for this order.")
+}
+
+// TestTheOrderListFiltersTheOrdersAwaitingTheirPayment is ADR 0294 on the
+// panel: the box asks the order module for the orders awaiting their
+// payment, stays ticked, and the paging keeps it; without it nothing is
+// filtered.
+func TestTheOrderListFiltersTheOrdersAwaitingTheirPayment(t *testing.T) {
+	t.Parallel()
+
+	catalog := &fakeCatalog{byEntity: map[string][]query.Record{EntityOrder: make([]query.Record, ordersPerPage+1)}}
+	for i := range catalog.byEntity[EntityOrder] {
+		catalog.byEntity[EntityOrder][i] = query.Record{fieldID: "order_" + strconv.Itoa(i), fieldStatus: "pending"}
+	}
+	panel := newCatalogPanel(t, catalog)
+
+	rec := httptest.NewRecorder()
+	orderRouter(panel).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, OrdersPath+"?awaiting=1", http.NoBody))
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotEmpty(t, catalog.specs)
+	assert.Equal(t, map[string]any{FilterAwaitingPayment: true}, catalog.specs[0].Filters)
+	assert.Contains(t, rec.Body.String(), `name="awaiting" value="1" checked`)
+	assert.Contains(t, rec.Body.String(), `?page=2&amp;awaiting=1`, "the next page keeps the filter")
+
+	plain := &fakeCatalog{byEntity: map[string][]query.Record{EntityOrder: {}}}
+	panel = newCatalogPanel(t, plain)
+	rec = httptest.NewRecorder()
+	orderRouter(panel).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, OrdersPath, http.NoBody))
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, plain.specs[0].Filters)
+	assert.NotContains(t, rec.Body.String(), "checked")
 }

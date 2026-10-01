@@ -649,7 +649,9 @@ past and is not corrected retroactively.
   something beside the transfer is never canceled by the job. The cancel gives
   the stock back ([ADR 0285](adr/0285-the-shops-cancel-gives-the-stock-back.md))
   and closes the payment session once its event is handled
-  ([ADR 0288](adr/0288-a-canceled-order-holds-no-payment.md)).
+  ([ADR 0288](adr/0288-a-canceled-order-holds-no-payment.md)). The order list
+  shows the orders still awaiting their payment
+  ([ADR 0294](adr/0294-the-order-list-filters-the-orders-awaiting-their-payment.md)).
 
 - **Store credit names its order, not the finer cause.** Since
   [ADR 0274](adr/0274-a-store-credit-names-the-order-it-compensates.md) an

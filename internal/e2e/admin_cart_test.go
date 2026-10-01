@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -243,6 +244,15 @@ func TestAnOperatorCompletesATelephoneOrderPaidLater(t *testing.T) {
 	assert.Zero(t, order.Summary.PaidTotal)
 	assert.Equal(t, adminCartStock-adminCartQuantity, sellableQuantity(ctx, t, stockItemID),
 		"the order's stock is deducted")
+
+	// The order is among the customer's orders awaiting their payment, and
+	// not among the others (ADR 0294).
+	for awaiting, listed := range map[string]bool{"true": true, "false": false} {
+		rec := adminCartRequest(t, http.MethodGet,
+			"/admin/v1/orders?customer_id="+customerID+"&awaiting_payment="+awaiting, "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.Equal(t, listed, strings.Contains(rec.Body.String(), orderID), "awaiting_payment=%s", awaiting)
+	}
 }
 
 // TestAnOperatorsLineIsPricedInTheChannelItNames verifies that the claim in the
