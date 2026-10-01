@@ -64,3 +64,38 @@ func TestAnOfflineMethodPlacesAnOrderTheShopCapturesLater(t *testing.T) {
 		"the money the shop recorded reaches the order (expected %d, last read %d)", total, paid)
 	assert.Equal(t, map[string]int64{offlineMethod: total}, captures(t, cartID))
 }
+
+// TestAnOfflineOrderNeverPaidGivesItsStockBack is ADR 0285 on the production
+// wiring: the customer never transfers, the shop cancels the order through the
+// admin route, and the unit the checkout deducted comes back to the shelf.
+func TestAnOfflineOrderNeverPaidGivesItsStockBack(t *testing.T) {
+	ctx := t.Context()
+	variantID, itemID := newStockedVariant(ctx, t, "Unpaid offline product",
+		map[string]int64{taxedCurrency: 10_000}, 5)
+	cartID, total := giftCart(t, variantID)
+
+	completed := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+		fmt.Sprintf(`{"payment_provider_id":%q,"expected_total":%d}`, offlineMethod, total))
+	require.Equal(t, http.StatusOK, completed.Code, completed.Body.String())
+	orderID, ok := storefrontData(t, completed)["order_id"].(string)
+	require.True(t, ok, completed.Body.String())
+	require.Equal(t, int64(4), stockLevel(ctx, t, itemID).StockedQuantity, "precondition: the sale deducted the unit")
+
+	canceled, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+orderID+"/cancel",
+		map[string]any{"reason": "the transfer never came"})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, canceled.Code, canceled.Body.String())
+
+	// The condition reads without asserting: it runs on its own goroutine,
+	// where a failed require would end that goroutine rather than the test.
+	var stocked int64
+	require.Eventually(t, func() bool {
+		levels, err := inventorySvc.ListInventoryLevels(ctx, itemID)
+		if err != nil || len(levels) != 1 {
+			return false
+		}
+		stocked = levels[0].StockedQuantity
+		return stocked == 5
+	}, olayBeklemeSuresi, 20*time.Millisecond,
+		"the canceled order's unit comes back to the shelf (last read %d)", stocked)
+}

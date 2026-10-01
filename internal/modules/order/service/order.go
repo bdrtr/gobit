@@ -808,17 +808,68 @@ func (s *Service) ListOrdersByIDs(ctx context.Context, ids []string) ([]models.O
 // — the saga died between the capture and the bookkeeping — still passes this
 // guard. That is the same window ADR 0020 and ADR 0022 both leave open and
 // `gobit stuck` reports; no local fact separates it from an unpaid order.
+//
+// # It writes nothing off
+//
+// The saga cancels an order whose stock is still reserved, and releasing the
+// reservation is its own step's compensation. The shop's cancel of an order the
+// checkout placed is [Service.CancelPlacedOrder], which also gives the stock
+// back.
 func (s *Service) CancelOrder(ctx context.Context, orderID, reason string) error {
-	if err := requireID("order_id", orderID); err != nil {
+	_, err := s.cancelOrder(ctx, orderID, reason, false)
+
+	return err
+}
+
+// CancelPlacedOrder cancels an order the checkout placed and writes off every
+// unit of it that is not yet returned or written off, so its stock comes back
+// (ADR 0285).
+//
+// An order the checkout placed has its stock DEDUCTED: the last step confirms
+// the reservations. Stamping it canceled alone leaves those units off the shelf
+// with nobody sending them, which an order that owes its total makes routine
+// (ADR 0284): the customer who never transfers is the ordinary end of a bank
+// transfer. Each write-off is a line cancellation of the units left, written in
+// the cancel's transaction with its order.line_canceled event, so the flow that
+// puts written-off units back (ADR 0134) gives back what no live parcel holds.
+//
+// It refuses what [Service.CancelOrder] refuses — a completed order and one
+// with money collected — and a second call writes nothing. A line that sold gift
+// cards is left as it is: it moved no stock, and a card is closed in the payment
+// module.
+func (s *Service) CancelPlacedOrder(ctx context.Context, orderID, reason string) error {
+	written, err := s.cancelOrder(ctx, orderID, reason, true)
+	if err != nil {
 		return err
+	}
+
+	// Published AFTER the commit, as a line cancellation's are; the outbox rows
+	// cover a lost publish.
+	for i := range written {
+		s.publishLineCanceled(ctx, orderID,
+			written[i].cancellation, written[i].variantID, written[i].before, written[i].bought)
+	}
+
+	return nil
+}
+
+// cancelOrder stamps the order canceled and, when writeOff is set, writes off
+// what is left of its lines in the same transaction; it returns the write-offs
+// to publish.
+func (s *Service) cancelOrder(
+	ctx context.Context, orderID, reason string, writeOff bool,
+) ([]writtenOff, error) {
+	if err := requireID("order_id", orderID); err != nil {
+		return nil, err
 	}
 	// Trimmed, so a reason of spaces is stored as none (D178).
 	reason = strings.TrimSpace(reason)
 	if err := checkTextLen("reason", reason); err != nil {
-		return err
+		return nil, err
 	}
 
-	return s.store.WithTx(ctx, func(ctx context.Context) error {
+	var written []writtenOff
+	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		order, err := s.store.LockOrder(ctx, orderID)
 		if err != nil {
 			return err
@@ -850,9 +901,20 @@ func (s *Service) CancelOrder(ctx context.Context, orderID, reason string) error
 				"unknown order status %q (%s)", order.Status, orderID)
 		}
 
+		if writeOff {
+			if written, err = s.writeOffRemaining(ctx, orderID, reason); err != nil {
+				return err
+			}
+		}
+
 		_, err = s.store.CancelOrder(ctx, orderID, reason)
 		return err
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	return written, nil
 }
 
 // CompleteOrder stamps the order as completed.

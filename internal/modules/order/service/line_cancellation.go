@@ -96,15 +96,9 @@ func (s *Service) CancelOrderLine(
 		return models.OrderLineCancellation{}, err
 	}
 
-	// written is one cancellation the transaction made, kept to publish after
+	// done are the cancellations the transaction made, kept to publish after
 	// the commit: the line asked for and, since ADR 0230, each of its add-ons.
-	type written struct {
-		cancellation models.OrderLineCancellation
-		variantID    string
-		before       int64
-		bought       int64
-	}
-	var done []written
+	var done []writtenOff
 
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		if _, lockErr := s.requireLiveOrder(ctx, orderID, "a line cancellation"); lockErr != nil {
@@ -169,7 +163,7 @@ func (s *Service) CancelOrderLine(
 				return errors.Internal(CodeInconsistentState,
 					"line %s passed the cancellation ceiling and is not on order %s", id, orderID)
 			}
-			w := written{
+			w := writtenOff{
 				cancellation: created, variantID: line.VariantID,
 				before: canceledBefore[id], bought: line.Quantity,
 			}
@@ -197,6 +191,83 @@ func (s *Service) CancelOrderLine(
 	}
 
 	return done[0].cancellation, nil
+}
+
+// orderCanceledReason is the reason a whole order's write-off records when the
+// cancel gave none; a line cancellation always carries one.
+const orderCanceledReason = "order canceled"
+
+// writtenOff is one line cancellation a transaction made, kept to publish after
+// the commit.
+type writtenOff struct {
+	cancellation models.OrderLineCancellation
+	variantID    string
+	before       int64
+	bought       int64
+}
+
+// writeOffRemaining writes off every unit of the order's lines that is not yet
+// returned or written off, and records each write-off's event; the caller holds
+// the order's lock and publishes after the commit (ADR 0285).
+//
+// A line that sold gift cards is left out: it moved no stock, and a card is
+// closed in the payment module ([refuseGiftCardLines]).
+func (s *Service) writeOffRemaining(ctx context.Context, orderID, reason string) ([]writtenOff, error) {
+	if reason == "" {
+		reason = orderCanceledReason
+	}
+	lines, err := s.store.ListLineItems(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]string, 0, len(lines))
+	for i := range lines {
+		if !lines[i].IsGiftcard {
+			targets = append(targets, lines[i].ID)
+		}
+	}
+	if len(targets) == 0 {
+		return nil, nil
+	}
+
+	spokenFor, err := s.unitsSpokenFor(ctx, targets)
+	if err != nil {
+		return nil, err
+	}
+	// The CANCELED sum alone is where each new row sits, for
+	// [Service.CancelOrderLine]'s reason.
+	canceledBefore, err := s.store.CanceledQuantities(ctx, targets)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []writtenOff
+	for i := range lines {
+		line := lines[i]
+		left := line.Quantity - spokenFor[line.ID]
+		if line.IsGiftcard || left <= 0 {
+			continue
+		}
+		created, err := s.store.CreateLineCancellation(ctx, models.OrderLineCancellation{
+			ID:              models.NewLineCancellationID(),
+			OrderLineItemID: line.ID,
+			Quantity:        left,
+			Reason:          reason,
+		})
+		if err != nil {
+			return nil, err
+		}
+		w := writtenOff{
+			cancellation: created, variantID: line.VariantID,
+			before: canceledBefore[line.ID], bought: line.Quantity,
+		}
+		if err := s.recordLineCanceled(ctx, orderID, w.cancellation, w.variantID, w.before, w.bought); err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+
+	return out, nil
 }
 
 // cancellationTargets is the line a write-off names followed by its add-ons,

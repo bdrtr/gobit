@@ -31,6 +31,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The shop's cancel gives the stock back** (ADR 0285, D195). **For
+  operators:** `POST /admin/v1/orders/{id}/cancel` now writes off every unit of
+  the order not yet returned or written off, as line cancellations under the
+  cancel's reason, and the units come back to the shelf; before, the units the
+  checkout had deducted stayed off it. An order that owes an offline method's
+  money and is never paid is the ordinary case.
+
 - **An offline method is paid when the shop says so** (ADR 0284). **For
   operators:** `PAYMENT_OFFLINE_METHODS` names the offline methods a shopper may
   choose — `bank_transfer,cash_on_delivery` — each a payment provider of its

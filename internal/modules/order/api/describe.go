@@ -827,10 +827,10 @@ func describeCreditLines(d *openapi.Doc) {
 func describeLineCancellations(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/line-cancellations", openapi.Operation{
 		Summary: "Writes off units of one line that will not be delivered.",
-		Description: "This is NOT the whole-order cancellation. That one is the checkout " +
-			"saga's compensation and refuses an order that has collected money; this one is " +
-			"for a live order whose line went out of stock, was damaged, or was dropped at " +
-			"the customer's request while the rest ships. " +
+		Description: "This is NOT the whole-order cancellation. That one refuses an order " +
+			"that has collected money and writes off every line that is left (ADR 0285); " +
+			"this one is for a live order whose line went out of stock, was damaged, or was " +
+			"dropped at the customer's request while the rest ships. " +
 			"\n\n" +
 			"NEITHER THE TOTAL NOR THE STATUS MOVES. The order's total says what was sold " +
 			"and goes on saying it; what a customer is owed for a unit they paid for and " +

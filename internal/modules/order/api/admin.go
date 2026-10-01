@@ -151,6 +151,9 @@ type cancelOrderRequest struct {
 // The call is IDEMPOTENT: an already canceled order is not an error, it returns
 // 200 with its existing (canceled) state. For the rationale see
 // [service.Service.CancelOrder]. On a completed order it returns 409.
+//
+// It is the shop's cancel of an order the checkout placed, so it writes off
+// what was not delivered and the stock comes back (ADR 0285).
 func (h *Handler) adminCancelOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -160,7 +163,7 @@ func (h *Handler) adminCancelOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.CancelOrder(ctx, orderID(r), body.Reason); err != nil {
+	if err := h.svc.CancelPlacedOrder(ctx, orderID(r), body.Reason); err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}

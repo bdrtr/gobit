@@ -108,8 +108,9 @@ type Orders interface {
 	GetOrder(ctx context.Context, orderID string) (models.OrderDetail, error)
 	// ListOrders pages the orders.
 	ListOrders(ctx context.Context, in service.ListOrdersInput) (service.OrderPage, error)
-	// CancelOrder cancels the order; it is idempotent.
-	CancelOrder(ctx context.Context, orderID, reason string) error
+	// CancelPlacedOrder cancels an order the checkout placed and writes off
+	// what was not delivered; it is idempotent (ADR 0285).
+	CancelPlacedOrder(ctx context.Context, orderID, reason string) error
 	// CompleteOrder completes the order.
 	CompleteOrder(ctx context.Context, orderID string) (models.Order, error)
 	// Timeline is everything that happened to the order, newest first.

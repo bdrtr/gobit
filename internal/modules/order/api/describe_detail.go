@@ -91,7 +91,12 @@ func describeOrderDetail(d *openapi.Doc) {
 			"\n\n" +
 			"A COMPLETED order is a different matter and comes back as 409: completion is " +
 			"the end of the line, and unwinding it is a refund and a return rather than a " +
-			"cancellation." +
+			"cancellation. So is an order with money collected on it." +
+			"\n\n" +
+			"The cancel WRITES OFF every unit not yet returned or written off, as line " +
+			"cancellations under its reason, so the stock the checkout deducted comes back " +
+			"to the shelf; what a live parcel holds stays out until the parcel is canceled " +
+			"(ADR 0285)." +
 			"\n\n" +
 			"The body is OPTIONAL and carries only a reason, kept on the order for whoever " +
 			"reads it later. " + detailNote,

@@ -123,9 +123,9 @@ func (f *fakeOrders) ListOrders(_ context.Context, in service.ListOrdersInput) (
 	return service.OrderPage{Items: f.orders, Count: f.count, NextCursor: f.nextCursor}, f.err
 }
 
-// CancelOrder cancels the order.
-func (f *fakeOrders) CancelOrder(_ context.Context, orderID, reason string) error {
-	f.record("CancelOrder")
+// CancelPlacedOrder cancels the order.
+func (f *fakeOrders) CancelPlacedOrder(_ context.Context, orderID, reason string) error {
+	f.record("CancelPlacedOrder")
 	f.gotOrderID = orderID
 	f.gotReason = reason
 	return f.err
@@ -659,7 +659,7 @@ func TestAdminCancelWorksWithoutBody(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Equal(t, "", svc.gotReason)
-	assert.Equal(t, []string{"CancelOrder", "GetOrder"}, svc.calls,
+	assert.Equal(t, []string{"CancelPlacedOrder", "GetOrder"}, svc.calls,
 		"after the cancel the CURRENT state of the order has to be read")
 }
 
