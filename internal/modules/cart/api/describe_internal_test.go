@@ -596,7 +596,7 @@ func parameterNames(t *testing.T, op map[string]any, location string) []string {
 // every registered route appears here whether it was described or not. The list
 // is the second half and it is a claim about the SHAPE of the surface: the
 // reads, and the writes an operator taking an order over the telephone needs
-// (ADR 0146, ADR 0286, ADR 0292). Quantity changes, line removals, coupons and
+// (ADR 0146, ADR 0286, ADR 0292, ADR 0300). Quantity changes, coupons and
 // merges stay on the storefront surface, and another endpoint here is a
 // decision rather than an addition.
 func TestEveryAdminEndpointIsDescribed(t *testing.T) {
@@ -634,6 +634,8 @@ func TestEveryAdminEndpointIsDescribed(t *testing.T) {
 		"POST /admin/v1/carts/{id}/shipping-methods",
 		"DELETE /admin/v1/carts/{id}/shipping-methods/{shipping_method_id}",
 		"POST /admin/v1/carts/{id}/complete",
+		"DELETE /admin/v1/carts/{id}/line-items/{line_item_id}",
+		"DELETE /admin/v1/carts/{id}",
 	}, found)
 }
 

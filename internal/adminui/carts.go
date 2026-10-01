@@ -40,6 +40,10 @@ const (
 	CartAddressPath  = CartPath + "/address"
 	CartShippingPath = CartPath + "/shipping"
 	CartCompletePath = CartPath + "/complete"
+	// The operator's corrections of their own cart (ADR 0300): one line
+	// removed, the whole cart discarded.
+	CartLineRemovePath = CartLinesPath + "/{line}/remove"
+	CartDiscardPath    = CartPath + "/discard"
 )
 
 // telephoneLabel is what the section is called on screen.
@@ -63,6 +67,11 @@ type TelephoneCarts interface {
 	ShippingOptions(ctx context.Context, cartID string) (ids, names []string, amounts []int64, err error)
 	// AddShippingMethod prices the shipping option for the cart and adds it.
 	AddShippingMethod(ctx context.Context, cartID, shippingOptionID string) (string, error)
+	// RemoveLine removes a line from an operator's cart and reprices it (ADR
+	// 0300).
+	RemoveLine(ctx context.Context, cartID, lineID string) error
+	// Discard deletes an operator's cart that will not be completed (ADR 0300).
+	Discard(ctx context.Context, cartID string) error
 	// Complete completes the cart in the named channel with an offline method
 	// against the total read to the caller, and returns the order and what it
 	// owes.
@@ -461,6 +470,26 @@ func (u *UI) addCartLine(w http.ResponseWriter, r *http.Request) {
 			strings.TrimSpace(r.PostFormValue(formVariantID)), quantity)
 
 		return "", err
+	})
+}
+
+// removeCartLine removes the line in the path and returns to the cart's page
+// (ADR 0300).
+func (u *UI) removeCartLine(w http.ResponseWriter, r *http.Request) {
+	u.cartWrite(w, r, func(ctx context.Context, id string) (string, error) {
+		return "", u.carts.RemoveLine(ctx, id, chi.URLParam(r, "line"))
+	})
+}
+
+// discardCart deletes the cart and returns to the telephone order's page,
+// where it is no longer listed (ADR 0300).
+func (u *UI) discardCart(w http.ResponseWriter, r *http.Request) {
+	u.cartWrite(w, r, func(ctx context.Context, id string) (string, error) {
+		if err := u.carts.Discard(ctx, id); err != nil {
+			return "", err
+		}
+
+		return CartsPath, nil
 	})
 }
 

@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An operator corrects their own cart** (ADR 0300). **For operators:** the
+  telephone order's cart page removes a line and discards the cart, which
+  then leaves the open carts. **For integrators:**
+  `DELETE /admin/v1/carts/{id}/line-items/{line_item_id}` and
+  `DELETE /admin/v1/carts/{id}` on a cart an operator opened; a shopper's
+  answers 409 `cart_opened_by_shopper`.
+
 - **An order names the operator who placed it** (ADR 0298). **For
   operators:** the panel's order list has a box for the orders an operator
   placed, and an order's page says which operator placed it. **For

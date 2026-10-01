@@ -27,6 +27,8 @@ func TestTheAdminWritesRefuseAShoppersCart(t *testing.T) {
 		{http.MethodPost, "/admin/v1/carts/cart_1/shipping-methods", `{"shipping_option_id":"so_desk"}`},
 		{http.MethodDelete, "/admin/v1/carts/cart_1/shipping-methods/sm_1", ""},
 		{http.MethodPost, "/admin/v1/carts/cart_1/complete", telephoneCompletion},
+		{http.MethodDelete, "/admin/v1/carts/cart_1/line-items/li_1", ""},
+		{http.MethodDelete, "/admin/v1/carts/cart_1", ""},
 	} {
 		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
 			svc := withLineItem()
@@ -46,6 +48,8 @@ func TestTheAdminWritesRefuseAShoppersCart(t *testing.T) {
 			assert.Zero(t, checkout.calls, "no order was placed")
 			assert.Equal(t, service.AddressInput{}, svc.addressInput, "no address was written")
 			assert.Empty(t, svc.gotMethodID, "no method was removed")
+			assert.Empty(t, svc.gotLineID, "no line was removed")
+			assert.Zero(t, svc.deleteCalls, "the cart was not deleted")
 		})
 	}
 }
@@ -110,4 +114,41 @@ func TestAMissingCartIsNotAShoppers(t *testing.T) {
 
 	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	assert.NotContains(t, rec.Body.String(), "cart_opened_by_shopper")
+}
+
+// TestAnOperatorCorrectsOnlyTheirOwnCart is ADR 0300: on a cart an operator
+// opened, the admin side removes a line and discards the cart, each the
+// storefront's own act; on a shopper's both are refused, as every admin write
+// is (TestTheAdminWritesRefuseAShoppersCart).
+func TestAnOperatorCorrectsOnlyTheirOwnCart(t *testing.T) {
+	svc := withOperatorsLineItem()
+	h := newServerWithFlows(t, svc, api.Flows{Repricing: &fakeRepricing{}})
+
+	rec := doRequestAs(t, h, &adminWriter, http.MethodDelete, "/admin/v1/carts/cart_1/line-items/li_1", "")
+	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Equal(t, "li_1", svc.gotLineID, "the line in the path was removed")
+
+	rec = doRequestAs(t, h, &adminWriter, http.MethodDelete, "/admin/v1/carts/cart_1", "")
+	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	assert.Equal(t, 1, svc.deleteCalls, "the cart was deleted")
+
+	surfaceCarts := withOperatorsLineItem()
+	repricing := &fakeRepricing{}
+	surface := surfaceOver(api.Flows{Repricing: repricing}, surfaceCarts)
+	require.NoError(t, surface.RemoveLine(operator(), "cart_1", "li_1"))
+	assert.Equal(t, "li_1", surfaceCarts.gotLineID)
+	assert.Equal(t, []string{"cart_1"}, repricing.repriced, "the removal reprices the cart, as the storefront's does")
+	require.NoError(t, surface.Discard(operator(), "cart_1"))
+	assert.Equal(t, 1, surfaceCarts.deleteCalls)
+
+	shoppers := withLineItem()
+	surface = surfaceOver(api.Flows{Repricing: &fakeRepricing{}}, shoppers)
+	err := surface.RemoveLine(operator(), "cart_1", "li_1")
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err))
+	err = surface.Discard(operator(), "cart_1")
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err))
+	assert.Empty(t, shoppers.gotLineID, "no line of the shopper's was removed")
+	assert.Zero(t, shoppers.deleteCalls, "the shopper's cart was not deleted")
 }

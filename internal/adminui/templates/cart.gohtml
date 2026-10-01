@@ -38,6 +38,16 @@ be read says it is in minor units.
       <td class="num">{{ .Quantity }}</td>
       <td class="num">{{ .UnitPrice }}</td>
       <td class="num">{{ .Total }}</td>
+      {{ if and $.CanWrite (not $.Cart.Completed) }}
+      <td>
+        {{- /* An add-on goes with its line and is not removed alone (ADR 0229). */ -}}
+        {{ if not .AddOn }}
+        <form method="post" action="{{ $.CartsPath }}/{{ $.Cart.ID }}/lines/{{ .ID }}/remove">
+          <button class="quiet" type="submit">Remove</button>
+        </form>
+        {{ end }}
+      </td>
+      {{ end }}
     </tr>
     {{ end }}
   </tbody>
@@ -139,5 +149,12 @@ be read says it is in minor units.
   <button type="submit">Place the order</button>
 </form>
 {{ end }}
+
+{{/* A telephone order the caller abandoned is discarded (ADR 0300). */}}
+<h3>Discard</h3>
+<form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/discard">
+  <p>The cart is deleted with its lines; it cannot be opened again.</p>
+  <button type="submit">Discard the cart</button>
+</form>
 {{ end }}
 {{ end }}

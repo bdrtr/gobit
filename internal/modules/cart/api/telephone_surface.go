@@ -77,6 +77,27 @@ func (s *TelephoneSurface) AddLine(
 	return flow.AddPricedLineItem(scoped, cartID, variantID, quantity, nil, nil, nil)
 }
 
+// RemoveLine removes a line from an operator's cart and reprices it, as the
+// line removal endpoint does (ADR 0300).
+func (s *TelephoneSurface) RemoveLine(ctx context.Context, cartID, lineID string) error {
+	if err := s.h.operatorsCart(ctx, cartID); err != nil {
+		return err
+	}
+
+	return s.h.repriced(ctx, cartID, func() error {
+		return s.h.svc.RemoveLineItem(ctx, cartID, lineID)
+	})
+}
+
+// Discard deletes an operator's cart that will not be completed (ADR 0300).
+func (s *TelephoneSurface) Discard(ctx context.Context, cartID string) error {
+	if err := s.h.operatorsCart(ctx, cartID); err != nil {
+		return err
+	}
+
+	return s.h.svc.DeleteCart(ctx, cartID)
+}
+
 // SetShippingAddress writes the cart's shipping address from the Address*
 // keys and reprices the cart, as the address endpoint does; a key it does not
 // name is left out.

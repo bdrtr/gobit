@@ -46,6 +46,16 @@ func TestTheAdminWritesLeaveAShoppersCartAlone(t *testing.T) {
 		"billing address": func() int {
 			return adminCartRequest(t, http.MethodPut, "/admin/v1/carts/"+cartID+"/billing-address", address).Code
 		},
+		"line removal": func() int {
+			lines, _ := storefrontData(t, read)["items"].([]any)
+			require.Len(t, lines, 1)
+			line, _ := lines[0].(map[string]any)
+			lineID, _ := line["id"].(string)
+			return adminCartRequest(t, http.MethodDelete, "/admin/v1/carts/"+cartID+"/line-items/"+lineID, "").Code
+		},
+		"discard": func() int {
+			return adminCartRequest(t, http.MethodDelete, "/admin/v1/carts/"+cartID, "").Code
+		},
 		"completion": func() int {
 			return adminCartRequest(t, http.MethodPost, "/admin/v1/carts/"+cartID+"/complete",
 				fmt.Sprintf(`{"sales_channel_id":%q,"payment_provider_id":%q,"expected_total":%d}`,

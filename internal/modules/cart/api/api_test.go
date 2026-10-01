@@ -55,6 +55,9 @@ type fakeCarts struct {
 	// updateCalls counts the calls that reached UpdateCart. A refusal is only
 	// a refusal if the write never happened, and a status code cannot say so.
 	updateCalls int
+	// deleteCalls counts the calls that reached DeleteCart, for the same
+	// reason (ADR 0300).
+	deleteCalls int
 	// gotMergeSource and gotMergeTarget are kept apart because the merge names
 	// TWO carts and they are not interchangeable: one survives and the other is
 	// deleted, so a handler that swapped them would empty the wrong basket.
@@ -119,6 +122,7 @@ func (f *fakeCarts) ListCarts(_ context.Context, in service.ListCartsInput) (ser
 // DeleteCart deletes the cart.
 func (f *fakeCarts) DeleteCart(_ context.Context, cartID string) error {
 	f.gotCartID = cartID
+	f.deleteCalls++
 	return f.err
 }
 
@@ -1317,11 +1321,13 @@ func TestAdminListDefaultLimit(t *testing.T) {
 // money is taken through the storefront's own completion with the totals in
 // front of them.
 //
-// Everything in the list below would produce it. Changing a quantity, dropping a
-// line, taking a coupon off, merging another cart in, deleting the cart — each
-// one changes a cart the shopper is holding into a different one while they look
-// at the old figure. The party that does those is the shopper, on the storefront
-// surface, and that is why the admin has no route for them.
+// Everything in the list below would produce it. Changing a quantity, taking a
+// coupon off, merging another cart in — each one changes a cart the shopper is
+// holding into a different one while they look at the old figure. The party
+// that does those is the shopper, on the storefront surface, and that is why
+// the admin has no route for them. Dropping a line and deleting the cart have
+// admin routes since ADR 0300, for the operator's own cart only, and refuse a
+// shopper's (ADR 0299): [TestAnOperatorCorrectsOnlyTheirOwnCart].
 //
 // ADR 0286 opened the addresses, the shipping method and the completion, for a
 // telephone order the operator completes with an offline method: the operator
@@ -1335,10 +1341,8 @@ func TestAdminCannotUndoWhatTheShopperSaw(t *testing.T) {
 
 	for _, tc := range []struct{ method, path string }{
 		{http.MethodPatch, "/admin/v1/carts/cart_1"},
-		{http.MethodDelete, "/admin/v1/carts/cart_1"},
 		{http.MethodPut, "/admin/v1/carts/cart_1"},
 		{http.MethodPatch, "/admin/v1/carts/cart_1/line-items/item_1"},
-		{http.MethodDelete, "/admin/v1/carts/cart_1/line-items/item_1"},
 		{http.MethodPost, "/admin/v1/carts/cart_1/merge"},
 		{http.MethodPost, "/admin/v1/carts/cart_1/promotions"},
 		{http.MethodDelete, "/admin/v1/carts/cart_1/promotions/SUMMER"},

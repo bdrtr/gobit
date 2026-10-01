@@ -304,6 +304,24 @@ func (h *Handler) adminSetBillingAddress(w http.ResponseWriter, r *http.Request)
 	h.storeSetBillingAddress(w, r)
 }
 
+// adminRemoveLineItem is the storefront's line removal on an operator's cart:
+// the operator corrects the cart they are building (ADR 0300).
+func (h *Handler) adminRemoveLineItem(w http.ResponseWriter, r *http.Request) {
+	if h.shoppersCartRefused(w, r) {
+		return
+	}
+	h.storeRemoveLineItem(w, r)
+}
+
+// adminDeleteCart is the storefront's cart deletion on an operator's cart: a
+// telephone order the caller abandoned is discarded (ADR 0300).
+func (h *Handler) adminDeleteCart(w http.ResponseWriter, r *http.Request) {
+	if h.shoppersCartRefused(w, r) {
+		return
+	}
+	h.storeDeleteCart(w, r)
+}
+
 // adminRemoveShippingMethod is the storefront's shipping method removal on an
 // operator's cart (ADR 0286, ADR 0299).
 func (h *Handler) adminRemoveShippingMethod(w http.ResponseWriter, r *http.Request) {

@@ -32,7 +32,21 @@ type fakeCarts struct {
 	addressed  []map[string]string
 	shipped    []string
 	completed  []string
+	removed    []string
+	discarded  []string
 	err        error
+}
+
+func (f *fakeCarts) RemoveLine(_ context.Context, cartID, lineID string) error {
+	f.removed = append(f.removed, cartID+"|"+lineID)
+
+	return f.err
+}
+
+func (f *fakeCarts) Discard(_ context.Context, cartID string) error {
+	f.discarded = append(f.discarded, cartID)
+
+	return f.err
 }
 
 func (f *fakeCarts) OpenCart(_ context.Context, countryCode, customerID, email string) (string, error) {
@@ -131,6 +145,8 @@ func phoneRouter(panel *UI) chi.Router {
 	r.Post(CartAddressPath, panel.setCartAddress)
 	r.Post(CartShippingPath, panel.addCartShipping)
 	r.Post(CartCompletePath, panel.completeCart)
+	r.Post(CartLineRemovePath, panel.removeCartLine)
+	r.Post(CartDiscardPath, panel.discardCart)
 
 	return r
 }
@@ -722,4 +738,46 @@ func newPhonePanel(t *testing.T) *UI {
 	panel.carts = &fakeCarts{}
 
 	return panel
+}
+
+// TestTheOperatorCorrectsTheirCart is ADR 0300 on the page: each line has a
+// remove button that reaches the surface and returns to the cart, and the
+// discard form deletes the cart and returns to the telephone order's page; a
+// refusal is printed on the cart.
+func TestTheOperatorCorrectsTheirCart(t *testing.T) {
+	t.Parallel()
+
+	carts := &fakeCarts{}
+	panel := newCatalogPanel(t, phoneCatalog(false))
+	panel.carts = carts
+
+	page := phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), `action="`+CartsPath+`/cart_phone/lines/line_1/remove"`)
+	assert.NotContains(t, page.Body.String(), `action="`+CartsPath+`/cart_phone/lines/line_2/remove"`,
+		"an add-on goes with its line and is not removed alone (ADR 0229)")
+	assert.Contains(t, page.Body.String(), `action="`+CartsPath+`/cart_phone/discard"`)
+
+	rec := phoneRequest(panel, http.MethodPost, CartsPath+"/cart_phone/lines/line_1/remove", url.Values{}, scopeCartWrite)
+	assert.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	assert.Equal(t, CartsPath+"/cart_phone", rec.Header().Get("Location"))
+	assert.Equal(t, []string{"cart_phone|line_1"}, carts.removed)
+
+	rec = phoneRequest(panel, http.MethodPost, CartsPath+"/cart_phone/discard", url.Values{}, scopeCartWrite)
+	assert.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	assert.Equal(t, CartsPath, rec.Header().Get("Location"), "a discarded cart has no page to return to")
+	assert.Equal(t, []string{"cart_phone"}, carts.discarded)
+
+	refusing := newCatalogPanel(t, phoneCatalog(false))
+	refusing.carts = &fakeCarts{err: errors.Conflict("cart_opened_by_shopper", "a shopper opened this cart")}
+	rec = phoneRequest(refusing, http.MethodPost, CartsPath+"/cart_phone/discard", url.Values{}, scopeCartRead, scopeCartWrite)
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "a shopper opened this cart")
+
+	done := newCatalogPanel(t, phoneCatalog(true))
+	done.carts = &fakeCarts{}
+	page = phoneRequest(done, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.NotContains(t, page.Body.String(), "/remove\"", "a completed cart is not corrected")
+	assert.NotContains(t, page.Body.String(), "/discard\"")
 }

@@ -138,4 +138,9 @@ func (h *Handler) Routes(r chi.Router) {
 	writable.Post("/admin/v1/carts/{id}/shipping-methods", h.adminAddShippingMethod)
 	writable.Delete("/admin/v1/carts/{id}/shipping-methods/{shipping_method_id}", h.adminRemoveShippingMethod)
 	writable.Post("/admin/v1/carts/{id}/complete", h.adminCompleteCart)
+
+	// The operator corrects their own cart: a line removed, the cart discarded
+	// (ADR 0300).
+	writable.Delete("/admin/v1/carts/{id}/line-items/{line_item_id}", h.adminRemoveLineItem)
+	writable.Delete("/admin/v1/carts/{id}", h.adminDeleteCart)
 }

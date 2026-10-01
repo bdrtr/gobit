@@ -458,6 +458,18 @@ func describeAdminCompletion(d *openapi.Doc) {
 					"the provider is not an offline method."),
 		},
 	})
+	d.Describe(http.MethodDelete, "/admin/v1/carts/{id}/line-items/{line_item_id}", openapi.Operation{
+		Summary: "Removes a line from a cart an operator opened; the cart is repriced (ADR 0300).",
+		Responses: operatorsCartOnly(map[string]any{
+			"204": emptyResponse("The line item was removed"),
+		}),
+	})
+	d.Describe(http.MethodDelete, "/admin/v1/carts/{id}", openapi.Operation{
+		Summary: "Discards a cart an operator opened, one the caller will not complete (ADR 0300).",
+		Responses: operatorsCartOnly(map[string]any{
+			"204": emptyResponse("The cart was deleted"),
+		}),
+	})
 }
 
 // operatorsCartOnly adds the refusal every admin write on a cart in the path

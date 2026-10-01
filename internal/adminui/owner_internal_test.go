@@ -503,6 +503,14 @@ func (c recordingCarts) AddShippingMethod(context.Context, string, string) (stri
 	return "", c.surfaces.reach(ServiceCartAdmin)
 }
 
+func (c recordingCarts) RemoveLine(context.Context, string, string) error {
+	return c.surfaces.reach(ServiceCartAdmin)
+}
+
+func (c recordingCarts) Discard(context.Context, string) error {
+	return c.surfaces.reach(ServiceCartAdmin)
+}
+
 func (c recordingCarts) Complete(
 	context.Context, string, string, string, int64,
 ) (orderID string, outstanding int64, err error) {
@@ -611,6 +619,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, CartCompletePath): {
 		formSalesChannelID: {"sc_1"}, formPaymentMethod: {"bank_transfer"}, formReadTotal: {"1000"},
 	},
+	// And corrects the operator's own cart (ADR 0300).
+	routeKey(http.MethodPost, CartLineRemovePath): {},
+	routeKey(http.MethodPost, CartDiscardPath):    {},
 }
 
 // panelWalk is one panel built on the recording doubles.
@@ -680,7 +691,7 @@ func (w *panelWalk) request(t *testing.T, key string, walk walkCase, scopes ...s
 
 	method, pattern, _ := strings.Cut(key, " ")
 	path := strings.NewReplacer("{id}", "walk", "{variantID}", "walk",
-		"{kind}", "return", "{record}", "walk", "{act}", "cancel").Replace(pattern)
+		"{kind}", "return", "{record}", "walk", "{act}", "cancel", "{line}", "walk").Replace(pattern)
 
 	var req *http.Request
 	if method == http.MethodPost {

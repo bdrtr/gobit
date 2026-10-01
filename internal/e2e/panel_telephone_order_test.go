@@ -233,3 +233,72 @@ func TestAnOperatorFindsTheCallerInThePanel(t *testing.T) {
 	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
 	assert.Contains(t, page.Body.String(), "customer "+customerID, "the cart is the found customer's")
 }
+
+// TestAnOperatorCorrectsATelephoneCartInThePanel is ADR 0300 on the production
+// wiring: the operator removes a line from the cart they opened, the page
+// reads the cart without it, and the discarded cart leaves the open carts and
+// has no page.
+func TestAnOperatorCorrectsATelephoneCartInThePanel(t *testing.T) {
+	ctx := t.Context()
+	keep, _ := newStockedVariant(ctx, t, "E2E Panel Kept Line", map[string]int64{taxedCurrency: adminCartUnitPrice}, adminCartStock)
+	drop, _ := newStockedVariant(ctx, t, "E2E Panel Dropped Line", map[string]int64{taxedCurrency: adminCartUnitPrice}, adminCartStock)
+
+	panel, err := adminui.FromContainer(ctr, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_phone", Kind: "user", Scopes: []string{"cart:read", "cart:write"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	opened := send(http.MethodPost, adminui.CartsPath, url.Values{
+		"country_code": {taxedCountry}, "email": {"caller@example.com"},
+	})
+	require.Equal(t, http.StatusSeeOther, opened.Code, opened.Body.String())
+	cartPath := opened.Header().Get("Location")
+	for _, variantID := range []string{keep, drop} {
+		added := send(http.MethodPost, cartPath+"/lines", url.Values{
+			"sales_channel_id": {testChannelID}, "variant_id": {variantID}, "quantity": {"1"},
+		})
+		require.Equal(t, http.StatusSeeOther, added.Code, added.Body.String())
+	}
+
+	cart, err := cartSvc.GetCart(ctx, strings.TrimPrefix(cartPath, adminui.CartsPath+"/"))
+	require.NoError(t, err)
+	var dropLine string
+	for _, line := range cart.Items {
+		if line.VariantID == drop {
+			dropLine = line.ID
+		}
+	}
+	require.NotEmpty(t, dropLine)
+
+	removed := send(http.MethodPost, cartPath+"/lines/"+dropLine+"/remove", url.Values{})
+	require.Equal(t, http.StatusSeeOther, removed.Code, removed.Body.String())
+	page := send(http.MethodGet, cartPath, nil)
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	assert.Contains(t, page.Body.String(), "E2E Panel Kept Line")
+	assert.NotContains(t, page.Body.String(), "E2E Panel Dropped Line", "the removed line is gone")
+	repriced, err := cartSvc.GetCart(ctx, strings.TrimPrefix(cartPath, adminui.CartsPath+"/"))
+	require.NoError(t, err)
+	assert.False(t, repriced.TotalsStale(), "the removal repriced the cart")
+	assert.Equal(t, adminCartUnitPrice, repriced.Subtotal, "the total is the kept line's alone")
+
+	discarded := send(http.MethodPost, cartPath+"/discard", url.Values{})
+	require.Equal(t, http.StatusSeeOther, discarded.Code, discarded.Body.String())
+	assert.Equal(t, adminui.CartsPath, discarded.Header().Get("Location"))
+	listed := send(http.MethodGet, adminui.CartsPath, nil)
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	assert.NotContains(t, listed.Body.String(), `href="`+cartPath+`"`, "a discarded cart is not open")
+	gone := send(http.MethodGet, cartPath, nil)
+	assert.Equal(t, http.StatusNotFound, gone.Code, gone.Body.String())
+}
