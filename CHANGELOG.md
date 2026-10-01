@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel shows a product's history** (ADR 0316). **For operators:** the
+  product page links to its revisions, newest first with what each changed,
+  and an older one is restored under `product:write`; a product written since
+  the page was read is refused rather than overwritten.
+
 - **A promotion is limited to categories in the panel** (ADR 0315). **For
   operators:** a promotion's page limits a discount on items to chosen
   categories and their subcategories, names the categories of its rules, and

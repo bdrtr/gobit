@@ -23,7 +23,7 @@ names it under the table.
 <p><a href="{{ .ProductsPath }}">← Products</a></p>
 
 <h1>{{ .Product.Title }}</h1>
-<p><a href="{{ .EditPath }}">Edit</a></p>
+<p><a href="{{ .EditPath }}">Edit</a> · <a href="{{ .ProductsPath }}/{{ .Product.ID }}/revisions">History</a></p>
 <dl>
   <dt>Handle</dt><dd>{{ .Product.Handle }}</dd>
   <dt>Status</dt><dd>{{ .Product.Status }}</dd>

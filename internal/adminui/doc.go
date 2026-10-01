@@ -125,6 +125,11 @@
 // and removes a rule ([UI.addCategoryRule], [UI.removeRule]); the categories
 // are the product module's, read only for an operator who may (ADR 0315).
 //
+// A product's history ([UI.showRevisions]) lists the revisions the product
+// module records for its writes, and restores an older one at the version the
+// page was read at ([UI.restoreRevision]), refused as an edit is when the
+// product moved since (ADR 0316).
+//
 // # Response bodies go through core's writer
 //
 // HTML is never STREAMED to the writer. The template is rendered into memory

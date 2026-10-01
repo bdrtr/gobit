@@ -467,6 +467,14 @@ func (s *recordingSurfaces) SetVariantBundle(context.Context, string, []string, 
 	return s.reach(ServiceProductAdmin)
 }
 
+func (s *recordingSurfaces) RevisionsJSON(context.Context, string, int32, int32) (json.RawMessage, int64, error) {
+	return json.RawMessage(`[]`), 0, s.reach(ServiceProductAdmin)
+}
+
+func (s *recordingSurfaces) RestoreRevision(context.Context, string, int64, int64) ([]string, error) {
+	return nil, s.reach(ServiceProductAdmin)
+}
+
 // recordingPrices is the pricing surface; a separate type because its method
 // set would otherwise have to share a receiver with the product surface's.
 type recordingPrices struct{ surfaces *recordingSurfaces }
@@ -708,6 +716,8 @@ var walkForms = map[string]url.Values{
 	// A promotion's rules (ADR 0315).
 	routeKey(http.MethodPost, PromotionRulesPath):      {formCategory: {"pcat_walk"}},
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
+	// Restoring a product's revision (ADR 0316).
+	routeKey(http.MethodPost, ProductRevisionRestorePath): {fieldVersion: {"3"}},
 	// Writing a coupon (ADR 0314).
 	routeKey(http.MethodPost, PromotionsPath): {
 		formCouponCode: {"WALK"}, formCouponMeasure: {"percentage"}, formCouponAmount: {"10"}, formCouponTarget: {"order"},
@@ -782,7 +792,8 @@ func (w *panelWalk) request(t *testing.T, key string, walk walkCase, scopes ...s
 
 	method, pattern, _ := strings.Cut(key, " ")
 	path := strings.NewReplacer("{id}", "walk", "{variantID}", "walk",
-		"{kind}", "return", "{record}", "walk", "{act}", "cancel", "{line}", "walk").Replace(pattern)
+		"{kind}", "return", "{record}", "walk", "{act}", "cancel", "{line}", "walk",
+		"{ruleID}", "walk", "{revision}", "2").Replace(pattern)
 
 	var req *http.Request
 	if method == http.MethodPost {

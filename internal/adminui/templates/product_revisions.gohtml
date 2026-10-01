@@ -1,0 +1,53 @@
+{{- /*
+product_revisions.gohtml is a product's history (ADR 0316).
+
+The revisions are the product module's: one for every write that changed the
+product's admin view, newest first, each naming the fields it changed and the
+request that made it, which the admin audit log records its caller under. An
+operator who may write products restores an older revision; the form carries
+the version the page was read at, so a product written since is refused rather
+than overwritten. A restore writes the descriptive content back — the status,
+the schedule, the variants, the options and the images stay as they are — and
+the page names what the revision held that has been removed since.
+*/ -}}
+{{ define "body" }}
+<p><a href="{{ .ProductsPath }}/{{ .ProductID }}">← Product</a></p>
+<h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ with .Restored }}<p role="status">Revision {{ . }} was restored as a new revision.{{ with $.Dropped }} Left out, since removed: {{ range $i, $d := . }}{{ if $i }}, {{ end }}{{ $d }}{{ end }}.{{ end }}</p>{{ end }}
+
+<p class="muted">{{ .Total }} revisions; the product is at version {{ .Version }}.</p>
+
+{{ if .Revisions }}
+<div class="scroll">
+<table>
+  <thead><tr><th class="num">Version</th><th>Recorded (UTC)</th><th>Changed</th><th>Request</th>{{ if .CanRestore }}<th></th>{{ end }}</tr></thead>
+  <tbody>
+  {{ range .Revisions }}
+    <tr>
+      <td class="num">{{ .Version }}</td>
+      <td>{{ .RecordedAt.UTC.Format "2006-01-02 15:04:05" }}</td>
+      <td>{{ if .Changed }}{{ range $i, $c := .Changed }}{{ if $i }}, {{ end }}{{ $c }}{{ end }}{{ else }}<span class="muted">first</span>{{ end }}</td>
+      <td>{{ with .RequestID }}<code>{{ . }}</code>{{ else }}<span class="muted">a job</span>{{ end }}</td>
+      {{ if $.CanRestore }}<td>{{ if ne .Version $.Version }}
+        <form method="post" action="{{ $.ProductsPath }}/{{ $.ProductID }}/revisions/{{ .Version }}/restore">
+          <input type="hidden" name="version" value="{{ $.Version }}">
+          <button type="submit">Restore</button>
+        </form>
+      {{ else }}<span class="muted">current</span>{{ end }}</td>{{ end }}
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No revision is recorded.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Newer</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Older</a>{{ end }}
+</nav>
+{{ end }}
