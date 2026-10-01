@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -57,10 +58,12 @@ const CodeUnitPriceAmbiguous = "pricing_unit_price_ambiguous"
 // a real side effect of an edit that looks local.
 //
 // Two saves of the same set, each changing its own currency, both land: the set
-// is read under its lock and written back from what it holds (D193). Two saves
-// of the same currency are last-write-wins; there is no version on the form.
+// is read under its lock and written back from what it holds (D193). read is the
+// amount the form was drawn with, and a price that holds another one by the
+// time the write takes the lock is refused with [CodePriceMoved] (ADR 0280), so
+// two saves of the same currency do not silently overwrite each other.
 func (a *AdminSurface) SetBasePriceAmount(
-	ctx context.Context, priceSetID, currencyCode string, amount int64,
+	ctx context.Context, priceSetID, currencyCode string, read, amount int64,
 ) error {
 	if a == nil {
 		return errors.Unavailable(CodeInvalidInput, "the pricing admin surface is not set up")
@@ -69,10 +72,34 @@ func (a *AdminSurface) SetBasePriceAmount(
 		return err
 	}
 
-	_, err := a.svc.setUnitBasePrices(ctx, priceSetID, map[string]int64{currencyCode: amount})
+	currency := strings.ToUpper(strings.TrimSpace(currencyCode))
+	if currency == "" {
+		return errors.Invalid(CodeInvalidInput, "the currency is required")
+	}
+	_, err := a.svc.reviseUnitBasePrices(ctx, priceSetID, map[string]int64{currency: amount},
+		func(existing []models.Price) error {
+			at := unitBasePrices(existing, currency)
+			// Two prices at one unit are refused as ambiguous by the write
+			// itself; which of them moved is not this check's to say.
+			if len(at) > 1 || (len(at) == 1 && existing[at[0]].Amount == read) {
+				return nil
+			}
+			now := "none"
+			if len(at) == 1 {
+				now = strconv.FormatInt(existing[at[0]].Amount, 10)
+			}
+
+			return errors.Conflict(CodePriceMoved,
+				"the base price in %s is %s, not the %d the form was drawn with; nothing was saved",
+				currency, now, read)
+		})
 
 	return err
 }
+
+// CodePriceMoved refuses a price written over an amount the writer was not
+// shown (ADR 0280).
+const CodePriceMoved = "pricing_price_moved"
 
 // setUnitBasePrices sets the base price at one unit in each named currency,
 // leaves every other price on the set as it is, and reports whether it wrote.
@@ -83,6 +110,16 @@ func (a *AdminSurface) SetBasePriceAmount(
 // guard here would be a branch no test could distinguish from its absence.
 func (s *Service) setUnitBasePrices(
 	ctx context.Context, priceSetID string, amountsByCurrency map[string]int64,
+) (bool, error) {
+	return s.reviseUnitBasePrices(ctx, priceSetID, amountsByCurrency, nil)
+}
+
+// reviseUnitBasePrices is the write behind setUnitBasePrices; check, when given,
+// looks at the prices read under the set's lock before anything is decided and
+// refuses the write by returning an error (ADR 0280).
+func (s *Service) reviseUnitBasePrices(
+	ctx context.Context, priceSetID string, amountsByCurrency map[string]int64,
+	check func(existing []models.Price) error,
 ) (bool, error) {
 	amounts := make(map[string]int64, len(amountsByCurrency))
 	for code, amount := range amountsByCurrency {
@@ -107,6 +144,11 @@ func (s *Service) setUnitBasePrices(
 	// a filtered read would have the write below delete the rest.
 	changed := false
 	_, err := s.repo.RevisePrices(ctx, priceSetID, func(existing []models.Price) ([]models.Price, bool, error) {
+		if check != nil {
+			if err := check(existing); err != nil {
+				return nil, false, err
+			}
+		}
 		inputs, write, err := unitBaseInputs(priceSetID, existing, amounts)
 		if err != nil || !write {
 			return nil, false, err

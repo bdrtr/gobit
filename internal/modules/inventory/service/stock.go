@@ -29,6 +29,26 @@ import (
 // close locks that same row exclusively, so this write either finishes before
 // the close or waits and then finds the location closed (ADR 0055).
 func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID string, stockedQty int64) (models.InventoryLevel, error) {
+	return s.setInventoryLevel(ctx, itemID, locationID, stockedQty, nil)
+}
+
+// SetInventoryLevelFrom writes the physical quantity as [Service.SetInventoryLevel]
+// does, and only when the level still holds read, the quantity the writer was
+// shown (ADR 0280). A level that moved since — a sale took a unit, somebody else
+// counted — is refused with [CodeStockMoved] and nothing is written: an
+// absolute count written over a quantity it never saw would erase the movement
+// in between. A location with no level yet holds zero.
+func (s *Service) SetInventoryLevelFrom(
+	ctx context.Context, itemID, locationID string, read, stockedQty int64,
+) (models.InventoryLevel, error) {
+	return s.setInventoryLevel(ctx, itemID, locationID, stockedQty, &read)
+}
+
+// setInventoryLevel is the write behind both; read, when given, is compared
+// with the level under its lock.
+func (s *Service) setInventoryLevel(
+	ctx context.Context, itemID, locationID string, stockedQty int64, read *int64,
+) (models.InventoryLevel, error) {
 	if err := requireIDs(itemID, locationID); err != nil {
 		return models.InventoryLevel{}, err
 	}
@@ -53,6 +73,9 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 			if !errors.HasKind(err, errors.KindNotFound) {
 				return err
 			}
+			if err := stockUnmoved(read, 0, locationID); err != nil {
+				return err
+			}
 			created, createErr := s.openLevel(ctx, itemID, locationID, stockedQty,
 				models.MovementStockCount)
 			if createErr != nil {
@@ -62,6 +85,9 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 			return nil
 		}
 
+		if err := stockUnmoved(read, level.StockedQuantity, locationID); err != nil {
+			return err
+		}
 		if stockedQty < level.ReservedQuantity {
 			return errors.Conflict(CodeInsufficientStock,
 				"fiziksel adet (%d) rezerve adedin (%d) altına indirilemez; önce rezervasyonları serbest bırakın",
@@ -80,6 +106,18 @@ func (s *Service) SetInventoryLevel(ctx context.Context, itemID, locationID stri
 		return models.InventoryLevel{}, err
 	}
 	return out, nil
+}
+
+// stockUnmoved refuses a count written over a quantity the writer was not
+// shown: read is what they saw, current what the locked level holds.
+func stockUnmoved(read *int64, current int64, locationID string) error {
+	if read == nil || *read == current {
+		return nil
+	}
+
+	return errors.Conflict(CodeStockMoved,
+		"the physical count at %s is %d, not the %d the form was drawn with; nothing was saved, "+
+			"so look again and count from what is there", locationID, current, *read)
 }
 
 // AdjustInventory raises or lowers the physical quantity by delta, as an

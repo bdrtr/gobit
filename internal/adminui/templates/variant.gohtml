@@ -45,6 +45,7 @@ section names it.
         <input type="hidden" name="price_set_id" value="{{ $setID }}">
         <input type="hidden" name="currency" value="{{ .Currency }}">
         <input type="hidden" name="minor" value="{{ if .Minor }}1{{ else }}0{{ end }}">
+        <input type="hidden" name="read_amount" value="{{ .Amount }}">
         <label>{{ .Currency }}{{ if .Minor }} (minor units){{ end }}
           <input type="text" name="amount" value="{{ .Amount }}" required>
         </label>
@@ -111,6 +112,7 @@ section names it.
             <form method="post" action="{{ $stockPath }}">
               <input type="hidden" name="inventory_item_id" value="{{ $itemID }}">
               <input type="hidden" name="location_id" value="{{ .LocationID }}">
+              <input type="hidden" name="read_quantity" value="{{ .StockedQuantity }}">
               <input type="number" name="quantity" value="{{ .StockedQuantity }}" min="0" required>
               <button type="submit"{{ if not $canStock }} disabled{{ end }}>Save</button>
             </form>

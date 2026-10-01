@@ -38,9 +38,17 @@ const (
 // PriceWriter is the narrow price surface the panel needs (ADR 0001).
 type PriceWriter interface {
 	// SetBasePriceAmount sets one base price's amount and leaves every other
-	// price on the set untouched.
-	SetBasePriceAmount(ctx context.Context, priceSetID, currencyCode string, amount int64) error
+	// price on the set untouched; read is the amount the form was drawn with,
+	// and a price that moved since is refused (ADR 0280).
+	SetBasePriceAmount(ctx context.Context, priceSetID, currencyCode string, read, amount int64) error
 }
+
+// The hidden fields of the price and stock forms that carry what the form was
+// drawn with, so a write over a value that moved since is refused (ADR 0280).
+const (
+	formReadAmount   = "read_amount"
+	formReadQuantity = "read_quantity"
+)
 
 // StockAdmin is the narrow stock surface the panel needs.
 //
@@ -50,8 +58,10 @@ type PriceWriter interface {
 type StockAdmin interface {
 	// StockLevelsJSON returns one line per stock location for the item.
 	StockLevelsJSON(ctx context.Context, itemID string) (json.RawMessage, error)
-	// SetStockLevel sets the physical quantity at one location.
-	SetStockLevel(ctx context.Context, itemID, locationID string, quantity int64) error
+	// SetStockLevel sets the physical quantity at one location; read is the
+	// count the form was drawn with, and a level that moved since is refused
+	// (ADR 0280).
+	SetStockLevel(ctx context.Context, itemID, locationID string, read, quantity int64) error
 }
 
 // stockLevelRow is one location's line on the variant page.
@@ -106,14 +116,22 @@ func (u *UI) submitVariantPrice(w http.ResponseWriter, r *http.Request) {
 	priceSetID := r.PostFormValue("price_set_id")
 	currency := strings.ToUpper(strings.TrimSpace(r.PostFormValue("currency")))
 
-	amount, err := parseAmount(r.PostFormValue("amount"), u.currencyScales(r.Context())[currency],
-		r.PostFormValue("minor") == "1")
+	scale, minor := u.currencyScales(r.Context())[currency], r.PostFormValue("minor") == "1"
+	amount, err := parseAmount(r.PostFormValue("amount"), scale, minor)
 	if err != nil {
 		u.renderVariant(w, r, http.StatusUnprocessableEntity, productID, variantID, err.Error())
 		return
 	}
+	// The amount the form was drawn with, written in the same notation, so a
+	// price that moved since is refused rather than overwritten (ADR 0280).
+	read, err := parseAmount(r.PostFormValue(formReadAmount), scale, minor)
+	if err != nil {
+		u.renderVariant(w, r, http.StatusUnprocessableEntity, productID, variantID,
+			"The form does not say which price it was drawn with; open the page again.")
+		return
+	}
 
-	if err := u.prices.SetBasePriceAmount(r.Context(), priceSetID, currency, amount); err != nil {
+	if err := u.prices.SetBasePriceAmount(r.Context(), priceSetID, currency, read, amount); err != nil {
 		u.afterWrite(w, r, err, productID, variantID, "The price could not be saved")
 		return
 	}
@@ -148,8 +166,16 @@ func (u *UI) submitVariantStock(w http.ResponseWriter, r *http.Request) {
 			"The quantity must be a whole number.")
 		return
 	}
+	// The count the form was drawn with: a level that moved since is refused
+	// rather than overwritten (ADR 0280).
+	read, convErr := strconv.ParseInt(strings.TrimSpace(r.PostFormValue(formReadQuantity)), 10, 64)
+	if convErr != nil {
+		u.renderVariant(w, r, http.StatusUnprocessableEntity, productID, variantID,
+			"The form does not say which count it was drawn with; open the page again.")
+		return
+	}
 
-	if err := u.stock.SetStockLevel(r.Context(), itemID, locationID, quantity); err != nil {
+	if err := u.stock.SetStockLevel(r.Context(), itemID, locationID, read, quantity); err != nil {
 		u.afterWrite(w, r, err, productID, variantID, "The stock could not be saved")
 		return
 	}

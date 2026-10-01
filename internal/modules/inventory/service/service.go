@@ -63,6 +63,9 @@ const (
 	// CodeInsufficientStock reports that the requested quantity is more than the
 	// sellable stock. The call that loses a reservation race gets this one too.
 	CodeInsufficientStock = "inventory_insufficient_stock"
+	// CodeStockMoved refuses a physical count written over a quantity the
+	// writer was not shown (ADR 0280).
+	CodeStockMoved = "inventory_stock_moved"
 	// CodeReservationNotActive reports that an invalid transition was attempted
 	// on a finished reservation.
 	CodeReservationNotActive = "inventory_reservation_not_active"

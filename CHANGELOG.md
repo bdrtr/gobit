@@ -24,6 +24,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A price and a count name what they were drawn with** (ADR 0280). **For
+  operators:** saving a variant's price or a location's physical count in the
+  panel over a value that changed since the page was drawn — another
+  operator's save, a sale taking a unit — is refused and the page shows the
+  value as it is now, instead of writing the old figure back.
+
 - **Two price edits to one set no longer lose one of them** (D193). **For
   operators:** saving a variant's price in one currency while another currency
   of the same variant is saved, from the panel or a catalog import, keeps both

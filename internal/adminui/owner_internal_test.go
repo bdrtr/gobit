@@ -455,7 +455,7 @@ func (s *recordingSurfaces) SetVariantBundle(context.Context, string, []string, 
 // set would otherwise have to share a receiver with the product surface's.
 type recordingPrices struct{ surfaces *recordingSurfaces }
 
-func (p recordingPrices) SetBasePriceAmount(context.Context, string, string, int64) error {
+func (p recordingPrices) SetBasePriceAmount(context.Context, string, string, int64, int64) error {
 	return p.surfaces.reach(ServicePricingAdmin)
 }
 
@@ -467,7 +467,7 @@ func (s recordingStock) StockLevelsJSON(context.Context, string) (json.RawMessag
 	return json.RawMessage(`[{"location_id":"walk","location_name":"walk"}]`), nil
 }
 
-func (s recordingStock) SetStockLevel(context.Context, string, string, int64) error {
+func (s recordingStock) SetStockLevel(context.Context, string, string, int64, int64) error {
 	return s.surfaces.reach(ServiceInventoryAdmin)
 }
 
@@ -552,10 +552,10 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, ProductRelationsPath): {FieldCrossSellIDs: {""}},
 	routeKey(http.MethodPost, ProductAddOnsPath):    {"add_ons": {""}},
 	routeKey(http.MethodPost, VariantPricePath): {
-		"price_set_id": {"walk"}, "currency": {"TRY"}, "amount": {"1"}, "minor": {"1"},
+		"price_set_id": {"walk"}, "currency": {"TRY"}, "amount": {"1"}, "read_amount": {"1"}, "minor": {"1"},
 	},
 	routeKey(http.MethodPost, VariantStockPath): {
-		"inventory_item_id": {"walk"}, "location_id": {"walk"}, "quantity": {"1"},
+		"inventory_item_id": {"walk"}, "location_id": {"walk"}, "quantity": {"1"}, "read_quantity": {"0"},
 	},
 	routeKey(http.MethodPost, VariantBundlePath): {"parts": {""}, "version": {"1"}},
 	// The walk withdraws a return; every act reaches the same surface.

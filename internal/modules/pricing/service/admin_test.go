@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,6 +47,31 @@ func newAdminFixture(t *testing.T, existing []models.Price) *adminFixture {
 	return fx
 }
 
+// setPrice saves a base price through the surface as the form does: the amount
+// the fixture holds at one unit is what the form was drawn with (ADR 0280).
+func (fx *adminFixture) setPrice(t *testing.T, currency string, amount int64) error {
+	t.Helper()
+
+	existing, err := fx.repo.listPricesFn(context.Background(), "pset_1")
+	require.NoError(t, err)
+	var read int64
+	if at := unitBasePrices(existing, strings.ToUpper(strings.TrimSpace(currency))); len(at) == 1 {
+		read = existing[at[0]].Amount
+	}
+
+	return fx.surface.SetBasePriceAmount(context.Background(), "pset_1", currency, read, amount)
+}
+
+// addPrice sets a base price in a currency the set has none at one unit in,
+// through the write a catalog import uses; the panel draws no form for it.
+func (fx *adminFixture) addPrice(t *testing.T, currency string, amount int64) error {
+	t.Helper()
+
+	_, err := fx.surface.svc.setUnitBasePrices(context.Background(), "pset_1", map[string]int64{currency: amount})
+
+	return err
+}
+
 // listedPrice builds a stored price.
 func listedPrice(currency string, amount int64, listID *string, rules []models.PriceRule) models.Price {
 	return models.Price{
@@ -81,7 +107,7 @@ func TestSetBasePriceAmountKeepsEveryOtherPrice(t *testing.T) {
 		}),
 	})
 
-	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 24990))
+	require.NoError(t, fx.setPrice(t, "TRY", 24990))
 
 	require.Len(t, fx.written, 4,
 		"no price may be dropped; the writer underneath REPLACES the whole set")
@@ -123,7 +149,7 @@ func TestSetBasePriceAmountPreservesRuleContent(t *testing.T) {
 		}),
 	})
 
-	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 24990))
+	require.NoError(t, fx.setPrice(t, "TRY", 24990))
 
 	var rules []models.PriceRule
 	for _, price := range fx.written {
@@ -148,7 +174,7 @@ func TestSetBasePriceAmountAddsAMissingCurrency(t *testing.T) {
 
 	fx := newAdminFixture(t, []models.Price{listedPrice("TRY", 19990, nil, nil)})
 
-	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "usd", 999))
+	require.NoError(t, fx.addPrice(t, "usd", 999))
 
 	require.Len(t, fx.written, 2)
 
@@ -177,7 +203,7 @@ func TestANewPriceCarriesTheNormalizedCurrency(t *testing.T) {
 
 	fx := newAdminFixture(t, nil)
 
-	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", " try ", 24990))
+	require.NoError(t, fx.addPrice(t, " try ", 24990))
 
 	require.Len(t, fx.written, 1)
 	assert.Equal(t, "TRY", fx.written[0].CurrencyCode)
@@ -196,7 +222,7 @@ func TestAPaddedCurrencyStillFindsTheBasePrice(t *testing.T) {
 
 	fx := newAdminFixture(t, []models.Price{listedPrice("TRY", 19990, nil, nil)})
 
-	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", " try ", 24990))
+	require.NoError(t, fx.setPrice(t, " try ", 24990))
 
 	require.Len(t, fx.written, 1, "the set must not gain a second base price in one currency")
 	assert.Equal(t, int64(24990), fx.written[0].Amount)
@@ -209,7 +235,7 @@ func TestSetBasePriceAmountRejectsAnEmptyCurrency(t *testing.T) {
 
 	fx := newAdminFixture(t, nil)
 
-	err := fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "  ", 100)
+	err := fx.setPrice(t, "  ", 100)
 
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err))
@@ -223,7 +249,7 @@ func TestPricingAdminSurfaceIsNilSafe(t *testing.T) {
 
 	var surface *AdminSurface
 
-	err := surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 100)
+	err := surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 0, 100)
 
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindUnavailable))
@@ -260,7 +286,7 @@ func TestSetBasePriceAmountLeavesAQuantityTierAlone(t *testing.T) {
 		tierPrice("price_ten", 9000, 10, nil),
 	})
 
-	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 12000))
+	require.NoError(t, fx.setPrice(t, "TRY", 12000))
 
 	assert.Equal(t, map[int32]int64{1: 12000, 10: 9000}, writtenAmounts(fx.written))
 }
@@ -275,7 +301,7 @@ func TestAPriceAtOneUnitIsAddedBelowTheLowestTier(t *testing.T) {
 		tierPrice("price_ten", 9000, 10, nil),
 	})
 
-	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 10000))
+	require.NoError(t, fx.addPrice(t, "TRY", 10000))
 
 	assert.Equal(t, map[int32]int64{1: 10000, 10: 9000, 50: 8000}, writtenAmounts(fx.written))
 	for i := range fx.written {
@@ -293,7 +319,7 @@ func TestAnAmountThatStandsWritesNothing(t *testing.T) {
 
 	fx := newAdminFixture(t, []models.Price{listedPrice("TRY", 19990, nil, nil)})
 
-	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 19990))
+	require.NoError(t, fx.setPrice(t, "TRY", 19990))
 
 	assert.Nil(t, fx.written, "nothing is written")
 }
@@ -309,7 +335,7 @@ func TestTwoPricesAtOneUnitAreNotGuessedBetween(t *testing.T) {
 		tierPrice("price_five", 9500, 1, &upTo),
 	})
 
-	err := fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 12000)
+	err := fx.setPrice(t, "TRY", 12000)
 
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
@@ -330,4 +356,31 @@ func TestACurrencyNamedTwiceIsRefused(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err))
 	assert.Nil(t, fx.written)
+}
+
+// TestAPriceOverAnAmountItDidNotSeeIsRefused is ADR 0280: the form says what
+// it was drawn with, and a price that holds another amount when the write
+// reads it under the set's lock is refused with nothing written; a currency
+// with no price at one unit was never drawn and is refused the same way.
+func TestAPriceOverAnAmountItDidNotSeeIsRefused(t *testing.T) {
+	t.Parallel()
+
+	fx := newAdminFixture(t, []models.Price{listedPrice("TRY", 19990, nil, nil)})
+
+	err := fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "TRY", 18000, 24990)
+	require.Error(t, err)
+	assert.Equal(t, CodePriceMoved, errors.CodeOf(err))
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+	assert.Contains(t, err.Error(), "is 19990, not the 18000")
+	assert.Nil(t, fx.written, "the refused write writes nothing")
+
+	err = fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "USD", 0, 999)
+	require.Error(t, err)
+	assert.Equal(t, CodePriceMoved, errors.CodeOf(err))
+	assert.Contains(t, err.Error(), "is none")
+	assert.Nil(t, fx.written)
+
+	require.NoError(t, fx.surface.SetBasePriceAmount(context.Background(), "pset_1", "try", 19990, 24990))
+	require.Len(t, fx.written, 1)
+	assert.Equal(t, int64(24990), fx.written[0].Amount)
 }

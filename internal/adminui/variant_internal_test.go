@@ -23,13 +23,14 @@ type fakePriceWriter struct {
 	calls    int
 	setID    string
 	currency string
+	read     int64
 	amount   int64
 	err      error
 }
 
-func (f *fakePriceWriter) SetBasePriceAmount(_ context.Context, setID, currency string, amount int64) error {
+func (f *fakePriceWriter) SetBasePriceAmount(_ context.Context, setID, currency string, read, amount int64) error {
 	f.calls++
-	f.setID, f.currency, f.amount = setID, currency, amount
+	f.setID, f.currency, f.read, f.amount = setID, currency, read, amount
 
 	return f.err
 }
@@ -45,6 +46,7 @@ type fakeStockAdmin struct {
 	calls      int
 	itemID     string
 	locationID string
+	read       int64
 	quantity   int64
 	writeErr   error
 }
@@ -58,9 +60,9 @@ func (f *fakeStockAdmin) StockLevelsJSON(_ context.Context, itemID string) (json
 	return f.levels, nil
 }
 
-func (f *fakeStockAdmin) SetStockLevel(_ context.Context, itemID, locationID string, quantity int64) error {
+func (f *fakeStockAdmin) SetStockLevel(_ context.Context, itemID, locationID string, read, quantity int64) error {
 	f.calls++
-	f.itemID, f.locationID, f.quantity = itemID, locationID, quantity
+	f.itemID, f.locationID, f.read, f.quantity = itemID, locationID, read, quantity
 
 	return f.writeErr
 }
@@ -149,6 +151,10 @@ func TestVariantPageOffersThePriceAndTheStockForEditing(t *testing.T) {
 	assert.Contains(t, body, "250g")
 	assert.Contains(t, body, "COF-250")
 	assert.Contains(t, body, `value="199.90"`, "the price box opens with the scaled amount")
+	assert.Contains(t, body, `name="read_amount" value="199.90"`,
+		"the form says which price it was drawn with (ADR 0280)")
+	assert.Contains(t, body, `name="read_quantity" value="10"`,
+		"the form says which count it was drawn with (ADR 0280)")
 	assert.Contains(t, body, `value="pset_1"`, "the write needs the price set's identity")
 	assert.Contains(t, body, "Main warehouse")
 	assert.Contains(t, body, `value="10"`, "the stock box opens with the PHYSICAL count")
@@ -186,7 +192,7 @@ func TestSavingAPriceScalesWithTheCurrencyNotWithAGuess(t *testing.T) {
 	panel := newVariantPanel(t, variantCatalog(2), writer, nil)
 
 	rec := postForm(panel, "/price", url.Values{
-		"price_set_id": {"pset_1"}, "currency": {"try"}, "minor": {"0"}, "amount": {"249.50"},
+		"price_set_id": {"pset_1"}, "currency": {"try"}, "minor": {"0"}, "amount": {"249.50"}, "read_amount": {"199.90"},
 	})
 
 	require.Equal(t, http.StatusSeeOther, rec.Code)
@@ -196,6 +202,7 @@ func TestSavingAPriceScalesWithTheCurrencyNotWithAGuess(t *testing.T) {
 	assert.Equal(t, "pset_1", writer.setID)
 	assert.Equal(t, "TRY", writer.currency, "the code is normalized before it leaves the panel")
 	assert.Equal(t, int64(24950), writer.amount)
+	assert.Equal(t, int64(19990), writer.read, "what the form was drawn with, in the same scale (ADR 0280)")
 }
 
 // TestSavingAPriceInMinorUnitsPassesTheIntegerThrough proves the raw box is not
@@ -207,7 +214,7 @@ func TestSavingAPriceInMinorUnitsPassesTheIntegerThrough(t *testing.T) {
 	panel := newVariantPanel(t, variantCatalog(nil), writer, nil)
 
 	rec := postForm(panel, "/price", url.Values{
-		"price_set_id": {"pset_1"}, "currency": {"TRY"}, "minor": {"1"}, "amount": {"24950"},
+		"price_set_id": {"pset_1"}, "currency": {"TRY"}, "minor": {"1"}, "amount": {"24950"}, "read_amount": {"19990"},
 	})
 
 	require.Equal(t, http.StatusSeeOther, rec.Code)
@@ -242,7 +249,7 @@ func TestARejectedPriceComesBackWithTheModulesMessage(t *testing.T) {
 	panel := newVariantPanel(t, variantCatalog(2), writer, nil)
 
 	rec := postForm(panel, "/price", url.Values{
-		"price_set_id": {"pset_1"}, "currency": {"TRY"}, "minor": {"0"}, "amount": {"1.00"},
+		"price_set_id": {"pset_1"}, "currency": {"TRY"}, "minor": {"0"}, "amount": {"1.00"}, "read_amount": {"0.50"},
 	})
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
@@ -262,7 +269,7 @@ func TestAnUnexpectedPriceFailureIsNotShownToTheOperator(t *testing.T) {
 	panel := newVariantPanel(t, variantCatalog(2), writer, nil)
 
 	rec := postForm(panel, "/price", url.Values{
-		"price_set_id": {"pset_1"}, "currency": {"TRY"}, "minor": {"0"}, "amount": {"1.00"},
+		"price_set_id": {"pset_1"}, "currency": {"TRY"}, "minor": {"0"}, "amount": {"1.00"}, "read_amount": {"0.50"},
 	})
 
 	require.Equal(t, http.StatusInternalServerError, rec.Code)
@@ -280,7 +287,7 @@ func TestSavingStockReachesTheInventorySurface(t *testing.T) {
 	panel := newVariantPanel(t, variantCatalog(2), nil, stock)
 
 	rec := postForm(panel, "/stock", url.Values{
-		"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"25"},
+		"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"25"}, "read_quantity": {"10"},
 	})
 
 	require.Equal(t, http.StatusSeeOther, rec.Code)
@@ -288,6 +295,52 @@ func TestSavingStockReachesTheInventorySurface(t *testing.T) {
 	assert.Equal(t, "inv_1", stock.itemID)
 	assert.Equal(t, "sloc_1", stock.locationID)
 	assert.Equal(t, int64(25), stock.quantity)
+	assert.Equal(t, int64(10), stock.read, "the count the form was drawn with (ADR 0280)")
+}
+
+// TestAFormThatDoesNotSayWhatItSawIsRefused is ADR 0280: a price or stock form
+// without the value it was drawn with cannot be checked against what moved,
+// and is refused before the module is asked.
+func TestAFormThatDoesNotSayWhatItSawIsRefused(t *testing.T) {
+	t.Parallel()
+
+	writer := &fakePriceWriter{}
+	stock := &fakeStockAdmin{levels: json.RawMessage(stockJSON)}
+	panel := newVariantPanel(t, variantCatalog(2), writer, stock)
+
+	rec := postForm(panel, "/price", url.Values{
+		"price_set_id": {"pset_1"}, "currency": {"TRY"}, "minor": {"0"}, "amount": {"249.50"},
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "does not say which price it was drawn with")
+	assert.Zero(t, writer.calls)
+
+	rec = postForm(panel, "/stock", url.Values{
+		"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"25"},
+	})
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "does not say which count it was drawn with")
+	assert.Zero(t, stock.calls)
+}
+
+// TestAMovedCountComesBackOnThePage: the module's refusal of a count over a
+// level that moved is shown beside the page drawn again, with the count as it
+// is now (ADR 0280).
+func TestAMovedCountComesBackOnThePage(t *testing.T) {
+	t.Parallel()
+
+	stock := &fakeStockAdmin{
+		levels:   json.RawMessage(stockJSON),
+		writeErr: errors.Conflict("inventory_stock_moved", "the physical count at sloc_1 is 9, not the 10 the form was drawn with"),
+	}
+	panel := newVariantPanel(t, variantCatalog(2), nil, stock)
+
+	rec := postForm(panel, "/stock", url.Values{
+		"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"12"}, "read_quantity": {"10"},
+	})
+
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "is 9, not the 10 the form was drawn with")
 }
 
 // TestAStockCountIsAWholeNumber proves a decimal is refused rather than
@@ -322,7 +375,7 @@ func TestPromisedStockRefusalReachesTheOperator(t *testing.T) {
 	panel := newVariantPanel(t, variantCatalog(2), nil, stock)
 
 	rec := postForm(panel, "/stock", url.Values{
-		"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"1"},
+		"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"1"}, "read_quantity": {"10"},
 	})
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
@@ -372,10 +425,10 @@ func TestEditingWithoutTheModuleSaysSo(t *testing.T) {
 	panel := newVariantPanel(t, variantCatalog(2), nil, nil)
 
 	price := postForm(panel, "/price", url.Values{
-		"price_set_id": {"pset_1"}, "currency": {"TRY"}, "amount": {"1.00"},
+		"price_set_id": {"pset_1"}, "currency": {"TRY"}, "amount": {"1.00"}, "read_amount": {"0.50"},
 	})
 	stock := postForm(panel, "/stock", url.Values{
-		"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"1"},
+		"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"1"}, "read_quantity": {"10"},
 	})
 
 	assert.Equal(t, http.StatusServiceUnavailable, price.Code)

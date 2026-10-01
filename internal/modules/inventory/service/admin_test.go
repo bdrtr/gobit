@@ -195,7 +195,7 @@ func TestSetStockWritesThePhysicalCount(t *testing.T) {
 	loc := addLocation(t, svc, "Main warehouse")
 	store.seedLevel(itemID, loc, 10, 4)
 
-	require.NoError(t, admin.SetStockLevel(context.Background(), itemID, loc, 20))
+	require.NoError(t, admin.SetStockLevel(context.Background(), itemID, loc, 10, 20))
 
 	level := store.level(itemID, loc)
 	assert.Equal(t, int64(20), level.StockedQuantity)
@@ -214,13 +214,39 @@ func TestSetStockKeepsThePromisedStock(t *testing.T) {
 	loc := addLocation(t, svc, "Main warehouse")
 	store.seedLevel(itemID, loc, 10, 4)
 
-	err := admin.SetStockLevel(context.Background(), itemID, loc, 3)
+	err := admin.SetStockLevel(context.Background(), itemID, loc, 10, 3)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
 		"the operator must be told the goods are promised, not that they typed nonsense")
 	assert.Equal(t, int64(10), store.level(itemID, loc).StockedQuantity,
 		"the refused write must change nothing")
+}
+
+// TestACountOverAQuantityItDidNotSeeIsRefused is ADR 0280: the form says what
+// it was drawn with, and a level that holds another quantity when the write
+// takes its lock is refused and left as it is; a location with no level holds
+// zero.
+func TestACountOverAQuantityItDidNotSeeIsRefused(t *testing.T) {
+	admin, svc, store := newAdmin(t)
+	store.seedItem(itemID, "SKU-1")
+	loc := addLocation(t, svc, "Main warehouse")
+	empty := addLocation(t, svc, "Back room")
+	store.seedLevel(itemID, loc, 9, 0)
+
+	err := admin.SetStockLevel(context.Background(), itemID, loc, 10, 12)
+	require.Error(t, err)
+	assert.Equal(t, service.CodeStockMoved, errors.CodeOf(err))
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
+	assert.Contains(t, err.Error(), "is 9, not the 10")
+	assert.Equal(t, int64(9), store.level(itemID, loc).StockedQuantity, "the refused count changes nothing")
+
+	err = admin.SetStockLevel(context.Background(), itemID, empty, 3, 5)
+	require.Error(t, err, "a location with no level holds zero, not three")
+	assert.Equal(t, service.CodeStockMoved, errors.CodeOf(err))
+
+	require.NoError(t, admin.SetStockLevel(context.Background(), itemID, empty, 0, 5))
+	assert.Equal(t, int64(5), store.level(itemID, empty).StockedQuantity)
 }
 
 // TestAnUnwiredAdminSurfaceSaysSoRatherThanPanicking proves the zero value is
@@ -234,7 +260,7 @@ func TestAnUnwiredAdminSurfaceSaysSoRatherThanPanicking(t *testing.T) {
 	var admin *service.AdminSurface
 
 	_, readErr := admin.StockLevelsJSON(context.Background(), itemID)
-	writeErr := admin.SetStockLevel(context.Background(), itemID, "sloc_A", 1)
+	writeErr := admin.SetStockLevel(context.Background(), itemID, "sloc_A", 0, 1)
 
 	require.Error(t, readErr)
 	require.Error(t, writeErr)
