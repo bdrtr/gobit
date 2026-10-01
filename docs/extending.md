@@ -276,25 +276,28 @@ integrations) listen to them. Which backend carries them is chosen by
 `EVENT_BUS=inmemory|redis`, and the difference between the two is what the
 second rule below is about.
 
-Today there are eight subscribers: the search plugin `search-pg` (`product.*`),
+Today there are ten subscribers: the search plugin `search-pg` (`product.*`),
 the notification module (`order.placed`), the browser push plugin `web-push`
 (`order.placed`), the **order module** itself (`payment.captured`,
-`payment.refunded`), the **gift card sale flow** (`payment.captured`, ADR 0210),
-the **cancellation flow** (`order.line_canceled`, `fulfillment.canceled`, ADR
-0134 and 0139), the analytics plugin `analytics` (`cart.created`,
-`cart.completed`, `order.placed`, ADR 0153) and the outbound webhook plugin
-`webhook-out` (all ten topics below; a receiver narrows them by topic, filter and
-field, ADR 0218).
+`payment.refunded`), the **payment module** (`order.canceled`, ADR 0288), the
+**gift card sale flow** (`payment.captured`, ADR 0210), the **cancellation
+flow** (`order.line_canceled`, `fulfillment.canceled`, ADR 0134 and 0139), the
+**return flow** (`fulfillment.canceled`, ADR 0239), the analytics plugin
+`analytics` (`cart.created`, `cart.completed`, `order.placed`, ADR 0153) and the
+outbound webhook plugin `webhook-out` (all eleven topics below; a receiver
+narrows them by topic, filter and field, ADR 0218).
 
-The order module is the only subscriber that is not a plugin, and it is a
-subscriber for the reason a plugin would not do: money moved by the payment
-module's own routes has no flow on its path, so nothing else could tell the
-order (ADR 0121).
+The order and payment modules subscribe to each other for the reason a plugin
+would not do. Money moved by the payment module's own routes has no flow on its
+path, so nothing else could tell the order (ADR 0121); an order canceled by the
+shop or by the checkout's compensation has no flow on its path that holds its
+payment (ADR 0288).
 
 | Event | Payload |
 |---|---|
 | `order.placed` | `order_id`, `display_id`, `status`, `region_id`, `customer_id`, `currency_code`, `total`, `item_count`, `placed_at` |
 | `order.line_canceled` | `order_id`, `order_line_item_id`, `variant_id`, `cancellation_id`, `canceled_quantity`, `canceled_before`, `bought_quantity`, `canceled_at` |
+| `order.canceled` | `order_id`, `canceled_at` |
 | `product.created` / `product.updated` | `product_id`, `status` |
 | `product.deleted` | `product_id` |
 | `payment.captured` / `payment.refunded` | `payment_collection_id`, `occurred_at` |

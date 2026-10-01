@@ -31,6 +31,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A canceled order holds no payment** (ADR 0288, D197). **For operators:** the
+  shop's cancel of an order now closes every session of its payment still
+  authorized — an offline method's promise, or a card's hold left by a checkout
+  that died before capturing — so a canceled order no longer offers to record a
+  transfer. **For integrators:** both cancels, the shop's and the checkout's
+  compensation, publish `order.canceled` (`order_id`, `canceled_at`), and the
+  outbound webhook plugin forwards it.
+
 - **The panel records an offline payment** (ADR 0287). **For operators:** the
   order page names each offline method's session still awaiting its money,
   with the method and the amount, and an operator holding `payment:write`

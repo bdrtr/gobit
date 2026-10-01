@@ -5,7 +5,7 @@ transaction writes off every unit not yet returned or written off. Those units
 come back to the shelf through the flow that puts written-off units back. The
 saga's cancel of an order it is unwinding writes nothing off.
 
-- **Status:** Accepted
+- **Status:** Accepted — amended by [0288](0288-a-canceled-order-holds-no-payment.md)
 - **Date:** 2026-10-01
 
 ## Context

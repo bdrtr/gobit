@@ -19,7 +19,7 @@ import (
 // maxBodyBytes bounds a request body.
 //
 // A registration is a URL, a handful of topic names, a sentence of prose and,
-// since ADR 0218, the filters and field lists of up to ten topics. Sixty-four
+// since ADR 0218, the filters and field lists of up to eleven topics. Sixty-four
 // kilobytes holds those with room and is far too small to be a way of filling
 // memory.
 const maxBodyBytes = 64 << 10

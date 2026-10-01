@@ -276,16 +276,22 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		}
 	}
 
-	// Dar bir arayüzle çözülüyor: modül yalnızca YAYIMLAR, abone olmaz ve
-	// otobüsü kapatmaz (bkz. service.EventPublisher).
+	// Resolved through narrow interfaces: the service publishes, the
+	// registration below subscribes to one order event (ADR 0288), and nothing
+	// here closes the bus (see service.EventPublisher).
 	//
-	// ZORUNLU, ve bu order modülünün kalibi: kaybolan bir para olayının
-	// telafisi yok. Olaysız bir kurulum, siparişin ne tahsil edildiğini ne iade
-	// edildiğini öğrenemediği bir kurulumdur.
+	// REQUIRED, and this is the order module's stance: a lost money event has
+	// no compensation. An installation without events is one where the order
+	// learns neither what was captured nor what was refunded.
 	bus, err := container.Resolve[service.EventPublisher](c, eventBusServiceName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü olay otobüsünü çözemedi (%q)", ModuleName, eventBusServiceName)
+			"the %s module could not resolve the event bus (%q)", ModuleName, eventBusServiceName)
+	}
+	subscriber, err := container.Resolve[service.EventSubscriber](c, eventBusServiceName)
+	if err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"the %s module could not resolve the event bus as a subscriber (%q)", ModuleName, eventBusServiceName)
 	}
 
 	log := slog.Default().With("modul", ModuleName)
@@ -347,6 +353,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		Logger:                 log,
 		LoyaltyEarnBasisPoints: m.opts.LoyaltyEarnBasisPoints,
 		GiftCardValidityDays:   m.opts.GiftCardValidityDays,
+		Links:                  links,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
@@ -362,6 +369,13 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// The panel's surface (ADR 0287).
 	if err := c.Provide(AdminName, &ReceivingSurface{svc: svc}); err != nil {
 		return err
+	}
+	// A canceled order's authorized sessions are closed here (ADR 0288). A
+	// failure STOPS THE STARTUP, for the order module's reason: a module that
+	// hears no cancel leaves every unpaid order's promise open and looks wired.
+	if err := subscriber.Subscribe(service.TopicOrderCanceled, svc.HandleOrderCanceled); err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
+			"the %s module could not subscribe to the %q event", ModuleName, service.TopicOrderCanceled)
 	}
 	if err := c.Provide(ProvidersName, providers); err != nil {
 		return err

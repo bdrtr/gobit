@@ -59,7 +59,7 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 //
 // So the list is written out, and it is the WHOLE set: a static census of every
 // eventbus.Event this repository can publish resolves to exactly this slice —
-// the ten topics plugins/webhookout forwards.
+// the eleven topics plugins/webhookout forwards.
 //
 // The number and the path sit on ONE line deliberately. It is the only place
 // the size is written, and the count gate is LINE-ANCHORED: a sentence whose
@@ -103,12 +103,12 @@ var ForwardedTopics = []string{
 	topicFulfillmentCanceled,
 	topicCartCreated,
 	topicCartCompleted,
+	topicOrderCanceled,
 }
 
 // The topics, as constants the arch gates can resolve.
 const (
-	// topicOrderPlaced is published when an order is created. It is the only
-	// order event gobit publishes today.
+	// topicOrderPlaced is published when an order is created.
 	topicOrderPlaced = "order.placed"
 	// topicPaymentCaptured is published when money is collected against a
 	// payment collection.
@@ -166,6 +166,13 @@ const (
 	// placement with no completion is an order that failed in between. A receiver
 	// that treats the two as one loses exactly that.
 	topicCartCompleted = "cart.completed"
+	// topicOrderCanceled is published when an order is canceled, by the shop or
+	// by the checkout unwinding the order it placed (ADR 0288).
+	//
+	// It carries the order and the moment and not the operator's reason, so it
+	// needs no new redaction rule. A receiver that heard "order.placed" for an
+	// order the checkout then unwound hears this one too.
+	topicOrderCanceled = "order.canceled"
 )
 
 // redactedFields are the payload fields that never leave this installation, and
@@ -723,6 +730,7 @@ var TopicFields = map[string][]string{
 	topicFulfillmentCanceled: {fieldCanceledAt, "fulfillment_id", "reference"},
 	topicCartCreated:         {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
 	topicCartCompleted:       {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
+	topicOrderCanceled:       {fieldCanceledAt, fieldOrderID},
 }
 
 // The payload fields more than one topic carries, spelled as their publishers

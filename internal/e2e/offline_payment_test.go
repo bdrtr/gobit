@@ -67,7 +67,9 @@ func TestAnOfflineMethodPlacesAnOrderTheShopCapturesLater(t *testing.T) {
 
 // TestAnOfflineOrderNeverPaidGivesItsStockBack is ADR 0285 on the production
 // wiring: the customer never transfers, the shop cancels the order through the
-// admin route, and the unit the checkout deducted comes back to the shelf.
+// admin route, and the unit the checkout deducted comes back to the shelf. The
+// bank transfer the order was promised is closed as well (ADR 0288), through
+// the order's cancel event and the payment module's subscription.
 func TestAnOfflineOrderNeverPaidGivesItsStockBack(t *testing.T) {
 	ctx := t.Context()
 	variantID, itemID := newStockedVariant(ctx, t, "Unpaid offline product",
@@ -98,4 +100,14 @@ func TestAnOfflineOrderNeverPaidGivesItsStockBack(t *testing.T) {
 		return stocked == 5
 	}, olayBeklemeSuresi, 20*time.Millisecond,
 		"the canceled order's unit comes back to the shelf (last read %d)", stocked)
+
+	var status string
+	require.Eventually(t, func() bool {
+		readErr := testPool.Pool().QueryRow(ctx, `
+            SELECT s.status FROM payment_sessions s
+            JOIN payment_collections c ON c.id = s.payment_collection_id
+            WHERE c.reference = $1 AND s.provider_id = $2`, cartID, offlineMethod).Scan(&status)
+		return readErr == nil && status == "canceled"
+	}, olayBeklemeSuresi, 20*time.Millisecond,
+		"the transfer the canceled order was promised is closed (last read %q)", status)
 }

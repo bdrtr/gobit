@@ -392,6 +392,10 @@ type Options struct {
 	// operator did not say. ZERO is the default and means never, so an
 	// installation that did not decide makes no card that expires.
 	GiftCardValidityDays int
+	// Links reads which collections an order is bound to, which is how a
+	// canceled order's payment is found (ADR 0288). Nil leaves
+	// [Service.HandleOrderCanceled] refusing every event.
+	Links OrderLinks
 }
 
 // MaxGiftCardValidityDays is the longest validity an installation may set: a
@@ -416,6 +420,7 @@ type Service struct {
 	store     Store
 	providers *ProviderRegistry
 	events    EventPublisher
+	links     OrderLinks
 	log       *slog.Logger
 
 	// earnBasisPoints is [Options.LoyaltyEarnBasisPoints]; zero earns nothing.
@@ -457,6 +462,7 @@ func New(opts Options) (*Service, error) {
 		store:                opts.Store,
 		providers:            opts.Providers,
 		events:               opts.Events,
+		links:                opts.Links,
 		log:                  log,
 		earnBasisPoints:      opts.LoyaltyEarnBasisPoints,
 		giftCardValidityDays: int32(opts.GiftCardValidityDays),

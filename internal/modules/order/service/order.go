@@ -815,10 +815,20 @@ func (s *Service) ListOrdersByIDs(ctx context.Context, ids []string) ([]models.O
 // reservation is its own step's compensation. The shop's cancel of an order the
 // checkout placed is [Service.CancelPlacedOrder], which also gives the stock
 // back.
+//
+// It does announce itself: both cancels write [EventOrderCanceled] in their
+// transaction (ADR 0288), so a subscriber that heard the order placed hears it
+// end.
 func (s *Service) CancelOrder(ctx context.Context, orderID, reason string) error {
-	_, err := s.cancelOrder(ctx, orderID, reason, false)
+	outcome, err := s.cancelOrder(ctx, orderID, reason, false)
+	if err != nil {
+		return err
+	}
+	if outcome.canceled != nil {
+		s.publishOrderCanceled(ctx, *outcome.canceled)
+	}
 
-	return err
+	return nil
 }
 
 // CancelPlacedOrder cancels an order the checkout placed and writes off every
@@ -838,37 +848,49 @@ func (s *Service) CancelOrder(ctx context.Context, orderID, reason string) error
 // cards is left as it is: it moved no stock, and a card is closed in the payment
 // module.
 func (s *Service) CancelPlacedOrder(ctx context.Context, orderID, reason string) error {
-	written, err := s.cancelOrder(ctx, orderID, reason, true)
+	outcome, err := s.cancelOrder(ctx, orderID, reason, true)
 	if err != nil {
 		return err
 	}
 
 	// Published AFTER the commit, as a line cancellation's are; the outbox rows
 	// cover a lost publish.
+	written := outcome.written
 	for i := range written {
 		s.publishLineCanceled(ctx, orderID,
 			written[i].cancellation, written[i].variantID, written[i].before, written[i].bought)
+	}
+	if outcome.canceled != nil {
+		s.publishOrderCanceled(ctx, *outcome.canceled)
 	}
 
 	return nil
 }
 
-// cancelOrder stamps the order canceled and, when writeOff is set, writes off
-// what is left of its lines in the same transaction; it returns the write-offs
-// to publish.
+// cancelOutcome is what a cancel's transaction wrote and the caller publishes:
+// the write-offs, and the order when this call canceled it — nil when it was
+// already canceled.
+type cancelOutcome struct {
+	written  []writtenOff
+	canceled *models.Order
+}
+
+// cancelOrder stamps the order canceled with its [EventOrderCanceled] (ADR
+// 0288) and, when writeOff is set, writes off what is left of its lines in the
+// same transaction.
 func (s *Service) cancelOrder(
 	ctx context.Context, orderID, reason string, writeOff bool,
-) ([]writtenOff, error) {
+) (cancelOutcome, error) {
 	if err := requireID("order_id", orderID); err != nil {
-		return nil, err
+		return cancelOutcome{}, err
 	}
 	// Trimmed, so a reason of spaces is stored as none (D178).
 	reason = strings.TrimSpace(reason)
 	if err := checkTextLen("reason", reason); err != nil {
-		return nil, err
+		return cancelOutcome{}, err
 	}
 
-	var written []writtenOff
+	var outcome cancelOutcome
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
 		order, err := s.store.LockOrder(ctx, orderID)
 		if err != nil {
@@ -902,19 +924,27 @@ func (s *Service) cancelOrder(
 		}
 
 		if writeOff {
-			if written, err = s.writeOffRemaining(ctx, orderID, reason); err != nil {
+			if outcome.written, err = s.writeOffRemaining(ctx, orderID, reason); err != nil {
 				return err
 			}
 		}
 
-		_, err = s.store.CancelOrder(ctx, orderID, reason)
-		return err
+		canceled, err := s.store.CancelOrder(ctx, orderID, reason)
+		if err != nil {
+			return err
+		}
+		if err := s.recordOrderCanceled(ctx, canceled); err != nil {
+			return err
+		}
+		outcome.canceled = &canceled
+
+		return nil
 	})
 	if err != nil {
-		return nil, err
+		return cancelOutcome{}, err
 	}
 
-	return written, nil
+	return outcome, nil
 }
 
 // CompleteOrder stamps the order as completed.
