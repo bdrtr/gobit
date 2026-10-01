@@ -11,6 +11,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -132,6 +133,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.validatePaymentOfflineMethods(); err != nil {
+		return err
+	}
+	if err := c.validatePaymentOfflineWaitDays(); err != nil {
 		return err
 	}
 	if err := c.validateNotificationProvider(); err != nil {
@@ -371,6 +375,24 @@ func (c Config) validatePaymentOfflineMethods() error {
 			return fmt.Errorf("config: %q appears twice in the PAYMENT_OFFLINE_METHODS list", name)
 		}
 		seen[name] = struct{}{}
+	}
+	return nil
+}
+
+// validatePaymentOfflineWaitDays refuses a wait for a method the installation
+// does not offer and a wait outside one to [MaxPaymentOfflineWaitDays] days
+// (ADR 0289). A wait for a method that is not offered would never be read, and
+// an operator who misspelled the method would believe its orders expire.
+func (c Config) validatePaymentOfflineWaitDays() error {
+	for _, method := range slices.Sorted(maps.Keys(c.PaymentOfflineWaitDays)) {
+		if !slices.Contains(c.PaymentOfflineMethods, method) {
+			return fmt.Errorf("config: PAYMENT_OFFLINE_WAIT_DAYS names %q, which PAYMENT_OFFLINE_METHODS does not offer",
+				method)
+		}
+		if days := c.PaymentOfflineWaitDays[method]; days < 1 || days > MaxPaymentOfflineWaitDays {
+			return fmt.Errorf("config: PAYMENT_OFFLINE_WAIT_DAYS gives %q %d days; a wait is 1 to %d days, "+
+				"and a method left out never expires", method, days, MaxPaymentOfflineWaitDays)
+		}
 	}
 	return nil
 }

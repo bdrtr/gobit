@@ -31,6 +31,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An unpaid offline order expires by its method's wait** (ADR 0289). **For
+  operators:** `PAYMENT_OFFLINE_WAIT_DAYS=bank_transfer:3` gives an offline
+  method a wait, and the `offline-order-expiry` job cancels, every quarter hour,
+  the order whose session of that method is still authorized past it in a
+  payment that captured nothing: its stock comes back and its session is
+  closed. A method left out never expires, which is every method by default;
+  leave cash on delivery out, since it is paid after the parcel has left. A
+  wait for a method not offered, or outside 1 to 365 days, stops the startup.
+
 - **A canceled order holds no payment** (ADR 0288, D197). **For operators:** the
   shop's cancel of an order now closes every session of its payment still
   authorized — an offline method's promise, or a card's hold left by a checkout

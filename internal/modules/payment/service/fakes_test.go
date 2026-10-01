@@ -489,6 +489,44 @@ func (f *fakeStore) SessionsOfCollections(_ context.Context, ids []string) ([]mo
 	return out, nil
 }
 
+// ListOverdueOfflineSessions applies the real query's conditions: authorized,
+// of a named provider, opened before that provider's cutoff, after the key, in
+// a collection that captured nothing; oldest first, then by id.
+func (f *fakeStore) ListOverdueOfflineSessions(
+	_ context.Context, providerIDs []string, cutoffs []time.Time,
+	afterCreatedAt time.Time, afterID string, limit int32,
+) ([]models.PaymentSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := []models.PaymentSession{}
+	for id := range f.sessions {
+		ses := f.sessions[id]
+		at := slices.Index(providerIDs, ses.ProviderID)
+		if ses.Status != models.SessionAuthorized || at < 0 || !ses.CreatedAt.Before(cutoffs[at]) {
+			continue
+		}
+		if ses.CreatedAt.Before(afterCreatedAt) || (ses.CreatedAt.Equal(afterCreatedAt) && ses.ID <= afterID) {
+			continue
+		}
+		if f.collections[ses.PaymentCollectionID].CapturedAmount != 0 {
+			continue
+		}
+		out = append(out, ses)
+	}
+	slices.SortFunc(out, func(a, b models.PaymentSession) int {
+		if order := a.CreatedAt.Compare(b.CreatedAt); order != 0 {
+			return order
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	if len(out) > int(limit) {
+		out = out[:limit]
+	}
+
+	return out, nil
+}
+
 // ListSessionsForReconciliation returns the suspect set for reconciliation.
 //
 // It applies BOTH of the real query's conditions — authorized, and last written

@@ -17,6 +17,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/core/eventbus/outbox"
+	"github.com/bdrtr/gobit/core/link"
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	"github.com/bdrtr/gobit/internal/core/config"
@@ -26,6 +27,7 @@ import (
 	"github.com/bdrtr/gobit/internal/jobs/customersegment"
 	"github.com/bdrtr/gobit/internal/jobs/giftcardexpiry"
 	"github.com/bdrtr/gobit/internal/jobs/giftcardsweep"
+	"github.com/bdrtr/gobit/internal/jobs/offlineexpiry"
 	"github.com/bdrtr/gobit/internal/jobs/outboxrelay"
 	"github.com/bdrtr/gobit/internal/jobs/paymentrecon"
 	"github.com/bdrtr/gobit/internal/jobs/productimport"
@@ -34,7 +36,9 @@ import (
 	"github.com/bdrtr/gobit/internal/jobs/scheduledpublish"
 	"github.com/bdrtr/gobit/internal/jobs/stockalert"
 	"github.com/bdrtr/gobit/internal/jobs/storecreditexpiry"
+	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/payment"
+	paymentmodels "github.com/bdrtr/gobit/internal/modules/payment/models"
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 	"github.com/bdrtr/gobit/internal/modules/product"
 	"github.com/bdrtr/gobit/internal/modules/review"
@@ -67,6 +71,20 @@ type giftCardExpirer interface {
 // it (ADR 0258).
 type storeCreditExpirer interface {
 	ExpireStoreCredit(ctx context.Context, limit int64) (int, error)
+}
+
+// overdueOffline is the payment service as the offline expiry needs it (ADR
+// 0289).
+type overdueOffline interface {
+	ListOverdueOffline(
+		ctx context.Context, now time.Time, after paymentsvc.OverdueKey, limit int32,
+	) ([]paymentmodels.PaymentSession, error)
+}
+
+// placedOrderCanceler is the order service as the offline expiry needs it:
+// the shop's cancel, which gives the stock back (ADR 0285).
+type placedOrderCanceler interface {
+	CancelPlacedOrder(ctx context.Context, orderID, reason string) error
 }
 
 // productPublisher is the product service as the scheduled publisher needs it.
@@ -228,6 +246,29 @@ func registerJobs(
 			"the job runner could not resolve the payment service (%q)", payment.ServiceName)
 	}
 	if err := registry.Add(storecreditexpiry.Definition(creditExpirer, log)); err != nil {
+		return nil, err
+	}
+	// The offline expiry cancels the orders whose offline payment did not
+	// arrive within its method's wait (ADR 0289). It is registered
+	// unconditionally too: with no method given a wait it reads nothing, and
+	// says so. It acts through the payment service's overdue read, the links
+	// and the order service's cancel.
+	overdue, err := container.Resolve[overdueOffline](c, payment.ServiceName)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"the job runner could not resolve the payment service (%q)", payment.ServiceName)
+	}
+	bindings, err := container.Resolve[link.LinkService](c, svcLink)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"the job runner could not resolve the links (%q)", svcLink)
+	}
+	canceler, err := container.Resolve[placedOrderCanceler](c, order.ServiceName)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"the job runner could not resolve the order service (%q)", order.ServiceName)
+	}
+	if err := registry.Add(offlineexpiry.Definition(overdue, bindings, canceler, log)); err != nil {
 		return nil, err
 	}
 	// The stock alert job mails the customers whose marked wishlist variant is

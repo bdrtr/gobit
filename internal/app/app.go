@@ -594,6 +594,9 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 		// The offline methods the installation named, each a provider whose
 		// money arrives after the order is placed (ADR 0284).
 		OfflineMethods: cfg.PaymentOfflineMethods,
+		// And how long each of them waits for its money before its order is
+		// canceled (ADR 0289); a method left out never expires.
+		OfflineWaitDays: cfg.PaymentOfflineWaitDays,
 		// The tenders that spend a PERSON's balance — store credit (ADR 0152)
 		// and loyalty points (ADR 0165) — are turned on for the installations
 		// where the customer claim is PROVEN. On one that has gone back to the

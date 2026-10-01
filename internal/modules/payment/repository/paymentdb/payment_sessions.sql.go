@@ -169,6 +169,78 @@ func (q *Queries) GetPaymentSessionByIdempotencyKey(ctx context.Context, arg Get
 	return i, err
 }
 
+const listOverdueOfflineSessions = `-- name: ListOverdueOfflineSessions :many
+SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions s
+WHERE s.status = 'authorized'
+  AND s.provider_id = ANY($1::text[])
+  AND s.created_at < ($2::timestamptz[])[array_position($1::text[], s.provider_id)]
+  AND (s.created_at, s.id) > ($3::timestamptz, $4::text)
+  AND EXISTS (
+    SELECT 1 FROM payment_collections c
+    WHERE c.id = s.payment_collection_id AND c.captured_amount = 0
+  )
+ORDER BY s.created_at, s.id
+LIMIT $5
+`
+
+type ListOverdueOfflineSessionsParams struct {
+	ProviderIds    []string
+	Cutoffs        []pgtype.Timestamptz
+	AfterCreatedAt pgtype.Timestamptz
+	AfterID        string
+	RowLimit       int32
+}
+
+// The offline sessions past the wait their method was given (ADR 0289):
+// authorized, of one of the named providers, opened before that provider's
+// cutoff, in a collection that captured nothing — a collection that took a
+// gift card beside the transfer is the shop's to decide, and its order's
+// cancel would be refused anyway.
+//
+// The cutoff is the provider's own: provider_ids and cutoffs are parallel
+// arrays, and array_position finds the row's provider in the first. The page
+// is keyed on (created_at, id), oldest first, so an order the job cannot
+// cancel does not hold the page against the ones after it.
+func (q *Queries) ListOverdueOfflineSessions(ctx context.Context, arg ListOverdueOfflineSessionsParams) ([]PaymentSession, error) {
+	rows, err := q.db.Query(ctx, listOverdueOfflineSessions,
+		arg.ProviderIds,
+		arg.Cutoffs,
+		arg.AfterCreatedAt,
+		arg.AfterID,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PaymentSession{}
+	for rows.Next() {
+		var i PaymentSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.PaymentCollectionID,
+			&i.ProviderID,
+			&i.ExternalID,
+			&i.Status,
+			&i.Amount,
+			&i.AuthorizedAmount,
+			&i.CurrencyCode,
+			&i.Data,
+			&i.IdempotencyKey,
+			&i.DeclineReason,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPaymentSessionsByCollection = `-- name: ListPaymentSessionsByCollection :many
 SELECT id, payment_collection_id, provider_id, external_id, status, amount, authorized_amount, currency_code, data, idempotency_key, decline_reason, created_at, updated_at FROM payment_sessions
 WHERE payment_collection_id = $1

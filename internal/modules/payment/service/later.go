@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"maps"
 	"slices"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
@@ -107,4 +109,62 @@ func (s *Service) RecordReceived(ctx context.Context, sessionID string) (models.
 	}
 
 	return s.CapturePayment(ctx, sessionID, 0)
+}
+
+// MaxOfflineWaitDays is the longest an offline method may make an order wait
+// for its money (ADR 0289): a year, past which a shop means never and leaves
+// the method out.
+const MaxOfflineWaitDays = 365
+
+// checkOfflineWaits refuses a wait outside one to [MaxOfflineWaitDays] days,
+// and one given to a provider that is not registered or whose money moves at
+// the checkout: such a wait would never be read, and the shop would believe
+// its orders expire.
+func checkOfflineWaits(waits map[string]int, providers *ProviderRegistry) error {
+	for _, method := range slices.Sorted(maps.Keys(waits)) {
+		if days := waits[method]; days < 1 || days > MaxOfflineWaitDays {
+			return errors.Internal(CodeNotReady,
+				"the offline method %q is given %d days to wait; a wait is 1 to %d days", method, days,
+				MaxOfflineWaitDays)
+		}
+		provider, err := providers.Get(method)
+		if err != nil {
+			return errors.Internal(CodeNotReady,
+				"a wait is given to %q, which is not a registered payment provider", method)
+		}
+		if !capturesLater(provider) {
+			return errors.Internal(CodeNotReady,
+				"a wait is given to %q, whose money moves at the checkout; only an offline method waits",
+				method)
+		}
+	}
+
+	return nil
+}
+
+// OverdueKey is where a page of overdue sessions continues: after this
+// session's opening and id. The zero key starts from the oldest.
+type OverdueKey struct {
+	OpenedAt  time.Time
+	SessionID string
+}
+
+// ListOverdueOffline returns, oldest first after the key, the sessions of an
+// offline method that has a wait and is still authorized past it at now, in
+// collections that captured nothing (ADR 0289). An installation that gave no
+// method a wait reads nothing.
+func (s *Service) ListOverdueOffline(
+	ctx context.Context, now time.Time, after OverdueKey, limit int32,
+) ([]models.PaymentSession, error) {
+	if len(s.offlineWaits) == 0 {
+		return []models.PaymentSession{}, nil
+	}
+
+	methods := slices.Sorted(maps.Keys(s.offlineWaits))
+	cutoffs := make([]time.Time, 0, len(methods))
+	for _, method := range methods {
+		cutoffs = append(cutoffs, now.UTC().AddDate(0, 0, -s.offlineWaits[method]))
+	}
+
+	return s.store.ListOverdueOfflineSessions(ctx, methods, cutoffs, after.OpenedAt, after.SessionID, limit)
 }

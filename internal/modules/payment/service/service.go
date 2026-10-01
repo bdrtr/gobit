@@ -60,6 +60,7 @@ package service
 import (
 	"context"
 	"log/slog"
+	"maps"
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -308,6 +309,13 @@ type Store interface {
 	// SessionsOfCollections returns the sessions of the given collections in
 	// one read.
 	SessionsOfCollections(ctx context.Context, collectionIDs []string) ([]models.PaymentSession, error)
+	// ListOverdueOfflineSessions returns, oldest first after the key, the
+	// authorized sessions of the given providers opened before each one's
+	// cutoff, in collections that captured nothing (ADR 0289).
+	ListOverdueOfflineSessions(
+		ctx context.Context, providerIDs []string, cutoffs []time.Time,
+		afterCreatedAt time.Time, afterID string, limit int32,
+	) ([]models.PaymentSession, error)
 	// ListSessionsForReconciliation returns the sessions that are authorized
 	// but not captured here and have been in that state since before
 	// unchangedSince — the only set where this module and a provider can
@@ -396,6 +404,12 @@ type Options struct {
 	// canceled order's payment is found (ADR 0288). Nil leaves
 	// [Service.HandleOrderCanceled] refusing every event.
 	Links OrderLinks
+	// OfflineWaitDays is how many days each named offline method waits for
+	// its money before [Service.ListOverdueOffline] reports its session (ADR
+	// 0289). A method left out never expires. A named method has to be a
+	// registered provider whose money comes later, and a wait is one to
+	// [MaxOfflineWaitDays] days.
+	OfflineWaitDays map[string]int
 }
 
 // MaxGiftCardValidityDays is the longest validity an installation may set: a
@@ -422,6 +436,9 @@ type Service struct {
 	events    EventPublisher
 	links     OrderLinks
 	log       *slog.Logger
+
+	// offlineWaits is [Options.OfflineWaitDays].
+	offlineWaits map[string]int
 
 	// earnBasisPoints is [Options.LoyaltyEarnBasisPoints]; zero earns nothing.
 	earnBasisPoints int64
@@ -454,6 +471,9 @@ func New(opts Options) (*Service, error) {
 			"the gift card validity has to be between 0 and %d days, %d given",
 			MaxGiftCardValidityDays, opts.GiftCardValidityDays)
 	}
+	if err := checkOfflineWaits(opts.OfflineWaitDays, opts.Providers); err != nil {
+		return nil, err
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -464,6 +484,7 @@ func New(opts Options) (*Service, error) {
 		events:               opts.Events,
 		links:                opts.Links,
 		log:                  log,
+		offlineWaits:         maps.Clone(opts.OfflineWaitDays),
 		earnBasisPoints:      opts.LoyaltyEarnBasisPoints,
 		giftCardValidityDays: int32(opts.GiftCardValidityDays),
 	}, nil

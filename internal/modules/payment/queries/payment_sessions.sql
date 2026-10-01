@@ -122,3 +122,26 @@ WHERE status = 'authorized'
   AND provider_id <> ALL(sqlc.arg(excluded_providers)::text[])
 ORDER BY updated_at
 LIMIT sqlc.arg(row_limit);
+
+-- The offline sessions past the wait their method was given (ADR 0289):
+-- authorized, of one of the named providers, opened before that provider's
+-- cutoff, in a collection that captured nothing — a collection that took a
+-- gift card beside the transfer is the shop's to decide, and its order's
+-- cancel would be refused anyway.
+--
+-- The cutoff is the provider's own: provider_ids and cutoffs are parallel
+-- arrays, and array_position finds the row's provider in the first. The page
+-- is keyed on (created_at, id), oldest first, so an order the job cannot
+-- cancel does not hold the page against the ones after it.
+-- name: ListOverdueOfflineSessions :many
+SELECT * FROM payment_sessions s
+WHERE s.status = 'authorized'
+  AND s.provider_id = ANY(sqlc.arg(provider_ids)::text[])
+  AND s.created_at < (sqlc.arg(cutoffs)::timestamptz[])[array_position(sqlc.arg(provider_ids)::text[], s.provider_id)]
+  AND (s.created_at, s.id) > (sqlc.arg(after_created_at)::timestamptz, sqlc.arg(after_id)::text)
+  AND EXISTS (
+    SELECT 1 FROM payment_collections c
+    WHERE c.id = s.payment_collection_id AND c.captured_amount = 0
+  )
+ORDER BY s.created_at, s.id
+LIMIT sqlc.arg(row_limit);

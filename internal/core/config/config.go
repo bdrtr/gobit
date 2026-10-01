@@ -258,6 +258,12 @@ const (
 	// says so. It repeats the payment service's ceiling for the loyalty rate's
 	// reason, and an arch assertion binds the two.
 	MaxGiftCardValidityDays = 36_500
+
+	// MaxPaymentOfflineWaitDays is the longest an offline method may make an
+	// order wait for its money (ADR 0289): a year, past which a shop means never
+	// and leaves the method out. It repeats the payment service's ceiling for the
+	// loyalty rate's reason, and an arch assertion binds the two.
+	MaxPaymentOfflineWaitDays = 365
 )
 
 // The valid enum values; Validate checks against these.
@@ -965,6 +971,17 @@ type Config struct {
 	// digits and underscores, starting with a letter; one the payment module
 	// cannot register stops the startup, naming the method.
 	PaymentOfflineMethods []string `env:"PAYMENT_OFFLINE_METHODS" envSeparator:","`
+
+	// PaymentOfflineWaitDays is how many days an order placed with an offline
+	// method waits for its money before a job cancels it, per method:
+	// "bank_transfer:3" (ADR 0289).
+	//
+	// A method left out never expires, and every method is left out by default.
+	// Cash on delivery is paid at the door after the parcel has left, so a wait
+	// counted from the placement would cancel an order on its way. A named
+	// method has to be one of [Config.PaymentOfflineMethods], and a wait is one
+	// to [MaxPaymentOfflineWaitDays] days.
+	PaymentOfflineWaitDays OfflineWaits `env:"PAYMENT_OFFLINE_WAIT_DAYS"`
 
 	// GraphQLMaxFieldRepetition is the upper bound on how many times the same field
 	// may be selected under the same object.

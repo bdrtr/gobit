@@ -2,6 +2,7 @@ package config_test
 
 import (
 	"log/slog"
+	"maps"
 	"os"
 	"reflect"
 	"slices"
@@ -36,6 +37,7 @@ var envKeys = []string{
 	"GRAPHQL_MAX_DEPTH", "GRAPHQL_MAX_COMPLEXITY", "GRAPHQL_INTROSPECTION",
 	"STOREFRONT_CATALOG_CACHE_TTL", "STOREFRONT_CATALOG_CACHE_SHARED",
 	"PAYMENT_LOYALTY_EARN_BASIS_POINTS", "PAYMENT_GIFT_CARD_VALIDITY_DAYS", "PAYMENT_OFFLINE_METHODS",
+	"PAYMENT_OFFLINE_WAIT_DAYS",
 	"DB_MAX_CONNS", "DB_MIN_CONNS", "ADMIN_SECOND_FACTOR_REQUIRED_FROM",
 }
 
@@ -392,6 +394,45 @@ func TestTheOfflineMethodsAreReadAsWritten(t *testing.T) {
 		t.Setenv("PAYMENT_OFFLINE_METHODS", value)
 		if _, err := config.Load(); err == nil {
 			t.Fatalf("Load() should have refused PAYMENT_OFFLINE_METHODS=%q", value)
+		}
+	}
+}
+
+// TestTheOfflineWaitIsPerMethod pins PAYMENT_OFFLINE_WAIT_DAYS (ADR 0289): no
+// wait by default, one read per method as written, and a wait for a method
+// the installation does not offer, outside one day to a year, given twice or
+// not written as method:days, refused.
+func TestTheOfflineWaitIsPerMethod(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PAYMENT_OFFLINE_METHODS", "bank_transfer,cash_on_delivery")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("the default has to load: %v", err)
+	}
+	if len(cfg.PaymentOfflineWaitDays) != 0 {
+		t.Fatalf("no method expires unless it is named, got %v", cfg.PaymentOfflineWaitDays)
+	}
+
+	t.Setenv("PAYMENT_OFFLINE_WAIT_DAYS", "bank_transfer:3")
+	if cfg, err = config.Load(); err != nil {
+		t.Fatalf("a wait for an offered method has to load: %v", err)
+	}
+	if !maps.Equal(cfg.PaymentOfflineWaitDays, config.OfflineWaits{"bank_transfer": 3}) {
+		t.Fatalf("the wait is read per method, got %v", cfg.PaymentOfflineWaitDays)
+	}
+
+	t.Setenv("PAYMENT_OFFLINE_WAIT_DAYS", "bank_transfer:365")
+	if cfg, err = config.Load(); err != nil || cfg.PaymentOfflineWaitDays["bank_transfer"] != config.MaxPaymentOfflineWaitDays {
+		t.Fatalf("the ceiling has to survive: %v, %v", cfg.PaymentOfflineWaitDays, err)
+	}
+
+	for _, value := range []string{
+		"wire_transfer:3", "bank_transfer:0", "bank_transfer:366", "bank_transfer:-1",
+		"bank_transfer:3,bank_transfer:5", "bank_transfer: 3", "bank_transfer", "bank_transfer:3d", ",",
+	} {
+		t.Setenv("PAYMENT_OFFLINE_WAIT_DAYS", value)
+		if _, err := config.Load(); err == nil {
+			t.Fatalf("Load() should have refused PAYMENT_OFFLINE_WAIT_DAYS=%q", value)
 		}
 	}
 }

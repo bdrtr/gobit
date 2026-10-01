@@ -193,6 +193,12 @@ type Options struct {
 	// offers only by naming it.
 	OfflineMethods []string
 
+	// OfflineWaitDays is how many days each named offline method waits for its
+	// money before the offline expiry job cancels its order (ADR 0289). A
+	// method left out never expires, which is every method by default; a named
+	// one has to be in OfflineMethods.
+	OfflineWaitDays map[string]int
+
 	// PersonBoundTenders bir KİŞİNİN bakiyesini harcayan iki sağlayıcının —
 	// mağaza kredisi (ADR 0152) ve sadakat puanı (ADR 0165) — kaydedilip
 	// kaydedilmeyeceğidir.
@@ -354,6 +360,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		LoyaltyEarnBasisPoints: m.opts.LoyaltyEarnBasisPoints,
 		GiftCardValidityDays:   m.opts.GiftCardValidityDays,
 		Links:                  links,
+		OfflineWaitDays:        m.opts.OfflineWaitDays,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,

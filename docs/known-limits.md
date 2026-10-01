@@ -631,11 +631,16 @@ past and is not corrected retroactively.
   A card payment taken over the telephone is not offered, because the operator
   would hold the card; a caller who pays by card is sent the cart's link.
 
-- **An offline order that is never paid stays until the shop cancels it.** An
-  order placed with an offline method owes its total and holds its stock; nothing
-  cancels it after a deadline. The shop's cancel gives the stock back
-  ([ADR 0285](adr/0285-the-shops-cancel-gives-the-stock-back.md)) and closes the
-  payment session once its event is handled
+- **An unpaid offline order expires only where its method was given a wait.**
+  An order placed with an offline method owes its total and holds its stock.
+  Since [ADR 0289](adr/0289-an-unpaid-offline-order-expires-by-its-methods-wait.md)
+  `PAYMENT_OFFLINE_WAIT_DAYS` gives a method days, and a job cancels the order
+  whose session of that method is still authorized past them; a method left
+  out, which is every method by default and cash on delivery by design, keeps
+  its order until the shop cancels it. An order whose payment captured
+  something beside the transfer is never canceled by the job. The cancel gives
+  the stock back ([ADR 0285](adr/0285-the-shops-cancel-gives-the-stock-back.md))
+  and closes the payment session once its event is handled
   ([ADR 0288](adr/0288-a-canceled-order-holds-no-payment.md)).
 
 - **Store credit names its order, not the finer cause.** Since
