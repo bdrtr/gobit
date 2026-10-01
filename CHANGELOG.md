@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kırıcı değişiklikler
 
+- **Production registers no manual provider** (ADR 0283, D194). **For
+  operators:** with `APP_ENV=production` the `manual` payment provider, which
+  authorizes and captures whatever the caller names, is no longer registered: a
+  shopper could complete a cart with it and receive an order recorded as paid
+  with nothing paid. Development and staging keep it. A production shop takes
+  payment through a provider plugin, the gift card and the balance tenders.
+
 - **A second factor is changed only with itself** (ADR 0264, D182, D183).
   **For integrators:** `DELETE /admin/v1/auth/mfa` is gone; the removal is
   `POST /admin/v1/auth/mfa/remove`. It and `POST /admin/v1/auth/mfa` on an

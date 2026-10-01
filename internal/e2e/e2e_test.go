@@ -665,6 +665,7 @@ func setUpHarness(ctx context.Context) error {
 	// would earn itself back forever, so the scenario that proves it earns
 	// nothing runs at the rate where it matters most (ADR 0165).
 	registry.Add(paymentmod.New(paymentmod.Options{
+		ManualProvider:         true,
 		PersonBoundTenders:     true,
 		LoyaltyEarnBasisPoints: loyaltyEarnBasisPoints,
 	}))

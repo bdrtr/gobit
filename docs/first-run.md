@@ -71,7 +71,8 @@ The block completes the cart with the `manual` provider, which ships with the
 framework and records an outcome the caller names. It is what a first run has:
 an installation with no Stripe account can still take an order end to end and
 see the amounts. A real provider replaces this one call and nothing else — the
-cart, the totals and the order are the same records.
+cart, the totals and the order are the same records. Because it pays for
+nothing, it is not registered when `APP_ENV=production` (ADR 0283).
 
 ## The block
 

@@ -376,6 +376,12 @@ func TestTheB2BStorefrontRefusesAnUnverifiedClaimInARealProcess(t *testing.T) {
 		assert.Contains(t, tenders, "loyalty_points")
 	})
 
+	t.Run("the manual provider is offered outside production", func(t *testing.T) {
+		assert.Contains(t, storefrontTenders(t, s, storefrontKey), manualProviderID,
+			"a development installation takes an order end to end without a provider account; "+
+				"its absence here would let the production scenario pass for the wrong reason (ADR 0283)")
+	})
+
 	for _, path := range []string{"/company", "/employee"} {
 		t.Run(path, func(t *testing.T) {
 			code, body := s.storefrontRequest(http.MethodGet,

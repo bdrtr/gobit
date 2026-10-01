@@ -12,10 +12,10 @@ import (
 
 // ProviderRegistry holds the payment providers by their identities.
 //
-// The module puts its own default provider
-// ([github.com/bdrtr/gobit/internal/modules/payment/manual.Provider]) here
-// during Register and hands the registry to the container under the name
-// "payment.providers". A plugin adds its own provider by resolving the registry
+// The module puts its own providers here during Register — the manual provider
+// ([github.com/bdrtr/gobit/internal/modules/payment/manual.Provider]) only where
+// the installation asks for it (ADR 0283) — and hands the registry to the
+// container under the name "payment.providers". A plugin adds its own provider by resolving the registry
 // from the container, WITHOUT TOUCHING the core or this module; the contract is
 // the PaymentProvider interface in core/provider, and plugins/paymentpaytr
 // satisfies it.

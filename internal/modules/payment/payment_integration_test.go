@@ -905,8 +905,9 @@ func TestModulContainerdaAdlariKaydeder(t *testing.T) {
 
 	registry, err := container.Resolve[*service.ProviderRegistry](c, payment.ProvidersName)
 	require.NoError(t, err)
-	assert.Equal(t, []string{giftcard.ID, manual.ID}, registry.IDs(),
-		"the default provider and the gift card are registered in every installation (ADR 0208)")
+	assert.Equal(t, []string{giftcard.ID}, registry.IDs(),
+		"the gift card is registered in every installation (ADR 0208), and the manual provider "+
+			"only where it is asked for (ADR 0283)")
 
 	provider, err := container.Resolve[query.Provider](c, payment.ProviderName)
 	require.NoError(t, err)
@@ -1233,17 +1234,34 @@ func TestEszamanliIkiCaptureTekTahsilatUretir(t *testing.T) {
 
 // --- mağaza kredisi ----------------------------------------------------------
 
-// TestModulAyarAcikkenKrediSaglayicisiniKaydeder ayar AÇIKKEN sağlayıcının
-// kaydedildiğini doğrular.
+// TestTheManualProviderIsRegisteredWhereItIsAskedFor is the companion of
+// [TestModulContainerdaAdlariKaydeder] for the manual provider: the default
+// leaves it out, and the setting is what puts it in (ADR 0283).
+func TestTheManualProviderIsRegisteredWhereItIsAskedFor(t *testing.T) {
+	ctx := context.Background()
+	c := container.New(nil)
+	require.NoError(t, c.Provide("core.db", testPool))
+	require.NoError(t, c.Provide("core.link", link.New(testPool, slog.New(slog.DiscardHandler))))
+	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
+
+	require.NoError(t, payment.New(payment.Options{ManualProvider: true}).Register(ctx, c))
+
+	registry, err := container.Resolve[*service.ProviderRegistry](c, payment.ProvidersName)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{giftcard.ID, manual.ID}, registry.IDs())
+}
+
+// TestModulAyarAcikkenKrediSaglayicisiniKaydeder proves the providers are
+// registered while the setting is ON.
 //
-// Eşlik eden çift budur. [TestModulContainerdaAdlariKaydeder] varsayılan
-// kurulumda kayıtta YALNIZCA manuel sağlayıcının olduğunu çiviliyor; tek başına
-// o iddia, sağlayıcılar hiç kaydedilmiyor olsa da geçerdi. İkisi birlikte reddin
-// AYARIN kararı olduğunu söylüyor — ki o ayar bir güvenlik kararı: müşteri
-// iddiasına kanıtsız güvenen bir kurulumda kişiye bağlı bir tender, birinin
-// adını yazan herkesin onun bakiyesini harcaması demek olurdu (ADR 0152). Ayar
-// TEK ve iki tender'ı birden açıyor (ADR 0165): kredi kayıtlıyken puanın
-// kayıtsız olduğu bir kurulum yok.
+// It is the companion of [TestModulContainerdaAdlariKaydeder], which pins that
+// a default installation registers only the gift card; that claim alone would
+// hold if the providers were never registered at all. Together the two say the
+// refusal is the SETTING's decision — and that setting is a security decision:
+// in an installation that trusts the customer claim without proof, a
+// person-bound tender would mean anybody who types someone's name spends their
+// balance (ADR 0152). The setting is ONE and opens both tenders (ADR 0165):
+// there is no installation where credit is registered and points are not.
 func TestModulAyarAcikkenKrediSaglayicisiniKaydeder(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
@@ -1256,7 +1274,7 @@ func TestModulAyarAcikkenKrediSaglayicisiniKaydeder(t *testing.T) {
 
 	registry, err := container.Resolve[*service.ProviderRegistry](c, payment.ProvidersName)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{manual.ID, giftcard.ID, storecredit.ID, loyaltypoints.ID}, registry.IDs(),
+	assert.ElementsMatch(t, []string{giftcard.ID, storecredit.ID, loyaltypoints.ID}, registry.IDs(),
 		"with the setting on, store credit and loyalty points are tenders too, beside the gift card")
 }
 

@@ -5,17 +5,22 @@
 // PaymentCollection, PaymentSession, Payment ve Refund verisinin TEK yazma
 // yetkilisidir (Prensip 2.3).
 //
-// # Sağlayıcı soyutlaması
+// # The provider abstraction
 //
-// Ödeme kuruluşuyla konuşan taraf modül değil, core/provider'daki
-// PaymentProvider sözleşmesini karşılayan bir SAĞLAYICIDIR. Modül sağlayıcıları
-// kimlikleriyle bir kayıtta tutar ([service.ProviderRegistry]) ve akış sırasında
-// ADLA çözer. Kutudan çıkan sağlayıcılar [Module.Register]'ın kaydettikleridir:
-// manuel/test sağlayıcısı (internal/modules/payment/manual) her kurulumda, bir
-// müşterinin kendi bakiyesini harcayan iki tender (storecredit, loyaltypoints)
-// yalnızca müşteri iddiasının kanıtlandığı kurulumda ([Options.PersonBoundTenders]).
-// Eklenti sistemi, çekirdeğe ve bu modüle dokunmadan container'daki kayda kendi
-// sağlayıcısını ekler — plugins/paymentpaytr tam olarak bunu yapar.
+// The side that talks to a payment institution is not the module but a
+// PROVIDER that satisfies core/provider's PaymentProvider contract. The module
+// keeps providers by id in a registry ([service.ProviderRegistry]) and resolves
+// them BY NAME during a flow.
+//
+// The providers in the box are the ones [Module.Register] registers: the gift
+// card in every installation; the manual provider
+// (internal/modules/payment/manual), which authorizes whatever the caller
+// names, only where [Options.ManualProvider] asks for it, which the composition
+// root does everywhere but production (ADR 0283); and the two tenders that
+// spend a customer's own balance (storecredit, loyaltypoints) only where the
+// customer claim is proven ([Options.PersonBoundTenders]). The plugin system
+// adds its own provider to the registry in the container without touching the
+// core or this module — plugins/paymentpaytr does exactly that.
 //
 // # Saga telafisi
 //
@@ -164,12 +169,22 @@ func New(opts ...Options) *Module {
 	return m
 }
 
-// Options modülün kurulum tarafından verilen ayarlarıdır.
+// Options are the module's settings, given by the installation.
 //
-// Sıfır değeri GÜVENLİ tarafı seçiyor: kişiye bağlı tender'lar kayıtlı DEĞİL.
-// Modülü elle kuran bir gömen, ayarı hiç duymamış olsa bile müşterinin parasını
-// ya da puanını harcayan bir ödeme yöntemi açmış olmuyor.
+// The zero value picks the SAFE side: neither the manual provider nor the
+// person-bound tenders are registered. An embedder who builds the module by
+// hand without having heard of either setting has opened no tender that places
+// a paid order without payment, and none that spends a customer's money or
+// points.
 type Options struct {
+	// ManualProvider is whether the manual provider is registered.
+	//
+	// It authorizes and captures whatever the caller names, so where a shopper
+	// can choose it an order is placed paid with nothing paid (ADR 0283). It is
+	// what an installation without a provider account takes an order end to end
+	// with, and the composition root registers it everywhere but production.
+	ManualProvider bool
+
 	// PersonBoundTenders bir KİŞİNİN bakiyesini harcayan iki sağlayıcının —
 	// mağaza kredisi (ADR 0152) ve sadakat puanı (ADR 0165) — kaydedilip
 	// kaydedilmeyeceğidir.
@@ -224,10 +239,10 @@ func (m *Module) Migrations() fs.FS { return migrationsRoot }
 // çözülmesi güvenlidir ve eksikliği modülün hiç çalışamayacağı bir kurulum
 // hatasıdır — sessizce ertelenmez.
 //
-// Varsayılan sağlayıcı ([manual.Provider]) burada kaydedilir. Aynı depo
-// örneğini kullanır ama AYRI bir tabloya yazar; servisin [service.Store]
-// arayüzünde o tablonun metotları yoktur, yani modül sağlayıcının defterine
-// tip düzeyinde erişemez.
+// The manual provider ([manual.Provider]) is registered here when
+// [Options.ManualProvider] asks for it. It uses the same repository but writes
+// to a SEPARATE table; the service's [service.Store] has none of that table's
+// methods, so the module cannot reach the provider's ledger at the type level.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, dbServiceName)
 	if err != nil {
@@ -269,9 +284,11 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	repo := repository.New(pool.Pool())
 
 	providers := service.NewProviderRegistry()
-	if err := providers.Register(manual.New(repo, log)); err != nil {
-		return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
-			"%s modülü varsayılan sağlayıcıyı kaydedemedi", ModuleName)
+	if m.opts.ManualProvider {
+		if err := providers.Register(manual.New(repo, log)); err != nil {
+			return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
+				"the %s module could not register the manual provider", ModuleName)
+		}
 	}
 	// Mağaza kredisi ve sadakat puanı da birer ödeme yöntemi ve kutudan çıkıyor
 	// (ADR 0152, ADR 0165): eklenti gerektirmiyorlar, çünkü harcadıkları bakiye

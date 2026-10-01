@@ -585,6 +585,12 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	}))
 	// Phase 6: payment and order
 	registry.Add(payment.New(payment.Options{
+		// The manual provider authorizes whatever the caller names, so where a
+		// shopper can choose it an order is placed paid with nothing paid. It is
+		// what an installation without a provider account takes an order end to
+		// end with, and production is the one environment where nobody should
+		// (ADR 0283).
+		ManualProvider: !cfg.IsProduction(),
 		// The tenders that spend a PERSON's balance — store credit (ADR 0152)
 		// and loyalty points (ADR 0165) — are turned on for the installations
 		// where the customer claim is PROVEN. On one that has gone back to the

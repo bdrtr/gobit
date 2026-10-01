@@ -82,7 +82,7 @@ The handful that has to be set by hand:
 | `REDIS_URL` | the same rule |
 | `JWT_SECRET` | without it the identity layer **rejects every request** (ADR 0007) |
 | `JWT_TTL` | how long an admin session lasts; twelve hours by default and it **never renews** (ADR 0031). Capped at twenty-four hours in a shared environment |
-| `APP_ENV` | any value other than `development` counts as a shared environment and turns the warnings on |
+| `APP_ENV` | any value other than `development` counts as a shared environment and turns the warnings on; `production` also leaves out the `manual` payment provider, which pays for nothing (ADR 0283) |
 | `EVENT_BUS` · `GUARD_BACKEND` | both must be `redis` if you run more than one instance |
 | `PLUGINS` | the names of the plugins to install, for example `PLUGINS=search-pg` |
 
@@ -252,7 +252,7 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 281 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 282 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
 | [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: fifty-four items in seven groups — identity and authorization, sales channel scope, the category tree, a product's history, tax, installation and operation, the limit of the invariants |
