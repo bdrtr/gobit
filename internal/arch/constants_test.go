@@ -336,6 +336,8 @@ func TestTheBuyerAttributeNamesAgree(t *testing.T) {
 		"the cart and the pricing ladder must spell the customer attribute alike")
 	assert.Equal(t, pricingmodels.AttrCompanyID, cartflow.AttrCompanyID,
 		"the cart and the pricing ladder must spell the company attribute alike")
+	assert.Equal(t, pricingmodels.AttrCustomerGroupID, cartflow.AttrCustomerGroupID,
+		"the attribute a price list's group rule names must be the one the cart fills (ADR 0327)")
 }
 
 // TestTheGraphQLLimitDefaultsAgreeWithTheConfig verifies that the GraphQL

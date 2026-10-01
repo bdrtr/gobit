@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel prices a variant on a list** (ADR 0327). **For operators:** a
+  variant's page lists its prices on price lists with the customers each is
+  for, and adds a price on a list for every customer or for some customer
+  groups, and removes one, under `pricing:write`. **For integrators:**
+  `pricing.admin` reads, adds and removes a set's list prices, and pricing
+  names the `customer_group_id` attribute, pinned against the cart's.
+
 - **The panel writes and lists the price lists** (ADR 0326). **For
   operators:** a Price lists screen lists the lists with their type, status
   and window, and writes one under `pricing:write`. **For integrators:** the

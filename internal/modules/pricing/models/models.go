@@ -166,6 +166,11 @@ const (
 	AttrCompanyID = "company_id"
 )
 
+// AttrCustomerGroupID carries the customer's group that ranks first (ADR
+// 0049), the segment a price list's price is limited to (ADR 0327). The cart
+// writes it, and internal/arch binds the two spellings.
+const AttrCustomerGroupID = "customer_group_id"
+
 // BuyerRank reports how narrowly the rule names the buyer: 2 for the customer,
 // 1 for their company, 0 for anything else.
 //

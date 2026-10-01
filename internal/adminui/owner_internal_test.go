@@ -492,6 +492,18 @@ func (p recordingPrices) CreatePriceList(
 	return "plist_walk", p.surfaces.reach(ServicePricingAdmin)
 }
 
+func (p recordingPrices) ListPricesJSON(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage(`[]`), p.surfaces.reach(ServicePricingAdmin)
+}
+
+func (p recordingPrices) AddListPrice(context.Context, string, string, string, int64, []string) error {
+	return p.surfaces.reach(ServicePricingAdmin)
+}
+
+func (p recordingPrices) RemoveListPrice(context.Context, string, string) error {
+	return p.surfaces.reach(ServicePricingAdmin)
+}
+
 func (p recordingPrices) SetBasePriceAmount(context.Context, string, string, int64, int64) error {
 	return p.surfaces.reach(ServicePricingAdmin)
 }
@@ -876,6 +888,12 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, PromotionRuleRemovePath): {},
 	// Writing a customer group (ADR 0323).
 	routeKey(http.MethodPost, CustomerGroupListPath): {formGroupName: {"Walk"}},
+	// A variant's list prices (ADR 0327).
+	routeKey(http.MethodPost, VariantListPricesPath): {
+		formPriceSetID: {"pset_walk"}, formListPriceList: {"plist_walk"},
+		formListPriceCurrency: {"TRY"}, formListPriceAmount: {"10"},
+	},
+	routeKey(http.MethodPost, VariantListPriceRemovePath): {formPriceSetID: {"pset_walk"}},
 	// Writing a price list (ADR 0326).
 	routeKey(http.MethodPost, PriceListsPath): {formPriceListTitle: {"Walk"}},
 	// A claim's evidence (ADR 0325).
@@ -977,7 +995,7 @@ func (w *panelWalk) request(t *testing.T, key string, walk walkCase, scopes ...s
 	path := strings.NewReplacer("{id}", "walk", "{variantID}", "walk",
 		"{kind}", "return", "{record}", "walk", "{act}", "cancel", "{line}", "walk",
 		"{ruleID}", "walk", "{revision}", "2", "{parcel}", "walk", "{claim}", "walk",
-		"{evidence}", "walk").Replace(pattern)
+		"{evidence}", "walk", "{priceID}", "walk").Replace(pattern)
 
 	var req *http.Request
 	if fileField, multi := walkMultipart[key]; multi {

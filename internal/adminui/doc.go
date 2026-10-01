@@ -135,7 +135,10 @@
 //
 // The Price lists screen ([UI.listPriceLists]) lists the pricing module's
 // lists with their type, status and window, and its form writes one
-// ([UI.createPriceList]) through the module's panel surface (ADR 0326).
+// ([UI.createPriceList]) through the module's panel surface (ADR 0326). A
+// variant's page lists its prices on those lists and puts one on a list, for
+// every customer or for some customer groups ([UI.addListPrice],
+// [UI.removeListPrice], ADR 0327).
 //
 // The Campaigns screen ([UI.listCampaigns]) lists the windows and budgets the
 // promotions share, with how much of each budget is used, and its form writes

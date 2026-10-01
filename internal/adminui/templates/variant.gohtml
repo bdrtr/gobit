@@ -55,9 +55,55 @@ section names it.
   {{ else }}
     <p>This variant's price set has no single base price at one unit to edit here. Add or change one through the admin API.</p>
   {{ end }}
+  {{ if .ListPricesUnread }}<p class="muted">The variant's prices on price lists could not be read.</p>{{ end }}
+  {{ if .ListPrices }}
+    {{/* A price on a list, for every customer or for some groups, read through
+    the pricing module's surface with its rules (ADR 0327). */}}
+    <h3>Prices on price lists</h3>
+    <table>
+      <thead>
+        <tr><th>Price list</th><th>Amount</th><th>Applies to</th>{{ if .CanRemoveList }}<th></th>{{ end }}</tr>
+      </thead>
+      <tbody>
+      {{ range .ListPrices }}
+        <tr><td>{{ .List }}</td><td>{{ .Amount }}</td><td>{{ .Applies }}</td>
+          {{ if $.CanRemoveList }}<td>
+            <form method="post" action="{{ $.ListPricesPath }}/{{ .ID }}/remove">
+              <input type="hidden" name="price_set_id" value="{{ $.PriceSetID }}">
+              <button type="submit">Remove</button>
+            </form>
+          </td>{{ end }}
+        </tr>
+      {{ end }}
+      </tbody>
+    </table>
+  {{ end }}
+  {{ with .ListPriceForm }}
+  {{ if .Lists }}
+  <form method="post" action="{{ $.ListPricesPath }}">
+    <input type="hidden" name="price_set_id" value="{{ $.PriceSetID }}">
+    <select name="price_list_id" aria-label="price list" required>
+      {{ range .Lists }}<option value="{{ .ID }}">{{ .Title }} ({{ .Type }}, {{ .Status }})</option>{{ end }}
+    </select>
+    <select name="currency" aria-label="currency" required>
+      {{ range .Currencies }}<option value="{{ . }}">{{ . }}</option>{{ end }}
+    </select>
+    <input type="text" name="amount" placeholder="amount" aria-label="amount" required>
+    {{ if .Groups }}
+    <select name="customer_group" multiple aria-label="customer groups" size="4">
+      {{ range .Groups }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+    </select>
+    {{ end }}
+    <button type="submit">Add the price on the list</button>
+    <p class="muted">With no group chosen, the price is for every customer.</p>
+  </form>
+  {{ else }}
+  <p class="muted">No price list has been written; write one on the Price lists screen.</p>
+  {{ end }}
+  {{ end }}
   {{ if .OtherPrices }}
     <h3>Other prices</h3>
-    <p>Quantity tiers and prices on a price list are changed through the admin API.</p>
+    <p>Quantity tiers are changed through the admin API.</p>
     <table>
       <thead>
         <tr><th>Currency</th><th>Amount</th><th>Applies to</th></tr>

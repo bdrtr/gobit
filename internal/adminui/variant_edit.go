@@ -121,7 +121,7 @@ func (u *UI) submitVariantPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	priceSetID := r.PostFormValue("price_set_id")
+	priceSetID := r.PostFormValue(formPriceSetID)
 	currency := strings.ToUpper(strings.TrimSpace(r.PostFormValue("currency")))
 
 	scale, minor := u.currencyScales(r.Context())[currency], r.PostFormValue("minor") == "1"
@@ -261,6 +261,22 @@ func (u *UI) renderVariant(
 	if !access.StockHidden {
 		itemID, _ = recordChildID(record, keyInventory)
 	}
+	// A variant's list prices, with the groups each is for, come from the
+	// pricing module's surface, which reads the ruled ones the read layer
+	// leaves out; the expansion's list prices are then not printed twice
+	// (ADR 0327).
+	var listPrices []listPriceView
+	var listPricesUnread bool
+	var listPriceForm *listPriceForm
+	if admin, ok := u.prices.(ListPriceAdmin); ok && !access.PricesHidden && priceSetID != "" {
+		listPrices, listPricesUnread = u.listPricesOf(r, admin, priceSetID, scales)
+		if !listPricesUnread {
+			others = slices.DeleteFunc(others, func(row otherPriceRow) bool { return row.OnList })
+		}
+		if u.canWriteListPrices(r) {
+			listPriceForm = u.listPriceFormOf(r, scales)
+		}
+	}
 	parts, err := u.loadBundle(r, record)
 	if err != nil {
 		u.catalogFailure(w, r, err, "The variant's bundle could not be read.")
@@ -295,6 +311,12 @@ func (u *UI) renderVariant(
 		// template draws it only where the page says the variant has none.
 		"CanKeepStock":  u.canStockVariant(r),
 		"StockItemPath": variantURL(productID, variantID) + "/stock-item",
+		// The list prices and the form that adds one (ADR 0327).
+		"ListPrices":       listPrices,
+		"ListPricesUnread": listPricesUnread,
+		"ListPriceForm":    listPriceForm,
+		"ListPricesPath":   variantURL(productID, variantID) + "/list-prices",
+		"CanRemoveList":    u.canWriteListPrices(r),
 	})
 }
 
@@ -437,6 +459,9 @@ type otherPriceRow struct {
 	Minor    bool
 	// Applies says when the price applies: its quantities and its list.
 	Applies string
+	// OnList says the price is on a price list, which the page lists apart
+	// when the pricing module's surface reads them (ADR 0327).
+	OnList bool
 }
 
 // variantPrices splits the price-set expansion into the prices the page edits
@@ -454,6 +479,7 @@ func variantPrices(record query.Record, scales map[string]int) ([]priceRow, []ot
 		view    priceView
 		unit    bool
 		applies string
+		onList  bool
 	}
 	prices := make([]read, 0, len(raw))
 	unitCount := map[string]int{}
@@ -474,6 +500,7 @@ func variantPrices(record query.Record, scales map[string]int) ([]priceRow, []ot
 			view:    priceView{Amount: text, Currency: code, Minor: !exact},
 			unit:    unit,
 			applies: applies(from, upTo, listID),
+			onList:  listID != "",
 		})
 	}
 
@@ -486,6 +513,7 @@ func variantPrices(record query.Record, scales map[string]int) ([]priceRow, []ot
 		}
 		others = append(others, otherPriceRow{
 			Currency: price.view.Currency, Amount: price.view.Amount, Minor: price.view.Minor, Applies: price.applies,
+			OnList: price.onList,
 		})
 	}
 

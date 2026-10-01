@@ -854,6 +854,9 @@ var panelSurfaceContracts = map[string]string{
 	"claim_evidence.go": "order.admin's claim evidence",
 	// The price lists, which no read provider publishes (ADR 0326).
 	"price_lists.go": "pricing.admin's price lists",
+	// A variant's list prices with their rules, which the read provider
+	// leaves out (ADR 0327).
+	"variant_list_prices.go": "pricing.admin's list prices",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

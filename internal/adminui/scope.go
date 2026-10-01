@@ -193,6 +193,10 @@ func builtInScopes() map[string]string {
 		routeKey(post, PromotionStatusPath): scopePromotionWrite,
 		routeKey(get, PromotionPath):        scopePromotionRead,
 		routeKey(post, PromotionsPath):      scopePromotionWrite,
+		// A variant's prices on price lists are the pricing module's (ADR
+		// 0327).
+		routeKey(post, VariantListPricesPath):      scopePricingWrite,
+		routeKey(post, VariantListPriceRemovePath): scopePricingWrite,
 		// The price lists and the form that writes one are the pricing
 		// module's (ADR 0326).
 		routeKey(get, PriceListsPath):  scopePricingRead,

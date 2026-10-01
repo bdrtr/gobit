@@ -58,6 +58,8 @@ func (u *UI) routes(r chi.Router) {
 	r.Get(PromotionsPath, u.needs(http.MethodGet, PromotionsPath, u.listPromotions))
 	r.Get(CampaignsPath, u.needs(http.MethodGet, CampaignsPath, u.listCampaigns))
 	r.Get(PriceListsPath, u.needs(http.MethodGet, PriceListsPath, u.listPriceLists))
+	r.Post(VariantListPricesPath, u.needs(http.MethodPost, VariantListPricesPath, u.addListPrice))
+	r.Post(VariantListPriceRemovePath, u.needs(http.MethodPost, VariantListPriceRemovePath, u.removeListPrice))
 	r.Post(PriceListsPath, u.needs(http.MethodPost, PriceListsPath, u.createPriceList))
 	r.Post(CampaignsPath, u.needs(http.MethodPost, CampaignsPath, u.createCampaign))
 	r.Get(NotificationsPath, u.needs(http.MethodGet, NotificationsPath, u.listNotifications))
