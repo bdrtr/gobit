@@ -113,13 +113,18 @@ func (u *UI) listCustomers(w http.ResponseWriter, r *http.Request) {
 	u.templates.render(w, r, http.StatusOK, "customers.gohtml", data)
 }
 
-// showCustomer renders one customer.
-//
-// The ADDRESSES are absent, and that is a property of the read layer rather
-// than a shortcut: an address is the customer module's own record, and the read
-// layer joins across LINKS, not within a module. Showing them would need the
-// panel to hold the customer module's service — the coupling the fourth tree
-// exists to avoid.
+// fieldCustomerAddresses is the customer provider's list of a customer's
+// addresses (ADR 0308), a field and not a join, as a cart's lines are (ADR
+// 0290).
+const fieldCustomerAddresses = "addresses"
+
+// customerAddress is one of a customer's addresses as the page prints it.
+type customerAddress struct {
+	Lines                           []string
+	DefaultShipping, DefaultBilling bool
+}
+
+// showCustomer renders one customer with their addresses (ADR 0308).
 func (u *UI) showCustomer(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if strings.TrimSpace(id) == "" {
@@ -132,7 +137,7 @@ func (u *UI) showCustomer(w http.ResponseWriter, r *http.Request) {
 		Entity: EntityCustomer,
 		Fields: []string{
 			fieldID, fieldEmail, fieldFirstName, fieldLastName, fieldPhone,
-			fieldHasAccount, fieldCreatedAt,
+			fieldHasAccount, fieldCreatedAt, fieldCustomerAddresses,
 		},
 		Filters: map[string]any{filterID: []string{id}},
 		Limit:   1,
@@ -149,9 +154,19 @@ func (u *UI) showCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var addresses []customerAddress
+	for _, entry := range recordList(records[0][fieldCustomerAddresses]) {
+		addresses = append(addresses, customerAddress{
+			Lines:           addressLines(map[string]any(entry)),
+			DefaultShipping: recordBool(entry, "is_default_shipping"),
+			DefaultBilling:  recordBool(entry, "is_default_billing"),
+		})
+	}
+
 	u.templates.render(w, r, http.StatusOK, "customer.gohtml", map[string]any{
 		titleKey:        customerRowOf(records[0]).display(),
 		"Customer":      customerRowOf(records[0]),
+		"Addresses":     addresses,
 		"CustomersPath": CustomersPath,
 	})
 }

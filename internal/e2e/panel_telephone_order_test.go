@@ -353,4 +353,20 @@ func TestAnOperatorFindsACustomerByEmailInThePanel(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Body.String(), adminui.CustomersPath+"/"+customerID)
 	assert.NotContains(t, rec.Body.String(), otherID, "only the records holding the e-mail are listed")
+
+	// The customer's page lists the addresses the customer module keeps (ADR
+	// 0308).
+	_, err = customerSvc.CreateAddress(ctx, customerID, customersvc.AddressInput{
+		Address1: "Kept Street 3", City: "Ankara", CountryCode: taxedCountry, IsDefaultBilling: true,
+	})
+	require.NoError(t, err)
+	page := httptest.NewRequest(http.MethodGet, adminui.CustomersPath+"/"+customerID, http.NoBody)
+	page = page.WithContext(corehttp.WithPrincipal(page.Context(), corehttp.Principal{
+		ID: "usr_desk", Kind: "user", Scopes: []string{"customer:read"},
+	}))
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, page)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "Kept Street 3<br>")
+	assert.Contains(t, rec.Body.String(), "default billing")
 }

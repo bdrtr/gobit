@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The customer page lists the customer's addresses** (ADR 0308). **For
+  operators:** the panel's customer page lists the customer's addresses and
+  marks the defaults. **For integrators:** the `customer` query provider
+  offers the `addresses` field.
+
 - **The panel creates a product and its variants** (ADR 0307). **For
   operators:** the product list links to a form that creates a draft product,
   and the product page adds a variant with a title and an optional SKU; a new

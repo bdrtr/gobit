@@ -3,6 +3,7 @@ package adminui
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,4 +199,39 @@ func TestABrokenCustomerReadIsStillTheScreensFault(t *testing.T) {
 	}}
 	rec := getCustomerPage(newCatalogPanel(t, broken), CustomersPath)
 	assert.Equal(t, http.StatusInternalServerError, rec.Code, rec.Body.String())
+}
+
+// TestTheCustomerPageListsTheirAddresses is ADR 0308: the page asks for the
+// customer's addresses and prints each, its defaults marked, and says when
+// none is kept.
+func TestTheCustomerPageListsTheirAddresses(t *testing.T) {
+	t.Parallel()
+
+	catalog := &fakeCatalog{byEntity: map[string][]query.Record{EntityCustomer: {{
+		"id": "cus_1", "email": "ada@example.test", "first_name": "Ada", "has_account": true,
+		fieldCustomerAddresses: []map[string]any{
+			{"id": "addr_1", "address_1": "Home St 1", "city": "Ankara", "country_code": "TR",
+				"is_default_shipping": true, "is_default_billing": false},
+			{"id": "addr_2", "company": "Engines Ltd", "address_1": "Office St 2", "city": "Izmir", "country_code": "TR",
+				"is_default_shipping": false, "is_default_billing": true},
+		},
+	}}}}
+	rec := getCustomerPage(newCatalogPanel(t, catalog), CustomersPath+"/cus_1")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, "Home St 1<br>")
+	assert.Contains(t, body, "Engines Ltd<br>")
+	assert.Equal(t, 1, strings.Count(body, "default shipping"))
+	assert.Equal(t, 1, strings.Count(body, "default billing"))
+	assert.Less(t, strings.Index(body, "Home St 1"), strings.Index(body, "Office St 2"), "in the order they were written")
+	spec, ok := catalog.specFor(EntityCustomer)
+	require.True(t, ok)
+	assert.Contains(t, spec.Fields, fieldCustomerAddresses)
+
+	bare := &fakeCatalog{byEntity: map[string][]query.Record{EntityCustomer: {{
+		"id": "cus_2", "email": "bare@example.test", fieldCustomerAddresses: []map[string]any{},
+	}}}}
+	rec = getCustomerPage(newCatalogPanel(t, bare), CustomersPath+"/cus_2")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "No address is kept for this customer.")
 }

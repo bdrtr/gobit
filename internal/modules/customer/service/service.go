@@ -140,9 +140,10 @@ type Repository interface {
 	CreateAddress(ctx context.Context, a models.CustomerAddress) (models.CustomerAddress, error)
 	GetAddress(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error)
 	ListAddresses(ctx context.Context, customerID string) ([]models.CustomerAddress, error)
-	// DefaultShippingAddresses returns the default shipping address of each
-	// of the given customers that has one, in one read (ADR 0304).
-	DefaultShippingAddresses(ctx context.Context, customerIDs []string) ([]models.CustomerAddress, error)
+	// AddressesOfCustomers returns the living addresses of the given
+	// customers in one read, each customer's in the order they were written
+	// (ADR 0304, ADR 0308).
+	AddressesOfCustomers(ctx context.Context, customerIDs []string) ([]models.CustomerAddress, error)
 	UpdateAddress(ctx context.Context, customerID, addressID string, patch models.AddressPatch, now time.Time) (models.CustomerAddress, error)
 	DeleteAddress(ctx context.Context, customerID, addressID string, now time.Time) error
 	SetDefaultAddress(ctx context.Context, customerID, addressID string, kind models.DefaultKind, now time.Time) (models.CustomerAddress, error)

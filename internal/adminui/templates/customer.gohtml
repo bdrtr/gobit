@@ -1,11 +1,8 @@
 {{- /*
 customer.gohtml is one customer's page.
 
-The ADDRESSES are absent, and that is a property of the read layer rather than a
-shortcut: an address is the customer module's own record and the read layer
-joins across LINKS, not within a module. Showing them would need the panel to
-hold the customer module's service — the coupling the fourth tree exists to
-avoid (ADR 0011).
+The addresses are the customer provider's list-valued field, in the order they
+were written, each marked when it is a default (ADR 0308).
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
@@ -36,6 +33,25 @@ avoid (ADR 0011).
     <tr><th>Identifier</th><td>{{ .Customer.ID }}</td></tr>
   </tbody>
 </table>
+
+<h2>Addresses</h2>
+{{ if .Addresses }}
+<table>
+  <tbody>
+    {{ range .Addresses }}
+    <tr>
+      <td>{{ range .Lines }}{{ . }}<br>{{ end }}</td>
+      <td>
+        {{ if .DefaultShipping }}<span class="pill">default shipping</span>{{ end }}
+        {{ if .DefaultBilling }}<span class="pill">default billing</span>{{ end }}
+      </td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p class="muted">No address is kept for this customer.</p>
+{{ end }}
 
 <p><a href="{{ .CustomersPath }}">Back to customers</a></p>
 {{ end }}

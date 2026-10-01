@@ -58,3 +58,41 @@ func TestTheDefaultShippingAddressFieldOnTheRealQuery(t *testing.T) {
 	assert.Nil(t, byID[moved.ID]["default_shipping_address"], "a deleted default is no default")
 	assert.Nil(t, byID[homeless.ID]["default_shipping_address"])
 }
+
+// TestTheAddressesFieldOnTheRealQuery is ADR 0308's list against a real
+// PostgreSQL: a customer's living addresses in the order they were written,
+// a deleted one left out, an empty list for a customer with none.
+func TestTheAddressesFieldOnTheRealQuery(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+
+	housed := newAccount(ctx, t, svc)
+	var written []string
+	for _, street := range []string{"First Street 1", "Second Street 2", "Third Street 3"} {
+		in := validAddress()
+		in.Address1 = street
+		created, err := svc.CreateAddress(ctx, housed.ID, in)
+		require.NoError(t, err)
+		written = append(written, created.ID)
+	}
+	require.NoError(t, svc.DeleteAddress(ctx, housed.ID, written[1]))
+	homeless := newAccount(ctx, t, svc)
+
+	records, err := service.NewQueryProvider(svc).FetchByIDs(ctx, []string{housed.ID, homeless.ID},
+		[]string{query.IDField, "addresses"})
+	require.NoError(t, err)
+	byID := map[any]query.Record{}
+	for _, record := range records {
+		byID[record[query.IDField]] = record
+	}
+
+	list, ok := byID[housed.ID]["addresses"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, list, 2, "the deleted address is left out")
+	assert.Equal(t, written[0], list[0]["id"])
+	assert.Equal(t, "First Street 1", list[0]["address_1"])
+	assert.Equal(t, written[2], list[1]["id"], "in the order they were written")
+	empty, ok := byID[homeless.ID]["addresses"].([]map[string]any)
+	require.True(t, ok)
+	assert.Empty(t, empty)
+}

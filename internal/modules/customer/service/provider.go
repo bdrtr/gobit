@@ -28,9 +28,14 @@ const (
 	fieldUpdatedAt  = "updated_at"
 	// fieldDefaultShippingAddress is the customer's default shipping address,
 	// keyed as an order's and a cart's address is, or nil when none is set
-	// (ADR 0304). It costs one read for a page of customers, made only when
-	// asked for.
+	// (ADR 0304).
 	fieldDefaultShippingAddress = "default_shipping_address"
+	// fieldAddresses is the customer's living addresses in the order they
+	// were written, each keyed as the default is, with its id and its two
+	// default flags; an empty list for a customer with none (ADR 0308). It and
+	// [fieldDefaultShippingAddress] cost one read for a page of customers,
+	// made only when either is asked for.
+	fieldAddresses = "addresses"
 )
 
 // The filter names the provider recognizes.
@@ -47,7 +52,7 @@ const (
 var supportedFields = []string{
 	fieldID, fieldEmail, fieldFirstName, fieldLastName, fieldPhone,
 	fieldHasAccount, fieldGroupIDs, fieldMetadata, fieldCreatedAt, fieldUpdatedAt,
-	fieldDefaultShippingAddress,
+	fieldDefaultShippingAddress, fieldAddresses,
 }
 
 // supportedFilters are the filters the provider recognizes.
@@ -182,18 +187,22 @@ func (p *QueryProvider) records(
 	}
 
 	defaults := map[string]models.CustomerAddress{}
-	if slices.Contains(fields, fieldDefaultShippingAddress) {
+	addressesOf := map[string][]models.CustomerAddress{}
+	if slices.Contains(fields, fieldDefaultShippingAddress) || slices.Contains(fields, fieldAddresses) {
 		ids := make([]string, 0, len(customers))
 		for i := range customers {
 			ids = append(ids, customers[i].ID)
 		}
 
-		addresses, err := p.svc.repo.DefaultShippingAddresses(ctx, ids)
+		addresses, err := p.svc.repo.AddressesOfCustomers(ctx, ids)
 		if err != nil {
 			return nil, err
 		}
 		for i := range addresses {
-			defaults[addresses[i].CustomerID] = addresses[i]
+			addressesOf[addresses[i].CustomerID] = append(addressesOf[addresses[i].CustomerID], addresses[i])
+			if addresses[i].IsDefaultShipping {
+				defaults[addresses[i].CustomerID] = addresses[i]
+			}
 		}
 	}
 
@@ -224,6 +233,8 @@ func (p *QueryProvider) records(
 				record[fieldUpdatedAt] = c.UpdatedAt
 			case fieldDefaultShippingAddress:
 				record[fieldDefaultShippingAddress] = addressRecord(defaults, c.ID)
+			case fieldAddresses:
+				record[fieldAddresses] = addressList(addressesOf[c.ID])
 			}
 		}
 		records = append(records, record)
@@ -239,6 +250,27 @@ func addressRecord(addresses map[string]models.CustomerAddress, customerID strin
 		return nil
 	}
 
+	return addressKeys(&a)
+}
+
+// addressList is a customer's addresses as the field's value, each with its id
+// and its default flags beside the address keys; never nil, so a customer with
+// none answers an empty list.
+func addressList(addresses []models.CustomerAddress) []map[string]any {
+	out := make([]map[string]any, 0, len(addresses))
+	for i := range addresses {
+		entry := addressKeys(&addresses[i])
+		entry["id"] = addresses[i].ID
+		entry["is_default_shipping"] = addresses[i].IsDefaultShipping
+		entry["is_default_billing"] = addresses[i].IsDefaultBilling
+		out = append(out, entry)
+	}
+
+	return out
+}
+
+// addressKeys is one address under the order's address keys.
+func addressKeys(a *models.CustomerAddress) map[string]any {
 	return map[string]any{
 		"first_name": a.FirstName, "last_name": a.LastName, "company": a.Company,
 		"address_1": a.Address1, "address_2": a.Address2, "city": a.City,
