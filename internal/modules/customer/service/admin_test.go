@@ -44,3 +44,23 @@ func TestThePanelPutsACustomerIntoAGroupAndTakesThemOut(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
 }
+
+// TestThePanelWritesACustomerGroup is ADR 0323: the surface writes a group
+// with its rank and returns its id, and a name a live group holds is a
+// conflict.
+func TestThePanelWritesACustomerGroup(t *testing.T) {
+	ctx := context.Background()
+	svc := New(newMemRepo(), Options{})
+	surface := NewAdminSurface(svc)
+
+	id, err := surface.CreateGroup(ctx, "Wholesale", -2)
+	require.NoError(t, err)
+	group, err := svc.GetGroup(ctx, id)
+	require.NoError(t, err)
+	assert.Equal(t, "Wholesale", group.Name)
+	assert.Equal(t, int32(-2), group.Rank, "a rank in front of the default")
+
+	_, err = surface.CreateGroup(ctx, "Wholesale", 0)
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "a live group's name: %v", err)
+}

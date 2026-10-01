@@ -1,0 +1,54 @@
+{{- /*
+customer_groups.gohtml lists the shop's customer groups (ADR 0323).
+
+A group is a segment a price or a promotion can be limited to (ADR 0049, ADR
+0321). A customer in several groups is priced by the one that ranks first,
+and the smaller rank ranks first; a promotion limited to groups applies to a
+customer in any of them. The rows come newest first, through the customer
+module's group entity.
+
+An operator who may write the customers writes a group here and puts
+customers into it on their pages (ADR 0322).
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ with .Created }}<p role="status">Group {{ . }} was written.</p>{{ end }}
+
+{{ if .CanCreate }}
+<details{{ if .Typed }} open{{ end }}>
+  <summary>New group</summary>
+  <form method="post" action="{{ .Path }}">
+    <input name="name" value="{{ .Typed.Get "name" }}" placeholder="name, e.g. Wholesale" aria-label="name" required>
+    <input name="rank" value="{{ .Typed.Get "rank" }}" placeholder="rank, 0 if blank" aria-label="rank" inputmode="numeric">
+    <button type="submit">Write the group</button>
+  </form>
+</details>
+{{ end }}
+
+{{ if .Groups }}
+<div class="scroll">
+<table>
+  <thead><tr><th>Group</th><th class="num">Rank</th><th>Created</th></tr></thead>
+  <tbody>
+  {{ range .Groups }}
+    <tr>
+      <td>{{ .Name }} <span class="muted">{{ .ID }}</span></td>
+      <td class="num">{{ .Rank }}</td>
+      <td>{{ if not .CreatedAt.IsZero }}{{ .CreatedAt.Format "2006-01-02" }}{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No customer group has been written.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

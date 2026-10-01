@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel writes and lists the customer groups** (ADR 0323). **For
+  operators:** a Customer groups screen lists the groups newest first with
+  their rank and writes one under `customer:write`. **For integrators:** the
+  customer module's input checks answer in English.
+
 - **The panel puts a customer into groups** (ADR 0322). **For operators:** a
   customer's page names their groups, and an operator holding
   `customer:write` puts the customer into a group or takes them out. **For

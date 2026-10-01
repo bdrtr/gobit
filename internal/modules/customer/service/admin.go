@@ -34,3 +34,15 @@ func (a *AdminSurface) AddCustomerToGroup(ctx context.Context, customerID, group
 func (a *AdminSurface) RemoveCustomerFromGroup(ctx context.Context, customerID, groupID string) error {
 	return a.service().RemoveFromGroup(ctx, customerID, groupID)
 }
+
+// CreateGroup writes a customer group and returns its id (ADR 0323): the name
+// is unique among live groups, and the rank is any whole number, the smaller
+// ranking first (ADR 0049).
+func (a *AdminSurface) CreateGroup(ctx context.Context, name string, rank int32) (string, error) {
+	group, err := a.service().CreateGroup(ctx, GroupInput{Name: name, Rank: rank})
+	if err != nil {
+		return "", err
+	}
+
+	return group.ID, nil
+}

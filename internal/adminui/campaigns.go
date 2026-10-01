@@ -247,13 +247,13 @@ func (u *UI) renderCampaigns(w http.ResponseWriter, r *http.Request, code int, r
 		views = append(views, campaignView{campaignRow: rows[i], Budget: rows[i].budgetText(scales)})
 	}
 	data := map[string]any{
-		titleKey:    campaignsLabel,
-		"Campaigns": views,
-		totalKey:    total,
-		"Created":   r.URL.Query().Get(paramCreated),
-		"CanCreate": u.canCreateCampaigns(r),
-		refusedKey:  refused,
-		typedKey:    typed,
+		titleKey:     campaignsLabel,
+		"Campaigns":  views,
+		totalKey:     total,
+		"Created":    r.URL.Query().Get(paramCreated),
+		canCreateKey: u.canCreateCampaigns(r),
+		refusedKey:   refused,
+		typedKey:     typed,
 	}
 	addPaging(data, page, int64(page*campaignsPerPage) < total, CampaignsPath)
 

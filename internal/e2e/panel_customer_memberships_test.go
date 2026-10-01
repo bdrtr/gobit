@@ -76,3 +76,49 @@ func TestAnOperatorPutsACustomerIntoAGroupInThePanel(t *testing.T) {
 	assert.Contains(t, again.Body.String(), "customer "+customerID+" is not a member of group "+group.ID,
 		"the module's reason, in the panel's language")
 }
+
+// TestAnOperatorWritesACustomerGroupInThePanel is ADR 0323 on the production
+// wiring: the Customer groups form writes a group with its rank through the
+// registered `customer.admin` surface, the list names it first with its rank,
+// read through the group entity, and the same name is refused by the module.
+func TestAnOperatorWritesACustomerGroupInThePanel(t *testing.T) {
+	ctx := t.Context()
+	panel, err := adminui.FromContainer(ctr, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_support", Kind: "user", Scopes: []string{"customer:read", "customer:write"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+
+	name := fmt.Sprintf("E2E Panel Gold %d", fixtureCounter.Add(1))
+	written := send(http.MethodPost, adminui.CustomerGroupListPath, url.Values{"name": {name}, "rank": {"-5"}})
+	require.Equal(t, http.StatusSeeOther, written.Code, written.Body.String())
+	list := send(http.MethodGet, written.Header().Get("Location"), nil).Body.String()
+	assert.Contains(t, list, "Group "+name+" was written.")
+	_, row, found := strings.Cut(list, "<td>"+name+" ")
+	require.True(t, found, "the newest group is on the first page")
+	cells, _, _ := strings.Cut(row, "</tr>")
+	assert.Contains(t, cells, `<td class="num">-5</td>`, "with its rank")
+
+	page, err := customerSvc.ListGroups(ctx, 100, 0)
+	require.NoError(t, err)
+	var stored bool
+	for _, group := range page.Items {
+		stored = stored || (group.Name == name && group.Rank == -5)
+	}
+	assert.True(t, stored, "the module holds the group as written")
+
+	again := send(http.MethodPost, adminui.CustomerGroupListPath, url.Values{"name": {name}})
+	require.Equal(t, http.StatusUnprocessableEntity, again.Code, again.Body.String())
+	assert.Contains(t, again.Body.String(), "a customer group named &#34;"+name+"&#34; already exists")
+}

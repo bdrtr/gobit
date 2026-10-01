@@ -289,7 +289,7 @@ func (u *UI) renderPromotions(
 		refusedKey:   refused,
 		typedKey:     typed,
 	}
-	data["CanCreate"] = u.canCreateCoupons(r)
+	data[canCreateKey] = u.canCreateCoupons(r)
 	if u.canSwitchPromotions(r) {
 		data["Switch"] = promotionSwitches[status]
 	}

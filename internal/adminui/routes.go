@@ -104,6 +104,8 @@ func (u *UI) routes(r chi.Router) {
 	r.Get(SalesPath, u.needs(http.MethodGet, SalesPath, u.listSales))
 	r.Get(CustomersPath, u.needs(http.MethodGet, CustomersPath, u.listCustomers))
 	r.Get(CustomerPath, u.needs(http.MethodGet, CustomerPath, u.showCustomer))
+	r.Get(CustomerGroupListPath, u.needs(http.MethodGet, CustomerGroupListPath, u.listCustomerGroups))
+	r.Post(CustomerGroupListPath, u.needs(http.MethodPost, CustomerGroupListPath, u.createCustomerGroup))
 	r.Post(CustomerGroupsPath, u.needs(http.MethodPost, CustomerGroupsPath, u.addToGroup))
 	r.Post(CustomerGroupRemovePath, u.needs(http.MethodPost, CustomerGroupRemovePath, u.removeFromGroup))
 	r.Get(InventoryPath, u.needs(http.MethodGet, InventoryPath, u.listInventory))

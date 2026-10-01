@@ -46,7 +46,6 @@ internal/modules/customer/service/fakes_test.go
 internal/modules/customer/service/group_test.go
 internal/modules/customer/service/provider_test.go
 internal/modules/customer/service/service_test.go
-internal/modules/customer/service/validate.go
 internal/modules/inventory/api/api.go
 internal/modules/inventory/api/api_test.go
 internal/modules/inventory/api/describe_internal_test.go

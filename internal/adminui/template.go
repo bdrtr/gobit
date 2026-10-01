@@ -40,10 +40,11 @@ const refusedKey = "Refused"
 const typedKey = "Typed"
 
 // statusesKey and totalKey carry a list screen's status tabs and the count in
-// the chosen one.
+// the chosen one, and canCreateKey whether the screen offers its form.
 const (
-	statusesKey = "Statuses"
-	totalKey    = "Total"
+	statusesKey  = "Statuses"
+	totalKey     = "Total"
+	canCreateKey = "CanCreate"
 )
 
 // productsPathKey is the template data key carrying the product list's path,
@@ -100,6 +101,7 @@ var pages = []string{
 	"product_revisions.gohtml",
 	"notifications.gohtml",
 	"campaigns.gohtml",
+	"customer_groups.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -297,6 +299,8 @@ func sections() []navItem {
 		// The campaigns hold the promotions' windows and budgets (ADR 0319).
 		{Label: campaignsLabel, Path: CampaignsPath},
 		{Label: customersLabel, Path: CustomersPath},
+		// The groups sit beside the customers they hold (ADR 0323).
+		{Label: customerGroupsLabel, Path: CustomerGroupListPath},
 		// The notifications sit beside the customers they were sent to (ADR
 		// 0317).
 		{Label: notificationsLabel, Path: NotificationsPath},
