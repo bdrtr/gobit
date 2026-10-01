@@ -305,6 +305,9 @@ type Store interface {
 	PaymentSessionByIdempotencyKey(ctx context.Context, providerID, key string) (models.PaymentSession, error)
 	// ListPaymentSessionsByCollection returns the collection's sessions.
 	ListPaymentSessionsByCollection(ctx context.Context, collectionID string) ([]models.PaymentSession, error)
+	// SessionsOfCollections returns the sessions of the given collections in
+	// one read.
+	SessionsOfCollections(ctx context.Context, collectionIDs []string) ([]models.PaymentSession, error)
 	// ListSessionsForReconciliation returns the sessions that are authorized
 	// but not captured here and have been in that state since before
 	// unchangedSince — the only set where this module and a provider can

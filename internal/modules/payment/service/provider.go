@@ -48,6 +48,11 @@ const (
 	//
 	// It costs a third query and only when asked for, like the two moments.
 	FieldMovements = "movements"
+	// FieldAwaiting is every session whose money the shop records when it
+	// arrives — an offline method's, authorized and not captured (ADR 0287):
+	// a list of records keyed by the Awaiting* names below, empty when nothing
+	// is awaited. It costs a query only when asked for, like the movements.
+	FieldAwaiting = "awaiting"
 	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt is the last update time.
@@ -74,6 +79,17 @@ const (
 	// MovementReference is a refund's cause: the caller's id for the record
 	// that caused it, or "" (ADR 0187). A capture's is always "".
 	MovementReference = "reference"
+)
+
+// The keys of one entry of [FieldAwaiting], part of the entity's contract for
+// the movements' reason.
+const (
+	// AwaitingSessionID is the session the money is recorded against.
+	AwaitingSessionID = "session_id"
+	// AwaitingProviderID is the offline method the customer was to pay by.
+	AwaitingProviderID = "provider_id"
+	// AwaitingAmount is what the session awaits (minor unit).
+	AwaitingAmount = "amount"
 )
 
 // collectionFieldGetters are the extractors of the offered fields.
@@ -188,6 +204,7 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 type collectionExtras struct {
 	moments   map[string]models.PaymentMoments
 	movements map[string][]models.PaymentMovement
+	awaiting  map[string][]models.PaymentSession
 }
 
 // extras reads the moments and the movements, each only when asked for.
@@ -202,8 +219,44 @@ func (p *QueryProvider) extras(
 	if err != nil {
 		return collectionExtras{}, err
 	}
+	awaiting, err := p.awaiting(ctx, collections, fields)
+	if err != nil {
+		return collectionExtras{}, err
+	}
 
-	return collectionExtras{moments: moments, movements: movements}, nil
+	return collectionExtras{moments: moments, movements: movements, awaiting: awaiting}, nil
+}
+
+// awaiting reads the sessions whose money is awaited, ONLY when
+// [FieldAwaiting] was asked for.
+func (p *QueryProvider) awaiting(
+	ctx context.Context, collections []models.PaymentCollection, fields []string,
+) (map[string][]models.PaymentSession, error) {
+	if len(collections) == 0 || !wants(fields, FieldAwaiting) {
+		return nil, nil
+	}
+
+	ids := make([]string, 0, len(collections))
+	for i := range collections {
+		ids = append(ids, collections[i].ID)
+	}
+
+	return p.svc.ListAwaitingSessions(ctx, ids)
+}
+
+// awaitingRecords turns one collection's awaited sessions into the field's
+// value; never nil, for [movementRecords]' reason.
+func awaitingRecords(list []models.PaymentSession) []map[string]any {
+	out := make([]map[string]any, 0, len(list))
+	for i := range list {
+		out = append(out, map[string]any{
+			AwaitingSessionID:  list[i].ID,
+			AwaitingProviderID: list[i].ProviderID,
+			AwaitingAmount:     list[i].AuthorizedAmount,
+		})
+	}
+
+	return out
 }
 
 // movements reads every capture and refund, and ONLY when [FieldMovements] was
@@ -359,6 +412,8 @@ func records(
 				record[name] = moment.LastRefundedAt
 			case FieldMovements:
 				record[name] = movementRecords(extra.movements[collections[i].ID])
+			case FieldAwaiting:
+				record[name] = awaitingRecords(extra.awaiting[collections[i].ID])
 			default:
 				record[name] = collectionFieldGetters[name](collections[i])
 			}
@@ -370,15 +425,16 @@ func records(
 
 // offeredFields is every field this entity offers, sorted.
 //
-// It is the getters PLUS the two moment fields and the movements, which have no
-// getter because they do not come off the collection row. Building the default
-// list from the getters alone would mean a caller that named no field got a
-// record missing three of the fields the provider declares — the provider
-// contradicting its own contract, silently.
+// It is the getters PLUS the two moment fields, the movements and the awaited
+// sessions, which have no getter because they do not come off the collection
+// row. Building the default list from the getters alone would mean a caller
+// that named no field got a record missing four of the fields the provider
+// declares — the provider contradicting its own contract, silently.
 func offeredFields() []string {
 	names := slices.Sorted(maps.Keys(collectionFieldGetters))
 
-	return slices.Sorted(slices.Values(append(names, FieldFirstCapturedAt, FieldLastRefundedAt, FieldMovements)))
+	return slices.Sorted(slices.Values(append(names,
+		FieldFirstCapturedAt, FieldLastRefundedAt, FieldMovements, FieldAwaiting)))
 }
 
 // providerLimit clamps the core's limit value to the provider's page ceiling.
@@ -401,9 +457,10 @@ func providerLimit(limit int) int64 {
 // validateFields verifies that all of the requested fields are offered.
 func validateFields(fields []string) error {
 	for _, name := range fields {
-		if name == FieldFirstCapturedAt || name == FieldLastRefundedAt || name == FieldMovements {
-			// The two moment fields and the movements have no getter: they do
-			// not come off the collection row. They are still offered fields,
+		if name == FieldFirstCapturedAt || name == FieldLastRefundedAt || name == FieldMovements ||
+			name == FieldAwaiting {
+			// The two moment fields, the movements and the awaited sessions
+			// have no getter: they do not come off the collection row. They are still offered fields,
 			// and refusing them here would make the provider reject its own
 			// contract.
 			continue

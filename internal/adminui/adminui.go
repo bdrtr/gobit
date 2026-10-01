@@ -187,7 +187,10 @@ type UI struct {
 	// afterSales acts on an order's after-sales records (ADR 0271); nil when
 	// the installation registers none.
 	afterSales AfterSalesAdmin
-	scopes     map[string]string
+	// payments records an offline method's money as received (ADR 0287); nil
+	// when the installation registers none.
+	payments PaymentReceiver
+	scopes   map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -257,6 +260,12 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// So is recording a payment: without the payment module's surface the
+	// order page offers no form (ADR 0287).
+	payments, err := optionalService[PaymentReceiver](c, ServicePaymentAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -283,6 +292,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		secondFactor:  secondFactor,
 		sessions:      sessions,
 		afterSales:    afterSales,
+		payments:      payments,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

@@ -187,6 +187,9 @@ type orderPayment struct {
 	// it has not.
 	FirstCapturedAt *time.Time
 	LastRefundedAt  *time.Time
+	// Awaiting are the sessions whose money the shop records when it arrives
+	// (ADR 0287).
+	Awaiting []orderAwaiting
 }
 
 // orderParcel is one parcel of the order.
@@ -407,6 +410,7 @@ func (u *UI) renderOrder(
 		titleKey:               "Order " + detail.DisplayID,
 		"Outcome":              outcome,
 		"CanAct":               u.afterSales != nil && principal.HasScope(scopeOrderWrite),
+		"CanRecordPayment":     u.payments != nil && principal.HasScope(scopePaymentWrite),
 		"Order":                detail,
 		"OrdersPath":           OrdersPath,
 		"LinesPerOrder":        linesPerOrder,
@@ -630,6 +634,7 @@ func (u *UI) paymentOf(r *http.Request, orderID string, scales map[string]int) (
 		Fields: []string{
 			fieldStatus, fieldAmount, fieldCurrencyCod, fieldAuthorizedAmount,
 			fieldCapturedAmount, fieldRefundedAmount, fieldFirstCapturedAt, fieldLastRefundedAt,
+			fieldAwaiting,
 		},
 	})
 	if err != nil {
@@ -651,6 +656,7 @@ func (u *UI) paymentOf(r *http.Request, orderID string, scales map[string]int) (
 	payment.Authorized, _ = amountField(record, fieldAuthorizedAmount, payment.Currency, scales)
 	payment.Captured, _ = amountField(record, fieldCapturedAmount, payment.Currency, scales)
 	payment.Refunded, _ = amountField(record, fieldRefundedAmount, payment.Currency, scales)
+	payment.Awaiting = awaitingOf(record, payment.Currency, scales)
 
 	return &payment, false
 }

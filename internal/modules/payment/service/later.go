@@ -1,6 +1,12 @@
 package service
 
-import "slices"
+import (
+	"context"
+	"slices"
+
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/payment/models"
+)
 
 // laterCapturer is a provider whose money arrives after the order is placed:
 // an offline method, whose capture is an operator recording that it came
@@ -47,4 +53,58 @@ func (s *Service) laterCapturing() []string {
 	}
 
 	return slices.Clip(out)
+}
+
+// CodeSessionCapturesNow reports a session recorded as received whose
+// provider's money moves at the checkout (ADR 0287).
+const CodeSessionCapturesNow = "payment_session_captures_now"
+
+// ListAwaitingSessions returns, per collection, the sessions whose money the
+// shop records when it arrives: authorized, not captured, and of a provider
+// whose money comes later (ADR 0287).
+func (s *Service) ListAwaitingSessions(
+	ctx context.Context, collectionIDs []string,
+) (map[string][]models.PaymentSession, error) {
+	later := s.laterCapturing()
+	out := map[string][]models.PaymentSession{}
+	if len(collectionIDs) == 0 || len(later) == 0 {
+		return out, nil
+	}
+
+	sessions, err := s.store.SessionsOfCollections(ctx, collectionIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range sessions {
+		if sessions[i].Status == models.SessionAuthorized && slices.Contains(later, sessions[i].ProviderID) {
+			out[sessions[i].PaymentCollectionID] = append(out[sessions[i].PaymentCollectionID], sessions[i])
+		}
+	}
+
+	return out, nil
+}
+
+// RecordReceived records that the money an offline method promised arrived:
+// it captures the session whole (ADR 0287). A second call returns the capture
+// the first made.
+//
+// A session whose provider moves its money at the checkout is refused: its
+// money moves through the provider, and an operator's word is not a capture of
+// it.
+func (s *Service) RecordReceived(ctx context.Context, sessionID string) (models.Payment, error) {
+	ses, err := s.GetPaymentSession(ctx, sessionID)
+	if err != nil {
+		return models.Payment{}, err
+	}
+	provider, err := s.providers.Get(ses.ProviderID)
+	if err != nil {
+		return models.Payment{}, err
+	}
+	if !capturesLater(provider) {
+		return models.Payment{}, errors.Conflict(CodeSessionCapturesNow,
+			"session %s is paid through %q at the checkout; only an offline method's money is "+
+				"recorded as received", sessionID, ses.ProviderID)
+	}
+
+	return s.CapturePayment(ctx, sessionID, 0)
 }

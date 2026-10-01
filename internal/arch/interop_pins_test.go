@@ -57,6 +57,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order"
 	orderapi "github.com/bdrtr/gobit/internal/modules/order/api"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
+	"github.com/bdrtr/gobit/internal/modules/payment"
 	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 	pricingapi "github.com/bdrtr/gobit/internal/modules/pricing/api"
 	pricingsvc "github.com/bdrtr/gobit/internal/modules/pricing/service"
@@ -223,6 +224,7 @@ var (
 	_ adminui.SessionAdmin = (*authsvc.AccountSurface)(nil)
 	// The acts on an order's after-sales records (ADR 0271).
 	_ adminui.AfterSalesAdmin = (*order.AfterSalesSurface)(nil)
+	_ adminui.PaymentReceiver = (*payment.ReceivingSurface)(nil)
 )
 
 // A FLOW resolving another FLOW's surface.

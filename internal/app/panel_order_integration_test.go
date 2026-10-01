@@ -19,11 +19,15 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/errorreport"
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/internal/adminui"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
+	"github.com/bdrtr/gobit/internal/modules/payment"
+	"github.com/bdrtr/gobit/internal/modules/payment/manual"
+	paymentsvc "github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
 // TestThePanelShowsWhereARealOrderGoes is ADR 0196's gate: the panel built from
@@ -343,4 +347,111 @@ func TestThePanelOpensARealOrdersAfterSales(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sent, 1)
 	assert.Equal(t, "sloc_panel", sent[0].LocationID)
+}
+
+// TestThePanelRecordsARealOfflinePayment is ADR 0287's gate: on a real
+// installation naming a bank transfer, the order page reads what the payment
+// module awaits through the real read layer, and the form records it through
+// the module's own surface.
+//
+// The collection holds a card's session beside the transfer's, both
+// authorized: the page awaits only the transfer, and recording the card's is
+// refused — its money moves through the provider.
+func TestThePanelRecordsARealOfflinePayment(t *testing.T) {
+	ctx := context.Background()
+
+	dsn := migrateDSN(t)
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("DATABASE_URL", dsn)
+	t.Setenv("JWT_SECRET", "panel-order-test-secret-32-bytes-long!")
+	t.Setenv("LOG_LEVEL", "warn")
+	t.Setenv("PAYMENT_OFFLINE_METHODS", "bank_transfer")
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	app, closeApp, err := openApplication(ctx, cfg, slog.New(slog.DiscardHandler), errorreport.NewSink(),
+		Options{}, publishesOnly)
+	require.NoError(t, err)
+	defer closeApp()
+
+	orders, err := container.Resolve[*ordersvc.Service](app.container, order.ServiceName)
+	require.NoError(t, err)
+	payments, err := container.Resolve[*paymentsvc.Service](app.container, payment.ServiceName)
+	require.NoError(t, err)
+	links, err := container.Resolve[link.LinkService](app.container, svcLink)
+	require.NoError(t, err)
+
+	placed, err := orders.CreateOrder(ctx, ordersvc.CreateOrderInput{
+		RegionID: "reg_panel", CustomerID: "cus_panel", CurrencyCode: "TRY",
+		Subtotal: 10_000, Total: 10_000,
+		Items: []ordersvc.CreateOrderItemInput{{
+			VariantID: "variant_panel", Title: "Panel item", Quantity: 1,
+			UnitPrice: 10_000, Subtotal: 10_000, Total: 10_000,
+		}},
+	})
+	require.NoError(t, err)
+	collection, err := payments.CreatePaymentCollection(ctx, paymentsvc.CreateCollectionInput{
+		Reference: placed.ID, Amount: 10_000, CurrencyCode: "TRY",
+	})
+	require.NoError(t, err)
+	authorized := func(providerID string, amount int64, data map[string]any) string {
+		t.Helper()
+
+		session, err := payments.CreateSession(ctx, collection.ID, providerID, paymentsvc.CreateSessionInput{
+			Amount: amount, IdempotencyKey: collection.ID + providerID, Data: data,
+		})
+		require.NoError(t, err)
+		_, err = payments.AuthorizePayment(ctx, session.ID)
+		require.NoError(t, err)
+		return session.ID
+	}
+	cardID := authorized(manual.ID, 4_000, map[string]any{manual.DataKeyOutcome: manual.OutcomeAuthorize})
+	transferID := authorized("bank_transfer", 6_000, nil)
+	require.NoError(t, links.Create(ctx, "order_payment", placed.ID, collection.ID))
+
+	panel, err := adminui.FromContainer(app.container, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	operator := corehttp.Principal{
+		ID: "usr_panel", Kind: "user", Scopes: []string{"order:read", "payment:read", "payment:write"},
+	}
+	serve := func(req *http.Request) *httptest.ResponseRecorder {
+		t.Helper()
+
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req.WithContext(corehttp.WithPrincipal(req.Context(), operator)))
+		return rec
+	}
+	record := func(sessionID string) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequest(http.MethodPost,
+			adminui.OrdersPath+"/"+placed.ID+"/payment/"+sessionID+"/received", http.NoBody)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		return serve(req)
+	}
+
+	page := serve(httptest.NewRequest(http.MethodGet, adminui.OrdersPath+"/"+placed.ID, http.NoBody))
+	require.Equal(t, http.StatusOK, page.Code, page.Body.String())
+	// The installation registers no currency, so amounts print in minor units.
+	assert.Contains(t, page.Body.String(), `Awaiting <span class="num">6000 TRY</span> by bank_transfer.`)
+	assert.Contains(t, page.Body.String(), "/payment/"+transferID+"/received")
+	assert.NotContains(t, page.Body.String(), "/payment/"+cardID+"/received",
+		"the card's money is not awaited")
+
+	refused := record(cardID)
+	assert.Equal(t, http.StatusUnprocessableEntity, refused.Code, refused.Body.String())
+	assert.Contains(t, refused.Body.String(), `<p role="alert">`)
+	untouched, err := payments.GetPaymentCollection(ctx, collection.ID)
+	require.NoError(t, err)
+	assert.Zero(t, untouched.CapturedAmount, "an operator's word is not a capture of the card's money")
+
+	done := record(transferID)
+	require.Equal(t, http.StatusOK, done.Code, done.Body.String())
+	assert.Contains(t, done.Body.String(), "The payment of 6000 TRY (minor units) was recorded as received.")
+	assert.NotContains(t, done.Body.String(), "Awaiting", "nothing is awaited any more")
+	paid, err := payments.GetPaymentCollection(ctx, collection.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(6_000), paid.CapturedAmount, "the transfer is captured whole")
 }

@@ -39,7 +39,10 @@ const (
 	// The order page reads an order's payment and parcels only for an operator
 	// holding these as well (ADR 0251): the order's privilege opens the page,
 	// and each module's own opens its data on it.
-	scopePaymentRead     = "payment:read"
+	scopePaymentRead = "payment:read"
+	// Recording an offline method's money as received is a payment write
+	// (ADR 0287).
+	scopePaymentWrite    = "payment:write"
 	scopeFulfillmentRead = "fulfillment:read"
 	// The product and variant pages read a variant's prices under this one and
 	// its stock under [scopeInventoryRead] (ADR 0260).
@@ -121,6 +124,9 @@ func builtInScopes() map[string]string {
 		routeKey(post, OrderAfterSalePath): scopeOrderWrite,
 		// And so is opening one (ADR 0272).
 		routeKey(post, OrderAfterSaleOpenPath): scopeOrderWrite,
+		// Recording an offline payment is the payment module's write
+		// (ADR 0287).
+		routeKey(post, OrderPaymentReceivedPath): scopePaymentWrite,
 		// The sales report is made of order lines and shows what they sold for.
 		// It names no scope of its own because it holds no data of its own: an
 		// operator who may read the orders may read their total.

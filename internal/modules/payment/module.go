@@ -359,6 +359,10 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
 		return err
 	}
+	// The panel's surface (ADR 0287).
+	if err := c.Provide(AdminName, &ReceivingSurface{svc: svc}); err != nil {
+		return err
+	}
 	if err := c.Provide(ProvidersName, providers); err != nil {
 		return err
 	}

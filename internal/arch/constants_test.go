@@ -1004,6 +1004,9 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	// The order module's panel surface (ADR 0271).
 	assert.Equal(t, order.AdminName, adminui.ServiceOrderAdmin,
 		"the panel's after-sales surface name must match the order module")
+	// The payment module's panel surface (ADR 0287).
+	assert.Equal(t, payment.AdminName, adminui.ServicePaymentAdmin,
+		"the panel's payment surface name must match the payment module")
 	assert.Equal(t, authsvc.CodeMFALocked, adminui.CodeMFALocked,
 		"the panel's locked-account code must match the auth module")
 	assert.Equal(t, authsvc.CodeMFAUnavailable, adminui.CodeMFAUnavailable,

@@ -475,6 +475,20 @@ func (f *fakeStore) ListPaymentSessionsByCollection(
 	return out, nil
 }
 
+// SessionsOfCollections returns the sessions of the given collections.
+func (f *fakeStore) SessionsOfCollections(_ context.Context, ids []string) ([]models.PaymentSession, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := []models.PaymentSession{}
+	for _, id := range slices.Sorted(maps.Keys(f.sessions)) {
+		if slices.Contains(ids, f.sessions[id].PaymentCollectionID) {
+			out = append(out, f.sessions[id])
+		}
+	}
+	return out, nil
+}
+
 // ListSessionsForReconciliation returns the suspect set for reconciliation.
 //
 // It applies BOTH of the real query's conditions — authorized, and last written

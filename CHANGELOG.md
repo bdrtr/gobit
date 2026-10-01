@@ -31,6 +31,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel records an offline payment** (ADR 0287). **For operators:** the
+  order page names each offline method's session still awaiting its money,
+  with the method and the amount, and an operator holding `payment:write`
+  records it as received with one button: the session is captured whole and
+  the order's paid total rises. A card's session is refused. **For
+  integrators:** the `payment_collection` query provider offers `awaiting`,
+  a list of `session_id`, `provider_id` and `amount`.
+
 - **An operator completes a telephone order** (ADR 0286). **For operators:** the
   cart's admin surface now writes the shipping and billing addresses
   (`PUT /admin/v1/carts/{id}/shipping-address`, `…/billing-address`), adds and

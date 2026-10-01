@@ -471,6 +471,15 @@ func (s recordingStock) SetStockLevel(context.Context, string, string, int64, in
 	return s.surfaces.reach(ServiceInventoryAdmin)
 }
 
+// recordingPayments records the payment module's surface (ADR 0287).
+type recordingPayments struct{ surfaces *recordingSurfaces }
+
+func (p recordingPayments) RecordReceived(
+	context.Context, string,
+) (paymentID string, amount int64, currencyCode string, err error) {
+	return "", 0, "", p.surfaces.reach(ServicePaymentAdmin)
+}
+
 // recordingAfterSales is the order module's panel surface (ADR 0271); the walk
 // takes one act, and every act reaches the same surface.
 type recordingAfterSales struct{ surfaces *recordingSurfaces }
@@ -562,6 +571,8 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, OrderAfterSalePath): {},
 	// And opens one (ADR 0272).
 	routeKey(http.MethodPost, OrderAfterSaleOpenPath): {},
+	// And records an offline payment (ADR 0287).
+	routeKey(http.MethodPost, OrderPaymentReceivedPath): {},
 }
 
 // panelWalk is one panel built on the recording doubles.
@@ -587,6 +598,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServicePricingAdmin, PriceWriter(recordingPrices{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceInventoryAdmin, StockAdmin(recordingStock{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceOrderAdmin, AfterSalesAdmin(recordingAfterSales{walk.surfaces})))
+	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
 	ui, err := FromContainer(c, false, nil)

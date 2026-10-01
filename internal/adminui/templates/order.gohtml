@@ -149,6 +149,17 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
     </tr>
   </tbody>
 </table>
+{{ range .Awaiting }}
+{{/* An offline method's money arrives after the order (ADR 0287). */}}
+<p>
+  Awaiting <span class="num">{{ .Amount }} {{ $.Order.Payment.Currency }}</span> by {{ .Method }}.
+  {{ if $.CanRecordPayment }}
+  <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/payment/{{ .SessionID }}/received">
+    <button type="submit">Record the money as received</button>
+  </form>
+  {{ end }}
+</p>
+{{ end }}
 {{ end }}
 {{ else }}
 <p class="muted">No payment is linked to this order.</p>
