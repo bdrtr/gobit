@@ -5,6 +5,10 @@ The rows come from the promotion module's panel surface: its read provider
 keeps drafts, inactive promotions and usage out, because the read layer cannot
 tell a storefront from an operator. A promotion with no code is applied by
 itself and says so.
+
+An operator who may write promotions moves a row to its next status (ADR
+0312). The form carries the status the row was drawn in, so a promotion
+another operator moved first is refused rather than moved back.
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
@@ -15,21 +19,30 @@ itself and says so.
   {{ end }}
 </nav>
 
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+
 <p class="muted">{{ .Total }} {{ .Status }}.</p>
 
 {{ if .Promotions }}
 <div class="scroll">
 <table>
   <thead>
-    <tr><th>Code</th><th>Type</th><th class="num">Used</th><th>Created</th></tr>
+    <tr><th>Code</th><th>Type</th><th class="num">Used</th><th>Created</th>{{ if .Switch }}<th></th>{{ end }}</tr>
   </thead>
   <tbody>
-  {{ range .Promotions }}
+  {{ range $row := .Promotions }}
     <tr>
       <td>{{ if .IsAutomatic }}<span class="pill">automatic</span>{{ else }}{{ .Code }}{{ end }}</td>
       <td>{{ .Type }}</td>
       <td class="num">{{ .UsageCount }}{{ with .UsageLimit }} of {{ . }}{{ end }}</td>
       <td>{{ if not .CreatedAt.IsZero }}{{ .CreatedAt.Format "2006-01-02" }}{{ end }}</td>
+      {{ with $.Switch }}<td>
+        <form method="post" action="{{ $.Path }}/{{ $row.ID }}/status">
+          <input type="hidden" name="from" value="{{ $row.Status }}">
+          <input type="hidden" name="to" value="{{ .To }}">
+          <button type="submit">{{ .Label }}</button>
+        </form>
+      </td>{{ end }}
     </tr>
   {{ end }}
   </tbody>

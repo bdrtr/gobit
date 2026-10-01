@@ -114,7 +114,10 @@
 // one status at a time with their usage, and it reads them through the
 // promotion module's panel surface rather than the read layer: the read
 // provider returns only active promotions and leaves the usage out, because it
-// cannot tell a storefront from an operator (ADR 0311).
+// cannot tell a storefront from an operator (ADR 0311). Each row offers its
+// one move, publish, pause or resume ([UI.switchPromotion]), carrying the
+// status it was drawn in so that a promotion another operator moved first is
+// refused rather than moved back (ADR 0312).
 //
 // # Response bodies go through core's writer
 //

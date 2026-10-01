@@ -509,6 +509,10 @@ func (p recordingPromotions) PromotionsJSON(context.Context, string, int32, int3
 	return json.RawMessage(`[]`), 0, p.surfaces.reach(ServicePromotionAdmin)
 }
 
+func (p recordingPromotions) SwitchPromotionStatus(context.Context, string, string, string) error {
+	return p.surfaces.reach(ServicePromotionAdmin)
+}
+
 // recordingCarts records the cart module's surface (ADR 0290).
 type recordingCarts struct{ surfaces *recordingSurfaces }
 
@@ -681,6 +685,8 @@ var walkForms = map[string]url.Values{
 	// And corrects the operator's own cart (ADR 0300).
 	routeKey(http.MethodPost, CartLineRemovePath): {},
 	routeKey(http.MethodPost, CartDiscardPath):    {},
+	// Switching a promotion's status (ADR 0312).
+	routeKey(http.MethodPost, PromotionStatusPath): {formStatusFrom: {"active"}, formStatusTo: {"inactive"}},
 }
 
 // panelWalk is one panel built on the recording doubles.

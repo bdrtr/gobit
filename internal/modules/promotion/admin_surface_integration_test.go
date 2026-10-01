@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -79,4 +80,57 @@ func TestThePanelListsThePromotionsInAStatus(t *testing.T) {
 	_, _, err = surface.PromotionsJSON(ctx, "on-sale", 10, 0)
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err))
+}
+
+// TestThePanelSwitchesAStatusFromTheOneItRead is ADR 0312 against a real
+// PostgreSQL: the switch moves the promotion only from the status the
+// operator read, so a second operator pausing the same coupon is refused
+// rather than writing over the first; it writes the status alone, keeping an
+// edit made meanwhile; and a deleted or unknown promotion is not found.
+func TestThePanelSwitchesAStatusFromTheOneItRead(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	surface := promotion.NewAdminSurface(svc)
+
+	code := uniqueCode()
+	promo, err := svc.CreatePromotion(ctx, service.PromotionInput{Code: code, Status: models.PromotionActive})
+	require.NoError(t, err)
+	bystander, err := svc.CreatePromotion(ctx, service.PromotionInput{Code: uniqueCode(), Status: models.PromotionActive})
+	require.NoError(t, err)
+
+	// Another operator raises the limit after the list was drawn.
+	limit := int64(7)
+	edited, err := svc.UpdatePromotion(ctx, promo.ID, service.PromotionInput{
+		Code: code, Status: models.PromotionActive, UsageLimit: &limit,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, surface.SwitchPromotionStatus(ctx, promo.ID, "active", "inactive"))
+	switched, err := svc.GetPromotion(ctx, promo.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.PromotionInactive, switched.Status)
+	require.NotNil(t, switched.UsageLimit, "the edit made meanwhile is kept")
+	assert.Equal(t, int64(7), *switched.UsageLimit)
+	assert.True(t, switched.UpdatedAt.After(edited.UpdatedAt), "the switch stamps the promotion")
+
+	other, err := svc.GetPromotion(ctx, bystander.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.PromotionActive, other.Status, "only the named promotion moves")
+
+	err = surface.SwitchPromotionStatus(ctx, promo.ID, "active", "draft")
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "a second operator who read it active is refused: %v", err)
+	assert.Equal(t, service.CodeStatusMoved, errors.CodeOf(err))
+	again, err := svc.GetPromotion(ctx, promo.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.PromotionInactive, again.Status, "the refused switch wrote nothing")
+
+	require.NoError(t, svc.DeletePromotion(ctx, bystander.ID))
+	err = surface.SwitchPromotionStatus(ctx, bystander.ID, "active", "inactive")
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "a deleted promotion is not switched: %v", err)
+
+	err = surface.SwitchPromotionStatus(ctx, models.NewPromotionID(time.Now()), "active", "inactive")
+	require.Error(t, err)
+	assert.True(t, errors.IsNotFound(err), "an unknown promotion is not found: %v", err)
 }

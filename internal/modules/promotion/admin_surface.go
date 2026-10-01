@@ -68,3 +68,14 @@ func (a *AdminSurface) PromotionsJSON(ctx context.Context, status string, limit,
 
 	return body, page.Count, nil
 }
+
+// SwitchPromotionStatus moves the promotion from the status the operator read
+// to another, and refuses when it is no longer in the first (ADR 0312).
+func (a *AdminSurface) SwitchPromotionStatus(ctx context.Context, id, from, to string) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
+	}
+
+	_, err := a.svc.SwitchPromotionStatus(ctx, id, models.PromotionStatus(from), models.PromotionStatus(to))
+	return err
+}

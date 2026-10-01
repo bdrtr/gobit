@@ -95,6 +95,11 @@ type Repository interface {
 	ListPromotions(ctx context.Context, status, campaignID *string, limit, offset int32) ([]models.Promotion, int64, error)
 	GetPromotionsByIDs(ctx context.Context, ids []string) ([]models.Promotion, error)
 	UpdatePromotion(ctx context.Context, p models.Promotion, now time.Time) (models.Promotion, error)
+	// SwitchPromotionStatus moves the promotion from one status to another if
+	// it is still in the first, and reports whether it did (ADR 0312).
+	SwitchPromotionStatus(
+		ctx context.Context, id string, from, to models.PromotionStatus, now time.Time,
+	) (models.Promotion, bool, error)
 	DeletePromotion(ctx context.Context, id string, now time.Time) error
 	ListCandidates(ctx context.Context, codes []string) ([]models.PromotionCandidate, error)
 	// ListCandidatesForDiagnosis returns the same set WITHOUT the status filter;

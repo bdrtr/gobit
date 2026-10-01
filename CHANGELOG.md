@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An operator switches a promotion's status in the panel** (ADR 0312).
+  **For operators:** the Promotions screen publishes a draft, pauses an active
+  promotion and resumes an inactive one under `promotion:write`; a promotion
+  another operator moved first is refused with the status it is in now.
+
 - **The panel lists the promotions** (ADR 0311). **For operators:** a
   Promotions screen lists the active, draft and inactive promotions with how
   often each was used against its limit, under `promotion:read`.

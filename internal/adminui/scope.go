@@ -169,9 +169,11 @@ func builtInScopes() map[string]string {
 		routeKey(get, CustomerPath):  scopeCustomerRead,
 		routeKey(get, InventoryPath): scopeInventoryRead,
 		routeKey(get, ReviewsPath):   scopeReviewRead,
-		// The promotions are the promotion module's (ADR 0311).
-		routeKey(get, PromotionsPath):    scopePromotionRead,
-		routeKey(get, ReviewsScriptPath): scopeReviewRead,
+		// The promotions are the promotion module's (ADR 0311), and so is
+		// switching one's status (ADR 0312).
+		routeKey(get, PromotionsPath):       scopePromotionRead,
+		routeKey(post, PromotionStatusPath): scopePromotionWrite,
+		routeKey(get, ReviewsScriptPath):    scopeReviewRead,
 	}
 }
 
