@@ -63,3 +63,50 @@ func TestTheLinesFieldOnTheRealQuery(t *testing.T) {
 	assert.Equal(t, ring, parents["Wrap"], "the add-on names its line")
 	assert.Empty(t, parents["Ring"])
 }
+
+// TestTheShippingFieldsOnTheRealQuery is ADR 0291's read against a real
+// PostgreSQL: the shipping address and not the billing one, the living
+// shipping methods and not a removed one, and nothing for a cart that has
+// neither.
+func TestTheShippingFieldsOnTheRealQuery(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newServiceWithBus(t)
+	shipped, bare := newCart(ctx, t, svc), newCart(ctx, t, svc)
+
+	_, err := svc.SetShippingAddress(ctx, shipped.ID, service.AddressInput{
+		FirstName: "Ada", Address1: "12 Right St", City: "Ankara", CountryCode: "TR",
+	})
+	require.NoError(t, err)
+	_, err = svc.SetBillingAddress(ctx, shipped.ID, service.AddressInput{
+		FirstName: "Billed", Address1: "1 Ledger Rd", City: "Izmir", CountryCode: "TR",
+	})
+	require.NoError(t, err)
+	gone, err := svc.AddShippingMethod(ctx, shipped.ID, service.AddShippingMethodInput{Name: "Gone", Amount: 100})
+	require.NoError(t, err)
+	require.NoError(t, svc.RemoveShippingMethod(ctx, shipped.ID, gone.ID))
+	_, err = svc.AddShippingMethod(ctx, shipped.ID, service.AddShippingMethodInput{
+		Name: "Courier", ShippingOptionID: "so_courier", Amount: 2_500,
+	})
+	require.NoError(t, err)
+
+	records, err := service.NewQueryProvider(svc).FetchByIDs(ctx, []string{shipped.ID, bare.ID},
+		[]string{query.IDField, service.FieldShippingAddress, service.FieldShippingMethods})
+	require.NoError(t, err)
+	require.Len(t, records, 2)
+
+	for _, record := range records {
+		methods, ok := record[service.FieldShippingMethods].([]map[string]any)
+		require.True(t, ok)
+		if record[query.IDField] == bare.ID {
+			assert.Nil(t, record[service.FieldShippingAddress])
+			assert.Empty(t, methods)
+			continue
+		}
+		address, ok := record[service.FieldShippingAddress].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "12 Right St", address[service.AddressLine1], "the shipping address, not the billing one")
+		require.Len(t, methods, 1, "the removed method is left out")
+		assert.Equal(t, "Courier", methods[0][service.MethodName])
+		assert.Equal(t, int64(2_500), methods[0][service.MethodAmount])
+	}
+}

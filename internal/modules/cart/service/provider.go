@@ -51,6 +51,40 @@ const (
 	// for a cart with none. It costs a read only when asked for, like the
 	// payment collection's movements.
 	FieldLines = "lines"
+	// FieldShippingAddress is the cart's shipping address, a record keyed by
+	// the Address* names below, or nil when none was written (ADR 0291).
+	FieldShippingAddress = "shipping_address"
+	// FieldShippingMethods is the cart's shipping methods, each a record keyed
+	// by the Method* names below; an empty list when none was chosen (ADR
+	// 0291).
+	FieldShippingMethods = "shipping_methods"
+)
+
+// The keys of [FieldShippingAddress], the order's address keys, so a reader of
+// either reads both.
+const (
+	AddressFirstName   = "first_name"
+	AddressLastName    = "last_name"
+	AddressCompany     = "company"
+	AddressLine1       = "address_1"
+	AddressLine2       = "address_2"
+	AddressCity        = "city"
+	AddressProvince    = "province"
+	AddressPostalCode  = "postal_code"
+	AddressCountryCode = "country_code"
+	AddressPhone       = "phone"
+)
+
+// The keys of one entry of [FieldShippingMethods].
+const (
+	// MethodID is the shipping method's identifier.
+	MethodID = "id"
+	// MethodOptionID is the shipping option it was priced from.
+	MethodOptionID = "shipping_option_id"
+	// MethodName is the option's name as the cart recorded it.
+	MethodName = "name"
+	// MethodAmount is what it costs (minor unit).
+	MethodAmount = "amount"
 )
 
 // The keys of one entry of [FieldLines], part of the entity's contract for the
@@ -201,11 +235,11 @@ func (p *QueryProvider) List(ctx context.Context, opts query.ListOptions) ([]que
 	if err != nil {
 		return nil, err
 	}
-	lines, err := p.lines(ctx, result.Items, opts.Fields)
+	extra, err := p.extras(ctx, result.Items, opts.Fields)
 	if err != nil {
 		return nil, err
 	}
-	return records(result.Items, opts.Fields, lines), nil
+	return records(result.Items, opts.Fields, extra), nil
 }
 
 // idFilter reads the id filter's value: one id, or a list of them.
@@ -248,38 +282,64 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 	if err != nil {
 		return nil, err
 	}
-	lines, err := p.lines(ctx, carts, fields)
+	extra, err := p.extras(ctx, carts, fields)
 	if err != nil {
 		return nil, err
 	}
-	return records(carts, fields, lines), nil
+	return records(carts, fields, extra), nil
 }
 
-// lines reads the carts' lines in one read, ONLY when [FieldLines] was asked
-// for — a read that names no field asks for every field.
-func (p *QueryProvider) lines(
-	ctx context.Context, carts []models.Cart, fields []string,
-) (map[string][]models.LineItem, error) {
-	if len(carts) == 0 || (len(fields) > 0 && !slices.Contains(fields, FieldLines)) {
-		return nil, nil
-	}
+// cartExtras are the fields that do not come off the cart row, by cart.
+type cartExtras struct {
+	lines     map[string][]models.LineItem
+	addresses map[string]models.CartAddress
+	methods   map[string][]models.ShippingMethod
+}
 
+// extraFields are the fields [cartExtras] carries; none has a getter.
+var extraFields = []string{FieldLines, FieldShippingAddress, FieldShippingMethods}
+
+// extras reads each extra field in one read for the carts, and ONLY when it
+// was asked for — a read that names no field asks for every field.
+func (p *QueryProvider) extras(ctx context.Context, carts []models.Cart, fields []string) (cartExtras, error) {
+	var out cartExtras
+	if len(carts) == 0 {
+		return out, nil
+	}
 	ids := make([]string, 0, len(carts))
 	for i := range carts {
 		ids = append(ids, carts[i].ID)
 	}
+	asked := func(name string) bool { return len(fields) == 0 || slices.Contains(fields, name) }
 
-	return p.svc.LinesOfCarts(ctx, ids)
+	var err error
+	if asked(FieldLines) {
+		if out.lines, err = p.svc.LinesOfCarts(ctx, ids); err != nil {
+			return out, err
+		}
+	}
+	if asked(FieldShippingAddress) {
+		if out.addresses, err = p.svc.ShippingAddressesOfCarts(ctx, ids); err != nil {
+			return out, err
+		}
+	}
+	if asked(FieldShippingMethods) {
+		if out.methods, err = p.svc.ShippingMethodsOfCarts(ctx, ids); err != nil {
+			return out, err
+		}
+	}
+
+	return out, nil
 }
 
 // offeredFields is every field this entity offers, sorted: the getters PLUS
-// the lines, which do not come off the cart row.
+// the extras, which do not come off the cart row.
 func offeredFields() []string {
-	return slices.Sorted(slices.Values(append(slices.Collect(maps.Keys(cartFieldGetters)), FieldLines)))
+	return slices.Sorted(slices.Values(append(slices.Collect(maps.Keys(cartFieldGetters)), extraFields...)))
 }
 
 // records converts the carts into records with the requested fields.
-func records(carts []models.Cart, fields []string, lines map[string][]models.LineItem) []query.Record {
+func records(carts []models.Cart, fields []string, extra cartExtras) []query.Record {
 	selected := fields
 	if len(selected) == 0 {
 		selected = offeredFields()
@@ -291,14 +351,49 @@ func records(carts []models.Cart, fields []string, lines map[string][]models.Lin
 	for i := range carts {
 		record := make(query.Record, len(selected))
 		for _, name := range selected {
-			if name == FieldLines {
-				record[name] = lineRecords(lines[carts[i].ID])
-				continue
+			switch name {
+			case FieldLines:
+				record[name] = lineRecords(extra.lines[carts[i].ID])
+			case FieldShippingAddress:
+				record[name] = addressRecord(extra.addresses, carts[i].ID)
+			case FieldShippingMethods:
+				record[name] = methodRecords(extra.methods[carts[i].ID])
+			default:
+				record[name] = cartFieldGetters[name](carts[i])
 			}
-			record[name] = cartFieldGetters[name](carts[i])
 		}
 		out = append(out, record)
 	}
+	return out
+}
+
+// addressRecord is one cart's shipping address as the field's value, nil
+// when the cart has none.
+func addressRecord(addresses map[string]models.CartAddress, cartID string) map[string]any {
+	addr, ok := addresses[cartID]
+	if !ok {
+		return nil
+	}
+
+	return map[string]any{
+		AddressFirstName: addr.FirstName, AddressLastName: addr.LastName, AddressCompany: addr.Company,
+		AddressLine1: addr.Address1, AddressLine2: addr.Address2, AddressCity: addr.City,
+		AddressProvince: addr.Province, AddressPostalCode: addr.PostalCode,
+		AddressCountryCode: addr.CountryCode, AddressPhone: addr.Phone,
+	}
+}
+
+// methodRecords is one cart's shipping methods as the field's value; never
+// nil, for [lineRecords]' reason.
+func methodRecords(list []models.ShippingMethod) []map[string]any {
+	out := make([]map[string]any, 0, len(list))
+	for i := range list {
+		out = append(out, map[string]any{
+			MethodID: list[i].ID, MethodOptionID: list[i].ShippingOptionID,
+			MethodName: list[i].Name, MethodAmount: list[i].Amount,
+		})
+	}
+
 	return out
 }
 
@@ -345,8 +440,8 @@ func providerLimit(limit int) int64 {
 // validateFields verifies that all of the requested fields are offered.
 func validateFields(fields []string) error {
 	for _, name := range fields {
-		if name == FieldLines {
-			// The lines have no getter: they do not come off the cart row.
+		if slices.Contains(extraFields, name) {
+			// The extras have no getter: they do not come off the cart row.
 			continue
 		}
 		if _, ok := cartFieldGetters[name]; !ok {

@@ -319,11 +319,6 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		Promotions: &cartPromotions{c: c, log: log},
 		Repricing:  &cartRepricing{c: c, log: log},
 	}
-	// The panel builds a telephone order through the same flows the admin API
-	// holds, so the two refuse alike (ADR 0290).
-	if err := c.Provide(AdminName, api.NewTelephoneSurface(flows)); err != nil {
-		return err
-	}
 	m.handler = api.New(svc, flows,
 		// The customer identity is resolved the same way and for the same
 		// reason, one layer further out: it comes from the EMBEDDER's module,
@@ -331,6 +326,11 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// the flows, an absent one is not an error — see [identityBinding].
 		(&identityBinding{c: c, log: log}).identity,
 		m.opts.TrustUnverifiedCustomerClaim)
+	// The panel builds a telephone order through the handler the admin API
+	// runs, so the two refuse alike (ADR 0290, ADR 0291).
+	if err := c.Provide(AdminName, api.NewTelephoneSurface(m.handler)); err != nil {
+		return err
+	}
 	slog.Default().DebugContext(ctx, "cart module registered",
 		"service", ServiceName, "provider", ProviderName)
 	return nil

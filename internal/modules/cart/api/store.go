@@ -853,36 +853,9 @@ func (h *Handler) storeCompleteCart(w http.ResponseWriter, r *http.Request) {
 // The cart's contact address is read from OUR OWN service here, for both: it is
 // not taken from either body.
 func (h *Handler) completeCart(ctx context.Context, w http.ResponseWriter, in completeCartFlowRequest) {
-	flow, err := h.checkout()
+	result, err := h.complete(ctx, in)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
-		return
-	}
-
-	detail, err := h.svc.GetCart(ctx, in.CartID)
-	if err != nil {
-		corehttp.WriteError(ctx, w, err)
-		return
-	}
-	in.Email = detail.Email
-
-	request, err := json.Marshal(in)
-	if err != nil {
-		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInternal, codeInvalidRequest,
-			"the order completion request could not be encoded"))
-		return
-	}
-
-	response, err := flow.CompleteCartJSON(ctx, request)
-	if err != nil {
-		corehttp.WriteError(ctx, w, err)
-		return
-	}
-
-	var result completeCartFlowResult
-	if err := json.Unmarshal(response, &result); err != nil {
-		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInternal, codeFlowResultInvalid,
-			"the order completion result could not be decoded: %s", in.CartID))
 		return
 	}
 
@@ -893,6 +866,40 @@ func (h *Handler) completeCart(ctx context.Context, w http.ResponseWriter, in co
 		Total:        result.Amount,
 		Outstanding:  result.Outstanding,
 	}})
+}
+
+// complete runs the completion and returns its result: [Handler.completeCart]
+// for a caller that answers its own errors — the panel's surface (ADR 0291).
+func (h *Handler) complete(ctx context.Context, in completeCartFlowRequest) (completeCartFlowResult, error) {
+	flow, err := h.checkout()
+	if err != nil {
+		return completeCartFlowResult{}, err
+	}
+
+	detail, err := h.svc.GetCart(ctx, in.CartID)
+	if err != nil {
+		return completeCartFlowResult{}, err
+	}
+	in.Email = detail.Email
+
+	request, err := json.Marshal(in)
+	if err != nil {
+		return completeCartFlowResult{}, coreerrors.Wrap(err, coreerrors.KindInternal, codeInvalidRequest,
+			"the order completion request could not be encoded")
+	}
+
+	response, err := flow.CompleteCartJSON(ctx, request)
+	if err != nil {
+		return completeCartFlowResult{}, err
+	}
+
+	var result completeCartFlowResult
+	if err := json.Unmarshal(response, &result); err != nil {
+		return completeCartFlowResult{}, coreerrors.Wrap(err, coreerrors.KindInternal, codeFlowResultInvalid,
+			"the order completion result could not be decoded: %s", in.CartID)
+	}
+
+	return result, nil
 }
 
 // storeSetShippingAddress writes the cart's shipping address.

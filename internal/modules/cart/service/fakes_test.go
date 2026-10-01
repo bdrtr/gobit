@@ -801,6 +801,21 @@ func (f *fakeStore) UpsertCartAddress(_ context.Context, addr models.CartAddress
 	return addr, nil
 }
 
+// ListCartAddressesOfCarts returns the addresses of the given carts, grouped by
+// cart, as the real query does.
+func (f *fakeStore) ListCartAddressesOfCarts(ctx context.Context, cartIDs []string) ([]models.CartAddress, error) {
+	var out []models.CartAddress
+	for _, cartID := range slices.Sorted(slices.Values(cartIDs)) {
+		addresses, err := f.ListCartAddresses(ctx, cartID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, addresses...)
+	}
+
+	return out, nil
+}
+
 // ListCartAddresses returns the cart's addresses.
 func (f *fakeStore) ListCartAddresses(ctx context.Context, cartID string) ([]models.CartAddress, error) {
 	view := f.view(ctx)
@@ -844,6 +859,23 @@ func (f *fakeStore) CreateShippingMethod(_ context.Context, method models.Shippi
 	method.CreatedAt, method.UpdatedAt = stamp, stamp
 	f.methods[method.ID] = method
 	return method, nil
+}
+
+// ListShippingMethodsOfCarts returns the shipping methods of the given carts,
+// grouped by cart, as the real query does.
+func (f *fakeStore) ListShippingMethodsOfCarts(
+	ctx context.Context, cartIDs []string,
+) ([]models.ShippingMethod, error) {
+	var out []models.ShippingMethod
+	for _, cartID := range slices.Sorted(slices.Values(cartIDs)) {
+		methods, err := f.ListShippingMethods(ctx, cartID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, methods...)
+	}
+
+	return out, nil
 }
 
 // ListShippingMethods returns the cart's shipping methods.

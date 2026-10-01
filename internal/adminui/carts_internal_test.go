@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -22,9 +23,12 @@ import (
 // fakeCarts records what reached the cart module's surface and answers as
 // scripted.
 type fakeCarts struct {
-	opened []string
-	added  []string
-	err    error
+	opened    []string
+	added     []string
+	addressed []map[string]string
+	shipped   []string
+	completed []string
+	err       error
 }
 
 func (f *fakeCarts) OpenCart(_ context.Context, countryCode, customerID, email string) (string, error) {
@@ -48,6 +52,30 @@ func (f *fakeCarts) AddLine(
 	return "line_1", nil
 }
 
+func (f *fakeCarts) SetShippingAddress(_ context.Context, cartID string, address map[string]string) error {
+	f.addressed = append(f.addressed, address)
+
+	return f.err
+}
+
+func (f *fakeCarts) AddShippingMethod(_ context.Context, cartID, shippingOptionID string) (string, error) {
+	f.shipped = append(f.shipped, cartID+"|"+shippingOptionID)
+
+	return "sm_1", f.err
+}
+
+func (f *fakeCarts) Complete(
+	_ context.Context, cartID, salesChannelID, paymentProviderID string, expectedTotal int64,
+) (orderID string, outstanding int64, err error) {
+	f.completed = append(f.completed, strings.Join([]string{cartID, salesChannelID, paymentProviderID,
+		strconv.FormatInt(expectedTotal, 10)}, "|"))
+	if f.err != nil {
+		return "", 0, f.err
+	}
+
+	return "order_phone", expectedTotal, nil
+}
+
 // phoneCatalog holds one open cart of two lines, the second an add-on.
 func phoneCatalog(completed bool) *fakeCatalog {
 	return &fakeCatalog{byEntity: map[string][]query.Record{EntityCart: {{
@@ -55,6 +83,13 @@ func phoneCatalog(completed bool) *fakeCatalog {
 		fieldCartCustomerID: "", fieldSubtotal: int64(32_000), fieldTax: int64(6_400),
 		fieldShipping: int64(0), fieldTotal: int64(38_400), fieldCartTotalsStale: false,
 		fieldCartCompleted: completed,
+		fieldCartShippingAddress: map[string]any{
+			"first_name": "Ada", "last_name": "Lovelace", "address_1": "12 Right St",
+			"city": "Ankara", "postal_code": "06000", "country_code": "TR", "phone": "",
+		},
+		fieldCartShippingMethods: []map[string]any{
+			{"id": "sm_1", "shipping_option_id": "so_courier", cartMethodName: "Courier", cartMethodAmount: int64(0)},
+		},
 		fieldCartLines: []map[string]any{
 			{
 				cartLineID: "line_1", cartLineVariantID: "variant_shirt", cartLineTitle: "Shirt",
@@ -77,6 +112,9 @@ func phoneRouter(panel *UI) chi.Router {
 	r.Post(CartsPath, panel.openTelephoneOrder)
 	r.Get(CartPath, panel.showCart)
 	r.Post(CartLinesPath, panel.addCartLine)
+	r.Post(CartAddressPath, panel.setCartAddress)
+	r.Post(CartShippingPath, panel.addCartShipping)
+	r.Post(CartCompletePath, panel.completeCart)
 
 	return r
 }
@@ -236,4 +274,89 @@ func TestTheTelephoneOrderWithoutTheSurfaceIsUnavailable(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable,
 		phoneRequest(panel, http.MethodPost, CartsPath+"/cart_phone/lines",
 			url.Values{formQuantity: {"1"}}, scopeCartWrite).Code)
+}
+
+// TestTheCartPageNamesItsAddressAndShipping: the address and the chosen method
+// are printed, the address form carries what is there, and the completion
+// carries the total the page was drawn with (ADR 0291).
+func TestTheCartPageNamesItsAddressAndShipping(t *testing.T) {
+	t.Parallel()
+
+	panel := newCatalogPanel(t, phoneCatalog(false))
+	panel.carts = &fakeCarts{}
+
+	rec := phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone", nil, scopeCartRead, scopeCartWrite)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, "Ada Lovelace<br>")
+	assert.Contains(t, body, "12 Right St<br>")
+	assert.Contains(t, body, "Courier")
+	assert.Contains(t, body, `name="address_1" value="12 Right St"`, "the form starts from what is there")
+	assert.Contains(t, body, `name="read_total" value="38400"`, "the completion carries the total read")
+	assert.Contains(t, body, `action="`+CartsPath+`/cart_phone/complete"`)
+}
+
+// TestTheCartsWritesReachTheSurface: the address, the shipping option and the
+// completion reach the cart module's surface; the first two return to the
+// cart, and the completion goes to the order it placed.
+func TestTheCartsWritesReachTheSurface(t *testing.T) {
+	t.Parallel()
+
+	carts := &fakeCarts{}
+	panel := newCatalogPanel(t, phoneCatalog(false))
+	panel.carts = carts
+	cart := CartsPath + "/cart_phone"
+	scopes := []string{scopeCartRead, scopeCartWrite}
+
+	address := phoneRequest(panel, http.MethodPost, cart+"/address", url.Values{
+		"first_name": {" Ada "}, "last_name": {"Lovelace"}, "address_1": {"12 Right St"},
+		"city": {"Ankara"}, "postal_code": {"06000"}, "country_code": {"TR"}, "phone": {"+90"},
+	}, scopes...)
+	assert.Equal(t, http.StatusSeeOther, address.Code, address.Body.String())
+	assert.Equal(t, cart, address.Header().Get("Location"))
+	require.Len(t, carts.addressed, 1)
+	assert.Equal(t, map[string]string{
+		"first_name": "Ada", "last_name": "Lovelace", "address_1": "12 Right St",
+		"city": "Ankara", "postal_code": "06000", "country_code": "TR", "phone": "+90",
+	}, carts.addressed[0])
+
+	shipping := phoneRequest(panel, http.MethodPost, cart+"/shipping",
+		url.Values{formShippingOption: {" so_courier "}}, scopes...)
+	assert.Equal(t, http.StatusSeeOther, shipping.Code, shipping.Body.String())
+	assert.Equal(t, []string{"cart_phone|so_courier"}, carts.shipped)
+
+	completed := phoneRequest(panel, http.MethodPost, cart+"/complete", url.Values{
+		formSalesChannelID: {"sc_shop"}, formPaymentMethod: {"bank_transfer"}, formReadTotal: {"38400"},
+	}, scopes...)
+	assert.Equal(t, http.StatusSeeOther, completed.Code, completed.Body.String())
+	assert.Equal(t, OrdersPath+"/order_phone", completed.Header().Get("Location"))
+	assert.Equal(t, []string{"cart_phone|sc_shop|bank_transfer|38400"}, carts.completed)
+}
+
+// TestARefusedCompletionSaysWhy: a completion without the page's total is
+// refused before the surface, and the module's refusal — the total moved, say
+// — is printed on the cart with what was typed.
+func TestARefusedCompletionSaysWhy(t *testing.T) {
+	t.Parallel()
+
+	carts := &fakeCarts{}
+	panel := newCatalogPanel(t, phoneCatalog(false))
+	panel.carts = carts
+	scopes := []string{scopeCartRead, scopeCartWrite}
+
+	missing := phoneRequest(panel, http.MethodPost, CartsPath+"/cart_phone/complete", url.Values{
+		formSalesChannelID: {"sc_shop"}, formPaymentMethod: {"bank_transfer"},
+	}, scopes...)
+	assert.Equal(t, http.StatusUnprocessableEntity, missing.Code)
+	assert.Contains(t, missing.Body.String(), "draw the cart again")
+	assert.Empty(t, carts.completed)
+
+	carts.err = errors.Conflict("checkout_workflow_total_mismatch", "the total moved since it was read")
+	moved := phoneRequest(panel, http.MethodPost, CartsPath+"/cart_phone/complete", url.Values{
+		formSalesChannelID: {"sc_shop"}, formPaymentMethod: {"bank_transfer"}, formReadTotal: {"1"},
+	}, scopes...)
+	assert.Equal(t, http.StatusUnprocessableEntity, moved.Code, moved.Body.String())
+	assert.Contains(t, moved.Body.String(), "the total moved since it was read")
+	assert.Contains(t, moved.Body.String(), `value="bank_transfer"`)
 }

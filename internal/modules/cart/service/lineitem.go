@@ -358,3 +358,39 @@ func (s *Service) LinesOfCarts(ctx context.Context, cartIDs []string) (map[strin
 
 	return out, nil
 }
+
+// ShippingAddressesOfCarts returns the shipping address of each of the given
+// carts that has one, in one read (ADR 0291).
+func (s *Service) ShippingAddressesOfCarts(ctx context.Context, cartIDs []string) (map[string]models.CartAddress, error) {
+	addresses, err := s.store.ListCartAddressesOfCarts(ctx, cartIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string]models.CartAddress, len(cartIDs))
+	for i := range addresses {
+		if addresses[i].Type == models.AddressShipping {
+			out[addresses[i].CartID] = addresses[i]
+		}
+	}
+
+	return out, nil
+}
+
+// ShippingMethodsOfCarts returns the living shipping methods of the given
+// carts in one read, by cart (ADR 0291).
+func (s *Service) ShippingMethodsOfCarts(
+	ctx context.Context, cartIDs []string,
+) (map[string][]models.ShippingMethod, error) {
+	methods, err := s.store.ListShippingMethodsOfCarts(ctx, cartIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make(map[string][]models.ShippingMethod, len(cartIDs))
+	for i := range methods {
+		out[methods[i].CartID] = append(out[methods[i].CartID], methods[i])
+	}
+
+	return out, nil
+}

@@ -14,9 +14,11 @@ import (
 	"github.com/bdrtr/gobit/core/query"
 )
 
-// The telephone order (ADR 0290): an operator opens a cart for a caller and
-// adds priced lines to it through the cart module's panel surface, the acts
-// the admin API took since ADR 0146.
+// The telephone order: an operator opens a cart for a caller and adds priced
+// lines to it (ADR 0290), writes its shipping address, chooses its shipping
+// method and completes it with an offline method (ADR 0291), through the cart
+// module's panel surface — the acts the admin API took since ADR 0146 and ADR
+// 0286.
 
 // ServiceCartAdmin is the cart module's panel surface, spelled by hand and
 // pinned against the module's constant in internal/arch.
@@ -26,11 +28,15 @@ const ServiceCartAdmin = "cart.admin"
 const EntityCart = "cart"
 
 // The telephone order's paths: the form that opens a cart, the cart's page,
-// and the form that adds a line to it.
+// and the forms that add a line, write the address, choose the shipping and
+// complete the cart.
 const (
-	CartsPath     = URLPrefix + "/carts"
-	CartPath      = CartsPath + "/{id}"
-	CartLinesPath = CartPath + "/lines"
+	CartsPath        = URLPrefix + "/carts"
+	CartPath         = CartsPath + "/{id}"
+	CartLinesPath    = CartPath + "/lines"
+	CartAddressPath  = CartPath + "/address"
+	CartShippingPath = CartPath + "/shipping"
+	CartCompletePath = CartPath + "/complete"
 )
 
 // telephoneLabel is what the section is called on screen.
@@ -46,6 +52,16 @@ type TelephoneCarts interface {
 	// AddLine adds a variant priced by the named channel's catalog and returns
 	// the line's id.
 	AddLine(ctx context.Context, cartID, salesChannelID, variantID string, quantity int64) (string, error)
+	// SetShippingAddress writes the shipping address from the address keys
+	// and reprices the cart.
+	SetShippingAddress(ctx context.Context, cartID string, address map[string]string) error
+	// AddShippingMethod prices the shipping option for the cart and adds it.
+	AddShippingMethod(ctx context.Context, cartID, shippingOptionID string) (string, error)
+	// Complete completes the cart in the named channel with an offline method
+	// against the total read to the caller, and returns the order and what it
+	// owes.
+	Complete(ctx context.Context, cartID, salesChannelID, paymentProviderID string, expectedTotal int64) (
+		orderID string, outstanding int64, err error)
 }
 
 // The cart fields the page reads beyond the order's, and the keys of one
@@ -62,7 +78,19 @@ const (
 	cartLineUnitPrice    = "unit_price"
 	cartLineTotal        = "total"
 	cartLineParentID     = "parent_line_id"
+	// The shipping address, keyed as an order's is, and the chosen methods
+	// (ADR 0291).
+	fieldCartShippingAddress = "shipping_address"
+	fieldCartShippingMethods = "shipping_methods"
+	cartMethodName           = "name"
+	cartMethodAmount         = "amount"
 )
+
+// addressFields are the address form's fields, the cart surface's keys, in the
+// order the form asks for them.
+var addressFields = []string{
+	"first_name", "last_name", "address_1", "city", "postal_code", "country_code", "phone",
+}
 
 // The forms' fields beside [formVariantID] and [formQuantity].
 const (
@@ -70,6 +98,11 @@ const (
 	formCustomerID     = "customer_id"
 	formEmail          = "email"
 	formSalesChannelID = "sales_channel_id"
+	formShippingOption = "shipping_option_id"
+	formPaymentMethod  = "payment_provider_id"
+	// formReadTotal is the total the page was drawn with, in minor units: the
+	// total the operator read to the caller (ADR 0280's read value).
+	formReadTotal = "read_total"
 )
 
 // cartLine is one line as the page prints it.
@@ -88,6 +121,19 @@ type cartPage struct {
 	Subtotal, Tax, Shipping, Total   string
 	TotalsStale, Completed, Unscaled bool
 	Lines                            []cartLine
+	// TotalMinor is the total in minor units, carried by the completion form.
+	TotalMinor int64
+	// ShipTo is the shipping address, a line a part; Address its fields, to
+	// draw the form with what is there.
+	ShipTo  []string
+	Address map[string]string
+	// Methods are the chosen shipping methods, each its name and amount.
+	Methods []cartMethod
+}
+
+// cartMethod is one chosen shipping method.
+type cartMethod struct {
+	Name, Amount string
 }
 
 // newTelephoneOrder renders the form that opens a cart.
@@ -142,34 +188,17 @@ func (u *UI) showCart(w http.ResponseWriter, r *http.Request) {
 // addCartLine adds a line and returns to the cart's page; a refusal comes back
 // on the page with what was typed.
 func (u *UI) addCartLine(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if u.carts == nil {
-		u.errorPage(w, r, http.StatusServiceUnavailable, "Telephone orders unavailable",
-			"The cart module's panel surface is not registered in this installation.")
-		return
-	}
-	if err := r.ParseForm(); err != nil {
-		u.errorPage(w, r, http.StatusBadRequest, "Bad request", "The form could not be read.")
-		return
-	}
+	u.cartWrite(w, r, func(ctx context.Context, id string) (string, error) {
+		quantity, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue(formQuantity)), 10, 64)
+		if err != nil {
+			return "", errors.Invalid("admin_ui_quantity", "The quantity is a whole number.")
+		}
+		_, err = u.carts.AddLine(ctx, id,
+			strings.TrimSpace(r.PostFormValue(formSalesChannelID)),
+			strings.TrimSpace(r.PostFormValue(formVariantID)), quantity)
 
-	quantity, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue(formQuantity)), 10, 64)
-	if err != nil {
-		u.renderCart(w, r, http.StatusUnprocessableEntity, id, "The quantity is a whole number.", r.PostForm)
-		return
-	}
-
-	_, err = u.carts.AddLine(r.Context(), id,
-		strings.TrimSpace(r.PostFormValue(formSalesChannelID)),
-		strings.TrimSpace(r.PostFormValue(formVariantID)), quantity)
-	switch {
-	case err == nil:
-		corehttp.WriteRedirect(r.Context(), w, CartsPath+"/"+id)
-	case errors.IsInvalid(err) || errors.IsConflict(err) || errors.IsNotFound(err):
-		u.renderCart(w, r, http.StatusUnprocessableEntity, id, messageFor(err), r.PostForm)
-	default:
-		u.unexpectedFailure(w, r, err, "The line could not be added")
-	}
+		return "", err
+	})
 }
 
 // renderCart reads the cart and writes its page, with a refused write's reason
@@ -190,6 +219,7 @@ func (u *UI) renderCart(
 			fieldID, fieldCurrencyCod, fieldEmail, fieldCartCustomerID,
 			fieldSubtotal, fieldTax, fieldShipping, fieldTotal,
 			fieldCartTotalsStale, fieldCartCompleted, fieldCartLines,
+			fieldCartShippingAddress, fieldCartShippingMethods,
 		},
 		Filters: map[string]any{filterID: []string{id}},
 		Limit:   1,
@@ -210,6 +240,8 @@ func (u *UI) renderCart(
 		"CanWrite":  u.carts != nil && principal.HasScope(scopeCartWrite),
 		"Refused":   refused,
 		"Typed":     typed,
+		// AddressFields orders the address form (ADR 0291).
+		"AddressFields": addressFields,
 	})
 }
 
@@ -226,20 +258,24 @@ func cartPageOf(record query.Record, scales map[string]int) cartPage {
 	var known bool
 	page.Total, known = amountField(record, fieldTotal, page.Currency, scales)
 	page.Unscaled = !known
+	page.TotalMinor = recordInt(record, fieldTotal)
+	page.ShipTo = addressLines(record[fieldCartShippingAddress])
+	page.Address = map[string]string{}
+	if address, ok := record[fieldCartShippingAddress].(map[string]any); ok {
+		for _, name := range addressFields {
+			page.Address[name] = stringValue(address[name])
+		}
+	}
+	for _, entry := range recordList(record[fieldCartShippingMethods]) {
+		method := cartMethod{Name: recordString(entry, cartMethodName)}
+		method.Amount, _ = amountField(entry, cartMethodAmount, page.Currency, scales)
+		page.Methods = append(page.Methods, method)
+	}
 	page.Subtotal, _ = amountField(record, fieldSubtotal, page.Currency, scales)
 	page.Tax, _ = amountField(record, fieldTax, page.Currency, scales)
 	page.Shipping, _ = amountField(record, fieldShipping, page.Currency, scales)
 
-	var entries []query.Record
-	switch value := record[fieldCartLines].(type) {
-	case []map[string]any:
-		for _, entry := range value {
-			entries = append(entries, entry)
-		}
-	case []query.Record:
-		entries = value
-	}
-	for _, entry := range entries {
+	for _, entry := range recordList(record[fieldCartLines]) {
 		line := cartLine{
 			ID:        recordString(entry, cartLineID),
 			VariantID: recordString(entry, cartLineVariantID),
@@ -253,4 +289,91 @@ func cartPageOf(record query.Record, scales map[string]int) cartPage {
 	}
 
 	return page
+}
+
+// recordList reads a list-valued field as the provider built it, or as
+// records when the read went through a layer that converts them.
+func recordList(value any) []query.Record {
+	var entries []query.Record
+	switch list := value.(type) {
+	case []map[string]any:
+		for _, entry := range list {
+			entries = append(entries, entry)
+		}
+	case []query.Record:
+		entries = list
+	}
+
+	return entries
+}
+
+// setCartAddress writes the shipping address and returns to the cart.
+func (u *UI) setCartAddress(w http.ResponseWriter, r *http.Request) {
+	u.cartWrite(w, r, func(ctx context.Context, id string) (string, error) {
+		address := make(map[string]string, len(addressFields))
+		for _, name := range addressFields {
+			address[name] = strings.TrimSpace(r.PostFormValue(name))
+		}
+
+		return "", u.carts.SetShippingAddress(ctx, id, address)
+	})
+}
+
+// addCartShipping chooses the shipping option and returns to the cart.
+func (u *UI) addCartShipping(w http.ResponseWriter, r *http.Request) {
+	u.cartWrite(w, r, func(ctx context.Context, id string) (string, error) {
+		_, err := u.carts.AddShippingMethod(ctx, id, strings.TrimSpace(r.PostFormValue(formShippingOption)))
+		return "", err
+	})
+}
+
+// completeCart completes the cart against the total the page was drawn with
+// and goes to the order it placed.
+func (u *UI) completeCart(w http.ResponseWriter, r *http.Request) {
+	u.cartWrite(w, r, func(ctx context.Context, id string) (string, error) {
+		total, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue(formReadTotal)), 10, 64)
+		if err != nil {
+			return "", errors.Invalid("admin_ui_read_total",
+				"The page's total did not come back with the form; draw the cart again.")
+		}
+		orderID, _, err := u.carts.Complete(ctx, id,
+			strings.TrimSpace(r.PostFormValue(formSalesChannelID)),
+			strings.TrimSpace(r.PostFormValue(formPaymentMethod)), total)
+		if err != nil {
+			return "", err
+		}
+
+		return OrdersPath + "/" + orderID, nil
+	})
+}
+
+// cartWrite runs one of the cart page's writes and goes to the page it names,
+// the cart's own when it names none; a refusal is drawn on the cart's page
+// with what was typed.
+func (u *UI) cartWrite(
+	w http.ResponseWriter, r *http.Request, write func(ctx context.Context, id string) (string, error),
+) {
+	id := chi.URLParam(r, "id")
+	if u.carts == nil {
+		u.errorPage(w, r, http.StatusServiceUnavailable, "Telephone orders unavailable",
+			"The cart module's panel surface is not registered in this installation.")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		u.errorPage(w, r, http.StatusBadRequest, "Bad request", "The form could not be read.")
+		return
+	}
+
+	next, err := write(r.Context(), id)
+	switch {
+	case err == nil:
+		if next == "" {
+			next = CartsPath + "/" + id
+		}
+		corehttp.WriteRedirect(r.Context(), w, next)
+	case errors.IsInvalid(err) || errors.IsConflict(err) || errors.IsNotFound(err):
+		u.renderCart(w, r, http.StatusUnprocessableEntity, id, messageFor(err), r.PostForm)
+	default:
+		u.unexpectedFailure(w, r, err, "The cart could not be changed")
+	}
 }

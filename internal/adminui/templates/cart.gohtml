@@ -1,6 +1,7 @@
 {{- /*
-cart.gohtml is a telephone order's cart (ADR 0290): its lines as the catalog
-priced them, its totals, and the form that adds a line.
+cart.gohtml is a telephone order's cart: its lines as the catalog priced them,
+its totals and the form that adds a line (ADR 0290), and its address, its
+shipping and the completion with an offline method (ADR 0291).
 
 Every amount is printed with its currency, and an amount whose scale could not
 be read says it is in minor units.
@@ -43,6 +44,21 @@ be read says it is in minor units.
 <p class="muted">The cart holds no line yet.</p>
 {{ end }}
 
+<h2>Shipping</h2>
+
+<table>
+  <tbody>
+    <tr>
+      <th>Ship to</th>
+      <td>{{ range .Cart.ShipTo }}{{ . }}<br>{{ else }}<span class="muted">no shipping address</span>{{ end }}</td>
+    </tr>
+    <tr>
+      <th>Method</th>
+      <td>{{ range .Cart.Methods }}{{ .Name }} <span class="num">{{ .Amount }} {{ $.Cart.Currency }}</span><br>{{ else }}<span class="muted">no shipping method</span>{{ end }}</td>
+    </tr>
+  </tbody>
+</table>
+
 <h2>Amounts</h2>
 
 <table>
@@ -69,5 +85,30 @@ be read says it is in minor units.
   <input name="quantity" value="{{ with .Typed.Get "quantity" }}{{ . }}{{ else }}1{{ end }}" inputmode="numeric" aria-label="quantity" required>
   <button type="submit">Add</button>
 </form>
+
+<h3>Ship to</h3>
+<form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/address">
+  {{ range $name := .AddressFields }}
+  <input name="{{ $name }}" value="{{ with $.Typed.Get $name }}{{ . }}{{ else }}{{ index $.Cart.Address $name }}{{ end }}" placeholder="{{ $name }}" aria-label="{{ $name }}">
+  {{ end }}
+  <button type="submit">Save the address</button>
+</form>
+
+<h3>Shipping method</h3>
+<form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/shipping">
+  <input name="shipping_option_id" value="{{ .Typed.Get "shipping_option_id" }}" placeholder="shipping option id" aria-label="shipping option" required>
+  <button type="submit">Choose</button>
+</form>
+
+{{ if .Cart.Lines }}
+<h3>Complete</h3>
+<form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/complete">
+  <p>Read the total to the caller first: the order is placed for {{ .Cart.Total }} {{ .Cart.Currency }} and owes it until the money arrives.</p>
+  <input type="hidden" name="read_total" value="{{ .Cart.TotalMinor }}">
+  <input name="sales_channel_id" value="{{ .Typed.Get "sales_channel_id" }}" placeholder="sales channel id" aria-label="sales channel" required>
+  <input name="payment_provider_id" value="{{ .Typed.Get "payment_provider_id" }}" placeholder="offline method, e.g. bank_transfer" aria-label="offline method" required>
+  <button type="submit">Place the order</button>
+</form>
+{{ end }}
 {{ end }}
 {{ end }}

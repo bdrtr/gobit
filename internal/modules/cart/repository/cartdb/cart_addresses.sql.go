@@ -54,6 +54,53 @@ func (q *Queries) ListCartAddresses(ctx context.Context, cartID string) ([]CartA
 	return items, nil
 }
 
+const listCartAddressesOfCarts = `-- name: ListCartAddressesOfCarts :many
+SELECT id, cart_id, address_type, source_address_id, first_name, last_name, company, address_1, address_2, city, province, postal_code, country_code, phone, metadata, created_at, updated_at, deleted_at FROM cart_addresses
+WHERE cart_id = ANY($1::text[]) AND deleted_at IS NULL
+ORDER BY cart_id, address_type
+`
+
+// ListCartAddressesOfCarts is ListCartAddresses for many carts in one read;
+// the query provider's shipping_address field reads it (ADR 0291).
+func (q *Queries) ListCartAddressesOfCarts(ctx context.Context, cartIds []string) ([]CartAddress, error) {
+	rows, err := q.db.Query(ctx, listCartAddressesOfCarts, cartIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CartAddress{}
+	for rows.Next() {
+		var i CartAddress
+		if err := rows.Scan(
+			&i.ID,
+			&i.CartID,
+			&i.AddressType,
+			&i.SourceAddressID,
+			&i.FirstName,
+			&i.LastName,
+			&i.Company,
+			&i.Address1,
+			&i.Address2,
+			&i.City,
+			&i.Province,
+			&i.PostalCode,
+			&i.CountryCode,
+			&i.Phone,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const softDeleteCartAddressesByCart = `-- name: SoftDeleteCartAddressesByCart :exec
 UPDATE cart_addresses
 SET deleted_at = now(), updated_at = now()

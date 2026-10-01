@@ -31,6 +31,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel completes a telephone order** (ADR 0291). **For operators:** the
+  cart's page writes the caller's shipping address, chooses the shipping option
+  and places the order with an offline method against the total the page
+  shows, then opens the order; a total that moved, or a method that would be
+  captured, is refused on the page. **For integrators:** the `cart` query
+  provider offers `shipping_address` and `shipping_methods`.
+
 - **The panel opens a telephone order** (ADR 0290, D198). **For operators:**
   the panel's telephone order section opens a cart for a country and a caller
   and adds lines the catalog prices in the sales channel the operator names;

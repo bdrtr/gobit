@@ -138,6 +138,10 @@ func builtInScopes() map[string]string {
 		routeKey(post, CartsPath):     scopeCartWrite,
 		routeKey(get, CartPath):       scopeCartRead,
 		routeKey(post, CartLinesPath): scopeCartWrite,
+		// The rest of it is the cart's write too (ADR 0291).
+		routeKey(post, CartAddressPath):  scopeCartWrite,
+		routeKey(post, CartShippingPath): scopeCartWrite,
+		routeKey(post, CartCompletePath): scopeCartWrite,
 		// The sales report is made of order lines and shows what they sold for.
 		// It names no scope of its own because it holds no data of its own: an
 		// operator who may read the orders may read their total.

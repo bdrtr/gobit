@@ -114,6 +114,44 @@ func (q *Queries) ListShippingMethods(ctx context.Context, cartID string) ([]Car
 	return items, nil
 }
 
+const listShippingMethodsOfCarts = `-- name: ListShippingMethodsOfCarts :many
+SELECT id, cart_id, name, shipping_option_id, amount, data, created_at, updated_at, deleted_at FROM cart_shipping_methods
+WHERE cart_id = ANY($1::text[]) AND deleted_at IS NULL
+ORDER BY cart_id, created_at, id
+`
+
+// ListShippingMethodsOfCarts is ListShippingMethods for many carts in one
+// read; the query provider's shipping_methods field reads it (ADR 0291).
+func (q *Queries) ListShippingMethodsOfCarts(ctx context.Context, cartIds []string) ([]CartShippingMethod, error) {
+	rows, err := q.db.Query(ctx, listShippingMethodsOfCarts, cartIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CartShippingMethod{}
+	for rows.Next() {
+		var i CartShippingMethod
+		if err := rows.Scan(
+			&i.ID,
+			&i.CartID,
+			&i.Name,
+			&i.ShippingOptionID,
+			&i.Amount,
+			&i.Data,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const softDeleteShippingMethod = `-- name: SoftDeleteShippingMethod :execrows
 UPDATE cart_shipping_methods
 SET deleted_at = now(), updated_at = now()

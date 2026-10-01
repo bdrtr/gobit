@@ -317,9 +317,9 @@ func TestSigningOutNeedsNoPrivilege(t *testing.T) {
 		"an operator with no privilege could not sign out")
 }
 
-// TestTheTelephoneOrderAsksForTheCartsPrivileges pins the four routes of ADR
-// 0290: the form that opens a cart and both writes ask for cart:write, and the
-// cart's page asks for cart:read. The walk of ADR 0260 cannot tell the two
+// TestTheTelephoneOrderAsksForTheCartsPrivileges pins the telephone order's
+// routes (ADR 0290, ADR 0291): the form that opens a cart and every write ask
+// for cart:write, and the cart's page asks for cart:read. The walk of ADR 0260 cannot tell the two
 // apart, because both belong to the cart module.
 func TestTheTelephoneOrderAsksForTheCartsPrivileges(t *testing.T) {
 	t.Parallel()
@@ -339,6 +339,9 @@ func TestTheTelephoneOrderAsksForTheCartsPrivileges(t *testing.T) {
 		"the opening form": get(reader, CartsPath),
 		"the opening":      post(reader, CartsPath),
 		"a line":           post(reader, cartPage+"/lines"),
+		"the address":      post(reader, cartPage+"/address"),
+		"the shipping":     post(reader, cartPage+"/shipping"),
+		"the completion":   post(reader, cartPage+"/complete"),
 	} {
 		assert.Equal(t, http.StatusForbidden, rec.Code, "%s opened for a reader", name)
 		assert.Contains(t, rec.Body.String(), scopeCartWrite, name)

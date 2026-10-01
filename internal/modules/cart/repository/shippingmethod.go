@@ -54,6 +54,28 @@ func (r *Repository) GetShippingMethod(ctx context.Context, cartID, methodID str
 	return toShippingMethod(row)
 }
 
+// ListShippingMethodsOfCarts returns the living shipping methods of the given
+// carts in one read (ADR 0291).
+func (r *Repository) ListShippingMethodsOfCarts(
+	ctx context.Context, cartIDs []string,
+) ([]models.ShippingMethod, error) {
+	rows, err := r.queries(ctx).ListShippingMethodsOfCarts(ctx, cartIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the shipping methods of the carts could not be listed")
+	}
+
+	out := make([]models.ShippingMethod, 0, len(rows))
+	for i := range rows {
+		method, convErr := toShippingMethod(rows[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, method)
+	}
+
+	return out, nil
+}
+
 // ListShippingMethods returns the cart's shipping methods.
 func (r *Repository) ListShippingMethods(ctx context.Context, cartID string) ([]models.ShippingMethod, error) {
 	rows, err := r.queries(ctx).ListShippingMethods(ctx, cartID)

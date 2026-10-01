@@ -48,6 +48,26 @@ func (r *Repository) UpsertCartAddress(ctx context.Context, addr models.CartAddr
 	return toCartAddress(row)
 }
 
+// ListCartAddressesOfCarts returns the living addresses of the given carts in
+// one read (ADR 0291).
+func (r *Repository) ListCartAddressesOfCarts(ctx context.Context, cartIDs []string) ([]models.CartAddress, error) {
+	rows, err := r.queries(ctx).ListCartAddressesOfCarts(ctx, cartIDs)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the addresses of the carts could not be listed")
+	}
+
+	out := make([]models.CartAddress, 0, len(rows))
+	for i := range rows {
+		addr, convErr := toCartAddress(rows[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, addr)
+	}
+
+	return out, nil
+}
+
 // ListCartAddresses returns the cart's addresses (in type order).
 func (r *Repository) ListCartAddresses(ctx context.Context, cartID string) ([]models.CartAddress, error) {
 	rows, err := r.queries(ctx).ListCartAddresses(ctx, cartID)

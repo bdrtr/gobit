@@ -127,6 +127,9 @@ type Store interface {
 
 	// UpsertCartAddress writes the cart's address of the given type.
 	UpsertCartAddress(ctx context.Context, addr models.CartAddress) (models.CartAddress, error)
+	// ListCartAddressesOfCarts returns the addresses of the given carts in one
+	// read (ADR 0291).
+	ListCartAddressesOfCarts(ctx context.Context, cartIDs []string) ([]models.CartAddress, error)
 	// ListCartAddresses returns the cart's addresses.
 	ListCartAddresses(ctx context.Context, cartID string) ([]models.CartAddress, error)
 	// SoftDeleteCartAddressesByCart soft deletes all of the cart's addresses.
@@ -167,6 +170,9 @@ type Store interface {
 
 	// CreateShippingMethod adds a shipping method to the cart.
 	CreateShippingMethod(ctx context.Context, method models.ShippingMethod) (models.ShippingMethod, error)
+	// ListShippingMethodsOfCarts returns the shipping methods of the given carts
+	// in one read (ADR 0291).
+	ListShippingMethodsOfCarts(ctx context.Context, cartIDs []string) ([]models.ShippingMethod, error)
 	// ListShippingMethods returns the cart's shipping methods.
 	ListShippingMethods(ctx context.Context, cartID string) ([]models.ShippingMethod, error)
 	// SoftDeleteShippingMethod soft deletes the shipping method.

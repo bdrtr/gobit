@@ -38,6 +38,13 @@ SELECT * FROM cart_addresses
 WHERE cart_id = $1 AND deleted_at IS NULL
 ORDER BY address_type;
 
+-- ListCartAddressesOfCarts is ListCartAddresses for many carts in one read;
+-- the query provider's shipping_address field reads it (ADR 0291).
+-- name: ListCartAddressesOfCarts :many
+SELECT * FROM cart_addresses
+WHERE cart_id = ANY(sqlc.arg(cart_ids)::text[]) AND deleted_at IS NULL
+ORDER BY cart_id, address_type;
+
 -- name: SoftDeleteCartAddressesByCart :exec
 UPDATE cart_addresses
 SET deleted_at = now(), updated_at = now()

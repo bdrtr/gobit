@@ -491,6 +491,20 @@ func (c recordingCarts) AddLine(context.Context, string, string, string, int64) 
 	return "", c.surfaces.reach(ServiceCartAdmin)
 }
 
+func (c recordingCarts) SetShippingAddress(context.Context, string, map[string]string) error {
+	return c.surfaces.reach(ServiceCartAdmin)
+}
+
+func (c recordingCarts) AddShippingMethod(context.Context, string, string) (string, error) {
+	return "", c.surfaces.reach(ServiceCartAdmin)
+}
+
+func (c recordingCarts) Complete(
+	context.Context, string, string, string, int64,
+) (orderID string, outstanding int64, err error) {
+	return "", 0, c.surfaces.reach(ServiceCartAdmin)
+}
+
 // recordingAfterSales is the order module's panel surface (ADR 0271); the walk
 // takes one act, and every act reaches the same surface.
 type recordingAfterSales struct{ surfaces *recordingSurfaces }
@@ -587,6 +601,12 @@ var walkForms = map[string]url.Values{
 	// The telephone order opens a cart and adds a line (ADR 0290).
 	routeKey(http.MethodPost, CartsPath):     {formCountryCode: {"TR"}, formEmail: {"caller@example.com"}},
 	routeKey(http.MethodPost, CartLinesPath): {formSalesChannelID: {"sc_1"}, formVariantID: {"variant_1"}, formQuantity: {"1"}},
+	// And completes it (ADR 0291).
+	routeKey(http.MethodPost, CartAddressPath):  {"first_name": {"Ada"}, "country_code": {"TR"}},
+	routeKey(http.MethodPost, CartShippingPath): {formShippingOption: {"so_1"}},
+	routeKey(http.MethodPost, CartCompletePath): {
+		formSalesChannelID: {"sc_1"}, formPaymentMethod: {"bank_transfer"}, formReadTotal: {"1000"},
+	},
 }
 
 // panelWalk is one panel built on the recording doubles.
