@@ -55,6 +55,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
@@ -117,6 +118,9 @@ type Service struct {
 	store  Store
 	events EventPublisher
 	log    *slog.Logger
+	// retention is how long an open cart is kept untouched; zero keeps every
+	// cart (ADR 0301).
+	retention time.Duration
 }
 
 // Options are the service's dependencies.
@@ -138,6 +142,11 @@ type Options struct {
 	Events EventPublisher
 	// Logger, when nil is given, makes the logs be discarded.
 	Logger *slog.Logger
+	// RetentionDays is how many days an open cart is kept after its last
+	// change before [Service.DeleteAbandonedCarts] deletes it; zero keeps
+	// every cart, as the module always did (ADR 0301). The period is the
+	// shop's, as the controller of what the cart holds (ADR 0029).
+	RetentionDays int
 }
 
 // New produces a service with the given dependencies.
@@ -161,7 +170,15 @@ func New(opts Options) (*Service, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Service{store: opts.Repo, events: opts.Events, log: log}, nil
+	if opts.RetentionDays < 0 || opts.RetentionDays > MaxRetentionDays {
+		return nil, errors.Internal(CodeNotReady,
+			"the cart retention is zero to %d days, %d given", MaxRetentionDays, opts.RetentionDays)
+	}
+
+	return &Service{
+		store: opts.Repo, events: opts.Events, log: log,
+		retention: time.Duration(opts.RetentionDays) * 24 * time.Hour,
+	}, nil
 }
 
 // Page holds the pagination parameters of the list requests.

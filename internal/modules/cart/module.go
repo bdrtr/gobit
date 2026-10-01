@@ -229,6 +229,9 @@ type Options struct {
 	// itself is: a setting that could change between two requests would make
 	// two identical requests answer differently.
 	TrustUnverifiedCustomerClaim bool
+	// RetentionDays is how many days an open cart is kept after its last
+	// change; zero keeps every cart (ADR 0301).
+	RetentionDays int
 }
 
 // New produces a cart module ready to be registered.
@@ -278,9 +281,10 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	svc, err := service.New(service.Options{
-		Repo:   repository.New(pool.Pool()),
-		Events: bus,
-		Logger: log,
+		Repo:          repository.New(pool.Pool()),
+		Events:        bus,
+		Logger:        log,
+		RetentionDays: m.opts.RetentionDays,
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,

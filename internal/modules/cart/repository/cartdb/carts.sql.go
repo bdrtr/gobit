@@ -147,6 +147,39 @@ func (q *Queries) CreateCart(ctx context.Context, arg CreateCartParams) (Cart, e
 	return i, err
 }
 
+const deleteAbandonedCarts = `-- name: DeleteAbandonedCarts :execrows
+DELETE FROM carts
+WHERE id IN (
+    SELECT id FROM carts
+    WHERE completed_at IS NULL AND updated_at < $1::timestamptz
+    ORDER BY updated_at, id
+    LIMIT $2::bigint
+    FOR UPDATE SKIP LOCKED
+)
+`
+
+type DeleteAbandonedCartsParams struct {
+	Cutoff   pgtype.Timestamptz
+	RowLimit int64
+}
+
+// DeleteAbandonedCarts deletes, for good, up to row_limit open carts untouched
+// since the cutoff, the oldest first, and their children through the foreign
+// keys' cascade (ADR 0301).
+//
+// Every write to a cart moves its updated_at (the revision bump, the contact,
+// the totals), so the cutoff reads as the cart's last change. A cart a write
+// holds locked is skipped rather than waited for, and is read again by the
+// next run. A soft-deleted cart is deleted too: it still holds what the
+// shopper wrote.
+func (q *Queries) DeleteAbandonedCarts(ctx context.Context, arg DeleteAbandonedCartsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAbandonedCarts, arg.Cutoff, arg.RowLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getCart = `-- name: GetCart :one
 SELECT id, region_id, customer_id, email, currency_code, subtotal, discount_total, tax_total, shipping_total, total, revision, totals_revision, metadata, completed_at, created_at, updated_at, deleted_at, adds_to_order_id, prices_include_tax, opened_by FROM carts
 WHERE id = $1 AND deleted_at IS NULL

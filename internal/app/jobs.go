@@ -24,6 +24,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
 	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
+	"github.com/bdrtr/gobit/internal/jobs/cartretention"
 	"github.com/bdrtr/gobit/internal/jobs/customersegment"
 	"github.com/bdrtr/gobit/internal/jobs/giftcardexpiry"
 	"github.com/bdrtr/gobit/internal/jobs/giftcardsweep"
@@ -36,6 +37,7 @@ import (
 	"github.com/bdrtr/gobit/internal/jobs/scheduledpublish"
 	"github.com/bdrtr/gobit/internal/jobs/stockalert"
 	"github.com/bdrtr/gobit/internal/jobs/storecreditexpiry"
+	"github.com/bdrtr/gobit/internal/modules/cart"
 	"github.com/bdrtr/gobit/internal/modules/order"
 	"github.com/bdrtr/gobit/internal/modules/payment"
 	paymentmodels "github.com/bdrtr/gobit/internal/modules/payment/models"
@@ -79,6 +81,13 @@ type overdueOffline interface {
 	ListOverdueOffline(
 		ctx context.Context, now time.Time, after paymentsvc.OverdueKey, limit int32,
 	) ([]paymentmodels.PaymentSession, error)
+}
+
+// abandonedCarts is the cart service as the cart retention needs it (ADR
+// 0301).
+type abandonedCarts interface {
+	DeleteAbandonedCarts(ctx context.Context, now time.Time, limit int64) (int64, error)
+	AbandonedCartsExpire() bool
 }
 
 // placedOrderCanceler is the order service as the offline expiry needs it:
@@ -269,6 +278,17 @@ func registerJobs(
 			"the job runner could not resolve the order service (%q)", order.ServiceName)
 	}
 	if err := registry.Add(offlineexpiry.Definition(overdue, bindings, canceler, log)); err != nil {
+		return nil, err
+	}
+	// The cart retention deletes the open carts untouched for the shop's
+	// period (ADR 0301). It is registered unconditionally: with no period it
+	// deletes nothing, and says so.
+	abandoned, err := container.Resolve[abandonedCarts](c, cart.ServiceName)
+	if err != nil {
+		return nil, coreerrors.Wrap(err, coreerrors.KindOf(err), job.CodeInvalidDefinition,
+			"the job runner could not resolve the cart service (%q)", cart.ServiceName)
+	}
+	if err := registry.Add(cartretention.Definition(abandoned)); err != nil {
 		return nil, err
 	}
 	// The stock alert job mails the customers whose marked wishlist variant is

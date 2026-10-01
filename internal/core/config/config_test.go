@@ -38,6 +38,7 @@ var envKeys = []string{
 	"STOREFRONT_CATALOG_CACHE_TTL", "STOREFRONT_CATALOG_CACHE_SHARED",
 	"PAYMENT_LOYALTY_EARN_BASIS_POINTS", "PAYMENT_GIFT_CARD_VALIDITY_DAYS", "PAYMENT_OFFLINE_METHODS",
 	"PAYMENT_OFFLINE_WAIT_DAYS",
+	"CART_RETENTION_DAYS",
 	"DB_MAX_CONNS", "DB_MIN_CONNS", "ADMIN_SECOND_FACTOR_REQUIRED_FROM",
 }
 
@@ -333,6 +334,35 @@ func TestTheCatalogCacheTTLRefusesANegativeValueAndAcceptsZero(t *testing.T) {
 	if cfg.CatalogCacheShared {
 		t.Fatal("the shared flag has to default to false; a cache nobody asked for " +
 			"must not be shareable")
+	}
+}
+
+// TestTheCartRetentionIsBoundedAndOffByDefault is ADR 0301's setting: an
+// installation keeps every cart until it names a period, and a period is
+// between one day and the ceiling.
+func TestTheCartRetentionIsBoundedAndOffByDefault(t *testing.T) {
+	for _, days := range []string{"-1", "3651"} {
+		clearEnv(t)
+		t.Setenv("CART_RETENTION_DAYS", days)
+
+		if _, err := config.Load(); err == nil {
+			t.Fatalf("Load() should have refused CART_RETENTION_DAYS=%s", days)
+		}
+	}
+
+	clearEnv(t)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("the default has to load: %v", err)
+	}
+	if cfg.CartRetentionDays != 0 {
+		t.Fatalf("no cart is deleted unless the shop says so, got %d days", cfg.CartRetentionDays)
+	}
+
+	clearEnv(t)
+	t.Setenv("CART_RETENTION_DAYS", "3650")
+	if cfg, err = config.Load(); err != nil || cfg.CartRetentionDays != config.MaxCartRetentionDays {
+		t.Fatalf("the ceiling has to survive: %d, %v", cfg.CartRetentionDays, err)
 	}
 }
 

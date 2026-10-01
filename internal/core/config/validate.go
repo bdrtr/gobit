@@ -74,6 +74,11 @@ func (c Config) Validate() error {
 			"config: PAYMENT_GIFT_CARD_VALIDITY_DAYS has to be between 0 and %d, %d given; "+
 				"zero means a gift card never expires", MaxGiftCardValidityDays, c.GiftCardValidityDays)
 	}
+	if c.CartRetentionDays < 0 || c.CartRetentionDays > MaxCartRetentionDays {
+		return fmt.Errorf(
+			"config: CART_RETENTION_DAYS has to be between 0 and %d, %d given; "+
+				"zero keeps every cart", MaxCartRetentionDays, c.CartRetentionDays)
+	}
 	if c.LoyaltyEarnBasisPoints < 0 || c.LoyaltyEarnBasisPoints > MaxLoyaltyEarnBasisPoints {
 		return fmt.Errorf(
 			"config: PAYMENT_LOYALTY_EARN_BASIS_POINTS has to be between 0 and %d, %d given; "+

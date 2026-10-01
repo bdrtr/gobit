@@ -235,6 +235,15 @@ func TestTheOfflineWaitCeilingAgreesWithThePaymentService(t *testing.T) {
 		"the config's offline wait ceiling must match the payment service's")
 }
 
+// TestTheCartRetentionCeilingAgreesWithTheCartService binds the two homes of
+// the cart retention's ceiling, for the loyalty ceiling's reason (ADR 0301).
+func TestTheCartRetentionCeilingAgreesWithTheCartService(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, cartsvc.MaxRetentionDays, config.MaxCartRetentionDays,
+		"the config's cart retention ceiling must match the cart service's")
+}
+
 // TestTheReceivableAccountAgrees binds the one account the payment and the order
 // journals share (ADR 0186, ADR 0188).
 //

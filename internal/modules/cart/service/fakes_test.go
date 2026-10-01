@@ -74,6 +74,12 @@ type fakeStore struct {
 	// order being deterministic rests on it.
 	seq int
 
+	// abandoned is how many carts DeleteAbandonedCarts reports deleted, and
+	// the two slices what it was asked (ADR 0301).
+	abandoned        int64
+	abandonedCutoffs []time.Time
+	abandonedLimits  []int64
+
 	// lockedCarts records the locked carts IN ORDER. Whether the lock was taken
 	// is a concurrency contract and in a real database its violation only shows
 	// up under a race; here it can be read directly.
@@ -532,6 +538,19 @@ func (f *fakeStore) SoftDeleteCart(_ context.Context, id string) error {
 	cart.DeletedAt = &now
 	f.carts[id] = cart
 	return nil
+}
+
+// DeleteAbandonedCarts records the cutoff and the limit it was asked for and
+// answers the scripted count; the rule itself is the query's, held on a real
+// PostgreSQL (ADR 0301).
+func (f *fakeStore) DeleteAbandonedCarts(_ context.Context, cutoff time.Time, limit int64) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.abandonedCutoffs = append(f.abandonedCutoffs, cutoff)
+	f.abandonedLimits = append(f.abandonedLimits, limit)
+
+	return min(limit, f.abandoned), nil
 }
 
 // CreateLineItem records the line.

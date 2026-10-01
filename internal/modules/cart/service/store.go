@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/internal/modules/cart/models"
@@ -88,6 +89,9 @@ type Store interface {
 	MarkCartCompleted(ctx context.Context, id string) (models.Cart, error)
 	// SoftDeleteCart soft deletes the cart.
 	SoftDeleteCart(ctx context.Context, id string) error
+	// DeleteAbandonedCarts deletes for good up to limit open carts untouched
+	// since the cutoff, the oldest first, and returns how many (ADR 0301).
+	DeleteAbandonedCarts(ctx context.Context, cutoff time.Time, limit int64) (int64, error)
 
 	// CreateLineItem records a new cart line.
 	CreateLineItem(ctx context.Context, item models.LineItem) (models.LineItem, error)

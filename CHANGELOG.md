@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An abandoned cart is deleted after the shop's period** (ADR 0301). **For
+  operators:** `CART_RETENTION_DAYS` names how many days an open cart is kept
+  after its last change; the hourly `cart-retention` job then deletes it for
+  good with its lines, addresses, shipping methods and coupon codes. Zero, the
+  default, keeps every cart; a completed cart is never deleted.
+
 - **An operator corrects their own cart** (ADR 0300). **For operators:** the
   telephone order's cart page removes a line and discards the cart, which
   then leaves the open carts. **For integrators:**

@@ -402,6 +402,21 @@ func (r *Repository) SoftDeleteCart(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteAbandonedCarts deletes for good up to limit open carts untouched since
+// the cutoff, the oldest first, with their children, and returns how many
+// (ADR 0301).
+func (r *Repository) DeleteAbandonedCarts(ctx context.Context, cutoff time.Time, limit int64) (int64, error) {
+	deleted, err := r.queries(ctx).DeleteAbandonedCarts(ctx, cartdb.DeleteAbandonedCartsParams{
+		Cutoff:   pgtype.Timestamptz{Time: cutoff, Valid: true},
+		RowLimit: limit,
+	})
+	if err != nil {
+		return 0, classify(err, codeQueryFailed, "the abandoned carts could not be deleted")
+	}
+
+	return deleted, nil
+}
+
 // writeBlocked reads the REASON why a writing query affected no row at all.
 //
 // The queries' WHERE says "not deleted AND not completed"; zero rows corresponds

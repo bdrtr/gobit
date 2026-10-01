@@ -21,6 +21,7 @@ import (
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/job"
 	"github.com/bdrtr/gobit/internal/core/job/jobpg"
+	"github.com/bdrtr/gobit/internal/jobs/cartretention"
 	"github.com/bdrtr/gobit/internal/jobs/customersegment"
 	"github.com/bdrtr/gobit/internal/jobs/giftcardexpiry"
 	"github.com/bdrtr/gobit/internal/jobs/giftcardsweep"
@@ -30,6 +31,7 @@ import (
 	"github.com/bdrtr/gobit/internal/jobs/sagawatch"
 	"github.com/bdrtr/gobit/internal/jobs/scheduledpublish"
 	"github.com/bdrtr/gobit/internal/jobs/stockalert"
+	"github.com/bdrtr/gobit/internal/modules/cart"
 )
 
 // jobsEnv points the binary at a database of its own and gives it the smallest
@@ -279,12 +281,36 @@ func TestEveryJobTheRootDeclaresCanBeBuiltAgainstARealInstallation(t *testing.T)
 	for _, name := range []string{
 		sagawatch.Name, paymentrecon.Name, outboxrelay.Name, scheduledpublish.Name, productimport.Name,
 		giftcardsweep.Name, giftcardexpiry.Name, stockalert.Name, customersegment.Name,
+		cartretention.Name,
 	} {
 		definition, getErr := registry.Get(name)
 		require.NoError(t, getErr,
 			"%q is missing from the registry the runner and `gobit jobs` both read; "+
 				"the listing would then show a page with nothing missing from it", name)
 		assert.NotNil(t, definition.Run, "%q was registered with no work to do", name)
+	}
+}
+
+// TestTheCartRetentionReachesTheCartService holds ADR 0301's wiring: the
+// period an installation names is the one the cart service the job resolves
+// deletes by, and an installation that names none deletes nothing.
+func TestTheCartRetentionReachesTheCartService(t *testing.T) {
+	ctx := context.Background()
+	dsn := migrateDSN(t)
+	log := slog.New(slog.DiscardHandler)
+
+	for days, expire := range map[string]bool{"30": true, "0": false} {
+		jobsEnv(t, dsn)
+		t.Setenv("CART_RETENTION_DAYS", days)
+		cfg, err := config.Load()
+		require.NoError(t, err)
+
+		app, closeApp, err := openApplication(ctx, cfg, log, errorreport.NewSink(), Options{}, consumesEvents)
+		require.NoError(t, err)
+		carts, err := container.Resolve[abandonedCarts](app.container, cart.ServiceName)
+		require.NoError(t, err)
+		assert.Equal(t, expire, carts.AbandonedCartsExpire(), "CART_RETENTION_DAYS=%s", days)
+		closeApp()
 	}
 }
 

@@ -117,6 +117,25 @@ SET completed_at = now(), updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL AND completed_at IS NULL
 RETURNING *;
 
+-- DeleteAbandonedCarts deletes, for good, up to row_limit open carts untouched
+-- since the cutoff, the oldest first, and their children through the foreign
+-- keys' cascade (ADR 0301).
+--
+-- Every write to a cart moves its updated_at (the revision bump, the contact,
+-- the totals), so the cutoff reads as the cart's last change. A cart a write
+-- holds locked is skipped rather than waited for, and is read again by the
+-- next run. A soft-deleted cart is deleted too: it still holds what the
+-- shopper wrote.
+-- name: DeleteAbandonedCarts :execrows
+DELETE FROM carts
+WHERE id IN (
+    SELECT id FROM carts
+    WHERE completed_at IS NULL AND updated_at < sqlc.arg('cutoff')::timestamptz
+    ORDER BY updated_at, id
+    LIMIT sqlc.arg('row_limit')::bigint
+    FOR UPDATE SKIP LOCKED
+);
+
 -- name: SoftDeleteCart :execrows
 UPDATE carts
 SET deleted_at = now(), updated_at = now()

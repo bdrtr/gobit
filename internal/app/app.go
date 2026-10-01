@@ -582,6 +582,7 @@ func registerModules(registry *module.Registry, cfg config.Config, log *slog.Log
 	// that record built one function to avoid.
 	registry.Add(cart.New(cart.Options{
 		TrustUnverifiedCustomerClaim: cfg.StorefrontTrustsUnverifiedCustomerClaim,
+		RetentionDays:                cfg.CartRetentionDays,
 	}))
 	// Phase 6: payment and order
 	registry.Add(payment.New(payment.Options{

@@ -259,6 +259,10 @@ const (
 	// reason, and an arch assertion binds the two.
 	MaxGiftCardValidityDays = 36_500
 
+	// MaxCartRetentionDays is the longest an installation may keep an open
+	// cart untouched: ten years, past which the period is no period (ADR 0301).
+	MaxCartRetentionDays = 3_650
+
 	// MaxPaymentOfflineWaitDays is the longest an offline method may make an
 	// order wait for its money (ADR 0289): a year, past which a shop means never
 	// and leaves the method out. It repeats the payment service's ceiling for the
@@ -982,6 +986,16 @@ type Config struct {
 	// method has to be one of [Config.PaymentOfflineMethods], and a wait is one
 	// to [MaxPaymentOfflineWaitDays] days.
 	PaymentOfflineWaitDays OfflineWaits `env:"PAYMENT_OFFLINE_WAIT_DAYS"`
+
+	// CartRetentionDays is how many days an open cart is kept after its last
+	// change before a job deletes it for good, with its lines and addresses
+	// (ADR 0301).
+	//
+	// Zero, the default, keeps every cart, as gobit always did: the period is
+	// the shop's, as the controller of what a guest's cart holds (ADR 0029),
+	// and an installation must not start deleting by upgrading. A completed
+	// cart is never deleted. Up to [MaxCartRetentionDays].
+	CartRetentionDays int `env:"CART_RETENTION_DAYS" envDefault:"0"`
 
 	// GraphQLMaxFieldRepetition is the upper bound on how many times the same field
 	// may be selected under the same object.
