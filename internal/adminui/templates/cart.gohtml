@@ -79,9 +79,24 @@ be read says it is in minor units.
 
 {{ if and .CanWrite (not .Cart.Completed) }}
 <h3>Add a line</h3>
+{{ if .CanSearch }}
+{{/* A product found by its title offers its variants to the form (ADR 0293). */}}
+<form method="get" action="{{ .CartsPath }}/{{ .Cart.ID }}">
+  <input name="find" value="{{ .Search }}" placeholder="product title" aria-label="find a product">
+  <button type="submit">Find</button>
+</form>
+{{ if .FindFailed }}<p class="muted">The products could not be read; type the variant's id.</p>
+{{ else if and .Search (not .Found) }}<p class="muted">No product's title matches "{{ .Search }}".</p>{{ end }}
+{{ end }}
 <form method="post" action="{{ .CartsPath }}/{{ .Cart.ID }}/lines">
   <input name="sales_channel_id" value="{{ .Typed.Get "sales_channel_id" }}" placeholder="sales channel id" aria-label="sales channel" required>
+  {{ if .Found }}
+  <select name="variant_id" aria-label="variant" required>
+    {{ range .Found }}<option value="{{ .ID }}">{{ .Label }}</option>{{ end }}
+  </select>
+  {{ else }}
   <input name="variant_id" value="{{ .Typed.Get "variant_id" }}" placeholder="variant id" aria-label="variant" required>
+  {{ end }}
   <input name="quantity" value="{{ with .Typed.Get "quantity" }}{{ . }}{{ else }}1{{ end }}" inputmode="numeric" aria-label="quantity" required>
   <button type="submit">Add</button>
 </form>

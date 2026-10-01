@@ -40,7 +40,7 @@ func TestAnOperatorOpensATelephoneOrderInThePanel(t *testing.T) {
 		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-			ID: "usr_phone", Kind: "user", Scopes: []string{"cart:read", "cart:write"},
+			ID: "usr_phone", Kind: "user", Scopes: []string{"cart:read", "cart:write", "product:read"},
 		}))
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, req)
@@ -53,6 +53,12 @@ func TestAnOperatorOpensATelephoneOrderInThePanel(t *testing.T) {
 	require.Equal(t, http.StatusSeeOther, opened.Code, opened.Body.String())
 	cartPath := opened.Header().Get("Location")
 	require.True(t, strings.HasPrefix(cartPath, adminui.CartsPath+"/"), cartPath)
+
+	// The operator finds the product by its title and the form offers its
+	// variant (ADR 0293).
+	found := send(http.MethodGet, cartPath+"?find="+url.QueryEscape("Panel Telephone Order"), nil)
+	require.Equal(t, http.StatusOK, found.Code, found.Body.String())
+	assert.Contains(t, found.Body.String(), `<option value="`+variantID+`">`)
 
 	added := send(http.MethodPost, cartPath+"/lines", url.Values{
 		"sales_channel_id": {testChannelID}, "variant_id": {variantID},

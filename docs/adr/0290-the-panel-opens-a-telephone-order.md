@@ -6,7 +6,7 @@ module's `cart.admin` surface, the admin API's own acts. The cart query
 provider offers a cart's lines and an `id` filter, so the cart's page reads it
 as the order page reads an order.
 
-- **Status:** Accepted
+- **Status:** Accepted — amended by [0293](0293-a-telephone-order-finds-a-variant-by-its-title.md)
 - **Date:** 2026-10-01
 
 ## Context

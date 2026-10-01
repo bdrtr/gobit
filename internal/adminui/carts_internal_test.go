@@ -416,3 +416,83 @@ func TestTheShippingFormOffersTheCartsOptions(t *testing.T) {
 		})
 	}
 }
+
+// searchCatalog is phoneCatalog with a product of two variants to find.
+func searchCatalog() *fakeCatalog {
+	catalog := phoneCatalog(false)
+	catalog.byEntity[EntityProduct] = []query.Record{{fieldID: "prod_shirt", fieldTitle: "Shirt"}}
+	catalog.byEntity[EntityVariant] = []query.Record{
+		{fieldID: "variant_shirt_m", fieldTitle: "M", fieldSKU: "SH-M", fieldVariantProduct: "prod_shirt"},
+		{fieldID: "variant_shirt_l", fieldTitle: "L", fieldSKU: "", fieldVariantProduct: "prod_shirt"},
+	}
+
+	return catalog
+}
+
+// TestTheCartFindsAVariantByItsProductsTitle is ADR 0293: an operator who may
+// read the catalog finds a product by its title, and the add form offers its
+// variants by name; one who may not is offered the id box and nothing of the
+// catalog is read for them.
+func TestTheCartFindsAVariantByItsProductsTitle(t *testing.T) {
+	t.Parallel()
+
+	catalog := searchCatalog()
+	panel := newCatalogPanel(t, catalog)
+	panel.carts = &fakeCarts{}
+
+	rec := phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone?find=+shirt+", nil,
+		scopeCartRead, scopeCartWrite, scopeProductRead)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, `<select name="variant_id"`)
+	assert.Contains(t, body, `<option value="variant_shirt_m">Shirt — M (SH-M)</option>`)
+	assert.Contains(t, body, `<option value="variant_shirt_l">Shirt — L</option>`)
+	assert.Contains(t, body, `name="find" value="shirt"`)
+	var asked []query.GraphSpec
+	for _, spec := range catalog.specs {
+		if spec.Entity == EntityProduct || spec.Entity == EntityVariant {
+			asked = append(asked, spec)
+		}
+	}
+	require.Len(t, asked, 2)
+	assert.Equal(t, "shirt", asked[0].Filters[filterSearch])
+	assert.Equal(t, []string{"prod_shirt"}, asked[1].Filters[filterProductID])
+
+	blind := searchCatalog()
+	panel = newCatalogPanel(t, blind)
+	panel.carts = &fakeCarts{}
+	rec = phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone?find=shirt", nil, scopeCartRead, scopeCartWrite)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.NotContains(t, rec.Body.String(), `name="find"`)
+	assert.Contains(t, rec.Body.String(), `<input name="variant_id"`)
+	for _, spec := range blind.specs {
+		assert.NotEqual(t, EntityProduct, spec.Entity, "the catalog is the product module's, read under its privilege")
+	}
+}
+
+// TestASearchThatFindsNothingSaysSo: no match is said, a failed read is said,
+// and both leave the id box.
+func TestASearchThatFindsNothingSaysSo(t *testing.T) {
+	t.Parallel()
+
+	empty := searchCatalog()
+	empty.byEntity[EntityProduct] = nil
+	panel := newCatalogPanel(t, empty)
+	panel.carts = &fakeCarts{}
+	rec := phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone?find=kilt", nil,
+		scopeCartRead, scopeCartWrite, scopeProductRead)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `No product's title matches "kilt".`)
+	assert.Contains(t, rec.Body.String(), `<input name="variant_id"`)
+
+	failing := searchCatalog()
+	failing.errByEntity = map[string]error{EntityProduct: errors.Unavailable("catalog_down", "the catalog did not answer")}
+	panel = newCatalogPanel(t, failing)
+	panel.carts = &fakeCarts{}
+	rec = phoneRequest(panel, http.MethodGet, CartsPath+"/cart_phone?find=shirt", nil,
+		scopeCartRead, scopeCartWrite, scopeProductRead)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "The products could not be read")
+	assert.Contains(t, rec.Body.String(), `<input name="variant_id"`)
+}

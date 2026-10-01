@@ -31,6 +31,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A telephone order finds a variant by its title** (ADR 0293). **For
+  operators:** the telephone order's cart page searches the catalog by product
+  title and the add form offers the found variants by name; it needs
+  `product:read` beside the cart's write, and without it the variant's id is
+  typed as before.
+
 - **A cart lists the shipping options it can take** (ADR 0292). **For
   integrators:** `GET /store/v1/carts/{id}/shipping-options` lists the options
   the cart can take, each priced for the cart's own subtotal, item count and

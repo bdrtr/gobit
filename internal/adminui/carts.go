@@ -139,6 +139,71 @@ type cartMethod struct {
 	Name, Amount string
 }
 
+// paramFind is the cart page's search: the text typed to find a product by its
+// title, whose variants the add form then offers (ADR 0293).
+const paramFind = "find"
+
+// productsFound is how many products one search reads.
+const productsFound = 10
+
+// fieldVariantProduct is the product a variant record belongs to.
+const fieldVariantProduct = "product_id"
+
+// foundVariant is one variant a search offers to the add form.
+type foundVariant struct {
+	ID, Label string
+}
+
+// findVariants reads the variants of the products whose title matches the
+// term, in the products' order, each labeled with its product, its title and
+// its SKU.
+func (u *UI) findVariants(r *http.Request, term string) ([]foundVariant, error) {
+	products, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+		Entity:  EntityProduct,
+		Fields:  []string{fieldID, fieldTitle},
+		Filters: map[string]any{filterSearch: term},
+		Limit:   productsFound,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(products) == 0 {
+		return []foundVariant{}, nil
+	}
+
+	ids := make([]string, 0, len(products))
+	titles := make(map[string]string, len(products))
+	for _, product := range products {
+		id := recordString(product, fieldID)
+		ids = append(ids, id)
+		titles[id] = recordString(product, fieldTitle)
+	}
+	variants, err := u.catalog.Graph(r.Context(), query.GraphSpec{
+		Entity:  EntityVariant,
+		Fields:  []string{fieldID, fieldTitle, fieldSKU, fieldVariantProduct},
+		Filters: map[string]any{filterProductID: ids},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	byProduct := make(map[string][]foundVariant, len(ids))
+	for _, variant := range variants {
+		label := titles[recordString(variant, fieldVariantProduct)] + " — " + recordString(variant, fieldTitle)
+		if sku := recordString(variant, fieldSKU); sku != "" {
+			label += " (" + sku + ")"
+		}
+		product := recordString(variant, fieldVariantProduct)
+		byProduct[product] = append(byProduct[product], foundVariant{ID: recordString(variant, fieldID), Label: label})
+	}
+	out := []foundVariant{}
+	for _, id := range ids {
+		out = append(out, byProduct[id]...)
+	}
+
+	return out, nil
+}
+
 // cartOption is one shipping option the cart can take, as the form offers it.
 type cartOption struct {
 	ID, Name, Amount string
@@ -267,6 +332,18 @@ func (u *UI) renderCart(
 	if canWrite && !page.Completed {
 		options, optionsRead = u.shippingOptionsOf(r, page, scales)
 	}
+	// The search reads the product module's catalog, so it is offered only to
+	// an operator who may read it (ADR 0260, ADR 0293).
+	canSearch := canWrite && !page.Completed && principal.HasScope(scopeProductRead)
+	search := strings.TrimSpace(r.URL.Query().Get(paramFind))
+	var found []foundVariant
+	findFailed := false
+	if canSearch && search != "" {
+		var err error
+		if found, err = u.findVariants(r, search); err != nil {
+			findFailed = true
+		}
+	}
 
 	u.templates.render(w, r, status, "cart.gohtml", map[string]any{
 		titleKey:      telephoneLabel,
@@ -275,6 +352,10 @@ func (u *UI) renderCart(
 		"CanWrite":    canWrite,
 		"Options":     options,
 		"OptionsRead": optionsRead,
+		"CanSearch":   canSearch,
+		"Search":      search,
+		"Found":       found,
+		"FindFailed":  findFailed,
 		"Refused":     refused,
 		"Typed":       typed,
 		// AddressFields orders the address form (ADR 0291).

@@ -631,8 +631,10 @@ past and is not corrected retroactively.
   The panel takes the whole order
   ([ADR 0290](adr/0290-the-panel-opens-a-telephone-order.md),
   [ADR 0291](adr/0291-the-panel-completes-a-telephone-order.md)), with the
-  channel, the variant and the offline method typed by id; the shipping option
-  is chosen from the options the cart can take
+  channel and the offline method typed by id; the variant is found by its
+  product's title for an operator who may read the catalog
+  ([ADR 0293](adr/0293-a-telephone-order-finds-a-variant-by-its-title.md)), and the
+  shipping option is chosen from the options the cart can take
   ([ADR 0292](adr/0292-a-cart-lists-the-shipping-options-it-can-take.md)).
   A card payment taken over the telephone is not offered, because the operator
   would hold the card; a caller who pays by card is sent the cart's link.
