@@ -60,7 +60,8 @@ func get(r chi.Router, path string) *httptest.ResponseRecorder {
 // rather than that a grant is missing. An entry MISSING for a screen the router
 // opens hides a screen they are entitled to, and the panel has already been
 // bitten by that half once — [TestTheReviewScreenIsInTheMenu] exists because of
-// it. A test naming the expected menu per privilege would assert my arithmetic;
+// it, and [TestEveryScreenWithoutAnIdIsInTheMenu] holds it for every screen,
+// since a walk of the menu's links cannot see an entry that is gone. A test naming the expected menu per privilege would assert my arithmetic;
 // what is asserted instead is that the two things a reader can disagree about
 // AGREE: the rendered menu, and the router's own answer for each of its links.
 //
@@ -100,6 +101,55 @@ func TestTheMenuOffersExactlyTheScreensTheRouterOpens(t *testing.T) {
 					map[bool]string{true: "OFFERS", false: "HIDES"}[offered])
 			}
 		})
+	}
+}
+
+// screensOutsideTheMenu are the routes drawn without an id in their path that
+// the menu does not offer, each with the way an operator reaches it instead.
+var screensOutsideTheMenu = map[string]string{
+	URLPrefix:         "the entry point, which sends the operator on to a screen they can open",
+	LoginPath:         "the sign-in, drawn before there is an operator to offer a menu to",
+	StylesheetPath:    "the stylesheet every page loads",
+	ReviewsScriptPath: "the script the review screen loads",
+	ProductNewPath:    "the form the product list's New product link opens",
+}
+
+// TestEveryScreenWithoutAnIdIsInTheMenu holds the half of the menu that
+// [TestTheMenuOffersExactlyTheScreensTheRouterOpens] cannot: that test walks
+// the menu's own links, so a screen whose entry is gone is not among them, and
+// only the review screen was pinned (D204).
+//
+// A route drawn without an id is a screen an operator starts from; one with an
+// id is reached from a list, and is left to that list's links.
+func TestEveryScreenWithoutAnIdIsInTheMenu(t *testing.T) {
+	t.Parallel()
+
+	offered := map[string]bool{}
+	for _, item := range sections() {
+		offered[item.Path] = true
+	}
+
+	checked := 0
+	for key := range builtInScopes() {
+		path, drawn := strings.CutPrefix(key, http.MethodGet+" ")
+		if !drawn || strings.Contains(path, "{") {
+			continue
+		}
+		checked++
+		_, exempt := screensOutsideTheMenu[path]
+		assert.True(t, offered[path] || exempt,
+			"%s is a screen the router opens and no menu entry offers; only somebody who knows "+
+				"the URL can open it. Add it to sections(), or to screensOutsideTheMenu with the "+
+				"way an operator reaches it", path)
+		assert.False(t, offered[path] && exempt,
+			"%s is in the menu and still exempted; drop the exemption", path)
+	}
+	require.GreaterOrEqual(t, checked, len(sections()),
+		"only %d routes were read as screens; the walk has gone blind", checked)
+
+	for path, how := range screensOutsideTheMenu {
+		_, listed := builtInScopes()[routeKey(http.MethodGet, path)]
+		assert.True(t, listed, "%s is exempted as %s and is no route", path, how)
 	}
 }
 
