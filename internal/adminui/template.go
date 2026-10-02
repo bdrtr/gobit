@@ -126,6 +126,7 @@ var pages = []string{
 	"user.gohtml",
 	"api_keys.gohtml",
 	"api_key_made.gohtml",
+	"sales_channels.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -346,6 +347,9 @@ func sections() []navItem {
 		// The keys integrations call the API with sit beside the users (ADR
 		// 0350).
 		{Label: apiKeysLabel, Path: APIKeysPath},
+		// The channels publishable keys are attached to sit beside them (ADR
+		// 0352).
+		{Label: salesChannelsLabel, Path: SalesChannelsPath},
 		// The reviews sit LAST, and not because they matter least: they are
 		// the panel's first screen of the shape ADR 0030 decided on, so an
 		// operator meeting a section that behaves differently meets it at the

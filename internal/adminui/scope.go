@@ -209,6 +209,10 @@ func builtInScopes() map[string]string {
 		routeKey(post, APIKeyRevokePath): scopeAdmin,
 		// And so is making one (ADR 0351).
 		routeKey(post, APIKeysPath): scopeAdmin,
+		// The sales channels are read and corrected as the keys are (ADR
+		// 0352).
+		routeKey(get, SalesChannelsPath): scopeAuthRead,
+		routeKey(post, SalesChannelPath): scopeAdmin,
 		// The shipping options are the fulfillment module's, and so are
 		// revising one (ADR 0333) and writing one (ADR 0334).
 		routeKey(get, ShippingOptionsPath):       scopeFulfillmentRead,

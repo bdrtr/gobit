@@ -196,7 +196,11 @@
 // themselves. The API keys screen ([UI.listAPIKeys]) beside it lists the
 // keys integrations call the API with, their tokens only as redacted, and
 // revokes one for an operator holding admin ([UI.revokeAPIKey], ADR 0350),
-// and makes one, showing its token once ([UI.makeAPIKey], ADR 0351).
+// and makes one, showing its token once ([UI.makeAPIKey], ADR 0351). The
+// Sales channels screen ([UI.listSalesChannels]) lists the channels through
+// the auth module's channel entity and corrects each one's name, description
+// and whether it is in use from what its row was drawn with
+// ([UI.reviseSalesChannel], ADR 0352).
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator

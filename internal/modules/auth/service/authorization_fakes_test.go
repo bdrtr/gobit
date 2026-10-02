@@ -79,6 +79,13 @@ func (d *fakeRepo) UpdateUser(
 	return models.User{ID: id, Scopes: patch.Scopes}, nil
 }
 
+func (d *fakeRepo) ReviseSalesChannel(
+	_ context.Context, id string, _, next models.ChannelTerms, _ time.Time,
+) (models.SalesChannel, bool, error) {
+	d.writeCount++
+	return models.SalesChannel{ID: id, Name: next.Name, Description: next.Description, IsDisabled: next.IsDisabled}, true, nil
+}
+
 func (d *fakeRepo) ReviseUserScopes(
 	_ context.Context, id string, _, next []string, _ time.Time,
 ) (models.User, bool, error) {

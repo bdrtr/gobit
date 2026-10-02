@@ -135,6 +135,8 @@ func (u *UI) routes(r chi.Router) {
 	r.Post(UserRemovePath, u.needs(http.MethodPost, UserRemovePath, u.removeUser))
 	r.Get(APIKeysPath, u.needs(http.MethodGet, APIKeysPath, u.listAPIKeys))
 	r.Post(APIKeysPath, u.needs(http.MethodPost, APIKeysPath, u.makeAPIKey))
+	r.Get(SalesChannelsPath, u.needs(http.MethodGet, SalesChannelsPath, u.listSalesChannels))
+	r.Post(SalesChannelPath, u.needs(http.MethodPost, SalesChannelPath, u.reviseSalesChannel))
 	r.Post(APIKeyRevokePath, u.needs(http.MethodPost, APIKeyRevokePath, u.revokeAPIKey))
 	r.Get(InvoicePath, u.needs(http.MethodGet, InvoicePath, u.showInvoice))
 	r.Post(InvoiceStatusPath, u.needs(http.MethodPost, InvoiceStatusPath, u.moveInvoice))

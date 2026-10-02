@@ -879,6 +879,9 @@ var panelSurfaceContracts = map[string]string{
 	"users.go": "auth.admin's users",
 	// The API keys, which the auth provider does not publish (ADR 0350).
 	"api_keys.go": "auth.admin's keys",
+	// A sales channel's terms as the surface takes them, read and written
+	// (ADR 0352), which the channel provider's field names spell.
+	"sales_channels.go": "auth.admin's channel terms",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

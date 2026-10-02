@@ -224,6 +224,59 @@ func (q *Queries) LockLiveSalesChannel(ctx context.Context, id string) (string, 
 	return id_2, err
 }
 
+const reviseSalesChannel = `-- name: ReviseSalesChannel :one
+UPDATE sales_channel
+SET name        = $1::text,
+    description = $2::text,
+    is_disabled = $3::boolean,
+    updated_at  = $4
+WHERE id = $5
+  AND deleted_at IS NULL
+  AND name = $6::text
+  AND description = $7::text
+  AND is_disabled = $8::boolean
+RETURNING id, name, description, is_disabled, metadata, created_at, updated_at, deleted_at
+`
+
+type ReviseSalesChannelParams struct {
+	Name            string
+	Description     string
+	IsDisabled      bool
+	UpdatedAt       pgtype.Timestamptz
+	ID              string
+	ReadName        string
+	ReadDescription string
+	ReadIsDisabled  bool
+}
+
+// ReviseSalesChannel writes the channel's terms only while they are the ones
+// the caller read (ADR 0352): no row means the channel is gone or was revised
+// since.
+func (q *Queries) ReviseSalesChannel(ctx context.Context, arg ReviseSalesChannelParams) (SalesChannel, error) {
+	row := q.db.QueryRow(ctx, reviseSalesChannel,
+		arg.Name,
+		arg.Description,
+		arg.IsDisabled,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.ReadName,
+		arg.ReadDescription,
+		arg.ReadIsDisabled,
+	)
+	var i SalesChannel
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.IsDisabled,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const softDeleteSalesChannel = `-- name: SoftDeleteSalesChannel :one
 UPDATE sales_channel
 SET deleted_at = $2, updated_at = $2

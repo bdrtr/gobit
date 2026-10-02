@@ -848,6 +848,10 @@ func (a recordingAccounts) RevokeAPIKey(context.Context, string, string) error {
 	return a.surfaces.reach(ServiceAuthAdmin)
 }
 
+func (a recordingAccounts) ReviseSalesChannel(context.Context, string, json.RawMessage, json.RawMessage) error {
+	return a.surfaces.reach(ServiceAuthAdmin)
+}
+
 func (a recordingAccounts) MakeAPIKey(
 	context.Context, string, string, string, []string, []string,
 ) (id, plaintext string, err error) {
@@ -1104,6 +1108,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, UserRemovePath):      {},
 	routeKey(http.MethodPost, APIKeyRevokePath):    {paramKeyStatus: {"open"}},
 	routeKey(http.MethodPost, APIKeysPath):         {formKeyTitle: {"Walk"}, formKeyType: {"secret"}},
+	routeKey(http.MethodPost, SalesChannelPath): {
+		formChannelReadName: {"Walk"}, formChannelReadDisabled: {"false"}, formChannelName: {"Walk"},
+	},
 	// Writing off units of a line (ADR 0341).
 	routeKey(http.MethodPost, OrderLineCancellationsPath): {
 		formWriteOffLine: {"oli_walk"}, formReadSpokenFor: {"0"}, formWriteOffQuantity: {"1"}, formWriteOffReason: {"walk"},

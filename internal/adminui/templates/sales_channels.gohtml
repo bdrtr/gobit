@@ -1,0 +1,58 @@
+{{- /*
+sales_channels.gohtml is the auth module's sales channels (ADR 0352).
+
+A channel is a storefront the shop sells through: a publishable key is
+attached to one, and the catalog it shows is the channel's. A disabled
+channel is not seen by the keys attached to it. An operator who holds admin
+corrects a channel's name, description and whether it is in use from the
+ones its row was drawn with; a channel another operator corrected meanwhile
+is refused.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ with .Written }}<p role="status">Channel {{ . }} was written.</p>{{ end }}
+
+{{ if .Channels }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Channel</th><th>Description</th><th>In use</th><th>Made (UTC)</th>{{ if .CanRevise }}<th></th>{{ end }}</tr>
+  </thead>
+  <tbody>
+  {{ range .Channels }}
+    <tr>
+      <td>{{ .Read.Name }}<br><span class="muted">{{ .ID }}</span></td>
+      <td>{{ .Read.Description }}</td>
+      <td>{{ if .Read.IsDisabled }}<span class="pill">disabled</span>{{ else }}yes{{ end }}</td>
+      <td>{{ .CreatedAt.UTC.Format "2006-01-02" }}</td>
+      {{ if $.CanRevise }}<td>
+        <details{{ if .Refused }} open{{ end }}>
+          <summary>Correct</summary>
+          <form method="post" action="{{ $.Path }}/{{ .ID }}?page={{ $.Page }}">
+            <input type="hidden" name="read_name" value="{{ .Read.Name }}">
+            <input type="hidden" name="read_description" value="{{ .Read.Description }}">
+            <input type="hidden" name="read_disabled" value="{{ .Read.IsDisabled }}">
+            <input name="name" value="{{ .Form.Name }}" aria-label="name" required>
+            <input name="description" value="{{ .Form.Description }}" placeholder="description" aria-label="description">
+            <label><input type="checkbox" name="disabled" value="1"{{ if .Form.IsDisabled }} checked{{ end }}> disabled</label>
+            <button type="submit">Write</button>
+          </form>
+        </details>
+      </td>{{ end }}
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No sales channel here.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

@@ -59,6 +59,22 @@ UPDATE sales_channel SET
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING *;
 
+-- ReviseSalesChannel writes the channel's terms only while they are the ones
+-- the caller read (ADR 0352): no row means the channel is gone or was revised
+-- since.
+-- name: ReviseSalesChannel :one
+UPDATE sales_channel
+SET name        = sqlc.arg('name')::text,
+    description = sqlc.arg('description')::text,
+    is_disabled = sqlc.arg('is_disabled')::boolean,
+    updated_at  = sqlc.arg('updated_at')
+WHERE id = sqlc.arg('id')
+  AND deleted_at IS NULL
+  AND name = sqlc.arg('read_name')::text
+  AND description = sqlc.arg('read_description')::text
+  AND is_disabled = sqlc.arg('read_is_disabled')::boolean
+RETURNING *;
+
 -- name: SoftDeleteSalesChannel :one
 UPDATE sales_channel
 SET deleted_at = $2, updated_at = $2

@@ -355,6 +355,10 @@ const (
 	channelsListedAtMost = 50
 )
 
+// channelsKey is the template data key carrying sales channels a screen
+// lists or a form offers.
+const channelsKey = "Channels"
+
 // channelOption is one sales channel the forms offer.
 type channelOption struct {
 	ID, Name string
@@ -640,7 +644,7 @@ func (u *UI) renderCart(
 		refusedKey:    refused,
 		typedKey:      typed,
 		"Prefilled":   prefilled,
-		"Channels":    channels,
+		channelsKey:   channels,
 		"Methods":     methods,
 		// AddressFields orders the address forms (ADR 0291, ADR 0303).
 		"AddressFields": addressFields,

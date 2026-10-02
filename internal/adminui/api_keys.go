@@ -165,7 +165,7 @@ func (u *UI) renderAPIKeysTyped(w http.ResponseWriter, r *http.Request, code int
 		canCreateKey:  canMake,
 		typedKey:      typed,
 		privilegesKey: privilegeChoices(nil, typed[formScope]),
-		"Channels":    channels,
+		channelsKey:   channels,
 		"KeyTypes":    keyTypes,
 		titleKey:      apiKeysLabel,
 		"Keys":        rows,

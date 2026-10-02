@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel corrects the sales channels** (ADR 0352). **For operators:**
+  a Sales channels screen lists the channels under `auth:read`, and each
+  row renames, describes or disables its channel under `admin`; a channel
+  another operator corrected meanwhile is refused. **For integrators:**
+  `auth.admin` corrects a channel from the terms read, refusing
+  `auth_sales_channel_revised`.
+
 - **The panel makes an API key** (ADR 0351). **For operators:** the API
   keys screen makes a secret key with the privileges ticked, or a
   publishable one attached to the sales channels ticked, under `admin`,

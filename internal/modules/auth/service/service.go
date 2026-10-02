@@ -219,6 +219,9 @@ type Repository interface {
 	ListSalesChannels(ctx context.Context, filter models.SalesChannelFilter, limit, offset int64) ([]models.SalesChannel, int64, error)
 	GetSalesChannelsByIDs(ctx context.Context, ids []string) ([]models.SalesChannel, error)
 	UpdateSalesChannel(ctx context.Context, id string, patch models.SalesChannelPatch, now time.Time) (models.SalesChannel, error)
+	// ReviseSalesChannel writes the channel's terms only while they are the
+	// ones read, and reports whether it wrote (ADR 0352).
+	ReviseSalesChannel(ctx context.Context, id string, read, next models.ChannelTerms, now time.Time) (models.SalesChannel, bool, error)
 	DeleteSalesChannel(ctx context.Context, id string, now time.Time) error
 }
 
