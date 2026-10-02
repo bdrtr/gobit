@@ -28,17 +28,18 @@ func (f *recordingFulfilling) OpenForOrder(
 	return "ful_1", f.already, nil
 }
 
-// TestThePanelOpensAParcelThroughTheFlowTheAPICalls is ADR 0324: the surface
-// hands the fulfilling flow the order and the panel's key, and nothing else,
-// so the flow ships on the delivery the order was sold; it reports a key that
-// had already opened the parcel; a surface without the flow is unavailable.
+// TestThePanelOpensAParcelThroughTheFlowTheAPICalls is ADR 0324: named no
+// delivery, the surface hands the fulfilling flow the order and the panel's
+// key, and nothing else, so the flow ships on the delivery the order was sold;
+// it reports a key that had already opened the parcel; a surface without the
+// flow is unavailable. A named delivery is ADR 0332's, on the real schema.
 func TestThePanelOpensAParcelThroughTheFlowTheAPICalls(t *testing.T) {
 	t.Parallel()
 
 	flow := &recordingFulfilling{}
 	surface := &AfterSalesSurface{fulfilling: flow}
 
-	parcel, already, err := surface.OpenParcel(context.Background(), "order_1", "panel-k")
+	parcel, already, err := surface.OpenParcel(context.Background(), "order_1", "", "panel-k")
 	require.NoError(t, err)
 	assert.Equal(t, "ful_1", parcel)
 	assert.False(t, already)
@@ -47,11 +48,11 @@ func TestThePanelOpensAParcelThroughTheFlowTheAPICalls(t *testing.T) {
 		"the key alone; no option, so the flow takes the one the order was sold")
 
 	flow.already = true
-	_, already, err = surface.OpenParcel(context.Background(), "order_1", "panel-k")
+	_, already, err = surface.OpenParcel(context.Background(), "order_1", "", "panel-k")
 	require.NoError(t, err)
 	assert.True(t, already, "a key that had already opened the parcel says so")
 
-	_, _, err = (&AfterSalesSurface{}).OpenParcel(context.Background(), "order_1", "panel-k")
+	_, _, err = (&AfterSalesSurface{}).OpenParcel(context.Background(), "order_1", "", "panel-k")
 	require.Error(t, err)
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
 }

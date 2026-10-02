@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,7 +16,8 @@ import (
 )
 
 // An order's parcels on its page (ADR 0324): the order module opens one
-// through the fulfilling flow under order:write, and the fulfillment module
+// through the fulfilling flow under order:write, on the delivery the operator
+// names when the order was sold several (ADR 0332), and the fulfillment module
 // moves it — shipped, delivered, back undelivered, canceled — under
 // fulfillment:write.
 
@@ -35,9 +37,11 @@ const (
 const scopeFulfillmentWrite = "fulfillment:write"
 
 // The parcel forms' fields: the key that makes a second press of the open
-// button open nothing, and the tracking a shipped parcel carries.
+// button open nothing, the delivery the parcel goes on, and the tracking a
+// shipped parcel carries.
 const (
 	formParcelKey      = "key"
+	formParcelDelivery = "delivery"
 	formTrackingNumber = "tracking_number"
 	formTrackingURL    = "tracking_url"
 )
@@ -45,9 +49,36 @@ const (
 // ParcelOpener is the narrow surface a parcel is opened through: the order
 // module's, over the fulfilling flow.
 type ParcelOpener interface {
-	// OpenParcel opens a parcel for the order on the delivery it was sold,
-	// and reports whether the key had already opened it.
-	OpenParcel(ctx context.Context, orderID, idempotencyKey string) (fulfillmentID string, alreadyOpen bool, err error)
+	// OpenParcel opens a parcel for the order on the delivery deliveryID
+	// names, or on the one it was sold when that is empty, and reports
+	// whether the key had already opened it.
+	OpenParcel(
+		ctx context.Context, orderID, deliveryID, idempotencyKey string,
+	) (fulfillmentID string, alreadyOpen bool, err error)
+}
+
+// DeliveryLister is the narrow surface an order's deliveries are read
+// through, as they stand after their changes (ADR 0332).
+type DeliveryLister interface {
+	// DeliveriesJSON lists the order's deliveries.
+	DeliveriesJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+}
+
+// parcelDelivery is one of an order's deliveries as the surface sends it; the
+// json tags are the contract with that surface, exercised end to end.
+type parcelDelivery struct {
+	ID               string `json:"id"`
+	ShippingOptionID string `json:"shipping_option_id"`
+	Name             string `json:"name"`
+}
+
+// parcelOpening is what the open form draws: the key it carries, and the
+// deliveries to choose from when the order was sold several; NoDelivery says
+// the order was sold none, so there is nothing to open a parcel on.
+type parcelOpening struct {
+	Key        string
+	Deliveries []parcelDelivery
+	NoDelivery bool
 }
 
 // ParcelMover is the narrow surface a parcel is moved through: the
@@ -131,14 +162,37 @@ func newParcelKey() string {
 	return "panel-" + hex.EncodeToString(key[:])
 }
 
-// parcelKeyFor is the key the open form carries, empty for an operator who
-// may not open a parcel, which draws no form.
-func (u *UI) parcelKeyFor(r *http.Request) string {
+// parcelOpeningFor is what the open form draws, nil for an operator who may
+// not open a parcel, who is drawn no form. An order sold one delivery is
+// opened on it by the flow, so only an order sold several is asked which
+// (ADR 0332); deliveries the surface cannot list leave the choice to the flow,
+// which refuses an order it cannot default.
+func (u *UI) parcelOpeningFor(r *http.Request, orderID string) *parcelOpening {
 	if !u.canOpenParcels(r) {
-		return ""
+		return nil
+	}
+	opening := &parcelOpening{Key: newParcelKey()}
+	lister, ok := u.afterSales.(DeliveryLister)
+	if !ok {
+		return opening
+	}
+	ctx := r.Context()
+	var deliveries []parcelDelivery
+	raw, err := lister.DeliveriesJSON(ctx, orderID)
+	if err == nil {
+		err = json.Unmarshal(raw, &deliveries)
+	}
+	switch {
+	case err != nil:
+		corehttp.LoggerFromContext(ctx).WarnContext(ctx,
+			"the panel could not read the order's deliveries", "error", err, "order_id", orderID)
+	case len(deliveries) == 0:
+		opening.NoDelivery = true
+	case len(deliveries) > 1:
+		opening.Deliveries = deliveries
 	}
 
-	return newParcelKey()
+	return opening
 }
 
 // openParcel opens a parcel for the order in the path with the key the form
@@ -163,7 +217,8 @@ func (u *UI) openParcel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	parcel, already, err := opener.OpenParcel(r.Context(), orderID, key)
+	parcel, already, err := opener.OpenParcel(r.Context(), orderID,
+		strings.TrimSpace(r.PostFormValue(formParcelDelivery)), key)
 	switch {
 	case err == nil && already:
 		u.renderOrder(w, r, http.StatusOK, orderID, &afterSaleOutcome{

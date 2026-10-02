@@ -471,7 +471,7 @@ func (u *UI) renderOrder(
 		"FulfillmentPrivilege":  scopeFulfillmentRead,
 		"ParcelMoves":           parcelMoves,
 		"CanMoveParcels":        u.canMoveParcels(r),
-		"ParcelKey":             u.parcelKeyFor(r),
+		"ParcelOpening":         u.parcelOpeningFor(r, detail.ID),
 		"CanAttachEvidence":     u.canAttachEvidence(r),
 		"CanDetachEvidence":     u.canDetachEvidence(r),
 		"NotificationsShown":    u.notifications != nil,

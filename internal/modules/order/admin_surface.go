@@ -32,25 +32,93 @@ type AfterSalesSurface struct {
 	fulfilling api.Fulfilling
 }
 
-// OpenParcel opens a parcel for the order on the delivery it was sold, and
-// reports whether the idempotency key had already opened it (ADR 0324): the
-// panel's form carries one key, so a second press, or a reload of the page it
-// landed on, opens nothing new.
+// OpenParcel opens a parcel for the order and reports whether the idempotency
+// key had already opened it (ADR 0324): the panel's form carries one key, so a
+// second press, or a reload of the page it landed on, opens nothing new. The
+// parcel goes on the delivery deliveryID names, on the option it stands on now
+// (ADR 0332), or, when deliveryID is empty, on the one the order was sold.
 func (s *AfterSalesSurface) OpenParcel(
-	ctx context.Context, orderID, idempotencyKey string,
+	ctx context.Context, orderID, deliveryID, idempotencyKey string,
 ) (fulfillmentID string, alreadyOpen bool, err error) {
 	if s == nil || s.fulfilling == nil {
 		return "", false, errors.Unavailable(codeSetupFailed, "the fulfilling flow is not set up")
 	}
+	optionID := ""
+	if deliveryID != "" {
+		if optionID, err = s.optionOf(ctx, orderID, deliveryID); err != nil {
+			return "", false, err
+		}
+	}
 	request, err := json.Marshal(struct {
-		IdempotencyKey string `json:"idempotency_key"`
-	}{idempotencyKey})
+		IdempotencyKey   string `json:"idempotency_key"`
+		ShippingOptionID string `json:"shipping_option_id,omitempty"`
+	}{idempotencyKey, optionID})
 	if err != nil {
 		return "", false, errors.Wrap(err, errors.KindInternal, codeSetupFailed,
 			"the parcel request could not be encoded")
 	}
 
 	return s.fulfilling.OpenForOrder(ctx, orderID, request)
+}
+
+// adminDelivery is one of an order's deliveries as the panel offers it (ADR
+// 0332); the json tags are the contract with the panel.
+type adminDelivery struct {
+	ID               string `json:"id"`
+	ShippingOptionID string `json:"shipping_option_id"`
+	Name             string `json:"name"`
+}
+
+// DeliveriesJSON lists the order's deliveries as they stand after their
+// changes (ADR 0199), in the order they were sold (ADR 0332).
+func (s *AfterSalesSurface) DeliveriesJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	deliveries, err := s.deliveriesOf(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]adminDelivery, 0, len(deliveries))
+	for _, delivery := range deliveries {
+		out = append(out, adminDelivery{
+			ID: delivery.ID, ShippingOptionID: delivery.ShippingOptionID, Name: delivery.Name,
+		})
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the deliveries could not be encoded")
+	}
+
+	return body, nil
+}
+
+// deliveriesOf reads the order's deliveries as they stand.
+func (s *AfterSalesSurface) deliveriesOf(ctx context.Context, orderID string) ([]models.OrderShippingMethod, error) {
+	if s == nil || s.svc == nil {
+		return nil, errors.Unavailable(codeSetupFailed, "the order service is not set up")
+	}
+	detail, err := s.svc.GetOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	return models.CurrentDeliveries(detail.ShippingMethods, detail.DeliveryChanges), nil
+}
+
+// optionOf is the option the order's delivery stands on now; a delivery the
+// order does not have is not found.
+func (s *AfterSalesSurface) optionOf(ctx context.Context, orderID, deliveryID string) (string, error) {
+	deliveries, err := s.deliveriesOf(ctx, orderID)
+	if err != nil {
+		return "", err
+	}
+	for _, delivery := range deliveries {
+		if delivery.ID == deliveryID {
+			return delivery.ShippingOptionID, nil
+		}
+	}
+
+	return "", errors.NotFound(service.CodeDeliveryMissing,
+		"order %s has no delivery %s; draw the page again", orderID, deliveryID)
 }
 
 // ReceiveReturn records that a return's goods arrived at the location and puts

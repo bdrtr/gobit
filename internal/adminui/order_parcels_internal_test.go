@@ -14,7 +14,7 @@ import (
 )
 
 // fakeParcelOpener acts on after-sales records as the shared fake does and
-// opens parcels, recording each key.
+// opens parcels, recording each delivery and key.
 type fakeParcelOpener struct {
 	fakeAfterSales
 	keys    []string
@@ -22,8 +22,10 @@ type fakeParcelOpener struct {
 	openErr error
 }
 
-func (f *fakeParcelOpener) OpenParcel(_ context.Context, orderID, key string) (parcel string, already bool, err error) {
-	f.keys = append(f.keys, orderID+"|"+key)
+func (f *fakeParcelOpener) OpenParcel(
+	_ context.Context, orderID, delivery, key string,
+) (parcel string, already bool, err error) {
+	f.keys = append(f.keys, orderID+"|"+delivery+"|"+key)
 	return "ful_new", f.already, f.openErr
 }
 
@@ -100,7 +102,7 @@ func TestAnOrdersParcelsAreOpenedAndMovedOnItsPage(t *testing.T) {
 
 	rec = campaignsRequest(panel, http.MethodPost, page+"/parcels", url.Values{formParcelKey: {first[1]}}, all...)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, []string{"order_1|" + first[1]}, opener.keys)
+	assert.Equal(t, []string{"order_1||" + first[1]}, opener.keys, "a surface that lists no deliveries names none")
 	assert.Contains(t, rec.Body.String(), "Parcel ful_new was opened.")
 	opener.already = true
 	rec = campaignsRequest(panel, http.MethodPost, page+"/parcels", url.Values{formParcelKey: {first[1]}}, all...)

@@ -212,13 +212,22 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
 A parcel is opened by the order module on the delivery the order was sold, and
 moved by the fulfillment module (ADR 0324). The open form carries a key drawn
 with the page, so a second press, or a reload of the page it lands on, opens
-nothing new.
+nothing new. An order sold several deliveries is asked which one the parcel
+goes on, and the module sends it on the option that delivery stands on when
+the form is sent (ADR 0332).
 */}}
-{{ with .ParcelKey }}
+{{ with .ParcelOpening }}
+{{ if .NoDelivery }}
+<p class="muted">This order was sold no delivery, so there is none to open a parcel on.</p>
+{{ else }}
 <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/parcels">
-  <input type="hidden" name="key" value="{{ . }}">
+  <input type="hidden" name="key" value="{{ .Key }}">
+  {{ with .Deliveries }}<select name="delivery" aria-label="delivery" required>
+    {{ range . }}<option value="{{ .ID }}">{{ .Name }} ({{ .ShippingOptionID }})</option>{{ end }}
+  </select>{{ end }}
   <button type="submit">Open a parcel</button>
 </form>
+{{ end }}
 {{ end }}
 
 {{ if .NotificationsShown }}

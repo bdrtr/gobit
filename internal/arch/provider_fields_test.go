@@ -857,6 +857,9 @@ var panelSurfaceContracts = map[string]string{
 	// A variant's list prices with their rules, which the read provider
 	// leaves out (ADR 0327).
 	"variant_list_prices.go": "pricing.admin's list prices",
+	// An order's deliveries as they stand after their changes, which the
+	// order's read provider does not publish (ADR 0332).
+	"order_parcels.go": "order.admin's deliveries",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

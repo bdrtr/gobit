@@ -727,8 +727,12 @@ func (a recordingAfterSales) OpenClaim(context.Context, string, string, int64, s
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }
 
-func (a recordingAfterSales) OpenParcel(context.Context, string, string) (parcel string, already bool, err error) {
+func (a recordingAfterSales) OpenParcel(context.Context, string, string, string) (parcel string, already bool, err error) {
 	return "ful_walk", false, a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) DeliveriesJSON(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage(`[]`), a.surfaces.reach(ServiceOrderAdmin)
 }
 
 func (a recordingAfterSales) ClaimEvidenceJSON(context.Context, string) (json.RawMessage, error) {

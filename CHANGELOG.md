@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel opens a parcel on the delivery chosen** (ADR 0332, D207). **For
+  operators:** an order sold several deliveries asks on its page which one a
+  parcel goes on; before, the panel could open no parcel on such an order.
+  **For integrators:** `order.admin` lists an order's deliveries, and its
+  `OpenParcel` takes the delivery to open on.
+
 - **The panel revises a campaign and its budget limit** (ADR 0331). **For
   operators:** each row of the Campaigns screen revises its campaign's name,
   description, window and budget limit under `promotion:write`, so an
