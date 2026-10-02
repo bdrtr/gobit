@@ -39,6 +39,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel lists the taxes** (ADR 0355). **For operators:** a Taxes
+  screen shows each country's and province's tax rates, the default
+  marked, under `tax:read`.
+
 - **The panel lists the regions** (ADR 0354). **For operators:** a Regions
   screen shows each region's currency, tax rate, whether taxes are computed
   and the countries it covers, under `region:read`.

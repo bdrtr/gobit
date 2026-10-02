@@ -174,7 +174,9 @@
 // option on a registered provider and one of the newest profiles, in a
 // region's currency or a typed one ([UI.createShippingOption], ADR 0334).
 // The Regions screen beside it ([UI.listRegions]) lists the region module's
-// regions with their currency, tax rate and countries (ADR 0354).
+// regions with their currency, tax rate and countries (ADR 0354), and the
+// Taxes screen ([UI.listTaxes]) the tax module's tax regions with the rates
+// each charges (ADR 0355).
 //
 // The Store profile screen ([UI.showStoreProfile]) shows who the shop is,
 // which every invoice is issued under, and writes it from the profile the

@@ -31,13 +31,13 @@ func TestTheRegionsScreenListsTheRegions(t *testing.T) {
 	t.Parallel()
 
 	panel, catalog := regionsPanel(t,
-		query.Record{fieldID: "reg_tr", fieldName: "Turkey", fieldCurrencyCod: "try", fieldRegionTaxRate: int32(2000),
-			fieldRegionAutoTaxes: true, fieldRegionCountries: []map[string]any{{"code": "tr", "name": "Turkey"}}},
-		query.Record{fieldID: "reg_eu", fieldName: "Europe", fieldCurrencyCod: "eur", fieldRegionTaxRate: int32(1850),
+		query.Record{fieldID: "reg_tr", fieldName: "Turkey", fieldCurrencyCod: "TRY", fieldRegionTaxRate: int32(2000),
+			fieldRegionAutoTaxes: true, fieldRegionCountries: []map[string]any{{"code": "TR", "name": "Turkey"}}},
+		query.Record{fieldID: "reg_eu", fieldName: "Europe", fieldCurrencyCod: "EUR", fieldRegionTaxRate: int32(1850),
 			fieldRegionAutoTaxes: false, fieldRegionCountries: []map[string]any{
-				{"code": "de", "name": "Germany"}, {"code": "fr", "name": "France"},
+				{"code": "DE", "name": "Germany"}, {"code": "FR", "name": "France"},
 			}},
-		query.Record{fieldID: "reg_x", fieldName: "Nowhere", fieldCurrencyCod: "usd", fieldRegionTaxRate: int32(0),
+		query.Record{fieldID: "reg_x", fieldName: "Nowhere", fieldCurrencyCod: "USD", fieldRegionTaxRate: int32(0),
 			fieldRegionCountries: []map[string]any{}},
 	)
 

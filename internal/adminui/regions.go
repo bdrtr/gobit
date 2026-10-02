@@ -10,7 +10,8 @@ import (
 // The Regions screen (ADR 0354): the region module's regions through its
 // region entity, each with its currency, its tax rate, whether taxes are
 // computed for it and the countries it covers, for an operator who may read
-// the regions. Nothing is written here.
+// the regions. Nothing is written here, and the codes are printed as the
+// module stores them, upper-cased.
 
 // RegionsPath lists the regions.
 const RegionsPath = URLPrefix + "/regions"
@@ -66,13 +67,13 @@ func (u *UI) listRegions(w http.ResponseWriter, r *http.Request) {
 		rate, _ := intValue(record[fieldRegionTaxRate])
 		row := regionRow{
 			ID: recordString(record, fieldID), Name: recordString(record, fieldName),
-			Currency:       strings.ToUpper(recordString(record, fieldCurrencyCod)),
+			Currency:       recordString(record, fieldCurrencyCod),
 			TaxRate:        percentText(int64(rate)),
 			AutomaticTaxes: recordBool(record, fieldRegionAutoTaxes),
 		}
 		for _, country := range recordList(record[fieldRegionCountries]) {
 			row.Countries = append(row.Countries,
-				strings.TrimSpace(strings.ToUpper(recordString(country, fieldCountryCode))+" "+recordString(country, fieldName)))
+				strings.TrimSpace(recordString(country, fieldCountryCode)+" "+recordString(country, fieldName)))
 		}
 		rows = append(rows, row)
 	}

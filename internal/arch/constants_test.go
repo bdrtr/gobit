@@ -53,6 +53,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 	"github.com/bdrtr/gobit/internal/modules/settings"
+	taxsvc "github.com/bdrtr/gobit/internal/modules/tax/service"
 	cartflow "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
@@ -979,6 +980,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	assert.Equal(t, cartsvc.FieldOpenedBy, adminui.FieldCartOpenedBy)
 	// The telephone order's channel list (ADR 0305).
 	assert.Equal(t, authsvc.Entity, adminui.EntitySalesChannel)
+	// The Taxes screen (ADR 0355).
+	assert.Equal(t, taxsvc.Entity, adminui.EntityTaxRegion)
 	assert.Equal(t, cartsvc.FilterOpenedByOperator, adminui.FilterOpenedByOperator)
 	assert.Equal(t, ordersvc.FieldPlacedBy, adminui.FieldPlacedBy)
 	assert.Equal(t, ordersvc.FilterPlacedByOperator, adminui.FilterPlacedByOperator)

@@ -1,0 +1,41 @@
+{{- /*
+taxes.gohtml is the tax module's tax regions (ADR 0355).
+
+A tax region is a country, or a province under one, with the rates it
+charges: a rate with a rule is charged only on the items its rule matches,
+and the default rate, which has none, on the rest. A region with no provider
+of its own inherits its country's, and a country with none computes its tax
+in the module. Nothing is written here; the admin API writes the tax
+regions.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ if .TaxRegions }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Country</th><th>Province</th><th>Rates</th><th>Provider</th></tr>
+  </thead>
+  <tbody>
+  {{ range .TaxRegions }}
+    <tr>
+      <td>{{ .Country }}<br><span class="muted">{{ .ID }}</span></td>
+      <td>{{ with .Province }}{{ . }}{{ else }}<span class="muted">the whole country</span>{{ end }}</td>
+      <td>{{ range $i, $rate := .Rates }}{{ if $i }}<br>{{ end }}{{ $rate.Name }} {{ $rate.Percent }}%{{ with $rate.Code }} <span class="muted">{{ . }}</span>{{ end }}{{ if $rate.Default }} <span class="pill">default</span>{{ end }}{{ else }}<span class="muted">none</span>{{ end }}</td>
+      <td>{{ with .Provider }}{{ . }}{{ else }}<span class="muted">inherited</span>{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No tax region here.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

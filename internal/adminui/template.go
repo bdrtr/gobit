@@ -128,6 +128,7 @@ var pages = []string{
 	"api_key_made.gohtml",
 	"sales_channels.gohtml",
 	"regions.gohtml",
+	"taxes.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -338,6 +339,8 @@ func sections() []navItem {
 		{Label: shippingOptionsLabel, Path: ShippingOptionsPath},
 		// The regions sit beside the options shipped in them (ADR 0354).
 		{Label: regionsLabel, Path: RegionsPath},
+		// The taxes sit beside the regions they are charged in (ADR 0355).
+		{Label: taxesLabel, Path: TaxesPath},
 		// The shop's identity, which its invoices are issued under (ADR
 		// 0336).
 		{Label: storeProfileLabel, Path: StoreProfilePath},
