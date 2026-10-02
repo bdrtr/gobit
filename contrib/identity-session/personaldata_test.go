@@ -42,7 +42,7 @@ func TestTheDeclarationNamesEveryColumnOfTheTable(t *testing.T) {
 	// assertion that named one table would go on passing when a second arrived.
 	assert.Equal(t, map[string][]string{
 		"customer_credentials": {
-			"created_at", "customer_id", "email", "password_hash", "updated_at",
+			"created_at", "customer_id", "email", "password_hash", "sessions_valid_from", "updated_at",
 		},
 		"customer_registrations": {
 			"created_at", "email", "expires_at", "password_hash", "token_hash",

@@ -186,7 +186,7 @@ func (s pgCredentials) CredentialRecordsOf(
 	ctx context.Context, customerID, email string,
 ) ([]StoredCredential, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT customer_id, email, created_at, updated_at
+		`SELECT customer_id, email, created_at, updated_at, sessions_valid_from
 		 FROM customer_credentials
 		 WHERE ($1 <> '' AND customer_id = $1) OR ($2 <> '' AND email = $2)
 		 ORDER BY created_at, customer_id`, customerID, email)
@@ -198,9 +198,13 @@ func (s pgCredentials) CredentialRecordsOf(
 	var out []StoredCredential
 	for rows.Next() {
 		var row StoredCredential
+		var validFrom *time.Time
 		if err := rows.Scan(&row.CustomerID, &row.Email,
-			&row.CreatedAt, &row.UpdatedAt); err != nil {
+			&row.CreatedAt, &row.UpdatedAt, &validFrom); err != nil {
 			return nil, fmt.Errorf("identity-session: a credential could not be scanned: %w", err)
+		}
+		if validFrom != nil {
+			row.SessionsValidFrom = *validFrom
 		}
 		out = append(out, row)
 	}

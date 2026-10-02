@@ -148,10 +148,12 @@ func (m *Module) requestPasswordReset(w http.ResponseWriter, r *http.Request) {
 // credential is written, for the registration's reason: the other order leaves
 // a replayable link that sets the password back to this one.
 //
-// It signs the person in because following the link is the proof every
-// password reset rests on. It does not sign anybody else out: a session is a
-// signed cookie with no record behind it, so one issued before the reset stays
-// valid until it expires (ADR 0373).
+// It ends every session issued before it, where the store keeps the moment
+// sessions count from (ADR 0374): a reset is how somebody locks out whoever
+// learned the old password. The anchor moves before the password does, so a
+// failure between the two has signed people out rather than left a stranger
+// signed in. Then it signs the person in, because following the link is the
+// proof every password reset rests on.
 func (m *Module) confirmPasswordReset(w http.ResponseWriter, r *http.Request) {
 	var body passwordResetConfirmation
 	if !decode(w, r, &body) {
@@ -180,6 +182,11 @@ func (m *Module) confirmPasswordReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := m.endSessions(r.Context(), customerID); err != nil {
+		m.unavailable(w, r, "the sessions before the reset could not be ended", err)
+
+		return
+	}
 	if err := m.store.Put(r.Context(), customerID, email, passwordHash); err != nil {
 		m.unavailable(w, r, "the new password could not be written", err)
 

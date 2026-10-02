@@ -50,6 +50,19 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A replaced password ends the sessions before it** (ADR 0374, D222). **For
+  integrators:** `contrib/identity-session` refuses a session cookie issued
+  before the customer's password was last reset or replaced, and
+  `POST /store/v1/auth/sessions/revoke-others` ends every other session of the
+  signed-in shopper, renewing the caller's. Migration 000004 adds
+  `customer_credentials.sessions_valid_from`; a credential store you bind
+  yourself takes part by implementing `SessionAnchors`. A cookie issued before
+  this release keeps working until the customer's first reset.
+  `GET /store/v1/auth/session` answers 500 `identity_session_unavailable` when
+  that moment cannot be read. **For operators:** replacing a customer's
+  password through `PUT /admin/v1/customer-credentials` signs them out
+  everywhere.
+
 - **A guest checkout is not an account** (D221). **For integrators:**
   `examples/starter` lets a shopper who once bought as a guest register with
   the same address, and records an account it opens as one (`has_account`);

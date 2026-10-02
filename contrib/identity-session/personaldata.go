@@ -67,6 +67,9 @@ type StoredCredential struct {
 	CreatedAt time.Time
 	// UpdatedAt is when it was last changed.
 	UpdatedAt time.Time
+	// SessionsValidFrom is the moment the person's sessions count from, or the
+	// zero time when nothing ever ended them (ADR 0374).
+	SessionsValidFrom time.Time
 }
 
 // StoredRegistration is an unfinished sign-up as a dossier reports it.
@@ -97,6 +100,8 @@ const (
 	columnUpdatedAt    = "updated_at"
 	columnExpiresAt    = "expires_at"
 	columnTokenHash    = "token_hash"
+
+	columnSessionsValidFrom = "sessions_valid_from"
 )
 
 // passwordHashNotReproduced is what a dossier says in place of the hash.
@@ -145,6 +150,13 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Table: tableCustomerCredentials, Column: columnUpdatedAt,
 				Kind:      personaldata.Named,
 				Why:       "when they last changed it, which says they were here and roughly when",
+				OnErasure: personaldata.Emptied,
+			},
+			{
+				Table: tableCustomerCredentials, Column: columnSessionsValidFrom,
+				Kind: personaldata.Named,
+				Why: "when the person's password was last replaced or they ended their other " +
+					"sessions, so that every session issued before it is refused (ADR 0374)",
 				OnErasure: personaldata.Emptied,
 			},
 			// The pending-registration table is declared too, and it was NOT until
@@ -229,11 +241,11 @@ func (m *Module) PersonalData() personaldata.Declaration {
 // # It erases the row, not the sessions
 //
 // A signed cookie is not stored anywhere — that is the whole point of signing it
-// (ADR 0127) — so there is no row to delete and no list to walk. What ends a
-// session in flight is the key it was signed with, and dropping that logs
-// EVERYBODY out, which is not an erasure of one person. The cookie a deleted
-// person still holds stops working the moment anything looks the account up, and
-// it expires on its own. Reporting the row as deleted and the sessions as
+// (ADR 0127) — so there is no row to delete and no list to walk. The moment a
+// person's sessions count from (ADR 0374) is a column of the row this deletes,
+// so it goes with it rather than ending anything. The cookie a deleted person
+// still holds stops working the moment anything looks the account up, and it
+// expires on its own. Reporting the row as deleted and the sessions as
 // untouched is the honest answer; claiming a session sweep that cannot exist
 // would not be.
 func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldata.Result, error) {
@@ -344,6 +356,7 @@ func (m *Module) PersonalDataOf(
 				},
 				{Column: columnCreatedAt, Kind: personaldata.Named, Value: row.CreatedAt},
 				{Column: columnUpdatedAt, Kind: personaldata.Named, Value: row.UpdatedAt},
+				{Column: columnSessionsValidFrom, Kind: personaldata.Named, Value: momentOrNothing(row.SessionsValidFrom)},
 			},
 		})
 	}
@@ -402,6 +415,16 @@ func (m *Module) PersonalDataOf(
 	return personaldata.Disclosure{
 		Holder: ErasureHolder, State: personaldata.Disclosed, Records: out,
 	}, nil
+}
+
+// momentOrNothing reports a moment that may not have happened: nil, rather than
+// the year one, for a column that holds nothing.
+func momentOrNothing(moment time.Time) any {
+	if moment.IsZero() {
+		return nil
+	}
+
+	return moment
 }
 
 // subjectHandles reads the two handles this module can look somebody up by.

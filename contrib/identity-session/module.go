@@ -157,7 +157,7 @@ var (
 	_ corehttp.Identity = (*Sessions)(nil)
 	// The schema capability is OPTIONAL and the composition root looks for it
 	// with a type assertion, so a drifted method name would cost nothing at
-	// compile time and three endpoints in the published document. This line
+	// compile time and every endpoint in the published document. This line
 	// closes that silence — the same one gobit's own modules close for
 	// themselves.
 	_ openapi.Describer = (*Module)(nil)
@@ -258,6 +258,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		cookieName: name,
 		secure:     !m.opts.Insecure,
 		now:        time.Now,
+		anchors:    m.sessionAnchors(),
 	}
 
 	if err := c.Provide(corehttp.IdentityName, m.sessions); err != nil {
@@ -293,7 +294,9 @@ func (m *Module) Credentials() Credentials { return m.store }
 // before that there is no secret to sign with.
 func (m *Module) Sessions() *Sessions { return m.sessions }
 
-// Routes mounts the two storefront endpoints and the operator one.
+// Routes mounts the storefront endpoints and the operator one: signing in and
+// out and reading the session always, and registration, a password reset and
+// ending sessions only where what each needs is bound.
 //
 // If Register did not run nothing is mounted, which is gobit's own modules'
 // stance: an endpoint that exists and panics is worse than one that does not
@@ -309,6 +312,9 @@ func (m *Module) Routes(r chi.Router) {
 	r.Post("/store/v1/auth/sign-out", m.signOut)
 	r.Get("/store/v1/auth/session", m.session)
 	r.Put("/admin/v1/customer-credentials", m.putCredential)
+	if m.sessionAnchors() != nil {
+		r.Post("/store/v1/auth/sessions/revoke-others", m.revokeOtherSessions)
+	}
 
 	// The limit wraps only the endpoints that send mail and the ones that spend
 	// what was sent. Signing in is already bounded by not knowing the password,
@@ -447,8 +453,8 @@ type sessionAnswer struct {
 	// CustomerID is the customer the cookie proves: the id the customer
 	// routes take in their path.
 	CustomerID string `json:"customer_id"`
-	// ExpiresAt is when the session ends; it cannot be ended earlier, as the
-	// sign-in says.
+	// ExpiresAt is when the session ends unless a password replaced or the
+	// customer ends it sooner (ADR 0374).
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
@@ -462,14 +468,14 @@ type sessionAnswer struct {
 // cache, because it names a person.
 //
 // Every request that proves nobody gets one answer, for the reason
-// [Sessions.CustomerID] gives one error.
+// [Sessions.CustomerID] gives one error; a session whose anchor could not be
+// read is a failure and says so.
 func (m *Module) session(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 
 	customerID, expiresAt, err := m.sessions.Session(r)
 	if err != nil {
-		corehttp.WriteError(r.Context(), w, coreerrors.Unauthorized(CodeNoSession,
-			"the request carries no valid session"))
+		m.refuseSession(w, r, err)
 
 		return
 	}
@@ -500,6 +506,11 @@ func (m *Module) signOut(w http.ResponseWriter, r *http.Request) {
 // — a different pair, mounted only when the installation binds [Accounts] and
 // [Verification] (ADR 0133). The difference between them is whose word is taken
 // for who somebody is: here an operator's, there a proven address.
+//
+// Replacing a password ends the customer's sessions, as a reset does (ADR
+// 0374): an operator replaces one because somebody else may know it. The
+// anchor moves BEFORE the password, so a failure between the two has signed
+// people out rather than left a stranger signed in.
 func (m *Module) putCredential(w http.ResponseWriter, r *http.Request) {
 	var body credentialRequest
 	if !decode(w, r, &body) {
@@ -515,6 +526,12 @@ func (m *Module) putCredential(w http.ResponseWriter, r *http.Request) {
 	hash, err := HashPassword(body.Password)
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, coreerrors.Invalid(CodeInvalid, "%s", err.Error()))
+
+		return
+	}
+	// A customer with no credential yet has no session this could end.
+	if err := m.endSessions(r.Context(), body.CustomerID); err != nil && !errors.Is(err, ErrNoCredential) {
+		m.unavailable(w, r, "the customer's sessions could not be ended", err)
 
 		return
 	}

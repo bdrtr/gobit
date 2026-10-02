@@ -90,6 +90,10 @@ func TestAnEditedCookieIsRefused(t *testing.T) {
 		"another customer": strings.Replace(cookie.Value, testCustomerID, "cust_SOMEBODY_ELSE", 1),
 		"a later expiry": strings.Replace(cookie.Value,
 			"."+expiryOf(t, cookie.Value)+".", ".99999999999.", 1),
+		// The moment of issue is under the MAC too: moved forward, a cookie
+		// stolen before a password reset would outlive it (ADR 0374).
+		"a later issue": strings.Replace(cookie.Value,
+			"."+issuedOf(t, cookie.Value)+".", ".99999999999999.", 1),
 		"no signature": payloadOf(t, cookie.Value),
 		"empty":        "",
 		"a lone dot":   ".",
@@ -332,10 +336,20 @@ func payloadOf(t *testing.T, value string) string {
 func expiryOf(t *testing.T, value string) string {
 	t.Helper()
 
-	_, stamp, found := strings.Cut(payloadOf(t, value), ".")
-	require.True(t, found, "the payload carries no expiry")
+	stamps := strings.Split(payloadOf(t, value), ".")
+	require.Len(t, stamps, 3, "the payload is the customer, the expiry and the moment of issue")
 
-	return stamp
+	return stamps[1]
+}
+
+// issuedOf returns the moment-of-issue stamp out of a cookie value (ADR 0374).
+func issuedOf(t *testing.T, value string) string {
+	t.Helper()
+
+	stamps := strings.Split(payloadOf(t, value), ".")
+	require.Len(t, stamps, 3, "the payload is the customer, the expiry and the moment of issue")
+
+	return stamps[2]
 }
 
 // TestTheStoredHashCarriesItsOwnCost proves a credential keeps the parameters it

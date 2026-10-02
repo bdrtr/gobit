@@ -134,8 +134,8 @@ func TestTheSchemaIsWhatTheModuleWrites(t *testing.T) {
 	require.NoError(t, testPool.QueryRow(t.Context(),
 		`SELECT count(*) FROM information_schema.columns WHERE table_name = 'customer_credentials'`,
 	).Scan(&columns))
-	assert.Equal(t, 5, columns,
-		"customer_id, email, password_hash, created_at, updated_at")
+	assert.Equal(t, 6, columns,
+		"customer_id, email, password_hash, created_at, updated_at, sessions_valid_from")
 
 	var checks int
 	require.NoError(t, testPool.QueryRow(t.Context(),

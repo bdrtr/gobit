@@ -78,15 +78,22 @@ past and is not corrected retroactively.
   asks for, and it is not a verifier gobit vouches for; it is one that passes
   `core/identitytest.Contract`, which holds the shape and opens no signature. Its
   limits:
-    - **A signed cookie cannot be revoked before it expires.** That is the price of
-      keeping the identity off the read path of fifteen storefront routes, and it is
-      the shape an admin session had until
-      [ADR 0267](adr/0267-a-session-can-be-closed-alone.md). Rotating the
-      signing key does NOT log anybody out (`RetiredSecrets`, ADR 0129) — which is
-      the point, and therefore not a revocation either. A key that LEAKED is dropped
-      outright, which logs everybody out and is the correct price. A password
-      reset signs nobody out for the same reason: a session issued before it
-      works until it expires.
+    - **One session cannot be ended alone.** A session is a signed cookie with no
+      record of its own, which keeps a write off every sign-in; an admin session
+      has one since [ADR 0267](adr/0267-a-session-can-be-closed-alone.md). What
+      a shopper's credential keeps since
+      [ADR 0374](adr/0374-a-replaced-password-ends-the-sessions-before-it.md) is
+      the moment their sessions count from: a password reset, an operator
+      replacing a password and `POST /store/v1/auth/sessions/revoke-others` move
+      it, and every cookie issued before it proves nobody — all of them or none,
+      at the price of one primary-key read on each request whose cookie is
+      otherwise good. A customer with no password here, signed in by the passkey
+      module alone or by an embedder's own code, has no such moment, and a
+      credential store an installation binds itself keeps one only if it offers
+      `SessionAnchors`. Rotating the signing key does NOT log anybody out
+      (`RetiredSecrets`, ADR 0129) — which is the point, and therefore not a
+      revocation either. A key that LEAKED is dropped outright, which logs
+      everybody out and is the correct price.
     - **A stolen cookie IS the account.** With the passkey module bound it can
       register its own key and remove the owner's. The rule those endpoints enforce
       is "an account keeps a way in", not "only the owner changes credentials", and

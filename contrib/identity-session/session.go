@@ -11,7 +11,8 @@
 //	}))
 //
 // It brings a signed session cookie, argon2id passwords, a credential table and
-// two storefront endpoints. It passes `core/identitytest.Contract`.
+// the storefront endpoints that sign a shopper in and out. It passes
+// `core/identitytest.Contract`.
 //
 // # Why it is a SEPARATE Go module
 //
@@ -25,12 +26,14 @@
 //
 // # What it does NOT do
 //
-// It does not register customers from the storefront. That flow needs e-mail
-// verification, a rate limit and a decision about who may create a customer,
-// and none of those is a session's business; credentials are written by an
-// operator endpoint here. It holds no server-side session record — a signed
-// cookie cannot be revoked before it expires, which is the price of not having a
-// table on the read path and is stated where an operator reads it.
+// It holds no server-side session record, so one session cannot be ended
+// alone. What it keeps is one moment per credential (ADR 0374): a password
+// replaced, or a customer ending their other sessions, moves it, and a cookie
+// issued before it proves nobody. Reading it is one primary-key read on every
+// request whose cookie is otherwise good.
+//
+// Storefront self-registration (ADR 0133) and a password reset (ADR 0373) are
+// mounted only when the installation binds what they need: see [Options].
 //
 // The signing key CAN be rotated without logging anybody out: see
 // [Options.RetiredSecrets].
@@ -46,15 +49,16 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
 
 // Sessions verifies a request against a signed cookie.
 //
-// It is the type that satisfies [corehttp.Identity], and it holds no store: a
-// session cookie carries the customer identifier and its own expiry, so reading
-// one costs no query. That is the whole reason the shape is a signed cookie —
-// the identity is consulted on twelve storefront routes and a table on that path
-// would be a query on every one of them.
+// It is the type that satisfies [corehttp.Identity]. A session cookie carries
+// the customer identifier, its own expiry and the moment it was issued, so
+// whether it was signed here costs no query. Whether it still counts is one
+// read of the customer's anchor, where the store keeps one (ADR 0374).
 type Sessions struct {
 	secret []byte
 	// retired are keys this verifier still ACCEPTS and never signs with.
@@ -67,6 +71,9 @@ type Sessions struct {
 	cookieName string
 	secure     bool
 	now        func() time.Time
+	// anchors keeps the moment each customer's sessions count from; nil when
+	// the bound store keeps none, and then a session counts until it expires.
+	anchors SessionAnchors
 }
 
 // CustomerID returns the customer the cookie PROVES.
@@ -77,6 +84,11 @@ type Sessions struct {
 // their own; a bad signature is a caller who edited one; an expired one is a
 // caller whose session ended. All four answer the same error TEXT on purpose —
 // telling them apart tells an attacker which half of a forgery worked.
+//
+// A cookie issued before the customer's anchor is a fifth refusal with the same
+// text (ADR 0374). Failing to READ the anchor is not a refusal: it answers a
+// classified error, so the caller is told the shop failed rather than that they
+// are nobody.
 //
 // It does not touch the request. The cookie is read from the header and nothing
 // else is looked at, which is what keeps the handler's body intact — the mistake
@@ -96,12 +108,23 @@ func (s *Sessions) Session(r *http.Request) (customerID string, expiresAt time.T
 		return "", time.Time{}, errNoSession
 	}
 
-	customerID, expiry, err := s.open(cookie.Value)
+	customerID, expiry, issued, err := s.open(cookie.Value)
 	if err != nil {
 		return "", time.Time{}, err
 	}
 	if !s.now().Before(expiry) {
 		return "", time.Time{}, errNoSession
+	}
+
+	if s.anchors != nil {
+		anchor, err := s.anchors.SessionsValidFrom(r.Context(), customerID)
+		if err != nil {
+			return "", time.Time{}, coreerrors.Wrap(err, coreerrors.KindInternal, CodeUnavailable,
+				"whether the session still counts could not be read")
+		}
+		if issuedBefore(issued, anchor) {
+			return "", time.Time{}, errNoSession
+		}
 	}
 
 	return customerID, expiry, nil
@@ -117,7 +140,8 @@ var errNoSession = errors.New("identity-session: the request carries no valid se
 // injected script can steal, and those three attributes are the whole of what a
 // cookie can do about it.
 func (s *Sessions) Issue(w http.ResponseWriter, customerID string) {
-	http.SetCookie(w, s.Cookie(s.cookieName, s.seal(customerID, s.now().Add(s.ttl)), s.ttl))
+	now := s.now()
+	http.SetCookie(w, s.Cookie(s.cookieName, s.seal(customerID, now.Add(s.ttl), now), s.ttl))
 }
 
 // Cookie builds a cookie carrying this installation's security attributes.
@@ -197,13 +221,17 @@ const (
 	purposeValue   = "v1"
 )
 
-// seal produces the cookie value: the identifier, the expiry and a MAC over both.
+// seal produces the cookie value: the identifier, the expiry, the moment of
+// issue in milliseconds and a MAC over all three.
 //
 // The expiry is INSIDE the MAC and not only in the cookie's own Expires
 // attribute, because the attribute is a request to the browser and the value is
-// what the server reads. A caller who edits the attribute changes nothing.
-func (s *Sessions) seal(customerID string, expiry time.Time) string {
-	payload := customerID + "." + strconv.FormatInt(expiry.Unix(), 10)
+// what the server reads. A caller who edits the attribute changes nothing. The
+// moment of issue is inside it for the anchor's sake (ADR 0374): a caller who
+// could move it forward could outlive a password reset.
+func (s *Sessions) seal(customerID string, expiry, issued time.Time) string {
+	payload := customerID + "." + strconv.FormatInt(expiry.Unix(), 10) +
+		"." + strconv.FormatInt(issued.UnixMilli(), 10)
 
 	return payload + "." + base64.RawURLEncoding.EncodeToString(s.sign(purposeSession, payload))
 }
@@ -258,36 +286,47 @@ func (s *Sessions) OpenValue(sealed string) (string, error) {
 // open reads a cookie value and refuses one none of this installation's keys
 // sealed. A retired key still opens what it sealed, which is what makes a
 // rotation something other than logging everybody out (ADR 0129).
-func (s *Sessions) open(value string) (customerID string, expiry time.Time, err error) {
+//
+// A cookie sealed before cookies carried their moment of issue answers the zero
+// time for it: it is still a session, and any anchor ends it (ADR 0374).
+func (s *Sessions) open(value string) (customerID string, expiry, issued time.Time, err error) {
 	// The signature is the LAST segment: the identifier may not contain a dot
 	// (it is a ULID-shaped token this framework mints) but saying so here would
 	// be a second copy of that rule, and cutting from the right needs no copy.
 	payload, signature, found := cutLast(value)
 	if !found {
-		return "", time.Time{}, errNoSession
+		return "", time.Time{}, time.Time{}, errNoSession
 	}
 
 	raw, err := base64.RawURLEncoding.DecodeString(signature)
 	if err != nil {
-		return "", time.Time{}, errNoSession
+		return "", time.Time{}, time.Time{}, errNoSession
 	}
 	// The MAC is checked BEFORE the payload is parsed: everything after this line
 	// is a value one of this installation's keys produced, and everything before
 	// it is a string a caller sent.
 	if !s.verify(purposeSession, payload, raw) {
-		return "", time.Time{}, errNoSession
+		return "", time.Time{}, time.Time{}, errNoSession
 	}
 
-	id, stamp, found := strings.Cut(payload, ".")
+	id, stamps, found := strings.Cut(payload, ".")
 	if !found || id == "" {
-		return "", time.Time{}, errNoSession
+		return "", time.Time{}, time.Time{}, errNoSession
 	}
+	stamp, issuedStamp, carriesIssue := strings.Cut(stamps, ".")
 	seconds, err := strconv.ParseInt(stamp, 10, 64)
 	if err != nil {
-		return "", time.Time{}, errNoSession
+		return "", time.Time{}, time.Time{}, errNoSession
+	}
+	if carriesIssue {
+		millis, err := strconv.ParseInt(issuedStamp, 10, 64)
+		if err != nil {
+			return "", time.Time{}, time.Time{}, errNoSession
+		}
+		issued = time.UnixMilli(millis)
 	}
 
-	return id, time.Unix(seconds, 0), nil
+	return id, time.Unix(seconds, 0), issued, nil
 }
 
 // verify accepts a MAC produced by the CURRENT key or by any retired one.

@@ -5,7 +5,7 @@ own `go.mod`: a signed cookie, argon2id passwords, its own table and two
 storefront endpoints. It costs a tree four gates had to learn about and buys an
 installation that can actually sign somebody in.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0374](0374-a-replaced-password-ends-the-sessions-before-it.md), which ends the sessions before a replaced password
 - **Date:** 2026-09-11
 
 ## Context

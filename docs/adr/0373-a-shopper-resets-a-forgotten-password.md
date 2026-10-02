@@ -6,6 +6,7 @@ address of an account, which replaces the password and signs the person in.
 
 - **Status:** Accepted
 - **Date:** 2026-10-02
+- **Amended by:** [0374](0374-a-replaced-password-ends-the-sessions-before-it.md): a reset ends every session issued before it
 
 ## Context
 

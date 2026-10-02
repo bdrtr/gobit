@@ -8,18 +8,18 @@ import (
 
 // docTag groups this module's endpoints in the document.
 //
-// One tag for all three, and it is the CONCERN rather than the module: an
+// One tag for all of them, and it is the CONCERN rather than the module: an
 // integrator reading the document is looking for "how do I sign somebody in",
 // not for which Go module answers it.
 const docTag = "Identity"
 
-// Describe writes this module's three endpoints into the OpenAPI document.
+// Describe writes this module's endpoints into the OpenAPI document.
 //
 // # Why a module outside gobit describes its own routes
 //
 // The document an installation publishes is assembled from every module that
 // implements [openapi.Describer], and a module that does not is a hole in it:
-// three endpoints an integrator can call and cannot find. The core reports the
+// endpoints an integrator can call and cannot find. The core reports the
 // hole through openapi.Doc.UndescribedRoutes, which is what an embedder who
 // skipped this method sees; the reverse — a description matching no route — is
 // openapi.Doc.UnmatchedDescriptions, and it is why the paths below have to be
@@ -39,10 +39,12 @@ func (m *Module) Describe(d *openapi.Doc) {
 			"read from GET /store/v1/auth/session.\n\n" +
 			"The address is compared case-insensitively and with surrounding space " +
 			"trimmed, so one person has one account however they type it.\n\n" +
-			"The session cookie cannot be revoked before it expires. It carries the " +
-			"customer and the expiry under a MAC and no record is kept server-side, " +
-			"which is what keeps the twelve storefront routes that name a customer off " +
-			"a database query per request.",
+			"The session cookie carries the customer, its expiry and the moment it was " +
+			"issued under a MAC, and no record of it is kept server-side, so one session " +
+			"cannot be ended alone. Where the credential store keeps the moment a " +
+			"customer's sessions count from, a password replaced and " +
+			"POST /store/v1/auth/sessions/revoke-others move it, and every cookie issued " +
+			"before it proves nobody (ADR 0374).",
 		Tags: []string{docTag},
 		Responses: map[string]any{
 			"204": openapi.Response("The session cookie was set", nil),
@@ -83,18 +85,48 @@ func (m *Module) Describe(d *openapi.Doc) {
 			"registration answer with the cookie alone (ADR 0366). The id is in the body " +
 			"and never in a URL, and the answer carries Cache-Control: no-store, because " +
 			"it names a person.\n\n" +
-			"expires_at is when the session ends; it cannot be ended earlier, as the " +
-			"sign-in says.",
+			"expires_at is when the session ends unless it is ended sooner: by a " +
+			"password replaced or by the customer ending their other sessions (ADR 0374).",
 		Tags: []string{docTag},
 		Responses: map[string]any{
 			"200": openapi.Response("The customer the cookie proves", d.Item(sessionAnswer{})),
 			"401": openapi.ErrorResponse(
 				"The request proves nobody. Code \"identity_session_none\", and it is the " +
 					"SAME answer for no cookie, an edited one, one signed with a key this " +
-					"installation does not hold and an expired one: telling them apart would " +
-					"tell a forger which half of a forgery worked."),
+					"installation does not hold, an expired one and one issued before the " +
+					"customer's sessions were ended: telling them apart would tell a forger " +
+					"which half of a forgery worked."),
+			"500": openapi.ErrorResponse(
+				"Whether the session still counts could not be read. Code " +
+					"\"identity_session_unavailable\"; it is a failure, not a refusal."),
 		},
 	})
+
+	// Described only where it is mounted: a store that keeps no anchor cannot
+	// end anybody's sessions.
+	if m.sessionAnchors() != nil {
+		d.Describe(http.MethodPost, "/store/v1/auth/sessions/revoke-others", openapi.Operation{
+			Summary: "Ends every session of the signed-in customer but this one.",
+			Description: "Moves the moment the customer's sessions count from to now, so " +
+				"every cookie issued before it proves nobody, and answers with a new " +
+				"session cookie for this browser (ADR 0374). It is how a shopper signs out " +
+				"a phone they lost or a computer they left signed in.\n\n" +
+				"It ends them all or none: a session has no record of its own, so one " +
+				"browser cannot be named. A replaced password ends them the same way.",
+			Tags: []string{docTag},
+			Responses: map[string]any{
+				"204": openapi.Response("The other sessions are ended and this one is renewed", nil),
+				"401": openapi.ErrorResponse(
+					"The request proves nobody. Code \"identity_session_none\"."),
+				"409": openapi.ErrorResponse(
+					"The customer signs in some other way than a password kept here, so " +
+						"there is no moment of theirs to move. Code " +
+						"\"identity_session_sessions_not_ended\"."),
+				"500": openapi.ErrorResponse(
+					"The sessions could not be ended. Code \"identity_session_unavailable\"."),
+			},
+		})
+	}
 
 	// The two registration endpoints are described only when they are MOUNTED.
 	//
@@ -115,7 +147,10 @@ func (m *Module) Describe(d *openapi.Doc) {
 		RequestBody: d.RequestBody(credentialRequest{}),
 		Description: "Takes customer_id, email and password, and stores the password " +
 			"as an argon2id hash. It REPLACES whatever that customer had, so it is both " +
-			"the way an account is created and the way a password is reset.\n\n" +
+			"the way an account is created and the way a password is reset. Replacing " +
+			"one ends every session of that customer issued before it, where the store " +
+			"keeps the moment sessions count from (ADR 0374): an operator replaces a " +
+			"password because somebody else may know it.\n\n" +
 			"It is on the admin prefix and behind the operator authentication: it writes " +
 			"a credential for ANY customer the caller names, which is an operator's " +
 			"power and not a shopper's.\n\n" +
@@ -136,6 +171,9 @@ func (m *Module) Describe(d *openapi.Doc) {
 			"409": openapi.ErrorResponse(
 				"The e-mail address already belongs to ANOTHER customer. Code " +
 					"\"identity_session_not_written\"; one address is one account."),
+			"500": openapi.ErrorResponse(
+				"The customer's sessions could not be ended, so the password was not " +
+					"replaced. Code \"identity_session_unavailable\"."),
 		},
 	})
 }
@@ -252,8 +290,9 @@ func (m *Module) describePasswordReset(d *openapi.Doc) {
 			"token is consumed, in one statement, and the credential is replaced. The " +
 			"person is signed in: following the link is the proof a reset rests on.\n\n" +
 			"One answer for a token that never existed, one already used and one expired.\n\n" +
-			"It does not sign anybody else out. A session is a signed cookie with no " +
-			"record behind it, so one issued before the reset works until it expires.",
+			"Every session of that customer issued before the reset is ended, where the " +
+			"store keeps the moment sessions count from (ADR 0374): a reset is how " +
+			"somebody locks out whoever learned the old password.",
 		Tags: []string{docTag},
 		Responses: map[string]any{
 			"204": openapi.Response("The password is replaced and the session cookie is set", nil),
@@ -266,8 +305,9 @@ func (m *Module) describePasswordReset(d *openapi.Doc) {
 				"Too many attempts from this client. No code: the rate limit is gobit's " +
 					"own middleware and answers before this module is reached."),
 			"500": openapi.ErrorResponse(
-				"The reset could not be read or the password could not be written. Code " +
-					"\"identity_session_unavailable\"; the token is spent either way."),
+				"The reset could not be read, the earlier sessions could not be ended or " +
+					"the password could not be written. Code \"identity_session_unavailable\"; " +
+					"the token is spent either way."),
 		},
 	})
 }
