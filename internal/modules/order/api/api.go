@@ -475,10 +475,13 @@ type orderAddressDTO struct {
 
 // lineItemDTO is the external representation of an order line item.
 type lineItemDTO struct {
-	ID            string `json:"id"`
-	OrderID       string `json:"order_id"`
-	VariantID     string `json:"variant_id"`
-	Title         string `json:"title"`
+	ID        string `json:"id"`
+	OrderID   string `json:"order_id"`
+	VariantID string `json:"variant_id"`
+	Title     string `json:"title"`
+	// ProductTitle is the title of the variant's product, copied with the
+	// variant's at the sale (ADR 0365); absent on a line written before.
+	ProductTitle  string `json:"product_title,omitempty"`
 	Quantity      int64  `json:"quantity"`
 	UnitPrice     int64  `json:"unit_price"`
 	Subtotal      int64  `json:"subtotal"`
@@ -734,6 +737,7 @@ func toLineItemDTO(item models.OrderLineItem) lineItemDTO {
 		OrderID:          item.OrderID,
 		VariantID:        item.VariantID,
 		Title:            item.Title,
+		ProductTitle:     item.ProductTitle,
 		Quantity:         item.Quantity,
 		UnitPrice:        item.UnitPrice,
 		Subtotal:         item.Subtotal,

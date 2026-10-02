@@ -31,6 +31,10 @@ type CreateOrderItemInput struct {
 	// Title is the display name of the line; it is REQUIRED and it is COPIED
 	// from the variant.
 	Title string
+	// ProductTitle is the title of the variant's product, copied with it (ADR
+	// 0365). It is not required: an order carried over from a caller that
+	// does not know it still places.
+	ProductTitle string
 	// Quantity is the number of units on the line; it has to be positive.
 	Quantity int64
 	// UnitPrice is the unit price (minor unit).
@@ -403,6 +407,7 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 				OrderID:          order.ID,
 				VariantID:        in.Items[i].VariantID,
 				Title:            in.Items[i].Title,
+				ProductTitle:     strings.TrimSpace(in.Items[i].ProductTitle),
 				Quantity:         in.Items[i].Quantity,
 				UnitPrice:        in.Items[i].UnitPrice,
 				Subtotal:         in.Items[i].Subtotal,

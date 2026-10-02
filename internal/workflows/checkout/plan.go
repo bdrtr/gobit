@@ -292,6 +292,9 @@ type planLine struct {
 	InventoryItemID string `json:"inventory_item_id"`
 	// Title is the displayed name of the line; it is COPIED from the catalog.
 	Title string `json:"title"`
+	// ProductTitle is the title of the variant's product, copied with it (ADR
+	// 0365). A plan saved before it was carried reads it empty.
+	ProductTitle string `json:"product_title,omitempty"`
 	// Quantity is the count on the line.
 	Quantity int64 `json:"quantity"`
 	// UnitPrice is the unit price (minor unit).
@@ -611,6 +614,7 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 			VariantID:        item.VariantID,
 			InventoryItemID:  items[item.VariantID],
 			Title:            facts[item.VariantID].Title,
+			ProductTitle:     facts[item.VariantID].ProductTitle,
 			Quantity:         item.Quantity,
 			UnitPrice:        amounts.UnitPrice,
 			Subtotal:         amounts.Subtotal,
@@ -698,6 +702,9 @@ type variantFacts struct {
 	// (ADR 0211).
 	ProductID  string
 	IsGiftcard bool
+	// ProductTitle is that product's title, copied onto the order line beside
+	// the variant's (ADR 0365).
+	ProductTitle string
 	// Components are what one unit of a bundle variant holds (ADR 0235); empty
 	// for a variant that is no bundle.
 	Components []bundlePart
@@ -908,7 +915,12 @@ func unreadParts(facts map[string]variantFacts) []string {
 }
 
 // giftCardFlags reads, in one query, whether the variants' products are gift
-// cards, and marks the facts (ADR 0211).
+// cards, and marks the facts (ADR 0211), with the products' titles the order
+// line names its product by (ADR 0365).
+//
+// The title costs nothing: it is one more name in the field list of a read
+// every checkout already makes. It is not required, as the flag is: an order
+// line without its product's title still says what it sold by the variant's.
 //
 // The flag is on the product, not the variant, so this is the checkout's
 // second catalog read. It is strict where the cart's totals are lenient: the
@@ -925,7 +937,7 @@ func (w *Workflows) giftCardFlags(ctx context.Context, facts map[string]variantF
 
 	records, err := w.catalog.Graph(ctx, query.GraphSpec{
 		Entity:  EntityProduct,
-		Fields:  []string{query.IDField, FieldIsGiftcard},
+		Fields:  []string{query.IDField, FieldIsGiftcard, FieldTitle},
 		Filters: map[string]any{FilterIDs: productIDs},
 		Limit:   len(productIDs),
 	})
@@ -935,6 +947,7 @@ func (w *Workflows) giftCardFlags(ctx context.Context, facts map[string]variantF
 	}
 
 	giftcard := make(map[string]bool, len(records))
+	titles := make(map[string]string, len(records))
 	for i := range records {
 		id, idOK := records[i][query.IDField].(string)
 		flag, flagOK := records[i][FieldIsGiftcard].(bool)
@@ -942,6 +955,7 @@ func (w *Workflows) giftCardFlags(ctx context.Context, facts map[string]variantF
 			return errors.Internal(CodeVariantUnknown, "the product record could not be read: %v", records[i])
 		}
 		giftcard[id] = flag
+		titles[id], _ = records[i][FieldTitle].(string)
 	}
 
 	for variantID, fact := range facts {
@@ -951,6 +965,7 @@ func (w *Workflows) giftCardFlags(ctx context.Context, facts map[string]variantF
 				"the product of variant %s is not in the catalog", variantID)
 		}
 		fact.IsGiftcard = flag
+		fact.ProductTitle = titles[fact.ProductID]
 		facts[variantID] = fact
 	}
 
@@ -1290,6 +1305,7 @@ type orderSnapshot struct {
 type orderSnapshotItem struct {
 	VariantID     string `json:"variant_id"`
 	Title         string `json:"title"`
+	ProductTitle  string `json:"product_title,omitempty"`
 	Quantity      int64  `json:"quantity"`
 	UnitPrice     int64  `json:"unit_price"`
 	Subtotal      int64  `json:"subtotal"`
@@ -1416,6 +1432,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 		items = append(items, orderSnapshotItem{
 			VariantID:     p.Lines[i].VariantID,
 			Title:         p.Lines[i].Title,
+			ProductTitle:  p.Lines[i].ProductTitle,
 			Quantity:      p.Lines[i].Quantity,
 			UnitPrice:     p.Lines[i].UnitPrice,
 			Subtotal:      p.Lines[i].Subtotal,

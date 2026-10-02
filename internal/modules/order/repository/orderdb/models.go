@@ -154,6 +154,7 @@ type OrderLineItem struct {
 	ParentLineItemID *string
 	Seq              *int64
 	Components       []byte
+	ProductTitle     string
 }
 
 type OrderLineTax struct {

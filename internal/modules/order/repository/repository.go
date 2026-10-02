@@ -441,6 +441,7 @@ func (r *Repository) CreateLineItem(ctx context.Context, item models.OrderLineIt
 		OrderID:          item.OrderID,
 		VariantID:        item.VariantID,
 		Title:            item.Title,
+		ProductTitle:     item.ProductTitle,
 		Quantity:         item.Quantity,
 		UnitPrice:        item.UnitPrice,
 		Subtotal:         item.Subtotal,

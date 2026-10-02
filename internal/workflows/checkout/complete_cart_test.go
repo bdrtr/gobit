@@ -219,12 +219,12 @@ func TestOrderSnapshotIsBuiltFromTotalsAndCatalog(t *testing.T) {
 
 	require.Len(t, placed.Items, 2)
 	assert.Equal(t, orderSnapshotItem{
-		VariantID: testVariantA, Title: testTitleA, Quantity: 2,
+		VariantID: testVariantA, Title: testTitleA, ProductTitle: productTitleOf(testVariantA), Quantity: 2,
 		UnitPrice: 1000, Subtotal: 2000, TaxTotal: 400, Total: 2400,
 		LineKey: testLineA,
 	}, placed.Items[0])
 	assert.Equal(t, orderSnapshotItem{
-		VariantID: testVariantB, Title: testTitleB, Quantity: 1,
+		VariantID: testVariantB, Title: testTitleB, ProductTitle: productTitleOf(testVariantB), Quantity: 1,
 		UnitPrice: 500, Subtotal: 500, TaxTotal: 100, Total: 600,
 		LineKey: testLineB,
 	}, placed.Items[1])

@@ -36,9 +36,10 @@ import (
 //     is_giftcard, prices_include_tax, difference_due). They describe the sale.
 //   - STATE AND STAMPS (status, claim_type, address_type, price_list_type,
 //     recalls and every *_at). What the record is and when it moved.
-//   - WHAT WAS SOLD AND HOW IT WAS SENT (order_line_items.title and
-//     components, the name of a shipping method or a delivery change). A
-//     catalog copy and a shipping option's name, the same for every buyer.
+//   - WHAT WAS SOLD AND HOW IT WAS SENT (order_line_items.title,
+//     product_title and components, the name of a shipping method or a
+//     delivery change). A catalog copy and a shipping option's name, the same
+//     for every buyer.
 var notPersonalColumns = map[string][]string{
 	"orders": {
 		"id", "display_id", "status", "region_id", "currency_code", "cart_id",
@@ -51,7 +52,7 @@ var notPersonalColumns = map[string][]string{
 		"id", "order_id", "variant_id", "title", "quantity", "unit_price", "subtotal",
 		"discount_total", "tax_total", "total", "created_at", "updated_at", "tax_rate_bps",
 		"price_id", "price_list_id", "price_list_type", "is_giftcard", "parent_line_item_id",
-		"seq", "components",
+		"seq", "components", "product_title",
 	},
 	"order_addresses": {
 		"id", "order_id", "address_type", "created_at", "updated_at", "superseded_at",

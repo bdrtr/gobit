@@ -380,7 +380,7 @@ func TestTheOrderPageListsItsLines(t *testing.T) {
 	catalog := linedOrderCatalog(func(query.GraphSpec) ([]query.Record, error) {
 		return []query.Record{
 			{
-				"id": "oli_ring", "title": "Silver ring", "variant_id": "variant_ring",
+				"id": "oli_ring", "title": "Silver ring", "product_title": "Band classic", "variant_id": "variant_ring",
 				"quantity": int64(1), "unit_price": int64(60_000), "subtotal": int64(60_000),
 				"discount_total": int64(6_000), "tax_total": int64(10_800), "total": int64(64_800),
 				"is_giftcard": false, "properties": map[string]string{"Size": "54"},
@@ -410,12 +410,15 @@ func TestTheOrderPageListsItsLines(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"Silver ring", "variant_ring", "Size: 54",
+		`<strong>Band classic</strong> <span class="muted">—</span> Silver ring`,
 		"600.00", "60.00", "108.00", "648.00",
 		"Gift card", `<span class="pill">gift card</span>`, "50.00", "100.00",
 		"add-on:</span> Engraving", "Font: Serif", "Text: For Anna", "236.00",
 	} {
 		assert.Contains(t, body, want)
 	}
+	assert.NotContains(t, body, `<span class="muted">—</span> Gift card`,
+		"a line that kept no product title prints its own title alone")
 	ring, engraving, card := strings.Index(body, "Silver ring"),
 		strings.Index(body, "add-on:</span> Engraving"), strings.Index(body, "variant_card")
 	assert.Less(t, ring, engraving, "the add-on follows its line")
@@ -440,7 +443,7 @@ func TestTheOrderPageListsItsLines(t *testing.T) {
 	for _, field := range []string{
 		fieldTitle, fieldVariantID, fieldQuantity, fieldUnitPrice, fieldSubtotal, fieldDiscount,
 		fieldTax, fieldTotal, fieldIsGiftcard, fieldProperties, fieldParentLineItemID,
-		fieldAskedBack, fieldCanceledQuantity,
+		fieldAskedBack, fieldCanceledQuantity, fieldProductTitle,
 	} {
 		assert.Contains(t, spec.Fields, field, "the line read did not ask for %s", field)
 	}

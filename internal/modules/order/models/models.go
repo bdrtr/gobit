@@ -307,8 +307,12 @@ type OrderLineItem struct {
 	// VariantID is the product variant the line points at; it belongs to the
 	// product module.
 	VariantID string
-	// Title is the displayed name of the line.
+	// Title is the displayed name of the line: the variant's title, copied
+	// from the catalog when the order was placed.
 	Title string
+	// ProductTitle is the title of the product the variant belongs to, copied
+	// with it (ADR 0365); empty on a line written before the order kept it.
+	ProductTitle string
 	// Quantity is the quantity on the line; it is always positive.
 	Quantity int64
 	// UnitPrice is the unit price (minor unit).

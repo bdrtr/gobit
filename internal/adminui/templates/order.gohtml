@@ -93,7 +93,7 @@ timeline and in the person's file, not here.
     {{ range .Order.Lines }}
     <tr>
       <td>
-        {{ if .AddOn }}<span class="muted">add-on:</span> {{ end }}{{ .Title }}
+        {{ if .AddOn }}<span class="muted">add-on:</span> {{ end }}{{ with .ProductTitle }}<strong>{{ . }}</strong> <span class="muted">—</span> {{ end }}{{ .Title }}
         {{ if .GiftCard }}<span class="pill">gift card</span>{{ end }}
         <br><span class="muted">{{ .VariantID }}</span>
         {{ range .Properties }}<br><span class="muted">{{ . }}</span>{{ end }}

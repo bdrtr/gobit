@@ -48,6 +48,10 @@ const (
 	// name: a catalog rename must not rewrite what an invoice says. A consumer
 	// wanting today's name reads the product entity through the variant id.
 	FieldLineItemTitle = "title"
+	// FieldLineItemProductTitle is the title of the product the line's variant
+	// belongs to, copied with it at the sale (ADR 0365); empty on a line
+	// written before the order kept it.
+	FieldLineItemProductTitle = "product_title"
 	// FieldLineItemQuantity is how many units the line sold.
 	FieldLineItemQuantity = "quantity"
 	// FieldLineItemUnitPrice is the unit price at the moment of sale (minor
@@ -145,6 +149,7 @@ var lineItemFieldGetters = map[string]func(models.OrderLineItem) any{
 	FieldLineItemOrderID:       func(l models.OrderLineItem) any { return l.OrderID },
 	FieldLineItemVariantID:     func(l models.OrderLineItem) any { return l.VariantID },
 	FieldLineItemTitle:         func(l models.OrderLineItem) any { return l.Title },
+	FieldLineItemProductTitle:  func(l models.OrderLineItem) any { return l.ProductTitle },
 	FieldLineItemQuantity:      func(l models.OrderLineItem) any { return l.Quantity },
 	FieldLineItemUnitPrice:     func(l models.OrderLineItem) any { return l.UnitPrice },
 	FieldLineItemSubtotal:      func(l models.OrderLineItem) any { return l.Subtotal },

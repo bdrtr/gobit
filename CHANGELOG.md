@@ -50,6 +50,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An order line names its product** (ADR 0365, D214). **For
+  integrators:** an order line carries `product_title`, its product's title
+  as it was when the order was placed, in the admin and store order records
+  and on the order line entity; an order placed before carries none. **For
+  operators:** the order page and an invoice row print the product beside
+  the variant, "Kenya AA — 1 kg / Filtre", rather than the variant alone.
+
 - **A credential that could not be checked is not refused** (ADR 0364,
   D213). **For integrators:** while the database holding the identities is
   out of reach, `/admin/v1` and `/store/v1` answer 503 or 500 with the code

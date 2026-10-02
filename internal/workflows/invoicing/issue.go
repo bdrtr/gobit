@@ -414,7 +414,9 @@ func nonEmpty(values ...string) []string {
 
 // invoiceOrderItem is one line of that order.
 type invoiceOrderItem struct {
-	Title         string `json:"title"`
+	Title string `json:"title"`
+	// ProductTitle is the title of the line's product, kept since ADR 0365.
+	ProductTitle  string `json:"product_title"`
 	Quantity      int64  `json:"quantity"`
 	UnitPrice     int64  `json:"unit_price"`
 	Subtotal      int64  `json:"subtotal"`
@@ -442,6 +444,22 @@ type invoiceOrderItemTax struct {
 	TaxAmount     int64  `json:"tax_amount"`
 }
 
+// describedAs is what a row prints for an order line: its product and its
+// variant together (ADR 0365), "Kenya AA — 1 kg / Filtre". A line that kept no
+// product title prints its variant's, as every row did before, and a variant
+// whose title is its product's prints it once.
+func describedAs(productTitle, title string) string {
+	productTitle, title = strings.TrimSpace(productTitle), strings.TrimSpace(title)
+	switch {
+	case productTitle == "" || productTitle == title:
+		return title
+	case title == "":
+		return productTitle
+	default:
+		return productTitle + " — " + title
+	}
+}
+
 // lines turns the order's lines into the document's, adding carriage as a LINE.
 //
 // # Why carriage becomes a line
@@ -459,7 +477,7 @@ func (o invoiceOrder) lines() []documentLine {
 
 	for i := range o.Items {
 		lines = append(lines, documentLine{
-			Description:   o.Items[i].Title,
+			Description:   describedAs(o.Items[i].ProductTitle, o.Items[i].Title),
 			Quantity:      o.Items[i].Quantity,
 			UnitPrice:     o.Items[i].UnitPrice,
 			Subtotal:      o.Items[i].Subtotal,

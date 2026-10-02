@@ -94,6 +94,21 @@ func TestTheLineTaxRateReachesTheDocument(t *testing.T) {
 	assert.Equal(t, int32(2000), h.invoices.lastDocument(t).Lines[0].TaxRateBps)
 }
 
+// TestARowNamesTheProductItSold is ADR 0365: the order line's product title
+// reaches the document beside the variant's, so a row says what was sold.
+func TestARowNamesTheProductItSold(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.orders.order.Items[0].ProductTitle = "Kenya AA"
+	h.orders.order.Items[0].Title = "1 kg / Filtre"
+
+	_, err := h.flow.IssueForOrder(context.Background(), validIssue())
+	require.NoError(t, err)
+
+	assert.Equal(t, "Kenya AA — 1 kg / Filtre", h.invoices.lastDocument(t).Lines[0].Description)
+}
+
 // TestIssuingTwiceDoesNotSpendASecondNumber is the flow's own guarantee.
 //
 // A number is spent for good once it is taken (ADR 0024). A double-click that

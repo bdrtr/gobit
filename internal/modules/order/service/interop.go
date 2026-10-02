@@ -211,6 +211,7 @@ func (a *interopAddress) toOrderAddress(kind models.AddressType) *models.OrderAd
 type interopOrderItem struct {
 	VariantID     string         `json:"variant_id"`
 	Title         string         `json:"title"`
+	ProductTitle  string         `json:"product_title,omitempty"`
 	Quantity      int64          `json:"quantity"`
 	UnitPrice     int64          `json:"unit_price"`
 	Subtotal      int64          `json:"subtotal"`
@@ -300,6 +301,7 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 		items = append(items, CreateOrderItemInput{
 			VariantID:     incoming.Items[k].VariantID,
 			Title:         incoming.Items[k].Title,
+			ProductTitle:  incoming.Items[k].ProductTitle,
 			Quantity:      incoming.Items[k].Quantity,
 			UnitPrice:     incoming.Items[k].UnitPrice,
 			Subtotal:      incoming.Items[k].Subtotal,
@@ -684,8 +686,12 @@ func (i *Interop) OrderContactJSON(ctx context.Context, orderID string) (json.Ra
 // and a string would only add a parse that can fail.
 type interopInvoiceItem struct {
 	// Title is what was sold, as it was copied from the catalog when the order
-	// was placed. It is what the document prints.
+	// was placed: the variant's title.
 	Title string `json:"title"`
+	// ProductTitle is the title of the variant's product, copied with it (ADR
+	// 0365); empty on an order placed before it was kept. The document prints
+	// the two together.
+	ProductTitle string `json:"product_title,omitempty"`
 	// Quantity is the count sold.
 	Quantity int64 `json:"quantity"`
 	// UnitPrice is the unit price (minor unit).
@@ -809,6 +815,7 @@ func (i *Interop) OrderInvoiceJSON(ctx context.Context, orderID string) (json.Ra
 	for k := range detail.Items {
 		items = append(items, interopInvoiceItem{
 			Title:         detail.Items[k].Title,
+			ProductTitle:  detail.Items[k].ProductTitle,
 			Quantity:      detail.Items[k].Quantity,
 			UnitPrice:     detail.Items[k].UnitPrice,
 			Subtotal:      detail.Items[k].Subtotal,

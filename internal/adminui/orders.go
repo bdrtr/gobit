@@ -75,6 +75,9 @@ const (
 	fieldParentLineItemID = "parent_line_item_id"
 	fieldAskedBack        = "asked_back_quantity"
 	fieldCanceledQuantity = "canceled_quantity"
+	// fieldProductTitle is the product a line sold, beside its variant (ADR
+	// 0365); empty on a line written before.
+	fieldProductTitle = "product_title"
 )
 
 // The links the order page expands to reach the order's payment and its
@@ -240,10 +243,13 @@ type orderParcel struct {
 
 // orderLine is one line of the order page.
 type orderLine struct {
-	ID        string
-	Title     string
-	VariantID string
-	Quantity  int64
+	ID    string
+	Title string
+	// ProductTitle is the product the line sold (ADR 0365), or empty on a
+	// line written before the order kept it.
+	ProductTitle string
+	VariantID    string
+	Quantity     int64
 	// The amounts, each formatted the way the order's are.
 	UnitPrice string
 	Subtotal  string
@@ -565,7 +571,7 @@ func (u *UI) linesOf(
 			fieldID, fieldTitle, fieldVariantID, fieldQuantity, fieldUnitPrice,
 			fieldSubtotal, fieldDiscount, fieldTax, fieldTotal,
 			fieldIsGiftcard, fieldProperties, fieldParentLineItemID,
-			fieldAskedBack, fieldCanceledQuantity,
+			fieldAskedBack, fieldCanceledQuantity, fieldProductTitle,
 		},
 		Filters: map[string]any{fieldOrderID: orderID},
 		Limit:   linesPerOrder,
@@ -590,14 +596,15 @@ func (u *UI) linesOf(
 	parents := make([]string, 0, len(records))
 	for _, record := range records {
 		line := orderLine{
-			ID:         recordString(record, fieldID),
-			Title:      recordString(record, fieldTitle),
-			VariantID:  recordString(record, fieldVariantID),
-			Quantity:   recordInt(record, fieldQuantity),
-			GiftCard:   recordBool(record, fieldIsGiftcard),
-			Properties: propertyLines(record[fieldProperties]),
-			AskedBack:  recordInt(record, fieldAskedBack),
-			Canceled:   recordInt(record, fieldCanceledQuantity),
+			ID:           recordString(record, fieldID),
+			Title:        recordString(record, fieldTitle),
+			ProductTitle: recordString(record, fieldProductTitle),
+			VariantID:    recordString(record, fieldVariantID),
+			Quantity:     recordInt(record, fieldQuantity),
+			GiftCard:     recordBool(record, fieldIsGiftcard),
+			Properties:   propertyLines(record[fieldProperties]),
+			AskedBack:    recordInt(record, fieldAskedBack),
+			Canceled:     recordInt(record, fieldCanceledQuantity),
 		}
 		line.UnitPrice, _ = amountField(record, fieldUnitPrice, currency, scales)
 		line.Subtotal, _ = amountField(record, fieldSubtotal, currency, scales)

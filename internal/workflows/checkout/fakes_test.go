@@ -902,10 +902,19 @@ func catalogAnswer(scripts map[string]variantScript, spec query.GraphSpec) []que
 	}
 	out := make([]query.Record, 0, len(scripts))
 	for id, script := range scripts {
-		out = append(out, query.Record{query.IDField: productOf(id), FieldIsGiftcard: script.giftcard})
+		record := query.Record{query.IDField: productOf(id), FieldIsGiftcard: script.giftcard}
+		// The title only when it is asked for, as the provider answers: a fake
+		// that handed it back unasked would hide a read that stopped asking.
+		if slices.Contains(spec.Fields, FieldTitle) {
+			record[FieldTitle] = productTitleOf(id)
+		}
+		out = append(out, record)
 	}
 	return out
 }
+
+// productTitleOf is the title the scripted catalog gives a variant's product.
+func productTitleOf(variantID string) string { return "Product of " + variantID }
 
 // defaultVariants is the catalog the happy path runs on: both variants are
 // COUNTED and neither permits backorder.

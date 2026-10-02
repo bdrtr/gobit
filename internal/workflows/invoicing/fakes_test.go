@@ -42,6 +42,7 @@ type fakeOrder struct {
 // fakeItem is one line of that order.
 type fakeItem struct {
 	Title         string `json:"title"`
+	ProductTitle  string `json:"product_title,omitempty"`
 	Quantity      int64  `json:"quantity"`
 	UnitPrice     int64  `json:"unit_price"`
 	Subtotal      int64  `json:"subtotal"`

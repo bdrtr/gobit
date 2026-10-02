@@ -137,7 +137,8 @@ func TestLineItemQueryProviderARequestWithoutFieldsReturnsAllFields(t *testing.T
 
 	offered := []string{
 		service.FieldID, service.FieldLineItemOrderID, service.FieldLineItemVariantID,
-		service.FieldLineItemTitle, service.FieldLineItemQuantity, service.FieldLineItemUnitPrice,
+		service.FieldLineItemTitle, service.FieldLineItemProductTitle, service.FieldLineItemQuantity,
+		service.FieldLineItemUnitPrice,
 		service.FieldLineItemSubtotal, service.FieldLineItemDiscountTotal,
 		service.FieldLineItemTaxTotal, service.FieldLineItemTaxRateBps,
 		service.FieldLineItemTotal, service.FieldLineItemCreatedAt, service.FieldLineItemIsGiftcard,
