@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
 	"strings"
 
@@ -173,6 +174,10 @@ func RequireAdmin(auth Authenticator) func(http.Handler) http.Handler {
 				// what user enumeration is made of.
 				LoggerFromContext(ctx).WarnContext(ctx, "admin authentication failed",
 					"error", err, "request_id", RequestIDFromContext(ctx))
+				if _, failed := AuthenticatorFailure(err); failed {
+					writeAuthenticatorFailure(ctx, w, err)
+					return
+				}
 				unauthorized(ctx, w, "authentication is required")
 				return
 			}
@@ -210,6 +215,10 @@ func RequireStore(auth Authenticator, header string) func(http.Handler) http.Han
 			if err != nil {
 				LoggerFromContext(ctx).WarnContext(ctx, "store authentication failed",
 					"error", err, "request_id", RequestIDFromContext(ctx))
+				if _, failed := AuthenticatorFailure(err); failed {
+					writeAuthenticatorFailure(ctx, w, err)
+					return
+				}
 				unauthorized(ctx, w, "the publishable api key is invalid")
 				return
 			}
@@ -294,6 +303,47 @@ func bearerCredential(r *http.Request) (scheme, credential string, ok bool) {
 		return "", "", false
 	}
 	return strings.ToLower(scheme), credential, true
+}
+
+// CodeAuthenticationUnchecked is the code a guard answers with when the
+// authenticator could not reach a verdict on the credential (ADR 0364).
+const CodeAuthenticationUnchecked = "auth_unchecked"
+
+// AuthenticatorFailure reports that an authenticator failed to reach a verdict
+// on a credential, rather than refusing it, and the status that says so (ADR
+// 0364): the error is classified by core/errors as unavailable or internal —
+// the store holding the identities was out of reach, or broke. A refusal is
+// answered 401 and tells the client to change its credential; a failure is
+// not the credential's, and answering it 401 would tell a storefront its key
+// was revoked and sign every operator out of the panel during a database
+// outage.
+//
+// Only a CLASSIFIED error is a failure. An error classified as anything else,
+// or not classified at all, stays a refusal, so an authenticator that returns
+// a bare error for a wrong credential still answers 401.
+func AuthenticatorFailure(err error) (status int, failed bool) {
+	var classified *coreerrors.Error
+	if !stderrors.As(err, &classified) {
+		return 0, false
+	}
+	if classified.Kind != coreerrors.KindUnavailable && classified.Kind != coreerrors.KindInternal {
+		return 0, false
+	}
+
+	return policyForKind(classified.Kind).status, true
+}
+
+// writeAuthenticatorFailure answers a request whose credential could not be
+// checked, with the failure's class and a sentence of the core's own: the
+// authenticator's message stays in the log, as a refusal's does.
+func writeAuthenticatorFailure(ctx context.Context, w http.ResponseWriter, err error) {
+	if coreerrors.KindOf(err) == coreerrors.KindUnavailable {
+		WriteError(ctx, w, coreerrors.Unavailable(CodeAuthenticationUnchecked,
+			"the credential could not be checked just now; try again"))
+		return
+	}
+
+	WriteError(ctx, w, coreerrors.Internal(CodeAuthenticationUnchecked, "the credential could not be checked"))
 }
 
 // unauthorized writes a 401 response conforming to RFC 9110.

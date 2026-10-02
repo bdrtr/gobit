@@ -90,6 +90,8 @@ type sessionRepo struct {
 	// enrollment nobody proved" are different set-ups: the second one locks nobody
 	// out and the difference is exactly what the demand must respect.
 	mfa *models.MFACredential
+	// userErr is the fault a user read meets, when set.
+	userErr error
 }
 
 // identity returns the row of the given provider; nil if there is none.
@@ -137,6 +139,9 @@ func (d *sessionRepo) anchor(provider string) time.Time {
 
 // GetUser returns the user; errors.NotFound if it holds no such identifier.
 func (d *sessionRepo) GetUser(_ context.Context, id string) (models.User, error) {
+	if d.userErr != nil {
+		return models.User{}, d.userErr
+	}
 	if id != d.user.ID {
 		return models.User{}, errors.NotFound("test_user_missing", "no such user: %s", id)
 	}

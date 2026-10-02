@@ -38,6 +38,8 @@ type fakeRepo struct {
 	lastPatch models.UserPatch
 	// invites is the invitation table.
 	invites fakeInvitations
+	// keyErr is the fault an API key lookup meets, when set.
+	keyErr error
 }
 
 var _ service.Repository = (*fakeRepo)(nil)
@@ -148,6 +150,9 @@ func (d *fakeRepo) GetAPIKey(_ context.Context, id string) (models.APIKey, error
 }
 
 func (d *fakeRepo) GetAPIKeyByHash(_ context.Context, _ string) (models.APIKey, error) {
+	if d.keyErr != nil {
+		return models.APIKey{}, d.keyErr
+	}
 	return models.APIKey{}, errors.NotFound("api_key_not_found", "the api key was not found")
 }
 

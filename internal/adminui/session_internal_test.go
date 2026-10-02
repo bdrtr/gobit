@@ -274,6 +274,46 @@ func TestGuardClearsInvalidCookie(t *testing.T) {
 	assert.Negative(t, cookie.MaxAge, "the cookie must be deleted")
 }
 
+// outageAuthenticator cannot reach the identities: every credential is met
+// with the error it holds.
+type outageAuthenticator struct{ err error }
+
+func (o outageAuthenticator) AuthenticateAdmin(context.Context, string, string) (corehttp.Principal, error) {
+	return corehttp.Principal{}, o.err
+}
+
+func (o outageAuthenticator) AuthenticateStore(context.Context, string) (corehttp.Principal, error) {
+	return corehttp.Principal{}, o.err
+}
+
+// TestGuardKeepsTheSessionItCouldNotCheck is ADR 0364: when the authenticator
+// cannot reach a verdict the panel answers the failure's status with a page
+// that says the session is kept, and writes no cookie, so an outage of the
+// identities signs no operator out.
+func TestGuardKeepsTheSessionItCouldNotCheck(t *testing.T) {
+	t.Parallel()
+
+	for status, err := range map[int]error{
+		http.StatusInternalServerError: errors.Internal("auth_query_failed", "failed to connect"),
+		http.StatusServiceUnavailable:  errors.Unavailable("auth_canceled", "the pool is gone"),
+	} {
+		panel := newTestPanel(t, &fakeSession{}, outageAuthenticator{err: err}, true)
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, URLPrefix, http.NoBody)
+		req.AddCookie(&http.Cookie{Name: CookieName, Value: "good"})
+		req.AddCookie(&http.Cookie{Name: MarkerName, Value: "1"})
+		panel.Protect(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+			t.Error("the protected handler must NOT run when the session could not be checked")
+		})).ServeHTTP(rec, req)
+
+		assert.Equal(t, status, rec.Code)
+		assert.Empty(t, rec.Result().Cookies(), "%d: neither the session nor the marker is touched", status)
+		assert.Contains(t, rec.Body.String(), uncheckedTitle)
+		assert.NotContains(t, rec.Body.String(), `action="`+LoginPath+`"`, "%d: no sign-in is asked for", status)
+	}
+}
+
 // TestGuardPutsPrincipalInContext proves the happy path.
 //
 // Identity RESOLUTION is not the panel's own work: the same authenticator is

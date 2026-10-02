@@ -50,6 +50,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A credential that could not be checked is not refused** (ADR 0364,
+  D213). **For integrators:** while the database holding the identities is
+  out of reach, `/admin/v1` and `/store/v1` answer 503 or 500 with the code
+  `auth_unchecked` rather than 401, so a storefront does not take an outage
+  for a revoked key. **For operators:** the panel keeps the session through
+  such an outage and says so, rather than signing everyone out.
+  `corehttp.AuthenticatorFailure` tells the two apart for an embedder's own
+  guard.
+
 - **The panel corrects a region** (ADR 0362). **For operators:** each row
   of the Regions screen corrects its region's name, whether taxes are
   computed for it and its tax rate under `region:write`. **For

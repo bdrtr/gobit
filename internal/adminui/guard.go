@@ -66,6 +66,14 @@ func (u *UI) Protect(next http.Handler) http.Handler {
 		// spell the same value. Two spellings of the same word would work today
 		// only because the auth module happens to compare case-insensitively.
 		principal, err := u.authenticator.AuthenticateAdmin(r.Context(), corehttp.SchemeBearer, token)
+		if status, failed := corehttp.AuthenticatorFailure(err); failed {
+			// Who the operator is could not be checked — the identities are
+			// out of reach — which is not a dead session: the cookie is kept,
+			// and the next request, once they are back, finds the session
+			// where it was (ADR 0364).
+			u.errorPage(w, r, status, uncheckedTitle, uncheckedMessage)
+			return
+		}
 		if err != nil {
 			// The cookie exists but is invalid: expired, or the secret changed.
 			// It must be dropped, otherwise the browser keeps sending the same
@@ -79,6 +87,14 @@ func (u *UI) Protect(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(corehttp.WithPrincipal(r.Context(), principal)))
 	})
 }
+
+// The page a request is answered with when the operator's session could not be
+// checked (ADR 0364).
+const (
+	uncheckedTitle   = "Sign-in could not be checked"
+	uncheckedMessage = "The panel could not check who you are just now, so your session is kept. " +
+		"Try again in a moment."
+)
 
 // stateChangingMethods are the methods a browser can be made to trigger from
 // another site.
