@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	stderrors "errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +13,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	b2bmodels "github.com/bdrtr/gobit/internal/modules/b2b/models"
 )
@@ -66,15 +66,36 @@ var _ corehttp.Identity = storefrontIdentity{}
 //
 // An absent header is an ERROR and never an empty identifier: the contract
 // forbids the empty-and-nil pair, because a caller cannot tell it apart from a
-// proof of the empty customer.
+// proof of the empty customer. The error is a BARE one, as the identity gobit
+// ships (contrib/identity-session) returns: a harness whose verifier classified
+// its refusal could not see D220, where such an error reached every anonymous
+// caller as an internal fault.
 func (storefrontIdentity) CustomerID(r *http.Request) (string, error) {
 	id := r.Header.Get(customerHeader)
 	if id == "" {
-		return "", coreerrors.Unauthorized("e2e_no_session",
-			"this request carries no customer session")
+		return "", errNoSession
 	}
 
 	return id, nil
+}
+
+// errNoSession is the harness verifier's refusal of a request with no proof.
+var errNoSession = stderrors.New("this request carries no customer session")
+
+// TestARequestWithoutAProofIsRefusedNotFailed is D220 through the production
+// wiring: a storefront route naming a customer, asked with no proof, answers
+// 401 identity_refused rather than the 500 a bare refusal used to become
+// (ADR 0371).
+func TestARequestWithoutAProofIsRefusedNotFailed(t *testing.T) {
+	for _, path := range []string{
+		"/store/v1/customers/" + aStranger + "/orders",
+		"/store/v1/customers/" + aStranger + "/addresses",
+		"/store/v1/customers/" + aStranger + "/wishlist",
+	} {
+		rec := identifiedStorefrontRequest(t, "", http.MethodGet, path, "")
+		assert.Equal(t, http.StatusUnauthorized, rec.Code, "%s: %s", path, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), corehttp.CodeIdentityRefused, path)
+	}
 }
 
 // identifiedStorefrontRequest makes a storefront request that PROVES the given

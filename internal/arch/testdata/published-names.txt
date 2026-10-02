@@ -237,6 +237,7 @@ core/http CodeIdempotencyInFlight
 core/http CodeIdempotencyKeyTooLong
 core/http CodeIdentityMismatch
 core/http CodeIdentityNotBound
+core/http CodeIdentityRefused
 core/http CodeIdentityUnproven
 core/http CodeRateLimited
 core/http CodeSalesChannelMissing
@@ -289,6 +290,7 @@ core/http Principal.HasScope
 core/http PrincipalFromContext
 core/http ProfilingHandler
 core/http ProvenCustomer
+core/http ProvenCustomerIfAny
 core/http PublishableKeyHeader
 core/http RateLimit
 core/http RateLimiter

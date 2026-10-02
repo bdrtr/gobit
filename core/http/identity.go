@@ -1,6 +1,7 @@
 package http
 
 import (
+	stderrors "errors"
 	"net/http"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
@@ -120,14 +121,12 @@ const (
 	// — while a missing identity does not mean "every caller is who they say
 	// they are". It means nobody looked.
 	//
-	// WHETHER to return it is the caller's decision and not this package's,
-	// and the tree makes it both ways on purpose. The address book refuses
-	// (ADR 0043): no anonymous caller has a correct use for somebody's street
-	// address. The cart and the b2b storefront do not (ADR 0057): they are in
-	// service in installations that bound nothing, and withdrawing a working
-	// surface is a bigger change than the leak it would close. Those two log a
-	// WARN naming this slot instead, and their records say the oracle stays
-	// open until a verifier is bound.
+	// WHETHER to return it is the caller's decision and not this package's.
+	// The address book refuses (ADR 0043): no anonymous caller has a correct
+	// use for somebody's street address. The cart and the b2b storefront
+	// refuse too since ADR 0125, unless the installation sets
+	// STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM and serves the claim
+	// unchecked; each logs a WARN saying which of the two it chose.
 	CodeIdentityNotBound = "identity_not_bound"
 
 	// CodeIdentityMismatch means the identity proved a DIFFERENT customer than
@@ -147,6 +146,17 @@ const (
 	// answer, and a 403 here would send the shopper looking for a permission
 	// problem that does not exist.
 	CodeIdentityUnproven = "identity_unproven"
+
+	// CodeIdentityRefused means the bound [Identity] refused the request with
+	// an error it did not classify (ADR 0371): no session, an expired one, a
+	// forged one.
+	//
+	// It is Unauthorized because an unclassified error is not a verdict the
+	// implementation reached about itself — the rule ADR 0364 gives an
+	// authenticator — and the shopper's client can act on it by signing in.
+	// Answering it as an internal fault told every anonymous caller the shop
+	// was broken.
+	CodeIdentityRefused = "identity_refused"
 )
 
 // ProvenCustomer returns the customer a storefront request may act on, or the
@@ -162,16 +172,23 @@ const (
 //
 //     Reaching this function with a nil identity is therefore a DECISION to
 //     refuse, and the caller makes it before calling: the address book passes
-//     what it holds and takes the refusal (ADR 0043), while the cart and the
-//     b2b storefront do not call at all when nothing is bound, because
-//     withdrawing a surface they ship working is a larger change than the leak
-//     it closes (ADR 0057). This branch is what an unbound proof MEANS, not a
-//     ruling on which surfaces must demand one.
+//     what it holds and takes the refusal (ADR 0043), and so do the cart and
+//     the b2b storefront since ADR 0125, unless the installation trusts an
+//     unverified claim and they do not call at all. This branch is what an
+//     unbound proof MEANS, not a ruling on which surfaces must demand one.
 //
-//   - the identity returns an error — passed through UNWRAPPED, so the embedder
-//     picks the status by picking the error's kind. Wrapping it here would
-//     overwrite the embedder's answer with a guess made by a package that knows
-//     nothing about how the proof was obtained.
+//   - the identity returns a CLASSIFIED error — passed through UNWRAPPED, so
+//     the embedder picks the status by picking the error's kind. Wrapping it
+//     here would overwrite the embedder's answer with a guess made by a package
+//     that knows nothing about how the proof was obtained.
+//
+//   - the identity returns an UNCLASSIFIED error — [CodeIdentityRefused],
+//     Unauthorized (ADR 0371). An error that picks no kind picked no status,
+//     and the core's default for one is an internal fault; for the identity
+//     that answer means every anonymous caller of a storefront route naming a
+//     customer is told the shop is broken. Only a classified unavailable or
+//     internal error is a failure to check, as it is for an authenticator
+//     (ADR 0364).
 //
 //   - the identity proves nothing and reports no error — [CodeIdentityUnproven],
 //     Internal. The pair cannot be told apart from a proof of the empty
@@ -227,18 +244,64 @@ func ProvenCustomer(identity Identity, r *http.Request, claimed string) (string,
 				"naming a customer cannot be served", IdentityName)
 	}
 
-	proven, err := identity.CustomerID(r)
+	proven, err := proof(identity, r)
 	if err != nil {
 		return "", err
-	}
-	if proven == "" {
-		return "", coreerrors.Internal(CodeIdentityUnproven,
-			"the bound customer identity returned neither an identifier nor an error")
 	}
 	if proven != claimed {
 		return "", coreerrors.Forbidden(CodeIdentityMismatch,
 			"the request names customer %q and the bound identity proves a different one",
 			claimed)
+	}
+
+	return proven, nil
+}
+
+// ProvenCustomerIfAny returns the customer a storefront request proves, or ""
+// when it proves nobody: no identity is bound, or the bound one refuses the
+// request (ADR 0371). It is for a surface open to anonymous callers that
+// treats a proven one differently — a review a buyer writes — and never for one
+// that acts on a customer, which [ProvenCustomer] guards.
+//
+// It returns an error only when the identity could not reach a verdict: a
+// classified unavailable or internal error, or an answer with neither an
+// identifier nor an error. A proof that could not be read is not a proof of
+// nobody, and serving the request as anonymous would hide the outage.
+func ProvenCustomerIfAny(identity Identity, r *http.Request) (string, error) {
+	if identity == nil {
+		return "", nil
+	}
+
+	proven, err := proof(identity, r)
+	if err != nil {
+		if _, failed := AuthenticatorFailure(err); failed {
+			return "", err
+		}
+
+		return "", nil
+	}
+
+	return proven, nil
+}
+
+// proof asks the identity and classifies its answer: an identifier; a
+// failure to check, passed through; the identity's own classified refusal,
+// passed through; an unclassified error, as [CodeIdentityRefused]; or nothing
+// at all, as [CodeIdentityUnproven].
+func proof(identity Identity, r *http.Request) (string, error) {
+	proven, err := identity.CustomerID(r)
+	if err != nil {
+		var classified *coreerrors.Error
+		if stderrors.As(err, &classified) {
+			return "", err
+		}
+
+		return "", coreerrors.Wrap(err, coreerrors.KindUnauthorized, CodeIdentityRefused,
+			"the bound customer identity proves no customer for this request")
+	}
+	if proven == "" {
+		return "", coreerrors.Internal(CodeIdentityUnproven,
+			"the bound customer identity returned neither an identifier nor an error")
 	}
 
 	return proven, nil

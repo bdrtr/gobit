@@ -50,6 +50,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An identity that proves nobody refuses** (ADR 0371, D220). **For
+  operators:** with `contrib/identity-session` bound, a storefront request
+  naming a customer with no session, an expired one or a forged one answers
+  401 `identity_refused`, where it answered 500 `internal_error`. **For
+  integrators:** `corehttp.ProvenCustomerIfAny` returns the customer a request
+  proves, or nobody, and `core/identitytest.Contract` fails an identity that
+  answers a request carrying nothing as unavailable or internal.
+
 - **One binding resolves the storefront's customer identity** (ADR 0370).
   **For operators:** the payment, customer, order, cart and b2b modules log
   `customer identity bound` with a `module` attribute when an identity is

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/identitytest"
 )
 
@@ -131,6 +132,20 @@ func TestAnInventedIdentifierFails(t *testing.T) {
 
 	assert.True(t, contains(failures, "carrying no credentials"),
 		"an identifier from nothing must be caught; got %v", failures)
+}
+
+// TestAnEmptyRequestAnsweredAsAnOutageFails is ADR 0371's rule: nothing to
+// check is a refusal, and an implementation that answers it as an outage tells
+// every anonymous caller the shop is broken.
+func TestAnEmptyRequestAnsweredAsAnOutageFails(t *testing.T) {
+	t.Parallel()
+
+	failures := run(funcIdentity(func(*http.Request) (string, error) {
+		return "", coreerrors.Unavailable("session_store_down", "the session store is out of reach")
+	}))
+
+	assert.True(t, contains(failures, "as a failure to check"),
+		"an empty request answered as an outage must be caught; got %v", failures)
 }
 
 // TestAnIdentifierBesideAnErrorFails holds the rule gobit's own caller does not

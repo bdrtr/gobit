@@ -149,17 +149,28 @@ func Contract(t T, identity corehttp.Identity) {
 	theRequestSurvivesBeingRead(t, identity)
 }
 
-// anEmptyRequestProvesNobody refuses an identifier that came from nowhere.
+// anEmptyRequestProvesNobody refuses an identifier that came from nowhere, and
+// a failure where a refusal belongs.
 //
 // A request with no headers, no cookies and no body carries no proof of
 // anything. A verifier answering it with an identifier has invented one, and
 // every storefront route naming a customer would then serve that customer to
-// an anonymous caller.
+// an anonymous caller. A verifier answering it with a classified unavailable or
+// internal error says it could not check (ADR 0371), so every anonymous caller
+// of those routes is told the shop is broken, and a route open to anonymous
+// callers refuses them all.
 func anEmptyRequestProvesNobody(t T, identity corehttp.Identity) {
 	t.Helper()
 
 	id, err := identity.CustomerID(bareRequest())
 	if err != nil {
+		if _, failed := corehttp.AuthenticatorFailure(err); failed {
+			t.Errorf("identitytest: a request carrying no credentials at all was answered as a "+
+				"failure to check: %v\n"+
+				"Nothing was there to check. Refuse it with an unclassified error or an "+
+				"Unauthorized one; unavailable and internal mean the proof could not be read.", err)
+		}
+
 		return
 	}
 	if id != "" {
