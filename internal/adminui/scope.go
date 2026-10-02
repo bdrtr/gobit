@@ -206,8 +206,10 @@ func builtInScopes() map[string]string {
 		// switching one's status (ADR 0312).
 		routeKey(get, PromotionsPath):       scopePromotionRead,
 		routeKey(post, PromotionStatusPath): scopePromotionWrite,
-		routeKey(get, PromotionPath):        scopePromotionRead,
-		routeKey(post, PromotionsPath):      scopePromotionWrite,
+		// And changing how much its discount gives (ADR 0338).
+		routeKey(post, PromotionDiscountPath): scopePromotionWrite,
+		routeKey(get, PromotionPath):          scopePromotionRead,
+		routeKey(post, PromotionsPath):        scopePromotionWrite,
 		// A variant's prices on price lists are the pricing module's (ADR
 		// 0327).
 		routeKey(post, VariantListPricesPath):      scopePricingWrite,

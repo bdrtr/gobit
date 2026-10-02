@@ -123,6 +123,12 @@ type Repository interface {
 
 	SetApplicationMethod(ctx context.Context, m models.ApplicationMethod, now time.Time) (models.ApplicationMethod, error)
 	GetApplicationMethod(ctx context.Context, promotionID string) (models.ApplicationMethod, error)
+	// ReviseMethodValue writes the discount's value if the method is still of
+	// the type and the value read, and reports whether it did (ADR 0338).
+	ReviseMethodValue(
+		ctx context.Context, promotionID string, readType models.ApplicationMethodType, readValue, value int64,
+		now time.Time,
+	) (models.ApplicationMethod, bool, error)
 	DeleteApplicationMethod(ctx context.Context, promotionID string, now time.Time) error
 
 	CreatePromotionRule(ctx context.Context, rule models.PromotionRule, now time.Time) (models.PromotionRule, error)

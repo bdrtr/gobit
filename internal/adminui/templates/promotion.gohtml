@@ -38,6 +38,23 @@ to an operator who may read the catalog.
     {{ with .ApplyToQuantity }}<tr><th>Rewarded</th><td>the {{ . }} cheapest units</td></tr>{{ end }}
   </tbody>
 </table>
+{{ if $.Written }}<p role="status">The discount was written.</p>{{ end }}
+{{ with $.DiscountForm }}
+{{/* How much the discount gives, changed from the type and the value the
+page was drawn with (ADR 0338): a percentage typed as a percent, a fixed
+amount in its currency's decimals. */}}
+<details{{ if .Refused }} open{{ end }}>
+  <summary>Change how much it gives</summary>
+  <form method="post" action="{{ $.Path }}/{{ $.Promotion.ID }}/discount">
+    <input type="hidden" name="read_type" value="{{ .ReadType }}">
+    <input type="hidden" name="read_value" value="{{ .ReadValue }}">
+    <input type="hidden" name="currency" value="{{ .Currency }}">
+    <input name="value" value="{{ .Value }}" aria-label="discount" inputmode="decimal" required>
+    {{ if eq .ReadType "percentage" }}%{{ else }}{{ .Currency }}{{ end }}
+    <button type="submit">Write</button>
+  </form>
+</details>
+{{ end }}
 {{ else }}
 <p class="muted">No discount is defined; the promotion applies nothing.</p>
 {{ end }}

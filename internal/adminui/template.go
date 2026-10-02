@@ -48,6 +48,9 @@ const (
 	// canReviseKey says whether a list's rows offer the form that revises
 	// what each row names (ADR 0329, ADR 0330, ADR 0331).
 	canReviseKey = "CanRevise"
+	// writtenKey says a page's form just wrote what it shows, named in the
+	// address the form landed on (ADR 0336, ADR 0337, ADR 0338).
+	writtenKey = "Written"
 	// createdKey carries what a screen's form just wrote, named in the
 	// address the form landed on.
 	createdKey = "Created"

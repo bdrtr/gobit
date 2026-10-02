@@ -621,6 +621,10 @@ func (p recordingPromotions) ReviseCampaign(
 	return p.surfaces.reach(ServicePromotionAdmin)
 }
 
+func (p recordingPromotions) ReviseDiscountValue(context.Context, string, string, int64, int64) error {
+	return p.surfaces.reach(ServicePromotionAdmin)
+}
+
 func (p recordingPromotions) SetPromotionCampaign(context.Context, string, string, string) error {
 	return p.surfaces.reach(ServicePromotionAdmin)
 }
@@ -951,6 +955,10 @@ var walkForms = map[string]url.Values{
 	// And corrects the operator's own cart (ADR 0300).
 	routeKey(http.MethodPost, CartLineRemovePath): {},
 	routeKey(http.MethodPost, CartDiscardPath):    {},
+	// Changing how much a promotion's discount gives (ADR 0338).
+	routeKey(http.MethodPost, PromotionDiscountPath): {
+		formReadMethodType: {"percentage"}, formReadMethodValue: {"1000"}, formDiscountValue: {"15"},
+	},
 	// Switching a promotion's status (ADR 0312).
 	routeKey(http.MethodPost, PromotionStatusPath): {formStatusFrom: {"active"}, formStatusTo: {"inactive"}},
 	// A promotion's rules (ADR 0315).

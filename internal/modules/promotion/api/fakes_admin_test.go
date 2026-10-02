@@ -84,3 +84,17 @@ func (m *memRepo) ReviseCampaign(
 	m.campaigns[id] = c
 	return c, true, nil
 }
+
+// ReviseMethodValue writes the value only from the type and the value read.
+func (m *memRepo) ReviseMethodValue(
+	_ context.Context, promotionID string, readType models.ApplicationMethodType, readValue, value int64,
+	now time.Time,
+) (models.ApplicationMethod, bool, error) {
+	method, ok := m.methods[promotionID]
+	if !ok || method.Type != readType || method.Value != readValue {
+		return models.ApplicationMethod{}, false, nil
+	}
+	method.Value, method.UpdatedAt = value, now
+	m.methods[promotionID] = method
+	return method, true, nil
+}

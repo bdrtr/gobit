@@ -157,7 +157,7 @@ func (u *UI) renderStoreProfile(w http.ResponseWriter, r *http.Request, code int
 		"Form":     form,
 		"ReadAt":   readAt,
 		"CanWrite": principal.HasScope(scopeSettingsWrite),
-		"Written":  r.URL.Query().Get(paramWritten) != "",
+		writtenKey: r.URL.Query().Get(paramWritten) != "",
 		refusedKey: refused,
 		pathKey:    StoreProfilePath,
 	})

@@ -359,6 +359,21 @@ func (a *AdminSurface) ReviseCampaign(
 	return err
 }
 
+// ReviseDiscountValue changes how much the promotion's discount gives, from
+// the type and the value the operator read, and refuses when either changed
+// since (ADR 0338): a fixed discount's value is in the currency's minor
+// units, a percentage's in basis points.
+func (a *AdminSurface) ReviseDiscountValue(
+	ctx context.Context, promotionID, readType string, readValue, value int64,
+) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
+	}
+	_, err := a.svc.ReviseDiscountValue(ctx, promotionID, models.ApplicationMethodType(readType), readValue, value)
+
+	return err
+}
+
 // SetPromotionCampaign puts the promotion into the campaign to, or out of any
 // when to is empty, if it is still in the campaign from the operator read,
 // empty for none (ADR 0320).

@@ -121,7 +121,9 @@
 // status it was drawn in so that a promotion another operator moved first is
 // refused rather than moved back (ADR 0312), and links to the promotion's
 // page ([UI.showPromotion]): its discount, rules, campaign and latest uses,
-// read through the same surface (ADR 0313). Its form writes a draft coupon
+// read through the same surface (ADR 0313), where the discount's value is
+// changed from the one it was drawn with ([UI.reviseDiscount], ADR 0338). Its
+// form writes a draft coupon
 // with its discount ([UI.createCoupon]), which the module writes in one
 // transaction (ADR 0314). The page limits a discount on items to categories
 // and removes a rule ([UI.addCategoryRule], [UI.removeRule]); the categories

@@ -197,7 +197,7 @@ func (u *UI) renderCustomerTyped(
 		"Groups":        groups,
 		"GroupsUnread":  groupsUnread,
 		refusedKey:      refused,
-		"Written":       r.URL.Query().Get(paramWritten) != "",
+		writtenKey:      r.URL.Query().Get(paramWritten) != "",
 	}
 	if u.canReviseContact(r) {
 		drawn := contactOf(records[0])

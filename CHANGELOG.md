@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel changes how much a discount gives** (ADR 0338). **For
+  operators:** a promotion's page changes its discount's value under
+  `promotion:write`, a percentage typed as a percent and a fixed amount in
+  its currency's decimals; a discount changed meanwhile is refused. **For
+  integrators:** `promotion.admin` changes a discount's value from the type
+  and the value read, refusing `promotion_discount_revised`.
+
 - **The panel corrects a customer's name and phone** (ADR 0337). **For
   operators:** a customer's page corrects their first name, last name and
   phone under `customer:write`; a customer another operator corrected

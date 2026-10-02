@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -306,6 +307,13 @@ type ruleView struct {
 // a refused write's reason. An operator who may write and not read the
 // promotion is told the reason alone (ADR 0260).
 func (u *UI) renderPromotion(w http.ResponseWriter, r *http.Request, code int, refused string) {
+	u.renderPromotionTyped(w, r, code, refused, nil)
+}
+
+// renderPromotionTyped is [UI.renderPromotion] with what was typed in the
+// discount form a refusal came back to, the drawn type and value always the
+// discount's as it is now (ADR 0338).
+func (u *UI) renderPromotionTyped(w http.ResponseWriter, r *http.Request, code int, refused string, typed url.Values) {
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
 	if refused != "" && !principal.HasScope(scopePromotionRead) {
 		u.errorPage(w, r, code, "Not done", refused)
@@ -345,6 +353,7 @@ func (u *UI) renderPromotion(w http.ResponseWriter, r *http.Request, code int, r
 		"Promotion": page,
 		pathKey:     PromotionsPath,
 		refusedKey:  refused,
+		writtenKey:  r.URL.Query().Get(paramWritten) != "",
 	}
 	if m := page.Method; m != nil {
 		gives := percentText(m.Value) + "% off"
@@ -353,6 +362,16 @@ func (u *UI) renderPromotion(w http.ResponseWriter, r *http.Request, code int, r
 		}
 		data["Gives"] = gives
 		data["Target"] = promotionTargets[m.TargetType]
+		if u.canReviseDiscount(r) {
+			form := discountForm{
+				ReadType: m.Type, ReadValue: m.Value, Currency: m.CurrencyCode,
+				Value: discountValueText(m.Type, m.Value, m.CurrencyCode, scales),
+			}
+			if typed != nil {
+				form.Value, form.Refused = typed.Get(formDiscountValue), true
+			}
+			data["DiscountForm"] = form
+		}
 	}
 	if page.Campaign != nil {
 		data["Budget"] = page.Campaign.budgetText(scales)
