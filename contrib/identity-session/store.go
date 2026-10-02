@@ -323,3 +323,73 @@ func (s pgCredentials) PendingRegistrationOf(
 
 	return &out, nil
 }
+
+// The store holds pending password resets (ADR 0373).
+var _ PasswordResets = pgCredentials{}
+
+// PutPasswordReset writes a pending reset, replacing the customer's own (ADR
+// 0373). The foreign key refuses a customer with no credential here.
+func (s pgCredentials) PutPasswordReset(
+	ctx context.Context, tokenHash, customerID string, expiresAt time.Time,
+) error {
+	if _, err := s.pool.Exec(ctx,
+		`INSERT INTO customer_password_resets (token_hash, customer_id, expires_at)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (customer_id) DO UPDATE
+		 SET token_hash = EXCLUDED.token_hash,
+		     expires_at = EXCLUDED.expires_at,
+		     created_at = now()`,
+		tokenHash, customerID, expiresAt); err != nil {
+		return fmt.Errorf("identity-session: the password reset could not be written: %w", err)
+	}
+
+	return nil
+}
+
+// TakePasswordReset removes a pending reset and answers the customer and the
+// address their credential signs in with.
+//
+// One statement, for [pgCredentials.TakeRegistration]'s reason: two requests
+// carrying one token cannot both be answered, and an expired row is not one
+// this statement can take. The address is read from the credential in the same
+// statement, so the reset row does not keep a second copy of it.
+func (s pgCredentials) TakePasswordReset(
+	ctx context.Context, tokenHash string,
+) (customerID, email string, err error) {
+	row := s.pool.QueryRow(ctx,
+		`DELETE FROM customer_password_resets r
+		 USING customer_credentials c
+		 WHERE r.token_hash = $1 AND r.expires_at > now() AND c.customer_id = r.customer_id
+		 RETURNING r.customer_id, c.email`, tokenHash)
+
+	switch err := row.Scan(&customerID, &email); {
+	case errors.Is(err, pgx.ErrNoRows):
+		return "", "", ErrNoPasswordReset
+	case err != nil:
+		return "", "", fmt.Errorf("identity-session: the password reset could not be taken: %w", err)
+	}
+
+	return customerID, email, nil
+}
+
+// PendingPasswordResetOf reads the unused reset of a customer or of the address
+// their credential signs in with.
+func (s pgCredentials) PendingPasswordResetOf(
+	ctx context.Context, customerID, email string,
+) (*StoredPasswordReset, error) {
+	var out StoredPasswordReset
+	err := s.pool.QueryRow(ctx,
+		`SELECT r.customer_id, r.created_at, r.expires_at
+		 FROM customer_password_resets r
+		 JOIN customer_credentials c ON c.customer_id = r.customer_id
+		 WHERE ($1 <> '' AND r.customer_id = $1) OR ($2 <> '' AND c.email = $2)`,
+		customerID, email).Scan(&out.CustomerID, &out.CreatedAt, &out.ExpiresAt)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("identity-session: the password reset could not be read: %w", err)
+	}
+
+	return &out, nil
+}

@@ -37,7 +37,7 @@ func TestTheDeclarationNamesEveryColumnOfTheTable(t *testing.T) {
 		sort.Strings(declared[table])
 	}
 
-	// BOTH tables. The registration table was missing here until the personal-data
+	// EVERY table. The registration table was missing here until the personal-data
 	// audit failed on it, and the assertion is keyed by table for that reason: an
 	// assertion that named one table would go on passing when a second arrived.
 	assert.Equal(t, map[string][]string{
@@ -46,6 +46,9 @@ func TestTheDeclarationNamesEveryColumnOfTheTable(t *testing.T) {
 		},
 		"customer_registrations": {
 			"created_at", "email", "expires_at", "password_hash", "token_hash",
+		},
+		"customer_password_resets": {
+			"created_at", "customer_id", "expires_at", "token_hash",
 		},
 	}, declared, "every column of every table, because every one of them is about somebody")
 }

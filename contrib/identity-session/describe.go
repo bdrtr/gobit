@@ -106,6 +106,9 @@ func (m *Module) Describe(d *openapi.Doc) {
 	if m.selfRegistrationMounted() {
 		m.describeSelfRegistration(d)
 	}
+	if m.passwordResetMounted() {
+		m.describePasswordReset(d)
+	}
 
 	d.Describe(http.MethodPut, "/admin/v1/customer-credentials", openapi.Operation{
 		Summary:     "Writes or replaces a customer's credential.",
@@ -205,6 +208,65 @@ func (m *Module) describeSelfRegistration(d *openapi.Doc) {
 			"500": openapi.ErrorResponse(
 				"The registration could not be read, the account could not be opened or " +
 					"the credential could not be written. Code " +
+					"\"identity_session_unavailable\"; the token is spent either way."),
+		},
+	})
+}
+
+// describePasswordReset writes the two storefront password reset endpoints
+// (ADR 0373).
+func (m *Module) describePasswordReset(d *openapi.Doc) {
+	d.Describe(http.MethodPost, "/store/v1/auth/password-reset", openapi.Operation{
+		Summary:     "Sends a password reset link to the address of an account.",
+		RequestBody: d.RequestBody(passwordResetRequest{}),
+		Description: "Takes email. It answers 202 whether that address signs in here or " +
+			"not, because anything else would answer, for any address a caller cares to " +
+			"try, whether that person shops here. An address with a password gets a link; " +
+			"one without gets nothing, so the endpoint cannot be used to mail strangers " +
+			"from this shop.\n\n" +
+			"Asking again REPLACES the pending reset, so the newest link is the one that " +
+			"works. A link lasts an hour by default.\n\n" +
+			"It shares the registration's rate limit per client, because one request makes " +
+			"this shop send mail. It is mounted only when the installation has bound " +
+			"somebody to carry the link and a store that keeps pending resets.",
+		Tags: []string{docTag},
+		Responses: map[string]any{
+			"202": openapi.Response("The request was accepted; watch the address", nil),
+			"422": openapi.ErrorResponse(
+				"The address is missing or cannot be an address, or the body could not be " +
+					"parsed. Code \"identity_session_password_reset_invalid\"."),
+			"429": openapi.ErrorResponse(
+				"Too many requests from this client. No code: the rate limit is gobit's " +
+					"own middleware and answers before this module is reached."),
+			"500": openapi.ErrorResponse(
+				"The reset could not be recorded, or the message could not be sent. Code " +
+					"\"identity_session_unavailable\"; the same request can be made again."),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/store/v1/auth/password-reset/confirm", openapi.Operation{
+		Summary:     "Sets a new password from a reset link and signs the person in.",
+		RequestBody: d.RequestBody(passwordResetConfirmation{}),
+		Description: "Takes the token from the message and the new password. The password " +
+			"is checked first, so one the hash refuses does not spend the link; then the " +
+			"token is consumed, in one statement, and the credential is replaced. The " +
+			"person is signed in: following the link is the proof a reset rests on.\n\n" +
+			"One answer for a token that never existed, one already used and one expired.\n\n" +
+			"It does not sign anybody else out. A session is a signed cookie with no " +
+			"record behind it, so one issued before the reset works until it expires.",
+		Tags: []string{docTag},
+		Responses: map[string]any{
+			"204": openapi.Response("The password is replaced and the session cookie is set", nil),
+			"422": openapi.ErrorResponse(
+				"The password is empty, or the token is not a usable pending reset: " +
+					"unknown, already used or expired. Codes " +
+					"\"identity_session_password_reset_invalid\" and " +
+					"\"identity_session_password_reset_not_usable\"."),
+			"429": openapi.ErrorResponse(
+				"Too many attempts from this client. No code: the rate limit is gobit's " +
+					"own middleware and answers before this module is reached."),
+			"500": openapi.ErrorResponse(
+				"The reset could not be read or the password could not be written. Code " +
 					"\"identity_session_unavailable\"; the token is spent either way."),
 		},
 	})

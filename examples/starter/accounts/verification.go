@@ -16,7 +16,7 @@ import (
 // rather than in a comment somebody has to find.
 //
 // What replaces it is a dozen lines against whatever the shop already sends mail
-// with. The interface is two methods and neither returns anything but an error.
+// with. Each method returns nothing but an error.
 type LogOnlyVerification struct {
 	log *slog.Logger
 }
@@ -51,6 +51,18 @@ func (v LogOnlyVerification) SendAlreadyRegistered(ctx context.Context, email st
 		"DEVELOPMENT ONLY: an already-registered message was written to the log instead "+
 			"of being sent",
 		"email", email)
+
+	return nil
+}
+
+// SendPasswordReset logs a reset link, loudly (ADR 0373). Whoever reads the log
+// can replace the account's password with it, which is the strongest reason
+// yet that this type must not ship.
+func (v LogOnlyVerification) SendPasswordReset(ctx context.Context, email, token string) error {
+	v.log.WarnContext(ctx,
+		"DEVELOPMENT ONLY: a password reset link was written to the log instead of being sent; "+
+			"replace accounts.LogOnlyVerification before this reaches anybody",
+		"email", email, "reset_token", token)
 
 	return nil
 }

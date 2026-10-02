@@ -67,7 +67,9 @@ past and is not corrected retroactively.
   module of its own: a signed cookie, argon2id passwords, its own table, storefront
   sign-in and sign-out, an operator endpoint, and since
   [ADR 0133](adr/0133-a-shopper-opens-their-own-account.md) self-registration behind
-  a proven address. `contrib/identity-passkey` adds both WebAuthn ceremonies and,
+  a proven address, and since
+  [ADR 0373](adr/0373-a-shopper-resets-a-forgotten-password.md) a password reset
+  behind the same proof. `contrib/identity-passkey` adds both WebAuthn ceremonies and,
   since [ADR 0130](adr/0130-a-person-can-see-their-passkeys-and-remove-one.md),
   listing a person's keys and removing one. Neither is in gobit's own dependency
   graph — a separate `go.mod`, decided on a measurement: go-webauthn brings nine
@@ -82,7 +84,9 @@ past and is not corrected retroactively.
       [ADR 0267](adr/0267-a-session-can-be-closed-alone.md). Rotating the
       signing key does NOT log anybody out (`RetiredSecrets`, ADR 0129) — which is
       the point, and therefore not a revocation either. A key that LEAKED is dropped
-      outright, which logs everybody out and is the correct price.
+      outright, which logs everybody out and is the correct price. A password
+      reset signs nobody out for the same reason: a session issued before it
+      works until it expires.
     - **A stolen cookie IS the account.** With the passkey module bound it can
       register its own key and remove the owner's. The rule those endpoints enforce
       is "an account keeps a way in", not "only the owner changes credentials", and

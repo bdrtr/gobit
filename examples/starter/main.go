@@ -71,11 +71,16 @@ func main() {
 		// LogOnlyVerification and warns on every send, because a real shop sends
 		// mail with its own client — and a deployment that keeps this one is putting
 		// sign-up links into its log files.
+		//
+		// The same stand-in carries a password reset link (ADR 0373), which
+		// mounts the storefront's "forgot my password" pair; a real shop binds
+		// its mailer here as well.
 		Add(identitysession.New(identitysession.Options{
 			Secret:         []byte(os.Getenv("SESSION_SECRET")),
 			RetiredSecrets: retiredSecrets(os.Getenv("SESSION_SECRET_RETIRED")),
 			Accounts:       shopAccounts,
 			Verification:   accounts.NewLogOnlyVerification(nil),
+			PasswordReset:  accounts.NewLogOnlyVerification(nil),
 		}))
 
 	if err := shop.Main(os.Args[1:], os.Stdout); err != nil {

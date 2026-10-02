@@ -50,6 +50,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A shopper resets a forgotten password** (ADR 0373). **For integrators:**
+  `contrib/identity-session` mounts `POST /store/v1/auth/password-reset` and
+  `.../confirm` when `Options.PasswordReset` is bound; the request answers 202
+  for any address and mails a single-use link to an account's, and the
+  confirmation replaces the password and signs the person in. **Migration:**
+  identity-session's 000003 adds `customer_password_resets`.
+
 - **A buyer's review says they bought it** (ADR 0372). **For integrators:**
   a storefront review whose request proves a customer who bought the product
   answers `verified_purchase: true`, in the listing and in the admin reads; the

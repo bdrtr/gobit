@@ -86,8 +86,9 @@ type StoredRegistration struct {
 
 // The table and columns this module declares.
 const (
-	tableCustomerCredentials   = "customer_credentials"
-	tableCustomerRegistrations = "customer_registrations"
+	tableCustomerCredentials    = "customer_credentials"
+	tableCustomerRegistrations  = "customer_registrations"
+	tableCustomerPasswordResets = "customer_password_resets"
 
 	columnCustomerID   = "customer_id"
 	columnEmail        = "email"
@@ -189,6 +190,36 @@ func (m *Module) PersonalData() personaldata.Declaration {
 					"a controller reading this list sees the whole row rather than part of it",
 				OnErasure: personaldata.Emptied,
 			},
+			// A pending password reset (ADR 0373) goes with the credential it
+			// would replace: its foreign key cascades, so the erasure above takes it
+			// without a statement of its own that could be forgotten.
+			{
+				Table: tableCustomerPasswordResets, Column: columnCustomerID,
+				Kind: personaldata.Named,
+				Why: "the customer a password reset link was sent for, while that link is " +
+					"unused; it goes with their credential",
+				OnErasure: personaldata.Emptied,
+			},
+			{
+				Table: tableCustomerPasswordResets, Column: columnTokenHash,
+				Kind: personaldata.Named,
+				Why: "the SHA-256 of the reset link that was sent; it identifies the reset " +
+					"rather than the person",
+				OnErasure: personaldata.Emptied,
+			},
+			{
+				Table: tableCustomerPasswordResets, Column: columnCreatedAt,
+				Kind: personaldata.Named,
+				Why: "when the person asked for a new password, which is a record of " +
+					"something they did at a moment",
+				OnErasure: personaldata.Emptied,
+			},
+			{
+				Table: tableCustomerPasswordResets, Column: columnExpiresAt,
+				Kind:      personaldata.Named,
+				Why:       "when the reset link stops working; declared beside the moment above",
+				OnErasure: personaldata.Emptied,
+			},
 		},
 	}
 }
@@ -238,6 +269,9 @@ func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldat
 		return personaldata.Result{}, err
 	}
 
+	// A pending password reset needs no statement here: its row points at the
+	// credential just deleted and the foreign key took it (ADR 0373).
+
 	m.log.InfoContext(ctx, "identity-session erased a person's credentials",
 		"rows", rows+pending, "pending_registrations", pending,
 		"by_customer_id", customerID != "", "by_email", email != "")
@@ -284,7 +318,13 @@ func (m *Module) PersonalDataOf(
 	if err != nil {
 		return personaldata.Disclosure{}, err
 	}
-	if len(found) == 0 && pending == nil {
+	var reset *StoredPasswordReset
+	if resets, ok := records.(PasswordResetRecords); ok {
+		if reset, err = resets.PendingPasswordResetOf(ctx, customerID, email); err != nil {
+			return personaldata.Disclosure{}, err
+		}
+	}
+	if len(found) == 0 && pending == nil && reset == nil {
 		return personaldata.Disclosure{
 			Holder: ErasureHolder, State: personaldata.Nothing,
 		}, nil
@@ -328,6 +368,26 @@ func (m *Module) PersonalDataOf(
 					Value: "a sign-up link was sent to this address; the stored value is its " +
 						"SHA-256 and is deliberately not reproduced here, because the link " +
 						"itself would open the account",
+				},
+			},
+		})
+	}
+
+	// A pending password reset is its own record too, its token reported as the
+	// sign-up link's is: by what it is, never by its value.
+	if reset != nil {
+		out = append(out, personaldata.Record{
+			Table: tableCustomerPasswordResets,
+			ID:    reset.CustomerID,
+			Fields: []personaldata.Field{
+				{Column: columnCustomerID, Kind: personaldata.Named, Value: reset.CustomerID},
+				{Column: columnCreatedAt, Kind: personaldata.Named, Value: reset.CreatedAt},
+				{Column: columnExpiresAt, Kind: personaldata.Named, Value: reset.ExpiresAt},
+				{
+					Column: columnTokenHash, Kind: personaldata.Named,
+					Value: "a password reset link was sent; the stored value is its SHA-256 and " +
+						"is deliberately not reproduced here, because the link itself would " +
+						"replace the password",
 				},
 			},
 		})
@@ -387,3 +447,26 @@ func (m *Module) personalRecords() (PersonalRecords, bool) {
 
 // The store's own implementation is pinned where the contract is declared.
 var _ PersonalRecords = pgCredentials{}
+
+// PasswordResetRecords is the OPTIONAL capability a store offers to show a
+// pending password reset in a dossier (ADR 0373). It is not a method of
+// [PersonalRecords], which is published, for [PasswordReset]'s reason.
+type PasswordResetRecords interface {
+	// PendingPasswordResetOf reads the unused reset of a customer or of the
+	// address their credential signs in with, or nil when there is none.
+	PendingPasswordResetOf(ctx context.Context, customerID, email string) (*StoredPasswordReset, error)
+}
+
+// StoredPasswordReset is a pending reset as a dossier reports it: never its
+// token or the token's hash.
+type StoredPasswordReset struct {
+	// CustomerID is the customer the link was sent for.
+	CustomerID string
+	// CreatedAt is when the reset was asked for.
+	CreatedAt time.Time
+	// ExpiresAt is when the link stops working.
+	ExpiresAt time.Time
+}
+
+// The store shows pending resets in a dossier.
+var _ PasswordResetRecords = pgCredentials{}

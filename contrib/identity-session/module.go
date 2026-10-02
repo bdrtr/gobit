@@ -109,7 +109,16 @@ type Options struct {
 	//
 	// Zero means [DefaultRegistrationTTL].
 	RegistrationTTL time.Duration
-	// Limiter bounds how often the registration endpoints may be called.
+	// PasswordReset carries a reset link to the address of an account, and
+	// binding it, with a store that holds pending resets, mounts the storefront's
+	// password reset (ADR 0373). Nil leaves those endpoints unmounted.
+	PasswordReset PasswordReset
+	// PasswordResetTTL is how long a reset link works for.
+	//
+	// Zero means [DefaultPasswordResetTTL].
+	PasswordResetTTL time.Duration
+	// Limiter bounds how often the registration and password reset endpoints
+	// may be called, one quota for both: each makes the shop send mail.
 	//
 	// A registration endpoint sends mail to an address a stranger typed, so an
 	// unlimited one is a shop that can be pointed at anybody. Nil therefore does
@@ -301,7 +310,17 @@ func (m *Module) Routes(r chi.Router) {
 	r.Get("/store/v1/auth/session", m.session)
 	r.Put("/admin/v1/customer-credentials", m.putCredential)
 
-	if !m.selfRegistrationMounted() {
+	// The limit wraps only the endpoints that send mail and the ones that spend
+	// what was sent. Signing in is already bounded by not knowing the password,
+	// and gobit's own guard stack limits the whole API; what is different here
+	// is that ONE request makes this shop send mail to an address a stranger
+	// chose. Registration and reset share the quota.
+	limited := r.With(corehttp.RateLimit(m.registrationLimiter(), m.limitKey))
+
+	if m.selfRegistrationMounted() {
+		limited.Post("/store/v1/auth/register", m.register)
+		limited.Post("/store/v1/auth/register/verify", m.verifyRegistration)
+	} else {
 		// Said once, at INFO rather than WARN: an installation that binds no
 		// Accounts has not misconfigured anything, it has chosen to open accounts
 		// its own way. What would be a fault is mounting an endpoint that takes a
@@ -310,17 +329,15 @@ func (m *Module) Routes(r chi.Router) {
 			"accounts_bound", !isNil(m.opts.Accounts),
 			"verification_bound", !isNil(m.opts.Verification),
 			"store_holds_registrations", m.storeHoldsRegistrations())
-
-		return
 	}
 
-	// The limit wraps only these two. Signing in is already bounded by not
-	// knowing the password, and gobit's own guard stack limits the whole API;
-	// what is different here is that ONE request makes this shop send mail to an
-	// address a stranger chose.
-	limited := r.With(corehttp.RateLimit(m.registrationLimiter(), m.limitKey))
-	limited.Post("/store/v1/auth/register", m.register)
-	limited.Post("/store/v1/auth/register/verify", m.verifyRegistration)
+	if m.passwordResetMounted() {
+		limited.Post("/store/v1/auth/password-reset", m.requestPasswordReset)
+		limited.Post("/store/v1/auth/password-reset/confirm", m.confirmPasswordReset)
+	} else {
+		m.log.Info("identity-session: password reset is not mounted",
+			"password_reset_bound", !isNil(m.opts.PasswordReset))
+	}
 }
 
 // storeHoldsRegistrations says whether the bound store can keep a pending row.
