@@ -740,6 +740,10 @@ func (a recordingAfterSales) OpenParcel(context.Context, string, string, string)
 	return "ful_walk", false, a.surfaces.reach(ServiceOrderAdmin)
 }
 
+func (a recordingAfterSales) CancelOrder(context.Context, string, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
 func (a recordingAfterSales) InvoiceOfOrder(context.Context, string) (id, number, status string, found bool, err error) {
 	return "", "", "", false, a.surfaces.reach(ServiceOrderAdmin)
 }
@@ -989,6 +993,8 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, OrderParcelActPath): {},
 	// Writing the store profile (ADR 0336).
 	routeKey(http.MethodPost, StoreProfilePath): {formProfileName: {"Walk"}, formProfileCountry: {"TR"}},
+	// Canceling an order (ADR 0339).
+	routeKey(http.MethodPost, OrderCancelPath): {formCancelReason: {"walk"}},
 	// Issuing an order's invoice (ADR 0335).
 	routeKey(http.MethodPost, OrderInvoicePath): {formInvoiceNewSeries: {"GBT"}},
 	// Writing a shipping option (ADR 0334) and revising one (ADR 0333).

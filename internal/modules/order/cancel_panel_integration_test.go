@@ -1,0 +1,68 @@
+//go:build integration
+
+package order_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/core/eventbus"
+	"github.com/bdrtr/gobit/core/link"
+	"github.com/bdrtr/gobit/core/query"
+	"github.com/bdrtr/gobit/internal/modules/order"
+	"github.com/bdrtr/gobit/internal/modules/order/models"
+	"github.com/bdrtr/gobit/internal/modules/order/service"
+)
+
+// TestThePanelCancelsAPlacedOrder is ADR 0339 on the real schema: the
+// surface cancels a pending order through the service the API's cancel
+// calls, and a second cancel writes nothing; a completed order is refused.
+func TestThePanelCancelsAPlacedOrder(t *testing.T) {
+	ctx := context.Background()
+
+	c := container.New(nil)
+	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
+	bus := eventbus.NewInMemory(nil)
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = bus.Shutdown(shutdownCtx)
+	})
+	require.NoError(t, c.Provide("core.db", testPool))
+	require.NoError(t, c.Provide("core.eventbus", bus))
+	require.NoError(t, c.Provide("core.query", query.New(link.New(testPool, nil), c, nil)))
+	require.NoError(t, order.New().Register(ctx, c))
+	svc, err := container.Resolve[*service.Service](c, order.ServiceName)
+	require.NoError(t, err)
+	surface, err := container.Resolve[*order.AfterSalesSurface](c, order.AdminName)
+	require.NoError(t, err)
+
+	pending, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+	require.NoError(t, surface.CancelOrder(ctx, pending.ID, "never paid"))
+	detail, err := svc.GetOrder(ctx, pending.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.OrderCanceled, detail.Status)
+	assert.Equal(t, "never paid", detail.CancelReason, "the reason is kept with the order")
+	require.NoError(t, surface.CancelOrder(ctx, pending.ID, "again"), "a second cancel writes nothing")
+	detail, err = svc.GetOrder(ctx, pending.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "never paid", detail.CancelReason, "and keeps the first reason")
+
+	completed, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+	_, err = svc.CompleteOrder(ctx, completed.ID)
+	require.NoError(t, err)
+	err = surface.CancelOrder(ctx, completed.ID, "too late")
+	require.Error(t, err)
+	assert.True(t, errors.IsConflict(err), "a completed order is not canceled: %v", err)
+	detail, err = svc.GetOrder(ctx, completed.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.OrderCompleted, detail.Status)
+}

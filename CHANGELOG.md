@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The order page cancels an unpaid order** (ADR 0339). **For operators:**
+  a pending order's page cancels it under `order:write`, with a reason, and
+  its units' stock comes back; an order with money collected is refused.
+  **For integrators:** `order.admin` cancels an order as the API's cancel
+  does.
+
 - **The panel changes how much a discount gives** (ADR 0338). **For
   operators:** a promotion's page changes its discount's value under
   `promotion:write`, a percentage typed as a percent and a fixed amount in

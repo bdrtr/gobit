@@ -369,3 +369,15 @@ func (s *AfterSalesSurface) IssueInvoice(
 
 	return s.invoicing.IssueForOrder(ctx, orderID, request)
 }
+
+// CancelOrder cancels an order the checkout placed and writes off every unit
+// not yet returned or written off, so their stock comes back (ADR 0285), as
+// the API's cancel does (ADR 0339). A completed order and one with money
+// collected are refused, and a second call writes nothing.
+func (s *AfterSalesSurface) CancelOrder(ctx context.Context, orderID, reason string) error {
+	if s == nil || s.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the order service is not set up")
+	}
+
+	return s.svc.CancelPlacedOrder(ctx, orderID, reason)
+}

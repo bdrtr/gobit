@@ -175,7 +175,9 @@ func builtInScopes() map[string]string {
 		routeKey(post, OrderParcelsPath): scopeOrderWrite,
 		// An order's invoice is issued by the order module, through the
 		// invoicing flow, under its write (ADR 0335).
-		routeKey(post, OrderInvoicePath):   scopeOrderWrite,
+		routeKey(post, OrderInvoicePath): scopeOrderWrite,
+		// And cancels the order (ADR 0339).
+		routeKey(post, OrderCancelPath):    scopeOrderWrite,
 		routeKey(post, OrderParcelActPath): scopeFulfillmentWrite,
 		// The store profile is the settings module's (ADR 0336).
 		routeKey(get, StoreProfilePath):  scopeSettingsRead,

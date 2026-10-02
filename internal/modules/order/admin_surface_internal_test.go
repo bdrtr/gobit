@@ -128,3 +128,12 @@ func TestThePanelInvoicesAnOrderThroughTheFlowTheAPICalls(t *testing.T) {
 	_, _, _, err = (&AfterSalesSurface{}).IssueInvoice(ctx, "order_1", "GBT", nil)
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
 }
+
+// TestASurfaceWithoutTheServiceCancelsNothing is ADR 0339's guard: a surface
+// that was never built is unavailable rather than a nil dereference.
+func TestASurfaceWithoutTheServiceCancelsNothing(t *testing.T) {
+	t.Parallel()
+
+	err := (&AfterSalesSurface{}).CancelOrder(context.Background(), "order_1", "")
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
+}

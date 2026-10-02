@@ -183,7 +183,9 @@
 // chooses when the order was sold several (ADR 0332), and moves one
 // ([UI.moveParcel]) —
 // shipped, delivered, back undelivered, canceled — through the fulfillment
-// module's surface (ADR 0324). It names the order's invoice and issues one
+// module's surface (ADR 0324). A pending order's page cancels it
+// ([UI.cancelOrder], ADR 0339), its units written off so their stock comes
+// back. It names the order's invoice and issues one
 // ([UI.issueInvoice]) through the order module's surface and the invoicing
 // flow, on a series the invoice module's surface lists (ADR 0335). A claim on
 // it lists its evidence and takes a
