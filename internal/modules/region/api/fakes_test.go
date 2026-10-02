@@ -121,6 +121,20 @@ func (m *memRepo) UpdateRegion(
 	return next, nil
 }
 
+func (m *memRepo) ReviseRegion(
+	_ context.Context, id string, read, next models.RegionTerms, now time.Time,
+) (models.Region, bool, error) {
+	// As in the UPDATE, a region gone or revised since matches no row.
+	current, ok := m.regions[id]
+	if !ok || current.DeletedAt != nil || current.Terms() != read {
+		return models.Region{}, false, nil
+	}
+	current.Name, current.AutomaticTaxes, current.TaxRate, current.UpdatedAt =
+		next.Name, next.AutomaticTaxes, next.TaxRate, now
+	m.regions[id] = current
+	return current, true, nil
+}
+
 func (m *memRepo) DeleteRegion(ctx context.Context, id string, now time.Time) error {
 	current, err := m.GetRegion(ctx, id)
 	if err != nil {

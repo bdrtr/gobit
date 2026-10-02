@@ -97,6 +97,9 @@ type Repository interface {
 	ListRegions(ctx context.Context, limit, offset int32) ([]models.Region, int64, error)
 	GetRegionsByIDs(ctx context.Context, ids []string) ([]models.Region, error)
 	UpdateRegion(ctx context.Context, id string, patch models.RegionPatch, now time.Time) (models.Region, error)
+	// ReviseRegion writes the region's terms only while they are the ones
+	// read, and reports whether it wrote (ADR 0362).
+	ReviseRegion(ctx context.Context, id string, read, next models.RegionTerms, now time.Time) (models.Region, bool, error)
 	DeleteRegion(ctx context.Context, id string, now time.Time) error
 	GetRegionByCountry(ctx context.Context, countryCode string) (models.Region, error)
 

@@ -5,7 +5,7 @@ region entity under `region:read`, each with its currency, its tax rate as
 a percent, whether taxes are computed for it and the countries it covers;
 nothing is written there.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0362](0362-the-panel-corrects-a-region.md)
 - **Date:** 2026-10-02
 
 ## Context

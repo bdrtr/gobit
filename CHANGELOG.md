@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel corrects a region** (ADR 0362). **For operators:** each row
+  of the Regions screen corrects its region's name, whether taxes are
+  computed for it and its tax rate under `region:write`. **For
+  integrators:** `region.admin` corrects a region from the terms read,
+  refused with `region_revised` when they changed since.
+
 - **The order list narrows to a status** (ADR 0361). **For operators:**
   the order list shows the pending, completed, archived or canceled orders
   alone, beside its other boxes.

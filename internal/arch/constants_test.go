@@ -51,6 +51,7 @@ import (
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	"github.com/bdrtr/gobit/internal/modules/promotion"
+	regionmodule "github.com/bdrtr/gobit/internal/modules/region"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 	"github.com/bdrtr/gobit/internal/modules/settings"
 	taxsvc "github.com/bdrtr/gobit/internal/modules/tax/service"
@@ -1052,6 +1053,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the option entity the panel reads must be the one the fulfillment module opens (ADR 0333)")
 	assert.Equal(t, settings.AdminName, adminui.ServiceSettingsAdmin,
 		"the panel's settings surface name must match the settings module (ADR 0336)")
+	assert.Equal(t, regionmodule.AdminName, adminui.ServiceRegionAdmin,
+		"the panel's region surface name must match the region module (ADR 0362)")
 	assert.Equal(t, invoice.AdminName, adminui.ServiceInvoiceAdmin,
 		"the panel's invoice surface name must match the invoice module (ADR 0335)")
 	assert.Equal(t, file.AdminName, adminui.ServiceFileAdmin,

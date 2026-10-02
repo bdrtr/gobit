@@ -4,16 +4,22 @@ regions.gohtml is the region module's regions (ADR 0354).
 A region is where the shop sells in one currency: its prices, its shipping
 options and its taxes are the region's. The screen shows each one's
 currency, its tax rate, whether taxes are computed for it, and the countries
-it covers. Nothing is written here; the admin API writes the regions.
+it covers. An operator who may write the regions corrects each one's name,
+whether taxes are computed and its rate from the ones its row was drawn
+with (ADR 0362); its currency and its countries are the admin API's to
+change.
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ with .Written }}<p role="status">Region {{ . }} was written.</p>{{ end }}
 
 {{ if .Regions }}
 <div class="scroll">
 <table>
   <thead>
-    <tr><th>Region</th><th>Currency</th><th>Tax rate</th><th>Taxes computed</th><th>Countries</th></tr>
+    <tr><th>Region</th><th>Currency</th><th>Tax rate</th><th>Taxes computed</th><th>Countries</th>{{ if .CanRevise }}<th></th>{{ end }}</tr>
   </thead>
   <tbody>
   {{ range .Regions }}
@@ -23,6 +29,22 @@ it covers. Nothing is written here; the admin API writes the regions.
       <td>{{ .TaxRate }}%</td>
       <td>{{ if .AutomaticTaxes }}yes{{ else }}no{{ end }}</td>
       <td>{{ range $i, $country := .Countries }}{{ if $i }}, {{ end }}{{ $country }}{{ else }}<span class="muted">none</span>{{ end }}</td>
+      {{ if $.CanRevise }}<td>
+        {{/* The name, the taxes and the rate corrected from the ones the row
+        was drawn with (ADR 0362); the currency is not among them. */}}
+        <details{{ if .Refused }} open{{ end }}>
+          <summary>Correct</summary>
+          <form method="post" action="{{ $.Path }}/{{ .ID }}?page={{ $.Page }}">
+            <input type="hidden" name="read_name" value="{{ .Name }}">
+            <input type="hidden" name="read_automatic_taxes" value="{{ .AutomaticTaxes }}">
+            <input type="hidden" name="read_tax_rate" value="{{ .RateBps }}">
+            <input name="name" value="{{ .Form.Name }}" aria-label="name" required>
+            <input name="tax_rate" value="{{ .Form.TaxRate }}" aria-label="tax rate, percent" inputmode="decimal" required>%
+            <label><input type="checkbox" name="automatic_taxes" value="1"{{ if .Form.AutomaticTaxes }} checked{{ end }}> taxes computed</label>
+            <button type="submit">Write</button>
+          </form>
+        </details>
+      </td>{{ end }}
     </tr>
   {{ end }}
   </tbody>

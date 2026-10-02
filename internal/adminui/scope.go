@@ -222,6 +222,8 @@ func builtInScopes() map[string]string {
 		routeKey(post, SalesChannelsPath): scopeAdmin,
 		// The regions are the region module's (ADR 0354).
 		routeKey(get, RegionsPath): scopeRegionRead,
+		// And correcting one is too (ADR 0362).
+		routeKey(post, RegionPath): scopeRegionWrite,
 		// The tax regions are the tax module's (ADR 0355).
 		routeKey(get, TaxesPath): scopeTaxRead,
 		// The parcels are the fulfillment module's (ADR 0356).

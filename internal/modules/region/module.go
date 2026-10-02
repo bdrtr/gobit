@@ -87,6 +87,8 @@ const (
 	ServiceName = ModuleName + ".service"
 	// ProviderName is the query provider's name in the container (ADR 0004).
 	ProviderName = service.Entity + query.ProviderSuffix
+	// AdminName is the panel surface's name in the container (ADR 0362).
+	AdminName = ModuleName + ".admin"
 	// dbServiceName is the core database pool's name in the container.
 	dbServiceName = "core.db"
 )
@@ -155,6 +157,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(ProviderName, service.NewQueryProvider(m.svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(AdminName, service.NewAdminSurface(m.svc)); err != nil {
 		return err
 	}
 

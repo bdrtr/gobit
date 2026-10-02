@@ -256,6 +256,59 @@ func (q *Queries) ListRegions(ctx context.Context, arg ListRegionsParams) ([]Reg
 	return items, nil
 }
 
+const reviseRegion = `-- name: ReviseRegion :one
+UPDATE region
+SET name            = $1::text,
+    automatic_taxes = $2::boolean,
+    tax_rate        = $3::integer,
+    updated_at      = $4
+WHERE id = $5
+  AND deleted_at IS NULL
+  AND name = $6::text
+  AND automatic_taxes = $7::boolean
+  AND tax_rate = $8::integer
+RETURNING id, name, currency_code, automatic_taxes, tax_rate, created_at, updated_at, deleted_at
+`
+
+type ReviseRegionParams struct {
+	Name               string
+	AutomaticTaxes     bool
+	TaxRate            int32
+	UpdatedAt          pgtype.Timestamptz
+	ID                 string
+	ReadName           string
+	ReadAutomaticTaxes bool
+	ReadTaxRate        int32
+}
+
+// ReviseRegion writes the region's name, automatic taxes and tax rate only
+// while they are the ones the caller read (ADR 0362): no row means the region
+// is gone or was revised since.
+func (q *Queries) ReviseRegion(ctx context.Context, arg ReviseRegionParams) (Region, error) {
+	row := q.db.QueryRow(ctx, reviseRegion,
+		arg.Name,
+		arg.AutomaticTaxes,
+		arg.TaxRate,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.ReadName,
+		arg.ReadAutomaticTaxes,
+		arg.ReadTaxRate,
+	)
+	var i Region
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.CurrencyCode,
+		&i.AutomaticTaxes,
+		&i.TaxRate,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const softDeleteRegion = `-- name: SoftDeleteRegion :one
 UPDATE region
 SET deleted_at = $2, updated_at = $2

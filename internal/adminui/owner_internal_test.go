@@ -874,6 +874,13 @@ func (a recordingAccounts) MakeAPIKey(
 	return "apikey_walk", "sk_walk", a.surfaces.reach(ServiceAuthAdmin)
 }
 
+// recordingRegions records the region module's surface (ADR 0362).
+type recordingRegions struct{ surfaces *recordingSurfaces }
+
+func (g recordingRegions) ReviseRegion(context.Context, string, json.RawMessage, json.RawMessage) error {
+	return g.surfaces.reach(ServiceRegionAdmin)
+}
+
 // recordingInvoices records the invoice module's surface (ADR 0335).
 type recordingInvoices struct{ surfaces *recordingSurfaces }
 
@@ -1125,6 +1132,10 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, APIKeyRevokePath):    {paramKeyStatus: {"open"}},
 	routeKey(http.MethodPost, APIKeysPath):         {formKeyTitle: {"Walk"}, formKeyType: {"secret"}},
 	routeKey(http.MethodPost, SalesChannelsPath):   {formChannelName: {"Walk"}},
+	routeKey(http.MethodPost, RegionPath): {
+		formRegionReadName: {"Walk"}, formRegionReadAutomatic: {"true"}, formRegionReadRate: {"2000"},
+		formRegionName: {"Walk"}, formRegionTaxRate: {"20"},
+	},
 	routeKey(http.MethodPost, SalesChannelPath): {
 		formChannelReadName: {"Walk"}, formChannelReadDisabled: {"false"}, formChannelName: {"Walk"},
 	},
@@ -1200,6 +1211,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServiceInvoiceAdmin, InvoiceSeriesLister(recordingInvoices{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceAuthAdmin, UserLister(recordingAccounts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceSettingsAdmin, StoreProfileAdmin(recordingSettings{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceRegionAdmin, RegionReviser(recordingRegions{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePromotionAdmin, PromotionLister(recordingPromotions{walk.surfaces})))

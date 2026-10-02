@@ -197,6 +197,29 @@ func (m *memRepo) GetRegionsByIDs(_ context.Context, ids []string) ([]models.Reg
 	return out, nil
 }
 
+// ReviseRegion mirrors the query: the terms are written only on a live region
+// whose terms are the ones read.
+func (m *memRepo) ReviseRegion(
+	_ context.Context, id string, read, next models.RegionTerms, now time.Time,
+) (models.Region, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ReviseRegion"); err != nil {
+		return models.Region{}, false, err
+	}
+
+	// As in the UPDATE, a region gone or revised since matches no row.
+	current, ok := m.regions[id]
+	if !ok || current.DeletedAt != nil || current.Terms() != read {
+		return models.Region{}, false, nil
+	}
+	current.Name, current.AutomaticTaxes, current.TaxRate, current.UpdatedAt =
+		next.Name, next.AutomaticTaxes, next.TaxRate, now
+	m.regions[id] = current
+
+	return current, true, nil
+}
+
 func (m *memRepo) UpdateRegion(
 	_ context.Context,
 	id string,

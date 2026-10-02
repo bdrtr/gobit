@@ -221,7 +221,10 @@ type UI struct {
 	// settings reads and writes the shop's identity (ADR 0336); nil when the
 	// installation registers no settings surface.
 	settings StoreProfileAdmin
-	scopes   map[string]string
+	// regions corrects a region (ADR 0362); nil when the installation
+	// registers no region surface.
+	regions RegionReviser
+	scopes  map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -343,6 +346,11 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And a region's correction (ADR 0362).
+	regions, err := optionalService[RegionReviser](c, ServiceRegionAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -379,6 +387,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		files:         files,
 		invoices:      invoices,
 		settings:      settings,
+		regions:       regions,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

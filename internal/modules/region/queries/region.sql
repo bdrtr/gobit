@@ -63,6 +63,22 @@ SET name = $2, currency_code = $3, automatic_taxes = $4, tax_rate = $5, updated_
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
+-- ReviseRegion writes the region's name, automatic taxes and tax rate only
+-- while they are the ones the caller read (ADR 0362): no row means the region
+-- is gone or was revised since.
+-- name: ReviseRegion :one
+UPDATE region
+SET name            = sqlc.arg('name')::text,
+    automatic_taxes = sqlc.arg('automatic_taxes')::boolean,
+    tax_rate        = sqlc.arg('tax_rate')::integer,
+    updated_at      = sqlc.arg('updated_at')
+WHERE id = sqlc.arg('id')
+  AND deleted_at IS NULL
+  AND name = sqlc.arg('read_name')::text
+  AND automatic_taxes = sqlc.arg('read_automatic_taxes')::boolean
+  AND tax_rate = sqlc.arg('read_tax_rate')::integer
+RETURNING *;
+
 -- name: SoftDeleteRegion :one
 UPDATE region
 SET deleted_at = $2, updated_at = $2
