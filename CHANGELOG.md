@@ -39,6 +39,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel lists and revises the shipping options** (ADR 0333). **For
+  operators:** a Shipping options screen lists the options with their
+  provider, profile, region and fee under `fulfillment:read`, and each row
+  renames its option, sets a flat option's fee and keeps it off the
+  storefront under `fulfillment:write`; an option another operator revised
+  meanwhile is refused. **For integrators:** `fulfillment.admin` revises an
+  option from the terms read, refusing `fulfillment_shipping_option_revised`.
+
 - **The panel opens a parcel on the delivery chosen** (ADR 0332, D207). **For
   operators:** an order sold several deliveries asks on its page which one a
   parcel goes on; before, the panel could open no parcel on such an order.

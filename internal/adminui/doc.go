@@ -76,6 +76,7 @@
 // The menu holds the catalog, the price lists, the orders, the
 // telephone order, the sales report, the promotions, the campaigns, the
 // customers, the customer groups, the notifications, the inventory, the
+// shipping options, the
 // reviews, and the person's own second factor and sessions, in that order;
 // the last two are open to everybody who can sign in (ADR 0266,
 // ADR 0268). The list lives in one
@@ -159,6 +160,12 @@
 // module's panel surface (ADR 0317). The order's page lists what was sent for
 // it, for an operator who may read the log, and links to that screen on the
 // order (ADR 0318).
+//
+// The Shipping options screen ([UI.listShippingOptions]) lists the
+// fulfillment module's options with their provider, profile, region and fee
+// through the module's option entity, and each row renames its option, sets
+// a flat option's fee and says whether the storefront offers it, from what it
+// was drawn with ([UI.reviseShippingOption], ADR 0333).
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator

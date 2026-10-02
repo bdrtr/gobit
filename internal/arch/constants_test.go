@@ -30,6 +30,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/file"
 	"github.com/bdrtr/gobit/internal/modules/file/local"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment"
+	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 	"github.com/bdrtr/gobit/internal/modules/inventory"
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
 	"github.com/bdrtr/gobit/internal/modules/notification"
@@ -1035,6 +1036,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the panel's customer surface name must match the customer module (ADR 0322)")
 	assert.Equal(t, fulfillment.AdminName, adminui.ServiceFulfillmentAdmin,
 		"the panel's fulfillment surface name must match the fulfillment module (ADR 0324)")
+	assert.Equal(t, fulfillmentsvc.EntityName, adminui.EntityShippingOption,
+		"the option entity the panel reads must be the one the fulfillment module opens (ADR 0333)")
 	assert.Equal(t, file.AdminName, adminui.ServiceFileAdmin,
 		"the panel's file surface name must match the file module (ADR 0325)")
 	assert.Equal(t, product.AdminName, adminui.ServiceProductAdmin,

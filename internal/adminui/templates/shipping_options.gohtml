@@ -1,0 +1,71 @@
+{{- /*
+shipping_options.gohtml lists the fulfillment module's shipping options (ADR
+0333).
+
+An option is how a parcel is sent: its provider carries it, its profile says
+which goods it carries, and its region says where it is offered, every
+region when it names none. A flat option charges the fee it carries; a
+calculated one asks its provider for the fee. An option the storefront does
+not offer is for the panel and the telephone order alone. The rows come
+newest first, through the module's shipping_option entity.
+
+Each row's form renames its option, sets a flat option's fee and says whether
+the storefront offers it; it carries them as the row was drawn, and the
+module refuses when another operator revised the option first. The provider,
+the profile, the price type and the region are the option's identity and
+are not revised here.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ with .Created }}<p role="status">Shipping option {{ . }} was written.</p>{{ end }}
+
+{{ if .Options }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Option</th><th>Provider</th><th>Profile</th><th>Region</th><th class="num">Fee</th><th>Storefront</th>{{ if .CanRevise }}<th></th>{{ end }}</tr>
+  </thead>
+  <tbody>
+  {{ range $row := .Options }}
+    <tr>
+      <td>{{ .Name }} <span class="muted">{{ .ID }}</span>{{ if .IsReturn }} <span class="pill">return</span>{{ end }}</td>
+      <td>{{ .Provider }}</td>
+      <td><span class="muted">{{ .Profile }}</span></td>
+      <td>{{ with .Region }}{{ . }}{{ else }}<span class="muted">every region</span>{{ end }}</td>
+      <td class="num">{{ with .Fee }}{{ . }}{{ else }}<span class="muted">from the provider</span>{{ end }}</td>
+      <td>{{ if .AdminOnly }}<span class="muted">panel only</span>{{ else }}offered{{ end }}</td>
+      {{ if $.CanRevise }}
+      <td>
+        <details{{ if $row.Refused }} open{{ end }}>
+          <summary>Revise</summary>
+          <form method="post" action="{{ $.Path }}/{{ $row.ID }}?page={{ $.Page }}">
+            <input type="hidden" name="read_name" value="{{ $row.Name }}">
+            <input type="hidden" name="read_amount" value="{{ $row.Amount }}">
+            <input type="hidden" name="read_admin_only" value="{{ $row.AdminOnly }}">
+            <input type="hidden" name="price_type" value="{{ $row.PriceType }}">
+            <input type="hidden" name="currency_code" value="{{ $row.Currency }}">
+            <input name="name" value="{{ $row.FormName }}" aria-label="name" required>
+            {{ if eq $row.PriceType $.FlatPriceType }}<input name="amount" value="{{ $row.FormAmount }}" aria-label="fee" placeholder="{{ $row.Currency }}" inputmode="decimal" required>{{ end }}
+            <label><input type="checkbox" name="admin_only" value="1"{{ if $row.FormAdminOnly }} checked{{ end }}> panel only</label>
+            <button type="submit">Write</button>
+          </form>
+        </details>
+      </td>
+      {{ end }}
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No shipping option has been written.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

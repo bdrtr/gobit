@@ -1,6 +1,10 @@
 package service
 
-import "context"
+import (
+	"context"
+
+	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
+)
 
 // AdminSurface is the fulfillment module's panel surface (ADR 0324): the moves
 // an operator makes on a parcel once it is open. Only primitives cross it, as
@@ -36,4 +40,19 @@ func (a *AdminSurface) ReturnParcel(ctx context.Context, id string) error {
 // CancelParcel cancels a parcel that has not left.
 func (a *AdminSurface) CancelParcel(ctx context.Context, id string) error {
 	return a.svc.CancelFulfillment(ctx, id)
+}
+
+// ReviseShippingOption writes the option's name, fee and storefront
+// visibility from the ones the operator read, and refuses when another writer
+// changed any of them since (ADR 0333); the fee is in the currency's minor
+// units, and adminOnly keeps the option off the storefront.
+func (a *AdminSurface) ReviseShippingOption(
+	ctx context.Context, id, readName string, readAmount int64, readAdminOnly bool,
+	name string, amount int64, adminOnly bool,
+) error {
+	_, err := a.svc.ReviseShippingOption(ctx, id,
+		models.OptionTerms{Name: readName, Amount: readAmount, AdminOnly: readAdminOnly},
+		models.OptionTerms{Name: name, Amount: amount, AdminOnly: adminOnly})
+
+	return err
 }

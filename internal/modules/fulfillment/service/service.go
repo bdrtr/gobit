@@ -213,6 +213,12 @@ type Store interface {
 	ListEligibleShippingOptions(ctx context.Context, filter models.EligibilityFilter) ([]models.ShippingOption, error)
 	// UpdateShippingOption writes the option's fields with ABSOLUTE values.
 	UpdateShippingOption(ctx context.Context, option models.ShippingOption) (models.ShippingOption, error)
+	// ReviseShippingOption writes the option's terms if they are still the
+	// ones read and its price type takes the fee, and reports whether it did
+	// (ADR 0333).
+	ReviseShippingOption(
+		ctx context.Context, id string, read, next models.OptionTerms,
+	) (models.ShippingOption, bool, error)
 	// SoftDeleteShippingOption soft-deletes the option.
 	SoftDeleteShippingOption(ctx context.Context, id string) error
 

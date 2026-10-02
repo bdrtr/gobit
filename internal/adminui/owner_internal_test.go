@@ -783,6 +783,10 @@ func (p recordingParcels) CancelParcel(context.Context, string) error {
 	return p.surfaces.reach(ServiceFulfillmentAdmin)
 }
 
+func (p recordingParcels) ReviseShippingOption(context.Context, string, string, int64, bool, string, int64, bool) error {
+	return p.surfaces.reach(ServiceFulfillmentAdmin)
+}
+
 func (a recordingAfterSales) OpenExchange(context.Context, string, int64, string) (string, error) {
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }
@@ -933,6 +937,10 @@ var walkForms = map[string]url.Values{
 	// An order's parcels (ADR 0324).
 	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}},
 	routeKey(http.MethodPost, OrderParcelActPath): {},
+	// Revising a shipping option (ADR 0333).
+	routeKey(http.MethodPost, ShippingOptionRevisePath): {
+		formReadName: {"Walk"}, formReadAmount: {"0"}, formReadAdminOnly: {"false"}, formGroupName: {"Walked"},
+	},
 	// A customer's groups (ADR 0322).
 	routeKey(http.MethodPost, CustomerGroupsPath):      {formCustomerGroup: {"custgrp_walk"}},
 	routeKey(http.MethodPost, CustomerGroupRemovePath): {},
