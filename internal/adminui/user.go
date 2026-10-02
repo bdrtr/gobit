@@ -51,6 +51,10 @@ type ScopeReviser interface {
 	ReviseUserScopes(ctx context.Context, id string, read, next []string) error
 }
 
+// privilegesKey is the template data key carrying the privileges a form
+// offers (ADR 0347).
+const privilegesKey = "Privileges"
+
 // privilegeChoice is one privilege the form offers, ticked or not.
 type privilegeChoice struct {
 	Scope   string
@@ -146,16 +150,16 @@ func (u *UI) renderUser(w http.ResponseWriter, r *http.Request, code int, id, re
 	_, canInvite := u.users.(UserInviter)
 	_, canRemove := u.users.(UserRemover)
 	data := map[string]any{
-		"CanRemove":  canRemove && principal.HasScope(scopeAdmin) && user.ID != principal.ID,
-		"Invited":    r.URL.Query().Get(paramInvited),
-		"CanInvite":  canInvite && principal.HasScope(scopeAdmin),
-		titleKey:     user.Email,
-		"User":       user,
-		"Privileges": privilegeChoices(user.Scopes, ticked),
-		canReviseKey: canRevise && principal.HasScope(scopeAdmin),
-		writtenKey:   r.URL.Query().Get(paramWritten),
-		refusedKey:   refused,
-		pathKey:      UsersPath,
+		"CanRemove":   canRemove && principal.HasScope(scopeAdmin) && user.ID != principal.ID,
+		"Invited":     r.URL.Query().Get(paramInvited),
+		"CanInvite":   canInvite && principal.HasScope(scopeAdmin),
+		titleKey:      user.Email,
+		"User":        user,
+		privilegesKey: privilegeChoices(user.Scopes, ticked),
+		canReviseKey:  canRevise && principal.HasScope(scopeAdmin),
+		writtenKey:    r.URL.Query().Get(paramWritten),
+		refusedKey:    refused,
+		pathKey:       UsersPath,
 	}
 
 	u.templates.render(w, r, code, "user.gohtml", data)

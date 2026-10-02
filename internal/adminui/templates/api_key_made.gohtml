@@ -1,0 +1,13 @@
+{{- /*
+api_key_made.gohtml shows a key's token once (ADR 0351).
+
+The auth module stores only the token's hash, so this answer is the token's
+only copy: it is not stored by the browser, and a token lost is not brought
+back; the key is revoked and another made.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+<p role="status">The key {{ .ID }} was made. Copy its token now; it is not shown again.</p>
+<p><code>{{ .Token }}</code></p>
+<p><a href="{{ .Path }}">Every key</a></p>
+{{ end }}

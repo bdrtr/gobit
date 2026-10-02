@@ -848,6 +848,12 @@ func (a recordingAccounts) RevokeAPIKey(context.Context, string, string) error {
 	return a.surfaces.reach(ServiceAuthAdmin)
 }
 
+func (a recordingAccounts) MakeAPIKey(
+	context.Context, string, string, string, []string, []string,
+) (id, plaintext string, err error) {
+	return "apikey_walk", "sk_walk", a.surfaces.reach(ServiceAuthAdmin)
+}
+
 // recordingInvoices records the invoice module's surface (ADR 0335).
 type recordingInvoices struct{ surfaces *recordingSurfaces }
 
@@ -1097,6 +1103,7 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, UserInvitationPath):  {},
 	routeKey(http.MethodPost, UserRemovePath):      {},
 	routeKey(http.MethodPost, APIKeyRevokePath):    {paramKeyStatus: {"open"}},
+	routeKey(http.MethodPost, APIKeysPath):         {formKeyTitle: {"Walk"}, formKeyType: {"secret"}},
 	// Writing off units of a line (ADR 0341).
 	routeKey(http.MethodPost, OrderLineCancellationsPath): {
 		formWriteOffLine: {"oli_walk"}, formReadSpokenFor: {"0"}, formWriteOffQuantity: {"1"}, formWriteOffReason: {"walk"},

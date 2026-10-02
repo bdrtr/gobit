@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
 // The revoked tabs of the panel's API keys screen (ADR 0350).
@@ -78,4 +79,23 @@ func (s *AccountSurface) RevokeAPIKey(ctx context.Context, id, revokedBy string)
 	_, err := s.svc.RevokeAPIKey(ctx, id, revokedBy)
 
 	return err
+}
+
+// MakeAPIKey makes a key of the type with the title, carrying the privileges
+// when it is a secret one and attached to the sales channels when it is a
+// publishable one, in the operator's name, and returns its id and its token,
+// the token's only copy (ADR 0351). No privilege given is none: a nil list
+// would make an administrator's key.
+func (s *AccountSurface) MakeAPIKey(
+	ctx context.Context, createdBy, keyType, title string, scopes, channelIDs []string,
+) (id, token string, err error) {
+	key, token, err := s.svc.CreateAPIKey(ctx, CreateAPIKeyInput{
+		Type: models.APIKeyType(keyType), Title: title, Scopes: append([]string{}, scopes...),
+		CreatedBy: createdBy, SalesChannelIDs: channelIDs,
+	})
+	if err != nil {
+		return "", "", err
+	}
+
+	return key.ID, token, nil
 }

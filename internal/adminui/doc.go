@@ -195,7 +195,8 @@
 // removes them ([UI.removeUser], ADR 0349), though not the operator
 // themselves. The API keys screen ([UI.listAPIKeys]) beside it lists the
 // keys integrations call the API with, their tokens only as redacted, and
-// revokes one for an operator holding admin ([UI.revokeAPIKey], ADR 0350).
+// revokes one for an operator holding admin ([UI.revokeAPIKey], ADR 0350),
+// and makes one, showing its token once ([UI.makeAPIKey], ADR 0351).
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator

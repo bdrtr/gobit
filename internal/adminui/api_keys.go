@@ -83,6 +83,12 @@ func (u *UI) listAPIKeys(w http.ResponseWriter, r *http.Request) {
 	u.renderAPIKeys(w, r, http.StatusOK, r.URL.Query().Get(paramKeyStatus), "")
 }
 
+// renderAPIKeys lists the keys in the tab with a refused revocation's
+// reason.
+func (u *UI) renderAPIKeys(w http.ResponseWriter, r *http.Request, code int, tab, refused string) {
+	u.renderAPIKeysTyped(w, r, code, tab, refused, nil)
+}
+
 // revokeAPIKey revokes the key in the path in the operator's name and
 // returns to the tab it was pressed on, which says so; a refusal, a key
 // revoked meanwhile included, comes back on that tab (ADR 0350).
@@ -112,10 +118,12 @@ func (u *UI) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// renderAPIKeys lists the keys in the tab with a refused revocation's
-// reason. An operator who may revoke holds admin, and with it the privilege
-// to read the keys.
-func (u *UI) renderAPIKeys(w http.ResponseWriter, r *http.Request, code int, tab, refused string) {
+// renderAPIKeysTyped lists the keys in the tab with a refusal's reason and
+// what was typed in the key form, which an operator holding admin is offered
+// with the sales channels a publishable key is attached to (ADR 0351). An
+// operator who may revoke or make holds admin, and with it the privilege to
+// read the keys.
+func (u *UI) renderAPIKeysTyped(w http.ResponseWriter, r *http.Request, code int, tab, refused string, typed url.Values) {
 	lister, ok := u.users.(KeyLister)
 	if !ok {
 		u.errorPage(w, r, http.StatusServiceUnavailable, "API keys unavailable",
@@ -147,15 +155,26 @@ func (u *UI) renderAPIKeys(w http.ResponseWriter, r *http.Request, code int, tab
 
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
 	_, canRevoke := u.users.(KeyRevoker)
+	_, canMake := u.users.(KeyMaker)
+	canMake = canMake && principal.HasScope(scopeAdmin)
+	var channels []channelOption
+	if canMake {
+		channels, _ = u.channelsOf(r)
+	}
 	data := map[string]any{
-		titleKey:     apiKeysLabel,
-		"Keys":       rows,
-		statusKey:    tab,
-		statusesKey:  keyTabs,
-		totalKey:     total,
-		canReviseKey: canRevoke && principal.HasScope(scopeAdmin),
-		"Revoked":    r.URL.Query().Get(paramRevoked),
-		refusedKey:   refused,
+		canCreateKey:  canMake,
+		typedKey:      typed,
+		privilegesKey: privilegeChoices(nil, typed[formScope]),
+		"Channels":    channels,
+		"KeyTypes":    keyTypes,
+		titleKey:      apiKeysLabel,
+		"Keys":        rows,
+		statusKey:     tab,
+		statusesKey:   keyTabs,
+		totalKey:      total,
+		canReviseKey:  canRevoke && principal.HasScope(scopeAdmin),
+		"Revoked":     r.URL.Query().Get(paramRevoked),
+		refusedKey:    refused,
 	}
 	addPaging(data, page, int64(page*keysPerPage) < total, APIKeysPath)
 

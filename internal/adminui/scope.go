@@ -207,6 +207,8 @@ func builtInScopes() map[string]string {
 		// revoked under admin, as the API does (ADR 0350).
 		routeKey(get, APIKeysPath):       scopeAuthRead,
 		routeKey(post, APIKeyRevokePath): scopeAdmin,
+		// And so is making one (ADR 0351).
+		routeKey(post, APIKeysPath): scopeAdmin,
 		// The shipping options are the fulfillment module's, and so are
 		// revising one (ADR 0333) and writing one (ADR 0334).
 		routeKey(get, ShippingOptionsPath):       scopeFulfillmentRead,

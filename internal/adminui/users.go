@@ -109,17 +109,17 @@ func (u *UI) renderUsers(w http.ResponseWriter, r *http.Request, code int, refus
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
 	_, canInvite := u.users.(UserInviter)
 	data := map[string]any{
-		titleKey:     usersLabel,
-		"Users":      rows,
-		statusKey:    tab,
-		statusesKey:  secondFactorTabs,
-		emailKey:     email,
-		totalKey:     total,
-		canCreateKey: canInvite && principal.HasScope(scopeAdmin),
-		"Privileges": privilegeChoices(nil, typed[formScope]),
-		typedKey:     typed,
-		refusedKey:   refused,
-		"Removed":    query.Get(paramRemoved) != "",
+		titleKey:      usersLabel,
+		"Users":       rows,
+		statusKey:     tab,
+		statusesKey:   secondFactorTabs,
+		emailKey:      email,
+		totalKey:      total,
+		canCreateKey:  canInvite && principal.HasScope(scopeAdmin),
+		privilegesKey: privilegeChoices(nil, typed[formScope]),
+		typedKey:      typed,
+		refusedKey:    refused,
+		"Removed":     query.Get(paramRemoved) != "",
 	}
 	addPaging(data, page, int64(page*usersPerPage) < total, UsersPath)
 

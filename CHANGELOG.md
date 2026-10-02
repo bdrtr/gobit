@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel makes an API key** (ADR 0351). **For operators:** the API
+  keys screen makes a secret key with the privileges ticked, or a
+  publishable one attached to the sales channels ticked, under `admin`,
+  and shows its token once. **For integrators:** `auth.admin` makes a key,
+  an empty privilege list making no administrator's key.
+
 - **The panel lists and revokes the API keys** (ADR 0350). **For
   operators:** an API keys screen lists the keys integrations call the API
   with under `auth:read`, the open ones first, with their privileges and

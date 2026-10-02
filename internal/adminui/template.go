@@ -125,6 +125,7 @@ var pages = []string{
 	"users.gohtml",
 	"user.gohtml",
 	"api_keys.gohtml",
+	"api_key_made.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",

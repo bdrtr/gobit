@@ -14,6 +14,28 @@ answered after a leak.
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
 {{ with .Revoked }}<p role="status">Key {{ . }} was revoked.</p>{{ end }}
 
+{{ if .CanCreate }}
+{{/* A secret key carries the privileges ticked, none when none is; a
+publishable one carries none and is attached to the sales channels ticked
+(ADR 0351). Its token is shown once, on the answer to this form. */}}
+<details{{ if .Refused }} open{{ end }}>
+  <summary>Make a key</summary>
+  <form method="post" action="{{ .Path }}">
+    <input name="title" value="{{ .Typed.Get "title" }}" placeholder="title" aria-label="title" required>
+    <select name="type" aria-label="type">
+      {{ range .KeyTypes }}<option value="{{ . }}"{{ if eq . ($.Typed.Get "type") }} selected{{ end }}>{{ . }}</option>{{ end }}
+    </select>
+    <fieldset><legend>Privileges, for a secret key</legend>
+    {{ range .Privileges }}<label><input type="checkbox" name="scope" value="{{ .Scope }}"{{ if .Checked }} checked{{ end }}> {{ .Scope }}</label>
+    {{ end }}</fieldset>
+    <fieldset><legend>Sales channels, for a publishable key</legend>
+    {{ range .Channels }}<label><input type="checkbox" name="channel" value="{{ .ID }}"> {{ .Name }}</label>
+    {{ else }}<span class="muted">No sales channel could be read.</span>{{ end }}</fieldset>
+    <button type="submit">Make</button>
+  </form>
+</details>
+{{ end }}
+
 <nav aria-label="Revoked">
   {{ range .Statuses }}
   <a href="{{ $.Path }}?status={{ . }}"{{ if eq . $.Status }} aria-current="page"{{ end }}>{{ . }}</a>

@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -81,4 +82,38 @@ func TestThePanelListsAndRevokesTheKeys(t *testing.T) {
 	assert.Equal(t, "user_7", repo.revokedBy, "in the operator's name")
 	err = surface.RevokeAPIKey(context.Background(), "user_1", "user_7")
 	assert.True(t, errors.IsInvalid(err), "an id that is not a key's: %v", err)
+}
+
+// TestThePanelMakesAKey is ADR 0351: the surface makes a secret key with the
+// privileges given and none when none is, never an administrator's by
+// omission, in the operator's name, and returns its token once, only its
+// hash stored; a publishable key carrying a privilege, and a privilege the
+// operator lacks, make nothing.
+func TestThePanelMakesAKey(t *testing.T) {
+	t.Parallel()
+
+	svc, repo := newService(t)
+	surface := service.NewAccountSurface(svc, "gobit")
+	admin := scopedCtx(models.ScopeAdmin)
+
+	id, token, err := surface.MakeAPIKey(admin, "user_1", "secret", "ERP", nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, repo.lastKey.ID, id)
+	assert.True(t, strings.HasPrefix(token, "sk_"), token)
+	assert.Equal(t, []string{}, repo.lastKey.Scopes, "no privilege given is none, not admin")
+	assert.Equal(t, "ERP|user_1|secret", repo.lastKey.Title+"|"+repo.lastKey.CreatedBy+"|"+string(repo.lastKey.Type))
+	assert.Equal(t, models.HashToken(token), repo.lastKey.TokenHash, "only the token's hash is stored")
+
+	_, _, err = surface.MakeAPIKey(admin, "user_1", "secret", "Reports", []string{"order:read"}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"order:read"}, repo.lastKey.Scopes)
+
+	writes := repo.writeCount
+	_, _, err = surface.MakeAPIKey(admin, "user_1", "publishable", "Shop", []string{"order:read"}, nil)
+	assert.True(t, errors.IsInvalid(err), "a publishable key carries no privilege: %v", err)
+	_, _, err = surface.MakeAPIKey(scopedCtx(narrowScope), "user_1", "secret", "Boss", []string{models.ScopeAdmin}, nil)
+	requireEscalationError(t, err)
+	_, _, err = surface.MakeAPIKey(admin, "user_1", "golden", "Odd", nil, nil)
+	assert.True(t, errors.IsInvalid(err), "a type there is not: %v", err)
+	assert.Equal(t, writes, repo.writeCount, "nothing was made")
 }
