@@ -7,35 +7,36 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
-// AddressInput bir adresin yazma girdisidir.
+// AddressInput is the write input of an address.
 type AddressInput struct {
-	// FirstName adresin üzerindeki addır; boş bırakılabilir.
+	// FirstName is the first name on the address; it may be left empty.
 	FirstName string
-	// LastName adresin üzerindeki soyaddır; boş bırakılabilir.
+	// LastName is the last name on the address; it may be left empty.
 	LastName string
-	// Company şirket adıdır; boş bırakılabilir.
+	// Company is the company name; it may be left empty.
 	Company string
-	// Address1 adresin ilk satırıdır; zorunludur.
+	// Address1 is the address's first line; it is required.
 	Address1 string
-	// Address2 adresin ikinci satırıdır; boş bırakılabilir.
+	// Address2 is the address's second line; it may be left empty.
 	Address2 string
-	// City şehirdir; zorunludur.
+	// City is the city; it is required.
 	City string
-	// CountryCode ISO 3166-1 alpha-2 ülke kodudur; zorunludur, BÜYÜK harfe
-	// normalize edilerek saklanır.
+	// CountryCode is the ISO 3166-1 alpha-2 country code; it is required, and it
+	// is stored normalized to UPPER case.
 	CountryCode string
-	// PostalCode posta kodudur; boş bırakılabilir.
+	// PostalCode is the postal code; it may be left empty.
 	PostalCode string
-	// Phone adresin iletişim telefonudur; boş bırakılabilir.
+	// Phone is the address's contact phone; it may be left empty.
 	Phone string
-	// IsDefaultShipping adresi varsayılan kargo adresi yapar; müşterinin varsa
-	// eski varsayılanı AYNI işlemde temizlenir.
+	// IsDefaultShipping makes the address the default shipping address; the
+	// customer's previous default, if any, is cleared in the SAME transaction.
 	IsDefaultShipping bool
-	// IsDefaultBilling adresi varsayılan fatura adresi yapar.
+	// IsDefaultBilling makes the address the default billing address.
 	IsDefaultBilling bool
 }
 
-// CreateAddress müşterinin yeni adresini ekler; müşteri yoksa errors.NotFound.
+// CreateAddress adds a new address for the customer; errors.NotFound if the
+// customer does not exist.
 func (s *Service) CreateAddress(ctx context.Context, customerID string, in AddressInput) (models.CustomerAddress, error) {
 	if err := s.ready(); err != nil {
 		return models.CustomerAddress{}, err
@@ -71,10 +72,10 @@ func (s *Service) CreateAddress(ctx context.Context, customerID string, in Addre
 	})
 }
 
-// GetAddress müşterinin adresini döner; yoksa errors.NotFound.
+// GetAddress returns the customer's address; errors.NotFound if it does not exist.
 //
-// Sahiplik denetimi sorgunun WHERE koşulundadır: başka bir müşterinin adresinin
-// kimliği verilse bile kayıt DÖNMEZ.
+// The ownership check is in the query's WHERE clause: even when the id of
+// another customer's address is given, the record is NOT returned.
 func (s *Service) GetAddress(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error) {
 	if err := s.ready(); err != nil {
 		return models.CustomerAddress{}, err
@@ -85,10 +86,11 @@ func (s *Service) GetAddress(ctx context.Context, customerID, addressID string) 
 	return s.repo.GetAddress(ctx, customerID, addressID)
 }
 
-// ListAddresses müşterinin adreslerini döner.
+// ListAddresses returns the customer's addresses.
 //
-// Müşterinin varlığı ÖNCE doğrulanır: olmayan bir müşteri için boş liste
-// dönseydi istemci 404 yerine "hiç adresi yok" sanırdı.
+// The customer's existence is verified FIRST: if an empty list were returned
+// for a customer that does not exist, the client would take it for "has no
+// addresses at all" instead of a 404.
 func (s *Service) ListAddresses(ctx context.Context, customerID string) ([]models.CustomerAddress, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
@@ -102,34 +104,36 @@ func (s *Service) ListAddresses(ctx context.Context, customerID string) ([]model
 	return s.repo.ListAddresses(ctx, customerID)
 }
 
-// UpdateAddressInput bir adresin kısmi güncelleme girdisidir.
+// UpdateAddressInput is the partial update input of an address.
 //
-// nil alan "dokunma", dolu alan "bu değeri yaz" demektir. Varsayılan işaretleri
-// burada YOKTUR; onlar için [Service.SetDefaultShippingAddress] ve
-// [Service.SetDefaultBillingAddress] kullanılır, çünkü işaret değiştirmek
-// müşterinin diğer adreslerini de ilgilendirir.
+// A nil field means "leave it alone", a set field means "write this value". The
+// default flags are NOT here; [Service.SetDefaultShippingAddress] and
+// [Service.SetDefaultBillingAddress] are used for them, because changing a flag
+// also concerns the customer's other addresses.
 type UpdateAddressInput struct {
-	// FirstName yeni addır.
+	// FirstName is the new first name.
 	FirstName *string
-	// LastName yeni soyaddır.
+	// LastName is the new last name.
 	LastName *string
-	// Company yeni şirket adıdır.
+	// Company is the new company name.
 	Company *string
-	// Address1 adresin yeni ilk satırıdır; verilirse boş olamaz.
+	// Address1 is the address's new first line; if given, it cannot be empty.
 	Address1 *string
-	// Address2 adresin yeni ikinci satırıdır.
+	// Address2 is the address's new second line.
 	Address2 *string
-	// City yeni şehirdir; verilirse boş olamaz.
+	// City is the new city; if given, it cannot be empty.
 	City *string
-	// CountryCode yeni ülke kodudur; verilirse doğrulanır ve BÜYÜK harfe çevrilir.
+	// CountryCode is the new country code; if given, it is validated and
+	// converted to UPPER case.
 	CountryCode *string
-	// PostalCode yeni posta kodudur.
+	// PostalCode is the new postal code.
 	PostalCode *string
-	// Phone yeni telefondur.
+	// Phone is the new phone.
 	Phone *string
 }
 
-// UpdateAddress adresin verilen alanlarını günceller; yoksa errors.NotFound.
+// UpdateAddress updates the given fields of the address; errors.NotFound if it
+// does not exist.
 func (s *Service) UpdateAddress(
 	ctx context.Context,
 	customerID, addressID string,
@@ -166,7 +170,8 @@ func (s *Service) UpdateAddress(
 	return s.repo.UpdateAddress(ctx, customerID, addressID, patch, s.clock())
 }
 
-// DeleteAddress adresi soft delete ile siler; yoksa errors.NotFound.
+// DeleteAddress deletes the address with a soft delete; errors.NotFound if it
+// does not exist.
 func (s *Service) DeleteAddress(ctx context.Context, customerID, addressID string) error {
 	if err := s.ready(); err != nil {
 		return err
@@ -177,24 +182,24 @@ func (s *Service) DeleteAddress(ctx context.Context, customerID, addressID strin
 	return s.repo.DeleteAddress(ctx, customerID, addressID, s.clock())
 }
 
-// SetDefaultShippingAddress adresi müşterinin varsayılan kargo adresi yapar.
+// SetDefaultShippingAddress makes the address the customer's default shipping address.
 //
-// Müşteri başına EN FAZLA BİR varsayılan kargo adresi olabilir: eski işaret
-// aynı işlemde kaldırılır ve kısıt veritabanındaki kısmi benzersiz indeksle
-// zorlanır (bkz. repository.Repo.SetDefaultAddress).
+// A customer can have AT MOST ONE default shipping address: the old flag is
+// removed in the same transaction, and the constraint is enforced by a partial
+// unique index in the database (see repository.Repo.SetDefaultAddress).
 func (s *Service) SetDefaultShippingAddress(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error) {
 	return s.setDefault(ctx, customerID, addressID, models.DefaultShipping)
 }
 
-// SetDefaultBillingAddress adresi müşterinin varsayılan fatura adresi yapar.
+// SetDefaultBillingAddress makes the address the customer's default billing address.
 //
-// Kargo işaretinden BAĞIMSIZDIR: tek bir adresin ikisi birden olması da,
-// iki işaretin farklı adreslere dağılması da geçerlidir.
+// It is INDEPENDENT of the shipping flag: a single address holding both flags
+// and the two flags being spread over different addresses are both valid.
 func (s *Service) SetDefaultBillingAddress(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error) {
 	return s.setDefault(ctx, customerID, addressID, models.DefaultBilling)
 }
 
-// setDefault iki varsayılan atama yolunun ortak gövdesidir.
+// setDefault is the shared body of the two default-assignment paths.
 func (s *Service) setDefault(
 	ctx context.Context,
 	customerID, addressID string,
@@ -212,81 +217,81 @@ func (s *Service) setDefault(
 		return models.CustomerAddress{}, err
 	}
 
-	s.log.DebugContext(ctx, "müşterinin varsayılan adresi güncellendi",
+	s.log.DebugContext(ctx, "customer's default address updated",
 		slog.String("customer_id", customerID),
 		slog.String("address_id", addressID),
-		slog.String("tur", kind.String()),
+		slog.String("kind", kind.String()),
 	)
 	return address, nil
 }
 
-// requireAddressIDs müşteri ve adresin kimliklerini birlikte doğrular.
+// requireAddressIDs validates the customer's and the address's ids together.
 func requireAddressIDs(customerID, addressID string) error {
 	if err := requireID(customerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return err
 	}
-	return requireID(addressID, models.AddressIDPrefix, "adresin kimliği")
+	return requireID(addressID, models.AddressIDPrefix, "address id")
 }
 
-// validateAddressText adresin metin alanlarını doğrular.
+// validateAddressText validates the address's text fields.
 func validateAddressText(in AddressInput) error {
-	if err := requireText("adresin ilk satırı", in.Address1); err != nil {
+	if err := requireText("the address's first line", in.Address1); err != nil {
 		return err
 	}
-	if err := requireText("şehir", in.City); err != nil {
+	if err := requireText("city", in.City); err != nil {
 		return err
 	}
 	if err := validatePerson(in.FirstName, in.LastName, in.Phone); err != nil {
 		return err
 	}
-	if err := checkLen("şirket", in.Company, models.MaxNameLen); err != nil {
+	if err := checkLen("company", in.Company, models.MaxNameLen); err != nil {
 		return err
 	}
-	if err := checkLen("adresin ilk satırı", in.Address1, models.MaxAddressLen); err != nil {
+	if err := checkLen("the address's first line", in.Address1, models.MaxAddressLen); err != nil {
 		return err
 	}
-	if err := checkLen("adresin ikinci satırı", in.Address2, models.MaxAddressLen); err != nil {
+	if err := checkLen("the address's second line", in.Address2, models.MaxAddressLen); err != nil {
 		return err
 	}
-	if err := checkLen("şehir", in.City, models.MaxNameLen); err != nil {
+	if err := checkLen("city", in.City, models.MaxNameLen); err != nil {
 		return err
 	}
-	return checkLen("posta kodu", in.PostalCode, models.MaxPostalCodeLen)
+	return checkLen("postal code", in.PostalCode, models.MaxPostalCodeLen)
 }
 
-// validateAddressPatch kısmi güncellemedeki alanları doğrular.
+// validateAddressPatch validates the fields in a partial update.
 //
-// Zorunlu alanlar (ilk satır, şehir) verilirse BOŞ OLAMAZ: kısmi güncelleme
-// bir alanı atlayabilir ama var olan bir zorunluluğu kaldıramaz.
+// Required fields (first line, city) CANNOT BE EMPTY if given: a partial update
+// may skip a field, but it cannot remove an existing requirement.
 func validateAddressPatch(patch models.AddressPatch) error {
 	if patch.Address1 != nil {
-		if err := requireText("adresin ilk satırı", *patch.Address1); err != nil {
+		if err := requireText("the address's first line", *patch.Address1); err != nil {
 			return err
 		}
-		if err := checkLen("adresin ilk satırı", *patch.Address1, models.MaxAddressLen); err != nil {
+		if err := checkLen("the address's first line", *patch.Address1, models.MaxAddressLen); err != nil {
 			return err
 		}
 	}
 	if patch.City != nil {
-		if err := requireText("şehir", *patch.City); err != nil {
+		if err := requireText("city", *patch.City); err != nil {
 			return err
 		}
-		if err := checkLen("şehir", *patch.City, models.MaxNameLen); err != nil {
+		if err := checkLen("city", *patch.City, models.MaxNameLen); err != nil {
 			return err
 		}
 	}
 	if patch.Company != nil {
-		if err := checkLen("şirket", *patch.Company, models.MaxNameLen); err != nil {
+		if err := checkLen("company", *patch.Company, models.MaxNameLen); err != nil {
 			return err
 		}
 	}
 	if patch.Address2 != nil {
-		if err := checkLen("adresin ikinci satırı", *patch.Address2, models.MaxAddressLen); err != nil {
+		if err := checkLen("the address's second line", *patch.Address2, models.MaxAddressLen); err != nil {
 			return err
 		}
 	}
 	if patch.PostalCode != nil {
-		if err := checkLen("posta kodu", *patch.PostalCode, models.MaxPostalCodeLen); err != nil {
+		if err := checkLen("postal code", *patch.PostalCode, models.MaxPostalCodeLen); err != nil {
 			return err
 		}
 	}

@@ -40,7 +40,6 @@ internal/modules/customer/queries/customer_group.sql
 internal/modules/customer/repository/address.go
 internal/modules/customer/repository/customer.go
 internal/modules/customer/repository/repository.go
-internal/modules/customer/service/address.go
 internal/modules/customer/service/address_test.go
 internal/modules/customer/service/fakes_test.go
 internal/modules/customer/service/group_test.go

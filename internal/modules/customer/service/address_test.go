@@ -11,192 +11,195 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
-// yeniMusteri test için bir müşteri açar.
-func yeniMusteri(ctx context.Context, t *testing.T, svc *Service, eposta string) models.Customer {
+// yeniMusteri opens a customer for a test.
+func yeniMusteri(ctx context.Context, t *testing.T, svc *Service, email string) models.Customer {
 	t.Helper()
 
-	c, err := svc.CreateCustomer(ctx, CustomerInput{Email: eposta})
+	c, err := svc.CreateCustomer(ctx, CustomerInput{Email: email})
 	require.NoError(t, err)
 	return c
 }
 
-// TestUlkeKoduNormalizeEdilir ülke kodunun BÜYÜK harfe çevrildiğini ve
-// biçiminin doğrulandığını kanıtlar.
-func TestUlkeKoduNormalizeEdilir(t *testing.T) {
+// TestTheCountryCodeIsNormalized proves that the country code is converted to
+// UPPER case and that its format is validated.
+func TestTheCountryCodeIsNormalized(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := yeniServis(t)
-	musteri := yeniMusteri(ctx, t, svc, "ulke@example.com")
+	customer := yeniMusteri(ctx, t, svc, "country@example.com")
 
-	adresi, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	address, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
 	require.NoError(t, err)
-	assert.Equal(t, "TR", adresi.CountryCode, "ülke kodu BÜYÜK harfe çevrilmeli")
+	assert.Equal(t, "TR", address.CountryCode, "the country code has to be converted to UPPER case")
 
-	for _, kod := range []string{"", "T", "TUR", "T1"} {
-		girdi := gecerliAdres()
-		girdi.CountryCode = kod
-		_, err := svc.CreateAddress(ctx, musteri.ID, girdi)
-		require.Error(t, err, "geçersiz ülke kodu: %q", kod)
+	for _, code := range []string{"", "T", "TUR", "T1"} {
+		input := gecerliAdres()
+		input.CountryCode = code
+		_, err := svc.CreateAddress(ctx, customer.ID, input)
+		require.Error(t, err, "invalid country code: %q", code)
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	}
 }
 
-// TestZorunluAdresAlanlari boş ilk satır ve şehrin reddedildiğini kanıtlar.
-func TestZorunluAdresAlanlari(t *testing.T) {
+// TestRequiredAddressFields proves that an empty first line and an empty city
+// are rejected.
+func TestRequiredAddressFields(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := yeniServis(t)
-	musteri := yeniMusteri(ctx, t, svc, "zorunlu@example.com")
+	customer := yeniMusteri(ctx, t, svc, "required@example.com")
 
-	bosSatir := gecerliAdres()
-	bosSatir.Address1 = "   "
-	_, err := svc.CreateAddress(ctx, musteri.ID, bosSatir)
+	blankLine := gecerliAdres()
+	blankLine.Address1 = "   "
+	_, err := svc.CreateAddress(ctx, customer.ID, blankLine)
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	bosSehir := gecerliAdres()
-	bosSehir.City = ""
-	_, err = svc.CreateAddress(ctx, musteri.ID, bosSehir)
+	blankCity := gecerliAdres()
+	blankCity.City = ""
+	_, err = svc.CreateAddress(ctx, customer.ID, blankCity)
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestVarsayilanAdresTekildir müşteri başına tek varsayılan kargo ve tek
-// varsayılan fatura adresi olduğunu kanıtlar.
+// TestTheDefaultAddressIsUnique proves that a customer has a single default
+// shipping address and a single default billing address.
 //
-// Yeni varsayılan atandığında ESKİSİNİN işareti kalkmalıdır; kalksaydığını
-// varsayan bir uygulama, müşteriye iki varsayılan kargo adresi bırakırdı ve
-// sepet hangisini seçeceğini bilemezdi. Kuralın veritabanı kısıtıyla da
-// zorlandığı entegrasyon testinde kanıtlanır.
-func TestVarsayilanAdresTekildir(t *testing.T) {
+// When a new default is assigned, the flag of the OLD one has to be removed; an
+// implementation that assumed it had been removed would leave the customer with
+// two default shipping addresses, and the cart could not know which one to
+// pick. That the rule is also enforced by a database constraint is proven in
+// the integration test.
+func TestTheDefaultAddressIsUnique(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := yeniServis(t)
-	musteri := yeniMusteri(ctx, t, svc, "varsayilan@example.com")
+	customer := yeniMusteri(ctx, t, svc, "default@example.com")
 
-	ilk, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	first, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
 	require.NoError(t, err)
-	ikinci, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
-	require.NoError(t, err)
-
-	_, err = svc.SetDefaultShippingAddress(ctx, musteri.ID, ilk.ID)
+	second, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
 	require.NoError(t, err)
 
-	guncel, err := svc.SetDefaultShippingAddress(ctx, musteri.ID, ikinci.ID)
+	_, err = svc.SetDefaultShippingAddress(ctx, customer.ID, first.ID)
 	require.NoError(t, err)
-	assert.True(t, guncel.IsDefaultShipping)
 
-	adresler, err := svc.ListAddresses(ctx, musteri.ID)
+	updated, err := svc.SetDefaultShippingAddress(ctx, customer.ID, second.ID)
 	require.NoError(t, err)
-	assert.Equal(t, 1, varsayilanSayisi(adresler, models.DefaultShipping),
-		"müşteri başına tek varsayılan kargo adresi olmalı")
+	assert.True(t, updated.IsDefaultShipping)
 
-	eskisi, err := svc.GetAddress(ctx, musteri.ID, ilk.ID)
+	addresses, err := svc.ListAddresses(ctx, customer.ID)
 	require.NoError(t, err)
-	assert.False(t, eskisi.IsDefaultShipping, "eski varsayılanın işareti kalkmalı")
+	assert.Equal(t, 1, countDefaults(addresses, models.DefaultShipping),
+		"a customer has to have a single default shipping address")
+
+	previous, err := svc.GetAddress(ctx, customer.ID, first.ID)
+	require.NoError(t, err)
+	assert.False(t, previous.IsDefaultShipping, "the old default's flag has to be removed")
 }
 
-// TestKargoVeFaturaVarsayilanlariBagimsizdir iki işaretin birbirini
-// etkilemediğini kanıtlar.
-func TestKargoVeFaturaVarsayilanlariBagimsizdir(t *testing.T) {
+// TestShippingAndBillingDefaultsAreIndependent proves that the two flags do not
+// affect each other.
+func TestShippingAndBillingDefaultsAreIndependent(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := yeniServis(t)
-	musteri := yeniMusteri(ctx, t, svc, "bagimsiz@example.com")
+	customer := yeniMusteri(ctx, t, svc, "independent@example.com")
 
-	kargo, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	shipping, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
 	require.NoError(t, err)
-	fatura, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
-	require.NoError(t, err)
-
-	_, err = svc.SetDefaultShippingAddress(ctx, musteri.ID, kargo.ID)
-	require.NoError(t, err)
-	_, err = svc.SetDefaultBillingAddress(ctx, musteri.ID, fatura.ID)
+	billing, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
 	require.NoError(t, err)
 
-	okunanKargo, err := svc.GetAddress(ctx, musteri.ID, kargo.ID)
+	_, err = svc.SetDefaultShippingAddress(ctx, customer.ID, shipping.ID)
 	require.NoError(t, err)
-	assert.True(t, okunanKargo.IsDefaultShipping)
-	assert.False(t, okunanKargo.IsDefaultBilling, "fatura işareti kargoyu etkilememeli")
+	_, err = svc.SetDefaultBillingAddress(ctx, customer.ID, billing.ID)
+	require.NoError(t, err)
 
-	okunanFatura, err := svc.GetAddress(ctx, musteri.ID, fatura.ID)
+	readShipping, err := svc.GetAddress(ctx, customer.ID, shipping.ID)
 	require.NoError(t, err)
-	assert.True(t, okunanFatura.IsDefaultBilling)
-	assert.False(t, okunanFatura.IsDefaultShipping)
+	assert.True(t, readShipping.IsDefaultShipping)
+	assert.False(t, readShipping.IsDefaultBilling, "the billing flag must not affect the shipping flag")
+
+	readBilling, err := svc.GetAddress(ctx, customer.ID, billing.ID)
+	require.NoError(t, err)
+	assert.True(t, readBilling.IsDefaultBilling)
+	assert.False(t, readBilling.IsDefaultShipping)
 }
 
-// TestOlusturmadaVarsayilanIsareti adresi yaratılırken verilen varsayılan
-// işaretinin eskisini temizlediğini kanıtlar.
-func TestOlusturmadaVarsayilanIsareti(t *testing.T) {
+// TestTheDefaultFlagOnCreateClearsTheOldOne proves that a default flag given
+// when the address is created clears the old one.
+func TestTheDefaultFlagOnCreateClearsTheOldOne(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := yeniServis(t)
-	musteri := yeniMusteri(ctx, t, svc, "olusturma@example.com")
+	customer := yeniMusteri(ctx, t, svc, "create@example.com")
 
-	ilkGirdi := gecerliAdres()
-	ilkGirdi.IsDefaultShipping = true
-	ilk, err := svc.CreateAddress(ctx, musteri.ID, ilkGirdi)
+	firstInput := gecerliAdres()
+	firstInput.IsDefaultShipping = true
+	first, err := svc.CreateAddress(ctx, customer.ID, firstInput)
 	require.NoError(t, err)
-	assert.True(t, ilk.IsDefaultShipping)
+	assert.True(t, first.IsDefaultShipping)
 
-	ikinciGirdi := gecerliAdres()
-	ikinciGirdi.IsDefaultShipping = true
-	_, err = svc.CreateAddress(ctx, musteri.ID, ikinciGirdi)
+	secondInput := gecerliAdres()
+	secondInput.IsDefaultShipping = true
+	_, err = svc.CreateAddress(ctx, customer.ID, secondInput)
 	require.NoError(t, err)
 
-	adresler, err := svc.ListAddresses(ctx, musteri.ID)
+	addresses, err := svc.ListAddresses(ctx, customer.ID)
 	require.NoError(t, err)
-	assert.Equal(t, 1, varsayilanSayisi(adresler, models.DefaultShipping),
-		"yeni varsayılan eskisini temizlemeli")
+	assert.Equal(t, 1, countDefaults(addresses, models.DefaultShipping),
+		"the new default has to clear the old one")
 }
 
-// TestVarsayilanAdresSilinince silinen varsayılanın yerine yenisinin
-// atanabildiğini kanıtlar.
+// TestWhenTheDefaultAddressIsDeleted proves that a new default can be
+// assigned in place of a deleted one.
 //
-// Kısmi benzersiz indeks deleted_at IS NULL koşuluyla tanımlıdır; silinen satır
-// indeksin kapsamından çıkar. Koşul olmasaydı silinmiş bir varsayılan yeri
-// sonsuza dek işgal ederdi.
-func TestVarsayilanAdresSilinince(t *testing.T) {
+// The partial unique index is defined with the condition deleted_at IS NULL; a
+// deleted row leaves the index's scope. Without the condition, a deleted
+// default would occupy the place forever.
+func TestWhenTheDefaultAddressIsDeleted(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := yeniServis(t)
-	musteri := yeniMusteri(ctx, t, svc, "silinen@example.com")
+	customer := yeniMusteri(ctx, t, svc, "deleted@example.com")
 
-	ilk, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	first, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
 	require.NoError(t, err)
-	_, err = svc.SetDefaultShippingAddress(ctx, musteri.ID, ilk.ID)
+	_, err = svc.SetDefaultShippingAddress(ctx, customer.ID, first.ID)
 	require.NoError(t, err)
 
-	require.NoError(t, svc.DeleteAddress(ctx, musteri.ID, ilk.ID))
+	require.NoError(t, svc.DeleteAddress(ctx, customer.ID, first.ID))
 
-	ikinci, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	second, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
 	require.NoError(t, err)
-	yeni, err := svc.SetDefaultShippingAddress(ctx, musteri.ID, ikinci.ID)
+	newDefault, err := svc.SetDefaultShippingAddress(ctx, customer.ID, second.ID)
 	require.NoError(t, err)
-	assert.True(t, yeni.IsDefaultShipping)
+	assert.True(t, newDefault.IsDefaultShipping)
 }
 
-// TestBaskaMusterininAdresiOkunamaz sahiplik denetiminin sorguda olduğunu
-// kanıtlar.
-func TestBaskaMusterininAdresiOkunamaz(t *testing.T) {
+// TestAnotherCustomersAddressCannotBeRead proves that the ownership check is
+// in the query.
+func TestAnotherCustomersAddressCannotBeRead(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := yeniServis(t)
 
-	sahibi := yeniMusteri(ctx, t, svc, "sahip@example.com")
-	yabanci := yeniMusteri(ctx, t, svc, "yabanci@example.com")
+	owner := yeniMusteri(ctx, t, svc, "owner@example.com")
+	stranger := yeniMusteri(ctx, t, svc, "stranger@example.com")
 
-	adresi, err := svc.CreateAddress(ctx, sahibi.ID, gecerliAdres())
+	address, err := svc.CreateAddress(ctx, owner.ID, gecerliAdres())
 	require.NoError(t, err)
 
-	_, err = svc.GetAddress(ctx, yabanci.ID, adresi.ID)
+	_, err = svc.GetAddress(ctx, stranger.ID, address.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"başkasının adresi okunamamalı")
+		"another customer's address must not be readable")
 
-	err = svc.DeleteAddress(ctx, yabanci.ID, adresi.ID)
+	err = svc.DeleteAddress(ctx, stranger.ID, address.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"başkasının adresi silinememeli")
+		"another customer's address must not be deletable")
 
-	_, err = svc.SetDefaultShippingAddress(ctx, yabanci.ID, adresi.ID)
+	_, err = svc.SetDefaultShippingAddress(ctx, stranger.ID, address.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"başkasının adresi varsayılan yapılamamalı")
+		"another customer's address must not be made the default")
 }
 
-// TestOlmayanMusteriyeAdres eksik müşteri için NotFound döndüğünü kanıtlar.
-func TestOlmayanMusteriyeAdres(t *testing.T) {
+// TestAddressForAMissingCustomer proves that NotFound is returned for a missing
+// customer.
+func TestAddressForAMissingCustomer(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := yeniServis(t)
 
@@ -205,37 +208,37 @@ func TestOlmayanMusteriyeAdres(t *testing.T) {
 
 	_, err = svc.ListAddresses(ctx, models.NewCustomerID(sabitSaat))
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"olmayan müşteri için boş liste değil NotFound dönmeli")
+		"a customer that does not exist has to get NotFound, not an empty list")
 }
 
-// TestAdresGuncellemeKismidir verilmeyen alanların korunduğunu kanıtlar.
-func TestAdresGuncellemeKismidir(t *testing.T) {
+// TestTheAddressUpdateIsPartial proves that the fields not given are kept.
+func TestTheAddressUpdateIsPartial(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := yeniServis(t)
-	musteri := yeniMusteri(ctx, t, svc, "kismi@example.com")
+	customer := yeniMusteri(ctx, t, svc, "partial@example.com")
 
-	adresi, err := svc.CreateAddress(ctx, musteri.ID, gecerliAdres())
+	address, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
 	require.NoError(t, err)
 
-	yeniSehir := "Ankara"
-	guncel, err := svc.UpdateAddress(ctx, musteri.ID, adresi.ID, UpdateAddressInput{City: &yeniSehir})
+	newCity := "Ankara"
+	updated, err := svc.UpdateAddress(ctx, customer.ID, address.ID, UpdateAddressInput{City: &newCity})
 	require.NoError(t, err)
-	assert.Equal(t, "Ankara", guncel.City)
-	assert.Equal(t, adresi.Address1, guncel.Address1, "verilmeyen alan korunmalı")
-	assert.Equal(t, adresi.CountryCode, guncel.CountryCode)
+	assert.Equal(t, "Ankara", updated.City)
+	assert.Equal(t, address.Address1, updated.Address1, "a field not given has to be kept")
+	assert.Equal(t, address.CountryCode, updated.CountryCode)
 
-	// Zorunlu bir alan verilirse BOŞ olamaz.
-	bos := ""
-	_, err = svc.UpdateAddress(ctx, musteri.ID, adresi.ID, UpdateAddressInput{City: &bos})
+	// A required field cannot be EMPTY if it is given.
+	empty := ""
+	_, err = svc.UpdateAddress(ctx, customer.ID, address.ID, UpdateAddressInput{City: &empty})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// varsayilanSayisi verilen türde kaç adresin işaretli olduğunu döner.
-func varsayilanSayisi(adresler []models.CustomerAddress, kind models.DefaultKind) int {
+// countDefaults returns how many addresses carry the flag of the given kind.
+func countDefaults(addresses []models.CustomerAddress, kind models.DefaultKind) int {
 	var n int
-	for i := range adresler {
-		a := &adresler[i]
+	for i := range addresses {
+		a := &addresses[i]
 		if (kind == models.DefaultShipping && a.IsDefaultShipping) ||
 			(kind == models.DefaultBilling && a.IsDefaultBilling) {
 			n++
