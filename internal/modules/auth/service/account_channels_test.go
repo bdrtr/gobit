@@ -80,3 +80,35 @@ func TestThePanelRevisesASalesChannel(t *testing.T) {
 	err = surface.ReviseSalesChannel(context.Background(), "sc_1", read, read)
 	assert.True(t, errors.IsNotFound(err), "%v", err)
 }
+
+// madeChannelRepo records the channel the panel makes over the shared fake.
+type madeChannelRepo struct {
+	*fakeRepo
+	made []models.SalesChannel
+}
+
+func (r *madeChannelRepo) CreateSalesChannel(_ context.Context, c models.SalesChannel) (models.SalesChannel, error) {
+	r.made = append(r.made, c)
+	return c, nil
+}
+
+// TestThePanelMakesASalesChannel is ADR 0353: the surface makes the channel
+// with its name, description and state, returns its id, and refuses an
+// empty name without making anything.
+func TestThePanelMakesASalesChannel(t *testing.T) {
+	t.Parallel()
+
+	repo := &madeChannelRepo{fakeRepo: &fakeRepo{}}
+	surface := service.NewAccountSurface(service.New(repo, service.Options{JWTSecret: "test-signing-secret-long-enough"}), "gobit")
+
+	id, err := surface.MakeSalesChannel(context.Background(), "Phone", "telephone orders", true)
+	require.NoError(t, err)
+	require.Len(t, repo.made, 1)
+	assert.Equal(t, id, repo.made[0].ID)
+	assert.True(t, strings.HasPrefix(id, models.SalesChannelIDPrefix), id)
+	assert.Equal(t, models.ChannelTerms{Name: "Phone", Description: "telephone orders", IsDisabled: true}, repo.made[0].Terms())
+
+	_, err = surface.MakeSalesChannel(context.Background(), " ", "", false)
+	assert.True(t, errors.IsInvalid(err), "%v", err)
+	assert.Len(t, repo.made, 1, "nothing was made")
+}

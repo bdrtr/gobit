@@ -200,7 +200,8 @@
 // Sales channels screen ([UI.listSalesChannels]) lists the channels through
 // the auth module's channel entity and corrects each one's name, description
 // and whether it is in use from what its row was drawn with
-// ([UI.reviseSalesChannel], ADR 0352).
+// ([UI.reviseSalesChannel], ADR 0352), and makes one ([UI.makeSalesChannel],
+// ADR 0353).
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator

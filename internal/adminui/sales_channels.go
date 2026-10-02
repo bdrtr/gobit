@@ -183,7 +183,15 @@ func (u *UI) renderSalesChannels(w http.ResponseWriter, r *http.Request, code in
 
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
 	_, canRevise := u.users.(ChannelReviser)
+	_, canMake := u.users.(ChannelMaker)
+	// A refusal with no channel named is the new channel's form's (ADR 0353).
+	var making url.Values
+	if typed != nil && refusedID == "" {
+		making = typed
+	}
 	data := map[string]any{
+		canCreateKey: canMake && principal.HasScope(scopeAdmin),
+		typedKey:     making,
 		titleKey:     salesChannelsLabel,
 		channelsKey:  rows,
 		canReviseKey: canRevise && principal.HasScope(scopeAdmin),

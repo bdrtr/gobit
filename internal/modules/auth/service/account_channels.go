@@ -33,3 +33,16 @@ func (s *AccountSurface) ReviseSalesChannel(ctx context.Context, id string, read
 
 	return err
 }
+
+// MakeSalesChannel makes a sales channel with the name, the description and
+// whether it starts disabled, and returns its id (ADR 0353).
+func (s *AccountSurface) MakeSalesChannel(ctx context.Context, name, description string, disabled bool) (string, error) {
+	channel, err := s.svc.CreateSalesChannel(ctx, SalesChannelInput{
+		Name: name, Description: description, IsDisabled: disabled,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return channel.ID, nil
+}

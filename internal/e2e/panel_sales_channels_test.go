@@ -78,3 +78,42 @@ func TestAnOperatorCorrectsASalesChannelInThePanel(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, stale.Code, stale.Body.String())
 	assert.Contains(t, stale.Body.String(), "draw the list again")
 }
+
+// TestAnOperatorMakesASalesChannelInThePanel is ADR 0353 on the production
+// wiring: the Sales channels screen makes a channel through the registered
+// `auth.admin` surface, which the screen then lists first as it was typed,
+// and refuses a second with the same name.
+func TestAnOperatorMakesASalesChannelInThePanel(t *testing.T) {
+	panel, err := adminui.FromContainer(ctr, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	send := func(method, path string, form url.Values) *httptest.ResponseRecorder {
+		t.Helper()
+
+		req := httptest.NewRequest(method, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_owner", Kind: "user", Scopes: []string{corehttp.ScopeAdmin},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec
+	}
+	name := fmt.Sprintf("e2e made channel %d", fixtureCounter.Add(1))
+	form := url.Values{"name": {name}, "description": {"by telephone"}, "disabled": {"1"}}
+
+	made := send(http.MethodPost, adminui.SalesChannelsPath, form)
+	require.Equal(t, http.StatusSeeOther, made.Code, made.Body.String())
+	page := send(http.MethodGet, made.Header().Get("Location"), nil).Body.String()
+	assert.Contains(t, page, "Channel "+name+" was written.")
+	_, row, found := strings.Cut(page, "<td>"+name+"<br>")
+	require.True(t, found, "the new channel is listed first")
+	row, _, _ = strings.Cut(row, "</tr>")
+	assert.Contains(t, row, "<td>by telephone</td>")
+	assert.Contains(t, row, `<span class="pill">disabled</span>`)
+
+	again := send(http.MethodPost, adminui.SalesChannelsPath, form)
+	require.Equal(t, http.StatusUnprocessableEntity, again.Code, again.Body.String())
+	assert.Contains(t, again.Body.String(), `name="name" value="`+name+`"`, "the refused form keeps what was typed")
+}

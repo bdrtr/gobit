@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel makes a sales channel** (ADR 0353). **For operators:** the
+  Sales channels screen makes a channel under `admin`, enabled or not; a
+  name another channel holds is refused. **For integrators:**
+  `auth.admin` makes a channel as the API's create does.
+
 - **The panel corrects the sales channels** (ADR 0352). **For operators:**
   a Sales channels screen lists the channels under `auth:read`, and each
   row renames, describes or disables its channel under `admin`; a channel

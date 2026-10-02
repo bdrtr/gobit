@@ -848,6 +848,10 @@ func (a recordingAccounts) RevokeAPIKey(context.Context, string, string) error {
 	return a.surfaces.reach(ServiceAuthAdmin)
 }
 
+func (a recordingAccounts) MakeSalesChannel(context.Context, string, string, bool) (string, error) {
+	return "sc_walk", a.surfaces.reach(ServiceAuthAdmin)
+}
+
 func (a recordingAccounts) ReviseSalesChannel(context.Context, string, json.RawMessage, json.RawMessage) error {
 	return a.surfaces.reach(ServiceAuthAdmin)
 }
@@ -1108,6 +1112,7 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, UserRemovePath):      {},
 	routeKey(http.MethodPost, APIKeyRevokePath):    {paramKeyStatus: {"open"}},
 	routeKey(http.MethodPost, APIKeysPath):         {formKeyTitle: {"Walk"}, formKeyType: {"secret"}},
+	routeKey(http.MethodPost, SalesChannelsPath):   {formChannelName: {"Walk"}},
 	routeKey(http.MethodPost, SalesChannelPath): {
 		formChannelReadName: {"Walk"}, formChannelReadDisabled: {"false"}, formChannelName: {"Walk"},
 	},

@@ -14,6 +14,18 @@ is refused.
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
 {{ with .Written }}<p role="status">Channel {{ . }} was written.</p>{{ end }}
 
+{{ if .CanCreate }}
+<details{{ if .Typed }} open{{ end }}>
+  <summary>Make a channel</summary>
+  <form method="post" action="{{ .Path }}">
+    <input name="name" value="{{ .Typed.Get "name" }}" placeholder="name" aria-label="name" required>
+    <input name="description" value="{{ .Typed.Get "description" }}" placeholder="description" aria-label="description">
+    <label><input type="checkbox" name="disabled" value="1"{{ if .Typed.Get "disabled" }} checked{{ end }}> disabled</label>
+    <button type="submit">Make</button>
+  </form>
+</details>
+{{ end }}
+
 {{ if .Channels }}
 <div class="scroll">
 <table>
