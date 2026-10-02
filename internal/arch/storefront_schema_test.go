@@ -136,7 +136,8 @@ const (
 	// The review migration refuses it twice over: it would be the only network
 	// identifier of a shopper stored anywhere in this repository, and it would
 	// buy nothing, because the quota that would use it already exists one layer
-	// up on the whole /store/v1 prefix, keyed by the connection.
+	// up on the whole /store/v1 prefix, keyed by the client as the installation
+	// tells clients apart.
 	claimNetwork claimKind = "holds a NETWORK ORIGIN"
 	// claimRecord names a prior record of the shop.
 	//

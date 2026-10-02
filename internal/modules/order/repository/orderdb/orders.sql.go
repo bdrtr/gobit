@@ -321,6 +321,38 @@ func (q *Queries) CreateOrder(ctx context.Context, arg CreateOrderParams) (Order
 	return i, err
 }
 
+const customerBoughtAnyOf = `-- name: CustomerBoughtAnyOf :one
+SELECT EXISTS (
+    SELECT 1
+    FROM orders o
+    JOIN order_line_items li ON li.order_id = o.id
+    WHERE o.customer_id = $1::text
+      AND o.status <> 'canceled'
+      AND li.variant_id = ANY($2::text[])
+) AS bought
+`
+
+type CustomerBoughtAnyOfParams struct {
+	CustomerID string
+	VariantIds []string
+}
+
+// CustomerBoughtAnyOf reports whether the customer has an order that was not
+// canceled with a line of one of the variants (ADR 0372): what a review's
+// "verified purchase" asks of the customer a storefront request proved.
+//
+// A completed or archived order counts as a pending one does: the goods were
+// bought, and whether they have arrived yet is not what the badge says. A guest
+// order names no customer and is never reached. It walks orders_customer_idx to
+// the customer's orders and order_line_items_order_idx to their lines, so its
+// cost is the customer's own history, not the shop's.
+func (q *Queries) CustomerBoughtAnyOf(ctx context.Context, arg CustomerBoughtAnyOfParams) (bool, error) {
+	row := q.db.QueryRow(ctx, customerBoughtAnyOf, arg.CustomerID, arg.VariantIds)
+	var bought bool
+	err := row.Scan(&bought)
+	return bought, err
+}
+
 const getOrder = `-- name: GetOrder :one
 SELECT id, display_id, status, region_id, customer_id, email, currency_code, cart_id, idempotency_key, subtotal, discount_total, tax_total, shipping_total, total, metadata, placed_at, completed_at, canceled_at, cancel_reason, created_at, updated_at, archived_at, personal_data_erased_at, adds_to_order_id, prices_include_tax, placed_by FROM orders
 WHERE id = $1

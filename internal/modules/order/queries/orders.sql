@@ -173,3 +173,22 @@ SET status      = 'archived',
     updated_at  = now()
 WHERE id = $1 AND status = 'completed'
 RETURNING *;
+
+-- CustomerBoughtAnyOf reports whether the customer has an order that was not
+-- canceled with a line of one of the variants (ADR 0372): what a review's
+-- "verified purchase" asks of the customer a storefront request proved.
+--
+-- A completed or archived order counts as a pending one does: the goods were
+-- bought, and whether they have arrived yet is not what the badge says. A guest
+-- order names no customer and is never reached. It walks orders_customer_idx to
+-- the customer's orders and order_line_items_order_idx to their lines, so its
+-- cost is the customer's own history, not the shop's.
+-- name: CustomerBoughtAnyOf :one
+SELECT EXISTS (
+    SELECT 1
+    FROM orders o
+    JOIN order_line_items li ON li.order_id = o.id
+    WHERE o.customer_id = sqlc.arg('customer_id')::text
+      AND o.status <> 'canceled'
+      AND li.variant_id = ANY(sqlc.arg('variant_ids')::text[])
+) AS bought;

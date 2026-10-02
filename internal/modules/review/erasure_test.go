@@ -70,11 +70,15 @@ const reviewsTable = "reviews"
 //     reason the model gave is a different matter and IS declared, for the same
 //     reason the moderation note is — it is free text about the author's own
 //     free text, and a reason for rejecting a review quotes the review.
+//   - verified_purchase says the writer bought the product, and nothing about
+//     which customer they were: the customer is asked when the review is
+//     written and not kept (ADR 0372).
 var notPersonalColumns = map[string][]string{
 	reviewsTable: {
 		"id", "product_id", "rating", "status", "moderated_at",
 		"created_at", "updated_at",
 		"suggested_status", "suggested_at", "suggestion_model",
+		"verified_purchase",
 	},
 }
 

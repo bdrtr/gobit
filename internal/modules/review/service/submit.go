@@ -22,11 +22,10 @@ import (
 // address for the same reason.
 //
 // An order id would let the row claim "verified purchase" and the claim would
-// be false: ADR 0008 leaves customer identity to the embedding application, so
-// an order id proves only that the writer has one, and it is the same
-// credential the storefront return request already runs on. What it would buy —
-// a narrower spam surface — is bought instead by the thing that actually works,
-// which is that nothing is published until a person approves it.
+// be false: an order id proves only that the writer has one, and it is the
+// same credential the storefront return request already runs on. The badge
+// comes instead from the customer the request PROVED and that customer's own
+// orders (ADR 0372) — see [SubmitInput.CustomerID].
 type SubmitInput struct {
 	// ProductID is what the review is about.
 	//
@@ -46,6 +45,11 @@ type SubmitInput struct {
 	// AuthorName is the byline the author typed. See [models.Review] for why it
 	// is the only thing stored about them.
 	AuthorName string
+	// CustomerID is the customer the request PROVED, or empty when it proved
+	// nobody. It decides whether the review is a verified purchase and is not
+	// stored (ADR 0372); the handler takes it from the bound identity, never
+	// from the request body.
+	CustomerID string
 }
 
 // Submit stores a review and returns it in [models.StatusSubmitted].
@@ -70,18 +74,25 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (models.Review, er
 		return models.Review{}, err
 	}
 
+	productID := strings.TrimSpace(in.ProductID)
+	verified, err := s.verifiedPurchase(ctx, strings.TrimSpace(in.CustomerID), productID)
+	if err != nil {
+		return models.Review{}, err
+	}
+
 	review := models.Review{
 		ID:        models.NewReviewID(),
-		ProductID: strings.TrimSpace(in.ProductID),
+		ProductID: productID,
 		Rating:    in.Rating,
 		// The text is stored TRIMMED. A body of three newlines would otherwise
 		// pass the emptiness check the moment it was written and arrive in the
 		// moderation queue as a blank card an operator has to open to see is
 		// blank.
-		Title:      strings.TrimSpace(in.Title),
-		Body:       strings.TrimSpace(in.Body),
-		AuthorName: strings.TrimSpace(in.AuthorName),
-		Status:     models.StatusSubmitted,
+		Title:            strings.TrimSpace(in.Title),
+		Body:             strings.TrimSpace(in.Body),
+		AuthorName:       strings.TrimSpace(in.AuthorName),
+		Status:           models.StatusSubmitted,
+		VerifiedPurchase: verified,
 	}
 
 	stored, err := s.repo.Create(ctx, review)
@@ -93,6 +104,17 @@ func (s *Service) Submit(ctx context.Context, in SubmitInput) (models.Review, er
 		"review_id", stored.ID, "product_id", stored.ProductID, "status", stored.Status)
 
 	return stored, nil
+}
+
+// verifiedPurchase asks whether the proven customer bought the product; a
+// request that proved nobody, or a service with no purchases to ask, writes an
+// unverified review without asking.
+func (s *Service) verifiedPurchase(ctx context.Context, customerID, productID string) (bool, error) {
+	if customerID == "" || s.purchases == nil {
+		return false, nil
+	}
+
+	return s.purchases.Bought(ctx, customerID, productID)
 }
 
 // validate refuses a submission that could not become a readable review.

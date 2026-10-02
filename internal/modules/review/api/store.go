@@ -38,10 +38,12 @@ type storeSubmitRequest struct {
 //
 // # Authorization
 //
-// There is none, and that is declared rather than hidden. The storefront's only
-// principal is the publishable key (ADR 0008 leaves customer identity to the
-// embedding application), so this module cannot know who is writing, cannot
-// establish that they bought the product, and does not pretend to.
+// There is none, and that is declared rather than hidden: anybody holding the
+// publishable key may write a review. What a request PROVES is asked of the
+// bound customer identity, and a proven customer who bought the product gets a
+// verified-purchase badge (ADR 0372); a refusal of any kind writes the review as
+// a stranger's, and only an identity that could not check ends the request.
+// The customer is never read from the body, which refuses an unknown field.
 //
 // What makes the write acceptable is the same argument the order module writes
 // down for its return request, and decision A15 in docs/gaps.md turns it into a
@@ -66,12 +68,20 @@ func (h *Handler) storeSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	customerID, err := corehttp.ProvenCustomerIfAny(h.identity, r)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
 	submitted, err := h.svc.Submit(ctx, service.SubmitInput{
 		ProductID:  productID(r),
 		Rating:     body.Rating,
 		Title:      body.Title,
 		Body:       body.Body,
 		AuthorName: body.AuthorName,
+		CustomerID: customerID,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)

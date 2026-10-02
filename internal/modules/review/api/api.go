@@ -129,10 +129,21 @@ type Reviews interface {
 // Handler serves the review endpoints.
 type Handler struct {
 	svc Reviews
+	// identity tells a buyer from a stranger on the storefront's submission;
+	// nil marks every review unverified (ADR 0372).
+	identity corehttp.Identity
 }
 
 // New builds the handler.
 func New(svc Reviews) *Handler { return &Handler{svc: svc} }
+
+// WithIdentity gives the storefront's review submission the identity that
+// says which customer a request proves, if any (ADR 0372).
+func (h *Handler) WithIdentity(identity corehttp.Identity) *Handler {
+	h.identity = identity
+
+	return h
+}
 
 // Routes mounts the module's endpoints on the router.
 func (h *Handler) Routes(r chi.Router) {
@@ -177,13 +188,17 @@ type itemEnvelope struct {
 // operator's sentence about a stranger's text that was never written to be
 // published.
 type storeReviewDTO struct {
-	ID         string    `json:"id"`
-	ProductID  string    `json:"product_id"`
-	Rating     int16     `json:"rating"`
-	Title      string    `json:"title"`
-	Body       string    `json:"body"`
-	AuthorName string    `json:"author_name"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         string `json:"id"`
+	ProductID  string `json:"product_id"`
+	Rating     int16  `json:"rating"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	AuthorName string `json:"author_name"`
+	// VerifiedPurchase says the writer was a customer the storefront proved
+	// who had bought the product (ADR 0372). Who they were is not published,
+	// nor stored.
+	VerifiedPurchase bool      `json:"verified_purchase"`
+	CreatedAt        time.Time `json:"created_at"`
 }
 
 // adminReviewDTO is what an OPERATOR sees.
@@ -195,6 +210,8 @@ type adminReviewDTO struct {
 	Body       string `json:"body"`
 	AuthorName string `json:"author_name"`
 	Status     string `json:"status"`
+	// VerifiedPurchase is the badge the storefront shows (ADR 0372).
+	VerifiedPurchase bool `json:"verified_purchase"`
 	// ModeratedAt is absent while the review is still waiting, rather than
 	// present as the zero instant: a review dated year one reads as a data
 	// fault, and "not yet" is what the row actually says.
@@ -258,29 +275,31 @@ type summaryDTO struct {
 // toStoreReviewDTO converts a review for a shopper.
 func toStoreReviewDTO(in models.Review) storeReviewDTO {
 	return storeReviewDTO{
-		ID:         in.ID,
-		ProductID:  in.ProductID,
-		Rating:     in.Rating,
-		Title:      in.Title,
-		Body:       in.Body,
-		AuthorName: in.AuthorName,
-		CreatedAt:  in.CreatedAt,
+		ID:               in.ID,
+		ProductID:        in.ProductID,
+		Rating:           in.Rating,
+		Title:            in.Title,
+		Body:             in.Body,
+		AuthorName:       in.AuthorName,
+		VerifiedPurchase: in.VerifiedPurchase,
+		CreatedAt:        in.CreatedAt,
 	}
 }
 
 // toAdminReviewDTO converts a review for an operator.
 func toAdminReviewDTO(in models.Review) adminReviewDTO {
 	out := adminReviewDTO{
-		ID:             in.ID,
-		ProductID:      in.ProductID,
-		Rating:         in.Rating,
-		Title:          in.Title,
-		Body:           in.Body,
-		AuthorName:     in.AuthorName,
-		Status:         in.Status.String(),
-		ModerationNote: in.ModerationNote,
-		CreatedAt:      in.CreatedAt,
-		UpdatedAt:      in.UpdatedAt,
+		ID:               in.ID,
+		ProductID:        in.ProductID,
+		Rating:           in.Rating,
+		Title:            in.Title,
+		Body:             in.Body,
+		AuthorName:       in.AuthorName,
+		Status:           in.Status.String(),
+		VerifiedPurchase: in.VerifiedPurchase,
+		ModerationNote:   in.ModerationNote,
+		CreatedAt:        in.CreatedAt,
+		UpdatedAt:        in.UpdatedAt,
 	}
 	if !in.ModeratedAt.IsZero() {
 		moment := in.ModeratedAt

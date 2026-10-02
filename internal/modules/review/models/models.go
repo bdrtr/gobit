@@ -174,6 +174,11 @@ type Review struct {
 	AuthorName string
 	// Status is where the review stands.
 	Status Status
+	// VerifiedPurchase says the request that wrote the review proved a
+	// customer, and one of that customer's orders that was not canceled has a
+	// line of one of the product's variants (ADR 0372). The customer is not
+	// stored: the badge needs them only at the moment of writing.
+	VerifiedPurchase bool
 	// ModeratedAt is when a human decided; it is the zero time while the review
 	// is still submitted.
 	ModeratedAt time.Time

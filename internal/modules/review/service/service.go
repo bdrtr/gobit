@@ -111,12 +111,25 @@ type Repo interface {
 type Options struct {
 	// Logger falls back to slog.Default when nil.
 	Logger *slog.Logger
+	// Purchases answers whether a proven customer bought the product a review
+	// is about (ADR 0372). Nil marks no review a verified purchase.
+	Purchases Purchases
+}
+
+// Purchases answers whether a customer bought a product (ADR 0372).
+//
+// The module builds it over the catalog's variants and the order module's
+// history, both read across a module boundary; a composition that has neither
+// answers false rather than refusing the review.
+type Purchases interface {
+	Bought(ctx context.Context, customerID, productID string) (bool, error)
 }
 
 // Service is the review module's rules.
 type Service struct {
-	repo Repo
-	log  *slog.Logger
+	repo      Repo
+	purchases Purchases
+	log       *slog.Logger
 }
 
 // New builds the service.
@@ -125,7 +138,7 @@ func New(repo Repo, opts Options) *Service {
 		opts.Logger = slog.Default()
 	}
 
-	return &Service{repo: repo, log: opts.Logger}
+	return &Service{repo: repo, purchases: opts.Purchases, log: opts.Logger}
 }
 
 // Page is one page of a review listing.

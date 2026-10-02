@@ -445,6 +445,21 @@ func (v fakeSnapshot) awaitsPayment(order models.Order) bool {
 	return order.Status != models.OrderCanceled && v.summaries[order.ID].PaidTotal < order.Total-credited
 }
 
+// CustomerBoughtAnyOf mirrors the query: an order of the customer that was not
+// canceled, with a line of one of the variants.
+func (f *fakeStore) CustomerBoughtAnyOf(ctx context.Context, customerID string, variantIDs []string) (bool, error) {
+	snapshot := f.view(ctx)
+	for id := range snapshot.items {
+		order, ok := snapshot.orders[snapshot.items[id].OrderID]
+		if ok && order.CustomerID == customerID && order.Status != models.OrderCanceled &&
+			slices.Contains(variantIDs, snapshot.items[id].VariantID) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 // ListOrders filters and pages the orders.
 func (f *fakeStore) ListOrders(ctx context.Context, filter models.OrderFilter) ([]models.Order, int64, error) {
 	snapshot := f.view(ctx)

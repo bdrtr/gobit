@@ -47,16 +47,17 @@ func cursorBounds(c corepage.Cursor) (at pgtype.Timestamptz, id *string) {
 // reader should not have to know it.
 func toReview(row reviewdb.Review) models.Review {
 	out := models.Review{
-		ID:             row.ID,
-		ProductID:      row.ProductID,
-		Rating:         row.Rating,
-		Title:          row.Title,
-		Body:           row.Body,
-		AuthorName:     row.AuthorName,
-		Status:         models.Status(row.Status),
-		ModerationNote: row.ModerationNote,
-		CreatedAt:      row.CreatedAt.Time,
-		UpdatedAt:      row.UpdatedAt.Time,
+		ID:               row.ID,
+		ProductID:        row.ProductID,
+		Rating:           row.Rating,
+		Title:            row.Title,
+		Body:             row.Body,
+		AuthorName:       row.AuthorName,
+		Status:           models.Status(row.Status),
+		VerifiedPurchase: row.VerifiedPurchase,
+		ModerationNote:   row.ModerationNote,
+		CreatedAt:        row.CreatedAt.Time,
+		UpdatedAt:        row.UpdatedAt.Time,
 	}
 	if row.ModeratedAt.Valid {
 		out.ModeratedAt = row.ModeratedAt.Time

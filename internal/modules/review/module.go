@@ -33,10 +33,11 @@
 // thing that handles every other unwanted review: an operator does not approve
 // it.
 //
-// It also does not know who wrote the review, and does not pretend to. There is
-// no order id on the row, so "verified purchase" is not expressible here — an
-// order id would prove that the writer holds one, which under ADR 0008 is not
-// the same as being the buyer.
+// It also does not keep who wrote the review. When the storefront request
+// proves a customer, the module asks whether that customer bought the product
+// and marks the review a verified purchase (ADR 0372), and it keeps the answer,
+// not the customer. There is still no order id on the row: an order id would
+// prove that the writer holds one, which is not the same as being the buyer.
 //
 // # What it stores about a person
 //
@@ -75,6 +76,7 @@ import (
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/core/openapi"
 	"github.com/bdrtr/gobit/core/personaldata"
+	"github.com/bdrtr/gobit/internal/core/identity"
 	"github.com/bdrtr/gobit/internal/modules/review/api"
 	"github.com/bdrtr/gobit/internal/modules/review/repository"
 	"github.com/bdrtr/gobit/internal/modules/review/service"
@@ -167,14 +169,20 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 
 	log := m.opts.Logger.With("module", ModuleName)
 
-	svc := service.New(repository.New(pool.Pool()), service.Options{Logger: log})
+	svc := service.New(repository.New(pool.Pool()), service.Options{
+		Logger:    log,
+		Purchases: &purchases{c: c, log: log},
+	})
 
 	if err := c.Provide(ServiceName, svc); err != nil {
 		return err
 	}
 
 	m.svc = svc
-	m.handler = api.New(svc)
+	// The storefront's submission asks who the request proves, if anybody, so a
+	// buyer's review says they bought the product (ADR 0372); the identity is
+	// resolved on first use, like the order module's surface.
+	m.handler = api.New(svc).WithIdentity(storefrontIdentity(c, log))
 
 	log.DebugContext(ctx, "review module registered", "service", ServiceName)
 
@@ -288,4 +296,13 @@ func mustSub(f embed.FS, dir string) fs.FS {
 	}
 
 	return sub
+}
+
+// storefrontIdentity binds the storefront's review submission to the
+// embedder's customer identity (ADR 0370, ADR 0372). Nothing bound is no
+// refusal: a review a stranger writes is the module's ordinary case, and it is
+// written unverified.
+func storefrontIdentity(c *container.Container, log *slog.Logger) *identity.Binding {
+	return identity.New(c, log, ModuleName, codeSetupFailed,
+		"no customer identity is bound; every review is written unverified, as a stranger's is")
 }

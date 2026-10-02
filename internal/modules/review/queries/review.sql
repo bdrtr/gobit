@@ -7,8 +7,8 @@
 
 -- name: CreateReview :one
 INSERT INTO reviews (
-    id, product_id, rating, title, body, author_name, status
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
+    id, product_id, rating, title, body, author_name, status, verified_purchase
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: GetReview :one

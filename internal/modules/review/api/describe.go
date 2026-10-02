@@ -33,16 +33,20 @@ func Describe(d *openapi.Doc) {
 		Description: ratingText() +
 			"The review is stored in the \"submitted\" status and is visible to NOBODY " +
 			"on the storefront until an operator approves it. That is the design and not a " +
-			"delay: the storefront's only principal is the publishable key, so this framework " +
-			"cannot know who wrote the review and does not claim to — what makes the write " +
-			"acceptable is that a person stands between it and its effect. " +
-			"\"Verified purchase\" is therefore not expressible and no order id is taken: an " +
-			"order id proves that the writer holds one, not that they are the buyer. " +
+			"delay: anybody holding the publishable key may write a review, and what makes " +
+			"the write acceptable is that a person stands between it and its effect. " +
+			"When the request proves a customer through the bound identity, and one of that " +
+			"customer's orders that was not canceled carries one of the product's variants, " +
+			"the review is a verified purchase; the customer is asked about and not stored. " +
+			"A request that proves nobody writes an unverified review, and an identity that " +
+			"could not check ends the request. No order id is taken: an order id proves that " +
+			"the writer holds one, not that they are the buyer. " +
 			"The body carries a display name and NO contact detail; an email address here " +
 			"would be an unverified mailing list with no way to unsubscribe. " +
 			"The endpoint has no quota of its own — the storefront prefix carries a single " +
-			"rate limit shared by every store endpoint, keyed by the connection — so what " +
-			"keeps a flood off a product page is the approval step, not the limit.",
+			"rate limit shared by every store endpoint, keyed by the client as the " +
+			"installation tells clients apart — so what keeps a flood off a product page is " +
+			"the approval step, not the limit.",
 		RequestBody: d.RequestBody(storeSubmitRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The stored review, awaiting moderation",

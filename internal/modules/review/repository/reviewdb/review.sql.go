@@ -63,19 +63,20 @@ func (q *Queries) CountReviews(ctx context.Context, arg CountReviewsParams) (int
 const createReview = `-- name: CreateReview :one
 
 INSERT INTO reviews (
-    id, product_id, rating, title, body, author_name, status
-) VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model
+    id, product_id, rating, title, body, author_name, status, verified_purchase
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model, verified_purchase
 `
 
 type CreateReviewParams struct {
-	ID         string
-	ProductID  string
-	Rating     int16
-	Title      string
-	Body       string
-	AuthorName string
-	Status     string
+	ID               string
+	ProductID        string
+	Rating           int16
+	Title            string
+	Body             string
+	AuthorName       string
+	Status           string
+	VerifiedPurchase bool
 }
 
 // reviews queries.
@@ -93,6 +94,7 @@ func (q *Queries) CreateReview(ctx context.Context, arg CreateReviewParams) (Rev
 		arg.Body,
 		arg.AuthorName,
 		arg.Status,
+		arg.VerifiedPurchase,
 	)
 	var i Review
 	err := row.Scan(
@@ -111,12 +113,13 @@ func (q *Queries) CreateReview(ctx context.Context, arg CreateReviewParams) (Rev
 		&i.SuggestedAt,
 		&i.SuggestionNote,
 		&i.SuggestionModel,
+		&i.VerifiedPurchase,
 	)
 	return i, err
 }
 
 const getReview = `-- name: GetReview :one
-SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model FROM reviews WHERE id = $1
+SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model, verified_purchase FROM reviews WHERE id = $1
 `
 
 func (q *Queries) GetReview(ctx context.Context, id string) (Review, error) {
@@ -138,12 +141,13 @@ func (q *Queries) GetReview(ctx context.Context, id string) (Review, error) {
 		&i.SuggestedAt,
 		&i.SuggestionNote,
 		&i.SuggestionModel,
+		&i.VerifiedPurchase,
 	)
 	return i, err
 }
 
 const listApprovedReviews = `-- name: ListApprovedReviews :many
-SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model FROM reviews
+SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model, verified_purchase FROM reviews
 WHERE product_id = $1::text
   AND status = 'approved'
   AND (created_at, id) < (
@@ -202,6 +206,7 @@ func (q *Queries) ListApprovedReviews(ctx context.Context, arg ListApprovedRevie
 			&i.SuggestedAt,
 			&i.SuggestionNote,
 			&i.SuggestionModel,
+			&i.VerifiedPurchase,
 		); err != nil {
 			return nil, err
 		}
@@ -214,7 +219,7 @@ func (q *Queries) ListApprovedReviews(ctx context.Context, arg ListApprovedRevie
 }
 
 const listReviews = `-- name: ListReviews :many
-SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model FROM reviews
+SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model, verified_purchase FROM reviews
 WHERE ($1::text IS NULL OR status = $1::text)
   AND ($2::text IS NULL OR product_id = $2::text)
   AND ($3::text IS NULL
@@ -279,6 +284,7 @@ func (q *Queries) ListReviews(ctx context.Context, arg ListReviewsParams) ([]Rev
 			&i.SuggestedAt,
 			&i.SuggestionNote,
 			&i.SuggestionModel,
+			&i.VerifiedPurchase,
 		); err != nil {
 			return nil, err
 		}
@@ -291,7 +297,7 @@ func (q *Queries) ListReviews(ctx context.Context, arg ListReviewsParams) ([]Rev
 }
 
 const listReviewsAwaitingSuggestion = `-- name: ListReviewsAwaitingSuggestion :many
-SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model FROM reviews
+SELECT id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model, verified_purchase FROM reviews
 WHERE status = 'submitted'
   AND suggested_status IS NULL
 ORDER BY created_at, id
@@ -336,6 +342,7 @@ func (q *Queries) ListReviewsAwaitingSuggestion(ctx context.Context, rowLimit in
 			&i.SuggestedAt,
 			&i.SuggestionNote,
 			&i.SuggestionModel,
+			&i.VerifiedPurchase,
 		); err != nil {
 			return nil, err
 		}
@@ -355,7 +362,7 @@ SET status          = $1::text,
     updated_at      = now()
 WHERE id = $3::text
   AND status = $4::text
-RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model
+RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model, verified_purchase
 `
 
 type ModerateReviewParams struct {
@@ -399,6 +406,7 @@ func (q *Queries) ModerateReview(ctx context.Context, arg ModerateReviewParams) 
 		&i.SuggestedAt,
 		&i.SuggestionNote,
 		&i.SuggestionModel,
+		&i.VerifiedPurchase,
 	)
 	return i, err
 }
@@ -412,7 +420,7 @@ SET suggested_status = $1::text,
     updated_at       = now()
 WHERE id = $4::text
   AND status = 'submitted'
-RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model
+RETURNING id, product_id, rating, title, body, author_name, status, moderated_at, moderation_note, created_at, updated_at, suggested_status, suggested_at, suggestion_note, suggestion_model, verified_purchase
 `
 
 type SuggestReviewParams struct {
@@ -466,6 +474,7 @@ func (q *Queries) SuggestReview(ctx context.Context, arg SuggestReviewParams) (R
 		&i.SuggestedAt,
 		&i.SuggestionNote,
 		&i.SuggestionModel,
+		&i.VerifiedPurchase,
 	)
 	return i, err
 }

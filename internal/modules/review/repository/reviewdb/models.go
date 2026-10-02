@@ -9,19 +9,20 @@ import (
 )
 
 type Review struct {
-	ID              string
-	ProductID       string
-	Rating          int16
-	Title           string
-	Body            string
-	AuthorName      string
-	Status          string
-	ModeratedAt     pgtype.Timestamptz
-	ModerationNote  string
-	CreatedAt       pgtype.Timestamptz
-	UpdatedAt       pgtype.Timestamptz
-	SuggestedStatus *string
-	SuggestedAt     pgtype.Timestamptz
-	SuggestionNote  string
-	SuggestionModel string
+	ID               string
+	ProductID        string
+	Rating           int16
+	Title            string
+	Body             string
+	AuthorName       string
+	Status           string
+	ModeratedAt      pgtype.Timestamptz
+	ModerationNote   string
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	SuggestedStatus  *string
+	SuggestedAt      pgtype.Timestamptz
+	SuggestionNote   string
+	SuggestionModel  string
+	VerifiedPurchase bool
 }

@@ -80,6 +80,9 @@ type Store interface {
 	// ListOrders filters and pages the orders; the second value is the total
 	// count.
 	ListOrders(ctx context.Context, filter models.OrderFilter) ([]models.Order, int64, error)
+	// CustomerBoughtAnyOf reports whether the customer has an order that was
+	// not canceled with a line of one of the variants (ADR 0372).
+	CustomerBoughtAnyOf(ctx context.Context, customerID string, variantIDs []string) (bool, error)
 	// OrdersByIDs fetches a set of identifiers in a SINGLE query (no N+1).
 	OrdersByIDs(ctx context.Context, ids []string) ([]models.Order, error)
 	// CancelOrder cancels the order; it only takes effect in the 'pending'

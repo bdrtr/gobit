@@ -56,13 +56,14 @@ func (r *Repository) queries() *reviewdb.Queries { return reviewdb.New(r.pool) }
 // Create writes a submitted review.
 func (r *Repository) Create(ctx context.Context, in models.Review) (models.Review, error) {
 	row, err := r.queries().CreateReview(ctx, reviewdb.CreateReviewParams{
-		ID:         in.ID,
-		ProductID:  in.ProductID,
-		Rating:     in.Rating,
-		Title:      in.Title,
-		Body:       in.Body,
-		AuthorName: in.AuthorName,
-		Status:     in.Status.String(),
+		ID:               in.ID,
+		ProductID:        in.ProductID,
+		Rating:           in.Rating,
+		Title:            in.Title,
+		Body:             in.Body,
+		AuthorName:       in.AuthorName,
+		Status:           in.Status.String(),
+		VerifiedPurchase: in.VerifiedPurchase,
 	})
 	if err != nil {
 		return models.Review{}, wrapDB(err, codeQueryFailed, "the review could not be written")

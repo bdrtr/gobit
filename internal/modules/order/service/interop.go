@@ -354,6 +354,13 @@ func (i *Interop) ShippingParentOf(ctx context.Context, orderID string) (string,
 	return i.svc.ShippingParentOf(ctx, orderID)
 }
 
+// CustomerBoughtAnyOf reports whether the customer has an order that was not
+// canceled with a line of one of the variants; the review module asks it to
+// mark a proven customer's review a verified purchase (ADR 0372).
+func (i *Interop) CustomerBoughtAnyOf(ctx context.Context, customerID string, variantIDs []string) (bool, error) {
+	return i.svc.CustomerBoughtAnyOf(ctx, customerID, variantIDs)
+}
+
 // CheckAddition answers whether an order of customerID in currencyCode may add
 // to orderID now; nil means it may (ADR 0192).
 //

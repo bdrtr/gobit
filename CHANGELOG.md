@@ -50,6 +50,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A buyer's review says they bought it** (ADR 0372). **For integrators:**
+  a storefront review whose request proves a customer who bought the product
+  answers `verified_purchase: true`, in the listing and in the admin reads; the
+  customer is not stored. **Migration:** the review module's 000004 adds the
+  column.
+
 - **An identity that proves nobody refuses** (ADR 0371, D220). **For
   operators:** with `contrib/identity-session` bound, a storefront request
   naming a customer with no session, an expired one or a forged one answers
