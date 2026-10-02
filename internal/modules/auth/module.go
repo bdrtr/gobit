@@ -28,12 +28,11 @@
 //
 // # Logging out is WHOLESALE
 //
-// POST /admin/v1/auth/logout drops ALL of the caller's sessions; a single
-// device cannot be picked. The token holds no state, and invalidating a
-// single token would have wanted a jti-based blacklist (a new repository);
-// instead a single time anchor kept per identity is advanced and every token
-// minted before it drops at once (see internal/modules/auth/service,
-// session.go).
+// POST /admin/v1/auth/logout drops ALL of the caller's sessions: a single
+// time anchor kept per identity is advanced and every token minted before it
+// drops at once (see internal/modules/auth/service, session.go). Closing one
+// session is POST /admin/v1/auth/sessions/{id}/revoke, which closes the row
+// that session's token names (ADR 0267).
 //
 // # AN UNPROTECTED ENDPOINT
 //

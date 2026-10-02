@@ -11,19 +11,14 @@ import (
 
 // This file defines when and HOW a session drops.
 //
-// # THERE IS NO SESSION RECORD
+// # Two ways a session drops
 //
-// The token holds no state: there is no table called "open sessions" on the
-// server and there is no way to invalidate a SINGLE token that has been
-// produced. Doing that would require putting a "jti" into the token and keeping
-// a blacklist store that every request reads and whose expired records are
-// cleaned up regularly — that price, which means giving up the token being
-// stateless, buys no new capability today (see [Service.Logout]).
-//
-// Instead, a SINGLE timestamp is kept per identity: [sessionAnchor]. A token is
-// rejected if it was produced before the anchor. This is why revocation is
-// always WHOLESALE — when the anchor moves forward, the tokens on all of the
-// user's devices drop at the same moment.
+// Every sign-in writes a session row its token names, and closing that row
+// refuses that token alone (ADR 0267, sessions.go). Beside it, a SINGLE
+// timestamp is kept per identity: [sessionAnchor]. A token is rejected if it
+// was produced before the anchor, so moving the anchor forward drops the tokens
+// on all of the user's devices at the same moment. A logout and a password
+// change move the anchor; closing one session or all the others closes rows.
 //
 // # The anchor is per IDENTITY, not per user
 //
@@ -88,19 +83,14 @@ func latestAnchor(identities []models.AuthIdentity) time.Time {
 // Logout closes the caller's sessions and returns the moment the revocation
 // rests on.
 //
-// # ALL sessions drop; a single device cannot be picked
+// # ALL sessions drop
 //
 // This endpoint closes NOT one device but all of the caller's sessions: an
 // administrator logging out from their phone has also closed the session on
-// their laptop. The limit is real and must not be hidden — a user who thinks "I
-// logged out" needs to know what they actually did.
-//
-// Dropping a single device HAS NOT BEEN ADDED because the token is stateless:
-// saying "drop that token" means a jti-based blacklist, that is, A NEW STORE
-// that is read on every request and whose expired records are cleaned up. The
-// need of today — "I lost my device, log me out everywhere" — is already met by
-// wholesale revocation; the distinction will be added when it is really needed
-// (see the head of the file).
+// their laptop. A user who thinks "I logged out" needs to know what they
+// actually did. Closing one session, or every one but the caller's, is a
+// different pair of endpoints that close rows rather than move the anchor (ADR
+// 0267, [Service.CloseSession]).
 //
 // # ALL providers drop
 //

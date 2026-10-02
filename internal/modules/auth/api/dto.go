@@ -164,12 +164,12 @@ type logoutResponse struct {
 	// AllSessions reports that the revocation covers ALL of the caller's
 	// sessions.
 	//
-	// The field is always true today and this is not a shortcoming but the
-	// contract itself: there is no way to drop a single device (see
-	// service.Service.Logout). Being constant it could have been dropped, but
-	// then the only place a client could learn about the wholesale revocation
-	// would have been the documentation, and a developer looking at the
-	// response would have been left alone with their wrong assumption.
+	// The field is always true and this is the contract itself: a logout drops
+	// every session, and closing one is a different endpoint (ADR 0267). Being
+	// constant it could have been dropped, but then the only place a client
+	// could learn about the wholesale revocation would have been the
+	// documentation, and a developer looking at the response would have been
+	// left alone with their wrong assumption.
 	AllSessions bool `json:"all_sessions"`
 	// RevokedAt is the moment the revocation rests on (RFC3339, UTC).
 	//

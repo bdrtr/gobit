@@ -129,9 +129,7 @@ func (h *Handler) writeUser(w http.ResponseWriter, r *http.Request, status int, 
 //
 // The endpoint closes not one device but all of the caller's sessions: an admin
 // logging out from their phone has closed their session on the laptop too.
-// Dropping a single device does not exist and cannot exist today either — that
-// would take a jti-based deny list, that is, a new store read on every request
-// (see service.Service.Logout).
+// Closing one device is POST /admin/v1/auth/sessions/{id}/revoke (ADR 0267).
 //
 // # THIS ENDPOINT ASKS FOR NO SCOPE
 //

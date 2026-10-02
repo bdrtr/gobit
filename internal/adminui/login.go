@@ -126,8 +126,8 @@ func mfaMessage(err error) string {
 //
 // The identity service's logout drops ALL of the caller's sessions: signing out
 // on a phone also signs the desktop out. Clearing the cookie without calling the
-// service would look kinder but would be a lie — the token is stateless, a
-// deleted cookie does NOT invalidate it, and a copied token would keep working.
+// service would look kinder but would be a lie — a deleted cookie does NOT close
+// the session its token names, and a copied token would keep working.
 //
 // The cookie is cleared even if the service call fails: leaving a dead session
 // in the user's browser means leaving them signed in somewhere they believe they
