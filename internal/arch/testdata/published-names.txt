@@ -226,6 +226,7 @@ core/http CallbackResponse
 core/http CallbackRoute
 core/http CallbackVerify
 core/http ClientIPKey
+core/http ClientKeyName
 core/http CodeAuthenticationUnchecked
 core/http CodeCallbackConflict
 core/http CodeCallbackFrozen

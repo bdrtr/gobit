@@ -501,6 +501,12 @@ in headless commerce, running behind a reverse proxy is very nearly the only
 deployment shape — so a shared installation that has left `TRUSTED_PROXY_HOPS=0`
 while the rate limit is **on** produces a **warning** at startup. If you are behind
 a proxy, write the number of hops you trust in between (`1` for a single ingress).
+The same key is provided to the modules as `corehttp.ClientKeyName`, and a
+module's own limit — `contrib/identity-session`'s registrations — keys a client
+with it too ([ADR 0368](adr/0368-a-module-keys-a-client-as-the-installation-does.md)).
+A storefront that calls gobit from its server is such a proxy: it forwards its
+shopper's address in `X-Forwarded-For`, read from a header only its own platform
+writes, and the installation trusts one hop.
 
 `RATE_LIMIT_PER_MINUTE <= 0` does **not build the limiter at all** (in ADR 0007
 zero means "off"). It is a legitimate choice, but it also leaves the login endpoint

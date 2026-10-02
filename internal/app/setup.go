@@ -248,6 +248,13 @@ func panelPages(host *coreplugin.Host) []adminui.Page {
 	return out
 }
 
+// clientKey is the key the installation tells one client from another by,
+// built from the hops it trusts: the guard stack's limit keys by it, and so
+// does a module limiting a route of its own (ADR 0368).
+func clientKey(cfg config.Config) corehttp.KeyFunc {
+	return corehttp.TrustedProxyIPKey(cfg.TrustedProxyHops)
+}
+
 // dbConfig builds the connection pool settings from the configuration.
 //
 // Only the two limits the operator can set are overridden; the lifetimes and
@@ -493,6 +500,12 @@ func openApplication(
 		return nil, nil, err
 	}
 	if err := c.Provide(svcWorkflow, workflow.New(workflowStore, log)); err != nil {
+		return nil, nil, err
+	}
+
+	// The key one client is told from another by, as the installation's own
+	// limit keys it, for a module limiting a route of its own (ADR 0368).
+	if err := c.Provide(corehttp.ClientKeyName, clientKey(cfg)); err != nil {
 		return nil, nil, err
 	}
 

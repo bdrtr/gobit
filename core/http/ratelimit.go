@@ -156,6 +156,15 @@ func ClientIPKey(r *http.Request) string {
 	return host
 }
 
+// ClientKeyName is the container name the installation's client key is
+// provided under: the [KeyFunc] its own rate limit tells one client from
+// another by, [TrustedProxyIPKey] with the hops the installation trusts (ADR
+// 0368). A module that limits a route of its own keys it with this rather
+// than [ClientIPKey]; behind the reverse proxy nearly every installation
+// stands behind, the connection's address is the proxy's for every client,
+// and a per-client limit keyed by it is one quota for the whole shop.
+const ClientKeyName = "core.http.client_key"
+
 // TrustedProxyIPKey extracts the client IP from the X-Forwarded-For chain.
 //
 // hops is the number of TRUSTED reverse proxies between us and the request. The

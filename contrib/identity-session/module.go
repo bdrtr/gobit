@@ -121,6 +121,14 @@ type Options struct {
 	// shared limiter (core/http/redisguard). Said here because the default is
 	// the kind that looks like a limit and is a fraction of one.
 	Limiter corehttp.RateLimiter
+	// LimitKey tells one client of the registration endpoints from another.
+	//
+	// Nil means the installation's own client key, the one its rate limit
+	// keys by and gobit's root provides under [corehttp.ClientKeyName] (ADR
+	// 0368), so behind a reverse proxy the installation trusts, each shopper
+	// has a quota of their own rather than sharing the proxy's. A composition
+	// that provides none falls back to the connection's address.
+	LimitKey corehttp.KeyFunc
 }
 
 // Module is the gobit module this package installs.
@@ -129,6 +137,8 @@ type Module struct {
 	sessions *Sessions
 	store    Credentials
 	log      *slog.Logger
+	// limitKey keys the registration endpoints' limit (see Options.LimitKey).
+	limitKey corehttp.KeyFunc
 }
 
 // That the published contract is satisfied is pinned down at compile time, and
@@ -218,6 +228,11 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		m.store = pgCredentials{pool: pool.Pool()}
 	}
 
+	m.limitKey = m.opts.LimitKey
+	if m.limitKey == nil {
+		m.limitKey = installationKey(c)
+	}
+
 	ttl := m.opts.TTL
 	if ttl <= 0 {
 		ttl = DefaultTTL
@@ -303,7 +318,7 @@ func (m *Module) Routes(r chi.Router) {
 	// knowing the password, and gobit's own guard stack limits the whole API;
 	// what is different here is that ONE request makes this shop send mail to an
 	// address a stranger chose.
-	limited := r.With(corehttp.RateLimit(m.registrationLimiter(), corehttp.ClientIPKey))
+	limited := r.With(corehttp.RateLimit(m.registrationLimiter(), m.limitKey))
 	limited.Post("/store/v1/auth/register", m.register)
 	limited.Post("/store/v1/auth/register/verify", m.verifyRegistration)
 }
@@ -330,6 +345,17 @@ const (
 	// DefaultRegistrationWindow is that window.
 	DefaultRegistrationWindow = 10 * time.Minute
 )
+
+// installationKey is the client key the installation's own rate limit keys by
+// (ADR 0368), or the connection's address where the container holds none.
+func installationKey(c *container.Container) corehttp.KeyFunc {
+	key, err := container.Resolve[corehttp.KeyFunc](c, corehttp.ClientKeyName)
+	if err != nil {
+		return corehttp.ClientIPKey
+	}
+
+	return key
+}
 
 // registrationLimiter answers the bound these endpoints run behind.
 //

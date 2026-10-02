@@ -210,7 +210,7 @@ func guardStack(
 			}
 
 			opts.Limiter = limiter
-			opts.LimitKey = corehttp.TrustedProxyIPKey(cfg.TrustedProxyHops)
+			opts.LimitKey = clientKey(cfg)
 		}
 
 		log.Info("guard backend: redis (shared)",
@@ -241,7 +241,7 @@ func guardStack(
 	// anyway; hence the check first.
 	if limiter := corehttp.NewMemoryLimiter(cfg.RateLimitPerMinute, time.Minute); limiter != nil {
 		opts.Limiter = limiter
-		opts.LimitKey = corehttp.TrustedProxyIPKey(cfg.TrustedProxyHops)
+		opts.LimitKey = clientKey(cfg)
 	}
 
 	// The in-memory setup is BROKEN in a multi-instance deployment and it

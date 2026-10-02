@@ -50,6 +50,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A module keys a client as the installation does** (ADR 0368, D217).
+  **For operators:** behind a proxy `TRUSTED_PROXY_HOPS` now reaches
+  `contrib/identity-session`'s registration limit, so each shopper has a
+  quota of their own rather than the whole shop sharing the proxy's. **For
+  integrators:** `corehttp.ClientKeyName` names the installation's client
+  key in the container; `identitysession.Options.LimitKey` overrides it.
+
 - **identity-session describes its request bodies** (D216). **For
   integrators:** the sign-in, registration, verification and credential
   routes of `contrib/identity-session` describe their bodies in
