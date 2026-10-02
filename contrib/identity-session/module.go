@@ -295,8 +295,8 @@ func (m *Module) Credentials() Credentials { return m.store }
 func (m *Module) Sessions() *Sessions { return m.sessions }
 
 // Routes mounts the storefront endpoints and the operator one: signing in and
-// out and reading the session always, and registration, a password reset and
-// ending sessions only where what each needs is bound.
+// out and reading the session always, and registration, a password reset,
+// changing a password and ending sessions only where what each needs is bound.
 //
 // If Register did not run nothing is mounted, which is gobit's own modules'
 // stance: an endpoint that exists and panics is worse than one that does not
@@ -314,6 +314,9 @@ func (m *Module) Routes(r chi.Router) {
 	r.Put("/admin/v1/customer-credentials", m.putCredential)
 	if m.sessionAnchors() != nil {
 		r.Post("/store/v1/auth/sessions/revoke-others", m.revokeOtherSessions)
+	}
+	if m.passwordChangeMounted() {
+		r.Post("/store/v1/auth/password", m.changePassword)
 	}
 
 	// The limit wraps only the endpoints that send mail and the ones that spend

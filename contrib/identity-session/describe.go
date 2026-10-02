@@ -102,6 +102,38 @@ func (m *Module) Describe(d *openapi.Doc) {
 		},
 	})
 
+	if m.passwordChangeMounted() {
+		d.Describe(http.MethodPost, "/store/v1/auth/password", openapi.Operation{
+			Summary:     "Changes the signed-in customer's password, given the current one.",
+			RequestBody: d.RequestBody(passwordChange{}),
+			Description: "Takes current_password and new_password. The current password is " +
+				"asked for because a session is not the person: a cookie left signed in on a " +
+				"shared computer would otherwise be enough to lock its owner out (ADR 0375).\n\n" +
+				"Every session of the customer issued before the change ends, where the store " +
+				"keeps the moment sessions count from, and this browser gets a new session " +
+				"cookie (ADR 0374).",
+			Tags: []string{docTag},
+			Responses: map[string]any{
+				"204": openapi.Response("The password is replaced and this session is renewed", nil),
+				"401": openapi.ErrorResponse(
+					"The request proves nobody. Code \"identity_session_none\"."),
+				"403": openapi.ErrorResponse(
+					"The current password does not match. Code " +
+						"\"identity_session_current_password_wrong\"."),
+				"409": openapi.ErrorResponse(
+					"The customer signs in some other way than a password kept here. Code " +
+						"\"identity_session_no_password_here\"."),
+				"422": openapi.ErrorResponse(
+					"The new password is one the hash refuses, code " +
+						"\"identity_session_password_change_invalid\", or the body could not be " +
+						"parsed, code \"identity_session_invalid\"."),
+				"500": openapi.ErrorResponse(
+					"The credential could not be read or written, or the earlier sessions " +
+						"could not be ended. Code \"identity_session_unavailable\"."),
+			},
+		})
+	}
+
 	// Described only where it is mounted: a store that keeps no anchor cannot
 	// end anybody's sessions.
 	if m.sessionAnchors() != nil {

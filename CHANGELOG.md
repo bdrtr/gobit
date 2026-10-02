@@ -50,6 +50,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A signed-in shopper changes their password** (ADR 0375). **For
+  integrators:** `contrib/identity-session` mounts `POST /store/v1/auth/password`
+  with `{"current_password", "new_password"}`; a wrong current password answers
+  403 `identity_session_current_password_wrong`, and a success ends the
+  shopper's other sessions and renews this one. A credential store you bind
+  yourself offers it by implementing `CustomerCredentials`.
+
 - **A replaced password ends the sessions before it** (ADR 0374, D222). **For
   integrators:** `contrib/identity-session` refuses a session cookie issued
   before the customer's password was last reset or replaced, and

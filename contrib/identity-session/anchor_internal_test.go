@@ -57,6 +57,7 @@ type anchoredStore struct {
 	anchor     time.Time
 	reset      string // token hash
 	puts       int
+	reads      int // credentials read by customer
 	endErr     error
 	readErr    error
 	// rounds writes a moment at a microsecond, rounding, which is what
@@ -113,6 +114,17 @@ func (s *anchoredStore) EndSessionsBefore(_ context.Context, customerID string, 
 	}
 
 	return nil
+}
+
+func (s *anchoredStore) CredentialOf(_ context.Context, customerID string) (email, passwordHash string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads++
+	if customerID != s.customerID {
+		return "", "", ErrNoCredential
+	}
+
+	return s.email, s.hash, nil
 }
 
 func (s *anchoredStore) PutPasswordReset(_ context.Context, tokenHash, _ string, _ time.Time) error {
