@@ -39,10 +39,12 @@ const refusedKey = "Refused"
 // with, to draw it again.
 const typedKey = "Typed"
 
-// statusesKey and totalKey carry a list screen's status tabs and the count in
-// the chosen one, and canCreateKey whether the screen offers its form.
+// statusesKey, statusKey and totalKey carry a list screen's status tabs, the
+// chosen one and the count in it, and canCreateKey whether the screen offers
+// its form.
 const (
 	statusesKey  = "Statuses"
+	statusKey    = "Status"
 	totalKey     = "Total"
 	canCreateKey = "CanCreate"
 	// canReviseKey says whether a list's rows offer the form that revises
@@ -114,6 +116,7 @@ var pages = []string{
 	"price_lists.gohtml",
 	"shipping_options.gohtml",
 	"store_profile.gohtml",
+	"invoices.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -325,6 +328,9 @@ func sections() []navItem {
 		// The shop's identity, which its invoices are issued under (ADR
 		// 0336).
 		{Label: storeProfileLabel, Path: StoreProfilePath},
+		// The invoices sit beside the identity they are issued under (ADR
+		// 0343).
+		{Label: invoicesLabel, Path: InvoicesPath},
 		// The reviews sit LAST, and not because they matter least: they are
 		// the panel's first screen of the shape ADR 0030 decided on, so an
 		// operator meeting a section that behaves differently meets it at the

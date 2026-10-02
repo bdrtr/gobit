@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel lists the invoices** (ADR 0343). **For operators:** an
+  Invoices screen lists the shop's documents under `invoice:read`, the
+  latest first, every status or one, each with its number, buyer, total,
+  status and why. **For integrators:** `invoice.admin` lists a page of the
+  documents in a status.
+
 - **The panel corrects a customer's address** (ADR 0342). **For
   operators:** each address on a customer's page corrects its name,
   company, lines, city, postal code, country and phone under

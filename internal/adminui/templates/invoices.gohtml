@@ -1,0 +1,48 @@
+{{- /*
+invoices.gohtml is the invoice module's documents (ADR 0343).
+
+An invoice is issued from its order's page (ADR 0335) and moves on from
+there: sent to the authority, accepted or rejected, or canceled. This screen
+lists them, the latest first, in one status or in all of them, for an
+operator who may read the invoices; a rejected or canceled one says why.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+<nav aria-label="Status">
+  {{ range .Statuses }}
+  <a href="{{ $.Path }}?status={{ . }}"{{ if eq . $.Status }} aria-current="page"{{ end }}>{{ or . "all" }}</a>
+  {{ end }}
+</nav>
+<p class="muted">{{ .Total }} {{ or .Status "in all" }}.</p>
+
+{{ if .Invoices }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Number</th><th>Kind</th><th>Buyer</th><th>Total</th><th>Status</th><th>Issued (UTC)</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Invoices }}
+    <tr>
+      <td>{{ .Number }}</td>
+      <td>{{ .Kind }}</td>
+      <td>{{ .BuyerName }}</td>
+      <td>{{ .Amount }} {{ .CurrencyCode }}{{ if .Minor }} <span class="muted">(minor units)</span>{{ end }}</td>
+      <td>{{ .Status }}{{ with .StatusReason }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
+      <td>{{ .IssuedAt.UTC.Format "2006-01-02 15:04" }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No invoice here.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?status={{ .Status }}&amp;page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?status={{ .Status }}&amp;page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

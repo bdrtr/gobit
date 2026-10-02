@@ -194,7 +194,7 @@ func (u *UI) renderNotifications(w http.ResponseWriter, r *http.Request, code in
 	data := map[string]any{
 		titleKey:     notificationsLabel,
 		"Deliveries": rows,
-		"Status":     status,
+		statusKey:    status,
 		statusesKey:  notificationStatuses,
 		"Reference":  reference,
 		totalKey:     total,

@@ -283,7 +283,7 @@ func (u *UI) renderPromotions(
 	data := map[string]any{
 		titleKey:     promotionsLabel,
 		"Promotions": rows,
-		"Status":     status,
+		statusKey:    status,
 		statusesKey:  promotionStatuses,
 		totalKey:     total,
 		refusedKey:   refused,

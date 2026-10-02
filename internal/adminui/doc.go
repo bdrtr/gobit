@@ -177,7 +177,9 @@
 // The Store profile screen ([UI.showStoreProfile]) shows who the shop is,
 // which every invoice is issued under, and writes it from the profile the
 // page was drawn with ([UI.writeStoreProfile]) through the settings module's
-// panel surface (ADR 0336).
+// panel surface (ADR 0336). The Invoices screen ([UI.listInvoices]) beside it
+// lists the invoice module's documents, the latest first, in one status or in
+// all of them, through that module's panel surface (ADR 0343).
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator

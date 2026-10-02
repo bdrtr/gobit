@@ -786,6 +786,10 @@ func (i recordingInvoices) SeriesJSON(context.Context) (json.RawMessage, error) 
 	return json.RawMessage(`[{"prefix":"GBT","year":2026,"last_number":1}]`), i.surfaces.reach(ServiceInvoiceAdmin)
 }
 
+func (i recordingInvoices) InvoicesJSON(context.Context, string, int32, int32) (json.RawMessage, int64, error) {
+	return json.RawMessage(`[]`), 0, i.surfaces.reach(ServiceInvoiceAdmin)
+}
+
 func (a recordingAfterSales) DeliveriesJSON(context.Context, string) (json.RawMessage, error) {
 	return json.RawMessage(`[]`), a.surfaces.reach(ServiceOrderAdmin)
 }
