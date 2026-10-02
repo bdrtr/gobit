@@ -1,4 +1,4 @@
-package customer
+package payment
 
 import (
 	"bytes"
@@ -27,7 +27,7 @@ func TestTheStorefrontIdentityRefusesWhenNothingIsBound(t *testing.T) {
 	_, err := storefrontIdentity(container.New(nil), slog.New(slog.NewTextHandler(&logged, nil))).CustomerID(request)
 	require.Error(t, err)
 	assert.Equal(t, corehttp.CodeIdentityNotBound, errors.CodeOf(err))
-	assert.Contains(t, logged.String(), "the storefront profile and address routes will refuse")
+	assert.Contains(t, logged.String(), "the storefront balance routes will refuse")
 
 	c := container.New(nil)
 	require.NoError(t, c.Provide(corehttp.IdentityName, "not an identity"))

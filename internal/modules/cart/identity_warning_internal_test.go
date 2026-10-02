@@ -9,12 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/container"
+	"github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // TestTheWarningSaysWhatAnAbsentIdentityCosts is D219: with no identity
-// bound, the operator is warned of what the installation does with a
-// request naming a customer — refuses it by default (ADR 0125), takes it at
-// its word only when STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM says so.
+// bound, the handler is handed no identity and the operator is warned of what
+// the installation does with a request naming a customer — refuses it by
+// default (ADR 0125), takes it at its word only when
+// STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM says so.
 func TestTheWarningSaysWhatAnAbsentIdentityCosts(t *testing.T) {
 	t.Parallel()
 
@@ -29,17 +32,26 @@ func TestTheWarningSaysWhatAnAbsentIdentityCosts(t *testing.T) {
 			t.Parallel()
 
 			var logged bytes.Buffer
-			binding := &identityBinding{
-				c: container.New(nil), log: slog.New(slog.NewTextHandler(&logged, nil)), trustUnverified: tc.trust,
-			}
+			held, err := storefrontIdentity(container.New(nil), slog.New(slog.NewTextHandler(&logged, nil)),
+				tc.trust).Identity(t.Context())
 
-			identity, err := binding.identity(t.Context())
-
-			require.NoError(t, err)
-			assert.Nil(t, identity)
+			require.NoError(t, err, "the handler decides what an absent identity means")
+			assert.Nil(t, held)
 			assert.Contains(t, logged.String(), "level=WARN")
 			assert.Contains(t, logged.String(), tc.says)
 			assert.NotContains(t, logged.String(), tc.not)
 		})
 	}
+}
+
+// TestAWrongIdentityIsThisModulesSetupFault: an identity registered under the
+// wrong type is a wiring fault, and it names this module.
+func TestAWrongIdentityIsThisModulesSetupFault(t *testing.T) {
+	t.Parallel()
+
+	c := container.New(nil)
+	require.NoError(t, c.Provide(corehttp.IdentityName, "not an identity"))
+	_, err := storefrontIdentity(c, nil, false).Identity(t.Context())
+	require.Error(t, err)
+	assert.Equal(t, codeSetupFailed, errors.CodeOf(err))
 }

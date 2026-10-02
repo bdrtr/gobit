@@ -396,7 +396,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	m.svc = svc
 	m.providers = providers
 	m.personal = service.NewPersonalData(repo, log)
-	m.handler = api.New(svc).WithIdentity(&identityBinding{c: c, log: log})
+	m.handler = api.New(svc).WithIdentity(storefrontIdentity(c, log))
 
 	log.DebugContext(ctx, "payment modülü kaydedildi",
 		"servis", ServiceName,

@@ -50,6 +50,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **One binding resolves the storefront's customer identity** (ADR 0370).
+  **For operators:** the payment, customer, order, cart and b2b modules log
+  `customer identity bound` with a `module` attribute when an identity is
+  bound, where three of them logged their own messages and two nothing; the
+  warning with nothing bound is unchanged.
+
 - **An absent identity is warned of as the installation answers it**
   (D219). **For operators:** with no customer identity bound, the b2b and
   cart modules now warn that a request naming a customer is refused, as it

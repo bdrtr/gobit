@@ -1,111 +1,40 @@
 package cart
 
 import (
-	"context"
 	"log/slog"
-	"sync"
 
 	"github.com/bdrtr/gobit/core/container"
-	"github.com/bdrtr/gobit/core/errors"
-	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/internal/core/identity"
 )
 
-// identityBinding resolves the embedder's customer identity ON FIRST USE and
-// hands it to the handler, or hands the handler NOTHING when the installation
-// bound none.
+// storefrontIdentity binds the cart's storefront to the embedder's customer
+// identity (ADR 0370). It is asked only when a storefront body NAMES a
+// customer — cart creation and the guest-to-registered handover; a guest cart
+// never reaches it.
 //
-// It is asked only when a storefront body NAMES a customer — cart creation and
-// the guest-to-registered handover. A guest cart never reaches it, which is
-// what lets the check exist at all on a surface whose default path is a shopper
-// with no account (ADR 0057).
-//
-// # Why lazily
-//
-// It is the shape this module already uses four times over for its flows: the
-// identity comes from a module the EMBEDDER adds and the composition root adds
-// those last, so resolving during Register would fail for a perfectly correct
-// installation and make registration order part of the contract. The resolved
-// name belongs to the CORE, so no module owns a slot the embedder has to fill.
-//
-// # Why an absent binding is not answered here
+// # Why an absent identity is not refused here
 //
 // This is where the cart parts company with the address book. ADR 0043 closed
-// the address book by refusing when nothing is bound, and it could: those
-// routes hand back a person's name, e-mail and street address, and there is no
-// correct anonymous use of them. The cart's default path is a shopper with no
-// account, so this binding answers "nobody is bound" with a NIL identity and
-// the handler decides what that means for a body naming a customer: since ADR
-// 0125 it refuses it, unless the installation set
-// STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM and serves it unchecked. A guest
-// cart is served either way.
-//
-// The WARN below says which of the two this installation chose. With the
-// setting on, a caller who knows an identifier can open a cart as that
-// customer, and binding a verifier is what closes it.
-//
-// The comparison is not here. It is corehttp.ProvenCustomer, shared with the
-// customer and b2b storefronts, because an authorization rule copied per module
-// is a rule that keeps answering after one copy drifts.
-type identityBinding struct {
-	c   *container.Container
-	log *slog.Logger
-	// trustUnverified is the installation's
-	// STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM, which the handler reads too:
-	// the binding reads it only to warn of what an absent identity costs.
-	trustUnverified bool
-	once            sync.Once
-	svc             corehttp.Identity
-	err             error
+// the address book by refusing when nothing is bound, and it could: there is no
+// correct anonymous use of a person's address. The cart's default path is a
+// shopper with no account, so the binding hands the handler NO identity and the
+// handler decides what that means for a body naming a customer: since ADR 0125
+// it refuses it, unless the installation trusts an unverified claim
+// (STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM) and serves it unchecked. The
+// warning says which of the two this installation chose (D219).
+func storefrontIdentity(c *container.Container, log *slog.Logger, trustUnverified bool) *identity.Binding {
+	return identity.New(c, log, ModuleName, codeSetupFailed, absentIdentity(trustUnverified))
 }
 
-// identity returns the bound customer identity, a NIL one when the installation
-// bound none, or an error when the binding itself is broken.
-//
-// The three returns are three different sentences, and the middle one is the
-// reason this is not itself a corehttp.Identity: that contract answers with an
-// identifier or with an error, and "this installation bound no verifier" is
-// neither. Squeezing it into the error return is what made the first draft of
-// ADR 0057 a breaking change.
-func (b *identityBinding) identity(ctx context.Context) (corehttp.Identity, error) {
-	b.once.Do(func() { b.resolve(ctx) })
-
-	return b.svc, b.err
-}
-
-// resolve looks the identity up in the container and remembers the outcome.
-//
-// The three branches are three different sentences: bound; nothing bound, which
-// is a deployment decision and is warned of as the installation answers it,
-// refused or served unchecked (ADR 0125); and bound under the wrong type, which is a
-// WIRING error and answers Internal rather than inheriting the container's
-// KindInvalid — telling a client its request was invalid when no client could
-// have written it differently is the fault the flow wrappers in this module
-// already refuse to make.
-//
-// The decision is made ONCE and remembered, like its siblings: re-resolving on
-// every request would reproduce the same answer at the cost of a container
-// lookup per cart opened.
-func (b *identityBinding) resolve(ctx context.Context) {
-	svc, err := container.Resolve[corehttp.Identity](b.c, corehttp.IdentityName)
-	switch {
-	case err == nil:
-		b.svc = svc
-		b.log.InfoContext(ctx, "cart storefront identity bound",
-			slog.String("service", corehttp.IdentityName))
-	case errors.IsNotFound(err) && b.trustUnverified:
-		b.log.WarnContext(ctx,
-			"no customer identity is bound and STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM is set; "+
-				"a cart body naming a customer is taken at its word, so a caller who knows an "+
-				"identifier can open a cart as that customer. Bind one to close it",
-			slog.String("service", corehttp.IdentityName))
-	case errors.IsNotFound(err):
-		b.log.WarnContext(ctx,
-			"no customer identity is bound; a cart body naming a customer is refused and only "+
-				"guest carts are opened (ADR 0125). Bind one to open carts for customers",
-			slog.String("service", corehttp.IdentityName))
-	default:
-		b.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,
-			"the %s module could not resolve the customer identity (%q)",
-			ModuleName, corehttp.IdentityName)
+// absentIdentity is the warning of what the cart's storefront does without an
+// identity, as the installation answers ADR 0125.
+func absentIdentity(trustUnverified bool) string {
+	if trustUnverified {
+		return "no customer identity is bound and " +
+			"STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM is set; a cart body naming a customer is taken at its " +
+			"word, so a caller who knows an identifier can open a cart as that customer. Bind one to close it"
 	}
+
+	return "no customer identity is bound; a cart body naming a customer is " +
+		"refused and only guest carts are opened (ADR 0125). Bind one to open carts for customers"
 }

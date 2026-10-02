@@ -32,7 +32,7 @@
 //     issues none; what changed with ADR 0043 is that the storefront routes
 //     naming a customer now REQUIRE the embedder's verifier and refuse when
 //     none is bound. The contract is corehttp.Identity, resolved from the
-//     container under corehttp.IdentityName by [identityBinding]; see the
+//     container under corehttp.IdentityName by [storefrontIdentity]; see the
 //     internal/modules/customer/api package documentation.
 //
 // # A note for the side that declares the link
@@ -175,7 +175,7 @@ func (m *Module) Migrations() fs.FS { return migrationsRoot }
 // the only thing that would create a dependency on the module order would be
 // resolving another MODULE's service, and that is not done.
 //
-// That sentence survives ADR 0043 unchanged, and [identityBinding] is why. The
+// That sentence survives ADR 0043 unchanged, and [storefrontIdentity] is why. The
 // customer identity comes from a module the embedder adds LAST, so resolving it
 // here would make registration order part of the contract; the wrapper handed
 // to the handler resolves it on the first storefront request instead. The
@@ -193,7 +193,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 
 	repo := repository.New(pool.Pool())
 	m.svc = service.New(repo, service.Options{Logger: m.log})
-	m.handler = api.New(m.svc, &identityBinding{c: c, log: m.log}).
+	m.handler = api.New(m.svc, storefrontIdentity(c, m.log)).
 		WithPreview(&segmentPreview{c: c, log: m.log})
 
 	if err := c.Provide(ServiceName, m.svc); err != nil {

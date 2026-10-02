@@ -22,9 +22,10 @@ import (
 //
 // ADR 0043's seam is a chain of three links and each one was already held on
 // its own: core/http/identity_test.go proves that an implementation registers
-// under corehttp.IdentityName and resolves as the interface, the tests beside
-// this one prove that [identityBinding] resolves that name lazily and refuses
-// when it is absent, and internal/modules/customer/api/identity_test.go proves
+// under corehttp.IdentityName and resolves as the interface,
+// internal/core/identity/binding_test.go proves that the binding
+// [storefrontIdentity] builds resolves that name lazily and refuses when it is
+// absent, and internal/modules/customer/api/identity_test.go proves
 // that a handler holding an identity compares it against the path. What none of
 // them touched is [Module.Register] handing the handler a REAL binding: with
 // `api.New(m.svc, nil)` written there instead, every one of those tests stayed
@@ -43,6 +44,9 @@ import (
 // being able to prove it. It is not a secret: it travels in every order
 // response.
 const strangerID = "cust_SOMEBODY_ELSE"
+
+// provenID is the customer the bound identity in these tests proves.
+const provenID = "cust_PROVEN"
 
 // recordingIdentity is an embedder's implementation reduced to its answer, plus
 // a count of how often it was ASKED.
@@ -149,9 +153,9 @@ func TestRegisterHandsTheStorefrontTheIdentityTheEmbedderProvided(t *testing.T) 
 //
 // Its counterpart in internal/modules/customer/api walks the same routes with a
 // literal nil, which exercises the handler's own guard; production never passes
-// nil, so the refusal it really makes comes from [identityBinding] finding
-// nothing registered. That branch was proved once, at wrapper level, and never
-// across the routes it closes. Here it is the wired module over an empty
+// nil, so the refusal it really makes comes from the binding
+// [storefrontIdentity] builds finding nothing registered. That branch is
+// proved at the binding's level, and not across the routes it closes. Here it is the wired module over an empty
 // container — an installation that read no ADR and bound nothing — and every
 // registered route naming a customer has to refuse.
 func TestEveryStorefrontRouteNamingACustomerRefusesWhenTheContainerHoldsNothing(t *testing.T) {

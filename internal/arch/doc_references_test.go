@@ -1668,6 +1668,21 @@ var testNameReferenceExemptions = []pathReferenceExemption{
 			"second ledger would have been invisible to it. Rewriting the name to the " +
 			"live one would make the sentence say the opposite of what happened.",
 	},
+	{
+		file: "docs/adr/0043-gobit-requires-an-identity-it-still-does-not-issue.md",
+		path: "TestAnUnboundIdentityRefusesInsteadOfAnsweringEmpty",
+		reason: "ADR 0043 is part of the historical record and takes no edit but its " +
+			"summary. Its mutation ran against the customer module's own binding; ADR " +
+			"0370 moved the binding into internal/core/identity, where the same row is " +
+			"TestAProofAskedOfNothingIsRefused.",
+	},
+	{
+		file: "docs/measurements/0057-the-storefront-customer-claim.md",
+		path: "TestTheIdentityBindingIsEmptyWhenNothingIsRegistered",
+		reason: "The report is dated and names the cart's and b2b's own bindings as they " +
+			"were when its mutations ran; ADR 0370 moved them into internal/core/identity, " +
+			"where the same row is TestAHandlerAskingForTheIdentityIsHandedNothing.",
+	},
 }
 
 // findTestNameExemption is [findPathExemption] for the backticked-test-name list.
