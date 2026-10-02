@@ -29,24 +29,29 @@ import (
 // cart for its flows, and the resolved name belongs to the CORE, so no module
 // owns a slot the embedder has to fill.
 //
-// # Why an absent binding is NOT a refusal
+// # Why an absent binding is not answered here
 //
-// Because these two routes are shipped and working. An installation that bound
-// no verifier reads a company and a limit through them today, and ADR 0057
-// narrows what is WRONG rather than withdrawing what works: a path claim the
-// bound identity contradicts is refused, and a path claim nobody can check is
-// served exactly as before. The residue is real and named where an operator
-// meets it — the WARN below — rather than paid for by an embedder who upgraded.
+// The binding answers "nobody is bound" with a NIL identity and the handler
+// decides what that means: since ADR 0125 it refuses the two routes, unless
+// the installation set STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM and serves
+// the path's claim unchecked. The WARN below says which of the two this
+// installation chose; with the setting on, a caller holding somebody's
+// identifier reads their company and allowance, and binding a verifier is
+// what closes it.
 //
 // What is NOT here is the comparison. That is corehttp.ProvenCustomer, shared
 // with the address book and the cart, because an authorization rule copied per
 // module is a rule that keeps answering after one copy drifts (ADR 0057).
 type identityBinding struct {
-	c    *container.Container
-	log  *slog.Logger
-	once sync.Once
-	svc  corehttp.Identity
-	err  error
+	c   *container.Container
+	log *slog.Logger
+	// trustUnverified is the installation's
+	// STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM, which the handler reads too:
+	// the binding reads it only to warn of what an absent identity costs.
+	trustUnverified bool
+	once            sync.Once
+	svc             corehttp.Identity
+	err             error
 }
 
 // identity returns the bound customer identity, a NIL one when the installation
@@ -64,8 +69,8 @@ func (b *identityBinding) identity(ctx context.Context) (corehttp.Identity, erro
 // resolve looks the identity up in the container and remembers the outcome.
 //
 // The three branches are three different sentences: bound; nothing bound (a
-// deployment decision, so the routes go on answering and an operator is warned
-// what that costs); and bound under the wrong type (a WIRING error, so Internal
+// deployment decision, warned of as the installation answers it, refused or
+// served unchecked, ADR 0125); and bound under the wrong type (a WIRING error, so Internal
 // — the container reports a type mismatch as KindInvalid and inheriting that
 // would tell a client its request was invalid when no client could have written
 // it differently).
@@ -79,11 +84,17 @@ func (b *identityBinding) resolve(ctx context.Context) {
 		b.svc = svc
 		b.log.InfoContext(ctx, "b2b storefront identity bound",
 			slog.String("service", corehttp.IdentityName))
+	case errors.IsNotFound(err) && b.trustUnverified:
+		b.log.WarnContext(ctx,
+			"no customer identity is bound and STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM is set; "+
+				"the b2b storefront routes take the customer in the path at its word, so a caller "+
+				"who knows an identifier reads that person's company and spending limit. Bind one "+
+				"to close it",
+			slog.String("service", corehttp.IdentityName))
 	case errors.IsNotFound(err):
 		b.log.WarnContext(ctx,
-			"no customer identity is bound; the b2b storefront routes take the customer in "+
-				"the path at its word, so a caller who knows an identifier reads that "+
-				"person's company and spending limit. Bind one to close it",
+			"no customer identity is bound; the b2b storefront routes refuse every request "+
+				"(ADR 0125). Bind one to serve them",
 			slog.String("service", corehttp.IdentityName))
 	default:
 		b.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,

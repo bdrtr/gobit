@@ -227,17 +227,17 @@ that produces every answer below. With one bound, a request naming somebody else
 is `403 identity_mismatch` on any of the fifteen. gobit still verifies nothing
 itself: it requires the embedder's verifier and refuses to guess in its absence.
 
-**With nothing bound the twelve split.** The eight the customer module owns
+**With nothing bound the twelve refuse.** The eight the customer module owns
 refuse every request with `401 identity_not_bound` — a mandatory obligation for
 anyone upgrading past `v0.8.0`, and the closed row
 [ADR 0007](adr/0007-sertlestirme-arizada-davranis.md) writes for an unconfigured
-authenticator. The four ADR 0057 added answer as they always have: they ship
-working, and taking them away from an installation that has bound nothing costs
-that installation more than the leak it would close. So in such an installation
-those four still believe the claim — b2b's two hand a stranger the named
+authenticator. The four ADR 0057 added refuse too since
+[ADR 0125](adr/0125-serving-an-unverified-customer-claim-is-a-choice.md), unless
+the installation sets `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM=true`. Where
+it does, those four believe the claim — b2b's two hand a stranger the named
 customer's employer and spending limit, and a cart body opens a cart in the
-customer's name — and each module logs a WARN naming the empty slot. Binding a
-verifier is what closes it.
+customer's name. The b2b and cart modules each log a WARN on first use saying
+which of the two the installation chose. Binding a verifier is what closes it.
 
 A cart that names NOBODY is a guest cart and is never asked, which is why a shop
 with no identity bound still sells; `POST /store/v1/customers` is outside the set

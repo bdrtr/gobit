@@ -35,11 +35,10 @@ type notAnIdentity struct{}
 // of ADR 0057, at the place that decides it.
 //
 // An empty container is an installation that never read ADR 0008, and the
-// answer it gets is a NIL identity and no error — not a refusal. The first
-// draft of this record returned coreerrors.Unauthorized here, which turned
-// every b2b storefront read in such an installation into a 401 on upgrade.
-// A nil identity is what leaves those routes answering, and the residue is
-// stated in the record instead of charged to the embedder.
+// answer it gets is a NIL identity and no error — not a refusal. A nil
+// identity hands the meaning to the handler, which since ADR 0125 refuses the
+// two routes unless the installation trusts an unverified claim; the binding
+// only warns which of the two it is.
 func TestTheIdentityBindingIsEmptyWhenNothingIsRegistered(t *testing.T) {
 	t.Parallel()
 

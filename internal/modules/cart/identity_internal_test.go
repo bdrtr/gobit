@@ -32,12 +32,11 @@ func (p providedIdentity) CustomerID(*http.Request) (string, error) { return p.i
 // TestTheIdentityBindingIsEmptyWhenNothingIsRegistered is the non-breaking half
 // of ADR 0057, at the place that decides it.
 //
-// The first draft of this record returned coreerrors.Unauthorized here, and an
-// installation that had been selling for a year would have stopped being able
-// to open a cart for any customer at all on upgrade — and with it the b2b
-// spending limit, which only binds a cart naming one. A nil identity is what
-// leaves the surface answering; the residue is stated in the record and warned
-// about in the log rather than charged to the embedder.
+// The first draft of this record returned coreerrors.Unauthorized here, and
+// with it the binding would have decided what an absent verifier means. A nil
+// identity hands that to the handler, which since ADR 0125 refuses a body
+// naming a customer unless the installation trusts an unverified claim; the
+// binding only warns which of the two it is.
 func TestTheIdentityBindingIsEmptyWhenNothingIsRegistered(t *testing.T) {
 	t.Parallel()
 

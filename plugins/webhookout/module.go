@@ -192,13 +192,15 @@ const (
 // tell whether it did, and says so: an implementation that hands the path
 // parameter back satisfies the interface and proves nothing.
 //
-// What did NOT move is enough on its own, and both halves are named as open in
-// ADR 0043's own consequences. b2b's two storefront routes still read the
-// customer out of their own path parameter with no identity at all, so an id
-// still returns that person's company and their spending limit. And the cart
-// still takes customer_id from its body, so an id is something to SPEND from as
-// well as to read: the checkout a stranger completes is deducted from the named
-// customer's window, which is ADR 0008's measurement and it reproduces exactly.
+// ADR 0125 closed the two halves ADR 0043 named as open, by default only: b2b's
+// two storefront routes and the cart's bodies naming a customer refuse a claim
+// no identity backs, unless the installation sets
+// STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM. Where it does, an id still returns
+// that person's company and their spending limit, and is something to SPEND
+// from as well as to read: the checkout a stranger completes is deducted from
+// the named customer's window, which is ADR 0008's measurement. This plugin
+// cannot tell which installation it runs in, so it withholds the id in all of
+// them.
 //
 // Sending it to a registered receiver would hand a third party standing hold of
 // that lever, over endpoints that ask them for nothing. The event carries it
@@ -212,9 +214,9 @@ const (
 // This map is deliberately not configurable. A setting that let an installation
 // switch it off would be the setting nobody reads before switching it on.
 var redactedFields = map[string]string{
-	"customer_id": "a customer id is a lever on that customer: b2b's storefront " +
-		"routes still return their company and spending limit for it with no identity " +
-		"check, and the cart still accepts it from a body (ADR 0008, ADR 0043)",
+	"customer_id": "a customer id is a lever on that customer: an installation that trusts " +
+		"an unverified claim returns their b2b company and spending limit for it and opens " +
+		"a cart in their name on it alone (ADR 0008, ADR 0043, ADR 0125)",
 }
 
 // The delivery job's shape.

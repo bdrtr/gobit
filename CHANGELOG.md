@@ -50,6 +50,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **An absent identity is warned of as the installation answers it**
+  (D219). **For operators:** with no customer identity bound, the b2b and
+  cart modules now warn that a request naming a customer is refused, as it
+  has been since ADR 0125, and warn that it is believed only where
+  `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM` is set; `docs/security.md`
+  says the same.
+
 - **The address book keeps a province** (ADR 0369, D218). **For
   integrators:** a customer's saved address takes and answers `province`, the
   unit under the country (an il in Turkey), on the storefront and admin address

@@ -235,8 +235,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// Kimlik EMBEDDER'ın modülünden gelir ve o modül bu noktada henüz kayıtlı
 	// olmayabilir; bu yüzden çözüm İLK İSTEĞE ertelenir (bkz. identityBinding).
 	// Aynı kalıp order'ın harcama kuralında ve cart'ın akışlarında kullanılıyor.
-	m.handler = api.New(svc, (&identityBinding{c: c, log: m.log}).identity,
-		m.opts.TrustUnverifiedCustomerClaim)
+	binding := &identityBinding{c: c, log: m.log, trustUnverified: m.opts.TrustUnverifiedCustomerClaim}
+	m.handler = api.New(svc, binding.identity, m.opts.TrustUnverifiedCustomerClaim)
 	m.log.InfoContext(ctx, "b2b modülü kaydedildi",
 		slog.String("servis", ServiceName),
 		slog.String("interop", InteropName),

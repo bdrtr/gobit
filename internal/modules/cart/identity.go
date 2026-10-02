@@ -27,32 +27,35 @@ import (
 // installation and make registration order part of the contract. The resolved
 // name belongs to the CORE, so no module owns a slot the embedder has to fill.
 //
-// # Why an absent binding is NOT a refusal here
+// # Why an absent binding is not answered here
 //
 // This is where the cart parts company with the address book. ADR 0043 closed
 // the address book by refusing when nothing is bound, and it could: those
 // routes hand back a person's name, e-mail and street address, and there is no
 // correct anonymous use of them. The cart's default path is a shopper with no
-// account, and a body naming a customer is how a working installation that
-// never bound a verifier registers a cart today. Refusing there would take a
-// shipped surface away from an embedder doing nothing wrong, so this binding
-// answers "nobody is bound" with a NIL identity and the handler serves the
-// request unchecked. What ADR 0057 narrows is the MISMATCH, and that breaks
-// only a caller who was lying.
+// account, so this binding answers "nobody is bound" with a NIL identity and
+// the handler decides what that means for a body naming a customer: since ADR
+// 0125 it refuses it, unless the installation set
+// STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM and serves it unchecked. A guest
+// cart is served either way.
 //
-// The residue is stated rather than hidden: with no verifier bound, a caller
-// who knows an identifier can still open a cart as that customer. Binding one
-// is what closes it, and the WARN below is where an operator is told so.
+// The WARN below says which of the two this installation chose. With the
+// setting on, a caller who knows an identifier can open a cart as that
+// customer, and binding a verifier is what closes it.
 //
 // The comparison is not here. It is corehttp.ProvenCustomer, shared with the
 // customer and b2b storefronts, because an authorization rule copied per module
 // is a rule that keeps answering after one copy drifts.
 type identityBinding struct {
-	c    *container.Container
-	log  *slog.Logger
-	once sync.Once
-	svc  corehttp.Identity
-	err  error
+	c   *container.Container
+	log *slog.Logger
+	// trustUnverified is the installation's
+	// STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM, which the handler reads too:
+	// the binding reads it only to warn of what an absent identity costs.
+	trustUnverified bool
+	once            sync.Once
+	svc             corehttp.Identity
+	err             error
 }
 
 // identity returns the bound customer identity, a NIL one when the installation
@@ -72,8 +75,8 @@ func (b *identityBinding) identity(ctx context.Context) (corehttp.Identity, erro
 // resolve looks the identity up in the container and remembers the outcome.
 //
 // The three branches are three different sentences: bound; nothing bound, which
-// is a deployment decision and leaves the claim unchecked behind a WARN naming
-// the slot that would check it; and bound under the wrong type, which is a
+// is a deployment decision and is warned of as the installation answers it,
+// refused or served unchecked (ADR 0125); and bound under the wrong type, which is a
 // WIRING error and answers Internal rather than inheriting the container's
 // KindInvalid — telling a client its request was invalid when no client could
 // have written it differently is the fault the flow wrappers in this module
@@ -89,11 +92,16 @@ func (b *identityBinding) resolve(ctx context.Context) {
 		b.svc = svc
 		b.log.InfoContext(ctx, "cart storefront identity bound",
 			slog.String("service", corehttp.IdentityName))
+	case errors.IsNotFound(err) && b.trustUnverified:
+		b.log.WarnContext(ctx,
+			"no customer identity is bound and STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM is set; "+
+				"a cart body naming a customer is taken at its word, so a caller who knows an "+
+				"identifier can open a cart as that customer. Bind one to close it",
+			slog.String("service", corehttp.IdentityName))
 	case errors.IsNotFound(err):
 		b.log.WarnContext(ctx,
-			"no customer identity is bound; a cart body naming a customer is taken at its "+
-				"word, so a caller who knows an identifier can open a cart as that customer. "+
-				"Bind one to close it",
+			"no customer identity is bound; a cart body naming a customer is refused and only "+
+				"guest carts are opened (ADR 0125). Bind one to open carts for customers",
 			slog.String("service", corehttp.IdentityName))
 	default:
 		b.err = errors.Wrap(err, errors.KindInternal, codeSetupFailed,

@@ -328,7 +328,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// reason, one layer further out: it comes from the EMBEDDER's module,
 		// which the composition root adds after everything in the box. Unlike
 		// the flows, an absent one is not an error — see [identityBinding].
-		(&identityBinding{c: c, log: log}).identity,
+		(&identityBinding{c: c, log: log, trustUnverified: m.opts.TrustUnverifiedCustomerClaim}).identity,
 		m.opts.TrustUnverifiedCustomerClaim)
 	// The panel builds a telephone order through the handler the admin API
 	// runs, so the two refuse alike (ADR 0290, ADR 0291).

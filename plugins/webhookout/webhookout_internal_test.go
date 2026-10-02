@@ -76,12 +76,12 @@ func TestAnAttemptCountBelowOneDoesNotPanic(t *testing.T) {
 
 // TestACustomerIDNeverLeavesTheInstallation is the payload boundary.
 //
-// A customer id is a LEVER on that customer, and ADR 0043 narrowed which levers
-// without removing any: the address book now requires a bound identity, but
-// b2b's two storefront routes still return the person's company and spending
-// limit for an id alone, and the cart still takes customer_id from its body, so
-// the id can be spent from as well as read. Putting it in a webhook body hands
-// that to a third party standing, for every order.
+// A customer id is a LEVER on that customer. ADR 0043 and ADR 0125 narrowed
+// which levers by default, but an installation that trusts an unverified claim
+// still returns the person's b2b company and spending limit for an id alone and
+// opens a cart in their name from a body naming it, so the id can be spent from
+// as well as read. Putting it in a webhook body hands that to a third party
+// standing, for every order.
 func TestACustomerIDNeverLeavesTheInstallation(t *testing.T) {
 	t.Parallel()
 
@@ -93,8 +93,8 @@ func TestACustomerIDNeverLeavesTheInstallation(t *testing.T) {
 
 	assert.NotContains(t, payload, "customer_id",
 		"the customer id is in the outbound payload; it is a lever on that customer — "+
-			"b2b's storefront routes return their company and spending limit for it with "+
-			"no identity check, and the cart still accepts it from a body")
+			"an installation trusting an unverified claim returns their company and "+
+			"spending limit for it, and opens a cart in their name from a body naming it")
 	assert.Equal(t, []string{"customer_id"}, redacted,
 		"the removal has to be VISIBLE in the body: a receiver that simply sees no "+
 			"customer_id cannot tell a guest order from a withheld field, and will build a "+

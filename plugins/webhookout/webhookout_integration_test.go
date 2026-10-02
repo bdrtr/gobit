@@ -417,9 +417,9 @@ func TestTheCustomerIDIsNotOnTheWire(t *testing.T) {
 
 	assert.NotContains(t, string(seen[0].Body), "cus_leak",
 		"a customer id left the installation in a webhook body. It is a lever on that "+
-			"customer: b2b's storefront routes return their company and spending limit "+
-			"for it with no identity check, and the cart still accepts it from a body, "+
-			"so the receiver now has standing hold of it (ADR 0008, ADR 0043).")
+			"customer: an installation trusting an unverified claim returns their company "+
+			"and spending limit for it and opens a cart in their name from a body naming "+
+			"it, so the receiver now has standing hold of it (ADR 0008, ADR 0043, ADR 0125).")
 	assert.Equal(t, []string{"customer_id"}, seen[0].Envelope.Redacted,
 		"the withholding has to be visible to the receiver")
 
