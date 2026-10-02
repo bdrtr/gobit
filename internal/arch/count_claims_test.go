@@ -729,7 +729,9 @@ func countUnquoted(line string) string {
 // in the DIRECTORY-LAYOUT column, where it opens the line and a run of spaces
 // separates it from the description — the shape both READMEs draw their tree in,
 // and a shape prose does not fall into by accident.
-func countAnchored(line, anchor string) bool {
+//
+// tokens are the line's, read once for every population (D212).
+func countAnchored(line string, tokens []string, anchor string) bool {
 	if !strings.Contains(anchor, "/") {
 		// A single segment anchors in PROSE when it is written as a path with a
 		// trailing slash — "the eleven plugins under plugins/" — and only then.
@@ -740,7 +742,7 @@ func countAnchored(line, anchor string) bool {
 		// This is the opt-in half of the anchor rule. A writer who means the
 		// whole population says so by naming its path, and a sentence that does
 		// not is left alone rather than guessed at.
-		for _, token := range countWord.FindAllString(line, -1) {
+		for _, token := range tokens {
 			if strings.Trim(token, ".") == anchor+"/" {
 				return true
 			}
@@ -766,7 +768,7 @@ func countAnchored(line, anchor string) bool {
 			strings.HasPrefix(strings.TrimLeft(rest, " "), "#")
 	}
 
-	for _, token := range countWord.FindAllString(line, -1) {
+	for _, token := range tokens {
 		trimmed := strings.Trim(token, "./")
 		if trimmed == anchor || strings.HasPrefix(trimmed, anchor+"/") {
 			return true
@@ -825,13 +827,32 @@ func countQuotedRow(doc, line string) bool {
 // noun ends the claim: "twenty-one items in four groups" is two claims and not one
 // spanning both.
 func countClaimsIn(line string, population countedPopulation, numerals countNumerals) []countClaim {
-	line = countUnquoted(line)
+	return countClaimsInLine(countLineOf(line), population, numerals)
+}
 
-	if !countAnchored(line, population.anchor) {
+// countLine is a line as the audit reads it: its quotations blanked and its
+// tokens, worked out once and read for every population. Working them out
+// once per population, ten times over every line of the tree, was most of the
+// time this audit took (D212).
+type countLine struct {
+	text   string
+	tokens []string
+}
+
+// countLineOf reads a line for the audit.
+func countLineOf(raw string) countLine {
+	text := countUnquoted(raw)
+
+	return countLine{text: text, tokens: countWord.FindAllString(text, -1)}
+}
+
+// countClaimsInLine is [countClaimsIn] over a line already read.
+func countClaimsInLine(line countLine, population countedPopulation, numerals countNumerals) []countClaim {
+	if !countAnchored(line.text, line.tokens, population.anchor) {
 		return nil
 	}
 
-	tokens := countWord.FindAllString(line, -1)
+	tokens := line.tokens
 
 	var claims []countClaim
 	for at := 0; at < len(tokens); at++ {
@@ -890,8 +911,9 @@ func collectMarkdownCountClaims(t *testing.T, numerals countNumerals) []countCla
 			if countQuotedRow(doc.path, line) {
 				continue
 			}
+			read := countLineOf(line)
 			for _, population := range countedPopulations {
-				for _, claim := range countClaimsIn(line, population, numerals) {
+				for _, claim := range countClaimsInLine(read, population, numerals) {
 					claim.file, claim.line, claim.markdown = doc.path, index+1, true
 					claims = append(claims, claim)
 				}
@@ -952,9 +974,9 @@ func collectCommentCountClaims(t *testing.T, numerals countNumerals) []countClai
 			for _, comment := range group.List {
 				at := fset.Position(comment.Pos()).Line
 				for offset, raw := range strings.Split(comment.Text, "\n") {
-					line := prose.live(raw)
+					read := countLineOf(prose.live(raw))
 					for _, population := range countedPopulations {
-						for _, claim := range countClaimsIn(line, population, numerals) {
+						for _, claim := range countClaimsInLine(read, population, numerals) {
 							claim.file, claim.line = relative, at+offset
 							claims = append(claims, claim)
 						}

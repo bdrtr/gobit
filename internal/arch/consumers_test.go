@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -115,9 +116,23 @@ type sourceTree struct {
 }
 
 // scanProductionSource parses the production source and builds the indexes.
+//
+// The tree is built ONCE per test process and shared, read-only, by every test
+// that reads it (D212), as [scanDocReferences] is.
 func scanProductionSource(t *testing.T) *sourceTree {
 	t.Helper()
 
+	tree, err := productionSource()
+	require.NoError(t, err)
+
+	return tree
+}
+
+// productionSource is the shared tree [scanProductionSource] returns.
+var productionSource = sync.OnceValues(buildProductionSource)
+
+// buildProductionSource parses the production source and builds the indexes.
+func buildProductionSource() (*sourceTree, error) {
 	tree := &sourceTree{
 		fset:        token.NewFileSet(),
 		constants:   map[string]map[string]constDefinition{},
@@ -128,19 +143,23 @@ func scanProductionSource(t *testing.T) *sourceTree {
 	for _, root := range productionTrees {
 		absolute := filepath.Join(repoRoot, root)
 		if _, err := os.Stat(absolute); err != nil {
-			t.Fatalf("the %q root was not found: %v", root, err)
+			return nil, fmt.Errorf("the %q root was not found: %w", root, err)
 		}
-		for _, path := range treeFiles(t, root) {
+		files, err := walkTreeFiles(root)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range files {
 			if strings.HasSuffix(path, "_test.go") {
 				continue
 			}
 			parsed, err := parser.ParseFile(tree.fset, path, nil, parser.SkipObjectResolution)
 			if err != nil {
-				t.Fatalf("%s could not be parsed: %v", path, err)
+				return nil, fmt.Errorf("%s could not be parsed: %w", path, err)
 			}
 			relative, err := filepath.Rel(repoRoot, path)
 			if err != nil {
-				t.Fatalf("%s could not be turned into a relative path: %v", path, err)
+				return nil, fmt.Errorf("%s could not be turned into a relative path: %w", path, err)
 			}
 			relative = filepath.ToSlash(relative)
 			file := &sourceFile{
@@ -162,7 +181,7 @@ func scanProductionSource(t *testing.T) *sourceTree {
 		tree.scanDeclarations(file)
 	}
 
-	return tree
+	return tree, nil
 }
 
 // collectImports builds the file's local package name → import path table.

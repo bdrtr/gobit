@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"unicode"
 	"unicode/utf8"
@@ -131,6 +132,9 @@ type referenceScan struct {
 	testNames map[string]bool
 	// stdCache caches the resolved stdlib packages; a nil value means "not stdlib".
 	stdCache map[string]*referencePackage
+	// stdMu guards stdCache: the scan is shared by tests running in parallel
+	// (see [scanDocReferences]), and stdCache is the one part filled lazily.
+	stdMu sync.Mutex
 }
 
 // scanDocReferences parses the Go source under the production roots.
@@ -138,9 +142,25 @@ type referenceScan struct {
 // Test files ARE INCLUDED: this repository's densest godocs are inside the
 // architecture tests and a rotten reference does the same damage there — some of
 // them even leak into the message a test prints WHEN IT FAILS.
+//
+// The scan is built ONCE per test process and shared, read-only, by every
+// test that reads it (D212): eleven tests each parsing the whole tree spent a
+// fifth of the package's time doing the same work. Its one lazy part,
+// [referenceScan.stdPackage], takes stdMu.
 func scanDocReferences(t *testing.T) *referenceScan {
 	t.Helper()
 
+	scan, err := docReferences()
+	require.NoError(t, err)
+
+	return scan
+}
+
+// docReferences is the shared scan [scanDocReferences] returns.
+var docReferences = sync.OnceValues(buildDocReferences)
+
+// buildDocReferences parses the tree and builds the scan.
+func buildDocReferences() (*referenceScan, error) {
 	scan := &referenceScan{
 		fset:           token.NewFileSet(),
 		packages:       map[string]*referencePackage{},
@@ -152,16 +172,20 @@ func scanDocReferences(t *testing.T) *referenceScan {
 	for _, root := range referencedTrees {
 		abs := filepath.Join(repoRoot, root)
 		if _, err := os.Stat(abs); err != nil {
-			t.Fatalf("the %q root was not found: %v", root, err)
+			return nil, fmt.Errorf("the %q root was not found: %w", root, err)
 		}
-		for _, filePath := range treeFiles(t, root) {
+		files, err := walkTreeFiles(root)
+		if err != nil {
+			return nil, err
+		}
+		for _, filePath := range files {
 			tree, err := parser.ParseFile(scan.fset, filePath, nil, parser.ParseComments|parser.SkipObjectResolution)
 			if err != nil {
-				t.Fatalf("%s could not be parsed: %v", filePath, err)
+				return nil, fmt.Errorf("%s could not be parsed: %w", filePath, err)
 			}
 			rel, err := filepath.Rel(repoRoot, filePath)
 			if err != nil {
-				t.Fatalf("%s could not be turned into a relative path: %v", filePath, err)
+				return nil, fmt.Errorf("%s could not be turned into a relative path: %w", filePath, err)
 			}
 			rel = filepath.ToSlash(rel)
 			file := &referenceFile{
@@ -191,7 +215,7 @@ func scanDocReferences(t *testing.T) *referenceScan {
 		}
 	}
 
-	return scan
+	return scan, nil
 }
 
 // packageFor returns the directory + package name unit, creating it if there is none.
@@ -822,6 +846,9 @@ func (s *referenceScan) lookUpInPackage(importPath string, parts []string) strin
 
 // stdPackage reads a stdlib package from the GOROOT source; nil if it is not stdlib.
 func (s *referenceScan) stdPackage(importPath string) *referencePackage {
+	s.stdMu.Lock()
+	defer s.stdMu.Unlock()
+
 	if pkg, ok := s.stdCache[importPath]; ok {
 		return pkg
 	}
@@ -857,6 +884,30 @@ func (s *referenceScan) stdPackage(importPath string) *referencePackage {
 	}
 	s.stdCache[importPath] = pkg
 	return pkg
+}
+
+// TestTheStdlibCacheTakesParallelLookups is D212: the reference scan is shared
+// by tests running in parallel and its standard-library cache is filled
+// lazily, so lookups made at once from many of them may not race. Each
+// goroutine here asks a fresh scan for a package no other has read yet.
+func TestTheStdlibCacheTakesParallelLookups(t *testing.T) {
+	t.Parallel()
+
+	scan := &referenceScan{fset: token.NewFileSet(), stdCache: map[string]*referencePackage{}}
+	paths := []string{
+		"bufio", "bytes", "container/list", "context", "encoding/base64", "encoding/hex",
+		"errors", "hash/crc32", "io", "net/url", "sort", "strconv", "unicode/utf8",
+	}
+
+	var wg sync.WaitGroup
+	for range 3 {
+		for _, importPath := range paths {
+			wg.Go(func() { assert.NotNil(t, scan.stdPackage(importPath), importPath) })
+		}
+	}
+	wg.Wait()
+
+	assert.Len(t, scan.stdCache, len(paths))
 }
 
 // allLinkCandidates returns the link candidates in every scanned comment.

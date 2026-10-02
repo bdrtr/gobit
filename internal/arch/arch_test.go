@@ -181,9 +181,18 @@ func holdsProductionGo(t *testing.T, dir string) bool {
 func treeFiles(t *testing.T, tree string) []string {
 	t.Helper()
 
-	files := goFiles(t, filepath.Join(repoRoot, tree))
-	if tree != repositoryRoot {
-		return files
+	files, err := walkTreeFiles(tree)
+	require.NoError(t, err)
+
+	return files
+}
+
+// walkTreeFiles is [treeFiles] for a caller that holds no test, such as a scan
+// built once and shared by every test that reads it (D212).
+func walkTreeFiles(tree string) ([]string, error) {
+	files, err := walkGoFiles(filepath.Join(repoRoot, tree))
+	if err != nil || tree != repositoryRoot {
+		return files, err
 	}
 
 	shallow := files[:0]
@@ -193,7 +202,7 @@ func treeFiles(t *testing.T, tree string) []string {
 		}
 	}
 
-	return shallow
+	return shallow, nil
 }
 
 // treeProductionFiles is [treeFiles] without the _test.go files.
@@ -316,6 +325,17 @@ func modulePrefix(t *testing.T) string {
 // tree.
 func goFiles(t *testing.T, root string) []string {
 	t.Helper()
+
+	out, err := walkGoFiles(root)
+	if err != nil {
+		t.Fatalf("%s could not be scanned: %v", root, err)
+	}
+
+	return out
+}
+
+// walkGoFiles is [goFiles] for a caller that holds no test.
+func walkGoFiles(root string) ([]string, error) {
 	var out []string
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -341,10 +361,8 @@ func goFiles(t *testing.T, root string) []string {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("%s could not be scanned: %v", root, err)
-	}
-	return out
+
+	return out, err
 }
 
 // TestModulesDoNotImportEachOther enforces Principle 2.1/2.4 and ADR 0001.
