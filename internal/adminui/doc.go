@@ -131,6 +131,8 @@
 // who may read the customers (ADR 0321). A customer's page names their groups
 // and puts them into one or takes them out ([UI.addToGroup],
 // [UI.removeFromGroup]) through the customer module's surface (ADR 0322), and
+// corrects their name and phone from the ones it was drawn with
+// ([UI.reviseContact], ADR 0337), and
 // the Customer groups screen ([UI.listCustomerGroups]) lists the groups with
 // their rank and writes one ([UI.createCustomerGroup], ADR 0323); each row
 // renames and re-ranks its group from what it was drawn with

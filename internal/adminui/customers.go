@@ -2,6 +2,7 @@ package adminui
 
 import (
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -136,6 +137,15 @@ func (u *UI) showCustomer(w http.ResponseWriter, r *http.Request) {
 // write's reason. An operator who may write and not read the customers is
 // told the reason alone (ADR 0260).
 func (u *UI) renderCustomer(w http.ResponseWriter, r *http.Request, code int, id, refused string) {
+	u.renderCustomerTyped(w, r, code, id, refused, nil)
+}
+
+// renderCustomerTyped is [UI.renderCustomer] with what was typed in the
+// contact form a refusal came back to, the drawn name and phone always the
+// customer's as they are now (ADR 0337).
+func (u *UI) renderCustomerTyped(
+	w http.ResponseWriter, r *http.Request, code int, id, refused string, typed url.Values,
+) {
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
 	if refused != "" && !principal.HasScope(scopeCustomerRead) {
 		u.errorPage(w, r, code, "Not done", refused)
@@ -187,6 +197,18 @@ func (u *UI) renderCustomer(w http.ResponseWriter, r *http.Request, code int, id
 		"Groups":        groups,
 		"GroupsUnread":  groupsUnread,
 		refusedKey:      refused,
+		"Written":       r.URL.Query().Get(paramWritten) != "",
+	}
+	if u.canReviseContact(r) {
+		drawn := contactOf(records[0])
+		form := drawn
+		if typed != nil {
+			form = customerContact{
+				FirstName: typed.Get(formFirstName), LastName: typed.Get(formLastName), Phone: typed.Get(formPhone),
+			}
+		}
+		data["ContactRead"], data["ContactForm"] = drawn, form
+		data["ContactRefused"] = typed != nil
 	}
 	// The groups to join are offered only to an operator who may write them:
 	// a reader is not read the whole list for a form they cannot send.

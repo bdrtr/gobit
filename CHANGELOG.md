@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel corrects a customer's name and phone** (ADR 0337). **For
+  operators:** a customer's page corrects their first name, last name and
+  phone under `customer:write`; a customer another operator corrected
+  meanwhile is refused. **For integrators:** `customer.admin` corrects a
+  customer's contact from the one read, refusing `customer_contact_revised`.
+
 - **The panel writes the store profile** (ADR 0336). **For operators:** a
   Store profile screen shows who the shop is under `settings:read` and
   writes it under `settings:write`, so a new shop issues its first invoice

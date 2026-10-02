@@ -197,6 +197,8 @@ func builtInScopes() map[string]string {
 		routeKey(post, CustomerGroupListPath):   scopeCustomerWrite,
 		routeKey(post, CustomerGroupRevisePath): scopeCustomerWrite,
 		routeKey(post, CustomerGroupsPath):      scopeCustomerWrite,
+		// And correcting a customer's name and phone (ADR 0337).
+		routeKey(post, CustomerContactPath):     scopeCustomerWrite,
 		routeKey(post, CustomerGroupRemovePath): scopeCustomerWrite,
 		routeKey(get, InventoryPath):            scopeInventoryRead,
 		routeKey(get, ReviewsPath):              scopeReviewRead,

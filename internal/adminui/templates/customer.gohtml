@@ -8,12 +8,15 @@ The groups are the customer's, in the order their rank gives them, named
 through the customer module's group entity. A promotion or a price limited to
 a group reaches the customer through them (ADR 0321). An operator who may
 write the customers puts the customer into a group or takes them out (ADR
-0322).
+0322), and corrects their name and phone from the ones the page was drawn
+with; the e-mail is what an account signs in with and is not corrected here
+(ADR 0337).
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
 
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ if .Written }}<p role="status">The contact details were written.</p>{{ end }}
 
 <div class="panel">
   <p>
@@ -41,6 +44,21 @@ write the customers puts the customer into a group or takes them out (ADR
     <tr><th>Identifier</th><td>{{ .Customer.ID }}</td></tr>
   </tbody>
 </table>
+
+{{ with .ContactForm }}
+<details{{ if $.ContactRefused }} open{{ end }}>
+  <summary>Correct the name and phone</summary>
+  <form method="post" action="{{ $.CustomersPath }}/{{ $.Customer.ID }}/contact">
+    <input type="hidden" name="read_first_name" value="{{ $.ContactRead.FirstName }}">
+    <input type="hidden" name="read_last_name" value="{{ $.ContactRead.LastName }}">
+    <input type="hidden" name="read_phone" value="{{ $.ContactRead.Phone }}">
+    <input name="first_name" value="{{ .FirstName }}" placeholder="first name" aria-label="first name">
+    <input name="last_name" value="{{ .LastName }}" placeholder="last name" aria-label="last name">
+    <input name="phone" value="{{ .Phone }}" placeholder="phone" aria-label="phone" type="tel">
+    <button type="submit">Write</button>
+  </form>
+</details>
+{{ end }}
 
 <h2>Addresses</h2>
 {{ if .Addresses }}

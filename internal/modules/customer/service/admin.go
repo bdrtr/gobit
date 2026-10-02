@@ -1,6 +1,12 @@
 package service
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+
+	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/customer/models"
+)
 
 // AdminSurface is the customer module's panel surface (ADR 0322): a
 // customer's membership of the groups. Only primitives cross it, as across
@@ -52,5 +58,33 @@ func (a *AdminSurface) CreateGroup(ctx context.Context, name string, rank int32)
 // 0329).
 func (a *AdminSurface) ReviseGroup(ctx context.Context, id, readName string, readRank int32, name string, rank int32) error {
 	_, err := a.service().ReviseGroup(ctx, id, readName, readRank, name, rank)
+	return err
+}
+
+// adminContact is a customer's name and phone as the panel reads and writes
+// them; the json tags are the contract with the panel, which cannot import
+// this package.
+type adminContact struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Phone     string `json:"phone"`
+}
+
+// ReviseCustomerContact corrects the customer's name and phone from the ones
+// the operator read, and refuses when another writer changed any of them
+// since (ADR 0337). Both travel as JSON, their fields named rather than
+// placed.
+func (a *AdminSurface) ReviseCustomerContact(ctx context.Context, id string, read, next json.RawMessage) error {
+	var was, will adminContact
+	if err := json.Unmarshal(read, &was); err != nil {
+		return errors.Invalid(CodeInvalidInput, "the contact read could not be read: %v", err)
+	}
+	if err := json.Unmarshal(next, &will); err != nil {
+		return errors.Invalid(CodeInvalidInput, "the contact written could not be read: %v", err)
+	}
+	_, err := a.service().ReviseContact(ctx, id,
+		models.ContactTerms{FirstName: was.FirstName, LastName: was.LastName, Phone: was.Phone},
+		models.ContactTerms{FirstName: will.FirstName, LastName: will.LastName, Phone: will.Phone})
+
 	return err
 }

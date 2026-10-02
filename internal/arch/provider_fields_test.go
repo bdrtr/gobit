@@ -868,6 +868,9 @@ var panelSurfaceContracts = map[string]string{
 	"order_invoice.go": "invoice.admin's series and the invoicing flow's party",
 	// The store profile, which no read provider publishes (ADR 0336).
 	"store_profile.go": "settings.admin's store profile",
+	// A customer's contact as the surface takes it, read and written (ADR
+	// 0337).
+	"customer_contact.go": "customer.admin's contact",
 }
 
 // panelReadFields returns every field name the admin panel names in its own
