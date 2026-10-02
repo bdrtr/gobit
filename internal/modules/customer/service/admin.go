@@ -88,3 +88,45 @@ func (a *AdminSurface) ReviseCustomerContact(ctx context.Context, id string, rea
 
 	return err
 }
+
+// adminAddress is an address's printed fields as the panel reads and writes
+// them; the json tags are the contract with the panel, which cannot import
+// this package, and spell the address keys the customer provider publishes.
+type adminAddress struct {
+	FirstName   string `json:"first_name"`
+	LastName    string `json:"last_name"`
+	Company     string `json:"company"`
+	Address1    string `json:"address_1"`
+	Address2    string `json:"address_2"`
+	City        string `json:"city"`
+	CountryCode string `json:"country_code"`
+	PostalCode  string `json:"postal_code"`
+	Phone       string `json:"phone"`
+}
+
+// terms are the address's printed fields.
+func (a adminAddress) terms() models.AddressTerms {
+	return models.AddressTerms{
+		FirstName: a.FirstName, LastName: a.LastName, Company: a.Company, Address1: a.Address1,
+		Address2: a.Address2, City: a.City, CountryCode: a.CountryCode, PostalCode: a.PostalCode, Phone: a.Phone,
+	}
+}
+
+// ReviseCustomerAddress corrects the customer's address from the printed
+// fields the operator read, and refuses when another writer changed any of
+// them since (ADR 0342). Both travel as JSON, their fields named rather than
+// placed.
+func (a *AdminSurface) ReviseCustomerAddress(
+	ctx context.Context, customerID, addressID string, read, next json.RawMessage,
+) error {
+	var was, will adminAddress
+	if err := json.Unmarshal(read, &was); err != nil {
+		return errors.Invalid(CodeInvalidInput, "the address read could not be read: %v", err)
+	}
+	if err := json.Unmarshal(next, &will); err != nil {
+		return errors.Invalid(CodeInvalidInput, "the address written could not be read: %v", err)
+	}
+	_, err := a.service().ReviseAddress(ctx, customerID, addressID, was.terms(), will.terms())
+
+	return err
+}

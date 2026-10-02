@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel corrects a customer's address** (ADR 0342). **For
+  operators:** each address on a customer's page corrects its name,
+  company, lines, city, postal code, country and phone under
+  `customer:write`; an address another operator corrected meanwhile is
+  refused. **For integrators:** `customer.admin` corrects an address from
+  the one read, refusing `customer_address_revised`.
+
 - **The order page writes off a line's units** (ADR 0341). **For
   operators:** each line of a pending order writes off some of its units
   under `order:write`, with a reason and a note, and their stock comes

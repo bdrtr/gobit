@@ -125,6 +125,11 @@ type Repository interface {
 	UpdateGroup(ctx context.Context, id string, patch models.CustomerGroupPatch, now time.Time) (models.CustomerGroup, error)
 	// ReviseGroup writes a group's name and rank while they are the ones read,
 	// and reports whether it did (ADR 0329).
+	// ReviseAddress writes the address's printed fields if they are still
+	// the ones read, and reports whether it did (ADR 0342).
+	ReviseAddress(
+		ctx context.Context, customerID, addressID string, read, next models.AddressTerms, now time.Time,
+	) (models.CustomerAddress, bool, error)
 	// ReviseContact writes the customer's name and phone if they are still
 	// the ones read, and reports whether it did (ADR 0337).
 	ReviseContact(

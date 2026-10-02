@@ -16,7 +16,7 @@ with; the e-mail is what an account signs in with and is not corrected here
 <h1>{{ .Title }}</h1>
 
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
-{{ if .Written }}<p role="status">The contact details were written.</p>{{ end }}
+{{ if eq .Written "address" }}<p role="status">The address was written.</p>{{ else if .Written }}<p role="status">The contact details were written.</p>{{ end }}
 
 <div class="panel">
   <p>
@@ -71,6 +71,26 @@ with; the e-mail is what an account signs in with and is not corrected here
         {{ if .DefaultShipping }}<span class="pill">default shipping</span>{{ end }}
         {{ if .DefaultBilling }}<span class="pill">default billing</span>{{ end }}
       </td>
+      {{ if $.CanEditAddresses }}<td>
+        {{/* An address's printed fields corrected from the ones the page
+        was drawn with (ADR 0342); the default flags are not among them. */}}
+        <details{{ if .Refused }} open{{ end }}>
+          <summary>Correct</summary>
+          <form method="post" action="{{ $.CustomersPath }}/{{ $.Customer.ID }}/addresses/{{ .ID }}">
+            {{ range $key, $value := .Read }}<input type="hidden" name="read_{{ $key }}" value="{{ $value }}">{{ end }}
+            <input name="first_name" value="{{ index .Form "first_name" }}" placeholder="first name" aria-label="first name">
+            <input name="last_name" value="{{ index .Form "last_name" }}" placeholder="last name" aria-label="last name">
+            <input name="company" value="{{ index .Form "company" }}" placeholder="company" aria-label="company">
+            <input name="address_1" value="{{ index .Form "address_1" }}" placeholder="first line" aria-label="first line" required>
+            <input name="address_2" value="{{ index .Form "address_2" }}" placeholder="second line" aria-label="second line">
+            <input name="postal_code" value="{{ index .Form "postal_code" }}" placeholder="postal code" aria-label="postal code">
+            <input name="city" value="{{ index .Form "city" }}" placeholder="city" aria-label="city" required>
+            <input name="country_code" value="{{ index .Form "country_code" }}" placeholder="country, e.g. TR" aria-label="country" maxlength="2" required>
+            <input name="phone" value="{{ index .Form "phone" }}" placeholder="phone" aria-label="phone" type="tel">
+            <button type="submit">Write</button>
+          </form>
+        </details>
+      </td>{{ end }}
     </tr>
     {{ end }}
   </tbody>

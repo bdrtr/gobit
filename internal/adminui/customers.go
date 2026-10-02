@@ -123,8 +123,14 @@ const fieldCustomerAddresses = "addresses"
 
 // customerAddress is one of a customer's addresses as the page prints it.
 type customerAddress struct {
+	ID                              string
 	Lines                           []string
 	DefaultShipping, DefaultBilling bool
+	// Read and Form are the address's printed fields as drawn and as its
+	// form offers them, what was typed when its correction was refused (ADR
+	// 0342).
+	Read, Form printedAddress
+	Refused    bool
 }
 
 // showCustomer renders one customer with their addresses (ADR 0308) and
@@ -179,36 +185,48 @@ func (u *UI) renderCustomerTyped(
 	}
 
 	var addresses []customerAddress
+	refusedAddress := typed.Get(formAddressID)
 	for _, entry := range recordList(records[0][fieldCustomerAddresses]) {
-		addresses = append(addresses, customerAddress{
+		address := customerAddress{
+			ID:              recordString(entry, fieldID),
 			Lines:           addressLines(map[string]any(entry)),
 			DefaultShipping: recordBool(entry, "is_default_shipping"),
 			DefaultBilling:  recordBool(entry, "is_default_billing"),
-		})
+			Read:            printedAddressOf(entry),
+		}
+		address.Form = address.Read
+		if refusedAddress != "" && address.ID == refusedAddress {
+			address.Form, address.Refused = printedAddress{}, true
+			for _, key := range addressKeys {
+				address.Form[key] = typed.Get(key)
+			}
+		}
+		addresses = append(addresses, address)
 	}
 
 	memberOf := recordStrings(records[0], fieldCustomerGroupIDs)
 	groups, groupsUnread := u.customerGroupsOf(r.Context(), memberOf)
 	data := map[string]any{
-		titleKey:        customerRowOf(records[0]).display(),
-		"Customer":      customerRowOf(records[0]),
-		"Addresses":     addresses,
-		"CustomersPath": CustomersPath,
-		"Groups":        groups,
-		"GroupsUnread":  groupsUnread,
-		refusedKey:      refused,
-		writtenKey:      r.URL.Query().Get(paramWritten) != "",
+		titleKey:           customerRowOf(records[0]).display(),
+		"Customer":         customerRowOf(records[0]),
+		"Addresses":        addresses,
+		"CustomersPath":    CustomersPath,
+		"Groups":           groups,
+		"GroupsUnread":     groupsUnread,
+		refusedKey:         refused,
+		writtenKey:         r.URL.Query().Get(paramWritten),
+		"CanEditAddresses": u.canReviseAddresses(r),
 	}
 	if u.canReviseContact(r) {
 		drawn := contactOf(records[0])
 		form := drawn
-		if typed != nil {
+		if typed != nil && refusedAddress == "" {
 			form = customerContact{
 				FirstName: typed.Get(formFirstName), LastName: typed.Get(formLastName), Phone: typed.Get(formPhone),
 			}
 		}
 		data["ContactRead"], data["ContactForm"] = drawn, form
-		data["ContactRefused"] = typed != nil
+		data["ContactRefused"] = typed != nil && refusedAddress == ""
 	}
 	// The groups to join are offered only to an operator who may write them:
 	// a reader is not read the whole list for a form they cannot send.
