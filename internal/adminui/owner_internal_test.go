@@ -790,6 +790,15 @@ func (i recordingInvoices) InvoicesJSON(context.Context, string, int32, int32) (
 	return json.RawMessage(`[]`), 0, i.surfaces.reach(ServiceInvoiceAdmin)
 }
 
+func (i recordingInvoices) InvoiceJSON(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage(`{"id":"walk","number":"GBT2026000000001","status":"issued","currency_code":"TRY",` +
+		`"moves":["sent","canceled"]}`), i.surfaces.reach(ServiceInvoiceAdmin)
+}
+
+func (i recordingInvoices) MoveInvoice(context.Context, string, string, string, string) error {
+	return i.surfaces.reach(ServiceInvoiceAdmin)
+}
+
 func (a recordingAfterSales) DeliveriesJSON(context.Context, string) (json.RawMessage, error) {
 	return json.RawMessage(`[]`), a.surfaces.reach(ServiceOrderAdmin)
 }
@@ -1012,7 +1021,8 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}},
 	routeKey(http.MethodPost, OrderParcelActPath): {},
 	// Writing the store profile (ADR 0336).
-	routeKey(http.MethodPost, StoreProfilePath): {formProfileName: {"Walk"}, formProfileCountry: {"TR"}},
+	routeKey(http.MethodPost, StoreProfilePath):  {formProfileName: {"Walk"}, formProfileCountry: {"TR"}},
+	routeKey(http.MethodPost, InvoiceStatusPath): {formInvoiceReadStatus: {"issued"}, formInvoiceTo: {"sent"}},
 	// Writing off units of a line (ADR 0341).
 	routeKey(http.MethodPost, OrderLineCancellationsPath): {
 		formWriteOffLine: {"oli_walk"}, formReadSpokenFor: {"0"}, formWriteOffQuantity: {"1"}, formWriteOffReason: {"walk"},

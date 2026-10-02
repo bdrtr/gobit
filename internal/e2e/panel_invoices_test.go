@@ -68,7 +68,7 @@ func TestAnOperatorListsTheInvoicesInThePanel(t *testing.T) {
 
 		rec := send(http.MethodGet, adminui.InvoicesPath+"?"+url.Values{"status": {status}}.Encode(), nil)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		_, after, found := strings.Cut(rec.Body.String(), "<td>"+number[1]+"</td>")
+		_, after, found := strings.Cut(rec.Body.String(), ">"+number[1]+"</a></td>")
 		if !found {
 			return ""
 		}

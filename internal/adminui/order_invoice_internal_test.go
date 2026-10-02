@@ -146,7 +146,8 @@ func TestAnOrdersInvoiceIsIssuedOnItsPage(t *testing.T) {
 }
 
 // TestAnIssuedInvoiceIsNamedAndNotOfferedAgain: an order with an invoice is
-// named with its number and status and offered no form; an invoice that
+// named with its number and status and offered no form, and its page is
+// linked for an operator who may read the invoices; an invoice that
 // cannot be read is said so; a surface that cannot invoice draws no section
 // and answers 503.
 func TestAnIssuedInvoiceIsNamedAndNotOfferedAgain(t *testing.T) {
@@ -159,6 +160,10 @@ func TestAnIssuedInvoiceIsNamedAndNotOfferedAgain(t *testing.T) {
 		page, nil, writer...).Body.String())
 	assert.Contains(t, section, `Invoice <strong>GBT2026000000007</strong> <span class="pill">issued</span>`)
 	assert.NotContains(t, section, "<form", "an invoiced order is offered no second one")
+	assert.Contains(t, section, `<a href="`+InvoicesPath+`/inv_1">Open the invoice</a>`, "ADR 0344")
+	section = invoiceSection(t, campaignsRequest(invoicePanel(t, issued, &fakeSeries{body: `[]`}), http.MethodGet,
+		page, nil, scopeOrderRead).Body.String())
+	assert.NotContains(t, section, "Open the invoice", "an operator who may not read the invoices is not sent to one")
 
 	failing := &fakeInvoicer{readErr: errors.Unavailable("db_down", "no answer")}
 	section = invoiceSection(t, campaignsRequest(invoicePanel(t, failing, nil), http.MethodGet, page, nil, writer...).Body.String())

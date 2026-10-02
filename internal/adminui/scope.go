@@ -187,8 +187,11 @@ func builtInScopes() map[string]string {
 		// The store profile is the settings module's (ADR 0336).
 		routeKey(get, StoreProfilePath):  scopeSettingsRead,
 		routeKey(post, StoreProfilePath): scopeSettingsWrite,
-		// The invoices are the invoice module's (ADR 0343).
-		routeKey(get, InvoicesPath): scopeInvoiceRead,
+		// The invoices are the invoice module's (ADR 0343), and so are one's
+		// page and moving its status (ADR 0344).
+		routeKey(get, InvoicesPath):       scopeInvoiceRead,
+		routeKey(get, InvoicePath):        scopeInvoiceRead,
+		routeKey(post, InvoiceStatusPath): scopeInvoiceWrite,
 		// The shipping options are the fulfillment module's, and so are
 		// revising one (ADR 0333) and writing one (ADR 0334).
 		routeKey(get, ShippingOptionsPath):       scopeFulfillmentRead,

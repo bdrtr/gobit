@@ -1,0 +1,68 @@
+{{- /*
+invoice.gohtml is one invoice as the invoice module issued it (ADR 0344).
+
+The parties and the rows are copies taken when the document was issued, so
+they are printed as they are and never edited here. An operator who may
+write the invoices moves the document on, to a status its own may move to,
+from the one the page was drawn in; a rejection and a cancellation say why.
+*/ -}}
+{{ define "body" }}
+{{ with .Invoice }}
+<h1>Invoice {{ .Number }} <span class="pill">{{ .Status }}</span></h1>
+<p class="muted">{{ .Kind }} · {{ .ID }} · issued {{ .IssuedAt.UTC.Format "2006-01-02 15:04" }} UTC{{ with .ExternalID }} · {{ . }}{{ end }}</p>
+{{ with .StatusReason }}<p>Why: {{ . }}</p>{{ end }}
+{{ end }}
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ with .Moved }}<p role="status">The invoice was moved to {{ . }}.</p>{{ end }}
+
+{{ if .CanMove }}
+<form method="post" action="{{ .Path }}/{{ .Invoice.ID }}/status">
+  <input type="hidden" name="read_status" value="{{ .Invoice.Status }}">
+  <select name="to" aria-label="move to">
+    {{ range .Invoice.Moves }}<option value="{{ . }}"{{ if eq . $.Chosen }} selected{{ end }}>{{ . }}</option>{{ end }}
+  </select>
+  <input name="reason" value="{{ .Reason }}" placeholder="why — needed to reject or cancel" aria-label="why">
+  <button type="submit">Move</button>
+</form>
+{{ end }}
+
+{{ with .Invoice }}
+<div class="scroll">
+<table>
+  <thead><tr><th></th><th>Seller</th><th>Buyer</th></tr></thead>
+  <tbody>
+    <tr><th>Name</th><td>{{ .Seller.Name }}</td><td>{{ .Buyer.Name }}</td></tr>
+    <tr><th>Tax number</th><td>{{ .Seller.TaxNumber }}</td><td>{{ .Buyer.TaxNumber }}</td></tr>
+    <tr><th>Tax office</th><td>{{ .Seller.TaxOffice }}</td><td>{{ .Buyer.TaxOffice }}</td></tr>
+    <tr><th>Address</th><td>{{ .Seller.Address }}</td><td>{{ .Buyer.Address }}</td></tr>
+    <tr><th>Country</th><td>{{ .Seller.CountryCode }}</td><td>{{ .Buyer.CountryCode }}</td></tr>
+    <tr><th>E-mail</th><td>{{ .Seller.Email }}</td><td>{{ .Buyer.Email }}</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Row</th><th>Quantity</th><th>Unit price</th><th>Discount</th><th>Tax rate</th><th>Tax</th><th>Total</th></tr></thead>
+  <tbody>
+  {{ range .Lines }}
+    <tr>
+      <td>{{ .Description }}</td>
+      <td>{{ .Quantity }}</td>
+      <td>{{ .UnitPriceText }}</td>
+      <td>{{ .DiscountText }}</td>
+      <td>{{ .Rate }}%</td>
+      <td>{{ .TaxText }}</td>
+      <td>{{ .TotalText }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+
+<p>Subtotal {{ .SubtotalText }} · discount {{ .DiscountText }} · tax {{ .TaxText }} · <strong>total {{ .Amount }} {{ .CurrencyCode }}</strong>{{ if .PricesIncludeTax }} <span class="muted">(prices include tax)</span>{{ end }}</p>
+{{ end }}
+
+<p><a href="{{ .Path }}">Every invoice</a></p>
+{{ end }}

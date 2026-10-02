@@ -10,6 +10,10 @@ import (
 
 // MoveInput is a request to move a document to another status.
 type MoveInput struct {
+	// From, when given, is the status the caller read the document in; the
+	// move is refused with [CodeStatusMoved] when the document is no longer
+	// in it (ADR 0344). Empty moves it from whatever status it is in.
+	From models.Status
 	// To is the status the document is to move to.
 	To models.Status
 	// Reason is why; it is REQUIRED for a rejection and a cancellation.
@@ -53,6 +57,10 @@ func (s *Service) MoveStatus(
 	current, err := s.repo.GetInvoice(ctx, id)
 	if err != nil {
 		return models.Invoice{}, err
+	}
+	if in.From != "" && current.Status != in.From {
+		return models.Invoice{}, errors.Conflict(CodeStatusMoved,
+			"invoice %s is %q now, not %q as it was read; draw the page again", id, current.Status, in.From)
 	}
 
 	if !current.Status.CanMoveTo(in.To) {

@@ -33,6 +33,9 @@ const (
 	CodeInvalidInput = "invoice_invalid_input"
 	// CodeTransition reports a status move the document may not make.
 	CodeTransition = "invoice_invalid_transition"
+	// CodeStatusMoved reports a move from a status the document is no longer
+	// in (ADR 0344).
+	CodeStatusMoved = "invoice_status_moved"
 	// CodeNumbering reports that a number could not be allocated.
 	CodeNumbering = "invoice_numbering_failed"
 )

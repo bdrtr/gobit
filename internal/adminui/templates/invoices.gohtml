@@ -25,7 +25,7 @@ operator who may read the invoices; a rejected or canceled one says why.
   <tbody>
   {{ range .Invoices }}
     <tr>
-      <td>{{ .Number }}</td>
+      <td><a href="{{ $.Path }}/{{ .ID }}">{{ .Number }}</a></td>
       <td>{{ .Kind }}</td>
       <td>{{ .BuyerName }}</td>
       <td>{{ .Amount }} {{ .CurrencyCode }}{{ if .Minor }} <span class="muted">(minor units)</span>{{ end }}</td>

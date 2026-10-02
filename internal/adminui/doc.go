@@ -179,7 +179,10 @@
 // page was drawn with ([UI.writeStoreProfile]) through the settings module's
 // panel surface (ADR 0336). The Invoices screen ([UI.listInvoices]) beside it
 // lists the invoice module's documents, the latest first, in one status or in
-// all of them, through that module's panel surface (ADR 0343).
+// all of them, through that module's panel surface (ADR 0343). A document's
+// page ([UI.showInvoice]) shows its parties, rows and totals, and moves its
+// status from the one it was drawn in ([UI.moveInvoice], ADR 0344); the
+// order's page links to it.
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator

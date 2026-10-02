@@ -871,8 +871,10 @@ var panelSurfaceContracts = map[string]string{
 	// A customer's contact as the surface takes it, read and written (ADR
 	// 0337).
 	"customer_contact.go": "customer.admin's contact",
-	// The invoices, which no read provider publishes (ADR 0343).
+	// The invoices, which no read provider publishes (ADR 0343), and one
+	// with its parties and rows (ADR 0344).
 	"invoices.go": "invoice.admin's documents",
+	"invoice.go":  "invoice.admin's document",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

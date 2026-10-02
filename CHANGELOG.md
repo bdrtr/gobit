@@ -39,6 +39,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel shows an invoice and moves its status** (ADR 0344). **For
+  operators:** an invoice's page, linked from its order and from the
+  Invoices screen, shows the parties, rows and totals under `invoice:read`
+  and records that it was sent, accepted, rejected or canceled under
+  `invoice:write`; an invoice moved meanwhile is refused. **For
+  integrators:** `MoveInput.From` names the status the document was read
+  in, refused with `invoice_status_moved` when it has left it; the admin
+  API's move is unchanged.
+
 - **The panel lists the invoices** (ADR 0343). **For operators:** an
   Invoices screen lists the shop's documents under `invoice:read`, the
   latest first, every status or one, each with its number, buyer, total,

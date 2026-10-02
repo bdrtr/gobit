@@ -23,6 +23,15 @@ type adminInvoice struct {
 	IssuedAt     time.Time `json:"issued_at"`
 }
 
+// listedInvoice is the document as the Invoices screen lists it.
+func listedInvoice(invoice *models.Invoice) adminInvoice {
+	return adminInvoice{
+		ID: invoice.ID, Number: invoice.Number, Kind: string(invoice.Kind), Status: string(invoice.Status),
+		StatusReason: invoice.StatusReason, BuyerName: invoice.Buyer.Name, CurrencyCode: invoice.CurrencyCode,
+		Total: invoice.Total, IssuedAt: invoice.IssuedAt,
+	}
+}
+
 // InvoicesJSON lists the documents in the status, or in every status when it
 // is empty, the latest first, a page at a time, with how many there are (ADR
 // 0343).
@@ -43,12 +52,7 @@ func (a *AdminSurface) InvoicesJSON(
 
 	out := make([]adminInvoice, 0, len(page.Items))
 	for i := range page.Items {
-		invoice := &page.Items[i]
-		out = append(out, adminInvoice{
-			ID: invoice.ID, Number: invoice.Number, Kind: string(invoice.Kind), Status: string(invoice.Status),
-			StatusReason: invoice.StatusReason, BuyerName: invoice.Buyer.Name, CurrencyCode: invoice.CurrencyCode,
-			Total: invoice.Total, IssuedAt: invoice.IssuedAt,
-		})
+		out = append(out, listedInvoice(&page.Items[i]))
 	}
 	body, err := json.Marshal(out)
 	if err != nil {

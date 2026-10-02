@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 
@@ -93,6 +94,9 @@ type orderInvoice struct {
 	ID     string
 	Number string
 	Status string
+	// Open is the document's page, for an operator who may read the
+	// invoices (ADR 0344).
+	Open string
 	// CanIssue says the operator may issue one and the order has none.
 	CanIssue bool
 	// Prefixes are the series the form offers, the latest year's first; empty
@@ -117,6 +121,9 @@ func (u *UI) invoiceOf(r *http.Request, orderID string) *orderInvoice {
 		return &orderInvoice{Unread: true}
 	}
 	principal, _ := corehttp.PrincipalFromContext(ctx)
+	if invoice.Found && principal.HasScope(scopeInvoiceRead) {
+		invoice.Open = InvoicesPath + "/" + url.PathEscape(invoice.ID)
+	}
 	invoice.CanIssue = !invoice.Found && principal.HasScope(scopeOrderWrite)
 	if invoice.CanIssue && u.invoices != nil && principal.HasScope(scopeInvoiceRead) {
 		invoice.Prefixes = u.seriesPrefixes(ctx)

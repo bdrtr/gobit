@@ -117,6 +117,7 @@ var pages = []string{
 	"shipping_options.gohtml",
 	"store_profile.gohtml",
 	"invoices.gohtml",
+	"invoice.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",

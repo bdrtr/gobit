@@ -281,7 +281,7 @@ why a new one is named apart from the ones the shop has.
 {{ if .Unread }}
 <p class="muted">The invoice of this order could not be read.</p>
 {{ else if .Found }}
-<p>Invoice <strong>{{ .Number }}</strong> <span class="pill">{{ .Status }}</span> <span class="muted">{{ .ID }}</span></p>
+<p>Invoice <strong>{{ .Number }}</strong> <span class="pill">{{ .Status }}</span> <span class="muted">{{ .ID }}</span>{{ with .Open }} <a href="{{ . }}">Open the invoice</a>{{ end }}</p>
 {{ else }}
 <p class="muted">No invoice has been issued for this order.</p>
 {{ end }}
