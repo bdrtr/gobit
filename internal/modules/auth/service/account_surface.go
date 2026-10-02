@@ -11,7 +11,8 @@ import (
 )
 
 // AccountSurface is a person's own account as the admin panel reaches it:
-// their second factor (ADR 0266) and their sessions (ADR 0268).
+// their second factor (ADR 0266) and their sessions (ADR 0268); and the
+// shop's users as the panel's Users screen lists them (ADR 0345).
 //
 // It speaks in PRIMITIVES because the panel may import no module (ADR 0013):
 // the enrolment comes back as the secret and its link rather than as

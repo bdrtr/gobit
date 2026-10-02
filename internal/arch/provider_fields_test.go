@@ -875,6 +875,8 @@ var panelSurfaceContracts = map[string]string{
 	// with its parties and rows (ADR 0344).
 	"invoices.go": "invoice.admin's documents",
 	"invoice.go":  "invoice.admin's document",
+	// The users, which the auth provider does not publish (ADR 0345).
+	"users.go": "auth.admin's users",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

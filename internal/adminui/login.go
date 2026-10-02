@@ -27,7 +27,7 @@ func (u *UI) loginPage(w http.ResponseWriter, r *http.Request, status int, messa
 		titleKey:    "Sign in",
 		"LoginPath": LoginPath,
 		errorKey:    message,
-		"Email":     r.PostFormValue("email"),
+		emailKey:    r.PostFormValue("email"),
 		// The page being asked for survives the sign-in as a hidden field. On
 		// the guard's path it is the page the operator was interrupted on; on a
 		// failed submission it is whatever the previous attempt carried, so a

@@ -39,6 +39,10 @@ const refusedKey = "Refused"
 // with, to draw it again.
 const typedKey = "Typed"
 
+// emailKey is the template data key carrying an e-mail a screen was asked
+// for or a form was sent with.
+const emailKey = "Email"
+
 // statusesKey, statusKey and totalKey carry a list screen's status tabs, the
 // chosen one and the count in it, and canCreateKey whether the screen offers
 // its form.
@@ -118,6 +122,7 @@ var pages = []string{
 	"store_profile.gohtml",
 	"invoices.gohtml",
 	"invoice.gohtml",
+	"users.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -332,6 +337,9 @@ func sections() []navItem {
 		// The invoices sit beside the identity they are issued under (ADR
 		// 0343).
 		{Label: invoicesLabel, Path: InvoicesPath},
+		// The users who operate the shop come after what they operate (ADR
+		// 0345).
+		{Label: usersLabel, Path: UsersPath},
 		// The reviews sit LAST, and not because they matter least: they are
 		// the panel's first screen of the shape ADR 0030 decided on, so an
 		// operator meeting a section that behaves differently meets it at the

@@ -188,6 +188,9 @@ type UI struct {
 	// sessions is the person's own sessions (ADR 0268); nil when the
 	// installation registers none.
 	sessions SessionAdmin
+	// users lists the shop's users (ADR 0345); nil when the installation
+	// registers no auth surface.
+	users UserLister
 	// afterSales acts on an order's after-sales records (ADR 0271); nil when
 	// the installation registers none.
 	afterSales AfterSalesAdmin
@@ -282,6 +285,10 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	users, err := optionalService[UserLister](c, ServiceAuthAdmin)
+	if err != nil {
+		return nil, err
+	}
 	// The after-sales acts are optional like every write surface: without the
 	// order module's the order page offers none (ADR 0271).
 	afterSales, err := optionalService[AfterSalesAdmin](c, ServiceOrderAdmin)
@@ -361,6 +368,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		stock:         stock,
 		secondFactor:  secondFactor,
 		sessions:      sessions,
+		users:         users,
 		afterSales:    afterSales,
 		payments:      payments,
 		carts:         carts,

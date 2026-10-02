@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel lists the users** (ADR 0345). **For operators:** a Users
+  screen lists who operates the shop under `auth:read`, each with their
+  privileges and whether they have proven a second factor, those without
+  one on a tab of their own. **For integrators:** `auth.admin` lists a page
+  of the users.
+
 - **The panel shows an invoice and moves its status** (ADR 0344). **For
   operators:** an invoice's page, linked from its order and from the
   Invoices screen, shows the parties, rows and totals under `invoice:read`

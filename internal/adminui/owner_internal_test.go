@@ -779,6 +779,42 @@ func (s recordingSettings) ReviseStoreProfile(context.Context, string, json.RawM
 	return s.surfaces.reach(ServiceSettingsAdmin)
 }
 
+// recordingAccounts records the auth module's surface: a person's own
+// factor and sessions, and the users (ADR 0345).
+type recordingAccounts struct{ surfaces *recordingSurfaces }
+
+func (a recordingAccounts) SecondFactorStatus(context.Context, string) (proven, waiting, owed bool, err error) {
+	return false, false, false, a.surfaces.reach(ServiceAuthAdmin)
+}
+
+func (a recordingAccounts) EnrollSecondFactor(context.Context, string, string) (secret, uri string, err error) {
+	return "", "", a.surfaces.reach(ServiceAuthAdmin)
+}
+
+func (a recordingAccounts) ConfirmSecondFactor(context.Context, string, string) error {
+	return a.surfaces.reach(ServiceAuthAdmin)
+}
+
+func (a recordingAccounts) RemoveSecondFactor(context.Context, string, string) error {
+	return a.surfaces.reach(ServiceAuthAdmin)
+}
+
+func (a recordingAccounts) SessionsJSON(context.Context, string, string) (json.RawMessage, error) {
+	return json.RawMessage(`[]`), a.surfaces.reach(ServiceAuthAdmin)
+}
+
+func (a recordingAccounts) CloseSession(context.Context, string, string) error {
+	return a.surfaces.reach(ServiceAuthAdmin)
+}
+
+func (a recordingAccounts) CloseOtherSessions(context.Context, string, string) (int64, error) {
+	return 0, a.surfaces.reach(ServiceAuthAdmin)
+}
+
+func (a recordingAccounts) UsersJSON(context.Context, string, string, int32, int32) (json.RawMessage, int64, error) {
+	return json.RawMessage(`[]`), 0, a.surfaces.reach(ServiceAuthAdmin)
+}
+
 // recordingInvoices records the invoice module's surface (ADR 0335).
 type recordingInvoices struct{ surfaces *recordingSurfaces }
 
@@ -1090,6 +1126,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServiceFulfillmentAdmin, ParcelMover(recordingParcels{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceFileAdmin, FileUploader(recordingFiles{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceInvoiceAdmin, InvoiceSeriesLister(recordingInvoices{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceAuthAdmin, UserLister(recordingAccounts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceSettingsAdmin, StoreProfileAdmin(recordingSettings{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))

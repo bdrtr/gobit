@@ -1,0 +1,56 @@
+{{- /*
+users.gohtml is the auth module's users (ADR 0345).
+
+A user is an operator of this panel or of the admin API. Each row names the
+privileges they hold and whether they have proven an authenticator; the tabs
+list those who have not, which is the list an installation requiring a
+second factor works through (ADR 0265). A user is found by their e-mail.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+<form method="get" action="{{ .Path }}" role="search">
+  <input name="email" value="{{ .Email }}" placeholder="e-mail" aria-label="the user's e-mail" type="email">
+  <button type="submit">Find the user</button>
+</form>
+
+{{ if .Email }}
+<p class="muted">{{ .Total }} for {{ .Email }}. <a href="{{ .Path }}">Every user</a></p>
+{{ else }}
+<nav aria-label="Second factor">
+  {{ range .Statuses }}
+  <a href="{{ $.Path }}?second_factor={{ . }}"{{ if eq . $.Status }} aria-current="page"{{ end }}>{{ if eq . "missing" }}without a second factor{{ else if eq . "proven" }}with a second factor{{ else }}all{{ end }}</a>
+  {{ end }}
+</nav>
+<p class="muted">{{ .Total }} {{ if eq .Status "missing" }}without a second factor{{ else if eq .Status "proven" }}with a second factor{{ else }}in all{{ end }}.</p>
+{{ end }}
+
+{{ if .Users }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>E-mail</th><th>Name</th><th>Privileges</th><th>Second factor</th><th>Since (UTC)</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Users }}
+    <tr>
+      <td>{{ .Email }}</td>
+      <td>{{ .Name }}</td>
+      <td>{{ range $i, $scope := .Scopes }}{{ if $i }}, {{ end }}{{ $scope }}{{ else }}<span class="muted">none</span>{{ end }}</td>
+      <td>{{ if .SecondFactor }}proven{{ else }}<span class="pill">missing</span>{{ end }}</td>
+      <td>{{ .CreatedAt.UTC.Format "2006-01-02" }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No user here.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?second_factor={{ .Status }}&amp;email={{ .Email }}&amp;page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?second_factor={{ .Status }}&amp;email={{ .Email }}&amp;page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

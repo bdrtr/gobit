@@ -108,7 +108,7 @@ func (u *UI) listCustomers(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		titleKey:    customersLabel,
 		"Customers": rows,
-		"Email":     email,
+		emailKey:    email,
 		refusedKey:  refused,
 	}
 	addPaging(data, page, hasNext, CustomersPath)
