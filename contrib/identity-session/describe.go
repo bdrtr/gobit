@@ -34,7 +34,8 @@ func (m *Module) Describe(d *openapi.Doc) {
 		Description: "Takes an e-mail address and a password. On success it sets an " +
 			"HttpOnly, SameSite=Lax session cookie and answers 204 with NO BODY: what " +
 			"the caller needs is the cookie, and an echoed identifier would land in " +
-			"every browser history that logs a URL.\n\n" +
+			"every browser history that logs a URL. The customer the cookie proves is " +
+			"read from GET /store/v1/auth/session.\n\n" +
 			"The address is compared case-insensitively and with surrounding space " +
 			"trimmed, so one person has one account however they type it.\n\n" +
 			"The session cookie cannot be revoked before it expires. It carries the " +
@@ -71,6 +72,26 @@ func (m *Module) Describe(d *openapi.Doc) {
 		Tags: []string{docTag},
 		Responses: map[string]any{
 			"204": openapi.Response("The session cookie was cleared", nil),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/store/v1/auth/session", openapi.Operation{
+		Summary: "Says which customer the session cookie proves, and until when.",
+		Description: "It is how a storefront that signed a shopper in learns the customer " +
+			"id the customer routes take in their path: signing in and finishing a " +
+			"registration answer with the cookie alone (ADR 0366). The id is in the body " +
+			"and never in a URL, and the answer carries Cache-Control: no-store, because " +
+			"it names a person.\n\n" +
+			"expires_at is when the session ends; it cannot be ended earlier, as the " +
+			"sign-in says.",
+		Tags: []string{docTag},
+		Responses: map[string]any{
+			"200": openapi.Response("The customer the cookie proves", d.Item(sessionAnswer{})),
+			"401": openapi.ErrorResponse(
+				"The request proves nobody. Code \"identity_session_none\", and it is the " +
+					"SAME answer for no cookie, an edited one, one signed with a key this " +
+					"installation does not hold and an expired one: telling them apart would " +
+					"tell a forger which half of a forgery worked."),
 		},
 	})
 

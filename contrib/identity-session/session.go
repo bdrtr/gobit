@@ -82,20 +82,29 @@ type Sessions struct {
 // else is looked at, which is what keeps the handler's body intact — the mistake
 // gobit's own compliance suite refuses.
 func (s *Sessions) CustomerID(r *http.Request) (string, error) {
+	customerID, _, err := s.Session(r)
+
+	return customerID, err
+}
+
+// Session returns the customer the cookie proves and the moment the session
+// ends (ADR 0366), refusing what [Sessions.CustomerID] refuses with the same
+// error.
+func (s *Sessions) Session(r *http.Request) (customerID string, expiresAt time.Time, err error) {
 	cookie, err := r.Cookie(s.cookieName)
 	if err != nil {
-		return "", errNoSession
+		return "", time.Time{}, errNoSession
 	}
 
 	customerID, expiry, err := s.open(cookie.Value)
 	if err != nil {
-		return "", err
+		return "", time.Time{}, err
 	}
 	if !s.now().Before(expiry) {
-		return "", errNoSession
+		return "", time.Time{}, errNoSession
 	}
 
-	return customerID, nil
+	return customerID, expiry, nil
 }
 
 // errNoSession is the single answer every failed read gives.

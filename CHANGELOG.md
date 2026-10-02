@@ -50,6 +50,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A storefront asks whom its session proves** (ADR 0366, D215). **For
+  integrators:** with `contrib/identity-session` bound, `GET
+  /store/v1/auth/session` answers `customer_id` and `expires_at` for the
+  session cookie, uncached, and 401 `identity_session_none` when the request
+  proves nobody; a storefront that signed a shopper in reads the id the
+  customer routes take from it.
+
 - **An order line names its product** (ADR 0365, D214). **For
   integrators:** an order line carries `product_title`, its product's title
   as it was when the order was placed, in the admin and store order records

@@ -283,6 +283,7 @@ func (m *Module) Routes(r chi.Router) {
 
 	r.Post("/store/v1/auth/sign-in", m.signIn)
 	r.Post("/store/v1/auth/sign-out", m.signOut)
+	r.Get("/store/v1/auth/session", m.session)
 	r.Put("/admin/v1/customer-credentials", m.putCredential)
 
 	if !m.selfRegistrationMounted() {
@@ -363,10 +364,10 @@ type credentialRequest struct {
 //
 // # Why the answer carries no body
 //
-// What the caller needs is the cookie, and anything else this could return —
-// the customer's id, their e-mail — is something the storefront can read from
-// the routes that now work. A sign-in that echoed the identifier would put it
-// in every browser history that logged a URL.
+// What the caller needs is the cookie. The customer's id is read from
+// GET /store/v1/auth/session (ADR 0366), and their e-mail from the customer
+// route that id opens; a sign-in that echoed the identifier would put it in
+// every browser history that logged a URL.
 func (m *Module) signIn(w http.ResponseWriter, r *http.Request) {
 	var body signInRequest
 	if !decode(w, r, &body) {
@@ -396,6 +397,43 @@ func (m *Module) signIn(w http.ResponseWriter, r *http.Request) {
 
 	m.sessions.Issue(w, customerID)
 	corehttp.WriteJSON(r.Context(), w, http.StatusNoContent, nil)
+}
+
+// sessionAnswer is the body of GET /store/v1/auth/session.
+type sessionAnswer struct {
+	// CustomerID is the customer the cookie proves: the id the customer
+	// routes take in their path.
+	CustomerID string `json:"customer_id"`
+	// ExpiresAt is when the session ends; it cannot be ended earlier, as the
+	// sign-in says.
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// session answers which customer the request's cookie proves, and until when
+// (ADR 0366).
+//
+// It is how a storefront that signed a shopper in learns the id gobit's
+// customer routes take: the sign-in and the registration answer with a cookie
+// alone, and every route that names a customer needs the id in its path. The
+// id leaves in a body, never in a URL, and the answer is not stored by any
+// cache, because it names a person.
+//
+// Every request that proves nobody gets one answer, for the reason
+// [Sessions.CustomerID] gives one error.
+func (m *Module) session(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+
+	customerID, expiresAt, err := m.sessions.Session(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, coreerrors.Unauthorized(CodeNoSession,
+			"the request carries no valid session"))
+
+		return
+	}
+
+	corehttp.WriteJSON(r.Context(), w, http.StatusOK, struct {
+		Data sessionAnswer `json:"data"`
+	}{Data: sessionAnswer{CustomerID: customerID, ExpiresAt: expiresAt.UTC()}})
 }
 
 // signOut clears the cookie.

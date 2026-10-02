@@ -30,6 +30,10 @@ const (
 	CodeNotWritten = "identity_session_not_written"
 	// CodeUnavailable is a failure on this module's side.
 	CodeUnavailable = "identity_session_unavailable"
+	// CodeNoSession answers a session read whose request proves nobody (ADR
+	// 0366): no cookie, an edited one, one from a key nobody holds, or an
+	// expired one, all four alike.
+	CodeNoSession = "identity_session_none"
 )
 
 // decode reads a JSON body and answers the caller itself when it cannot.
