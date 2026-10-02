@@ -373,14 +373,14 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	// the handler is built inside it.
 	receiving := &returnReceiving{c: c, log: log}
 	fulfilling := &fulfillingFlow{c: c, log: log}
-	m.handler = api.New(svc,
-		receiving,
-		&invoicingFlow{c: c, log: log},
-		fulfilling)
-	// The panel acts on the after-sales records, and opens a parcel (ADR
-	// 0324), through the same flows the API does (ADR 0271), so the two
-	// surfaces refuse and fail alike.
-	if err := c.Provide(AdminName, &AfterSalesSurface{svc: svc, flow: receiving, fulfilling: fulfilling}); err != nil {
+	invoicing := &invoicingFlow{c: c, log: log}
+	m.handler = api.New(svc, receiving, invoicing, fulfilling)
+	// The panel acts on the after-sales records, opens a parcel (ADR 0324)
+	// and issues the invoice (ADR 0335) through the same flows the API does
+	// (ADR 0271), so the two surfaces refuse and fail alike.
+	if err := c.Provide(AdminName, &AfterSalesSurface{
+		svc: svc, flow: receiving, fulfilling: fulfilling, invoicing: invoicing,
+	}); err != nil {
 		return err
 	}
 	slog.Default().DebugContext(ctx, "order module registered",

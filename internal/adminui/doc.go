@@ -174,7 +174,10 @@
 // chooses when the order was sold several (ADR 0332), and moves one
 // ([UI.moveParcel]) —
 // shipped, delivered, back undelivered, canceled — through the fulfillment
-// module's surface (ADR 0324). A claim on it lists its evidence and takes a
+// module's surface (ADR 0324). It names the order's invoice and issues one
+// ([UI.issueInvoice]) through the order module's surface and the invoicing
+// flow, on a series the invoice module's surface lists (ADR 0335). A claim on
+// it lists its evidence and takes a
 // file ([UI.attachEvidence]), stored by the file module's surface and bound by
 // the order module's, each under its own write privilege (ADR 0325).
 //

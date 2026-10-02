@@ -30,6 +30,7 @@ type AfterSalesSurface struct {
 	svc        *service.Service
 	flow       api.ReturnReceiving
 	fulfilling api.Fulfilling
+	invoicing  api.Invoicing
 }
 
 // OpenParcel opens a parcel for the order and reports whether the idempotency
@@ -322,4 +323,49 @@ func (s *AfterSalesSurface) AttachClaimEvidence(ctx context.Context, claimID, up
 // left to the file module (ADR 0325).
 func (s *AfterSalesSurface) DetachClaimEvidence(ctx context.Context, evidenceID string) error {
 	return s.svc.DetachClaimEvidence(ctx, evidenceID)
+}
+
+// InvoiceOfOrder names the document issued for the order, and reports when
+// there is none (ADR 0335).
+func (s *AfterSalesSurface) InvoiceOfOrder(
+	ctx context.Context, orderID string,
+) (invoiceID, number, status string, found bool, err error) {
+	if s == nil || s.invoicing == nil {
+		return "", "", "", false, errors.Unavailable(codeSetupFailed, "the invoicing flow is not set up")
+	}
+	invoiceID, number, status, err = s.invoicing.InvoiceOfOrder(ctx, orderID)
+	switch {
+	case errors.IsNotFound(err):
+		return "", "", "", false, nil
+	case err != nil:
+		return "", "", "", false, err
+	}
+
+	return invoiceID, number, status, true, nil
+}
+
+// IssueInvoice issues the order's document on the series the prefix names,
+// or returns the one the order has, reporting which (ADR 0335). The buyer is
+// the flow's JSON party, its printed fields named rather than placed: a name,
+// address, country or e-mail left out is taken from the order (ADR 0193), and
+// the tax number and office are as given.
+func (s *AfterSalesSurface) IssueInvoice(
+	ctx context.Context, orderID, seriesPrefix string, buyer json.RawMessage,
+) (invoiceID, number string, alreadyIssued bool, err error) {
+	if s == nil || s.invoicing == nil {
+		return "", "", false, errors.Unavailable(codeSetupFailed, "the invoicing flow is not set up")
+	}
+	if len(buyer) == 0 {
+		buyer = json.RawMessage(`{}`)
+	}
+	request, err := json.Marshal(struct {
+		SeriesPrefix string          `json:"series_prefix"`
+		Buyer        json.RawMessage `json:"buyer"`
+	}{seriesPrefix, buyer})
+	if err != nil {
+		return "", "", false, errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the invoice request could not be encoded")
+	}
+
+	return s.invoicing.IssueForOrder(ctx, orderID, request)
 }

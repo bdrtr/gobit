@@ -230,6 +230,39 @@ the form is sent (ADR 0332).
 {{ end }}
 {{ end }}
 
+{{ with .Invoice }}
+<h2>Invoice</h2>
+{{/*
+The order's invoice is named by the order module and issued through the
+invoicing flow the API calls (ADR 0335). The series an invoice is numbered
+on are the invoice module's, offered to an operator who may read them; a
+prefix not used before opens a new series with its first invoice, which is
+why a new one is named apart from the ones the shop has.
+*/}}
+{{ if .Unread }}
+<p class="muted">The invoice of this order could not be read.</p>
+{{ else if .Found }}
+<p>Invoice <strong>{{ .Number }}</strong> <span class="pill">{{ .Status }}</span> <span class="muted">{{ .ID }}</span></p>
+{{ else }}
+<p class="muted">No invoice has been issued for this order.</p>
+{{ end }}
+{{ if .CanIssue }}
+<form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/invoice">
+  {{ with .Prefixes }}<select name="series" aria-label="series">
+    {{ range . }}<option value="{{ . }}">{{ . }}</option>{{ end }}
+  </select>{{ end }}
+  <input name="new_series" placeholder="{{ if .Prefixes }}or a new series{{ else }}series, e.g. GBT{{ end }}" aria-label="new series" maxlength="3">
+  <input name="buyer_name" placeholder="buyer, or as billed" aria-label="buyer">
+  <input name="buyer_address" placeholder="address, or as billed" aria-label="buyer's address">
+  <input name="buyer_country" placeholder="country, or as billed" aria-label="buyer's country" maxlength="2">
+  <input name="tax_number" placeholder="buyer's tax number" aria-label="tax number">
+  <input name="tax_office" placeholder="buyer's tax office" aria-label="tax office">
+  <button type="submit">Issue the invoice</button>
+</form>
+<p class="muted">A series not used before is opened by its first invoice. The buyer is the order's billing address where it is left empty.</p>
+{{ end }}
+{{ end }}
+
 {{ if .NotificationsShown }}
 {{/*
 What the notification module sent for the order (ADR 0318), read only for an

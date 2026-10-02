@@ -82,6 +82,9 @@ const ServiceName = ModuleName + ".service"
 // the mechanism, not a concession.
 const InteropName = ModuleName + ".interop"
 
+// AdminName is the module's panel surface's name in the container (ADR 0335).
+const AdminName = ModuleName + ".admin"
+
 // svcDB is the name of the core database pool in the container.
 const svcDB = "core.db"
 
@@ -201,6 +204,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(AdminName, service.NewAdminSurface(svc)); err != nil {
 		return err
 	}
 

@@ -39,6 +39,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The order page issues the order's invoice** (ADR 0335). **For
+  operators:** an order's page names its invoice and issues one under
+  `order:write`, on a series the shop numbers on (offered with
+  `invoice:read`) or a new one named apart, the buyer defaulting to the
+  order's billing address. **For integrators:** `order.admin` names and
+  issues an order's invoice, and the invoice module registers
+  `invoice.admin`, which lists the series.
+
 - **The panel writes a shipping option** (ADR 0334, D208). **For
   operators:** the Shipping options screen writes an option on a registered
   provider and one of the newest profiles, in a region and its currency or

@@ -732,6 +732,21 @@ func (a recordingAfterSales) OpenParcel(context.Context, string, string, string)
 	return "ful_walk", false, a.surfaces.reach(ServiceOrderAdmin)
 }
 
+func (a recordingAfterSales) InvoiceOfOrder(context.Context, string) (id, number, status string, found bool, err error) {
+	return "", "", "", false, a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) IssueInvoice(context.Context, string, string, json.RawMessage) (id, number string, already bool, err error) {
+	return "inv_walk", "GBT2026000000001", false, a.surfaces.reach(ServiceOrderAdmin)
+}
+
+// recordingInvoices records the invoice module's surface (ADR 0335).
+type recordingInvoices struct{ surfaces *recordingSurfaces }
+
+func (i recordingInvoices) SeriesJSON(context.Context) (json.RawMessage, error) {
+	return json.RawMessage(`[{"prefix":"GBT","year":2026,"last_number":1}]`), i.surfaces.reach(ServiceInvoiceAdmin)
+}
+
 func (a recordingAfterSales) DeliveriesJSON(context.Context, string) (json.RawMessage, error) {
 	return json.RawMessage(`[]`), a.surfaces.reach(ServiceOrderAdmin)
 }
@@ -949,6 +964,8 @@ var walkForms = map[string]url.Values{
 	// An order's parcels (ADR 0324).
 	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}},
 	routeKey(http.MethodPost, OrderParcelActPath): {},
+	// Issuing an order's invoice (ADR 0335).
+	routeKey(http.MethodPost, OrderInvoicePath): {formInvoiceNewSeries: {"GBT"}},
 	// Writing a shipping option (ADR 0334) and revising one (ADR 0333).
 	routeKey(http.MethodPost, ShippingOptionsPath): {
 		formGroupName: {"Walk"}, formOptionProvider: {"manual"}, formOptionProfile: {"sprof_walk"},
@@ -1002,6 +1019,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServiceOrderAdmin, AfterSalesAdmin(recordingAfterSales{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceFulfillmentAdmin, ParcelMover(recordingParcels{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceFileAdmin, FileUploader(recordingFiles{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceInvoiceAdmin, InvoiceSeriesLister(recordingInvoices{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePromotionAdmin, PromotionLister(recordingPromotions{walk.surfaces})))

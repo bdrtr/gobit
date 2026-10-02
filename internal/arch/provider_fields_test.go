@@ -863,6 +863,9 @@ var panelSurfaceContracts = map[string]string{
 	// The providers and the profiles a shipping option is written on, which
 	// no read provider publishes (ADR 0334).
 	"shipping_options.go": "fulfillment.admin's option choices",
+	// The invoice series, which no read provider publishes, and the buyer the
+	// order module's surface hands to the invoicing flow (ADR 0335).
+	"order_invoice.go": "invoice.admin's series and the invoicing flow's party",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

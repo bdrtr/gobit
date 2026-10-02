@@ -472,6 +472,7 @@ func (u *UI) renderOrder(
 		"ParcelMoves":           parcelMoves,
 		"CanMoveParcels":        u.canMoveParcels(r),
 		"ParcelOpening":         u.parcelOpeningFor(r, detail.ID),
+		"Invoice":               u.invoiceOf(r, detail.ID),
 		"CanAttachEvidence":     u.canAttachEvidence(r),
 		"CanDetachEvidence":     u.canDetachEvidence(r),
 		"NotificationsShown":    u.notifications != nil,

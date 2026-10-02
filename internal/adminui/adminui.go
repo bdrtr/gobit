@@ -211,8 +211,11 @@ type UI struct {
 	parcels ParcelMover
 	// files stores a claim's evidence (ADR 0325); nil when the installation
 	// registers no file surface.
-	files  FileUploader
-	scopes map[string]string
+	files FileUploader
+	// invoices lists the series an order's invoice is numbered on (ADR
+	// 0335); nil when the installation registers no invoice surface.
+	invoices InvoiceSeriesLister
+	scopes   map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -320,6 +323,11 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And the series an order's invoice is numbered on (ADR 0335).
+	invoices, err := optionalService[InvoiceSeriesLister](c, ServiceInvoiceAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -353,6 +361,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		memberships:   memberships,
 		parcels:       parcels,
 		files:         files,
+		invoices:      invoices,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

@@ -172,7 +172,10 @@ func builtInScopes() map[string]string {
 		routeKey(get, CustomerPath):  scopeCustomerRead,
 		// An order's parcel is opened by the order module and moved by the
 		// fulfillment module (ADR 0324).
-		routeKey(post, OrderParcelsPath):   scopeOrderWrite,
+		routeKey(post, OrderParcelsPath): scopeOrderWrite,
+		// An order's invoice is issued by the order module, through the
+		// invoicing flow, under its write (ADR 0335).
+		routeKey(post, OrderInvoicePath):   scopeOrderWrite,
 		routeKey(post, OrderParcelActPath): scopeFulfillmentWrite,
 		// The shipping options are the fulfillment module's, and so are
 		// revising one (ADR 0333) and writing one (ADR 0334).
