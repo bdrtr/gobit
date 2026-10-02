@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The order page completes and archives an order** (ADR 0340). **For
+  operators:** a pending order's page marks it completed and a completed
+  one's archives it under `order:write`. **For integrators:**
+  `order.admin` completes and archives an order as the API does.
+
 - **The order page cancels an unpaid order** (ADR 0339). **For operators:**
   a pending order's page cancels it under `order:write`, with a reason, and
   its units' stock comes back; an order with money collected is refused.

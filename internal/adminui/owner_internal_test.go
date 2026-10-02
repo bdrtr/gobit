@@ -744,6 +744,14 @@ func (a recordingAfterSales) CancelOrder(context.Context, string, string) error 
 	return a.surfaces.reach(ServiceOrderAdmin)
 }
 
+func (a recordingAfterSales) CompleteOrder(context.Context, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) ArchiveOrder(context.Context, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
 func (a recordingAfterSales) InvoiceOfOrder(context.Context, string) (id, number, status string, found bool, err error) {
 	return "", "", "", false, a.surfaces.reach(ServiceOrderAdmin)
 }
@@ -993,6 +1001,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, OrderParcelActPath): {},
 	// Writing the store profile (ADR 0336).
 	routeKey(http.MethodPost, StoreProfilePath): {formProfileName: {"Walk"}, formProfileCountry: {"TR"}},
+	// Completing and archiving an order (ADR 0340).
+	routeKey(http.MethodPost, OrderCompletePath): {},
+	routeKey(http.MethodPost, OrderArchivePath):  {},
 	// Canceling an order (ADR 0339).
 	routeKey(http.MethodPost, OrderCancelPath): {formCancelReason: {"walk"}},
 	// Issuing an order's invoice (ADR 0335).

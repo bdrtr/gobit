@@ -381,3 +381,25 @@ func (s *AfterSalesSurface) CancelOrder(ctx context.Context, orderID, reason str
 
 	return s.svc.CancelPlacedOrder(ctx, orderID, reason)
 }
+
+// CompleteOrder marks a pending order completed, as the API's complete does
+// (ADR 0340); a canceled or already completed order is refused.
+func (s *AfterSalesSurface) CompleteOrder(ctx context.Context, orderID string) error {
+	if s == nil || s.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the order service is not set up")
+	}
+	_, err := s.svc.CompleteOrder(ctx, orderID)
+
+	return err
+}
+
+// ArchiveOrder takes a completed order out of the daily lists, as the API's
+// archive does (ADR 0340); an order that is not completed is refused.
+func (s *AfterSalesSurface) ArchiveOrder(ctx context.Context, orderID string) error {
+	if s == nil || s.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the order service is not set up")
+	}
+	_, err := s.svc.ArchiveOrder(ctx, orderID)
+
+	return err
+}

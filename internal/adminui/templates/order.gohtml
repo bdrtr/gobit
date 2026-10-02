@@ -26,6 +26,13 @@ be read says it is in minor units instead of being divided by a guessed hundred.
   <p>
     {{ if .Order.Email }}{{ .Order.Email }}{{ else }}<span class="muted">no address on this order</span>{{ end }}
   </p>
+  {{/* A pending order is marked completed and a completed one archived, as
+  the API's transitions do (ADR 0340). */}}
+  {{ if eq $.CloseMove "complete" }}
+  <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/complete"><button type="submit">Mark as completed</button></form>
+  {{ else if eq $.CloseMove "archive" }}
+  <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/archive"><button type="submit">Archive the order</button></form>
+  {{ end }}
   {{ if $.CanCancel }}
   {{/* An order the checkout placed and nobody paid for yet is canceled here,
   its units written off so their stock comes back (ADR 0339); one with money

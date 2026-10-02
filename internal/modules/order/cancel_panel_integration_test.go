@@ -23,6 +23,8 @@ import (
 // TestThePanelCancelsAPlacedOrder is ADR 0339 on the real schema: the
 // surface cancels a pending order through the service the API's cancel
 // calls, and a second cancel writes nothing; a completed order is refused.
+// And ADR 0340: a pending order is completed once and not archived, a
+// completed one is archived with its moment.
 func TestThePanelCancelsAPlacedOrder(t *testing.T) {
 	ctx := context.Background()
 
@@ -57,12 +59,21 @@ func TestThePanelCancelsAPlacedOrder(t *testing.T) {
 
 	completed, err := svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
-	_, err = svc.CompleteOrder(ctx, completed.ID)
-	require.NoError(t, err)
+	err = surface.ArchiveOrder(ctx, completed.ID)
+	require.Error(t, err, "a pending order is not archived")
+	require.NoError(t, surface.CompleteOrder(ctx, completed.ID))
+	err = surface.CompleteOrder(ctx, completed.ID)
+	assert.True(t, errors.IsConflict(err), "a second completion is refused: %v", err)
 	err = surface.CancelOrder(ctx, completed.ID, "too late")
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err), "a completed order is not canceled: %v", err)
 	detail, err = svc.GetOrder(ctx, completed.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.OrderCompleted, detail.Status)
+
+	require.NoError(t, surface.ArchiveOrder(ctx, completed.ID))
+	detail, err = svc.GetOrder(ctx, completed.ID)
+	require.NoError(t, err)
+	assert.Equal(t, models.OrderArchived, detail.Status, "a completed order is archived")
+	require.NotNil(t, detail.ArchivedAt)
 }

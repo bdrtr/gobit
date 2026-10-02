@@ -474,6 +474,7 @@ func (u *UI) renderOrder(
 		"ParcelOpening":         u.parcelOpeningFor(r, detail.ID),
 		"Invoice":               u.invoiceOf(r, detail.ID),
 		"CanCancel":             u.canCancelOrder(r, detail.Status),
+		"CloseMove":             u.orderCloseMove(r, detail.Status),
 		"CanAttachEvidence":     u.canAttachEvidence(r),
 		"CanDetachEvidence":     u.canDetachEvidence(r),
 		"NotificationsShown":    u.notifications != nil,
