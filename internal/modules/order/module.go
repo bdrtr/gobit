@@ -374,7 +374,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	receiving := &returnReceiving{c: c, log: log}
 	fulfilling := &fulfillingFlow{c: c, log: log}
 	invoicing := &invoicingFlow{c: c, log: log}
-	m.handler = api.New(svc, receiving, invoicing, fulfilling)
+	m.handler = api.New(svc, receiving, invoicing, fulfilling).WithIdentity(&identityBinding{c: c, log: log})
 	// The panel acts on the after-sales records, opens a parcel (ADR 0324)
 	// and issues the invoice (ADR 0335) through the same flows the API does
 	// (ADR 0271), so the two surfaces refuse and fail alike.

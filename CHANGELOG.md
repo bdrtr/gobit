@@ -50,6 +50,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A customer lists their own orders** (ADR 0367). **For integrators:**
+  `GET /store/v1/customers/{id}/orders` answers a page of the proven
+  customer's orders, newest first, refusing another customer's list with
+  403 `identity_mismatch` and an installation with no customer identity
+  with 401 `identity_not_bound`.
+
 - **A storefront asks whom its session proves** (ADR 0366, D215). **For
   integrators:** with `contrib/identity-session` bound, `GET
   /store/v1/auth/session` answers `customer_id` and `expires_at` for the

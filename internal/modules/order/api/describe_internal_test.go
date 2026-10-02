@@ -243,6 +243,10 @@ func describedEndpoints() []endpointExpectation {
 			response: filledOrder(), shape: pagedList,
 		},
 		{
+			method: http.MethodGet, path: pathStoreOwnOrders, status: "200",
+			response: filledOrder(), shape: pagedList,
+		},
+		{
 			method: http.MethodGet, path: "/admin/v1/orders/{id}/returns", status: "200",
 			response: filledReturn(), shape: pagedList,
 		},

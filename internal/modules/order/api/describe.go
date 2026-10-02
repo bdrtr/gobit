@@ -174,6 +174,32 @@ func Describe(d *openapi.Doc) {
 		},
 	})
 
+	d.Describe(http.MethodGet, pathStoreOwnOrders, openapi.Operation{
+		Summary: "Lists a signed-in customer's own orders, newest first.",
+		Description: "The path's customer has to be the one the request proves through the " +
+			"installation's customer identity, as for the customer's addresses and " +
+			"balances: a storefront signed a shopper in, read their id, and lists their " +
+			"orders here (ADR 0367). Each record is the order without its lines; " +
+			"GET /store/v1/orders/{id} reads one with them.",
+		Parameters: []openapi.Parameter{
+			queryParameter("limit", typeInteger,
+				"Page size; when it is not given the service's default applies."),
+			queryParameter("offset", typeInteger, "Number of records to skip."),
+			queryParameter("after", typeString,
+				"Opaque cursor from a previous page's \"next_cursor\"; refused together "+
+					"with \"offset\". When the response carries no \"next_cursor\" the "+
+					"listing is exhausted."),
+		},
+		Responses: map[string]any{
+			"200": openapi.Response("Page of the customer's orders",
+				d.List(orderDTO{}, openapi.WithCursor())),
+			"401": openapi.ErrorResponse("No customer identity is bound, or the request " +
+				"proves no customer (\"identity_not_bound\")."),
+			"403": openapi.ErrorResponse("The request proves another customer than the " +
+				"path names (\"identity_mismatch\")."),
+		},
+	})
+
 	describeReturns(d)
 	describeExchanges(d)
 	describeExchangeMoney(d)

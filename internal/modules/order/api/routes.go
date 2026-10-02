@@ -80,6 +80,9 @@ func (h *Handler) Routes(r chi.Router) {
 	// that the order BELONGS TO THE CUSTOMER is separate work and is still not
 	// done; this is a deliberate gap, not a hidden assumption.
 	r.Get("/store/v1/orders/{id}", h.storeGetOrder)
+	// A customer's own orders are the exception: the route PROVES the customer
+	// through the installation's customer identity (ADR 0367).
+	r.Get(pathStoreOwnOrders, h.storeListOwnOrders)
 	r.Get("/store/v1/orders/{id}/timeline", h.storeGetOrderTimeline)
 	r.Post("/store/v1/orders/{id}/returns", h.storeRequestReturn)
 

@@ -55,6 +55,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	corepage "github.com/bdrtr/gobit/internal/core/page"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
 	"github.com/bdrtr/gobit/internal/modules/order/service"
@@ -272,6 +273,9 @@ type Handler struct {
 	receiving  ReturnReceiving
 	invoicing  Invoicing
 	fulfilling Fulfilling
+	// identity proves the customer the storefront's own orders route names
+	// (ADR 0367); nil refuses that route.
+	identity corehttp.Identity
 }
 
 // New produces the handler set that runs over the given service and flow.
