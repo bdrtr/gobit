@@ -39,6 +39,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A customer's page lists their orders** (ADR 0358). **For operators:**
+  a customer's page shows their newest orders to an operator who may read
+  the orders, and the order list narrows to one customer's orders.
+
 - **The panel lists the payments** (ADR 0357). **For operators:** a
   Payments screen lists every order's payment under `payment:read`, the
   money held and still to be captured or recorded first, then by status,

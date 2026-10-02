@@ -99,6 +99,34 @@ with; the e-mail is what an account signs in with and is not corrected here
 <p class="muted">No address is kept for this customer.</p>
 {{ end }}
 
+{{ with .CustomerOrders }}
+<h2>Orders</h2>
+{{/* The customer's newest orders, read only for an operator who may read
+the orders (ADR 0358); every one of them is on the order list. */}}
+{{ if .Unread }}
+<p class="muted">The customer's orders could not be read.</p>
+{{ else if .Orders }}
+<div class="scroll">
+<table>
+  <thead><tr><th>Order</th><th>Status</th><th class="num">Total</th><th>Placed</th></tr></thead>
+  <tbody>
+  {{ range .Orders }}
+    <tr>
+      <td><a href="{{ $.OrdersPath }}/{{ .ID }}">#{{ .DisplayID }}</a></td>
+      <td><span class="pill">{{ .Status }}</span></td>
+      <td class="num">{{ .Total }} {{ .Currency }}{{ if .Minor }} <span class="muted">(minor)</span>{{ end }}</td>
+      <td>{{ if not .PlacedAt.IsZero }}{{ .PlacedAt.Format "2006-01-02 15:04" }}{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ if .More }}<p><a href="{{ $.OrdersPath }}?customer={{ $.Customer.ID }}">Every order of this customer</a></p>{{ end }}
+{{ else }}
+<p class="muted">No order yet.</p>
+{{ end }}
+{{ end }}
+
 <h2>Groups</h2>
 {{ if .GroupsUnread }}<p class="muted">The groups' names could not be read; they are shown by id.</p>{{ end }}
 {{ if .Groups }}

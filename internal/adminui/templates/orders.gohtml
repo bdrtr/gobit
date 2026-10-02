@@ -19,8 +19,11 @@ exist in total.
 <form method="get" action="{{ .Path }}">
   <label><input type="checkbox" name="awaiting" value="1"{{ if .Awaiting }} checked{{ end }}> Only the orders awaiting their payment</label>
   <label><input type="checkbox" name="placed" value="1"{{ if .Placed }} checked{{ end }}> Only the orders an operator placed</label>
+  {{ with .Customer }}<input type="hidden" name="customer" value="{{ . }}">{{ end }}
   <button type="submit">Show</button>
 </form>
+{{/* One customer's orders, which their page links to (ADR 0358). */}}
+{{ with .Customer }}<p class="muted">The orders of customer {{ . }}. <a href="{{ $.Path }}">Every order</a></p>{{ end }}
 
 {{ if .Orders }}
 <div class="scroll">
@@ -56,8 +59,8 @@ exist in total.
 {{ end }}
 
 <nav>
-  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ if .Awaiting }}&amp;awaiting=1{{ end }}{{ if .Placed }}&amp;placed=1{{ end }}">Previous</a>{{ end }}
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}{{ if .Awaiting }}&amp;awaiting=1{{ end }}{{ if .Placed }}&amp;placed=1{{ end }}{{ with .Customer }}&amp;customer={{ . }}{{ end }}">Previous</a>{{ end }}
   <span class="muted">Page {{ .Page }}</span>
-  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ if .Awaiting }}&amp;awaiting=1{{ end }}{{ if .Placed }}&amp;placed=1{{ end }}">Next</a>{{ end }}
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}{{ if .Awaiting }}&amp;awaiting=1{{ end }}{{ if .Placed }}&amp;placed=1{{ end }}{{ with .Customer }}&amp;customer={{ . }}{{ end }}">Next</a>{{ end }}
 </nav>
 {{ end }}

@@ -216,6 +216,10 @@ func (u *UI) renderCustomerTyped(
 		refusedKey:         refused,
 		writtenKey:         r.URL.Query().Get(paramWritten),
 		"CanEditAddresses": u.canReviseAddresses(r),
+		// The customer's newest orders, for an operator who may read the
+		// orders (ADR 0358).
+		"CustomerOrders": u.ordersOfCustomer(r, recordString(records[0], fieldID)),
+		ordersPathKey:    OrdersPath,
 	}
 	if u.canReviseContact(r) {
 		drawn := contactOf(records[0])

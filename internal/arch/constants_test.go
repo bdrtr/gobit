@@ -983,6 +983,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	// The Taxes screen (ADR 0355) and the Parcels screen (ADR 0356).
 	assert.Equal(t, taxsvc.Entity, adminui.EntityTaxRegion)
 	assert.Equal(t, fulfillmentsvc.FulfillmentEntity, adminui.EntityFulfillment)
+	// A customer's orders (ADR 0358).
+	assert.Equal(t, ordersvc.FieldCustomerID, adminui.FilterOrderCustomer)
 	// The Payments screen (ADR 0357).
 	assert.Equal(t, paymentservice.EntityName, adminui.EntityPaymentCollection)
 	assert.Equal(t, cartsvc.FilterOpenedByOperator, adminui.FilterOpenedByOperator)

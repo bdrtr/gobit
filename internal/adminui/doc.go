@@ -133,6 +133,8 @@
 // who may read the customers (ADR 0321). A customer's page names their groups
 // and puts them into one or takes them out ([UI.addToGroup],
 // [UI.removeFromGroup]) through the customer module's surface (ADR 0322), and
+// lists their newest orders for an operator who may read the orders, the
+// order list listing every one of them (ADR 0358), and
 // corrects their name and phone from the ones it was drawn with
 // ([UI.reviseContact], ADR 0337) and each address's printed fields the same
 // way ([UI.reviseAddress], ADR 0342), and

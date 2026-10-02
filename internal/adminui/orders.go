@@ -321,8 +321,10 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 	// together.
 	awaiting := r.URL.Query().Get(paramAwaiting) == "1"
 	placed := r.URL.Query().Get(paramPlaced) == "1"
+	// And one customer's, which their page links to (ADR 0358).
+	customer := strings.TrimSpace(r.URL.Query().Get(paramOrderCustomer))
 	var filters map[string]any
-	if awaiting || placed {
+	if awaiting || placed || customer != "" {
 		filters = map[string]any{}
 	}
 	if awaiting {
@@ -330,6 +332,9 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 	}
 	if placed {
 		filters[FilterPlacedByOperator] = true
+	}
+	if customer != "" {
+		filters[FilterOrderCustomer] = customer
 	}
 
 	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
@@ -365,6 +370,7 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 		"Orders":   rows,
 		"Awaiting": awaiting,
 		"Placed":   placed,
+		"Customer": customer,
 	}
 	addPaging(data, page, hasNext, OrdersPath)
 
