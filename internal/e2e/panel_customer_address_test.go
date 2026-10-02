@@ -103,3 +103,45 @@ func TestAnOperatorCorrectsACustomersAddressInThePanel(t *testing.T) {
 	assert.Equal(t, "Bagdat Cd. 10", drawn(stale.Body.String()).Get("read_address_1"),
 		"the page is drawn from the address as it is now")
 }
+
+// TestAnOperatorAddsACustomersAddressInThePanel is ADR 0359 on the
+// production wiring: a customer's page adds an address through the
+// registered `customer.admin` surface, as the default shipping address when
+// ticked, and a second one made the default takes the flag from the first.
+func TestAnOperatorAddsACustomersAddressInThePanel(t *testing.T) {
+	ctx := t.Context()
+	created, err := customerSvc.CreateCustomer(ctx, customersvc.CustomerInput{
+		Email: fmt.Sprintf("e2e-address-added-%d@example.com", fixtureCounter.Add(1)),
+	})
+	require.NoError(t, err)
+	panel, err := adminui.FromContainer(ctr, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	add := func(form url.Values) {
+		t.Helper()
+
+		req := httptest.NewRequest(http.MethodPost, adminui.CustomersPath+"/"+created.ID+"/addresses",
+			strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_support", Kind: "user", Scopes: []string{"customer:read", "customer:write"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	}
+
+	add(url.Values{"first_name": {"Ada"}, "address_1": {"1 First St"}, "city": {"Izmir"}, "country_code": {"tr"},
+		"default_shipping": {"1"}})
+	add(url.Values{"address_1": {"2 Second St"}, "city": {"Ankara"}, "country_code": {"TR"}, "default_shipping": {"1"}})
+	addresses, err := customerSvc.ListAddresses(ctx, created.ID)
+	require.NoError(t, err)
+	require.Len(t, addresses, 2)
+	byLine := map[string]bool{}
+	for _, address := range addresses {
+		byLine[address.Address1+"|"+address.CountryCode] = address.IsDefaultShipping
+	}
+	assert.Equal(t, map[string]bool{"1 First St|TR": false, "2 Second St|TR": true}, byLine,
+		"the second default takes the flag from the first, the country upper-cased")
+}

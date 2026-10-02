@@ -220,6 +220,19 @@ func (u *UI) renderCustomerTyped(
 		// orders (ADR 0358).
 		"CustomerOrders": u.ordersOfCustomer(r, recordString(records[0], fieldID)),
 		ordersPathKey:    OrdersPath,
+		// The new address's form, with what was typed when it was refused
+		// (ADR 0359).
+		"CanAddAddress": u.canAddAddresses(r),
+		"NewAddress":    printedAddress{},
+	}
+	if refusedAddress == newAddressMarker {
+		added := printedAddress{}
+		for _, key := range addressKeys {
+			added[key] = typed.Get(key)
+		}
+		data["NewAddress"], data["NewAddressRefused"] = added, true
+		data["NewDefaultShipping"] = typed.Get(formDefaultShipping) != ""
+		data["NewDefaultBilling"] = typed.Get(formDefaultBilling) != ""
 	}
 	if u.canReviseContact(r) {
 		drawn := contactOf(records[0])

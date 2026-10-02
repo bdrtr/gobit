@@ -99,6 +99,28 @@ with; the e-mail is what an account signs in with and is not corrected here
 <p class="muted">No address is kept for this customer.</p>
 {{ end }}
 
+{{ if .CanAddAddress }}
+{{/* An address added with its printed fields, the default shipping or
+billing address when ticked (ADR 0359). */}}
+<details{{ if .NewAddressRefused }} open{{ end }}>
+  <summary>Add an address</summary>
+  <form method="post" action="{{ .CustomersPath }}/{{ .Customer.ID }}/addresses">
+    <input name="first_name" value="{{ index .NewAddress "first_name" }}" placeholder="first name" aria-label="first name">
+    <input name="last_name" value="{{ index .NewAddress "last_name" }}" placeholder="last name" aria-label="last name">
+    <input name="company" value="{{ index .NewAddress "company" }}" placeholder="company" aria-label="company">
+    <input name="address_1" value="{{ index .NewAddress "address_1" }}" placeholder="first line" aria-label="first line" required>
+    <input name="address_2" value="{{ index .NewAddress "address_2" }}" placeholder="second line" aria-label="second line">
+    <input name="postal_code" value="{{ index .NewAddress "postal_code" }}" placeholder="postal code" aria-label="postal code">
+    <input name="city" value="{{ index .NewAddress "city" }}" placeholder="city" aria-label="city" required>
+    <input name="country_code" value="{{ index .NewAddress "country_code" }}" placeholder="country, e.g. TR" aria-label="country" maxlength="2" required>
+    <input name="phone" value="{{ index .NewAddress "phone" }}" placeholder="phone" aria-label="phone" type="tel">
+    <label><input type="checkbox" name="default_shipping" value="1"{{ if .NewDefaultShipping }} checked{{ end }}> default shipping</label>
+    <label><input type="checkbox" name="default_billing" value="1"{{ if .NewDefaultBilling }} checked{{ end }}> default billing</label>
+    <button type="submit">Add</button>
+  </form>
+</details>
+{{ end }}
+
 {{ with .CustomerOrders }}
 <h2>Orders</h2>
 {{/* The customer's newest orders, read only for an operator who may read

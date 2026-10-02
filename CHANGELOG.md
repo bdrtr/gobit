@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel adds a customer's address** (ADR 0359). **For operators:** a
+  customer's page adds an address under `customer:write`, as their default
+  shipping or billing address when ticked. **For integrators:**
+  `customer.admin` adds an address as the API's create does.
+
 - **A customer's page lists their orders** (ADR 0358). **For operators:**
   a customer's page shows their newest orders to an operator who may read
   the orders, and the order list narrows to one customer's orders.
