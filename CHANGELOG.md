@@ -39,6 +39,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel lists the regions** (ADR 0354). **For operators:** a Regions
+  screen shows each region's currency, tax rate, whether taxes are computed
+  and the countries it covers, under `region:read`.
+
 - **The panel makes a sales channel** (ADR 0353). **For operators:** the
   Sales channels screen makes a channel under `admin`, enabled or not; a
   name another channel holds is refused. **For integrators:**

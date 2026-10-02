@@ -1,0 +1,40 @@
+{{- /*
+regions.gohtml is the region module's regions (ADR 0354).
+
+A region is where the shop sells in one currency: its prices, its shipping
+options and its taxes are the region's. The screen shows each one's
+currency, its tax rate, whether taxes are computed for it, and the countries
+it covers. Nothing is written here; the admin API writes the regions.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ if .Regions }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Region</th><th>Currency</th><th>Tax rate</th><th>Taxes computed</th><th>Countries</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Regions }}
+    <tr>
+      <td>{{ .Name }}<br><span class="muted">{{ .ID }}</span></td>
+      <td>{{ .Currency }}</td>
+      <td>{{ .TaxRate }}%</td>
+      <td>{{ if .AutomaticTaxes }}yes{{ else }}no{{ end }}</td>
+      <td>{{ range $i, $country := .Countries }}{{ if $i }}, {{ end }}{{ $country }}{{ else }}<span class="muted">none</span>{{ end }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No region here.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

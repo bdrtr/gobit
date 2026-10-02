@@ -54,6 +54,9 @@ const (
 	// The sales channels are the auth module's, read under its privilege for
 	// the telephone order's channel list (ADR 0305).
 	scopeAuthRead = "auth:read"
+	// The regions are the region module's, read under its privilege on the
+	// Regions screen (ADR 0354).
+	scopeRegionRead = "region:read"
 )
 
 // routeKey is how the scope table names a route: its method and its path.
@@ -215,6 +218,8 @@ func builtInScopes() map[string]string {
 		routeKey(post, SalesChannelPath): scopeAdmin,
 		// And so is making one (ADR 0353).
 		routeKey(post, SalesChannelsPath): scopeAdmin,
+		// The regions are the region module's (ADR 0354).
+		routeKey(get, RegionsPath): scopeRegionRead,
 		// The shipping options are the fulfillment module's, and so are
 		// revising one (ADR 0333) and writing one (ADR 0334).
 		routeKey(get, ShippingOptionsPath):       scopeFulfillmentRead,
