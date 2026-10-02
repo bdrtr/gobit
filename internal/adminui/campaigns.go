@@ -116,7 +116,7 @@ func (u *UI) canCreateCampaigns(r *http.Request) bool {
 
 // listCampaigns renders the campaigns.
 func (u *UI) listCampaigns(w http.ResponseWriter, r *http.Request) {
-	u.renderCampaigns(w, r, http.StatusOK, "", url.Values{})
+	u.renderCampaigns(w, r, http.StatusOK, "", url.Values{}, "")
 }
 
 // createCampaign writes the campaign the form describes and returns to the
@@ -140,7 +140,7 @@ func (u *UI) createCampaign(w http.ResponseWriter, r *http.Request) {
 		created := url.Values{paramCreated: {strings.TrimSpace(r.PostFormValue(formCampaignIdentifier))}}
 		corehttp.WriteRedirect(r.Context(), w, CampaignsPath+"?"+created.Encode())
 	case errors.IsInvalid(err) || errors.IsConflict(err):
-		u.renderCampaigns(w, r, http.StatusUnprocessableEntity, messageFor(err), r.PostForm)
+		u.renderCampaigns(w, r, http.StatusUnprocessableEntity, messageFor(err), r.PostForm, "")
 	default:
 		u.unexpectedFailure(w, r, err, "The campaign could not be written")
 	}
@@ -203,16 +203,21 @@ func readWindowMoment(value, whose, end string) (*time.Time, error) {
 	return &at, nil
 }
 
-// campaignView is one campaign as the list prints it.
+// campaignView is one campaign as the list prints it, with its row's form
+// (ADR 0331).
 type campaignView struct {
 	campaignRow
+	campaignForm
 	Budget string
 }
 
 // renderCampaigns lists the campaigns with a refused write's reason and what
-// was typed. An operator who may write and not read the list is told the
-// reason alone (ADR 0260).
-func (u *UI) renderCampaigns(w http.ResponseWriter, r *http.Request, code int, refused string, typed url.Values) {
+// was typed: in the new campaign's form, or in the row of the campaign
+// revised when one was (ADR 0331). An operator who may write and not read the
+// list is told the reason alone (ADR 0260).
+func (u *UI) renderCampaigns(
+	w http.ResponseWriter, r *http.Request, code int, refused string, typed url.Values, revised string,
+) {
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
 	if refused != "" && !principal.HasScope(scopePromotionRead) {
 		u.errorPage(w, r, code, "Not done", refused)
@@ -244,11 +249,19 @@ func (u *UI) renderCampaigns(w http.ResponseWriter, r *http.Request, code int, r
 	scales := u.currencyScales(r.Context())
 	views := make([]campaignView, 0, len(rows))
 	for i := range rows {
-		views = append(views, campaignView{campaignRow: rows[i], Budget: rows[i].budgetText(scales)})
+		views = append(views, campaignView{
+			campaignRow: rows[i], campaignForm: campaignFormOf(&rows[i], scales, typed, revised),
+			Budget: rows[i].budgetText(scales),
+		})
+	}
+	if revised != "" {
+		// What was typed is the row's, not the new campaign's.
+		typed = url.Values{}
 	}
 	data := map[string]any{
 		titleKey:     campaignsLabel,
 		"Campaigns":  views,
+		canReviseKey: u.canReviseCampaigns(r),
 		totalKey:     total,
 		createdKey:   r.URL.Query().Get(paramCreated),
 		canCreateKey: u.canCreateCampaigns(r),

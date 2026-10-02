@@ -92,11 +92,11 @@ func (u *UI) sendRevision(r *http.Request, reviser PriceListReviser, id, title s
 	if err != nil {
 		return err
 	}
-	startsAt, err := revisedMoment(r.PostFormValue(formPriceListStarts), readStarts, "start")
+	startsAt, err := revisedMoment(r.PostFormValue(formPriceListStarts), readStarts, "price list", "start")
 	if err != nil {
 		return err
 	}
-	endsAt, err := revisedMoment(r.PostFormValue(formPriceListEnds), readEnds, "end")
+	endsAt, err := revisedMoment(r.PostFormValue(formPriceListEnds), readEnds, "price list", "end")
 	if err != nil {
 		return err
 	}
@@ -120,15 +120,16 @@ func drawnMoment(value string) (*time.Time, error) {
 	return &at, nil
 }
 
-// revisedMoment reads a typed end of the window. The picker shows a moment
-// to the minute, so an end typed as it was shown is the moment drawn, not
-// that minute: a revision of the title leaves the window where it was.
-func revisedMoment(typed string, drawn *time.Time, end string) (*time.Time, error) {
+// revisedMoment reads a typed end of a price list's or a campaign's window.
+// The picker shows a moment to the minute, so an end typed as it was shown is
+// the moment drawn, not that minute: a revision of the title leaves the
+// window where it was.
+func revisedMoment(typed string, drawn *time.Time, whose, end string) (*time.Time, error) {
 	if drawn != nil && strings.TrimSpace(typed) == drawn.UTC().Format(publishAtLayout) {
 		return drawn, nil
 	}
 
-	return readWindowMoment(typed, "price list", end)
+	return readWindowMoment(typed, whose, end)
 }
 
 // lineFeeds turns the CR LF a browser sends a line break as back into the

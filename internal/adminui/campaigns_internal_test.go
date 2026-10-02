@@ -26,6 +26,7 @@ type fakeCampaigns struct {
 	pages    [][2]int32
 	written  []campaignWrite
 	writeErr error
+	revised  []string
 }
 
 // campaignWrite is one write the fake was asked for.

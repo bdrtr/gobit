@@ -45,6 +45,9 @@ const (
 	statusesKey  = "Statuses"
 	totalKey     = "Total"
 	canCreateKey = "CanCreate"
+	// canReviseKey says whether a list's rows offer the form that revises
+	// what each row names (ADR 0329, ADR 0330, ADR 0331).
+	canReviseKey = "CanRevise"
 	// createdKey carries what a screen's form just wrote, named in the
 	// address the form landed on.
 	createdKey = "Created"

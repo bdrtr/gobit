@@ -207,10 +207,11 @@ func builtInScopes() map[string]string {
 		// module's (ADR 0326).
 		routeKey(get, PriceListsPath):  scopePricingRead,
 		routeKey(post, PriceListsPath): scopePricingWrite,
-		// The campaigns and the form that writes one are the promotion
-		// module's (ADR 0319).
-		routeKey(get, CampaignsPath):  scopePromotionRead,
-		routeKey(post, CampaignsPath): scopePromotionWrite,
+		// The campaigns, the form that writes one (ADR 0319) and the one that
+		// revises one (ADR 0331) are the promotion module's.
+		routeKey(get, CampaignsPath):       scopePromotionRead,
+		routeKey(post, CampaignsPath):      scopePromotionWrite,
+		routeKey(post, CampaignRevisePath): scopePromotionWrite,
 		// And putting a promotion into one (ADR 0320).
 		routeKey(post, PromotionCampaignPath): scopePromotionWrite,
 		// And limiting one to customer groups (ADR 0321).

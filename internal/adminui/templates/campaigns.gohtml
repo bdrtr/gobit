@@ -11,6 +11,12 @@ datetime-local inputs, which carry no zone; the labels say UTC because the
 panel reads them as UTC, as it reads a product's schedule (ADR 0178). A
 budget in money is typed in its currency's decimals, or in minor units when
 the panel cannot read the currency's scale.
+
+Each row's form revises its campaign's name, description, window and budget
+limit; it carries them as the row was drawn, the moments to the nanosecond
+and the limit in its unit, and the module refuses when another operator
+revised the campaign first (ADR 0331). The identifier and the budget's unit
+are not revised here.
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
@@ -45,15 +51,37 @@ the panel cannot read the currency's scale.
 <div class="scroll">
 <table>
   <thead>
-    <tr><th>Campaign</th><th>From (UTC)</th><th>Until (UTC)</th><th>Budget used</th></tr>
+    <tr><th>Campaign</th><th>From (UTC)</th><th>Until (UTC)</th><th>Budget used</th>{{ if .CanRevise }}<th></th>{{ end }}</tr>
   </thead>
   <tbody>
-  {{ range .Campaigns }}
+  {{ range $row := .Campaigns }}
     <tr>
       <td>{{ .Name }} <span class="muted">{{ .CampaignIdentifier }}</span>{{ with .Description }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
       <td>{{ with .StartsAt }}{{ .UTC.Format "2006-01-02 15:04" }}{{ else }}<span class="muted">always</span>{{ end }}</td>
       <td>{{ with .EndsAt }}{{ .UTC.Format "2006-01-02 15:04" }}{{ else }}<span class="muted">open</span>{{ end }}</td>
       <td class="num">{{ with .Budget }}{{ . }}{{ else }}<span class="muted">no budget</span>{{ end }}</td>
+      {{ if $.CanRevise }}
+      <td>
+        <details{{ if $row.Refused }} open{{ end }}>
+          <summary>Revise</summary>
+          <form method="post" action="{{ $.Path }}/{{ $row.ID }}?page={{ $.Page }}">
+            <input type="hidden" name="read_name" value="{{ $row.Name }}">
+            <input type="hidden" name="read_description" value="{{ $row.Description }}">
+            <input type="hidden" name="read_starts_at" value="{{ $row.ReadStarts }}">
+            <input type="hidden" name="read_ends_at" value="{{ $row.ReadEnds }}">
+            <input type="hidden" name="read_budget_limit" value="{{ $row.ReadLimit }}">
+            <input type="hidden" name="budget_type" value="{{ $row.BudgetType }}">
+            <input type="hidden" name="budget_currency" value="{{ $row.BudgetCurrencyCode }}">
+            <input name="name" value="{{ $row.FormName }}" aria-label="name" required>
+            <textarea name="description" aria-label="description" rows="2">{{ $row.FormDescription }}</textarea>
+            <label>From (UTC) <input type="datetime-local" name="starts_at" value="{{ $row.FormStarts }}"></label>
+            <label>Until (UTC) <input type="datetime-local" name="ends_at" value="{{ $row.FormEnds }}"></label>
+            {{ if $row.BudgetLimit }}<input name="budget_limit" value="{{ $row.FormLimit }}" aria-label="budget limit"{{ if eq $row.BudgetType "spend" }} placeholder="{{ $row.BudgetCurrencyCode }}"{{ end }} required>{{ end }}
+            <button type="submit">Write</button>
+          </form>
+        </details>
+      </td>
+      {{ end }}
     </tr>
   {{ end }}
   </tbody>

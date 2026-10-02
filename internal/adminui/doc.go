@@ -147,7 +147,9 @@
 //
 // The Campaigns screen ([UI.listCampaigns]) lists the windows and budgets the
 // promotions share, with how much of each budget is used, and its form writes
-// a campaign ([UI.createCampaign]) through the same surface (ADR 0319). A
+// a campaign ([UI.createCampaign]) through the same surface (ADR 0319); each
+// row revises its campaign's name, description, window and budget limit from
+// the ones it was drawn with ([UI.reviseCampaign], ADR 0331). A
 // promotion's page puts the promotion into one of them, or out of any, from
 // the campaign it was read in ([UI.placeInCampaign], ADR 0320).
 //

@@ -242,7 +242,7 @@ func (u *UI) renderCustomerGroups(
 		"Groups":     rows,
 		createdKey:   r.URL.Query().Get(paramCreated),
 		canCreateKey: u.canCreateGroups(r),
-		"CanRevise":  u.canReviseGroups(r),
+		canReviseKey: u.canReviseGroups(r),
 		refusedKey:   refused,
 		typedKey:     typed,
 	}

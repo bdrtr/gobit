@@ -68,3 +68,19 @@ func (m *memRepo) ListLatestRedemptions(_ context.Context, promotionID string, l
 	}
 	return out, nil
 }
+
+// ReviseCampaign writes the terms only from the ones read, a limit only
+// beside a budget type.
+func (m *memRepo) ReviseCampaign(
+	_ context.Context, id string, read, next models.CampaignTerms, now time.Time,
+) (models.Campaign, bool, error) {
+	c, ok := m.campaigns[id]
+	if !ok || c.DeletedAt != nil || !c.Terms().Same(read) ||
+		(c.BudgetType == models.BudgetNone) != (next.BudgetLimit == nil) {
+		return models.Campaign{}, false, nil
+	}
+	c.Name, c.Description, c.StartsAt, c.EndsAt, c.BudgetLimit = next.Name, next.Description, next.StartsAt, next.EndsAt, next.BudgetLimit
+	c.UpdatedAt = now
+	m.campaigns[id] = c
+	return c, true, nil
+}

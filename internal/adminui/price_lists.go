@@ -229,7 +229,7 @@ func (u *UI) renderPriceLists(
 	data := map[string]any{
 		titleKey:     priceListsLabel,
 		"PriceLists": views,
-		"CanRevise":  u.canRevisePriceLists(r),
+		canReviseKey: u.canRevisePriceLists(r),
 		totalKey:     total,
 		createdKey:   r.URL.Query().Get(paramCreated),
 		canCreateKey: u.canCreatePriceLists(r),

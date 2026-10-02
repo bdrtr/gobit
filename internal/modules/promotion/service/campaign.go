@@ -154,10 +154,8 @@ func buildCampaign(id string, in CampaignInput, now time.Time) (models.Campaign,
 	if err := validateText("campaign description", in.Description, 0, MaxDescriptionLen); err != nil {
 		return models.Campaign{}, err
 	}
-	if in.StartsAt != nil && in.EndsAt != nil && !in.StartsAt.Before(*in.EndsAt) {
-		return models.Campaign{}, errors.Invalid(CodeInvalidInput,
-			"the campaign start has to be before its end (start: %s, end: %s)",
-			in.StartsAt.UTC().Format(time.RFC3339), in.EndsAt.UTC().Format(time.RFC3339))
+	if err := checkCampaignWindow(in.StartsAt, in.EndsAt); err != nil {
+		return models.Campaign{}, err
 	}
 
 	budgetType, limit, currency, err := normalizeBudget(in)
@@ -226,13 +224,8 @@ func normalizeBudget(in CampaignInput) (
 			"a %q budget requires a limit; for an unlimited budget the type has to be %q",
 			string(budgetType), string(models.BudgetNone))
 	}
-	if *in.BudgetLimit < 0 {
-		return "", nil, "", errors.Invalid(CodeInvalidInput,
-			"budget limit cannot be negative, %d given", *in.BudgetLimit)
-	}
-	if *in.BudgetLimit > models.MaxAmount {
-		return "", nil, "", errors.Invalid(CodeInvalidInput,
-			"budget limit can be at most %d, %d given", models.MaxAmount, *in.BudgetLimit)
+	if err := checkBudgetLimit(*in.BudgetLimit); err != nil {
+		return "", nil, "", err
 	}
 
 	if budgetType == models.BudgetUsage {
@@ -248,6 +241,32 @@ func normalizeBudget(in CampaignInput) (
 		return "", nil, "", err
 	}
 	return budgetType, copyInt64(in.BudgetLimit), currency, nil
+}
+
+// checkCampaignWindow refuses a window that does not start before it ends; an
+// open end bounds nothing.
+func checkCampaignWindow(startsAt, endsAt *time.Time) error {
+	if startsAt != nil && endsAt != nil && !startsAt.Before(*endsAt) {
+		return errors.Invalid(CodeInvalidInput,
+			"the campaign start has to be before its end (start: %s, end: %s)",
+			startsAt.UTC().Format(time.RFC3339), endsAt.UTC().Format(time.RFC3339))
+	}
+
+	return nil
+}
+
+// checkBudgetLimit refuses a budget limit below zero or above
+// [models.MaxAmount].
+func checkBudgetLimit(limit int64) error {
+	if limit < 0 {
+		return errors.Invalid(CodeInvalidInput, "budget limit cannot be negative, %d given", limit)
+	}
+	if limit > models.MaxAmount {
+		return errors.Invalid(CodeInvalidInput,
+			"budget limit can be at most %d, %d given", models.MaxAmount, limit)
+	}
+
+	return nil
 }
 
 // copyTime converts a time pointer to UTC and returns it as a COPY.

@@ -88,6 +88,12 @@ type Repository interface {
 	GetCampaignsByIDs(ctx context.Context, ids []string) ([]models.Campaign, error)
 	UpdateCampaign(ctx context.Context, c models.Campaign, now time.Time) (models.Campaign, error)
 	DeleteCampaign(ctx context.Context, id string, now time.Time) error
+	// ReviseCampaign writes the campaign's terms if they are still the ones
+	// read and its budget type takes the limit, and reports whether it did
+	// (ADR 0331).
+	ReviseCampaign(
+		ctx context.Context, id string, read, next models.CampaignTerms, now time.Time,
+	) (models.Campaign, bool, error)
 
 	CreatePromotion(ctx context.Context, p models.Promotion, now time.Time) (models.Promotion, error)
 	GetPromotion(ctx context.Context, id string) (models.Promotion, error)

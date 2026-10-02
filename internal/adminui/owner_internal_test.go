@@ -610,6 +610,12 @@ func (p recordingPromotions) CreateCampaign(
 	return "camp_walk", p.surfaces.reach(ServicePromotionAdmin)
 }
 
+func (p recordingPromotions) ReviseCampaign(
+	context.Context, string, string, string, *time.Time, *time.Time, *int64, string, string, *time.Time, *time.Time, *int64,
+) error {
+	return p.surfaces.reach(ServicePromotionAdmin)
+}
+
 func (p recordingPromotions) SetPromotionCampaign(context.Context, string, string, string) error {
 	return p.surfaces.reach(ServicePromotionAdmin)
 }
@@ -930,8 +936,9 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, PromotionGroupRulesPath): {formGroup: {"custgrp_walk"}},
 	// Putting a promotion into a campaign (ADR 0320).
 	routeKey(http.MethodPost, PromotionCampaignPath): {formCampaignTo: {"camp_walk"}},
-	// Writing a campaign (ADR 0319).
-	routeKey(http.MethodPost, CampaignsPath): {formCampaignName: {"Walk"}, formCampaignIdentifier: {"WALK"}},
+	// Writing a campaign (ADR 0319) and revising one (ADR 0331).
+	routeKey(http.MethodPost, CampaignsPath):      {formCampaignName: {"Walk"}, formCampaignIdentifier: {"WALK"}},
+	routeKey(http.MethodPost, CampaignRevisePath): {formReadName: {"Walk"}, formCampaignName: {"Walked"}},
 	// Sending a notification again (ADR 0317).
 	routeKey(http.MethodPost, NotificationResendPath): {"status": {"failed"}},
 	// Restoring a product's revision (ADR 0316).

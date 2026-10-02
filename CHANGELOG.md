@@ -39,6 +39,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel revises a campaign and its budget limit** (ADR 0331). **For
+  operators:** each row of the Campaigns screen revises its campaign's name,
+  description, window and budget limit under `promotion:write`, so an
+  exhausted budget is raised where it is read; a campaign another operator
+  revised meanwhile is refused rather than written over. **For
+  integrators:** `promotion.admin` revises a campaign from the terms read,
+  refusing `promotion_campaign_revised`.
+
 - **The panel revises a price list's title and window** (ADR 0330). **For
   operators:** each row of the Price lists screen revises its list's title,
   description and window under `pricing:write`; a list another operator

@@ -335,6 +335,30 @@ func (a *AdminSurface) CreateCampaign(
 	return campaign.ID, nil
 }
 
+// ReviseCampaign writes the campaign's name, description, window and budget
+// limit from the ones the operator read, and refuses when another writer
+// changed any of them since (ADR 0331); a nil moment is an open end, a nil
+// limit no limit, and a limit is in the budget's own unit.
+func (a *AdminSurface) ReviseCampaign(
+	ctx context.Context, id, readName, readDescription string, readStartsAt, readEndsAt *time.Time,
+	readBudgetLimit *int64, name, description string, startsAt, endsAt *time.Time, budgetLimit *int64,
+) error {
+	if a == nil || a.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the promotion service is not set up")
+	}
+
+	_, err := a.svc.ReviseCampaign(ctx, id,
+		models.CampaignTerms{
+			Name: readName, Description: readDescription, StartsAt: readStartsAt, EndsAt: readEndsAt,
+			BudgetLimit: readBudgetLimit,
+		},
+		models.CampaignTerms{
+			Name: name, Description: description, StartsAt: startsAt, EndsAt: endsAt, BudgetLimit: budgetLimit,
+		})
+
+	return err
+}
+
 // SetPromotionCampaign puts the promotion into the campaign to, or out of any
 // when to is empty, if it is still in the campaign from the operator read,
 // empty for none (ADR 0320).
