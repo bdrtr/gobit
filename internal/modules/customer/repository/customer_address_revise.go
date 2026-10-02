@@ -25,10 +25,10 @@ func (r *Repo) ReviseAddress(
 	row, err := r.q.ReviseCustomerAddress(ctx, customerdb.ReviseCustomerAddressParams{
 		ID: addressID, CustomerID: customerID, UpdatedAt: fromTime(now),
 		FirstName: next.FirstName, LastName: next.LastName, Company: next.Company,
-		Address1: next.Address1, Address2: next.Address2, City: next.City,
+		Address1: next.Address1, Address2: next.Address2, City: next.City, Province: next.Province,
 		CountryCode: next.CountryCode, PostalCode: next.PostalCode, Phone: next.Phone,
 		ReadFirstName: read.FirstName, ReadLastName: read.LastName, ReadCompany: read.Company,
-		ReadAddress1: read.Address1, ReadAddress2: read.Address2, ReadCity: read.City,
+		ReadAddress1: read.Address1, ReadAddress2: read.Address2, ReadCity: read.City, ReadProvince: read.Province,
 		ReadCountryCode: read.CountryCode, ReadPostalCode: read.PostalCode, ReadPhone: read.Phone,
 	})
 	switch {

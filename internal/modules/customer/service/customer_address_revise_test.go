@@ -25,7 +25,8 @@ func (m *memRepo) ReviseAddress(
 		return models.CustomerAddress{}, false, nil
 	}
 	a.FirstName, a.LastName, a.Company, a.Address1, a.Address2 = next.FirstName, next.LastName, next.Company, next.Address1, next.Address2
-	a.City, a.CountryCode, a.PostalCode, a.Phone, a.UpdatedAt = next.City, next.CountryCode, next.PostalCode, next.Phone, now
+	a.City, a.Province, a.CountryCode = next.City, next.Province, next.CountryCode
+	a.PostalCode, a.Phone, a.UpdatedAt = next.PostalCode, next.Phone, now
 	m.addresses[addressID] = a
 
 	return a, true, nil
@@ -89,16 +90,19 @@ func TestThePanelCorrectsAnAddress(t *testing.T) {
 	surface := NewAdminSurface(svc)
 	customer, err := svc.CreateCustomer(ctx, CustomerInput{Email: "ada@example.com"})
 	require.NoError(t, err)
-	address, err := svc.CreateAddress(ctx, customer.ID, AddressInput{Address1: "12 Main St", City: "Springfield", CountryCode: "TR"})
+	address, err := svc.CreateAddress(ctx, customer.ID, AddressInput{
+		Address1: "12 Main St", City: "Springfield", Province: "Illinois", CountryCode: "TR",
+	})
 	require.NoError(t, err)
 
 	read := `{"first_name":"","last_name":"","company":"","address_1":"12 Main St","address_2":"","city":"Springfield",` +
-		`"country_code":"TR","postal_code":"","phone":""}`
-	next := strings.Replace(read, "12 Main St", "14 Main St", 1)
+		`"province":"Illinois","country_code":"TR","postal_code":"","phone":""}`
+	next := strings.NewReplacer("12 Main St", "14 Main St", "Illinois", "Ohio").Replace(read)
 	require.NoError(t, surface.ReviseCustomerAddress(ctx, customer.ID, address.ID, json.RawMessage(read), json.RawMessage(next)))
 	stored, err := svc.GetAddress(ctx, customer.ID, address.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "14 Main St", stored.Address1)
+	assert.Equal(t, "Ohio", stored.Province, "the province is read and written by its key")
 
 	err = surface.ReviseCustomerAddress(ctx, customer.ID, address.ID, json.RawMessage(read), json.RawMessage(next))
 	assert.Equal(t, CodeAddressRevised, errors.CodeOf(err))

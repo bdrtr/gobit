@@ -59,14 +59,15 @@ func TestAnAddressIsAddedOnTheCustomersPage(t *testing.T) {
 	form := newAddressForm(t, rec.Body.String())
 	assert.Contains(t, form, `action="`+page+`/addresses"`)
 	assert.Contains(t, form, `name="address_1" value=""`)
+	assert.Contains(t, form, `name="province" value=""`, "the province is asked for")
 	assert.NotContains(t, form, " checked")
 	assert.NotContains(t, rec.Body.String(), "<details open>", "nothing refused, nothing open")
 	rec = campaignsRequest(panel, http.MethodGet, page, nil, scopeCustomerRead)
 	assert.NotContains(t, rec.Body.String(), "Add an address", "a reader adds nothing")
 
 	rec = campaignsRequest(panel, http.MethodPost, page+"/addresses", url.Values{
-		"first_name": {" Ada "}, "address_1": {" 1 New St "}, "city": {" Izmir "}, "country_code": {" tr "},
-		formDefaultShipping: {"1"},
+		"first_name": {" Ada "}, "address_1": {" 1 New St "}, "city": {" Konak "}, "province": {" Izmir "},
+		"country_code": {" tr "}, formDefaultShipping: {"1"},
 	}, writer...)
 	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
 	assert.Equal(t, page+"?written=address", rec.Header().Get("Location"))
@@ -75,10 +76,10 @@ func TestAnAddressIsAddedOnTheCustomersPage(t *testing.T) {
 	}, writer...)
 	require.Equal(t, http.StatusSeeOther, rec.Code)
 	assert.Equal(t, []string{
-		`cus_1|{"address_1":"1 New St","address_2":"","city":"Izmir","company":"","country_code":"tr",` +
-			`"first_name":"Ada","last_name":"","phone":"","postal_code":""}|true|false`,
+		`cus_1|{"address_1":"1 New St","address_2":"","city":"Konak","company":"","country_code":"tr",` +
+			`"first_name":"Ada","last_name":"","phone":"","postal_code":"","province":"Izmir"}|true|false`,
 		`cus_1|{"address_1":"2 Other St","address_2":"","city":"Ankara","company":"","country_code":"TR",` +
-			`"first_name":"","last_name":"","phone":"","postal_code":""}|false|true`,
+			`"first_name":"","last_name":"","phone":"","postal_code":"","province":""}|false|true`,
 	}, adder.added, "trimmed, the defaults as ticked")
 
 	adder.addErr = errors.Invalid("customer_invalid_input", "the address's first line is required")

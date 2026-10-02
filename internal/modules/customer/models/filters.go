@@ -80,6 +80,8 @@ type AddressPatch struct {
 	Address2 *string
 	// City is the new city.
 	City *string
+	// Province is the new province, the sub-country unit (ADR 0067).
+	Province *string
 	// CountryCode is the new country code; it must be normalized by the caller.
 	CountryCode *string
 	// PostalCode is the new postal code.

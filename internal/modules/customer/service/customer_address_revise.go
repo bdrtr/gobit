@@ -32,8 +32,8 @@ func (s *Service) ReviseAddress(
 	next.CountryCode = country
 	if err := validateAddressText(AddressInput{
 		FirstName: next.FirstName, LastName: next.LastName, Company: next.Company, Address1: next.Address1,
-		Address2: next.Address2, City: next.City, CountryCode: next.CountryCode, PostalCode: next.PostalCode,
-		Phone: next.Phone,
+		Address2: next.Address2, City: next.City, Province: next.Province, CountryCode: next.CountryCode,
+		PostalCode: next.PostalCode, Phone: next.Phone,
 	}); err != nil {
 		return models.CustomerAddress{}, err
 	}

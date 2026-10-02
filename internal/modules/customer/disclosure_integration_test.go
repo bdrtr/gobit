@@ -115,6 +115,7 @@ func TestDisclosureShowsWhatTheDatabaseHolds(t *testing.T) {
 	addressRecord := findRecord(t, disclosure, service.TableAddress, addresses[0].ID)
 	assert.Equal(t, "Bagdat Cad. 12", fieldValue(t, addressRecord, "address_1"))
 	assert.Equal(t, "Daire 4", fieldValue(t, addressRecord, "address_2"))
+	assert.Equal(t, "Istanbul", fieldValue(t, addressRecord, "province"))
 	assert.Equal(t, "TR", fieldValue(t, addressRecord, "country_code"))
 }
 

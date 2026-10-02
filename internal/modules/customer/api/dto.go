@@ -73,6 +73,10 @@ type addressDTO struct {
 	Address2 string `json:"address_2"`
 	// City is the city.
 	City string `json:"city"`
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US — as the cart's and the order's addresses mean it; it is
+	// NOT the district (ADR 0067). Empty when none was given.
+	Province string `json:"province"`
 	// CountryCode is the ISO 3166-1 alpha-2 country code (UPPER case).
 	CountryCode string `json:"country_code"`
 	// PostalCode is the postal code.
@@ -144,12 +148,15 @@ type groupMemberRequest struct {
 
 // addressRequest is the address creation body.
 type addressRequest struct {
+	// The printed fields of an address; Province among them is the sub-country
+	// unit, an il in Turkey, and not the district (ADR 0067).
 	FirstName         string `json:"first_name"`
 	LastName          string `json:"last_name"`
 	Company           string `json:"company"`
 	Address1          string `json:"address_1"`
 	Address2          string `json:"address_2"`
 	City              string `json:"city"`
+	Province          string `json:"province"`
 	CountryCode       string `json:"country_code"`
 	PostalCode        string `json:"postal_code"`
 	Phone             string `json:"phone"`
@@ -163,12 +170,15 @@ type addressRequest struct {
 // the customer's other addresses as well, it is done through separate
 // endpoints.
 type updateAddressRequest struct {
+	// The printed fields of an address; Province among them is the sub-country
+	// unit, an il in Turkey, and not the district (ADR 0067).
 	FirstName   *string `json:"first_name"`
 	LastName    *string `json:"last_name"`
 	Company     *string `json:"company"`
 	Address1    *string `json:"address_1"`
 	Address2    *string `json:"address_2"`
 	City        *string `json:"city"`
+	Province    *string `json:"province"`
 	CountryCode *string `json:"country_code"`
 	PostalCode  *string `json:"postal_code"`
 	Phone       *string `json:"phone"`
@@ -214,6 +224,7 @@ func toAddressDTO(a models.CustomerAddress) addressDTO {
 		Address1:          a.Address1,
 		Address2:          a.Address2,
 		City:              a.City,
+		Province:          a.Province,
 		CountryCode:       a.CountryCode,
 		PostalCode:        a.PostalCode,
 		Phone:             a.Phone,

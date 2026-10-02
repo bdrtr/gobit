@@ -257,6 +257,7 @@ UPDATE customer_address SET
     address_1   = sqlc.arg('placeholder'),
     address_2   = '',
     city        = sqlc.arg('placeholder'),
+    province    = '',
     postal_code = '',
     phone       = '',
     updated_at  = sqlc.arg('updated_at')
@@ -267,6 +268,7 @@ WHERE customer_id = sqlc.arg('customer_id')
     OR address_1   <> sqlc.arg('placeholder')
     OR address_2   <> ''
     OR city        <> sqlc.arg('placeholder')
+    OR province    <> ''
     OR postal_code <> ''
     OR phone       <> '');
 

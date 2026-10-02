@@ -49,7 +49,7 @@ func (q *Queries) ClearDefaultShipping(ctx context.Context, arg ClearDefaultShip
 }
 
 const getCustomerAddress = `-- name: GetCustomerAddress :one
-SELECT id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at FROM customer_address
+SELECT id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at, province FROM customer_address
 WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL
 `
 
@@ -83,6 +83,7 @@ func (q *Queries) GetCustomerAddress(ctx context.Context, arg GetCustomerAddress
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Province,
 	)
 	return i, err
 }
@@ -92,10 +93,10 @@ const insertCustomerAddress = `-- name: InsertCustomerAddress :one
 INSERT INTO customer_address (
     id, customer_id, first_name, last_name, company,
     address_1, address_2, city, country_code, postal_code, phone,
-    is_default_shipping, is_default_billing, created_at, updated_at
+    is_default_shipping, is_default_billing, created_at, updated_at, province
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
-RETURNING id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $15)
+RETURNING id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at, province
 `
 
 type InsertCustomerAddressParams struct {
@@ -113,9 +114,10 @@ type InsertCustomerAddressParams struct {
 	IsDefaultShipping bool
 	IsDefaultBilling  bool
 	CreatedAt         pgtype.Timestamptz
+	Province          string
 }
 
-// customer_address sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+// customer_address queries. Every read filters on deleted_at IS NULL.
 func (q *Queries) InsertCustomerAddress(ctx context.Context, arg InsertCustomerAddressParams) (CustomerAddress, error) {
 	row := q.db.QueryRow(ctx, insertCustomerAddress,
 		arg.ID,
@@ -132,6 +134,7 @@ func (q *Queries) InsertCustomerAddress(ctx context.Context, arg InsertCustomerA
 		arg.IsDefaultShipping,
 		arg.IsDefaultBilling,
 		arg.CreatedAt,
+		arg.Province,
 	)
 	var i CustomerAddress
 	err := row.Scan(
@@ -151,12 +154,13 @@ func (q *Queries) InsertCustomerAddress(ctx context.Context, arg InsertCustomerA
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Province,
 	)
 	return i, err
 }
 
 const listAddressesForDisclosure = `-- name: ListAddressesForDisclosure :many
-SELECT id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at FROM customer_address
+SELECT id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at, province FROM customer_address
 WHERE customer_id = ANY($1::text[])
 ORDER BY customer_id, created_at DESC, id DESC
 `
@@ -208,6 +212,7 @@ func (q *Queries) ListAddressesForDisclosure(ctx context.Context, customerIds []
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Province,
 		); err != nil {
 			return nil, err
 		}
@@ -220,7 +225,7 @@ func (q *Queries) ListAddressesForDisclosure(ctx context.Context, customerIds []
 }
 
 const listCustomerAddresses = `-- name: ListCustomerAddresses :many
-SELECT id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at FROM customer_address
+SELECT id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at, province FROM customer_address
 WHERE customer_id = $1 AND deleted_at IS NULL
 ORDER BY created_at DESC, id DESC
 `
@@ -251,6 +256,7 @@ func (q *Queries) ListCustomerAddresses(ctx context.Context, customerID string) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Province,
 		); err != nil {
 			return nil, err
 		}
@@ -266,7 +272,7 @@ const markDefaultBilling = `-- name: MarkDefaultBilling :one
 UPDATE customer_address
 SET is_default_billing = TRUE, updated_at = $3
 WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL
-RETURNING id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at
+RETURNING id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at, province
 `
 
 type MarkDefaultBillingParams struct {
@@ -295,6 +301,7 @@ func (q *Queries) MarkDefaultBilling(ctx context.Context, arg MarkDefaultBilling
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Province,
 	)
 	return i, err
 }
@@ -303,7 +310,7 @@ const markDefaultShipping = `-- name: MarkDefaultShipping :one
 UPDATE customer_address
 SET is_default_shipping = TRUE, updated_at = $3
 WHERE id = $1 AND customer_id = $2 AND deleted_at IS NULL
-RETURNING id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at
+RETURNING id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at, province
 `
 
 type MarkDefaultShippingParams struct {
@@ -332,6 +339,7 @@ func (q *Queries) MarkDefaultShipping(ctx context.Context, arg MarkDefaultShippi
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Province,
 	)
 	return i, err
 }
@@ -364,12 +372,13 @@ UPDATE customer_address SET
     address_1    = COALESCE($4::text, address_1),
     address_2    = COALESCE($5::text, address_2),
     city         = COALESCE($6::text, city),
-    country_code = COALESCE($7::text, country_code),
-    postal_code  = COALESCE($8::text, postal_code),
-    phone        = COALESCE($9::text, phone),
-    updated_at   = $10
-WHERE id = $11 AND customer_id = $12 AND deleted_at IS NULL
-RETURNING id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at
+    province     = COALESCE($7::text, province),
+    country_code = COALESCE($8::text, country_code),
+    postal_code  = COALESCE($9::text, postal_code),
+    phone        = COALESCE($10::text, phone),
+    updated_at   = $11
+WHERE id = $12 AND customer_id = $13 AND deleted_at IS NULL
+RETURNING id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at, province
 `
 
 type UpdateCustomerAddressParams struct {
@@ -379,6 +388,7 @@ type UpdateCustomerAddressParams struct {
 	Address1    *string
 	Address2    *string
 	City        *string
+	Province    *string
 	CountryCode *string
 	PostalCode  *string
 	Phone       *string
@@ -395,6 +405,7 @@ func (q *Queries) UpdateCustomerAddress(ctx context.Context, arg UpdateCustomerA
 		arg.Address1,
 		arg.Address2,
 		arg.City,
+		arg.Province,
 		arg.CountryCode,
 		arg.PostalCode,
 		arg.Phone,
@@ -420,6 +431,7 @@ func (q *Queries) UpdateCustomerAddress(ctx context.Context, arg UpdateCustomerA
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Province,
 	)
 	return i, err
 }

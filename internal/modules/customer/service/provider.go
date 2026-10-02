@@ -273,7 +273,7 @@ func addressList(addresses []models.CustomerAddress) []map[string]any {
 func addressKeys(a *models.CustomerAddress) map[string]any {
 	return map[string]any{
 		"first_name": a.FirstName, "last_name": a.LastName, "company": a.Company,
-		"address_1": a.Address1, "address_2": a.Address2, "city": a.City,
+		"address_1": a.Address1, "address_2": a.Address2, "city": a.City, "province": a.Province,
 		"postal_code": a.PostalCode, "country_code": a.CountryCode, "phone": a.Phone,
 	}
 }

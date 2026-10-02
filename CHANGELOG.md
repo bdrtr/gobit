@@ -50,6 +50,15 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The address book keeps a province** (ADR 0369, D218). **For
+  integrators:** a customer's saved address takes and answers `province`, the
+  unit under the country (an il in Turkey), on the storefront and admin address
+  endpoints and under the customer provider's address keys, so a storefront
+  copies it to the cart with the rest; an address saved before holds it empty.
+  **For operators:** the panel's address forms ask for it, a correction
+  compares it, and an erasure empties it. **Migration:** the customer module's
+  000007 adds the column.
+
 - **A module keys a client as the installation does** (ADR 0368, D217).
   **For operators:** behind a proxy `TRUSTED_PROXY_HOPS` now reaches
   `contrib/identity-session`'s registration limit, so each shopper has a

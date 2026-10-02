@@ -10,7 +10,7 @@ import (
 )
 
 const listAddressesOfCustomers = `-- name: ListAddressesOfCustomers :many
-SELECT id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at FROM customer_address
+SELECT id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at, province FROM customer_address
 WHERE customer_id = ANY ($1::text[])
   AND deleted_at IS NULL
 ORDER BY customer_id, created_at, id
@@ -46,6 +46,7 @@ func (q *Queries) ListAddressesOfCustomers(ctx context.Context, customerIds []st
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.Province,
 		); err != nil {
 			return nil, err
 		}

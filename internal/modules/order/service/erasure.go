@@ -230,7 +230,7 @@ var personalColumns = []personaldata.Holding{
 	},
 	{
 		Table: tableOrderAddresses, Column: columnProvince, Kind: personaldata.Named,
-		Why:       "the province or district of the address",
+		Why:       "the province of the address, the unit under the country (ADR 0067)",
 		OnErasure: personaldata.Emptied,
 	},
 	{

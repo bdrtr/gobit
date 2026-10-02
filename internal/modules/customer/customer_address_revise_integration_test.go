@@ -16,8 +16,8 @@ import (
 
 // TestAnAddressIsCorrectedOnlyAsItWasRead is ADR 0342 against a real
 // PostgreSQL: the printed fields are written from the ones read and the
-// default flag is kept; a stale line, city, country or phone writes nothing
-// and is refused; another customer's address is not found; a deleted
+// default flag is kept; a stale line, city, province, country or phone writes
+// nothing and is refused; another customer's address is not found; a deleted
 // address is not found.
 func TestAnAddressIsCorrectedOnlyAsItWasRead(t *testing.T) {
 	ctx := context.Background()
@@ -27,15 +27,15 @@ func TestAnAddressIsCorrectedOnlyAsItWasRead(t *testing.T) {
 	other, err := svc.CreateCustomer(ctx, service.CustomerInput{Email: newEmail(t)})
 	require.NoError(t, err)
 	address, err := svc.CreateAddress(ctx, customer.ID, service.AddressInput{
-		FirstName: "Ada", Address1: "12 Main St", City: "Springfield", CountryCode: "TR", Phone: "555",
-		IsDefaultBilling: true,
+		FirstName: "Ada", Address1: "12 Main St", City: "Springfield", Province: "Illinois", CountryCode: "TR",
+		Phone: "555", IsDefaultBilling: true,
 	})
 	require.NoError(t, err)
 	read := address.Terms()
 
 	next := models.AddressTerms{
 		FirstName: "Augusta", LastName: "King", Company: "Analytical", Address1: "14 Main St", Address2: "Flat 3",
-		City: "Shelbyville", CountryCode: "DE", PostalCode: "34000", Phone: "556",
+		City: "Shelbyville", Province: "Ohio", CountryCode: "DE", PostalCode: "34000", Phone: "556",
 	}
 	corrected, err := svc.ReviseAddress(ctx, customer.ID, address.ID, read, next)
 	require.NoError(t, err)
@@ -53,6 +53,7 @@ func TestAnAddressIsCorrectedOnlyAsItWasRead(t *testing.T) {
 		"a first line read before":  func(t *models.AddressTerms) { t.Address1 = read.Address1 },
 		"a second line read before": func(t *models.AddressTerms) { t.Address2 = read.Address2 },
 		"a city read before":        func(t *models.AddressTerms) { t.City = read.City },
+		"a province read before":    func(t *models.AddressTerms) { t.Province = read.Province },
 		"a country read before":     func(t *models.AddressTerms) { t.CountryCode = read.CountryCode },
 		"a postal code read before": func(t *models.AddressTerms) { t.PostalCode = read.PostalCode },
 		"a phone read before":       func(t *models.AddressTerms) { t.Phone = read.Phone },

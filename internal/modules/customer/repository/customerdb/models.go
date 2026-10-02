@@ -38,6 +38,7 @@ type CustomerAddress struct {
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
 	DeletedAt         pgtype.Timestamptz
+	Province          string
 }
 
 type CustomerGroup struct {

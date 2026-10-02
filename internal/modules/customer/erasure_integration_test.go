@@ -82,7 +82,8 @@ func personalRecord(ctx context.Context, t *testing.T, svc *service.Service, acc
 		Company:     "Kaya Ltd",
 		Address1:    "Bagdat Cad. 12",
 		Address2:    "Daire 4",
-		City:        "Istanbul",
+		City:        "Kadikoy",
+		Province:    "Istanbul",
 		CountryCode: "tr",
 		PostalCode:  "34000",
 		Phone:       "+90 555 000 0001",
@@ -127,6 +128,7 @@ type addressColumns struct {
 	Address1    string
 	Address2    string
 	City        string
+	Province    string
 	CountryCode string
 	PostalCode  string
 	Phone       string
@@ -138,7 +140,7 @@ func readAddresses(ctx context.Context, t *testing.T, customerID string) []addre
 
 	rows, err := testPool.Pool().Query(ctx,
 		`SELECT first_name, last_name, company, address_1, address_2,
-                city, country_code, postal_code, phone
+                city, province, country_code, postal_code, phone
          FROM customer_address WHERE customer_id = $1 ORDER BY id`, customerID)
 	require.NoError(t, err)
 	defer rows.Close()
@@ -147,7 +149,7 @@ func readAddresses(ctx context.Context, t *testing.T, customerID string) []addre
 	for rows.Next() {
 		var row addressColumns
 		require.NoError(t, rows.Scan(&row.FirstName, &row.LastName, &row.Company,
-			&row.Address1, &row.Address2, &row.City, &row.CountryCode,
+			&row.Address1, &row.Address2, &row.City, &row.Province, &row.CountryCode,
 			&row.PostalCode, &row.Phone))
 		out = append(out, row)
 	}

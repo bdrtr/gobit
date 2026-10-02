@@ -6,6 +6,7 @@ a different thing and still has no field.
 
 - **Status:** Accepted
 - **Date:** 2026-09-08
+- **Amended by:** [0369](0369-the-address-book-keeps-a-province.md): the address book keeps a province; the column this record left out arrived with its first reader.
 
 ## Context
 

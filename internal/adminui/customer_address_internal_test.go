@@ -35,7 +35,8 @@ func addressCatalog() *fakeCatalog {
 			fieldID: "cus_1", "email": "ada@example.test", fieldFirstName: "Ada", fieldCustomerGroupIDs: []string{},
 			fieldCustomerAddresses: []map[string]any{{
 				"id": "cadr_1", "first_name": "Ada", "last_name": "Byron", "company": "", "address_1": "Bagdat Cd. 1",
-				"address_2": "", "city": "Istanbul", "postal_code": "34710", "country_code": "TR", "phone": "555",
+				"address_2": "", "city": "Kadikoy", "province": "Istanbul", "postal_code": "34710",
+				"country_code": "TR", "phone": "555",
 				"is_default_shipping": true,
 			}, {
 				"id": "cadr_2", "first_name": "", "last_name": "", "company": "Engines Ltd", "address_1": "Fleet St 2",
@@ -75,11 +76,12 @@ func TestACustomersAddressIsCorrectedOnTheirPage(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	form := addressForm(t, rec.Body.String(), "cadr_1")
 	for _, want := range []string{
-		`name="read_address_1" value="Bagdat Cd. 1"`, `name="read_city" value="Istanbul"`,
+		`name="read_address_1" value="Bagdat Cd. 1"`, `name="read_city" value="Kadikoy"`,
+		`name="read_province" value="Istanbul"`, `name="province" value="Istanbul"`,
 		`name="read_country_code" value="TR"`, `name="read_postal_code" value="34710"`, `name="read_phone" value="555"`,
 		`name="read_first_name" value="Ada"`, `name="read_last_name" value="Byron"`, `name="read_company" value=""`,
 		`name="read_address_2" value=""`,
-		`name="address_1" value="Bagdat Cd. 1"`, `name="city" value="Istanbul"`, `name="country_code" value="TR"`,
+		`name="address_1" value="Bagdat Cd. 1"`, `name="city" value="Kadikoy"`, `name="country_code" value="TR"`,
 		`name="first_name" value="Ada"`, `name="last_name" value="Byron"`, `name="postal_code" value="34710"`,
 		`name="phone" value="555"`,
 	} {
@@ -100,16 +102,17 @@ func TestACustomersAddressIsCorrectedOnTheirPage(t *testing.T) {
 	rec = campaignsRequest(panel, http.MethodPost, page+"/addresses/cadr_2", url.Values{
 		"read_company": {"Engines Ltd"}, "read_address_1": {"Fleet St 2"}, "read_city": {"London"},
 		"read_country_code": {"GB"}, "company": {" Engines Ltd "}, "address_1": {" Fleet Street 2 "},
-		"address_2": {" Floor 3 "}, "city": {" London "}, "postal_code": {" EC4 "}, "country_code": {" gb "},
-		"first_name": {" Charles "}, "last_name": {" Babbage "}, "phone": {" +44 20 "},
+		"address_2": {" Floor 3 "}, "city": {" London "}, "province": {" England "}, "postal_code": {" EC4 "},
+		"country_code": {" gb "}, "first_name": {" Charles "}, "last_name": {" Babbage "}, "phone": {" +44 20 "},
 	}, writer...)
 	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
 	assert.Equal(t, page+"?written=address", rec.Header().Get("Location"))
 	assert.Equal(t, []string{`cus_1|cadr_2|` +
 		`{"address_1":"Fleet St 2","address_2":"","city":"London","company":"Engines Ltd","country_code":"GB",` +
-		`"first_name":"","last_name":"","phone":"","postal_code":""}|` +
+		`"first_name":"","last_name":"","phone":"","postal_code":"","province":""}|` +
 		`{"address_1":"Fleet Street 2","address_2":"Floor 3","city":"London","company":"Engines Ltd",` +
-		`"country_code":"gb","first_name":"Charles","last_name":"Babbage","phone":"+44 20","postal_code":"EC4"}`},
+		`"country_code":"gb","first_name":"Charles","last_name":"Babbage","phone":"+44 20","postal_code":"EC4",` +
+		`"province":"England"}`},
 		reviser.corrected)
 	landed := campaignsRequest(panel, http.MethodGet, rec.Header().Get("Location"), nil, scopeCustomerRead)
 	assert.Contains(t, landed.Body.String(), "The address was written.")
@@ -126,7 +129,7 @@ func TestACustomersAddressIsCorrectedOnTheirPage(t *testing.T) {
 	assert.Contains(t, body, "draw the page again")
 	form = addressForm(t, body, "cadr_1")
 	for _, want := range []string{
-		`name="read_city" value="Istanbul"`, `name="read_first_name" value="Ada"`,
+		`name="read_city" value="Kadikoy"`, `name="read_first_name" value="Ada"`,
 		`name="first_name" value="Typed"`, `name="address_1" value="Typed St"`, `name="city" value="Ankara"`,
 		`name="last_name" value=""`,
 	} {

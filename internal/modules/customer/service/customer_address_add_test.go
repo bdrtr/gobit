@@ -23,13 +23,14 @@ func TestThePanelAddsAnAddress(t *testing.T) {
 	require.NoError(t, err)
 
 	id, err := surface.AddCustomerAddress(ctx, customer.ID, json.RawMessage(`{"first_name":"Ada","last_name":"Byron",
-		"company":"","address_1":"12 Main St","address_2":"Flat 3","city":"Springfield","country_code":"tr",
+		"company":"","address_1":"12 Main St","address_2":"Flat 3","city":"Springfield","province":"Illinois","country_code":"tr",
 		"postal_code":"34000","phone":"555"}`), true, false)
 	require.NoError(t, err)
 	stored, err := svc.GetAddress(ctx, customer.ID, id)
 	require.NoError(t, err)
-	assert.Equal(t, "Ada|Byron|12 Main St|Flat 3|Springfield|TR|34000|555", stored.FirstName+"|"+stored.LastName+"|"+
-		stored.Address1+"|"+stored.Address2+"|"+stored.City+"|"+stored.CountryCode+"|"+stored.PostalCode+"|"+stored.Phone)
+	assert.Equal(t, "Ada|Byron|12 Main St|Flat 3|Springfield|Illinois|TR|34000|555", stored.FirstName+"|"+
+		stored.LastName+"|"+stored.Address1+"|"+stored.Address2+"|"+stored.City+"|"+stored.Province+"|"+
+		stored.CountryCode+"|"+stored.PostalCode+"|"+stored.Phone)
 	assert.True(t, stored.IsDefaultShipping, "the default shipping address, as asked")
 	assert.False(t, stored.IsDefaultBilling)
 

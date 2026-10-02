@@ -54,7 +54,7 @@ func TestTheDefaultShippingAddressIsReadWhenAskedFor(t *testing.T) {
 	housed, err := svc.CreateCustomer(ctx, CustomerInput{Email: "housed@example.test"})
 	require.NoError(t, err)
 	_, err = svc.CreateAddress(ctx, housed.ID, AddressInput{
-		FirstName: "Ada", Company: "Engines Ltd", Address1: "12 Right St", City: "Ankara",
+		FirstName: "Ada", Company: "Engines Ltd", Address1: "12 Right St", City: "Cankaya", Province: "Ankara",
 		PostalCode: "06000", CountryCode: "TR", Phone: "+90", IsDefaultShipping: true,
 	})
 	require.NoError(t, err)
@@ -73,7 +73,8 @@ func TestTheDefaultShippingAddressIsReadWhenAskedFor(t *testing.T) {
 	}
 	assert.Equal(t, map[string]any{
 		"first_name": "Ada", "last_name": "", "company": "Engines Ltd", "address_1": "12 Right St",
-		"address_2": "", "city": "Ankara", "postal_code": "06000", "country_code": "TR", "phone": "+90",
+		"address_2": "", "city": "Cankaya", "province": "Ankara", "postal_code": "06000", "country_code": "TR",
+		"phone": "+90",
 	}, byID[housed.ID][fieldDefaultShippingAddress])
 	assert.Nil(t, byID[homeless.ID][fieldDefaultShippingAddress])
 	assert.Equal(t, 1, repo.calls["AddressesOfCustomers"], "two customers, one read")

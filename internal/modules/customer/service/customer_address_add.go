@@ -19,8 +19,9 @@ func (a *AdminSurface) AddCustomerAddress(
 	}
 	added, err := a.service().CreateAddress(ctx, customerID, AddressInput{
 		FirstName: fields.FirstName, LastName: fields.LastName, Company: fields.Company, Address1: fields.Address1,
-		Address2: fields.Address2, City: fields.City, CountryCode: fields.CountryCode, PostalCode: fields.PostalCode,
-		Phone: fields.Phone, IsDefaultShipping: defaultShipping, IsDefaultBilling: defaultBilling,
+		Address2: fields.Address2, City: fields.City, Province: fields.Province, CountryCode: fields.CountryCode,
+		PostalCode: fields.PostalCode, Phone: fields.Phone,
+		IsDefaultShipping: defaultShipping, IsDefaultBilling: defaultBilling,
 	})
 	if err != nil {
 		return "", err

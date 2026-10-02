@@ -51,6 +51,7 @@ const (
 	columnAddress1    = "address_1"
 	columnAddress2    = "address_2"
 	columnCity        = "city"
+	columnProvince    = "province"
 	columnPostalCode  = "postal_code"
 	columnCountryCode = "country_code"
 	columnVariantID   = "variant_id"
@@ -149,6 +150,11 @@ var personalDataHoldings = []personaldata.Holding{
 	{
 		Table: TableAddress, Column: columnCity, Kind: personaldata.Named,
 		Why:       "the city of a saved address",
+		OnErasure: personaldata.Emptied,
+	},
+	{
+		Table: TableAddress, Column: columnProvince, Kind: personaldata.Named,
+		Why:       "the province of a saved address, the unit under the country (ADR 0067)",
 		OnErasure: personaldata.Emptied,
 	},
 	{

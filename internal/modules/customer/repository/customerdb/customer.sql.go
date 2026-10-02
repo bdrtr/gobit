@@ -40,6 +40,7 @@ UPDATE customer_address SET
     address_1   = $1,
     address_2   = '',
     city        = $1,
+    province    = '',
     postal_code = '',
     phone       = '',
     updated_at  = $2
@@ -50,6 +51,7 @@ WHERE customer_id = $3
     OR address_1   <> $1
     OR address_2   <> ''
     OR city        <> $1
+    OR province    <> ''
     OR postal_code <> ''
     OR phone       <> '')
 `

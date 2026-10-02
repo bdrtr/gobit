@@ -164,6 +164,10 @@ type CustomerAddress struct {
 	Address2 string
 	// City is the city; it is required.
 	City string
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US — as the cart's and the order's addresses mean it; it is
+	// NOT the district (ADR 0067). It can be empty.
+	Province string
 	// CountryCode is the ISO 3166-1 alpha-2 country code; it is always stored in
 	// UPPER case.
 	CountryCode string

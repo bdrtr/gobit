@@ -97,6 +97,7 @@ with; the e-mail is what an account signs in with and is not corrected here
             <input name="address_2" value="{{ index .Form "address_2" }}" placeholder="second line" aria-label="second line">
             <input name="postal_code" value="{{ index .Form "postal_code" }}" placeholder="postal code" aria-label="postal code">
             <input name="city" value="{{ index .Form "city" }}" placeholder="city" aria-label="city" required>
+            <input name="province" value="{{ index .Form "province" }}" placeholder="province, e.g. an il" aria-label="province">
             <input name="country_code" value="{{ index .Form "country_code" }}" placeholder="country, e.g. TR" aria-label="country" maxlength="2" required>
             <input name="phone" value="{{ index .Form "phone" }}" placeholder="phone" aria-label="phone" type="tel">
             <button type="submit">Write</button>
@@ -124,6 +125,7 @@ billing address when ticked (ADR 0359). */}}
     <input name="address_2" value="{{ index .NewAddress "address_2" }}" placeholder="second line" aria-label="second line">
     <input name="postal_code" value="{{ index .NewAddress "postal_code" }}" placeholder="postal code" aria-label="postal code">
     <input name="city" value="{{ index .NewAddress "city" }}" placeholder="city" aria-label="city" required>
+    <input name="province" value="{{ index .NewAddress "province" }}" placeholder="province, e.g. an il" aria-label="province">
     <input name="country_code" value="{{ index .NewAddress "country_code" }}" placeholder="country, e.g. TR" aria-label="country" maxlength="2" required>
     <input name="phone" value="{{ index .NewAddress "phone" }}" placeholder="phone" aria-label="phone" type="tel">
     <label><input type="checkbox" name="default_shipping" value="1"{{ if .NewDefaultShipping }} checked{{ end }}> default shipping</label>

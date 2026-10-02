@@ -101,8 +101,9 @@ var clientDeclarableFacts = []string{AttrSubtotal, AttrItemCount, AttrTotalWeigh
 // VARIANT, so a volume computed today would be the parent's carton applied to
 // the size that exists to differ from it.
 //
-// Two more facts settled it. `customer_address` holds no sub-country column at
-// all, so a saved address cannot carry even a province into the cart; and
+// Two more facts settled it. `customer_address` held no sub-country column at
+// all, so a saved address could not carry even a province into the cart (it
+// keeps one since ADR 0369, and still no district); and
 // [ListOptionsInput.TotalWeight], the one field of this shape the published
 // input already has, is handed a LITERAL ZERO by the only trusted producer,
 // because the cart carries no weight. The blocker is therefore the producer and

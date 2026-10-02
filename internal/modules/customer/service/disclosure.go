@@ -314,6 +314,7 @@ func addressValues(a models.CustomerAddress) map[string]any {
 		columnAddress1:    a.Address1,
 		columnAddress2:    a.Address2,
 		columnCity:        a.City,
+		columnProvince:    a.Province,
 		columnPostalCode:  a.PostalCode,
 		columnPhone:       a.Phone,
 		columnCountryCode: a.CountryCode,

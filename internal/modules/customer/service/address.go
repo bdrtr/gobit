@@ -21,6 +21,10 @@ type AddressInput struct {
 	Address2 string
 	// City is the city; it is required.
 	City string
+	// Province is the sub-country unit under the country — an il in Turkey, a
+	// state in the US — as the cart's and the order's addresses mean it; it is
+	// NOT the district (ADR 0067). It may be left empty.
+	Province string
 	// CountryCode is the ISO 3166-1 alpha-2 country code; it is required, and it
 	// is stored normalized to UPPER case.
 	CountryCode string
@@ -63,6 +67,7 @@ func (s *Service) CreateAddress(ctx context.Context, customerID string, in Addre
 		Address1:          in.Address1,
 		Address2:          in.Address2,
 		City:              in.City,
+		Province:          in.Province,
 		CountryCode:       country,
 		PostalCode:        in.PostalCode,
 		Phone:             in.Phone,
@@ -123,6 +128,8 @@ type UpdateAddressInput struct {
 	Address2 *string
 	// City is the new city; if given, it cannot be empty.
 	City *string
+	// Province is the new province, the sub-country unit (ADR 0067).
+	Province *string
 	// CountryCode is the new country code; if given, it is validated and
 	// converted to UPPER case.
 	CountryCode *string
@@ -153,6 +160,7 @@ func (s *Service) UpdateAddress(
 		Address1:   in.Address1,
 		Address2:   in.Address2,
 		City:       in.City,
+		Province:   in.Province,
 		PostalCode: in.PostalCode,
 		Phone:      in.Phone,
 	}
@@ -256,6 +264,9 @@ func validateAddressText(in AddressInput) error {
 	if err := checkLen("city", in.City, models.MaxNameLen); err != nil {
 		return err
 	}
+	if err := checkLen("province", in.Province, models.MaxNameLen); err != nil {
+		return err
+	}
 	return checkLen("postal code", in.PostalCode, models.MaxPostalCodeLen)
 }
 
@@ -277,6 +288,11 @@ func validateAddressPatch(patch models.AddressPatch) error {
 			return err
 		}
 		if err := checkLen("city", *patch.City, models.MaxNameLen); err != nil {
+			return err
+		}
+	}
+	if patch.Province != nil {
+		if err := checkLen("province", *patch.Province, models.MaxNameLen); err != nil {
 			return err
 		}
 	}

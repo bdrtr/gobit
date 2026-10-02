@@ -19,23 +19,25 @@ SET first_name   = $1::text,
     address_1    = $4::text,
     address_2    = $5::text,
     city         = $6::text,
-    country_code = $7::text,
-    postal_code  = $8::text,
-    phone        = $9::text,
-    updated_at   = $10
-WHERE id = $11
-  AND customer_id = $12
+    province     = $7::text,
+    country_code = $8::text,
+    postal_code  = $9::text,
+    phone        = $10::text,
+    updated_at   = $11
+WHERE id = $12
+  AND customer_id = $13
   AND deleted_at IS NULL
-  AND first_name = $13::text
-  AND last_name = $14::text
-  AND company = $15::text
-  AND address_1 = $16::text
-  AND address_2 = $17::text
-  AND city = $18::text
-  AND country_code = $19::text
-  AND postal_code = $20::text
-  AND phone = $21::text
-RETURNING id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at
+  AND first_name = $14::text
+  AND last_name = $15::text
+  AND company = $16::text
+  AND address_1 = $17::text
+  AND address_2 = $18::text
+  AND city = $19::text
+  AND province = $20::text
+  AND country_code = $21::text
+  AND postal_code = $22::text
+  AND phone = $23::text
+RETURNING id, customer_id, first_name, last_name, company, address_1, address_2, city, country_code, postal_code, phone, is_default_shipping, is_default_billing, created_at, updated_at, deleted_at, province
 `
 
 type ReviseCustomerAddressParams struct {
@@ -45,6 +47,7 @@ type ReviseCustomerAddressParams struct {
 	Address1        string
 	Address2        string
 	City            string
+	Province        string
 	CountryCode     string
 	PostalCode      string
 	Phone           string
@@ -57,6 +60,7 @@ type ReviseCustomerAddressParams struct {
 	ReadAddress1    string
 	ReadAddress2    string
 	ReadCity        string
+	ReadProvince    string
 	ReadCountryCode string
 	ReadPostalCode  string
 	ReadPhone       string
@@ -74,6 +78,7 @@ func (q *Queries) ReviseCustomerAddress(ctx context.Context, arg ReviseCustomerA
 		arg.Address1,
 		arg.Address2,
 		arg.City,
+		arg.Province,
 		arg.CountryCode,
 		arg.PostalCode,
 		arg.Phone,
@@ -86,6 +91,7 @@ func (q *Queries) ReviseCustomerAddress(ctx context.Context, arg ReviseCustomerA
 		arg.ReadAddress1,
 		arg.ReadAddress2,
 		arg.ReadCity,
+		arg.ReadProvince,
 		arg.ReadCountryCode,
 		arg.ReadPostalCode,
 		arg.ReadPhone,
@@ -108,6 +114,7 @@ func (q *Queries) ReviseCustomerAddress(ctx context.Context, arg ReviseCustomerA
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.Province,
 	)
 	return i, err
 }

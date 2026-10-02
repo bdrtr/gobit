@@ -30,7 +30,8 @@ const formAddressID = "address_id"
 // keys, each also a form field and, prefixed with "read_", the field the form
 // carries it as drawn in.
 var addressKeys = []string{
-	"first_name", "last_name", "company", "address_1", "address_2", "city", "country_code", "postal_code", "phone",
+	"first_name", "last_name", "company", "address_1", "address_2", "city", "province", "country_code", "postal_code",
+	"phone",
 }
 
 // AddressReviser is the narrow surface a customer's address is corrected

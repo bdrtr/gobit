@@ -1,12 +1,12 @@
--- customer_address sorguları. Tüm okumalar deleted_at IS NULL filtresi uygular.
+-- customer_address queries. Every read filters on deleted_at IS NULL.
 
 -- name: InsertCustomerAddress :one
 INSERT INTO customer_address (
     id, customer_id, first_name, last_name, company,
     address_1, address_2, city, country_code, postal_code, phone,
-    is_default_shipping, is_default_billing, created_at, updated_at
+    is_default_shipping, is_default_billing, created_at, updated_at, province
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14, $15)
 RETURNING *;
 
 -- GetCustomerAddress adresi kimliğiyle ve SAHİBİYLE birlikte okur.
@@ -31,6 +31,7 @@ UPDATE customer_address SET
     address_1    = COALESCE(sqlc.narg('address_1')::text, address_1),
     address_2    = COALESCE(sqlc.narg('address_2')::text, address_2),
     city         = COALESCE(sqlc.narg('city')::text, city),
+    province     = COALESCE(sqlc.narg('province')::text, province),
     country_code = COALESCE(sqlc.narg('country_code')::text, country_code),
     postal_code  = COALESCE(sqlc.narg('postal_code')::text, postal_code),
     phone        = COALESCE(sqlc.narg('phone')::text, phone),

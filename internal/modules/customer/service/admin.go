@@ -93,12 +93,15 @@ func (a *AdminSurface) ReviseCustomerContact(ctx context.Context, id string, rea
 // them; the json tags are the contract with the panel, which cannot import
 // this package, and spell the address keys the customer provider publishes.
 type adminAddress struct {
+	// The printed fields of an address; Province among them is the sub-country
+	// unit, an il in Turkey, and not the district (ADR 0067).
 	FirstName   string `json:"first_name"`
 	LastName    string `json:"last_name"`
 	Company     string `json:"company"`
 	Address1    string `json:"address_1"`
 	Address2    string `json:"address_2"`
 	City        string `json:"city"`
+	Province    string `json:"province"`
 	CountryCode string `json:"country_code"`
 	PostalCode  string `json:"postal_code"`
 	Phone       string `json:"phone"`
@@ -108,7 +111,8 @@ type adminAddress struct {
 func (a adminAddress) terms() models.AddressTerms {
 	return models.AddressTerms{
 		FirstName: a.FirstName, LastName: a.LastName, Company: a.Company, Address1: a.Address1,
-		Address2: a.Address2, City: a.City, CountryCode: a.CountryCode, PostalCode: a.PostalCode, Phone: a.Phone,
+		Address2: a.Address2, City: a.City, Province: a.Province, CountryCode: a.CountryCode,
+		PostalCode: a.PostalCode, Phone: a.Phone,
 	}
 }
 

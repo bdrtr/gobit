@@ -454,6 +454,7 @@ func (m *memRepo) UpdateAddress(
 	assign(&a.Address1, patch.Address1)
 	assign(&a.Address2, patch.Address2)
 	assign(&a.City, patch.City)
+	assign(&a.Province, patch.Province)
 	assign(&a.CountryCode, patch.CountryCode)
 	assign(&a.PostalCode, patch.PostalCode)
 	assign(&a.Phone, patch.Phone)
