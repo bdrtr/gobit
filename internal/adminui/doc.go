@@ -191,7 +191,9 @@
 // ones it was drawn with for an operator who holds admin
 // ([UI.reviseUserScopes], ADR 0347). The Users screen invites a user, opened
 // without a password with the privileges ticked ([UI.inviteUser]), and their
-// page sends the invitation again ([UI.resendInvitation], ADR 0348).
+// page sends the invitation again ([UI.resendInvitation], ADR 0348) and
+// removes them ([UI.removeUser], ADR 0349), though not the operator
+// themselves.
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator

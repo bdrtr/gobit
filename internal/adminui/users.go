@@ -119,6 +119,7 @@ func (u *UI) renderUsers(w http.ResponseWriter, r *http.Request, code int, refus
 		"Privileges": privilegeChoices(nil, typed[formScope]),
 		typedKey:     typed,
 		refusedKey:   refused,
+		"Removed":    query.Get(paramRemoved) != "",
 	}
 	addPaging(data, page, int64(page*usersPerPage) < total, UsersPath)
 

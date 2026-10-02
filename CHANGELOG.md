@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel removes a user** (ADR 0349). **For operators:** a user's
+  page removes them under `admin`, their sessions ending with them; the
+  last administrator is kept, and an operator cannot remove themselves
+  from the panel. **For integrators:** `auth.admin` removes a user as the
+  API's delete does.
+
 - **The panel invites a user** (ADR 0348). **For operators:** the Users
   screen invites a colleague under `admin`, with the privileges ticked and
   none when none is; they set their own password from the invitation, and

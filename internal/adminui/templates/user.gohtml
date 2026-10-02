@@ -35,5 +35,13 @@ taking admin from the last user who holds it (ADR 0346).
 </form>
 {{ end }}
 
+{{ if .CanRemove }}
+{{/* Removing a user deletes their login identities too, so their sessions
+end; the last administrator is kept (ADR 0346, ADR 0349). */}}
+<form method="post" action="{{ .Path }}/{{ .User.ID }}/remove">
+  <button type="submit">Remove the user</button>
+</form>
+{{ end }}
+
 <p><a href="{{ .Path }}">Every user</a></p>
 {{ end }}

@@ -144,7 +144,9 @@ func (u *UI) renderUser(w http.ResponseWriter, r *http.Request, code int, id, re
 	}
 	_, canRevise := u.users.(ScopeReviser)
 	_, canInvite := u.users.(UserInviter)
+	_, canRemove := u.users.(UserRemover)
 	data := map[string]any{
+		"CanRemove":  canRemove && principal.HasScope(scopeAdmin) && user.ID != principal.ID,
 		"Invited":    r.URL.Query().Get(paramInvited),
 		"CanInvite":  canInvite && principal.HasScope(scopeAdmin),
 		titleKey:     user.Email,

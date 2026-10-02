@@ -10,6 +10,7 @@ second factor works through (ADR 0265). A user is found by their e-mail.
 <h1>{{ .Title }}</h1>
 
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ if .Removed }}<p role="status">The user was removed.</p>{{ end }}
 
 {{ if .CanCreate }}
 {{/* A user is opened without a password and invited to set their own

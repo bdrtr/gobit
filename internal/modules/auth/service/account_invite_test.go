@@ -88,3 +88,18 @@ func TestThePanelInvitesAUser(t *testing.T) {
 	err = surface.ResendInvitation(admin, id, "apikey_1")
 	assert.True(t, errors.IsInvalid(err), "an inviter who is not a user: %v", err)
 }
+
+// TestThePanelRemovesAUser is ADR 0349: the surface deletes the user through
+// the service, which refuses an id that is not a user's.
+func TestThePanelRemovesAUser(t *testing.T) {
+	t.Parallel()
+
+	svc, repo := newService(t)
+	surface := service.NewAccountSurface(svc, "gobit")
+
+	require.NoError(t, surface.RemoveUser(context.Background(), "user_1"))
+	assert.Equal(t, 1, repo.writeCount, "the delete reached the store")
+	err := surface.RemoveUser(context.Background(), "apikey_1")
+	assert.True(t, errors.IsInvalid(err), "%v", err)
+	assert.Equal(t, 1, repo.writeCount)
+}

@@ -836,6 +836,10 @@ func (a recordingAccounts) ResendInvitation(context.Context, string, string) err
 	return a.surfaces.reach(ServiceAuthAdmin)
 }
 
+func (a recordingAccounts) RemoveUser(context.Context, string) error {
+	return a.surfaces.reach(ServiceAuthAdmin)
+}
+
 // recordingInvoices records the invoice module's surface (ADR 0335).
 type recordingInvoices struct{ surfaces *recordingSurfaces }
 
@@ -1083,6 +1087,7 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, UserScopesPath):      {formReadScope: {"order:read"}, formScope: {"order:read"}},
 	routeKey(http.MethodPost, UserInvitationsPath): {formInviteEmail: {"walk@example.test"}},
 	routeKey(http.MethodPost, UserInvitationPath):  {},
+	routeKey(http.MethodPost, UserRemovePath):      {},
 	// Writing off units of a line (ADR 0341).
 	routeKey(http.MethodPost, OrderLineCancellationsPath): {
 		formWriteOffLine: {"oli_walk"}, formReadSpokenFor: {"0"}, formWriteOffQuantity: {"1"}, formWriteOffReason: {"walk"},

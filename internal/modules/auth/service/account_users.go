@@ -135,3 +135,9 @@ func (s *AccountSurface) InviteUser(
 func (s *AccountSurface) ResendInvitation(ctx context.Context, userID, invitedBy string) error {
 	return s.svc.InviteUser(ctx, userID, invitedBy)
 }
+
+// RemoveUser deletes the user and their login identities, refusing the last
+// live user holding admin (ADR 0349, ADR 0346).
+func (s *AccountSurface) RemoveUser(ctx context.Context, id string) error {
+	return s.svc.DeleteUser(ctx, id)
+}

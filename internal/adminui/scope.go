@@ -201,6 +201,8 @@ func builtInScopes() map[string]string {
 		// Inviting a user is an administrator's too (ADR 0348).
 		routeKey(post, UserInvitationsPath): scopeAdmin,
 		routeKey(post, UserInvitationPath):  scopeAdmin,
+		// And so is removing one (ADR 0349).
+		routeKey(post, UserRemovePath): scopeAdmin,
 		// The shipping options are the fulfillment module's, and so are
 		// revising one (ADR 0333) and writing one (ADR 0334).
 		routeKey(get, ShippingOptionsPath):       scopeFulfillmentRead,
