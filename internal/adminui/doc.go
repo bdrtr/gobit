@@ -76,7 +76,7 @@
 // The menu holds the catalog, the price lists, the orders, the
 // telephone order, the sales report, the promotions, the campaigns, the
 // customers, the customer groups, the notifications, the inventory, the
-// shipping options, the
+// shipping options, the store profile, the
 // reviews, and the person's own second factor and sessions, in that order;
 // the last two are open to everybody who can sign in (ADR 0266,
 // ADR 0268). The list lives in one
@@ -168,6 +168,11 @@
 // was drawn with ([UI.reviseShippingOption], ADR 0333). Its form writes an
 // option on a registered provider and one of the newest profiles, in a
 // region's currency or a typed one ([UI.createShippingOption], ADR 0334).
+//
+// The Store profile screen ([UI.showStoreProfile]) shows who the shop is,
+// which every invoice is issued under, and writes it from the profile the
+// page was drawn with ([UI.writeStoreProfile]) through the settings module's
+// panel surface (ADR 0336).
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator

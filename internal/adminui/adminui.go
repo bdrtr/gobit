@@ -215,6 +215,9 @@ type UI struct {
 	// invoices lists the series an order's invoice is numbered on (ADR
 	// 0335); nil when the installation registers no invoice surface.
 	invoices InvoiceSeriesLister
+	// settings reads and writes the shop's identity (ADR 0336); nil when the
+	// installation registers no settings surface.
+	settings StoreProfileAdmin
 	scopes   map[string]string
 }
 
@@ -328,6 +331,11 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And the shop's identity (ADR 0336).
+	settings, err := optionalService[StoreProfileAdmin](c, ServiceSettingsAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -362,6 +370,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		parcels:       parcels,
 		files:         files,
 		invoices:      invoices,
+		settings:      settings,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

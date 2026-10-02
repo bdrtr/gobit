@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/settings/models"
@@ -46,6 +47,12 @@ type Store interface {
 	GetProfile(ctx context.Context) (models.StoreProfile, error)
 	// SetProfile writes the profile, replacing what was there.
 	SetProfile(ctx context.Context, profile models.StoreProfile) (models.StoreProfile, error)
+	// ReviseProfile writes the profile if it is still the one read, named by
+	// the moment it was last written, nil for none, and reports whether it
+	// did (ADR 0336).
+	ReviseProfile(
+		ctx context.Context, readUpdatedAt *time.Time, profile models.StoreProfile,
+	) (models.StoreProfile, bool, error)
 }
 
 // Service is the settings module's business layer.

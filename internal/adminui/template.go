@@ -110,6 +110,7 @@ var pages = []string{
 	"customer_groups.gohtml",
 	"price_lists.gohtml",
 	"shipping_options.gohtml",
+	"store_profile.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -318,6 +319,9 @@ func sections() []navItem {
 		{Label: inventoryLabel, Path: InventoryPath},
 		// The shipping options sit beside the stock they send (ADR 0333).
 		{Label: shippingOptionsLabel, Path: ShippingOptionsPath},
+		// The shop's identity, which its invoices are issued under (ADR
+		// 0336).
+		{Label: storeProfileLabel, Path: StoreProfilePath},
 		// The reviews sit LAST, and not because they matter least: they are
 		// the panel's first screen of the shape ADR 0030 decided on, so an
 		// operator meeting a section that behaves differently meets it at the

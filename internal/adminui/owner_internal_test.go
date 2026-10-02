@@ -740,6 +740,17 @@ func (a recordingAfterSales) IssueInvoice(context.Context, string, string, json.
 	return "inv_walk", "GBT2026000000001", false, a.surfaces.reach(ServiceOrderAdmin)
 }
 
+// recordingSettings records the settings module's surface (ADR 0336).
+type recordingSettings struct{ surfaces *recordingSurfaces }
+
+func (s recordingSettings) StoreProfileJSON(context.Context) (json.RawMessage, error) {
+	return json.RawMessage(`null`), s.surfaces.reach(ServiceSettingsAdmin)
+}
+
+func (s recordingSettings) ReviseStoreProfile(context.Context, string, json.RawMessage) error {
+	return s.surfaces.reach(ServiceSettingsAdmin)
+}
+
 // recordingInvoices records the invoice module's surface (ADR 0335).
 type recordingInvoices struct{ surfaces *recordingSurfaces }
 
@@ -964,6 +975,8 @@ var walkForms = map[string]url.Values{
 	// An order's parcels (ADR 0324).
 	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}},
 	routeKey(http.MethodPost, OrderParcelActPath): {},
+	// Writing the store profile (ADR 0336).
+	routeKey(http.MethodPost, StoreProfilePath): {formProfileName: {"Walk"}, formProfileCountry: {"TR"}},
 	// Issuing an order's invoice (ADR 0335).
 	routeKey(http.MethodPost, OrderInvoicePath): {formInvoiceNewSeries: {"GBT"}},
 	// Writing a shipping option (ADR 0334) and revising one (ADR 0333).
@@ -1020,6 +1033,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServiceFulfillmentAdmin, ParcelMover(recordingParcels{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceFileAdmin, FileUploader(recordingFiles{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceInvoiceAdmin, InvoiceSeriesLister(recordingInvoices{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceSettingsAdmin, StoreProfileAdmin(recordingSettings{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePromotionAdmin, PromotionLister(recordingPromotions{walk.surfaces})))

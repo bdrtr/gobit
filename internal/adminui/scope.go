@@ -177,6 +177,9 @@ func builtInScopes() map[string]string {
 		// invoicing flow, under its write (ADR 0335).
 		routeKey(post, OrderInvoicePath):   scopeOrderWrite,
 		routeKey(post, OrderParcelActPath): scopeFulfillmentWrite,
+		// The store profile is the settings module's (ADR 0336).
+		routeKey(get, StoreProfilePath):  scopeSettingsRead,
+		routeKey(post, StoreProfilePath): scopeSettingsWrite,
 		// The shipping options are the fulfillment module's, and so are
 		// revising one (ADR 0333) and writing one (ADR 0334).
 		routeKey(get, ShippingOptionsPath):       scopeFulfillmentRead,

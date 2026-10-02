@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel writes the store profile** (ADR 0336). **For operators:** a
+  Store profile screen shows who the shop is under `settings:read` and
+  writes it under `settings:write`, so a new shop issues its first invoice
+  without the API; a profile another operator wrote meanwhile is refused.
+  **For integrators:** the settings module registers `settings.admin`.
+
 - **The order page issues the order's invoice** (ADR 0335). **For
   operators:** an order's page names its invoice and issues one under
   `order:write`, on a series the shop numbers on (offered with

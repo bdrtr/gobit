@@ -1,0 +1,46 @@
+{{- /*
+store_profile.gohtml shows who the shop is (ADR 0336).
+
+The store profile is the settings module's: the legal name, tax identity,
+e-mail, address and country every invoice is issued under (ADR 0115). An
+invoice cannot be issued before it is written. An operator who may write the
+settings writes it here; the form carries the moment the profile was last
+written, and the module refuses when another operator wrote it first.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ if .Written }}<p role="status">The store profile was written.</p>{{ end }}
+
+{{ with .Profile }}
+<table>
+  <tbody>
+    <tr><th>Legal name</th><td>{{ .LegalName }}</td></tr>
+    <tr><th>Tax number</th><td>{{ with .TaxNumber }}{{ . }}{{ else }}<span class="muted">none</span>{{ end }}</td></tr>
+    <tr><th>Tax office</th><td>{{ with .TaxOffice }}{{ . }}{{ else }}<span class="muted">none</span>{{ end }}</td></tr>
+    <tr><th>E-mail</th><td>{{ with .Email }}{{ . }}{{ else }}<span class="muted">none</span>{{ end }}</td></tr>
+    <tr><th>Address</th><td>{{ with .Address }}{{ . }}{{ else }}<span class="muted">none</span>{{ end }}</td></tr>
+    <tr><th>Country</th><td>{{ .CountryCode }}</td></tr>
+  </tbody>
+</table>
+{{ else }}
+<p class="muted">The shop has not said who it is; no invoice can be issued until it does.</p>
+{{ end }}
+
+{{ if .CanWrite }}
+<details{{ if or .Refused (not .Profile) }} open{{ end }}>
+  <summary>{{ if .Profile }}Revise the store profile{{ else }}Write the store profile{{ end }}</summary>
+  <form method="post" action="{{ .Path }}">
+    <input type="hidden" name="read_updated_at" value="{{ .ReadAt }}">
+    <input name="legal_name" value="{{ .Form.LegalName }}" placeholder="legal name" aria-label="legal name" required>
+    <input name="tax_number" value="{{ .Form.TaxNumber }}" placeholder="tax number" aria-label="tax number">
+    <input name="tax_office" value="{{ .Form.TaxOffice }}" placeholder="tax office" aria-label="tax office">
+    <input name="email" value="{{ .Form.Email }}" placeholder="e-mail" aria-label="e-mail" type="email">
+    <textarea name="address" aria-label="address" rows="3" placeholder="address, as printed">{{ .Form.Address }}</textarea>
+    <input name="country_code" value="{{ .Form.CountryCode }}" placeholder="country, e.g. TR" aria-label="country" maxlength="2" required>
+    <button type="submit">Write the store profile</button>
+  </form>
+</details>
+{{ end }}
+{{ end }}

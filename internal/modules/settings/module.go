@@ -66,6 +66,9 @@ const (
 	// A consumer resolves it under this name and declares its own narrow
 	// interface, which this type satisfies structurally (ADR 0001).
 	InteropName = ModuleName + ".interop"
+	// AdminName is the module's panel surface's name in the container (ADR
+	// 0336).
+	AdminName = ModuleName + ".admin"
 	// dbServiceName is the core database pool's name in the container.
 	dbServiceName = "core.db"
 )
@@ -126,6 +129,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 	if err := c.Provide(InteropName, service.NewInterop(m.svc)); err != nil {
+		return err
+	}
+	if err := c.Provide(AdminName, service.NewAdminSurface(m.svc)); err != nil {
 		return err
 	}
 
