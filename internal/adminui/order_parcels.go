@@ -107,13 +107,13 @@ type parcelMove struct {
 // none. The module refuses the rest anyway, so this is what the page offers,
 // not what it allows.
 var parcelMoves = map[string][]parcelMove{
-	"pending": {
+	parcelPending: {
 		{Act: "ship", Label: "Mark as shipped", Tracking: true},
 		{Act: actCancel, Label: "Cancel the parcel"},
 	},
 	// A parcel on its way can still be recalled through the carrier, so the
 	// module cancels it as well.
-	"shipped": {
+	parcelShipped: {
 		{Act: "deliver", Label: "Mark as delivered"},
 		{Act: "return", Label: "Mark as come back undelivered"},
 		{Act: actCancel, Label: "Cancel the parcel"},

@@ -43,6 +43,10 @@ const typedKey = "Typed"
 // for or a form was sent with.
 const emailKey = "Email"
 
+// ordersPathKey is the template data key carrying the orders' path, which a
+// screen links an order's page under.
+const ordersPathKey = "OrdersPath"
+
 // statusesKey, statusKey and totalKey carry a list screen's status tabs, the
 // chosen one and the count in it, and canCreateKey whether the screen offers
 // its form.
@@ -129,6 +133,7 @@ var pages = []string{
 	"sales_channels.gohtml",
 	"regions.gohtml",
 	"taxes.gohtml",
+	"parcels.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -335,6 +340,8 @@ func sections() []navItem {
 		// 0317).
 		{Label: notificationsLabel, Path: NotificationsPath},
 		{Label: inventoryLabel, Path: InventoryPath},
+		// The parcels sit beside the stock they send (ADR 0356).
+		{Label: parcelsLabel, Path: ParcelsPath},
 		// The shipping options sit beside the stock they send (ADR 0333).
 		{Label: shippingOptionsLabel, Path: ShippingOptionsPath},
 		// The regions sit beside the options shipped in them (ADR 0354).

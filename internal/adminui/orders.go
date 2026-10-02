@@ -465,7 +465,7 @@ func (u *UI) renderOrder(
 		"CanAct":                u.afterSales != nil && principal.HasScope(scopeOrderWrite),
 		"CanRecordPayment":      u.payments != nil && principal.HasScope(scopePaymentWrite),
 		"Order":                 detail,
-		"OrdersPath":            OrdersPath,
+		ordersPathKey:           OrdersPath,
 		"LinesPerOrder":         linesPerOrder,
 		"PaymentPrivilege":      scopePaymentRead,
 		"FulfillmentPrivilege":  scopeFulfillmentRead,

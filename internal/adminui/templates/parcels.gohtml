@@ -1,0 +1,50 @@
+{{- /*
+parcels.gohtml is the fulfillment module's parcels across every order (ADR
+0356).
+
+A parcel is what an order's units leave the shop in. The ones still to be
+shipped come first, which is what a warehouse comes to the screen for; each
+tab lists the parcels in one status, the newest first, with when they
+reached it. An operator who may read the orders too sees the order each
+parcel was opened for, and opens it there; a parcel is moved on its order's
+page.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+<nav aria-label="Status">
+  {{ range .Statuses }}
+  <a href="{{ $.Path }}?status={{ . }}"{{ if eq . $.Status }} aria-current="page"{{ end }}>{{ . }}</a>
+  {{ end }}
+</nav>
+
+{{ if .Parcels }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Parcel</th><th>Order</th><th>Carrier</th><th>Tracking</th><th>Opened (UTC)</th>{{ if ne .Status "pending" }}<th>{{ .Status }} (UTC)</th>{{ end }}</tr>
+  </thead>
+  <tbody>
+  {{ range .Parcels }}{{ $parcel := . }}
+    <tr>
+      <td>{{ .ID }}</td>
+      <td>{{ with .OrderID }}<a href="{{ $.OrdersPath }}/{{ . }}">#{{ $parcel.OrderNumber }}</a>{{ else }}<span class="muted">—</span>{{ end }}</td>
+      <td>{{ .Provider }}</td>
+      <td>{{ with .TrackingURL }}<a href="{{ . }}" rel="noopener noreferrer">{{ end }}{{ .TrackingNumber }}{{ if .TrackingURL }}</a>{{ end }}</td>
+      <td>{{ .CreatedAt.UTC.Format "2006-01-02 15:04" }}</td>
+      {{ if ne $.Status "pending" }}<td>{{ if not .Moved.IsZero }}{{ .Moved.UTC.Format "2006-01-02 15:04" }}{{ end }}</td>{{ end }}
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No parcel here.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?status={{ .Status }}&amp;page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?status={{ .Status }}&amp;page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

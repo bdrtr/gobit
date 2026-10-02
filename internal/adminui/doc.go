@@ -178,6 +178,11 @@
 // Taxes screen ([UI.listTaxes]) the tax module's tax regions with the rates
 // each charges (ADR 0355).
 //
+// The Parcels screen ([UI.listParcels]) lists the fulfillment module's
+// parcels across every order, one status at a time, the ones still to be
+// shipped first, naming each one's order for an operator who may read the
+// orders (ADR 0356).
+//
 // The Store profile screen ([UI.showStoreProfile]) shows who the shop is,
 // which every invoice is issued under, and writes it from the profile the
 // page was drawn with ([UI.writeStoreProfile]) through the settings module's

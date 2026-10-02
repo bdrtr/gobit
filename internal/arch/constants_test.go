@@ -980,8 +980,9 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	assert.Equal(t, cartsvc.FieldOpenedBy, adminui.FieldCartOpenedBy)
 	// The telephone order's channel list (ADR 0305).
 	assert.Equal(t, authsvc.Entity, adminui.EntitySalesChannel)
-	// The Taxes screen (ADR 0355).
+	// The Taxes screen (ADR 0355) and the Parcels screen (ADR 0356).
 	assert.Equal(t, taxsvc.Entity, adminui.EntityTaxRegion)
+	assert.Equal(t, fulfillmentsvc.FulfillmentEntity, adminui.EntityFulfillment)
 	assert.Equal(t, cartsvc.FilterOpenedByOperator, adminui.FilterOpenedByOperator)
 	assert.Equal(t, ordersvc.FieldPlacedBy, adminui.FieldPlacedBy)
 	assert.Equal(t, ordersvc.FilterPlacedByOperator, adminui.FilterPlacedByOperator)

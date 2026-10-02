@@ -260,11 +260,11 @@ func (u *UI) listSales(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		titleKey:     salesLabel,
-		"Sales":      rows,
-		"OrdersPath": OrdersPath,
-		fromKey:      window.From.Format(dayLayout),
-		toKey:        window.lastDay().Format(dayLayout),
+		titleKey:      salesLabel,
+		"Sales":       rows,
+		ordersPathKey: OrdersPath,
+		fromKey:       window.From.Format(dayLayout),
+		toKey:         window.lastDay().Format(dayLayout),
 	}
 	addPaging(data, page, hasNext, SalesPath)
 

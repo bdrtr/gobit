@@ -93,6 +93,17 @@ func TestAnOperatorShipsAnOrderInThePanel(t *testing.T) {
 	assert.Contains(t, shipped.Body.String(), `<a href="https://carrier.example/E2E-TK-1" rel="noopener noreferrer">E2E-TK-1</a>`,
 		"the parcel carries its tracking")
 
+	// The Parcels screen lists it among the shipped, its order named (ADR
+	// 0356).
+	listed := send(http.MethodGet, adminui.ParcelsPath+"?status=shipped", nil).Body.String()
+	_, row, found := strings.Cut(listed, "<td>"+parcel+"</td>")
+	require.True(t, found, "the shipped parcel is on the Parcels screen")
+	row, _, _ = strings.Cut(row, "</tr>")
+	assert.Contains(t, row, `<a href="`+pagePath+`">#`, "with its order")
+	assert.Contains(t, row, "E2E-TK-1</a>")
+	assert.NotContains(t, send(http.MethodGet, adminui.ParcelsPath, nil).Body.String(), "<td>"+parcel+"</td>",
+		"and not among those still to be shipped")
+
 	delivered := send(http.MethodPost, pagePath+"/parcels/"+parcel+"/deliver", url.Values{})
 	require.Equal(t, http.StatusOK, delivered.Code, delivered.Body.String())
 	assert.Contains(t, delivered.Body.String(), "Parcel "+parcel+" was delivered.")
