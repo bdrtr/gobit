@@ -104,3 +104,27 @@ func TestACustomersPageListsTheirOrders(t *testing.T) {
 	campaignsRequest(panel, http.MethodGet, OrdersPath, nil, scopeOrderRead)
 	assert.Nil(t, lastSpec(t, catalog, EntityOrder).Filters, "every order")
 }
+
+// TestTheOrderListNarrowsToAStatus is ADR 0361: the order list asks for the
+// orders in the status chosen, keeps it across its pages and in its form
+// beside the other narrowings, and lists every status when none, or one
+// there is not, is chosen.
+func TestTheOrderListNarrowsToAStatus(t *testing.T) {
+	t.Parallel()
+
+	panel, catalog := customerOrdersPanel(t, ordersPerPage+1, nil)
+	rec := campaignsRequest(panel, http.MethodGet, OrdersPath+"?status=canceled", nil, scopeOrderRead)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, map[string]any{FilterOrderStatus: "canceled"}, lastSpec(t, catalog, EntityOrder).Filters)
+	body := rec.Body.String()
+	assert.Contains(t, body, `<option value="canceled" selected>canceled</option>`)
+	assert.Contains(t, body, `<option value="">every status</option>`)
+	assert.Contains(t, body, `?page=2&amp;status=canceled">Next</a>`)
+
+	campaignsRequest(panel, http.MethodGet, OrdersPath+"?status=pending&customer=cus_1&placed=1", nil, scopeOrderRead)
+	assert.Equal(t, map[string]any{FilterOrderStatus: "pending", FilterOrderCustomer: "cus_1", FilterPlacedByOperator: true},
+		lastSpec(t, catalog, EntityOrder).Filters, "a status narrows beside the rest")
+	rec = campaignsRequest(panel, http.MethodGet, OrdersPath+"?status=lost", nil, scopeOrderRead)
+	assert.Nil(t, lastSpec(t, catalog, EntityOrder).Filters, "a status there is not is every status")
+	assert.NotContains(t, rec.Body.String(), " selected>")
+}

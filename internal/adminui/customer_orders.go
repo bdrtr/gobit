@@ -19,6 +19,20 @@ const paramOrderCustomer = "customer"
 // internal/arch.
 const FilterOrderCustomer = "customer_id"
 
+// FilterOrderStatus is the order entity's filter by status, the order
+// module's name, pinned against it in internal/arch (ADR 0361).
+const FilterOrderStatus = "status"
+
+// The order statuses beside [orderPending] and [orderCompleted].
+const (
+	orderArchived = "archived"
+	orderCanceled = "canceled"
+)
+
+// orderStatuses are the order module's statuses the order list narrows to,
+// in the order an order moves through them (ADR 0361).
+var orderStatuses = []string{orderPending, orderCompleted, orderArchived, orderCanceled}
+
 // ordersPerCustomer is how many of a customer's orders their page lists.
 const ordersPerCustomer = 5
 

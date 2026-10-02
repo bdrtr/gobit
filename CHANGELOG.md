@@ -39,6 +39,10 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The order list narrows to a status** (ADR 0361). **For operators:**
+  the order list shows the pending, completed, archived or canceled orders
+  alone, beside its other boxes.
+
 - **The panel moves a default and removes an address** (ADR 0360). **For
   operators:** each address on a customer's page is made their default
   shipping or billing address, or removed, under `customer:write`. **For

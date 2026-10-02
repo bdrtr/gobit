@@ -321,11 +321,19 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 	// together.
 	awaiting := r.URL.Query().Get(paramAwaiting) == "1"
 	placed := r.URL.Query().Get(paramPlaced) == "1"
-	// And one customer's, which their page links to (ADR 0358).
+	// And one customer's, which their page links to (ADR 0358), and the ones
+	// in one status (ADR 0361).
 	customer := strings.TrimSpace(r.URL.Query().Get(paramOrderCustomer))
+	status := r.URL.Query().Get(paramDeliveryStatus)
+	if !slices.Contains(orderStatuses, status) {
+		status = ""
+	}
 	var filters map[string]any
-	if awaiting || placed || customer != "" {
+	if awaiting || placed || customer != "" || status != "" {
 		filters = map[string]any{}
+	}
+	if status != "" {
+		filters[FilterOrderStatus] = status
 	}
 	if awaiting {
 		filters[FilterAwaitingPayment] = true
@@ -366,11 +374,13 @@ func (u *UI) listOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		titleKey:   ordersLabel,
-		"Orders":   rows,
-		"Awaiting": awaiting,
-		"Placed":   placed,
-		"Customer": customer,
+		titleKey:    ordersLabel,
+		"Orders":    rows,
+		"Awaiting":  awaiting,
+		"Placed":    placed,
+		"Customer":  customer,
+		statusKey:   status,
+		statusesKey: orderStatuses,
 	}
 	addPaging(data, page, hasNext, OrdersPath)
 
