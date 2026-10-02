@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel writes a shipping option** (ADR 0334, D208). **For
+  operators:** the Shipping options screen writes an option on a registered
+  provider and one of the newest profiles, in a region and its currency or
+  in every region, under `fulfillment:write`. **For integrators:**
+  `fulfillment.admin` lists its providers and profiles and writes an option.
+
 - **The panel lists and revises the shipping options** (ADR 0333). **For
   operators:** a Shipping options screen lists the options with their
   provider, profile, region and fee under `fulfillment:read`, and each row

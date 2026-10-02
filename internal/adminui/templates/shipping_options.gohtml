@@ -14,12 +14,49 @@ the storefront offers it; it carries them as the row was drawn, and the
 module refuses when another operator revised the option first. The provider,
 the profile, the price type and the region are the option's identity and
 are not revised here.
+
+An operator who may write the options writes one here, on a provider this
+installation registers and one of the newest shipping profiles (ADR 0334).
+An option in a region charges in that region's currency; one in every
+region charges in the currency typed.
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
 
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
 {{ with .Created }}<p role="status">Shipping option {{ . }} was written.</p>{{ end }}
+
+{{ with .Choices }}
+<details{{ if $.Typed }} open{{ end }}>
+  <summary>New shipping option</summary>
+  {{ if .Profiles }}
+  <form method="post" action="{{ $.Path }}">
+    <input name="name" value="{{ $.Typed.Get "name" }}" placeholder="name, e.g. Courier" aria-label="name" required>
+    <select name="provider_id" aria-label="provider">
+      {{ range .Providers }}<option value="{{ . }}"{{ if eq ($.Typed.Get "provider_id") . }} selected{{ end }}>{{ . }}</option>{{ end }}
+    </select>
+    <select name="shipping_profile_id" aria-label="profile">
+      {{ range .Profiles }}<option value="{{ .ID }}"{{ if eq ($.Typed.Get "shipping_profile_id") .ID }} selected{{ end }}>{{ .Name }}</option>{{ end }}
+    </select>{{ if .ProfilesMore }} <span class="muted">the newest profiles</span>{{ end }}
+    <select name="price_type" aria-label="price type">
+      <option value="flat"{{ if eq ($.Typed.Get "price_type") "flat" }} selected{{ end }}>a flat fee</option>
+      <option value="calculated"{{ if eq ($.Typed.Get "price_type") "calculated" }} selected{{ end }}>the provider's rate</option>
+    </select>
+    <input name="amount" value="{{ $.Typed.Get "amount" }}" placeholder="fee, for a flat fee" aria-label="fee" inputmode="decimal">
+    <select name="region_id" aria-label="region">
+      <option value="">every region</option>
+      {{ range $.Regions }}<option value="{{ .ID }}"{{ if eq ($.Typed.Get "region_id") .ID }} selected{{ end }}>{{ .Name }} ({{ .Currency }})</option>{{ end }}
+    </select>
+    <input name="currency_code" value="{{ $.Typed.Get "currency_code" }}" placeholder="currency, for every region" aria-label="currency" maxlength="3">
+    <label><input type="checkbox" name="is_return" value="1"{{ if $.Typed.Get "is_return" }} checked{{ end }}> for returns</label>
+    <label><input type="checkbox" name="admin_only" value="1"{{ if $.Typed.Get "admin_only" }} checked{{ end }}> panel only</label>
+    <button type="submit">Write the shipping option</button>
+  </form>
+  {{ else }}
+  <p class="muted">No shipping profile has been written; an option is written on one.</p>
+  {{ end }}
+</details>
+{{ end }}
 
 {{ if .Options }}
 <div class="scroll">

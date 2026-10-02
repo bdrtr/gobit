@@ -345,8 +345,9 @@ var storefrontPublished = []struct {
 	why    string
 }{
 	{
-		EntityRegion, []string{fieldID, fieldCurrencyCod, fieldCurrency},
-		"a currency's scale turns a minor-unit amount into a price, and /store/v1/regions publishes it",
+		EntityRegion, []string{fieldID, fieldName, fieldCurrencyCod, fieldCurrency},
+		"a currency's scale turns a minor-unit amount into a price, and a region's name is what a shipping " +
+			"option is offered in (ADR 0334); /store/v1/regions publishes both",
 	},
 }
 
@@ -787,6 +788,17 @@ func (p recordingParcels) ReviseShippingOption(context.Context, string, string, 
 	return p.surfaces.reach(ServiceFulfillmentAdmin)
 }
 
+func (p recordingParcels) OptionChoicesJSON(context.Context) (json.RawMessage, error) {
+	return json.RawMessage(`{"providers":["manual"],"profiles":[{"id":"sprof_walk","name":"Walk"}]}`),
+		p.surfaces.reach(ServiceFulfillmentAdmin)
+}
+
+func (p recordingParcels) CreateShippingOption(
+	context.Context, string, string, string, string, int64, string, string, bool, bool,
+) (string, error) {
+	return "sopt_walk", p.surfaces.reach(ServiceFulfillmentAdmin)
+}
+
 func (a recordingAfterSales) OpenExchange(context.Context, string, int64, string) (string, error) {
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }
@@ -937,7 +949,11 @@ var walkForms = map[string]url.Values{
 	// An order's parcels (ADR 0324).
 	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}},
 	routeKey(http.MethodPost, OrderParcelActPath): {},
-	// Revising a shipping option (ADR 0333).
+	// Writing a shipping option (ADR 0334) and revising one (ADR 0333).
+	routeKey(http.MethodPost, ShippingOptionsPath): {
+		formGroupName: {"Walk"}, formOptionProvider: {"manual"}, formOptionProfile: {"sprof_walk"},
+		formOptionPriceType: {"flat"}, formOptionCurrencyCode: {"TRY"},
+	},
 	routeKey(http.MethodPost, ShippingOptionRevisePath): {
 		formReadName: {"Walk"}, formReadAmount: {"0"}, formReadAdminOnly: {"false"}, formGroupName: {"Walked"},
 	},
@@ -1191,6 +1207,35 @@ func TestEachScreenReadsOnlyWhatItsPrivilegesModuleOwns(t *testing.T) {
 	}
 }
 
+// walkBase is what a route reads under its own privilege that another
+// privilege's reads are measured against. Only what it reads unpublished
+// counts: a storefront-published read of an entity, the currency scales
+// every money screen reads, must not hide another read of the same entity a
+// privilege adds (D208).
+func walkBase(alone []observed) map[string]bool {
+	base := map[string]bool{}
+	for _, read := range alone {
+		if read.published < 0 {
+			base[read.what] = true
+		}
+	}
+
+	return base
+}
+
+// TestAPublishedReadHidesNoOtherRead is D208: a published read of an entity
+// leaves the entity out of a route's base, so a privilege's other read of it
+// is still held to its owner; an unpublished read is the base.
+func TestAPublishedReadHidesNoOtherRead(t *testing.T) {
+	t.Parallel()
+
+	base := walkBase([]observed{
+		{what: EntityRegion, owner: "modules/region", published: 0},
+		{what: EntityOrder, owner: "modules/order", published: -1},
+	})
+	assert.Equal(t, map[string]bool{EntityOrder: true}, base)
+}
+
 // TestAPrivilegeAddsOnlyItsOwnModulesData holds the reads a screen makes for
 // an operator holding MORE than its privilege.
 //
@@ -1218,10 +1263,7 @@ func TestAPrivilegeAddsOnlyItsOwnModulesData(t *testing.T) {
 		scope := builtInScopes()[key]
 		for _, walkCase := range walkCases(t, key) {
 			_, alone := walk.request(t, key, walkCase, walkScopes(key, scope)...)
-			base := map[string]bool{}
-			for _, read := range alone {
-				base[read.what] = true
-			}
+			base := walkBase(alone)
 
 			for _, extra := range declared {
 				if slices.Contains(walkScopes(key, scope), extra) || len(owners.scopes[extra]) != 1 {

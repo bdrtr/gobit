@@ -2,6 +2,7 @@ package adminui
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"net/http"
 	"net/url"
@@ -19,10 +20,12 @@ import (
 // with their provider, profile, region and fee, read through its
 // shipping_option entity, and each row's form that renames the option, sets
 // its fee and says whether the storefront offers it, from what the row was
-// drawn with, through the module's panel surface.
+// drawn with, through the module's panel surface; and the form that writes
+// one (ADR 0334).
 
 const (
-	// ShippingOptionsPath lists the shipping options.
+	// ShippingOptionsPath lists the shipping options and takes the form that
+	// writes one.
 	ShippingOptionsPath = URLPrefix + "/shipping-options"
 	// ShippingOptionRevisePath takes a row's form that revises its option.
 	ShippingOptionRevisePath = ShippingOptionsPath + "/{id}"
@@ -52,16 +55,55 @@ const (
 // calculated, takes its fee from the provider.
 const priceFlat = "flat"
 
-// The revise form's fields beside the name and the read ones the other
-// revise forms share: the fee, whether the storefront hides the option, and
-// what the row was drawn with to read the fee in.
+// The option forms' fields beside the name and the read ones the other
+// revise forms share: the fee, whether the storefront hides the option, what
+// the row was drawn with to read the fee in, and what a new option is
+// written on (ADR 0334).
 const (
 	formOptionAmount       = "amount"
 	formOptionAdminOnly    = "admin_only"
 	formReadAdminOnly      = "read_admin_only"
 	formOptionPriceType    = "price_type"
 	formOptionCurrencyCode = "currency_code"
+	formOptionProvider     = "provider_id"
+	formOptionProfile      = "shipping_profile_id"
+	formOptionRegion       = "region_id"
+	formOptionReturn       = "is_return"
 )
+
+// ShippingOptionCreator is the narrow surface a shipping option is written
+// through (ADR 0334).
+type ShippingOptionCreator interface {
+	// OptionChoicesJSON lists the registered providers and the newest
+	// profiles an option is written on.
+	OptionChoicesJSON(ctx context.Context) (json.RawMessage, error)
+	// CreateShippingOption writes an option and returns its id; the fee is in
+	// the currency's minor units, and an empty region is every region.
+	CreateShippingOption(
+		ctx context.Context, name, providerID, profileID, priceType string, amount int64,
+		currency, regionID string, isReturn, adminOnly bool,
+	) (string, error)
+}
+
+// optionChoices is what the surface offers a new option on; the json tags
+// are the contract with that surface, exercised end to end.
+type optionChoices struct {
+	Providers []string `json:"providers"`
+	Profiles  []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+	} `json:"profiles"`
+	ProfilesMore bool `json:"profiles_more"`
+}
+
+// optionRegion is one region a new option may be offered in, with the
+// currency its fee is then in.
+type optionRegion struct {
+	ID       string
+	Name     string
+	Currency string
+}
 
 // ShippingOptionReviser is the narrow surface a shipping option's terms are
 // revised through (ADR 0333).
@@ -104,6 +146,133 @@ func (u *UI) canReviseShippingOptions(r *http.Request) bool {
 
 	return ok && principal.HasScope(scopeFulfillmentWrite)
 }
+
+// canCreateShippingOptions reports whether the operator may write an option
+// here.
+func (u *UI) canCreateShippingOptions(r *http.Request) bool {
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	_, ok := u.parcels.(ShippingOptionCreator)
+
+	return ok && principal.HasScope(scopeFulfillmentWrite)
+}
+
+// createShippingOption writes the option the form describes and returns to
+// the list, which names it; a refusal comes back on the list with what was
+// typed (ADR 0334).
+func (u *UI) createShippingOption(w http.ResponseWriter, r *http.Request) {
+	creator, ok := u.parcels.(ShippingOptionCreator)
+	if !ok {
+		u.errorPage(w, r, http.StatusServiceUnavailable, "Shipping options unavailable",
+			"The fulfillment module's panel surface cannot write a shipping option in this installation.")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		u.errorPage(w, r, http.StatusBadRequest, "Bad request", "The form could not be read.")
+		return
+	}
+
+	name := strings.TrimSpace(r.PostFormValue(formGroupName))
+	err := u.writeShippingOption(r, creator, name)
+	switch {
+	case err == nil:
+		created := url.Values{paramCreated: {name}}
+		corehttp.WriteRedirect(r.Context(), w, ShippingOptionsPath+"?"+created.Encode())
+	case errors.IsInvalid(err) || errors.IsConflict(err) || errors.IsNotFound(err):
+		u.renderShippingOptions(w, r, http.StatusUnprocessableEntity, messageFor(err), r.PostForm, "")
+	default:
+		u.unexpectedFailure(w, r, err, "The shipping option could not be written")
+	}
+}
+
+// writeShippingOption reads the form into the surface's terms: an option in a
+// region charges in that region's currency, one in every region in the
+// currency typed, and a fee is read in the currency's decimals, or as minor
+// units when the panel cannot read its scale.
+func (u *UI) writeShippingOption(r *http.Request, creator ShippingOptionCreator, name string) error {
+	ctx := r.Context()
+	regionID := strings.TrimSpace(r.PostFormValue(formOptionRegion))
+	currency := strings.ToUpper(strings.TrimSpace(r.PostFormValue(formOptionCurrencyCode)))
+	if regionID != "" {
+		region, found := u.optionRegion(ctx, regionID)
+		if !found {
+			return errors.Invalid("admin_ui_region_unknown",
+				"The region %s could not be read; draw the page again.", regionID)
+		}
+		currency = region.Currency
+	}
+	var amount int64
+	if text := strings.TrimSpace(r.PostFormValue(formOptionAmount)); text != "" {
+		scale, known := u.currencyScales(ctx)[currency]
+		var err error
+		if amount, err = parseAmount(text, scale, !known); err != nil {
+			return err
+		}
+	}
+
+	_, err := creator.CreateShippingOption(ctx, name,
+		r.PostFormValue(formOptionProvider), r.PostFormValue(formOptionProfile), r.PostFormValue(formOptionPriceType),
+		amount, currency, regionID,
+		r.PostFormValue(formOptionReturn) != "", r.PostFormValue(formOptionAdminOnly) != "")
+
+	return err
+}
+
+// optionRegions reads the regions a new option may be offered in.
+func (u *UI) optionRegions(ctx context.Context) []optionRegion {
+	records, err := u.catalog.Graph(ctx, query.GraphSpec{
+		Entity: EntityRegion, Fields: []string{fieldID, fieldName, fieldCurrencyCod}, Limit: regionsOffered,
+	})
+	if err != nil {
+		corehttp.LoggerFromContext(ctx).WarnContext(ctx, "the panel could not read the regions", "error", err)
+		return nil
+	}
+	regions := make([]optionRegion, 0, len(records))
+	for _, rec := range records {
+		regions = append(regions, optionRegion{
+			ID: recordString(rec, fieldID), Name: recordString(rec, fieldName),
+			Currency: strings.ToUpper(recordString(rec, fieldCurrencyCod)),
+		})
+	}
+
+	return regions
+}
+
+// optionRegion is the region the form named, as the read layer has it.
+func (u *UI) optionRegion(ctx context.Context, id string) (optionRegion, bool) {
+	for _, region := range u.optionRegions(ctx) {
+		if region.ID == id {
+			return region, true
+		}
+	}
+
+	return optionRegion{}, false
+}
+
+// optionChoicesFor is what the new option's form is drawn on, nil when the
+// operator may not write one or the surface cannot say.
+func (u *UI) optionChoicesFor(r *http.Request) *optionChoices {
+	if !u.canCreateShippingOptions(r) {
+		return nil
+	}
+	creator, _ := u.parcels.(ShippingOptionCreator)
+	ctx := r.Context()
+	raw, err := creator.OptionChoicesJSON(ctx)
+	var choices optionChoices
+	if err == nil {
+		err = json.Unmarshal(raw, &choices)
+	}
+	if err != nil {
+		corehttp.LoggerFromContext(ctx).WarnContext(ctx,
+			"the panel could not read what a shipping option is written on", "error", err)
+		return nil
+	}
+
+	return &choices
+}
+
+// regionsOffered is how many regions the new option's form offers; a shop
+// sells in a handful.
+const regionsOffered = 100
 
 // listShippingOptions renders the options.
 func (u *UI) listShippingOptions(w http.ResponseWriter, r *http.Request) {
@@ -210,12 +379,24 @@ func (u *UI) renderShippingOptions(
 		rows = append(rows, shippingOptionOf(rec, scales, typed, revised))
 	}
 
+	if revised != "" {
+		// What was typed is the row's, not the new option's.
+		typed = url.Values{}
+	}
+	choices := u.optionChoicesFor(r)
+	var regions []optionRegion
+	if choices != nil {
+		regions = u.optionRegions(r.Context())
+	}
 	data := map[string]any{
 		titleKey:        shippingOptionsLabel,
 		"Options":       rows,
 		createdKey:      r.URL.Query().Get(paramCreated),
 		canReviseKey:    u.canReviseShippingOptions(r),
+		"Choices":       choices,
+		"Regions":       regions,
 		refusedKey:      refused,
+		typedKey:        typed,
 		"FlatPriceType": priceFlat,
 	}
 	addPaging(data, page, more, ShippingOptionsPath)

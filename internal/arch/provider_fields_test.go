@@ -860,6 +860,9 @@ var panelSurfaceContracts = map[string]string{
 	// An order's deliveries as they stand after their changes, which the
 	// order's read provider does not publish (ADR 0332).
 	"order_parcels.go": "order.admin's deliveries",
+	// The providers and the profiles a shipping option is written on, which
+	// no read provider publishes (ADR 0334).
+	"shipping_options.go": "fulfillment.admin's option choices",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

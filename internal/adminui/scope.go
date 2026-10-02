@@ -174,9 +174,10 @@ func builtInScopes() map[string]string {
 		// fulfillment module (ADR 0324).
 		routeKey(post, OrderParcelsPath):   scopeOrderWrite,
 		routeKey(post, OrderParcelActPath): scopeFulfillmentWrite,
-		// The shipping options are the fulfillment module's, and so is
-		// revising one (ADR 0333).
+		// The shipping options are the fulfillment module's, and so are
+		// revising one (ADR 0333) and writing one (ADR 0334).
 		routeKey(get, ShippingOptionsPath):       scopeFulfillmentRead,
+		routeKey(post, ShippingOptionsPath):      scopeFulfillmentWrite,
 		routeKey(post, ShippingOptionRevisePath): scopeFulfillmentWrite,
 		// A claim's evidence is bound by the order module, the file stored by
 		// the file module under its own write, asked in the handler (ADR

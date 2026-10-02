@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
@@ -55,4 +57,69 @@ func (a *AdminSurface) ReviseShippingOption(
 		models.OptionTerms{Name: name, Amount: amount, AdminOnly: adminOnly})
 
 	return err
+}
+
+// codeAdminEncodeFailed reports choices the panel's surface could not encode.
+const codeAdminEncodeFailed = "fulfillment_admin_encode_failed"
+
+// adminChoices is what the panel's form writes a shipping option from (ADR
+// 0334); the json tags are the contract with the panel, which cannot import
+// this package.
+type adminChoices struct {
+	Providers    []string       `json:"providers"`
+	Profiles     []adminProfile `json:"profiles"`
+	ProfilesMore bool           `json:"profiles_more"`
+}
+
+// adminProfile is one shipping profile the form offers.
+type adminProfile struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Type string `json:"type"`
+}
+
+// OptionChoicesJSON lists what a shipping option is written from: the
+// providers registered in this installation, and the shipping profiles a
+// page at a time, the most recent first, saying when there are more (ADR
+// 0334).
+func (a *AdminSurface) OptionChoicesJSON(ctx context.Context) (json.RawMessage, error) {
+	profiles, total, err := a.svc.ListShippingProfiles(ctx, ListProfilesInput{Page: Page{Limit: MaxLimit}})
+	if err != nil {
+		return nil, err
+	}
+	choices := adminChoices{
+		Providers: a.svc.ProviderIDs(ctx), Profiles: make([]adminProfile, 0, len(profiles)),
+		ProfilesMore: total > int64(len(profiles)),
+	}
+	for _, profile := range profiles {
+		choices.Profiles = append(choices.Profiles, adminProfile{
+			ID: profile.ID, Name: profile.Name, Type: string(profile.Type),
+		})
+	}
+	body, err := json.Marshal(choices)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeAdminEncodeFailed,
+			"the shipping option choices could not be encoded")
+	}
+
+	return body, nil
+}
+
+// CreateShippingOption writes a shipping option and returns its id (ADR
+// 0334): priceType is "flat", whose fee is amount in the currency's minor
+// units, or "calculated", whose fee its provider quotes; an empty region
+// offers it in every region, and adminOnly keeps it off the storefront.
+func (a *AdminSurface) CreateShippingOption(
+	ctx context.Context, name, providerID, profileID, priceType string, amount int64,
+	currency, regionID string, isReturn, adminOnly bool,
+) (string, error) {
+	option, err := a.svc.CreateShippingOption(ctx, CreateOptionInput{
+		Name: name, ProviderID: providerID, ShippingProfileID: profileID, PriceType: priceType,
+		Amount: amount, CurrencyCode: currency, RegionID: regionID, IsReturn: isReturn, AdminOnly: adminOnly,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return option.ID, nil
 }

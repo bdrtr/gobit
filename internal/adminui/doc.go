@@ -165,7 +165,9 @@
 // fulfillment module's options with their provider, profile, region and fee
 // through the module's option entity, and each row renames its option, sets
 // a flat option's fee and says whether the storefront offers it, from what it
-// was drawn with ([UI.reviseShippingOption], ADR 0333).
+// was drawn with ([UI.reviseShippingOption], ADR 0333). Its form writes an
+// option on a registered provider and one of the newest profiles, in a
+// region's currency or a typed one ([UI.createShippingOption], ADR 0334).
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator

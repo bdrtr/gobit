@@ -2,6 +2,7 @@ package adminui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -37,7 +38,8 @@ func (f *fakeOptionReviser) ReviseShippingOption(
 func optionsCatalog() *fakeCatalog {
 	return &fakeCatalog{byEntity: map[string][]query.Record{
 		EntityRegion: {{
-			"id": "reg_1", "currency_code": "TRY", "currency": map[string]any{"code": "TRY", "decimal_digits": int64(2)},
+			"id": "reg_1", "name": "Turkey", "currency_code": "TRY",
+			"currency": map[string]any{"code": "TRY", "decimal_digits": int64(2)},
 		}},
 		EntityShippingOption: {
 			{
@@ -223,5 +225,126 @@ func TestAShippingOptionRowRevisesItsOption(t *testing.T) {
 	assert.NotContains(t, rec.Body.String(), "sopt_back", "a writer who cannot read is shown none of the list")
 	reviser.err = errors.Unavailable("db_down", "no answer")
 	rec = campaignsRequest(panel, http.MethodPost, ShippingOptionsPath+"/sopt_std", sent, writer...)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+// fakeOptionWriter revises options as fakeOptionReviser does, offers the
+// scripted choices and records each option written.
+type fakeOptionWriter struct {
+	fakeOptionReviser
+	choices   string
+	choiceErr error
+	written   []string
+	writeErr  error
+}
+
+func (f *fakeOptionWriter) OptionChoicesJSON(context.Context) (json.RawMessage, error) {
+	return json.RawMessage(f.choices), f.choiceErr
+}
+
+func (f *fakeOptionWriter) CreateShippingOption(
+	_ context.Context, name, providerID, profileID, priceType string, amount int64,
+	currency, regionID string, isReturn, adminOnly bool,
+) (string, error) {
+	f.written = append(f.written, fmt.Sprintf("%s|%s|%s|%s|%d|%s|%s|%t|%t",
+		name, providerID, profileID, priceType, amount, currency, regionID, isReturn, adminOnly))
+	return "sopt_new", f.writeErr
+}
+
+// twoProviders is what an option is written on: two providers and a profile,
+// with more profiles than the form offers.
+const twoProviders = `{"providers":["manual","spy"],
+	"profiles":[{"id":"sprof_default","name":"Default","type":"default"}],"profiles_more":true}`
+
+// newOptionForm is the page's form that writes an option.
+func newOptionForm(t *testing.T, body string) string {
+	t.Helper()
+
+	_, form, found := strings.Cut(body, `<summary>New shipping option</summary>`)
+	require.True(t, found, "the page offers the form that writes an option")
+	form, _, _ = strings.Cut(form, "</details>")
+
+	return form
+}
+
+// TestTheShippingOptionFormWritesWhatWasTyped is ADR 0334: a writer whose
+// surface can write is offered the registered providers, the newest
+// profiles and the regions with their currencies; the option is written with
+// the name trimmed, in the chosen region's currency whatever was typed or in
+// the typed one for every region, its fee read in that currency's decimals,
+// and the list it lands on names it; a region or a fee the panel cannot read
+// is not sent, and a refusal comes back with what was typed.
+func TestTheShippingOptionFormWritesWhatWasTyped(t *testing.T) {
+	t.Parallel()
+
+	writer := &fakeOptionWriter{choices: twoProviders}
+	panel := shippingOptionsPanel(t, optionsCatalog(), writer)
+	scopes := []string{scopeFulfillmentRead, scopeFulfillmentWrite}
+
+	rec := campaignsRequest(panel, http.MethodGet, ShippingOptionsPath, nil, scopes...)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	form := newOptionForm(t, rec.Body.String())
+	for _, want := range []string{
+		`<option value="manual">manual</option>`, `<option value="spy">spy</option>`,
+		`<option value="sprof_default">Default</option>`, "the newest profiles",
+		`<option value="">every region</option>`, `<option value="reg_1">Turkey (TRY)</option>`,
+		`<option value="calculated">the provider's rate</option>`,
+	} {
+		assert.Contains(t, form, want)
+	}
+	assert.NotContains(t, rec.Body.String(), "<details open>", "nothing typed, nothing open")
+
+	rec = campaignsRequest(panel, http.MethodPost, ShippingOptionsPath, url.Values{
+		formGroupName: {" Courier "}, formOptionProvider: {"spy"}, formOptionProfile: {"sprof_default"},
+		formOptionPriceType: {"flat"}, formOptionAmount: {" 19.90 "}, formOptionRegion: {"reg_1"},
+		formOptionCurrencyCode: {"usd"}, formOptionReturn: {"1"},
+	}, scopes...)
+	require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	assert.Equal(t, ShippingOptionsPath+"?created=Courier", rec.Header().Get("Location"))
+	assert.Equal(t, []string{"Courier|spy|sprof_default|flat|1990|TRY|reg_1|true|false"}, writer.written,
+		"the region's currency, whatever was typed; for returns and offered")
+
+	campaignsRequest(panel, http.MethodPost, ShippingOptionsPath, url.Values{
+		formGroupName: {"Abroad"}, formOptionProvider: {"manual"}, formOptionProfile: {"sprof_default"},
+		formOptionPriceType: {"flat"}, formOptionAmount: {"500"}, formOptionCurrencyCode: {" usd "},
+		formOptionAdminOnly: {"1"},
+	}, scopes...)
+	assert.Equal(t, "Abroad|manual|sprof_default|flat|500|USD||false|true", writer.written[1],
+		"every region in the typed currency, a fee in minor units where the scale is not known; panel only")
+
+	for reason, typed := range map[string]url.Values{
+		"The region reg_gone could not be read; draw the page again.": {formGroupName: {"Gold"}, formOptionRegion: {"reg_gone"}},
+		"This currency has 2 decimal digits":                          {formGroupName: {"Gold"}, formOptionRegion: {"reg_1"}, formOptionAmount: {"1.234"}},
+	} {
+		rec = campaignsRequest(panel, http.MethodPost, ShippingOptionsPath, typed, scopes...)
+		require.Equal(t, http.StatusUnprocessableEntity, rec.Code, reason)
+		assert.Contains(t, rec.Body.String(), reason)
+		assert.Contains(t, newOptionForm(t, rec.Body.String()), `value="Gold"`, "what was typed comes back")
+		assert.Contains(t, rec.Body.String(), "<details open>", "the form is open on what was typed")
+	}
+	assert.Len(t, writer.written, 2, "what the panel cannot read is not sent")
+
+	writer.writeErr = errors.NotFound("fulfillment_provider_not_found", `the shipping provider "spy" is not registered`)
+	rec = campaignsRequest(panel, http.MethodPost, ShippingOptionsPath, url.Values{formGroupName: {"Gold"}}, scopes...)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	assert.Contains(t, rec.Body.String(), "is not registered")
+	writer.writeErr = errors.Unavailable("db_down", "no answer")
+	rec = campaignsRequest(panel, http.MethodPost, ShippingOptionsPath, url.Values{formGroupName: {"Gold"}}, scopes...)
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+
+	rec = campaignsRequest(shippingOptionsPanel(t, optionsCatalog(), &fakeOptionWriter{choices: `{"providers":["manual"],"profiles":[]}`}),
+		http.MethodGet, ShippingOptionsPath, nil, scopes...)
+	assert.Contains(t, rec.Body.String(), "No shipping profile has been written; an option is written on one.")
+	assert.NotContains(t, rec.Body.String(), `action="`+ShippingOptionsPath+`"`, "no profile, no form")
+	rec = campaignsRequest(shippingOptionsPanel(t, optionsCatalog(), &fakeOptionWriter{choiceErr: errors.Unavailable("db_down", "x")}),
+		http.MethodGet, ShippingOptionsPath, nil, scopes...)
+	assert.NotContains(t, rec.Body.String(), "New shipping option", "choices that cannot be read draw no form")
+	rec = campaignsRequest(panel, http.MethodGet, ShippingOptionsPath, nil, scopeFulfillmentRead)
+	assert.NotContains(t, rec.Body.String(), "New shipping option", "a reader writes nothing")
+	rec = campaignsRequest(shippingOptionsPanel(t, optionsCatalog(), &fakeOptionReviser{}), http.MethodGet,
+		ShippingOptionsPath, nil, scopes...)
+	assert.NotContains(t, rec.Body.String(), "New shipping option", "a surface that cannot write offers no form")
+	rec = campaignsRequest(shippingOptionsPanel(t, optionsCatalog(), &fakeOptionReviser{}), http.MethodPost,
+		ShippingOptionsPath, url.Values{formGroupName: {"X"}}, scopeFulfillmentWrite)
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
