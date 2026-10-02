@@ -30,7 +30,8 @@ const docTag = "Identity"
 // module can describe itself.
 func (m *Module) Describe(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/auth/sign-in", openapi.Operation{
-		Summary: "Signs a customer in and sets the session cookie.",
+		Summary:     "Signs a customer in and sets the session cookie.",
+		RequestBody: d.RequestBody(signInRequest{}),
 		Description: "Takes an e-mail address and a password. On success it sets an " +
 			"HttpOnly, SameSite=Lax session cookie and answers 204 with NO BODY: what " +
 			"the caller needs is the cookie, and an echoed identifier would land in " +
@@ -107,7 +108,8 @@ func (m *Module) Describe(d *openapi.Doc) {
 	}
 
 	d.Describe(http.MethodPut, "/admin/v1/customer-credentials", openapi.Operation{
-		Summary: "Writes or replaces a customer's credential.",
+		Summary:     "Writes or replaces a customer's credential.",
+		RequestBody: d.RequestBody(credentialRequest{}),
 		Description: "Takes customer_id, email and password, and stores the password " +
 			"as an argon2id hash. It REPLACES whatever that customer had, so it is both " +
 			"the way an account is created and the way a password is reset.\n\n" +
@@ -138,7 +140,8 @@ func (m *Module) Describe(d *openapi.Doc) {
 // describeSelfRegistration writes the two storefront registration endpoints.
 func (m *Module) describeSelfRegistration(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/auth/register", openapi.Operation{
-		Summary: "Starts a self-registration for an e-mail address.",
+		Summary:     "Starts a self-registration for an e-mail address.",
+		RequestBody: d.RequestBody(registerRequest{}),
 		Description: "Takes email and password. It answers 202 and creates NOTHING about " +
 			"the person: no customer, no credential, no session. What it writes is one row " +
 			"of this module's own, holding the address, the password as an argon2id hash, " +
@@ -174,7 +177,8 @@ func (m *Module) describeSelfRegistration(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPost, "/store/v1/auth/register/verify", openapi.Operation{
-		Summary: "Proves an address and finishes the registration.",
+		Summary:     "Proves an address and finishes the registration.",
+		RequestBody: d.RequestBody(verifyRequest{}),
 		Description: "Takes the token from the message. It opens the customer account if " +
 			"the address has none, writes the credential, and signs the person IN — they " +
 			"have just proved they control the address, which is the same proof a password " +

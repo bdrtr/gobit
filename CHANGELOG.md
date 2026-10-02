@@ -50,6 +50,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **identity-session describes its request bodies** (D216). **For
+  integrators:** the sign-in, registration, verification and credential
+  routes of `contrib/identity-session` describe their bodies in
+  `/openapi.json`, so a generated client can send them; regenerate a client
+  generated before.
+
 - **A customer lists their own orders** (ADR 0367). **For integrators:**
   `GET /store/v1/customers/{id}/orders` answers a page of the proven
   customer's orders, newest first, refusing another customer's list with
