@@ -116,6 +116,19 @@ type updateCustomerRequest struct {
 	Metadata  map[string]any `json:"metadata"`
 }
 
+// storeUpdateCustomerRequest is the body a shopper updates their own profile
+// with: the operator's body without the e-mail address (ADR 0376).
+//
+// The address is the one an account signs in under and receives its mail at,
+// and the storefront has no proof that a shopper owns a new one. Without the
+// field, a body carrying it is an unknown field and is refused.
+type storeUpdateCustomerRequest struct {
+	FirstName *string        `json:"first_name"`
+	LastName  *string        `json:"last_name"`
+	Phone     *string        `json:"phone"`
+	Metadata  map[string]any `json:"metadata"`
+}
+
 // groupRequest is the customer group creation body.
 type groupRequest struct {
 	Name string `json:"name"`

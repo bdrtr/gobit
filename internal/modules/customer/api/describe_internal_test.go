@@ -282,7 +282,7 @@ func anlatilanUclar() []ucBeklentisi {
 		},
 		{
 			metod: http.MethodPut, yol: "/store/v1/customers/{id}", durum: "200",
-			istek: updateCustomerRequest{}, yanit: doluMusteri(),
+			istek: storeUpdateCustomerRequest{}, yanit: doluMusteri(),
 		},
 	}
 

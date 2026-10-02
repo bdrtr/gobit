@@ -12,6 +12,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kırıcı değişiklikler
 
+- **A shopper does not change their address unproven** (ADR 0376, D224).
+  **For integrators:** `PUT /store/v1/customers/{id}` no longer takes
+  `email`; a body carrying it answers 422 `customer_invalid_body` and writes
+  nothing. Nothing on the storefront proved the shopper owned the new
+  address, which receives the account's mail. The operator's
+  `PUT /admin/v1/customers/{id}` keeps the field.
+
 - **A request body requires no field** (ADR 0363, D211). **For
   integrators:** the request bodies of `/openapi.json` list no required
   field, so a client generated from it sends only the fields it sets; a

@@ -252,8 +252,12 @@ func describeStorefront(d *openapi.Doc) {
 	d.Describe(http.MethodPut, "/store/v1/customers/{id}", openapi.Operation{
 		Summary: "Updates the customer's own profile.",
 		Description: "The customer named in the path has to be the customer the " +
-			"request proves; see the refusal codes below.",
-		RequestBody: d.RequestBody(updateCustomerRequest{}),
+			"request proves; see the refusal codes below.\n\n" +
+			"The e-mail address is not changed here: it is the address the account " +
+			"signs in under and receives its mail at, and nothing here proves the " +
+			"shopper owns a new one. A body carrying email is refused as a field this " +
+			"endpoint does not know; an operator changes the address (ADR 0376).",
+		RequestBody: d.RequestBody(storeUpdateCustomerRequest{}),
 		Responses: answers(storefrontIdentityRefusals(), "200",
 			openapi.Response("The updated profile", d.Item(customerDTO{}))),
 	})

@@ -59,8 +59,9 @@ func (h *Handler) storeGetCustomer(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCustomerDTO(customer))
 }
 
-// storeUpdateCustomer müşterinin kendi profilini günceller
-// (PUT /store/v1/customers/{id}).
+// storeUpdateCustomer updates the shopper's own profile
+// (PUT /store/v1/customers/{id}), every field but the e-mail address, which
+// the storefront cannot prove a shopper owns (ADR 0376).
 func (h *Handler) storeUpdateCustomer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -70,13 +71,18 @@ func (h *Handler) storeUpdateCustomer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req updateCustomerRequest
+	var req storeUpdateCustomerRequest
 	if err := decodeBody(w, r, &req); err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
 
-	updated, err := h.svc.UpdateCustomer(ctx, customerID, toUpdateCustomerInput(req))
+	updated, err := h.svc.UpdateCustomer(ctx, customerID, service.UpdateCustomerInput{
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Phone:     req.Phone,
+		Metadata:  req.Metadata,
+	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
 		return
