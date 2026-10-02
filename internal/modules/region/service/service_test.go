@@ -13,11 +13,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 )
 
-// testClock testlerin sabit zaman kaynağıdır; zamana bağlı alanlar
-// belirlenimci olsun diye kullanılır.
+// testClock is the tests' fixed time source; it is used so that time-dependent
+// fields are deterministic.
 var testClock = time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 
-// newTestService sahte depo üzerinde çalışan bir servis ve deposunu döner.
+// newTestService returns a service running on the fake repository, together
+// with the repository.
 func newTestService(t *testing.T) (*Service, *memRepo) {
 	t.Helper()
 
@@ -26,7 +27,7 @@ func newTestService(t *testing.T) (*Service, *memRepo) {
 	return svc, repo
 }
 
-// newRegion test için bir bölge oluşturur.
+// newRegion creates a region for a test.
 func newRegion(t *testing.T, svc *Service, currency string) models.Region {
 	t.Helper()
 
@@ -40,47 +41,47 @@ func newRegion(t *testing.T, svc *Service, currency string) models.Region {
 	return region
 }
 
-// TestCreateRegionNormalizesAndValidates bölge oluşturmanın normalleştirme ve
-// doğrulama kurallarını kanıtlar.
+// TestCreateRegionNormalizesAndValidates proves the normalization and
+// validation rules of region creation.
 func TestCreateRegionNormalizesAndValidates(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("para birimi büyük harfe çevrilir", func(t *testing.T) {
+	t.Run("the currency is converted to upper case", func(t *testing.T) {
 		svc, _ := newTestService(t)
 
 		region, err := svc.CreateRegion(ctx, CreateRegionInput{
-			Name: "  Türkiye  ", CurrencyCode: " try ", TaxRate: 2000,
+			Name: "  T\u00fcrkiye  ", CurrencyCode: " try ", TaxRate: 2000,
 		})
 		require.NoError(t, err)
-		assert.Equal(t, "TRY", region.CurrencyCode, "kod BÜYÜK harf saklanmalı")
-		assert.Equal(t, "Türkiye", region.Name, "ad kırpılmalı")
+		assert.Equal(t, "TRY", region.CurrencyCode, "the code has to be stored in UPPER case")
+		assert.Equal(t, "T\u00fcrkiye", region.Name, "the name has to be trimmed")
 		assert.True(t, strings.HasPrefix(region.ID, models.RegionIDPrefix),
-			"kimlik %q önekiyle başlamalı, %q üretildi", models.RegionIDPrefix, region.ID)
+			"the id has to start with the %q prefix, %q was generated", models.RegionIDPrefix, region.ID)
 		assert.Equal(t, testClock, region.CreatedAt)
 	})
 
-	t.Run("geçersiz para birimi kodu reddedilir", func(t *testing.T) {
+	t.Run("an invalid currency code is rejected", func(t *testing.T) {
 		svc, repo := newTestService(t)
 
 		for _, code := range []string{"", "TR", "TRYX", "TR1", "T RY", "₺₺₺"} {
 			_, err := svc.CreateRegion(ctx, CreateRegionInput{Name: "X", CurrencyCode: code})
-			require.Error(t, err, "%q kabul edilmemeli", code)
-			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "kod: %q", code)
+			require.Error(t, err, "%q must not be accepted", code)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "code: %q", code)
 		}
 		assert.Zero(t, repo.callCount("CreateRegion"),
-			"biçimsel olarak geçersiz kod için veritabanına hiç gidilmemeli")
+			"a formally invalid code must never reach the database")
 	})
 
-	t.Run("tanımsız para birimi reddedilir", func(t *testing.T) {
+	t.Run("an undefined currency is rejected", func(t *testing.T) {
 		svc, _ := newTestService(t)
 
-		// Biçimsel olarak geçerli ama referans tablosunda yok.
+		// Formally valid, but absent from the reference table.
 		_, err := svc.CreateRegion(ctx, CreateRegionInput{Name: "X", CurrencyCode: "XYZ"})
 		require.Error(t, err)
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	})
 
-	t.Run("boş ad reddedilir", func(t *testing.T) {
+	t.Run("an empty name is rejected", func(t *testing.T) {
 		svc, _ := newTestService(t)
 
 		_, err := svc.CreateRegion(ctx, CreateRegionInput{Name: "   ", CurrencyCode: "TRY"})
@@ -88,36 +89,36 @@ func TestCreateRegionNormalizesAndValidates(t *testing.T) {
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	})
 
-	t.Run("aralık dışı vergi oranı reddedilir", func(t *testing.T) {
+	t.Run("an out-of-range tax rate is rejected", func(t *testing.T) {
 		svc, _ := newTestService(t)
 
 		for _, rate := range []int32{-1, models.MaxTaxRate + 1} {
 			_, err := svc.CreateRegion(ctx, CreateRegionInput{
 				Name: "X", CurrencyCode: "TRY", TaxRate: rate,
 			})
-			require.Error(t, err, "oran: %d", rate)
-			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "oran: %d", rate)
+			require.Error(t, err, "rate: %d", rate)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "rate: %d", rate)
 		}
 	})
 
-	t.Run("sınır değerdeki vergi oranları kabul edilir", func(t *testing.T) {
+	t.Run("tax rates at the bounds are accepted", func(t *testing.T) {
 		svc, _ := newTestService(t)
 
 		for _, rate := range []int32{models.MinTaxRate, models.MaxTaxRate} {
 			region, err := svc.CreateRegion(ctx, CreateRegionInput{
 				Name: "X", CurrencyCode: "TRY", TaxRate: rate,
 			})
-			require.NoError(t, err, "oran: %d", rate)
+			require.NoError(t, err, "rate: %d", rate)
 			assert.Equal(t, rate, region.TaxRate)
 		}
 	})
 }
 
-// TestGetRegionRejectsForeignID yanlış türde bir kimliğin "bulunamadı" değil,
-// doğrulama hatası döndüğünü kanıtlar.
+// TestGetRegionRejectsForeignID proves that an id of the wrong type returns a
+// validation error, not "not found".
 //
-// Önekli kimliklerin varlık sebebi budur: bir customer idnin bölge yerine
-// geçmesi, sessiz bir 404 değil ne olduğu belli bir 422 olmalıdır.
+// This is why prefixed ids exist: a customer id standing in for a region has to
+// be a 422 that says what it is, not a silent 404.
 func TestGetRegionRejectsForeignID(t *testing.T) {
 	svc, repo := newTestService(t)
 
@@ -125,31 +126,31 @@ func TestGetRegionRejectsForeignID(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-	assert.Zero(t, repo.callCount("GetRegion"), "yanlış önekli kimlik için depoya gidilmemeli")
+	assert.Zero(t, repo.callCount("GetRegion"), "an id with the wrong prefix must not reach the repository")
 }
 
-// TestUpdateRegionIsPartial kısmi güncellemenin yalnızca verilen alanları
-// değiştirdiğini kanıtlar.
+// TestUpdateRegionIsPartial proves that a partial update changes only the
+// given fields.
 func TestUpdateRegionIsPartial(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
 	region := newRegion(t, svc, "TRY")
 
-	name := "Yeni Ad"
+	name := "New Name"
 	updated, err := svc.UpdateRegion(ctx, region.ID, UpdateRegionInput{Name: &name})
 	require.NoError(t, err)
 
-	assert.Equal(t, "Yeni Ad", updated.Name)
-	assert.Equal(t, region.CurrencyCode, updated.CurrencyCode, "verilmeyen para birimi değişmemeli")
-	assert.Equal(t, region.TaxRate, updated.TaxRate, "verilmeyen vergi oranı değişmemeli")
-	assert.Equal(t, region.AutomaticTaxes, updated.AutomaticTaxes, "verilmeyen bayrak değişmemeli")
+	assert.Equal(t, "New Name", updated.Name)
+	assert.Equal(t, region.CurrencyCode, updated.CurrencyCode, "a currency that was not given must not change")
+	assert.Equal(t, region.TaxRate, updated.TaxRate, "a tax rate that was not given must not change")
+	assert.Equal(t, region.AutomaticTaxes, updated.AutomaticTaxes, "a flag that was not given must not change")
 }
 
-// TestUpdateRegionZeroValuesAreWritten sıfır değerli bir yamanın "dokunma"
-// sayılmadığını kanıtlar.
+// TestUpdateRegionZeroValuesAreWritten proves that a zero-valued patch is not
+// treated as "leave alone".
 //
-// İşaretçi kullanmanın tek sebebi budur: false ve 0 geçerli değerlerdir ve
-// alanın verilip verilmediğinden ayırt edilmelidir.
+// That is the only reason for using pointers: false and 0 are valid values and
+// have to be distinguishable from the field not being given at all.
 func TestUpdateRegionZeroValuesAreWritten(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -165,13 +166,13 @@ func TestUpdateRegionZeroValuesAreWritten(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.False(t, updated.AutomaticTaxes, "false yazılmalı, 'dokunma' sayılmamalı")
-	assert.Zero(t, updated.TaxRate, "0 yazılmalı, 'dokunma' sayılmamalı")
+	assert.False(t, updated.AutomaticTaxes, "false has to be written, not treated as 'leave alone'")
+	assert.Zero(t, updated.TaxRate, "0 has to be written, not treated as 'leave alone'")
 	assert.Equal(t, region.Name, updated.Name)
 }
 
-// TestUpdateRegionRejectsEmptyPatch boş bir yamanın sessizce başarılı
-// dönmediğini kanıtlar.
+// TestUpdateRegionRejectsEmptyPatch proves that an empty patch does not
+// silently return success.
 func TestUpdateRegionRejectsEmptyPatch(t *testing.T) {
 	ctx := context.Background()
 	svc, repo := newTestService(t)
@@ -182,11 +183,11 @@ func TestUpdateRegionRejectsEmptyPatch(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-	assert.Zero(t, repo.callCount("UpdateRegion"), "boş yama için depoya gidilmemeli")
+	assert.Zero(t, repo.callCount("UpdateRegion"), "an empty patch must not reach the repository")
 }
 
-// TestUpdateRegionValidatesCurrency yamadaki para biriminin de
-// normalleştirilip doğrulandığını kanıtlar.
+// TestUpdateRegionValidatesCurrency proves that the currency in a patch is
+// normalized and validated too.
 func TestUpdateRegionValidatesCurrency(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -200,11 +201,11 @@ func TestUpdateRegionValidatesCurrency(t *testing.T) {
 	good := "usd"
 	updated, err := svc.UpdateRegion(ctx, region.ID, UpdateRegionInput{CurrencyCode: &good})
 	require.NoError(t, err)
-	assert.Equal(t, "USD", updated.CurrencyCode, "yamadaki kod da BÜYÜK harfe çevrilmeli")
+	assert.Equal(t, "USD", updated.CurrencyCode, "the code in the patch has to be converted to UPPER case too")
 }
 
-// TestAddCountryToRegionUniqueness bir ülkenin en fazla bir bölgeye ait
-// olabileceğini kanıtlar.
+// TestAddCountryToRegionUniqueness proves that a country can belong to at most
+// one region.
 func TestAddCountryToRegionUniqueness(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -213,22 +214,22 @@ func TestAddCountryToRegionUniqueness(t *testing.T) {
 
 	country, err := svc.AddCountryToRegion(ctx, first.ID, "tr")
 	require.NoError(t, err)
-	assert.Equal(t, "TR", country.Code, "ülke kodu BÜYÜK harfe çevrilmeli")
+	assert.Equal(t, "TR", country.Code, "the country code has to be converted to UPPER case")
 	require.NotNil(t, country.RegionID)
 	assert.Equal(t, first.ID, *country.RegionID)
 
 	_, err = svc.AddCountryToRegion(ctx, second.ID, "TR")
-	require.Error(t, err, "aynı ülke ikinci bir bölgeye eklenememeli")
+	require.Error(t, err, "the same country must not be addable to a second region")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 
-	// İlk bölgedeki bağ bozulmamış olmalı.
+	// The attachment to the first region has to be intact.
 	resolved, err := svc.ResolveRegionForCountry(ctx, "TR")
 	require.NoError(t, err)
 	assert.Equal(t, first.ID, resolved.ID)
 }
 
-// TestAddCountryToRegionIsIdempotent aynı bölgeye tekrar ekleme isteğinin hata
-// üretmediğini kanıtlar.
+// TestAddCountryToRegionIsIdempotent proves that a repeated request to add a
+// country to the same region does not produce an error.
 func TestAddCountryToRegionIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -238,13 +239,13 @@ func TestAddCountryToRegionIsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 
 	again, err := svc.AddCountryToRegion(ctx, region.ID, "TR")
-	require.NoError(t, err, "tekrarlanan yönetim isteği hata üretmemeli")
+	require.NoError(t, err, "a repeated admin request must not produce an error")
 	require.NotNil(t, again.RegionID)
 	assert.Equal(t, region.ID, *again.RegionID)
 }
 
-// TestAddCountryToRegionValidatesInput geçersiz kimlik ve ülke kodunun depoya
-// hiç gitmeden reddedildiğini kanıtlar.
+// TestAddCountryToRegionValidatesInput proves that an invalid id and an invalid
+// country code are rejected without reaching the repository at all.
 func TestAddCountryToRegionValidatesInput(t *testing.T) {
 	ctx := context.Background()
 	svc, repo := newTestService(t)
@@ -257,14 +258,14 @@ func TestAddCountryToRegionValidatesInput(t *testing.T) {
 
 	for _, code := range []string{"", "T", "TUR", "T1"} {
 		_, err = svc.AddCountryToRegion(ctx, region.ID, code)
-		require.Error(t, err, "%q kabul edilmemeli", code)
-		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "kod: %q", code)
+		require.Error(t, err, "%q must not be accepted", code)
+		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "code: %q", code)
 	}
-	assert.Zero(t, repo.callCount("AssignCountry"), "geçersiz girdi için depoya gidilmemeli")
+	assert.Zero(t, repo.callCount("AssignCountry"), "invalid input must not reach the repository")
 }
 
-// TestRemoveCountryFromRegion ülkenin bölgeden çıkarılmasını ve yanlış bölgeyle
-// yapılan çağrının reddini kanıtlar.
+// TestRemoveCountryFromRegion proves that a country is removed from its region
+// and that a call made with the wrong region is rejected.
 func TestRemoveCountryFromRegion(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -275,7 +276,7 @@ func TestRemoveCountryFromRegion(t *testing.T) {
 	require.NoError(t, err)
 
 	err = svc.RemoveCountryFromRegion(ctx, second.ID, "TR")
-	require.Error(t, err, "başka bölgenin ülkesi çıkarılamamalı")
+	require.Error(t, err, "another region's country must not be removable")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
 	require.NoError(t, svc.RemoveCountryFromRegion(ctx, first.ID, "tr"))
@@ -285,15 +286,15 @@ func TestRemoveCountryFromRegion(t *testing.T) {
 	assert.Equal(t, CodeCountryUnassigned, errors.CodeOf(err))
 }
 
-// TestResolveRegionForCountry çözümün mutlu yolunu ve üç ayrı başarısızlık
-// durumunu kanıtlar.
+// TestResolveRegionForCountry proves the happy path of the resolution and the
+// three distinct failure cases.
 //
-// Üçü de errors.NotFound döner ama KODLARI farklıdır; çağıran hangi
-// düzeltmenin gerektiğini kodundan bilir.
+// All three return errors.NotFound but their CODES differ; the caller knows
+// from the code which fix is needed.
 func TestResolveRegionForCountry(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("ülkeden bölgeye tek sorguda gidilir", func(t *testing.T) {
+	t.Run("country to region takes a single query", func(t *testing.T) {
 		svc, repo := newTestService(t)
 		region := newRegion(t, svc, "TRY")
 		_, err := svc.AddCountryToRegion(ctx, region.ID, "TR")
@@ -305,19 +306,19 @@ func TestResolveRegionForCountry(t *testing.T) {
 		assert.Equal(t, region.ID, resolved.ID)
 		assert.Equal(t, "TRY", resolved.CurrencyCode)
 		assert.Equal(t, 1, repo.callCount("GetRegionByCountry"))
-		assert.Zero(t, repo.callCount("GetCountry"), "mutlu yolda ikinci sorgu yapılmamalı")
+		assert.Zero(t, repo.callCount("GetCountry"), "the happy path must not make a second query")
 	})
 
-	t.Run("tanımsız ülke kodu doğrulamada elenir", func(t *testing.T) {
+	t.Run("an undefined country code is eliminated by validation", func(t *testing.T) {
 		svc, repo := newTestService(t)
 
-		_, err := svc.ResolveRegionForCountry(ctx, "TURKIYE")
+		_, err := svc.ResolveRegionForCountry(ctx, "TURKEY")
 		require.Error(t, err)
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 		assert.Zero(t, repo.callCount("GetRegionByCountry"))
 	})
 
-	t.Run("bilinmeyen ülke bulunamadı döner", func(t *testing.T) {
+	t.Run("an unknown country returns not found", func(t *testing.T) {
 		svc, _ := newTestService(t)
 
 		_, err := svc.ResolveRegionForCountry(ctx, "ZZ")
@@ -326,7 +327,7 @@ func TestResolveRegionForCountry(t *testing.T) {
 		assert.Equal(t, "country_not_found", errors.CodeOf(err))
 	})
 
-	t.Run("bölgesiz ülke ayrı bir kodla döner", func(t *testing.T) {
+	t.Run("a country without a region returns a separate code", func(t *testing.T) {
 		svc, _ := newTestService(t)
 
 		_, err := svc.ResolveRegionForCountry(ctx, "DE")
@@ -335,14 +336,15 @@ func TestResolveRegionForCountry(t *testing.T) {
 		assert.Equal(t, CodeCountryUnassigned, errors.CodeOf(err))
 	})
 
-	t.Run("bölgesi silinmiş ülke tutarsızlık kodu döner", func(t *testing.T) {
+	t.Run("a country whose region was deleted returns the inconsistency code", func(t *testing.T) {
 		svc, repo := newTestService(t)
 		region := newRegion(t, svc, "TRY")
 		_, err := svc.AddCountryToRegion(ctx, region.ID, "TR")
 		require.NoError(t, err)
 
-		// Bölgeyi ülkeleri serbest BIRAKMADAN sil: gerçek depoda oluşmayan,
-		// ama servisin ayırt edebilmesi gereken tutarsız durum.
+		// Delete the region WITHOUT releasing its countries: an inconsistent
+		// state that does not arise in the real repository, but that the
+		// service has to be able to tell apart.
 		repo.mu.Lock()
 		stale := repo.regions[region.ID]
 		deleted := testClock
@@ -357,11 +359,12 @@ func TestResolveRegionForCountry(t *testing.T) {
 	})
 }
 
-// TestDeleteRegionReleasesCountries silinen bölgenin ülkelerinin serbest
-// kaldığını kanıtlar.
+// TestDeleteRegionReleasesCountries proves that the countries of a deleted
+// region are released.
 //
-// Serbest bırakılmasaydı ülke ölü bir bölgeye bağlı kalır, başka hiçbir bölgeye
-// eklenemez ve o ülkedeki müşteri için sepet açılamazdı.
+// Had they not been released, the country would stay attached to a dead region,
+// it could not be added to any other region, and no cart could be opened for a
+// customer in that country.
 func TestDeleteRegionReleasesCountries(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -374,20 +377,20 @@ func TestDeleteRegionReleasesCountries(t *testing.T) {
 	require.NoError(t, svc.DeleteRegion(ctx, first.ID))
 
 	_, err = svc.GetRegion(ctx, first.ID)
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "silinen bölge okunamamalı")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "a deleted region must not be readable")
 
-	// Ülke artık serbesttir ve başka bir bölgeye eklenebilir.
+	// The country is now free and can be added to another region.
 	country, err := svc.AddCountryToRegion(ctx, second.ID, "TR")
-	require.NoError(t, err, "serbest kalan ülke başka bölgeye eklenebilmeli")
+	require.NoError(t, err, "a released country has to be addable to another region")
 	require.NotNil(t, country.RegionID)
 	assert.Equal(t, second.ID, *country.RegionID)
 }
 
-// TestListCountriesValidatesRegionFilter bölge süzgecinin doğrulandığını
-// kanıtlar.
+// TestListCountriesValidatesRegionFilter proves that the region filter is
+// validated.
 //
-// Doğrulanmasaydı yanlış türde bir kimlik boş liste döndürür ve istemci
-// bölgenin ülkesi olmadığını sanırdı.
+// Without validation an id of the wrong type would return an empty list and the
+// client would conclude that the region has no countries.
 func TestListCountriesValidatesRegionFilter(t *testing.T) {
 	ctx := context.Background()
 	svc, repo := newTestService(t)
@@ -395,14 +398,14 @@ func TestListCountriesValidatesRegionFilter(t *testing.T) {
 	for _, id := range []string{"", "prod_01"} {
 		filter := id
 		_, err := svc.ListCountries(ctx, ListCountriesInput{RegionID: &filter})
-		require.Error(t, err, "kimlik: %q", id)
-		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "kimlik: %q", id)
+		require.Error(t, err, "id: %q", id)
+		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "id: %q", id)
 	}
 	assert.Zero(t, repo.callCount("ListCountries"))
 }
 
-// TestPagingIsNormalized sayfalama sınırlarının uygulandığını ve UYGULANAN
-// değerin geri bildirildiğini kanıtlar.
+// TestPagingIsNormalized proves that the paging bounds are applied and that the
+// APPLIED value is reported back.
 func TestPagingIsNormalized(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -410,19 +413,19 @@ func TestPagingIsNormalized(t *testing.T) {
 
 	page, err := svc.ListRegions(ctx, 0, 0)
 	require.NoError(t, err)
-	assert.Equal(t, DefaultLimit, page.Limit, "limit verilmezse varsayılan uygulanmalı")
+	assert.Equal(t, DefaultLimit, page.Limit, "if no limit is given the default has to be applied")
 
 	page, err = svc.ListRegions(ctx, MaxLimit+1000, 0)
 	require.NoError(t, err)
-	assert.Equal(t, MaxLimit, page.Limit, "limit azami değerle kırpılmalı")
+	assert.Equal(t, MaxLimit, page.Limit, "the limit has to be cut to the maximum value")
 
 	_, err = svc.ListRegions(ctx, 10, -1)
-	require.Error(t, err, "negatif offset reddedilmeli")
+	require.Error(t, err, "a negative offset has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestListCurrenciesReturnsSeededSet para birimi listesinin ondalık basamak
-// bilgisiyle döndüğünü kanıtlar.
+// TestListCurrenciesReturnsSeededSet proves that the currency list comes back
+// with the decimal digits.
 func TestListCurrenciesReturnsSeededSet(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -436,12 +439,12 @@ func TestListCurrenciesReturnsSeededSet(t *testing.T) {
 		digits[currency.Code] = currency.DecimalDigits
 	}
 	assert.Equal(t, int32(2), digits["TRY"])
-	assert.Equal(t, int32(0), digits["JPY"], "JPY ondalıksızdır")
-	assert.Equal(t, int32(3), digits["KWD"], "KWD üç basamaklıdır")
+	assert.Equal(t, int32(0), digits["JPY"], "JPY has no decimal digits")
+	assert.Equal(t, int32(3), digits["KWD"], "KWD has three decimal digits")
 }
 
-// TestGetCurrencyNormalizesCode para birimi okumasının kodu normalleştirdiğini
-// kanıtlar.
+// TestGetCurrencyNormalizesCode proves that reading a currency normalizes the
+// code.
 func TestGetCurrencyNormalizesCode(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -460,8 +463,8 @@ func TestGetCurrencyNormalizesCode(t *testing.T) {
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestUnconfiguredServiceReturnsTypedError deposuz bir servisin panik değil
-// tipli hata döndürdüğünü kanıtlar.
+// TestUnconfiguredServiceReturnsTypedError proves that a service without a
+// repository returns a typed error, not a panic.
 func TestUnconfiguredServiceReturnsTypedError(t *testing.T) {
 	ctx := context.Background()
 	svc := New(nil, Options{})

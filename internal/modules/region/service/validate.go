@@ -9,115 +9,120 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 )
 
-// maxNameLen bölge adının azami bayt uzunluğudur. Sınırsız bir ad, tek istekle
-// tabloya megabaytlarca metin yazmanın en ucuz yoludur.
+// maxNameLen is the maximum byte length of a region name. An unbounded name is
+// the cheapest way to write megabytes of text into the table with a single
+// request.
 const maxNameLen = 255
 
-// maxIDLen kabul edilen kimlik uzunluğu üst sınırıdır. Kimlikler link
-// tablosundaki benzersiz indekse de girdiği için sınır orayla uyumlu tutulur.
+// maxIDLen is the upper bound on the accepted id length. Because ids also go
+// into the unique index of the link table, the bound is kept consistent with
+// that index.
 const maxIDLen = 255
 
-// NormalizeCurrencyCode ISO 4217 para birimi kodunu doğrular ve BÜYÜK harfe
-// çevirir.
+// NormalizeCurrencyCode validates an ISO 4217 currency code and converts it to
+// UPPER case.
 //
-// Kabul edilen biçim tam üç HARFTİR. Baştaki/sondaki boşluklar kırpılır (kod
-// zaten büyük harfe dönüştürülerek normalleştiriliyor; boşluk için ayrı bir
-// katılık tutarsız olurdu), ama harf dışı hiçbir karakter kabul edilmez.
+// The accepted form is exactly three LETTERS. Leading/trailing whitespace is
+// trimmed (the code is already normalized by being converted to upper case; a
+// separate strictness for whitespace would be inconsistent), but no character
+// other than a letter is accepted.
 //
-// Yalnızca BİÇİM denetlenir; kodun tanımlı olup olmadığı ancak veritabanındaki
-// referans tablosundan bilinir ve oradaki foreign key ile denetlenir. Ayrım
-// önemlidir: "abc" biçimsel olarak geçerli ama tanımsız bir koddur ve ikisi de
-// errors.Invalid döner, farkları yalnızca mesajlarındadır.
+// Only the FORM is checked; whether the code is defined is known only from the
+// reference table in the database, and it is checked there by the foreign key.
+// The distinction matters: "abc" is a formally valid but undefined code, and
+// both cases return errors.Invalid; they differ only in their messages.
 //
-// Dışa açıktır çünkü aynı normalleştirme hem servis girdilerinde hem de
-// modüller arası yüzeyde (bkz. interop.go) kullanılır ve iki yerin ayrışması,
-// bir yoldan geçen kodun diğerinden geçmemesi demek olurdu.
+// It is exported because the same normalization is used both on the service
+// inputs and on the cross-module surface (see interop.go), and the two places
+// diverging would mean that a code passing through one path does not pass
+// through the other.
 func NormalizeCurrencyCode(code string) (string, error) {
-	return normalizeAlphaCode(code, models.CurrencyCodeLength, "para birimi kodu", "ISO 4217")
+	return normalizeAlphaCode(code, models.CurrencyCodeLength, "the currency code", "ISO 4217")
 }
 
-// NormalizeCountryCode ISO 3166-1 alpha-2 ülke kodunu doğrular ve BÜYÜK harfe
-// çevirir.
+// NormalizeCountryCode validates an ISO 3166-1 alpha-2 country code and
+// converts it to UPPER case.
 //
-// Kabul edilen biçim tam iki HARFTİR; kuralın gerekçesi
-// [NormalizeCurrencyCode] ile aynıdır.
+// The accepted form is exactly two LETTERS; the rationale for the rule is the
+// same as for [NormalizeCurrencyCode].
 func NormalizeCountryCode(code string) (string, error) {
-	return normalizeAlphaCode(code, models.CountryCodeLength, "ülke kodu", "ISO 3166-1 alpha-2")
+	return normalizeAlphaCode(code, models.CountryCodeLength, "the country code", "ISO 3166-1 alpha-2")
 }
 
-// normalizeAlphaCode sabit uzunluklu bir alfabetik kodu doğrular ve büyük
-// harfe çevirir.
+// normalizeAlphaCode validates a fixed-length alphabetic code and converts it
+// to upper case.
 //
-// ASCII denetimi büyük harfe çevirmeden ÖNCE, yalnızca kırpılmış ORİJİNAL
-// rune'lar üzerinde yapılır. Sıra kritiktir: Unicode'un basit büyük harf
-// eşlemesi bazı ASCII DIŞI harfleri ASCII harflere taşır (noktasız "ı" -> "I",
-// uzun "ſ" -> "S"). Denetim çevirmeden SONRA yapılsaydı "ıs" sessizce "IS"
-// (İzlanda), "ıls" da "ILS" olur ve fonksiyonun "yalnızca ASCII harf" sözü
-// tutmazdı.
+// The ASCII check is made BEFORE the upper-case conversion, and only on the
+// trimmed ORIGINAL runes. The order is critical: Unicode's simple upper-case
+// mapping moves some NON-ASCII letters onto ASCII letters (the dotless i,
+// U+0131, -> "I"; the long s "ſ" -> "S"). Had the check been made AFTER the
+// conversion, a dotless i followed by "s" would silently become "IS" (Iceland),
+// a dotless i followed by "ls" would become "ILS", and the function's "ASCII
+// letters only" promise would not hold.
 //
-// Uzunluk BAYT değil RUNE sayısıyla ölçülür: "TRY" ile aynı bayt uzunluğunda
-// ama üç harf olmayan bir girdi (örn. iki çok baytlı karakter) aksi hâlde
-// uzunluk denetimini geçer, harf denetiminde takılırdı — mesaj o zaman yanlış
-// sebebi gösterirdi.
+// Length is measured in RUNES, not BYTES: an input with the same byte length as
+// "TRY" that is not three characters (e.g. a two-byte letter and an ASCII one)
+// would otherwise pass the length check and get stuck at the letter check —
+// the message would then report the wrong reason.
 func normalizeAlphaCode(code string, length int, label, standard string) (string, error) {
 	trimmed := strings.TrimSpace(code)
 	if len([]rune(trimmed)) != length {
 		return "", errors.Invalid(CodeInvalidInput,
-			"%s tam %d harf olmalı (%s), %q verildi", label, length, standard, code)
+			"%s has to be exactly %d letters (%s), %q given", label, length, standard, code)
 	}
 	for _, r := range trimmed {
 		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
 			return "", errors.Invalid(CodeInvalidInput,
-				"%s yalnızca ASCII harf içerebilir (%s), %q verildi", label, standard, code)
+				"%s can only contain ASCII letters (%s), %q given", label, standard, code)
 		}
 	}
 	return strings.ToUpper(trimmed), nil
 }
 
-// normalizeName bölge adını doğrular ve baş/son boşluklarını kırpar.
+// normalizeName validates a region name and trims its leading/trailing
+// whitespace.
 func normalizeName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return "", errors.Invalid(CodeInvalidInput, "bölge adı boş olamaz")
+		return "", errors.Invalid(CodeInvalidInput, "the region name cannot be empty")
 	}
 	if len(trimmed) > maxNameLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"bölge adı en fazla %d bayt olabilir, %d bayt verildi", maxNameLen, len(trimmed))
+			"the region name can be at most %d bytes, %d bytes given", maxNameLen, len(trimmed))
 	}
 	for _, r := range trimmed {
-		// Kontrol karakterleri (satır sonu dâhil) bir ad değildir ve log ile
-		// yönetim arayüzünü bozar.
+		// Control characters (line breaks included) are not part of a name, and
+		// they break the log and the admin interface.
 		if unicode.IsControl(r) {
-			return "", errors.Invalid(CodeInvalidInput, "bölge adı kontrol karakteri içeremez")
+			return "", errors.Invalid(CodeInvalidInput, "the region name cannot contain a control character")
 		}
 	}
 	return trimmed, nil
 }
 
-// validateTaxRate vergi oranının izin verilen aralıkta olduğunu doğrular.
+// validateTaxRate validates that the tax rate is within the allowed range.
 //
-// Oran BAZ PUANDIR (2000 = %20). Üst sınır %100'dür: daha büyük bir oran
-// veri giriş hatasıdır ve sepet toplamını sessizce ikiye katlardı.
+// The rate is in BASIS POINTS (2000 = 20%). The upper bound is 100%: a larger
+// rate is a data entry error and would silently double the cart total.
 func validateTaxRate(rate int32) error {
 	if rate < models.MinTaxRate {
 		return errors.Invalid(CodeInvalidInput,
-			"vergi oranı negatif olamaz, %d verildi (baz puan)", rate)
+			"the tax rate cannot be negative, %d given (basis points)", rate)
 	}
 	if rate > models.MaxTaxRate {
 		return errors.Invalid(CodeInvalidInput,
-			"vergi oranı en fazla %d baz puan (%%100) olabilir, %d verildi", models.MaxTaxRate, rate)
+			"the tax rate can be at most %d basis points (100%%), %d given", models.MaxTaxRate, rate)
 	}
 	return nil
 }
 
-// requireRegionID bir bölge kimliğinin kullanılabilir ve DOĞRU TÜRDE olduğunu
-// doğrular.
+// requireRegionID validates that a region id is usable and of the RIGHT TYPE.
 //
-// Önek kontrolü bilinçlidir: önekli kimliklerin varlık sebebi, yanlış türde bir
-// kimliğin (örn. bir customer idnin bölge yerine geçmesi) "bulunamadı"
-// olarak değil, ne olduğu belli bir doğrulama hatası olarak dönmesidir.
+// The prefix check is deliberate: the reason prefixed ids exist is that an id
+// of the wrong type (e.g. a customer id standing in for a region) comes back
+// not as "not found" but as a validation error that says what it is.
 func requireRegionID(id string) error {
-	const label = "bölge kimliği"
+	const label = "the region id"
 	if id == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
 	}
@@ -126,23 +131,24 @@ func requireRegionID(id string) error {
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir, %d bayt verildi", label, maxIDLen, len(id))
+			"%s can be at most %d bytes, %d bytes given", label, maxIDLen, len(id))
 	}
 	if !strings.HasPrefix(id, models.RegionIDPrefix) {
 		return errors.Invalid(CodeInvalidInput,
-			"%s %q önekiyle başlamalı, %q verildi", label, models.RegionIDPrefix, id)
+			"%s has to start with the %q prefix, %q given", label, models.RegionIDPrefix, id)
 	}
 	return nil
 }
 
-// normalizePaging sayfalama parametrelerini uygulanabilir değerlere çevirir.
+// normalizePaging converts the paging parameters into applicable values.
 //
-// Limit 0 veya negatifse varsayılan, [MaxLimit]'i aşıyorsa azami değer
-// uygulanır; kırpma hata DEĞİLDİR ama uygulanan değer sonuçta geri bildirilir
-// (bkz. [Page]). Negatif offset ise düzeltilemez bir istektir ve reddedilir.
+// If the limit is 0 or negative the default is applied, and if it exceeds
+// [MaxLimit] the maximum value is applied; clamping is NOT an error, but the
+// applied value is reported back in the result (see [Page]). A negative offset,
+// on the other hand, is a request that cannot be corrected, and it is rejected.
 func normalizePaging(limit, offset int32) (outLimit, outOffset int32, err error) {
 	if offset < 0 {
-		return 0, 0, errors.Invalid(CodeInvalidInput, "offset negatif olamaz, %d verildi", offset)
+		return 0, 0, errors.Invalid(CodeInvalidInput, "the offset cannot be negative, %d given", offset)
 	}
 	if limit <= 0 {
 		limit = DefaultLimit
@@ -153,12 +159,13 @@ func normalizePaging(limit, offset int32) (outLimit, outOffset int32, err error)
 	return limit, offset, nil
 }
 
-// clampToInt32 bir int değeri int32 aralığına sıkıştırır.
+// clampToInt32 clamps an int value into the int32 range.
 //
-// Query katmanının [query.ListOptions] alanları int'tir; 64 bit bir platformda
-// oradan gelen devasa bir değer int32'ye dönüşürken SARARDI ve negatif bir
-// limit üretebilirdi. Sıkıştırma bu sarmayı imkânsız kılar; sınırın kendisi
-// zaten normalizePaging'de [MaxLimit]'e indirilir.
+// The fields of the Query layer's [query.ListOptions] are int; on a 64-bit
+// platform a huge value coming from there would WRAP when converted to int32
+// and could produce a negative limit. Clamping makes that wraparound
+// impossible; the bound itself is brought down to [MaxLimit] in normalizePaging
+// anyway.
 func clampToInt32(value int) int32 {
 	if value > math.MaxInt32 {
 		return math.MaxInt32

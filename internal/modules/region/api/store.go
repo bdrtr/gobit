@@ -7,12 +7,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/service"
 )
 
-// storeListRegions GET /store/v1/regions handler'ıdır.
+// storeListRegions is the handler for GET /store/v1/regions.
 //
-// Vitrinin para birimi/bölge seçimi buradan beslenir: her bölge para
-// biriminin sembolü ve ONDALIK BASAMAK sayısıyla birlikte döner, çünkü
-// tutarlar minor unit tam sayıdır ve istemci bölme çarpanını aynı yanıttan
-// öğrenmelidir (bkz. currencyDTO.DecimalDigits).
+// The storefront's currency/region picker is fed from here: every region comes
+// back together with its currency's symbol and number of DECIMAL DIGITS,
+// because amounts are minor-unit integers and the client has to learn the
+// divisor from the same response (see currencyDTO.DecimalDigits).
 func (a *API) storeListRegions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -30,7 +30,7 @@ func (a *API) storeListRegions(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toStoreRegionDTO)
 }
 
-// storeGetRegion GET /store/v1/regions/{id} handler'ıdır.
+// storeGetRegion is the handler for GET /store/v1/regions/{id}.
 func (a *API) storeGetRegion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -42,7 +42,7 @@ func (a *API) storeGetRegion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toStoreRegionDTO(region))
 }
 
-// toStoreRegionDTO vitrin görünümünü yanıt gövdesine çevirir.
+// toStoreRegionDTO turns the storefront view into the response body.
 func toStoreRegionDTO(item service.StoreRegion) storeRegionDTO {
 	dto := storeRegionDTO{
 		ID:           item.Region.ID,

@@ -73,10 +73,10 @@ green on the same tree the same day.
 | `internal/modules/promotion` | `TestEszamanliReleaseSayaciBirKezDusurur` | serialization failure (40001) where a waiter was meant to proceed |
 | `internal/modules/promotion` | `TestKuralEklemeSilinenPromosyonaYazmaz` | refused as Internal (500) where NotFound (404) was meant |
 | `internal/modules/promotion` | `TestYontemYazmaSilinenPromosyonaYazmaz` | refused as Internal (500) where NotFound (404) was meant |
-| `internal/modules/region` | `TestBolgeGuncellemeKilitAltindaOkur` | serialization failure (40001) where a waiter was meant to proceed |
-| `internal/modules/region` | `TestUlkeAtamasiKilitAltindaOkur` | refused as Internal (500) where Conflict (409) was meant |
-| `internal/modules/region` | `TestSilinmekteOlanBolgeyeUlkeEklenemez` | refused as Internal (500) where NotFound (404) was meant |
-| `internal/modules/region` | `TestEszamanliUlkeAtamasiTekKazanan` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/region` | `TestARegionUpdateReadsUnderTheLock` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/region` | `TestCountryAssignmentReadsUnderTheLock` | refused as Internal (500) where Conflict (409) was meant |
+| `internal/modules/region` | `TestACountryCannotJoinARegionBeingDeleted` | refused as Internal (500) where NotFound (404) was meant |
+| `internal/modules/region` | `TestConcurrentCountryAssignmentHasOneWinner` | serialization failure (40001) where a waiter was meant to proceed |
 | `internal/modules/tax` | `TestAProvinceCannotJoinARootBeingDeleted` | refused as Internal (500) where NotFound (404) was meant |
 | `internal/modules/tax` | `TestARateCannotJoinARegionBeingDeleted` | refused as Internal (500) where NotFound (404) was meant |
 

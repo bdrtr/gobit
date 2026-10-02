@@ -10,17 +10,17 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 )
 
-// memRepo [Repository]'nin bellek içi uygulamasıdır.
+// memRepo is the in-memory implementation of [Repository].
 //
-// Amacı, servisin KURALLARINI veritabanı olmadan doğrulayabilmektir: kimlik
-// üretimi, normalleştirme, kısmi güncelleme, çakışma sınıflandırması ve toplu
-// okuma sayısı. Veritabanına özgü iddialar (satır kilidinin eşzamanlı iki
-// atamayı ayırması, soft delete'in SQL tarafında süzülmesi, foreign key'in
-// tanımsız para birimini reddetmesi) BURADA DEĞİL, entegrasyon testlerinde
-// kanıtlanır — sahte bir depo kendi yazdığı kuralı doğrulayamaz.
+// Its purpose is to verify the service's RULES without a database: id
+// generation, normalization, partial update, conflict classification and the
+// number of batch reads. Database-specific claims (the row lock separating two
+// concurrent assignments, soft delete being filtered on the SQL side, the
+// foreign key rejecting an undefined currency) are proven NOT HERE but in the
+// integration tests — a fake repository cannot verify a rule it wrote itself.
 //
-// Depo çağrıları sayılır (calls): "kayıt başına sorgu yapılmıyor" iddiasının
-// kanıtı budur.
+// Repository calls are counted (calls): that is the evidence for the claim "no
+// query is made per record".
 type memRepo struct {
 	mu sync.Mutex
 
@@ -28,24 +28,26 @@ type memRepo struct {
 	countries  map[string]models.Country
 	currencies map[string]models.Currency
 
-	// calls metot adına göre çağrı sayacıdır.
+	// calls is the call counter keyed by method name.
 	calls map[string]int
-	// failOn dolu bir metot adı için o çağrının döneceği hatadır.
+	// failOn holds, for each method name set in it, the error that call
+	// returns.
 	failOn map[string]error
-	// lastListLimit ve lastListOffset son ListRegions çağrısına UYGULANAN
-	// sayfalama değerleridir; servisin sınırları gerçekten uyguladığı bunlarla
-	// kanıtlanır.
+	// lastListLimit and lastListOffset are the paging values APPLIED to the
+	// last ListRegions call; they prove that the service really applies the
+	// bounds.
 	lastListLimit  int32
 	lastListOffset int32
 }
 
 var _ Repository = (*memRepo)(nil)
 
-// newMemRepo tohumlanmış bir bellek içi depo üretir.
+// newMemRepo produces a seeded in-memory repository.
 //
-// Para birimleri gerçek tohumun üç sınıfını da kapsar: 2 basamaklı (TRY, USD),
-// 0 basamaklı (JPY) ve 3 basamaklı (KWD). Sabit 100 çarpanı varsayan bir kod
-// bu üç sınıfın ikisinde yanlış sonuç verir.
+// The currencies cover all three classes of the real seed: 2 decimal digits
+// (TRY, USD), 0 decimal digits (JPY) and 3 decimal digits (KWD). Code that
+// assumes a fixed factor of 100 gives a wrong result in two of these three
+// classes.
 func newMemRepo() *memRepo {
 	m := &memRepo{
 		regions:    map[string]models.Region{},
@@ -63,7 +65,7 @@ func newMemRepo() *memRepo {
 		m.currencies[c.Code] = c
 	}
 	for _, c := range []models.Country{
-		{Code: "TR", Name: "Türkiye"},
+		{Code: "TR", Name: "T\u00fcrkiye"},
 		{Code: "DE", Name: "Germany"},
 		{Code: "US", Name: "United States of America"},
 		{Code: "JP", Name: "Japan"},
@@ -73,29 +75,29 @@ func newMemRepo() *memRepo {
 	return m
 }
 
-// track çağrıyı sayar ve enjekte edilmiş hata varsa döner.
-// Çağıran m.mu'yu tutmalıdır.
+// track counts the call and returns the injected error, if there is one.
+// The caller must hold m.mu.
 func (m *memRepo) track(name string) error {
 	m.calls[name]++
 	return m.failOn[name]
 }
 
-// lastPaging son ListRegions çağrısına uygulanan limit ve offset'i döner.
+// lastPaging returns the limit and offset applied to the last ListRegions call.
 func (m *memRepo) lastPaging() (limit, offset int32) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.lastListLimit, m.lastListOffset
 }
 
-// callCount verilen metodun kaç kez çağrıldığını döner.
+// callCount returns how many times the given method was called.
 func (m *memRepo) callCount(name string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.calls[name]
 }
 
-// resetCalls çağrı sayaçlarını sıfırlar; kurulum çağrılarının iddiaya
-// karışmaması içindir.
+// resetCalls zeroes the call counters; it keeps the setup calls out of the
+// assertion.
 func (m *memRepo) resetCalls() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -109,11 +111,11 @@ func (m *memRepo) CreateRegion(_ context.Context, region models.Region, now time
 		return models.Region{}, err
 	}
 
-	// Gerçek depoda bu denetim foreign key'dir; sahte depo aynı sözü aynı
-	// hata sınıfıyla tutar.
+	// In the real repository this check is the foreign key; the fake
+	// repository keeps the same promise with the same error class.
 	if _, ok := m.currencies[region.CurrencyCode]; !ok {
 		return models.Region{}, errors.Invalid("region_unknown_currency",
-			"bölge oluşturulamadı: para birimi tanımlı değil")
+			"the region could not be created: the currency is not defined")
 	}
 
 	region.CreatedAt = now
@@ -131,11 +133,11 @@ func (m *memRepo) GetRegion(_ context.Context, id string) (models.Region, error)
 	return m.getRegionLocked(id)
 }
 
-// getRegionLocked kilit altında bölgeyi okur. Çağıran m.mu'yu tutmalıdır.
+// getRegionLocked reads the region under the lock. The caller must hold m.mu.
 func (m *memRepo) getRegionLocked(id string) (models.Region, error) {
 	region, ok := m.regions[id]
 	if !ok || region.DeletedAt != nil {
-		return models.Region{}, errors.NotFound("region_not_found", "bölge bulunamadı: %s", id)
+		return models.Region{}, errors.NotFound("region_not_found", "region not found: %s", id)
 	}
 	return region, nil
 }
@@ -157,8 +159,8 @@ func (m *memRepo) ListRegions(_ context.Context, limit, offset int32) ([]models.
 	return slices.Clone(live[offset:end]), total, nil
 }
 
-// liveRegionsLocked silinmemiş bölgeleri kimliğe göre sıralı döner.
-// Çağıran m.mu'yu tutmalıdır.
+// liveRegionsLocked returns the regions that are not deleted, sorted by id.
+// The caller must hold m.mu.
 func (m *memRepo) liveRegionsLocked() []models.Region {
 	out := make([]models.Region, 0, len(m.regions))
 	for _, region := range m.regions {
@@ -215,7 +217,7 @@ func (m *memRepo) UpdateRegion(
 	next := current.Patched(patch)
 	if _, ok := m.currencies[next.CurrencyCode]; !ok {
 		return models.Region{}, errors.Invalid("region_unknown_currency",
-			"bölge güncellenemedi: para birimi tanımlı değil")
+			"the region could not be updated: the currency is not defined")
 	}
 	next.UpdatedAt = now
 	m.regions[id] = next
@@ -238,7 +240,8 @@ func (m *memRepo) DeleteRegion(_ context.Context, id string, now time.Time) erro
 	current.UpdatedAt = now
 	m.regions[id] = current
 
-	// Gerçek depo silme ile ülkeleri serbest bırakmayı TEK işlemde yapar.
+	// The real repository deletes the region and releases its countries in a
+	// SINGLE transaction.
 	for code, country := range m.countries {
 		if country.RegionID != nil && *country.RegionID == id {
 			country.RegionID = nil
@@ -259,7 +262,7 @@ func (m *memRepo) GetRegionByCountry(_ context.Context, countryCode string) (mod
 	country, ok := m.countries[countryCode]
 	if !ok || country.RegionID == nil {
 		return models.Region{}, errors.NotFound("region_not_found",
-			"%s ülkesi için bölge bulunamadı", countryCode)
+			"no region found for country %s", countryCode)
 	}
 	return m.getRegionLocked(*country.RegionID)
 }
@@ -280,7 +283,7 @@ func (m *memRepo) AssignCountry(
 	}
 	country, ok := m.countries[countryCode]
 	if !ok {
-		return models.Country{}, errors.NotFound("country_not_found", "ülke bulunamadı: %s", countryCode)
+		return models.Country{}, errors.NotFound("country_not_found", "country not found: %s", countryCode)
 	}
 
 	if country.RegionID != nil {
@@ -288,7 +291,7 @@ func (m *memRepo) AssignCountry(
 			return country, nil
 		}
 		return models.Country{}, errors.Conflict("country_already_in_region",
-			"%s ülkesi zaten %s bölgesine ait", countryCode, *country.RegionID)
+			"country %s already belongs to region %s", countryCode, *country.RegionID)
 	}
 
 	assigned := regionID
@@ -307,11 +310,11 @@ func (m *memRepo) UnassignCountry(_ context.Context, regionID, countryCode strin
 
 	country, ok := m.countries[countryCode]
 	if !ok {
-		return errors.NotFound("country_not_found", "ülke bulunamadı: %s", countryCode)
+		return errors.NotFound("country_not_found", "country not found: %s", countryCode)
 	}
 	if country.RegionID == nil || *country.RegionID != regionID {
 		return errors.NotFound("country_not_in_region",
-			"%s ülkesi %s bölgesine ait değil", countryCode, regionID)
+			"country %s does not belong to region %s", countryCode, regionID)
 	}
 
 	country.RegionID = nil
@@ -329,7 +332,7 @@ func (m *memRepo) GetCountry(_ context.Context, code string) (models.Country, er
 
 	country, ok := m.countries[code]
 	if !ok {
-		return models.Country{}, errors.NotFound("country_not_found", "ülke bulunamadı: %s", code)
+		return models.Country{}, errors.NotFound("country_not_found", "country not found: %s", code)
 	}
 	return country, nil
 }
@@ -415,7 +418,7 @@ func (m *memRepo) GetCurrency(_ context.Context, code string) (models.Currency, 
 
 	currency, ok := m.currencies[code]
 	if !ok {
-		return models.Currency{}, errors.NotFound("currency_not_found", "para birimi bulunamadı: %s", code)
+		return models.Currency{}, errors.NotFound("currency_not_found", "currency not found: %s", code)
 	}
 	return currency, nil
 }

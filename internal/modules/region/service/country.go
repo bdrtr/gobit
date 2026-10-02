@@ -8,14 +8,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 )
 
-// AddCountryToRegion bir ülkeyi bölgeye ekler.
+// AddCountryToRegion adds a country to a region.
 //
-// Ülke başka bir bölgeye aitse errors.Conflict döner: bir ülke EN FAZLA bir
-// bölgeye ait olabilir. Kural veritabanı tarafında satır kilidiyle korunur
-// (bkz. repository.AssignCountry), yani eşzamanlı iki istekte de tutar.
+// If the country belongs to another region, errors.Conflict is returned: a
+// country can belong to AT MOST one region. The rule is guarded on the database
+// side by a row lock (see repository.AssignCountry), so it holds under two
+// concurrent requests as well.
 //
-// Ülke zaten AYNI bölgedeyse çağrı başarılıdır ve mevcut kayıt döner;
-// tekrarlanan bir yönetim isteği hata üretmez.
+// If the country is already in the SAME region, the call succeeds and the
+// existing record is returned; a repeated admin request does not produce an
+// error.
 func (s *Service) AddCountryToRegion(ctx context.Context, regionID, countryCode string) (models.Country, error) {
 	if err := s.ready(); err != nil {
 		return models.Country{}, err
@@ -33,17 +35,18 @@ func (s *Service) AddCountryToRegion(ctx context.Context, regionID, countryCode 
 		return models.Country{}, err
 	}
 
-	s.log.DebugContext(ctx, "ülke bölgeye eklendi",
+	s.log.DebugContext(ctx, "country added to region",
 		slog.String("region_id", regionID),
 		slog.String("country_code", code),
 	)
 	return country, nil
 }
 
-// RemoveCountryFromRegion bir ülkeyi bölgeden çıkarır.
+// RemoveCountryFromRegion removes a country from a region.
 //
-// Ülke o bölgeye ait değilse errors.NotFound döner; silme isteğinin hedefi
-// "bölgedeki ülke" kaydıdır ve o kayıt yoktur.
+// If the country does not belong to that region, errors.NotFound is returned;
+// the target of the removal request is the "country in the region" record, and
+// that record does not exist.
 func (s *Service) RemoveCountryFromRegion(ctx context.Context, regionID, countryCode string) error {
 	if err := s.ready(); err != nil {
 		return err
@@ -60,29 +63,30 @@ func (s *Service) RemoveCountryFromRegion(ctx context.Context, regionID, country
 		return err
 	}
 
-	s.log.DebugContext(ctx, "ülke bölgeden çıkarıldı",
+	s.log.DebugContext(ctx, "country removed from region",
 		slog.String("region_id", regionID),
 		slog.String("country_code", code),
 	)
 	return nil
 }
 
-// ListCountriesInput ülke listeleme girdisidir.
+// ListCountriesInput is the input for listing countries.
 type ListCountriesInput struct {
-	// RegionID dolu ise yalnızca o bölgenin ülkeleri döner; nil ise tümü.
+	// RegionID, when set, limits the result to that region's countries; when
+	// nil, all countries are returned.
 	RegionID *string
-	// Limit sayfa boyudur; 0 verilirse [DefaultLimit] uygulanır.
+	// Limit is the page size; if 0 is given, [DefaultLimit] is applied.
 	Limit int32
-	// Offset atlanacak kayıt sayısıdır.
+	// Offset is the number of records to skip.
 	Offset int32
 }
 
-// ListCountries sayfalanmış ülke listesini döner.
+// ListCountries returns the paginated country list.
 //
-// Ülke listesi REFERANS VERİDİR ve tohum ile yüklenir; burada yalnızca okuma
-// vardır. Bölge süzgeci verilirse kimliği önce doğrulanır: doğrulanmasaydı
-// yanlış türde bir kimlik boş bir liste döndürür ve istemci bölgenin ülkesi
-// olmadığını sanırdı.
+// The country list is REFERENCE DATA and is loaded by the seed; there is only
+// reading here. If a region filter is given, its id is validated first: without
+// that validation an id of the wrong type would return an empty list and the
+// client would conclude that the region has no countries.
 func (s *Service) ListCountries(ctx context.Context, in ListCountriesInput) (Page[models.Country], error) {
 	if err := s.ready(); err != nil {
 		return Page[models.Country]{}, err
@@ -104,24 +108,27 @@ func (s *Service) ListCountries(ctx context.Context, in ListCountriesInput) (Pag
 	return Page[models.Country]{Items: countries, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// ResolveRegionForCountry ülke kodundan bölgeyi çözer.
+// ResolveRegionForCountry resolves the region from a country code.
 //
-// Sepet oluşturulurken kullanılan yoldur: sepetin para birimi ve vergi bölgesi
-// müşterinin ülkesinden bulunur. Mutlu yol TEK sorgudur.
+// This is the path taken when a cart is created: the cart's currency and tax
+// region are found from the customer's country. The happy path is a SINGLE
+// query.
 //
-// Bulunamama hâlinde üç ayrı durum vardır ve üçü de errors.NotFound döner ama
-// KODLARI farklıdır; çağıran hangi düzeltmenin gerektiğini kodundan bilir:
+// When nothing is found there are three distinct cases. All three return
+// errors.NotFound, but with different CODES; the caller knows from the code
+// which fix is needed:
 //
-//   - Ülke tanımsız (repository.CodeCountryNotFound) — istemci geçerli bir ISO
-//     kodu göndermemiştir.
-//   - Ülke hiçbir bölgeye bağlı değil ([CodeCountryUnassigned]) — operatör o
-//     ülkeye satış açmamıştır.
-//   - Ülke bağlı ama bölgesi yok ([CodeCountryRegionMissing]) — veri
-//     tutarsızlığıdır; normalde oluşmaz, çünkü bölge silinirken ülkeleri
-//     serbest bırakılır.
+//   - The country is undefined (repository.CodeCountryNotFound) — the client
+//     did not send a valid ISO code.
+//   - The country is attached to no region ([CodeCountryUnassigned]) — the
+//     operator has not opened sales to that country.
+//   - The country is attached but its region is missing
+//     ([CodeCountryRegionMissing]) — a data inconsistency; it does not arise
+//     normally, because a region's countries are released when the region is
+//     deleted.
 //
-// Ayrım YALNIZCA hata yolunda ikinci bir sorguyla yapılır; mutlu yol tek
-// sorgu kalır.
+// The distinction is made ONLY on the error path, with a second query; the
+// happy path stays a single query.
 func (s *Service) ResolveRegionForCountry(ctx context.Context, countryCode string) (models.Region, error) {
 	if err := s.ready(); err != nil {
 		return models.Region{}, err
@@ -141,14 +148,15 @@ func (s *Service) ResolveRegionForCountry(ctx context.Context, countryCode strin
 
 	country, lookupErr := s.repo.GetCountry(ctx, code)
 	if lookupErr != nil {
-		// Ülkenin kendisi de yoksa ilk hata değil BU hata anlamlıdır:
-		// "ülke bulunamadı" istemcinin düzeltebileceği tek bilgidir.
+		// If the country itself does not exist either, it is THIS error and not
+		// the first one that carries the meaning: "country not found" is the
+		// only information the client can act on.
 		return models.Region{}, lookupErr
 	}
 	if country.RegionID != nil {
 		return models.Region{}, errors.NotFound(CodeCountryRegionMissing,
-			"%s ülkesi %s bölgesine bağlı ama bölge bulunamadı", code, *country.RegionID)
+			"country %s is attached to region %s but the region was not found", code, *country.RegionID)
 	}
 	return models.Region{}, errors.NotFound(CodeCountryUnassigned,
-		"%s ülkesi hiçbir bölgeye bağlı değil", code)
+		"country %s is not attached to any region", code)
 }

@@ -6,10 +6,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 )
 
-// GetCurrency ISO 4217 koduna göre para birimi döner; yoksa errors.NotFound.
+// GetCurrency returns the currency for an ISO 4217 code; errors.NotFound if
+// there is none.
 //
-// Kod BÜYÜK harfe normalleştirilir: "try" ile "TRY" aynı kaydı bulur. Biçimsel
-// olarak geçersiz bir kod errors.Invalid döner ve veritabanına hiç gidilmez.
+// The code is normalized to UPPER case: "try" and "TRY" find the same record. A
+// formally invalid code returns errors.Invalid and the database is never
+// reached.
 func (s *Service) GetCurrency(ctx context.Context, code string) (models.Currency, error) {
 	if err := s.ready(); err != nil {
 		return models.Currency{}, err
@@ -21,10 +23,10 @@ func (s *Service) GetCurrency(ctx context.Context, code string) (models.Currency
 	return s.repo.GetCurrency(ctx, normalized)
 }
 
-// ListCurrencies sayfalanmış para birimi listesini döner.
+// ListCurrencies returns the paginated currency list.
 //
-// Para birimi listesi REFERANS VERİDİR ve tohum ile yüklenir; modülün yazma
-// yüzeyi yoktur (bkz. models.Currency).
+// The currency list is REFERENCE DATA and is loaded by the seed; the module has
+// no write surface for it (see models.Currency).
 func (s *Service) ListCurrencies(ctx context.Context, limit, offset int32) (Page[models.Currency], error) {
 	if err := s.ready(); err != nil {
 		return Page[models.Currency]{}, err

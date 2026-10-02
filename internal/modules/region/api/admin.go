@@ -7,7 +7,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/service"
 )
 
-// createRegion POST /admin/v1/regions handler'ıdır.
+// createRegion is the handler for POST /admin/v1/regions.
 func (a *API) createRegion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -25,7 +25,7 @@ func (a *API) createRegion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toRegionDTO(region))
 }
 
-// listRegions GET /admin/v1/regions handler'ıdır.
+// listRegions is the handler for GET /admin/v1/regions.
 func (a *API) listRegions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -43,7 +43,7 @@ func (a *API) listRegions(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toRegionDTO)
 }
 
-// getRegion GET /admin/v1/regions/{id} handler'ıdır.
+// getRegion is the handler for GET /admin/v1/regions/{id}.
 func (a *API) getRegion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -55,12 +55,13 @@ func (a *API) getRegion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toRegionDTO(region))
 }
 
-// updateRegion PUT /admin/v1/regions/{id} handler'ıdır.
+// updateRegion is the handler for PUT /admin/v1/regions/{id}.
 //
-// Yöntem PUT olsa da semantik KISMİDİR: verilmeyen alan değişmez. Bu bilinçli
-// bir sadeleştirmedir — PATCH'i ayrı bir yöntem olarak sunmak, iki gövde
-// şekli ve iki doğrulama yolu demek olurdu; kısmi olmayan bir PUT ise
-// göndermeyi unutulan bir alanı sessizce sıfırlardı.
+// The method is PUT, but the semantics are PARTIAL: a field that is not given
+// does not change. This is a deliberate simplification — offering PATCH as a
+// separate method would mean two body shapes and two validation paths, while a
+// PUT that is not partial would silently zero a field the client forgot to
+// send.
 func (a *API) updateRegion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -78,7 +79,7 @@ func (a *API) updateRegion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toRegionDTO(region))
 }
 
-// deleteRegion DELETE /admin/v1/regions/{id} handler'ıdır.
+// deleteRegion is the handler for DELETE /admin/v1/regions/{id}.
 func (a *API) deleteRegion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -89,10 +90,11 @@ func (a *API) deleteRegion(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// addCountry POST /admin/v1/regions/{id}/countries handler'ıdır.
+// addCountry is the handler for POST /admin/v1/regions/{id}/countries.
 //
-// Ülke başka bir bölgeye aitse servis errors.Conflict döner ve corehttp bunu
-// 409'a çevirir; handler status seçmez.
+// If the country belongs to another region the service returns
+// errors.Conflict and corehttp turns that into 409; the handler does not
+// choose a status.
 func (a *API) addCountry(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -110,7 +112,7 @@ func (a *API) addCountry(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toCountryDTO(country))
 }
 
-// removeCountry DELETE /admin/v1/regions/{id}/countries/{code} handler'ıdır.
+// removeCountry is the handler for DELETE /admin/v1/regions/{id}/countries/{code}.
 func (a *API) removeCountry(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -121,7 +123,7 @@ func (a *API) removeCountry(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// listRegionCountries GET /admin/v1/regions/{id}/countries handler'ıdır.
+// listRegionCountries is the handler for GET /admin/v1/regions/{id}/countries.
 func (a *API) listRegionCountries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -144,12 +146,12 @@ func (a *API) listRegionCountries(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toCountryDTO)
 }
 
-// listCountries GET /admin/v1/countries handler'ıdır.
+// listCountries is the handler for GET /admin/v1/countries.
 //
-// "region_id" sorgu parametresi verilirse yalnızca o bölgenin ülkeleri döner.
-// Parametre VERİLMİŞ ama boşsa süzgeç uygulanmaz denmez; servis boş kimliği
-// reddeder, çünkü boş bir değer istemcinin hatasıdır ve sessizce tüm listeyi
-// döndürmek o hatayı gizlerdi.
+// If the "region_id" query parameter is given, only that region's countries
+// are returned. If the parameter IS given but empty, that is not read as "no
+// filter"; the service rejects the empty ID, because an empty value is the
+// client's mistake and silently returning the whole list would hide it.
 func (a *API) listCountries(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -171,7 +173,7 @@ func (a *API) listCountries(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toCountryDTO)
 }
 
-// listCurrencies GET /admin/v1/currencies handler'ıdır.
+// listCurrencies is the handler for GET /admin/v1/currencies.
 func (a *API) listCurrencies(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -189,7 +191,7 @@ func (a *API) listCurrencies(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toCurrencyDTO)
 }
 
-// getCurrency GET /admin/v1/currencies/{code} handler'ıdır.
+// getCurrency is the handler for GET /admin/v1/currencies/{code}.
 func (a *API) getCurrency(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

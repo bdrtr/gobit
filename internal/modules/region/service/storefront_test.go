@@ -10,12 +10,12 @@ import (
 	"github.com/bdrtr/gobit/core/errors"
 )
 
-// TestListStoreRegionsBatchesReads vitrin listesinin sorgu sayısının bölge
-// sayısından BAĞIMSIZ olduğunu kanıtlar.
+// TestListStoreRegionsBatchesReads proves that the number of queries for the
+// storefront list is INDEPENDENT of the number of regions.
 //
-// Bölge başına para birimi/ülke okuması yapmak N+1 demek olurdu ve vitrin
-// listesi tam da en çok kaydın döndüğü yerdir. İddia sayaçla kanıtlanır:
-// üç bölge için de toplam üç okuma yapılır.
+// Reading the currency/countries per region would mean N+1, and the storefront
+// list is exactly where the most records come back. The claim is proven with a
+// counter: for three regions, three reads are made in total.
 func TestListStoreRegionsBatchesReads(t *testing.T) {
 	ctx := context.Background()
 	svc, repo := newTestService(t)
@@ -39,11 +39,11 @@ func TestListStoreRegionsBatchesReads(t *testing.T) {
 
 	assert.Equal(t, 1, repo.callCount("ListRegions"))
 	assert.Equal(t, 1, repo.callCount("GetCurrenciesByCodes"),
-		"para birimleri TEK toplu okumayla alınmalı")
+		"the currencies have to be fetched with a SINGLE batch read")
 	assert.Equal(t, 1, repo.callCount("ListCountriesByRegions"),
-		"ülkeler TEK toplu okumayla alınmalı")
-	assert.Zero(t, repo.callCount("GetCurrency"), "bölge başına para birimi okunmamalı")
-	assert.Zero(t, repo.callCount("ListCountries"), "bölge başına ülke okunmamalı")
+		"the countries have to be fetched with a SINGLE batch read")
+	assert.Zero(t, repo.callCount("GetCurrency"), "the currency must not be read per region")
+	assert.Zero(t, repo.callCount("ListCountries"), "the countries must not be read per region")
 
 	byID := map[string]StoreRegion{}
 	for _, item := range page.Items {
@@ -55,20 +55,20 @@ func TestListStoreRegionsBatchesReads(t *testing.T) {
 	assert.Equal(t, "TRY", tr.Currency.Code)
 	assert.Equal(t, int32(2), tr.Currency.DecimalDigits)
 	require.Len(t, tr.Countries, 2)
-	assert.Equal(t, "DE", tr.Countries[0].Code, "ülkeler koda göre sıralı olmalı")
+	assert.Equal(t, "DE", tr.Countries[0].Code, "the countries have to be sorted by code")
 	assert.Equal(t, "TR", tr.Countries[1].Code)
 
 	jp := byID[second.ID]
 	require.NotNil(t, jp.Currency)
-	assert.Equal(t, int32(0), jp.Currency.DecimalDigits, "JPY ondalıksızdır")
+	assert.Equal(t, int32(0), jp.Currency.DecimalDigits, "JPY has no decimal digits")
 	require.Len(t, jp.Countries, 1)
 }
 
-// TestListStoreRegionsEmptyCountriesAreSlices ülkesi olmayan bir bölgenin nil
-// değil boş dilim döndürdüğünü kanıtlar.
+// TestListStoreRegionsEmptyCountriesAreSlices proves that a region without
+// countries returns an empty slice, not nil.
 //
-// JSON'da null yerine [] görünmesi, tüketicinin tek biçimli bir yüzey görmesi
-// demektir.
+// Seeing [] instead of null in the JSON means the consumer sees a uniform
+// surface.
 func TestListStoreRegionsEmptyCountriesAreSlices(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -81,8 +81,8 @@ func TestListStoreRegionsEmptyCountriesAreSlices(t *testing.T) {
 	assert.Empty(t, page.Items[0].Countries)
 }
 
-// TestGetStoreRegion tek bölge okumasının da para birimi ve ülkeleri
-// taşıdığını kanıtlar.
+// TestGetStoreRegion proves that the single region read carries the currency
+// and the countries as well.
 func TestGetStoreRegion(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -94,26 +94,27 @@ func TestGetStoreRegion(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, region.ID, item.Region.ID)
 	require.NotNil(t, item.Currency)
-	assert.Equal(t, int32(3), item.Currency.DecimalDigits, "KWD üç basamaklıdır")
+	assert.Equal(t, int32(3), item.Currency.DecimalDigits, "KWD has three decimal digits")
 	require.Len(t, item.Countries, 1)
 	assert.Equal(t, "US", item.Countries[0].Code)
 
-	_, err = svc.GetStoreRegion(ctx, "reg_YOK")
+	_, err = svc.GetStoreRegion(ctx, "reg_MISSING")
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestStoreRegionCurrencyMissingIsNil referans tablosunda bulunamayan bir para
-// biriminin sıfır değerle DEĞİL nil ile temsil edildiğini kanıtlar.
+// TestStoreRegionCurrencyMissingIsNil proves that a currency not found in the
+// reference table is represented by nil, NOT by a zero value.
 //
-// Sıfır değer, ondalık basamağı 0 göstererek tutarları yanlış ölçekte
-// gösterirdi; nil ise tüketiciye "bilinmiyor" der.
+// A zero value would report the decimal digits as 0 and show amounts at the
+// wrong scale; nil tells the consumer "unknown".
 func TestStoreRegionCurrencyMissingIsNil(t *testing.T) {
 	ctx := context.Background()
 	svc, repo := newTestService(t)
 	region := newRegion(t, svc, "TRY")
 
-	// Foreign key nedeniyle gerçekte oluşamaz; sahte depoda elle kurulur.
+	// Because of the foreign key this cannot happen for real; it is set up by
+	// hand in the fake repository.
 	repo.mu.Lock()
 	delete(repo.currencies, "TRY")
 	repo.mu.Unlock()
@@ -121,5 +122,5 @@ func TestStoreRegionCurrencyMissingIsNil(t *testing.T) {
 	item, err := svc.GetStoreRegion(ctx, region.ID)
 	require.NoError(t, err)
 	assert.Nil(t, item.Currency)
-	assert.Equal(t, "TRY", item.Region.CurrencyCode, "kod yine de görünmeli")
+	assert.Equal(t, "TRY", item.Region.CurrencyCode, "the code has to be visible all the same")
 }

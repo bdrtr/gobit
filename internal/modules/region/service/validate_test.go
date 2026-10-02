@@ -11,10 +11,10 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 )
 
-// TestNormalizeCurrencyCode ISO 4217 kodunun kabul ve ret kurallarını
-// kanıtlar.
+// TestNormalizeCurrencyCode proves the acceptance and rejection rules of an ISO
+// 4217 code.
 func TestNormalizeCurrencyCode(t *testing.T) {
-	t.Run("kabul edilenler", func(t *testing.T) {
+	t.Run("accepted", func(t *testing.T) {
 		cases := []struct{ input, want string }{
 			{input: "TRY", want: "TRY"},
 			{input: "try", want: "TRY"},
@@ -24,35 +24,46 @@ func TestNormalizeCurrencyCode(t *testing.T) {
 		}
 		for _, tc := range cases {
 			got, err := NormalizeCurrencyCode(tc.input)
-			require.NoError(t, err, "girdi: %q", tc.input)
-			assert.Equal(t, tc.want, got, "girdi: %q", tc.input)
+			require.NoError(t, err, "input: %q", tc.input)
+			assert.Equal(t, tc.want, got, "input: %q", tc.input)
 		}
 	})
 
-	t.Run("reddedilenler", func(t *testing.T) {
-		// "₺₺₺" üç RUNE'dur ama üç bayt değildir; uzunluk bayt üzerinden
-		// ölçülseydi burada uzunluk denetimi geçer, harf denetiminde takılır
-		// ve mesaj yanlış sebebi gösterirdi.
+	t.Run("rejected", func(t *testing.T) {
+		// "₺₺₺" is three RUNES and nine bytes: measured in runes it passes the
+		// length check and is refused by the letter check, which names the
+		// reason; measured in bytes it would be refused as the wrong length.
+		// Two runes of three bytes ("\u015fa") are refused as the wrong length,
+		// which measured in bytes they would pass. The reasons are asserted
+		// below.
 		//
-		// "ıls" ve "ſek" ASCII DIŞI harflerdir ama Unicode'un basit büyük harf
-		// eşlemesi onları "ILS" ve "SEK"e — tohumdaki iki GERÇEK para
-		// birimine — taşır. ASCII denetimi çevirmeden sonra yapılsaydı ikisi
-		// de sessizce geçer, fonksiyonun sözleşmesi bozulurdu.
+		// The dotless i (U+0131) followed by "ls", and "ſek", contain NON-ASCII
+		// letters, but Unicode's simple upper-case mapping moves them onto
+		// "ILS" and "SEK" — two REAL currencies in the seed. Had the ASCII check
+		// been made after the conversion, both would silently pass and the
+		// function's contract would break.
 		for _, input := range []string{
-			"", "TR", "TRYX", "TR1", "T RY", "₺₺₺", "TR-", "123", "ıls", "ſek",
+			"", "TR", "TRYX", "TR1", "T RY", "₺₺₺", "TR-", "123", "\u0131ls", "ſek",
 		} {
 			_, err := NormalizeCurrencyCode(input)
-			require.Error(t, err, "girdi: %q", input)
-			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "girdi: %q", input)
-			assert.Equal(t, CodeInvalidInput, errors.CodeOf(err), "girdi: %q", input)
+			require.Error(t, err, "input: %q", input)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "input: %q", input)
+			assert.Equal(t, CodeInvalidInput, errors.CodeOf(err), "input: %q", input)
 		}
+
+		_, err := NormalizeCurrencyCode("₺₺₺")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "can only contain ASCII letters", "three runes are the right length")
+		_, err = NormalizeCurrencyCode("\u015fa")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "has to be exactly 3 letters", "two runes are not, whatever their bytes")
 	})
 }
 
-// TestNormalizeCountryCode ISO 3166-1 alpha-2 kodunun kabul ve ret kurallarını
-// kanıtlar.
+// TestNormalizeCountryCode proves the acceptance and rejection rules of an ISO
+// 3166-1 alpha-2 code.
 func TestNormalizeCountryCode(t *testing.T) {
-	t.Run("kabul edilenler", func(t *testing.T) {
+	t.Run("accepted", func(t *testing.T) {
 		cases := []struct{ input, want string }{
 			{input: "TR", want: "TR"},
 			{input: "tr", want: "TR"},
@@ -61,57 +72,59 @@ func TestNormalizeCountryCode(t *testing.T) {
 		}
 		for _, tc := range cases {
 			got, err := NormalizeCountryCode(tc.input)
-			require.NoError(t, err, "girdi: %q", tc.input)
-			assert.Equal(t, tc.want, got, "girdi: %q", tc.input)
+			require.NoError(t, err, "input: %q", tc.input)
+			assert.Equal(t, tc.want, got, "input: %q", tc.input)
 		}
 	})
 
-	t.Run("reddedilenler", func(t *testing.T) {
-		// "ÇĞ" büyük harfe çevrildikten sonra da ASCII değildir, dolayısıyla
-		// denetimin sırasından bağımsız olarak reddedilir. "ıs" ve "ſe" ise
-		// tam tersidir: basit büyük harf eşlemesi onları "IS" (İzlanda) ve
-		// "SE" (İsveç) yapar, yani denetim çevirmeden sonra yapılsaydı geçerli
-		// birer ISO koduna dönüşür ve tohumdaki gerçek ülkeleri çözerlerdi.
-		for _, input := range []string{"", "T", "TUR", "T1", "1R", "ÇĞ", "T-", "ıs", "ſe"} {
+	t.Run("rejected", func(t *testing.T) {
+		// The C with cedilla and G with breve pair (U+00C7 U+011E) is still not
+		// ASCII after the upper-case conversion, so it is rejected whatever the
+		// order of the checks. The dotless i (U+0131) followed by "s", and "ſe",
+		// are the exact opposite: the simple upper-case mapping turns them into
+		// "IS" (Iceland) and "SE" (Sweden), so had the check been made after the
+		// conversion they would become valid ISO codes and resolve real
+		// countries in the seed.
+		for _, input := range []string{"", "T", "TUR", "T1", "1R", "\u00c7\u011e", "T-", "\u0131s", "ſe"} {
 			_, err := NormalizeCountryCode(input)
-			require.Error(t, err, "girdi: %q", input)
-			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "girdi: %q", input)
+			require.Error(t, err, "input: %q", input)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "input: %q", input)
 		}
 	})
 }
 
-// TestNormalizeName bölge adının kırpıldığını, boş ve kontrol karakterli
-// adların reddedildiğini kanıtlar.
+// TestNormalizeName proves that a region name is trimmed, and that empty names
+// and names containing control characters are rejected.
 func TestNormalizeName(t *testing.T) {
-	got, err := normalizeName("  Avrupa Birliği  ")
+	got, err := normalizeName("  European Union  ")
 	require.NoError(t, err)
-	assert.Equal(t, "Avrupa Birliği", got)
+	assert.Equal(t, "European Union", got)
 
-	for _, input := range []string{"", "   ", "\t\n", "Ad\nSatır", "Ad\x00"} {
+	for _, input := range []string{"", "   ", "\t\n", "Name\nLine", "Name\x00"} {
 		_, err := normalizeName(input)
-		require.Error(t, err, "girdi: %q", input)
-		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "girdi: %q", input)
+		require.Error(t, err, "input: %q", input)
+		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "input: %q", input)
 	}
 
 	_, err = normalizeName(strings.Repeat("a", maxNameLen+1))
-	require.Error(t, err, "aşırı uzun ad reddedilmeli")
+	require.Error(t, err, "an overly long name has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestValidateTaxRate vergi oranı sınırlarını kanıtlar.
+// TestValidateTaxRate proves the bounds of the tax rate.
 func TestValidateTaxRate(t *testing.T) {
 	for _, rate := range []int32{models.MinTaxRate, 1, 2000, models.MaxTaxRate} {
-		require.NoError(t, validateTaxRate(rate), "oran: %d", rate)
+		require.NoError(t, validateTaxRate(rate), "rate: %d", rate)
 	}
 	for _, rate := range []int32{-1, models.MaxTaxRate + 1, 1 << 20} {
 		err := validateTaxRate(rate)
-		require.Error(t, err, "oran: %d", rate)
-		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "oran: %d", rate)
+		require.Error(t, err, "rate: %d", rate)
+		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "rate: %d", rate)
 	}
 }
 
-// TestRequireRegionID kimlik doğrulamasının önek, boşluk ve uzunluk
-// kurallarını kanıtlar.
+// TestRequireRegionID proves the prefix, whitespace and length rules of id
+// validation.
 func TestRequireRegionID(t *testing.T) {
 	require.NoError(t, requireRegionID(models.RegionIDPrefix+"01ABCDEF"))
 
@@ -125,22 +138,24 @@ func TestRequireRegionID(t *testing.T) {
 		models.RegionIDPrefix + strings.Repeat("a", maxIDLen),
 	} {
 		err := requireRegionID(id)
-		require.Error(t, err, "kimlik: %q", id)
-		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "kimlik: %q", id)
+		require.Error(t, err, "id: %q", id)
+		assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "id: %q", id)
 	}
 }
 
-// TestClampToInt32 int32 aralığına sıkıştırmanın sarma üretmediğini kanıtlar.
+// TestClampToInt32 proves that clamping to the int32 range does not produce a
+// wraparound.
 //
-// Query katmanının limit alanı int'tir; 64 bit bir platformda oradan gelen
-// devasa bir değer doğrudan dönüştürülseydi negatif bir limite SARARDI.
+// The Query layer's limit field is an int; on a 64-bit platform a huge value
+// coming from there would WRAP to a negative limit if it were converted
+// directly.
 func TestClampToInt32(t *testing.T) {
 	assert.Equal(t, int32(5), clampToInt32(5))
 	assert.Equal(t, int32(2147483647), clampToInt32(1<<40))
 	assert.Equal(t, int32(-2147483648), clampToInt32(-(1 << 40)))
 }
 
-// TestNormalizePaging sayfalama sınırlarının uygulandığını kanıtlar.
+// TestNormalizePaging proves that the paging bounds are applied.
 func TestNormalizePaging(t *testing.T) {
 	limit, offset, err := normalizePaging(0, 0)
 	require.NoError(t, err)
@@ -149,7 +164,7 @@ func TestNormalizePaging(t *testing.T) {
 
 	limit, _, err = normalizePaging(-5, 0)
 	require.NoError(t, err)
-	assert.Equal(t, DefaultLimit, limit, "negatif limit varsayılana düşmeli")
+	assert.Equal(t, DefaultLimit, limit, "a negative limit has to fall back to the default")
 
 	limit, _, err = normalizePaging(MaxLimit+1, 0)
 	require.NoError(t, err)

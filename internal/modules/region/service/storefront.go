@@ -8,35 +8,39 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 )
 
-// StoreRegion vitrine dönen bölge görünümüdür: bölge, para birimi ve ülkeleri.
+// StoreRegion is the region view returned to the storefront: the region, its
+// currency and its countries.
 //
-// Üçü BİRLİKTE taşınır çünkü vitrin üçüne aynı anda ihtiyaç duyar: müşteri
-// bölgeyi ülkesinden seçer, tutarları para biriminin sembolüyle ve ondalık
-// basamağıyla görür. Ayrı uç noktalar olsaydı tek bir bölge seçim ekranı üç
-// istek atardı.
+// The three travel TOGETHER because the storefront needs all three at once: the
+// customer picks the region by their country and sees amounts with the
+// currency's symbol and decimal digits. Had they been separate endpoints, a
+// single region selection screen would make three requests.
 //
-// Vergi oranı ve otomatik vergi bayrağı BİLİNÇLİ OLARAK yoktur: ikisi de iş
-// yapılandırmasıdır ve müşteriye gitmez; vergi, sepet toplamının içinde
-// hesaplanmış olarak görünür.
+// The tax rate and the automatic tax flag are DELIBERATELY absent: both are
+// business configuration and do not go to the customer; tax appears already
+// computed inside the cart total.
 type StoreRegion struct {
-	// Region bölgenin kendisidir.
+	// Region is the region itself.
 	Region models.Region
-	// Currency bölgenin para birimidir; referans tablosunda bulunamazsa nil.
+	// Currency is the region's currency; nil if it is not found in the
+	// reference table.
 	//
-	// nil dönmesi bilinçlidir: eksik bir para biriminin yerine sıfır değer
-	// koymak, ondalık basamağı 0 göstererek tutarları yanlış ölçekte
-	// gösterirdi. Foreign key nedeniyle bu durum normalde oluşamaz.
+	// Returning nil is deliberate: putting a zero value in place of a missing
+	// currency would report the decimal digits as 0 and show amounts at the
+	// wrong scale. Because of the foreign key, this case cannot normally arise.
 	Currency *models.Currency
-	// Countries bölgeye bağlı ülkelerdir; yoksa boş dilim.
+	// Countries are the countries attached to the region; an empty slice if
+	// there are none.
 	Countries []models.Country
 }
 
-// ListStoreRegions vitrin için sayfalanmış bölge listesini para birimi ve
-// ülkeleriyle birlikte döner.
+// ListStoreRegions returns the paginated region list for the storefront,
+// together with each region's currency and countries.
 //
-// Sorgu sayısı bölge sayısından BAĞIMSIZDIR: bölgeler, para birimleri ve
-// ülkeler üç toplu okumayla alınır. Bölge başına okuma yapmak N+1 demek olurdu
-// ve vitrin listesi tam da en çok kaydın döndüğü yerdir.
+// The number of queries is INDEPENDENT of the number of regions: regions,
+// currencies and countries are fetched with three batch reads. Reading per
+// region would mean N+1, and the storefront list is exactly where the most
+// records come back.
 func (s *Service) ListStoreRegions(ctx context.Context, limit, offset int32) (Page[StoreRegion], error) {
 	if err := s.ready(); err != nil {
 		return Page[StoreRegion]{}, err
@@ -58,7 +62,8 @@ func (s *Service) ListStoreRegions(ctx context.Context, limit, offset int32) (Pa
 	return Page[StoreRegion]{Items: items, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// GetStoreRegion vitrin için tek bir bölgeyi para birimi ve ülkeleriyle döner.
+// GetStoreRegion returns a single region for the storefront, together with its
+// currency and countries.
 func (s *Service) GetStoreRegion(ctx context.Context, id string) (StoreRegion, error) {
 	region, err := s.GetRegion(ctx, id)
 	if err != nil {
@@ -70,17 +75,18 @@ func (s *Service) GetStoreRegion(ctx context.Context, id string) (StoreRegion, e
 		return StoreRegion{}, err
 	}
 	if len(items) == 0 {
-		// decorate girdi başına tam bir çıktı üretir; buraya düşmek
-		// imkânsızdır ama sıfır değer dönmek sessiz bir hata olurdu.
+		// decorate produces exactly one output per input; reaching this point
+		// is impossible, but returning a zero value would be a silent error.
 		return StoreRegion{}, errors.Internal(CodeDecorateFailed,
-			"bölge vitrin görünümüne çevrilemedi: %s", id)
+			"the region could not be converted to the storefront view: %s", id)
 	}
 	return items[0], nil
 }
 
-// decorate bölgeleri para birimi ve ülkeleriyle TOPLU olarak zenginleştirir.
+// decorate enriches the regions with their currencies and countries in BATCH.
 //
-// İki toplu okuma yapar (para birimleri, ülkeler) ve girdi sırasını KORUR.
+// It makes two batch reads (currencies, countries) and PRESERVES the input
+// order.
 func (s *Service) decorate(ctx context.Context, regions []models.Region) ([]StoreRegion, error) {
 	items := make([]StoreRegion, 0, len(regions))
 	if len(regions) == 0 {

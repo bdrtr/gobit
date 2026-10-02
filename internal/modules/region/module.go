@@ -1,54 +1,57 @@
-// Package region bölge ve para birimi modülüdür (plan Bölüm 6, Faz 5).
+// Package region is the region and currency module (plan Section 6, Phase 5).
 //
-// Sorumluluğu tek cümleyle: bir satışın hangi para biriminde ve hangi vergi
-// bölgesinde yapıldığını tanımlamak. Modül Region, Currency ve Country
-// verisinin TEK yazma yetkilisidir (Prensip 2.3).
+// Its responsibility in one sentence: to define in which currency and in which
+// tax region a sale is made. The module is the SOLE writer of Region, Currency
+// and Country data (Principle 2.3).
 //
-// # Sepet akışının temeli
+// # The foundation of the cart flow
 //
-// Sepet para birimini ve vergi bölgesini buradan alır: müşterinin ülkesinden
-// bölge bulunur ([service.Service.RegionIDForCountry]), bölgenin para birimi
-// sepete yazılır ([service.Service.RegionCurrency]) ve vergi satırı bölgenin
-// YEDEK oranıyla hesaplanır ([service.Service.RegionTax]). Bu üç metot ilkel
-// tiplerle yazılmıştır ki tüketici modül region'ı import etmeden kendi dar
-// arayüzünü tanımlayabilsin (ADR 0001).
+// The cart takes its currency and tax region from here: the region is found
+// from the customer's country ([service.Service.RegionIDForCountry]), the
+// region's currency is written onto the cart ([service.Service.RegionCurrency])
+// and the tax line is calculated with the region's FALLBACK rate
+// ([service.Service.RegionTax]). These three methods are written with primitive
+// types so that a consuming module can define its own narrow interface without
+// importing region (ADR 0001).
 //
-// # Referans veri
+// # Reference data
 //
-// Currency ve Country referans veridir ve migration ile tohumlanır
-// (000002_region_seed): 41 para birimi ve ISO 3166-1'in 249 ülkesi. Her
-// kurulumun bunları elle girmesi beklenemez; eksik girilen tek bir ülke,
-// o ülkedeki müşteri için sepet açılamaması demektir.
+// Currency and Country are reference data and are seeded by a migration
+// (000002_region_seed): 41 currencies and the 249 countries of ISO 3166-1.
+// Every installation cannot be expected to enter them by hand; a single
+// country left out means a cart cannot be opened for a customer in that
+// country.
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// region hiçbir modülü import etmez ve sepetlerin, siparişlerin varlığından
-// haberdar değildir. Sepet ve sipariş bölgeyi KENDİ SÜTUNLARINDA taşır; bunun
-// bir link ile aynalanması denendi ve okuyucusu çıkmadığı için kaldırıldı
-// (bkz. CHANGELOG, "cart_region"). Bugün region'a işaret eden bir link
-// YOKTUR — ihtiyaç doğarsa bildiren taraf aşağıdaki nota bakmalıdır.
+// region imports no module and is unaware that carts and orders exist. The cart
+// and the order carry the region IN THEIR OWN COLUMNS; mirroring that with a
+// link was tried and removed because no reader turned up (see CHANGELOG,
+// "cart_region"). Today there is NO link pointing at region — should the need
+// arise, the declaring side has to read the note below.
 //
-// # Dışarıya açtığı yüzeyler
+// # The surfaces it exposes
 //
-//   - "region.service" — modüller arası çağrılar için servis (bkz.
-//     internal/modules/region/service, "Modüller arası yüzey").
-//   - "region.query" — Query katmanına açılan okuma sağlayıcısı (ADR 0004).
-//     Kayıtlar para birimi ve ülkeleriyle döner.
-//   - /admin/v1/regions, /admin/v1/currencies, /admin/v1/countries — yönetim API'si.
-//   - /store/v1/regions — vitrinin para birimi/bölge seçimi.
+//   - "region.service" — the service for cross-module calls (see
+//     internal/modules/region/service, "Cross-module surface").
+//   - "region.query" — the read provider opened to the Query layer (ADR 0004).
+//     Records come back with their currency and countries.
+//   - /admin/v1/regions, /admin/v1/currencies, /admin/v1/countries — the admin API.
+//   - /store/v1/regions — the storefront's currency/region choice.
 //
-// # Link'i bildiren tarafa not
+// # A note for the side that declares the link
 //
-// Query, bir genişletmenin hedef sağlayıcısını link tanımının UCUNDAKİ MODÜL
-// ADINDAN bulur (bkz. core/query targetSide: hedef ad + ".query"
-// aranır). region için entity adı ile modül adı AYNIDIR ("region"), yani linki
-// bildiren modül ucu doğal biçimde yazabilir. Aşağıdaki tanım VARSAYIMSALDIR;
-// böyle bir link bugün yoktur ve eklenmesi ancak GEZEN bir okuyucusu varsa
-// doğrudur (bkz. internal/arch TestTheLinkDefinitionsAreTraversed):
+// Query finds an expansion's target provider FROM THE MODULE NAME AT THE END
+// of the link definition (see core/query targetSide: the target name +
+// ".query" is looked up). For region the entity name and the module name are
+// THE SAME ("region"), so the module declaring the link can write the end
+// naturally. The definition below is HYPOTHETICAL; no such link exists today,
+// and adding one is right only if it has a reader that TRAVERSES it (see
+// internal/arch TestTheLinkDefinitionsAreTraversed):
 //
 //	link.LinkDefinition{
-//	    Name:        "siparis_region",
-//	    From:        link.LinkSide{Module: "siparis", Field: "siparis_id"},
+//	    Name:        "order_region",
+//	    From:        link.LinkSide{Module: "order", Field: "order_id"},
 //	    To:          link.LinkSide{Module: "region", Field: "region_id"},
 //	    Cardinality: link.OneToOne,
 //	}
@@ -73,31 +76,32 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/service"
 )
 
-// Container'daki adlar.
+// Names in the container.
 const (
-	// ModuleName modülün benzersiz adıdır; migration versiyon tablosunun
-	// öneki de budur.
+	// ModuleName is the module's unique name; it is also the prefix of the
+	// migration version table.
 	ModuleName = "region"
-	// ServiceName servisin container'daki adıdır. Tüketici modüller onu bu adla
-	// ve KENDİ tanımladıkları dar arayüzle çözer (ADR 0001).
+	// ServiceName is the service's name in the container. Consuming modules
+	// resolve it by this name and through a narrow interface they define
+	// THEMSELVES (ADR 0001).
 	ServiceName = ModuleName + ".service"
-	// ProviderName query sağlayıcısının container'daki adıdır (ADR 0004).
+	// ProviderName is the query provider's name in the container (ADR 0004).
 	ProviderName = service.Entity + query.ProviderSuffix
-	// dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
+	// dbServiceName is the core database pool's name in the container.
 	dbServiceName = "core.db"
 )
 
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// migrationsRoot migration dosyalarının kök dizinidir.
+// migrationsRoot is the root directory of the migration files.
 //
-// golang-migrate kaynağı köke bakar (iofs.New(src, ".")), embed.FS ise
-// dosyaları "migrations/" altında tutar; alt ağaç bu yüzden bir kez burada
-// açılır.
+// The golang-migrate source looks at the root (iofs.New(src, ".")), whereas the
+// embed.FS keeps the files under "migrations/"; that is why the subtree is
+// opened once, here.
 var migrationsRoot = mustSub(migrationsFS, "migrations")
 
-// Module region modülünün [module.Module] uygulamasıdır.
+// Module is the region module's [module.Module] implementation.
 type Module struct {
 	svc *service.Service
 	api *api.API
@@ -106,16 +110,17 @@ type Module struct {
 
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe itself for the document is pinned down at compile time
+// too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca bölgenin uçları belgeden sessizce düşerdi. Bu satır o
-// sessizliği kapatır.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it with a TYPE ASSERTION; should the method name or signature drift,
+// nothing would break at compile time — only the region endpoints would
+// silently fall out of the document. This line closes that silence.
 var _ openapi.Describer = (*Module)(nil)
 
-// New kurulmamış bir region modülü üretir; servis [Module.Register] içinde
-// kurulur. log nil ise loglar atılır.
+// New produces a region module that is not yet set up; the service is built in
+// [Module.Register]. If log is nil, logs are discarded.
 func New(log *slog.Logger) *Module {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -123,23 +128,23 @@ func New(log *slog.Logger) *Module {
 	return &Module{log: log}
 }
 
-// Name modülün adını döner.
+// Name returns the module's name.
 func (m *Module) Name() string { return ModuleName }
 
-// Register servisi ve query sağlayıcısını container'a kaydeder.
+// Register registers the service and the query provider in the container.
 //
-// region hiçbir MODÜLÜN servisine ihtiyaç duymaz; yalnızca çekirdek havuzunu
-// çözer. Havuz Bootstrap'tan ÖNCE kaydedildiği için burada doğrudan çözmek
-// güvenlidir — modül sırasına bağımlılık yaratan tek şey başka bir MODÜLÜN
-// servisini çözmek olurdu ve bu yapılmaz.
+// region needs no MODULE's service; it resolves only the core pool. Because the
+// pool is registered BEFORE Bootstrap, resolving it directly here is safe — the
+// only thing that would create a dependency on module order is resolving
+// another MODULE's service, and that is not done.
 //
-// Link tanımı bildirilmez ve region'a işaret eden bir link de yoktur: bölge
-// kimliğini taşıyan taraflar onu kendi sütunlarında tutar.
+// No link definition is declared, and there is no link pointing at region
+// either: the sides that carry a region id keep it in their own columns.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, dbServiceName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindUnavailable, "region_db_unavailable",
-			"region modülü %q servisini çözemedi", dbServiceName)
+			"the region module could not resolve the %q service", dbServiceName)
 	}
 
 	repo := repository.New(pool.Pool())
@@ -153,56 +158,58 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 
-	m.log.InfoContext(ctx, "region modülü kaydedildi",
-		slog.String("servis", ServiceName),
-		slog.String("saglayici", ProviderName),
+	m.log.InfoContext(ctx, "region module registered",
+		slog.String("service", ServiceName),
+		slog.String("provider", ProviderName),
 	)
 	return nil
 }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Routes modülün admin ve store route'larını router'a bağlar.
+// Routes mounts the module's admin and store routes on the router.
 //
-// Register'dan SONRA çağrılır (bkz. module.Registry.Bootstrap); api bu yüzden
-// kurulmuş olur. Yine de nil kontrolü vardır: Register hata verip Bootstrap
-// yarıda kesilirse Routes hiç çağrılmaz, ama modül elle kullanılırsa panik
-// yerine sessiz bir no-op daha güvenlidir.
+// It is called AFTER Register (see module.Registry.Bootstrap), so api is set up
+// by then. There is a nil check all the same: if Register fails and Bootstrap
+// is cut short, Routes is never called, but if the module is used by hand a
+// quiet no-op is safer than a panic.
 func (m *Module) Routes(r chi.Router) {
 	if m.api == nil {
-		m.log.Warn("region modülü Register edilmeden Routes çağrıldı, route bağlanmadı")
+		m.log.Warn("Routes was called on the region module without Register, no route was mounted")
 		return
 	}
 	m.api.Routes(r)
 }
 
-// Describe modülün uçlarını OpenAPI belgesine işler.
+// Describe writes the module's endpoints into the OpenAPI document.
 //
-// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
-// DTO'larından türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
-// yüzeyini genişletirdi.
+// The description itself lives in [api.Describe]: the body schemas are derived
+// from that package's unexported DTOs, and exporting the types only for the
+// sake of the document would widen the module's surface.
 //
-// [Module.Routes]'un tersine api kontrolü YOKTUR ve gerekmez: şema tiplerden
-// gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün belgesini de
-// sessizce boşaltırdı.
+// Unlike [Module.Routes] there is NO api check, and none is needed: the schema
+// comes from the types, not from the service. Adding a check would silently
+// empty the document of a module that is not set up, too.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// Service kurulmuş servisi döner; Register çağrılmadıysa nil.
+// Service returns the built service; nil if Register has not been called.
 //
-// Modülü doğrudan kullanan testler ve gömen uygulamalar içindir; normal akışta
-// servis container'dan [ServiceName] adıyla çözülür.
+// It is for tests and embedding applications that use the module directly; in
+// the normal flow the service is resolved from the container under the name
+// [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
 
-// mustSub alt dosya sistemini açar; açılamazsa panikler.
+// mustSub opens the sub file system; it panics if it cannot be opened.
 //
-// //go:embed dizinin varlığını derleme zamanında garanti ettiği için hata yolu
-// erişilemezdir. Yine de sessizce nil dönmek, modülün migration'sız (yani
-// tablosuz) ayağa kalkması demek olurdu; kurulum hatası açıkça patlamalıdır.
+// The error path is unreachable, because //go:embed guarantees at compile time
+// that the directory exists. Returning nil silently would nevertheless mean the
+// module coming up without migrations (that is, without tables); a setup error
+// must blow up openly.
 func mustSub(fsys fs.FS, dir string) fs.FS {
 	sub, err := fs.Sub(fsys, dir)
 	if err != nil {
-		panic("region: migration dizini açılamadı: " + err.Error())
+		panic("region: the migration directory could not be opened: " + err.Error())
 	}
 	return sub
 }

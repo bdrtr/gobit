@@ -10,11 +10,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/service"
 )
 
-// memRepo [service.Repository]'nin bellek içi uygulamasıdır.
+// memRepo is an in-memory implementation of [service.Repository].
 //
-// HTTP katmanı testleri GERÇEK servisi kullanır; yalnızca depo taklit edilir.
-// Böylece doğrulama, hata sınıflandırması ve zarf biçimi uçtan uca sınanır ve
-// handler'ların status kodu seçmediği (core/http'nin seçtiği) kanıtlanabilir.
+// The HTTP layer's tests use the REAL service; only the repository is faked.
+// That way validation, error classification and the envelope shape are tested
+// end to end, and it can be proven that the handlers do not choose the status
+// code (core/http does).
 type memRepo struct {
 	regions    map[string]models.Region
 	countries  map[string]models.Country
@@ -23,7 +24,7 @@ type memRepo struct {
 
 var _ service.Repository = (*memRepo)(nil)
 
-// newMemRepo tohumlanmış bir bellek içi depo üretir.
+// newMemRepo builds a seeded in-memory repository.
 func newMemRepo() *memRepo {
 	m := &memRepo{
 		regions:    map[string]models.Region{},
@@ -38,7 +39,7 @@ func newMemRepo() *memRepo {
 		m.currencies[c.Code] = c
 	}
 	for _, c := range []models.Country{
-		{Code: "TR", Name: "Türkiye"},
+		{Code: "TR", Name: "Turkey"},
 		{Code: "DE", Name: "Germany"},
 		{Code: "JP", Name: "Japan"},
 	} {
@@ -50,7 +51,7 @@ func newMemRepo() *memRepo {
 func (m *memRepo) CreateRegion(_ context.Context, region models.Region, now time.Time) (models.Region, error) {
 	if _, ok := m.currencies[region.CurrencyCode]; !ok {
 		return models.Region{}, errors.Invalid("region_unknown_currency",
-			"bölge oluşturulamadı: para birimi tanımlı değil")
+			"region could not be created: the currency is not defined")
 	}
 	region.CreatedAt = now
 	region.UpdatedAt = now
@@ -61,7 +62,7 @@ func (m *memRepo) CreateRegion(_ context.Context, region models.Region, now time
 func (m *memRepo) GetRegion(_ context.Context, id string) (models.Region, error) {
 	region, ok := m.regions[id]
 	if !ok || region.DeletedAt != nil {
-		return models.Region{}, errors.NotFound("region_not_found", "bölge bulunamadı: %s", id)
+		return models.Region{}, errors.NotFound("region_not_found", "region not found: %s", id)
 	}
 	return region, nil
 }
@@ -76,7 +77,7 @@ func (m *memRepo) ListRegions(_ context.Context, limit, offset int32) ([]models.
 	return live[offset:end], total, nil
 }
 
-// liveRegions silinmemiş bölgeleri kimliğe göre sıralı döner.
+// liveRegions returns the regions that are not deleted, sorted by ID.
 func (m *memRepo) liveRegions() []models.Region {
 	out := make([]models.Region, 0, len(m.regions))
 	for _, region := range m.regions {
@@ -113,7 +114,7 @@ func (m *memRepo) UpdateRegion(
 	next := current.Patched(patch)
 	if _, ok := m.currencies[next.CurrencyCode]; !ok {
 		return models.Region{}, errors.Invalid("region_unknown_currency",
-			"bölge güncellenemedi: para birimi tanımlı değil")
+			"region could not be updated: the currency is not defined")
 	}
 	next.UpdatedAt = now
 	m.regions[id] = next
@@ -142,7 +143,7 @@ func (m *memRepo) GetRegionByCountry(ctx context.Context, countryCode string) (m
 	country, ok := m.countries[countryCode]
 	if !ok || country.RegionID == nil {
 		return models.Region{}, errors.NotFound("region_not_found",
-			"%s ülkesi için bölge bulunamadı", countryCode)
+			"no region found for country %s", countryCode)
 	}
 	return m.GetRegion(ctx, *country.RegionID)
 }
@@ -157,14 +158,14 @@ func (m *memRepo) AssignCountry(
 	}
 	country, ok := m.countries[countryCode]
 	if !ok {
-		return models.Country{}, errors.NotFound("country_not_found", "ülke bulunamadı: %s", countryCode)
+		return models.Country{}, errors.NotFound("country_not_found", "country not found: %s", countryCode)
 	}
 	if country.RegionID != nil {
 		if *country.RegionID == regionID {
 			return country, nil
 		}
 		return models.Country{}, errors.Conflict("country_already_in_region",
-			"%s ülkesi zaten %s bölgesine ait", countryCode, *country.RegionID)
+			"country %s already belongs to region %s", countryCode, *country.RegionID)
 	}
 
 	assigned := regionID
@@ -177,11 +178,11 @@ func (m *memRepo) AssignCountry(
 func (m *memRepo) UnassignCountry(_ context.Context, regionID, countryCode string, now time.Time) error {
 	country, ok := m.countries[countryCode]
 	if !ok {
-		return errors.NotFound("country_not_found", "ülke bulunamadı: %s", countryCode)
+		return errors.NotFound("country_not_found", "country not found: %s", countryCode)
 	}
 	if country.RegionID == nil || *country.RegionID != regionID {
 		return errors.NotFound("country_not_in_region",
-			"%s ülkesi %s bölgesine ait değil", countryCode, regionID)
+			"country %s does not belong to region %s", countryCode, regionID)
 	}
 	country.RegionID = nil
 	country.UpdatedAt = now
@@ -192,7 +193,7 @@ func (m *memRepo) UnassignCountry(_ context.Context, regionID, countryCode strin
 func (m *memRepo) GetCountry(_ context.Context, code string) (models.Country, error) {
 	country, ok := m.countries[code]
 	if !ok {
-		return models.Country{}, errors.NotFound("country_not_found", "ülke bulunamadı: %s", code)
+		return models.Country{}, errors.NotFound("country_not_found", "country not found: %s", code)
 	}
 	return country, nil
 }
@@ -243,7 +244,7 @@ func (m *memRepo) ListCountriesByRegions(
 func (m *memRepo) GetCurrency(_ context.Context, code string) (models.Currency, error) {
 	currency, ok := m.currencies[code]
 	if !ok {
-		return models.Currency{}, errors.NotFound("currency_not_found", "para birimi bulunamadı: %s", code)
+		return models.Currency{}, errors.NotFound("currency_not_found", "currency not found: %s", code)
 	}
 	return currency, nil
 }
@@ -275,7 +276,7 @@ func (m *memRepo) GetCurrenciesByCodes(_ context.Context, codes []string) ([]mod
 	return out, nil
 }
 
-// compareStrings iki dizeyi sözlüksel olarak karşılaştırır.
+// compareStrings compares two strings lexicographically.
 func compareStrings(a, b string) int {
 	switch {
 	case a < b:

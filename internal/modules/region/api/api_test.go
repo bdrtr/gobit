@@ -17,10 +17,11 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/service"
 )
 
-// testNow testlerin sabit saatidir.
+// testNow is the tests' fixed clock.
 var testNow = time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 
-// newTestRouter gerçek servis ve bellek içi depoyla bir router kurar.
+// newTestRouter builds a router with the real service and an in-memory
+// repository.
 func newTestRouter(t *testing.T) (chi.Router, *memRepo) {
 	t.Helper()
 
@@ -32,35 +33,36 @@ func newTestRouter(t *testing.T) (chi.Router, *memRepo) {
 	return r, repo
 }
 
-// adminKimlik testlerin varsayılan çağıranıdır: tam yetkili yönetim kimliği.
-var adminKimlik = corehttp.Principal{
+// adminPrincipal is the tests' default caller: a fully privileged admin
+// identity.
+var adminPrincipal = corehttp.Principal{
 	ID:     "user_test",
 	Kind:   "user",
 	Scopes: []string{corehttp.ScopeAdmin},
 }
 
-// do bir isteği TAM YETKİLİ bir kimlikle çalıştırır ve yanıtı döner.
+// do runs a request with a FULLY PRIVILEGED identity and returns the response.
 //
-// Kimliğin context'e konması, yönetim uçları corehttp.RequireScope ile
-// korunduğu için gereklidir: o middleware kimliği context'ten okur ve kimliği
-// oraya koyan corehttp.RequireAdmin bu testte YOKTUR (router doğrudan
-// kurulur). Kimlik eklenmeseydi bu dosyadaki her yönetim testi, sınadığı
-// davranışa hiç ulaşamadan 401 alırdı. Testlerin ne doğruladığı değişmedi;
-// yalnızca çağıranın kim olduğu belirtildi.
+// Putting the identity into the context is needed because the admin endpoints
+// are guarded by corehttp.RequireScope: that middleware reads the identity from
+// the context, and corehttp.RequireAdmin, which puts it there, is ABSENT in
+// this test (the router is built directly). Without the identity every admin
+// test in this file would get 401 before ever reaching the behavior it tests.
+// What the tests verify did not change; only who the caller is was stated.
 func do(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	return doAs(t, r, &adminKimlik, method, path, body)
+	return doAs(t, r, &adminPrincipal, method, path, body)
 }
 
-// doAs isteği verilen kimlikle çalıştırır; kimlik nil ise istek KİMLİKSİZ
-// gider.
-func doAs(t *testing.T, r chi.Router, kimlik *corehttp.Principal, method, path, body string) *httptest.ResponseRecorder {
+// doAs runs the request with the given identity; if the identity is nil the
+// request goes WITHOUT an identity.
+func doAs(t *testing.T, r chi.Router, principal *corehttp.Principal, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	if kimlik != nil {
-		req = req.WithContext(corehttp.WithPrincipal(req.Context(), *kimlik))
+	if principal != nil {
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), *principal))
 	}
 
 	rec := httptest.NewRecorder()
@@ -68,18 +70,18 @@ func doAs(t *testing.T, r chi.Router, kimlik *corehttp.Principal, method, path, 
 	return rec
 }
 
-// decodeItem tekil zarfın data alanını çözer.
+// decodeItem decodes the data field of the single-record envelope.
 func decodeItem(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
 	var envelope struct {
 		Data map[string]any `json:"data"`
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "gövde: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "body: %s", rec.Body.String())
 	return envelope.Data
 }
 
-// decodeList liste zarfını çözer.
+// decodeList decodes the list envelope.
 func decodeList(t *testing.T, rec *httptest.ResponseRecorder) (data []map[string]any, count, offset, limit int64) {
 	t.Helper()
 
@@ -89,11 +91,11 @@ func decodeList(t *testing.T, rec *httptest.ResponseRecorder) (data []map[string
 		Offset int64            `json:"offset"`
 		Limit  int64            `json:"limit"`
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "gövde: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "body: %s", rec.Body.String())
 	return envelope.Data, envelope.Count, envelope.Offset, envelope.Limit
 }
 
-// errorCode hata zarfındaki kodu döner.
+// errorCode returns the code in the error envelope.
 func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 
@@ -102,83 +104,83 @@ func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 			Code string `json:"code"`
 		} `json:"error"`
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "gövde: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "body: %s", rec.Body.String())
 	return envelope.Error.Code
 }
 
-// createRegion test için bir bölge oluşturur ve kimliğini döner.
+// createRegion creates a region for the test and returns its ID.
 func createRegion(t *testing.T, r chi.Router, name, currency string) string {
 	t.Helper()
 
 	rec := do(t, r, http.MethodPost, "/admin/v1/regions",
 		`{"name":"`+name+`","currency_code":"`+currency+`","automatic_taxes":true,"tax_rate_bps":2000}`)
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
 	id, ok := decodeItem(t, rec)["id"].(string)
-	require.True(t, ok, "kimlik dönmeli")
+	require.True(t, ok, "an ID has to be returned")
 	return id
 }
 
-// TestCreateRegionReturnsCreatedEnvelope oluşturma yanıtının status kodunu ve
-// zarfını kanıtlar (plan Bölüm 8).
+// TestCreateRegionReturnsCreatedEnvelope proves the status code and the
+// envelope of the create response (plan Section 8).
 func TestCreateRegionReturnsCreatedEnvelope(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	rec := do(t, r, http.MethodPost, "/admin/v1/regions",
-		`{"name":"Türkiye","currency_code":"try","automatic_taxes":true,"tax_rate_bps":2000}`)
+		`{"name":"Turkey","currency_code":"try","automatic_taxes":true,"tax_rate_bps":2000}`)
 
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, "application/json; charset=utf-8", rec.Header().Get("Content-Type"))
 
 	data := decodeItem(t, rec)
-	assert.Equal(t, "Türkiye", data["name"])
-	assert.Equal(t, "TRY", data["currency_code"], "kod BÜYÜK harfe normalleştirilmeli")
+	assert.Equal(t, "Turkey", data["name"])
+	assert.Equal(t, "TRY", data["currency_code"], "the code has to be normalized to UPPER case")
 	assert.Equal(t, true, data["automatic_taxes"])
-	assert.InDelta(t, 2000, data["tax_rate_bps"], 0, "oran baz puan olarak dönmeli")
+	assert.InDelta(t, 2000, data["tax_rate_bps"], 0, "the rate has to come back in basis points")
 	assert.Contains(t, data["id"], "reg_")
 }
 
-// TestCreateRegionRejectsInvalidInput geçersiz girdinin 422 ile döndüğünü
-// kanıtlar.
+// TestCreateRegionRejectsInvalidInput proves that invalid input comes back
+// with 422.
 //
-// Handler status SEÇMEZ: servis errors.Invalid döner, corehttp onu 422'ye
-// çevirir (plan Bölüm 2.7).
+// The handler does NOT CHOOSE the status: the service returns errors.Invalid
+// and corehttp turns it into 422 (plan Section 2.7).
 func TestCreateRegionRejectsInvalidInput(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	cases := map[string]string{
-		"geçersiz para birimi biçimi": `{"name":"X","currency_code":"TRYX"}`,
-		"tanımsız para birimi":        `{"name":"X","currency_code":"XYZ"}`,
-		"boş ad":                      `{"name":"  ","currency_code":"TRY"}`,
-		"aralık dışı vergi oranı":     `{"name":"X","currency_code":"TRY","tax_rate_bps":10001}`,
+		"invalid currency format": `{"name":"X","currency_code":"TRYX"}`,
+		"undefined currency":      `{"name":"X","currency_code":"XYZ"}`,
+		"empty name":              `{"name":"  ","currency_code":"TRY"}`,
+		"out-of-range tax rate":   `{"name":"X","currency_code":"TRY","tax_rate_bps":10001}`,
 	}
 	for name, body := range cases {
 		t.Run(name, func(t *testing.T) {
 			rec := do(t, r, http.MethodPost, "/admin/v1/regions", body)
 
-			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
+			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
 			assert.NotEmpty(t, errorCode(t, rec))
 		})
 	}
 }
 
-// TestCreateRegionRejectsUnknownField bilinmeyen alanın sessizce yok
-// sayılmadığını kanıtlar.
+// TestCreateRegionRejectsUnknownField proves that an unknown field is not
+// silently ignored.
 //
-// Sessizce yok sayılsaydı, alan adını yanlış yazan bir istemci vergi oranının
-// yazıldığını sanırdı.
+// Were it silently ignored, a client that misspelled the field name would
+// believe the tax rate had been written.
 func TestCreateRegionRejectsUnknownField(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	rec := do(t, r, http.MethodPost, "/admin/v1/regions",
 		`{"name":"X","currency_code":"TRY","tax_rate":2000}`)
 
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "gövde: %s", rec.Body.String())
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, "region_invalid_body", errorCode(t, rec))
 }
 
-// TestCreateRegionRejectsEmptyAndDoubleBody boş ve çift JSON belgeli gövdenin
-// reddedildiğini kanıtlar.
+// TestCreateRegionRejectsEmptyAndDoubleBody proves that an empty body and a
+// body with two JSON documents are rejected.
 func TestCreateRegionRejectsEmptyAndDoubleBody(t *testing.T) {
 	r, _ := newTestRouter(t)
 
@@ -192,15 +194,15 @@ func TestCreateRegionRejectsEmptyAndDoubleBody(t *testing.T) {
 	assert.Equal(t, "region_invalid_body", errorCode(t, rec))
 }
 
-// TestRegionLifecycle bölge okuma, listeleme, kısmi güncelleme ve silmeyi
-// uçtan uca kanıtlar.
+// TestRegionLifecycle proves reading, listing, partially updating and deleting
+// a region end to end.
 func TestRegionLifecycle(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := createRegion(t, r, "Türkiye", "TRY")
+	id := createRegion(t, r, "Turkey", "TRY")
 
 	rec := do(t, r, http.MethodGet, "/admin/v1/regions/"+id, "")
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "Türkiye", decodeItem(t, rec)["name"])
+	assert.Equal(t, "Turkey", decodeItem(t, rec)["name"])
 
 	rec = do(t, r, http.MethodGet, "/admin/v1/regions", "")
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -208,29 +210,29 @@ func TestRegionLifecycle(t *testing.T) {
 	assert.Len(t, data, 1)
 	assert.Equal(t, int64(1), count)
 	assert.Equal(t, int64(0), offset)
-	assert.Equal(t, int64(service.DefaultLimit), limit, "uygulanan limit zarfta dönmeli")
+	assert.Equal(t, int64(service.DefaultLimit), limit, "the applied limit has to come back in the envelope")
 
-	// Yalnızca ad gönderilir; para birimi ve oran DEĞİŞMEMELİDİR.
-	rec = do(t, r, http.MethodPut, "/admin/v1/regions/"+id, `{"name":"Türkiye Bölgesi"}`)
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	// Only the name is sent; the currency and the rate must NOT CHANGE.
+	rec = do(t, r, http.MethodPut, "/admin/v1/regions/"+id, `{"name":"Turkey Region"}`)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	updated := decodeItem(t, rec)
-	assert.Equal(t, "Türkiye Bölgesi", updated["name"])
-	assert.Equal(t, "TRY", updated["currency_code"], "verilmeyen alan değişmemeli")
-	assert.InDelta(t, 2000, updated["tax_rate_bps"], 0, "verilmeyen alan değişmemeli")
+	assert.Equal(t, "Turkey Region", updated["name"])
+	assert.Equal(t, "TRY", updated["currency_code"], "a field that is not given must not change")
+	assert.InDelta(t, 2000, updated["tax_rate_bps"], 0, "a field that is not given must not change")
 
 	rec = do(t, r, http.MethodPut, "/admin/v1/regions/"+id, `{}`)
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "boş yama reddedilmeli")
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "an empty patch has to be rejected")
 
 	rec = do(t, r, http.MethodDelete, "/admin/v1/regions/"+id, "")
 	require.Equal(t, http.StatusNoContent, rec.Code)
-	assert.Empty(t, rec.Body.String(), "204 gövdesiz olmalı")
+	assert.Empty(t, rec.Body.String(), "a 204 has to have no body")
 
 	rec = do(t, r, http.MethodGet, "/admin/v1/regions/"+id, "")
-	assert.Equal(t, http.StatusNotFound, rec.Code, "silinen bölge okunamamalı")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "a deleted region must not be readable")
 }
 
-// TestGetRegionWrongPrefixIsUnprocessable yanlış türde bir kimliğin 404 değil
-// 422 döndüğünü kanıtlar.
+// TestGetRegionWrongPrefixIsUnprocessable proves that an ID of the wrong kind
+// returns 422, not 404.
 func TestGetRegionWrongPrefixIsUnprocessable(t *testing.T) {
 	r, _ := newTestRouter(t)
 
@@ -240,29 +242,29 @@ func TestGetRegionWrongPrefixIsUnprocessable(t *testing.T) {
 	assert.Equal(t, "region_invalid_input", errorCode(t, rec))
 }
 
-// TestCountryUniquenessIsConflict aynı ülkeyi ikinci bir bölgeye eklemenin
-// 409 döndüğünü kanıtlar.
+// TestCountryUniquenessIsConflict proves that adding the same country to a
+// second region returns 409.
 func TestCountryUniquenessIsConflict(t *testing.T) {
 	r, _ := newTestRouter(t)
-	first := createRegion(t, r, "Türkiye", "TRY")
-	second := createRegion(t, r, "Avrupa", "USD")
+	first := createRegion(t, r, "Turkey", "TRY")
+	second := createRegion(t, r, "Europe", "USD")
 
 	rec := do(t, r, http.MethodPost, "/admin/v1/regions/"+first+"/countries", `{"country_code":"tr"}`)
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 	country := decodeItem(t, rec)
-	assert.Equal(t, "TR", country["code"], "ülke kodu BÜYÜK harfe normalleştirilmeli")
+	assert.Equal(t, "TR", country["code"], "the country code has to be normalized to UPPER case")
 	assert.Equal(t, first, country["region_id"])
 
 	rec = do(t, r, http.MethodPost, "/admin/v1/regions/"+second+"/countries", `{"country_code":"TR"}`)
-	assert.Equal(t, http.StatusConflict, rec.Code, "gövde: %s", rec.Body.String())
+	assert.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
 	assert.Equal(t, "country_already_in_region", errorCode(t, rec))
 }
 
-// TestRegionCountryListAndRemoval bölgenin ülke listesini ve çıkarmayı
-// kanıtlar.
+// TestRegionCountryListAndRemoval proves a region's country list and removing
+// a country from it.
 func TestRegionCountryListAndRemoval(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := createRegion(t, r, "Avrupa", "USD")
+	id := createRegion(t, r, "Europe", "USD")
 
 	for _, code := range []string{"DE", "TR"} {
 		rec := do(t, r, http.MethodPost, "/admin/v1/regions/"+id+"/countries",
@@ -281,7 +283,7 @@ func TestRegionCountryListAndRemoval(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, rec.Code)
 
 	rec = do(t, r, http.MethodDelete, "/admin/v1/regions/"+id+"/countries/DE", "")
-	assert.Equal(t, http.StatusNotFound, rec.Code, "ikinci çıkarma bulunamadı dönmeli")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "a second removal has to return not found")
 
 	rec = do(t, r, http.MethodGet, "/admin/v1/regions/"+id+"/countries", "")
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -290,17 +292,17 @@ func TestRegionCountryListAndRemoval(t *testing.T) {
 	assert.Equal(t, "TR", data[0]["code"])
 }
 
-// TestListCountriesFilter ülke listesinin bölge süzgecini kanıtlar.
+// TestListCountriesFilter proves the region filter of the country list.
 func TestListCountriesFilter(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := createRegion(t, r, "Türkiye", "TRY")
+	id := createRegion(t, r, "Turkey", "TRY")
 	rec := do(t, r, http.MethodPost, "/admin/v1/regions/"+id+"/countries", `{"country_code":"TR"}`)
 	require.Equal(t, http.StatusCreated, rec.Code)
 
 	rec = do(t, r, http.MethodGet, "/admin/v1/countries", "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	_, count, _, _ := decodeList(t, rec)
-	assert.Equal(t, int64(3), count, "süzgeçsiz istek tüm ülkeleri saymalı")
+	assert.Equal(t, int64(3), count, "a request without the filter has to count every country")
 
 	rec = do(t, r, http.MethodGet, "/admin/v1/countries?region_id="+id, "")
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -309,13 +311,13 @@ func TestListCountriesFilter(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 	assert.Equal(t, "TR", data[0]["code"])
 
-	// Boş bir region_id "süzme yok" DEĞİL, istemci hatasıdır.
+	// An empty region_id is NOT "no filter"; it is a client error.
 	rec = do(t, r, http.MethodGet, "/admin/v1/countries?region_id=", "")
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-// TestCurrencyEndpointsAreReadOnly para birimi uç noktalarının okuma
-// yüzeyini ve ondalık basamak alanını kanıtlar.
+// TestCurrencyEndpointsAreReadOnly proves the read surface of the currency
+// endpoints and their decimal digits field.
 func TestCurrencyEndpointsAreReadOnly(t *testing.T) {
 	r, _ := newTestRouter(t)
 
@@ -329,31 +331,32 @@ func TestCurrencyEndpointsAreReadOnly(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	currency := decodeItem(t, rec)
 	assert.Equal(t, "JPY", currency["code"])
-	assert.InDelta(t, 0, currency["decimal_digits"], 0, "JPY ondalıksızdır")
+	assert.InDelta(t, 0, currency["decimal_digits"], 0, "JPY has no decimals")
 
 	rec = do(t, r, http.MethodGet, "/admin/v1/currencies/XYZ", "")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 
-	// Referans veriye yazma yüzeyi YOKTUR; route hiç kayıtlı değildir.
+	// Reference data has NO write surface; the route is not registered at all.
 	rec = do(t, r, http.MethodPost, "/admin/v1/currencies", `{"code":"XYZ"}`)
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code,
-		"para birimi yazma yüzeyi bilinçli olarak yoktur")
+		"the currency write surface is deliberately absent")
 }
 
-// TestStoreRegionsExposeCurrencyScale vitrin uç noktasının para biriminin
-// ONDALIK BASAMAĞINI döndürdüğünü kanıtlar.
+// TestStoreRegionsExposeCurrencyScale proves that the storefront endpoint
+// returns the currency's DECIMAL DIGITS.
 //
-// Tutarlar minor unit tam sayıdır; istemci bölme çarpanını aynı yanıttan
-// öğrenmezse sabit 100 varsayar ve yen tutarlarını yüz kat küçük gösterir.
+// Amounts are minor-unit integers; a client that does not learn the divisor
+// from the same response assumes a fixed 100 and shows yen amounts a hundred
+// times too small.
 func TestStoreRegionsExposeCurrencyScale(t *testing.T) {
 	r, _ := newTestRouter(t)
-	jpID := createRegion(t, r, "Japonya", "JPY")
+	jpID := createRegion(t, r, "Japan", "JPY")
 	rec := do(t, r, http.MethodPost, "/admin/v1/regions/"+jpID+"/countries", `{"country_code":"JP"}`)
 	require.Equal(t, http.StatusCreated, rec.Code)
-	createRegion(t, r, "Türkiye", "TRY")
+	createRegion(t, r, "Turkey", "TRY")
 
 	rec = do(t, r, http.MethodGet, "/store/v1/regions", "")
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	data, count, _, _ := decodeList(t, rec)
 	require.Len(t, data, 2)
 	assert.Equal(t, int64(2), count)
@@ -367,44 +370,44 @@ func TestStoreRegionsExposeCurrencyScale(t *testing.T) {
 
 	jp := byID[jpID]
 	currency, ok := jp["currency"].(map[string]any)
-	require.True(t, ok, "para birimi gövdesi olmalı")
+	require.True(t, ok, "there has to be a currency body")
 	assert.Equal(t, "JPY", currency["code"])
 	assert.Equal(t, "¥", currency["symbol"])
 	assert.InDelta(t, 0, currency["decimal_digits"], 0)
 
 	countries, ok := jp["countries"].([]any)
-	require.True(t, ok, "ülkeler gövdede olmalı")
+	require.True(t, ok, "the countries have to be in the body")
 	require.Len(t, countries, 1)
 
-	// Vergi yapılandırması MÜŞTERİYE gitmez.
+	// The tax configuration does NOT go to the CUSTOMER.
 	assert.NotContains(t, jp, "tax_rate_bps")
 	assert.NotContains(t, jp, "automatic_taxes")
 }
 
-// TestStoreRegionEmptyCountriesIsArray ülkesi olmayan bölgenin null değil boş
-// dizi döndürdüğünü kanıtlar.
+// TestStoreRegionEmptyCountriesIsArray proves that a region with no countries
+// returns an empty array, not null.
 func TestStoreRegionEmptyCountriesIsArray(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := createRegion(t, r, "Türkiye", "TRY")
+	id := createRegion(t, r, "Turkey", "TRY")
 
 	rec := do(t, r, http.MethodGet, "/store/v1/regions/"+id, "")
 	require.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), `"countries":[]`,
-		"boş liste null değil [] olmalı")
+		"an empty list has to be [], not null")
 }
 
-// TestStoreRegionNotFound olmayan bölge için 404 döndüğünü kanıtlar.
+// TestStoreRegionNotFound proves that a missing region returns 404.
 func TestStoreRegionNotFound(t *testing.T) {
 	r, _ := newTestRouter(t)
 
-	rec := do(t, r, http.MethodGet, "/store/v1/regions/reg_YOK", "")
+	rec := do(t, r, http.MethodGet, "/store/v1/regions/reg_MISSING", "")
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 	assert.Equal(t, "region_not_found", errorCode(t, rec))
 }
 
-// TestPagingParamsMustBeIntegers sayıya çevrilemeyen sayfalama parametresinin
-// sessizce ilk sayfaya düşmediğini kanıtlar.
+// TestPagingParamsMustBeIntegers proves that a paging parameter that cannot be
+// converted to a number does not silently fall back to the first page.
 func TestPagingParamsMustBeIntegers(t *testing.T) {
 	r, _ := newTestRouter(t)
 
@@ -415,52 +418,54 @@ func TestPagingParamsMustBeIntegers(t *testing.T) {
 	} {
 		rec := do(t, r, http.MethodGet, path, "")
 
-		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "yol: %s", path)
-		assert.Equal(t, "region_invalid_body", errorCode(t, rec), "yol: %s", path)
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "path: %s", path)
+		assert.Equal(t, "region_invalid_body", errorCode(t, rec), "path: %s", path)
 	}
 }
 
-// TestDarYetkiliKimlikYazmaUcunda403Alir yalnızca [api.ScopeRead] taşıyan bir
-// kimliğin yönetim YAZMA uçlarından geçemediğini kanıtlar.
+// TestNarrowScopeDoesNotOpenWriteEndpoints proves that an identity carrying
+// only [api.ScopeRead] cannot pass the admin WRITE endpoints.
 //
-// Sınanan senaryo somuttur: okuma yetkisiyle giriş yapan bir yönetim kimliği,
-// yetki zorlaması olmasaydı DELETE /admin/v1/regions/{id} ile bölgeleri
-// silebilir ya da bir ülkeyi başka bölgeye taşıyıp o ülkeden gelen her
-// siparişin para birimini ve vergi oranını değiştirebilirdi.
-func TestDarYetkiliKimlikYazmaUcunda403Alir(t *testing.T) {
+// The scenario under test is concrete: an admin identity signed in with the
+// read scope could, without scope enforcement, delete regions with
+// DELETE /admin/v1/regions/{id}, or move a country to another region and so
+// change the currency and tax rate of every order that comes from that
+// country.
+func TestNarrowScopeDoesNotOpenWriteEndpoints(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := createRegion(t, r, "Türkiye", "TRY")
-	darKimlik := corehttp.Principal{ID: "user_dar", Kind: "user", Scopes: []string{api.ScopeRead}}
+	id := createRegion(t, r, "Turkey", "TRY")
+	narrowPrincipal := corehttp.Principal{ID: "user_narrow", Kind: "user", Scopes: []string{api.ScopeRead}}
 
-	for _, uc := range []struct{ method, path, body string }{
-		{http.MethodPost, "/admin/v1/regions", `{"name":"Avrupa","currency_code":"USD"}`},
-		{http.MethodPut, "/admin/v1/regions/" + id, `{"name":"Yeni"}`},
+	for _, endpoint := range []struct{ method, path, body string }{
+		{http.MethodPost, "/admin/v1/regions", `{"name":"Europe","currency_code":"USD"}`},
+		{http.MethodPut, "/admin/v1/regions/" + id, `{"name":"New"}`},
 		{http.MethodDelete, "/admin/v1/regions/" + id, ""},
 		{http.MethodPost, "/admin/v1/regions/" + id + "/countries", `{"country_code":"tr"}`},
 		{http.MethodDelete, "/admin/v1/regions/" + id + "/countries/tr", ""},
 	} {
-		rec := doAs(t, r, &darKimlik, uc.method, uc.path, uc.body)
+		rec := doAs(t, r, &narrowPrincipal, endpoint.method, endpoint.path, endpoint.body)
 		assert.Equal(t, http.StatusForbidden, rec.Code,
-			"%s %s okuma yetkisiyle açılmamalı: %s", uc.method, uc.path, rec.Body.String())
+			"%s %s must not open with the read scope: %s", endpoint.method, endpoint.path, rec.Body.String())
 	}
 
-	// Reddedilen istekler gerçekten YAZMAMIŞ olmalı: bölge hâlâ yerinde ve
-	// eski adıyla durmalı. Yalnızca status koduna bakmak, middleware'in
-	// handler'dan SONRA çalıştığı bir hatayı gözden kaçırırdı.
+	// The rejected requests must really have WRITTEN NOTHING: the region has to
+	// still be in place, under its old name. Looking at the status code alone
+	// would miss a fault in which the middleware runs AFTER the handler.
 	rec := do(t, r, http.MethodGet, "/admin/v1/regions/"+id, "")
-	require.Equal(t, http.StatusOK, rec.Code, "bölge silinmemiş olmalı")
-	assert.Equal(t, "Türkiye", decodeItem(t, rec)["name"], "bölge güncellenmemiş olmalı")
+	require.Equal(t, http.StatusOK, rec.Code, "the region must not have been deleted")
+	assert.Equal(t, "Turkey", decodeItem(t, rec)["name"], "the region must not have been updated")
 }
 
-// TestDarYetkiliKimlikOkumaUcundaGecer aynı dar kimliğin yönetim OKUMA
-// uçlarından GEÇTİĞİNİ kanıtlar.
+// TestNarrowScopePassesOnReadEndpoints proves that the same narrow identity
+// DOES PASS the admin READ endpoints.
 //
-// Yetki zorlamasının değeri, dar yetkiyi de gerçekten kabul etmesindedir:
-// yalnızca reddetseydi kimse dar yetki dağıtmaz, herkese admin verilirdi.
-func TestDarYetkiliKimlikOkumaUcundaGecer(t *testing.T) {
+// The value of scope enforcement is that it really accepts the narrow scope
+// too: if it only ever rejected, nobody would hand out narrow scopes and
+// everybody would be given admin.
+func TestNarrowScopePassesOnReadEndpoints(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := createRegion(t, r, "Türkiye", "TRY")
-	darKimlik := corehttp.Principal{ID: "user_dar", Kind: "user", Scopes: []string{api.ScopeRead}}
+	id := createRegion(t, r, "Turkey", "TRY")
+	narrowPrincipal := corehttp.Principal{ID: "user_narrow", Kind: "user", Scopes: []string{api.ScopeRead}}
 
 	for _, path := range []string{
 		"/admin/v1/regions",
@@ -469,18 +474,19 @@ func TestDarYetkiliKimlikOkumaUcundaGecer(t *testing.T) {
 		"/admin/v1/countries",
 		"/admin/v1/currencies",
 	} {
-		rec := doAs(t, r, &darKimlik, http.MethodGet, path, "")
+		rec := doAs(t, r, &narrowPrincipal, http.MethodGet, path, "")
 		assert.Equal(t, http.StatusOK, rec.Code, "GET %s: %s", path, rec.Body.String())
 	}
 }
 
-// TestKimliksizYonetimIstegi401Alir kimliği hiç olmayan isteğin 401 aldığını
-// kanıtlar.
+// TestAdminRequestWithoutPrincipalReturns401 proves that a request with no
+// identity at all gets 401.
 //
-// Ayrım bilinçlidir: 401 "kim olduğunu söyle", 403 "kim olduğunu biliyorum
-// ama yetkin yok" demektir. İkisi karışsaydı istemci, kimliğini yenileyerek
-// çözülmeyecek bir sorun için oturum tazelemeyi denerdi.
-func TestKimliksizYonetimIstegi401Alir(t *testing.T) {
+// The distinction is deliberate: 401 means "tell me who you are", 403 means "I
+// know who you are, but you lack the scope". Were the two mixed up, the client
+// would try refreshing its session for a problem that renewing its identity
+// will not solve.
+func TestAdminRequestWithoutPrincipalReturns401(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	rec := doAs(t, r, nil, http.MethodGet, "/admin/v1/regions", "")
@@ -488,14 +494,16 @@ func TestKimliksizYonetimIstegi401Alir(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
 }
 
-// TestMagazaUclariYetkiIstemez store yüzeyine yetki EKLENMEDİĞİNİ kanıtlar.
+// TestStoreEndpointsRequireNoScope proves that NO scope was added to the store
+// surface.
 //
-// Mağaza yüzeyinin kimliği publishable anahtardır ve o anahtar tanımı gereği
-// yetki taşımaz; store uçlarına yanlışlıkla bir scope takılırsa vitrin
-// tamamen çalışmaz hâle gelir ve bu test onu hemen yakalar.
-func TestMagazaUclariYetkiIstemez(t *testing.T) {
+// The storefront surface's identity is the publishable key, and that key by
+// definition carries no scope; if a scope is ever attached to the store
+// endpoints by mistake, the storefront stops working entirely, and this test
+// catches that at once.
+func TestStoreEndpointsRequireNoScope(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := createRegion(t, r, "Türkiye", "TRY")
+	id := createRegion(t, r, "Turkey", "TRY")
 
 	for _, path := range []string{"/store/v1/regions", "/store/v1/regions/" + id} {
 		rec := doAs(t, r, nil, http.MethodGet, path, "")

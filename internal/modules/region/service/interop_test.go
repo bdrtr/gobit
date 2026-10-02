@@ -11,17 +11,18 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/models"
 )
 
-// TestInteropSurfaceUsesPrimitiveTypes modüller arası yüzeyin, tüketicinin
-// KENDİ paketinde tanımlayabileceği dar arayüzleri yapısal olarak
-// karşıladığını kanıtlar (ADR 0001).
+// TestInteropSurfaceUsesPrimitiveTypes proves that the cross-module surface
+// structurally satisfies the narrow interfaces a consumer can define in its OWN
+// package (ADR 0001).
 //
-// Buradaki arayüzler bilinçli olarak region'ın hiçbir tipini adlandırmaz;
-// cart modülü Faz 5'te tam olarak böyle bir arayüz yazacak ve somut servisi
-// container'dan "region.service" adıyla çözecektir. Bu atama derlenmezse,
-// tüketici tarafında da derlenmeyecek demektir — hata, çalışma zamanında
-// container'dan çözüm anında değil BURADA yakalanır.
+// The interfaces here deliberately name none of region's types; the cart module
+// will write exactly such an interface in Phase 5 and will resolve the concrete
+// service from the container under the name "region.service". If this
+// assignment does not compile, it will not compile on the consumer side either
+// — the error is caught HERE, not at the moment of resolution from the
+// container at run time.
 func TestInteropSurfaceUsesPrimitiveTypes(t *testing.T) {
-	// Tüketici modülün yazacağı arayüzlerin birebir kopyası.
+	// Exact copies of the interfaces the consuming module will write.
 	type regionResolver interface {
 		RegionIDForCountry(ctx context.Context, countryCode string) (string, error)
 	}
@@ -45,7 +46,8 @@ func TestInteropSurfaceUsesPrimitiveTypes(t *testing.T) {
 	)
 }
 
-// TestRegionIDForCountry ülkeden bölge kimliğine giden dar yüzeyi kanıtlar.
+// TestRegionIDForCountry proves the narrow surface that leads from a country to
+// a region id.
 func TestRegionIDForCountry(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -62,12 +64,12 @@ func TestRegionIDForCountry(t *testing.T) {
 	assert.Equal(t, CodeCountryUnassigned, errors.CodeOf(err))
 }
 
-// TestRegionCurrencyReturnsDecimalDigits bölgenin para birimiyle birlikte
-// ONDALIK BASAMAK sayısının da döndüğünü kanıtlar.
+// TestRegionCurrencyReturnsDecimalDigits proves that the region's currency comes
+// back together with its number of DECIMAL DIGITS.
 //
-// Basamak sayısı olmadan sepet, minor unit tam sayıyı hangi çarpanla
-// göstereceğini bilemez; sabit 100 varsayan bir sunum katmanı yen tutarlarını
-// yüz kat küçük gösterirdi.
+// Without the digit count the cart cannot know by which factor to present the
+// minor unit integer; a presentation layer assuming a fixed 100 would show yen
+// amounts a hundred times too small.
 func TestRegionCurrencyReturnsDecimalDigits(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -84,31 +86,31 @@ func TestRegionCurrencyReturnsDecimalDigits(t *testing.T) {
 	code, digits, err = svc.RegionCurrency(ctx, jpyRegion.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "JPY", code)
-	assert.Equal(t, int32(0), digits, "JPY ondalıksızdır")
+	assert.Equal(t, int32(0), digits, "JPY has no decimal digits")
 
 	code, digits, err = svc.RegionCurrency(ctx, kwdRegion.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "KWD", code)
-	assert.Equal(t, int32(3), digits, "KWD üç basamaklıdır")
+	assert.Equal(t, int32(3), digits, "KWD has three decimal digits")
 }
 
-// TestRegionCurrencyRejectsUnknownRegion olmayan bölge için bulunamadı
-// döndüğünü kanıtlar.
+// TestRegionCurrencyRejectsUnknownRegion proves that not found is returned for a
+// region that does not exist.
 func TestRegionCurrencyRejectsUnknownRegion(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
 
-	_, _, err := svc.RegionCurrency(ctx, "reg_YOK")
+	_, _, err := svc.RegionCurrency(ctx, "reg_MISSING")
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
 	_, _, err = svc.RegionCurrency(ctx, "cart_01")
 	require.Error(t, err)
-	assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "yanlış önek doğrulama hatasıdır")
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "a wrong prefix is a validation error")
 }
 
-// TestRegionTaxReturnsBasisPoints vergi oranının BAZ PUAN tam sayı olarak
-// döndüğünü ve otomatik vergi bayrağını taşıdığını kanıtlar.
+// TestRegionTaxReturnsBasisPoints proves that the tax rate comes back as a BASIS
+// POINT integer and that it carries the automatic tax flag.
 func TestRegionTaxReturnsBasisPoints(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)
@@ -116,12 +118,12 @@ func TestRegionTaxReturnsBasisPoints(t *testing.T) {
 
 	rate, automatic, err := svc.RegionTax(ctx, region.ID)
 	require.NoError(t, err)
-	assert.Equal(t, int32(2000), rate, "%20 = 2000 baz puan")
+	assert.Equal(t, int32(2000), rate, "20% = 2000 basis points")
 	assert.True(t, automatic)
 
-	// Vergi tam sayı aritmetiğiyle hesaplanır: 19,99 TRY (1999 kuruş) için
-	// 1999 * 2000 / 10000 = 399 kuruş. float bir oranla aynı hesap kuruş
-	// düzeyinde sessizce kayardı.
+	// Tax is computed with integer arithmetic: for 19.99 TRY (1999 minor
+	// units), 1999 * 2000 / 10000 = 399 minor units. The same computation with
+	// a float rate would silently drift at the minor-unit level.
 	const subtotal int64 = 1999
 	tax := subtotal * int64(rate) / int64(models.MaxTaxRate)
 	assert.Equal(t, int64(399), tax)
@@ -137,7 +139,7 @@ func TestRegionTaxReturnsBasisPoints(t *testing.T) {
 	assert.False(t, automatic)
 }
 
-// TestCurrencyDecimalDigits kod üzerinden ondalık basamak okumasını kanıtlar.
+// TestCurrencyDecimalDigits proves reading the decimal digits by currency code.
 func TestCurrencyDecimalDigits(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newTestService(t)

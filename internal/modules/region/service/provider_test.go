@@ -11,8 +11,8 @@ import (
 	"github.com/bdrtr/gobit/core/query"
 )
 
-// newTestProvider sahte depo üzerinde çalışan bir sağlayıcı, servisi ve
-// deposunu döner.
+// newTestProvider returns a provider running on the fake repository, together
+// with its service and repository.
 func newTestProvider(t *testing.T) (*QueryProvider, *Service, *memRepo) {
 	t.Helper()
 
@@ -20,11 +20,12 @@ func newTestProvider(t *testing.T) (*QueryProvider, *Service, *memRepo) {
 	return NewQueryProvider(svc), svc, repo
 }
 
-// TestProviderEntityMatchesRegistrationName sağlayıcının entity adının
-// container'a kaydedilen adla uyuştuğunu kanıtlar.
+// TestProviderEntityMatchesRegistrationName proves that the provider's entity
+// name matches the name it is registered under in the container.
 //
-// Query, bir genişletmenin hedefini "<entity>.query" adıyla arar; ad
-// uyuşmazsa errors.NotFound döner ve hata yalnızca çalışma zamanında görünürdü.
+// Query looks up the target of an expansion under the name "<entity>.query"; if
+// the names did not match, errors.NotFound would be returned and the error
+// would only show at run time.
 func TestProviderEntityMatchesRegistrationName(t *testing.T) {
 	provider, _, _ := newTestProvider(t)
 
@@ -32,8 +33,8 @@ func TestProviderEntityMatchesRegistrationName(t *testing.T) {
 	assert.Equal(t, "region.query", provider.Entity()+query.ProviderSuffix)
 }
 
-// TestProviderListReturnsFullRecords varsayılan alan kümesinin bölgeyi, para
-// birimini ve ülkelerini taşıdığını kanıtlar.
+// TestProviderListReturnsFullRecords proves that the default field set carries
+// the region, its currency and its countries.
 func TestProviderListReturnsFullRecords(t *testing.T) {
 	ctx := context.Background()
 	provider, svc, _ := newTestProvider(t)
@@ -53,19 +54,19 @@ func TestProviderListReturnsFullRecords(t *testing.T) {
 	assert.Equal(t, true, record["automatic_taxes"])
 
 	currency, ok := record["currency"].(map[string]any)
-	require.True(t, ok, "para birimi alt kaydı olmalı")
+	require.True(t, ok, "there has to be a currency sub-record")
 	assert.Equal(t, "JPY", currency["code"])
 	assert.Equal(t, int32(0), currency["decimal_digits"],
-		"vitrin bölme çarpanını bu alandan öğrenir")
+		"the storefront learns the division factor from this field")
 
 	countries, ok := record["countries"].([]map[string]any)
-	require.True(t, ok, "ülke alt kayıtları olmalı")
+	require.True(t, ok, "there have to be country sub-records")
 	require.Len(t, countries, 1)
 	assert.Equal(t, "JP", countries[0]["code"])
 }
 
-// TestProviderFetchByIDsBatchesReads genişletme başına SABİT sayıda okuma
-// yapıldığını kanıtlar (ADR 0004'ün N+1 yasağı).
+// TestProviderFetchByIDsBatchesReads proves that a CONSTANT number of reads is
+// made per expansion (ADR 0004's N+1 ban).
 func TestProviderFetchByIDsBatchesReads(t *testing.T) {
 	ctx := context.Background()
 	provider, svc, repo := newTestProvider(t)
@@ -86,15 +87,15 @@ func TestProviderFetchByIDsBatchesReads(t *testing.T) {
 	assert.Equal(t, 1, repo.callCount("GetRegionsByIDs"))
 	assert.Equal(t, 1, repo.callCount("GetCurrenciesByCodes"))
 	assert.Equal(t, 1, repo.callCount("ListCountriesByRegions"))
-	assert.Zero(t, repo.callCount("GetCurrency"), "kayıt başına para birimi okunmamalı")
-	assert.Zero(t, repo.callCount("ListCountries"), "kayıt başına ülke okunmamalı")
+	assert.Zero(t, repo.callCount("GetCurrency"), "the currency must not be read per record")
+	assert.Zero(t, repo.callCount("ListCountries"), "the countries must not be read per record")
 }
 
-// TestProviderSkipsUnrequestedJoins istenmeyen alt kayıtlar için hiç sorgu
-// yapılmadığını kanıtlar.
+// TestProviderSkipsUnrequestedJoins proves that no query at all is made for
+// sub-records that were not asked for.
 //
-// Alan seçimi yalnızca yanıtı küçültmek için değildir; istenmeyen bir
-// genişletmenin MALİYETİ de ödenmemelidir.
+// Field selection is not only for shrinking the response; the COST of an
+// expansion that was not asked for must not be paid either.
 func TestProviderSkipsUnrequestedJoins(t *testing.T) {
 	ctx := context.Background()
 	provider, svc, repo := newTestProvider(t)
@@ -107,27 +108,27 @@ func TestProviderSkipsUnrequestedJoins(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 
-	assert.Zero(t, repo.callCount("GetCurrenciesByCodes"), "para birimi istenmedi, okunmamalı")
-	assert.Zero(t, repo.callCount("ListCountriesByRegions"), "ülkeler istenmedi, okunmamalı")
+	assert.Zero(t, repo.callCount("GetCurrenciesByCodes"), "the currency was not requested, it must not be read")
+	assert.Zero(t, repo.callCount("ListCountriesByRegions"), "the countries were not requested, they must not be read")
 	assert.NotContains(t, records[0], "currency")
 	assert.NotContains(t, records[0], "countries")
-	assert.Contains(t, records[0], query.IDField, "kimlik istenmese de eklenmeli")
+	assert.Contains(t, records[0], query.IDField, "the id has to be added even when it is not requested")
 }
 
-// TestProviderRejectsUnknownField tanınmayan alan için errors.Invalid
-// döndüğünü kanıtlar (ADR 0004: alan doğrulaması sağlayıcıya aittir).
+// TestProviderRejectsUnknownField proves that errors.Invalid is returned for an
+// unrecognized field (ADR 0004: field validation belongs to the provider).
 func TestProviderRejectsUnknownField(t *testing.T) {
 	ctx := context.Background()
 	provider, _, repo := newTestProvider(t)
 
-	_, err := provider.FetchByIDs(ctx, []string{"reg_1"}, []string{"tax_rate", "gizli_alan"})
+	_, err := provider.FetchByIDs(ctx, []string{"reg_1"}, []string{"tax_rate", "hidden_field"})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-	assert.Zero(t, repo.callCount("GetRegionsByIDs"), "alan doğrulaması okumadan ÖNCE yapılmalı")
+	assert.Zero(t, repo.callCount("GetRegionsByIDs"), "field validation has to happen BEFORE the read")
 }
 
-// TestProviderIDFilter kimlik filtresinin kabul ettiği ve reddettiği biçimleri
-// kanıtlar.
+// TestProviderIDFilter proves the forms the id filter accepts and the forms it
+// rejects.
 func TestProviderIDFilter(t *testing.T) {
 	ctx := context.Background()
 	provider, svc, _ := newTestProvider(t)
@@ -145,7 +146,7 @@ func TestProviderIDFilter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
-	// Boş dilim "hiçbir kimlik" demektir; nil'den ayrı bir anlamdır.
+	// An empty slice means "no ids"; its meaning is distinct from nil.
 	records, err = provider.List(ctx, query.ListOptions{
 		Filters: map[string]any{"id": []string{}},
 	})
@@ -153,18 +154,19 @@ func TestProviderIDFilter(t *testing.T) {
 	assert.Empty(t, records)
 
 	_, err = provider.List(ctx, query.ListOptions{Filters: map[string]any{"name": "X"}})
-	require.Error(t, err, "desteklenmeyen filtre reddedilmeli")
+	require.Error(t, err, "an unsupported filter has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
 	_, err = provider.List(ctx, query.ListOptions{Filters: map[string]any{"id": 42}})
-	require.Error(t, err, "yanlış tipli filtre reddedilmeli")
+	require.Error(t, err, "a filter of the wrong type has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestProviderListAppliesModuleDefaultLimit Query sözleşmesindeki "sınırsız"
-// yerine modülün sayfa boyunun uygulandığını kanıtlar.
+// TestProviderListAppliesModuleDefaultLimit proves that the module's page size
+// is applied in place of the "unlimited" in the Query contract.
 //
-// Sınırsız bir kök listesi tek istekte tüm tabloyu belleğe alırdı.
+// An unlimited root list would load the whole table into memory in a single
+// request.
 func TestProviderListAppliesModuleDefaultLimit(t *testing.T) {
 	ctx := context.Background()
 	provider, svc, repo := newTestProvider(t)
@@ -176,27 +178,28 @@ func TestProviderListAppliesModuleDefaultLimit(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, records, 3)
 	limit, offset := repo.lastPaging()
-	assert.Equal(t, DefaultLimit, limit, "sınırsız istek modülün varsayılanına düşmeli")
+	assert.Equal(t, DefaultLimit, limit, "an unlimited request has to fall back to the module's default")
 	assert.Zero(t, offset)
 
-	// int32'ye sığmayan bir limit SARMAMALI; sıkıştırıldıktan sonra azami
-	// değerle kırpılmalıdır. Sarsaydı negatif bir limit veritabanına giderdi.
+	// A limit that does not fit in int32 must NOT WRAP; after being clamped it
+	// has to be cut to the maximum value. Had it wrapped, a negative limit
+	// would have gone to the database.
 	records, err = provider.List(ctx, query.ListOptions{Limit: 1 << 40})
 	require.NoError(t, err)
 	assert.Len(t, records, 3)
 	limit, _ = repo.lastPaging()
-	assert.Equal(t, MaxLimit, limit, "limit azami değerle kırpılmalı")
+	assert.Equal(t, MaxLimit, limit, "the limit has to be cut to the maximum value")
 
 	_, err = provider.List(ctx, query.ListOptions{Offset: -1})
-	require.Error(t, err, "negatif offset reddedilmeli")
+	require.Error(t, err, "a negative offset has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestProviderRecordsAreIndependent döndürülen kayıtların birbirinin durumunu
-// paylaşmadığını kanıtlar.
+// TestProviderRecordsAreIndependent proves that the returned records do not
+// share each other's state.
 //
-// Query genişletme sonucunu kaydın İÇİNE yazar; paylaşılan bir harita, bir
-// kaydın genişletmesinin diğerinde de görünmesi demek olurdu.
+// Query writes the expansion result INTO the record; a shared map would mean
+// that one record's expansion also shows up in another.
 func TestProviderRecordsAreIndependent(t *testing.T) {
 	ctx := context.Background()
 	provider, svc, _ := newTestProvider(t)
@@ -207,6 +210,6 @@ func TestProviderRecordsAreIndependent(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 
-	records[0]["ek_alan"] = "x"
-	assert.NotContains(t, records[1], "ek_alan")
+	records[0]["extra_field"] = "x"
+	assert.NotContains(t, records[1], "extra_field")
 }

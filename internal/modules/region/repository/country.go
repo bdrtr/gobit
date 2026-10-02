@@ -9,21 +9,24 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/region/repository/regiondb"
 )
 
-// AssignCountry ülkeyi bölgeye bağlar ve güncel ülkeyi döner.
+// AssignCountry binds the country to the region and returns the updated
+// country.
 //
-// "Bir ülke en fazla bir bölgeye ait olabilir" kuralı BURADA korunur:
+// The rule "a country can belong to at most one region" is guarded HERE:
 //
-//   - Bölge satırı önce PAYLAŞIMLI kilitlenir (kilit sırasının ilk adımı);
-//     böylece silinmekte olan bir bölgeye ülke eklenemez.
-//   - Ülke satırı sonra TEKİL kilitlenir. Aynı ülkeyi iki farklı bölgeye
-//     eklemeye çalışan iki istekten ikincisi burada bekler; beklemesi bitince
-//     satırın GÜNCEL sürümünü okur, ülkenin alındığını görür ve
-//     errors.Conflict döner. Kilit olmasaydı ikisi de boş bir region_id görür
-//     ve ikincisi birincinin yazdığını sessizce ezerdi.
+//   - The region row is locked SHARED first (the first step of the lock
+//     order), so a country cannot be added to a region that is being deleted.
+//   - The country row is then locked EXCLUSIVELY. Of two requests trying to add
+//     the same country to two different regions, the second waits here; once
+//     its wait is over it reads the CURRENT version of the row, sees that the
+//     country has been taken and returns errors.Conflict. Without the lock both
+//     would see an empty region_id and the second would silently overwrite
+//     what the first wrote.
 //
-// Çağrı IDEMPOTENTTİR: ülke zaten aynı bölgedeyse yazma yapılmadan mevcut kayıt
-// döner. Tekrar edilen bir yönetim isteğinin çakışma hatası vermesi anlamsız
-// olurdu — istenen durum zaten sağlanmıştır.
+// The call is IDEMPOTENT: if the country is already in the same region, the
+// existing record is returned without a write. A repeated admin request
+// failing with a conflict error would make no sense — the requested state
+// already holds.
 func (r *Repo) AssignCountry(
 	ctx context.Context,
 	regionID, countryCode string,
@@ -33,12 +36,12 @@ func (r *Repo) AssignCountry(
 
 	err := r.inTx(ctx, func(q *regiondb.Queries) error {
 		if _, err := q.GetRegionForShare(ctx, regionID); err != nil {
-			return notFoundOr(err, CodeRegionNotFound, "bölge bulunamadı: %s", regionID)
+			return notFoundOr(err, CodeRegionNotFound, "region not found: %s", regionID)
 		}
 
 		current, err := q.GetCountryForUpdate(ctx, countryCode)
 		if err != nil {
-			return notFoundOr(err, CodeCountryNotFound, "ülke bulunamadı: %s", countryCode)
+			return notFoundOr(err, CodeCountryNotFound, "country not found: %s", countryCode)
 		}
 
 		if current.RegionID != nil {
@@ -47,7 +50,7 @@ func (r *Repo) AssignCountry(
 				return nil
 			}
 			return errors.Conflict(CodeCountryTaken,
-				"%s ülkesi zaten %s bölgesine ait; bir ülke en fazla bir bölgeye ait olabilir",
+				"country %s already belongs to region %s; a country can belong to at most one region",
 				countryCode, *current.RegionID)
 		}
 
@@ -57,7 +60,7 @@ func (r *Repo) AssignCountry(
 			UpdatedAt: fromTime(now),
 		})
 		if err != nil {
-			return wrapDB(err, "ülke bölgeye eklenemedi: %s", countryCode)
+			return wrapDB(err, "the country could not be added to the region: %s", countryCode)
 		}
 		assigned = toCountry(row)
 		return nil
@@ -68,20 +71,21 @@ func (r *Repo) AssignCountry(
 	return assigned, nil
 }
 
-// UnassignCountry ülkeyi verilen bölgeden ayırır.
+// UnassignCountry detaches the country from the given region.
 //
-// Ülke o bölgeye ait değilse errors.NotFound döner: silme isteğinin hedefi
-// "bölgedeki ülke" kaydıdır ve o kayıt yoktur. Sessizce başarılı dönmek,
-// yanlış bölge kimliğiyle yapılan bir çağrının başarılı sanılması demekti.
+// If the country does not belong to that region it returns errors.NotFound:
+// the target of the delete request is the "country in the region" record, and
+// that record does not exist. Returning success silently would mean a call made
+// with the wrong region id is taken for a successful one.
 func (r *Repo) UnassignCountry(ctx context.Context, regionID, countryCode string, now time.Time) error {
 	return r.inTx(ctx, func(q *regiondb.Queries) error {
 		current, err := q.GetCountryForUpdate(ctx, countryCode)
 		if err != nil {
-			return notFoundOr(err, CodeCountryNotFound, "ülke bulunamadı: %s", countryCode)
+			return notFoundOr(err, CodeCountryNotFound, "country not found: %s", countryCode)
 		}
 		if current.RegionID == nil || *current.RegionID != regionID {
 			return errors.NotFound(CodeCountryNotInRegion,
-				"%s ülkesi %s bölgesine ait değil", countryCode, regionID)
+				"country %s does not belong to region %s", countryCode, regionID)
 		}
 
 		if _, err := q.ClearCountryRegion(ctx, regiondb.ClearCountryRegionParams{
@@ -90,13 +94,13 @@ func (r *Repo) UnassignCountry(ctx context.Context, regionID, countryCode string
 			UpdatedAt: fromTime(now),
 		}); err != nil {
 			return notFoundOr(err, CodeCountryNotInRegion,
-				"%s ülkesi %s bölgesinden çıkarılamadı", countryCode, regionID)
+				"country %s could not be removed from region %s", countryCode, regionID)
 		}
 		return nil
 	})
 }
 
-// GetCountry koda göre ülke döner; yoksa errors.NotFound.
+// GetCountry returns the country by its code; errors.NotFound if there is none.
 func (r *Repo) GetCountry(ctx context.Context, code string) (models.Country, error) {
 	if err := r.ready(); err != nil {
 		return models.Country{}, err
@@ -104,15 +108,16 @@ func (r *Repo) GetCountry(ctx context.Context, code string) (models.Country, err
 
 	row, err := r.q.GetCountry(ctx, code)
 	if err != nil {
-		return models.Country{}, notFoundOr(err, CodeCountryNotFound, "ülke bulunamadı: %s", code)
+		return models.Country{}, notFoundOr(err, CodeCountryNotFound, "country not found: %s", code)
 	}
 	return toCountry(row), nil
 }
 
-// ListCountries sayfalanmış ülke listesini ve TOPLAM kayıt sayısını döner.
+// ListCountries returns a paginated list of countries and the TOTAL record
+// count.
 //
-// regionID nil ise süzgeç uygulanmaz; dolu ise yalnızca o bölgenin ülkeleri
-// döner.
+// If regionID is nil no filter is applied; if it is set, only that region's
+// countries are returned.
 func (r *Repo) ListCountries(
 	ctx context.Context,
 	regionID *string,
@@ -128,12 +133,12 @@ func (r *Repo) ListCountries(
 		Off:      offset,
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "ülke listesi alınamadı")
+		return nil, 0, wrapDB(err, "the country list could not be read")
 	}
 
 	total, err := r.q.CountCountries(ctx, regionID)
 	if err != nil {
-		return nil, 0, wrapDB(err, "ülke sayısı alınamadı")
+		return nil, 0, wrapDB(err, "the country count could not be read")
 	}
 
 	countries := make([]models.Country, 0, len(rows))
@@ -143,11 +148,11 @@ func (r *Repo) ListCountries(
 	return countries, total, nil
 }
 
-// ListCountriesByRegions birden çok bölgenin ülkelerini TEK sorguda, bölge
-// kimliğine göre gruplanmış olarak döner.
+// ListCountriesByRegions returns the countries of several regions in a SINGLE
+// query, grouped by region id.
 //
-// Query sağlayıcısı bölgeleri ülkeleriyle döndürür; bölge başına ayrı sorgu
-// N+1 demek olurdu (ADR 0004).
+// The Query provider returns regions together with their countries; a separate
+// query per region would mean N+1 (ADR 0004).
 func (r *Repo) ListCountriesByRegions(
 	ctx context.Context,
 	regionIDs []string,
@@ -161,15 +166,16 @@ func (r *Repo) ListCountriesByRegions(
 
 	rows, err := r.q.ListCountriesByRegions(ctx, regionIDs)
 	if err != nil {
-		return nil, wrapDB(err, "bölgelerin ülkeleri alınamadı")
+		return nil, wrapDB(err, "the countries of the regions could not be read")
 	}
 
 	byRegion := make(map[string][]models.Country, len(regionIDs))
 	for i := range rows {
 		regionID := rows[i].RegionID
 		if regionID == nil {
-			// Sorgu region_id = ANY(...) süzdüğü için NULL satır dönemez;
-			// yine de dönse kimliksiz bir gruba yazmak sessiz bir hata olurdu.
+			// The query filters on region_id = ANY(...), so a NULL row cannot
+			// come back; if one did, writing it into a group without an id
+			// would be a silent error.
 			continue
 		}
 		byRegion[*regionID] = append(byRegion[*regionID], toCountry(rows[i]))

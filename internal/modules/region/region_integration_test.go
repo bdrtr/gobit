@@ -1,15 +1,15 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so `make test` stays
+// fast. To run them: make test-integration
 //
-// Birim testleri sahte bir depo ile servisin KARARLARINI kanıtlar. Buradaki
-// testler kararların dayandığı ZEMİNİ kanıtlar: migration'ın geri
-// alınabildiğini, TOHUM VERİSİNİN gerçekten yüklendiğini, kısıtların
-// uygulandığını ve "bir ülke en fazla bir bölgeye ait olabilir" kuralının
-// eşzamanlı iki istekte de tuttuğunu. Sonuncusu yalnızca burada, gerçek
-// goroutine'lerle gerçek satır kilitleri üzerinde sınanabilir.
+// The unit tests prove the service's DECISIONS against a fake repository. The
+// tests here prove the GROUND those decisions stand on: that the migration can
+// be rolled back, that the SEED DATA really loads, that the constraints are
+// enforced, and that the rule "a country belongs to at most one region" holds
+// under two concurrent requests too. The last can only be tried here, with real
+// goroutines on real row locks.
 package region_test
 
 import (
@@ -39,24 +39,25 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
-// listeyi kullanır.
-var modulTablolari = []string{"currency", "region", "country"}
+// moduleTables are the tables the module owns; the migration tests use this
+// list.
+var moduleTables = []string{"currency", "region", "country"}
 
-// tohumdakiUlkeSayisi ISO 3166-1'de resmen atanmış alpha-2 kodu sayısıdır.
+// seededCountryCount is the number of alpha-2 codes officially assigned in ISO
+// 3166-1.
 //
-// Sabit bilinçlidir: tohum dosyası kazara kırpılırsa ya da bir satır
-// kopyalanırken düşerse, sayı testte anında görünür. "Sıfırdan büyük" gibi
-// gevşek bir iddia bunu yakalayamazdı.
-const tohumdakiUlkeSayisi = 249
+// The constant is deliberate: if the seed file is accidentally truncated, or a
+// row drops out while being copied, the count shows it in the test at once. A
+// loose claim such as "greater than zero" could not catch that.
+const seededCountryCount = 249
 
-// tohumdakiParaBirimiSayisi tohumlanan para birimi sayısıdır.
-const tohumdakiParaBirimiSayisi = 41
+// seededCurrencyCount is the number of currencies the seed loads.
+const seededCurrencyCount = 41
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool every test shares.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection string the migration calls use.
 	testDSN string
 )
 
@@ -64,8 +65,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up one Postgres container and runs every test against
+// it. It is a separate function because os.Exit skips defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -77,62 +78,62 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection string could not be read: %v\n", err)
 		return 1
 	}
 
 	cfg := db.DefaultConfig(testDSN)
-	// Eşzamanlılık testi onlarca goroutine'i aynı anda koşturur; her işlem bir
-	// bağlantı tuttuğu için havuz varsayılandan geniş açılır.
+	// The concurrency test runs dozens of goroutines at once; every transaction
+	// holds a connection, so the pool is opened wider than the default.
 	cfg.MaxConns = 24
 	testPool, err = db.New(ctx, cfg, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
 	if err := db.Migrate(ctx, testDSN, region.New(nil).Migrations(), region.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// yeniServis gerçek depo üzerinde çalışan bir servis kurar.
-func yeniServis(t *testing.T) *service.Service {
+// newService builds a service that runs on the real repository.
+func newService(t *testing.T) *service.Service {
 	t.Helper()
 
 	return service.New(repository.New(testPool.Pool()), service.Options{})
 }
 
-// yeniBolge test için benzersiz adlı bir bölge oluşturur.
-func yeniBolge(ctx context.Context, t *testing.T, svc *service.Service, currency string) models.Region {
+// newRegion creates a region whose name is unique to the test.
+func newRegion(ctx context.Context, t *testing.T, svc *service.Service, currency string) models.Region {
 	t.Helper()
 
-	bolge, err := svc.CreateRegion(ctx, service.CreateRegionInput{
+	created, err := svc.CreateRegion(ctx, service.CreateRegionInput{
 		Name:           t.Name() + " " + currency,
 		CurrencyCode:   currency,
 		AutomaticTaxes: true,
 		TaxRate:        2000,
 	})
 	require.NoError(t, err)
-	return bolge
+	return created
 }
 
-// sayim tek sütunlu bir sayım sorgusunu çalıştırır.
-func sayim(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
+// countOf runs a single-column count query.
+func countOf(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 	t.Helper()
 
 	var count int64
@@ -165,7 +166,7 @@ func TestTheMigrationCanBeRolledBack(t *testing.T) {
 	t.Run("with a live region in place", func(t *testing.T) {
 		dsn, pool := migratedDatabase(ctx, t)
 		svc := service.New(repository.New(pool.Pool()), service.Options{})
-		created := yeniBolge(ctx, t, svc, "TRY")
+		created := newRegion(ctx, t, svc, "TRY")
 		_, err := svc.AddCountryToRegion(ctx, created.ID, "TR")
 		require.NoError(t, err)
 		require.Equal(t, int64(1), countIn(ctx, t, pool,
@@ -178,7 +179,7 @@ func TestTheMigrationCanBeRolledBack(t *testing.T) {
 	t.Run("with a soft-deleted region in place", func(t *testing.T) {
 		dsn, pool := migratedDatabase(ctx, t)
 		svc := service.New(repository.New(pool.Pool()), service.Options{})
-		created := yeniBolge(ctx, t, svc, "USD")
+		created := newRegion(ctx, t, svc, "USD")
 		require.NoError(t, svc.DeleteRegion(ctx, created.ID))
 		require.Equal(t, int64(1), countIn(ctx, t, pool,
 			`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NOT NULL`, created.ID),
@@ -225,12 +226,12 @@ func rollBackAndReapply(ctx context.Context, t *testing.T, dsn string, pool *db.
 	src := region.New(nil).Migrations()
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, src, region.ModuleName, 0))
-	for _, table := range modulTablolari {
+	for _, table := range moduleTables {
 		assert.False(t, testdb.TableExists(t, dsn, table), "%s must not remain after the rollback", table)
 	}
 
 	require.NoError(t, db.Migrate(ctx, dsn, src, region.ModuleName))
-	for _, table := range modulTablolari {
+	for _, table := range moduleTables {
 		assert.True(t, testdb.TableExists(t, dsn, table), "%s must be applied again", table)
 	}
 
@@ -240,38 +241,39 @@ func rollBackAndReapply(ctx context.Context, t *testing.T, dsn string, pool *db.
 	assert.Equal(t, uint(3), version,
 		"the schema (1), the seed (2) and dropping deleted_at from the reference tables (3) are separate versions")
 
-	assert.Equal(t, int64(tohumdakiUlkeSayisi), countIn(ctx, t, pool, `SELECT count(*) FROM country`),
+	assert.Equal(t, int64(seededCountryCount), countIn(ctx, t, pool, `SELECT count(*) FROM country`),
 		"the country seed has to be applied again")
-	assert.Equal(t, int64(tohumdakiParaBirimiSayisi), countIn(ctx, t, pool, `SELECT count(*) FROM currency`),
+	assert.Equal(t, int64(seededCurrencyCount), countIn(ctx, t, pool, `SELECT count(*) FROM currency`),
 		"the currency seed has to be applied again")
 	assert.Zero(t, countIn(ctx, t, pool, `SELECT count(*) FROM region`),
 		"the schema was dropped and rebuilt, so no region may remain")
 }
 
-// TestTohumVerisiYuklendi referans verisinin migration ile geldiğini doğrular.
+// TestTheSeedIsLoaded verifies that the reference data arrives with the
+// migration.
 //
-// Tohum, modülün kullanılabilirliğinin ön şartıdır: eksik bir ülke, o ülkedeki
-// müşteri için sepet açılamaması demektir.
-func TestTohumVerisiYuklendi(t *testing.T) {
+// The seed is a precondition for the module being usable at all: a missing
+// country means no cart can be opened for a customer in that country.
+func TestTheSeedIsLoaded(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	assert.Equal(t, int64(tohumdakiUlkeSayisi), sayim(ctx, t, `SELECT count(*) FROM country`))
-	assert.Equal(t, int64(tohumdakiParaBirimiSayisi), sayim(ctx, t, `SELECT count(*) FROM currency`))
+	assert.Equal(t, int64(seededCountryCount), countOf(ctx, t, `SELECT count(*) FROM country`))
+	assert.Equal(t, int64(seededCurrencyCount), countOf(ctx, t, `SELECT count(*) FROM currency`))
 
-	// Ondalık basamak sayısı bu modülün varlık sebebidir; üç sınıf da
-	// tohumda bulunmalıdır.
-	basamaklar := map[string]int32{"TRY": 2, "USD": 2, "EUR": 2, "GBP": 2, "JPY": 0, "KWD": 3}
-	for kod, beklenen := range basamaklar {
-		currency, err := svc.GetCurrency(ctx, kod)
-		require.NoError(t, err, "%s tohumda olmalı", kod)
-		assert.Equal(t, beklenen, currency.DecimalDigits, "%s ondalık basamağı", kod)
-		assert.NotEmpty(t, currency.Symbol, "%s sembolü olmalı", kod)
-		assert.NotEmpty(t, currency.Name, "%s adı olmalı", kod)
+	// The number of decimal digits is the reason this module exists; all three
+	// classes must be in the seed.
+	digits := map[string]int32{"TRY": 2, "USD": 2, "EUR": 2, "GBP": 2, "JPY": 0, "KWD": 3}
+	for code, want := range digits {
+		currency, err := svc.GetCurrency(ctx, code)
+		require.NoError(t, err, "%s must be in the seed", code)
+		assert.Equal(t, want, currency.DecimalDigits, "%s decimal digits", code)
+		assert.NotEmpty(t, currency.Symbol, "%s must have a symbol", code)
+		assert.NotEmpty(t, currency.Name, "%s must have a name", code)
 	}
 
-	// Çarpanın tam sayı bölmesiyle kullanımı: 1999 minor unit, para birimine
-	// göre farklı bir major unit verir.
+	// The factor used with integer division: 1999 minor units give a different
+	// major unit depending on the currency.
 	jpy, err := svc.GetCurrency(ctx, "JPY")
 	require.NoError(t, err)
 	try, err := svc.GetCurrency(ctx, "TRY")
@@ -282,33 +284,36 @@ func TestTohumVerisiYuklendi(t *testing.T) {
 	assert.Equal(t, int64(19), 1999/try.MinorUnitFactor())
 	assert.Equal(t, int64(1), 1999/kwd.MinorUnitFactor())
 
-	// Ülke adları ISO'nun İngilizce kısa adlarıdır ve kodlar BÜYÜK harftir.
-	ulkeler, err := svc.ListCountries(ctx, service.ListCountriesInput{Limit: service.MaxLimit})
+	// Country names are ISO's English short names and the codes are UPPER case.
+	countries, err := svc.ListCountries(ctx, service.ListCountriesInput{Limit: service.MaxLimit})
 	require.NoError(t, err)
-	require.NotEmpty(t, ulkeler.Items)
-	assert.Equal(t, int64(tohumdakiUlkeSayisi), ulkeler.Count)
+	require.NotEmpty(t, countries.Items)
+	assert.Equal(t, int64(seededCountryCount), countries.Count)
 
-	assert.Zero(t, sayim(ctx, t, `SELECT count(*) FROM country WHERE iso_2 <> upper(iso_2)`),
-		"tüm ülke kodları BÜYÜK harf olmalı")
-	assert.Zero(t, sayim(ctx, t, `SELECT count(*) FROM currency WHERE code <> upper(code)`),
-		"tüm para birimi kodları BÜYÜK harf olmalı")
-	assert.Equal(t, int64(1), sayim(ctx, t, `SELECT count(*) FROM country WHERE iso_2 = 'TR' AND name = 'Türkiye'`))
+	assert.Zero(t, countOf(ctx, t, `SELECT count(*) FROM country WHERE iso_2 <> upper(iso_2)`),
+		"every country code must be UPPER case")
+	assert.Zero(t, countOf(ctx, t, `SELECT count(*) FROM currency WHERE code <> upper(code)`),
+		"every currency code must be UPPER case")
+	// TR's ISO short name carries one letter outside ASCII, U+00FC. It is
+	// written as an escape: the query the database receives is byte for byte
+	// the same, and this file stays ASCII.
+	assert.Equal(t, int64(1), countOf(ctx, t, "SELECT count(*) FROM country WHERE iso_2 = 'TR' AND name = 'T\u00fcrkiye'"))
 }
 
-// TestTohumTekrarUygulanabilir tohum dosyasının GERÇEĞİNİ ikinci kez
-// çalıştırıp idempotent olduğunu doğrular.
+// TestTheSeedCanBeAppliedAgain runs the seed file ITSELF a second time and
+// verifies that it is idempotent.
 //
-// Dosyanın kendisi okunur; testin içine kopyalanmış bir SQL, dosyada yapılan
-// bir değişikliği görmez ve kanıt değeri taşımazdı.
+// The file itself is read: SQL copied into the test would not see a change
+// made to the file and would carry no evidence.
 //
-// İki iddia birden sınanır: yeniden çalıştırma birincil anahtar ihlaliyle
-// PATLAMAMALI (aksi hâlde bir yeniden dağıtım migration'ı kirli bırakırdı) ve
-// operatörün düzelttiği bir değer EZİLMEMELİ.
-func TestTohumTekrarUygulanabilir(t *testing.T) {
+// Two claims are tried at once: running it again must not BLOW UP on a primary
+// key violation (otherwise a redeploy would leave the migration dirty), and a
+// value the operator corrected must not be OVERWRITTEN.
+func TestTheSeedCanBeAppliedAgain(t *testing.T) {
 	ctx := context.Background()
 
-	tohum, err := fs.ReadFile(region.New(nil).Migrations(), "000002_region_seed.up.sql")
-	require.NoError(t, err, "tohum dosyası gömülü olmalı")
+	seed, err := fs.ReadFile(region.New(nil).Migrations(), "000002_region_seed.up.sql")
+	require.NoError(t, err, "the seed file must be embedded")
 
 	_, err = testPool.Pool().Exec(ctx, `UPDATE currency SET symbol = 'X' WHERE code = 'TRY'`)
 	require.NoError(t, err)
@@ -318,35 +323,35 @@ func TestTohumTekrarUygulanabilir(t *testing.T) {
 		require.NoError(t, restoreErr)
 	})
 
-	oncekiUlke := sayim(ctx, t, `SELECT count(*) FROM country`)
+	countriesBefore := countOf(ctx, t, `SELECT count(*) FROM country`)
 
-	_, err = testPool.Pool().Exec(ctx, string(tohum))
-	require.NoError(t, err, "tohum ikinci kez uygulanabilmeli")
+	_, err = testPool.Pool().Exec(ctx, string(seed))
+	require.NoError(t, err, "the seed must be applicable a second time")
 
-	assert.Equal(t, oncekiUlke, sayim(ctx, t, `SELECT count(*) FROM country`),
-		"ikinci uygulama satır ÇOĞALTMAMALI")
+	assert.Equal(t, countriesBefore, countOf(ctx, t, `SELECT count(*) FROM country`),
+		"the second application must not DUPLICATE rows")
 
 	var symbol string
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT symbol FROM currency WHERE code = 'TRY'`).Scan(&symbol))
-	assert.Equal(t, "X", symbol, "operatörün düzelttiği değer EZİLMEMELİ")
+	assert.Equal(t, "X", symbol, "the value the operator corrected must not be OVERWRITTEN")
 }
 
-// TestBolgeGuncellemeKilitAltindaOkur kısmi güncellemenin okumasını satır
-// kilidi altında yaptığını belirlenimci biçimde doğrular.
+// TestARegionUpdateReadsUnderTheLock verifies deterministically that a partial
+// update does its read under the row lock.
 //
-// Kurgu [TestUlkeAtamasiKilitAltindaOkur] ile aynıdır ve KAYIP GÜNCELLEMEYİ
-// (lost update) üretir: rakip bir işlem satırı kilitlerken güncelleme başlar
-// ve bekler; rakip işlem vergi oranını değiştirip commit eder. Okuma kilit
-// ALTINDA yapıldığı için bekleyen güncelleme satırın YENİ hâlini okur ve
-// yalnızca kendi alanını değiştirir. Kilitsiz okumada ise güncelleme, satırı
-// ESKİ hâliyle okumuş olurdu ve yazarken rakip işlemin oranını eski değeriyle
-// geri yazardı — hiçbir hata dönmeden.
-func TestBolgeGuncellemeKilitAltindaOkur(t *testing.T) {
+// The setup is the same as [TestCountryAssignmentReadsUnderTheLock] and
+// produces a LOST UPDATE: the update starts while a rival transaction holds the
+// row lock, and waits; the rival transaction changes the tax rate and commits.
+// Because the read is done UNDER the lock, the waiting update reads the row's
+// NEW state and changes only its own field. With an unlocked read the update
+// would have read the row in its OLD state, and on writing it would have put
+// the rival transaction's rate back to the old value — with no error returned.
+func TestARegionUpdateReadsUnderTheLock(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	bolge := yeniBolge(ctx, t, svc, "TRY")
-	require.Equal(t, int32(2000), bolge.TaxRate)
+	svc := newService(t)
+	reg := newRegion(ctx, t, svc, "TRY")
+	require.Equal(t, int32(2000), reg.TaxRate)
 
 	conn, err := testPool.Pool().Acquire(ctx)
 	require.NoError(t, err)
@@ -356,41 +361,41 @@ func TestBolgeGuncellemeKilitAltindaOkur(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var kilitli string
+	var locked string
 	require.NoError(t, tx.QueryRow(ctx,
-		`SELECT id FROM region WHERE id = $1 FOR UPDATE`, bolge.ID).Scan(&kilitli))
+		`SELECT id FROM region WHERE id = $1 FOR UPDATE`, reg.ID).Scan(&locked))
 
-	sonuc := make(chan error, 1)
+	result := make(chan error, 1)
 	go func() {
-		yeniAd := "Kilit Altında Güncellendi"
-		_, updErr := svc.UpdateRegion(ctx, bolge.ID, service.UpdateRegionInput{Name: &yeniAd})
-		sonuc <- updErr
+		newName := "Updated Under The Lock"
+		_, updErr := svc.UpdateRegion(ctx, reg.ID, service.UpdateRegionInput{Name: &newName})
+		result <- updErr
 	}()
 
-	requireKilitBekleyen(ctx, t)
+	requireLockWaiter(ctx, t)
 
 	_, err = tx.Exec(ctx,
-		`UPDATE region SET tax_rate = 500, updated_at = now() WHERE id = $1`, bolge.ID)
+		`UPDATE region SET tax_rate = 500, updated_at = now() WHERE id = $1`, reg.ID)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit(ctx))
 
 	select {
-	case updErr := <-sonuc:
+	case updErr := <-result:
 		require.NoError(t, updErr)
 	case <-time.After(15 * time.Second):
-		t.Fatal("bekleyen güncelleme zamanında tamamlanmadı")
+		t.Fatal("the waiting update did not finish in time")
 	}
 
-	guncel, err := svc.GetRegion(ctx, bolge.ID)
+	updated, err := svc.GetRegion(ctx, reg.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "Kilit Altında Güncellendi", guncel.Name, "yamanın alanı yazılmalı")
-	assert.Equal(t, int32(500), guncel.TaxRate,
-		"rakip işlemin yazdığı oran EZİLMEMELİ (kayıp güncelleme)")
+	assert.Equal(t, "Updated Under The Lock", updated.Name, "the patch's field must be written")
+	assert.Equal(t, int32(500), updated.TaxRate,
+		"the rate the rival transaction wrote must not be OVERWRITTEN (lost update)")
 }
 
-// TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
-// yine modülün kendi tablolarına gittiğini doğrular (Prensip 2.2).
-func TestCrossModuleForeignKeyYok(t *testing.T) {
+// TestNoCrossModuleForeignKeys verifies that ALL the foreign keys in the
+// module's tables go to the module's own tables again (Principle 2.2).
+func TestNoCrossModuleForeignKeys(t *testing.T) {
 	ctx := context.Background()
 
 	rows, err := testPool.Pool().Query(ctx,
@@ -398,79 +403,81 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
          FROM pg_constraint c
          JOIN pg_class src ON src.oid = c.conrelid
          JOIN pg_class tgt ON tgt.oid = c.confrelid
-         WHERE c.contype = 'f' AND src.relname = ANY($1)`, modulTablolari)
+         WHERE c.contype = 'f' AND src.relname = ANY($1)`, moduleTables)
 	require.NoError(t, err)
 	defer rows.Close()
 
-	sahipli := make(map[string]struct{}, len(modulTablolari))
-	for _, table := range modulTablolari {
-		sahipli[table] = struct{}{}
+	owned := make(map[string]struct{}, len(moduleTables))
+	for _, table := range moduleTables {
+		owned[table] = struct{}{}
 	}
 
-	var sayi int
+	var n int
 	for rows.Next() {
 		var name, src, tgt string
 		require.NoError(t, rows.Scan(&name, &src, &tgt))
-		assert.Contains(t, sahipli, tgt,
-			"%s kısıtı modül dışına referans veriyor (%s -> %s)", name, src, tgt)
-		sayi++
+		assert.Contains(t, owned, tgt,
+			"the %s constraint references outside the module (%s -> %s)", name, src, tgt)
+		n++
 	}
 	require.NoError(t, rows.Err())
-	assert.Equal(t, 2, sayi, "region->currency ve country->region bağları kurulmuş olmalı")
+	assert.Equal(t, 2, n, "the region->currency and country->region links must be in place")
 }
 
-// TestBolgeYasamDongusu bölge oluşturma, okuma, kısmi güncelleme ve yumuşak
-// silmeyi uçtan uca doğrular.
-func TestBolgeYasamDongusu(t *testing.T) {
+// TestTheRegionLifecycle verifies creating, reading, partially updating and
+// soft-deleting a region end to end.
+func TestTheRegionLifecycle(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	bolge, err := svc.CreateRegion(ctx, service.CreateRegionInput{
-		Name: "Türkiye", CurrencyCode: "try", AutomaticTaxes: true, TaxRate: 2000,
+	// The name carries a letter outside ASCII (U+00FC), written as an escape so
+	// this file stays ASCII; the value stored is the same.
+	created, err := svc.CreateRegion(ctx, service.CreateRegionInput{
+		Name: "T\u00fcrkiye", CurrencyCode: "try", AutomaticTaxes: true, TaxRate: 2000,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "TRY", bolge.CurrencyCode, "kod BÜYÜK harf saklanmalı")
-	assert.False(t, bolge.CreatedAt.IsZero(), "created_at veritabanından gelmeli")
-	assert.Equal(t, "UTC", bolge.CreatedAt.Location().String(), "zaman UTC olmalı")
+	assert.Equal(t, "TRY", created.CurrencyCode, "the code must be stored in UPPER case")
+	assert.False(t, created.CreatedAt.IsZero(), "created_at must come from the database")
+	assert.Equal(t, "UTC", created.CreatedAt.Location().String(), "the time must be UTC")
 
-	okunan, err := svc.GetRegion(ctx, bolge.ID)
+	got, err := svc.GetRegion(ctx, created.ID)
 	require.NoError(t, err)
-	assert.Equal(t, bolge.ID, okunan.ID)
-	assert.Equal(t, int32(2000), okunan.TaxRate)
+	assert.Equal(t, created.ID, got.ID)
+	assert.Equal(t, int32(2000), got.TaxRate)
 
-	// Kısmi güncelleme: yalnızca oran değişir.
-	oran := int32(1000)
-	guncel, err := svc.UpdateRegion(ctx, bolge.ID, service.UpdateRegionInput{TaxRate: &oran})
+	// Partial update: only the rate changes.
+	rate := int32(1000)
+	updated, err := svc.UpdateRegion(ctx, created.ID, service.UpdateRegionInput{TaxRate: &rate})
 	require.NoError(t, err)
-	assert.Equal(t, int32(1000), guncel.TaxRate)
-	assert.Equal(t, "Türkiye", guncel.Name, "verilmeyen alan değişmemeli")
-	assert.Equal(t, "TRY", guncel.CurrencyCode, "verilmeyen alan değişmemeli")
-	assert.True(t, guncel.UpdatedAt.After(bolge.UpdatedAt) || guncel.UpdatedAt.Equal(bolge.UpdatedAt))
+	assert.Equal(t, int32(1000), updated.TaxRate)
+	assert.Equal(t, "T\u00fcrkiye", updated.Name, "a field that was not given must not change")
+	assert.Equal(t, "TRY", updated.CurrencyCode, "a field that was not given must not change")
+	assert.True(t, updated.UpdatedAt.After(created.UpdatedAt) || updated.UpdatedAt.Equal(created.UpdatedAt))
 
-	require.NoError(t, svc.DeleteRegion(ctx, bolge.ID))
+	require.NoError(t, svc.DeleteRegion(ctx, created.ID))
 
-	_, err = svc.GetRegion(ctx, bolge.ID)
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "yumuşak silinen bölge okunamamalı")
+	_, err = svc.GetRegion(ctx, created.ID)
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "a soft-deleted region must not be readable")
 
-	sayfa, err := svc.ListRegions(ctx, service.MaxLimit, 0)
+	page, err := svc.ListRegions(ctx, service.MaxLimit, 0)
 	require.NoError(t, err)
-	for _, item := range sayfa.Items {
-		assert.NotEqual(t, bolge.ID, item.ID, "yumuşak silinen bölge listede görünmemeli")
+	for _, item := range page.Items {
+		assert.NotEqual(t, created.ID, item.ID, "a soft-deleted region must not appear in the list")
 	}
 
-	// Satır hâlâ oradadır; silme SOFT'tur.
-	assert.Equal(t, int64(1), sayim(ctx, t,
-		`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NOT NULL`, bolge.ID))
+	// The row is still there; the delete is SOFT.
+	assert.Equal(t, int64(1), countOf(ctx, t,
+		`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NOT NULL`, created.ID))
 }
 
-// TestTanimsizParaBirimiReddedilir foreign key ihlalinin anlamlı bir tipli
-// hataya çevrildiğini doğrular.
+// TestAnUnknownCurrencyIsRejected verifies that a foreign key violation is
+// turned into a meaningful typed error.
 //
-// Sınıflandırılmasaydı istemcinin düzeltebileceği bu durum 500 olarak görünür
-// ve gerçek sebep yalnızca logda kalırdı.
-func TestTanimsizParaBirimiReddedilir(t *testing.T) {
+// Without the classification this case, which the client can correct, would
+// show up as a 500 and the real cause would stay only in the log.
+func TestAnUnknownCurrencyIsRejected(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
 	_, err := svc.CreateRegion(ctx, service.CreateRegionInput{Name: "X", CurrencyCode: "XBT"})
 
@@ -479,13 +486,13 @@ func TestTanimsizParaBirimiReddedilir(t *testing.T) {
 	assert.Equal(t, repository.CodeUnknownCurrency, errors.CodeOf(err))
 }
 
-// TestVeritabaniKisitlariUygulanir servis doğrulaması atlansa bile kısıtların
-// ikinci kapı olduğunu doğrular.
-func TestVeritabaniKisitlariUygulanir(t *testing.T) {
+// TestTheDatabaseConstraintsAreEnforced verifies that the constraints are a
+// second gate even when the service's validation is bypassed.
+func TestTheDatabaseConstraintsAreEnforced(t *testing.T) {
 	ctx := context.Background()
 
-	// Aralık dışı vergi oranı (servis onu zaten eler; buradaki iddia CHECK'in
-	// gerçekten kurulmuş olduğudur).
+	// An out-of-range tax rate (the service already filters it out; the claim
+	// here is that the CHECK really was created).
 	_, err := testPool.Pool().Exec(ctx,
 		`INSERT INTO region (id, name, currency_code, tax_rate) VALUES ('reg_check', 'X', 'TRY', 10001)`)
 	require.Error(t, err)
@@ -498,100 +505,102 @@ func TestVeritabaniKisitlariUygulanir(t *testing.T) {
 
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO currency (code, symbol, name) VALUES ('try', '₺', 'X')`)
-	require.Error(t, err, "küçük harfli kod kabul edilmemeli")
+	require.Error(t, err, "a lower-case code must not be accepted")
 	assert.Contains(t, err.Error(), "currency_code_check")
 
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO currency (code, symbol, name, decimal_digits) VALUES ('ZZZ', 'Z', 'X', 5)`)
-	require.Error(t, err, "beşten fazla basamak kabul edilmemeli")
+	require.Error(t, err, "more than five digits must not be accepted")
 	assert.Contains(t, err.Error(), "currency_digits_check")
 
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO country (iso_2, name) VALUES ('TRX', 'X')`)
-	require.Error(t, err, "üç harfli ülke kodu kabul edilmemeli")
+	require.Error(t, err, "a three-letter country code must not be accepted")
 	assert.Contains(t, err.Error(), "country_iso_2_check")
 }
 
-// TestUlkeTekilligi bir ülkenin en fazla bir bölgeye ait olabileceğini gerçek
-// veritabanında doğrular.
-func TestUlkeTekilligi(t *testing.T) {
+// TestACountryBelongsToAtMostOneRegion verifies on the real database that a
+// country can belong to at most one region.
+func TestACountryBelongsToAtMostOneRegion(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	ilk := yeniBolge(ctx, t, svc, "TRY")
-	ikinci := yeniBolge(ctx, t, svc, "USD")
+	svc := newService(t)
+	first := newRegion(ctx, t, svc, "TRY")
+	second := newRegion(ctx, t, svc, "USD")
 
-	ulke, err := svc.AddCountryToRegion(ctx, ilk.ID, "cy")
+	country, err := svc.AddCountryToRegion(ctx, first.ID, "cy")
 	require.NoError(t, err)
-	require.NotNil(t, ulke.RegionID)
-	assert.Equal(t, ilk.ID, *ulke.RegionID)
-	assert.Equal(t, "CY", ulke.Code)
+	require.NotNil(t, country.RegionID)
+	assert.Equal(t, first.ID, *country.RegionID)
+	assert.Equal(t, "CY", country.Code)
 
-	_, err = svc.AddCountryToRegion(ctx, ikinci.ID, "CY")
-	require.Error(t, err, "aynı ülke ikinci bir bölgeye eklenememeli")
+	_, err = svc.AddCountryToRegion(ctx, second.ID, "CY")
+	require.Error(t, err, "the same country must not be added to a second region")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 
-	// Aynı bölgeye tekrar ekleme idempotenttir.
-	tekrar, err := svc.AddCountryToRegion(ctx, ilk.ID, "CY")
+	// Adding it to the same region again is idempotent.
+	again, err := svc.AddCountryToRegion(ctx, first.ID, "CY")
 	require.NoError(t, err)
-	assert.Equal(t, ilk.ID, *tekrar.RegionID)
+	assert.Equal(t, first.ID, *again.RegionID)
 
-	// Olmayan ülke ve olmayan bölge ayrı ayrı bulunamadı döner.
-	_, err = svc.AddCountryToRegion(ctx, ilk.ID, "ZZ")
+	// A missing country and a missing region each return not found.
+	_, err = svc.AddCountryToRegion(ctx, first.ID, "ZZ")
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	_, err = svc.AddCountryToRegion(ctx, "reg_OLMAYAN", "MT")
+	_, err = svc.AddCountryToRegion(ctx, "reg_MISSING", "MT")
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// kilitBekleyenSayisi kilit bekleyen (bloke olmuş) oturum sayısını döner.
-func kilitBekleyenSayisi(ctx context.Context, t *testing.T) int64 {
+// lockWaiterCount returns how many sessions are waiting (blocked) on a lock.
+func lockWaiterCount(ctx context.Context, t *testing.T) int64 {
 	t.Helper()
 
-	return sayim(ctx, t,
+	return countOf(ctx, t,
 		`SELECT count(*) FROM pg_stat_activity
          WHERE datname = current_database()
            AND wait_event_type = 'Lock'
            AND pid <> pg_backend_pid()`)
 }
 
-// requireKilitBekleyen bir isteğin gerçekten kilitte beklediğini doğrular.
+// requireLockWaiter verifies that a request really is waiting on a lock.
 //
-// Uyku yerine BEKLEME DURUMUNA bakılır: sabit bir uyku ya yavaş makinede
-// erken uyanıp testi kırılgan yapardı, ya da her koşuya boş bekleme eklerdi.
-func requireKilitBekleyen(ctx context.Context, t *testing.T) {
+// It looks at the WAIT STATE rather than sleeping: a fixed sleep would either
+// wake early on a slow machine and make the test flaky, or add idle waiting to
+// every run.
+func requireLockWaiter(ctx context.Context, t *testing.T) {
 	t.Helper()
 
 	require.Eventually(t, func() bool {
-		return kilitBekleyenSayisi(ctx, t) > 0
-	}, 10*time.Second, 10*time.Millisecond, "istek satır kilidinde beklemeliydi")
+		return lockWaiterCount(ctx, t) > 0
+	}, 10*time.Second, 10*time.Millisecond, "the request should have been waiting on the row lock")
 }
 
-// TestUlkeAtamasiKilitAltindaOkur ülke satırının OKUMA ANINDA kilitlendiğini
-// belirlenimci biçimde doğrular.
+// TestCountryAssignmentReadsUnderTheLock verifies deterministically that the
+// country row is locked AT THE MOMENT IT IS READ.
 //
-// EŞZAMANLILIK İDDİASININ ASIL KANITI BUDUR. Kurgu, yarışın kaybeden tarafını
-// zamanlamaya bırakmadan üretir:
+// THIS IS THE REAL PROOF OF THE CONCURRENCY CLAIM. The setup produces the
+// losing side of the race without leaving it to timing:
 //
-//  1. Rakip bir işlem ülke satırını FOR UPDATE ile kilitler (henüz kimseye
-//     ait değildir).
-//  2. Servis, aynı ülkeyi başka bir bölgeye eklemeye çalışır ve BEKLER.
-//  3. Rakip işlem ülkeyi ilk bölgeye alıp commit eder.
-//  4. Bekleyen istek uyanır.
+//  1. A rival transaction locks the country row with FOR UPDATE (the country
+//     belongs to no region yet).
+//  2. The service tries to add the same country to another region and WAITS.
+//  3. The rival transaction puts the country into the first region and commits.
+//  4. The waiting request wakes up.
 //
-// Doğru uygulamada 4. adımda okuma kilit ALTINDA yapıldığı için satırın GÜNCEL
-// hâli görülür ve errors.Conflict döner. Okuma kilitsiz olsaydı istek 2.
-// adımda region_id'yi BOŞ okumuş olurdu; uyandığında kararı çoktan verilmiş
-// olur, UPDATE'i WHERE koşulunu yeniden değerlendirip başarılı olur ve ülke
-// SESSİZCE ikinci bölgeye geçerdi — hiçbir hata dönmeden.
-func TestUlkeAtamasiKilitAltindaOkur(t *testing.T) {
+// In a correct implementation the read in step 4 is done UNDER the lock, so the
+// row's CURRENT state is seen and errors.Conflict is returned. Had the read been
+// unlocked, the request would have read region_id as EMPTY in step 2; by the
+// time it woke its decision would already have been made, its UPDATE would
+// re-evaluate the WHERE clause and succeed, and the country would SILENTLY move
+// to the second region — with no error returned.
+func TestCountryAssignmentReadsUnderTheLock(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	ilk := yeniBolge(ctx, t, svc, "TRY")
-	ikinci := yeniBolge(ctx, t, svc, "USD")
+	svc := newService(t)
+	first := newRegion(ctx, t, svc, "TRY")
+	second := newRegion(ctx, t, svc, "USD")
 
-	const ulkeKodu = "IS"
+	const countryCode = "IS"
 
 	conn, err := testPool.Pool().Acquire(ctx)
 	require.NoError(t, err)
@@ -601,59 +610,61 @@ func TestUlkeAtamasiKilitAltindaOkur(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var kilitli string
+	var locked string
 	require.NoError(t, tx.QueryRow(ctx,
-		`SELECT iso_2 FROM country WHERE iso_2 = $1 FOR UPDATE`, ulkeKodu).Scan(&kilitli))
+		`SELECT iso_2 FROM country WHERE iso_2 = $1 FOR UPDATE`, countryCode).Scan(&locked))
 
-	sonuc := make(chan error, 1)
+	result := make(chan error, 1)
 	go func() {
-		_, addErr := svc.AddCountryToRegion(ctx, ikinci.ID, ulkeKodu)
-		sonuc <- addErr
+		_, addErr := svc.AddCountryToRegion(ctx, second.ID, countryCode)
+		result <- addErr
 	}()
 
-	requireKilitBekleyen(ctx, t)
+	requireLockWaiter(ctx, t)
 
 	_, err = tx.Exec(ctx,
-		`UPDATE country SET region_id = $2, updated_at = now() WHERE iso_2 = $1`, ulkeKodu, ilk.ID)
+		`UPDATE country SET region_id = $2, updated_at = now() WHERE iso_2 = $1`, countryCode, first.ID)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit(ctx))
 
 	select {
-	case addErr := <-sonuc:
+	case addErr := <-result:
 		require.Error(t, addErr,
-			"bekleyen istek, uyandığında satırın GÜNCEL hâlini görmeli ve çakışma dönmeli")
+			"on waking, the waiting request must see the row's CURRENT state and return a conflict")
 		assert.Equal(t, errors.KindConflict, errors.KindOf(addErr))
 	case <-time.After(15 * time.Second):
-		t.Fatal("bekleyen istek zamanında tamamlanmadı")
+		t.Fatal("the waiting request did not finish in time")
 	}
 
-	cozulen, err := svc.ResolveRegionForCountry(ctx, ulkeKodu)
+	resolved, err := svc.ResolveRegionForCountry(ctx, countryCode)
 	require.NoError(t, err)
-	assert.Equal(t, ilk.ID, cozulen.ID, "ülke rakip işlemin bölgesinde kalmalı")
+	assert.Equal(t, first.ID, resolved.ID, "the country must stay in the rival transaction's region")
 }
 
-// TestSilinmekteOlanBolgeyeUlkeEklenemez bölge satırının PAYLAŞIMLI kilidinin
-// işe yaradığını belirlenimci biçimde doğrular.
+// TestACountryCannotJoinARegionBeingDeleted verifies deterministically that the
+// SHARED lock on the region row does its job.
 //
-// Kilit sırasının ilk adımı bölgedir ve bilinçlidir: ülke ekleme, o sırada
-// silinmekte olan bir bölgeyi CANLI görmemelidir. Kurgu:
+// The region is the first step of the lock order, and deliberately so: adding
+// a country must not see a region that is being deleted at that moment as
+// LIVE. The setup:
 //
-//  1. Rakip bir işlem bölge satırını kilitler.
-//  2. Ülke ekleme başlar ve bölge kilidinde BEKLER.
-//  3. Rakip işlem bölgeyi yumuşak siler ve commit eder.
-//  4. Bekleyen istek uyanır; FOR SHARE kilidi alındıktan sonra WHERE koşulu
-//     (deleted_at IS NULL) YENİDEN değerlendirilir ve satır "yok" görünür.
+//  1. A rival transaction locks the region row.
+//  2. Adding a country starts and WAITS on the region lock.
+//  3. The rival transaction soft-deletes the region and commits.
+//  4. The waiting request wakes up; once the FOR SHARE lock is taken, the WHERE
+//     clause (deleted_at IS NULL) is evaluated AGAIN and the row looks "absent".
 //
-// Bölge kilitsiz okunsaydı istek 2. adımda bölgeyi canlı görür, uyanmaz ve
-// ülkeyi SİLİNMİŞ bir bölgeye bağlardı: ülke ölü bir bölgeye kilitlenir,
-// başka hiçbir bölgeye eklenemez ve ResolveRegionForCountry onun için kalıcı
-// olarak tutarsızlık kodu dönerdi.
-func TestSilinmekteOlanBolgeyeUlkeEklenemez(t *testing.T) {
+// Had the region been read without a lock, the request would have seen it live
+// in step 2, never woken to the delete, and tied the country to a DELETED
+// region: the country would be locked into a dead region, could not be added to
+// any other region, and ResolveRegionForCountry would return the inconsistency
+// code for it for good.
+func TestACountryCannotJoinARegionBeingDeleted(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	bolge := yeniBolge(ctx, t, svc, "TRY")
+	svc := newService(t)
+	reg := newRegion(ctx, t, svc, "TRY")
 
-	const ulkeKodu = "FI"
+	const countryCode = "FI"
 
 	conn, err := testPool.Pool().Acquire(ctx)
 	require.NoError(t, err)
@@ -663,107 +674,109 @@ func TestSilinmekteOlanBolgeyeUlkeEklenemez(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var kilitli string
+	var locked string
 	require.NoError(t, tx.QueryRow(ctx,
-		`SELECT id FROM region WHERE id = $1 FOR UPDATE`, bolge.ID).Scan(&kilitli))
+		`SELECT id FROM region WHERE id = $1 FOR UPDATE`, reg.ID).Scan(&locked))
 
-	sonuc := make(chan error, 1)
+	result := make(chan error, 1)
 	go func() {
-		_, addErr := svc.AddCountryToRegion(ctx, bolge.ID, ulkeKodu)
-		sonuc <- addErr
+		_, addErr := svc.AddCountryToRegion(ctx, reg.ID, countryCode)
+		result <- addErr
 	}()
 
-	requireKilitBekleyen(ctx, t)
+	requireLockWaiter(ctx, t)
 
 	_, err = tx.Exec(ctx,
-		`UPDATE region SET deleted_at = now(), updated_at = now() WHERE id = $1`, bolge.ID)
+		`UPDATE region SET deleted_at = now(), updated_at = now() WHERE id = $1`, reg.ID)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit(ctx))
 
 	select {
-	case addErr := <-sonuc:
-		require.Error(t, addErr, "silinmiş bölgeye ülke eklenememeli")
+	case addErr := <-result:
+		require.Error(t, addErr, "a country must not be added to a deleted region")
 		assert.Equal(t, errors.KindNotFound, errors.KindOf(addErr))
 	case <-time.After(15 * time.Second):
-		t.Fatal("bekleyen istek zamanında tamamlanmadı")
+		t.Fatal("the waiting request did not finish in time")
 	}
 
-	assert.Zero(t, sayim(ctx, t,
-		`SELECT count(*) FROM country WHERE iso_2 = $1 AND region_id IS NOT NULL`, ulkeKodu),
-		"ülke silinmiş bölgeye bağlanmamalı")
+	assert.Zero(t, countOf(ctx, t,
+		`SELECT count(*) FROM country WHERE iso_2 = $1 AND region_id IS NOT NULL`, countryCode),
+		"the country must not be tied to the deleted region")
 }
 
-// TestEszamanliUlkeAtamasiTekKazanan aynı ülkeyi farklı bölgelere eşzamanlı
-// eklemeye çalışan isteklerden YALNIZCA BİRİNİN kazandığını doğrular.
+// TestConcurrentCountryAssignmentHasOneWinner verifies that of the requests
+// trying to add the same country to different regions at the same time, ONLY
+// ONE wins.
 //
-// Bu test kuralın uçtan uca tuttuğunu gösterir ama KİLİDİN VARLIĞINI KANITLAMAZ:
-// istekler doğal olarak seri hâle gelirse kilitsiz bir uygulama da geçerdi.
-// Kilidin asıl kanıtı [TestUlkeAtamasiKilitAltindaOkur] içindedir; ikisi
-// birlikte hem kuralı hem mekanizmasını kapsar.
-func TestEszamanliUlkeAtamasiTekKazanan(t *testing.T) {
+// This test shows that the rule holds end to end but DOES NOT PROVE THAT THE
+// LOCK EXISTS: if the requests happened to run one after another, an
+// implementation without the lock would pass too. The real proof of the lock is
+// in [TestCountryAssignmentReadsUnderTheLock]; together the two cover both the
+// rule and its mechanism.
+func TestConcurrentCountryAssignmentHasOneWinner(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 
-	const bolgeSayisi = 8
-	bolgeler := make([]models.Region, 0, bolgeSayisi)
-	for i := range bolgeSayisi {
-		bolgeler = append(bolgeler, yeniBolge(ctx, t, svc, []string{"TRY", "USD", "EUR", "JPY"}[i%4]))
+	const regionCount = 8
+	regions := make([]models.Region, 0, regionCount)
+	for i := range regionCount {
+		regions = append(regions, newRegion(ctx, t, svc, []string{"TRY", "USD", "EUR", "JPY"}[i%4]))
 	}
 
-	const ulkeKodu = "MT"
+	const countryCode = "MT"
 	var (
-		wg       sync.WaitGroup
-		mu       sync.Mutex
-		kazanan  []string
-		cakisma  int
-		digerErr []error
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		winners   []string
+		conflicts int
+		otherErrs []error
 	)
 
-	wg.Add(bolgeSayisi)
-	for _, bolge := range bolgeler {
+	wg.Add(regionCount)
+	for _, reg := range regions {
 		go func(regionID string) {
 			defer wg.Done()
 
-			_, err := svc.AddCountryToRegion(ctx, regionID, ulkeKodu)
+			_, err := svc.AddCountryToRegion(ctx, regionID, countryCode)
 
 			mu.Lock()
 			defer mu.Unlock()
 			switch {
 			case err == nil:
-				kazanan = append(kazanan, regionID)
+				winners = append(winners, regionID)
 			case errors.IsConflict(err):
-				cakisma++
+				conflicts++
 			default:
-				digerErr = append(digerErr, err)
+				otherErrs = append(otherErrs, err)
 			}
-		}(bolge.ID)
+		}(reg.ID)
 	}
 	wg.Wait()
 
-	assert.Empty(t, digerErr, "beklenmeyen hata: %v", digerErr)
-	require.Len(t, kazanan, 1, "yarışı tam olarak bir bölge kazanmalı")
-	assert.Equal(t, bolgeSayisi-1, cakisma, "kaybedenlerin hepsi çakışma almalı")
+	assert.Empty(t, otherErrs, "unexpected error: %v", otherErrs)
+	require.Len(t, winners, 1, "exactly one region must win the race")
+	assert.Equal(t, regionCount-1, conflicts, "every loser must get a conflict")
 
-	// Veritabanındaki son durum kazananla uyuşmalı.
-	cozulen, err := svc.ResolveRegionForCountry(ctx, ulkeKodu)
+	// The final state in the database must match the winner.
+	resolved, err := svc.ResolveRegionForCountry(ctx, countryCode)
 	require.NoError(t, err)
-	assert.Equal(t, kazanan[0], cozulen.ID)
+	assert.Equal(t, winners[0], resolved.ID)
 }
 
-// TestResolveRegionForCountry ülkeden bölgeye çözümü ve üç başarısızlık
-// durumunu gerçek veritabanında doğrular.
+// TestResolveRegionForCountry verifies the resolution from country to region
+// and its three failure cases on the real database.
 func TestResolveRegionForCountry(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	bolge := yeniBolge(ctx, t, svc, "EUR")
+	svc := newService(t)
+	reg := newRegion(ctx, t, svc, "EUR")
 
-	_, err := svc.AddCountryToRegion(ctx, bolge.ID, "PT")
+	_, err := svc.AddCountryToRegion(ctx, reg.ID, "PT")
 	require.NoError(t, err)
 
-	cozulen, err := svc.ResolveRegionForCountry(ctx, "pt")
+	resolved, err := svc.ResolveRegionForCountry(ctx, "pt")
 	require.NoError(t, err)
-	assert.Equal(t, bolge.ID, cozulen.ID)
-	assert.Equal(t, "EUR", cozulen.CurrencyCode, "sepet para birimini buradan alır")
+	assert.Equal(t, reg.ID, resolved.ID)
+	assert.Equal(t, "EUR", resolved.CurrencyCode, "the cart takes its currency from here")
 
 	_, err = svc.ResolveRegionForCountry(ctx, "ZZ")
 	require.Error(t, err)
@@ -771,104 +784,109 @@ func TestResolveRegionForCountry(t *testing.T) {
 	assert.Equal(t, repository.CodeCountryNotFound, errors.CodeOf(err))
 
 	_, err = svc.ResolveRegionForCountry(ctx, "AQ")
-	require.Error(t, err, "bölgeye bağlanmamış ülke için bölge bulunmamalı")
+	require.Error(t, err, "no region may be found for a country tied to no region")
 	assert.Equal(t, service.CodeCountryUnassigned, errors.CodeOf(err))
 
 	_, err = svc.ResolveRegionForCountry(ctx, "PRT")
-	require.Error(t, err, "alpha-3 kodu kabul edilmemeli")
+	require.Error(t, err, "an alpha-3 code must not be accepted")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestBolgeSilinceUlkelerSerbestKalir silme ile ülkelerin serbest bırakılmasının
-// TEK işlemde olduğunu doğrular.
+// TestDeletingARegionReleasesItsCountries verifies that the delete and the
+// release of the countries happen in ONE operation.
 //
-// Serbest bırakılmasaydı ülke ölü bir bölgeye bağlı kalır, foreign key
-// yüzünden başka hiçbir bölgeye eklenemez ve o ülkedeki müşteri için sepet
-// hiç açılamazdı.
-func TestBolgeSilinceUlkelerSerbestKalir(t *testing.T) {
+// Had they not been released, the country would stay tied to a dead region,
+// could not be added to any other region because of the foreign key, and no
+// cart could ever be opened for a customer in that country.
+func TestDeletingARegionReleasesItsCountries(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	ilk := yeniBolge(ctx, t, svc, "TRY")
-	ikinci := yeniBolge(ctx, t, svc, "USD")
+	svc := newService(t)
+	first := newRegion(ctx, t, svc, "TRY")
+	second := newRegion(ctx, t, svc, "USD")
 
-	for _, kod := range []string{"AL", "AD"} {
-		_, err := svc.AddCountryToRegion(ctx, ilk.ID, kod)
+	for _, code := range []string{"AL", "AD"} {
+		_, err := svc.AddCountryToRegion(ctx, first.ID, code)
 		require.NoError(t, err)
 	}
 
-	require.NoError(t, svc.DeleteRegion(ctx, ilk.ID))
+	require.NoError(t, svc.DeleteRegion(ctx, first.ID))
 
-	assert.Zero(t, sayim(ctx, t, `SELECT count(*) FROM country WHERE region_id = $1`, ilk.ID),
-		"silinen bölgeye bağlı ülke kalmamalı")
+	assert.Zero(t, countOf(ctx, t, `SELECT count(*) FROM country WHERE region_id = $1`, first.ID),
+		"no country may stay tied to the deleted region")
 
-	ulke, err := svc.AddCountryToRegion(ctx, ikinci.ID, "AL")
-	require.NoError(t, err, "serbest kalan ülke başka bölgeye eklenebilmeli")
-	require.NotNil(t, ulke.RegionID)
-	assert.Equal(t, ikinci.ID, *ulke.RegionID)
+	country, err := svc.AddCountryToRegion(ctx, second.ID, "AL")
+	require.NoError(t, err, "a released country must be addable to another region")
+	require.NotNil(t, country.RegionID)
+	assert.Equal(t, second.ID, *country.RegionID)
 }
 
-// beklettigiIstekSayisi verilen oturumun BLOKE ETTİĞİ istek sayısını döner.
+// blockedRequestCount returns how many requests the given session is
+// BLOCKING.
 //
-// [kilitBekleyenSayisi]'nın bilinen bir engelleyiciye daraltılmış hâlidir ve
-// daraltma bu dosyadaki tek testte zorunludur: aşağıdaki test bir ANA dair
-// iddia kurar — "silme henüz bitmemişken dışarıdan bakan ne görüyor" — ve o an
-// yanlış seçilirse test hiçbir şey ölçmeden yeşil kalır. "Veritabanında biri
-// kilitte bekliyor" koşulu başka bir oturumun beklemesiyle de sağlanır; o
-// durumda iddia silme daha ilk deyimini çalıştırmadan koşar ve elbette tutar.
-// pg_blocking_pids beklemenin BİZİM işlemimizden kaynaklandığını söyler, yani
-// koşul ancak silme gerçekten ikinci deyimine geldiğinde sağlanır.
-func beklettigiIstekSayisi(ctx context.Context, t *testing.T, engelleyenPid int32) int64 {
+// It is [lockWaiterCount] narrowed to a known blocker, and the narrowing is
+// mandatory for the one test in this file that uses it: the test below makes a
+// claim about a MOMENT — "what does an observer outside see while the delete
+// has not finished yet" — and if that moment is picked wrongly the test stays
+// green having measured nothing. The condition "somebody in the database is
+// waiting on a lock" is also met by another session's wait; in that case the
+// assertion runs before the delete has even run its first statement, and of
+// course it holds. pg_blocking_pids says the wait comes from OUR transaction,
+// so the condition is met only once the delete has really reached its second
+// statement.
+func blockedRequestCount(ctx context.Context, t *testing.T, blockerPID int32) int64 {
 	t.Helper()
 
-	return sayim(ctx, t,
+	return countOf(ctx, t,
 		`SELECT count(*) FROM pg_stat_activity
          WHERE datname = current_database()
            AND wait_event_type = 'Lock'
-           AND $1 = ANY(pg_blocking_pids(pid))`, engelleyenPid)
+           AND $1 = ANY(pg_blocking_pids(pid))`, blockerPID)
 }
 
-// requireBeklettigiIstek verilen oturumun bir isteği gerçekten beklettiğini
-// doğrular.
+// requireBlockedRequest verifies that the given session really is holding a
+// request up.
 //
-// Uyku yerine BEKLEME DURUMUNA bakılır; gerekçe [requireKilitBekleyen] ile
-// aynıdır.
-func requireBeklettigiIstek(ctx context.Context, t *testing.T, engelleyenPid int32) {
+// It looks at the WAIT STATE rather than sleeping; the reason is the same as
+// [requireLockWaiter]'s.
+func requireBlockedRequest(ctx context.Context, t *testing.T, blockerPID int32) {
 	t.Helper()
 
 	require.Eventually(t, func() bool {
-		return beklettigiIstekSayisi(ctx, t, engelleyenPid) > 0
-	}, 10*time.Second, 10*time.Millisecond, "istek bu oturumun kilidinde beklemeliydi")
+		return blockedRequestCount(ctx, t, blockerPID) > 0
+	}, 10*time.Second, 10*time.Millisecond, "the request should have been waiting on this session's lock")
 }
 
-// TestBolgeSilmeIkiYazmayiTekIslemdeYapar silmenin İKİ yazmasının dışarıya TEK
-// ANDA göründüğünü belirlenimci biçimde doğrular.
+// TestDeletingARegionMakesBothWritesInOneTransaction verifies deterministically
+// that the delete's TWO writes become visible to the outside AT ONE MOMENT.
 //
-// [TestBolgeSilinceUlkelerSerbestKalir] iki yazmanın da OLDUĞUNU gösterir,
-// BİRLİKTE olduğunu değil. Fark ölçülerek bulundu: repository.DeleteRegion'ın
-// işlem çerçevesi kaldırılıp iki yazma iki ayrı autocommit deyimine çevrildiğinde
-// modülün integration testlerinin TAMAMI yeşil kalıyordu (2026-09-06). Yani
-// çerçeve vardı ama onu tutan hiçbir test yoktu; bu test o boşluğu kapatır.
+// [TestDeletingARegionReleasesItsCountries] shows that both writes HAPPEN, not
+// that they happen TOGETHER. The gap was found by measuring: with the
+// transaction frame of repository.DeleteRegion removed and the two writes
+// turned into two separate autocommit statements, ALL of the module's
+// integration tests stayed green (2026-09-06). So the frame was there but no
+// test held it in place; this test closes that gap.
 //
-// Kurgu ara durumu zamanlamaya bırakmadan üretir:
+// The setup produces the intermediate state without leaving it to timing:
 //
-//  1. Rakip bir işlem bölgenin TEK ülkesini FOR UPDATE ile kilitler.
-//  2. Silme başlar: bölgeyi yumuşak siler, sonra ülkeleri serbest bırakmak
-//     ister ve ülke kilidinde BEKLER.
-//  3. ÜÇÜNCÜ bir okuma (havuzdan, kendi autocommit'inde) yalnızca commit
-//     edilmiş veriyi görür.
-//  4. Rakip işlem kilidi bırakır, silme tamamlanır.
+//  1. A rival transaction locks the region's ONLY country with FOR UPDATE.
+//  2. The delete starts: it soft-deletes the region, then goes to release the
+//     countries and WAITS on the country lock.
+//  3. A THIRD read (from the pool, in its own autocommit) sees only committed
+//     data.
+//  4. The rival transaction lets go of the lock and the delete completes.
 //
-// Kanıtı taşıyan adım 3'tür: doğru uygulamada bölge HÂLÂ CANLI görünür, çünkü
-// ilk yazma commit edilmemiştir. İki yazma ayrı işlemlerde olsaydı bölge o anda
-// silinmiş, ülkesi ise hâlâ ona bağlı görünürdü — yani tam olarak silmenin
-// engellemek için var olduğu durum: ölü bir bölgeye bağlı ülke.
-func TestBolgeSilmeIkiYazmayiTekIslemdeYapar(t *testing.T) {
+// Step 3 carries the proof: in a correct implementation the region STILL LOOKS
+// LIVE, because the first write has not been committed. Had the two writes
+// been in separate transactions, at that moment the region would look deleted
+// while its country still looked tied to it — exactly the state the delete
+// exists to prevent: a country tied to a dead region.
+func TestDeletingARegionMakesBothWritesInOneTransaction(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	bolge := yeniBolge(ctx, t, svc, "TRY")
+	svc := newService(t)
+	reg := newRegion(ctx, t, svc, "TRY")
 
-	const ulkeKodu = "LV"
-	_, err := svc.AddCountryToRegion(ctx, bolge.ID, ulkeKodu)
+	const countryCode = "LV"
+	_, err := svc.AddCountryToRegion(ctx, reg.ID, countryCode)
 	require.NoError(t, err)
 
 	conn, err := testPool.Pool().Acquire(ctx)
@@ -879,161 +897,161 @@ func TestBolgeSilmeIkiYazmayiTekIslemdeYapar(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var engelleyenPid int32
-	require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&engelleyenPid))
+	var blockerPID int32
+	require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
 
-	var kilitli string
+	var locked string
 	require.NoError(t, tx.QueryRow(ctx,
-		`SELECT iso_2 FROM country WHERE iso_2 = $1 FOR UPDATE`, ulkeKodu).Scan(&kilitli))
+		`SELECT iso_2 FROM country WHERE iso_2 = $1 FOR UPDATE`, countryCode).Scan(&locked))
 
-	sonuc := make(chan error, 1)
+	result := make(chan error, 1)
 	go func() {
-		sonuc <- svc.DeleteRegion(ctx, bolge.ID)
+		result <- svc.DeleteRegion(ctx, reg.ID)
 	}()
 
-	requireBeklettigiIstek(ctx, t, engelleyenPid)
+	requireBlockedRequest(ctx, t, blockerPID)
 
-	assert.Equal(t, int64(1), sayim(ctx, t,
-		`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NULL`, bolge.ID),
-		"ikinci yazma bitmeden bölge silinmiş görünmemeli")
-	assert.Equal(t, int64(1), sayim(ctx, t,
-		`SELECT count(*) FROM country WHERE iso_2 = $1 AND region_id = $2`, ulkeKodu, bolge.ID),
-		"ülke de henüz serbest kalmamış olmalı; ara durum yoktur")
+	assert.Equal(t, int64(1), countOf(ctx, t,
+		`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NULL`, reg.ID),
+		"the region must not look deleted before the second write has finished")
+	assert.Equal(t, int64(1), countOf(ctx, t,
+		`SELECT count(*) FROM country WHERE iso_2 = $1 AND region_id = $2`, countryCode, reg.ID),
+		"the country must not have been released yet either; there is no intermediate state")
 
 	require.NoError(t, tx.Rollback(ctx))
 
 	select {
-	case delErr := <-sonuc:
-		require.NoError(t, delErr, "kilit bırakılınca silme tamamlanmalı")
+	case delErr := <-result:
+		require.NoError(t, delErr, "once the lock is released the delete must complete")
 	case <-time.After(15 * time.Second):
-		t.Fatal("bekleyen silme zamanında tamamlanmadı")
+		t.Fatal("the waiting delete did not finish in time")
 	}
 
-	assert.Zero(t, sayim(ctx, t,
-		`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NULL`, bolge.ID),
-		"silme commit edilince bölge canlı kalmamalı")
-	assert.Zero(t, sayim(ctx, t,
-		`SELECT count(*) FROM country WHERE region_id = $1`, bolge.ID),
-		"aynı anda ülke de serbest kalmalı")
+	assert.Zero(t, countOf(ctx, t,
+		`SELECT count(*) FROM region WHERE id = $1 AND deleted_at IS NULL`, reg.ID),
+		"once the delete has committed the region must not stay live")
+	assert.Zero(t, countOf(ctx, t,
+		`SELECT count(*) FROM country WHERE region_id = $1`, reg.ID),
+		"the country must be released at the same moment")
 }
 
-// TestUlkeBolgedenCikarilir ülke çıkarma yolunu ve yanlış bölgeyle yapılan
-// çağrının reddini doğrular.
-func TestUlkeBolgedenCikarilir(t *testing.T) {
+// TestACountryIsRemovedFromARegion verifies the path that removes a country and
+// the refusal of a call made with the wrong region.
+func TestACountryIsRemovedFromARegion(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	ilk := yeniBolge(ctx, t, svc, "TRY")
-	ikinci := yeniBolge(ctx, t, svc, "USD")
+	svc := newService(t)
+	first := newRegion(ctx, t, svc, "TRY")
+	second := newRegion(ctx, t, svc, "USD")
 
-	_, err := svc.AddCountryToRegion(ctx, ilk.ID, "BG")
+	_, err := svc.AddCountryToRegion(ctx, first.ID, "BG")
 	require.NoError(t, err)
 
-	err = svc.RemoveCountryFromRegion(ctx, ikinci.ID, "BG")
-	require.Error(t, err, "başka bölgenin ülkesi çıkarılamamalı")
+	err = svc.RemoveCountryFromRegion(ctx, second.ID, "BG")
+	require.Error(t, err, "another region's country must not be removable")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
-	assert.Equal(t, int64(1), sayim(ctx, t,
-		`SELECT count(*) FROM country WHERE iso_2 = 'BG' AND region_id = $1`, ilk.ID),
-		"başarısız çıkarma bağı bozmamalı")
+	assert.Equal(t, int64(1), countOf(ctx, t,
+		`SELECT count(*) FROM country WHERE iso_2 = 'BG' AND region_id = $1`, first.ID),
+		"a failed removal must not break the link")
 
-	require.NoError(t, svc.RemoveCountryFromRegion(ctx, ilk.ID, "bg"))
-	assert.Zero(t, sayim(ctx, t, `SELECT count(*) FROM country WHERE iso_2 = 'BG' AND region_id IS NOT NULL`))
+	require.NoError(t, svc.RemoveCountryFromRegion(ctx, first.ID, "bg"))
+	assert.Zero(t, countOf(ctx, t, `SELECT count(*) FROM country WHERE iso_2 = 'BG' AND region_id IS NOT NULL`))
 }
 
-// TestUlkeListesiBolgeyeGoreSuzulur ülke listesinin bölge süzgecini gerçek
-// sorguyla doğrular.
-func TestUlkeListesiBolgeyeGoreSuzulur(t *testing.T) {
+// TestTheCountryListFiltersByRegion verifies the country list's region filter
+// with the real query.
+func TestTheCountryListFiltersByRegion(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	bolge := yeniBolge(ctx, t, svc, "TRY")
+	svc := newService(t)
+	reg := newRegion(ctx, t, svc, "TRY")
 
-	for _, kod := range []string{"GE", "AM"} {
-		_, err := svc.AddCountryToRegion(ctx, bolge.ID, kod)
+	for _, code := range []string{"GE", "AM"} {
+		_, err := svc.AddCountryToRegion(ctx, reg.ID, code)
 		require.NoError(t, err)
 	}
 
-	sayfa, err := svc.ListCountries(ctx, service.ListCountriesInput{RegionID: &bolge.ID})
+	page, err := svc.ListCountries(ctx, service.ListCountriesInput{RegionID: &reg.ID})
 	require.NoError(t, err)
-	require.Len(t, sayfa.Items, 2)
-	assert.Equal(t, int64(2), sayfa.Count)
-	assert.Equal(t, "AM", sayfa.Items[0].Code, "koda göre sıralı dönmeli")
-	assert.Equal(t, "GE", sayfa.Items[1].Code)
+	require.Len(t, page.Items, 2)
+	assert.Equal(t, int64(2), page.Count)
+	assert.Equal(t, "AM", page.Items[0].Code, "the countries must come back ordered by code")
+	assert.Equal(t, "GE", page.Items[1].Code)
 
-	tumu, err := svc.ListCountries(ctx, service.ListCountriesInput{Limit: 5})
+	all, err := svc.ListCountries(ctx, service.ListCountriesInput{Limit: 5})
 	require.NoError(t, err)
-	assert.Len(t, tumu.Items, 5, "sayfa boyu uygulanmalı")
-	assert.Equal(t, int64(tohumdakiUlkeSayisi), tumu.Count, "toplam sayı sayfa boyundan bağımsızdır")
+	assert.Len(t, all.Items, 5, "the page size must be applied")
+	assert.Equal(t, int64(seededCountryCount), all.Count, "the total count does not depend on the page size")
 }
 
-// TestVitrinBolgeleriParaBirimiyleDoner vitrin görünümünün para birimi ve
-// ülkeleri tek çağrıda taşıdığını doğrular.
-func TestVitrinBolgeleriParaBirimiyleDoner(t *testing.T) {
+// TestTheStorefrontRegionCarriesItsCurrencyAndCountries verifies that the
+// storefront view carries the currency and the countries in a single call.
+func TestTheStorefrontRegionCarriesItsCurrencyAndCountries(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	bolge := yeniBolge(ctx, t, svc, "JPY")
-	_, err := svc.AddCountryToRegion(ctx, bolge.ID, "SG")
+	svc := newService(t)
+	reg := newRegion(ctx, t, svc, "JPY")
+	_, err := svc.AddCountryToRegion(ctx, reg.ID, "SG")
 	require.NoError(t, err)
 
-	item, err := svc.GetStoreRegion(ctx, bolge.ID)
+	item, err := svc.GetStoreRegion(ctx, reg.ID)
 	require.NoError(t, err)
 	require.NotNil(t, item.Currency)
 	assert.Equal(t, "JPY", item.Currency.Code)
-	assert.Equal(t, int32(0), item.Currency.DecimalDigits, "JPY ondalıksızdır")
+	assert.Equal(t, int32(0), item.Currency.DecimalDigits, "JPY has no decimals")
 	assert.Equal(t, int64(1), item.Currency.MinorUnitFactor())
 	require.Len(t, item.Countries, 1)
 	assert.Equal(t, "SG", item.Countries[0].Code)
 }
 
-// TestInteropYuzeyiGercekVeriyleCalisir modüller arası dar yüzeyin gerçek
-// veritabanında beklenen değerleri döndürdüğünü doğrular.
+// TestTheInteropSurfaceWorksOnRealData verifies that the narrow surface between
+// modules returns the expected values on the real database.
 //
-// Bu yüzey Faz 5'te cart'ın, Faz 6'da order'ın ve Faz 7'de tax'ın kullanacağı
-// tek kapıdır; uyumsuzluk derleme zamanında değil çözüm anında görüneceği için
-// (ADR 0001) gerçek veriyle sınanması ZORUNLUDUR.
-func TestInteropYuzeyiGercekVeriyleCalisir(t *testing.T) {
+// This surface is the one door cart will use in Phase 5, order in Phase 6 and
+// tax in Phase 7; a mismatch shows not at compile time but at resolution time
+// (ADR 0001), so trying it with real data is MANDATORY.
+func TestTheInteropSurfaceWorksOnRealData(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	bolge := yeniBolge(ctx, t, svc, "KWD")
-	_, err := svc.AddCountryToRegion(ctx, bolge.ID, "KW")
+	svc := newService(t)
+	reg := newRegion(ctx, t, svc, "KWD")
+	_, err := svc.AddCountryToRegion(ctx, reg.ID, "KW")
 	require.NoError(t, err)
 
 	id, err := svc.RegionIDForCountry(ctx, "kw")
 	require.NoError(t, err)
-	assert.Equal(t, bolge.ID, id)
+	assert.Equal(t, reg.ID, id)
 
-	kod, basamak, err := svc.RegionCurrency(ctx, bolge.ID)
+	code, digits, err := svc.RegionCurrency(ctx, reg.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "KWD", kod)
-	assert.Equal(t, int32(3), basamak, "KWD üç basamaklıdır")
+	assert.Equal(t, "KWD", code)
+	assert.Equal(t, int32(3), digits, "KWD has three decimal digits")
 
-	oran, otomatik, err := svc.RegionTax(ctx, bolge.ID)
+	rate, automatic, err := svc.RegionTax(ctx, reg.ID)
 	require.NoError(t, err)
-	assert.Equal(t, int32(2000), oran)
-	assert.True(t, otomatik)
+	assert.Equal(t, int32(2000), rate)
+	assert.True(t, automatic)
 
-	// Verginin tam sayı aritmetiğiyle hesabı: 19,990 KWD (19990 fils) için
+	// The tax computed in integer arithmetic: for 19.990 KWD (19990 fils),
 	// 19990 * 2000 / 10000 = 3998 fils.
-	assert.Equal(t, int64(3998), 19990*int64(oran)/int64(models.MaxTaxRate))
+	assert.Equal(t, int64(3998), 19990*int64(rate)/int64(models.MaxTaxRate))
 
-	basamak, err = svc.CurrencyDecimalDigits(ctx, "jpy")
+	digits, err = svc.CurrencyDecimalDigits(ctx, "jpy")
 	require.NoError(t, err)
-	assert.Zero(t, basamak)
+	assert.Zero(t, digits)
 }
 
-// TestQuerySaglayicisiTopluOkur sağlayıcının gerçek sorgularla toplu okuduğunu
-// ve kayıtları para birimi/ülke ile döndürdüğünü doğrular.
-func TestQuerySaglayicisiTopluOkur(t *testing.T) {
+// TestTheQueryProviderReadsInBulk verifies that the provider reads in bulk with
+// the real queries and returns the records with their currency and countries.
+func TestTheQueryProviderReadsInBulk(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newService(t)
 	provider := service.NewQueryProvider(svc)
 
-	ilk := yeniBolge(ctx, t, svc, "TRY")
-	ikinci := yeniBolge(ctx, t, svc, "JPY")
-	_, err := svc.AddCountryToRegion(ctx, ilk.ID, "AZ")
+	first := newRegion(ctx, t, svc, "TRY")
+	second := newRegion(ctx, t, svc, "JPY")
+	_, err := svc.AddCountryToRegion(ctx, first.ID, "AZ")
 	require.NoError(t, err)
-	_, err = svc.AddCountryToRegion(ctx, ikinci.ID, "TH")
+	_, err = svc.AddCountryToRegion(ctx, second.ID, "TH")
 	require.NoError(t, err)
 
-	records, err := provider.FetchByIDs(ctx, []string{ilk.ID, ikinci.ID}, nil)
+	records, err := provider.FetchByIDs(ctx, []string{first.ID, second.ID}, nil)
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 
@@ -1044,32 +1062,34 @@ func TestQuerySaglayicisiTopluOkur(t *testing.T) {
 		byID[id] = record
 	}
 
-	jp, ok := byID[ikinci.ID]["currency"].(map[string]any)
+	jp, ok := byID[second.ID]["currency"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "JPY", jp["code"])
 	assert.Equal(t, int32(0), jp["decimal_digits"])
 
-	countries, ok := byID[ilk.ID]["countries"].([]map[string]any)
+	countries, ok := byID[first.ID]["countries"].([]map[string]any)
 	require.True(t, ok)
 	require.Len(t, countries, 1)
 	assert.Equal(t, "AZ", countries[0]["code"])
 
-	// Alan seçimi: istenmeyen alt kayıtlar hiç dönmez.
-	dar, err := provider.FetchByIDs(ctx, []string{ilk.ID}, []string{"currency_code"})
+	// Field selection: sub-records that were not asked for do not come back at
+	// all.
+	narrow, err := provider.FetchByIDs(ctx, []string{first.ID}, []string{"currency_code"})
 	require.NoError(t, err)
-	require.Len(t, dar, 1)
-	assert.NotContains(t, dar[0], "currency")
-	assert.NotContains(t, dar[0], "countries")
-	assert.Equal(t, "TRY", dar[0]["currency_code"])
+	require.Len(t, narrow, 1)
+	assert.NotContains(t, narrow[0], "currency")
+	assert.NotContains(t, narrow[0], "countries")
+	assert.Equal(t, "TRY", narrow[0]["currency_code"])
 }
 
-// TestModulKaydiCozulebilir modülün container'a kaydettiği adların gerçekten
-// çözülebildiğini ve beklenen arayüzleri karşıladığını doğrular.
+// TestTheModuleRegistrationResolves verifies that the names the module
+// registers in the container really resolve and satisfy the expected
+// interfaces.
 //
-// ADR 0001'in bedeli buydu: sağlayıcı ile tüketici arasında derleme zamanı
-// bağı yoktur, uyumsuzluk ancak çözüm anında görünür. Bu test o anı erkene
-// çeker.
-func TestModulKaydiCozulebilir(t *testing.T) {
+// This was ADR 0001's price: there is no compile-time link between provider and
+// consumer, and a mismatch shows only at resolution time. This test brings that
+// moment forward.
+func TestTheModuleRegistrationResolves(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
@@ -1078,44 +1098,47 @@ func TestModulKaydiCozulebilir(t *testing.T) {
 	require.NoError(t, mod.Register(ctx, c))
 
 	svc, err := container.Resolve[*service.Service](c, "region.service")
-	require.NoError(t, err, "servis, sabit adıyla çözülebilmeli")
+	require.NoError(t, err, "the service must resolve by its constant name")
 	require.NotNil(t, svc)
 	assert.Equal(t, "region.service", region.ServiceName,
-		"servis adı değişirse tüketici modüller onu bulamaz")
+		"if the service name changes, the consumer modules cannot find it")
 
-	// Ad, ADR 0004'ün kuralıyla ELDE hesaplanır: sağlayıcı "<entity>.query"
-	// adıyla aranır. Sabiti kullanmak testi totolojiye çevirirdi.
+	// The name is worked out BY HAND with ADR 0004's rule: the provider is
+	// looked up under the name "<entity>.query". Using the constant would turn
+	// the test into a tautology.
 	provider, err := container.Resolve[query.Provider](c, "region"+query.ProviderSuffix)
-	require.NoError(t, err, "Query sağlayıcısı adıyla çözülebilmeli (ADR 0004)")
+	require.NoError(t, err, "the Query provider must resolve by its name (ADR 0004)")
 	assert.Equal(t, "region", provider.Entity(),
-		"kayıt adının öneki Entity() ile aynı olmalı")
+		"the registration name's prefix must be the same as Entity()")
 
-	// Tüketici modülün (Faz 5'te cart) yazacağı DAR arayüz burada çözülür;
-	// region import EDİLMEDEN yalnızca imzayla eşleşir (ADR 0001).
+	// The NARROW interface a consumer module (cart, in Phase 5) will write is
+	// resolved here; it matches by signature alone, WITHOUT importing region
+	// (ADR 0001).
 	type regionReader interface {
 		RegionIDForCountry(ctx context.Context, countryCode string) (string, error)
 		RegionCurrency(ctx context.Context, regionID string) (string, int32, error)
 		RegionTax(ctx context.Context, regionID string) (int32, bool, error)
 	}
 	reader, err := container.Resolve[regionReader](c, region.ServiceName)
-	require.NoError(t, err, "dar tüketici arayüzü servisi karşılamalı")
+	require.NoError(t, err, "the service must satisfy the narrow consumer interface")
 
-	bolge := yeniBolge(ctx, t, svc, "TRY")
-	_, err = svc.AddCountryToRegion(ctx, bolge.ID, "MD")
+	reg := newRegion(ctx, t, svc, "TRY")
+	_, err = svc.AddCountryToRegion(ctx, reg.ID, "MD")
 	require.NoError(t, err)
 
 	id, err := reader.RegionIDForCountry(ctx, "MD")
 	require.NoError(t, err)
-	assert.Equal(t, bolge.ID, id)
+	assert.Equal(t, reg.ID, id)
 
-	// Asıl kanıt: çekirdeğin Query katmanı, modülü hiç tanımadan yalnızca
-	// entity adıyla sağlayıcıyı bulup veriyi çekebilmeli.
+	// The real proof: the core's Query layer must be able to find the provider
+	// and fetch the data by the entity name alone, without knowing the module
+	// at all.
 	records, err := query.New(nil, c, nil).Graph(ctx, query.GraphSpec{
 		Entity:  "region",
-		Filters: map[string]any{"id": bolge.ID},
+		Filters: map[string]any{"id": reg.ID},
 	})
 	require.NoError(t, err)
 	require.Len(t, records, 1)
-	assert.Equal(t, bolge.ID, records[0][query.IDField])
+	assert.Equal(t, reg.ID, records[0][query.IDField])
 	assert.Equal(t, "TRY", records[0]["currency_code"])
 }
