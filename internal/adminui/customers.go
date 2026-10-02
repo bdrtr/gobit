@@ -223,7 +223,9 @@ func (u *UI) renderCustomerTyped(
 		// The new address's form, with what was typed when it was refused
 		// (ADR 0359).
 		"CanAddAddress": u.canAddAddresses(r),
-		"NewAddress":    printedAddress{},
+		// And each address's row moves a default or removes it (ADR 0360).
+		"CanActOnAddresses": u.canActOnAddresses(r),
+		"NewAddress":        printedAddress{},
 	}
 	if refusedAddress == newAddressMarker {
 		added := printedAddress{}

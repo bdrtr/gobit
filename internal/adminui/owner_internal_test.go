@@ -603,6 +603,14 @@ func (m recordingMemberships) AddCustomerAddress(context.Context, string, json.R
 	return "cadr_walk", m.surfaces.reach(ServiceCustomerAdmin)
 }
 
+func (m recordingMemberships) MakeAddressDefault(context.Context, string, string, string) error {
+	return m.surfaces.reach(ServiceCustomerAdmin)
+}
+
+func (m recordingMemberships) RemoveCustomerAddress(context.Context, string, string) error {
+	return m.surfaces.reach(ServiceCustomerAdmin)
+}
+
 // recordingNotifications records the notification module's surface (ADR 0317).
 type recordingNotifications struct{ surfaces *recordingSurfaces }
 
@@ -1140,11 +1148,13 @@ var walkForms = map[string]url.Values{
 		formReadName: {"Walk"}, formReadAmount: {"0"}, formReadAdminOnly: {"false"}, formGroupName: {"Walked"},
 	},
 	// A customer's groups (ADR 0322).
-	routeKey(http.MethodPost, CustomerGroupsPath):      {formCustomerGroup: {"custgrp_walk"}},
-	routeKey(http.MethodPost, CustomerContactPath):     {formFirstName: {"Walk"}},
-	routeKey(http.MethodPost, CustomerAddressPath):     {"address_1": {"Walk"}, "city": {"Walk"}, "country_code": {"TR"}},
-	routeKey(http.MethodPost, CustomerAddressesPath):   {"address_1": {"Walk"}, "city": {"Walk"}, "country_code": {"TR"}},
-	routeKey(http.MethodPost, CustomerGroupRemovePath): {},
+	routeKey(http.MethodPost, CustomerGroupsPath):         {formCustomerGroup: {"custgrp_walk"}},
+	routeKey(http.MethodPost, CustomerContactPath):        {formFirstName: {"Walk"}},
+	routeKey(http.MethodPost, CustomerAddressPath):        {"address_1": {"Walk"}, "city": {"Walk"}, "country_code": {"TR"}},
+	routeKey(http.MethodPost, CustomerAddressesPath):      {"address_1": {"Walk"}, "city": {"Walk"}, "country_code": {"TR"}},
+	routeKey(http.MethodPost, CustomerAddressDefaultPath): {formDefaultKind: {"shipping"}},
+	routeKey(http.MethodPost, CustomerAddressRemovePath):  {},
+	routeKey(http.MethodPost, CustomerGroupRemovePath):    {},
 	// Limiting a promotion to customer groups (ADR 0321).
 	routeKey(http.MethodPost, PromotionGroupRulesPath): {formGroup: {"custgrp_walk"}},
 	// Putting a promotion into a campaign (ADR 0320).

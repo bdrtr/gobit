@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/adminui"
 	customersvc "github.com/bdrtr/gobit/internal/modules/customer/service"
@@ -144,4 +145,53 @@ func TestAnOperatorAddsACustomersAddressInThePanel(t *testing.T) {
 	}
 	assert.Equal(t, map[string]bool{"1 First St|TR": false, "2 Second St|TR": true}, byLine,
 		"the second default takes the flag from the first, the country upper-cased")
+}
+
+// TestAnOperatorMovesADefaultAndRemovesAnAddressInThePanel is ADR 0360 on
+// the production wiring: an address's row on a customer's page makes it the
+// default shipping address, taking the flag from the address that held it,
+// and another's row removes it.
+func TestAnOperatorMovesADefaultAndRemovesAnAddressInThePanel(t *testing.T) {
+	ctx := t.Context()
+	created, err := customerSvc.CreateCustomer(ctx, customersvc.CustomerInput{
+		Email: fmt.Sprintf("e2e-address-acts-%d@example.com", fixtureCounter.Add(1)),
+	})
+	require.NoError(t, err)
+	first, err := customerSvc.CreateAddress(ctx, created.ID, customersvc.AddressInput{
+		Address1: "1 First St", City: "Izmir", CountryCode: "TR", IsDefaultShipping: true,
+	})
+	require.NoError(t, err)
+	second, err := customerSvc.CreateAddress(ctx, created.ID, customersvc.AddressInput{
+		Address1: "2 Second St", City: "Ankara", CountryCode: "TR",
+	})
+	require.NoError(t, err)
+	panel, err := adminui.FromContainer(ctr, false, nil)
+	require.NoError(t, err)
+	router := chi.NewRouter()
+	panel.Routes(router)
+	send := func(path string, form url.Values) {
+		t.Helper()
+
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
+			ID: "usr_support", Kind: "user", Scopes: []string{"customer:read", "customer:write"},
+		}))
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusSeeOther, rec.Code, rec.Body.String())
+	}
+	addresses := adminui.CustomersPath + "/" + created.ID + "/addresses/"
+
+	send(addresses+second.ID+"/default", url.Values{"kind": {"shipping"}})
+	moved, err := customerSvc.GetAddress(ctx, created.ID, second.ID)
+	require.NoError(t, err)
+	assert.True(t, moved.IsDefaultShipping, "the second is the default now")
+	left, err := customerSvc.GetAddress(ctx, created.ID, first.ID)
+	require.NoError(t, err)
+	assert.False(t, left.IsDefaultShipping, "and the first is not")
+
+	send(addresses+first.ID+"/remove", nil)
+	_, err = customerSvc.GetAddress(ctx, created.ID, first.ID)
+	assert.True(t, errors.IsNotFound(err), "the removed address is found no more: %v", err)
 }

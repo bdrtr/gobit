@@ -138,7 +138,8 @@
 // corrects their name and phone from the ones it was drawn with
 // ([UI.reviseContact], ADR 0337) and each address's printed fields the same
 // way ([UI.reviseAddress], ADR 0342), and adds an address ([UI.addAddress],
-// ADR 0359), and
+// ADR 0359), moves a default to one or removes one ([UI.makeAddressDefault],
+// [UI.removeAddress], ADR 0360), and
 // the Customer groups screen ([UI.listCustomerGroups]) lists the groups with
 // their rank and writes one ([UI.createCustomerGroup], ADR 0323); each row
 // renames and re-ranks its group from what it was drawn with

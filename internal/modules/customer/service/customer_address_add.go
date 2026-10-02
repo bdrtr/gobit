@@ -28,3 +28,33 @@ func (a *AdminSurface) AddCustomerAddress(
 
 	return added.ID, nil
 }
+
+// The default kinds the panel moves (ADR 0360).
+const (
+	// DefaultShippingKind makes an address the default shipping address.
+	DefaultShippingKind = "shipping"
+	// DefaultBillingKind makes an address the default billing address.
+	DefaultBillingKind = "billing"
+)
+
+// MakeAddressDefault makes the customer's address their default shipping or
+// billing address, as kind names, taking the flag from the address that
+// held it in the same write (ADR 0360).
+func (a *AdminSurface) MakeAddressDefault(ctx context.Context, customerID, addressID, kind string) error {
+	var err error
+	switch kind {
+	case DefaultShippingKind:
+		_, err = a.service().SetDefaultShippingAddress(ctx, customerID, addressID)
+	case DefaultBillingKind:
+		_, err = a.service().SetDefaultBillingAddress(ctx, customerID, addressID)
+	default:
+		err = errors.Invalid(CodeInvalidInput, "a default is %q or %q, not %q", DefaultShippingKind, DefaultBillingKind, kind)
+	}
+
+	return err
+}
+
+// RemoveCustomerAddress removes the customer's address (ADR 0360).
+func (a *AdminSurface) RemoveCustomerAddress(ctx context.Context, customerID, addressID string) error {
+	return a.service().DeleteAddress(ctx, customerID, addressID)
+}

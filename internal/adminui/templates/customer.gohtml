@@ -16,7 +16,7 @@ with; the e-mail is what an account signs in with and is not corrected here
 <h1>{{ .Title }}</h1>
 
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
-{{ if eq .Written "address" }}<p role="status">The address was written.</p>{{ else if .Written }}<p role="status">The contact details were written.</p>{{ end }}
+{{ if eq .Written "address" }}<p role="status">The address was written.</p>{{ else if eq .Written "default" }}<p role="status">The default address was moved.</p>{{ else if eq .Written "removed" }}<p role="status">The address was removed.</p>{{ else if .Written }}<p role="status">The contact details were written.</p>{{ end }}
 
 <div class="panel">
   <p>
@@ -71,6 +71,18 @@ with; the e-mail is what an account signs in with and is not corrected here
         {{ if .DefaultShipping }}<span class="pill">default shipping</span>{{ end }}
         {{ if .DefaultBilling }}<span class="pill">default billing</span>{{ end }}
       </td>
+      {{ if $.CanActOnAddresses }}<td>
+        {{/* A default moved here, or the address removed (ADR 0360). */}}
+        {{ if not .DefaultShipping }}<form method="post" action="{{ $.CustomersPath }}/{{ $.Customer.ID }}/addresses/{{ .ID }}/default">
+          <input type="hidden" name="kind" value="shipping"><button type="submit">Make default shipping</button>
+        </form>{{ end }}
+        {{ if not .DefaultBilling }}<form method="post" action="{{ $.CustomersPath }}/{{ $.Customer.ID }}/addresses/{{ .ID }}/default">
+          <input type="hidden" name="kind" value="billing"><button type="submit">Make default billing</button>
+        </form>{{ end }}
+        <form method="post" action="{{ $.CustomersPath }}/{{ $.Customer.ID }}/addresses/{{ .ID }}/remove">
+          <button type="submit">Remove</button>
+        </form>
+      </td>{{ end }}
       {{ if $.CanEditAddresses }}<td>
         {{/* An address's printed fields corrected from the ones the page
         was drawn with (ADR 0342); the default flags are not among them. */}}

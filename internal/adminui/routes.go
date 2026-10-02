@@ -119,6 +119,8 @@ func (u *UI) routes(r chi.Router) {
 	r.Post(CustomerContactPath, u.needs(http.MethodPost, CustomerContactPath, u.reviseContact))
 	r.Post(CustomerAddressPath, u.needs(http.MethodPost, CustomerAddressPath, u.reviseAddress))
 	r.Post(CustomerAddressesPath, u.needs(http.MethodPost, CustomerAddressesPath, u.addAddress))
+	r.Post(CustomerAddressDefaultPath, u.needs(http.MethodPost, CustomerAddressDefaultPath, u.makeAddressDefault))
+	r.Post(CustomerAddressRemovePath, u.needs(http.MethodPost, CustomerAddressRemovePath, u.removeAddress))
 	r.Post(OrderParcelsPath, u.needs(http.MethodPost, OrderParcelsPath, u.openParcel))
 	r.Post(OrderInvoicePath, u.needs(http.MethodPost, OrderInvoicePath, u.issueInvoice))
 	r.Post(OrderCancelPath, u.needs(http.MethodPost, OrderCancelPath, u.cancelOrder))

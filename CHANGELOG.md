@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel moves a default and removes an address** (ADR 0360). **For
+  operators:** each address on a customer's page is made their default
+  shipping or billing address, or removed, under `customer:write`. **For
+  integrators:** `customer.admin` moves a default and removes an address
+  as the API does.
+
 - **The panel adds a customer's address** (ADR 0359). **For operators:** a
   customer's page adds an address under `customer:write`, as their default
   shipping or billing address when ticked. **For integrators:**

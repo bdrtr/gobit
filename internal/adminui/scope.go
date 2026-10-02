@@ -249,6 +249,9 @@ func builtInScopes() map[string]string {
 		// (ADR 0359).
 		routeKey(post, CustomerAddressPath):   scopeCustomerWrite,
 		routeKey(post, CustomerAddressesPath): scopeCustomerWrite,
+		// And moving a default or removing an address (ADR 0360).
+		routeKey(post, CustomerAddressDefaultPath): scopeCustomerWrite,
+		routeKey(post, CustomerAddressRemovePath):  scopeCustomerWrite,
 		// And correcting a customer's name and phone (ADR 0337).
 		routeKey(post, CustomerContactPath):     scopeCustomerWrite,
 		routeKey(post, CustomerGroupRemovePath): scopeCustomerWrite,

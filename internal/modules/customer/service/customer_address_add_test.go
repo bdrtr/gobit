@@ -50,3 +50,43 @@ func TestThePanelAddsAnAddress(t *testing.T) {
 		false, false)
 	assert.True(t, errors.IsInvalid(err), "an id that is not a customer's: %v", err)
 }
+
+// TestThePanelMovesADefaultAndRemovesAnAddress is ADR 0360: the surface
+// makes an address the default shipping or billing address, taking the flag
+// from the one that held it, refuses a default there is not, and removes an
+// address, which is found no more.
+func TestThePanelMovesADefaultAndRemovesAnAddress(t *testing.T) {
+	ctx := context.Background()
+	svc := New(newMemRepo(), Options{})
+	surface := NewAdminSurface(svc)
+	customer, err := svc.CreateCustomer(ctx, CustomerInput{Email: "ada@example.com"})
+	require.NoError(t, err)
+	first, err := svc.CreateAddress(ctx, customer.ID, AddressInput{
+		Address1: "1 First St", City: "Izmir", CountryCode: "TR", IsDefaultShipping: true, IsDefaultBilling: true,
+	})
+	require.NoError(t, err)
+	second, err := svc.CreateAddress(ctx, customer.ID, AddressInput{Address1: "2 Second St", City: "Ankara", CountryCode: "TR"})
+	require.NoError(t, err)
+
+	require.NoError(t, surface.MakeAddressDefault(ctx, customer.ID, second.ID, DefaultShippingKind))
+	moved, err := svc.GetAddress(ctx, customer.ID, second.ID)
+	require.NoError(t, err)
+	assert.True(t, moved.IsDefaultShipping)
+	assert.False(t, moved.IsDefaultBilling, "the billing default is another flag")
+	kept, err := svc.GetAddress(ctx, customer.ID, first.ID)
+	require.NoError(t, err)
+	assert.False(t, kept.IsDefaultShipping, "the flag left the first")
+	assert.True(t, kept.IsDefaultBilling)
+	require.NoError(t, surface.MakeAddressDefault(ctx, customer.ID, second.ID, DefaultBillingKind))
+	moved, err = svc.GetAddress(ctx, customer.ID, second.ID)
+	require.NoError(t, err)
+	assert.True(t, moved.IsDefaultBilling)
+	err = surface.MakeAddressDefault(ctx, customer.ID, second.ID, "gift")
+	assert.True(t, errors.IsInvalid(err), "%v", err)
+
+	require.NoError(t, surface.RemoveCustomerAddress(ctx, customer.ID, first.ID))
+	_, err = svc.GetAddress(ctx, customer.ID, first.ID)
+	assert.True(t, errors.IsNotFound(err), "the removed address is found no more: %v", err)
+	err = surface.RemoveCustomerAddress(ctx, customer.ID, first.ID)
+	assert.True(t, errors.IsNotFound(err), "nor removed twice: %v", err)
+}
