@@ -1,0 +1,51 @@
+{{- /*
+payments.gohtml is the payment module's collections across every order (ADR
+0357).
+
+A collection is what an order is to collect: its amount, and how much of it
+was authorized, captured and refunded. The ones authorized come first: their
+money is held and is to be captured, or, paid offline, recorded on the
+order's page. Each tab lists the collections in one status, the newest
+first. An operator who may read the orders too sees the order each was
+taken for, and opens it there.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+<nav aria-label="Status">
+  {{ range .Statuses }}
+  <a href="{{ $.Path }}?status={{ . }}"{{ if eq . $.Status }} aria-current="page"{{ end }}>{{ . }}</a>
+  {{ end }}
+</nav>
+
+{{ if .Payments }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Collection</th><th>Order</th><th>Amount</th><th>Authorized</th><th>Captured</th><th>Refunded</th><th>Opened (UTC)</th></tr>
+  </thead>
+  <tbody>
+  {{ range .Payments }}{{ $payment := . }}
+    <tr>
+      <td>{{ .ID }}</td>
+      <td>{{ with .OrderID }}<a href="{{ $.OrdersPath }}/{{ . }}">#{{ $payment.OrderNumber }}</a>{{ else }}<span class="muted">—</span>{{ end }}</td>
+      <td>{{ .Amount }}</td>
+      <td>{{ .Authorized }}</td>
+      <td>{{ .Captured }}</td>
+      <td>{{ .Refunded }}</td>
+      <td>{{ .CreatedAt.UTC.Format "2006-01-02 15:04" }}</td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No payment here.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?status={{ .Status }}&amp;page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?status={{ .Status }}&amp;page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

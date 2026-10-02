@@ -178,6 +178,11 @@
 // Taxes screen ([UI.listTaxes]) the tax module's tax regions with the rates
 // each charges (ADR 0355).
 //
+// The Payments screen ([UI.listPayments]) lists the payment module's
+// collections across every order, one status at a time, the ones authorized
+// first, naming each one's order for an operator who may read the orders
+// (ADR 0357).
+//
 // The Parcels screen ([UI.listParcels]) lists the fulfillment module's
 // parcels across every order, one status at a time, the ones still to be
 // shipped first, naming each one's order for an operator who may read the

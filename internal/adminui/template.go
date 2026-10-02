@@ -134,6 +134,7 @@ var pages = []string{
 	"regions.gohtml",
 	"taxes.gohtml",
 	"parcels.gohtml",
+	"payments.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -329,6 +330,8 @@ func sections() []navItem {
 		// wants the period around it should not have to cross the whole menu to
 		// get there.
 		{Label: salesLabel, Path: SalesPath},
+		// The payments sit beside the sales they collect (ADR 0357).
+		{Label: paymentsLabel, Path: PaymentsPath},
 		// The promotions sit beside the sales they discount (ADR 0311).
 		{Label: promotionsLabel, Path: PromotionsPath},
 		// The campaigns hold the promotions' windows and budgets (ADR 0319).

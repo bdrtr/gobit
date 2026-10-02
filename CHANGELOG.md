@@ -39,6 +39,11 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel lists the payments** (ADR 0357). **For operators:** a
+  Payments screen lists every order's payment under `payment:read`, the
+  money held and still to be captured or recorded first, then by status,
+  each with its order for an operator who may read the orders.
+
 - **The panel lists the parcels** (ADR 0356). **For operators:** a Parcels
   screen lists the parcels of every order under `fulfillment:read`, the
   ones still to be shipped first, then by status, each with its carrier

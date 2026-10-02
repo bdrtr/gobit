@@ -749,6 +749,23 @@ func recordList(value any) []query.Record {
 	return entries
 }
 
+// linkedRecord is the record an expansion wrote: the one record a link
+// that relates one writes, or the first of the list a link that relates
+// many writes.
+func linkedRecord(value any) (query.Record, bool) {
+	switch record := value.(type) {
+	case map[string]any:
+		return record, true
+	case query.Record:
+		return record, true
+	}
+	if records := recordList(value); len(records) > 0 {
+		return records[0], true
+	}
+
+	return nil, false
+}
+
 // setCartAddress writes the shipping address and returns to the cart.
 func (u *UI) setCartAddress(w http.ResponseWriter, r *http.Request) {
 	u.cartWrite(w, r, func(ctx context.Context, id string) (string, error) {
