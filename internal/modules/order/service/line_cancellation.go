@@ -34,7 +34,16 @@ type CancelOrderLineInput struct {
 	Reason string
 	// Note is free-form detail; it may be empty.
 	Note string
+	// ReadSpokenFor, when given, is how many of the line's units were asked
+	// back or written off when the caller read the line; the cancellation is
+	// refused with [CodeLineMoved] if that has changed, so a form sent twice
+	// writes off once (ADR 0341).
+	ReadSpokenFor *int64
 }
+
+// CodeLineMoved refuses a line cancellation whose line had more or fewer of
+// its units asked back or written off than the caller read (ADR 0341).
+const CodeLineMoved = "order_line_moved"
 
 // CancelOrderLine writes off units of one line without touching the rest of the
 // order.
@@ -122,6 +131,11 @@ func (s *Service) CancelOrderLine(
 		spokenFor, sumErr := s.unitsSpokenFor(ctx, targets)
 		if sumErr != nil {
 			return sumErr
+		}
+		if in.ReadSpokenFor != nil && spokenFor[in.OrderLineItemID] != *in.ReadSpokenFor {
+			return errors.Conflict(CodeLineMoved,
+				"order line %s has %d units asked back or written off now, not %d; draw the page again",
+				in.OrderLineItemID, spokenFor[in.OrderLineItemID], *in.ReadSpokenFor)
 		}
 		for _, id := range targets {
 			if err := checkCancelQuantity(lines, spokenFor, CancelOrderLineInput{

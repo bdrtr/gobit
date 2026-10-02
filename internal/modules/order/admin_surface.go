@@ -403,3 +403,22 @@ func (s *AfterSalesSurface) ArchiveOrder(ctx context.Context, orderID string) er
 
 	return err
 }
+
+// CancelOrderLine writes off units of one line of a live order, with the
+// reason and the note kept with the cancellation, as the API's line
+// cancellation does; readSpokenFor is how many of the line's units were
+// asked back or written off when the operator read the line, and the module
+// refuses when that has changed, so a form sent twice writes off once (ADR
+// 0341).
+func (s *AfterSalesSurface) CancelOrderLine(
+	ctx context.Context, orderID, lineID string, readSpokenFor, quantity int64, reason, note string,
+) error {
+	if s == nil || s.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the order service is not set up")
+	}
+	_, err := s.svc.CancelOrderLine(ctx, orderID, service.CancelOrderLineInput{
+		OrderLineItemID: lineID, Quantity: quantity, Reason: reason, Note: note, ReadSpokenFor: &readSpokenFor,
+	})
+
+	return err
+}

@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The order page writes off a line's units** (ADR 0341). **For
+  operators:** each line of a pending order writes off some of its units
+  under `order:write`, with a reason and a note, and their stock comes
+  back; the same form sent twice writes off once. **For integrators:** a
+  line cancellation may name the units spoken for when the line was read,
+  refused with `order_line_moved` when that moved.
+
 - **The order page completes and archives an order** (ADR 0340). **For
   operators:** a pending order's page marks it completed and a completed
   one's archives it under `order:write`. **For integrators:**

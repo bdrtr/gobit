@@ -179,6 +179,8 @@ func builtInScopes() map[string]string {
 		// And completes and archives it (ADR 0340).
 		routeKey(post, OrderCompletePath): scopeOrderWrite,
 		routeKey(post, OrderArchivePath):  scopeOrderWrite,
+		// And writes off units of a line (ADR 0341).
+		routeKey(post, OrderLineCancellationsPath): scopeOrderWrite,
 		// And cancels the order (ADR 0339).
 		routeKey(post, OrderCancelPath):    scopeOrderWrite,
 		routeKey(post, OrderParcelActPath): scopeFulfillmentWrite,

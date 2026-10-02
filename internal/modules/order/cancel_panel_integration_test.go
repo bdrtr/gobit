@@ -20,14 +20,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// TestThePanelCancelsAPlacedOrder is ADR 0339 on the real schema: the
-// surface cancels a pending order through the service the API's cancel
-// calls, and a second cancel writes nothing; a completed order is refused.
-// And ADR 0340: a pending order is completed once and not archived, a
-// completed one is archived with its moment.
-func TestThePanelCancelsAPlacedOrder(t *testing.T) {
-	ctx := context.Background()
+// panelSurface registers the module on a container of its own and returns
+// its service and the panel's surface over it.
+func panelSurface(t *testing.T) (*service.Service, *order.AfterSalesSurface) {
+	t.Helper()
 
+	ctx := context.Background()
 	c := container.New(nil)
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 	bus := eventbus.NewInMemory(nil)
@@ -44,6 +42,18 @@ func TestThePanelCancelsAPlacedOrder(t *testing.T) {
 	require.NoError(t, err)
 	surface, err := container.Resolve[*order.AfterSalesSurface](c, order.AdminName)
 	require.NoError(t, err)
+
+	return svc, surface
+}
+
+// TestThePanelCancelsAPlacedOrder is ADR 0339 on the real schema: the
+// surface cancels a pending order through the service the API's cancel
+// calls, and a second cancel writes nothing; a completed order is refused.
+// And ADR 0340: a pending order is completed once and not archived, a
+// completed one is archived with its moment.
+func TestThePanelCancelsAPlacedOrder(t *testing.T) {
+	ctx := context.Background()
+	svc, surface := panelSurface(t)
 
 	pending, err := svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
@@ -76,4 +86,30 @@ func TestThePanelCancelsAPlacedOrder(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.OrderArchived, detail.Status, "a completed order is archived")
 	require.NotNil(t, detail.ArchivedAt)
+}
+
+// TestThePanelWritesOffALineOnce is ADR 0341 on the real schema: the surface
+// writes off a unit of a line from the count spoken for when it was read,
+// and the same write-off sent again, the count having moved, is refused by
+// the module under the order's lock.
+func TestThePanelWritesOffALineOnce(t *testing.T) {
+	ctx := context.Background()
+	svc, surface := panelSurface(t)
+
+	placed, err := svc.CreateOrder(ctx, validInput())
+	require.NoError(t, err)
+	detail, err := svc.GetOrder(ctx, placed.ID)
+	require.NoError(t, err)
+	lineID := detail.Items[0].ID
+
+	require.NoError(t, surface.CancelOrderLine(ctx, placed.ID, lineID, 0, 1, "out of stock", "supplier late"))
+	err = surface.CancelOrderLine(ctx, placed.ID, lineID, 0, 1, "out of stock", "")
+	require.Error(t, err)
+	assert.Equal(t, service.CodeLineMoved, errors.CodeOf(err), "the same write-off sent twice: %v", err)
+	require.NoError(t, surface.CancelOrderLine(ctx, placed.ID, lineID, 1, 1, "out of stock", ""), "read after the first")
+
+	cancellations, err := svc.ListLineCancellations(ctx, placed.ID)
+	require.NoError(t, err)
+	require.Len(t, cancellations, 2, "two write-offs, not three")
+	assert.Equal(t, "supplier late", cancellations[0].Note)
 }
