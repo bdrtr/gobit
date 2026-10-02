@@ -101,6 +101,18 @@ UPDATE auth_user SET
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING *;
 
+-- ReviseUserScopes writes the user's scopes only while they are, as a set,
+-- the ones the caller read (ADR 0347): no row means the user is gone or their
+-- scopes were changed since.
+-- name: ReviseUserScopes :one
+UPDATE auth_user
+SET scopes = sqlc.arg('next')::text[], updated_at = sqlc.arg('updated_at')
+WHERE id = sqlc.arg('id')
+  AND deleted_at IS NULL
+  AND scopes @> sqlc.arg('read')::text[]
+  AND scopes <@ sqlc.arg('read')::text[]
+RETURNING *;
+
 -- name: SoftDeleteUser :one
 UPDATE auth_user
 SET deleted_at = $2, updated_at = $2

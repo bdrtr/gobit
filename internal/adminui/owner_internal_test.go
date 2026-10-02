@@ -51,8 +51,9 @@ import (
 // ownerTrees are the trees whose top-level directories each own something.
 var ownerTrees = []string{filepath.Join("..", "modules"), filepath.Join("..", "..", "plugins")}
 
-// scopeShape is a privilege's value: a module and a verb.
-var scopeShape = regexp.MustCompile(`^[a-z0-9_]+:[a-z0-9_]+$`)
+// scopeShape is a privilege's value: a module and a verb, or admin, which the
+// auth module declares and its writes ask for (ADR 0347).
+var scopeShape = regexp.MustCompile(`^([a-z0-9_]+:[a-z0-9_]+|admin)$`)
 
 // linkEnds is one link definition's two ends, by entity name.
 type linkEnds struct{ from, to string }
@@ -815,6 +816,15 @@ func (a recordingAccounts) UsersJSON(context.Context, string, string, int32, int
 	return json.RawMessage(`[]`), 0, a.surfaces.reach(ServiceAuthAdmin)
 }
 
+func (a recordingAccounts) UserJSON(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage(`{"id":"walk","email":"walk@example.test","scopes":["order:read"]}`),
+		a.surfaces.reach(ServiceAuthAdmin)
+}
+
+func (a recordingAccounts) ReviseUserScopes(context.Context, string, []string, []string) error {
+	return a.surfaces.reach(ServiceAuthAdmin)
+}
+
 // recordingInvoices records the invoice module's surface (ADR 0335).
 type recordingInvoices struct{ surfaces *recordingSurfaces }
 
@@ -1059,6 +1069,7 @@ var walkForms = map[string]url.Values{
 	// Writing the store profile (ADR 0336).
 	routeKey(http.MethodPost, StoreProfilePath):  {formProfileName: {"Walk"}, formProfileCountry: {"TR"}},
 	routeKey(http.MethodPost, InvoiceStatusPath): {formInvoiceReadStatus: {"issued"}, formInvoiceTo: {"sent"}},
+	routeKey(http.MethodPost, UserScopesPath):    {formReadScope: {"order:read"}, formScope: {"order:read"}},
 	// Writing off units of a line (ADR 0341).
 	routeKey(http.MethodPost, OrderLineCancellationsPath): {
 		formWriteOffLine: {"oli_walk"}, formReadSpokenFor: {"0"}, formWriteOffQuantity: {"1"}, formWriteOffReason: {"walk"},
@@ -1378,7 +1389,12 @@ func TestAPrivilegeAddsOnlyItsOwnModulesData(t *testing.T) {
 
 	declared := make([]string, 0, len(owners.scopes))
 	for scope := range owners.scopes {
-		declared = append(declared, scope)
+		// admin holds every privilege (corehttp.Principal.HasScope), so what it
+		// adds is every module's by design; it is a route's own privilege only
+		// where the auth module's writes ask for it (ADR 0347).
+		if scope != scopeAdmin {
+			declared = append(declared, scope)
+		}
 	}
 	sort.Strings(declared)
 	require.GreaterOrEqual(t, len(declared), 20,

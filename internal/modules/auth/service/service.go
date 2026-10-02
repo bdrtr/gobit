@@ -181,6 +181,9 @@ type Repository interface {
 	GetUserByEmail(ctx context.Context, email string) (models.User, error)
 	ListUsers(ctx context.Context, filter models.UserFilter, limit, offset int64) ([]models.User, int64, error)
 	UpdateUser(ctx context.Context, id string, patch models.UserPatch, now time.Time) (models.User, error)
+	// ReviseUserScopes writes the user's scopes only while they are, as a
+	// set, the ones read, and reports whether it wrote (ADR 0347).
+	ReviseUserScopes(ctx context.Context, id string, read, next []string, now time.Time) (models.User, bool, error)
 	DeleteUser(ctx context.Context, id string, now time.Time) error
 
 	GetIdentity(ctx context.Context, userID, provider string) (models.AuthIdentity, error)

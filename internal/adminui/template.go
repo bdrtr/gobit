@@ -123,6 +123,7 @@ var pages = []string{
 	"invoices.gohtml",
 	"invoice.gohtml",
 	"users.gohtml",
+	"user.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",

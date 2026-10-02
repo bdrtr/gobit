@@ -187,7 +187,9 @@
 // The Users screen ([UI.listUsers]) lists the auth module's users with the
 // privileges they hold and whether they have proven an authenticator, those
 // without one on a tab of their own, through that module's panel surface
-// (ADR 0345).
+// (ADR 0345). A user's page ([UI.showUser]) changes their privileges from the
+// ones it was drawn with for an operator who holds admin
+// ([UI.reviseUserScopes], ADR 0347).
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator

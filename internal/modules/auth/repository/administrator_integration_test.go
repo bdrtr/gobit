@@ -135,3 +135,51 @@ func TestTwoWritesCannotTakeAdminFromTheLastTwo(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{models.ScopeAdmin}, stored.Scopes, "and keeps admin")
 }
+
+// TestAUsersScopesAreWrittenOnlyAsTheyWereRead is ADR 0347 against a real
+// PostgreSQL: the scopes are written while they are, as a set, the ones read,
+// in whatever order and with whatever repeats; a set that differs by one, a
+// deleted user and taking admin from the last administrator write nothing.
+func TestAUsersScopesAreWrittenOnlyAsTheyWereRead(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := administratorsOnly(ctx, t)
+	admin := newUserWith(ctx, t, repo, models.ScopeAdmin)
+	clerk := newUserWith(ctx, t, repo, "order:read", "order:write")
+
+	revised, written, err := repo.ReviseUserScopes(ctx, clerk.ID,
+		[]string{"order:write", "order:read", "order:write"}, []string{"order:read", "customer:read"}, time.Now())
+	require.NoError(t, err)
+	require.True(t, written, "the set read, in another order")
+	assert.Equal(t, []string{"order:read", "customer:read"}, revised.Scopes)
+	stored, err := repo.GetUser(ctx, clerk.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"order:read", "customer:read"}, stored.Scopes)
+	assert.True(t, stored.UpdatedAt.After(clerk.UpdatedAt), "the moment it was written moves")
+
+	for label, read := range map[string][]string{
+		"one more":  {"order:read", "customer:read", "order:write"},
+		"one fewer": {"order:read"},
+		"none":      {},
+	} {
+		_, written, err = repo.ReviseUserScopes(ctx, clerk.ID, read, []string{"product:read"}, time.Now())
+		require.NoError(t, err, label)
+		assert.False(t, written, "%s than they are", label)
+	}
+	stored, err = repo.GetUser(ctx, clerk.ID)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"order:read", "customer:read"}, stored.Scopes, "nothing was written")
+
+	_, written, err = repo.ReviseUserScopes(ctx, clerk.ID, stored.Scopes, nil, time.Now())
+	require.NoError(t, err)
+	assert.True(t, written, "no privilege at all, given as nil")
+	_, written, err = repo.ReviseUserScopes(ctx, clerk.ID, nil, []string{"order:read"}, time.Now())
+	require.NoError(t, err)
+	assert.True(t, written, "from no privilege at all, read as nil")
+
+	_, _, err = repo.ReviseUserScopes(ctx, admin.ID, []string{models.ScopeAdmin}, []string{"order:read"}, time.Now())
+	assert.Equal(t, repository.CodeLastAdministrator, errors.CodeOf(err), "%v", err)
+	require.NoError(t, repo.DeleteUser(ctx, clerk.ID, time.Now()))
+	_, written, err = repo.ReviseUserScopes(ctx, clerk.ID, []string{"order:read"}, []string{}, time.Now())
+	require.NoError(t, err)
+	assert.False(t, written, "a deleted user")
+}

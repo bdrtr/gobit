@@ -2,8 +2,13 @@ package repository
 
 import (
 	"context"
+	"slices"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/auth/models"
 	"github.com/bdrtr/gobit/internal/modules/auth/repository/authdb"
 )
 
@@ -32,4 +37,46 @@ func keepAnAdministrator(ctx context.Context, q *authdb.Queries, id string) erro
 	}
 
 	return nil
+}
+
+// ReviseUserScopes writes the user's scopes only while they are, as a set,
+// the ones read, and reports whether it wrote (ADR 0347). Taking admin from
+// the last live user holding it is refused as any write's is (ADR 0346).
+func (r *Repo) ReviseUserScopes(
+	ctx context.Context, id string, read, next []string, now time.Time,
+) (models.User, bool, error) {
+	if err := r.ready(); err != nil {
+		return models.User{}, false, err
+	}
+	// A nil slice would be sent as NULL, which no set contains and the column
+	// does not take.
+	read, next = append([]string{}, read...), append([]string{}, next...)
+
+	var revised models.User
+	var written bool
+	err := r.inTx(ctx, func(q *authdb.Queries) error {
+		if !slices.Contains(next, models.ScopeAdmin) {
+			if err := keepAnAdministrator(ctx, q, id); err != nil {
+				return err
+			}
+		}
+		row, err := q.ReviseUserScopes(ctx, authdb.ReviseUserScopesParams{
+			Next: next, UpdatedAt: fromTime(now), ID: id, Read: read,
+		})
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return nil
+		case err != nil:
+			return wrapDB(err, "could not revise the scopes of the user")
+		}
+		revised, err = toUser(row)
+		written = err == nil
+
+		return err
+	})
+	if err != nil {
+		return models.User{}, false, err
+	}
+
+	return revised, written, nil
 }

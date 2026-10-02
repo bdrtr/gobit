@@ -1,0 +1,31 @@
+{{- /*
+user.gohtml is one of the auth module's users (ADR 0347).
+
+The privileges are the names the admin API grants them under. An operator
+who holds admin changes them from the ones the page was drawn with; a user
+whose privileges another operator changed meanwhile is refused, and so is
+taking admin from the last user who holds it (ADR 0346).
+*/ -}}
+{{ define "body" }}
+{{ with .User }}
+<h1>{{ .Email }}</h1>
+<p class="muted">{{ with .Name }}{{ . }} · {{ end }}{{ .ID }} · since {{ .CreatedAt.UTC.Format "2006-01-02" }} · second factor {{ if .SecondFactor }}proven{{ else }}<span class="pill">missing</span>{{ end }}</p>
+{{ end }}
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ if .Written }}<p role="status">The privileges were written.</p>{{ end }}
+
+<h2>Privileges</h2>
+{{ if .CanRevise }}
+<form method="post" action="{{ .Path }}/{{ .User.ID }}/scopes">
+  {{ range .User.Scopes }}<input type="hidden" name="read_scope" value="{{ . }}">{{ end }}
+  {{ range .Privileges }}<label><input type="checkbox" name="scope" value="{{ .Scope }}"{{ if .Checked }} checked{{ end }}> {{ .Scope }}</label>
+  {{ end }}
+  <button type="submit">Write</button>
+</form>
+{{ else }}
+<p>{{ range $i, $scope := .User.Scopes }}{{ if $i }}, {{ end }}{{ $scope }}{{ else }}<span class="muted">none</span>{{ end }}</p>
+{{ end }}
+
+<p><a href="{{ .Path }}">Every user</a></p>
+{{ end }}

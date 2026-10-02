@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/auth/models"
 )
 
 // The second-factor tabs of the panel's Users screen (ADR 0345).
@@ -27,6 +28,20 @@ type panelUser struct {
 	Scopes       []string  `json:"scopes"`
 	SecondFactor bool      `json:"second_factor"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// listedUser is the user as the panel lists them, saying whether they have
+// proven an authenticator.
+func listedUser(user *models.User, secondFactor bool) panelUser {
+	scopes := user.Scopes
+	if scopes == nil {
+		scopes = []string{}
+	}
+
+	return panelUser{
+		ID: user.ID, Email: user.Email, FirstName: user.FirstName, LastName: user.LastName,
+		Scopes: scopes, SecondFactor: secondFactor, CreatedAt: user.CreatedAt,
+	}
 }
 
 // UsersJSON lists the shop's users, the newest first, a page at a time, with
@@ -65,15 +80,7 @@ func (s *AccountSurface) UsersJSON(
 
 	out := make([]panelUser, 0, len(page.Items))
 	for i := range page.Items {
-		user := &page.Items[i]
-		scopes := user.Scopes
-		if scopes == nil {
-			scopes = []string{}
-		}
-		out = append(out, panelUser{
-			ID: user.ID, Email: user.Email, FirstName: user.FirstName, LastName: user.LastName,
-			Scopes: scopes, SecondFactor: holders[user.ID], CreatedAt: user.CreatedAt,
-		})
+		out = append(out, listedUser(&page.Items[i], holders[page.Items[i].ID]))
 	}
 	body, err := json.Marshal(out)
 	if err != nil {
@@ -81,4 +88,26 @@ func (s *AccountSurface) UsersJSON(
 	}
 
 	return body, page.Count, nil
+}
+
+// UserJSON returns the user as the Users screen lists them (ADR 0347).
+func (s *AccountSurface) UserJSON(ctx context.Context, id string) (json.RawMessage, error) {
+	user, err := s.svc.GetUser(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	holders, err := s.svc.SecondFactorHolders(ctx, []string{user.ID})
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(listedUser(&user, holders[user.ID]))
+}
+
+// ReviseUserScopes writes the user's privileges from the ones the operator
+// read, and refuses when another writer changed them since (ADR 0347).
+func (s *AccountSurface) ReviseUserScopes(ctx context.Context, id string, read, next []string) error {
+	_, err := s.svc.ReviseUserScopes(ctx, id, read, next)
+
+	return err
 }

@@ -465,6 +465,49 @@ func (q *Queries) PutPendingMFASecret(ctx context.Context, arg PutPendingMFASecr
 	return i, err
 }
 
+const reviseUserScopes = `-- name: ReviseUserScopes :one
+UPDATE auth_user
+SET scopes = $1::text[], updated_at = $2
+WHERE id = $3
+  AND deleted_at IS NULL
+  AND scopes @> $4::text[]
+  AND scopes <@ $4::text[]
+RETURNING id, email, first_name, last_name, avatar_url, scopes, metadata, created_at, updated_at, deleted_at
+`
+
+type ReviseUserScopesParams struct {
+	Next      []string
+	UpdatedAt pgtype.Timestamptz
+	ID        string
+	Read      []string
+}
+
+// ReviseUserScopes writes the user's scopes only while they are, as a set,
+// the ones the caller read (ADR 0347): no row means the user is gone or their
+// scopes were changed since.
+func (q *Queries) ReviseUserScopes(ctx context.Context, arg ReviseUserScopesParams) (AuthUser, error) {
+	row := q.db.QueryRow(ctx, reviseUserScopes,
+		arg.Next,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.Read,
+	)
+	var i AuthUser
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.FirstName,
+		&i.LastName,
+		&i.AvatarUrl,
+		&i.Scopes,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
 const secondFactorHolders = `-- name: SecondFactorHolders :many
 SELECT user_id FROM auth_mfa_credential
 WHERE user_id = ANY($1::text[]) AND confirmed_at IS NOT NULL

@@ -57,8 +57,8 @@ func TestTheUsersScreenListsThePrivilegesAndTheSecondFactor(t *testing.T) {
 	rec := campaignsRequest(panel, http.MethodGet, UsersPath, nil, scopeAuthRead)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	body := rec.Body.String()
-	_, ada, _ := strings.Cut(body, "<td>ada@example.test</td>")
-	ada, bob, _ := strings.Cut(ada, "<td>bob@example.test</td>")
+	_, ada, _ := strings.Cut(body, `<a href="`+UsersPath+`/usr_ada">ada@example.test</a></td>`)
+	ada, bob, _ := strings.Cut(ada, `<a href="`+UsersPath+`/usr_bob">bob@example.test</a></td>`)
 	for _, want := range []string{"<td>Ada Lovelace</td>", "<td>order:read, order:write</td>", "<td>proven</td>",
 		"<td>2026-05-02</td>"} {
 		assert.Contains(t, ada, want, "Ada's row")

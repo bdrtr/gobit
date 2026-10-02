@@ -192,8 +192,12 @@ func builtInScopes() map[string]string {
 		routeKey(get, InvoicesPath):       scopeInvoiceRead,
 		routeKey(get, InvoicePath):        scopeInvoiceRead,
 		routeKey(post, InvoiceStatusPath): scopeInvoiceWrite,
-		// The users are the auth module's (ADR 0345).
-		routeKey(get, UsersPath): scopeAuthRead,
+		// The users are the auth module's (ADR 0345), and so is one's page;
+		// their privileges are written under admin, as the API writes them
+		// (ADR 0347).
+		routeKey(get, UsersPath):       scopeAuthRead,
+		routeKey(get, UserPath):        scopeAuthRead,
+		routeKey(post, UserScopesPath): scopeAdmin,
 		// The shipping options are the fulfillment module's, and so are
 		// revising one (ADR 0333) and writing one (ADR 0334).
 		routeKey(get, ShippingOptionsPath):       scopeFulfillmentRead,

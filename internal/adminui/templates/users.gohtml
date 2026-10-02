@@ -34,7 +34,7 @@ second factor works through (ADR 0265). A user is found by their e-mail.
   <tbody>
   {{ range .Users }}
     <tr>
-      <td>{{ .Email }}</td>
+      <td><a href="{{ $.Path }}/{{ .ID }}">{{ .Email }}</a></td>
       <td>{{ .Name }}</td>
       <td>{{ range $i, $scope := .Scopes }}{{ if $i }}, {{ end }}{{ $scope }}{{ else }}<span class="muted">none</span>{{ end }}</td>
       <td>{{ if .SecondFactor }}proven{{ else }}<span class="pill">missing</span>{{ end }}</td>

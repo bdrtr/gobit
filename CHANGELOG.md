@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel changes a user's privileges** (ADR 0347). **For operators:**
+  a user's page, linked from the Users screen, shows who they are under
+  `auth:read`, and an operator holding `admin` ticks the privileges they
+  hold; privileges another operator changed meanwhile are refused. **For
+  integrators:** `auth.admin` changes a user's privileges from the set
+  read, refusing `auth_user_scopes_revised`.
+
 - **The last administrator keeps admin** (ADR 0346, D209). **For
   integrators:** `PUT /admin/v1/users/{id}` with scopes that leave out
   `admin`, and `DELETE /admin/v1/users/{id}`, answer 409

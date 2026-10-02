@@ -61,7 +61,7 @@ func TestAnOperatorListsTheUsersInThePanel(t *testing.T) {
 	}
 	// row is the user's row on the page, or empty when they are not listed.
 	row := func(page, email string) string {
-		_, after, found := strings.Cut(page, "<td>"+email+"</td>")
+		_, after, found := strings.Cut(page, ">"+email+"</a></td>")
 		if !found {
 			return ""
 		}

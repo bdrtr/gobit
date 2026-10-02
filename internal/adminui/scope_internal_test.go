@@ -331,7 +331,8 @@ func TestEachRouteDemandsThePrivilegeItsOwnPathIsListedUnder(t *testing.T) {
 
 // TestAWriteRouteAsksAWritePrivilege is D202: a route that changes something
 // is listed under a write privilege, or under none when it changes the
-// operator's own account. The walk above hands each route exactly the scope
+// operator's own account. The auth module's write privilege is admin itself,
+// as its API spells it (ADR 0347). The walk above hands each route exactly the scope
 // it is listed under, so a write listed under its module's READ privilege
 // passed it, and every reader could make the write.
 //
@@ -353,7 +354,7 @@ func TestAWriteRouteAsksAWritePrivilege(t *testing.T) {
 		}
 		writes++
 		scope := ui.scopes[routeKey(method, pattern)]
-		assert.True(t, scope == "" || strings.HasSuffix(scope, ":write"),
+		assert.True(t, scope == "" || scope == scopeAdmin || strings.HasSuffix(scope, ":write"),
 			"POST %s is listed under %q; a write the panel binds asks for a write privilege", pattern, scope)
 
 		return nil
