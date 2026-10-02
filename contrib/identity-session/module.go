@@ -117,8 +117,18 @@ type Options struct {
 	//
 	// Zero means [DefaultPasswordResetTTL].
 	PasswordResetTTL time.Duration
-	// Limiter bounds how often the registration and password reset endpoints
-	// may be called, one quota for both: each makes the shop send mail.
+	// AddressProof carries the link that proves a new address, and binding it,
+	// with an [Accounts] that offers [AddressChanges] and a store that keeps
+	// pending changes, mounts the storefront's address change (ADR 0377). Nil
+	// leaves those endpoints unmounted.
+	AddressProof AddressProof
+	// AddressChangeTTL is how long an address change link works for.
+	//
+	// Zero means [DefaultAddressChangeTTL].
+	AddressChangeTTL time.Duration
+	// Limiter bounds how often the registration, password reset and address
+	// change endpoints may be called, one quota for all: each makes the shop
+	// send mail.
 	//
 	// A registration endpoint sends mail to an address a stranger typed, so an
 	// unlimited one is a shop that can be pointed at anybody. Nil therefore does
@@ -323,7 +333,7 @@ func (m *Module) Routes(r chi.Router) {
 	// what was sent. Signing in is already bounded by not knowing the password,
 	// and gobit's own guard stack limits the whole API; what is different here
 	// is that ONE request makes this shop send mail to an address a stranger
-	// chose. Registration and reset share the quota.
+	// chose. Registration, reset and address change share the quota.
 	limited := r.With(corehttp.RateLimit(m.registrationLimiter(), m.limitKey))
 
 	if m.selfRegistrationMounted() {
@@ -346,6 +356,14 @@ func (m *Module) Routes(r chi.Router) {
 	} else {
 		m.log.Info("identity-session: password reset is not mounted",
 			"password_reset_bound", !isNil(m.opts.PasswordReset))
+	}
+
+	if m.addressChangeMounted() {
+		limited.Post("/store/v1/auth/email", m.requestAddressChange)
+		limited.Post("/store/v1/auth/email/confirm", m.confirmAddressChange)
+	} else {
+		m.log.Info("identity-session: address change is not mounted",
+			"address_proof_bound", !isNil(m.opts.AddressProof))
 	}
 }
 

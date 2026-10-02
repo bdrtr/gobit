@@ -66,3 +66,14 @@ func (v LogOnlyVerification) SendPasswordReset(ctx context.Context, email, token
 
 	return nil
 }
+
+// SendAddressProof logs an address change link, loudly (ADR 0377). Whoever
+// reads the log can move the account to the address with it.
+func (v LogOnlyVerification) SendAddressProof(ctx context.Context, email, token string) error {
+	v.log.WarnContext(ctx,
+		"DEVELOPMENT ONLY: an address change link was written to the log instead of being sent; "+
+			"replace accounts.LogOnlyVerification before this reaches anybody",
+		"email", email, "address_token", token)
+
+	return nil
+}

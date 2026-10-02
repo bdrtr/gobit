@@ -50,6 +50,9 @@ func TestTheDeclarationNamesEveryColumnOfTheTable(t *testing.T) {
 		"customer_password_resets": {
 			"created_at", "customer_id", "expires_at", "token_hash",
 		},
+		"customer_address_changes": {
+			"created_at", "customer_id", "email", "expires_at", "token_hash",
+		},
 	}, declared, "every column of every table, because every one of them is about somebody")
 }
 

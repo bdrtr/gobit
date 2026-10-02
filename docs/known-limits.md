@@ -69,7 +69,9 @@ past and is not corrected retroactively.
   [ADR 0133](adr/0133-a-shopper-opens-their-own-account.md) self-registration behind
   a proven address, and since
   [ADR 0373](adr/0373-a-shopper-resets-a-forgotten-password.md) a password reset
-  behind the same proof. `contrib/identity-passkey` adds both WebAuthn ceremonies and,
+  behind the same proof, and since
+  [ADR 0377](adr/0377-a-shopper-moves-their-account-by-proving-the-new-address.md)
+  an address change behind a link to the new address. `contrib/identity-passkey` adds both WebAuthn ceremonies and,
   since [ADR 0130](adr/0130-a-person-can-see-their-passkeys-and-remove-one.md),
   listing a person's keys and removing one. Neither is in gobit's own dependency
   graph — a separate `go.mod`, decided on a measurement: go-webauthn brings nine

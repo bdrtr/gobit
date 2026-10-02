@@ -45,6 +45,18 @@ func (s *Service) CustomerEmail(ctx context.Context, customerID string) (string,
 	return customer.Email, nil
 }
 
+// ChangeCustomerEmail moves a customer to another address (ADR 0377).
+//
+// It is the identity module's half of an address change a person proved by
+// following a link sent to the new address; that module cannot import this one,
+// so the signature is primitive. The address is folded as every write folds it,
+// and one another account holds answers errors.Conflict.
+func (s *Service) ChangeCustomerEmail(ctx context.Context, customerID, email string) error {
+	_, err := s.UpdateCustomer(ctx, customerID, UpdateCustomerInput{Email: &email})
+
+	return err
+}
+
 // CustomerGroupIDs returns the ids of the groups the customer is a member of;
 // errors.NotFound if the customer does not exist.
 //

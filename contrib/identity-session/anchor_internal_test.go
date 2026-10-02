@@ -63,6 +63,8 @@ type anchoredStore struct {
 	// rounds writes a moment at a microsecond, rounding, which is what
 	// PostgreSQL does to a timestamp it is sent as text.
 	rounds bool
+	// moving is the pending address change, by its token's hash.
+	moving map[string]string
 }
 
 func (s *anchoredStore) Credential(_ context.Context, email string) (customerID, passwordHash string, err error) {
@@ -125,6 +127,26 @@ func (s *anchoredStore) CredentialOf(_ context.Context, customerID string) (emai
 	}
 
 	return s.email, s.hash, nil
+}
+
+func (s *anchoredStore) PutAddressChange(_ context.Context, tokenHash, _, email string, _ time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.moving = map[string]string{tokenHash: email}
+
+	return nil
+}
+
+func (s *anchoredStore) TakeAddressChange(_ context.Context, tokenHash string) (customerID, email string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	email, ok := s.moving[tokenHash]
+	if !ok {
+		return "", "", ErrNoAddressChange
+	}
+	delete(s.moving, tokenHash)
+
+	return s.customerID, email, nil
 }
 
 func (s *anchoredStore) PutPasswordReset(_ context.Context, tokenHash, _ string, _ time.Time) error {

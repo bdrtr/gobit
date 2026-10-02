@@ -57,6 +57,16 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A shopper moves their account by proving the new address** (ADR 0377).
+  **For integrators:** `contrib/identity-session` mounts
+  `POST /store/v1/auth/email` with `{"new_email", "current_password"}`, which
+  sends a link to the new address and answers 202, and
+  `POST /store/v1/auth/email/confirm` with `{"token"}`, which moves the account
+  there. It is mounted when `Options.AddressProof` is bound and the bound
+  `Accounts` implements `AddressChanges`; the customer module offers
+  `ChangeCustomerEmail` on its cross-module surface for that. Migration 000005
+  adds `customer_address_changes`.
+
 - **A signed-in shopper changes their password** (ADR 0375). **For
   integrators:** `contrib/identity-session` mounts `POST /store/v1/auth/password`
   with `{"current_password", "new_password"}`; a wrong current password answers

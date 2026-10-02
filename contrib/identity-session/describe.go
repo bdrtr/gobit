@@ -173,6 +173,9 @@ func (m *Module) Describe(d *openapi.Doc) {
 	if m.passwordResetMounted() {
 		m.describePasswordReset(d)
 	}
+	if m.addressChangeMounted() {
+		m.describeAddressChange(d)
+	}
 
 	d.Describe(http.MethodPut, "/admin/v1/customer-credentials", openapi.Operation{
 		Summary:     "Writes or replaces a customer's credential.",
@@ -340,6 +343,71 @@ func (m *Module) describePasswordReset(d *openapi.Doc) {
 				"The reset could not be read, the earlier sessions could not be ended or " +
 					"the password could not be written. Code \"identity_session_unavailable\"; " +
 					"the token is spent either way."),
+		},
+	})
+}
+
+// describeAddressChange writes the two storefront address change endpoints
+// (ADR 0377).
+func (m *Module) describeAddressChange(d *openapi.Doc) {
+	d.Describe(http.MethodPost, "/store/v1/auth/email", openapi.Operation{
+		Summary:     "Sends a link that moves the signed-in customer's account to a new address.",
+		RequestBody: d.RequestBody(addressChangeRequest{}),
+		Description: "Takes new_email and current_password from a request whose session " +
+			"proves a customer. The current password is asked for because a session is " +
+			"not the person. The account does not move until the link sent to the new " +
+			"address is followed.\n\n" +
+			"It answers 202 whether the new address is free or another account's, and " +
+			"only a free one is mailed: anything else would tell any account holder which " +
+			"addresses have accounts. Asking again REPLACES the pending change; a link " +
+			"lasts an hour by default. It shares the registration's rate limit per client.",
+		Tags: []string{docTag},
+		Responses: map[string]any{
+			"202": openapi.Response("The request was accepted; watch the new address", nil),
+			"401": openapi.ErrorResponse(
+				"The request proves nobody. Code \"identity_session_none\"."),
+			"403": openapi.ErrorResponse(
+				"The current password does not match. Code " +
+					"\"identity_session_current_password_wrong\"."),
+			"409": openapi.ErrorResponse(
+				"The customer signs in some other way than a password kept here. Code " +
+					"\"identity_session_no_password_here\"."),
+			"422": openapi.ErrorResponse(
+				"The new address cannot be an address or is the one the account has, code " +
+					"\"identity_session_address_change_invalid\", or the body could not be " +
+					"parsed, code \"identity_session_invalid\"."),
+			"429": openapi.ErrorResponse(
+				"Too many requests from this client. No code: the rate limit is gobit's " +
+					"own middleware and answers before this module is reached."),
+			"500": openapi.ErrorResponse(
+				"The change could not be recorded or the message could not be sent. Code " +
+					"\"identity_session_unavailable\"."),
+		},
+	})
+
+	d.Describe(http.MethodPost, "/store/v1/auth/email/confirm", openapi.Operation{
+		Summary:     "Moves the account to the address a link was sent to.",
+		RequestBody: d.RequestBody(addressChangeConfirmation{}),
+		Description: "Takes the token from the message. It needs no session: following the " +
+			"link is the proof the change waited for, and it may be opened on another " +
+			"device. The token is consumed in one statement; the account's record moves, " +
+			"then the address its password signs in under. Nobody is signed in or out.\n\n" +
+			"One answer for a token that never existed, one already used and one expired.",
+		Tags: []string{docTag},
+		Responses: map[string]any{
+			"204": openapi.Response("The account signs in and is mailed at the new address", nil),
+			"409": openapi.ErrorResponse(
+				"Another account took the address after the link was sent. Code " +
+					"\"identity_session_address_taken\"."),
+			"422": openapi.ErrorResponse(
+				"The token is not a usable pending change: unknown, already used or " +
+					"expired. Code \"identity_session_address_change_not_usable\"."),
+			"429": openapi.ErrorResponse(
+				"Too many attempts from this client. No code: the rate limit is gobit's " +
+					"own middleware and answers before this module is reached."),
+			"500": openapi.ErrorResponse(
+				"The change could not be read or the account could not be moved. Code " +
+					"\"identity_session_unavailable\"; the token is spent either way."),
 		},
 	})
 }

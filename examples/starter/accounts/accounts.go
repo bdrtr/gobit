@@ -54,6 +54,7 @@ const customerEntity = "customer"
 type customers interface {
 	RegisterGuestCustomer(ctx context.Context, email, firstName, lastName, phone string) (string, error)
 	ConvertGuestToAccount(ctx context.Context, customerID string) error
+	ChangeCustomerEmail(ctx context.Context, customerID, email string) error
 }
 
 // Module is a gobit module whose only job is to hold the container.
@@ -154,4 +155,20 @@ func (m *Module) OpenAccount(ctx context.Context, email string) (string, error) 
 	}
 
 	return id, nil
+}
+
+// ChangeAccountEmail moves an account's record to an address its owner has
+// just proven (ADR 0377). The customer module refuses an address another
+// account holds, and the refusal is passed on with its kind, so the identity
+// module can tell it from a failure.
+func (m *Module) ChangeAccountEmail(ctx context.Context, customerID, email string) error {
+	service, err := container.Resolve[customers](m.c, customerService)
+	if err != nil {
+		return fmt.Errorf("starter: %q could not be resolved: %w", customerService, err)
+	}
+	if err := service.ChangeCustomerEmail(ctx, customerID, email); err != nil {
+		return fmt.Errorf("starter: the account could not be moved to the new address: %w", err)
+	}
+
+	return nil
 }

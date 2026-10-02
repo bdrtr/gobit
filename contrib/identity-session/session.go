@@ -32,8 +32,9 @@
 // issued before it proves nobody. Reading it is one primary-key read on every
 // request whose cookie is otherwise good.
 //
-// Storefront self-registration (ADR 0133) and a password reset (ADR 0373) are
-// mounted only when the installation binds what they need: see [Options].
+// Storefront self-registration (ADR 0133), a password reset (ADR 0373) and an
+// address change (ADR 0377) are mounted only when the installation binds what
+// they need: see [Options].
 //
 // The signing key CAN be rotated without logging anybody out: see
 // [Options.RetiredSecrets].

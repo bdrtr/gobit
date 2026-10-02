@@ -92,6 +92,7 @@ const (
 	tableCustomerCredentials    = "customer_credentials"
 	tableCustomerRegistrations  = "customer_registrations"
 	tableCustomerPasswordResets = "customer_password_resets"
+	tableCustomerAddressChanges = "customer_address_changes"
 
 	columnCustomerID   = "customer_id"
 	columnEmail        = "email"
@@ -232,6 +233,43 @@ func (m *Module) PersonalData() personaldata.Declaration {
 				Why:       "when the reset link stops working; declared beside the moment above",
 				OnErasure: personaldata.Emptied,
 			},
+			// A pending address change (ADR 0377) goes with the credential it
+			// would move, by its cascade, and is also erased by the address it
+			// would move to: that address may be somebody else's.
+			{
+				Table: tableCustomerAddressChanges, Column: columnCustomerID,
+				Kind: personaldata.Named,
+				Why: "the customer whose account a link would move to a new address, while " +
+					"that link is unused",
+				OnErasure: personaldata.Emptied,
+			},
+			{
+				Table: tableCustomerAddressChanges, Column: columnEmail,
+				Kind: personaldata.Named,
+				Why: "the address the account asked to move to, which has not been proven " +
+					"yet and may be the address of somebody else",
+				OnErasure: personaldata.Emptied,
+			},
+			{
+				Table: tableCustomerAddressChanges, Column: columnTokenHash,
+				Kind: personaldata.Named,
+				Why: "the SHA-256 of the link that was sent to the new address; it identifies " +
+					"the change rather than the person",
+				OnErasure: personaldata.Emptied,
+			},
+			{
+				Table: tableCustomerAddressChanges, Column: columnCreatedAt,
+				Kind: personaldata.Named,
+				Why: "when the person asked to move their account, which is a record of " +
+					"something they did at a moment",
+				OnErasure: personaldata.Emptied,
+			},
+			{
+				Table: tableCustomerAddressChanges, Column: columnExpiresAt,
+				Kind:      personaldata.Named,
+				Why:       "when the link stops working; declared beside the moment above",
+				OnErasure: personaldata.Emptied,
+			},
 		},
 	}
 }
@@ -282,14 +320,24 @@ func (m *Module) Erase(ctx context.Context, s personaldata.Subject) (personaldat
 	}
 
 	// A pending password reset needs no statement here: its row points at the
-	// credential just deleted and the foreign key took it (ADR 0373).
+	// credential just deleted and the foreign key took it (ADR 0373). So does
+	// the person's own pending address change; one that would move SOMEBODY
+	// ELSE's account to this person's address holds the address and goes by it
+	// (ADR 0377).
+	moving := 0
+	if changes, ok := records.(AddressChangeRecords); ok {
+		if moving, err = changes.EraseAddressChangesTo(ctx, email); err != nil {
+			return personaldata.Result{}, err
+		}
+	}
 
 	m.log.InfoContext(ctx, "identity-session erased a person's credentials",
-		"rows", rows+pending, "pending_registrations", pending,
+		"rows", rows+pending+moving, "pending_registrations", pending,
+		"address_changes_to_the_address", moving,
 		"by_customer_id", customerID != "", "by_email", email != "")
 
 	return personaldata.Result{
-		Holder: ErasureHolder, Outcome: personaldata.Deleted, Rows: rows + pending,
+		Holder: ErasureHolder, Outcome: personaldata.Deleted, Rows: rows + pending + moving,
 	}, nil
 }
 
@@ -336,7 +384,13 @@ func (m *Module) PersonalDataOf(
 			return personaldata.Disclosure{}, err
 		}
 	}
-	if len(found) == 0 && pending == nil && reset == nil {
+	var changes []StoredAddressChange
+	if moving, ok := records.(AddressChangeRecords); ok {
+		if changes, err = moving.PendingAddressChangesOf(ctx, customerID, email); err != nil {
+			return personaldata.Disclosure{}, err
+		}
+	}
+	if len(found) == 0 && pending == nil && reset == nil && len(changes) == 0 {
 		return personaldata.Disclosure{
 			Holder: ErasureHolder, State: personaldata.Nothing,
 		}, nil
@@ -401,6 +455,27 @@ func (m *Module) PersonalDataOf(
 					Value: "a password reset link was sent; the stored value is its SHA-256 and " +
 						"is deliberately not reproduced here, because the link itself would " +
 						"replace the password",
+				},
+			},
+		})
+	}
+
+	// A pending address change is its own record, its token reported by what
+	// it is (ADR 0377).
+	for _, change := range changes {
+		out = append(out, personaldata.Record{
+			Table: tableCustomerAddressChanges,
+			ID:    change.CustomerID,
+			Fields: []personaldata.Field{
+				{Column: columnCustomerID, Kind: personaldata.Named, Value: change.CustomerID},
+				{Column: columnEmail, Kind: personaldata.Named, Value: change.Email},
+				{Column: columnCreatedAt, Kind: personaldata.Named, Value: change.CreatedAt},
+				{Column: columnExpiresAt, Kind: personaldata.Named, Value: change.ExpiresAt},
+				{
+					Column: columnTokenHash, Kind: personaldata.Named,
+					Value: "a link was sent to the new address; the stored value is its SHA-256 " +
+						"and is deliberately not reproduced here, because the link itself would " +
+						"move the account",
 				},
 			},
 		})
@@ -493,3 +568,30 @@ type StoredPasswordReset struct {
 
 // The store shows pending resets in a dossier.
 var _ PasswordResetRecords = pgCredentials{}
+
+// AddressChangeRecords is the OPTIONAL capability a store offers to answer a
+// data-subject request about pending address changes (ADR 0377), for
+// [PasswordResetRecords]' reason.
+type AddressChangeRecords interface {
+	// EraseAddressChangesTo deletes every pending change that would move an
+	// account to the address, and answers how many went. A blank address
+	// erases nothing.
+	EraseAddressChangesTo(ctx context.Context, email string) (int, error)
+	// PendingAddressChangesOf reads the pending change of a customer, of the
+	// address their credential signs in with, and every one that would move an
+	// account to the address.
+	PendingAddressChangesOf(ctx context.Context, customerID, email string) ([]StoredAddressChange, error)
+}
+
+// StoredAddressChange is a pending address change as a dossier reports it:
+// never its token or the token's hash.
+type StoredAddressChange struct {
+	// CustomerID is the customer the link would move.
+	CustomerID string
+	// Email is the address it would move them to.
+	Email string
+	// CreatedAt is when the change was asked for.
+	CreatedAt time.Time
+	// ExpiresAt is when the link stops working.
+	ExpiresAt time.Time
+}

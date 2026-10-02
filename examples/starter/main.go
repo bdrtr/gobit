@@ -39,6 +39,15 @@ import (
 // toolchain stamped into it.
 var version string
 
+// The seams identity-session finds by type assertion are pinned here: a
+// drifted signature would otherwise leave the flow unmounted, with a green
+// build and a log line at startup.
+var (
+	_ identitysession.AddressChanges = (*accounts.Module)(nil)
+	_ identitysession.PasswordReset  = accounts.LogOnlyVerification{}
+	_ identitysession.AddressProof   = accounts.LogOnlyVerification{}
+)
+
 func main() {
 	// The accounts adapter is a module AND a seam: it is added so that gobit hands
 	// it the container, and passed to the session module so that self-registration
@@ -73,14 +82,16 @@ func main() {
 		// sign-up links into its log files.
 		//
 		// The same stand-in carries a password reset link (ADR 0373), which
-		// mounts the storefront's "forgot my password" pair; a real shop binds
-		// its mailer here as well.
+		// mounts the storefront's "forgot my password" pair, and the link that
+		// proves a new address (ADR 0377); a real shop binds its mailer here as
+		// well.
 		Add(identitysession.New(identitysession.Options{
 			Secret:         []byte(os.Getenv("SESSION_SECRET")),
 			RetiredSecrets: retiredSecrets(os.Getenv("SESSION_SECRET_RETIRED")),
 			Accounts:       shopAccounts,
 			Verification:   accounts.NewLogOnlyVerification(nil),
 			PasswordReset:  accounts.NewLogOnlyVerification(nil),
+			AddressProof:   accounts.NewLogOnlyVerification(nil),
 		}))
 
 	if err := shop.Main(os.Args[1:], os.Stdout); err != nil {

@@ -256,7 +256,9 @@ func describeStorefront(d *openapi.Doc) {
 			"The e-mail address is not changed here: it is the address the account " +
 			"signs in under and receives its mail at, and nothing here proves the " +
 			"shopper owns a new one. A body carrying email is refused as a field this " +
-			"endpoint does not know; an operator changes the address (ADR 0376).",
+			"endpoint does not know (ADR 0376). An identity that proves the new address " +
+			"moves it, as contrib/identity-session's address change does (ADR 0377), and " +
+			"an operator can change it.",
 		RequestBody: d.RequestBody(storeUpdateCustomerRequest{}),
 		Responses: answers(storefrontIdentityRefusals(), "200",
 			openapi.Response("The updated profile", d.Item(customerDTO{}))),
