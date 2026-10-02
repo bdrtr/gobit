@@ -39,6 +39,14 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The last administrator keeps admin** (ADR 0346, D209). **For
+  integrators:** `PUT /admin/v1/users/{id}` with scopes that leave out
+  `admin`, and `DELETE /admin/v1/users/{id}`, answer 409
+  `auth_last_administrator` when the user is the last live one holding
+  admin. **For operators:** give admin to another user before taking it
+  from the last one; a shop can no longer lock itself out of its own
+  administration.
+
 - **The panel lists the users** (ADR 0345). **For operators:** a Users
   screen lists who operates the shop under `auth:read`, each with their
   privileges and whether they have proven a second factor, those without

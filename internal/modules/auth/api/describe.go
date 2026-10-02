@@ -400,6 +400,7 @@ func describeUsers(d *openapi.Doc) {
 		RequestBody: d.RequestBody(updateUserRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The updated user", d.Item(userDTO{})),
+			"409": openapi.ErrorResponse(lastAdministratorRefusal),
 		},
 	})
 
@@ -407,6 +408,7 @@ func describeUsers(d *openapi.Doc) {
 		Summary: "Soft-deletes the user and their login credentials.",
 		Responses: map[string]any{
 			"204": emptyResponse("The user was deleted"),
+			"409": openapi.ErrorResponse(lastAdministratorRefusal),
 		},
 	})
 
@@ -686,3 +688,8 @@ func optionalCodeBody(d *openapi.Doc) map[string]any {
 
 	return body
 }
+
+// lastAdministratorRefusal is how a write that would take admin from the last
+// live user holding it is refused (ADR 0346).
+const lastAdministratorRefusal = "The user is the last live user who holds admin " +
+	"(\"auth_last_administrator\", ADR 0346); give admin to another user first."

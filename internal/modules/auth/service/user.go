@@ -245,7 +245,8 @@ type UpdateUserInput struct {
 //
 // The scope list CANNOT EXCEED THE CALLER'S OWN (see
 // [requireGrantableScopes]): could it, a narrowly scoped identity would update
-// its own record and become admin.
+// its own record and become admin. Nor may it take admin from the last live
+// user holding it (repository.CodeLastAdministrator, ADR 0346).
 func (s *Service) UpdateUser(ctx context.Context, id string, in UpdateUserInput) (models.User, error) {
 	if err := s.ready(); err != nil {
 		return models.User{}, err
@@ -283,7 +284,9 @@ func (s *Service) UpdateUser(ctx context.Context, id string, in UpdateUserInput)
 	return s.repo.UpdateUser(ctx, id, patch, s.clock())
 }
 
-// DeleteUser soft deletes the user and their login identities.
+// DeleteUser soft deletes the user and their login identities, and refuses
+// the last live user holding admin (repository.CodeLastAdministrator, ADR
+// 0346).
 //
 // The identities are deleted as well; had they stayed alive the user could log
 // in EVEN AFTER BEING DELETED. A session token produced earlier IS NOT ACCEPTED

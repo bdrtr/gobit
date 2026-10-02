@@ -42,6 +42,17 @@ SELECT * FROM auth_user
 WHERE id = $1 AND deleted_at IS NULL
 FOR SHARE;
 
+-- LockLiveAdministrators locks every live user who holds admin, in the order
+-- of their ids, so a write that would take admin from one of them decides
+-- whether another is left while no competitor can take it from that other
+-- (ADR 0346). A row a competitor took admin from while this waited is checked
+-- again as it is now and left out.
+-- name: LockLiveAdministrators :many
+SELECT id FROM auth_user
+WHERE deleted_at IS NULL AND 'admin' = ANY(scopes)
+ORDER BY id
+FOR UPDATE;
+
 -- second_factor keeps the users who have (true) or have not (false) proven an
 -- authenticator, which is how an operator finds who still owes one before the
 -- installation requires it (ADR 0265). An enrolment nobody confirmed is not one.

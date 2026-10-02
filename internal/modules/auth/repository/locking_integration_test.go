@@ -179,6 +179,9 @@ func TestTheAddressOfADeletedAdministratorStaysUsable(t *testing.T) {
 	repo := newRepo(t)
 	svc := newRaceService(repo)
 	user := newUser(ctx, t, repo)
+	// Another administrator, so this one is not the last and may be deleted
+	// (ADR 0346).
+	newUser(ctx, t, repo)
 
 	require.NoError(t, svc.SetPassword(ctx, user.ID, racePassword))
 	require.NoError(t, svc.DeleteUser(ctx, user.ID))

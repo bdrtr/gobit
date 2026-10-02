@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -155,7 +156,8 @@ func (r *Repo) ListUsers(
 	return users, total, nil
 }
 
-// UpdateUser updates the given fields of the user.
+// UpdateUser updates the given fields of the user, and refuses scopes that
+// take admin from the last live user holding it (ADR 0346).
 //
 // If the email changes, the provider_identity field of the login identity is
 // updated IN THE SAME TRANSACTION: the two sit in separate columns but express
@@ -178,6 +180,11 @@ func (r *Repo) UpdateUser(
 
 	var updated models.User
 	txErr := r.inTx(ctx, func(q *authdb.Queries) error {
+		if patch.Scopes != nil && !slices.Contains(patch.Scopes, models.ScopeAdmin) {
+			if err := keepAnAdministrator(ctx, q, id); err != nil {
+				return err
+			}
+		}
 		row, upErr := q.UpdateUser(ctx, authdb.UpdateUserParams{
 			Email:     patch.Email,
 			FirstName: patch.FirstName,
@@ -219,7 +226,8 @@ func (r *Repo) UpdateUser(
 	return updated, nil
 }
 
-// DeleteUser soft-deletes the user together with its login identities.
+// DeleteUser soft-deletes the user together with its login identities, and
+// refuses the last live user holding admin (ADR 0346).
 //
 // The two are in the SAME transaction, and what matters is not the order but
 // ATOMICITY: a user whose identity stayed live could still log in after being
@@ -230,6 +238,9 @@ func (r *Repo) DeleteUser(ctx context.Context, id string, now time.Time) error {
 	}
 
 	return r.inTx(ctx, func(q *authdb.Queries) error {
+		if err := keepAnAdministrator(ctx, q, id); err != nil {
+			return err
+		}
 		if _, err := q.SoftDeleteUser(ctx, authdb.SoftDeleteUserParams{
 			ID:        id,
 			DeletedAt: fromTime(now),

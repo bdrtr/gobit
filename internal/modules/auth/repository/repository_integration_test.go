@@ -41,6 +41,10 @@ const postgresImage = "postgres:16-alpine"
 // testPool is the pool shared by all of the tests.
 var testPool *db.Pool
 
+// testDSN is the shared database's address, from which a test that needs a
+// database of its own makes one (internal/testdb).
+var testDSN string
+
 func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
@@ -72,6 +76,7 @@ func runWithPostgres(m *testing.M) int {
 		return 1
 	}
 
+	testDSN = dsn
 	testPool, err = db.New(ctx, db.DefaultConfig(dsn), nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not open the connection pool: %v\n", err)

@@ -253,6 +253,38 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]AuthUse
 	return items, nil
 }
 
+const lockLiveAdministrators = `-- name: LockLiveAdministrators :many
+SELECT id FROM auth_user
+WHERE deleted_at IS NULL AND 'admin' = ANY(scopes)
+ORDER BY id
+FOR UPDATE
+`
+
+// LockLiveAdministrators locks every live user who holds admin, in the order
+// of their ids, so a write that would take admin from one of them decides
+// whether another is left while no competitor can take it from that other
+// (ADR 0346). A row a competitor took admin from while this waited is checked
+// again as it is now and left out.
+func (q *Queries) LockLiveAdministrators(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, lockLiveAdministrators)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockLiveUser = `-- name: LockLiveUser :one
 SELECT id, email, first_name, last_name, avatar_url, scopes, metadata, created_at, updated_at, deleted_at FROM auth_user
 WHERE id = $1 AND deleted_at IS NULL
