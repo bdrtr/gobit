@@ -271,15 +271,14 @@ func describeStore(d *openapi.Doc) {
 // call. Calling it required would have meant the client generator forcing the
 // caller to build an empty object only because the schema says so.
 //
-// The schema is still derived from the TYPE; the only thing written by hand is
-// the envelope's "required" flag.
+// The schema is still derived from the TYPE, through RequestBody so it is the
+// type's request form (ADR 0363); the only thing written by hand is the
+// envelope's "required" flag.
 func optionalBody(d *openapi.Doc, v any) map[string]any {
-	return map[string]any{
-		"required": false,
-		"content": map[string]any{
-			"application/json": map[string]any{"schema": d.SchemaOf(v)},
-		},
-	}
+	body := d.RequestBody(v)
+	body["required"] = false
+
+	return body
 }
 
 // emptyResponse produces the definition of a response WITHOUT a body.

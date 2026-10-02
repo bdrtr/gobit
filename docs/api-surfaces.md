@@ -49,6 +49,12 @@ behavior (the tag, `omitempty`, unexported fields, embedded struct flattening
 and shadowing); where the imitation is incomplete the schema is worse than no
 schema at all — the client sends a field name it believes to be right.
 
+A response lists a field without `omitempty` as required, since the encoder
+always writes it. A request body lists none: the decoder accepts every field
+absent, and the service refuses what a body must carry by a code and a reason
+([ADR 0363](adr/0363-a-request-body-requires-no-field.md)). A type both read
+and written is published a second time, as read, under its name with `Input`.
+
 Modules describe their own endpoints through the optional `openapi.Describer`
 interface:
 

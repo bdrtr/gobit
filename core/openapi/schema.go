@@ -3,7 +3,9 @@ package openapi
 import (
 	"encoding"
 	"encoding/json"
+	"maps"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -93,18 +95,19 @@ func (d *Doc) SchemaOf(v any) map[string]any {
 	return d.schemaOfType(reflect.TypeOf(v), map[reflect.Type]bool{})
 }
 
-// Schemas returns the derived component schemas.
+// Schemas returns the derived component schemas, under the names the built
+// document publishes them by.
 //
 // [Doc.Build] writes them under components/schemas; they are also exported
 // because [Doc.SchemaOf] returns a "$ref" — a caller (and a test) wanting to see
 // what the reference points at has to be able to read the map.
+//
+// A type both read from a request body and written in a response is published
+// twice, its request form as its name with [inputSuffix] (ADR 0363). A request
+// body's "$ref" read off a description, rather than off the built document,
+// still names that form by the type's own name; the build renames it.
 func (d *Doc) Schemas() map[string]any {
-	duplicate := make(map[string]any, len(d.schemas))
-	for name, schema := range d.schemas {
-		duplicate[name] = schema
-	}
-
-	return duplicate
+	return d.publishedSchemas()
 }
 
 // Item produces the schema of the single-object response envelope from the
@@ -185,7 +188,20 @@ func (d *Doc) ListOptionalCount(v any, opts ...ListOption) map[string]any {
 }
 
 // RequestBody produces a REQUIRED JSON request body definition from the given type.
+//
+// The schema is the type's REQUEST FORM, in which no field is required (ADR
+// 0363). A field without omitempty is always WRITTEN, which is what "required"
+// says of a response; the decoder reading a request accepts every field
+// absent, and what a body must carry is the service's to refuse, by a code
+// and a reason. Called required here, every field of a body would have to be
+// sent: a client generated from the document could not open a cart without
+// naming a customer.
 func (d *Doc) RequestBody(v any) map[string]any {
+	reading := d.reading
+	d.reading = true
+
+	defer func() { d.reading = reading }()
+
 	return map[string]any{
 		"required": true,
 		"content": map[string]any{
@@ -524,7 +540,20 @@ func (d *Doc) structSchemaOrRef(t reflect.Type, seen map[reflect.Type]bool) map[
 		return map[string]any{}
 	}
 
-	if owner, registered := d.schemaOwners[name]; registered {
+	// The request form and the written form keep their own registries, and a
+	// name belongs to one type across both.
+	owners, schemas, others := d.schemaOwners, d.schemas, d.inputOwners
+	if d.reading {
+		owners, schemas, others = d.inputOwners, d.inputs, d.schemaOwners
+	}
+
+	if other, registered := others[name]; registered && other != t {
+		d.reportClash("two types want the name " + name + ": " + other.PkgPath() + " and " + t.PkgPath())
+
+		return map[string]any{}
+	}
+
+	if owner, registered := owners[name]; registered {
 		if owner != t {
 			d.reportClash("two types want the name " + name + ": " + owner.PkgPath() + " and " + t.PkgPath())
 
@@ -537,9 +566,9 @@ func (d *Doc) structSchemaOrRef(t reflect.Type, seen map[reflect.Type]bool) map[
 	// The registration happens BEFORE descending into the fields: when a
 	// self-referencing type arrives back here it finds the name and returns a
 	// $ref. In the other order the recursion would never end.
-	d.schemaOwners[name] = t
-	d.schemas[name] = map[string]any{}
-	d.schemas[name] = d.structSchema(t, seen)
+	owners[name] = t
+	schemas[name] = map[string]any{}
+	schemas[name] = d.structSchema(t, seen)
 	// The component set is the document's second input; a document already built
 	// is now incomplete (see [Doc.Handler]).
 	d.describeVersion++
@@ -556,7 +585,8 @@ func (d *Doc) structSchema(t reflect.Type, seen map[reflect.Type]bool) map[strin
 	for _, a := range jsonFields(t) {
 		properties[a.name] = d.schemaOfType(a.typ, seen)
 
-		if !a.optional {
+		// A request form requires nothing; see [Doc.RequestBody].
+		if !a.optional && !d.reading {
 			required = append(required, a.name)
 		}
 	}
@@ -569,6 +599,115 @@ func (d *Doc) structSchema(t reflect.Type, seen map[reflect.Type]bool) map[strin
 	}
 
 	return schema
+}
+
+// inputSuffix ends the published name of a type's request form when the same
+// type is also published as written (ADR 0363).
+const inputSuffix = "Input"
+
+// inputNames returns the name each request-form component is published by,
+// and the clashes that naming makes.
+//
+// It is decided when the document is BUILT, not when a type registers: a
+// body's schema is derived before the response beside it in one operation
+// literal, so a type's written form may register after its request form has
+// been referred to, and only the finished registries say which types have
+// both.
+func (d *Doc) inputNames() (names map[string]string, clashes []string) {
+	names = make(map[string]string, len(d.inputOwners))
+
+	for name, owner := range d.inputOwners {
+		if d.schemaOwners[name] != owner {
+			names[name] = name
+
+			continue
+		}
+
+		renamed := name + inputSuffix
+		for _, registry := range []map[string]reflect.Type{d.schemaOwners, d.inputOwners} {
+			if other, taken := registry[renamed]; taken {
+				clashes = append(clashes, "the request form of "+name+" is published as "+renamed+
+					", which "+other.PkgPath()+"."+other.Name()+" also wants")
+			}
+		}
+
+		names[name] = renamed
+	}
+
+	sort.Strings(clashes)
+
+	return names, clashes
+}
+
+// publishedSchemas returns the written forms and the request forms under the
+// names the document publishes them by.
+func (d *Doc) publishedSchemas() map[string]any {
+	names, _ := d.inputNames()
+
+	published := make(map[string]any, len(d.schemas)+len(d.inputs)+len(reservedSchemaNames))
+	for name, schema := range d.schemas {
+		published[name] = schema
+	}
+
+	for name, schema := range d.inputs {
+		published[names[name]], _ = withInputRefs(schema, names)
+	}
+
+	return published
+}
+
+// withInputRefs returns the schema with every reference to a request form
+// pointing at the name it is published by, and whether it changed any. It
+// copies only what it changes, so a schema that refers to no renamed form is
+// returned as it is.
+func withInputRefs(node any, names map[string]string) (any, bool) {
+	switch typed := node.(type) {
+	case map[string]any:
+		var changed map[string]any
+
+		for key, value := range typed {
+			next, renamed := value, false
+
+			if ref, isRef := value.(string); isRef && key == schemaRef {
+				name := strings.TrimPrefix(ref, refPrefix)
+				if published, known := names[name]; known && published != name {
+					next, renamed = refPrefix+published, true
+				}
+			} else {
+				next, renamed = withInputRefs(value, names)
+			}
+
+			if renamed {
+				if changed == nil {
+					changed = maps.Clone(typed)
+				}
+
+				changed[key] = next
+			}
+		}
+
+		if changed != nil {
+			return changed, true
+		}
+	case []any:
+		var changed []any
+
+		for i, value := range typed {
+			if next, renamed := withInputRefs(value, names); renamed {
+				if changed == nil {
+					changed = slices.Clone(typed)
+				}
+
+				changed[i] = next
+			}
+		}
+
+		if changed != nil {
+			return changed, true
+		}
+	}
+
+	return node, false
 }
 
 // reportClash records a component name clash.
@@ -589,9 +728,12 @@ func (d *Doc) reportClash(message string) {
 	d.describeVersion++
 }
 
+// refPrefix begins every reference to a component schema.
+const refPrefix = "#/components/schemas/"
+
 // refSchema produces a schema referring to a component.
 func refSchema(name string) map[string]any {
-	return map[string]any{schemaRef: "#/components/schemas/" + name}
+	return map[string]any{schemaRef: refPrefix + name}
 }
 
 // itemSchema builds the single-object response envelope with the given record schema.

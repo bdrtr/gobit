@@ -135,6 +135,17 @@ type Doc struct {
 	// schemaOwners holds which Go type every component name came from; it is the
 	// only record that catches a name clash.
 	schemaOwners map[string]reflect.Type
+	// inputs are the component schemas of the types read from request bodies,
+	// as they are read: no field is required (ADR 0363). [Doc.publishedSchemas]
+	// publishes them beside schemas.
+	inputs map[string]any
+	// inputOwners holds which Go type every request-form component came from.
+	inputOwners map[string]reflect.Type
+	// reading is true while [Doc.RequestBody] derives a schema, so the struct
+	// types it meets register in their request form.
+	//
+	// It is a field for the reason namespace is one.
+	reading bool
 	// schemaClashes is the report of DIFFERENT types wanting the same component name.
 	schemaClashes []string
 	// namespace is the module whose Describe is running right now, or "".
@@ -213,6 +224,8 @@ func New(title, version string) *Doc {
 		version:      version,
 		schemas:      make(map[string]any),
 		schemaOwners: make(map[string]reflect.Type),
+		inputs:       make(map[string]any),
+		inputOwners:  make(map[string]reflect.Type),
 	}
 }
 
@@ -309,6 +322,7 @@ func (d *Doc) Build(r chi.Routes) (map[string]any, error) {
 func (d *Doc) build(r chi.Routes) (map[string]any, error) {
 	paths := map[string]any{}
 	seen := map[string]struct{}{}
+	inputNames, inputClashes := d.inputNames()
 
 	err := chi.Walk(r, func(
 		method, route string, _ http.Handler, middlewares ...func(http.Handler) http.Handler,
@@ -322,6 +336,10 @@ func (d *Doc) build(r chi.Routes) (map[string]any, error) {
 
 		operation := d.operation(method, path)
 		operation.Security = withScopes(operation.Security, demandedScopes(middlewares))
+		if operation.RequestBody != nil {
+			body, _ := withInputRefs(operation.RequestBody, inputNames)
+			operation.RequestBody, _ = body.(map[string]any)
+		}
 
 		existing, _ := paths[path].(map[string]any)
 		if existing == nil {
@@ -342,9 +360,9 @@ func (d *Doc) build(r chi.Routes) (map[string]any, error) {
 	// The clash check comes AFTER the walk: unmatched descriptions
 	// ([Doc.UnmatchedDescriptions]) are a failure independent of a clash, and seen
 	// has to be filled anyway so the operator can see both at once.
-	if len(d.schemaClashes) > 0 {
+	if clashes := append(slices.Clone(d.schemaClashes), inputClashes...); len(clashes) > 0 {
 		return nil, errors.Invalid(codeSchemaNameConflict,
-			"an OpenAPI component name clashed: %s", strings.Join(d.schemaClashes, "; "))
+			"an OpenAPI component name clashed: %s", strings.Join(clashes, "; "))
 	}
 
 	return map[string]any{
@@ -744,11 +762,7 @@ func (d *Doc) components() map[string]any {
 // The shared ones being written last here is a second line of defense — if that
 // check is ever skipped, the error envelope's schema still does not break.
 func (d *Doc) schemaComponents() map[string]any {
-	schemas := make(map[string]any, len(d.schemas)+len(reservedSchemaNames))
-
-	for ad, schema := range d.schemas {
-		schemas[ad] = schema
-	}
+	schemas := d.publishedSchemas()
 
 	schemas[schemaNameError] = map[string]any{
 		schemaType:     typeObject,

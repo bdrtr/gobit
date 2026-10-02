@@ -12,6 +12,17 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Kırıcı değişiklikler
 
+- **A request body requires no field** (ADR 0363, D211). **For
+  integrators:** the request bodies of `/openapi.json` list no required
+  field, so a client generated from it sends only the fields it sets; a
+  field the service needs is refused at run time with its reason, as
+  before. The request forms of `CustomerSegmentCondition`,
+  `CustomerSegmentRule`, `ErasureRequest`, `OrderAddress` and
+  `ProductBundleComponent` are published as `CustomerSegmentConditionInput`,
+  `CustomerSegmentRuleInput`, `ErasureRequestInput`, `OrderAddressInput` and
+  `ProductBundleComponentInput`; regenerate a client. Responses are
+  unchanged.
+
 - **An operator's writes reach only an operator's cart** (ADR 0299, D200).
   **For integrators:** `POST /admin/v1/carts/{id}/line-items`, the two address
   writes, the shipping method writes and `POST /admin/v1/carts/{id}/complete`
