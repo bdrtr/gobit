@@ -113,7 +113,7 @@ test: ## Birim testlerini çalıştır (race + coverage)
 	$(NO_AMBIENT_SERVICES) go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
 
 test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerektirir)
-	$(NO_AMBIENT_SERVICES) $(REAPER_WAITS_OUT_THE_GAP) go test -race -tags=integration -count=1 -coverpkg=./... \
+	$(NO_AMBIENT_SERVICES) $(REAPER_WAITS_OUT_THE_GAP) go test -race -tags=integration -count=1 -timeout 15m -coverpkg=./... \
 		-coverprofile=coverage-integration.out -covermode=atomic ./...
 	@go tool cover -func=coverage-integration.out | tail -1
 
