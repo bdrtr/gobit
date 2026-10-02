@@ -840,6 +840,14 @@ func (a recordingAccounts) RemoveUser(context.Context, string) error {
 	return a.surfaces.reach(ServiceAuthAdmin)
 }
 
+func (a recordingAccounts) APIKeysJSON(context.Context, string, int32, int32) (json.RawMessage, int64, error) {
+	return json.RawMessage(`[]`), 0, a.surfaces.reach(ServiceAuthAdmin)
+}
+
+func (a recordingAccounts) RevokeAPIKey(context.Context, string, string) error {
+	return a.surfaces.reach(ServiceAuthAdmin)
+}
+
 // recordingInvoices records the invoice module's surface (ADR 0335).
 type recordingInvoices struct{ surfaces *recordingSurfaces }
 
@@ -1088,6 +1096,7 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, UserInvitationsPath): {formInviteEmail: {"walk@example.test"}},
 	routeKey(http.MethodPost, UserInvitationPath):  {},
 	routeKey(http.MethodPost, UserRemovePath):      {},
+	routeKey(http.MethodPost, APIKeyRevokePath):    {paramKeyStatus: {"open"}},
 	// Writing off units of a line (ADR 0341).
 	routeKey(http.MethodPost, OrderLineCancellationsPath): {
 		formWriteOffLine: {"oli_walk"}, formReadSpokenFor: {"0"}, formWriteOffQuantity: {"1"}, formWriteOffReason: {"walk"},

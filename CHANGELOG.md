@@ -39,6 +39,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel lists and revokes the API keys** (ADR 0350). **For
+  operators:** an API keys screen lists the keys integrations call the API
+  with under `auth:read`, the open ones first, with their privileges and
+  when they were last used, and revokes one under `admin`. **For
+  integrators:** `auth.admin` lists the keys with their tokens redacted and
+  revokes one.
+
 - **The panel removes a user** (ADR 0349). **For operators:** a user's
   page removes them under `admin`, their sessions ending with them; the
   last administrator is kept, and an operator cannot remove themselves

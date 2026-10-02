@@ -124,6 +124,7 @@ var pages = []string{
 	"invoice.gohtml",
 	"users.gohtml",
 	"user.gohtml",
+	"api_keys.gohtml",
 	"product_relations.gohtml",
 	"product_add_ons.gohtml",
 	"variant.gohtml",
@@ -341,6 +342,9 @@ func sections() []navItem {
 		// The users who operate the shop come after what they operate (ADR
 		// 0345).
 		{Label: usersLabel, Path: UsersPath},
+		// The keys integrations call the API with sit beside the users (ADR
+		// 0350).
+		{Label: apiKeysLabel, Path: APIKeysPath},
 		// The reviews sit LAST, and not because they matter least: they are
 		// the panel's first screen of the shape ADR 0030 decided on, so an
 		// operator meeting a section that behaves differently meets it at the

@@ -1,0 +1,60 @@
+{{- /*
+api_keys.gohtml is the auth module's API keys (ADR 0350).
+
+A key is a credential an integration calls the API with. Its token is shown
+once, when it is made, and only as redacted after; what a key may do is the
+privileges it carries. The keys still accepted come first, which is what an
+operator watches; one holding admin revokes a key, which stays listed with
+when and by whom, so the question "which key was open" can still be
+answered after a leak.
+*/ -}}
+{{ define "body" }}
+<h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+{{ with .Revoked }}<p role="status">Key {{ . }} was revoked.</p>{{ end }}
+
+<nav aria-label="Revoked">
+  {{ range .Statuses }}
+  <a href="{{ $.Path }}?status={{ . }}"{{ if eq . $.Status }} aria-current="page"{{ end }}>{{ . }}</a>
+  {{ end }}
+</nav>
+<p class="muted">{{ .Total }} {{ if eq .Status "open" }}open{{ else if eq .Status "revoked" }}revoked{{ else }}in all{{ end }}.</p>
+
+{{ if .Keys }}
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th>Key</th><th>Type</th><th>Token</th><th>Privileges</th><th>Last used (UTC)</th><th>Made (UTC)</th><th>Revoked</th>{{ if .CanRevise }}<th></th>{{ end }}</tr>
+  </thead>
+  <tbody>
+  {{ range .Keys }}{{ $key := . }}
+    <tr>
+      <td>{{ .Title }}<br><span class="muted">{{ .ID }}</span></td>
+      <td>{{ .Type }}</td>
+      <td><code>{{ .Redacted }}</code></td>
+      <td>{{ range $i, $scope := .Scopes }}{{ if $i }}, {{ end }}{{ $scope }}{{ else }}<span class="muted">none</span>{{ end }}</td>
+      <td>{{ with .LastUsedAt }}{{ .UTC.Format "2006-01-02 15:04" }}{{ else }}<span class="muted">never</span>{{ end }}</td>
+      <td>{{ .CreatedAt.UTC.Format "2006-01-02" }}</td>
+      <td>{{ with .RevokedAt }}{{ .UTC.Format "2006-01-02 15:04" }} by {{ $key.RevokedBy }}{{ end }}</td>
+      {{ if $.CanRevise }}<td>{{ if not .RevokedAt }}
+        <form method="post" action="{{ $.Path }}/{{ .ID }}/revoke">
+          <input type="hidden" name="status" value="{{ $.Status }}">
+          <button type="submit">Revoke</button>
+        </form>
+      {{ end }}</td>{{ end }}
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No key here.</p>
+{{ end }}
+
+<nav>
+  {{ if .HasPrev }}<a href="{{ .Path }}?status={{ .Status }}&amp;page={{ .PrevPage }}">Previous</a>{{ end }}
+  <span class="muted">Page {{ .Page }}</span>
+  {{ if .HasNext }}<a href="{{ .Path }}?status={{ .Status }}&amp;page={{ .NextPage }}">Next</a>{{ end }}
+</nav>
+{{ end }}

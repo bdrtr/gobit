@@ -193,7 +193,9 @@
 // without a password with the privileges ticked ([UI.inviteUser]), and their
 // page sends the invitation again ([UI.resendInvitation], ADR 0348) and
 // removes them ([UI.removeUser], ADR 0349), though not the operator
-// themselves.
+// themselves. The API keys screen ([UI.listAPIKeys]) beside it lists the
+// keys integrations call the API with, their tokens only as redacted, and
+// revokes one for an operator holding admin ([UI.revokeAPIKey], ADR 0350).
 //
 // The order's page opens a parcel ([UI.openParcel]) through the order
 // module's surface and the fulfilling flow, on the delivery the operator
