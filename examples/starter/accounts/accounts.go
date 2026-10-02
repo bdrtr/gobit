@@ -53,6 +53,7 @@ const customerEntity = "customer"
 // interface. Repeating the signature verbatim is the mechanism.
 type customers interface {
 	RegisterGuestCustomer(ctx context.Context, email, firstName, lastName, phone string) (string, error)
+	ConvertGuestToAccount(ctx context.Context, customerID string) error
 }
 
 // Module is a gobit module whose only job is to hold the container.
@@ -106,10 +107,14 @@ func (m *Module) CustomerIDForEmail(ctx context.Context, email string) (string, 
 		return "", fmt.Errorf("starter: %q could not be resolved: %w", queryCatalog, err)
 	}
 
+	// An ACCOUNT, not any record with the address. A guest checkout leaves a
+	// customer row behind, and taking it for an account told somebody who once
+	// bought as a guest that they already had an account they could not sign in
+	// to (D221).
 	records, err := catalog.Graph(ctx, query.GraphSpec{
 		Entity:  customerEntity,
 		Fields:  []string{query.IDField},
-		Filters: map[string]any{"email": email},
+		Filters: map[string]any{"email": email, "has_account": true},
 		Limit:   1,
 	})
 	if err != nil {
@@ -124,13 +129,13 @@ func (m *Module) CustomerIDForEmail(ctx context.Context, email string) (string, 
 	return id, nil
 }
 
-// OpenAccount creates a customer for an address that has just been proven.
-//
-// It calls RegisterGuestCustomer, and the name is worth a sentence: a "guest"
-// record in gobit is a customer row without an account, and an account in this
-// arrangement IS a credential in the session module. So the pair — this row plus
-// the credential the module writes next — is a registered customer, and there is
-// no third state to model.
+// OpenAccount creates a customer account for an address that has just been
+// proven: a customer row, then converted to an account, because has_account is
+// the one field gobit's customer module tells an account from a guest by. A row
+// left a guest was shown as one in the panel, missed by a segment counting
+// accounts, and outside the index that keeps one address to one account (D221).
+// A conversion refused — another account took the address meanwhile — fails the
+// verification, and the guest row it leaves is harmless.
 //
 // The name and phone are left empty on purpose. Nobody typed them, and inventing
 // a placeholder would put a value into a person's record that they never gave.
@@ -143,6 +148,9 @@ func (m *Module) OpenAccount(ctx context.Context, email string) (string, error) 
 	id, err := service.RegisterGuestCustomer(ctx, email, "", "", "")
 	if err != nil {
 		return "", fmt.Errorf("starter: the customer could not be opened: %w", err)
+	}
+	if err := service.ConvertGuestToAccount(ctx, id); err != nil {
+		return "", fmt.Errorf("starter: the customer could not be made an account: %w", err)
 	}
 
 	return id, nil

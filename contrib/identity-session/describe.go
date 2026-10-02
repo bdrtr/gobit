@@ -193,9 +193,9 @@ func (m *Module) describeSelfRegistration(d *openapi.Doc) {
 			"One answer for a token that never existed, one already used and one expired. " +
 			"Telling them apart would say, for any token somebody tries, whether it was " +
 			"ever real.\n\n" +
-			"An address that gained a customer between the two halves of the flow — they " +
-			"checked out as a guest in the meantime — keeps that record rather than " +
-			"getting a second one.",
+			"An address that gained an account between the two halves of the flow keeps " +
+			"that account rather than getting a second one. A guest checkout is not an " +
+			"account: an address that only ever bought as a guest registers like a new one.",
 		Tags: []string{docTag},
 		Responses: map[string]any{
 			"204": openapi.Response("The account is open and the session cookie is set", nil),

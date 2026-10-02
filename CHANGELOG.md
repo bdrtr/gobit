@@ -50,6 +50,13 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **A guest checkout is not an account** (D221). **For integrators:**
+  `examples/starter` lets a shopper who once bought as a guest register with
+  the same address, and records an account it opens as one (`has_account`);
+  an `identitysession.Accounts` implementation answers
+  `CustomerIDForEmail` with the customer whose ACCOUNT the address is, never a
+  guest record.
+
 - **A shopper resets a forgotten password** (ADR 0373). **For integrators:**
   `contrib/identity-session` mounts `POST /store/v1/auth/password-reset` and
   `.../confirm` when `Options.PasswordReset` is bound; the request answers 202

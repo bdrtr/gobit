@@ -55,8 +55,13 @@ const DefaultRegistrationTTL = time.Hour
 // Self-registration is NOT MOUNTED unless this is bound. A module that cannot
 // open an account must not publish an endpoint that offers to.
 type Accounts interface {
-	// CustomerIDForEmail answers the customer that address already belongs to,
-	// or the EMPTY STRING when there is none.
+	// CustomerIDForEmail answers the customer whose ACCOUNT that address is, or
+	// the EMPTY STRING when it has none.
+	//
+	// An account, not any record with the address: a guest checkout leaves a
+	// customer behind in most shops, and answering it tells a person who once
+	// bought as a guest that they already have an account they cannot sign in
+	// to, so they can never open one (D221).
 	//
 	// Empty rather than a sentinel error: "nobody has this address" is an
 	// ordinary answer on this path rather than a fault, and a sentinel cannot
@@ -304,10 +309,10 @@ func (m *Module) verifyRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if customerID == "" {
-		// Opened only now, with the address proven. A customer that exists by
-		// this point is somebody who registered, or checked out as a guest,
-		// between the two halves of this flow — and that person keeps their
-		// record rather than getting a second one.
+		// Opened only now, with the address proven. An account that exists by
+		// this point is somebody who registered between the two halves of this
+		// flow — and that person keeps their account rather than getting a
+		// second one.
 		customerID, err = m.opts.Accounts.OpenAccount(r.Context(), email)
 		if err != nil {
 			m.unavailable(w, r, "the account could not be opened", err)

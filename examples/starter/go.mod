@@ -13,6 +13,7 @@ require (
 	github.com/bdrtr/gobit v0.0.0
 	github.com/bdrtr/gobit/contrib/identity-session v0.0.0
 	github.com/go-chi/chi/v5 v5.3.2
+	github.com/stretchr/testify v1.12.1
 )
 
 require (
@@ -56,6 +57,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
