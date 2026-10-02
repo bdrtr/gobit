@@ -14,6 +14,7 @@ taking admin from the last user who holds it (ADR 0346).
 
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
 {{ if .Written }}<p role="status">The privileges were written.</p>{{ end }}
+{{ if eq .Invited "sent" }}<p role="status">An invitation was sent to {{ .User.Email }}.</p>{{ else if eq .Invited "unsent" }}<p role="alert">The user was opened, but the invitation could not be sent; send it again below.</p>{{ end }}
 
 <h2>Privileges</h2>
 {{ if .CanRevise }}
@@ -25,6 +26,13 @@ taking admin from the last user who holds it (ADR 0346).
 </form>
 {{ else }}
 <p>{{ range $i, $scope := .User.Scopes }}{{ if $i }}, {{ end }}{{ $scope }}{{ else }}<span class="muted">none</span>{{ end }}</p>
+{{ end }}
+
+{{ if .CanInvite }}
+{{/* A new invitation replaces the one pending (ADR 0348). */}}
+<form method="post" action="{{ .Path }}/{{ .User.ID }}/invitation">
+  <button type="submit">Send an invitation</button>
+</form>
 {{ end }}
 
 <p><a href="{{ .Path }}">Every user</a></p>

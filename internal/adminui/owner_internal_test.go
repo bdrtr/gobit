@@ -825,6 +825,17 @@ func (a recordingAccounts) ReviseUserScopes(context.Context, string, []string, [
 	return a.surfaces.reach(ServiceAuthAdmin)
 }
 
+func (a recordingAccounts) InviteUser(context.Context, string, string, string, string, []string) (string, error) {
+	if err := a.surfaces.reach(ServiceAuthAdmin); err != nil {
+		return "", err
+	}
+	return "walk", nil
+}
+
+func (a recordingAccounts) ResendInvitation(context.Context, string, string) error {
+	return a.surfaces.reach(ServiceAuthAdmin)
+}
+
 // recordingInvoices records the invoice module's surface (ADR 0335).
 type recordingInvoices struct{ surfaces *recordingSurfaces }
 
@@ -1067,9 +1078,11 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}},
 	routeKey(http.MethodPost, OrderParcelActPath): {},
 	// Writing the store profile (ADR 0336).
-	routeKey(http.MethodPost, StoreProfilePath):  {formProfileName: {"Walk"}, formProfileCountry: {"TR"}},
-	routeKey(http.MethodPost, InvoiceStatusPath): {formInvoiceReadStatus: {"issued"}, formInvoiceTo: {"sent"}},
-	routeKey(http.MethodPost, UserScopesPath):    {formReadScope: {"order:read"}, formScope: {"order:read"}},
+	routeKey(http.MethodPost, StoreProfilePath):    {formProfileName: {"Walk"}, formProfileCountry: {"TR"}},
+	routeKey(http.MethodPost, InvoiceStatusPath):   {formInvoiceReadStatus: {"issued"}, formInvoiceTo: {"sent"}},
+	routeKey(http.MethodPost, UserScopesPath):      {formReadScope: {"order:read"}, formScope: {"order:read"}},
+	routeKey(http.MethodPost, UserInvitationsPath): {formInviteEmail: {"walk@example.test"}},
+	routeKey(http.MethodPost, UserInvitationPath):  {},
 	// Writing off units of a line (ADR 0341).
 	routeKey(http.MethodPost, OrderLineCancellationsPath): {
 		formWriteOffLine: {"oli_walk"}, formReadSpokenFor: {"0"}, formWriteOffQuantity: {"1"}, formWriteOffReason: {"walk"},

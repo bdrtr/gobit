@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"math"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
+
+	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
 // The Users screen (ADR 0345): the shop's users, the newest first, each with
@@ -64,6 +67,13 @@ func (u userRow) Name() string { return joinName(u.FirstName, u.LastName) }
 
 // listUsers renders the users in the chosen tab, or the one searched for.
 func (u *UI) listUsers(w http.ResponseWriter, r *http.Request) {
+	u.renderUsers(w, r, http.StatusOK, "", nil)
+}
+
+// renderUsers lists the users with a refused invitation's reason and what
+// was typed in it (ADR 0348). An operator who may invite holds admin, and
+// with it the privilege to read the users.
+func (u *UI) renderUsers(w http.ResponseWriter, r *http.Request, code int, refused string, typed url.Values) {
 	if u.users == nil {
 		u.errorPage(w, r, http.StatusServiceUnavailable, "Users unavailable",
 			"The auth module's panel surface cannot list the users in this installation.")
@@ -96,15 +106,21 @@ func (u *UI) listUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	_, canInvite := u.users.(UserInviter)
 	data := map[string]any{
-		titleKey:    usersLabel,
-		"Users":     rows,
-		statusKey:   tab,
-		statusesKey: secondFactorTabs,
-		emailKey:    email,
-		totalKey:    total,
+		titleKey:     usersLabel,
+		"Users":      rows,
+		statusKey:    tab,
+		statusesKey:  secondFactorTabs,
+		emailKey:     email,
+		totalKey:     total,
+		canCreateKey: canInvite && principal.HasScope(scopeAdmin),
+		"Privileges": privilegeChoices(nil, typed[formScope]),
+		typedKey:     typed,
+		refusedKey:   refused,
 	}
 	addPaging(data, page, int64(page*usersPerPage) < total, UsersPath)
 
-	u.templates.render(w, r, http.StatusOK, "users.gohtml", data)
+	u.templates.render(w, r, code, "users.gohtml", data)
 }

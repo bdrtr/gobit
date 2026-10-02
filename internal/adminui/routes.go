@@ -130,6 +130,8 @@ func (u *UI) routes(r chi.Router) {
 	r.Get(UsersPath, u.needs(http.MethodGet, UsersPath, u.listUsers))
 	r.Get(UserPath, u.needs(http.MethodGet, UserPath, u.showUser))
 	r.Post(UserScopesPath, u.needs(http.MethodPost, UserScopesPath, u.reviseUserScopes))
+	r.Post(UserInvitationsPath, u.needs(http.MethodPost, UserInvitationsPath, u.inviteUser))
+	r.Post(UserInvitationPath, u.needs(http.MethodPost, UserInvitationPath, u.resendInvitation))
 	r.Get(InvoicePath, u.needs(http.MethodGet, InvoicePath, u.showInvoice))
 	r.Post(InvoiceStatusPath, u.needs(http.MethodPost, InvoiceStatusPath, u.moveInvoice))
 	r.Post(StoreProfilePath, u.needs(http.MethodPost, StoreProfilePath, u.writeStoreProfile))

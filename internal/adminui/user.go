@@ -143,7 +143,10 @@ func (u *UI) renderUser(w http.ResponseWriter, r *http.Request, code int, id, re
 		ticked = user.Scopes
 	}
 	_, canRevise := u.users.(ScopeReviser)
+	_, canInvite := u.users.(UserInviter)
 	data := map[string]any{
+		"Invited":    r.URL.Query().Get(paramInvited),
+		"CanInvite":  canInvite && principal.HasScope(scopeAdmin),
 		titleKey:     user.Email,
 		"User":       user,
 		"Privileges": privilegeChoices(user.Scopes, ticked),

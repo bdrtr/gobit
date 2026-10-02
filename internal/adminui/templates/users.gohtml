@@ -9,6 +9,24 @@ second factor works through (ADR 0265). A user is found by their e-mail.
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
 
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+
+{{ if .CanCreate }}
+{{/* A user is opened without a password and invited to set their own
+(ADR 0348); no privilege ticked is none. */}}
+<details{{ if .Refused }} open{{ end }}>
+  <summary>Invite a user</summary>
+  <form method="post" action="{{ .Path }}/invitations">
+    <input name="email" value="{{ .Typed.Get "email" }}" placeholder="e-mail" aria-label="e-mail" type="email" required>
+    <input name="first_name" value="{{ .Typed.Get "first_name" }}" placeholder="first name" aria-label="first name">
+    <input name="last_name" value="{{ .Typed.Get "last_name" }}" placeholder="last name" aria-label="last name">
+    {{ range .Privileges }}<label><input type="checkbox" name="scope" value="{{ .Scope }}"{{ if .Checked }} checked{{ end }}> {{ .Scope }}</label>
+    {{ end }}
+    <button type="submit">Invite</button>
+  </form>
+</details>
+{{ end }}
+
 <form method="get" action="{{ .Path }}" role="search">
   <input name="email" value="{{ .Email }}" placeholder="e-mail" aria-label="the user's e-mail" type="email">
   <button type="submit">Find the user</button>

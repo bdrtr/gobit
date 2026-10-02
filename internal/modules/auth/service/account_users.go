@@ -111,3 +111,27 @@ func (s *AccountSurface) ReviseUserScopes(ctx context.Context, id string, read, 
 
 	return err
 }
+
+// InviteUser opens a user with the e-mail, name and privileges, without a
+// password, and sends them an invitation from the operator (ADR 0348). No
+// privilege given is none: a nil list would open an administrator. The
+// user's id comes back whenever they were opened, with the invitation's
+// error when it could not be sent, so the panel can name whom it opened.
+func (s *AccountSurface) InviteUser(
+	ctx context.Context, invitedBy, email, firstName, lastName string, scopes []string,
+) (string, error) {
+	user, err := s.svc.CreateUser(ctx, CreateUserInput{
+		Email: email, FirstName: firstName, LastName: lastName, Scopes: append([]string{}, scopes...),
+	}, "")
+	if err != nil {
+		return "", err
+	}
+
+	return user.ID, s.svc.InviteUser(ctx, user.ID, invitedBy)
+}
+
+// ResendInvitation sends the user a new invitation from the operator, which
+// replaces the one pending (ADR 0348).
+func (s *AccountSurface) ResendInvitation(ctx context.Context, userID, invitedBy string) error {
+	return s.svc.InviteUser(ctx, userID, invitedBy)
+}

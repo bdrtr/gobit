@@ -39,6 +39,12 @@ Sabitlenme `1.0.0` ile olur.
 
 ### Düzeltmeler
 
+- **The panel invites a user** (ADR 0348). **For operators:** the Users
+  screen invites a colleague under `admin`, with the privileges ticked and
+  none when none is; they set their own password from the invitation, and
+  their page sends it again. **For integrators:** `auth.admin` opens and
+  invites a user, an empty privilege list opening no administrator.
+
 - **The panel changes a user's privileges** (ADR 0347). **For operators:**
   a user's page, linked from the Users screen, shows who they are under
   `auth:read`, and an operator holding `admin` ticks the privileges they
