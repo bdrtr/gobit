@@ -233,6 +233,21 @@ func (m *memRepo) UpdateTaxRate(_ context.Context, id string, patch models.TaxRa
 	return updated, nil
 }
 
+// ReviseTaxRate writes the name and the rate only while they are the ones
+// read.
+func (m *memRepo) ReviseTaxRate(
+	_ context.Context, id string, read, next models.TaxRateTerms, now time.Time,
+) (models.TaxRate, bool, error) {
+	current, ok := m.rates[id]
+	if !ok || current.DeletedAt != nil || current.Name != read.Name || current.RateBps != read.RateBps {
+		return models.TaxRate{}, false, nil
+	}
+	current.Name, current.RateBps, current.UpdatedAt = next.Name, next.RateBps, now.UTC()
+	m.rates[id] = current
+
+	return current, true, nil
+}
+
 // DeleteTaxRate deletes the rate and its rules.
 func (m *memRepo) DeleteTaxRate(_ context.Context, id string, now time.Time) error {
 	rate, ok := m.rates[id]

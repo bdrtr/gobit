@@ -183,7 +183,8 @@
 // correcting its region's name, taxes and rate ([UI.reviseRegion], ADR
 // 0362), and the
 // Taxes screen ([UI.listTaxes]) the tax module's tax regions with the rates
-// each charges (ADR 0355).
+// each charges (ADR 0355), each rate correcting its name and rate
+// ([UI.reviseTaxRate], ADR 0378).
 //
 // The Payments screen ([UI.listPayments]) lists the payment module's
 // collections across every order, one status at a time, the ones authorized

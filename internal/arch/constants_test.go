@@ -54,6 +54,7 @@ import (
 	regionmodule "github.com/bdrtr/gobit/internal/modules/region"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 	"github.com/bdrtr/gobit/internal/modules/settings"
+	taxmodule "github.com/bdrtr/gobit/internal/modules/tax"
 	taxsvc "github.com/bdrtr/gobit/internal/modules/tax/service"
 	cartflow "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
@@ -1055,6 +1056,8 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 		"the panel's settings surface name must match the settings module (ADR 0336)")
 	assert.Equal(t, regionmodule.AdminName, adminui.ServiceRegionAdmin,
 		"the panel's region surface name must match the region module (ADR 0362)")
+	assert.Equal(t, taxmodule.AdminName, adminui.ServiceTaxAdmin,
+		"the panel's tax surface name must match the tax module (ADR 0378)")
 	assert.Equal(t, invoice.AdminName, adminui.ServiceInvoiceAdmin,
 		"the panel's invoice surface name must match the invoice module (ADR 0335)")
 	assert.Equal(t, file.AdminName, adminui.ServiceFileAdmin,

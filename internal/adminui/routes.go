@@ -141,6 +141,7 @@ func (u *UI) routes(r chi.Router) {
 	r.Get(SalesChannelsPath, u.needs(http.MethodGet, SalesChannelsPath, u.listSalesChannels))
 	r.Get(RegionsPath, u.needs(http.MethodGet, RegionsPath, u.listRegions))
 	r.Post(RegionPath, u.needs(http.MethodPost, RegionPath, u.reviseRegion))
+	r.Post(TaxRatePath, u.needs(http.MethodPost, TaxRatePath, u.reviseTaxRate))
 	r.Get(TaxesPath, u.needs(http.MethodGet, TaxesPath, u.listTaxes))
 	r.Get(ParcelsPath, u.needs(http.MethodGet, ParcelsPath, u.listParcels))
 	r.Get(PaymentsPath, u.needs(http.MethodGet, PaymentsPath, u.listPayments))

@@ -247,6 +247,13 @@ func (r TaxRate) RatePercent() (percent, remainder int32) {
 	return r.RateBps / BpsPerPercent, r.RateBps % BpsPerPercent
 }
 
+// TaxRateTerms are the terms of a rate the panel corrects (ADR 0378): its
+// name and its rate, written only while they are the ones read.
+type TaxRateTerms struct {
+	Name    string
+	RateBps int32
+}
+
 // TaxRatePatch is a PARTIAL update of a rate.
 //
 // A nil field means "do not touch"; a filled field is the new value. Had a full

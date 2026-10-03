@@ -182,6 +182,9 @@ type Repository interface {
 	ListTaxRates(ctx context.Context, regionID string) ([]models.TaxRate, error)
 	ListTaxRatesByRegions(ctx context.Context, regionIDs []string) ([]models.TaxRate, error)
 	UpdateTaxRate(ctx context.Context, id string, patch models.TaxRatePatch, now time.Time) (models.TaxRate, error)
+	// ReviseTaxRate writes a rate's name and rate only while they are the ones
+	// read, and reports whether it wrote (ADR 0378).
+	ReviseTaxRate(ctx context.Context, id string, read, next models.TaxRateTerms, now time.Time) (models.TaxRate, bool, error)
 	DeleteTaxRate(ctx context.Context, id string, now time.Time) error
 
 	CreateTaxClass(ctx context.Context, class models.TaxClass, now time.Time) (models.TaxClass, error)

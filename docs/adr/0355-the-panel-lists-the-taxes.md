@@ -7,6 +7,7 @@ that it inherits one; nothing is written there.
 
 - **Status:** Accepted
 - **Date:** 2026-10-02
+- **Amended by:** [0378](0378-the-panel-corrects-a-tax-rate.md): each rate is corrected from the ones it was drawn with
 
 ## Context
 

@@ -56,6 +56,19 @@ SET name = $2, code = $3, rate_bps = $4, is_default = $5, metadata = $6,
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;
 
+-- ReviseTaxRate writes a rate's name and rate only while they are the ones the
+-- caller read (ADR 0378): no row means the rate is gone or was revised since.
+-- name: ReviseTaxRate :one
+UPDATE tax_rate
+SET name       = sqlc.arg('name')::text,
+    rate_bps   = sqlc.arg('rate_bps')::integer,
+    updated_at = sqlc.arg('updated_at')
+WHERE id = sqlc.arg('id')
+  AND deleted_at IS NULL
+  AND name = sqlc.arg('read_name')::text
+  AND rate_bps = sqlc.arg('read_rate_bps')::integer
+RETURNING *;
+
 -- name: SoftDeleteTaxRate :one
 UPDATE tax_rate
 SET deleted_at = $2, updated_at = $2

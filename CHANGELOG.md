@@ -56,6 +56,12 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **The panel corrects a tax rate** (ADR 0378). **For operators:** each rate
+  on the Taxes screen corrects its name and its rate, typed as a percent, for
+  an operator holding `tax:write`; a rate someone else changed since the page
+  was drawn is refused and the form comes back with what was typed.
+  **For integrators:** the tax module provides `tax.admin` in the container.
+
 - **A shopper moves their account by proving the new address** (ADR 0377).
   **For integrators:** `contrib/identity-session` mounts
   `POST /store/v1/auth/email` with `{"new_email", "current_password"}`, which

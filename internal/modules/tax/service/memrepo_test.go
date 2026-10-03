@@ -408,6 +408,27 @@ func (m *memRepo) ratesForLocked(regionIDs []string) []models.TaxRate {
 	return out
 }
 
+// ReviseTaxRate writes the name and the rate only while they are the ones
+// read, as the statement's WHERE does.
+func (m *memRepo) ReviseTaxRate(
+	_ context.Context, id string, read, next models.TaxRateTerms, now time.Time,
+) (models.TaxRate, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.enter("ReviseTaxRate"); err != nil {
+		return models.TaxRate{}, false, err
+	}
+
+	current, ok := m.rates[id]
+	if !ok || current.DeletedAt != nil || current.Name != read.Name || current.RateBps != read.RateBps {
+		return models.TaxRate{}, false, nil
+	}
+	current.Name, current.RateBps, current.UpdatedAt = next.Name, next.RateBps, now.UTC()
+	m.rates[id] = current
+
+	return current, true, nil
+}
+
 // UpdateTaxRate applies the patch; it checks the default-rate constraints.
 func (m *memRepo) UpdateTaxRate(_ context.Context, id string, patch models.TaxRatePatch, now time.Time) (models.TaxRate, error) {
 	m.mu.Lock()

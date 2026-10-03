@@ -2,14 +2,17 @@ package adminui
 
 import (
 	"net/http"
+	"net/url"
 
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/query"
 )
 
 // The Taxes screen (ADR 0355): the tax module's tax regions through its tax
 // region entity, a country's own and its provinces', each with the rates it
-// charges, for an operator who may read the taxes. Nothing is written here,
-// and the codes are printed as the module stores them, upper-cased.
+// charges, for an operator who may read the taxes, the codes printed as the
+// module stores them, upper-cased. Each rate corrects its name and rate for
+// an operator who may write the taxes (ADR 0378).
 
 // TaxesPath lists the tax regions.
 const TaxesPath = URLPrefix + "/taxes"
@@ -50,15 +53,39 @@ type taxRegionRow struct {
 
 // taxRateView is one rate a tax region charges.
 type taxRateView struct {
-	Name, Code string
+	ID, Name, Code string
 	// Percent is the rate as a percent.
 	Percent string
 	Default bool
+	// RateBps is the rate in basis points as read, which the correction form
+	// carries (ADR 0378).
+	RateBps int64
+	// Form is what the rate's correction form offers: the terms as read, or
+	// what was typed when its correction was refused, which Refused says.
+	Form    taxRateForm
+	Refused bool
+}
+
+// taxRateForm is what a rate's correction form offers.
+type taxRateForm struct {
+	Name, Rate string
 }
 
 // listTaxes renders the tax regions a page at a time, in the module's order:
 // by country, a country's own before its provinces.
 func (u *UI) listTaxes(w http.ResponseWriter, r *http.Request) {
+	u.renderTaxes(w, r, http.StatusOK, "", nil)
+}
+
+// renderTaxes lists the tax regions with a refused correction's reason and
+// what was typed for the rate it was sent for. An operator who may correct and
+// not read is told the reason alone (ADR 0260).
+func (u *UI) renderTaxes(w http.ResponseWriter, r *http.Request, code int, refused string, typed url.Values) {
+	principal, _ := corehttp.PrincipalFromContext(r.Context())
+	if refused != "" && !principal.HasScope(scopeTaxRead) {
+		u.errorPage(w, r, code, "Not done", refused)
+		return
+	}
 	page := pageNumber(r.URL.Query().Get("page"))
 	records, err := u.catalog.Graph(r.Context(), query.GraphSpec{
 		Entity: EntityTaxRegion,
@@ -85,16 +112,28 @@ func (u *UI) listTaxes(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, rate := range recordList(record[fieldTaxRates]) {
 			bps, _ := intValue(rate[fieldRateBps])
-			row.Rates = append(row.Rates, taxRateView{
-				Name: recordString(rate, fieldName), Code: recordString(rate, "code"),
-				Percent: percentText(int64(bps)), Default: recordBool(rate, fieldRateDefault),
-			})
+			view := taxRateView{
+				ID: recordString(rate, fieldID), Name: recordString(rate, fieldName), Code: recordString(rate, "code"),
+				Percent: percentText(int64(bps)), Default: recordBool(rate, fieldRateDefault), RateBps: int64(bps),
+			}
+			view.Form = taxRateForm{Name: view.Name, Rate: view.Percent}
+			if refusedID := typed.Get(formTaxRateID); refusedID != "" && view.ID == refusedID {
+				view.Refused = true
+				view.Form = taxRateForm{Name: typed.Get(formTaxName), Rate: typed.Get(formTaxRate)}
+			}
+			row.Rates = append(row.Rates, view)
 		}
 		rows = append(rows, row)
 	}
 
-	data := map[string]any{titleKey: taxesLabel, "TaxRegions": rows}
+	data := map[string]any{
+		titleKey:     taxesLabel,
+		"TaxRegions": rows,
+		canReviseKey: u.taxes != nil && principal.HasScope(scopeTaxWrite),
+		writtenKey:   r.URL.Query().Get(paramWritten),
+		refusedKey:   refused,
+	}
 	addPaging(data, page, hasNext, TaxesPath)
 
-	u.templates.render(w, r, http.StatusOK, "taxes.gohtml", data)
+	u.templates.render(w, r, code, "taxes.gohtml", data)
 }

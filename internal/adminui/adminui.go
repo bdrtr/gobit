@@ -224,7 +224,10 @@ type UI struct {
 	// regions corrects a region (ADR 0362); nil when the installation
 	// registers no region surface.
 	regions RegionReviser
-	scopes  map[string]string
+	// taxes corrects a tax rate (ADR 0378); nil where the tax module is not
+	// installed, and the Taxes screen then offers no correction.
+	taxes  TaxRateReviser
+	scopes map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -351,6 +354,11 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And a tax rate's correction (ADR 0378).
+	taxes, err := optionalService[TaxRateReviser](c, ServiceTaxAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -388,6 +396,7 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 		invoices:      invoices,
 		settings:      settings,
 		regions:       regions,
+		taxes:         taxes,
 		session:       session,
 		authenticator: authenticator,
 		templates:     templates,

@@ -884,6 +884,7 @@ var panelSurfaceContracts = map[string]string{
 	"sales_channels.go": "auth.admin's channel terms",
 	// A region's terms as the surface takes them (ADR 0362).
 	"region_revise.go": "region.admin's region terms",
+	"tax_revise.go":    "tax.admin's tax rate terms",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

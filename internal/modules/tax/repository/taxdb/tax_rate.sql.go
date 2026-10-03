@@ -259,6 +259,56 @@ func (q *Queries) ListTaxRatesStandingOn(ctx context.Context, baseIds []string) 
 	return items, nil
 }
 
+const reviseTaxRate = `-- name: ReviseTaxRate :one
+UPDATE tax_rate
+SET name       = $1::text,
+    rate_bps   = $2::integer,
+    updated_at = $3
+WHERE id = $4
+  AND deleted_at IS NULL
+  AND name = $5::text
+  AND rate_bps = $6::integer
+RETURNING id, tax_region_id, name, code, rate_bps, is_default, metadata, created_at, updated_at, deleted_at, stacks_on_id, compound
+`
+
+type ReviseTaxRateParams struct {
+	Name        string
+	RateBps     int32
+	UpdatedAt   pgtype.Timestamptz
+	ID          string
+	ReadName    string
+	ReadRateBps int32
+}
+
+// ReviseTaxRate writes a rate's name and rate only while they are the ones the
+// caller read (ADR 0378): no row means the rate is gone or was revised since.
+func (q *Queries) ReviseTaxRate(ctx context.Context, arg ReviseTaxRateParams) (TaxRate, error) {
+	row := q.db.QueryRow(ctx, reviseTaxRate,
+		arg.Name,
+		arg.RateBps,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.ReadName,
+		arg.ReadRateBps,
+	)
+	var i TaxRate
+	err := row.Scan(
+		&i.ID,
+		&i.TaxRegionID,
+		&i.Name,
+		&i.Code,
+		&i.RateBps,
+		&i.IsDefault,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.StacksOnID,
+		&i.Compound,
+	)
+	return i, err
+}
+
 const softDeleteTaxRate = `-- name: SoftDeleteTaxRate :one
 UPDATE tax_rate
 SET deleted_at = $2, updated_at = $2

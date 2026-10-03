@@ -881,6 +881,13 @@ func (g recordingRegions) ReviseRegion(context.Context, string, json.RawMessage,
 	return g.surfaces.reach(ServiceRegionAdmin)
 }
 
+// recordingTaxes records the tax module's surface (ADR 0378).
+type recordingTaxes struct{ surfaces *recordingSurfaces }
+
+func (g recordingTaxes) ReviseTaxRate(context.Context, string, json.RawMessage, json.RawMessage) error {
+	return g.surfaces.reach(ServiceTaxAdmin)
+}
+
 // recordingInvoices records the invoice module's surface (ADR 0335).
 type recordingInvoices struct{ surfaces *recordingSurfaces }
 
@@ -1136,6 +1143,9 @@ var walkForms = map[string]url.Values{
 		formRegionReadName: {"Walk"}, formRegionReadAutomatic: {"true"}, formRegionReadRate: {"2000"},
 		formRegionName: {"Walk"}, formRegionTaxRate: {"20"},
 	},
+	routeKey(http.MethodPost, TaxRatePath): {
+		formTaxReadName: {"Walk"}, formTaxReadRate: {"2000"}, formTaxName: {"Walk"}, formTaxRate: {"20"},
+	},
 	routeKey(http.MethodPost, SalesChannelPath): {
 		formChannelReadName: {"Walk"}, formChannelReadDisabled: {"false"}, formChannelName: {"Walk"},
 	},
@@ -1212,6 +1222,7 @@ func newPanelWalk(t *testing.T, owners ownership) *panelWalk {
 	require.NoError(t, c.Provide(ServiceAuthAdmin, UserLister(recordingAccounts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceSettingsAdmin, StoreProfileAdmin(recordingSettings{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceRegionAdmin, RegionReviser(recordingRegions{walk.surfaces})))
+	require.NoError(t, c.Provide(ServiceTaxAdmin, TaxRateReviser(recordingTaxes{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePaymentAdmin, PaymentReceiver(recordingPayments{walk.surfaces})))
 	require.NoError(t, c.Provide(ServiceCartAdmin, TelephoneCarts(recordingCarts{walk.surfaces})))
 	require.NoError(t, c.Provide(ServicePromotionAdmin, PromotionLister(recordingPromotions{walk.surfaces})))
