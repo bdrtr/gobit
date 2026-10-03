@@ -36,11 +36,11 @@ const (
 	invitationFieldExpires = "expires_in_hours"
 )
 
-// messenger is the narrow surface this module needs from the notification module.
+// Messenger is the narrow surface this module needs from the notification module.
 //
 // Declared HERE with primitive types only, because this module cannot import that
 // one; the compiler is shown the pair in internal/arch (ADR 0136).
-type messenger interface {
+type Messenger interface {
 	Send(ctx context.Context, template, channel, reference, to string, data map[string]string) error
 }
 
@@ -54,7 +54,7 @@ type invitationSender struct {
 	log *slog.Logger
 
 	once sync.Once
-	svc  messenger
+	svc  Messenger
 	err  error
 }
 
@@ -71,7 +71,7 @@ func newInvitationSender(c *container.Container, log *slog.Logger) *invitationSe
 // and that its owner will never hear of.
 func (s *invitationSender) SendInvitation(ctx context.Context, email, token, reference string) error {
 	s.once.Do(func() {
-		s.svc, s.err = container.Resolve[messenger](s.c, notificationInteropName)
+		s.svc, s.err = container.Resolve[Messenger](s.c, notificationInteropName)
 		if s.err != nil {
 			s.err = errors.Wrap(s.err, errors.KindInternal, codeSetupFailed,
 				"the %s module could not resolve the notification surface (%q); an "+

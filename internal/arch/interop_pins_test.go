@@ -31,8 +31,11 @@ package arch_test
 // that runs tests because it cannot reach a lane that compiles them.
 
 import (
-	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -43,6 +46,7 @@ import (
 	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/query"
 	"github.com/bdrtr/gobit/internal/adminui"
+	"github.com/bdrtr/gobit/internal/modules/auth"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	b2bsvc "github.com/bdrtr/gobit/internal/modules/b2b/service"
 	cartapi "github.com/bdrtr/gobit/internal/modules/cart/api"
@@ -65,6 +69,7 @@ import (
 	promotionapi "github.com/bdrtr/gobit/internal/modules/promotion/api"
 	promotionsvc "github.com/bdrtr/gobit/internal/modules/promotion/service"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
+	"github.com/bdrtr/gobit/internal/modules/review"
 	settingssvc "github.com/bdrtr/gobit/internal/modules/settings/service"
 	taxsvc "github.com/bdrtr/gobit/internal/modules/tax/service"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
@@ -118,15 +123,16 @@ var (
 	_ notifsvc.OrderContactReader = (*ordersvc.Interop)(nil)
 )
 
-// The AUTH module resolving the NOTIFICATION module's surface.
+// A module resolving another module's surface from its root package.
 //
-// The consumer interface is unexported (`auth.messenger`), so this pin names the
-// producer against the shape the consumer needs rather than against the consumer's
-// own type — which is the one thing this file cannot do for an unexported
-// interface, and is written here rather than left to be noticed.
-var _ interface {
-	Send(ctx context.Context, template, channel, reference, to string, data map[string]string) error
-} = (*notifsvc.Interop)(nil)
+// The two consumer interfaces were unexported until D226, and an unexported one
+// can only be pinned by copying its shape, which goes on matching the producer
+// after the consumer's own type has moved. They are exported so the pin names
+// the consumer's type itself.
+var (
+	_ auth.Messenger        = (*notifsvc.Interop)(nil)
+	_ review.OrderPurchases = (*ordersvc.Interop)(nil)
+)
 
 // A FLOW resolving a MODULE's surface.
 //
@@ -141,6 +147,8 @@ var (
 	_ cartwf.Discounts = (*promotionsvc.Interop)(nil)
 	_ cartwf.Taxes     = (*taxsvc.Interop)(nil)
 	_ cartwf.Shipping  = (*fulfillsvc.Interop)(nil)
+	_ cartwf.Companies = (*b2bsvc.Interop)(nil)
+	_ cartwf.Orders    = (*ordersvc.Interop)(nil)
 
 	_ checkoutwf.Carts       = (*cartsvc.Interop)(nil)
 	_ checkoutwf.Inventory   = (*inventorysvc.Interop)(nil)
@@ -151,6 +159,7 @@ var (
 
 	_ fulfillingwf.Orders       = (*ordersvc.Interop)(nil)
 	_ fulfillingwf.Fulfillments = (*fulfillsvc.Interop)(nil)
+	_ fulfillingwf.Payments     = (*paymentsvc.Interop)(nil)
 
 	_ invoicingwf.Orders       = (*ordersvc.Interop)(nil)
 	_ invoicingwf.Invoices     = (*invoicesvc.Interop)(nil)
@@ -375,4 +384,136 @@ func TestEveryConsumedInteropNameIsPinned(t *testing.T) {
 	assert.GreaterOrEqual(t, checked, 8,
 		"only %d consumed interop names were priced; the derivation has gone blind and "+
 			"this gate would pass whatever the tree held", checked)
+}
+
+// TestEveryInteropConsumerIsPinned prices what [TestEveryConsumedInteropNameIsPinned]
+// cannot: the CONSUMER. A name pinned for one flow passes that gate while a
+// second flow resolving it under an interface of its own goes unchecked, and the
+// fulfilling flow's Payments was such a consumer of payment.interop until D226.
+//
+// The population is derived as the name gate's is: every call whose name carries
+// "resolve" and whose name argument is an interop name another module provides,
+// with the interface its type argument names. A generic helper's own body
+// resolves T and is skipped; its CALLERS name the interface.
+func TestEveryInteropConsumerIsPinned(t *testing.T) {
+	t.Parallel()
+
+	tree := scanProductionSource(t)
+	provided := tree.providedNames(t)
+	pinned := pinnedConsumers(t)
+
+	checked := 0
+	for name, sites := range tree.calls {
+		if !strings.Contains(strings.ToLower(name), resolveCallFragment) {
+			continue
+		}
+		for _, site := range sites {
+			consumer := typeArgument(site.file, site.call.Fun)
+			if consumer == "" {
+				continue
+			}
+			for _, arg := range site.call.Args {
+				for _, value := range tree.stringValues(site.file, site.fn, arg, 0) {
+					producer, ok := provided[value]
+					if !ok || !strings.HasSuffix(value, interopFamily) {
+						continue
+					}
+					if prefix := owningModulePrefix(producer); prefix != "" &&
+						strings.HasPrefix(site.file.path, prefix) {
+						continue
+					}
+					if _, exempt := interopPinExemptions[value]; exempt {
+						continue
+					}
+					checked++
+					assert.Truef(t, pinned[consumer],
+						"%s resolves %q as %s, and this file pins nothing for that "+
+							"interface.\nThe name gate passes because the name is pinned for "+
+							"another consumer; this one can drift from the producer and fail "+
+							"at RESOLUTION (gap D73, D226). Add `var _ <consumer interface> = "+
+							"(*<producer>)(nil)` above.",
+						tree.location(site.file, site.call.Pos()), value, consumer)
+				}
+			}
+		}
+	}
+
+	assert.GreaterOrEqual(t, checked, 20,
+		"only %d interop consumers were priced; the derivation has gone blind", checked)
+}
+
+// typeArgument answers the import path and name of the interface a generic
+// resolve call names, as "path.Name", or "" for a call that names none or names
+// a type parameter.
+func typeArgument(file *sourceFile, fun ast.Expr) string {
+	var arg ast.Expr
+	switch x := fun.(type) {
+	case *ast.IndexExpr:
+		arg = x.Index
+	case *ast.IndexListExpr:
+		if len(x.Indices) == 1 {
+			arg = x.Indices[0]
+		}
+	}
+	switch x := arg.(type) {
+	case *ast.Ident:
+		if x.Name == "T" {
+			return ""
+		}
+
+		return file.importPath + "." + x.Name
+	case *ast.SelectorExpr:
+		pkg, ok := x.X.(*ast.Ident)
+		if !ok || file.imports[pkg.Name] == "" {
+			return ""
+		}
+
+		return file.imports[pkg.Name] + "." + x.Sel.Name
+	}
+
+	return ""
+}
+
+// pinnedConsumers reads this file's own pins: every `_ pkg.Interface = ...`
+// declaration, as "path.Interface".
+func pinnedConsumers(t *testing.T) map[string]bool {
+	t.Helper()
+
+	parsed, err := parser.ParseFile(token.NewFileSet(),
+		filepath.Join(repoRoot, "internal", "arch", "interop_pins_test.go"), nil, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("this file could not be parsed: %v", err)
+	}
+	imports := map[string]string{}
+	for _, imp := range parsed.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		local := path[strings.LastIndex(path, "/")+1:]
+		if imp.Name != nil {
+			local = imp.Name.Name
+		}
+		imports[local] = path
+	}
+
+	pinned := map[string]bool{}
+	for _, decl := range parsed.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.VAR {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			value, ok := spec.(*ast.ValueSpec)
+			if !ok || len(value.Names) != 1 || value.Names[0].Name != "_" {
+				continue
+			}
+			selector, ok := value.Type.(*ast.SelectorExpr)
+			if !ok {
+				continue
+			}
+			if pkg, ok := selector.X.(*ast.Ident); ok && imports[pkg.Name] != "" {
+				pinned[imports[pkg.Name]+"."+selector.Sel.Name] = true
+			}
+		}
+	}
+
+	return pinned
 }

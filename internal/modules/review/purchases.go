@@ -27,8 +27,8 @@ const (
 // read.
 const codePurchaseReadFailed = "review_purchase_read_failed"
 
-// orderPurchases is the order module's answer this module reads (ADR 0372).
-type orderPurchases interface {
+// OrderPurchases is the order module's answer this module reads (ADR 0372).
+type OrderPurchases interface {
 	CustomerBoughtAnyOf(ctx context.Context, customerID string, variantIDs []string) (bool, error)
 }
 
@@ -46,7 +46,7 @@ type purchases struct {
 
 	once    sync.Once
 	catalog query.Query
-	orders  orderPurchases
+	orders  OrderPurchases
 	err     error
 }
 
@@ -97,7 +97,7 @@ func (p *purchases) resolve(ctx context.Context) {
 
 		return
 	}
-	orders, err := container.Resolve[orderPurchases](p.c, orderInteropName)
+	orders, err := container.Resolve[OrderPurchases](p.c, orderInteropName)
 	if err != nil {
 		p.absent(ctx, err, orderInteropName)
 
