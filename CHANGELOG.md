@@ -1,16 +1,15 @@
-# Değişiklik günlüğü
+# Changelog
 
-Biçim [Keep a Changelog](https://keepachangelog.com/tr/1.1.0/) ölçütlerine,
-sürümleme [Semantic Versioning](https://semver.org/lang/tr/) kurallarına
-uyar.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and versioning follows [Semantic Versioning](https://semver.org/).
 
-`0.x` boyunca **kırıcı değişiklikler minor sürümlerde gelebilir**: API yüzeyi
-henüz sabitlenmemiştir ve bir uç, daha doğru bir tasarım uğruna taşınabilir.
-Sabitlenme `1.0.0` ile olur.
+Throughout `0.x`, **breaking changes may arrive in minor releases**: the API
+surface is not fixed yet, and an endpoint may move for the sake of a better
+design. It is fixed with `1.0.0`.
 
-## [Yayımlanmamış]
+## [Unreleased]
 
-### Kırıcı değişiklikler
+### Breaking changes
 
 - **A shopper does not change their address unproven** (ADR 0376, D224).
   **For integrators:** `PUT /store/v1/customers/{id}` no longer takes
@@ -55,7 +54,7 @@ Sabitlenme `1.0.0` ile olur.
   three endpoints on one's own factor no longer need `auth:read`, so every
   operator who can sign in can protect their account.
 
-### Düzeltmeler
+### Fixes
 
 - **A shopper moves their account by proving the new address** (ADR 0377).
   **For integrators:** `contrib/identity-session` mounts
@@ -1198,7 +1197,7 @@ Sabitlenme `1.0.0` ile olur.
   checkout does; `go run` of a module at a version stamps that version. The
   refusal of `gobit new` now names `go run` inside a checkout.
 
-### Kararlar
+### Decisions
 
 - **A bundle variant is replaced from its catalog parts** (ADR 0244). **For
   operators:** an exchange's replacement that names a bundle variant, a gift box
@@ -1792,15 +1791,17 @@ Sabitlenme `1.0.0` ile olur.
 
 ## [0.9.0] — 2026-09-25
 
-Her madde **bir satırdır ve kararını adlandırır**. Gerekçe, ölçüm ve karşı
-okuma burada değil: karar `docs/adr/` içindeki kayıtta, kararı üreten tartışma
-onu getiren commit mesajında, sayılar `docs/measurements/` altında durur. Bu
-bölüm 2026-09-09'da 4.604 satırdan bu listeye indirildi — anlatının tamamı git
-geçmişinde duruyor. Elli iki karar 2026-09-09'da toplu olarak eklendi: hepsi
-verilmiş ve hiçbiri duyurulmamıştı, ve bunu soran bir şey yoktu —
-`TestTheChangelogNamesEveryUnreleasedDecision` artık soruyor (ADR 0098).
+Every item **is one line and names its decision**. The rationale, the
+measurement and the opposing reading are not here: the decision lives in its
+record under `docs/adr/`, the discussion that produced it in the commit
+message that brought it, and the numbers under `docs/measurements/`. This
+section was cut down from 4,604 lines to this list on 2026-09-09 — the full
+narrative remains in the git history. Fifty-two decisions were added in bulk
+on 2026-09-09: all of them had been made and none had been announced, and
+nothing asked about it — `TestTheChangelogNamesEveryUnreleasedDecision` now
+asks (ADR 0098).
 
-### Kırıcı değişiklikler
+### Breaking changes
 
 Legitimate in a minor version throughout `0.x` (see the head of this file).
 Collected on the day of the cut by diffing v0.8.0 against this tree: the
@@ -1870,318 +1871,358 @@ a v0.8.0 user has to change.
   prices reach storefront carts (ADR 0049), `paid_total` is filled (ADR 0022),
   and a mixed-rate cart is taxed per line.
 
-### Düzeltmeler
+### Fixes
 
-- **Kilitlerin dayandığı yalıtım düzeyine veritabanını hiçbir şey bağlamıyordu**
-  (D123). Bir toplamı koruyan her kilit ancak READ COMMITTED'da doğru; sunucu,
-  veritabanı ya da rol REPEATABLE READ'e ayarlıyken entegrasyon şeridi on beş
-  pakette kırk test düşürdü, beşi sessizce: bir siparişi karşılayan harcama
-  sınırından sekiz sipariş, üç birimlik satırda on altı iptal, 6.100'lük
-  siparişe 10.000 kredi, bir kategori halkası, kapanan konuma stok yazımı.
-  Kapatan ADR 0166.
+- **Nothing bound the database to the isolation level the locks rely on**
+  (D123). Every lock that guards a sum is correct only under READ COMMITTED;
+  with the server, the database or the role set to REPEATABLE READ, the
+  integration lane failed forty tests across fifteen packages, five of them
+  silently: eight orders against a spending limit that covers one, sixteen
+  cancellations on a three-unit line, 10,000 of credit on a 6,100 order, a
+  category cycle, a stock write to a location being closed. Closed by
+  ADR 0166.
 
-- **S3 testleri yine yalnız CI'da kırmızıydı, D80'in sebebiyle** (D121). D80'in
-  taşındığı kayıt defteri (`quay.io/minio/minio`) sabitlenmiş etiketi de
-  `latest`'i de artık sunmuyor ve bu makine bir yıllık kopyayı tutuyordu. MinIO
-  topluluk sunucusunu kimliksiz çekilebilen hiçbir yerde imaj olarak
-  dağıtmıyor; D80 aynı satıcının ikinci adresine taşınarak aynı açıklığı bir ana
-  bilgisayar adı öteye koymuştu. Testler artık RustFS 1.0.0'a karşı koşuyor ve
-  ona güvenilmeden önce iki özelliği ölçüldü: kanonik başlık bloğunun satır
-  sonunu düşürmek imza testlerini, bucket politikasını atlamak anonim okumayı
-  kırmızı yapıyor. Düzenek artık hiçbir satıcının adını taşımıyor.
+- **The S3 tests were red only in CI again, for D80's reason** (D121). The
+  registry D80 moved to (`quay.io/minio/minio`) no longer serves either the
+  pinned tag or `latest`, and this machine was holding a year-old copy. MinIO
+  does not distribute the community server as an image anywhere it can be
+  pulled without credentials; by moving to the same vendor's second address,
+  D80 had put the same exposure one hostname away. The tests now run against
+  RustFS 1.0.0, and two of its properties were measured before it was trusted:
+  dropping the line ending of the canonical header block turns the signature
+  tests red, and skipping the bucket policy turns anonymous reads red. The rig
+  no longer carries any vendor's name.
 
-- **scaffold testinin çevrimdışı tidy öncülü baştan yanlıştı** (D122). Üretilen
-  projenin grafiği checkout'unkinden farklı: bağımlılıkların yalnız-test
-  bağımlılıklarını istiyor ve checkout'un kendi `go mod download`'u onları
-  hiç getirmiyor. Test yalnız ağlı bir tidy'nin ısıttığı önbelleklerde yeşildi;
-  go.sum CI'nın önbellek anahtarını değiştirince soğuk başladı ve düştü. Tidy
-  artık kullanıcınınki gibi modül vekilinden geçiyor, derleme çevrimdışı
-  kalıyor.
+- **The scaffold test's offline-tidy premise was wrong from the start**
+  (D122). The generated project's graph differs from the checkout's: it wants
+  the test-only dependencies of its dependencies, and the checkout's own
+  `go mod download` never fetches them. The test was green only on caches
+  warmed by a networked tidy; when go.sum changed CI's cache key, it started
+  cold and failed. The tidy now goes through the module proxy, as a user's
+  does, and the build stays offline.
 
-- **Satırı olmayan bir müşterinin bakiyesi iki kez harcanabiliyordu** (D118).
-  İki bakiye defteri de bakiyeyi toplamadan önce müşterinin SATIRLARINI
-  kilitliyordu ve satırı olmayan müşteri hiçbir şey kilitlemiyordu; kilit ile
-  toplam arasında commit olan para kimsenin tutmadığı bir satırdı, ikinci
-  yetkilendirme onu beklemeden kilitledi ve ikisi de harcadı — sonda 100 puanlık
-  bakiyeyi −100'e indirdi. ADR 0152 bunu "delik değil" diye yazmıştı; ADR 0165'te
-  araya giren yazıcı her adlı tahsilatta koşan otomatik kazanım. Kilit artık
-  BAKİYEDE: müşteri ve para birimine bağlı işlem ömürlü bir danışma kilidi,
-  sipariş modülünün harcama kilidinin argümanıyla. Ağaçtaki her kilit testi
-  müşteriyi rakip kilitlemeden ÖNCE fonluyordu; yeni test paranın kilit
-  tutulurken geldiği şekli de koşuyor ve rakibi kilidin SQL kopyasıyla değil
-  deponun kendi fonksiyonuyla kuruyor.
+- **The balance of a customer with no rows could be spent twice** (D118). Both
+  balance ledgers locked the customer's ROWS before summing the balance, and a
+  customer with no rows locked nothing; money committed between the lock and
+  the sum was a row nobody held, the second authorization locked without
+  waiting for it, and both spent — in the end taking a 100-point balance down
+  to −100. ADR 0152 had written this down as "not a hole"; under ADR 0165 the
+  interleaving writer is the automatic earn that runs on every named capture.
+  The lock is now ON THE BALANCE: a transaction-scoped advisory lock keyed on
+  the customer and the currency, on the argument of the order module's
+  spending lock. Every lock test in the tree funded the customer BEFORE the
+  rival locked; the new test also runs the shape where the money arrives while
+  the lock is held, and builds the rival with the repository's own function
+  rather than an SQL copy of the lock.
 
-- **Bakiye kilidinin dayandığı yalıtım düzeyi hiçbir yerde adlandırılmamıştı**
-  (D119). Bekleyen yetkilendirmenin toplamı ancak READ COMMITTED'da taze bir
-  anlık görüntüdür; ödeme deposu her işlemi sunucunun varsayılanında açıyordu
-  ve bir rol ya da veritabanı onu REPEATABLE READ yapabilir — orada kilit
-  yerindeyken bakiye ikinci kez harcanıyor. `WithTx` artık düzeyi adıyla açıyor
-  ve tanık, bağlantıları REPEATABLE READ'de başlayan bir havuz. Aynı adlandırılmamış
-  düzey diğer modüllerin kilitlerinin de altında; ölçüm 0165 bunu adlandırıyor.
+- **The isolation level the balance lock rests on was named nowhere** (D119).
+  The waiting authorization's sum is a fresh snapshot only under READ
+  COMMITTED; the payment repository opened every transaction at the server's
+  default, and a role or a database can make that REPEATABLE READ — there,
+  with the lock in place, the balance is spent a second time. `WithTx` now
+  opens the level by name, and the witness is a pool whose connections start
+  in REPEATABLE READ. The same unnamed level sits under the other modules'
+  locks too; measurement 0165 names it.
 
-- **Kişiye bağlı tender'ları kaydeden ayar telinin hiçbir tanığı yoktu** (D120).
-  Kurulum kökü `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM`'i ödeme modülüne
-  TERSİNE çevirerek veriyor; olumsuzlama düşseydi bakiye tender'ları herkesin
-  müşteri adı yazabildiği kurulumda kaydedilirdi ve her şerit yeşil kalırdı.
-  İki smoke süreci artık vitrinin sağlayıcı listesini okuyor: ayarı açık olan
-  kredi ve puan sunmamalı, stok kurulum ikisini de sunmalı.
+- **The setting wire that registers the person-bound tenders had no witness**
+  (D120). The composition root hands
+  `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM` to the payment module INVERTED;
+  had the negation been dropped, the balance tenders would be registered on an
+  installation where anyone can type a customer name, and every lane would
+  have stayed green. Two smoke processes now read the storefront's provider
+  list: the one with the setting on must not offer credit and points, and the
+  stock installation must offer both.
 
-- **Saatlik mutabakat mağaza kredisinin oturumlarını "sorulamaz", defterini
-  "hiçbir şeyin doğrulamadığı" diye raporluyordu** (D117). Sağlayıcı
-  `SessionInspector`'ı gerçeklemiyordu; aynı şekildeki manuel sağlayıcı
-  gerçekliyordu — iki emsal birbiriyle çelişiyordu ve puan tender'ı birini seçmek
-  zorundaydı. Aynı işlemde yazan bir defter için "doğrulanmamış" cümlesi yanlış:
-  mutabakatın kapattığı delik (sağlayıcı parayı aldı, modülün commit'i düştü)
-  burada oluşamaz, blokaj modülle birlikte geri alınır. Ortak makine artık her
-  iki tender için `InspectSession`'ı kendi oturum tablosundan cevaplıyor ve
-  rapor bu oturumlar için "ikisi uyuşuyor" diyor.
+- **The hourly reconciliation reported store credit's sessions as "cannot be
+  asked" and its ledger as "verified by nothing"** (D117). The provider did
+  not implement `SessionInspector`; the manual provider, of the same shape,
+  did — the two precedents contradicted each other, and the points tender had
+  to pick one. For a ledger that writes in the same transaction, the
+  "unverified" sentence is wrong: the hole the reconciliation closes (the
+  provider took the money, the module's commit failed) cannot form here; the
+  hold is rolled back together with the module. The shared machine now answers
+  `InspectSession` for both tenders from its own session table, and the report
+  says "the two agree" for these sessions.
 
-- **Kredi defterinin iki yazıcısı vardı ve çifti hiçbir kapı tutmuyordu**
-  (D116). `IssueCredit` ve mağaza kredisi sağlayıcısı aynı
-  `payment_store_credit_entries` tablosuna yazıyor ve altıncı bir yazıcıyı
-  hiçbir test yakalamazdı; puan defterinin kapısı ise TEK yazıcı kabul ediyordu,
-  yani ikinci yazıcılı bir defter için araç yoktu. Artık
-  `TestEveryPaymentLedgerWriteEntersThroughANamedDoor` iki deftere birden
-  bakıyor ve ikinci kapıyı bir fonksiyon adı listesinden değil tender'ın
-  `ID()` metodunun döndürdüğü kimlikten TÜRETİYOR — adlarla yazılsaydı manuel ve
-  PayTR sağlayıcılarının aynı adlı metotları da içeri girerdi. Yeniden
-  adlandırılan ya da silinen bir tender kapıyı kimseye açmak yerine denetimi
-  kırmızı yapıyor, ve her kapının — adlandırılan fonksiyonun da tender'ın da —
-  gerçekten YAZDIĞI görülmek zorunda.
+- **The credit ledger had two writers and no gate held the pair** (D116).
+  `IssueCredit` and the store-credit provider write to the same
+  `payment_store_credit_entries` table, and no test would have caught a sixth
+  writer; the points ledger's gate, for its part, accepted a SINGLE writer, so
+  there was no tool for a ledger with a second writer.
+  `TestEveryPaymentLedgerWriteEntersThroughANamedDoor` now looks at both
+  ledgers at once and DERIVES the second door not from a list of function
+  names but from the identity the tender's `ID()` method returns — written
+  with names, the same-named methods of the manual and PayTR providers would
+  have got in too. A renamed or deleted tender turns the check red rather than
+  leaving a door that opens for no one, and every door — the named function
+  and the tender alike — has to be seen actually WRITING.
 
-- **Üç sayım bayatlamıştı** (D115). Ödeme modülünün paket godoc'u "kutudan
-  çıkan tek sağlayıcı manuel" diyordu (ADR 0152'den beri yanlış, puanla iki
-  eksik); sağlayıcı uyum kapısının godoc'u "on iki sağlayıcı" diyordu (on üç
-  paket vardı, tender'la on dört); `api/describe.go` "sorgu dizesini okuyan TEK
-  uç" diyordu (beş okuyucu var). Hiçbirini kapı fiyatlamıyor — satırda nüfusun
-  yolu yok. Üç cümle de artık sayıyı değil MEKANİZMAYI adlandırıyor: kayıt
-  sırasında kaydedilenler, tabanın üstünde kalan bir nüfus, kendi dosyasında
-  anlatılan okuyucular — D102/D110/D111'in sınıfı, aynı onarım.
+- **Three counts had gone stale** (D115). The payment module's package godoc
+  said "the only provider out of the box is manual" (wrong since ADR 0152, and
+  two short counting points); the provider conformance gate's godoc said
+  "twelve providers" (there were thirteen packages, fourteen with the tender);
+  `api/describe.go` said "the ONLY endpoint that reads the query string"
+  (there are five readers). No gate checks any of them — the line carries no
+  path to the population. All three sentences now name the MECHANISM rather
+  than the number: what is registered at registration time, a population that
+  stays above a floor, the readers described in their own file — the class of
+  D102/D110/D111, the same repair.
 
-- **checkout godoc'u aynı sepetin başarısız bir denemeden sonra yeniden
-  denenemeyeceğini söylüyordu** (D114). `internal/workflows/checkout/doc.go`'nun
-  "# Idempotency" bölümü bunu "kabul edilen bedel" diye yazıyordu; oysa motor
-  (`workflow.StatusFailed` anahtarı SERBEST BIRAKIR), onun testi ve
-  `docs/known-limits.md` tam tersini söylüyor, pgstore de anahtarı aynı UPDATE'te
-  boşaltıyor. Altı kopya, hiçbiri kapılı, üçü yanlış ve üçü de kararı anlatan
-  pakette. Üçü de yeniden yazıldı — kararı anlatan kopya, motorun tuttuğu kopya
-  olmak zorunda — ve e2e artık
-  reddedilen bir sepeti AYNI sepetle başka bir tender üzerinden tamamlıyor: puan
-  için "puan yetmedi, kartla öde" sıradan yol, ve hiçbir şerit onu yürümüyordu.
+- **The checkout godoc said the same cart could not be retried after a failed
+  attempt** (D114). The "# Idempotency" section of
+  `internal/workflows/checkout/doc.go` wrote this down as "an accepted cost";
+  yet the engine (`workflow.StatusFailed` RELEASES the key), its test and
+  `docs/known-limits.md` say the exact opposite, and pgstore clears the key in
+  the same UPDATE. Six copies, none of them gated, three wrong, and all three
+  in the package that describes the decision. All three were rewritten — the
+  copy that describes the decision has to be the copy the engine keeps — and
+  the e2e now completes a refused cart with the SAME cart through another
+  tender: for points, "not enough points, pay by card" is the ordinary path,
+  and no lane walked it.
 
-- **Vitrinde kişiye bağlı bir tender seçen misafir 500 alıyordu** (D113).
-  Mağaza kredisi sağlayıcısı sahipsiz oturumu İÇ HATA ile reddediyordu —
-  gerekçesi çağıranın modül olması ("kimse için koleksiyon açıp birine ait
-  tender seçti") — ama vitrinde seçen, o tender'ı içeren bir listeyi okuyan
-  alışverişçi, ve `core/http` iç hatayı 500'e çeviriyor. Puan tender'ı aynı
-  hatayı miras alacaktı. Artık ikisinin ortak makinesi ÇATIŞMA (409) döndürüyor:
-  istek iyi biçimli, onu reddeden karşılaştığı durum. Eski test HTTP durumunu
-  değil yalnız hata kodunu iğneliyordu.
+- **A guest who chose a person-bound tender on the storefront got a 500**
+  (D113). The store-credit provider refused an ownerless session with an
+  INTERNAL ERROR — on the reasoning that the caller is the module ("it opened
+  a collection for nobody and chose a tender that belongs to someone") — but
+  on the storefront the one choosing is the shopper who read a list containing
+  that tender, and `core/http` turns an internal error into a 500. The points
+  tender would have inherited the same error. The two tenders' shared machine
+  now returns CONFLICT (409): the request is well-formed; what refuses it is
+  the state it meets. The old test pinned only the error code, not the HTTP
+  status.
 
-- **Kimlik öneklerinin testi sekiz önekin beşini tutuyordu** (D112).
-  `TestIdentifierPrefixesAndOrdering` elle yazılmış bir map'ti: mağaza
-  kredisinin iki öneki (ADR 0152) ve puan defterininki (ADR 0164) `ids.go`'ya
-  eklendi, teste eklenmedi, ve dokuzuncusu da aynı yoldan görünmez olacaktı.
-  Nüfus artık `ids.go`'daki `IDPrefix` sabitlerinden OKUNUYOR ve daha kısa bir
-  map'i test reddediyor — bu depodaki her elle listelenmiş nüfusun er geç
-  ihtiyaç duyduğu şekil.
+- **The identifier-prefix test held five of the eight prefixes** (D112).
+  `TestIdentifierPrefixesAndOrdering` was a hand-written map: store credit's
+  two prefixes (ADR 0152) and the points ledger's (ADR 0164) were added to
+  `ids.go` but not to the test, and a ninth would have gone invisible the same
+  way. The population is now READ from the `IDPrefix` constants in `ids.go`,
+  and the test refuses a shorter map — the shape every hand-listed population
+  in this repository needs sooner or later.
 
-- **Beş cümle modül nüfusunu on yedi diye fiyatlıyordu, ağaç on sekiz tutuyor**
-  (D110). Sayım kapısı bir iddiayı ancak nüfusun YOLU sayıyla aynı satırdaysa
-  denetime alıyor ve bu ölçülmüş bir karar: çıplak "sayı + çoğul isim" şekli alt
-  kümelerce baskın, yalnız `internal/arch` içinde otuz tane var ("iki modül bir
-  şemayı paylaşıyor", "üç modül", "bir modül"). O yüzden kapı GENİŞLETİLMEDİ —
-  dizine göre bir gevşetme tam o cümleleri içine alırdı, ki kapının kendi
-  godoc'unun reddettiği "yanına kontrol eklenmiş muafiyet listesi" şekli bu.
-  Okuma üç ayrı cümle türü ayırdı: TARİHLİ ölçüm ("2026-09-07'de ölçüldü, matris
-  on beş modül adlandırıyordu") tarihindeki doğruyu söylüyor ve öyle bırakıldı;
-  GEREKSİZ sayı ("17 modülün hepsi hem api hem service dizini taşıyor",
-  "deponun on yedi modülünün on yedisi kayıtlı", "aynı adlı bir dosya on yedi
-  modülde birden var" — iki kopya) cümlenin ihtiyacı olmayan şeydi ve silindi,
-  böylece bir daha çürüyemez; ve BİLGİ TAŞIYAN sayı ("on yedi modül api
-  paketinden ON DÖRDÜ, diğer üçü sabitlerle tanımlıyor") iğnelenmiş bir kayda
-  dönüştü: türetilmiş kapsamın dışında kalan paketler artık her birinin
-  gerekçesini adlandıran bir kayda karşı iddia ediliyor. İğne, düzyazının
-  kaçırdığını buldu: `settings/api` kapsamdan sessizce çıkmış, ve adlandırılan
-  üçünden FARKLI bir sebeple — hiç `openapi.Parameter` kurmuyor ve hiç query
-  parametresi okumuyor, yani onlardan farklı olarak denetimsiz kalan bir şey yok.
+- **Five sentences put the module population at seventeen; the tree holds
+  eighteen** (D110). The count gate takes a claim under check only when the
+  population's PATH is on the same line as the number, and that is a measured
+  decision: the bare "number + plural noun" shape is dominated by subsets —
+  `internal/arch` alone holds thirty ("two modules share a schema", "three
+  modules", "one module"). So the gate was NOT WIDENED — loosening it by
+  directory would have pulled in exactly those sentences, which is the
+  "exemption list with a check bolted on" shape the gate's own godoc refuses.
+  The reading separated three kinds of sentence: the DATED measurement
+  ("measured on 2026-09-07, the matrix named fifteen modules") states what was
+  true on its date and was left as it is; the UNNEEDED number ("all 17 modules
+  carry both an api and a service directory", "seventeen of the repository's
+  seventeen modules are registered", "a file of the same name exists in
+  seventeen modules at once" — two copies) was something the sentence did not
+  need and was deleted, so it can never rot again; and the INFORMATION-BEARING
+  number ("FOURTEEN of the seventeen module api packages, the other three
+  define them with constants") became a pinned record: the packages left
+  outside the derived scope are now asserted against a record that names each
+  one's reason. The pin found what the prose had missed: `settings/api` had
+  silently dropped out of the scope, and for a reason DIFFERENT from the three
+  named — it never builds an `openapi.Parameter` and never reads a query
+  parameter, so, unlike them, nothing is left unchecked.
 
-- **İki yoldan giden bir olayın gövdesi İKİ kez elle yazılmıştı** (D109).
-  `order.placed` hız için doğrudan yayımlanıyor, güvence için outbox'a yazılıyor
-  ve ikisi aynı TÜRETİLMİŞ olay kimliğini taşıyor — yükü ise dokuz anahtarlık iki
-  ayrı map literaliydi, okuduğum gün aynı ve karşılaştıranı olmayan. Bir kopyaya
-  alan eklenmesi tek bir olay kimliğine iki gövde verirdi ve abonenin hangisini
-  gördüğü, hızlı yolun mu röleyin mi yetiştiğine bağlı olurdu. Bunu bir defter
-  satırı yapan şey kuralın NEREDE durduğu: ödeme modülü yükünü yazıldığı günden
-  beri tek yerde kuruyor ve godoc'u order modülünü ADIYLA "kaçındığı şekil" diye
-  işaret ediyordu — kural doğruydu, yazılıydı, ve hiçbir yerde uygulanmıyordu.
-  Düzeltmeden önce ölçüldü: altı modül servisi yayımlıyor, beşi gövdeyi
-  adlandırılmış bir fonksiyondan kuruyor, biri kurmuyordu; beş konu iki yoldan
-  gidiyor. Kapı artık her test-dışı Go dosyasını yürüyüp bir outbox yazımıyla bir
-  `eventbus.Event` literalini paket içinde KONUYA göre eşliyor ve yük ifadeleri
-  aynı kurucu çağrısı olmayan çifti reddediyor; üç mutasyonla kanıtlandı, biri
-  özgün literali geri koymak. Aynı okumadan iki bayat cümle döküldü: ödeme
-  godoc'undaki suçlama (artık kapının tarifi) ve analytics eklentisinin dokuz
-  anahtar taşıyan bir yük için yazdığı "sekiz anahtarın ikisi".
+- **The body of an event that travels two paths was written by hand TWICE**
+  (D109). `order.placed` is published directly for speed and written to the
+  outbox for assurance, and both carry the same DERIVED event id — its
+  payload, though, was two separate nine-key map literals, identical on the
+  day I read them and with nothing comparing them. Adding a field to one copy
+  would have given a single event id two bodies, and which one a subscriber
+  saw would have depended on whether the fast path or the relay got there
+  first. What makes this a ledger row is WHERE the rule stood: the payment
+  module has built its payload in one place since the day it was written, and
+  its godoc pointed at the order module BY NAME as "the shape it avoids" — the
+  rule was right, was written down, and was enforced nowhere. Measured before
+  the fix: six module services publish, five build the body from a named
+  function, one did not; five topics travel two paths. The gate now walks
+  every non-test Go file, matches an outbox write with an `eventbus.Event`
+  literal by TOPIC within the package, and refuses a pair whose payload
+  expressions are not the same constructor call; proven with three mutations,
+  one of them putting the original literal back. Two stale sentences fell out
+  of the same reading: the accusation in the payment godoc (now a description
+  of the gate) and the analytics plugin's "two of the eight keys", written for
+  a payload that carries nine.
 
-- **Bir kapı, beklediği şeyden SONRA koşan bir yan etkiye iddia kuruyordu**
-  (D108). `TestRedisIntegrationTakesOverWhatADeadConsumerWasHolding` (ADR 0162)
-  devralınan olayın handler'a ulaşmasını bekleyip askı listesinin boş olduğunu
-  iddia ediyordu; oysa ACK, handler DÖNDÜKTEN sonra bir `defer` içinde
-  koşuyor ve handler tamponlu kanala yazar yazmaz dönüyor. Yani iddia ACK'ten
-  önce koşabilirdi — CI'da koştu da, test yeşil girdikten bir push sonra. Yarış
-  İNŞADAN kanıtlı, üretimden değil: testi yazan makinede `-race` ile beş koşumda
-  bir kez bile düşmedi, ki zaten bu yüzden geçti. Onarım hoşgörü değil SIRA:
-  `Shutdown` tüketim döngüsünü bekliyor, döngü de içinde bulunduğu dağıtım —
-  ACK dahil — bitmeden dönemiyor. Hata iletisi artık askıdaki kaydın SAHİBİNİ de
-  yazıyor: öldürülen tüketicinin adı altında olması devralmanın hiç olmadığını,
-  bu sürecin adı altında olması olduğunu ama ACK'lenmediğini söyler, ve eski
-  ileti okuyana hangisi olduğunu söyleyemiyordu.
+- **A gate built an assertion on a side effect that runs AFTER the thing it
+  waited for** (D108).
+  `TestRedisIntegrationTakesOverWhatADeadConsumerWasHolding` (ADR 0162) waited
+  for the taken-over event to reach the handler and then asserted that the
+  pending list was empty; yet the ACK runs in a `defer` AFTER the handler
+  RETURNS, and the handler returns as soon as it has written to a buffered
+  channel. So the assertion could run before the ACK — and in CI it did, one
+  push after the test went in green. The race is proven by CONSTRUCTION, not
+  by reproduction: on the machine that wrote the test it did not fail once in
+  five runs with `-race`, which is exactly why it got in. The fix is not
+  tolerance but ORDER: `Shutdown` waits for the consumption loop, and the loop
+  cannot return until the dispatch it is in — ACK included — has finished. The
+  failure message now also writes the pending entry's OWNER: under the killed
+  consumer's name it says the takeover never happened, under this process's
+  name it says it happened but was not ACKed, and the old message could not
+  tell the reader which.
 
-- **Bir entegrasyon testi, bu deponun hiç başlatmadığı bir veritabanına bağlandı**
-  (D107). `TestTheToolListIsThisInstallationsOwnSchema` (ADR 0161) `config.Load()`
-  çağırıp `DATABASE_URL` vermiyordu, yani localhost:5432'de ne cevap veriyorsa ona
-  — testi yazan makinedeki geliştirme veritabanına. Yerelde dokuz şerit yeşil
-  geçti, CI koşucusunda `connection refused` ile kırmızı oldu ve main kırıldı.
-  İddiaları yanlış değildi (araç listesi router ağacından türetiliyor, veriden
-  değil); yanlış olan, sınanan KURULUMUN ortamdan gelmesiydi. Paketteki her komşu
-  senaryo zaten kendi kabını başlatıp DSN'ini ortama veriyor (`migrateDSN`), ve bu
-  test artık o şekli kullanıyor. Sınıf fikstürün: öznesi "bu kurulum" olan bir
-  kapı kurulumu BAŞLATMAK zorunda, yoksa ölçtüğü şey geliştiricinin makinesidir.
+- **An integration test connected to a database this repository never
+  started** (D107). `TestTheToolListIsThisInstallationsOwnSchema` (ADR 0161)
+  called `config.Load()` without supplying `DATABASE_URL`, so it connected to
+  whatever answered on localhost:5432 — the development database on the
+  machine that wrote the test. Locally nine lanes passed green; on the CI
+  runner it went red with `connection refused` and main broke. Its assertions
+  were not wrong (the tool list is derived from the router tree, not from
+  data); what was wrong was that the INSTALLATION under test came from the
+  environment. Every neighboring scenario in the package already starts its
+  own container and hands its DSN to the environment (`migrateDSN`), and this
+  test now uses that shape. The class is the fixture's: a gate whose subject
+  is "this installation" has to START the installation, or what it measures is
+  the developer's machine.
 
-- **Üretim kodunun bir TEST paketini import etmesini hiçbir şey engellemiyordu**
-  (D106). Kural tek bir godoc'ta yaşıyordu — GraphQL handler'ının yakalama
-  yazıcısı, httptest'in "test ikilisine ait olduğunu" söyleyip tam bu yüzden dokuz
-  satırı elle yazıyor. Düzeltmeden önce mutasyonla kanıtlandı: YAYIMLANMIŞ ağaçtaki
-  bir dosyaya eklenen httptest import'u lint'ten ve bütün arch kapılarından geçti.
-  Artık bir kapı `net/http/httptest`, `testing`, `testing/fstest` ve
-  `testing/iotest`'i üretim dosyalarında reddediyor. Muafiyet LİSTELENMİŞ değil
-  TÜRETİLMİŞ: hiçbir test-dışı dosyanın import etmediği paket, adı ne olursa olsun
-  test desteğidir — bu, yayımlanmış uyumluluk paketi `core/identitytest`'i ve yerel
-  `internal/benchbudget`'ı ikisini de adlandırmadan kapsıyor ve birinin üretimden
-  erişilmeye başladığı günü yakalıyor. Türetimin kendisi yük taşıdığı için boyutu
-  İKİ yönde de denetleniyor: her şeyi test desteği sayacak şekilde bozulduğunda
-  gerçek bir ihlali yutup kapıyı yeşil bıraktı — ölçüldü, ve artık muafiyet sayısı
-  genişlediğinde düşüyor.
+- **Nothing stopped production code from importing a TEST package** (D106).
+  The rule lived in a single godoc — the GraphQL handler's capture writer,
+  which says httptest "belongs to the test binary" and writes nine lines by
+  hand for exactly that reason. Proven by mutation before the fix: an httptest
+  import added to a file in the PUBLISHED tree passed lint and every arch
+  gate. A gate now refuses `net/http/httptest`, `testing`, `testing/fstest`
+  and `testing/iotest` in production files. The exemption is DERIVED, not
+  LISTED: a package that no non-test file imports is test support, whatever
+  its name — this covers the published conformance package `core/identitytest`
+  and the local `internal/benchbudget` without naming either, and catches the
+  day one of them starts being reached from production. Because the derivation
+  itself carries weight, its size is checked in BOTH directions: broken so as
+  to count everything as test support, it swallowed a real violation and left
+  the gate green — measured — and it now fails when the exemption count
+  widens.
 
-- **Korumasız durum-değiştiren rotayı reddeden kapı, yalnız chi'nin FİİL
-  metotlarını sayıyordu** (D103). `Handle`, `HandleFunc` ve `Mount` — üçü de HER
-  metodu bağlar, yani POST'u da — nüfusun dışındaydı. Sonuç, kapının kaçakçılığın
-  dürüst biçimini reddedip kaçak biçimini kabul etmesiydi: kompozisyon köküne
-  konan `r.Post("/mcp", h)` "korunan hiçbir önekin dışında bağlanmış" diye düşüyor,
-  `r.Handle("/mcp", h)` ise geçiyordu — ikisi de hiçbir şeyin doğrulamadığı,
-  kotalamadığı ve kaydetmediği bir POST bağlarken. MCP sunucusunun nereye
-  monte edilebileceği ölçülürken, kapıyı OKUYARAK değil oraya bir şey KOYMAYA
-  çalışarak bulundu. Ağaçta saklanan bir şey yoktu: üretimdeki tek
-  `Handle`/`HandleFunc` çağrıları operatör ve profil mux'larında ve o dosyalar chi
-  import etmiyor, yani zaten nüfusun dışında; `callbacks.Mount(router)` ise TEK
-  argümanlı ve toplayıcının mevcut arite kuralı onu adıyla muaf tutmadan dışarıda
-  bırakıyor. Bu, kapının kendisinin karşı yazıldığı sınıf — denetlediği nüfus
-  söylediği cümleden dar olan kural — ve doğrulanmamış bir POST'un bir ödemeyi
-  "ödendi"ye çevirmesi yüzünden var olan kapıda.
+- **The gate that refuses an unprotected state-changing route counted only
+  chi's VERB methods** (D103). `Handle`, `HandleFunc` and `Mount` — all three
+  bind EVERY method, POST included — were outside the population. The result
+  was a gate that refused the honest form of the smuggling and accepted the
+  sneaky one: `r.Post("/mcp", h)` placed on the composition root failed as
+  "bound outside any protected prefix", while `r.Handle("/mcp", h)` passed —
+  though both bind a POST that nothing verifies, subjects to a quota or
+  records. It was found while measuring where the MCP server could be mounted,
+  not by READING the gate but by trying to PUT something there. Nothing was
+  hiding in the tree: the only production `Handle`/`HandleFunc` calls are in
+  the operator and profiling muxes, and those files do not import chi, so they
+  were outside the population anyway; `callbacks.Mount(router)` takes a SINGLE
+  argument, and the collector's existing arity rule leaves it out without
+  exempting it by name. This is the very class the gate itself was written
+  against — a rule whose checked population is narrower than the sentence it
+  states — and in a gate that exists because an unverified POST turned a
+  payment to "paid".
 
-- **CI ayrı modülleri hiç lint'lemiyordu** (D100, D102). Lint işi kökü
-  `golangci-lint-action` ile geçiriyor, sonra `make vuln` koşuyordu; `make lint`
-  hiç koşmuyordu — ki ayrı modülleri dolaşan hedef o. Aksiyon içinde durduğu modülü
-  lint'ler, bu depo ise ALTI modül: kök, üç örnek, iki contrib ağacı. `examples/` ve
-  `contrib/`e ulaşan tek linter pre-push kancasıydı ve `git push --no-verify` onu
-  atlatıyor. Kuralı iş dosyasının KENDİ yorumu zaten söylüyordu, bir adım aşağıda:
-  "`make vuln` üzerinden koşuyor, çıplak bir komutla değil, ki geliştiricinin
-  yerelde koştuğu hedef CI'nın koştuğu hedef olsun". Artık lint de öyle, ve sürümün
-  iki yerine tek evi var — aksiyon Makefile'ınkinin yanında kendi kopyasını
-  pinliyordu. Bir kapı aksiyonu ADIYLA reddediyor ve dört hedefi `run:` satırlarında
-  arıyor; ilk sürümü bütün dosyada arıyordu ve `make vuln`'den söz eden bir YORUM
-  onu tatmin ediyordu, yani o adımı silmek yeşil kalıyordu. Aynı turda vuln
-  hedefinin yorumundaki "ÜÇ modülde" sayımı da düzeltildi (D102): liste altıya
-  çıkmıştı, cümle üçte kalmıştı — elle yazılmış bir sayım, saydığı şey büyüdüğünde
-  sessizce yanlış olur.
+- **CI never linted the separate modules** (D100, D102). The Lint job ran the
+  root through `golangci-lint-action`, then ran `make vuln`; it never ran
+  `make lint` — which is the target that walks the separate modules. The
+  action lints the module it stands in, and this repository is SIX modules:
+  the root, three examples, two contrib trees. The only linter that reached
+  `examples/` and `contrib/` was the pre-push hook, and `git push --no-verify`
+  bypasses it. The job file's OWN comment already stated the rule, one step
+  further down: "runs through `make vuln`, not a bare command, so that the
+  target the developer runs locally is the target CI runs". Lint now does too,
+  and the version has one home instead of two — the action pinned its own copy
+  beside the Makefile's. A gate refuses the action BY NAME and looks for four
+  targets on `run:` lines; its first version searched the whole file, and a
+  COMMENT mentioning `make vuln` satisfied it, so deleting that step stayed
+  green. In the same round the "in THREE modules" count in the vuln target's
+  comment was corrected too (D102): the list had grown to six, the sentence
+  had stayed at three — a hand-written count goes silently wrong when what it
+  counts grows.
 
-- **Panelin varlıkları hiçbir zaman yeniden çekilmiyordu ve yetki arkasındakiler
-  PAYLAŞILAN önbelleğe açıktı** (D94, D95). Damga yalnızca ETag'e giriyordu, adres
-  hiç değişmiyordu ve yanıt `immutable` diyor — yani tarayıcıya bir yıl boyunca
-  sormaması söyleniyordu. Kusur kendi godoc'unda yazılıydı: damganın baytlardan
-  türediğini söyleyip "böylece operatörün tarayıcısı dosya gerçekten değiştiğinde
-  tam o zaman yeniden çeker" diye bitiyordu, oysa hiçbir koşullu istek yapılmıyor
-  ve yazıcıda `If-None-Match` dalı yok. Yanındaki test aynı iddiayı ADINDA taşıyıp
-  yalnızca ETag'i doğruluyordu. Artık damga ADRESTE de duruyor, yani baytlar
-  değişince adres değişiyor ve `immutable` dürüst hâle geliyor. İkincisi bir önceki
-  commit'in kendi ürettiği kusur: ADR 0156 reviews betiğini ve her kayıtlı ekranın
-  betiğini yetki arkasına aldı, `Cache-Control` ise `public` kalmıştı — araya giren
-  bir vekilin, panelin reddettiği çağırana o baytları vermesi daveti.
-  `core/http.WritePrivateAsset` yayımlandı ve panel iki yazıcı arasında REDDİ
-  kuran AYNI kapsam tablosuna bakarak seçiyor, böylece yetki kazanan bir yol aynı
-  düzenlemede herkese açık önbelleklenebilir olmaktan çıkıyor. Korunan şey baytlar
-  değil — kurulumdan kuruluma aynılar — KURAL: reddeden bir uç, önündeki bir şeyin
-  cevaplayabildiği bir kural koymamış olur. Kapı router'ı yürüyüp damga taşıyan her
-  yanıtı buluyor ve İKİ yönü de iddia ediyor.
-- **Sipariş ekranının satırları neden göstermediğine dair gerekçesi yanlıştı**
-  (D96), iki kopyada. "Okuma katmanı BAĞLAR üzerinden birleştirir, modül İÇİNDE
-  değil" cümlesi iki yarısında da yanlış: sipariş satırı kendi başına bir okuma
-  varlığı, `order_id` süzgeci kabul ediyor, ve panelin KENDİ satış raporu onu aynı
-  yüzeyden bir dosya öteden okuyor. Aynı cümle MÜŞTERİ adresleri için iki kez daha
-  geçiyor ve orada DOĞRU — müşteri modülü tek bir varlık yayımlıyor, adres varlığı
-  yok — bu yüzden ifade her yerde değiştirilmedi, her kopyanın ÖZNESİ ayrıldı.
+- **The panel's assets were never refetched, and the ones behind a privilege
+  were open to SHARED caches** (D94, D95). The stamp went only into the ETag,
+  the address never changed, and the response says `immutable` — so the
+  browser was being told not to ask for a year. The defect was written in its
+  own godoc: it said the stamp derives from the bytes and ended with "so the
+  operator's browser refetches exactly when the file really changes", yet no
+  conditional request is ever made and the writer has no `If-None-Match`
+  branch. The test beside it carried the same claim IN ITS NAME and verified
+  only the ETag. The stamp now sits IN THE ADDRESS too, so when the bytes
+  change the address changes and `immutable` becomes honest. The second is a
+  defect the previous commit produced itself: ADR 0156 put the reviews script
+  and every registered screen's script behind a privilege, while
+  `Cache-Control` had stayed `public` — an invitation for an intervening proxy
+  to hand those bytes to a caller the panel refuses.
+  `core/http.WritePrivateAsset` is published, and the panel chooses between
+  the two writers by consulting the SAME scope table that sets up the REFUSAL,
+  so a path that gains a privilege stops being publicly cacheable in the same
+  edit. What is protected is not the bytes — they are the same from one
+  installation to the next — but the RULE: an endpoint whose refusal something
+  in front of it can answer has not set a rule. The gate walks the router,
+  finds every response that carries a stamp, and asserts BOTH directions.
+- **The order screen's reason for not showing the lines was wrong** (D96), in
+  two copies. The sentence "the read layer joins across LINKS, not WITHIN a
+  module" is wrong in both halves: the order line is a read entity in its own
+  right, accepts an `order_id` filter, and the panel's OWN sales report reads
+  it from the same surface one file away. The same sentence appears twice more
+  for CUSTOMER addresses, and there it is TRUE — the customer module publishes
+  a single entity, with no address entity — so the wording was not changed
+  everywhere; each copy's SUBJECT was told apart.
 
-- **Yüz otuz beş test dosyası, Docker'sız koşan HİÇBİR şeridin görmediği yerde
-  duruyordu** (D88). Karşılanmayan bir derleme kısıtı dosyayı Go araç zincirine
-  görünmez yapıyor: `go build ./...`, `go vet ./...`, `go test ./...` ve
-  `golangci-lint run ./...` onu ATLIYOR, ve o dosyaları bugüne kadar derleyen tek
-  şey `make test-integration` — bir kap isteyen, dakikalar süren, yani insanın EN
-  SON koştuğu şerit. ADR 0152 için `Interop.CreateCollection` genişletildiğinde
-  `payment_integration_test.go` içindeki üç çağrı yeri artık uymuyordu ve bunu
-  elle koşulan `go vet -tags integration ./...` dışında söyleyen olmadı.
-  `.golangci.yml` artık `run.build-tags` içinde `integration` adını taşıyor.
-  Etiketin açılmasıyla hemen ortaya çıkanlar: ADR 0012'den beri her yerde
-  reddedilen US yazım kuralına aykırı elli iki İngiliz imlası, on gocritic
-  bulgusu, yutulmuş bir hata ve hiç çağrılmayan bir yardımcı — otuz sekiz
-  dosyada altmış dört bulgu, hiçbiri yeni değil ve hepsi görünmezdi. Etiket
-  listesi bilerek TEK: `smoke` dosyaları gerçek süreç başlatıyor, `load`
-  dosyaları benchmark, ikisinin de kendi şeridi var ve hiçbiri bir refactor'ın
-  sessizce kırdığı şey olmadı.
+- **One hundred thirty-five test files sat where NO lane that runs without
+  Docker could see them** (D88). An unsatisfied build constraint makes a file
+  invisible to the Go toolchain: `go build ./...`, `go vet ./...`,
+  `go test ./...` and `golangci-lint run ./...` SKIP it, and the only thing
+  that compiled those files until now was `make test-integration` — the lane
+  that needs a container and takes minutes, so the one a person runs LAST.
+  When `Interop.CreateCollection` was widened for ADR 0152, three call sites
+  in `payment_integration_test.go` no longer fit, and nothing said so except a
+  `go vet -tags integration ./...` run by hand. `.golangci.yml` now carries
+  `integration` in `run.build-tags`. What surfaced as soon as the tag was
+  turned on: fifty-two British spellings against the US spelling rule, of the
+  kind refused everywhere since ADR 0012, ten gocritic findings, a swallowed
+  error and a helper that is never called — sixty-four findings in
+  thirty-eight files, none of them new and all of them invisible. The tag list
+  is deliberately ONE entry long: `smoke` files start real processes, `load`
+  files are benchmarks, both have their own lane, and neither has been
+  something a refactor silently broke.
 
-- **Kapatılmış bir sınır hâlâ SINIR olarak yayımlanıyordu** (D81). ADR 0136
-  modüller arası METOT KÜMESİNİ derleme zamanı denetimine çevirdi; ama iki
-  "bilinen sınırlar" belgesi de hâlâ "Cross-module signatures are not checked at
-  compile time" diye açılıyordu. Daha kötüsü: `docs/mimari.md` KENDİSİYLE
-  çelişiyordu — bölüm 5 bir önceki commit'te düzeltilmiş, bölüm 12'nin tablosu
-  ve bölüm 5'in içindeki bir cümle bırakılmıştı. Ağaç noktasal değil SÜPÜRÜLDÜ:
-  "derleyici denetlemiyor" cümlesinin yirmi kopyası var ve ON BEŞİ DOĞRU,
-  bilerek dokunulmadı — öznesi JSON ŞEMASI ya da sınırdan geçen DEĞERLER, ki
-  pin onlara dokunmuyor. Ayrım satırın tamamı: imza denetleniyor, ANLAM
-  denetlenmiyor. Ve `docs/mimari.md`'nin kendi "Known limits" bölümü yirmi dokuz
-  maddenin onunu taşıyan bir ALT KÜME olduğunu artık söylüyor.
+- **A closed limit was still published as a LIMIT** (D81). ADR 0136 turned the
+  cross-module METHOD SET into a compile-time check; yet both "known limits"
+  documents still opened with "Cross-module signatures are not checked at
+  compile time". Worse: `docs/mimari.md` contradicted ITSELF — section 5 had
+  been corrected in the previous commit, while section 12's table and a
+  sentence inside section 5 had been left behind. The tree was SWEPT, not
+  spot-fixed: the sentence "the compiler does not check" has twenty copies,
+  and FIFTEEN OF THEM ARE TRUE and were deliberately left untouched — their
+  subject is the JSON SCHEMA or the VALUES crossing the boundary, which the
+  pin does not touch. The distinction is the whole row: the signature is
+  checked, the MEANING is not. And `docs/mimari.md`'s own "Known limits"
+  section now says it is a SUBSET carrying ten of the twenty-nine items.
 
-- **Entegrasyon şeridi bu makinede bir yıllık ÖNBELLEK sayesinde yeşildi**
-  (D80). CI "pull access denied for minio/minio" ile düştü; bu ileti eksik
-  etiket gibi okunuyor ama değil — Docker Hub, sabitlenmiş etiketi de `latest`i
-  de anonim çekime kapatıyor, yani sorun etiket değil DEPO. Aynı etiket MinIO'nun
-  kendi kayıt defterinde (`quay.io/minio/minio`) kimliksiz servis ediliyor.
-  Sabitleme hiç sorun değildi; değişen şey sabitin ALTINDAKİ erişimdi — bir
-  pinin savunamayacağı sınıf. Yerelde her koşunun geçmesinin sebebi on iki aylık
-  önbellekti; düzeltmenin gerçek olduğunun kanıtı da önbellekte `quay.io/...`
-  adının bulunmaması: test çekmek ZORUNDA kaldı ve çekti.
+- **The integration lane was green on this machine thanks to a year-old
+  CACHE** (D80). CI failed with "pull access denied for minio/minio"; the
+  message reads like a missing tag, but it is not — Docker Hub closes both the
+  pinned tag and `latest` to anonymous pulls, so the problem is not the tag
+  but the REPOSITORY. The same tag is served without credentials from MinIO's
+  own registry (`quay.io/minio/minio`). The pinning was never the problem;
+  what changed was the access BENEATH the pin — a class a pin cannot defend
+  against. The reason every local run passed was the twelve-month-old cache;
+  the proof that the fix is real is that the `quay.io/...` name was not in the
+  cache: the test HAD to pull, and it did.
 
-- **Entegrasyon şeridi yirmi koşuda bir, bir test sahtesindeki VERİ YARIŞINDAN
-  düşüyordu** (D79). Sahte, gönderim sınırına kaç soru sorulduğunu sayıyor — bir
-  tekrarın HİÇBİR ŞEY sormadığını kanıtlayan şey bu — ve sayaç, iki koliyi iki
-  goroutine'de açan test altında korumasız artırılıyordu. Yapısı gereği yarış;
-  şeridin sessizliği dedektörün yalnızca gördüğünü bildirmesiydi. HEAD'de
-  ölçüldü: yirmi koşuda bir. Sayaç testin goroutine'inden de OKUNUYOR, o yüzden
-  okuyucu da korundu — yalnızca yazanı düzeltmek yarısını ayakta bırakırdı.
+- **The integration lane failed one run in twenty from a DATA RACE in a test
+  fake** (D79). The fake counts how many questions are asked of the shipping
+  boundary — which is what proves a retry asks NOTHING — and the counter was
+  incremented unguarded under a test that opens two parcels in two goroutines.
+  A race by construction; the lane's silence was the detector reporting only
+  what it saw. Measured at HEAD: one run in twenty. The counter is also READ
+  from the test's goroutine, so the reader was guarded too — fixing only the
+  writer would have left half of it standing.
 
-- **Mimari anlatısı her akışa saga diyordu, ve sayıları denetleyen kapı ona
-  KATILIYORDU** (D78). `internal/workflows` altındaki yedi paketten yalnızca
-  biri saga motorunu kullanıyor; belge okuyucuya her akışın bir yürütme kaydı,
-  telafi zinciri ve idempotency anahtarı olduğunu öğretiyordu. Hiç anılmayan
-  şekil ise iki kusura mal olan şekildi: tamamen otobüsle sürülen, hiçbir şeyin
-  çözmediği akış. Düzyazıdan kötüsü DENETİMDİ — sayım sözlüğü `saga`yı
-  `workflows`un eşanlamlısı sayıp dizin sayısına karşı fiyatlıyordu, yani
-  "yedi saga" cümlesi onaylanırdı. Nüfus artık ithalden türetiliyor ve iki ad
-  ayrı girdi. Aynı belgede iki cümle daha bayattı: bağın kanıtının e2e testi
-  olduğu (oysa ADR 0136'dan beri derleme-zamanı pini) ve `<module>.interop`'un
-  "sagalar/çekirdek için" olduğu (oysa modüller birbirininkini çözüyor).
+- **The architecture narrative called every flow a saga, and the gate that
+  checks counts AGREED with it** (D78). Of the seven packages under
+  `internal/workflows`, only one uses the saga engine; the document taught the
+  reader that every flow has an execution record, a compensation chain and an
+  idempotency key. The shape never mentioned was the one that cost two
+  defects: the flow driven entirely by the bus, which nothing resolves. Worse
+  than the prose was the CHECK — the count dictionary treated `saga` as a
+  synonym of `workflows` and checked it against the directory count, so the
+  sentence "seven sagas" would have been approved. The population is now
+  derived from imports, and the two names are separate entries. Two more
+  sentences in the same document were stale: that the proof of the binding is
+  the e2e test (whereas since ADR 0136 it is a compile-time pin) and that
+  `<module>.interop` is "for sagas/core" (whereas modules resolve each
+  other's).
 
-### Kararlar
+### Decisions
 
 - **An installed binary starts a project** (ADR 0182). `gobit new` in a binary
   built without the Makefile's build facts requires the library at the version
@@ -2341,1977 +2382,2197 @@ a v0.8.0 user has to change.
   from. ADR 0047 is amended: a replaced price is still deleted, and what it was
   is kept in the snapshot before. The history starts at the upgrade.
 
-- **READ COMMITTED'da başlamayan bir bağlantı reddediliyor** (ADR 0166).
-  `core/db`'nin kurduğu havuz her yeni oturumun varsayılan yalıtım düzeyini
-  okuyor ve READ COMMITTED değilse bağlantıyı reddediyor — açılışta ve süreç
-  çalışırken açtığı her bağlantıda. **Operatör için kırıcı:** ADR 0015'in küme
-  sözleşmesine bir satır ekleniyor; varsayılanı REPEATABLE READ ya da
-  SERIALIZABLE olan bir kurulum artık açılmıyor ve hata bulduğu düzeyi ve onu
-  geri alan ifadeyi söylüyor.
-
-- **Bir müşteri artık PUANIYLA ödeyebiliyor** (ADR 0165). Puan, mağaza
-  kredisinin geçtiği yuvadan — bu modülde bir sağlayıcı, `loyalty_points` —
-  harcanıyor ve BİR PUAN, kazanıldığı para biriminin BİR minor unit'i ediyor:
-  sözleşmenin tutarıyla defterin puanı tek sayı, sınırda hiçbir şey
-  çevrilmiyor ve kazanım oranı baz puan cinsinden geri ödeme diye okunuyor.
-  Puanla ödenen tahsilat puan KAZANDIRMIYOR — tavan oranda bir puan kendini
-  geri kazanırdı, altında da dükkân sönen bir borca geri ödeme yapardı; kazanım
-  hedefi artık koleksiyonun yalnız BAŞKA sağlayıcılardan tahsil edilmiş net
-  parasından hesaplanıyor, harcanan kredi ise kazanmaya devam ediyor, çünkü o
-  nominal değerde borç olan paradır. İki tender TEK durum makinesi: mağaza
-  kredisi ve puan sağlayıcıları elle yazılmış iki kopya değil, `balancetender`
-  paketindeki tek makinenin kendi defteri üstünde koşan iki kaydı —
-  yetkilendirme EKSİ blokaj, iptal serbest bırakma, iade iade satırı yazıyor,
-  tahsilat harcama yazmıyor (yalnız almadığı kısmı serbest bırakıyor), ve her
-  harcama satırı koleksiyonu değil sağlayıcının KENDİ oturumunu referans alıyor.
-  Bakiye toplanmadan önce satırlar değil BAKİYE kilitleniyor — müşteri ve para
-  birimine bağlı bir danışma kilidi (D118) — ve işlem READ COMMITTED'ı adıyla
-  açıyor (D119); ADR 0152'nin kilidi de bu. Defter kapısı ikinci kapıyı bir
-  ad listesinden değil tender'ın KİMLİĞİNDEN türetiyor ve artık kredi defterine
-  de bakıyor. Bakiye SIFIRIN ALTINA düşebilir: bir iade, müşterinin çoktan
-  harcadığı puanı geri alır, bunun için reddedilmez, açığı bir sonraki kazanım
-  önce kapatır ve tender ona karşı ret verir. Her iki tender artık saatlik
-  mutabakata cevap veriyor (kredi "sorulamaz" sayılıyordu); ikisinden birini
-  seçen misafir sunucu hatası yerine 409 alıyor; ikisi TEK seçenek altında
-  kayıtlı — `StoreCredit` adı gitti, gerekçesinin adıyla
-  `Options.PersonBoundTenders` geldi, müşteri iddiasının kanıtlandığı kurulumda.
-  Vitrinde puan siparişin tamamını ya karşılıyor ya hiç — bölmek yönetim
-  yüzeyinin işi; müşteri kendi bakiyesini hâlâ okuyamıyor.
-
-- **Bir tahsilat artık müşteriye PUAN kazandırıyor** (ADR 0164). Yalnızca eklenen
-  `payment_loyalty_entries` defteri ödeme modülünde duruyor ve satırı yazan tek
-  şey `writeCollectionTotals` — bir koleksiyonun toplamlarını kımıldatan tek
-  fonksiyon. Her satır bir FARK: hedef, koleksiyonun kendi kümülatif tutarından
-  hesaplanıyor, yazılmış olanın üstüne fark ekleniyor, yani aynı olay ikinci kez
-  geldiğinde hiçbir şey yazılmıyor ve bir iade EKSİ satır yazıyor. Özellik
-  listesinin önerdiği üç ismin üçü de ölçümde düştü: `loyalty` adı
-  `examples/starter/loyalty` tarafından ALINMIŞ (kayıt yinelenen adı rotaları
-  bağlamadan önce reddediyor ve starter'ı hiçbir şerit ayağa kaldırmıyor),
-  `order.placed` saga'nın ikinci adımında — para daha hareket etmeden — yayımlanıyor
-  ve misafir siparişinde müşterisi BOŞ, ve yalnız kazanım yarısı hiçbir kapının
-  göremediği bir tablo demek (ADR 0153'ün tersine çevirdiği dilim sırası). Oran
-  bir baz puan ayarı ve sıfır varsayılan: defter var, hiçbir kurulum kazanmıyor.
-  Tavan minor unit başına bir puan ve aşan değer SESSİZCE KÜÇÜLTÜLMÜYOR, ediliyor
-  — iki ayrı evi bir arch iddiası bağlıyor. Operatör bakiyeyi ve geçmişi
-  `payment:read` altında okuyor; yazma ucu yok, çünkü bu modülde yazmak PARA
-  HAREKETİ demek. Puan henüz harcanamıyor.
-- **Bir şerit artık teste geliştiricinin veritabanını VERMİYOR** (ADR 0163).
-  Ayarların varsayılanı localhost:5432 ve localhost:6379'u gösteriyor ve bir
-  geliştirme makinesinde ikisi de dinliyor, yani kendi kurulumunu başlatmayı
-  unutan bir test yerelde yeşil geçip koşucuda kırmızı oluyordu (D107). Kural
-  aslında zaten verilmişti ama TEK şeride ve düzyazıda: `internal/smoke` her
-  sunucu sürecinin ortamını sıfırdan kuruyor ve godoc'u gerekçeyi
-  `DATABASE_URL`'i adıyla sayarak yazıyor. Artık `make test`,
-  `make test-integration` ve `make smoke` iki adresi de hiçbir şeyin dinlemediği
-  127.0.0.1:1'e kuruyor. Adres ÇÖZÜMLENİYOR ama bağlanmıyor, yani config'i başka
-  bir şey için yükleyen testler etkilenmiyor. Değişiklikten ÖNCE ölçüldü: bütün
-  entegrasyon şeridi ve bütün smoke şeridi ölü adreslere karşı koşuldu, ikisi de
-  yeşil ve iki koşumda tek bir bağlantı denemesi yok — yani hiçbir senaryo
-  ortamdaki servise yaslanmıyormuş. Kapının değerleri elle yazılmıyor,
-  `config.go`'nun kendi `envDefault`'undan türetiliyor: şeridin değeri
-  varsayılana EŞİTLENİRSE de düşüyor.
-
-- **Ölü bir tüketicinin elinde kalan mesaj artık geri geliyor** (ADR 0162). Redis
-  otobüsü XREADGROUP ile bir mesajı tek tüketiciye veriyor ve verdiğini
-  hatırlıyor; o süreç ACK'lemeden ölürse mesaj ONUN askı listesinde kalıyordu, ve
-  yeniden başlayan süreç `<hostname>-<pid>` ile yeni bir ada geliyor, yani kendi
-  boş listesine bakıyor ve ">" imleci o mesajı bir daha kimseye önermiyordu. Kapı
-  yazılmadan ÖNCE gerçek Redis'e karşı ölçüldü: bir tüketici mesajı aldı ve
-  durdu, taze bir tüketici açıldı, on saniye sonra kayıt hâlâ oradaydı ve kimseye
-  bir şey önerilmemişti. Artık tüketim döngüsü iki okuma ARASINDA kendi akışını
-  süpürüyor: BAŞKA bir tüketicinin adı altında ve `ClaimMinIdle`'dan (varsayılan
-  bir dakika) uzun süredir boşta duran mesaj XCLAIM ile alınıp yeni bir mesaj gibi
-  dağıtılıyor. Böylece "en az bir kez" sözü, dayanıklılığın satın alındığı vakayı
-  —sürecin ölmesini— kapsıyor; bir handler'ın hatası ve paniği ise DEĞİŞMEDEN
-  ACK'lenmeye devam ediyor. Zehirli mesaj sınırlı: üç kez teslim edilip
-  ACK'lenmemiş mesaj dördüncüye verilmiyor, ACK'lenip hata seviyesinde
-  günlükleniyor — ölü mektup o satır, ve onu okuyan tek şey bir insan. Eşik,
-  YALNIZCA yavaş bir tüketiciyi ölüden ayıran şey olduğu için en yavaş
-  handler'dan uzun olmak zorunda; XCLAIM boşta kalma süresini İKİNCİ kez
-  sorduğu için iki komut arasında sahibinin bitirdiği mesaj hiç alınmıyor. Yönetim
-  API'si yüz yirmi bir okuma işlemi cevaplıyor ve bugüne kadarki tek çağıranları
-  bir tarayıcı ile curl'dü. "Hangi siparişler askıda" diye soran bir model
-  istemcisinin, biri sarmalayıcı yazmadan girebileceği bir yol yoktu — ve bir
-  sarmalayıcı, bayatlamakta özgür ikinci bir uç listesidir. Artık `gobit mcp`
-  stdin'de JSON-RPC okuyup dört metot cevaplıyor: initialize, ping, tools/list ve
-  tools/call. ARAÇ LİSTESİ açılışta, bu sürecin SERVİS ETTİĞİ belgeden türetiliyor
-  — yönetim öneki altındaki her GET işlemi için bir araç — ve bir çağrı, bu
-  sürecin monte ettiği router üzerinden süreç içi bir GET. Hiçbir şey yeniden
-  yazılmıyor: bir araç ancak bir uç varsa var oluyor, ucun kendi describe bloğunun
-  söylediğini söylüyor, ve çağrı yönetim yüzeyinin bütün halkalarından geçiyor —
-  kimlik, kapsam, kota ve denetim kaydı. SALT-OKUNUR olması bir söz değil iki
-  şeyin özelliği: liste yalnız GET'lerden kuruluyor, ve kimlik bilgisi üstün
-  kapsamı taşıyorsa sunucu açılmadan reddediliyor (kurulumun kendisine, herhangi
-  bir istemcinin kullanacağı uçtan sorularak). Adlar YOLDAN türetiliyor, çünkü bu
-  belgede hiçbir işlem `operationId` taşımıyor — ölçüldü; yani bir araç ucu
-  taşındığında taşınıyor, ki dürüst hata bu: taşınmayı atlatan bir araç başka bir
-  şey hakkında cevap verirdi. Belge hangi aracın hangi YETKİYİ istediğini
-  söyleyemiyor (kapsam taşımıyor), o yüzden anahtarın kapsamları karar veriyor ve
-  reddedilen çağrı API'nin kendi hata zarfıyla dönüyor — eksik yetkiyi o
-  adlandırıyor. İki sınır kaydedildi: bu ve belgenin düzyazısının bir kısmının
-  Türkçe olması (yüz yirmi araç açıklamasının kırk üçü; defter DOSYALARI yönetiyor,
-  içlerindeki metni değil).
-
-- **Bir KOMUT artık sunucunun olaylarını almıyor** (ADR 0160, D104, D105). Dispatch'teki
-  her fiil bütün uygulamayı açıyor — bilinçli, ve `seed`'in şemayı modüllerin
-  kendisinden alması, `recover`'ın onardığı servislere ulaşması bu yüzden mümkün.
-  Ama uygulamayı açmak modülleri kaydediyor, modülleri kaydetmek de onları olay
-  otobüsüne ABONE ediyor. Bellek içi otobüste bu zararsız: otobüs sürecin kendisi.
-  Redis'te değil — orada abone olmak bir bildirim değil, tüketici grubunu yoksa
-  yaratıp ondan okuyan bir goroutine başlatmak, ve aynı gruptaki tüketiciler her
-  mesajı YALNIZCA BİR KEZ alıyor. Yani `gobit seed`, Redis'li bir kurulumda
-  sunucunun grubuna katılıp koştuğu sürece `order.placed`, `payment.captured` ve
-  modüllerin dinlediği her topiği aldı. Aldığını da KOŞTURDU: bildirim modülünün
-  abonesi, abone olan aynı `Register`'da kayıtlı, yani bir seed komutu sipariş
-  onaylarını gönderdi. Ve çıkmadan önce onaylayamadığı mesaj, bir daha asla
-  dönmeyecek `<hostname>-<pid>` tüketicisinin bekleyen listesinde kaldı — otobüste
-  ne XAUTOCLAIM var ne bekleyen listesi süpürmesi (D105, AÇIK). Artık montaj bir
-  olay ROLÜ alıyor: istek cevaplayan iki yol (sunucu ve facade'ın süreç-içi koşum
-  takımı) tüketiyor, beş fiil ise gerçek otobüse YAYINLIYOR ve hiçbir şeye abone
-  olmuyor. Yayın bilerek dokunulmadan bırakıldı — komut bir servis üzerinden
-  yazarken aynı işlemde outbox satırı yazıp commit'ten sonra doğrudan yayımlıyor;
-  otobüsü bellek içiyle değiştirmek o doğrudan yarıyı sessizce düşürürdü. Nüfus
-  kapısı ÇAĞRI YERLERİNİ denetliyor: her `openApplication` çağrısı bir rol
-  adlandırmak zorunda ve istek cevaplamayan bir tüketen çağrı reddediliyor — gelecek
-  yılın fiili bir komşuyu kopyalayarak yazılacak ve her komşu bir komut.
-
-- **Bir TARAYICI artık gobit'e karşı alışveriş edebiliyor** (ADR 0159, D99, D100).
-  Bu depoda gobit'in önüne tarayıcı koyan hiçbir şey yoktu: vitrin API'si kırk sekiz
-  rota, otuz yedisi misafire açık, ve herhangi birinin çalıştığının tek kanıtı onları
-  HTTP üzerinden süren bir Go koşum takımıydı. "Bunun üstüne dükkân kurabilir miyim"
-  diye soran birinin iki seçeneği vardı: testleri okumak ya da README'ye inanmak.
-  Satırın istediği Next.js/SvelteKit şekli ÖLÇÜLDÜ ve reddedildi: bütün depoda ona
-  değen tek kapı yol-dili kontrolü, yani bir node zinciri kendi kilit dosyası ve kendi
-  açık yüzeyiyle DENETİMSİZ girerdi. Onun yerine `examples/storefront` öteki dördü
-  gibi bir Go modülü: `main.go` yayımlanmış facade artı kendi modülü, modül de üç
-  kabuk ve çerçevesiz tek bir betik servis ediyor. Sayfalar gobit'in KENDİ sürecinde
-  koşuyor, yani tarayıcı `/store/v1` ile AYNI KÖKENDE ve hiçbir kurulumun örnek
-  çalışsın diye CORS açması gerekmiyor. Dükkân hiçbir servis tutmuyor ve veritabanı
-  okumuyor — her sayfadaki her rakamı tarayıcı çekiyor, ki örneği örnek hakkında değil
-  YÜZEY hakkında bir iddia yapan şey bu. Keşfedemediği iki değeri (publishable key ve
-  satış kanalı) AÇILIŞTA reddediyor: onlarsız başlayan bir dükkân sayfanın yaptığı her
-  isteğe 401 verir ve boş katalog gibi görünür. Kendi içerik politikasını taşıyor ve
-  panelinki OLAMAZ — katalog ürün görseli gösterir, panelin politikası ise `img-src`
-  olmayan `default-src 'none'` ile başlar; bir gömenin kendi sayfaları için yayımlanmış
-  politika yok, yani üç başlığı gömen kendisi yazıyor. Aynı değişiklikte `.js` dil
-  taramasına girdi (D99): depo zaten içeriği hiç okunmamış iki elle yazılmış betik
-  gönderiyordu ve bu örnek üçüncüsü olacaktı — operatörün SAYFANIN İÇİNDE okuduğu
-  düzyazı, hiçbir şeyin denetlemediği tek gönderilen metin. Ve ayrı modüllerin CI'da
-  hiç lint'lenmediği ortaya çıktı (D100, AÇIK): Lint işi kökü action ile geçiriyor ve
-  `make vuln` koşuyor, `make lint` koşmuyor — D88'in bir ağaç ötedeki şekli. Ve
-  beşinci modülü eklerken üçüncü bir şey çıktı (D101): hangi ayrı modüllerin
-  YAYIMLANMIŞ yüzeye karşı derlendiğini söyleyen tablo elle yazılıydı ve hiçbir şeye
-  bağlı değildi — taze girdiyi silmek bütün arch takımını yeşil bıraktı. Artık
-  nüfusu Makefile'ın `SEPARATE_MODULES`'ından geliyor, ki onu da başka bir kapı
-  diskteki go.mod'lara bağlıyor: zincir disk → Makefile → tablo.
-
-- **İlk çalıştırma artık şeritlerin KOŞTURDUĞU bir belge** (ADR 0158, D98). Boş bir
-  veritabanından bir alışverişçinin siparişine giden yol on beş çağrı ve on biri
-  hiçbir yere yazılmamıştı: iki koşum takımının içinde yaşıyorlardı — smoke'un
-  vitrin senaryosu ve `internal/e2e`'nin düzeneği, her biri kendi bölgesini, fiyat
-  bağını ve stoğunu kendisi kuruyor. Bütün şeritler yeşildi ve boşluk TAM DA bu
-  yüzden görünmezdi. `security.md` boş veritabanından yürüyen tek belgeydi ve
-  katalogu okumakta bitiyor — boş veritabanında o boş bir liste, yani çağrının
-  başarısı satın alınabilir bir şey olup olmadığı hakkında hiçbir şey söylemiyor.
-  `gobit seed` de kapatmıyor: o fiil yük rig'ini kuruyor (elli iki bin ürün, toplu
-  SQL) ve bölge yaratmıyor. Artık `docs/first-run.md` yolun tamamını yapıştırılabilir
-  bir blok olarak taşıyor ve bir smoke senaryosu onu gerçek ikiliye karşı koşturup
-  her BAĞ için bir durum kodunu ve sondaki siparişi doğruluyor. Yazmak, iki koşum
-  takımının göremediği şeyi buldu: vitrin yardımcısı bölgesine İKİ ülke bağlıyor ve
-  bu yüzden "tek yargı yetkisi adlandırılamıyor" dalından, BÖLGENİN oranıyla
-  vergileniyor; tek ülkeli bir bölge — yani sıradan ilk kurulum — tax modülü
-  tarafından vergileniyor ve orada vergi bölgesi yoksa cevap sıfır. Bu bir kusur
-  değil (sunucu `tax_source=tax_unconfigured` ile uyarıyor) ama bunu bir operatöre
-  söyleyen hiçbir şey yoktu. Nüfus kuralı ZATEN VARDI —
-  `TestEveryChainedCurlFlowIsExecuted` belgeden türetilmiş anahtarlarla bir
-  belge→tanık haritası tutuyor — ve yeni belge oraya bir HATA olarak geldi; o
-  bulunmadan önce aynı iş için ikinci bir kapı yazılıp silindi.
-
-- **Panelin ADRESİ artık panelin** (ADR 0157, D97). ADR 0155 içerik politikasını
-  panelin rotalarının girdiği TEK bir chi grubuna kurmuştu; gerekçe doğruydu,
-  ÖZNESİ yanlıştı: bir grup panelin BAĞLADIĞI her rotayı kapsar, politikanın
-  söylediği cümle ise bir ADRES hakkında. Bir eklentinin `AddRoutes`'u aynı
-  router'da, panelden SONRA koşuyor ve tek kontrolü desen çakışması — çakışmayan
-  bir desen grubun dışına bağlanıyor. Probla ölçüldü, tartışılmadı:
-  `/admin/ui/rogue` boş `Content-Security-Policy` ve `X-Frame-Options` olmadan 200
-  dönüyordu, yanındaki panel rotası ikisini de taşıyordu. Delik ÜÇ halka değil BİR
-  halka derindi — kompozisyon kökü öteki iki panel halkasını (köken ve kimlik)
-  zaten ÖNEKE kuruyor, yani sayfa operatörün oturumunun içindeydi ve üzerinde
-  hangi betiklerin koşabileceğini söyleyen tek kural yoktu. Politika artık o iki
-  halkanın yanına, önekin tamamına ve ONLARDAN ÖNCE kuruluyor: bir reddi ve bir
-  404'ü de kapsıyor. YETKİ ise politikanın kapatamadığı İKİNCİ delikti — ADR 0156
-  her panel yolunu panelin kendi tablosunda fiyatlıyor, panelin bağlamadığı bir
-  rota hiçbir tabloda değil, yani hiç yetkisi olmayan bir operatör ona ulaşıyordu.
-  Bu yüzden karar iki yarım: bir eklenti artık panelin adresinin içine rota
-  BAĞLAYAMIYOR, kayıt açılışta reddediliyor ve ret iletisi GİRİŞ YOLUNU
-  adlandırıyor — `RegisterAdminPage`, bir yetki bildiren ve panelin kendi
-  kaynağından servis ettiği bir betik veren yol. Önek iki yerde yazılı (panel ve
-  `core/plugin`, ki o `internal`'ı import edemez) ve ikisini DAVRANIŞ bağlıyor:
-  panelin kendi sabiti registry'ye veriliyor ve reddin ateşlenmesi gerekiyor —
-  kaymış bir kopya, hiçbir şeyin servis etmediği bir adresi korurdu, ki bu kural
-  gibi okunup kural olmayan şeydir. Ret SEGMENT sınırında eşleşiyor, yani
-  `/admin/uipload` hâlâ bağlanıyor. Ağaçta panelin adresine bağlanan hiçbir şey
-  yoktu; panele ulaşan tek eklenti zaten sanctioned yolu kullanıyor.
-
-- **Bir panel ekranı artık bir YETKİYE mal oluyor** (ADR 0156, D92, D93). Yönetim
-  API'si yetmiş bir rotada bir kapsam adlandırıyor ve `internal/e2e`'nin yetki
-  matrisi, kapsamı olmayan geçerli bir kimliğin 403 aldığını uçtan uca
-  kanıtlıyor. Panel aynı verinin İKİNCİ kapısıydı ve yalnızca kimliğe bakıyordu:
-  halkası principal'ı çözüp bağlama koyuyor, çerçeve de ondan tek bir bit
-  okuyordu — `_, signedIn := PrincipalFromContext(...)`. Kapsam listesi her
-  istekte oradaydı ve atamada düşürülüyordu. Bu teorik bir hesap değildi:
-  `POST /admin/v1/users` bir kapsam listesi alıyor, `PATCH` onu değiştiriyor, ve
-  böyle bir hesap panele girip bütün katalogu, her müşterinin adını ve adresini,
-  stok seviyelerini ve satış raporunu okuyordu — üstelik ürün başlığını
-  DEĞİŞTİREBİLİYORDU, çünkü panel modül yazma yüzeylerine doğrudan çağırıyor.
-  Artık her panel yolu, modülün kendi API'sinin kullandığı dizeyle yazılmış bir
-  yetkiyle TEK bir tabloda listeli; rota tutmayan operatörü panelin kendi 403
-  sayfasıyla ve eksik yetkiyi ADLANDIRARAK reddediyor, menü açılamayacak girdiyi
-  düşürüyor, kapı da operatörü açabileceği İLK ekrana gönderiyor. Bir eklentinin
-  kaydettiği ekran da yetkisini bildiriyor ve bildirmeyen bir kayıt AÇILIŞTA
-  reddediliyor. Yetki EKRAN başına: açılmış bir ekranın GÖSTERDİĞİNİ daraltmıyor
-  ve okuma katmanı principal'dan habersiz kalıyor (bilinen sınırlar). Kapıyı
-  router'ı İKİ kez yürüyen denetim tutuyor — biri her rotanın yetkisiz operatörü
-  reddettiğini, öteki her rotanın KENDİ yolunun listelendiği yetkiyi istediğini
-  kanıtlıyor; ikincisi var çünkü bağlama satırı yolunu iki kez adlandırıyor ve
-  bir ekranın yolunu başkasının handler'ıyla eşleyen satır yetkisiz operatörü
-  aynı doğrulukla reddediyor. Aynı turda ADR 0155'in politika kapısının NIL
-  sayfalarla kurulduğu ve bir eklentinin ekranını hiç yürümediği çıktı (D93).
-
-- **Bir eklenti artık yönetim PANELİNE ekran koyabiliyor** (ADR 0155, D91). Panel
-  altı ekranla geliyordu ve yedinciyi eklemenin yolu yoktu: `sections()` altı
-  elemanlı PAKET-ÖZEL bir dilim ve `internal/adminui` `internal/` altında, yani
-  dışarıdan adlandırılamıyor. Bir eklenti yönetim UCU açabiliyordu —
-  `plugins/analytics` tam bu şekildi — ve onu okumanın tek yolu curl'du. Artık
-  `core/plugin.AdminPage{Label, Path, Script []byte}` yayımlanmış ve
-  `Host.RegisterAdminPage` onları topluyor; panel bunları kurucu argümanı olarak
-  alıyor, bozuk bir kaydı AÇILIŞTA reddediyor, ve kabuğu, betiği ve menü girdisini
-  TEK bir listeden bağlıyor. Betik URL değil BAYT ve politikayı mümkün kılan şey
-  bu: panel onu KENDİ kaynağından servis ediyor, yani `script-src 'self'` yeterli
-  ve hiçbir kurulumun politikası üçüncü bir köken için açılmıyor — eklenti
-  kurmamış olanlar dahil. Eklenti şablon göndermiyor ve ADR 0030'un reddettiği
-  alternatif reddedilmiş kalıyor: burada sahiplenilen TEK bir kabuk her kayıtlı
-  ekranı çiziyor, betik onu /admin/v1'den operatörün kendi oturumuyla dolduruyor.
-  Ve bu dilimin ikinci yarısı: panel bugüne kadar HİÇBİR içerik politikası
-  taşımıyordu — ağaçta `Content-Security-Policy` sıfır kez geçiyordu, `X-Frame-Options`
-  ve `Referrer-Policy` de. Bir operatörün oturum açtığı HTML'i çizen bir yüzey için
-  bu zaten yanlıştı; ADR 0030'dan beri daha kötüydü, çünkü panelin yeni ekranları
-  /admin/v1'in İSTEMCİSİ, yani panelin servis ettiği bir betik operatörün
-  oturumunu taşıyor. Politika nonce'suz sıkı olabildi çünkü panel bunu YAPISIYLA
-  hak etmişti ve bu ölçüldü: on dört şablon ve stil dosyası boyunca tam bir
-  `<script>` var (defer'li src), satır içi stil yok, olay niteliği yok, görsel
-  yok, `url()` yok, `template.HTML` yok. Politika her panel rotasını tutan TEK bir
-  chi grubuna kuruldu ve router'ı YÜRÜYEN bir kapı yirmisinin de taşıdığını
-  kanıtlıyor — handler başına bir çağrı, biri handler ekleyene kadar tutan bir
-  kuraldır. İlk tüketici `plugins/analytics`: huni ekranı artık panelin menüsünde.
-
-- **Bir proje artık BINARY'DEN başlatılabiliyor** (ADR 0154, D90). gobit bir
-  kütüphane ve ön kapısı kapalıydı: hiçbir şey proje üretmiyordu, yani bir
-  yazarın ilk adımı `cmd/server/main.go`'yu okuyup bir `go.mod` tahmin etmek,
-  hangi ayarların var olduğunu tahmin etmek ve hangi servisleri kaldıracağını
-  tahmin etmekti. `gobit new <dir>` artık binary'nin İÇİNE gömülü şablonlardan
-  bir proje yazıyor. Ve dilimin şeklini belirleyen olgu şu — ölçüldü, tartışılmadı:
-  `github.com/bdrtr/gobit@latest` v0.8.0'a çözülüyor ve o etiket kök paketi
-  İÇERMİYOR (facade ondan sonra geldi), yani `require ... v0.8.0` + `import
-  "github.com/bdrtr/gobit"` `go mod tidy`'de "does not contain package" ile
-  düşüyor; `@latest` de aynı şekilde. Bugün import edilebilen tek sürüm bir
-  commit'in pseudo-version'ı, ve üretilen `go.mod` onu yazıyor: ÜRETEN
-  binary'nin derlendiği sürüm — etiketten derlendiyse etiket, değilse commit'in
-  pseudo-version'ı. Hiçbirini bilemeyen bir derleme TAHMİN ETMİYOR, reddediyor ve
-  `-replace` ile bir checkout'u gösteriyor. Biçim de önemli: bir etiket
-  erişilebilirse proxy YAMAYI artırıp damgayı `-0.` ile öneklendiriyor, yoksa
-  `v0.0.0-<zaman>-<hash>` veriyor — yanlışını yazan bir binary proxy'nin servis
-  ETMEDİĞİ bir sürümü adlandırır ve üretilen projede `go mod tidy` onu sessizce
-  üreticinin hiç seçmediği bir şeye çeviriri. Üç şablon tuzağı dosya ADLARIYLA
-  kapatıldı ve üçü de ölçüldü: içinde `go.mod` bulunan bir dizin embed
-  kümesinden SESSİZCE çıkıyor (`all:` bunu kaldırmıyor, ve satırın kendi önerisi
-  olan "`examples/starter`'ı göm" tam bu yüzden imkânsız), `.go` ile biten bir
-  şablon ağacın her üretim Go dosyasını ayrıştıran iki kapıyı ve `go build`'i
-  aynı anda kırıyor, `.env.tmpl` ise deponun kendi `.gitignore`'u tarafından
-  izlenmiyor. Üretilen proje DERLENİP KOŞULARAK kanıtlanıyor; o şeridin
-  kanıtlayamadığı şey de yazılı: go.mod'u bu checkout'a çevirdiği için
-  "şablon pinlediği sürümde çalışıyor" ile "ağacın ucunda çalışıyor" arasını
-  ayırt edemiyor. Dil kapısı artık `.tmpl` tarıyor — bir şablonun düzyazısı
-  başkasının projesine render ediliyor, yani orada kalan Türkçe burada kalmıyor,
-  SEVK EDİLİYOR.
-
-- **Bir mağaza artık sepetlerinin NEREYE gittiğini görebiliyor** (ADR 0153). Bir
-  mağazanın vitrini hakkındaki ilk sorusu bir orandır: açılan sepetlerin kaçı
-  siparişe döndü. Pay, sipariş modülü var olduğundan beri otobüstaydı; PAYDA
-  hiçbir yerde yoktu, çünkü sepet modülü hiçbir şey yayımlamıyor ve
-  `core/eventbus`'ı SIFIR kez import ediyordu — yani her alışverişçinin ilk
-  dokunduğu modül, kendisi hakkında hiçbir şey söylemeyen modüldü. Artık iki olay
-  yayımlıyor: `cart.created` ve `cart.completed`, ev deseniyle — işlemin İÇİNDE
-  outbox satırı, commit'ten SONRA doğrudan yayım — ve gövdeyi TEK yerde kuruyor
-  (sipariş modülü onu iki kez elle kuruyor ve iki kopyayı karşılaştıran hiçbir şey
-  yok; ödeme modülünün notu bunu yazıyordu, bu onu izleyen üçüncü modül).
-  Tüketicisi `plugins/analytics`: üç topiğe abone oluyor, olay BAŞINA BİR SATIR
-  yazıyor ve `GET /admin/v1/analytics/funnel` ucunu açıyor. Tamamlama ile sipariş
-  AYRI tutuluyor ve ucun gösterdiği en yararlı şey bu: saga siparişi İKİNCİ
-  adımında veriyor, sepeti SON adımında tamamlıyor, yani arada düşen bir sipariş
-  tamamlanmamış bir sepetle birlikte duruyor. Sayım TABLONUN özelliği: otobüs en
-  az bir kez teslim ediyor ve yayımcılar olay kimliğini kayıttan TÜRETİYOR, o
-  yüzden satırın anahtarı olayın kimliği ve `ON CONFLICT DO NOTHING`; artırılan
-  bir sayaç tek bir yeniden teslimde olmamış bir orana dönüşürdü. Kimliği OLMAYAN
-  bir olay yazılmıyor REDDEDİLİYOR — boş anahtar birincil anahtarı kapar ve
-  sonraki her olay onun tekrarı gibi görünürdü (ürün modülünün üç topiği kimlik
-  taşımıyor, yani bu varsayımsal bir şekil değil). Satırın önerdiği SIRA ölçülüp
-  reddedildi: `core/provider`'a bir `Analytics` arayüzü + yayımlanmış-adlar
-  defterine üç satır eklenip hiçbir gerçekleme yazılmadığında bütün `internal/arch`
-  şeridi YEŞİL kalıyor — yani o dilim, var olmayan bir tüketici için 1.0.0'a
-  verilmiş bir söz (ADR 0063 tam bunu reddediyor). Bedeli açık: iki topik daha
-  ZORUNLU olarak iletiliyor ve `cart.created` ağacın en yüksek hacimli topiği —
-  terk edilen her sepet artık bir webhook teslimi. Bu yüzden SATIR başına topik
-  yok.
-
-- **Mağaza artık müşteri için PARA TUTABİLİYOR** (ADR 0152). Geç kalan bir
-  teslimattan sonra müşteriyi elde tutmanın iki yolu var — parayı geri göndermek
-  ya da müşterinin hesabına yazmak — ve bu depo yalnızca birincisini
-  yapabiliyordu: hiçbir modülün hiçbir tablosu bakiye tutmuyordu, yani
-  "hesabınıza 200 lira yazdık" bir tabloda değil bir excel dosyasında duran bir
-  sözdü. Artık ödeme modülünün yalnızca EKLENEN bir defteri var — müşteri ve para
-  birimi başına işaretli tutar — ve onu kartın harcandığı yuvadan harcayan bir
-  `store_credit` sağlayıcısı. Bakiye satırların TOPLAMI ve hiçbir yerde
-  saklanmıyor: yetkilendirme EKSİ bir blokaj yazıyor, tahsilat hiçbir şey
-  yazmıyor, iptal serbest bırakıyor — yani müşterinin harcayabileceği tutarın
-  içinden açık blokajlar zaten düşülmüş oluyor ve bir düzeltme yeni bir SATIR.
-  Kararı tablodan ayıran şey HARCAMA yarısıydı: bir kişiye ait parayı yalnızca o
-  kişi harcayabilir, oysa ödemenin sahibini söyleyen taraf İSTEMCİYDİ — tahsilat
-  bir referans ve bir tutar taşıyor, kimseyi adlandırmıyordu. Artık tahsilat
-  müşteriyi taşıyor ve o müşteri sepetten geliyor (ADR 0125'ten beri KANITLANMIŞ
-  olan alan), yani bir misafir sepeti krediyle ödeyemiyor — sağlayıcı kimseyi
-  adlandırmayan oturumu reddediyor. Tehlikeli birleşim YAPILANDIRILAMIYOR:
-  `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM` açık bir kurulumda sağlayıcı hiç
-  kaydedilmiyor, yani ödeme yöntemi KAYBOLUYOR — başkasının bakiyesini harcama
-  yoluna dönüşmüyor. Kilit kararın korrektlik argümanı ve gerçek bir sunucuda,
-  rakip bir işlemle kanıtlandı; ilk yazılan eşzamanlılık testi kilit
-  KALDIRILDIĞINDA da geçiyordu (yerel sunucu her işlemi bir sonraki goroutine
-  başlamadan bitiriyordu), o yüzden çakışmayı UMAN test yerine ÜRETEN test
-  yazıldı.
-
-- **Katalog artık ne kadar süre YENİDEN KULLANILABİLECEĞİNİ söylüyor** (ADR 0151).
-  ADR 0044 satış kanalını katalog YOLUNA taşımıştı — "paylaşılan bir önbelleğin
-  saklayabileceği şey budur" — ve bilerek hiçbir önbellek açmamış, tazelik
-  politikasını da seçmemişti. Politikayı belirleyen olgu orada ÖLÇÜLMÜŞ: katalog
-  gövdesi YAZMA OLMADAN değişebiliyor, çünkü fiyat listesi penceresi SAATE karşı
-  açılıyor (`listablePrices` saati argüman alıyor). Yani yazmada geçersiz kılma
-  asla tam olamaz — 09:00 geldiğinde hiçbir şey yazmıyor — ve tek tam olabilecek
-  araç TTL. Artık üç kanal-kapsamlı okuma BAŞARI yolunda
-  `Cache-Control: <kapsam>, max-age=<ttl>` yazıyor; TTL
-  `STOREFRONT_CATALOG_CACHE_TTL`'den geliyor (sıfır — varsayılan — hiçbir başlık
-  yazmıyor) ve kapsam `STOREFRONT_CATALOG_CACHE_SHARED` açık değilse `private`.
-  İki ayar iki AYRI soru: TTL tazelik, `shared` GÜVENLİK — ADR 0044'ten beri
-  publishable key gövdeye etki etmeyen bir KAPI, yani `public` bir CDN'in saklanmış
-  gövdeyi ANAHTARSIZ çağırana servis etmesine izin verir. Çoğu mağaza tam bunu
-  istiyor (kanalın kataloğu vitrinin dünyaya gösterdiği şey, anahtar da tarayıcıda
-  duruyor) ama bu deponun onlar adına vereceği bir karar değil: varsayılan false ve
-  paylaşılan bir kurulum açılışta UYARI alıyor. Başlık handler başına ve başarı
-  yolunda yazılıyor; middleware rota tablosunu ikinci kez bilmek zorunda kalırdı ve
-  handler'ın gövdeyle mi retle mi cevaplayacağını GÖREMEZ — CDN'in TTL boyunca
-  sakladığı bir 404, düzeltildikten sonra da kayıp kalan bir ürün demek. Negatif
-  TTL açılışı durduruyor, sıfır kabul ediliyor: sıfır bir cevap, `-1h` ise
-  yaptığını söylediğini sanan bir yazım hatası. Beş mutasyondan biri hayatta kaldı
-  ve kusur KODDA değil TESTTEydi: doğrulayıcı `-1h`'yi reddediyordu ve bunu hiçbir
-  test tutmuyordu.
-
-- **gobit'i GÖMEN bir program artık onu kendi testinde ayağa kaldırabiliyor**
-  (ADR 0150). gobit bir KÜTÜPHANE (ADR 0025) ama onu gömen bir programın ona karşı
-  test yazma yolu yoktu: facade yalnızca `Main(args, out)` sunuyor — porta bağlanıp
-  blokluyor — ve arkasındaki her şey (göçler, modül kaydı, router, koruma
-  halkaları) `internal/` altında, dışarıdan erişilemez. Kalan iki seçenek ikiliyi
-  çalıştırıp sokete konuşmak ya da montajı kendi testinde YENİDEN YAZMAKTI; bu
-  deponun ikincisinin bedelini bildiği bir kaydı var (ADR 0141 tam o kopya
-  kaydığı için var). Artık `App.InProcess(ctx)` bütün kurulumu ayağa kaldırıp
-  `Main`'in sunacağı `http.Handler`'ı dönüyor — ve AYNI montaj fonksiyonundan
-  geçerek, çünkü kendi montajı olan bir koşum takımı "kurulum nedir" sorusuna
-  ikinci bir cevap olurdu ve testlerin güvendiği cevap kimsenin deploy etmediği
-  olurdu. PORTU ya da SAATİ olan hiçbir şey başlamıyor: HTTP sunucusu yok,
-  operatör dinleyicileri yok, ZAMANLI İŞ yok — bir relay'in testin kendi
-  iddialarının altında tıklaması, arızayı testin ne zaman baktığına bağlar. Bedeli
-  yazılı: olay abonesine yalnızca DOĞRUDAN yayımla ulaşıyor, outbox satırının
-  verdiği sözü tutan relay çalışmıyor. Yapılandırma ORTAMDAN okunuyor, tıpkı
-  `Main` gibi (ikinci bir yapılandırma yolu, hiçbir deployment'ın kullanmadığı
-  varsayılanlarla koşan bir test demek), ve bunun bedeli böyle bir testin
-  `t.Parallel` olamaması. Facade'ı genişletmek yayımlanmış yüzeyi denetleyen
-  kapıda bir delik de buldu (D86): ad envanteri yalnızca `core/` ağacını
-  yürüyordu, oysa paket listesi facade'ı da yayımlanmış ilan ediyor — yani
-  `gobit.App` ve metotları 1.0.0'a kadar tutulacak, hiçbir şeyin denetlemediği
-  sözlerdi ve `InProcess` eklendiğinde kapı yeşil kaldı.
-
-- **Bir taşıyıcıya artık kolinin NEREDE olduğu sorulabiliyor** (ADR 0149). Takip
-  numarası sevk anında iliştirilebiliyordu ve çizelge beş anı taşıyordu, yani ELLE
-  yarısı tamdı; SAĞLAYICI yarısı yoktu — kargo sözleşmesi üç metottu (`Quote`,
-  `Create`, `Cancel`) ve etiket basıldıktan sonra taşıyıcıya hiçbir şey
-  sormuyordu. Boşluğu kutudaki sağlayıcının kendi godoc'u adlandırıyordu:
-  `GetShipment` "çekirdek sözleşmenin parçası DEĞİL… iki defterin birbirinden
-  ayrıştığı bir hata ancak böyle görülebilir". İki defter bilerek ayrı tablolar ve
-  gerçekten ayrışıyorlar: sevk işaretlendiğinde modül `shipped` derken sağlayıcının
-  satırı `pending` kalıyor, ve operatörün yazdığı takip numarası etiketin açıldığı
-  numaranın yanında duruyor — yani yanlış numarayla kaydedilmiş bir koli artık
-  GÖRÜNÜYOR. `core/provider` artık İSTEĞE BAĞLI bir `ShipmentTracker` yayımlıyor
-  (`Track`, bir OKUMA, sağlayıcının kendi kimliğiyle) ve
-  `GET /admin/v1/fulfillments/{id}/tracking` taşıyıcının görüşünü modülün kaydının
-  YANINDA veriyor, hiçbir şey YAZMADAN: hangi tarafın yetkili olduğu sağlayıcıya
-  bağlı — gerçek taşıyıcı kolinin nerede olduğunu bilir, kutudaki sağlayıcı ise
-  mağazanın kendisi, orada operatörün kaydı doğrudur — ve yazmak iki durumdan
-  birinde yanlış tarafı seçmek olurdu. Cevap BEŞ biçimli ve istemci ADA bakıyor,
-  boşluğa değil: "pending" diyen bir taşıyıcı ile sorulamayan bir taşıyıcı aynı boş
-  alanları üretir. Yedi mutasyon ısırdı, biri hayatta kaldı ve kusur KODDA değil
-  TESTTEydi: fikstürlerin hiçbirinde modül tarafı boş değildi, o yüzden iki numara
-  zaten farklıydı — kapatan test iki tarafı da boş olan koli.
-
-- **Bir kural artık ürünün NEYE AİT olduğunu sorabiliyor** (ADR 0148). ADR 0144
-  kümeyi okuyan işleci (`any_in`) getirdi ve bağlam tarafına kümeyi verdi; satır
-  tarafına veremedi, çünkü bir ürünün kategorileri ve etiketleri ürün satırının
-  kolonu değil ve hiçbir şey onları yayımlamıyordu. Yani işleç vardı, sorularının
-  yarısı sorulamıyordu: tüccar "bu ürüne %20" ve "bu koleksiyona %20" yazabiliyor,
-  mağazanın gerçekten yürüttüğü kampanyayı — bir KATEGORİYE indirim —
-  yazamıyordu. Kural satırı kaydediliyor, yönetim ucu 200 dönüyor ve indirim
-  sessizce sıfır kalıyordu. Artık ürün kaydı `category_ids` ve `tag_ids`
-  yayımlıyor ve sepet her satırın listelerini gönderiyor. Okumalar YALNIZCA alan
-  adlandırıldığında yapılıyor: panelin ızgarası, bağ çözümü ve verginin tür
-  okuması hiçbir şey ödemiyor — ama BOŞ alan seçimi (yani "kaydın tamamı")
-  ödüyor, çünkü tamamı doğru olmak zorunda. Üyelik DOĞRUDAN, ki sağlayıcının
-  `category_id` SÜZGECİNİN verdiği cevabın aynısı: üst kategoriyi adlandıran bir
-  kural, yalnızca alt kategorilerde dosyalanmış ürünlere ulaşmıyor ve bu sınır
-  known-limits'te süzgecinkinin yanında duruyor. Kargo yöntemi liste TAŞIMIYOR ve
-  taşımayacak — hiçbir kategoride değildir — yani kargo hedefli bir kategori
-  kuralı hiçbir şey seçmiyor, ki doğru cevap budur. Ve bu turda düzyazıda kalmış
-  bir kural kapıya çevrildi: promosyon modülü aynı hesabı İKİ yüzeyde cevaplıyor
-  (sepetin interop'u ve `POST /admin/v1/promotions/compute`), ikisinin godoc'u da
-  şekillerin BİREBİR aynı kalmasını söylüyordu — alan birine eklendi, ötekine
-  eklenmedi ve hiçbir şey düşmedi (D85).
-
-- **İkinci etken artık İSTENİYOR** (ADR 0147). ADR 0143 yöneticiye ikinci etkeni
-  TUTACAK yeri verdi — mühürlü TOTP sırrı, iki uç, RFC 6238 — ama "bu kişi
-  telefonunu kanıtladı mı" sorusunu soran metodun tek çağıranı kendi testiydi:
-  kişi kaydolup onaylıyor, sonra parolasıyla hiçbir şey olmamış gibi giriyordu.
-  Bu deponun kendi tekrarlayan kusuru, ve burada daha kötüsü — yaptığını iddia
-  ettiği şey yönetimi korumak, ve açan kurulum korunduğuna inanıyordu. Artık
-  `Login` jetonu imzalamadan önce hesabın kanıtlanmış etkenini soruyor; kod giriş
-  gövdesinde geliyor ve retler KENDİLERİNİ adlandırıyor (`auth_mfa_required`,
-  `auth_mfa_code_wrong`), ikisi de yalnızca parola DOĞRU çıktıktan sonra, yani
-  yabancıya hesap hakkında bir şey söylemiyorlar. Yanlış kod bir deneme sayılıyor
-  (altı haneyi tahmin etmenin tek sınırı o sayaç), eksik kod sayılmıyor (sıradan
-  iki adımlı girişin ilk yarısı). ADR 0143'ün bıraktığı üç soru ŞEKİLLE
-  cevaplandı: makine etkilenmiyor (talep parola girişinde, anahtarın
-  authenticator'ı yok), kanıtlanmamış kayıt hiçbir şey istemiyor (yarıda kalan
-  tarama kimseyi kilitlemiyor), ve yeniden kayıt artık onayı SİLMİYOR — yeni sır
-  `pending_secret`'ta kanıtlanmışın YANINDA bekliyor, çünkü silmek ikinci etkenden
-  hiç sır gerektirmeyen bir çıkış yolu olurdu. Telefonunu kaybeden artık kendi
-  başına düzeltemiyor ve hiçbir uç onun yerine düzeltmiyor: meslektaşının etkenini
-  kaldırabilen bir yönetici, çalınmış TEK bir oturumu her hesaba parolayla girmeye
-  yeterli kılardı. Kalan yol makinede: `gobit mfa-reset <email> -confirm <email>`.
-  Hiçbir şey mağaza genelinde zorunlu değil (kimse kaydolmadan zorunluluk herkesi
-  aynı anda kilitler) ve bu known-limits'e yazıldı. Ve `Login`'i genişletmek
-  `adminui.Session`'ı derlenen her şeritte YEŞİL kalarak kırdı: panel beş yüzeyi
-  adla çözüyor ve hiçbiri sabitlenmemişti — arıza AÇILIŞTA bekliyordu; beşi de
-  artık sabitli.
-
-- **Bir operatör artık TELEFONDAN sipariş alabiliyor** (ADR 0146). Sepetin
-  yönetici yüzeyi kararla salt okunurdu: panelden yapılan bir düzeltme,
-  müşterinin baktığı tutarı arkasından değiştirmek demekti. O gerekçe bir sepeti
-  DEĞİŞTİRMEYİ kapsıyor, AÇMAYI değil — ve sipariş modülü boşluğu dolduramıyor,
-  çünkü `CreateOrder`'ın rotası bilerek yok: HTTP üzerinden açılan bir sipariş
-  çağıranın belirlediği bir toplamı taşır. Tutarı sunucunun yapan şey sepettir.
-  Yüzey tam olarak iki yazma kazandı — sepeti açmak ve FİYATLANMIŞ bir satır
-  eklemek — ve satır yazması ZORUNLU bir `sales_channel_id` taşıyor: yönetici
-  anahtarı kanal taşımaz, kanalsız bir kimlik "kanalsız" değil "hiçbir kanala
-  bağlı" demektir, yani talep operatörün kataloğunun tamamını yazdığı varyant
-  kimliği hakkında bir iletiyle reddederdi. Handler kanalı principal'a YAZIYOR,
-  böylece sepetin mevcut kapsam kuralı atlanmak yerine olduğu gibi koşuyor.
-  Sepet açmak kanal İSTEMİYOR: o yolda kanalı hiçbir şey okumuyor, istemek
-  kimsenin bakmadığı bir bağlama yazılan bir iddia olurdu. Bedeli yazılı:
-  kapsamı sunucu kanıtlamadı, iddia her istekte ayrı yapılıyor (bir sepetin iki
-  satırı iki kanal altında yazılabilir) ve operatör müşterinin elindeki sepete
-  satır ekleyebiliyor — ama gördüğü şeyi DEĞİŞTİREN hiçbir şeyi yapamıyor ve
-  parayı hâlâ müşteri, mağaza yüzeyinden, önündeki toplama karşı ödüyor.
-
-- **Bir değişim artık BAŞKA BİR ÜRÜN gönderebiliyor** (ADR 0145). Modüldeki her
-  satış-sonrası kalemi var olan bir sipariş satırını NOT NULL bir yabancı
-  anahtarla gösteriyordu; müşterinin zaten sahip olduğu maldan söz eden kayıtlar
-  için doğru, bir DEĞİŞİM için değil. "Aynı gömleği bir beden büyük gönder"
-  sıradan değişimdir, ama `order_replacement_items` yalnızca siparişte zaten
-  olan varyantın birimlerini ifade edebiliyordu — ve değişimin para yarısı
-  ADR 0120'den beri fark tahsil edebiliyor, cevaplayacağı mal olmadan. Kalem
-  artık satır YERİNE bir varyant adlandırabiliyor (şemada CHECK: tam olarak
-  biri). Aşağı akışta hiçbir şey değişmedi ve bu şans değil ölçümün bulgusu:
-  sevkiyat akışı zaten yalnızca varyanttan çalışıyordu, satır oradaydı çünkü
-  satırın kendisi ne gönderdiğini söyleyemiyordu. Bedeli yazılı: satır kalemini
-  "alınandan fazlası olamaz" sınırlıyor, varyant kalemini ise yalnızca
-  operatörün YAZDIĞI fark tutarı — bu known-limits'e eklendi.
-
-- **Bir kural artık "şu gruplardan HERHANGİ BİRİNDE mi" diye sorabiliyor**
-  (ADR 0144). Müşteri tüccarın koyduğu kadar grupta olur, ama sepet yalnızca
-  BİRİNİ gönderebiliyordu: sıralı baş (ADR 0049). Yani {retail, vip}
-  gruplarındaki, başı retail olan bir müşteri `customer_group_id in [vip]`
-  kuralına UYMUYORDU — segmentin İÇİNDEKİ birine segment indiriminin sessizce
-  uygulanmaması, ki ADR 0103 tam bu kusurla açılıyor. Dokuzuncu bir işleç
-  (`any_in`) bağlamın değer KÜMESİNİ okuyor ve sepet bütün grupları sıralı başın
-  YANINDA gönderiyor. Eski işleçler listeye BAKMIYOR: gönderilmiş bir `in`
-  kuralının cevabı aynı kalmalı, yoksa canlı bir indirim hiçbir şey duyurmadan
-  genişlerdi. Ölçüm ayrıca satırın "eksik" dediği üç hedefin de bağlı olduğunu
-  ve `cart/discount.go`'daki bir cümlenin ("müşteri grubu bağlama KONMUYOR")
-  uzun süredir yanlış olduğunu buldu.
-
-- **Bir yönetici artık İKİNCİ BİR ETKEN taşıyabiliyor** (ADR 0143). `auth_mfa_
-  credential` göçü, ve `/admin/v1/auth/mfa` altında iki uç: kayıt ve onay.
-  Uçlar hiçbir kullanıcı adlandırmıyor — çağıranın KENDİSİNE etki ediyorlar,
-  çünkü meslektaşı adına kayıt açabilen bir yönetici onun telefonunun sırrını
-  elinde tutardı; api_key ile yapılan istek de reddediliyor, makinenin
-  doğrulayıcısı yok. Kayıt, ilk doğru koda kadar SAYILMIYOR.
-
-  Bu, modülün geri okuyabildiği İLK sır: parola argon2id, api anahtarı ve davet
-  jetonu SHA-256, hiçbiri geri getirilemez — ama altı haneyi doğrulamak onu
-  yeniden hesaplamak demek. Sır AES-GCM ile mühürleniyor ve anahtarı kurulum
-  veriyor (`MFA_SECRET_KEY`); anahtar yoksa kayıt REDDEDİLİYOR, çünkü öntanımlı
-  bir anahtar anahtar değildir ve düz metin, adının yaptığından azını sessizce
-  yapan bir güvenlik özelliğidir. Anahtar `JWT_SECRET`'tan AYRI: ikisi farklı
-  saatlerde döndürülür. TOTP bağımlılık olarak değil YAZILARAK geldi ve RFC
-  6238'in kendi test vektörlerine karşı doğrulanıyor. Giriş akışı henüz
-  dokunulmadı — zorunlu kılmak ayrı bir karar.
-
-- **İki eylem de AYNI HEDEFİ hesaplıyor** (ADR 0142, D82). Bir satırın iptal
-  edilen birimlerini rafa iki eylem koyuyor: yazımın kendisi ve gerisini tutan
-  kolinin iptali. İkisi de FARK hesaplıyordu, ve koli eylemi "yazımın zaten geri
-  koyduğu" terimini çıkarıyordu — okumadığı, VARSAYDIĞI bir sayı. Otobüs sıra
-  vaat etmiyor: doğrudan yayımı kaybolan bir yazım, outbox aktarıcısıyla bir
-  dakika sonra, operatör koliyi iptal ettikten SONRA geliyor. Ölçüldü: beş
-  birimlik bir iptal için rafa SEKİZ birim yazıldı, ve iki eylemin referansları
-  farklı olduğu için defterin tekilliği bunu göremiyordu. Artık ikisi de
-  `min(iptal, satılan − kolideki)` hedefini hesaplıyor ve modül, kilidin altında
-  farkı hareket ettiriyor; sıra önemsizleşiyor ve yeniden teslim edilen olay
-  hedefi zaten karşılanmış buluyor. `inventory_movements` satır kimliği taşıyan
-  bir sütun kazandı, referansın tekil indeksi ise DÜŞTÜ — aynı eylem hedefi
-  büyüdüğünde meşru biçimde ikinci kez yazıyor.
-
-- **Uçtan uca zemin, üretimin bağladığı her akışı bağlıyor** (ADR 0141).
-  `internal/e2e` modül ve akış kümesini ELLE kuruyor — bilerek, çünkü gerçek
-  kurulumu çağıran bir zemin modülleri değil kurulumu sınardı. O kopyanın
-  bedeli kopya olmasıydı: üretim yedi akış bağlıyordu, zemin altı. Eksik olan,
-  deponun YALNIZCA otobüsle sürülen tek akışıydı — hiçbir şey onu çözmüyor,
-  hiçbir şey çağırmıyor, yani bağlanmamış hâli hiçbir isteği kırmıyor ve hiçbir
-  testi kızartmıyor; yalnızca stok rakamı eksik kalıyor. D75 ile D76 tam orada
-  haftalarca durdu. Kapı artık iki kökün İTHAL ettiği akış paketlerini
-  karşılaştırıyor, ve zemin ADR 0134/0135/0139/0140'ı aynı anda gören ilk
-  senaryoyu koşuyor.
-
-- **Bir koli artık hangi sipariş için açıldığını KAYDEDİYOR** (ADR 0140). Koli
-  açmanın iki yolu var ve hiçbiri ikisini birden yapmıyordu: akışın açtığı koli
-  bağlıydı ama kalem taşımıyordu (açtığı yüzey kalem almıyor), modülün yönetici
-  ucunun açtığı koli kalem taşıyordu ama hiçbir şeye bağlı değildi. Gerçek bir
-  veritabanına karşı ölçüldü: üç birimlik bir koli `CommittedQuantities`'e
-  `{oli: 3}` diyor, bağ listesine BOŞ. Yani `committed` terimi, katkısı olan her
-  koli için yapısal olarak sıfırdı — ve o terim ÜÇ kararın ortasında duruyor
-  (ADR 0134, 0135, 0139). Bağı artık tanımın sahibi olan modül yazıyor; akıştaki
-  yazım kaldırıldı, çünkü aynı kuralın iki yerde olması onun bir yerde
-  unutulmasının sebebiydi.
-
-- **İptal edilen bir koli, tuttuğu birimleri geri veriyor** (ADR 0139). Bir
-  satırın kaç biriminin rafa ait olduğu `min(iptal, satılan − canlı kolide)`
-  ve bu ifadenin İKİ tarafı da oynuyor; ama yalnızca birinin olayı vardı.
-  Açık bir kolinin altında iptal edilen satır, kutunun dışındaki birimleri geri
-  koyuyor ve gerisini doğru biçimde bırakıyordu — ADR 0135 tam o duruma bakıp
-  "çerçeve kimsenin sevkiyatını kendi başına geri çekmez" dedi ve dükkânın
-  çözümünü aynı cümlede adlandırdı: koliyi iptal et. Koliyi iptal etmek bir
-  durumu çeviriyor, stoğa dokunmuyor ve KİMSEYE söylemiyordu; fulfillment
-  modülü hiç olay yayımlamamıştı. Böylece o birimler ne kolide, ne müşteriye
-  borçlu, ne rafta kalıyordu. Modül artık `fulfillment.canceled` yayımlıyor ve
-  iptal akışı ikinci olayı olarak dinliyor: bıraktığı miktar, iki pencerenin
-  FARKI — durumların farkı olduğu için akışın daha önce ne iade ettiğini
-  hatırlamasına gerek yok, ve iki koli hangi sırayla iptal edilirse edilsin
-  toplam aynı.
-
-- **Konteyner toplayıcısı, makinenin çöpe atıldığı yerde kapalı** (ADR 0138).
-  Doğrulama şeridi 11 Eylül'de iki kez, birbiriyle ilgisiz iki pakette,
-  altmışar saniye bekledikten sonra kırmızıya döndü; beklenen şey testin
-  istediği Postgres değil, süreçler arasında PAYLAŞILAN Ryuk konteyneriydi —
-  son istemcisi ayrıldıktan on saniye sonra kendini sonlandırıyor, kaydı
-  silinene kadar etiket aramasına yakalanıyor, ve ölmüş bir konteynerin asla
-  yayımlamayacağı bir port için altmış saniye bekleniyor. GitHub koşucusu iş
-  bitince yok edildiğinden toplayıcının koruyacağı bir şey yok: iki işte
-  kapatıldı, ve kararı meşrulaştıran iddia — koşucunun geçici olduğu — bir
-  arch kapısıyla iki yönde çivilendi.
-
-- **Bir meslektaş artık KENDİ ilk parolasını belirliyor** (ADR 0137). Bugüne
-  kadar bir kullanıcı eklemenin iki yolu vardı ve ikisi de yanlıştı: ya
-  `CreateUser`'a parolayı siz yazıyordunuz — yani bir kişi bir başkasının sırrını
-  biliyordu ve "bu kullanıcı olarak kim davranabilir" kaydı ilk dakikadan yanlıştı
-  — ya da parolasız yaratıp hiç `auth_identity` satırı yazmıyordunuz, ki o da giriş
-  yapamayan ve sebebini hiçbir yerin söylemediği bir hesap. Artık davet var:
-  `POST /admin/v1/users/{id}/invitations` açıyor, `POST /admin/v1/auth/accept-invitation`
-  harcıyor. Jeton yanıtta DEĞİL — davet API'den geri verilseydi yönetici gene
-  meslektaşının ilk-parola bağlantısını tutuyor olurdu. Kabul ucu ikinci korumasız
-  admin yolu ve öyle olmak zorunda: onu çağıran kişinin henüz kimlik doğrulayacağı
-  bir hesabı yok. **Ve bunu mümkün kılan şey**: bildirim modülü artık modüller-arası
-  bir yüzeye sahip — o güne kadar gobit içinden posta göndermenin tek yolu bir
-  OLAYDI, ve bir olay kalıcı akışta durur, en az bir kez teslim edilir ve
-  operatörün üçüncü taraf uçlarına İLETİLİR; tek kullanımlık bir davet jetonu
-  bunların hiçbiri olamaz.
-
-- **Derleyici artık HER interop çiftini denetliyor** (ADR 0136). Bir tüketici,
-  ihtiyaç duyduğu dar arayüzü KENDİ paketinde tanımlıyor ve somut değeri
-  container'dan isimle çözüyor; iki taraf birbirini ithal etmediği için bir imza
-  kayması iki tarafta da derleniyor ve ancak ÇÖZÜM anında patlıyor — istek
-  yolunda, `sync.Once` ile önbelleğe alınmış hâlde, başlangıç yeşilken. Ve
-  patlamıştı: `*cart.Interop` ne `ApplyPromotionCode` ne `RemovePromotionCode`
-  taşıyordu, yani iki vitrin kupon ucu kod yazan ilk müşteriye 500 dönüyordu
-  (D73). Bunu yazmayı engelleyen şey başka bir modülün godoc'undaki bir cümleydi:
-  "derleyici ikisini asla birlikte görmez" — yanlış; aynı Go modülündeki ÜÇÜNCÜ
-  bir paket ikisini de ithal edebiliyor. `internal/arch/interop_pins_test.go`
-  artık otuz yedi atama taşıyor, ve nüfusu diskten türeten bir kapı listenin tam
-  kalmasını sağlıyor (ilk koşumunda elle yazdığım listede iki eksik buldu).
-
-- **Bir koli artık siparişin BORÇLU olduğundan fazlasını taşıyamıyor**
-  (ADR 0135). `POST /admin/v1/fulfillments` satır kimliği ve adet alıyordu ve
-  hiçbirini siparişe karşı denetlemiyordu — okuyarak doğrulandı: boş kimlik,
-  global bir adet aralığı ve aynı satırın iki kez geçmesi reddediliyor, başka
-  hiçbir şey. Ne satırın o siparişe ait olduğu, ne adedin satılanın içinde
-  kaldığı, ne birimlerin başka bir kolide olduğu, ne de iptal edilmiş oldukları.
-  Yani bir operatör, müşteriye iptal edildiği söylenen malı sevk edebiliyordu —
-  ve ADR 0134'ten beri o birimlerin stoğu rafa geri döndüğü için aynı mal iki kez
-  çıkıyor, sayım farkı kadar eksiliyordu. Artık fulfillment modülü `fulfilling`
-  akışını istek anında çözüp `alınan − iptal − canlı kolideki` sınırını soruyor ve
-  aşan kalemi reddediyor. Uç KIMILDAMIYOR, ve sınır okunamazsa koli açılmıyor —
-  okunamayan bir sınır sınır değildir (D72).
-
-- **Bilinen sınırlar belgesi artık contrib kimlik modüllerini de KAPSIYOR**
-  (D71). `docs/known-limits.md`, gobit'in yapmadığı şeyleri okumak için açılan
-  belge, ve kimlik bölümü reddeden dört rotayı kapatmanın yolunu "tek satır
-  bağlama: bir doğrulayıcı bağla" diye bitiriyor. ADR 0127'den beri bağlanacak
-  BİR TANESİ var — bu depoda — ve dosyada `contrib` kelimesi hiç geçmiyordu.
-  Yani belgenin kendi tavsiyesini izleyen okur ne onun var olduğunu ne de neyi
-  kapatmadığını öğreniyordu: imzalı çerez süresi dolmadan iptal edilemez, çalınmış
-  bir çerez kendi passkey'ini kaydedip sahibinin anahtarını kaldırabilir,
-  kurulumun bağladığı bir kimlik bilgisi deposu hiçbir veri-sahibi yeteneğini
-  yanıtlamayabilir, `Options.RPID` değişimi kayıtlı her anahtarı terk eder, ve
-  kaydolmanın varsayılan hız sınırı SÜREÇ başına. Hepsi bir ADR'de yazılıydı;
-  hiçbiri birinin sınır aradığı yerde değildi.
-
-- **İptal edilen birimler artık RAFA geri dönüyor** (ADR 0134). Checkout'un son
-  adımı rezervasyonları onaylıyor, yani stoku DÜŞÜYOR — o hâlde var olan bir
-  siparişin birimleri satılabilir sayıdan çıkmış oluyor, ve sonradan silinen bir
-  satır hem kimsenin göndermeyeceği hem de stok sayılmayan bir birim. Hiçbir şey
-  onu geri koymuyordu: ne tam sipariş iptali, ne ADR 0113'ün kısmi iptali, ve
-  order modülü koyamaz (birimler başka bir modülde). Artık order
-  `order.line_canceled` yayımlıyor (outbox + doğrudan) ve YENİ bir akış abone
-  oluyor: fulfillment'a canlı kolinin kaç birim tuttuğunu soruyor ve
-  `min(iptal toplamı, alınan − kolideki)`'nin artışını geri koyuyor — yani ikinci
-  iptal çifte saymıyor ve sevk edilmiş birim rafa dönmüyor. Deponun İLK yalnızca
-  dinleyen akışı. Stok geri koyma ilk kez İDEMPOTENT: veri yolu en az bir kez
-  teslim ediyor, o yüzden iptal kimliği hareketin referansı ve defter onu tekil
-  tutuyor (D70).
-
-- **Bir müşteri artık KENDİ hesabını açabiliyor** (ADR 0133).
-  `contrib/identity-session` yalnızca giriş yapıyor ve bir operatörün kimlik
-  bilgisi yazmasına izin veriyordu; bir müşteri hesap açamıyordu. İki uç eklendi:
-  kaydolma ve doğrulama. Kaydolma kişi hakkında HİÇBİR ŞEY yaratmıyor — ne
-  müşteri, ne kimlik bilgisi, ne oturum; yalnızca bu modülün kendi tablosunda
-  adresi, parolanın argon2id özetini ve token'ın özetini tutan bir satır. Hesabı
-  olan adres için de AYNI 202 dönüyor, yoksa "bu kişi burada alışveriş ediyor mu"
-  sorusu herkese cevaplanır; farklı olan gönderilen mesaj. Token
-  `DELETE ... RETURNING` ile tüketiliyor, yani tek-kullanımlık olması kilide
-  ihtiyaç duymuyor, ve hesap açılmadan ÖNCE harcanıyor. Müşteri kaydını kim
-  yaratacağı kurulumun bağladığı bir seam: `customer.service`'in
-  `RegisterGuestCustomer`'ı "aynı e-posta engel değil" diyor, yani kaydolma için
-  yanlış semantik. Uçlar seam bağlanmadıkça YOK — tipli nil de bağlanmamış sayılır.
-
-- **İki contrib kimlik modülü artık bir VERİ SAHİBİNE cevap veriyor**
-  (ADR 0132). `contrib/identity-session` ve `contrib/identity-passkey`, ADR
-  0029'un üç veri-sahibi yeteneğinden hiçbirini gerçeklemiyordu — oysa aralarında
-  bir e-posta adresi, bir argon2id parola özeti, bir müşteri kimliği, cihaz başına
-  bir kimlik bilgisi ve dört zaman damgası tutuyorlardı. Yani bir mağaza silme
-  talebini yerine getirip, silinen kişiyi içeri alan kimlik bilgilerini yerinde
-  bırakabiliyordu. Bunu yakalamak için yazılmış denetim de onları göremiyordu:
-  yalnızca `plugins/` altını geziyordu ve ayrı bir go.mod bir tabloyu daha az
-  kişisel yapmıyor — kökler artık DİSKE karşı doğrulanıyor. Passkey silmesi
-  bilinçli olarak RP kapsamı DIŞINDA: ötekiler "hangi anahtarlar bu kişiyi içeri
-  alır" sorusunu yanıtlıyor, bu ise "onun hakkında ne tutuluyor". Parola özeti
-  beyan ediliyor ama değeri üretilmiyor — sütunu düşürmek cevabı yanlış yapardı,
-  değerini basmak kişinin kendi sırrını dosyaya koyardı (D69).
-
-- **Bir passkey artık TEK bir doğrulayan tarafa ait** (ADR 0131). Passkey'i
-  üreten doğrulayıcı onu bir RP kimliğine bağlar: `Options.RPID` değişen bir
-  kurulum — alan adı taşınması, ya da bir alt alan adının düşürülmesi — kayıtlı
-  her anahtarı kullanılamaz bırakıyor. Satırlar kalıyordu ve hangi tarafa ait
-  oldukları hiçbir yerde yazmıyordu, yani bir commit önce gönderilen "son giriş
-  yolunu koruma" kuralı onları SAYIYORDU: bir terk edilmiş ve bir yeni anahtar
-  tutan kişiye "iki yolunuz var" deniyor, YENİ olanı kaldırmaya izin veriliyordu
-  — koruma, önlemek için yazıldığı kilitlenmeyi üretiyordu. Sunucunun da bir
-  görüşü yoktu ve bu yarısı ölçüldü: `example.test` altında kaydedilmiş satır,
-  `moved.test` altında birini 204 ile içeri aldı. Artık `rp_id` bir sütun ve
-  deponun her okuması/yazması onunla kapsamlı; NULL, sütundan önceki satır
-  demek ve yapılandırılmış taraf olarak okunuyor — yani yükseltme kimseyi
-  dışarı atmıyor (D68).
-
-- **Bir kişi artık passkey'lerini GÖREBİLİYOR ve birini kaldırabiliyor**
-  (ADR 0130). `contrib/identity-passkey` yalnızca kayıt ve giriş sunuyordu:
-  telefonunu kaybeden biri hesabını neyin açtığını göremiyor, o cihazı iptal
-  edemiyordu. İki uç eklendi — çağıranın kendi anahtarlarının listesi ve birini
-  kaldırma. Kaldırma, hesabı girişsiz bırakacaksa reddediliyor ve bu kural bir
-  KOŞUL değil bir KİLİT: READ COMMITTED altında DELETE'in içine yazılan aynı
-  kontrol, eşzamanlı iki kaldırmada sıfır anahtar bırakıyor — ölçüldü, her
-  koşuda. "Başka bir giriş yolu var mı" sorusu bu modülün KENDİ sorusu, ve
-  işlem açılmadan önce soruluyor: satır kilidi tutarken başka bir modülü
-  sorgulamak aynı havuzdan ikinci bir bağlantı ister. "Bakamadık" asla "başka
-  yolunuz yok" değil — biri 500, diğeri 409.
-
-- **İmzalama anahtarı artık kimseyi dışarı atmadan DÖNDÜRÜLEBİLİYOR** (ADR 0129).
-  `contrib/identity-session` tek bir anahtarla imzalıyor ve doğruluyordu; onu
-  değiştirmek, her tarayıcıdaki her çerezin aynı anda doğrulanmaz olması demekti.
-  Yani bir döndürmenin bedeli her alışverişçinin oturumuydu — ki anahtarların
-  neden döndürülmediğinin sebebi bu, döndürülmemesi gerektiğinin değil. Modülün
-  kendi paket belgesi bunu bir cümleyle söylüyordu; yazılı bir sınır,
-  kapatılabilen bir sınırdır. `identitysession.Options.RetiredSecrets` çerezin hâlâ taşıyabileceği
-  ama hiçbir şeyin İMZALAMADIĞI anahtarları tutuyor. Sıra tam olarak özelliğin
-  kendisi: ikisini de kabul edip ESKİSİYLE imzalamaya devam eden bir gerçekleme,
-  "oturumlar çalışıyor" diyen her testi geçer ve hiçbir şey döndürmemiş olur.
-  SIZAN bir anahtar emekliye ayrılmaz, doğrudan atılır — bu herkesi dışarı atar ve
-  doğru bedel odur.
-
-- **Passkey'ler KENDİ modülünde** (ADR 0128). `contrib/identity-passkey` her iki
-  WebAuthn törenini de yapıyor, kendi kimlik bilgisi tablosunu tutuyor ve kişiyi
-  parolanın açtığı AYNI oturum çerezine sokuyor. Ayrı bir `go.mod`, çünkü ölçüldü:
-  go-webauthn'ı import etmek gobit'in grafiğinde OLMAYAN dokuz modül ekliyor —
-  `go-tpm` ve `go-tpm-tools` dahil, yani çoğu dükkânın hiç görmeyeceği donanımın
-  attestation desteği. `contrib/identity-session`'ı parola için import eden bir
-  kurulum bunu taşımamalı. Tören durumu, oturum modülünün anahtarıyla mühürlenmiş
-  kısa ömürlü bir çerez; bu, o modülün MAC'ine "bu imza NE İÇİN" bilgisini
-  eklettirdi — tek anahtarın iki şekli imzalaması onları birbirinin yerine
-  geçirilebilir yapar. Giriş kimseyi ADLANDIRMIYOR: doğrulayıcı kişiye hangi
-  anahtarını kullanacağını soruyor, ki bu hem daha iyi akış hem de hesap sayımı
-  OLMAYAN tek akış. Törenler gerçek bir yazılım doğrulayıcısıyla KOŞULUYOR, çünkü
-  bu modülün yapabileceği her hata bir challenge, bir origin ya da bir kullanıcı
-  tutamağı hakkında ve handler'a dair hiçbir iddia bunların hiçbirini görmez.
-
-- **Çalışan bir müşteri kimliği artık AĞAÇTA — ama modülün DIŞINDA** (ADR 0127).
-  `contrib/identity-session`: imzalı çerez oturumu, argon2id parolalar, kendi
-  tablosu ve iki vitrin ucu; gömen import edip `Add` ediyor. ADR 0125 müşteri
-  adlandıran her vitrin ucunu bir doğrulayıcı bağlanana kadar kapattı, ADR 0126
-  kuralları yayımladı — ama bağlanacak bir şey yoktu: buradaki her gerçekleme bir
-  test sahtesi. Yeri KARARDI: `plugins/*` ana modülde, yani oraya girecek bir
-  WebAuthn kütüphanesi ürün kataloğu isteyen bir dükkânın grafiğine, güvenlik
-  taramasına ve hukuk incelemesine düşer — bağımlılık kapısının kendi cümlesi. Ayrı
-  bir `go.mod` onu dışarıda tutuyor. İlk dilim kimseye hiçbir bağımlılık eklemiyor:
-  argon2id `golang.org/x/crypto` istiyor ve gobit onu zaten DOĞRUDAN require
-  ediyor. Passkey kendi kaydına kaldı. Dört kapı ve iki şerit yeni ağacı öğrendi ve
-  her biri bir şey buldu — en keskini, hiçbir şeyin koşmadığı yirmi sekiz test.
-
-- **Bir müşteri kimliği artık YAYIMLANMIŞ bir süitten geçiyor** (ADR 0126).
-  `corehttp.Identity` bu çerçevenin istediği ve gerçeklemediği tek arayüz, ve
-  gömenin ne yazdığını hiçbir şey denetlemiyordu — `docs/known-limits.md` bunu iki
-  kayıttır bir cümleyle söylüyordu: iddia edilen kimliği geri veren bir gerçekleme
-  arayüzü karşılar ve çerçeve bunu ayırt edemez. ADR 0125 bunu canlı bir soruya
-  çevirdi: müşteri adlandıran her vitrin ucu artık bir doğrulayıcı bağlanana kadar
-  reddediyor. Bariz kural ise İŞE YARAMIYOR — arayüzün kendi sözleşmesi "yukarı
-  akıştaki bir vekilin yazdığı başlık"ı meşru bir kaynak sayıyor ve haklı: süzen
-  bir geçidin arkasında o başlık kanıttır. İkisini ayıran şey başlık değil, onu
-  süzen bir şey olup olmadığı — ve isteği tutan hiçbir test geçidi göremez. Çözüm:
-  gerçekleme bunu BEYAN ediyor (`identitytest.UpstreamTrust`) ve süit o başlığı
-  sondalamıyor. Süitin kendi testlerindeki iki gerçekleme aynı kod: beyan eden
-  geçiyor, etmeyen ise implemente edilecek arayüzü ADIYLA söyleyen bir hatayla
-  düşüyor.
-
-- **Doğrulanmamış bir müşteri iddiasını sunmak artık bir SEÇİM** (ADR 0125).
-  ADR 0057 müşteri adlandıran on iki vitrin ucunu tek bir karşılaştırmaya bağladı
-  ve dördünün, hiçbir doğrulayıcı bağlı değilken iddiayı DENETLENMEDEN sunmasını
-  bilerek seçti — gerekçesi yanlış da değildi: reddetmek, hiçbir yanlış yapmamış
-  bir gömenden çalışan bir yüzeyi geri çeker. Kalıntı açıkça yazıldı ve
-  `docs/known-limits.md`'ye kondu: bir müşteri kimliğini bilen (o kimlik her
-  sipariş yanıtında geziyor) biri, o kişinin şirketini ve harcama sınırını okuyor
-  ve onun adına sepet açıyordu — sepet yarısı o kişinin B2B ödeneğini harcıyor.
-  O kaydın yapamadığı şey bunu bir KARAR hâline getirmekti: bir kurulum, açık
-  cevabı sorunun var olduğunu bilmeyerek alıyordu ve açılışta bir WARN bir seçim
-  değildir. Dördü artık varsayılan olarak reddediyor — adres defterinin zaten
-  yaptığı gibi — ve eski cevap tek bir ayar uzakta
-  (`STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM`). Geri çekilen şey yüzey değil,
-  onu KARAR VERMEDEN almak. Varsayılan aynı zamanda SIFIR DEĞER: alan olumlu
-  adlandırıldı, çünkü `internal/e2e` bileşim kökünü sıfır Options ile taklit
-  ediyor ve modülleri elle kuran her gömen de öyle. Misafir trafiği iki değerde de
-  aynı — kimseyi adlandırmayan bir gövde hiç sorgulanmıyor, ki ADR 0057'nin bütün
-  karşılaştırmayı üzerine kurduğu cümle bu.
-
-- **Sevkiyat artık paranın HÂLÂ ORADA olup olmadığını SORUYOR** (ADR 0124).
-  ADR 0120 değişimin farkını alabilmesini sağladı ve satır, paranın orada olduğu
-  ANI tutuyor — bir sipariş satırının payment'ın sahip olduğu bir rakam hakkında
-  tutabileceği tek şey o (ADR 0119). Ama bir AN, bir BAKİYE değil: koleksiyon
-  payment'ın kendi iade rotasından erişilebilir kalıyor ve o yolda hiçbir akış
-  yok. Ölçüldü: fonla, koleksiyonu iade et, sevk et — 200 döndü, gerçek bir koli
-  açıldı, birimler raftan indi ve değişim `completed` işaretlendi; koleksiyonda
-  hiçbir şey yokken (D61). Kusur eksik bir kural değil, DEĞİŞEN bir şey hakkında
-  BİR KEZ sorulmuş bir kural. Akış artık stok hareket etmeden önce soruyor —
-  reddin hâlâ bedelsiz olduğu yerde — ve kaydı kapatmadan önce bir daha, çünkü o
-  adım yeniden deneme yolunda da koşuyor.
-
-- **Canlı kodda anılan bir şema adı ARTIK ÇÖZÜLÜYOR** (ADR 0123). D59'un on
-  bayat cümlesinden dördü, ADR 0120'nin düşürdüğü bir CHECK'i adlandırıyordu:
-  okuyucuya iddiayı doğrulayacağı bir ad veriyor, ad ise hiçbir şeye çözülüyordu.
-  Bu, `doc_references_test.go`'nun yazıldığı sınıf — atıf okuyucuyu ARAMAYA
-  gönderir ve aranan şey yoktur — ama onun ulaşamadığı boyutta, çünkü bir kısıt
-  adı Go sembolü de yol da değil, bir yorumdaki kelime. Denetlenen dağarcık
-  göçlerin KENDİSİNDEN türetiliyor: şemanın hiç tanımladığı her ad. Göçler SIRAYLA
-  yürünüyor ve sıra işin kendisi — bir ad rutin olarak düşürülüp bir satır sonra
-  geri ekleniyor, bir CHECK böyle genişletiliyor.
-
-- **Üretilen kod artık YENİDEN ÜRETİLEREK doğrulanıyor** (ADR 0122). Depo 75
-  sqlc dosyasını ve 14 gqlgen dosyasını ağaçta tutuyor ve hiçbir şey onları
-  kaynaklarıyla karşılaştırmıyordu. Kusur bir yorumla ortaya çıktı (D60), ama
-  ölçüm daha kötüsünü buldu: kaynak `.sql` veritabanının koştuğu sorgu DEĞİL —
-  koşulan şey üretilen dosyadaki dizge — yani yalnızca kaynağı düzenlemek
-  hiçbir şey tarafından çalıştırılmıyor. B2B harcama penceresini kaynakta bin
-  katına çıkarmak `go build`'i, `go vet`'i, birim şeridini ve gerçek
-  PostgreSQL'e karşı entegrasyon şeridini temiz bırakıyor; hepsi ESKİ sorguyu
-  koşuyor, ki doğru olan o. Düzenleme tam da yanlışken görünmez. CI artık
-  üreteçleri koşup farkı soruyor — go.mod için zaten sorduğu soru.
-
-- **Ödeme modülü artık paranın ne zaman hareket ettiğini SÖYLÜYOR** (ADR 0121).
-  Siparişin özeti, payment'ın tuttuğunun bir RAPORU, ve onu yalnızca iki akış
-  yazıyordu. Payment ise tahsilat ve iade rotalarını kendi yayımlıyor, o yollarda
-  hiçbir akış yok — yani para hareket ediyor ve siparişin kaydı hiç öğrenmiyordu.
-  ADR 0022 bunu üç gün önce görmüş, aboneyi "daha iyi ev" diye adlandırmış ve tek
-  bir sebeple reddetmişti: payment hiçbir şey yayımlamıyordu. Aynı cümlede de
-  önce cevaplanması gereken soruyu bırakmıştı — **bir ödeme olayı ne taşır?**
-  Cevap: koleksiyonun KİMLİĞİNİ ve anı, tutarı DEĞİL. Üç sebebi var ve üçü de
-  ölçüldü. İade bilerek idempotent değil, yani yükteki bir tutar ARTIM olurdu ve
-  otobüs en az bir kez teslim ediyor — tekrar teslim edilen bir artım, hiç
-  olmamış bir toplam bildirir. Tüketicinin yazması ise yalnızca KÜMÜLATİF sayıda
-  doğru çalışan bir birleştirme. Ve yayımlanan her konu kurulum dışına
-  iletiliyor: yükteki para, operatörün kaydettiği üçüncü taraf uçlarına giderdi.
-  Abone siparişe `order_payment` bağı üzerinden TERS yönde ulaşıyor, çünkü
-  koleksiyonun `reference`'ı SEPET kimliği taşıyor — yayımlanan OpenAPI tarifi
-  bunu "an order id in practice" diye yanlış anlatıyordu, o da düzeltildi.
-  ADR 0119 bükülmüyor: yasak olan bir order satırının payment'ın rakamını KENDİ
-  GERÇEĞİ gibi tutması, rapor tutması değil — ve abone raporu YAZDIĞI AN sorarak
-  üretiyor. Kusurlar: D55 kapandı, ve kardeşi D57 açılıp aynı commit'te kapandı —
-  tahsilat rotası da aynı sessizliği taşıyordu ve D55 yalnızca bakılan rotadan
-  yazıldığı için kaçmıştı.
-
-- **Bir değişim artık farkını ALABİLİYOR** (ADR 0120). Göç 000008 değişimin
-  tamamlanmasını kaldırırken geri getirecek şeyi adıyla yazmıştı: mal çıkışı, ve
-  fark sıfır değilse para girişi. Malı ADR 0090 getirdi; para üç kayıt sürdü —
-  0117 satışın bağını yerinde tuttu, 0118 koleksiyonun kapısını kalan kapasiteye
-  çevirdi, 0119 order satırının payment'ın tutarını AYNALAMAYACAĞINA karar verdi.
-  Geriye tek soru kalmıştı: geri çekme muhafızı nereye konur. Ölçüldü ve geri
-  çekmeyi koruyan BEŞ şeklin hiçbiri ayakta kalmadı — parayı orada okumak bu
-  modülün soramayacağı bir modülü ister, sayacı okumak ise geri alınamayan bir
-  kayıt ve bir daha unutulamayan bir sipariş üretir.
-  Cevap soruyu taşıdı: **muhafız geri çekmede değil BAĞLAMADA duruyor.** Parayı
-  aldığı an değişim `requested`'dan çıkıyor ve geçiş tablosu bunun ne demek
-  olduğunu kendisi söylüyor — iadenin `received → conflict` satırının aynısı.
-  Karar: pozitif fark, operatörün parayı topladığı koleksiyonu ADLANDIRARAK
-  fonlanıyor; satır o koleksiyonun KİMLİĞİNİ ve ANI tutuyor, tutarını asla.
-  Fonlanmış bir değişimin malı onu tamamlayabiliyor, olağan geri çekme onu
-  reddediyor, ve çıkışı parayı geri gönderip isteği de geri alan TEK bir eylem.
-  Bedeller açık: statü sözlüğü üçten dörde çıktı ve yayımlandı. Tamamlanmanın
-  sınırı şemada KALDI, ve bu ancak satır bir KİMLİK tuttuğu için mümkün — bir
-  CHECK kolonu görür, link katmanına yazılmış bir bağı görmez. Bu, ADR 0117'nin
-  ikinci cümlesini geçersiz kılıyor: o kayıt link demişti çünkü görünen şekil
-  oydu; ağacın kendi şekli, iki tarafı birden tutan akışın yazdığı çapraz-modül
-  kimliği için bir KOLON (göç 000012 bunu gerekçesiyle yazmış).
-  Ve yeni statünün açacağı deliği kapattım: silme süpürgesi `requested` arıyordu,
-  `funded` onu tetiklemezdi — yani parası tutulan bir sipariş UNUTULABİLİR hâle
-  gelirdi. Dal ikisini birden okuyor.
-
-- **Bir sipariş paranın ikinci bir kopyasını TUTMUYOR** (ADR 0119). Değişimin
-  farkı üç kez tasarlandı, altı aday üretildi ve altısı da bağımsız okumalarla
-  yıkıldı. Neredeyse her şeyde ayrışıyorlardı ve tek bir şeyden öldüler: her biri
-  değişimin satırına bir PARA sayısı koyup kuralı satır-yerel bir CHECK'e
-  bağlıyordu — göç 000017'nin tamamlanmayı sınırlarken savunduğu şekil.
-  Başka bir modülün sahibi olduğu para için o gerekçe taşımıyor. Ölçüldü: payment
-  bir tahsilatı iade eden bir rota YAYIMLIYOR, hiç olay yayımlamıyor (sıfır
-  `Publish`, sıfır konu, sıfır abone), ve `order_exchanges` üzerindeki bir kısıt
-  `payment_collections`'a yazılan bir satırı GÖREMEZ. Yani order tarafındaki bir
-  kopya, yayımlanmış bir rotanın sessizce geçersiz kılabildiği bir iddia, ve
-  şemanın sunduğu en güçlü muhafız tam da onu fark edemeyen muhafız.
-  Karar: payment'ın sahip olduğu bir tutar order satırına AYNALANMIYOR; o tutar
-  bir şeye karar veriyorsa, karar anında payment'a SORULUYOR. Order satırının
-  kaydedebileceği şey bir SORUNUN CEVAPLANDIĞI AN'dır, cevabın aritmetiği değil.
-  Bedeli açıkça ödeniyor: 000017'nin satır-yerel sınırı bu olgu için bırakılıyor
-  (o sınırın gerekçesi olgunun satırda olmasıydı, bu olgu satırda değil), ve ölçüm
-  ile yazma arasında modüller arası işlem olmadığı için kapanmayan bir pencere
-  kalıyor — bir tamamlama, yazıldığı ANI beyan eder, sonraki her anı değil.
-  Ağaçta zaten böyle bir kopya var ve artık adı konuldu: `order_summaries`'in
-  toplamları bir RAPOR, kaynak değil. O yüzeyin godoc'u kendi merge semantiğini
-  "payment olaylarını dinleyen bir abone" ile gerekçelendiriyordu ve öyle bir
-  abone VAR OLAMAZ; cümle düzeltildi, bayatlık düzeltilmedi — tetiği ADR 0022'nin
-  kendi tetiği. Kusur D55.
-  Üç turun kapattıkları bir sonraki kayda devrediliyor (bağ adı ve bire-bir
-  kardinalitesi, yalnızca-pozitif yüklem, tabanın değil EŞİTLİĞİN ölçü olması,
-  yapısal tavan, yeniden yazan `down`, imza genişletmek yerine metot eklemek), ve
-  bilerek açık bırakılan tek soru da: geri çekme muhafızı.
-
-- **Bir koleksiyonun kapısı artık KALANI okuyor** (ADR 0118). Kapı
-  "bu koleksiyon hiç bir şey aldı mı" diye soruyordu, ve altındaki hesap tahsil
-  edileni hiç okumuyordu — yalnızca canlı oturumların rezervini düşüyordu. Yani
-  bayrak bir kısayol değildi, ikinci bir oturumla ikinci bir tahsilat arasındaki
-  TEK duvardı; kaba olmasının sebebi buydu, ve kısmi bir tahsilatın kalanını da
-  o kabalıkla sonsuza kadar toplanamaz yapıyordu.
-  Kısmi tahsilat bir köşe durumu değil: admin tahsilat ucu tutarı İSTEĞE BAĞLI
-  alıyor ve yalnızca yukarıdan sınırlıyor, bir sağlayıcı kısmen yetkilendirince
-  operatör hiçbir şey seçmeden aynı yere geliniyor, ve türetilmiş durum sözlüğü
-  o hâli yazıldığı günden beri adıyla tanıyor. Modül kendi sözünü de çiğniyordu:
-  oturum testi "iptal edilen bir oturum koleksiyonu sonsuza kadar kilitlememeli,
-  müşteri yeni bir ödeme yolu deneyebilmeli" diyor, ve bu yalnızca hiçbir şey
-  tahsil edilmemişken tutuyordu.
-  Karar: oturum açmak KALANI soruyor — tutar eksi tahsil edilen eksi canlı
-  oturumların rezervi — ve yalnızca bu sıfırken reddediyor. Çift tahsilatın
-  bariyeri bir bayraktan aritmetiğe taşınıyor, üstelik ikinci duvarın zaten
-  durduğu yere: `captured_amount <= amount` kısıtı bugüne kadar ancak sağlayıcı
-  parayı ÇEKTİKTEN sonra ateşlenebiliyordu.
-  Tam iade edilmiş bir koleksiyon YENİDEN AÇILMIYOR ve bu bilinçli: iade tahsil
-  edileni küçültmüyor, kalan kapasite sıfır kalıyor. ADR 0117'nin tetiği bu ama
-  tüketicisi yok — üretimdeki iki iade çağıranı da parayı yalnızca geri
-  gönderiyor (ADR 0063). Yan taraftan bir düzeltme: ADR 0117 "engel bağ değil
-  koleksiyon" diyordu; ölçüm daha dar bir cevap verdi — var olan koleksiyon
-  yeniden kullanılabilir olsa bile farkı ALAMAZ, çünkü `amount` bir daha
-  yazılmıyor. Fark İKİNCİ bir koleksiyon ister, ve onun adı hâlâ ertelenmiş
-  durumda. Kusurlar D53 ve D54.
-
-- **Satışın ödeme bağı yalnızca satışı taşıyor** (ADR 0117). ADR 0116 bir
-  kardinaliteyi genişletilebilir yaptı ve tek soruyu yazılı olarak açık bıraktı:
-  değişimin tahsilatı kendi adını ister mi. O güne kadar cevap zorunluydu —
-  `order_payment`'ı genişletmek açılışı durduruyordu — ve artık durdurmuyor.
-  Ölçüldü: reddeden şey mekanizma değil SATIR. Bir link satırı iki kimlik ve bir
-  an taşıyor, o anı hiçbir okuma ifadesi SELECT etmiyor, ve genişletilmiş bir
-  `order_payment` altında checkout'un açtığı tahsilat ile bir değişimi
-  karşılayan tahsilatı ayırt edecek veri kalmıyor — üç okuyucunun üçü de eline
-  geçen ilkini alıyor. En pahalısı iade akışı: yorumu bir tarif değil GEREKÇE,
-  "bire-bir, o yüzden birden fazlası bir seçim değil veri hatasıdır" diyor, ve
-  genişletme davranışı aynı bırakıp gerekçeyi yalanlardı.
-  Karar: `order_payment` bire-bir kalıyor; bir siparişe karşı başka bir sebeple
-  toplanan para, satırın taşıyamadığı ayrımı ADIYLA taşıyan kendi bağına
-  bağlanacak. O bağın adı ve uçları burada KARARLAŞTIRILMIYOR — tüketicisi yok,
-  ve bu depo okunmayan bir adı yayımlamıyor.
-  Aynı turda ADR 0114'ün geride bıraktığı okuma yüzeyleri düzeltildi (D52):
-  admin değişim kaydı, durumunun zaten yayımladığı ANI kazandı, ve çizelge bir
-  değişimin iki bitişini birden bildiriyor. İkisi de mutasyonla kanıtlandı.
-  Farkı olan bir değişim hâlâ kapanmıyor, ve ölçülen engel bağ değil koleksiyon:
-  bir tahsilat koleksiyonu bir şey aldıktan sonra terk edilemiyor. Tetik yazılı.
-
-- **Bir bağın kardinalitesi artık GENİŞLEYEBİLİYOR** (`core/link`, ADR 0116).
-  Ağaçta üç yer aynı adımı adlandırıyordu — ADR 0114'ün açık bıraktığı sınır,
-  payment modülünün bağ tanımı ("o gün bu OneToMany olur ve **başka hiçbir şey
-  değişmez**") ve yetenek listesi. O cümle yanlıştı ve en sert biçimde yanlıştı:
-  `core/link` her tanımı kalıcı bir deftere yazıp gelen tanımla EŞİTLİK üzerinden
-  karşılaştırıyor, yani değişmiş bir kardinalite açılışta çakışmadır — uygulama
-  hiç başlamazdı. Şema yarısı da aynı şekildeydi: DDL baştan sona `IF NOT
-  EXISTS` olduğu için gevşek bir bildirim hiçbir şey yaratmıyor ve hiçbir şeyi
-  KALDIRMIYORDU; eski kardinalite altında kurulan tekil indeks hayatta kalıp
-  eskisini dayatmaya devam ederdi.
-  Karar: iki ucu değişmemiş ve kardinalitesi depodakinden GENİŞ olan bir bildirim
-  uygulanıyor — defter satırı taşınıyor ve yeni kardinalitenin istemediği
-  indeksler, bildirimin zaten tuttuğu kilidin altında, aynı işlemde düşürülüyor.
-  Güvenlik gerekçesi tek cümle: dar bir kardinalitenin kabul ettiği her çift
-  geniş olanınca da kabul edilir, yani diskteki satırlar yeni kısıtı eskisini
-  sağlamış olmakla sağlar — genişleme güvenli olduğunu bilmek için hiçbir veri
-  okumaz. DARALTMA okumak zorundadır ve reddedilmeye devam ediyor.
-  Bedelleri: bir bağı genişleten sürüm bu yoldan GERİ ALINAMAZ (eski ikili dar
-  kardinaliteyi bildirir ve açılışta reddedilir), ve ret mesajı artık izin
-  verilen yönü söylüyor çünkü oraya çarpan okur çoğunlukla geri alıyordur.
-  `verifySchema` sorusunun öteki yarısını kazandı: gereken indeksler var mı diye
-  soruyordu, artık gerekmeyenler GİTTİ Mİ diye de soruyor. Ve `OneToOne`'ı geçen
-  bir genişleme bir EŞZAMANLILIK güvencesi HARCIYOR: `from_uniq`, aynı sol taraf
-  kaydına iki hedef bağlanmasının tek yapısal engeli — akışlar bağı okuyup sonra
-  yazıyor ve advisory kilit yalnızca `Define`'ın etrafında. Bedel `OneToMany`'nin
-  kendi anlamı, ama onu erişilebilir yapan kayıt bu.
-  `order_payment` burada genişletilMİYOR: okuyucuları tek tahsilat varsayıyor ve
-  bunu yazıyor (iade akışı ikincisini "seçim değil veri hatası" sayıp ilkini
-  alır), ikisi arasında seçim kuralı ise ikincisinin bir anlamı olmadan
-  yazılamaz. ADR 0089/0090'ın yaptığı ayrımın aynısı.
-
-- **Mağaza artık kim olduğunu SÖYLÜYOR** (yeni `settings` modülü, ADR 0115).
-  Faturalama akışı iki tarafı da ÇAĞIRANINDAN alıyordu ve satıcının neden orada
-  olduğunu kendi godoc'u yazmıştı: "satıcının yasal bilgileri mağazanın kendi
-  yapılandırmasıdır ve burada hiçbir modülde yaşamıyor." Bunun iki sonucu vardı:
-  aynı mağazadan kesilen iki belge iki farklı satıcı adlandırabiliyordu, ve her
-  faturaya basılan kimlik, operatörün düzenleyemediği tek şeydi — fiyatı, ürünü,
-  siparişi değiştirebilen kişi mağazanın vergi dairesini düzeltmek için yeniden
-  dağıtım istemek zorundaydı.
-  Karar: `settings` modülü TEK bir `store_profile` tutuyor — yasal ad, vergi
-  numarası, vergi dairesi, e-posta, adres, ülke — ve faturalama akışı satıcıyı
-  ondan okuyor. Satıcı artık hiçbir isteğin parçası değil.
-  Bedelleri: profil yazılmadan belge kesilmesi REDDEDİLİYOR ve mesaj ucun adını
-  söylüyor (ilk faturasını kesen operatör tam da profili doldurmamış kişidir).
-  Yönetim gövdesi `seller` alanını KAYBEDİYOR — yayımlanmış bir yüzeyi
-  daraltmak burada yan etki değil kararın kendisi: çağıranın verebildiği bir
-  alan, iki çağıranın farklı verebildiği bir alandır. PATCH değil PUT, çünkü
-  kayıt bir KİMLİK ve kısmi yazma bir düzenlemeden gelen yasal adla başka bir
-  düzenlemeden gelen vergi numarasını yan yana bırakırdı. Kurulum başına TEK
-  profil (ADR 0009 çok kiracılılığı kurulum sınırına koyar).
-  Modül kolonlarını KİŞİSEL VERİ olarak beyan ediyor ama silici GERÇEKLEMİYOR:
-  şahıs şirketi bir kişidir, ama silinmeyi isteyen özne MÜŞTERİDİR ve
-  denetleyicinin kendi kimliğini silmek, kesilmiş belgeler onu basmaya devam
-  ederken mağazayı kendi kurulumundan silmek olurdu. E-posta HİÇBİR YERDE
-  katlanmıyor ve muafiyet bedelini yazıyor: bu adres basılıyor, eşleştirilmiyor.
-- **Bir değişim artık malını gönderebiliyor** (`order_replacements` ikinci bir
-  kaynak tanıyor, ADR 0114). Değişim, yalnızca geri çekilebilen bir istekti. Göç
-  000008 onun "tamamlandı" durumunu kaldırırken geri getirecek koşulu adıyla
-  yazmıştı: mal ÇIKMALI ve fark sıfır değilse para HAREKET ETMELİ, "ve çerçevede
-  ikisi de yok". İkisinden biri geldi — ADR 0090 mal çıkış akışını inşa etti ve
-  `order_replacements` onun gönderdiği kayıt. Ama o kayıt yalnızca bir TALEPTEN
-  beslenebiliyordu, çünkü yazıldığı gün mal isteyebilen tek şey bir talepti; oysa
-  değişim zaten "gelen mala karşılık giden mal" demek.
-  Karar: bir gönderim kaydı TEK bir kaynak adlandırır — talep ya da değişim — ve
-  gönderildiğinde o kaynağı kapatır. Değişim yalnızca `difference_due` sıfırsa
-  kapanır, ve bu sınırı veritabanı tutar (`order_exchanges_completed_owes_nothing`).
-  Farkı olan bir değişim, malı çıktıktan SONRA da açık kalır. Bu bir boşluk değil
-  dürüst hâl: malın yarısı gönderim kaydında duruyor, paranın yarısı ise bu
-  çerçevenin göremediği bir yerde oldu. Gerisinin tetiği payment modülünün kendi
-  link tanımında zaten yazılı — sipariş↔ödeme bağının bire-çok olduğu gün.
-  Modüller arası tel `claim_id`/`claim_status` yerine
-  `source_kind`/`source_id`/`source_status` taşıyor: biri hep boş iki çift, her
-  okuyucuya "hangisi doluydu" sorusunu sordururdu. İki uç birbirini import
-  edemiyor (ADR 0006), yani derleyici bu dikişi görmüyor; kanıt entegrasyon
-  şeridinde.
-  Değişimin artık İKİ geçişi var, yani `CancelExchange`'in godoc'unun "tek geçiş
-  için yazmaya değmez" dediği ortak çerçeve yazıldı: iki geçişte, "ikinci çağrı
-  İLK anı korur" kuralı yoksa iki yere yazılırdı.
-- **Bir satır artık KISMEN iptal edilebiliyor** (`order_line_cancellations`,
-  ADR 0113). İptal ya hep ya hiçti: `CancelOrder` siparişin tamamını alır ve
-  tahsilatı olan bir siparişi reddeder — ki olduğu şey için doğrudur, o
-  checkout sagasının telafisidir ve hiçbir şey sevk edilmemiş, hiçbir şey
-  çekilmemişken koşar. İfade edemediği şey sıradan olandı: canlı bir siparişin
-  bir satırı stoktan düşer, depoda hasarlanır ya da müşteri onu bırakırken
-  siparişin gerisi sevk olur. Modülde bunu söyleyecek hiçbir şey yoktu, ve
-  kaydetmenin iki yolu da yanlıştı — ya tüm siparişi iptal et, ya da sepetin
-  anlık görüntüsü olan satırın adedini düzenle.
-  Karar: kayıt satırın KAÇ biriminin teslim edilmeyeceğini, sebebiyle birlikte
-  tutuyor; tavan — alınan eksi iade istenen eksi zaten iptal edilen — SİPARİŞİN
-  KİLİDİ altında denetleniyor. İade yolu aynı toplamı okuyor, yani bir birim
-  hangi eylem konuştuysa BİR KEZ konuşulmuş oluyor: üç birimlik bir satır iki
-  kez iade istenip bir kez iptal edilemiyor.
-  Bedelleri adıyla yazılı. Siparişin TOPLAMI da satırın ADEDİ de kımıldamıyor
-  (ikisi de anlık görüntü, ve toplam satırlara CHECK ile çivili). DURUM da
-  kımıldamıyor: son satırı da iptal edilmiş bir sipariş hâlâ birinin kapatması
-  gereken bir sipariştir. PARA ikinci bir eylem — ödenmiş ama gelmeyecek bir
-  birim iade ya da kredidir (ADR 0105) ve hangisi olduğu bu modülün tutmadığı
-  bir politikaya bağlı; ödemeden önceki bir iptal ise hiçbir şey borçlu değil.
-  STOK geri konmuyor, ve adlandırılmaya değer sınır bu: order modülü
-  inventory'ye uzanamaz (ADR 0006), yani rezervasyonu bırakmak üstteki bir akışın
-  işidir ve henüz isteyen bir akış yok — tetik, isteyen ilk akıştır.
-  Eşzamanlılık iddiası gerçek Postgres üzerinde kanıtlı: kilit kaldırıldığında
-  on altı çağıranın on altısı da kazanıyor ve üç birimlik satıra on altı birim
-  yazılıyor. İlk yazdığım test bunu YAKALAMIYORDU — goroutine'leri yalnızca
-  başta buluşturmak yetmiyor; toplamın okunduğu yere yapısal bir gecikme
-  konunca mutasyon kesin biçimde kırmızıya döndü.
-- **Bir alım artık bir birim kazandırıyor** ("al X, kazan Y" mekaniği,
-  ADR 0112). `buyget` bir enum'da kelimeydi ve başka bir şey değildi: tür
-  yazılabiliyor, promosyon yayına alınamıyor, hesap da onu atlıyordu — hiç
-  inşa edilmemiş bir mekaniğin yerinde duran üç ret. Eksik olan üç şeydi ve
-  üçü ayrı cinstendi: kurallar `context` ile `target`tı, yani hangi satırın
-  ALINDIĞINI hangisinin ÖDÜLLENDİRİLDİĞİNDEN ayıran bir şey yoktu; uygulama
-  yöntemi tutar ölçüyordu, adet değil, yani ödülün kaç birime ineceğini
-  söyleyen bir alan yoktu; ve hesap girdisi satır tutarını taşıyordu, birim
-  fiyatı değil — ödül ise birim başına fiyatlanır ve türetme tek bir bölmedir,
-  bölme de yuvarlar.
-  Karar: `buy` kuralların seçtiği birimler `buy_quantity`'ye karşı sayılır,
-  sonra hedef kuralların seçtiği ve alımın TÜKETMEDİĞİ birimlerin EN UCUZ
-  `apply_to_quantity` tanesi indirilir. Alınan bir birim aynı zamanda
-  ödüllendirilen birim değildir, yani "al 2, birini kazan" sepette ÜÇ birim
-  ister; öteki okuma, aynı sözle müşteriye iki tanesini bir fiyatına verirdi.
-  Alımı EN PAHALI birimler karşılar, ödül en ucuza iner — süpermarketin kendi
-  kuralı ve tacir açısından güvenli yön. Ödül hesap başına BİR KEZ verilir;
-  tekrarlayan merdiven ("her üçüncüsü bedava") ayrı bir sözdür ve tetiği bir
-  tacirin onu yazmasıdır.
-  Bedeli iki yerde ödendi. Birim fiyat artık indirim isteğinin ZORUNLU alanıdır
-  ve kimliği (birim × adet = tutar) zorlanır — iki çağıran da (sepet akışı ve
-  yönetim hesabı ucu) gönderir, çünkü isteğe bağlı bir alan mekaniği bir
-  çağıranda çalıştırıp diğerinde sessizce çalıştırmazdı. Ve mekanik ile yöntem
-  UYUŞMAK zorundadır: sayı çifti olmayan bir buyget de, çifti taşıyan bir
-  standart promosyon da `reward_mismatch` ile elenir ve operatöre söylenir
-  (ADR 0110). Uygulamamak güvenli yöndür; eşleşmenin kendisi bir CHECK'tir,
-  yani elle yazılan bir satır da yarım kalamaz. `allocation` ile `max_quantity`
-  bu yolda okunmaz, ve `not_standard` eleme kelimesi kalktı — motor artık iki
-  mekaniği de uyguluyor.
-  Vitrinin kupon sorgusu da düzeldi: buyget kuponu artık MEKANİĞİ ve iki sayısı
-  ile dönüyor, ve hesabın eleyeceği bir kuponu müşteriye sunmuyor. İkisi de aynı
-  yüklemi kullanıyor; ayrı yazılsalardı müşteri kodu yazar, hiçbir şey olmaz ve
-  hiçbir yerde bir sebep durmazdı. Mekaniğin gövdede olması şart: "al 2, birini
-  kazan" kuponu on bin baz puan taşır ve mekanik söylenmeseydi vitrin onu
-  "%100 indirim" diye gösterirdi.
-- **Sepetin KENDI verisi artik bir promosyon kuralini yonetebiliyor**
-  (`cart.` onekiyle bağlam, ADR 0111). Indirim motorunun kural baglamı sepet
-  akisinin karar verdigi IKI addan kuruluyordu -- bolge ve musteri grubu -- ve
-  ucuncusunu ekleyen bir sey yoktu: `internal/app.Options` yalnizca
-  `Modules`/`Plugins` aliyor, yani gomen kisinin hicbir diki yeri yoktu. Bu,
-  siradan promosyonlari yazilamaz yapiyordu: tek kurulumdan iki marka satan bir
-  dukkan, "yuzde on, yalnizca A markasi" diyemiyordu -- cart modulunde o
-  modulun hic duymadigi bir kavram icin kolon acmadan. Bir cerceve icin bunun
-  tersi olmali.
-  Onek SUS DEGIL: metadata'sinda `customer_group_id` tasiyan bir sepet, aksi
-  halde o cantayi YAZAN tarafa kendine segment indirimi verdirirdi. Nokta
-  bilincli -- iki sabit adin ikisinde de nokta yok, yani iki uzay hicbir
-  yazimla carpisamaz. Yalnizca DIZE degerler geciyor: motor butun degerleri
-  karsilastiriyor, yani bir sayi bicimlendirme kurali isterdi ve 1 ile 1.0 ayni
-  sayi ama iki farkli oznitelik degeri. Sayi isteyen tacir sayiyi dize yazar;
-  sayisal islecler onu zaten cozuyor. Sayi SINIRLI, cunku her oznitelik her
-  toplam turunda indirim istegine kopyalaniyor.
-
-- **Elenen bir promosyon artik NEDEN elendigini soyluyor** — ve yalnizca
-  operatore (`skipped[]`, ADR 0110). `eligible()` bool donuyor ve sebebi
-  dusuruyordu: dokuz kapi tek bir `false` uretiyordu, yani hesap NEYIN
-  uygulandigini soyleyebiliyor ve tacirin yayimladigi kuponun neden
-  uygulanmadigini soyleyemiyordu -- sifir indirim goruyor ve dokuz hipotezle
-  kaliyordu. ADR 0109 soruyu SIRADAN yapti: musteriler artik kod yazabiliyor.
-  Engel aday sorgusuydu. `ListApplicablePromotions` `status = 'active'` tasiyor,
-  yani yayimlanip AKTIF EDILMEMIS bir promosyon hic aday olmuyor -- ne uygulandi
-  ne elendi diye doner. Bir kodun hicbir sey yapmamasinin en sik sebebi tam
-  olarak bu, ve ucun veremedigi tek cevap oydu. `ExplainDiscounts` durum
-  suzgeci OLMAYAN okumayi kullaniyor; iki yolun TUTARLARI birebir ayni ve oyle
-  olmak zorunda, cunku tacire bir yolun sayilari gosteriliyor ve musteriden
-  otekinin sayilari tahsil ediliyor.
-  Sebep YALNIZCA yonetim ucunda: musteriye "bu kod var ama kampanyasi henuz
-  baslamadi" demek, kod tahmin eden birine kampanya takvimi cikarma imkani
-  tanir. Kampanyanin uc hali (silinmis, penceresi kapali, butcesi bitmis) TEK
-  kelime -- tacire ayni cevap, ve ayirmak kampanyanin takvimini yanita koymak
-  olurdu.
-  Sebep kumesi KAPALI ve sozluk ikinci kez yazildi, cunku Go adlandirilmis bir
-  dize tipinin uyelerini sayamiyor: kimsenin uretemedigi bir kelime, ucun vaat
-  edip hic vermedigi bir cevaptir -- ve bu varsayimsal degil, bu degisikligin
-  ILK hali sorgu genisletilmeden once `not_active` ile tam olarak onu yapiyordu.
-
-- **Musterinin YAZDIGI kupon artik sepete iniyor, ve siparis onu HARCIYOR**
-  (`cart_promotion_code` + saga adimi, ADR 0109). Promosyon motoru kurulduğundan
-  beri kupon kodu aliyordu ve kimse ona kod GONDERMIYORDU: sepetin kodu
-  koyacak yeri yoktu, indirim isteginin "codes" dizisi hep bostu, yani yalnizca
-  OTOMATIK promosyonlar bir sepete ulasabiliyordu -- tacir kuponu yayimliyor ve
-  yazan her musterinin hicbir sey almadigini izliyordu. Sessiz olan yarisi daha
-  kotuydu: kullanim sayacini ve kampanya butcesini hareket ettiren
-  `RedeemPromotion`'i bu depoda HICBIR SEY cagirmiyordu, yani tek kullanimlik
-  bir kupon hic sinirlanamiyordu.
-  Kod YAZILMADAN ONCE soruluyor; tersi, tur suresince kullanilamaz bir kodu
-  sepette tutar ve sonra geri almak zorunda kalir -- o geri almanin basarisizligi
-  musteriyi hicbir seyin karsilamayacagi bir kuponla birakir. HICBIR SEY
-  indirmeyen bir kupon yine de uygulaniyor: hedefine uyan satiri olmayan gecerli
-  bir kod gecersiz degildir, yalnizca bugun ise yaramamistir.
-  Kuponlar siparis ACILMADAN once harcaniyor, ve referans SEPET: son hakki
-  musteri odeme sayfasindayken alinan bir promosyon alisverisi reddetmeli, ve
-  siparis var olduktan sonra reddetmek hic acilmamasi gereken bir siparisi iptal
-  etmek demek. **Yukseltme aninda yarim kalmis bir alisveris kurtarilamaz** --
-  motor adim ADLARINI kayitla eslestiriyor ve bes adimlik kayit alti adimlik
-  tanimla uyusmuyor; bedel ADR'de yazili.
-
-- **Bir gorsel artik DUZELTILEBILIYOR, adresi ise degistirilemiyor**
-  (uc admin ucu, ADR 0108). ADR 0104 `alt_text`'i vitrinde ve GraphQL tipinde
-  YAYIMLADI ve duzeltilebilir birakmadi: `CreateProduct` gorselleri aliyordu ve
-  tabloyu baska hicbir sey yazmiyordu, yani yanlis yazilmis bir alt metin urun
-  yasadigi surece kaliyordu -- ve yayimlanmis yanlis bir metin, hic olmayan bir
-  metinden KOTUDUR, cunku ekran okuyucu artik hatayi okuyor. Yama alt metne,
-  siraya ve metadata'ya ulasiyor; ADRESE ULASMIYOR: `url` ile yukleme bagi ayni
-  cagrida yazildi, ve birini otekini birakmadan tasimak satirin kendi kolonuyla
-  bag kaydini ayri dosyalari gosterir hale getirir -- modulun "bu gorseli su
-  yuklemeye bagla" ucunu tam olarak bu yuzden acmadigi durum. Resmi degistirmek
-  YENI bir gorsel ve eskisinin silinmesi, yani ne yaptigini soyleyen iki cagri.
-  Her sorgu IKI kimlik tasiyor: yalnizca gorselin kimligiyle adreslenen bir uc,
-  cagirana kendi urununu adlandirip baskasinin resmini duzenletirdi.
-  `alt_text` bir uzunluk siniri kazandi, ve HER IKI yazma yolunda: iki yoldan
-  birinde duran sinir, sinir degildir.
-
-- **Iki sepet artik BIRLESEBILIYOR, ve adet TOPLANIYOR** (ADR 0107). Giris
-  yapmak bir sepeti DEVREDEBILIYORDU ve KATLAYAMIYORDU: uyenin kendi sepeti
-  varsa devir reddediliyordu ve musteri iki sepetle kaliyordu, birini bir daha
-  gormemek uzere. Cakisan adetin toplanmasi YENI bir karar degil --
-  `AddLineItem`'in karari, bir yigina uygulanmis hali: ayni varyanti iki kez
-  eklemek tek satirin adedini yukseltir (fiyat kademesi toplam adetten
-  seciliyor, tek satir tek rezervasyon demek, ayni urun iki kez iki urun gibi
-  okunuyor), ve ayni iki ekleme IKI OTURUMDA yapildi diye baska cevap
-  vermemeli. Kilit ROLE gore degil KIMLIGE gore aliniyor: ters yonde kosan iki
-  birlestirme yoksa her biri otekinin bekledigi satiri tutar ve PostgreSQL
-  birini oldurerek cozer -- entegrasyon testi bu mutasyonu gerceklestirdiginde
-  tam olarak oyle oldu.
-
-- **Bir talep artik NE OLDUGUNU GOSTEREBILIYOR** (`order_claim_evidence`,
-  ADR 0106). Talep bir gerekce ve bir not tasiyordu, yani "kutu ezilmis geldi"
-  bir CUMLEYDI ve hicbir zaman bir fotograf degildi. Baglama yuklemenin
-  KIMLIGIYLE kuruluyor, adresiyle degil: `product_image` ikisini birden tasir
-  cunku adresi her urun goruntulemesinde bir sayfaya yaziliyor; bir talebin
-  kaniti aylar sonra, tek operator tarafindan, tek talep icin aciliyor ve
-  imzali bir adres o zamana kadar suresini doldurmus oluyor. Ayni dosya bir
-  talebin kaniti BIR KEZ olur -- cift tiklama ikinci bir fotograf degildir --
-  ama iki ayri talebin kaniti olabilir.
-
-- **Bir siparisin BORCU dusurulebiliyor, SATILAN degismeden**
-  (`order_credit_lines`, ADR 0105). Siparisin toplami sepetin anlik goruntusudur
-  ve kendi satirlarina bir CHECK ile civilidir; satistan sonra verilen bir taviz
-  musterinin ne aldigini degil ne odeyecegini degistirir. Tavan siparisin TOPLAMI
-  ve siparisin KILIDI altinda denetleniyor; odemeden sonra verilen bir taviz
-  bakiyeyi eksiye dusurur, ki bu "dukkan musteriye borclu" demektir ve bir iade
-  onu kapatir.
-
-- **Bir gorsel artik NE GOSTERDIGINI soyluyor** (`product_image.alt_text`) —
-  vitrinde ve GraphQL tipinde yayimlaniyor. Bos deger EKSIK degil CEVAP: HTML
-  `alt=""`'a "bu gorsel bilgi tasimaz" anlamini veriyor, yani dekoratif resmin
-  kendisi. Kolon bu yuzden nullable degil, ve degeri kirpiliyor -- tek bosluktan
-  ibaret bir alt metin, birinin verdigini sandigi bir aciklamadir (ADR 0104).
-
-- **Bir promosyon kurali artik URUNU ve KOLEKSIYONU adlandirabiliyor.** Satir
-  yalnizca VARYANTINI tasiyordu, yani bir urune indirim yazan tacir her
-  varyantini tek tek saymak zorundaydi. Iki anahtar da turun ZATEN okudugu urun
-  satirindan geliyor, yani ek maliyet yok. Kategori ve etiket LISTEDIR ve satir
-  niteligi tek bir dizedir; onlari tasimak motorun sozlesmesini degistirmek
-  demek, ve o karar burada YAZILI olarak erteleniyor (ADR 0103).
-
-- **Siparis belgeye tahsil ettigi HER orani veriyor** — ADR 0097'nin zaten
-  yaptigini soyledigi sey. Yapmiyordu: siparisin fatura yuzeyinde
-  `tax_components` alani hic yoktu, okuyucu ureticinin hic yazmadigi bir anahtari
-  okuyordu, ve butun toplamlar yine tutuyordu. Sakli tutan sey akisin kendi
-  SAHTESIYDI: tuketicinin paketinde ELLE yazilmis bir siparis sekli, gercek
-  ureticinin soyleyemedigini soyluyordu. Iki test artik hopu bagliyor (ADR 0102,
-  D50).
-
-- **Bir urun artik bir TIP giyiyor, ve bir vergi kurali onu adlandirabiliyor.**
-  Vergi modulunun tuketicisi yazildigi gunden beri BAGLIYDI ve hep BOS geliyordu:
-  tacir "kitaplar %1" diyemiyor, her kitabi tek tek adlandiriyordu. Tip, toplam
-  yolunun ZATEN yaptigi katalog okumasindan geliyor -- ayni satir hem indirim
-  bayraklarini hem tipi tasiyor ve BIR KEZ okunuyor. Tip silinince urunler ayni
-  islemde serbest birakiliyor, cunku bayat bir tip isaretcisi para demek
-  (ADR 0101).
-
-- **Musteri artik kendi siparisinin ZAMAN CIZELGESINI goruyor**
-  (`GET /store/v1/orders/{id}/timeline`) — ayni bilesim, siparisin ve MALIN
-  anlarina daraltilmis. Para anlari ve arsivleme gecmiyor, ve vitrin yanit tipi
-  tutar alanini HIC tasimiyor: kopyalayan bir duzenleme derlenmez. Yeni bir tur
-  eklendiginde vitrinde GORUNMEZ olur, ki guvenli yon budur (ADR 0100).
-
-- **Fiyat listesi de artik `metadata` tasiyor, ve HANGI kaydin tasidigi bir
-  kurala baglandi.** Tacirin YAZDIGI kayit tasir (baslik, aciklama, pencere);
-  merdivenin uzerinde hesap yaptigi `price`, `price_set` ve `price_rule`
-  tasimaz. Guncelleme alani BIRLESTIRMEZ, DEGISTIRIR — birlestirme bir anahtari
-  silmenin yolunu birakmazdi (ADR 0099).
-
-- **Degisiklik gunlugu artik SON SURUMDEN BERI alinan her karari anmak
-  zorunda, ve bunu bir kapi tutuyor.** Nufus iki belgenin kendi
-  tarihlerinden turetiliyor: git komutu yok, elle yazilmis bir taban yok.
-  Bedeli, bir kararin duyurulmasinin artik onu vermenin parcasi olmasi
-  (ADR 0098).
-
-- **Vergi kirilimi BELGEYE ulasti: fatura satiri artik her orani ayri
-  yaziyor.** Faturalama akisi siparisin `tax_components` alanini okuyor,
-  fatura modulu `invoice_line_taxes` icine yaziyor; bedeli ayni bes alanin
-  dorduncu kopyasi. Yeni tablo saklama korumasina alindi ve ADR 0095'in
-  acik biraktigi sinir kapandi (ADR 0097).
-
-- **Bir satir artik kendisini vergileyen HER orani hatirliyor.** Kirilim
-  vergiden sepete, kasadan `order_line_taxes` tablosuna kadar satirla
-  birlikte gidiyor; satirin kendi `tax_rate_bps`'i yiginin TABANI olarak
-  kaliyor, liste ise butunu. Yolun uzerindeki iki sinir bilmedigi alani
-  sessizce dusurdugu icin her sema TEK commit'te degisti (ADR 0096).
-
-- **Bir oran baska bir oranin USTUNDE durabiliyor.** Secim degismiyor: yine
-  tek oran secilir, sonra basini cektigi yigina genisletilir, her bilesen
-  kendi tabaninda yuvarlanir ve satirin vergisi bunlarin toplami olur.
-  Bedeli, satirda saklanan oranin yiginin TABANI olmasi — fatura simdilik
-  yalniz taban orani yaziyor (ADR 0095).
-
-- **Bir urun artik bir vergi SINIFI giyiyor** (ADR 0094) — `tax_class`
-  sinifi adlandirir, `tax_class_member` urunu baglar, ve bir oran kurali tek
-  tek urunlere degil bir sinifa yazilabiliyor. Sinifi vergi modulu kendi
-  tablolarindan cozer: kimse gondermez, telde hicbir sey degismez. Bir urun
-  en cok BIR sinifta olur; ozgullukte urunun arkasinda, tipin onunde gelir.
-
-- **Vitrinin stok rozeti artik yalnizca kanalin depolarini sayiyor.**
-  Envanter ayni toplami DEPO KIRILIMIYLA da yayimliyor, vitrin onu ikinci
-  bir genisletmeyle topluyor: rozet ile kasa artik ayni baglamayi okuyor.
-  Daraltmayan okuma hicbir sey odemiyor; kirilim eksikse cevap toplam degil
-  SIFIR (ADR 0093).
-
-- **Satis kanali artik KENDI depolarindan sevk ediyor** (ADR 0092) — stok
-  konumu ile kanal arasina bir bag kondu, ve kasa rezervasyonu siparisin
-  kanalina hizmet eden depolarla sinirlaniyor. Baga sahip olmayan kanal
-  hicbir seyi daraltmaz. Vitrin rozeti daraltilmadi: stokta gorunen urun
-  KASADA reddedilebilir.
-
-- **Bir kategoriyi tasimak artik butun agacin KILIDINI aliyor.**
-  `pg_advisory_xact_lock` ikinci tasiyani bekletiyor, ifadenin dongu
-  muhafizi de bekleyisin ardindan onu reddediyor. Halka kapatamayan bir
-  yazma — ad, sira, bayrak, ebeveyni bosaltma — kilit almiyor; bedel iki
-  tasimanin artik ayni anda kosmamasidir (ADR 0091, ADR 0085'i tadil eder).
-
-- **Bir talep artik yalnizca parayla degil MALLA da kapaniyor.**
-  `internal/workflows/returns.DispatchReplacement` mali ayirir, siparise
-  koli acar ve stoktan duser. Rezervasyon artik bir AMAC tasiyor: ayrilan
-  mal defterden `replacement` olarak cikiyor, satisla karismiyor. Bedeli,
-  bir akisin baska bir akisi adiyla cozmesi (ADR 0090).
-
-- **Mal ile cozulecek bir talep artik NE gonderilecegini soyluyor.**
-  `order_replacements` ve `order_replacement_items` siparisin yanina
-  kuruldu; dort yonetim ucu kaydediyor, okuyor, listeliyor ve geri aliyor.
-  Hicbir sey gonderilmiyor — `claim.go` bir `replace` talebini hala
-  cozmuyor, ama artik tahmine degil bir KAYDA karsi yazilabilir (ADR 0089).
-
-- **Iptal edilmis bir koliyi adlandiran anahtar REDDEDILIYOR** (ADR 0088) —
-  "zaten acik" cevabi, koliden sag kalmis bir baglantidan geliyordu. Durum
-  akisin zaten sahip oldugu dar yuzeyden okunuyor, yani modul siniri
-  genislemiyor; bedeli her acilista bir cagri. Hata sevkiyati adlandirir ve
-  YENI bir anahtarin gerektigini soyler.
-
-- **Bilinen sinirlarin grup ADLARI da tutuluyor, yalnizca sayilari degil.**
-  README'nin listesi `docs/known-limits.md` basliklarina kucuk harfle ve
-  SIRAYLA esitlendi: ortaya eklenip sona yazilan bir grup, fiyatladigi
-  belgeden baska bir belgeyi anlatir. Bir maddenin DOGRU baslik altinda
-  olup olmadigini yine hicbir kapi tutamaz (ADR 0087).
-
-- **Bir fiyat vergisini ICINDE tasiyabiliyor** — ve cikarma, duz hesabin
-  tersi degil, KENDI aritmetigi. Bayrak vergi BOLGESINDE durur ve NULL
-  DEVRALMA demektir; hicbir sey soylemeyen bir zincir vergi haric kalir,
-  yani mevcut kurulumlarda degisen bir sey yok. Etikette yazan tutar artik
-  kasada odenen tutar (ADR 0086).
-
-- **Kategori artik DEGISTIRILEBILIYOR: `PATCH
-  /admin/v1/product-categories/{id}`** — ad, ust kategori ve bayraklar
-  yazilabiliyor, kapali dogan bir kategori nihayet acilabiliyor. Halka
-  kapatacak bir tasimayi IFADENIN kendisi reddeder, yaninda duran bir
-  kontrol degil (ADR 0085).
-
-- **`docs/gaps.md`'nin numaralari artik tekil ve YOGUN.** Defterin ilk
-  paragrafinda zaten duran kurali nihayet
-  `internal/arch/gap_ledger_test.go` tutuyor. Ayni adrese oturan uc satir
-  D36-D38 olarak yeniden numaralandi; onlari getiren commit mesajlari eski
-  numaralari adlandirmaya devam ediyor (ADR 0084).
-
-- **Belgedeki zincirli komut blogu artik KOSULUYOR, yeniden yazilmiyor**
-  (ADR 0083). `docs/security.md`'nin blogu oldugu gibi `sh`'e veriliyor ve
-  cevaplari sirayla okunuyor: rota kapisinin goremedigi baslik adi, govde
-  alani ve `jq` yolu ilk kez tutuluyor. Bedeli, testin `curl` ile `jq`
-  istemesi ve onlarsiz atlamak yerine DUSMESI.
-
-- **Es zamanlilik sozu veren her tip artik IKI goroutine'den kosuluyor**
-  (ADR 0082) — nufus, paketin sozu ile tipin tasidigi ilkelin kesisiminden
-  geliyor ve tanigi `internal/arch/concurrency_promise_test.go` icindeki
-  yazili harita adlandiriyor. `Bootstrap`'in godoc'u da artik garantisinin
-  neyi kapsamadigini soyluyor: bir abone rota degildir.
-
-- **Baslangic yoklamasinin olctugu her yol artik bir TANIK test tasiyor.**
-  Oznesi kod degil KUME oldugu icin, sozlesmeyi bozan bir kume suiti uc
-  yerde kirmiziya ceviriyor; nufus bir listeden degil yoklamanin kendi
-  SQL'inden turuyor (`internal/arch/cluster_contract_test.go`). Suitin
-  kaplari uretimin initdb argumanlarina baglanmadi (ADR 0081).
-
-- **Uc fuzz hedefi yayimlandi, ve onemli tohumlar bulunmadi: HESAPLANDI.**
-  `go test` bir hedefin yalnizca TOHUMLARINI kosar; her hedef en az uc tohum
-  tasiyor (`internal/arch/fuzz_seed_test.go`), `make fuzz` ise CI'da
-  kosmuyor. Kalan kural: hedefi yazdiktan sonra korudugu kodu mutasyona
-  ugrat, uretilen girdi bulamazsa siniri hesapla ve tohumla (ADR 0080).
-
-- **Her benchmark bir `benchbudget.Budget` tasiyor, ve tavan islem basina
-  TAHSIS.** Butceler siradan test seridinde kosuyor; nufusu
-  `internal/arch/benchmark_budget_test.go` dosya adindan degil BILDIRIMDEN
-  turetiyor. Fiyatlanan bir yola eklenen tahsis artik bir testi kiriyor;
-  tahsis etmeden yavaslayan degisiklik ise hala gorunmuyor (ADR 0079).
-
-- **Her DOGRUDAN bagimlilik bir gerekce cumlesi, her DOLAYLI olan bir satir
-  tasiyor** — cumleyi bagimliligi secen yazar, kesfeden tuketici degil
-  (`internal/arch/dependency_allowlist_test.go`). `govulncheck` kokte ve iki
-  ornek modulde kosar, bilinen bir acik derlemeyi KIRAR, ve muafiyet
-  mekanizmasi yok (ADR 0078).
-
-- **`core/providertest` YAYIMLANDI: bir saglayici artik yazili bir cumleyi
-  degil, KOSULABILIR bir uyum suite'ini geciyor.** Yuzey on sekiz pakete
-  cikti ve agactaki on iki saglayici, bir gomenin kosacagi suite'in AYNISINI
-  kendi paketinden kosuyor. Suite yalnizca servise gitmeden tutani denetler
-  ve bunu soyler: yesil "calisiyor" demek degil (ADR 0077).
-
-- **ADR 0030'un gocu BASLADI: panelin ilk `/admin/v1` ekrani moderasyon
-  kuyrugu** (ADR 0076). Ekran bir kabuk ve bir betik, yeni modul sozlesmesi
-  yok. Oturum cerezi artik `/admin` agacinin tamamina gidiyor: yonetim
-  API'sinin CSRF bagisikligi bir YOKLUKtu, yerine bir savunma kondu —
-  cerezle gelen durum-degistirici istek ayni kokenli bir `Origin` istiyor.
-
-- **`docs/measurements/README.md` artik DENETLENIYOR: her satir raporunun
-  gercek uzunlugunu soyler, ve her raporun bir satiri vardir.** Asil kazanc
-  ikinci yon: indekslenmemis kanit, adini bilmeyenin BULAMADIGI kanittir.
-  Bedeli tek satir -- raporu buyuten commit indeksin satirini da tasir
-  (ADR 0075).
-
-- **Model ile operatorlerin uyusmasi artik SAYILIYOR.**
-  `GET /admin/v1/reviews/suggestion-agreement` model basina iki sayi verir:
-  karara baglanmis kac yorumda oneri var, ve onerilerin kaci yorumun
-  bittigi statuyu adlandirmis. ORAN yok; paydayi goren istemci kendi
-  hesaplar. Rapor okumada hesaplanir, hicbir sey saklanmaz (ADR 0074).
-
-- **Bir oneri verilen karardan SAG CIKAR: moderasyon onu silmez.** Yonetim
-  listesi artik `?suggested=` ile daraliyor, taninmayan deger bos sayfa
-  degil RED aliyor ve suzgeci kuyrukla sinirli `reviews_suggestion_idx`
-  tasiyor. Bedeli buyuyen bir tablo, aldigi sey modelle insanin anlasmasini
-  olcebilecek TEK korpus (ADR 0073).
-
-- **Model KAPALI bir soruyu yanitliyor, ve soruyu zamanlanmis bir is
-  soruyor.** `core/provider` bir siniflandirma sozlesmesi yayimliyor, tekil
-  `ai.provider` yuvasini `ai-anthropic` eklentisi dolduruyor, ve is yalnizca
-  yuva doluysa kaydediliyor. Eklentiyi adlandiran kurulum bir ALT ISLEYICI
-  ustlenir, ve hicbir dogruluk iddia edilmiyor: olculmedi (ADR 0072).
-
-- **Bir modelin onerisi yorumun YANINDA saklaniyor, kararinda degil.** Dort
-  kolon kendi basina duruyor; `status` ve `moderated_at`'e dokunulmuyor,
-  boylece ayna hala bir insanin karar verdigini soyluyor. Oneri butun olarak
-  var ya da hic yok, karari verilmis bir yoruma yazilmiyor, ve alisverisciye
-  hicbir yerde gorunmuyor. Henuz oneriyi yazan bir sey yok (ADR 0071).
-
-- **Bir sayi iddiasi KAPALI bir kelime dagarcigina karsi denetleniyor**
-  (ADR 0070) — sekiz nufus var, ve bir cumle kapiya ancak nufusun YOLUNU
-  ayni satirda yazarak giriyor. Kapi acildigi gun README'lerde yanlis
-  sayilar buldu. Her ADR kaydi ve bu dosya kapsam disi; evrensel
-  olumsuzlama ise kapisiz kaliyor, cunku nesnesi bir yuklem.
-
-- **Is raporunun KANALI yayimlandi, zamanlayici yayimlanmadi.**
-  `core/jobreport` uc fonksiyon tasiyor; kosucu `internal/core/job`'da kaldi
-  ve cekirdegin kendi isleri de ayni yayimlanmis paketten rapor veriyor —
-  TEK mekanizma. Artik bir eklentinin basarili kosusu da `gobit jobs`
-  detayinda konusabiliyor; bedeli `core/`'un on yedinci paketi (ADR 0069).
-
-- **Fiziksel stogun her degisimi bir SATIR birakiyor, ama sayiyi hala
-  `stocked_quantity` tutuyor** (`inventory_movements`). Hareket kolonla ayni
-  islemde yazilir ve `stocked_after` tasir; kayma tek satirda gorunur.
-  Ayirma bir hareket degil, satirin arkasinda aktor degil bir SEBEP var, ve
-  hicbir sey satiri silmiyor; defter yonetim ucuyla geldi (ADR 0068).
-
-- **`province` ulke altindaki birimdir, ilce DEGILDIR.** Elle yazilan her
-  bildirim artik bunu soyluyor; `internal/arch/province_test.go` SESSIZ bir
-  yenisini reddediyor. Uctan uca adres duzeltildi, ilcenin hala bir alani
-  yok (ADR 0067).
-
-- **Oneri deposu KURULMUYOR; bir oneri, konusu olan satirin sahibi modulde
-  durur ve o modulun yazma yolundan uygulanir** (ADR 0066). Tetik, bir
-  sorgunun yeniden uretemedigi ilk oneridir; uygulayan sey gobit degil,
-  mevcut ucu cagiran insandir. Bedeli: bugun oneri isteyen operator hicbir
-  sey bulmuyor, ve iki module yayilan bir onerinin burada evi yok.
-
-- **`coreprovider.QuoteInput` GENISLETILMEDI: ilce ve desi, agac bir koliyi
-  adresleyip olcebildigi gun gelir.** Bedeli, ilceye gore fiyatlayan bir
-  kargo entegrasyonunun duz tarifede kalmasi. Kurali bir kapi tutuyor:
-  `TestEveryQuoteInputFieldIsFilledByTheTree`, agacta hicbir uretim
-  dosyasinin doldurmadigi alani yayimlanmis girdide reddediyor (ADR 0065).
-
-- **Kayitli odeme araci beklemede, ve bekledigi sey bir ozellik degil bir
-  SAGLAYICI.** Depolanmis bir token'la odeme bugun uctan uca calisiyor;
-  eksik olan, boyle bir token'i URETEN bir ust akis. Alisverisci her kasada
-  kartini yeniden yaziyor, ve yayimlanmis yuzey hicbir uygulayicisi olmayan
-  bir sekle harcanmiyor (B9 → ADR 0064).
-
-- **Stok olayi ve dosya olayi YAYIMLANMADI: ileten bir eklenti bir konunun
-  ilk abonesi degildir.** `plugins/webhookout` her konuyu zorunlulukla tasir
-  ve `TestEveryTopicHasASubscriberThatChoseIt` bunu artik reddediyor.
-  Bedeli, her kapiyi gecebilecek iki olayin gonderilmemesi; B15 ile B7'nin
-  olay yarisi bosluk olarak degil KARAR olarak kapandi (ADR 0063).
-
-- **Bir geri cagrinin defteri, onu ALAN modulun kendi tablosudur** — kendine
-  ait bir `callback_log` yok. Okuyucu, kapsam ve saklama sorusu zaten
-  `paytr_payment` tarafinda cevaplanmis; isleyicisi hic kosmamis bir cagri
-  ise yalnizca log'ta kalir ve gobit ona saklama sozu vermez. Karar
-  IKINCI bir saglayici agaca girdigi gun yeniden acilir (ADR 0062).
-
-- **gobit dil ekseninin iki yarisini da kurmuyor, ve bu bir eksiklik degil
-  KARAR: A11 defterden bir cevapla cikti.** Kaydi olmayan bir yerel ayari
-  iki kapi reddediyor — `plugins/webpush` disinda bir Go adi ya da struct
-  etiketi, cihaz kaydi disinda bir SQL kolonu. Bedeli, yol ya da sorgu
-  anahtari olarak gelen bir yerel ayarin izlenmemesi (ADR 0061).
-
-- **Migration rolu ile runtime rolunu ayirmak OPERATORUN isi; gobit'in
-  ikili dosyasi degismiyor.** Tek DSN kalir, rol yonetimi ve acilis
-  sinamasi gelmez; verilen sey bir ayar degil, `security.md`'de yayimlanan
-  yetki listesi. Kutudan cikan tek superuser kurulumu ise hem degismeden
-  hem korumasiz kalir (ADR 0060).
-
-- **Olcum duzenegi artik CARPIK bir taksonomiyi de kurabiliyor:
-  `Spec.SkewedCategorySize` iki kucuk kategori dogurur, sifir hicbirini.**
-  Kucuk kategori vakasi artik elle kurulan bir deneme veritabanini degil bir
-  KOMUTU istiyor; bedeli, bir urunun ilk kez iki kategoriye ait olmasi ve
-  konumsal uyeliklerin boyu degistirirken sifirlanmayi istemesi (ADR 0058).
-
-- **Musteri adlandiran her vitrin ucu iddiasini TEK bir karsilastirmaya
-  veriyor:** `corehttp.ProvenCustomer`. b2b vitrini ile sepet ona baglandi,
-  adres defteri de onun uzerine tasindi. Sorgulanan sey UC degil IDDIA;
-  dogrulayici baglanmamis kurulumda hicbir sey geri cekilmiyor, yalnizca
-  WARN dusuyor (ADR 0057).
-
-- **Bir geri cagri `audit_log` satiri OLMUYOR; kaydi `CallbackRegistry`'nin
-  kendi gunlugu.** Her sonuc oraya bir satir birakiyor, reddedilenler dahil.
-  Bedeli, operatorun sorgu bekledigi yerde bir gunluk aramasi yapmasi:
-  `GET /admin/v1/audit-log` hicbir geri cagri gostermiyor (ADR 0056).
-
-- **Bir stok konumu BOS kapanir, ve kapali satir okunabilir kalir.**
-  Uzerinde birim ya da canli bir ayirma duran konum kapanmayi REDDEDER,
-  kapali konum stok yazmasi kabul etmez; uygunluk okumalari boylece
-  join'siz kaliyor. `deleted_at` yerini `closed_at`'e birakti, ve kapanis
-  nihaidir: geri acma yok (ADR 0055).
-
-- **Siparis ve odeme SILINMIYOR: on `deleted_at` kolonu dusuruldu, ve para
-  olaylarinin yuzeyi ucuncu bir ani kazanmadi.** Bir siparis STATU ile emekli
-  olur, bir para kaydi saklanir; artik hicbir kayit gizlenemez. Dort
-  benzersizlik kurali da nihayet HER satiri kapiyor: bir idempotency anahtari
-  elle damgalanarak serbest birakilamiyor (ADR 0054).
-
-- **gobit TEK dil saklar, ikinci dil gomen programin.** Locale kolonu,
-  ceviri tablosu ve ceviri modulu yok; ikinci dili bugun tasiyabilen tek yer
-  `metadata` alani olan tablolar, ve kategori, etiket, secenek ile gobit'in
-  seed ettigi ulke ve para birimi adlari o yolun disinda. Vitrine ulasan
-  hicbir istek henuz DIL soyleyemedigi icin A11 acik kaliyor (ADR 0050).
-
-- **Fiyati BIR grup belirliyor, ve gruplari SATICI siralar.** Sepet,
-  musterinin en yuksek sirali grubunu tek bir `customer_group_id` degeri
-  olarak yaziyor; `customer_group` bir `rank` kolonu kazandi. Fiyatlama,
-  kampanya ve teslimat hic degismedi; sirayi hic kurmayan magaza kimlik
-  sirasini alir (ADR 0049).
-
-- **Kume sozlesmesi KIMILDAMIYOR: pgvector istege bagli ayri bir eklenti
-  modulu olarak gelir** (ADR 0045). Uzanti satiri `none` kaliyor, cunku
-  kimsenin kurmak zorunda olmadigi bir eklenti hicbir kurulumun ne
-  saglamasi gerektigini degistirmez. `CREATE EXTENSION` yalnizca o modulun
-  kendi migration'ina ait; disina cikarsa ADR 0015 ayni degisiklikte acilir.
-
-- **Musterinin odedigi ile saticinin aldigi ayni sayi KALIYOR.** Bir fark
-  gerektiginde esitlik gevsetilmez; fark, kendi karsi tarafini tasiyan ayri
-  bir MUTABAKAT SATIRI olarak gelir ve satirin sekline ilk tuketici karar
-  verir. Esitligi tutan dort katman ilk kez tek tek adlandirildi; bedeli,
-  taksit vade farkinin bugun hala mumkun olmamasi (ADR 0042).
-
-- **Bir e-posta adresinin saklanma bicimi TEK kural: kirpilir, sonra GO
-  tarafinda kucuk harfe cevrilir, veritabaninda asla.** `invoice` da artik
-  Go'da katliyor: `buyer_email` belgenin dedigini aynen tutuyor, esitlik
-  `buyer_email_folded` uzerinden kuruluyor. Alti kopya yerinde kaliyor,
-  onlari `internal/arch/email_test.go` bir arada tutuyor (ADR 0038).
-
-- **Bir insan, silinebildigi seyi artik GOREBILIYOR** (ADR 0034) — kisisel
-  veri aciklamasi silmenin yanina yayimlandi ve bir kisinin dosyasi, onu
-  silen ayni supurge tarafindan toplaniyor. Cevap veremeyen bir tutucu
-  dosyanin icinde `Unresolvable` olarak gorunuyor: eksiklik bir deftere
-  degil, kisinin aldigi belgeye yaziliyor.
-
-- **Gelen bir saglayici cagrisi BAGLANMIYOR, KAYDEDILIYOR** (ADR 0028) —
-  eklenti rotayi `Host.RegisterCallback` ile bildirir, baglamayi cekirdek
-  yapar; kota, govde siniri, zaman asimi, imza dogrulamasi ve tekrar
-  penceresi hepsine uygulanir. Dogrulayicisi olmayan bir rota acilista
-  reddedilir: korumasiz bir uc artik IFADE EDILEMIYOR.
-
-- **Bilesim koku `internal/app`'e tasindi, ve modul kokundeki YAYIMLANMIS
-  cephe onu cagiriyor: `cmd/server` artik on bes satir.** Agac disinda bir
-  uygulama boylece mumkun, ve operator altkomutlari kutuphaneyle birlikte
-  geliyor. Cephe dort metottur; yasam dongusu yayimlanmadi ve `internal/`
-  agacini yalnizca o import edebilir (ADR 0027).
-
-- **Iki saat KALIYOR, ve her an kendi saatini adlandiriyor** (ADR 0053).
-
-- **`returned_at` nihayet moduller arasi okuma katmanina ulasti.** Kolonda,
-  modelde ve yonetim govdesinde vardi; yalnizca baska bir modulun ne
-  okuyabilecegine karar veren haritada yoktu. Eksigi hicbir sey RAPOR
-  EDEMEZDI, cunku o harita bilinmeyen alani sifirla yanitlamaz, REDDEDER
-  (ADR 0004) -- yani kimse dordunca ani istemedi ve kimse isteyemedigini
-  ogrenmedi. Siparis timeline'i artik geri donen koliyi de gosteriyor
+- **A connection that does not start in READ COMMITTED is refused**
+  (ADR 0166). The pool `core/db` builds reads every new session's default
+  isolation level and refuses the connection if it is not READ COMMITTED — at
+  startup and on every connection it opens while the process runs. **Breaking
+  for operators:** a line is added to ADR 0015's cluster contract; an
+  installation whose default is REPEATABLE READ or SERIALIZABLE no longer
+  starts, and the error states the level it found and the statement that
+  undoes it.
+
+- **A customer can now pay with their POINTS** (ADR 0165). Points are spent
+  through the slot store credit goes through — a provider in this module,
+  `loyalty_points` — and ONE POINT is worth ONE minor unit of the currency it
+  was earned in: the contract's amount and the ledger's points are a single
+  number, nothing is converted at the boundary, and the earn rate reads as a
+  rebate in basis points. A capture paid in points earns NO points — at the
+  ceiling rate a point would earn itself back, and below it the shop would pay
+  a rebate on a debt being extinguished; the earn target is now computed only
+  from the collection's net money captured through OTHER providers, while
+  spent credit keeps earning, because it is money owed at face value. The two
+  tenders are ONE state machine: the store-credit and points providers are not
+  two hand-written copies but two registrations of the single machine in the
+  `balancetender` package, each running over its own ledger — authorization
+  writes a MINUS hold, cancellation a release, a refund a refund row, and a
+  capture writes no spend (it only releases the part it did not take), and
+  every spend row references the provider's OWN session rather than the
+  collection. Before the balance is summed, it is the BALANCE that gets
+  locked, not the rows — an advisory lock keyed on the customer and the
+  currency (D118) — and the transaction opens READ COMMITTED by name (D119);
+  this is ADR 0152's lock too. The ledger gate derives the second door from
+  the tender's IDENTITY rather than a list of names, and now looks at the
+  credit ledger as well. The balance can go BELOW ZERO: a refund takes back
+  points the customer has already spent and is not refused for it; the next
+  earn closes the deficit first, and the tender refuses against it. Both
+  tenders now answer the hourly reconciliation (credit used to count as
+  "cannot be asked"); a guest who picks either one gets a 409 instead of a
+  server error; both are registered under ONE option, on an installation where
+  the customer claim is proven — the `StoreCredit` name is gone, replaced by
+  `Options.PersonBoundTenders`, named for its reason. On the storefront,
+  points cover either the whole order or none of it — splitting is the admin
+  surface's job; the customer still cannot read their own balance.
+
+- **A capture now earns the customer POINTS** (ADR 0164). The append-only
+  `payment_loyalty_entries` ledger lives in the payment module, and the only
+  thing that writes its rows is `writeCollectionTotals` — the one function
+  that moves a collection's totals. Every row is a DIFFERENCE: the target is
+  computed from the collection's own cumulative amount and the difference is
+  appended on top of what has been written, so when the same event arrives a
+  second time nothing is written, and a refund writes a NEGATIVE row. All
+  three of the nouns the feature list proposed fell under measurement: the
+  name `loyalty` is TAKEN by `examples/starter/loyalty` (the registry refuses
+  a repeated name before mounting routes, and no lane boots the starter),
+  `order.placed` is published in the saga's second step — before the money has
+  even moved — and on a guest order its customer is EMPTY, and an earn half
+  alone means a table no gate can see (the slice order ADR 0153 inverted). The
+  rate is a basis-point setting with a zero default: the ledger exists, and no
+  installation earns. The ceiling is one point per minor unit, and a value
+  above it is not SILENTLY REDUCED but refused — an arch assertion ties the
+  two separate homes together. The operator reads the balance and the history
+  under `payment:read`; there is no write endpoint, because in this module a
+  write means MONEY MOVING. Points cannot be spent yet.
+- **A lane no longer HANDS a test the developer's database** (ADR 0163). The
+  settings default to localhost:5432 and localhost:6379, and on a development
+  machine both are listening, so a test that forgot to start its own
+  installation passed green locally and went red on the runner (D107). The
+  rule had in fact already been made, but for ONE lane and in prose:
+  `internal/smoke` builds every server process's environment from scratch, and
+  its godoc gives the reason by naming `DATABASE_URL`. Now `make test`,
+  `make test-integration` and `make smoke` set both addresses to 127.0.0.1:1,
+  where nothing listens. The address RESOLVES but does not connect, so tests
+  that load the config for something else are unaffected. Measured BEFORE the
+  change: the whole integration lane and the whole smoke lane were run against
+  the dead addresses, both green, with not a single connection attempt in
+  either run — so no scenario was leaning on a service in the environment. The
+  gate's values are not written by hand but derived from `config.go`'s own
+  `envDefault`: it also fails if the lane's value is set EQUAL to the default.
+
+- **A message left in a dead consumer's hands now comes back** (ADR 0162). The
+  Redis bus gives a message to a single consumer with XREADGROUP and remembers
+  that it did; if that process died without ACKing, the message stayed in ITS
+  pending list, and the restarted process comes back under a new name,
+  `<hostname>-<pid>`, so it looks at its own empty list, and the ">" cursor
+  never offered that message to anyone again. Measured against real Redis
+  BEFORE the gate was written: one consumer took the message and stopped, a
+  fresh consumer was opened, ten seconds later the entry was still there and
+  nothing had been offered to anyone. The consumption loop now sweeps its own
+  stream BETWEEN two reads: a message under ANOTHER consumer's name that has
+  sat idle longer than `ClaimMinIdle` (one minute by default) is claimed with
+  XCLAIM and dispatched like a new message. So the "at least once" promise
+  covers the case durability is bought for — the process dying — while a
+  handler's error and panic go on being ACKed UNCHANGED. A poison message is
+  bounded: a message delivered three times without an ACK is not handed out a
+  fourth time; it is ACKed and logged at error level — that line is the dead
+  letter, and the only thing that reads it is a human. The threshold has to be
+  longer than the slowest handler, because it is the ONLY thing that tells a
+  slow consumer from a dead one; because XCLAIM asks about the idle time a
+  SECOND time, a message its owner finished between the two commands is never
+  claimed. The admin API answers one hundred twenty-one read operations, and
+  until now its only callers were a browser and curl. A model client asking
+  "which orders are stuck" had no way in without someone writing a wrapper —
+  and a wrapper is a second endpoint list, free to go stale. `gobit mcp` now
+  reads JSON-RPC on stdin and answers four methods: initialize, ping,
+  tools/list and tools/call. The TOOL LIST is derived at startup from the
+  document this process SERVES — one tool for every GET operation under the
+  admin prefix — and a call is an in-process GET through the router this
+  process mounts. Nothing is re-implemented: a tool exists only if an endpoint
+  does, it says what the endpoint's own describe block says, and the call
+  passes through every ring of the admin surface — identity, scope, quota and
+  the audit log. Being READ-ONLY is not a promise but a property of two
+  things: the list is built only from GETs, and if the credential carries the
+  superior scope it is refused before the server starts (by asking the
+  installation itself, through the endpoint any client would use). The names
+  are derived FROM THE PATH, because no operation in this document carries an
+  `operationId` — measured; so a tool moves when its endpoint moves, which is
+  the honest failure: a tool that survived the move would answer about
+  something else. The document cannot say which tool needs which PRIVILEGE (it
+  carries no scope), so the key's scopes decide, and a refused call comes back
+  in the API's own error envelope — that is what names the missing privilege.
+  Two limits were recorded: this one, and that part of the document's prose is
+  Turkish (forty-three of the one hundred twenty tool descriptions; the ledger
+  governs FILES, not the text inside them).
+
+- **A COMMAND no longer receives the server's events** (ADR 0160, D104, D105).
+  Every verb in the dispatch opens the whole application — deliberately, and
+  that is what lets `seed` take the schema from the modules themselves and
+  `recover` reach the services it repairs. But opening the application
+  registers the modules, and registering the modules SUBSCRIBES them to the
+  event bus. On the in-memory bus that is harmless: the bus is the process
+  itself. On Redis it is not — there, subscribing is not a declaration but
+  creating the consumer group if it is missing and starting a goroutine that
+  reads from it, and the consumers in one group receive each message ONLY
+  ONCE. So `gobit seed`, on an installation with Redis, joined the server's
+  group and, for as long as it ran, received `order.placed`,
+  `payment.captured` and every topic the modules listen to. And it RAN what it
+  received: the notification module's subscriber is registered in the same
+  `Register` that subscribes, so a seed command sent order confirmations. And
+  a message it could not ACK before exiting stayed in the pending list of a
+  `<hostname>-<pid>` consumer that will never come back — the bus has neither
+  XAUTOCLAIM nor a pending-list sweep (D105, OPEN). Assembly now takes an
+  event ROLE: the two paths that answer requests (the server and the facade's
+  in-process harness) consume, while five verbs PUBLISH to the real bus and
+  subscribe to nothing. Publishing was deliberately left untouched — when a
+  command writes through a service, it writes the outbox row in the same
+  transaction and publishes directly after the commit; swapping the bus for
+  the in-memory one would silently drop that direct half. The population gate
+  checks the CALL SITES: every `openApplication` call has to name a role, and
+  a consuming call that does not answer requests is refused — next year's verb
+  will be written by copying a neighbor, and every neighbor is a command.
+
+- **A BROWSER can now shop against gobit** (ADR 0159, D99, D100). Nothing in
+  this repository put a browser in front of gobit: the storefront API is
+  forty-eight routes, thirty-seven of them open to guests, and the only proof
+  that any of them worked was a Go harness driving them over HTTP. Someone
+  asking "can I build a shop on this?" had two options: read the tests or
+  believe the README. The Next.js/SvelteKit shape the row asked for was
+  MEASURED and rejected: the only gate in the whole repository that touches it
+  is the path-language check, so a node toolchain would enter UNAUDITED, with
+  its own lockfile and its own exposed surface. Instead, `examples/storefront`
+  is a Go module like the other four: `main.go` is the published facade plus
+  its own module, and the module serves three shells and a single
+  framework-free script. The pages run in gobit's OWN process, so the browser
+  is on the SAME ORIGIN as `/store/v1`, and no installation has to open CORS
+  for the example to work. The shop holds no service and reads no database —
+  the browser fetches every figure on every page, which is what makes the
+  example a claim about the SURFACE rather than about the example. It refuses
+  AT STARTUP when the two values it cannot discover (the publishable key and
+  the sales channel) are missing: a shop that started without them would get a
+  401 on every request the page makes and would look like an empty catalog. It
+  carries its own content policy, and that policy CANNOT be the panel's — a
+  catalog shows product images, while the panel's policy starts with
+  `default-src 'none'` and has no `img-src`; there is no published policy for
+  an embedder's own pages, so the embedder writes the three headers
+  themselves. In the same change `.js` joined the language scan (D99): the
+  repository was already shipping two hand-written scripts whose content had
+  never been read, and this example would be the third — prose the operator
+  reads INSIDE THE PAGE, the only shipped text nothing checked. And it emerged
+  that the separate modules had never been linted in CI (D100, OPEN): the Lint
+  job runs the root through the action and runs `make vuln`, not `make lint` —
+  D88's shape one tree over. And adding the fifth module turned up a third
+  thing (D101): the table saying which separate modules build against the
+  PUBLISHED surface was hand-written and tied to nothing — deleting the fresh
+  entry left the whole arch suite green. Its population now comes from the
+  Makefile's `SEPARATE_MODULES`, which another gate in turn ties to the go.mod
+  files on disk: the chain is disk → Makefile → table.
+
+- **The first run is now a document the lanes EXECUTE** (ADR 0158, D98). The
+  road from an empty database to a shopper's order is fifteen calls, and
+  eleven of them were written down nowhere: they lived inside two harnesses —
+  smoke's storefront scenario and `internal/e2e`'s rig, each setting up its
+  own region, price link and stock. Every lane was green, and the gap was
+  invisible EXACTLY because of that. `security.md` was the only document that
+  walked from an empty database, and it ends at reading the catalog — on an
+  empty database that is an empty list, so the call's success says nothing
+  about whether there is anything to buy. `gobit seed` does not close the gap
+  either: that verb builds the load rig (fifty-two thousand products, bulk
+  SQL) and creates no region. `docs/first-run.md` now carries the whole road
+  as a pasteable block, and a smoke scenario runs it against the real binary,
+  verifying a status code for every LINK and the order at the end. Writing it
+  found what the two harnesses could not see: the storefront helper binds TWO
+  countries to its region and is therefore taxed through the "no single
+  jurisdiction can be named" branch, at the REGION's rate; a single-country
+  region — that is, the ordinary first installation — is taxed by the tax
+  module, and if there is no tax region there the answer is zero. This is not
+  a defect (the server warns with `tax_source=tax_unconfigured`), but nothing
+  told an operator so. The population rule ALREADY EXISTED —
+  `TestEveryChainedCurlFlowIsExecuted` keeps a document→witness map with keys
+  derived from the document — and the new document arrived there as an ERROR;
+  before that was found, a second gate for the same job was written and
+  deleted.
+
+- **The panel's ADDRESS now belongs to the panel** (ADR 0157, D97). ADR 0155
+  had set the content policy on a SINGLE chi group that the panel's routes
+  enter; the reasoning was right, its SUBJECT was wrong: a group covers every
+  route the panel BINDS, while the sentence the policy states is about an
+  ADDRESS. A plugin's `AddRoutes` runs on the same router, AFTER the panel,
+  and its only check is a pattern collision — a pattern that does not collide
+  is bound outside the group. Measured with a probe, not argued:
+  `/admin/ui/rogue` answered 200 with an empty `Content-Security-Policy` and
+  no `X-Frame-Options`, while the panel route beside it carried both. The hole
+  was ONE ring deep, not THREE — the composition root already sets the other
+  two panel rings (origin and identity) on the PREFIX, so the page was inside
+  the operator's session, and there was not a single rule saying which scripts
+  could run on it. The policy is now set beside those two rings, on the whole
+  prefix and BEFORE THEM: it covers a refusal and a 404 as well. PRIVILEGE was
+  the SECOND hole, which the policy cannot close — ADR 0156 assigns every
+  panel path its privilege in the panel's own table, and a route the panel did
+  not bind is in no table, so an operator with no privilege at all reached it.
+  So the decision has two halves: a plugin can no longer BIND a route inside
+  the panel's address, the registration is refused at startup, and the refusal
+  message names the WAY IN — `RegisterAdminPage`, the path that declares a
+  privilege and hands over a script the panel serves from its own origin. The
+  prefix is written in two places (the panel and `core/plugin`, which cannot
+  import `internal`) and BEHAVIOR binds the two: the panel's own constant is
+  handed to the registry and the refusal has to fire — a drifted copy would
+  guard an address nothing serves, which is the thing that reads like a rule
+  and is not one. The refusal matches on a SEGMENT boundary, so
+  `/admin/uipload` still binds. Nothing in the tree bound to the panel's
+  address; the only plugin that reaches the panel already uses the sanctioned
+  path.
+
+- **A panel screen now costs a PRIVILEGE** (ADR 0156, D92, D93). The admin API
+  names a scope on seventy-one routes, and `internal/e2e`'s privilege matrix
+  proves end to end that a valid identity without the scope gets 403. The
+  panel was a SECOND door to the same data and looked only at identity: its
+  ring resolved the principal and put it in the context, and the framework
+  read a single bit from it — `_, signedIn := PrincipalFromContext(...)`. The
+  scope list was there on every request and was dropped at the assignment.
+  This was not a theoretical account: `POST /admin/v1/users` takes a scope
+  list, `PATCH` changes it, and such an account entered the panel and read the
+  whole catalog, every customer's name and address, stock levels and the sales
+  report — and could moreover CHANGE a product title, because the panel calls
+  module write surfaces directly. Every panel path is now listed in a SINGLE
+  table with a privilege written in the string the module's own API uses; the
+  route refuses an operator who does not hold it with the panel's own 403
+  page, NAMING the missing privilege, the menu drops an entry that cannot be
+  opened, and the front door sends the operator to the FIRST screen they can
+  open. A screen a plugin registers declares its privilege too, and a
+  registration that does not is refused AT STARTUP. The privilege is per
+  SCREEN: it does not narrow what an opened screen SHOWS, and the read layer
+  stays unaware of the principal (known limits). The gate is held by a check
+  that walks the router TWICE — one pass proves that every route refuses the
+  unprivileged operator, the other that every route asks for the privilege its
+  OWN path is listed with; the second exists because a binding line names its
+  path twice, and a line that pairs one screen's path with another's handler
+  refuses the unprivileged operator just as correctly. The same round found
+  that ADR 0155's policy gate was built with NIL pages and never walked a
+  plugin's screen (D93).
+
+- **A plugin can now put a screen in the admin PANEL** (ADR 0155, D91). The
+  panel came with six screens and there was no way to add a seventh:
+  `sections()` is a six-element PACKAGE-PRIVATE slice and `internal/adminui`
+  sits under `internal/`, so it cannot be named from outside. A plugin could
+  open an admin ENDPOINT — `plugins/analytics` was exactly that shape — and
+  the only way to read it was curl.
+  `core/plugin.AdminPage{Label, Path, Script []byte}` is now published and
+  `Host.RegisterAdminPage` collects them; the panel takes them as a
+  constructor argument, refuses a malformed registration AT STARTUP, and binds
+  the shell, the script and the menu entry from a SINGLE list. The script is
+  BYTES, not a URL, and that is what makes the policy possible: the panel
+  serves it from its OWN origin, so `script-src 'self'` is enough and no
+  installation's policy opens up for a third origin — including those that
+  installed no plugin. The plugin ships no template, and the alternative
+  ADR 0030 rejected stays rejected: a SINGLE shell owned here draws every
+  registered screen, and the script fills it from /admin/v1 with the
+  operator's own session. And the second half of this slice: until now the
+  panel carried NO content policy at all — `Content-Security-Policy` appeared
+  zero times in the tree, and neither did `X-Frame-Options` or
+  `Referrer-Policy`. For a surface that draws HTML an operator is signed in
+  to, that was wrong already; since ADR 0030 it was worse, because the panel's
+  new screens are CLIENTS of /admin/v1, so a script the panel serves carries
+  the operator's session. The policy could be strict without nonces because
+  the panel had earned it BY ITS STRUCTURE, and that was measured: across
+  fourteen template and style files there is exactly one `<script>` (a
+  deferred src), no inline style, no event attribute, no image, no `url()`, no
+  `template.HTML`. The policy was set on a SINGLE chi group that holds every
+  panel route, and a gate that WALKS the router proves all twenty carry it —
+  one call per handler is a rule that holds until someone adds a handler. The
+  first consumer is `plugins/analytics`: its funnel screen is now in the
+  panel's menu.
+
+- **A project can now be started FROM THE BINARY** (ADR 0154, D90). gobit is a
+  library and its front door was shut: nothing generated a project, so an
+  author's first step was to read `cmd/server/main.go` and guess a `go.mod`,
+  guess which settings exist and guess which services to bring up.
+  `gobit new <dir>` now writes a project from templates embedded INSIDE the
+  binary. And the fact that set the shape of the slice is this — measured, not
+  argued: `github.com/bdrtr/gobit@latest` resolves to v0.8.0 and that tag does
+  NOT CONTAIN the root package (the facade came after it), so with
+  `require ... v0.8.0` + `import
+  "github.com/bdrtr/gobit"` `go mod tidy` fails, reporting "does not contain
+  package"; `@latest` fails the same way. The only version importable today is
+  a commit's pseudo-version, and the generated `go.mod` writes it: the version
+  the GENERATING binary was built at — the tag if it was built from a tag,
+  otherwise the commit's pseudo-version. A build that can know neither does
+  NOT GUESS; it refuses and points to a checkout with `-replace`. The format
+  matters too: if a tag is reachable, the proxy bumps the PATCH and prefixes
+  the stamp with `-0.`, otherwise it gives `v0.0.0-<zaman>-<hash>` — a binary
+  that writes the wrong one names a version the proxy does NOT serve, and in
+  the generated project `go mod tidy` silently turns it into something the
+  generator never chose. Three template traps were closed by file NAMES, and
+  all three were measured: a directory containing a `go.mod` SILENTLY drops out
+  of the embed set (`all:` does not lift this, and it is exactly why the row's
+  own suggestion, "embed `examples/starter`", is impossible), a template ending
+  in `.go` breaks at once `go build` and the two gates that parse every
+  production Go file in the tree, and `.env.tmpl` goes untracked because of the
+  repository's own `.gitignore`. The generated project is proven by BUILDING
+  AND RUNNING it; what that lane cannot prove is written down too: because it
+  repoints go.mod at this checkout, it cannot tell "the template works at the
+  version it pins" apart from "it works at the tip of the tree". The language
+  gate now scans `.tmpl` — a template's prose is rendered into someone else's
+  project, so Turkish left there does not stay here, it SHIPS.
+
+- **A shop can now see WHERE its carts go** (ADR 0153). A shop's first
+  question about its storefront is a ratio: how many of the carts opened
+  turned into orders. The numerator has been on the bus since the order module
+  existed; the DENOMINATOR was nowhere, because the cart module published
+  nothing and imported `core/eventbus` ZERO times — so the module every
+  shopper touches first was the module that said nothing about itself. It now
+  publishes two events, `cart.created` and `cart.completed`, with the house
+  pattern — the outbox row INSIDE the transaction, the direct publish AFTER
+  the commit — and builds the body in ONE place (the order module builds it
+  twice by hand, and nothing compares the two copies; the payment module's
+  note said so, and this is the third module to follow it). Its consumer is
+  `plugins/analytics`: it subscribes to three topics, writes ONE ROW PER event
+  and opens the `GET /admin/v1/analytics/funnel` endpoint. Completion and
+  order are kept APART, and that is the most useful thing the endpoint shows:
+  the saga places the order in its SECOND step and completes the cart in its
+  LAST, so an order that fails in between stands beside an uncompleted cart.
+  The count is a property of the TABLE: the bus delivers at least once and the
+  publishers DERIVE the event id from the record, so the row's key is the
+  event's id with `ON CONFLICT DO NOTHING`; an incremented counter would turn,
+  on a single redelivery, into a ratio that never happened. An event WITHOUT
+  an id is not written; it is REFUSED — an empty key would grab the primary
+  key and every later event would look like its repeat (three of the product
+  module's topics carry no id, so this is not a hypothetical shape). The ORDER
+  the row proposed was measured and rejected: with an `Analytics` interface
+  added to `core/provider` plus three lines in the published-names ledger and
+  no implementation written, the whole `internal/arch` lane stays GREEN — so
+  that slice is a promise made to 1.0.0 for a consumer that does not exist
+  (ADR 0063 rejects exactly this). The cost is plain: two more topics are
+  MANDATORILY forwarded, and `cart.created` is the highest-volume topic in the
+  tree — every abandoned cart is now a webhook delivery. That is why there is
+  no per-LINE topic.
+
+- **The store can now HOLD MONEY for a customer** (ADR 0152). After a late
+  delivery there are two ways to keep the customer — send the money back or
+  credit it to the customer's account — and this repository could only do the
+  first: no table of any module held a balance, so "we credited 200 lira to
+  your account" was a promise kept in a spreadsheet, not in a table. The
+  payment module now has an APPEND-ONLY ledger — a signed amount per customer
+  and currency — and a `store_credit` provider that spends it from the slot a
+  card is spent from. The balance is the SUM of the rows and is stored
+  nowhere: authorization writes a NEGATIVE hold, capture writes nothing,
+  cancellation releases it — so open holds are already subtracted from what
+  the customer can spend, and a correction is a new ROW. What made this a
+  decision rather than just a table was the SPENDING half: money that belongs
+  to a person can be spent only by that person, yet the party that named the
+  payment's owner was the CLIENT — a capture carried a reference and an
+  amount and named nobody. Now the capture carries the customer, and that
+  customer comes from the cart (the field that has been PROVEN since
+  ADR 0125), so a guest cart cannot pay with credit — the provider rejects a
+  session that names nobody. The dangerous combination CANNOT BE CONFIGURED:
+  on an installation with `STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM` on, the
+  provider is never registered, so the payment method DISAPPEARS — it does
+  not turn into a way to spend someone else's balance. The locking decision
+  rests on a correctness argument and was proven on a real server against a
+  competing transaction; the first concurrency test written also passed with
+  the lock REMOVED (the local server finished every transaction before the
+  next goroutine started), so a test that PRODUCES the conflict was written
+  instead of one that HOPES for it.
+
+- **The catalog now says how long it can be REUSED** (ADR 0151).
+  ADR 0044 moved the sales channel into the catalog PATH — "this is what a
+  shared cache can store" — and deliberately turned on no cache and chose no
+  freshness policy either. The fact that sets the policy was MEASURED there:
+  the catalog body can change WITHOUT A WRITE, because the price-list window
+  opens against the CLOCK (`listablePrices` takes the clock as an argument).
+  So invalidation on write can never be complete — when 09:00 arrives,
+  nothing writes — and the only tool that can be complete is a TTL. The three
+  channel-scoped reads now write
+  `Cache-Control: <kapsam>, max-age=<ttl>` on the SUCCESS path; the TTL comes
+  from `STOREFRONT_CATALOG_CACHE_TTL` (zero — the default — writes no header)
+  and the scope is `private` unless `STOREFRONT_CATALOG_CACHE_SHARED` is on.
+  The two settings answer two SEPARATE questions: the TTL is freshness,
+  `shared` is SECURITY — since ADR 0044 the publishable key has been a GATE
+  that does not affect the body, so `public` lets a CDN serve the stored body
+  to a caller WITHOUT A KEY. Most stores want exactly that (the channel's
+  catalog is what the storefront shows the world, and the key sits in the
+  browser anyway), but it is not a decision this repository makes on their
+  behalf: the default is false and a shared installation gets a WARNING at
+  startup. The header is written per handler and on the success path; a
+  middleware would have to know the route table a second time and CANNOT SEE
+  whether the handler will answer with a body or a rejection — a 404 that the
+  CDN stores for the TTL means a product that stays missing even after it is
+  fixed. A negative TTL stops startup, zero is accepted: zero is an answer,
+  while `-1h` is a typo its author believes does what it says. One of five
+  mutations survived, and the defect was in the TEST, not the CODE: the
+  validator rejected `-1h` and no test held it to that.
+
+- **A program that EMBEDS gobit can now stand it up in its own test**
+  (ADR 0150). gobit is a LIBRARY (ADR 0025), yet a program embedding it had
+  no way to write tests against it: the facade offers only `Main(args, out)` —
+  it binds a port and blocks — and everything behind it (migrations, module
+  registration, the router, the protection rings) is under `internal/`,
+  unreachable from outside. The two remaining options were to run the binary
+  and talk to the socket, or to REWRITE the assembly in one's own test; this
+  repository has a record of what the second costs (ADR 0141 exists precisely
+  because that copy drifted). Now `App.InProcess(ctx)` stands up the whole
+  installation and returns the `http.Handler` that `Main` would serve — and
+  it goes through the SAME assembly function, because a harness with its own
+  assembly would be a second answer to "what is the installation", and the
+  answer the tests trusted would be the one nobody deploys. Nothing with a
+  PORT or a CLOCK starts: no HTTP server, no operator listeners, no SCHEDULED
+  JOBS — a relay ticking underneath the test's own assertions makes a failure
+  depend on when the test happens to look. The cost is written down: an
+  event subscriber is reached only by a DIRECT publish; the relay that keeps
+  the promise an outbox row makes does not run. Configuration is read from
+  the ENVIRONMENT, just as `Main` reads it (a second configuration path would
+  mean a test running with defaults no deployment uses), and the cost of that
+  is that such a test cannot be `t.Parallel`. Widening the facade also found
+  a hole in the gate that audits the published surface (D86): the name
+  inventory walked only the `core/` tree, while the package list declares the
+  facade published too — so `gobit.App` and its methods were promises to be
+  kept until 1.0.0 that nothing audited, and the gate stayed green when
+  `InProcess` was added.
+
+- **A carrier can now be asked WHERE a parcel is** (ADR 0149). A tracking
+  number could be attached at shipment time and the timeline carried five
+  moments, so the MANUAL half was complete; the PROVIDER half was missing —
+  the shipping contract was three methods (`Quote`, `Create`, `Cancel`) and
+  asked the carrier nothing once the label was printed. The gap was named by
+  the bundled provider's own godoc: `GetShipment` "is NOT part of the core
+  contract… only this way can a fault in which the two ledgers diverge be
+  seen". The two ledgers are deliberately separate tables, and they really do
+  diverge: when the shipment is marked, the module says `shipped` while the
+  provider's row stays `pending`, and the tracking number the operator typed
+  sits next to the number the label was opened with — so a parcel recorded
+  with the wrong number is now VISIBLE. `core/provider` now publishes an
+  OPTIONAL `ShipmentTracker` (`Track`, a READ, by the provider's own ID), and
+  `GET /admin/v1/fulfillments/{id}/tracking` returns the carrier's view NEXT
+  TO the module's record, WRITING nothing: which side is authoritative
+  depends on the provider — a real carrier knows where the parcel is, while
+  the bundled provider is the store itself, where the operator's record is
+  the right one — and writing would mean picking the wrong side in one of the
+  two cases. The answer has FIVE shapes and the client looks at the NAME, not
+  at emptiness: a carrier that says "pending" and a carrier that cannot be
+  asked produce the same empty fields. Seven mutations bit, one survived, and
+  the defect was in the TEST, not the CODE: in none of the fixtures was the
+  module side empty, so the two numbers were already different — the test
+  that closed it is a parcel with both sides empty.
+
+- **A rule can now ask what a product BELONGS TO** (ADR 0148). ADR 0144
+  brought the set-reading operator (`any_in`) and gave the set to the context
+  side; it could not give it to the row side, because a product's categories
+  and tags are not columns of the product row and nothing published them. So
+  the operator existed, but half of its questions could not be asked: a
+  merchant could write "20% off this product" and "20% off this collection",
+  but not the campaign stores actually run — a discount on a CATEGORY. The
+  rule row was saved, the admin endpoint returned 200, and the discount
+  silently stayed at zero. The product record now publishes `category_ids`
+  and `tag_ids`, and the cart sends each line's lists. The reads happen ONLY
+  when the field is named: the panel's grid, link resolution and the tax-type
+  read pay nothing — but an EMPTY field selection (meaning "the whole
+  record") does pay, because the whole record has to be correct. Membership
+  is DIRECT, which is the same answer the provider's `category_id` FILTER
+  gives: a rule naming a parent category does not reach products filed only
+  under its subcategories, and that limit sits in known-limits next to the
+  filter's. A shipping method carries NO list and never will — it is in no
+  category — so a category rule targeting shipping selects nothing, which is
+  the right answer. And in this round a rule that had stayed in prose was
+  turned into a gate: the promotion module answers the same computation on
+  TWO surfaces (the cart's interop and `POST /admin/v1/promotions/compute`),
+  and both godocs said the shapes had to stay EXACTLY the same — the field
+  was added to one and not the other, and nothing failed (D85).
+
+- **The second factor is now DEMANDED** (ADR 0147). ADR 0143 gave an
+  administrator a place to HOLD a second factor — a sealed TOTP secret, two
+  endpoints, RFC 6238 — but the only caller of the method that asks "has this
+  person proven their phone" was its own test: a person enrolled and
+  confirmed, then logged in with their password as if nothing had happened.
+  This is the repository's own recurring defect, and here it is worse — what
+  the feature claims to do is protect administration, and the installation
+  that turned it on believed it was protected. `Login` now asks for the
+  account's proven factor before signing the token; the code arrives in the
+  login body and the rejections NAME THEMSELVES (`auth_mfa_required`,
+  `auth_mfa_code_wrong`), both only after the password turns out CORRECT, so
+  they tell a stranger nothing about the account. A wrong code counts as an
+  attempt (that counter is the only limit on guessing six digits); a missing
+  code does not (it is the first half of an ordinary two-step login). The
+  three questions ADR 0143 left open were answered by SHAPE: machines are
+  unaffected (the demand sits on password login, and a key has no
+  authenticator), an unproven enrolment demands nothing (an abandoned scan
+  locks nobody out), and re-enrolment no longer DELETES the confirmation —
+  the new secret waits in `pending_secret` NEXT TO the proven one, because
+  deleting would be a way out of the second factor that requires no secret at
+  all. Someone who loses their phone can no longer fix it on their own, and
+  no endpoint fixes it for them: an administrator who could remove a
+  colleague's factor would make a SINGLE stolen session enough to enter every
+  account with a password. The remaining path is on the machine:
+  `gobit mfa-reset <email> -confirm <email>`. Nothing is mandatory store-wide
+  (a mandate before anyone has enrolled would lock everyone out at once), and
+  this was written into known-limits. And widening `Login` broke
+  `adminui.Session` while staying GREEN in every lane that compiles: the
+  panel resolves five surfaces by name and none of them was pinned — the
+  failure was waiting at STARTUP; all five are now pinned.
+
+- **An operator can now take an order OVER THE PHONE** (ADR 0146). The
+  cart's admin surface was read-only by decision: a correction made from the
+  panel meant changing, behind the customer's back, the amount the customer
+  was looking at. That reasoning covers CHANGING a cart, not OPENING one —
+  and the order module cannot fill the gap, because `CreateOrder`
+  deliberately has no route: an order opened over HTTP would carry a total
+  the caller decided. What makes the amount the server's is the cart. The
+  surface gained exactly two writes — opening a cart and adding a PRICED line
+  — and the line write carries a MANDATORY `sales_channel_id`: an admin key
+  carries no channel, and an identity without a channel means not
+  "channel-less" but "bound to no channel", so the request would be rejected,
+  for every variant in the catalog, with a message about the variant ID the
+  operator typed. The handler WRITES the channel onto the principal, so the
+  cart's existing scope rule runs as it is instead of being bypassed. Opening
+  a cart does NOT ASK for a channel: nothing reads the channel on that path,
+  and asking for one would be a claim written into a context nobody looks at.
+  The cost is written down: the server has not proven the scope, the claim is
+  made separately on each request (two lines of one cart can be written under
+  two channels), and the operator can add lines to a cart the customer is
+  holding — but cannot do anything that CHANGES what the customer sees, and
+  the customer still pays, from the store surface, against the total in front
+  of them.
+
+- **An exchange can now send A DIFFERENT PRODUCT** (ADR 0145). Every
+  after-sales item in the module pointed at an existing order line through a
+  NOT NULL foreign key; that is right for records about goods the customer
+  already owns, but not for an EXCHANGE. "Send the same shirt one size up" is
+  an ordinary exchange, yet `order_replacement_items` could express only units
+  of a variant already on the order — and the money half of the exchange has
+  been able to collect a difference since ADR 0120, with no goods for it to
+  answer for. An item can now name a variant INSTEAD OF a line (a CHECK in
+  the schema: exactly one of the two). Nothing changed downstream, and that
+  is not luck but the measurement's finding: the shipment flow already worked
+  from the variant alone; the line was there because the item itself could
+  not say what it was sending. The cost is written down: a line item is
+  bounded by "no more than was bought", while a variant item is bounded only
+  by the difference amount the operator WRITES — this was added to
+  known-limits.
+
+- **A rule can now ask "is it in ANY of these groups"**
+  (ADR 0144). A customer is in as many groups as the merchant puts them in,
+  but the cart could send only ONE: the ranked head (ADR 0049). So a customer
+  in the {retail, vip} groups whose head was retail DID NOT MATCH the rule
+  `customer_group_id in [vip]` — a segment discount silently not applied to
+  someone INSIDE the segment, which is exactly the defect ADR 0103 opens with.
+  A ninth operator (`any_in`) reads the context's value SET, and the cart
+  sends all the groups ALONGSIDE the ranked head. The old operators do NOT
+  LOOK at the list: the answer of an already shipped `in` rule has to stay the
+  same, or a live discount would widen without announcing anything. The
+  measurement also found that all three targets the entry called "missing"
+  were wired, and that a sentence in `cart/discount.go` ("the customer group
+  is NOT PUT into the context") had long been wrong.
+
+- **An administrator can now carry a SECOND FACTOR** (ADR 0143). The
+  `auth_mfa_credential` migration, and two endpoints under `/admin/v1/auth/mfa`:
+  enrolment and confirmation. The endpoints name no user — they act on the
+  caller ITSELF, because an administrator who could open an enrolment on a
+  colleague's behalf would hold the secret of that colleague's phone; a
+  request made with an api_key is rejected too, since a machine has no
+  authenticator. An enrolment does NOT COUNT until the first correct code.
+
+  This is the FIRST secret the module can read back: the password is
+  argon2id, the api key and the invitation token are SHA-256, none of them
+  retrievable — but verifying six digits means recomputing them. The secret
+  is sealed with AES-GCM and the key is supplied by the installation
+  (`MFA_SECRET_KEY`); without a key, enrolment is REJECTED, because a default
+  key is not a key, and plaintext is a security feature that silently does
+  less than its name says. The key is SEPARATE from `JWT_SECRET`: the two are
+  rotated at different times. TOTP arrived WRITTEN in-house, not as a
+  dependency, and is verified against RFC 6238's own test vectors. The login
+  flow is not touched yet — making it mandatory is a separate decision.
+
+- **Both actions compute the SAME TARGET** (ADR 0142, D82). Two actions put a
+  line's canceled units back on the shelf: the cancellation write itself and
+  the cancellation of the parcel holding the rest. Both computed a
+  DIFFERENCE, and the parcel action subtracted the term "what the write
+  already put back" — a number it did not read but ASSUMED. The bus does not
+  promise order: a write whose direct publish is lost arrives a minute later
+  through the outbox relay, AFTER the operator has canceled the parcel.
+  Measured: EIGHT units were written to the shelf for a five-unit
+  cancellation, and because the two actions' references differed, the
+  ledger's uniqueness could not see it. Both now compute the target
+  `min(canceled, sold − in parcels)` and the module moves the difference under
+  the lock; order no longer matters, and a redelivered event finds the target
+  already met. `inventory_movements` gained a column carrying the line ID,
+  and the reference's unique index was DROPPED — the same action
+  legitimately writes a second time when the target grows.
+
+- **The end-to-end harness wires every flow production wires** (ADR 0141).
+  `internal/e2e` builds its module and flow set BY HAND — deliberately,
+  because a harness that called the real installation would test the
+  installation, not the modules. The cost of that copy was being a copy:
+  production wired seven flows, the harness six. The missing one was the
+  repository's only flow driven SOLELY by the bus — nothing resolves it,
+  nothing calls it, so leaving it unwired breaks no request and turns no test
+  red; only the stock figure comes up short. D75 and D76 sat exactly there for
+  weeks. The gate now compares the flow packages the two roots IMPORT, and
+  the harness runs the first scenario that sees ADR 0134/0135/0139/0140 at
+  once.
+
+- **A parcel now RECORDS which order it was opened for** (ADR 0140). There
+  are two ways to open a parcel and neither did both: a parcel the flow
+  opened was linked but carried no items (the surface it opens through takes
+  no items), and a parcel the module's admin endpoint opened carried items
+  but was linked to nothing. Measured against a real database: a three-unit
+  parcel says `{oli: 3}` to `CommittedQuantities` and EMPTY to the link list.
+  So the `committed` term was structurally zero for every parcel that
+  contributed to it — and that term sits in the middle of THREE decisions
+  (ADR 0134, 0135, 0139). The link is now written by the module that owns the
+  definition; the write in the flow was removed, because having the same rule
+  in two places was the reason it was forgotten in one.
+
+- **A canceled parcel gives back the units it held** (ADR 0139). How many of
+  a line's units belong to the shelf is `min(canceled, sold − in live parcels)`,
+  and BOTH sides of that expression move; but only one of them had an event.
+  A line canceled under an open parcel put back the units outside the box and
+  correctly left the rest — ADR 0135 looked at exactly that case, said "the
+  framework does not pull back anyone's shipment on its own", and named the
+  shop's remedy in the same sentence: cancel the parcel. Canceling the parcel
+  flipped a status, touched no stock and told NOBODY; the fulfillment module
+  had never published an event. So those units were neither in a parcel, nor
+  owed to the customer, nor on the shelf. The module now publishes
+  `fulfillment.canceled` and the cancellation flow listens to it as its
+  second event: the amount it releases is the DIFFERENCE between the two
+  windows — because it is a difference of states, the flow does not need to
+  remember what it returned before, and in whichever order two parcels are
+  canceled, the total is the same.
+
+- **The container reaper is off where the machine gets thrown away**
+  (ADR 0138). On 11 September the verification lane turned red twice, in two
+  unrelated packages, after waiting sixty seconds each time; what it was
+  waiting for was not the Postgres the test asked for but the Ryuk container
+  SHARED between processes — it terminates itself ten seconds after its last
+  client leaves, is still caught by the label search until its record is
+  deleted, and sixty seconds are spent waiting for a port a dead container
+  will never publish. Since the GitHub runner is destroyed when the job ends,
+  the reaper has nothing to protect: it was turned off in two jobs, and the
+  claim that justifies the decision — that the runner is ephemeral — was
+  nailed down in both directions by an arch gate.
+
+- **A colleague now sets THEIR OWN first password** (ADR 0137). Until now
+  there were two ways to add a user and both were wrong: either you wrote the
+  password into `CreateUser` — so one person knew another person's secret,
+  and the record of "who can act as this user" was wrong from the first
+  minute — or you created the user without a password and never wrote an
+  `auth_identity` row, which yields an account that cannot log in and whose
+  reason nothing states. Now there are invitations:
+  `POST /admin/v1/users/{id}/invitations` opens one,
+  `POST /admin/v1/auth/accept-invitation` spends it. The token is NOT in the
+  response — if the API handed the invitation back, the administrator would
+  still be holding the colleague's first-password link. The accept endpoint
+  is the second unprotected admin path, and it has to be: the person calling
+  it does not yet have an account to authenticate with. **And what made this
+  possible**: the notification module now has a cross-module surface — until
+  then the only way to send mail from inside gobit was an EVENT, and an event
+  sits in the durable stream, is delivered at least once and is FORWARDED to
+  the operator's third-party endpoints; a single-use invitation token can be
+  none of those.
+
+- **The compiler now checks EVERY interop pair** (ADR 0136). A consumer
+  defines the narrow interface it needs in its OWN package and resolves the
+  concrete value from the container by name; since neither side imports the
+  other, a signature drift compiles on both sides and blows up only at
+  RESOLUTION time — on the request path, cached with `sync.Once`, while
+  startup is green. And it had blown up: `*cart.Interop` carried neither
+  `ApplyPromotionCode` nor `RemovePromotionCode`, so the two storefront
+  coupon endpoints returned 500 to the first customer who typed a code (D73).
+  What kept this from being written was a sentence in another module's
+  godoc: "the compiler never sees the two together" — wrong; a THIRD package
+  in the same Go module can import both. `internal/arch/interop_pins_test.go`
+  now carries thirty-seven assignments, and a gate that derives the
+  population from disk keeps the list complete (on its first run it found two
+  missing from the list I had written by hand).
+
+- **A parcel can no longer carry more than the order OWES**
+  (ADR 0135). `POST /admin/v1/fulfillments` took line IDs and quantities and
+  checked none of them against the order — verified by reading: an empty ID,
+  a global quantity range and the same line appearing twice are rejected,
+  nothing else. Not whether the line belongs to that order, not whether the
+  quantity stays within what was sold, not whether the units are in another
+  parcel, nor whether they have been canceled. So an operator could ship goods
+  the customer had been told were canceled — and since ADR 0134 returned the
+  stock of those units to the shelf, the same goods left twice and the count
+  fell short by the difference. The fulfillment module now resolves the
+  `fulfilling` flow at request time, asks for the bound
+  `received − canceled − in live parcels` and rejects an item that exceeds it. The
+  endpoint itself DOES NOT CHANGE, and if the bound cannot be read the parcel
+  is not opened — a bound that cannot be read is no bound (D72).
+
+- **The known-limits document now COVERS the contrib identity modules too**
+  (D71). `docs/known-limits.md` is the document people open to read what
+  gobit does not do, and its identity section ends the way to close the four
+  rejecting routes with "one line of wiring: wire a verifier". Since ADR 0127
+  there has been ONE to wire — in this repository — and the word `contrib`
+  appeared nowhere in the file. So a reader following the document's own
+  advice learned neither that it existed nor what it does not close: a
+  signed cookie cannot be revoked before it expires, a stolen cookie can
+  enroll its own passkey and remove the owner's key, a credential store the
+  installation wires in may answer none of the data-subject capabilities, a
+  change of `Options.RPID` abandons every enrolled key, and the default rate
+  limit on sign-up is per PROCESS. All of it was written in an ADR; none of
+  it was where someone looks for limits.
+
+- **Canceled units now return to the SHELF** (ADR 0134). Checkout's last step
+  confirms the reservations, so stock is DECREMENTED — the units of an
+  existing order have therefore left the sellable count, and a line deleted
+  afterwards is a unit that nobody will ship and that is not counted as stock
+  either. Nothing put it back: not full order cancellation, not ADR 0113's
+  partial cancellation, and the order module cannot (the units live in
+  another module). Now order publishes `order.line_canceled` (outbox +
+  direct) and a NEW flow subscribes: it asks fulfillment how many units the
+  live parcel holds and puts back the increase in
+  `min(total canceled, received − in parcels)` — so a second cancellation does not
+  double-count and a shipped unit does not return to the shelf. It is the
+  repository's FIRST listen-only flow. Restocking is IDEMPOTENT for the first
+  time: the bus delivers at least once, so the cancellation ID is the
+  movement's reference and the ledger keeps it unique (D70).
+
+- **A customer can now open THEIR OWN account** (ADR 0133).
+  `contrib/identity-session` only logged people in and let an operator write
+  a credential; a customer could not open an account. Two endpoints were
+  added: sign-up and verification. Sign-up creates NOTHING about the person —
+  no customer, no credential, no session; only a row in this module's own
+  table holding the address, the argon2id hash of the password and the hash
+  of the token. The SAME 202 is returned for an address that already has an
+  account, otherwise the question "does this person shop here" would be
+  answered for anyone; what differs is the message sent. The token is
+  consumed with `DELETE ... RETURNING`, so being single-use needs no lock, and
+  it is spent BEFORE the account is opened. Who creates the customer record is
+  a seam the installation wires: `customer.service`'s `RegisterGuestCustomer`
+  says "the same e-mail is no obstacle", which is the wrong semantics for
+  sign-up. The endpoints DO NOT EXIST unless the seam is wired — a typed nil
+  counts as unwired too.
+
+- **The two contrib identity modules now answer a DATA SUBJECT**
+  (ADR 0132). `contrib/identity-session` and `contrib/identity-passkey`
+  implemented none of ADR
+  0029's three data-subject capabilities — yet between them they held an
+  e-mail address, an argon2id password hash, a customer ID, a per-device
+  credential and four timestamps. So a store could fulfil an erasure request
+  and leave in place the credentials that let the erased person in. The audit
+  written to catch this could not see them either: it walked only under
+  `plugins/`, and a separate go.mod does not make a table any less personal —
+  the roots are now verified against DISK. Passkey erasure is deliberately
+  OUTSIDE the RP scope: the other operations answer "which keys let this
+  person in", while this one answers "what is held about them". The password
+  hash is declared but its value is not produced — dropping the column would
+  make the answer wrong, and printing its value would put the person's own
+  secret into the file (D69).
+
+- **A passkey now belongs to a SINGLE relying party** (ADR 0131). The
+  authenticator that generates a passkey binds it to an RP ID: an
+  installation whose `Options.RPID` changes — a domain move, or a subdomain
+  being dropped — leaves every enrolled key unusable. The rows stayed, and
+  nothing recorded which party they belonged to, so the "protect the last
+  login path" rule shipped one commit earlier COUNTED them: a person holding
+  one abandoned key and one new key was told "you have two paths" and was
+  allowed to remove the NEW one — the protection produced the very lockout it
+  was written to prevent. The server had no view of this either, and that
+  half was measured: a row enrolled under `example.test` let someone in under
+  `moved.test` with a 204. Now `rp_id` is a column and every read and write of
+  the store is scoped by it; NULL means a row from before the column existed
+  and is read as the configured party — so the upgrade locks nobody out (D68).
+
+- **A person can now SEE their passkeys and remove one**
+  (ADR 0130). `contrib/identity-passkey` offered only enrolment and login:
+  someone who lost their phone could not see what opened their account, nor
+  revoke that device. Two endpoints were added — a list of the caller's own
+  keys and removal of one. Removal is rejected if it would leave the account
+  with no way to log in, and that rule is not a CONDITION but a LOCK: the same
+  check written inside the DELETE under READ COMMITTED leaves zero keys when
+  two removals run concurrently — measured, on every run. The question "is
+  there another login path" is this module's OWN question, and it is asked
+  before the transaction opens: querying another module while holding a row
+  lock needs a second connection from the same pool. "We could not check" is
+  never "you have no other path" — one is a 500, the other a 409.
+
+- **The signing key can now be ROTATED without locking anyone out**
+  (ADR 0129). `contrib/identity-session` signed and verified with a single
+  key; changing it meant every cookie in every browser became unverifiable at
+  once. So the price of a rotation was every shopper's session — which is the
+  reason keys do not get rotated, not a reason they should not be. The
+  module's own package doc said so in one sentence; a limit that is written
+  down is a limit that can be closed.
+  `identitysession.Options.RetiredSecrets` holds keys the cookie may still
+  carry but that nothing SIGNS with any more. The order is exactly the
+  feature itself: an implementation that accepts both but keeps signing with
+  the OLD one passes every test that says "sessions work" and has rotated
+  nothing. A LEAKED key is not retired, it is thrown out outright — that locks
+  everyone out, and that is the right price.
+
+- **Passkeys are in THEIR OWN module** (ADR 0128). `contrib/identity-passkey`
+  performs both WebAuthn ceremonies, keeps its own credential table and puts
+  the person into the SAME session cookie the password opens. A separate
+  `go.mod`, because it was measured: importing go-webauthn adds nine modules
+  that are NOT in gobit's graph — including `go-tpm` and `go-tpm-tools`, that
+  is, attestation support for hardware most shops will never see. An
+  installation that imports `contrib/identity-session` for passwords should
+  not carry that. The ceremony state is a short-lived cookie sealed with the
+  session module's key; this made that module's MAC also take in "what this
+  signature is FOR" — one key signing two shapes makes them interchangeable.
+  Login NAMES nobody: the authenticator asks the person which of their keys
+  to use, which is both the better flow and the only flow WITHOUT account
+  enumeration. The ceremonies RUN against a real software authenticator,
+  because every mistake this module can make is about a challenge, an origin
+  or a user handle, and no assertion about the handler sees any of those.
+
+- **A working customer identity is now IN THE TREE — but OUTSIDE the module**
+  (ADR 0127). `contrib/identity-session`: a signed cookie session, argon2id
+  passwords, its own table and two storefront endpoints; the embedder imports
+  it and `Add`s it. ADR 0125 closed every storefront endpoint that names a
+  customer until a verifier is wired, and ADR 0126 published the rules — but
+  there was nothing to wire: every implementation here was a test fake. Where
+  it lives was the DECISION: `plugins/*` is in the main module, so a WebAuthn
+  library entering there would land in the graph, the security scan and the
+  legal review of a shop that wants a product catalog — the dependency gate's
+  own sentence. A separate `go.mod` keeps it out. The first slice adds no
+  dependency for anyone: argon2id needs `golang.org/x/crypto`, and gobit
+  already requires it DIRECTLY. Passkeys were left for a record of their own.
+  Four gates and two lanes learned the new tree and each of them found
+  something — the sharpest find was twenty-eight tests that nothing ran.
+
+- **A customer identity now passes a PUBLISHED suite** (ADR 0126).
+  `corehttp.Identity` is the one interface this framework requires and does
+  not implement, and nothing checked what the embedder wrote —
+  `docs/known-limits.md` had said so in one sentence for two records now: an
+  implementation that hands back the claimed identity satisfies the interface
+  and the framework cannot tell the difference. ADR 0125 turned this into a
+  live question: every storefront endpoint that names a customer now rejects
+  until a verifier is wired. The obvious rule, however, DOES NOT WORK — the
+  interface's own contract counts "a header written by an upstream proxy" as
+  a legitimate source, and rightly so: behind a filtering gateway that header
+  is proof. What separates the two cases is not the header but whether
+  something filters it — and no test holding the request can see the
+  gateway. The solution: the implementation DECLARES it
+  (`identitytest.UpstreamTrust`) and the suite does not probe that header.
+  The two implementations in the suite's own tests are the same code: the one
+  that declares passes, while the one that does not fails with an error that
+  names the interface to implement BY NAME.
+
+- **Serving an unverified customer claim is now a CHOICE** (ADR 0125).
+  ADR 0057 tied twelve storefront endpoints that name a customer to a single
+  comparison and deliberately chose to let four of them serve the claim
+  UNCHECKED when no verifier is wired — and its reasoning was not wrong
+  either: rejecting pulls a working surface away from an embedder who has
+  done nothing wrong. The residue was written down plainly and put in
+  `docs/known-limits.md`: someone who knew a customer ID (that ID travels in
+  every order response) could read that person's company and spending limit
+  and open carts in their name — the cart half spends that person's B2B
+  allowance. What that record could not do was turn this into a DECISION: an
+  installation got the open answer without knowing the question existed, and
+  a WARN at startup is not a choice. All four now reject by default — as the
+  address book already did — and the old answer is one setting away
+  (`STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM`). What is withdrawn is not
+  the surface but getting it WITHOUT DECIDING. The default is also the ZERO
+  VALUE: the field was named in the positive, because `internal/e2e` imitates
+  the composition root with zero Options, and so does every embedder that
+  builds the modules by hand. Guest traffic is the same under both values — a
+  body that names nobody is never questioned, which is the sentence ADR 0057
+  built the whole comparison on.
+
+- **Shipment now ASKS whether the money is STILL THERE** (ADR 0124).
+  ADR 0120 let the exchange collect its difference, and the row holds the
+  MOMENT the money was there — the only thing an order row can hold about a
+  figure that payment owns (ADR 0119). But a MOMENT is not a BALANCE: the
+  collection stays reachable from payment's own refund route, and there is no
+  flow on that path. Measured: fund, refund the collection, ship — it
+  returned 200, a real parcel was opened, the units came off the shelf and
+  the exchange was marked `completed`, with nothing in the collection (D61).
+  The defect is not a missing rule but a rule asked ONCE about something that
+  CHANGES. The flow now asks before stock moves — where a rejection still
+  costs nothing — and once more before closing the record, because that step
+  also runs on the retry path.
+
+- **A schema name cited in live code now RESOLVES** (ADR 0123). Four of D59's
+  ten stale sentences named a CHECK that ADR 0120 had dropped: they gave the
+  reader a name to verify the claim with, and the name resolved to nothing.
+  This is the class `doc_references_test.go` was written for — a citation
+  sends the reader off to SEARCH and what they search for does not exist —
+  but in a dimension that test cannot reach, because a constraint name is
+  neither a Go symbol nor a path but a word in a comment. The audited
+  vocabulary is derived from the migrations THEMSELVES: every name the schema
+  ever defined. The migrations are walked IN ORDER, and the order is the
+  whole point — a name is routinely dropped and re-added a line later; that
+  is how a CHECK gets widened.
+
+- **Generated code is now verified by REGENERATING it** (ADR 0122). The
+  repository keeps 75 sqlc files and 14 gqlgen files in the tree, and nothing
+  compared them with their sources. The defect surfaced through a comment
+  (D60), but the measurement found something worse: the source `.sql` is NOT
+  the query the database runs — what runs is the string in the generated file
+  — so an edit to the source alone is executed by nothing. Multiplying the
+  B2B spending window a thousandfold in the source leaves `go build`,
+  `go vet`, the unit lane and the integration lane against real PostgreSQL
+  clean; all of them run the OLD query, which is the correct thing for them
+  to do. The edit is invisible precisely when it is wrong. CI now runs the
+  generators and asks for the diff — the question it already asks for go.mod.
+
+- **The payment module now SAYS when money moves** (ADR 0121).
+  The order's summary is a REPORT of what payment holds, and only two flows
+  wrote it. Payment, however, publishes its capture and refund routes itself,
+  and there is no flow on those paths — so money moved and the order's record
+  never found out. ADR 0022 had seen this three days earlier, named the
+  subscriber "the better home" and rejected it for a single reason: payment
+  published nothing. In the same sentence it left the question that had to
+  be answered first — **what does a payment event carry?**
+  The answer: the collection's ID and the moment, NOT the amount. There are
+  three reasons and all three were measured. Refund is deliberately not
+  idempotent, so an amount in the payload would be an INCREMENT, and the bus
+  delivers at least once — a redelivered increment reports a total that never
+  happened. The consumer's write, for its part, is a merge that works
+  correctly only on a CUMULATIVE number. And every published topic is
+  forwarded outside the installation: money in the payload would go to the
+  third-party endpoints the operator has registered. The subscriber reaches
+  the order in REVERSE through the `order_payment` link, because the
+  collection's `reference` carries the CART ID — the published OpenAPI
+  description wrongly described it as "an order id in practice", and that was
+  fixed too. ADR 0119 does not bend: what is forbidden is an order row
+  holding payment's figure as ITS OWN TRUTH, not holding a report — and the
+  subscriber produces the report by asking at the MOMENT IT WRITES. Defects:
+  D55 closed, and its sibling D57 was opened and closed in the same commit —
+  the capture route carried the same silence, and D55 had missed it because
+  it was written from the route that had been looked at only.
+
+- **An exchange can now COLLECT its difference** (ADR 0120). When migration
+  000008 removed exchange completion, it wrote down by name what would bring
+  it back: goods going out and, if the difference is not zero, money coming
+  in. ADR 0090 brought the goods; the money took three records — 0117 kept
+  the sale's link as it was, 0118 turned the collection's gate into remaining
+  capacity, and 0119 decided that the order row may NOT MIRROR payment's
+  amount. One question was left: where to put the withdrawal guard. It was
+  measured, and none of the FIVE shapes that guard withdrawal survived —
+  reading the money there needs a module this module cannot ask, and reading
+  the counter produces a record that cannot be undone and an order that can
+  never be forgotten again.
+  The answer moved the question: **the guard sits not at withdrawal but at
+  FUNDING.** The moment the exchange takes the money it leaves `requested`,
+  and the transition table itself says what that means — the same as the
+  return's `received → conflict` row.
+  Decision: a positive difference is funded by NAMING the collection in which
+  the operator gathered the money; the row holds that collection's ID and
+  the MOMENT, never its amount. The goods of a funded exchange can complete
+  it, ordinary withdrawal rejects it, and its way out is a SINGLE action that
+  sends the money back and withdraws the request as well.
+  The costs are stated openly: the status vocabulary went from three to four
+  and was published. The completion bound STAYED in the schema, and that is
+  possible only because the row holds an ID — a CHECK sees a column, it does
+  not see a link written in the link layer. This overrides the second
+  sentence of ADR 0117: that record said "link" because that was the visible
+  shape; the tree's own shape for a cross-module ID written by the flow that
+  holds both sides is a COLUMN (migration 000012 wrote this down with its
+  reasoning).
+  And I closed the hole the new status would have opened: the erasure sweep
+  looked for `requested`, and `funded` would not have triggered it — so an
+  order whose money is being held would have become FORGETTABLE. The branch
+  reads both.
+
+- **An order does NOT KEEP a second copy of the money** (ADR 0119). The
+  exchange's difference was designed three times, six candidates were
+  produced, and all six were knocked down by independent readings. They
+  differed on almost everything and died of one thing: each put a MONEY
+  number on the exchange's row and tied the rule to a row-local CHECK — the
+  shape migration 000017 defended when it bounded completion.
+  That reasoning does not carry over to money another module owns. Measured:
+  payment PUBLISHES a route that refunds a capture and publishes no event at
+  all (zero `Publish`, zero topics, zero subscribers), and a constraint on
+  `order_exchanges` CANNOT SEE a row written to `payment_collections`. So a
+  copy on the order side is a claim that a published route can silently
+  invalidate, and the strongest guard the schema offers is exactly the guard
+  that cannot notice it.
+  Decision: an amount that payment owns is NOT MIRRORED onto an order row; if
+  that amount decides something, payment is ASKED at the moment of the
+  decision. What an order row can record is the MOMENT A QUESTION WAS
+  ANSWERED, not the arithmetic of the answer.
+  The cost is paid openly: 000017's row-local bound is given up for this fact
+  (that bound was justified by the fact being on the row; this fact is not on
+  the row), and because there is no cross-module transaction between the
+  measurement and the write, a window remains that does not close — a
+  completion declares the MOMENT it was written, not every moment after.
+  The tree already holds such a copy, and it now has a name:
+  `order_summaries`' totals are a REPORT, not a source. That surface's godoc
+  justified its own merge semantics with "a subscriber listening to payment
+  events", and such a subscriber CANNOT EXIST; the sentence was fixed, the
+  staleness was not — its trigger is ADR 0022's own trigger. Defect D55.
+  What the three rounds settled is handed over to the next record (the link
+  name and its one-to-one cardinality, the positive-only predicate, EQUALITY
+  rather than the floor as the measure, the structural ceiling, a `down` that
+  rewrites, adding a method instead of widening a signature), together with
+  the one question deliberately left open: the withdrawal guard.
+
+- **A collection's gate now reads what REMAINS** (ADR 0118). The gate asked
+  "has this collection ever received anything", and the computation beneath
+  it never read what had been captured — it only subtracted the live
+  sessions' reserve. So the flag was not a shortcut but the ONLY wall between
+  a second session and a second capture; that is why it was crude, and that
+  same crudeness made the remainder of a partial capture uncollectable
+  forever.
+  A partial capture is not a corner case: the admin capture endpoint takes
+  the amount as OPTIONAL and bounds it only from above, the same place is
+  reached without the operator choosing anything when a provider authorizes
+  partially, and the derived status vocabulary has recognized that state by
+  name since the day it was written. The module was also breaking its own
+  word: the session test says "a canceled session must not lock the
+  collection forever, the customer must be able to try another payment
+  method", and that held only as long as nothing had been captured.
+  Decision: opening a session asks for the REMAINDER — the amount minus what
+  was captured minus the live sessions' reserve — and rejects only when that
+  is zero. The barrier against double capture moves from a flag to
+  arithmetic, and moreover to where the second wall already stands: the
+  `captured_amount <= amount` constraint could until now fire only AFTER the
+  provider had TAKEN the money.
+  A fully refunded collection is NOT REOPENED, and this is deliberate: a
+  refund does not shrink what was captured, so the remaining capacity stays
+  zero. That is ADR 0117's trigger, but it has no consumer — both refund
+  callers in production only send money back (ADR 0063). A correction on the
+  side: ADR 0117 said "the obstacle is the collection, not the link"; the
+  measurement gave a narrower answer — even if the existing collection were
+  reusable it CANNOT take the difference, because `amount` is never written
+  again. The difference needs a SECOND collection, and its name is still
+  deferred. Defects D53 and D54.
+
+- **The sale's payment link carries only the sale** (ADR 0117). ADR 0116 made
+  a cardinality widenable and left a single question open in writing: does
+  the exchange's capture need a name of its own. Until then the answer was
+  forced — widening `order_payment` stopped startup — and now it no longer
+  is. Measured: what refuses is not the mechanism but the ROW. A link row
+  carries two IDs and a moment, no read statement SELECTs that moment, and
+  under a widened `order_payment` no data would remain to tell the capture
+  checkout opened apart from a capture covering an exchange — all three
+  readers take the first one they get. The most expensive is the refund
+  flow: its comment is not a description but a RATIONALE, saying
+  "one-to-one, so more than one is not a choice but a data error", and
+  widening would leave the behavior the same while making the rationale a
+  lie.
+  Decision: `order_payment` stays one-to-one; money collected against an
+  order for another reason will be tied to a link of its own, which carries
+  BY NAME the distinction the row cannot carry. That link's name and ends are
+  NOT DECIDED here — it has no consumer, and this repository does not publish
+  a name nobody reads.
+  The same round fixed the read surfaces ADR 0114 had left behind (D52): the
+  admin exchange record gained the MOMENT its status already published, and
+  the timeline reports both of an exchange's endings. Both were proven by
+  mutation.
+  An exchange with a difference still does not close, and the measured
+  obstacle is not the link but the collection: a capture collection cannot be
+  abandoned once it has received something. The trigger is written down.
+
+- **A link's cardinality can now WIDEN** (`core/link`, ADR 0116).
+  Three places in the tree named the same step — the limit ADR 0114 left
+  open, the payment module's link definition ("that day this becomes
+  OneToMany and **nothing else changes**") and the capability list. That
+  sentence was wrong, and wrong in the harshest way: `core/link` writes every
+  definition into a durable ledger and compares the incoming definition by
+  EQUALITY, so a changed cardinality is a conflict at startup — the
+  application would never have started. The schema half had the same shape:
+  because the DDL is `IF NOT
+  EXISTS` from top to bottom, a looser declaration created nothing and
+  REMOVED nothing; the unique index built under the old cardinality would
+  survive and keep enforcing the old one.
+  Decision: a declaration whose two ends are unchanged and whose cardinality
+  is WIDER than the stored one is applied — the ledger row is migrated, and
+  the indexes the new cardinality does not want are dropped in the same
+  transaction, under the lock the declaration already holds.
+  The safety argument is one sentence: every pair a narrow cardinality
+  accepts is accepted by the wide one too, so the rows on disk satisfy the
+  new constraint by having satisfied the old one — widening reads no data to
+  know it is safe. NARROWING has to read and continues to be rejected.
+  The costs: a release that widens a link CANNOT BE ROLLED BACK this way (the
+  old binary declares the narrow cardinality and is rejected at startup), and
+  the rejection message now states the allowed direction, because the reader
+  who runs into it is usually rolling back.
+  `verifySchema` gained the other half of its question: it used to ask whether
+  the needed indexes exist, and now it also asks whether the unneeded ones are
+  GONE. And a widening past `OneToOne` SPENDS a CONCURRENCY guarantee:
+  `from_uniq` is the only structural barrier against two targets being linked
+  to the same left-side record — flows read the link and then write, and the
+  advisory lock is only around `Define`. The cost is `OneToMany`'s own
+  meaning, but this is the record that makes it reachable.
+  `order_payment` is NOT widened here: its readers assume a single capture and
+  say so in writing (the refund flow counts a second one as "a data error, not
+  a choice" and takes the first), and a rule for choosing between the two
+  cannot be written until the second one has a meaning. It is the same
+  distinction ADR 0089/0090 made.
+
+- **The store now SAYS who it is** (new `settings` module, ADR 0115).
+  The invoicing flow took both parties FROM ITS CALLER, and its own godoc had
+  written down why the seller was there: "the seller's legal details are the
+  store's own configuration and live in no module here." That had two
+  consequences: two documents issued by the same store could name two
+  different sellers, and the identity printed on every invoice was the one
+  thing the operator could not edit — the person who could change prices,
+  products and orders had to ask for a redeployment to correct the store's
+  tax office.
+  Decision: the `settings` module holds a SINGLE `store_profile` — legal
+  name, tax number, tax office, e-mail, address, country — and the invoicing
+  flow reads the seller from it. The seller is no longer part of any request.
+  The costs: issuing a document before the profile has been written is
+  REJECTED, and the message names the endpoint (the operator issuing their
+  first invoice is exactly the person who has not filled in the profile). The
+  admin body LOSES the `seller` field — narrowing a published surface is not
+  a side effect here but the decision itself: a field the caller can supply
+  is a field two callers can supply differently. PUT, not PATCH, because the
+  record is an IDENTITY, and a partial write would leave the legal name from
+  one edit next to the tax number from another. ONE profile per installation
+  (ADR 0009 puts multi-tenancy at the installation boundary).
+  The module declares its columns as PERSONAL DATA but does NOT IMPLEMENT an
+  eraser: a sole proprietorship is a person, but the subject who asks for
+  erasure is the CUSTOMER, and erasing the controller's own identity, while
+  the issued documents keep printing it, would mean erasing the store from
+  its own installation. The e-mail is case-folded NOWHERE, and the exemption
+  states its cost: this address is printed, not matched.
+- **An exchange can now ship its goods** (`order_replacements` recognizes a
+  second source, ADR 0114). An exchange was a request that could only be
+  withdrawn. When migration 000008 removed its "completed" status, it wrote
+  down by name the condition that would bring it back: goods MUST go out and,
+  if the difference is not zero, money MUST MOVE, "and the framework has
+  neither". One of the two has arrived — ADR 0090 built the goods-out flow,
+  and `order_replacements` is the record it ships. But that record could be
+  fed only from a CLAIM, because on the day it was written the only thing
+  that could ask for goods was a claim; yet an exchange already means "goods
+  going out in return for goods coming in".
+  Decision: a shipment record names a SINGLE source — a claim or an exchange
+  — and closes that source when it ships. An exchange closes only if
+  `difference_due` is zero, and the database holds that bound
+  (`order_exchanges_completed_owes_nothing`). An exchange with a difference
+  stays open even AFTER its goods have gone out. This is not a gap but the
+  honest state: the goods half sits in the shipment record, while the money
+  half happened somewhere this framework cannot see. The trigger for the rest
+  is already written in the payment module's own link definition — the day
+  the order↔payment link becomes one-to-many.
+  The cross-module wire carries `source_kind`/`source_id`/`source_status`
+  instead of `claim_id`/`claim_status`: two pairs, one of them always empty,
+  would make every reader ask "which one was filled in". The two ends cannot
+  import each other (ADR 0006), so the compiler does not see this seam; the
+  proof is in the integration lane.
+  The exchange now has TWO transitions, so the common frame that
+  `CancelExchange`'s godoc called "not worth writing for a single transition"
+  has been written: with two transitions, the rule "the second call keeps the
+  FIRST moment" would otherwise have been written in two places.
+- **A line can now be PARTIALLY canceled** (`order_line_cancellations`,
+  ADR 0113). Cancellation was all or nothing: `CancelOrder` takes the whole
+  order and rejects an order that has a capture — which is right for what it
+  is: it is the checkout saga's compensation and runs when nothing has been
+  shipped and nothing has been charged. What it could not express was the
+  ordinary case: one line of a live order goes out of stock, gets damaged in
+  the warehouse, or the customer drops it while the rest of the order ships.
+  The module had nothing to say this with, and both ways of recording it
+  were wrong — either cancel the whole order, or edit the quantity on the
+  line, which is a snapshot of the cart.
+  Decision: the record holds HOW MANY of the line's units will not be
+  delivered, together with the reason; the ceiling — bought minus return
+  requested minus already canceled — is checked under the ORDER'S LOCK. The
+  return path reads the same total, so whichever action spoke for a unit, it
+  has been spoken for ONCE: a three-unit line cannot have a return requested
+  twice and also be canceled once.
+  The costs are written down by name. Neither the order's TOTAL nor the
+  line's QUANTITY moves (both are snapshots, and the total is nailed to the
+  lines by a CHECK). The STATUS does not move either: an order whose last
+  line has been canceled too is still an order someone has to close. MONEY is
+  a second action — a unit that was paid for but will not arrive is a refund
+  or a credit (ADR 0105), and which one depends on a policy this module does
+  not hold; a cancellation before payment owes nothing. STOCK is not put back,
+  and this is the limit worth naming: the order module cannot reach into
+  inventory (ADR 0006), so releasing the reservation is the job of a flow
+  above it, and no flow asks for that yet — the trigger is the first flow
+  that does.
+  The concurrency claim is proven on real Postgres: with the lock removed,
+  all sixteen of sixteen callers win and sixteen units are written to a
+  three-unit line. The first test I wrote did NOT CATCH this — making the
+  goroutines meet only at the start is not enough; once a structural delay
+  was placed where the total is read, the mutation turned red reliably.
+- **A purchase now earns a unit** (the "buy X, get Y" mechanic,
+  ADR 0112). `buyget` was a word in an enum and nothing more: the type could
+  be written, the promotion could not be published, and the computation
+  skipped it — three rejections standing in for a mechanic that was never
+  built. Three things were missing, each of a different kind: the rules were
+  `context` and `target`, so nothing separated the line that was BOUGHT from
+  the line that was REWARDED; the application method measured an amount, not
+  a quantity, so no field said how many units the reward lands on; and the
+  computation input carried the line amount, not the unit price — while the
+  reward is priced per unit, and deriving it takes a single division, and
+  division rounds.
+  Decision: the units selected by `buy` rules are counted against
+  `buy_quantity`, then the CHEAPEST `apply_to_quantity` of the units that the
+  target rules select and that the purchase has NOT CONSUMED are discounted.
+  A unit that is bought is not also the unit that is rewarded, so "buy 2, get
+  one" needs THREE units in the cart; the other reading of the same words
+  would give the customer two for the price of one. The purchase is met by
+  the MOST EXPENSIVE units and the reward lands on the cheapest — the
+  supermarket's own rule and the safe direction for the merchant. The reward
+  is granted ONCE per computation; a repeating ladder ("every third one
+  free") is a separate promise, and its trigger is a merchant writing one.
+  The cost was paid in two places. The unit price is now a MANDATORY field of
+  the discount request, and its identity (unit × quantity = amount) is
+  enforced — both callers (the cart flow and the admin compute endpoint) send
+  it, because an optional field would make the mechanic work for one caller
+  and silently not work for the other. And the mechanic and the method MUST
+  AGREE: a buyget without the number pair and a standard promotion carrying
+  the pair are both eliminated with `reward_mismatch` and the operator is
+  told (ADR 0110). Not applying is the safe direction; the match itself is a
+  CHECK, so a hand-written row cannot be half-filled either. `allocation` and
+  `max_quantity` are not read on this path, and the `not_standard`
+  elimination word is gone — the engine now applies both mechanics.
+  The storefront's coupon query was fixed too: a buyget coupon now comes back
+  with its MECHANIC and its two numbers, and a coupon the computation would
+  eliminate is not offered to the customer. Both use the same predicate; had
+  they been written separately, the customer would type the code, nothing
+  would happen, and no reason would be recorded anywhere. The mechanic has to
+  be in the body: a "buy 2, get one" coupon carries ten thousand basis
+  points, and had the mechanic not been stated, the storefront would show it
+  as "100% off".
+- **The cart's OWN data can now drive a promotion rule**
+  (context with the `cart.` prefix, ADR 0111). The discount engine's rule
+  context was built from the TWO names the cart flow decides -- region and
+  customer group -- and nothing added a third: `internal/app.Options` takes
+  only `Modules`/`Plugins`, so the embedder had no seam at all. That made
+  ordinary promotions impossible to write: a shop selling two brands from one
+  installation could not say "ten percent, brand A only" -- not without
+  opening a column in the cart module for a concept that module had never
+  heard of. For a framework it ought to be the other way round.
+  The prefix is NOT DECORATION: a cart carrying `customer_group_id` in its
+  metadata would otherwise let whoever WRITES that bag grant themselves a
+  segment discount. The dot is deliberate -- neither of the two fixed names
+  contains a dot, so the two namespaces cannot collide under any spelling.
+  Only STRING values pass: the engine compares all values, so a number would
+  need a formatting rule, and 1 and 1.0 are the same number but two different
+  attribute values. A merchant who wants a number writes it as a string; the
+  numeric operators already parse it. The count is CAPPED, because every
+  attribute is copied into the discount request on every totals pass.
+
+- **An eliminated promotion now says WHY it was eliminated** — and only to
+  the operator (`skipped[]`, ADR 0110). `eligible()` returned a bool and
+  dropped the reason: nine gates produced a single `false`, so the
+  computation could say WHAT applied but not why the coupon the merchant had
+  published did not -- the merchant saw zero discount and was left with nine
+  hypotheses. ADR 0109 made the question an ORDINARY one: customers can now
+  type codes.
+  The obstacle was the candidate query. `ListApplicablePromotions` carries
+  `status = 'active'`, so a promotion that was published but NOT ACTIVATED is
+  never a candidate -- it comes back as neither applied nor eliminated. That
+  is exactly the most common reason a code does nothing, and it was the one
+  answer the endpoint could not give. `ExplainDiscounts` uses the read
+  WITHOUT the status filter; the AMOUNTS on the two paths are exactly the same
+  and have to be, because the merchant is shown one path's numbers and the
+  customer is charged the other's.
+  The reason is on the admin endpoint ONLY: telling a customer "this code
+  exists but its campaign has not started yet" would let someone guessing
+  codes extract the campaign calendar. The campaign's three states (deleted,
+  window closed, budget exhausted) are ONE word -- the same answer for the
+  merchant, and separating them would put the campaign's calendar into the
+  response.
+  The reason set is CLOSED and the vocabulary was written out a second time,
+  because Go cannot enumerate the members of a named string type: a word
+  nobody can produce is an answer the endpoint promises and never gives --
+  and this is not hypothetical: the FIRST version of this change did exactly
+  that with `not_active` before the query was widened.
+
+- **The coupon the customer TYPES now lands on the cart, and the order SPENDS
+  it** (`cart_promotion_code` + a saga step, ADR 0109). Ever since it was
+  built, the promotion engine accepted coupon codes, and nobody SENT it one:
+  the cart had nowhere to put the code and the discount request's "codes"
+  array was always empty, so only AUTOMATIC promotions could reach a cart --
+  the merchant published the coupon and watched every customer who typed it
+  get nothing. The silent half was worse: NOTHING in this repository called
+  `RedeemPromotion`, which moves the usage counter and the campaign budget,
+  so a single-use coupon could never be limited at all.
+  The code is checked BEFORE it is WRITTEN; the reverse would keep in the
+  cart a code that is unusable for the whole round and then have to take it
+  back -- and if that take-back failed, the customer would be left with a
+  coupon nothing will honor. A coupon that discounts NOTHING is still
+  applied: a valid code with no line matching its target is not invalid, it
+  just has not been of use today.
+  Coupons are spent BEFORE the order is OPENED, and the reference is the
+  CART: a promotion whose last use is taken while the customer is on the
+  payment page must reject the purchase, and rejecting once the order exists
+  would mean canceling an order that should never have been opened.
+  **A checkout left half-done at the moment of an upgrade cannot be
+  recovered** -- the engine matches step NAMES against the record, and a
+  five-step record does not match a six-step definition; the cost is written
+  in the ADR.
+
+- **An image can now be CORRECTED, but its address cannot be changed** (three
+  admin endpoints, ADR 0108). ADR 0104 PUBLISHED `alt_text` on the storefront
+  and in the GraphQL type and did not leave it correctable: `CreateProduct`
+  took the images and nothing else wrote the table, so a mistyped alt text
+  stayed for as long as the product lived -- and a published wrong text is
+  WORSE than no text at all, because the screen reader now reads out the
+  mistake. The patch reaches the alt text, the sort order and the metadata; it
+  DOES NOT REACH THE ADDRESS: `url` and the upload link were written in the
+  same call, and moving one without the other would leave the row's own column
+  and the link record pointing at different files -- exactly why the module
+  never opened a "link this image to that upload" endpoint. Changing the
+  picture is a NEW image plus deleting the old one, that is, two calls that
+  say what they do. Every query carries TWO IDs: an endpoint addressed only by
+  the image's ID would let a caller name their own product and edit someone
+  else's picture. `alt_text` gained a length limit, and on BOTH write paths: a
+  limit that stands on only one of two paths is not a limit.
+
+- **Two carts can now MERGE, and quantities ADD UP** (ADR 0107). Logging in
+  could HAND OVER a cart but could not FOLD one in: if the member had a cart
+  of their own, the handover was rejected and the customer was left with two
+  carts, never to see one of them again. Adding up overlapping quantities is
+  not a NEW decision -- it is `AddLineItem`'s decision applied to a batch:
+  adding the same variant twice raises a single line's quantity (the price
+  tier is chosen from the total quantity, one line means one reservation, the
+  same product appearing twice reads like two products), and the same two
+  additions should not get a different answer just because they were made in
+  TWO SESSIONS. The lock is taken by IDENTITY, not by ROLE: otherwise two
+  merges running in opposite directions would each hold the row the other is
+  waiting for, and PostgreSQL resolves that by killing one of them -- which is
+  exactly what happened when the integration test carried out this mutation.
+
+- **A claim can now SHOW WHAT HAPPENED** (`order_claim_evidence`, ADR 0106). A
+  claim carried a reason and a note, so "the box arrived crushed" was a
+  SENTENCE and never a photo. The link is made by the upload's IDENTITY, not
+  its address: `product_image` carries both because its address is written
+  into a page on every product view; a claim's evidence is opened months
+  later, by a single operator, for a single claim, and by then a signed
+  address will have expired. The same file is evidence for a claim ONCE -- a
+  double click is not a second photo -- but it can be evidence for two
+  separate claims.
+
+- **An order's AMOUNT OWED can be reduced without changing what was SOLD**
+  (`order_credit_lines`, ADR 0105). An order's total is a snapshot of the cart
+  and is nailed to its own lines by a CHECK; a concession granted after the
+  sale changes not what the customer bought but what they will pay. The
+  ceiling is the order's TOTAL, checked under the order's LOCK; a concession
+  granted after payment takes the balance below zero, which means "the shop
+  owes the customer", and a refund closes it.
+
+- **An image now says WHAT IT SHOWS** (`product_image.alt_text`) — published
+  on the storefront and in the GraphQL type. An empty value is not MISSING, it
+  is an ANSWER: HTML gives `alt=""` the meaning "this image carries no
+  information", i.e. the decorative picture itself. That is why the column is
+  not nullable, and its value is trimmed -- an alt text made of a single space
+  is a description someone believes they provided (ADR 0104).
+
+- **A promotion rule can now name the PRODUCT and the COLLECTION.** A line
+  carried only its VARIANT, so a merchant writing a discount for a product had
+  to list each of its variants one by one. Both keys come from the product row
+  the pass ALREADY reads, so there is no extra cost. Category and tag are
+  LISTS and a line attribute is a single string; carrying them means changing
+  the engine's contract, and that decision is deferred here IN WRITING
+  (ADR 0103).
+
+- **The order hands the document EVERY rate it charged** — which ADR 0097
+  already said it did. It did not: the order's invoicing surface had no
+  `tax_components` field at all, the reader was reading a key the producer
+  never wrote, and all the totals still balanced. What kept this hidden was
+  the flow's own FAKE: an order shape written BY HAND in the consumer's
+  package said what the real producer could not. Two tests now pin the hop
+  (ADR 0102, D50).
+
+- **A product now wears a TYPE, and a tax rule can name it.** The tax module's
+  consumer had been WIRED since the day it was written, and what reached it
+  was always EMPTY: a merchant could not say "books 1%" and named every book
+  one by one instead. The type comes from the catalog read the totals path
+  ALREADY performs -- the same row carries both the discount flags and the
+  type, and is read ONCE. When a type is deleted, its products are released in
+  the same transaction, because a stale type pointer means money (ADR 0101).
+
+- **A customer now sees their own order's TIMELINE**
+  (`GET /store/v1/orders/{id}/timeline`) — the same composition, narrowed to
+  the moments of the order and of the GOODS. Money moments and archiving do
+  not come through, and the storefront response type carries NO amount field
+  at all: an edit that copies one over does not compile. A newly added kind is
+  INVISIBLE on the storefront, which is the safe direction (ADR 0100).
+
+- **The price list now carries `metadata` too, and WHICH records carry it is
+  now governed by a rule.** A record the merchant WRITES carries it (title,
+  description, window); `price`, `price_set` and `price_rule`, which the
+  ladder computes over, do not. An update does not MERGE the field, it
+  REPLACES it — merging would leave no way to delete a key (ADR 0099).
+
+- **The changelog must now mention every decision taken SINCE THE LAST
+  RELEASE, and a gate enforces it.** The population is derived from the two
+  documents' own dates: no git command, no hand-written baseline. The cost:
+  announcing a decision is now part of making it (ADR 0098).
+
+- **The tax breakdown reached the DOCUMENT: an invoice line now writes each
+  rate separately.** The invoicing flow reads the order's `tax_components`
+  field, and the invoice module writes into `invoice_line_taxes`; the cost is
+  a fourth copy of the same five fields. The new table was brought under
+  retention protection, and the limit ADR 0095 left open is closed (ADR 0097).
+
+- **A line now remembers EVERY rate that taxes it.** The breakdown travels
+  with the line from tax to cart and from checkout to the `order_line_taxes`
+  table; the line's own `tax_rate_bps` remains the BASE of the stack, while
+  the list is the whole. Because two boundaries along the path silently drop
+  any field they do not know, every schema changed in a SINGLE commit
+  (ADR 0096).
+
+- **A rate can stand ON TOP of another rate.** Selection does not change: a
+  single rate is still selected, then expanded into the stack it heads; each
+  component is rounded on its own base, and the line's tax is their sum. The
+  cost: the rate stored on the line is the BASE of the stack — for now the
+  invoice writes only the base rate (ADR 0095).
+
+- **A product now wears a tax CLASS** (ADR 0094) — `tax_class` names the
+  class, `tax_class_member` links the product, and a rate rule can be written
+  for a class rather than for individual products. The tax module resolves the
+  class from its own tables: nobody sends it, and nothing changes on the wire.
+  A product is in at most ONE class; in specificity it ranks below the product
+  and above the type.
+
+- **The storefront's stock badge now counts only the channel's warehouses.**
+  Inventory also publishes the same total WITH A PER-WAREHOUSE BREAKDOWN, and
+  the storefront sums it through a second expansion: the badge and checkout
+  now read the same binding. A read that does not narrow pays nothing; if the
+  breakdown is missing, the answer is ZERO, not the total (ADR 0093).
+
+- **A sales channel now ships from its OWN warehouses** (ADR 0092) — a link
+  was added between stock location and channel, and the checkout reservation
+  is limited to the warehouses that serve the order's channel. A channel
+  without a link narrows nothing. The storefront badge was not narrowed: a
+  product that shows as in stock can be rejected AT CHECKOUT.
+
+- **Moving a category now takes the LOCK on the whole tree.**
+  `pg_advisory_xact_lock` makes a second mover wait, and the statement's cycle
+  guard then rejects it once the wait is over. A write that cannot close a
+  loop — name, position, flag, clearing the parent — takes no lock; the cost
+  is that two moves no longer run at the same time (ADR 0091, amends
+  ADR 0085).
+
+- **A claim can now be closed not only with money but with GOODS too.**
+  `internal/workflows/returns.DispatchReplacement` reserves the goods, opens a
+  parcel on the order and deducts the stock. A reservation now carries a
+  PURPOSE: reserved goods leave the ledger as `replacement` and do not get
+  mixed up with sales. The cost: one flow resolves another flow by name
+  (ADR 0090).
+
+- **A claim to be resolved with goods now says WHAT is to be sent.**
+  `order_replacements` and `order_replacement_items` were set up beside the
+  order; four admin endpoints record, read, list and withdraw them. Nothing is
+  shipped — `claim.go` still does not resolve a `replace` claim, but it can
+  now be written against a RECORD rather than a guess (ADR 0089).
+
+- **A key that names a cancelled parcel is REJECTED** (ADR 0088) — the
+  "already open" answer came from a link that had outlived the parcel. The
+  status is read from the narrow surface the flow already has, so the module
+  boundary does not widen; the cost is one call per opening. The error names
+  the shipment and says that a NEW key is needed.
+
+- **The group NAMES of the known limits are now held too, not just their
+  counts.** The README's list was matched against the `docs/known-limits.md`
+  headings, in lower case and IN ORDER: a group inserted in the middle but
+  written at the end describes a different document from the one it prices.
+  Whether an item sits under the RIGHT heading is still something no gate can
+  hold (ADR 0087).
+
+- **A price can carry its tax INSIDE it** — and extracting it is not the
+  inverse of the plain calculation but an arithmetic of its OWN. The flag
+  lives on the tax REGION, and NULL means INHERIT; a chain that says nothing
+  stays tax-exclusive, so nothing changes in existing installations. The
+  amount written on the label is now the amount paid at checkout (ADR 0086).
+
+- **A category can now be CHANGED: `PATCH
+  /admin/v1/product-categories/{id}`** — name, parent category and flags can
+  be written, and a category born closed can finally be opened. A move that
+  would close a loop is rejected by the STATEMENT itself, not by a check
+  standing beside it (ADR 0085).
+
+- **The numbers in `docs/gaps.md` are now unique and DENSE.** The rule already
+  stated in the ledger's first paragraph is finally enforced by
+  `internal/arch/gap_ledger_test.go`. Three rows that sat on the same address
+  were renumbered as D36-D38; the commit messages that introduced them go on
+  naming the old numbers (ADR 0084).
+
+- **The chained command block in the document is now RUN, not rewritten**
+  (ADR 0083). The block in `docs/security.md` is handed to `sh` as it stands
+  and its responses are read in order: the header name, the body field and the
+  `jq` path, which the route gate cannot see, are held for the first time. The
+  cost: the test needs `curl` and `jq`, and FAILS without them instead of
+  skipping.
+
+- **Every type that makes a concurrency promise is now run from TWO
+  goroutines** (ADR 0082) — the population comes from the intersection of the
+  package's promise and the primitive the type carries, and the witness is
+  named by the written map in `internal/arch/concurrency_promise_test.go`. The
+  godoc of `Bootstrap` now also says what its guarantee does not cover: a
+  subscriber is not a route.
+
+- **Every path the startup probe measures now carries a WITNESS test.**
+  Because its subject is the CLUSTER rather than the code, a cluster that
+  breaks the contract turns the suite red in three places; the population
+  derives not from a list but from the probe's own SQL
+  (`internal/arch/cluster_contract_test.go`). The suite's containers were not
+  bound to production's initdb arguments (ADR 0081).
+
+- **Three fuzz targets were published, and the important seeds were not found:
+  they were COMPUTED.** `go test` runs only a target's SEEDS; every target
+  carries at least three seeds (`internal/arch/fuzz_seed_test.go`), while
+  `make fuzz` does not run in CI. The remaining rule: after writing a target,
+  mutate the code it protects; if generated input cannot find the boundary,
+  compute the boundary and seed it (ADR 0080).
+
+- **Every benchmark carries a `benchbudget.Budget`, and the ceiling is
+  ALLOCATIONS per operation.** The budgets run in the ordinary test lane;
+  `internal/arch/benchmark_budget_test.go` derives the population from the
+  DECLARATION, not the file name. An allocation added to a priced path now
+  breaks a test; a change that slows things down without allocating is still
+  invisible (ADR 0079).
+
+- **Every DIRECT dependency carries a sentence of justification, every
+  INDIRECT one a line** — the sentence comes from the author who chose the
+  dependency, not the consumer who discovers it
+  (`internal/arch/dependency_allowlist_test.go`). `govulncheck` runs at the
+  root and in the two example modules, a known vulnerability BREAKS the build,
+  and there is no exemption mechanism (ADR 0078).
+
+- **`core/providertest` was PUBLISHED: a provider now passes a RUNNABLE
+  conformance suite, not a written sentence.** The surface grew to eighteen
+  packages, and the twelve providers in the tree run, from their own packages,
+  the SAME suite an embedder would run. The suite checks only what holds
+  without going to the service, and says so: green does not mean "it works"
+  (ADR 0077).
+
+- **The migration of ADR 0030 BEGAN: the panel's first `/admin/v1` screen is
+  the moderation queue** (ADR 0076). The screen is a shell and a script; there
+  is no new module contract. The session cookie now goes to the whole `/admin`
+  tree: the admin API's CSRF immunity was an ABSENCE, and a defence was put in
+  its place — a state-changing request that arrives with the cookie requires a
+  same-origin `Origin`.
+
+- **`docs/measurements/README.md` is now CHECKED: every row states its
+  report's real length, and every report has a row.** The real gain is the
+  second direction: unindexed evidence is evidence that anyone who does not
+  know its name CANNOT FIND. The cost is one line -- the commit that grows a
+  report also carries the index row (ADR 0075).
+
+- **Agreement between the model and the operators is now COUNTED.**
+  `GET /admin/v1/reviews/suggestion-agreement` gives two numbers per model:
+  how many decided reviews have a suggestion, and how many of those
+  suggestions named the status the review ended in. There is no RATIO; a
+  client that sees the denominator computes it itself. The report is computed
+  on read; nothing is stored (ADR 0074).
+
+- **A suggestion SURVIVES the decision made on it: moderation does not delete
+  it.** The admin list now narrows with `?suggested=`, an unrecognised value
+  gets a REJECTION rather than an empty page, and the filter is backed by
+  `reviews_suggestion_idx`, limited to the queue. The cost is a growing table;
+  what it buys is the ONLY corpus that can measure whether model and human
+  agree (ADR 0073).
+
+- **The model answers a CLOSED question, and a scheduled job asks it.**
+  `core/provider` publishes a classification contract, the `ai-anthropic`
+  plugin fills the singular `ai.provider` slot, and the job is registered only
+  if the slot is filled. An installation that names the plugin takes on a
+  SUBPROCESSOR, and no accuracy is claimed: it was not measured (ADR 0072).
+
+- **A model's suggestion is stored BESIDE the review, not in its decision.**
+  Four columns stand on their own; `status` and `moderated_at` are not
+  touched, so the mirror still says a human made the decision. A suggestion
+  exists in full or not at all, is not written to a review that has already
+  been decided, and is visible to the shopper nowhere. Nothing writes
+  suggestions yet (ADR 0071).
+
+- **A count claim is checked against a CLOSED vocabulary** (ADR 0070) — there
+  are eight populations, and a sentence enters the gate only by writing the
+  population's PATH on the same line. On the day it opened, the gate found
+  wrong numbers in the READMEs. Every ADR record and this file are out of
+  scope; the universal negation stays ungated, because its object is a
+  predicate.
+
+- **The job report's CHANNEL was published; the scheduler was not.**
+  `core/jobreport` carries three functions; the runner stayed in
+  `internal/core/job`, and the core's own jobs also report through the same
+  published package — ONE mechanism. A plugin's successful run can now speak
+  in the `gobit jobs` detail too; the cost is the seventeenth package under
+  `core/` (ADR 0069).
+
+- **Every change to physical stock leaves a ROW, but the number is still held
+  by `stocked_quantity`** (`inventory_movements`). A movement is written in
+  the same transaction as the column and carries `stocked_after`; drift shows
+  up in a single row. A reservation is not a movement, behind each row there
+  is a REASON rather than an actor, and nothing deletes the row; the ledger
+  came with an admin endpoint (ADR 0068).
+
+- **`province` is the unit below the country; it is NOT the district.** Every
+  hand-written declaration now says so; `internal/arch/province_test.go`
+  rejects a new SILENT one. The address was fixed end to end; the district
+  still has no field (ADR 0067).
+
+- **No suggestion store is BUILT; a suggestion lives in the module that owns
+  the row it concerns, and is applied through that module's write path**
+  (ADR 0066). The trigger is the first suggestion a query cannot reproduce;
+  what applies it is not gobit but the human calling the existing endpoint.
+  The cost: an operator who wants suggestions today finds nothing, and a
+  suggestion that spans two modules has no home here.
+
+- **`coreprovider.QuoteInput` was NOT WIDENED: district and desi (volumetric
+  weight) arrive on the day the tree can address and measure a parcel.** The
+  cost: a carrier integration that prices by district stays on a flat tariff.
+  A gate holds the rule: `TestEveryQuoteInputFieldIsFilledByTheTree` rejects
+  any field in the published input that no production file in the tree fills
+  (ADR 0065).
+
+- **The saved payment method is on hold, and what it waits for is not a
+  feature but a PROVIDER.** Paying with a stored token works end to end today;
+  what is missing is an upstream flow that PRODUCES such a token. The shopper
+  types their card in again at every checkout, and the published surface is
+  not spent on a shape with no implementer (B9 → ADR 0064).
+
+- **The stock event and the file event were NOT PUBLISHED: a forwarding plugin
+  is not a topic's first subscriber.** `plugins/webhookout` carries every
+  topic by necessity, and `TestEveryTopicHasASubscriberThatChoseIt` now
+  rejects that. The cost: two events that could pass every gate are not sent;
+  B15 and the event half of B7 closed as a DECISION, not as a gap (ADR 0063).
+
+- **A callback's ledger is the RECEIVING module's own table** — there is no
+  dedicated `callback_log`. The questions of reader, scope and retention are
+  already answered on the `paytr_payment` side; a call whose handler never ran
+  stays only in the log, and gobit makes it no retention promise. The decision
+  reopens on the day a SECOND provider enters the tree (ADR 0062).
+
+- **gobit builds neither half of the language axis, and this is not a
+  shortcoming but a DECISION: A11 left the ledger with an answer.** Two gates
+  reject a locale that has no record — a Go name or struct tag outside
+  `plugins/webpush`, an SQL column outside the device record. The cost: a
+  locale arriving as a path or query key is not tracked (ADR 0061).
+
+- **Separating the migration role from the runtime role is the OPERATOR'S job;
+  gobit's binary does not change.** A single DSN remains, and neither role
+  management nor a startup check is coming; what is provided is not a setting
+  but the privilege list published in `security.md`. The out-of-the-box
+  single-superuser setup, for its part, stays both unchanged and unprotected
+  (ADR 0060).
+
+- **The measurement harness can now also build a SKEWED taxonomy:
+  `Spec.SkewedCategorySize` produces two small categories, zero produces
+  none.** The small-category case now needs a COMMAND rather than a hand-built
+  trial database; the cost is that a product belongs to two categories for the
+  first time, and that positional memberships need resetting when the size
+  changes (ADR 0058).
+
+- **Every storefront endpoint that names a customer submits its claim to ONE
+  comparison:** `corehttp.ProvenCustomer`. The b2b storefront and the cart
+  were wired to it, and the address book was moved onto it. What is questioned
+  is the CLAIM, not the ENDPOINT; in an installation with no verifier wired,
+  nothing is withdrawn, only a WARN is logged (ADR 0057).
+
+- **A callback does NOT BECOME an `audit_log` row; its record is the
+  `CallbackRegistry`'s own log.** Every outcome leaves a line there, rejected
+  ones included. The cost: the operator searches a log where they would expect
+  a query: `GET /admin/v1/audit-log` shows no callbacks (ADR 0056).
+
+- **A stock location closes EMPTY, and the closed row stays readable.** A
+  location still holding units or a live reservation REFUSES to close, and a
+  closed location accepts no stock writes; availability reads thus stay
+  join-free. `deleted_at` gave way to `closed_at`, and closing is final: there
+  is no reopening (ADR 0055).
+
+- **Orders and payments are NOT DELETED: ten `deleted_at` columns were
+  dropped, and the money-events surface did not gain a third moment.** An
+  order retires through its STATUS, a money record is kept; no record can be
+  hidden any more. The four uniqueness rules finally cover EVERY row as well:
+  an idempotency key cannot be freed by stamping it by hand (ADR 0054).
+
+- **gobit stores ONE language; the second language belongs to the embedding
+  program.** There is no locale column, translation table or translation
+  module; the only place that can carry a second language today is the tables
+  with a `metadata` field, and categories, tags, options and the country and
+  currency names gobit seeds are outside that path. Because no request
+  reaching the storefront can state a LANGUAGE yet, A11 stays open (ADR 0050).
+
+- **ONE group determines the price, and the SELLER ranks the groups.** The
+  cart writes the customer's highest-ranked group as a single
+  `customer_group_id` value; `customer_group` gained a `rank` column. Pricing,
+  promotions and delivery did not change at all; a store that never sets a
+  ranking gets ID order (ADR 0049).
+
+- **The cluster contract does NOT BUDGE: pgvector comes as an optional,
+  separate plugin module** (ADR 0045). The extensions line stays `none`,
+  because a plugin nobody has to install does not change what any installation
+  must provide. `CREATE EXTENSION` belongs only to that module's own
+  migration; if it leaks outside, ADR 0015 is reopened in the same change.
+
+- **What the customer pays and what the seller receives REMAIN the same
+  number.** When a difference is needed, the equality is not relaxed; the
+  difference arrives as a separate RECONCILIATION LINE carrying its own
+  counterpart, and the first consumer decides the line's shape. The four
+  layers that hold the equality were named one by one for the first time; the
+  cost is that an instalment surcharge is still not possible today (ADR 0042).
+
+- **How an email address is stored is ONE rule: it is trimmed, then lowercased
+  on the GO side, never in the database.** `invoice` now folds in Go too:
+  `buyer_email` keeps exactly what the document says, and equality is
+  established through `buyer_email_folded`. The six copies stay where they
+  are; `internal/arch/email_test.go` holds them together (ADR 0038).
+
+- **A person can now SEE what can be erased about them** (ADR 0034) — a
+  personal-data disclosure was published alongside erasure, and a person's
+  file is gathered by the same sweep that erases it. A holder that cannot
+  answer shows up in the file as `Unresolvable`: the gap is written not into a
+  ledger but into the document the person receives.
+
+- **An incoming provider call is not MOUNTED, it is REGISTERED** (ADR 0028) —
+  the plugin declares the route with `Host.RegisterCallback` and the core does
+  the mounting; quota, body limit, timeout, signature verification and the
+  replay window apply to all of them. A route without a verifier is rejected
+  at startup: an unprotected endpoint can no longer be EXPRESSED.
+
+- **The composition root moved to `internal/app`, and the PUBLISHED facade at
+  the module root calls it: `cmd/server` is now fifteen lines.** An
+  application outside the tree thus becomes possible, and the operator
+  subcommands ship with the library. The facade is four methods; the lifecycle
+  was not published, and only the facade can import the `internal/` tree
+  (ADR 0027).
+
+- **Two clocks REMAIN, and every moment names its own clock** (ADR 0053).
+
+- **`returned_at` finally reached the cross-module read layer.** It existed in
+  the column, the model and the admin body; it was missing only from the map
+  that decides what another module may read. Nothing COULD HAVE REPORTED the
+  gap, because that map does not answer an unknown field with zero, it REJECTS
+  it (ADR 0004) -- so nobody asked for the fourth moment, and nobody learned
+  they could not. The order timeline now also shows the returning parcel
   (`shipment.returned`).
 
-- **Migration iptali zarif katmanini birakti** (ADR 0052, ADR 0003'u tadil eder)
-  — D31 teshis edildi ve KAPANDI.
+- **Migration cancellation dropped its graceful layer** (ADR 0052, amends
+  ADR 0003) — D31 was diagnosed and CLOSED.
 
-- **D10'un artigi kapandi: sahiplik butun agacin, modullerin degil**
+- **The remainder of D10 is closed: ownership belongs to the whole tree, not
+  to the modules** (`internal/arch/module_sql_test.go`).
+
+- **The shape of the records is now governed by a rule: an ADR gets 80 lines,
+  measurements live in a separate tree.**
+
+- **`docs/measurements/` was opened.** The 15 measurement reports inside
+  gaps.md (2,757 lines) and `catalog-search-cost.md` were moved there,
+  unchanged. An ADR links to a measurement in a single line. A measurement
+  file may be as long as it needs to be -- nobody has to read it; everybody
+  has to read the ADR.
+
+- **The `docs/adr/README.md` index.** Number, title, the decision in one
+  sentence, status (in force / which record changed it). A newcomer reads this
+  first. `TestTheADRIndexNamesEveryRecord` holds both directions.
+
+- **`docs/gaps.md` 4,615 -> 156 lines.** Every gap has one row: the question,
+  and where the answer is. A closed row names its ADR and falls silent; the
+  reasoning is in the ADR, the history in git. Struck-through text and the
+  "original naming below" blocks were deleted. Nothing was DECIDED or reopened
+  during the simplification -- but two rows turned out to be STALE: D22
+  (webhookout can now be installed) and D25 (the parameter gate has been
+  written) still showed as open in the ledger.
+
+- **Store search also carries the sales channel IN ITS PATH** (the fourth
+  route of ADR 0044) — and the rule is now not a claim but a MECHANISM.
+
+- **The store catalog gained THREE filters** (ADR 0039, ADR 0040, ADR 0041) —
+  option value, stock status and price range; all one surface.
+
+- **The sales channel moved into the catalog PATH** (ADR 0044) — the store
+  catalog now lives under
+  `/store/v1/sales-channels/{sales_channel_id}/products`.
+
+- **Metrics go out by SCRAPE** (ADR 0046) — if `METRICS_ADDR` is set, a
+  `/metrics` endpoint opens; OTLP stays with traces.
+
+- **A replaced price is DELETED** (ADR 0047) — and what survived a replace was
+  never a history anyway.
+
+- **The four carried flags are finally READ** (ADR 0048) — two at checkout,
+  two in the promotion engine.
+
+- **The audit log (`audit_log`) can finally be READ** (ADR 0037) — and reading
+  it is recorded too.
+
+- **The search plugin was translated into English and its two endpoints
+  documented** — the schema ledger dropped to ZERO, the language ledger from
+  214 to 202.
+
+- **A component name now carries the module that owns it** (ADR 0036) — and
+  twenty-five of the thirty-eight entries in the ledger opened yesterday were
+  paid off the same day.
+
+- **The webhook plugin's operator surface was both TYPED and documented**, and
+  typing it exposed a defect.
+
+- **The schema vocabulary was PUBLISHED, and silence was given a voice**
+  (ADR 0035; addendum to ADR 0026 — the sixteenth package).
+
+- **The saga store now deletes its own rows, and it turned out to be EDITING,
+  not "pruning"** (addendum to ADR 0033).
+
+- **The KVKK erasure contract was established, and it became the fifth of the
+  seventeen decisions** (B17 → ADR 0033; an addendum each to ADR 0026 and
+  ADR 0032).
+
+- **The first four of the seventeen decisions were made and written down as
+  ADRs: the root, the pair and the single live hazard** (A2 → ADR 0029, A7 →
+  ADR 0030, A12 → ADR 0031, A4 → ADR 0032).
+
+- **A row that said "behind a decision" had no written decision; it was
+  written, and the decision turned out to be text matching** (A18, the OPTION
+  VALUE half of B2).
+
+- **If a decision is named after the FEATURE that found it, the next round
+  pays for the same question a second time** (A15, B4).
+
+- **A15 was applied, not quoted: what carries the answer is SQL — not a
+  comment line** (A15, B4).
+
+- **A plugin that had been written, documented and tested end to end COULD NOT
+  BE INSTALLED — and the gate written for this class was GREEN** (C5, D22).
+
+- **The migrate-down tests of `internal/app` were failing not in the proof
+  itself but in its PRECONDITION.** Two tests had hard-coded that region has
+  "exactly two migrations"; when the module gained a third, both broke. The
+  number is now read: one derives the number of steps to roll back from the
+  current version, the other reads the untouched owner's version BEFORE
+  rolling back and compares against it.
+- **Four foundational rows carried a blocker that their own rows did not name
+  — and measuring showed that ALL eight open rows were blocked** (B9, B15,
+  B16; B8 the same day).
+
+- **The decision list said it was an ORDER but wrote the order down nowhere;
+  it was measured and written down, and out came one root and one PAIR.**
+
+- **Two modules had no tests at all in their `api` package, thirteen did, and
+  nothing was asking about it** (D26).
+
+- **The other direction of the same machine was derived too, and writing both
+  directions required FOUR fixes in the scanner** (continuation of D25).
+
+- **The gate for D25 was written and turned up two live findings on its first
+  run** — and the naive form I rejected stays on record.
+
+- **A handler can read a query parameter it never documented, and all of the
+  repository's gates stay green** (D25).
+
+- **gobit will be a LIBRARY, not a template that gets copied** (ADR 0025).
+
+- **A write whose identity is unknown is now held by the SCHEMA too**
+  (ADR 0051) — the third part of the decision, the part the record itself
+  carried as "not done".
+
+- **The address book now requires a PROVEN identity** (ADR 0043) — and gobit
+  still does NOT PRODUCE that identity.
+
+### Fixed
+
+- **A published API description said the OPPOSITE of what the endpoint does**
+  (D62). ADR 0125 made four storefront endpoints reject by default; the eight
+  passages describing the old behaviour did not follow. Three of them were
+  OpenAPI descriptions — that is, the promise given to the integrator
+  (ADR 0026) — and someone reading the document would write code at odds with
+  a status the endpoint now returns by DEFAULT. The other five were in Go; two
+  of them, explaining why `IdentityLookup` exists, described the rejection as
+  "the breaking change ADR 0057 was rewritten to avoid" — precisely what ADR
+  0125 did, deliberately and with a way back. No gate caught it, and none can:
+  the count gate prices populations, the schema-name gate resolves
+  identifiers; neither reads a sentence for its MEANING.
+
+- **A funded exchange stayed OPEN forever after its goods had shipped** (D59).
+  ADR 0120 gave the exchange the `funded` state and widened both closing
+  guards for it; the shipment flow, however, kept its own third condition when
+  closing the source — a copy of a vocabulary it does not own. The new word
+  did not make it into the copy, so the operator collected the difference and
+  shipped the goods, and the record stayed `funded`. Nothing failed, nothing
+  was logged: that guard's whole job is to be silent. The flow now looks at
+  the order module's ANSWER (`source_open`), not at the state. In the same
+  commit, ten sentences describing the world before ADR 0120 were corrected —
+  one of them a published OpenAPI description.
+
+- **Four decision rows named a TOPIC; they were measured and turned into
+  QUESTIONS — and the first draft carried twenty-four false claims** (A4, A5,
+  A11, A12).
+
+- **All of the documentation was measured against the code: thirty-eight
+  claims were wrong, and three contradicted gaps.md's OWN table.**
+
+- **A cleanup done to add a root revealed that godocs referred to twenty-five
+  dead file names — and no gate saw that class.**
+
+- **The path check's root list had a five-file hole, and what found the hole
+  was a file that fell into it.**
+
+- **Nothing held the DEFAULT of a flag that nothing READ either — and
+  `allow_backorder` is not alone, it is one of four** (A6, D2).
+
+- **The gates themselves were audited: three of 89 gates were GREEN right on
+  top of the defect they were written for** (D23).
+
+- **Carrier events arrive OUT OF ORDER; the shipment state machine rejected
+  all of them — while tolerating duplicates** (B10, D24).
+
+- **Tax's shape was looked for in four more modules: two turned up a DEFECT,
+  two did not — and the absence was measured too** (D6, D19, D20).
+
+- **TWO of the column check's three blind spots were closed, a FOURTH was
+  found while closing them — and the fix turned up nine live findings on its
+  first run** (D16, D18).
+
+- **Nine columns that appeared the moment the check was fixed: nine
+  `deleted_at` columns that nothing writes** (D18).
+
+- **The check built to catch a column that is never written had never caught
+  the finding it gives as an EXAMPLE in its godoc — all three of its blind
+  spots were measured by mutation** (gaps.md D16).
+
+- **A criterion that is not given now writes NO CLAUSE AT ALL — and the real
+  cost of the category filter was MEASURED for the first time.**
+
+- **The product module's eight recorded performance figures were measured
+  again; FIVE turned out wrong** (D15).
+
+- **`make load-test` was measuring an EMPTY catalog** (D14) — and this is one
+  floor below D11.
+
+- **`make load-test` measured nothing — and looked green.**
+
+- **`docs/gaps.md`: B2's remaining four filters turned out NOT to be a single
+  job — measured and split.**
+
+- **`docs/gaps.md`: the premise of the read-cache item was refuted BY
+  MEASUREMENT.**
+
+- **`docs/gaps.md`: the "an admin session cannot be revoked" item was WRONG.**
+
+- **`docs/gaps.md`: the item saying a guest cart cannot be taken over was
+  WRONG.**
+
+### Added
+
+- **The storefront's fourth lookup endpoint was built — and it is the only one
+  that returns text** (prerequisite for the OPTION VALUE half of B2).
+
+- **The storefront catalog can now be sorted — and what the row called its
+  "only trap" had already been solved by the contract it rides on** (the SORT
+  half of B2).
+
+- **Review module: a customer can write a review, and it appears nowhere until
+  it is approved** (B4). The seventeenth module.
+
+- **A parcel can COME BACK: `returned` is the fifth shipment status, and the
+  table now separates NOTIFICATION from COMMAND** (B10).
+
+- **The SENDER for outgoing webhooks was written — and it CANNOT BE INSTALLED
+  today; this was not assumed, it was measured** (C5, D22).
+
+- **The nine columns that nothing ever wrote were answered — and it turned out
+  the nine had no SINGLE answer** (D18).
+
+- **A successful job run can now SPEAK: the detail column of the `gobit jobs`
+  list came out from behind an ERROR** (D21).
+
+- **A plugin can now register a scheduled job — and the extension point
+  arrived together with its FIRST CONSUMER** (B13).
+
+- **Dead letters now have an OPERATOR FACE: `gobit deadletters`** (B12).
+
+- **A return request and a claim can now be WITHDRAWN — two `UPDATE`
+  statements had no caller in production** (D17).
+
+- **The outgoing delivery machine: retry with increasing delay and a DEAD
+  LETTER — and measurement showed that what it fixes is not a slowdown but
+  delivery STOPPING** (B12).
+
+- **An order's archiving is now DATED, and the exchange table received its
+  first `UPDATE` statement** (D5, D4).
+
+- **The tax module carries the transaction in the CONTEXT, and the module has
+  its first shared lock** (the tax half of D6).
+
+- **The panel's catalog now has a SEARCH BOX: the read layer learned `q` — and
+  its cost was MEASURED on 52,004 products** (the last filter of B2, the
+  remaining half of D12).
+
+- **The measurement harness is now built FROM THE REPOSITORY: `gobit seed`**
+  (D13).
+
+- **The panel's catalog can now be narrowed by category: the read layer
+  learned the taxonomy filters and a `category` entity** (B2, D12).
+
+- **A module's SQL can name only its OWN tables**
   (`internal/arch/module_sql_test.go`).
 
-- **Kayitlarin sekli kurala baglandi: ADR 80 satir, olcumler ayri agacta.**
-
-- **`docs/measurements/` acildi.** gaps.md'nin icindeki 15 olcum raporu (2.757
-  satir) ve `catalog-search-cost.md` oraya tasindi, degistirilmeden. Bir ADR
-  olcume tek satirla baglanir. Olcum dosyasi istedigi kadar uzun olabilir --
-  kimse onu okumak zorunda degil; ADR'yi herkes okumak zorunda.
-
-- **`docs/adr/README.md` indeksi.** Numara, baslik, tek cumlelik karar, durum
-  (gecerli / hangi kayit degistirdi). Yeni gelen once bunu okur.
-  `TestTheADRIndexNamesEveryRecord` iki yonu de tutuyor.
-
-- **`docs/gaps.md` 4.615 -> 156 satir.** Her boslugun bir satiri var: soru, ve
-  cevabin nerede oldugu. Kapali satir ADR'sini soyler ve susar; gerekce ADR'de,
-  tarih git'te. Cizili metinler ve "orijinal adlandirma asagida" bloklari
-  silindi. Sadelestirme sirasinda hicbir sey KARARA baglanmadi ya da yeniden
-  acilmadi -- ama iki satirin BAYAT oldugu ortaya cikti: D22 (webhookout artik
-  kurulabilir) ve D25 (parametre kapisi yazilmis) defterde hala acik
-  gorunuyordu.
-
-- **Magaza aramasi da satis kanalini YOLUNDA tasiyor** (ADR 0044'un dorduncu
-  rotasi) — ve kural artik bir iddia degil, bir MEKANIZMA.
-
-- **Magaza katalogu UC filtre kazandi** (ADR 0039, ADR 0040, ADR 0041) — secenek
-  degeri, stok durumu ve fiyat araligi; hepsi tek bir yuzey.
-
-- **Satis kanali katalog YOLUNA tasindi** (ADR 0044) — magaza katalogu artik
-  `/store/v1/sales-channels/{sales_channel_id}/products` altinda.
-
-- **Metrikler SCRAPE ile cikiyor** (ADR 0046) — `METRICS_ADDR` verilirse bir
-  `/metrics` ucu acilir; OTLP izlerde kalir.
-
-- **Yerine konan fiyat SILINIYOR** (ADR 0047) — ve bir replace'ten sag kalan sey
-  zaten bir tarihce degildi.
-
-- **Tasinan dort bayrak nihayet OKUNUYOR** (ADR 0048) — ikisi kasada, ikisi
-  kampanya motorunda.
-
-- **Denetim gunlugu (`audit_log`) nihayet OKUNABILIYOR** (ADR 0037) — ve
-  okunmasi da kaydediliyor.
-
-- **search eklentisi Ingilizceye cevrildi ve iki ucu anlatildi** — sema defteri
-  SIFIRA indi, dil defteri 214'ten 202'ye.
-
-- **Bilesen adi artik sahibi olan modulu tasiyor** (ADR 0036) — ve dun acilan
-  otuz sekiz kisilik defterin yirmi besi ayni gun odendi.
-
-- **Webhook eklentisinin operator yuzeyi hem TIPLENDI hem anlatildi**, ve
-  tiplemek bir kusur ortaya cikardi.
-
-- **Sema kelime dagarcigi YAYIMLANDI, ve sessizlige bir ses kondu** (ADR 0035;
-  ADR 0026'ya ek not — on altinci paket).
-
-- **Saga deposu artik kendi satirlarini siliyor, ve "budama" degil DUZENLEME
-  cikti** (ADR 0033'e ek not).
-
-- **KVKK silme sözleşmesi kuruldu ve bu on yedi kararın beşincisi oldu**
-  (B17 → ADR 0033; ADR 0026 ve ADR 0032'ye birer ek not).
-
-- **On yedi kararın ilk dördü verildi ve ADR olarak yazıldı: kök, çift ve tek
-  canlı tehlike** (A2 → ADR 0029, A7 → ADR 0030, A12 → ADR 0031, A4 → ADR 0032).
-
-- **"Bir kararın arkasında" diyen bir satırın kararı yazılmamıştı; yazıldı ve
-  karar metin eşleşmesi çıktı** (A18, B2'nin OPTION VALUE yarısı).
-
-- **Bir kararın adı, onu bulan ÖZELLİĞİN adı olursa, sonraki tur aynı soruyu
-  ikinci kez öder** (A15, B4).
-
-- **A15 uygulandı, alıntılanmadı: cevabı taşıyan şey SQL — bir yorum satırı
-  değil** (A15, B4).
-
-- **Yazılmış, belgelenmiş, uçtan uca test edilmiş bir eklenti KURULAMIYORDU —
-  ve bu sınıf için yazılmış kapı YEŞİLDİ** (C5, D22).
-
-- **`internal/app`'in migrate-down testleri, kanıtın kendisinde değil ÖN
-  KOŞULUNDA düşüyordu.** İki test region'ın "tam iki migration"ı olduğunu elle
-  yazmıştı; modül üçüncüsünü kazanınca ikisi de kırıldı. Sayı artık okunuyor:
-  biri geri alınacak adım sayısını mevcut sürümden türetiyor, diğeri
-  dokunulmayan sahibin sürümünü geri almadan ÖNCE okuyup onunla karşılaştırıyor.
-- **Dört temel satırı, kendi satırlarının adlandırmadığı bir engel taşıyordu —
-  ve ölçünce açık sekiz satırın HEPSİNİN engelli olduğu çıktı** (B9, B15, B16;
-  B8 aynı gün).
-
-- **Karar listesi bir SIRA olduğunu söylüyordu ama sırayı hiçbir yerde
-  yazmıyordu; ölçülüp yazıldı, ve bir kök ile bir ÇİFT çıktı.**
-
-- **İki modülün `api` paketinde hiç test yoktu, on üçünde vardı, ve bunu hiçbir
-  şey sormuyordu** (D26).
-
-- **Aynı makinenin öteki yönü de türetildi, ve iki yönü yazmak tarayıcıda DÖRT
-  düzeltme gerektirdi** (D25'in devamı).
-
-- **D25'in kapısı yazıldı ve ilk koşusunda iki canlı bulgu buldu** — ve
-  reddettiğim naif biçim kayıt olarak duruyor.
-
-- **Bir handler, hiç belgelemediği bir sorgu parametresini okuyabiliyor ve
-  deponun bütün kapıları yeşil kalıyor** (D25).
-
-- **gobit bir KÜTÜPHANE olacak, kopyalanan bir şablon değil** (ADR 0025).
-
-- **Kimliği bilinmeyen bir yazma artık ŞEMA tarafından da tutuluyor** (ADR 0051)
-  — kararın üçüncü parçası, kaydın kendisinin "yapılmadı" diye taşıdığı parça.
-
-- **Adres defteri artık KANITLANMIŞ bir kimlik istiyor** (ADR 0043) — ve gobit
-  o kimliği hâlâ ÜRETMİYOR.
-
-### Düzeltildi
-
-- **Yayımlanmış bir API tarifi, ucun yaptığının TERSİNİ söylüyordu** (D62).
-  ADR 0125 dört vitrin ucunu varsayılan olarak reddeder yaptı; eski davranışı
-  anlatan sekiz pasaj peşinden gitmedi. Üçü OpenAPI tarifiydi — yani
-  entegratöre verilmiş söz (ADR 0026) — ve belgeyi okuyan biri, ucun artık
-  VARSAYILAN olarak döndüğü bir statüye karşı kod yazardı. Diğer beşi Go'daydı;
-  ikisi `IdentityLookup`'ın var olma gerekçesini anlatırken reddi "ADR 0057'nin
-  kaçınmak için yeniden yazıldığı kırıcı değişiklik" diye tarif ediyordu — ki ADR
-  0125 tam onu, bilerek ve geri dönüş yolu vererek yaptı. Hiçbir kapı yakalamadı
-  ve yakalayamaz: sayım kapısı nüfus fiyatlar, şema-adı kapısı tanımlayıcı
-  çözer; ikisi de bir cümleyi ANLAMI için okumaz.
-
-- **Fonlanmış bir değişim, malı çıktıktan sonra sonsuza kadar AÇIK kalıyordu**
-  (D59). ADR 0120 değişime `funded` durumunu verdi ve kapanışın iki muhafızını
-  da onun için genişletti; sevkiyat akışı ise kaynağı kapatırken kendi üçüncü
-  koşulunu tutuyordu — sahibi olmadığı bir sözcük dağarcığının kopyasını. Yeni
-  sözcük kopyaya girmedi, yani operatör farkı tahsil edip malı gönderiyor ve
-  kayıt `funded` kalıyordu. Hiçbir şey düşmedi, hiçbir şey loglanmadı: o
-  muhafızın bütün işi sessiz olmak. Akış artık sipariş modülünün CEVABINA
-  bakıyor (`source_open`), duruma değil. Aynı commit'te ADR 0120 öncesi dünyayı
-  anlatan on cümle düzeltildi — biri yayımlanmış OpenAPI tarifi.
-
-- **Dört karar satırı bir KONU adlandırıyordu; ölçülüp SORUYA çevrildi — ve ilk
-  taslak yirmi dört yanlış iddia taşıyordu** (A4, A5, A11, A12).
-
-- **Belgelerin tamamı koda karşı ölçüldü: otuz sekiz iddia yanlıştı, ve üçü
-  gaps.md'nin KENDİ tablosuyla çelişiyordu.**
-
-- **Bir kök eklemek için yapılan temizlik, godoc'ların yirmi beş ölü dosya
-  adına atıf yaptığını ortaya çıkardı — ve o sınıfı hiçbir kapı görmüyordu.**
-
-- **Yol denetiminin kök listesinde beş dosyalık bir delik vardı, ve deliği
-  bulan şey deliğe düşen bir dosya oldu.**
-
-- **Hiçbir şeyin OKUMADIĞI bayrağın VARSAYILANINI da hiçbir şey tutmuyordu — ve
-  `allow_backorder` yalnız değil, dördün biri** (A6, D2).
-
-- **Kapıların kendisi denetlendi: 89 kapıdan üçü, yazılma sebebi olan kusurun
-  tam üzerinde YEŞİLDİ** (D23).
-
-- **Kargonun olayları SIRASIZ gelir; sevkiyat durum makinesi hepsini
-  reddediyordu — tekrarları ise hoş görüyordu** (B10, D24).
-
-- **Tax'ın şekli dört modülde daha arandı: ikisinde KUSUR çıktı, ikisinde
-  çıkmadı — ve çıkmayışı da ölçüldü** (D6, D19, D20).
-
-- **Sütun denetiminin üç kör noktasından İKİSİ kapandı, DÖRDÜNCÜSÜ kapatırken
-  bulundu — ve düzeltme ilk koşumunda dokuz canlı bulgu çıkardı** (D16, D18).
-
-- **Denetim düzeltilir düzeltilmez görünen dokuz sütun: hiçbir şeyin yazmadığı
-  dokuz `deleted_at`** (D18).
-
-- **Bir sütunun yazılmadığını yakalamak için kurulmuş denetim, godoc'unda ÖRNEK
-  olarak verdiği bulguyu hiç yakalamamıştı — üç kör noktası da mutasyonla
-  ölçüldü** (gaps.md D16).
-
-- **Verilmeyen bir ölçüt artık HİÇ YAN TÜMCE YAZMIYOR — ve kategori süzgecinin
-  gerçek maliyeti ilk kez ÖLÇÜLDÜ.**
-
-- **Ürün modülünün sekiz kayıtlı performans rakamı yeniden ölçüldü; BEŞİ yanlış
-  çıktı** (D15).
-
-- **`make load-test` BOŞ bir katalog ölçüyordu** (D14) — ve bu, D11'in bir kat
-  altı.
-
-- **`make load-test` hiçbir şey ölçmüyordu — ve yeşil görünüyordu.**
-
-- **`docs/gaps.md`: B2'nin kalan dört filtresi tek bir iş DEĞİLMİŞ — ölçüldü ve
-  bölündü.**
-
-- **`docs/gaps.md`: okuma önbelleği maddesinin dayanağı ÖLÇÜMLE çürüdü.**
-
-- **`docs/gaps.md`: "yönetici oturumu iptal edilemiyor" maddesi YANLIŞTI.**
-
-- **`docs/gaps.md`: misafir sepeti devralınamıyor maddesi YANLIŞTI.**
-
-### Eklendi
-
-- **Vitrinin dördüncü sözlük ucu kuruldu — ve tek metin döndüreni o**
-  (B2'nin OPTION VALUE yarısının ön koşulu).
-
-- **Vitrin kataloğu artık sıralanabiliyor — ve satırın "tek tuzağı" dediği şey,
-  bindiği sözleşme tarafından zaten çözülmüştü** (B2'nin SORT yarısı).
-
-- **Yorum modülü: bir müşteri yorum yazabiliyor, ve onaylanana kadar hiçbir
-  yerde görünmüyor** (B4). On yedinci modül.
-
-- **Bir koli GERİ DÖNEBİLİR: `returned` beşinci sevkiyat statüsü, ve tablo artık
-  BİLDİRİM ile KOMUT'u ayırıyor** (B10).
-
-- **Giden webhook'ların GÖNDERİCİSİ yazıldı — ve bugün KURULAMIYOR; bu
-  varsayılmadı, ölçüldü** (C5, D22).
-
-- **Hiçbir şeyin hiç yazmadığı dokuz sütun cevaplandı — ve dokuzun TEK bir
-  cevabı yokmuş** (D18).
-
-- **Başarılı bir iş koşusu artık KONUŞABİLİYOR: `gobit jobs` listesinin detay
-  sütunu bir HATANIN arkasından çıktı** (D21).
-
-- **Bir eklenti artık zamanlanmış iş kaydedebiliyor — ve uzatma noktası İLK
-  TÜKETİCİSİYLE birlikte geldi** (B13).
-
-- **Ölü mektupların artık bir OPERATÖR YÜZÜ var: `gobit deadletters`** (B12).
-
-- **İade isteği ve talep artık GERİ ALINABİLİYOR — iki `UPDATE` ifadesinin
-  üretimde hiçbir çağıranı yoktu** (D17).
-
-- **Giden teslimat makinesi: artan gecikmeli yeniden deneme ve ÖLÜ MEKTUP — ve
-  düzelttiği şeyin bir yavaşlama değil, teslimatın DURMASI olduğu ölçüldü**
-  (B12).
-
-- **Siparişin arşivlenmesi artık TARİHLENİYOR, ve takasın tablosu ilk `UPDATE`
-  ifadesini aldı** (D5, D4).
-
-- **Vergi modülü işlemi CONTEXT'te taşıyor, ve modülün ilk paylaşımlı kilidi
-  var** (D6'nın vergi yarısı).
-
-- **Panelin kataloğunda artık ARAMA KUTUSU var: okuma katmanı `q`'yu öğrendi —
-  ve maliyeti 52.004 üründe ÖLÇÜLDÜ** (B2'nin son süzgeci, D12'nin kalan yarısı).
-
-- **Ölçüm düzeneği artık DEPODAN kuruluyor: `gobit seed`** (D13).
-
-- **Panelin kataloğu artık kategoriye göre daraltılabiliyor: okuma katmanı
-  taksonomi süzgeçlerini ve bir `category` varlığını öğrendi** (B2, D12).
-
-- **Bir modülün SQL'i yalnızca KENDİ tablolarını adlandırabiliyor**
-  (`internal/arch/module_sql_test.go`).
-
-- **Bir yapı dosyasındaki her `-run` deseni gerçek bir test adlandırmak zorunda**
+- **Every `-run` pattern in a build file must name a real test**
   (`internal/arch/build_files_test.go`).
 
-- **Satılan SATIR artık okunabiliyor: `order_line_item` varlığı ve panelde
-  Satışlar bölümü** (B14).
+- **The sold LINE can now be read: the `order_line_item` entity and a Sales
+  section in the panel** (B14).
 
-- **Panelin bir çerçevesi ve ikinci bir bölümü var** (stil, menü, siparişler).
+- **The panel has a frame and a second section** (styling, menu, orders).
 
-- **Fatura modülü** (ADR 0024) — belge, satırları, tarafları, durumu ve
-  **boşluksuz** numaralandırması.
+- **Invoice module** (ADR 0024) — the document, its lines, its parties, its
+  status and its **gapless** numbering.
 
-- **Sipariş artık tek çağrıyla faturalanıyor** (`POST /admin/v1/orders/{id}/invoice`).
+- **An order is now invoiced with a single call**
+  (`POST /admin/v1/orders/{id}/invoice`).
 
-- **Sipariş satırı artık hangi ORANDA vergilendiğini söylüyor** (`tax_rate_bps`).
+- **An order line now says at what RATE it was taxed** (`tax_rate_bps`).
 
-- **Derin sayfa artık ucuz** (cursor pagination).
+- **Deep pages are now cheap** (cursor pagination).
 
-- **Go tarafı artık ölçülüyor** (pprof + benchmark).
+- **The Go side is now measured** (pprof + benchmark).
 
-- **Yönetim yazmaları artık iz bırakıyor** (audit log).
+- **Admin writes now leave a trace** (audit log).
 
-- **Söz verilen olay artık onu vaat eden işlemin parçası** (outbox, ADR 0023).
+- **A promised event is now part of the transaction that promises it**
+  (outbox, ADR 0023).
 
-- **Tarayıcıdaki vitrin artık API'yi çağırabiliyor** (`CORS_ALLOWED_ORIGINS`).
+- **A storefront in the browser can now call the API**
+  (`CORS_ALLOWED_ORIGINS`).
 
-- **Para iadesi geldi ve ADR 0022'nin açık bıraktığı yarıyı kapattı** — B2B
-  bütçe hatası dahil.
+- **Refunds arrived and closed the half that ADR 0022 left open** — including
+  the B2B budget bug.
 
-- **Talepler (claim) artık çözülüyor — ama yalnızca parayla, ve ötekini
-  REDDEDEREK.**
+- **Claims are now resolved — but only with money, and by REJECTING the other
+  kind.**
 
-- **Müşteri artık iade talebi açabiliyor** (`POST /store/v1/orders/{id}/returns`).
+- **A customer can now open a return request**
+  (`POST /store/v1/orders/{id}/returns`).
 
-- **İade artık EYLİYOR: teslim alınan malın stoğu geri konuyor**
-  (`internal/workflows/returns`, satış sonrası 2/3).
+- **A return now ACTS: the stock of received goods is put back**
+  (`internal/workflows/returns`, after-sales 2/3).
 
-- **Sipariş ile ödemesi arasında artık bir yol var** (`order_payment` link'i).
+- **There is now a path between an order and its payment** (the
+  `order_payment` link).
 
-- **İade kaydı artık kımıldayabiliyor ve hangi satırların geldiğini söylüyor**
-  (satış sonrası, 1/3).
+- **A return record can now move, and it says which lines came back**
+  (after-sales, 1/3).
 
-- **Parası alınmış sipariş artık iptal edilemiyor** — ediliyordu, ve iptal
-  hiçbir şeyi geri almıyordu.
+- **An order that has been paid for can no longer be cancelled** — it could
+  be, and the cancellation reversed nothing.
 
-- **Vergi artık doğru girdilerden hesaplanıyor** — karışık sepet baştan sona en
-  yüksek orandan vergileniyordu.
+- **Tax is now computed from the right inputs** — a mixed cart was taxed
+  throughout at the highest rate.
 
-- **Sipariş artık üzerine ne ödendiğini biliyor** (ADR 0022) — `paid_total` her
-  gerçek siparişte sıfırdı.
+- **An order now knows what has been paid against it** (ADR 0022) —
+  `paid_total` was zero on every real order.
 
-- **Alışverişçi artık kendi kargo fiyatını belirleyemiyor** (ADR 0021) — bu bir
-  özellik değil, sömürülebilir bir açığın kapatılması.
+- **A shopper can no longer set their own shipping price** (ADR 0021) — this
+  is not a feature but the closing of an exploitable hole.
 
-- **Ödeme mutabakatı** (`internal/jobs/paymentrecon`, ADR 0020) — deponun adı
-  konmuş tek tutulmamış periyodik sözü, ve para hakkında.
+- **Payment reconciliation** (`internal/jobs/paymentrecon`, ADR 0020) — the
+  repository's only named periodic promise that was not being kept, and it is
+  about money.
 
-- **Zamanlanmış iş geldi** (`internal/core/job`, ADR 0019) — ama planladığımın
-  onda biri kadarıyla, ve asıl değeri kodda değil ÖLÇÜMDE.
+- **Scheduled jobs arrived** (`internal/core/job`, ADR 0019) — but at a tenth
+  of what I planned, and their real value lies not in the code but in the
+  MEASUREMENT.
 
-- **PayTR ile ödeme geldi** (`payment-paytr` eklentisi) — ve web push'la
-  **aynı bulguya** çıktı, ters yönden.
+- **Payment with PayTR arrived** (the `payment-paytr` plugin) — and it reached
+  **the same finding** as web push, from the opposite direction.
 
-- **Tarayıcı push bildirimi geldi** (`web-push` eklentisi, ADR 0018) — ve
-  sağlayıcı yuvasına GİRMEDİ. Bu turun asıl bulgusu kodu değil, kararı
-  değiştirdi.
+- **Browser push notifications arrived** (the `web-push` plugin, ADR 0018) —
+  and did NOT GO INTO the provider slot. This round's real finding changed the
+  decision, not the code.
 
-- **Yüklemeler artık nesne deposuna gidebiliyor** (`file-s3` eklentisi).
-  Kutudan çıkan `local` sağlayıcısı TEK süreç için doğrudur ve İKİ süreç için
-  yanlıştır: dosya, yüklemeyi karşılayan örneğin diskine düşer ve başka örneğe
-  yönlenen her istek 404 alır — hiçbir hata görünmeden, çünkü o örnek
-  açısından anahtar gerçekten yoktur. AWS S3, MinIO ve R2 ile çalışır.
+- **Uploads can now go to an object store** (the `file-s3` plugin). The
+  out-of-the-box `local` provider is correct for ONE process and wrong for
+  TWO: the file lands on the disk of the instance that served the upload, and
+  every request routed to another instance gets a 404 — with no visible error,
+  because from that instance's point of view the key really does not exist.
+  Works with AWS S3, MinIO and R2.
 
-- **Bildirimler artık GERÇEKTEN gidiyor** (`notification-smtp` eklentisi).
-  Kutudan çıkan tek bildirim sağlayıcısı `logonly`'ydi ve adı ne yaptığını
-  dürüstçe söylüyordu: bir log satırı yazar, hiçbir yere göndermez. Yani
-  bildirim yuvası bugüne dek çerçevenin tutmadığı bir sözdü — sağlayıcı
-  soyutlaması vardı, çalışan uygulaması yoktu.
+- **Notifications are now REALLY sent** (the `notification-smtp` plugin). The
+  only notification provider out of the box was `logonly`, and its name
+  honestly said what it did: it writes a log line and sends nothing anywhere.
+  So until now the notification slot was a promise the framework did not keep
+  — the provider abstraction existed, a working implementation did not.
 
-- **İKİNCİ bir hata raporlayıcı yazıldı ve ADR 0014'ün sınavı böylece koşuldu**
-  (`error-otlp`). ADR "sözleşmenin doğru ŞEKİLDE mi olduğunu yoksa yalnızca
-  Sentry'nin istediği şekil mi olduğunu ancak ikinci bir uygulama gösterir"
-  diyordu; ikinci uygulama, modeli Sentry'den en uzak olanı seçti.
-  OpenTelemetry log modelinde "issue" yok, gruplama anahtarı yok, tekilleştirme
-  yok: bir kayıt zaman, önem derecesi, gövde ve özniteliklerdir.
+- **A SECOND error reporter was written, and ADR 0014's test was thereby run**
+  (`error-otlp`). The ADR said "only a second implementation shows whether the
+  contract has the right SHAPE or merely the shape Sentry wants"; the second
+  implementation chose the one whose model is furthest from Sentry. The
+  OpenTelemetry log model has no "issue", no grouping key, no deduplication: a
+  record is a time, a severity, a body and attributes.
 
-- **`gobit recover <execution-id> -confirm <execution-id>`: yarım kalmış bir
-  saga artık ELLE telafi edilebiliyor.** v0.8.0 kesintiye uğrayan ödemeyi
-  GÖRÜNÜR (`gobit stuck`) ve GERİ ALINABİLİR (kayıtlardan telafi) yapmıştı, ama
-  geri almayı yalnızca aynı anahtarla dönen bir çağıran tetikleyebiliyordu. Bu,
-  yeniden deneyen müşteriyi kapsar ve başkasını değil: terk edilmiş sepetin
-  dönen çağıranı yoktur, kayıt sonsuza dek `running` kalır ve ayırdığı stoğu
-  BIRAKACAK KİMSE olmaz. Operatörün elinde üzerinde işlem yapamadığı bir liste
-  vardı.
+- **`gobit recover <execution-id> -confirm <execution-id>`: a half-finished
+  saga can now be compensated BY HAND.** v0.8.0 had made an interrupted
+  payment VISIBLE (`gobit stuck`) and REVERSIBLE (compensation from the
+  records), but the reversal could only be triggered by a caller returning
+  with the same key. That covers the customer who retries and nobody else: an
+  abandoned cart has no returning caller, the record stays `running` forever,
+  and there is NO ONE TO RELEASE the stock it reserved. The operator held a
+  list they could not act on.
 
-### Değiştirildi
+### Changed
 
-- **`cart`, `order` ve `auth` modüllerinde Türkçe kalmadı** (ADR 0012'nin
-  cırcırı). Doksan beş dosya, paket başına bir ajan olmak üzere on sekiz ajanla
-  iki aşamada çevrildi; içerik defteri 397 dosyadan **302**'ye, yol defteri 16
-  satırdan **9**'a indi.
+- **No Turkish is left in the `cart`, `order` and `auth` modules** (ADR 0012's
+  ratchet). Ninety-five files were translated in two stages by eighteen
+  agents, one agent per package; the content ledger dropped from 397 files to
+  **302**, the path ledger from 16 rows to **9**.
 
-- **Cırcırın GÖREMEDİĞİ bir borç sınıfı bulundu ve kapatıldı: diyakritiksiz
-  Türkçe.** Üç şeritli dedektör Türkçe harfleri, kelime listesini ve AST
-  TANIYICILARINI tarıyor; bir yorum ya da dize sabiti içinde `"limit negatif
-  olamaz: %d"` gibi tümü ASCII yazılmış Türkçe üç şeridin de dışında kalıyor.
-  Sonuç: dedektöre göre TEMİZ olan, dolayısıyla deftere hiç girmeyen, dolayısıyla
-  hiçbir ajana atanmayan dosyalar Türkçe taşımaya devam ediyordu.
+- **A class of debt the ratchet COULD NOT SEE was found and closed: Turkish
+  without diacritics.** The three-lane detector scans for Turkish letters, the
+  word list and AST IDENTIFIERS; all-ASCII Turkish such as `"limit negatif
+  olamaz: %d"` inside a comment or a string constant falls outside all three
+  lanes. The result: files that were CLEAN according to the detector, and
+  therefore never entered the ledger, and therefore were never assigned to any
+  agent, went on carrying Turkish.
 
-- **Dedektörün kök listesinden silinmiş bir kök geri kondu.** `turkishStems`
-  içindeki `"ayristir"` girdisi, `5b0778c`'de bir tanımlayıcı yeniden
-  adlandırmasıyla `"parseDir"` hâline gelmişti: liste KAYNAK değil VERİ, ve
-  toplu yeniden adlandırma onu sessizce yedi. Suite yeşil kaldığı için kimse
-  görmedi. Körlüğün bedeli ölçülebilir — `internal/arch/configuration_test.go`
-  o günden beri `ayrisik`/`ayristirmaHatasi` tanımlayıcılarını taşıyordu ve
-  dosya "çevrildi" sayılmıştı. Aynı sınıfın üçüncü tekrarı (öncekiler:
-  `denetim` → `auditCtx`, `gunlukBekle` → `waitForLog`).
+- **A stem deleted from the detector's stem list was put back.** The
+  `"ayristir"` entry in `turkishStems` had become `"parseDir"` in `5b0778c`
+  through an identifier rename: the list is DATA, not SOURCE, and the bulk
+  rename silently ate it. Because the suite stayed green, nobody noticed. The
+  cost of the blindness is measurable — `internal/arch/configuration_test.go`
+  had carried the identifiers `ayrisik`/`ayristirmaHatasi` ever since, and the
+  file had been counted as "translated". The third recurrence of the same
+  class (the earlier ones: `denetim` → `auditCtx`, `gunlukBekle` →
+  `waitForLog`).
 
-- **Cırcırın dışında kalan 19 YAML dosyası çevrildi.** Dedektör `.go`, `.sql`,
-  `.gohtml`, `.md` ve `.graphqls` tarıyor; YAML hiç taranmıyor, dolayısıyla bu
-  borç defterde HİÇ görünmüyordu. On beş `sqlc.yaml`, `gqlgen.yml`,
-  `.golangci.yml`, `.github/workflows/ci.yml` ve `deploy/docker-compose.yml`.
+- **The 19 YAML files outside the ratchet were translated.** The detector
+  scans `.go`, `.sql`, `.gohtml`, `.md` and `.graphqls`; YAML is not scanned
+  at all, so this debt NEVER showed up in the ledger. Fifteen `sqlc.yaml`
+  files, `gqlgen.yml`, `.golangci.yml`, `.github/workflows/ci.yml` and
+  `deploy/docker-compose.yml`.
 
-- **`internal/core/workflow` ağacında Türkçe kalmadı** (ADR 0012'nin cırcırı).
-  Beş turda motorun kendisi, `pgstore` ve ikisinin TÜM test dosyaları çevrildi;
-  defter 715 dosyadan **708**'e indi.
+- **No Turkish is left in the `internal/core/workflow` tree** (ADR 0012's
+  ratchet). Over five rounds the engine itself, `pgstore` and ALL the test
+  files of both were translated; the ledger dropped from 715 files to **708**.
 
-- **`internal/core` ağacında Türkçe kalmadı** (ADR 0012'nin cırcırı). Workflow
-  turunun ardından gelen dört turda `core/http`'nin kalan dosyaları,
-  `redisguard`, `core/query`, `core/openapi` ve `internal/core/config` çevrildi; defter
-  708 dosyadan **680**'e indi ve defterde artık `internal/core/` ile başlayan
-  TEK BİR satır yok. Kalan borç `internal/modules/*`, `internal/e2e`,
-  `internal/arch`'ın kendi testleri ve ADR 0001-0011'de.
+- **No Turkish is left in the `internal/core` tree** (ADR 0012's ratchet). In
+  the four rounds that followed the workflow round, the remaining files of
+  `core/http`, `redisguard`, `core/query`, `core/openapi` and
+  `internal/core/config` were translated; the ledger dropped from 708 files to
+  **680**, and there is no longer A SINGLE row in the ledger starting with
+  `internal/core/`. The remaining debt is in `internal/modules/*`,
+  `internal/e2e`, `internal/arch`'s own tests and ADR 0001-0011.
 
-- **On beş modülün KIRICI YÜZEYİ İngilizceye geçti** ve sıralamanın kendisi bir
-  karardır. Borç ~45 bin satırdı; bütçe ortada biterse geriye kalanın yarısının
-  ZARARSIZ olması için önce çatallayan/vendor'layan bir kurulumun DERLENDİĞİ
-  yüzey çevrildi:
+- **The BREAKING SURFACE of fifteen modules moved to English**, and the
+  ordering itself is a decision. The debt was ~45 thousand lines; so that the
+  remaining half would be HARMLESS if the budget ran out midway, the surface
+  that a forking/vendoring installation COMPILES against was translated first:
 
-- **`internal/arch` ve `internal/core` ağaçlarında Türkçe kalmadı**, `internal/e2e`
-  yarılandı. Defter 715 dosyadan **559**'a, yol defteri 37'den 29'a indi.
+- **No Turkish is left in the `internal/arch` and `internal/core` trees**, and
+  `internal/e2e` is half done. The ledger dropped from 715 files to **559**,
+  the path ledger from 37 to 29.
 
-- **Çeviri paralelleştirildi** (ajan başına bir dosya ya da bir modül) ve iki adımın
-  MERKEZÎ kalması gerektiği ölçülerek görüldü. Paylaşılan tanıtıcılar dalgadan
-  ÖNCE tek elden çevrilmezse iki ajan aynı adı iki farklı İngilizceye çevirir;
-  paylaşılan hata METİNLERİ ise dalgadan SONRA çevrilmek zorunda, çünkü on iki
-  modülün `provider.go`'su bayt bayt aynı boilerplate'i taşıyor ve "başkasının
-  dosyasındaki dizeye dokunma" kuralı yüzünden hiçbir ajan kendi başına
-  temizleyemiyor.
+- **The translation was parallelised** (one file or one module per agent), and
+  measurement showed that two steps must stay CENTRAL. If shared identifiers
+  are not translated by a single hand BEFORE the wave, two agents translate
+  the same name into two different English names; shared error TEXTS, on the
+  other hand, have to be translated AFTER the wave, because the `provider.go`
+  of twelve modules carries byte-for-byte identical boilerplate, and the rule
+  "do not touch a string in someone else's file" means no agent can clean it
+  up on its own.
 
-- **Toplu yeniden adlandırma dedektörün kendi VERİSİNİ bozabiliyor.** Bu turda
-  bozdu: `denetim` → `auditCtx` yeniden adlandırması `language_test.go`'daki
-  `turkishStems` listesinde duran `"denetim"` girdisini de değiştirdi, yani
-  dedektörden bir kök silindi. Suite yeşil kaldı, çünkü `TestDetectorIsNotBlind`
-  liste BOYUNUN tabanını pinliyor, tek tek girdileri değil. Kök geri kondu; ders
-  ADR 0012'nin kendi cümlesinin tekrarı — dize sabitleri kaynak değil VERİ
-  olabilir.
+- **A bulk rename can corrupt the detector's own DATA.** This round it did:
+  the `denetim` → `auditCtx` rename also changed the `"denetim"` entry in the
+  `turkishStems` list in `language_test.go`, which means a stem was deleted
+  from the detector. The suite stayed green, because `TestDetectorIsNotBlind`
+  pins a floor under the list's LENGTH, not the individual entries. The stem
+  was put back; the lesson repeats ADR 0012's own sentence — string constants
+  can be DATA, not source.
 
-- Hata KODLARI, entity/link/kayıt ADLARI, süzgeç anahtarları, JSON etiketleri ve
-  ID önekleri bu turların HİÇBİRİNDE değişmedi. v0.8.0'da motor için verilen
-  kararın aynısı: mesaj İngilizceye geçer, sözleşme yerinde kalır.
+- Error CODES, entity/link/record NAMES, filter keys, JSON tags and ID
+  prefixes changed in NONE of these rounds. It is the same decision as the one
+  made for the engine in v0.8.0: the message moves to English, the contract
+  stays in place.
 
 ## [0.8.0] — 2026-09-04
 
-### Kırıcı değişiklikler
+### Breaking changes
 
-`0.x` boyunca minor sürümde meşrudur (bkz. dosyanın başı). Üçü de HTTP
-yüzeyini değiştirmiyor; ikisi çerçeveyi GÖMEN kurulumları, biri kendi saga
-adımını YAZANLARI ilgilendiriyor.
+These are legitimate in a minor release throughout `0.x` (see the top of the
+file). None of the three changes the HTTP surface; two concern installations
+that EMBED the framework, one concerns those who WRITE their own saga step.
 
-- **`cart/service.Store` portunun `SetLineItemTotals` imzası değişti.** Eski
-  imza satır başına çağrılıyordu ve güncellenen satırı döndürüyordu; yenisi bir
-  hesap turunun TÜM satır tutarlarını tek çağrıda alıyor ve yalnızca hata
-  döndürüyor:
+- **The signature of `SetLineItemTotals` on the `cart/service.Store` port
+  changed.** The old signature was called once per line and returned the
+  updated line; the new one takes ALL the line totals of a calculation pass in
+  a single call and returns only an error:
 
   ```go
   // eski
@@ -4320,2375 +4581,2651 @@ adımını YAZANLARI ilgilendiriyor.
   SetLineItemTotals(ctx, cartID string, lines []models.LineItemTotals) error
   ```
 
-  Bu portu kendisi uygulayan bir kurulum derlenmez. Sebep bir ölçümdür ve
-  aşağıda "Değiştirildi" altında yazılı: satır başına UPDATE, sepetin kilidini
-  satır sayısıyla orantılı süre tutuyordu.
+  An installation that implements this port itself will not compile. The
+  reason is a measurement, written up below under "Changed": an UPDATE per
+  line held the cart's lock for a time proportional to the number of lines.
 
-- **Motorun, `pgstore`'un, `core/link`'in ve `core/eventbus`'ın hata MESAJLARI
-  İngilizce.** Hata KODLARI ve durum sabitlerinin DEĞERLERİ değişmedi — onlar
-  makine sözleşmesidir ve dokunulmadı. Etkilenen tek sınıf, mesaj METNİNE
-  bağlanmış iddialardır: bu turda deponun kendi testlerinde tam olarak böyle üç
-  bağ kırıldı ve ancak koşulunca görüldü, çünkü kod ile mesaj arasında
-  derleyici bağı yoktur. Müşteriye mesajı OLDUĞU GİBİ gösteren bir vitrin de
-  etkilenir (ADR 0012'nin cırcırı; aynı sınıf v0.6.0'da başlamıştı).
+- **The error MESSAGES of the engine, `pgstore`, `core/link` and
+  `core/eventbus` are in English.** The error CODES and the VALUES of the
+  status constants did not change — they are the machine contract and were not
+  touched. The only class affected is assertions bound to the message TEXT: in
+  this round exactly three such bindings broke in the repository's own tests
+  and were seen only when the tests ran, because there is no compiler link
+  between a code and its message. A storefront that shows the message to the
+  customer AS IS is affected too (ADR 0012's ratchet; the same class began in
+  v0.6.0).
 
-- **`workflow.Step` sözleşmesi büyüdü: `Compensate` EŞZAMANLI çağrılabilir.**
-  Bugüne dek "iki kez çağrılabilir" deniyordu ve bu SIRAYLA demekti. Kurtarma
-  yolu bir Compensate'i aynı ANDA çağırabilen ilk yoldur. Bu depoda dağıtılan
-  iki depo (`NewMemoryStore`, `pgstore`) kurtarmayı tekelli yaptığı için pratikte
-  kapı kapalıdır; BAŞKA bir `workflow.Store` uygulayan kurulumda açıktır ve
-  telafisini oku-değiştir-yaz olarak yazan bir adım stoğu birden çok kez
-  bırakır. Geri alma KİMLİKLE yapılmalıdır.
+- **The `workflow.Step` contract grew: `Compensate` may be called
+  CONCURRENTLY.** Until now it said "may be called twice", and that meant ONE
+  AFTER THE OTHER. The recovery path is the first path that can call a
+  Compensate at the same MOMENT. Because the two stores shipped in this
+  repository (`NewMemoryStore`, `pgstore`) make recovery exclusive, the door is
+  closed in practice; it is open in an installation that implements ANOTHER
+  `workflow.Store`, and a step that writes its compensation as
+  read-modify-write releases stock more than once. Undoing must be done BY ID.
 
-### Eklendi
+### Added
 
-- **`gobit stuck`: yarım kalmış saga'lar artık LİSTELENEBİLİYOR.** v0.7.0
-  kesintiye uğrayan bir ödemeyi sessiz olmaktan çıkarmıştı (kirası dolan
-  yürütme kapanıyor, iş yapılmışsa `compensation_failed` yazılıyor ve ERROR
-  loglanıyor) ama o kaydı GÖRECEK hiçbir yüzey yoktu; operatör psql açıyordu.
-  Komut YALNIZCA OKUR: hiçbir rezervasyon bırakılmaz, hiçbir yürütme kapanmaz,
-  hiçbir anahtar serbest bırakılmaz — hâlâ koşan bir saga'nın stoğunu bırakmak
-  onu ikinci kez ayırtır.
+- **`gobit stuck`: half-done sagas can now be LISTED.** v0.7.0 had stopped an
+  interrupted payment from being silent (an execution whose lease expires is
+  closed, `compensation_failed` is written if work was done, and an ERROR is
+  logged), but there was no surface to SEE that record; the operator opened
+  psql. The command ONLY READS: no reservation is released, no execution is
+  closed, no key is freed — releasing the stock of a saga that is still running
+  would get that stock reserved a second time.
 
-  Komut İKİ sınıf listeliyor ve ikincisi ölçülerek bulundu. Durum sorgusu
-  (`compensation_failed`) yalnızca motorun KAPATTIĞI kayıtları görür; oysa
-  süreç saga'nın ortasında ölür ve müşteri bir daha dönmezse kayıt sonsuza dek
-  `running` kalır, stoğu tutar ve hiçbir log satırında geçmez. Ölçüm: elle
-  müdahale bekleyen iki yürütmeden yalnızca biri durum sorgusuyla bulunuyordu.
-  İkinci sınıf bu yüzden "kirası dolmuş VE hâlâ tutulan adımı olan" olarak
-  tanımlı — yalnızca yaşlı olan bir kayıt hiçbir şey tutmuyorsa motor onu kendi
-  onarır ve listelemek operatörün sayfasını gereksiz satırla doldururdu.
+  The command lists TWO classes, and the second was found by measurement. The
+  status query (`compensation_failed`) sees only the records the engine has
+  CLOSED; but if the process dies in the middle of a saga and the customer
+  never comes back, the record stays `running` forever, holds the stock and
+  appears in no log line. Measured: of two executions awaiting manual
+  intervention, only one was found by the status query. The second class is
+  therefore defined as "lease expired AND has a step still holding something" —
+  if a record that is merely old holds nothing, the engine repairs it itself,
+  and listing it would fill the operator's page with needless rows.
 
-  Kararın kendisi [ADR 0016](docs/adr/0016-operator-read-surface-for-half-done-sagas.md)'da.
+  The decision itself is in [ADR 0016](docs/adr/0016-operator-read-surface-for-half-done-sagas.md).
 
-  Bayatlığın kesim ANI artık sorgunun İÇİNDE hesaplanıyor ve satırlarla birlikte
-  geri dönüyor: satırları SEÇEN an ile başlıkta YAZAN an aynı ifadeden geliyor.
-  İki ayrı değer bırakmak, testte görünmeyen bir sapma sınıfıydı — testte
-  çağıran ile veritabanı aynı makinede olduğu için çağıranın saatiyle süzüp
-  veritabanının saatini yazan bir sürüm bütün suite'i geçiyordu (mutasyonla
-  ölçüldü).
+  The staleness cutoff MOMENT is now computed INSIDE the query and returned
+  along with the rows: the moment that SELECTS the rows and the moment WRITTEN
+  in the header come from the same expression. Leaving two separate values was
+  a class of drift invisible in tests — because the caller and the database
+  are on the same machine in tests, a version that filtered by the caller's
+  clock and printed the database's clock passed the whole suite (measured by
+  mutation).
 
-- **`gobit migrate status` ve `gobit migrate down <owner>`: migration'ların
-  operatöre açık bir yüzeyi oldu.** `.down.sql` dosyaları vardı, geri
-  alınabilirlikleri testliydi, ama onları çağıracak bir şey yoktu; geri alma
-  elle yapılıyordu. `cmd/server` argüman bile okumuyordu — `--help` bile
-  sunucuyu başlatıyordu.
+- **`gobit migrate status` and `gobit migrate down <owner>`: migrations now
+  have a surface open to the operator.** The `.down.sql` files existed and
+  their reversibility was tested, but nothing called them; rolling back was
+  done by hand. `cmd/server` did not even read arguments — even `--help`
+  started the server.
 
-  Sunucu HÂLÂ argümansız çalıştırmayla başlıyor ve başka hiçbir yolla
-  başlamıyor; ileri migration açılışta otomatik kalıyor ve bilinçli olarak bir
-  `migrate up` YOK, çünkü ayrı bir komut "şemayı güncellemeyi unuttum"
-  sınıfını geri getirirdi.
+  The server STILL starts when run without arguments, and in no other way;
+  forward migration stays automatic at startup, and there is deliberately NO
+  `migrate up`, because a separate command would bring back the "I forgot to
+  update the schema" class.
 
-  Geri alma GERİ ALINAMAZ bir iştir, o yüzden kapısı var: `-confirm <owner>`
-  ile sahip adı ikinci kez yazılmadan hiçbir şey çalışmaz, varsayılan adım
-  sayısı 1'dir ve KİRLİ bir defter (yarıda kalmış bir önceki koşu) onayla bile
-  reddedilir — kirli durumu geri almak, hangi yarının uygulandığı bilinmeyen
-  bir şemayı bir adım daha bozmaktır.
+  Rolling back CANNOT BE UNDONE, so it has a gate: nothing runs until the
+  owner name is typed a second time with `-confirm <owner>`, the default step
+  count is 1, and a DIRTY ledger (a previous run left halfway) is refused even
+  with confirmation — rolling back a dirty state damages, by one more step, a
+  schema of which nobody knows which half was applied.
 
-  Kaynak listesi İKİNCİ bir liste değil: modüller kendi migration'larını nasıl
-  kaydediyorsa komut da onları oradan topluyor, yani sunucunun uyguladığı küme
-  ile komutun gördüğü küme ayrışamaz.
+  The source list is not a SECOND list: the command collects the migrations
+  from the same place the modules register them, so the set the server applies
+  and the set the command sees cannot diverge.
 
-  **Bilinen ve ölçülmüş bir tehlike godoc'a yazıldı:** golang-migrate advisory
-  kilidi `context.Background()` ile alıyor, yani beklemeyi ne son teslim tarihi
-  ne Ctrl-C keser. Ölçüldü: bağlamı 5 saniyede dolan bir `Version()` çağrısı,
-  kilidi başkası tutarken 15 saniye sonra hâlâ dönmemişti. Bu STATUS yolunda da
-  geçerli (sürüm okumak eksik sürüm tablosunu yaratır, o da kilidi alır), yani
-  bir dağıtımın ileri migration'ı sürerken çalıştırılan `migrate status`
-  sessizce bekleyebilir.
+  **A known and measured hazard is written in the godoc:** golang-migrate
+  takes the advisory lock with `context.Background()`, so neither a deadline
+  nor Ctrl-C interrupts the wait. Measured: a `Version()` call whose context
+  expired after 5 seconds had still not returned after 15 seconds while
+  someone else held the lock. This holds on the STATUS path too (reading the
+  version creates the missing version table, which also takes the lock), so a
+  `migrate status` run while a deployment's forward migration is in progress
+  can wait silently.
 
-- **Vitrin listesinin toplam SAYACI artık isteğe bağlı**
-  (`GET /store/v1/products?with_count=false`; GraphQL'de `count` alanını
-  seçmemek yeter). Varsayılan DEĞİŞMEDİ: parametresiz istek bugünkü baytların
-  aynısını alıyor.
+- **The total COUNT of the storefront listing is now optional**
+  (`GET /store/v1/products?with_count=false`; in GraphQL, not selecting the
+  `count` field is enough). The default DID NOT CHANGE: a request without the
+  parameter receives the same bytes as today.
 
-  Sayaç ucuzlatılamadığı için isteğe bağlı yapıldı ve bu bir ölçüm sonucudur:
-  kanal süzgeci ürün başına bir alt sorgu çalıştırıyor (`SubPlan`, `loops=52004`)
-  ve sorgunun kendisi zaten indeks üstünde — `EXPLAIN` çıktısında `Heap
-  Fetches: 0`. Yani gezilecek küme küçültülemiyor, yalnızca gezilmemesi
-  sağlanabiliyor. Ölçüldü (52.004 ürün, LIMIT 20, ortanca): liste servisi
-  sayarak **67,00 ms**, saymadan **0,65 ms**; sayacın kendisi 64,07 ms.
+  The count was made optional because it could not be made cheaper, and that
+  is the result of a measurement: the channel filter runs one subquery per
+  product (`SubPlan`, `loops=52004`) and the query itself is already on the
+  index — the `EXPLAIN` output shows `Heap
+  Fetches: 0`. So the set to be walked cannot be shrunk; it can only be left
+  unwalked. Measured (52,004 products, LIMIT 20, median): the list service
+  with counting **67.00 ms**, without **0.65 ms**; the count itself 64.07 ms.
 
-  Sayaç atlandığında zarfta `count` alanı **BULUNMAZ** — `0` dönmez, `null`
-  dönmez. `0` yalan söylerdi ("sonuç yok"), `null` ise GraphQL şemasında
-  `Int!`'i gevşetmek demekti; alanın yokluğu ise iki yüzeyde de aynı şeyi
-  söylüyor: sayılmadı.
+  When the count is skipped, the `count` field is **ABSENT** from the
+  envelope — it does not return `0`, it does not return `null`. `0` would lie
+  ("no results"), and `null` would have meant loosening `Int!` in the GraphQL
+  schema; the field's absence says the same thing on both surfaces: not
+  counted.
 
-  Bir de bedava düzelen bir kusur: GraphQL'de `count` alanını hiç seçmeyen bir
-  sorgu da sayaç SQL'ini çalıştırıyordu. Artık seçim kümesine bakılıyor
-  (`@skip`/`@include` dâhil).
+  Plus a defect fixed for free: in GraphQL, a query that did not select the
+  `count` field at all still ran the count SQL. The selection set is now
+  consulted (`@skip`/`@include` included).
 
-  README'nin "Bilinen sınırlar"ındaki 79 ms bayattı; bu turda yeniden ölçüldü
-  ve satır güncellendi. Planın "tutarlı zarf" cümlesi de sayacın düşebildiğini
-  söyleyecek şekilde düzeltildi — alan adları ve tipleri değişmiyor, yalnızca
-  hesaplanmayan sayaç zarfta yer almıyor.
+  The 79 ms in the README's "Known limits" was stale; it was re-measured in
+  this round and the line updated. The plan's "consistent envelope" sentence
+  was also corrected to say that the count can be dropped — field names and
+  types do not change; only a count that was not computed is left out of the
+  envelope.
 
-### Değiştirildi
+### Changed
 
-- **Terk edilmiş bir saga'nın telafisi artık KAYITLARDAN çalıştırılıyor**
+- **An abandoned saga's compensation now runs FROM THE RECORDS**
   ([ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)).
-  Süreç saga'nın ortasında öldüğünde telafi hiç çalışmıyordu: ayrılan stok,
-  açılan sipariş ve ödeme oturumu ortada kalıyordu ve README'nin yazdığı gibi
-  "otomatik kurtarma YOKTU". Engel `StepContext.Shared`'ın kalıcı olmamasıydı —
-  telafi "hangi rezervasyonu iptal edeceğim" cevabını oradan okuyor.
+  When the process died in the middle of a saga, compensation never ran: the
+  reserved stock, the opened order and the payment session were left hanging,
+  and as the README put it, "there WAS NO automatic recovery". The obstacle
+  was that `StepContext.Shared` is not persisted — compensation reads the
+  answer to "which reservation do I cancel" from there.
 
-  Ölçüldü: o cevap kaybolmuş DEĞİL. Adımların Invoke çıktıları kalıcı ve telafi
-  kaydı onları silmiyor (`StepRecord.Output` godoc'u bunu zaten bir karar olarak
-  yazıyor). Eksik olan tek şey JSON'u tipli değere geri çevirmekti ve onu
-  yalnızca adımın kendisi bilir: yeni `workflow.Recoverable` arayüzü bunu
-  yapıyor. Uygulamayan adımı olan zincir bugünkü davranışı alıyor, yani arayüz
-  yetenek ekliyor, sözleşme kırmıyor. Kurtarma tamamlanınca kayıt `failed` olup
-  anahtarını BIRAKIYOR — müşteri aynı sepeti yeniden ödeyebiliyor.
+  Measured: that answer is NOT lost. The steps' Invoke outputs are persisted
+  and the compensation record does not delete them (the `StepRecord.Output`
+  godoc already states this as a decision). The only thing missing was turning
+  the JSON back into a typed value, and only the step itself knows how to do
+  that: the new `workflow.Recoverable` interface does it. A chain with a step
+  that does not implement it gets today's behavior, so the interface adds a
+  capability and breaks no contract. When recovery completes, the record
+  becomes `failed` and RELEASES its key — the customer can pay for the same
+  cart again.
 
-  **Kurtarma bir noktada bilerek DURUYOR ve orası ödeme.** Motor adım kaydını
-  Invoke döndükten SONRA yazıyor, yani tahsilatın içinde ölen süreç hiçbir iz
-  bırakmıyor; kurtarma onu "çalışmamış" sayarsa kartı çekilmiş müşterinin stoğu
-  bırakılır, anahtarı serbest kalır ve müşteri İKİNCİ KEZ tahsil edilir. Böyle
-  bir adım `workflow.RecoveryBlocker` ile işaretleniyor ve kaydı yokken
-  kendisinden öncekilerin de kurtarılmasını engelliyor. `complete_cart` için
-  sonuç: çökmenin dört noktasından üçü kurtarılıyor, tahsilat noktası elle
-  müdahalede kalıyor.
+  **Recovery deliberately STOPS at one point, and that point is payment.** The
+  engine writes the step record AFTER Invoke returns, so a process that dies
+  inside the capture leaves no trace; if recovery counted that step as "never
+  ran", the stock of a customer whose card was charged would be released,
+  their key freed, and the customer charged a SECOND TIME. Such a step is
+  marked with `workflow.RecoveryBlocker`, and while it has no record it also
+  blocks recovery of the steps before it. The result for `complete_cart`:
+  three of the four crash points are recovered; the capture point remains a
+  matter for manual intervention.
 
-  Kurtarma tetiklenmiyor, denk geliniyor: aynı anahtarla dönen bir çağıran onu
-  bulur. Zamanlanmış süpürücü bilinçli olarak eklenmedi — kurtarma yan etkisi
-  olan bir iş çalıştırır.
+  Recovery is not triggered, it is encountered: a caller returning with the
+  same key finds it. A scheduled sweeper was deliberately not added — recovery
+  runs work that has side effects.
 
-- **Workflow motorunun KENDİSİ İngilizceye çevrildi**: `workflow.go` — paket
-  yorumu (saga sözleşmesi, telafi kuralı, idempotency anahtarı, kalıcılık
-  politikası), `Step`/`Recoverable`/`RecoveryBlocker` arayüzleri, `Executor` ve
-  motorun tüm iç yordamları. Defter 716 dosyadan 715'e indi; paketin ÜRETİM
-  kodunda Türkçe kalmadı, kalan beş dosyanın hepsi testtir.
+- **The workflow engine ITSELF was translated into English**: `workflow.go` —
+  the package comment (saga contract, compensation rule, idempotency key,
+  persistence policy), the `Step`/`Recoverable`/`RecoveryBlocker` interfaces,
+  `Executor` and all of the engine's internal routines. The ledger went down
+  from 716 files to 715; no Turkish is left in the package's PRODUCTION code,
+  and the remaining five files are all tests.
 
-  İki TEST BAĞI kırıldı ve kırıldığı yerde düzeltildi — ikisi de mesaj METNİNE
-  bağlıydı, yani derleyici görmedi, ancak koşunca çıktı: `workflow_test.go`
-  motorun kendi cümlesinin kaybolmadığını `"b" adımı` diye arıyordu ve
-  `pgstore_integration_test.go` kurtarma reddini DÖRT yerde `ELLE MÜDAHALE`
-  diye arıyordu. Bu, çeviri turlarının tekrar eden bulgusu: mesaj metnine
-  bağlanmış iddialar, çeviriyi ancak koşarak fark ettiren tek bağ.
+  Two TEST BINDINGS broke and were fixed where they broke — both were bound to
+  the message TEXT, so the compiler did not see them and they surfaced only
+  when run: `workflow_test.go` checked that the engine's own sentence was not
+  lost by searching for `"b" adımı`, and `pgstore_integration_test.go`
+  searched for the recovery refusal as `ELLE MÜDAHALE` in FOUR places. This is
+  the recurring finding of the translation rounds: assertions bound to message
+  text are the one binding through which a translation is noticed, and only by
+  running the tests.
 
-  Çevirinin kendi tehlike sınıfı da vardı ve üç yerde denk gelindi: Türkçe
-  cümlenin öğe sırası İngilizcede DEĞİŞİYOR, dolayısıyla `%q ... %d ... %q`
-  operandları da yeniden sıralanmak zorunda ("%q workflow'unun %q adımı (%d)
-  başarısız oldu" → "the %q step (%d) of the %q workflow failed"). Aynı tipteki
-  iki operandı takas etmek derleyici için görünmezdir; `go vet` de aynı tipte
-  olduklarından susar. Üçü de çeviriyle birlikte elle sıralandı ve suite
-  koşuldu.
+  The translation also had its own hazard class, met in three places: the
+  order of elements in a Turkish sentence CHANGES in English, so the
+  `%q ... %d ... %q` operands have to be reordered too (the Turkish word order,
+  "%q workflow's %q step (%d) failed", becomes "the %q step (%d) of the %q
+  workflow failed"). Swapping two operands of the same type is invisible to
+  the compiler; `go vet` stays silent too, since they share a type. All three
+  were reordered by hand along with the translation, and the suite was run.
 
-  Davranış değişmedi: hata KODLARI (`workflow_step_failed`,
-  `workflow_recovery_failed`, …) ve durum sabitlerinin değerleri aynı — onlar
-  makine sözleşmesi. Değişen yalnızca insan okuyan metin.
+  Behavior did not change: the error CODES (`workflow_step_failed`,
+  `workflow_recovery_failed`, …) and the values of the status constants are
+  the same — they are the machine contract. Only the human-readable text
+  changed.
 
-- **Workflow motorunun sözleşme dosyaları İngilizceye çevrildi**: `store.go`
-  (Store arayüzü, durum sabitleri, kayıt tipleri), `options.go` (RunOption'lar
-  ve yeniden deneme politikası), `memory.go` ve `parallel.go`. Defter 720
-  dosyadan 716'ya indi.
+- **The workflow engine's contract files were translated into English**:
+  `store.go` (the Store interface, status constants, record types),
+  `options.go` (the RunOptions and the retry policy), `memory.go` and
+  `parallel.go`. The ledger went down from 720 files to 716.
 
-  Çeviri BAYAT BİR CÜMLE ortaya çıkardı ve düzeltildi: `ParallelStep`'in tip
-  godoc'u "Compensate tüm dalları TERS SIRADA ve SIRAYLA çağırır" diyordu, oysa
-  uygulama dal telafilerini EŞZAMANLI koşuyor ve bunun gerekçesi aynı dosyanın
-  başka bir godoc'unda yazılı (sıralı yürütme, yavaş bir dalın ortak bütçeyi
-  tüketmesi yüzünden sonraki dalları ölü bağlamla çağırıyordu). İki cümle
-  birbiriyle çelişiyordu; İngilizce metin uygulamanın yaptığını yazıyor. Aynı
-  godoc'ta İKİNCİ bir kopya daha vardı ("iç geri alma sırayla ve ters dal
-  sırasında yürür") — iç geri alma da aynı eşzamanlı yola gidiyor; o da
-  düzeltildi.
+  The translation uncovered A STALE SENTENCE, which was fixed: the type godoc
+  of `ParallelStep` said "Compensate calls all branches IN REVERSE ORDER and
+  ONE AT A TIME", whereas the implementation runs the branch compensations
+  CONCURRENTLY, and the reason for that is written in another godoc of the
+  same file (sequential execution called later branches with a dead context,
+  because a slow branch used up the shared budget). The two sentences
+  contradicted each other; the English text states what the implementation
+  does. The same godoc held a SECOND copy ("the inner rollback runs
+  sequentially and in reverse branch order") — the inner rollback takes the
+  same concurrent path too; that was fixed as well.
 
-- **`internal/core/workflow/pgstore`'un ÜRETİM dosyaları İngilizceye çevrildi**
-  (ADR 0012'nin cırcırı): `pgstore.go`, `convert.go`, `sql.go`, `ids.go`,
-  `migrations.go` ve iki migration SQL'i. Defter 727 dosyadan 720'ye indi;
-  pakette Türkçe kalan üç dosya da test dosyalarıdır.
+- **The PRODUCTION files of `internal/core/workflow/pgstore` were translated
+  into English** (ADR 0012's ratchet): `pgstore.go`, `convert.go`, `sql.go`,
+  `ids.go`, `migrations.go` and two migration SQL files. The ledger went down
+  from 727 files to 720; the three files in the package that still carry
+  Turkish are all test files.
 
-  Davranış değişmedi ama bir TEST BAĞI kırıldı ve kırıldığı yerde düzeltildi:
-  hata eşlemesini sınayan tablo, birincil anahtar ihlalinin mesajında
-  "kimlikli" kelimesini arıyordu. Bu, deponun kendi mesaj METNİNE bağlanmış tek
-  iddiaydı; kod ve mesaj arasında derleyici bağı olmadığı için ancak koşunca
-  görülür.
+  Behavior did not change, but one TEST BINDING broke and was fixed where it
+  broke: the table testing the error mapping searched the primary-key
+  violation's message for the word "kimlikli" ("with ID"). This was the only
+  assertion bound to the repository's own message TEXT; since there is no
+  compiler link between code and message, it is seen only when run.
 
-  Migration dosyalarının yalnızca YORUMLARI değişti; DDL'e dokunulmadı ve
-  golang-migrate dosyaları sürüm numarasına göre uyguladığı için uygulanmış bir
-  veritabanı etkilenmez.
+  Only the COMMENTS of the migration files changed; the DDL was not touched,
+  and since golang-migrate applies files by version number, an
+  already-migrated database is not affected.
 
-- **`core/link` ve `core/eventbus` İngilizceye çevrildi**
-  (ADR 0012'nin cırcırı). Türkçe defterinden 15 satır DÜŞTÜ: 742 dosyadan
-  727'ye; yol defteri 38'de kaldı (iki pakette hiç yol kaydı yoktu). İki pakette
-  Türkçe harf sayısı sıfır.
+- **`core/link` and `core/eventbus` were translated into English**
+  (ADR 0012's ratchet). 15 lines DROPPED from the Turkish ledger: from 742
+  files to 727; the path ledger stayed at 38 (the two packages had no path
+  entries at all). The count of Turkish letters in the two packages is zero.
 
-  Çeviri davranışı değiştirmedi ve bu iddia yapısal olarak sınandı: yorumları
-  atıp dizeleri ve tanıtıcıları normalleştiren bir AST karşılaştırması altı
-  üretim dosyasının beşini BİREBİR aynı gösteriyor. Altıncısında iki biçim
-  dizesinin operand sırası değişti — Türkçe cümlenin öğe sırası İngilizcede
-  başka — ve o sıra hiçbir kapının göremediği bir yerdi: aynı tipte üç operand
-  arasında `go vet` bir şey görmez. Sıra artık bir entegrasyon testiyle çivili
-  ve testin fikstürü de ölçüldü: adı çakışan bir GÖRÜNÜM ile DDL bir adım önce
-  düşüyor, MATERYALLEŞTİRİLMİŞ görünümle ise "başarıyla" tamamlanıp denetime
-  ulaşıyor — yani sessiz şekil budur.
+  The translation did not change behavior, and that claim was tested
+  structurally: an AST comparison that drops comments and normalizes strings
+  and identifiers shows five of the six production files as IDENTICAL. In the
+  sixth, the operand order of two format strings changed — a Turkish sentence
+  orders its elements differently from English — and that order sat where no
+  gate could see it: `go vet` sees nothing among three operands of the same
+  type. The order is now pinned by an integration test, and the test's
+  fixture was measured too: with a VIEW whose name collides, the DDL fails one
+  step earlier, whereas with a MATERIALIZED view it completes "successfully"
+  and reaches the check — so that is the silent shape.
 
-  Hata KODLARI değişmedi (beş üretim dosyasında birebir aynı) ve hata
-  ayrıntılarının ANAHTARLARI da artık testli: `stored` anahtarının hem varlığı
-  hem DEĞERİ sabitlendi — yalnızca varlığını sınayan bir iddia, saklanan tanım
-  yerine geleni yazan bir hatayı geçiriyordu ve operatör iki tanımı aynı
-  görürdü.
+  The error CODES did not change (identical in five production files), and
+  the KEYS of the error details are now tested too: both the presence and the
+  VALUE of the `stored` key are pinned — an assertion testing only its
+  presence let through an error that reported the incoming definition instead
+  of the stored one, and the operator would have seen the two definitions as
+  identical.
 
-- **Sepet satır tutarları TEK deyimle yazılıyor; sepetin kilidi satır sayısıyla
-  orantılı süre boyunca tutulmuyor.** Hesap turu satır başına bir UPDATE
-  koşuyordu ve bunu sepetin `FOR UPDATE` kilidi altında yapıyordu; kilit o
-  sepete yazan her akışı sıraya dizdiği için süre doğrudan sepetin yazma
-  kapasitesiydi. Ölçüldü (100 satırlık sepet, kilidin alınmasından son yazmanın
-  dönmesine kadar, p50): satır başına UPDATE **8,0 ms**, tek deyim **0,55 ms**;
-  10 satırda 0,28 ms, yani satır sayısıyla neredeyse hiç uzamıyor.
+- **Cart line totals are written in a SINGLE statement; the cart's lock is no
+  longer held for a time proportional to the number of lines.** The
+  calculation pass ran one UPDATE per line, and did so under the cart's
+  `FOR UPDATE` lock; since the lock serializes every flow writing to that
+  cart, the duration was directly the cart's write capacity. Measured
+  (100-line cart, from taking the lock until the last write returns, p50):
+  UPDATE per line **8.0 ms**, single statement **0.55 ms**; at 10 lines
+  0.28 ms, so it barely grows with the number of lines.
 
-  Ölçüm dürüst okunmalı ve godoc'lar bunu artık söylüyor: test harness'ının
-  konteyneri `fsync=off` koşuyor, dolayısıyla bu sayılar YAZMA EVRESİDİR,
-  ardından gelen commit'in WAL flush'ı değildir. Flush da aynı kilidin altında
-  ve bu değişiklik ona dokunmuyor — kalıcı bir kümede ölçüldü, satır sayısından
-  bağımsız 6,2 ms. Yani operatörün göreceği kilit süresi ~14,2 ms'den ~6,8 ms'ye
-  iner: **~2 kat**, yazma evresinin kendi içindeki 14 kat değil.
+  The measurement must be read honestly, and the godocs now say so: the test
+  harness's container runs with `fsync=off`, so these numbers are the WRITE
+  PHASE, not the WAL flush of the commit that follows. The flush is under the
+  same lock too, and this change does not touch it — measured on a durable
+  cluster, 6.2 ms regardless of line count. So the lock time an operator will
+  see drops from ~14.2 ms to ~6.8 ms: **~2x**, not the 14x within the write
+  phase itself.
 
-  Boru hattı (pgx batch / sqlc `:batchexec`) bilerek REDDEDİLDİ ve gerekçe bir
-  sayı: aynı 100 UPDATE tek boru hattında 3,0 ms sürüyor, yani kazancın yalnızca
-  üçte ikisi. Kalan fark deyim başına ayrıştırma/planlama maliyetidir ve onu
-  ancak deyim sayısını 1'e indirmek siler.
+  Pipelining (pgx batch / sqlc `:batchexec`) was deliberately REJECTED, and
+  the reason is a number: the same 100 UPDATEs take 3.0 ms in a single
+  pipeline, so only two thirds of the gain. The remaining difference is the
+  per-statement parse/plan cost, and only cutting the statement count to 1
+  removes it.
 
-  Tutar–satır eşleşmesi API şekliyle korunuyor: kimlik tutarlarıyla AYNI değerde
-  taşınıyor (`LineItemTotals`), yani çağıran iki ayrı dilimi farklı sıralarda
-  veremez. Eksik yazılan tur sessiz geçmiyor — eşleşmeyen kimlik (silinmiş satır,
-  başka sepetin satırı) turu düşürüyor ve hata çağıranın sırasındaki İLK
-  yazılamayan satırı adlandırıyor.
+  The total–line pairing is protected by the shape of the API: the ID travels
+  in the SAME value as its totals (`LineItemTotals`), so a caller cannot pass
+  two separate slices in different orders. A pass that writes incompletely
+  does not go by silently — an ID that does not match (a deleted line, another
+  cart's line) fails the pass, and the error names the FIRST line that could
+  not be written, in the caller's order.
 
-### Düzeltildi
+### Fixed
 
-- **Motor, hiçbir adım koşmadan BAŞARI dönebiliyordu.** Yürütme açmayı en fazla
-  iki tur denerken ikinci turda da "terk edilmiş, yeniden dene" cevabı gelirse
-  döngü bitiyor ve o noktada `replay`'in dönüş değeri `(nil, nil)` oluyordu —
-  bu değer olduğu gibi çağırana veriliyordu. Ölçüldü: `out=<nil> err=<nil>
-  invokes=0`. Çağıran nil hatayı "sipariş verildi" diye okur; sepet akışında
-  bunun anlamı, hiçbir siparişin açılmadığı bir başarı yanıtıdır — bir saga
-  motorunun söyleyebileceği en kötü yalan.
+- **The engine could return SUCCESS without running a single step.** The
+  engine tried to open an execution for at most two rounds; if the second
+  round also got the answer "abandoned, try again", the loop ended, and at
+  that point the return value of `replay` was `(nil, nil)` — and that value
+  was handed to the caller as is. Measured: `out=<nil> err=<nil>
+  invokes=0`. The caller reads a nil error as "order placed"; in the cart flow
+  that means a success response for which no order was opened — the worst lie
+  a saga engine can tell.
 
-  Döngünün ardındaki hata artık gerçekten dönüyor ve sınıfı `KindUnavailable`
-  (503), yeni kodu `workflow_execution_contended`: sistem bozuk değil, anahtar
-  çekişmede ve hiçbir adım koşmadığı için çağıran AYNI anahtarla
-  tekrarlayabilir. Üretimde bu duruma art arda iki terk edilmiş yürütmeyle ya da
-  gerçek saga süresinden kısa bildirilen bir `WithLease` ile varılır.
+  The error after the loop is now actually returned; its class is
+  `KindUnavailable` (503) and its new code `workflow_execution_contended`: the
+  system is not broken, the key is contended, and since no step ran, the
+  caller can retry with the SAME key. In production this state is reached
+  through two abandoned executions in a row, or through a `WithLease`
+  declared shorter than the real saga duration.
 
-- **Kendi kendine çözülen bir yarış 500 dönüyordu.** `Create` "anahtar dolu"
-  dedikten sonra okuma "böyle bir yürütme yok" diyorsa, iki çağrı ARASINDA
-  anahtar bırakılmıştır — telafi edilen bir yürütme anahtarını bırakır ve terk
-  edilmiş bir kaydı kapatan her çağıran bunu yapar. Motor bu okumayı
-  `workflow_store_failed` diye sarıyordu, yani müşteri kendi kendine çözülen bir
-  yarış yüzünden 500 alıyordu (ölçüldü: aynı terk edilmiş kayda dört eşzamanlı
-  çağıran vardığında biri tam olarak bu hatayı aldı). Artık yeniden AÇMAYI
-  deniyor; anahtar zaten serbesttir.
+- **A race that resolves itself returned 500.** If, after `Create` said "key
+  taken", the read says "no such execution", the key was released BETWEEN the
+  two calls — a compensated execution releases its key, and so does every
+  caller that closes an abandoned record. The engine wrapped that read as
+  `workflow_store_failed`, so the customer got a 500 because of a race that
+  resolves itself (measured: when four concurrent callers reached the same
+  abandoned record, one got exactly this error). It now tries to OPEN again;
+  the key is already free.
 
-  İki arıza da aynı avda, v0.7.0 sonrası eklenen kurtarma yolunun eşzamanlılık
-  ölçümüyle bulundu; ikisi de mutasyonla kanıtlandı (eski davranış geri
-  konduğunda testler tek tek düşüyor).
+  Both faults were found in the same hunt, by measuring the concurrency of the
+  recovery path added after v0.7.0; both were proven by mutation (when the old
+  behavior is put back, the tests fail one by one).
 
-- **Kurtarma TEKELLİ oldu: terk edilmiş bir kaydı artık tek bir süreç telafi
-  ediyor.** Terk edilmiş kayıt kimsenin sahipliğinde olmadığı için aynı anahtarla
-  dönen her çağıran onu buluyordu ve HEPSİ telafi zincirini koşuyordu — dört
-  eşzamanlı çağıranla ölçüldü, zincir dört kez koştu. Motor artık kurtarmadan
-  ÖNCE kaydı talep ediyor: tek bir koşullu UPDATE, yalnızca kayıt hâlâ `running`
-  iken ve `updated_at` "bu terk edilmiş" kararının dayandığı değerken tutuyor.
-  Kazanan `updated_at`'i damgalıyor; bu hem ötekileri eliyor hem de kirayı
-  kurtarma sürdükçe tazeliyor. Ölçüm: aynı dört çağıran, TEK telafi (talep
-  kaldırıldığında dörde dönüyor).
+- **Recovery became EXCLUSIVE: an abandoned record is now compensated by a
+  single process.** Since an abandoned record is owned by no one, every caller
+  returning with the same key found it and ALL of them ran the compensation
+  chain — measured with four concurrent callers, the chain ran four times. The
+  engine now claims the record BEFORE recovering: a single conditional UPDATE
+  that succeeds only while the record is still `running` and `updated_at` is
+  the value the "this is abandoned" decision was based on. The winner stamps
+  `updated_at`; that both eliminates the others and refreshes the lease while
+  recovery lasts. Measured: the same four callers, ONE compensation (it goes
+  back to four when the claim is removed).
 
-  Talep, adım kayıtları OKUNDUKTAN sonra ve ilk yazmadan önce alınıyor. Okuma
-  yan etkisizdir; kazanılan talep ise `updated_at`'i damgalar, yani kirayı
-  uzatır. Talep önce gelseydi, adımları okuyamayan — yani hiçbir şey yapmayan —
-  bir çağıran kaydın kirasını sessizce ileri atmış olurdu ve gerçekten yarım
-  kalmış bir saga hem bir sonraki çağırandan hem de `gobit stuck`'tan tam bir
-  kira süresi boyunca saklanırdı.
+  The claim is taken AFTER the step records are read and before the first
+  write. Reading has no side effects; a won claim, however, stamps
+  `updated_at`, which extends the lease. Had the claim come first, a caller
+  that cannot read the steps — and so does nothing — would have silently
+  pushed the record's lease forward, and a genuinely half-done saga would have
+  been hidden from both the next caller and `gobit stuck` for a full lease
+  period.
 
-  Talebi KAYBEDEN çağırana "hâlâ sürüyor" denmiyor, döngüye bir tur daha
-  gönderiliyor: kazanan anahtarı her an bırakabilir ve ikinci tur iki sonu da
-  doğru yanıtlar — anahtar serbestse yeni yürütme açılır, kazanan hâlâ
-  çalışıyorsa bulunan kayıt TAZEDİR, yani "hâlâ sürüyor" o zaman doğrudur.
+  A caller that LOSES the claim is not told "still in progress"; it is sent
+  around the loop once more: the winner may release the key at any moment, and
+  the second round answers both outcomes correctly — if the key is free, a new
+  execution is opened; if the winner is still working, the record found is
+  FRESH, so "still in progress" is then true.
 
-  Yetenek İSTEĞE BAĞLI bir arayüzdür (`workflow.ClaimingStore`), `Store`'a
-  eklenen bir metot değil: port metodu, bu deponun dışında yazılmış her Store
-  uygulamasını kırardı. Bedeli, `Store`'u GÖMEN bir sarmalayıcının yeteneği
-  sessizce gizlemesidir (gömülü arayüz yalnızca kendi metotlarını taşır) —
-  gerekçe ve sınır [ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md)'de.
+  The capability is an OPTIONAL interface (`workflow.ClaimingStore`), not a
+  method added to `Store`: a port method would break every Store
+  implementation written outside this repository. The cost is that a wrapper
+  that EMBEDS `Store` silently hides the capability (an embedded interface
+  carries only its own methods) — the reasoning and the limit are in
+  [ADR 0017](docs/adr/0017-recovering-abandoned-sagas-from-the-record.md).
 
-- **Telafinin EŞZAMANLI çağrılabildiği yazıya geçti** (davranış değişmedi).
-  Terk edilmiş kayıt kimsenin sahipliğinde olmadığı için aynı anahtarla varan
-  her çağıran onu kurtarır; dört eşzamanlı çağıranla ölçüldü, zincir DÖRT kez
-  koştu. `Step` sözleşmesi bugüne dek yalnızca "iki kez çağrılabilir" diyordu ve
-  bu SIRAYLA anlamına geliyordu. Deponun kendi adımlarında bedel yinelenen iş ve
-  yinelenen sağlayıcı çağrısıdır (her telafi KİMLİKLE geri alır), ama telafisini
-  oku-değiştir-yaz olarak yazan bir eklenti adımı stoğu birden çok kez bırakır.
-  Sözleşme artık bunu açıkça yasaklıyor — ve aynı yayımlanmamış turda kapı da
-  kapandı: kurtarma tekelli oldu (yukarıdaki maddeye bakın). Yasak yine de
-  duruyor, çünkü tekelliği kuran yetenek isteğe bağlıdır ve bir adım altındaki
-  Store'un onu sunup sunmadığını GÖREMEZ.
+- **That compensation may be called CONCURRENTLY is now written down**
+  (behavior did not change). Since an abandoned record is owned by no one,
+  every caller arriving with the same key recovers it; measured with four
+  concurrent callers, the chain ran FOUR times. Until now the `Step` contract
+  only said "may be called twice", and that meant ONE AFTER THE OTHER. For the
+  repository's own steps the cost is duplicated work and duplicated provider
+  calls (every compensation undoes BY ID), but a plugin step that writes its
+  compensation as read-modify-write releases stock more than once. The
+  contract now forbids that explicitly — and in the same unreleased round the
+  door was closed too: recovery became exclusive (see the entry above). The
+  prohibition stays anyway, because the capability that establishes
+  exclusivity is optional, and a step CANNOT SEE whether the Store beneath it
+  offers it.
 
 ## [0.7.0] — 2026-09-03
 
-### Kırıcı değişiklikler
+### Breaking changes
 
-Üçü de `0.x` boyunca minor sürümde meşrudur (bkz. dosyanın başı) ve üçü de
-**yükseltirken bakılacak** şeylerdir.
+All three are legitimate in a minor release throughout `0.x` (see the top of
+the file), and all three are things **to check when upgrading**.
 
-- **`/ready` artık her bağımlılık için 503 DÖNMÜYOR.** Redis erişilemezken uç
-  `200` ve gövdede `"status": "degraded"` döner; yalnızca Postgres gibi
-  KESEN bir bağımlılık `503` üretir. 503'e alarm kuran bir kurulum Redis
-  kesintisini artık o yoldan GÖRMEZ — sinyal gövdedeki `degraded` alanı ve
-  düşen her yoklama için yazılan WARN satırıdır. Değişikliğin sebebi ve ölçümü
-  aşağıda; kararın kendisi
-  [ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md)'de.
-- **Bir sepet en fazla 100 farklı satır taşır.** Tavana ulaşmış bir sepete YENİ
-  satır açmak isteyen istek `400` ve `cart_workflow_line_limit_reached` alır.
-  Var olan satırın adedini artırmak muaftır; tavandan ÖNCE açılmış daha büyük
-  sepetler hesaplanabilir ve ödenebilir kalır, yalnızca yeni satır alamaz.
-- **Arama sonuçlarının SIRASI değişti.** Sonuç KÜMESİ aynı; çok kelimeli bir
-  sorguda artık alan ağırlığı (başlık > anahtar > açıklama) kelime yakınlığını
-  yeniyor. Sıralamaya bağlı ekran görüntüsü testi olan istemciler etkilenir.
+- **`/ready` NO LONGER returns 503 for every dependency.** While Redis is
+  unreachable the endpoint returns `200` with `"status": "degraded"` in the
+  body; only a dependency that CUTS service, like Postgres, produces `503`. An
+  installation that alerts on 503 will no longer SEE a Redis outage that way —
+  the signal is the `degraded` field in the body and the WARN line written for
+  every failing check. The reason for the change and its measurement are
+  below; the decision itself is in
+  [ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md).
+- **A cart carries at most 100 distinct lines.** A request to open a NEW line
+  on a cart that has reached the ceiling gets `400` and
+  `cart_workflow_line_limit_reached`. Increasing the quantity of an existing
+  line is exempt; larger carts opened BEFORE the ceiling remain calculable and
+  payable, they just cannot take new lines.
+- **The ORDER of search results changed.** The result SET is the same; in a
+  multi-word query, field weight (title > keywords > description) now beats
+  word proximity. Clients with screenshot tests that depend on the order are
+  affected.
 
-Çerçeveyi gömen (Go) kurulumlar için üç imza değişti:
+For installations that embed the framework (Go), three signatures changed:
 
-- `NewMemoryIdempotencyStore` artık bayt bütçesini de alıyor (`ttl, butce`).
-- `RouterOptions.ReadinessChecks` alanının tipi `GatingChecks` oldu ve yanına
-  `DegradedChecks` geldi. Adlandırılmamış bir harita değişmezi hâlâ atanabilir;
-  adlandırılmış `map[string]HealthCheck` tipinde bir DEĞİŞKEN geçen çağıran
-  derlenmez — ve bu bilinçlidir, iki sınıfın karışmaması buna dayanıyor.
-- `cart/api.Carts` arayüzünden `AddLineItem` kaldırıldı. Servis metodunun
-  kendisi duruyor; satır ekleme akıştan geçer.
+- `NewMemoryIdempotencyStore` now also takes the byte budget (`ttl, butce`).
+- The type of the `RouterOptions.ReadinessChecks` field became `GatingChecks`,
+  and `DegradedChecks` arrived beside it. An unnamed map literal can still be
+  assigned; a caller passing a VARIABLE of a named `map[string]HealthCheck`
+  type will not compile — and that is deliberate: keeping the two classes from
+  mixing depends on it.
+- `AddLineItem` was removed from the `cart/api.Carts` interface. The service
+  method itself remains; adding a line goes through the flow.
 
-### Eklendi
+### Added
 
-- **Bellek içi idempotency deposu SINIRSIZ büyüyordu; bayt bütçesi geldi**
-  (`IDEMPOTENCY_MAX_MEMORY_BYTES`, varsayılan 64 MiB). Depo her mutasyon isteği
-  için yanıt gövdesiyle birlikte bir kayıt tutuyor, kaydı açan anahtarı İSTEMCİ
-  seçiyor ve tek sınır 24 saatlik TTL'di. Ölçüldü (runtime.MemStats, GC
-  sonrası): 1 KiB gövdeli 10.000 kayıt 15,51 MiB, 64 KiB gövdeli 10.000 kayıt
-  630,69 MiB, 1 MiB gövdeli 1.000 kayıt 999,58 MiB tutuyordu; 50.000 kayıt
-  yazılıp saat 23 saat ilerletildiğinde düşen kayıt sayısı SIFIRDI — TTL
-  büyümeyi hiçbir yerde durdurmuyordu. `GUARD_BACKEND` varsayılanı `memory` ve
-  `Validate` üretimde `redis` şart koşmuyor, yani sıradan bir üretim dağıtımı bu
-  depoyu çalıştırıyor.
+- **The in-memory idempotency store grew WITHOUT BOUND; it now has a byte
+  budget** (`IDEMPOTENCY_MAX_MEMORY_BYTES`, default 64 MiB). The store keeps an
+  entry, response body included, for every mutating request, the CLIENT
+  chooses the key that opens the entry, and the only limit was a 24-hour TTL.
+  Measured (runtime.MemStats, after GC): 10,000 entries with 1 KiB bodies held
+  15.51 MiB, 10,000 entries with 64 KiB bodies 630.69 MiB, 1,000 entries with
+  1 MiB bodies 999.58 MiB; with 50,000 entries written and the clock advanced
+  23 hours, the number of entries dropped was ZERO — the TTL stopped the
+  growth nowhere. The `GUARD_BACKEND` default is `memory` and `Validate` does
+  not require `redis` in production, so an ordinary production deployment runs
+  this store.
 
-  Bütçe dolunca en ESKİ kayıt düşüyor. Reddetmek daha kötüydü: anahtarı istemci
-  seçtiği için uydurma anahtarlarla gelen tek bir istemci mağazanın tüm mutasyon
-  trafiğini kapatabilirdi — bellek arızası, tetiklemesi bedava bir erişim
-  arızasına dönerdi. Düşürmenin bedeli, o anahtarla gelen tekrarın yeniden
-  işlenmesidir ve bu TTL'in zaten ödediği bedelin aynısıdır; tahliye o silmeyi
-  ERKENE alır, en eski kayıt da korumasından geriye en az kalmış olandır.
-  Sessiz değil: ilk tahliye her zaman, sonrası dakikada bir WARN loglanıyor,
-  bütçe her açılışta yazılıyor, README ve `docs/mimari.md` sınırı adıyla anıyor.
+  When the budget is full, the OLDEST entry is dropped. Refusing was worse:
+  since the client chooses the key, a single client arriving with made-up keys
+  could shut off all of the shop's mutating traffic — a memory fault would
+  turn into an availability fault that costs nothing to trigger. The cost of
+  dropping is that a retry arriving with that key is processed again, and that
+  is the same cost the TTL already pays; eviction only brings that deletion
+  FORWARD, and the oldest entry is the one with the least protection left. It
+  is not silent: the first eviction is always logged at WARN, later ones once
+  a minute; the budget is written at every startup; the README and
+  `docs/mimari.md` name the limit.
 
-  Kayıtlar artık haritanın yanında süreye göre sıralı bir listede duruyor.
-  Eski süre-dolumu TÜM haritayı tarıyordu ve tarama sürecin TEK idempotency
-  kilidini tutarken koşuyordu: 1.000.000 kayıtta 50,3 ms, 100.000 kayıtta
-  2,13 ms. Artık yalnızca süresi dolan ÖN EK dolaşılıyor: aynı iki harita
-  boyunda 188 ns ve 164 ns. Bu, taramayı dakikada bire kısan sapmayı da
-  gereksiz kıldı — o kısıntı, süresi dolmuş bir kaydın bir dakikaya kadar
-  OYNATILMAYA devam etmesi demekti, yani TTL'in söylediğinden uzun bir koruma.
-  Yanıt kopyası ve muhasebe kilidin DIŞINA çıkarıldı: 1 MiB gövdeli eşzamanlı
-  oynatma 50,1-52,7 µs'ten 34,5-40,8 µs'e indi.
+  Entries now also sit, beside the map, in a list ordered by expiry. The old
+  expiry pass scanned the WHOLE map, and the scan ran while holding the
+  process's SINGLE idempotency lock: 50.3 ms at 1,000,000 entries, 2.13 ms at
+  100,000. Now only the expired PREFIX is walked: 188 ns and 164 ns at the
+  same two map sizes. This also made unnecessary the workaround that throttled
+  the scan to once a minute — that throttling meant an expired entry kept
+  being REPLAYED for up to a minute, i.e. protection longer than the TTL says.
+  The response copy and the accounting were moved OUTSIDE the lock:
+  concurrent replay with 1 MiB bodies went down from 50.1-52.7 µs to
+  34.5-40.8 µs.
 
-  **Kabul edilen en küçük bütçe 1 MiB'tan 2 MiB'a çıkarıldı.** Tabanın gerekçesi
-  "tek bir azami boy yanıt sığmalı"ydı ama 1 MiB'ta sığmıyordu ve bu ölçüldü:
-  1 MiB bütçeye yazılan 1 MiB'lık yanıt anında düşüyor, çünkü kaydın bedeli
-  gövdenin yanında anahtarı, parmak izini ve yapısal maliyeti de taşıyor. Yani
-  taban, tam olarak yasakladığı sessiz-işlevsiz yapılandırmayı KABUL ediyordu.
-  Sabit eşitliği sınayan test, davranışı sınayan bir testle değiştirildi.
+  **The smallest accepted budget was raised from 1 MiB to 2 MiB.** The floor's
+  rationale was "a single maximum-size response must fit", but at 1 MiB it did
+  not fit, and this was measured: a 1 MiB response written into a 1 MiB budget
+  is dropped immediately, because an entry's cost carries the key, the
+  fingerprint and structural overhead besides the body. So the floor ACCEPTED
+  exactly the silently non-functional configuration it was meant to forbid.
+  The test that checked equality with a constant was replaced by one that
+  tests the behavior.
 
-- **PostgreSQL havuzunun sınırları ayarlanabilir oldu** (`DB_MAX_CONNS`,
-  varsayılan 10; `DB_MIN_CONNS`, varsayılan 2). Sayı sabit yazılıydı ve hiçbir
-  ortam değişkeni onu değiştiremiyordu; oysa havuz TEK BİR isteğin değil TÜM
-  SÜRECİN veritabanı eşzamanlılık tavanıdır — HTTP istekleri, workflow motoru ve
-  olay tüketicisi aynı havuzdan çeker.
+- **The PostgreSQL pool's limits became configurable** (`DB_MAX_CONNS`,
+  default 10; `DB_MIN_CONNS`, default 2). The number was hard-coded and no
+  environment variable could change it; yet the pool is the database
+  concurrency ceiling not of A SINGLE request but of the WHOLE PROCESS — HTTP
+  requests, the workflow engine and the event consumer all draw from the same
+  pool.
 
-  Tavanın gözden kaçan tarafı GraphQL'de: gqlgen kök alanlarını eşzamanlı çözer
-  ve sayıyı sınırlamaz, yani `GRAPHQL_MAX_FIELD_REPETITION=20` ile tek bir meşru
-  vitrin belgesi 40 eşzamanlı okuma açabilir. Ölçüldü (52.000 ürün, gerçek
-  vitrin sorguları, 40 eşzamanlı kök alanı): 10 bağlantıda 813 alımın 771'i
-  bekliyor, ortalama bekleme 65,3 ms.
+  The overlooked side of the ceiling is in GraphQL: gqlgen resolves root
+  fields concurrently and does not limit how many, so with
+  `GRAPHQL_MAX_FIELD_REPETITION=20` a single legitimate storefront document
+  can open 40 concurrent reads. Measured (52,000 products, real storefront
+  queries, 40 concurrent root fields): with 10 connections, 771 of 813
+  acquisitions wait, average wait 65.3 ms.
 
-  Varsayılan yine de 10 KALDI ve sebebi ölçüm: veritabanı uygulamayla aynı
-  kutudayken darboğaz havuz değil sunucunun CPU'su, büyütmek gecikmeyi geri
-  getirmiyor (p50 306 ms → 368 ms). Veritabanı ağın ötesindeyse kazandırıyor ve
-  kazanç kök alanın gidiş dönüş sayısına bağlı: liste yolunda 5 ms'lik atlamada
-  1,3 kat (459 → 348 ms), 20 ms'de 1,8 kat (638 → 351 ms); üç gidiş dönüşlük
-  tekil ürün alanında 3,8 kat (69,2 → 18,0 ms). Yani eksik olan sayı değil
-  DÜĞMEYDİ — varsayılanı yükseltmek her kurulumun küme bağlantı bütçesini
-  çarpardı, kazanç ise yalnızca gecikmeye bağlı topolojilere düşer.
+  The default nevertheless STAYED at 10, and the reason is a measurement: when
+  the database is on the same box as the application, the bottleneck is the
+  server's CPU, not the pool, and raising it does not win latency back (p50
+  306 ms → 368 ms). When the database is across a network it pays off, and the
+  gain depends on the root field's number of round trips: on the list path
+  1.3x at a 5 ms hop (459 → 348 ms), 1.8x at 20 ms (638 → 351 ms); 3.8x on the
+  three-round-trip single-product field (69.2 → 18.0 ms). So what was missing
+  was not the number but the KNOB — raising the default would multiply every
+  installation's cluster connection budget, while the gain falls only to
+  latency-bound topologies.
 
-  Sınırların gerçekten havuza ULAŞTIĞI testli ve iki uçtan da çivili: havuz 1
-  bağlantıyla açılıp cevap veriyor (paylaşılan bir kümeye çok örnekle bağlanan
-  kurulumun godoc'ta önerilen çaresi buydu ve o güne kadar yalnızca bir yapı
-  iddiasıydı), 250'lik bir tavan da değiştirilmeden geçiyor. İkisi de sessiz
-  mutasyonlara karşı: `max(cfg.MaxConns, 4)` biçiminde bir taban ya da 64'lük
-  bir tavan, 4 ile yazılmış bir testle uyuşup açılış logunun yazdığından farklı
-  bir havuz çalıştırırdı.
+  That the limits actually REACH the pool is tested and pinned from both ends:
+  the pool opens with 1 connection and answers (this was the remedy the godoc
+  recommended for an installation connecting many instances to a shared
+  cluster, and until then it was only a structural claim), and a ceiling of
+  250 also passes through unchanged. Both guard against silent mutations: a
+  floor of the form `max(cfg.MaxConns, 4)` or a ceiling of 64 would agree with
+  a test written with 4 and run a different pool from the one the startup log
+  reports.
 
-- **`DATABASE_URL` içindeki `pool_*` parametreleri artık açılışta UYARILIYOR.**
-  pgxpool onları okuyor, uygulama ise havuz alanlarını yapılandırmadan ezdiği
-  için `?pool_max_conns=40` hiçbir şey yapmıyordu — sessizce. Havuz sabit
-  yazılıyken zararsızdı; `DB_MAX_CONNS` var olduğu andan itibaren operatörün
-  aynı sayıyı yazabileceği iki makul yer var ve biri hiçbir işe yaramıyor.
-  Reddetmek değil uyarmak doğru: parametre ne kadar zamandır yok sayılıyorsa o
-  kadar zamandır açılan bir süreci durdurmak, önlediği sürprizden büyük bir
-  bedeldir.
+- **`pool_*` parameters in `DATABASE_URL` now produce a WARNING at startup.**
+  pgxpool reads them, but because the application overwrites the pool fields
+  from its configuration, `?pool_max_conns=40` did nothing — silently. That
+  was harmless while the pool was hard-coded; from the moment `DB_MAX_CONNS`
+  exists, there are two reasonable places where an operator might write the
+  same number, and one of them does nothing. Warning rather than refusing is
+  right: stopping a process that has been starting up for as long as the
+  parameter has been ignored is a bigger cost than the surprise it prevents.
 
-- **Sepete satır sayısı TAVANI: 100** (`cart.MaxLineItems`). Tavana dayanmış
-  bir sepete YENİ satır açmak isteyen istek `409` değil `400` ile ve
-  `cart_workflow_line_limit_reached` koduyla reddedilir; mesaj hem tavanı hem
-  sepetteki satır sayısını yazar. Kırpma YOK.
+- **A line-count CEILING on carts: 100** (`cart.MaxLineItems`). A request to
+  open a NEW line on a cart at the ceiling is refused with `400`, not `409`,
+  and the code `cart_workflow_line_limit_reached`; the message states both the
+  ceiling and the number of lines in the cart. There is NO truncation.
 
-  Sebebi ölçülmüştür: satır ekleyen her istek sepetin tüm satırlarının tutarını
-  yeniden YAZAR (cart modülünün `SetTotals`'ı satır başına bir UPDATE, sepetin
-  kilidi altında), yani 100 satırlık bir sepeti kurmak 5.050 satır yazımı,
-  1.000 satırlık bir sepet 500.500 yazım eder. Tavansız bir sepet, tek bir
-  istemcinin veritabanını meşgul edebileceği süreyi sınırsız bırakıyordu.
+  The reason was measured: every request that adds a line REWRITES the totals
+  of all of the cart's lines (the cart module's `SetTotals` runs one UPDATE
+  per line, under the cart's lock), so building a 100-line cart costs 5,050
+  line writes, and a 1,000-line cart 500,500 writes. A cart without a ceiling
+  left unbounded the time a single client could keep the database busy.
 
-  Tavan yalnızca satır AÇAN yolda uygulanır: sepette zaten duran bir varyantı
-  yeniden eklemek adedi artırır ve tavana takılmaz — takılsaydı dolu bir sepetin
-  sahibi kendi satırının adedini bile artıramazdı. Hesap turu, adet güncellemesi
-  ve sipariş yolu tavanı hiç sormaz, çünkü tavan konmadan önce açılmış ve bugün
-  100'ün üstünde satır taşıyan bir sepet hesaplanabilir ve tamamlanabilir
-  kalmalıdır. Tavan bir KAPIDIR, kesin bir üst sınır değil: karşılaştırma sepet
-  kilidinin dışındaki anlık görüntüye bakar, eşzamanlı iki ekleme birkaç satır
-  aşabilir.
+  The ceiling is enforced only on the path that OPENS a line: adding again a
+  variant already in the cart increases the quantity and does not hit the
+  ceiling — if it did, the owner of a full cart could not even increase the
+  quantity of their own line. The calculation pass, the quantity update and
+  the order path never consult the ceiling, because a cart opened before the
+  ceiling was introduced and carrying more than 100 lines today must remain
+  calculable and completable. The ceiling is a GATE, not a hard upper bound:
+  the comparison looks at a snapshot taken outside the cart lock, so two
+  concurrent additions can overshoot by a few lines.
 
-  Tavanın dayandığı "tek kapı" iddiası uğruna `cart/api.Carts` arayüzünden
-  `AddLineItem` KALDIRILDI (kırıcı; servis metodunun kendisi duruyor ve akış
-  onu çağırıyor). Metodun hiçbir çağıranı yoktu ama arayüzde durması, ona
-  bağlanacak bir handler'ın hem sunucu tarafı fiyatlandırmayı hem tavanı
-  sessizce atlamasına açık kapı bırakıyordu — aynı gerekçeyle `CreateCart` da
-  o arayüzde yok.
+  For the sake of the "single gate" claim the ceiling relies on, `AddLineItem`
+  was REMOVED from the `cart/api.Carts` interface (breaking; the service
+  method itself remains and the flow calls it). The method had no callers, but
+  its presence on the interface left the door open for a handler wired to it
+  to silently bypass both server-side pricing and the ceiling — `CreateCart` is
+  absent from that interface for the same reason.
 
-- **`pricing.interop` toplu fiyat yüzeyi yayımlıyor**
-  (`CalculateAmountsJSON`, kalem tavanı `MaxCalculateItems` = 1000). İstek
-  sırasını korur, kalem başına "fiyatlandı" BAYRAĞI döner (hata değil) ve
-  fiyatı olmayan kalem yüzünden isteğin tamamını düşürmez. Tavan aşılırsa istek
-  bütün olarak reddedilir; kırpmak, çağıranın sepetinin bir kısmını fiyatsız
-  bırakıp sonucu "başarılı" göstermek olurdu. Kalem sayısı 280 ile 300 arasında
-  planın indeksten tam taramaya döndüğü ölçüldü ve sabitin godoc'una yazıldı —
-  1000'e kadar maliyet doğrusal değildir.
+- **`pricing.interop` publishes a bulk price surface**
+  (`CalculateAmountsJSON`, item ceiling `MaxCalculateItems` = 1000). It
+  preserves the request order, returns a per-item "priced" FLAG (not an
+  error), and does not fail the whole request because of an item without a
+  price. If the ceiling is exceeded, the request is refused as a whole;
+  truncating would mean leaving part of the caller's cart unpriced while
+  reporting the result as "successful". It was measured that the plan
+  switches from the index to a full scan between 280 and 300 items, and this
+  is written in the constant's godoc — up to 1000, the cost is not linear.
 
-- **`SHUTDOWN_TIMEOUT` saga bütçesinden kısaysa açılışta UYARI.** Varsayılanlar
-  15 saniye ve 2 dakika, yani sıradan bir deploy uçuştaki bir ödemeyi ortasından
-  kesebilir. İkisi de yanlış değil — 15 saniye makul bir deploy bütçesi
-  (Kubernetes'in varsayılan grace period'u 30 saniye), 2 dakika üç modül ve bir
-  ödeme sağlayıcısı geçen bir zincir için makul bir tavan. Yanlış olan, bir
-  kurulumun hangisini seçtiğini BİLMEMEK.
+- **A WARNING at startup if `SHUTDOWN_TIMEOUT` is shorter than the saga
+  budget.** The defaults are 15 seconds and 2 minutes, so an ordinary deploy
+  can cut an in-flight payment off in the middle. Neither is wrong — 15
+  seconds is a reasonable deploy budget (Kubernetes' default grace period is
+  30 seconds), and 2 minutes is a reasonable ceiling for a chain that passes
+  through three modules and a payment provider. What is wrong is an
+  installation NOT KNOWING which one it has chosen.
 
 
-- **PostgreSQL'in bir SEÇENEK değil TEMEL olduğu yazıya geçti**
-  ([ADR 0015](docs/adr/0015-postgresql-cluster-contract.md)). gobit
-  PostgreSQL'i desteklemiyor, onun ÜZERİNE yazılmış — ve bu bağımlılık bugüne
-  kadar hiçbir yerde sözleşme olarak durmuyordu. Bu turda tam da bu yüzden bir
-  blocker çıktı: küme `--locale=C` ile kuruluyordu ve on dört ADR'nin hiçbiri
-  locale'den bahsetmiyordu.
+- **That PostgreSQL is a FOUNDATION, not an OPTION, is now written down**
+  ([ADR 0015](docs/adr/0015-postgresql-cluster-contract.md)). gobit does not
+  support PostgreSQL, it is written ON TOP of it — and until now that
+  dependency stood nowhere as a contract. Exactly because of that, a blocker
+  surfaced in this round: the cluster was being created with `--locale=C`, and
+  none of the fourteen ADRs mentioned locale.
 
-  ADR bağımlılığın nerede yaşadığını SAYIYOR — dizi parametreleri (`= ANY`)
-  üzerine kurulu N+1'siz okuma katmanı, iş kuralının kendisi olan kısmi tekil
-  indeksler (`UNIQUE (handle) WHERE deleted_at IS NULL`), `jsonb`,
-  `timestamptz` (235 sütun), advisory lock'lar, ve `core/link`'in HER AÇILIŞTA
-  koştuğu DDL — sonra kümenin sağlaması gerekenleri bir tabloya bağlıyor:
-  sürüm, encoding, CTYPE, uzantılar (bugün SIFIR), yetkiler, `search_path`.
+  The ADR LISTS where the dependency lives — the N+1-free read layer built on
+  array parameters (`= ANY`), the partial unique indexes that are the business
+  rule itself (`UNIQUE (handle) WHERE deleted_at IS NULL`), `jsonb`,
+  `timestamptz` (235 columns), advisory locks, and the DDL that `core/link`
+  runs at EVERY STARTUP — then sets out in a table what the cluster must
+  provide: version, encoding, CTYPE, extensions (ZERO today), privileges,
+  `search_path`.
 
-  Sözleşme bir PROB ile uygulanıyor, çünkü gerçek dağıtımda compose dosyasını
-  düzeltmek yetmez: RDS/Cloud SQL/Neon'da `initdb` argümanını siz seçmezsiniz.
-  Prob AD değil DAVRANIŞ sınıyor ve **bugün tek bir kontrolü var** — bu bir
-  eksiklik değil karar: tablodaki öteki satırların hepsi GÜRÜLTÜLÜ düşüyor
-  (insert reddedilir, `link.Define` patlar, sorgu "relation does not exist"
-  der), yalnızca harf katlaması doğru, boş ve sessiz bir cevap dönerek düşüyor.
+  The contract is enforced by a PROBE, because in a real deployment fixing the
+  compose file is not enough: on RDS/Cloud SQL/Neon you do not choose the
+  `initdb` arguments. The probe tests BEHAVIOR, not NAMES, and **today it has a
+  single check** — that is a decision, not a gap: every other row in the table
+  fails LOUDLY (the insert is refused, `link.Define` blows up, the query says
+  "relation does not exist"); only case folding fails by returning a valid,
+  empty and silent answer.
 
-  İkinci bir veritabanı desteklenmeyecek ve gerekçesi ideolojik değil:
-  listenin ilk üç maddesi taşınabilir değil, üstelik ikinci lehçe deponun
-  "her kural TEK yerde tanımlı" disiplinini her değişmez için bozar.
+  A second database will not be supported, and the reason is not ideological:
+  the first three items on the list are not portable, and a second dialect
+  would also break the repository's "every rule defined in ONE place"
+  discipline for every invariant.
 
-### Değiştirildi
+### Changed
 
-- **Redis kesintisi TÜM kopyaları aynı anda trafikten çıkarıyordu.** `/ready`
-  bugüne kadar tek sınıf yoklama tanıyordu: biri düşünce 503. `GUARD_BACKEND`
-  çok örnekli her kurulumda `redis` olduğu için Redis o kümeye giriyordu ve bir
-  failover sırasında bütün pod'lar aynı saniyede NotReady oluyordu — Kubernetes
-  Service'i boşaltıyor, trafiğin kaydırılabileceği sağlıklı kopya kalmıyor,
-  kısmi bir bozulma tam bir kesintiye dönüyordu. Bu, ADR 0007'nin koruma
-  katmanları için REDDETTİĞİ "her şey için fail-closed" seçeneğinin bir kat
-  yukarısıdır; ADR o bölümle genişletildi.
+- **A Redis outage took ALL replicas out of traffic at once.** Until now
+  `/ready` knew a single class of check: if one failed, 503. Since
+  `GUARD_BACKEND` is `redis` in every multi-instance installation, Redis was in
+  that set, and during a failover every pod went NotReady in the same second —
+  Kubernetes emptied the Service, no healthy replica was left to shift traffic
+  to, and a partial degradation became a full outage. This is one layer above
+  the "fail-closed for everything" option that ADR 0007 REJECTED for the
+  protection layers; the ADR was extended with that section.
 
-  Yoklamalar artık İKİ SINIF: `ReadinessChecks` düşerse 503 ve örnek trafikten
-  çıkar (Postgres), `DegradedChecks` düşerse gövdede bildirilir ama kod 200
-  kalır (Redis). Gövdedeki `status` üç ayrı değer alır — `ok`, `degraded`,
-  `unavailable` — çünkü eskiden 503 de "degraded" diyordu ve iki durum bir
-  logdan ayırt edilemiyordu.
+  Checks now come in TWO CLASSES: if a `ReadinessChecks` check fails, 503 and
+  the instance leaves traffic (Postgres); if a `DegradedChecks` check fails, it
+  is reported in the body but the code stays 200 (Redis). The `status` in the
+  body takes three distinct values — `ok`, `degraded`, `unavailable` — because
+  the 503 used to say "degraded" as well, and the two states could not be told
+  apart from a log.
 
-  Redis'in derecelendiren tarafa konması ÖLÇÜLDÜ (`GUARD_BACKEND=redis`, Redis
-  kapalı): vitrin katalog okuması 200, `Idempotency-Key` taşımayan yazma 200,
-  taşıyan yazma istek başına yeniden denenebilir bir 503
-  (`idempotency_store_unavailable`). Hiçbir istek yanlış işlenmiyor —
-  korunamayan tek sınıf reddedilen tek sınıf. Kapı yapmak, 200 dönen istekleri
-  de birlikte götürürdü.
+  Putting Redis on the degrading side was MEASURED (`GUARD_BACKEND=redis`,
+  Redis down): storefront catalog read 200, a write without `Idempotency-Key`
+  200, a write carrying it a per-request retryable 503
+  (`idempotency_store_unavailable`). No request is processed wrongly — the
+  only class that cannot be protected is the only class refused. Making it a
+  gate would have taken the requests that return 200 down with it.
 
-  İki sınıfın Go tipi de AYRIDIR (`GatingChecks`, `DegradingChecks`): bir
-  bağımlılığı taraf değiştirmek tek kelimelik, incelemede masum görünen bir
-  düzenlemedir ve her testi geçer. Adlandırılmamış bir `map[string]HealthCheck`
-  ikisine birden atanabildiği için bileşim kökünde o tipin kullanılmadığı da
-  ayrıca sınanıyor (`TestReadinessMapsUseTheNamedTypes`) — mutasyonla
-  doğrulandı: adlandırılmamış harita kullanan sürüm Redis'i kapı tarafına geri
-  koyuyor ve depodaki hiçbir test düşmüyordu.
+  The two classes also have SEPARATE Go types (`GatingChecks`,
+  `DegradingChecks`): moving a dependency to the other side is a one-word edit
+  that looks innocent in review and passes every test. Since an unnamed
+  `map[string]HealthCheck` can be assigned to both, it is also tested
+  separately that the composition root does not use that type
+  (`TestReadinessMapsUseTheNamedTypes`) — verified by mutation: a version
+  using an unnamed map put Redis back on the gate side and no test in the
+  repository failed.
 
-  Derecelendiren yoklamaların bütçesi ayrı ve KISA (varsayılan 250 ms,
-  `READINESS_DEGRADED_TIMEOUT`): erişilemez bir Redis'e atılan tek Ping 1,7
-  saniye sürüyor (istemci beş kez deniyor) ve kubelet'in varsayılan probe zaman
-  aşımı 1 saniye — bütçesiz bir "bozulma" yoklaması, probu düşürerek aynı
-  kesintiyi arka kapıdan geri getirirdi. Bütçe aşımı gövdede bütçeyi adıyla
-  yazar; ama bütçenin bir bedeli var ve godoc'a yazıldı: kök sebebi yok ediyor,
-  "connection refused" ile DNS hatası aynı cümleye iniyor.
+  Degrading checks have a separate and SHORT budget (default 250 ms,
+  `READINESS_DEGRADED_TIMEOUT`): a single Ping to an unreachable Redis takes
+  1.7 seconds (the client tries five times), and the kubelet's default probe
+  timeout is 1 second — a "degradation" check with no budget would fail the
+  probe and bring the same outage back through the back door. A budget overrun
+  names the budget in the body; but the budget has a cost, and it is written
+  in the godoc: it destroys the root cause — "connection refused" and a DNS
+  error collapse into the same sentence.
 
-  Düşen her derecelendiren yoklama WARN logluyor ve satır örneğin HİZMET
-  VERMEYE DEVAM ETTİĞİNİ söylüyor: kod 200 kaldığı için orkestratörde hiçbir
-  olay üretmez, yani o satır bozulmanın tek alarm kanalıdır. Aynı ad iki sınıfa
-  birden yazılırsa kapı tarafı kazanır ve bu da açılışta bir kez uyarı olarak
-  bildirilir.
+  Every failing degrading check logs a WARN, and the line says the instance
+  CONTINUES TO SERVE: since the code stays 200, it produces no event in the
+  orchestrator, so that line is the degradation's only alerting channel. If
+  the same name is registered in both classes, the gate side wins, and that
+  too is reported once at startup as a warning.
 
-- **Sepet kurmanın fiyat okuması KARESEL büyüyordu; doğrusala indi.** Satır
-  ekleyen her istek sepetin TÜM satırlarını yeniden fiyatlıyor ve pricing'e
-  satır başına iki sorgu açıyordu, yani N satırlık bir sepeti kurmak ~1,5N²
-  gidiş-dönüş ediyordu. Ölçüldü (paketin kendi sahteleriyle, çağrılar
-  sayılarak):
+- **The price reads of building a cart grew QUADRATICALLY; they are now
+  linear.** Every request that adds a line reprices ALL of the cart's lines and
+  issued two queries per line to pricing, so building an N-line cart took
+  ~1.5N² round trips. Measured (with the package's own fakes, counting calls):
 
-  | sepet | fiyat çağrısı (eski) | (yeni) | SQL sorgusu (eski) | (yeni) |
+  | cart | price calls (old) | (new) | SQL queries (old) | (new) |
   |---|---|---|---|---|
-  | 10 satır | 65 | 20 | 130 | 40 |
-  | 50 satır | 1 325 | 100 | 2 650 | 200 |
-  | 100 satır | 5 150 | 200 | 10 300 | 400 |
+  | 10 lines | 65 | 20 | 130 | 40 |
+  | 50 lines | 1 325 | 100 | 2 650 | 200 |
+  | 100 lines | 5 150 | 200 | 10 300 | 400 |
 
-  Hesap turu artık pricing'in TOPLU yüzeyini (`service.CalculateAmountsJSON`)
-  kullanıyor: kap sayısından bağımsız olarak iki sorgu. Toplu okumanın kendisi
-  zaten vardı (`ListPriceCandidatesBySets`) ve hesap yoluna hiç bağlanmamıştı.
-  Sorgunun kendisi de gerçek veriyle ölçüldü (54.000 kap): 50 kap için kap
-  başına yol 4,93 ms, toplu yol 0,25 ms; 100 kap için 9,88 ms ve 0,33 ms.
+  The calculation pass now uses pricing's BULK surface
+  (`service.CalculateAmountsJSON`): two queries regardless of the number of
+  price sets. The bulk read itself already existed
+  (`ListPriceCandidatesBySets`) and had never been wired into the calculation
+  path. The query itself was also measured with real data (54,000 price
+  sets): for 50 sets, the per-set path 4.93 ms, the bulk path 0.25 ms; for 100
+  sets, 9.88 ms and 0.33 ms.
 
-  Seçilen TUTAR değişmiyor ve bu iddia testle çivili
-  (`TestCalculateAmountsJSONMatchesCalculateAmount`): iki yol pricing'in aynı
-  saf seçim fonksiyonunu aynı aday satırlarıyla çalıştırır. Tek fark toplu
-  yolun saati BİR kez okumasıdır ve fark toplu yolun lehinedir — tam o sırada
-  biten bir kampanya, aynı sepetin iki satırını farklı anlardan fiyatlayamaz.
+  The AMOUNT selected does not change, and that claim is pinned by a test
+  (`TestCalculateAmountsJSONMatchesCalculateAmount`): both paths run pricing's
+  same pure selection function with the same candidate rows. The only
+  difference is that the bulk path reads the clock ONCE, and the difference
+  favors the bulk path — a campaign ending at that very moment cannot price
+  two lines of the same cart from different instants.
 
-  Satır AÇILIRKEN sorulan tek fiyat hâlâ tekil metotla soruluyor: ölçüldü, tek
-  kapta toplu yolun üstünlüğü YOK (aday sorgusu 66 µs'ye karşı 77 µs) ve tekil
-  metot daha kesin bir "kap yok" hatası veriyor.
+  The single price asked for while a line is being OPENED is still asked with
+  the single-item method: measured, on a single set the bulk path has NO
+  advantage (candidate query 66 µs against 77 µs), and the single-item method
+  gives a more precise "no price set" error.
 
-- **Fiyatı olmayan satırların HEPSİ tek hatada bildiriliyor.** Toplu yanıt
-  satırların tamamını birden taşıdığı için ilk fiyatsız satırda dönmek elde
-  olan bilgiyi atmak olurdu: iki ölü varyantı olan bir sepetin sahibi ikisini
-  de bu istekte öğreniyor, sepetini istek istek onarmıyor. Hata sınıfı ve kodu
-  değişmedi (`Invalid`, `cart_workflow_price_unavailable`); tek satır fiyatsızsa
-  mesaj da aynen eskisi gibi.
+- **ALL lines without a price are reported in a single error.** Since the
+  bulk response carries every line at once, returning at the first unpriced
+  line would throw away information already at hand: the owner of a cart with
+  two dead variants learns about both in this request, instead of repairing
+  the cart one request at a time. The error class and code did not change
+  (`Invalid`, `cart_workflow_price_unavailable`); if only one line is
+  unpriced, the message is exactly as before.
 
-- **Arama sıralaması `ts_rank_cd` yerine `ts_rank` ile yapılıyor ve sıralama
-  sorgusu artık sorgu başına bir kez hesaplanıyor.** Vitrinin arama ucu
-  eşleşen HER belgeyi puanlamak zorundadır (GIN indeksi `ORDER BY`'ı
-  karşılayamaz), dolayısıyla puanlama fonksiyonunun satır başına bedeli
-  doğrudan ucun bedelidir. Ölçüldü (52.000 belgelik indeks, ~92 lexeme'lik
-  belgeler, LIMIT 20):
+- **Search ranking uses `ts_rank` instead of `ts_rank_cd`, and the ranking
+  query is now computed once per query.** The storefront's search endpoint
+  must score EVERY matching document (a GIN index cannot satisfy `ORDER BY`),
+  so the per-row cost of the scoring function is directly the endpoint's cost.
+  Measured (an index of 52,000 documents, documents of ~92 lexemes, LIMIT 20):
 
-  | eşleşme | ts_rank_cd | ts_rank | yalnızca eşleşme |
+  | matches | ts_rank_cd | ts_rank | match only |
   |---|---|---|---|
-  | 1 002 | 13,7 ms | 1,4 ms | 1,1 ms |
-  | 10 400 | 148,0 ms | 23,0 ms | 21,7 ms |
-  | 52 000 | 663,0 ms | 24,7 ms | 23,8 ms |
+  | 1 002 | 13.7 ms | 1.4 ms | 1.1 ms |
+  | 10 400 | 148.0 ms | 23.0 ms | 21.7 ms |
+  | 52 000 | 663.0 ms | 24.7 ms | 23.8 ms |
 
-  Fark `ts_rank_cd`'nin belge başına ~12 µs'lik bedelidir ve planlayıcı bunu
-  GÖREMEZ: `pg_proc.procost` her iki fonksiyon için de 1'dir. Kataloğun
-  tamamında geçen tek bir kelime, varsayılan 600 istek/dakika kotasıyla
-  saniyede 6,6 çekirdek yakıyordu.
+  The difference is `ts_rank_cd`'s cost of ~12 µs per document, and the
+  planner CANNOT SEE it: `pg_proc.procost` is 1 for both functions. A single
+  word occurring across the whole catalog, at the default quota of 600
+  requests/minute, burned 6.6 core-seconds per second.
 
-  Sıralama GÖZLENEBİLİR biçimde değişti: `ts_rank_cd` kelime yakınlığını alan
-  ağırlığının ÜSTÜNE koyabiliyordu, `ts_rank` koyamaz. "mavi gomlek"
-  sorgusunda iki kelimeyi anahtar alanında (B) yan yana taşıyan ürün, ikisini
-  de başlığında (A) taşıyan üründen önce geliyordu; artık başlık kazanıyor.
-  İndeksin ağırlıklara ayrılmış olmasının sebebi budur, yani bu düzeltmedir.
-  Yakınlık tamamen kaybolmadı — ölçüldü, iki kelime arasındaki boşluk 0'dan
-  6'ya çıkarken skor 0,9910'dan 0,7615'e iniyor — yalnızca ağırlığı yenemez
-  oldu.
+  The ranking changed OBSERVABLY: `ts_rank_cd` could place word proximity
+  ABOVE field weight; `ts_rank` cannot. For the query "mavi gomlek" ("blue
+  shirt"), a product carrying the two words side by side in its keywords field
+  (B) came before a product carrying both in its title (A); now the title
+  wins. That is why the index is split into weights, so this is the fix.
+  Proximity did not disappear entirely — measured, as the gap between the two
+  words grows from 0 to 6 the score falls from 0.9910 to 0.7615 — it just can
+  no longer beat weight.
 
-  Sıralama **sorgunun olumlu kısmıyla** yapılıyor (`querytree`): `ts_rank`
-  olumsuzlama taşıyan bir sorguda HER belgeye 0 verir, yani `gomlek -mavi`
-  yazan alışverişçinin sonuçları alakaya göre değil indekslenme sırasına göre
-  gelirdi — üstelik `-` desteği `websearch_to_tsquery`'yi seçmenin gerekçesi
-  sayılırken. Yalnızca hariç tutmadan oluşan bir sorgu (`-mavi`) sıralanacak
-  olumlu sinyal bırakmaz; o durumda sıra `product_id`'dir ve bu README'nin
-  "Bilinen sınırlar" bölümünde yazılıdır.
+  Ranking uses **the positive part of the query** (`querytree`): `ts_rank`
+  gives EVERY document 0 for a query carrying a negation, so a shopper typing
+  `gomlek -mavi` would have received results in indexing order rather than by
+  relevance — even though support for `-` was counted as the reason for
+  choosing `websearch_to_tsquery`. A query made only of exclusions (`-mavi`)
+  leaves no positive signal to rank by; in that case the order is
+  `product_id`, and this is written in the README's "Known limits" section.
 
-  Sıralama ifadesi skaler alt sorgudur. pgx altıncı çalıştırmadan sonra genel
-  plana geçebilir ve genel planda ifade sabite katlanmaz, satır başına
-  yeniden ayrıştırılırdı: 52.000 eşleşmede 46,7 ms'ye karşı 25,4 ms.
+  The ranking expression is a scalar subquery. After the sixth execution pgx
+  may switch to a generic plan, and in a generic plan the expression would not
+  be folded into a constant but re-parsed per row: 46.7 ms against 25.4 ms at
+  52,000 matches.
 
-- **Vitrinin satış kanalı görünürlük kuralı tek bir korelasyonlu alt sorguya
-  indi.** Kural DEĞİŞMEDİ; nasıl yazıldığı değişti. Eski hâli iki bağımsız
-  alt sorguydu ("hiç ataması yok VEYA istenen kanalda ataması var") ve
-  `saleschannel.go`'nun yorumu aday satır başına bir indeks yoklaması
-  yapıldığını iddia ediyordu. İddia yanlıştı: planlayıcı iki bağımsız EXISTS
-  gördüğünde ikisini de hash'e çeviriyor, yani ilk satırı dönmeden ÖNCE link
-  tablosunun tamamını iki kez tarıyor.
+- **The storefront's sales channel visibility rule was reduced to a single
+  correlated subquery.** The rule DID NOT CHANGE; how it is written did. The
+  old form was two independent subqueries ("has no assignment at all OR has
+  an assignment in the requested channel"), and the comment in
+  `saleschannel.go` claimed that one index probe was made per candidate row.
+  The claim was wrong: when the planner sees two independent EXISTS it turns
+  both into hashes, so it scans the whole link table twice BEFORE returning
+  the first row.
 
-  Ölçüldü — 52.000 ürün, 52.000 kanal ataması, gerçek Postgres, vitrinin
-  `GET /store/v1/products?limit=20` ucu:
+  Measured — 52,000 products, 52,000 channel assignments, real Postgres, the
+  storefront's `GET /store/v1/products?limit=20` endpoint:
 
-  | | eski | yeni |
+  | | old | new |
   |---|---|---|
-  | liste sorgusu | 26,80 ms | **0,14 ms** |
-  | sayaç sorgusu | 73,87 ms | 78,97 ms |
-  | istekteki toplam SQL | 100,7 ms | 79,9 ms |
+  | list query | 26.80 ms | **0.14 ms** |
+  | count query | 73.87 ms | 78.97 ms |
+  | total SQL in the request | 100.7 ms | 79.9 ms |
 
-  Maliyet sayfa boyutuyla değil KATALOG boyutuyla büyüyordu, üstelik vitrinin
-  en sıcak ucunda: aynı uç 2.000 ürünle 7,5 ms, 52.000 ürünle 113 ms sürüyordu
-  ve ikisi de aynı 20 satırı dönüyordu.
+  The cost grew with CATALOG size, not page size — and on the storefront's
+  hottest endpoint at that: the same endpoint took 7.5 ms with 2,000 products
+  and 113 ms with 52,000, both returning the same 20 rows.
 
-  Yeni formülasyondaki `IS TRUE` bir süs DEĞİL: onsuz, kanal dizisi bir NULL
-  eleman taşıdığında `bool_or` NULL'ı yutuyor, `COALESCE` onu "hiç ataması yok"
-  sanıyor ve atanmış bir ürün yanlış kanalda GÖRÜNÜR oluyor — yani eksik hâli
-  açığa düşüyor. Sekiz senaryoda ölçüldü. Ve hiçbir test bunu yakalayamaz,
-  çünkü kanal dizisi Go'dan `[]string` gelir ve NULL eleman üretemez; gerekçe
-  kodda yazılı.
+  The `IS TRUE` in the new formulation is NOT decoration: without it, when the
+  channel array carries a NULL element, `bool_or` swallows the NULL,
+  `COALESCE` takes it for "has no assignment at all", and an assigned product
+  becomes VISIBLE in the wrong channel — so the form without it fails open.
+  Measured across eight scenarios. And no test can catch this, because the
+  channel array comes from Go as `[]string` and cannot produce a NULL element;
+  the reasoning is written in the code.
 
-- **Sayacın maliyeti bir SINIR olarak yazıya geçti** (README, "Bilinen
-  sınırlar"). Vitrin listesinin toplam sayacı kanal süzgeciyle birlikte
-  katalogun tamamına bakmak zorundadır ve düzeltilebilir bir şey değildir:
-  aynı katalogda süzgeçsiz düz sayım 2 ms, kanal süzgeçli sayım 79 ms sürüyor.
+- **The count's cost is now written down as a LIMIT** (README, "Known
+  limits"). With the channel filter, the storefront listing's total count has
+  to look at the whole catalog, and that is not something that can be fixed:
+  on the same catalog a plain count without the filter takes 2 ms, a count
+  with the channel filter 79 ms.
 
-### Düzeltildi
+### Fixed
 
-- **Ortasında kesilen bir ödeme sepeti SONSUZA DEK kilitliyordu.** Yürütme
-  kaydı "running" açılır ve uç duruma geçerek kapanır; süreç o geçişi yazamadan
-  ölürse (deploy, OOM, pod tahliyesi) kayıt sonsuza dek running kalır. Ölçüldü:
-  üç gün önce çökmüş bir yürütme hâlâ *"hâlâ sürüyor"* diyordu ve o sepet bir
-  daha ödenemiyordu.
+- **A payment interrupted midway locked the cart FOREVER.** An execution
+  record is opened as "running" and closed by moving to a terminal state; if
+  the process dies before it can write that transition (deploy, OOM, pod
+  eviction), the record stays running forever. Measured: an execution that
+  crashed three days earlier still said *"still in progress"*, and that cart
+  could never be paid for again.
 
-  Motor artık bir KİRA süresi kabul ediyor (`workflow.WithLease`): çağıran
-  akışının meşru olarak ne kadar sürebileceğini bildirir, ve o süreden uzun
-  süre running duran bir kayıt hiçbir sürecin tutamayacağı bir kayıttır.
-  Yaşlılık tek başına kanıt değildir, kira kanıttır — bu yüzden süre motorca
-  tahmin edilmez, çağıranca bildirilir.
+  The engine now accepts a LEASE duration (`workflow.WithLease`): the caller
+  declares how long its flow can legitimately take, and a record that stays
+  running longer than that is a record no process can be holding. Age alone
+  is not proof, the lease is — that is why the duration is not guessed by the
+  engine but declared by the caller.
 
-  Terk edilmiş bir kaydın ne yapılacağına ADIM KAYITLARINA bakılarak karar
-  verilir ve iki dal da testli:
+  What to do with an abandoned record is decided by looking at the STEP
+  RECORDS, and both branches are tested:
 
-  - **Hiçbir adım iş yapmamışsa** telafi edilecek bir şey yoktur: kayıt
-    `failed` olur, anahtarını bırakır, müşteri sepetini ödeyebilir.
-  - **İş yapılmışsa** telafi hiç çalışmamıştır ve yarım iş ortadadır: kayıt
-    `compensation_failed` olur, anahtarını TUTAR, ERROR loglanır ve çağıran
-    "elle müdahale gerekir" der. Sessizce yeniden denemek, ayrılmış stoğun
-    ikinci kez ayrılması olurdu.
-  - **Adımlar okunamıyorsa** karar VERİLMEZ; kayıt olduğu gibi bırakılır. İki
-    yanlışın bedeli eşit değil: geç karar müşteriyi bekletir, erken karar
-    koşan bir saga'nın anahtarını bırakıp stoğu ikiye katlar.
+  - **If no step did any work**, there is nothing to compensate: the record
+    becomes `failed`, releases its key, and the customer can pay for their
+    cart.
+  - **If work was done**, compensation never ran and half-done work is left
+    hanging: the record becomes `compensation_failed`, KEEPS its key, an ERROR
+    is logged and the caller says "manual intervention required". Silently
+    retrying would reserve already-reserved stock a second time.
+  - **If the steps cannot be read**, NO decision is made; the record is left
+    as it is. The two mistakes do not cost the same: a late decision keeps the
+    customer waiting, an early one releases the key of a running saga and
+    double-books the stock.
 
-  `complete_cart` kirası 10 dakika: teorik üst sınır 2dk + 5×30sn = 4,5 dakika
-  ve marj bilinçli olarak iki katından fazla.
-
-
-- **Başarısız bir ödeme sepeti KALICI olarak bozuyordu.** Kartı reddedilen
-  müşteri — gerçek bir vitrinde her on ödemenin birinde olan şey — o sepeti bir
-  daha ödeyemiyordu. Ölçüldü:
-
-  ```
-  1) manual_outcome=decline  -> payment_authorization_declined   (saga telafi etti)
-  2) geçerli ödemeyle tekrar -> 409 workflow_execution_failed
-     "...daha önce başarısız oldu ve telafi edildi; yeniden denemek için
-      YENİ bir anahtar kullanın"
-  ```
-
-  Tavsiyenin HTTP yüzeyinde bir karşılığı da yoktu: anahtar sepet kimliğinden
-  TÜRETİLİYOR (`complete_cart:<sepet>`), yani müşterinin yeni anahtar
-  verebileceği bir alan yok. Sepet içindekilerle birlikte duruyor ama satın
-  alınamıyor; müşteri sepeti sıfırdan kurmak zorunda.
-
-  Kusur anlamdaydı: bu motorda `StatusFailed` "başarısız" değil, **"başarısız
-  ve telafi EKSİKSİZ tamamlandı"** demek — yani deneme dünyada iz bırakmadı.
-  Anahtar da bir izdir. Artık o duruma geçiş anahtarı BIRAKIYOR (kaydı silmeden;
-  başarısız deneme denetim kaydı olarak kalıyor) ve aynı sepet tekrar
-  ödenebiliyor.
-
-  Sınır iki yandan çizili ve testli: `completed` anahtarı bırakmaz (yoksa aynı
-  sepet iki kez tahsil edilirdi), `compensation_failed` de bırakmaz (yoksa elle
-  müdahale bekleyen yarım bir işin üstüne yeni deneme binerdi). Bırakma, durum
-  yazımıyla AYNI ifadede yapılıyor: iki ayrı yazım arasında düşen bir süreç
-  anahtarı sonsuza dek tutulu bırakır, yani düzeltilen arızayı nadir bir yarış
-  olarak geri getirirdi.
+  The `complete_cart` lease is 10 minutes: the theoretical upper bound is
+  2 min + 5×30 s = 4.5 minutes, and the margin is deliberately more than
+  double that.
 
 
-- **ARAMA TÜRKÇE'DE SESSİZCE ÇALIŞMIYORDU.** `deploy/docker-compose.yml`
-  Postgres'i `--locale=C` ile kuruyordu ve C locale yalnızca ASCII harfleri
-  katlar. Sonuç: `"çanta"` arayan müşteri, başlığı `"Çanta"` olan ürünü
-  BULAMIYORDU. Hata yok, log yok, metrik yok — arama kutusu boş liste dönüyordu.
-
-  Bu bir eklenti sorunu DEĞİLDİ: vitrinin kendi süzgeci
-  (`title ILIKE '%' || $q || '%'`) de aynı ayara bağlı, yani hiçbir eklenti
-  kurulmamış bir kurulumda da bozuktu. Gerçek sunucuda ölçüldü:
+- **A failed payment broke the cart PERMANENTLY.** A customer whose card was
+  declined — something that happens in one of every ten payments on a real
+  storefront — could never pay for that cart again. Measured:
 
   ```
-  GET /store/v1/products?q=çanta   -> 0 sonuç
-  GET /store/v1/products?q=Çanta   -> 1 sonuç
+  1) manual_outcome=decline  -> payment_authorization_declined   (the saga compensated)
+  2) retry with a valid payment -> 409 workflow_execution_failed
+     "...it failed before and was compensated; to try again, use a NEW
+      key"
   ```
 
-  Düzeltme `--locale=C.UTF-8`. Aynı imajda üç kurulum ölçüldü:
+  The advice had no counterpart on the HTTP surface either: the key is
+  DERIVED from the cart ID (`complete_cart:<sepet>`), so there is no field
+  where the customer could supply a new key. The cart stays, contents and all,
+  but cannot be bought; the customer has to build the cart from scratch.
+
+  The defect was in the meaning: in this engine `StatusFailed` does not mean
+  "failed" but **"failed and compensation completed IN FULL"** — that is, the
+  attempt left no trace in the world. The key is a trace too. Moving to that
+  state now RELEASES the key (without deleting the record; the failed attempt
+  remains as an audit record), and the same cart can be paid for again.
+
+  The boundary is drawn on both sides and tested: `completed` does not release
+  the key (otherwise the same cart would be charged twice), and neither does
+  `compensation_failed` (otherwise a new attempt would pile on top of
+  half-done work awaiting manual intervention). The release happens in the
+  SAME statement as the status write: a process that died between two
+  separate writes would leave the key held forever, bringing back the fixed
+  fault as a rare race.
+
+
+- **SEARCH SILENTLY DID NOT WORK IN TURKISH.** `deploy/docker-compose.yml`
+  created Postgres with `--locale=C`, and the C locale folds only ASCII
+  letters. The result: a customer searching for `"çanta"` could NOT FIND the
+  product titled `"Çanta"`. No error, no log, no metric — the search box
+  returned an empty list.
+
+  This was NOT a plugin problem: the storefront's own filter
+  (`title ILIKE '%' || $q || '%'`) depends on the same setting, so it was
+  broken in an installation with no plugin installed as well. Measured on a
+  real server:
+
+  ```
+  GET /store/v1/products?q=çanta   -> 0 results
+  GET /store/v1/products?q=Çanta   -> 1 result
+  ```
+
+  The fix is `--locale=C.UTF-8`. Three setups were measured on the same image:
 
   | initdb | `ILIKE` | `to_tsvector` |
   |---|---|---|
-  | `--locale=C` (eskisi) | ✗ | ✗ |
-  | `--locale=C.UTF-8` (yenisi) | ✓ | ✓ |
+  | `--locale=C` (old) | ✗ | ✗ |
+  | `--locale=C.UTF-8` (new) | ✓ | ✓ |
   | `--locale-provider=icu` | ✓ | **✗** |
 
-  ICU'nun yarım kalması önemli: `ILIKE`'ı düzeltip arama indeksini bozuk
-  bırakıyor, yani düzeltilmiş gibi görünen bir kurulum üretiyor. C.UTF-8
-  sıralamayı da kaybettirmiyor — karşılaştırma yine bayt sırası, değişen
-  yalnızca harf katlaması.
+  That ICU only gets halfway matters: it fixes `ILIKE` and leaves the search
+  index broken, so it produces an installation that looks fixed. C.UTF-8 does
+  not cost the sort order either — comparison is still byte order; only case
+  folding changes.
 
-- **Açılışta artık bu sınanıyor** (`core/db/casefold.go`). Havuz
-  açıldıktan sonra veritabanına iki soru sorulur — `'Ç' ILIKE 'ç'` ve
-  `to_tsvector`/`websearch_to_tsquery` eşleşmesi — ve biri bile başarısızsa
-  hangi arama yolunun etkilendiğini ve çözümün ne olduğunu söyleyen bir UYARI
-  loglanır. Açılış DURDURULMAZ: tamamen ASCII bir katalog C locale'de sorunsuz
-  çalışır ve o kurulumları reddetmek yanlış olurdu.
+- **This is now tested at startup** (`core/db/casefold.go`). After the pool
+  opens, the database is asked two questions — `'Ç' ILIKE 'ç'` and a
+  `to_tsvector`/`websearch_to_tsquery` match — and if even one fails, a
+  WARNING is logged saying which search path is affected and what the remedy
+  is. Startup is NOT STOPPED: an all-ASCII catalog works fine under the C
+  locale, and refusing those installations would be wrong.
 
-  Locale ADI okunmuyor, DAVRANIŞ sınanıyor: ad bir vekildir ve beklenmedik ama
-  doğru bir locale yanlış raporlanırdı. İki yarı da sınanıyor, çünkü ICU
-  kurulumunda ayrışıyorlar — yalnızca `ILIKE`'a bakan bir kontrol o kuruluma
-  temiz rapor verirdi. Locale initdb ANINDA sabitlendiği için var olan bir veri
-  dizini eski ayarıyla kalır; uyarı bunu ve dump/restore gerektiğini söyler.
+  The locale NAME is not read; the BEHAVIOR is tested: the name is a proxy,
+  and an unexpected but correct locale would be misreported. Both halves are
+  tested, because they diverge on an ICU setup — a check looking only at
+  `ILIKE` would give that setup a clean report. Since the locale is fixed AT
+  initdb TIME, an existing data directory keeps its old setting; the warning
+  says so, and that a dump/restore is required.
 
-### Güvenlik
+### Security
 
-- **Vitrinde bir alışverişçi başkasının SEPETİNİ alabiliyordu.** Idempotency
-  kaydı çağıranın kimliğiyle ad alanına alınıyor; ama `/store/v1`'de çözülen
-  kimlik alışverişçinin değil MAĞAZANIN kimliği — publishable anahtar her
-  tarayıcıda aynı ve zaten gizli değil. Yani bütün müşteriler TEK kova
-  paylaşıyor ve kaydı seçen şey istemcinin seçtiği bir başlık.
+- **On the storefront, a shopper could get someone else's CART.** The
+  idempotency record is namespaced by the caller's identity; but the identity
+  resolved on `/store/v1` is the SHOP's, not the shopper's — the publishable
+  key is the same in every browser and is not secret anyway. So all customers
+  share ONE bucket, and what selects the record is a header the client
+  chooses.
 
-  Ölçüldü, çıkarsanmadı: iki bağımsız çağıran, `Idempotency-Key: cart-9`,
-  aynı gövde → **ikisi de aynı sepet kimliğini** aldı ve ikincinin yanıtında
-  `Idempotency-Replayed: true` vardı. Sepette sahiplik denetimi olmadığı için
-  (README, "Bilinen sınırlar") bu, yabancıya birinin sepetini vermek demek:
-  içindekiler, e-postası, adresi, ve tamamlama yetkisi.
+  Measured, not inferred: two independent callers, `Idempotency-Key: cart-9`,
+  the same body → **both received the same cart ID**, and the second one's
+  response carried `Idempotency-Replayed: true`. Since the cart has no
+  ownership check (README, "Known limits"), this means handing a stranger
+  someone's cart: its contents, email, address, and the right to complete it.
 
-  Vitrin bunu çoğu uçta atlatıyordu, çünkü parmak izi YOLU da içeriyor ve
-  sepet kapsamlı uçların yolunda sepet kimliği var — aynı anahtarı kendi
-  sepetinde kullanan ikinci müşteri 409 alıyor. Sızıntı tam olarak yolunda
-  hiçbir yetenek TAŞIMAYAN ve yanıtında bir yetenek ÜRETEN tek uçtaydı:
-  `POST /store/v1/carts`.
+  The storefront escaped this on most endpoints, because the fingerprint also
+  includes the PATH, and cart-scoped endpoints have the cart ID in their path
+  — a second customer using the same key on their own cart gets 409. The leak
+  was exactly on the one endpoint that CARRIES no capability in its path and
+  PRODUCES a capability in its response: `POST /store/v1/carts`.
 
-  O uç artık idempotency halkasından MUAF. Bedeli açık: zaman aşımına uğrayan
-  bir yaratma isteğini tekrarlayan istemci iki sepet açar, biri terk edilir.
-  Para, stok ve müşteriye görünen hiçbir şey etkilenmiyor. Muafiyet TAM YOL
-  eşleşmesiyle çalıştığı için `/carts/{id}/complete` korunmaya devam ediyor —
-  çift SİPARİŞ üreten uç odur.
+  That endpoint is now EXEMPT from the idempotency ring. The cost is plain: a
+  client retrying a create request that timed out opens two carts, and one is
+  abandoned. Money, stock and anything visible to the customer are
+  unaffected. Since the exemption works by EXACT PATH match,
+  `/carts/{id}/complete` stays protected — that is the endpoint that produces
+  a double ORDER.
 
-  Bu davranışı bir e2e testi TERSİNDEN çiviliyordu ("aynı anahtar tek sepet
-  üretir") ve iddiası kendi başına makuldü; yanlış olan, kaydın vitrinde
-  çağıranları ayırabildiği varsayımıydı. Test yeni sözleşmeyi ve kapattığı
-  sızıntıyı yazacak şekilde yeniden yazıldı. Ayrıca e2e kurulumu artık
-  üretimin muafiyet listesini KULLANIYOR: eskiden kendi listesini kurduğu için
-  üretimdeki satırı silmek hiçbir testi düşürmüyordu.
+  An e2e test pinned this behavior the OTHER WAY ROUND ("the same key produces
+  one cart"), and its assertion was reasonable on its own; what was wrong was
+  the assumption that the record could tell callers apart on the storefront.
+  The test was rewritten to state the new contract and the leak it closes. The
+  e2e setup also now USES production's exemption list: since it used to build
+  its own list, deleting the line in production failed no test.
 
 ## [0.6.0] — 2026-09-03
 
-### Eklendi
+### Added
 
-- **Hata bildirimi: çekirdekte sözleşme, eklentide Sentry**
+- **Error reporting: the contract in the core, Sentry in a plugin**
   ([ADR 0014](docs/adr/0014-error-reporting.md)). `provider.ErrorReporter`
-  çekirdekte, `plugins/errorsentry` içinde uygulaması. Besleme **log**tur: her
-  arıza zaten ERROR yazıyor, dolayısıyla `logger.Options.Middleware` ile log
-  handler'ını sarmak üç kapıyı (WriteError, Recoverer, doğrudan ErrorContext)
-  birden kapatır ve arıza üreten koda hiçbir yükümlülük eklemez.
+  lives in the core, its implementation in `plugins/errorsentry`. The feed is
+  the **log**: every failure already writes at ERROR, so wrapping the log
+  handler through `logger.Options.Middleware` closes three doors at once
+  (WriteError, Recoverer, a direct ErrorContext) and adds no obligation to the
+  code that produces failures.
 
-  Zor kısım Sentry'yi bağlamak değil, **neyin asla gönderilmeyeceğine** karar
-  vermekti ve o karar çekirdekte duruyor:
+  The hard part was not wiring up Sentry but deciding **what is never sent**,
+  and that decision lives in the core:
 
-  - Raporlayıcı **hatanın kendisini hiç görmez**; olay yalnızca dize taşır.
-    Alamadığı şeyi gönderemez.
-  - Öznitelikler **izin listesiyle** geçer, elenen anahtarların adları yine
-    taşınır. Varsayılanda hiçbir iş kimliği yok.
-  - Serbest metinden yalnızca log mesajı ve `errors.Error.Message` çıkar;
-    ikisinin de yazılı güvencesi var. Sarılı zincir süreçte kalır.
-  - Gruplama anahtarı hata KODUDUR, yığın izi değil.
-  - Kod başına dakikada üç rapor; bastırılan sayı bir sonrakiyle taşınır.
-  - Log önce yazılır; panikleyen raporlayıcı süreç ömrü boyunca kapatılır;
-    gönderim hatası raporlama eşiğinin ALTINDA loglanır — üstünde loglamak
-    toplayıcı kesintisini kendi kendini büyüten bir döngüye çevirirdi.
+  - The reporter **never sees the error itself**; the event carries only
+    strings. It cannot send what it never receives.
+  - Attributes pass through an **allowlist**, and the names of the dropped
+    keys are still carried. By default no business identifier is included.
+  - The only free text that leaves is the log message and
+    `errors.Error.Message`; both carry a written guarantee. The wrapped chain
+    stays in the process.
+  - The grouping key is the error CODE, not the stack trace.
+  - Three reports per code per minute; the suppressed count rides along with
+    the next one.
+  - The log is written first; a reporter that panics is switched off for the
+    life of the process; a send failure is logged BELOW the reporting
+    threshold — logging it above would turn a collector outage into a
+    self-amplifying loop.
 
-- **Erişim logunun 5xx satırı artık "zaten raporlandı" diye işaretleniyor.**
-  Bu kusuru gerçek bir toplayıcıya karşı koşarken bulduk ve hiçbir birim testi
-  gösteremezdi: bir 5xx İKİ kez loglanıyor — biri kodu taşıyan teşhis satırı,
-  öteki kod taşımayan erişim özeti — ve ikisi de ERROR. İkisini birden
-  bildirmek hacmi ikiye katlıyor, dahası uygulamadaki her sunucu hatasını
-  `unclassified` kovasına dolduruyordu; o kovanın, gerçekten sınıflandırılmamış
-  bir arıza içinde görünebilsin diye boş kalması gerekir. Üstelik o kovanın
-  hız bütçesini de harcıyordu.
+- **The access log's 5xx line is now marked "already reported".**
+  We found this defect while running against a real collector, and no unit
+  test could have shown it: a 5xx is logged TWICE — once as the diagnostic
+  line that carries the code, once as the access summary that carries none —
+  and both are ERROR. Reporting both doubled the volume and, worse, filled the
+  `unclassified` bucket with every server error in the application; that
+  bucket has to stay empty so that a genuinely unclassified failure can be
+  seen in it. On top of that, it was spending that bucket's rate budget.
 
-- **Panelde fiyat ve stok düzenleme** ([ADR 0013](docs/adr/0013-panel-write-surface.md)
-  eki). Varyant sayfası bir varyantın para birimi başına taban fiyatını ve her
-  lokasyondaki fiziksel stoğunu düzenletiyor; `pricing.admin` ve
-  `inventory.admin` yüzeyleri bunun için eklendi.
+- **Price and stock editing in the panel** ([ADR 0013](docs/adr/0013-panel-write-surface.md)
+  addendum). The variant page lets the operator edit a variant's base price
+  per currency and its physical stock at each location; the `pricing.admin`
+  and `inventory.admin` surfaces were added for this.
 
-  Fiyat yüzeyi bir **kayıpsız oku-değiştir-yaz**. Modülün tek fiyat yazıcısı
-  YIKICI: `SetPrices` kümenin fiyatlarını değiştirmiyor, DEĞİŞTİRİYOR — girdide
-  olmayan her fiyatı siliyor. Panel ise fiyatları sorgu sağlayıcısından
-  okuyor ve o sağlayıcı kural taşıyan ve liste üzerindeki fiyatları
-  FİLTRELİYOR. İkisi birleşince, taban fiyatı düzenleyen naif bir form
-  kümedeki her kampanya fiyatını sessizce silerdi — operatör onları hiç
-  görmediği için de fark edilmezdi. Yüzey bu yüzden TÜM fiyatları okuyup
-  yalnızca birini değiştiriyor ve geri kalanını olduğu gibi geri yazıyor.
-  Bedeli yazılı: yazma fiyat kimliklerini yeniden üretiyor, ki bu kimlikler
-  yalnızca pricing'in kendi `price_rule` satırlarınca anılıyor.
+  The price surface is a **lossless read-modify-write**. The module's only
+  price writer is DESTRUCTIVE: `SetPrices` does not change the set's prices,
+  it REPLACES them — it deletes every price that is not in the input. The
+  panel, however, reads prices from the query provider, and that provider
+  FILTERS OUT prices that carry rules and prices on a price list. Put
+  together, a naive form that edits the base price would silently delete
+  every campaign price in the set — and since the operator never saw them,
+  nobody would notice. So the surface reads ALL prices, changes only one and
+  writes the rest back as they were. The cost is written down: the write
+  regenerates the price IDs, which are referenced only by pricing's own
+  `price_rule` rows.
 
-  Stok yüzeyi bir de OKUMA taşıyor, ki diğer ikisi taşımıyor. Sebep tercih
-  değil boşluk: sorgu sağlayıcısı kalem başına TEK bir toplam veriyor ve
-  toplamla stok düzenlenemez — operatörün hangi deponun ne tuttuğunu bilmesi
-  gerek. Kırılım sorgu katmanına eklenmedi, çünkü orada kitle vitrini de
-  içeriyor; rezerve adetler ve iç depo adları oraya ait değil.
+  The stock surface also carries a READ, which the other two do not. The
+  reason is a gap, not a preference: the query provider gives ONE total per
+  item, and stock cannot be edited from a total — the operator needs to know
+  which warehouse holds what. The breakdown was not added to the query layer,
+  because there its audience includes the storefront; reserved quantities and
+  internal warehouse names do not belong there.
 
-  Boş lokasyonlar da listeleniyor: yalnızca seviyesi olanları gösteren bir
-  form yeni bir depoyu HİÇ stoklayamazdı, çünkü depo ancak stoğu olduğunda
-  görünürdü — yani operatörün ulaşmaya çalıştığı durumda. Rezerve adet de
-  yazılıyor, çünkü servisin "söz verilmiş stoğun altına inemezsin" reddi
-  aksi hâlde keyfî görünürdü.
+  Empty locations are listed too: a form that showed only the locations that
+  have a level could NEVER stock a new warehouse, because the warehouse would
+  appear only once it had stock — that is, in exactly the state the operator
+  is trying to reach. The reserved quantity is shown as well, because
+  otherwise the service's "you cannot go below promised stock" rejection
+  would look arbitrary.
 
-  Para hesabı baştan sona TAMSAYI. Operatörün yazdığı metin ondalık kısmı
-  ÖTELENEREK (ölçeklenerek değil) minor birime çevriliyor — iki haneli bir
-  para biriminde "1.5" 150'dir, 15 değil — ve para biriminin hane sayısından
-  fazla ondalık YUVARLANMIYOR, reddediliyor: yuvarlamak operatörün yazdığı
-  fiyatı sessizce değiştirmek olurdu. Ölçek bilinmiyorsa kutu ham minor
-  birim alıyor ve form bunu SÖYLÜYOR; söylemeyen bir kutuya "199.90" yazan
-  operatör kastettiğinin yüzde birini kaydederdi.
+  Money arithmetic is INTEGER from end to end. The text the operator types is
+  converted to minor units by SHIFTING the decimal part (not by scaling it) —
+  in a two-decimal currency "1.5" is 150, not 15 — and decimals beyond the
+  currency's number of digits are not ROUNDED but rejected: rounding would
+  silently change the price the operator typed. If the scale is unknown, the
+  box takes raw minor units and the form SAYS so; an operator who typed
+  "199.90" into a box that did not say so would record one hundredth of what
+  they meant.
 
-- **Panel artık YAZIYOR: ürün başlığı, handle ve durumu düzenlenebiliyor**
-  ([ADR 0013](docs/adr/0013-panel-write-surface.md)). ADR 0011'in "panel okuma
-  yollarını kullanır" kararı bilinçli olarak açıldı ve yerine ne konduğu
-  yazıldı.
+- **The panel now WRITES: a product's title, handle and status can be edited**
+  ([ADR 0013](docs/adr/0013-panel-write-surface.md)). ADR 0011's "the panel
+  uses the read paths" decision was deliberately reopened, and what replaced
+  it is written down.
 
-  Okuma katmanı GENERİKTİ; yazmanın karşılığı yok. Product servisinin metodu
-  modülün kendi tiplerini taşıyor (`UpdateProductInput`, `models.Status`) ve
-  panel onları adlandıramaz — adlandırdığı an KENDİ paketinde tanımlı BAŞKA bir
-  tip olurlar. Bu yüzden modül ilkel-tipli dar bir **yönetim yazma yüzeyi**
-  yayımlıyor ve container'a `product.admin` adıyla, interop'tan AYRI
-  kaydediliyor.
+  The read layer was GENERIC; writing has no counterpart. The product
+  service's method carries the module's own types (`UpdateProductInput`,
+  `models.Status`) and the panel cannot name them — the moment it does, they
+  become a DIFFERENT type defined in its OWN package. So the module publishes
+  a narrow, primitive-typed **admin write surface**, registered in the
+  container under the name `product.admin`, SEPARATELY from interop.
 
-  Ayrım bir dosyalama tercihi değil: interop'un godoc'u dar kalmaya söz veriyor
-  ve kitlesini sayıyor (başka modüller, akışlar, eklentiler). Oraya bir yazma
-  metodu eklemek, bir düzenleme formunun yan etkisi olarak HER EKLENTİYE
-  katalogu yeniden yazma yetkisi verirdi. `TestAdminSurfaceHasOneAudience` adı
-  gerçek kılıyor: `.admin` ile biten bir adı, sahibi modül ve panel dışında
-  hiçbir üretim dosyası anamaz.
+  The separation is not a filing preference: interop's godoc promises to stay
+  narrow and lists its audience (other modules, workflows, plugins). Adding a
+  write method there would, as a side effect of an edit form, give EVERY
+  PLUGIN the power to rewrite the catalog. `TestAdminSurfaceHasOneAudience`
+  makes the name true: no production file other than the owning module and
+  the panel may reference a name that ends in `.admin`.
 
-  Yazma SERVİSTEN geçiyor, depodan değil: handle tekilliği ve
-  `product.updated` olayı orada. Sessiz olan yarısı (olay) ayrıca iddia
-  ediliyor — gürültülü olan (handle çakışması) yoksa ikisinin de kanıtı
-  sayılırdı.
+  The write goes through the SERVICE, not the repository: handle uniqueness
+  and the `product.updated` event live there. The quiet half (the event) is
+  asserted separately — otherwise the noisy half (the handle conflict) would
+  have counted as proof of both.
 
-  Yüzey KOŞULLU çözülüyor: product modülü kurulu olmayan bir kurulumda panel
-  yine açılıyor ve düzenleme formu sebebini söyleyen bir 503 dönüyor.
+  The surface is resolved CONDITIONALLY: in an installation without the
+  product module, the panel still opens and the edit form returns a 503 that
+  states the reason.
 
-- **Panelin beklenmeyen arızada tarayıcıya JSON zarfı yazması düzeltildi.**
-  Kusur giriş yolunda ADR 0011'den beri vardı: `corehttp.WriteError` çerçevenin
-  JSON zarfını yazıyor, bu bir API istemcisi için doğru ama bu yola TARAYICI
-  gelmiş oluyor. Üstelik zarf, Internal olmayan sınıfların mesajını olduğu gibi
-  geçiriyor — o söz API istemcileri için verilmişti; panel sayfasını okuyan
-  operatör sızmış bir bağlantı dizesini teşhisten ayıramaz. Artık panelin kendi
-  hata sayfası dönüyor, gerçek sebep loga gidiyor.
+- **The panel no longer writes a JSON envelope to the browser on an
+  unexpected failure.** The defect had been on the login path since ADR 0011:
+  `corehttp.WriteError` writes the framework's JSON envelope, which is right
+  for an API client, but what arrives on this path is a BROWSER. Worse, the
+  envelope passes the message of non-Internal classes through unchanged — that
+  promise was made to API clients; an operator reading the panel page cannot
+  tell a leaked connection string from a diagnosis. The panel's own error page
+  is now returned, and the real cause goes to the log.
 
-- **Panelin katalog ekranları geldi: ürün listesi ve ürün sayfası.** Ürün
-  sayfası varyantları, fiyatlarını ve stoklarını gösteriyor — üçü üç ayrı
-  modülden, hiçbiri panel tarafından import edilmeden. Okuma katmanına herkes
-  gibi ADLA ulaşılıyor (ADR 0004) ve fiyat ile stok TEK çağrıda genişletme
-  olarak geliyor; satır başına sorgu yok.
+- **The panel's catalog screens have arrived: the product list and the product
+  page.** The product page shows variants, their prices and their stock —
+  three things from three separate modules, none of them imported by the
+  panel. The read layer is reached BY NAME like everyone else (ADR 0004), and
+  price and stock arrive as expansions in ONE call; there is no query per row.
 
-  Panel bu adları ELLE yazmak zorunda (modülleri import edemez) ve ayrışmaları
-  SESSİZDİR: link adı değiştiği gün panel derlenir, 200 döner ve yalnızca fiyat
-  sütunu boşalır. `TestThePanelCatalogNamesAgree` bu bağı derleme zamanına
-  taşıyor — `TestTheProviderRegistryNamesAgree` ile aynı gerekçe, aynı yer.
-  Süzgeç ve alan adlarının çoğu sahibi modülde dışa açık olmadığı için
-  pinlenemiyor; onların koruması okuma katmanının "tanımadığım alan" reddi ve
-  bunun panelde 500'e çevrilmesi.
+  The panel has to write these names BY HAND (it cannot import the modules),
+  and their drift is SILENT: on the day a link name changes, the panel
+  compiles, returns 200, and only the price column goes empty.
+  `TestThePanelCatalogNamesAgree` moves this tie to compile time — the same
+  rationale and the same place as `TestTheProviderRegistryNamesAgree`. Most
+  filter and field names cannot be pinned, because the owning module does not
+  export them; their protection is the read layer's "unknown field" rejection
+  and the panel turning it into a 500.
 
-  **Fiyat ASLA tahmin edilmiyor.** Tutar minor unit tam sayısıdır ve okunur
-  hâle getirmek para biriminin ondalık basamak sayısını gerektirir; ISO 4217'de
-  bu sayı 0 (JPY), 2 (çoğunluk) ve 3 (KWD) olabilir. Ölçek bölge kaydından
-  okunur; okunamazsa ham tam sayı gösterilir ve "minor units" diye
-  ETİKETLENİR. Sabit 100 varsaymak iki sınıfta yanlış tutarı KENDİNDEN EMİN
-  gösterirdi. Aritmetik baştan sona tam sayıda kalır (plan Bölüm 8: float
-  ASLA).
+  **The price is NEVER guessed.** The amount is a minor-unit integer, and
+  making it readable requires the currency's number of decimal places; in
+  ISO 4217 that number can be 0 (JPY), 2 (the majority) or 3 (KWD). The scale
+  is read from the region record; if it cannot be read, the raw integer is
+  shown and LABELED "minor units". Assuming a fixed 100 would show a wrong
+  amount CONFIDENTLY in two classes. The arithmetic stays in integers from end
+  to end (plan Section 8: float NEVER).
 
-  Stoğu olmayan varyant `—` gösteriyor, `0` DEĞİL: sıfır "tükendi" demektir,
-  hiç takip edilmemek başka bir olgudur.
+  A variant without stock shows `—`, NOT `0`: zero means "sold out", and never
+  having been tracked is a different fact.
 
-- **Yönetim paneli iskeleti: dördüncü ağaç `internal/adminui`**
-  ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)). Panel `/admin/ui`
-  altında yaşar, sunucu tarafında HTML üretir (`html/template`, ikiliye gömülü)
-  ve modülleri İMPORT ETMEZ — çerçevenin okuma yollarını container'dan adla
-  çözer. Bu turda giriş, çıkış ve korumalı bir giriş noktası var; katalog
-  ekranları bir sonraki turda.
+- **Admin panel skeleton: a fourth tree, `internal/adminui`**
+  ([ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)). The panel lives
+  under `/admin/ui`, renders HTML on the server side (`html/template`,
+  embedded in the binary) and does NOT IMPORT modules — it resolves the
+  framework's read paths from the container by name. This round brings login,
+  logout and a protected entry point; the catalog screens come in the next
+  round.
 
-- **Panelin kimliği bir çerezle taşınır ve çerez YALNIZCA panel ağacında
-  geçerlidir.** `Path` panel önekine sabitlenmiştir; `HttpOnly`, `SameSite=Strict`
-  ve paylaşılan ortamlarda `Secure`. Bunun sebebi savunma değil KORUMA:
-  yönetim API'sinin bugünkü CSRF bağışıklığı, jetonun tarayıcının KENDİLİĞİNDEN
-  eklemediği bir başlıkta yaşamasından gelir. Çerez `/admin/v1`'e de gitseydi o
-  bağışıklık kaybolur ve her yönetim ucu yeni bir saldırı yüzeyine girerdi.
-  CSRF'in ikinci katmanı `Origin` denetimidir (`adminui.UI.CheckOrigin`).
+- **The panel's identity is carried in a cookie, and the cookie is valid ONLY
+  in the panel tree.** `Path` is pinned to the panel prefix; `HttpOnly`,
+  `SameSite=Strict`, and `Secure` in shared environments. The reason is not a
+  defense but PRESERVATION: the admin API's current CSRF immunity comes from
+  the token living in a header the browser does NOT add ON ITS OWN. If the
+  cookie also went to `/admin/v1`, that immunity would be lost and every admin
+  endpoint would join a new attack surface. CSRF's second layer is the
+  `Origin` check (`adminui.UI.CheckOrigin`).
 
-- **`corehttp.WriteHTML`, `corehttp.WriteRedirect` ve `corehttp.WriteAsset`.**
-  Panel gövdesini kendi yazmaz: HTML de çekirdeğin yazıcısından geçer, böylece
-  hata yolu değişmezi (gövde yalnızca çekirdeğin yazıcılarından yazılır)
-  panelde de geçerli kalır. Sayfa önce TAMPONA üretilir; ortada oluşan bir hata
-  yarım gövde + 200 yerine 500 döner.
+- **`corehttp.WriteHTML`, `corehttp.WriteRedirect` and `corehttp.WriteAsset`.**
+  The panel does not write its body itself: HTML also goes through the core's
+  writer, so the error-path invariant (the body is written only by the core's
+  writers) holds in the panel too. The page is rendered into a BUFFER first;
+  an error midway returns 500 instead of a half body + 200.
 
-- **Panelin koruma halkası bileşim kökünde takılır** (`adminui.Ring`).
-  Middleware router kurulurken takılmak zorundadır, panel ise container'dan
-  modül önyüklemesi SIRASINDA doğar; halka bu boşluğu köprüler ve bağlanmadan
-  önce gelen isteği REDDEDER — korumasız bir yönetim yüzeyi sessizce açık
-  kalmaktansa gürültüyle kapalı kalır (ADR 0007'nin kimlik hattı).
+- **The panel's protection ring is mounted at the composition root**
+  (`adminui.Ring`). Middleware has to be mounted while the router is being
+  built, whereas the panel is born from the container DURING module bootstrap;
+  the ring bridges this gap and REJECTS any request that arrives before it is
+  connected — an unprotected admin surface stays loudly closed rather than
+  silently open (the identity line in ADR 0007).
 
-- **Deponun çalışma dili İngilizce oldu ve geçiş bir DEFTERE bağlandı**
+- **The repository's working language became English, and the transition was
+  tied to a LEDGER**
   ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)).
-  `internal/arch/testdata/turkish_ledger.txt` hâlâ Türkçe içeren her dosyayı,
-  `internal/arch/testdata/turkish_paths.txt` ise Türkçe ADI olan her yolu adıyla
-  sayar; defterde olmayan bir dosya Türkçe içeremez. Defterler yalnızca
-  KÜÇÜLÜR: bir satırı silmek dosyanın gerçekten çevrilmiş olmasını gerektirir.
-  Başlangıç borcu 784 dosya + 41 yol.
+  `internal/arch/testdata/turkish_ledger.txt` names every file that still
+  contains Turkish, and `internal/arch/testdata/turkish_paths.txt` every path
+  that has a Turkish NAME; a file that is not in the ledger may not contain
+  Turkish. The ledgers only SHRINK: deleting a line requires the file to have
+  actually been translated. The starting debt is 784 files + 41 paths.
 
-  Dedektör ÜÇ ŞERİTLİDİR ve bunun sebebi ölçüldü: bütün ağacı harf çevirisine
-  sokmak yalnızca diyakritiğe bakan bir kuralı 724 dosyadan 0'a düşürüyor —
-  yani tek bir komutla "çeviri bitti" dedirtiyor. İkinci şerit, harf
-  çevirisinden SAĞ ÇIKAN Türkçe işlev sözcüklerini yorum ve dize
-  değişmezlerinde arar (liste Go standart kütüphanesinin 7711 dosyasına karşı
-  ölçüldü, yalnızca sıfır isabet verenler alındı); üçüncüsü Türkçe kökleri
-  tanımlayıcıların TAM parçalarında arar.
+  The detector has THREE LANES, and the reason was measured: transliterating
+  the whole tree drops a rule that looks only at diacritics from 724 files to
+  0 — that is, a single command would let you declare "translation done". The
+  second lane searches comments and string literals for Turkish function words
+  that SURVIVE transliteration (the list was measured against the 7711 files
+  of the Go standard library, and only the words with zero hits were taken);
+  the third searches for Turkish roots in WHOLE parts of identifiers.
 
-- Dil dedektöründeki fixture, paket düzeyindeki muafiyet haritasını mutasyona
-  uğratıyordu ve aynı haritayı paralel koşan başka bir test okuyordu; `-race`
-  altında veri yarışı. Harita artık `scanSource`'a PARAMETRE olarak geçiyor:
-  paylaşılan durum kilitlenmedi, kaldırıldı.
+- The fixture in the language detector was mutating the package-level
+  exemption map while another test running in parallel read the same map; a
+  data race under `-race`. The map is now passed to `scanSource` as a
+  PARAMETER: the shared state was not locked, it was removed.
 
-- **Smoke testlerinin beklediği log mesajları artık üretime bağlı**
-  (`TestSmokeLogAssertionsMatchProduction`). Smoke testi bir üretim log
-  satırını METİN olarak bekliyor ve ikisi arasında derleyici bağı YOK: mesajı
-  yeniden adlandırmak smoke testini derlenir, vet'lenir ve lint'lenir hâlde
-  bırakıyor, üstelik `go test ./...` onu koşmuyor bile — smoke bir build
-  etiketinin arkasında. Kırılma push'tan SONRA, CI'ın en yavaş işinde
-  görünüyor.
+- **The log messages the smoke tests expect are now tied to production**
+  (`TestSmokeLogAssertionsMatchProduction`). The smoke test expects a
+  production log line as TEXT, and there is NO compiler link between the two:
+  renaming the message leaves the smoke test compiling, vetted and linted, and
+  `go test ./...` does not even run it — smoke sits behind a build tag. The
+  break shows up AFTER the push, in CI's slowest job.
 
-  Bu varsayımsal değil: observability paketindeki `"izleme kuruldu"` mesajını
-  çevirmek tam olarak bu çifti kırdı ve bütün yerel kapılar yeşil kaldı.
-  Denetim, mesajın üretimde hâlâ YAZILDIĞINI kaynağa bakarak doğruluyor;
-  mesajı dışa açık bir sabite taşımak, operatöre giden bir metni paketin API
-  yüzeyine koymak olurdu.
+  This is not hypothetical: translating the `"izleme kuruldu"` message in the
+  observability package broke exactly this pair, and every local gate stayed
+  green. The check confirms, by looking at the source, that the message is
+  still WRITTEN in production; moving the message into an exported constant
+  would have put operator-facing text on the package's API surface.
 
-- **SOLID'in mekanik olarak ölçülebilen iki boşluğu kapandı**
-  (`internal/arch/solid_test.go`). `TestResolvedTypeIsAnInterface` DIP'in
-  TÜKETİM yarısını zorluyor: üretimdeki her `container.Resolve[T]` çağrı yeri
-  bir ARAYÜZ çözmek zorunda. depguard yalnızca modüller arası import'u yasaklar;
-  çağıranın KENDİ modülünden ya da çekirdekten gelen somut bir tipe hiçbir şey
-  demiyordu. Ölçüm: 18 arayüz, 5 jenerik yardımcı ve tam bir somut aile —
-  `core.db` adıyla 16 kez çözülen `*db.Pool`, gerekçesiyle yazılı.
-  `TestLayerPurity` ise modül İÇİNDEKİ katman sınırını zorluyor: `api` pgx'i,
-  kendi `repository`'sini ve üretilmiş sqlc kodunu; `service` ise `net/http`,
-  chi ve pgx'i import edemez. Ölçüm: 15 modül, 30 dizin, 0 ihlal.
+- **The two gaps in SOLID that can be measured mechanically are closed**
+  (`internal/arch/solid_test.go`). `TestResolvedTypeIsAnInterface` enforces the
+  CONSUMPTION half of DIP: every `container.Resolve[T]` call site in production
+  must resolve an INTERFACE. depguard only forbids imports between modules; it
+  said nothing about a concrete type coming from the caller's OWN module or
+  from the core. Measurement: 18 interfaces, 5 generic helpers and exactly one
+  concrete family — `*db.Pool`, resolved 16 times under the name `core.db`,
+  with its justification written down. `TestLayerPurity` enforces the layer
+  boundary INSIDE a module: `api` may not import pgx, its own `repository` or
+  generated sqlc code; `service` may not import `net/http`, chi or pgx.
+  Measurement: 15 modules, 30 directories, 0 violations.
 
-  İki testin de mutasyonla bulunmuş bir kusuru var artık kapalı: taranan dizin
-  sayacı, denetlediği kural listesinin KENDİSİNDEN besleniyordu — katman adını
-  kuralda değiştirmek sıfır dizin buluyor ve her modül tek bir import
-  okunmadan geçiyordu. Sayaç artık DİSKE karşı doğrulanıyor.
+  Both tests had a defect, found by mutation, that is now closed: the counter
+  of scanned directories was fed from the VERY rule list it was checking —
+  renaming a layer in the rule found zero directories, and every module passed
+  without a single import being read. The counter is now verified against the
+  DISK.
 
-- **Dedektörün kendi körlüğüne karşı denetimler.** `TestDetectorIsNotBlind`
-  her şeridin ayrı sayacını ve taranan her kökü pozitif tutar; taranacak
-  köklerin listesi DİSKE karşı doğrulanır, çünkü listeyi kendi içinden okuyan
-  bir sayaç, listeden bir ağaç düştüğünde onunla birlikte susar (mutasyonla
-  görüldü). `TestDetectorFindsPlantedTurkish` her şeride bilinen bir örnek
-  ekiller, `TestDetectorPassesEnglishSource` ise doğru İngilizceyi yanlışlıkla
-  suçlamadığını kanıtlar — `module`, `rollback`, `reason` ve Go'nun `x, ok`
-  deyiminden doğan `yok` değişkeni dâhil.
+- **Checks against the detector's own blindness.** `TestDetectorIsNotBlind`
+  keeps each lane's separate counter and every scanned root positive; the list
+  of roots to scan is verified against the DISK, because a counter that reads
+  the list from itself falls silent along with it when a tree drops out of the
+  list (seen by mutation). `TestDetectorFindsPlantedTurkish` plants a known
+  sample in every lane, and `TestDetectorPassesEnglishSource` proves that it
+  does not falsely accuse correct English — including `module`, `rollback`,
+  `reason` and the variable name Go's `y, ok` idiom shortens to.
 
-- **SOLID kuralı ölçüme bağlandı.** ADR 0012 beş prensibin bugünkü durumunu
-  tabloya döküyor: DIP ve OCP zorlanıyor, ISP modül sınırlarında YAPISAL olarak
-  sağlanıyor, SRP yalnızca makro düzeyde, LSP için hiçbir denetim yok. Son ikisi
-  için "denetim yoktur" AÇIKÇA yazıldı; boyut linter'ları kapalı kalıyor çünkü
-  53 metotlu bir arayüzü eşiğe göre altıya bölmek tasarımı değil sayacı
-  memnun eder.
+- **The SOLID rule was tied to measurement.** ADR 0012 tabulates the current
+  state of the five principles: DIP and OCP are enforced, ISP holds
+  STRUCTURALLY at module boundaries, SRP only at the macro level, and there is
+  no check at all for LSP. For the last two, "there is no check" is written
+  down EXPLICITLY; the size linters stay off, because splitting a 53-method
+  interface into six to meet a threshold pleases the counter, not the design.
 
-### Değiştirildi
+### Changed
 
-- Kablolama değişmezi (`TestTheAdminPanelIsSetUpInTheCompositionRoot`) ve modül-izolasyonu
-  denetimi (`TestTheAdminPanelDoesNotImportModules`) dördüncü ağacı da kapsıyor. Önek
-  eşlemesi ağacın KÖKÜNÜ de kabul edecek şekilde düzeltildi: eskiden yalnızca
-  alt paketleri görüyordu, yani kökte kurulan bir paket denetimin dışında
-  kalırdı.
-- Gövde yazımı taraması artık `tmpl.Execute(w, …)` biçimindeki şablon
-  akıtmalarını da yakalıyor. Tarama alıcının import adına baktığı için şablon
-  yazıcısına KÖRDÜ ve panel bu kör noktadan geçebilirdi.
-- **Panel çerezinin `/admin/v1`'de KABUL EDİLMEDİĞİ artık bir değişmez**
-  (bu testin adı 2026-09-09'da
-  `TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck` oldu: ADR 0030
-  uygulanınca çerez artık kabul EDİLİYOR ve bağışıklığın yerini bir savunma
-  aldı — test daha sıkı, çünkü bir yokluk tek iddia ister, bir savunma matris). ADR 0011'in taşıyıcı iddiası
-  buydu ve bugüne kadar hiçbir test onu tutmuyordu: yönetim API'sinin CSRF
-  bağışıklığı bir savunmadan değil, jetonun tarayıcının KENDİLİĞİNDEN
-  eklemediği bir başlıkta yaşamasından geliyor. İddia GERÇEK koruma yığınında
-  sınanıyor, elle kurulmuş bir zincirde değil — çünkü kanıtlanan şey KAPSAMIN
-  bir özelliği.
+- The wiring invariant (`TestTheAdminPanelIsSetUpInTheCompositionRoot`) and
+  the module-isolation check (`TestTheAdminPanelDoesNotImportModules`) cover
+  the fourth tree too. The prefix match was fixed to accept the ROOT of the
+  tree as well: it used to see only subpackages, so a package set up at the
+  root would have stayed outside the check.
+- The body-write scan now also catches template streams of the form
+  `tmpl.Execute(w, …)`. Because the scan looked at the receiver's import name,
+  it was BLIND to the template writer, and the panel could have slipped
+  through this blind spot.
+- **That the panel cookie is NOT ACCEPTED at `/admin/v1` is now an invariant**
+  (on 2026-09-09 this test was renamed
+  `TestThePanelSessionReachesTheAdminAPIOnlyUnderTheOriginCheck`: once
+  ADR 0030 was implemented, the cookie IS accepted and a defense took the
+  place of the immunity — the test is stricter, because an absence takes a
+  single assertion and a defense takes a matrix). This was ADR 0011's
+  load-bearing claim, and until now no test held it: the admin API's CSRF
+  immunity comes not from a defense but from the token living in a header the
+  browser does NOT add ON ITS OWN. The claim is tested on the REAL protection
+  stack, not on a hand-built chain — because what is being proven is a
+  property of the SCOPE.
 
-  Test yazılırken dört mutasyon sağ kaldı ve dördü de testteki gerçek
-  boşluklardı: çerezle panelin açılması, halka hiç takılı değilken de
-  geçiyordu (panel öneki kotalar için zaten açık); köken halkasının TAKILI
-  olduğunu hiçbir şey kanıtlamıyordu; giriş yolunun kimlik muafiyetini
-  kaldırmak hiçbir testi düşürmüyordu — oysa bedeli "kimse giriş yapamaz"dır
-  ve arıza bir hataya bile benzemez, giriş sayfası 401'le geri gelir.
+  Four mutations survived while the test was being written, and all four were
+  real gaps in the test: opening the panel with the cookie passed even when
+  the ring was not mounted at all (the panel prefix is already open for the
+  quotas); nothing proved that the origin ring was MOUNTED; removing the login
+  path's identity exemption failed no test — yet its cost is "nobody can log
+  in", and the failure does not even look like an error: the login page comes
+  back with a 401.
 
-- **`corehttp.SchemeBearer`.** Çekirdek, `Authorization` başlığından okuduğu
-  şemayı KÜÇÜK HARFE indirip doğrulayıcıya öyle veriyor; panel ise jetonu
-  çerezde taşıdığı için başlıktan hiç geçmiyor ve şemayı elle yazıyordu. İki
-  yazım bugün yalnızca auth modülünün büyük/küçük harf duyarsız
-  karşılaştırması sayesinde çalışıyordu. Sözleşme artık `Authenticator`
-  arayüzünde yazılı ve iki taraf da aynı sabiti kullanıyor.
+- **`corehttp.SchemeBearer`.** The core LOWERCASES the scheme it reads from
+  the `Authorization` header and hands it to the authenticator that way; the
+  panel, because it carries the token in a cookie, never goes through the
+  header and was writing the scheme by hand. The two spellings worked today
+  only thanks to the auth module's case-insensitive comparison. The contract
+  is now written on the `Authenticator` interface, and both sides use the
+  same constant.
 
-- `core/http/auth.go` İngilizceye çevrildi. Kimlik doğrulama
-  yanıtlarının mesajları değişti (`"authentication is required"`); kodlar
-  (`unauthenticated`, `forbidden`) değişmedi.
+- `core/http/auth.go` was translated into English. The messages of
+  authentication responses changed (`"authentication is required"`); the codes
+  (`unauthenticated`, `forbidden`) did not.
 
-- **Çekirdeğin sekiz paketi İngilizceye çevrildi** (ADR 0012): `core/errors`,
-  `core/container`, `core/module`, `core/provider`,
-  `internal/core/logger`, `core/db` (migration testdata'sı dâhil),
-  `internal/core/observability`, `core/plugin`, ve `core/http`
-  içinde `response.go`, `auth.go`, `router.go`, `server.go`, `middleware.go`,
-  ve `core/query`'nin üretim dosyaları.
+- **Eight core packages were translated into English** (ADR 0012):
+  `core/errors`, `core/container`, `core/module`, `core/provider`,
+  `internal/core/logger`, `core/db` (including the migration testdata),
+  `internal/core/observability`, `core/plugin`, and in `core/http`
+  `response.go`, `auth.go`, `router.go`, `server.go`, `middleware.go`, and the
+  production files of `core/query`.
 
-  Okuma katmanının hata AYRINTI anahtarları da çevrildi
-  (`"aranan_ad"` → `"looked_up_name"`, `"alan"` → `"field"`). Bunlar hata
-  KODU değildir; kod sözleşmedir ve değişmedi. Ayrıntılar teşhis içindir ve
-  deponun dilinde yazılır. Davranış değişmedi. Değişen KULLANICIYA/OPERATÖRE
-  giden metinlerdir: container'ın teşhis mesajları (`"missing: Reserve(...)"`,
-  `"...have pointer receivers"`), modül kaydı hataları ve log anahtarları
-  (`"servis"` → `"service"`, `"tembel"` → `"lazy"`). `Kind.String()` çıktıları
-  (`not_found`, `invalid`, …) SÖZLEŞMEDİR ve değişmedi; godoc'a bu açıkça
-  yazıldı.
+  The read layer's error DETAIL keys were translated too
+  (`"aranan_ad"` → `"looked_up_name"`, `"alan"` → `"field"`). These are not
+  error CODES; the code is the contract and did not change. Details are for
+  diagnosis and are written in the repository's language. Behavior did not
+  change. What changed is text that reaches USERS/OPERATORS: the container's
+  diagnostic messages (`"missing: Reserve(...)"`,
+  `"...have pointer receivers"`), module registration errors and log keys
+  (`"servis"` → `"service"`, `"tembel"` → `"lazy"`). The `Kind.String()`
+  outputs (`not_found`, `invalid`, …) are a CONTRACT and did not change; the
+  godoc now says so explicitly.
 
-- **Bileşim kökü ve çekirdeğin yanıt yazıcısı İngilizceye çevrildi**
-  ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)). `cmd/server`
-  içinde `kurulum.go` → `setup.go`, `kurulum_test.go` → `setup_test.go`,
-  `belge_test.go` → `docs_test.go`; `core/http` içinde `response.go`
-  ve testi. Davranış değişmedi, ama açılış LOG MESAJLARI
-  ve kullanıcıya dönen genel iç hata mesajı artık İngilizce
-  (`"an unexpected server error occurred"`). Hata KODLARI değişmedi ve
-  değişmeyecek: kod makine sözleşmesidir, mesaj insan içindir.
+- **The composition root and the core's response writer were translated into
+  English** ([ADR 0012](docs/adr/0012-repository-language-and-solid.md)). In
+  `cmd/server`, `kurulum.go` → `setup.go`, `kurulum_test.go` →
+  `setup_test.go`, `belge_test.go` → `docs_test.go`; in `core/http`,
+  `response.go` and its test. Behavior did not change, but the startup LOG
+  MESSAGES and the generic internal error message returned to the user are now
+  in English (`"an unexpected server error occurred"`). Error CODES did not
+  change and will not: the code is the machine contract, the message is for
+  humans.
 
-  Yeniden adlandırmalar sırasında kayıt denetimi gerçek bir tuzağı yakaladı:
-  eklenti kaydının yerel değişkenine `registry` demek, denetimin alıcıyı ADIYLA
-  tanıması yüzünden o satırı modül kaydı gibi gösteriyordu.
+  During the renames the registration check caught a real trap: naming the
+  plugin registry's local variable `registry` made that line look like a
+  module registration, because the check recognizes the receiver BY NAME.
 
-  İçerik defteri 784 → 777, yol defteri 41 → 38.
+  Content ledger 784 → 777, path ledger 41 → 38.
 
-- ADR seçenek bölümü başlıklarını tanıyan liste İKİ DİLLİ oldu
-  (`internal/arch/doc_references_test.go`). Yalnızca Türkçe başlık tanıyan
-  kural, İngilizce yazılmış bir ADR'nin REDDEDİLMİŞ seçeneklerini bugünkü depo
-  hakkında iddia sanar ve var olmayan sembolleri kırık bildirirdi.
+- The list that recognizes the headings of ADR option sections became
+  BILINGUAL (`internal/arch/doc_references_test.go`). A rule that recognized
+  only Turkish headings would take the REJECTED options of an ADR written in
+  English for claims about today's repository, and would report nonexistent
+  symbols as broken.
 
 ## [0.5.0] — 2026-09-02
 
-### Kırıcı değişiklikler
+### Breaking changes
 
-`0.x` boyunca minor sürümlerde kırıcı değişiklik olabilir. Aşağıdaki
-**mağaza API'sini** kullanan istemcileri doğrudan etkiler.
+Breaking changes may occur in minor releases throughout `0.x`. The following
+directly affect clients that use the **store API**.
 
-- **`POST /store/v1/carts` gövdesinden `region_id` KALDIRILDI; yerine
-  `country_code` ZORUNLU oldu.** Alanı gönderen istek artık `422` alır (gövde
-  tanınmayan alanı reddeder). Sepetin bölgesini ve para birimini sunucu,
-  müşterinin ÜLKESİNDEN türetir.
+- **`region_id` was REMOVED from the `POST /store/v1/carts` body;
+  `country_code` became REQUIRED in its place.** A request that sends the
+  field now gets `422` (the body rejects unrecognized fields). The server
+  derives the cart's region and currency from the customer's COUNTRY.
 
-  Kaldırmanın iki sebebi vardır ve ikisi de aynı ölçüttendir ("gövdeye konan
-  şey müşterinin belirleyebildiği şeydir"):
+  There are two reasons for the removal, and both come from the same yardstick
+  ("what goes into the body is what the customer can decide"):
 
-  1. `region_id` müşterinin ifade etmek istediği şey **değildir**. Müşteri bir
-     ülke seçer (ya da tarayıcısı söyler); bölge, o ülkenin sunucudaki
-     karşılığıdır ve eşlemeyi operatör kurar. İstemciye bir iç varlık kimliği
-     yazdırmak, `unit_price`/`currency_code` ile kapatılan "sunucunun verisini
-     istemciden almak" sınıfının daha yumuşak bir biçimidir; bölge sepetin
-     **vergi oranını** seçtiği için sonucu da kozmetik değildir.
-  2. Türetmeyi zaten yapan bir akış vardı — `internal/workflows/cart`'ın
-     `create_cart`'ı ülke kodundan hem bölgeyi hem para birimini çözer — ve
-     vitrin ucu onu **atlıyordu**. Aynı işlem için iki sözleşme, işletmecinin
-     gördüğü yol da ham olan.
+  1. `region_id` is **not** what the customer wants to express. The customer
+     picks a country (or their browser says it); the region is that country's
+     counterpart on the server, and the operator sets up the mapping. Making
+     the client write an internal entity ID is a softer form of the "taking
+     the server's data from the client" class that was closed with
+     `unit_price`/`currency_code`; and since the region selects the cart's
+     **tax rate**, the consequence is not cosmetic either.
+  2. A workflow that already did the derivation existed —
+     `internal/workflows/cart`'s `create_cart` resolves both the region and
+     the currency from the country code — and the storefront endpoint
+     **bypassed** it. Two contracts for the same operation, and the path the
+     operator saw was the raw one.
 
-  Sessizce yok saymak yine seçilmedi: istemci gönderdiğini sanır, sunucu başka
-  bir bölgede sepet açardı — ve o sepet başka bir vergi oranıyla, başka bir
-  fiyat listesinden fiyatlanırdı.
+  Silently ignoring the field was not chosen either: the client would think it
+  had sent it, and the server would open a cart in a different region — and
+  that cart would be priced at a different tax rate, from a different price
+  list.
 
-  Yeni hata yüzeyi ÜÇ ayrı `404` taşır ve üçü ayrı durumdur: geçerli ama hiçbir
-  bölgeye bağlı olmayan ülke `country_has_no_region`, referans tablosunda hiç
-  bulunmayan ülke kodu `country_not_found`, bağlı olduğu bölge silinmiş ülke
-  ise `country_region_missing`. Biçimi bozuk ya da boş bir kod `422`'dir.
-  Ayrıca sepet açma yolundan `cart_region_unavailable` (500) kodu DÜŞTÜ —
-  bölge yüzeyi handler'a artık hiç bağlanmıyor — ve yerine sepet açılıp
-  okunamadığında `cart_missing_after_create` geldi; ikisi de operatör kodudur,
-  istemci onlara göre dallanmaz. Ayrım korunur çünkü ikisi farklı düzeltmeler ister: birinde
-  müşteri başka bir ülke seçer, diğerinde istemci gövdesini düzeltir.
+  The new error surface carries THREE separate `404`s, and they are three
+  distinct situations: a valid country that is bound to no region is
+  `country_has_no_region`, a country code that does not exist in the reference
+  table at all is `country_not_found`, and a country whose bound region has
+  been deleted is `country_region_missing`. A malformed or empty code is
+  `422`. In addition, the `cart_region_unavailable` (500) code DROPPED out of
+  the cart-opening path — the region surface is no longer wired into the
+  handler at all — and in its place came `cart_missing_after_create`, for when
+  the cart is opened but cannot be read; both are operator codes, and the
+  client does not branch on them. The distinction is kept because the two
+  need different fixes: in one the customer picks a different country, in the
+  other the client fixes its body.
 
-- **Bağlama, satır uçlarındaki kalıbın AYNISIDIR ve yeni bir mekanizma
-  getirmez.** `cart` kendi paketinde üçüncü bir dar arayüz tanımlar
-  (`api.CartOpening`), somut akışı container'dan `workflows.cart.interop`
-  adıyla **tembel** çözer ve çözülemezse **kapalı** arızalanır: `500`, sepet
-  yazılmaz. Bunun bir sonucu olarak `cart` modülünün başka bir modülü adla
-  çözdüğü tek yer de kapandı — `api.RegionCurrencyReader` ve `region.service`
-  bağı **kaldırıldı**, çünkü para birimini artık akış türetiyor. Modülün
-  `LinePricingName` sabiti `CartFlowsName` oldu: aynı kayıt bugün iki dar
-  arayüzü besliyor ve sabitin adı akışın adı olmalıydı.
+- **The wiring is the SAME as the pattern on the line-item endpoints and
+  brings no new mechanism.** `cart` defines a third narrow interface in its own
+  package (`api.CartOpening`), resolves the concrete workflow from the
+  container **lazily** under the name `workflows.cart.interop`, and fails
+  **closed** if it cannot be resolved: `500`, no cart is written. As a
+  consequence, the only place where the `cart` module resolved another module
+  by name is closed too — the `api.RegionCurrencyReader` and `region.service`
+  binding was **removed**, because the workflow now derives the currency. The
+  module's `LinePricingName` constant became `CartFlowsName`: the same
+  registration feeds two narrow interfaces today, and the constant's name had
+  to be the workflow's name.
 
-- `workflows/cart`'ın `Carts` dar arayüzü yine büyüdü: `OpenCart` artık sepet
-  metadata'sını da taşır. Kendi uygulamasını yazan gömülü kodu etkiler. Aynı
-  yüzeye `OpenCartForCountry` eklendi — `Interop` bir süre bilinçli olarak
-  sepet açmayı yayımlamıyordu, çünkü tüketicisi yoktu; artık var.
+- The `Carts` narrow interface of `workflows/cart` grew again: `OpenCart` now
+  also carries the cart metadata. This affects embedded code that writes its
+  own implementation. `OpenCartForCountry` was added to the same surface —
+  for a while `Interop` deliberately did not publish cart opening, because it
+  had no consumer; now it has one.
 
-- **`fulfillment.interop`'un `SelectLocation` metodu KALDIRILDI; yerine
-  `RankLocations` geldi.** Gömülü kodu ve kendi kargo yüzeyini yazan tüketiciyi
-  etkiler. VAR OLAN uçların yolları ile istek/yanıt şemaları değişmedi; hata
-  kodu için bir alttaki maddeye, yeni yönetim uçları için "Eklendi" bölümüne
-  bakın.
+- **The `SelectLocation` method of `fulfillment.interop` was REMOVED;
+  `RankLocations` replaces it.** This affects embedded code and consumers that
+  write their own fulfillment surface. The paths and request/response schemas
+  of EXISTING endpoints did not change; for the error code see the item below,
+  and for the new admin endpoints see the "Added" section.
 
   ```go
-  // önce
+  // before
   SelectLocation(ctx context.Context, candidateLocationIDs []string) (string, error)
-  // sonra
+  // after
   RankLocations(ctx context.Context, destinationRegionID string, candidateLocationIDs []string) ([]string, error)
   ```
 
-  İki değişiklik var ve ikisinin de ayrı gerekçesi var.
+  There are two changes, and each has its own rationale.
 
-  **Bölge parametresi** yazılı bir taahhüdü kırıyor: eski godoc "politika bu
-  metodun İÇİNDE zenginleşir; çağıranın gördüğü imza değişmez" diyordu. Taahhüt
-  yanlıştı ve nerede yanlış olduğu somut: eksik olan yalnızca deponun kendisi
-  değil, gönderinin NEREYE gittiğiydi ve ikincisi modülün içinde zenginleşmeyle
-  elde edilemez. Bölge çağıranın elindedir — sepet akışının planı zaten taşıyor.
+  **The region parameter** breaks a written commitment: the old godoc said
+  "the policy grows richer INSIDE this method; the signature the caller sees
+  does not change". The commitment was wrong, and where it was wrong is
+  concrete: what was missing was not only the warehouse itself but WHERE the
+  shipment is going, and the latter cannot be obtained by enrichment inside
+  the module. The region is in the caller's hands — the cart workflow's plan
+  already carries it.
 
-  **Sıra dönmesi** bir maliyet kararıdır ve karşılaştırma KARŞI-OLGUSALDIR:
-  v0.4.0'ın seçimi saf bir fonksiyondu, veritabanına hiç dokunmuyordu. Politika
-  eski yüzeye (tek lokasyon dönen `SelectLocation`) eklenseydi, çağıran tükenen
-  her depodan sonra yeniden sormak zorunda kalacaktı — N adaylı bir satır için
-  bir sorgu yerine N sorgu; üstelik sıra deterministik olduğu için o N-1 çağrı
-  aynı sıralamayı yeniden hesaplayacaktı. Yan kazanç ölçülebilir: sepet akışının aday döngüsünün
-  sonlanması artık modülün ne döndüğünden bağımsızdır — eskiden seçilen adayın
-  listeden düşürülebilmesine bağlıydı, şimdi sonlu bir dilimin uzunluğuyla
-  sınırlıdır.
+  **Returning a ranking** is a cost decision, and the comparison is
+  COUNTERFACTUAL: v0.4.0's selection was a pure function that never touched
+  the database. Had the policy been added to the old surface
+  (`SelectLocation`, which returns a single location), the caller would have
+  had to ask again after every warehouse that ran out — N queries instead of
+  one for a line with N candidates; and since the order is deterministic,
+  those N-1 calls would recompute the same ranking. The side gain is
+  measurable: the termination of the cart workflow's candidate loop is now
+  independent of what the module returns — it used to depend on the selected
+  candidate being droppable from the list; now it is bounded by the length of
+  a finite slice.
 
-  Derleyicinin denetlemediği tek dikiş, arayüzün container'dan **adla**
-  çözüldüğü yerdir; kanıtı `internal/e2e` altındaki uçtan uca senaryodur.
+  The only seam the compiler does not check is where the interface is resolved
+  from the container **by name**; its proof is the end-to-end scenario under
+  `internal/e2e`.
 
-- **Stok ayırma adımı artık ALT HATANIN KODUNU koruyor.** Vitrin istemcisinin
-  gövdede gördüğü `error.code`, tamamlama sırasında stok ayrılamadığında
-  değişti:
+- **The stock reservation step now PRESERVES THE UNDERLYING ERROR'S CODE.**
+  The `error.code` that the storefront client sees in the body changed for the
+  case where stock cannot be reserved during completion:
 
-  | Durum | Önce | Sonra |
+  | Situation | Before | After |
   |---|---|---|
-  | Hiçbir depoda aday yok | `checkout_workflow_reservation_failed` | değişmedi |
-  | Seçilen depolar tükendi | `checkout_workflow_reservation_failed` | `inventory_insufficient_stock` |
-  | Hiçbir aday sepetin bölgesine hizmet etmiyor | — | `fulfillment_no_serviceable_location` |
+  | No candidate in any warehouse | `checkout_workflow_reservation_failed` | unchanged |
+  | The selected warehouses ran out | `checkout_workflow_reservation_failed` | `inventory_insufficient_stock` |
+  | No candidate serves the cart's region | — | `fulfillment_no_serviceable_location` |
 
-  Durum kodu üçünde de `409` kalır. Değişikliğin sebebi bu turun kendi
-  ihtiyacıdır ve bu özelliğin ÖN KOŞULUDUR: taşıma katmanı gövdeye tek bir
-  makine okunur alan yazar ve kod ezildiği sürece yanlış kurulmuş bir bölge
-  bağı, dolu raflarla "stok ayrılamadı" diye raporlanırdı — operatör bakması
-  gereken yeri bulamazdı. Kalıp yeni değil: motor aynı hatayı bir tur önce
-  kendi sarmalamasında düzeltmişti ve gerekçesi orada B2B harcama limitiyle
-  ölçülmüş hâlde yazılı.
+  The status code stays `409` in all three. The reason for the change is this
+  round's own need, and it is a PRECONDITION of this feature: the transport
+  layer writes a single machine-readable field into the body, and as long as
+  the code was overwritten, a misconfigured region binding would have been
+  reported as "stock could not be reserved" with full shelves — the operator
+  could not find where to look. The pattern is not new: the engine fixed the
+  same fault in its own wrapping one round earlier, and the rationale is
+  written there, measured with the B2B spending limit.
 
-  Koda göre dallanan istemciyi etkiler. `checkout_workflow_reservation_failed`
-  artık adım hatasının SARMALAMASINDA yedektir: alt hata kendi kodunu taşıyorsa
-  o korunur. Kod kaybolmuş DEĞİLDİR — adımın KENDİ ürettiği hatalarda görünmeye
-  devam eder: hiçbir depoda aday bulunmadığında (yukarıdaki tablonun ilk satırı)
-  ve kargo modülü sözleşmeyi çiğnediğinde (boş sıra, aday olmayan kimlik,
-  yinelenen aday — üçü de `500`).
+  This affects clients that branch on the code.
+  `checkout_workflow_reservation_failed` is now a fallback in the WRAPPING of
+  the step error: if the underlying error carries its own code, that code is
+  kept. The code is NOT gone — it keeps appearing in the errors the step
+  produces ITSELF: when no candidate is found in any warehouse (the first row
+  of the table above) and when the fulfillment module breaks the contract (an
+  empty ranking, an ID that is not a candidate, a duplicated candidate — all
+  three `500`).
 
-- **Satış kanalı kapsamı artık YAZMA yolunda da uygulanıyor.** Kanal ataması
-  KULLANAN kurulumlarda `POST /store/v1/carts/{id}/line-items`, yabancı kanalın
-  varyantı için `201` yerine `404` döner. Ayrıntı ve gerekçe aşağıda, Güvenlik
-  başlığında; madde buraya da konuldu çünkü yükseltme öncesi yalnızca bu bölümü
-  tarayan entegratör aksi hâlde görmezdi.
+- **Sales channel scope is now enforced on the WRITE path too.** In
+  installations that USE channel assignment,
+  `POST /store/v1/carts/{id}/line-items` returns `404` instead of `201` for a
+  variant of a foreign channel. The details and rationale are below, under
+  Security; the item is placed here too because an integrator who scans only
+  this section before upgrading would otherwise not see it.
 
-### Eklendi
+### Added
 
-- **Yönetim paneli başladı: yazma kapısı, iskelet ve denetimin kapsamı.**
-  Panel `internal/adminui` altında, `internal/workflows`'un kardeşi olarak
-  dördüncü bir ağaçta yaşıyor ve sunucu tarafında üretilen HTML'i ikiliye
-  gömülü şablonlardan üretiyor. Karar ve reddedilen seçenekler
-  [ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md)'de. Bu turda gelen
-  yalnızca iskelettir: oturum, koruma halkası ve katalog ekranları sonraki
-  turlarda.
+- **The admin panel has begun: the write gate, the skeleton and the scope of
+  the checks.** The panel lives under `internal/adminui`, in a fourth tree as
+  a sibling of `internal/workflows`, and renders server-side HTML from
+  templates embedded in the binary. The decision and the rejected options are
+  in [ADR 0011](docs/adr/0011-yonetim-paneli-dorduncu-agac.md). What arrives
+  this round is only the skeleton: the session, the protection ring and the
+  catalog screens come in later rounds.
 
-  Çekirdeğe üç yazıcı eklendi — HTML, yönlendirme ve statik varlık. HTML
-  yazıcısı gövdeyi **önce belleğe** üretmeyi şart koşuyor: doğrudan yazıcıya
-  akıtılan bir şablonda ortada doğan hata, `200` durum kodlu YARIM bir sayfa
-  bırakır ve başlık gönderildikten sonra ne panik yakalayıcı ne hata yazıcısı
-  bir şey yapabilir. JSON yazıcısının aksine 2xx zorunluluğu YOKTUR ve bu
-  bilinçli: kimliksiz bir tarayıcıya giriş sayfasını `401` ile döndürmek, onu
-  başka bir yere yollamaktan daha dürüsttür.
+  Three writers were added to the core — HTML, redirect and static asset. The
+  HTML writer requires the body to be rendered **into memory first**: in a
+  template streamed straight to the writer, an error that arises midway leaves
+  a HALF page with a `200` status code, and once the headers are sent neither
+  the panic recoverer nor the error writer can do anything. Unlike the JSON
+  writer there is NO 2xx requirement, and that is deliberate: returning the
+  login page to an unauthenticated browser with `401` is more honest than
+  sending it somewhere else.
 
-  **İki kör nokta, açıldıkları turda kapatıldı** — ikisi de ölçüldü:
+  **Two blind spots, closed in the round they opened in** — both measured:
 
-  - Kayıt denetimleri kapsamlarını modül ağacına indiriyordu; panel ağacında
-    "yazılmış ama hiçbir yere bağlanmamış" bir yetenek arch koşusunu YEŞİL
-    bırakırdı. Uydurmaya gerek olmadı: aynı boşluk `internal/workflows` için
-    zaten kapatılmıştı ve kalıbı hazırdı. Denetim ayrıca kökte yaşayan
-    paketleri de görecek şekilde düzeltildi — önek eşleşmesi yalnızca alt
-    paketleri kapsıyordu.
-  - "Gövde tek yerden yazılır" değişmezinin modül dışı kolu şablon yazımını
-    GÖRMÜYORDU: çağrının alıcısı bir paket adı olmadığı için hedef çözülemiyor
-    ve çağrı sessizce geçiyordu. Bu bir izin değil, taramanın ölçme biçiminin
-    negatifiydi — kural kalkmıyor, körleşiyordu. Tarama artık şablonun yazıcıya
-    akıtılmasını yakalıyor.
+  - The registration checks narrowed their scope to the module tree; in the
+    panel tree, a capability that was "written but wired up nowhere" would
+    have left the arch run GREEN. Nothing had to be invented: the same gap had
+    already been closed for `internal/workflows`, and its pattern was ready.
+    The check was also fixed to see packages that live at the root — the
+    prefix match covered only subpackages.
+  - The out-of-module arm of the "the body is written from one place"
+    invariant did NOT SEE template writes: since the call's receiver is not a
+    package name, the target could not be resolved and the call slipped
+    through silently. This was not a permission but a false negative of the
+    way the scan measured — the rule was not being lifted, it was going
+    blind. The scan now catches a template being streamed to the writer.
 
-  Şablonlar AÇILIŞTA ayrıştırılıyor ve adları iki yönlü çiviliyor: beklenen bir
-  ad ayrıştırılmamışsa da, ayrıştırılan bir şablon hiçbir yerde çağrılmıyorsa da
-  açılış durur. Şablon adı bir dizedir; yazım hatası derlenir, lint görmez ve
-  yalnızca o sayfa açıldığında patlar.
+  Templates are parsed AT STARTUP and their names are pinned in both
+  directions: startup halts if an expected name was not parsed, and also if a
+  parsed template is called nowhere. A template name is a string; a typo
+  compiles, lint does not see it, and it blows up only when that page is
+  opened.
 
-  Beş mutasyonla doğrulandı: panelin kablolaması, modül import yasağı, şablonun
-  yazıcıya akıtılması ve şablon adı denetiminin her iki yönü.
+  Verified with five mutations: the panel's wiring, the module import ban, the
+  template being streamed to the writer, and both directions of the template
+  name check.
 
-- **Depo seçimi artık bir POLİTİKA taşıyor.** Sınır bu turda YAZIYA GEÇTİ ve
-  aynı yayımlanmamış pencerede kapandı; hiçbir yayımlanmış sürümün bilinen
-  sınırlarında durmadı. Kaydın değeri, kuralın v0.2.0'dan beri sessizce
-  "kimliği en küçük aday" olmasıdır. Yazıya geçtiğinde şöyle duruyordu:
-  *"Depo seçimi bir POLİTİKA taşımaz … yakınlık, maliyet ve stok dağılımı
-  İFADE EDİLEMEZ, çünkü modülün bir lokasyon modeli yoktur."*
+- **Warehouse selection now carries a POLICY.** The limit was WRITTEN DOWN
+  this round and closed in the same unreleased window; it never stood among
+  the known limits of any released version. The value of the record is that
+  the rule had silently been "the candidate with the smallest ID" since
+  v0.2.0. When it was written down, it read: *"Warehouse selection carries no
+  POLICY … proximity, cost and stock distribution CANNOT BE EXPRESSED, because
+  the module has no location model."*
 
-  Lokasyon modeli kargo modülünün **kendi** şemasına geldi (iki tablo) ve depo
-  kimliği opak, FK'sız bir yabancı kimlik olarak duruyor — `region_id`'nin
-  bugüne kadar durduğu gibi. Modül ad ya da adres KOPYALAMIYOR: deponun nerede
-  olduğu stok modülünün verisidir ve orada kalıyor.
+  The location model arrived in the fulfillment module's **own** schema (two
+  tables), and the warehouse ID stays an opaque foreign ID without an FK —
+  the way `region_id` has stood until now. The module does NOT COPY a name or
+  an address: where the warehouse is located is the inventory module's data,
+  and it stays there.
 
-  Kural üç adımdır — **ele** (bir depoya bağlanmış bölgeler varsa ve hedef
-  onların arasında değilse aday düşer), **sırala** (`priority`, küçük olan öne),
-  **eşitliği boz** (kimliği küçük olan öne). Yönetim yüzeyi
-  `PUT/GET/DELETE /admin/v1/shipping-locations/{location_id}` ve
+  The rule has three steps — **eliminate** (if there are regions bound to a
+  warehouse and the destination is not among them, the candidate drops out),
+  **sort** (`priority`, smaller first), **break ties** (smaller ID first). The
+  admin surface is
+  `PUT/GET/DELETE /admin/v1/shipping-locations/{location_id}` and
   `GET /admin/v1/shipping-locations`.
 
-  **Geriye uyumluluk SEÇİLEN DEPO için tamdır ve testlidir:** politika kaydı
-  yokken eleme ve sıralama boşa düşer, geriye eşitliği bozan kural kalır ve
-  seçilen depo bu turdan öncekiyle aynıdır.
+  **Backward compatibility is complete for the SELECTED WAREHOUSE and is
+  tested:** with no policy record, elimination and sorting are no-ops, the
+  tie-breaking rule is what remains, and the selected warehouse is the same as
+  before this round.
 
-  Kayıtsız kurulumda da değişen iki şey var ve ikisi de burada yazılı olmalı:
-  hata KODU değişti (yukarıdaki kırıcı değişikliğe bakın; depo BİLDİREN
-  çağrıları da etkiler, çünkü o yol politikaya hiç girmese de aynı sarmalamadan
-  geçer) ve seçim artık satır başına BİR SQL SORGUSU yapıyor — eski seçim saf
-  bir fonksiyondu ve veritabanına hiç dokunmuyordu, yani bu yolda yeni bir
-  arıza ihtimali doğdu.
+  Two things change even in an installation without records, and both must be
+  written down here: the error CODE changed (see the breaking change above; it
+  also affects calls that NAME a warehouse, because that path goes through the
+  same wrapping even though it never enters the policy), and selection now
+  makes ONE SQL QUERY per line — the old selection was a pure function that
+  never touched the database, so a new possibility of failure arose on this
+  path.
 
-  Gerçek yığında ölçüldü: `internal/e2e/multi_warehouse_test.go`, gerçek Postgres ve
-  gerçek modüllerle iki yeterli depo kurar, politikayı yazar ve rezervasyonun
-  hangi depoda açıldığını okur. Mutasyonla doğrulandı.
+  Measured on the real stack: `internal/e2e/multi_warehouse_test.go` sets up
+  two sufficient warehouses with real Postgres and real modules, writes the
+  policy, and reads which warehouse the reservation was opened in. Verified by
+  mutation.
 
-  Politikanın İFADE ETMEDİKLERİ de yazıya geçti — stok dağılımı, maliyet,
-  sipariş düzeyinde karar ve (depo, bölge) çifti başına tercih — ve her birinin
-  neden edilemediği [ADR 0010](docs/adr/0010-depo-secim-politikasi.md)'da.
+  What the policy does NOT EXPRESS was written down too — stock distribution,
+  cost, an order-level decision and a preference per (warehouse, region) pair
+  — and why each of them cannot be expressed is in
+  [ADR 0010](docs/adr/0010-depo-secim-politikasi.md).
 
-  Kabul edilen üç bedel README'nin bilinen sınırlarına GİRDİ ve en ağırı şudur:
-  var olmayan bir bölge kimliği bağlamak (ya da bir bölgeyi silip aynı adla
-  yeniden açmak — yeni kayıt yeni kimlik alır) o depoyu her sepette eler ve tek
-  depolu bir kurulumda mağazayı kapatır; düşen sepet de bir daha tamamlanamaz,
-  çünkü tamamlama akışının idempotency anahtarı sepet kimliğinden türer.
+  The three accepted costs ENTERED the README's known limits, and the heaviest
+  is this: binding a region ID that does not exist (or deleting a region and
+  reopening it under the same name — the new record gets a new ID) eliminates
+  that warehouse for every cart and, in a single-warehouse installation,
+  closes the store; and a cart that fails can never be completed again,
+  because the completion workflow's idempotency key is derived from the cart
+  ID.
 
-  Bedel kaldırılmadı, GÖRÜNÜR yapıldı — ama görünürlüğün sınırı da yazılı
-  olmalı: vitrin gövdesine yalnızca KOD ulaşır
-  (`fulfillment_no_serviceable_location`); gövdedeki mesaj her üç ayırma
-  arızasında da aynıdır, çünkü taşıma katmanı en dıştaki mesajı yazar.
-  Adayların gerçekte hangi bölgelere bağlı olduğunu yazan döküm SUNUCU LOGUNDA
-  ve `workflow_executions` kaydındadır. Yani kod istemciye, döküm operatöre
-  gider.
+  The cost was not removed, it was made VISIBLE — but the limit of that
+  visibility must be written down too: only the CODE reaches the storefront
+  body (`fulfillment_no_serviceable_location`); the message in the body is the
+  same for all three reservation failures, because the transport layer writes
+  the outermost message. The dump of which regions the candidates are
+  actually bound to is in the SERVER LOG and in the `workflow_executions`
+  record. So the code goes to the client, the dump to the operator.
 
-  Bölge bağının bir **kısıt** olduğu, tercih için `priority` kullanıldığı ayrımı
-  da bilinçlidir: "hizmet ettiği bölgeler" taşıyıcının kapsama alanıdır ve
-  kapsam dışına göndermek graceful bir geri düşüş değil, imkânsız bir gönderidir.
-  Bağı sıralama anahtarına çevirip katı kesiği bir bayrağın arkasına almak
-  değerlendirildi ve reddedildi; gerekçe ADR'de.
+  The distinction that the region binding is a **constraint** while `priority`
+  is used for preference is also deliberate: "the regions it serves" is the
+  carrier's coverage area, and shipping outside the coverage is not a graceful
+  fallback but an impossible shipment. Turning the binding into a sort key and
+  putting the hard cut behind a flag was considered and rejected; the
+  rationale is in the ADR.
 
-- **Kurulum tuzağı artık gerçek süreçte çivili:**
-  `internal/smoke/keys_test.go` içindeki
-  `TestPublishableKeyWithoutChannelIsRejectedByStorefront`, README'nin publishable
-  anahtar paragrafını uçtan uca yürür — kanalsız anahtar üretilir (`201`),
-  mağaza yüzeyinde `401` alır, teşhis kodu (`auth_no_sales_channel`) yanıtta
-  değil sunucunun LOGUNDA aranır ve kanal sonradan bağlanınca AYNI anahtar
-  girer. Bu yol depoda hiçbir zeminde koşmuyordu: hiçbir test o kodu
-  beklemiyordu ve `internal/smoke`'un kendi yardımcıları anahtarı her zaman
-  bir kanala bağlı üretiyordu. Mutasyonla doğrulandı — kanalsız anahtarı kabul
-  eden bir sunucuda senaryo `401` beklerken `200` görüp düşüyor.
+- **The setup trap is now pinned in the real process:**
+  `TestPublishableKeyWithoutChannelIsRejectedByStorefront` in
+  `internal/smoke/keys_test.go` walks the README's publishable key paragraph
+  end to end — a key without a channel is created (`201`), it gets `401` on
+  the store surface, the diagnostic code (`auth_no_sales_channel`) is looked
+  for not in the response but in the server's LOG, and once a channel is bound
+  afterwards the SAME key gets in. This path ran at no level in the
+  repository: no test expected that code, and `internal/smoke`'s own helpers
+  always created the key bound to a channel. Verified by mutation — on a
+  server that accepts a key without a channel, the scenario expects `401`,
+  sees `200` and fails.
 
-- `product` modülünün varyant Query sağlayıcısı yeni bir süzgeç tanıyor:
-  `sales_channel_ids`. Yalnızca `id` ya da `ids` ile BİRLİKTE kullanılabilir;
-  tek başına verilirse istek `422` alır — kanal süzgeci bir yetkilendirme
-  daraltmasıdır, kendi başına bir listeleme ölçütü değil. Sepet akışının kanal
-  kapsamını yazma yolunda uygulaması buna dayanır. HTTP yüzeyine açık DEĞİLDİR.
+- The variant Query provider of the `product` module recognizes a new filter:
+  `sales_channel_ids`. It can be used only TOGETHER with `id` or `ids`; given
+  on its own, the request gets `422` — the channel filter is an authorization
+  narrowing, not a listing criterion in its own right. The cart workflow's
+  enforcement of channel scope on the write path relies on it. It is NOT
+  exposed on the HTTP surface.
 
-### Değişti
+### Changed
 
-- `POST /store/v1/carts` gövdesindeki `metadata` **kaldı** ve akışa olduğu gibi
-  taşınıyor. Karar satır metadata'sında verilenin aynısıdır: alan gerçekten
-  istemcinin bilgisidir (kampanya kaynağı, vitrin oturumu), hiçbir hesaba
-  girmez ve türetilecek bir karşılığı yoktur. Düşürülseydi, sepeti açan tek yol
-  artık akış olduğu için istemcinin gönderdiği alan sessizce kaybolurdu.
+- `metadata` in the `POST /store/v1/carts` body **stays** and is passed
+  through to the workflow as is. The decision is the same as the one made for
+  line metadata: the field really is the client's information (campaign
+  source, storefront session), enters no calculation and has no counterpart to
+  derive. Had it been dropped, a field the client sent would have silently
+  disappeared, since the workflow is now the only path that opens a cart.
 
-### Düzeltildi
+### Fixed
 
-- **`.env`, komut satırından verilen ortam değişkenlerini SESSİZCE eziyordu.**
-  `Makefile`'ın `.env` yükleyicisi dosyayı çağıranın ortamının ÜSTÜNE
-  uyguluyordu; `.env.example`'daki boş `PLUGINS=`,
-  `OTEL_EXPORTER_OTLP_ENDPOINT=` ve `ADMIN_BOOTSTRAP_EMAIL=` satırları,
-  README'nin `DEĞİŞKEN=… make run` biçimindeki her örneğini etkisiz bırakıyordu
-  — hata vermeden. Ölçüldü (aynı Makefile, aynı `.env`, tek fark yükleyici):
-  düzeltme öncesi `PLUGINS=search-pg … make` → `PLUGINS=[]`,
-  `OTEL_EXPORTER_OTLP_ENDPOINT=[]`; sonrasında ikisi de komut satırındaki
-  değeri taşıyor ve `.env` hâlâ okunuyor (`LOG_FORMAT=text` geliyor).
-  Öncelik docker compose'unkiyle aynı yöne çevrildi: **ortam > `.env`**.
-  Yöntem ayrıştırmaz — çağıranın ortamı `export -p` ile saklanır, `.env`
-  kabukla yüklenir, saklanan ortam geri uygulanır.
+- **`.env` was SILENTLY overriding environment variables given on the command
+  line.** The `Makefile`'s `.env` loader applied the file ON TOP OF the
+  caller's environment; the empty `PLUGINS=`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT=` and `ADMIN_BOOTSTRAP_EMAIL=` lines in
+  `.env.example` left every one of the README's examples of the form
+  `VARIABLE=… make run` without effect — without an error. Measured (the same
+  Makefile, the same `.env`, the only difference being the loader): before the
+  fix, `PLUGINS=search-pg … make` → `PLUGINS=[]`,
+  `OTEL_EXPORTER_OTLP_ENDPOINT=[]`; after it, both carry the command-line value
+  and `.env` is still read (`LOG_FORMAT=text` comes through). Precedence was
+  turned to the same direction as docker compose's: **environment > `.env`**.
+  The method does no parsing — the caller's environment is saved with
+  `export -p`, `.env` is loaded by the shell, and the saved environment is
+  applied back on top.
 
-- **`make openapi-client` çalışma ağacına root'a ait dosyalar yazıyordu** ve
-  ardından `make clean` "Permission denied" ile düşüyordu; geliştirici kendi
-  deposunu temizlemek için `sudo`'ya muhtaç kalıyordu. Üreteç konteynerine
-  `--user` verildi. Mekanizma ölçüldü: `--user` olmadan konteyner `uid 0` ile
-  yazıyor ve `rm -rf` çıkış kodu 1 veriyor; `--user` ile dosyaların sahibi
-  çağıran oluyor ve aynı `rm -rf` 0 dönüyor.
+- **`make openapi-client` wrote root-owned files into the working tree**, and
+  `make clean` then failed with "Permission denied"; developers needed `sudo`
+  to clean their own repository. The generator container was given `--user`.
+  The mechanism was measured: without `--user` the container writes as
+  `uid 0` and `rm -rf` exits with code 1; with `--user` the files are owned by
+  the caller and the same `rm -rf` returns 0.
 
-- README'nin modül izolasyonu güvencesi BAYATTI: "12 modül × 11 yasak"
-  yazıyordu, oysa `.golangci.yml` bugün 15 modülün her biri için 14 yasak
-  taşıyor (sayıldı: 15 kural, 210 `deny` girdisi, hiçbiri eksik değil). Sayı
-  düzeltildi ve listenin elle tutulduğu, ama unutulması hâlinde kuralın
-  denetimsiz KALMADIĞI yazıldı — `TestModulesDoNotImportEachOther` modül
-  ağacını gezer, `.golangci.yml`'den haberi yoktur.
+- The README's module isolation guarantee was STALE: it said "12 modules × 11
+  bans", whereas `.golangci.yml` today carries 14 bans for each of 15 modules
+  (counted: 15 rules, 210 `deny` entries, none missing). The number was
+  corrected, and it is now written down that the list is maintained by hand,
+  but that if it is forgotten the rule does NOT GO unchecked —
+  `TestModulesDoNotImportEachOther` walks the module tree and knows nothing of
+  `.golangci.yml`.
 
-- README, müşteri oturumunu "Faz 8" diye anıyordu; aynı belgenin "Faz durumu"
-  tablosunda Faz 8 (Auth · admin user · API key · RBAC) **tamamlanmış**
-  görünüyor. Okuyan için çelişkili işaret: yapılmış bir fazın kapsamı olarak
-  gösterilen şey aslında hiçbir fazın kapsamında değil. Faz numarası
-  kaldırıldı, kapsam açıkça yazıldı.
+- The README referred to the customer session as "Phase 8"; in the same
+  document's "Phase status" table, Phase 8 (Auth · admin user · API key ·
+  RBAC) appears **complete**. A contradictory signal for the reader: what is
+  shown as the scope of a finished phase is in fact within the scope of no
+  phase at all. The phase number was removed and the scope written out
+  explicitly.
 
-### Kaldırıldı
+### Removed
 
-- **Hız sınırının dışa açık anahtar yardımcısı KALDIRILDI** —
-  `core/http` paketindeki `PrincipalKey`. (Ad burada paketiyle
-  nitelenmeden yazılıyor: nitelenmiş bir atıf okuyanı ARAMAYA yollar ve
-  `internal/arch` bunu denetler; oysa bu maddenin söylediği şey tam olarak
-  aranacak bir şey KALMADIĞIDIR.)
+- **The rate limiter's exported key helper was REMOVED** — `PrincipalKey` in
+  the `core/http` package. (The name is written here without its package
+  qualifier: a qualified reference sends the reader off to SEARCH, and
+  `internal/arch` checks for that; yet what this item says is precisely that
+  there is NOTHING left to search for.)
 
-  v0.4.0'da dışa açık bir yardımcıydı ve hız sınırı anahtarını çağıranın
-  kimliğinden türetiyordu. Üretimde tüketicisi
-  YOKTU ve olamazdı: hız sınırı halkası koruma yığınında kimlik doğrulamadan
-  ÖNCE koşar, yani çağrıldığı anda ortada bir kimlik bulunmaz ve fonksiyon her
-  istekte aynı yedek anahtarı döndürürdü. Sunduğu şey tutulamayan bir vaatti.
+  In v0.4.0 it was an exported helper that derived the rate limit key from the
+  caller's identity. It had NO consumer in production, and could not have had
+  one: the rate limit ring runs BEFORE authentication in the protection stack,
+  so at the moment it is called there is no identity yet, and the function
+  would return the same fallback key on every request. What it offered was a
+  promise that could not be kept.
 
-  Gömülü kodu etkiler: kendi `KeyFunc`'ını yazan taraf bu yardımcıyı çağırıyorsa
-  artık derlenmez. Karşılığı aynı davranışın kendi paketinde iki satırla
-  yazılmasıdır; anahtarın kimliğe göre ayrılması isteniyorsa halkanın kimlik
-  doğrulamadan SONRA takılması gerekir ve gerekçe `KeyFunc` godoc'undadır.
+  This affects embedded code: a party that writes its own `KeyFunc` and calls
+  this helper no longer compiles. The replacement is to write the same
+  behavior in two lines in its own package; if the key should be split by
+  identity, the ring has to be mounted AFTER authentication, and the rationale
+  is in the `KeyFunc` godoc.
 
-### Güvenlik
+### Security
 
-- **Satış kanalı kapsamı artık YAZMA yolunda da uygulanıyor: başka bir kanalın
-  varyantı sepete EKLENEMİYOR.** Kural (`ataması olmayan ürün her kanalda
-  görünür, ataması olan yalnızca atandığı kanallarda`) v0.4.0'a kadar yalnızca
-  OKUMA yüzeyinde uygulanıyordu — liste, sayaç, tekil uç ve toplu okuma tek bir
-  SQL şablonundan geçiyordu. `POST /store/v1/carts/{id}/line-items` ise varyantı
-  YALNIZCA kimlikle okuyordu.
+- **Sales channel scope is now enforced on the WRITE path too: a variant of
+  another channel CANNOT be ADDED to the cart.** The rule (`a product without
+  an assignment is visible in every channel, one with an assignment only in
+  the channels it is assigned to`) was enforced until v0.4.0 only on the READ
+  surface — the list, the counter, the single-item endpoint and the bulk read
+  all went through a single SQL template.
+  `POST /store/v1/carts/{id}/line-items`, however, read the variant by ID
+  ONLY.
 
-  Sonucu, kuralın kendisini anlamsız kılıyordu: B kanalının publishable
-  anahtarıyla gelen bir istemci, yalnızca A kanalında satılan bir varyantın
-  kimliğini gövdeye yazarak satırı ekliyor ve alışverişi tamamlayabiliyordu.
-  Vitrinde gizlenen ürün sepette satılabiliyordu, yani süzgeç bir yetkilendirme
-  değil bir görüntüleme tercihiydi. Gerçek yığında ölçüldü: düzeltme öncesi
-  yabancı kanalın varyantı `201`, sonrasında `404` alıyor
-  (`internal/e2e/channel_cart_test.go`).
+  The consequence made the rule itself meaningless: a client arriving with
+  channel B's publishable key could add the line and complete the purchase
+  just by writing into the body the ID of a variant sold only in channel A. A
+  product hidden in the storefront could be sold through the cart, so the
+  filter was a display preference, not an authorization. Measured on the real
+  stack: before the fix the foreign channel's variant gets `201`, after it
+  `404` (`internal/e2e/channel_cart_test.go`).
 
-  Kural İKİNCİ KEZ YAZILMADI. Akış varyantı yine Query katmanından okur;
-  eklenen tek şey, okumaya isteğin DOĞRULANMIŞ kimliğinden gelen kanalların
-  süzgeç olarak konmasıdır. Süzgeci uygulayan taraf product modülüdür ve
-  vitrinin kullandığı SQL şablonunun ta kendisiyle uygular
-  (`repository/saleschannel.go`); yeni sorgu yalnızca şablonu varyantın
-  `product_id`'siyle örnekler.
+  The rule was NOT WRITTEN A SECOND TIME. The workflow still reads the variant
+  from the Query layer; the only addition is that the channels coming from the
+  request's AUTHENTICATED identity are placed on the read as a filter. The
+  side that applies the filter is the product module, and it applies it with
+  the very same SQL template the storefront uses
+  (`repository/saleschannel.go`); the new query only instantiates the template
+  with the variant's `product_id`.
 
-  Kanallar İSTEMCİDEN ALINMAZ, `corehttp.Principal`'dan gelir — okuma
-  yüzeyindeki kararın aynısı. Üç durum da okuma yüzeyiyle BİREBİR aynı ayrılır:
-  kimlik yok → süzgeç uygulanmaz, kanalsız kimlik → BOŞ KÜME (yalnızca atamasız
-  ürünler), kanallı kimlik → o kanallar. İki türetmenin aynı anlamı taşıdığını
-  bir arch testi çiviler (`TestChannelDerivationMeansTheSameOnBothSurfaces`).
+  Channels are NOT TAKEN FROM THE CLIENT; they come from `corehttp.Principal`
+  — the same decision as on the read surface. The three cases are also
+  separated EXACTLY as on the read surface: no identity → no filter is
+  applied; an identity without channels → the EMPTY SET (only unassigned
+  products); an identity with channels → those channels. An arch test pins
+  that the two derivations carry the same meaning
+  (`TestChannelDerivationMeansTheSameOnBothSurfaces`).
 
-  Kapsam dışı varyant, hiç var olmayan varyantla **aynı** hatayı döner
-  (`404 cart_workflow_variant_unknown`): farklı bir sınıf, başka bir kanalda
-  satılan ürünün varlığını ele verir ve gizlemenin kendisini delerdi.
+  An out-of-scope variant returns the **same** error as a variant that does
+  not exist at all (`404 cart_workflow_variant_unknown`): a different class
+  would give away the existence of a product sold in another channel and
+  would pierce the hiding itself.
 
-  **Kapsam GİRİŞTE uygulanır.** Satır adedi güncelleme ve sepet tamamlama
-  yolları kapsamı yeniden sormaz: sepete varyant sokabilen tek yol satır
-  eklemedir ve sepete GİRMİŞ bir satırın, ürünü sonradan başka bir kanala
-  taşıyan bir yönetici düzenlemesiyle ödenemez hâle gelmemesi verilmiş bir
-  karardır. Sınır `workflows/cart/saleschannel.go`'da ve README'de yazılıdır;
-  bir arch testi (`TestVariantReadsGoThroughTheChannelDecision`) her yeni varyant
-  okumasını ya kararı vermeye ya da gerekçesini yazmaya zorlar.
+  **Scope is enforced AT ENTRY.** The line quantity update and cart completion
+  paths do not ask about scope again: adding a line is the only path that can
+  bring a variant into a cart, and it is a deliberate decision that a line
+  that is ALREADY IN a cart does not become unpayable because of an admin edit
+  that later moves the product to another channel. The boundary is written
+  down in `workflows/cart/saleschannel.go` and in the README; an arch test
+  (`TestVariantReadsGoThroughTheChannelDecision`) forces every new variant read
+  either to make the decision or to write down its rationale.
 
-  **Kimden ne isteniyor:** kanal ataması hiç kullanmayan kurulumlar
-  etkilenmez (atamasız ürün her kanalda satılabilir kalır). Kanal ataması
-  KULLANAN kurulumlarda, bugüne kadar açığa dayanarak yabancı kanalın ürününü
-  sepete ekleyen bir istemci artık `404` alır; doğru düzeltme, vitrinde
-  gösterilen katalogla sepete eklenen ürünü aynı anahtardan geçirmektir.
+  **What is asked of whom:** installations that never use channel assignment
+  are not affected (an unassigned product stays sellable in every channel). In
+  installations that DO USE channel assignment, a client that has so far
+  relied on the gap to add a foreign channel's product to the cart now gets
+  `404`; the right fix is to route the catalog shown in the storefront and the
+  product added to the cart through the same key.
 
-- **B2B harcama limitinin uygulanma KOŞULU belgelendi: limit, müşterisini
-  BEYAN EDEN alışverişe uygulanır.** Davranış **değişmedi**; değişen şey, bu
-  deponun v0.4.0'a kadar limiti koşulsuz uygulanan bir kural gibi anlatmasıydı.
+- **The CONDITION under which the B2B spending limit is applied is now
+  documented: the limit applies to a purchase that DECLARES its customer.**
+  The behavior **did not change**; what changed is that until v0.4.0 this
+  repository described the limit as a rule applied unconditionally.
 
-  Kural `order.CreateOrder` içinde `CustomerID` üzerinden çalışır ve o kimlik
-  zincire vitrin sepetinin gövdesinden girer. Mağaza yüzeyinin tek kimliği
-  publishable anahtardır ve o bir satış kanalını temsil eder, bir müşteriyi
-  değil (`corehttp.Principal` müşteri kimliği taşımaz) — yani `customer_id`
-  hiçbir kanıt istemeyen bir iddiadır. Gerçek ikilide, tek bir publishable
-  anahtarla ölçüldü (limit `50_000`, sepet toplamı `76_800`): gövdede
-  `customer_id` varken tamamlama `409 order_spending_limit_exceeded`, aynı sepet
-  alan olmadan `200` alıyor. Başkasının kimliğiyle tamamlanan alışveriş o
-  müşterinin penceresinden düşüyor, yani adı bilinen bir çalışanın harcama hakkı
-  **yakılabiliyor**. Beyanı zorunlu kılmak da kapatmıyor:
-  `POST /store/v1/customers` publishable anahtarla kuralsız, taze bir misafir
-  kaydı açıyor.
+  The rule works through `CustomerID` inside `order.CreateOrder`, and that ID
+  enters the chain from the body of the storefront cart. The store surface's
+  only identity is the publishable key, and it represents a sales channel, not
+  a customer (`corehttp.Principal` carries no customer ID) — so `customer_id`
+  is a claim that requires no proof. Measured on the real binary with a single
+  publishable key (limit `50_000`, cart total `76_800`): with `customer_id` in
+  the body, completion gets `409 order_spending_limit_exceeded`; the same cart
+  without the field gets `200`. A purchase completed under someone else's ID
+  is deducted from that customer's window, so the spending allowance of an
+  employee whose name is known **can be burned**. Making the declaration
+  mandatory does not close it either: `POST /store/v1/customers` opens a
+  fresh guest record with no rules using the publishable key.
 
-  Dördüncü kapı atfın **sonradan** yapılabilmesidir: misafir olarak açılan bir
-  sepet `POST /store/v1/carts/{id}` ile başkasının `customer_id`'sine devredilir
-  ve sipariş o kimliğe yazılır — yani atıf yalnızca sepet açılışında değil,
-  sepetin ÖMRÜ BOYUNCA beyana dayanır (ölçüldü: devir `200`, sipariş kurbanın
-  adına). Kapı sayısı üç değil DÖRTTÜR; aynı sayı README'nin B2B bölümünde ve
-  ADR 0008'de de dörttür.
+  The fourth door is that attribution can be made **after the fact**: a cart
+  opened as a guest is handed over to someone else's `customer_id` with
+  `POST /store/v1/carts/{id}`, and the order is written under that identity —
+  so attribution rests on the declaration not only when the cart is opened but
+  for the cart's WHOLE LIFETIME (measured: the handover gets `200`, and the
+  order is in the victim's name). The number of doors is not three but FOUR;
+  the same number is four in the README's B2B section and in ADR 0008 as well.
 
-  Kimlik doğrulama **inşa edilmedi** ve bu bilinçlidir: doğrulama çerçevenin
-  değil gömen uygulamanın işi olarak karara bağlandı
-  ([ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md) — reddedilen
-  seçenekler ve gömen uygulamaya düşen işin listesi orada). Sınır README'nin
-  B2B bölümüne, `order` modülünün godoc'una, `service.SpendingPolicy` ile
-  `CreateOrderInput.CustomerID` alanlarına yazıldı ve `order`'da iki testle
-  sabitlendi (`TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule`,
-  `TestTheSpendingRuleIsAppliedToTheDeclaredCustomer`). İki test bir yeteneği
-  değil bir kararı korur: kimlik doğrulama geldiğinde düşmeleri **beklenir**.
+  Authentication was **not built**, and this is deliberate: verification was
+  decided to be the job of the embedding application, not of the framework
+  ([ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md) — the rejected
+  options and the list of work that falls to the embedding application are
+  there). The boundary was written into the README's B2B section, the `order`
+  module's godoc, and the `service.SpendingPolicy` and
+  `CreateOrderInput.CustomerID` fields, and pinned in `order` with two tests
+  (`TestTrustBoundaryGuestOrderIsNeverAskedForTheSpendingRule`,
+  `TestTheSpendingRuleIsAppliedToTheDeclaredCustomer`). The two tests protect a
+  decision, not a capability: when authentication arrives, they are
+  **expected** to fail.
 
-  B2B kurulumu olan gömen uygulamaların yapması gereken: vitrin yüzeyini bir
-  müşteri oturumuyla korumak ve `customer_id`'yi gövdeden değil oturumdan
-  okumak. O katman olmadan limit, yalnızca dürüst istemcinin hatasını yakalar.
+  What embedding applications with a B2B setup must do: protect the
+  storefront surface with a customer session and read `customer_id` from the
+  session, not from the body. Without that layer, the limit only catches an
+  honest client's mistake.
 
-### Bilinen sınırlar
+### Known limits
 
-Bu bölüm bir GEÇMİŞ kaydının parçasıdır ve yalnızca **bu sürümde değişeni**
-söyler. v0.1.0 ile v0.4.0'ın "Bilinen sınırlar" bölümleri O SÜRÜMLERDE neyin
-bilindiğini anlatır ve geriye dönük düzeltilmezler; kapanan bir sınır, kapandığı
-sürümün kaydına yazılır — buraya. Bugün geçerli olan sınırların TAM listesi
-[`README.md`](./README.md)'nin "Bilinen sınırlar" bölümündedir: bir sürüm
-kaydından bugünü çıkarmak, üç listeyi üst üste koymayı gerektirirdi ve
-benimseme kararını veren kişi tam olarak o listeyi okur.
+This section is part of a HISTORICAL record and says only **what changed in
+this release**. The "Known limits" sections of v0.1.0 and v0.4.0 describe
+what was known IN THOSE RELEASES and are not corrected retroactively; a limit
+that closes is written into the record of the release in which it closed —
+here. The FULL list of the limits that hold today is in the "Known limits"
+section of [`README.md`](./README.md): extracting today from a release record
+would require stacking three lists on top of each other, and the person who
+makes the adoption decision reads exactly that list.
 
-**Kapananlar.**
+**Closed.**
 
-- v0.4.0'ın "`POST /store/v1/carts` hâlâ `region_id` alıyor" maddesi KAPANDI:
-  alan gövdeden kalktı, bölgeyi ve para birimini sunucu `country_code`'dan
-  türetiyor (yukarıda, Kırıcı değişiklikler). Kapatma, maddenin kendi işaret
-  ettiği yerde yapıldı — handler'da değil, türetmeyi zaten yapan akışta.
-- Satış kanalı kuralının YAZMA yolunda uygulanmaması KAPANDI (yukarıda,
-  Güvenlik). Bu, hiçbir sürümün "Bilinen sınırlar" bölümünde YAZMIYORDU ve
-  kaydın asıl kısmı budur: kural v0.1.0'dan beri bir yetkilendirme diye
-  anlatılıyor, yalnızca okuma yüzeyinde uygulanıyordu. Yazılmamış bir sınır,
-  kimsenin kapatmadığı sınırdır; bu kez onu görünür kılan şey de bir belge oldu
-  ([ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md) açığı, kendi
-  gerekçesini kurarken buldu).
-- Depo seçiminin POLİTİKASIZ olması KAPANDI (yukarıda, Eklendi): kural artık
-  ele → sırala → eşitliği boz üçlüsüdür. Bu sınır da hiçbir YAYIMLANMIŞ sürümün
-  "Bilinen sınırlar" bölümünde durmadı — aynı yayımlanmamış pencerede yazıya
-  geçti ve kapandı. Kaydın değeri, kuralın v0.2.0'dan (çoklu depo desteğinin
-  geldiği sürüm) beri sessizce "kimliği en küçük aday" olmasıdır. Kapatmanın
-  kabul edilen bedelleri aşağıdaki açık sınırlara girdi.
+- v0.4.0's item "`POST /store/v1/carts` still takes `region_id`" is CLOSED:
+  the field is gone from the body, and the server derives the region and the
+  currency from `country_code` (above, Breaking changes). The closing was done
+  where the item itself pointed — not in the handler, but in the workflow that
+  already did the derivation.
+- The sales channel rule not being enforced on the WRITE path is CLOSED
+  (above, Security). This was NOT WRITTEN in the "Known limits" section of any
+  release, and that is the real point of the record: since v0.1.0 the rule had
+  been described as an authorization while being enforced only on the read
+  surface. A limit that is not written down is a limit nobody closes; this
+  time, too, what made it visible was a document
+  ([ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md) found the gap
+  while building its own rationale).
+- Warehouse selection having NO POLICY is CLOSED (above, Added): the rule is
+  now the eliminate → sort → break ties triple. This limit, too, never stood in
+  the "Known limits" section of any RELEASED version — it was written down and
+  closed in the same unreleased window. The value of the record is that the
+  rule had silently been "the candidate with the smallest ID" since v0.2.0
+  (the release that brought multi-warehouse support). The accepted costs of
+  the closing entered the open limits below.
 
-**Devam eden.** v0.4.0'ın "vitrin sepetlerinde SAHİPLİK denetimi yok" maddesi
-aynen geçerlidir; model değişmedi. Değişen tek şey, modelin kapsamadığı yerin
-(`customer_id` iddiası) bu sürümde gerçek ikilide ÖLÇÜLMÜŞ olmasıdır.
+**Ongoing.** v0.4.0's item "no OWNERSHIP check on storefront carts" holds as
+is; the model did not change. The only thing that changed is that the place
+the model does not cover (the `customer_id` claim) was MEASURED on the real
+binary in this release.
 
-**Bu turda araştırıldı, karar verildi ve BİLEREK açık bırakıldı.**
+**Investigated, decided and DELIBERATELY left open this round.**
 
-- **Müşteri kimliği doğrulanmıyor; harcama limiti KOŞULLU uygulanıyor.**
-  Ölçümler ve gerekçe yukarıda, Güvenlik başlığında; karar
-  [ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md)'de. Sınırın doğru
-  cümlesi "harcama limiti uygulanmıyor" DEĞİL, "limit yalnızca müşterisini
-  BEYAN EDEN alışverişe uygulanır"dır: kimliğin doğrulandığı bir vitrinde kural
-  muhasebe disiplinini gerçekten uygular.
+- **The customer identity is not verified; the spending limit is applied
+  CONDITIONALLY.** The measurements and the rationale are above, under
+  Security; the decision is in
+  [ADR 0008](docs/adr/0008-musteri-kimligi-guven-siniri.md). The correct
+  statement of this limit is NOT "the spending limit is not applied" but "the
+  limit applies only to a purchase that DECLARES its customer": in a
+  storefront where identity is verified, the rule really does enforce
+  accounting discipline.
 
-- **Satış kanalı kapsamı GİRİŞTE uygulanır; sepete girmiş bir satırın ADEDİ
-  sonradan artırılabilir.** Kapsam yalnızca satır eklemede sorulur. Ürün
-  sonradan başka bir kanala taşınsa bile satır adedini güncelleyen yol kapsamı
-  yeniden sormaz (`Workflows.UpdateLineItem`,
-  `internal/workflows/cart/update_line_item.go`); tamamlama akışı da sormaz.
-  Sonucu tek cümleyle: vitrininde artık görünmeyen bir üründen, sepetinde zaten
-  bir satırı olan istemci DAHA FAZLA satın alabilir. Bu bir gözden kaçma değil,
-  verilmiş kararın bedelidir — alternatifi, yöneticinin bir katalog
-  düzenlemesiyle müşterinin dolu sepetini ödenemez hâle getirmesiydi. Karar
-  gerekçesiyle `internal/workflows/cart/saleschannel.go`'da yazılıdır ve bir
-  arch testi her yeni varyant okumasını aynı kararı vermeye zorlar
+- **Sales channel scope is enforced AT ENTRY; the QUANTITY of a line already
+  in a cart can be increased later.** Scope is asked only when a line is
+  added. Even if the product is later moved to another channel, the path that
+  updates the line quantity does not ask about scope again
+  (`Workflows.UpdateLineItem`,
+  `internal/workflows/cart/update_line_item.go`); nor does the completion
+  workflow. The consequence in one sentence: a client that already has a line
+  in its cart can buy MORE of a product that is no longer visible in its
+  storefront. This is not an oversight but the cost of a decision that was
+  made — the alternative was an admin making a customer's full cart unpayable
+  with a catalog edit. The decision is written down with its rationale in
+  `internal/workflows/cart/saleschannel.go`, and an arch test forces every new
+  variant read to make the same decision
   (`TestVariantReadsGoThroughTheChannelDecision`).
 
-- **Çok kiracılılık YOKTUR ve bu bir karardır: sınır KURULUMDUR, satır değil.**
-  74 tablonun hiçbirinde "bu satır kime ait" sorusunun cevabı yoktur, hiçbir
-  sorgu böyle bir süzgeç taşımaz ve çerçeve kiracılar arası bir sınır
-  tanımadığı gibi İDDİA DA ETMEZ. İki müşteriye tek kurulumdan hizmet vermek
-  desteklenmiyor: bir kiracı = bir kurulum = bir veritabanı = bir süreç. Plan
-  belgesi kavramı iki yerde kapsam dışı bırakıyordu ama GEREKÇESİNİ
-  yazmıyordu; gerekçesiz bir kapsam dışı bırakma karar değildir, her turda
-  yeniden tartışılır. Reddedilen iki tasarım ve kararı yeniden neyin açacağı
-  [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md)'da.
+- **There is NO multi-tenancy, and that is a decision: the boundary is the
+  INSTALLATION, not the row.** None of the 74 tables holds an answer to the
+  question "whom does this row belong to", no query carries such a filter, and
+  the framework neither recognizes a boundary between tenants nor CLAIMS one.
+  Serving two customers from one installation is not supported: one tenant =
+  one installation = one database = one process. The plan document left the
+  concept out of scope in two places but did not write down its RATIONALE; an
+  exclusion from scope without a rationale is not a decision, and it is
+  re-argued every round. The two rejected designs and what would reopen the
+  decision are in [ADR 0009](docs/adr/0009-cok-kiracililik-kurulum-siniri.md).
 
-- **Yanlış bir bölge bağı MAĞAZAYI KAPATIR ve düşen sepeti KALICI olarak
-  tüketir.** Var olmayan bir bölge kimliği bağlamak — ya da bir bölgeyi silip
-  aynı adla yeniden açmak, çünkü yeni kayıt yeni kimlik alır — o depoyu her
-  sepette eler; tek depolu bir kurulumda sonucu, katalog dolu olduğu hâlde her
-  tamamlamanın reddedilmesidir. Düşen sepet bir daha tamamlanamaz, çünkü
-  tamamlama akışının idempotency anahtarı sepet kimliğinden türer ve başarısız
-  bir yürütme aynı anahtarla tekrar koşamaz. Bu yakma bu sürümden ÖNCE de
-  vardı; değişen, tetikleyicisinin artık bir stok olgusu değil tek bir yönetim
-  yazması olabilmesidir. Bedel kaldırılmadı, GÖRÜNÜR yapıldı: arıza kendi hata
-  kodunu taşır ve o kod vitrine ulaşır.
+- **A wrong region binding CLOSES THE STORE and PERMANENTLY consumes the cart
+  that fails.** Binding a region ID that does not exist — or deleting a region
+  and reopening it under the same name, because the new record gets a new ID
+  — eliminates that warehouse for every cart; in a single-warehouse
+  installation, the result is that every completion is rejected even though
+  the catalog is full. The failed cart can never be completed again, because
+  the completion workflow's idempotency key is derived from the cart ID and a
+  failed execution cannot run again with the same key. This burn existed
+  BEFORE this release too; what changed is that its trigger can now be a
+  single admin write rather than a stock fact. The cost was not removed, it
+  was made VISIBLE: the failure carries its own error code, and that code
+  reaches the storefront.
 
-- **Bölge bağı bir TERCİH değil KISITTIR ve geri düşme kümesini DARALTIR.** İki
-  depoyu ayrı bölgelere bağlayan işletmeci, ilk deponun stoğu yarışta
-  tükendiğinde siparişin düşmesini kabul etmiş olur — oysa politika yazılmadan
-  önce o sipariş diğerinden çıkardı. "Önce A, tükenirse B" bölge bağıyla değil
-  ÖNCELİKLE yazılır. Bağı sıralama anahtarına çevirip katı kesiği bir bayrağın
-  arkasına almak değerlendirildi ve reddedildi; gerekçe
-  [ADR 0010](docs/adr/0010-depo-secim-politikasi.md)'da.
+- **A region binding is not a PREFERENCE but a CONSTRAINT, and it NARROWS the
+  fallback set.** An operator who binds two warehouses to separate regions
+  accepts that the order fails when the first warehouse's stock runs out in a
+  race — whereas before the policy was written, that order would have shipped
+  from the other one. "A first, B if it runs out" is written with PRIORITY,
+  not with a region binding. Turning the binding into a sort key and putting
+  the hard cut behind a flag was considered and rejected; the rationale is in
+  [ADR 0010](docs/adr/0010-depo-secim-politikasi.md).
 
-- **Bir deponun SON bölge bağını silmek onu gizlemez, TÜM bölgelere açar.**
-  Kural satış kanalı kapsamınınkiyle aynıdır ve aynı gerekçeden gelir: katı
-  alternatif, açıldığı gün politikası olmayan tüm kurulumların siparişini
-  durdururdu. Asimetri yazılmalı — satış kanalında bedel GÖRÜNÜRLÜKTÜR, burada
-  DÜŞEN SİPARİŞTİR.
+- **Deleting a warehouse's LAST region binding does not hide it; it opens it
+  to ALL regions.** The rule is the same as for sales channel scope and comes
+  from the same rationale: the strict alternative would have stopped the
+  orders of every installation without a policy on the day it shipped. The
+  asymmetry must be written down — for the sales channel the cost is
+  VISIBILITY, here it is a FAILED ORDER.
 
-- **Akış kurulumunu denetleyen mimari değişmez sözdizimsel bir VEKİLDİR ve
-  yanlış negatifi ÖLÇÜLDÜ.** `TestEveryWorkflowIsSetUpInTheCompositionRoot`, "yanlış
-  yapılandırma açılışı durdurabilir mi" sorusunu "kuruluma giden yol bir `go`
-  ifadesinden geçiyor mu" diye sorar. `go` tek satırlık bir dolaylamanın
-  arkasına saklandığında denetim GEÇER, oysa özellik sağlanmaz: gerçek süreçte
-  ölçüldü — senkron ikili, kurulum hatasında çıkış kodu 1 verirken o biçimdeki
-  ikili sağlıklı açılıp arızayı tek bir ERROR satırına indiriyor. Vekil yine de
-  tutuluyor çünkü YAKALADIĞI biçimler (çıplak `go`, kapanış, çok halkalı
-  zincir) kazara yazılanlardır; kaçırdığı biçim bilerek yazılmayı gerektirir.
-  Kapsam `internal/arch/registration_test.go`'da yazılıdır ve orada "bu değişmez
-  açılışın kapalı arızalandığını garanti eder" cümlesi bilinçli olarak
-  kurulmuyor.
+- **The architecture invariant that checks workflow setup is a syntactic
+  PROXY, and its false negative was MEASURED.**
+  `TestEveryWorkflowIsSetUpInTheCompositionRoot` asks the question "can a
+  misconfiguration halt startup" as "does the path to setup go through a `go`
+  statement". When the `go` is hidden behind a one-line indirection the check
+  PASSES, yet the property does not hold: measured in the real process — the
+  synchronous binary exits with code 1 on a setup error, while a binary of
+  that shape starts up healthy and reduces the failure to a single ERROR line.
+  The proxy is kept anyway, because the shapes it CATCHES (a bare `go`, a
+  closure, a multi-link chain) are the ones written by accident; the shape it
+  misses has to be written on purpose. The scope is written down in
+  `internal/arch/registration_test.go`, and the sentence "this invariant
+  guarantees that startup fails closed" is deliberately not made there.
 
 ## [0.4.0] — 2026-09-01
 
-### Kırıcı değişiklikler
+### Breaking changes
 
-`0.x` boyunca minor sürümlerde kırıcı değişiklik olabilir. Aşağıdakiler
-**mağaza API'sini** kullanan istemcileri doğrudan etkiler.
+Breaking changes may land in minor releases throughout `0.x`. The following
+directly affect clients that use the **store API**.
 
-- **`POST /store/v1/carts/{id}/line-items` gövdesinden `unit_price` ve `title`
-  KALDIRILDI.** İkisini gönderen istek artık `422` alır (gövde tanınmayan alanı
-  reddeder). Sessizce yok saymak seçilmedi: istemci gönderdiğini sanır, sunucu
-  başka bir fiyat yazardı. Fiyat `pricing`'den, başlık katalogdan gelir; gerekçe
-  aşağıda ("Fiyat yetkisi istemciden alındı").
-- **`POST /store/v1/carts` gövdesinden `currency_code` KALDIRILDI.** Alanı
-  gönderen istek artık `422` alır (gövde tanınmayan alanı reddeder). Sepetin
-  para birimini sunucu, sepetin BÖLGESİNDEN türetir. Sessizce yok saymak yine
-  seçilmedi: istemci gönderdiğini sanır, sunucu başka bir para birimi yazar ve
-  satır beklenenden başka bir fiyat listesinden fiyatlanırdı. Gerekçe aşağıda
-  ("Para birimi yetkisi istemciden alındı").
+- **`unit_price` and `title` are REMOVED from the body of
+  `POST /store/v1/carts/{id}/line-items`.** A request that sends either now
+  gets `422` (the body rejects unrecognised fields). Silently ignoring them was
+  not chosen: the client would believe it had sent them, while the server
+  wrote a different price. The price comes from `pricing` and the title from
+  the catalog; the rationale is below ("Pricing authority taken away from the
+  client").
+- **`currency_code` is REMOVED from the `POST /store/v1/carts` body.** A
+  request that sends the field now gets `422` (the body rejects unrecognised
+  fields). The server derives the cart's currency from the cart's REGION.
+  Silently ignoring it was again not chosen: the client would believe it had
+  sent it, the server would write a different currency, and the line would be
+  priced from a different price list than expected. Rationale below
+  ("Currency authority taken away from the client").
 
-- **`POST /store/v1/carts` bilinmeyen bir `region_id` ile artık `404` döner.**
-  Eskiden bölgenin varlığı hiç denetlenmiyordu ve uydurma bir kimlikle sepet
-  açılabiliyordu; para birimi bölgeden okunduğu için o kapı da kapandı. Boş ya
-  da biçimsiz `region_id` yine `422`'dir — ama hata artık `region` modülünün
-  kodunu taşır (`region_invalid_input`), `cart`'ınkini değil.
+- **`POST /store/v1/carts` now returns `404` for an unknown `region_id`.**
+  Previously the region's existence was never checked, and a cart could be
+  opened with a made-up ID; since the currency is read from the region, that
+  door is closed too. An empty or malformed `region_id` is still `422` — but
+  the error now carries the `region` module's code (`region_invalid_input`),
+  not `cart`'s.
 
-- **`PATCH /store/v1/carts/{id}/line-items/{line_item_id}` sıfır adette artık
-  `422` değil `204` döner** ve satırı kaldırır. Sıfır adet eskiden geçersizdi,
-  yani hiçbir istemci ona bağımlı olamaz; her sepet arayüzünde adet seçiciyi
-  sıfıra indirmek "bunu kaldır" demektir ve niyeti akış çevirir.
-- `workflows/cart`'ın `Carts` dar arayüzü büyüdü: `AddCartLineItem` artık satır
-  metadata'sını da taşır. Kendi uygulamasını yazan gömülü kodu etkiler.
+- **`PATCH /store/v1/carts/{id}/line-items/{line_item_id}` with a quantity of
+  zero now returns `204` instead of `422`** and removes the line. A zero
+  quantity used to be invalid, so no client can depend on it; in every cart
+  UI, bringing the quantity selector down to zero means "remove this", and the
+  workflow translates the intent.
+- The `Carts` narrow interface of `workflows/cart` grew: `AddCartLineItem` now
+  also carries the line's metadata. This affects embedding code that writes
+  its own implementation.
 
-### Eklendi
+### Added
 
-- **Sepet akışları üretim ikilisine BAĞLANDI; `POST
-  /store/v1/carts/{id}/complete` eklendi.** `internal/workflows/cart` ve
-  `internal/workflows/checkout` hiçbir kurulumda çağrılmıyordu: `cmd/server`
-  yalnızca saga MOTORUNU (`core.workflow`) kaydediyor, akışların kendisini
-  üretim kodunda kuran tek satır bulunmuyordu. Tek çağıran `internal/e2e`
-  testleriydi — yani çalışan ikilide sepeti siparişe çeviren yol YOKTU: ödeme,
-  kargo, checkout promosyonu, `order.placed` bildirimi ve b2b harcama limiti
-  erişilemezdi. README ise `complete_cart`'ı sunulan bir yetenek gibi
-  anlatıyordu.
+- **The cart workflows are WIRED into the production binary; `POST
+  /store/v1/carts/{id}/complete` added.** `internal/workflows/cart` and
+  `internal/workflows/checkout` were not called in any setup: `cmd/server`
+  registered only the saga ENGINE (`core.workflow`), and not a single line of
+  production code built the workflows themselves. The only callers were the
+  `internal/e2e` tests — so in the running binary there was NO path that
+  turned a cart into an order: payment, shipping, checkout promotions, the
+  `order.placed` notification and the b2b spending limit were unreachable. The
+  README, meanwhile, described `complete_cart` as a capability on offer.
 
-  Kablolama, `order` → `b2b` harcama kuralındaki kalıbın aynısıdır: akışların
-  HTTP sahibi MODÜLDÜR. `cart` kendi paketinde iki dar arayüz tanımlar
-  (`api.LinePricing`, `api.CartCompletion`), somut akışı container'dan
-  `workflows.cart.interop` / `workflows.checkout.interop` adıyla çözer ve
-  `cmd/server` yalnızca akışları kurup kaydeder — bileşim köküne handler kodu
-  girmez, URL'ler sepetin altında kalır.
+  The wiring follows the same pattern as the `order` → `b2b` spending rule:
+  the HTTP owner of the workflows is the MODULE. `cart` defines two narrow
+  interfaces in its own package (`api.LinePricing`, `api.CartCompletion`),
+  resolves the concrete workflow from the container under the names
+  `workflows.cart.interop` / `workflows.checkout.interop`, and `cmd/server`
+  only builds and registers the workflows — no handler code enters the
+  composition root, and the URLs stay under the cart.
 
-  Kayıt sırası **dairesel**dir ve daire iki yerden kırılır: akış tüm modüllerin
-  yüzeylerini çözdüğü için ancak `Bootstrap`'tan sonra kurulabilir, modülün
-  handler'ı ise `Register` sırasında kurulur. Modül tarafındaki çözüm bu yüzden
-  TEMBELDİR (ilk istekte, sonucu saklanarak) — `order`'ın `spendingPolicy`
-  sarmalayıcısıyla birebir aynı mekanizma; yenisi icat edilmedi.
+  The registration order is **circular**, and the circle is broken in two
+  places: because the workflow resolves the surfaces of every module, it can
+  only be built after `Bootstrap`, while the module's handler is built during
+  `Register`. The module-side resolution is therefore LAZY (on the first
+  request, with the result kept) — exactly the same mechanism as `order`'s
+  `spendingPolicy` wrapper; no new one was invented.
 
-  Bağlanan uçlar: satır ekleme ve adet güncelleme artık `add_line_item` /
-  `update_line_item` akışlarından geçer (yani satır her değişiklikte YENİDEN
-  FİYATLANIR ve sepetin toplamı bayat kalmaz), `POST .../complete` ise
-  `complete_cart` saga'sını çalıştırır.
+  Endpoints wired: adding a line and updating a quantity now go through the
+  `add_line_item` / `update_line_item` workflows (so the line is RE-PRICED on
+  every change and the cart total does not go stale), while
+  `POST .../complete` runs the `complete_cart` saga.
 
-  Tamamlama gövdesindeki her alan bir yetki sorusu olarak ayrı ayrı
-  kararlaştırıldı: `payment_provider_id` ve `payment_data` istemciden gelir
-  (müşterinin seçimi), `expected_total` **zorunludur** (opsiyonel olsaydı alanı
-  unutan her istemci "gördüğün tutarla çekilen tutar aynı mı" korumasını
-  sessizce kapatırdı; ayrışma `409` üretir ve hesap saga'nın ilk adımından önce
-  yenilendiği için HİÇBİR yan etki uygulanmaz), `email` gövdede YOKTUR (sepetin
-  adresi zaten sepettedir; ikinci bir kanal, siparişi sepette görünenden başka
-  bir adrese bağlardı) ve `location_id` de YOKTUR (hangi depodan çıkılacağı
-  kargo kararıdır; müşteriye depo seçtirmek stok topolojisini sızdırırdı).
-  Yanıt siparişin kimliğini ve tahsil edilen tutarı taşır; ödeme oturumu/
-  koleksiyon/rezervasyon kimlikleri ve operatöre ait uyarılar yayımlanmaz.
+  Each field in the completion body was decided separately, as a question of
+  authority: `payment_provider_id` and `payment_data` come from the client
+  (the customer's choice); `expected_total` is **required** (had it been
+  optional, every client that forgot the field would silently switch off the
+  "is the amount charged the amount you saw" protection; a mismatch produces
+  `409`, and because the calculation is refreshed before the saga's first
+  step, NO side effect is applied); `email` is NOT in the body (the cart's
+  address is already on the cart; a second channel would tie the order to an
+  address other than the one shown on the cart); and `location_id` is NOT
+  there either (which warehouse to ship from is a shipping decision; letting
+  the customer pick a warehouse would leak the stock topology). The response
+  carries the order's ID and the amount collected; payment session /
+  collection / reservation IDs and operator-facing warnings are not
+  published.
 
-- **Fiyat yetkisi istemciden alındı.** `POST
-  /store/v1/carts/{id}/line-items` gövdesi `unit_price` alıyor ve cart servisi
-  onu OLDUĞU GİBİ yazıyordu; yalnızca aralığı denetleniyor (`checkAmount`),
-  doğruluğu denetlenmiyordu. Alanın godoc'u "nihai fiyatı `calculate_totals`
-  workflow'u yazar" diyordu — ama o workflow hiç kurulmuyordu, yani istemcinin
-  gönderdiği fiyat NİHAİ fiyattı. Vitrinin kimliği publishable anahtardır ve
-  tarayıcıda durur: bu, herkesin erişebildiği bir "kendi fiyatını yaz" ucuydu.
-  Sonuca gitmiyordu çünkü checkout ucu da yoktu — ama ikisi aynı kökten ve
-  checkout bağlandığı anda "her şeyi 1 kuruşa al" açılırdı. `title` de aynı
-  sınıftaydı: satırın adı kataloğun verisidir ve sepette, siparişte, faturada
-  ve kargo listesinde görünen odur.
+- **Pricing authority taken away from the client.** The `POST
+  /store/v1/carts/{id}/line-items` body took `unit_price` and the cart service
+  wrote it AS IS; only its range was checked (`checkAmount`), not its
+  correctness. The field's godoc said "the `calculate_totals` workflow writes
+  the final price" — but that workflow was never built, so the price the
+  client sent WAS the final price. The storefront's identity is the
+  publishable key, and it lives in the browser: this was a "write your own
+  price" endpoint open to anyone. It had no consequence because the checkout
+  endpoint did not exist either — but both had the same root, and the moment
+  checkout was wired, "buy everything for a single cent" would have opened up.
+  `title` was in the same class: the line's name is catalog data, and it is
+  what appears on the cart, the order, the invoice and the packing list.
 
-  Fiyat artık `pricing` modülünden, başlık Query katmanından gelir. Yönetim
-  tarafında karşılığı açılmadı ve gerekmiyor: `cart`'ın `/admin/v1` yüzeyi
-  tanımı gereği YALNIZCA OKUMADIR (sepeti değiştiren tek taraf müşteridir),
-  yani "yönetici fiyat girebilsin" için değiştirilecek bir uç yoktur.
+  The price now comes from the `pricing` module and the title from the Query
+  layer. No admin-side counterpart was opened, and none is needed: `cart`'s
+  `/admin/v1` surface is READ-ONLY by definition (the only party that changes
+  a cart is the customer), so there is no endpoint to change for "let an
+  administrator enter a price".
 
-  **Fiyat yolu KAPALI arızalanır**: fiyatlandırma akışı çözülemezse satır HİÇ
-  EKLENMEZ — ne istemcinin fiyatıyla, ne sıfırla. Bu, b2b harcama kuralının
-  bilinçli TERSİDİR: b2b kayıtlı değilse "limit yok" doğru cevaptır, ama
-  fiyatlandırıcı yoksa "fiyat yok" satırı yazmak sessizce bedava mal satmaktır.
-  Gerekçe `linePricing` godoc'una yazıldı.
+  **The price path fails CLOSED**: if the pricing workflow cannot be resolved,
+  the line is NOT ADDED AT ALL — neither at the client's price nor at zero.
+  This is the deliberate OPPOSITE of the b2b spending rule: if b2b is not
+  registered, "no limit" is the right answer, but if there is no pricer,
+  writing a "no price" line is silently selling goods for free. The rationale
+  is written in the `linePricing` godoc.
 
-  Yeni testler: vitrinin fiyat/başlık kabul etmediği ve reddedilen isteğin
-  sepete satır YAZMADIĞI (birim + e2e), fiyatlandırıcı yokken satırın
-  eklenmediği, tamamlama ucunun gerçekten sipariş ürettiği ve onaylanmayan
-  toplamda hiçbir yan etki bırakmadığı (e2e, gerçek modüller ve gerçek
-  Postgres üzerinde, tümüyle HTTP'den).
+  New tests: that the storefront accepts no price/title and that a rejected
+  request WRITES no line to the cart (unit + e2e), that the line is not added
+  when there is no pricer, that the completion endpoint really produces an
+  order and that an unconfirmed total leaves no side effect behind (e2e, on
+  real modules and real Postgres, entirely over HTTP).
 
-- **Para birimi yetkisi istemciden alındı.** `POST /store/v1/carts` gövdesi
-  `currency_code` alıyor ve cart servisi onu OLDUĞU GİBİ yazıyordu; yalnızca
-  kodun BİÇİMİ doğrulanıyor, bölgeninkiyle karşılaştırılmıyordu. Yani ayrışma
-  reddedilmiyordu: TRY bölgesinde açılan bir sepete `EUR` yazan istemci, o
-  sepeti gerçekten EUR olarak alıyordu.
+- **Currency authority taken away from the client.** The
+  `POST /store/v1/carts` body took `currency_code` and the cart service wrote
+  it AS IS; only the code's FORMAT was validated, and it was not compared with
+  the region's. So a mismatch was not rejected: a client that wrote `EUR` on a
+  cart opened in a TRY region really got that cart in EUR.
 
-  Sınıf `unit_price` ile AYNIDIR ve patlama yarıçapı yalnızca daha küçüktür:
-  istemci tutar uyduramıyordu ama HANGİ FİYAT LİSTESİNİN uygulanacağını
-  seçebiliyordu. Para birimi sepetin bir etiketi değil, fiyatın SEÇİCİSİDİR —
-  satır akışı birim fiyatı varyantın fiyat kümesinden "sepetin para biriminde"
-  okur. Küçük yarıçap kusuru küçültür, meşrulaştırmaz.
+  The class is the SAME as `unit_price`, only with a smaller blast radius: the
+  client could not invent an amount, but it could choose WHICH PRICE LIST was
+  applied. The currency is not a label on the cart but the price's SELECTOR —
+  the line workflow reads the unit price from the variant's price set "in the
+  cart's currency". A smaller radius makes the defect smaller; it does not
+  make it legitimate.
 
-  Para birimi bölgenin verisidir: `region` şemasında bölge başına TEK bir
-  sütundur (`region.currency_code`, `currency` tablosuna FK). Bir bölgenin iki
-  para birimi olamayacağı için sepetin para birimi bir seçim değil bir
-  TÜRETMEDİR ve artık handler onu bölgeden okur. Kalıp fiyattakinin aynısıdır:
-  `cart`, `region`'ı import etmez; kendi paketinde dar bir arayüz tanımlar
-  (`api.RegionCurrencyReader`) ve somut servisi container'dan `region.service`
-  adıyla çözer (ADR 0001/0006).
+  The currency is the region's data: in the `region` schema it is a SINGLE
+  column per region (`region.currency_code`, an FK to the `currency` table).
+  Since a region cannot have two currencies, the cart's currency is not a
+  choice but a DERIVATION, and the handler now reads it from the region. The
+  pattern is the same as for the price: `cart` does not import `region`; it
+  defines a narrow interface in its own package (`api.RegionCurrencyReader`)
+  and resolves the concrete service from the container under the name
+  `region.service` (ADR 0001/0006).
 
-  **Bu yol da KAPALI arızalanır**: bölge yüzeyi çözülemezse sepet HİÇ AÇILMAZ.
-  Bir varsayılana düşmek — mağazanın ilk para birimi ya da istemcinin dediği —
-  tam olarak kapatılan kapıyı geri açardı. Gerekçe sepet açma ucunun godoc'una
-  yazıldı (`internal/modules/cart/api/store.go`).
+  **This path fails CLOSED too**: if the region surface cannot be resolved,
+  the cart is NOT OPENED AT ALL. Falling back to a default — the store's first
+  currency, or whatever the client said — would reopen exactly the door that
+  was closed. The rationale is written in the godoc of the cart-creation
+  endpoint (`internal/modules/cart/api/store.go`).
 
-  **Yönetim yüzeyinde aynı alan MEŞRUDUR ve kaldırılmadı.** `POST
-  /admin/v1/regions` gövdesindeki `currency_code` bölgeyi TANIMLAR: operatör
-  orada bir kopya değil ASLI yazar ve kopyalanacak bir kaynak yoktur. Ölçüt
-  "alan gövdede mi" değil, "bu değer çağıranın kendi verisi mi" sorusudur.
-  `cart`'ın kendi `/admin/v1` yüzeyinde soru hiç doğmaz: orası yalnızca okur ve
-  sepet açan bir yönetim ucu yoktur.
+  **On the admin surface the same field is LEGITIMATE and was not
+  removed.** In the `POST
+  /admin/v1/regions` body, `currency_code` DEFINES the region: there the
+  operator writes the ORIGINAL, not a copy, and there is no source to copy
+  from. The criterion is not "is the field in the body" but the question "is
+  this value the caller's own data". On `cart`'s own `/admin/v1` surface the
+  question never arises: it only reads, and there is no admin endpoint that
+  opens a cart.
 
-  Yeni testler: alanın reddedildiği ve reddedilen isteğin sepet YAZMADIĞI
-  (birim + e2e), para biriminin gerçekten bölgeden geldiği, bölge yüzeyi
-  yokken sepetin açılmadığı, bilinmeyen bölgenin sepet açtırmadığı ve
-  container adının sözleşme olduğu (birim). Asıl kanıt e2e'dedir: farklı para
-  birimli İKİ bölgede aynı varyant, sepet başına FARKLI birim fiyat alır —
-  para biriminin fiyatı seçtiği ancak bu iddiada görünür.
+  New tests: that the field is rejected and the rejected request WRITES no
+  cart (unit + e2e), that the currency really comes from the region, that no
+  cart is opened when the region surface is missing, that an unknown region
+  does not get a cart opened, and that the container name is a contract
+  (unit). The real proof is in the e2e: the same variant in TWO regions with
+  different currencies gets a DIFFERENT unit price per cart — that the
+  currency selects the price becomes visible only in this assertion.
 
 
-- **B2B modülü: şirket, çalışan ve harcama limiti.** Alıcının bir birey değil,
-  dönem başına harcama yetkisi sınırlı bir ÇALIŞAN olduğu kurulum. Modül başka
-  hiçbir modülü import etmez; çalışan → müşteri bağı yalnızca `core/link`'tedir
-  ve `b2b_company_employee` tablosunda `customer_id` sütunu **yoktur** (aynı
-  ilişkiyi iki yerde tutmak, ayrışabilecekleri bir yer açardı).
+- **B2B module: company, employee and spending limit.** A setup in which the
+  buyer is not an individual but an EMPLOYEE whose spending authority per
+  period is limited. The module imports no other module; the employee →
+  customer tie lives only in `core/link`, and the `b2b_company_employee` table
+  has **no** `customer_id` column (keeping the same relationship in two places
+  would open a place where they could diverge).
 
-  Kural iki modüle bölünmüştür: **limit** `b2b`'nin, **harcama** (verilmiş
-  siparişlerin toplamı) `order`'ın verisidir. İkisi birbirini import edemediği
-  için sözleşme JSON'dur, `order` kendi dar arayüzünü (`service.SpendingPolicy`)
-  kendi paketinde tanımlar ve somut tipi container'dan `b2b.interop` adıyla
-  çözer. Bunun kabul edilen bedeli, **derleyicinin bu sözleşmeyi
-  denetlememesidir**: bir alan adı ayrışsaydı iki paketin birim testleri de
-  yeşil kalır, üretimde limit sessizce kalkardı — sözleşmenin iki ucu bu yüzden
-  gerçek container üzerinden e2e'de birleştirilir.
+  The rule is split across two modules: the **limit** is `b2b`'s data, the
+  **spending** (the total of placed orders) is `order`'s. Since neither may
+  import the other, the contract is JSON: `order` defines its own narrow
+  interface (`service.SpendingPolicy`) in its own package and resolves the
+  concrete type from the container under the name `b2b.interop`. The accepted
+  cost of this is that **the compiler does not check this contract**: had a
+  field name diverged, the unit tests of both packages would stay green and in
+  production the limit would silently disappear — which is why the two ends
+  of the contract are joined in e2e over the real container.
 
-  Kontrol `order.CreateOrder` içinde, siparişin yazıldığı **işlemin içinde** ve
-  müşteri kilidi altında yapılır. `complete_cart` saga'sında `create_order`,
-  `authorize_payment`'tan **önce** koştuğu için reddedilen alışverişte para hiç
-  yetkilendirilmez; kontrol ile yazma aynı işlemde olduğu için iki eşzamanlı
-  sipariş limiti birlikte aşamaz. Kural saga yerine servise konmuştur çünkü bu
-  modülde sipariş yaratan tek yol odur — saga'ya konsaydı ileride eklenecek
-  ikinci bir çağıran onu sessizce atlardı.
+  The check runs inside `order.CreateOrder`, **within the transaction** that
+  writes the order and under the customer lock. Because `create_order` runs
+  **before** `authorize_payment` in the `complete_cart` saga, money is never
+  authorized for a rejected purchase; because the check and the write share a
+  transaction, two concurrent orders cannot exceed the limit together. The
+  rule was put in the service rather than the saga because that is the only
+  path in this module that creates an order — had it been put in the saga, a
+  second caller added later would silently bypass it.
 
-  Limit `nil` ise sınırsız, `0` ise gerçek bir sıfır limittir. Pencere
-  takvimdendir (aylık/yıllık, UTC). Şirketin para birimi sepetinkinden farklıysa
-  sipariş reddedilir; çevirmek bir kur kaynağı gerektirirdi ve o karar bu
-  modülün değildir. Modül kayıtlı değilken davranış b2b hiç yokmuş gibidir.
+  A `nil` limit means unlimited; `0` is a real zero limit. The window is
+  calendar-based (monthly/yearly, UTC). If the company's currency differs
+  from the cart's, the order is rejected; converting would need an
+  exchange-rate source, and that decision does not belong to this module.
+  When the module is not registered, the behaviour is as if b2b did not exist
+  at all.
 
-- **GraphQL'in beş yeni sertleştirme sınırı artık ortam değişkeniyle
-  ayarlanıyor.** `GRAPHQL_MAX_FIELD_REPETITION`, `GRAPHQL_MAX_RESPONSE_BYTES`,
-  `GRAPHQL_MAX_INTROSPECTION_ROOTS`, `GRAPHQL_MAX_INTROSPECTION_DEPTH` ve
-  `GRAPHQL_MAX_SELECTIONS`. Kapılar eklendiğinde yalnızca `graph.Options`
-  üzerinden ayarlanabiliyordu; yani operatörün ayarlayamadığı kapılar tam da
-  **en yüksek ciddiyetli ikisiydi** (bayt çoğaltması ve iç gözlem seli) ve
-  meşru bir ihtiyaç doğduğunda tek çare kodu çatallamaktı.
+- **GraphQL's five new hardening limits are now configurable through
+  environment variables.** `GRAPHQL_MAX_FIELD_REPETITION`,
+  `GRAPHQL_MAX_RESPONSE_BYTES`, `GRAPHQL_MAX_INTROSPECTION_ROOTS`,
+  `GRAPHQL_MAX_INTROSPECTION_DEPTH` and `GRAPHQL_MAX_SELECTIONS`. When the
+  gates were added they could only be set through `graph.Options`; so the
+  gates the operator could not set were precisely **the two of highest
+  severity** (byte amplification and the introspection flood), and when a
+  legitimate need arose the only recourse was to fork the code.
 
-  `internal/arch`'taki simetri testi bu boşluğu göremiyordu çünkü üç sınırı elle
-  karşılaştırıyordu; test artık `graph.Options`'ı **yansımayla gezer** ve
-  `Max*` ile başlayan her alanın çekirdekte bir karşılığı olmasını zorlar.
-  Mutasyonla doğrulandı: eşlemeden bir girdi çıkarıldığında test düşüyor.
+  The symmetry test in `internal/arch` could not see this gap because it
+  compared three limits by hand; the test now walks `graph.Options` **by
+  reflection** and enforces that every field matching `Max*` has a
+  counterpart in the core. Verified by mutation: removing an entry from the
+  mapping makes the test fail.
 
-- **GraphQL hata politikası artık hatanın TİPİNE değil KAYNAĞINA bakıyor.**
-  Presenter "bu bir `*errors.Error` mi" diye soruyor, olmayanı istemciye olduğu
-  gibi veriyordu; oysa çekirdeğin kuralı tam tersidir. Ölçüldü: vitrin servisi
-  sınıflandırılmamış bir hata döndürdüğünde yanıt (durum 200)
+- **The GraphQL error policy now looks at the error's SOURCE, not its TYPE.**
+  The presenter asked "is this an `*errors.Error`" and handed anything that
+  was not to the client as is; the core's rule is the exact opposite.
+  Measured: when the storefront service returned an unclassified error, the
+  response (status 200) carried the text
   `pq: SSL connection error host=db.internal user=gobit password=s3cr3t …;
-  SELECT * FROM product_products WHERE id=$1` metnini aynen taşıyordu ve o hata
-  **hiçbir yere de yazılmıyordu** — aynı hata REST ucunda 500, `internal_error`
-  ve genel mesajla dönüp gerçek metni logluyordu. Artık resolver'ın altından
-  gelen her şey, tipli olsun olmasın, `WriteError`'a verilir (maskeleme ve
-  loglama kuralı ikinci kez yazılmaz); ayrıştırma, doğrulama ve sınır kapıları
-  ise olduğu gibi döner ve sunucu hatası olarak **loglanmaz** — istemcinin
-  yazım yanlışı logu doldurabilen bir boru olurdu.
+  SELECT * FROM product_products WHERE id=$1` verbatim, and that error was
+  **not written anywhere either** — the same error on the REST endpoint came
+  back as 500, `internal_error` and a generic message, and logged the real
+  text. Now everything that comes from beneath a resolver, typed or not, is
+  handed to `WriteError` (the masking and logging rule is not written a second
+  time); parse, validation and limit gates, on the other hand, are returned as
+  is and are **not logged** as server errors — otherwise a client's typo would
+  be a pipe that can fill the log.
 
-  Aynı ayrımın iki yan sonucu:
+  The same distinction has two side effects:
 
-  - **`GRAPHQL_INTROSPECTION=false` artık şemayı gerçekten gizliyor.**
-    Anahtar `__schema`'yı kapatıyordu ama doğrulayıcı adları perakende
-    dağıtmaya devam ediyordu: `prodcts` → `Did you mean "products" or
+  - **`GRAPHQL_INTROSPECTION=false` now really hides the schema.**
+    The switch closed `__schema`, but the validator kept handing out the
+    names piecemeal:
+    `prodcts` → `Did you mean "products" or
     "product"?`, `Prodct` → `Did you mean "Product"?`, `limitt` →
-    `Did you mean "limit"?`. Doğrulayıcı bütün hataları tek yanıtta topladığı
-    için bir istekte onlarca ad denenebiliyor, hız sınırı da bunu bir istek
-    sayıyordu. Anahtar artık `SetDisableSuggestion`'ı da kurar ve gqlgen'in
-    ulaşamadığı kuralların öneri cümlesi yanıtta kesilir. İç gözlem sorgusu da
-    çalıştırılmadan reddedilir (`INTROSPECTION_DISABLED`); `__typename` bir
-    kök değildir ve çalışmaya devam eder.
-  - **Bozuk JSON gövdesi artık yansıtılmıyor.** gqlgen'in POST taşıması
-    çözemediği gövdeyi hata mesajına EKLİYOR (`… body:…`), yani 64 KiB'a kadar
-    saldırgan denetimindeki metin yanıta ve yanıtı kaydeden ara katmanların
-    loglarına giriyordu. Taşımanın hataları kodsuz geldiği için tanınır ve
-    metinleri bizim sabitlerimizle değiştirilir: `REQUEST_DECODE_FAILED` ve —
-    boyutunu bildirmeyen istemcinin gövdesi kesildiğinde —
-    `REQUEST_BODY_TOO_LARGE`, artık sınırı sayıyla söyleyerek.
+    `Did you mean "limit"?`. Because the validator collects every error into
+    a single response, dozens of names could be tried in one request, and the
+    rate limiter counted that as one request. The switch now also sets
+    `SetDisableSuggestion`, and for the rules gqlgen cannot reach, the
+    suggestion sentence is cut out of the response. The introspection query
+    is also rejected without being executed (`INTROSPECTION_DISABLED`);
+    `__typename` is not a root and keeps working.
+  - **A malformed JSON body is no longer reflected.** gqlgen's POST transport
+    APPENDS the body it cannot decode to the error message (`… body:…`), so
+    up to 64 KiB of attacker-controlled text went into the response and into
+    the logs of any intermediary layer that records responses. Because the
+    transport's errors arrive without a code, they are recognised and their
+    text is replaced with our own constants: `REQUEST_DECODE_FAILED` and —
+    when the body of a client that did not declare its size is truncated —
+    `REQUEST_BODY_TOO_LARGE`, which now states the limit as a number.
 
-- **GraphQL sertleştirmesinde ölçülen dört boşluk kapatıldı: yanıt baytı, iç
-  gözlem, sorgu önbelleği ve fragment açılımı.** Dördü de gerçek handler
-  üzerinde ölçüldü, tahmin edilmedi.
+- **Four measured gaps in GraphQL hardening closed: response bytes,
+  introspection, the query cache and fragment expansion.** All four were
+  measured against the real handler, not guessed.
 
-  1. **Yanıt boyutu hiçbir kapıdan geçmiyordu.** Karmaşıklık modeli alan
-     *sayısını* fiyatlıyor, baytı değil:
+  1. **Response size passed through no gate.** The complexity model prices
+     the *number* of fields, not bytes: the document
      `products(limit:100){ items { a0:description … a488:description } }`
-     belgesinin maliyeti tam **50.000**, yani tavana oturuyor ve geçiyordu —
-     8,5 KiB'lık istek **204,9 MiB** yanıt üretiyordu (24.620 kat) ve hız
-     sınırlayıcı bunu *bir* istek sayıyordu. İki kapı eklendi: aynı alanın aynı
-     nesne altında kaç kez seçilebileceği (`MaxFieldRepetition`, varsayılan 20;
-     kardeş kapsamlı sayım, takma adlar yok sayılır) ve **gerçekleşen** yanıt
-     baytı (`MaxResponseBytes`, varsayılan 4 MiB). İkincisi tahmine değil
-     ölçüme bakar. Sınıra çarpıldığında **yarım JSON gönderilmez**: hiçbir bayt
-     gitmemişken aşan gövde atılıp tam bir hata zarfı yazılır, bir kısmı
-     gitmişse bağlantı `http.ErrAbortHandler` ile bırakılır.
-  2. **İç gözlem her iki kapının da dışındaydı.** Derinlik sayımı
-     `__schema`/`__type` köklerini atlıyor, gqlgen'in karmaşıklık yürüyüşü de
-     `__Schema` tipli alanı atlıyordu; yani ölçülen derinlik 0, karmaşıklık 0
-     ve operatörün elinde ayar yoktu. Ölçüldü: 302 takma adlı `__schema`
-     belgesi 5,00 MiB dönüyordu ve `Options{MaxDepth: 1, MaxComplexity: 1}` ile
-     bile 200 alıyordu — aynı ayarla `products { count }` reddedilirken. Artık
-     iç gözlem *sayılıyor*: kök sayısı (`MaxIntrospectionRoots`, varsayılan 2)
-     ve alt ağacın kendi derinlik tavanı (`MaxIntrospectionDepth`, varsayılan
-     15) ayrı ayrı sınırlı. Ayrı tavan, veri sınırının 13'ün üstüne
-     çıkarılmasını gerektiren eski gerekçeyi de ortadan kaldırdı.
-  3. **Sorgu önbelleği reddedilen belgeleri saklıyordu.** gqlgen belgeyi
-     doğrulamadan hemen sonra önbelleğe ekler, sınır eklentileri ise ondan
-     sonra koşar; yani servise hiç ulaşmayan belge de yer tutuyordu. Ölçüldü:
-     65 KB'lık 100 reddedilmiş belge, `runtime.GC` sonrası **171,8 MiB** kalıcı
-     yığın (6,5 MB'lık yüklemenin 26 katı) — üstelik vitrinin gerçek belgeleri
-     önbellekten atılıyordu. Önbellek artık girdi *sayısıyla* değil **bayt** ile
-     sınırlı (girdi başına 8 KiB) ve bir belge ancak **tüm kapılardan geçtikten
-     sonra** saklanıyor. Ayrıca `SetParserTokenLimit` kuruldu (8.192; daha önce
-     hiç çağrılmıyordu, yani sınırsızdı): jeton sınırı ayrıştırmanın *içinde*
-     çalıştığı için en ucuz kapıdır ve gövde sınırına sığan 302/448 takma adlı
-     iç gözlem belgelerini belge sonuna kadar ayrıştırmadan reddeder.
+     costs exactly **50,000**, so it sat right at the ceiling and passed — an
+     8.5 KiB request produced a **204.9 MiB** response (24,620 times the size),
+     and the rate limiter counted it as *one* request. Two gates were added:
+     how many times the same field may be selected under the same object
+     (`MaxFieldRepetition`, default 20; counted per sibling scope, aliases
+     ignored) and the **actual** response bytes (`MaxResponseBytes`, default
+     4 MiB). The second looks at measurement, not estimation. When the limit
+     is hit, **no half-written JSON is sent**: if no byte has gone out yet,
+     the oversized body is discarded and a complete error envelope is
+     written; if part of it has gone out, the connection is dropped with
+     `http.ErrAbortHandler`.
+  2. **Introspection was outside both gates.** The depth count skipped the
+     `__schema`/`__type` roots, and gqlgen's complexity walk skipped fields
+     of type `__Schema`; so the measured depth was 0, the complexity 0, and
+     the operator had no setting to turn. Measured: a `__schema` document with
+     302 aliases returned 5.00 MiB and got 200 even with
+     `Options{MaxDepth: 1, MaxComplexity: 1}` — while the same setting
+     rejected `products { count }`. Introspection is now *counted*: the
+     number of roots (`MaxIntrospectionRoots`, default 2) and the subtree's
+     own depth ceiling (`MaxIntrospectionDepth`, default 15) are limited
+     separately. The separate ceiling also removed the old rationale that
+     required raising the data limit above 13.
+  3. **The query cache kept rejected documents.** gqlgen adds a document to
+     the cache right after validation, while the limit extensions run after
+     that; so a document that never reached the service still took up space.
+     Measured: 100 rejected 65 KB documents left **171.8 MiB** of retained
+     heap after `runtime.GC` (26 times the 6.5 MB upload) — and on top of
+     that the storefront's real documents were being evicted from the cache.
+     The cache is now bounded by **bytes** rather than by entry *count*
+     (8 KiB per entry), and a document is stored only **after it has passed
+     every gate**. `SetParserTokenLimit` is also set (8,192; it had never been
+     called before, i.e. it was unlimited): because the token limit runs
+     *inside* parsing it is the cheapest gate, and it rejects the
+     302/448-alias introspection documents that fit within the body limit
+     without parsing them to the end of the document.
 
-  4. **Fragment açılımı üsseldi ve ağacı gezen her hesap orada asılıyordu.**
-     `fragment f(k) on Product { ...f(k-1) ...f(k-1) }` zinciri geçerlidir,
-     döngü içermez (doğrulamanın reddettiği tek şey odur) ve 26 seviyede
-     **1.127 bayttır** — ama açılımı 2²⁶ seçimdir. Ölçüldü: bu belge ucu on
-     saniyede bitiremiyordu. Tuzak tek bir yürüyüşte değildi; derinlik sayımı,
-     yeni alan tekrarı sayımı ve gqlgen'in kendi karmaşıklık yürüyüşü, üçü de
-     fragment tanımına belleksiz iniyor. Bu yüzden düzeltme bir yürüyüşü değil
-     ağacın büyüklüğünü bağlar: `MaxSelections` (varsayılan 10.000, jeton
-     sınırının hemen üstü) diğer bütün kapılardan önce koşar ve bütçe bittiği
-     anda gezinmeyi yarıda keser — sınırı uygularken tam da sınırın engellediği
-     işi yapmamak için.
+  4. **Fragment expansion was exponential, and every computation that walks
+     the tree hung there.** A chain of
+     `fragment f(k) on Product { ...f(k-1) ...f(k-1) }` is valid, contains no
+     cycle (the only thing validation rejects) and at 26 levels is
+     **1,127 bytes** — but its expansion is 2²⁶ selections. Measured: the
+     endpoint could not finish this document in ten seconds. The trap was not
+     in a single walk; the depth count, the new field-repetition count and
+     gqlgen's own complexity walk all three descend into the fragment
+     definition without memoization. So the fix bounds not a walk but the size
+     of the tree: `MaxSelections` (default 10,000, just above the token limit)
+     runs before every other gate and cuts the traversal short the moment the
+     budget runs out — so that, while enforcing the limit, it does not do
+     precisely the work the limit prevents.
 
-  Kalibrasyon tablosuna **bayt sütunu** geldi (README ve `limits.go`): eski
-  tablo yalnızca alan sayımını ölçüyordu, yani tam da kaçırdığı boyutu hiç
-  sormuyordu. Tablodaki karmaşıklık sayıları artık `graph/limits_test.go`
-  içinde ölçümle sabitleniyor (ürün sayfası satırı kök sorgu maliyetini
-  saymadığı için 1,4 bin yazıyordu; ölçüldüğünde 2.368 çıktı). Yeni sınırlar
-  `graph.Options`/`product.Options` üzerinden yapılandırılır.
+  The calibration table gained a **bytes column** (README and `limits.go`):
+  the old table measured only the field count, so it never asked about
+  exactly the dimension it missed. The complexity figures in the table are
+  now pinned by measurement in `graph/limits_test.go` (the product-page row
+  said 1.4 thousand because it did not count the root query cost; measured, it
+  came out at 2,368). The new limits are configured through
+  `graph.Options`/`product.Options`.
 
-- **GraphQL ucunun sertleştirilmesi: derinlik, karmaşıklık, gövde ve iç
-  gözlem.** Bu uçta bir isteğin maliyetini sorguyu **yazan** belirler; hız
-  sınırlayıcı ise takma adlarla yüzlerce kök sorgu taşıyan belgeyi de bir
-  istek sayar. Üç kapı eklendi ve her biri ötekinin göremediği belgeyi
-  yakalar (kalanları yukarıdaki maddede): derinlik (`GRAPHQL_MAX_DEPTH`, varsayılan 10), karmaşıklık
-  (`GRAPHQL_MAX_COMPLEXITY`, varsayılan 50.000) ve 64 KiB'lık gövde sınırı —
-  ilk ikisi ancak belge ayrıştırıldıktan sonra ölçülebildiği için ayrıştırma
-  maliyetini yalnızca sonuncusu bağlar. Karmaşıklık modeli **liste
-  alanlarının maliyetini eleman sayısıyla çarpar** (sabit maliyet, tam da
-  pahalı olan sorguyu ucuz gösterirdi) ve kök sorgulara ayrıca bir veritabanı
-  gidiş-dönüşü fiyatı yazar. Sınırlar **yükseltilebilir, kaldırılamaz**:
-  sıfır/negatif değer geçersizdir ve açılışı durdurur. İç gözlem
-  yapılandırılabilir oldu (`GRAPHQL_INTROSPECTION`) ve varsayılanı **açık**
-  bırakıldı: şema bu deponun içinde duran bir dosyadır, kapatmak saldırgandan
-  bir şey saklamaz ama kod üreteçlerini körleştirir. `product.New` artık
-  `product.Options` alır (kırıcı: modül config'i tanımadığı için sınırlar
-  kompozisyon kökünden geçirilir).
+- **Hardening of the GraphQL endpoint: depth, complexity, body and
+  introspection.** On this endpoint the cost of a request is decided by
+  whoever **writes** the query; the rate limiter, meanwhile, counts a document
+  that carries hundreds of root queries through aliases as a single request
+  too. Three gates were added, and each catches the document the others
+  cannot see (the rest are in the entry above): depth (`GRAPHQL_MAX_DEPTH`,
+  default 10), complexity (`GRAPHQL_MAX_COMPLEXITY`, default 50,000) and a
+  64 KiB body limit — since the first two can only be measured after the
+  document has been parsed, only the last one bounds the cost of parsing. The
+  complexity model **multiplies the cost of list fields by the element
+  count** (a fixed cost would make exactly the expensive query look cheap)
+  and additionally charges root queries the price of a database round trip.
+  The limits **can be raised, not removed**: a zero/negative value is invalid
+  and stops startup. Introspection became configurable
+  (`GRAPHQL_INTROSPECTION`) and its default was left **on**: the schema is a
+  file that sits inside this repository, so turning it off hides nothing from
+  an attacker but blinds code generators. `product.New` now takes
+  `product.Options` (breaking: because the module does not know the config,
+  the limits are passed in from the composition root).
 
-- **GraphQL vitrin okuma yüzeyi (`POST /store/v1/graphql`).** Katalog ikinci
-  bir yüzeyden okunur: `products` ve `product` sorguları, `StoreProduct`'ın
-  bugün döndüğü alanlarla. Şema (`internal/modules/product/graph/schema.graphqls`)
-  elle yazılan sözleşmedir, Go tarafı ondan üretilir (gqlgen, `make gen`).
-  Resolver'lar **vitrin servisini** çağırır — depoya inilmez, yeni SQL
-  yazılmaz: satış kanalı görünürlük kuralının ikinci bir uygulaması, ayrıştığı
-  gün kataloğu sızdırırdı. Kanal kimlikleri `Principal`'dan okunur ve şemada
-  argümanı **yoktur**; uç `/store/v1` altında olduğu için publishable anahtar
-  ve hız sınırı yığından otomatik gelir. Yazma yüzeyi yok, GET yok
-  (yalnızca POST; yanıt kanala göre değiştiğinden GET'in önbellek getirisi
-  yoktur, bedeli vardır). Fiyat ve stok, sahibi başka modüller olduğu için
-  JSON skalarıdır; hata gövdesi çekirdeğin `WriteError`'ından geçirilir, yani
-  maskeleme kuralı ve hata kodları REST ile aynıdır.
+- **GraphQL storefront read surface (`POST /store/v1/graphql`).** The catalog
+  is read from a second surface: the `products` and `product` queries, with
+  the fields `StoreProduct` returns today. The schema
+  (`internal/modules/product/graph/schema.graphqls`) is the hand-written
+  contract, and the Go side is generated from it (gqlgen, `make gen`).
+  Resolvers call the **storefront service** — they do not go down to the
+  repository and no new SQL is written: a second implementation of the sales
+  channel visibility rule would leak the catalog the day it diverged. Channel
+  IDs are read from the `Principal` and have **no** argument in the schema;
+  because the endpoint sits under `/store/v1`, the publishable key and the
+  rate limit come automatically from the stack. There is no write surface and
+  no GET (POST only; since the response varies by channel, GET would bring no
+  caching benefit, only a cost). Price and stock are JSON scalars because
+  other modules own them; the error body goes through the core's
+  `WriteError`, so the masking rule and the error codes are the same as in
+  REST.
 
-- **`FileProvider` ve `file` modülü — plan Bölüm 5.6 tamamlandı.** Dört
-  sağlayıcı soyutlamasının sonuncusu. `POST /admin/v1/uploads` (multipart) →
-  dönen adres → `GET /files/{anahtar}`. Üretilen URL mevcut ürün görseli
-  akışına doğrudan takılır, yani `product` modülüne dokunmadan gerçek bir
-  tüketici yolu oluşur.
-  Bu, depoda istemciden **rastgele bayt** kabul edilen ilk yerdir; güvenlik
-  kuralları yapısal: depo anahtarı ÜRETİLİR (istemcinin dosya adı hiçbir yol
-  ifadesine girmez, yol geçişi imkânsız), içerik tipi istemciye sorulmaz
-  içerikten tespit edilir, izin listesi (yasak listesi değil) ve SVG dışarıda,
-  boyut sınırı hem gövdede hem dosyada zorlanır, sunumda `Content-Type`
-  saklanan tipten yazılır ve `nosniff` her yanıtta bulunur.
+- **`FileProvider` and the `file` module — plan Section 5.6 completed.** The
+  last of the four provider abstractions. `POST /admin/v1/uploads`
+  (multipart) → the returned address → `GET /files/{anahtar}`. The generated
+  URL plugs directly into the existing product image flow, so a real consumer
+  path exists without touching the `product` module.
+  This is the first place in the repository that accepts **arbitrary bytes**
+  from a client; the security rules are structural: the storage key is
+  GENERATED (the client's file name never enters any path expression, so path
+  traversal is impossible), the content type is not asked of the client but
+  detected from the content, there is an allow list (not a deny list) and SVG
+  is excluded, the size limit is enforced both on the body and on the file,
+  `Content-Type` is written from the stored type when serving, and `nosniff`
+  is present on every response.
 
-### Düzeltildi
+### Fixed
 
-İşletmecinin kurulumunu **sessizce** bozan ayarlar kapatıldı. Ortak yanları,
-hiçbirinin hata üretmemesi ve hepsinin ancak üretimde — sınır aşıldığında, ilk
-giriş denemesinde ya da görseller kaybolduğunda — görünmesiydi:
+Settings that **silently** broke an operator's setup were closed off. What
+they had in common is that none of them produced an error and all of them
+became visible only in production — when a limit was exceeded, on the first
+login attempt, or when images went missing:
 
-- **Olay veri yolu, aynı Redis'i paylaşan iki kurulum arasında AYRILMIYORDU.**
-  `cmd/server` veri yolunu sıfır değerli bir `eventbus.RedisConfig` ile
-  kuruyordu: stream öneki de consumer group da paketin varsayılanına düşüyor,
-  yani `REDIS_KEY_PREFIX` olay tarafına HİÇ ulaşmıyordu. Koruma anahtarları
-  ayrılıyor, olaylar ayrılmıyordu.
+- **The event bus did NOT separate two installations sharing the same
+  Redis.** `cmd/server` built the bus with a zero-valued
+  `eventbus.RedisConfig`: both the stream prefix and the consumer group fell
+  back to the package default, so `REDIS_KEY_PREFIX` NEVER reached the event
+  side. The guard keys were separated; the events were not.
 
-  Grubun paylaşılması ikisinin de kötüsüdür: consumer group'un tanımı gereği
-  bir mesajı gruptaki tüketicilerden yalnızca **biri** alır, yani üretimin
-  `order.placed` olayı staging tarafından tüketilip yutulabilirdi — sipariş
-  konur, onay bildirimi hiçbir yere gitmez ve hiçbir yerde hata görünmez.
+  Sharing the group is the worse of the two: by the very definition of a
+  consumer group, only **one** of the group's consumers receives a message,
+  so production's `order.placed` event could be consumed and swallowed by
+  staging — the order is placed, the confirmation notification goes nowhere,
+  and no error shows up anywhere.
 
-  Ad alanı artık önekten türetiliyor (`<önek>:events:<olay>` ve grup `<önek>`)
-  ve türetme tek bir yerde, `eventbus.RedisConfig.WithNamespace` içinde
-  yaşıyor; paketin varsayılanları da o türetmeden okunuyor
-  (`DefaultStreamPrefix = DefaultGroup + ":events"`), yani varsayılan kurulum
-  ile ayrılmış kurulum yarım ayrışamıyor. Varsayılan önekle sonuç **bugünküyle
-  birebir aynıdır**: yükseltilen bir kurulumun stream'i ve grubu yerinde kalır.
+  The namespace is now derived from the prefix (`<prefix>:events:<event>` and the
+  group `<prefix>`), and the derivation lives in a single place,
+  `eventbus.RedisConfig.WithNamespace`; the package defaults are also read
+  from that derivation (`DefaultStreamPrefix = DefaultGroup + ":events"`), so
+  a default installation and a separated one cannot half-diverge. With the
+  default prefix the result is **exactly the same as today**: an upgraded
+  installation keeps its stream and its group in place.
 
-  Tüketici adı ters yönde çalışır — kurulumları değil, aynı gruptaki
-  **süreçleri** ayırır — ve bu yüzden ad alanına bağlanmadı. Bunun yerine
-  `EVENT_BUS_CONSUMER` eklendi: `RedisConfig.Consumer`'ın godoc'u kalıcı bir
-  kimliğin (StatefulSet pod adı) "açıkça verilmesi" gerektiğini söylüyordu ama
-  onu verecek bir ortam değişkeni YOKTU. Aynı adı iki örneğe vermek sessizce
-  çift işlemeye yol açar (ikisi de açılışta o adın bekleyen listesini okur) ve
-  tek süreç bunu göremez; bu yüzden çözülen ad açılışta **loglanır**.
+  The consumer name works in the opposite direction — it separates not
+  installations but the **processes** within the same group — and so it was
+  not tied to the namespace. Instead, `EVENT_BUS_CONSUMER` was added: the
+  godoc of `RedisConfig.Consumer` said a stable identity (the StatefulSet pod
+  name) had to be "given explicitly", but there was NO environment variable
+  to give it with. Giving the same name to two instances silently leads to
+  double processing (both read that name's pending list at startup), and a
+  single process cannot see this; that is why the resolved name is
+  **logged** at startup.
 
-- **`TRUSTED_PROXY_HOPS=0`, ters proxy arkasında hız sınırını mağaza geneline
-  düşürüyordu ve bunu sessizce yapıyordu.** Değer sıfırken `X-Forwarded-For`
-  hiç okunmaz ve anahtar `RemoteAddr`'a düşer; ters proxy / ingress / CDN
-  arkasında o adres HER İSTEKTE proxy'nindir, yani `RATE_LIMIT_PER_MINUTE`
-  "müşteri başına 600" değil "tüm mağaza için dakikada 600" olur ve tek bir
-  müşteri vitrini kilitleyebilir.
+- **`TRUSTED_PROXY_HOPS=0` behind a reverse proxy collapsed the rate limit
+  into a store-wide one, and did so silently.** With the value at zero,
+  `X-Forwarded-For` is never read and the key falls back to `RemoteAddr`;
+  behind a reverse proxy / ingress / CDN that address is the proxy's ON EVERY
+  REQUEST, so `RATE_LIMIT_PER_MINUTE` becomes not "600 per customer" but "600
+  per minute for the whole store", and a single customer can lock up the
+  storefront.
 
-  **Varsayılan değişmedi ve açılış durmuyor**, çünkü iki yanlışın bedeli aynı
-  sınıfta değil: fazla verilen bir değer istemcinin uydurduğu adresi gerçek
-  saydırır ve saldırgan her istekte taze bir kova alarak sınırı TAMAMEN atlar —
-  bir güvenlik açığı; eksik değer ise korumayı yalnızca gevşetir. Sıfır, doğrudan
-  internete bakan bir kurulumda DOĞRU cevaptır ve yapılandırma hangisinin
-  geçerli olduğunu bilemez. Eklenen şey deponun kendi kalıbı: hız sınırı açıkken
-  sıfır atlamayla çıkan paylaşılan bir kurulum artık açılışta **uyarı** üretir
-  (`GUARD_BACKEND=memory` ve `FILE_ROOT` uyarılarıyla aynı kapı). "Riskli"
-  tanımı config'te (`Config.RateLimitKeyIsPerClient`), uyarıyı yazan taraf
-  `cmd/server`'dadır.
+  **The default did not change and startup does not stop**, because the
+  costs of the two mistakes are not of the same class: a value set too high
+  makes a client-invented address count as real, and an attacker bypasses the
+  limit ENTIRELY by taking a fresh bucket on every request — a security hole;
+  a value set too low only loosens the protection. Zero is the CORRECT answer
+  for an installation that faces the internet directly, and the configuration
+  cannot know which case applies. What was added is the repository's own
+  pattern: a shared installation that starts with zero hops while the rate
+  limit is on now produces a **warning** at startup (the same gate as the
+  `GUARD_BACKEND=memory` and `FILE_ROOT` warnings). The definition of "risky"
+  lives in config (`Config.RateLimitKeyIsPerClient`); the side that writes the
+  warning lives in `cmd/server`.
 
-- **`EVENT_BUS=inmemory` paylaşılan ortamda yalnızca INFO logluyordu**, oysa
-  eşdeğeri `GUARD_BACKEND=memory` WARN üretiyordu — aynı ödün birinde görünüp
-  ötekinde görünmüyordu. Bellek içi veri yolu ÇALIŞIR ama kalıcı değildir:
-  teslim asenkrondur ve süreç çökerse ya da kapanış `SHUTDOWN_TIMEOUT` içinde
-  bitmezse teslim edilmemiş olaylar iz bırakmadan kaybolur. Artık paylaşılan
-  ortamda WARN, yerel geliştirmede INFO.
+- **`EVENT_BUS=inmemory` logged only INFO in a shared environment**, while
+  its equivalent `GUARD_BACKEND=memory` produced a WARN — the same trade-off
+  was visible in one and invisible in the other. The in-memory bus WORKS but
+  is not durable: delivery is asynchronous, and if the process crashes or
+  shutdown does not finish within `SHUTDOWN_TIMEOUT`, undelivered events are
+  lost without a trace. Now WARN in a shared environment, INFO in local
+  development.
 
-- **`RATE_LIMIT_PER_MINUTE <= 0` iken sınırlayıcının hiç kurulmadığı tek
-  satırla bile bildirilmiyordu.** Kapatmak meşru bir seçimdir (ADR 0007'de
-  sıfır "kapat" demektir) ama giriş ucunu da kotasız bırakır ve kimsenin
-  bilmediği bir "kapalı", kazayla yazılmış bir sıfırdan ayırt edilemez. Artık
-  paylaşılan ortamda WARN, yerel geliştirmede INFO.
+- **With `RATE_LIMIT_PER_MINUTE <= 0`, the fact that the limiter was not
+  built at all was not reported, not even with a single line.** Turning it off
+  is a legitimate choice (in ADR 0007 zero means "off"), but it also leaves
+  the login endpoint without a quota, and an "off" that nobody knows about
+  cannot be told apart from an accidentally written zero. Now WARN in a shared
+  environment, INFO in local development.
 
-- **Taze veritabanı + boş `ADMIN_BOOTSTRAP_*` ikilisi sessizce açılıyordu.**
-  İkisini birden boş bırakmak `config.Validate`'ten geçiyordu ve haklı olarak:
-  KURULMUŞ bir sistem için meşru bir seçimdir ve "kurulmuş mu" sorusunu
-  doğrulama göremez. Ama veritabanı da boşsa sonuç yönetilemez bir kurulumdur —
-  hiç kullanıcı yoktur, yönetim yüzeyi giriş ucu dışında tamamen korumalıdır ve
-  ilk kullanıcıyı HTTP'den yaratmanın yolu yoktur; mağaza yüzeyi de kapalıdır,
-  çünkü publishable anahtarı da yönetim ucu üretir. Sunucu yine de açılıyor,
-  `/health` ve `/ready` yeşil dönüyor ve arıza ilk giriş denemesine kadar
-  görünmüyordu.
+- **A fresh database + an empty `ADMIN_BOOTSTRAP_*` pair started silently.**
+  Leaving both empty passed `config.Validate`, and rightly so: for an
+  ALREADY-INSTALLED system it is a legitimate choice, and validation cannot
+  see the question "is it installed". But if the database is empty too, the
+  result is an unmanageable installation — there are no users, the admin
+  surface is fully protected apart from the login endpoint, and there is no
+  way to create the first user over HTTP; the store surface is closed too,
+  because the publishable key is also produced by an admin endpoint. The
+  server started anyway, `/health` and `/ready` came back green, and the
+  failure stayed invisible until the first login attempt.
 
-  Tohum adımı artık kullanıcı sayısını HER HÂLDE okuyor ve sıfır kullanıcı +
-  tohumsuz yapılandırma paylaşılan ortamlarda **açılışı durduruyor**
-  (`admin_bootstrap_required`), yerel geliştirmede uyarı üretiyor. Burada
-  belirsizlik yok — `FILE_ROOT` uyarıyla yetiniyor çünkü yapılandırmanın yanlış
-  olduğu kesin değil, sıfır kullanıcılı bir kurulumun yönetilemez olduğu ise
-  kesin. Ayrım `JWT_SECRET`'inkiyle aynıdır ve ".env olmadan `make up &&
-  make run` çalışır" sözü korunur.
+  The seed step now reads the user count IN EVERY CASE, and zero users + a
+  seedless configuration **stops startup** in shared environments
+  (`admin_bootstrap_required`) and produces a warning in local development.
+  There is no uncertainty here — `FILE_ROOT` settles for a warning because it
+  is not certain that the configuration is wrong, whereas it is certain that
+  a zero-user installation is unmanageable. The distinction is the same as
+  for `JWT_SECRET`, and the promise "`make up &&
+  make run` works without a .env" is kept.
 
-- **`Config.LocalFileRootIsDurable` (o gün adı LocalFileRootIsPortable'dı)
-  yalnızca `filepath.IsAbs`'e bakıyordu.**
-  `FILE_ROOT=/tmp/gobit-uploads` mutlaktır, "göreli yol vermeyin" öğüdünü geçer
-  ve uyarı susardı — oysa `/tmp` (ve `/var/tmp`, `/dev/shm`, `TMPDIR`) işletim
-  sistemi tarafından temizlenir, üstelik çoğu dağıtımda tmpfs oldukları için
-  yeniden başlatmayı bile beklemez. Yani `Config.FileRoot` godoc'unun varsayılan
-  için REDDETTİĞİ sessiz veri kaybı, tek satırlık bir ayarla geri geliyordu.
-  Ölçüt artık "çalışma dizininden bağımsız mı" değil "süreç yeniden başladığında
-  yerinde kalır mı"; ad da davranışa çekildi: `LocalFileRootIsDurable`.
+- **`Config.LocalFileRootIsDurable` (named LocalFileRootIsPortable at the
+  time) looked only at `filepath.IsAbs`.**
+  `FILE_ROOT=/tmp/gobit-uploads` is absolute, passes the "do not give a
+  relative path" advice, and the warning would go quiet — yet `/tmp` (and
+  `/var/tmp`, `/dev/shm`, `TMPDIR`) are cleaned up by the operating system,
+  and since they are tmpfs on most distributions they do not even wait for a
+  reboot. So the silent data loss that the `Config.FileRoot` godoc REJECTED
+  for the default came back through a one-line setting. The criterion is now
+  not "is it independent of the working directory" but "does it stay in place
+  when the process restarts"; the name was brought in line with the
+  behaviour as well: `LocalFileRootIsDurable`.
 
-- **`validateFile` godoc'u mutlak yol şartını UYGULUYORMUŞ gibi yazıyordu**,
-  oysa doğrulama durdurmuyor, `cmd/server` yalnızca WARN logluyor. Belge
-  davranışa çekildi: kalıcılık bir doğrulama değil uyarıdır ve gerekçesi
-  `LocalFileRootIsDurable` godoc'undadır.
+- **The `validateFile` godoc read as if it ENFORCED the absolute-path
+  requirement**, whereas validation does not stop anything and `cmd/server`
+  only logs a WARN. The documentation was brought in line with the behaviour:
+  durability is a warning, not a validation, and its rationale is in the
+  `LocalFileRootIsDurable` godoc.
 
-- **`cmd/server`'daki b2b kaydının yorumu kendisiyle çelişiyordu**: "bu satır
-  silindiğinde ... saf B2C kurulum, KODU DEĞİŞTİRMEDEN elde edilir" diyordu,
-  oysa satırı silmek kod değişikliğidir. Cümle düzeltildi ve b2b'yi kapatan bir
-  ortam değişkeninin neden **eklenmediği** yazıldı: yanlışlıkla `false` verilen
-  bir anahtar harcama limitini hiçbir hata üretmeden kaldırırdı — yani bu
-  bölümün kapattığı sessiz arıza sınıfının yenisi olurdu. Kod yolu ise yarım
-  kalamıyor; `TestEveryModuleIsRegisteredInTheCompositionRoot` satırı silen kişiden kararı
-  gerekçesiyle yazmasını istiyor. Modülü B2C kurulumda bırakmanın bedeli de
-  küçük ve görünür: iki boş tablo ve hiç tetiklenmeyen bir kural.
+- **The comment on the b2b registration in `cmd/server` contradicted
+  itself**: it said "when this line is deleted ... a pure B2C setup is
+  obtained WITHOUT CHANGING THE CODE", whereas deleting the line is a code
+  change. The sentence was corrected, and why an environment variable that
+  turns b2b off was **not added** was written down: a switch accidentally set
+  to `false` would remove the spending limit without producing any error —
+  that is, it would be a new member of the very silent-failure class this
+  section closes. The code path, for its part, cannot be left half-done;
+  `TestEveryModuleIsRegisteredInTheCompositionRoot` asks whoever deletes the
+  line to write the decision down together with its rationale. The cost of
+  leaving the module in a B2C setup is small and visible, too: two empty
+  tables and a rule that never fires.
 
-Sepet akışlarının bağlanmasını izleyen bağımsız doğrulamanın çıkardığı bulgular:
+Findings from the independent verification that followed the wiring of the
+cart workflows:
 
-- **Saga adım hatası, alt hatanın KODUNU kaybediyordu.** `internal/core/workflow`
-  patlayan adımı sararken hatanın SINIFINI (`Kind`) alt hatadan devralıyor ama
-  KODUNU kendi sabitiyle (`workflow_step_failed`) eziyordu. Taşıma katmanı
-  gövdeye tek bir makine okunur alan yazar (`error.code`), yani her saga hatası
-  istemci için TEK bir değere düzleşiyordu. Somut bedeli B2B harcama limitiydi:
-  limiti aşan alışveriş `409` alıyor, gövdede `spending_limit` HİÇ geçmiyordu ve
-  vitrin "limitiniz yetmedi" ile "geçici çakışma, tekrar deneyin"i ayırt
-  edemiyordu — oysa `409` tam olarak tekrarın çözmediği sınıftır. Kod artık
-  korunur (`stepFailureCode`); kodsuz bir adım hatası motorun kendi sabitini
-  alır. YALNIZCA kod taşınır: mesaj ve `Details` zincirde kalır ve
-  `KindInternal` hatalarında yine maskelenir. Değişikliğin SINIRI da testle
-  çizildi — telafi patladığında dıştaki kod `workflow_compensation_failed`
-  olarak KALIR, çünkü orada okunması gereken şey adımın neden düştüğü değil,
-  sistemin tutarsız kaldığıdır.
+- **A saga step error lost the CODE of the underlying error.**
+  `internal/core/workflow`, when wrapping a failing step, inherited the
+  error's CLASS (`Kind`) from the underlying error but overwrote its CODE with
+  its own constant (`workflow_step_failed`). The transport layer writes a
+  single machine-readable field into the body (`error.code`), so every saga
+  error flattened into ONE value for the client. The concrete cost was the
+  B2B spending limit: a purchase that exceeded the limit got `409`,
+  `spending_limit` appeared NOWHERE in the body, and the storefront could not
+  tell "your limit is not enough" from "transient conflict, try again" —
+  whereas `409` is precisely the class that a retry does not solve. The code
+  is now preserved (`stepFailureCode`); a step error with no code gets the
+  engine's own constant. ONLY the code is carried over: the message and
+  `Details` stay in the chain and are still masked on `KindInternal` errors.
+  The LIMIT of the change was drawn with a test too — when compensation
+  fails, the outer code STAYS `workflow_compensation_failed`, because what
+  has to be read there is not why the step failed but that the system has
+  been left inconsistent.
 
-- **KAPALI arıza yanlış status sınıfı döndürüyordu (`404`).** Satır
-  fiyatlandırma / sepet tamamlama akışı çözülemediğinde `cart` modülü
-  container'ın hata sınıfını olduğu gibi geçiriyordu: kayıtsız ad
-  `KindNotFound` → `404`, yanlış tipte kayıt `KindInvalid` → `422`. Para
-  açısından davranış doğruydu (satır YAZILMIYOR), sınıf yanlıştı: `404`
-  istemciye "böyle bir uç yok" der, `5xx` uyarı zinciri hiç çalmaz ve ara
-  katmanlar yanıtı önbelleğe alıp arızayı kurulum düzeldikten sonra da
-  sürdürebilir. Sarmalama artık `KindInternal`'dır; operatöre ne söylediği
-  korunur, istemciye giden metin çekirdeğin maskeleme kuralından geçer ve
-  geriye yalnızca `cart_module_setup_failed` kodu kalır. Aynı sınıf hatası
-  `order` modülünün harcama kuralı sarmalayıcısında da düzeltildi.
+- **Failing CLOSED returned the wrong status class (`404`).** When the
+  line pricing / cart completion workflow could not be resolved, the `cart`
+  module passed the container's error class through as is: an unregistered
+  name was `KindNotFound` → `404`, a registration of the wrong type
+  `KindInvalid` → `422`. Money-wise the behaviour was right (the line is NOT
+  WRITTEN), but the class was wrong: `404` tells the client "there is no such
+  endpoint", the `5xx` alert chain never rings, and intermediaries can cache
+  the response and keep the failure going even after the setup has been
+  fixed. The wrapping is now `KindInternal`; what it tells the operator is
+  preserved, the text sent to the client goes through the core's masking
+  rule, and only the `cart_module_setup_failed` code remains. The same class
+  of bug was also fixed in the `order` module's spending-rule wrapper.
 
-Düşmanca bir güvenlik incelemesinin çıkardığı altı bulgu:
+Six findings from an adversarial security review:
 
-- **Idempotency middleware yükleme akışını öldürüyordu.** `Idempotency-Key`
-  taşıyan bir multipart isteğin TÜM gövdesi parmak izi için belleğe alınıyor,
-  akışın anlamı yok oluyor ve middleware'in 1 MiB tamponu yükleme ucunun kendi
-  sınırından ÖNCE devreye giriyordu — istemci, ayarladığı sınırın altında
-  "gövde çok büyük" alıyordu. Akışlı gövdeler artık kaydedilmez.
-- **`/files` koruma yığınının dışındaydı**: kimliksiz VE kotasız, üstelik her
-  istek bir veritabanı okuması. Kimliksiz olmak korumasız olmak değildir;
-  `GuardOptions.OpenPrefixes` eklendi. Sağlık uçları bilinçli olarak dışarıda.
-- **Çok aralıklı `Range` ile ~11x yanıt büyütmesi**: `ServeContent` aralıkların
-  toplam baytını sınırlar, SAYISINI değil. Tek aralık korunur, çoklu olanda
-  başlık silinir.
-- **`Cache-Control: immutable` yanlıştı**: anahtar tekrar kullanılmaz ama
-  içerik SİLİNEBİLİR; paylaşılan bir önbellek silinen dosyayı bir yıl daha
-  sunardı. Süre bir saate indirildi, `immutable` kaldırıldı.
-- **`FILE_ALLOWED_TYPES` tarayıcıda çalışan tipleri kabul ediyordu.**
-  `text/html` yazan bir kurulumda zincir çalışır ve depolanmış XSS olur;
-  `nosniff` bunu DURDURMAZ, çünkü yanıt gerçekten o tiptir.
-- Geçici yükleme dosyasının temizliği defer edilmemişti (panikte sızıntı).
+- **The idempotency middleware killed the upload stream.** The ENTIRE body of
+  a multipart request carrying an `Idempotency-Key` was buffered in memory
+  for the fingerprint, streaming lost its point, and the middleware's 1 MiB
+  buffer kicked in BEFORE the upload endpoint's own limit — the client got
+  "body too large" below the limit it had configured. Streamed bodies are no
+  longer recorded.
+- **`/files` was outside the guard stack**: unauthenticated AND without a
+  quota, and every request a database read on top of that. Being
+  unauthenticated is not the same as being unprotected;
+  `GuardOptions.OpenPrefixes` was added. The health endpoints are
+  deliberately left outside.
+- **~11x response amplification through a multi-range `Range`**:
+  `ServeContent` limits the total bytes of the ranges, not their NUMBER. A
+  single range is kept; with multiple ranges the header is dropped.
+- **`Cache-Control: immutable` was wrong**: the key is never reused, but the
+  content CAN BE DELETED; a shared cache would keep serving a deleted file for
+  another year. The lifetime was cut to one hour and `immutable` was removed.
+- **`FILE_ALLOWED_TYPES` accepted types that execute in the browser.** In an
+  installation that lists `text/html` the chain works and becomes stored XSS;
+  `nosniff` does NOT stop this, because the response really is of that type.
+- Cleanup of the temporary upload file was not deferred (a leak on panic).
 
-- **`NotificationProvider` ve `notification` modülü.** Plan Bölüm 5.6 DÖRT
-  sağlayıcı soyutlaması sayıyor (payment, fulfillment, notification, file);
-  kodda yalnızca ikisi vardı. Bu iş üçüncüsünü kapatır ve aynı anda ikinci bir
-  boşluğu da: `order.placed` yayımlanıyordu ama **tek abonesi yoktu** — arama
-  eklentisi ürün olaylarını dinliyor, sipariş olaylarını değil. Bildirim, o
-  olayın ilk gerçek tüketicisi.
-  Varsayılan sağlayıcı `log`'dur ve **gerçekten göndermediğini söyler**: WARN
-  seviyesinde "bildirim GÖNDERİLMEDİ" yazar, alıcıyı loglamaz ve şablon
-  verisinin değerlerini değil yalnızca anahtarlarını basar. Sessiz bir "gitti"
-  yalanı, sipariş onayının müşteriye ulaştığını sanmak demek olurdu.
-  Bilinmeyen bir `NOTIFICATION_PROVIDER` adı açılışı durdurur.
-  Teslim günlüğü **alıcı adresini saklamaz**: e-posta zaten sipariş kaydında
-  duruyor ve ikinci bir kopya, silinmesi gereken yerlerin sayısını artırırdı.
-  `(şablon, referans)` benzersizdir — aynı sipariş için iki kez bildirim
-  gitmez.
-  Abone e-postayı **olaydan değil kayıttan** okur (olay yükü kalıcı akışa PII
-  koymaz); bunun için `order.interop` dar bir okuma yüzeyi açtı
-  (`OrderContactJSON`). Uçtan uca test tam olarak bu ayrımı çiviler.
+- **`NotificationProvider` and the `notification` module.** Plan Section 5.6
+  counts FOUR provider abstractions (payment, fulfillment, notification,
+  file); only two of them existed in the code. This work closes the third,
+  and a second gap at the same time: `order.placed` was published but **had
+  not a single subscriber** — the search plugin listens to product events,
+  not order events. Notification is the first real consumer of that event.
+  The default provider is `log`, and it **says that it did not really
+  send**: it writes "notification NOT SENT" at WARN level, does not log the
+  recipient, and prints only the keys of the template data, not their values.
+  A silent "it went out" lie would have meant believing the order
+  confirmation had reached the customer.
+  An unknown `NOTIFICATION_PROVIDER` name stops startup.
+  The delivery log **does not store the recipient address**: the email is
+  already on the order record, and a second copy would increase the number of
+  places it has to be deleted from.
+  `(template, reference)` is unique — no notification goes out twice for the
+  same order.
+  The subscriber reads the email **from the record, not from the event** (the
+  event payload puts no PII into the durable stream); for this,
+  `order.interop` opened a narrow read surface (`OrderContactJSON`). The
+  end-to-end test nails down exactly this distinction.
 
-- **Smoke testleri: gerçek süreç, gerçek migration, gerçek sinyal.**
-  Birim + entegrasyon testleri (~%76 kapsam) ve lint TEMİZ geçerken uygulama
-  elle çalıştırıldığında dört arıza çıkmıştı; dördü de `main.go`'nun
-  kablolamasında, açılıştaki migration'larda, config yüklemesinde ve sinyal
-  işlemede saklanıyordu. `internal/e2e` bunları göremez: `httptest` ile
-  router'ı sürer, yani gerçek bir açılış DEĞİLDİR.
-  `internal/smoke` sunucu ikilisini derleyip **süreç olarak** çalıştırır ve
-  o hata sınıfını CI'a bağlar: soğuk açılış + README akışı, üç örneğin aynı
-  boş veritabanına eşzamanlı açılışı (tohum yarışının regresyonu), beş yanlış
-  yapılandırmanın açılışta anlaşılır mesajla durması, OTLP adresinin iki
-  biçiminin de kabul edilmesi ve `METRIC_EXPORT_INTERVAL` ad çakışmasının geri
-  gelmemesi, SIGTERM sonrası çıkış kodu 0 ile düzgün kapanış.
-  İki regresyon **mutasyonla** doğrulandı: tohum düzeltmesi geri alındığında
-  eşzamanlı açılış testi, ad çakışması geri getirildiğinde izleme testi düşüyor.
-  `make smoke` ile çalışır; CI'da AYRI bir iş — "entegrasyon düştü" ile
-  "uygulama açılmıyor" aynı satırda görünmemeli.
+- **Smoke tests: a real process, real migrations, a real signal.**
+  While unit + integration tests (~76% coverage) and lint passed CLEAN,
+  running the application by hand had turned up four failures; all four were
+  hiding in the wiring of `main.go`, the startup migrations, config loading
+  and signal handling. `internal/e2e` cannot see them: it drives the router
+  through `httptest`, so it is NOT a real startup.
+  `internal/smoke` builds the server binary and runs it **as a process**, and
+  ties that class of error to CI: a cold start + the README flow, three
+  instances starting concurrently against the same empty database (the
+  regression of the seed race), five wrong configurations stopping at startup
+  with an understandable message, both forms of the OTLP address being
+  accepted and the `METRIC_EXPORT_INTERVAL` name clash not coming back, and a
+  clean shutdown with exit code 0 after SIGTERM.
+  Two regressions were verified **by mutation**: when the seed fix is
+  reverted, the concurrent-startup test fails; when the name clash is brought
+  back, the tracing test fails.
+  It runs with `make smoke`; in CI it is a SEPARATE job — "integration
+  failed" and "the application does not start" must not show up on the same
+  line.
 
-### Kaldırıldı
+### Removed
 
-- **`cart_customer`, `cart_region`, `order_customer`, `order_region` link
-  tanımları.** Dördü de her sepette/siparişte YAZILIYOR, hiç GEZİLMİYORDU.
-  Bu **kayıp bir özellik değildir**: bu bağların taşıdığı her okumayı zaten
-  sütunlar yapıyor. `carts.region_id` / `carts.customer_id` ve
-  `orders.region_id` / `orders.customer_id` hem kaynaktır hem indekslidir;
-  müşteri ve bölge süzgeçleri (`ListCarts`, `ListOrders`,
-  `order/queries/orders.sql`) tam olarak o sütunlardan çalışır. Link tablosu
-  aynı ilişkinin ikinci bir kopyasıydı; satır yazıyor, kardinalite kısıtının
-  bedelini ödüyor ve karşılığında hiçbir davranış üretmiyordu.
+- **The `cart_customer`, `cart_region`, `order_customer` and `order_region`
+  link definitions.** All four were WRITTEN on every cart/order and never
+  TRAVERSED. This is **not a lost feature**: every read these ties carried is
+  already done by columns. `carts.region_id` / `carts.customer_id` and
+  `orders.region_id` / `orders.customer_id` are both the source and indexed;
+  the customer and region filters (`ListCarts`, `ListOrders`,
+  `order/queries/orders.sql`) run on exactly those columns. The link table
+  was a second copy of the same relationship; it wrote rows, paid the cost of
+  the cardinality constraint, and produced no behaviour in return.
 
-  Bu, bilinçli bir tasarım kararının geri alınmasıdır. Bağlar "Query katmanına
-  açılan ayna" olsun diye bildirilmişti ve `ManyToMany` kardinalitesi tam da o
-  ayna uğruna seçilmişti (tekillik zaten sütunda garantiliydi). Aynaya bakan
-  bir okuyucu hiç çıkmadı: ne bir `query.Expansion`, ne bir modül API'si.
-  Bulan şey `internal/arch/consumers_test.go`'daki `TestTheLinkDefinitionsAreTraversed`
-  değişmezidir — "üretilen her yeteneğin bir tüketicisi vardır" kuralının
-  link yüzeyi. Aynı sınıfın önceki vakası ürün ↔ satış kanalı arızasıydı.
+  This reverses a deliberate design decision. The ties had been declared to
+  serve as "a mirror opened onto the Query layer", and the `ManyToMany`
+  cardinality had been chosen precisely for the sake of that mirror
+  (uniqueness was already guaranteed by the column). No reader that looked
+  into the mirror ever appeared: neither a `query.Expansion` nor a module API.
+  What found this was the `TestTheLinkDefinitionsAreTraversed`
+  invariant in `internal/arch/consumers_test.go` — the link-surface side of
+  the rule "every capability produced has a consumer". The previous case of
+  the same class was the product ↔ sales channel failure.
 
-  Silme telafisi de gitti ve **kod bundan sadeleşerek çıktı**: bağ sepet
-  satırıyla aynı işlemde olmadığı için `CreateCart` bağ kurulamayınca sepeti
-  geri alıyor, `UpdateCart` müşteri devrini geri alıyor, `CreateOrder` ise
-  siparişi yazmadan ÖNCE bağlanıp yazma düşünce bağı temizliyordu. Şimdi her
-  ikisi de tek yazma işlemidir; telafi yolu, telafinin telafisi ve
-  "hayalet sipariş" penceresi diye bir şey kalmadı. `cart` ve `order`
-  modüllerinin `core.link` bağımlılığı da tamamen kalktı (`service.Linker`,
-  `Options.Links`, `Definitions()`).
+  The compensating deletes went too, and **the code came out simpler for
+  it**: because the tie was not in the same transaction as the cart row,
+  `CreateCart` rolled the cart back when the tie could not be created,
+  `UpdateCart` rolled back a customer handover, and `CreateOrder` linked
+  BEFORE writing the order and cleaned up the tie when the write failed. Now
+  both are a single write transaction; there is no longer any such thing as a
+  compensation path, a compensation of the compensation, or a "ghost order"
+  window. The `core.link` dependency of the `cart` and `order` modules is gone
+  entirely (`service.Linker`, `Options.Links`, `Definitions()`).
 
-  **Veritabanı: migration YAZILMADI, bu bilinçlidir.** Link şeması
-  migration'ın değil, açılıştaki bildirimin ürünüdür ve sahibi `core/link`'tir
-  (ADR 0005); bir modülün migration'ının başka bir alt sistemin tablosunu
-  düşürmesi, `b2b`'nin down migration'ında da bilinçle yapılmayan şeydir.
-  Somut sonuçlar:
+  **Database: NO migration was written, and this is deliberate.** The link
+  schema is the product of the startup declaration, not of a migration, and
+  its owner is `core/link` (ADR 0005); a module's migration dropping another
+  subsystem's table is exactly what `b2b`'s down migration also deliberately
+  does not do. Concrete consequences:
 
-  - `link_cart_customer`, `link_cart_region`, `link_order_customer` ve
-    `link_order_region` tabloları var olan kurulumlarda **yetim kalır**.
-    Zararsızdırlar: hiçbir kod yolu onlara dokunmaz ve işaret ettikleri
-    kimlikler bir daha üretilmez. Temizlik OPERASYONEL bir karardır ve elle
-    yapılır (`DROP TABLE IF EXISTS link_cart_customer, link_cart_region,
-    link_order_customer, link_order_region;`). Otomatikleştirilmemesinin
-    sebebi ADR 0005'te yazılıdır: tabloyu koda bakarak düşürmek, bir dağıtım
-    hatası yüzünden geçici olarak kaybolan bir tanımın tüm bağları silmesi
-    demek olurdu — ve **silinen satır geri gelmez**.
-  - `link_definitions` tablosunda bu dört ada ait satırlar kalır. Açılışta
-    **hiçbir çakışma üretmezler**: `LinkService.Define` yalnızca kendi
-    bildirdiği adın satırını okuyup karşılaştırır (upsert + `RETURNING`,
-    bkz. `core/link/service.go`), defteri koda karşı taramaz.
-    Koddan gelmeyen bir satır hiç okunmaz. Tek koşullu sonuç şudur: ileride
-    aynı ADLA fakat farklı uçlarla bir link bildirilirse açılış
-    `errors.Conflict` ile durur — ki bu, defterin görevini yapmasıdır, bir
-    arıza değil.
+  - The `link_cart_customer`, `link_cart_region`, `link_order_customer` and
+    `link_order_region` tables are **left orphaned** on existing
+    installations. They are harmless: no code path touches them, and the IDs
+    they point to are never produced again. Cleanup is an OPERATIONAL decision
+    and is done by hand (`DROP TABLE IF EXISTS link_cart_customer, link_cart_region,
+    link_order_customer, link_order_region;`). The reason it is not
+    automated is written in ADR 0005: dropping the table by looking at the
+    code would mean that a definition that went missing temporarily because
+    of a deployment mistake deletes all of its ties — and **a deleted row
+    does not come back**.
+  - The rows for these four names remain in the `link_definitions` table.
+    They **produce no conflict** at startup: `LinkService.Define` reads and
+    compares only the row of the name it declares itself (upsert +
+    `RETURNING`, see `core/link/service.go`); it does not scan the ledger
+    against the code. A row that does not come from the code is never read.
+    The only conditional consequence is this: if a link is later declared
+    with the same NAME but different ends, startup stops with
+    `errors.Conflict` — which is the ledger doing its job, not a failure.
 
-### Bilinen sınırlar
+### Known limitations
 
-Bu turda ARAŞTIRILDI, karar verildi ve BİLEREK açık bırakıldı. Kayda geçmemiş
-bir açık, kimsenin kapatmadığı açıktır.
+The following were INVESTIGATED in this round, decided on, and DELIBERATELY
+left open. A gap that never makes it onto the record is a gap nobody closes.
 
-- **`POST /store/v1/carts` hâlâ `region_id` alıyor.** `currency_code` bu
-  gövdeden KALDIRILDI (yukarı bakın); bölge kimliği kaldı ve aynı sınıftadır —
-  bölge vergi ORANINI seçer. Patlama yarıçapı iki adım küçüldü: bölgenin
-  gerçekten var olduğu artık doğrulanıyor (para birimi ondan okunuyor) ve
-  seçimin fiyat listesi üzerindeki etkisi kalktı. Doğru kapatma yeri yine
-  handler değil: türetmeyi zaten yapan bir akış var — `create_cart` ülke
-  kodundan hem bölgeyi hem para birimini çözüyor. Gövdenin `country_code`'a
-  inmesi ve ucun o akışa devredilmesi gerekir; akışın modüller arası yüzeyine
-  bugün bilinçli olarak bulunmayan bir metot eklemeyi ve mağaza sözleşmesini
-  bir kez daha kırmayı gerektirdiği için bu tura alınmadı. Gerekçe
-  `api.createCartRequest` godoc'unda.
+- **`POST /store/v1/carts` still takes `region_id`.** `currency_code` was
+  REMOVED from this body (see above); the region ID stayed, and it is in the
+  same class — the region selects the tax RATE. The blast radius shrank by
+  two steps: the region's actual existence is now validated (the currency is
+  read from it), and the choice's effect on the price list is gone. The right
+  place to close it is still not the handler: a workflow that already does
+  the derivation exists — `create_cart` resolves both the region and the
+  currency from the country code. The body needs to be reduced to
+  `country_code` and the endpoint handed over to that workflow; this was not
+  taken into this round because it requires adding a method that is
+  deliberately absent from the workflow's cross-module surface today, and
+  breaking the store contract once more. Rationale in the
+  `api.createCartRequest` godoc.
 
-- **Vitrin sepetlerinde SAHİPLİK denetimi yok — model bu, ve artık YAZILI.**
-  `/store/v1/carts/{id}` altındaki uçlar isteği yapanın sepetin sahibi
-  olduğunu doğrulamaz. Bu bir "yetenek URL" modelidir: sepet kimliği 48 bit
-  zaman damgası + 80 bit kriptografik rastgelelikten üretilir, tahmin edilemez
-  ve onu bilmek erişim hakkını taşır. Zorunluluktan da doğar — mağaza
-  yüzeyinin tek kimliği publishable anahtardır ve o bir SIR değildir; ortada
-  müşteri oturumu yoktur. Aynı beyan `order` modülünde zaten yazılıydı; `cart`
-  için hiçbir yerde yazmıyordu ve şimdi paket belgesinde duruyor, modelin
-  kuralıyla birlikte (vitrin tarafında LİSTE ucu YOKTUR; bir liste ucu tek bir
-  kimliği bilmeyi tüm sepetleri okumaya çevirirdi).
+- **Storefront carts have no OWNERSHIP check — this is the model, and it is
+  now WRITTEN DOWN.** The endpoints under `/store/v1/carts/{id}` do not verify
+  that the requester owns the cart. This is a "capability URL" model: the
+  cart ID is generated from a 48-bit timestamp + 80 bits of cryptographic
+  randomness, it cannot be guessed, and knowing it carries the right of
+  access. It also arises out of necessity — the store surface's only identity
+  is the publishable key, and that is not a SECRET; there is no customer
+  session. The same statement was already written in the `order` module; for
+  `cart` it was written nowhere, and now it sits in the package documentation,
+  together with the model's rule (there is NO LIST endpoint on the storefront
+  side; a list endpoint would turn knowing a single ID into reading every
+  cart).
 
-  Modelin KAPSAMADIĞI şey ayrıca adlandırıldı: yetenek URL'i "elimdeki kimliğe
-  erişebilirim" der, "ben şu müşteriyim" DEMEZ. Oysa gövdelerdeki
-  `customer_id` kanıtsız bir sahiplik iddiasıdır ve sepetin müşterisi b2b
-  harcama limitinin hangi şirket penceresinden düşüleceğini belirler — yani
-  iddia başkasının penceresini tüketebilir. Servis yalnızca tek bir sınırı
-  korur (müşterisi olan sepet başkasına devredilemez). Tek doğru kapatma
-  müşteri oturumudur (Faz 8) ve bu turda uydurma bir yetki mekanizması İNŞA
-  EDİLMEDİ.
+  What the model does NOT COVER was named separately: a capability URL says
+  "I can access the ID I hold", it does NOT say "I am this customer". Yet the
+  `customer_id` in request bodies is an unproven claim of ownership, and the
+  cart's customer determines which company's window the b2b spending limit is
+  deducted from — so the claim can use up someone else's window. The service
+  protects only a single boundary (a cart that has a customer cannot be
+  handed over to someone else). The only correct closure is a customer
+  session (Phase 8), and no made-up authorization mechanism was BUILT in this
+  round.
 
 ## [0.3.0] — 2026-08-31
 
-API artık kendini anlatıyor: şemadan çalışan bir istemci üretilebiliyor.
+The API now describes itself: a client that works from the schema can be
+generated.
 
-**Kırıcı değişiklik YOKTUR.** `core/openapi` paketinin dışa açık
-API'si yalnızca büyüdü (metot eklendi, hiçbiri kaldırılmadı) ve kaldırılan
-`List` bileşeni v0.2.0'da zaten yayımlanmıyordu — eklenmesi ve kaldırılması
-aynı yayımlanmamış pencerede oldu, yani kimsenin ürettiği bir istemciye
-girmedi.
+**There are NO breaking changes.** The exported API of the `core/openapi`
+package only grew (methods were added, none were removed), and the removed
+`List` component was not published in v0.2.0 in the first place — it was
+added and removed within the same unpublished window, so it never made it
+into a client anyone generated.
 
-### Eklendi
+### Added
 
-- **Tüm API yüzeyi anlatıldı (196 uç).** Şema artık her ucun ne aldığını ve ne
-  döndüğünü söylüyor. Ölçüldü: `openapi-generator v7.10.0` şemayı **sıfır
-  bulguyla** doğruluyor ve 237 modelli bir TypeScript istemcisi üretiyor.
-  `POST /admin/v1/users` örneği farkı özetler —
-  öncesi `postAdminV1Users(): Promise<void>` (gövdesiz, dönüşsüz, kullanılamaz),
-  sonrası `postAdminV1Users(req: PostAdminV1UsersRequest): Promise<…201Response>`.
-  `make openapi-client DIL=…` ile istemci üretilebilir; depoda SDK
-  VENDORLANMAZ, çünkü şema router'dan üretildiğine göre ikinci bir artefaktı
-  sürümlemek ve senkron tutmak gereksiz bir yük olurdu.
-- **OpenAPI şeması artık gövdeleri anlatıyor.** Şema sözdizimsel olarak
-  geçerliydi ama anlamsal olarak BOŞTU: `Doc.Describe` hiçbir yerde
-  çağrılmıyordu ve her işlem yalnızca `operationId`, `tags`, `security` ve
-  GENEL hata yanıtları (401/422/429/500) taşıyordu. `POST /store/v1/carts`
-  için ne `requestBody` ne de bir 2xx yanıtı vardı — bir istemci üreteci
-  bundan her şeyi `any` olan, dönüş tipi `void` metotlar üretirdi.
-  Gövde şemaları artık Go tiplerinden **yansımayla türetiliyor**: elle yazılan
-  bir alan listesi, DTO'ya alan eklendiği gün eksik kalır ve kimse fark etmez.
-  Türetme `encoding/json`'un davranışını taklit eder (etiket, `omitempty`,
-  dışa kapalı alanlar, gömülü struct düzleştirmesi ve **gölgelenme**).
-  Modüller opsiyonel `openapi.Describer` arayüzüyle kendi uçlarını anlatır;
-  `module.Module` sözleşmesi değişmedi. Bugün `cart` ve `product`'ın vitrin
-  uçları anlatılıyor.
+- **The whole API surface is described (196 endpoints).** The schema now says
+  what each endpoint takes and what it returns. Measured:
+  `openapi-generator v7.10.0` validates the schema with **zero findings** and
+  generates a TypeScript client with 237 models.
+  The `POST /admin/v1/users` example sums up the difference —
+  before, `postAdminV1Users(): Promise<void>` (no body, no return, unusable),
+  after, `postAdminV1Users(req: PostAdminV1UsersRequest): Promise<…201Response>`.
+  A client can be generated with `make openapi-client DIL=…`; no SDK is
+  VENDORED into the repository, because since the schema is generated from
+  the router, versioning a second artefact and keeping it in sync would be a
+  needless burden.
+- **The OpenAPI schema now describes bodies.** The schema was syntactically
+  valid but semantically EMPTY: `Doc.Describe` was not called anywhere, and
+  each operation carried only `operationId`, `tags`, `security` and the
+  GENERIC error responses (401/422/429/500). `POST /store/v1/carts` had
+  neither a `requestBody` nor a 2xx response — from that, a client generator
+  would produce methods where everything is `any` and the return type is
+  `void`.
+  Body schemas are now **derived from Go types by reflection**: a
+  hand-written field list falls behind the day a field is added to the DTO,
+  and nobody notices.
+  The derivation mimics the behaviour of `encoding/json` (tags, `omitempty`,
+  unexported fields, flattening of embedded structs, and **shadowing**).
+  Modules describe their own endpoints through the optional
+  `openapi.Describer` interface; the `module.Module` contract did not change.
+  Today the storefront endpoints of `cart` and `product` are described.
 
-### Değişti
+### Changed
 
-- **Kullanılmayan `List` bileşeni yayımlanmıyor.** Gerçek üreteç onu
-  "kullanılmayan model" diye bildirdi; üretilen her istemcide ölü bir sınıftı.
-  Anlatılmamış liste uçlarına varsayılan olarak bağlamak cazipti ama yanlış
-  olurdu: bir ucun gerçekten liste döndüğü doğrulanmadan şemaya yazılamaz.
-- **Şema bileşen adları normalleştirildi** (`cartDTO` → `Cart`). Bileşen adı
-  bir iç ayrıntı değil yayımlanan sözleşmedir; istemci üreteçleri ondan sınıf
-  adı üretir. Normalleştirilmeseydi aynı belgede `StoreProduct` (dışa açık) ile
-  `cartDTO` (dışa kapalı) yan yana durur, üretilen istemcide iki farklı
-  adlandırma düzeni olurdu.
+- **The unused `List` component is no longer published.** The real generator
+  reported it as an "unused model"; it was a dead class in every generated
+  client. Wiring it by default to the undescribed list endpoints was tempting
+  but would have been wrong: an endpoint cannot be written into the schema as
+  returning a list until it has been verified that it really does.
+- **Schema component names were normalised** (`cartDTO` → `Cart`). A
+  component name is not an internal detail but the published contract; client
+  generators produce class names from it. Without normalisation,
+  `StoreProduct` (exported) and `cartDTO` (unexported) would have stood side
+  by side in the same document, and the generated client would have had two
+  different naming schemes.
 
 ## [0.2.0] — 2026-08-31
 
-Yol haritası bittikten sonra bulunanlar. Ortak bir örüntü var: bu sürümdeki
-işlerin çoğu yeni özellik değil, **kurulmuş ama tüketicisi olmayan**
-yeteneklere tüketici yazmaktır — satış kanalı doğrulanıyor ama okunmuyordu,
-event bus hazırdı ama tek olay vardı, `Host.AddModule` hiç kullanılmamıştı.
+What was found after the roadmap was finished. There is a common pattern:
+most of the work in this release is not new features but writing consumers
+for capabilities that were **built but had no consumer** — the sales channel
+was validated but not read, the event bus was ready but had a single event,
+`Host.AddModule` had never been used.
 
-### Kırıcı değişiklikler
+### Breaking changes
 
-`0.x` boyunca minor sürümlerde kırıcı değişiklik olabilir. Bu sürümdekiler
-yalnızca **modülleri gömen** kodu etkiler; HTTP API'sini kullanan istemciler
-etkilenmez.
+Breaking changes may land in minor releases throughout `0.x`. Those in this
+release affect only code that **embeds the modules**; clients that use the
+HTTP API are not affected.
 
-- `product` modülü `Register` sırasında `core.eventbus` servisini ZORUNLU
-  kılar; yoksa açılış durur. Sessizce atlamak, katalog çalışırken indeksin
-  sessizce eskimesi demekti.
-- `product/repository.Store` arayüzü büyüdü (`ProductVisibleInSalesChannels`,
-  `VisibleProductIDs`); kendi uygulamasını yazan kod
-  bunları eklemelidir.
-- `product/service.GetStoreProduct` artık satış kanalı kimliklerini de alır.
-- `workflows/checkout`'un `Inventory` ve `Fulfillment` dar arayüzleri büyüdü
-  (`LocationsWithStock`, `SelectLocation`).
+- The `product` module REQUIRES the `core.eventbus` service during
+  `Register`; without it, startup stops. Silently skipping it would have meant
+  the index silently going stale while the catalog kept working.
+- The `product/repository.Store` interface grew
+  (`ProductVisibleInSalesChannels`, `VisibleProductIDs`); code that writes its
+  own implementation must add these.
+- `product/service.GetStoreProduct` now also takes the sales channel IDs.
+- The `Inventory` and `Fulfillment` narrow interfaces of `workflows/checkout`
+  grew (`LocationsWithStock`, `SelectLocation`).
 
-### Eklendi
+### Added
 
-- **Alan olayları ve gerçek bir eklenti: arama.** `order.placed` depodaki TEK
-  olaydı — event bus tamamen kurulu (bellek içi + Redis Streams, consumer
-  group, XACK), plan Bölüm 5.4'te çekirdek sözleşme, `Host.Subscribe`
-  eklentiler için hazır, ama abone olunacak neredeyse hiçbir şey yoktu.
-  `product` artık `product.created` / `product.updated` / `product.deleted`
-  yayımlıyor (sipariş olaylarının doktrini: dar yük, tüm değerler dize, kalıcı
-  akışa kişisel veri yok).
-  `plugins/searchpg` bunları tüketen ilk **gerçek** eklenti: kendi modülünü,
-  kendi tablosunu ve migration'ını getiriyor (`Host.AddModule` bugüne kadar hiç
-  kullanılmamıştı), PostgreSQL tam metin araması yapıyor ve
-  `GET /store/v1/search` ile `POST /admin/v1/search/reindex` uçlarını açıyor.
-  Dış servis bilinçli olarak yok: eklenti sınırı sayesinde ileride
-  Meilisearch/OpenSearch'e geçmek başka hiçbir yeri değiştirmez.
-  **Arama, kanal süzmesinin bypass'ı değildir** — eklenti yalnızca kimlik
-  indeksler, kayıtları `product.interop` getirir ve görünürlük kuralı tek
-  yerde kalır.
-- **Çoklu depo: stok satır başına, doğru depodan ayrılır.** `complete_cart`
-  saga'sındaki "TEK LOKASYON VARSAYIMI" kaldırıldı — kod bu değişikliği
-  "Faz 7'de" diye vaat ediyordu, Faz 7 bitmiş ve varsayım durmuştu.
-  `CompleteCartInput.LocationID` artık **opsiyoneldir**: dolu ise eski davranış
-  aynen korunur, boş ise lokasyon satır başına seçilir ve bir siparişin
-  satırları farklı depolardan ayrılabilir.
-  İş bölümü bilinçlidir — "hangi depolarda yeterli stok var" bir **stok
-  olgusudur** (`inventory.interop.LocationsWithStock`), "hangisinden
-  gönderelim" bir **kargo kararıdır** (`fulfillment.interop.SelectLocation`).
-  Seçilen depo ayırma anında tükenmişse sıradaki adaya geçilir; bu yalnızca
-  çakışmada olur, diğer hata sınıflarında ısrar edilmez.
-- **`product↔sales_channel` bağı ve vitrin katalog süzmesi.** Planın "önemli
-  linkler" listesindeki son eksik bağ kuruldu: publishable anahtarın bağlı
-  olduğu kanal artık kataloğu gerçekten belirliyor. Önceden anahtar
-  doğrulanıyor ve `Principal.SalesChannelIDs` doluyordu ama hiçbir modül
-  okumuyordu — her anahtar aynı kataloğu görüyordu.
-  Süzgeç veritabanında uygulanır (`EXISTS`/`NOT EXISTS`), böylece sayfalama ve
-  toplam sayaç süzülmüş küme üzerinde çalışır. Kanal kimlikten okunur, sorgu
-  dizesinden ASLA.
-  Yeni uçlar: `POST`/`DELETE`/`GET /admin/v1/products/{id}/sales-channels`.
+- **Domain events and a real plugin: search.** `order.placed` was the ONLY
+  event in the repository — the event bus was fully built (in-memory + Redis
+  Streams, consumer group, XACK), it was a core contract in plan Section 5.4,
+  and `Host.Subscribe` was ready for plugins, but there was almost nothing to
+  subscribe to.
+  `product` now publishes `product.created` / `product.updated` /
+  `product.deleted` (the doctrine of the order events: a narrow payload, every
+  value a string, no personal data in the durable stream).
+  `plugins/searchpg` is the first **real** plugin to consume them: it brings
+  its own module, its own table and migration (`Host.AddModule` had never been
+  used until now), does PostgreSQL full-text search, and exposes the
+  `GET /store/v1/search` and `POST /admin/v1/search/reindex` endpoints.
+  There is deliberately no external service: thanks to the plugin boundary,
+  moving to Meilisearch/OpenSearch later changes nothing anywhere else.
+  **Search is not a bypass of channel filtering** — the plugin indexes only
+  IDs, `product.interop` fetches the records, and the visibility rule stays in
+  one place.
+- **Multi-warehouse: stock is reserved per line, from the right warehouse.**
+  The "SINGLE LOCATION ASSUMPTION" in the `complete_cart` saga was removed —
+  the code promised this change "in Phase 7"; Phase 7 had finished and the
+  assumption had stayed.
+  `CompleteCartInput.LocationID` is now **optional**: if it is set, the old
+  behaviour is kept exactly; if it is empty, the location is chosen per line
+  and the lines of one order can be reserved from different warehouses.
+  The division of labour is deliberate — "which warehouses have enough
+  stock" is a **stock fact** (`inventory.interop.LocationsWithStock`), "which
+  one do we ship from" is a **shipping decision**
+  (`fulfillment.interop.SelectLocation`).
+  If the chosen warehouse has run out at reservation time, the next candidate
+  is tried; this happens only on a conflict, and other error classes are not
+  retried.
+- **The `product↔sales_channel` tie and storefront catalog filtering.** The
+  last missing tie on the plan's "important links" list was built: the
+  channel a publishable key is bound to now really determines the catalog.
+  Previously the key was validated and `Principal.SalesChannelIDs` was
+  filled, but no module read it — every key saw the same catalog.
+  The filter is applied in the database (`EXISTS`/`NOT EXISTS`), so
+  pagination and the total count work on the filtered set. The channel is
+  read from the identity, NEVER from the query string.
+  New endpoints: `POST`/`DELETE`/`GET /admin/v1/products/{id}/sales-channels`.
 
 ## [0.1.0] — 2026-08-31
 
-Planın Faz 0–9 yol haritasının tamamı. Tek binary olarak çalışan, modüller
-arası derleme zamanı bağımlılığı OLMAYAN bir headless commerce çekirdeği.
+The whole of the plan's Phase 0–9 roadmap. A headless commerce core that runs
+as a single binary, with NO compile-time dependency between modules.
 
-### Eklendi
+### Added
 
-**Çekirdek**
-- Modül sözleşmesi ve yaşam döngüsü (`Register` → migration → `Routes`),
-  el yazması DI container ([ADR 0002](docs/adr/0002-di-container-el-yazmasi.md)).
-- Module Links — modüller arası ilişki foreign key OLMADAN; kardinalite
-  veritabanı kısıtıyla zorlanır
+**Core**
+- Module contract and lifecycle (`Register` → migration → `Routes`),
+  hand-written DI container ([ADR 0002](docs/adr/0002-di-container-el-yazmasi.md)).
+- Module Links — relationships between modules WITHOUT foreign keys;
+  cardinality is enforced by a database constraint
   ([ADR 0005](docs/adr/0005-link-semasi-migration-disinda.md)).
-- Query katmanı — cross-module okuma; N+1 yapısal olarak imkânsız
+- Query layer — cross-module reads; N+1 is structurally impossible
   ([ADR 0004](docs/adr/0004-query-veri-erisimi.md)).
-- Saga motoru — ters sırada telafi, retry, idempotency anahtarı, panik
-  izolasyonu; yürütme durumu Postgres'te.
-- Event bus — bellek içi (geliştirme) ve Redis Streams (üretim).
-- Modül başına ayrı migration klasörü ve versiyon tablosu; iptal edilebilir
-  migration ([ADR 0003](docs/adr/0003-migration-iptali.md)).
+- Saga engine — compensation in reverse order, retry, idempotency key, panic
+  isolation; execution state in Postgres.
+- Event bus — in-memory (development) and Redis Streams (production).
+- A separate migration folder and version table per module; cancellable
+  migrations ([ADR 0003](docs/adr/0003-migration-iptali.md)).
 
-**Commerce modülleri**
-- Katalog: `product`, `pricing`, `inventory`.
-- Sepet: `cart`, `customer`, `region`.
-- Sipariş: `payment`, `order` — `complete_cart` saga'sı.
-- Faz 7: `fulfillment`, `promotion`, `tax`.
-- Kimlik: `auth` — yönetim kullanıcısı, JWT oturumu, publishable/gizli API
-  anahtarı, satış kanalı.
+**Commerce modules**
+- Catalog: `product`, `pricing`, `inventory`.
+- Cart: `cart`, `customer`, `region`.
+- Order: `payment`, `order` — the `complete_cart` saga.
+- Phase 7: `fulfillment`, `promotion`, `tax`.
+- Identity: `auth` — admin user, JWT session, publishable/secret API key,
+  sales channel.
 
-**Güvenlik**
-- İki yüzey, iki kimlik: `/admin/v1` Bearer jeton ya da gizli anahtar,
-  `/store/v1` publishable anahtar.
-- Yetki (scope) TÜM modüllerde uç uç zorlanır (`<modül>:read` /
-  `<modül>:write`, `admin` üst yetki); yetki yükseltme ayrıca servis
-  katmanında engellenir.
-- İlk yönetici tohumu (`ADMIN_BOOTSTRAP_*`) — yalnızca hiç kullanıcı yokken
-  çalışır, eşzamanlı açılışta yarışı yutar.
-- Oturum iptali: parola değişimi ve `POST /admin/v1/auth/logout`; ikisi de
-  çağıranın TÜM oturumlarını düşürür.
+**Security**
+- Two surfaces, two identities: `/admin/v1` takes a Bearer token or a secret
+  key, `/store/v1` a publishable key.
+- Authorization (scope) is enforced endpoint by endpoint in ALL modules
+  (`<module>:read` / `<module>:write`, with `admin` as the superscope);
+  privilege escalation is additionally blocked in the service layer.
+- First admin seed (`ADMIN_BOOTSTRAP_*`) — runs only when there are no users
+  at all, and absorbs the race on concurrent startup.
+- Session revocation: password change and `POST /admin/v1/auth/logout`; both
+  drop ALL of the caller's sessions.
 
-**Sertleştirme**
-- Hız sınırı, idempotency ve kimlik middleware'leri; arıza davranışı bileşene
-  göre değişir ([ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md)).
-- `GUARD_BACKEND=redis` ile paylaşılan hız sınırı ve idempotency deposu —
-  çok örnekli dağıtım için.
-- OpenTelemetry trace + metrik; toplayıcı verilmezse izleme gerçekten kapalı.
-- Eklenti sistemi (derleme zamanı kaydı) ve `payment-stripe` iskeleti.
-- Router ağacından üretilen OpenAPI şeması (`/openapi.json`).
+**Hardening**
+- Rate limit, idempotency and authentication middleware; failure behaviour
+  varies by component ([ADR 0007](docs/adr/0007-sertlestirme-arizada-davranis.md)).
+- A shared rate-limit and idempotency store with `GUARD_BACKEND=redis` —
+  for multi-instance deployments.
+- OpenTelemetry traces + metrics; if no collector is given, tracing is
+  genuinely off.
+- Plugin system (compile-time registration) and a `payment-stripe` skeleton.
+- OpenAPI schema generated from the router tree (`/openapi.json`).
 
-**Doğrulama**
-- Mimari değişmezler test ile zorlanır: modül izolasyonu, cross-module FK
-  yasağı, eklenti izolasyonu, godoc biçimi, para tam sayılığı.
-- Uçtan uca testler modülleri ÜRETİM kablolamasıyla kurar; yetki değişmezi
-  router ağacını gezerek her yönetim ucunu denetler.
-- Temel yük testi (`make load-test`).
+**Verification**
+- Architectural invariants are enforced by tests: module isolation, the ban
+  on cross-module FKs, plugin isolation, godoc format, integer money.
+- End-to-end tests build the modules with the PRODUCTION wiring; the
+  authorization invariant checks every admin endpoint by walking the router
+  tree.
+- A basic load test (`make load-test`).
 
-### Düzeltildi
+### Fixed
 
-Bu sürüm yayımlanmadan önce, uygulamayı gerçekten çalıştırarak bulunan ve
-yalnızca test koşarak görünmeyen üç arıza:
+Three failures found before this release by actually running the
+application, which running the tests alone did not reveal:
 
-- **Eşzamanlı açılışta tohum yarışı.** Birden çok örnek boş bir veritabanına
-  aynı anda açıldığında biri dışındaki hepsi `admin_bootstrap_failed` ile
-  ölüyordu. Çakışma artık bir arıza değil yarış olarak ele alınır.
-- **`OTEL_EXPORTER_OTLP_ENDPOINT` belirtim biçimini SESSİZCE yutuyordu.**
-  `http://host:4317` verildiğinde uygulama "izleme kuruldu" logluyor ve
-  hiçbir span göndermiyordu. Artık iki biçim de kabul edilir.
-- **`OTEL_METRIC_EXPORT_INTERVAL` adı OpenTelemetry ile çakışıyordu.**
-  Belirtim milisaniye tamsayı ister, bu paket Go süresi okur; belirtime uyan
-  değer uygulamayı açılışta düşürüyordu. Değişken `METRIC_EXPORT_INTERVAL`
-  oldu.
+- **Seed race on concurrent startup.** When several instances started against
+  an empty database at the same time, all but one died with
+  `admin_bootstrap_failed`. A conflict is now treated as a race, not a
+  failure.
+- **`OTEL_EXPORTER_OTLP_ENDPOINT` SILENTLY swallowed the format from the
+  spec.** Given `http://host:4317`, the application logged "tracing set up"
+  and sent no spans at all. Both forms are now accepted.
+- **The name `OTEL_METRIC_EXPORT_INTERVAL` clashed with OpenTelemetry.**
+  The spec wants an integer in milliseconds, while this package reads a Go
+  duration; a value that followed the spec brought the application down at
+  startup. The variable became `METRIC_EXPORT_INTERVAL`.
 
-### Düzeltildi
+### Fixed
 
-- **`make migrate-up` dokuz faz geriden konuşuyordu.** Operatöre "Faz 1'de
-  core/db migration runner'ı devreye girecek" diyordu; Faz 1 dokuz faz önce
-  bitmiş ve migration'lar açılışta otomatik uygulanıyordu. Hedefler gerçeğe
-  uyduruldu ve geri alma yolunun OLMADIĞI açıkça yazıldı.
-- **Kapsam ölçümü 22 puan yanıltıyordu.** CI `-coverpkg` olmadan ölçüyordu,
-  yani bir paketi BAŞKA paketin testi kapsadığında sayılmıyordu. Artık iki
-  ayrı sayı raporlanıyor: yalnızca birim (~%55) ve birim + entegrasyon (~%76).
-- **Arama yolunda N+1.** Görünürlük kimlik başına sorulurken toplu sorguya
-  çevrildi; aynı SQL şablonundan üretildiği için kural hâlâ tek.
-- **Çoklu depoda yarış.** Aday listesi kilitsiz okunur, ayırma kilitlidir;
-  seçilen depo bu arada tükenmişse sıradaki adaya geçilir. Önceden sipariş
-  tümden düşerdi — üstelik başka depoda stok dururken.
+- **`make migrate-up` was talking nine phases out of date.** It told the
+  operator "the core/db migration runner will come into play in Phase 1";
+  Phase 1 had finished nine phases earlier and migrations were applied
+  automatically at startup. The targets were brought in line with reality, and
+  the fact that there is NO rollback path was stated explicitly.
+- **Coverage measurement was off by 22 points.** CI measured without
+  `-coverpkg`, so a package was not counted when ANOTHER package's test
+  covered it. Two separate numbers are now reported: unit only (~55%) and
+  unit + integration (~76%).
+- **N+1 on the search path.** Visibility, which was asked per ID, was turned
+  into a batch query; since it is generated from the same SQL template, the
+  rule still lives in one place.
+- **A race in multi-warehouse.** The candidate list is read without a lock,
+  while the reservation is locked; if the chosen warehouse has run out in the
+  meantime, the next candidate is tried. Previously the order failed outright
+  — and with stock sitting in another warehouse, no less.
 
-### Bilinen sınırlar
+### Known limitations
 
-- Oturum iptali yalnızca toptan; tek cihaz düşürülemez.
-- Modüller arası imzalar derleme zamanında denetlenmez
-  ([ADR 0001](docs/adr/0001-modul-arasi-iletisim.md)'in kabul edilen bedeli).
-- Stokta tek lokasyon varsayımı.
-- **Kanal ataması olmayan ürün tüm kanallarda görünür.** Kural bilinçli ve
-  geriye uyumludur, ama bir tuzağı vardır: son kanal bağını silmek ürünü
-  gizlemez, tüm vitrinlere açar. Gizlemek için `status` kullanılmalıdır.
-  Katı alternatif ("ataması olmayan hiçbir kanalda görünmez") bir sonraki
-  minor sürüm için düşünülmeli — açıldığı gün mevcut katalogları boşaltır.
-- **Migration geri alma yolu yok.** Her modülün `.down.sql` dosyaları vardır
-  ve geri alınabilirlikleri testle denetlenir, ama onları çağıracak bir yüzey
-  yoktur; geri alma elle yapılır. İleri yön açılışta otomatiktir.
-- Yük testi süreç içidir; kapasite planı üretmez.
+- Session revocation is all-or-nothing only; a single device cannot be
+  signed out.
+- Cross-module signatures are not checked at compile time
+  (the accepted cost of [ADR 0001](docs/adr/0001-modul-arasi-iletisim.md)).
+- Single-location assumption in stock.
+- **A product with no channel assignment is visible in every channel.** The
+  rule is deliberate and backward compatible, but it has a trap: deleting the
+  last channel tie does not hide the product, it opens it up to every
+  storefront. Use `status` to hide it. The strict alternative ("an unassigned
+  product is visible in no channel") should be considered for the next minor
+  release — the day it is switched on, it empties existing catalogs.
+- **There is no migration rollback path.** Every module has `.down.sql` files
+  and their reversibility is checked by tests, but there is no surface to call
+  them; rollback is done by hand. The forward direction is automatic at
+  startup.
+- The load test is in-process; it does not produce a capacity plan.
 
-[Yayımlanmamış]: https://github.com/bdrtr/gobit/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/bdrtr/gobit/compare/v0.9.0...HEAD
 [0.9.0]: https://github.com/bdrtr/gobit/releases/tag/v0.9.0
 [0.8.0]: https://github.com/bdrtr/gobit/releases/tag/v0.8.0
 [0.7.0]: https://github.com/bdrtr/gobit/releases/tag/v0.7.0

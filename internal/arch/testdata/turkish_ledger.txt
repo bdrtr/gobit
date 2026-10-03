@@ -7,4 +7,3 @@
 # This list may only SHRINK. Removing a line requires the file to be
 # translated; the test refuses a line whose file is already clean.
 #
-CHANGELOG.md

@@ -293,6 +293,15 @@ const generatedMarker = "Code generated"
 //     'Curaçao', 'Türkiye' (ISO 3166 reference names, not translatable, and
 //     they reach the DATABASE, so escaping them is not available)
 var diacriticDataExemptions = map[string][]string{
+	// The changelog was translated on 2026-10-03, and what keeps a Turkish
+	// letter is quotation. Two entries report test bindings that searched for a
+	// message's Turkish text, and the dead text IS the report, as in ADR 0012's
+	// example. The case-folding entry is about non-ASCII letters, so its words
+	// have to carry one, for ADR 0015's reason above.
+	"CHANGELOG.md": {
+		"`\"b\" adımı`", "`ELLE MÜDAHALE`",
+		"`\"çanta\"`", "`\"Çanta\"`", "q=çanta", "q=Çanta", "`'Ç' ILIKE 'ç'`",
+	},
 	// The region module's seed holds ISO 3166-1 short names as data, and two
 	// of them carry a letter this lane reads: Curaçao, and Türkiye, the name
 	// ISO and the United Nations register for TR. Spelling either in ASCII
@@ -900,13 +909,16 @@ func TestDetectorIsNotBlind(t *testing.T) {
 		}
 	}
 
-	// The identifier lane reads Go source alone, and once no Go file is left on
-	// the ledger it has nothing to find: the identifiers' migration is complete
-	// while prose debt remains elsewhere. Its teeth are then proven only by the
-	// planted control ([TestDetectorFindsPlantedTurkish]), and a hit would be a
-	// Go file outside the ledger, which [TestNoTurkishOutsideLedger] reports.
+	// A lane with nothing left on the ledger to read has nothing to find, and
+	// its zero is then the migration being complete rather than the lane being
+	// blind: the identifier lane reads Go source alone, the other two every
+	// scanned file. A finished lane's teeth are proven by the planted control
+	// ([TestDetectorFindsPlantedTurkish]), and a hit would be a file outside
+	// the ledger, which [TestNoTurkishOutsideLedger] reports. The ledger has
+	// been empty since 2026-10-03.
+	ledger := loadLedger(t, turkishLedgerPath)
 	goLeft := false
-	for rel := range loadLedger(t, turkishLedgerPath) {
+	for rel := range ledger {
 		if strings.HasSuffix(rel, ".go") {
 			goLeft = true
 
@@ -914,17 +926,17 @@ func TestDetectorIsNotBlind(t *testing.T) {
 		}
 	}
 	for _, lane := range []string{laneDiacritic, laneWord, laneIdentifier} {
-		if lane == laneIdentifier && !goLeft {
+		finished := len(ledger) == 0 || (lane == laneIdentifier && !goLeft)
+		if finished {
 			assert.Zero(t, perLane[lane],
-				"the ledger lists no Go file, so no Go identifier may carry Turkish")
+				"the %s lane has nothing left on %s to read, so nothing it reads may "+
+					"carry Turkish", lane, turkishLedgerPath)
 
 			continue
 		}
 		assert.Positive(t, perLane[lane],
-			"the %s lane found nothing in the whole repository. Either the migration "+
-				"is complete — in which case %s is empty and this assertion should be "+
-				"replaced by one that says so — or the lane is broken.",
-			lane, turkishLedgerPath)
+			"the %s lane found nothing in the whole repository while %s still lists "+
+				"files it reads; the lane is broken.", lane, turkishLedgerPath)
 	}
 
 	for _, root := range append(slices.Clone(scannedRoots), ".") {
