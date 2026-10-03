@@ -11,12 +11,14 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/models"
 )
 
-// sabitSaat testlerin belirlenimci zaman kaynağıdır. Ayın ORTASI seçilmiştir:
-// aylık pencerenin başlangıcı böyle "şimdi" ile karışmaz.
-var sabitSaat = time.Date(2026, time.March, 17, 9, 30, 0, 0, time.UTC)
+// fixedClock is the tests' deterministic time source. The MIDDLE of the month
+// was chosen: that way the start of the monthly window is not confused with
+// "now".
+var fixedClock = time.Date(2026, time.March, 17, 9, 30, 0, 0, time.UTC)
 
-// yeniServis sahte depo ve sahte bağ servisiyle bir servis kurar.
-func yeniServis(t *testing.T) (*Service, *memRepo, *memLinker) {
+// newTestService builds a service with a fake repository and a fake bond
+// service.
+func newTestService(t *testing.T) (*Service, *memRepo, *memLinker) {
 	t.Helper()
 
 	repo := newMemRepo()
@@ -24,85 +26,87 @@ func yeniServis(t *testing.T) (*Service, *memRepo, *memLinker) {
 	svc, err := New(Options{
 		Repo:  repo,
 		Links: links,
-		Now:   func() time.Time { return sabitSaat },
+		Now:   func() time.Time { return fixedClock },
 	})
 	require.NoError(t, err)
 	return svc, repo, links
 }
 
-// gecerliSirket testlerin varsayılan şirket girdisidir.
-func gecerliSirket() CompanyInput {
+// validCompanyInput is the tests' default company input.
+func validCompanyInput() CompanyInput {
 	return CompanyInput{
-		Name:                     "Acme Sanayi A.Ş.",
+		Name:                     "Acme Sanayi A.S.",
 		Email:                    "Muhasebe@Acme.example",
 		CurrencyCode:             "try",
 		SpendingLimitResetPeriod: string(models.ResetMonthly),
 	}
 }
 
-// yeniSirket testler için bir şirket oluşturur.
-func yeniSirket(t *testing.T, svc *Service) models.Company {
+// newTestCompany creates a company for the tests.
+func newTestCompany(t *testing.T, svc *Service) models.Company {
 	t.Helper()
 
-	company, err := svc.CreateCompany(t.Context(), gecerliSirket())
+	company, err := svc.CreateCompany(t.Context(), validCompanyInput())
 	require.NoError(t, err)
 	return company
 }
 
-// TestServisBagimlilikOlmadanKurulamaz eksik bağımlılığın KURULUMDA
-// yakalandığını doğrular.
+// TestTheServiceCannotBeBuiltWithoutItsDependencies verifies that a missing
+// dependency is caught AT SETUP.
 //
-// Çalışma zamanına ertelenseydi modül açılır, çalışan kayıtları yazılır ve
-// hiçbiri bir müşteriye bağlanmazdı; eksiklik ancak vitrinde görünürdü.
-func TestServisBagimlilikOlmadanKurulamaz(t *testing.T) {
+// Had it been deferred to run time, the module would come up, employee
+// records would be written and none of them would be bound to a customer; the
+// gap would only show in the storefront.
+func TestTheServiceCannotBeBuiltWithoutItsDependencies(t *testing.T) {
 	// The refusal is required before its class (D136): this test used to pass
 	// with the checks removed, because HasKind(nil, KindInternal) was true.
 	_, err := New(Options{Links: newMemLinker()})
-	require.Error(t, err, "depo olmadan kurulmamalı")
-	assert.True(t, errors.HasKind(err, errors.KindInternal), "depo olmadan kurulmamalı")
+	require.Error(t, err, "it must not be built without a repository")
+	assert.True(t, errors.HasKind(err, errors.KindInternal), "it must not be built without a repository")
 
 	_, err = New(Options{Repo: newMemRepo()})
-	require.Error(t, err, "link servisi olmadan kurulmamalı")
-	assert.True(t, errors.HasKind(err, errors.KindInternal), "link servisi olmadan kurulmamalı")
+	require.Error(t, err, "it must not be built without a link service")
+	assert.True(t, errors.HasKind(err, errors.KindInternal), "it must not be built without a link service")
 }
 
-// TestSirketOlusturmaGirdiyiDogrular servis katmanındaki doğrulamanın
-// veritabanına gitmeden çalıştığını gösterir.
-func TestSirketOlusturmaGirdiyiDogrular(t *testing.T) {
-	durumlar := map[string]func(in *CompanyInput){
-		"ad boş":                 func(in *CompanyInput) { in.Name = "   " },
-		"e-posta boş":            func(in *CompanyInput) { in.Email = "" },
-		"e-posta biçimsiz":       func(in *CompanyInput) { in.Email = "muhasebe@acme" },
-		"para birimi boş":        func(in *CompanyInput) { in.CurrencyCode = "" },
-		"para birimi kısa":       func(in *CompanyInput) { in.CurrencyCode = "TR" },
-		"para birimi harf değil": func(in *CompanyInput) { in.CurrencyCode = "TR1" },
-		"ülke kodu geçersiz":     func(in *CompanyInput) { in.CountryCode = "TUR" },
-		"periyot tanımsız":       func(in *CompanyInput) { in.SpendingLimitResetPeriod = "weekly" },
+// TestCreateCompanyValidatesItsInput shows that the validation in the service
+// layer runs without going to the database.
+func TestCreateCompanyValidatesItsInput(t *testing.T) {
+	cases := map[string]func(in *CompanyInput){
+		"empty name":             func(in *CompanyInput) { in.Name = "   " },
+		"empty e-mail":           func(in *CompanyInput) { in.Email = "" },
+		"malformed e-mail":       func(in *CompanyInput) { in.Email = "muhasebe@acme" },
+		"empty currency":         func(in *CompanyInput) { in.CurrencyCode = "" },
+		"short currency":         func(in *CompanyInput) { in.CurrencyCode = "TR" },
+		"currency not letters":   func(in *CompanyInput) { in.CurrencyCode = "TR1" },
+		"invalid country code":   func(in *CompanyInput) { in.CountryCode = "TUR" },
+		"undefined reset period": func(in *CompanyInput) { in.SpendingLimitResetPeriod = "weekly" },
 	}
 
-	for ad, boz := range durumlar {
-		t.Run(ad, func(t *testing.T) {
-			svc, repo, _ := yeniServis(t)
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc, repo, _ := newTestService(t)
 
-			in := gecerliSirket()
-			boz(&in)
+			in := validCompanyInput()
+			mutate(&in)
 
 			_, err := svc.CreateCompany(t.Context(), in)
-			assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
-			assert.Zero(t, repo.calls["CreateCompany"], "geçersiz girdi depoya hiç gitmemeli")
+			assert.True(t, errors.IsInvalid(err), "expected class Invalid, got: %v", err)
+			assert.Zero(t, repo.calls["CreateCompany"], "invalid input must never reach the repository")
 		})
 	}
 }
 
-// TestSirketOlusturmaNormalizeEder e-postanın küçük, kodların BÜYÜK harfe
-// çevrildiğini ve periyodun varsayılanını doğrular.
+// TestCreateCompanyNormalizes verifies that the e-mail address is turned to
+// lower case and the codes to UPPER case, and the default of the period.
 //
-// Normalizasyon SAKLAMADA yapılır: süzgeç sütundaki değerle karşılaştırır ve
-// iki farklı yazım tabloya girerse süzgeç ikisini farklı sanardı.
-func TestSirketOlusturmaNormalizeEder(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// The normalization is done ON STORAGE: the filter compares against the value
+// in the column, and if two different spellings entered the table the filter
+// would take them for different values.
+func TestCreateCompanyNormalizes(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
-	in := gecerliSirket()
+	in := validCompanyInput()
 	in.CountryCode = "tr"
 	in.SpendingLimitResetPeriod = ""
 
@@ -113,18 +117,19 @@ func TestSirketOlusturmaNormalizeEder(t *testing.T) {
 	assert.Equal(t, "TRY", company.CurrencyCode)
 	assert.Equal(t, "TR", company.CountryCode)
 	assert.Equal(t, models.ResetNever, company.SpendingLimitResetPeriod,
-		"periyot verilmezse en kısıtlayıcı seçenek uygulanmalı")
-	assert.Equal(t, sabitSaat, company.CreatedAt)
+		"if no period is given the most restrictive option has to apply")
+	assert.Equal(t, fixedClock, company.CreatedAt)
 }
 
-// TestCalisanEklemeMusteriBaginiKurar bağın kurulduğunu ve kaydın müşteri
-// kimliğiyle döndüğünü doğrular.
+// TestCreateEmployeeBondsTheCustomer verifies that the bond is established and
+// the record comes back with the customer id.
 //
-// Kimliğin dönmesi önemlidir: sütunu olmadığı için değer yalnızca link'ten
-// gelebilir ve boş dönmesi, bağın hiç kurulmadığının işareti olurdu.
-func TestCalisanEklemeMusteriBaginiKurar(t *testing.T) {
-	svc, _, links := yeniServis(t)
-	company := yeniSirket(t, svc)
+// The id coming back matters: since it has no column, the value can only come
+// from link, and its coming back empty would be the sign that the bond was
+// never established.
+func TestCreateEmployeeBondsTheCustomer(t *testing.T) {
+	svc, _, links := newTestService(t)
+	company := newTestCompany(t, svc)
 
 	limit := int64(150000)
 	employee, err := svc.CreateEmployee(t.Context(), EmployeeInput{
@@ -139,44 +144,46 @@ func TestCalisanEklemeMusteriBaginiKurar(t *testing.T) {
 	assert.Equal(t, company.ID, employee.CompanyID)
 	require.NotNil(t, employee.SpendingLimit)
 	assert.Equal(t, limit, *employee.SpendingLimit)
-	assert.True(t, links.bags[LinkEmployeeCustomer][employee.ID]["cust_01"], "bağ kurulmalı")
+	assert.True(t, links.bonds[LinkEmployeeCustomer][employee.ID]["cust_01"], "the bond has to be established")
 }
 
-// TestCalisanEklemeKimlikOneklerinizDenetler yanlış tipteki bir kimliğin
-// veritabanına hiç gitmeden yakalandığını doğrular.
-func TestCalisanEklemeKimlikOneklerinizDenetler(t *testing.T) {
-	svc, repo, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
+// TestCreateEmployeeChecksIDPrefixes verifies that an id of the wrong type is
+// caught without ever going to the database.
+func TestCreateEmployeeChecksIDPrefixes(t *testing.T) {
+	svc, repo, _ := newTestService(t)
+	company := newTestCompany(t, svc)
 
 	_, err := svc.CreateEmployee(t.Context(), EmployeeInput{
 		CompanyID: company.ID,
-		// Şirket kimliği customer id yerine verilmiş.
+		// A company id given in place of the customer id.
 		CustomerID: company.ID,
 	})
-	assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
+	assert.True(t, errors.IsInvalid(err), "expected class Invalid, got: %v", err)
 	assert.Zero(t, repo.calls["CreateEmployee"])
 }
 
-// TestCalisanEklemeOlmayanSirketeBulunamadiDoner eksik kaynağın 422 değil 404
-// sınıfında bildirildiğini doğrular.
-func TestCalisanEklemeOlmayanSirketeBulunamadiDoner(t *testing.T) {
-	svc, repo, _ := yeniServis(t)
+// TestCreateEmployeeForAMissingCompanyIsNotFound verifies that a missing
+// resource is reported in the 404 class, not 422.
+func TestCreateEmployeeForAMissingCompanyIsNotFound(t *testing.T) {
+	svc, repo, _ := newTestService(t)
 
 	_, err := svc.CreateEmployee(t.Context(), EmployeeInput{
-		CompanyID:  "comp_YOK",
+		CompanyID:  "comp_MISSING",
 		CustomerID: "cust_01",
 	})
-	assert.True(t, errors.IsNotFound(err), "beklenen sınıf NotFound, gelen: %v", err)
-	assert.Zero(t, repo.calls["CreateEmployee"], "şirket yoksa çalışan hiç yazılmamalı")
+	assert.True(t, errors.IsNotFound(err), "expected class NotFound, got: %v", err)
+	assert.Zero(t, repo.calls["CreateEmployee"], "if the company does not exist no employee may be written")
 }
 
-// TestCalisanEklemeBagKurulamazsaGeriAlinir telafinin çalıştığını doğrular.
+// TestCreateEmployeeIsRolledBackWhenTheBondFails verifies that the
+// compensation works.
 //
-// Geri alınmasaydı, müşterisi olmayan bir çalışan kaydı ayakta kalırdı: kayıt
-// bir harcama limiti taşır ama vitrinde hiç kimseye çözülmez.
-func TestCalisanEklemeBagKurulamazsaGeriAlinir(t *testing.T) {
-	svc, repo, links := yeniServis(t)
-	company := yeniSirket(t, svc)
+// Had it not been rolled back, an employee record without a customer would
+// stay up: the record carries a spending limit but resolves to nobody in the
+// storefront.
+func TestCreateEmployeeIsRolledBackWhenTheBondFails(t *testing.T) {
+	svc, repo, links := newTestService(t)
+	company := newTestCompany(t, svc)
 	links.failCreate = true
 
 	_, err := svc.CreateEmployee(t.Context(), EmployeeInput{
@@ -185,41 +192,44 @@ func TestCalisanEklemeBagKurulamazsaGeriAlinir(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	require.Len(t, repo.employees, 1, "kayıt yazılmış olmalı")
+	require.Len(t, repo.employees, 1, "the record has to have been written")
 	for _, e := range repo.employees {
-		assert.NotNil(t, e.DeletedAt, "bağı kurulamayan çalışan geri alınmalı")
+		assert.NotNil(t, e.DeletedAt, "an employee whose bond could not be established has to be rolled back")
 	}
 }
 
-// TestAyniMusteriIkinciSirketeEklenemez kardinalitenin sonucunu doğrular.
+// TestACustomerCannotJoinASecondCompany verifies the consequence of the
+// cardinality.
 //
-// Kural link tablosundadır; burada sınanan, servisin o ihlali ÇAKIŞMA olarak
-// taşımasıdır — Internal'a çevrilseydi istemci düzeltilebilir bir durumu sunucu
-// hatası sanardı.
-func TestAyniMusteriIkinciSirketeEklenemez(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	ilk := yeniSirket(t, svc)
+// The rule is in the link table; what is exercised here is that the service
+// carries that violation as a CONFLICT — had it been turned into Internal, the
+// client would take a state it can fix for a server error.
+func TestACustomerCannotJoinASecondCompany(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	first := newTestCompany(t, svc)
 
-	ikinci, err := svc.CreateCompany(t.Context(), CompanyInput{
+	second, err := svc.CreateCompany(t.Context(), CompanyInput{
 		Name: "Beta Ltd.", Email: "beta@ornek.test", CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.CreateEmployee(t.Context(), EmployeeInput{CompanyID: ilk.ID, CustomerID: "cust_01"})
+	_, err = svc.CreateEmployee(t.Context(), EmployeeInput{CompanyID: first.ID, CustomerID: "cust_01"})
 	require.NoError(t, err)
 
-	_, err = svc.CreateEmployee(t.Context(), EmployeeInput{CompanyID: ikinci.ID, CustomerID: "cust_01"})
-	assert.True(t, errors.IsConflict(err), "beklenen sınıf Conflict, gelen: %v", err)
+	_, err = svc.CreateEmployee(t.Context(), EmployeeInput{CompanyID: second.ID, CustomerID: "cust_01"})
+	assert.True(t, errors.IsConflict(err), "expected class Conflict, got: %v", err)
 }
 
-// TestSirketSilmeCalisanlariVeBaglariTemizler şirket silmenin kararını
-// doğrular: sarkan çalışan kaydı KALMAZ ve müşteri bağı serbest kalır.
+// TestDeleteCompanyClearsEmployeesAndBonds verifies the decision behind
+// deleting a company: NO dangling employee record is LEFT and the customer
+// bond is freed.
 //
-// Bağın serbest kalması testin asıl iddiasıdır: kalsaydı müşteri, kapanmış bir
-// şirket yüzünden bir daha hiçbir şirkete çalışan olarak eklenemezdi.
-func TestSirketSilmeCalisanlariVeBaglariTemizler(t *testing.T) {
-	svc, repo, links := yeniServis(t)
-	company := yeniSirket(t, svc)
+// The bond being freed is the test's real claim: had it stayed, the customer,
+// because of a closed company, could never again be added as an employee of
+// any company.
+func TestDeleteCompanyClearsEmployeesAndBonds(t *testing.T) {
+	svc, repo, links := newTestService(t)
+	company := newTestCompany(t, svc)
 
 	employee, err := svc.CreateEmployee(t.Context(), EmployeeInput{
 		CompanyID: company.ID, CustomerID: "cust_01",
@@ -228,24 +238,24 @@ func TestSirketSilmeCalisanlariVeBaglariTemizler(t *testing.T) {
 
 	require.NoError(t, svc.DeleteCompany(t.Context(), company.ID))
 
-	assert.NotNil(t, repo.employees[employee.ID].DeletedAt, "çalışan da silinmeli")
-	assert.Empty(t, links.bags[LinkEmployeeCustomer][employee.ID], "müşteri bağı kaldırılmalı")
+	assert.NotNil(t, repo.employees[employee.ID].DeletedAt, "the employee has to be deleted too")
+	assert.Empty(t, links.bonds[LinkEmployeeCustomer][employee.ID], "the customer bond has to be removed")
 
-	// Müşteri artık başka bir şirkete eklenebilmeli.
-	yeni, err := svc.CreateCompany(t.Context(), CompanyInput{
+	// The customer has to be addable to another company now.
+	next, err := svc.CreateCompany(t.Context(), CompanyInput{
 		Name: "Gamma Ltd.", Email: "gamma@ornek.test", CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	_, err = svc.CreateEmployee(t.Context(), EmployeeInput{CompanyID: yeni.ID, CustomerID: "cust_01"})
-	assert.NoError(t, err, "bağı serbest kalan müşteri yeniden işe alınabilmeli")
+	_, err = svc.CreateEmployee(t.Context(), EmployeeInput{CompanyID: next.ID, CustomerID: "cust_01"})
+	assert.NoError(t, err, "a customer whose bond was freed has to be hirable again")
 }
 
-// TestCalisanSilmeBagiKaldirir tek bir çalışanın silinmesinde de bağın
-// temizlendiğini doğrular. İşten çıkan birinin başka bir şirkette işe başlaması
-// olağan durumdur.
-func TestCalisanSilmeBagiKaldirir(t *testing.T) {
-	svc, _, links := yeniServis(t)
-	company := yeniSirket(t, svc)
+// TestDeleteEmployeeRemovesTheBond verifies that the bond is cleaned up when a
+// single employee is deleted too. Somebody who leaves starting work at another
+// company is the ordinary case.
+func TestDeleteEmployeeRemovesTheBond(t *testing.T) {
+	svc, _, links := newTestService(t)
+	company := newTestCompany(t, svc)
 
 	employee, err := svc.CreateEmployee(t.Context(), EmployeeInput{
 		CompanyID: company.ID, CustomerID: "cust_01",
@@ -253,18 +263,19 @@ func TestCalisanSilmeBagiKaldirir(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, svc.DeleteEmployee(t.Context(), employee.ID))
-	assert.Empty(t, links.bags[LinkEmployeeCustomer][employee.ID])
+	assert.Empty(t, links.bonds[LinkEmployeeCustomer][employee.ID])
 }
 
-// TestUyelikYalnizcaKendiSirketiniDoner modülün vitrin değişmezini sabitler:
-// bir müşteri BAŞKASININ şirketini okuyamaz.
+// TestMembershipReturnsOnlyTheirOwnCompany pins the module's storefront
+// invariant: a customer cannot read SOMEBODY ELSE's company.
 //
-// Yüzeyde şirket kimliği alan bir uç olmadığı için (bkz. api paketi) tek
-// giriş noktası budur; burada tuttuğu sürece vitrinde de tutar.
-func TestUyelikYalnizcaKendiSirketiniDoner(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// Since the surface has no endpoint taking a company id (see the api package),
+// this is the only entry point; as long as it holds here it holds in the
+// storefront too.
+func TestMembershipReturnsOnlyTheirOwnCompany(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
-	acme := yeniSirket(t, svc)
+	acme := newTestCompany(t, svc)
 	beta, err := svc.CreateCompany(t.Context(), CompanyInput{
 		Name: "Beta Ltd.", Email: "beta@ornek.test", CurrencyCode: "EUR",
 		SpendingLimitResetPeriod: string(models.ResetYearly),
@@ -276,83 +287,84 @@ func TestUyelikYalnizcaKendiSirketiniDoner(t *testing.T) {
 	_, err = svc.CreateEmployee(t.Context(), EmployeeInput{CompanyID: beta.ID, CustomerID: "cust_B"})
 	require.NoError(t, err)
 
-	uyelikA, err := svc.MembershipOfCustomer(t.Context(), "cust_A")
+	membershipA, err := svc.MembershipOfCustomer(t.Context(), "cust_A")
 	require.NoError(t, err)
-	assert.Equal(t, acme.ID, uyelikA.Company.ID)
+	assert.Equal(t, acme.ID, membershipA.Company.ID)
 
-	uyelikB, err := svc.MembershipOfCustomer(t.Context(), "cust_B")
+	membershipB, err := svc.MembershipOfCustomer(t.Context(), "cust_B")
 	require.NoError(t, err)
-	assert.Equal(t, beta.ID, uyelikB.Company.ID,
-		"her müşteri YALNIZCA kendi şirketini görmeli")
+	assert.Equal(t, beta.ID, membershipB.Company.ID,
+		"every customer has to see ONLY their own company")
 
 	_, err = svc.MembershipOfCustomer(t.Context(), "cust_YABANCI")
 	assert.True(t, errors.IsNotFound(err),
-		"hiçbir şirkete bağlı olmayan müşteri 404 almalı, gelen: %v", err)
+		"a customer bound to no company has to get a 404, got: %v", err)
 }
 
-// TestUyelikPencereBaslangiciniHesaplar harcama penceresinin şirketin
-// periyodundan türetildiğini doğrular.
+// TestMembershipComputesTheWindowStart verifies that the spending window is
+// derived from the company's period.
 //
-// Pencerenin kendisi bu turda uygulanmaz; sonraki adımın okuyacağı değer tam
-// olarak budur ve TAKVİME göredir (kaydın açılış tarihine göre değil).
-func TestUyelikPencereBaslangiciniHesaplar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc) // aylık
+// The window itself is not enforced in this round; this is exactly the value
+// the next step will read, and it follows the CALENDAR (not the date the
+// record was opened).
+func TestMembershipComputesTheWindowStart(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc) // monthly
 	_, err := svc.CreateEmployee(t.Context(), EmployeeInput{
 		CompanyID: company.ID, CustomerID: "cust_A",
 	})
 	require.NoError(t, err)
 
-	uyelik, err := svc.MembershipOfCustomer(t.Context(), "cust_A")
+	membership, err := svc.MembershipOfCustomer(t.Context(), "cust_A")
 	require.NoError(t, err)
-	require.NotNil(t, uyelik.SpendingWindowStart)
-	assert.Equal(t, time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC), *uyelik.SpendingWindowStart)
+	require.NotNil(t, membership.SpendingWindowStart)
+	assert.Equal(t, time.Date(2026, time.March, 1, 0, 0, 0, 0, time.UTC), *membership.SpendingWindowStart)
 
-	// Periyot "never" olduğunda pencere yoktur.
-	hicbirZaman := string(models.ResetNever)
+	// When the period is "never" there is no window.
+	never := string(models.ResetNever)
 	_, err = svc.UpdateCompany(t.Context(), company.ID,
-		UpdateCompanyInput{SpendingLimitResetPeriod: &hicbirZaman})
+		UpdateCompanyInput{SpendingLimitResetPeriod: &never})
 	require.NoError(t, err)
 
-	uyelik, err = svc.MembershipOfCustomer(t.Context(), "cust_A")
+	membership, err = svc.MembershipOfCustomer(t.Context(), "cust_A")
 	require.NoError(t, err)
-	assert.Nil(t, uyelik.SpendingWindowStart)
+	assert.Nil(t, membership.SpendingWindowStart)
 }
 
-// TestUyelikSilinmisCalisanaCozulmez temizlenememiş bir bağın silinmiş kaydı
-// geri getiremeyeceğini doğrular.
+// TestMembershipDoesNotResolveToADeletedEmployee verifies that a bond that
+// could not be cleaned up cannot bring back a deleted record.
 //
-// Senaryo gerçektir: link kaldırma veritabanı işleminin dışındadır ve
-// başarısız olabilir (bkz. Service.unlinkCustomers). Okuma yolu bu yüzden
-// deleted_at IS NULL süzmeye GÜVENİR; süzmeseydi silinmiş bir çalışan
-// vitrinde hâlâ harcama yetkisi taşırdı.
-func TestUyelikSilinmisCalisanaCozulmez(t *testing.T) {
-	svc, _, links := yeniServis(t)
-	company := yeniSirket(t, svc)
+// The scenario is real: removing a link is outside the database transaction
+// and can fail (see Service.unlinkCustomers). That is why the read path RELIES
+// on filtering deleted_at IS NULL; had it not filtered, a deleted employee
+// would still carry spending authority in the storefront.
+func TestMembershipDoesNotResolveToADeletedEmployee(t *testing.T) {
+	svc, _, links := newTestService(t)
+	company := newTestCompany(t, svc)
 
 	employee, err := svc.CreateEmployee(t.Context(), EmployeeInput{
 		CompanyID: company.ID, CustomerID: "cust_A",
 	})
 	require.NoError(t, err)
 
-	links.failDelete = true // bağ temizlenemesin
+	links.failDelete = true // keep the bond from being cleaned up
 	require.NoError(t, svc.DeleteEmployee(t.Context(), employee.ID))
-	require.True(t, links.bags[LinkEmployeeCustomer][employee.ID]["cust_A"],
-		"test kurulumu: bağ bilerek sarkık bırakıldı")
+	require.True(t, links.bonds[LinkEmployeeCustomer][employee.ID]["cust_A"],
+		"test setup: the bond was deliberately left dangling")
 
 	_, err = svc.MembershipOfCustomer(t.Context(), "cust_A")
 	assert.True(t, errors.IsNotFound(err),
-		"sarkan bağ silinmiş çalışanı geri getirmemeli, gelen: %v", err)
+		"a dangling bond must not bring back a deleted employee, got: %v", err)
 }
 
-// TestHarcamaLimitiKaldirilabilir "dokunma" ile "sınırsız yap" ayrımını
-// doğrular.
+// TestTheSpendingLimitCanBeCleared verifies the distinction between "leave it
+// alone" and "make it unlimited".
 //
-// Ayrım olmasaydı bir kez konmuş limit asla kaldırılamazdı: JSON'da null ile
-// alanın hiç gönderilmemesi aynı nil işaretçiye çözülür.
-func TestHarcamaLimitiKaldirilabilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
+// Without the distinction a limit once set could never be removed: in JSON,
+// null and not sending the field at all resolve to the same nil pointer.
+func TestTheSpendingLimitCanBeCleared(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc)
 
 	limit := int64(5000)
 	employee, err := svc.CreateEmployee(t.Context(), EmployeeInput{
@@ -360,27 +372,27 @@ func TestHarcamaLimitiKaldirilabilir(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Yalnızca yönetici işaretini değiştirmek limite DOKUNMAMALI.
-	yonetici := true
-	guncel, err := svc.UpdateEmployee(t.Context(), employee.ID,
-		UpdateEmployeeInput{IsCompanyAdmin: &yonetici})
+	// Changing only the admin flag must NOT TOUCH the limit.
+	isAdmin := true
+	updated, err := svc.UpdateEmployee(t.Context(), employee.ID,
+		UpdateEmployeeInput{IsCompanyAdmin: &isAdmin})
 	require.NoError(t, err)
-	require.NotNil(t, guncel.SpendingLimit, "limit korunmalı")
-	assert.Equal(t, limit, *guncel.SpendingLimit)
+	require.NotNil(t, updated.SpendingLimit, "the limit has to be kept")
+	assert.Equal(t, limit, *updated.SpendingLimit)
 
-	guncel, err = svc.UpdateEmployee(t.Context(), employee.ID,
+	updated, err = svc.UpdateEmployee(t.Context(), employee.ID,
 		UpdateEmployeeInput{ClearSpendingLimit: true})
 	require.NoError(t, err)
-	assert.Nil(t, guncel.SpendingLimit, "limit kaldırılmalı")
-	assert.False(t, guncel.HasSpendingLimit())
+	assert.Nil(t, updated.SpendingLimit, "the limit has to be removed")
+	assert.False(t, updated.HasSpendingLimit())
 }
 
-// TestHarcamaLimitiHemVerilipHemKaldirilamaz çelişkili girdinin reddedildiğini
-// doğrular. Sessizce birini seçmek, istemcinin hangisinin uygulandığını
-// bilmemesi demek olurdu.
-func TestHarcamaLimitiHemVerilipHemKaldirilamaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
+// TestTheSpendingLimitCannotBeSetAndClearedAtOnce verifies that contradictory
+// input is rejected. Silently picking one would mean the client does not know
+// which one was applied.
+func TestTheSpendingLimitCannotBeSetAndClearedAtOnce(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc)
 
 	limit := int64(100)
 	employee, err := svc.CreateEmployee(t.Context(), EmployeeInput{
@@ -391,53 +403,52 @@ func TestHarcamaLimitiHemVerilipHemKaldirilamaz(t *testing.T) {
 	_, err = svc.UpdateEmployee(t.Context(), employee.ID, UpdateEmployeeInput{
 		SpendingLimit: &limit, ClearSpendingLimit: true,
 	})
-	assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
+	assert.True(t, errors.IsInvalid(err), "expected class Invalid, got: %v", err)
 }
 
-// TestNegatifHarcamaLimitiReddedilir sınırın anlamlı olmasını zorlar: negatif
-// bir limit her karşılaştırmayı aşar ve çalışanı sessizce alışverişten men
-// ederdi.
-func TestNegatifHarcamaLimitiReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
+// TestANegativeSpendingLimitIsRejected forces the bound to be meaningful: a
+// negative limit exceeds every comparison and would silently bar the employee
+// from buying.
+func TestANegativeSpendingLimitIsRejected(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc)
 
-	negatif := int64(-1)
+	negative := int64(-1)
 	_, err := svc.CreateEmployee(t.Context(), EmployeeInput{
-		CompanyID: company.ID, CustomerID: "cust_A", SpendingLimit: &negatif,
+		CompanyID: company.ID, CustomerID: "cust_A", SpendingLimit: &negative,
 	})
-	assert.True(t, errors.IsInvalid(err), "beklenen sınıf Invalid, gelen: %v", err)
+	assert.True(t, errors.IsInvalid(err), "expected class Invalid, got: %v", err)
 }
 
-// TestSifirHarcamaLimitiSinirsizdanFarklidir 0 ile nil'in ayrı anlamlar
-// taşıdığını doğrular: biri "hiç harcayamaz", öteki "sınırsız".
-func TestSifirHarcamaLimitiSinirsizdanFarklidir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
+// TestAZeroSpendingLimitDiffersFromUnlimited verifies that 0 and nil carry
+// different meanings: one is "can spend nothing", the other "unlimited".
+func TestAZeroSpendingLimitDiffersFromUnlimited(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc)
 
-	sifir := int64(0)
-	sinirli, err := svc.CreateEmployee(t.Context(), EmployeeInput{
-		CompanyID: company.ID, CustomerID: "cust_A", SpendingLimit: &sifir,
+	zero := int64(0)
+	limited, err := svc.CreateEmployee(t.Context(), EmployeeInput{
+		CompanyID: company.ID, CustomerID: "cust_A", SpendingLimit: &zero,
 	})
 	require.NoError(t, err)
-	require.NotNil(t, sinirli.SpendingLimit)
-	assert.Equal(t, int64(0), *sinirli.SpendingLimit)
-	assert.True(t, sinirli.HasSpendingLimit(), "sıfır limit de bir sınırdır")
+	require.NotNil(t, limited.SpendingLimit)
+	assert.Equal(t, int64(0), *limited.SpendingLimit)
+	assert.True(t, limited.HasSpendingLimit(), "a zero limit is a bound too")
 
-	sinirsiz, err := svc.CreateEmployee(t.Context(), EmployeeInput{
+	unlimited, err := svc.CreateEmployee(t.Context(), EmployeeInput{
 		CompanyID: company.ID, CustomerID: "cust_B",
 	})
 	require.NoError(t, err)
-	assert.False(t, sinirsiz.HasSpendingLimit())
+	assert.False(t, unlimited.HasSpendingLimit())
 }
 
-// TestCalisanListesiMusteriKimliklerinizTekSorguylaDoldurur ADR 0004'ün N+1
-// yasağını sabitler.
+// TestTheEmployeeListFillsCustomerIDsInOneQuery pins ADR 0004's N+1 ban.
 //
-// Müşteri kimlikleri link'ten gelir; kayıt başına ayrı bir bağ okuması,
-// sayfa büyüdükçe sorgu sayısının da büyümesi demek olurdu.
-func TestCalisanListesiMusteriKimliklerinizTekSorguylaDoldurur(t *testing.T) {
-	svc, _, links := yeniServis(t)
-	company := yeniSirket(t, svc)
+// The customer ids come from link; a separate bond read per record would mean
+// the number of queries growing as the page grows.
+func TestTheEmployeeListFillsCustomerIDsInOneQuery(t *testing.T) {
+	svc, _, links := newTestService(t)
+	company := newTestCompany(t, svc)
 
 	for _, id := range []string{"cust_A", "cust_B", "cust_C"} {
 		_, err := svc.CreateEmployee(t.Context(), EmployeeInput{CompanyID: company.ID, CustomerID: id})
@@ -445,69 +456,71 @@ func TestCalisanListesiMusteriKimliklerinizTekSorguylaDoldurur(t *testing.T) {
 	}
 	links.calls["ListMany"] = 0
 
-	sayfa, err := svc.ListEmployees(t.Context(), ListEmployeesInput{CompanyID: &company.ID})
+	page, err := svc.ListEmployees(t.Context(), ListEmployeesInput{CompanyID: &company.ID})
 	require.NoError(t, err)
 
-	require.Len(t, sayfa.Items, 3)
-	assert.Equal(t, int64(3), sayfa.Count)
-	assert.Equal(t, 1, links.calls["ListMany"], "kayıt sayısından bağımsız TEK bağ sorgusu olmalı")
-	for _, e := range sayfa.Items {
-		assert.NotEmpty(t, e.CustomerID, "her kaydın customer id dolmalı")
+	require.Len(t, page.Items, 3)
+	assert.Equal(t, int64(3), page.Count)
+	assert.Equal(t, 1, links.calls["ListMany"], "there has to be ONE bond query, whatever the number of records")
+	for _, e := range page.Items {
+		assert.NotEmpty(t, e.CustomerID, "every record's customer id has to be filled in")
 	}
 }
 
-// TestListelemeSayfalamaSinirlariniUygular varsayılan ve üst sınırın
-// uygulandığını doğrular.
+// TestListingAppliesThePagingLimits verifies that the default and the upper
+// bound are applied.
 //
-// Aşırı limit KIRPILMAZ, reddedilir: sessizce kırpılan bir limit istemciye
-// sayfa boyunu yanlış bildirir ve sayfalama döngüsü aynı kayıtları tekrar okur.
-func TestListelemeSayfalamaSinirlariniUygular(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	yeniSirket(t, svc)
+// An excessive limit is NOT CLIPPED but rejected: a silently clipped limit
+// misreports the page size to the client, and the paging loop reads the same
+// records again.
+func TestListingAppliesThePagingLimits(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	newTestCompany(t, svc)
 
-	sayfa, err := svc.ListCompanies(t.Context(), ListCompaniesInput{})
+	page, err := svc.ListCompanies(t.Context(), ListCompaniesInput{})
 	require.NoError(t, err)
-	assert.Equal(t, DefaultLimit, sayfa.Limit, "limit verilmezse varsayılan uygulanmalı")
+	assert.Equal(t, DefaultLimit, page.Limit, "if no limit is given the default has to apply")
 
 	_, err = svc.ListCompanies(t.Context(), ListCompaniesInput{Limit: MaxLimit + 1})
-	assert.True(t, errors.IsInvalid(err), "üst sınırı aşan limit reddedilmeli")
+	assert.True(t, errors.IsInvalid(err), "a limit above the upper bound has to be rejected")
 
 	_, err = svc.ListEmployees(t.Context(), ListEmployeesInput{Offset: -1})
-	assert.True(t, errors.IsInvalid(err), "negatif offset reddedilmeli")
+	assert.True(t, errors.IsInvalid(err), "a negative offset has to be rejected")
 }
 
-// TestSirketSuzgeciNormalizeEdilir süzgeç değerinin de saklama biçimine
-// çevrildiğini doğrular; çevrilmeseydi büyük harfli bir e-posta hiçbir kaydı
-// bulamazdı.
-func TestSirketSuzgeciNormalizeEdilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	yeniSirket(t, svc)
+// TestTheCompanyFilterIsNormalized verifies that the filter value is turned
+// into the storage form too; had it not been, an upper-case e-mail address
+// would find no record.
+func TestTheCompanyFilterIsNormalized(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	newTestCompany(t, svc)
 
-	aranan := "MUHASEBE@acme.EXAMPLE"
-	sayfa, err := svc.ListCompanies(t.Context(), ListCompaniesInput{Email: &aranan})
+	wanted := "MUHASEBE@acme.EXAMPLE"
+	page, err := svc.ListCompanies(t.Context(), ListCompaniesInput{Email: &wanted})
 	require.NoError(t, err)
-	assert.Len(t, sayfa.Items, 1)
+	assert.Len(t, page.Items, 1)
 }
 
-// TestSirketGuncellemeZorunluluguKaldiramaz kısmi güncellemenin sınırını
-// sabitler: verilmeyen alan değişmez, ama VERİLEN bir alan boşaltılamaz.
-func TestSirketGuncellemeZorunluluguKaldiramaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
+// TestUpdateCompanyCannotRemoveARequirement pins the bound of a partial
+// update: a field that is not given does not change, but a GIVEN field cannot
+// be emptied.
+func TestUpdateCompanyCannotRemoveARequirement(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc)
 
-	bos := ""
-	_, err := svc.UpdateCompany(t.Context(), company.ID, UpdateCompanyInput{Name: &bos})
-	assert.True(t, errors.IsInvalid(err), "ad boşaltılamaz")
+	empty := ""
+	_, err := svc.UpdateCompany(t.Context(), company.ID, UpdateCompanyInput{Name: &empty})
+	assert.True(t, errors.IsInvalid(err), "the name cannot be emptied")
 
-	_, err = svc.UpdateCompany(t.Context(), company.ID, UpdateCompanyInput{CurrencyCode: &bos})
-	assert.True(t, errors.IsInvalid(err), "para birimi boşaltılamaz")
+	_, err = svc.UpdateCompany(t.Context(), company.ID, UpdateCompanyInput{CurrencyCode: &empty})
+	assert.True(t, errors.IsInvalid(err), "the currency cannot be emptied")
 
-	_, err = svc.UpdateCompany(t.Context(), company.ID, UpdateCompanyInput{SpendingLimitResetPeriod: &bos})
+	_, err = svc.UpdateCompany(t.Context(), company.ID, UpdateCompanyInput{SpendingLimitResetPeriod: &empty})
 	assert.True(t, errors.IsInvalid(err),
-		"periyot boş verilirse sessizce 'never'a düşmemeli")
+		"a period given empty must not silently fall back to 'never'")
 
-	// Adres alanları ise gerçekten temizlenebilir.
-	guncel, err := svc.UpdateCompany(t.Context(), company.ID, UpdateCompanyInput{PostalCode: &bos})
+	// The address fields, on the other hand, really can be cleared.
+	updated, err := svc.UpdateCompany(t.Context(), company.ID, UpdateCompanyInput{PostalCode: &empty})
 	require.NoError(t, err)
-	assert.Empty(t, guncel.PostalCode)
+	assert.Empty(t, updated.PostalCode)
 }

@@ -1,20 +1,21 @@
-// Package repository promotion modülünün veritabanı erişim katmanıdır.
+// Package repository is the promotion module's database access layer.
 //
-// sqlc'nin ürettiği promotiondb paketi bu paketin İÇİNDE kalır: dışarıya
-// yalnızca [models] domain tipleri verilir, pgtype hiçbir imzada görünmez. Bu
-// sınır bilinçlidir — servis ve API katmanları depolama ayrıntısına bağlanmaz
-// ve üretilen kod yeniden üretildiğinde yalnızca bu paket etkilenir.
+// The promotiondb package that sqlc generates stays INSIDE this package: only
+// the [models] domain types are handed out, and pgtype appears in no
+// signature. The boundary is deliberate — the service and API layers do not
+// bind to storage details, and when the generated code is regenerated only
+// this package is affected.
 //
-// Ham hatalar da sınırı geçmez: pgx.ErrNoRows ve PostgreSQL kısıt ihlalleri
-// burada core/errors'ın tipli hatalarına çevrilir, böylece HTTP
-// katmanı status kodunu doğru seçer (plan Bölüm 2.7).
+// Raw errors do not cross the boundary either: pgx.ErrNoRows and PostgreSQL
+// constraint violations are translated here into core/errors' typed errors,
+// so the HTTP layer picks the right status code (plan Section 2.7).
 //
-// # Kilit sırası
+// # Lock order
 //
-// Kullanım akışı (Redeem/Release) satır kilitleri alır ve sıra HER YERDE
-// AYNIDIR: ÖNCE promosyon, SONRA kampanya. Aynı kampanyaya bağlı iki promosyon
-// eşzamanlı kullanıldığında ikisi de aynı kampanya satırını ister; sıra ancak
-// böyle sabitlenirse kilitlenme (deadlock) oluşmaz.
+// The redemption flow (Redeem/Release) takes row locks, and the order is THE
+// SAME EVERYWHERE: FIRST the promotion, THEN the campaign. When two promotions
+// tied to the same campaign are redeemed concurrently, both want the same
+// campaign row; only an order fixed this way keeps a deadlock from forming.
 package repository
 
 import (
@@ -32,49 +33,52 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/repository/promotiondb"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the caller can look at them with errors.CodeOf.
 const (
-	// CodeCampaignNotFound istenen kampanyanın bulunamadığını bildirir.
+	// CodeCampaignNotFound reports that the requested campaign was not found.
 	CodeCampaignNotFound = "campaign_not_found"
-	// CodePromotionNotFound istenen promosyonun bulunamadığını bildirir.
+	// CodePromotionNotFound reports that the requested promotion was not found.
 	CodePromotionNotFound = "promotion_not_found"
-	// CodeApplicationMethodNotFound promosyonun uygulama yöntemi olmadığını bildirir.
+	// CodeApplicationMethodNotFound reports that the promotion has no
+	// application method.
 	CodeApplicationMethodNotFound = "promotion_application_method_not_found"
-	// CodePromotionRuleNotFound istenen promosyon kuralının bulunamadığını bildirir.
+	// CodePromotionRuleNotFound reports that the requested promotion rule was
+	// not found.
 	CodePromotionRuleNotFound = "promotion_rule_not_found"
-	// CodeUsageLimitReached promosyonun kullanım hakkının bittiğini bildirir.
+	// CodeUsageLimitReached reports that the promotion's uses have run out.
 	CodeUsageLimitReached = "promotion_usage_limit_reached"
-	// CodePromotionNotActive promosyonun yayında OLMADIĞINI bildirir; taslak ve
-	// pasif promosyon kullanılamaz (bkz. [Repo.Redeem]).
+	// CodePromotionNotActive reports that the promotion is NOT live; a draft or
+	// inactive promotion cannot be redeemed (see [Repo.Redeem]).
 	CodePromotionNotActive = "promotion_not_active"
-	// CodeCampaignWindowClosed kampanyanın tarih penceresinin kullanım anını
-	// KAPSAMADIĞINI bildirir (bkz. [Repo.Redeem]).
+	// CodeCampaignWindowClosed reports that the campaign's date window does NOT
+	// COVER the moment of redemption (see [Repo.Redeem]).
 	CodeCampaignWindowClosed = "campaign_window_closed"
-	// CodeBudgetUnitLocked bütçe sayacı sıfır değilken bütçenin BİRİMİNİN (türü
-	// ya da para birimi) değiştirilemeyeceğini bildirir (bkz. [Repo.UpdateCampaign]).
+	// CodeBudgetUnitLocked reports that the budget's UNIT (its type or its
+	// currency) cannot be changed while the budget counter is not zero (see
+	// [Repo.UpdateCampaign]).
 	CodeBudgetUnitLocked = "campaign_budget_unit_locked"
-	// CodeBudgetExceeded kampanya bütçesinin yetmediğini bildirir.
+	// CodeBudgetExceeded reports that the campaign budget does not suffice.
 	CodeBudgetExceeded = "campaign_budget_exceeded"
-	// CodeBudgetCurrencyMismatch kullanımın para biriminin kampanya bütçesininkiyle
-	// uyuşmadığını bildirir.
+	// CodeBudgetCurrencyMismatch reports that the redemption's currency does not
+	// match the campaign budget's.
 	CodeBudgetCurrencyMismatch = "campaign_budget_currency_mismatch"
-	// CodeRedemptionRaced serbest bırakma sırasında araya başka bir çağrının
-	// girdiğini bildirir; satır kilidi altında oluşmaması BEKLENEN bir durumdur
-	// (bkz. [Repo.Release]).
+	// CodeRedemptionRaced reports that another call got in between during a
+	// release; under the row lock it is EXPECTED never to happen (see
+	// [Repo.Release]).
 	CodeRedemptionRaced = "promotion_redemption_raced"
-	// CodeConstraintViolation veritabanı kısıtının ihlal edildiğini bildirir.
+	// CodeConstraintViolation reports that a database constraint was violated.
 	CodeConstraintViolation = "promotion_constraint_violation"
-	// CodeDuplicate benzersizlik ihlalini bildirir.
+	// CodeDuplicate reports a uniqueness violation.
 	CodeDuplicate = "promotion_duplicate"
-	// CodeQueryFailed beklenmeyen bir veritabanı hatasını bildirir.
+	// CodeQueryFailed reports an unexpected database error.
 	CodeQueryFailed = "promotion_query_failed"
-	// CodeCanceled bağlam iptalini bildirir.
+	// CodeCanceled reports a context cancellation.
 	CodeCanceled = "promotion_canceled"
-	// CodeTxFailed işlem (transaction) yönetiminin başarısızlığını bildirir.
+	// CodeTxFailed reports a failure of transaction management.
 	CodeTxFailed = "promotion_tx_failed"
 )
 
-// PostgreSQL SQLSTATE kodları (ihtiyaç duyulanlar).
+// PostgreSQL SQLSTATE codes (the ones needed).
 const (
 	sqlstateCheckViolation       = "23514"
 	sqlstateUniqueViolation      = "23505"
@@ -83,20 +87,20 @@ const (
 	sqlstateStringDataRightTrunc = "22001"
 )
 
-// emptyJSONObject boş bir metadata gövdesidir; NOT NULL sütuna hiçbir zaman
-// nil yazılmaz.
+// emptyJSONObject is an empty metadata body; nil is never written to the NOT
+// NULL column.
 var emptyJSONObject = []byte(`{}`)
 
-// Repo promotion tablolarına erişimi sağlar. Eşzamanlı kullanıma güvenlidir.
+// Repo provides access to the promotion tables. It is safe for concurrent use.
 type Repo struct {
 	pool *pgxpool.Pool
 	q    *promotiondb.Queries
 }
 
-// New verilen havuz üzerinde çalışan bir depo üretir.
+// New builds a repository that runs on the given pool.
 //
-// pool nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak bildirilir;
-// kurulum yolu panik üretmez.
+// If pool is nil, that is reported as a typed error on the first call, not at
+// setup; the setup path does not panic.
 func New(pool *pgxpool.Pool) *Repo {
 	r := &Repo{pool: pool}
 	if pool != nil {
@@ -105,20 +109,22 @@ func New(pool *pgxpool.Pool) *Repo {
 	return r
 }
 
-// ready havuzun kullanılabilir olduğunu doğrular.
+// ready verifies that the pool can be used.
 func (r *Repo) ready() error {
 	if r == nil || r.pool == nil || r.q == nil {
-		return errors.Unavailable(CodeQueryFailed, "promotion veritabanı havuzu kurulmamış")
+		return errors.Unavailable(CodeQueryFailed, "the promotion database pool is not set up")
 	}
 	return nil
 }
 
-// inTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem GERİ ALINIR.
+// inTx runs fn in a single transaction; if fn returns an error the transaction
+// is ROLLED BACK.
 //
-// Kullanım akışı için ZORUNLUDUR: satır kilidi ancak bir işlem boyunca tutulur
-// ve sayaç ile defter (promotion_redemption) ya BİRLİKTE yazılır ya hiç
-// yazılmaz. Aksi hâlde sayacı artmış ama defteri olmayan bir promosyon, geri
-// alınamayan bir kullanım bırakırdı.
+// It is MANDATORY for the redemption flow: a row lock is held only for the
+// length of a transaction, and the counter and the ledger (promotion_redemption)
+// are either written TOGETHER or not at all. Otherwise a promotion whose
+// counter went up but which has no ledger entry would leave behind a
+// redemption that cannot be released.
 func (r *Repo) inTx(ctx context.Context, fn func(q *promotiondb.Queries) error) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -126,10 +132,10 @@ func (r *Repo) inTx(ctx context.Context, fn func(q *promotiondb.Queries) error) 
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return wrapDB(err, "işlem başlatılamadı")
+		return wrapDB(err, "the transaction could not be started")
 	}
-	// Rollback, Commit'ten sonra çağrıldığında pgx.ErrTxClosed döner ve
-	// yok sayılır; bu, başarılı yolda da defer'ın güvenle kalmasını sağlar.
+	// Rollback called after Commit returns pgx.ErrTxClosed, which is ignored;
+	// that is what lets the defer stay in place safely on the success path too.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := fn(r.q.WithTx(tx)); err != nil {
@@ -137,16 +143,17 @@ func (r *Repo) inTx(ctx context.Context, fn func(q *promotiondb.Queries) error) 
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return wrapDB(err, "işlem tamamlanamadı")
+		return wrapDB(err, "the transaction could not be completed")
 	}
 	return nil
 }
 
-// wrapDB ham bir veritabanı hatasını tipli hataya çevirir.
+// wrapDB turns a raw database error into a typed error.
 //
-// Sınıflandırma bilinçlidir: kısıt ihlali İSTEMCİ hatasıdır (422), benzersizlik
-// ihlali çakışmadır (409), iptal geçici erişilemezliktir (503); geri kalan her
-// şey sunucu hatasıdır ve mesajı istemciye SIZDIRILMAZ (bkz. core/http).
+// The classification is deliberate: a constraint violation is a CLIENT error
+// (422), a uniqueness violation is a conflict (409), a cancellation is a
+// temporary unavailability (503); everything else is a server error and its
+// message is NOT LEAKED to the client (see core/http).
 func wrapDB(err error, format string, a ...any) error {
 	if err == nil {
 		return nil
@@ -163,18 +170,19 @@ func wrapDB(err error, format string, a ...any) error {
 		switch pgErr.Code {
 		case sqlstateUniqueViolation:
 			return errors.Wrap(err, errors.KindConflict, CodeDuplicate,
-				"%s (kısıt: %s)", sprintf(format, a...), pgErr.ConstraintName)
+				"%s (constraint: %s)", sprintf(format, a...), pgErr.ConstraintName)
 		case sqlstateCheckViolation, sqlstateForeignKeyViolation,
 			sqlstateNotNullViolation, sqlstateStringDataRightTrunc:
 			return errors.Wrap(err, errors.KindInvalid, CodeConstraintViolation,
-				"%s (kısıt: %s)", sprintf(format, a...), pgErr.ConstraintName)
+				"%s (constraint: %s)", sprintf(format, a...), pgErr.ConstraintName)
 		}
 	}
 
 	return errors.Wrap(err, errors.KindInternal, CodeQueryFailed, format, a...)
 }
 
-// notFoundOr pgx.ErrNoRows'u NotFound'a, diğer her şeyi wrapDB'ye çevirir.
+// notFoundOr turns pgx.ErrNoRows into NotFound and everything else into
+// wrapDB's result.
 func notFoundOr(err error, code, format string, a ...any) error {
 	if err == nil {
 		return nil
@@ -185,10 +193,11 @@ func notFoundOr(err error, code, format string, a ...any) error {
 	return wrapDB(err, format, a...)
 }
 
-// sprintf hata mesajını bir kez biçimlendirir.
+// sprintf formats the error message once.
 //
-// Argümansız çağrılarda format DEĞİŞTİRİLMEDEN döner; aksi hâlde mesajdaki bir
-// yüzde işareti (örn. "%!d(MISSING)") kullanıcıya bozuk metin olarak giderdi.
+// A call with no arguments returns the format UNCHANGED; otherwise a percent
+// sign in the message would reach the user as garbled text (e.g.
+// "%!d(MISSING)").
 func sprintf(format string, a ...any) string {
 	if len(a) == 0 {
 		return format
@@ -196,11 +205,11 @@ func sprintf(format string, a ...any) string {
 	return fmt.Sprintf(format, a...)
 }
 
-// toTime NULL olmayan bir zaman damgasını UTC time.Time'a çevirir.
+// toTime turns a non-NULL timestamp into a UTC time.Time.
 //
-// Geçersiz (NULL) damga sıfır zaman döner: NOT NULL sütunlarda bu durum
-// oluşamaz, oluşursa da sıfır zaman panik üretmeyen ve testte göze batan bir
-// değerdir.
+// An invalid (NULL) timestamp returns the zero time: on NOT NULL columns that
+// cannot happen, and if it ever does, the zero time is a value that does not
+// panic and that stands out in a test.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -208,7 +217,7 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// toTimePtr NULL olabilen bir zaman damgasını *time.Time'a çevirir.
+// toTimePtr turns a nullable timestamp into a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
 		return nil
@@ -217,12 +226,13 @@ func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// fromTime bir zamanı NOT NULL damgaya çevirir; daima UTC yazılır.
+// fromTime turns a time into a NOT NULL timestamp; it is always written in
+// UTC.
 func fromTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }
 
-// fromTimePtr isteğe bağlı bir zamanı damgaya çevirir; nil ise SQL NULL.
+// fromTimePtr turns an optional time into a timestamp; nil becomes SQL NULL.
 func fromTimePtr(t *time.Time) pgtype.Timestamptz {
 	if t == nil {
 		return pgtype.Timestamptz{}
@@ -230,7 +240,7 @@ func fromTimePtr(t *time.Time) pgtype.Timestamptz {
 	return fromTime(*t)
 }
 
-// deref bir dize işaretçisini değere çevirir; nil ise boş dize.
+// deref turns a string pointer into its value; nil becomes the empty string.
 func deref(s *string) string {
 	if s == nil {
 		return ""
@@ -238,11 +248,13 @@ func deref(s *string) string {
 	return *s
 }
 
-// nilIfEmpty boş dizeyi SQL NULL'a çevirir.
+// nilIfEmpty turns the empty string into SQL NULL.
 //
-// Boş dize ile NULL ayrımı bu şemada anlamlıdır: bütçenin para birimi yalnızca
-// "spend" türünde vardır ve diğer türlerde NULL OLMALIDIR (bkz. migration'daki
-// campaign_budget_currency_check). Boş dize yazılsaydı kısıt reddederdi.
+// The difference between the empty string and NULL is meaningful in this
+// schema: a budget's currency exists only for the "spend" type and MUST BE
+// NULL for the other types (see campaign_budget_currency_check in the
+// migration). Had the empty string been written, the constraint would have
+// refused it.
 func nilIfEmpty(s string) *string {
 	if s == "" {
 		return nil
@@ -250,11 +262,11 @@ func nilIfEmpty(s string) *string {
 	return &s
 }
 
-// copyInt64 bir tam sayı işaretçisini KOPYALAYARAK döner.
+// copyInt64 returns an integer pointer by COPYING it.
 //
-// Kopya şarttır: üretilen satırın işaretçisi doğrudan domain modeline
-// verilseydi, çağıranın modeli değiştirmesi depo tarafındaki tampon üzerinde de
-// etki yaratırdı.
+// The copy is required: had the generated row's pointer been handed straight
+// to the domain model, a caller changing the model would also have affected
+// the buffer on the repository's side.
 func copyInt64(v *int64) *int64 {
 	if v == nil {
 		return nil
@@ -263,10 +275,10 @@ func copyInt64(v *int64) *int64 {
 	return &out
 }
 
-// encodeMetadata metadata haritasını JSONB gövdesine çevirir.
+// encodeMetadata turns the metadata map into a JSONB body.
 //
-// Boş ya da nil harita `{}` yazar: sütun NOT NULL'dur ve JSON null,
-// jsonb_typeof kısıtına çarpardı.
+// An empty or nil map writes `{}`: the column is NOT NULL, and a JSON null
+// would have hit the jsonb_typeof constraint.
 func encodeMetadata(md map[string]string) ([]byte, error) {
 	if len(md) == 0 {
 		return emptyJSONObject, nil
@@ -274,16 +286,17 @@ func encodeMetadata(md map[string]string) ([]byte, error) {
 	raw, err := json.Marshal(md)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, CodeConstraintViolation,
-			"promosyon üstverisi JSON'a çevrilemedi")
+			"the promotion metadata could not be encoded as JSON")
 	}
 	return raw, nil
 }
 
-// decodeMetadata JSONB gövdesini metadata haritasına çevirir.
+// decodeMetadata turns a JSONB body into the metadata map.
 //
-// Çözümlenemeyen bir gövde BOŞ harita döner, hata DEĞİL: üstveri iş kuralına
-// girmez ve elle yazılmış bozuk bir kayıt yüzünden promosyonun tamamının
-// okunamaz olması, hesabı bütünüyle düşürürdü.
+// A body that cannot be decoded returns an EMPTY map, NOT an error: metadata
+// takes no part in a business rule, and the whole promotion becoming
+// unreadable because of one hand-written broken record would have brought the
+// computation down entirely.
 func decodeMetadata(raw []byte) map[string]string {
 	if len(raw) == 0 {
 		return map[string]string{}

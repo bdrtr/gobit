@@ -7,9 +7,9 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/service"
 )
 
-// --- şirketler ----------------------------------------------------------------
+// --- companies ---------------------------------------------------------------
 
-// adminCreateCompany yeni bir şirket oluşturur (POST /admin/v1/b2b/companies).
+// adminCreateCompany creates a new company (POST /admin/v1/b2b/companies).
 func (h *Handler) adminCreateCompany(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -37,11 +37,11 @@ func (h *Handler) adminCreateCompany(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toCompanyDTO(created))
 }
 
-// adminListCompanies şirketleri süzerek ve sayfalayarak listeler
+// adminListCompanies lists companies, filtered and paged
 // (GET /admin/v1/b2b/companies).
 //
-// "email" süzgeci BİRDEN ÇOK kayıt getirebilir: şirket e-postası benzersiz
-// değildir (bkz. models.Company).
+// The "email" filter can bring back MORE THAN ONE record: a company's e-mail
+// address is not unique (see models.Company).
 func (h *Handler) adminListCompanies(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -63,7 +63,7 @@ func (h *Handler) adminListCompanies(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toCompanyDTO)
 }
 
-// adminGetCompany tek bir şirketi döner (GET /admin/v1/b2b/companies/{id}).
+// adminGetCompany returns a single company (GET /admin/v1/b2b/companies/{id}).
 func (h *Handler) adminGetCompany(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -75,7 +75,7 @@ func (h *Handler) adminGetCompany(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCompanyDTO(company))
 }
 
-// adminUpdateCompany şirketin verilen alanlarını günceller
+// adminUpdateCompany updates the given fields of a company
 // (PUT /admin/v1/b2b/companies/{id}).
 func (h *Handler) adminUpdateCompany(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -104,11 +104,12 @@ func (h *Handler) adminUpdateCompany(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCompanyDTO(updated))
 }
 
-// adminDeleteCompany şirketi ve ÇALIŞANLARINI yumuşak siler
+// adminDeleteCompany soft-deletes a company and its EMPLOYEES
 // (DELETE /admin/v1/b2b/companies/{id}).
 //
-// Çalışanların da silinmesi bilinçlidir: sahipsiz kalan bir çalışan kaydı,
-// vitrinde artık okunamayan bir şirkete çözülürdü (bkz. service.DeleteCompany).
+// Deleting the employees too is deliberate: an employee record left without an
+// owner would resolve, in the storefront, to a company that can no longer be
+// read (see service.DeleteCompany).
 func (h *Handler) adminDeleteCompany(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -119,14 +120,14 @@ func (h *Handler) adminDeleteCompany(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// --- çalışanlar ---------------------------------------------------------------
+// --- employees ---------------------------------------------------------------
 
-// adminCreateEmployee şirkete yeni bir çalışan ekler
+// adminCreateEmployee adds a new employee to a company
 // (POST /admin/v1/b2b/employees).
 //
-// Müşteri başka bir şirketin çalışanıysa 409 döner; sınıflandırma servisten
-// (ve nihayetinde link tablosunun benzersizlik kısıtından) gelir, handler
-// status seçmez.
+// If the customer is already an employee of another company it answers 409;
+// the classification comes from the service (and ultimately from the link
+// table's uniqueness constraint), and the handler does not choose a status.
 func (h *Handler) adminCreateEmployee(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -149,10 +150,10 @@ func (h *Handler) adminCreateEmployee(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toEmployeeDTO(created))
 }
 
-// adminListEmployees çalışanları süzerek ve sayfalayarak listeler
+// adminListEmployees lists employees, filtered and paged
 // (GET /admin/v1/b2b/employees).
 //
-// Süzgeçler: company_id, is_company_admin.
+// Filters: company_id, is_company_admin.
 func (h *Handler) adminListEmployees(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -180,7 +181,7 @@ func (h *Handler) adminListEmployees(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toEmployeeDTO)
 }
 
-// adminGetEmployee tek bir çalışanı döner
+// adminGetEmployee returns a single employee
 // (GET /admin/v1/b2b/employees/{id}).
 func (h *Handler) adminGetEmployee(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -193,7 +194,7 @@ func (h *Handler) adminGetEmployee(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toEmployeeDTO(employee))
 }
 
-// adminUpdateEmployee çalışanın harcama yetkisini günceller
+// adminUpdateEmployee updates an employee's spending authority
 // (PUT /admin/v1/b2b/employees/{id}).
 func (h *Handler) adminUpdateEmployee(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -216,7 +217,7 @@ func (h *Handler) adminUpdateEmployee(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toEmployeeDTO(updated))
 }
 
-// adminDeleteEmployee çalışanı yumuşak siler ve müşteri bağını kaldırır
+// adminDeleteEmployee soft-deletes an employee and removes the customer bond
 // (DELETE /admin/v1/b2b/employees/{id}).
 func (h *Handler) adminDeleteEmployee(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

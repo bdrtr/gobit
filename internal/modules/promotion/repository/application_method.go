@@ -8,24 +8,27 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/repository/promotiondb"
 )
 
-// SetApplicationMethod promosyonun uygulama yöntemini yazar; varsa ÜZERİNE
-// YAZAR.
+// SetApplicationMethod writes the promotion's application method; if one
+// exists it OVERWRITES it.
 //
-// Promosyon yoksa ya da silinmişse errors.NotFound döner.
+// If the promotion does not exist or has been deleted, errors.NotFound is
+// returned.
 //
-// Yerine koyma tek ifadedir (upsert): "önce sil sonra ekle" iki ifade arasında
-// yöntemsiz bir promosyon bırakır ve o aralıkta koşan bir hesap indirim
-// üretmezdi.
+// The replacement is a single statement (upsert): "delete first, then insert"
+// would leave a promotion without a method between the two statements, and a
+// computation running in that gap would have produced no discount.
 //
-// Promosyon PAYLAŞIMLI kilit altında okunur ve yöntem AYNI işlemde yazılır
-// (bkz. [requireLivePromotion]). Upsert'ün TEK ifade olması yetmez: tek ifade
-// olan şey yazmanın kendisidir, promosyonun canlı olduğu bilgisi değil. Foreign
-// key de yetmez — yumuşak silme satırı yerinde bıraktığı için FK, silinmiş bir
-// promosyonun altına yazılan yöntemi GEÇİRİR.
+// The promotion is read under a SHARED lock and the method is written in the
+// SAME transaction (see [requireLivePromotion]). The upsert being a SINGLE
+// statement is not enough: what is a single statement is the write itself, not
+// the knowledge that the promotion is live. A foreign key is not enough either
+// — because a soft delete leaves the row in place, the FK LETS THROUGH a method
+// written under a deleted promotion.
 //
-// Koşulu upsert'ün İÇİNE koymak (INSERT ... SELECT) reddedildi: çakışma dalı
-// (ON CONFLICT DO UPDATE) promosyon tablosunu göremez ve o dalda koşul yeniden
-// yazılamazdı; iki dalın farklı garantileri olurdu.
+// Putting the condition INSIDE the upsert (INSERT ... SELECT) was rejected: the
+// conflict branch (ON CONFLICT DO UPDATE) cannot see the promotion table and
+// the condition could not have been written again in that branch; the two
+// branches would have had different guarantees.
 func (r *Repo) SetApplicationMethod(
 	ctx context.Context,
 	m models.ApplicationMethod,
@@ -52,7 +55,7 @@ func (r *Repo) SetApplicationMethod(
 			CreatedAt:       fromTime(now),
 		})
 		if txErr != nil {
-			return wrapDB(txErr, "uygulama yöntemi yazılamadı: %s", m.PromotionID)
+			return wrapDB(txErr, "the application method could not be written: %s", m.PromotionID)
 		}
 		out = toApplicationMethod(row)
 		return nil
@@ -63,8 +66,8 @@ func (r *Repo) SetApplicationMethod(
 	return out, nil
 }
 
-// GetApplicationMethod promosyonun uygulama yöntemini döner; yoksa
-// errors.NotFound.
+// GetApplicationMethod returns the promotion's application method; if there is
+// none, errors.NotFound.
 func (r *Repo) GetApplicationMethod(ctx context.Context, promotionID string) (models.ApplicationMethod, error) {
 	if err := r.ready(); err != nil {
 		return models.ApplicationMethod{}, err
@@ -73,15 +76,17 @@ func (r *Repo) GetApplicationMethod(ctx context.Context, promotionID string) (mo
 	row, err := r.q.GetApplicationMethod(ctx, promotionID)
 	if err != nil {
 		return models.ApplicationMethod{}, notFoundOr(err, CodeApplicationMethodNotFound,
-			"promosyonun uygulama yöntemi yok: %s", promotionID)
+			"the promotion has no application method: %s", promotionID)
 	}
 	return toApplicationMethod(row), nil
 }
 
-// DeleteApplicationMethod yöntemi soft delete ile siler; yoksa errors.NotFound.
+// DeleteApplicationMethod deletes the method with a soft delete; if there is
+// none, errors.NotFound.
 //
-// Yöntemsiz kalan promosyon HATA DEĞİLDİR: indirim üretmez ve hesapta atlanır.
-// Bu, bir promosyonu silmeden geçici olarak etkisizleştirmenin yoludur.
+// A promotion left without a method is NOT AN ERROR: it produces no discount
+// and is skipped in the computation. This is the way to disable a promotion
+// temporarily without deleting it.
 func (r *Repo) DeleteApplicationMethod(ctx context.Context, promotionID string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -92,12 +97,12 @@ func (r *Repo) DeleteApplicationMethod(ctx context.Context, promotionID string, 
 		DeletedAt:   fromTime(now),
 	}); err != nil {
 		return notFoundOr(err, CodeApplicationMethodNotFound,
-			"promosyonun uygulama yöntemi yok: %s", promotionID)
+			"the promotion has no application method: %s", promotionID)
 	}
 	return nil
 }
 
-// toApplicationMethod üretilen satırı domain modeline çevirir.
+// toApplicationMethod turns the generated row into the domain model.
 func toApplicationMethod(row promotiondb.PromotionApplicationMethod) models.ApplicationMethod {
 	return models.ApplicationMethod{
 		ID:              row.ID,

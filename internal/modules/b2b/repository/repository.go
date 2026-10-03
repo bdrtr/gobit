@@ -1,19 +1,20 @@
-// Package repository b2b modülünün veritabanı erişim katmanıdır.
+// Package repository is the b2b module's database access layer.
 //
-// sqlc'nin ürettiği b2bdb paketi bu paketin İÇİNDE kalır: dışarıya yalnızca
-// [models] domain tipleri verilir, pgtype hiçbir imzada görünmez. Bu sınır
-// bilinçlidir — servis ve API katmanları depolama ayrıntısına bağlanmaz ve
-// üretilen kod yeniden üretildiğinde yalnızca bu paket etkilenir.
+// The b2bdb package sqlc generates stays INSIDE this package: only the [models]
+// domain types are handed out, and pgtype appears in no signature. The boundary
+// is deliberate — the service and API layers do not bind to storage details,
+// and when the generated code is regenerated only this package is affected.
 //
-// Ham hatalar da sınırı geçmez: pgx.ErrNoRows ve PostgreSQL kısıt ihlalleri
-// burada core/errors'ın tipli hatalarına çevrilir, böylece HTTP katmanı
-// status kodunu doğru seçer (plan Bölüm 2.7).
+// Raw errors do not cross the boundary either: pgx.ErrNoRows and PostgreSQL
+// constraint violations are turned into core/errors' typed errors here, so the
+// HTTP layer picks the right status code (plan Section 2.7).
 //
-// # Çalışanın müşteri bağı burada YOKTUR
+// # The employee's customer bond is NOT here
 //
-// [models.CompanyEmployee.CustomerID] bu katmanda BOŞ döner: bağın sahibi
-// core/link'tir ve şemada karşılığı olan bir sütun yoktur. Alanı dolduran
-// servis katmanıdır (bkz. internal/modules/b2b/service, links.go).
+// [models.CompanyEmployee.CustomerID] comes back EMPTY from this layer: the
+// bond is owned by core/link and has no corresponding column in the schema.
+// The service layer is what fills the field (see
+// internal/modules/b2b/service, links.go).
 package repository
 
 import (
@@ -31,25 +32,27 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/repository/b2bdb"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the calling side can look at these with errors.CodeOf.
 const (
-	// CodeCompanyNotFound istenen şirketin bulunamadığını bildirir.
+	// CodeCompanyNotFound reports that the requested company could not be
+	// found.
 	CodeCompanyNotFound = "b2b_company_not_found"
-	// CodeEmployeeNotFound istenen çalışanın bulunamadığını bildirir.
+	// CodeEmployeeNotFound reports that the requested employee could not be
+	// found.
 	CodeEmployeeNotFound = "b2b_employee_not_found"
-	// CodeConstraintViolation veritabanı kısıtının ihlal edildiğini bildirir.
+	// CodeConstraintViolation reports that a database constraint was violated.
 	CodeConstraintViolation = "b2b_constraint_violation"
-	// CodeDuplicate benzersizlik ihlalini bildirir.
+	// CodeDuplicate reports a uniqueness violation.
 	CodeDuplicate = "b2b_duplicate"
-	// CodeQueryFailed beklenmeyen bir veritabanı hatasını bildirir.
+	// CodeQueryFailed reports an unexpected database error.
 	CodeQueryFailed = "b2b_query_failed"
-	// CodeCanceled bağlam iptalini bildirir.
+	// CodeCanceled reports a context cancellation.
 	CodeCanceled = "b2b_canceled"
-	// CodeTxFailed işlem (transaction) yönetiminin başarısızlığını bildirir.
+	// CodeTxFailed reports a failure of transaction management.
 	CodeTxFailed = "b2b_tx_failed"
 )
 
-// PostgreSQL SQLSTATE kodları (ihtiyaç duyulanlar).
+// PostgreSQL SQLSTATE codes (the ones this package needs).
 const (
 	sqlstateCheckViolation       = "23514"
 	sqlstateUniqueViolation      = "23505"
@@ -58,16 +61,16 @@ const (
 	sqlstateStringDataRightTrunc = "22001"
 )
 
-// Repo b2b tablolarına erişimi sağlar. Eşzamanlı kullanıma güvenlidir.
+// Repo gives access to the b2b tables. It is safe for concurrent use.
 type Repo struct {
 	pool *pgxpool.Pool
 	q    *b2bdb.Queries
 }
 
-// New verilen havuz üzerinde çalışan bir depo üretir.
+// New builds a repository that works over the given pool.
 //
-// pool nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak bildirilir;
-// kurulum yolu panik üretmez.
+// A nil pool is reported as a typed error on the first call, not at setup; the
+// setup path does not panic.
 func New(pool *pgxpool.Pool) *Repo {
 	r := &Repo{pool: pool}
 	if pool != nil {
@@ -76,20 +79,21 @@ func New(pool *pgxpool.Pool) *Repo {
 	return r
 }
 
-// ready havuzun kullanılabilir olduğunu doğrular.
+// ready verifies that the pool can be used.
 func (r *Repo) ready() error {
 	if r == nil || r.pool == nil || r.q == nil {
-		return errors.Unavailable(CodeQueryFailed, "b2b veritabanı havuzu kurulmamış")
+		return errors.Unavailable(CodeQueryFailed, "the b2b database pool is not set up")
 	}
 	return nil
 }
 
-// inTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem GERİ ALINIR.
+// inTx runs fn in a single transaction; if fn returns an error the transaction
+// is ROLLED BACK.
 //
-// Atomiklik şirket silmede zorunludur: şirketin yumuşak silinmesiyle
-// çalışanlarının silinmesi arasında bir hata oluşursa, silinmiş bir şirkete
-// bağlı CANLI çalışan kayıtları kalırdı ve vitrin o çalışanlara artık
-// okunamayan bir şirket gösterirdi.
+// Atomicity is required when deleting a company: had an error struck between
+// soft-deleting the company and deleting its employees, LIVE employee records
+// bound to a deleted company would be left behind, and the storefront would
+// show those employees a company that can no longer be read.
 func (r *Repo) inTx(ctx context.Context, fn func(q *b2bdb.Queries) error) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -97,10 +101,10 @@ func (r *Repo) inTx(ctx context.Context, fn func(q *b2bdb.Queries) error) error 
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return wrapDB(err, "işlem başlatılamadı")
+		return wrapDB(err, "the transaction could not be started")
 	}
-	// Rollback, Commit'ten sonra çağrıldığında pgx.ErrTxClosed döner ve
-	// yok sayılır; bu, başarılı yolda da defer'ın güvenle kalmasını sağlar.
+	// Rollback called after Commit returns pgx.ErrTxClosed, which is ignored;
+	// that is what lets the defer stay in place safely on the success path too.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := fn(r.q.WithTx(tx)); err != nil {
@@ -108,16 +112,17 @@ func (r *Repo) inTx(ctx context.Context, fn func(q *b2bdb.Queries) error) error 
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return wrapDB(err, "işlem tamamlanamadı")
+		return wrapDB(err, "the transaction could not be completed")
 	}
 	return nil
 }
 
-// wrapDB ham bir veritabanı hatasını tipli hataya çevirir.
+// wrapDB turns a raw database error into a typed error.
 //
-// Sınıflandırma bilinçlidir: kısıt ihlali İSTEMCİ hatasıdır (422), benzersizlik
-// ihlali çakışmadır (409), iptal geçici erişilemezliktir (503); geri kalan her
-// şey sunucu hatasıdır ve mesajı istemciye SIZDIRILMAZ (bkz. core/http).
+// The classification is deliberate: a constraint violation is a CLIENT error
+// (422), a uniqueness violation is a conflict (409), a cancellation is a
+// temporary unavailability (503); everything else is a server error and its
+// message is NOT LEAKED to the client (see core/http).
 func wrapDB(err error, format string, a ...any) error {
 	if err == nil {
 		return nil
@@ -134,18 +139,19 @@ func wrapDB(err error, format string, a ...any) error {
 		switch pgErr.Code {
 		case sqlstateUniqueViolation:
 			return errors.Wrap(err, errors.KindConflict, CodeDuplicate,
-				"%s (kısıt: %s)", sprintf(format, a...), pgErr.ConstraintName)
+				"%s (constraint: %s)", sprintf(format, a...), pgErr.ConstraintName)
 		case sqlstateCheckViolation, sqlstateForeignKeyViolation,
 			sqlstateNotNullViolation, sqlstateStringDataRightTrunc:
 			return errors.Wrap(err, errors.KindInvalid, CodeConstraintViolation,
-				"%s (kısıt: %s)", sprintf(format, a...), pgErr.ConstraintName)
+				"%s (constraint: %s)", sprintf(format, a...), pgErr.ConstraintName)
 		}
 	}
 
 	return errors.Wrap(err, errors.KindInternal, CodeQueryFailed, format, a...)
 }
 
-// notFoundOr pgx.ErrNoRows'u NotFound'a, diğer her şeyi wrapDB'ye çevirir.
+// notFoundOr turns pgx.ErrNoRows into NotFound and everything else into
+// wrapDB.
 func notFoundOr(err error, code, format string, a ...any) error {
 	if err == nil {
 		return nil
@@ -156,10 +162,11 @@ func notFoundOr(err error, code, format string, a ...any) error {
 	return wrapDB(err, format, a...)
 }
 
-// sprintf hata mesajını bir kez biçimlendirir.
+// sprintf formats the error message once.
 //
-// Argümansız çağrılarda format DEĞİŞTİRİLMEDEN döner; aksi hâlde mesajdaki bir
-// yüzde işareti (örn. "%!d(MISSING)") kullanıcıya bozuk metin olarak giderdi.
+// In calls without arguments the format comes back UNCHANGED; otherwise a
+// percent sign in the message would reach the user as garbled text (e.g.
+// "%!d(MISSING)").
 func sprintf(format string, a ...any) string {
 	if len(a) == 0 {
 		return format
@@ -167,12 +174,12 @@ func sprintf(format string, a ...any) string {
 	return fmt.Sprintf(format, a...)
 }
 
-// toInt32 sayfalama değerini sorgunun beklediği int32'ye GÜVENLE daraltır.
+// toInt32 narrows a paging value SAFELY to the int32 the query expects.
 //
-// Negatif değer sıfıra, int32'yi aşan değer üst sınıra çekilir: aksi hâlde
-// daraltma sessizce işaret değiştirir ve "LIMIT -2147483648" gibi bir sorgu
-// üretirdi. Sınır kontrolü çağıranın doğrulamasına bırakılmaz; burası son
-// savunmadır.
+// A negative value is pulled up to zero and a value above int32 down to the
+// upper bound: otherwise the narrowing would silently flip the sign and produce
+// a query like "LIMIT -2147483648". The bounds check is not left to the
+// caller's validation; this is the last line of defense.
 func toInt32(n int64) int32 {
 	switch {
 	case n < 0:
@@ -184,11 +191,11 @@ func toInt32(n int64) int32 {
 	}
 }
 
-// toTime NULL olmayan bir zaman damgasını UTC time.Time'a çevirir.
+// toTime turns a non-NULL timestamp into a UTC time.Time.
 //
-// Geçersiz (NULL) damga sıfır zaman döner: NOT NULL sütunlarda bu durum
-// oluşamaz, oluşursa da sıfır zaman panik üretmeyen ve testte göze batan bir
-// değerdir.
+// An invalid (NULL) timestamp returns the zero time: on NOT NULL columns this
+// cannot happen, and if it does, the zero time is a value that does not panic
+// and stands out in a test.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -196,7 +203,7 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// toTimePtr NULL olabilen bir zaman damgasını *time.Time'a çevirir.
+// toTimePtr turns a nullable timestamp into a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
 		return nil
@@ -205,7 +212,8 @@ func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// fromTime bir zamanı NOT NULL damgaya çevirir; daima UTC yazılır.
+// fromTime turns a time into a NOT NULL timestamp; it is always written as
+// UTC.
 func fromTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }

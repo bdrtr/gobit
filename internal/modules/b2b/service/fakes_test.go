@@ -10,27 +10,29 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/repository"
 )
 
-// memRepo [Repository]'nin bellek içi uygulamasıdır.
+// memRepo is an in-memory implementation of [Repository].
 //
-// Sahte depo GERÇEK deponun iki değişmezini taklit eder: okumaların yumuşak
-// silinmiş kayıtları atlaması ve şirket silmenin çalışanları da silmesi. Taklit
-// etmeseydi birim testleri bu kuralları "servis uyguluyor" sanarak geçerdi;
-// oysa ikisinin de yeri SQL'dir ve burada yalnızca servisin sonucu doğru
-// kullandığı sınanır. Kuralların gerçekten veritabanında tuttuğu ayrıca
-// entegrasyon testinde kanıtlanır (bkz. b2b_integration_test.go).
+// The fake repository imitates two invariants of the REAL repository: reads
+// skip soft-deleted records, and deleting a company deletes its employees too.
+// Had it not imitated them, the unit tests would pass believing "the service
+// enforces" these rules; but both belong in SQL, and all that is exercised
+// here is that the service uses the outcome correctly. That the rules really
+// hold in the database is proven separately in the integration test (see
+// b2b_integration_test.go).
 type memRepo struct {
 	companies map[string]models.Company
 	employees map[string]models.CompanyEmployee
 
-	// calls metot adı -> çağrı sayısıdır; toplu (batch) davranışın kanıtı budur.
+	// calls is method name -> call count; it is the proof of the batch
+	// behavior.
 	calls map[string]int
-	// failCreateEmployee doğruysa çalışan yazımı hata döner.
+	// failCreateEmployee, if true, makes writing an employee return an error.
 	failCreateEmployee bool
 }
 
 var _ Repository = (*memRepo)(nil)
 
-// newMemRepo boş bir bellek içi depo üretir.
+// newMemRepo builds an empty in-memory repository.
 func newMemRepo() *memRepo {
 	return &memRepo{
 		companies: map[string]models.Company{},
@@ -39,10 +41,10 @@ func newMemRepo() *memRepo {
 	}
 }
 
-// record bir çağrıyı sayar.
+// record counts a call.
 func (m *memRepo) record(name string) { m.calls[name]++ }
 
-// liveCompany canlı şirketi döner.
+// liveCompany returns the live company.
 func (m *memRepo) liveCompany(id string) (models.Company, bool) {
 	c, ok := m.companies[id]
 	if !ok || c.DeletedAt != nil {
@@ -51,7 +53,7 @@ func (m *memRepo) liveCompany(id string) (models.Company, bool) {
 	return c, true
 }
 
-// liveEmployee canlı çalışanı döner.
+// liveEmployee returns the live employee.
 func (m *memRepo) liveEmployee(id string) (models.CompanyEmployee, bool) {
 	e, ok := m.employees[id]
 	if !ok || e.DeletedAt != nil {
@@ -72,7 +74,7 @@ func (m *memRepo) GetCompany(_ context.Context, id string) (models.Company, erro
 	c, ok := m.liveCompany(id)
 	if !ok {
 		return models.Company{}, errors.NotFound(repository.CodeCompanyNotFound,
-			"şirket bulunamadı: %s", id)
+			"company not found: %s", id)
 	}
 	return c, nil
 }
@@ -97,7 +99,7 @@ func (m *memRepo) ListCompanies(
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].ID > all[j].ID })
 
-	return sayfala(all, limit, offset), int64(len(all)), nil
+	return paginate(all, limit, offset), int64(len(all)), nil
 }
 
 func (m *memRepo) UpdateCompany(
@@ -111,12 +113,12 @@ func (m *memRepo) UpdateCompany(
 	c, ok := m.liveCompany(id)
 	if !ok {
 		return models.Company{}, errors.NotFound(repository.CodeCompanyNotFound,
-			"şirket bulunamadı: %s", id)
+			"company not found: %s", id)
 	}
 
-	metinler := []struct {
-		hedef  *string
-		kaynak *string
+	fields := []struct {
+		dst *string
+		src *string
 	}{
 		{&c.Name, patch.Name},
 		{&c.Email, patch.Email},
@@ -127,9 +129,9 @@ func (m *memRepo) UpdateCompany(
 		{&c.CountryCode, patch.CountryCode},
 		{&c.CurrencyCode, patch.CurrencyCode},
 	}
-	for _, alan := range metinler {
-		if alan.kaynak != nil {
-			*alan.hedef = *alan.kaynak
+	for _, f := range fields {
+		if f.src != nil {
+			*f.dst = *f.src
 		}
 	}
 	if patch.SpendingLimitResetPeriod != nil {
@@ -146,13 +148,13 @@ func (m *memRepo) DeleteCompany(_ context.Context, id string, now time.Time) ([]
 
 	c, ok := m.liveCompany(id)
 	if !ok {
-		return nil, errors.NotFound(repository.CodeCompanyNotFound, "şirket bulunamadı: %s", id)
+		return nil, errors.NotFound(repository.CodeCompanyNotFound, "company not found: %s", id)
 	}
 	c.DeletedAt = &now
 	c.UpdatedAt = now
 	m.companies[id] = c
 
-	var silinen []string
+	var deleted []string
 	for eid, e := range m.employees {
 		if e.CompanyID != id || e.DeletedAt != nil {
 			continue
@@ -160,10 +162,10 @@ func (m *memRepo) DeleteCompany(_ context.Context, id string, now time.Time) ([]
 		e.DeletedAt = &now
 		e.UpdatedAt = now
 		m.employees[eid] = e
-		silinen = append(silinen, eid)
+		deleted = append(deleted, eid)
 	}
-	sort.Strings(silinen)
-	return silinen, nil
+	sort.Strings(deleted)
+	return deleted, nil
 }
 
 func (m *memRepo) CreateEmployee(
@@ -173,9 +175,9 @@ func (m *memRepo) CreateEmployee(
 	m.record("CreateEmployee")
 	if m.failCreateEmployee {
 		return models.CompanyEmployee{}, errors.Internal(repository.CodeQueryFailed,
-			"çalışan oluşturulamadı (test)")
+			"the employee could not be created (test)")
 	}
-	// Depo customer idni SAKLAMAZ: sütunu yoktur.
+	// The repository does NOT STORE the customer id: it has no column.
 	e.CustomerID = ""
 	e.UpdatedAt = e.CreatedAt
 	m.employees[e.ID] = e
@@ -187,7 +189,7 @@ func (m *memRepo) GetEmployee(_ context.Context, id string) (models.CompanyEmplo
 	e, ok := m.liveEmployee(id)
 	if !ok {
 		return models.CompanyEmployee{}, errors.NotFound(repository.CodeEmployeeNotFound,
-			"çalışan bulunamadı: %s", id)
+			"employee not found: %s", id)
 	}
 	return e, nil
 }
@@ -214,7 +216,7 @@ func (m *memRepo) ListEmployees(
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].ID > all[j].ID })
 
-	return sayfala(all, limit, offset), int64(len(all)), nil
+	return paginate(all, limit, offset), int64(len(all)), nil
 }
 
 func (m *memRepo) UpdateEmployee(
@@ -228,7 +230,7 @@ func (m *memRepo) UpdateEmployee(
 	e, ok := m.liveEmployee(id)
 	if !ok {
 		return models.CompanyEmployee{}, errors.NotFound(repository.CodeEmployeeNotFound,
-			"çalışan bulunamadı: %s", id)
+			"employee not found: %s", id)
 	}
 	switch {
 	case patch.ClearSpendingLimit:
@@ -249,7 +251,7 @@ func (m *memRepo) DeleteEmployee(_ context.Context, id string, now time.Time) er
 
 	e, ok := m.liveEmployee(id)
 	if !ok {
-		return errors.NotFound(repository.CodeEmployeeNotFound, "çalışan bulunamadı: %s", id)
+		return errors.NotFound(repository.CodeEmployeeNotFound, "employee not found: %s", id)
 	}
 	e.DeletedAt = &now
 	e.UpdatedAt = now
@@ -257,46 +259,49 @@ func (m *memRepo) DeleteEmployee(_ context.Context, id string, now time.Time) er
 	return nil
 }
 
-// sayfala bellek içi listeye sayfalama uygular.
-func sayfala[T any](all []T, limit, offset int64) []T {
+// paginate applies paging to an in-memory list.
+func paginate[T any](all []T, limit, offset int64) []T {
 	if offset >= int64(len(all)) {
 		return []T{}
 	}
-	son := offset + limit
-	if son > int64(len(all)) {
-		son = int64(len(all))
+	end := offset + limit
+	if end > int64(len(all)) {
+		end = int64(len(all))
 	}
-	return all[offset:son]
+	return all[offset:end]
 }
 
-// memLinker [Linker]'ın bellek içi uygulamasıdır.
+// memLinker is an in-memory implementation of [Linker].
 //
-// Kardinaliteyi GERÇEK link servisi gibi zorlar: hem çalışan hem müşteri ucu
-// tekildir ve ihlal errors.Conflict döner. Zorlamasaydı "bir müşteri en fazla
-// bir şirketin çalışanıdır" kuralının servis tarafındaki sonuçları (409'un
-// doğru sınıflandırılması) hiç sınanamazdı.
+// It enforces the cardinality the way the REAL link service does: both the
+// employee side and the customer side are unique, and a violation returns
+// errors.Conflict. Had it not enforced it, the service-side consequences of
+// the rule "a customer is an employee of at most one company" (the 409 being
+// classified correctly) could never be exercised.
 type memLinker struct {
-	// bags link adı -> fromID -> toID kümesi.
-	bags map[string]map[string]map[string]bool
-	// calls metot adı -> çağrı sayısı; N+1 yokluğunun kanıtıdır.
+	// bonds is link name -> fromID -> set of toIDs.
+	bonds map[string]map[string]map[string]bool
+	// calls is method name -> call count; it is the proof that there is no
+	// N+1.
 	calls map[string]int
-	// failCreate doğruysa bağ kurma hata döner.
+	// failCreate, if true, makes establishing a bond return an error.
 	failCreate bool
-	// failDelete doğruysa bağ kaldırma hata döner.
+	// failDelete, if true, makes removing a bond return an error.
 	failDelete bool
-	// failListByTo ayarlanırsa ters yön okuması bu hatayı döner.
+	// failListByTo, if set, is the error the reverse-direction read returns.
 	//
-	// "Bağ yok" ile "bağı okuyamadık" farklı durumlardır ve ayrımı yalnızca
-	// okumayı düşürebilen bir sahte sınayabilir.
+	// "There is no bond" and "we could not read the bond" are different
+	// states, and only a fake that can make the read fail can exercise the
+	// distinction.
 	failListByTo error
 }
 
 var _ Linker = (*memLinker)(nil)
 
-// newMemLinker boş bir bellek içi bağ servisi üretir.
+// newMemLinker builds an empty in-memory bond service.
 func newMemLinker() *memLinker {
 	return &memLinker{
-		bags:  map[string]map[string]map[string]bool{},
+		bonds: map[string]map[string]map[string]bool{},
 		calls: map[string]int{},
 	}
 }
@@ -304,37 +309,37 @@ func newMemLinker() *memLinker {
 func (l *memLinker) Create(_ context.Context, name, fromID, toID string) error {
 	l.calls["Create"]++
 	if l.failCreate {
-		return errors.Internal("link_query_failed", "bağ kurulamadı (test)")
+		return errors.Internal("link_query_failed", "the bond could not be established (test)")
 	}
-	if l.bags[name] == nil {
-		l.bags[name] = map[string]map[string]bool{}
+	if l.bonds[name] == nil {
+		l.bonds[name] = map[string]map[string]bool{}
 	}
-	if l.bags[name][fromID][toID] {
+	if l.bonds[name][fromID][toID] {
 		return nil // idempotent
 	}
-	for from, tos := range l.bags[name] {
+	for from, tos := range l.bonds[name] {
 		if from == fromID && len(tos) > 0 {
 			return errors.Conflict("link_cardinality_violation",
-				"%q linkinde %s zaten bağlı", name, fromID)
+				"in the %q link, %s is already bound", name, fromID)
 		}
 		if tos[toID] {
 			return errors.Conflict("link_cardinality_violation",
-				"%q linkinde %s zaten bağlı", name, toID)
+				"in the %q link, %s is already bound", name, toID)
 		}
 	}
-	if l.bags[name][fromID] == nil {
-		l.bags[name][fromID] = map[string]bool{}
+	if l.bonds[name][fromID] == nil {
+		l.bonds[name][fromID] = map[string]bool{}
 	}
-	l.bags[name][fromID][toID] = true
+	l.bonds[name][fromID][toID] = true
 	return nil
 }
 
 func (l *memLinker) Delete(_ context.Context, name, fromID, toID string) error {
 	l.calls["Delete"]++
 	if l.failDelete {
-		return errors.Internal("link_query_failed", "bağ kaldırılamadı (test)")
+		return errors.Internal("link_query_failed", "the bond could not be removed (test)")
 	}
-	delete(l.bags[name][fromID], toID)
+	delete(l.bonds[name][fromID], toID)
 	return nil
 }
 
@@ -347,7 +352,7 @@ func (l *memLinker) ListMany(
 
 	out := map[string][]string{}
 	for _, fromID := range fromIDs {
-		for toID := range l.bags[name][fromID] {
+		for toID := range l.bonds[name][fromID] {
 			out[fromID] = append(out[fromID], toID)
 		}
 		sort.Strings(out[fromID])
@@ -365,15 +370,15 @@ func (l *memLinker) ListManyByTo(
 		return nil, l.failListByTo
 	}
 
-	istenen := map[string]bool{}
+	wanted := map[string]bool{}
 	for _, id := range toIDs {
-		istenen[id] = true
+		wanted[id] = true
 	}
 
 	out := map[string][]string{}
-	for fromID, tos := range l.bags[name] {
+	for fromID, tos := range l.bonds[name] {
 		for toID := range tos {
-			if istenen[toID] {
+			if wanted[toID] {
 				out[toID] = append(out[toID], fromID)
 			}
 		}

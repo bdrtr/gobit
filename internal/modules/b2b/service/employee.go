@@ -9,36 +9,40 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/models"
 )
 
-// EmployeeInput bir çalışanın yazma girdisidir.
+// EmployeeInput is the write input of an employee.
 type EmployeeInput struct {
-	// CompanyID çalışanın bağlanacağı şirkettir; zorunludur.
+	// CompanyID is the company the employee is bound to; it is required.
 	CompanyID string
-	// CustomerID çalışanın müşteri kaydıdır (customer modülü); zorunludur.
+	// CustomerID is the employee's customer record (customer module); it is
+	// required.
 	//
-	// Müşterinin GERÇEKTEN var olduğu doğrulanmaz: doğrulamak customer
-	// modülüne bağımlılık demek olurdu ve bu bağ, link katmanının kaldırmak
-	// için var olduğu bağın ta kendisidir (ADR 0001).
+	// That the customer REALLY exists is not verified: verifying it would mean
+	// a dependency on the customer module, and that dependency is exactly the
+	// one the link layer exists to remove (ADR 0001).
 	CustomerID string
-	// SpendingLimit çalışanın pencere başına harcayabileceği azami tutardır
-	// (minor unit); nil SINIRSIZ demektir, 0 gerçek bir sıfır limittir.
+	// SpendingLimit is the most the employee may spend per window (minor
+	// unit); nil means UNLIMITED, 0 is a real zero limit.
 	SpendingLimit *int64
-	// IsCompanyAdmin çalışanın şirket yöneticisi olup olmadığıdır.
+	// IsCompanyAdmin is whether the employee is a company admin.
 	IsCompanyAdmin bool
 }
 
-// CreateEmployee şirkete yeni bir çalışan ekler ve müşteri bağını kurar.
+// CreateEmployee adds a new employee to a company and establishes the customer
+// bond.
 //
-// Müşteri BAŞKA bir şirketin çalışanıysa errors.Conflict döner; kural link
-// tablosundaki benzersizliktedir (bkz. [Definitions]) ve uygulama tarafında
-// tekrarlanmaz — tekrarlansaydı iki eşzamanlı istek arasındaki yarışı yine
-// indeks çözerdi.
+// If the customer is an employee of ANOTHER company it returns
+// errors.Conflict; the rule lives in the uniqueness in the link table (see
+// [Definitions]) and is not repeated on the application side — had it been
+// repeated, the race between two concurrent requests would still be settled by
+// the index.
 //
-// Bağ kurulumu çalışan satırıyla AYNI işlemde değildir (link servisi kendi
-// bağlantısını kullanır); bu yüzden bağ kurulamazsa çalışan GERİ ALINIR.
-// Alternatifi, müşterisi olmayan bir çalışan kaydının ayakta kalmasıydı: kayıt
-// bir harcama limiti taşır ama vitrinde hiç kimseye çözülmez.
+// Establishing the bond is NOT in the same transaction as the employee row (the
+// link service uses its own connection); that is why the employee is ROLLED
+// BACK if the bond cannot be established. The alternative was an employee
+// record without a customer staying up: the record carries a spending limit
+// but resolves to nobody in the storefront.
 func (s *Service) CreateEmployee(ctx context.Context, in EmployeeInput) (models.CompanyEmployee, error) {
-	if err := requireID(in.CompanyID, models.CompanyIDPrefix, "şirket kimliği"); err != nil {
+	if err := requireID(in.CompanyID, models.CompanyIDPrefix, "company id"); err != nil {
 		return models.CompanyEmployee{}, err
 	}
 	if err := requireID(in.CustomerID, models.CustomerIDPrefix, "customer id"); err != nil {
@@ -48,9 +52,9 @@ func (s *Service) CreateEmployee(ctx context.Context, in EmployeeInput) (models.
 		return models.CompanyEmployee{}, err
 	}
 
-	// Şirketin varlığı ÖNCE doğrulanır: foreign key ihlali de aynı sonucu
-	// verirdi ama istemciye 422 olarak dönerdi ve eksik bir kaynak için doğru
-	// sınıf errors.NotFound'dur.
+	// The company's existence is verified FIRST: a foreign key violation would
+	// give the same result, but it would reach the client as a 422, and the
+	// right class for a missing resource is errors.NotFound.
 	if _, err := s.repo.GetCompany(ctx, in.CompanyID); err != nil {
 		return models.CompanyEmployee{}, err
 	}
@@ -73,7 +77,7 @@ func (s *Service) CreateEmployee(ctx context.Context, in EmployeeInput) (models.
 	}
 
 	created.CustomerID = in.CustomerID
-	s.log.InfoContext(ctx, "şirket çalışanı eklendi",
+	s.log.InfoContext(ctx, "company employee added",
 		slog.String("employee_id", created.ID),
 		slog.String("company_id", created.CompanyID),
 		slog.String("customer_id", in.CustomerID),
@@ -81,24 +85,25 @@ func (s *Service) CreateEmployee(ctx context.Context, in EmployeeInput) (models.
 	return created, nil
 }
 
-// rollbackEmployee bağı kurulamayan çalışanı geri alır.
+// rollbackEmployee rolls back an employee whose bond could not be established.
 //
-// Hata DÖNMEZ: çağıran zaten asıl hatayı döndürecektir ve telafinin hatası onu
-// gölgelerse istemci düzeltilebilir bir sebep yerine anlamsız bir sebep görür.
-// Geri alınamayan kayıt uyarı olarak loglanır; hiçbir müşteriye bağlı olmadığı
-// için vitrinde görünmez ama görünür kalmalıdır.
+// It returns NO error: the caller is going to return the original error
+// anyway, and if the compensation's error shadowed it the client would see a
+// meaningless reason instead of one it can fix. A record that cannot be rolled
+// back is logged as a warning; since it is bound to no customer it does not
+// show in the storefront, but it has to stay visible.
 func (s *Service) rollbackEmployee(ctx context.Context, employeeID string) {
 	if err := s.repo.DeleteEmployee(ctx, employeeID, s.clock()); err != nil {
-		s.log.WarnContext(ctx, "bağı kurulamayan çalışan geri alınamadı",
+		s.log.WarnContext(ctx, "an employee whose bond could not be established could not be rolled back",
 			"employee_id", employeeID, "error", err)
 	}
 }
 
-// GetEmployee kimliğe göre çalışan döner; yoksa errors.NotFound.
+// GetEmployee returns an employee by id; errors.NotFound if there is none.
 //
-// Müşteri kimliği link'ten okunur ve kayda EKLENİR; sütunu yoktur.
+// The customer id is read from link and ADDED to the record; it has no column.
 func (s *Service) GetEmployee(ctx context.Context, id string) (models.CompanyEmployee, error) {
-	if err := requireID(id, models.EmployeeIDPrefix, "çalışan kimliği"); err != nil {
+	if err := requireID(id, models.EmployeeIDPrefix, "employee id"); err != nil {
 		return models.CompanyEmployee{}, err
 	}
 
@@ -107,29 +112,29 @@ func (s *Service) GetEmployee(ctx context.Context, id string) (models.CompanyEmp
 		return models.CompanyEmployee{}, err
 	}
 
-	tekil := []models.CompanyEmployee{employee}
-	if err := s.attachCustomerIDs(ctx, tekil); err != nil {
+	single := []models.CompanyEmployee{employee}
+	if err := s.attachCustomerIDs(ctx, single); err != nil {
 		return models.CompanyEmployee{}, err
 	}
-	return tekil[0], nil
+	return single[0], nil
 }
 
-// ListEmployeesInput çalışan listelemesinin girdisidir.
+// ListEmployeesInput is the input of the employee listing.
 type ListEmployeesInput struct {
-	// CompanyID verilirse yalnızca bu şirketin çalışanları döner.
+	// CompanyID, if given, returns only this company's employees.
 	CompanyID *string
-	// IsCompanyAdmin verilirse yönetici ayrımına göre süzer.
+	// IsCompanyAdmin, if given, filters on whether the employee is an admin.
 	IsCompanyAdmin *bool
-	// Limit sayfa boyudur; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the page size; if 0, [DefaultLimit] applies.
 	Limit int64
-	// Offset atlanacak kayıt sayısıdır.
+	// Offset is the number of records to skip.
 	Offset int64
 }
 
-// ListEmployees çalışanları süzerek ve sayfalayarak listeler.
+// ListEmployees lists employees, filtered and paged.
 //
-// Müşteri kimlikleri TEK ek sorguyla doldurulur; kayıt başına ayrı sorgu N+1
-// olurdu (bkz. [Service.attachCustomerIDs]).
+// The customer ids are filled in with ONE extra query; a separate query per
+// record would be N+1 (see [Service.attachCustomerIDs]).
 func (s *Service) ListEmployees(
 	ctx context.Context,
 	in ListEmployeesInput,
@@ -139,7 +144,7 @@ func (s *Service) ListEmployees(
 		return Page[models.CompanyEmployee]{}, err
 	}
 	if in.CompanyID != nil {
-		if err := requireID(*in.CompanyID, models.CompanyIDPrefix, "şirket kimliği"); err != nil {
+		if err := requireID(*in.CompanyID, models.CompanyIDPrefix, "company id"); err != nil {
 			return Page[models.CompanyEmployee]{}, err
 		}
 	}
@@ -157,37 +162,41 @@ func (s *Service) ListEmployees(
 	return Page[models.CompanyEmployee]{Items: items, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// UpdateEmployeeInput bir çalışanın kısmi güncelleme girdisidir.
+// UpdateEmployeeInput is the partial update input of an employee.
 //
-// ŞİRKET ve MÜŞTERİ alanları BİLİNÇLİ OLARAK yoktur: ikisi de kaydın kimliğini
-// oluşturur. Çalışan başka bir şirkete geçiyorsa doğru işlem kaydı taşımak
-// değil, eskisini kapatıp yenisini açmaktır — harcama geçmişi eski şirkete
-// aittir ve taşımak onu sessizce yeni şirkete devrederdi.
+// The COMPANY and CUSTOMER fields are DELIBERATELY absent: both make up the
+// record's identity. If the employee moves to another company the right
+// operation is not to move the record but to close the old one and open a new
+// one — the spending history belongs to the old company, and moving it would
+// silently hand it over to the new company.
 type UpdateEmployeeInput struct {
-	// SpendingLimit yeni harcama limitidir (minor unit); nil "dokunma"dır.
+	// SpendingLimit is the new spending limit (minor unit); nil is "leave it
+	// alone".
 	SpendingLimit *int64
-	// ClearSpendingLimit doğruysa limit kaldırılır (çalışan sınırsız olur).
+	// ClearSpendingLimit, if true, removes the limit (the employee becomes
+	// unlimited).
 	//
-	// Ayrı bir bayraktır çünkü alanın kendisi de nil olabilir: tek bir
-	// işaretçi "dokunma" ile "sınırsız yap"ı ayıramaz ve ayıramadığı için
-	// limit bir kez konduktan sonra asla kaldırılamazdı.
+	// It is a separate flag because the field itself can be nil too: a single
+	// pointer cannot tell "leave it alone" from "make it unlimited", and
+	// because it cannot, a limit once set could never be removed.
 	ClearSpendingLimit bool
-	// IsCompanyAdmin yönetici işaretinin yeni değeridir.
+	// IsCompanyAdmin is the new value of the admin flag.
 	IsCompanyAdmin *bool
 }
 
-// UpdateEmployee çalışanın verilen alanlarını günceller; yoksa errors.NotFound.
+// UpdateEmployee updates the given fields of an employee; errors.NotFound if
+// there is none.
 func (s *Service) UpdateEmployee(
 	ctx context.Context,
 	id string,
 	in UpdateEmployeeInput,
 ) (models.CompanyEmployee, error) {
-	if err := requireID(id, models.EmployeeIDPrefix, "çalışan kimliği"); err != nil {
+	if err := requireID(id, models.EmployeeIDPrefix, "employee id"); err != nil {
 		return models.CompanyEmployee{}, err
 	}
 	if in.ClearSpendingLimit && in.SpendingLimit != nil {
 		return models.CompanyEmployee{}, errors.Invalid(CodeInvalidInput,
-			"harcama limiti aynı anda hem verilip hem kaldırılamaz")
+			"the spending limit cannot be set and cleared at the same time")
 	}
 	if err := validateSpendingLimit(in.SpendingLimit); err != nil {
 		return models.CompanyEmployee{}, err
@@ -202,22 +211,22 @@ func (s *Service) UpdateEmployee(
 		return models.CompanyEmployee{}, err
 	}
 
-	tekil := []models.CompanyEmployee{updated}
-	if err := s.attachCustomerIDs(ctx, tekil); err != nil {
+	single := []models.CompanyEmployee{updated}
+	if err := s.attachCustomerIDs(ctx, single); err != nil {
 		return models.CompanyEmployee{}, err
 	}
-	return tekil[0], nil
+	return single[0], nil
 }
 
-// DeleteEmployee çalışanı yumuşak siler ve müşteri bağını kaldırır; kayıt yoksa
-// errors.NotFound.
+// DeleteEmployee soft-deletes an employee and removes the customer bond;
+// errors.NotFound if the record does not exist.
 //
-// Bağın kaldırılması silmenin ayrılmaz parçasıdır: bağ tekil olduğu için kalan
-// bir satır, o müşterinin bir daha HİÇBİR şirkete çalışan olarak eklenememesi
-// demektir. İşten çıkan bir çalışanın başka bir şirkette işe başlaması ise
-// olağan durumdur.
+// Removing the bond is an inseparable part of the deletion: since the bond is
+// unique, a remaining row means that customer can never again be added as an
+// employee of ANY company. And an employee who leaves starting work at another
+// company is the ordinary case.
 func (s *Service) DeleteEmployee(ctx context.Context, id string) error {
-	if err := requireID(id, models.EmployeeIDPrefix, "çalışan kimliği"); err != nil {
+	if err := requireID(id, models.EmployeeIDPrefix, "employee id"); err != nil {
 		return err
 	}
 
@@ -226,45 +235,49 @@ func (s *Service) DeleteEmployee(ctx context.Context, id string) error {
 	}
 	s.unlinkCustomers(ctx, []string{id})
 
-	s.log.InfoContext(ctx, "şirket çalışanı silindi", slog.String("employee_id", id))
+	s.log.InfoContext(ctx, "company employee deleted", slog.String("employee_id", id))
 	return nil
 }
 
-// Membership bir müşterinin şirketindeki üyeliğidir: kendi çalışan kaydı, bağlı
-// olduğu şirket ve geçerli harcama penceresinin başlangıcı.
+// Membership is a customer's membership in their company: their own employee
+// record, the company they belong to and the start of the current spending
+// window.
 //
-// Vitrinin okuduğu tek görünümdür. Üçü birlikte döner çünkü üçü tek bir soruyu
-// cevaplar: "ben kimin adına, ne kadar ve hangi dönem içinde harcayabilirim?"
+// It is the only view the storefront reads. The three come back together
+// because the three answer one question: "on whose behalf, how much and within
+// which period can I spend?"
 type Membership struct {
-	// Employee müşterinin kendi çalışan kaydıdır.
+	// Employee is the customer's own employee record.
 	Employee models.CompanyEmployee
-	// Company çalışanın bağlı olduğu şirkettir.
+	// Company is the company the employee belongs to.
 	Company models.Company
-	// SpendingWindowStart geçerli harcama penceresinin başlangıcıdır; şirketin
-	// sıfırlama periyodu [models.ResetNever] ise nil (pencere yoktur).
+	// SpendingWindowStart is the start of the current spending window; nil if
+	// the company's reset period is [models.ResetNever] (there is no window).
 	//
-	// KALAN HAK BURADA HESAPLANMAZ ve bu bilinçli bir eksiktir: kalanı bulmak
-	// için pencere içindeki siparişlerin toplamı gerekir ve o veri order
-	// modülünündür — limiti de o modül uygular (bkz. [Interop.SpendingLimitJSON]).
-	// Uydurulmuş bir "kalan" alanı (örn. limitin kendisi) istemciye yanlış
-	// bilgi verirdi; verilmeyen bir alan ise yalnızca eksiktir.
+	// THE REMAINING ALLOWANCE IS NOT COMPUTED HERE, and that is a deliberate
+	// gap: finding the remainder needs the sum of the orders inside the window,
+	// and that data belongs to the order module — which is also the module that
+	// enforces the limit (see [Interop.SpendingLimitJSON]). A made-up
+	// "remaining" field (e.g. the limit itself) would misinform the client; a
+	// field that is not given is merely missing.
 	SpendingWindowStart *time.Time
 }
 
-// MembershipOfCustomer müşterinin KENDİ üyeliğini döner; müşteri bir şirketin
-// çalışanı değilse errors.NotFound.
+// MembershipOfCustomer returns the customer's OWN membership; errors.NotFound
+// if the customer is not an employee of a company.
 //
-// # Başkasının şirketi neden okunamaz
+// # Why somebody else's company cannot be read
 //
-// Bu, vitrinin şirkete ulaşan TEK yoludur ve girdisi bir şirket kimliği değil,
-// MÜŞTERİ kimliğidir. Şirket, müşterinin kendi çalışan kaydından türetilir;
-// istemcinin bir şirketi adıyla isteyebileceği bir uç yoktur (bkz. api paketi).
-// Böylece "başkasının şirketini okuma" isteği ifade EDİLEMEZ hâle gelir —
-// yetki kontrolüyle reddedilen değil, kurulamayan bir istektir.
+// This is the storefront's ONLY way to a company, and its input is not a
+// company id but a CUSTOMER id. The company is derived from the customer's own
+// employee record; there is no endpoint through which a client could ask for a
+// company by name (see the api package). A request to "read somebody else's
+// company" thereby CANNOT BE EXPRESSED — it is not a request refused by an
+// authorization check but one that cannot be put together.
 //
-// Yumuşak silinmiş bir çalışan ya da şirket bulunmaz: her iki okuma da
-// deleted_at IS NULL süzer. Bu yüzden geride kalmış (temizlenememiş) bir bağ
-// bile silinmiş bir kaydı geri getiremez.
+// A soft-deleted employee or company is not found: both reads filter on
+// deleted_at IS NULL. That is why even a bond left behind (one that could not
+// be cleaned up) cannot bring back a deleted record.
 func (s *Service) MembershipOfCustomer(ctx context.Context, customerID string) (Membership, error) {
 	if err := requireID(customerID, models.CustomerIDPrefix, "customer id"); err != nil {
 		return Membership{}, err
@@ -276,7 +289,7 @@ func (s *Service) MembershipOfCustomer(ctx context.Context, customerID string) (
 	}
 	if employeeID == "" {
 		return Membership{}, errors.NotFound(CodeEmployeeNotFound,
-			"müşteri hiçbir şirketin çalışanı değil: %s", customerID)
+			"the customer is not an employee of any company: %s", customerID)
 	}
 
 	employee, err := s.repo.GetEmployee(ctx, employeeID)

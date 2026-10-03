@@ -8,36 +8,37 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/models"
 )
 
-// CompanyInput bir şirketin yazma girdisidir.
+// CompanyInput is the write input of a company.
 type CompanyInput struct {
-	// Name şirketin ticari unvanıdır; zorunludur.
+	// Name is the company's trade name; it is required.
 	Name string
-	// Email şirketin iletişim adresidir; zorunludur, küçük harfe normalize
-	// edilerek saklanır ve BENZERSİZ DEĞİLDİR.
+	// Email is the company's contact address; it is required, it is stored
+	// normalized to lower case, and it is NOT UNIQUE.
 	Email string
-	// Phone şirketin telefonudur; boş bırakılabilir.
+	// Phone is the company's telephone number; it may be left empty.
 	Phone string
-	// Address fatura adresinin sokak satırıdır; boş bırakılabilir.
+	// Address is the street line of the billing address; it may be left empty.
 	Address string
-	// City şehirdir; boş bırakılabilir.
+	// City is the city; it may be left empty.
 	City string
-	// PostalCode posta kodudur; boş bırakılabilir.
+	// PostalCode is the postal code; it may be left empty.
 	PostalCode string
-	// CountryCode ISO 3166-1 alpha-2 ülke kodudur; boş bırakılabilir.
+	// CountryCode is the ISO 3166-1 alpha-2 country code; it may be left empty.
 	CountryCode string
-	// CurrencyCode ISO 4217 para birimi kodudur; ZORUNLUDUR. Harcama
-	// limitleri bu para biriminde ifade edilir.
+	// CurrencyCode is the ISO 4217 currency code; it is REQUIRED. Spending
+	// limits are expressed in this currency.
 	CurrencyCode string
-	// SpendingLimitResetPeriod çalışan limitlerinin sıfırlanma aralığıdır;
-	// boş bırakılırsa [models.ResetNever] uygulanır.
+	// SpendingLimitResetPeriod is the interval at which employee limits reset;
+	// if left empty, [models.ResetNever] applies.
 	SpendingLimitResetPeriod string
 }
 
-// CreateCompany yeni bir şirket oluşturur.
+// CreateCompany creates a new company.
 //
-// E-posta benzersizliği ARANMAZ: bu modülde e-postayla bir kimlik kurulmaz ve
-// aynı holdingin iki tüzel kişisi aynı muhasebe adresini paylaşabilir
-// (gerekçe migration'daki tablo belgesindedir).
+// E-mail uniqueness is NOT REQUIRED: no identity is built on the e-mail
+// address in this module, and two legal entities of the same holding may share
+// the same accounting address (the reasoning is in the table documentation in
+// the migration).
 func (s *Service) CreateCompany(ctx context.Context, in CompanyInput) (models.Company, error) {
 	company, err := s.validateCompanyInput(in)
 	if err != nil {
@@ -53,23 +54,24 @@ func (s *Service) CreateCompany(ctx context.Context, in CompanyInput) (models.Co
 		return models.Company{}, err
 	}
 
-	s.log.InfoContext(ctx, "şirket oluşturuldu",
+	s.log.InfoContext(ctx, "company created",
 		slog.String("company_id", created.ID),
 		slog.String("currency_code", created.CurrencyCode),
 	)
 	return created, nil
 }
 
-// validateCompanyInput girdiyi doğrular ve saklanacak modele çevirir.
+// validateCompanyInput validates the input and turns it into the model to be
+// stored.
 //
-// Kimlik ve zaman alanları BURADA doldurulmaz: doğrulama saf kalır ve zaman
-// kaynağına dokunmadığı için testte belirlenimcidir.
+// The id and time fields are NOT filled in HERE: the validation stays pure,
+// and because it does not touch the time source it is deterministic in a test.
 func (s *Service) validateCompanyInput(in CompanyInput) (models.Company, error) {
-	if err := requireText("şirket adı", in.Name); err != nil {
+	if err := requireText("company name", in.Name); err != nil {
 		return models.Company{}, err
 	}
 	name := strings.TrimSpace(in.Name)
-	if err := checkLen("şirket adı", name, models.MaxNameLen); err != nil {
+	if err := checkLen("company name", name, models.MaxNameLen); err != nil {
 		return models.Company{}, err
 	}
 
@@ -77,16 +79,16 @@ func (s *Service) validateCompanyInput(in CompanyInput) (models.Company, error) 
 	if err != nil {
 		return models.Company{}, err
 	}
-	if err := checkLen("telefon", in.Phone, models.MaxPhoneLen); err != nil {
+	if err := checkLen("phone", in.Phone, models.MaxPhoneLen); err != nil {
 		return models.Company{}, err
 	}
-	if err := checkLen("adres", in.Address, models.MaxAddressLen); err != nil {
+	if err := checkLen("address", in.Address, models.MaxAddressLen); err != nil {
 		return models.Company{}, err
 	}
-	if err := checkLen("şehir", in.City, models.MaxAddressLen); err != nil {
+	if err := checkLen("city", in.City, models.MaxAddressLen); err != nil {
 		return models.Company{}, err
 	}
-	if err := checkLen("posta kodu", in.PostalCode, models.MaxPostalCodeLen); err != nil {
+	if err := checkLen("postal code", in.PostalCode, models.MaxPostalCodeLen); err != nil {
 		return models.Company{}, err
 	}
 
@@ -116,26 +118,26 @@ func (s *Service) validateCompanyInput(in CompanyInput) (models.Company, error) 
 	}, nil
 }
 
-// GetCompany kimliğe göre şirket döner; yoksa errors.NotFound.
+// GetCompany returns a company by id; errors.NotFound if there is none.
 func (s *Service) GetCompany(ctx context.Context, id string) (models.Company, error) {
-	if err := requireID(id, models.CompanyIDPrefix, "şirket kimliği"); err != nil {
+	if err := requireID(id, models.CompanyIDPrefix, "company id"); err != nil {
 		return models.Company{}, err
 	}
 	return s.repo.GetCompany(ctx, id)
 }
 
-// ListCompaniesInput şirket listelemesinin girdisidir.
+// ListCompaniesInput is the input of the company listing.
 type ListCompaniesInput struct {
-	// Email verilirse yalnızca bu e-postaya sahip şirketler döner; sonuç
-	// BİRDEN ÇOK kayıt içerebilir.
+	// Email, if given, returns only the companies with this e-mail address;
+	// the result can contain MORE THAN ONE record.
 	Email *string
-	// Limit sayfa boyudur; 0 ise [DefaultLimit] uygulanır.
+	// Limit is the page size; if 0, [DefaultLimit] applies.
 	Limit int64
-	// Offset atlanacak kayıt sayısıdır.
+	// Offset is the number of records to skip.
 	Offset int64
 }
 
-// ListCompanies şirketleri süzerek ve sayfalayarak listeler.
+// ListCompanies lists companies, filtered and paged.
 func (s *Service) ListCompanies(ctx context.Context, in ListCompaniesInput) (Page[models.Company], error) {
 	limit, offset, err := normalizePaging(in.Limit, in.Offset)
 	if err != nil {
@@ -144,8 +146,9 @@ func (s *Service) ListCompanies(ctx context.Context, in ListCompaniesInput) (Pag
 
 	filter := models.CompanyFilter{}
 	if in.Email != nil {
-		// Süzgeç değeri de SAKLAMA biçimine çevrilir: sütunda küçük harfli
-		// değer durur ve normalize edilmemiş bir süzgeç hiçbir satır bulmazdı.
+		// The filter value is turned into the STORAGE form too: the column holds
+		// the lower-case value, and a filter that was not normalized would find
+		// no row.
 		email := models.NormalizeEmail(*in.Email)
 		filter.Email = &email
 	}
@@ -157,46 +160,48 @@ func (s *Service) ListCompanies(ctx context.Context, in ListCompaniesInput) (Pag
 	return Page[models.Company]{Items: items, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// UpdateCompanyInput bir şirketin kısmi güncelleme girdisidir.
+// UpdateCompanyInput is the partial update input of a company.
 //
-// nil alan "dokunma", dolu alan "bu değeri yaz" demektir; adres alanlarında
-// boş dize gerçek bir temizlemedir.
+// A nil field means "leave it alone", a filled field means "write this value";
+// in the address fields an empty string is a real clearing.
 type UpdateCompanyInput struct {
-	// Name yeni unvandır; verilirse boş olamaz.
+	// Name is the new trade name; if given it cannot be empty.
 	Name *string
-	// Email yeni e-postadır; verilirse doğrulanır ve normalize edilir.
+	// Email is the new e-mail address; if given it is validated and normalized.
 	Email *string
-	// Phone yeni telefondur.
+	// Phone is the new telephone number.
 	Phone *string
-	// Address adresin yeni sokak satırıdır.
+	// Address is the new street line of the address.
 	Address *string
-	// City yeni şehirdir.
+	// City is the new city.
 	City *string
-	// PostalCode yeni posta kodudur.
+	// PostalCode is the new postal code.
 	PostalCode *string
-	// CountryCode yeni ülke kodudur; boş dize adresi temizler.
+	// CountryCode is the new country code; an empty string clears the address.
 	CountryCode *string
-	// CurrencyCode yeni para birimi kodudur; verilirse boş olamaz.
+	// CurrencyCode is the new currency code; if given it cannot be empty.
 	CurrencyCode *string
-	// SpendingLimitResetPeriod yeni sıfırlama aralığıdır.
+	// SpendingLimitResetPeriod is the new reset interval.
 	//
-	// Değişmesi GEÇMİŞE dönük çalışır: yeni pencere, geçerli takvim ayının ya
-	// da yılının başından itibaren sayılır (bkz. [models.SpendingResetPeriod]).
-	// Bu bilinçlidir — alternatifi, değişiklik anını her çalışan için ayrıca
-	// saklamak ve sıfırlamayı takvimden koparmaktı.
+	// Changing it works RETROACTIVELY: the new window is counted from the start
+	// of the current calendar month or year (see [models.SpendingResetPeriod]).
+	// This is deliberate — the alternative was to store the moment of the
+	// change separately for every employee and to detach the reset from the
+	// calendar.
 	SpendingLimitResetPeriod *string
 }
 
-// UpdateCompany şirketin verilen alanlarını günceller; yoksa errors.NotFound.
+// UpdateCompany updates the given fields of a company; errors.NotFound if
+// there is none.
 //
-// Verilen alanlar oluşturmadakiyle AYNI doğrulamadan geçer: kısmi güncelleme
-// bir alanı atlayabilir ama var olan bir zorunluluğu kaldıramaz.
+// The given fields pass the SAME validation as on creation: a partial update
+// can skip a field, but it cannot remove an existing requirement.
 func (s *Service) UpdateCompany(
 	ctx context.Context,
 	id string,
 	in UpdateCompanyInput,
 ) (models.Company, error) {
-	if err := requireID(id, models.CompanyIDPrefix, "şirket kimliği"); err != nil {
+	if err := requireID(id, models.CompanyIDPrefix, "company id"); err != nil {
 		return models.Company{}, err
 	}
 
@@ -207,17 +212,17 @@ func (s *Service) UpdateCompany(
 	return s.repo.UpdateCompany(ctx, id, patch, s.clock())
 }
 
-// validateCompanyPatch kısmi güncelleme girdisini doğrulanmış bir yamaya
-// çevirir.
+// validateCompanyPatch turns the partial update input into a validated
+// patch.
 func (s *Service) validateCompanyPatch(in UpdateCompanyInput) (models.CompanyPatch, error) {
 	var patch models.CompanyPatch
 
 	if in.Name != nil {
-		if err := requireText("şirket adı", *in.Name); err != nil {
+		if err := requireText("company name", *in.Name); err != nil {
 			return models.CompanyPatch{}, err
 		}
 		name := strings.TrimSpace(*in.Name)
-		if err := checkLen("şirket adı", name, models.MaxNameLen); err != nil {
+		if err := checkLen("company name", name, models.MaxNameLen); err != nil {
 			return models.CompanyPatch{}, err
 		}
 		patch.Name = &name
@@ -230,26 +235,26 @@ func (s *Service) validateCompanyPatch(in UpdateCompanyInput) (models.CompanyPat
 		patch.Email = &email
 	}
 
-	metinler := []struct {
-		hedef  **string
-		kaynak *string
-		etiket string
-		sinir  int
+	textFields := []struct {
+		dst   **string
+		src   *string
+		label string
+		limit int
 	}{
-		{&patch.Phone, in.Phone, "telefon", models.MaxPhoneLen},
-		{&patch.Address, in.Address, "adres", models.MaxAddressLen},
-		{&patch.City, in.City, "şehir", models.MaxAddressLen},
-		{&patch.PostalCode, in.PostalCode, "posta kodu", models.MaxPostalCodeLen},
+		{&patch.Phone, in.Phone, "phone", models.MaxPhoneLen},
+		{&patch.Address, in.Address, "address", models.MaxAddressLen},
+		{&patch.City, in.City, "city", models.MaxAddressLen},
+		{&patch.PostalCode, in.PostalCode, "postal code", models.MaxPostalCodeLen},
 	}
-	for _, m := range metinler {
-		if m.kaynak == nil {
+	for _, f := range textFields {
+		if f.src == nil {
 			continue
 		}
-		value := strings.TrimSpace(*m.kaynak)
-		if err := checkLen(m.etiket, value, m.sinir); err != nil {
+		value := strings.TrimSpace(*f.src)
+		if err := checkLen(f.label, value, f.limit); err != nil {
 			return models.CompanyPatch{}, err
 		}
-		*m.hedef = &value
+		*f.dst = &value
 	}
 
 	if in.CountryCode != nil {
@@ -267,11 +272,11 @@ func (s *Service) validateCompanyPatch(in UpdateCompanyInput) (models.CompanyPat
 		patch.CurrencyCode = &currency
 	}
 	if in.SpendingLimitResetPeriod != nil {
-		// Boş dize burada "never" DEĞİLDİR: güncellemede boş bir değer, alanı
-		// sessizce en kısıtlayıcı seçeneğe çekerdi ve istemci bunu istememiş
-		// olabilir. Oluşturmadaki varsayılan ile güncellemedeki reddin farkı
-		// budur.
-		if err := requireText("harcama limiti sıfırlama periyodu", *in.SpendingLimitResetPeriod); err != nil {
+		// An empty string is NOT "never" here: on an update an empty value
+		// would silently pull the field to the most restrictive option, and the
+		// client may not have asked for that. That is the difference between
+		// the default on creation and the refusal on update.
+		if err := requireText("spending limit reset period", *in.SpendingLimitResetPeriod); err != nil {
 			return models.CompanyPatch{}, err
 		}
 		period, err := normalizeResetPeriod(*in.SpendingLimitResetPeriod)
@@ -284,24 +289,27 @@ func (s *Service) validateCompanyPatch(in UpdateCompanyInput) (models.CompanyPat
 	return patch, nil
 }
 
-// DeleteCompany şirketi ve ÇALIŞANLARINI yumuşak siler; yoksa errors.NotFound.
+// DeleteCompany soft-deletes a company and its EMPLOYEES; errors.NotFound if
+// there is none.
 //
-// # Karar: çalışanlar şirketle birlikte silinir
+// # Decision: the employees are deleted with the company
 //
-// Alternatif, çalışan kayıtlarını yerinde bırakmaktı ve o kayıtlar vitrinde
-// SAHİPSİZ kalırdı: "kendi şirketim" sorusu artık okunamayan bir şirkete
-// çözülür, müşteri ise hâlâ bir harcama limiti taşıyan bir kayıt görürdü —
-// arkasında ödeme yapacak bir tüzel kişi olmadan. Bu yüzden değişmez şudur:
-// canlı bir çalışan kaydı DAİMA canlı bir şirkete aittir.
+// The alternative was to leave the employee records in place, and those
+// records would be left OWNERLESS in the storefront: the "my own company"
+// question would resolve to a company that can no longer be read, while the
+// customer would see a record still carrying a spending limit — with no legal
+// entity behind it to pay. So the invariant is this: a live employee record
+// ALWAYS belongs to a live company.
 //
-// Müşteri bağları da kaldırılır ve bu, silmenin en kritik adımıdır: bağ tekil
-// olduğu için sarkan bir satır, o müşterinin bir daha HİÇBİR şirkete çalışan
-// olarak eklenememesi demektir. Bağların kaldırılması veritabanı işleminin
-// DIŞINDADIR (link ayrı bir alt sistemdir); başarısız olursa hata dönülmez,
-// uyarı loglanır — silme çoktan gerçekleşmiştir ve çağırana hata dönmek
-// "şirket silinmedi" izlenimi verirdi.
+// The customer bonds are removed too, and this is the most critical step of
+// the deletion: since the bond is unique, a dangling row means that customer
+// can never again be added as an employee of ANY company. Removing the bonds
+// is OUTSIDE the database transaction (link is a separate subsystem); if it
+// fails, no error is returned and a warning is logged — the deletion has
+// already happened, and returning an error to the caller would give the
+// impression that "the company was not deleted".
 func (s *Service) DeleteCompany(ctx context.Context, id string) error {
-	if err := requireID(id, models.CompanyIDPrefix, "şirket kimliği"); err != nil {
+	if err := requireID(id, models.CompanyIDPrefix, "company id"); err != nil {
 		return err
 	}
 
@@ -311,9 +319,9 @@ func (s *Service) DeleteCompany(ctx context.Context, id string) error {
 	}
 	s.unlinkCustomers(ctx, employeeIDs)
 
-	s.log.InfoContext(ctx, "şirket silindi",
+	s.log.InfoContext(ctx, "company deleted",
 		slog.String("company_id", id),
-		slog.Int("silinen_calisan", len(employeeIDs)),
+		slog.Int("deleted_employees", len(employeeIDs)),
 	)
 	return nil
 }

@@ -8,14 +8,14 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/repository/promotiondb"
 )
 
-// CreatePromotionRule bir promosyona kural ekler; promosyon yoksa ya da
-// silinmişse errors.NotFound döner.
+// CreatePromotionRule adds a rule to a promotion; if the promotion does not
+// exist or has been deleted, errors.NotFound is returned.
 //
-// Promosyon PAYLAŞIMLI kilit altında okunur ve kural AYNI işlemde yazılır
-// (bkz. [requireLivePromotion]). Kilidin burada, foreign key'in ise hiçbir
-// yerde yeterli OLMADIĞININ gerekçesi orada yazılıdır: yumuşak silme satırı
-// yerinde bıraktığı için FK, silinmiş bir promosyonun altına yazılan kuralı
-// GEÇİRİR.
+// The promotion is read under a SHARED lock and the rule is written in the
+// SAME transaction (see [requireLivePromotion]). The reason the lock is needed
+// here, and the foreign key is NOT enough anywhere, is written there: because
+// a soft delete leaves the row in place, the FK LETS THROUGH a rule written
+// under a deleted promotion.
 func (r *Repo) CreatePromotionRule(
 	ctx context.Context,
 	rule models.PromotionRule,
@@ -38,7 +38,7 @@ func (r *Repo) CreatePromotionRule(
 			CreatedAt:   fromTime(now),
 		})
 		if txErr != nil {
-			return wrapDB(txErr, "promosyon kuralı eklenemedi: %s", rule.PromotionID)
+			return wrapDB(txErr, "the promotion rule could not be added: %s", rule.PromotionID)
 		}
 		out = toPromotionRule(row)
 		return nil
@@ -49,7 +49,7 @@ func (r *Repo) CreatePromotionRule(
 	return out, nil
 }
 
-// GetPromotionRule kimliğe göre kuralı döner; yoksa errors.NotFound.
+// GetPromotionRule returns the rule by id; if there is none, errors.NotFound.
 func (r *Repo) GetPromotionRule(ctx context.Context, id string) (models.PromotionRule, error) {
 	if err := r.ready(); err != nil {
 		return models.PromotionRule{}, err
@@ -58,12 +58,12 @@ func (r *Repo) GetPromotionRule(ctx context.Context, id string) (models.Promotio
 	row, err := r.q.GetPromotionRule(ctx, id)
 	if err != nil {
 		return models.PromotionRule{}, notFoundOr(err, CodePromotionRuleNotFound,
-			"promosyon kuralı bulunamadı: %s", id)
+			"promotion rule not found: %s", id)
 	}
 	return toPromotionRule(row), nil
 }
 
-// ListPromotionRules bir promosyonun canlı kurallarını döner.
+// ListPromotionRules returns a promotion's live rules.
 func (r *Repo) ListPromotionRules(ctx context.Context, promotionID string) ([]models.PromotionRule, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func (r *Repo) ListPromotionRules(ctx context.Context, promotionID string) ([]mo
 
 	rows, err := r.q.ListPromotionRules(ctx, promotionID)
 	if err != nil {
-		return nil, wrapDB(err, "promosyon kuralları alınamadı: %s", promotionID)
+		return nil, wrapDB(err, "the promotion rules could not be read: %s", promotionID)
 	}
 
 	out := make([]models.PromotionRule, 0, len(rows))
@@ -81,7 +81,8 @@ func (r *Repo) ListPromotionRules(ctx context.Context, promotionID string) ([]mo
 	return out, nil
 }
 
-// DeletePromotionRule kuralı soft delete ile siler; yoksa errors.NotFound.
+// DeletePromotionRule deletes the rule with a soft delete; if there is none,
+// errors.NotFound.
 func (r *Repo) DeletePromotionRule(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -91,12 +92,12 @@ func (r *Repo) DeletePromotionRule(ctx context.Context, id string, now time.Time
 		ID:        id,
 		DeletedAt: fromTime(now),
 	}); err != nil {
-		return notFoundOr(err, CodePromotionRuleNotFound, "promosyon kuralı bulunamadı: %s", id)
+		return notFoundOr(err, CodePromotionRuleNotFound, "promotion rule not found: %s", id)
 	}
 	return nil
 }
 
-// toPromotionRule üretilen satırı domain modeline çevirir.
+// toPromotionRule turns the generated row into the domain model.
 func toPromotionRule(row promotiondb.PromotionRule) models.PromotionRule {
 	return models.PromotionRule{
 		ID:          row.ID,

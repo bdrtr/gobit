@@ -8,68 +8,76 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
-// RedeemInput bir kupon kullanımının girdisidir.
+// RedeemInput is the input of a coupon redemption.
 //
-// Promosyon ya kimlikle ya kodla adlandırılır; ikisi birden verilirse KİMLİK
-// kazanır (daha kesindir) ve kod yalnızca doğrulanır.
+// The promotion is named either by id or by code; if both are given the ID
+// wins (it is more precise) and the code is only verified.
 type RedeemInput struct {
-	// PromotionID kullanılacak promosyonun kimliğidir; boşsa [Code] kullanılır.
+	// PromotionID is the id of the promotion to redeem; if empty, [Code] is
+	// used.
 	PromotionID string
-	// Code kullanılacak promosyonun kupon kodudur; [PromotionID] boşsa
-	// ZORUNLUDUR.
+	// Code is the coupon code of the promotion to redeem; it is REQUIRED when
+	// [PromotionID] is empty.
 	Code string
-	// Reference kullanımın hangi iş kaydına ait olduğudur (örn. sipariş
-	// kimliği). İdempotency ANAHTARIDIR: aynı referansla ikinci çağrı sayacı
-	// artırmaz.
+	// Reference is the business record the redemption belongs to (e.g. an
+	// order id). It is the idempotency KEY: a second call with the same
+	// reference does not increment the counter.
 	Reference string
-	// Amount fiilen uygulanan indirim tutarıdır (minor unit); para ölçülü
-	// kampanya bütçesi bu kadar tüketilir.
+	// Amount is the discount amount actually applied (minor unit); a
+	// money-measured campaign budget is consumed by this much.
 	Amount int64
-	// CurrencyCode indirimin para birimidir (ISO 4217).
+	// CurrencyCode is the currency of the discount (ISO 4217).
 	CurrencyCode string
 }
 
-// RedeemPromotion promosyonu bir referans için kullanır ve sayaçları artırır.
+// RedeemPromotion redeems the promotion for a reference and increments the
+// counters.
 //
-// # İDEMPOTENTTİR
+// # IT IS IDEMPOTENT
 //
-// Aynı [RedeemInput.Reference] ile ikinci çağrı YENİ kullanım yazmaz ve hiçbir
-// sayacı artırmaz; var olan kaydı döner. Sipariş tamamlama saga'sı bir adımı
-// yeniden çalıştırabilir ve tekrar, kuponun ikinci kez harcanması anlamına
-// GELMEMELİDİR.
+// A second call with the same [RedeemInput.Reference] writes NO new redemption
+// and increments no counter; it returns the existing record. The order
+// completion saga may rerun a step, and a retry MUST NOT mean the coupon is
+// spent a second time.
 //
-// # Reddedilme sebepleri
+// # Reasons for refusal
 //
-// Şu durumlarda errors.Conflict döner ve HİÇBİR ŞEY yazılmaz:
+// In these cases errors.Conflict is returned and NOTHING is written:
 //
-//   - Promosyon YAYINDA DEĞİLDİR (taslak ya da pasif). Yayına hiç alınmamış bir
-//     promosyonun kuponu tüketilemez ve kampanya bütçesi yenemez.
-//   - Kampanyası varsa: kampanya SİLİNMİŞTİR, tarih penceresi kullanım anını
-//     KAPSAMAZ ya da bütçesinin para birimi kullanımınkiyle uyuşmaz.
-//   - Kullanım hakkı dolmuştur ya da kampanya bütçesi yetmez.
+//   - The promotion is NOT LIVE (draft or inactive). The coupon of a promotion
+//     that was never published cannot be consumed, and the campaign budget
+//     cannot be eaten.
+//   - If it has a campaign: the campaign is DELETED, its date window does NOT
+//     COVER the moment of redemption, or its budget's currency does not match
+//     the redemption's.
+//   - The usage allowance is exhausted, or the campaign budget does not
+//     suffice.
 //
-// Denetimlerin HEPSİ veritabanında, satır kilidi altında yapılır (bkz.
-// repository.Redeem); sayaç sınırları ayrıca koşullu UPDATE ile zorlanır.
-// Uygulamada "önce oku sonra yaz" biçiminde yapılsaydı, iki eşzamanlı kullanım
-// aynı son hakkı alabilirdi.
+// ALL of the checks are made in the database, under a row lock (see
+// repository.Redeem); the counter limits are additionally enforced with a
+// conditional UPDATE. Had it been done in the application as "read first, then
+// write", two concurrent redemptions could take the same last allowance.
 //
-// Denetimler idempotency'den SONRA gelir: aynı referansla yapılan ikinci çağrı,
-// promosyon bu arada durdurulmuş olsa bile var olan kaydı döner. Gerekçe
-// repository.Redeem godoc'undadır.
+// The checks come AFTER idempotency: a second call with the same reference
+// returns the existing record even if the promotion was stopped in the
+// meantime. The reasoning is in repository.Redeem's godoc.
 //
-// Eleme burada [Service.ComputeDiscounts]'takiyle aynı kapı DEĞİLDİR: hesap yan
-// etkisizdir ve elemesi müşteriye ne gösterileceğine karar verir; buradaki
-// denetim ise sayaca yazma anının hakemidir ve hesapla kullanım arasında
-// değişen bir durumu yakalayan TEK yerdir.
+// The elimination here is NOT the same gate as the one in
+// [Service.ComputeDiscounts]: the computation has no side effects and its
+// elimination decides what is shown to the customer, whereas the check here is
+// the arbiter of the moment the counter is written, and it is the ONLY place
+// that catches a state that changed between the computation and the
+// redemption.
 //
-// # Neden hesap yeniden yapılmaz
+// # Why the computation is not redone
 //
-// Tutar ÇAĞIRANDAN gelir; servis onu [Service.ComputeDiscounts] ile yeniden
-// hesaplamaz. Sebep, hesabın sepetin o anki şekline dayanmasıdır: sepet
-// kullanım anında değişmiş olabilir ve burada yapılacak ikinci bir hesap,
-// müşteriye gösterilenden farklı bir tutarı bütçeye yazardı. Tutarın doğruluğu
-// çağıranın (sipariş tamamlama akışının) sorumluluğundadır; bu modül yalnızca
-// yazılanı defterler.
+// The amount comes FROM THE CALLER; the service does not recompute it with
+// [Service.ComputeDiscounts]. The reason is that the computation depends on the
+// cart's shape at that moment: the cart may have changed by the time of
+// redemption, and a second computation made here would write to the budget an
+// amount different from the one shown to the customer. The correctness of the
+// amount is the responsibility of the caller (the order completion flow); this
+// module only records in the ledger what is written.
 func (s *Service) RedeemPromotion(ctx context.Context, in RedeemInput) (models.Redemption, error) {
 	if err := s.ready(); err != nil {
 		return models.Redemption{}, err
@@ -79,10 +87,10 @@ func (s *Service) RedeemPromotion(ctx context.Context, in RedeemInput) (models.R
 	if err != nil {
 		return models.Redemption{}, err
 	}
-	if err := validateText("kullanım referansı", in.Reference, 1, MaxReferenceLen); err != nil {
+	if err := validateText("redemption reference", in.Reference, 1, MaxReferenceLen); err != nil {
 		return models.Redemption{}, err
 	}
-	if err := validateAmount("indirim tutarı", in.Amount); err != nil {
+	if err := validateAmount("discount amount", in.Amount); err != nil {
 		return models.Redemption{}, err
 	}
 	currency, err := normalizeCurrency(in.CurrencyCode)
@@ -102,41 +110,44 @@ func (s *Service) RedeemPromotion(ctx context.Context, in RedeemInput) (models.R
 		return models.Redemption{}, err
 	}
 
-	// Tutar loglanır çünkü bütçe muhasebesinin izini sürmenin tek yolu budur;
-	// kupon KODU loglanmaz (kullanılabilir bir sırdır, plan Bölüm 8).
-	s.log.DebugContext(ctx, "promosyon kullanıldı",
+	// The amount is logged because it is the only way to trace the budget
+	// accounting; the coupon CODE is not logged (it is a usable secret, plan
+	// Section 8).
+	s.log.DebugContext(ctx, "promotion redeemed",
 		slog.String("promotion_id", promo.ID),
 		slog.String("reference", in.Reference),
-		slog.Bool("yeni_kayit", created),
-		slog.Int64("tutar", redemption.Amount),
+		slog.Bool("new_record", created),
+		slog.Int64("amount", redemption.Amount),
 	)
 	return redemption, nil
 }
 
-// ReleaseInput bir kupon kullanımının geri alınması girdisidir.
+// ReleaseInput is the input for reversing a coupon redemption.
 type ReleaseInput struct {
-	// PromotionID promosyonun kimliğidir; boşsa [Code] kullanılır.
+	// PromotionID is the id of the promotion; if empty, [Code] is used.
 	PromotionID string
-	// Code promosyonun kupon kodudur; [PromotionID] boşsa ZORUNLUDUR.
+	// Code is the coupon code of the promotion; it is REQUIRED when
+	// [PromotionID] is empty.
 	Code string
-	// Reference geri alınacak kullanımın referansıdır.
+	// Reference is the reference of the redemption to reverse.
 	Reference string
 }
 
-// ReleasePromotion bir kullanımı serbest bırakır ve sayaçları geri alır.
+// ReleasePromotion releases a redemption and reverses the counters.
 //
-// # SAGA TELAFİSİDİR ve İDEMPOTENTTİR
+// # IT IS A SAGA COMPENSATION and IT IS IDEMPOTENT
 //
-// İki kez çağrılırsa ikinci çağrı hata VERMEZ ve sayaçlar ikinci kez düşmez.
-// Hiç kullanım yazılmamışsa da hata dönmez: telafi, yazmadan patlamış bir
-// adımın ardından da çalışabilmelidir (plan Bölüm 5.5).
+// If it is called twice, the second call returns NO error and the counters do
+// not drop a second time. No error is returned either when no redemption was
+// ever written: the compensation must be able to run after a step that blew up
+// before writing, too (plan Section 5.5).
 //
-// Promosyonun KENDİSİ yoksa errors.NotFound döner. Bu, sessizce yutulmaması
-// gereken bir kurulum hatasıdır: var olmayan bir promosyonun telafisi, yanlış
-// kimlikle çağrılmış bir adım demektir.
+// If the promotion ITSELF does not exist, errors.NotFound is returned. This is
+// a setup error that must not be swallowed silently: compensating a promotion
+// that does not exist means a step was called with the wrong id.
 //
-// İkinci dönüş değeri BU ÇAĞRIDA bir şeyin geri alınıp alınmadığını bildirir;
-// telafinin gerçekten iş yaptığını sınayan testler buna bakar.
+// The second return value reports whether anything was reversed IN THIS CALL;
+// the tests that check the compensation really did work look at it.
 func (s *Service) ReleasePromotion(ctx context.Context, in ReleaseInput) (bool, error) {
 	if err := s.ready(); err != nil {
 		return false, err
@@ -146,7 +157,7 @@ func (s *Service) ReleasePromotion(ctx context.Context, in ReleaseInput) (bool, 
 	if err != nil {
 		return false, err
 	}
-	if err := validateText("kullanım referansı", in.Reference, 1, MaxReferenceLen); err != nil {
+	if err := validateText("redemption reference", in.Reference, 1, MaxReferenceLen); err != nil {
 		return false, err
 	}
 
@@ -155,15 +166,16 @@ func (s *Service) ReleasePromotion(ctx context.Context, in ReleaseInput) (bool, 
 		return false, err
 	}
 
-	s.log.DebugContext(ctx, "promosyon kullanımı serbest bırakıldı",
+	s.log.DebugContext(ctx, "promotion redemption released",
 		slog.String("promotion_id", promo.ID),
 		slog.String("reference", in.Reference),
-		slog.Bool("geri_alindi", released),
+		slog.Bool("released", released),
 	)
 	return released, nil
 }
 
-// GetRedemption bir referansın GEÇERLİ kullanımını döner; yoksa errors.NotFound.
+// GetRedemption returns the VALID redemption of a reference; if there is none,
+// errors.NotFound.
 func (s *Service) GetRedemption(ctx context.Context, promotionID, reference string) (models.Redemption, error) {
 	if err := s.ready(); err != nil {
 		return models.Redemption{}, err
@@ -171,16 +183,16 @@ func (s *Service) GetRedemption(ctx context.Context, promotionID, reference stri
 	if err := requireID(promotionID, models.PromotionIDPrefix, "promotion id"); err != nil {
 		return models.Redemption{}, err
 	}
-	if err := validateText("kullanım referansı", reference, 1, MaxReferenceLen); err != nil {
+	if err := validateText("redemption reference", reference, 1, MaxReferenceLen); err != nil {
 		return models.Redemption{}, err
 	}
 	return s.repo.GetRedemption(ctx, promotionID, reference)
 }
 
-// ListRedemptions bir promosyonun kullanım defterini sayfalanmış döner.
+// ListRedemptions returns a promotion's redemption ledger, paginated.
 //
-// Serbest bırakılmış kayıtlar da döner: defter bir geçmiştir ve geri alınmış
-// bir kullanımın izi silinmemelidir.
+// Released records are returned too: the ledger is a history, and the trace of
+// a reversed redemption must not be erased.
 func (s *Service) ListRedemptions(
 	ctx context.Context,
 	promotionID string,
@@ -207,12 +219,12 @@ func (s *Service) ListRedemptions(
 	return Page[models.Redemption]{Items: items, Count: total, Limit: limit, Offset: offset}, nil
 }
 
-// resolvePromotion promosyonu kimlikten ya da koddan çözer.
+// resolvePromotion resolves the promotion from an id or from a code.
 //
-// Kimlik verildiyse o kullanılır; kod da verilmişse promosyonun kodu ile
-// EŞLEŞMESİ beklenir. Uyumsuzluk sessizce yok sayılmaz: iki farklı promosyonu
-// adlandıran bir istek, çağıranın hangisini kastettiğini bilmediği anlamına
-// gelir ve sayaç yanlış promosyona yazılırdı.
+// If an id is given, it is used; if a code is given as well, it is expected to
+// MATCH the promotion's code. A mismatch is not silently ignored: a request
+// that names two different promotions means the caller does not know which one
+// it means, and the counter would be written to the wrong promotion.
 func (s *Service) resolvePromotion(ctx context.Context, id, code string) (models.Promotion, error) {
 	switch {
 	case id != "":
@@ -230,7 +242,7 @@ func (s *Service) resolvePromotion(ctx context.Context, id, code string) (models
 			}
 			if normalized != promo.Code {
 				return models.Promotion{}, errors.Invalid(CodeInvalidInput,
-					"promotion id ile kupon kodu farklı promosyonları gösteriyor: %s / %s",
+					"promotion id and coupon code point to different promotions: %s / %s",
 					id, normalized)
 			}
 		}
@@ -243,6 +255,6 @@ func (s *Service) resolvePromotion(ctx context.Context, id, code string) (models
 		return s.repo.GetPromotionByCode(ctx, normalized)
 	default:
 		return models.Promotion{}, errors.Invalid(CodeInvalidInput,
-			"promotion id ya da kupon kodu verilmeli")
+			"a promotion id or a coupon code must be given")
 	}
 }

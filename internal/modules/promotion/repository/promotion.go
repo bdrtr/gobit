@@ -8,9 +8,10 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/repository/promotiondb"
 )
 
-// CreatePromotion yeni bir promosyon yazar.
+// CreatePromotion writes a new promotion.
 //
-// Kullanım SAYACI (usage_count) girdiden okunmaz, daima sıfırdan başlar.
+// The usage COUNTER (usage_count) is not read from the input; it always starts
+// from zero.
 func (r *Repo) CreatePromotion(ctx context.Context, p models.Promotion, now time.Time) (models.Promotion, error) {
 	if err := r.ready(); err != nil {
 		return models.Promotion{}, err
@@ -32,12 +33,12 @@ func (r *Repo) CreatePromotion(ctx context.Context, p models.Promotion, now time
 		CreatedAt:   fromTime(now),
 	})
 	if err != nil {
-		return models.Promotion{}, wrapDB(err, "promosyon oluşturulamadı: %s", p.Code)
+		return models.Promotion{}, wrapDB(err, "the promotion could not be created: %s", p.Code)
 	}
 	return toPromotion(row), nil
 }
 
-// GetPromotion kimliğe göre promosyonu döner; yoksa errors.NotFound.
+// GetPromotion returns the promotion by id; if there is none, errors.NotFound.
 func (r *Repo) GetPromotion(ctx context.Context, id string) (models.Promotion, error) {
 	if err := r.ready(); err != nil {
 		return models.Promotion{}, err
@@ -45,14 +46,16 @@ func (r *Repo) GetPromotion(ctx context.Context, id string) (models.Promotion, e
 
 	row, err := r.q.GetPromotion(ctx, id)
 	if err != nil {
-		return models.Promotion{}, notFoundOr(err, CodePromotionNotFound, "promosyon bulunamadı: %s", id)
+		return models.Promotion{}, notFoundOr(err, CodePromotionNotFound, "promotion not found: %s", id)
 	}
 	return toPromotion(row), nil
 }
 
-// GetPromotionByCode kupon koduna göre promosyonu döner; yoksa errors.NotFound.
+// GetPromotionByCode returns the promotion by coupon code; if there is none,
+// errors.NotFound.
 //
-// Kod BÜYÜK harf saklanır; çağıran normalleştirmeyi yapmış olmalıdır.
+// The code is stored in UPPER case; the caller must already have normalized
+// it.
 func (r *Repo) GetPromotionByCode(ctx context.Context, code string) (models.Promotion, error) {
 	if err := r.ready(); err != nil {
 		return models.Promotion{}, err
@@ -60,16 +63,16 @@ func (r *Repo) GetPromotionByCode(ctx context.Context, code string) (models.Prom
 
 	row, err := r.q.GetPromotionByCode(ctx, code)
 	if err != nil {
-		return models.Promotion{}, notFoundOr(err, CodePromotionNotFound, "promosyon bulunamadı: %s", code)
+		return models.Promotion{}, notFoundOr(err, CodePromotionNotFound, "promotion not found: %s", code)
 	}
 	return toPromotion(row), nil
 }
 
-// ListPromotions sayfalanmış promosyon listesini ve TOPLAM sayıyı döner.
+// ListPromotions returns the paginated promotion list and the TOTAL count.
 //
-// status ve campaignID isteğe bağlı süzgeçlerdir; nil "süzme" demektir, boş
-// dize değil. Ayrım anlamlıdır: boş bir durum dizesi hiçbir kayda uymazken
-// nil, süzgecin hiç uygulanmaması demektir.
+// status and campaignID are optional filters; nil means "do not filter", the
+// empty string does not. The difference is meaningful: an empty status string
+// matches no record, while nil means the filter is not applied at all.
 func (r *Repo) ListPromotions(
 	ctx context.Context,
 	status, campaignID *string,
@@ -86,14 +89,14 @@ func (r *Repo) ListPromotions(
 		RowOffset:  int64(offset),
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "promosyonlar listelenemedi")
+		return nil, 0, wrapDB(err, "the promotions could not be listed")
 	}
 	total, err := r.q.CountPromotions(ctx, promotiondb.CountPromotionsParams{
 		Status:     copyString(status),
 		CampaignID: copyString(campaignID),
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "promosyon sayısı alınamadı")
+		return nil, 0, wrapDB(err, "the promotion count could not be read")
 	}
 
 	out := make([]models.Promotion, 0, len(rows))
@@ -103,9 +106,9 @@ func (r *Repo) ListPromotions(
 	return out, total, nil
 }
 
-// GetPromotionsByIDs verilen kimliklerin promosyonlarını TEK turda döner.
+// GetPromotionsByIDs returns the promotions of the given ids in ONE round trip.
 //
-// Bulunamayan kimlik için kayıt DÖNMEZ; bu bir hata değildir (ADR 0004).
+// An id that is not found returns NO record; that is not an error (ADR 0004).
 func (r *Repo) GetPromotionsByIDs(ctx context.Context, ids []string) ([]models.Promotion, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -116,7 +119,7 @@ func (r *Repo) GetPromotionsByIDs(ctx context.Context, ids []string) ([]models.P
 
 	rows, err := r.q.GetPromotionsByIDs(ctx, ids)
 	if err != nil {
-		return nil, wrapDB(err, "promosyonlar alınamadı")
+		return nil, wrapDB(err, "the promotions could not be read")
 	}
 
 	out := make([]models.Promotion, 0, len(rows))
@@ -126,9 +129,11 @@ func (r *Repo) GetPromotionsByIDs(ctx context.Context, ids []string) ([]models.P
 	return out, nil
 }
 
-// UpdatePromotion promosyonun tanımını günceller; yoksa errors.NotFound.
+// UpdatePromotion updates the promotion's definition; if there is none,
+// errors.NotFound.
 //
-// Kullanım sayacı bu yoldan DEĞİŞMEZ (bkz. queries/promotion.sql'deki gerekçe).
+// The usage counter does NOT CHANGE on this path (see the reasoning in
+// queries/promotion.sql).
 func (r *Repo) UpdatePromotion(ctx context.Context, p models.Promotion, now time.Time) (models.Promotion, error) {
 	if err := r.ready(); err != nil {
 		return models.Promotion{}, err
@@ -150,25 +155,28 @@ func (r *Repo) UpdatePromotion(ctx context.Context, p models.Promotion, now time
 		UpdatedAt:   fromTime(now),
 	})
 	if err != nil {
-		return models.Promotion{}, notFoundOr(err, CodePromotionNotFound, "promosyon bulunamadı: %s", p.ID)
+		return models.Promotion{}, notFoundOr(err, CodePromotionNotFound, "promotion not found: %s", p.ID)
 	}
 	return toPromotion(row), nil
 }
 
-// DeletePromotion promosyonu soft delete ile siler; yoksa errors.NotFound.
+// DeletePromotion deletes the promotion with a soft delete; if there is none,
+// errors.NotFound.
 //
-// Uygulama yöntemi ve kurallar SİLİNMEZ ve hesaba da GİRMEZ: hesabın aday
-// sorgusu (ListApplicablePromotions) promosyonun deleted_at'ine bakar, kupon
-// yolu (GetPromotionByCode) da öyle. Silinmiş bir promosyonun yöntemi ya da
-// kuralı hiçbir sepet hesabına giremez (ölçüldü, 2026-09-06).
+// The application method and the rules are NOT DELETED, and they do NOT ENTER
+// the computation either: the computation's candidate query
+// (ListApplicablePromotions) looks at the promotion's deleted_at, and so does
+// the coupon path (GetPromotionByCode). A deleted promotion's method or rule
+// cannot enter any cart computation (measured, 2026-09-06).
 //
-// "Hepsi promosyon üzerinden okunur" demek YANLIŞ olurdu ve bir süre öyle
-// yazıyordu: [Repo.GetApplicationMethod] ve [Repo.GetPromotionRule] yalnızca
-// KENDİ satırlarının deleted_at'ine bakar, promosyona JOIN yapmaz. İkisi de
-// silinmiş bir promosyonun satırını döndürür. Bugün bunun bir sonucu yoktur —
-// ikisinin de HTTP yolu yoktur ve GetApplicationMethod'un tek çağıranı
-// (service.storeCandidate) promosyonu zaten önce koddan çözer ve silinmişse
-// oraya hiç varmaz — ama sonuçsuz olması, olmadığı anlamına gelmez.
+// Saying "everything is read through the promotion" would be WRONG, and for a
+// while it said exactly that: [Repo.GetApplicationMethod] and
+// [Repo.GetPromotionRule] look only at the deleted_at of their OWN rows and do
+// not JOIN the promotion. Both return a row of a deleted promotion. Today this
+// has no consequence — neither has an HTTP path, and GetApplicationMethod's
+// only caller (service.storeCandidate) already resolves the promotion from the
+// code first and never gets there if it is deleted — but having no
+// consequence does not mean it is not there.
 func (r *Repo) DeletePromotion(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -178,52 +186,56 @@ func (r *Repo) DeletePromotion(ctx context.Context, id string, now time.Time) er
 		ID:        id,
 		DeletedAt: fromTime(now),
 	}); err != nil {
-		return notFoundOr(err, CodePromotionNotFound, "promosyon bulunamadı: %s", id)
+		return notFoundOr(err, CodePromotionNotFound, "promotion not found: %s", id)
 	}
 	return nil
 }
 
-// ListCandidates hesaplamaya girebilecek adayları TEK TURDA (dört sorguyla)
-// döner: aktif otomatik promosyonlar ve verilen kodlara sahip promosyonlar.
+// ListCandidates returns the candidates that can enter the computation in ONE
+// ROUND (with four queries): the active automatic promotions and the
+// promotions that carry the given codes.
 //
-// Dört sorgu SABİTTİR ve aday sayısından bağımsızdır: promosyonlar, uygulama
-// yöntemleri, kurallar ve kampanyalar toplu okunur. Aday başına sorgu (N+1)
-// yapılmaz — bir sepet hesabı her turda çalıştığı için N+1 burada doğrudan
-// gecikme demektir.
+// The four queries are FIXED and independent of the number of candidates:
+// promotions, application methods, rules and campaigns are read in bulk. There
+// is no query per candidate (N+1) — because a cart computation runs on every
+// round, N+1 here directly means latency.
 //
-// codes nil ya da boş olabilir; o durumda yalnızca otomatik promosyonlar döner.
-// Kodlar BÜYÜK harfe normalleştirilmiş olarak beklenir.
+// codes may be nil or empty; in that case only the automatic promotions are
+// returned. The codes are expected to be normalized to UPPER case.
 func (r *Repo) ListCandidates(ctx context.Context, codes []string) ([]models.PromotionCandidate, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
 	}
 	if codes == nil {
-		// pgx boş dilim ile nil'i aynı biçimde kodlar; yine de nil bir dizi
-		// argümanı göndermemek için boş dilime çevrilir.
+		// pgx encodes an empty slice and nil the same way; it is still turned
+		// into an empty slice so that a nil array argument is never sent.
 		codes = []string{}
 	}
 
 	rows, err := r.q.ListApplicablePromotions(ctx, codes)
 	if err != nil {
-		return nil, wrapDB(err, "uygulanabilir promosyonlar alınamadı")
+		return nil, wrapDB(err, "the applicable promotions could not be read")
 	}
 
 	return r.candidatesOf(ctx, rows)
 }
 
-// ListCandidatesForDiagnosis adayları DURUM SÜZGECİ OLMADAN döner.
+// ListCandidatesForDiagnosis returns the candidates WITHOUT THE STATUS FILTER.
 //
-// Yönetim tarafının "neden uygulanmadı" cevabı bu okumadan üretilir: bir kodun
-// hiçbir şey yapmamasının en sık sebebi promosyonun yayına ALINMAMIŞ olmasıdır,
-// ve süzgeçli okuma onu hiç döndürmediği için o cevap verilemez.
+// The admin side's "why was it not applied" answer is produced from this read:
+// the most common reason a code does nothing is that the promotion has NOT
+// BEEN PUBLISHED, and because the filtered read never returns it, that answer
+// could not be given.
 //
-// Eleme kuralı BU okumada yaşamaz; service.skipReasonOf'ta yaşar. Aynı gerekçe
-// service.storeCandidate'ın godoc'unda da yazılı: durum kontrolü Go'da yapılırsa
-// "ne uygulanır" kuralı TEK yerde durur, sorgunun WHERE'i ile Go arasında
-// bölünmez — bölünürse süzgeci kaldıran bir değişiklik hiçbir testi düşürmez.
+// The skip rule does not live in THIS read; it lives in service.skipReasonOf.
+// The same reasoning is written in service.storeCandidate's godoc: if the
+// status check is done in Go, the "what applies" rule stays in ONE place and is
+// not split between the query's WHERE and Go — if it were split, a change that
+// removed the filter would fail no test.
 //
-// SICAK YOL bunu kullanmaz: sepet toplamı her değişiklikte yeniden hesaplanıyor
-// ve durum süzgeci o okumayı uygulanabilir promosyonlarla sınırlı tutan şey.
+// The HOT PATH does not use this: the cart total is recomputed on every change,
+// and the status filter is what keeps that read limited to applicable
+// promotions.
 func (r *Repo) ListCandidatesForDiagnosis(
 	ctx context.Context, codes []string,
 ) ([]models.PromotionCandidate, error) {
@@ -236,19 +248,20 @@ func (r *Repo) ListCandidatesForDiagnosis(
 
 	rows, err := r.q.ListCandidatesForDiagnosis(ctx, codes)
 	if err != nil {
-		return nil, wrapDB(err, "aday promosyonlar alınamadı")
+		return nil, wrapDB(err, "the candidate promotions could not be read")
 	}
 
 	return r.candidatesOf(ctx, rows)
 }
 
-// candidatesOf promosyon satırlarını yöntemleri, kuralları ve kampanyalarıyla
-// birlikte adaylara çevirir.
+// candidatesOf turns promotion rows into candidates together with their
+// methods, rules and campaigns.
 //
-// İki okuma da buraya iner ve ayrılmaları ŞART: alt okumaların dördü aynı ve
-// ikisini ayrı yazmak, birine eklenen bir alanın ötekinde eksik kalması demekti
-// — iki aday listesi aynı hesabı besliyor ve farkları yalnızca ELENEN üyeler
-// olmak zorunda.
+// Both reads come down here, and their NOT diverging is REQUIRED: all four of
+// the sub-reads are the same, and writing them twice would have meant a field
+// added to one going missing from the other — the two candidate lists feed the
+// same computation, and the only difference between them has to be the members
+// that are SKIPPED.
 func (r *Repo) candidatesOf(
 	ctx context.Context, rows []promotiondb.Promotion,
 ) ([]models.PromotionCandidate, error) {
@@ -267,7 +280,7 @@ func (r *Repo) candidatesOf(
 
 	methodRows, err := r.q.GetApplicationMethodsByPromotions(ctx, promotionIDs)
 	if err != nil {
-		return nil, wrapDB(err, "uygulama yöntemleri alınamadı")
+		return nil, wrapDB(err, "the application methods could not be read")
 	}
 	methods := make(map[string]models.ApplicationMethod, len(methodRows))
 	for i := range methodRows {
@@ -276,7 +289,7 @@ func (r *Repo) candidatesOf(
 
 	ruleRows, err := r.q.ListPromotionRulesByPromotions(ctx, promotionIDs)
 	if err != nil {
-		return nil, wrapDB(err, "promosyon kuralları alınamadı")
+		return nil, wrapDB(err, "the promotion rules could not be read")
 	}
 	rules := make(map[string][]models.PromotionRule, len(promotionIDs))
 	for i := range ruleRows {
@@ -315,27 +328,29 @@ func (r *Repo) candidatesOf(
 	return out, nil
 }
 
-// requireLivePromotion promosyonun CANLI olduğunu PAYLAŞIMLI kilit altında
-// doğrular; yoksa (ya da silinmişse) errors.NotFound döner.
+// requireLivePromotion verifies under a SHARED lock that the promotion is
+// LIVE; if there is none (or it has been deleted), errors.NotFound is returned.
 //
-// Promosyonun ALTINA satır yazan her yol bunu çağırmalıdır ve çağrı yazmayla
-// AYNI işlemde olmalıdır: kilit işlem bitince serbest kalır, yani işlemsiz bir
-// kilit hiçbir şey korumaz.
+// Every path that writes rows UNDER a promotion must call this, and the call
+// must be in the SAME transaction as the write: the lock is released when the
+// transaction ends, so a lock without a transaction protects nothing.
 //
-// Reddedilen alternatif, kontrolü SERVİSTE yapmaktı — ve bir süre öyleydi.
-// O biçimde varlık denetimi ile yazma iki AYRI autocommit deyimidir; araya
-// giren bir yumuşak silme okumayı bayatlatır ve yazma yine de iner. Foreign key
-// bunu yakalayamaz, çünkü yumuşak silme satırı yerinde bırakır ve FK satırın
-// deleted_at'ine değil VARLIĞINA bakar (ölçüldü, 2026-09-06; bkz.
-// promotion_integration_test.go'daki TestKuralEklemeSilinenPromosyonaYazmaz).
+// The rejected alternative was doing the check IN THE SERVICE — and for a
+// while it was done that way. In that shape the existence check and the write
+// are two SEPARATE autocommit statements; a soft delete that gets in between
+// makes the read stale and the write still lands. A foreign key cannot catch
+// this, because a soft delete leaves the row in place and the FK looks at the
+// row's EXISTENCE, not at its deleted_at (measured, 2026-09-06; see
+// TestAddingARuleDoesNotWriteUnderADeletedPromotion in
+// promotion_integration_test.go).
 func requireLivePromotion(ctx context.Context, q *promotiondb.Queries, promotionID string) error {
 	if _, err := q.LockPromotionShared(ctx, promotionID); err != nil {
-		return notFoundOr(err, CodePromotionNotFound, "promosyon bulunamadı: %s", promotionID)
+		return notFoundOr(err, CodePromotionNotFound, "promotion not found: %s", promotionID)
 	}
 	return nil
 }
 
-// toPromotion üretilen satırı domain modeline çevirir.
+// toPromotion turns the generated row into the domain model.
 func toPromotion(row promotiondb.Promotion) models.Promotion {
 	return models.Promotion{
 		ID:          row.ID,
@@ -353,8 +368,8 @@ func toPromotion(row promotiondb.Promotion) models.Promotion {
 	}
 }
 
-// copyString bir dize işaretçisini KOPYALAYARAK döner; gerekçe copyInt64'teki
-// ile aynıdır.
+// copyString returns a string pointer by COPYING it; the reasoning is the same
+// as copyInt64's.
 func copyString(v *string) *string {
 	if v == nil {
 		return nil

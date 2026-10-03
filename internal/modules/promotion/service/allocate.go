@@ -7,56 +7,61 @@ import (
 	"slices"
 )
 
-// allocLine tahsise giren tek bir satırdır.
+// allocLine is a single line taking part in an allocation.
 type allocLine struct {
-	// ID satırın kimliğidir; kuruş artığının sahibi belirlenirken son
-	// belirleyicidir.
+	// ID is the line's identity; it is the final tie-breaker when deciding who
+	// owns the leftover cent.
 	ID string
-	// Amount satırın tutarıdır (minor unit); pay bu tutarla orantılıdır.
+	// Amount is the line's amount (minor unit); the share is proportional to
+	// this amount.
 	Amount int64
 }
 
-// allocateAcross verilen toplamı satırlara tutarlarıyla ORANTILI dağıtır.
+// allocateAcross distributes the given total across the lines in PROPORTION to
+// their amounts.
 //
-// Dağıtılan payların toplamı, girilen toplamla BİREBİR tutar (kuruş artığı
-// dâhil); tek istisna, tüm satırların tutarının sıfır olduğu durumdur ve orada
-// dağıtılacak bir taban yoktur.
+// The distributed shares add up EXACTLY to the total passed in (leftover cent
+// included); the one exception is when every line's amount is zero, and there
+// is no base to distribute over.
 //
-// # Yöntem: en büyük kalan (largest remainder)
+// # Method: largest remainder
 //
-// Her satırın payı önce AŞAĞI yuvarlanarak hesaplanır:
+// Each line's share is first computed rounding DOWN:
 //
-//	pay_i = floor(toplam × tutar_i / taban),  taban = Σ tutar_i
+//	share_i = floor(total × amount_i / base),  base = Σ amount_i
 //
-// Aşağı yuvarlama yüzünden payların toplamı toplamdan `artık` kadar eksik
-// kalır ve artık, pay alan satır sayısından küçüktür. Artık BİRER BİRER,
-// kesirli kalanı EN BÜYÜK olan satırlara dağıtılır.
+// Because of the rounding down, the shares fall short of the total by a
+// `leftover`, and the leftover is smaller than the number of lines receiving a
+// share. The leftover is handed out ONE BY ONE to the lines whose fractional
+// remainder is the LARGEST.
 //
-// Basit alternatifler bilinçle reddedilmiştir: artığı ilk satıra ya da en
-// büyük satıra topluca vermek, iki kuruşluk artığı tek bir kaleme yığar ve o
-// kalemin indirimini orantısal hakkından iki kuruş fazla gösterir.
+// The simple alternatives were rejected deliberately: giving the whole leftover
+// to the first line or to the largest line piles a two-cent leftover onto a
+// single item and shows that item's discount two cents above its proportional
+// entitlement.
 //
-// # Kuruş artığı kime gider
+// # Who gets the leftover cent
 //
-// Sıralama ölçütleri şunlardır; ilk FARK kazananı belirler:
+// The ordering criteria are these; the first DIFFERENCE decides the winner:
 //
-//  1. Kesirli kalan (büyük kazanır) — orantısal hakkı en çok kırpılan satır.
-//  2. Tutar (büyük kazanır) — eşit kalanda büyük satır, bir kuruşu oransal
-//     olarak daha az bozar.
-//  3. Kimlik (küçük kazanır) — kalan her durumda sonuç BELİRLENİMCİDİR ve
-//     satırların GELİŞ SIRASINDAN bağımsızdır. Kimlikler zaman sıralı olduğu
-//     için bu, "önce eklenen kalem" demektir.
+//  1. Fractional remainder (larger wins) — the line whose proportional
+//     entitlement was cut the most.
+//  2. Amount (larger wins) — on an equal remainder, the larger line is
+//     proportionally less distorted by one cent.
+//  3. Identity (smaller wins) — in every remaining case the result is
+//     DETERMINISTIC and independent of the lines' ARRIVAL ORDER. Since
+//     identities are time-ordered, this means "the item added first".
 //
-// Belirlenimcilik süsleme değildir: aynı sepet iki kez hesaplandığında aynı
-// satıra aynı kuruş düşmelidir, aksi hâlde iki hesap arasında satır tutarları
-// oynar ve mutabakat imkânsızlaşır.
+// Determinism is not decoration: when the same cart is computed twice, the same
+// cent must land on the same line, otherwise line amounts shift between the two
+// computations and reconciliation becomes impossible.
 //
-// # Sınırlar
+// # Bounds
 //
-// total, tabanı AŞAMAZ; aşıyorsa tabana kırpılır — bir tahsis, dağıttığı
-// tabandan fazlasını dağıtamaz. Tutarı pozitif OLMAYAN satır pay ALMAZ: sıfır
-// tutarlı bir kaleme kuruş yazmak, indirimi olmayan bir kaleme indirim
-// göstermek olurdu.
+// total CANNOT exceed the base; if it does, it is clipped to the base — an
+// allocation cannot distribute more than the base it distributes over. A line
+// whose amount is NOT positive receives NO share: writing a cent onto a
+// zero-amount item would be showing a discount on an item that has none.
 func allocateAcross(total int64, lines []allocLine) []int64 {
 	out := make([]int64, len(lines))
 	if total <= 0 || len(lines) == 0 {
@@ -76,8 +81,8 @@ func allocateAcross(total int64, lines []allocLine) []int64 {
 		total = base
 	}
 
-	// share bir satırın payı ve kesirli kalanıdır; artık dağıtımı buna göre
-	// sıralanır.
+	// share is a line's share and its fractional remainder; the leftover
+	// distribution is ordered by it.
 	type share struct {
 		index     int
 		remainder int64
@@ -120,23 +125,25 @@ func allocateAcross(total int64, lines []allocLine) []int64 {
 	return out
 }
 
-// mulDivMod a×b/d bölümünü ve kalanını 128 bit ara sonuç üzerinden döner.
+// mulDivMod returns the quotient and remainder of a×b/d through a 128-bit
+// intermediate result.
 //
-// Ara çarpım int64'e SIĞMAYABİLİR: tahsiste a ve b'nin ikisi de
-// [models.MaxAmount] (10^12) büyüklüğünde olabilir ve çarpımları 10^24'e
-// ulaşır. math/bits'in 128 bitlik çarpma/bölmesi bu yüzden zorunludur; float'a
-// geçmek plan Bölüm 8'in yasakladığı şeydir ve zaten kuruş düzeyinde sessiz
-// hata üretirdi.
+// The intermediate product MAY NOT FIT in an int64: in an allocation both a and
+// b can be as large as [models.MaxAmount] (10^12), and their product reaches
+// 10^24. That is why math/bits' 128-bit multiplication/division is mandatory;
+// switching to float is what plan Section 8 forbids, and it would produce
+// silent errors at the cent level anyway.
 //
-// Bölüm AŞAĞI yuvarlanır (tam sayı bölmesi) ve kalan, artık dağıtımının
-// sıralama anahtarıdır.
+// The quotient is rounded DOWN (integer division), and the remainder is the
+// sort key of the leftover distribution.
 //
-// Ön koşul: 0 ≤ a ≤ d, 0 ≤ b ≤ d, d > 0. Bu koşul altında 128 bitlik bölmenin
-// kendi ön koşulu (yüksek kelime < bölen) kendiliğinden sağlanır ve bölüm
-// int64'e sığar. Koşulun ihlal edildiği durumda sıfır dönülür — yani indirim
-// verilmez. Yön bilinçlidir: bir aritmetik ön koşulu kırıldığında müşteriye
-// hesaplanamamış bir indirim vermektense hiç indirim vermemek yeğdir ve durum
-// toplamlarda görünür kalır.
+// Precondition: 0 ≤ a ≤ d, 0 ≤ b ≤ d, d > 0. Under this condition the 128-bit
+// division's own precondition (high word < divisor) holds by itself and the
+// quotient fits in an int64. When the condition is violated, zero is returned
+// — that is, no discount is given. The direction is deliberate: when an
+// arithmetic precondition is broken, giving no discount at all is preferable to
+// giving the customer a discount that could not be computed, and the situation
+// stays visible in the totals.
 func mulDivMod(a, b, d int64) (quotient, remainder int64) {
 	if a <= 0 || b <= 0 || d <= 0 {
 		return 0, 0
@@ -148,10 +155,10 @@ func mulDivMod(a, b, d int64) (quotient, remainder int64) {
 	}
 
 	q, r := bits.Div64(hi, lo, uint64(d))
-	// Kalan bölenden küçüktür ve bölen int64 olduğu için kalan da sığar; bölüm
-	// ise ön koşul altında b'yi aşamaz. İkisi de yine de denetlenir — sınırın
-	// YEREL olarak kanıtlanması, uzaktaki bir değişikliğin sessizce sarma
-	// üretmesini imkânsız kılar.
+	// The remainder is smaller than the divisor, and since the divisor is an
+	// int64 the remainder fits too; the quotient, under the precondition,
+	// cannot exceed b. Both are checked anyway — proving the bound LOCALLY makes
+	// it impossible for a distant change to silently produce a wraparound.
 	if q > math.MaxInt64 || r > math.MaxInt64 {
 		return 0, 0
 	}

@@ -13,12 +13,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
-// testNow testlerin sabit saatidir; kampanya penceresine bağlı dallar ancak
-// belirlenimci bir saatle sınanabilir.
+// testNow is the tests' fixed clock; the branches that depend on a campaign
+// window can only be tested with a deterministic clock.
 var testNow = time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 
-// newTestService bellek deposu üzerinde çalışan, saati sabitlenmiş bir servis
-// kurar.
+// newTestService builds a service with a fixed clock running on the in-memory
+// repository.
 func newTestService(repo *memRepo) *Service {
 	return New(repo, Options{
 		Logger: slog.New(slog.DiscardHandler),
@@ -26,10 +26,10 @@ func newTestService(repo *memRepo) *Service {
 	})
 }
 
-// ptr bir değerin işaretçisini döner; isteğe bağlı alanları kısa yazmak için.
+// ptr returns a pointer to a value; for writing optional fields briefly.
 func ptr[T any](v T) *T { return &v }
 
-// percentageMethod yüzde indirimli bir uygulama yöntemi üretir.
+// percentageMethod produces a percentage-discount application method.
 func percentageMethod(promotionID string, bps int64, target models.ApplicationTargetType, alloc models.Allocation) *models.ApplicationMethod {
 	return &models.ApplicationMethod{
 		ID:          "appm_" + promotionID,
@@ -41,7 +41,7 @@ func percentageMethod(promotionID string, bps int64, target models.ApplicationTa
 	}
 }
 
-// fixedMethod sabit tutarlı bir uygulama yöntemi üretir.
+// fixedMethod produces a fixed-amount application method.
 func fixedMethod(promotionID string, amount int64, target models.ApplicationTargetType, alloc models.Allocation) *models.ApplicationMethod {
 	return &models.ApplicationMethod{
 		ID:           "appm_" + promotionID,
@@ -54,7 +54,8 @@ func fixedMethod(promotionID string, amount int64, target models.ApplicationTarg
 	}
 }
 
-// seedPromotion depoya bir promosyonu yöntemi ve kurallarıyla birlikte yazar.
+// seedPromotion writes a promotion into the repository together with its
+// method and rules.
 func seedPromotion(
 	repo *memRepo,
 	promo models.Promotion,
@@ -76,14 +77,15 @@ func seedPromotion(
 	}
 }
 
-// item hesap girdisine giren bir kalem üretir.
-// item bir kalem kurar ve BİRİM fiyatı tutardan türetir.
+// item produces an item taking part in the computation input.
+// item builds an item and derives the UNIT price from the amount.
 //
-// Türetme yalnızca TESTTEDİR ve üretimde tam da bu yüzden yasaktır: bölme,
-// bölünmeyen bir tutarda sessizce yuvarlar. Testte sessiz değildir — kimliği
-// (birim × adet = tutar) [normalizeComputeInput] zorlar, yani bölünmeyen bir
-// tutarla kurulan kalem hesabın kapısında reddedilir ve testi düşürür. Birim
-// fiyatın kendisini konu eden testler onu [unitItem] ile açıkça yazar.
+// The derivation exists ONLY IN TESTS, and that is exactly why it is forbidden
+// in production: the division silently rounds an amount that does not divide.
+// In a test it is not silent — [normalizeComputeInput] enforces the identity
+// (unit × quantity = amount), so an item built with an amount that does not
+// divide is rejected at the computation's door and fails the test. The tests
+// whose subject is the unit price itself write it explicitly with [unitItem].
 func item(id string, amount, quantity int64, attrs map[string]string) ComputeItem {
 	unit := int64(0)
 	if quantity > 0 {
@@ -92,7 +94,7 @@ func item(id string, amount, quantity int64, attrs map[string]string) ComputeIte
 	return ComputeItem{ID: id, Amount: amount, UnitAmount: unit, Quantity: quantity, Attributes: attrs}
 }
 
-// unitItem BİRİM fiyattan bir kalem kurar; tutar birim × adettir.
+// unitItem builds an item from the UNIT price; the amount is unit × quantity.
 func unitItem(id string, unitAmount, quantity int64, attrs map[string]string) ComputeItem {
 	return ComputeItem{
 		ID:         id,
@@ -103,50 +105,50 @@ func unitItem(id string, unitAmount, quantity int64, attrs map[string]string) Co
 	}
 }
 
-// assertInvariants sonucun DEĞİŞMEZLERİNİ doğrular.
+// assertInvariants verifies the result's INVARIANTS.
 //
-// Bu yardımcı neredeyse her testte çağrılır ve modülün en kritik iddialarını
-// tek yerde toplar: satır sınırı, toplam kimliği ve Σ satır = Σ promosyon
-// eşitliği. Hesabın herhangi bir dalında yapılan bir hata, dalın kendi
-// iddiasını geçse bile buraya takılır.
+// This helper is called in almost every test and gathers the module's most
+// critical claims in one place: the line bound, the total identity and the
+// Σ line = Σ promotion equality. A mistake made in any branch of the
+// computation gets caught here even if it passes the branch's own assertion.
 func assertInvariants(t *testing.T, in ComputeInput, res ComputeResult) {
 	t.Helper()
 
-	require.Len(t, res.Items, len(in.Items), "her kalem için bir sonuç kaydı olmalı")
-	require.Len(t, res.ShippingMethods, len(in.ShippingMethods), "her kargo yöntemi için bir sonuç kaydı olmalı")
+	require.Len(t, res.Items, len(in.Items), "there has to be one result record per item")
+	require.Len(t, res.ShippingMethods, len(in.ShippingMethods), "there has to be one result record per shipping method")
 
 	var itemsTotal int64
 	for i := range in.Items {
-		assert.Equal(t, in.Items[i].ID, res.Items[i].ID, "sonuç girdiyle aynı sırada olmalı")
-		assert.GreaterOrEqual(t, res.Items[i].Amount, int64(0), "indirim negatif olamaz")
+		assert.Equal(t, in.Items[i].ID, res.Items[i].ID, "the result has to be in the same order as the input")
+		assert.GreaterOrEqual(t, res.Items[i].Amount, int64(0), "a discount cannot be negative")
 		assert.LessOrEqual(t, res.Items[i].Amount, in.Items[i].Amount,
-			"%s kaleminin indirimi tutarını aşamaz", in.Items[i].ID)
+			"the discount of item %s cannot exceed its amount", in.Items[i].ID)
 		itemsTotal += res.Items[i].Amount
 	}
 	var shippingTotal int64
 	for i := range in.ShippingMethods {
 		assert.Equal(t, in.ShippingMethods[i].ID, res.ShippingMethods[i].ID)
 		assert.LessOrEqual(t, res.ShippingMethods[i].Amount, in.ShippingMethods[i].Amount,
-			"%s kargo yönteminin indirimi tutarını aşamaz", in.ShippingMethods[i].ID)
+			"the discount of shipping method %s cannot exceed its amount", in.ShippingMethods[i].ID)
 		shippingTotal += res.ShippingMethods[i].Amount
 	}
 
-	assert.Equal(t, itemsTotal, res.ItemsDiscountTotal, "Σ kalem indirimi kalem toplamıyla birebir tutmalı")
-	assert.Equal(t, shippingTotal, res.ShippingDiscountTotal, "Σ kargo indirimi kargo toplamıyla birebir tutmalı")
-	assert.Equal(t, itemsTotal+shippingTotal, res.DiscountTotal, "toplam indirim iki bileşenin toplamıdır")
+	assert.Equal(t, itemsTotal, res.ItemsDiscountTotal, "Σ item discount has to equal the items total exactly")
+	assert.Equal(t, shippingTotal, res.ShippingDiscountTotal, "Σ shipping discount has to equal the shipping total exactly")
+	assert.Equal(t, itemsTotal+shippingTotal, res.DiscountTotal, "the total discount is the sum of the two components")
 
 	var appliedTotal int64
 	for i := range res.Applied {
-		assert.Positive(t, res.Applied[i].Amount, "sıfır indirim uygulanmış sayılmaz")
+		assert.Positive(t, res.Applied[i].Amount, "a zero discount does not count as applied")
 		appliedTotal += res.Applied[i].Amount
 	}
 	assert.Equal(t, res.DiscountTotal, appliedTotal,
-		"promosyon başına uygulanan tutarların toplamı, toplam indirimle birebir tutmalı")
+		"the sum of the amounts applied per promotion has to equal the total discount exactly")
 }
 
-func TestComputeDiscountsYuzdeEachAsagiYuvarlar(t *testing.T) {
+func TestComputeDiscountsPercentageEachRoundsDown(t *testing.T) {
 	repo := newMemRepo()
-	// %20 → 999 * 2000 / 10000 = 199.8 → 199 (AŞAĞI).
+	// 20% → 999 * 2000 / 10000 = 199.8 → 199 (DOWN).
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE20", IsAutomatic: true},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
@@ -159,11 +161,11 @@ func TestComputeDiscountsYuzdeEachAsagiYuvarlar(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Equal(t, int64(199), res.Items[0].Amount,
-		"yüzde indirim aşağı yuvarlanmalı (199.8 → 199); yukarı yuvarlama vaat edilen oranı aşardı")
+		"a percentage discount has to round down (199.8 → 199); rounding up would exceed the promised rate")
 	assert.Equal(t, int64(199), res.DiscountTotal)
 }
 
-func TestComputeDiscountsSabitTutarEachAdedeUygulanir(t *testing.T) {
+func TestComputeDiscountsFixedAmountEachAppliesToTheQuantity(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SABIT10", IsAutomatic: true},
 		fixedMethod("promo_1", 1000, models.TargetItems, models.AllocationEach))
@@ -171,20 +173,20 @@ func TestComputeDiscountsSabitTutarEachAdedeUygulanir(t *testing.T) {
 	in := ComputeInput{
 		CurrencyCode: "TRY",
 		Items: []ComputeItem{
-			unitItem("li_1", 1666, 3, nil), // 3 birim × 1000 = 3000
-			unitItem("li_2", 2000, 1, nil), // 1 birim × 1000 = 1000
+			unitItem("li_1", 1666, 3, nil), // 3 units × 1000 = 3000
+			unitItem("li_2", 2000, 1, nil), // 1 unit × 1000 = 1000
 		},
 	}
 	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, int64(3000), res.Items[0].Amount, "sabit tutar her BİRİME uygulanır")
+	assert.Equal(t, int64(3000), res.Items[0].Amount, "a fixed amount is applied to EACH UNIT")
 	assert.Equal(t, int64(1000), res.Items[1].Amount)
 	assert.Equal(t, int64(4000), res.DiscountTotal)
 }
 
-func TestComputeDiscountsSabitTutarEachMaxQuantityIleSinirlanir(t *testing.T) {
+func TestComputeDiscountsFixedAmountEachIsBoundedByMaxQuantity(t *testing.T) {
 	repo := newMemRepo()
 	method := fixedMethod("promo_1", 1000, models.TargetItems, models.AllocationEach)
 	method.MaxQuantity = ptr(int64(2))
@@ -199,10 +201,10 @@ func TestComputeDiscountsSabitTutarEachMaxQuantityIleSinirlanir(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Equal(t, int64(2000), res.Items[0].Amount,
-		"azami adet 2 ise indirim yalnızca iki birime uygulanır")
+		"with a maximum quantity of 2 the discount applies to only two units")
 }
 
-func TestComputeDiscountsYuzdeEachMaxQuantityYokSayar(t *testing.T) {
+func TestComputeDiscountsPercentageEachIgnoresMaxQuantity(t *testing.T) {
 	repo := newMemRepo()
 	method := percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach)
 	method.MaxQuantity = ptr(int64(1))
@@ -217,14 +219,14 @@ func TestComputeDiscountsYuzdeEachMaxQuantityYokSayar(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Equal(t, int64(5000), res.Items[0].Amount,
-		"yüzde indirimde azami adet yok sayılır; taban satırın TUTARIDIR")
+		"a percentage discount ignores the maximum quantity; the base is the line's AMOUNT")
 }
 
-func TestComputeDiscountsAcrossKurusArtigiDagitilirVeToplamBirebirTutar(t *testing.T) {
+func TestComputeDiscountsAcrossDistributesTheLeftoverCentAndTheTotalAddsUpExactly(t *testing.T) {
 	repo := newMemRepo()
-	// 100 birimlik sabit indirim üç eşit satıra dağıtılır: 33 + 33 + 33 = 99,
-	// artan 1 kuruş kesirli kalanı eşit olanlar arasında KİMLİĞİ EN KÜÇÜK olana
-	// gider.
+	// A fixed discount of 100 units is distributed across three equal lines:
+	// 33 + 33 + 33 = 99, and the leftover 1 cent goes, among those with an
+	// equal fractional remainder, to the one with the SMALLEST IDENTITY.
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SABIT100", IsAutomatic: true},
 		fixedMethod("promo_1", 100, models.TargetItems, models.AllocationAcross))
 
@@ -240,19 +242,19 @@ func TestComputeDiscountsAcrossKurusArtigiDagitilirVeToplamBirebirTutar(t *testi
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, int64(100), res.DiscountTotal, "Σ satır indirimi dağıtılan toplamla BİREBİR tutmalı")
-	assert.Equal(t, int64(34), res.Items[0].Amount, "kuruş artığı kimliği en küçük satıra gider")
+	assert.Equal(t, int64(100), res.DiscountTotal, "Σ line discount has to equal the distributed total EXACTLY")
+	assert.Equal(t, int64(34), res.Items[0].Amount, "the leftover cent goes to the line with the smallest identity")
 	assert.Equal(t, int64(33), res.Items[1].Amount)
 	assert.Equal(t, int64(33), res.Items[2].Amount)
 }
 
-func TestComputeDiscountsAcrossTahsisiGirdiSirasindanBagimsizdir(t *testing.T) {
+func TestComputeDiscountsAcrossAllocationIsIndependentOfInputOrder(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SABIT100", IsAutomatic: true},
 		fixedMethod("promo_1", 100, models.TargetItems, models.AllocationAcross))
 	svc := newTestService(repo)
 
-	duz := ComputeInput{
+	inOrder := ComputeInput{
 		CurrencyCode: "TRY",
 		Items: []ComputeItem{
 			item("li_a", 1000, 1, nil),
@@ -260,7 +262,7 @@ func TestComputeDiscountsAcrossTahsisiGirdiSirasindanBagimsizdir(t *testing.T) {
 			item("li_c", 1000, 1, nil),
 		},
 	}
-	ters := ComputeInput{
+	reversed := ComputeInput{
 		CurrencyCode: "TRY",
 		Items: []ComputeItem{
 			item("li_c", 1000, 1, nil),
@@ -269,25 +271,25 @@ func TestComputeDiscountsAcrossTahsisiGirdiSirasindanBagimsizdir(t *testing.T) {
 		},
 	}
 
-	ileri, err := svc.ComputeDiscounts(context.Background(), duz)
+	forward, err := svc.ComputeDiscounts(context.Background(), inOrder)
 	require.NoError(t, err)
-	geri, err := svc.ComputeDiscounts(context.Background(), ters)
+	backward, err := svc.ComputeDiscounts(context.Background(), reversed)
 	require.NoError(t, err)
 
 	byID := map[string]int64{}
-	for _, line := range geri.Items {
+	for _, line := range backward.Items {
 		byID[line.ID] = line.Amount
 	}
-	for _, line := range ileri.Items {
+	for _, line := range forward.Items {
 		assert.Equal(t, line.Amount, byID[line.ID],
-			"%s satırının kuruşu, satırların GELİŞ SIRASINDAN bağımsız olmalı", line.ID)
+			"the cent of line %s has to be independent of the lines' ARRIVAL ORDER", line.ID)
 	}
 }
 
-func TestComputeDiscountsAcrossYuzdeTekSeferYuvarlar(t *testing.T) {
+func TestComputeDiscountsAcrossPercentageRoundsOnce(t *testing.T) {
 	repo := newMemRepo()
-	// Taban 3 × 333 = 999; %20 → 199 (tek seferde). Satır başına hesaplansaydı
-	// her satır 66 alır ve toplam 198 olurdu — bir kuruş kayıp.
+	// The base is 3 × 333 = 999; 20% → 199 (in one go). Computed per line, each
+	// line would get 66 and the total would be 198 — one cent lost.
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE20", IsAutomatic: true},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationAcross))
 
@@ -304,10 +306,10 @@ func TestComputeDiscountsAcrossYuzdeTekSeferYuvarlar(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Equal(t, int64(199), res.DiscountTotal,
-		"across yüzdesi TOPLAM üzerinden bir kez yuvarlanır (199), satır başına değil (198)")
+		"an across percentage is rounded once over the TOTAL (199), not per line (198)")
 }
 
-func TestComputeDiscountsSiparisHedefiTumKalemlereDagitilirVeHedefKuraliniYokSayar(t *testing.T) {
+func TestComputeDiscountsOrderTargetIsDistributedToAllItemsAndIgnoresTheTargetRule(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
 		models.Promotion{ID: "promo_1", Code: "SIPARIS10", IsAutomatic: true},
@@ -329,13 +331,13 @@ func TestComputeDiscountsSiparisHedefiTumKalemlereDagitilirVeHedefKuraliniYokSay
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, int64(1000), res.DiscountTotal, "%10 × 10000 = 1000")
+	assert.Equal(t, int64(1000), res.DiscountTotal, "10% × 10000 = 1000")
 	assert.Equal(t, int64(600), res.Items[0].Amount)
 	assert.Equal(t, int64(400), res.Items[1].Amount,
-		"sipariş hedefi hedef kuralını yok sayar; indirim TÜM kalemlere dağıtılır")
+		"an order target ignores the target rule; the discount is distributed to ALL items")
 }
 
-func TestComputeDiscountsHedefKuraliKalemleriSuzer(t *testing.T) {
+func TestComputeDiscountsTargetRuleFiltersItems(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
 		models.Promotion{ID: "promo_1", Code: "ELEKTRONIK", IsAutomatic: true},
@@ -359,11 +361,11 @@ func TestComputeDiscountsHedefKuraliKalemleriSuzer(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Equal(t, int64(600), res.Items[0].Amount)
-	assert.Zero(t, res.Items[1].Amount, "kuralı sağlamayan kalem indirim almaz")
-	assert.Zero(t, res.Items[2].Amount, "özniteliği olmayan kalem kuralı SAĞLAMAZ")
+	assert.Zero(t, res.Items[1].Amount, "an item that does not satisfy the rule gets no discount")
+	assert.Zero(t, res.Items[2].Amount, "an item without the attribute DOES NOT SATISFY the rule")
 }
 
-func TestComputeDiscountsKargoHedefi(t *testing.T) {
+func TestComputeDiscountsShippingTarget(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "KARGOBEDAVA", IsAutomatic: true},
 		percentageMethod("promo_1", 10000, models.TargetShippingMethods, models.AllocationEach))
@@ -377,12 +379,12 @@ func TestComputeDiscountsKargoHedefi(t *testing.T) {
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Zero(t, res.Items[0].Amount, "kargo indirimi kalemlere dokunmaz")
+	assert.Zero(t, res.Items[0].Amount, "a shipping discount does not touch the items")
 	assert.Equal(t, int64(4990), res.ShippingMethods[0].Amount)
 	assert.Equal(t, int64(4990), res.ShippingDiscountTotal)
 }
 
-func TestComputeDiscountsYuzdelerBirbirineBinmez(t *testing.T) {
+func TestComputeDiscountsPercentagesDoNotStack(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "ON", IsAutomatic: true},
 		percentageMethod("promo_1", 1000, models.TargetItems, models.AllocationEach))
@@ -398,16 +400,16 @@ func TestComputeDiscountsYuzdelerBirbirineBinmez(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Equal(t, int64(3000), res.DiscountTotal,
-		"%10 + %20 ORİJİNAL tutar üzerinden 3000 eder; bileşik hesap 2800 verirdi")
+		"10% + 20% over the ORIGINAL amount comes to 3000; a compound computation would give 2800")
 	require.Len(t, res.Applied, 2)
 	assert.Equal(t, int64(1000), res.Applied[0].Amount)
 	assert.Equal(t, int64(2000), res.Applied[1].Amount)
 }
 
-func TestComputeDiscountsKuponlarOtomatiklerdenONCEUygulanir(t *testing.T) {
+func TestComputeDiscountsCouponsApplyBEFOREAutomatics(t *testing.T) {
 	repo := newMemRepo()
-	// İkisi birlikte satırın tutarını aşar; kırpılan SONUNCU olmalıdır ve
-	// sonuncu, otomatik promosyondur.
+	// Together the two exceed the line's amount; the one clipped has to be the
+	// LAST, and the last is the automatic promotion.
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "OTOMATIK", IsAutomatic: true},
 		percentageMethod("promo_1", 8000, models.TargetItems, models.AllocationEach))
 	seedPromotion(repo, models.Promotion{ID: "promo_2", Code: "KUPON", IsAutomatic: false},
@@ -422,15 +424,15 @@ func TestComputeDiscountsKuponlarOtomatiklerdenONCEUygulanir(t *testing.T) {
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, int64(10000), res.DiscountTotal, "toplam indirim satır tutarını aşamaz")
+	assert.Equal(t, int64(10000), res.DiscountTotal, "the total discount cannot exceed the line amount")
 	require.Len(t, res.Applied, 2)
-	assert.Equal(t, "KUPON", res.Applied[0].Code, "kupon önce uygulanır")
-	assert.Equal(t, int64(8000), res.Applied[0].Amount, "müşterinin yazdığı kupon TAM uygulanır")
+	assert.Equal(t, "KUPON", res.Applied[0].Code, "the coupon is applied first")
+	assert.Equal(t, int64(8000), res.Applied[0].Amount, "the coupon the customer typed is applied IN FULL")
 	assert.Equal(t, "OTOMATIK", res.Applied[1].Code)
-	assert.Equal(t, int64(2000), res.Applied[1].Amount, "kırpılan, sonra gelen otomatik promosyondur")
+	assert.Equal(t, int64(2000), res.Applied[1].Amount, "the one clipped is the automatic promotion that comes after")
 }
 
-func TestComputeDiscountsAyniGruptaKimlikSirasiyleUygulanir(t *testing.T) {
+func TestComputeDiscountsWithinAGroupAppliesInIDOrder(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_a", Code: "ILK", IsAutomatic: true},
 		percentageMethod("promo_a", 8000, models.TargetItems, models.AllocationEach))
@@ -446,12 +448,12 @@ func TestComputeDiscountsAyniGruptaKimlikSirasiyleUygulanir(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	require.Len(t, res.Applied, 2)
-	assert.Equal(t, "promo_a", res.Applied[0].PromotionID, "aynı grupta kimliği küçük olan önce uygulanır")
+	assert.Equal(t, "promo_a", res.Applied[0].PromotionID, "within the same group the one with the smaller identity is applied first")
 	assert.Equal(t, int64(8000), res.Applied[0].Amount)
 	assert.Equal(t, int64(2000), res.Applied[1].Amount)
 }
 
-func TestComputeDiscountsIndirimSatirTutariniAsamaz(t *testing.T) {
+func TestComputeDiscountsDiscountCannotExceedTheLineAmount(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "COKBUYUK", IsAutomatic: true},
 		fixedMethod("promo_1", 999_999, models.TargetItems, models.AllocationEach))
@@ -464,12 +466,12 @@ func TestComputeDiscountsIndirimSatirTutariniAsamaz(t *testing.T) {
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, int64(500), res.Items[0].Amount, "indirim satırın tutarında durur")
+	assert.Equal(t, int64(500), res.Items[0].Amount, "the discount stops at the line's amount")
 	assert.Equal(t, int64(500), res.Applied[0].Amount,
-		"promosyona yazılan tutar, KIRPILDIKTAN sonraki gerçek tutardır")
+		"the amount written to the promotion is the real amount AFTER CLIPPING")
 }
 
-func TestComputeDiscountsSifirTutarliKalemIndirimAlmaz(t *testing.T) {
+func TestComputeDiscountsZeroAmountItemGetsNoDiscount(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SABIT100", IsAutomatic: true},
 		fixedMethod("promo_1", 100, models.TargetItems, models.AllocationAcross))
@@ -485,11 +487,11 @@ func TestComputeDiscountsSifirTutarliKalemIndirimAlmaz(t *testing.T) {
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Zero(t, res.Items[0].Amount, "sıfır tutarlı kaleme kuruş yazılmaz")
+	assert.Zero(t, res.Items[0].Amount, "no cent is written onto a zero-amount item")
 	assert.Equal(t, int64(100), res.Items[1].Amount)
 }
 
-func TestComputeDiscountsTumKalemlerSifirsaIndirimYok(t *testing.T) {
+func TestComputeDiscountsNoDiscountWhenEveryItemIsZero(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE50", IsAutomatic: true},
 		percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationAcross))
@@ -503,10 +505,10 @@ func TestComputeDiscountsTumKalemlerSifirsaIndirimYok(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Zero(t, res.DiscountTotal)
-	assert.Empty(t, res.Applied, "hiç indirim üretmeyen promosyon uygulanmış sayılmaz")
+	assert.Empty(t, res.Applied, "a promotion that produces no discount at all does not count as applied")
 }
 
-func TestComputeDiscountsKalemsizSepetHataVermez(t *testing.T) {
+func TestComputeDiscountsCartWithoutItemsIsNotAnError(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE50", IsAutomatic: true},
 		percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
@@ -520,31 +522,32 @@ func TestComputeDiscountsKalemsizSepetHataVermez(t *testing.T) {
 	assert.Empty(t, res.Items)
 }
 
-func TestComputeDiscountsBuyukTutarlarTasmaz(t *testing.T) {
+func TestComputeDiscountsLargeAmountsDoNotOverflow(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE100", IsAutomatic: true},
 		percentageMethod("promo_1", 10000, models.TargetItems, models.AllocationAcross))
 
-	// İki satır da azami tutarın yarısıdır; taban tam [models.MaxAmount] olur ve
-	// %100 indirim 10^12 × 10^4 / 10^4 ara çarpımını gerektirir.
-	yarim := models.MaxAmount / 2
+	// Both lines are half the maximum amount; the base comes to exactly
+	// [models.MaxAmount] and a 100% discount needs the intermediate product
+	// 10^12 × 10^4 / 10^4.
+	half := models.MaxAmount / 2
 	in := ComputeInput{
 		CurrencyCode: "TRY",
 		Items: []ComputeItem{
-			item("li_a", yarim, 1, nil),
-			item("li_b", yarim, 1, nil),
+			item("li_a", half, 1, nil),
+			item("li_b", half, 1, nil),
 		},
 	}
 	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, models.MaxAmount, res.DiscountTotal, "azami tutarda bile hesap taşmadan tamamlanır")
-	assert.Equal(t, yarim, res.Items[0].Amount)
-	assert.Equal(t, yarim, res.Items[1].Amount)
+	assert.Equal(t, models.MaxAmount, res.DiscountTotal, "even at the maximum amount the computation completes without overflowing")
+	assert.Equal(t, half, res.Items[0].Amount)
+	assert.Equal(t, half, res.Items[1].Amount)
 }
 
-func TestComputeDiscountsAraToplamSinirasiAsilirsaReddedilir(t *testing.T) {
+func TestComputeDiscountsSubtotalAboveTheBoundIsRejected(t *testing.T) {
 	repo := newMemRepo()
 	in := ComputeInput{
 		CurrencyCode: "TRY",
@@ -557,111 +560,112 @@ func TestComputeDiscountsAraToplamSinirasiAsilirsaReddedilir(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err),
-		"ara toplamın azami tutarı aşması, taşma korumasının sınırıdır ve reddedilir")
+		"a subtotal exceeding the maximum amount is the limit of the overflow protection and is rejected")
 }
 
-func TestComputeDiscountsElemeDallari(t *testing.T) {
-	gecmisPencere := models.Campaign{
-		ID: "camp_gecmis", Name: "Geçmiş", CampaignIdentifier: "GECMIS",
+func TestComputeDiscountsEliminationBranches(t *testing.T) {
+	pastWindow := models.Campaign{
+		ID: "camp_gecmis", Name: "Past", CampaignIdentifier: "GECMIS",
 		BudgetType: models.BudgetNone,
 		EndsAt:     ptr(testNow.Add(-time.Hour)),
 	}
-	tukenmisButce := models.Campaign{
-		ID: "camp_tukenmis", Name: "Tükenmiş", CampaignIdentifier: "TUKENMIS",
+	exhaustedBudget := models.Campaign{
+		ID: "camp_tukenmis", Name: "Exhausted", CampaignIdentifier: "TUKENMIS",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(1000)),
 		BudgetUsed: 1000, BudgetCurrencyCode: "TRY",
 	}
 
-	testler := []struct {
-		ad      string
-		hazirla func(repo *memRepo)
-		gerekce string
+	tests := []struct {
+		name   string
+		setup  func(repo *memRepo)
+		reason string
 	}{
 		{
-			ad: "taslak promosyon",
-			hazirla: func(repo *memRepo) {
+			name: "draft promotion",
+			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
 					ID: "promo_1", Code: "TASLAK", IsAutomatic: true, Status: models.PromotionDraft,
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
-			gerekce: "taslak promosyon indirim üretmez",
+			reason: "a draft promotion produces no discount",
 		},
 		{
-			ad: "pasif promosyon",
-			hazirla: func(repo *memRepo) {
+			name: "inactive promotion",
+			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
 					ID: "promo_1", Code: "PASIF", IsAutomatic: true, Status: models.PromotionInactive,
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
-			gerekce: "pasif promosyon indirim üretmez",
+			reason: "an inactive promotion produces no discount",
 		},
 		{
-			ad: "uygulama yöntemi yok",
-			hazirla: func(repo *memRepo) {
+			name: "no application method",
+			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YONTEMSIZ", IsAutomatic: true}, nil)
 			},
-			gerekce: "yöntemsiz promosyon indirimin NASIL uygulanacağını söylemez",
+			reason: "a promotion without a method does not say HOW the discount is to be applied",
 		},
 		{
-			ad: "buyget türü",
-			hazirla: func(repo *memRepo) {
+			name: "buyget type",
+			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
 					ID: "promo_1", Code: "BUYGET", IsAutomatic: true, Type: models.PromotionBuyGet,
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
-			gerekce: "buyget mekaniği bu fazda yok; hesap onu atlar",
+			reason: "a buyget promotion whose method carries no buy and reward counts is " +
+				"skipped as a reward mismatch (buyget_test.go asserts the reason)",
 		},
 		{
-			ad: "kullanım hakkı bitmiş",
-			hazirla: func(repo *memRepo) {
+			name: "usage allowance used up",
+			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
 					ID: "promo_1", Code: "BITMIS", IsAutomatic: true,
 					UsageLimit: ptr(int64(2)), UsageCount: 2,
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
-			gerekce: "kullanım hakkı biten kupon uygulanmaz",
+			reason: "a coupon whose usage allowance has run out is not applied",
 		},
 		{
-			ad: "kampanya penceresi kapalı",
-			hazirla: func(repo *memRepo) {
-				repo.campaigns[gecmisPencere.ID] = gecmisPencere
+			name: "campaign window closed",
+			setup: func(repo *memRepo) {
+				repo.campaigns[pastWindow.ID] = pastWindow
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "GECMIS", IsAutomatic: true, CampaignID: ptr(gecmisPencere.ID),
+					ID: "promo_1", Code: "GECMIS", IsAutomatic: true, CampaignID: ptr(pastWindow.ID),
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
-			gerekce: "penceresi kapanmış kampanyanın promosyonu uygulanmaz",
+			reason: "the promotion of a campaign whose window has closed is not applied",
 		},
 		{
-			ad: "kampanya bütçesi tükenmiş",
-			hazirla: func(repo *memRepo) {
-				repo.campaigns[tukenmisButce.ID] = tukenmisButce
+			name: "campaign budget exhausted",
+			setup: func(repo *memRepo) {
+				repo.campaigns[exhaustedBudget.ID] = exhaustedBudget
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "TUKENMIS", IsAutomatic: true, CampaignID: ptr(tukenmisButce.ID),
+					ID: "promo_1", Code: "TUKENMIS", IsAutomatic: true, CampaignID: ptr(exhaustedBudget.ID),
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
-			gerekce: "bütçesi tükenmiş kampanya KISMİ de uygulanmaz",
+			reason: "a campaign whose budget is exhausted is not applied PARTIALLY either",
 		},
 		{
-			ad: "kampanya silinmiş",
-			hazirla: func(repo *memRepo) {
+			name: "campaign deleted",
+			setup: func(repo *memRepo) {
 				seedPromotion(repo, models.Promotion{
-					ID: "promo_1", Code: "SAHIPSIZ", IsAutomatic: true, CampaignID: ptr("camp_yok"),
+					ID: "promo_1", Code: "SAHIPSIZ", IsAutomatic: true, CampaignID: ptr("camp_missing"),
 				}, percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 			},
-			gerekce: "kampanyası silinmiş promosyon sınırsız hâle GELMEZ, elenir",
+			reason: "a promotion whose campaign was deleted does NOT BECOME unlimited; it is eliminated",
 		},
 		{
-			ad: "sabit indirimde para birimi uyuşmuyor",
-			hazirla: func(repo *memRepo) {
+			name: "currency mismatch on a fixed discount",
+			setup: func(repo *memRepo) {
 				method := fixedMethod("promo_1", 1000, models.TargetItems, models.AllocationEach)
 				method.CurrencyCode = "USD"
 				seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "DOLAR", IsAutomatic: true}, method)
 			},
-			gerekce: "kur çevirisi yapılmaz; farklı para birimindeki sabit indirim elenir",
+			reason: "no currency conversion is made; a fixed discount in a different currency is eliminated",
 		},
 		{
-			ad: "bağlam kuralı sağlanmıyor",
-			hazirla: func(repo *memRepo) {
+			name: "context rule not satisfied",
+			setup: func(repo *memRepo) {
 				seedPromotion(repo,
 					models.Promotion{ID: "promo_1", Code: "VIPONLY", IsAutomatic: true},
 					percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach),
@@ -671,14 +675,14 @@ func TestComputeDiscountsElemeDallari(t *testing.T) {
 					},
 				)
 			},
-			gerekce: "bağlamda alan yoksa kural EŞLEŞMEZ ve promosyon elenir",
+			reason: "if the field is not in the context the rule DOES NOT MATCH and the promotion is eliminated",
 		},
 	}
 
-	for _, tt := range testler {
-		t.Run(tt.ad, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			repo := newMemRepo()
-			tt.hazirla(repo)
+			tt.setup(repo)
 
 			in := ComputeInput{
 				CurrencyCode: "TRY",
@@ -688,13 +692,13 @@ func TestComputeDiscountsElemeDallari(t *testing.T) {
 			require.NoError(t, err)
 
 			assertInvariants(t, in, res)
-			assert.Zero(t, res.DiscountTotal, tt.gerekce)
-			assert.Empty(t, res.Applied, tt.gerekce)
+			assert.Zero(t, res.DiscountTotal, tt.reason)
+			assert.Empty(t, res.Applied, tt.reason)
 		})
 	}
 }
 
-func TestComputeDiscountsBaglamKuraliSaglaninca(t *testing.T) {
+func TestComputeDiscountsWhenTheContextRuleIsSatisfied(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
 		models.Promotion{ID: "promo_1", Code: "VIPONLY", IsAutomatic: true},
@@ -714,10 +718,10 @@ func TestComputeDiscountsBaglamKuraliSaglaninca(t *testing.T) {
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, int64(5000), res.DiscountTotal, "bağlam kuralı sağlandığında promosyon uygulanır")
+	assert.Equal(t, int64(5000), res.DiscountTotal, "when the context rule is satisfied the promotion is applied")
 }
 
-func TestComputeDiscountsKuponKoduVerilmezseOtomatikOlmayanUygulanmaz(t *testing.T) {
+func TestComputeDiscountsNonAutomaticIsNotAppliedWithoutItsCode(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "GIZLIKUPON", IsAutomatic: false},
 		percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
@@ -730,10 +734,10 @@ func TestComputeDiscountsKuponKoduVerilmezseOtomatikOlmayanUygulanmaz(t *testing
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Zero(t, res.DiscountTotal, "kodu verilmeyen kupon kendiliğinden uygulanmaz")
+	assert.Zero(t, res.DiscountTotal, "a coupon whose code was not given is not applied on its own")
 }
 
-func TestComputeDiscountsKuponKoduBuyukKucukHarfDuyarsizdir(t *testing.T) {
+func TestComputeDiscountsCouponCodeIsCaseInsensitive(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YAZ20", IsAutomatic: false},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
@@ -747,11 +751,11 @@ func TestComputeDiscountsKuponKoduBuyukKucukHarfDuyarsizdir(t *testing.T) {
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, int64(2000), res.DiscountTotal, "kupon kodu büyük/küçük harf ve boşluğa duyarsızdır")
+	assert.Equal(t, int64(2000), res.DiscountTotal, "a coupon code is insensitive to case and whitespace")
 	assert.Empty(t, res.UnmatchedCodes)
 }
 
-func TestComputeDiscountsAyniKodIkiKezVerilirseBirKezUygulanir(t *testing.T) {
+func TestComputeDiscountsSameCodeGivenTwiceAppliesOnce(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YAZ20", IsAutomatic: false},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
@@ -759,22 +763,22 @@ func TestComputeDiscountsAyniKodIkiKezVerilirseBirKezUygulanir(t *testing.T) {
 	in := ComputeInput{
 		CurrencyCode: "TRY",
 		Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
-		// Aynı kupon iki kez, ve bağlanamayan bir kod da iki kez: ilki indirimin
-		// ikiye katlanmadığını, ikincisi tekilleştirmenin YANITTA da geçerli
-		// olduğunu sınar.
+		// The same coupon twice, and an unmatchable code twice too: the first
+		// tests that the discount is not doubled, the second that the
+		// deduplication holds in the RESPONSE as well.
 		Codes: []string{"YAZ20", "yaz20", "HICYOK", "hicyok"},
 	}
 	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, int64(2000), res.DiscountTotal, "tekrarlanan kod indirimi ikiye katlamamalı")
+	assert.Equal(t, int64(2000), res.DiscountTotal, "a repeated code must not double the discount")
 	require.Len(t, res.Applied, 1)
 	assert.Equal(t, []string{"HICYOK"}, res.UnmatchedCodes,
-		"bağlanamayan bir kod, kaç kez verilirse verilsin bir kez bildirilir")
+		"an unmatchable code is reported once, however many times it is given")
 }
 
-func TestComputeDiscountsBaglanamayanKodlarBildirilir(t *testing.T) {
+func TestComputeDiscountsUnmatchedCodesAreReported(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{
 		ID: "promo_1", Code: "TASLAK", IsAutomatic: false, Status: models.PromotionDraft,
@@ -790,10 +794,10 @@ func TestComputeDiscountsBaglanamayanKodlarBildirilir(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Equal(t, []string{"TASLAK", "HICYOK"}, res.UnmatchedCodes,
-		"taslak promosyon ile var olmayan kod AYNI biçimde bildirilir; ayrım sızıntı olurdu")
+		"a draft promotion and a nonexistent code are reported the SAME way; a distinction would be a leak")
 }
 
-func TestComputeDiscountsIndirimUretmeyenGecerliKodEslesmisSayilir(t *testing.T) {
+func TestComputeDiscountsValidCodeThatProducesNoDiscountCountsAsMatched(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
 		models.Promotion{ID: "promo_1", Code: "ELEKTRONIK", IsAutomatic: false},
@@ -815,101 +819,101 @@ func TestComputeDiscountsIndirimUretmeyenGecerliKodEslesmisSayilir(t *testing.T)
 	assertInvariants(t, in, res)
 	assert.Zero(t, res.DiscountTotal)
 	assert.Empty(t, res.UnmatchedCodes,
-		"hedefine uyan kalemi olmayan GEÇERLİ kupon, geçersiz kod değildir")
+		"a VALID coupon with no item matching its target is not an invalid code")
 }
 
-func TestComputeDiscountsGirdiDogrulamasi(t *testing.T) {
-	gecerliKalem := item("li_1", 1000, 1, nil)
+func TestComputeDiscountsInputValidation(t *testing.T) {
+	validItem := item("li_1", 1000, 1, nil)
 
-	testler := []struct {
-		ad      string
-		in      ComputeInput
-		gerekce string
+	tests := []struct {
+		name   string
+		in     ComputeInput
+		reason string
 	}{
 		{
-			ad:      "para birimi yok",
-			in:      ComputeInput{Items: []ComputeItem{gecerliKalem}},
-			gerekce: "para birimi zorunludur",
+			name:   "no currency",
+			in:     ComputeInput{Items: []ComputeItem{validItem}},
+			reason: "the currency is mandatory",
 		},
 		{
-			ad: "kalem kimliği tekrar ediyor",
+			name: "item id is repeated",
 			in: ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{
 				item("li_1", 1000, 1, nil), item("li_1", 2000, 1, nil),
 			}},
-			gerekce: "aynı kimlik iki kez geçerse hangi satırın hangi indirimi aldığı ayırt edilemez",
+			reason: "if the same identity appears twice, which line received which discount cannot be told apart",
 		},
 		{
-			ad:      "negatif tutar",
-			in:      ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{item("li_1", -1, 1, nil)}},
-			gerekce: "negatif tutar bir indirim değildir",
+			name:   "negative amount",
+			in:     ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{item("li_1", -1, 1, nil)}},
+			reason: "a negative amount is not a discount",
 		},
 		{
-			ad:      "sıfır adet",
-			in:      ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{item("li_1", 1000, 0, nil)}},
-			gerekce: "adet en az bir olmalı",
+			name:   "zero quantity",
+			in:     ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{item("li_1", 1000, 0, nil)}},
+			reason: "the quantity has to be at least one",
 		},
 		{
-			ad:      "geçersiz kupon kodu",
-			in:      ComputeInput{CurrencyCode: "TRY", Codes: []string{"a b"}},
-			gerekce: "kupon kodu boşluk içeremez",
+			name:   "invalid coupon code",
+			in:     ComputeInput{CurrencyCode: "TRY", Codes: []string{"a b"}},
+			reason: "a coupon code cannot contain whitespace",
 		},
 		{
-			ad: "birim fiyat gönderilmedi",
+			name: "unit price not sent",
 			in: ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{
 				{ID: "li_1", Amount: 1000, Quantity: 1},
 			}},
-			gerekce: "birim fiyat ZORUNLUDUR; boş bırakılan alan, ödül mekaniğini " +
-				"bazı çağıranlarda sessizce çalışmaz kılardı",
+			reason: "the unit price is MANDATORY; a field left empty would make the reward mechanic " +
+				"silently not work for some callers",
 		},
 		{
-			ad: "birim fiyat × adet, tutarı vermiyor",
+			name: "unit price × quantity does not give the amount",
 			in: ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{
 				{ID: "li_1", Amount: 1000, UnitAmount: 400, Quantity: 2},
 			}},
-			gerekce: "ödül birimden, satır sınırı tutardan okunur; ikisi ayrıştığında " +
-				"promosyon satırın taşıyabileceğinden fazlasını vaat eder",
+			reason: "the reward is read from the unit, the line bound from the amount; when the two diverge " +
+				"the promotion promises more than the line can carry",
 		},
 		{
-			ad: "negatif birim fiyat",
+			name: "negative unit price",
 			in: ComputeInput{CurrencyCode: "TRY", Items: []ComputeItem{
 				{ID: "li_1", Amount: -2, UnitAmount: -1, Quantity: 2},
 			}},
-			gerekce: "negatif birim fiyat bir fiyat değildir",
+			reason: "a negative unit price is not a price",
 		},
 	}
 
-	for _, tt := range testler {
-		t.Run(tt.ad, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			_, err := newTestService(newMemRepo()).ComputeDiscounts(context.Background(), tt.in)
-			require.Error(t, err, tt.gerekce)
-			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), tt.gerekce)
+			require.Error(t, err, tt.reason)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), tt.reason)
 		})
 	}
 }
 
-func TestComputeDiscountsGirdiyiDegistirmez(t *testing.T) {
+func TestComputeDiscountsDoesNotModifyTheInput(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YAZ20", IsAutomatic: false},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
-	kodlar := []string{"yaz20"}
-	oznitelikler := map[string]string{"kategori": "giyim"}
+	codes := []string{"yaz20"}
+	attrs := map[string]string{"kategori": "giyim"}
 	in := ComputeInput{
 		CurrencyCode: "try",
-		Items:        []ComputeItem{item("li_1", 10000, 1, oznitelikler)},
-		Codes:        kodlar,
+		Items:        []ComputeItem{item("li_1", 10000, 1, attrs)},
+		Codes:        codes,
 	}
 	_, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"yaz20"}, kodlar, "çağıranın kod dilimi değiştirilmemeli")
-	assert.Equal(t, "try", in.CurrencyCode, "çağıranın girdisi normalleştirme yüzünden değişmemeli")
-	assert.Equal(t, map[string]string{"kategori": "giyim"}, oznitelikler)
+	assert.Equal(t, []string{"yaz20"}, codes, "the caller's code slice must not be modified")
+	assert.Equal(t, "try", in.CurrencyCode, "the caller's input must not change because of normalization")
+	assert.Equal(t, map[string]string{"kategori": "giyim"}, attrs)
 }
 
-func TestComputeDiscountsDepoHatasiYukseltilir(t *testing.T) {
+func TestComputeDiscountsPropagatesTheRepositoryError(t *testing.T) {
 	repo := newMemRepo()
-	repo.errOn["ListCandidates"] = errors.Unavailable("test_db", "veritabanı yok")
+	repo.errOn["ListCandidates"] = errors.Unavailable("test_db", "no database")
 
 	_, err := newTestService(repo).ComputeDiscounts(context.Background(), ComputeInput{
 		CurrencyCode: "TRY",
@@ -918,10 +922,10 @@ func TestComputeDiscountsDepoHatasiYukseltilir(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err),
-		"depo hatası sessizce 'indirim yok'a düşmemeli")
+		"a repository error must not silently fall to 'no discount'")
 }
 
-func TestComputeDiscountsHicYazmaz(t *testing.T) {
+func TestComputeDiscountsNeverWrites(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{
 		ID: "promo_1", Code: "YAZ20", IsAutomatic: true, UsageLimit: ptr(int64(5)),
@@ -937,21 +941,22 @@ func TestComputeDiscountsHicYazmaz(t *testing.T) {
 	}
 
 	assert.Zero(t, repo.promotions["promo_1"].UsageCount,
-		"hesap yan etkisizdir; sepete bakmak kuponu HARCAMAZ")
+		"the computation has no side effects; looking at the cart DOES NOT SPEND the coupon")
 	assert.Zero(t, repo.calls["Redeem"])
 }
 
-// TestComputeDiscountsAcrossDoluSatirIkinciPromosyonuYariyaDusurmez "across"
-// tahsisinde dağıtılacak toplamın hedeflerin ORİJİNAL tutarına göre
-// hesaplandığını pinler (bkz. [acrossTotal]).
+// TestComputeDiscountsAcrossFullLineDoesNotHalveTheSecondPromotion pins that in
+// an "across" allocation the total to distribute is computed from the targets'
+// ORIGINAL amounts (see [acrossTotal]).
 //
-// Senaryo üst üste binen iki promosyondur: kupon li_1'i tamamen indirir,
-// otomatik sipariş promosyonu ise siparişin TAMAMINA %100 uygular. Toplam
-// hedeflerin KALANINA kırpılsaydı havuz 1000'e düşer, ama paylar yine orijinal
-// tutarlara göre dağıtıldığı için dolu li_1 payının yarısını yiyip kırptırır ve
-// li_2'ye vaat edilenin yarısı (500) verilirdi — yani promosyon iki kez
-// cezalandırılırdı.
-func TestComputeDiscountsAcrossDoluSatirIkinciPromosyonuYariyaDusurmez(t *testing.T) {
+// The scenario is two overlapping promotions: the coupon discounts li_1
+// entirely, and the automatic order promotion applies 100% to the WHOLE order.
+// Had the total been clipped to the targets' REMAINDER, the pool would drop to
+// 1000, but since the shares are still distributed by the original amounts, the
+// full li_1 would eat half the share and get it clipped, and li_2 would be
+// given half of what was promised (500) — that is, the promotion would be
+// penalized twice.
+func TestComputeDiscountsAcrossFullLineDoesNotHalveTheSecondPromotion(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
 		models.Promotion{ID: "promo_1", Code: "KUPON", IsAutomatic: false},
@@ -976,20 +981,20 @@ func TestComputeDiscountsAcrossDoluSatirIkinciPromosyonuYariyaDusurmez(t *testin
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, int64(1000), res.Items[0].Amount, "kupon li_1'i tamamen indirir")
+	assert.Equal(t, int64(1000), res.Items[0].Amount, "the coupon discounts li_1 entirely")
 	assert.Equal(t, int64(1000), res.Items[1].Amount,
-		"dolu satırın payı kırpılıp kaybolur; boş satır yine de TAM payını alır")
+		"the full line's share is clipped and lost; the empty line still receives its FULL share")
 	assert.Equal(t, int64(2000), res.DiscountTotal,
-		"%100 sipariş indirimi kalana kırpılsaydı toplam 1500 olurdu; yüzdeler bileşik değildir")
+		"had the 100% order discount been clipped to the remainder the total would be 1500; percentages are not compound")
 	require.Len(t, res.Applied, 2)
 	assert.Equal(t, int64(1000), res.Applied[1].Amount,
-		"sipariş promosyonuna yazılan tutar, satır sınırına takılan kısım düşüldükten sonrasıdır")
+		"the amount written to the order promotion is what remains after the part caught on the line bound is subtracted")
 }
 
-// TestComputeDiscountsAcrossSabitTutarTabaniAsamaz kırpmanın hâlâ var olduğunu
-// pinler: kırpmayı tamamen kaldıran bir değişiklik hedeflerin tutarından
-// fazlasını dağıtmaya çalışırdı.
-func TestComputeDiscountsAcrossSabitTutarTabaniAsamaz(t *testing.T) {
+// TestComputeDiscountsAcrossFixedAmountCannotExceedTheBase pins that the
+// clipping still exists: a change removing the clipping entirely would try to
+// distribute more than the targets' amount.
+func TestComputeDiscountsAcrossFixedAmountCannotExceedTheBase(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "COKBUYUK", IsAutomatic: true},
 		fixedMethod("promo_1", 999_999, models.TargetItems, models.AllocationAcross))
@@ -1005,50 +1010,52 @@ func TestComputeDiscountsAcrossSabitTutarTabaniAsamaz(t *testing.T) {
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, int64(1000), res.DiscountTotal, "tahsis dağıttığı tabandan fazlasını dağıtamaz")
+	assert.Equal(t, int64(1000), res.DiscountTotal, "an allocation cannot distribute more than the base it distributes over")
 	assert.Equal(t, int64(300), res.Items[0].Amount)
 	assert.Equal(t, int64(700), res.Items[1].Amount)
 }
 
-// TestComputeDiscountsKampanyaButceParaBirimiElenir PARA ölçülü bir kampanya
-// bütçesinin sepetinkinden farklı para biriminde olması hâlinde promosyonun
-// hesaba HİÇ girmediğini pinler (bkz. [campaignBudgetCurrencyMatches]).
+// TestComputeDiscountsEliminatesOnCampaignBudgetCurrency pins that when a
+// MONEY-measured campaign budget is in a currency different from the cart's,
+// the promotion does NOT enter the computation AT ALL (see
+// [campaignBudgetCurrencyMatches]).
 //
-// Eleme olmasaydı indirim sepette görünür, [Service.RedeemPromotion] ise aynı
-// tutarı campaign_budget_currency_mismatch ile reddederdi.
-func TestComputeDiscountsKampanyaButceParaBirimiElenir(t *testing.T) {
-	tryButcesi := models.Campaign{
+// Without the elimination the discount would show in the cart, while
+// [Service.RedeemPromotion] would refuse the same amount with
+// campaign_budget_currency_mismatch.
+func TestComputeDiscountsEliminatesOnCampaignBudgetCurrency(t *testing.T) {
+	tryBudget := models.Campaign{
 		ID: "camp_try", Name: "Yaz", CampaignIdentifier: "YAZ",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(100_000)), BudgetCurrencyCode: "TRY",
 	}
-	adetButcesi := models.Campaign{
+	usageBudget := models.Campaign{
 		ID: "camp_adet", Name: "Adet", CampaignIdentifier: "ADET",
 		BudgetType: models.BudgetUsage, BudgetLimit: ptr(int64(10)),
 	}
 
-	testler := []struct {
-		ad       string
-		campaign models.Campaign
-		sepet    string
-		beklenen int64
-		gerekce  string
+	tests := []struct {
+		name         string
+		campaign     models.Campaign
+		cartCurrency string
+		want         int64
+		reason       string
 	}{
 		{
-			ad: "para birimi uyuşmuyor", campaign: tryButcesi, sepet: "USD", beklenen: 0,
-			gerekce: "TRY bütçeli kampanyanın promosyonu USD sepete uygulanamaz",
+			name: "currencies do not match", campaign: tryBudget, cartCurrency: "USD", want: 0,
+			reason: "the promotion of a campaign with a TRY budget cannot be applied to a USD cart",
 		},
 		{
-			ad: "para birimi uyuşuyor", campaign: tryButcesi, sepet: "TRY", beklenen: 2000,
-			gerekce: "aynı para biriminde eleme YAPILMAZ",
+			name: "currencies match", campaign: tryBudget, cartCurrency: "TRY", want: 2000,
+			reason: "in the same currency NO elimination is made",
 		},
 		{
-			ad: "adet ölçülü bütçe para birimine bakmaz", campaign: adetButcesi, sepet: "USD", beklenen: 2000,
-			gerekce: "adet sayan bir bütçenin para birimi yoktur; sepetinkiyle karşılaştırılamaz",
+			name: "a usage-measured budget does not look at the currency", campaign: usageBudget, cartCurrency: "USD", want: 2000,
+			reason: "a budget that counts usage has no currency; it cannot be compared with the cart's",
 		},
 	}
 
-	for _, tt := range testler {
-		t.Run(tt.ad, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			repo := newMemRepo()
 			repo.campaigns[tt.campaign.ID] = tt.campaign
 			seedPromotion(repo, models.Promotion{
@@ -1056,73 +1063,75 @@ func TestComputeDiscountsKampanyaButceParaBirimiElenir(t *testing.T) {
 			}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 			in := ComputeInput{
-				CurrencyCode: tt.sepet,
+				CurrencyCode: tt.cartCurrency,
 				Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
 			}
 			res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 			require.NoError(t, err)
 
 			assertInvariants(t, in, res)
-			assert.Equal(t, tt.beklenen, res.DiscountTotal, tt.gerekce)
+			assert.Equal(t, tt.want, res.DiscountTotal, tt.reason)
 		})
 	}
 }
 
-// TestComputeDiscountsSayisalKuralCevrilemeyenDegerleEslesmez [matchNumeric]
-// godoc'undaki "tam sayıya çevrilemeyen bir değer kuralı EŞLEŞMEZ" kararını
-// pinler.
+// TestComputeDiscountsNumericRuleDoesNotMatchAnUnparsableValue pins the
+// decision in the [matchNumeric] godoc that "a value that cannot be converted
+// to an integer DOES NOT MATCH the rule".
 //
-// Karar güvenlik açısından taşıyıcıdır: aksi hâlde bozuk ya da kötü niyetli tek
-// bir bağlam alanı ("total": "abc") eşik kurallarını herkese açardı.
-func TestComputeDiscountsSayisalKuralCevrilemeyenDegerleEslesmez(t *testing.T) {
-	testler := []struct {
-		ad          string
-		kuralDegeri string
-		baglam      string
-		beklenen    int64
-		gerekce     string
+// The decision is load-bearing for security: otherwise a single broken or
+// malicious context field ("total": "abc") would open the threshold rules to
+// everyone.
+func TestComputeDiscountsNumericRuleDoesNotMatchAnUnparsableValue(t *testing.T) {
+	tests := []struct {
+		name         string
+		ruleValue    string
+		contextValue string
+		want         int64
+		reason       string
 	}{
 		{
-			ad: "bağlam değeri sayı değil", kuralDegeri: "5000", baglam: "abc", beklenen: 0,
-			gerekce: "çevrilemeyen bağlam değeri kuralı EŞLEŞMEZ; eşiği herkese açmaz",
+			name: "the context value is not a number", ruleValue: "5000", contextValue: "abc", want: 0,
+			reason: "a context value that cannot be converted DOES NOT MATCH the rule; it does not open the threshold to everyone",
 		},
 		{
-			ad: "kuralın değeri sayı değil", kuralDegeri: "besbin", baglam: "10000", beklenen: 0,
-			gerekce: "çevrilemeyen kural değeri de eşleşmez; okunamayan koşul indirimi açmamalı",
+			name: "the rule's value is not a number", ruleValue: "besbin", contextValue: "10000", want: 0,
+			reason: "a rule value that cannot be converted does not match either; an unreadable condition must not open the discount",
 		},
 		{
-			ad: "iki taraf da sayı", kuralDegeri: "5000", baglam: "10000", beklenen: 5000,
-			gerekce: "iki taraf da çevrilebiliyorsa kural normal değerlendirilir",
+			name: "both sides are numbers", ruleValue: "5000", contextValue: "10000", want: 5000,
+			reason: "if both sides can be converted the rule is evaluated normally",
 		},
 	}
 
-	for _, tt := range testler {
-		t.Run(tt.ad, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			repo := newMemRepo()
 			seedPromotion(repo,
 				models.Promotion{ID: "promo_1", Code: "ESIK", IsAutomatic: true},
 				percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach),
 				models.PromotionRule{
 					ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleContext,
-					Attribute: "cart_total", Operator: models.OpGte, Values: []string{tt.kuralDegeri},
+					Attribute: "cart_total", Operator: models.OpGte, Values: []string{tt.ruleValue},
 				},
 			)
 
 			in := ComputeInput{
 				CurrencyCode: "TRY",
-				Context:      map[string]string{"cart_total": tt.baglam},
+				Context:      map[string]string{"cart_total": tt.contextValue},
 				Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
 			}
 			res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 			require.NoError(t, err)
 
 			assertInvariants(t, in, res)
-			assert.Equal(t, tt.beklenen, res.DiscountTotal, tt.gerekce)
+			assert.Equal(t, tt.want, res.DiscountTotal, tt.reason)
 		})
 	}
 }
 
-// anyInPromotion "şu gruplardan HERHANGİ BİRİNDE" kuralını taşıyan promosyonu kurar.
+// anyInPromotion builds the promotion carrying the "in ANY ONE of these
+// groups" rule.
 func anyInPromotion(repo *memRepo, operator models.RuleOperator) {
 	seedPromotion(repo,
 		models.Promotion{ID: "promo_1", Code: "SEGMENT", IsAutomatic: true},
@@ -1134,13 +1143,14 @@ func anyInPromotion(repo *memRepo, operator models.RuleOperator) {
 	)
 }
 
-// TestAnyInSegmentIndirimiBASTAKIGrupOlmasaDaUygular kusurun kendisidir.
+// TestAnyInAppliesTheSegmentDiscountEvenWhenItIsNotTheLEADINGGroup is the
+// defect itself.
 //
-// Müşteri {retail, vip} gruplarında ve tüccarın sıraladığı BAŞ "retail". Sepetin
-// gönderebildiği tek değer o baştı, yani vip için yazılmış bir kural segmentin
-// İÇİNDEKİ müşteriye sessizce uygulanmıyordu — ADR 0103'ün açılış kusuru
-// (ADR 0144).
-func TestAnyInSegmentIndirimiBASTAKIGrupOlmasaDaUygular(t *testing.T) {
+// The customer is in the groups {retail, vip} and the LEADING one, as the
+// merchant ordered them, is "retail". The only value the cart could send was
+// that leading one, so a rule written for vip was silently not applied to a
+// customer INSIDE the segment — ADR 0103's opening defect (ADR 0144).
+func TestAnyInAppliesTheSegmentDiscountEvenWhenItIsNotTheLEADINGGroup(t *testing.T) {
 	repo := newMemRepo()
 	anyInPromotion(repo, models.OpAnyIn)
 
@@ -1155,18 +1165,21 @@ func TestAnyInSegmentIndirimiBASTAKIGrupOlmasaDaUygular(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Equal(t, int64(5000), res.DiscountTotal,
-		"müşteri vip grubunda; baş grubun retail olması indirimi kapatmamalı")
+		"the customer is in the vip group; the leading group being retail must not shut the discount off")
 }
 
-// TestGONDERILMISKurallarinCevabiListeyleDEGISMEZ ikinci riski ayrı çiviler.
+// TestTheAnswerOfSHIPPEDRulesDoesNotCHANGEWithTheList nails down the second
+// risk separately.
 //
-// Aynı müşteri, aynı liste, ama kural `in` ile yazılmış. `in` tek değere bakar ve
-// baş "retail" olduğu için eşleşmez — bugünkü cevabın ta kendisi. İşleçler
-// birbirine karışsaydı canlı bir indirim, hiçbir şey duyurmadan genişlerdi.
+// The same customer, the same list, but the rule is written with `in`. `in`
+// looks at a single value and, since the leading one is "retail", does not
+// match — exactly today's answer. Had the operators been mixed up, a live
+// discount would widen without announcing anything.
 //
-// Ayrı bir vaka olması şart: tek fikstürde ikisi de sınansaydı, baştan aşağı
-// yanlış bir uygulama ilk iddiaya takılır ve bu hiç ateşlenmezdi.
-func TestGONDERILMISKurallarinCevabiListeyleDEGISMEZ(t *testing.T) {
+// It has to be a separate case: had both been tested in a single fixture, a
+// thoroughly wrong implementation would get caught on the first assertion and
+// this one would never fire.
+func TestTheAnswerOfSHIPPEDRulesDoesNotCHANGEWithTheList(t *testing.T) {
 	repo := newMemRepo()
 	anyInPromotion(repo, models.OpIn)
 
@@ -1181,15 +1194,16 @@ func TestGONDERILMISKurallarinCevabiListeyleDEGISMEZ(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Zero(t, res.DiscountTotal,
-		"`in` LİSTEYE BAKMAZ: gönderilmiş bir kuralın cevabı aynı kalmalı")
+		"`in` DOES NOT LOOK AT THE LIST: the answer of a shipped rule has to stay the same")
 }
 
-// TestAnyInListeGONDERILMEDIYSEEslesmez bilinmeyeni eşleşmiş saymaz.
+// TestAnyInDoesNotMatchWhenTheListIsNOTSENT does not count the unknown as
+// matched.
 //
-// Liste yoksa müşterinin hangi gruplarda olduğu BİLİNMİYOR, ve bilinmeyen bir
-// segmenti eşleşmiş saymak segment indirimini herkese açardı — eşleştiricinin
-// bağlamda bulunmayan alana verdiği cevabın aynısı.
-func TestAnyInListeGONDERILMEDIYSEEslesmez(t *testing.T) {
+// Without a list, which groups the customer is in is NOT KNOWN, and counting
+// an unknown segment as matched would open the segment discount to everyone —
+// the same answer the matcher gives for a field missing from the context.
+func TestAnyInDoesNotMatchWhenTheListIsNOTSENT(t *testing.T) {
 	repo := newMemRepo()
 	anyInPromotion(repo, models.OpAnyIn)
 
@@ -1202,10 +1216,10 @@ func TestAnyInListeGONDERILMEDIYSEEslesmez(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Zero(t, res.DiscountTotal,
-		"tek değer vip olsa bile: any_in LİSTE tarafını okur, ve liste yok")
+		"even if the single value is vip: any_in reads the LIST side, and there is no list")
 }
 
-// listItem kalemi LİSTE öznitelikleriyle kurar (ADR 0148).
+// listItem builds an item with LIST attributes (ADR 0148).
 func listItem(id string, amount, quantity int64, lists map[string][]string) ComputeItem {
 	out := item(id, amount, quantity, nil)
 	out.Lists = lists
@@ -1213,8 +1227,8 @@ func listItem(id string, amount, quantity int64, lists map[string][]string) Comp
 	return out
 }
 
-// categoryPromotion hedef kuralı "şu kategorilerden herhangi birinde" olan
-// promosyonu kurar.
+// categoryPromotion builds a promotion whose target rule is "in any one of
+// these categories".
 func categoryPromotion(repo *memRepo, operator models.RuleOperator, attribute string) {
 	seedPromotion(repo,
 		models.Promotion{ID: "promo_1", Code: "KATEGORI", IsAutomatic: true},
@@ -1226,15 +1240,15 @@ func categoryPromotion(repo *memRepo, operator models.RuleOperator, attribute st
 	)
 }
 
-// TestHedefKuraliSatirinKATEGORISINIOkuyabilir ADR 0144'ün bıraktığı yarıdır.
+// TestATargetRuleCanReadTheLinesCATEGORY is the half ADR 0144 left behind.
 //
-// İşleç vardı, satırın sunacağı küme yoktu: ürün modülü üyeliği yayımlamıyordu,
-// yani "şu kategorilerden herhangi birindeki satırlara %50" yazılamıyordu
-// (ADR 0148).
+// The operator existed, the set the line would offer did not: the product
+// module did not publish membership, so "50% off lines in any one of these
+// categories" could not be written (ADR 0148).
 //
-// İki kalem var ve YALNIZCA biri o kategoride: hepsini seçen bir uygulama da,
-// hiçbirini seçmeyen de bu testte düşer.
-func TestHedefKuraliSatirinKATEGORISINIOkuyabilir(t *testing.T) {
+// There are two items and ONLY one is in that category: an implementation that
+// selects all of them fails this test, and so does one that selects none.
+func TestATargetRuleCanReadTheLinesCATEGORY(t *testing.T) {
 	repo := newMemRepo()
 	categoryPromotion(repo, models.OpAnyIn, "category_ids")
 
@@ -1254,17 +1268,18 @@ func TestHedefKuraliSatirinKATEGORISINIOkuyabilir(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Equal(t, int64(5000), res.DiscountTotal,
-		"yalnızca kategorideki satır indirim almalı: 10000'in %50'si")
+		"only the line in the category should get a discount: 50% of 10000")
 	assert.Equal(t, int64(5000), res.Items[0].Amount)
 	assert.Zero(t, res.Items[1].Amount,
-		"öteki kategorideki satıra indirim düşmemeli; düşüyorsa kural OKUNMUYOR")
+		"no discount should fall to the line in the other category; if it does, the rule is NOT BEING READ")
 }
 
-// TestHedefKuraliETIKETIdeOkuyabilir ikinci listeyi ayrı çiviler.
+// TestATargetRuleCanReadTheTAGToo nails down the second list separately.
 //
-// Aynı mekanizma iki alan taşıyor ve biri çalışırken ötekinin unutulması sessiz
-// olurdu: etiket kuralı hiçbir satırı seçmez, indirim üretmez, hata da yoktur.
-func TestHedefKuraliETIKETIdeOkuyabilir(t *testing.T) {
+// The same mechanism carries two fields, and forgetting one while the other
+// works would be silent: the tag rule selects no line, produces no discount,
+// and there is no error either.
+func TestATargetRuleCanReadTheTAGToo(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
 		models.Promotion{ID: "promo_1", Code: "ETIKET", IsAutomatic: true},
@@ -1290,17 +1305,17 @@ func TestHedefKuraliETIKETIdeOkuyabilir(t *testing.T) {
 	assert.Zero(t, res.Items[1].Amount)
 }
 
-// TestSatirKuralindaTekDegerliIslecLISTEYEBAKMAZ ADR 0144'ün kuralını SATIR
-// tarafında tekrar eder.
+// TestASingleValuedOperatorInALineRuleDoesNotREADTheLIST repeats ADR 0144's
+// rule on the LINE side.
 //
-// Aynı liste, kural `in` ile yazılmış: eşleşmemeli. İşleçler birbirine karışsaydı,
-// gönderilmiş bir `category_ids in [cat_shirts]` kuralı — ki tek bir değerle asla
-// eşleşmiyordu — bir gün eşleşmeye başlar ve canlı bir indirim hiçbir şey
-// duyurmadan genişlerdi.
+// The same list, the rule written with `in`: it must not match. Had the
+// operators been mixed up, a shipped `category_ids in [cat_shirts]` rule —
+// which never matched a single value — would one day start matching and a live
+// discount would widen without announcing anything.
 //
-// Ayrı vaka olması şart: tek fikstürde ikisi de sınansaydı baştan aşağı yanlış bir
-// uygulama ilk iddiaya takılırdı.
-func TestSatirKuralindaTekDegerliIslecLISTEYEBAKMAZ(t *testing.T) {
+// It has to be a separate case: had both been tested in a single fixture, a
+// thoroughly wrong implementation would get caught on the first assertion.
+func TestASingleValuedOperatorInALineRuleDoesNotREADTheLIST(t *testing.T) {
 	repo := newMemRepo()
 	categoryPromotion(repo, models.OpIn, "category_ids")
 
@@ -1317,16 +1332,17 @@ func TestSatirKuralindaTekDegerliIslecLISTEYEBAKMAZ(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Zero(t, res.DiscountTotal,
-		"`in` LİSTEYE BAKMAZ; satır tarafında da öyle")
+		"`in` DOES NOT LOOK AT THE LIST; on the line side as well")
 }
 
-// TestListesizSatirKATEGORIKuraliylaEslesmez bilinmeyeni eşleşmiş saymaz.
+// TestALineWithoutListsDoesNotMatchACATEGORYRule does not count the unknown as
+// matched.
 //
-// Bir satırın listesi YOKSA ürünün hangi kategorilerde olduğu bilinmiyor —
-// kataloğu okunamayan ürün tam olarak böyle görünür (bkz. sepet akışının
-// `lineLists`). Bilinmeyeni eşleşmiş saymak, indirimi okunamayan her ürüne
-// açardı.
-func TestListesizSatirKATEGORIKuraliylaEslesmez(t *testing.T) {
+// If a line HAS NO list, which categories the product is in is not known —
+// that is exactly how a product whose catalog cannot be read looks (see the
+// cart flow's `lineLists`). Counting the unknown as matched would open the
+// discount to every unreadable product.
+func TestALineWithoutListsDoesNotMatchACATEGORYRule(t *testing.T) {
 	repo := newMemRepo()
 	categoryPromotion(repo, models.OpAnyIn, "category_ids")
 
@@ -1340,12 +1356,13 @@ func TestListesizSatirKATEGORIKuraliylaEslesmez(t *testing.T) {
 	assert.Zero(t, res.DiscountTotal)
 }
 
-// TestKargoHedefiKATEGORIKuraliylaEslesmez kargo tarafını ayrı söyler.
+// TestAShippingTargetDoesNotMatchACATEGORYRule states the shipping side
+// separately.
 //
-// Bir kargo yöntemi hiçbir kategoride değildir ve liste taşımaz. Kural eşleşmez,
-// ki doğru cevap budur; eşleşseydi "şu kategorideki ürünlere indirim" kuralı
-// kargoyu bedavaya çevirirdi.
-func TestKargoHedefiKATEGORIKuraliylaEslesmez(t *testing.T) {
+// A shipping method is in no category and carries no list. The rule does not
+// match, which is the right answer; had it matched, a "discount on products in
+// this category" rule would turn shipping free.
+func TestAShippingTargetDoesNotMatchACATEGORYRule(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
 		models.Promotion{ID: "promo_1", Code: "KARGO", IsAutomatic: true},
@@ -1368,5 +1385,5 @@ func TestKargoHedefiKATEGORIKuraliylaEslesmez(t *testing.T) {
 
 	assertInvariants(t, in, res)
 	assert.Zero(t, res.ShippingDiscountTotal,
-		"kargo yönteminin kategorisi yoktur; kural onu seçmemeli")
+		"a shipping method has no category; the rule must not select it")
 }

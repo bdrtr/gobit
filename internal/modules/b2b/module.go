@@ -1,55 +1,58 @@
-// Package b2b şirket adına alışverişi mümkün kılan modüldür.
+// Package b2b is the module that makes buying on a company's behalf possible.
 //
-// Sorumluluğu tek cümleyle: alıcının KİMİN ADINA ve NE KADARA kadar alışveriş
-// yapabileceğini bilmek. Modül Company ve CompanyEmployee verisinin TEK yazma
-// yetkilisidir (Prensip 2.3).
+// Its responsibility in one sentence: knowing ON WHOSE BEHALF and UP TO HOW
+// MUCH a buyer may shop. The module is the SOLE writer of the Company and
+// CompanyEmployee data (Principle 2.3).
 //
-// # Neden bu modül vitrin akışının varsayımını kırıyor
+// # Why this module breaks the storefront flow's assumption
 //
-// B2C akışında alıcı bir bireydir ve kendi parasını harcar; harcama yetkisi
-// diye bir kavram yoktur. B2B'de alıcı, HARCAMA YETKİSİ SINIRLI bir çalışandır:
-// kimliği yine bir müşteri kaydıdır (customer modülü), ama ne kadar
-// harcayabileceğini bağlı olduğu şirket belirler. Bu modül o iki bilgiyi tutar;
-// kimliğin kendisini TUTMAZ.
+// In the B2C flow the buyer is an individual spending their own money; there
+// is no such concept as spending authority. In B2B the buyer is an employee
+// with a LIMITED SPENDING AUTHORITY: their identity is again a customer record
+// (customer module), but how much they may spend is decided by the company
+// they belong to. This module holds those two pieces of information; it does
+// NOT hold the identity itself.
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// Harcamanın kendisini bilmez: sepet, sipariş ve tutarlar başka modüllerin
-// verisidir. Bu yüzden limiti UYGULAYAN taraf da bu modül DEĞİLDİR — modül
-// yalnızca kuralı (limit, şirketin para birimi ve geçerli pencerenin
-// başlangıcı) yayımlar; kuralı harcamaya uygulayan order modülüdür, çünkü
-// harcama onun verisidir ve kural ancak siparişin yazıldığı işlemde
-// uygulandığında yarışa kapalı olur (bkz. service/interop.go). Pencerenin
-// tanımı için bkz. internal/modules/b2b/models, SpendingResetPeriod.
+// It does not know the spending itself: carts, orders and amounts are other
+// modules' data. That is why the side that ENFORCES the limit is NOT this
+// module either — the module only publishes the rule (the limit, the company's
+// currency and the start of the current window); the module that applies the
+// rule to the spending is order, because the spending is its data and the rule
+// is closed to races only when it is applied in the transaction that writes
+// the order (see service/interop.go). For the definition of the window see
+// internal/modules/b2b/models, SpendingResetPeriod.
 //
-// Modül hiçbir modülü import etmez (Prensip 2.1/2.4, ADR 0001). Çalışanın
-// müşteri kaydına bağı Module Links ile kurulur ve şemada karşılığı olan bir
-// sütun yoktur (Prensip 2.2).
+// The module imports no other module (Principle 2.1/2.4, ADR 0001). The
+// employee's bond to the customer record is established with Module Links and
+// has no corresponding column in the schema (Principle 2.2).
 //
-// # Dışarıya açtığı yüzeyler
+// # The surfaces it opens to the outside
 //
-//   - "b2b.service" — modülün zengin tipleriyle konuşan servis; bugün yalnızca
-//     modülün kendi HTTP yüzeyi tüketir.
-//   - "b2b.interop" — harcama KURALINI yayımlayan ilkel yüzey (ADR 0001).
-//     order modülü onu bu adla çözer ve kuralı siparişin yazıldığı işlemde
-//     uygular.
-//   - /admin/v1/b2b/companies, /admin/v1/b2b/employees — yönetim API'si.
-//   - /store/v1/b2b/customers/{customer_id}/… — vitrin API'si.
+//   - "b2b.service" — the service that speaks in the module's rich types;
+//     today only the module's own HTTP surface consumes it.
+//   - "b2b.interop" — the primitive surface that publishes the spending RULE
+//     (ADR 0001). The order module resolves it under this name and applies
+//     the rule in the transaction that writes the order.
+//   - /admin/v1/b2b/companies, /admin/v1/b2b/employees — the admin API.
+//   - /store/v1/b2b/customers/{customer_id}/… — the storefront API.
 //
-// # Neden Query sağlayıcısı YOK
+// # Why there is NO Query provider
 //
-// Modül "b2b_employee.query" gibi bir sağlayıcı KAYDETMEZ. Sağlayıcı, Query
-// katmanının genişletmelerinde kök ya da hedef olabilmek içindir; b2b'yi
-// genişletmenin ya da b2b üzerinden genişletmenin bugün bir tüketicisi yoktur.
-// Kaydedilseydi, çağıranı olmayan bir yetenek daha eklenmiş olurdu — bu depoda
-// tekrar eden hata sınıfı tam olarak budur. İhtiyaç doğduğunda eklenmesi
-// birkaç satırdır; kaldırılması ise yayımlanmış bir sözleşmeyi geri almaktır.
+// The module does NOT REGISTER a provider such as "b2b_employee.query". A
+// provider exists so that something can be a root or a target in the Query
+// layer's expansions; today nothing consumes expanding b2b or expanding
+// through b2b. Had it been registered, one more capability with no caller would
+// have been added — that is exactly the error class that recurs in this
+// repository. Adding it when the need arises is a few lines; removing it would
+// mean taking back a published contract.
 //
-// # Bildirdiği link
+// # The link it declares
 //
-// "b2b_employee_customer" tanımını BU modül bildirir (ADR 0005); bağın sahibi
-// çalışan kaydıdır. Kardinalite seçiminin gerekçesi için bkz.
-// internal/modules/b2b/service, Definitions.
+// THIS module declares the "b2b_employee_customer" definition (ADR 0005); the
+// bond is owned by the employee record. For the reasoning behind the choice of
+// cardinality see internal/modules/b2b/service, Definitions.
 package b2b
 
 import (
@@ -72,40 +75,43 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/service"
 )
 
-// Container'daki adlar.
+// The names in the container.
 const (
-	// ModuleName modülün benzersiz adıdır; migration versiyon tablosunun öneki
-	// de budur.
+	// ModuleName is the module's unique name; it is also the prefix of the
+	// migration version table.
 	ModuleName = "b2b"
-	// ServiceName servisin container'daki adıdır. Tüketici modüller onu bu adla
-	// ve KENDİ tanımladıkları dar arayüzle çözer (ADR 0001).
+	// ServiceName is the service's name in the container. Consumer modules
+	// resolve it under this name and with the narrow interface they define
+	// THEMSELVES (ADR 0001).
 	ServiceName = ModuleName + ".service"
-	// InteropName modüller arası İLKEL yüzeyin container'daki adıdır.
+	// InteropName is the container name of the cross-module PRIMITIVE surface.
 	//
-	// Servisin kendisinden AYRI kaydedilir: servis b2b'nin zengin tipleriyle
-	// konuşur, bu yüzey yalnızca ilkel ve stdlib tipleriyle. Harcama limitini
-	// uygulayan order modülü onu bu adla ve kendi tanımladığı dar arayüzle
-	// çözer (bkz. service/interop.go).
+	// It is registered SEPARATELY from the service itself: the service speaks
+	// in b2b's rich types, this surface only in primitive and stdlib types. The
+	// order module, which enforces the spending limit, resolves it under this
+	// name and with the narrow interface it defines itself (see
+	// service/interop.go).
 	InteropName = ModuleName + ".interop"
 )
 
-// Container'da çözülen çekirdek servislerin adları.
+// The names of the core services resolved from the container.
 const (
 	svcDB   = "core.db"
 	svcLink = "core.link"
 )
 
-// Hata kodları.
+// Error codes.
 const (
 	codeSetupFailed = "b2b_module_setup_failed"
 	codeLinkDefine  = "b2b_link_define_failed"
 )
 
-// Kişisel veri tutan tabloların adları ([Module.PersonalData] bildirimi için).
+// The names of the tables that hold personal data (for the
+// [Module.PersonalData] declaration).
 //
-// tableCompany, [ModuleName] ile aynı harflerle BAŞLAR ama ondan türetilmez:
-// biri veritabanındaki bir tablonun adı, öteki modülün container'daki adıdır ve
-// birinin değişmesi ötekini değiştirmez.
+// tableCompany STARTS with the same letters as [ModuleName] but is not derived
+// from it: one is the name of a table in the database, the other the module's
+// name in the container, and changing one does not change the other.
 const (
 	tableCompany  = "b2b_company"
 	tableEmployee = "b2b_company_employee"
@@ -114,12 +120,12 @@ const (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// migrationsRoot gömülü dosyaların "migrations/" öneki soyulmuş hâlidir:
-// db.Migrate kaynağı KÖKTEN okur ve embed.FS dosyaları klasör adıyla birlikte
-// taşırdı.
+// migrationsRoot is the embedded files with the "migrations/" prefix stripped:
+// db.Migrate reads the source FROM THE ROOT, and embed.FS would carry the files
+// along with the directory name.
 var migrationsRoot = mustSub(migrationFiles, "migrations")
 
-// Module b2b modülünün [module.Module] uygulamasıdır.
+// Module is the b2b module's implementation of [module.Module].
 type Module struct {
 	svc     *service.Service
 	handler *api.Handler
@@ -127,34 +133,36 @@ type Module struct {
 	opts    Options
 }
 
-// Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
+// That the core contract is satisfied is pinned at compile time.
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe the document is pinned at compile time too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca modülün uçları belgeden sessizce düşerdi. Bu satır o
-// sessizliği kapatır.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it WITH A TYPE ASSERTION; if the method's name or signature drifted,
+// nothing would break at compile time, the module's endpoints would just
+// silently drop out of the document. This line closes that silence.
 var _ openapi.Describer = (*Module)(nil)
 
-// Kişisel veriyi BİLDİREBİLDİĞİ de derleme zamanında sabitlenir.
+// That it can DECLARE personal data is pinned at compile time too.
 //
-// Gerekçe [openapi.Describer] pininin aynısıdır ve bedeli daha ağırdır:
-// [personaldata.Declarer] da TİP İDDİASIYLA aranır (ADR 0033), yani metot adı ya da
-// imzası kaydığında hiçbir şey derlemede kırılmaz — modül taramadan sessizce
-// düşer. Belge örneğinde bunun bedeli eksik bir yol, burada ise gömen
-// uygulamanın bir kişiye yayımladığı bildirimde şirket adının, fatura adresinin
-// ve o kişinin harcama limitinin HİÇ GÖRÜNMEMESİDİR.
+// The reasoning is the same as for the [openapi.Describer] pin and the price
+// is heavier: [personaldata.Declarer] is looked for WITH A TYPE ASSERTION too
+// (ADR 0033), so when the method's name or signature drifts nothing breaks at
+// compile time — the module silently drops out of the sweep. In the document's
+// case the price of that is a missing path; here it is the company's name, its
+// billing address and that person's spending limit NEVER APPEARING in the
+// disclosure the embedding application publishes to a person.
 //
-// [personaldata.Eraser] BİLİNÇLİ olarak sabitlenmez, çünkü uygulanmaz: bu modülün
-// silebileceği bir kişi kaydı yoktur (bkz. [Module.PersonalData]). Bildiren ama
-// silmeyen bir tutucu, koordinatörün her raporunda RETAINED satırı olarak
-// görünür; sessiz kalmak ise satırı hiç üretmezdi.
+// [personaldata.Eraser] is DELIBERATELY not pinned, because it is not
+// implemented: this module has no person record it could erase (see
+// [Module.PersonalData]). A holder that declares but does not erase shows up as
+// a RETAINED row in every report of the coordinator; staying silent would not
+// produce the row at all.
 var _ personaldata.Declarer = (*Module)(nil)
 
-// New kurulmamış bir b2b modülü üretir; servis [Module.Register] içinde
-// kurulur. log nil ise loglar atılır.
+// New builds a b2b module that is not set up yet; the service is set up in
+// [Module.Register]. If log is nil the logs are discarded.
 func New(log *slog.Logger, opts Options) *Module {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -178,29 +186,31 @@ type Options struct {
 	TrustUnverifiedCustomerClaim bool
 }
 
-// Name modülün adını döner.
+// Name returns the module's name.
 func (m *Module) Name() string { return ModuleName }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Register servisi container'a kaydeder ve link tanımını bildirir.
+// Register registers the service in the container and declares the link
+// definition.
 //
-// Yalnızca ÇEKİRDEK servisler çözülür; başka modüllerin servisleri bu aşamada
-// henüz kayıtlı olmayabilir (bkz. module.Module belgesi). core.db ve core.link
-// modüller ayağa kalkmadan önce kompozisyon kökünde hazır değer olarak
-// kaydedildiği için burada çözülmeleri güvenlidir ve eksiklikleri modülün hiç
-// çalışamayacağı bir kurulum hatasıdır — sessizce ertelenmez.
+// Only CORE services are resolved; other modules' services may not be
+// registered yet at this stage (see the module.Module documentation). Since
+// core.db and core.link are registered as ready values in the composition root
+// before the modules come up, resolving them here is safe, and their absence is
+// a setup error under which the module can never work — it is not silently
+// deferred.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, svcDB)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, svcDB)
+			"the %s module could not resolve the database pool (%q)", ModuleName, svcDB)
 	}
 	links, err := container.Resolve[link.LinkService](c, svcLink)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü link servisini çözemedi (%q)", ModuleName, svcLink)
+			"the %s module could not resolve the link service (%q)", ModuleName, svcLink)
 	}
 
 	svc, err := service.New(service.Options{
@@ -210,119 +220,127 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s servisi kurulamadı", ModuleName)
+			"the %s service could not be set up", ModuleName)
 	}
 
 	if err := c.Provide(ServiceName, svc); err != nil {
 		return err
 	}
-	// Modüller arası yüzey AYRI bir adla kaydedilir: servis b2b'nin zengin
-	// tipleriyle konuşur, bu yüzey yalnızca ilkel tiplerle (ADR 0001).
+	// The cross-module surface is registered under a SEPARATE name: the
+	// service speaks in b2b's rich types, this surface only in primitive types
+	// (ADR 0001).
 	if err := c.Provide(InteropName, service.NewInterop(svc)); err != nil {
 		return err
 	}
 
-	// Link tanımları BURADA bildirilir: şema, tanımın kendisiyle aynı yerde
-	// durur ve her açılışta idempotent olarak doğrulanır (ADR 0005).
+	// The link definitions are declared HERE: the schema sits in the same place
+	// as the definition itself and is verified idempotently at every startup
+	// (ADR 0005).
 	for _, def := range service.Definitions() {
 		if err := links.Define(ctx, def); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), codeLinkDefine,
-				"%q link tanımı bildirilemedi", def.Name)
+				"the %q link definition could not be declared", def.Name)
 		}
 	}
 
 	m.svc = svc
-	// Kimlik EMBEDDER'ın modülünden gelir ve o modül bu noktada henüz kayıtlı
-	// olmayabilir; bu yüzden çözüm İLK İSTEĞE ertelenir (bkz. storefrontIdentity).
-	// Aynı kalıp order'ın harcama kuralında ve cart'ın akışlarında kullanılıyor.
+	// The identity comes from the EMBEDDER's module, and that module may not be
+	// registered yet at this point; that is why resolving it is deferred to the
+	// FIRST REQUEST (see storefrontIdentity). The same pattern is used in
+	// order's spending rule and in cart's flows.
 	m.handler = api.New(svc, storefrontIdentity(c, m.log, m.opts.TrustUnverifiedCustomerClaim).Identity,
 		m.opts.TrustUnverifiedCustomerClaim)
-	m.log.InfoContext(ctx, "b2b modülü kaydedildi",
-		slog.String("servis", ServiceName),
+	m.log.InfoContext(ctx, "b2b module registered",
+		slog.String("service", ServiceName),
 		slog.String("interop", InteropName),
 		slog.String("link", service.LinkEmployeeCustomer),
 	)
 	return nil
 }
 
-// Routes modülün admin ve store route'larını router'a bağlar.
+// Routes binds the module's admin and store routes to the router.
 //
-// Register çalışmadıysa hiçbir uç bağlanmaz: servisi olmayan bir handler'ın ilk
-// istekte panik üretmesindense ucun hiç var olmaması yeğdir.
+// If Register did not run, no endpoint is bound: an endpoint not existing at
+// all is preferable to a handler without a service panicking on the first
+// request.
 func (m *Module) Routes(r chi.Router) {
 	if m.handler == nil {
-		m.log.Warn("b2b modülü Register edilmeden Routes çağrıldı, route bağlanmadı")
+		m.log.Warn("Routes was called before the b2b module was registered; no route was bound")
 		return
 	}
 	m.handler.Routes(r)
 }
 
-// Describe modülün uçlarını OpenAPI belgesine işler.
+// Describe writes the module's endpoints into the OpenAPI document.
 //
-// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
-// DTO'larından türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
-// yüzeyini genişletirdi.
+// The description itself is in [api.Describe]: the body schemas are derived
+// from that package's unexported DTOs, and exporting the types just for the
+// document's sake would widen the module's surface.
 //
-// [Module.Routes]'un tersine handler kontrolü YOKTUR ve gerekmez: şema
-// tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
-// belgesini de sessizce boşaltırdı.
+// Unlike [Module.Routes] there is NO handler check, and none is needed: the
+// schema comes from the types, not from the service. Adding a check would
+// silently empty the document of a module that is not set up, too.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// PersonalData modülün kişisel veri tuttuğu HER sütunu bildirir.
+// PersonalData declares EVERY column in which the module holds personal data.
 //
-// # Neden modülde, neden statik
+// # Why in the module, why static
 //
-// Bildirim KODUN bir özelliğidir, verinin değil: boş veritabanında da dolusunda
-// da aynı cümledir ve bir denetim onu bağlantı açmadan okur (ADR 0029). Bu
-// yüzden servise değil modüle bağlıdır ve Register çağrılmamışken de doğru
-// yanıt verir.
+// The declaration is a property of the CODE, not of the data: it is the same
+// sentence on an empty database and on a full one, and an audit reads it
+// without opening a connection (ADR 0029). That is why it is bound to the
+// module rather than the service, and answers correctly even when Register has
+// not been called.
 //
-// Holder BOŞ bırakılır: koordinatör onu KAYIT DEFTERİNDEKİ adla doldurur (bkz.
-// internal/workflows/datasubject, Coordinator.PersonalData). Buraya elle yazmak,
-// aynı adı iki yerde tutmak ve ikisinin ayrışmasını beklemek olurdu.
+// Holder is left EMPTY: the coordinator fills it with the name in the
+// REGISTRY (see internal/workflows/datasubject, Coordinator.PersonalData).
+// Writing it here by hand would mean keeping the same name in two places and
+// waiting for the two to diverge.
 //
-// # Neden şirket satırı kişisel veridir
+// # Why a company row is personal data
 //
-// Modülün belgesi "alıcı bir TÜZEL KİŞİDİR" der ve bu, şirket satırının kişisel
-// veri taşımadığı anlamına GELMEZ: şahıs şirketinde tüzel kişinin adı o kişinin
-// KENDİ adıdır, fatura adresi de çoğu zaman evidir. Bir çerçeve, satırın hangi
-// şirket türüne ait olduğunu bilmez; bilmediği için de ikisini ayıramaz ve
-// ayıramadığı bir yerde bildirmemek, yanılmanın maliyetini kişiye yüklemek
-// olurdu.
+// The module's documentation says "the buyer is a LEGAL ENTITY", and that does
+// NOT mean the company row carries no personal data: in a sole proprietorship
+// the legal entity's name is that person's OWN name, and the billing address is
+// often their home. A framework does not know which kind of company a row
+// belongs to; because it does not know, it cannot tell the two apart, and not
+// declaring where it cannot tell them apart would put the cost of being wrong
+// on the person.
 //
-// # Çalışan tablosunun kenar durumu
+// # The employee table's edge case
 //
-// b2b_company_employee'de kişiyi ADLANDIRAN tek bir sütun yoktur — ne ad, ne
-// e-posta, ne de bir customer_id (sütunun neden bulunmadığı migration'ın
-// başlığında yazılıdır). Buna karşılık tablonun HER SATIRI bir gerçek kişi
-// hakkındadır ve spending_limit o kişinin harcama yetkisidir. Bildirilen şey bu
-// yüzden bir kimlik değil, kişi hakkındaki OLGULARDIR: limit ve yönetici olma
-// durumu.
+// b2b_company_employee has not a single column that NAMES the person — no
+// name, no e-mail address, not even a customer_id (why the column is absent is
+// written in the migration's header). On the other hand EVERY ROW of the table
+// is about a real person, and spending_limit is that person's spending
+// authority. What is declared is therefore not an identity but FACTS about the
+// person: the limit and whether they are an admin.
 //
-// Kimliği taşıyan bağ ("b2b_employee_customer") bu modülün servisinde bildirilir
-// ama tablosu core/link tarafından ÇALIŞMA ZAMANINDA yaratılır ve hiçbir
-// migration'da görünmez; o depoyu koordinatör AYRICA bildirir (bkz.
-// internal/workflows/datasubject, linkHoldings). Burada onu da bildirmek, tek bir
-// veriyi iki tutucunun üstlenmesi olurdu.
+// The bond that carries the identity ("b2b_employee_customer") is declared in
+// this module's service, but its table is created AT RUN TIME by core/link and
+// appears in no migration; the coordinator declares that store SEPARATELY (see
+// internal/workflows/datasubject, linkHoldings). Declaring it here as well
+// would mean two holders taking on a single piece of data.
 //
-// id ve company_id bildirilmez: bir anahtar satırı adlandırır, kişiyi değil ve
-// yanındaki sütunlar anonimleştikten sonra kimseyi göstermez. Bunu bildirmek,
-// kurulumdaki her yabancı anahtarı listeye sokardı.
+// id and company_id are not declared: a key names a row, not a person, and
+// once the columns beside it are anonymized it points to nobody. Declaring it
+// would put every foreign key in the installation on the list.
 //
-// # Neden hepsi [personaldata.Named]
+// # Why all of them are [personaldata.Named]
 //
-// Bu modülde serbest metin bir sütun (metadata jsonb, açıklama, not) YOKTUR:
-// her sütunun ne taşıdığını gobit bilir, çünkü oraya doğrulayarak kendisi
-// yazar. Bildirimde tek bir [personaldata.Open] satırının bulunmaması bu şemanın
-// ölçülmüş bir özelliğidir, atlanmış bir ihtimal değil.
+// This module has NO free-text column (metadata jsonb, description, note):
+// gobit knows what each column carries, because it writes there itself after
+// validating. That the declaration holds not a single [personaldata.Open] row
+// is a measured property of this schema, not a possibility that was skipped.
 //
-// # Neden eksiksiz olmak zorunda
+// # Why it has to be complete
 //
-// Liste, gömen uygulamanın "bu kişi hakkında nerede ne var" sorusuna
-// verebileceği tek yanıttır; gömen onu gizlilik bildirimi olarak yayımlar.
-// Eksik bir satır listeyi kısaltmaz, YALAN hâline getirir. Bu yüzden liste
-// migrations/000001_b2b_init.up.sql'deki iki tablonun sütunlarından birebir
-// türetilir ve eksiksizliği testle sabitlenir (bkz.
+// The list is the only answer the embedding application can give to the
+// question "what is held about this person, and where"; the embedder
+// publishes it as a privacy notice. A missing row does not shorten the list,
+// it makes it a LIE. That is why the list is derived one-to-one from the
+// columns of the two tables in migrations/000001_b2b_init.up.sql and its
+// completeness is pinned by a test (see
 // TestPersonalDataCoversEveryPersonalColumn).
 func (m *Module) PersonalData() personaldata.Declaration {
 	return personaldata.Declaration{
@@ -376,21 +394,24 @@ func (m *Module) PersonalData() personaldata.Declaration {
 	}
 }
 
-// Service kurulmuş servisi döner; Register çağrılmadıysa nil.
+// Service returns the service that was set up; nil if Register was not
+// called.
 //
-// Modülü doğrudan kullanan testler ve gömen uygulamalar içindir; normal akışta
-// servis container'dan [ServiceName] adıyla çözülür.
+// It is for tests and embedding applications that use the module directly; in
+// the normal flow the service is resolved from the container under the name
+// [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
 
-// mustSub gömülü dosya sisteminin alt ağacını açar.
+// mustSub opens a subtree of the embedded file system.
 //
-// Yol derleme zamanında sabittir; buraya düşmek migrations klasörünün
-// gömülmediği anlamına gelir ve sessiz geçilemez — migration'sız açılan bir
-// modül, tabloları olmadan çalışmaya başlardı.
+// The path is fixed at compile time; ending up here means the migrations
+// directory was not embedded, and that cannot be passed over silently — a
+// module that came up without migrations would start working without its
+// tables.
 func mustSub(fsys fs.FS, dir string) fs.FS {
 	sub, err := fs.Sub(fsys, dir)
 	if err != nil {
-		panic("b2b: migration kaynağı açılamadı: " + err.Error())
+		panic("b2b: the migration source could not be opened: " + err.Error())
 	}
 	return sub
 }

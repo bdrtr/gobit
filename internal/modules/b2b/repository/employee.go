@@ -8,12 +8,13 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/repository/b2bdb"
 )
 
-// CreateEmployee yeni bir çalışan yazar.
+// CreateEmployee writes a new employee.
 //
-// [models.CompanyEmployee.CustomerID] YOK SAYILIR: müşteri bağı şemada değil
-// link tablosundadır ve onu kuran servis katmanıdır. Şirket yoksa foreign key
-// ihlali errors.Invalid'e çevrilir; çağıran şirketin varlığını önceden
-// doğrulayarak daha iyi bir hata üretebilir.
+// [models.CompanyEmployee.CustomerID] is IGNORED: the customer bond lives not
+// in the schema but in the link table, and the service layer is what
+// establishes it. If the company does not exist the foreign key violation is
+// turned into errors.Invalid; the caller can produce a better error by
+// verifying beforehand that the company exists.
 func (r *Repo) CreateEmployee(ctx context.Context, e models.CompanyEmployee) (models.CompanyEmployee, error) {
 	if err := r.ready(); err != nil {
 		return models.CompanyEmployee{}, err
@@ -27,12 +28,12 @@ func (r *Repo) CreateEmployee(ctx context.Context, e models.CompanyEmployee) (mo
 		CreatedAt:      fromTime(e.CreatedAt),
 	})
 	if err != nil {
-		return models.CompanyEmployee{}, wrapDB(err, "çalışan oluşturulamadı")
+		return models.CompanyEmployee{}, wrapDB(err, "the employee could not be created")
 	}
 	return toEmployee(row), nil
 }
 
-// GetEmployee kimliğe göre çalışan döner; yoksa errors.NotFound.
+// GetEmployee returns an employee by id; errors.NotFound if there is none.
 func (r *Repo) GetEmployee(ctx context.Context, id string) (models.CompanyEmployee, error) {
 	if err := r.ready(); err != nil {
 		return models.CompanyEmployee{}, err
@@ -40,12 +41,12 @@ func (r *Repo) GetEmployee(ctx context.Context, id string) (models.CompanyEmploy
 
 	row, err := r.q.GetEmployee(ctx, id)
 	if err != nil {
-		return models.CompanyEmployee{}, notFoundOr(err, CodeEmployeeNotFound, "çalışan bulunamadı: %s", id)
+		return models.CompanyEmployee{}, notFoundOr(err, CodeEmployeeNotFound, "employee not found: %s", id)
 	}
 	return toEmployee(row), nil
 }
 
-// ListEmployees sayfalanmış çalışan listesini ve TOPLAM kayıt sayısını döner.
+// ListEmployees returns the paged employee list and the TOTAL record count.
 func (r *Repo) ListEmployees(
 	ctx context.Context,
 	filter models.EmployeeFilter,
@@ -62,7 +63,7 @@ func (r *Repo) ListEmployees(
 		Off:            toInt32(offset),
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "çalışan listesi alınamadı")
+		return nil, 0, wrapDB(err, "the employee list could not be read")
 	}
 
 	total, err := r.q.CountEmployees(ctx, b2bdb.CountEmployeesParams{
@@ -70,12 +71,13 @@ func (r *Repo) ListEmployees(
 		IsCompanyAdmin: filter.IsCompanyAdmin,
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "çalışan sayısı alınamadı")
+		return nil, 0, wrapDB(err, "the employees could not be counted")
 	}
 	return toEmployees(rows), total, nil
 }
 
-// UpdateEmployee çalışanın verilen alanlarını günceller; yoksa errors.NotFound.
+// UpdateEmployee updates the given fields of an employee; errors.NotFound if
+// there is none.
 func (r *Repo) UpdateEmployee(
 	ctx context.Context,
 	id string,
@@ -95,16 +97,17 @@ func (r *Repo) UpdateEmployee(
 	})
 	if err != nil {
 		return models.CompanyEmployee{}, notFoundOr(err, CodeEmployeeNotFound,
-			"çalışan bulunamadı: %s", id)
+			"employee not found: %s", id)
 	}
 	return toEmployee(row), nil
 }
 
-// DeleteEmployee çalışanı yumuşak siler; yoksa errors.NotFound.
+// DeleteEmployee soft-deletes an employee; errors.NotFound if there is none.
 //
-// Müşteri BAĞI burada kaldırılmaz; onu kaldıran servis katmanıdır (link ayrı
-// bir alt sistemdir). Bağın kaldırılması şarttır: kalırsa müşteri, bağın tekil
-// olması yüzünden bir daha hiçbir şirkete çalışan olarak eklenemez.
+// The customer BOND is not removed here; the service layer is what removes it
+// (link is a separate subsystem). Removing the bond is mandatory: if it stays,
+// the customer, because the bond is unique, can never again be added as an
+// employee of any company.
 func (r *Repo) DeleteEmployee(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -114,15 +117,15 @@ func (r *Repo) DeleteEmployee(ctx context.Context, id string, now time.Time) err
 		ID:        id,
 		DeletedAt: fromTime(now),
 	}); err != nil {
-		return notFoundOr(err, CodeEmployeeNotFound, "çalışan bulunamadı: %s", id)
+		return notFoundOr(err, CodeEmployeeNotFound, "employee not found: %s", id)
 	}
 	return nil
 }
 
-// toEmployee üretilen satırı domain modeline çevirir.
+// toEmployee turns a generated row into the domain model.
 //
-// CustomerID BOŞ kalır: sütunu yoktur, değeri link'ten gelir ve servis
-// katmanı doldurur (bkz. paket belgesi).
+// CustomerID stays EMPTY: it has no column, its value comes from link and the
+// service layer fills it in (see the package documentation).
 func toEmployee(row b2bdb.B2bCompanyEmployee) models.CompanyEmployee {
 	return models.CompanyEmployee{
 		ID:             row.ID,
@@ -135,7 +138,7 @@ func toEmployee(row b2bdb.B2bCompanyEmployee) models.CompanyEmployee {
 	}
 }
 
-// toEmployees satır dilimini domain modellerine çevirir.
+// toEmployees turns a slice of rows into domain models.
 func toEmployees(rows []b2bdb.B2bCompanyEmployee) []models.CompanyEmployee {
 	out := make([]models.CompanyEmployee, 0, len(rows))
 	for i := range rows {

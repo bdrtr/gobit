@@ -9,27 +9,27 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/service"
 )
 
-// campaignRequest kampanya oluşturma/güncelleme gövdesidir.
+// campaignRequest is the campaign create/update body.
 type campaignRequest struct {
-	// Name kampanyanın görünen adıdır.
+	// Name is the campaign's display name.
 	Name string `json:"name"`
-	// CampaignIdentifier benzersiz iş kimliğidir.
+	// CampaignIdentifier is the unique business identifier.
 	CampaignIdentifier string `json:"campaign_identifier"`
-	// Description açıklamadır.
+	// Description is the description.
 	Description string `json:"description"`
-	// StartsAt geçerlilik penceresinin başıdır.
+	// StartsAt is the start of the validity window.
 	StartsAt *time.Time `json:"starts_at"`
-	// EndsAt geçerlilik penceresinin sonudur.
+	// EndsAt is the end of the validity window.
 	EndsAt *time.Time `json:"ends_at"`
-	// BudgetType bütçenin ölçü birimidir (none | spend | usage).
+	// BudgetType is the budget's unit of measure (none | spend | usage).
 	BudgetType string `json:"budget_type"`
-	// BudgetLimit bütçenin üst sınırıdır.
+	// BudgetLimit is the budget's upper bound.
 	BudgetLimit *int64 `json:"budget_limit"`
-	// BudgetCurrencyCode "spend" bütçesinin para birimidir.
+	// BudgetCurrencyCode is the currency of a "spend" budget.
 	BudgetCurrencyCode string `json:"budget_currency_code"`
 }
 
-// toCampaignInput gövdeyi servis girdisine çevirir.
+// toCampaignInput turns the body into the service input.
 func (r campaignRequest) toCampaignInput() service.CampaignInput {
 	return service.CampaignInput{
 		Name:               r.Name,
@@ -43,7 +43,7 @@ func (r campaignRequest) toCampaignInput() service.CampaignInput {
 	}
 }
 
-// createCampaign yeni bir kampanya oluşturur (POST /admin/v1/campaigns).
+// createCampaign creates a new campaign (POST /admin/v1/campaigns).
 func (a *API) createCampaign(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -61,7 +61,7 @@ func (a *API) createCampaign(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toCampaignDTO(campaign))
 }
 
-// listCampaigns kampanyaları sayfalayarak listeler (GET /admin/v1/campaigns).
+// listCampaigns lists the campaigns, paginated (GET /admin/v1/campaigns).
 func (a *API) listCampaigns(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -79,7 +79,7 @@ func (a *API) listCampaigns(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toCampaignDTO)
 }
 
-// getCampaign tek bir kampanyayı döner (GET /admin/v1/campaigns/{id}).
+// getCampaign returns a single campaign (GET /admin/v1/campaigns/{id}).
 func (a *API) getCampaign(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -91,10 +91,11 @@ func (a *API) getCampaign(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCampaignDTO(campaign))
 }
 
-// updateCampaign kampanyanın tanımını yerine koyar
+// updateCampaign replaces the campaign's definition
 // (PUT /admin/v1/campaigns/{id}).
 //
-// Bütçe SAYACI bu yoldan değişmez; yalnızca kullanım akışı onu yazar.
+// The budget COUNTER does not change through this path; only the redemption
+// flow writes it.
 func (a *API) updateCampaign(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -112,7 +113,7 @@ func (a *API) updateCampaign(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCampaignDTO(campaign))
 }
 
-// deleteCampaign kampanyayı soft delete ile siler
+// deleteCampaign deletes the campaign with a soft delete
 // (DELETE /admin/v1/campaigns/{id}).
 func (a *API) deleteCampaign(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -124,25 +125,25 @@ func (a *API) deleteCampaign(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// promotionRequest promosyon oluşturma/güncelleme gövdesidir.
+// promotionRequest is the promotion create/update body.
 type promotionRequest struct {
-	// Code kupon kodudur.
+	// Code is the coupon code.
 	Code string `json:"code"`
-	// IsAutomatic promosyonun kodsuz uygulanıp uygulanmayacağıdır.
+	// IsAutomatic is whether the promotion is applied without a code.
 	IsAutomatic bool `json:"is_automatic"`
-	// Type promosyonun mekaniğidir (standard | buyget).
+	// Type is the promotion's mechanic (standard | buyget).
 	Type string `json:"type"`
-	// CampaignID promosyonu bir kampanyaya bağlar.
+	// CampaignID ties the promotion to a campaign.
 	CampaignID *string `json:"campaign_id"`
-	// Status yayın durumudur (draft | active | inactive).
+	// Status is the publication status (draft | active | inactive).
 	Status string `json:"status"`
-	// UsageLimit kullanım sınırıdır.
+	// UsageLimit is the usage limit.
 	UsageLimit *int64 `json:"usage_limit"`
-	// Metadata operatörün serbest notudur.
+	// Metadata is the operator's free-form note.
 	Metadata map[string]string `json:"metadata"`
 }
 
-// toPromotionInput gövdeyi servis girdisine çevirir.
+// toPromotionInput turns the body into the service input.
 func (r promotionRequest) toPromotionInput() service.PromotionInput {
 	return service.PromotionInput{
 		Code:        r.Code,
@@ -155,7 +156,7 @@ func (r promotionRequest) toPromotionInput() service.PromotionInput {
 	}
 }
 
-// createPromotion yeni bir promosyon oluşturur (POST /admin/v1/promotions).
+// createPromotion creates a new promotion (POST /admin/v1/promotions).
 func (a *API) createPromotion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -173,10 +174,10 @@ func (a *API) createPromotion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toPromotionDTO(promo))
 }
 
-// listPromotions promosyonları sayfalayarak listeler
+// listPromotions lists the promotions, paginated
 // (GET /admin/v1/promotions).
 //
-// "status" ve "campaign_id" sorgu parametreleriyle süzülebilir.
+// It can be filtered with the "status" and "campaign_id" query parameters.
 func (a *API) listPromotions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -204,7 +205,7 @@ func (a *API) listPromotions(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toPromotionDTO)
 }
 
-// getPromotion tek bir promosyonu döner (GET /admin/v1/promotions/{id}).
+// getPromotion returns a single promotion (GET /admin/v1/promotions/{id}).
 func (a *API) getPromotion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -216,7 +217,7 @@ func (a *API) getPromotion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toPromotionDTO(promo))
 }
 
-// updatePromotion promosyonun tanımını yerine koyar
+// updatePromotion replaces the promotion's definition
 // (PUT /admin/v1/promotions/{id}).
 func (a *API) updatePromotion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -235,7 +236,7 @@ func (a *API) updatePromotion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toPromotionDTO(promo))
 }
 
-// deletePromotion promosyonu soft delete ile siler
+// deletePromotion deletes the promotion with a soft delete
 // (DELETE /admin/v1/promotions/{id}).
 func (a *API) deletePromotion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -247,30 +248,32 @@ func (a *API) deletePromotion(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// applicationMethodRequest uygulama yöntemi yazma gövdesidir.
+// applicationMethodRequest is the application method write body.
 type applicationMethodRequest struct {
-	// Type indirimin ölçüsüdür (fixed | percentage).
+	// Type is the discount's measure (fixed | percentage).
 	Type string `json:"type"`
-	// TargetType indirimin hedefidir (items | shipping_methods | order).
+	// TargetType is the discount's target (items | shipping_methods | order).
 	TargetType string `json:"target_type"`
-	// Allocation dağıtım biçimidir (each | across).
+	// Allocation is the allocation mode (each | across).
 	Allocation string `json:"allocation"`
-	// Value sabit tutar (minor unit) ya da baz puandır.
+	// Value is a fixed amount (minor unit) or basis points.
 	Value int64 `json:"value"`
-	// MaxQuantity sabit tutarın uygulanacağı azami adettir.
+	// MaxQuantity is the maximum quantity the fixed amount is applied to.
 	MaxQuantity *int64 `json:"max_quantity"`
-	// BuyQuantity ödülün hak edilmesi için alınması gereken adettir.
+	// BuyQuantity is the quantity that has to be bought to earn the reward.
 	BuyQuantity *int64 `json:"buy_quantity"`
-	// ApplyToQuantity ödülün ineceği adettir; alım adediyle BİRLİKTE verilir.
+	// ApplyToQuantity is the quantity the reward lands on; it is given TOGETHER
+	// with the buy quantity.
 	ApplyToQuantity *int64 `json:"apply_to_quantity"`
-	// CurrencyCode sabit tutarlı indirimin para birimidir.
+	// CurrencyCode is the currency of a fixed-amount discount.
 	CurrencyCode string `json:"currency_code"`
 }
 
-// setApplicationMethod promosyonun uygulama yöntemini yazar
+// setApplicationMethod writes the promotion's application method
 // (PUT /admin/v1/promotions/{id}/application-method).
 //
-// Yerine koymadır: promosyonun zaten bir yöntemi varsa üzerine yazılır.
+// It is a replacement: if the promotion already has a method, it is
+// overwritten.
 func (a *API) setApplicationMethod(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -297,7 +300,7 @@ func (a *API) setApplicationMethod(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toApplicationMethodDTO(method))
 }
 
-// deleteApplicationMethod yöntemi soft delete ile siler
+// deleteApplicationMethod deletes the method with a soft delete
 // (DELETE /admin/v1/promotions/{id}/application-method).
 func (a *API) deleteApplicationMethod(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -309,19 +312,19 @@ func (a *API) deleteApplicationMethod(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// promotionRuleRequest kural ekleme gövdesidir.
+// promotionRuleRequest is the rule add body.
 type promotionRuleRequest struct {
-	// RuleType kuralın neye baktığıdır (context | target).
+	// RuleType is what the rule looks at (context | target).
 	RuleType string `json:"rule_type"`
-	// Attribute bakılacak alan adıdır.
+	// Attribute is the name of the field to look at.
 	Attribute string `json:"attribute"`
-	// Operator karşılaştırma işlecidir.
+	// Operator is the comparison operator.
 	Operator string `json:"operator"`
-	// Values karşılaştırmanın sağ tarafıdır.
+	// Values is the right-hand side of the comparison.
 	Values []string `json:"values"`
 }
 
-// listPromotionRules bir promosyonun kurallarını döner
+// listPromotionRules returns a promotion's rules
 // (GET /admin/v1/promotions/{id}/rules).
 func (a *API) listPromotionRules(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -334,7 +337,7 @@ func (a *API) listPromotionRules(w http.ResponseWriter, r *http.Request) {
 	writeItems(w, r, toPromotionRuleDTOs(rules))
 }
 
-// createPromotionRule bir promosyona kural ekler
+// createPromotionRule adds a rule to a promotion
 // (POST /admin/v1/promotions/{id}/rules).
 func (a *API) createPromotionRule(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -358,7 +361,7 @@ func (a *API) createPromotionRule(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toPromotionRuleDTO(rule))
 }
 
-// deletePromotionRule kuralı soft delete ile siler
+// deletePromotionRule deletes the rule with a soft delete
 // (DELETE /admin/v1/promotion-rules/{id}).
 func (a *API) deletePromotionRule(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -370,7 +373,7 @@ func (a *API) deletePromotionRule(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// listRedemptions bir promosyonun kullanım defterini döner
+// listRedemptions returns a promotion's redemption ledger
 // (GET /admin/v1/promotions/{id}/redemptions).
 func (a *API) listRedemptions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -389,27 +392,29 @@ func (a *API) listRedemptions(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toRedemptionDTO)
 }
 
-// redeemRequest kullanım yazma gövdesidir.
+// redeemRequest is the redemption write body.
 type redeemRequest struct {
-	// Reference kullanımın iş kaydı referansıdır; idempotency anahtarıdır.
+	// Reference is the redemption's business record reference; it is the
+	// idempotency key.
 	Reference string `json:"reference"`
-	// Amount uygulanan indirim tutarıdır (minor unit).
+	// Amount is the applied discount amount (minor unit).
 	Amount int64 `json:"amount"`
-	// CurrencyCode indirimin para birimidir.
+	// CurrencyCode is the discount's currency.
 	CurrencyCode string `json:"currency_code"`
 }
 
-// redeemPromotion promosyonu bir referans için kullanır
+// redeemPromotion redeems the promotion for a reference
 // (POST /admin/v1/promotions/{id}/redeem).
 //
-// İDEMPOTENTTİR: aynı referansla ikinci istek sayacı artırmaz ve var olan
-// kaydı döner. Bu yüzden yanıt 201 değil 200'dür — istek her zaman yeni bir
-// kayıt YARATMAZ.
+// It is IDEMPOTENT: a second request with the same reference does not increment
+// the counter and returns the existing record. That is why the response is 200
+// and not 201 — the request does NOT always CREATE a new record.
 //
-// Promosyon taslak/pasifse, kampanyasının penceresi kapalıysa ya da bir sayaç
-// sınırı aşılacaksa 409 döner; sebeplerin tamamı [service.Service.RedeemPromotion]
-// godoc'undadır. Yönetim yüzeyi olması bu denetimleri GEVŞETMEZ: sayaç ve bütçe
-// aynı defteri besler.
+// It returns 409 if the promotion is draft/inactive, if its campaign's window
+// is closed or if a counter limit would be exceeded; the full list of reasons
+// is in the [service.Service.RedeemPromotion] godoc. Being the admin surface
+// does NOT LOOSEN these checks: the counter and the budget feed the same
+// ledger.
 func (a *API) redeemPromotion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -432,25 +437,26 @@ func (a *API) redeemPromotion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toRedemptionDTO(redemption))
 }
 
-// releaseRequest kullanım geri alma gövdesidir.
+// releaseRequest is the redemption release body.
 type releaseRequest struct {
-	// Reference geri alınacak kullanımın referansıdır.
+	// Reference is the reference of the redemption to release.
 	Reference string `json:"reference"`
 }
 
-// releaseResultDTO geri alma yanıtının gövdesidir.
+// releaseResultDTO is the body of the release response.
 type releaseResultDTO struct {
-	// Released BU İSTEKTE bir şeyin geri alınıp alınmadığını bildirir.
+	// Released reports whether something was released IN THIS REQUEST.
 	//
-	// false, isteğin başarısız olduğu anlamına GELMEZ: telafi idempotenttir ve
-	// zaten geri alınmış bir kullanım için ikinci çağrı hata vermez.
+	// false does NOT MEAN the request failed: the compensation is idempotent
+	// and a second call for an already released redemption returns no error.
 	Released bool `json:"released"`
 }
 
-// releasePromotion bir kullanımı serbest bırakır
+// releasePromotion releases a redemption
 // (POST /admin/v1/promotions/{id}/release).
 //
-// İDEMPOTENTTİR: ikinci çağrı hata vermez ve sayaçlar ikinci kez düşmez.
+// It is IDEMPOTENT: a second call returns no error and the counters do not go
+// down a second time.
 func (a *API) releasePromotion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -471,16 +477,16 @@ func (a *API) releasePromotion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, releaseResultDTO{Released: released})
 }
 
-// computeRequest indirim hesabı gövdesidir.
+// computeRequest is the discount computation body.
 //
-// Alan adları interop şemasıyla BİREBİR aynıdır (bkz. service paketindeki
-// interop.go); iki yüzeyin aynı hesabı farklı adlarla istemesi, operatörün
-// yönetim ekranında denediği isteğin sepet akışında farklı davranması demek
-// olurdu.
+// The field names are EXACTLY the same as the interop schema's (see interop.go
+// in the service package); two surfaces asking for the same computation under
+// different names would mean a request the operator tried on the admin screen
+// behaving differently in the cart flow.
 type computeRequest struct {
-	// CurrencyCode sepetin para birimidir.
+	// CurrencyCode is the cart's currency.
 	CurrencyCode string `json:"currency_code"`
-	// Context bağlam kurallarının bakacağı alanlardır.
+	// Context holds the fields the context rules look at.
 	Context map[string]string `json:"context"`
 	// ContextLists is what a context rule reads as a SET (ADR 0144).
 	//
@@ -488,28 +494,28 @@ type computeRequest struct {
 	// rule: two surfaces computing the same thing from two schemas is two chances
 	// for one of them to drift. Only the "any_in" operator looks here.
 	ContextLists map[string][]string `json:"context_lists"`
-	// Items sepet kalemleridir.
+	// Items are the cart's lines.
 	Items []computeItemRequest `json:"items"`
-	// ShippingMethods sepetin kargo yöntemleridir.
+	// ShippingMethods are the cart's shipping methods.
 	ShippingMethods []computeShippingRequest `json:"shipping_methods"`
-	// Codes uygulanacak kupon kodlarıdır.
+	// Codes are the coupon codes to apply.
 	Codes []string `json:"codes"`
-	// At hesabın yapıldığı andır; boşsa "şimdi".
+	// At is the moment of the computation; "now" when empty.
 	At *time.Time `json:"at"`
 }
 
-// computeItemRequest hesaptaki tek bir kalemin gövdesidir.
+// computeItemRequest is the body of a single line in the computation.
 type computeItemRequest struct {
-	// ID kalemin kimliğidir.
+	// ID is the line's id.
 	ID string `json:"id"`
-	// Amount kalemin ara toplamıdır (birim × adet), minor unit.
+	// Amount is the line's subtotal (unit × quantity), in minor units.
 	Amount int64 `json:"amount"`
-	// UnitAmount kalemin birim fiyatıdır; ZORUNLUDUR ve
-	// UnitAmount × Quantity = Amount olmak zorundadır.
+	// UnitAmount is the line's unit price; it is REQUIRED and
+	// UnitAmount × Quantity = Amount has to hold.
 	UnitAmount int64 `json:"unit_amount"`
-	// Quantity kalemin adedidir.
+	// Quantity is the line's quantity.
 	Quantity int64 `json:"quantity"`
-	// Attributes hedef kurallarının bakacağı özniteliklerdir.
+	// Attributes are the attributes the target rules look at.
 	Attributes map[string]string `json:"attributes"`
 	// Lists is what a TARGET rule reads as a SET (ADR 0148): the line's product's
 	// `category_ids` and `tag_ids`.
@@ -521,28 +527,30 @@ type computeItemRequest struct {
 	Lists map[string][]string `json:"lists"`
 }
 
-// computeShippingRequest hesaptaki tek bir kargo yönteminin gövdesidir.
+// computeShippingRequest is the body of a single shipping method in the
+// computation.
 type computeShippingRequest struct {
-	// ID kargo yönteminin kimliğidir.
+	// ID is the shipping method's id.
 	ID string `json:"id"`
-	// Amount kargo tutarıdır (minor unit).
+	// Amount is the shipping amount (minor unit).
 	Amount int64 `json:"amount"`
-	// Attributes hedef kurallarının bakacağı özniteliklerdir.
+	// Attributes are the attributes the target rules look at.
 	Attributes map[string]string `json:"attributes"`
 }
 
-// computeDiscounts verilen sepet bağlamı için indirimleri hesaplar
+// computeDiscounts computes the discounts for the given cart context
 // (POST /admin/v1/promotions/compute).
 //
-// YAN ETKİSİZDİR: hiçbir sayaç değişmez. Uç nokta yönetim tarafındadır çünkü
-// gövdesi promosyonların KİMLİKLERİNİ ve kodlarını döner; müşteri tarafındaki
-// karşılığı, indirimi sepet toplamına yazan sepet akışıdır.
+// It has NO SIDE EFFECTS: no counter changes. The endpoint is on the admin side
+// because its body returns the promotions' IDS and codes; its counterpart on
+// the customer side is the cart flow, which writes the discount into the cart
+// total.
 //
-// [service.Service.ExplainDiscounts]'u çağırır, ComputeDiscounts'u değil: tek
-// fark aday okumasıdır ve indirim tutarları birebir aynıdır. Fazlası
-// `skipped` — hangi promosyonun NEDEN uygulanmadığı — ve o cevap yalnızca burada
-// yayımlanır, çünkü müşteriye verilirse kod tahmin eden birine kampanya takvimi
-// çıkarma imkânı tanır (ADR 0110).
+// It calls [service.Service.ExplainDiscounts], not ComputeDiscounts: the only
+// difference is the candidate read, and the discount amounts are exactly the
+// same. What it adds is `skipped` — WHY a promotion did not apply — and that
+// answer is published only here, because handed to the customer it would let
+// someone guessing codes read off a campaign calendar (ADR 0110).
 func (a *API) computeDiscounts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

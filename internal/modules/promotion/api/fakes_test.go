@@ -11,17 +11,18 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/service"
 )
 
-// memRepo service.Repository'nin API testleri için bellekte çalışan
-// uygulamasıdır.
+// memRepo is an in-memory implementation of service.Repository for the API
+// tests.
 //
-// Servis paketindeki taklidin ikizidir ve bu tekrar bilinçlidir: API testleri
-// dış paketten (api_test) koşar ve servis paketinin test dosyalarını göremez.
-// Alternatif, taklidi üretim koduna taşımak olurdu — test yardımcısının
-// dağıtılan ikiliye girmesi bu tekrardan daha pahalıdır.
+// It is the twin of the fake in the service package, and the duplication is
+// deliberate: the API tests run from an external package (api_test) and cannot
+// see the service package's test files. The alternative would have been moving
+// the fake into production code — a test helper ending up in the shipped
+// binary costs more than this duplication.
 //
-// Buradaki iş kuralları BİLİNÇLİ olarak sadedir: API testinin sınadığı şey
-// yönlendirme, zarf, status kodu ve MÜŞTERİ YÜZEYİNİN SIZDIRMAMASIDIR; hesap
-// aritmetiği servis paketinde sınanır.
+// The business rules here are DELIBERATELY plain: what the API test exercises
+// is routing, the envelope, the status code and that the CUSTOMER SURFACE DOES
+// NOT LEAK; the computation's arithmetic is tested in the service package.
 type memRepo struct {
 	campaigns   map[string]models.Campaign
 	promotions  map[string]models.Promotion
@@ -32,7 +33,7 @@ type memRepo struct {
 
 var _ service.Repository = (*memRepo)(nil)
 
-// newMemRepo boş bir bellek deposu üretir.
+// newMemRepo builds an empty in-memory repository.
 func newMemRepo() *memRepo {
 	return &memRepo{
 		campaigns:  map[string]models.Campaign{},
@@ -42,16 +43,16 @@ func newMemRepo() *memRepo {
 	}
 }
 
-// notFound tipli "bulunamadı" hatası üretir.
+// notFound builds a typed "not found" error.
 func notFound(what, id string) error {
-	return errors.NotFound("promotion_test_not_found", "%s bulunamadı: %s", what, id)
+	return errors.NotFound("promotion_test_not_found", "%s not found: %s", what, id)
 }
 
 func (m *memRepo) CreateCampaign(_ context.Context, c models.Campaign, now time.Time) (models.Campaign, error) {
 	for id := range m.campaigns {
 		if m.campaigns[id].CampaignIdentifier == c.CampaignIdentifier {
 			return models.Campaign{}, errors.Conflict("promotion_test_duplicate",
-				"kampanya iş kimliği zaten var: %s", c.CampaignIdentifier)
+				"campaign business identifier already exists: %s", c.CampaignIdentifier)
 		}
 	}
 	c.CreatedAt, c.UpdatedAt = now, now
@@ -62,7 +63,7 @@ func (m *memRepo) CreateCampaign(_ context.Context, c models.Campaign, now time.
 func (m *memRepo) GetCampaign(_ context.Context, id string) (models.Campaign, error) {
 	c, ok := m.campaigns[id]
 	if !ok {
-		return models.Campaign{}, notFound("kampanya", id)
+		return models.Campaign{}, notFound("campaign", id)
 	}
 	return c, nil
 }
@@ -73,7 +74,7 @@ func (m *memRepo) GetCampaignByIdentifier(_ context.Context, identifier string) 
 			return m.campaigns[id], nil
 		}
 	}
-	return models.Campaign{}, notFound("kampanya", identifier)
+	return models.Campaign{}, notFound("campaign", identifier)
 }
 
 func (m *memRepo) ListCampaigns(_ context.Context, limit, offset int32) ([]models.Campaign, int64, error) {
@@ -98,7 +99,7 @@ func (m *memRepo) GetCampaignsByIDs(_ context.Context, ids []string) ([]models.C
 func (m *memRepo) UpdateCampaign(_ context.Context, c models.Campaign, now time.Time) (models.Campaign, error) {
 	existing, ok := m.campaigns[c.ID]
 	if !ok {
-		return models.Campaign{}, notFound("kampanya", c.ID)
+		return models.Campaign{}, notFound("campaign", c.ID)
 	}
 	c.BudgetUsed = existing.BudgetUsed
 	c.CreatedAt = existing.CreatedAt
@@ -109,7 +110,7 @@ func (m *memRepo) UpdateCampaign(_ context.Context, c models.Campaign, now time.
 
 func (m *memRepo) DeleteCampaign(_ context.Context, id string, _ time.Time) error {
 	if _, ok := m.campaigns[id]; !ok {
-		return notFound("kampanya", id)
+		return notFound("campaign", id)
 	}
 	delete(m.campaigns, id)
 	return nil
@@ -119,7 +120,7 @@ func (m *memRepo) CreatePromotion(_ context.Context, p models.Promotion, now tim
 	for id := range m.promotions {
 		if m.promotions[id].Code == p.Code {
 			return models.Promotion{}, errors.Conflict("promotion_test_duplicate",
-				"kupon kodu zaten var: %s", p.Code)
+				"coupon code already exists: %s", p.Code)
 		}
 	}
 	p.UsageCount = 0
@@ -131,7 +132,7 @@ func (m *memRepo) CreatePromotion(_ context.Context, p models.Promotion, now tim
 func (m *memRepo) GetPromotion(_ context.Context, id string) (models.Promotion, error) {
 	p, ok := m.promotions[id]
 	if !ok {
-		return models.Promotion{}, notFound("promosyon", id)
+		return models.Promotion{}, notFound("promotion", id)
 	}
 	return p, nil
 }
@@ -142,7 +143,7 @@ func (m *memRepo) GetPromotionByCode(_ context.Context, code string) (models.Pro
 			return m.promotions[id], nil
 		}
 	}
-	return models.Promotion{}, notFound("promosyon", code)
+	return models.Promotion{}, notFound("promotion", code)
 }
 
 func (m *memRepo) ListPromotions(
@@ -178,7 +179,7 @@ func (m *memRepo) GetPromotionsByIDs(_ context.Context, ids []string) ([]models.
 func (m *memRepo) UpdatePromotion(_ context.Context, p models.Promotion, now time.Time) (models.Promotion, error) {
 	existing, ok := m.promotions[p.ID]
 	if !ok {
-		return models.Promotion{}, notFound("promosyon", p.ID)
+		return models.Promotion{}, notFound("promotion", p.ID)
 	}
 	p.UsageCount = existing.UsageCount
 	p.CreatedAt = existing.CreatedAt
@@ -189,7 +190,7 @@ func (m *memRepo) UpdatePromotion(_ context.Context, p models.Promotion, now tim
 
 func (m *memRepo) DeletePromotion(_ context.Context, id string, _ time.Time) error {
 	if _, ok := m.promotions[id]; !ok {
-		return notFound("promosyon", id)
+		return notFound("promotion", id)
 	}
 	delete(m.promotions, id)
 	return nil
@@ -199,18 +200,20 @@ func (m *memRepo) ListCandidates(_ context.Context, codes []string) ([]models.Pr
 	return m.candidates(codes, true), nil
 }
 
-// ListCandidatesForDiagnosis aynı kümeyi DURUM SÜZGECİ OLMADAN döner.
+// ListCandidatesForDiagnosis returns the same set WITHOUT THE STATUS FILTER.
 //
-// Süzgeç farkı taklit edilmek ZORUNDA: yönetim ucunun `skipped` cevabının en
-// sık üyesi (yayına alınmamış promosyon) yalnızca bu okumadan gelir, ve iki
-// okumayı aynı yapan bir sahte o farkı hiç kanıtlamaz.
+// The filter difference HAS TO be imitated: the most frequent member of the
+// admin endpoint's `skipped` answer (a promotion never activated) comes only
+// from this read, and a fake that makes the two reads the same never proves
+// that difference.
 func (m *memRepo) ListCandidatesForDiagnosis(
 	_ context.Context, codes []string,
 ) ([]models.PromotionCandidate, error) {
 	return m.candidates(codes, false), nil
 }
 
-// candidates iki okumanın paylaştığı gövdedir; onlyActive durum süzgecini açar.
+// candidates is the body the two reads share; onlyActive turns on the status
+// filter.
 func (m *memRepo) candidates(codes []string, onlyActive bool) []models.PromotionCandidate {
 	out := make([]models.PromotionCandidate, 0, len(m.promotions))
 	for id := range m.promotions {
@@ -237,17 +240,17 @@ func (m *memRepo) candidates(codes []string, onlyActive bool) []models.Promotion
 	return out
 }
 
-// canliPromosyon promosyonun altına satır yazan taklit metotların ortak
-// denetimidir.
+// checkLivePromotion is the shared check of the fake methods that write a row
+// under a promotion.
 //
-// Taklit bunu taşımak ZORUNDADIR: gerçek depo yazmayı promosyon satırı
-// PAYLAŞIMLI kilit altındayken ve aynı işlemde yapar (bkz.
-// repository.CreatePromotionRule). Denetimsiz bir taklit, silinmiş ya da hiç
-// var olmayan bir promosyona yöntem yazılmasını KABUL eder ve API katmanının
-// 404 döndüğünü sanan test yeşil kalırdı.
-func (m *memRepo) canliPromosyon(id string) error {
+// The fake HAS TO carry it: the real repository does the write while the
+// promotion row is under a SHARED lock and in the same transaction (see
+// repository.CreatePromotionRule). A fake without the check would ACCEPT a
+// method being written to a deleted or never-existing promotion, and the test
+// that believes the API layer returns 404 would stay green.
+func (m *memRepo) checkLivePromotion(id string) error {
 	if _, ok := m.promotions[id]; !ok {
-		return notFound("promosyon", id)
+		return notFound("promotion", id)
 	}
 	return nil
 }
@@ -257,7 +260,7 @@ func (m *memRepo) SetApplicationMethod(
 	method models.ApplicationMethod,
 	now time.Time,
 ) (models.ApplicationMethod, error) {
-	if err := m.canliPromosyon(method.PromotionID); err != nil {
+	if err := m.checkLivePromotion(method.PromotionID); err != nil {
 		return models.ApplicationMethod{}, err
 	}
 	method.CreatedAt, method.UpdatedAt = now, now
@@ -268,14 +271,14 @@ func (m *memRepo) SetApplicationMethod(
 func (m *memRepo) GetApplicationMethod(_ context.Context, promotionID string) (models.ApplicationMethod, error) {
 	method, ok := m.methods[promotionID]
 	if !ok {
-		return models.ApplicationMethod{}, notFound("uygulama yöntemi", promotionID)
+		return models.ApplicationMethod{}, notFound("application method", promotionID)
 	}
 	return method, nil
 }
 
 func (m *memRepo) DeleteApplicationMethod(_ context.Context, promotionID string, _ time.Time) error {
 	if _, ok := m.methods[promotionID]; !ok {
-		return notFound("uygulama yöntemi", promotionID)
+		return notFound("application method", promotionID)
 	}
 	delete(m.methods, promotionID)
 	return nil
@@ -286,7 +289,7 @@ func (m *memRepo) CreatePromotionRule(
 	rule models.PromotionRule,
 	now time.Time,
 ) (models.PromotionRule, error) {
-	if err := m.canliPromosyon(rule.PromotionID); err != nil {
+	if err := m.checkLivePromotion(rule.PromotionID); err != nil {
 		return models.PromotionRule{}, err
 	}
 	rule.CreatedAt, rule.UpdatedAt = now, now
@@ -302,7 +305,7 @@ func (m *memRepo) GetPromotionRule(_ context.Context, id string) (models.Promoti
 			}
 		}
 	}
-	return models.PromotionRule{}, notFound("promosyon kuralı", id)
+	return models.PromotionRule{}, notFound("promotion rule", id)
 }
 
 func (m *memRepo) ListPromotionRules(_ context.Context, promotionID string) ([]models.PromotionRule, error) {
@@ -318,13 +321,13 @@ func (m *memRepo) DeletePromotionRule(_ context.Context, id string, _ time.Time)
 			}
 		}
 	}
-	return notFound("promosyon kuralı", id)
+	return notFound("promotion rule", id)
 }
 
 func (m *memRepo) Redeem(_ context.Context, req models.Redemption, now time.Time) (models.Redemption, bool, error) {
 	promo, ok := m.promotions[req.PromotionID]
 	if !ok {
-		return models.Redemption{}, false, notFound("promosyon", req.PromotionID)
+		return models.Redemption{}, false, notFound("promotion", req.PromotionID)
 	}
 	for i := range m.redemptions {
 		existing := m.redemptions[i]
@@ -334,7 +337,7 @@ func (m *memRepo) Redeem(_ context.Context, req models.Redemption, now time.Time
 	}
 	if promo.UsageLimit != nil && promo.UsageCount+1 > *promo.UsageLimit {
 		return models.Redemption{}, false, errors.Conflict("promotion_test_usage_limit",
-			"promosyonun kullanım hakkı bitti: %s", promo.ID)
+			"the promotion's usage allowance has run out: %s", promo.ID)
 	}
 	promo.UsageCount++
 	m.promotions[promo.ID] = promo
@@ -359,7 +362,7 @@ func (m *memRepo) Release(
 ) (models.Redemption, bool, error) {
 	promo, ok := m.promotions[promotionID]
 	if !ok {
-		return models.Redemption{}, false, notFound("promosyon", promotionID)
+		return models.Redemption{}, false, notFound("promotion", promotionID)
 	}
 	for i := range m.redemptions {
 		redemption := m.redemptions[i]
@@ -384,7 +387,7 @@ func (m *memRepo) GetRedemption(_ context.Context, promotionID, reference string
 			return r, nil
 		}
 	}
-	return models.Redemption{}, notFound("kullanım kaydı", reference)
+	return models.Redemption{}, notFound("redemption record", reference)
 }
 
 func (m *memRepo) ListRedemptions(
@@ -401,7 +404,7 @@ func (m *memRepo) ListRedemptions(
 	return pageOf(all, limit, offset), int64(len(all)), nil
 }
 
-// pageOf bir dilimden sayfa keser.
+// pageOf cuts a page out of a slice.
 func pageOf[T any](all []T, limit, offset int32) []T {
 	if offset >= int32(len(all)) {
 		return []T{}

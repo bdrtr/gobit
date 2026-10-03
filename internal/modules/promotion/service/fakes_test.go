@@ -12,17 +12,17 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/repository"
 )
 
-// memRepo [Repository]'nin bellekte çalışan uygulamasıdır.
+// memRepo is an in-memory implementation of [Repository].
 //
-// Betiklenebilir bir sahte (stub) yerine GERÇEK davranışlı bir taklit
-// seçilmiştir: bu modülün servis testlerinin çoğu birden çok kaydın birlikte
-// okunmasına dayanır (aday listesi promosyon + yöntem + kural + kampanya
-// getirir) ve her testin bunu tek tek betiklemesi, testleri hesabın kendisinden
-// çok kurulumun doğruluğunu sınar hâle getirirdi.
+// A fake with REAL behavior was chosen over a scriptable stub: most of this
+// module's service tests depend on several records being read together (the
+// candidate list brings promotion + method + rule + campaign), and having
+// every test script that one by one would make the tests check the
+// correctness of the setup more than the computation itself.
 //
-// Eşzamanlılık GARANTİLERİ burada sınanmaz — kilitler veritabanındadır ve
-// iddia yalnızca entegrasyon testinde kanıtlanabilir. Buradaki mutex sadece
-// `-race` altında güvenli koşmak içindir.
+// Concurrency GUARANTEES are not tested here — the locks are in the database
+// and the claim can only be proven in the integration test. The mutex here is
+// only for running safely under `-race`.
 type memRepo struct {
 	mu          sync.Mutex
 	campaigns   map[string]models.Campaign
@@ -31,15 +31,16 @@ type memRepo struct {
 	rules       map[string][]models.PromotionRule
 	redemptions []models.Redemption
 
-	// errOn metot adı -> dönecek hata; hata enjeksiyonu için.
+	// errOn is method name -> the error to return; for error injection.
 	errOn map[string]error
-	// calls metot adı -> çağrı sayısıdır; toplu (batch) davranışın kanıtı budur.
+	// calls is method name -> call count; it is the proof of the batch
+	// behavior.
 	calls map[string]int
 }
 
 var _ Repository = (*memRepo)(nil)
 
-// newMemRepo boş bir bellek deposu üretir.
+// newMemRepo produces an empty in-memory repository.
 func newMemRepo() *memRepo {
 	return &memRepo{
 		campaigns:  map[string]models.Campaign{},
@@ -51,7 +52,7 @@ func newMemRepo() *memRepo {
 	}
 }
 
-// hook çağrıyı sayar ve varsa enjekte edilmiş hatayı döner.
+// hook counts the call and returns the injected error, if any.
 func (m *memRepo) hook(name string) error {
 	m.calls[name]++
 	return m.errOn[name]
@@ -66,7 +67,7 @@ func (m *memRepo) CreateCampaign(_ context.Context, c models.Campaign, now time.
 	for id := range m.campaigns {
 		if m.campaigns[id].CampaignIdentifier == c.CampaignIdentifier {
 			return models.Campaign{}, errors.Conflict(repository.CodeDuplicate,
-				"kampanya iş kimliği zaten var: %s", c.CampaignIdentifier)
+				"campaign business identifier already exists: %s", c.CampaignIdentifier)
 		}
 	}
 	c.CreatedAt, c.UpdatedAt = now, now
@@ -83,7 +84,7 @@ func (m *memRepo) GetCampaign(_ context.Context, id string) (models.Campaign, er
 	c, ok := m.campaigns[id]
 	if !ok {
 		return models.Campaign{}, errors.NotFound(repository.CodeCampaignNotFound,
-			"kampanya bulunamadı: %s", id)
+			"campaign not found: %s", id)
 	}
 	return c, nil
 }
@@ -100,7 +101,7 @@ func (m *memRepo) GetCampaignByIdentifier(_ context.Context, identifier string) 
 		}
 	}
 	return models.Campaign{}, errors.NotFound(repository.CodeCampaignNotFound,
-		"kampanya bulunamadı: %s", identifier)
+		"campaign not found: %s", identifier)
 }
 
 func (m *memRepo) ListCampaigns(_ context.Context, limit, offset int32) ([]models.Campaign, int64, error) {
@@ -141,18 +142,18 @@ func (m *memRepo) UpdateCampaign(_ context.Context, c models.Campaign, now time.
 	existing, ok := m.campaigns[c.ID]
 	if !ok {
 		return models.Campaign{}, errors.NotFound(repository.CodeCampaignNotFound,
-			"kampanya bulunamadı: %s", c.ID)
+			"campaign not found: %s", c.ID)
 	}
-	// Sayaç sıfır değilken bütçenin BİRİMİ dondurulur; gerçek depoda bunu
-	// UpdateCampaign sorgusunun WHERE koşulu zorlar.
+	// While the counter is not zero the budget's UNIT is frozen; in the real
+	// repository the UpdateCampaign query's WHERE clause enforces this.
 	if existing.BudgetUsed != 0 &&
 		(existing.BudgetType != c.BudgetType || existing.BudgetCurrencyCode != c.BudgetCurrencyCode) {
 		return models.Campaign{}, errors.Conflict(repository.CodeBudgetUnitLocked,
-			"kampanyanın bütçe sayacı %d; sayaç sıfırlanmadan bütçe türü ya da para birimi değiştirilemez",
+			"the campaign's budget counter is %d; the budget type or currency cannot be changed before the counter is reset",
 			existing.BudgetUsed)
 	}
-	// Sayaç yönetim yolundan DEĞİŞMEZ; gerçek deponun sorgusu da onu dışarıda
-	// bırakır.
+	// The counter does NOT change through the admin path; the real repository's
+	// query leaves it out too.
 	c.BudgetUsed = existing.BudgetUsed
 	c.CreatedAt = existing.CreatedAt
 	c.UpdatedAt = now
@@ -167,7 +168,7 @@ func (m *memRepo) DeleteCampaign(_ context.Context, id string, _ time.Time) erro
 		return err
 	}
 	if _, ok := m.campaigns[id]; !ok {
-		return errors.NotFound(repository.CodeCampaignNotFound, "kampanya bulunamadı: %s", id)
+		return errors.NotFound(repository.CodeCampaignNotFound, "campaign not found: %s", id)
 	}
 	delete(m.campaigns, id)
 	return nil
@@ -182,7 +183,7 @@ func (m *memRepo) CreatePromotion(_ context.Context, p models.Promotion, now tim
 	for id := range m.promotions {
 		if m.promotions[id].Code == p.Code {
 			return models.Promotion{}, errors.Conflict(repository.CodeDuplicate,
-				"kupon kodu zaten var: %s", p.Code)
+				"coupon code already exists: %s", p.Code)
 		}
 	}
 	p.UsageCount = 0
@@ -191,21 +192,22 @@ func (m *memRepo) CreatePromotion(_ context.Context, p models.Promotion, now tim
 	return p, nil
 }
 
-// canliPromosyon promosyonun altına satır yazan taklit metotların ortak
-// denetimidir; KİLİT YOKTUR, yalnızca sözleşme modellenir.
+// checkLivePromotion is the shared check of the fake methods that write a row
+// under a promotion; there is NO LOCK, only the contract is modeled.
 //
-// Taklit bunu yapmak ZORUNDADIR: gerçek depo yazmayı promosyon satırı
-// PAYLAŞIMLI kilit altındayken ve aynı işlemde yapar (bkz.
-// repository.CreatePromotionRule). Denetimi taşımayan bir taklit, silinmiş bir
-// promosyonun altına kural kabul eder — yani tam olarak gerçek depoda kapatılan
-// hatayı modellerdi ve servis testleri onu göremezdi.
+// The fake HAS TO do this: the real repository does the write while the
+// promotion row is under a SHARED lock and in the same transaction (see
+// repository.CreatePromotionRule). A fake without the check would accept a
+// rule under a deleted promotion — that is, it would model exactly the bug
+// that was closed in the real repository, and the service tests could not see
+// it.
 //
-// Kilidin kendisi taklit edilemez ve edilmemelidir: kilit veritabanındadır ve
-// yalnızca integration testinde sınanabilir.
-func (m *memRepo) canliPromosyon(id string) error {
+// The lock itself cannot and must not be faked: the lock is in the database
+// and can only be tested in the integration test.
+func (m *memRepo) checkLivePromotion(id string) error {
 	if _, ok := m.promotions[id]; !ok {
 		return errors.NotFound(repository.CodePromotionNotFound,
-			"promosyon bulunamadı: %s", id)
+			"promotion not found: %s", id)
 	}
 	return nil
 }
@@ -219,7 +221,7 @@ func (m *memRepo) GetPromotion(_ context.Context, id string) (models.Promotion, 
 	p, ok := m.promotions[id]
 	if !ok {
 		return models.Promotion{}, errors.NotFound(repository.CodePromotionNotFound,
-			"promosyon bulunamadı: %s", id)
+			"promotion not found: %s", id)
 	}
 	return p, nil
 }
@@ -236,7 +238,7 @@ func (m *memRepo) GetPromotionByCode(_ context.Context, code string) (models.Pro
 		}
 	}
 	return models.Promotion{}, errors.NotFound(repository.CodePromotionNotFound,
-		"promosyon bulunamadı: %s", code)
+		"promotion not found: %s", code)
 }
 
 func (m *memRepo) ListPromotions(
@@ -289,12 +291,12 @@ func (m *memRepo) UpdatePromotion(_ context.Context, p models.Promotion, now tim
 	existing, ok := m.promotions[p.ID]
 	if !ok {
 		return models.Promotion{}, errors.NotFound(repository.CodePromotionNotFound,
-			"promosyon bulunamadı: %s", p.ID)
+			"promotion not found: %s", p.ID)
 	}
 	for id := range m.promotions {
 		if id != p.ID && m.promotions[id].Code == p.Code {
 			return models.Promotion{}, errors.Conflict(repository.CodeDuplicate,
-				"kupon kodu zaten var: %s", p.Code)
+				"coupon code already exists: %s", p.Code)
 		}
 	}
 	p.UsageCount = existing.UsageCount
@@ -311,7 +313,7 @@ func (m *memRepo) DeletePromotion(_ context.Context, id string, _ time.Time) err
 		return err
 	}
 	if _, ok := m.promotions[id]; !ok {
-		return errors.NotFound(repository.CodePromotionNotFound, "promosyon bulunamadı: %s", id)
+		return errors.NotFound(repository.CodePromotionNotFound, "promotion not found: %s", id)
 	}
 	delete(m.promotions, id)
 	return nil
@@ -321,18 +323,20 @@ func (m *memRepo) ListCandidates(_ context.Context, codes []string) ([]models.Pr
 	return m.candidates("ListCandidates", codes, true)
 }
 
-// ListCandidatesForDiagnosis aynı kümeyi DURUM SÜZGECİ OLMADAN döner.
+// ListCandidatesForDiagnosis returns the same set WITHOUT THE STATUS FILTER.
 //
-// Süzgeç farkı taklit edilmek ZORUNDA: `skipped`'in tek işe yarayan üyesi
-// (yayına alınmamış promosyon) yalnızca bu okumadan geliyor, ve iki okumayı aynı
-// yapan bir sahte, gerçek sorgunun süzgeçsiz olduğunu hiç kanıtlamaz (D50).
+// The filter difference HAS TO be faked: the only useful member of `skipped`
+// (an unpublished promotion) comes only from this read, and a fake that makes
+// the two reads the same never proves that the real query is unfiltered
+// (D50).
 func (m *memRepo) ListCandidatesForDiagnosis(
 	_ context.Context, codes []string,
 ) ([]models.PromotionCandidate, error) {
 	return m.candidates("ListCandidatesForDiagnosis", codes, false)
 }
 
-// candidates iki okumanın paylaştığı gövdedir; onlyActive durum süzgecini açar.
+// candidates is the body the two reads share; onlyActive turns the status
+// filter on.
 func (m *memRepo) candidates(
 	hook string, codes []string, onlyActive bool,
 ) ([]models.PromotionCandidate, error) {
@@ -376,7 +380,7 @@ func (m *memRepo) SetApplicationMethod(
 	if err := m.hook("SetApplicationMethod"); err != nil {
 		return models.ApplicationMethod{}, err
 	}
-	if err := m.canliPromosyon(method.PromotionID); err != nil {
+	if err := m.checkLivePromotion(method.PromotionID); err != nil {
 		return models.ApplicationMethod{}, err
 	}
 	method.CreatedAt, method.UpdatedAt = now, now
@@ -393,7 +397,7 @@ func (m *memRepo) GetApplicationMethod(_ context.Context, promotionID string) (m
 	method, ok := m.methods[promotionID]
 	if !ok {
 		return models.ApplicationMethod{}, errors.NotFound(repository.CodeApplicationMethodNotFound,
-			"promosyonun uygulama yöntemi yok: %s", promotionID)
+			"promotion has no application method: %s", promotionID)
 	}
 	return method, nil
 }
@@ -406,7 +410,7 @@ func (m *memRepo) DeleteApplicationMethod(_ context.Context, promotionID string,
 	}
 	if _, ok := m.methods[promotionID]; !ok {
 		return errors.NotFound(repository.CodeApplicationMethodNotFound,
-			"promosyonun uygulama yöntemi yok: %s", promotionID)
+			"promotion has no application method: %s", promotionID)
 	}
 	delete(m.methods, promotionID)
 	return nil
@@ -422,7 +426,7 @@ func (m *memRepo) CreatePromotionRule(
 	if err := m.hook("CreatePromotionRule"); err != nil {
 		return models.PromotionRule{}, err
 	}
-	if err := m.canliPromosyon(rule.PromotionID); err != nil {
+	if err := m.checkLivePromotion(rule.PromotionID); err != nil {
 		return models.PromotionRule{}, err
 	}
 	rule.CreatedAt, rule.UpdatedAt = now, now
@@ -444,7 +448,7 @@ func (m *memRepo) GetPromotionRule(_ context.Context, id string) (models.Promoti
 		}
 	}
 	return models.PromotionRule{}, errors.NotFound(repository.CodePromotionRuleNotFound,
-		"promosyon kuralı bulunamadı: %s", id)
+		"promotion rule not found: %s", id)
 }
 
 func (m *memRepo) ListPromotionRules(_ context.Context, promotionID string) ([]models.PromotionRule, error) {
@@ -471,7 +475,7 @@ func (m *memRepo) DeletePromotionRule(_ context.Context, id string, _ time.Time)
 		}
 	}
 	return errors.NotFound(repository.CodePromotionRuleNotFound,
-		"promosyon kuralı bulunamadı: %s", id)
+		"promotion rule not found: %s", id)
 }
 
 func (m *memRepo) Redeem(_ context.Context, req models.Redemption, now time.Time) (models.Redemption, bool, error) {
@@ -484,7 +488,7 @@ func (m *memRepo) Redeem(_ context.Context, req models.Redemption, now time.Time
 	promo, ok := m.promotions[req.PromotionID]
 	if !ok {
 		return models.Redemption{}, false, errors.NotFound(repository.CodePromotionNotFound,
-			"promosyon bulunamadı: %s", req.PromotionID)
+			"promotion not found: %s", req.PromotionID)
 	}
 	for i := range m.redemptions {
 		existing := m.redemptions[i]
@@ -493,11 +497,11 @@ func (m *memRepo) Redeem(_ context.Context, req models.Redemption, now time.Time
 		}
 	}
 
-	// Uygunluk denetimleri gerçek deponun sırasını KORUR: idempotency önce gelir,
-	// durum ve pencere sonra (bkz. repository.Redeem godoc'u).
+	// The eligibility checks KEEP the real repository's order: idempotency comes
+	// first, status and window after (see repository.Redeem's godoc).
 	if promo.Status != models.PromotionActive {
 		return models.Redemption{}, false, errors.Conflict(repository.CodePromotionNotActive,
-			"promosyon yayında değil: %s (durum: %s)", req.PromotionID, promo.Status)
+			"promotion is not live: %s (status: %s)", req.PromotionID, promo.Status)
 	}
 
 	var (
@@ -508,20 +512,20 @@ func (m *memRepo) Redeem(_ context.Context, req models.Redemption, now time.Time
 		campaign, found := m.campaigns[*promo.CampaignID]
 		if !found {
 			return models.Redemption{}, false, errors.Conflict(repository.CodeCampaignNotFound,
-				"kampanya kullanım sırasında kayboldu: %s", *promo.CampaignID)
+				"campaign disappeared during redemption: %s", *promo.CampaignID)
 		}
 		if !campaign.WindowContains(now) {
 			return models.Redemption{}, false, errors.Conflict(repository.CodeCampaignWindowClosed,
-				"kampanyanın tarih penceresi kullanım anını kapsamıyor: %s", campaign.ID)
+				"the campaign's date window does not cover the moment of redemption: %s", campaign.ID)
 		}
 		if campaign.BudgetType == models.BudgetSpend && campaign.BudgetCurrencyCode != req.CurrencyCode {
 			return models.Redemption{}, false, errors.Conflict(repository.CodeBudgetCurrencyMismatch,
-				"kampanya bütçesi para birimi uyuşmuyor: %s", campaign.ID)
+				"campaign budget currency does not match: %s", campaign.ID)
 		}
 		delta = campaign.BudgetDeltaFor(req.Amount)
 		if campaign.BudgetLimit != nil && campaign.BudgetUsed+delta > *campaign.BudgetLimit {
 			return models.Redemption{}, false, errors.Conflict(repository.CodeBudgetExceeded,
-				"kampanya bütçesi yetmiyor: %s", campaign.ID)
+				"campaign budget is insufficient: %s", campaign.ID)
 		}
 		campaign.BudgetUsed += delta
 		m.campaigns[campaign.ID] = campaign
@@ -530,14 +534,15 @@ func (m *memRepo) Redeem(_ context.Context, req models.Redemption, now time.Time
 	}
 
 	if promo.UsageLimit != nil && promo.UsageCount+1 > *promo.UsageLimit {
-		// Bütçe zaten artırılmışsa geri alınır; gerçek depoda bunu işlem yapar.
+		// If the budget was already incremented it is rolled back; in the real
+		// repository the transaction does this.
 		if campaignID != nil && delta > 0 {
 			campaign := m.campaigns[*campaignID]
 			campaign.BudgetUsed -= delta
 			m.campaigns[*campaignID] = campaign
 		}
 		return models.Redemption{}, false, errors.Conflict(repository.CodeUsageLimitReached,
-			"promosyonun kullanım hakkı bitti: %s", promo.ID)
+			"promotion usage allowance is exhausted: %s", promo.ID)
 	}
 	promo.UsageCount++
 	m.promotions[promo.ID] = promo
@@ -571,7 +576,7 @@ func (m *memRepo) Release(
 	promo, ok := m.promotions[promotionID]
 	if !ok {
 		return models.Redemption{}, false, errors.NotFound(repository.CodePromotionNotFound,
-			"promosyon bulunamadı: %s", promotionID)
+			"promotion not found: %s", promotionID)
 	}
 
 	for i := range m.redemptions {
@@ -610,7 +615,7 @@ func (m *memRepo) GetRedemption(_ context.Context, promotionID, reference string
 		}
 	}
 	return models.Redemption{}, errors.NotFound(repository.CodePromotionNotFound,
-		"kullanım kaydı bulunamadı: %s/%s", promotionID, reference)
+		"redemption record not found: %s/%s", promotionID, reference)
 }
 
 func (m *memRepo) ListRedemptions(
@@ -632,7 +637,7 @@ func (m *memRepo) ListRedemptions(
 	return pageOf(all, limit, offset), int64(len(all)), nil
 }
 
-// pageOf bir dilimden sayfa keser.
+// pageOf cuts a page out of a slice.
 func pageOf[T any](all []T, limit, offset int32) []T {
 	if offset >= int32(len(all)) {
 		return []T{}

@@ -1,27 +1,29 @@
-// Package api b2b modülünün HTTP yüzeyidir.
+// Package api is the b2b module's HTTP surface.
 //
-// İki ad alanı vardır (plan Bölüm 8): /admin/v1 yönetim, /store/v1 müşteri.
-// Modülün tüm uçları "b2b" segmentinin altındadır; bir sonraki B2B kavramı
-// (teklif, onay akışı) eklendiğinde de aynı ağaca girer.
+// There are two namespaces (plan Section 8): /admin/v1 for administration,
+// /store/v1 for the customer. All of the module's endpoints sit under the "b2b"
+// segment; the next B2B concept (quotes, an approval flow) goes into the same
+// tree when it is added.
 //
-// # Vitrin: başkasının şirketi OKUNAMAZ
+// # Storefront: somebody else's company CANNOT be read
 //
-// Vitrin yüzeyinde şirket kimliğiyle çağrılan bir uç YOKTUR. Şirkete ulaşan tek
-// yol müşterinin KENDİ çalışan kaydından geçer:
+// The storefront surface has NO endpoint called with a company id. The only way
+// to a company goes through the customer's OWN employee record:
 //
 //	GET /store/v1/b2b/customers/{customer_id}/company
 //	GET /store/v1/b2b/customers/{customer_id}/employee
 //
-// İkisi de yalnızca o müşterinin üyeliğini çözer (bkz.
-// service.Service.MembershipOfCustomer). "Başkasının şirketini oku" isteği bu
-// yüzden reddedilen bir istek değil, İFADE EDİLEMEYEN bir istektir: istemcinin
-// yazabileceği bir şirket kimliği parametresi hiçbir uçta bulunmaz.
+// Both resolve only that customer's membership (see
+// service.Service.MembershipOfCustomer). A request to "read somebody else's
+// company" is therefore not a request that is refused but one that CANNOT BE
+// EXPRESSED: no endpoint has a company id parameter a client could write.
 //
-// # Vitrin uçları müşteriyi YOL PARAMETRESİNDEN okur, ama artık İNANMAZ
+// # The storefront endpoints read the customer FROM THE PATH, but no longer BELIEVE it
 //
-// Bu depoda vitrin isteklerinin kimliği publishable API anahtarıdır ve o anahtar
-// bir SATIŞ KANALINI temsil eder, bir müşteriyi değil (bkz. corehttp.RequireStore).
-// Uçlar customer idni yoldan alır; o değer bir İDDİADIR ve karşılığı aranır.
+// In this repository the identity of a storefront request is the publishable API
+// key, and that key represents a SALES CHANNEL, not a customer (see
+// corehttp.RequireStore). The endpoints take the customer id from the path; that
+// value is a CLAIM, and what backs it is looked for.
 //
 // Until 2026-09-08 nothing looked. What that cost is worth keeping, because it
 // is what the change bought: a caller holding somebody's customer id read that
@@ -46,17 +48,17 @@
 // and not this package's, which is what keeps this module's copy from becoming
 // a second, silently diverging answer to one authorization question.
 //
-// # Yetki
+// # Scopes
 //
-// /admin/v1 altındaki uçlar kimlikten AYRI olarak yetki ister:
+// The endpoints under /admin/v1 ask for a scope SEPARATELY from identity:
 //
-//   - [ScopeRead] ("b2b:read") — GET uçlarını açar.
-//   - [ScopeWrite] ("b2b:write") — POST, PUT ve DELETE uçlarını açar.
+//   - [ScopeRead] ("b2b:read") — opens the GET endpoints.
+//   - [ScopeWrite] ("b2b:write") — opens the POST, PUT and DELETE endpoints.
 //
-// corehttp.ScopeAdmin ("admin") ÜST YETKİDİR ve ikisini de karşılar.
+// corehttp.ScopeAdmin ("admin") is a SUPERSCOPE and satisfies both.
 //
-// Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
-// onu status koduna çevirir (plan Bölüm 2.7).
+// Handlers do NOT CHOOSE the status code: the service returns a typed error and
+// corehttp.WriteError turns it into a status code (plan Section 2.7).
 package api
 
 import (
@@ -75,71 +77,74 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/service"
 )
 
-// maxBodyBytes tek bir istek gövdesinin azami boyutudur. Sınırsız bir gövde,
-// tek istekle belleği tüketmenin en ucuz yoludur.
+// maxBodyBytes is the maximum size of a single request body. An unbounded body
+// is the cheapest way to exhaust memory with a single request.
 const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
-// codeInvalidBody istek gövdesi ya da parametresi çözümlenemediğinde dönen
-// hata kodudur.
+// codeInvalidBody is the error code returned when a request body or parameter
+// cannot be parsed.
 const codeInvalidBody = "b2b_invalid_body"
 
-// Yol parametrelerinin adları.
+// The names of the path parameters.
 const (
 	paramID         = "id"
 	paramCustomerID = "customer_id"
 )
 
-// Yetki sözlüğü: b2b'nin yönetim uçlarının istediği yetkiler.
+// The scope vocabulary: the scopes b2b's admin endpoints ask for.
 //
-// Adlar TÜM modüllerde aynı kalıptadır ("<modül>:read" / "<modül>:write").
-// Her modülün kendi sözcüğünü uydurması, yetki dağıtan kişinin modül başına
-// ayrı bir sözlük ezberlemesi demek olurdu; ezberlenmeyen sözlükte yapılan hata
-// da her zaman aynı yöne düşer — fazla yetki verilir.
+// The names follow the same pattern in ALL modules ("<module>:read" /
+// "<module>:write"). Each module inventing its own word would mean the person
+// granting scopes memorizing a separate vocabulary per module; and a mistake
+// made in a vocabulary nobody memorized always falls the same way — too much
+// is granted.
 const (
-	// ScopeRead b2b yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	// ScopeRead is the scope the READ endpoints of the b2b admin surface ask
+	// for.
 	//
-	// Şirketleri ve çalışan kayıtlarını okumaya yeter; hiçbir yazma ucunu
-	// açmaz. Tam yetkili kimliklere ayrıca verilmesi gerekmez: corehttp.ScopeAdmin
-	// taşıyan bir çağıran bunu da karşılar.
+	// It is enough to read companies and employee records; it opens no write
+	// endpoint. Fully privileged identities do not need to be granted it
+	// separately: a caller carrying corehttp.ScopeAdmin satisfies it too.
 	ScopeRead = "b2b:read"
 
-	// ScopeWrite b2b yönetim yüzeyindeki YAZMA uçlarının istediği yetkidir.
+	// ScopeWrite is the scope the WRITE endpoints of the b2b admin surface ask
+	// for.
 	//
-	// Şirket açma/kapatma ve çalışanların HARCAMA YETKİSİNİ değiştirme uçlarını
-	// açar. İkincisi bu modülde okuma yetkisinden ayrılmasının asıl sebebidir:
-	// bir çalışanın limitini yükseltmek, şirketin parasını harcama iznini
-	// genişletmektir.
+	// It opens the endpoints that open and close companies and that change
+	// employees' SPENDING AUTHORITY. The second is the real reason it is
+	// separate from the read scope in this module: raising an employee's limit
+	// widens their permission to spend the company's money.
 	ScopeWrite = "b2b:write"
 )
 
-// B2B handler'ların servisten ihtiyaç duyduğu yüzeydir.
+// B2B is the surface the handlers need from the service.
 //
-// Dar tutulması testleri sadeleştirir: HTTP davranışı, gerçek bir veritabanı
-// olmadan birkaç satırlık bir sahte ile doğrulanabilir.
+// Keeping it narrow simplifies the tests: the HTTP behavior can be verified
+// with a fake of a few lines, without a real database.
 type B2B interface {
-	// CreateCompany yeni bir şirket oluşturur.
+	// CreateCompany creates a new company.
 	CreateCompany(ctx context.Context, in service.CompanyInput) (models.Company, error)
-	// GetCompany şirketi kimliğiyle döner.
+	// GetCompany returns a company by its id.
 	GetCompany(ctx context.Context, id string) (models.Company, error)
-	// ListCompanies şirketleri süzer ve sayfalar.
+	// ListCompanies filters and pages companies.
 	ListCompanies(ctx context.Context, in service.ListCompaniesInput) (service.Page[models.Company], error)
-	// UpdateCompany şirketin verilen alanlarını günceller.
+	// UpdateCompany updates the given fields of a company.
 	UpdateCompany(ctx context.Context, id string, in service.UpdateCompanyInput) (models.Company, error)
-	// DeleteCompany şirketi ve çalışanlarını yumuşak siler.
+	// DeleteCompany soft-deletes a company and its employees.
 	DeleteCompany(ctx context.Context, id string) error
 
-	// CreateEmployee şirkete yeni bir çalışan ekler.
+	// CreateEmployee adds a new employee to a company.
 	CreateEmployee(ctx context.Context, in service.EmployeeInput) (models.CompanyEmployee, error)
-	// GetEmployee çalışanı kimliğiyle döner.
+	// GetEmployee returns an employee by its id.
 	GetEmployee(ctx context.Context, id string) (models.CompanyEmployee, error)
-	// ListEmployees çalışanları süzer ve sayfalar.
+	// ListEmployees filters and pages employees.
 	ListEmployees(ctx context.Context, in service.ListEmployeesInput) (service.Page[models.CompanyEmployee], error)
-	// UpdateEmployee çalışanın verilen alanlarını günceller.
+	// UpdateEmployee updates the given fields of an employee.
 	UpdateEmployee(ctx context.Context, id string, in service.UpdateEmployeeInput) (models.CompanyEmployee, error)
-	// DeleteEmployee çalışanı yumuşak siler ve müşteri bağını kaldırır.
+	// DeleteEmployee soft-deletes an employee and removes the customer bond.
 	DeleteEmployee(ctx context.Context, id string) error
 
-	// MembershipOfCustomer müşterinin KENDİ üyeliğini döner.
+	// MembershipOfCustomer returns the customer's OWN membership.
 	MembershipOfCustomer(ctx context.Context, customerID string) (service.Membership, error)
 }
 
@@ -158,7 +163,7 @@ type B2B interface {
 // carries is what let either record be written.
 type IdentityLookup func(ctx context.Context) (corehttp.Identity, error)
 
-// Handler b2b modülünün HTTP handler kümesidir.
+// Handler is the b2b module's set of HTTP handlers.
 type Handler struct {
 	svc B2B
 	// identity finds the verifier that proves which customer a storefront
@@ -173,7 +178,7 @@ type Handler struct {
 	trustUnverified bool
 }
 
-// New verilen servis üzerinde çalışan handler kümesini üretir.
+// New builds the set of handlers that works over the given service.
 //
 // identity may be nil, and a nil one means what a lookup finding nothing means:
 // this handler holds no verifier, does not pretend to, and answers the path
@@ -185,80 +190,83 @@ func New(svc B2B, identity IdentityLookup, trustUnverified bool) *Handler {
 	return &Handler{svc: svc, identity: identity, trustUnverified: trustUnverified}
 }
 
-// Routes b2b'nin admin ve store route'larını router'a bağlar.
+// Routes binds b2b's admin and store routes to the router.
 //
-// Route'lar chi'nin Route/Mount yardımcılarıyla DEĞİL, tam yollarla kaydedilir:
-// /admin/v1 önekini birden çok modül paylaşır ve aynı öneki iki kez Mount etmek
-// chi'de panik üretirdi. Tam yol kaydı aynı ağaca yan yana yazar.
+// The routes are registered with full paths, NOT with chi's Route/Mount
+// helpers: several modules share the /admin/v1 prefix, and mounting the same
+// prefix twice would panic in chi. Registering full paths writes them side by
+// side into the same tree.
 //
-// # KORUMA
+// # PROTECTION
 //
-// Yönetim uçlarının iki katmanı vardır ve ikisi de gereklidir:
+// The admin endpoints have two layers, and both are needed:
 //
-//  1. KİMLİK — corehttp.RequireAdmin. Bu modülde DEĞİL, router'ı kuran tarafta
-//     takılır (bkz. corehttp.APIGuards).
-//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile: okuma uçları
-//     [ScopeRead], yazma uçları [ScopeWrite] ister.
+//  1. IDENTITY — corehttp.RequireAdmin. It is attached NOT in this module but
+//     by the side that builds the router (see corehttp.APIGuards).
+//  2. SCOPE — HERE, endpoint by endpoint, with corehttp.RequireScope: the read
+//     endpoints ask for [ScopeRead], the write endpoints for [ScopeWrite].
 //
-// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi:
-// yetkileri bilinçli olarak boşaltılmış bir yönetim kullanıcısı da geçerli bir
-// kimliktir ve PUT /admin/v1/b2b/employees/{id} ile kendi harcama limitini
-// yükseltebilirdi.
+// Without the second layer authentication would stand in for authorization: an
+// admin user whose scopes were deliberately emptied is still a valid identity,
+// and could raise their own spending limit with
+// PUT /admin/v1/b2b/employees/{id}.
 //
-// Store uçlarına yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
-// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ. Vitrin uçlarının hangi
-// anlamda korunduğu (ve hangi anlamda korunmadığı) için bkz. paket belgesi.
+// NO scope is added to the store endpoints: the store surface's identity is
+// the publishable key, and that key by definition carries NO scope. For the
+// sense in which the storefront endpoints are protected (and the sense in which
+// they are not), see the package documentation.
 func (h *Handler) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
-	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+	read := r.With(corehttp.RequireScope(ScopeRead))
+	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	// --- yönetim: şirketler ---
-	yazma.Post("/admin/v1/b2b/companies", h.adminCreateCompany)
-	okuma.Get("/admin/v1/b2b/companies", h.adminListCompanies)
-	okuma.Get("/admin/v1/b2b/companies/{id}", h.adminGetCompany)
-	yazma.Put("/admin/v1/b2b/companies/{id}", h.adminUpdateCompany)
-	yazma.Delete("/admin/v1/b2b/companies/{id}", h.adminDeleteCompany)
+	// --- admin: companies ---
+	write.Post("/admin/v1/b2b/companies", h.adminCreateCompany)
+	read.Get("/admin/v1/b2b/companies", h.adminListCompanies)
+	read.Get("/admin/v1/b2b/companies/{id}", h.adminGetCompany)
+	write.Put("/admin/v1/b2b/companies/{id}", h.adminUpdateCompany)
+	write.Delete("/admin/v1/b2b/companies/{id}", h.adminDeleteCompany)
 
-	// --- yönetim: çalışanlar ---
-	yazma.Post("/admin/v1/b2b/employees", h.adminCreateEmployee)
-	okuma.Get("/admin/v1/b2b/employees", h.adminListEmployees)
-	okuma.Get("/admin/v1/b2b/employees/{id}", h.adminGetEmployee)
-	yazma.Put("/admin/v1/b2b/employees/{id}", h.adminUpdateEmployee)
-	yazma.Delete("/admin/v1/b2b/employees/{id}", h.adminDeleteEmployee)
+	// --- admin: employees ---
+	write.Post("/admin/v1/b2b/employees", h.adminCreateEmployee)
+	read.Get("/admin/v1/b2b/employees", h.adminListEmployees)
+	read.Get("/admin/v1/b2b/employees/{id}", h.adminGetEmployee)
+	write.Put("/admin/v1/b2b/employees/{id}", h.adminUpdateEmployee)
+	write.Delete("/admin/v1/b2b/employees/{id}", h.adminDeleteEmployee)
 
-	// --- vitrin ---
+	// --- storefront ---
 	//
-	// Yol MÜŞTERİYLE başlar, şirketle değil: kaynağın anahtarı müşterinin
-	// kendi kimliğidir ve şirket ondan TÜRETİLİR. Bir "/store/v1/b2b/companies/{id}"
-	// ucu bu modülde bilinçli olarak yoktur.
+	// The path starts with the CUSTOMER, not the company: the resource's key is
+	// the customer's own id and the company is DERIVED from it. A
+	// "/store/v1/b2b/companies/{id}" endpoint is deliberately absent from this
+	// module.
 	r.Get("/store/v1/b2b/customers/{customer_id}/company", h.storeGetCompany)
 	r.Get("/store/v1/b2b/customers/{customer_id}/employee", h.storeGetEmployee)
 }
 
-// itemEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).
+// itemEnvelope is the envelope of single-item responses (plan Section 8).
 type itemEnvelope struct {
-	// Data tek kaydın gövdesidir.
+	// Data is the body of the single record.
 	Data any `json:"data"`
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data geçerli sayfadaki kayıtlardır.
+	// Data are the records on the current page.
 	Data any `json:"data"`
-	// Count filtreye uyan TOPLAM kayıt sayısıdır.
+	// Count is the TOTAL number of records matching the filter.
 	Count int64 `json:"count"`
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the applied skip count.
 	Offset int64 `json:"offset"`
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the applied page size.
 	Limit int64 `json:"limit"`
 }
 
-// writeItem tekil yanıtı zarfıyla yazar.
+// writeItem writes a single-item response in its envelope.
 func writeItem(w http.ResponseWriter, r *http.Request, status int, data any) {
 	corehttp.WriteJSON(r.Context(), w, status, itemEnvelope{Data: data})
 }
 
-// writePage servis sayfasını liste zarfıyla yazar.
+// writePage writes a service page in the list envelope.
 func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page service.Page[S], convert func(S) T) {
 	items := make([]T, 0, len(page.Items))
 	for _, item := range page.Items {
@@ -272,12 +280,12 @@ func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page servic
 	})
 }
 
-// decodeBody istek gövdesini hedefe çözer.
+// decodeBody decodes the request body into the target.
 //
-// Bilinmeyen alanlar REDDEDİLİR: sessizce yok sayılan bir alan, istemcinin
-// gönderdiğini sandığı bir değerin hiç yazılmaması demektir. Bu modülde o değer
-// bir harcama limiti olabilir. Gövde boyutu da sınırlıdır; aşılırsa çözümleme
-// hatası olarak döner.
+// Unknown fields are REJECTED: a silently ignored field means a value the
+// client believes it sent is never written. In this module that value could be
+// a spending limit. The body size is bounded too; if the bound is exceeded it
+// comes back as a parse error.
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	reader := http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	dec := json.NewDecoder(reader)
@@ -285,21 +293,22 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
-			return coreerrors.Invalid(codeInvalidBody, "istek gövdesi boş olamaz")
+			return coreerrors.Invalid(codeInvalidBody, "request body cannot be empty")
 		}
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidBody,
-			"istek gövdesi çözümlenemedi")
+			"request body could not be parsed")
 	}
 
-	// Tek bir JSON belgesi beklenir; arkasından gelen ikinci belge sessizce
-	// yok sayılırsa istemci gönderdiğinin işlendiğini sanırdı.
+	// A single JSON document is expected; were a second document following it
+	// silently ignored, the client would believe what it sent had been
+	// processed.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return coreerrors.Invalid(codeInvalidBody, "istek gövdesi tek bir JSON belgesi olmalı")
+		return coreerrors.Invalid(codeInvalidBody, "request body has to be a single JSON document")
 	}
 	return nil
 }
 
-// pathParam yol parametresini okur.
+// pathParam reads a path parameter.
 func pathParam(r *http.Request, name string) string {
 	return chi.URLParam(r, name)
 }
@@ -349,11 +358,12 @@ func (h *Handler) storeCustomerID(r *http.Request) (string, error) {
 	return corehttp.ProvenCustomer(identity, r, claimed)
 }
 
-// pageParams sorgu dizesinden sayfalama parametrelerini okur.
+// pageParams reads the paging parameters from the query string.
 //
-// Eksik parametre sıfır döner ve servis varsayılanı uygular; SAYIYA
-// ÇEVRİLEMEYEN bir değer ise hata döner — sessizce sıfıra düşmek, istemcinin
-// istediği sayfa yerine ilk sayfayı almasına yol açardı.
+// A missing parameter returns zero and the service applies its default; a value
+// that CANNOT BE CONVERTED to a number returns an error instead — silently
+// falling back to zero would have made the client get the first page rather
+// than the page it asked for.
 func pageParams(r *http.Request) (limit, offset int64, err error) {
 	limit, err = intParam(r, "limit")
 	if err != nil {
@@ -366,7 +376,8 @@ func pageParams(r *http.Request) (limit, offset int64, err error) {
 	return limit, offset, nil
 }
 
-// intParam tek bir sayısal sorgu parametresini okur; yoksa sıfır döner.
+// intParam reads a single numeric query parameter; returns zero if it is
+// absent.
 func intParam(r *http.Request, name string) (int64, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -375,15 +386,16 @@ func intParam(r *http.Request, name string) (int64, error) {
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, coreerrors.Invalid(codeInvalidBody,
-			"%q parametresi tam sayı olmalı, %q verildi", name, raw)
+			"the %q parameter has to be an integer, %q given", name, raw)
 	}
 	return value, nil
 }
 
-// boolParam bir mantıksal sorgu parametresini okur; yoksa nil döner.
+// boolParam reads a boolean query parameter; returns nil if it is absent.
 //
-// nil ile false arasındaki fark burada anlamlıdır: "is_company_admin=false"
-// yönetici olmayanları süzer, parametrenin hiç verilmemesi ise süzmez.
+// The difference between nil and false is meaningful here:
+// "is_company_admin=false" filters for employees who are not admins, whereas
+// not giving the parameter at all filters nothing.
 func boolParam(r *http.Request, name string) (*bool, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -392,12 +404,12 @@ func boolParam(r *http.Request, name string) (*bool, error) {
 	value, err := strconv.ParseBool(raw)
 	if err != nil {
 		return nil, coreerrors.Invalid(codeInvalidBody,
-			"%q parametresi mantıksal (true/false) olmalı, %q verildi", name, raw)
+			"the %q parameter has to be a boolean (true/false), %q given", name, raw)
 	}
 	return &value, nil
 }
 
-// stringParam bir metin sorgu parametresini okur; yoksa nil döner.
+// stringParam reads a text query parameter; returns nil if it is absent.
 func stringParam(r *http.Request, name string) *string {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {

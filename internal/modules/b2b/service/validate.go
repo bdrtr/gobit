@@ -8,63 +8,67 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/models"
 )
 
-// countryCodeLen ISO 3166-1 alpha-2 kodunun uzunluğudur.
+// countryCodeLen is the length of an ISO 3166-1 alpha-2 code.
 const countryCodeLen = 2
 
-// currencyCodeLen ISO 4217 kodunun uzunluğudur.
+// currencyCodeLen is the length of an ISO 4217 code.
 const currencyCodeLen = 3
 
-// maxIDLen kabul edilen kimlik uzunluğu üst sınırıdır. Kimlikler link
-// tablosundaki benzersiz indekse de girdiği için sınır orayla uyumlu tutulur.
+// maxIDLen is the upper bound on an accepted id's length. Since ids also go
+// into the unique index in the link table, the bound is kept in line with it.
 const maxIDLen = 255
 
-// normalizeEmail e-postayı doğrular ve saklama biçimine çevirir.
+// normalizeEmail validates an e-mail address and turns it into the storage
+// form.
 //
-// Doğrulama BİLİNÇLİ OLARAK dardır: tam bir RFC 5322 ayrıştırıcısı yerine
-// yalnızca "tek @ var, iki yanı da dolu, alan adında nokta var, boşluk yok"
-// denetlenir. Daha katı bir desen geçerli ama alışılmadık adresleri reddeder,
-// daha gevşek bir desen ise migration'daki CHECK kısıtına takılıp istemciye
-// anlamsız bir veritabanı hatası döndürürdü.
+// The validation is DELIBERATELY narrow: instead of a full RFC 5322 parser, it
+// checks only "there is a single @, both sides are filled, the domain has a
+// dot, there is no whitespace". A stricter pattern would reject valid but
+// unusual addresses, and a looser one would trip the CHECK constraint in the
+// migration and hand the client a meaningless database error.
 //
-// Aynı doğrulayıcı customer modülünde de vardır; modül izolasyonu gereği
-// (Prensip 2.4) o paket import edilemez ve mantık burada tekrarlanır.
+// The same validator exists in the customer module too; because of module
+// isolation (Principle 2.4) that package cannot be imported, and the logic is
+// repeated here.
 func normalizeEmail(email string) (string, error) {
 	normalized := models.NormalizeEmail(email)
 	if normalized == "" {
-		return "", errors.Invalid(CodeInvalidInput, "e-posta boş olamaz")
+		return "", errors.Invalid(CodeInvalidInput, "the email address cannot be empty")
 	}
 	if len(normalized) > models.MaxEmailLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"e-posta en fazla %d bayt olabilir, %d bayt verildi", models.MaxEmailLen, len(normalized))
+			"the email address can be at most %d bytes, %d bytes given", models.MaxEmailLen, len(normalized))
 	}
 	if strings.ContainsFunc(normalized, unicode.IsSpace) {
-		return "", errors.Invalid(CodeInvalidInput, "e-posta boşluk içeremez: %q", email)
+		return "", errors.Invalid(CodeInvalidInput, "the email address cannot contain whitespace: %q", email)
 	}
 
 	local, domain, found := strings.Cut(normalized, "@")
 	if !found || local == "" || domain == "" {
 		return "", errors.Invalid(CodeInvalidInput,
-			"e-posta \"ad@alan.uzanti\" biçiminde olmalı, %q verildi", email)
+			"the email address has to be in the \"name@domain.tld\" form, %q given", email)
 	}
 	if strings.Contains(domain, "@") {
 		return "", errors.Invalid(CodeInvalidInput,
-			"e-posta birden çok @ içeremez, %q verildi", email)
+			"the email address cannot contain more than one @, %q given", email)
 	}
-	// Alan adında en az bir nokta aranır ve nokta uçlarda olamaz: "a@b" ile
-	// "a@b." arasındaki fark, ikincisinin hiçbir zaman teslim edilememesidir.
+	// At least one dot is required in the domain, and the dot cannot be at
+	// either end: the difference between "a@b" and "a@b." is that the second
+	// can never be delivered.
 	if !strings.Contains(domain, ".") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
 		return "", errors.Invalid(CodeInvalidInput,
-			"e-posta alan adı geçersiz, %q verildi", email)
+			"the email domain is invalid, %q given", email)
 	}
 	return normalized, nil
 }
 
-// normalizeCountryCode ülke kodunu doğrular ve BÜYÜK harfe çevirir.
+// normalizeCountryCode validates a country code and turns it to UPPER case.
 //
-// BOŞ değer geçerlidir ve boş döner: şirket adresi zorunlu değildir, çoğu kayıt
-// fatura adresi kesinleşmeden açılır. Kodun gerçekten var olan bir ülkeye
-// karşılık gelip gelmediği BURADA denetlenmez; ülke listesinin sahibi region
-// modülüdür ve b2b onu import edemez (ADR 0001).
+// An EMPTY value is valid and comes back empty: the company address is not
+// required, and most records are opened before the billing address is
+// settled. Whether the code corresponds to a country that really exists is NOT
+// checked HERE; the region module owns the country list and b2b cannot import
+// it (ADR 0001).
 func normalizeCountryCode(code string) (string, error) {
 	normalized := models.NormalizeCountryCode(code)
 	if normalized == "" {
@@ -72,42 +76,44 @@ func normalizeCountryCode(code string) (string, error) {
 	}
 	if len(normalized) != countryCodeLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"ülke kodu tam %d harf olmalı (ISO 3166-1 alpha-2), %q verildi", countryCodeLen, code)
+			"the country code has to be exactly %d letters (ISO 3166-1 alpha-2), %q given", countryCodeLen, code)
 	}
-	if !harflerdenOlusuyor(normalized) {
+	if !onlyLettersAToZ(normalized) {
 		return "", errors.Invalid(CodeInvalidInput,
-			"ülke kodu yalnızca harf içerebilir (ISO 3166-1 alpha-2), %q verildi", code)
+			"the country code can only contain letters (ISO 3166-1 alpha-2), %q given", code)
 	}
 	return normalized, nil
 }
 
-// normalizeCurrencyCode para birimi kodunu doğrular ve BÜYÜK harfe çevirir.
+// normalizeCurrencyCode validates a currency code and turns it to UPPER case.
 //
-// Ülke kodunun tersine ZORUNLUDUR: harcama limiti bir tam sayıdır ve hangi para
-// biriminde olduğu bilinmeden karşılaştırılamaz. Kodun gerçekten tanımlı bir
-// para birimi olup olmadığı burada denetlenmez; o liste region modülünündür.
+// Unlike the country code it is REQUIRED: a spending limit is an integer and
+// cannot be compared without knowing which currency it is in. Whether the code
+// is a currency that is really defined is not checked here; that list belongs
+// to the region module.
 func normalizeCurrencyCode(code string) (string, error) {
 	normalized := models.NormalizeCurrencyCode(code)
 	if normalized == "" {
-		return "", errors.Invalid(CodeInvalidInput, "para birimi kodu boş olamaz")
+		return "", errors.Invalid(CodeInvalidInput, "the currency code cannot be empty")
 	}
 	if len(normalized) != currencyCodeLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"para birimi kodu tam %d harf olmalı (ISO 4217), %q verildi", currencyCodeLen, code)
+			"the currency code has to be exactly %d letters (ISO 4217), %q given", currencyCodeLen, code)
 	}
-	if !harflerdenOlusuyor(normalized) {
+	if !onlyLettersAToZ(normalized) {
 		return "", errors.Invalid(CodeInvalidInput,
-			"para birimi kodu yalnızca harf içerebilir (ISO 4217), %q verildi", code)
+			"the currency code can only contain letters (ISO 4217), %q given", code)
 	}
 	return normalized, nil
 }
 
-// harflerdenOlusuyor dizenin yalnızca A-Z harflerinden oluştuğunu bildirir.
+// onlyLettersAToZ reports whether the string consists only of the letters
+// A-Z.
 //
-// unicode.IsLetter KULLANILMAZ: Türkçe "Ş" de bir harftir ama ISO kodları
-// yalnızca ASCII'dir ve geçmesine izin vermek, veritabanındaki desen kısıtına
-// anlaşılmaz bir hatayla takılırdı.
-func harflerdenOlusuyor(s string) bool {
+// unicode.IsLetter is NOT USED: the Turkish capital S with a cedilla is a
+// letter too, but ISO codes are ASCII only, and letting it through would trip
+// the pattern constraint in the database with an incomprehensible error.
+func onlyLettersAToZ(s string) bool {
 	for _, r := range s {
 		if r < 'A' || r > 'Z' {
 			return false
@@ -116,11 +122,11 @@ func harflerdenOlusuyor(s string) bool {
 	return true
 }
 
-// normalizeResetPeriod sıfırlama periyodunu doğrular.
+// normalizeResetPeriod validates a reset period.
 //
-// Boş değer [models.ResetNever]'a düşer: periyot vermemek "sıfırlama yok"
-// demektir ve en kısıtlayıcı seçenektir — bilinmeyen bir değeri aylık saymak,
-// hiç istenmemiş bir sıfırlamayı sessizce açardı.
+// An empty value falls back to [models.ResetNever]: giving no period means "no
+// reset" and is the most restrictive option — counting an unknown value as
+// monthly would silently switch on a reset nobody asked for.
 func normalizeResetPeriod(period string) (models.SpendingResetPeriod, error) {
 	trimmed := models.SpendingResetPeriod(strings.TrimSpace(period))
 	if trimmed == "" {
@@ -128,17 +134,18 @@ func normalizeResetPeriod(period string) (models.SpendingResetPeriod, error) {
 	}
 	if !trimmed.Valid() {
 		return "", errors.Invalid(CodeInvalidInput,
-			"harcama limiti sıfırlama periyodu %q, %q ya da %q olmalı, %q verildi",
+			"the spending limit reset period has to be %q, %q or %q, %q given",
 			models.ResetMonthly, models.ResetYearly, models.ResetNever, period)
 	}
 	return trimmed, nil
 }
 
-// requireID kimliğin boş olmadığını, önekini ve uzunluğunu doğrular.
+// requireID verifies that an id is not empty, and checks its prefix and its
+// length.
 //
-// Önek denetimi ucuz bir tip güvenliğidir: bir şirket kimliğinin çalışan
-// kimliği yerine geçirilmesi veritabanına hiç gitmeden yakalanır ve hata,
-// "bulunamadı" yerine ne beklendiğini söyler.
+// The prefix check is cheap type safety: a company id passed in place of an
+// employee id is caught without ever going to the database, and the error says
+// what was expected instead of "not found".
 func requireID(id, prefix, label string) error {
 	if id == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
@@ -148,30 +155,31 @@ func requireID(id, prefix, label string) error {
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir, %d bayt verildi", label, maxIDLen, len(id))
+			"%s can be at most %d bytes, %d bytes given", label, maxIDLen, len(id))
 	}
 	if !strings.HasPrefix(id, prefix) {
 		return errors.Invalid(CodeInvalidInput,
-			"%s %q önekiyle başlamalı, %q verildi", label, prefix, id)
+			"%s has to start with the %q prefix, %q given", label, prefix, id)
 	}
 	return nil
 }
 
-// normalizePaging sayfalama parametrelerini uygulanabilir değerlere çevirir.
+// normalizePaging turns the paging parameters into applicable values.
 //
-// Limit 0 verilirse varsayılan uygulanır. Negatif limit/offset ve [MaxLimit]'i
-// aşan limit ise DÜZELTİLMEZ, reddedilir: sessizce kırpılan bir limit istemciye
-// sayfa boyunu yanlış bildirir ve sayfalama döngüsü aynı kayıtları tekrar okur.
+// If a limit of 0 is given the default applies. A negative limit/offset and a
+// limit above [MaxLimit], however, are NOT CORRECTED but rejected: a silently
+// clipped limit misreports the page size to the client, and the paging loop
+// reads the same records again.
 func normalizePaging(limit, offset int64) (outLimit, outOffset int64, err error) {
 	if limit < 0 {
-		return 0, 0, errors.Invalid(CodeInvalidInput, "limit negatif olamaz, %d verildi", limit)
+		return 0, 0, errors.Invalid(CodeInvalidInput, "the limit cannot be negative, %d given", limit)
 	}
 	if offset < 0 {
-		return 0, 0, errors.Invalid(CodeInvalidInput, "offset negatif olamaz, %d verildi", offset)
+		return 0, 0, errors.Invalid(CodeInvalidInput, "the offset cannot be negative, %d given", offset)
 	}
 	if limit > MaxLimit {
 		return 0, 0, errors.Invalid(CodeInvalidInput,
-			"limit en fazla %d olabilir, %d verildi", MaxLimit, limit)
+			"the limit can be at most %d, %d given", MaxLimit, limit)
 	}
 	if limit == 0 {
 		limit = DefaultLimit
@@ -179,16 +187,16 @@ func normalizePaging(limit, offset int64) (outLimit, outOffset int64, err error)
 	return limit, offset, nil
 }
 
-// checkLen bir metin alanının uzunluk sınırını doğrular.
+// checkLen verifies the length bound of a text field.
 func checkLen(label, value string, limit int) error {
 	if len(value) > limit {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir, %d bayt verildi", label, limit, len(value))
+			"%s can be at most %d bytes, %d bytes given", label, limit, len(value))
 	}
 	return nil
 }
 
-// requireText bir metin alanının dolu olduğunu doğrular.
+// requireText verifies that a text field is filled.
 func requireText(label, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
@@ -196,15 +204,15 @@ func requireText(label, value string) error {
 	return nil
 }
 
-// validateSpendingLimit harcama limitinin anlamlı olduğunu doğrular.
+// validateSpendingLimit verifies that a spending limit is meaningful.
 //
-// nil "sınırsız" demektir ve geçerlidir. Negatif bir limit ise bir sınır değil,
-// anlamsız bir sayıdır: her karşılaştırma onu aşardı ve çalışan sessizce hiç
-// alışveriş yapamaz hâle gelirdi.
+// nil means "unlimited" and is valid. A negative limit, however, is not a
+// bound but a meaningless number: every comparison would exceed it, and the
+// employee would silently become unable to buy anything at all.
 func validateSpendingLimit(limit *int64) error {
 	if limit != nil && *limit < 0 {
 		return errors.Invalid(CodeInvalidInput,
-			"harcama limiti negatif olamaz, %d verildi (sınırsız için alanı boş bırakın)", *limit)
+			"the spending limit cannot be negative, %d given (leave the field empty for unlimited)", *limit)
 	}
 	return nil
 }

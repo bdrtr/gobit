@@ -8,7 +8,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/repository/b2bdb"
 )
 
-// CreateCompany yeni bir şirket yazar.
+// CreateCompany writes a new company.
 func (r *Repo) CreateCompany(ctx context.Context, c models.Company) (models.Company, error) {
 	if err := r.ready(); err != nil {
 		return models.Company{}, err
@@ -28,12 +28,12 @@ func (r *Repo) CreateCompany(ctx context.Context, c models.Company) (models.Comp
 		CreatedAt:                fromTime(c.CreatedAt),
 	})
 	if err != nil {
-		return models.Company{}, wrapDB(err, "şirket oluşturulamadı")
+		return models.Company{}, wrapDB(err, "the company could not be created")
 	}
 	return toCompany(row), nil
 }
 
-// GetCompany kimliğe göre şirket döner; yoksa errors.NotFound.
+// GetCompany returns a company by id; errors.NotFound if there is none.
 func (r *Repo) GetCompany(ctx context.Context, id string) (models.Company, error) {
 	if err := r.ready(); err != nil {
 		return models.Company{}, err
@@ -41,12 +41,12 @@ func (r *Repo) GetCompany(ctx context.Context, id string) (models.Company, error
 
 	row, err := r.q.GetCompany(ctx, id)
 	if err != nil {
-		return models.Company{}, notFoundOr(err, CodeCompanyNotFound, "şirket bulunamadı: %s", id)
+		return models.Company{}, notFoundOr(err, CodeCompanyNotFound, "company not found: %s", id)
 	}
 	return toCompany(row), nil
 }
 
-// ListCompanies sayfalanmış şirket listesini ve TOPLAM kayıt sayısını döner.
+// ListCompanies returns the paged company list and the TOTAL record count.
 func (r *Repo) ListCompanies(
 	ctx context.Context,
 	filter models.CompanyFilter,
@@ -62,17 +62,18 @@ func (r *Repo) ListCompanies(
 		Off:   toInt32(offset),
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "şirket listesi alınamadı")
+		return nil, 0, wrapDB(err, "the company list could not be read")
 	}
 
 	total, err := r.q.CountCompanies(ctx, filter.Email)
 	if err != nil {
-		return nil, 0, wrapDB(err, "şirket sayısı alınamadı")
+		return nil, 0, wrapDB(err, "the companies could not be counted")
 	}
 	return toCompanies(rows), total, nil
 }
 
-// UpdateCompany şirketin verilen alanlarını günceller; yoksa errors.NotFound.
+// UpdateCompany updates the given fields of a company; errors.NotFound if
+// there is none.
 func (r *Repo) UpdateCompany(
 	ctx context.Context,
 	id string,
@@ -103,27 +104,28 @@ func (r *Repo) UpdateCompany(
 		UpdatedAt:    fromTime(now),
 	})
 	if err != nil {
-		return models.Company{}, notFoundOr(err, CodeCompanyNotFound, "şirket bulunamadı: %s", id)
+		return models.Company{}, notFoundOr(err, CodeCompanyNotFound, "company not found: %s", id)
 	}
 	return toCompany(row), nil
 }
 
-// DeleteCompany şirketi ve ÇALIŞANLARINI yumuşak siler; şirket yoksa
-// errors.NotFound. Dönen dilim, silinen çalışanların kimlikleridir.
+// DeleteCompany soft-deletes a company and its EMPLOYEES; errors.NotFound if
+// the company does not exist. The returned slice holds the ids of the deleted
+// employees.
 //
-// # Neden çalışanlar da siliniyor
+// # Why the employees are deleted too
 //
-// Sarkan bir çalışan kaydının vitrinde sahibi olmazdı: "kendi şirketim" sorusu,
-// artık okunamayan (yumuşak silinmiş) bir şirkete çözülür ve müşteri ya 404
-// alır ya da silinmiş bir şirketi görürdü. İkincisi daha kötüdür — kayıt,
-// hâlâ bir harcama limiti taşır ve o limitin arkasında ödeme yapacak bir tüzel
-// kişi yoktur. Bu yüzden değişmez şudur: CANLI bir çalışan kaydı DAİMA canlı
-// bir şirkete aittir.
+// A dangling employee record would have no owner in the storefront: the "my
+// own company" question would resolve to a company that can no longer be read
+// (soft-deleted), and the customer would either get a 404 or see a deleted
+// company. The second is worse — the record still carries a spending limit,
+// and there is no legal entity behind that limit to pay. So the invariant is
+// this: a LIVE employee record ALWAYS belongs to a live company.
 //
-// İkisi TEK işlemde yapılır; arada kalan bir hata tam da yasaklanan durumu
-// üretirdi. Çalışanların müşteri BAĞLARI burada değil, servis katmanında
-// kaldırılır (link ayrı bir alt sistemdir ve bu işleme katılamaz); kimliklerin
-// dönmesinin sebebi de budur.
+// Both are done in ONE transaction; an error between them would produce exactly
+// the forbidden state. The employees' customer BONDS are removed not here but
+// in the service layer (link is a separate subsystem and cannot take part in
+// this transaction); that is also why the ids are returned.
 func (r *Repo) DeleteCompany(ctx context.Context, id string, now time.Time) ([]string, error) {
 	var employeeIDs []string
 
@@ -132,7 +134,7 @@ func (r *Repo) DeleteCompany(ctx context.Context, id string, now time.Time) ([]s
 			ID:        id,
 			DeletedAt: fromTime(now),
 		}); err != nil {
-			return notFoundOr(err, CodeCompanyNotFound, "şirket bulunamadı: %s", id)
+			return notFoundOr(err, CodeCompanyNotFound, "company not found: %s", id)
 		}
 
 		ids, err := q.SoftDeleteEmployeesOfCompany(ctx, b2bdb.SoftDeleteEmployeesOfCompanyParams{
@@ -140,7 +142,7 @@ func (r *Repo) DeleteCompany(ctx context.Context, id string, now time.Time) ([]s
 			DeletedAt: fromTime(now),
 		})
 		if err != nil {
-			return wrapDB(err, "şirketin çalışanları silinemedi: %s", id)
+			return wrapDB(err, "the company's employees could not be deleted: %s", id)
 		}
 		employeeIDs = ids
 		return nil
@@ -151,7 +153,7 @@ func (r *Repo) DeleteCompany(ctx context.Context, id string, now time.Time) ([]s
 	return employeeIDs, nil
 }
 
-// toCompany üretilen satırı domain modeline çevirir.
+// toCompany turns a generated row into the domain model.
 func toCompany(row b2bdb.B2bCompany) models.Company {
 	return models.Company{
 		ID:                       row.ID,
@@ -170,7 +172,7 @@ func toCompany(row b2bdb.B2bCompany) models.Company {
 	}
 }
 
-// toCompanies satır dilimini domain modellerine çevirir.
+// toCompanies turns a slice of rows into domain models.
 func toCompanies(rows []b2bdb.B2bCompany) []models.Company {
 	out := make([]models.Company, 0, len(rows))
 	for i := range rows {

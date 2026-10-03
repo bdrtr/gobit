@@ -1,36 +1,38 @@
-// Package api promotion modülünün HTTP yüzeyidir.
+// Package api is the promotion module's HTTP surface.
 //
-// İki ad alanı vardır (plan Bölüm 8): /admin/v1 yönetim, /store/v1 müşteri.
-// Yazma yüzeyi YALNIZCA admin tarafındadır; store tarafında tek bir kupon
-// doğrulama uç noktası bulunur.
+// There are two namespaces (plan Section 8): /admin/v1 for administration,
+// /store/v1 for the customer. The write surface is ONLY on the admin side; the
+// store side has a single coupon validation endpoint.
 //
-// # Store yüzeyi ne SIZDIRMAZ
+// # What the store surface does NOT LEAK
 //
-// Müşteriye giden gövde promosyonun DURUMUNU, kullanım sayacını, kampanya
-// bütçesini, üstverisini ve KURAL KOŞULLARINI içermez. Kod geçerli değilse
-// sebep de söylenmez: taslak, pasif, süresi geçmiş, bütçesi bitmiş ve
-// var olmayan kod AYNI 404'ü döner (gerekçe:
-// service.Service.LookupStoreCoupon).
+// The body that goes to the customer does not contain the promotion's STATUS,
+// the usage counter, the campaign budget, the metadata or the RULE CONDITIONS.
+// When a code is not valid, no reason is given either: a draft, inactive,
+// expired, budget-exhausted and nonexistent code all return the SAME 404
+// (rationale: service.Service.LookupStoreCoupon).
 //
-// Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
-// onu status koduna çevirir (plan Bölüm 2.7). Bu, hata sınıflandırmasının tek
-// bir yerde kalmasını sağlar.
+// Handlers do NOT CHOOSE the status code: the service returns a typed error and
+// corehttp.WriteError turns it into a status code (plan Section 2.7). This
+// keeps error classification in a single place.
 //
-// # Yetki
+// # Scopes
 //
-// Yönetim uçlarının tamamı yetki ister ve sözlük iki girdiden ibarettir:
+// Every admin endpoint asks for a scope, and the vocabulary consists of two
+// entries:
 //
-//   - [ScopeRead] — /admin/v1 altındaki OKUMA (GET, HEAD) uçlarını açar:
-//     kampanyalar, promosyonlar, kurallar ve kullanım kayıtları okunabilir.
-//   - [ScopeWrite] — /admin/v1 altındaki YAZMA (POST, PUT, PATCH, DELETE)
-//     uçlarını açar: CRUD'un yanı sıra kullanım/iade (redeem, release) ve
-//     indirim hesabı (compute) uçları da buraya girer.
+//   - [ScopeRead] — opens the READ (GET, HEAD) endpoints under /admin/v1:
+//     campaigns, promotions, rules and redemption records can be read.
+//   - [ScopeWrite] — opens the WRITE (POST, PUT, PATCH, DELETE) endpoints
+//     under /admin/v1: besides CRUD, the redeem/release endpoints and the
+//     discount computation (compute) endpoint belong here too.
 //
-// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de karşılar; ayrıca
-// listelenmesine gerek yoktur, corehttp.Principal.HasScope bunu zaten yapar.
+// corehttp.ScopeAdmin is a SUPERSCOPE and satisfies both; it does not need to
+// be listed separately, corehttp.Principal.HasScope already does that.
 //
-// /store/v1 kupon doğrulama ucu yetki İSTEMEZ: mağaza yüzeyinin kimliği
-// publishable anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
+// The /store/v1 coupon validation endpoint asks for NO scope: the storefront
+// surface's identity is the publishable key, and that key by definition
+// CARRIES no scope.
 package api
 
 import (
@@ -48,137 +50,143 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/service"
 )
 
-// maxBodyBytes tek bir istek gövdesinin azami boyutudur.
+// maxBodyBytes is the maximum size of a single request body.
 //
-// İndirim hesabı tek istekte yüzlerce satır taşıyabildiği için sınır
-// cömerttir; ama sınırsız değildir — sınırsız bir gövde, tek istekle belleği
-// tüketmenin en ucuz yoludur.
+// A discount computation can carry hundreds of lines in one request, so the
+// bound is generous; but it is not unbounded — an unbounded body is the
+// cheapest way to exhaust memory with a single request.
 const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
-// codeInvalidBody istek gövdesi çözümlenemediğinde dönen hata kodudur.
+// codeInvalidBody is the error code returned when a request body cannot be
+// parsed.
 const codeInvalidBody = "promotion_invalid_body"
 
-// API promotion'ın HTTP handler'larını barındırır.
+// API holds promotion's HTTP handlers.
 type API struct {
 	svc *service.Service
 	// trial is the flow the trial endpoint runs on; see [API.WithTrial].
 	trial PromotionTrial
 }
 
-// New verilen servis üzerinde çalışan bir API üretir.
+// New builds an API that runs on the given service.
 func New(svc *service.Service) *API {
 	return &API{svc: svc}
 }
 
-// Yetki sözlüğü: promotion'ın yönetim uçlarının istediği yetkiler.
+// Scope vocabulary: the scopes promotion's admin endpoints ask for.
 //
-// Sözlük BİLİNÇLİ OLARAK okuma/yazma ayrımından ibarettir. Kaynak başına ayrı
-// yetki ("campaigns:write", "redemptions:write" …) tanımlamak listeyi büyütür
-// ama bugün verilebilecek yeni bir kararı mümkün kılmaz: promosyonu
-// yazabilen bir kimlik zaten kampanyayı da yazabilmelidir, çünkü bütçe
-// kampanyada tutulur. Ayrım gerçekten gerektiğinde eklenir; şimdiden
-// eklenirse yalnızca yanlış bir kesinlik hissi verir.
+// The vocabulary DELIBERATELY consists of the read/write split. Defining a
+// separate scope per resource ("campaigns:write", "redemptions:write" …) would
+// grow the list but would not make possible any new decision that can be made
+// today: an identity that can write a promotion has to be able to write the
+// campaign as well, because the budget is kept on the campaign. The split is
+// added when it is genuinely needed; added now, it would only give a false
+// sense of precision.
 const (
-	// ScopeRead promotion yönetim yüzeyindeki OKUMA uçlarının istediği
-	// yetkidir.
+	// ScopeRead is the scope the READ endpoints of promotion's admin surface
+	// ask for.
 	ScopeRead = "promotion:read"
-	// ScopeWrite promotion yönetim yüzeyindeki YAZMA uçlarının istediği
-	// yetkidir.
+	// ScopeWrite is the scope the WRITE endpoints of promotion's admin
+	// surface ask for.
 	ScopeWrite = "promotion:write"
 )
 
-// Routes promotion'ın admin ve store route'larını router'a bağlar.
+// Routes binds promotion's admin and store routes to the router.
 //
-// Route'lar chi'nin Route/Mount yardımcılarıyla DEĞİL, tam yollarla kaydedilir:
-// /admin/v1 önekini birden çok modül paylaşır ve aynı öneki iki kez Mount etmek
-// chi'de panik üretirdi. Tam yol kaydı aynı ağaca yan yana yazar.
+// Routes are registered with full paths, NOT with chi's Route/Mount helpers:
+// several modules share the /admin/v1 prefix, and mounting the same prefix
+// twice would panic in chi. Registering full paths writes them side by side
+// into the same tree.
 //
-// # KORUMA
+// # PROTECTION
 //
-// İki katman vardır ve ikisi de gereklidir:
+// There are two layers, and both are needed:
 //
-//  1. KİMLİK — corehttp.RequireAdmin ile, router'ı kuran tarafta.
-//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile: okuma uçları
-//     [ScopeRead], yazma uçları [ScopeWrite] ister.
+//  1. IDENTITY — with corehttp.RequireAdmin, on the side that builds the
+//     router.
+//  2. SCOPE — HERE, endpoint by endpoint, with corehttp.RequireScope: read
+//     endpoints ask for [ScopeRead], write endpoints for [ScopeWrite].
 //
-// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi ve
-// yetkileri BOŞALTILMIŞ bir yönetim kullanıcısı promosyon oluşturup kendine
-// %100 indirim yazabilirdi — doğrudan para kaybı.
+// Without the second layer authentication would stand in for authorization,
+// and an admin user whose scopes were EMPTIED could create a promotion and
+// write themselves a 100% discount — a direct loss of money.
 //
-// POST /admin/v1/promotions/compute yalnızca HESAPLAR, hiçbir şey yazmaz; yine
-// de [ScopeWrite] ister. Sözlük yöntem üzerinden tanımlıdır ("POST → write")
-// ve istisnası yoktur: "aslında okuma olan POST" ayrımı, sözlüğü uç uç
-// tartışılan bir şeye çevirir ve bir sonraki gevşetme sessizce gelir. Hesabın
-// gerçekten yazmadığını doğrulayan yer servis katmanıdır.
+// POST /admin/v1/promotions/compute only COMPUTES and writes nothing; it still
+// asks for [ScopeWrite]. The vocabulary is defined by the method ("POST →
+// write") and has no exceptions: a "POST that is really a read" distinction
+// turns the vocabulary into something argued endpoint by endpoint, and the next
+// loosening arrives silently. The place that verifies the computation really
+// writes nothing is the service layer.
 func (a *API) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
-	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+	read := r.With(corehttp.RequireScope(ScopeRead))
+	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	yazma.Post("/admin/v1/campaigns", a.createCampaign)
-	okuma.Get("/admin/v1/campaigns", a.listCampaigns)
-	okuma.Get("/admin/v1/campaigns/{id}", a.getCampaign)
-	yazma.Put("/admin/v1/campaigns/{id}", a.updateCampaign)
-	yazma.Delete("/admin/v1/campaigns/{id}", a.deleteCampaign)
+	write.Post("/admin/v1/campaigns", a.createCampaign)
+	read.Get("/admin/v1/campaigns", a.listCampaigns)
+	read.Get("/admin/v1/campaigns/{id}", a.getCampaign)
+	write.Put("/admin/v1/campaigns/{id}", a.updateCampaign)
+	write.Delete("/admin/v1/campaigns/{id}", a.deleteCampaign)
 
-	yazma.Post("/admin/v1/promotions", a.createPromotion)
-	okuma.Get("/admin/v1/promotions", a.listPromotions)
-	okuma.Get("/admin/v1/promotions/{id}", a.getPromotion)
-	yazma.Put("/admin/v1/promotions/{id}", a.updatePromotion)
-	yazma.Delete("/admin/v1/promotions/{id}", a.deletePromotion)
+	write.Post("/admin/v1/promotions", a.createPromotion)
+	read.Get("/admin/v1/promotions", a.listPromotions)
+	read.Get("/admin/v1/promotions/{id}", a.getPromotion)
+	write.Put("/admin/v1/promotions/{id}", a.updatePromotion)
+	write.Delete("/admin/v1/promotions/{id}", a.deletePromotion)
 
-	yazma.Put("/admin/v1/promotions/{id}/application-method", a.setApplicationMethod)
-	yazma.Delete("/admin/v1/promotions/{id}/application-method", a.deleteApplicationMethod)
+	write.Put("/admin/v1/promotions/{id}/application-method", a.setApplicationMethod)
+	write.Delete("/admin/v1/promotions/{id}/application-method", a.deleteApplicationMethod)
 
-	okuma.Get("/admin/v1/promotions/{id}/rules", a.listPromotionRules)
-	yazma.Post("/admin/v1/promotions/{id}/rules", a.createPromotionRule)
-	yazma.Delete("/admin/v1/promotion-rules/{id}", a.deletePromotionRule)
+	read.Get("/admin/v1/promotions/{id}/rules", a.listPromotionRules)
+	write.Post("/admin/v1/promotions/{id}/rules", a.createPromotionRule)
+	write.Delete("/admin/v1/promotion-rules/{id}", a.deletePromotionRule)
 
-	okuma.Get("/admin/v1/promotions/{id}/redemptions", a.listRedemptions)
-	yazma.Post("/admin/v1/promotions/{id}/redeem", a.redeemPromotion)
-	yazma.Post("/admin/v1/promotions/{id}/release", a.releasePromotion)
+	read.Get("/admin/v1/promotions/{id}/redemptions", a.listRedemptions)
+	write.Post("/admin/v1/promotions/{id}/redeem", a.redeemPromotion)
+	write.Post("/admin/v1/promotions/{id}/release", a.releasePromotion)
 
-	yazma.Post("/admin/v1/promotions/compute", a.computeDiscounts)
+	write.Post("/admin/v1/promotions/compute", a.computeDiscounts)
 	// The trial's report is orders, so it asks for the order module's read
 	// privilege too (ADR 0176).
-	okuma.With(corehttp.RequireScope(orderReadScope)).Get(pathTrial, a.trialPromotion)
+	read.With(corehttp.RequireScope(orderReadScope)).Get(pathTrial, a.trialPromotion)
 
-	// Mağaza ucu DEĞİŞMEZ: publishable anahtar yetki taşımaz.
+	// The store endpoint is UNCHANGED: the publishable key carries no scope.
 	r.Get("/store/v1/promotions/{code}", a.storeGetPromotion)
 }
 
-// itemEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).
+// itemEnvelope is the envelope of single-record responses (plan Section 8).
 type itemEnvelope struct {
-	// Data tek kaydın gövdesidir.
+	// Data is the body of the single record.
 	Data any `json:"data"`
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data geçerli sayfadaki kayıtlardır.
+	// Data is the records on the current page.
 	Data any `json:"data"`
-	// Count filtreye uyan TOPLAM kayıt sayısıdır.
+	// Count is the TOTAL number of records matching the filter.
 	Count int64 `json:"count"`
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the applied skip count.
 	Offset int32 `json:"offset"`
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the applied page size.
 	Limit int32 `json:"limit"`
 }
 
-// writeItem tekil yanıtı zarfıyla yazar.
+// writeItem writes a single-record response with its envelope.
 func writeItem(w http.ResponseWriter, r *http.Request, status int, data any) {
 	corehttp.WriteJSON(r.Context(), w, status, itemEnvelope{Data: data})
 }
 
-// writeItems sayfalanmamış bir listeyi zarfıyla yazar.
+// writeItems writes an unpaginated list with its envelope.
 //
-// Sayfalanmayan uç noktalarda (bir promosyonun kuralları) zarfın sayısal
-// alanları kayıt sayısıyla doldurulur: istemcinin zarf şekli uç noktaya göre
-// değişmez.
+// On unpaginated endpoints (a promotion's rules) the envelope's numeric fields
+// are filled with the record count: the shape of the envelope the client sees
+// does not change from endpoint to endpoint.
 //
-// Limit, dönen kayıt sayısına EŞİTTİR ve [service.MaxLimit] ile KIRPILMAZ.
-// Kırpılsaydı 250 kurallı bir promosyon için yanıt "count=250, limit=100"
-// derdi; istemci sayfa boyunu 100 sanıp sayfalama döngüsüne girer ve aynı
-// kayıtları tekrar okurdu. Burada sayfa yoktur — tek sayfa tüm kayıtlardır.
+// Limit EQUALS the number of records returned and is NOT CLAMPED to
+// [service.MaxLimit]. Were it clamped, the response for a promotion with 250
+// rules would say "count=250, limit=100"; the client would take the page size
+// to be 100, enter a paging loop and read the same records again. There are no
+// pages here — the single page is all the records.
 func writeItems[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	if items == nil {
 		items = []T{}
@@ -192,12 +200,12 @@ func writeItems[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	})
 }
 
-// clampCount kayıt sayısını zarfın int32 limit alanına sığdırır.
+// clampCount fits the record count into the envelope's int32 limit field.
 //
-// Yalnızca int32 ARALIĞINA sığdırır; sayfa boyu sınırı uygulamaz (bkz.
-// writeItems). Alt sınır da denetlenir: count bir len() sonucudur ve negatif
-// olamaz, ama denetimin varlığı int32'ye dönüşün her girdide güvenli olduğunu
-// YEREL olarak kanıtlar.
+// It only fits it into the int32 RANGE; it applies no page size bound (see
+// writeItems). The lower bound is checked too: count is the result of a len()
+// and cannot be negative, but the presence of the check proves LOCALLY that the
+// conversion to int32 is safe for every input.
 func clampCount(count int64) int32 {
 	if count < 0 {
 		return 0
@@ -208,7 +216,7 @@ func clampCount(count int64) int32 {
 	return int32(count)
 }
 
-// writePage servis sayfasını liste zarfıyla yazar.
+// writePage writes a service page with the list envelope.
 func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page service.Page[S], convert func(S) T) {
 	items := make([]T, 0, len(page.Items))
 	for _, item := range page.Items {
@@ -222,11 +230,11 @@ func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page servic
 	})
 }
 
-// decodeBody istek gövdesini hedefe çözer.
+// decodeBody decodes the request body into the destination.
 //
-// Bilinmeyen alanlar REDDEDİLİR: sessizce yok sayılan bir alan, istemcinin
-// gönderdiğini sandığı bir kuralın hiç yazılmaması demektir. Gövde boyutu da
-// sınırlıdır; aşılırsa çözümleme hatası olarak döner.
+// Unknown fields are REJECTED: a silently ignored field means a rule the client
+// believes it sent is never written. The body size is bounded too; if the
+// bound is exceeded it comes back as a parse error.
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	reader := http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	dec := json.NewDecoder(reader)
@@ -234,30 +242,32 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
-			return coreerrors.Invalid(codeInvalidBody, "istek gövdesi boş olamaz")
+			return coreerrors.Invalid(codeInvalidBody, "request body cannot be empty")
 		}
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidBody,
-			"istek gövdesi çözümlenemedi")
+			"request body could not be parsed")
 	}
 
-	// Tek bir JSON belgesi beklenir; arkasından gelen ikinci belge sessizce
-	// yok sayılırsa istemci gönderdiğinin işlendiğini sanırdı.
+	// A single JSON document is expected; were a second document following it
+	// silently ignored, the client would believe what it sent had been
+	// processed.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return coreerrors.Invalid(codeInvalidBody, "istek gövdesi tek bir JSON belgesi olmalı")
+		return coreerrors.Invalid(codeInvalidBody, "request body has to be a single JSON document")
 	}
 	return nil
 }
 
-// pathID yol parametresini okur.
+// pathID reads a path parameter.
 func pathID(r *http.Request, name string) string {
 	return chi.URLParam(r, name)
 }
 
-// pageParams sorgu dizesinden sayfalama parametrelerini okur.
+// pageParams reads the paging parameters from the query string.
 //
-// Eksik parametre sıfır döner ve servis varsayılanı uygular; SAYIYA
-// ÇEVRİLEMEYEN bir değer ise hata döner — sessizce sıfıra düşmek, istemcinin
-// istediği sayfa yerine ilk sayfayı almasına yol açardı.
+// A missing parameter returns zero and the service applies the default; a value
+// that CANNOT BE CONVERTED TO A NUMBER returns an error — silently falling back
+// to zero would hand the client the first page instead of the page it asked
+// for.
 func pageParams(r *http.Request) (limit, offset int32, err error) {
 	limit, err = intParam(r, "limit")
 	if err != nil {
@@ -270,7 +280,8 @@ func pageParams(r *http.Request) (limit, offset int32, err error) {
 	return limit, offset, nil
 }
 
-// intParam tek bir sayısal sorgu parametresini okur; yoksa sıfır döner.
+// intParam reads a single numeric query parameter; it returns zero when the
+// parameter is absent.
 func intParam(r *http.Request, name string) (int32, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -279,15 +290,16 @@ func intParam(r *http.Request, name string) (int32, error) {
 	value, err := strconv.ParseInt(raw, 10, 32)
 	if err != nil {
 		return 0, coreerrors.Invalid(codeInvalidBody,
-			"%q parametresi tam sayı olmalı, %q verildi", name, raw)
+			"the %q parameter has to be an integer, %q was given", name, raw)
 	}
 	return int32(value), nil
 }
 
-// stringParam tek bir dize sorgu parametresini işaretçi olarak döner; yoksa nil.
+// stringParam returns a single string query parameter as a pointer; nil when
+// it is absent.
 //
-// İşaretçi dönmesi bilinçlidir: "süzgeç verilmedi" ile "boş değerle süzülsün"
-// ayrımı korunur.
+// Returning a pointer is deliberate: the distinction between "no filter was
+// given" and "filter by an empty value" is preserved.
 func stringParam(r *http.Request, name string) *string {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {

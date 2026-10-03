@@ -9,16 +9,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/service"
 )
 
-// stubB2B [api.B2B]'nin testler için betiklenebilir uygulamasıdır.
+// stubB2B is a scriptable implementation of [api.B2B] for the tests.
 //
-// HTTP katmanı testleri servisin İŞ MANTIĞINI değil taşımayı sınar:
-// yönlendirme, gövde çözümleme, zarf biçimi ve hata sınıfının status koduna
-// çevrilmesi. Bu yüzden servis yerine betiklenebilir bir sahte kullanılır;
-// testin dönmesini istediği tipli hata doğrudan verilir ve beklenen status kodu
-// ölçülür.
+// The HTTP layer's tests exercise the transport, not the service's BUSINESS
+// LOGIC: routing, body decoding, envelope shape and the translation of an error
+// kind into a status code. That is why a scriptable fake stands in for the
+// service; the typed error the test wants returned is handed over directly and
+// the expected status code is measured.
 //
-// Betiklenmemiş bir metot çağrılırsa tipli bir hata döner: sessiz sıfır değer,
-// testin yanlış nedenle geçmesine yol açardı.
+// Calling a method that was not scripted returns a typed error: a silent zero
+// value would let the test pass for the wrong reason.
 type stubB2B struct {
 	createCompanyFn func(ctx context.Context, in service.CompanyInput) (models.Company, error)
 	getCompanyFn    func(ctx context.Context, id string) (models.Company, error)
@@ -34,25 +34,26 @@ type stubB2B struct {
 
 	membershipFn func(ctx context.Context, customerID string) (service.Membership, error)
 
-	// son çağrının argümanları; handler'ın doğru değerleri ilettiğini kanıtlar.
-	sonID              string
-	sonCustomerID      string
-	sonCompanyInput    service.CompanyInput
-	sonEmployeeInput   service.EmployeeInput
-	sonEmployeeUpdate  service.UpdateEmployeeInput
-	sonCompanyListArgs service.ListCompaniesInput
-	sonEmployeeList    service.ListEmployeesInput
+	// The arguments of the last call; they prove the handler passed on the
+	// right values.
+	lastID              string
+	lastCustomerID      string
+	lastCompanyInput    service.CompanyInput
+	lastEmployeeInput   service.EmployeeInput
+	lastEmployeeUpdate  service.UpdateEmployeeInput
+	lastCompanyListArgs service.ListCompaniesInput
+	lastEmployeeList    service.ListEmployeesInput
 }
 
 var _ api.B2B = (*stubB2B)(nil)
 
-// unset betiklenmemiş bir metot çağrıldığında dönen hatadır.
+// unset is the error returned when a method that was not scripted is called.
 func unset(name string) error {
-	return errors.Internal("stub_unset", "%s testte betiklenmedi", name)
+	return errors.Internal("stub_unset", "%s was not scripted in the test", name)
 }
 
 func (s *stubB2B) CreateCompany(ctx context.Context, in service.CompanyInput) (models.Company, error) {
-	s.sonCompanyInput = in
+	s.lastCompanyInput = in
 	if s.createCompanyFn == nil {
 		return models.Company{}, unset("CreateCompany")
 	}
@@ -60,7 +61,7 @@ func (s *stubB2B) CreateCompany(ctx context.Context, in service.CompanyInput) (m
 }
 
 func (s *stubB2B) GetCompany(ctx context.Context, id string) (models.Company, error) {
-	s.sonID = id
+	s.lastID = id
 	if s.getCompanyFn == nil {
 		return models.Company{}, unset("GetCompany")
 	}
@@ -71,7 +72,7 @@ func (s *stubB2B) ListCompanies(
 	ctx context.Context,
 	in service.ListCompaniesInput,
 ) (service.Page[models.Company], error) {
-	s.sonCompanyListArgs = in
+	s.lastCompanyListArgs = in
 	if s.listCompaniesFn == nil {
 		return service.Page[models.Company]{}, unset("ListCompanies")
 	}
@@ -83,7 +84,7 @@ func (s *stubB2B) UpdateCompany(
 	id string,
 	in service.UpdateCompanyInput,
 ) (models.Company, error) {
-	s.sonID = id
+	s.lastID = id
 	if s.updateCompanyFn == nil {
 		return models.Company{}, unset("UpdateCompany")
 	}
@@ -91,7 +92,7 @@ func (s *stubB2B) UpdateCompany(
 }
 
 func (s *stubB2B) DeleteCompany(ctx context.Context, id string) error {
-	s.sonID = id
+	s.lastID = id
 	if s.deleteCompanyFn == nil {
 		return unset("DeleteCompany")
 	}
@@ -102,7 +103,7 @@ func (s *stubB2B) CreateEmployee(
 	ctx context.Context,
 	in service.EmployeeInput,
 ) (models.CompanyEmployee, error) {
-	s.sonEmployeeInput = in
+	s.lastEmployeeInput = in
 	if s.createEmployeeFn == nil {
 		return models.CompanyEmployee{}, unset("CreateEmployee")
 	}
@@ -110,7 +111,7 @@ func (s *stubB2B) CreateEmployee(
 }
 
 func (s *stubB2B) GetEmployee(ctx context.Context, id string) (models.CompanyEmployee, error) {
-	s.sonID = id
+	s.lastID = id
 	if s.getEmployeeFn == nil {
 		return models.CompanyEmployee{}, unset("GetEmployee")
 	}
@@ -121,7 +122,7 @@ func (s *stubB2B) ListEmployees(
 	ctx context.Context,
 	in service.ListEmployeesInput,
 ) (service.Page[models.CompanyEmployee], error) {
-	s.sonEmployeeList = in
+	s.lastEmployeeList = in
 	if s.listEmployeesFn == nil {
 		return service.Page[models.CompanyEmployee]{}, unset("ListEmployees")
 	}
@@ -133,8 +134,8 @@ func (s *stubB2B) UpdateEmployee(
 	id string,
 	in service.UpdateEmployeeInput,
 ) (models.CompanyEmployee, error) {
-	s.sonID = id
-	s.sonEmployeeUpdate = in
+	s.lastID = id
+	s.lastEmployeeUpdate = in
 	if s.updateEmployeeFn == nil {
 		return models.CompanyEmployee{}, unset("UpdateEmployee")
 	}
@@ -142,7 +143,7 @@ func (s *stubB2B) UpdateEmployee(
 }
 
 func (s *stubB2B) DeleteEmployee(ctx context.Context, id string) error {
-	s.sonID = id
+	s.lastID = id
 	if s.deleteEmployeeFn == nil {
 		return unset("DeleteEmployee")
 	}
@@ -153,7 +154,7 @@ func (s *stubB2B) MembershipOfCustomer(
 	ctx context.Context,
 	customerID string,
 ) (service.Membership, error) {
-	s.sonCustomerID = customerID
+	s.lastCustomerID = customerID
 	if s.membershipFn == nil {
 		return service.Membership{}, unset("MembershipOfCustomer")
 	}

@@ -12,8 +12,9 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
-// saglayiciDepo aktif ve aktif olmayan promosyonlarla dolu bir depo üretir.
-func saglayiciDepo() *memRepo {
+// providerRepo produces a repository filled with active and non-active
+// promotions.
+func providerRepo() *memRepo {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{
 		ID: "promo_1", Code: "AKTIF", Status: models.PromotionActive, IsAutomatic: true,
@@ -27,91 +28,91 @@ func saglayiciDepo() *memRepo {
 	return repo
 }
 
-func TestQueryProviderEntityAdi(t *testing.T) {
+func TestQueryProviderEntityName(t *testing.T) {
 	provider := NewQueryProvider(newTestService(newMemRepo()))
 
 	assert.Equal(t, "promotion", provider.Entity())
 	assert.Equal(t, "promotion.query", provider.Entity()+query.ProviderSuffix,
-		"Query sağlayıcıyı bu adla arar")
+		"Query looks the provider up by this name")
 }
 
-func TestQueryProviderYalnizcaAktifPromosyonlariListeler(t *testing.T) {
-	provider := NewQueryProvider(newTestService(saglayiciDepo()))
+func TestQueryProviderListsOnlyActivePromotions(t *testing.T) {
+	provider := NewQueryProvider(newTestService(providerRepo()))
 
-	kayitlar, err := provider.List(context.Background(), query.ListOptions{})
+	records, err := provider.List(context.Background(), query.ListOptions{})
 	require.NoError(t, err)
 
-	require.Len(t, kayitlar, 1, "taslak ve pasif promosyonlar okuma yüzeyinden SIZMAZ")
-	assert.Equal(t, "promo_1", kayitlar[0]["id"])
-	assert.Equal(t, "AKTIF", kayitlar[0]["code"])
+	require.Len(t, records, 1, "draft and inactive promotions do NOT leak through the read surface")
+	assert.Equal(t, "promo_1", records[0]["id"])
+	assert.Equal(t, "AKTIF", records[0]["code"])
 }
 
-func TestQueryProviderFetchByIDsDeAyniSuzgeciUygular(t *testing.T) {
-	provider := NewQueryProvider(newTestService(saglayiciDepo()))
+func TestQueryProviderFetchByIDsAppliesTheSameFilter(t *testing.T) {
+	provider := NewQueryProvider(newTestService(providerRepo()))
 
-	kayitlar, err := provider.FetchByIDs(context.Background(),
-		[]string{"promo_1", "promo_2", "promo_yok"}, nil)
+	records, err := provider.FetchByIDs(context.Background(),
+		[]string{"promo_1", "promo_2", "promo_missing"}, nil)
 	require.NoError(t, err)
 
-	require.Len(t, kayitlar, 1,
-		"kural TEK olmalı; iki yüzeyin ayrışması taslak bir kuponu link üzerinden açardı")
-	assert.Equal(t, "promo_1", kayitlar[0]["id"])
+	require.Len(t, records, 1,
+		"the rule has to be ONE; the two surfaces diverging would expose a draft coupon through a link")
+	assert.Equal(t, "promo_1", records[0]["id"])
 }
 
-func TestQueryProviderHassasAlanlariSunmaz(t *testing.T) {
-	provider := NewQueryProvider(newTestService(saglayiciDepo()))
+func TestQueryProviderDoesNotExposeSensitiveFields(t *testing.T) {
+	provider := NewQueryProvider(newTestService(providerRepo()))
 
-	kayitlar, err := provider.List(context.Background(), query.ListOptions{})
+	records, err := provider.List(context.Background(), query.ListOptions{})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
+	require.Len(t, records, 1)
 
-	for _, alan := range []string{"usage_count", "usage_limit", "metadata", "rules", "application_method"} {
-		assert.NotContains(t, kayitlar[0], alan, "%q okuma yüzeyinden sızmamalı", alan)
+	for _, field := range []string{"usage_count", "usage_limit", "metadata", "rules", "application_method"} {
+		assert.NotContains(t, records[0], field, "%q must not leak through the read surface", field)
 	}
 }
 
-func TestQueryProviderAlanSecimi(t *testing.T) {
-	provider := NewQueryProvider(newTestService(saglayiciDepo()))
+func TestQueryProviderFieldSelection(t *testing.T) {
+	provider := NewQueryProvider(newTestService(providerRepo()))
 
-	kayitlar, err := provider.FetchByIDs(context.Background(), []string{"promo_1"}, []string{"code"})
+	records, err := provider.FetchByIDs(context.Background(), []string{"promo_1"}, []string{"code"})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
+	require.Len(t, records, 1)
 
-	assert.Equal(t, "AKTIF", kayitlar[0]["code"])
-	assert.Contains(t, kayitlar[0], "id",
-		"Query kayıtları kimlik üzerinden birleştirir; kimlik istenmese de eklenir")
-	assert.NotContains(t, kayitlar[0], "status")
+	assert.Equal(t, "AKTIF", records[0]["code"])
+	assert.Contains(t, records[0], "id",
+		"Query joins records by id; the id is added even when it is not requested")
+	assert.NotContains(t, records[0], "status")
 }
 
-func TestQueryProviderTanimsizAlanReddedilir(t *testing.T) {
-	provider := NewQueryProvider(newTestService(saglayiciDepo()))
+func TestQueryProviderRejectsAnUndefinedField(t *testing.T) {
+	provider := NewQueryProvider(newTestService(providerRepo()))
 
 	_, err := provider.FetchByIDs(context.Background(), []string{"promo_1"}, []string{"usage_count"})
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err),
-		"ADR 0004: alan doğrulaması sağlayıcıya aittir")
+		"ADR 0004: field validation belongs to the provider")
 }
 
-func TestQueryProviderKimlikFiltresi(t *testing.T) {
-	provider := NewQueryProvider(newTestService(saglayiciDepo()))
+func TestQueryProviderIDFilter(t *testing.T) {
+	provider := NewQueryProvider(newTestService(providerRepo()))
 
-	kayitlar, err := provider.List(context.Background(), query.ListOptions{
+	records, err := provider.List(context.Background(), query.ListOptions{
 		Filters: map[string]any{"id": []string{"promo_1"}},
 	})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, "promo_1", kayitlar[0]["id"])
+	require.Len(t, records, 1)
+	assert.Equal(t, "promo_1", records[0]["id"])
 
-	bos, err := provider.List(context.Background(), query.ListOptions{
+	empty, err := provider.List(context.Background(), query.ListOptions{
 		Filters: map[string]any{"id": []string{}},
 	})
 	require.NoError(t, err)
-	assert.Empty(t, bos, "boş kimlik kümesi 'hiçbiri' demektir, 'süzme' değil")
+	assert.Empty(t, empty, "an empty id set means 'none', not 'do not filter'")
 }
 
-func TestQueryProviderDesteklenmeyenFiltre(t *testing.T) {
-	provider := NewQueryProvider(newTestService(saglayiciDepo()))
+func TestQueryProviderUnsupportedFilter(t *testing.T) {
+	provider := NewQueryProvider(newTestService(providerRepo()))
 
 	_, err := provider.List(context.Background(), query.ListOptions{
 		Filters: map[string]any{"code": "AKTIF"},
@@ -121,8 +122,8 @@ func TestQueryProviderDesteklenmeyenFiltre(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-func TestQueryProviderFiltreTipiDogrulanir(t *testing.T) {
-	provider := NewQueryProvider(newTestService(saglayiciDepo()))
+func TestQueryProviderValidatesTheFilterType(t *testing.T) {
+	provider := NewQueryProvider(newTestService(providerRepo()))
 
 	_, err := provider.List(context.Background(), query.ListOptions{
 		Filters: map[string]any{"id": 42},
@@ -132,7 +133,7 @@ func TestQueryProviderFiltreTipiDogrulanir(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-func TestQueryProviderSinirsizListeyiEngeller(t *testing.T) {
+func TestQueryProviderPreventsAnUnboundedList(t *testing.T) {
 	repo := newMemRepo()
 	for i := range int(MaxLimit) + 20 {
 		id := models.NewPromotionID(testNow.Add(-1))
@@ -143,9 +144,9 @@ func TestQueryProviderSinirsizListeyiEngeller(t *testing.T) {
 	}
 	provider := NewQueryProvider(newTestService(repo))
 
-	kayitlar, err := provider.List(context.Background(), query.ListOptions{})
+	records, err := provider.List(context.Background(), query.ListOptions{})
 	require.NoError(t, err)
 
-	assert.LessOrEqual(t, len(kayitlar), int(MaxLimit),
-		"sınırsız bir kök listesi tek istekte tüm tabloyu belleğe alırdı")
+	assert.LessOrEqual(t, len(records), int(MaxLimit),
+		"an unbounded root list would load the whole table into memory in a single request")
 }

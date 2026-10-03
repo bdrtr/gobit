@@ -13,17 +13,19 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
-// Test DAHİLİ pakettedir çünkü anlatılan gövdeler ([companyRequest],
-// [employeeDTO] …) dışa kapalıdır. Dışarıdan sınamanın tek yolu tipleri dışa
-// açmak olurdu; belgeyi sınamak uğruna modülün yüzeyini genişletmek, sınanan
-// şeyin kendisini bozardı.
+// The test is in the INTERNAL package because the bodies being described
+// ([companyRequest], [employeeDTO] …) are unexported. The only way to exercise
+// them from the outside would be to export the types; widening the module's
+// surface for the sake of exercising the document would break the very thing
+// being exercised.
 
-// belge Describe'ın çıktısını GERÇEK route ağacına karşı üretip JSON'dan geri
-// okunmuş hâlini döner.
+// buildDoc produces Describe's output against the REAL route tree and returns
+// it as read back from JSON.
 //
-// Router gerçek olmalıdır: açıklamadaki yol ile route'un yolu ayrışırsa hata
-// BURADA görünsün, üretimde /openapi.json'a bakan birinde değil.
-func belge(t *testing.T) map[string]any {
+// The router has to be real: the moment the description's path drifts from
+// the route's, let the failure show up HERE, not in somebody looking at
+// /openapi.json in production.
+func buildDoc(t *testing.T) map[string]any {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
@@ -39,74 +41,75 @@ func belge(t *testing.T) map[string]any {
 	r := chi.NewRouter()
 	New(nil, nil, false).Routes(r)
 
-	ham, err := doc.Build(r)
+	raw, err := doc.Build(r)
 	require.NoError(t, err)
 	require.Empty(t, doc.UnmatchedDescriptions(),
-		"anlatılan her uç bir route ile eşleşmeli; eşleşmeyen kayıt belgeye hiç girmez")
+		"every described endpoint has to match a route; an unmatched record never enters the document")
 
-	kodlanmis, err := json.Marshal(ham)
+	encoded, err := json.Marshal(raw)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(kodlanmis, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
 
-	yollar, ok := cozulmus["paths"].(map[string]any)
+	paths, ok := decoded["paths"].(map[string]any)
 	require.True(t, ok)
-	return yollar
+	return paths
 }
 
-// TestHerUcAnlatildi belgenin route ağacıyla ÖRTÜŞTÜĞÜNÜ doğrular.
+// TestEveryEndpointIsDescribed verifies that the document COINCIDES with the
+// route tree.
 //
-// İki yön de gereklidir ve ikisi de ayrı bir sessizliği kapatır:
-// anlatılıp route'u olmayan bir uç belgeye hiç girmez (Build onu eler),
-// route'u olup anlatılmayan bir uç ise belgede YOLU görünür ama gövdesi
-// görünmez — istemci üreteci o metodu argümansız üretir ve neden çalışmadığı
-// ancak çalışma zamanında anlaşılır.
-func TestHerUcAnlatildi(t *testing.T) {
-	yollar := belge(t)
+// Both directions are needed, and each closes a separate silence: an endpoint
+// that is described but has no route never enters the document (Build drops
+// it), while an endpoint that has a route but is not described shows its PATH
+// in the document but not its body — a client generator generates that method
+// without arguments, and why it does not work is only found out at run time.
+func TestEveryEndpointIsDescribed(t *testing.T) {
+	paths := buildDoc(t)
 
 	r := chi.NewRouter()
 	New(nil, nil, false).Routes(r)
 
-	err := chi.Walk(r, func(metot, desen string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		islemler, ok := yollar[desen].(map[string]any)
-		require.True(t, ok, "%s belgede yok", desen)
+	err := chi.Walk(r, func(method, pattern string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
+		operations, ok := paths[pattern].(map[string]any)
+		require.True(t, ok, "%s is not in the document", pattern)
 
-		op, ok := islemler[strings.ToLower(metot)].(map[string]any)
-		require.True(t, ok, "%s %s belgede yok", metot, desen)
-		assert.NotEmpty(t, op["summary"], "%s %s için özet yazılmamış", metot, desen)
+		op, ok := operations[strings.ToLower(method)].(map[string]any)
+		require.True(t, ok, "%s %s is not in the document", method, pattern)
+		assert.NotEmpty(t, op["summary"], "no summary was written for %s %s", method, pattern)
 		return nil
 	})
 	require.NoError(t, err)
 }
 
-// TestVitrinYanitiPencereAlaniniTasir vitrin şemasının bir sonraki adıma
-// bıraktığı alanları içerdiğini doğrular.
+// TestStoreResponseCarriesTheWindowFields verifies that the storefront schema
+// contains the fields it leaves for the next step.
 //
-// Alanların adları YAYIMLANAN sözleşmedir: harcama limitini uygulayacak olan
-// istemci tam olarak bunları okuyacaktır.
-func TestVitrinYanitiPencereAlaniniTasir(t *testing.T) {
-	yollar := belge(t)
+// The fields' names are the PUBLISHED contract: the client that will enforce
+// the spending limit is going to read exactly these.
+func TestStoreResponseCarriesTheWindowFields(t *testing.T) {
+	paths := buildDoc(t)
 
-	islemler, ok := yollar["/store/v1/b2b/customers/{customer_id}/employee"].(map[string]any)
+	operations, ok := paths["/store/v1/b2b/customers/{customer_id}/employee"].(map[string]any)
 	require.True(t, ok)
 
-	op, ok := islemler["get"].(map[string]any)
+	op, ok := operations["get"].(map[string]any)
 	require.True(t, ok)
 	assert.NotEmpty(t, op["responses"])
 
-	// Şema bileşeni gövdeden türetilir; alan adlarının kaynağı DTO'nun json
-	// etiketleridir ve burada onların gerçekten yazıldığı sabitlenir.
-	ham, err := json.Marshal(storeEmployeeDTO{})
+	// The schema component is derived from the body; the source of the field
+	// names is the DTO's json tags, and this pins that they are really written.
+	raw, err := json.Marshal(storeEmployeeDTO{})
 	require.NoError(t, err)
 
-	var alanlar map[string]any
-	require.NoError(t, json.Unmarshal(ham, &alanlar))
-	for _, ad := range []string{
+	var fields map[string]any
+	require.NoError(t, json.Unmarshal(raw, &fields))
+	for _, name := range []string{
 		"spending_limit", "spending_limit_reset_period", "spending_window_start",
 	} {
-		assert.Contains(t, alanlar, ad, "vitrin yanıtında %q alanı olmalı", ad)
+		assert.Contains(t, fields, name, "the storefront response has to carry the %q field", name)
 	}
-	assert.NotContains(t, alanlar, "spending_remaining",
-		"kalan hak bu turda hesaplanmıyor; alan uydurulmamalı")
+	assert.NotContains(t, fields, "spending_remaining",
+		"the remaining allowance is not computed in this round; the field must not be made up")
 }

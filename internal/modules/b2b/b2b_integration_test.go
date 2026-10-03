@@ -1,18 +1,20 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are kept apart with the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Birim testleri sahte bir depo ve sahte bir bağ servisiyle servisin
-// KARARLARINI kanıtlar. Buradaki testler kararların dayandığı ZEMİNİ kanıtlar:
-// migration'ın gerçekten geri alınabildiğini, "bir müşteri en fazla BİR
-// şirketin çalışanıdır" kuralının link tablosunun benzersiz indeksinde
-// durduğunu, şirket silmenin çalışanları ve bağları TEK işlemde temizlediğini
-// ve CHECK kısıtlarının uygulama doğrulaması atlansa bile tuttuğunu.
+// The unit tests prove the service's DECISIONS with a fake repository and a
+// fake bond service. The tests here prove the GROUND those decisions rest on:
+// that the migration really can be rolled back, that the rule "a customer is
+// an employee of at most ONE company" lives in the link table's unique index,
+// that deleting a company clears the employees and the bonds in ONE
+// transaction, and that the CHECK constraints hold even when the application's
+// validation is skipped.
 //
-// Bu iddiaların hiçbiri sahte bağ servisiyle sınanamaz: sahte, kardinaliteyi
-// Go'da TAKLİT eder ve taklidin gerçeğe uyduğunu yalnızca bu dosya gösterir.
+// None of these claims can be exercised with the fake bond service: the fake
+// IMITATES the cardinality in Go, and only this file shows that the imitation
+// matches the real thing.
 package b2b_test
 
 import (
@@ -39,27 +41,27 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
-// listeyi kullanır.
-var modulTablolari = []string{"b2b_company", "b2b_company_employee"}
+// moduleTables are the tables the module owns; the migration tests use this
+// list.
+var moduleTables = []string{"b2b_company", "b2b_company_employee"}
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool all tests share.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection address for the migration calls.
 	testDSN string
-	// testLinks gerçek link servisidir; tanım bir kez bildirilir.
+	// testLinks is the real link service; the definition is declared once.
 	testLinks link.LinkService
-	// musteriSayaci testler arasında benzersiz customer id üretir.
-	musteriSayaci atomic.Int64
+	// customerCounter produces customer ids that are unique across tests.
+	customerCounter atomic.Int64
 )
 
 func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs all tests on
+// it. It is a separate function because os.Exit skips the defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -71,38 +73,39 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection address could not be obtained: %v\n", err)
 		return 1
 	}
 
 	testPool, err = db.New(ctx, db.DefaultConfig(testDSN), nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
 	if err := db.Migrate(ctx, testDSN, b2b.New(nil, b2b.Options{}).Migrations(), b2b.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
 		return 1
 	}
 
-	// Link tanımı ÜRETİMDEKİ yoldan bildirilir (modülün Register'ı da bunu
-	// yapar): tablo ve kardinalite indeksleri böylece gerçek olur.
+	// The link definition is declared through the PRODUCTION path (the
+	// module's Register does the same): that way the table and the
+	// cardinality indexes are real.
 	testLinks = link.New(testPool, nil)
 	for _, def := range service.Definitions() {
 		if err := testLinks.Define(ctx, def); err != nil {
-			fmt.Fprintf(os.Stderr, "link tanımı bildirilemedi: %v\n", err)
+			fmt.Fprintf(os.Stderr, "the link definition could not be declared: %v\n", err)
 			return 1
 		}
 	}
@@ -110,9 +113,9 @@ func runWithPostgres(m *testing.M) int {
 	return m.Run()
 }
 
-// yeniServis gerçek depo ve gerçek link servisi üzerinde çalışan bir servis
-// kurar.
-func yeniServis(t *testing.T) *service.Service {
+// newService builds a service that works over the real repository and the
+// real link service.
+func newService(t *testing.T) *service.Service {
 	t.Helper()
 
 	svc, err := service.New(service.Options{
@@ -123,30 +126,31 @@ func yeniServis(t *testing.T) *service.Service {
 	return svc
 }
 
-// yeniMusteriID testler arasında çakışmayan bir customer id üretir.
+// newCustomerID produces a customer id that does not collide across tests.
 //
-// Kimlik customer modülünün önekini taşır ama o modülden GELMEZ: b2b müşterinin
-// var olduğunu doğrulamaz (ADR 0001) ve bağ, serbest bir kimlik dizgesidir.
-func yeniMusteriID() string {
-	return fmt.Sprintf("%s%026d", models.CustomerIDPrefix, musteriSayaci.Add(1))
+// The id carries the customer module's prefix but does NOT COME from that
+// module: b2b does not verify that the customer exists (ADR 0001), and the bond
+// is a free-form id string.
+func newCustomerID() string {
+	return fmt.Sprintf("%s%026d", models.CustomerIDPrefix, customerCounter.Add(1))
 }
 
-// yeniSirket test için bir şirket oluşturur.
-func yeniSirket(t *testing.T, svc *service.Service, periyot models.SpendingResetPeriod) models.Company {
+// newCompany creates a company for a test.
+func newCompany(t *testing.T, svc *service.Service, period models.SpendingResetPeriod) models.Company {
 	t.Helper()
 
 	company, err := svc.CreateCompany(t.Context(), service.CompanyInput{
 		Name:                     t.Name(),
 		Email:                    "muhasebe@ornek.test",
 		CurrencyCode:             "TRY",
-		SpendingLimitResetPeriod: string(periyot),
+		SpendingLimitResetPeriod: string(period),
 	})
 	require.NoError(t, err)
 	return company
 }
 
-// sayim tek sütunlu bir sayım sorgusunu çalıştırır.
-func sayim(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
+// countRows runs a single-column count query.
+func countRows(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 	t.Helper()
 
 	var count int64
@@ -205,9 +209,9 @@ func TestTheMigrationCanBeRolledBack(t *testing.T) {
 	t.Cleanup(pool.Close)
 	svc := serviceOn(t, pool)
 
-	company := yeniSirket(t, svc, models.ResetMonthly)
+	company := newCompany(t, svc, models.ResetMonthly)
 	_, err = svc.CreateEmployee(ctx, service.EmployeeInput{
-		CompanyID: company.ID, CustomerID: yeniMusteriID(),
+		CompanyID: company.ID, CustomerID: newCustomerID(),
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), countIn(ctx, t, pool,
@@ -216,12 +220,12 @@ func TestTheMigrationCanBeRolledBack(t *testing.T) {
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, src, b2b.ModuleName, 0),
 		"the down failed, which means the module can never be migrated again")
-	for _, table := range modulTablolari {
+	for _, table := range moduleTables {
 		assert.False(t, testdb.TableExists(t, dsn, table), "%s must not remain after the rollback", table)
 	}
 
 	require.NoError(t, db.Migrate(ctx, dsn, src, b2b.ModuleName))
-	for _, table := range modulTablolari {
+	for _, table := range moduleTables {
 		assert.True(t, testdb.TableExists(t, dsn, table), "%s must be applied again", table)
 	}
 
@@ -233,193 +237,198 @@ func TestTheMigrationCanBeRolledBack(t *testing.T) {
 		"the schema was dropped and rebuilt, so no company may remain")
 }
 
-// TestUctanUcaSirketVeCalisanAkisi modülün yönetim akışını gerçek veritabanında
-// koşturur.
-func TestUctanUcaSirketVeCalisanAkisi(t *testing.T) {
-	svc := yeniServis(t)
+// TestCompanyAndEmployeeFlowEndToEnd runs the module's admin flow on the real
+// database.
+func TestCompanyAndEmployeeFlowEndToEnd(t *testing.T) {
+	svc := newService(t)
 	ctx := t.Context()
 
-	company := yeniSirket(t, svc, models.ResetMonthly)
-	musteri := yeniMusteriID()
+	company := newCompany(t, svc, models.ResetMonthly)
+	customer := newCustomerID()
 
 	limit := int64(250000)
 	employee, err := svc.CreateEmployee(ctx, service.EmployeeInput{
 		CompanyID:     company.ID,
-		CustomerID:    musteri,
+		CustomerID:    customer,
 		SpendingLimit: &limit,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, musteri, employee.CustomerID)
+	assert.Equal(t, customer, employee.CustomerID)
 
-	// Okuma yolu customer idni link'ten DOLDURMALI: sütunu yoktur.
-	okunan, err := svc.GetEmployee(ctx, employee.ID)
+	// The read path has to FILL the customer id from link: it has no column.
+	fetched, err := svc.GetEmployee(ctx, employee.ID)
 	require.NoError(t, err)
-	assert.Equal(t, musteri, okunan.CustomerID)
-	assert.Zero(t, sayim(ctx, t,
+	assert.Equal(t, customer, fetched.CustomerID)
+	assert.Zero(t, countRows(ctx, t,
 		`SELECT count(*) FROM information_schema.columns
          WHERE table_name = 'b2b_company_employee' AND column_name = 'customer_id'`),
-		"müşteri bağı şemada DEĞİL link tablosunda durmalı (Prensip 2.2)")
+		"the customer bond has to live in the link table, NOT in the schema (Principle 2.2)")
 
-	// Limit kaldırılabilmeli ("dokunma" ile "sınırsız yap" ayrımı).
-	guncel, err := svc.UpdateEmployee(ctx, employee.ID, service.UpdateEmployeeInput{
+	// The limit has to be removable (the "leave it alone" versus "make it
+	// unlimited" distinction).
+	updated, err := svc.UpdateEmployee(ctx, employee.ID, service.UpdateEmployeeInput{
 		ClearSpendingLimit: true,
 	})
 	require.NoError(t, err)
-	assert.Nil(t, guncel.SpendingLimit)
+	assert.Nil(t, updated.SpendingLimit)
 
-	sayfa, err := svc.ListEmployees(ctx, service.ListEmployeesInput{CompanyID: &company.ID})
+	page, err := svc.ListEmployees(ctx, service.ListEmployeesInput{CompanyID: &company.ID})
 	require.NoError(t, err)
-	require.Len(t, sayfa.Items, 1)
-	assert.Equal(t, musteri, sayfa.Items[0].CustomerID)
+	require.Len(t, page.Items, 1)
+	assert.Equal(t, customer, page.Items[0].CustomerID)
 
-	// Yumuşak silinen kayıt hiçbir okumada görünmez.
+	// A soft-deleted record shows up in no read.
 	require.NoError(t, svc.DeleteEmployee(ctx, employee.ID))
 	_, err = svc.GetEmployee(ctx, employee.ID)
-	assert.True(t, errors.IsNotFound(err), "silinen çalışan okunmamalı, gelen: %v", err)
+	assert.True(t, errors.IsNotFound(err), "a deleted employee must not be read, got: %v", err)
 
-	sayfa, err = svc.ListEmployees(ctx, service.ListEmployeesInput{CompanyID: &company.ID})
+	page, err = svc.ListEmployees(ctx, service.ListEmployeesInput{CompanyID: &company.ID})
 	require.NoError(t, err)
-	assert.Empty(t, sayfa.Items)
+	assert.Empty(t, page.Items)
 }
 
-// TestBaskasininSirketiOkunamaz modülün vitrin değişmezini GERÇEK link
-// tablosunda sabitler.
+// TestAnotherCustomersCompanyCannotBeRead pins the module's storefront
+// invariant on the REAL link table.
 //
-// İki müşteri, iki şirket: her biri yalnızca kendi şirketini görür ve hiçbir
-// şirkete bağlı olmayan müşteri boş kayıt değil 404 alır. Vitrinde şirketi
-// kimliğiyle isteyebilecek bir uç bulunmadığı için (bkz. api paketi) bu, o
-// yüzeyin tek giriş noktasıdır.
-func TestBaskasininSirketiOkunamaz(t *testing.T) {
-	svc := yeniServis(t)
+// Two customers, two companies: each sees only their own company, and a
+// customer bound to no company gets a 404, not an empty record. Since the
+// storefront has no endpoint that could ask for a company by its id (see the
+// api package), this is that surface's only entry point.
+func TestAnotherCustomersCompanyCannotBeRead(t *testing.T) {
+	svc := newService(t)
 	ctx := t.Context()
 
-	acme := yeniSirket(t, svc, models.ResetMonthly)
-	beta := yeniSirket(t, svc, models.ResetYearly)
+	acme := newCompany(t, svc, models.ResetMonthly)
+	beta := newCompany(t, svc, models.ResetYearly)
 
-	musteriA, musteriB := yeniMusteriID(), yeniMusteriID()
-	_, err := svc.CreateEmployee(ctx, service.EmployeeInput{CompanyID: acme.ID, CustomerID: musteriA})
+	customerA, customerB := newCustomerID(), newCustomerID()
+	_, err := svc.CreateEmployee(ctx, service.EmployeeInput{CompanyID: acme.ID, CustomerID: customerA})
 	require.NoError(t, err)
-	_, err = svc.CreateEmployee(ctx, service.EmployeeInput{CompanyID: beta.ID, CustomerID: musteriB})
+	_, err = svc.CreateEmployee(ctx, service.EmployeeInput{CompanyID: beta.ID, CustomerID: customerB})
 	require.NoError(t, err)
 
-	uyelikA, err := svc.MembershipOfCustomer(ctx, musteriA)
+	membershipA, err := svc.MembershipOfCustomer(ctx, customerA)
 	require.NoError(t, err)
-	assert.Equal(t, acme.ID, uyelikA.Company.ID)
-	require.NotNil(t, uyelikA.SpendingWindowStart, "aylık periyotta pencere olmalı")
+	assert.Equal(t, acme.ID, membershipA.Company.ID)
+	require.NotNil(t, membershipA.SpendingWindowStart, "a monthly period has to have a window")
 
-	uyelikB, err := svc.MembershipOfCustomer(ctx, musteriB)
+	membershipB, err := svc.MembershipOfCustomer(ctx, customerB)
 	require.NoError(t, err)
-	assert.Equal(t, beta.ID, uyelikB.Company.ID,
-		"müşteri YALNIZCA kendi şirketini görmeli")
+	assert.Equal(t, beta.ID, membershipB.Company.ID,
+		"the customer has to see ONLY their own company")
 
-	_, err = svc.MembershipOfCustomer(ctx, yeniMusteriID())
+	_, err = svc.MembershipOfCustomer(ctx, newCustomerID())
 	assert.True(t, errors.IsNotFound(err),
-		"hiçbir şirkete bağlı olmayan müşteri 404 almalı, gelen: %v", err)
+		"a customer bound to no company has to get a 404, got: %v", err)
 }
 
-// TestAyniMusteriIkinciSirketeEklenemez kardinalitenin VERİTABANINDA
-// durduğunu doğrular.
+// TestACustomerCannotJoinASecondCompany verifies that the cardinality lives IN
+// THE DATABASE.
 //
-// Kural uygulamada da tutulabilirdi ("önce oku sonra yaz") ama iki eşzamanlı
-// istek arasında tutmazdı; link tablosunun benzersiz indeksi yarışı
-// veritabanına bırakır ve ihlali tipli bir Conflict'e çevirir.
-func TestAyniMusteriIkinciSirketeEklenemez(t *testing.T) {
-	svc := yeniServis(t)
+// The rule could have been kept in the application too ("read first, then
+// write"), but it would not hold between two concurrent requests; the link
+// table's unique index leaves the race to the database and turns the violation
+// into a typed Conflict.
+func TestACustomerCannotJoinASecondCompany(t *testing.T) {
+	svc := newService(t)
 	ctx := t.Context()
 
-	acme := yeniSirket(t, svc, models.ResetNever)
-	beta := yeniSirket(t, svc, models.ResetNever)
-	musteri := yeniMusteriID()
+	acme := newCompany(t, svc, models.ResetNever)
+	beta := newCompany(t, svc, models.ResetNever)
+	customer := newCustomerID()
 
-	_, err := svc.CreateEmployee(ctx, service.EmployeeInput{CompanyID: acme.ID, CustomerID: musteri})
+	_, err := svc.CreateEmployee(ctx, service.EmployeeInput{CompanyID: acme.ID, CustomerID: customer})
 	require.NoError(t, err)
 
-	_, err = svc.CreateEmployee(ctx, service.EmployeeInput{CompanyID: beta.ID, CustomerID: musteri})
-	require.True(t, errors.IsConflict(err), "beklenen sınıf Conflict, gelen: %v", err)
+	_, err = svc.CreateEmployee(ctx, service.EmployeeInput{CompanyID: beta.ID, CustomerID: customer})
+	require.True(t, errors.IsConflict(err), "expected class Conflict, got: %v", err)
 
-	// Bağı kurulamayan çalışan kaydı GERİ ALINMIŞ olmalı: aksi hâlde beta'nın
-	// çalışan listesinde müşterisiz bir kayıt kalırdı.
-	sayfa, err := svc.ListEmployees(ctx, service.ListEmployeesInput{CompanyID: &beta.ID})
+	// The employee record whose bond could not be established has to have been
+	// ROLLED BACK: otherwise a record without a customer would be left in
+	// beta's employee list.
+	page, err := svc.ListEmployees(ctx, service.ListEmployeesInput{CompanyID: &beta.ID})
 	require.NoError(t, err)
-	assert.Empty(t, sayfa.Items, "bağı kurulamayan çalışan ayakta kalmamalı")
+	assert.Empty(t, page.Items, "an employee whose bond could not be established must not stay up")
 }
 
-// TestSirketSilinceCalisanlarVeBaglarTemizlenir silme kararının üç sonucunu
-// birlikte doğrular: çalışanlar silinir, bağlar kalkar ve müşteri yeniden işe
-// alınabilir.
+// TestDeletingACompanyClearsItsEmployeesAndBonds verifies the three outcomes of
+// the deletion decision together: the employees are deleted, the bonds go
+// away, and the customer can be hired again.
 //
-// Üçüncüsü en kolay gözden kaçandır: bağ tekil olduğu için temizlenmemiş bir
-// satır, müşteriyi ömür boyu tek bir kapanmış şirkete kilitlerdi.
-func TestSirketSilinceCalisanlarVeBaglarTemizlenir(t *testing.T) {
-	svc := yeniServis(t)
+// The third is the easiest to overlook: since the bond is unique, a row that
+// was not cleaned up would lock the customer to a single closed company for
+// life.
+func TestDeletingACompanyClearsItsEmployeesAndBonds(t *testing.T) {
+	svc := newService(t)
 	ctx := t.Context()
 
-	company := yeniSirket(t, svc, models.ResetMonthly)
-	musteri := yeniMusteriID()
+	company := newCompany(t, svc, models.ResetMonthly)
+	customer := newCustomerID()
 	employee, err := svc.CreateEmployee(ctx, service.EmployeeInput{
-		CompanyID: company.ID, CustomerID: musteri,
+		CompanyID: company.ID, CustomerID: customer,
 	})
 	require.NoError(t, err)
 
 	require.NoError(t, svc.DeleteCompany(ctx, company.ID))
 
-	assert.Equal(t, int64(1), sayim(ctx, t,
+	assert.Equal(t, int64(1), countRows(ctx, t,
 		`SELECT count(*) FROM b2b_company_employee WHERE id = $1 AND deleted_at IS NOT NULL`,
-		employee.ID), "çalışan da yumuşak silinmeli")
-	assert.Zero(t, sayim(ctx, t,
+		employee.ID), "the employee has to be soft-deleted too")
+	assert.Zero(t, countRows(ctx, t,
 		`SELECT count(*) FROM link_b2b_employee_customer WHERE from_id = $1`, employee.ID),
-		"müşteri bağı kaldırılmalı")
+		"the customer bond has to be removed")
 
-	_, err = svc.MembershipOfCustomer(ctx, musteri)
-	assert.True(t, errors.IsNotFound(err), "silinen şirketin çalışanı vitrinde görünmemeli")
+	_, err = svc.MembershipOfCustomer(ctx, customer)
+	assert.True(t, errors.IsNotFound(err), "an employee of a deleted company must not show up in the storefront")
 
-	yeni := yeniSirket(t, svc, models.ResetMonthly)
-	_, err = svc.CreateEmployee(ctx, service.EmployeeInput{CompanyID: yeni.ID, CustomerID: musteri})
-	assert.NoError(t, err, "bağı serbest kalan müşteri yeniden işe alınabilmeli")
+	fresh := newCompany(t, svc, models.ResetMonthly)
+	_, err = svc.CreateEmployee(ctx, service.EmployeeInput{CompanyID: fresh.ID, CustomerID: customer})
+	assert.NoError(t, err, "a customer whose bond was freed has to be hirable again")
 }
 
-// TestKisitlarVeritabanindaTutar CHECK kısıtlarının SON SAVUNMA olduğunu
-// doğrular.
+// TestConstraintsHoldInTheDatabase verifies that the CHECK constraints are the
+// LAST LINE OF DEFENSE.
 //
-// Yazımlar servisi ATLAYARAK ham SQL ile yapılır: sınanan şey uygulama
-// doğrulaması değil, o doğrulama bir gün atlandığında (başka bir kod yolu, elle
-// müdahale, taşıma betiği) verinin yine de bozulamayacağıdır.
-func TestKisitlarVeritabanindaTutar(t *testing.T) {
+// The writes are made with raw SQL, BYPASSING the service: what is exercised is
+// not the application's validation but that, on the day that validation is
+// skipped (another code path, a manual intervention, a migration script), the
+// data still cannot be corrupted.
+func TestConstraintsHoldInTheDatabase(t *testing.T) {
 	ctx := t.Context()
 
-	durumlar := map[string]string{
-		"büyük harfli e-posta": `INSERT INTO b2b_company (id, name, email, currency_code)
+	cases := map[string]string{
+		"upper-case e-mail": `INSERT INTO b2b_company (id, name, email, currency_code)
              VALUES ('comp_kisit_1', 'X', 'BUYUK@ornek.test', 'TRY')`,
-		"geçersiz para birimi": `INSERT INTO b2b_company (id, name, email, currency_code)
+		"invalid currency": `INSERT INTO b2b_company (id, name, email, currency_code)
              VALUES ('comp_kisit_2', 'X', 'x@ornek.test', 'TR')`,
-		"tanımsız sıfırlama periyodu": `INSERT INTO b2b_company
+		"undefined reset period": `INSERT INTO b2b_company
              (id, name, email, currency_code, spending_limit_reset_period)
              VALUES ('comp_kisit_3', 'X', 'x@ornek.test', 'TRY', 'weekly')`,
-		"geçersiz ülke kodu": `INSERT INTO b2b_company
+		"invalid country code": `INSERT INTO b2b_company
              (id, name, email, currency_code, country_code)
              VALUES ('comp_kisit_4', 'X', 'x@ornek.test', 'TRY', 'TUR')`,
 	}
 
-	for ad, sql := range durumlar {
-		t.Run(ad, func(t *testing.T) {
+	for name, sql := range cases {
+		t.Run(name, func(t *testing.T) {
 			_, err := testPool.Pool().Exec(ctx, sql)
-			assert.Error(t, err, "kısıt bu yazımı reddetmeliydi")
+			assert.Error(t, err, "the constraint should have rejected this write")
 		})
 	}
 
-	t.Run("negatif harcama limiti", func(t *testing.T) {
-		svc := yeniServis(t)
-		company := yeniSirket(t, svc, models.ResetNever)
+	t.Run("negative spending limit", func(t *testing.T) {
+		svc := newService(t)
+		company := newCompany(t, svc, models.ResetNever)
 
 		_, err := testPool.Pool().Exec(ctx,
 			`INSERT INTO b2b_company_employee (id, company_id, spending_limit)
              VALUES ('compemp_kisit_1', $1, -1)`, company.ID)
-		assert.Error(t, err, "negatif limit bir sınır değil, anlamsız bir sayıdır")
+		assert.Error(t, err, "a negative limit is not a bound but a meaningless number")
 	})
 
-	t.Run("boş ülke kodu geçerlidir", func(t *testing.T) {
-		// Adres opsiyoneldir: kayıt çoğu zaman fatura adresi kesinleşmeden
-		// açılır ve kısıt bunu KABUL etmelidir.
+	t.Run("an empty country code is valid", func(t *testing.T) {
+		// The address is optional: a record is often opened before the billing
+		// address is settled, and the constraint has to ACCEPT that.
 		_, err := testPool.Pool().Exec(ctx,
 			`INSERT INTO b2b_company (id, name, email, currency_code, country_code)
              VALUES ('comp_kisit_5', 'X', 'x@ornek.test', 'TRY', '')`)

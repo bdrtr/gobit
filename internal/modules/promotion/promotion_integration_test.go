@@ -1,18 +1,18 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are separated with the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Birim testleri servisin KARARLARINI kanıtlar (indirim aritmetiği, eleme,
-// tahsis). Buradaki testler kararların dayandığı ZEMİNİ kanıtlar:
-// migration'ın geri alınabildiğini, kısıtların gerçekten uygulandığını ve
-// eşzamanlılık iddiasının veritabanı düzeyinde tuttuğunu.
+// The unit tests prove the service's DECISIONS (discount arithmetic, skipping,
+// allocation). The tests here prove the GROUND those decisions stand on: that
+// the migration can be rolled back, that the constraints are really enforced,
+// and that the concurrency claim holds at the database level.
 //
-// Özellikle "eşzamanlı Redeem sayacı ve bütçeyi bozamaz" iddiası YALNIZCA
-// burada, gerçek goroutine'lerle gerçek satır kilitleri üzerinde sınanabilir:
-// bellek içi taklit o iddiayı kanıtlayamaz, çünkü kilitler taklidin değil
-// veritabanının içindedir.
+// The claim "a concurrent Redeem cannot corrupt the counter and the budget" in
+// particular can be tested ONLY here, with real goroutines on real row locks:
+// an in-memory fake cannot prove that claim, because the locks live inside the
+// database, not inside the fake.
 package promotion_test
 
 import (
@@ -50,9 +50,9 @@ var moduleTables = []string{
 }
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool every test shares.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection address for the migration calls.
 	testDSN string
 )
 
@@ -60,8 +60,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs every test on
+// it. It is a separate function because os.Exit skips defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -73,55 +73,56 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "could not stop the postgres container: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not start the postgres container: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not get the connection address: %v\n", err)
 		return 1
 	}
 
 	cfg := db.DefaultConfig(testDSN)
-	// Eşzamanlılık testleri onlarca goroutine'i aynı anda koşturur; her işlem
-	// bir bağlantı tuttuğu için havuz varsayılandan geniş açılır.
+	// The concurrency tests run dozens of goroutines at once; because every
+	// transaction holds a connection, the pool is opened wider than the default.
 	cfg.MaxConns = 24
 	testPool, err = db.New(ctx, cfg, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not open the connection pool: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
 	if err := db.Migrate(ctx, testDSN, promotion.New(nil).Migrations(), promotion.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not apply the migration: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// newService gerçek depo üzerinde çalışan bir servis kurar.
+// newService builds a service that runs on the real repository.
 func newService(t *testing.T) *service.Service {
 	t.Helper()
 
 	return service.New(repository.New(testPool.Pool()), service.Options{})
 }
 
-// uniqueCode test başına çakışmayan bir kupon kodu üretir.
+// uniqueCode produces a coupon code that does not collide between tests.
 //
-// Kod BENZERSİZ bir indekse girdiği için testler birbirinin kodunu kullanamaz;
-// kimlik üreticisi zaten çakışmayan bir gövde ürettiğinden ondan türetilir.
+// Because the code goes into a UNIQUE index, tests cannot use one another's
+// code; it is derived from the id generator, which already produces a body
+// that does not collide.
 func uniqueCode() string {
 	return "K" + models.NewPromotionID(time.Now())[len(models.PromotionIDPrefix):]
 }
 
-// activePromotion yöntemi kurulmuş, aktif bir promosyon oluşturur.
+// activePromotion creates an active promotion with its method set up.
 func activePromotion(ctx context.Context, t *testing.T, svc *service.Service, in service.PromotionInput) models.Promotion {
 	t.Helper()
 
@@ -181,12 +182,12 @@ func TestTheMigrationsReallyRollBack(t *testing.T) {
 	assert.Equal(t, uint(5), version)
 }
 
-// TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
-// yine modülün kendi tablolarına gittiğini doğrular (Prensip 2.2).
+// TestNoCrossModuleForeignKeys verifies that ALL foreign keys on the module's
+// tables go to the module's own tables as well (Principle 2.2).
 //
-// Özellikle promotion_redemption.reference bir sipariş kimliğidir ve foreign
-// key OLAMAZ; bu test o kuralın şemada gerçekten tutulduğunu gösterir.
-func TestCrossModuleForeignKeyYok(t *testing.T) {
+// promotion_redemption.reference in particular is an order id and CANNOT be a
+// foreign key; this test shows that the rule really holds in the schema.
+func TestNoCrossModuleForeignKeys(t *testing.T) {
 	ctx := context.Background()
 
 	rows, err := testPool.Pool().Query(ctx,
@@ -198,106 +199,109 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
 	require.NoError(t, err)
 	defer rows.Close()
 
-	sahipli := make(map[string]struct{}, len(moduleTables))
+	owned := make(map[string]struct{}, len(moduleTables))
 	for _, table := range moduleTables {
-		sahipli[table] = struct{}{}
+		owned[table] = struct{}{}
 	}
 
-	var sayi int
+	var found int
 	for rows.Next() {
 		var name, src, tgt string
 		require.NoError(t, rows.Scan(&name, &src, &tgt))
-		assert.Contains(t, sahipli, tgt,
-			"%s kısıtı modül dışına referans veriyor (%s -> %s)", name, src, tgt)
-		sayi++
+		assert.Contains(t, owned, tgt,
+			"the %s constraint references outside the module (%s -> %s)", name, src, tgt)
+		found++
 	}
 	require.NoError(t, rows.Err())
-	assert.Positive(t, sayi, "modül içi foreign key'ler kullanılmalı")
+	assert.Positive(t, found, "foreign keys inside the module must be in use")
 }
 
-func TestKampanyaYasamDongusu(t *testing.T) {
+func TestCampaignLifecycle(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
-	kimlik := "KAMPANYA-" + uniqueCode()
+	identifier := "KAMPANYA-" + uniqueCode()
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
-		Name:               "Yaz İndirimi",
-		CampaignIdentifier: kimlik,
+		Name:               "Summer Sale",
+		CampaignIdentifier: identifier,
 		Description:        "Yaz sezonu",
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(100_000)),
 		BudgetCurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	assert.False(t, campaign.CreatedAt.IsZero(), "created_at veritabanından gelmeli")
-	assert.Equal(t, "UTC", campaign.CreatedAt.Location().String(), "zaman UTC olmalı")
+	assert.False(t, campaign.CreatedAt.IsZero(), "created_at must come from the database")
+	assert.Equal(t, "UTC", campaign.CreatedAt.Location().String(), "the time must be UTC")
 	assert.Zero(t, campaign.BudgetUsed)
 
-	okunan, err := svc.GetCampaignByIdentifier(ctx, kimlik)
+	fetched, err := svc.GetCampaignByIdentifier(ctx, identifier)
 	require.NoError(t, err)
-	assert.Equal(t, campaign.ID, okunan.ID)
+	assert.Equal(t, campaign.ID, fetched.ID)
 
-	// Aynı iş kimliği ikinci kez alınamaz; hakem veritabanı kısmi indeksidir.
-	_, err = svc.CreateCampaign(ctx, service.CampaignInput{Name: "İkinci", CampaignIdentifier: kimlik})
+	// The same business identifier cannot be taken a second time; the referee
+	// is the database's partial index.
+	_, err = svc.CreateCampaign(ctx, service.CampaignInput{Name: "Second", CampaignIdentifier: identifier})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 
 	require.NoError(t, svc.DeleteCampaign(ctx, campaign.ID))
 	_, err = svc.GetCampaign(ctx, campaign.ID)
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "yumuşak silinen kampanya okunamamalı")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "a soft-deleted campaign must not be readable")
 
-	// Silinen iş kimliği yeniden kullanılabilir: kısmi indeks yalnızca canlı
-	// kayıtları kapsar.
-	_, err = svc.CreateCampaign(ctx, service.CampaignInput{Name: "Yeniden", CampaignIdentifier: kimlik})
-	assert.NoError(t, err, "silinen bir iş kimliği sonsuza kadar rezerve kalmamalı")
+	// A deleted business identifier can be used again: the partial index covers
+	// only live records.
+	_, err = svc.CreateCampaign(ctx, service.CampaignInput{Name: "Yeniden", CampaignIdentifier: identifier})
+	assert.NoError(t, err, "a deleted business identifier must not stay reserved forever")
 }
 
-func TestKuponKoduBenzersizdir(t *testing.T) {
+func TestCouponCodeIsUnique(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
-	kod := uniqueCode()
+	code := uniqueCode()
 
-	promo, err := svc.CreatePromotion(ctx, service.PromotionInput{Code: kod})
+	promo, err := svc.CreatePromotion(ctx, service.PromotionInput{Code: code})
 	require.NoError(t, err)
 
-	_, err = svc.CreatePromotion(ctx, service.PromotionInput{Code: kod})
+	_, err = svc.CreatePromotion(ctx, service.PromotionInput{Code: code})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 
-	// Kod BÜYÜK harf saklandığı için küçük harfli deneme de aynı kupona çarpar.
-	_, err = svc.CreatePromotion(ctx, service.PromotionInput{Code: lower(kod)})
+	// Because the code is stored in UPPER case, a lower-case attempt hits the
+	// same coupon too.
+	_, err = svc.CreatePromotion(ctx, service.PromotionInput{Code: lower(code)})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 
 	require.NoError(t, svc.DeletePromotion(ctx, promo.ID))
-	_, err = svc.CreatePromotion(ctx, service.PromotionInput{Code: kod})
-	assert.NoError(t, err, "silinen bir kupon kodu yeniden kullanılabilir")
+	_, err = svc.CreatePromotion(ctx, service.PromotionInput{Code: code})
+	assert.NoError(t, err, "a deleted coupon code can be used again")
 }
 
-func TestUygulamaYontemiYerineKonur(t *testing.T) {
+func TestApplicationMethodIsReplaced(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
 
-	ikinci, err := svc.SetApplicationMethod(ctx, promo.ID, service.ApplicationMethodInput{
+	second, err := svc.SetApplicationMethod(ctx, promo.ID, service.ApplicationMethodInput{
 		Type:         models.MethodFixed,
 		TargetType:   models.TargetOrder,
 		Value:        5000,
 		CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, models.MethodFixed, ikinci.Type)
-	assert.Equal(t, models.AllocationAcross, ikinci.Allocation)
+	assert.Equal(t, models.MethodFixed, second.Type)
+	assert.Equal(t, models.AllocationAcross, second.Allocation)
 
-	okunan, err := svc.GetApplicationMethod(ctx, promo.ID)
+	fetched, err := svc.GetApplicationMethod(ctx, promo.ID)
 	require.NoError(t, err)
-	assert.Equal(t, ikinci.ID, okunan.ID, "promosyon başına TEK yöntem olur; ikincisi üzerine yazar")
+	assert.Equal(t, second.ID, fetched.ID, "there is ONE method per promotion; the second overwrites the first")
 
 	require.NoError(t, svc.DeleteApplicationMethod(ctx, promo.ID))
 	_, err = svc.GetApplicationMethod(ctx, promo.ID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	// Yöntemi silinen promosyon hesapta indirim ÜRETMEZ.
+	// A promotion whose method was deleted produces NO discount in the
+	// computation.
 	res, err := svc.ComputeDiscounts(ctx, service.ComputeInput{
 		CurrencyCode: "TRY",
 		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10000, UnitAmount: 10000, Quantity: 1}},
@@ -306,7 +310,7 @@ func TestUygulamaYontemiYerineKonur(t *testing.T) {
 	assert.Zero(t, res.DiscountTotal)
 }
 
-func TestKurallarVeritabaniKisitlariylaKorunur(t *testing.T) {
+func TestRulesAreProtectedByTheDatabaseConstraints(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
@@ -319,22 +323,22 @@ func TestKurallarVeritabaniKisitlariylaKorunur(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	kurallar, err := svc.ListPromotionRules(ctx, promo.ID)
+	rules, err := svc.ListPromotionRules(ctx, promo.ID)
 	require.NoError(t, err)
-	require.Len(t, kurallar, 1)
-	assert.Equal(t, []string{"vip", "b2b"}, kurallar[0].Values, "TEXT[] sütunu değerleri sırasıyla taşır")
+	require.Len(t, rules, 1)
+	assert.Equal(t, []string{"vip", "b2b"}, rules[0].Values, "the TEXT[] column carries the values in order")
 
 	require.NoError(t, svc.DeletePromotionRule(ctx, rule.ID))
-	kurallar, err = svc.ListPromotionRules(ctx, promo.ID)
+	rules, err = svc.ListPromotionRules(ctx, promo.ID)
 	require.NoError(t, err)
-	assert.Empty(t, kurallar)
+	assert.Empty(t, rules)
 }
 
-func TestHesapGercekVeritabaniUzerindeCalisir(t *testing.T) {
+func TestTheComputationRunsOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
+	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Yaz",
 		CampaignIdentifier: "HESAP-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
@@ -343,10 +347,10 @@ func TestHesapGercekVeritabaniUzerindeCalisir(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	kupon := activePromotion(ctx, t, svc, service.PromotionInput{
-		CampaignID: &kampanya.ID,
+	coupon := activePromotion(ctx, t, svc, service.PromotionInput{
+		CampaignID: &campaign.ID,
 	})
-	_, err = svc.AddPromotionRule(ctx, kupon.ID, service.RuleInput{
+	_, err = svc.AddPromotionRule(ctx, coupon.ID, service.RuleInput{
 		RuleType: models.RuleContext, Attribute: "region_id",
 		Operator: models.OpEq, Values: []string{"reg_1"},
 	})
@@ -359,196 +363,196 @@ func TestHesapGercekVeritabaniUzerindeCalisir(t *testing.T) {
 			{ID: "li_1", Amount: 10_000, UnitAmount: 10_000, Quantity: 1},
 			{ID: "li_2", Amount: 5_001, UnitAmount: 5_001, Quantity: 1},
 		},
-		Codes: []string{kupon.Code},
+		Codes: []string{coupon.Code},
 	}
 
 	res, err := svc.ComputeDiscounts(ctx, in)
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(2000), res.Items[0].Amount)
-	assert.Equal(t, int64(1000), res.Items[1].Amount, "%20 × 5001 = 1000 (aşağı yuvarlanmış)")
+	assert.Equal(t, int64(1000), res.Items[1].Amount, "20% × 5001 = 1000 (rounded down)")
 	assert.Equal(t, int64(3000), res.DiscountTotal)
 	assert.Equal(t, res.ItemsDiscountTotal+res.ShippingDiscountTotal, res.DiscountTotal)
 
-	// Bağlam sağlanmazsa kural eşleşmez ve indirim üretilmez.
+	// Without the context the rule does not match and no discount is produced.
 	in.Context = nil
 	res, err = svc.ComputeDiscounts(ctx, in)
 	require.NoError(t, err)
-	assert.Zero(t, res.DiscountTotal, "bağlam kuralı gerçek veritabanından okunduğunda da uygulanır")
+	assert.Zero(t, res.DiscountTotal, "the context rule applies when it is read from the real database too")
 }
 
-// TestEszamanliRedeemKullanimSinirindaTamOlarakSinirKadarKazanir eşzamanlılık
-// iddiasının çekirdeğini kanıtlar.
+// TestConcurrentRedeemAtTheUsageLimitWinsExactlyTheLimit proves the core of the
+// concurrency claim.
 //
-// Uygulama katmanında yapılan bir "önce oku sonra yaz" kontrolü bu testi
-// GEÇEMEZ: kazananların sınırla birebir eşit olması satır kilidinden ve
-// koşullu UPDATE'ten gelir.
-func TestEszamanliRedeemKullanimSinirindaTamOlarakSinirKadarKazanir(t *testing.T) {
+// A "read first, then write" check made in the application layer CANNOT PASS
+// this test: the winners being exactly equal to the limit comes from the row
+// lock and the conditional UPDATE.
+func TestConcurrentRedeemAtTheUsageLimitWinsExactlyTheLimit(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	const sinir = 5
-	const yarismaci = 20
-	promo := activePromotion(ctx, t, svc, service.PromotionInput{UsageLimit: ptr(int64(sinir))})
+	const limit = 5
+	const contenders = 20
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{UsageLimit: ptr(int64(limit))})
 
-	basla := make(chan struct{})
-	sonuclar := make([]error, yarismaci)
+	start := make(chan struct{})
+	results := make([]error, contenders)
 
 	var wg sync.WaitGroup
-	for i := range yarismaci {
+	for i := range contenders {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			<-basla
+			<-start
 			_, err := svc.RedeemPromotion(ctx, service.RedeemInput{
 				PromotionID:  promo.ID,
 				Reference:    fmt.Sprintf("order_%d", i),
 				Amount:       100,
 				CurrencyCode: "TRY",
 			})
-			sonuclar[i] = err
+			results[i] = err
 		}(i)
 	}
-	close(basla)
+	close(start)
 	wg.Wait()
 
-	var kazanan int
-	for i, err := range sonuclar {
+	var winners int
+	for i, err := range results {
 		if err == nil {
-			kazanan++
+			winners++
 			continue
 		}
 		assert.Equal(t, errors.KindConflict, errors.KindOf(err),
-			"kaybeden çağrı %d Conflict almalı, aldığı: %v", i, err)
+			"losing call %d must get Conflict, it got: %v", i, err)
 		assert.Equal(t, repository.CodeUsageLimitReached, errors.CodeOf(err))
 	}
-	assert.Equal(t, sinir, kazanan, "kullanım hakkı kadar çağrı kazanmalı")
+	assert.Equal(t, limit, winners, "as many calls as there are uses must win")
 
-	guncel, err := svc.GetPromotion(ctx, promo.ID)
+	current, err := svc.GetPromotion(ctx, promo.ID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(sinir), guncel.UsageCount, "sayaç sınırı AŞMAMALI")
+	assert.Equal(t, int64(limit), current.UsageCount, "the counter must NOT EXCEED the limit")
 }
 
-// TestEszamanliRedeemAyniReferansIcinTekKayitYazar idempotency'nin eşzamanlı
-// hâlini kanıtlar: aynı referansla yarışan çağrılardan yalnızca biri kayıt
-// yaratır ve sayaç bir artar.
-func TestEszamanliRedeemAyniReferansIcinTekKayitYazar(t *testing.T) {
+// TestConcurrentRedeemWritesOneRecordForTheSameReference proves the concurrent
+// form of the idempotency: of the calls racing with the same reference, only
+// one creates a record and the counter goes up by one.
+func TestConcurrentRedeemWritesOneRecordForTheSameReference(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	const yarismaci = 16
+	const contenders = 16
 	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
 
-	basla := make(chan struct{})
-	kimlikler := make([]string, yarismaci)
-	hatalar := make([]error, yarismaci)
+	start := make(chan struct{})
+	ids := make([]string, contenders)
+	errs := make([]error, contenders)
 
 	var wg sync.WaitGroup
-	for i := range yarismaci {
+	for i := range contenders {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			<-basla
+			<-start
 			redemption, err := svc.RedeemPromotion(ctx, service.RedeemInput{
 				PromotionID:  promo.ID,
 				Reference:    "order_tek",
 				Amount:       250,
 				CurrencyCode: "TRY",
 			})
-			kimlikler[i], hatalar[i] = redemption.ID, err
+			ids[i], errs[i] = redemption.ID, err
 		}(i)
 	}
-	close(basla)
+	close(start)
 	wg.Wait()
 
-	for i, err := range hatalar {
-		require.NoError(t, err, "idempotent çağrı %d hata vermemeli", i)
-		assert.Equal(t, kimlikler[0], kimlikler[i], "hepsi AYNI kullanım kaydını görmeli")
+	for i, err := range errs {
+		require.NoError(t, err, "idempotent call %d must not fail", i)
+		assert.Equal(t, ids[0], ids[i], "all of them must see the SAME redemption record")
 	}
 
-	guncel, err := svc.GetPromotion(ctx, promo.ID)
+	current, err := svc.GetPromotion(ctx, promo.ID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), guncel.UsageCount,
-		"aynı referans için sayaç yalnızca BİR kez artmalı")
+	assert.Equal(t, int64(1), current.UsageCount,
+		"for the same reference the counter must go up only ONCE")
 
 	page, err := svc.ListRedemptions(ctx, promo.ID, 100, 0)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), page.Count, "defterde tek bir kayıt olmalı")
+	assert.Equal(t, int64(1), page.Count, "there must be a single record in the ledger")
 }
 
-// TestEszamanliRedeemKampanyaButcesiniAsmaz bütçe sayacının eşzamanlı
-// kullanımda bozulmadığını kanıtlar.
+// TestConcurrentRedeemDoesNotExceedTheCampaignBudget proves that the budget
+// counter is not corrupted under concurrent redemption.
 //
-// Sayaç iki promosyon arasında PAYLAŞILIR: ikisi de aynı kampanya satırını
-// kilitler ve kilit sırası (önce promosyon, sonra kampanya) sabit olmasaydı bu
-// test kilitlenmeyle (deadlock) takılırdı.
-func TestEszamanliRedeemKampanyaButcesiniAsmaz(t *testing.T) {
+// The counter is SHARED between two promotions: both lock the same campaign
+// row, and had the lock order (first the promotion, then the campaign) not
+// been fixed, this test would have hung on a deadlock.
+func TestConcurrentRedeemDoesNotExceedTheCampaignBudget(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	const butce = 1000
-	const tutar = 100
-	const yarismaci = 30
+	const budget = 1000
+	const amount = 100
+	const contenders = 30
 
-	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
-		Name:               "Bütçeli",
+	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
+		Name:               "Budgeted",
 		CampaignIdentifier: "BUTCE-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
-		BudgetLimit:        ptr(int64(butce)),
+		BudgetLimit:        ptr(int64(budget)),
 		BudgetCurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
-	ilk := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
-	ikinci := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
-	promosyonlar := []models.Promotion{ilk, ikinci}
+	first := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &campaign.ID})
+	second := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &campaign.ID})
+	promotions := []models.Promotion{first, second}
 
-	basla := make(chan struct{})
-	sonuclar := make([]error, yarismaci)
+	start := make(chan struct{})
+	results := make([]error, contenders)
 
 	var wg sync.WaitGroup
-	for i := range yarismaci {
+	for i := range contenders {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			<-basla
+			<-start
 			_, err := svc.RedeemPromotion(ctx, service.RedeemInput{
-				PromotionID:  promosyonlar[i%len(promosyonlar)].ID,
+				PromotionID:  promotions[i%len(promotions)].ID,
 				Reference:    fmt.Sprintf("order_%d", i),
-				Amount:       tutar,
+				Amount:       amount,
 				CurrencyCode: "TRY",
 			})
-			sonuclar[i] = err
+			results[i] = err
 		}(i)
 	}
-	close(basla)
+	close(start)
 	wg.Wait()
 
-	var kazanan int
-	for i, err := range sonuclar {
+	var winners int
+	for i, err := range results {
 		if err == nil {
-			kazanan++
+			winners++
 			continue
 		}
 		assert.Equal(t, errors.KindConflict, errors.KindOf(err),
-			"kaybeden çağrı %d Conflict almalı, aldığı: %v", i, err)
+			"losing call %d must get Conflict, it got: %v", i, err)
 		assert.Equal(t, repository.CodeBudgetExceeded, errors.CodeOf(err))
 	}
-	assert.Equal(t, butce/tutar, kazanan, "bütçenin izin verdiği kadar kullanım kazanmalı")
+	assert.Equal(t, budget/amount, winners, "as many redemptions as the budget allows must win")
 
-	guncel, err := svc.GetCampaign(ctx, kampanya.ID)
+	current, err := svc.GetCampaign(ctx, campaign.ID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(butce), guncel.BudgetUsed, "bütçe sayacı sınırı AŞMAMALI")
+	assert.Equal(t, int64(budget), current.BudgetUsed, "the budget counter must NOT EXCEED the limit")
 }
 
-// TestEszamanliReleaseSayaciBirKezDusurur telafinin idempotency'sinin
-// eşzamanlı hâlini kanıtlar.
-func TestEszamanliReleaseSayaciBirKezDusurur(t *testing.T) {
+// TestConcurrentReleaseDecrementsTheCounterOnce proves the concurrent form of
+// the compensation's idempotency.
+func TestConcurrentReleaseDecrementsTheCounterOnce(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	const yarismaci = 16
-	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
+	const contenders = 16
+	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Telafi",
 		CampaignIdentifier: "TELAFI-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
@@ -557,50 +561,50 @@ func TestEszamanliReleaseSayaciBirKezDusurur(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &campaign.ID})
 	_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
 		PromotionID: promo.ID, Reference: "order_1", Amount: 750, CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
-	basla := make(chan struct{})
-	geriAlindi := make([]bool, yarismaci)
-	hatalar := make([]error, yarismaci)
+	start := make(chan struct{})
+	rolledBack := make([]bool, contenders)
+	errs := make([]error, contenders)
 
 	var wg sync.WaitGroup
-	for i := range yarismaci {
+	for i := range contenders {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			<-basla
+			<-start
 			released, err := svc.ReleasePromotion(ctx, service.ReleaseInput{
 				PromotionID: promo.ID, Reference: "order_1",
 			})
-			geriAlindi[i], hatalar[i] = released, err
+			rolledBack[i], errs[i] = released, err
 		}(i)
 	}
-	close(basla)
+	close(start)
 	wg.Wait()
 
-	var geriAlanSayisi int
-	for i, err := range hatalar {
-		require.NoError(t, err, "telafi %d hata vermemeli; idempotenttir", i)
-		if geriAlindi[i] {
-			geriAlanSayisi++
+	var rolledBackCount int
+	for i, err := range errs {
+		require.NoError(t, err, "compensation %d must not fail; it is idempotent", i)
+		if rolledBack[i] {
+			rolledBackCount++
 		}
 	}
-	assert.Equal(t, 1, geriAlanSayisi, "yalnızca BİR çağrı gerçekten geri almalı")
+	assert.Equal(t, 1, rolledBackCount, "only ONE call must really roll back")
 
-	guncelPromo, err := svc.GetPromotion(ctx, promo.ID)
+	currentPromo, err := svc.GetPromotion(ctx, promo.ID)
 	require.NoError(t, err)
-	assert.Zero(t, guncelPromo.UsageCount, "sayaç yalnızca bir kez düşmeli")
+	assert.Zero(t, currentPromo.UsageCount, "the counter must go down only once")
 
-	guncelKampanya, err := svc.GetCampaign(ctx, kampanya.ID)
+	currentCampaign, err := svc.GetCampaign(ctx, campaign.ID)
 	require.NoError(t, err)
-	assert.Zero(t, guncelKampanya.BudgetUsed, "bütçe yalnızca bir kez düşmeli")
+	assert.Zero(t, currentCampaign.BudgetUsed, "the budget must go down only once")
 }
 
-func TestReleaseHicKullanimYoksaHataVermez(t *testing.T) {
+func TestReleaseWithoutAnyRedemptionDoesNotFail(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
@@ -609,26 +613,26 @@ func TestReleaseHicKullanimYoksaHataVermez(t *testing.T) {
 		PromotionID: promo.ID, Reference: "hic_yazilmadi",
 	})
 
-	require.NoError(t, err, "yazmadan patlamış bir adımın telafisi de çalışabilmeli")
+	require.NoError(t, err, "the compensation of a step that blew up before writing must be able to run too")
 	assert.False(t, released)
 }
 
-func TestInteropYuzeyiJSONSemasiniKarsilar(t *testing.T) {
+func TestTheInteropSurfaceMeetsTheJSONSchema(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 	promo := activePromotion(ctx, t, svc, service.PromotionInput{IsAutomatic: true})
 
 	interop := service.NewInterop(svc)
-	istek := []byte(`{
+	request := []byte(`{
 	  "currency_code": "TRY",
 	  "items": [{"id": "li_1", "amount": 10000, "unit_amount": 10000, "quantity": 1}],
 	  "shipping_methods": [{"id": "sm_1", "amount": 4990}]
 	}`)
 
-	payload, err := interop.ComputeDiscountsJSON(ctx, istek)
+	payload, err := interop.ComputeDiscountsJSON(ctx, request)
 	require.NoError(t, err)
 
-	var yanit struct {
+	var response struct {
 		CurrencyCode          string `json:"currency_code"`
 		DiscountTotal         int64  `json:"discount_total"`
 		ItemsDiscountTotal    int64  `json:"items_discount_total"`
@@ -642,18 +646,18 @@ func TestInteropYuzeyiJSONSemasiniKarsilar(t *testing.T) {
 			Amount      int64  `json:"amount"`
 		} `json:"applied"`
 	}
-	require.NoError(t, json.Unmarshal(payload, &yanit))
+	require.NoError(t, json.Unmarshal(payload, &response))
 
-	assert.Equal(t, "TRY", yanit.CurrencyCode)
-	assert.Equal(t, int64(2000), yanit.DiscountTotal)
-	assert.Equal(t, int64(2000), yanit.ItemsDiscountTotal)
-	assert.Zero(t, yanit.ShippingDiscountTotal)
-	require.Len(t, yanit.Items, 1)
-	assert.Equal(t, "li_1", yanit.Items[0].ID)
-	require.Len(t, yanit.Applied, 1)
-	assert.Equal(t, promo.ID, yanit.Applied[0].PromotionID)
+	assert.Equal(t, "TRY", response.CurrencyCode)
+	assert.Equal(t, int64(2000), response.DiscountTotal)
+	assert.Equal(t, int64(2000), response.ItemsDiscountTotal)
+	assert.Zero(t, response.ShippingDiscountTotal)
+	require.Len(t, response.Items, 1)
+	assert.Equal(t, "li_1", response.Items[0].ID)
+	require.Len(t, response.Applied, 1)
+	assert.Equal(t, promo.ID, response.Applied[0].PromotionID)
 
-	// Kullanım ve telafi de ilkel yüzeyden çalışmalı.
+	// Redemption and compensation must work from the primitive surface too.
 	id, err := interop.RedeemPromotion(ctx, promo.ID, "", "order_interop", "TRY", 2000)
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)
@@ -663,14 +667,15 @@ func TestInteropYuzeyiJSONSemasiniKarsilar(t *testing.T) {
 	assert.True(t, released)
 }
 
-// TestQuerySaglayicisiGercekDepodaSuzer sağlayıcının Query katmanına yalnızca
-// AKTİF promosyonları ve dar bir alan kümesini açtığını doğrular (ADR 0004).
-func TestQuerySaglayicisiGercekDepodaSuzer(t *testing.T) {
+// TestTheQueryProviderFiltersOnTheRealRepository verifies that the provider
+// opens only ACTIVE promotions and a narrow set of fields to the Query layer
+// (ADR 0004).
+func TestTheQueryProviderFiltersOnTheRealRepository(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	aktif := activePromotion(ctx, t, svc, service.PromotionInput{})
-	taslak, err := svc.CreatePromotion(ctx, service.PromotionInput{
+	active := activePromotion(ctx, t, svc, service.PromotionInput{})
+	draft, err := svc.CreatePromotion(ctx, service.PromotionInput{
 		Code: uniqueCode(), Status: models.PromotionDraft,
 	})
 	require.NoError(t, err)
@@ -679,67 +684,67 @@ func TestQuerySaglayicisiGercekDepodaSuzer(t *testing.T) {
 	assert.Equal(t, "promotion", provider.Entity())
 	assert.Equal(t, "promotion"+query.ProviderSuffix, promotion.ProviderName)
 
-	kayitlar, err := provider.FetchByIDs(ctx, []string{aktif.ID, taslak.ID}, nil)
+	records, err := provider.FetchByIDs(ctx, []string{active.ID, draft.ID}, nil)
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1, "taslak promosyon okuma yüzeyinden sızmamalı")
-	assert.Equal(t, aktif.ID, kayitlar[0]["id"])
+	require.Len(t, records, 1, "a draft promotion must not leak from the read surface")
+	assert.Equal(t, active.ID, records[0]["id"])
 
-	for _, alan := range []string{"usage_count", "metadata"} {
-		assert.NotContains(t, kayitlar[0], alan, "%q okuma yüzeyinde bulunmamalı", alan)
+	for _, field := range []string{"usage_count", "metadata"} {
+		assert.NotContains(t, records[0], field, "%q must not be on the read surface", field)
 	}
 }
 
-// TestVeritabaniKisitlariSonSavunmadir servis doğrulaması atlansa bile
-// şemanın tutarsız kayıtları reddettiğini doğrular.
+// TestTheDatabaseConstraintsAreTheLastDefense verifies that the schema refuses
+// inconsistent records even when the service validation is bypassed.
 //
-// Depo doğrudan çağrılır: servis katmanı bu girdileri zaten eler, ama kısıtlar
-// elle çalıştırılan bir SQL'e karşı da geçerli olmalıdır.
-func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
+// The repository is called directly: the service layer already filters these
+// inputs out, but the constraints must hold against SQL run by hand too.
+func TestTheDatabaseConstraintsAreTheLastDefense(t *testing.T) {
 	ctx := context.Background()
 	repo := repository.New(testPool.Pool())
 	now := time.Now().UTC()
 
-	testler := []struct {
-		ad      string
-		yaz     func() error
-		gerekce string
+	cases := []struct {
+		name   string
+		write  func() error
+		reason string
 	}{
 		{
-			ad: "küçük harfli kupon kodu",
-			yaz: func() error {
+			name: "lower-case coupon code",
+			write: func() error {
 				_, err := repo.CreatePromotion(ctx, models.Promotion{
 					ID: models.NewPromotionID(now), Code: "kucuk",
 					Type: models.PromotionStandard, Status: models.PromotionDraft,
 				}, now)
 				return err
 			},
-			gerekce: "kod daima BÜYÜK harf saklanır",
+			reason: "the code is always stored in UPPER case",
 		},
 		{
-			ad: "tanımsız durum",
-			yaz: func() error {
+			name: "undefined status",
+			write: func() error {
 				_, err := repo.CreatePromotion(ctx, models.Promotion{
 					ID: models.NewPromotionID(now), Code: uniqueCode(),
 					Type: models.PromotionStandard, Status: "olmayan",
 				}, now)
 				return err
 			},
-			gerekce: "durum kümesi şemada kilitlidir",
+			reason: "the status set is locked in the schema",
 		},
 		{
-			ad: "para birimsiz spend bütçesi",
-			yaz: func() error {
+			name: "spend budget without a currency",
+			write: func() error {
 				_, err := repo.CreateCampaign(ctx, models.Campaign{
 					ID: models.NewCampaignID(now), Name: "X", CampaignIdentifier: uniqueCode(),
 					BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(100)),
 				}, now)
 				return err
 			},
-			gerekce: "para ölçülü bütçe para birimi olmadan yazılamaz",
+			reason: "a budget measured in money cannot be written without a currency",
 		},
 		{
-			ad: "para birimsiz sabit indirim yöntemi",
-			yaz: func() error {
+			name: "fixed discount method without a currency",
+			write: func() error {
 				promo, err := repo.CreatePromotion(ctx, models.Promotion{
 					ID: models.NewPromotionID(now), Code: uniqueCode(),
 					Type: models.PromotionStandard, Status: models.PromotionDraft,
@@ -754,11 +759,11 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 				}, now)
 				return err
 			},
-			gerekce: "sabit tutarlı indirim para birimi olmadan yazılamaz",
+			reason: "a fixed-amount discount cannot be written without a currency",
 		},
 		{
-			ad: "yüzde indirimde para birimi",
-			yaz: func() error {
+			name: "currency on a percentage discount",
+			write: func() error {
 				promo, err := repo.CreatePromotion(ctx, models.Promotion{
 					ID: models.NewPromotionID(now), Code: uniqueCode(),
 					Type: models.PromotionStandard, Status: models.PromotionDraft,
@@ -773,11 +778,11 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 				}, now)
 				return err
 			},
-			gerekce: "yüzde indirim para birimi taşımaz",
+			reason: "a percentage discount carries no currency",
 		},
 		{
-			ad: "para birimsiz kullanım defteri satırı",
-			yaz: func() error {
+			name: "redemption ledger row without a currency",
+			write: func() error {
 				promo, err := repo.CreatePromotion(ctx, models.Promotion{
 					ID: models.NewPromotionID(now), Code: uniqueCode(),
 					Type: models.PromotionStandard, Status: models.PromotionActive,
@@ -791,22 +796,22 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 				}, now)
 				return err
 			},
-			gerekce: "defterdeki her tutar hangi para biriminde olduğunu taşımak zorundadır",
+			reason: "every amount in the ledger has to carry the currency it is in",
 		},
 		{
-			ad: "negatif bütçe sınırı",
-			yaz: func() error {
+			name: "negative budget limit",
+			write: func() error {
 				_, err := repo.CreateCampaign(ctx, models.Campaign{
 					ID: models.NewCampaignID(now), Name: "X", CampaignIdentifier: uniqueCode(),
 					BudgetType: models.BudgetUsage, BudgetLimit: ptr(int64(-1)),
 				}, now)
 				return err
 			},
-			gerekce: "negatif bütçe yazılamaz",
+			reason: "a negative budget cannot be written",
 		},
 		{
-			ad: "yarım ödül çifti",
-			yaz: func() error {
+			name: "half a reward pair",
+			write: func() error {
 				promo, err := repo.CreatePromotion(ctx, models.Promotion{
 					ID: models.NewPromotionID(now), Code: uniqueCode(),
 					Type: models.PromotionBuyGet, Status: models.PromotionDraft,
@@ -822,11 +827,11 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 				}, now)
 				return err
 			},
-			gerekce: "ödülsüz bir alım koşulu yazılamaz; çift TAM ya da HİÇ",
+			reason: "a buy condition without a reward cannot be written; the pair is WHOLE or NOTHING",
 		},
 		{
-			ad: "sıfır ödül adedi",
-			yaz: func() error {
+			name: "zero reward quantity",
+			write: func() error {
 				promo, err := repo.CreatePromotion(ctx, models.Promotion{
 					ID: models.NewPromotionID(now), Code: uniqueCode(),
 					Type: models.PromotionBuyGet, Status: models.PromotionDraft,
@@ -842,29 +847,30 @@ func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
 				}, now)
 				return err
 			},
-			gerekce: "sıfır birime inen bir ödül, ödül değildir",
+			reason: "a reward that comes down to zero units is not a reward",
 		},
 	}
 
-	for _, tt := range testler {
-		t.Run(tt.ad, func(t *testing.T) {
-			err := tt.yaz()
-			require.Error(t, err, tt.gerekce)
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.write()
+			require.Error(t, err, tt.reason)
 			assert.Contains(t,
 				[]errors.Kind{errors.KindInvalid, errors.KindConflict}, errors.KindOf(err),
-				"kısıt ihlali istemci hatası olarak sınıflandırılmalı: %v", err)
+				"a constraint violation must be classified as a client error: %v", err)
 		})
 	}
 }
 
-// TestOdulSayilariVeAlimKuraliVeritabanindanGeriGelir "al X, kazan Y" mekaniğinin
-// ZEMİNİNİ sınar: iki yeni kolon ve üçüncü kural türü gerçek şemada duruyor mu.
+// TestRewardQuantitiesAndTheBuyRuleComeBackFromTheDatabase tests the GROUND of
+// the "buy X, get Y" mechanic: are the two new columns and the third rule type
+// standing in the real schema.
 //
-// Birim testleri mekaniği elle kurulmuş adaylar üzerinde kanıtlar; onların
-// kanıtlayamadığı şey, adayın veritabanından bu biçimde GELDİĞİDİR — göç
-// uygulanmamışsa ya da eşleme kolonu düşürüyorsa, hesap doğru çalışır ve hiçbir
-// promosyon ona ulaşamaz.
-func TestOdulSayilariVeAlimKuraliVeritabanindanGeriGelir(t *testing.T) {
+// The unit tests prove the mechanic on hand-built candidates; what they cannot
+// prove is that the candidate COMES from the database in this shape — if the
+// migration has not been applied, or the mapping drops a column, the
+// computation works correctly and no promotion can reach it.
+func TestRewardQuantitiesAndTheBuyRuleComeBackFromTheDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
@@ -872,7 +878,7 @@ func TestOdulSayilariVeAlimKuraliVeritabanindanGeriGelir(t *testing.T) {
 		Code: uniqueCode(), IsAutomatic: true,
 		Type: models.PromotionBuyGet, Status: models.PromotionActive,
 	})
-	require.NoError(t, err, "buyget promosyonu yayına alınabilir (ADR 0112)")
+	require.NoError(t, err, "a buyget promotion can be published (ADR 0112)")
 
 	_, err = svc.SetApplicationMethod(ctx, promo.ID, service.ApplicationMethodInput{
 		Type: models.MethodPercentage, TargetType: models.TargetItems,
@@ -885,34 +891,34 @@ func TestOdulSayilariVeAlimKuraliVeritabanindanGeriGelir(t *testing.T) {
 		RuleType: models.RuleBuy, Attribute: "variant_id",
 		Operator: models.OpIn, Values: []string{"var_1"},
 	})
-	require.NoError(t, err, "üçüncü kural türü şemanın CHECK'inden geçmeli")
+	require.NoError(t, err, "the third rule type must pass the schema's CHECK")
 
-	yontem, err := svc.GetApplicationMethod(ctx, promo.ID)
+	method, err := svc.GetApplicationMethod(ctx, promo.ID)
 	require.NoError(t, err)
-	require.NotNil(t, yontem.BuyQuantity, "alım adedi veritabanından geri gelmeli")
-	require.NotNil(t, yontem.ApplyToQuantity, "ödül adedi veritabanından geri gelmeli")
-	assert.Equal(t, int64(2), *yontem.BuyQuantity)
-	assert.Equal(t, int64(1), *yontem.ApplyToQuantity)
+	require.NotNil(t, method.BuyQuantity, "the buy quantity must come back from the database")
+	require.NotNil(t, method.ApplyToQuantity, "the reward quantity must come back from the database")
+	assert.Equal(t, int64(2), *method.BuyQuantity)
+	assert.Equal(t, int64(1), *method.ApplyToQuantity)
 
-	kurallar, err := svc.ListPromotionRules(ctx, promo.ID)
+	rules, err := svc.ListPromotionRules(ctx, promo.ID)
 	require.NoError(t, err)
-	require.Len(t, kurallar, 1)
-	assert.Equal(t, models.RuleBuy, kurallar[0].RuleType,
-		"kural türü olduğu gibi geri gelmeli; hesap alım kümesini bununla seçer")
+	require.Len(t, rules, 1)
+	assert.Equal(t, models.RuleBuy, rules[0].RuleType,
+		"the rule type must come back as it is; the computation picks the buy set with it")
 }
 
-// TestRedeemYayindaOlmayanPromosyonuGercekVeritabanindaReddeder taslak ve pasif
-// promosyonun kullanılamadığını GERÇEK Postgres üzerinde doğrular.
+// TestRedeemRefusesAPromotionThatIsNotLiveOnTheRealDatabase verifies on REAL
+// Postgres that a draft or inactive promotion cannot be redeemed.
 //
-// Denetim promosyon satırı FOR UPDATE ile kilitliyken yapılır; bellek içi
-// taklit onu yalnızca taklit eder, burada zemin sınanır.
-func TestRedeemYayindaOlmayanPromosyonuGercekVeritabanindaReddeder(t *testing.T) {
+// The check is made while the promotion row is locked with FOR UPDATE; the
+// in-memory fake only imitates that, here the ground is tested.
+func TestRedeemRefusesAPromotionThatIsNotLiveOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	for _, durum := range []models.PromotionStatus{models.PromotionDraft, models.PromotionInactive} {
-		t.Run(string(durum), func(t *testing.T) {
-			kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
+	for _, status := range []models.PromotionStatus{models.PromotionDraft, models.PromotionInactive} {
+		t.Run(string(status), func(t *testing.T) {
+			campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 				Name:               "Yaz",
 				CampaignIdentifier: "TASLAK-" + uniqueCode(),
 				BudgetType:         models.BudgetSpend,
@@ -922,7 +928,7 @@ func TestRedeemYayindaOlmayanPromosyonuGercekVeritabanindaReddeder(t *testing.T)
 			require.NoError(t, err)
 
 			promo := activePromotion(ctx, t, svc, service.PromotionInput{
-				Status: durum, CampaignID: &kampanya.ID,
+				Status: status, CampaignID: &campaign.ID,
 			})
 
 			_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
@@ -930,138 +936,139 @@ func TestRedeemYayindaOlmayanPromosyonuGercekVeritabanindaReddeder(t *testing.T)
 				Amount: 2500, CurrencyCode: "TRY",
 			})
 
-			require.Error(t, err, "yayına alınmamış promosyon kullanılamaz")
+			require.Error(t, err, "a promotion that has not been published cannot be redeemed")
 			assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 			assert.Equal(t, repository.CodePromotionNotActive, errors.CodeOf(err))
 
-			guncel, err := svc.GetPromotion(ctx, promo.ID)
+			current, err := svc.GetPromotion(ctx, promo.ID)
 			require.NoError(t, err)
-			assert.Zero(t, guncel.UsageCount, "reddedilen kullanım sayacı artırmaz")
+			assert.Zero(t, current.UsageCount, "a refused redemption does not increment the counter")
 
-			guncelKampanya, err := svc.GetCampaign(ctx, kampanya.ID)
+			currentCampaign, err := svc.GetCampaign(ctx, campaign.ID)
 			require.NoError(t, err)
-			assert.Zero(t, guncelKampanya.BudgetUsed,
-				"yayına alınmamış promosyon kampanya bütçesini YEMEZ")
+			assert.Zero(t, currentCampaign.BudgetUsed,
+				"a promotion that has not been published does NOT SPEND the campaign budget")
 		})
 	}
 }
 
-// TestRedeemKampanyaPenceresiKapaliysaGercekVeritabanindaReddeder kullanım
-// anının kampanyanın penceresinde olmasını GERÇEK Postgres üzerinde doğrular.
+// TestRedeemRefusesAClosedCampaignWindowOnTheRealDatabase verifies on REAL
+// Postgres that the moment of redemption has to be inside the campaign's
+// window.
 //
-// Denetim kampanya satırı kilitliyken yapılır: pencere ile bütçe sayacı aynı
-// anın kaydı olmalıdır.
-func TestRedeemKampanyaPenceresiKapaliysaGercekVeritabanindaReddeder(t *testing.T) {
+// The check is made while the campaign row is locked: the window and the
+// budget counter must be a record of the same moment.
+func TestRedeemRefusesAClosedCampaignWindowOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
-	simdi := time.Now().UTC()
+	now := time.Now().UTC()
 
-	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
-		Name:               "Bitmiş",
+	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
+		Name:               "Ended",
 		CampaignIdentifier: "PENCERE-" + uniqueCode(),
-		StartsAt:           ptr(simdi.Add(-48 * time.Hour)),
-		EndsAt:             ptr(simdi.Add(-24 * time.Hour)),
+		StartsAt:           ptr(now.Add(-48 * time.Hour)),
+		EndsAt:             ptr(now.Add(-24 * time.Hour)),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
 		BudgetCurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
-	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &campaign.ID})
 
 	_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
 		PromotionID: promo.ID, Reference: "order_" + uniqueCode(),
 		Amount: 2500, CurrencyCode: "TRY",
 	})
 
-	require.Error(t, err, "penceresi kapanmış kampanyanın bütçesi yenemez")
+	require.Error(t, err, "the budget of a campaign whose window has closed cannot be spent")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, repository.CodeCampaignWindowClosed, errors.CodeOf(err))
 
-	guncel, err := svc.GetCampaign(ctx, kampanya.ID)
+	current, err := svc.GetCampaign(ctx, campaign.ID)
 	require.NoError(t, err)
-	assert.Zero(t, guncel.BudgetUsed)
+	assert.Zero(t, current.BudgetUsed)
 }
 
-// TestUpdateCampaignButceBirimiKilidiVeritabanindadir kilidin UYGULAMADA değil
-// tek bir koşullu UPDATE'te olduğunu doğrular.
+// TestUpdateCampaignBudgetUnitLockIsInTheDatabase verifies that the lock is
+// NOT IN THE APPLICATION but in a single conditional UPDATE.
 //
-// Sayaç doldurulduktan sonra bütçe birimini değiştirme denemesi reddedilmeli,
-// aynı isteğin birimi KORUYAN hâli ise geçmelidir.
-func TestUpdateCampaignButceBirimiKilidiVeritabanindadir(t *testing.T) {
+// Once the counter has been filled, an attempt to change the budget unit must
+// be refused, while the form of the same request that KEEPS the unit must pass.
+func TestUpdateCampaignBudgetUnitLockIsInTheDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
-	kimlik := "KILIT-" + uniqueCode()
+	identifier := "KILIT-" + uniqueCode()
 
-	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
+	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Yaz",
-		CampaignIdentifier: kimlik,
+		CampaignIdentifier: identifier,
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
 		BudgetCurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
-	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &kampanya.ID})
+	promo := activePromotion(ctx, t, svc, service.PromotionInput{CampaignID: &campaign.ID})
 	_, err = svc.RedeemPromotion(ctx, service.RedeemInput{
 		PromotionID: promo.ID, Reference: "order_" + uniqueCode(),
 		Amount: 30_000, CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.UpdateCampaign(ctx, kampanya.ID, service.CampaignInput{
+	_, err = svc.UpdateCampaign(ctx, campaign.ID, service.CampaignInput{
 		Name:               "Yaz",
-		CampaignIdentifier: kimlik,
+		CampaignIdentifier: identifier,
 		BudgetType:         models.BudgetUsage,
 		BudgetLimit:        ptr(int64(100)),
 	})
-	require.Error(t, err, "sayaçtaki 30000 KURUŞ, tür değişince 30000 ADET olarak okunurdu")
+	require.Error(t, err, "the 30000 MINOR UNITS on the counter would be read as 30000 USES once the type changed")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, repository.CodeBudgetUnitLocked, errors.CodeOf(err))
 
-	_, err = svc.UpdateCampaign(ctx, kampanya.ID, service.CampaignInput{
+	_, err = svc.UpdateCampaign(ctx, campaign.ID, service.CampaignInput{
 		Name:               "Yaz",
-		CampaignIdentifier: kimlik,
+		CampaignIdentifier: identifier,
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
 		BudgetCurrencyCode: "USD",
 	})
-	require.Error(t, err, "önceki TRY harcaması USD sayılırdı")
+	require.Error(t, err, "the earlier TRY spending would be counted as USD")
 	assert.Equal(t, repository.CodeBudgetUnitLocked, errors.CodeOf(err))
 
-	guncellenen, err := svc.UpdateCampaign(ctx, kampanya.ID, service.CampaignInput{
+	updated, err := svc.UpdateCampaign(ctx, campaign.ID, service.CampaignInput{
 		Name:               "Yaz Sonu",
-		CampaignIdentifier: kimlik,
+		CampaignIdentifier: identifier,
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(2_000_000)),
 		BudgetCurrencyCode: "TRY",
 	})
-	require.NoError(t, err, "birim korunduğu sürece tanım ve SINIR güncellenebilir")
-	assert.Equal(t, "Yaz Sonu", guncellenen.Name)
-	assert.Equal(t, int64(2_000_000), *guncellenen.BudgetLimit)
-	assert.Equal(t, int64(30_000), guncellenen.BudgetUsed, "sayaç bu yoldan değişmez")
+	require.NoError(t, err, "as long as the unit is kept, the definition and the LIMIT can be updated")
+	assert.Equal(t, "Yaz Sonu", updated.Name)
+	assert.Equal(t, int64(2_000_000), *updated.BudgetLimit)
+	assert.Equal(t, int64(30_000), updated.BudgetUsed, "the counter does not change on this path")
 }
 
-// TestUpdateCampaignOlmayanKampanyaNotFound kilit denetiminin "bulunamadı"yı
-// yutmadığını doğrular: koşullu UPDATE iki sebeple de hiç satır dönmez ve
-// ikisinin AYRI hatalar olması gerekir.
-func TestUpdateCampaignOlmayanKampanyaNotFound(t *testing.T) {
+// TestUpdateCampaignMissingCampaignNotFound verifies that the lock check does
+// not swallow "not found": the conditional UPDATE returns no row for either
+// reason, and the two have to be SEPARATE errors.
+func TestUpdateCampaignMissingCampaignNotFound(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := newService(t).UpdateCampaign(ctx, models.NewCampaignID(time.Now()), service.CampaignInput{
-		Name: "Yok", CampaignIdentifier: "YOK-" + uniqueCode(),
+		Name: "Missing", CampaignIdentifier: "MISSING-" + uniqueCode(),
 	})
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"var olmayan kampanya, kilit çakışmasıyla AYNI hatayı dönmemeli")
+		"a campaign that does not exist must not return the SAME error as a lock conflict")
 }
 
-// ptr bir değerin işaretçisini döner.
+// ptr returns the address of a value.
 func ptr[T any](v T) *T { return &v }
 
-// lower bir kodu küçük harfe çevirir; kupon kodunun harf durumuna duyarsız
-// olduğunu sınayan test bunu kullanır.
+// lower converts a code to lower case; the test that checks a coupon code is
+// case-insensitive uses it.
 func lower(s string) string {
 	out := []rune(s)
 	for i, r := range out {
@@ -1072,59 +1079,63 @@ func lower(s string) string {
 	return string(out)
 }
 
-// sayim tek sütunlu bir sayım sorgusunu çalıştırır.
-func sayim(ctx context.Context, t *testing.T, sorgu string, arg ...any) int64 {
+// countOf runs a single-column count query.
+func countOf(ctx context.Context, t *testing.T, sql string, args ...any) int64 {
 	t.Helper()
 
-	var adet int64
-	require.NoError(t, testPool.Pool().QueryRow(ctx, sorgu, arg...).Scan(&adet))
-	return adet
+	var n int64
+	require.NoError(t, testPool.Pool().QueryRow(ctx, sql, args...).Scan(&n))
+	return n
 }
 
-// beklettigiIstekSayisi verilen oturumun BLOKE ETTİĞİ istek sayısını döner.
+// blockedRequestCount returns how many requests the given session is
+// BLOCKING.
 //
-// Daraltma zorunludur: "veritabanında biri kilitte bekliyor" koşulu başka bir
-// testin ya da havuzun beklemesiyle de sağlanır ve o durumda iddia, ölçmek
-// istediğimiz an gelmeden koşup elbette tutardı. pg_blocking_pids beklemenin
-// BİZİM kilitleyen işlemimizden kaynaklandığını söyler.
-func beklettigiIstekSayisi(ctx context.Context, t *testing.T, engelleyenPid int32) int64 {
+// The narrowing is mandatory: the condition "somebody in the database is
+// waiting on a lock" is also met by another test's or the pool's wait, and in
+// that case the assertion would run before the moment we want to measure had
+// come, and of course it would hold. pg_blocking_pids says the wait comes from
+// OUR locking transaction.
+func blockedRequestCount(ctx context.Context, t *testing.T, blockerPID int32) int64 {
 	t.Helper()
 
-	return sayim(ctx, t,
+	return countOf(ctx, t,
 		`SELECT count(*) FROM pg_stat_activity
          WHERE datname = current_database()
            AND wait_event_type = 'Lock'
-           AND $1 = ANY(pg_blocking_pids(pid))`, engelleyenPid)
+           AND $1 = ANY(pg_blocking_pids(pid))`, blockerPID)
 }
 
-// requireBeklettigiIstek verilen oturumun bir isteği gerçekten beklettiğini
-// doğrular.
+// requireBlockedRequest verifies that the given session really is holding a
+// request up.
 //
-// Uyku yerine BEKLEME DURUMUNA bakılır: sabit bir uyku ya yavaş makinede erken
-// uyanıp testi kırılgan yapardı, ya da her koşuya boş bekleme eklerdi.
-func requireBeklettigiIstek(ctx context.Context, t *testing.T, engelleyenPid int32) {
+// It looks at the WAIT STATE instead of sleeping: a fixed sleep would either
+// wake up early on a slow machine and make the test brittle, or add idle
+// waiting to every run.
+func requireBlockedRequest(ctx context.Context, t *testing.T, blockerPID int32) {
 	t.Helper()
 
 	require.Eventually(t, func() bool {
-		return beklettigiIstekSayisi(ctx, t, engelleyenPid) > 0
-	}, 10*time.Second, 10*time.Millisecond, "istek bu oturumun kilidinde beklemeliydi")
+		return blockedRequestCount(ctx, t, blockerPID) > 0
+	}, 10*time.Second, 10*time.Millisecond, "the request should have been waiting on this session's lock")
 }
 
-// promosyonuSilenIslem promosyonu YUMUŞAK silen ama HENÜZ commit ETMEYEN bir
-// işlem açar; dönen pid beklemenin bu işleme ATFEDİLEBİLMESİ içindir.
+// promotionDeletingTx opens a transaction that SOFT-deletes the promotion but
+// has NOT committed YET; the returned pid is there so the wait can be
+// ATTRIBUTED to this transaction.
 //
-// Rakip olarak düz bir `SELECT ... FOR UPDATE` DEĞİL, silmenin GERÇEK deyimi
-// kullanılır (repository.DeletePromotion'ın çalıştırdığı UPDATE). Fark testin
-// tamamını taşır: FOR UPDATE her satır kilidiyle çakışır ve yazma yolu hangi
-// kilidi alırsa alsın bekletirdi — yani test, yanlış bir kilit seçilse bile
-// yeşil kalırdı. Silme deyimi satıra yalnızca FOR NO KEY UPDATE koyar; yazma
-// yolunun aldığı PAYLAŞIMLI kilidin gerçek bir silmeyi beklediği ancak böyle
-// sınanır.
-func promosyonuSilenIslem(
+// The rival is NOT a plain `SELECT ... FOR UPDATE` but the delete's REAL
+// statement (the UPDATE that repository.DeletePromotion runs). The difference
+// carries the whole test: FOR UPDATE conflicts with every row lock and would
+// hold the write path up whichever lock it took — so the test would stay green
+// even if the wrong lock were chosen. The delete statement puts only FOR NO KEY
+// UPDATE on the row; only this way is it tested that the SHARED lock the write
+// path takes really waits for a real delete.
+func promotionDeletingTx(
 	ctx context.Context,
 	t *testing.T,
-	promosyonID string,
-) (tx pgx.Tx, pid int32, temizle func()) {
+	promotionID string,
+) (tx pgx.Tx, pid int32, cleanup func()) {
 	t.Helper()
 
 	conn, err := testPool.Pool().Acquire(ctx)
@@ -1135,52 +1146,53 @@ func promosyonuSilenIslem(
 		conn.Release()
 		require.NoError(t, err)
 	}
-	temizle = func() {
+	cleanup = func() {
 		_ = tx.Rollback(ctx)
 		conn.Release()
 	}
 
 	require.NoError(t, tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
 
-	etiket, err := tx.Exec(ctx,
+	tag, err := tx.Exec(ctx,
 		`UPDATE promotion SET deleted_at = now(), updated_at = now()
-         WHERE id = $1 AND deleted_at IS NULL`, promosyonID)
+         WHERE id = $1 AND deleted_at IS NULL`, promotionID)
 	require.NoError(t, err)
-	require.EqualValues(t, 1, etiket.RowsAffected(), "silme tek satırı etkilemeliydi")
+	require.EqualValues(t, 1, tag.RowsAffected(), "the delete should have affected a single row")
 
-	return tx, pid, temizle
+	return tx, pid, cleanup
 }
 
-// TestKuralEklemeSilinenPromosyonaYazmaz kural eklemenin "önce oku sonra yaz"
-// yarışını KAPATTIĞINI belirlenimci biçimde doğrular.
+// TestAddingARuleDoesNotWriteUnderADeletedPromotion verifies deterministically
+// that adding a rule CLOSES the "read first, then write" race.
 //
-// Kurgu ara durumu zamanlamaya bırakmaz:
+// The setup does not leave the intermediate state to timing:
 //
-//  1. Rakip bir işlem promosyonu YUMUŞAK siler ve commit ETMEZ.
-//  2. AddPromotionRule başlar ve promosyonu PAYLAŞIMLI kilitle okumak ister;
-//     silmenin kilidinde BEKLER. pg_blocking_pids ile beklemenin rakip
-//     işlemden geldiği doğrulanır.
-//  3. Rakip işlem commit eder; bekleyen istek uyanır ve kilidi aldıktan sonra
-//     WHERE koşulunu YENİDEN değerlendirip "kayıt yok" görür.
+//  1. A rival transaction SOFT-deletes the promotion and does NOT commit.
+//  2. AddPromotionRule starts and wants to read the promotion with a SHARED
+//     lock; it WAITS on the delete's lock. pg_blocking_pids verifies that the
+//     wait comes from the rival transaction.
+//  3. The rival transaction commits; the waiting request wakes up, and after
+//     taking the lock it evaluates the WHERE condition AGAIN and sees "no
+//     record".
 //
-// İki iddia da gereklidir ve AYRI şeyleri ölçer: adım 2 kilidin GERÇEKTEN
-// alındığını (yoksa hiç beklenmezdi), adım 3 sonucunun NotFound olması ise
-// yazmanın inmediğini gösterir.
+// Both assertions are needed and they measure SEPARATE things: step 2 shows
+// that the lock is REALLY taken (otherwise there would have been no wait at
+// all), and step 3's result being NotFound shows that the write did not land.
 //
-// Ölçüldü (2026-09-06): denetim serviste, ayrı bir autocommit okumasıyla
-// yapılırken bu test İKİ yerden birden düşüyordu — yazma hiç beklemiyordu ve
-// kural silinmiş promosyonun altına iniyordu. Foreign key onu yakalamaz:
-// yumuşak silme satırı yerinde bırakır ve FK satırın deleted_at'ine değil
-// VARLIĞINA bakar.
-func TestKuralEklemeSilinenPromosyonaYazmaz(t *testing.T) {
+// Measured (2026-09-06): while the check was made in the service, with a
+// separate autocommit read, this test failed in TWO places at once — the write
+// did not wait at all, and the rule landed under the deleted promotion. A
+// foreign key does not catch it: a soft delete leaves the row in place and the
+// FK looks at the row's EXISTENCE, not at its deleted_at.
+func TestAddingARuleDoesNotWriteUnderADeletedPromotion(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
 
-	tx, pid, temizle := promosyonuSilenIslem(ctx, t, promo.ID)
-	defer temizle()
+	tx, pid, cleanup := promotionDeletingTx(ctx, t, promo.ID)
+	defer cleanup()
 
-	bitti := make(chan error, 1)
+	done := make(chan error, 1)
 	go func() {
 		_, err := svc.AddPromotionRule(ctx, promo.ID, service.RuleInput{
 			RuleType:  models.RuleContext,
@@ -1188,30 +1200,31 @@ func TestKuralEklemeSilinenPromosyonaYazmaz(t *testing.T) {
 			Operator:  models.OpEq,
 			Values:    []string{"vip"},
 		})
-		bitti <- err
+		done <- err
 	}()
-	requireBeklettigiIstek(ctx, t, pid)
+	requireBlockedRequest(ctx, t, pid)
 	require.NoError(t, tx.Commit(ctx))
 
-	err := <-bitti
-	require.Error(t, err, "silinmiş promosyona kural yazılmamalı")
+	err := <-done
+	require.Error(t, err, "no rule must be written to a deleted promotion")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	assert.Zero(t, sayim(ctx, t,
+	assert.Zero(t, countOf(ctx, t,
 		`SELECT count(*) FROM promotion_rule r
          JOIN promotion p ON p.id = r.promotion_id
          WHERE r.promotion_id = $1 AND p.deleted_at IS NOT NULL`, promo.ID),
-		"silinmiş promosyonun altında canlı kural kalmamalı")
+		"no live rule must be left under a deleted promotion")
 }
 
-// TestYontemYazmaSilinenPromosyonaYazmaz aynı yarışı uygulama yöntemi yolunda
-// doğrular; kurgu [TestKuralEklemeSilinenPromosyonaYazmaz] ile aynıdır.
+// TestWritingAMethodDoesNotWriteUnderADeletedPromotion verifies the same race
+// on the application method path; the setup is the same as
+// [TestAddingARuleDoesNotWriteUnderADeletedPromotion].
 //
-// İki yol AYRI sınanır çünkü yazmaları farklıdır: kural düz bir INSERT, yöntem
-// ise bir upsert'tir. "Upsert tek ifadedir, o hâlde atomiktir" tam olarak
-// buradaki tuzaktır — tek ifade olan yazmanın kendisidir, promosyonun canlı
-// olduğu bilgisi değil.
-func TestYontemYazmaSilinenPromosyonaYazmaz(t *testing.T) {
+// The two paths are tested SEPARATELY because their writes differ: the rule is
+// a plain INSERT, while the method is an upsert. "An upsert is a single
+// statement, so it is atomic" is exactly the trap here — what is a single
+// statement is the write itself, not the knowledge that the promotion is live.
+func TestWritingAMethodDoesNotWriteUnderADeletedPromotion(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
@@ -1221,10 +1234,10 @@ func TestYontemYazmaSilinenPromosyonaYazmaz(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	tx, pid, temizle := promosyonuSilenIslem(ctx, t, promo.ID)
-	defer temizle()
+	tx, pid, cleanup := promotionDeletingTx(ctx, t, promo.ID)
+	defer cleanup()
 
-	bitti := make(chan error, 1)
+	done := make(chan error, 1)
 	go func() {
 		_, methodErr := svc.SetApplicationMethod(ctx, promo.ID, service.ApplicationMethodInput{
 			Type:       models.MethodPercentage,
@@ -1232,196 +1245,201 @@ func TestYontemYazmaSilinenPromosyonaYazmaz(t *testing.T) {
 			Allocation: models.AllocationEach,
 			Value:      5000,
 		})
-		bitti <- methodErr
+		done <- methodErr
 	}()
-	requireBeklettigiIstek(ctx, t, pid)
+	requireBlockedRequest(ctx, t, pid)
 	require.NoError(t, tx.Commit(ctx))
 
-	err = <-bitti
-	require.Error(t, err, "silinmiş promosyona uygulama yöntemi yazılmamalı")
+	err = <-done
+	require.Error(t, err, "no application method must be written to a deleted promotion")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	assert.Zero(t, sayim(ctx, t,
+	assert.Zero(t, countOf(ctx, t,
 		`SELECT count(*) FROM promotion_application_method m
          JOIN promotion p ON p.id = m.promotion_id
          WHERE m.promotion_id = $1 AND m.deleted_at IS NULL AND p.deleted_at IS NOT NULL`,
 		promo.ID),
-		"silinmiş promosyonun altında canlı uygulama yöntemi kalmamalı")
+		"no live application method must be left under a deleted promotion")
 }
 
-// TestKuponKoduylaKullanimZinciriGercekVeritabanindaTamamlanir kupon kodunun
-// hesaptan kullanıma ve telafiye kadar GERÇEK Postgres üzerinde çözüldüğünü
-// doğrular.
+// TestTheRedemptionChainByCouponCodeCompletesOnTheRealDatabase verifies that a
+// coupon code is resolved on REAL Postgres all the way from the computation to
+// the redemption and the compensation.
 //
-// Zincirin her adımı ölçüldüğünde (2026-09-07) tek bir sorgu hiç
-// çalışmamıştı: GetPromotionByCode. Kilit, sayaç ve idempotency sorgularının
-// hepsi %100 kapsanmışken kodun kendisinden promosyona geçen adım yalnızca
-// bellek içi taklide karşı koşuyordu — yani kupon kodu YAZAN bir müşterinin
-// yolunda, hiç Postgres görmemiş bir SQL vardı. Taklit o boşluğu göremez:
-// taklidin arama döngüsü Go'dadır, gerçekteki WHERE ise SQL'dedir ve ikisi
-// sessizce ayrışabilir.
+// When every step of the chain was measured (2026-09-07), a single query had
+// never run: GetPromotionByCode. While the lock, counter and idempotency
+// queries were all covered 100%, the step that goes from the code itself to
+// the promotion ran only against the in-memory fake — that is, on the path of
+// a customer who TYPES a coupon code there was SQL that had never seen
+// Postgres. The fake cannot see that gap: the fake's lookup loop is in Go, the
+// real WHERE is in SQL, and the two can silently diverge.
 //
-// Kullanım BİLEREK yalnızca kodla istenir (PromotionID boş bırakılır): kimlik
-// de verilseydi [service.Service.resolvePromotion] kimlik dalını seçer ve
-// kod sorgusu yine hiç çalışmazdı. Kod ayrıca KÜÇÜK harfle verilir; sütunda
-// BÜYÜK harf saklandığı için bu, normalleştirmenin gerçek sütuna karşı
-// tuttuğunu gösteren tek denemedir.
-func TestKuponKoduylaKullanimZinciriGercekVeritabanindaTamamlanir(t *testing.T) {
+// The redemption is asked for by code ONLY, ON PURPOSE (PromotionID is left
+// empty): had the id been given as well, [service.Service.resolvePromotion]
+// would pick the id branch and the code query would still never run. The code
+// is also given in LOWER case; because the column stores UPPER case, this is
+// the one attempt that shows the normalization holds against the real column.
+func TestTheRedemptionChainByCouponCodeCompletesOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	kupon := activePromotion(ctx, t, svc, service.PromotionInput{})
-	require.False(t, kupon.IsAutomatic, "bu testin konusu KOD gerektiren promosyondur")
+	coupon := activePromotion(ctx, t, svc, service.PromotionInput{})
+	require.False(t, coupon.IsAutomatic, "the subject of this test is a promotion that NEEDS A CODE")
 
 	res, err := svc.ComputeDiscounts(ctx, service.ComputeInput{
 		CurrencyCode: "TRY",
 		Items:        []service.ComputeItem{{ID: "li_1", Amount: 10_000, UnitAmount: 10_000, Quantity: 1}},
-		Codes:        []string{kupon.Code},
+		Codes:        []string{coupon.Code},
 	})
 	require.NoError(t, err)
-	assert.Empty(t, res.UnmatchedCodes, "geçerli kod eşleşmemiş sayılmamalı")
+	assert.Empty(t, res.UnmatchedCodes, "a valid code must not be counted as unmatched")
 
-	// İddia sepet TOPLAMINA değil, BU kuponun payına bağlanır. Sebep paylaşılan
-	// veritabanıdır: aynı konteyneri kullanan başka testler OTOMATİK promosyon
-	// bırakır ve onlar da her hesaba girer, yani toplam bu testin denetiminde
-	// değildir. Kupona göre anahtarlanan iddia hem daha dar hem de daha
-	// doğrudur — sınanan şey "sepet ne kadar indi" değil, "kodu yazılan kupon
-	// ne kadar indirdi"dir.
-	pay := uygulananPay(t, res, kupon.Code)
-	require.Equal(t, int64(2000), pay, "%20 × 10000 kuponun payı olmalı")
+	// The assertion is tied to THIS coupon's share, not to the cart TOTAL. The
+	// reason is the shared database: other tests using the same container leave
+	// AUTOMATIC promotions behind and those enter every computation too, so the
+	// total is not under this test's control. The assertion keyed by the coupon
+	// is both narrower and more correct — what is tested is not "how much did
+	// the cart go down" but "how much did the coupon whose code was typed take
+	// off".
+	share := appliedShare(t, res, coupon.Code)
+	require.Equal(t, int64(2000), share, "20% × 10000 must be the coupon's share")
 
-	referans := "order_" + uniqueCode()
-	kullanim, err := svc.RedeemPromotion(ctx, service.RedeemInput{
-		Code:         lower(kupon.Code),
-		Reference:    referans,
-		Amount:       pay,
+	reference := "order_" + uniqueCode()
+	redemption, err := svc.RedeemPromotion(ctx, service.RedeemInput{
+		Code:         lower(coupon.Code),
+		Reference:    reference,
+		Amount:       share,
 		CurrencyCode: "TRY",
 	})
-	require.NoError(t, err, "kupon kodu tek başına kullanımı adlandırabilmeli")
-	assert.Equal(t, kupon.ID, kullanim.PromotionID,
-		"küçük harfli kod, BÜYÜK harf saklanan satırın promosyonuna çözülmeli")
-	assert.Equal(t, pay, kullanim.Amount, "deftere kuponun kendi payı yazılmalı")
+	require.NoError(t, err, "the coupon code alone must be able to name the redemption")
+	assert.Equal(t, coupon.ID, redemption.PromotionID,
+		"the lower-case code must resolve to the promotion of the row stored in UPPER case")
+	assert.Equal(t, share, redemption.Amount, "the coupon's own share must be written to the ledger")
 
-	// Kullanım defterde GERÇEKTEN vardır: satır sayılır, servis cevabı
-	// tekrarlanmaz. Servisin döndürdüğü kayıt yazılmamış olsaydı da aynı
-	// görünürdü.
-	assert.EqualValues(t, 1, sayim(ctx, t,
+	// The redemption REALLY is in the ledger: the row is counted, the service's
+	// answer is not repeated back. Had the record the service returned not been
+	// written, it would have looked the same.
+	assert.EqualValues(t, 1, countOf(ctx, t,
 		`SELECT count(*) FROM promotion_redemption
          WHERE promotion_id = $1 AND reference = $2 AND released_at IS NULL`,
-		kupon.ID, referans), "kod yoluyla yapılan kullanım defterde tek satır olmalı")
+		coupon.ID, reference), "the redemption made by code must be a single row in the ledger")
 
-	okunan, err := svc.GetRedemption(ctx, kupon.ID, referans)
+	fetched, err := svc.GetRedemption(ctx, coupon.ID, reference)
 	require.NoError(t, err)
-	assert.Equal(t, kullanim.ID, okunan.ID)
+	assert.Equal(t, redemption.ID, fetched.ID)
 
-	guncel, err := svc.GetPromotion(ctx, kupon.ID)
+	current, err := svc.GetPromotion(ctx, coupon.ID)
 	require.NoError(t, err)
-	assert.EqualValues(t, 1, guncel.UsageCount, "kod yoluyla kullanım sayacı artırmalı")
+	assert.EqualValues(t, 1, current.UsageCount, "a redemption by code must increment the counter")
 
-	// Telafi de kodla adlandırılabilmelidir: sipariş iptal eden akış elinde
-	// yalnızca müşterinin yazdığı kodu tutuyor olabilir.
+	// The compensation must be nameable by code too: the flow that cancels an
+	// order may be holding only the code the customer typed.
 	released, err := svc.ReleasePromotion(ctx, service.ReleaseInput{
-		Code: kupon.Code, Reference: referans,
+		Code: coupon.Code, Reference: reference,
 	})
 	require.NoError(t, err)
-	assert.True(t, released, "kodla adlandırılan telafi gerçekten iş yapmalı")
+	assert.True(t, released, "a compensation named by code must really do the work")
 
-	guncel, err = svc.GetPromotion(ctx, kupon.ID)
+	current, err = svc.GetPromotion(ctx, coupon.ID)
 	require.NoError(t, err)
-	assert.Zero(t, guncel.UsageCount, "telafi sayacı geri almalı")
+	assert.Zero(t, current.UsageCount, "the compensation must roll the counter back")
 }
 
-// uygulananPay bir hesap sonucunda VERİLEN kupon koduna düşen indirimi döner.
+// appliedShare returns the discount that falls to the GIVEN coupon code in a
+// computation result.
 //
-// Toplam yerine payın okunması zorunludur: testler tek bir Postgres
-// konteynerini paylaşır ve daha önce koşan bir test tabloda OTOMATİK bir
-// promosyon bırakmış olabilir. Otomatik promosyon her hesaba kodsuz girer,
-// dolayısıyla sepet toplamı bu testin kurduğu duruma değil, suite'in o ana
-// kadarki geçmişine bağlıdır. Ölçüldü (2026-09-07): sepet toplamına bakan ilk
-// hâli tek başına yeşil, suite içinde kırmızıydı.
-func uygulananPay(t *testing.T, res service.ComputeResult, kod string) int64 {
+// Reading the share instead of the total is mandatory: the tests share a
+// single Postgres container, and a test that ran earlier may have left an
+// AUTOMATIC promotion in the table. An automatic promotion enters every
+// computation without a code, so the cart total depends not on the state this
+// test set up but on the suite's history up to that moment. Measured
+// (2026-09-07): the first version, which looked at the cart total, was green
+// on its own and red inside the suite.
+func appliedShare(t *testing.T, res service.ComputeResult, code string) int64 {
 	t.Helper()
 
 	for i := range res.Applied {
-		if res.Applied[i].Code == kod {
+		if res.Applied[i].Code == code {
 			return res.Applied[i].Amount
 		}
 	}
-	t.Fatalf("%s kuponu uygulananlar arasında yok: %+v", kod, res.Applied)
+	t.Fatalf("the coupon %s is not among the applied ones: %+v", code, res.Applied)
 	return 0
 }
 
-// TestSilinmisPromosyonunKuponKoduHicbirYuzeydeCozulmez yumuşak silinen bir
-// promosyonun kodunun okuma yüzeylerinde artık bulunamadığını doğrular.
+// TestADeletedPromotionsCouponCodeResolvesOnNoSurface verifies that the code of
+// a soft-deleted promotion can no longer be found on the read surfaces.
 //
-// İddia YALNIZCA veritabanının tanıklık edebileceği türdendir: yumuşak silme
-// satırı yerinde bırakır, bu yüzden "kayıt yok" kararını veren şey haritadan
-// silinmiş bir anahtar değil, sorgunun `deleted_at IS NULL` koşuludur. Bellek
-// içi taklit promosyonu haritadan ÇIKARARAK siler ve bu koşulun kaldırıldığını
-// göremez; testin ilk iddiası (satır hâlâ tabloda) tam olarak bu ayrımı
-// kurar.
+// The claim is ONLY of the kind the database can witness: a soft delete leaves
+// the row in place, so what decides "no record" is not a key removed from a
+// map but the query's `deleted_at IS NULL` condition. The in-memory fake
+// deletes the promotion by REMOVING it from the map and cannot see that
+// condition being removed; the test's first assertion (the row is still in the
+// table) sets up exactly that distinction.
 //
-// Sonucu ağırdır: koşul düşerse süresi dolmuş bir kampanyanın kuponu mağaza
-// yüzeyinde yeniden geçerli görünür ve operatörün "sildim" dediği kod
-// müşteriye kullanılabilir olarak döner.
+// The consequence is heavy: if the condition goes, the coupon of an expired
+// campaign looks valid again on the store surface, and the code the operator
+// "deleted" comes back to the customer as usable.
 //
-// Kullanım yolu burada SINANMAZ ve bu bilinçlidir: kullanım promosyonu
-// LockPromotion ile okur ve o sorgunun KENDİ `deleted_at IS NULL` koşulu
-// vardır, yani kod sorgusundaki koşul kaldırılsa bile kullanım yine
-// reddedilirdi. Buraya konsaydı ısırmayan bir iddia olurdu.
-func TestSilinmisPromosyonunKuponKoduHicbirYuzeydeCozulmez(t *testing.T) {
+// The redemption path is NOT TESTED here, and that is deliberate: the
+// redemption reads the promotion with LockPromotion, and that query has its
+// OWN `deleted_at IS NULL` condition, so even if the condition in the code
+// query were removed the redemption would still be refused. Put here, it would
+// have been an assertion that does not bite.
+func TestADeletedPromotionsCouponCodeResolvesOnNoSurface(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	kupon := activePromotion(ctx, t, svc, service.PromotionInput{})
-	require.NoError(t, svc.DeletePromotion(ctx, kupon.ID))
+	coupon := activePromotion(ctx, t, svc, service.PromotionInput{})
+	require.NoError(t, svc.DeletePromotion(ctx, coupon.ID))
 
-	require.EqualValues(t, 1, sayim(ctx, t,
-		`SELECT count(*) FROM promotion WHERE id = $1 AND deleted_at IS NOT NULL`, kupon.ID),
-		"yumuşak silme satırı YERİNDE bırakır; testin anlamı buna dayanır")
+	require.EqualValues(t, 1, countOf(ctx, t,
+		`SELECT count(*) FROM promotion WHERE id = $1 AND deleted_at IS NOT NULL`, coupon.ID),
+		"a soft delete leaves the row IN PLACE; the test's meaning rests on it")
 
-	_, err := svc.GetPromotionByCode(ctx, kupon.Code)
-	require.Error(t, err, "silinen kuponun kodu yönetim yüzeyinde de çözülmemeli")
+	_, err := svc.GetPromotionByCode(ctx, coupon.Code)
+	require.Error(t, err, "the code of a deleted coupon must not resolve on the admin surface either")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	_, err = svc.LookupStoreCoupon(ctx, kupon.Code)
-	require.Error(t, err, "silinen kupon müşteriye kullanılabilir görünmemeli")
+	_, err = svc.LookupStoreCoupon(ctx, coupon.Code)
+	require.Error(t, err, "a deleted coupon must not look usable to the customer")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 	assert.Equal(t, service.CodePromotionNotUsable, errors.CodeOf(err))
 
-	// Kod yeniden kullanılabildiği için aynı kodda YENİ bir promosyon
-	// açılabilir; silinen satırın kodu artık ONUN değildir.
-	yeni, err := svc.CreatePromotion(ctx, service.PromotionInput{
-		Code: kupon.Code, Status: models.PromotionActive,
+	// Because the code can be used again, a NEW promotion can be opened with the
+	// same code; the deleted row's code is no longer ITS OWN.
+	replacement, err := svc.CreatePromotion(ctx, service.PromotionInput{
+		Code: coupon.Code, Status: models.PromotionActive,
 	})
 	require.NoError(t, err)
-	cozulen, err := svc.GetPromotionByCode(ctx, kupon.Code)
+	resolved, err := svc.GetPromotionByCode(ctx, coupon.Code)
 	require.NoError(t, err)
-	assert.Equal(t, yeni.ID, cozulen.ID,
-		"kod iki satıra uyarken canlı olan seçilmeli, silinmiş olan değil")
+	assert.Equal(t, replacement.ID, resolved.ID,
+		"while the code matches two rows the live one must be picked, not the deleted one")
 }
 
-// TestPromosyonGuncellemeTanimiDegistirirKullanimSayacinaDokunmaz promosyonun
-// düzenleme yolunun GERÇEK Postgres üzerinde ne yapıp ne yapmadığını
-// doğrular.
+// TestUpdatingAPromotionChangesTheDefinitionAndLeavesTheUsageCounter verifies
+// on REAL Postgres what the promotion's edit path does and does not do.
 //
-// Ölçüldüğünde (2026-09-07) hem HTTP işleyicisi hem altındaki UPDATE %0'daydı:
-// oluşturma ve silme kapsanmışken düzenleme hiç veritabanına gönderilmemişti.
-// Bir promosyonun tanımını değiştirmek operatörün en sık yaptığı iştir ve
-// "gönderilmemiş SQL" sınıfının tam örneğidir.
+// When it was measured (2026-09-07), both the HTTP handler and the UPDATE
+// beneath it were at 0%: while creating and deleting were covered, an edit had
+// never been sent to the database. Changing a promotion's definition is what
+// an operator does most often, and it is a perfect example of the "SQL never
+// sent" class.
 //
-// Asıl iddia sayaçtadır: UPDATE'in SET listesinde usage_count BİLEREK yoktur
-// (bkz. queries/promotion.sql'deki gerekçe). O sütun listeye girseydi, kuponu
-// düzenleyen bir operatör kullanım geçmişini sıfırlar ve sınırı dolmuş bir
-// kupon yeniden dağıtılabilir hâle gelirdi — üstelik kullanım defteri
-// satırları yerinde kalacağı için defterle sayaç birbirini tutmazdı. Bu ancak
-// gerçek bir UPDATE çalıştırılarak görülebilir; taklit sayacı Go tarafında
-// elle korur ve SET listesi hakkında hiçbir şey söylemez.
-func TestPromosyonGuncellemeTanimiDegistirirKullanimSayacinaDokunmaz(t *testing.T) {
+// The real claim is about the counter: usage_count is ON PURPOSE absent from
+// the UPDATE's SET list (see the reasoning in queries/promotion.sql). Had that
+// column entered the list, an operator editing the coupon would reset its
+// usage history and a coupon whose limit was used up would become
+// distributable again — on top of which, because the redemption ledger rows
+// would stay in place, the ledger and the counter would no longer agree. This
+// can be seen only by running a real UPDATE; the fake protects the counter by
+// hand on the Go side and says nothing about the SET list.
+func TestUpdatingAPromotionChangesTheDefinitionAndLeavesTheUsageCounter(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	kampanya, err := svc.CreateCampaign(ctx, service.CampaignInput{
+	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Yaz",
 		CampaignIdentifier: "GUNCELLEME-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
@@ -1430,121 +1448,123 @@ func TestPromosyonGuncellemeTanimiDegistirirKullanimSayacinaDokunmaz(t *testing.
 	})
 	require.NoError(t, err)
 
-	kupon := activePromotion(ctx, t, svc, service.PromotionInput{
-		CampaignID: &kampanya.ID,
+	coupon := activePromotion(ctx, t, svc, service.PromotionInput{
+		CampaignID: &campaign.ID,
 		UsageLimit: ptr(int64(5)),
 	})
 	for i := range 2 {
 		_, redeemErr := svc.RedeemPromotion(ctx, service.RedeemInput{
-			PromotionID: kupon.ID, Reference: fmt.Sprintf("order_%d_%s", i, uniqueCode()),
+			PromotionID: coupon.ID, Reference: fmt.Sprintf("order_%d_%s", i, uniqueCode()),
 			Amount: 2500, CurrencyCode: "TRY",
 		})
 		require.NoError(t, redeemErr)
 	}
 
-	yeniKod := uniqueCode()
-	guncellenen, err := svc.UpdatePromotion(ctx, kupon.ID, service.PromotionInput{
-		Code:       lower(yeniKod),
-		CampaignID: &kampanya.ID,
+	newCode := uniqueCode()
+	updated, err := svc.UpdatePromotion(ctx, coupon.ID, service.PromotionInput{
+		Code:       lower(newCode),
+		CampaignID: &campaign.ID,
 		Status:     models.PromotionInactive,
 		UsageLimit: ptr(int64(9)),
 		Metadata:   map[string]string{"kanal": "eposta"},
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, yeniKod, guncellenen.Code, "kod BÜYÜK harfe çevrilerek yazılmalı")
-	assert.Equal(t, models.PromotionInactive, guncellenen.Status)
-	require.NotNil(t, guncellenen.UsageLimit)
-	assert.EqualValues(t, 9, *guncellenen.UsageLimit)
-	assert.Equal(t, map[string]string{"kanal": "eposta"}, guncellenen.Metadata)
+	assert.Equal(t, newCode, updated.Code, "the code must be written converted to UPPER case")
+	assert.Equal(t, models.PromotionInactive, updated.Status)
+	require.NotNil(t, updated.UsageLimit)
+	assert.EqualValues(t, 9, *updated.UsageLimit)
+	assert.Equal(t, map[string]string{"kanal": "eposta"}, updated.Metadata)
 
-	assert.EqualValues(t, 2, guncellenen.UsageCount,
-		"düzenleme kullanım geçmişini SİLEMEZ; sıfırlansaydı dolmuş bir kupon yeniden dağıtılabilirdi")
-	assert.Equal(t, kupon.CreatedAt, guncellenen.CreatedAt, "oluşturma anı düzenlemeyle değişmez")
-	assert.False(t, guncellenen.UpdatedAt.Before(kupon.UpdatedAt),
-		"düzenleme anı geriye gitmemeli")
+	assert.EqualValues(t, 2, updated.UsageCount,
+		"an edit CANNOT ERASE the usage history; had it been reset, a used-up coupon could be distributed again")
+	assert.Equal(t, coupon.CreatedAt, updated.CreatedAt, "the moment of creation does not change with an edit")
+	assert.False(t, updated.UpdatedAt.Before(coupon.UpdatedAt),
+		"the moment of the edit must not go backwards")
 
-	// Cevap değil, SATIR sınanır: dönen kayıt doğru olup yazma inmemiş olabilir.
-	okunan, err := svc.GetPromotion(ctx, kupon.ID)
+	// The ROW is tested, not the answer: the returned record may be right while
+	// the write did not land.
+	fetched, err := svc.GetPromotion(ctx, coupon.ID)
 	require.NoError(t, err)
-	assert.Equal(t, yeniKod, okunan.Code)
-	assert.Equal(t, models.PromotionInactive, okunan.Status)
-	assert.EqualValues(t, 2, okunan.UsageCount)
+	assert.Equal(t, newCode, fetched.Code)
+	assert.Equal(t, models.PromotionInactive, fetched.Status)
+	assert.EqualValues(t, 2, fetched.UsageCount)
 
-	// Defter ile sayaç birbirini tutmalıdır; sayaç sıfırlansaydı bu iki sayı
-	// ayrışırdı.
-	assert.EqualValues(t, 2, sayim(ctx, t,
+	// The ledger and the counter must agree; had the counter been reset these
+	// two numbers would diverge.
+	assert.EqualValues(t, 2, countOf(ctx, t,
 		`SELECT count(*) FROM promotion_redemption
-         WHERE promotion_id = $1 AND released_at IS NULL`, kupon.ID),
-		"kullanım defteri düzenlemeden etkilenmemeli")
+         WHERE promotion_id = $1 AND released_at IS NULL`, coupon.ID),
+		"the redemption ledger must not be affected by the edit")
 
-	guncelKampanya, err := svc.GetCampaign(ctx, kampanya.ID)
+	currentCampaign, err := svc.GetCampaign(ctx, campaign.ID)
 	require.NoError(t, err)
-	assert.EqualValues(t, 5000, guncelKampanya.BudgetUsed,
-		"promosyon düzenlemek kampanya bütçesini geri vermez")
+	assert.EqualValues(t, 5000, currentCampaign.BudgetUsed,
+		"editing a promotion does not give the campaign budget back")
 }
 
-// TestPromosyonGuncellemeSilinmisSatiraInmez yumuşak silinmiş bir promosyonun
-// düzenlenemediğini doğrular.
+// TestUpdatingAPromotionDoesNotLandOnADeletedRow verifies that a soft-deleted
+// promotion cannot be edited.
 //
-// Koşul UPDATE'in WHERE'indedir ve yalnızca veritabanı tanıklık edebilir:
-// satır yerinde durduğu için "id = $1" tek başına onu bulur. Koşul düşerse
-// silinmiş bir promosyon sessizce yeniden yayına alınabilir — durumu `active`
-// yapan bir düzenleme, silinmiş satırı diriltmeden indirim üreten bir kayda
-// çevirirdi (aday sorgusu `deleted_at`e baktığı için hesaba girmezdi, ama
-// kupon defteri ve yönetim listesi ayrışırdı).
-func TestPromosyonGuncellemeSilinmisSatiraInmez(t *testing.T) {
+// The condition is in the UPDATE's WHERE and only the database can witness it:
+// because the row stays in place, "id = $1" alone finds it. If the condition
+// goes, a deleted promotion can be silently published again — an edit that
+// sets the status to `active` would turn the deleted row, without reviving it,
+// into a record that produces discounts (it would not enter the computation
+// because the candidate query looks at `deleted_at`, but the coupon ledger and
+// the admin listing would diverge).
+func TestUpdatingAPromotionDoesNotLandOnADeletedRow(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	kupon := activePromotion(ctx, t, svc, service.PromotionInput{})
-	eskiKod := kupon.Code
-	require.NoError(t, svc.DeletePromotion(ctx, kupon.ID))
+	coupon := activePromotion(ctx, t, svc, service.PromotionInput{})
+	oldCode := coupon.Code
+	require.NoError(t, svc.DeletePromotion(ctx, coupon.ID))
 
-	_, err := svc.UpdatePromotion(ctx, kupon.ID, service.PromotionInput{
+	_, err := svc.UpdatePromotion(ctx, coupon.ID, service.PromotionInput{
 		Code: uniqueCode(), Status: models.PromotionActive,
 	})
 
-	require.Error(t, err, "silinmiş promosyon düzenlenememeli")
+	require.Error(t, err, "a deleted promotion must not be editable")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	assert.EqualValues(t, 1, sayim(ctx, t,
+	assert.EqualValues(t, 1, countOf(ctx, t,
 		`SELECT count(*) FROM promotion
          WHERE id = $1 AND code = $2 AND status = 'active' AND deleted_at IS NOT NULL`,
-		kupon.ID, eskiKod),
-		"reddedilen düzenleme satıra HİÇBİR ŞEY yazmamalı")
+		coupon.ID, oldCode),
+		"a refused edit must write NOTHING AT ALL to the row")
 }
 
-// TestPromosyonGuncellemeBaskasininKuponKodunuAlamaz kupon kodu benzersizliğinin
-// DÜZENLEME yolunda da geçerli olduğunu doğrular.
+// TestUpdatingAPromotionCannotTakeAnotherOnesCouponCode verifies that coupon
+// code uniqueness holds on the EDIT path too.
 //
-// [TestKuponKoduBenzersizdir] yalnızca oluşturmayı sınar; benzersizliğin hakemi
-// kısmi bir indeks olduğu için iki yolun ayrı ayrı gösterilmesi gerekir. Servis
-// katmanında bir kod çakışması denetimi YOKTUR ve olmamalıdır — iki eşzamanlı
-// düzenleme arasında yalnızca veritabanı hakemlik edebilir. Kaçarsa sonucu
-// somuttur: aynı kod iki canlı promosyona bağlanır ve müşterinin yazdığı kodun
-// hangi indirimi vereceği belirsizleşir (kod sorgusu `:one`dır ve ikinci satırı
-// gördüğünde hata verir).
-func TestPromosyonGuncellemeBaskasininKuponKodunuAlamaz(t *testing.T) {
+// [TestCouponCodeIsUnique] tests only creation; because the referee of
+// uniqueness is a partial index, the two paths have to be shown separately.
+// There is NO code collision check in the service layer and there must not be
+// one — between two concurrent edits only the database can referee. If it
+// slips, the consequence is concrete: the same code is tied to two live
+// promotions and which discount the code a customer types will give becomes
+// undefined (the code query is `:one` and fails when it sees the second row).
+func TestUpdatingAPromotionCannotTakeAnotherOnesCouponCode(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	birinci := activePromotion(ctx, t, svc, service.PromotionInput{})
-	ikinci := activePromotion(ctx, t, svc, service.PromotionInput{})
+	first := activePromotion(ctx, t, svc, service.PromotionInput{})
+	second := activePromotion(ctx, t, svc, service.PromotionInput{})
 
-	_, err := svc.UpdatePromotion(ctx, ikinci.ID, service.PromotionInput{
-		Code: birinci.Code, Status: models.PromotionActive,
+	_, err := svc.UpdatePromotion(ctx, second.ID, service.PromotionInput{
+		Code: first.Code, Status: models.PromotionActive,
 	})
 
-	require.Error(t, err, "canlı bir kuponun kodu düzenlemeyle devralınamaz")
+	require.Error(t, err, "a live coupon's code cannot be taken over by an edit")
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
-		"benzersizlik ihlali istemci çakışması olarak sınıflandırılmalı")
+		"a uniqueness violation must be classified as a client conflict")
 
-	assert.EqualValues(t, 1, sayim(ctx, t,
-		`SELECT count(*) FROM promotion WHERE code = $1 AND deleted_at IS NULL`, birinci.Code),
-		"kod hâlâ TEK bir canlı promosyona ait olmalı")
+	assert.EqualValues(t, 1, countOf(ctx, t,
+		`SELECT count(*) FROM promotion WHERE code = $1 AND deleted_at IS NULL`, first.Code),
+		"the code must still belong to ONE live promotion")
 
-	okunan, err := svc.GetPromotion(ctx, ikinci.ID)
+	fetched, err := svc.GetPromotion(ctx, second.ID)
 	require.NoError(t, err)
-	assert.Equal(t, ikinci.Code, okunan.Code, "reddedilen düzenleme kodu değiştirmemeli")
+	assert.Equal(t, second.Code, fetched.Code, "a refused edit must not change the code")
 }

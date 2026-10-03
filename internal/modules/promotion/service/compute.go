@@ -12,255 +12,282 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
-// MaxComputeLines tek bir hesapta taşınabilecek azami satır sayısıdır.
+// MaxComputeLines is the maximum number of lines a single computation can
+// carry.
 //
-// Sınırın var olması şarttır: her satır her promosyon için ayrı ayrı
-// değerlendirilir ve sınırsız bir liste, tek istekle hesabı meşgul ederdi.
-// Değer cömerttir — gerçek bir sepetin satır sayısı bunun çok altındadır ve
-// sınır ancak bozuk bir istemciyi durdurmak için vardır.
+// The bound has to exist: every line is evaluated separately for every
+// promotion, and an unbounded list would keep the computation busy with a
+// single request. The value is generous — a real cart's line count is far
+// below it, and the bound exists only to stop a broken client.
 const MaxComputeLines = 1000
 
-// ComputeItem hesaba giren tek bir sepet kalemidir.
+// ComputeItem is a single cart item taking part in a computation.
 type ComputeItem struct {
-	// ID kalemin kimliğidir; sonuçta indirim bu kimlikle geri döner ve aynı
-	// listede TEKRAR EDEMEZ.
+	// ID is the item's identity; the discount comes back in the result under
+	// this identity, and it CANNOT REPEAT within the same list.
 	ID string
-	// Amount kalemin ara toplamıdır (birim × adet), minor unit.
+	// Amount is the item's subtotal (unit × quantity), minor unit.
 	//
-	// İndirim satıra uygulanır ve tabanı budur: birim fiyattan yeniden
-	// hesaplansaydı, bölünmeyen adetlerde çağıranınkinden farklı bir taban
-	// üretirdi.
+	// The discount is applied to the line and this is its base: recomputed from
+	// the unit price, it would produce a base different from the caller's for
+	// quantities that do not divide.
 	Amount int64
-	// UnitAmount kalemin BİRİM fiyatıdır (minor unit) ve ZORUNLUDUR:
-	// UnitAmount × Quantity = Amount olmak zorundadır.
+	// UnitAmount is the item's UNIT price (minor unit) and is MANDATORY:
+	// UnitAmount × Quantity has to equal Amount.
 	//
-	// Birim fiyatı çağıran GÖNDERİR, bu paket TÜRETMEZ. Türetme tek bir
-	// bölmedir ve tam da orada sessizdir: 100 kuruşluk üç birim 33 kuruşa
-	// yuvarlanır ve "al 2, birini bedava" promosyonu müşteriye vaat edilenden
-	// bir kuruş az verirdi. Gönderen tarafta sayı zaten vardır — sepet birim
-	// fiyatı seçen taraftır — ve göndermemek, bilinen bir sayıyı alıcıya tahmin
-	// ettirmek olurdu.
+	// The caller SENDS the unit price; this package does NOT DERIVE it.
+	// Deriving it is a single division, and it is silent exactly there: three
+	// units worth 100 cents round to 33 cents each, and a "buy 2, get one free"
+	// promotion would give the customer one cent less than was promised. The
+	// sending side already has the number — the cart is the side that chooses
+	// the unit price — and not sending it would make the receiver guess a known
+	// number.
 	//
-	// Kimlik ZORUNLU tutulur, isteğe bağlı bir alan olarak bırakılmaz: yalnızca
-	// "buyget" mekaniğinin okuduğu bir alanı boş geçilebilir yapmak, o
-	// promosyonun bazı çağıranlarda sessizce çalışmaması demekti.
+	// The identity is kept MANDATORY rather than left as an optional field:
+	// making a field that only the "buyget" mechanic reads skippable would have
+	// meant that promotion silently not working for some callers.
 	UnitAmount int64
-	// Quantity kalemin adedidir; "fixed" + "each" indiriminde kaç birime
-	// uygulanacağını belirler.
+	// Quantity is the item's quantity; for a "fixed" + "each" discount it
+	// decides how many units the discount applies to.
 	Quantity int64
-	// Attributes hedef kurallarının bakacağı kalem öznitelikleridir
-	// (örn. {"product_category_id": "cat_1"}). nil olabilir; o durumda hedef
-	// kuralı olan bir promosyon bu kalemi seçemez.
+	// Attributes are the item attributes the target rules look at
+	// (e.g. {"product_category_id": "cat_1"}). It may be nil; in that case a
+	// promotion with a target rule cannot select this item.
 	Attributes map[string]string
-	// Lists hedef kuralının KÜME olarak okuduğu kalem öznitelikleridir
-	// (örn. {"category_ids": ["cat_1", "cat_2"]}), ADR 0148.
+	// Lists are the item attributes the target rule reads as a SET
+	// (e.g. {"category_ids": ["cat_1", "cat_2"]}), ADR 0148.
 	//
-	// Attributes'ın kardeşi, yerine geçeni DEĞİL: yalnızca `any_in` işleci buraya
-	// bakar ve tek değere bakan işleçler buraya HİÇ bakmaz. Gönderilmiş bir `eq`
-	// kuralının cevabı, listenin gelmeye başlamasıyla değişemez.
+	// It is Attributes' sibling, NOT its replacement: only the `any_in` operator
+	// looks here, and the operators that look at a single value NEVER look here.
+	// The answer of a shipped `eq` rule cannot change because the list has
+	// started to arrive.
 	Lists map[string][]string
 }
 
-// ComputeShippingMethod hesaba giren tek bir kargo yöntemidir.
+// ComputeShippingMethod is a single shipping method taking part in a
+// computation.
 //
-// Adet TAŞIMAZ: bir kargo yönteminin adedi yoktur ve "fixed" + "each"
-// indiriminde bir birim sayılır.
+// It does NOT CARRY a quantity: a shipping method has no quantity and counts
+// as one unit in a "fixed" + "each" discount.
 type ComputeShippingMethod struct {
-	// ID kargo yönteminin kimliğidir; aynı listede TEKRAR EDEMEZ.
+	// ID is the shipping method's identity; it CANNOT REPEAT within the same
+	// list.
 	ID string
-	// Amount kargo tutarıdır (minor unit).
+	// Amount is the shipping amount (minor unit).
 	Amount int64
-	// Attributes hedef kurallarının bakacağı özniteliklerdir; nil olabilir.
+	// Attributes are the attributes the target rules look at; it may be nil.
 	Attributes map[string]string
 }
 
-// ComputeInput bir indirim hesabının bağlamıdır.
+// ComputeInput is the context of a discount computation.
 type ComputeInput struct {
-	// CurrencyCode sepetin para birimidir (ISO 4217); ZORUNLUDUR.
+	// CurrencyCode is the cart's currency (ISO 4217); it is MANDATORY.
 	//
-	// Sabit tutarlı indirimler yalnızca KENDİ para biriminde uygulanır; farklı
-	// para birimindeki bir promosyon elenir. Kur çevirisi promotion'ın işi
-	// değildir ve sessiz bir çeviri, 100 USD'lik bir indirimi 100 TRY olarak
-	// uygulardı.
+	// Fixed-amount discounts are applied only in their OWN currency; a
+	// promotion in a different currency is eliminated. Currency conversion is
+	// not promotion's job, and a silent conversion would apply a 100 USD
+	// discount as 100 TRY.
 	CurrencyCode string
-	// Context bağlam kurallarının bakacağı alanlardır (örn.
-	// {"region_id": "reg_1", "customer_group_id": "vip"}). nil olabilir; o
-	// durumda bağlam kuralı olan her promosyon elenir.
+	// Context holds the fields the context rules look at (e.g.
+	// {"region_id": "reg_1", "customer_group_id": "vip"}). It may be nil; in
+	// that case every promotion with a context rule is eliminated.
 	Context map[string]string
-	// ContextLists, bağlam kuralının LİSTE tarafından okuyacağı alanlardır (örn.
-	// {"customer_group_id": ["retail", "vip"]}).
+	// ContextLists holds the fields the context rule reads on the LIST side
+	// (e.g. {"customer_group_id": ["retail", "vip"]}).
 	//
-	// [Context]'in YANINDA duran ek bir alan, onun yerine geçen bir tip değişikliği
-	// DEĞİL: çağıranın gönderdiği gövde `DisallowUnknownFields` ile okunuyor, yani
-	// bir yeniden adlandırma ya da tip değişimi her çağıranı kırardı — ve gönderilmiş
-	// bir `in` kuralının cevabı aynı kalmalı.
+	// It is an additional field standing BESIDE [Context], NOT a type change
+	// that replaces it: the body the caller sends is read with
+	// `DisallowUnknownFields`, so a rename or a type change would break every
+	// caller — and the answer of a shipped `in` rule has to stay the same.
 	//
-	// Yalnızca [models.RuleOperator.ReadsAList] doğru olan işleç buraya bakar. nil
-	// olabilir; o durumda o işleçli her kural eşleşmez, ki bu doğru cevap: liste
-	// gönderilmediyse müşterinin hangi gruplarda olduğu BİLİNMİYOR.
+	// Only an operator for which [models.RuleOperator.ReadsAList] is true looks
+	// here. It may be nil; in that case every rule with such an operator does
+	// not match, which is the right answer: if the list was not sent, which
+	// groups the customer is in is NOT KNOWN.
 	ContextLists map[string][]string
-	// Items sepet kalemleridir.
+	// Items are the cart items.
 	Items []ComputeItem
-	// ShippingMethods sepetin kargo yöntemleridir.
+	// ShippingMethods are the cart's shipping methods.
 	ShippingMethods []ComputeShippingMethod
-	// Codes uygulanacak kupon kodlarıdır; sıraları SONUCU ETKİLEMEZ
-	// (bkz. [Service.ComputeDiscounts], "Sıra").
+	// Codes are the coupon codes to apply; their order DOES NOT AFFECT THE
+	// RESULT (see [Service.ComputeDiscounts], "Order").
 	Codes []string
-	// At hesabın yapıldığı andır; sıfırsa "şimdi" kullanılır. Kampanyaların
-	// tarih penceresi bu ana göre değerlendirilir.
+	// At is the moment the computation is made for; if zero, "now" is used.
+	// The campaigns' date windows are evaluated against this moment.
 	At time.Time
 }
 
-// LineDiscount tek bir satıra düşen indirimdir.
+// LineDiscount is the discount that falls to a single line.
 type LineDiscount struct {
-	// ID satırın kimliğidir.
+	// ID is the line's identity.
 	ID string
-	// Amount satıra düşen TOPLAM indirimdir (minor unit); satırın tutarını
-	// ASLA aşmaz.
+	// Amount is the TOTAL discount that falls to the line (minor unit); it
+	// NEVER exceeds the line's amount.
 	Amount int64
 }
 
-// AppliedPromotion hesapta fiilen indirim üreten bir promosyondur.
+// AppliedPromotion is a promotion that actually produced a discount in the
+// computation.
 type AppliedPromotion struct {
-	// PromotionID promosyonun kimliğidir.
+	// PromotionID is the promotion's identity.
 	PromotionID string
-	// Code promosyonun kupon kodudur.
+	// Code is the promotion's coupon code.
 	Code string
-	// IsAutomatic promosyonun kodsuz uygulanıp uygulanmadığını bildirir.
+	// IsAutomatic reports whether the promotion was applied without a code.
 	IsAutomatic bool
-	// Amount promosyonun FİİLEN uyguladığı toplam indirimdir; satır
-	// sınırlarına takılan kısım BURAYA GİRMEZ.
+	// Amount is the total discount the promotion ACTUALLY applied; the part
+	// caught on the line bounds DOES NOT GO IN HERE.
 	Amount int64
 }
 
-// ComputeResult bir indirim hesabının sonucudur.
+// ComputeResult is the result of a discount computation.
 //
-// Kimlik her zaman sağlanır:
+// The identity always holds:
 //
 //	DiscountTotal = ItemsDiscountTotal + ShippingDiscountTotal
 //	              = Σ Items[i].Amount + Σ ShippingMethods[i].Amount
 //	              = Σ Applied[i].Amount
 type ComputeResult struct {
-	// CurrencyCode hesabın para birimidir (BÜYÜK harf).
+	// CurrencyCode is the computation's currency (UPPER case).
 	CurrencyCode string
-	// Items kalem başına indirimlerdir; girdideki HER kalem için bir kayıt
-	// içerir (indirimi sıfır olanlar dâhil) ve girdiyle AYNI sıradadır.
+	// Items are the per-item discounts; it holds one record for EVERY item in
+	// the input (including those whose discount is zero) and is in the SAME
+	// order as the input.
 	Items []LineDiscount
-	// ShippingMethods kargo yöntemi başına indirimlerdir; aynı kural geçerlidir.
+	// ShippingMethods are the per-shipping-method discounts; the same rule
+	// applies.
 	ShippingMethods []LineDiscount
-	// ItemsDiscountTotal kalemlere düşen toplam indirimdir.
+	// ItemsDiscountTotal is the total discount that falls to the items.
 	ItemsDiscountTotal int64
-	// ShippingDiscountTotal kargo yöntemlerine düşen toplam indirimdir.
+	// ShippingDiscountTotal is the total discount that falls to the shipping
+	// methods.
 	ShippingDiscountTotal int64
-	// DiscountTotal toplam indirimdir.
+	// DiscountTotal is the total discount.
 	DiscountTotal int64
-	// Applied fiilen indirim üreten promosyonlardır, UYGULAMA SIRASINDA.
+	// Applied are the promotions that actually produced a discount, IN
+	// APPLICATION ORDER.
 	Applied []AppliedPromotion
-	// Skipped hesaba KATILMAYAN adaylardır ve her biri bir sebep taşır.
+	// Skipped are the candidates that were NOT TAKEN INTO the computation, and
+	// each carries a reason.
 	//
-	// Nüfus, sorgunun döndürdüğü adaylardır: her otomatik promosyon ve gönderilen
-	// kodların promosyonları. Kodu yazılmamış, otomatik de olmayan bir promosyon
-	// veritabanı okumasına hiç girmez — yani bu liste "değerlendirildi ve
-	// reddedildi", "dükkândaki her promosyon" değil.
+	// The population is the candidates the query returned: every automatic
+	// promotion and the promotions of the codes sent. A promotion whose code
+	// was not entered and that is not automatic either never enters the
+	// database read — so this list is "evaluated and rejected", not "every
+	// promotion in the shop".
 	//
-	// YALNIZCA yönetim ucunda yayımlanır; gerekçe [SkipReason] godoc'undadır.
+	// It is published ONLY on the admin endpoint; the reasoning is in the
+	// [SkipReason] godoc.
 	Skipped []SkippedPromotion
-	// UnmatchedCodes uygulanabilir bir promosyona bağlanamayan kupon kodlarıdır.
+	// UnmatchedCodes are the coupon codes that could not be tied to an
+	// applicable promotion.
 	//
-	// Kod yanlış olabilir, promosyon taslak/pasif olabilir, kampanyası bitmiş
-	// ya da bütçesi tükenmiş olabilir; AYRIM YAPILMAZ. Sebep sızıntıdır:
-	// "bu kod var ama kampanyası henüz başlamadı" cevabı, yayınlanmamış bir
-	// kampanyanın varlığını ele verirdi.
+	// The code may be wrong, the promotion may be draft/inactive, its campaign
+	// may have ended or its budget may be exhausted; NO DISTINCTION IS MADE.
+	// The reason is leakage: the answer "this code exists but its campaign has
+	// not started yet" would give away the existence of an unpublished
+	// campaign.
 	UnmatchedCodes []string
 }
 
-// ComputeDiscounts verilen sepet bağlamı için indirimleri hesaplar.
+// ComputeDiscounts computes the discounts for the given cart context.
 //
-// BU MODÜLÜN KALBİDİR ve HİÇBİR ŞEY YAZMAZ: kupon sayacı ve kampanya bütçesi
-// yalnızca [Service.RedeemPromotion] ile değişir. Ayrım zorunludur — sepet
-// toplamı her değişiklikte yeniden hesaplanır ve her hesabın bir kuponu
-// tüketmesi, sepete bakmakla kuponu harcamayı aynı şey yapardı.
+// IT IS THE HEART OF THIS MODULE and IT WRITES NOTHING: the coupon counter and
+// the campaign budget change only through [Service.RedeemPromotion]. The
+// separation is mandatory — the cart total is recomputed on every change, and
+// every computation consuming a coupon would make looking at the cart and
+// spending the coupon the same thing.
 //
-// # 1. Eleme
+// # 1. Elimination
 //
-// Bir promosyon şu koşulların HEPSİNİ sağlamıyorsa hesaba hiç girmez:
+// A promotion does not enter the computation at all unless it satisfies ALL of
+// these conditions:
 //
-//   - Durumu "active"dir. Taslak ve pasif promosyonlar indirim üretmez.
-//   - Türü TANIMLIDIR ve uygulama yöntemiyle UYUŞUR: "buyget" ise yöntem alım
-//     ve ödül adetlerini taşır, "standard" ise taşımaz. Yarım kalmış bir ödül
-//     indirim üretmez ve nedenini söyler (bkz. [SkipRewardMismatch]); mekaniğin
-//     kendisi [applyBuyGet]'tedir.
-//   - Bir uygulama yöntemi vardır. Yöntemsiz promosyon indirimin NASIL
-//     uygulanacağını söylemez ve atlanır.
-//   - Kullanım sınırı DOLMAMIŞTIR.
-//   - Kampanyası varsa: kampanya SİLİNMEMİŞ, tarih penceresi anı KAPSIYOR ve
-//     bütçesi TÜKENMEMİŞ olmalıdır.
-//   - Kampanyasının bütçesi PARA ölçülüyse bütçenin para birimi sepetinkiyle
-//     AYNIDIR. Aksi hâlde indirim sepette görünür ama [Service.RedeemPromotion]
-//     onu reddederdi (bkz. [campaignBudgetCurrencyMatches]).
-//   - Sabit tutarlı indirimse para birimi sepetinkiyle AYNIDIR.
-//   - TÜM bağlam kuralları sepet bağlamıyla eşleşir.
+//   - Its status is "active". Draft and inactive promotions produce no
+//     discount.
+//   - Its type is DEFINED and AGREES with the application method: if it is
+//     "buyget", the method carries the buy and reward quantities, and if it is
+//     "standard", it does not. A half-finished reward produces no discount and
+//     says why (see [SkipRewardMismatch]); the mechanic itself is in
+//     [applyBuyGet].
+//   - It has an application method. A promotion without a method does not say
+//     HOW the discount is to be applied and is skipped.
+//   - Its usage limit is NOT REACHED.
+//   - If it has a campaign: the campaign must NOT BE DELETED, its date window
+//     must COVER the moment, and its budget must NOT BE EXHAUSTED.
+//   - If its campaign's budget is measured in MONEY, the budget's currency is
+//     the SAME as the cart's. Otherwise the discount would show in the cart but
+//     [Service.RedeemPromotion] would refuse it (see
+//     [campaignBudgetCurrencyMatches]).
+//   - If it is a fixed-amount discount, its currency is the SAME as the cart's.
+//   - ALL of its context rules match the cart context.
 //
-// Kupon kodları için ek koşul: kodun sahibi promosyon yalnızca kod verildiğinde
-// hesaba girer. Otomatik promosyonlar kodsuz girer.
+// An additional condition for coupon codes: the promotion that owns the code
+// enters the computation only when the code is given. Automatic promotions
+// enter without a code.
 //
-// # 2. Sıra — ÖNCE KUPONLAR, SONRA OTOMATİKLER
+// # 2. Order — COUPONS FIRST, AUTOMATICS AFTER
 //
-// Uygulama sırası şudur ve çağıranın kod sırasından BAĞIMSIZDIR:
+// The application order is this, and it is INDEPENDENT of the caller's code
+// order:
 //
-//  1. Kupon kodlu promosyonlar, kimliğe göre artan sırada.
-//  2. Otomatik promosyonlar, kimliğe göre artan sırada.
+//  1. Coupon-code promotions, in ascending order of identity.
+//  2. Automatic promotions, in ascending order of identity.
 //
-// Kimlikler zaman sıralı olduğu için ikinci ölçüt "önce tanımlanan önce
-// uygulanır" demektir ve sonuç BELİRLENİMCİDİR.
+// Since identities are time-ordered, the second criterion means "the one
+// defined first is applied first", and the result is DETERMINISTIC.
 //
-// Kuponların önce gelmesi bir tercih değil, açıklanabilirlik kararıdır: sıra
-// yalnızca bir satırın indirimi tutarına DAYANDIĞINDA görünür hâle gelir ve o
-// anda kırpılan promosyon sonuncusudur. Müşteri, kendi yazdığı kuponun tam
-// uygulandığını görmelidir; hiç adını duymadığı bir otomatik indirimin sessizce
-// kırpılması ise sorulmayan bir sorudur.
+// Coupons coming first is not a preference but an explainability decision:
+// the order only becomes visible when a line's discount REACHES its amount, and
+// at that moment the promotion that gets clipped is the last one. The customer
+// must see the coupon they typed applied in full; an automatic discount they
+// never heard of being silently clipped is a question nobody asks.
 //
-// # 3. Yüzdeler BİRBİRİNİN ÜZERİNE BİNMEZ (bileşik değil)
+// # 3. Percentages DO NOT STACK ON TOP OF EACH OTHER (not compound)
 //
-// Her yüzde indirim, satırın ORİJİNAL tutarı üzerinden hesaplanır; önceki
-// indirimlerden ARTA KALAN tutar üzerinden değil. %10 ve %20 birlikte
-// uygulandığında toplam indirim %30'dur, %28 değil.
+// Every percentage discount is computed on the line's ORIGINAL amount, not on
+// the amount LEFT OVER from earlier discounts. When 10% and 20% are applied
+// together, the total discount is 30%, not 28%.
 //
-// Gerekçe üç katlıdır:
+// The reasoning is threefold:
 //
-//   - Açıklanabilirlik: müşteri iki indirimi toplar, çarpmaz. Bileşik hesap
-//     her zaman söz verilenden azını verir ve destek talebine dönüşür.
-//   - Sıra bağımsızlığı: bileşik hesapta sonuç uygulama sırasına bağlıdır;
-//     bileşik olmayan hesapta sıra yalnızca üst sınır bağladığında görünür.
-//   - Üst sınır zaten güvencededir (aşağıya bakınız), yani bileşik hesabın
-//     koruduğu tek şeyi (indirimin tutarı aşmaması) başka bir kural sağlar.
+//   - Explainability: the customer adds two discounts, they do not multiply
+//     them. A compound computation always gives less than was promised and
+//     turns into a support ticket.
+//   - Order independence: in a compound computation the result depends on the
+//     application order; in a non-compound one the order only shows when the
+//     upper bound binds.
+//   - The upper bound is already guaranteed (see below), so the one thing a
+//     compound computation protects (the discount not exceeding the amount) is
+//     provided by another rule.
 //
-// # 4. Üst sınırlar
+// # 4. Upper bounds
 //
-// İki değişmez her koşulda korunur:
+// Two invariants hold under every condition:
 //
-//   - Bir satırın TOPLAM indirimi, satırın tutarını AŞAMAZ. Aşan kısım düşer
-//     ve promosyonun [AppliedPromotion.Amount] değerine GİRMEZ.
-//   - Toplam indirim ara toplamı aşamaz; bu, satır sınırının doğal sonucudur
-//     (Σ satır indirimi ≤ Σ satır tutarı).
+//   - A line's TOTAL discount CANNOT EXCEED the line's amount. The excess
+//     drops and DOES NOT GO INTO the promotion's [AppliedPromotion.Amount].
+//   - The total discount cannot exceed the subtotal; this is the natural
+//     consequence of the line bound (Σ line discount ≤ Σ line amount).
 //
-// Sınırın kırpılan kısmı BAŞKA bir satıra taşınmaz: taşımak, o satıra
-// promosyonun vaat ettiğinden fazlasını vermek olurdu.
+// The clipped part of the bound is NOT CARRIED to ANOTHER line: carrying it
+// would give that line more than the promotion promised.
 //
-// # 5. Yuvarlama
+// # 5. Rounding
 //
-// Yüzde hesabı tam sayıdır ve AŞAĞI yuvarlar (bkz.
-// [models.BasisPointDenominator]). "across" tahsisinde toplam BİR KEZ
-// yuvarlanır, sonra satırlara birebir dağıtılır — kuruş artığının kime gittiği
-// [allocateAcross] godoc'unda tanımlıdır.
+// The percentage computation is integer and rounds DOWN (see
+// [models.BasisPointDenominator]). In an "across" allocation the total is
+// rounded ONCE and then distributed to the lines exactly — who the leftover
+// cent goes to is defined in the [allocateAcross] godoc.
 //
-// # 6. Kampanya bütçesi
+// # 6. Campaign budget
 //
-// Bütçesi TÜKENMİŞ bir kampanyanın promosyonu hiç uygulanmaz; KISMİ uygulama
-// yapılmaz. Sebep, bu çağrının yan etkisiz olmasıdır: kalan bütçeyi burada
-// paylaştırmak, hesapla kullanım arasında değişebilen bir sayıyı müşteriye
-// kesinmiş gibi göstermek olurdu. Bütçenin gerçek hakemi
-// [Service.RedeemPromotion]'dır ve orada sınır aşılırsa errors.Conflict döner.
+// A promotion whose campaign budget is EXHAUSTED is not applied at all; NO
+// PARTIAL application is made. The reason is that this call has no side
+// effects: sharing out the remaining budget here would show the customer a
+// number that can change between computation and redemption as if it were
+// final. The real arbiter of the budget is [Service.RedeemPromotion], and
+// errors.Conflict is returned there if the bound is exceeded.
 func (s *Service) ComputeDiscounts(ctx context.Context, in ComputeInput) (ComputeResult, error) {
 	if err := s.ready(); err != nil {
 		return ComputeResult{}, err
@@ -278,25 +305,29 @@ func (s *Service) ComputeDiscounts(ctx context.Context, in ComputeInput) (Comput
 	return computeDiscounts(candidates, normalized), nil
 }
 
-// ExplainDiscounts aynı hesabı yapar ve NEDEN uygulanmadığını da söyler; hiçbir
-// şey yazmaz.
+// ExplainDiscounts makes the same computation and also says WHY a promotion
+// was not applied; it writes nothing.
 //
-// [Service.ComputeDiscounts]'tan tek farkı ADAY OKUMASI: bu, durum süzgeci
-// olmayan okumayı kullanır (repository.ListCandidatesForDiagnosis). Sebebi
-// [ComputeResult.Skipped]'ın işe yaramasıdır — süzgeçli okuma yayına alınmamış
-// bir promosyonu hiç döndürmez, yani "kodu yazdım hiçbir şey olmadı"nın EN SIK
-// cevabı ("aktif etmemişsin") verilemez.
+// Its one difference from [Service.ComputeDiscounts] is the CANDIDATE READ: it
+// uses the read without a status filter
+// (repository.ListCandidatesForDiagnosis). The reason is for
+// [ComputeResult.Skipped] to be useful — the filtered read never returns a
+// promotion that has not been published, so the MOST COMMON answer to "I typed
+// the code and nothing happened" ("you have not activated it") could not be
+// given.
 //
-// # İNDİRİM aynıdır
+// # The DISCOUNT is the same
 //
-// İki yolun tutarları BİREBİR aynı olmak zorundadır ve öyledir: geniş kümenin
-// fazladan üyeleri elemeyi geçemez, yani uygulananlar kümesi değişmez. Hesabın
-// kendisi de aynı saf fonksiyondur ([computeDiscounts]); ayrılan tek şey
-// okumadır. Bu iddia testle sabitlenmiştir — ayrılmaları, tacire gösterilen
-// indirimin müşterinin gördüğünden farklı olması demekti.
+// The amounts of the two paths have to be EXACTLY the same, and they are: the
+// extra members of the wider set cannot pass the elimination, so the set of
+// applied promotions does not change. The computation itself is the same pure
+// function ([computeDiscounts]); the only thing that differs is the read. This
+// claim is pinned by a test — their diverging would have meant the discount
+// shown to the merchant differing from the one the customer sees.
 //
-// Yönetim ucu bunu çağırır; sepet akışının çağırdığı ilkel yüzey ÇAĞIRMAZ, ve
-// sebebi sızıntıdır: sepetin toplamlarını vitrin okuyor (ADR 0110).
+// The admin endpoint calls this; the primitive surface the cart flow calls
+// DOES NOT, and the reason is leakage: the storefront reads the cart's totals
+// (ADR 0110).
 func (s *Service) ExplainDiscounts(ctx context.Context, in ComputeInput) (ComputeResult, error) {
 	if err := s.ready(); err != nil {
 		return ComputeResult{}, err
@@ -315,11 +346,12 @@ func (s *Service) ExplainDiscounts(ctx context.Context, in ComputeInput) (Comput
 	return computeDiscounts(candidates, normalized), nil
 }
 
-// normalizeComputeInput girdiyi doğrular ve normalleştirilmiş bir KOPYASINI
-// döner.
+// normalizeComputeInput validates the input and returns a normalized COPY of
+// it.
 //
-// Kopya şarttır: kodlar büyük harfe çevrilip tekilleştirilir ve çağıranın
-// dilimini yerinde değiştirmek, isteği gönderene ait bir veriyi bozmak olurdu.
+// The copy is required: the codes are upper-cased and deduplicated, and
+// modifying the caller's slice in place would corrupt data that belongs to the
+// sender of the request.
 func normalizeComputeInput(in ComputeInput, now time.Time) (ComputeInput, error) {
 	currency, err := normalizeCurrency(in.CurrencyCode)
 	if err != nil {
@@ -328,11 +360,11 @@ func normalizeComputeInput(in ComputeInput, now time.Time) (ComputeInput, error)
 
 	if len(in.Items) > MaxComputeLines {
 		return ComputeInput{}, errors.Invalid(CodeInvalidInput,
-			"hesap en fazla %d kalem taşıyabilir, %d verildi", MaxComputeLines, len(in.Items))
+			"a computation can carry at most %d items, %d given", MaxComputeLines, len(in.Items))
 	}
 	if len(in.ShippingMethods) > MaxComputeLines {
 		return ComputeInput{}, errors.Invalid(CodeInvalidInput,
-			"hesap en fazla %d kargo yöntemi taşıyabilir, %d verildi",
+			"a computation can carry at most %d shipping methods, %d given",
 			MaxComputeLines, len(in.ShippingMethods))
 	}
 
@@ -341,13 +373,13 @@ func normalizeComputeInput(in ComputeInput, now time.Time) (ComputeInput, error)
 	var itemsSubtotal int64
 	for i := range in.Items {
 		item := in.Items[i]
-		if err := validateLineID("kalem kimliği", item.ID, seen); err != nil {
+		if err := validateLineID("item id", item.ID, seen); err != nil {
 			return ComputeInput{}, withIndex(err, detailItemIndex, i)
 		}
-		if err := validateAmount("kalem tutarı", item.Amount); err != nil {
+		if err := validateAmount("item amount", item.Amount); err != nil {
 			return ComputeInput{}, withIndex(err, detailItemIndex, i)
 		}
-		if err := validateQuantity("kalem adedi", item.Quantity); err != nil {
+		if err := validateQuantity("item quantity", item.Quantity); err != nil {
 			return ComputeInput{}, withIndex(err, detailItemIndex, i)
 		}
 		if err := validateUnitAmount(item); err != nil {
@@ -356,7 +388,7 @@ func normalizeComputeInput(in ComputeInput, now time.Time) (ComputeInput, error)
 		itemsSubtotal += item.Amount
 		if itemsSubtotal > models.MaxAmount {
 			return ComputeInput{}, errors.Invalid(CodeInvalidInput,
-				"kalem ara toplamı en fazla %d olabilir (minor unit)", models.MaxAmount)
+				"the item subtotal can be at most %d (minor unit)", models.MaxAmount)
 		}
 		item.Attributes = maps.Clone(item.Attributes)
 		items = append(items, item)
@@ -367,16 +399,16 @@ func normalizeComputeInput(in ComputeInput, now time.Time) (ComputeInput, error)
 	var shippingSubtotal int64
 	for i := range in.ShippingMethods {
 		method := in.ShippingMethods[i]
-		if err := validateLineID("kargo yöntemi kimliği", method.ID, seenShipping); err != nil {
+		if err := validateLineID("shipping method id", method.ID, seenShipping); err != nil {
 			return ComputeInput{}, withIndex(err, detailShippingIndex, i)
 		}
-		if err := validateAmount("kargo tutarı", method.Amount); err != nil {
+		if err := validateAmount("shipping amount", method.Amount); err != nil {
 			return ComputeInput{}, withIndex(err, detailShippingIndex, i)
 		}
 		shippingSubtotal += method.Amount
 		if shippingSubtotal > models.MaxAmount {
 			return ComputeInput{}, errors.Invalid(CodeInvalidInput,
-				"kargo ara toplamı en fazla %d olabilir (minor unit)", models.MaxAmount)
+				"the shipping subtotal can be at most %d (minor unit)", models.MaxAmount)
 		}
 		method.Attributes = maps.Clone(method.Attributes)
 		shipping = append(shipping, method)
@@ -405,19 +437,20 @@ func normalizeComputeInput(in ComputeInput, now time.Time) (ComputeInput, error)
 	}, nil
 }
 
-// normalizeCodes kupon kodlarını doğrular, BÜYÜK harfe çevirir ve
-// TEKİLLEŞTİRİR.
+// normalizeCodes validates the coupon codes, converts them to UPPER case and
+// DEDUPLICATES them.
 //
-// Tekilleştirme şarttır: aynı kod iki kez verilseydi promosyon iki kez
-// uygulanır ve indirim ikiye katlanırdı. Sıra korunur ki hata mesajındaki
-// indeks anlamlı olsun; uygulama sırası zaten koddan bağımsızdır.
+// Deduplication is required: had the same code been given twice, the
+// promotion would be applied twice and the discount doubled. The order is kept
+// so that the index in the error message is meaningful; the application order
+// is independent of the codes anyway.
 func normalizeCodes(codes []string) ([]string, error) {
 	if len(codes) == 0 {
 		return []string{}, nil
 	}
 	if len(codes) > MaxCodesPerCompute {
 		return nil, errors.Invalid(CodeInvalidInput,
-			"tek hesapta en fazla %d kupon kodu verilebilir, %d verildi",
+			"at most %d coupon codes can be given in a single computation, %d given",
 			MaxCodesPerCompute, len(codes))
 	}
 
@@ -437,68 +470,74 @@ func normalizeCodes(codes []string) ([]string, error) {
 	return out, nil
 }
 
-// validateLineID bir satır kimliğinin dolu ve TEKİL olduğunu doğrular.
+// validateLineID validates that a line identity is present and UNIQUE.
 //
-// Tekillik şarttır: sonuç satır kimliğiyle geri döner ve aynı kimlik iki kez
-// geçseydi çağıran hangi satırın hangi indirimi aldığını ayırt edemezdi.
+// Uniqueness is required: the result comes back keyed by line identity, and
+// had the same identity appeared twice the caller could not tell which line
+// received which discount.
 func validateLineID(label, id string, seen map[string]struct{}) error {
 	if err := validateText(label, id, 1, maxIDLen); err != nil {
 		return err
 	}
 	if _, dup := seen[id]; dup {
-		return errors.Invalid(CodeInvalidInput, "%s tekrar ediyor: %q", label, id)
+		return errors.Invalid(CodeInvalidInput, "%s is repeated: %q", label, id)
 	}
 	seen[id] = struct{}{}
 	return nil
 }
 
-// validateUnitAmount kalemin birim fiyatını ve KİMLİĞİNİ doğrular.
+// validateUnitAmount validates the item's unit price and its IDENTITY.
 //
-// Kimlik (birim × adet = tutar) bu sözleşmenin taşıdığı tek çapraz kuraldır ve
-// burada zorlanmasının sebebi, iki sayının AYRI AYRI doğru olup birlikte yanlış
-// olabilmesidir: ödül hesabı birimden, satır sınırı tutardan okur, ve ikisi
-// ayrıştığında promosyon satırın taşıyabileceğinden fazlasını vaat eder.
+// The identity (unit × quantity = amount) is the one cross-field rule this
+// contract carries, and the reason it is enforced here is that the two numbers
+// can each be right SEPARATELY and wrong together: the reward computation
+// reads from the unit, the line bound from the amount, and when the two
+// diverge the promotion promises more than the line can carry.
 //
-// Çarpım int64'e sığar: birim en fazla [models.MaxAmount] (10^12), adet en fazla
-// [models.MaxQuantity] (10^6), yani ara sonuç 10^18'i aşmaz.
+// The product fits in an int64: the unit is at most [models.MaxAmount]
+// (10^12) and the quantity at most [models.MaxQuantity] (10^6), so the
+// intermediate result does not exceed 10^18.
 func validateUnitAmount(item ComputeItem) error {
-	if err := validateAmount("kalem birim fiyatı", item.UnitAmount); err != nil {
+	if err := validateAmount("item unit price", item.UnitAmount); err != nil {
 		return err
 	}
 	if item.UnitAmount*item.Quantity != item.Amount {
 		return errors.Invalid(CodeInvalidInput,
-			"kalem tutarı birim fiyat × adet olmalı: %d × %d = %d, %d verildi",
+			"the item amount has to be unit price × quantity: %d × %d = %d, %d given",
 			item.UnitAmount, item.Quantity, item.UnitAmount*item.Quantity, item.Amount)
 	}
 	return nil
 }
 
-// lineState hesap boyunca tek bir satırın değişen durumudur.
+// lineState is the changing state of a single line over the course of a
+// computation.
 type lineState struct {
-	// id satırın kimliğidir.
+	// id is the line's identity.
 	id string
-	// amount satırın ORİJİNAL tutarıdır; hesap boyunca değişmez ve yüzde
-	// indirimlerin tabanıdır (bileşik olmama kararı).
+	// amount is the line's ORIGINAL amount; it does not change over the
+	// computation and is the base of the percentage discounts (the
+	// non-compound decision).
 	amount int64
-	// unitAmount satırın birim fiyatıdır; ödül hesabının tabanıdır ve kargo
-	// yönteminde satır tutarının kendisidir (adedi birdir).
+	// unitAmount is the line's unit price; it is the base of the reward
+	// computation, and for a shipping method it is the line amount itself (its
+	// quantity is one).
 	unitAmount int64
-	// quantity satırın adedidir; kargo yönteminde birdir.
+	// quantity is the line's quantity; for a shipping method it is one.
 	quantity int64
-	// attributes hedef kurallarının bakacağı özniteliklerdir.
+	// attributes are the attributes the target rules look at.
 	attributes map[string]string
-	// lists hedef kuralının KÜME olarak okuduğu özniteliklerdir (ADR 0148).
+	// lists are the attributes the target rule reads as a SET (ADR 0148).
 	//
-	// Kargo yönteminde DAİMA boştur ve bu bir eksiklik değil: bir kargo yöntemi
-	// hiçbir kategoride değildir, etiket taşımaz, yani "şu kategorilerden herhangi
-	// birinde" sorusunun kargo için cevabı yoktur — kural eşleşmez, ki doğru cevap
-	// budur.
+	// For a shipping method it is ALWAYS empty, and that is not a gap: a
+	// shipping method is in no category and carries no tag, so the question
+	// "in any of these categories" has no answer for shipping — the rule does
+	// not match, which is the right answer.
 	lists map[string][]string
-	// discount satıra o ana kadar uygulanmış TOPLAM indirimdir.
+	// discount is the TOTAL discount applied to the line so far.
 	discount int64
 }
 
-// remaining satıra daha ne kadar indirim uygulanabileceğini döner.
+// remaining returns how much more discount can be applied to the line.
 func (l *lineState) remaining() int64 {
 	if l.discount >= l.amount {
 		return 0
@@ -506,10 +545,11 @@ func (l *lineState) remaining() int64 {
 	return l.amount - l.discount
 }
 
-// charge satıra indirim uygular ve FİİLEN uygulananı döner.
+// charge applies a discount to the line and returns what was ACTUALLY applied.
 //
-// İstenen tutar satırın kalanını aşarsa kırpılır; kırpılan kısım kaybolur ve
-// başka bir satıra taşınmaz (bkz. [Service.ComputeDiscounts], "Üst sınırlar").
+// If the requested amount exceeds the line's remainder, it is clipped; the
+// clipped part is lost and is not carried to another line (see
+// [Service.ComputeDiscounts], "Upper bounds").
 func (l *lineState) charge(want int64) int64 {
 	if want <= 0 {
 		return 0
@@ -521,11 +561,13 @@ func (l *lineState) charge(want int64) int64 {
 	return want
 }
 
-// computeDiscounts adaylardan sonucu üretir; SAF fonksiyondur.
+// computeDiscounts produces the result from the candidates; it is a PURE
+// function.
 //
-// Veritabanına, saate ve loglamaya dokunmaz. Hesabın her dalı bu yüzden
-// veritabanı olmadan birim testiyle kanıtlanabilir — modülün en kritik kararı
-// olan indirim aritmetiği için bu bir gerekliliktir.
+// It does not touch the database, the clock or logging. That is why every
+// branch of the computation can be proven by a unit test without a database —
+// for the discount arithmetic, the module's most critical decision, this is a
+// requirement.
 func computeDiscounts(candidates []models.PromotionCandidate, in ComputeInput) ComputeResult {
 	items := make([]lineState, 0, len(in.Items))
 	for i := range in.Items {
@@ -545,8 +587,8 @@ func computeDiscounts(candidates []models.PromotionCandidate, in ComputeInput) C
 			amount:     in.ShippingMethods[i].Amount,
 			unitAmount: in.ShippingMethods[i].Amount,
 			quantity:   1,
-			// Kargo yönteminin adedi yoktur; "fixed" + "each" indiriminde bir
-			// birim sayılır.
+			// A shipping method has no quantity; it counts as one unit in a
+			// "fixed" + "each" discount.
 			attributes: in.ShippingMethods[i].Attributes,
 		})
 	}
@@ -587,15 +629,16 @@ func computeDiscounts(candidates []models.PromotionCandidate, in ComputeInput) C
 	return result
 }
 
-// partitionCandidates adayları uygulanabilir olanlar ve ELENENLER diye ikiye
-// ayırır; uygulanabilir olanlar UYGULAMA SIRASINA dizilir.
+// partitionCandidates splits the candidates in two, the applicable ones and
+// the ELIMINATED ones; the applicable ones are arranged in APPLICATION ORDER.
 //
-// Sıra kuralı [Service.ComputeDiscounts] godoc'unda tanımlıdır: önce kuponlar,
-// sonra otomatikler; her grup içinde kimliğe göre artan.
+// The ordering rule is defined in the [Service.ComputeDiscounts] godoc: coupons
+// first, then automatics; ascending by identity within each group.
 //
-// Elenenler ADAY SIRASINDA döner ve sıralanmaz: hangi promosyonun neden elendiği
-// bir uygulama sırası taşımaz, ve elenmiş bir promosyonu "önce"ye koymak
-// uygulanmayan bir şeye uygulama sırası atfetmek olurdu.
+// The eliminated ones come back IN CANDIDATE ORDER and are not sorted: which
+// promotion was eliminated and why carries no application order, and putting
+// an eliminated promotion "first" would attribute an application order to
+// something that is not applied.
 func partitionCandidates(
 	candidates []models.PromotionCandidate, in ComputeInput,
 ) (eligible []models.PromotionCandidate, skipped []SkippedPromotion) {
@@ -616,8 +659,8 @@ func partitionCandidates(
 	}
 
 	slices.SortFunc(out, func(a, b models.PromotionCandidate) int {
-		// Kuponlar (otomatik olmayanlar) önce gelir; bool sıralaması yerine
-		// açık bir ölçüt kullanılır ki niyet okunabilir olsun.
+		// Coupons (the non-automatic ones) come first; an explicit criterion is
+		// used instead of a bool ordering so that the intent is readable.
 		if a.Promotion.IsAutomatic != b.Promotion.IsAutomatic {
 			if a.Promotion.IsAutomatic {
 				return 1
@@ -630,28 +673,31 @@ func partitionCandidates(
 	return out, skipped
 }
 
-// eligible bir adayın hesaba girip giremeyeceğini bildirir (bkz.
-// [Service.ComputeDiscounts] godoc'undaki "Eleme").
+// eligible reports whether a candidate can enter the computation (see
+// "Elimination" in the [Service.ComputeDiscounts] godoc).
 //
-// Kararı [skipReasonOf] verir ve bu fonksiyon onun evet/hayır'ıdır. Eleme
-// koşullarının İKİ yerde yazılması, birinin diğerinden sessizce ayrılması
-// demekti: bir promosyon bir gerekçeyle uygulanır, başka bir gerekçeyle elenmiş
-// raporlanırdı.
+// [skipReasonOf] makes the decision and this function is its yes/no. Writing
+// the elimination conditions in TWO places would have meant one silently
+// drifting from the other: a promotion would be applied for one reason and
+// reported eliminated for another.
 func eligible(candidate models.PromotionCandidate, in ComputeInput) bool {
 	return skipReasonOf(candidate, in) == ""
 }
 
-// campaignBudgetCurrencyMatches kampanyanın PARA ölçülü bütçesinin sepetin para
-// birimiyle aynı olduğunu bildirir.
+// campaignBudgetCurrencyMatches reports whether the campaign's MONEY-measured
+// budget is in the same currency as the cart.
 //
-// Kampanyasız, bütçesiz ve ADET ölçülü bütçeli promosyonlar daima geçer: adet
-// sayan bir bütçenin para birimi yoktur ve sepetinkiyle karşılaştırılamaz.
+// Promotions with no campaign, with no budget, and with a QUANTITY-measured
+// budget always pass: a budget that counts quantity has no currency and cannot
+// be compared with the cart's.
 //
-// Kontrolün BURADA da olması şarttır. Kullanım anında repository.Redeem aynı
-// koşulu kampanya satırı kilitliyken zorlar ve uymayan kullanımı errors.Conflict
-// ile reddeder. Eleme hesapta yapılmasaydı müşteri indirimi sepette görür,
-// sipariş tamamlamada 409 alırdı — ya da saga tüm siparişi telafi ederdi. Kur
-// çevirisi yapılmaz; gerekçesi [ComputeInput.CurrencyCode] godoc'undadır.
+// The check has to be HERE as well. At redemption time repository.Redeem
+// enforces the same condition while the campaign row is locked and refuses a
+// non-matching redemption with errors.Conflict. Had the elimination not been
+// done in the computation, the customer would see the discount in the cart and
+// get a 409 at order completion — or the saga would compensate the whole
+// order. No currency conversion is made; the reasoning is in the
+// [ComputeInput.CurrencyCode] godoc.
 func campaignBudgetCurrencyMatches(candidate models.PromotionCandidate, currencyCode string) bool {
 	campaign := candidate.Campaign
 	if campaign == nil || campaign.BudgetType != models.BudgetSpend {
@@ -660,12 +706,13 @@ func campaignBudgetCurrencyMatches(candidate models.PromotionCandidate, currency
 	return campaign.BudgetCurrencyCode == currencyCode
 }
 
-// campaignUsable adayın kampanyasının verilen anda indirim sunmaya uygun
-// olduğunu bildirir; kampanyasız promosyon daima uygundur.
+// campaignUsable reports whether the candidate's campaign is fit to offer a
+// discount at the given moment; a promotion with no campaign is always fit.
 //
-// Kampanya kimliği dolu ama üstverisi yoksa kampanya SİLİNMİŞTİR; promosyon
-// sahipsiz kalır ve hesaba katılmaz. Sessizce kampanyasız saymak, bütçesi ve
-// tarihi olan bir indirimi sınırsız hâle getirirdi.
+// If the campaign identity is set but there is no metadata, the campaign has
+// been DELETED; the promotion is left without an owner and is not taken into
+// the computation. Silently counting it as campaign-less would turn a discount
+// that has a budget and dates into an unlimited one.
 func campaignUsable(candidate models.PromotionCandidate, at time.Time) bool {
 	if candidate.Promotion.CampaignID == nil {
 		return true
@@ -676,11 +723,13 @@ func campaignUsable(candidate models.PromotionCandidate, at time.Time) bool {
 	return candidate.Campaign.WindowContains(at) && !candidate.Campaign.BudgetExhausted()
 }
 
-// unmatchedCodes uygulanabilir bir promosyona bağlanamayan kodları döner.
+// unmatchedCodes returns the codes that could not be tied to an applicable
+// promotion.
 //
-// Bir kod, sahibi promosyon ELEMEYİ GEÇTİYSE eşleşmiş sayılır — indirim
-// üretmemiş olsa bile. Ayrım bilinçlidir: hedefine uyan kalemi olmayan geçerli
-// bir kupon "geçersiz kod" değildir, yalnızca bu sepette işe yaramamıştır.
+// A code counts as matched if the promotion that owns it PASSED THE
+// ELIMINATION — even if it produced no discount. The distinction is
+// deliberate: a valid coupon with no item matching its target is not an
+// "invalid code"; it just was of no use in this cart.
 func unmatchedCodes(codes []string, eligible []models.PromotionCandidate) []string {
 	if len(codes) == 0 {
 		return []string{}
@@ -700,11 +749,11 @@ func unmatchedCodes(codes []string, eligible []models.PromotionCandidate) []stri
 	return out
 }
 
-// applyPromotion tek bir promosyonu satırlara uygular ve FİİLEN uygulanan
-// toplam indirimi döner.
+// applyPromotion applies a single promotion to the lines and returns the total
+// discount ACTUALLY applied.
 //
-// Satır durumlarını YERİNDE değiştirir; dönen değer, satır sınırlarına takılan
-// kısım DÜŞÜLDÜKTEN sonraki gerçek toplamdır.
+// It modifies the line states IN PLACE; the returned value is the real total
+// AFTER the part caught on the line bounds is SUBTRACTED.
 func applyPromotion(candidate models.PromotionCandidate, items, shipping []lineState) int64 {
 	method := candidate.Method
 	targets := selectTargets(candidate, items, shipping)
@@ -712,16 +761,17 @@ func applyPromotion(candidate models.PromotionCandidate, items, shipping []lineS
 		return 0
 	}
 
-	// "Al X, kazan Y" hedefleri AYNI biçimde seçer ve ödülü BİRİM sayarak
-	// verir; tahsis biçimi ile azami adet orada okunmaz, çünkü kaç birime
-	// inileceğini yöntemin kendi sayı çifti söyler.
+	// "Buy X, get Y" selects the targets the SAME way and gives the reward
+	// counting UNITS; the allocation and the maximum quantity are not read
+	// there, because the method's own pair of numbers says how many units to
+	// discount.
 	if candidate.Promotion.Type == models.PromotionBuyGet {
 		return applyBuyGet(candidate, items, targets)
 	}
 
-	// Sipariş hedefi TEK bir toplamı kalemlere dağıtır; tahsis biçimi yazma
-	// sırasında zaten "across"a zorlanır, buradaki zorlama elle yazılmış bir
-	// kayda karşı ikinci savunmadır.
+	// An order target distributes a SINGLE total across the items; the
+	// allocation is already forced to "across" at write time, and forcing it
+	// here is a second defense against a hand-written record.
 	allocation := method.Allocation
 	if method.TargetType == models.TargetOrder {
 		allocation = models.AllocationAcross
@@ -748,12 +798,12 @@ func applyPromotion(candidate models.PromotionCandidate, items, shipping []lineS
 	return applied
 }
 
-// selectTargets promosyonun indirimini alacak satırları seçer.
+// selectTargets selects the lines that will receive the promotion's discount.
 //
-// Hedef kuralları YALNIZCA "items" ve "shipping_methods" hedeflerinde
-// uygulanır. "order" hedefi siparişin TAMAMINI indirir; orada bir alt küme
-// süzmek, hedefin adıyla çelişirdi — bir alt küme isteniyorsa hedef "items"
-// olmalıdır.
+// Target rules are applied ONLY to the "items" and "shipping_methods" targets.
+// The "order" target discounts the WHOLE order; filtering a subset there would
+// contradict the target's name — if a subset is wanted, the target has to be
+// "items".
 func selectTargets(candidate models.PromotionCandidate, items, shipping []lineState) []*lineState {
 	switch candidate.Method.TargetType {
 	case models.TargetItems:
@@ -763,23 +813,25 @@ func selectTargets(candidate models.PromotionCandidate, items, shipping []lineSt
 	case models.TargetOrder:
 		return filterLines(items, nil)
 	default:
-		// Tanınmayan hedef indirim ÜRETMEZ: veritabanına sonradan sızmış bir
-		// değer, indirimi rastgele bir satır kümesine uygulamamalıdır.
+		// An unrecognized target produces NO discount: a value that leaked into
+		// the database later must not apply a discount to an arbitrary set of
+		// lines.
 		return nil
 	}
 }
 
-// filterLines hedef kurallarına uyan satırların işaretçilerini döner.
+// filterLines returns pointers to the lines that satisfy the target rules.
 //
-// Kuralsız süzgeç TÜM satırları seçer. İşaretçi dönmesi bilinçlidir: indirim
-// satırın durumuna YAZILIR ve kopya üzerinde çalışmak yazmayı kaybederdi.
+// A filter with no rules selects ALL lines. Returning pointers is deliberate:
+// the discount is WRITTEN into the line's state, and working on a copy would
+// lose the write.
 func filterLines(lines []lineState, rules []models.PromotionRule) []*lineState {
 	out := make([]*lineState, 0, len(lines))
 	for i := range lines {
-		// Satırın LİSTELERİ ADR 0148 ile geldi: ürün modülü üyeliği Query
-		// katmanından yayımlıyor, sepet de her satırın kategori ve etiket
-		// kimliklerini gönderiyor. Kargo satırlarında liste boştur ve boş kalması
-		// doğrudur (bkz. [lineState.lists]).
+		// A line's LISTS arrived with ADR 0148: the product module publishes
+		// membership from the Query layer, and the cart sends every line's
+		// category and tag identities. On shipping lines the list is empty, and
+		// its staying empty is correct (see [lineState.lists]).
 		if len(rules) > 0 && !matchRules(rules, lines[i].attributes, lines[i].lists) {
 			continue
 		}
@@ -788,14 +840,15 @@ func filterLines(lines []lineState, rules []models.PromotionRule) []*lineState {
 	return out
 }
 
-// eachDiscount "each" tahsisinde tek bir satırın HAM indirimini hesaplar.
+// eachDiscount computes the RAW discount of a single line in an "each"
+// allocation.
 //
-// Ham demek, satırın kalan tutarına henüz kırpılmamış demektir; kırpma
-// [lineState.charge] içindedir.
+// Raw means not yet clipped to the line's remaining amount; the clipping is in
+// [lineState.charge].
 //
-// Sabit tutarda indirim satırın HER BİRİMİNE uygulanır ve
-// [models.ApplicationMethod.MaxQuantity] birim sayısını sınırlar. Yüzdede
-// MaxQuantity YOK SAYILIR; gerekçe o alanın godoc'undadır.
+// For a fixed amount the discount is applied to EACH UNIT of the line, and
+// [models.ApplicationMethod.MaxQuantity] bounds the number of units. For a
+// percentage MaxQuantity IS IGNORED; the reasoning is in that field's godoc.
 func eachDiscount(method models.ApplicationMethod, line lineState) int64 {
 	switch method.Type {
 	case models.MethodFixed:
@@ -814,26 +867,31 @@ func eachDiscount(method models.ApplicationMethod, line lineState) int64 {
 	}
 }
 
-// acrossTotal "across" tahsisinde dağıtılacak TOPLAM indirimi hesaplar.
+// acrossTotal computes the TOTAL discount to distribute in an "across"
+// allocation.
 //
-// Yüzde, hedeflerin tutar toplamı üzerinden BİR KEZ hesaplanır: satır başına
-// hesaplayıp toplamak, her satırda bir kuruşa kadar aşağı yuvarlar ve
-// promosyonun vaat ettiğinden gözle görülür biçimde az verirdi.
+// The percentage is computed ONCE over the sum of the targets' amounts:
+// computing it per line and adding up would round down by up to a cent on
+// every line and give visibly less than the promotion promised.
 //
-// Taban, hedeflerin ORİJİNAL tutarlarının toplamıdır — KALAN tutarları DEĞİL.
+// The base is the sum of the targets' ORIGINAL amounts — NOT their REMAINING
+// amounts.
 //
-// Ayrım bir kuruş meselesi değildir. Kalana kırpmak, önceki bir promosyonun
-// doldurduğu satırı İKİ KEZ cezalandırırdı: dağıtılacak havuz o satırın kalanı
-// kadar küçülür, ama [allocateAcross] payları yine satırların ORİJİNAL tutarına
-// göre dağıttığı için dolu satır payını almaya devam eder ve o pay
-// [lineState.charge] içinde kırpılıp KAYBOLUR. Boş satıra vaat edilenin yarısı
-// verilirdi ve bu, [Service.ComputeDiscounts] godoc'undaki "yüzdeler birbirinin
-// üzerine BİNMEZ" kararını arka kapıdan bileşik hesaba çevirirdi.
+// The distinction is not a matter of a cent. Clipping to the remainder would
+// penalize a line that an earlier promotion had filled TWICE: the pool to
+// distribute would shrink by that line's remainder, but since
+// [allocateAcross] still distributes the shares by the lines' ORIGINAL
+// amounts, the full line keeps receiving its share, and that share is clipped
+// inside [lineState.charge] and LOST. The empty line would be given half of
+// what was promised, and that would turn the "percentages do NOT STACK on top
+// of each other" decision in the [Service.ComputeDiscounts] godoc into a
+// compound computation through the back door.
 //
-// Sonuç burada AYRICA kırpılmaz: bir tahsisin dağıttığı tabandan fazlasını
-// dağıtamayacağı kuralının tek sahibi [allocateAcross]'tır ve satır sınırını
-// [lineState.charge] korur. Aynı kırpmayı burada tekrarlamak, hiçbir davranışı
-// değiştirmeyen — dolayısıyla hiçbir testin koruyamayacağı — bir satır bırakırdı.
+// The result is NOT clipped here AS WELL: the sole owner of the rule that an
+// allocation cannot distribute more than the base it distributes over is
+// [allocateAcross], and [lineState.charge] guards the line bound. Repeating
+// the same clipping here would leave a line that changes no behavior — and
+// that therefore no test could guard.
 func acrossTotal(method models.ApplicationMethod, targets []*lineState) int64 {
 	var base int64
 	for _, line := range targets {
@@ -850,12 +908,13 @@ func acrossTotal(method models.ApplicationMethod, targets []*lineState) int64 {
 	}
 }
 
-// percentageOf bir tutarın baz puan karşılığını AŞAĞI yuvarlayarak döner.
+// percentageOf returns an amount's basis-point equivalent, rounding DOWN.
 //
-// Çarpım int64'e sığar: tutar en fazla [models.MaxAmount] (10^12), baz puan en
-// fazla [models.BasisPointDenominator] (10^4) olduğu için ara sonuç 10^16'yı
-// aşmaz. Yuvarlama yönünün gerekçesi [models.BasisPointDenominator]
-// godoc'undadır.
+// The product fits in an int64: since the amount is at most
+// [models.MaxAmount] (10^12) and the basis points at most
+// [models.BasisPointDenominator] (10^4), the intermediate result does not
+// exceed 10^16. The reasoning for the rounding direction is in the
+// [models.BasisPointDenominator] godoc.
 func percentageOf(amount, basisPoints int64) int64 {
 	if amount <= 0 || basisPoints <= 0 {
 		return 0
@@ -869,22 +928,22 @@ func percentageOf(amount, basisPoints int64) int64 {
 	return amount * basisPoints / models.BasisPointDenominator
 }
 
-// Hata ayrıntısındaki indeks anahtarları.
+// The index keys in an error's details.
 const (
-	// detailItemIndex kaçıncı KALEMİN reddedildiğini bildirir.
+	// detailItemIndex reports which ITEM was rejected.
 	detailItemIndex = "item_index"
-	// detailShippingIndex kaçıncı KARGO YÖNTEMİNİN reddedildiğini bildirir.
+	// detailShippingIndex reports which SHIPPING METHOD was rejected.
 	detailShippingIndex = "shipping_index"
-	// detailCodeIndex kaçıncı KUPON KODUNUN reddedildiğini bildirir.
+	// detailCodeIndex reports which COUPON CODE was rejected.
 	detailCodeIndex = "code_index"
 )
 
-// withIndex bir doğrulama hatasına kaçıncı girdide oluştuğunu ekler.
+// withIndex adds to a validation error which input it occurred at.
 //
-// Toplu bir hesapta hangi satırın reddedildiğini bilmek, hatayı kullanılabilir
-// kılan tek bilgidir. Anahtar çağırandan gelir çünkü kalem, kargo ve kod
-// listeleri AYRIDIR ve tek bir "index" anahtarı hangisinin kastedildiğini
-// söylemezdi.
+// In a batch computation, knowing which line was rejected is the one piece of
+// information that makes the error usable. The key comes from the caller
+// because the item, shipping and code lists are SEPARATE, and a single "index"
+// key would not say which one was meant.
 func withIndex(err error, key string, index int) error {
 	var typed *errors.Error
 	if errors.As(err, &typed) && typed != nil {
@@ -893,23 +952,25 @@ func withIndex(err error, key string, index int) error {
 	return err
 }
 
-// storeCouponVisible bir promosyonun MÜŞTERİYE gösterilebilir olduğunu bildirir.
+// storeCouponVisible reports whether a promotion can be shown to the CUSTOMER.
 //
-// Yönetim yüzeyinden farkı budur: taslak ve pasif promosyonlar, penceresi
-// kapanmış ya da bütçesi tükenmiş kampanyalar ve kullanım hakkı bitmiş kuponlar
-// müşteriye "yok" görünür.
+// This is how it differs from the admin surface: draft and inactive
+// promotions, campaigns whose window has closed or whose budget is exhausted,
+// and coupons whose usage allowance has run out all look "nonexistent" to the
+// customer.
 //
-// Mekanik ile yöntemin UYUŞMASI da burada aranır ve hesabın elemesiyle aynı
-// yüklemi kullanır ([mechanicMatchesMethod]). Ayrı yazılsalardı, biri kuponu
-// müşteriye sunarken öteki onu elerdi: müşteri kodu yazar, hiçbir şey olmaz ve
-// hiçbir yerde bir sebep durmaz.
+// The mechanic AGREEING with the method is also checked here, using the same
+// predicate as the computation's elimination ([mechanicMatchesMethod]). Had
+// they been written separately, one would offer the coupon to the customer
+// while the other eliminated it: the customer types the code, nothing happens,
+// and no reason stands anywhere.
 //
-// Ayrıca KURAL KOŞULLARI hiçbir zaman dışarı çıkmaz: bir kuralın sağ tarafı
-// (örn. bir müşteri grubunun kimliği) iş bilgisidir. Bu yüzden kurallar burada
-// DEĞERLENDİRİLMEZ de: sepet bağlamı olmadan değerlendirilemezler ve
-// "koşullarını sağlamıyorsun" cevabı koşulun varlığını ele verirdi. Kuponun o
-// sepette gerçekten indirim üretip üretmediğini [Service.ComputeDiscounts]
-// söyler.
+// Also, RULE CONDITIONS never go out: a rule's right-hand side (e.g. a customer
+// group's identity) is business information. That is also why the rules are
+// NOT EVALUATED here: they cannot be evaluated without a cart context, and the
+// answer "you do not satisfy its conditions" would give away that the
+// condition exists. Whether the coupon really produces a discount in that cart
+// is told by [Service.ComputeDiscounts].
 func storeCouponVisible(candidate models.PromotionCandidate, at time.Time) bool {
 	promo := candidate.Promotion
 	if promo.Status != models.PromotionActive || !promo.Type.Valid() {
@@ -924,56 +985,60 @@ func storeCouponVisible(candidate models.PromotionCandidate, at time.Time) bool 
 	return campaignUsable(candidate, at)
 }
 
-// StoreCoupon müşteriye gösterilebilen kupon bilgisidir.
+// StoreCoupon is the coupon information that can be shown to the customer.
 //
-// Bilinçli olarak DARDIR: durum, kullanım sayacı, kampanya bütçesi, üstveri ve
-// kural koşulları BULUNMAZ. Müşterinin görmesi gereken tek şey kuponun geçerli
-// olduğu ve ne tür bir indirim verdiğidir.
+// It is deliberately NARROW: status, usage counter, campaign budget, metadata
+// and rule conditions are NOT IN IT. The only thing the customer needs to see
+// is that the coupon is valid and what kind of discount it gives.
 type StoreCoupon struct {
-	// Code kupon kodudur (BÜYÜK harf).
+	// Code is the coupon code (UPPER case).
 	Code string
-	// Mechanic promosyonun mekaniğidir (standard | buyget).
+	// Mechanic is the promotion's mechanic (standard | buyget).
 	//
-	// Ölçünün yanında DURMAK ZORUNDA: "al 2, birini kazan" kuponu yüzde on bin
-	// baz puan taşır ve mekanik söylenmeseydi vitrin onu "%100 indirim" diye
-	// gösterirdi — kuponun verdiğinden başka bir şey.
+	// It HAS TO STAND beside the measure: a "buy 2, get one" coupon carries ten
+	// thousand basis points, and had the mechanic not been stated the
+	// storefront would show it as "100% off" — something other than what the
+	// coupon gives.
 	Mechanic models.PromotionType
-	// BuyQuantity ödülün hak edilmesi için alınması gereken adettir; yalnızca
-	// "buyget" kuponunda doludur.
+	// BuyQuantity is the quantity that has to be bought to earn the reward; it
+	// is set only on a "buyget" coupon.
 	BuyQuantity *int64
-	// ApplyToQuantity ödülün ineceği adettir; yalnızca "buyget" kuponunda
-	// doludur.
+	// ApplyToQuantity is the quantity the reward applies to; it is set only on
+	// a "buyget" coupon.
 	//
-	// İkisi de KOŞUL değil TEKLİFTİR: kuralların sağ tarafı hâlâ dışarı çıkmaz,
-	// çıkan şey kuponun ne verdiğidir.
+	// Neither is a CONDITION; both are the OFFER: the rules' right-hand side
+	// still does not go out, what goes out is what the coupon gives.
 	ApplyToQuantity *int64
-	// MethodType indirimin ölçüsüdür (fixed | percentage).
+	// MethodType is the discount's measure (fixed | percentage).
 	MethodType models.ApplicationMethodType
-	// TargetType indirimin hedefidir (items | shipping_methods | order).
+	// TargetType is the discount's target (items | shipping_methods | order).
 	TargetType models.ApplicationTargetType
-	// Value sabit tutar (minor unit) ya da baz puandır.
+	// Value is a fixed amount (minor unit) or basis points.
 	Value int64
-	// CurrencyCode sabit tutarlı indirimin para birimidir; yüzdede boştur.
+	// CurrencyCode is the currency of a fixed-amount discount; for a
+	// percentage it is empty.
 	CurrencyCode string
 }
 
-// LookupStoreCoupon bir kupon kodunun MÜŞTERİYE gösterilebilir bilgisini döner.
+// LookupStoreCoupon returns the information about a coupon code that can be
+// shown to the CUSTOMER.
 //
-// Kod yoksa, promosyon taslak/pasif ise, kampanyasının penceresi kapalıysa,
-// bütçesi tükenmişse ya da kullanım hakkı bittiyse AYNI hata döner:
-// errors.NotFound (kod: [CodePromotionNotUsable]). Ayrım yapılmaması
-// bilinçlidir — "bu kod var ama kampanyası henüz başlamadı" cevabı,
-// yayınlanmamış bir kampanyanın varlığını ele verir ve kod tahmin eden birine
-// bir kampanya takvimi çıkarma imkânı tanırdı.
+// If the code does not exist, the promotion is draft/inactive, its campaign's
+// window is closed, its budget is exhausted or its usage allowance has run
+// out, the SAME error is returned: errors.NotFound (code:
+// [CodePromotionNotUsable]). Making no distinction is deliberate — the answer
+// "this code exists but its campaign has not started yet" would give away the
+// existence of an unpublished campaign and would let someone guessing codes
+// work out a campaign calendar.
 func (s *Service) LookupStoreCoupon(ctx context.Context, code string) (StoreCoupon, error) {
 	if err := s.ready(); err != nil {
 		return StoreCoupon{}, err
 	}
 	normalized, err := normalizeCode(code)
 	if err != nil {
-		// Biçimsel olarak geçersiz bir kod da "yok" sayılır: kodun biçimini
-		// doğrulayan bir hata, geçerli biçimleri deneyerek arama alanını
-		// daraltmaya yarardı.
+		// A code that is invalid in form also counts as "nonexistent": an error
+		// validating the code's form would help narrow the search space by
+		// trying valid forms.
 		return StoreCoupon{}, notUsable(code)
 	}
 
@@ -982,14 +1047,14 @@ func (s *Service) LookupStoreCoupon(ctx context.Context, code string) (StoreCoup
 		if errors.IsNotFound(err) {
 			return StoreCoupon{}, notUsable(normalized)
 		}
-		// Altyapı arızası "kupon yok"a çevrilmez: müşteriye geçici bir hatayı
-		// kalıcı bir cevap gibi göstermek, geçerli bir kuponu sessizce
-		// reddetmek olurdu.
+		// An infrastructure failure is not turned into "no coupon": showing the
+		// customer a temporary error as if it were a permanent answer would be
+		// silently refusing a valid coupon.
 		return StoreCoupon{}, err
 	}
 
-	// Yöntemin varlığı da görünürlük kararının içindedir; ayrı bir kontrol,
-	// aynı soruya iki yerden cevap vermek olurdu.
+	// The method's presence is also part of the visibility decision; a
+	// separate check would be answering the same question from two places.
 	if !storeCouponVisible(candidate, s.clock()) {
 		return StoreCoupon{}, notUsable(normalized)
 	}
@@ -1006,22 +1071,22 @@ func (s *Service) LookupStoreCoupon(ctx context.Context, code string) (StoreCoup
 	}, nil
 }
 
-// storeCandidate kupon doğrulaması için adayı SÜZGEÇSİZ okur.
+// storeCandidate reads the candidate for coupon validation WITHOUT A FILTER.
 //
-// [Service.ComputeDiscounts]'un kullandığı aday listesi yalnızca AKTİF
-// promosyonları döner. Bu yüzey ondan okusaydı "müşteriye ne görünür" kuralı
-// İKİ yere bölünürdü — biri [storeCouponVisible], biri o sorgunun WHERE'i — ve
-// buradaki kontrol sessizce ölü kalırdı: durum süzgecini kaldıran bir
-// değişiklik hiçbir testi düşürmezdi.
+// The candidate list [Service.ComputeDiscounts] uses returns only ACTIVE
+// promotions. Had this surface read from it, the "what is visible to the
+// customer" rule would be split in TWO places — one [storeCouponVisible], the
+// other that query's WHERE — and the check here would silently stay dead: a
+// change removing the status filter would fail no test.
 //
-// Aday bu yüzden süzgeçsiz kurulur ve görünürlük kararının TEK sahibi
-// [storeCouponVisible] olur. Bedeli üç sorgudur; bu, müşterinin kupon
-// yazdığında yaptığı TEK bir işlemdir ve sepet hesabı gibi her turda
-// koşmaz.
+// That is why the candidate is built without a filter and [storeCouponVisible]
+// becomes the SOLE owner of the visibility decision. The cost is three
+// queries; this is a SINGLE action the customer takes when typing a coupon, and
+// it does not run on every round like the cart computation.
 //
-// Uygulama yöntemi ya da kampanya bulunamazsa hata DEĞİL, eksik alan dönülür:
-// ikisi de "kupon kullanılamaz" anlamına gelir ve kararı [storeCouponVisible]
-// verir.
+// If the application method or the campaign is not found, a missing field is
+// returned, NOT an error: both mean "the coupon cannot be used", and
+// [storeCouponVisible] makes the decision.
 func (s *Service) storeCandidate(ctx context.Context, code string) (models.PromotionCandidate, error) {
 	promo, err := s.repo.GetPromotionByCode(ctx, code)
 	if err != nil {
@@ -1049,21 +1114,22 @@ func (s *Service) storeCandidate(ctx context.Context, code string) (models.Promo
 	return candidate, nil
 }
 
-// notUsable müşteriye dönen tek biçimli "kupon yok" hatasını üretir.
+// notUsable produces the single-shaped "no coupon" error returned to the
+// customer.
 //
-// Mesaj kodun kendisini tekrar eder ama BAŞKA hiçbir şey söylemez; ayrımsız
-// olmasının gerekçesi [Service.LookupStoreCoupon] godoc'undadır.
+// The message repeats the code itself but says NOTHING else; the reasoning for
+// its making no distinction is in the [Service.LookupStoreCoupon] godoc.
 func notUsable(code string) error {
 	return errors.NotFound(CodePromotionNotUsable,
-		"kupon kullanılabilir değil: %s", strings.TrimSpace(code))
+		"coupon is not usable: %s", strings.TrimSpace(code))
 }
 
-// cloneLists bağlam listelerinin DERİN kopyasını üretir.
+// cloneLists produces a DEEP copy of the context lists.
 //
-// maps.Clone yetmez: değerler dilim, ve yüzeysel bir kopya çağıranın dilimini
-// paylaşırdı — normalize edilmiş girdiyi değiştiren bir şey çağıranın verisini de
-// değiştirirdi. Bu dosyanın Context için maps.Clone çağırmasının sebebi de aynı
-// sınırdır, orada değerler dize olduğu için yeterli oluyor.
+// maps.Clone is not enough: the values are slices, and a shallow copy would
+// share the caller's slice — something modifying the normalized input would
+// modify the caller's data too. The reason this file calls maps.Clone for
+// Context is the same boundary; there the values are strings, so it suffices.
 func cloneLists(in map[string][]string) map[string][]string {
 	if in == nil {
 		return nil

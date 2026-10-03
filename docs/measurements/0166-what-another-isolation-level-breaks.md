@@ -67,12 +67,12 @@ green on the same tree the same day.
 | `internal/modules/pricing` | `TestConcurrentSetPricesDoesNotMerge` | serialization failure (40001) where a waiter was meant to proceed |
 | `internal/modules/product` | `TestCreateVariantLosesRaceWithProductDeletion` | serialization failure (40001) where a waiter was meant to proceed |
 | `internal/modules/product` | `TestTwoConcurrentReparentsCannotCloseARingBetweenThem` | **silent** — both moves applied: a ring |
-| `internal/modules/promotion` | `TestEszamanliRedeemKullanimSinirindaTamOlarakSinirKadarKazanir` | serialization failure (40001) where a waiter was meant to proceed |
-| `internal/modules/promotion` | `TestEszamanliRedeemAyniReferansIcinTekKayitYazar` | serialization failure (40001) where a waiter was meant to proceed |
-| `internal/modules/promotion` | `TestEszamanliRedeemKampanyaButcesiniAsmaz` | serialization failure (40001) where a waiter was meant to proceed |
-| `internal/modules/promotion` | `TestEszamanliReleaseSayaciBirKezDusurur` | serialization failure (40001) where a waiter was meant to proceed |
-| `internal/modules/promotion` | `TestKuralEklemeSilinenPromosyonaYazmaz` | refused as Internal (500) where NotFound (404) was meant |
-| `internal/modules/promotion` | `TestYontemYazmaSilinenPromosyonaYazmaz` | refused as Internal (500) where NotFound (404) was meant |
+| `internal/modules/promotion` | `TestConcurrentRedeemAtTheUsageLimitWinsExactlyTheLimit` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/promotion` | `TestConcurrentRedeemWritesOneRecordForTheSameReference` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/promotion` | `TestConcurrentRedeemDoesNotExceedTheCampaignBudget` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/promotion` | `TestConcurrentReleaseDecrementsTheCounterOnce` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/promotion` | `TestAddingARuleDoesNotWriteUnderADeletedPromotion` | refused as Internal (500) where NotFound (404) was meant |
+| `internal/modules/promotion` | `TestWritingAMethodDoesNotWriteUnderADeletedPromotion` | refused as Internal (500) where NotFound (404) was meant |
 | `internal/modules/region` | `TestARegionUpdateReadsUnderTheLock` | serialization failure (40001) where a waiter was meant to proceed |
 | `internal/modules/region` | `TestCountryAssignmentReadsUnderTheLock` | refused as Internal (500) where Conflict (409) was meant |
 | `internal/modules/region` | `TestACountryCannotJoinARegionBeingDeleted` | refused as Internal (500) where NotFound (404) was meant |

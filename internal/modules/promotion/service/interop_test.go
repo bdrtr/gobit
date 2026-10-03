@@ -14,7 +14,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
-func TestComputeDiscountsJSONSemayiKarsilar(t *testing.T) {
+func TestComputeDiscountsJSONMeetsTheSchema(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YAZ20", IsAutomatic: false},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
@@ -22,7 +22,7 @@ func TestComputeDiscountsJSONSemayiKarsilar(t *testing.T) {
 		percentageMethod("promo_2", 10000, models.TargetShippingMethods, models.AllocationEach))
 
 	interop := NewInterop(newTestService(repo))
-	istek := []byte(`{
+	request := []byte(`{
 	  "currency_code": "TRY",
 	  "context": {"region_id": "reg_1"},
 	  "items": [{"id": "li_1", "amount": 25000, "unit_amount": 12500, "quantity": 2, "attributes": {"kategori": "giyim"}}],
@@ -31,48 +31,49 @@ func TestComputeDiscountsJSONSemayiKarsilar(t *testing.T) {
 	  "at": "2026-08-24T10:00:00Z"
 	}`)
 
-	payload, err := interop.ComputeDiscountsJSON(context.Background(), istek)
+	payload, err := interop.ComputeDiscountsJSON(context.Background(), request)
 	require.NoError(t, err)
 
-	// Şema, tüketicinin gördüğü sözleşmedir; alan adları BİREBİR doğrulanır.
-	var gelen map[string]any
-	require.NoError(t, json.Unmarshal(payload, &gelen))
-	for _, alan := range []string{
+	// The schema is the contract the consumer sees; the field names are verified
+	// EXACTLY.
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(payload, &raw))
+	for _, field := range []string{
 		"currency_code", "items", "shipping_methods", "items_discount_total",
 		"shipping_discount_total", "discount_total", "applied", "unmatched_codes",
 	} {
-		assert.Contains(t, gelen, alan, "%q alanı şemada olmalı", alan)
+		assert.Contains(t, raw, field, "the %q field has to be in the schema", field)
 	}
 
-	var cozulen interopResponse
-	require.NoError(t, json.Unmarshal(payload, &cozulen))
+	var decoded interopResponse
+	require.NoError(t, json.Unmarshal(payload, &decoded))
 
-	assert.Equal(t, "TRY", cozulen.CurrencyCode)
-	require.Len(t, cozulen.Items, 1)
-	assert.Equal(t, "li_1", cozulen.Items[0].ID)
-	assert.Equal(t, int64(5000), cozulen.Items[0].Amount)
-	require.Len(t, cozulen.ShippingMethods, 1)
-	assert.Equal(t, int64(4990), cozulen.ShippingMethods[0].Amount)
-	assert.Equal(t, int64(5000), cozulen.ItemsDiscountTotal)
-	assert.Equal(t, int64(4990), cozulen.ShippingDiscountTotal)
-	assert.Equal(t, int64(9990), cozulen.DiscountTotal)
-	assert.Equal(t, []string{"HICYOK"}, cozulen.UnmatchedCodes)
+	assert.Equal(t, "TRY", decoded.CurrencyCode)
+	require.Len(t, decoded.Items, 1)
+	assert.Equal(t, "li_1", decoded.Items[0].ID)
+	assert.Equal(t, int64(5000), decoded.Items[0].Amount)
+	require.Len(t, decoded.ShippingMethods, 1)
+	assert.Equal(t, int64(4990), decoded.ShippingMethods[0].Amount)
+	assert.Equal(t, int64(5000), decoded.ItemsDiscountTotal)
+	assert.Equal(t, int64(4990), decoded.ShippingDiscountTotal)
+	assert.Equal(t, int64(9990), decoded.DiscountTotal)
+	assert.Equal(t, []string{"HICYOK"}, decoded.UnmatchedCodes)
 
-	require.Len(t, cozulen.Applied, 2)
-	assert.Equal(t, "YAZ20", cozulen.Applied[0].Code)
-	assert.False(t, cozulen.Applied[0].IsAutomatic)
-	assert.Equal(t, "KARGO", cozulen.Applied[1].Code)
-	assert.True(t, cozulen.Applied[1].IsAutomatic)
+	require.Len(t, decoded.Applied, 2)
+	assert.Equal(t, "YAZ20", decoded.Applied[0].Code)
+	assert.False(t, decoded.Applied[0].IsAutomatic)
+	assert.Equal(t, "KARGO", decoded.Applied[1].Code)
+	assert.True(t, decoded.Applied[1].IsAutomatic)
 
-	var appliedToplam int64
-	for _, uygulanan := range cozulen.Applied {
-		appliedToplam += uygulanan.Amount
+	var appliedTotal int64
+	for _, applied := range decoded.Applied {
+		appliedTotal += applied.Amount
 	}
-	assert.Equal(t, cozulen.DiscountTotal, appliedToplam,
-		"şemanın beyan ettiği kimlik: Σ applied = discount_total")
+	assert.Equal(t, decoded.DiscountTotal, appliedTotal,
+		"the identity the schema declares: Σ applied = discount_total")
 }
 
-func TestComputeDiscountsJSONBosListeleriNullDegilDiziYazar(t *testing.T) {
+func TestComputeDiscountsJSONWritesEmptyListsAsArraysNotNull(t *testing.T) {
 	interop := NewInterop(newTestService(newMemRepo()))
 
 	payload, err := interop.ComputeDiscountsJSON(context.Background(),
@@ -88,61 +89,62 @@ func TestComputeDiscountsJSONBosListeleriNullDegilDiziYazar(t *testing.T) {
 	  "discount_total": 0,
 	  "applied": [],
 	  "unmatched_codes": []
-	}`, string(payload), "tüketici için tek biçimli bir yüzey: boş liste null değil []'dir")
+	}`, string(payload), "a uniform surface for the consumer: an empty list is [], not null")
 }
 
-func TestComputeDiscountsJSONBozukGovde(t *testing.T) {
+func TestComputeDiscountsJSONMalformedBody(t *testing.T) {
 	interop := NewInterop(newTestService(newMemRepo()))
 
-	testler := []struct {
-		ad      string
-		govde   string
-		gerekce string
+	tests := []struct {
+		name   string
+		body   string
+		reason string
 	}{
-		{ad: "boş gövde", govde: "", gerekce: "boş istek çözülemez"},
-		{ad: "bozuk JSON", govde: `{`, gerekce: "eksik JSON çözülemez"},
+		{name: "empty body", body: "", reason: "an empty request cannot be decoded"},
+		{name: "malformed JSON", body: `{`, reason: "incomplete JSON cannot be decoded"},
 		{
-			ad:      "bilinmeyen alan",
-			govde:   `{"currency_code": "TRY", "bilinmeyen": 1}`,
-			gerekce: "sessizce yok sayılan bir alan, gönderilenin hiç işlenmemesi demektir",
+			name:   "unknown field",
+			body:   `{"currency_code": "TRY", "unknown": 1}`,
+			reason: "a silently ignored field means what was sent was never processed",
 		},
 		{
-			ad:      "bozuk zaman damgası",
-			govde:   `{"currency_code": "TRY", "at": "dün"}`,
-			gerekce: "bozuk damga sessizce 'şimdi'ye düşmemeli",
+			name:   "malformed timestamp",
+			body:   `{"currency_code": "TRY", "at": "yesterday"}`,
+			reason: "a malformed timestamp must not silently fall back to 'now'",
 		},
 	}
 
-	for _, tt := range testler {
-		t.Run(tt.ad, func(t *testing.T) {
-			_, err := interop.ComputeDiscountsJSON(context.Background(), []byte(tt.govde))
-			require.Error(t, err, tt.gerekce)
-			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), tt.gerekce)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := interop.ComputeDiscountsJSON(context.Background(), []byte(tt.body))
+			require.Error(t, err, tt.reason)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), tt.reason)
 			assert.Equal(t, CodeInteropRequestInvalid, errors.CodeOf(err))
 		})
 	}
 }
 
-func TestComputeDiscountsJSONBuyukTamSayilariBozmaz(t *testing.T) {
+func TestComputeDiscountsJSONDoesNotCorruptLargeIntegers(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YUZDE1", IsAutomatic: true},
 		percentageMethod("promo_1", 100, models.TargetItems, models.AllocationEach))
 
 	interop := NewInterop(newTestService(repo))
-	// float64 yalnızca 2^53'e kadar tam sayıyı kayıpsız taşır; buradaki tutar
-	// onun üzerindedir ve JSON'dan float'a uğrasaydı kuruş düzeyinde bozulurdu.
-	istek := []byte(`{"currency_code":"TRY","items":[{"id":"li_1","amount":999999999999,"unit_amount":999999999999,"quantity":1}]}`)
+	// float64 carries integers losslessly only up to 2^53; the amount here is
+	// above that, and had it passed through a float on its way from JSON it
+	// would have been corrupted at the minor-unit level.
+	request := []byte(`{"currency_code":"TRY","items":[{"id":"li_1","amount":999999999999,"unit_amount":999999999999,"quantity":1}]}`)
 
-	payload, err := interop.ComputeDiscountsJSON(context.Background(), istek)
+	payload, err := interop.ComputeDiscountsJSON(context.Background(), request)
 	require.NoError(t, err)
 
-	var cozulen interopResponse
-	require.NoError(t, json.Unmarshal(payload, &cozulen))
-	assert.Equal(t, int64(9_999_999_999), cozulen.DiscountTotal,
-		"%%1 × 999999999999 = 9999999999 (aşağı yuvarlanmış); float bu değeri bozardı")
+	var decoded interopResponse
+	require.NoError(t, json.Unmarshal(payload, &decoded))
+	assert.Equal(t, int64(9_999_999_999), decoded.DiscountTotal,
+		"1%% × 999999999999 = 9999999999 (rounded down); a float would corrupt this value")
 }
 
-func TestComputeDiscountsJSONZamanDamgasiKampanyaPenceresiniSecer(t *testing.T) {
+func TestComputeDiscountsJSONTimestampSelectsTheCampaignWindow(t *testing.T) {
 	repo := newMemRepo()
 	repo.campaigns["camp_1"] = models.Campaign{
 		ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ", BudgetType: models.BudgetNone,
@@ -153,23 +155,23 @@ func TestComputeDiscountsJSONZamanDamgasiKampanyaPenceresiniSecer(t *testing.T) 
 	}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 	interop := NewInterop(newTestService(repo))
-	kalem := `"currency_code":"TRY","items":[{"id":"li_1","amount":10000,"unit_amount":10000,"quantity":1}]`
+	item := `"currency_code":"TRY","items":[{"id":"li_1","amount":10000,"unit_amount":10000,"quantity":1}]`
 
-	simdi, err := interop.ComputeDiscountsJSON(context.Background(), []byte("{"+kalem+"}"))
+	now, err := interop.ComputeDiscountsJSON(context.Background(), []byte("{"+item+"}"))
 	require.NoError(t, err)
-	assert.Contains(t, string(simdi), `"discount_total":0`,
-		"kampanya penceresi kapandığı için bugün indirim yok")
+	assert.Contains(t, string(now), `"discount_total":0`,
+		"no discount today, because the campaign window has closed")
 
-	gecmisAn := testNow.Add(-24 * time.Hour).Format(time.RFC3339)
-	gecmis, err := interop.ComputeDiscountsJSON(context.Background(),
-		[]byte(fmt.Sprintf("{%s,\"at\":%q}", kalem, gecmisAn)))
+	pastMoment := testNow.Add(-24 * time.Hour).Format(time.RFC3339)
+	past, err := interop.ComputeDiscountsJSON(context.Background(),
+		[]byte(fmt.Sprintf("{%s,\"at\":%q}", item, pastMoment)))
 	require.NoError(t, err)
-	assert.Contains(t, string(gecmis), `"discount_total":2000`,
-		"geçmiş bir an verildiğinde kampanya penceresi O ANA göre değerlendirilir")
+	assert.Contains(t, string(past), `"discount_total":2000`,
+		"when a past moment is given, the campaign window is evaluated against THAT moment")
 }
 
-func TestInteropRedeemVeReleaseIlkelYuzeydenCalisir(t *testing.T) {
-	repo := kuponluDepo(nil, nil)
+func TestInteropRedeemAndReleaseWorkThroughThePrimitiveSurface(t *testing.T) {
+	repo := repoWithCoupon(nil, nil)
 	interop := NewInterop(newTestService(repo))
 
 	id, err := interop.RedeemPromotion(context.Background(), "", "yaz20", "order_1", "TRY", 2500)
@@ -177,9 +179,9 @@ func TestInteropRedeemVeReleaseIlkelYuzeydenCalisir(t *testing.T) {
 	assert.NotEmpty(t, id)
 	assert.Equal(t, int64(1), repo.promotions["promo_1"].UsageCount)
 
-	ikinciID, err := interop.RedeemPromotion(context.Background(), "", "yaz20", "order_1", "TRY", 2500)
+	secondID, err := interop.RedeemPromotion(context.Background(), "", "yaz20", "order_1", "TRY", 2500)
 	require.NoError(t, err)
-	assert.Equal(t, id, ikinciID, "ilkel yüzey de idempotenttir")
+	assert.Equal(t, id, secondID, "the primitive surface is idempotent too")
 	assert.Equal(t, int64(1), repo.promotions["promo_1"].UsageCount)
 
 	released, err := interop.ReleasePromotion(context.Background(), "promo_1", "", "order_1")
@@ -187,7 +189,7 @@ func TestInteropRedeemVeReleaseIlkelYuzeydenCalisir(t *testing.T) {
 	assert.True(t, released)
 
 	released, err = interop.ReleasePromotion(context.Background(), "promo_1", "", "order_1")
-	require.NoError(t, err, "telafi tekrar çalıştırılabilir")
+	require.NoError(t, err, "the compensation can be rerun")
 	assert.False(t, released)
 	assert.Zero(t, repo.promotions["promo_1"].UsageCount)
 }

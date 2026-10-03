@@ -6,34 +6,36 @@ import (
 	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
-// storeGetPromotion bir kupon kodunu doğrular
+// storeGetPromotion validates a coupon code
 // (GET /store/v1/promotions/{code}).
 //
-// Store tarafındaki TEK promotion uç noktasıdır ve YALNIZCA okur; kupon
-// kullanımı (sayaç artırma) yönetim ve sipariş akışının işidir.
+// It is the ONLY promotion endpoint on the store side and it ONLY reads; using
+// a coupon (incrementing the counter) is the job of the admin and order flows.
 //
-// # Ne DÖNER
+// # What it RETURNS
 //
-// Kuponun kodu ve indirimin türü/hedefi/değeri. Bu kadarı zorunludur: müşteri,
-// yazdığı kodun ne yaptığını görmeden sepetine uygulayamaz.
+// The coupon's code and the discount's type/target/value. This much is
+// required: a customer cannot apply a code to their cart without seeing what
+// the code they typed does.
 //
-// # Ne DÖNMEZ
+// # What it does NOT return
 //
-// Promosyonun DURUMU, kullanım sayacı, campaign id ve bütçesi, üstverisi
-// ve KURAL KOŞULLARI. Bir kuralın sağ tarafı (örn. bir müşteri grubunun
-// kimliği ya da bir segment listesi) iş bilgisidir.
+// The promotion's STATUS, the usage counter, the campaign id and budget, the
+// metadata and the RULE CONDITIONS. A rule's right-hand side (e.g. a customer
+// group's id or a segment list) is business information.
 //
-// # Neden sebep söylenmez
+// # Why no reason is given
 //
-// Kod yoksa, promosyon taslak/pasif ise, kampanyasının penceresi kapalıysa,
-// bütçesi tükenmişse ya da kullanım hakkı bittiyse AYNI 404 döner. Ayrım
-// yapılsaydı, kod tahmin eden biri "bu kod var ama kampanyası henüz
-// başlamadı" cevabından yayınlanmamış bir kampanya takvimi çıkarabilirdi.
+// If the code does not exist, if the promotion is draft/inactive, if its
+// campaign's window is closed, if its budget is exhausted or if its usage
+// allowance has run out, the SAME 404 is returned. Were a distinction made,
+// someone guessing codes could read an unpublished campaign calendar off an
+// answer like "this code exists but its campaign has not started yet".
 //
-// Kuponun bu SEPETTE gerçekten indirim üretip üretmediği ayrı bir sorudur ve
-// cevabı sepet toplamının kendisidir: kural koşulları ancak sepet bağlamıyla
-// değerlendirilebilir ve burada değerlendirilmeleri, koşulun VARLIĞINI ele
-// verirdi.
+// Whether the coupon actually produces a discount in THIS CART is a separate
+// question, and its answer is the cart total itself: rule conditions can only
+// be evaluated with the cart's context, and evaluating them here would give
+// away the EXISTENCE of the condition.
 func (a *API) storeGetPromotion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

@@ -11,49 +11,54 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/repository/promotiondb"
 )
 
-// Redeem promosyonu bir referans için kullanır ve sayaçları artırır.
+// Redeem redeems the promotion for a reference and increments the counters.
 //
-// req'ten YALNIZCA ID, PromotionID, Reference, Amount ve CurrencyCode okunur;
-// CampaignID, BudgetDelta ve zaman damgaları YOK SAYILIR çünkü onlar kilit
-// altında okunan kampanyadan türetilir. Çağıranın gönderdiği bir bütçe payı
-// kabul edilseydi, defterle sayacın ayrışması istemcinin elinde olurdu.
+// ONLY ID, PromotionID, Reference, Amount and CurrencyCode are read from req;
+// CampaignID, BudgetDelta and the timestamps are IGNORED because they are
+// derived from the campaign read under the lock. Had a budget share sent by the
+// caller been accepted, whether the ledger and the counter diverge would have
+// been in the client's hands.
 //
-// İkinci dönüş değeri kaydın BU ÇAĞRIDA oluşturulup oluşturulmadığını bildirir;
-// false ise kullanım zaten vardı ve hiçbir sayaç değişmedi.
+// The second return value reports whether the record was created IN THIS CALL;
+// if it is false, the redemption already existed and no counter changed.
 //
-// # Neden tek işlem ve iki kilit
+// # Why one transaction and two locks
 //
-// Adımlar tek bir işlemde ve HER ZAMAN aynı kilit sırasıyla (önce promosyon,
-// sonra kampanya) yürür:
+// The steps run in a single transaction and ALWAYS in the same lock order
+// (first the promotion, then the campaign):
 //
-//  1. Promosyon satırı FOR UPDATE ile kilitlenir. Bu, aynı promosyonun tüm
-//     eşzamanlı kullanımlarını SERİ hâle getirir; "önce oku sonra yaz" yarışı
-//     oluşamaz.
-//  2. Aynı referans için GEÇERLİ bir kullanım varsa o kayıt dönür ve sayaçlara
-//     DOKUNULMAZ — idempotency budur. Kilit altında bakıldığı için iki
-//     eşzamanlı çağrıdan yalnızca biri kaydı oluşturur.
-//  3. Promosyonun DURUMU denetlenir; yayında değilse errors.Conflict döner.
-//  4. Kampanya varsa satırı kilitlenir; tarih penceresi kullanım anını
-//     kapsamalıdır ve bütçe para biriminde ölçülüyorsa kullanımın para
-//     birimiyle eşleşmesi ŞARTTIR (yoksa iki para birimi aynı sayaçta
-//     toplanırdı).
-//  5. Sayaçlar KOŞULLU UPDATE ile artırılır: sınır aşılacaksa satır
-//     güncellenmez ve işlem errors.Conflict ile geri alınır.
-//  6. Defter satırı yazılır; sayaç ile defter ya birlikte yazılır ya hiç
-//     yazılmaz.
+//  1. The promotion row is locked with FOR UPDATE. This makes all concurrent
+//     redemptions of the same promotion SERIAL; a "read first, then write"
+//     race cannot form.
+//  2. If there is a VALID redemption for the same reference, that record is
+//     returned and the counters are NOT TOUCHED — that is the idempotency.
+//     Because the lookup happens under the lock, only one of two concurrent
+//     calls creates the record.
+//  3. The promotion's STATUS is checked; if it is not live, errors.Conflict is
+//     returned.
+//  4. If there is a campaign, its row is locked; the date window must cover
+//     the moment of redemption, and if the budget is measured in a currency,
+//     the redemption's currency MUST match it (otherwise two currencies would
+//     have been added up on the same counter).
+//  5. The counters are incremented with a CONDITIONAL UPDATE: if the limit
+//     would be exceeded, the row is not updated and the transaction is rolled
+//     back with errors.Conflict.
+//  6. The ledger row is written; the counter and the ledger are either written
+//     together or not at all.
 //
-// Kilit sırasının sabit olması zorunludur: aynı kampanyaya bağlı iki promosyon
-// eşzamanlı kullanıldığında ikisi de aynı kampanya satırını ister ve ters sıra
-// kilitlenme (deadlock) demektir.
+// A fixed lock order is mandatory: when two promotions tied to the same
+// campaign are redeemed concurrently, both want the same campaign row, and the
+// opposite order means a deadlock.
 //
-// # Uygunluk denetimi İDEMPOTENCY'DEN SONRA gelir
+// # The eligibility checks come AFTER THE IDEMPOTENCY
 //
-// Durum ve pencere denetimleri BİLEREK 2. adımdan sonradır. Sıra ters olsaydı,
-// kullanımı yazıldıktan sonra durdurulan bir promosyonun saga adımı yeniden
-// çalıştığında hata dönerdi; oysa o kullanım zaten defterdedir ve tekrar,
-// yalnızca var olan kaydın okunması demektir. Telafi (bkz. [Repo.Release])
-// aynı sebeple hiçbir uygunluk denetimi yapmaz: durdurulmuş bir promosyonun
-// kullanımı da geri alınabilmelidir.
+// The status and window checks come after step 2 ON PURPOSE. Had the order
+// been reversed, the saga step of a promotion stopped after its redemption was
+// written would have returned an error when it ran again; yet that redemption
+// is already in the ledger, and a repeat means only reading the existing
+// record. The compensation (see [Repo.Release]) does no eligibility check for
+// the same reason: the redemption of a stopped promotion must be releasable
+// too.
 func (r *Repo) Redeem(ctx context.Context, req models.Redemption, now time.Time) (models.Redemption, bool, error) {
 	var (
 		out     models.Redemption
@@ -63,7 +68,7 @@ func (r *Repo) Redeem(ctx context.Context, req models.Redemption, now time.Time)
 	err := r.inTx(ctx, func(q *promotiondb.Queries) error {
 		promoRow, err := q.LockPromotion(ctx, req.PromotionID)
 		if err != nil {
-			return notFoundOr(err, CodePromotionNotFound, "promosyon bulunamadı: %s", req.PromotionID)
+			return notFoundOr(err, CodePromotionNotFound, "promotion not found: %s", req.PromotionID)
 		}
 		promo := toPromotion(promoRow)
 
@@ -76,12 +81,12 @@ func (r *Repo) Redeem(ctx context.Context, req models.Redemption, now time.Time)
 			out, created = toRedemption(existing), false
 			return nil
 		case !errors.Is(err, pgx.ErrNoRows):
-			return wrapDB(err, "kullanım kaydı okunamadı: %s/%s", req.PromotionID, req.Reference)
+			return wrapDB(err, "the redemption record could not be read: %s/%s", req.PromotionID, req.Reference)
 		}
 
 		if promo.Status != models.PromotionActive {
 			return errors.Conflict(CodePromotionNotActive,
-				"promosyon yayında değil: %s (durum: %s)", req.PromotionID, promo.Status)
+				"the promotion is not live: %s (status: %s)", req.PromotionID, promo.Status)
 		}
 
 		delta, campaignID, err := lockBudget(ctx, q, promo, req, now)
@@ -95,9 +100,9 @@ func (r *Repo) Redeem(ctx context.Context, req models.Redemption, now time.Time)
 		}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return errors.Conflict(CodeUsageLimitReached,
-					"promosyonun kullanım hakkı bitti: %s", req.PromotionID)
+					"the promotion's uses have run out: %s", req.PromotionID)
 			}
-			return wrapDB(err, "kullanım sayacı artırılamadı: %s", req.PromotionID)
+			return wrapDB(err, "the usage counter could not be incremented: %s", req.PromotionID)
 		}
 
 		if delta > 0 && campaignID != nil {
@@ -108,9 +113,9 @@ func (r *Repo) Redeem(ctx context.Context, req models.Redemption, now time.Time)
 			}); err != nil {
 				if errors.Is(err, pgx.ErrNoRows) {
 					return errors.Conflict(CodeBudgetExceeded,
-						"kampanya bütçesi yetmiyor: %s (istenen: %d)", *campaignID, delta)
+						"the campaign budget does not suffice: %s (requested: %d)", *campaignID, delta)
 				}
-				return wrapDB(err, "kampanya bütçesi artırılamadı: %s", *campaignID)
+				return wrapDB(err, "the campaign budget could not be incremented: %s", *campaignID)
 			}
 		}
 
@@ -125,7 +130,7 @@ func (r *Repo) Redeem(ctx context.Context, req models.Redemption, now time.Time)
 			CreatedAt:    fromTime(now),
 		})
 		if err != nil {
-			return wrapDB(err, "kullanım kaydı yazılamadı: %s/%s", req.PromotionID, req.Reference)
+			return wrapDB(err, "the redemption record could not be written: %s/%s", req.PromotionID, req.Reference)
 		}
 
 		out, created = toRedemption(row), true
@@ -137,12 +142,13 @@ func (r *Repo) Redeem(ctx context.Context, req models.Redemption, now time.Time)
 	return out, created, nil
 }
 
-// lockBudget kampanyayı kilitler, kullanım anında kullanılabilir olduğunu
-// doğrular ve bütçeden ne kadar tüketeceğini hesaplar.
+// lockBudget locks the campaign, verifies that it is usable at the moment of
+// redemption and computes how much of the budget will be consumed.
 //
-// Kampanyasız promosyonda sıfır ve nil döner. Kampanya kimliği dolu ama satır
-// bulunamıyorsa kampanya işlem sırasında SİLİNMİŞTİR ve çakışma dönülür:
-// silinmiş bir kampanyanın bütçesine yazmak, defteri sahipsiz bırakırdı.
+// For a promotion without a campaign it returns zero and nil. If the campaign
+// id is filled but the row cannot be found, the campaign was DELETED during the
+// transaction and a conflict is returned: writing to a deleted campaign's
+// budget would have left the ledger without an owner.
 func lockBudget(
 	ctx context.Context,
 	q *promotiondb.Queries,
@@ -159,25 +165,26 @@ func lockBudget(
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, nil, campaignGone(*promo.CampaignID)
 		}
-		return 0, nil, wrapDB(err, "kampanya kilitlenemedi: %s", *promo.CampaignID)
+		return 0, nil, wrapDB(err, "the campaign could not be locked: %s", *promo.CampaignID)
 	}
 	campaign := toCampaign(campRow)
 
-	// Penceresi kapalı bir kampanyanın bütçesi yenemez. Denetim kilidin ARDINDAN
-	// yapılır ki pencere ile sayaç aynı anın kaydı olsun; bütçe sınırının hakemi
-	// zaten burasıdır ve pencerenin başka bir yere bırakılması, hesapta elenen
-	// ama kullanımda kabul edilen bir promosyon bırakırdı.
+	// The budget of a campaign whose window is closed cannot be spent. The check
+	// is made AFTER the lock so that the window and the counter are a record of
+	// the same moment; this is already where the budget limit is refereed, and
+	// leaving the window to some other place would have left a promotion that is
+	// skipped in the computation but accepted at redemption.
 	if !campaign.WindowContains(now) {
 		return 0, nil, errors.Conflict(CodeCampaignWindowClosed,
-			"kampanyanın tarih penceresi kullanım anını kapsamıyor: %s", campaign.ID)
+			"the campaign's date window does not cover the moment of redemption: %s", campaign.ID)
 	}
 
-	// Para birimi ölçülü bir bütçe yalnızca KENDİ para biriminde tüketilebilir.
-	// Aksi hâlde 100 TRY ile 100 USD aynı sayaçta toplanır ve bütçe anlamını
-	// yitirirdi.
+	// A budget measured in a currency can be consumed only in its OWN currency.
+	// Otherwise 100 TRY and 100 USD would be added up on the same counter and the
+	// budget would lose its meaning.
 	if campaign.BudgetType == models.BudgetSpend && campaign.BudgetCurrencyCode != req.CurrencyCode {
 		return 0, nil, errors.Conflict(CodeBudgetCurrencyMismatch,
-			"kampanya bütçesi %s para biriminde; kullanım %s para biriminde geldi (kampanya: %s)",
+			"the campaign budget is in %s; the redemption came in %s (campaign: %s)",
 			campaign.BudgetCurrencyCode, req.CurrencyCode, campaign.ID)
 	}
 
@@ -185,27 +192,30 @@ func lockBudget(
 	return campaign.BudgetDeltaFor(req.Amount), &id, nil
 }
 
-// Release bir kullanımı serbest bırakır ve sayaçları geri alır.
+// Release releases a redemption and rolls the counters back.
 //
-// İkinci dönüş değeri BU ÇAĞRIDA bir şeyin geri alınıp alınmadığını bildirir.
+// The second return value reports whether anything was rolled back IN THIS
+// CALL.
 //
-// # İDEMPOTENTTİR
+// # IT IS IDEMPOTENT
 //
-// Saga telafisi olarak çağrıldığı için tekrar çalıştırılabilir olmak zorundadır
-// (plan Bölüm 5.5). İki savunma vardır:
+// Because it is called as a saga compensation it has to be safe to run again
+// (plan Section 5.5). There are two defenses:
 //
-//   - Satır kilidi: geçerli kullanım FOR UPDATE ile kilitlenir, iki eşzamanlı
-//     Release'ten yalnızca biri satırı bırakabilir.
-//   - Koşullu UPDATE: işaretleme yalnızca released_at IS NULL iken yazar.
+//   - The row lock: the valid redemption is locked with FOR UPDATE, so only one
+//     of two concurrent Releases can release the row.
+//   - The conditional UPDATE: the marking writes only while released_at IS
+//     NULL.
 //
-// Hiç kullanım YOKSA (ya da zaten bırakılmışsa) çağrı hata VERMEZ: telafi,
-// yazılmadan patlamış bir adımın ardından da çalışabilmelidir. Promosyonun
-// KENDİSİ yoksa errors.NotFound döner — bu, telafinin sessizce yutmaması
-// gereken bir kurulum hatasıdır.
+// If there is NO redemption at all (or it was already released), the call
+// returns NO error: the compensation must also be able to run after a step
+// that blew up before writing. If the promotion ITSELF does not exist,
+// errors.NotFound is returned — that is a setup error the compensation must not
+// silently swallow.
 //
-// Kampanya bu arada silinmişse bütçe düşümü ATLANIR ve serbest bırakma yine de
-// tamamlanır: bir kampanyanın silinmesi, telafiyi düşürmek için yeterli bir
-// sebep değildir.
+// If the campaign has been deleted in the meantime, the budget decrement is
+// SKIPPED and the release still completes: a campaign being deleted is not a
+// good enough reason to fail the compensation.
 func (r *Repo) Release(
 	ctx context.Context,
 	promotionID, reference string,
@@ -218,7 +228,7 @@ func (r *Repo) Release(
 
 	err := r.inTx(ctx, func(q *promotiondb.Queries) error {
 		if _, err := q.LockPromotion(ctx, promotionID); err != nil {
-			return notFoundOr(err, CodePromotionNotFound, "promosyon bulunamadı: %s", promotionID)
+			return notFoundOr(err, CodePromotionNotFound, "promotion not found: %s", promotionID)
 		}
 
 		locked, err := q.LockActiveRedemption(ctx, promotiondb.LockActiveRedemptionParams{
@@ -227,11 +237,11 @@ func (r *Repo) Release(
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				// Geri alınacak bir şey yok; telafi zaten çalışmış ya da hiç
-				// kullanım yazılmamış demektir.
+				// There is nothing to roll back; it means the compensation already
+				// ran or no redemption was ever written.
 				return nil
 			}
-			return wrapDB(err, "kullanım kaydı kilitlenemedi: %s/%s", promotionID, reference)
+			return wrapDB(err, "the redemption record could not be locked: %s/%s", promotionID, reference)
 		}
 		redemption := toRedemption(locked)
 
@@ -241,7 +251,7 @@ func (r *Repo) Release(
 				Delta: redemption.BudgetDelta,
 				Now:   fromTime(now),
 			}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return wrapDB(err, "kampanya bütçesi düşürülemedi: %s", *redemption.CampaignID)
+				return wrapDB(err, "the campaign budget could not be decremented: %s", *redemption.CampaignID)
 			}
 		}
 
@@ -249,7 +259,7 @@ func (r *Repo) Release(
 			ID:  promotionID,
 			Now: fromTime(now),
 		}); err != nil {
-			return wrapDB(err, "kullanım sayacı düşürülemedi: %s", promotionID)
+			return wrapDB(err, "the usage counter could not be decremented: %s", promotionID)
 		}
 
 		row, err := q.MarkRedemptionReleased(ctx, promotiondb.MarkRedemptionReleasedParams{
@@ -258,15 +268,16 @@ func (r *Repo) Release(
 		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				// Kayıt, biz kilidi tutarken bırakılmış demektir — satır kilidi
-				// altında bu OLAMAZ. Buraya düşmek kilidin çalışmadığını
-				// gösterir ve durum sessizce yutulmaz; ama sınıf Conflict'tir
-				// (Internal değil), çünkü istek geçerliydi ve yeniden
-				// denenebilir. Sayaçlar bu dalda işlemle birlikte geri alınır.
+				// It means the record was released while we held the lock —
+				// under the row lock this CANNOT happen. Landing here shows that
+				// the lock did not work, and the situation is not silently
+				// swallowed; but the class is Conflict (not Internal), because
+				// the request was valid and can be retried. In this branch the
+				// counters are rolled back together with the transaction.
 				return errors.Conflict(CodeRedemptionRaced,
-					"kullanım kaydı bırakılırken başka bir çağrı araya girdi: %s", redemption.ID)
+					"another call got in while the redemption record was being released: %s", redemption.ID)
 			}
-			return wrapDB(err, "kullanım kaydı serbest bırakılamadı: %s", redemption.ID)
+			return wrapDB(err, "the redemption record could not be released: %s", redemption.ID)
 		}
 
 		out, released = toRedemption(row), true
@@ -278,7 +289,8 @@ func (r *Repo) Release(
 	return out, released, nil
 }
 
-// GetRedemption bir referansın GEÇERLİ kullanımını döner; yoksa errors.NotFound.
+// GetRedemption returns a reference's VALID redemption; if there is none,
+// errors.NotFound.
 func (r *Repo) GetRedemption(ctx context.Context, promotionID, reference string) (models.Redemption, error) {
 	if err := r.ready(); err != nil {
 		return models.Redemption{}, err
@@ -290,15 +302,15 @@ func (r *Repo) GetRedemption(ctx context.Context, promotionID, reference string)
 	})
 	if err != nil {
 		return models.Redemption{}, notFoundOr(err, CodePromotionNotFound,
-			"kullanım kaydı bulunamadı: %s/%s", promotionID, reference)
+			"redemption record not found: %s/%s", promotionID, reference)
 	}
 	return toRedemption(row), nil
 }
 
-// ListRedemptions bir promosyonun kullanım defterini sayfalanmış olarak döner.
+// ListRedemptions returns a promotion's redemption ledger, paginated.
 //
-// Serbest bırakılmış kayıtlar da DÖNER: defter bir geçmiştir ve geri alınmış
-// bir kullanımın izi silinmemelidir.
+// Released records are returned TOO: the ledger is a history, and the trace of
+// a redemption that was rolled back must not be erased.
 func (r *Repo) ListRedemptions(
 	ctx context.Context,
 	promotionID string,
@@ -314,11 +326,11 @@ func (r *Repo) ListRedemptions(
 		Offset:      offset,
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "kullanım defteri okunamadı: %s", promotionID)
+		return nil, 0, wrapDB(err, "the redemption ledger could not be read: %s", promotionID)
 	}
 	total, err := r.q.CountRedemptions(ctx, promotionID)
 	if err != nil {
-		return nil, 0, wrapDB(err, "kullanım sayısı alınamadı: %s", promotionID)
+		return nil, 0, wrapDB(err, "the redemption count could not be read: %s", promotionID)
 	}
 
 	out := make([]models.Redemption, 0, len(rows))
@@ -328,7 +340,7 @@ func (r *Repo) ListRedemptions(
 	return out, total, nil
 }
 
-// toRedemption üretilen satırı domain modeline çevirir.
+// toRedemption turns the generated row into the domain model.
 func toRedemption(row promotiondb.PromotionRedemption) models.Redemption {
 	return models.Redemption{
 		ID:           row.ID,

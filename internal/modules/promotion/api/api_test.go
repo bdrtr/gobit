@@ -18,30 +18,33 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/promotion/service"
 )
 
-// testNow testlerin sabit saatidir.
+// testNow is the tests' fixed clock.
 var testNow = time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
 
-// adminKimlik testlerin varsayılan çağıranıdır: tam yetkili yönetici.
+// adminPrincipal is the tests' default caller: a fully privileged admin.
 //
-// Yönetim uçları corehttp.RequireScope ile korunuyor ve o middleware
-// context'te kimlik YOKSA 401 döner. Bu testler router'ı doğrudan kuruyor,
-// yani zincirde kimliği yerleştiren corehttp.RequireAdmin yok; kimliği bu
-// yüzden testin kendisi koyar. Eklenen tek şey KİMLİKTİR — testlerin
-// doğruladığı davranış (durum kodları, zarflar, sızıntı sınamaları) değişmedi.
-var adminKimlik = corehttp.Principal{
+// The admin endpoints are guarded by corehttp.RequireScope, and that
+// middleware returns 401 when there is NO identity in the context. These tests
+// build the router directly, so corehttp.RequireAdmin, which puts the identity
+// there, is not in the chain; that is why the test puts the identity there
+// itself. The only thing added is the IDENTITY — the behavior the tests verify
+// (status codes, envelopes, leak checks) did not change.
+var adminPrincipal = corehttp.Principal{
 	ID:     "usr_test",
 	Kind:   "user",
 	Scopes: []string{corehttp.ScopeAdmin},
 }
 
-// okumaKimligi yalnızca [api.ScopeRead] taşıyan dar yetkili çağırandır.
-var okumaKimligi = corehttp.Principal{
+// narrowPrincipal is a narrowly scoped caller that carries only
+// [api.ScopeRead].
+var narrowPrincipal = corehttp.Principal{
 	ID:     "usr_dar",
 	Kind:   "user",
 	Scopes: []string{api.ScopeRead},
 }
 
-// newTestRouter gerçek servis ve bellek içi depoyla bir router kurar.
+// newTestRouter builds a router with the real service and an in-memory
+// repository.
 func newTestRouter(t *testing.T) (chi.Router, *memRepo) {
 	t.Helper()
 
@@ -53,38 +56,39 @@ func newTestRouter(t *testing.T) (chi.Router, *memRepo) {
 	return r, repo
 }
 
-// do bir isteği tam yetkili kimlikle çalıştırır ve yanıtı döner.
+// do runs a request with the fully privileged identity and returns the
+// response.
 func do(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return doAs(t, r, adminKimlik, method, path, body)
+	return doAs(t, r, adminPrincipal, method, path, body)
 }
 
-// doAs bir isteği verilen kimlikle çalıştırır ve yanıtı döner.
-func doAs(t *testing.T, r chi.Router, kimlik corehttp.Principal, method, path, body string) *httptest.ResponseRecorder {
+// doAs runs a request with the given identity and returns the response.
+func doAs(t *testing.T, r chi.Router, principal corehttp.Principal, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(corehttp.WithPrincipal(req.Context(), kimlik))
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), principal))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	return rec
 }
 
-// decodeItem tekil zarfın data alanını çözer.
+// decodeItem decodes the data field of the single-record envelope.
 func decodeItem(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
 	var envelope struct {
 		Data map[string]any `json:"data"`
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "gövde: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "body: %s", rec.Body.String())
 	return envelope.Data
 }
 
-// decodeList liste zarfını çözer.
+// decodeList decodes the list envelope.
 func decodeList(t *testing.T, rec *httptest.ResponseRecorder) (data []map[string]any, count, offset, limit int64) {
 	t.Helper()
 
@@ -94,33 +98,33 @@ func decodeList(t *testing.T, rec *httptest.ResponseRecorder) (data []map[string
 		Offset int64            `json:"offset"`
 		Limit  int64            `json:"limit"`
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "gövde: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "body: %s", rec.Body.String())
 	return envelope.Data, envelope.Count, envelope.Offset, envelope.Limit
 }
 
-// promosyonOlustur bir promosyon yaratır ve kimliğini döner.
-func promosyonOlustur(t *testing.T, r chi.Router, govde string) string {
+// createPromotion creates a promotion and returns its id.
+func createPromotion(t *testing.T, r chi.Router, body string) string {
 	t.Helper()
 
-	rec := do(t, r, http.MethodPost, "/admin/v1/promotions", govde)
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+	rec := do(t, r, http.MethodPost, "/admin/v1/promotions", body)
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
 	id, ok := decodeItem(t, rec)["id"].(string)
-	require.True(t, ok, "yanıt bir kimlik taşımalı")
+	require.True(t, ok, "the response has to carry an id")
 	return id
 }
 
-func TestAdminKampanyaYasamDongusu(t *testing.T) {
+func TestAdminCampaignLifecycle(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	rec := do(t, r, http.MethodPost, "/admin/v1/campaigns", `{
-	  "name": "Yaz İndirimi",
+	  "name": "Summer Sale",
 	  "campaign_identifier": "YAZ-2026",
 	  "budget_type": "spend",
 	  "budget_limit": 100000,
 	  "budget_currency_code": "TRY"
 	}`)
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 
 	created := decodeItem(t, rec)
 	id, _ := created["id"].(string)
@@ -132,17 +136,17 @@ func TestAdminKampanyaYasamDongusu(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	rec = do(t, r, http.MethodPut, "/admin/v1/campaigns/"+id, `{
-	  "name": "Yaz İndirimi 2",
+	  "name": "Summer Sale 2",
 	  "campaign_identifier": "YAZ-2026",
 	  "budget_type": "none"
 	}`)
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
-	assert.Equal(t, "Yaz İndirimi 2", decodeItem(t, rec)["name"])
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, "Summer Sale 2", decodeItem(t, rec)["name"])
 
 	_, count, offset, limit := decodeList(t, do(t, r, http.MethodGet, "/admin/v1/campaigns", ""))
 	assert.Equal(t, int64(1), count)
 	assert.Equal(t, int64(0), offset)
-	assert.Equal(t, int64(service.DefaultLimit), limit, "zarf UYGULANAN limiti bildirir")
+	assert.Equal(t, int64(service.DefaultLimit), limit, "the envelope reports the APPLIED limit")
 
 	rec = do(t, r, http.MethodDelete, "/admin/v1/campaigns/"+id, "")
 	assert.Equal(t, http.StatusNoContent, rec.Code)
@@ -151,10 +155,10 @@ func TestAdminKampanyaYasamDongusu(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-func TestAdminPromosyonYasamDongusu(t *testing.T) {
+func TestAdminPromotionLifecycle(t *testing.T) {
 	r, _ := newTestRouter(t)
 
-	id := promosyonOlustur(t, r, `{"code": "yaz20", "status": "active", "is_automatic": true}`)
+	id := createPromotion(t, r, `{"code": "yaz20", "status": "active", "is_automatic": true}`)
 
 	rec := do(t, r, http.MethodGet, "/admin/v1/promotions/"+id, "")
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -163,17 +167,17 @@ func TestAdminPromosyonYasamDongusu(t *testing.T) {
 	rec = do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
 	  "type": "percentage", "target_type": "items", "allocation": "each", "value": 2000
 	}`)
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	method := decodeItem(t, rec)
 	assert.Equal(t, "percentage", method["type"])
-	assert.Nil(t, method["currency_code"], "yüzde indirimde para birimi null olmalı")
+	assert.Nil(t, method["currency_code"], "a percentage discount has to have a null currency")
 
 	rec = do(t, r, http.MethodPost, "/admin/v1/promotions/"+id+"/rules", `{
 	  "rule_type": "context", "attribute": "region_id", "operator": "eq", "values": ["reg_1"]
 	}`)
-	require.Equal(t, http.StatusCreated, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
 	ruleID, ok := decodeItem(t, rec)["id"].(string)
-	require.True(t, ok, "kural yanıtı bir kimlik taşımalı")
+	require.True(t, ok, "the rule response has to carry an id")
 
 	rules, count, _, _ := decodeList(t, do(t, r, http.MethodGet, "/admin/v1/promotions/"+id+"/rules", ""))
 	require.Len(t, rules, 1)
@@ -189,28 +193,30 @@ func TestAdminPromosyonYasamDongusu(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
 
-// TestAdminPromosyonGuncellemeGovdedeOlmayanAlanlariSifirlar PUT'un YERİNE
-// KOYMA olduğunu, kısmi güncelleme OLMADIĞINI doğrular.
+// TestAdminPromotionUpdateResetsFieldsAbsentFromTheBody proves that PUT is a
+// REPLACEMENT and NOT a partial update.
 //
-// Ölçüldüğünde (2026-09-07) bu işleyici %0'daydı: oluşturma, okuma, listeleme
-// ve silme kapsanmışken düzenleme ucu hiç çağrılmamıştı — yani promosyon
-// düzenlemenin HTTP yüzeyi hiç koşmadan yayınlanmıştı.
+// When measured (2026-09-07) this handler was at 0%: create, read, list and
+// delete were covered while the edit endpoint had never been called — that is,
+// the HTTP surface of promotion editing had shipped without ever running.
 //
-// İddianın ağırlığı sıfırlamadadır. PUT sessizce kısmi davransaydı, gövdesinde
-// yalnızca kodu gönderen bir operatör promosyonun otomatikliğini ve kullanım
-// sınırını FARKINDA OLMADAN korurdu; tersine, burada beklendiği gibi
-// yerine koyma yapıldığında o alanların kalkması operatörün İSTEDİĞİ şeydir
-// ve gerekçesi [service.Service.UpdatePromotion] godoc'undadır: "alan
-// gönderilmedi" ile "alan boşaltılsın" ayrımını istemciye bırakmak, bir
-// promosyonun kampanyasını sökme isteğini sessizce yutardı.
+// The weight of the assertion is on the reset. Had PUT silently behaved as a
+// partial update, an operator sending only the code in the body would have kept
+// the promotion's automatic flag and usage limit WITHOUT REALIZING IT;
+// conversely, when a replacement is done as expected here, those fields going
+// away is what the operator ASKED FOR, and the rationale is in the
+// [service.Service.UpdatePromotion] godoc: leaving the distinction between
+// "field not sent" and "clear the field" to the client would silently swallow a
+// request to detach a promotion from its campaign.
 //
-// Durum alanının da düşmesi ayrıca sınanır: gövdede durum yoksa promosyon
-// TASLAĞA döner, yani yayında kalmaz. Bu, yanlışlıkla eksik gönderilmiş bir
-// düzenlemenin GÜVENLİ yönde bittiğini söyler.
-func TestAdminPromosyonGuncellemeGovdedeOlmayanAlanlariSifirlar(t *testing.T) {
+// The status field dropping is tested separately too: when the body carries no
+// status, the promotion goes back to DRAFT, that is, it does not stay
+// published. This says that an edit sent incomplete by mistake ends in the SAFE
+// direction.
+func TestAdminPromotionUpdateResetsFieldsAbsentFromTheBody(t *testing.T) {
 	r, _ := newTestRouter(t)
 
-	id := promosyonOlustur(t, r, `{
+	id := createPromotion(t, r, `{
 	  "code": "yaz20",
 	  "status": "active",
 	  "is_automatic": true,
@@ -219,55 +225,55 @@ func TestAdminPromosyonGuncellemeGovdedeOlmayanAlanlariSifirlar(t *testing.T) {
 	}`)
 
 	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id, `{"code": "kis20"}`)
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
-	guncel := decodeItem(t, rec)
-	assert.Equal(t, id, guncel["id"], "düzenleme kimliği değiştirmez")
-	assert.Equal(t, "KIS20", guncel["code"], "kod BÜYÜK harfe çevrilerek yazılmalı")
-	assert.Equal(t, false, guncel["is_automatic"], "gövdede olmayan bayrak eski değerini KORUMAMALI")
-	assert.Nil(t, guncel["usage_limit"], "gövdede olmayan kullanım sınırı kalkmalı")
-	// Üstveri BOŞ nesne olarak döner, null olarak değil: normalizeMetadata nil
-	// yerine daima bir harita üretir, böylece istemci alanı ayırt etmek için
-	// null denetimi yazmak zorunda kalmaz.
-	assert.Equal(t, map[string]any{}, guncel["metadata"], "gövdede olmayan üstveri kalkmalı")
-	assert.Equal(t, string(models.PromotionDraft), guncel["status"],
-		"durumu gönderilmeyen bir düzenleme promosyonu YAYINDA bırakmamalı")
+	updated := decodeItem(t, rec)
+	assert.Equal(t, id, updated["id"], "an edit does not change the id")
+	assert.Equal(t, "KIS20", updated["code"], "the code has to be written converted to UPPER case")
+	assert.Equal(t, false, updated["is_automatic"], "a flag absent from the body must NOT KEEP its old value")
+	assert.Nil(t, updated["usage_limit"], "a usage limit absent from the body has to go away")
+	// The metadata comes back as an EMPTY object, not as null: normalizeMetadata
+	// always produces a map instead of nil, so the client does not have to write
+	// a null check to tell the field apart.
+	assert.Equal(t, map[string]any{}, updated["metadata"], "metadata absent from the body has to go away")
+	assert.Equal(t, string(models.PromotionDraft), updated["status"],
+		"an edit that does not send the status must not leave the promotion PUBLISHED")
 
-	// Cevap değil, KAYIT sınanır: işleyici doğru bir gövde yazıp yazmayı
-	// hiç yapmamış da olabilirdi.
+	// What is tested is the RECORD, not the response: the handler could have
+	// written a correct body and never done the write at all.
 	rec = do(t, r, http.MethodGet, "/admin/v1/promotions/"+id, "")
 	require.Equal(t, http.StatusOK, rec.Code)
-	okunan := decodeItem(t, rec)
-	assert.Equal(t, "KIS20", okunan["code"])
-	assert.Equal(t, string(models.PromotionDraft), okunan["status"])
-	assert.InDelta(t, 0, okunan["usage_count"], 0, "düzenleme kullanım sayacına dokunmaz")
+	readBack := decodeItem(t, rec)
+	assert.Equal(t, "KIS20", readBack["code"])
+	assert.Equal(t, string(models.PromotionDraft), readBack["status"])
+	assert.InDelta(t, 0, readBack["usage_count"], 0, "an edit does not touch the usage counter")
 
-	// Eski kod artık kimseye ait değildir ve yeniden alınabilir.
+	// The old code belongs to nobody any more and can be taken again.
 	rec = do(t, r, http.MethodPost, "/admin/v1/promotions", `{"code": "YAZ20"}`)
 	assert.Equal(t, http.StatusCreated, rec.Code,
-		"düzenlemeyle bırakılan kod rezerve kalmamalı; kalsaydı kod gerçekten yazılmamış olurdu")
+		"a code given up by an edit must not stay reserved; if it did, the code would not really have been written")
 }
 
-// TestAdminOlmayanPromosyonuGuncellemek404Doner düzenleme ucunun hata dalını
-// doğrular.
+// TestAdminUpdatingAMissingPromotionReturns404 proves the edit endpoint's error
+// branch.
 //
-// Ayrı bir testtir çünkü işleyicinin hata dalı ayrı bir yoldur: yazma yolu
-// çalışırken hata dalı hiç koşmamış olabilir ve o durumda yanlış kimlikle
-// gelen bir istemci 200 ya da 500 görürdü — ikisi de "böyle bir promosyon yok"
-// demez.
-func TestAdminOlmayanPromosyonuGuncellemek404Doner(t *testing.T) {
+// It is a separate test because the handler's error branch is a separate path:
+// the error branch may never have run while the write path works, and in that
+// case a client arriving with the wrong id would see 200 or 500 — neither of
+// which says "there is no such promotion".
+func TestAdminUpdatingAMissingPromotionReturns404(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	rec := do(t, r, http.MethodPut,
 		"/admin/v1/promotions/promo_YOKYOKYOKYOKYOKYOKYOKYOKYO", `{"code": "YENI"}`)
 
-	assert.Equal(t, http.StatusNotFound, rec.Code, "gövde: %s", rec.Body.String())
+	assert.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
 }
 
-func TestAdminPromosyonListesiSuzulebilir(t *testing.T) {
+func TestAdminPromotionListCanBeFiltered(t *testing.T) {
 	r, _ := newTestRouter(t)
-	promosyonOlustur(t, r, `{"code": "AKTIF", "status": "active"}`)
-	promosyonOlustur(t, r, `{"code": "TASLAK", "status": "draft"}`)
+	createPromotion(t, r, `{"code": "AKTIF", "status": "active"}`)
+	createPromotion(t, r, `{"code": "TASLAK", "status": "draft"}`)
 
 	data, count, _, _ := decodeList(t, do(t, r, http.MethodGet, "/admin/v1/promotions?status=active", ""))
 	require.Len(t, data, 1)
@@ -275,73 +281,73 @@ func TestAdminPromosyonListesiSuzulebilir(t *testing.T) {
 	assert.Equal(t, "AKTIF", data[0]["code"])
 
 	rec := do(t, r, http.MethodGet, "/admin/v1/promotions?status=olmayan", "")
-	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "tanımsız durum süzgeci reddedilir")
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "an undefined status filter is rejected")
 }
 
-func TestHataSiniflandirmasiStatusKodunaCevrilir(t *testing.T) {
+func TestErrorKindBecomesStatusCode(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := promosyonOlustur(t, r, `{"code": "YAZ20"}`)
+	id := createPromotion(t, r, `{"code": "YAZ20"}`)
 
-	testler := []struct {
-		ad     string
+	tests := []struct {
+		name   string
 		method string
 		path   string
 		body   string
 		status int
 	}{
 		{
-			ad: "bulunamayan promosyon", method: http.MethodGet,
+			name: "promotion not found", method: http.MethodGet,
 			path: "/admin/v1/promotions/promo_YOKYOKYOKYOKYOKYOKYOKYOKYO", status: http.StatusNotFound,
 		},
 		{
-			ad: "yanlış önekli kimlik", method: http.MethodGet,
+			name: "id with the wrong prefix", method: http.MethodGet,
 			path: "/admin/v1/promotions/camp_1", status: http.StatusUnprocessableEntity,
 		},
 		{
-			ad: "geçersiz gövde", method: http.MethodPost,
+			name: "invalid body", method: http.MethodPost,
 			path: "/admin/v1/promotions", body: `{"code": "AB"}`, status: http.StatusUnprocessableEntity,
 		},
 		{
-			ad: "bilinmeyen alan", method: http.MethodPost,
+			name: "unknown field", method: http.MethodPost,
 			path: "/admin/v1/promotions", body: `{"code": "YENI", "bilinmeyen": 1}`,
 			status: http.StatusUnprocessableEntity,
 		},
 		{
-			ad: "boş gövde", method: http.MethodPost,
+			name: "empty body", method: http.MethodPost,
 			path: "/admin/v1/promotions", body: "", status: http.StatusUnprocessableEntity,
 		},
 		{
-			ad: "tekrarlanan kod", method: http.MethodPost,
+			name: "duplicate code", method: http.MethodPost,
 			path: "/admin/v1/promotions", body: `{"code": "yaz20"}`, status: http.StatusConflict,
 		},
 		{
-			ad: "sayısal olmayan sayfa parametresi", method: http.MethodGet,
+			name: "non-numeric paging parameter", method: http.MethodGet,
 			path: "/admin/v1/promotions?limit=abc", status: http.StatusUnprocessableEntity,
 		},
 		{
-			ad: "olmayan promosyona yöntem", method: http.MethodPut,
+			name: "method on a missing promotion", method: http.MethodPut,
 			path:   "/admin/v1/promotions/promo_YOKYOKYOKYOKYOKYOKYOKYOKYO/application-method",
 			body:   `{"type": "percentage", "target_type": "items", "value": 1000}`,
 			status: http.StatusNotFound,
 		},
 	}
 
-	for _, tt := range testler {
-		t.Run(tt.ad, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			rec := do(t, r, tt.method, tt.path, tt.body)
-			assert.Equal(t, tt.status, rec.Code, "gövde: %s", rec.Body.String())
+			assert.Equal(t, tt.status, rec.Code, "body: %s", rec.Body.String())
 		})
 	}
 
-	// Var olan promosyonun kimliği yukarıdaki testlerde kullanılmadıysa da
-	// yaşam döngüsü bozulmamalıdır.
+	// Even though the existing promotion's id was not used in the cases above,
+	// its lifecycle must not be broken.
 	rec := do(t, r, http.MethodGet, "/admin/v1/promotions/"+id, "")
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestAdminHesapUcNoktasi(t *testing.T) {
+func TestAdminComputeEndpoint(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := promosyonOlustur(t, r, `{"code": "YAZ20", "status": "active", "is_automatic": true}`)
+	id := createPromotion(t, r, `{"code": "YAZ20", "status": "active", "is_automatic": true}`)
 
 	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
 	  "type": "percentage", "target_type": "items", "allocation": "each", "value": 2000
@@ -353,7 +359,7 @@ func TestAdminHesapUcNoktasi(t *testing.T) {
 	  "items": [{"id": "li_1", "amount": 10000, "unit_amount": 10000, "quantity": 1}],
 	  "codes": ["HICYOK"]
 	}`)
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 	result := decodeItem(t, rec)
 	assert.InDelta(t, 2000, result["discount_total"], 0)
@@ -364,28 +370,28 @@ func TestAdminHesapUcNoktasi(t *testing.T) {
 	items, ok := result["items"].([]any)
 	require.True(t, ok)
 	require.Len(t, items, 1)
-	ilkKalem, ok := items[0].(map[string]any)
+	firstItem, ok := items[0].(map[string]any)
 	require.True(t, ok)
-	assert.InDelta(t, 2000, ilkKalem["amount"], 0)
+	assert.InDelta(t, 2000, firstItem["amount"], 0)
 }
 
-func TestAdminKullanimVeGeriAlma(t *testing.T) {
+func TestAdminRedeemAndRelease(t *testing.T) {
 	r, repo := newTestRouter(t)
-	id := promosyonOlustur(t, r, `{"code": "YAZ20", "status": "active"}`)
+	id := createPromotion(t, r, `{"code": "YAZ20", "status": "active"}`)
 
 	rec := do(t, r, http.MethodPost, "/admin/v1/promotions/"+id+"/redeem",
 		`{"reference": "order_1", "amount": 2500, "currency_code": "TRY"}`)
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
-	ilkKullanim := decodeItem(t, rec)["id"]
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	firstRedemption := decodeItem(t, rec)["id"]
 
 	rec = do(t, r, http.MethodPost, "/admin/v1/promotions/"+id+"/redeem",
 		`{"reference": "order_1", "amount": 2500, "currency_code": "TRY"}`)
-	require.Equal(t, http.StatusOK, rec.Code, "idempotent istek hata vermez")
-	assert.Equal(t, ilkKullanim, decodeItem(t, rec)["id"])
+	require.Equal(t, http.StatusOK, rec.Code, "an idempotent request returns no error")
+	assert.Equal(t, firstRedemption, decodeItem(t, rec)["id"])
 	assert.Equal(t, int64(1), repo.promotions[id].UsageCount)
 
-	kayitlar, count, _, _ := decodeList(t, do(t, r, http.MethodGet, "/admin/v1/promotions/"+id+"/redemptions", ""))
-	require.Len(t, kayitlar, 1)
+	redemptions, count, _, _ := decodeList(t, do(t, r, http.MethodGet, "/admin/v1/promotions/"+id+"/redemptions", ""))
+	require.Len(t, redemptions, 1)
 	assert.Equal(t, int64(1), count)
 
 	rec = do(t, r, http.MethodPost, "/admin/v1/promotions/"+id+"/release", `{"reference": "order_1"}`)
@@ -393,14 +399,14 @@ func TestAdminKullanimVeGeriAlma(t *testing.T) {
 	assert.Equal(t, true, decodeItem(t, rec)["released"])
 
 	rec = do(t, r, http.MethodPost, "/admin/v1/promotions/"+id+"/release", `{"reference": "order_1"}`)
-	require.Equal(t, http.StatusOK, rec.Code, "telafi tekrar çalıştırılabilir")
+	require.Equal(t, http.StatusOK, rec.Code, "the compensation can be run again")
 	assert.Equal(t, false, decodeItem(t, rec)["released"])
 	assert.Zero(t, repo.promotions[id].UsageCount)
 }
 
-func TestStoreKuponDogrulamaSizdirmaz(t *testing.T) {
+func TestStoreCouponValidationDoesNotLeak(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := promosyonOlustur(t, r, `{
+	id := createPromotion(t, r, `{
 	  "code": "YAZ20", "status": "active", "usage_limit": 5,
 	  "metadata": {"ic_not": "gizli"}
 	}`)
@@ -417,7 +423,7 @@ func TestStoreKuponDogrulamaSizdirmaz(t *testing.T) {
 	require.Equal(t, http.StatusCreated, rec.Code)
 
 	rec = do(t, r, http.MethodGet, "/store/v1/promotions/yaz20", "")
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 	coupon := decodeItem(t, rec)
 	assert.Equal(t, "YAZ20", coupon["code"])
@@ -426,21 +432,21 @@ func TestStoreKuponDogrulamaSizdirmaz(t *testing.T) {
 	assert.InDelta(t, 5000, coupon["value"], 0)
 	assert.Equal(t, "TRY", coupon["currency_code"])
 
-	for _, alan := range []string{
+	for _, field := range []string{
 		"status", "usage_limit", "usage_count", "campaign_id", "metadata",
 		"rules", "is_automatic", "id",
 	} {
-		assert.NotContains(t, coupon, alan,
-			"%q müşteri gövdesinde BULUNMAMALI; pricing modülünde tam bu sınıf bir bulgu çıkmıştı", alan)
+		assert.NotContains(t, coupon, field,
+			"%q must NOT BE in the customer body; exactly this class of finding turned up in the pricing module", field)
 	}
 
-	// Kural koşulunun değeri gövdenin HİÇBİR yerinde geçmemeli.
-	assert.NotContains(t, rec.Body.String(), "vip", "kural koşulu müşteriye sızmamalı")
-	assert.NotContains(t, rec.Body.String(), "gizli", "üstveri müşteriye sızmamalı")
+	// The value of the rule condition must appear NOWHERE in the body.
+	assert.NotContains(t, rec.Body.String(), "vip", "the rule condition must not leak to the customer")
+	assert.NotContains(t, rec.Body.String(), "gizli", "the metadata must not leak to the customer")
 }
 
-// hataKodu yanıt gövdesindeki hata kodunu ve mesajını çözer.
-func hataKodu(t *testing.T, rec *httptest.ResponseRecorder) (code, message string) {
+// errorCodeAndMessage decodes the error code and message in the response body.
+func errorCodeAndMessage(t *testing.T, rec *httptest.ResponseRecorder) (code, message string) {
 	t.Helper()
 
 	var envelope struct {
@@ -449,133 +455,136 @@ func hataKodu(t *testing.T, rec *httptest.ResponseRecorder) (code, message strin
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "gövde: %s", rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope), "body: %s", rec.Body.String())
 	return envelope.Error.Code, envelope.Error.Message
 }
 
-func TestStoreKuponDurumaGoreAyrimYapmaz(t *testing.T) {
+func TestStoreCouponDoesNotDistinguishByStatus(t *testing.T) {
 	r, repo := newTestRouter(t)
 
-	// Taslak promosyon; uygulama yöntemi de var, yani tek eksiği DURUMU.
-	id := promosyonOlustur(t, r, `{"code": "TASLAK", "status": "draft"}`)
+	// A draft promotion; it has an application method too, so the only thing
+	// it lacks is its STATUS.
+	id := createPromotion(t, r, `{"code": "TASLAK", "status": "draft"}`)
 	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
 	  "type": "percentage", "target_type": "items", "value": 2000
 	}`)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	yokRec := do(t, r, http.MethodGet, "/store/v1/promotions/HICBOYLEBIRKODYOK", "")
-	yokKod, yokMesaj := hataKodu(t, yokRec)
-	require.Equal(t, http.StatusNotFound, yokRec.Code)
+	missingRec := do(t, r, http.MethodGet, "/store/v1/promotions/HICBOYLEBIRKODYOK", "")
+	missingCode, missingMessage := errorCodeAndMessage(t, missingRec)
+	require.Equal(t, http.StatusNotFound, missingRec.Code)
 
-	// Sızıntı sınaması: her durum AYNI status ve AYNI hata kodunu döner, ve
-	// mesaj yalnızca istemcinin ZATEN bildiği kodu tekrar eder — sebebi değil.
-	durumlar := []struct {
-		ad      string
-		hazirla func()
-		gerekce string
+	// Leak check: every case returns the SAME status and the SAME error code,
+	// and the message only repeats the code the client ALREADY knows — not the
+	// reason.
+	cases := []struct {
+		name    string
+		prepare func()
+		reason  string
 	}{
 		{
-			ad:      "taslak",
-			hazirla: func() {},
-			gerekce: "taslak kupon, var olmayan koddan ayırt edilememeli",
+			name:    "draft",
+			prepare: func() {},
+			reason:  "a draft coupon must be indistinguishable from a nonexistent code",
 		},
 		{
-			ad: "pasif",
-			hazirla: func() {
+			name: "inactive",
+			prepare: func() {
 				promo := repo.promotions[id]
 				promo.Status = models.PromotionInactive
 				repo.promotions[id] = promo
 			},
-			gerekce: "pasif kupon, var olmayan koddan ayırt edilememeli",
+			reason: "an inactive coupon must be indistinguishable from a nonexistent code",
 		},
 		{
-			ad: "kullanım hakkı bitmiş",
-			hazirla: func() {
+			name: "usage allowance run out",
+			prepare: func() {
 				promo := repo.promotions[id]
 				promo.Status = models.PromotionActive
 				promo.UsageLimit = new(int64)
 				repo.promotions[id] = promo
 			},
-			gerekce: "kullanım sayacı ele verilmemeli",
+			reason: "the usage counter must not be given away",
 		},
 	}
 
-	for _, tt := range durumlar {
-		t.Run(tt.ad, func(t *testing.T) {
-			tt.hazirla()
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.prepare()
 
 			rec := do(t, r, http.MethodGet, "/store/v1/promotions/TASLAK", "")
-			kod, mesaj := hataKodu(t, rec)
+			code, message := errorCodeAndMessage(t, rec)
 
-			assert.Equal(t, yokRec.Code, rec.Code, tt.gerekce)
-			assert.Equal(t, yokKod, kod, tt.gerekce)
+			assert.Equal(t, missingRec.Code, rec.Code, tt.reason)
+			assert.Equal(t, missingCode, code, tt.reason)
 			assert.Equal(t,
-				strings.Replace(yokMesaj, "HICBOYLEBIRKODYOK", "TASLAK", 1), mesaj,
-				"mesaj yalnızca istemcinin zaten bildiği kodu tekrar eder; sebep söylemez")
+				strings.Replace(missingMessage, "HICBOYLEBIRKODYOK", "TASLAK", 1), message,
+				"the message only repeats the code the client already knows; it gives no reason")
 		})
 	}
 }
 
-func TestStoreYazmaYuzeyiYoktur(t *testing.T) {
+func TestStoreHasNoWriteSurface(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
 		rec := do(t, r, method, "/store/v1/promotions/YAZ20", `{}`)
 		assert.Equal(t, http.StatusMethodNotAllowed, rec.Code,
-			"%s: kupon yazmak yönetim işidir", method)
+			"%s: writing a coupon is an admin job", method)
 	}
 }
 
-// TestDarYetkiYazmaUcunuAcmaz yalnızca okuma yetkisi taşıyan bir kimliğin
-// yönetim yazma uçlarında 403 aldığını doğrular.
+// TestNarrowScopeDoesNotOpenWriteEndpoints proves that an identity carrying
+// only the read scope gets 403 on the admin write endpoints.
 //
-// Kimlik doğrulama tek başına yetmez: yetkileri boşaltılmış ya da yalnızca
-// okumaya yetkili bir yönetim kullanıcısı, yetki zorlaması olmadan kendine
-// %100 indirimli bir promosyon yazabilir ya da kampanya bütçesini
-// sıfırlayabilirdi. 401 değil 403 beklenir — kimlik bilinmektedir, eksik olan
-// yetkidir.
-func TestDarYetkiYazmaUcunuAcmaz(t *testing.T) {
+// Authentication alone is not enough: without scope enforcement, an admin user
+// whose scopes were emptied, or who is only allowed to read, could write
+// themselves a promotion with a 100% discount or reset a campaign budget. 403
+// is expected, not 401 — the identity is known; what is missing is the scope.
+func TestNarrowScopeDoesNotOpenWriteEndpoints(t *testing.T) {
 	r, _ := newTestRouter(t)
 
-	for _, durum := range []struct {
-		ad     string
+	for _, tc := range []struct {
+		name   string
 		method string
 		path   string
 		body   string
 	}{
-		{"kampanya oluştur", http.MethodPost, "/admin/v1/campaigns", `{"name":"X","campaign_identifier":"X","budget_type":"none"}`},
-		{"kampanya güncelle", http.MethodPut, "/admin/v1/campaigns/promocamp_1", `{"name":"X","campaign_identifier":"X","budget_type":"none"}`},
-		{"kampanya sil", http.MethodDelete, "/admin/v1/campaigns/promocamp_1", ``},
-		{"promosyon oluştur", http.MethodPost, "/admin/v1/promotions", `{"code":"BEDAVA"}`},
-		{"promosyon güncelle", http.MethodPut, "/admin/v1/promotions/promo_1", `{"code":"BEDAVA"}`},
-		{"promosyon sil", http.MethodDelete, "/admin/v1/promotions/promo_1", ``},
-		{"uygulama yöntemi yaz", http.MethodPut, "/admin/v1/promotions/promo_1/application-method",
+		{"create campaign", http.MethodPost, "/admin/v1/campaigns", `{"name":"X","campaign_identifier":"X","budget_type":"none"}`},
+		{"update campaign", http.MethodPut, "/admin/v1/campaigns/promocamp_1", `{"name":"X","campaign_identifier":"X","budget_type":"none"}`},
+		{"delete campaign", http.MethodDelete, "/admin/v1/campaigns/promocamp_1", ``},
+		{"create promotion", http.MethodPost, "/admin/v1/promotions", `{"code":"BEDAVA"}`},
+		{"update promotion", http.MethodPut, "/admin/v1/promotions/promo_1", `{"code":"BEDAVA"}`},
+		{"delete promotion", http.MethodDelete, "/admin/v1/promotions/promo_1", ``},
+		{"write application method", http.MethodPut, "/admin/v1/promotions/promo_1/application-method",
 			`{"type":"percentage","target_type":"items","value":10000}`},
-		{"uygulama yöntemi sil", http.MethodDelete, "/admin/v1/promotions/promo_1/application-method", ``},
-		{"kural ekle", http.MethodPost, "/admin/v1/promotions/promo_1/rules", `{"attribute":"x","operator":"eq","values":["y"]}`},
-		{"kural sil", http.MethodDelete, "/admin/v1/promotion-rules/promorule_1", ``},
-		{"kullan", http.MethodPost, "/admin/v1/promotions/promo_1/redeem", `{}`},
-		{"geri al", http.MethodPost, "/admin/v1/promotions/promo_1/release", `{}`},
-		// Hesap ucu hiçbir şey YAZMAZ ama sözlük yöntem üzerinden tanımlıdır:
-		// POST → yazma. İstisnası olsaydı sözlük uç uç tartışılan bir şey olurdu.
-		{"indirim hesapla", http.MethodPost, "/admin/v1/promotions/compute", `{"items":[]}`},
+		{"delete application method", http.MethodDelete, "/admin/v1/promotions/promo_1/application-method", ``},
+		{"add rule", http.MethodPost, "/admin/v1/promotions/promo_1/rules", `{"attribute":"x","operator":"eq","values":["y"]}`},
+		{"delete rule", http.MethodDelete, "/admin/v1/promotion-rules/promorule_1", ``},
+		{"redeem", http.MethodPost, "/admin/v1/promotions/promo_1/redeem", `{}`},
+		{"release", http.MethodPost, "/admin/v1/promotions/promo_1/release", `{}`},
+		// The compute endpoint WRITES nothing, but the vocabulary is defined by
+		// the method: POST → write. Had it an exception, the vocabulary would be
+		// something argued endpoint by endpoint.
+		{"compute discount", http.MethodPost, "/admin/v1/promotions/compute", `{"items":[]}`},
 	} {
-		rec := doAs(t, r, okumaKimligi, durum.method, durum.path, durum.body)
-		assert.Equal(t, http.StatusForbidden, rec.Code, "durum: %s", durum.ad)
-		kod, _ := hataKodu(t, rec)
-		assert.Equal(t, corehttp.CodeForbidden, kod, "durum: %s", durum.ad)
+		rec := doAs(t, r, narrowPrincipal, tc.method, tc.path, tc.body)
+		assert.Equal(t, http.StatusForbidden, rec.Code, "case: %s", tc.name)
+		code, _ := errorCodeAndMessage(t, rec)
+		assert.Equal(t, corehttp.CodeForbidden, code, "case: %s", tc.name)
 	}
 }
 
-// TestDarYetkiOkumaUcundaGecer aynı dar kimliğin okuma uçlarından geçtiğini
-// doğrular.
+// TestNarrowScopePassesOnReadEndpoints proves that the same narrow identity
+// passes on the read endpoints.
 //
-// Bu testin çifti [TestDarYetkiYazmaUcunuAcmaz]'dır: yetki haritası her yazma
-// ucunu kapatırken okuma uçlarını da kapatsaydı, 403 sonuçları haritanın
-// doğruluğunu değil yalnızca aşırı kısıtlayıcılığını kanıtlardı.
-func TestDarYetkiOkumaUcundaGecer(t *testing.T) {
+// This test's pair is [TestNarrowScopeDoesNotOpenWriteEndpoints]: had the scope
+// map closed the read endpoints as well while closing every write endpoint, the
+// 403 results would prove not the map's correctness but only its
+// over-restrictiveness.
+func TestNarrowScopePassesOnReadEndpoints(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := promosyonOlustur(t, r, `{"code": "YAZ20", "status": "active"}`)
+	id := createPromotion(t, r, `{"code": "YAZ20", "status": "active"}`)
 
 	for _, path := range []string{
 		"/admin/v1/campaigns",
@@ -584,25 +593,25 @@ func TestDarYetkiOkumaUcundaGecer(t *testing.T) {
 		"/admin/v1/promotions/" + id + "/rules",
 		"/admin/v1/promotions/" + id + "/redemptions",
 	} {
-		rec := doAs(t, r, okumaKimligi, http.MethodGet, path, "")
-		assert.Equal(t, http.StatusOK, rec.Code, "yol: %s — gövde: %s", path, rec.Body.String())
+		rec := doAs(t, r, narrowPrincipal, http.MethodGet, path, "")
+		assert.Equal(t, http.StatusOK, rec.Code, "path: %s — body: %s", path, rec.Body.String())
 	}
 }
 
-// TestStoreUcuYetkiIstemez mağaza ucunun yetkisiz bir kimlikle de çalıştığını
-// doğrular.
+// TestStoreEndpointRequiresNoScope proves that the store endpoint works with an
+// unscoped identity too.
 //
-// Vitrinin kimliği publishable anahtardır ve o anahtar tanımı gereği yetki
-// TAŞIMAZ. Yönetim uçlarına yetki eklerken store ucuna da eklemek, ilk
-// dağıtımda bütün vitrini kapatmanın en sessiz yoludur; bu test o hatayı
-// derleme değil TEST zamanında yakalar. Beklenen 404'tür: kod yoktur — ama
-// 403 ya da 401 DEĞİL.
-func TestStoreUcuYetkiIstemez(t *testing.T) {
+// The storefront's identity is the publishable key, and that key by definition
+// CARRIES no scope. Adding a scope to the store endpoint while adding scopes to
+// the admin endpoints is the quietest way to close the whole storefront on the
+// first deployment; this test catches that mistake at TEST time, not at compile
+// time. 404 is expected: there is no such code — but NOT 403 or 401.
+func TestStoreEndpointRequiresNoScope(t *testing.T) {
 	r, _ := newTestRouter(t)
 
-	yetkisiz := corehttp.Principal{ID: "pk_1", Kind: "api_key"}
-	rec := doAs(t, r, yetkisiz, http.MethodGet, "/store/v1/promotions/HICBOYLEBIRKODYOK", "")
-	assert.Equal(t, http.StatusNotFound, rec.Code, "gövde: %s", rec.Body.String())
+	unscoped := corehttp.Principal{ID: "pk_1", Kind: "api_key"}
+	rec := doAs(t, r, unscoped, http.MethodGet, "/store/v1/promotions/HICBOYLEBIRKODYOK", "")
+	assert.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
 }
 
 // TestTheComputeEndpointSaysWhyAPromotionDidNotApply is the answer the body
@@ -613,7 +622,7 @@ func TestStoreUcuYetkiIstemez(t *testing.T) {
 // uses: they never activated it.
 func TestTheComputeEndpointSaysWhyAPromotionDidNotApply(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := promosyonOlustur(t, r, `{"code": "DRAFTED", "status": "draft", "is_automatic": true}`)
+	id := createPromotion(t, r, `{"code": "DRAFTED", "status": "draft", "is_automatic": true}`)
 
 	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
 	  "type": "percentage", "target_type": "items", "allocation": "each", "value": 2000
@@ -624,7 +633,7 @@ func TestTheComputeEndpointSaysWhyAPromotionDidNotApply(t *testing.T) {
 	  "currency_code": "TRY",
 	  "items": [{"id": "li_1", "amount": 10000, "unit_amount": 10000, "quantity": 1}]
 	}`)
-	require.Equal(t, http.StatusOK, rec.Code, "gövde: %s", rec.Body.String())
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 	result := decodeItem(t, rec)
 	assert.InDelta(t, 0, result["discount_total"], 0, "a draft promotion discounts nothing")
@@ -646,7 +655,7 @@ func TestTheComputeEndpointSaysWhyAPromotionDidNotApply(t *testing.T) {
 // having two spellings for "none".
 func TestTheComputeEndpointReportsNoReasonWhenNothingWasRefused(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := promosyonOlustur(t, r, `{"code": "LIVE20", "status": "active", "is_automatic": true}`)
+	id := createPromotion(t, r, `{"code": "LIVE20", "status": "active", "is_automatic": true}`)
 
 	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
 	  "type": "percentage", "target_type": "items", "allocation": "each", "value": 2000

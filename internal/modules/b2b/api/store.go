@@ -6,11 +6,12 @@ import (
 	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
-// Bu dosyadaki uçlar müşterinin KENDİ şirketini ve KENDİ çalışan kaydını
-// döner. İkisi de aynı servis çağrısına (MembershipOfCustomer) dayanır: müşteri
-// bir şirketin çalışanı değilse ikisi de 404 verir.
+// The endpoints in this file return the customer's OWN company and OWN
+// employee record. Both rest on the same service call (MembershipOfCustomer):
+// if the customer is not an employee of a company, both answer 404.
 //
-// Şirket kimliğiyle çağrılan bir uç YOKTUR; gerekçesi paket belgesindedir.
+// There is NO endpoint called with a company id; the reasoning is in the
+// package documentation.
 //
 // Both resolve the customer through [Handler.storeCustomerID], which refuses
 // the request when the installation's bound identity CONTRADICTS the customer
@@ -19,7 +20,7 @@ import (
 // service — and never learns from a 404 whether the identifier it guessed
 // belongs to anybody.
 
-// storeGetCompany müşterinin kendi şirketini döner
+// storeGetCompany returns the customer's own company
 // (GET /store/v1/b2b/customers/{customer_id}/company).
 func (h *Handler) storeGetCompany(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -38,11 +39,12 @@ func (h *Handler) storeGetCompany(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCompanyDTO(membership.Company))
 }
 
-// storeGetEmployee müşterinin kendi çalışan kaydını döner
+// storeGetEmployee returns the customer's own employee record
 // (GET /store/v1/b2b/customers/{customer_id}/employee).
 //
-// Yanıt harcama limitini, limitin sıfırlanma aralığını ve geçerli pencerenin
-// başlangıcını taşır; KALAN hak taşımaz (bkz. storeEmployeeDTO).
+// The response carries the spending limit, the interval at which the limit
+// resets and the start of the current window; it does NOT carry the REMAINING
+// allowance (see storeEmployeeDTO).
 func (h *Handler) storeGetEmployee(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

@@ -12,33 +12,34 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/b2b/models"
 )
 
-// kuralGovdesi yüzeyin döndüğü gövdenin testlerdeki karşılığıdır.
+// ruleBody is the tests' counterpart of the body the surface returns.
 //
-// Tip AYRI tanımlanır ve interopSpendingRule yeniden kullanılmaz: sınanan şey
-// tam olarak ALAN ADLARIDIR ve üretim tipini kullanan bir test, adlar değişse
-// bile geçerdi. Tüketici (order modülü) bu adları kendi paketinde ayrıca yazar
-// ve iki tarafı derleyici birbirine bağlayamaz.
-type kuralGovdesi struct {
+// The type is defined SEPARATELY and interopSpendingRule is not reused: what is
+// exercised is exactly the FIELD NAMES, and a test using the production type
+// would pass even if the names changed. The consumer (the order module) writes
+// these names separately in its own package, and the compiler cannot tie the
+// two sides together.
+type ruleBody struct {
 	Limited       bool   `json:"limited"`
 	SpendingLimit int64  `json:"spending_limit"`
 	CurrencyCode  string `json:"currency_code"`
 	WindowStart   string `json:"window_start"`
 }
 
-// kuraliCoz yüzeyi çağırır ve gövdeyi çözer.
-func kuraliCoz(t *testing.T, svc *Service, customerID string) kuralGovdesi {
+// decodeRule calls the surface and decodes the body.
+func decodeRule(t *testing.T, svc *Service, customerID string) ruleBody {
 	t.Helper()
 
 	payload, err := NewInterop(svc).SpendingLimitJSON(t.Context(), customerID)
 	require.NoError(t, err)
 
-	var kural kuralGovdesi
-	require.NoError(t, json.Unmarshal(payload, &kural))
-	return kural
+	var rule ruleBody
+	require.NoError(t, json.Unmarshal(payload, &rule))
+	return rule
 }
 
-// calisanEkle şirkete verilen limitle bir çalışan ekler.
-func calisanEkle(t *testing.T, svc *Service, companyID, customerID string, limit *int64) {
+// addEmployee adds an employee with the given limit to a company.
+func addEmployee(t *testing.T, svc *Service, companyID, customerID string, limit *int64) {
 	t.Helper()
 
 	_, err := svc.CreateEmployee(t.Context(), EmployeeInput{
@@ -49,132 +50,138 @@ func calisanEkle(t *testing.T, svc *Service, companyID, customerID string, limit
 	require.NoError(t, err)
 }
 
-// TestKuralLimitiVePencereyiYayimlar limitli çalışanın kuralını doğrular.
+// TestTheRulePublishesTheLimitAndTheWindow verifies the rule of a limited
+// employee.
 //
-// Şirketin periyodu aylıktır ve sabit saat ayın 17'sidir; pencere bu yüzden
-// ayın 1'inde 00:00 UTC'de başlamalıdır. Pencerenin TAKVİME göre olduğu
-// (şirketin açılış gününe göre kaymadığı) yalnızca burada, dönen dizede
-// görülür.
-func TestKuralLimitiVePencereyiYayimlar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
+// The company's period is monthly and the fixed clock is on the 17th of the
+// month; the window therefore has to start on the 1st of the month at 00:00
+// UTC. That the window follows the CALENDAR (does not shift with the day the
+// company was opened) is visible only here, in the returned string.
+func TestTheRulePublishesTheLimitAndTheWindow(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc)
 	limit := int64(500_000)
-	calisanEkle(t, svc, company.ID, "cust_01", &limit)
+	addEmployee(t, svc, company.ID, "cust_01", &limit)
 
-	kural := kuraliCoz(t, svc, "cust_01")
+	rule := decodeRule(t, svc, "cust_01")
 
-	assert.True(t, kural.Limited)
-	assert.Equal(t, int64(500_000), kural.SpendingLimit)
-	assert.Equal(t, "TRY", kural.CurrencyCode, "limit ŞİRKETİN para biriminde ifade edilir")
-	assert.Equal(t, "2026-03-01T00:00:00Z", kural.WindowStart)
+	assert.True(t, rule.Limited)
+	assert.Equal(t, int64(500_000), rule.SpendingLimit)
+	assert.Equal(t, "TRY", rule.CurrencyCode, "the limit is expressed in the COMPANY's currency")
+	assert.Equal(t, "2026-03-01T00:00:00Z", rule.WindowStart)
 }
 
-// TestKuralYillikPencereyiYayimlar yıllık periyodun 1 Ocak'ta başladığını
-// doğrular.
-func TestKuralYillikPencereyiYayimlar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	girdi := gecerliSirket()
-	girdi.SpendingLimitResetPeriod = string(models.ResetYearly)
-	company, err := svc.CreateCompany(t.Context(), girdi)
+// TestTheRulePublishesAYearlyWindow verifies that a yearly period starts on
+// 1 January.
+func TestTheRulePublishesAYearlyWindow(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	in := validCompanyInput()
+	in.SpendingLimitResetPeriod = string(models.ResetYearly)
+	company, err := svc.CreateCompany(t.Context(), in)
 	require.NoError(t, err)
 
 	limit := int64(10)
-	calisanEkle(t, svc, company.ID, "cust_01", &limit)
+	addEmployee(t, svc, company.ID, "cust_01", &limit)
 
-	assert.Equal(t, "2026-01-01T00:00:00Z", kuraliCoz(t, svc, "cust_01").WindowStart)
+	assert.Equal(t, "2026-01-01T00:00:00Z", decodeRule(t, svc, "cust_01").WindowStart)
 }
 
-// TestKuralPencerisizPeriyottaBosDoner "never" periyodunun karşılığını
-// doğrular.
+// TestTheRuleWindowIsEmptyForAPeriodWithoutOne verifies what the "never"
+// period comes out as.
 //
-// Pencere yoksa alan BOŞ dizedir. Sıfır zaman damgası göndermek, tüketicinin
-// "0001-01-01'den beri" ile "pencere yok"u ayırt etmesini beklemek olurdu ve
-// ilki bir tarih gibi görünüp sessizce yanlış bir aralık üretebilirdi.
-func TestKuralPencerisizPeriyottaBosDoner(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	girdi := gecerliSirket()
-	girdi.SpendingLimitResetPeriod = string(models.ResetNever)
-	company, err := svc.CreateCompany(t.Context(), girdi)
+// Without a window the field is an EMPTY string. Sending a zero timestamp
+// would mean expecting the consumer to tell "since 0001-01-01" from "there is
+// no window", and the first looks like a date and could silently produce a
+// wrong range.
+func TestTheRuleWindowIsEmptyForAPeriodWithoutOne(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	in := validCompanyInput()
+	in.SpendingLimitResetPeriod = string(models.ResetNever)
+	company, err := svc.CreateCompany(t.Context(), in)
 	require.NoError(t, err)
 
 	limit := int64(10)
-	calisanEkle(t, svc, company.ID, "cust_01", &limit)
+	addEmployee(t, svc, company.ID, "cust_01", &limit)
 
-	kural := kuraliCoz(t, svc, "cust_01")
-	assert.True(t, kural.Limited)
-	assert.Empty(t, kural.WindowStart)
+	rule := decodeRule(t, svc, "cust_01")
+	assert.True(t, rule.Limited)
+	assert.Empty(t, rule.WindowStart)
 }
 
-// TestKuralSinirsizCalisandaLimitsizDoner nil limitin "kural yok"a çözüldüğünü
-// doğrular.
+// TestTheRuleIsUnlimitedForAnUnlimitedEmployee verifies that a nil limit
+// resolves to "no rule".
 //
-// nil SINIRSIZ demektir; limitli bir kural olarak yayımlansaydı tüketici onu
-// bir tavan sanar ve sınırsız çalışan sıfır limitliye dönerdi.
-func TestKuralSinirsizCalisandaLimitsizDoner(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
-	calisanEkle(t, svc, company.ID, "cust_01", nil)
+// nil means UNLIMITED; had it been published as a limited rule, the consumer
+// would take it for a ceiling, and the unlimited employee would turn into one
+// with a zero limit.
+func TestTheRuleIsUnlimitedForAnUnlimitedEmployee(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc)
+	addEmployee(t, svc, company.ID, "cust_01", nil)
 
-	assert.False(t, kuraliCoz(t, svc, "cust_01").Limited)
+	assert.False(t, decodeRule(t, svc, "cust_01").Limited)
 }
 
-// TestKuralSifirLimitiKORUR 0 ile nil ayrımının sınırda kaybolmadığını
-// doğrular.
+// TestTheRuleKEEPSAZeroLimit verifies that the distinction between 0 and nil
+// is not lost at the boundary.
 //
-// Sıfır limitli çalışan SINIRLIDIR ve hiç harcayamaz. İkisini tek cevaba
-// indirmek, "limiti sıfırladım" diyen şirkete sınırsız bir çalışan verirdi.
-func TestKuralSifirLimitiKORUR(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
-	sifir := int64(0)
-	calisanEkle(t, svc, company.ID, "cust_01", &sifir)
+// An employee with a zero limit is LIMITED and can spend nothing. Collapsing
+// the two into one answer would hand a company that says "I set the limit to
+// zero" an unlimited employee.
+func TestTheRuleKEEPSAZeroLimit(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc)
+	zero := int64(0)
+	addEmployee(t, svc, company.ID, "cust_01", &zero)
 
-	kural := kuraliCoz(t, svc, "cust_01")
-	assert.True(t, kural.Limited)
-	assert.Zero(t, kural.SpendingLimit)
+	rule := decodeRule(t, svc, "cust_01")
+	assert.True(t, rule.Limited)
+	assert.Zero(t, rule.SpendingLimit)
 }
 
-// TestKuralCalisanOlmayanMusteride HATA DÖNMEZ.
+// TestTheRuleForACustomerWhoIsNoEmployee returns NO ERROR.
 //
-// Kurulumun çoğunluğu B2C'dir ve tüketici bu yüzeyi HER sipariş için çağırır;
-// "bu müşteri bir şirketin çalışanı değil" onun için normal yoldur. Hata
-// dönmek, tüketiciyi "kural yok" ile "kuralı öğrenemedik" arasında ayrım
-// yapamaz hâle getirirdi.
-func TestKuralCalisanOlmayanMusteride(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// Most installations are B2C, and the consumer calls this surface for EVERY
+// order; "this customer is not an employee of a company" is the normal path
+// for it. Returning an error would leave the consumer unable to tell "there is
+// no rule" from "we could not learn the rule".
+func TestTheRuleForACustomerWhoIsNoEmployee(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
-	kural := kuraliCoz(t, svc, "cust_BAGSIZ")
-	assert.False(t, kural.Limited)
+	rule := decodeRule(t, svc, "cust_BAGSIZ")
+	assert.False(t, rule.Limited)
 }
 
-// TestKuralTaninmayanKimlikteLimitsizDoner customer id bile olmayan bir
-// dizede hata dönmediğini doğrular.
+// TestTheRuleIsUnlimitedForAnUnrecognizedID verifies that a string that is not
+// even a customer id returns no error.
 //
-// Böyle bir kimlik çalışan olarak BAĞLANAMAZ (CreateEmployee önek denetimi
-// yapar), yani "limiti yok" cevabı tahmin değil kanıtlanabilir bir olgudur.
-// Hata dönmek, b2b'nin kimlik biçimi hakkındaki görüşünü her siparişin önüne
-// koymak olurdu.
-func TestKuralTaninmayanKimlikteLimitsizDoner(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// Such an id CANNOT BE BOUND as an employee (CreateEmployee checks the
+// prefix), so the answer "it has no limit" is not a guess but a provable fact.
+// Returning an error would put b2b's opinion about the id format in front of
+// every order.
+func TestTheRuleIsUnlimitedForAnUnrecognizedID(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
-	for _, kimlik := range []string{"", "cus_ESKI_ONEK", "  "} {
-		payload, err := NewInterop(svc).SpendingLimitJSON(t.Context(), kimlik)
-		require.NoError(t, err, "kimlik: %q", kimlik)
+	for _, id := range []string{"", "cus_ESKI_ONEK", "  "} {
+		payload, err := NewInterop(svc).SpendingLimitJSON(t.Context(), id)
+		require.NoError(t, err, "id: %q", id)
 
-		var kural kuralGovdesi
-		require.NoError(t, json.Unmarshal(payload, &kural))
-		assert.False(t, kural.Limited, "kimlik: %q", kimlik)
+		var rule ruleBody
+		require.NoError(t, json.Unmarshal(payload, &rule))
+		assert.False(t, rule.Limited, "id: %q", id)
 	}
 }
 
-// TestKuralOkumaArizasiniGIZLEMEZ altyapı hatasının yutulmadığını doğrular.
+// TestTheRuleDoesNotHIDEAReadFailure verifies that an infrastructure error is
+// not swallowed.
 //
-// Bağ katmanı okunamadığında limitin ne olduğu BİLİNMEZ. "limitsiz" dönmek,
-// link servisinin her arızasında harcama limitini sessizce kaldırmak olurdu;
-// tüketici bu yüzden hatayı görmeli ve siparişi reddetmelidir.
-func TestKuralOkumaArizasiniGIZLEMEZ(t *testing.T) {
-	svc, _, links := yeniServis(t)
-	links.failListByTo = errors.Internal("link_down", "bağ katmanı yanıt vermiyor")
+// When the bond layer cannot be read, what the limit is is NOT KNOWN.
+// Returning "unlimited" would silently remove the spending limit on every
+// failure of the link service; the consumer therefore has to see the error and
+// refuse the order.
+func TestTheRuleDoesNotHIDEAReadFailure(t *testing.T) {
+	svc, _, links := newTestService(t)
+	links.failListByTo = errors.Internal("link_down", "the bond layer does not answer")
 
 	_, err := NewInterop(svc).SpendingLimitJSON(t.Context(), "cust_01")
 
@@ -182,34 +189,36 @@ func TestKuralOkumaArizasiniGIZLEMEZ(t *testing.T) {
 	assert.True(t, errors.HasKind(err, errors.KindInternal))
 }
 
-// TestKuralSilinmisSirketteLimitsizDoner yumuşak silinmiş şirketin kuralının
-// yayımlanmadığını doğrular.
+// TestTheRuleIsUnlimitedForADeletedCompany verifies that a soft-deleted
+// company's rule is not published.
 //
-// Şirket silindiğinde çalışanları da silinir ve bağları kaldırılır; geride
-// kalmış bir bağ bile kuralı geri getirmemelidir. Aksi hâlde kapanmış bir
-// şirketin limiti, var olmayan bir bütçeye karşı uygulanmaya devam ederdi.
-func TestKuralSilinmisSirketteLimitsizDoner(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
+// When a company is deleted its employees are deleted too and their bonds are
+// removed; even a bond left behind must not bring the rule back. Otherwise a
+// closed company's limit would go on being enforced against a budget that does
+// not exist.
+func TestTheRuleIsUnlimitedForADeletedCompany(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc)
 	limit := int64(500)
-	calisanEkle(t, svc, company.ID, "cust_01", &limit)
+	addEmployee(t, svc, company.ID, "cust_01", &limit)
 
 	require.NoError(t, svc.DeleteCompany(t.Context(), company.ID))
 
-	assert.False(t, kuraliCoz(t, svc, "cust_01").Limited)
+	assert.False(t, decodeRule(t, svc, "cust_01").Limited)
 }
 
-// TestKuralPenceresiUTCdir dönen zamanın saat dilimi taşımadığını doğrular.
+// TestTheRuleWindowIsUTC verifies that the returned time carries no time zone.
 //
-// Yerel bir saat dilimi, aynı şirketin iki ülkedeki çalışanı için ayın farklı
-// anlarda başlaması demek olurdu; dize bu yüzden "Z" ile biter.
-func TestKuralPenceresiUTCdir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	company := yeniSirket(t, svc)
+// A local time zone would mean the month starting at different moments for
+// the same company's employees in two countries; that is why the string ends
+// in "Z".
+func TestTheRuleWindowIsUTC(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	company := newTestCompany(t, svc)
 	limit := int64(1)
-	calisanEkle(t, svc, company.ID, "cust_01", &limit)
+	addEmployee(t, svc, company.ID, "cust_01", &limit)
 
-	an, err := time.Parse(time.RFC3339, kuraliCoz(t, svc, "cust_01").WindowStart)
+	instant, err := time.Parse(time.RFC3339, decodeRule(t, svc, "cust_01").WindowStart)
 	require.NoError(t, err)
-	assert.Equal(t, time.UTC, an.Location())
+	assert.Equal(t, time.UTC, instant.Location())
 }
