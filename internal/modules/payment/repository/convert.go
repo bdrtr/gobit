@@ -13,8 +13,10 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/repository/paymentdb"
 )
 
-// This file is the ONLY place for the pgtype <-> domain model conversions and
-// for the classification of driver errors.
+// This file holds the shared pgtype <-> domain model helpers and the
+// converters of the collection, session, payment, refund and manual-session
+// rows, and it is the ONLY place driver errors are classified; the store
+// credit, loyalty and gift card files keep their own row converters.
 //
 // The boundary being here is deliberate: driver-specific types
 // (pgtype.Timestamptz, []byte for jsonb, *pgconn.PgError) do NOT LEAVE the

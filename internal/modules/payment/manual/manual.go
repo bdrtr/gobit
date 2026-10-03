@@ -34,11 +34,13 @@
 // # The separate ledger
 //
 // The provider's state is in the payment_manual_sessions table and is SEPARATE
-// from the payment service's tables. The service never touches this table; it
-// reaches the provider only through the PaymentProvider interface. The
-// separation structurally prevents the module from accidentally reading the
-// provider's internal state — with a real provider such a read is not possible
-// either.
+// from the payment service's tables. The payment flows never touch this table;
+// they reach the provider only through the PaymentProvider interface. Its one
+// reader outside this package is the module's personal-data answer (ADR 0277),
+// which reads the sessions of a customer's collections to disclose what they
+// keep about that person and writes nothing. The separation structurally
+// prevents the flows from accidentally reading the provider's internal state —
+// with a real provider such a read is not possible either.
 //
 // # Failure injection for tests
 //

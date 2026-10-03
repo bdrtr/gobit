@@ -27,16 +27,22 @@
 // transaction ends, a lock without a transaction would silently protect
 // nothing.
 //
-// # Two separate ledgers
+// # Two kinds of owner
 //
-// This package serves the data of two different owners: the payment module's
-// domain tables (payment_collections, payment_sessions, payments, refunds) and
-// the MANUAL PROVIDER's own ledger (payment_manual_sessions). The second is not
-// the module's domain data; it is the state of the imitated external system,
-// and only the manual package touches it. The separation is also kept
-// physically: the service's
+// This package serves the data of two kinds of owner: the payment module's own
+// tables (payment_collections, payment_sessions, payments, refunds, the store
+// credit and loyalty ledgers, and the gift cards with their ledger) and the
+// PROVIDERS' own session ledgers (payment_manual_sessions and the store-credit,
+// loyalty and gift-card providers' sessions). The second kind is not the
+// module's domain data; it is the state of the system each provider stands
+// for, and only its provider writes it. Two readers sit outside the providers:
+// the module's personal-data answer (ADR 0277), which reads those sessions to
+// disclose what they keep about a customer, and closing a gift card (ADR 0213),
+// which counts the card's sessions still holding part of it. The separation is
+// also kept physically: the service's
 // [github.com/bdrtr/gobit/internal/modules/payment/service.Store] interface has
-// NO manual-ledger methods.
+// NO manual-ledger methods, and of the providers' sessions it reads only that
+// count.
 package repository
 
 import (

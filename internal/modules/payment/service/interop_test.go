@@ -14,17 +14,20 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// paymentInterop is an EXACT copy of the surface the saga (internal/workflows)
-// needs from the payment module.
+// paymentInterop is the part of the PRIMITIVE surface the payment module offers
+// the sagas (internal/workflows) that this file exercises.
 //
 // This is the test's real job: the saga CANNOT import this module (ADR 0006) and
 // can only define an interface written in primitive types. That the concrete
-// [service.Interop] type meets that interface STRUCTURALLY is proved here by the
-// compiler; a signature drift is not left to the moment of resolving from the
-// container.
+// [service.Interop] type meets these signatures STRUCTURALLY is proved here by
+// the compiler; a signature drift is not left to the moment of resolving from
+// the container.
 //
-// That the definition here stays the same as the definition on the workflow side
-// is a contract; if they diverge, the e2e test fails.
+// It is not a copy of any workflow's interface: checkout.Payments also asks for
+// CheckTender and CapturesLater and asks for none of OpenSession, Refund and
+// SessionStatus, and the other flows declare their own subsets. The checkout,
+// returns and gift card sale interfaces are pinned against [service.Interop] by
+// the compiler in internal/arch (interop_pins_test.go).
 type paymentInterop interface {
 	CreateCollection(
 		ctx context.Context, reference, customerID, currencyCode string, amount int64,

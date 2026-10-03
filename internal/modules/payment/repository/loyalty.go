@@ -17,7 +17,8 @@ import (
 // gate holds the pair: the service's earn path, reached from the ONE function
 // that moves a collection's totals, and the loyalty-points provider's package.
 // The SESSIONS belong to that provider, the way payment_store_credit_sessions
-// belong to the store-credit one — the service never touches them.
+// belong to the store-credit one — the service's payment flows never touch
+// them, and its one read is the personal-data answer (ADR 0277).
 
 // AppendLoyaltyEntry adds one row to a customer's point ledger.
 //

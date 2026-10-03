@@ -38,7 +38,8 @@ type fakePayments struct {
 	// this translation is the endpoints' only job, its correctness is visible
 	// only here.
 	lastCreditInput service.IssueCreditInput
-	// lastCreditQuery is which customer and currency the balance was asked for.
+	// lastCreditQuery is which customer and currency the last balance or
+	// history read asked for.
 	lastCreditQuery [2]string
 	// lastCreditList is the whole input the history was read with (ADR 0274).
 	lastCreditList service.ListStoreCreditInput

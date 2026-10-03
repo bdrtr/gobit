@@ -12,7 +12,10 @@ import (
 )
 
 // The three tables a gift card is kept in (ADR 0208): the cards, their ledger,
-// and the gift-card provider's own sessions, which the service never touches.
+// and the gift-card provider's own sessions. The service's payment flows never
+// write those sessions; it reads them twice, counting the ones still holding
+// part of a card before closing it (ADR 0213) and disclosing a customer's in
+// the personal-data answer (ADR 0277).
 
 // Error codes of the gift card tables.
 const (

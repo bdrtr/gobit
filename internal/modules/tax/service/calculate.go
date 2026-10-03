@@ -27,9 +27,9 @@ const ShippingLineID = "_shipping"
 // data; it taxes the base as it is. The decision is exactly the cart flow's
 // current contract (internal/workflows/cart, "Tax contract"): tax follows the
 // price actually paid, and taxing the pre-discount amount would mean taking
-// tax on money never taken from the customer. When the promotion module fills
-// in the discount in Phase 7, the base's DEFINITION does not change; only its
-// value shrinks.
+// tax on money never taken from the customer. The cart already subtracts the
+// promotion discount (DiscountTotal) before it sends the amount; a discount
+// shrinks the base's value, not its DEFINITION.
 type TaxableItem struct {
 	// ID is the line item's id on the CALLER's side (e.g. a cart line) and is
 	// returned as is in the result. This module neither validates nor stores

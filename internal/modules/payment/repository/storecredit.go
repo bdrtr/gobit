@@ -16,7 +16,8 @@ import (
 // The LEDGER is the module's own money record: the service writes credit into it
 // and answers a balance out of it. The SESSIONS belong to the store-credit
 // PROVIDER, exactly as payment_manual_sessions belong to the manual one — the
-// service never touches them.
+// service's payment flows never touch them, and its one read is the
+// personal-data answer (ADR 0277).
 
 // AppendStoreCreditEntry adds one event to the ledger.
 //

@@ -227,9 +227,9 @@ func (u endpointExpectation) bodiless() bool { return u.response == nil && u.pri
 // = the encoded key set" and an empty sample would not write the omitempty
 // fields at all.
 //
-// The four endpoints that carry a payment COLLECTION body are NOT here, and
-// their absence is deliberate: the rationale is in [Describe]'s documentation
-// (the "Collection" component name collides with product).
+// The four endpoints that carry a payment COLLECTION body are here too, at the
+// end; the comment above them says why they were once left out and what
+// brought them in (ADR 0036).
 func describedEndpoints() []endpointExpectation {
 	return []endpointExpectation{
 		{

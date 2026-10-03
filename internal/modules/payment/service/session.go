@@ -22,10 +22,11 @@ type CreateSessionInput struct {
 	// ZERO, the collection's REMAINING amount is used; it means the same as the
 	// "zero = all of it" rule in the provider contract.
 	//
-	// The remaining amount is found by subtracting the total reserved by OPEN
-	// sessions from the collection's amount; this field exists only to SPLIT
-	// the payment across more than one session, and their total can never
-	// exceed the collection.
+	// The remaining amount is found by subtracting the captured total and the
+	// total reserved by OPEN sessions from the collection's amount (ADR 0118,
+	// see [Service.CreateSession]); this field exists only to SPLIT the payment
+	// across more than one session, and their total can never exceed the
+	// collection.
 	Amount int64
 	// IdempotencyKey prevents the same session from being opened twice; it is
 	// required.

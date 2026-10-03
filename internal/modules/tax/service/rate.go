@@ -226,9 +226,10 @@ func (s *Service) UpdateTaxRate(ctx context.Context, id string, in UpdateTaxRate
 
 // buildRatePatch validates the update input and turns it into a patch.
 //
-// Validation is applied only to the fields that are FILLED: the current value
-// of a field that is not touched must not fail the update, even if it violates
-// a rule that is not valid today.
+// Validation is applied only to the fields that are FILLED (name, code and
+// rate are checked when given): the current value of a field that is not
+// touched is never read here, so a stored value that today's rules would
+// refuse, one written before a rule was tightened, does not fail the update.
 func buildRatePatch(in UpdateTaxRateInput) (models.TaxRatePatch, error) {
 	var patch models.TaxRatePatch
 

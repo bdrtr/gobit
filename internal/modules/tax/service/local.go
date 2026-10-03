@@ -19,9 +19,10 @@ import (
 //
 // # Rate selection
 //
-// The rate APPLIED to a line item is a SINGLE one; rates are not added. The
-// selection walks the region chain from the most SPECIFIC to the general
-// (province, then country), and in each region this order applies:
+// A SINGLE rate is SELECTED for a line item; if rates stand on it, the line is
+// taxed by that whole stack and the components add (see [rateTable.stackFrom],
+// ADR 0095). The selection walks the region chain from the most SPECIFIC to the
+// general (province, then country), and in each region this order applies:
 //
 //  1. Among the ruled rates that MATCH the line item, the most SPECIFIC one
 //     wins: a rule written for a single product beats a rule written for that
@@ -34,16 +35,16 @@ import (
 //  4. If the region yields no rate at all (neither a matching rule nor a
 //     default), the walk moves to the NEXT link UP the chain.
 //
-// # The province OVERRIDES the country, rates are NOT ADDED
+// # The province OVERRIDES the country, the chain's rates are NOT ADDED
 //
 // The decision is deliberate. Addition (province + country) is right only in
 // jurisdictions where sub-national tax really is additive (US state + county
 // sales tax). In KDV/VAT countries — Turkey, the EU — the country rate is the
 // WHOLE tax, and the moment a province row was added every cart would be taxed
-// twice. If an additive structure is needed, the right way to express it is to
-// define a combined rate in the SAME region (e.g. a single 800 basis point rate
-// for 6% state + 2% county); that way the applied rate also reads as a single
-// line on the invoice.
+// twice. If an additive structure is needed, it is expressed as a STACK in the
+// SAME region (e.g. a 2% county rate standing on a 6% state rate, ADR 0095);
+// the selected rate expands into its stack and every component is carried on
+// the line separately.
 //
 // # Why moving up the chain exists
 //

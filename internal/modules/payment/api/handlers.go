@@ -319,9 +319,9 @@ func (h *Handler) cancelSession(w http.ResponseWriter, r *http.Request) {
 // themselves.
 //
 // It makes the SAME service call as [Handler.cancelSession] on the admin
-// surface; the reason it is a separate endpoint is authorization (in Phase 8
-// the store and admin surfaces will be protected differently), not a
-// difference in behavior.
+// surface; the reason it is a separate endpoint is authorization (the admin
+// route needs an admin identity and [ScopeWrite], the store route only the
+// publishable key), not a difference in behavior.
 //
 // Its reason to exist is the reservation: an open session covers the
 // collection's remaining amount, and that is what prevents a double capture.
@@ -413,9 +413,9 @@ func (h *Handler) listRefunds(w http.ResponseWriter, r *http.Request) {
 
 // decodeOptionalAmount decodes amount requests whose body is OPTIONAL.
 //
-// On the capture and cancel endpoints sending no body is valid and means "the
-// whole"; counting an empty body as an error would force the most common call
-// to write a needless JSON object.
+// On the capture endpoint, its only caller, sending no body is valid and means
+// "the whole"; counting an empty body as an error would force the most common
+// call to write a needless JSON object. The cancel endpoints read no body.
 func decodeOptionalAmount(w http.ResponseWriter, r *http.Request) (amountRequest, error) {
 	var body amountRequest
 	if r.ContentLength == 0 {

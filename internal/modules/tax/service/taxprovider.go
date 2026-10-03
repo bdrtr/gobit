@@ -30,13 +30,14 @@ const LocalProviderID = "local"
 //
 // # Why it is not in the core
 //
-// Plan Section 6 says "TaxProvider", but core/provider defines only
-// PaymentProvider and FulfillmentProvider, and this module cannot touch the
-// core. The contract therefore lives HERE. The decision is temporary: when a
-// second real provider (such as Avalara/TaxJar) is written, the interface has
-// to move to core/provider/tax.go and the types here have to become aliases.
-// The signatures are written to make that move cheap, in the same pattern as
-// the two providers in the core.
+// Plan Section 6 says "TaxProvider", but core/provider defines no tax contract
+// (its contracts are payment, fulfillment, notification, file, error reporting
+// and classification), and this module cannot touch the core. The contract
+// therefore lives HERE. The decision is temporary: when a second real provider
+// (such as Avalara/TaxJar) is written, the interface has to move to
+// core/provider/tax.go and the types here have to become aliases. The
+// signatures are written to make that move cheap, in the same pattern as the
+// provider contracts in the core.
 //
 // # Freedom from side effects
 //

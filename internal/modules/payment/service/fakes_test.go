@@ -115,10 +115,11 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 	}
 
 	f.mu.Lock()
-	// BOTH LEDGERS go into the snapshot as well. Had they not, a test saying "the
-	// transaction was rolled back, so the row was not written" would pass GREEN
-	// while the opposite of what it proves was true: a real transaction rolls the
-	// row back, a fake map does not.
+	// The store credit, loyalty and gift card LEDGERS (the cards and their
+	// digests with them) go into the snapshot as well. Had they not, a test
+	// saying "the transaction was rolled back, so the row was not written" would
+	// pass GREEN while the opposite of what it proves was true: a real
+	// transaction rolls the row back, a fake map does not.
 	snapshot := struct {
 		collections map[string]models.PaymentCollection
 		sessions    map[string]models.PaymentSession

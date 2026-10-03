@@ -719,10 +719,10 @@ func TestEmptyReadListsReturnAnEmptyArray(t *testing.T) {
 // When the sessions of a collection that does not exist are asked for, the
 // answer has to be 404; returning 500 would tell an operator who mistyped the
 // ID "the server broke" and send them to open an incident instead of looking
-// for their own mistake. This rule, already tested for the write endpoints
-// (see TestErrorKindsMapToStatusCodes), is verified separately on the read
-// endpoints: had all four of them set out to write the error by their own
-// hand, none of the other tests would have broken.
+// for their own mistake. This rule, already tested on a single read endpoint,
+// the collection itself (see TestErrorKindsMapToStatusCodes), is verified
+// separately on these four: had all four of them set out to write the error
+// by their own hand, none of the other tests would have broken.
 func TestReadEndpointsKeepTheServiceErrorKind(t *testing.T) {
 	paths := map[string]string{
 		"the collection's sessions": "/admin/v1/payment-collections/paycol_missing/payment-sessions",

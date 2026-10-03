@@ -18,9 +18,10 @@
 // Every admin endpoint asks for a scope, and the vocabulary has two entries:
 //
 //   - [ScopeRead] — opens the READ (GET, HEAD) endpoints under /admin/v1: tax
-//     regions, rates and rate rules can be read.
+//     regions, rates, rate rules, tax classes and their products can be read.
 //   - [ScopeWrite] — opens the WRITE (POST, PUT, PATCH, DELETE) endpoints
-//     under /admin/v1: creating, updating and deleting regions/rates/rules.
+//     under /admin/v1: creating, updating and deleting regions/rates/rules,
+//     tax classes and class memberships.
 //
 // corehttp.ScopeAdmin is a SUPERSCOPE and satisfies both; it does not have to
 // be listed separately, corehttp.Principal.HasScope already does that.

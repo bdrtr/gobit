@@ -12,15 +12,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// interopSurface is an exact copy of the NARROW interface on the consumer's
-// side.
+// interopSurface is the two-method surface [Interop] publishes across module
+// boundaries.
 //
-// The cart flow (internal/workflows/cart) CANNOT import the tax module and will
-// define these two signatures again in its own package. The declaration here
-// pins at compile time that the concrete [Interop] type satisfies that
-// interface STRUCTURALLY: if a signature changes, this test file does not
-// compile, and the mismatch is caught HERE instead of being seen only at run
-// time, at the moment of resolution.
+// The cart flow (internal/workflows/cart) CANNOT import the tax module and
+// declares only CalculateTaxJSON in its own Taxes interface; the e2e suite's
+// taxSurface declares RateForCountry as well. The declaration here pins at
+// compile time that the concrete [Interop] type satisfies both signatures
+// STRUCTURALLY: if a signature changes, this test file does not compile, and
+// the mismatch is caught HERE instead of being seen only at run time, at the
+// moment of resolution.
 type interopSurface interface {
 	CalculateTaxJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
 	RateForCountry(ctx context.Context, countryCode string) (rateBps int32, found bool, err error)

@@ -738,9 +738,11 @@ func TestNoMoreThanTheRemainderCanOpenAfterAPartialCapture(t *testing.T) {
 // A refund does not shrink the captured total, so the remaining capacity stays
 // at zero and the collection does NOT become payable again. ADR 0117 named the
 // trigger for this ("once it owes nothing"), and that trigger has no consumer
-// today: both refund callers in production only send the money back, and
-// neither captures again afterwards. A capability without a consumer is not
-// published (ADR 0063), and this test ties that decision to a gate.
+// today: all four refund callers in production (the admin refund endpoint and
+// the returns flow's refund, claim and exchange-difference paths) only send the
+// money back, and none captures again afterwards. A capability without a
+// consumer is not published (ADR 0063), and this test ties that decision to a
+// gate.
 func TestAFullyRefundedCollectionDoesNotReopen(t *testing.T) {
 	svc, _, _ := newTestService(t)
 	ctx := context.Background()

@@ -2,8 +2,8 @@
 //
 // Its responsibility in one sentence: to know in which geography and at which
 // rate a sale is taxed, and to compute the tax of a list of line items. The
-// module is the SOLE writer of TaxRegion, TaxRate and TaxRateRule data
-// (Principle 2.3).
+// module is the SOLE writer of TaxRegion, TaxRate, TaxRateRule, TaxClass and
+// TaxClassMember data (Principle 2.3).
 //
 // # The work inherited from region
 //
@@ -14,9 +14,10 @@
 //
 // The takeover is done in this round WITHOUT TOUCHING region (ADR 0001: modules
 // do not import one another and do not see one another's tables). tax sets up
-// its own schema and surface; having the cart flow resolve "tax.interop"
-// instead of "region.service" is a separate wiring step. The two surfaces
-// correspond one to one:
+// its own schema and surface, and the cart flow computes the tax through
+// "tax.interop"; it falls back to "region.service"'s rate only when tax is not
+// registered or the cart's region does not resolve to a single country. The
+// two surfaces correspond one to one:
 //
 //	region: RegionTax(ctx, regionID)   -> (rateBps int32, automatic bool, err error)
 //	tax:    RateForCountry(ctx, code)  -> (rateBps int32, found bool, err error)
@@ -30,10 +31,10 @@
 // # The provider abstraction is NOT IN THE CORE
 //
 // The plan says "TaxProvider", but core/provider has NO tax provider (it
-// defines the payment, shipping, notification and file contracts and
-// ErrorReporter), and this module cannot touch the core. The contract
-// therefore lives in the module's own package ([service.TaxProvider]), and the
-// implementation that ships in the box is the local calculation
+// defines the payment, shipping, notification, file and classification
+// contracts and ErrorReporter), and this module cannot touch the core. The
+// contract therefore lives in the module's own package ([service.TaxProvider]),
+// and the implementation that ships in the box is the local calculation
 // ([service.LocalProvider]). The decision is EXPLICITLY temporary; the
 // condition and the path for moving it are written in the service package's
 // godoc.
@@ -58,7 +59,8 @@
 //     ProvidersName below).
 //   - "tax_region.query" — the read provider opened to the Query layer
 //     (ADR 0004).
-//   - /admin/v1/tax-regions, /admin/v1/tax-rates (+ rules) — the admin API.
+//   - /admin/v1/tax-regions, /admin/v1/tax-rates (+ rules),
+//     /admin/v1/tax-classes (+ products) — the admin API.
 //
 // There is NO Store API; the reasoning is in the internal/modules/tax/api
 // package comment.
