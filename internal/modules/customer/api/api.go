@@ -1,6 +1,7 @@
-// Package api customer modülünün HTTP yüzeyidir.
+// Package api is the customer module's HTTP surface.
 //
-// İki ad alanı vardır (plan Bölüm 8): /admin/v1 yönetim, /store/v1 müşteri.
+// There are two namespaces (plan Section 8): /admin/v1 for administration,
+// /store/v1 for the customer.
 //
 // # The storefront REQUIRES an identity this framework does not issue
 //
@@ -32,22 +33,22 @@
 // the customer the path named. Naming the gap wrongly cost a reader the search
 // for a missing 401 that was never missing.
 //
-// # Yetki
+// # Scopes
 //
-// /admin/v1 altındaki uçlar kimlikten AYRI olarak yetki ister:
+// The endpoints under /admin/v1 ask for a scope SEPARATELY from identity:
 //
-//   - [ScopeRead] ("customer:read") — GET uçlarını açar.
-//   - [ScopeWrite] ("customer:write") — POST, PUT ve DELETE uçlarını açar.
+//   - [ScopeRead] ("customer:read") — opens the GET endpoints.
+//   - [ScopeWrite] ("customer:write") — opens the POST, PUT and DELETE endpoints.
 //
-// corehttp.ScopeAdmin ("admin") ÜST YETKİDİR ve ikisini de karşılar; tam
-// yetkili bir kimliğe ayrıca verilmesi gerekmez.
+// corehttp.ScopeAdmin ("admin") is a SUPERSCOPE and satisfies both; a fully
+// privileged identity does not need to be granted them separately.
 //
-// /store/v1 uçları yetki İSTEMEZ: mağaza yüzeyinin kimliği publishable
-// anahtardır ve o anahtar tanımı gereği yetki taşımaz.
+// The /store/v1 endpoints ask for NO scope: the storefront surface's identity
+// is the publishable key, and that key by definition carries no scope.
 //
-// Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
-// onu status koduna çevirir (plan Bölüm 2.7). Bu, hata sınıflandırmasının tek
-// bir yerde kalmasını sağlar.
+// Handlers do NOT CHOOSE the status code: the service returns a typed error and
+// corehttp.WriteError turns it into a status code (plan Section 2.7). This
+// keeps error classification in a single place.
 package api
 
 import (
@@ -67,73 +68,73 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/service"
 )
 
-// maxBodyBytes tek bir istek gövdesinin azami boyutudur. Sınırsız bir gövde,
-// tek istekle belleği tüketmenin en ucuz yoludur.
+// maxBodyBytes is the maximum size of a single request body. An unbounded body
+// is the cheapest way to exhaust memory with a single request.
 const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
-// codeInvalidBody istek gövdesi ya da parametresi çözümlenemediğinde dönen
-// hata kodudur.
+// codeInvalidBody is the error code returned when a request body or parameter
+// cannot be parsed.
 const codeInvalidBody = "customer_invalid_body"
 
-// Yol parametrelerinin adları.
+// The names of the path parameters.
 const (
 	paramID         = "id"
 	paramAddressID  = "address_id"
 	paramCustomerID = "customer_id"
 )
 
-// Customer handler'ların servisten ihtiyaç duyduğu yüzeydir.
+// Customer is the surface the handlers need from the service.
 //
-// Dar tutulması testleri sadeleştirir: HTTP davranışı, gerçek bir veritabanı
-// olmadan birkaç satırlık bir sahte ile doğrulanabilir.
+// Keeping it narrow keeps the tests simple: the HTTP behavior can be verified
+// with a fake a few lines long, without a real database.
 type Customer interface {
-	// CreateCustomer kayıtlı bir müşteri hesabı oluşturur.
+	// CreateCustomer creates a registered customer account.
 	CreateCustomer(ctx context.Context, in service.CustomerInput) (models.Customer, error)
-	// RegisterGuest misafir müşteri kaydı oluşturur.
+	// RegisterGuest creates a guest customer record.
 	RegisterGuest(ctx context.Context, in service.CustomerInput) (models.Customer, error)
-	// GetCustomer müşteriyi kimliğiyle döner.
+	// GetCustomer returns the customer by its identifier.
 	GetCustomer(ctx context.Context, id string) (models.Customer, error)
-	// ListCustomers müşterileri süzer ve sayfalar.
+	// ListCustomers filters and pages the customers.
 	ListCustomers(ctx context.Context, in service.ListCustomersInput) (service.Page[models.Customer], error)
-	// UpdateCustomer müşterinin verilen alanlarını günceller.
+	// UpdateCustomer updates the given fields of the customer.
 	UpdateCustomer(ctx context.Context, id string, in service.UpdateCustomerInput) (models.Customer, error)
-	// DeleteCustomer müşteriyi yumuşak siler.
+	// DeleteCustomer soft-deletes the customer.
 	DeleteCustomer(ctx context.Context, id string) error
-	// ConvertGuestToAccount misafiri kayıtlı hesaba çevirir.
+	// ConvertGuestToAccount turns a guest into a registered account.
 	ConvertGuestToAccount(ctx context.Context, customerID string) error
 
-	// CreateGroup yeni bir müşteri grubu oluşturur.
+	// CreateGroup creates a new customer group.
 	CreateGroup(ctx context.Context, in service.GroupInput) (models.CustomerGroup, error)
-	// GetGroup grubu kimliğiyle döner.
+	// GetGroup returns the group by its identifier.
 	GetGroup(ctx context.Context, id string) (models.CustomerGroup, error)
-	// ListGroups grupları sayfalar.
+	// ListGroups pages the groups.
 	ListGroups(ctx context.Context, limit, offset int64) (service.Page[models.CustomerGroup], error)
-	// UpdateGroup grubun verilen alanlarını günceller.
+	// UpdateGroup updates the given fields of the group.
 	UpdateGroup(ctx context.Context, id string, in service.UpdateGroupInput) (models.CustomerGroup, error)
-	// DeleteGroup grubu yumuşak siler.
+	// DeleteGroup soft-deletes the group.
 	DeleteGroup(ctx context.Context, id string) error
-	// AddToGroup müşteriyi gruba ekler.
+	// AddToGroup adds the customer to the group.
 	AddToGroup(ctx context.Context, customerID, groupID string) error
-	// RemoveFromGroup müşteriyi gruptan çıkarır.
+	// RemoveFromGroup removes the customer from the group.
 	RemoveFromGroup(ctx context.Context, customerID, groupID string) error
-	// ListGroupsOf müşterinin gruplarını döner.
+	// ListGroupsOf returns the customer's groups.
 	ListGroupsOf(ctx context.Context, customerID string) ([]models.CustomerGroup, error)
 	// SetGroupSegment and ClearGroupSegment give a group a rule that decides
 	// its members, and take it away (ADR 0217).
 	SetGroupSegment(ctx context.Context, groupID string, rule models.SegmentRule) (models.CustomerGroup, error)
 	ClearGroupSegment(ctx context.Context, groupID string) (models.CustomerGroup, error)
 
-	// CreateAddress müşterinin yeni adresini ekler.
+	// CreateAddress adds a new address for the customer.
 	CreateAddress(ctx context.Context, customerID string, in service.AddressInput) (models.CustomerAddress, error)
-	// ListAddresses müşterinin adreslerini döner.
+	// ListAddresses returns the customer's addresses.
 	ListAddresses(ctx context.Context, customerID string) ([]models.CustomerAddress, error)
-	// UpdateAddress adresin verilen alanlarını günceller.
+	// UpdateAddress updates the given fields of the address.
 	UpdateAddress(ctx context.Context, customerID, addressID string, in service.UpdateAddressInput) (models.CustomerAddress, error)
-	// DeleteAddress adresi yumuşak siler.
+	// DeleteAddress soft-deletes the address.
 	DeleteAddress(ctx context.Context, customerID, addressID string) error
-	// SetDefaultShippingAddress adresi varsayılan kargo adresi yapar.
+	// SetDefaultShippingAddress makes the address the default shipping address.
 	SetDefaultShippingAddress(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error)
-	// SetDefaultBillingAddress adresi varsayılan fatura adresi yapar.
+	// SetDefaultBillingAddress makes the address the default billing address.
 	SetDefaultBillingAddress(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error)
 
 	// SaveToWishlist puts a variant on the customer's wishlist (ADR 0190).
@@ -154,7 +155,7 @@ type Customer interface {
 	UnmarkPriceAlert(ctx context.Context, customerID, variantID string) error
 }
 
-// Handler customer modülünün HTTP handler kümesidir.
+// Handler is the customer module's set of HTTP handlers.
 type Handler struct {
 	svc Customer
 	// preview is the segment flow the preview endpoint runs on; see
@@ -166,7 +167,7 @@ type Handler struct {
 	identity corehttp.Identity
 }
 
-// New verilen servis üzerinde çalışan handler kümesini üretir.
+// New builds the set of handlers that runs on the given service.
 //
 // identity may be nil and the zero value is the SAFE one: with no identity the
 // store routes that name a customer refuse every request. A constructor that
@@ -182,92 +183,95 @@ func New(svc Customer, identity corehttp.Identity) *Handler {
 	return &Handler{svc: svc, identity: identity}
 }
 
-// Yetki sözlüğü: customer'ın yönetim uçlarının istediği yetkiler.
+// Scope vocabulary: the scopes customer's admin endpoints ask for.
 //
-// Adlar TÜM modüllerde aynı kalıptadır ("<modül>:read" / "<modül>:write").
-// Her modülün kendi sözcüğünü uydurması, yetki dağıtan kişinin modül başına
-// ayrı bir sözlük ezberlemesi demek olurdu; ezberlenmeyen sözlükte yapılan
-// hata da her zaman aynı yöne düşer — fazla yetki verilir.
+// The names follow the same pattern in ALL modules ("<module>:read" /
+// "<module>:write"). Every module coining its own word would mean the person
+// granting scopes memorizes a separate vocabulary per module; and a mistake made
+// in a vocabulary nobody memorized always falls the same way — too much is
+// granted.
 const (
-	// ScopeRead customer yönetim yüzeyindeki OKUMA uçlarının istediği
-	// yetkidir.
+	// ScopeRead is the scope the READ endpoints of customer's admin surface ask
+	// for.
 	//
-	// Müşteri kayıtlarını, adreslerini ve gruplarını okumaya yeter; hiçbir
-	// yazma ucunu açmaz. Tam yetkili kimliklere ayrıca verilmesi gerekmez:
-	// corehttp.ScopeAdmin taşıyan bir çağıran bunu da karşılar (bkz.
-	// corehttp.Principal.HasScope).
+	// It is enough to read customer records, their addresses and their groups;
+	// it opens no write endpoint. Fully privileged identities do not need it
+	// granted separately: a caller carrying corehttp.ScopeAdmin satisfies this
+	// one too (see corehttp.Principal.HasScope).
 	ScopeRead = "customer:read"
 
-	// ScopeWrite customer yönetim yüzeyindeki YAZMA uçlarının istediği
-	// yetkidir.
+	// ScopeWrite is the scope the WRITE endpoints of customer's admin surface
+	// ask for.
 	//
-	// Müşteri oluşturma, güncelleme, silme, misafiri hesaba çevirme, adres
-	// yazma ve grup üyeliği değiştirme uçlarını açar. Bu uçların bazıları
-	// kişisel veriyi KALICI olarak değiştirir; okuma yetkisiyle karışmaması
-	// bu yüzden önemlidir.
+	// It opens the endpoints that create, update and delete a customer, convert
+	// a guest into an account, write addresses and change group membership.
+	// Some of these endpoints change personal data PERMANENTLY, which is why it
+	// matters that this scope is not mixed up with the read scope.
 	ScopeWrite = "customer:write"
 )
 
-// Routes customer'ın admin ve store route'larını router'a bağlar.
+// Routes binds customer's admin and store routes to the router.
 //
-// Route'lar chi'nin Route/Mount yardımcılarıyla DEĞİL, tam yollarla kaydedilir:
-// /admin/v1 önekini birden çok modül paylaşır ve aynı öneki iki kez Mount etmek
-// chi'de panik üretirdi. Tam yol kaydı aynı ağaca yan yana yazar.
+// The routes are registered with full paths, NOT with chi's Route/Mount
+// helpers: several modules share the /admin/v1 prefix, and mounting the same
+// prefix twice would make chi panic. Registering full paths writes them side by
+// side into the same tree.
 //
-// # KORUMA
+// # PROTECTION
 //
-// Yönetim uçlarının iki katmanı vardır ve ikisi de gereklidir:
+// The admin endpoints have two layers, and both are needed:
 //
-//  1. KİMLİK — corehttp.RequireAdmin. Bu modülde DEĞİL, router'ı kuran
-//     tarafta takılır (bkz. corehttp.APIGuards).
-//  2. YETKİ — BURADA, uç uç corehttp.RequireScope ile: okuma uçları
-//     [ScopeRead], yazma uçları [ScopeWrite] ister.
+//  1. IDENTITY — corehttp.RequireAdmin. It is mounted NOT in this module but on
+//     the side that builds the router (see corehttp.APIGuards).
+//  2. SCOPE — HERE, endpoint by endpoint, with corehttp.RequireScope: read
+//     endpoints ask for [ScopeRead], write endpoints for [ScopeWrite].
 //
-// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi:
-// yetkileri bilinçli olarak boşaltılmış bir yönetim kullanıcısı da geçerli bir
-// kimliktir ve DELETE /admin/v1/customers/{id} ile müşteri kayıtlarını
-// silebilirdi.
+// Without the second layer authentication would stand in for authorization:
+// an admin user whose scopes were deliberately emptied is still a valid
+// identity and could delete customer records with
+// DELETE /admin/v1/customers/{id}.
 //
-// Store uçlarına yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
-// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ. The authorization the
-// store routes DO carry is a different question with a different answer: the
-// customer named in the path has to be the customer the request proves, and
-// that check is inside the handler rather than in front of it — see
-// [Handler.storeCustomerID]. It cannot be middleware here for the same reason
-// the core's is not: the parameter it compares against belongs to the route.
+// The store endpoints get NO scope: the storefront surface's identity is the
+// publishable key, and that key by definition carries NO scope. The
+// authorization the store routes DO carry is a different question with a
+// different answer: the customer named in the path has to be the customer the
+// request proves, and that check is inside the handler rather than in front of
+// it — see [Handler.storeCustomerID]. It cannot be middleware here for the same
+// reason the core's is not: the parameter it compares against belongs to the
+// route.
 func (h *Handler) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
-	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+	read := r.With(corehttp.RequireScope(ScopeRead))
+	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	// --- yönetim ---
-	yazma.Post("/admin/v1/customers", h.adminCreateCustomer)
-	okuma.Get("/admin/v1/customers", h.adminListCustomers)
-	okuma.Get("/admin/v1/customers/{id}", h.adminGetCustomer)
-	yazma.Put("/admin/v1/customers/{id}", h.adminUpdateCustomer)
-	yazma.Delete("/admin/v1/customers/{id}", h.adminDeleteCustomer)
-	yazma.Post("/admin/v1/customers/{id}/convert-to-account", h.adminConvertGuest)
+	// --- admin ---
+	write.Post("/admin/v1/customers", h.adminCreateCustomer)
+	read.Get("/admin/v1/customers", h.adminListCustomers)
+	read.Get("/admin/v1/customers/{id}", h.adminGetCustomer)
+	write.Put("/admin/v1/customers/{id}", h.adminUpdateCustomer)
+	write.Delete("/admin/v1/customers/{id}", h.adminDeleteCustomer)
+	write.Post("/admin/v1/customers/{id}/convert-to-account", h.adminConvertGuest)
 
-	okuma.Get("/admin/v1/customers/{id}/groups", h.adminListGroupsOfCustomer)
-	okuma.Get("/admin/v1/customers/{id}/addresses", h.adminListAddresses)
-	okuma.Get("/admin/v1/customers/{id}/wishlist", h.adminListWishlist)
-	yazma.Post("/admin/v1/customers/{id}/addresses", h.adminCreateAddress)
-	yazma.Put("/admin/v1/customers/{id}/addresses/{address_id}", h.adminUpdateAddress)
-	yazma.Delete("/admin/v1/customers/{id}/addresses/{address_id}", h.adminDeleteAddress)
-	yazma.Post("/admin/v1/customers/{id}/addresses/{address_id}/default-shipping", h.adminSetDefaultShipping)
-	yazma.Post("/admin/v1/customers/{id}/addresses/{address_id}/default-billing", h.adminSetDefaultBilling)
+	read.Get("/admin/v1/customers/{id}/groups", h.adminListGroupsOfCustomer)
+	read.Get("/admin/v1/customers/{id}/addresses", h.adminListAddresses)
+	read.Get("/admin/v1/customers/{id}/wishlist", h.adminListWishlist)
+	write.Post("/admin/v1/customers/{id}/addresses", h.adminCreateAddress)
+	write.Put("/admin/v1/customers/{id}/addresses/{address_id}", h.adminUpdateAddress)
+	write.Delete("/admin/v1/customers/{id}/addresses/{address_id}", h.adminDeleteAddress)
+	write.Post("/admin/v1/customers/{id}/addresses/{address_id}/default-shipping", h.adminSetDefaultShipping)
+	write.Post("/admin/v1/customers/{id}/addresses/{address_id}/default-billing", h.adminSetDefaultBilling)
 
-	yazma.Post("/admin/v1/customer-groups", h.adminCreateGroup)
-	okuma.Get("/admin/v1/customer-groups", h.adminListGroups)
-	okuma.Get("/admin/v1/customer-groups/{id}", h.adminGetGroup)
-	yazma.Put("/admin/v1/customer-groups/{id}", h.adminUpdateGroup)
-	yazma.Delete("/admin/v1/customer-groups/{id}", h.adminDeleteGroup)
-	yazma.Post("/admin/v1/customer-groups/{id}/customers", h.adminAddToGroup)
-	yazma.Delete("/admin/v1/customer-groups/{id}/customers/{customer_id}", h.adminRemoveFromGroup)
-	yazma.Put("/admin/v1/customer-groups/{id}/segment", h.adminSetGroupSegment)
-	yazma.Delete("/admin/v1/customer-groups/{id}/segment", h.adminClearGroupSegment)
-	yazma.Post("/admin/v1/customer-segments/preview", h.adminPreviewSegment)
+	write.Post("/admin/v1/customer-groups", h.adminCreateGroup)
+	read.Get("/admin/v1/customer-groups", h.adminListGroups)
+	read.Get("/admin/v1/customer-groups/{id}", h.adminGetGroup)
+	write.Put("/admin/v1/customer-groups/{id}", h.adminUpdateGroup)
+	write.Delete("/admin/v1/customer-groups/{id}", h.adminDeleteGroup)
+	write.Post("/admin/v1/customer-groups/{id}/customers", h.adminAddToGroup)
+	write.Delete("/admin/v1/customer-groups/{id}/customers/{customer_id}", h.adminRemoveFromGroup)
+	write.Put("/admin/v1/customer-groups/{id}/segment", h.adminSetGroupSegment)
+	write.Delete("/admin/v1/customer-groups/{id}/segment", h.adminClearGroupSegment)
+	write.Post("/admin/v1/customer-segments/preview", h.adminPreviewSegment)
 
-	// --- vitrin ---
+	// --- storefront ---
 	//
 	// The eleven routes carrying {id} require the claim to be BACKED; the guest
 	// registration below is the one that cannot, because it is what creates the
@@ -290,21 +294,21 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Delete("/store/v1/customers/{id}/wishlist/{variant_id}/price-alert", h.storeUnmarkPriceAlert)
 }
 
-// itemEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).
+// itemEnvelope is the envelope of single-record responses (plan Section 8).
 type itemEnvelope struct {
-	// Data tek kaydın gövdesidir.
+	// Data is the body of the single record.
 	Data any `json:"data"`
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data geçerli sayfadaki kayıtlardır.
+	// Data are the records on the current page.
 	Data any `json:"data"`
-	// Count filtreye uyan TOPLAM kayıt sayısıdır.
+	// Count is the TOTAL number of records matching the filter.
 	Count int64 `json:"count"`
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the number of skipped records that was applied.
 	Offset int64 `json:"offset"`
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the page size that was applied.
 	Limit int64 `json:"limit"`
 	// NextCursor is the opaque position to send back as "after" for the next
 	// page; it is ABSENT when this page is the last one.
@@ -314,21 +318,22 @@ type listEnvelope struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 }
 
-// writeItem tekil yanıtı zarfıyla yazar.
+// writeItem writes a single-record response with its envelope.
 func writeItem(w http.ResponseWriter, r *http.Request, status int, data any) {
 	corehttp.WriteJSON(r.Context(), w, status, itemEnvelope{Data: data})
 }
 
-// writeItems sayfalanmamış bir listeyi zarfıyla yazar.
+// writeItems writes an unpaged list with its envelope.
 //
-// Sayfalanmayan uç noktalarda (bir müşterinin adresleri, grupları) zarfın
-// sayısal alanları kayıt sayısıyla doldurulur: istemcinin zarf şekli uç noktaya
-// göre değişmez.
+// On the endpoints that are not paged (a customer's addresses, groups) the
+// envelope's numeric fields are filled with the record count: the envelope
+// shape a client sees does not change from endpoint to endpoint.
 //
-// Limit, dönen kayıt sayısına EŞİTTİR ve [service.MaxLimit] ile KIRPILMAZ.
-// Kırpılsaydı 250 adresli bir müşteri için yanıt "count=250, limit=100" derdi;
-// istemci sayfa boyunu 100 sanıp sayfalama döngüsüne girer ve aynı kayıtları
-// tekrar okurdu. Burada sayfa yoktur — tek sayfa tüm kayıtlardır.
+// Limit EQUALS the number of records returned and is NOT CLIPPED to
+// [service.MaxLimit]. Were it clipped, the response for a customer with 250
+// addresses would say "count=250, limit=100"; the client would take the page
+// size to be 100, enter a paging loop and read the same records again. There
+// are no pages here — the single page is all the records.
 func writeItems[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	if items == nil {
 		items = []T{}
@@ -342,7 +347,7 @@ func writeItems[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	})
 }
 
-// writePage servis sayfasını liste zarfıyla yazar.
+// writePage writes the service page with the list envelope.
 func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page service.Page[S], convert func(S) T) {
 	items := make([]T, 0, len(page.Items))
 	for _, item := range page.Items {
@@ -357,7 +362,7 @@ func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page servic
 	})
 }
 
-// convertAll bir dilimi DTO dilimine çevirir; nil dilim boş dilime döner.
+// convertAll turns a slice into a slice of DTOs; a nil slice comes back empty.
 func convertAll[S any, T any](items []S, convert func(S) T) []T {
 	out := make([]T, 0, len(items))
 	for _, item := range items {
@@ -366,11 +371,11 @@ func convertAll[S any, T any](items []S, convert func(S) T) []T {
 	return out
 }
 
-// decodeBody istek gövdesini hedefe çözer.
+// decodeBody decodes the request body into the destination.
 //
-// Bilinmeyen alanlar REDDEDİLİR: sessizce yok sayılan bir alan, istemcinin
-// gönderdiğini sandığı bir değerin hiç yazılmaması demektir. Gövde boyutu da
-// sınırlıdır; aşılırsa çözümleme hatası olarak döner.
+// Unknown fields are REJECTED: a silently ignored field means a value the
+// client believes it sent is never written. The body size is bounded too; if
+// the bound is exceeded it comes back as a parse error.
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	reader := http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	dec := json.NewDecoder(reader)
@@ -378,21 +383,22 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
-			return coreerrors.Invalid(codeInvalidBody, "istek gövdesi boş olamaz")
+			return coreerrors.Invalid(codeInvalidBody, "request body cannot be empty")
 		}
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidBody,
-			"istek gövdesi çözümlenemedi")
+			"request body could not be parsed")
 	}
 
-	// Tek bir JSON belgesi beklenir; arkasından gelen ikinci belge sessizce
-	// yok sayılırsa istemci gönderdiğinin işlendiğini sanırdı.
+	// A single JSON document is expected; were a second document following it
+	// silently ignored, the client would believe what it sent had been
+	// processed.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return coreerrors.Invalid(codeInvalidBody, "istek gövdesi tek bir JSON belgesi olmalı")
+		return coreerrors.Invalid(codeInvalidBody, "request body has to be a single JSON document")
 	}
 	return nil
 }
 
-// pathParam yol parametresini okur.
+// pathParam reads a path parameter.
 func pathParam(r *http.Request, name string) string {
 	return chi.URLParam(r, name)
 }
@@ -445,11 +451,12 @@ func afterParam(r *http.Request, listing string, offset int64) (corepage.Cursor,
 	return corepage.Decode(listing, raw)
 }
 
-// pageParams sorgu dizesinden sayfalama parametrelerini okur.
+// pageParams reads the paging parameters from the query string.
 //
-// Eksik parametre sıfır döner ve servis varsayılanı uygular; SAYIYA
-// ÇEVRİLEMEYEN bir değer ise hata döner — sessizce sıfıra düşmek, istemcinin
-// istediği sayfa yerine ilk sayfayı almasına yol açardı.
+// A missing parameter returns zero and the service applies its default; a value
+// that CANNOT BE CONVERTED to a number returns an error instead — silently
+// falling back to zero would have made the client get the first page rather
+// than the page it asked for.
 func pageParams(r *http.Request) (limit, offset int64, err error) {
 	limit, err = intParam(r, "limit")
 	if err != nil {
@@ -462,7 +469,8 @@ func pageParams(r *http.Request) (limit, offset int64, err error) {
 	return limit, offset, nil
 }
 
-// intParam tek bir sayısal sorgu parametresini okur; yoksa sıfır döner.
+// intParam reads a single numeric query parameter; returns zero if it is
+// absent.
 func intParam(r *http.Request, name string) (int64, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -471,15 +479,15 @@ func intParam(r *http.Request, name string) (int64, error) {
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
 		return 0, coreerrors.Invalid(codeInvalidBody,
-			"%q parametresi tam sayı olmalı, %q verildi", name, raw)
+			"the %q parameter has to be an integer, %q given", name, raw)
 	}
 	return value, nil
 }
 
-// boolParam bir mantıksal sorgu parametresini okur; yoksa nil döner.
+// boolParam reads a boolean query parameter; returns nil if it is absent.
 //
-// nil ile false arasındaki fark burada anlamlıdır: "has_account=false"
-// misafirleri süzer, parametrenin hiç verilmemesi ise süzmez.
+// The difference between nil and false is meaningful here: "has_account=false"
+// filters for guests, whereas not giving the parameter at all filters nothing.
 func boolParam(r *http.Request, name string) (*bool, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -488,12 +496,12 @@ func boolParam(r *http.Request, name string) (*bool, error) {
 	value, err := strconv.ParseBool(raw)
 	if err != nil {
 		return nil, coreerrors.Invalid(codeInvalidBody,
-			"%q parametresi mantıksal (true/false) olmalı, %q verildi", name, raw)
+			"the %q parameter has to be a boolean (true/false), %q given", name, raw)
 	}
 	return &value, nil
 }
 
-// stringParam bir metin sorgu parametresini okur; yoksa nil döner.
+// stringParam reads a text query parameter; returns nil if it is absent.
 func stringParam(r *http.Request, name string) *string {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {

@@ -9,23 +9,25 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/repository/customerdb"
 )
 
-// CodeInvalidDefaultKind tanımsız bir varsayılan işaret türünü bildirir.
+// CodeInvalidDefaultKind reports an undefined kind of default flag.
 const CodeInvalidDefaultKind = "customer_invalid_default_kind"
 
-// CreateAddress müşterinin yeni adresini yazar.
+// CreateAddress writes a new address for the customer.
 //
-// Adresin kendisi varsayılan olarak işaretlenecekse önce müşterinin O TÜRDEKİ eski
-// varsayılanı temizlenir; ikisi tek işlemde yapılır. Kilit sırası HER akışta
-// aynıdır — önce müşteri satırı, sonra adresler (bkz. [Repo.SetDefaultAddress]).
+// If the address itself is to be marked as a default, the customer's old
+// default OF THAT KIND is cleared first; both happen in one transaction. The
+// lock order is the same in EVERY flow — the customer row first, then the
+// addresses (see [Repo.SetDefaultAddress]).
 //
-// Müşterinin varlığı kilitle birlikte doğrulanır: yalnızca foreign key'e
-// güvenilseydi eksik müşteri istemciye 404 yerine 422 olarak dönerdi.
+// The customer's existence is verified together with the lock: had only the
+// foreign key been relied on, a missing customer would have reached the client
+// as a 422 instead of a 404.
 func (r *Repo) CreateAddress(ctx context.Context, a models.CustomerAddress) (models.CustomerAddress, error) {
 	var out models.CustomerAddress
 
 	err := r.inTx(ctx, func(q *customerdb.Queries) error {
 		if _, err := q.GetCustomerForUpdate(ctx, a.CustomerID); err != nil {
-			return notFoundOr(err, CodeCustomerNotFound, "müşteri bulunamadı: %s", a.CustomerID)
+			return notFoundOr(err, CodeCustomerNotFound, "customer not found: %s", a.CustomerID)
 		}
 
 		if err := clearDefaults(ctx, q, a.CustomerID, a.IsDefaultShipping, a.IsDefaultBilling, a.CreatedAt); err != nil {
@@ -50,7 +52,7 @@ func (r *Repo) CreateAddress(ctx context.Context, a models.CustomerAddress) (mod
 			CreatedAt:         fromTime(a.CreatedAt),
 		})
 		if err != nil {
-			return wrapDB(err, "müşteri adresi oluşturulamadı")
+			return wrapDB(err, "the customer address could not be created")
 		}
 		out = toAddress(row)
 		return nil
@@ -61,7 +63,8 @@ func (r *Repo) CreateAddress(ctx context.Context, a models.CustomerAddress) (mod
 	return out, nil
 }
 
-// GetAddress adresi kimliği ve SAHİBİYLE birlikte döner; yoksa errors.NotFound.
+// GetAddress returns the address by its id AND ITS OWNER; errors.NotFound if
+// it does not exist.
 func (r *Repo) GetAddress(ctx context.Context, customerID, addressID string) (models.CustomerAddress, error) {
 	if err := r.ready(); err != nil {
 		return models.CustomerAddress{}, err
@@ -73,12 +76,12 @@ func (r *Repo) GetAddress(ctx context.Context, customerID, addressID string) (mo
 	})
 	if err != nil {
 		return models.CustomerAddress{}, notFoundOr(err, CodeAddressNotFound,
-			"müşteri adresi bulunamadı: %s", addressID)
+			"customer address not found: %s", addressID)
 	}
 	return toAddress(row), nil
 }
 
-// ListAddresses müşterinin adreslerini döner.
+// ListAddresses returns the customer's addresses.
 func (r *Repo) ListAddresses(ctx context.Context, customerID string) ([]models.CustomerAddress, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -86,7 +89,7 @@ func (r *Repo) ListAddresses(ctx context.Context, customerID string) ([]models.C
 
 	rows, err := r.q.ListCustomerAddresses(ctx, customerID)
 	if err != nil {
-		return nil, wrapDB(err, "müşterinin adresleri alınamadı: %s", customerID)
+		return nil, wrapDB(err, "the customer's addresses could not be read: %s", customerID)
 	}
 
 	out := make([]models.CustomerAddress, 0, len(rows))
@@ -96,11 +99,12 @@ func (r *Repo) ListAddresses(ctx context.Context, customerID string) ([]models.C
 	return out, nil
 }
 
-// UpdateAddress adresin verilen alanlarını günceller; yoksa errors.NotFound.
+// UpdateAddress updates the given fields of the address; errors.NotFound if it
+// does not exist.
 //
-// Varsayılan işaretleri burada DEĞİŞTİRİLEMEZ: işaret, müşterinin diğer
-// adreslerini de ilgilendirdiği için tek satırlık bir güncellemeyle
-// yapılamaz (bkz. [Repo.SetDefaultAddress]).
+// The default flags CANNOT be changed here: a flag concerns the customer's
+// other addresses too, so it cannot be set with a single-row update (see
+// [Repo.SetDefaultAddress]).
 func (r *Repo) UpdateAddress(
 	ctx context.Context,
 	customerID, addressID string,
@@ -128,16 +132,18 @@ func (r *Repo) UpdateAddress(
 	})
 	if err != nil {
 		return models.CustomerAddress{}, notFoundOr(err, CodeAddressNotFound,
-			"müşteri adresi bulunamadı: %s", addressID)
+			"customer address not found: %s", addressID)
 	}
 	return toAddress(row), nil
 }
 
-// DeleteAddress adresi soft delete ile siler; yoksa errors.NotFound.
+// DeleteAddress soft-deletes the address; errors.NotFound if it does not
+// exist.
 //
-// Adresin taşıdığı varsayılan işareti için ayrıca temizleme gerekmez: kısmi
-// benzersiz indeksler deleted_at IS NULL koşuluyla tanımlıdır, silinen satır
-// indeksin kapsamından çıkar ve müşteri yeni bir varsayılan atayabilir.
+// The default flag the address carries needs no separate clearing: the partial
+// unique indexes are defined with the condition deleted_at IS NULL, so the
+// deleted row leaves the index's scope and the customer can assign a new
+// default.
 func (r *Repo) DeleteAddress(ctx context.Context, customerID, addressID string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -148,28 +154,30 @@ func (r *Repo) DeleteAddress(ctx context.Context, customerID, addressID string, 
 		CustomerID: customerID,
 		DeletedAt:  fromTime(now),
 	}); err != nil {
-		return notFoundOr(err, CodeAddressNotFound, "müşteri adresi bulunamadı: %s", addressID)
+		return notFoundOr(err, CodeAddressNotFound, "customer address not found: %s", addressID)
 	}
 	return nil
 }
 
-// SetDefaultAddress adresi müşterinin varsayılan kargo ya da fatura adresi
-// yapar.
+// SetDefaultAddress makes the address the customer's default shipping or
+// billing address.
 //
-// # Kilit sırası
+// # Lock order
 //
-// İşlem HER ZAMAN önce müşteri satırını kilitler, sonra adreslerin satırlarına
-// dokunur. Sıra sabit olduğu için aynı müşteriye gelen iki eşzamanlı atama
-// birbirini bekler ve sırayla çalışır; ters sırada kilit alan bir akış olsaydı
-// veritabanı işlemlerden birini kilitlenme (deadlock) ile öldürürdü.
+// The transaction ALWAYS locks the customer row first and only then touches the
+// address rows. Because the order is fixed, two concurrent assignments for the
+// same customer wait for each other and run one after the other; were there a
+// flow taking the locks in the opposite order, the database would kill one of
+// the transactions with a deadlock.
 //
-// # Neden temizleme yetmez
+// # Why clearing is not enough
 //
-// "Eskisini temizle, yenisini işaretle" adımı tek başına doğruluğun kaynağı
-// DEĞİLDİR; kısıt, müşteri başına tek işaretli satıra izin veren kısmi
-// benzersiz indekstir. Temizleme adımı yalnızca o kısıtı sağlamanın yoludur.
-// Kilit ile indeks birlikte çalışır: kilit yarışı seri hâle getirir, indeks
-// kilidin atlandığı ya da yanlış kurulduğu bir yolda ikinci işareti reddeder.
+// The "clear the old one, mark the new one" step is NOT on its own the source
+// of correctness; the constraint is the partial unique index that allows one
+// flagged row per customer. The clearing step is only the way to satisfy that
+// constraint. The lock and the index work together: the lock serializes the
+// race, and the index rejects a second flag on any path where the lock was
+// skipped or set up wrongly.
 func (r *Repo) SetDefaultAddress(
 	ctx context.Context,
 	customerID, addressID string,
@@ -178,23 +186,23 @@ func (r *Repo) SetDefaultAddress(
 ) (models.CustomerAddress, error) {
 	if !kind.Valid() {
 		return models.CustomerAddress{}, errors.Invalid(CodeInvalidDefaultKind,
-			"tanımsız varsayılan işaret türü: %d", uint8(kind))
+			"undefined kind of default flag: %d", uint8(kind))
 	}
 
 	var out models.CustomerAddress
 
 	err := r.inTx(ctx, func(q *customerdb.Queries) error {
 		if _, err := q.GetCustomerForUpdate(ctx, customerID); err != nil {
-			return notFoundOr(err, CodeCustomerNotFound, "müşteri bulunamadı: %s", customerID)
+			return notFoundOr(err, CodeCustomerNotFound, "customer not found: %s", customerID)
 		}
-		// Adresin sahipliği ve canlılığı işaretlemeden ÖNCE doğrulanır; aksi
-		// hâlde eski varsayılan temizlenir, yenisi hiç işaretlenemez ve müşteri
-		// varsayılansız kalırdı.
+		// The address's ownership and liveness are verified BEFORE marking;
+		// otherwise the old default would be cleared, the new one could never
+		// be marked, and the customer would be left with no default.
 		if _, err := q.GetCustomerAddress(ctx, customerdb.GetCustomerAddressParams{
 			ID:         addressID,
 			CustomerID: customerID,
 		}); err != nil {
-			return notFoundOr(err, CodeAddressNotFound, "müşteri adresi bulunamadı: %s", addressID)
+			return notFoundOr(err, CodeAddressNotFound, "customer address not found: %s", addressID)
 		}
 
 		if err := clearDefaults(ctx, q, customerID,
@@ -216,7 +224,7 @@ func (r *Repo) SetDefaultAddress(
 			})
 		}
 		if err != nil {
-			return notFoundOr(err, CodeAddressNotFound, "müşteri adresi varsayılan yapılamadı: %s", addressID)
+			return notFoundOr(err, CodeAddressNotFound, "the customer address could not be made the default: %s", addressID)
 		}
 
 		out = toAddress(row)
@@ -228,10 +236,10 @@ func (r *Repo) SetDefaultAddress(
 	return out, nil
 }
 
-// clearDefaults istenen türlerdeki varsayılan işaretlerini kaldırır.
+// clearDefaults removes the default flags of the requested kinds.
 //
-// Çağıran işlem İÇİNDEDİR ve müşteri satırını çoktan kilitlemiştir; bu yüzden
-// burada yeniden kilit alınmaz.
+// The caller is INSIDE a transaction and has already locked the customer row,
+// so no lock is taken again here.
 func clearDefaults(
 	ctx context.Context,
 	q *customerdb.Queries,
@@ -243,20 +251,20 @@ func clearDefaults(
 		if err := q.ClearDefaultShipping(ctx, customerdb.ClearDefaultShippingParams{
 			CustomerID: customerID, UpdatedAt: fromTime(now),
 		}); err != nil {
-			return wrapDB(err, "varsayılan kargo adresi temizlenemedi: %s", customerID)
+			return wrapDB(err, "the default shipping address could not be cleared: %s", customerID)
 		}
 	}
 	if billing {
 		if err := q.ClearDefaultBilling(ctx, customerdb.ClearDefaultBillingParams{
 			CustomerID: customerID, UpdatedAt: fromTime(now),
 		}); err != nil {
-			return wrapDB(err, "varsayılan fatura adresi temizlenemedi: %s", customerID)
+			return wrapDB(err, "the default billing address could not be cleared: %s", customerID)
 		}
 	}
 	return nil
 }
 
-// toAddress üretilen satırı domain modeline çevirir.
+// toAddress converts a generated row into the domain model.
 func toAddress(row customerdb.CustomerAddress) models.CustomerAddress {
 	return models.CustomerAddress{
 		ID:                row.ID,

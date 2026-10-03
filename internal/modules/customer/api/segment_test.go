@@ -94,7 +94,7 @@ func TestASegmentIsSetWithTheBodysRule(t *testing.T) {
 	rec := adminCall(t, adminRouter(svc), http.MethodPut, "/admin/v1/customer-groups/custgrp_1/segment", spendRule)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, "custgrp_1", svc.sonGroupID)
+	assert.Equal(t, "custgrp_1", svc.lastGroupID)
 	assert.Equal(t, "try", asked.CurrencyCode)
 	assert.Equal(t, int32(30), asked.WindowDays)
 	require.Len(t, asked.Conditions, 2)
@@ -118,7 +118,7 @@ func TestASegmentIsCleared(t *testing.T) {
 	rec := adminCall(t, adminRouter(svc), http.MethodDelete, "/admin/v1/customer-groups/custgrp_1/segment", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, "custgrp_1", svc.sonGroupID)
+	assert.Equal(t, "custgrp_1", svc.lastGroupID)
 	assert.NotContains(t, rec.Body.String(), `"segment"`)
 }
 

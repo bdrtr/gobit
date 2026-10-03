@@ -11,8 +11,8 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
-// yeniMusteri opens a customer for a test.
-func yeniMusteri(ctx context.Context, t *testing.T, svc *Service, email string) models.Customer {
+// newTestCustomer opens a customer for a test.
+func newTestCustomer(ctx context.Context, t *testing.T, svc *Service, email string) models.Customer {
 	t.Helper()
 
 	c, err := svc.CreateCustomer(ctx, CustomerInput{Email: email})
@@ -24,15 +24,15 @@ func yeniMusteri(ctx context.Context, t *testing.T, svc *Service, email string) 
 // UPPER case and that its format is validated.
 func TestTheCountryCodeIsNormalized(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
-	customer := yeniMusteri(ctx, t, svc, "country@example.com")
+	svc, _ := newTestService(t)
+	customer := newTestCustomer(ctx, t, svc, "country@example.com")
 
-	address, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
+	address, err := svc.CreateAddress(ctx, customer.ID, validAddress())
 	require.NoError(t, err)
 	assert.Equal(t, "TR", address.CountryCode, "the country code has to be converted to UPPER case")
 
 	for _, code := range []string{"", "T", "TUR", "T1"} {
-		input := gecerliAdres()
+		input := validAddress()
 		input.CountryCode = code
 		_, err := svc.CreateAddress(ctx, customer.ID, input)
 		require.Error(t, err, "invalid country code: %q", code)
@@ -44,16 +44,16 @@ func TestTheCountryCodeIsNormalized(t *testing.T) {
 // are rejected.
 func TestRequiredAddressFields(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
-	customer := yeniMusteri(ctx, t, svc, "required@example.com")
+	svc, _ := newTestService(t)
+	customer := newTestCustomer(ctx, t, svc, "required@example.com")
 
-	blankLine := gecerliAdres()
+	blankLine := validAddress()
 	blankLine.Address1 = "   "
 	_, err := svc.CreateAddress(ctx, customer.ID, blankLine)
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	blankCity := gecerliAdres()
+	blankCity := validAddress()
 	blankCity.City = ""
 	_, err = svc.CreateAddress(ctx, customer.ID, blankCity)
 	require.Error(t, err)
@@ -70,12 +70,12 @@ func TestRequiredAddressFields(t *testing.T) {
 // the integration test.
 func TestTheDefaultAddressIsUnique(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
-	customer := yeniMusteri(ctx, t, svc, "default@example.com")
+	svc, _ := newTestService(t)
+	customer := newTestCustomer(ctx, t, svc, "default@example.com")
 
-	first, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
+	first, err := svc.CreateAddress(ctx, customer.ID, validAddress())
 	require.NoError(t, err)
-	second, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
+	second, err := svc.CreateAddress(ctx, customer.ID, validAddress())
 	require.NoError(t, err)
 
 	_, err = svc.SetDefaultShippingAddress(ctx, customer.ID, first.ID)
@@ -99,12 +99,12 @@ func TestTheDefaultAddressIsUnique(t *testing.T) {
 // affect each other.
 func TestShippingAndBillingDefaultsAreIndependent(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
-	customer := yeniMusteri(ctx, t, svc, "independent@example.com")
+	svc, _ := newTestService(t)
+	customer := newTestCustomer(ctx, t, svc, "independent@example.com")
 
-	shipping, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
+	shipping, err := svc.CreateAddress(ctx, customer.ID, validAddress())
 	require.NoError(t, err)
-	billing, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
+	billing, err := svc.CreateAddress(ctx, customer.ID, validAddress())
 	require.NoError(t, err)
 
 	_, err = svc.SetDefaultShippingAddress(ctx, customer.ID, shipping.ID)
@@ -127,16 +127,16 @@ func TestShippingAndBillingDefaultsAreIndependent(t *testing.T) {
 // when the address is created clears the old one.
 func TestTheDefaultFlagOnCreateClearsTheOldOne(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
-	customer := yeniMusteri(ctx, t, svc, "create@example.com")
+	svc, _ := newTestService(t)
+	customer := newTestCustomer(ctx, t, svc, "create@example.com")
 
-	firstInput := gecerliAdres()
+	firstInput := validAddress()
 	firstInput.IsDefaultShipping = true
 	first, err := svc.CreateAddress(ctx, customer.ID, firstInput)
 	require.NoError(t, err)
 	assert.True(t, first.IsDefaultShipping)
 
-	secondInput := gecerliAdres()
+	secondInput := validAddress()
 	secondInput.IsDefaultShipping = true
 	_, err = svc.CreateAddress(ctx, customer.ID, secondInput)
 	require.NoError(t, err)
@@ -155,17 +155,17 @@ func TestTheDefaultFlagOnCreateClearsTheOldOne(t *testing.T) {
 // default would occupy the place forever.
 func TestWhenTheDefaultAddressIsDeleted(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
-	customer := yeniMusteri(ctx, t, svc, "deleted@example.com")
+	svc, _ := newTestService(t)
+	customer := newTestCustomer(ctx, t, svc, "deleted@example.com")
 
-	first, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
+	first, err := svc.CreateAddress(ctx, customer.ID, validAddress())
 	require.NoError(t, err)
 	_, err = svc.SetDefaultShippingAddress(ctx, customer.ID, first.ID)
 	require.NoError(t, err)
 
 	require.NoError(t, svc.DeleteAddress(ctx, customer.ID, first.ID))
 
-	second, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
+	second, err := svc.CreateAddress(ctx, customer.ID, validAddress())
 	require.NoError(t, err)
 	newDefault, err := svc.SetDefaultShippingAddress(ctx, customer.ID, second.ID)
 	require.NoError(t, err)
@@ -176,12 +176,12 @@ func TestWhenTheDefaultAddressIsDeleted(t *testing.T) {
 // in the query.
 func TestAnotherCustomersAddressCannotBeRead(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newTestService(t)
 
-	owner := yeniMusteri(ctx, t, svc, "owner@example.com")
-	stranger := yeniMusteri(ctx, t, svc, "stranger@example.com")
+	owner := newTestCustomer(ctx, t, svc, "owner@example.com")
+	stranger := newTestCustomer(ctx, t, svc, "stranger@example.com")
 
-	address, err := svc.CreateAddress(ctx, owner.ID, gecerliAdres())
+	address, err := svc.CreateAddress(ctx, owner.ID, validAddress())
 	require.NoError(t, err)
 
 	_, err = svc.GetAddress(ctx, stranger.ID, address.ID)
@@ -201,12 +201,12 @@ func TestAnotherCustomersAddressCannotBeRead(t *testing.T) {
 // customer.
 func TestAddressForAMissingCustomer(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newTestService(t)
 
-	_, err := svc.CreateAddress(ctx, models.NewCustomerID(sabitSaat), gecerliAdres())
+	_, err := svc.CreateAddress(ctx, models.NewCustomerID(fixedClock), validAddress())
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	_, err = svc.ListAddresses(ctx, models.NewCustomerID(sabitSaat))
+	_, err = svc.ListAddresses(ctx, models.NewCustomerID(fixedClock))
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
 		"a customer that does not exist has to get NotFound, not an empty list")
 }
@@ -214,10 +214,10 @@ func TestAddressForAMissingCustomer(t *testing.T) {
 // TestTheAddressUpdateIsPartial proves that the fields not given are kept.
 func TestTheAddressUpdateIsPartial(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
-	customer := yeniMusteri(ctx, t, svc, "partial@example.com")
+	svc, _ := newTestService(t)
+	customer := newTestCustomer(ctx, t, svc, "partial@example.com")
 
-	address, err := svc.CreateAddress(ctx, customer.ID, gecerliAdres())
+	address, err := svc.CreateAddress(ctx, customer.ID, validAddress())
 	require.NoError(t, err)
 
 	newCity := "Ankara"

@@ -38,11 +38,11 @@ type ClearDefaultShippingParams struct {
 	UpdatedAt  pgtype.Timestamptz
 }
 
-// ClearDefaultShipping müşterinin varsayılan kargo işaretini kaldırır.
+// ClearDefaultShipping removes the customer's default shipping flag.
 //
-// Yeni varsayılanı yazmadan ÖNCE çalışmalıdır: kısmi benzersiz indeks müşteri
-// başına tek işaretli satıra izin verir ve temizleme atlanırsa ikinci
-// işaretleme benzersizlik ihlaliyle döner.
+// It has to run BEFORE the new default is written: the partial unique index
+// allows one flagged row per customer, and if the clearing is skipped the
+// second marking comes back with a uniqueness violation.
 func (q *Queries) ClearDefaultShipping(ctx context.Context, arg ClearDefaultShippingParams) error {
 	_, err := q.db.Exec(ctx, clearDefaultShipping, arg.CustomerID, arg.UpdatedAt)
 	return err
@@ -58,11 +58,12 @@ type GetCustomerAddressParams struct {
 	CustomerID string
 }
 
-// GetCustomerAddress adresi kimliğiyle ve SAHİBİYLE birlikte okur.
+// GetCustomerAddress reads the address by its id AND ITS OWNER.
 //
-// customer_id koşulu bilinçlidir: bir müşterinin adres kimliğini tahmin eden
-// istek, sahiplik denetimi sorgunun dışında bırakılsaydı başkasının adresini
-// okuyabilirdi. Denetim WHERE'de olduğu sürece atlanamaz.
+// The customer_id condition is deliberate: had the ownership check been left
+// outside the query, a request that guesses a customer's address id could read
+// someone else's address. As long as the check is in the WHERE, it cannot be
+// skipped.
 func (q *Queries) GetCustomerAddress(ctx context.Context, arg GetCustomerAddressParams) (CustomerAddress, error) {
 	row := q.db.QueryRow(ctx, getCustomerAddress, arg.ID, arg.CustomerID)
 	var i CustomerAddress
@@ -165,27 +166,29 @@ WHERE customer_id = ANY($1::text[])
 ORDER BY customer_id, created_at DESC, id DESC
 `
 
-// ListAddressesForDisclosure verilen müşterilerin TÜM adreslerini okur.
+// ListAddressesForDisclosure reads ALL the addresses of the given customers.
 //
-// Bu dosyadaki tek deleted_at'siz sorgudur ve istisna, unutulma yolundakiyle
-// aynı olguya dayanır: yumuşak silme yalnızca deleted_at ile updated_at yazar,
-// silinmiş bir adres satırı kişinin sokağını, kapı numarasını ve telefonunu
-// AYNEN taşır. "Bize dair ne tutuyorsunuz" sorusunun yanıtı, listelerde
-// görünen satırlar değil, veritabanının GERÇEKTEN tuttuğu satırlardır.
+// It is the one query in this file without deleted_at, and the exception rests
+// on the same fact as the one on the erasure path: a soft delete writes only
+// deleted_at and updated_at, so a deleted address row carries the person's
+// street, door number and phone UNCHANGED. The answer to "what do you hold
+// about us" is not the rows that show up in lists but the rows the database
+// REALLY holds.
 //
-// customer_address_customer_idx bu sorguya HİZMET EDEMEZ: indeks
-// WHERE deleted_at IS NULL ile kurulmuş kısmi bir indekstir ve sorgu onun
-// koşulunun dışına çıkar. Tarama, unutulma yolunda kabul edilen gerekçenin
-// aynısıyla kabul edilir (bkz. repository/erasure.go, lockErasureTargets):
-// açıklama isteği kişi başına ömür boyu birkaç kez çalışır ve hiçbir
-// müşterinin beklediği istek yolunda değildir.
+// customer_address_customer_idx CANNOT SERVE this query: the index is a
+// partial index built WHERE deleted_at IS NULL, and the query goes outside its
+// condition. The scan is accepted on the same grounds accepted on the erasure
+// path (see repository/erasure.go, lockErasureTargets): a disclosure request
+// runs a few times per person per lifetime and is on no request path a
+// customer waits on.
 //
-// Tek çağrıda BÜTÜN müşterilerin adresleri istenir; e-postayla çözülen bir özne
-// onlarca misafir kaydına ulaşabilir ve her biri için ayrı sorgu, dosyanın
-// maliyetini kişinin geçmişteki sipariş sayısına bağlardı.
+// The addresses of ALL the customers are asked for in one call; a subject
+// resolved by e-mail can reach dozens of guest records, and a separate query
+// for each would tie the file's cost to the number of orders the person has
+// placed in the past.
 //
-// Sıralama belirlilik içindir ve müşteri kırılımını korur: aynı özne için iki
-// kez üretilen dosya satırları aynı sırada göstermelidir.
+// The ordering is for determinism and keeps the per-customer breakdown: a file
+// produced twice for the same subject has to show the rows in the same order.
 func (q *Queries) ListAddressesForDisclosure(ctx context.Context, customerIds []string) ([]CustomerAddress, error) {
 	rows, err := q.db.Query(ctx, listAddressesForDisclosure, customerIds)
 	if err != nil {

@@ -1,13 +1,14 @@
-// Package repository customer modülünün veritabanı erişim katmanıdır.
+// Package repository is the customer module's database access layer.
 //
-// sqlc'nin ürettiği customerdb paketi bu paketin İÇİNDE kalır: dışarıya yalnızca
-// [models] domain tipleri verilir, pgtype hiçbir imzada görünmez. Bu sınır
-// bilinçlidir — servis ve API katmanları depolama ayrıntısına bağlanmaz ve
-// üretilen kod yeniden üretildiğinde yalnızca bu paket etkilenir.
+// The customerdb package that sqlc generates stays INSIDE this package: only
+// the [models] domain types are handed out, and pgtype appears in no
+// signature. The boundary is deliberate — the service and API layers do not
+// bind to storage details, and when the generated code is regenerated only
+// this package is affected.
 //
-// Ham hatalar da sınırı geçmez: pgx.ErrNoRows ve PostgreSQL kısıt ihlalleri
-// burada core/errors'ın tipli hatalarına çevrilir, böylece HTTP katmanı
-// status kodunu doğru seçer (plan Bölüm 2.7).
+// Raw errors do not cross the boundary either: pgx.ErrNoRows and PostgreSQL
+// constraint violations are translated here into core/errors' typed errors,
+// so the HTTP layer picks the right status code (plan Section 2.7).
 package repository
 
 import (
@@ -26,48 +27,53 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/repository/customerdb"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the caller can look them up with errors.CodeOf.
 const (
-	// CodeCustomerNotFound istenen müşterinin bulunamadığını bildirir.
+	// CodeCustomerNotFound reports that the requested customer was not found.
 	CodeCustomerNotFound = "customer_not_found"
-	// CodeGroupNotFound istenen müşteri grubunun bulunamadığını bildirir.
+	// CodeGroupNotFound reports that the requested customer group was not
+	// found.
 	CodeGroupNotFound = "customer_group_not_found"
-	// CodeAddressNotFound istenen adresin bulunamadığını bildirir.
+	// CodeAddressNotFound reports that the requested address was not found.
 	CodeAddressNotFound = "customer_address_not_found"
-	// CodeMembershipNotFound istenen grup üyeliğinin bulunamadığını bildirir.
+	// CodeMembershipNotFound reports that the requested group membership was
+	// not found.
 	CodeMembershipNotFound = "customer_group_membership_not_found"
-	// CodeConstraintViolation veritabanı kısıtının ihlal edildiğini bildirir.
+	// CodeConstraintViolation reports that a database constraint was violated.
 	CodeConstraintViolation = "customer_constraint_violation"
-	// CodeDuplicate benzersizlik ihlalini bildirir (örn. kayıtlı e-posta,
-	// müşteri başına ikinci varsayılan adresi).
+	// CodeDuplicate reports a uniqueness violation (e.g. an e-mail already on
+	// an account, a second default address for one customer).
 	CodeDuplicate = "customer_duplicate"
-	// CodeMetadataInvalid metadata alanının çözümlenemediğini bildirir.
+	// CodeMetadataInvalid reports that the metadata field could not be
+	// decoded.
 	CodeMetadataInvalid = "customer_metadata_invalid"
-	// CodeQueryFailed beklenmeyen bir veritabanı hatasını bildirir.
+	// CodeQueryFailed reports an unexpected database error.
 	CodeQueryFailed = "customer_query_failed"
-	// CodeCanceled bağlam iptalini bildirir.
+	// CodeCanceled reports that the context was canceled.
 	CodeCanceled = "customer_canceled"
-	// CodeTxFailed işlem (transaction) yönetiminin başarısızlığını bildirir.
+	// CodeTxFailed reports that managing the transaction failed.
 	CodeTxFailed = "customer_tx_failed"
 )
 
-// Kısmi benzersiz indekslerin adları.
+// The names of the partial unique indexes.
 //
-// Adlar hata sınıflandırmasında kullanılır: bir benzersizlik ihlalinin hangi
-// kuraldan geldiği yalnızca kısıt adından okunabilir ve çağıran "e-posta zaten
-// hesapta" ile "ikinci varsayılan adresi" arasını ancak böyle ayırabilir.
+// The names are used to classify errors: which rule a uniqueness violation
+// came from can be read only from the constraint name, and only that way can
+// the caller tell "the e-mail is already on an account" from "a second default
+// address".
 const (
-	// IndexAccountEmail kayıtlı hesapların e-posta benzersizliğidir.
+	// IndexAccountEmail is the uniqueness of registered accounts' e-mails.
 	IndexAccountEmail = "customer_account_email_uniq"
-	// IndexDefaultShipping müşteri başına tek varsayılan kargo adresidir.
+	// IndexDefaultShipping is the single default shipping address per
+	// customer.
 	IndexDefaultShipping = "customer_address_default_shipping_uniq"
-	// IndexDefaultBilling müşteri başına tek varsayılan fatura adresidir.
+	// IndexDefaultBilling is the single default billing address per customer.
 	IndexDefaultBilling = "customer_address_default_billing_uniq"
-	// IndexGroupName grup adlarının benzersizliğidir.
+	// IndexGroupName is the uniqueness of group names.
 	IndexGroupName = "customer_group_name_uniq"
 )
 
-// PostgreSQL SQLSTATE kodları (ihtiyaç duyulanlar).
+// PostgreSQL SQLSTATE codes (the ones this package needs).
 const (
 	sqlstateCheckViolation       = "23514"
 	sqlstateUniqueViolation      = "23505"
@@ -76,16 +82,16 @@ const (
 	sqlstateStringDataRightTrunc = "22001"
 )
 
-// Repo customer tablolarına erişimi sağlar. Eşzamanlı kullanıma güvenlidir.
+// Repo gives access to the customer tables. It is safe for concurrent use.
 type Repo struct {
 	pool *pgxpool.Pool
 	q    *customerdb.Queries
 }
 
-// New verilen havuz üzerinde çalışan bir depo üretir.
+// New builds a repository that works over the given pool.
 //
-// pool nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak bildirilir;
-// kurulum yolu panik üretmez.
+// A nil pool is reported as a typed error on the first call, not at setup; the
+// setup path does not panic.
 func New(pool *pgxpool.Pool) *Repo {
 	r := &Repo{pool: pool}
 	if pool != nil {
@@ -94,20 +100,22 @@ func New(pool *pgxpool.Pool) *Repo {
 	return r
 }
 
-// ready havuzun kullanılabilir olduğunu doğrular.
+// ready verifies that the pool can be used.
 func (r *Repo) ready() error {
 	if r == nil || r.pool == nil || r.q == nil {
-		return errors.Unavailable(CodeQueryFailed, "customer veritabanı havuzu kurulmamış")
+		return errors.Unavailable(CodeQueryFailed, "the customer database pool is not set up")
 	}
 	return nil
 }
 
-// inTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem GERİ ALINIR.
+// inTx runs fn in a single transaction; if fn returns an error the transaction
+// is ROLLED BACK.
 //
-// Atomiklik varsayılan adresin atanması için zorunludur: eski varsayılanın
-// temizlenmesiyle yenisinin işaretlenmesi arasında hata oluşursa müşteri hiç
-// varsayılan adresi olmadan kalırdı. İşlem, müşterinin ya eski ya yeni
-// varsayılanla görünmesini garanti eder.
+// Atomicity is required for assigning the default address: had an error
+// struck between clearing the old default and marking the new one, the
+// customer would be left with no default address at all. The transaction
+// guarantees that the customer is seen with either the old default or the new
+// one.
 func (r *Repo) inTx(ctx context.Context, fn func(q *customerdb.Queries) error) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -115,10 +123,10 @@ func (r *Repo) inTx(ctx context.Context, fn func(q *customerdb.Queries) error) e
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return wrapDB(err, "işlem başlatılamadı")
+		return wrapDB(err, "the transaction could not be started")
 	}
-	// Rollback, Commit'ten sonra çağrıldığında pgx.ErrTxClosed döner ve
-	// yok sayılır; bu, başarılı yolda da defer'ın güvenle kalmasını sağlar.
+	// Rollback called after Commit returns pgx.ErrTxClosed, which is ignored;
+	// that is what lets the defer stay in place safely on the success path too.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := fn(r.q.WithTx(tx)); err != nil {
@@ -126,16 +134,17 @@ func (r *Repo) inTx(ctx context.Context, fn func(q *customerdb.Queries) error) e
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return wrapDB(err, "işlem tamamlanamadı")
+		return wrapDB(err, "the transaction could not be completed")
 	}
 	return nil
 }
 
-// wrapDB ham bir veritabanı hatasını tipli hataya çevirir.
+// wrapDB turns a raw database error into a typed error.
 //
-// Sınıflandırma bilinçlidir: kısıt ihlali İSTEMCİ hatasıdır (422), benzersizlik
-// ihlali çakışmadır (409), iptal geçici erişilemezliktir (503); geri kalan her
-// şey sunucu hatasıdır ve mesajı istemciye SIZDIRILMAZ (bkz. core/http).
+// The classification is deliberate: a constraint violation is a CLIENT error
+// (422), a uniqueness violation is a conflict (409), a cancellation is a
+// temporary unavailability (503); everything else is a server error and its
+// message is NOT LEAKED to the client (see core/http).
 func wrapDB(err error, format string, a ...any) error {
 	if err == nil {
 		return nil
@@ -152,23 +161,23 @@ func wrapDB(err error, format string, a ...any) error {
 		switch pgErr.Code {
 		case sqlstateUniqueViolation:
 			return errors.Wrap(err, errors.KindConflict, CodeDuplicate,
-				"%s (kısıt: %s)", sprintf(format, a...), pgErr.ConstraintName)
+				"%s (constraint: %s)", sprintf(format, a...), pgErr.ConstraintName)
 		case sqlstateCheckViolation, sqlstateForeignKeyViolation,
 			sqlstateNotNullViolation, sqlstateStringDataRightTrunc:
 			return errors.Wrap(err, errors.KindInvalid, CodeConstraintViolation,
-				"%s (kısıt: %s)", sprintf(format, a...), pgErr.ConstraintName)
+				"%s (constraint: %s)", sprintf(format, a...), pgErr.ConstraintName)
 		}
 	}
 
 	return errors.Wrap(err, errors.KindInternal, CodeQueryFailed, format, a...)
 }
 
-// ConstraintName hatanın hangi veritabanı kısıtından geldiğini döner; kısıt
-// bilgisi yoksa boş dize.
+// ConstraintName returns the database constraint the error came from, or an
+// empty string when there is no constraint information.
 //
-// Servis bunu benzersizlik ihlalinin GEREKÇESİNİ ayırt etmek için kullanır:
-// aynı SQLSTATE altında "e-posta zaten kayıtlı" ile "ikinci varsayılan adresi"
-// birbirinden yalnızca kısıt adıyla ayrılır.
+// The service uses it to tell the REASON for a uniqueness violation apart:
+// under the same SQLSTATE, "the e-mail is already registered" and "a second
+// default address" differ from each other only by the constraint name.
 func ConstraintName(err error) string {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -177,7 +186,8 @@ func ConstraintName(err error) string {
 	return ""
 }
 
-// notFoundOr pgx.ErrNoRows'u NotFound'a, diğer her şeyi wrapDB'ye çevirir.
+// notFoundOr turns pgx.ErrNoRows into NotFound and everything else into
+// wrapDB's result.
 func notFoundOr(err error, code, format string, a ...any) error {
 	if err == nil {
 		return nil
@@ -188,10 +198,11 @@ func notFoundOr(err error, code, format string, a ...any) error {
 	return wrapDB(err, format, a...)
 }
 
-// sprintf hata mesajını bir kez biçimlendirir.
+// sprintf formats the error message once.
 //
-// Argümansız çağrılarda format DEĞİŞTİRİLMEDEN döner; aksi hâlde mesajdaki bir
-// yüzde işareti (örn. "%!d(MISSING)") kullanıcıya bozuk metin olarak giderdi.
+// A call with no arguments returns the format UNCHANGED; otherwise a percent
+// sign in the message would reach the user as garbled text (e.g.
+// "%!d(MISSING)").
 func sprintf(format string, a ...any) string {
 	if len(a) == 0 {
 		return format
@@ -199,12 +210,12 @@ func sprintf(format string, a ...any) string {
 	return fmt.Sprintf(format, a...)
 }
 
-// toInt32 sayfalama değerini sorgunun beklediği int32'ye GÜVENLE daraltır.
+// toInt32 narrows a paging value SAFELY to the int32 the query expects.
 //
-// Negatif değer sıfıra, int32'yi aşan değer üst sınıra çekilir: aksi hâlde
-// daraltma sessizce işaret değiştirir ve "LIMIT -2147483648" gibi bir sorgu
-// üretirdi. Sınır kontrolü çağıranın doğrulamasına bırakılmaz; burası son
-// savunmadır.
+// A negative value is clamped to zero and a value beyond int32 to the upper
+// bound: otherwise the narrowing would silently flip the sign and produce a
+// query such as "LIMIT -2147483648". The bounds check is not left to the
+// caller's validation; this is the last line of defense.
 func toInt32(n int64) int32 {
 	switch {
 	case n < 0:
@@ -216,11 +227,11 @@ func toInt32(n int64) int32 {
 	}
 }
 
-// toTime NULL olmayan bir zaman damgasını UTC time.Time'a çevirir.
+// toTime turns a non-NULL timestamp into a UTC time.Time.
 //
-// Geçersiz (NULL) damga sıfır zaman döner: NOT NULL sütunlarda bu durum
-// oluşamaz, oluşursa da sıfır zaman panik üretmeyen ve testte göze batan bir
-// değerdir.
+// An invalid (NULL) timestamp returns the zero time: on NOT NULL columns that
+// cannot happen, and if it ever does, the zero time is a value that does not
+// panic and that stands out in a test.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -228,7 +239,7 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// toTimePtr NULL olabilen bir zaman damgasını *time.Time'a çevirir.
+// toTimePtr turns a nullable timestamp into a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
 		return nil
@@ -237,15 +248,16 @@ func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// fromTime bir zamanı NOT NULL damgaya çevirir; daima UTC yazılır.
+// fromTime turns a time into a NOT NULL timestamp; it is always written in
+// UTC.
 func fromTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }
 
-// toMetadata jsonb sütununu haritaya çevirir.
+// toMetadata turns the jsonb column into a map.
 //
-// Boş ya da JSON null değer nil harita döner; böylece API yanıtında
-// "metadata": null yerine alan hiç görünmez (omitempty).
+// An empty or JSON null value returns a nil map, so the API response leaves
+// the field out altogether instead of carrying "metadata": null (omitempty).
 func toMetadata(raw []byte) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -253,7 +265,7 @@ func toMetadata(raw []byte) (map[string]any, error) {
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodeMetadataInvalid,
-			"metadata alanı çözümlenemedi")
+			"the metadata field could not be decoded")
 	}
 	if len(out) == 0 {
 		return nil, nil
@@ -261,10 +273,10 @@ func toMetadata(raw []byte) (map[string]any, error) {
 	return out, nil
 }
 
-// fromMetadata haritayı jsonb sütununa yazılacak bayta çevirir.
+// fromMetadata turns the map into the bytes written to the jsonb column.
 //
-// nil harita boş nesneye ('{}') çevrilir: sütun NOT NULL'dur ve "metadata yok"
-// ile "metadata boş" arasında saklamada bir fark yoktur.
+// A nil map becomes the empty object ('{}'): the column is NOT NULL, and in
+// storage there is no difference between "no metadata" and "empty metadata".
 func fromMetadata(m map[string]any) ([]byte, error) {
 	if len(m) == 0 {
 		return []byte("{}"), nil
@@ -272,15 +284,15 @@ func fromMetadata(m map[string]any) ([]byte, error) {
 	raw, err := json.Marshal(m)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, CodeMetadataInvalid,
-			"metadata alanı JSON'a çevrilemedi")
+			"the metadata field could not be encoded as JSON")
 	}
 	return raw, nil
 }
 
-// patchMetadata kısmi güncelleme için metadata parametresini üretir.
+// patchMetadata builds the metadata parameter for a partial update.
 //
-// nil harita SQL NULL'a çevrilir; COALESCE onu görünce sütunu OLDUĞU GİBİ
-// bırakır. Boş olmayan harita ise gerçek bir yazımdır.
+// A nil map becomes SQL NULL, and COALESCE, on seeing it, leaves the column AS
+// IT IS. A non-empty map, by contrast, is a real write.
 func patchMetadata(m map[string]any) ([]byte, error) {
 	if m == nil {
 		return nil, nil

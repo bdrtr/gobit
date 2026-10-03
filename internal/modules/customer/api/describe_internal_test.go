@@ -16,20 +16,21 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
-// Test DAHİLİ pakettedir çünkü anlatılan gövdeler ([customerRequest],
-// [customerDTO] …) dışa kapalıdır. Dışarıdan sınamanın tek yolu tipleri dışa
-// açmak olurdu; belgeyi sınamak uğruna modülün yüzeyini genişletmek, sınanan
-// şeyin kendisini bozardı.
+// The test is in the INTERNAL package because the bodies being described
+// ([customerRequest], [customerDTO] …) are unexported. The only way to exercise
+// them from the outside would be to export the types; widening the module's
+// surface for the sake of exercising the document would break the very thing
+// being exercised.
 
-// belge Describe'ın çıktısını GERÇEK route ağacına karşı üretip JSON'dan geri
-// okunmuş hâlini döner.
+// buildDoc produces Describe's output against the REAL route tree and returns it
+// as read back from JSON.
 //
-// Doğrudan [openapi.Doc.Build] çıktısına bakmak yetmezdi: işlemler orada Go
-// struct'ıdır ve incelenen davranış tam olarak alanların JSON'a yazılıp
-// yazılmadığıdır. Router da gerçek olmalıdır — açıklama ile route'un yolu
-// ayrışırsa hata BURADA görünsün, üretimde /openapi.json'a bakan birinde
-// değil.
-func belge(t *testing.T) (yollar, bilesenler map[string]any) {
+// Looking at [openapi.Doc.Build]'s output directly would not have been enough:
+// the operations are Go structs there and the behavior under examination is
+// exactly whether the fields get written into JSON. The router has to be real
+// too — the moment the description's path drifts from the route's, let the
+// failure show up HERE, not in somebody looking at /openapi.json in production.
+func buildDoc(t *testing.T) (paths, components map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
@@ -49,353 +50,360 @@ func belge(t *testing.T) (yollar, bilesenler map[string]any) {
 	// which runs per request), and passing one here would suggest otherwise.
 	New(nil, nil).Routes(r)
 
-	ham, err := doc.Build(r)
+	raw, err := doc.Build(r)
 	require.NoError(t, err)
 	require.Empty(t, doc.UnmatchedDescriptions(),
-		"anlatılan her uç bir route ile eşleşmeli; eşleşmeyen kayıt belgeye hiç girmez")
+		"every described endpoint has to match a route; an unmatched record never enters the document")
 
-	kodlanmis, err := json.Marshal(ham)
+	encoded, err := json.Marshal(raw)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(kodlanmis, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
 
 	var ok bool
 
-	bilesenler, ok = cozulmus["components"].(map[string]any)["schemas"].(map[string]any)
+	components, ok = decoded["components"].(map[string]any)["schemas"].(map[string]any)
 	require.True(t, ok)
 
-	yollar, ok = cozulmus["paths"].(map[string]any)
+	paths, ok = decoded["paths"].(map[string]any)
 	require.True(t, ok)
 
-	return yollar, bilesenler
+	return paths, components
 }
 
-// islem belgeden tek bir yol+metod işlemini döner.
-func islem(t *testing.T, yollar map[string]any, metod, yol string) map[string]any {
+// operation returns a single path+method operation from the document.
+func operation(t *testing.T, paths map[string]any, method, path string) map[string]any {
 	t.Helper()
 
-	yolIslemleri, ok := yollar[yol].(map[string]any)
-	require.True(t, ok, "%s belgede olmalı", yol)
+	pathOperations, ok := paths[path].(map[string]any)
+	require.True(t, ok, "%s has to be in the document", path)
 
-	op, ok := yolIslemleri[strings.ToLower(metod)].(map[string]any)
-	require.True(t, ok, "%s %s belgede olmalı", metod, yol)
+	op, ok := pathOperations[strings.ToLower(method)].(map[string]any)
+	require.True(t, ok, "%s %s has to be in the document", method, path)
 
 	return op
 }
 
-// semaCoz "$ref" atıflarını belgedeki bileşene çözer.
-func semaCoz(t *testing.T, bilesenler, sema map[string]any) map[string]any {
+// resolveSchema resolves "$ref" references to the component in the document.
+func resolveSchema(t *testing.T, components, schema map[string]any) map[string]any {
 	t.Helper()
 
-	ref, refli := sema["$ref"].(string)
-	if !refli {
-		return sema
+	ref, isRef := schema["$ref"].(string)
+	if !isRef {
+		return schema
 	}
 
-	hedef, ok := bilesenler[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
-	require.True(t, ok, "%q bileşeni kayıtlı olmalı", ref)
+	target, ok := components[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
+	require.True(t, ok, "the %q component has to be registered", ref)
 
-	return hedef
+	return target
 }
 
-// govdeSemasi bir yanıt ya da istek gövdesi tanımından JSON şemasını çıkarır.
-func govdeSemasi(t *testing.T, tanim map[string]any) map[string]any {
+// bodySchema extracts the JSON schema out of a response or request body
+// definition.
+func bodySchema(t *testing.T, definition map[string]any) map[string]any {
 	t.Helper()
 
-	icerik, ok := tanim["content"].(map[string]any)
-	require.True(t, ok, "gövde tanımında content olmalı: %#v", tanim)
+	content, ok := definition["content"].(map[string]any)
+	require.True(t, ok, "the body definition has to have content: %#v", definition)
 
-	json_, ok := icerik["application/json"].(map[string]any)
-	require.True(t, ok, "gövde application/json olmalı")
+	jsonContent, ok := content["application/json"].(map[string]any)
+	require.True(t, ok, "the body has to be application/json")
 
-	sema, ok := json_["schema"].(map[string]any)
-	require.True(t, ok, "gövdenin şeması olmalı")
+	schema, ok := jsonContent["schema"].(map[string]any)
+	require.True(t, ok, "the body has to have a schema")
 
-	return sema
+	return schema
 }
 
-// alanlar şemanın "properties" anahtarlarını döner.
-func alanlar(t *testing.T, bilesenler, sema map[string]any) []string {
+// fields returns the "properties" keys of the schema.
+func fields(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ozellikler, ok := semaCoz(t, bilesenler, sema)["properties"].(map[string]any)
-	require.True(t, ok, "şemada properties olmalı: %#v", sema)
+	properties, ok := resolveSchema(t, components, schema)["properties"].(map[string]any)
+	require.True(t, ok, "the schema has to have properties: %#v", schema)
 
-	return anahtarlar(ozellikler)
+	return mapKeys(properties)
 }
 
-// zorunlular şemanın "required" listesini döner.
-func zorunlular(t *testing.T, bilesenler, sema map[string]any) []string {
+// requiredFields returns the "required" list of the schema.
+func requiredFields(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ham, _ := semaCoz(t, bilesenler, sema)["required"].([]any)
+	raw, _ := resolveSchema(t, components, schema)["required"].([]any)
 
-	adlar := make([]string, 0, len(ham))
-	for _, ad := range ham {
-		metin, ok := ad.(string)
+	names := make([]string, 0, len(raw))
+	for _, name := range raw {
+		text, ok := name.(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, metin)
+		names = append(names, text)
 	}
 
-	return adlar
+	return names
 }
 
-// anahtarlar bir haritanın anahtarlarını döner.
-func anahtarlar[T any](m map[string]T) []string {
-	adlar := make([]string, 0, len(m))
-	for ad := range m {
-		adlar = append(adlar, ad)
+// mapKeys returns the keys of a map.
+func mapKeys[T any](m map[string]T) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// jsonAnahtarlari değeri encoding/json ile kodlayıp anahtarlarını döner.
+// jsonKeys encodes the value with encoding/json and returns its keys.
 //
-// Karşılaştırmanın diğer ucu budur: şema, tel üzerinde GERÇEKTEN ne olduğunu
-// anlatmalıdır ve bunu bilen tek şey encoding/json'un kendisidir.
-func jsonAnahtarlari(t *testing.T, v any) []string {
+// This is the other end of the comparison: the schema has to describe what is
+// REALLY on the wire, and the only thing that knows that is encoding/json
+// itself.
+func jsonKeys(t *testing.T, v any) []string {
 	t.Helper()
 
-	ham, err := json.Marshal(v)
+	raw, err := json.Marshal(v)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(ham, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
 
-	return anahtarlar(cozulmus)
+	return mapKeys(decoded)
 }
 
-// sifirDegeri verilen örneğin tipinin sıfır değerini döner.
+// zeroValue returns the zero value of the given sample's type.
 //
-// Sıfır değerde JSON'a yazılan anahtarlar tam olarak "her zaman yazılanlar"dır,
-// yani şemanın "required" kümesi. Örneği elle ikinci kez yazmak yerine tipten
-// türetilir: iki örnek arasında bir alan unutulduğunda test yanlış nedenle
-// düşerdi.
-func sifirDegeri(v any) any {
+// The keys written to JSON at the zero value are exactly "the ones always
+// written", that is, the schema's "required" set. It is derived from the type
+// rather than writing the sample out a second time by hand: had a field been
+// forgotten between the two samples, the test would fail for the wrong reason.
+func zeroValue(v any) any {
 	return reflect.New(reflect.TypeOf(v)).Elem().Interface()
 }
 
-// ucBeklentisi anlatılan tek bir ucun sözleşmesidir.
-type ucBeklentisi struct {
-	metod string
-	yol   string
-	// durum başarılı yanıtın GERÇEK status kodudur; handler'ın yazdığı kodla
-	// aynı olmalıdır (bkz. admin.go, store.go).
-	durum string
-	// istek istek gövdesinin TÜM alanlarını taşıyan örnektir; nil ise uç gövde
-	// almaz.
-	istek any
-	// yanit başarılı yanıttaki KAYDIN tüm alanlarını taşıyan örnektir; nil ise
-	// yanıtın gövdesi yoktur (204).
-	yanit any
-	// liste yanıtın liste zarfıyla döndüğünü bildirir.
-	liste bool
+// endpointExpectation is the contract of a single described endpoint.
+type endpointExpectation struct {
+	method string
+	path   string
+	// status is the REAL status code of the successful response; it has to be
+	// the same as the code the handler writes (see admin.go, store.go).
+	status string
+	// request is a sample carrying ALL the fields of the request body; if it is
+	// nil the endpoint takes no body.
+	request any
+	// response is a sample carrying all the fields of the RECORD in the
+	// successful response; if it is nil the response has no body (204).
+	response any
+	// list reports that the response comes back in the list envelope.
+	list bool
 }
 
-// anahtar işlemin "METOD yol" kimliğini döner.
-func (u ucBeklentisi) anahtar() string { return u.metod + " " + u.yol }
+// key returns the operation's "METHOD path" identity.
+func (e endpointExpectation) key() string { return e.method + " " + e.path }
 
-// anlatilanUclar anlatılan uçların beklentileridir.
+// describedEndpoints are the expectations of the described endpoints.
 //
-// Örnekler DOLUDUR: omitempty taşıyan her alan sıfırdan farklı bir değer alır,
-// çünkü karşılaştırma "şemanın properties kümesi = kodlanan anahtar kümesi"
-// biçimindedir ve boş bir örnek omitempty alanları hiç yazmazdı.
-func anlatilanUclar() []ucBeklentisi {
-	uclar := []ucBeklentisi{
+// The samples are FILLED IN: every field carrying omitempty gets a value
+// different from the zero one, because the comparison has the shape "the
+// schema's properties set = the encoded key set", and an empty sample would not
+// write the omitempty fields at all.
+func describedEndpoints() []endpointExpectation {
+	endpoints := []endpointExpectation{
 		{
-			metod: http.MethodPost, yol: "/admin/v1/customers", durum: "201",
-			istek: customerRequest{}, yanit: doluMusteri(),
+			method: http.MethodPost, path: "/admin/v1/customers", status: "201",
+			request: customerRequest{}, response: filledCustomer(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/customers", durum: "200",
-			yanit: doluMusteri(), liste: true,
+			method: http.MethodGet, path: "/admin/v1/customers", status: "200",
+			response: filledCustomer(), list: true,
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/customers/{id}", durum: "200",
-			yanit: doluMusteri(),
+			method: http.MethodGet, path: "/admin/v1/customers/{id}", status: "200",
+			response: filledCustomer(),
 		},
 		{
-			metod: http.MethodPut, yol: "/admin/v1/customers/{id}", durum: "200",
-			istek: updateCustomerRequest{}, yanit: doluMusteri(),
+			method: http.MethodPut, path: "/admin/v1/customers/{id}", status: "200",
+			request: updateCustomerRequest{}, response: filledCustomer(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/customers/{id}", durum: "204",
+			method: http.MethodDelete, path: "/admin/v1/customers/{id}", status: "204",
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/customers/{id}/convert-to-account",
-			durum: "200", yanit: doluMusteri(),
+			method: http.MethodPost, path: "/admin/v1/customers/{id}/convert-to-account",
+			status: "200", response: filledCustomer(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/customers/{id}/groups", durum: "200",
-			yanit: doluGrup(), liste: true,
+			method: http.MethodGet, path: "/admin/v1/customers/{id}/groups", status: "200",
+			response: filledGroup(), list: true,
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/customer-groups", durum: "201",
-			istek: groupRequest{}, yanit: doluGrup(),
+			method: http.MethodPost, path: "/admin/v1/customer-groups", status: "201",
+			request: groupRequest{}, response: filledGroup(),
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/customer-groups", durum: "200",
-			yanit: doluGrup(), liste: true,
+			method: http.MethodGet, path: "/admin/v1/customer-groups", status: "200",
+			response: filledGroup(), list: true,
 		},
 		{
-			metod: http.MethodGet, yol: "/admin/v1/customer-groups/{id}", durum: "200",
-			yanit: doluGrup(),
+			method: http.MethodGet, path: "/admin/v1/customer-groups/{id}", status: "200",
+			response: filledGroup(),
 		},
 		{
-			metod: http.MethodPut, yol: "/admin/v1/customer-groups/{id}", durum: "200",
-			istek: updateGroupRequest{}, yanit: doluGrup(),
+			method: http.MethodPut, path: "/admin/v1/customer-groups/{id}", status: "200",
+			request: updateGroupRequest{}, response: filledGroup(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/customer-groups/{id}", durum: "204",
+			method: http.MethodDelete, path: "/admin/v1/customer-groups/{id}", status: "204",
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/customer-groups/{id}/customers",
-			durum: "204", istek: groupMemberRequest{},
+			method: http.MethodPost, path: "/admin/v1/customer-groups/{id}/customers",
+			status: "204", request: groupMemberRequest{},
 		},
 		{
-			metod: http.MethodDelete,
-			yol:   "/admin/v1/customer-groups/{id}/customers/{customer_id}",
-			durum: "204",
+			method: http.MethodDelete,
+			path:   "/admin/v1/customer-groups/{id}/customers/{customer_id}",
+			status: "204",
 		},
 		{
-			metod: http.MethodPut, yol: "/admin/v1/customer-groups/{id}/segment", durum: "200",
-			istek: *fullSegmentRule(), yanit: doluGrup(),
+			method: http.MethodPut, path: "/admin/v1/customer-groups/{id}/segment", status: "200",
+			request: *fullSegmentRule(), response: filledGroup(),
 		},
 		{
-			metod: http.MethodDelete, yol: "/admin/v1/customer-groups/{id}/segment", durum: "200",
-			yanit: doluGrup(),
+			method: http.MethodDelete, path: "/admin/v1/customer-groups/{id}/segment", status: "200",
+			response: filledGroup(),
 		},
 		{
-			metod: http.MethodPost, yol: "/admin/v1/customer-segments/preview", durum: "200",
-			istek: *fullSegmentRule(), yanit: segmentPreviewDTO{},
+			method: http.MethodPost, path: "/admin/v1/customer-segments/preview", status: "200",
+			request: *fullSegmentRule(), response: segmentPreviewDTO{},
 		},
 		{
-			metod: http.MethodPost, yol: "/store/v1/customers", durum: "201",
-			istek: customerRequest{}, yanit: doluMusteri(),
+			method: http.MethodPost, path: "/store/v1/customers", status: "201",
+			request: customerRequest{}, response: filledCustomer(),
 		},
 		{
-			metod: http.MethodGet, yol: "/store/v1/customers/{id}", durum: "200",
-			yanit: doluMusteri(),
+			method: http.MethodGet, path: "/store/v1/customers/{id}", status: "200",
+			response: filledCustomer(),
 		},
 		{
-			metod: http.MethodPut, yol: "/store/v1/customers/{id}", durum: "200",
-			istek: storeUpdateCustomerRequest{}, yanit: doluMusteri(),
+			method: http.MethodPut, path: "/store/v1/customers/{id}", status: "200",
+			request: storeUpdateCustomerRequest{}, response: filledCustomer(),
 		},
 	}
 
-	// On iki adres ucu, iki yüzey için AYNI şekilde. Elle on iki satır yazmak
-	// yerine türetilmeleri bilinçli: iki yüzeyin sözleşmesi gerçekten aynı ve
-	// elle yazılmış iki blok, birinin diğerinden ayrılabileceği bir yer açardı.
-	for _, onek := range []string{"/admin/v1", "/store/v1"} {
-		koleksiyon := onek + "/customers/{id}/addresses"
-		tekil := koleksiyon + "/{address_id}"
+	// Twelve address endpoints, the SAME shape for both surfaces. Deriving
+	// them rather than writing twelve rows by hand is deliberate: the two
+	// surfaces' contract really is the same, and two hand-written blocks would
+	// open a place where one could drift from the other.
+	for _, prefix := range []string{"/admin/v1", "/store/v1"} {
+		collection := prefix + "/customers/{id}/addresses"
+		single := collection + "/{address_id}"
 
-		uclar = append(uclar,
-			ucBeklentisi{
-				metod: http.MethodGet, yol: koleksiyon, durum: "200",
-				yanit: doluAdres(), liste: true,
+		endpoints = append(endpoints,
+			endpointExpectation{
+				method: http.MethodGet, path: collection, status: "200",
+				response: filledAddress(), list: true,
 			},
-			ucBeklentisi{
-				metod: http.MethodPost, yol: koleksiyon, durum: "201",
-				istek: addressRequest{}, yanit: doluAdres(),
+			endpointExpectation{
+				method: http.MethodPost, path: collection, status: "201",
+				request: addressRequest{}, response: filledAddress(),
 			},
-			ucBeklentisi{
-				metod: http.MethodPut, yol: tekil, durum: "200",
-				istek: updateAddressRequest{}, yanit: doluAdres(),
+			endpointExpectation{
+				method: http.MethodPut, path: single, status: "200",
+				request: updateAddressRequest{}, response: filledAddress(),
 			},
-			ucBeklentisi{metod: http.MethodDelete, yol: tekil, durum: "204"},
-			ucBeklentisi{
-				metod: http.MethodPost, yol: tekil + "/default-shipping", durum: "200",
-				yanit: doluAdres(),
+			endpointExpectation{method: http.MethodDelete, path: single, status: "204"},
+			endpointExpectation{
+				method: http.MethodPost, path: single + "/default-shipping", status: "200",
+				response: filledAddress(),
 			},
-			ucBeklentisi{
-				metod: http.MethodPost, yol: tekil + "/default-billing", durum: "200",
-				yanit: doluAdres(),
+			endpointExpectation{
+				method: http.MethodPost, path: single + "/default-billing", status: "200",
+				response: filledAddress(),
 			},
 		)
 	}
 
 	// The wishlist (ADR 0190): the operator reads it, the storefront also
 	// saves and removes. The PUT has no body; the path names the variant.
-	uclar = append(uclar,
-		ucBeklentisi{
-			metod: http.MethodGet, yol: "/admin/v1/customers/{id}/wishlist", durum: "200",
-			yanit: fullWishlistItem(), liste: true,
+	endpoints = append(endpoints,
+		endpointExpectation{
+			method: http.MethodGet, path: "/admin/v1/customers/{id}/wishlist", status: "200",
+			response: fullWishlistItem(), list: true,
 		},
-		ucBeklentisi{
-			metod: http.MethodGet, yol: "/store/v1/customers/{id}/wishlist", durum: "200",
-			yanit: fullWishlistItem(), liste: true,
+		endpointExpectation{
+			method: http.MethodGet, path: "/store/v1/customers/{id}/wishlist", status: "200",
+			response: fullWishlistItem(), list: true,
 		},
-		ucBeklentisi{
-			metod: http.MethodPut, yol: "/store/v1/customers/{id}/wishlist/{variant_id}", durum: "200",
-			yanit: fullWishlistItem(),
+		endpointExpectation{
+			method: http.MethodPut, path: "/store/v1/customers/{id}/wishlist/{variant_id}", status: "200",
+			response: fullWishlistItem(),
 		},
-		ucBeklentisi{
-			metod: http.MethodDelete, yol: "/store/v1/customers/{id}/wishlist/{variant_id}", durum: "204",
+		endpointExpectation{
+			method: http.MethodDelete, path: "/store/v1/customers/{id}/wishlist/{variant_id}", status: "204",
 		},
 		// The stock alert (ADR 0215).
-		ucBeklentisi{
-			metod: http.MethodPut, yol: "/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", durum: "200",
-			yanit: fullWishlistItem(),
+		endpointExpectation{
+			method: http.MethodPut, path: "/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", status: "200",
+			response: fullWishlistItem(),
 		},
-		ucBeklentisi{
-			metod: http.MethodDelete, yol: "/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", durum: "204",
+		endpointExpectation{
+			method: http.MethodDelete, path: "/store/v1/customers/{id}/wishlist/{variant_id}/stock-alert", status: "204",
 		},
 		// The price alert (ADR 0216).
-		ucBeklentisi{
-			metod: http.MethodPut, yol: "/store/v1/customers/{id}/wishlist/{variant_id}/price-alert", durum: "200",
-			istek: priceAlertRequest{}, yanit: fullWishlistItem(),
+		endpointExpectation{
+			method: http.MethodPut, path: "/store/v1/customers/{id}/wishlist/{variant_id}/price-alert", status: "200",
+			request: priceAlertRequest{}, response: fullWishlistItem(),
 		},
-		ucBeklentisi{
-			metod: http.MethodDelete, yol: "/store/v1/customers/{id}/wishlist/{variant_id}/price-alert", durum: "204",
+		endpointExpectation{
+			method: http.MethodDelete, path: "/store/v1/customers/{id}/wishlist/{variant_id}/price-alert", status: "204",
 		},
 	)
 
-	return uclar
+	return endpoints
 }
 
-// doluAdres karşılaştırmaya girecek adres örneğidir.
+// filledAddress is the address sample that enters the comparison.
 //
-// Sıfır değer YETER ve bu, komşusu [doluMusteri]'den ayrıldığı yerdir:
-// [addressDTO] hiçbir alanında omitempty taşımaz, yani her alan her zaman
-// yazılır. Karşılaştırma "şemanın alan kümesi = kodlanan anahtar kümesi"
-// biçiminde olduğu için, omitempty taşıyan bir tipte boş örnek testi ucun
-// kendisiyle ilgisi olmayan bir sebeple kırardı; burada kıramaz. Fonksiyon
-// yine de var, cünkü tipe bir gün omitempty eklenirse doldurulacak yer belli
-// olsun.
-func doluAdres() addressDTO {
+// The zero value IS ENOUGH, and this is where it parts from its neighbor
+// [filledCustomer]: [addressDTO] carries omitempty on none of its fields, so
+// every field is always written. Since the comparison has the shape "the
+// schema's field set = the encoded key set", an empty sample of a type carrying
+// omitempty would break the test for a reason that has nothing to do with the
+// endpoint itself; here it cannot. The function exists all the same, so that
+// the place to fill in is obvious the day omitempty is added to the type.
+func filledAddress() addressDTO {
 	return addressDTO{}
 }
 
-// anlatilmayanUclar ~~bileşen adı çakışması yüzünden ANLATILMAMIŞ uçlardır~~
-// artık BOŞTUR.
+// undescribedEndpoints ~~are the endpoints left UNDESCRIBED because of a
+// component name collision~~ is now EMPTY.
 //
-// **2026-09-07: liste ödendi.** Gerekçe gerçekti — [addressDTO] ve
-// [addressRequest], cart/api'deki aynı adlı tiplerle aynı bileşen adını ister
-// ve belge tümden üretilemez hâle gelirdi — ama çözümün yeri de doğru
-// bilinmişti: çekirdek. ADR 0036 bileşen adının önüne anlatılan modülün adını
-// koydu, bu tipler "CustomerAddress" oldu, cart'ınkiler "CartAddress" oldu ve
-// bu pakette tek bir tip yeniden adlandırılmadı.
+// **2026-09-07: the list was paid off.** The reason was real — [addressDTO] and
+// [addressRequest] want the same component name as the identically named types
+// in cart/api, and the document could not have been built at all — but the
+// place for the fix was known correctly too: the core. ADR 0036 put the
+// described module's name in front of the component name, these types became
+// "CustomerAddress", cart's became "CartAddress", and not one type in this
+// package was renamed.
 //
-// Fonksiyon KALDI ve boş döner. Silmek, aynı sınıf eksiğin bir dahaki sefere
-// yeniden icat edilmesi demekti; boş bir liste ise [TestUclarinTumuAnlatildiVeyaBilinenEksik]
-// testinin "bilinen eksik" dalını canlı tutar, yani bir gün gerçekten
-// anlatılamayan bir uç çıkarsa yazılacak yer bellidir. Testin bayat satır
-// denetimi de yerinde: listeye konan bir uç anlatılırsa test kırılır.
-func anlatilmayanUclar() []string {
+// The function STAYED and returns nothing. Deleting it would have meant the
+// same class of gap being reinvented the next time; an empty list instead keeps
+// the "known missing" branch of [TestEveryEndpointIsDescribedOrKnownMissing]
+// alive, so that if an endpoint that really cannot be described ever turns up,
+// the place to write it is obvious. The test's stale-row check is in place too:
+// an endpoint put on the list that does get described breaks the test.
+func undescribedEndpoints() []string {
 	return nil
 }
 
-// doluMusteri omitempty alanları da yazılan bir müşteri kaydı üretir.
-func doluMusteri() customerDTO {
+// filledCustomer produces a customer record whose omitempty fields are written
+// too.
+func filledCustomer() customerDTO {
 	return customerDTO{Metadata: map[string]any{"k": "v"}}
 }
 
-// doluGrup omitempty alanları da yazılan bir grup kaydı üretir.
-func doluGrup() customerGroupDTO {
+// filledGroup produces a group record whose omitempty fields are written too.
+func filledGroup() customerGroupDTO {
 	evaluated := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 
 	return customerGroupDTO{
@@ -411,217 +419,224 @@ func fullSegmentRule() *segmentRuleDTO {
 	}}
 }
 
-// TestUclarGovdeleriniAnlatir her anlatılan ucun ne ALDIĞINI ve ne DÖNDÜĞÜNÜ
-// söylediğini doğrular.
+// TestEndpointsDescribeTheirBodies verifies that every described endpoint says
+// what it TAKES and what it RETURNS.
 //
-// Bulgunun tam karşılığı budur: gövdesiz bir şema istemciye "bu uç var ve şöyle
-// başarısız olabilir" der, ne göndereceğini söylemez; istemci üreteci de her
-// şeyi 'any' olan, dönüş tipi 'void' olan bir metot üretir.
+// That is the exact counterpart of the finding: a bodyless schema tells the
+// client "this endpoint exists and can fail like so", it does not say what to
+// send; and the client generator produces a method whose every parameter is
+// 'any' and whose return type is 'void'.
 //
-// Alan kümeleri DTO'nun encoding/json çıktısıyla karşılaştırılır, elle yazılmış
-// bir listeyle değil: elle yazılmış liste, DTO'ya alan eklendiği gün eksik
-// kalır ve test bunu görmezdi.
-func TestUclarGovdeleriniAnlatir(t *testing.T) {
+// The field sets are compared against the DTO's encoding/json output, not
+// against a hand-written list: a hand-written list falls short the day a field is
+// added to the DTO and the test would not see it.
+func TestEndpointsDescribeTheirBodies(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := belge(t)
+	paths, components := buildDoc(t)
 
-	for _, uc := range anlatilanUclar() {
-		t.Run(uc.anahtar(), func(t *testing.T) {
+	for _, endpoint := range describedEndpoints() {
+		t.Run(endpoint.key(), func(t *testing.T) {
 			t.Parallel()
 
-			op := islem(t, yollar, uc.metod, uc.yol)
+			op := operation(t, paths, endpoint.method, endpoint.path)
 
-			istekTanimi, govdeVar := op["requestBody"].(map[string]any)
-			require.Equal(t, uc.istek != nil, govdeVar,
-				"gövde alan uçta requestBody olmalı, almayanda olmamalı")
+			requestDefinition, hasBody := op["requestBody"].(map[string]any)
+			require.Equal(t, endpoint.request != nil, hasBody,
+				"an endpoint that takes a body has to have requestBody, one that does not must not")
 
-			if uc.istek != nil {
-				sema := govdeSemasi(t, istekTanimi)
-				assert.ElementsMatch(t, jsonAnahtarlari(t, uc.istek),
-					alanlar(t, bilesenler, sema),
-					"istek gövdesinin alanları DTO ile örtüşmeli")
+			if endpoint.request != nil {
+				schema := bodySchema(t, requestDefinition)
+				assert.ElementsMatch(t, jsonKeys(t, endpoint.request),
+					fields(t, components, schema),
+					"the request body's fields have to match the DTO")
 			}
 
-			tanim := basariliYanit(t, op, uc.durum)
+			definition := successResponse(t, op, endpoint.status)
 
-			if uc.yanit == nil {
-				assert.NotContains(t, tanim, "content",
-					"204'ün gövdesi yoktur; şema gövde vaat etmemeli")
+			if endpoint.response == nil {
+				assert.NotContains(t, definition, "content",
+					"a 204 has no body; the schema must not promise one")
 
 				return
 			}
 
-			// Cursor alan bir liste cursor DÖNDÜRMEK zorunda; almayan da hiç
-			// yazmadığı bir alanı belgelememeli. Cevap ucun kendi
-			// parametrelerinden okunuyor ki iki yarı tek karar kalsın.
-			cursorlu := slices.Contains(parametreAdlari(t, op, "query"), "after")
+			// A list that takes a cursor HAS TO return one; one that does not
+			// must not document a field it never writes. The answer is read from
+			// the endpoint's own parameters so that the two halves stay a single
+			// decision.
+			takesCursor := slices.Contains(parameterNames(t, op, "query"), "after")
 
-			kayit := zarfKaydi(t, bilesenler, govdeSemasi(t, tanim), uc.liste, cursorlu)
-			assert.ElementsMatch(t, jsonAnahtarlari(t, uc.yanit), alanlar(t, bilesenler, kayit),
-				"yanıt kaydının alanları DTO ile örtüşmeli")
-			assert.ElementsMatch(t, jsonAnahtarlari(t, sifirDegeri(uc.yanit)),
-				zorunlular(t, bilesenler, kayit),
-				"required, encoding/json'un HER ZAMAN yazdığı anahtarlarla aynı olmalı")
+			record := envelopeRecord(t, components, bodySchema(t, definition), endpoint.list, takesCursor)
+			assert.ElementsMatch(t, jsonKeys(t, endpoint.response), fields(t, components, record),
+				"the response record's fields have to match the DTO")
+			assert.ElementsMatch(t, jsonKeys(t, zeroValue(endpoint.response)),
+				requiredFields(t, components, record),
+				"required has to be the same as the keys encoding/json ALWAYS writes")
 		})
 	}
 }
 
-// basariliYanit işlemin BEKLENEN status kodundaki yanıt tanımını döner.
-func basariliYanit(t *testing.T, op map[string]any, durum string) map[string]any {
+// successResponse returns the operation's response definition at the EXPECTED
+// status code.
+func successResponse(t *testing.T, op map[string]any, status string) map[string]any {
 	t.Helper()
 
-	yanitlar, ok := op["responses"].(map[string]any)
+	responses, ok := op["responses"].(map[string]any)
 	require.True(t, ok)
 
-	tanim, ok := yanitlar[durum].(map[string]any)
-	require.True(t, ok, "handler'ın GERÇEKTEN yazdığı kod belgelenmeli: %s", durum)
+	definition, ok := responses[status].(map[string]any)
+	require.True(t, ok, "the code the handler REALLY writes has to be documented: %s", status)
 
-	return tanim
+	return definition
 }
 
-// zarfKaydi yanıt zarfının içindeki KAYIT şemasını döner.
+// envelopeRecord returns the RECORD schema inside the response envelope.
 //
-// Tekil ve liste zarfları aynı "data" alanını taşır ama listede o alan bir
-// DİZİDİR; kaydı doğrudan okumak, dizi şemasını kayıt sanmak olurdu ve alan
-// karşılaştırması sessizce boş kümeyle geçerdi.
-func zarfKaydi(
-	t *testing.T, bilesenler, zarf map[string]any, liste, cursorlu bool,
+// The single and the list envelopes carry the same "data" field, but in a list
+// that field is an ARRAY; reading the record directly would take the array
+// schema for the record, and the field comparison would silently pass with an
+// empty set.
+func envelopeRecord(
+	t *testing.T, components, envelope map[string]any, list, takesCursor bool,
 ) map[string]any {
 	t.Helper()
 
-	beklenenAlanlar := []string{"data"}
-	if liste {
-		beklenenAlanlar = []string{"data", "count", "offset", "limit"}
+	expectedFields := []string{"data"}
+	if list {
+		expectedFields = []string{"data", "count", "offset", "limit"}
 	}
-	if cursorlu {
-		beklenenAlanlar = append(beklenenAlanlar, "next_cursor")
+	if takesCursor {
+		expectedFields = append(expectedFields, "next_cursor")
 	}
 
-	assert.ElementsMatch(t, beklenenAlanlar, alanlar(t, bilesenler, zarf),
-		"yanıt zarfının şekli plan Bölüm 8'deki zarfla aynı olmalı")
+	assert.ElementsMatch(t, expectedFields, fields(t, components, envelope),
+		"the response envelope's shape has to be the same as the envelope in plan Section 8")
 
-	ozellikler, ok := semaCoz(t, bilesenler, zarf)["properties"].(map[string]any)
+	properties, ok := resolveSchema(t, components, envelope)["properties"].(map[string]any)
 	require.True(t, ok)
 
-	kayit, ok := ozellikler["data"].(map[string]any)
+	record, ok := properties["data"].(map[string]any)
 	require.True(t, ok)
 
-	if !liste {
-		return kayit
+	if !list {
+		return record
 	}
 
-	oge, ok := kayit["items"].(map[string]any)
-	require.True(t, ok, "liste zarfının data alanı dizi olmalı")
+	item, ok := record["items"].(map[string]any)
+	require.True(t, ok, "the list envelope's data field has to be an array")
 
-	return oge
+	return item
 }
 
-// TestUclarinTumuAnlatildiVeyaBilinenEksik belgedeki her ucun ya anlatıldığını
-// ya da bilinen eksikler arasında olduğunu doğrular.
+// TestEveryEndpointIsDescribedOrKnownMissing verifies that every endpoint in
+// the document is either described or among the known missing ones.
 //
-// Yeni bir uç eklenip anlatılmadığında bu test düşer. Uyarı olmasaydı arıza
-// SESSİZ olurdu: uç belgede yolu ve güvenliğiyle görünür, yalnızca gövdesi
-// olmaz — yani şema "var ama ne aldığı bilinmiyor" der ve kimse fark etmez.
-func TestUclarinTumuAnlatildiVeyaBilinenEksik(t *testing.T) {
+// When a new endpoint is added and not described, this test fails. Without the
+// warning the fault would be SILENT: the endpoint appears in the document with
+// its path and its security, only without a body — that is, the schema says "it
+// exists but what it takes is unknown" and nobody notices.
+func TestEveryEndpointIsDescribedOrKnownMissing(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
+	paths, _ := buildDoc(t)
 
-	anlatilan := map[string]struct{}{}
-	for _, uc := range anlatilanUclar() {
-		anlatilan[uc.anahtar()] = struct{}{}
+	described := map[string]struct{}{}
+	for _, endpoint := range describedEndpoints() {
+		described[endpoint.key()] = struct{}{}
 	}
 
-	eksik := map[string]struct{}{}
-	for _, ad := range anlatilmayanUclar() {
-		eksik[ad] = struct{}{}
+	missing := map[string]struct{}{}
+	for _, name := range undescribedEndpoints() {
+		missing[name] = struct{}{}
 	}
 
-	var bulunan []string
+	var found []string
 
-	for yol, islemler := range yollar {
-		islemHaritasi, ok := islemler.(map[string]any)
-		require.True(t, ok, "yol girdisi metot haritası olmalı")
+	for path, operations := range paths {
+		byMethod, ok := operations.(map[string]any)
+		require.True(t, ok, "a path entry has to be a map of methods")
 
-		for metod, ham := range islemHaritasi {
-			op, ok := ham.(map[string]any)
+		for method, raw := range byMethod {
+			op, ok := raw.(map[string]any)
 			require.True(t, ok)
 
-			ad := strings.ToUpper(metod) + " " + yol
-			bulunan = append(bulunan, ad)
+			name := strings.ToUpper(method) + " " + path
+			found = append(found, name)
 
-			if _, bilinenEksik := eksik[ad]; bilinenEksik {
+			if _, knownMissing := missing[name]; knownMissing {
 				assert.Empty(t, op["summary"],
-					"%s bilinen eksik olarak işaretli ama anlatılmış; "+
-						"anlatıldıysa anlatilmayanUclar listesinden çıkarılmalı", ad)
+					"%s is marked as known missing but is described; "+
+						"once described it has to be taken off the undescribedEndpoints list", name)
 
 				continue
 			}
 
-			assert.Contains(t, anlatilan, ad, "%s anlatılmalı", ad)
-			assert.NotEmpty(t, op["summary"], "%s bir özet taşımalı", ad)
+			assert.Contains(t, described, name, "%s has to be described", name)
+			assert.NotEmpty(t, op["summary"], "%s has to carry a summary", name)
 		}
 	}
 
-	beklenen := append(anahtarlar(anlatilan), anahtarlar(eksik)...)
-	assert.ElementsMatch(t, beklenen, bulunan,
-		"tabloda olmayan bir uç sınanmamış demektir")
+	expected := append(mapKeys(described), mapKeys(missing)...)
+	assert.ElementsMatch(t, expected, found,
+		"an endpoint missing from the table has not been tested")
 }
 
-// TestAnlatilanUclarOkunmayanParametreVaatEtmez şemanın okunmayan bir sorgu
-// parametresi duyurmadığını doğrular.
+// TestDescribedEndpointsPromiseNoUnreadParameter verifies that the schema
+// announces no query parameter that is not read.
 //
-// Sorgu dizesini okuyan tek iki uç müşteri ve grup listeleridir (bkz.
-// [Handler.adminListCustomers], [Handler.adminListGroups]). Başka bir uca
-// parametre yazmak, istemci üretecinin metoda argüman koyması ve çağıranın onu
-// doldurup sunucunun sessizce yok sayması demekti.
-func TestAnlatilanUclarOkunmayanParametreVaatEtmez(t *testing.T) {
+// The only two endpoints that read the query string are the customer and the
+// group lists (see [Handler.adminListCustomers], [Handler.adminListGroups]).
+// Writing a parameter on any other endpoint meant the client generator putting
+// an argument on the method, and the caller filling it in while the server
+// silently ignores it.
+func TestDescribedEndpointsPromiseNoUnreadParameter(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
+	paths, _ := buildDoc(t)
 
-	beklenen := map[string][]string{
+	expected := map[string][]string{
 		"GET /admin/v1/customers":       {"email", "has_account", "group_id", "limit", "offset", "after"},
 		"GET /admin/v1/customer-groups": {"limit", "offset"},
 	}
 
-	for _, uc := range anlatilanUclar() {
-		op := islem(t, yollar, uc.metod, uc.yol)
+	for _, endpoint := range describedEndpoints() {
+		op := operation(t, paths, endpoint.method, endpoint.path)
 
-		sorgular := parametreAdlari(t, op, "query")
+		queries := parameterNames(t, op, "query")
 
-		assert.ElementsMatch(t, beklenen[uc.anahtar()], sorgular,
-			"%s yalnızca handler'ın GERÇEKTEN okuduğu parametreleri duyurmalı",
-			uc.anahtar())
+		assert.ElementsMatch(t, expected[endpoint.key()], queries,
+			"%s has to announce only the parameters the handler REALLY reads",
+			endpoint.key())
 	}
 }
 
-// parametreAdlari işlemin verilen konumdaki parametre adlarını döner.
-func parametreAdlari(t *testing.T, op map[string]any, konum string) []string {
+// parameterNames returns the names of the operation's parameters at the given
+// location.
+func parameterNames(t *testing.T, op map[string]any, location string) []string {
 	t.Helper()
 
-	ham, ok := op["parameters"].([]any)
+	raw, ok := op["parameters"].([]any)
 	if !ok {
 		return nil
 	}
 
-	var adlar []string
+	var names []string
 
-	for _, girdi := range ham {
-		parametre, ok := girdi.(map[string]any)
-		require.True(t, ok, "parametre bir nesne olmalı")
+	for _, entry := range raw {
+		parameter, ok := entry.(map[string]any)
+		require.True(t, ok, "a parameter has to be an object")
 
-		if parametre["in"] != konum {
+		if parameter["in"] != location {
 			continue
 		}
 
-		ad, ok := parametre["name"].(string)
-		require.True(t, ok, "parametrenin adı olmalı")
-		adlar = append(adlar, ad)
+		name, ok := parameter["name"].(string)
+		require.True(t, ok, "a parameter has to have a name")
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
 // fullWishlistItem is a wishlist item with every field written, the price

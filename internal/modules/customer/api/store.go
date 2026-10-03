@@ -7,7 +7,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/service"
 )
 
-// Bu dosyadaki uçlar müşterinin KENDİ profilini ve adreslerini yönetir.
+// The endpoints in this file manage the customer's OWN profile and addresses.
 //
 // Every handler below that names a customer resolves it through
 // [Handler.storeCustomerID], which refuses the request unless the bound
@@ -16,13 +16,14 @@ import (
 // cannot be mistaken for a malformed body, and an unidentified caller never
 // reaches the service with a parsed address in hand.
 
-// storeRegisterGuest misafir müşteri kaydı açar (POST /store/v1/customers).
+// storeRegisterGuest opens a guest customer record (POST /store/v1/customers).
 //
-// Aynı e-postayla daha önce misafir kaydı ya da kayıtlı bir hesap bulunması
-// engel DEĞİLDİR: misafir kaydı bir kimlik değil, tek seferlik bir alışverişin
-// iletişim bilgisidir (gerekçe için bkz. models.Customer). Hesap açma Faz 8'de,
-// auth modülüyle birlikte gelecektir; o zamana kadar bir misafir,
-// POST /admin/v1/customers/{id}/convert-to-account ile hesaba çevrilir.
+// An earlier guest record or a registered account under the same e-mail
+// address is NOT an obstacle: a guest record is not an identity but the contact
+// details of a one-off purchase (see models.Customer for the reasoning). Opening
+// an account will come in Phase 8, together with the auth module; until then a
+// guest is turned into an account with
+// POST /admin/v1/customers/{id}/convert-to-account.
 func (h *Handler) storeRegisterGuest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -40,7 +41,7 @@ func (h *Handler) storeRegisterGuest(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toCustomerDTO(guest))
 }
 
-// storeGetCustomer müşterinin kendi profilini döner
+// storeGetCustomer returns the customer's own profile
 // (GET /store/v1/customers/{id}).
 func (h *Handler) storeGetCustomer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -100,7 +101,7 @@ func (h *Handler) storeUpdateCustomer(w http.ResponseWriter, r *http.Request) {
 // in identity_test.go, which drives every registered storefront route naming a
 // customer and refuses to be told how many there are.
 
-// storeListAddresses müşterinin adreslerini döner
+// storeListAddresses returns the customer's addresses
 // (GET /store/v1/customers/{id}/addresses).
 func (h *Handler) storeListAddresses(w http.ResponseWriter, r *http.Request) {
 	customerID, err := h.storeCustomerID(r)
@@ -112,7 +113,7 @@ func (h *Handler) storeListAddresses(w http.ResponseWriter, r *http.Request) {
 	h.listAddresses(w, r, customerID)
 }
 
-// storeCreateAddress müşterinin yeni adresini ekler
+// storeCreateAddress adds a new address for the customer
 // (POST /store/v1/customers/{id}/addresses).
 func (h *Handler) storeCreateAddress(w http.ResponseWriter, r *http.Request) {
 	customerID, err := h.storeCustomerID(r)
@@ -124,7 +125,7 @@ func (h *Handler) storeCreateAddress(w http.ResponseWriter, r *http.Request) {
 	h.createAddress(w, r, customerID)
 }
 
-// storeUpdateAddress müşterinin adresini günceller
+// storeUpdateAddress updates the customer's address
 // (PUT /store/v1/customers/{id}/addresses/{address_id}).
 func (h *Handler) storeUpdateAddress(w http.ResponseWriter, r *http.Request) {
 	customerID, err := h.storeCustomerID(r)
@@ -136,7 +137,7 @@ func (h *Handler) storeUpdateAddress(w http.ResponseWriter, r *http.Request) {
 	h.updateAddress(w, r, customerID)
 }
 
-// storeDeleteAddress müşterinin adresini yumuşak siler
+// storeDeleteAddress soft-deletes the customer's address
 // (DELETE /store/v1/customers/{id}/addresses/{address_id}).
 func (h *Handler) storeDeleteAddress(w http.ResponseWriter, r *http.Request) {
 	customerID, err := h.storeCustomerID(r)
@@ -148,7 +149,7 @@ func (h *Handler) storeDeleteAddress(w http.ResponseWriter, r *http.Request) {
 	h.deleteAddress(w, r, customerID)
 }
 
-// storeSetDefaultShipping adresi varsayılan kargo adresi yapar
+// storeSetDefaultShipping makes the address the default shipping address
 // (POST /store/v1/customers/{id}/addresses/{address_id}/default-shipping).
 func (h *Handler) storeSetDefaultShipping(w http.ResponseWriter, r *http.Request) {
 	customerID, err := h.storeCustomerID(r)
@@ -160,7 +161,7 @@ func (h *Handler) storeSetDefaultShipping(w http.ResponseWriter, r *http.Request
 	h.setDefaultShipping(w, r, customerID)
 }
 
-// storeSetDefaultBilling adresi varsayılan fatura adresi yapar
+// storeSetDefaultBilling makes the address the default billing address
 // (POST /store/v1/customers/{id}/addresses/{address_id}/default-billing).
 func (h *Handler) storeSetDefaultBilling(w http.ResponseWriter, r *http.Request) {
 	customerID, err := h.storeCustomerID(r)
@@ -172,13 +173,14 @@ func (h *Handler) storeSetDefaultBilling(w http.ResponseWriter, r *http.Request)
 	h.setDefaultBilling(w, r, customerID)
 }
 
-// --- iki ad alanının paylaştığı adresle ilgili gövdeler --------------------------------
+// --- address bodies shared by the two namespaces ----------------------------
 //
-// Adresle ilgili uçlar admin ve store tarafında AYNI işi yapar; farkları yalnızca
-// customer idnin nereden geldiğidir. Gövdeler bu yüzden tek yerde durur:
-// iki kopya, yalnızca birinde düzeltilen bir doğrulama hatası demek olurdu.
+// The address endpoints do the SAME work on the admin and the store side; the
+// only difference between them is where the customer id comes from. The bodies
+// therefore live in one place: two copies would mean a validation bug fixed in
+// only one of them.
 
-// listAddresses verilen müşterinin adreslerini yazar.
+// listAddresses writes the given customer's addresses.
 func (h *Handler) listAddresses(w http.ResponseWriter, r *http.Request, customerID string) {
 	ctx := r.Context()
 
@@ -190,7 +192,7 @@ func (h *Handler) listAddresses(w http.ResponseWriter, r *http.Request, customer
 	writeItems(w, r, convertAll(addresses, toAddressDTO))
 }
 
-// createAddress verilen müşterinin yeni adresini ekler.
+// createAddress adds a new address for the given customer.
 func (h *Handler) createAddress(w http.ResponseWriter, r *http.Request, customerID string) {
 	ctx := r.Context()
 
@@ -221,7 +223,7 @@ func (h *Handler) createAddress(w http.ResponseWriter, r *http.Request, customer
 	writeItem(w, r, http.StatusCreated, toAddressDTO(address))
 }
 
-// updateAddress verilen müşterinin adresini günceller.
+// updateAddress updates the given customer's address.
 func (h *Handler) updateAddress(w http.ResponseWriter, r *http.Request, customerID string) {
 	ctx := r.Context()
 
@@ -251,7 +253,7 @@ func (h *Handler) updateAddress(w http.ResponseWriter, r *http.Request, customer
 	writeItem(w, r, http.StatusOK, toAddressDTO(address))
 }
 
-// deleteAddress verilen müşterinin adresini yumuşak siler.
+// deleteAddress soft-deletes the given customer's address.
 func (h *Handler) deleteAddress(w http.ResponseWriter, r *http.Request, customerID string) {
 	ctx := r.Context()
 
@@ -262,11 +264,12 @@ func (h *Handler) deleteAddress(w http.ResponseWriter, r *http.Request, customer
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// setDefaultShipping verilen müşterinin adresini varsayılan kargo adresi yapar.
+// setDefaultShipping makes the given customer's address the default shipping
+// address.
 //
-// İşaret güncelleme gövdesinde DEĞİL ayrı bir uçtadır: işaret müşterinin diğer
-// adreslerini de ilgilendirir (eskisi temizlenir) ve tek satırlık bir
-// güncellemeyle ifade edilemez (bkz. updateAddressRequest).
+// The flag lives NOT in the update body but on an endpoint of its own: the flag
+// concerns the customer's other addresses too (the previous one is cleared) and
+// cannot be expressed as a single-row update (see updateAddressRequest).
 func (h *Handler) setDefaultShipping(w http.ResponseWriter, r *http.Request, customerID string) {
 	ctx := r.Context()
 
@@ -278,7 +281,8 @@ func (h *Handler) setDefaultShipping(w http.ResponseWriter, r *http.Request, cus
 	writeItem(w, r, http.StatusOK, toAddressDTO(address))
 }
 
-// setDefaultBilling verilen müşterinin adresini varsayılan fatura adresi yapar.
+// setDefaultBilling makes the given customer's address the default billing
+// address.
 func (h *Handler) setDefaultBilling(w http.ResponseWriter, r *http.Request, customerID string) {
 	ctx := r.Context()
 

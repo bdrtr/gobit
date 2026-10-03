@@ -9,15 +9,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/service"
 )
 
-// stubCustomer [api.Customer]'ın testler için betiklenebilir uygulamasıdır.
+// stubCustomer is a scriptable implementation of [api.Customer] for the tests.
 //
-// HTTP katmanı testleri servisin İŞ MANTIĞINI değil, taşımayı sınar: yönlendirme,
-// gövde çözümleme, zarf biçimi ve hata sınıfının status koduna çevrilmesi. Bu
-// yüzden servis yerine betiklenebilir bir sahte kullanılır; testin dönmesini
-// istediği tipli hata doğrudan verilir ve beklenen status kodu ölçülür.
+// The HTTP layer's tests exercise the transport, not the service's BUSINESS
+// LOGIC: routing, body decoding, envelope shape and the translation of an error
+// kind into a status code. That is why a scriptable fake stands in for the
+// service; the typed error the test wants returned is handed over directly and
+// the expected status code is measured.
 //
-// Betiklenmemiş bir metot çağrılırsa tipli bir hata döner: sessiz sıfır değer,
-// testin yanlış nedenle geçmesine yol açardı.
+// Calling a method that was not scripted returns a typed error: a silent zero
+// value would let the test pass for the wrong reason.
 type stubCustomer struct {
 	createCustomerFn  func(ctx context.Context, in service.CustomerInput) (models.Customer, error)
 	registerGuestFn   func(ctx context.Context, in service.CustomerInput) (models.Customer, error)
@@ -52,23 +53,24 @@ type stubCustomer struct {
 	markPriceAlertFn     func(ctx context.Context, customerID, variantID, regionID string, channels []string) (models.WishlistItem, error)
 	unmarkPriceAlertFn   func(ctx context.Context, customerID, variantID string) error
 
-	// son çağrının argümanları; handler'ın doğru değerleri ilettiğini kanıtlar.
-	sonCustomerID string
-	sonGroupID    string
-	sonAddressID  string
-	sonInput      service.CustomerInput
-	sonListInput  service.ListCustomersInput
+	// The arguments of the last call; they prove the handler passed on the
+	// right values.
+	lastCustomerID string
+	lastGroupID    string
+	lastAddressID  string
+	lastInput      service.CustomerInput
+	lastListInput  service.ListCustomersInput
 }
 
 var _ api.Customer = (*stubCustomer)(nil)
 
-// unset betiklenmemiş bir metot çağrıldığında dönen hatadır.
+// unset is the error returned when a method that was not scripted is called.
 func unset(name string) error {
-	return errors.Internal("stub_unset", "%s testte betiklenmedi", name)
+	return errors.Internal("stub_unset", "%s was not scripted in the test", name)
 }
 
 func (s *stubCustomer) CreateCustomer(ctx context.Context, in service.CustomerInput) (models.Customer, error) {
-	s.sonInput = in
+	s.lastInput = in
 	if s.createCustomerFn == nil {
 		return models.Customer{}, unset("CreateCustomer")
 	}
@@ -76,7 +78,7 @@ func (s *stubCustomer) CreateCustomer(ctx context.Context, in service.CustomerIn
 }
 
 func (s *stubCustomer) RegisterGuest(ctx context.Context, in service.CustomerInput) (models.Customer, error) {
-	s.sonInput = in
+	s.lastInput = in
 	if s.registerGuestFn == nil {
 		return models.Customer{}, unset("RegisterGuest")
 	}
@@ -84,7 +86,7 @@ func (s *stubCustomer) RegisterGuest(ctx context.Context, in service.CustomerInp
 }
 
 func (s *stubCustomer) GetCustomer(ctx context.Context, id string) (models.Customer, error) {
-	s.sonCustomerID = id
+	s.lastCustomerID = id
 	if s.getCustomerFn == nil {
 		return models.Customer{}, unset("GetCustomer")
 	}
@@ -95,7 +97,7 @@ func (s *stubCustomer) ListCustomers(
 	ctx context.Context,
 	in service.ListCustomersInput,
 ) (service.Page[models.Customer], error) {
-	s.sonListInput = in
+	s.lastListInput = in
 	if s.listCustomersFn == nil {
 		return service.Page[models.Customer]{}, unset("ListCustomers")
 	}
@@ -107,7 +109,7 @@ func (s *stubCustomer) UpdateCustomer(
 	id string,
 	in service.UpdateCustomerInput,
 ) (models.Customer, error) {
-	s.sonCustomerID = id
+	s.lastCustomerID = id
 	if s.updateCustomerFn == nil {
 		return models.Customer{}, unset("UpdateCustomer")
 	}
@@ -115,7 +117,7 @@ func (s *stubCustomer) UpdateCustomer(
 }
 
 func (s *stubCustomer) DeleteCustomer(ctx context.Context, id string) error {
-	s.sonCustomerID = id
+	s.lastCustomerID = id
 	if s.deleteCustomerFn == nil {
 		return unset("DeleteCustomer")
 	}
@@ -123,7 +125,7 @@ func (s *stubCustomer) DeleteCustomer(ctx context.Context, id string) error {
 }
 
 func (s *stubCustomer) ConvertGuestToAccount(ctx context.Context, customerID string) error {
-	s.sonCustomerID = customerID
+	s.lastCustomerID = customerID
 	if s.convertGuestFn == nil {
 		return unset("ConvertGuestToAccount")
 	}
@@ -138,7 +140,7 @@ func (s *stubCustomer) CreateGroup(ctx context.Context, in service.GroupInput) (
 }
 
 func (s *stubCustomer) GetGroup(ctx context.Context, id string) (models.CustomerGroup, error) {
-	s.sonGroupID = id
+	s.lastGroupID = id
 	if s.getGroupFn == nil {
 		return models.CustomerGroup{}, unset("GetGroup")
 	}
@@ -160,7 +162,7 @@ func (s *stubCustomer) UpdateGroup(
 	id string,
 	in service.UpdateGroupInput,
 ) (models.CustomerGroup, error) {
-	s.sonGroupID = id
+	s.lastGroupID = id
 	if s.updateGroupFn == nil {
 		return models.CustomerGroup{}, unset("UpdateGroup")
 	}
@@ -168,7 +170,7 @@ func (s *stubCustomer) UpdateGroup(
 }
 
 func (s *stubCustomer) DeleteGroup(ctx context.Context, id string) error {
-	s.sonGroupID = id
+	s.lastGroupID = id
 	if s.deleteGroupFn == nil {
 		return unset("DeleteGroup")
 	}
@@ -176,7 +178,7 @@ func (s *stubCustomer) DeleteGroup(ctx context.Context, id string) error {
 }
 
 func (s *stubCustomer) AddToGroup(ctx context.Context, customerID, groupID string) error {
-	s.sonCustomerID, s.sonGroupID = customerID, groupID
+	s.lastCustomerID, s.lastGroupID = customerID, groupID
 	if s.addToGroupFn == nil {
 		return unset("AddToGroup")
 	}
@@ -184,7 +186,7 @@ func (s *stubCustomer) AddToGroup(ctx context.Context, customerID, groupID strin
 }
 
 func (s *stubCustomer) RemoveFromGroup(ctx context.Context, customerID, groupID string) error {
-	s.sonCustomerID, s.sonGroupID = customerID, groupID
+	s.lastCustomerID, s.lastGroupID = customerID, groupID
 	if s.removeFromGroupFn == nil {
 		return unset("RemoveFromGroup")
 	}
@@ -192,7 +194,7 @@ func (s *stubCustomer) RemoveFromGroup(ctx context.Context, customerID, groupID 
 }
 
 func (s *stubCustomer) ListGroupsOf(ctx context.Context, customerID string) ([]models.CustomerGroup, error) {
-	s.sonCustomerID = customerID
+	s.lastCustomerID = customerID
 	if s.listGroupsOfFn == nil {
 		return nil, unset("ListGroupsOf")
 	}
@@ -202,7 +204,7 @@ func (s *stubCustomer) ListGroupsOf(ctx context.Context, customerID string) ([]m
 func (s *stubCustomer) SetGroupSegment(
 	ctx context.Context, groupID string, rule models.SegmentRule,
 ) (models.CustomerGroup, error) {
-	s.sonGroupID = groupID
+	s.lastGroupID = groupID
 	if s.setSegmentFn == nil {
 		return models.CustomerGroup{}, unset("SetGroupSegment")
 	}
@@ -210,7 +212,7 @@ func (s *stubCustomer) SetGroupSegment(
 }
 
 func (s *stubCustomer) ClearGroupSegment(ctx context.Context, groupID string) (models.CustomerGroup, error) {
-	s.sonGroupID = groupID
+	s.lastGroupID = groupID
 	if s.clearSegmentFn == nil {
 		return models.CustomerGroup{}, unset("ClearGroupSegment")
 	}
@@ -222,7 +224,7 @@ func (s *stubCustomer) CreateAddress(
 	customerID string,
 	in service.AddressInput,
 ) (models.CustomerAddress, error) {
-	s.sonCustomerID = customerID
+	s.lastCustomerID = customerID
 	if s.createAddressFn == nil {
 		return models.CustomerAddress{}, unset("CreateAddress")
 	}
@@ -230,7 +232,7 @@ func (s *stubCustomer) CreateAddress(
 }
 
 func (s *stubCustomer) ListAddresses(ctx context.Context, customerID string) ([]models.CustomerAddress, error) {
-	s.sonCustomerID = customerID
+	s.lastCustomerID = customerID
 	if s.listAddressesFn == nil {
 		return nil, unset("ListAddresses")
 	}
@@ -242,7 +244,7 @@ func (s *stubCustomer) UpdateAddress(
 	customerID, addressID string,
 	in service.UpdateAddressInput,
 ) (models.CustomerAddress, error) {
-	s.sonCustomerID, s.sonAddressID = customerID, addressID
+	s.lastCustomerID, s.lastAddressID = customerID, addressID
 	if s.updateAddressFn == nil {
 		return models.CustomerAddress{}, unset("UpdateAddress")
 	}
@@ -250,7 +252,7 @@ func (s *stubCustomer) UpdateAddress(
 }
 
 func (s *stubCustomer) DeleteAddress(ctx context.Context, customerID, addressID string) error {
-	s.sonCustomerID, s.sonAddressID = customerID, addressID
+	s.lastCustomerID, s.lastAddressID = customerID, addressID
 	if s.deleteAddressFn == nil {
 		return unset("DeleteAddress")
 	}
@@ -261,7 +263,7 @@ func (s *stubCustomer) SetDefaultShippingAddress(
 	ctx context.Context,
 	customerID, addressID string,
 ) (models.CustomerAddress, error) {
-	s.sonCustomerID, s.sonAddressID = customerID, addressID
+	s.lastCustomerID, s.lastAddressID = customerID, addressID
 	if s.setDefaultShipFn == nil {
 		return models.CustomerAddress{}, unset("SetDefaultShippingAddress")
 	}
@@ -272,7 +274,7 @@ func (s *stubCustomer) SetDefaultBillingAddress(
 	ctx context.Context,
 	customerID, addressID string,
 ) (models.CustomerAddress, error) {
-	s.sonCustomerID, s.sonAddressID = customerID, addressID
+	s.lastCustomerID, s.lastAddressID = customerID, addressID
 	if s.setDefaultBillFn == nil {
 		return models.CustomerAddress{}, unset("SetDefaultBillingAddress")
 	}

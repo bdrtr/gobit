@@ -11,21 +11,21 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/repository/customerdb"
 )
 
-// Misafirden hesaba geçişin hata kodları.
+// The error codes of the guest-to-account conversion.
 const (
-	// CodeAlreadyAccount kaydın zaten bir hesap olduğunu bildirir.
+	// CodeAlreadyAccount reports that the record is already an account.
 	CodeAlreadyAccount = "customer_already_account"
-	// CodeEmailTaken e-postanın başka bir hesap tarafından kullanıldığını
-	// bildirir.
+	// CodeEmailTaken reports that the e-mail is in use by another account.
 	CodeEmailTaken = "customer_email_taken"
 )
 
-// CreateCustomer yeni bir müşteri yazar.
+// CreateCustomer writes a new customer.
 //
-// Kayıtlı bir hesabın e-postası zaten kullanılıyorsa errors.Conflict döner;
-// kural veritabanındaki kısmi benzersiz indekstedir (bkz. [IndexAccountEmail])
-// ve uygulama tarafında tekrarlanmaz — tekrarlansaydı iki eşzamanlı kayıt
-// arasındaki yarışı yine indeks çözerdi.
+// If the e-mail of a registered account is already in use, errors.Conflict is
+// returned; the rule lives in the partial unique index in the database (see
+// [IndexAccountEmail]) and is not repeated in the application — had it been,
+// the race between two concurrent registrations would still be settled by the
+// index.
 func (r *Repo) CreateCustomer(ctx context.Context, c models.Customer) (models.Customer, error) {
 	if err := r.ready(); err != nil {
 		return models.Customer{}, err
@@ -49,14 +49,15 @@ func (r *Repo) CreateCustomer(ctx context.Context, c models.Customer) (models.Cu
 	if err != nil {
 		if ConstraintName(err) == IndexAccountEmail {
 			return models.Customer{}, errors.Wrap(err, errors.KindConflict, CodeEmailTaken,
-				"%q e-postasıyla kayıtlı bir hesap zaten var", c.Email)
+				"an account registered with the e-mail %q already exists", c.Email)
 		}
-		return models.Customer{}, wrapDB(err, "müşteri oluşturulamadı")
+		return models.Customer{}, wrapDB(err, "the customer could not be created")
 	}
 	return toCustomer(row)
 }
 
-// GetCustomer kimliğe göre müşteri döner; yoksa errors.NotFound.
+// GetCustomer returns the customer by id; errors.NotFound if it does not
+// exist.
 func (r *Repo) GetCustomer(ctx context.Context, id string) (models.Customer, error) {
 	if err := r.ready(); err != nil {
 		return models.Customer{}, err
@@ -64,16 +65,17 @@ func (r *Repo) GetCustomer(ctx context.Context, id string) (models.Customer, err
 
 	row, err := r.q.GetCustomer(ctx, id)
 	if err != nil {
-		return models.Customer{}, notFoundOr(err, CodeCustomerNotFound, "müşteri bulunamadı: %s", id)
+		return models.Customer{}, notFoundOr(err, CodeCustomerNotFound, "customer not found: %s", id)
 	}
 	return toCustomer(row)
 }
 
-// GetAccountByEmail e-postaya göre KAYITLI hesabı döner; yoksa errors.NotFound.
+// GetAccountByEmail returns the REGISTERED account by e-mail; errors.NotFound
+// if it does not exist.
 //
-// Misafir kayıtları bilinçli olarak dışarıda bırakılır: aynı e-postayla birden
-// çok misafir olabildiği için "e-postaya göre tek müşteri" sorusunun misafirler
-// arasında tek bir doğru yanıtı yoktur (bkz. models.Customer).
+// Guest records are left out on purpose: since more than one guest can share
+// an e-mail, the question "the one customer with this e-mail" has no single
+// right answer among guests (see models.Customer).
 func (r *Repo) GetAccountByEmail(ctx context.Context, email string) (models.Customer, error) {
 	if err := r.ready(); err != nil {
 		return models.Customer{}, err
@@ -82,13 +84,13 @@ func (r *Repo) GetAccountByEmail(ctx context.Context, email string) (models.Cust
 	row, err := r.q.GetAccountByEmail(ctx, email)
 	if err != nil {
 		return models.Customer{}, notFoundOr(err, CodeCustomerNotFound,
-			"%q e-postasıyla kayıtlı hesap bulunamadı", email)
+			"no account registered with the e-mail %q was found", email)
 	}
 	return toCustomer(row)
 }
 
-// ListCustomers süzgeçlenmiş ve sayfalanmış müşteri listesini, filtreye uyan
-// TOPLAM kayıt sayısıyla birlikte döner.
+// ListCustomers returns the filtered, paged list of customers together with
+// the TOTAL number of records that match the filter.
 func (r *Repo) ListCustomers(
 	ctx context.Context,
 	filter models.CustomerFilter,
@@ -122,7 +124,7 @@ func (r *Repo) ListCustomers(
 		AfterID:    afterID,
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "müşteri listesi alınamadı")
+		return nil, 0, wrapDB(err, "the customer list could not be read")
 	}
 
 	total, err := r.q.CountCustomers(ctx, customerdb.CountCustomersParams{
@@ -131,7 +133,7 @@ func (r *Repo) ListCustomers(
 		GroupID:    filter.GroupID,
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "müşteri sayısı alınamadı")
+		return nil, 0, wrapDB(err, "the customers could not be counted")
 	}
 
 	customers, err := toCustomers(rows)
@@ -141,9 +143,9 @@ func (r *Repo) ListCustomers(
 	return customers, total, nil
 }
 
-// GetCustomersByIDs verilen kimliklere karşılık gelen müşterileri TEK sorguda
-// döner. Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir
-// (Query katmanının FetchByIDs sözleşmesi, ADR 0004).
+// GetCustomersByIDs returns the customers that match the given ids in ONE
+// query. No record comes back for an id that is not found, and that is not an
+// error (the Query layer's FetchByIDs contract, ADR 0004).
 func (r *Repo) GetCustomersByIDs(ctx context.Context, ids []string) ([]models.Customer, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -154,12 +156,13 @@ func (r *Repo) GetCustomersByIDs(ctx context.Context, ids []string) ([]models.Cu
 
 	rows, err := r.q.ListCustomersByIDs(ctx, ids)
 	if err != nil {
-		return nil, wrapDB(err, "müşteriler alınamadı")
+		return nil, wrapDB(err, "the customers could not be read")
 	}
 	return toCustomers(rows)
 }
 
-// UpdateCustomer müşterinin verilen alanlarını günceller; yoksa errors.NotFound.
+// UpdateCustomer updates the given fields of the customer; errors.NotFound if
+// it does not exist.
 func (r *Repo) UpdateCustomer(
 	ctx context.Context,
 	id string,
@@ -187,36 +190,39 @@ func (r *Repo) UpdateCustomer(
 	if err != nil {
 		if ConstraintName(err) == IndexAccountEmail {
 			return models.Customer{}, errors.Wrap(err, errors.KindConflict, CodeEmailTaken,
-				"e-posta başka bir hesap tarafından kullanılıyor")
+				"the e-mail is in use by another account")
 		}
-		return models.Customer{}, notFoundOr(err, CodeCustomerNotFound, "müşteri bulunamadı: %s", id)
+		return models.Customer{}, notFoundOr(err, CodeCustomerNotFound, "customer not found: %s", id)
 	}
 	return toCustomer(row)
 }
 
-// PromoteGuest misafir kaydını hesaba çevirir.
+// PromoteGuest turns a guest record into an account.
 //
-// Üç durum ayrı ayrı raporlanır ve hepsi TEK işlemde, müşteri satırı KİLİTLİYKEN
-// karara bağlanır:
+// Three outcomes are reported separately, and all of them are decided in ONE
+// transaction while the customer row is LOCKED:
 //
-//   - Kayıt yoksa errors.NotFound.
-//   - Kayıt zaten hesapsa errors.Conflict ([CodeAlreadyAccount]).
-//   - E-posta başka bir hesaba aitse errors.Conflict ([CodeEmailTaken]).
+//   - No record: errors.NotFound.
+//   - The record is already an account: errors.Conflict
+//     ([CodeAlreadyAccount]).
+//   - The e-mail belongs to another account: errors.Conflict
+//     ([CodeEmailTaken]).
 //
-// Ön denetim kilit altında yapılsa bile kısmi benzersiz indeks SON kapı olarak
-// kalır: denetimle güncelleme arasına giren başka bir işlem (aynı e-postayla
-// yeni bir hesap açan) yalnızca indeksle yakalanır. Bu yüzden benzersizlik
-// ihlali de aynı koda çevrilir; çağıran iki yolu ayırt etmek zorunda kalmaz.
+// Even though the pre-check is made under the lock, the partial unique index
+// remains the LAST gate: another transaction that slips in between the check
+// and the update (one opening a new account with the same e-mail) is caught
+// only by the index. That is why the uniqueness violation is translated into
+// the same code too; the caller does not have to tell the two paths apart.
 func (r *Repo) PromoteGuest(ctx context.Context, id string, now time.Time) (models.Customer, error) {
 	var out models.Customer
 
 	err := r.inTx(ctx, func(q *customerdb.Queries) error {
 		current, err := q.GetCustomerForUpdate(ctx, id)
 		if err != nil {
-			return notFoundOr(err, CodeCustomerNotFound, "müşteri bulunamadı: %s", id)
+			return notFoundOr(err, CodeCustomerNotFound, "customer not found: %s", id)
 		}
 		if current.HasAccount {
-			return errors.Conflict(CodeAlreadyAccount, "müşteri zaten bir hesaba sahip: %s", id)
+			return errors.Conflict(CodeAlreadyAccount, "the customer already has an account: %s", id)
 		}
 
 		taken, err := q.AccountEmailTakenByOther(ctx, customerdb.AccountEmailTakenByOtherParams{
@@ -224,11 +230,11 @@ func (r *Repo) PromoteGuest(ctx context.Context, id string, now time.Time) (mode
 			ID:    id,
 		})
 		if err != nil {
-			return wrapDB(err, "e-posta çakışması denetlenemedi")
+			return wrapDB(err, "the e-mail conflict could not be checked")
 		}
 		if taken {
 			return errors.Conflict(CodeEmailTaken,
-				"%q e-postasıyla kayıtlı bir hesap zaten var", current.Email)
+				"an account registered with the e-mail %q already exists", current.Email)
 		}
 
 		row, err := q.PromoteCustomerToAccount(ctx, customerdb.PromoteCustomerToAccountParams{
@@ -238,9 +244,9 @@ func (r *Repo) PromoteGuest(ctx context.Context, id string, now time.Time) (mode
 		if err != nil {
 			if ConstraintName(err) == IndexAccountEmail {
 				return errors.Wrap(err, errors.KindConflict, CodeEmailTaken,
-					"%q e-postasıyla kayıtlı bir hesap zaten var", current.Email)
+					"an account registered with the e-mail %q already exists", current.Email)
 			}
-			return notFoundOr(err, CodeCustomerNotFound, "müşteri hesaba çevrilemedi: %s", id)
+			return notFoundOr(err, CodeCustomerNotFound, "the customer could not be turned into an account: %s", id)
 		}
 
 		out, err = toCustomer(row)
@@ -252,34 +258,35 @@ func (r *Repo) PromoteGuest(ctx context.Context, id string, now time.Time) (mode
 	return out, nil
 }
 
-// DeleteCustomer müşteriyi ve adreslerini soft delete ile siler; yoksa
-// errors.NotFound.
+// DeleteCustomer soft-deletes the customer and their addresses;
+// errors.NotFound if the customer does not exist.
 //
-// Adresler AYNI işlemde silinir: foreign key'in ON DELETE CASCADE'i yalnızca
-// gerçek silmede çalışır ve yumuşak silme bir UPDATE olduğu için adresleri
-// kendiliğinden götürmez. Grup üyelikleri ise BIRAKILIR — silinmiş müşteri
-// zaten hiçbir listede görünmez ve üyelik satırı, kayıt bir gün gerçekten
-// silindiğinde cascade ile gider.
+// The addresses are deleted in the SAME transaction: the foreign key's ON
+// DELETE CASCADE runs only on a real delete, and since a soft delete is an
+// UPDATE it does not take the addresses with it by itself. Group memberships,
+// on the other hand, are LEFT in place — a deleted customer shows up in no list
+// anyway, and the membership row goes by cascade the day the record is really
+// deleted.
 func (r *Repo) DeleteCustomer(ctx context.Context, id string, now time.Time) error {
 	return r.inTx(ctx, func(q *customerdb.Queries) error {
 		if _, err := q.SoftDeleteCustomer(ctx, customerdb.SoftDeleteCustomerParams{
 			ID:        id,
 			DeletedAt: fromTime(now),
 		}); err != nil {
-			return notFoundOr(err, CodeCustomerNotFound, "müşteri bulunamadı: %s", id)
+			return notFoundOr(err, CodeCustomerNotFound, "customer not found: %s", id)
 		}
 
 		if err := q.SoftDeleteAddressesOfCustomer(ctx, customerdb.SoftDeleteAddressesOfCustomerParams{
 			CustomerID: id,
 			DeletedAt:  fromTime(now),
 		}); err != nil {
-			return wrapDB(err, "müşterinin adresleri silinemedi: %s", id)
+			return wrapDB(err, "the customer's addresses could not be deleted: %s", id)
 		}
 		return nil
 	})
 }
 
-// toCustomer üretilen satırı domain modeline çevirir.
+// toCustomer converts a generated row into the domain model.
 func toCustomer(row customerdb.Customer) (models.Customer, error) {
 	meta, err := toMetadata(row.Metadata)
 	if err != nil {
@@ -299,7 +306,7 @@ func toCustomer(row customerdb.Customer) (models.Customer, error) {
 	}, nil
 }
 
-// toCustomers satır dilimini domain modellerine çevirir.
+// toCustomers converts a slice of rows into domain models.
 func toCustomers(rows []customerdb.Customer) ([]models.Customer, error) {
 	out := make([]models.Customer, 0, len(rows))
 	for i := range rows {

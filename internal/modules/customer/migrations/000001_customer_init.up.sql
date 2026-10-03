@@ -1,32 +1,34 @@
--- customer modülünün şeması (plan Faz 5, Bölüm 6).
+-- The customer module's schema (plan Phase 5, Section 6).
 --
--- Tablolar YALNIZCA bu modüle aittir. Prensip 2.2 gereği başka bir modülün
--- tablosuna REFERENCES verilmez: sepetin ya da siparişin müşteriye bağlanması
--- Module Links üzerinden yapılır ve customer o bağı hiç görmez. Modülün KENDİ
--- tabloları arasındaki foreign key'ler serbesttir ve kullanılır.
+-- The tables belong to THIS module ONLY. Per Principle 2.2, no REFERENCES is
+-- given to another module's table: linking a cart or an order to a customer is
+-- done through Module Links, and customer never sees that link. Foreign keys
+-- BETWEEN the module's OWN tables are free and are used.
 --
--- Zaman sütunları TIMESTAMPTZ'dir ve daima UTC yazılır; silme SOFT'tur
--- (deleted_at) ve okuma sorguları deleted_at IS NULL filtresi uygular.
+-- Time columns are TIMESTAMPTZ and are always written in UTC; deletion is SOFT
+-- (deleted_at), and the read queries apply the deleted_at IS NULL filter.
 --
--- Bu filtrenin TEK istisnası UNUTULMA (erasure) sorgularıdır: kişinin
--- verisini kilitleyen ve üzerine yazan sorgular deleted_at'e HİÇ bakmaz (bkz.
--- queries/customer.sql, LockCustomerForErasure). Sebebi ölçülebilir bir
--- olgudur: yumuşak silme yalnızca deleted_at ile updated_at yazar, tek bir
--- kişisel sütuna dokunmaz — silinmiş bir müşterinin e-postası, adı ve telefonu
--- tabloda AYNEN durur. Filtre orada da uygulansaydı, kaydı silinmiş bir kişiye
--- "veriniz anonimleştirildi" denirken verisi yerinde kalırdı.
+-- The ONE exception to this filter is the ERASURE queries: the queries that
+-- lock and overwrite a person's data do NOT look at deleted_at at all (see
+-- queries/customer.sql, LockCustomerForErasure). The reason is a measurable
+-- fact: a soft delete writes only deleted_at and updated_at and touches not a
+-- single personal column — a deleted customer's e-mail, name and phone stay in
+-- the table UNCHANGED. Had the filter been applied there too, a person whose
+-- record was deleted would be told "your data has been anonymized" while their
+-- data stayed where it was.
 --
--- Aynı istisna aşağıdaki indeks yorumlarını da bağlar: WHERE deleted_at IS NULL
--- ile kurulmuş KISMİ indeksler unutulma sorgularına hizmet EDEMEZ, çünkü o
--- sorgular indeksin kendi koşulunun dışına çıkar.
+-- The same exception binds the index comments below: PARTIAL indexes built
+-- WHERE deleted_at IS NULL CANNOT serve the erasure queries, because those
+-- queries go outside the index's own condition.
 
--- customer hem misafir hem kayıtlı müşteriyi tutar; ikisini has_account ayırır.
+-- customer holds both guest and registered customers; has_account tells them
+-- apart.
 --
--- E-posta daima KÜÇÜK harfe normalize edilerek saklanır. Normalizasyon
--- saklamadadır çünkü benzersizlik indeksi ham sütun üzerindedir: "Ali@X.com"
--- ile "ali@x.com" aynı hesabı göstermeliyse ikisinin de aynı baytlara inmesi
--- gerekir. CHECK kısıtı, servis normalizasyonu atlansa bile büyük harfli bir
--- e-postanın tabloya girmesini engeller.
+-- The e-mail is always stored normalized to LOWER case. The normalization is
+-- at storage because the uniqueness index is on the raw column: if "Ali@X.com"
+-- and "ali@x.com" are to point at the same account, both have to come down to
+-- the same bytes. The CHECK constraint keeps an e-mail with upper-case letters
+-- out of the table even if the service's normalization is skipped.
 CREATE TABLE IF NOT EXISTS customer (
     id          TEXT PRIMARY KEY,
     email       TEXT        NOT NULL,
@@ -43,42 +45,45 @@ CREATE TABLE IF NOT EXISTS customer (
     CONSTRAINT customer_email_len_check   CHECK (length(email) <= 320)
 );
 
--- Kayıtlı HESAPLARIN e-postası benzersizdir; misafirlerinki DEĞİLDİR.
+-- The e-mail of registered ACCOUNTS is unique; that of guests is NOT.
 --
--- Kısmi indeks bu modülün en önemli kararıdır. Aynı e-postayla defalarca
--- misafir siparişi verilebilmelidir: vitrinde adresini yazan bir müşteri,
--- aylar önce aynı adresle alışveriş yapmış olduğu için reddedilemez. Buna
--- karşılık aynı e-postayla iki KAYITLI hesap olamaz, aksi hâlde Faz 8'de
--- gelecek "e-posta ile giriş" hangi kaydı seçeceğini bilemezdi. WHERE koşulu
--- iki gereksinimi tek kısıtta ifade eder ve kuralı uygulamaya değil
--- veritabanına bağlar.
+-- The partial index is this module's most important decision. Guest orders
+-- must be placeable with the same e-mail again and again: a customer typing
+-- their address on the storefront cannot be refused because they shopped with
+-- the same address months ago. On the other hand there cannot be two
+-- REGISTERED accounts with the same e-mail, or the "sign in by e-mail" coming
+-- in Phase 8 could not know which record to choose. The WHERE condition
+-- expresses both requirements in one constraint and binds the rule to the
+-- database rather than to the application.
 --
--- deleted_at IS NULL koşulu ikinci bir işi görür: yumuşak silinmiş bir hesabın
--- e-postası yeniden kullanılabilir kalır.
+-- The deleted_at IS NULL condition does a second job: a soft-deleted account's
+-- e-mail stays reusable.
 CREATE UNIQUE INDEX IF NOT EXISTS customer_account_email_uniq
     ON customer (email)
     WHERE has_account AND deleted_at IS NULL;
 
--- E-postaya göre arama (GetAccountByEmail, misafir eşleştirme) bu indeksi
--- kullanır; kısmi benzersiz indeks yalnızca hesapları kapsadığı için
--- misafir aramalarına yetmez.
+-- Lookups by e-mail (GetAccountByEmail, guest matching) use this index; the
+-- partial unique index covers only accounts, so it is not enough for guest
+-- lookups.
 --
--- E-postaya bakan UNUTULMA sorguları bu indeksi KULLANAMAZ: WHERE koşulu
--- yüzünden indeks yalnızca canlı satırları taşır, o sorgular ise silinmiş
--- satırları da arar. Onlar sıralı tarama (+ sıralama) yapar ve bu bilerek kabul
--- edilmiştir; gerekçesi repository/erasure.go, lockErasureTargets belgesindedir.
--- Yalnızca KİMLİK taşıyan unutulma sorgusu birincil anahtarla çalışır, taramaz.
--- Konu HEM kimlik HEM e-posta taşıdığında kullanılan sorgu ise (id = $1 OR
--- email = $2) birincil anahtarı KULLANAMAZ: OR'un iki yanı ayrı indeksler
--- ister ve bu sorgu da silinmiş satırları aradığı için kısmi indeksin dışına
--- çıkar. O da tarar, ve bu bilerek kabul edilmiştir.
+-- The ERASURE queries that look at the e-mail CANNOT USE this index: because of
+-- the WHERE condition the index carries only live rows, while those queries
+-- look for deleted rows too. They do a sequential scan (+ a sort), and this is
+-- accepted knowingly; the reasoning is in the documentation of
+-- repository/erasure.go, lockErasureTargets. Only the erasure query that
+-- carries an ID alone works through the primary key and does not scan. The
+-- query used when the subject carries BOTH an id AND an e-mail (id = $1 OR
+-- email = $2), on the other hand, CANNOT USE the primary key: the two sides of
+-- the OR want separate indexes, and since this query also looks for deleted
+-- rows it goes outside the partial index. It scans too, and this is accepted
+-- knowingly.
 CREATE INDEX IF NOT EXISTS customer_email_idx
     ON customer (email)
     WHERE deleted_at IS NULL;
 
--- customer_group müşteri segmentidir. pricing'in kural bağlamındaki
--- "customer_group_id" özniteliği buradaki kimliğe karşılık gelir; bağ
--- veritabanı düzeyinde DEĞİL, hesaplama bağlamı üzerinden kurulur.
+-- customer_group is a customer segment. The "customer_group_id" attribute in
+-- pricing's rule context corresponds to the id here; the link is made NOT at
+-- the database level but through the computation context.
 CREATE TABLE IF NOT EXISTS customer_group (
     id         TEXT PRIMARY KEY,
     name       TEXT        NOT NULL,
@@ -90,21 +95,21 @@ CREATE TABLE IF NOT EXISTS customer_group (
     CONSTRAINT customer_group_name_len_check CHECK (length(name) <= 255)
 );
 
--- Grup adı CANLI gruplar arasında benzersizdir.
+-- A group name is unique among LIVE groups.
 --
--- WHERE koşulu yumuşak silmenin karşılığıdır: silinen bir grubun adı indeksin
--- kapsamından çıkar ve yeniden kullanılabilir hâle gelir. Koşul olmasaydı bir
--- kez kullanılmış her ad sonsuza dek işgal edilirdi — grup silinebildiği için
--- bu somut bir kısıttır (bkz. queries/customer_group.sql,
+-- The WHERE condition is the counterpart of the soft delete: a deleted group's
+-- name leaves the index's scope and becomes reusable. Without the condition,
+-- every name used even once would be occupied forever — and since a group can
+-- be deleted, this is a concrete constraint (see queries/customer_group.sql,
 -- SoftDeleteCustomerGroup).
 CREATE UNIQUE INDEX IF NOT EXISTS customer_group_name_uniq
     ON customer_group (name)
     WHERE deleted_at IS NULL;
 
--- customer_group_customer müşteri ile grup arasındaki ÇOKA-ÇOK bağdır.
+-- customer_group_customer is the MANY-TO-MANY link between customer and group.
 --
--- Bileşik birincil anahtar aynı müşterinin aynı gruba iki kez eklenmesini
--- engeller; üyelik kümedir, çokluk taşımaz.
+-- The composite primary key prevents the same customer from being added to the
+-- same group twice; a membership is a set and carries no multiplicity.
 CREATE TABLE IF NOT EXISTS customer_group_customer (
     customer_id       TEXT        NOT NULL REFERENCES customer(id) ON DELETE CASCADE,
     customer_group_id TEXT        NOT NULL REFERENCES customer_group(id) ON DELETE CASCADE,
@@ -112,15 +117,15 @@ CREATE TABLE IF NOT EXISTS customer_group_customer (
     PRIMARY KEY (customer_id, customer_group_id)
 );
 
--- Bir grubun üyelerini listelemek birincil anahtarın ÖNEKİNİ kullanamaz;
--- ters yön için ayrı indeks gerekir.
+-- Listing a group's members cannot use the primary key's PREFIX; the reverse
+-- direction needs an index of its own.
 CREATE INDEX IF NOT EXISTS customer_group_customer_group_idx
     ON customer_group_customer (customer_group_id);
 
--- customer_address müşterinin kayıtlı adresidir.
+-- customer_address is a customer's saved address.
 --
--- Adres customer'a foreign key ile bağlıdır: ikisi de bu modülün verisidir ve
--- sahipsiz bir adres kaydının anlamı yoktur.
+-- The address is bound to customer by a foreign key: both are this module's
+-- data, and an address record without an owner has no meaning.
 CREATE TABLE IF NOT EXISTS customer_address (
     id                  TEXT        PRIMARY KEY,
     customer_id         TEXT        NOT NULL REFERENCES customer(id) ON DELETE CASCADE,
@@ -147,15 +152,17 @@ CREATE INDEX IF NOT EXISTS customer_address_customer_idx
     ON customer_address (customer_id)
     WHERE deleted_at IS NULL;
 
--- Varsayılan kargo/fatura adresi MÜŞTERİ BAŞINA TEKTİR ve bunu veritabanı
--- zorlar.
+-- The default shipping/billing address is ONE PER CUSTOMER, and the database
+-- enforces it.
 --
--- Kural uygulamada da tutulabilirdi ("yenisini yazmadan önce eskisini temizle")
--- ama iki eşzamanlı istek arasında tutmazdı: ikisi de eski varsayılanı temizler,
--- ikisi de kendi adresini işaretler ve müşteri iki varsayılan kargo adresiyle
--- kalırdı. Kısmi benzersiz indeks bu yarışı imkânsız kılar; ikinci yazım
--- benzersizlik ihlaliyle döner. Uygulama tarafındaki temizleme adımı hâlâ
--- gereklidir, ama artık DOĞRULUĞUN kaynağı değil, kısıtı sağlama yoludur.
+-- The rule could have been kept in the application too ("clear the old one
+-- before writing the new one"), but it would not hold between two concurrent
+-- requests: both would clear the old default, both would mark their own
+-- address, and the customer would be left with two default shipping addresses.
+-- The partial unique index makes this race impossible; the second write comes
+-- back with a uniqueness violation. The clearing step in the application is
+-- still needed, but it is no longer the source of CORRECTNESS, only the way to
+-- satisfy the constraint.
 CREATE UNIQUE INDEX IF NOT EXISTS customer_address_default_shipping_uniq
     ON customer_address (customer_id)
     WHERE is_default_shipping AND deleted_at IS NULL;

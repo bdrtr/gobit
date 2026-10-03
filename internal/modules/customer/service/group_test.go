@@ -11,20 +11,20 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
-// yeniGrup test için bir müşteri grubu açar.
-func yeniGrup(ctx context.Context, t *testing.T, svc *Service, ad string) models.CustomerGroup {
+// newTestGroup opens a customer group for a test.
+func newTestGroup(ctx context.Context, t *testing.T, svc *Service, name string) models.CustomerGroup {
 	t.Helper()
 
-	g, err := svc.CreateGroup(ctx, GroupInput{Name: ad})
+	g, err := svc.CreateGroup(ctx, GroupInput{Name: name})
 	require.NoError(t, err)
 	return g
 }
 
-// TestGrupAdiZorunluVeTekildir boş ve tekrarlanan grup adının reddedildiğini
-// kanıtlar.
-func TestGrupAdiZorunluVeTekildir(t *testing.T) {
+// TestAGroupNameIsRequiredAndUnique proves that an empty group name and a
+// repeated one are rejected.
+func TestAGroupNameIsRequiredAndUnique(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newTestService(t)
 
 	_, err := svc.CreateGroup(ctx, GroupInput{Name: "   "})
 	require.Error(t, err)
@@ -38,208 +38,214 @@ func TestGrupAdiZorunluVeTekildir(t *testing.T) {
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 }
 
-// TestGrupGuncellenebilir grubun adının ve metadata'sının düzeltilebildiğini
-// kanıtlar.
+// TestAGroupCanBeUpdated proves that a group's name and metadata can be
+// corrected.
 //
-// Ad canlı gruplar arasında benzersizdir; düzeltme yolu olmasaydı yanlış
-// girilmiş bir ad o adı sonsuza dek işgal ederdi ve pricing'in segment bağlamı
-// düzeltilemeyen bir kimliğe çakılı kalırdı.
-func TestGrupGuncellenebilir(t *testing.T) {
+// A name is unique among live groups; without a way to correct it, a mistyped
+// name would occupy that name forever, and pricing's segment context would
+// stay pinned to an id that could not be corrected.
+func TestAGroupCanBeUpdated(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newTestService(t)
 
-	grup := yeniGrup(ctx, t, svc, "VIPP")
+	group := newTestGroup(ctx, t, svc, "VIPP")
 
-	duzeltilmis := "  VIP  "
-	guncel, err := svc.UpdateGroup(ctx, grup.ID, UpdateGroupInput{
-		Name:     &duzeltilmis,
-		Metadata: map[string]any{"indirim": "10"},
+	corrected := "  VIP  "
+	updated, err := svc.UpdateGroup(ctx, group.ID, UpdateGroupInput{
+		Name:     &corrected,
+		Metadata: map[string]any{"discount": "10"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, "VIP", guncel.Name, "ad kırpılarak yazılmalı")
-	assert.Equal(t, "10", guncel.Metadata["indirim"])
+	assert.Equal(t, "VIP", updated.Name, "the name has to be written trimmed")
+	assert.Equal(t, "10", updated.Metadata["discount"])
 
-	// Verilmeyen alanlar OLDUĞU GİBİ kalır.
-	guncel, err = svc.UpdateGroup(ctx, grup.ID, UpdateGroupInput{})
+	// The fields that are not given stay AS THEY ARE.
+	updated, err = svc.UpdateGroup(ctx, group.ID, UpdateGroupInput{})
 	require.NoError(t, err)
-	assert.Equal(t, "VIP", guncel.Name, "verilmeyen ad korunmalı")
-	assert.Equal(t, "10", guncel.Metadata["indirim"], "verilmeyen metadata korunmalı")
+	assert.Equal(t, "VIP", updated.Name, "a name that is not given has to be kept")
+	assert.Equal(t, "10", updated.Metadata["discount"], "metadata that is not given has to be kept")
 
-	// Ad VERİLİRSE boş olamaz; kısmi güncelleme bir zorunluluğu kaldıramaz.
-	bos := "   "
-	_, err = svc.UpdateGroup(ctx, grup.ID, UpdateGroupInput{Name: &bos})
-	assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "boş ad reddedilmeli")
+	// A name, IF GIVEN, cannot be empty; a partial update cannot lift a
+	// requirement.
+	blank := "   "
+	_, err = svc.UpdateGroup(ctx, group.ID, UpdateGroupInput{Name: &blank})
+	assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "an empty name has to be rejected")
 
-	// Başka bir canlı grubun adı alınamaz.
-	digeri := yeniGrup(ctx, t, svc, "B2B")
-	alinmis := "VIP"
-	_, err = svc.UpdateGroup(ctx, digeri.ID, UpdateGroupInput{Name: &alinmis})
-	assert.Equal(t, errors.KindConflict, errors.KindOf(err), "kullanılan ad çakışma vermeli")
+	// Another live group's name cannot be taken.
+	other := newTestGroup(ctx, t, svc, "B2B")
+	taken := "VIP"
+	_, err = svc.UpdateGroup(ctx, other.ID, UpdateGroupInput{Name: &taken})
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err), "a name in use has to give a conflict")
 
-	// Olmayan grup NotFound.
-	_, err = svc.UpdateGroup(ctx, models.NewCustomerGroupID(sabitSaat), UpdateGroupInput{})
+	// A group that does not exist is NotFound.
+	_, err = svc.UpdateGroup(ctx, models.NewCustomerGroupID(fixedClock), UpdateGroupInput{})
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestSilinenGrupHicbirOkumadaGorunmez yumuşak silinen grubun her okuma
-// yolundan düştüğünü kanıtlar.
+// TestADeletedGroupAppearsInNoRead proves that a soft-deleted group drops out
+// of every read path.
 //
-// Üyelik satırları silinmez; görünmezliği sağlayan tek şey grup okuyan her
-// sorgunun deleted_at IS NULL süzgecidir. Süzgeç düşerse silinmiş bir grup
-// müşterinin segmentlerinde kalır ve fiyat hesabına taşınırdı.
-func TestSilinenGrupHicbirOkumadaGorunmez(t *testing.T) {
+// The membership rows are not deleted; the one thing that makes the group
+// invisible is the deleted_at IS NULL filter of every query that reads a
+// group. Were the filter dropped, a deleted group would stay among the
+// customer's segments and be carried into the price computation.
+func TestADeletedGroupAppearsInNoRead(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newTestService(t)
 
-	uye := yeniMusteri(ctx, t, svc, "segment@example.com")
-	grup := yeniGrup(ctx, t, svc, "VIP")
-	require.NoError(t, svc.AddToGroup(ctx, uye.ID, grup.ID))
+	member := newTestCustomer(ctx, t, svc, "segment@example.com")
+	group := newTestGroup(ctx, t, svc, "VIP")
+	require.NoError(t, svc.AddToGroup(ctx, member.ID, group.ID))
 
-	require.NoError(t, svc.DeleteGroup(ctx, grup.ID))
+	require.NoError(t, svc.DeleteGroup(ctx, group.ID))
 
-	_, err := svc.GetGroup(ctx, grup.ID)
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "silinen grup okunmamalı")
+	_, err := svc.GetGroup(ctx, group.ID)
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "a deleted group must not be readable")
 
-	sayfa, err := svc.ListGroups(ctx, 0, 0)
+	groupPage, err := svc.ListGroups(ctx, 0, 0)
 	require.NoError(t, err)
-	assert.Zero(t, sayfa.Count, "silinen grup listede görünmemeli")
+	assert.Zero(t, groupPage.Count, "a deleted group must not appear in the list")
 
-	gruplar, err := svc.ListGroupsOf(ctx, uye.ID)
+	groups, err := svc.ListGroupsOf(ctx, member.ID)
 	require.NoError(t, err)
-	assert.Empty(t, gruplar, "silinen grup müşterinin gruplarında görünmemeli")
+	assert.Empty(t, groups, "a deleted group must not appear among the customer's groups")
 
-	kimlikler, err := svc.CustomerGroupIDs(ctx, uye.ID)
+	ids, err := svc.CustomerGroupIDs(ctx, member.ID)
 	require.NoError(t, err)
-	assert.Empty(t, kimlikler, "silinen grup fiyat bağlamına taşınmamalı")
+	assert.Empty(t, ids, "a deleted group must not be carried into the price context")
 
-	page, err := svc.ListCustomers(ctx, ListCustomersInput{GroupID: &grup.ID})
+	page, err := svc.ListCustomers(ctx, ListCustomersInput{GroupID: &group.ID})
 	require.NoError(t, err)
-	assert.Zero(t, page.Count, "silinen grubun üyeleri süzgeçle listelenmemeli")
+	assert.Zero(t, page.Count, "a deleted group's members must not be listed by the filter")
 
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(svc.AddToGroup(ctx, uye.ID, grup.ID)),
-		"silinen gruba üye eklenememeli")
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(svc.DeleteGroup(ctx, grup.ID)),
-		"silinen grup ikinci kez silinememeli")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(svc.AddToGroup(ctx, member.ID, group.ID)),
+		"no member may be added to a deleted group")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(svc.DeleteGroup(ctx, group.ID)),
+		"a deleted group must not be deletable a second time")
 
-	// Ad kısmi benzersiz indeksin kapsamından çıktığı için serbest kalır.
+	// The name is free again because it has left the partial unique index's
+	// scope.
 	_, err = svc.CreateGroup(ctx, GroupInput{Name: "VIP"})
-	require.NoError(t, err, "silinen grubun adı yeniden kullanılabilmeli")
+	require.NoError(t, err, "a deleted group's name has to be reusable")
 }
 
-// TestGrubaEklemeIdempotenttir aynı üyeliğin iki kez eklenmesinin hata
-// vermediğini kanıtlar.
+// TestAddingToAGroupIsIdempotent proves that adding the same membership twice
+// gives no error.
 //
-// Üyelik bir KÜMEDİR; yeniden deneme ya da çift tıklama aynı sonucu vermelidir.
-func TestGrubaEklemeIdempotenttir(t *testing.T) {
+// A membership is a SET; a retry or a double click has to give the same
+// result.
+func TestAddingToAGroupIsIdempotent(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newTestService(t)
 
-	musteri := yeniMusteri(ctx, t, svc, "uye@example.com")
-	grup := yeniGrup(ctx, t, svc, "VIP")
+	customer := newTestCustomer(ctx, t, svc, "member@example.com")
+	group := newTestGroup(ctx, t, svc, "VIP")
 
-	require.NoError(t, svc.AddToGroup(ctx, musteri.ID, grup.ID))
-	require.NoError(t, svc.AddToGroup(ctx, musteri.ID, grup.ID), "ikinci ekleme hata vermemeli")
+	require.NoError(t, svc.AddToGroup(ctx, customer.ID, group.ID))
+	require.NoError(t, svc.AddToGroup(ctx, customer.ID, group.ID), "the second addition must not give an error")
 
-	gruplar, err := svc.ListGroupsOf(ctx, musteri.ID)
+	groups, err := svc.ListGroupsOf(ctx, customer.ID)
 	require.NoError(t, err)
-	require.Len(t, gruplar, 1, "üyelik çoklanmamalı")
-	assert.Equal(t, grup.ID, gruplar[0].ID)
+	require.Len(t, groups, 1, "the membership must not be duplicated")
+	assert.Equal(t, group.ID, groups[0].ID)
 }
 
-// TestGruptanCikarmaIdempotentDegildir olmayan bir üyeliğin kaldırılmasının
-// NotFound döndüğünü kanıtlar.
+// TestRemovingFromAGroupIsNotIdempotent proves that removing a membership that
+// does not exist returns NotFound.
 //
-// Ekleme idempotent, çıkarma değildir: olmayan bir üyeliği kaldırmak istemcinin
-// yanlış kimlikle çağırdığının en yaygın işaretidir ve sessizce başarı dönmek o
-// hatayı gizlerdi.
-func TestGruptanCikarmaIdempotentDegildir(t *testing.T) {
+// Adding is idempotent and removing is not: removing a membership that does not
+// exist is the most common sign that the client called with the wrong id, and
+// quietly returning success would hide that mistake.
+func TestRemovingFromAGroupIsNotIdempotent(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newTestService(t)
 
-	musteri := yeniMusteri(ctx, t, svc, "cikar@example.com")
-	grup := yeniGrup(ctx, t, svc, "B2B")
+	customer := newTestCustomer(ctx, t, svc, "remove@example.com")
+	group := newTestGroup(ctx, t, svc, "B2B")
 
-	err := svc.RemoveFromGroup(ctx, musteri.ID, grup.ID)
+	err := svc.RemoveFromGroup(ctx, customer.ID, group.ID)
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	require.NoError(t, svc.AddToGroup(ctx, musteri.ID, grup.ID))
-	require.NoError(t, svc.RemoveFromGroup(ctx, musteri.ID, grup.ID))
+	require.NoError(t, svc.AddToGroup(ctx, customer.ID, group.ID))
+	require.NoError(t, svc.RemoveFromGroup(ctx, customer.ID, group.ID))
 
-	gruplar, err := svc.ListGroupsOf(ctx, musteri.ID)
+	groups, err := svc.ListGroupsOf(ctx, customer.ID)
 	require.NoError(t, err)
-	assert.Empty(t, gruplar)
+	assert.Empty(t, groups)
 }
 
-// TestEksikTarafNotFound müşteri ya da grup yoksa NotFound döndüğünü kanıtlar.
-func TestEksikTarafNotFound(t *testing.T) {
+// TestAMissingSideIsNotFound proves that NotFound is returned when the
+// customer or the group does not exist.
+func TestAMissingSideIsNotFound(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newTestService(t)
 
-	musteri := yeniMusteri(ctx, t, svc, "eksik@example.com")
-	grup := yeniGrup(ctx, t, svc, "Toptan")
+	customer := newTestCustomer(ctx, t, svc, "missing@example.com")
+	group := newTestGroup(ctx, t, svc, "Wholesale")
 
-	err := svc.AddToGroup(ctx, models.NewCustomerID(sabitSaat), grup.ID)
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "olmayan müşteri")
+	err := svc.AddToGroup(ctx, models.NewCustomerID(fixedClock), group.ID)
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "a missing customer")
 
-	err = svc.AddToGroup(ctx, musteri.ID, models.NewCustomerGroupID(sabitSaat))
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "olmayan grup")
+	err = svc.AddToGroup(ctx, customer.ID, models.NewCustomerGroupID(fixedClock))
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "a missing group")
 
-	_, err = svc.ListGroupsOf(ctx, models.NewCustomerID(sabitSaat))
+	_, err = svc.ListGroupsOf(ctx, models.NewCustomerID(fixedClock))
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err),
-		"olmayan müşteri için boş liste değil NotFound dönmeli")
+		"a missing customer has to get NotFound, not an empty list")
 }
 
-// TestGrupSuzgeciyleListeleme grup üyeliğine göre süzmeyi kanıtlar.
-func TestGrupSuzgeciyleListeleme(t *testing.T) {
+// TestListingByGroup proves filtering by group membership.
+func TestListingByGroup(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newTestService(t)
 
-	uye := yeniMusteri(ctx, t, svc, "uye2@example.com")
-	yeniMusteri(ctx, t, svc, "uyesiz@example.com")
-	grup := yeniGrup(ctx, t, svc, "VIP")
-	require.NoError(t, svc.AddToGroup(ctx, uye.ID, grup.ID))
+	member := newTestCustomer(ctx, t, svc, "member2@example.com")
+	newTestCustomer(ctx, t, svc, "nonmember@example.com")
+	group := newTestGroup(ctx, t, svc, "VIP")
+	require.NoError(t, svc.AddToGroup(ctx, member.ID, group.ID))
 
-	page, err := svc.ListCustomers(ctx, ListCustomersInput{GroupID: &grup.ID})
+	page, err := svc.ListCustomers(ctx, ListCustomersInput{GroupID: &group.ID})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), page.Count)
 	require.Len(t, page.Items, 1)
-	assert.Equal(t, uye.ID, page.Items[0].ID)
+	assert.Equal(t, member.ID, page.Items[0].ID)
 }
 
-// TestModullerArasiYuzey ilkel imzalı modüller arası metotları kanıtlar.
+// TestTheCrossModuleSurface proves the cross-module methods with primitive
+// signatures.
 //
-// İmzalar YALNIZCA ilkel tip kullanır; tüketici modül customer'ı import
-// edemediği için ancak böyle bir imzayı kendi paketinde tekrarlayabilir
-// (ADR 0001).
-func TestModullerArasiYuzey(t *testing.T) {
+// The signatures use ONLY primitive types; a consumer module cannot import
+// customer, so a signature like this is the only kind it can repeat in its own
+// package (ADR 0001).
+func TestTheCrossModuleSurface(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := yeniServis(t)
+	svc, _ := newTestService(t)
 
-	kimlik, err := svc.RegisterGuestCustomer(ctx, "Interop@Example.com", "Ali", "Veli", "555")
+	id, err := svc.RegisterGuestCustomer(ctx, "Interop@Example.com", "Ali", "Veli", "555")
 	require.NoError(t, err)
-	assert.True(t, len(kimlik) > len(models.CustomerIDPrefix))
+	assert.True(t, len(id) > len(models.CustomerIDPrefix))
 
-	misafir, err := svc.GetCustomer(ctx, kimlik)
+	guest, err := svc.GetCustomer(ctx, id)
 	require.NoError(t, err)
-	assert.False(t, misafir.HasAccount, "modüller arası kayıt da MİSAFİR açmalı")
+	assert.False(t, guest.HasAccount, "a cross-module registration has to open a GUEST too")
 
-	eposta, err := svc.CustomerEmail(ctx, kimlik)
+	email, err := svc.CustomerEmail(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, "interop@example.com", eposta)
+	assert.Equal(t, "interop@example.com", email)
 
-	kimlikler, err := svc.CustomerGroupIDs(ctx, kimlik)
+	ids, err := svc.CustomerGroupIDs(ctx, id)
 	require.NoError(t, err)
-	assert.NotNil(t, kimlikler, "grubu olmayan müşteri için boş dilim dönmeli")
-	assert.Empty(t, kimlikler)
+	assert.NotNil(t, ids, "a customer with no group has to get an empty slice")
+	assert.Empty(t, ids)
 
-	grup := yeniGrup(ctx, t, svc, "VIP")
-	require.NoError(t, svc.AddToGroup(ctx, kimlik, grup.ID))
+	group := newTestGroup(ctx, t, svc, "VIP")
+	require.NoError(t, svc.AddToGroup(ctx, id, group.ID))
 
-	kimlikler, err = svc.CustomerGroupIDs(ctx, kimlik)
+	ids, err = svc.CustomerGroupIDs(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, []string{grup.ID}, kimlikler)
+	assert.Equal(t, []string{group.ID}, ids)
 
-	_, err = svc.CustomerEmail(ctx, models.NewCustomerID(sabitSaat))
+	_, err = svc.CustomerEmail(ctx, models.NewCustomerID(fixedClock))
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }

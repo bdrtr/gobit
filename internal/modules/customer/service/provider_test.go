@@ -12,199 +12,202 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/models"
 )
 
-// yeniSaglayici sahte depo üzerinde çalışan bir sağlayıcı kurar.
-func yeniSaglayici(t *testing.T) (*QueryProvider, *Service, *memRepo) {
+// newTestProvider builds a provider that works over the fake repository.
+func newTestProvider(t *testing.T) (*QueryProvider, *Service, *memRepo) {
 	t.Helper()
 
-	svc, repo := yeniServis(t)
+	svc, repo := newTestService(t)
 	return NewQueryProvider(svc), svc, repo
 }
 
-// TestSaglayiciEntityAdi sağlayıcının kayıt adıyla örtüşen entity adını
-// döndürdüğünü kanıtlar.
+// TestTheProviderEntityName proves that the provider returns an entity name
+// that matches the name it is registered under.
 //
-// Query, sağlayıcıyı "<entity>.query" adıyla arar ve Entity() ile adın
-// örtüştüğünü DOĞRULAR; ikisi ayrışırsa çözüm anında hata verir (ADR 0004).
-func TestSaglayiciEntityAdi(t *testing.T) {
-	p, _, _ := yeniSaglayici(t)
+// Query looks the provider up by the name "<entity>.query" and VERIFIES that
+// Entity() matches the name; if the two diverge, resolution fails at that
+// moment (ADR 0004).
+func TestTheProviderEntityName(t *testing.T) {
+	p, _, _ := newTestProvider(t)
 	assert.Equal(t, "customer", p.Entity())
 	assert.Equal(t, "customer.query", p.Entity()+query.ProviderSuffix)
 }
 
-// TestSaglayiciGrupKimlikleriniTekSorgudaGetirir N+1 yasağını kanıtlar.
+// TestTheProviderFetchesGroupIDsInOneCall proves the N+1 ban.
 //
-// Üç müşteri için grup kimlikleri TEK toplu çağrıyla gelmelidir. Müşteri başına
-// ayrı sorgu yapan bir uygulama da aynı SONUCU üretirdi; bu yüzden test sonucu
-// değil ÇAĞRI SAYISINI ölçer — ADR 0004'ün yasakladığı şey sonuç değil,
-// gidiş-dönüş sayısıdır.
-func TestSaglayiciGrupKimlikleriniTekSorgudaGetirir(t *testing.T) {
+// For three customers the group ids have to arrive in ONE batch call. An
+// implementation that ran a separate query per customer would produce the same
+// RESULT too, so the test measures the NUMBER OF CALLS rather than the result —
+// what ADR 0004 forbids is not a result but a number of round trips.
+func TestTheProviderFetchesGroupIDsInOneCall(t *testing.T) {
 	ctx := context.Background()
-	p, svc, repo := yeniSaglayici(t)
+	p, svc, repo := newTestProvider(t)
 
-	grup := yeniGrup(ctx, t, svc, "VIP")
-	var kimlikler []string
-	for _, eposta := range []string{"a@example.com", "b@example.com", "c@example.com"} {
-		musteri := yeniMusteri(ctx, t, svc, eposta)
-		require.NoError(t, svc.AddToGroup(ctx, musteri.ID, grup.ID))
-		kimlikler = append(kimlikler, musteri.ID)
+	group := newTestGroup(ctx, t, svc, "VIP")
+	var ids []string
+	for _, email := range []string{"a@example.com", "b@example.com", "c@example.com"} {
+		customer := newTestCustomer(ctx, t, svc, email)
+		require.NoError(t, svc.AddToGroup(ctx, customer.ID, group.ID))
+		ids = append(ids, customer.ID)
 	}
 
 	repo.calls["GroupIDsOfCustomers"] = 0
-	kayitlar, err := p.FetchByIDs(ctx, kimlikler, []string{fieldID, fieldGroupIDs})
+	records, err := p.FetchByIDs(ctx, ids, []string{fieldID, fieldGroupIDs})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 3)
+	require.Len(t, records, 3)
 
 	assert.Equal(t, 1, repo.calls["GroupIDsOfCustomers"],
-		"üç müşteri için grup kimlikleri TEK çağrıda gelmeli (N+1 yasağı)")
+		"the group ids of three customers have to arrive in ONE call (the N+1 ban)")
 
-	for _, kayit := range kayitlar {
-		assert.Equal(t, []string{grup.ID}, kayit[fieldGroupIDs])
+	for _, record := range records {
+		assert.Equal(t, []string{group.ID}, record[fieldGroupIDs])
 	}
 }
 
-// TestSaglayiciGrupsuzMusteriBosDilim grubu olmayan müşteri için nil değil boş
-// dilim döndüğünü kanıtlar.
-func TestSaglayiciGrupsuzMusteriBosDilim(t *testing.T) {
+// TestTheProviderGivesAGrouplessCustomerAnEmptySlice proves that a customer
+// with no group gets an empty slice, not nil.
+func TestTheProviderGivesAGrouplessCustomerAnEmptySlice(t *testing.T) {
 	ctx := context.Background()
-	p, svc, _ := yeniSaglayici(t)
+	p, svc, _ := newTestProvider(t)
 
-	musteri := yeniMusteri(ctx, t, svc, "grupsuz@example.com")
+	customer := newTestCustomer(ctx, t, svc, "groupless@example.com")
 
-	kayitlar, err := p.FetchByIDs(ctx, []string{musteri.ID}, nil)
+	records, err := p.FetchByIDs(ctx, []string{customer.ID}, nil)
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
+	require.Len(t, records, 1)
 
-	ids, ok := kayitlar[0][fieldGroupIDs].([]string)
-	require.True(t, ok, "group_ids alanı dize dilimi olmalı")
+	ids, ok := records[0][fieldGroupIDs].([]string)
+	require.True(t, ok, "the group_ids field has to be a string slice")
 	assert.NotNil(t, ids)
 	assert.Empty(t, ids)
 }
 
-// TestSaglayiciGrupKimlikleriIstenmezseSorgulanmaz alan seçimiyle üyelik
-// sorgusunun hiç çalıştırılmadığını kanıtlar.
-func TestSaglayiciGrupKimlikleriIstenmezseSorgulanmaz(t *testing.T) {
+// TestTheProviderSkipsGroupIDsNobodyAskedFor proves that, with field
+// selection, the membership query is never run.
+func TestTheProviderSkipsGroupIDsNobodyAskedFor(t *testing.T) {
 	ctx := context.Background()
-	p, svc, repo := yeniSaglayici(t)
+	p, svc, repo := newTestProvider(t)
 
-	musteri := yeniMusteri(ctx, t, svc, "alan@example.com")
+	customer := newTestCustomer(ctx, t, svc, "field@example.com")
 
 	repo.calls["GroupIDsOfCustomers"] = 0
-	kayitlar, err := p.FetchByIDs(ctx, []string{musteri.ID}, []string{fieldEmail})
+	records, err := p.FetchByIDs(ctx, []string{customer.ID}, []string{fieldEmail})
 	require.NoError(t, err)
-	require.Len(t, kayitlar, 1)
+	require.Len(t, records, 1)
 
 	assert.Zero(t, repo.calls["GroupIDsOfCustomers"],
-		"group_ids istenmediyse üyelik sorgusu hiç tetiklenmemeli")
-	assert.NotContains(t, kayitlar[0], fieldGroupIDs)
-	// Kimlik istenmese de EKLENİR: Query kayıtları "id" üzerinden birleştirir.
-	assert.Equal(t, musteri.ID, kayitlar[0][query.IDField])
+		"when group_ids is not asked for, the membership query must not run at all")
+	assert.NotContains(t, records[0], fieldGroupIDs)
+	// The id is ADDED even when it is not asked for: Query joins records on
+	// "id".
+	assert.Equal(t, customer.ID, records[0][query.IDField])
 }
 
-// TestSaglayiciBilinmeyenAlan desteklenmeyen alan için Invalid döndüğünü
-// kanıtlar (ADR 0004: alan doğrulaması sağlayıcıya aittir).
-func TestSaglayiciBilinmeyenAlan(t *testing.T) {
+// TestTheProviderRejectsAnUnknownField proves that an unsupported field
+// returns Invalid (ADR 0004: field validation belongs to the provider).
+func TestTheProviderRejectsAnUnknownField(t *testing.T) {
 	ctx := context.Background()
-	p, _, _ := yeniSaglayici(t)
+	p, _, _ := newTestProvider(t)
 
-	_, err := p.FetchByIDs(ctx, []string{"cust_x"}, []string{"gizli_alan"})
+	_, err := p.FetchByIDs(ctx, []string{"cust_x"}, []string{"hidden_field"})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	_, err = p.List(ctx, query.ListOptions{Fields: []string{"gizli_alan"}})
+	_, err = p.List(ctx, query.ListOptions{Fields: []string{"hidden_field"}})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestSaglayiciFiltreleri desteklenen ve desteklenmeyen filtreleri kanıtlar.
-func TestSaglayiciFiltreleri(t *testing.T) {
+// TestTheProviderFilters proves the supported and the unsupported filters.
+func TestTheProviderFilters(t *testing.T) {
 	ctx := context.Background()
-	p, svc, _ := yeniSaglayici(t)
+	p, svc, _ := newTestProvider(t)
 
-	hesap := yeniMusteri(ctx, t, svc, "filtre@example.com")
-	misafir, err := svc.RegisterGuest(ctx, CustomerInput{Email: "misafir@example.com"})
+	account := newTestCustomer(ctx, t, svc, "filter@example.com")
+	guest, err := svc.RegisterGuest(ctx, CustomerInput{Email: "guest@example.com"})
 	require.NoError(t, err)
 
-	t.Run("kimlik", func(t *testing.T) {
-		kayitlar, listErr := p.List(ctx, query.ListOptions{Filters: map[string]any{"id": hesap.ID}})
+	t.Run("id", func(t *testing.T) {
+		records, listErr := p.List(ctx, query.ListOptions{Filters: map[string]any{"id": account.ID}})
 		require.NoError(t, listErr)
-		require.Len(t, kayitlar, 1)
-		assert.Equal(t, hesap.ID, kayitlar[0][fieldID])
+		require.Len(t, records, 1)
+		assert.Equal(t, account.ID, records[0][fieldID])
 	})
 
 	t.Run("has_account", func(t *testing.T) {
-		kayitlar, listErr := p.List(ctx, query.ListOptions{Filters: map[string]any{"has_account": false}})
+		records, listErr := p.List(ctx, query.ListOptions{Filters: map[string]any{"has_account": false}})
 		require.NoError(t, listErr)
-		require.Len(t, kayitlar, 1)
-		assert.Equal(t, misafir.ID, kayitlar[0][fieldID])
+		require.Len(t, records, 1)
+		assert.Equal(t, guest.ID, records[0][fieldID])
 	})
 
-	t.Run("eposta normalize edilir", func(t *testing.T) {
-		kayitlar, listErr := p.List(ctx, query.ListOptions{
-			Filters: map[string]any{"email": "FILTRE@EXAMPLE.COM"},
+	t.Run("the e-mail is normalized", func(t *testing.T) {
+		records, listErr := p.List(ctx, query.ListOptions{
+			Filters: map[string]any{"email": "FILTER@EXAMPLE.COM"},
 		})
 		require.NoError(t, listErr)
-		require.Len(t, kayitlar, 1)
-		assert.Equal(t, hesap.ID, kayitlar[0][fieldID])
+		require.Len(t, records, 1)
+		assert.Equal(t, account.ID, records[0][fieldID])
 	})
 
-	t.Run("bilinmeyen filtre", func(t *testing.T) {
-		_, listErr := p.List(ctx, query.ListOptions{Filters: map[string]any{"soyad": "Veli"}})
+	t.Run("an unknown filter", func(t *testing.T) {
+		_, listErr := p.List(ctx, query.ListOptions{Filters: map[string]any{"surname": "Veli"}})
 		require.Error(t, listErr)
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(listErr))
 	})
 
-	t.Run("yanlis tip", func(t *testing.T) {
-		_, listErr := p.List(ctx, query.ListOptions{Filters: map[string]any{"has_account": "evet"}})
+	t.Run("a wrong type", func(t *testing.T) {
+		_, listErr := p.List(ctx, query.ListOptions{Filters: map[string]any{"has_account": "yes"}})
 		require.Error(t, listErr)
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(listErr))
 	})
 
-	t.Run("kimlik baska filtreyle birlesemez", func(t *testing.T) {
+	t.Run("the id does not combine with another filter", func(t *testing.T) {
 		_, listErr := p.List(ctx, query.ListOptions{
-			Filters: map[string]any{"id": hesap.ID, "has_account": true},
+			Filters: map[string]any{"id": account.ID, "has_account": true},
 		})
 		require.Error(t, listErr)
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(listErr),
-			"kesin kimlik kümesi ikinci bir süzgeçle sessizce daraltılamaz")
+			"an exact id set cannot be narrowed silently by a second filter")
 	})
 }
 
-// TestSaglayiciBulunamayanKimlik eksik kimlik için kayıt DÖNMEDİĞİNİ ve bunun
-// hata OLMADIĞINI kanıtlar (ADR 0004 sözleşmesi).
-func TestSaglayiciBulunamayanKimlik(t *testing.T) {
+// TestTheProviderSkipsAMissingID proves that NO record comes back for a
+// missing id and that this is NOT an error (the ADR 0004 contract).
+func TestTheProviderSkipsAMissingID(t *testing.T) {
 	ctx := context.Background()
-	p, svc, _ := yeniSaglayici(t)
+	p, svc, _ := newTestProvider(t)
 
-	musteri := yeniMusteri(ctx, t, svc, "var@example.com")
-	yok := models.NewCustomerID(sabitSaat)
+	customer := newTestCustomer(ctx, t, svc, "present@example.com")
+	missing := models.NewCustomerID(fixedClock)
 
-	kayitlar, err := p.FetchByIDs(ctx, []string{musteri.ID, yok}, nil)
-	require.NoError(t, err, "bulunamayan kimlik hata değildir")
-	require.Len(t, kayitlar, 1)
-	assert.Equal(t, musteri.ID, kayitlar[0][fieldID])
+	records, err := p.FetchByIDs(ctx, []string{customer.ID, missing}, nil)
+	require.NoError(t, err, "an id that is not found is not an error")
+	require.Len(t, records, 1)
+	assert.Equal(t, customer.ID, records[0][fieldID])
 }
 
-// TestSaglayiciSinirsizListeVarsayilanaDuser limit 0 verildiğinde modülün
-// varsayılan sayfa boyunun uygulandığını kanıtlar.
+// TestTheProviderUnboundedListFallsBackToTheDefault proves that, when limit 0
+// is given, the module's default page size is applied.
 //
-// Query sözleşmesinde 0 "sınırsız" demektir; sınırsız bir kök listesi tek
-// istekte tüm müşteri tablosunu belleğe alırdı.
-func TestSaglayiciSinirsizListeVarsayilanaDuser(t *testing.T) {
+// In the Query contract 0 means "unlimited"; an unlimited root list would load
+// the whole customer table into memory in a single request.
+func TestTheProviderUnboundedListFallsBackToTheDefault(t *testing.T) {
 	ctx := context.Background()
-	p, svc, repo := yeniSaglayici(t)
+	p, svc, repo := newTestProvider(t)
 
-	for _, eposta := range []string{"s1@example.com", "s2@example.com"} {
-		yeniMusteri(ctx, t, svc, eposta)
+	for _, email := range []string{"s1@example.com", "s2@example.com"} {
+		newTestCustomer(ctx, t, svc, email)
 	}
 
-	// Sahte depo uygulanan limiti geri bildirmediği için sınır, servisin
-	// doğrulamasıyla dolaylı kanıtlanır: aşırı büyük bir limit reddedilir.
+	// The fake repository does not report back the limit it was given, so the
+	// bound is proven indirectly through the service's validation: an
+	// oversized limit is rejected.
 	_, err := p.List(ctx, query.ListOptions{Limit: int(MaxLimit) + 1})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	kayitlar, err := p.List(ctx, query.ListOptions{})
+	records, err := p.List(ctx, query.ListOptions{})
 	require.NoError(t, err)
-	assert.Len(t, kayitlar, 2)
+	assert.Len(t, records, 2)
 	assert.Positive(t, repo.calls["ListCustomers"])
 }

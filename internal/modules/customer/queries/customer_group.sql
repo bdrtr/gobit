@@ -1,4 +1,4 @@
--- customer_group ve üyelik sorguları.
+-- customer_group and membership queries.
 
 -- name: InsertCustomerGroup :one
 INSERT INTO customer_group (id, name, rank, metadata, created_at, updated_at)
@@ -19,11 +19,10 @@ LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
 SELECT count(*) FROM customer_group
 WHERE deleted_at IS NULL;
 
--- UpdateCustomerGroup verilmeyen alanları OLDUĞU GİBİ bırakır.
+-- UpdateCustomerGroup leaves the fields that are not given AS THEY ARE.
 --
--- Adın düzeltilebilmesi şarttır: ad canlı gruplar arasında benzersizdir ve
--- yanlış girilmiş bir ad, düzeltme yolu olmadan o adı sonsuza dek işgal
--- ederdi.
+-- The name has to be correctable: a name is unique among live groups, and a
+-- mistyped name with no way to correct it would occupy that name forever.
 -- name: UpdateCustomerGroup :one
 UPDATE customer_group SET
     name       = COALESCE(sqlc.narg('name')::text, name),
@@ -36,42 +35,46 @@ UPDATE customer_group SET
 WHERE id = sqlc.arg('id') AND deleted_at IS NULL
 RETURNING *;
 
--- SoftDeleteCustomerGroup grubu yumuşak siler.
+-- SoftDeleteCustomerGroup soft-deletes the group.
 --
--- Üyelik satırları BIRAKILIR: silinmiş grup zaten hiçbir okumada görünmez
--- (grup okuyan her sorgu deleted_at IS NULL süzer) ve satırlar kayıt bir gün
--- gerçekten silindiğinde cascade ile gider. Ad, kısmi benzersiz indeksin
--- kapsamından çıktığı için yeniden kullanılabilir hâle gelir.
+-- The membership rows are LEFT in place: a deleted group shows up in no read
+-- anyway (every query that reads a group filters on deleted_at IS NULL), and
+-- the rows go by cascade the day the record is really deleted. The name becomes
+-- reusable because it leaves the partial unique index's scope.
 -- name: SoftDeleteCustomerGroup :one
 UPDATE customer_group
 SET deleted_at = $2, updated_at = $2
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id;
 
--- AddCustomerToGroup üyeliği yazar; zaten varsa hiçbir şey yapmaz.
+-- AddCustomerToGroup writes the membership; if it already exists it does
+-- nothing.
 --
--- Üyelik bir KÜMEDİR: aynı çağrının iki kez gelmesi (yeniden deneme, çift
--- tıklama) hata değil, aynı sonuçtur. ON CONFLICT DO NOTHING bu idempotansı
--- tek satırda ifade eder.
+-- A membership is a SET: the same call arriving twice (a retry, a double
+-- click) is not an error but the same outcome. ON CONFLICT DO NOTHING
+-- expresses this idempotency in one line.
 -- name: AddCustomerToGroup :exec
 INSERT INTO customer_group_customer (customer_id, customer_group_id, created_at)
 VALUES ($1, $2, $3)
 ON CONFLICT (customer_id, customer_group_id) DO NOTHING;
 
--- RemoveCustomerFromGroup üyeliği siler ve SİLİNEN SATIR SAYISINI döner.
+-- RemoveCustomerFromGroup deletes the membership and returns the NUMBER OF
+-- DELETED ROWS.
 --
--- Sayı, "üyelik yoktu" ile "üyelik kaldırıldı" ayrımını yapan tek bilgidir;
--- servis olmayan bir üyeliğin kaldırılması isteğine errors.NotFound döner.
+-- The number is the one piece of information that tells "there was no
+-- membership" from "the membership was removed"; for a request to remove a
+-- membership that does not exist, the service returns errors.NotFound.
 -- name: RemoveCustomerFromGroup :execrows
 DELETE FROM customer_group_customer
 WHERE customer_id = $1 AND customer_group_id = $2;
 
--- ListGroupsOfCustomer bir musterinin gruplarini SIRALI dondurur.
+-- ListGroupsOfCustomer returns a customer's groups IN ORDER.
 --
--- Siralama RANK, sonra id: bastaki grup, saticinin sectigi kazanandir. Bu
--- siralama ADR 0049 ile SOZLESME haline geldi — Service.CustomerGroupIDs'in
--- basi, sepetin kural baglamina yazdigi tek gruptur. Onceki siralama
--- (created_at DESC, id DESC) keyfi degildi ama bir SOZ de degildi; simdi soz.
+-- The order is RANK, then id: the first group is the winner the merchant
+-- chose. This order became a CONTRACT with ADR 0049 — the head of
+-- Service.CustomerGroupIDs is the one group the cart writes into its rule
+-- context. The previous order (created_at DESC, id DESC) was not arbitrary,
+-- but it was not a PROMISE either; now it is a promise.
 --
 -- name: ListGroupsOfCustomer :many
 SELECT g.* FROM customer_group g
@@ -79,11 +82,12 @@ JOIN customer_group_customer m ON m.customer_group_id = g.id
 WHERE m.customer_id = $1 AND g.deleted_at IS NULL
 ORDER BY g.rank, g.id;
 
--- ListGroupIDsOfCustomers birden çok müşterinin grup kimliklerini TEK sorguda
--- döner.
+-- ListGroupIDsOfCustomers returns the group ids of several customers in ONE
+-- query.
 --
--- Query sağlayıcısı müşterileri grup kimlikleriyle birlikte sunar; müşteri
--- başına ayrı sorgu, ADR 0004'ün yapısal olarak yasakladığı N+1 olurdu.
+-- The Query provider serves customers together with their group ids; a
+-- separate query per customer would be the N+1 that ADR 0004 structurally
+-- forbids.
 -- name: ListGroupIDsOfCustomers :many
 SELECT m.customer_id, m.customer_group_id
 FROM customer_group_customer m

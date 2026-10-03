@@ -23,11 +23,12 @@ type AddCustomerToGroupParams struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
-// AddCustomerToGroup üyeliği yazar; zaten varsa hiçbir şey yapmaz.
+// AddCustomerToGroup writes the membership; if it already exists it does
+// nothing.
 //
-// Üyelik bir KÜMEDİR: aynı çağrının iki kez gelmesi (yeniden deneme, çift
-// tıklama) hata değil, aynı sonuçtur. ON CONFLICT DO NOTHING bu idempotansı
-// tek satırda ifade eder.
+// A membership is a SET: the same call arriving twice (a retry, a double
+// click) is not an error but the same outcome. ON CONFLICT DO NOTHING
+// expresses this idempotency in one line.
 func (q *Queries) AddCustomerToGroup(ctx context.Context, arg AddCustomerToGroupParams) error {
 	_, err := q.db.Exec(ctx, addCustomerToGroup, arg.CustomerID, arg.CustomerGroupID, arg.CreatedAt)
 	return err
@@ -172,7 +173,7 @@ type InsertCustomerGroupParams struct {
 	CreatedAt pgtype.Timestamptz
 }
 
-// customer_group ve üyelik sorguları.
+// customer_group and membership queries.
 func (q *Queries) InsertCustomerGroup(ctx context.Context, arg InsertCustomerGroupParams) (CustomerGroup, error) {
 	row := q.db.QueryRow(ctx, insertCustomerGroup,
 		arg.ID,
@@ -253,11 +254,12 @@ type ListGroupIDsOfCustomersRow struct {
 	CustomerGroupID string
 }
 
-// ListGroupIDsOfCustomers birden çok müşterinin grup kimliklerini TEK sorguda
-// döner.
+// ListGroupIDsOfCustomers returns the group ids of several customers in ONE
+// query.
 //
-// Query sağlayıcısı müşterileri grup kimlikleriyle birlikte sunar; müşteri
-// başına ayrı sorgu, ADR 0004'ün yapısal olarak yasakladığı N+1 olurdu.
+// The Query provider serves customers together with their group ids; a
+// separate query per customer would be the N+1 that ADR 0004 structurally
+// forbids.
 func (q *Queries) ListGroupIDsOfCustomers(ctx context.Context, customerIds []string) ([]ListGroupIDsOfCustomersRow, error) {
 	rows, err := q.db.Query(ctx, listGroupIDsOfCustomers, customerIds)
 	if err != nil {
@@ -285,12 +287,13 @@ WHERE m.customer_id = $1 AND g.deleted_at IS NULL
 ORDER BY g.rank, g.id
 `
 
-// ListGroupsOfCustomer bir musterinin gruplarini SIRALI dondurur.
+// ListGroupsOfCustomer returns a customer's groups IN ORDER.
 //
-// Siralama RANK, sonra id: bastaki grup, saticinin sectigi kazanandir. Bu
-// siralama ADR 0049 ile SOZLESME haline geldi — Service.CustomerGroupIDs'in
-// basi, sepetin kural baglamina yazdigi tek gruptur. Onceki siralama
-// (created_at DESC, id DESC) keyfi degildi ama bir SOZ de degildi; simdi soz.
+// The order is RANK, then id: the first group is the winner the merchant
+// chose. This order became a CONTRACT with ADR 0049 — the head of
+// Service.CustomerGroupIDs is the one group the cart writes into its rule
+// context. The previous order (created_at DESC, id DESC) was not arbitrary,
+// but it was not a PROMISE either; now it is a promise.
 func (q *Queries) ListGroupsOfCustomer(ctx context.Context, customerID string) ([]CustomerGroup, error) {
 	rows, err := q.db.Query(ctx, listGroupsOfCustomer, customerID)
 	if err != nil {
@@ -398,10 +401,12 @@ type RemoveCustomerFromGroupParams struct {
 	CustomerGroupID string
 }
 
-// RemoveCustomerFromGroup üyeliği siler ve SİLİNEN SATIR SAYISINI döner.
+// RemoveCustomerFromGroup deletes the membership and returns the NUMBER OF
+// DELETED ROWS.
 //
-// Sayı, "üyelik yoktu" ile "üyelik kaldırıldı" ayrımını yapan tek bilgidir;
-// servis olmayan bir üyeliğin kaldırılması isteğine errors.NotFound döner.
+// The number is the one piece of information that tells "there was no
+// membership" from "the membership was removed"; for a request to remove a
+// membership that does not exist, the service returns errors.NotFound.
 func (q *Queries) RemoveCustomerFromGroup(ctx context.Context, arg RemoveCustomerFromGroupParams) (int64, error) {
 	result, err := q.db.Exec(ctx, removeCustomerFromGroup, arg.CustomerID, arg.CustomerGroupID)
 	if err != nil {
@@ -488,12 +493,12 @@ type SoftDeleteCustomerGroupParams struct {
 	DeletedAt pgtype.Timestamptz
 }
 
-// SoftDeleteCustomerGroup grubu yumuşak siler.
+// SoftDeleteCustomerGroup soft-deletes the group.
 //
-// Üyelik satırları BIRAKILIR: silinmiş grup zaten hiçbir okumada görünmez
-// (grup okuyan her sorgu deleted_at IS NULL süzer) ve satırlar kayıt bir gün
-// gerçekten silindiğinde cascade ile gider. Ad, kısmi benzersiz indeksin
-// kapsamından çıktığı için yeniden kullanılabilir hâle gelir.
+// The membership rows are LEFT in place: a deleted group shows up in no read
+// anyway (every query that reads a group filters on deleted_at IS NULL), and
+// the rows go by cascade the day the record is really deleted. The name becomes
+// reusable because it leaves the partial unique index's scope.
 func (q *Queries) SoftDeleteCustomerGroup(ctx context.Context, arg SoftDeleteCustomerGroupParams) (string, error) {
 	row := q.db.QueryRow(ctx, softDeleteCustomerGroup, arg.ID, arg.DeletedAt)
 	var id string
@@ -522,11 +527,10 @@ type UpdateCustomerGroupParams struct {
 	ID        string
 }
 
-// UpdateCustomerGroup verilmeyen alanları OLDUĞU GİBİ bırakır.
+// UpdateCustomerGroup leaves the fields that are not given AS THEY ARE.
 //
-// Adın düzeltilebilmesi şarttır: ad canlı gruplar arasında benzersizdir ve
-// yanlış girilmiş bir ad, düzeltme yolu olmadan o adı sonsuza dek işgal
-// ederdi.
+// The name has to be correctable: a name is unique among live groups, and a
+// mistyped name with no way to correct it would occupy that name forever.
 func (q *Queries) UpdateCustomerGroup(ctx context.Context, arg UpdateCustomerGroupParams) (CustomerGroup, error) {
 	row := q.db.QueryRow(ctx, updateCustomerGroup,
 		arg.Name,

@@ -64,9 +64,8 @@ const (
 	// It deliberately does NOT scan identifiers. The reason is a real Go
 	// idiom: `x, ok := ...` shortened to `xok`, and `y, ok := ...` to `yok`,
 	// produces the Turkish word "yok" as a variable name. It occurs twice in
-	// the Go standard library and once in this repository
-	// (customer/service/provider_test.go). Scanning identifiers with this word
-	// list would flag correct English code.
+	// the Go standard library. Scanning identifiers with this word list would
+	// flag correct English code.
 	laneWord = "word"
 
 	// laneIdentifier scans identifiers for Turkish stems, matching WHOLE

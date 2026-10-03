@@ -1,5 +1,5 @@
--- customer şemasının geri alınması. Sıra, foreign key bağımlılıklarının
--- tersidir: önce bağımlı tablolar düşer.
+-- Rolling back the customer schema. The order is the reverse of the foreign
+-- key dependencies: the dependent tables are dropped first.
 DROP INDEX IF EXISTS customer_address_default_billing_uniq;
 DROP INDEX IF EXISTS customer_address_default_shipping_uniq;
 DROP INDEX IF EXISTS customer_address_customer_idx;

@@ -7,14 +7,15 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/customer/service"
 )
 
-// --- müşteriler ---------------------------------------------------------------
+// --- customers ----------------------------------------------------------------
 
-// adminCreateCustomer KAYITLI bir müşteri hesabı oluşturur
+// adminCreateCustomer creates a REGISTERED customer account
 // (POST /admin/v1/customers).
 //
-// Yönetim ucu daima HESAP açar; misafir kaydı vitrin akışının parçasıdır ve
-// POST /store/v1/customers ile yapılır. Ayrım gövdedeki bir bayrağa
-// bırakılsaydı, yönetim isteği sessizce benzersizlik kuralının dışına düşerdi.
+// The admin endpoint always opens an ACCOUNT; guest registration is part of the
+// storefront flow and is done with POST /store/v1/customers. Had the
+// distinction been left to a flag in the body, an admin request would silently
+// have fallen outside the uniqueness rule.
 func (h *Handler) adminCreateCustomer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -32,12 +33,12 @@ func (h *Handler) adminCreateCustomer(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toCustomerDTO(created))
 }
 
-// adminListCustomers müşterileri süzerek ve sayfalayarak listeler
+// adminListCustomers lists customers, filtered and paged
 // (GET /admin/v1/customers).
 //
-// Süzgeçler: email, has_account, group_id. "email" süzgeci MİSAFİRLERİ DE
-// getirir; aynı e-postayla birden çok misafir kaydı olabildiği için sonuç
-// birden fazla satır içerebilir (bkz. models.Customer).
+// Filters: email, has_account, group_id. The "email" filter returns GUESTS
+// TOO; since several guest records can share one e-mail address, the result
+// can contain more than one row (see models.Customer).
 func (h *Handler) adminListCustomers(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -73,7 +74,7 @@ func (h *Handler) adminListCustomers(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toCustomerDTO)
 }
 
-// adminGetCustomer tek bir müşteriyi döner (GET /admin/v1/customers/{id}).
+// adminGetCustomer returns a single customer (GET /admin/v1/customers/{id}).
 func (h *Handler) adminGetCustomer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -85,7 +86,7 @@ func (h *Handler) adminGetCustomer(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCustomerDTO(customer))
 }
 
-// adminUpdateCustomer müşterinin verilen alanlarını günceller
+// adminUpdateCustomer updates the given fields of the customer
 // (PUT /admin/v1/customers/{id}).
 func (h *Handler) adminUpdateCustomer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -104,7 +105,7 @@ func (h *Handler) adminUpdateCustomer(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCustomerDTO(updated))
 }
 
-// adminDeleteCustomer müşteriyi ve adreslerini yumuşak siler
+// adminDeleteCustomer soft-deletes the customer and its addresses
 // (DELETE /admin/v1/customers/{id}).
 func (h *Handler) adminDeleteCustomer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -116,11 +117,12 @@ func (h *Handler) adminDeleteCustomer(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// adminConvertGuest misafir kaydını kayıtlı hesaba çevirir
+// adminConvertGuest turns a guest record into a registered account
 // (POST /admin/v1/customers/{id}/convert-to-account).
 //
-// E-posta zaten kayıtlı bir hesaba aitse ya da kayıt zaten hesapsa 409 döner;
-// sınıflandırma servisten gelir, handler status seçmez.
+// It returns 409 if the e-mail address already belongs to a registered account
+// or the record already is an account; the classification comes from the
+// service, the handler does not choose a status.
 func (h *Handler) adminConvertGuest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := pathParam(r, paramID)
@@ -130,8 +132,8 @@ func (h *Handler) adminConvertGuest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dönüşüm sonrası kaydın GÜNCEL hâli döner: istemcinin has_account alanını
-	// görmek için ikinci bir istek yapması gerekmez.
+	// The record's CURRENT state after the conversion is returned: the client
+	// does not need a second request to see the has_account field.
 	customer, err := h.svc.GetCustomer(ctx, id)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
@@ -140,9 +142,9 @@ func (h *Handler) adminConvertGuest(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCustomerDTO(customer))
 }
 
-// --- gruplar ------------------------------------------------------------------
+// --- groups -------------------------------------------------------------------
 
-// adminCreateGroup yeni bir müşteri grubu oluşturur
+// adminCreateGroup creates a new customer group
 // (POST /admin/v1/customer-groups).
 func (h *Handler) adminCreateGroup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -161,7 +163,7 @@ func (h *Handler) adminCreateGroup(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toGroupDTO(group))
 }
 
-// adminListGroups grupları sayfalayarak listeler
+// adminListGroups lists the groups, paged
 // (GET /admin/v1/customer-groups).
 func (h *Handler) adminListGroups(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -180,7 +182,7 @@ func (h *Handler) adminListGroups(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toGroupDTO)
 }
 
-// adminGetGroup tek bir grubu döner (GET /admin/v1/customer-groups/{id}).
+// adminGetGroup returns a single group (GET /admin/v1/customer-groups/{id}).
 func (h *Handler) adminGetGroup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -192,11 +194,11 @@ func (h *Handler) adminGetGroup(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toGroupDTO(group))
 }
 
-// adminUpdateGroup grubun verilen alanlarını günceller
+// adminUpdateGroup updates the given fields of the group
 // (PUT /admin/v1/customer-groups/{id}).
 //
-// Aynı adda başka bir canlı grup varsa 409 döner; sınıflandırma servisten
-// gelir, handler status seçmez.
+// It returns 409 if another live group has the same name; the classification
+// comes from the service, the handler does not choose a status.
 func (h *Handler) adminUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -215,11 +217,11 @@ func (h *Handler) adminUpdateGroup(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toGroupDTO(group))
 }
 
-// adminDeleteGroup grubu yumuşak siler
+// adminDeleteGroup soft-deletes the group
 // (DELETE /admin/v1/customer-groups/{id}).
 //
-// Üyelikler kaldırılmaz ama silinen grup hiçbir okumada görünmez; adı da
-// yeniden kullanılabilir hâle gelir (bkz. service.Service.DeleteGroup).
+// The memberships are not removed, but the deleted group shows up in no read;
+// its name also becomes free to use again (see service.Service.DeleteGroup).
 func (h *Handler) adminDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -230,10 +232,11 @@ func (h *Handler) adminDeleteGroup(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// adminAddToGroup müşteriyi gruba ekler
+// adminAddToGroup adds the customer to the group
 // (POST /admin/v1/customer-groups/{id}/customers).
 //
-// İşlem idempotenttir; zaten üye olan müşteri için de 204 döner.
+// The operation is idempotent; it returns 204 for a customer who already is a
+// member too.
 func (h *Handler) adminAddToGroup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -250,7 +253,7 @@ func (h *Handler) adminAddToGroup(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// adminRemoveFromGroup müşteriyi gruptan çıkarır
+// adminRemoveFromGroup removes the customer from the group
 // (DELETE /admin/v1/customer-groups/{id}/customers/{customer_id}).
 func (h *Handler) adminRemoveFromGroup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -263,7 +266,7 @@ func (h *Handler) adminRemoveFromGroup(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// adminListGroupsOfCustomer müşterinin gruplarını döner
+// adminListGroupsOfCustomer returns the customer's groups
 // (GET /admin/v1/customers/{id}/groups).
 func (h *Handler) adminListGroupsOfCustomer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -276,50 +279,50 @@ func (h *Handler) adminListGroupsOfCustomer(w http.ResponseWriter, r *http.Reque
 	writeItems(w, r, convertAll(groups, toGroupDTO))
 }
 
-// --- adresler -----------------------------------------------------------------
+// --- addresses ----------------------------------------------------------------
 
-// adminListAddresses müşterinin adreslerini döner
+// adminListAddresses returns the customer's addresses
 // (GET /admin/v1/customers/{id}/addresses).
 func (h *Handler) adminListAddresses(w http.ResponseWriter, r *http.Request) {
 	h.listAddresses(w, r, pathParam(r, paramID))
 }
 
-// adminCreateAddress müşterinin yeni adresini ekler
+// adminCreateAddress adds a new address for the customer
 // (POST /admin/v1/customers/{id}/addresses).
 func (h *Handler) adminCreateAddress(w http.ResponseWriter, r *http.Request) {
 	h.createAddress(w, r, pathParam(r, paramID))
 }
 
-// adminUpdateAddress adresi günceller
+// adminUpdateAddress updates the address
 // (PUT /admin/v1/customers/{id}/addresses/{address_id}).
 func (h *Handler) adminUpdateAddress(w http.ResponseWriter, r *http.Request) {
 	h.updateAddress(w, r, pathParam(r, paramID))
 }
 
-// adminDeleteAddress adresi yumuşak siler
+// adminDeleteAddress soft-deletes the address
 // (DELETE /admin/v1/customers/{id}/addresses/{address_id}).
 func (h *Handler) adminDeleteAddress(w http.ResponseWriter, r *http.Request) {
 	h.deleteAddress(w, r, pathParam(r, paramID))
 }
 
-// adminSetDefaultShipping adresi varsayılan kargo adresi yapar
+// adminSetDefaultShipping makes the address the default shipping address
 // (POST /admin/v1/customers/{id}/addresses/{address_id}/default-shipping).
 //
-// Uç, vitrindekinin yönetim tarafındaki EŞİDİR. Olmasaydı yönetici mevcut bir
-// adresi varsayılan yapmak için onu yeniden oluşturmak zorunda kalırdı —
-// güncelleme gövdesinde işaret yoktur ve yeniden oluşturma adresin kimliğini
-// değiştirirdi.
+// The endpoint is the admin-side COUNTERPART of the storefront's. Without it an
+// operator would have to re-create an existing address to make it the default
+// — the update body carries no flag, and re-creating the address would change
+// its identifier.
 func (h *Handler) adminSetDefaultShipping(w http.ResponseWriter, r *http.Request) {
 	h.setDefaultShipping(w, r, pathParam(r, paramID))
 }
 
-// adminSetDefaultBilling adresi varsayılan fatura adresi yapar
+// adminSetDefaultBilling makes the address the default billing address
 // (POST /admin/v1/customers/{id}/addresses/{address_id}/default-billing).
 func (h *Handler) adminSetDefaultBilling(w http.ResponseWriter, r *http.Request) {
 	h.setDefaultBilling(w, r, pathParam(r, paramID))
 }
 
-// toCustomerInput istek gövdesini servis girdisine çevirir.
+// toCustomerInput turns the request body into the service input.
 func toCustomerInput(req customerRequest) service.CustomerInput {
 	return service.CustomerInput{
 		Email:     req.Email,
@@ -330,7 +333,7 @@ func toCustomerInput(req customerRequest) service.CustomerInput {
 	}
 }
 
-// toUpdateCustomerInput güncelleme gövdesini servis girdisine çevirir.
+// toUpdateCustomerInput turns the update body into the service input.
 func toUpdateCustomerInput(req updateCustomerRequest) service.UpdateCustomerInput {
 	return service.UpdateCustomerInput{
 		Email:     req.Email,
