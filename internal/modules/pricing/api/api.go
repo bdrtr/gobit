@@ -1,29 +1,33 @@
-// Package api pricing modülünün HTTP yüzeyidir.
+// Package api is the pricing module's HTTP surface.
 //
-// İki ad alanı vardır (plan Bölüm 8): /admin/v1 yönetim, /store/v1 müşteri.
-// Fiyat yazma yüzeyi YALNIZCA admin tarafındadır; store tarafında tek bir
-// okuma uç noktası bulunur, çünkü müşteriye giden fiyat normalde product'ın
-// store listelemesinden, Query katmanı üzerinden gelir (ADR 0004).
+// There are two namespaces (plan Section 8): /admin/v1 for administration,
+// /store/v1 for the customer. The price write surface is ONLY on the admin
+// side; the store side has a single read endpoint, because the price that
+// reaches the customer normally comes from product's store listing, through
+// the Query layer (ADR 0004).
 //
-// Handler'lar status kodu SEÇMEZ: servis tipli hata döner, corehttp.WriteError
-// onu status koduna çevirir (plan Bölüm 2.7). Bu, hata sınıflandırmasının tek
-// bir yerde kalmasını sağlar.
+// Handlers do NOT CHOOSE the status code: the service returns a typed error and
+// corehttp.WriteError turns it into a status code (plan Section 2.7). This
+// keeps error classification in a single place.
 //
-// # Yetki
+// # Scopes
 //
-// /admin/v1 uçları yetki ister ve sözlük ikiye ayrılır: GET uçları [ScopeRead],
-// POST/PUT/PATCH/DELETE uçları [ScopeWrite] (bkz. [API.Routes]).
-// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de tek başına karşılar.
+// The /admin/v1 endpoints ask for a scope, and the vocabulary splits in two:
+// GET endpoints ask for [ScopeRead], POST/PUT/PATCH/DELETE endpoints for
+// [ScopeWrite] (see [API.Routes]). corehttp.ScopeAdmin is a SUPERSCOPE and
+// satisfies both on its own.
 //
-// Sözlükte İSTİSNA YOKTUR ve bu bilinçlidir: yetkinin metottan okunabilmesi,
-// bir ucun neyi açtığını handler'a bakmadan söyleyebilmek demektir. Yan
-// etkisiz bir hesabı yazma yetkisine bağlamamanın doğru yolu sözlüğe istisna
-// açmak değil, ucu okuma metoduna TAŞIMAKTIR; fiyat hesaplama ucu bunun
-// örneğidir (GET /admin/v1/price-sets/{id}/calculate, bkz.
+// The vocabulary has NO EXCEPTIONS, and that is deliberate: a scope that can be
+// read off the method means being able to say what an endpoint opens without
+// looking at its handler. The right way not to tie a side-effect-free
+// computation to the write scope is not to open an exception in the
+// vocabulary but to MOVE the endpoint to a read method; the price calculation
+// endpoint is the example (GET /admin/v1/price-sets/{id}/calculate, see
 // [API.calculatePrice]).
 //
-// /store/v1 ucuna yetki EKLENMEZ: mağaza yüzeyinin kimliği publishable
-// anahtardır ve o anahtar tanımı gereği yetki TAŞIMAZ.
+// NO scope is ADDED to the /store/v1 endpoint: the storefront surface's
+// identity is the publishable key, and that key by definition CARRIES no
+// scope.
 package api
 
 import (
@@ -44,146 +48,153 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/service"
 )
 
-// maxBodyBytes tek bir istek gövdesinin azami boyutudur.
+// maxBodyBytes is the maximum size of a single request body.
 //
-// Toplu fiyat yazma (SetPrices) tek istekte binlerce satır taşıyabildiği için
-// sınır cömerttir; ama sınırsız değildir — sınırsız bir gövde, tek istekle
-// belleği tüketmenin en ucuz yoludur.
+// A bulk price write (SetPrices) can carry thousands of rows in one request, so
+// the bound is generous; but it is not unbounded — an unbounded body is the
+// cheapest way to exhaust memory with a single request.
 const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
-// codeInvalidBody istek gövdesi çözümlenemediğinde dönen hata kodudur.
+// codeInvalidBody is the error code returned when a request body cannot be
+// parsed.
 const codeInvalidBody = "pricing_invalid_body"
 
-// Yetki sözlüğü: pricing'in yönetim uçlarının istediği yetkiler.
+// Scope vocabulary: the scopes pricing's admin endpoints ask for.
 //
-// Sözlük tüm modüllerde AYNI biçimdedir ve BİLİNÇLİ olarak iki girdiden
-// ibarettir: okuma ve yazma. Kaynak başına ayrı yetki ("price-lists:write",
-// "price-rules:read" …) tanımlamak listeyi büyütür ama bugün verilebilecek
-// hiçbir yeni kararı mümkün kılmaz; ayrım gerçekten gerektiğinde eklenir.
+// The vocabulary has the SAME shape in every module and DELIBERATELY consists
+// of two entries: read and write. Defining a separate scope per resource
+// ("price-lists:write", "price-rules:read" …) would grow the list but would
+// not make possible any new decision that can be made today; the split is
+// added when it is genuinely needed.
 const (
-	// ScopeRead pricing yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	// ScopeRead is the scope the READ endpoints of pricing's admin surface ask
+	// for.
 	//
-	// Fiyat setlerini, fiyat listelerini ve fiyat kurallarını okumaya yeter;
-	// hiçbir yazma ucunu açmaz. Tam yetkili kimliklere ayrıca verilmesi
-	// gerekmez: corehttp.ScopeAdmin taşıyan bir çağıran bunu da karşılar
-	// (bkz. corehttp.Principal.HasScope).
+	// It is enough to read price sets, price lists and price rules; it opens no
+	// write endpoint. Fully privileged identities do not need it granted
+	// separately: a caller carrying corehttp.ScopeAdmin satisfies this one too
+	// (see corehttp.Principal.HasScope).
 	ScopeRead = "pricing:read"
 
-	// ScopeWrite pricing yönetim yüzeyindeki YAZMA uçlarının istediği
-	// yetkidir.
+	// ScopeWrite is the scope the WRITE endpoints of pricing's admin surface
+	// ask for.
 	//
-	// Fiyat yazabilen bir kimlik, tek istekle bütün kataloğu bir kuruşa
-	// indirebilir; bu yüzden fiyatı yalnızca RAPORLAYAN entegrasyonların
-	// [ScopeRead] ile yetinebilmesi önemlidir.
+	// An identity that can write prices can drop the whole catalog to a single
+	// minor unit in one request; that is why it matters that integrations which
+	// only REPORT prices can make do with [ScopeRead].
 	ScopeWrite = "pricing:write"
 )
 
-// API pricing'in HTTP handler'larını barındırır.
+// API holds pricing's HTTP handlers.
 type API struct {
 	svc *service.Service
 	// trial is the flow the price list trial runs on; see [API.WithTrial].
 	trial PriceListTrial
 }
 
-// New verilen servis üzerinde çalışan bir API üretir.
+// New builds an API that runs on the given service.
 func New(svc *service.Service) *API {
 	return &API{svc: svc}
 }
 
-// Routes pricing'in admin ve store route'larını router'a bağlar.
+// Routes binds pricing's admin and store routes to the router.
 //
-// Route'lar chi'nin Route/Mount yardımcılarıyla DEĞİL, tam yollarla kaydedilir:
-// /admin/v1 önekini birden çok modül paylaşır ve aynı öneki iki kez Mount etmek
-// chi'de panik üretirdi. Tam yol kaydı aynı ağaca yan yana yazar.
+// Routes are registered with full paths, NOT with chi's Route/Mount helpers:
+// several modules share the /admin/v1 prefix, and mounting the same prefix
+// twice would panic in chi. Registering full paths writes them side by side
+// into the same tree.
 //
-// # KORUMA
+// # PROTECTION
 //
-// İki katman vardır ve ikisi de gereklidir:
+// There are two layers, and both are needed:
 //
-//  1. KİMLİK — /admin/v1 uçları corehttp.RequireAdmin ile korunur. O
-//     middleware bu modülde değil, router'ı kuran tarafta takılır (bkz.
-//     corehttp.APIGuards).
-//  2. YETKİ — uçlar BURADA, uç uç corehttp.RequireScope ile işaretlenir:
-//     GET uçları [ScopeRead], POST/PUT/DELETE uçları [ScopeWrite] ister.
+//  1. IDENTITY — the /admin/v1 endpoints are guarded by corehttp.RequireAdmin.
+//     That middleware is mounted not in this module but on the side that
+//     builds the router (see corehttp.APIGuards).
+//  2. SCOPE — the endpoints are marked HERE, endpoint by endpoint, with
+//     corehttp.RequireScope: GET endpoints ask for [ScopeRead], POST/PUT/DELETE
+//     endpoints for [ScopeWrite].
 //
-// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi:
-// yetkileri boşaltılmış bir yönetim kullanıcısı giriş yapıp
-// POST /admin/v1/price-sets/{id}/prices ile bütün fiyatları değiştirebilirdi.
+// Without the second layer authentication would stand in for authorization: an
+// admin user whose scopes were emptied could sign in and change every price
+// with POST /admin/v1/price-sets/{id}/prices.
 //
-// Mağaza ucuna yetki EKLENMEZ: /store/v1'in kimliği publishable anahtardır ve
-// o anahtar tanımı gereği yetki TAŞIMAZ.
+// NO scope is ADDED to the store endpoint: /store/v1's identity is the
+// publishable key, and that key by definition CARRIES no scope.
 func (a *API) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
-	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+	read := r.With(corehttp.RequireScope(ScopeRead))
+	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	yazma.Post("/admin/v1/price-sets", a.createPriceSet)
-	okuma.Get("/admin/v1/price-sets", a.listPriceSets)
-	okuma.Get("/admin/v1/price-sets/{id}", a.getPriceSet)
-	yazma.Delete("/admin/v1/price-sets/{id}", a.deletePriceSet)
-	okuma.Get("/admin/v1/price-sets/{id}/prices", a.listPrices)
-	yazma.Post("/admin/v1/price-sets/{id}/prices", a.setPrices)
+	write.Post("/admin/v1/price-sets", a.createPriceSet)
+	read.Get("/admin/v1/price-sets", a.listPriceSets)
+	read.Get("/admin/v1/price-sets/{id}", a.getPriceSet)
+	write.Delete("/admin/v1/price-sets/{id}", a.deletePriceSet)
+	read.Get("/admin/v1/price-sets/{id}/prices", a.listPrices)
+	write.Post("/admin/v1/price-sets/{id}/prices", a.setPrices)
 
-	// Hesaplama ucu hiçbir şey YAZMAZ ve bu yüzden bir GET'tir; bağlamını
-	// sorgu dizesinden alır (bkz. [API.calculatePrice]). Eskiden POST'tu ve
-	// sözlük metoda baktığı için [ScopeWrite] istiyordu: fiyatı yalnızca
-	// RAPORLAYAN bir entegrasyon, hesap yaptırabilmek için bütün kataloğu tek
-	// istekte değiştirebilen bir kimlikle çalışmak zorundaydı. Çözüm sözlüğe
-	// "bu POST aslında okuma" istisnası açmak DEĞİLDİ: istisna bir kez
-	// açıldığında bir ucun neyi açtığını anlamak için handler'ı okumak
-	// gerekirdi. Uç metoduyla niyetini söyleyecek biçimde taşındı.
-	okuma.Get("/admin/v1/price-sets/{id}/calculate", a.calculatePrice)
+	// The calculation endpoint WRITES nothing and is therefore a GET; it takes
+	// its context from the query string (see [API.calculatePrice]). It used to
+	// be a POST, and because the vocabulary looks at the method it asked for
+	// [ScopeWrite]: an integration that only REPORTS prices had to run, just to
+	// get a calculation done, with an identity that could change the whole
+	// catalog in a single request. The fix was NOT to open a "this POST is
+	// really a read" exception in the vocabulary: once an exception is opened,
+	// understanding what an endpoint opens would take reading its handler. The
+	// endpoint was moved so that its method states its intent.
+	read.Get("/admin/v1/price-sets/{id}/calculate", a.calculatePrice)
 	// What the set charged over a window, from the price history (ADR 0167).
-	okuma.Get(pathAdminPriceHistory, a.priceHistory)
+	read.Get(pathAdminPriceHistory, a.priceHistory)
 
-	yazma.Post("/admin/v1/price-lists", a.createPriceList)
-	okuma.Get("/admin/v1/price-lists", a.listPriceLists)
-	okuma.Get("/admin/v1/price-lists/{id}", a.getPriceList)
-	yazma.Put("/admin/v1/price-lists/{id}", a.updatePriceList)
-	yazma.Delete("/admin/v1/price-lists/{id}", a.deletePriceList)
+	write.Post("/admin/v1/price-lists", a.createPriceList)
+	read.Get("/admin/v1/price-lists", a.listPriceLists)
+	read.Get("/admin/v1/price-lists/{id}", a.getPriceList)
+	write.Put("/admin/v1/price-lists/{id}", a.updatePriceList)
+	write.Delete("/admin/v1/price-lists/{id}", a.deletePriceList)
 	// What a list would do to the orders of a period (ADR 0220); its answer is
 	// orders, so it asks for the order module's read privilege too.
-	okuma.With(corehttp.RequireScope(orderReadScope)).Get(pathListTrial, a.trialPriceList)
+	read.With(corehttp.RequireScope(orderReadScope)).Get(pathListTrial, a.trialPriceList)
 
-	okuma.Get("/admin/v1/prices/{price_id}/rules", a.listPriceRules)
-	yazma.Post("/admin/v1/prices/{price_id}/rules", a.createPriceRule)
-	yazma.Delete("/admin/v1/price-rules/{id}", a.deletePriceRule)
+	read.Get("/admin/v1/prices/{price_id}/rules", a.listPriceRules)
+	write.Post("/admin/v1/prices/{price_id}/rules", a.createPriceRule)
+	write.Delete("/admin/v1/price-rules/{id}", a.deletePriceRule)
 
 	r.Get("/store/v1/price-sets/{id}", a.storeGetPriceSet)
 }
 
-// itemEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).
+// itemEnvelope is the envelope of single-record responses (plan Section 8).
 type itemEnvelope struct {
-	// Data tek kaydın gövdesidir.
+	// Data is the body of the single record.
 	Data any `json:"data"`
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data geçerli sayfadaki kayıtlardır.
+	// Data holds the records on the current page.
 	Data any `json:"data"`
-	// Count filtreye uyan TOPLAM kayıt sayısıdır.
+	// Count is the TOTAL number of records matching the filter.
 	Count int64 `json:"count"`
-	// Offset uygulanan atlama sayısıdır.
+	// Offset is the number of records skipped.
 	Offset int32 `json:"offset"`
-	// Limit uygulanan sayfa boyudur.
+	// Limit is the page size applied.
 	Limit int32 `json:"limit"`
 }
 
-// writeItem tekil yanıtı zarfıyla yazar.
+// writeItem writes a single-record response in its envelope.
 func writeItem(w http.ResponseWriter, r *http.Request, status int, data any) {
 	corehttp.WriteJSON(r.Context(), w, status, itemEnvelope{Data: data})
 }
 
-// writeItems sayfalanmamış bir listeyi zarfıyla yazar.
+// writeItems writes an unpaged list in its envelope.
 //
-// Sayfalanmayan uç noktalarda (bir kabın fiyatları, bir fiyatın kuralları)
-// zarfın sayısal alanları kayıt sayısıyla doldurulur: istemcinin zarf şekli
-// uç noktaya göre değişmez.
+// On unpaged endpoints (a container's prices, a price's rules) the envelope's
+// numeric fields are filled with the record count: the client's envelope shape
+// does not change from endpoint to endpoint.
 //
-// Limit, dönen kayıt sayısına EŞİTTİR ve [service.MaxLimit] ile KIRPILMAZ.
-// Kırpılsaydı 250 fiyatlı bir kap için yanıt "count=250, limit=100" derdi;
-// istemci sayfa boyunu 100 sanıp sayfalama döngüsüne girer ve aynı kayıtları
-// tekrar okurdu. Burada sayfa yoktur — tek sayfa tüm kayıtlardır.
+// Limit EQUALS the number of records returned and is NOT CLIPPED to
+// [service.MaxLimit]. Were it clipped, the response for a container with 250
+// prices would say "count=250, limit=100"; the client would take the page size
+// to be 100, enter a paging loop and read the same records again. There are no
+// pages here — the single page is all the records.
 func writeItems[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	if items == nil {
 		items = []T{}
@@ -197,13 +208,13 @@ func writeItems[T any](w http.ResponseWriter, r *http.Request, items []T) {
 	})
 }
 
-// clampCount kayıt sayısını zarfın int32 limit alanına sığdırır.
+// clampCount fits the record count into the envelope's int32 limit field.
 //
-// Yalnızca int32 ARALIĞINA sığdırır; sayfa boyu sınırı uygulamaz (bkz.
-// writeItems). Alt sınır da denetlenir: count bir len() sonucudur ve negatif
-// olamaz, ama denetimin varlığı int32'ye dönüşün her girdide güvenli olduğunu
-// YEREL olarak kanıtlar; çağıranın uzağındaki bir değişiklik sessizce sarma
-// üretemez.
+// It fits it into the int32 RANGE only; it applies no page size bound (see
+// writeItems). The lower bound is checked too: count is the result of a len()
+// and cannot be negative, but the presence of the check proves LOCALLY that the
+// conversion to int32 is safe for every input; a change far from the caller
+// cannot silently produce a wraparound.
 func clampCount(count int64) int32 {
 	if count < 0 {
 		return 0
@@ -214,7 +225,7 @@ func clampCount(count int64) int32 {
 	return int32(count)
 }
 
-// writePage servis sayfasını liste zarfıyla yazar.
+// writePage writes a service page in the list envelope.
 func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page service.Page[S], convert func(S) T) {
 	items := make([]T, 0, len(page.Items))
 	for _, item := range page.Items {
@@ -228,11 +239,11 @@ func writePage[S any, T any](w http.ResponseWriter, r *http.Request, page servic
 	})
 }
 
-// decodeBody istek gövdesini hedefe çözer.
+// decodeBody decodes the request body into the destination.
 //
-// Bilinmeyen alanlar REDDEDİLİR: sessizce yok sayılan bir alan, istemcinin
-// gönderdiğini sandığı bir fiyatın hiç yazılmaması demektir. Gövde boyutu da
-// sınırlıdır; aşılırsa çözümleme hatası olarak döner.
+// Unknown fields are REJECTED: a silently ignored field means a price the
+// client believes it sent is never written. The body size is bounded too; if
+// the bound is exceeded it comes back as a parse error.
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	reader := http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	dec := json.NewDecoder(reader)
@@ -240,30 +251,32 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
-			return coreerrors.Invalid(codeInvalidBody, "istek gövdesi boş olamaz")
+			return coreerrors.Invalid(codeInvalidBody, "request body cannot be empty")
 		}
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidBody,
-			"istek gövdesi çözümlenemedi")
+			"request body could not be parsed")
 	}
 
-	// Tek bir JSON belgesi beklenir; arkasından gelen ikinci belge sessizce
-	// yok sayılırsa istemci gönderdiğinin işlendiğini sanırdı.
+	// A single JSON document is expected; were a second document following it
+	// silently ignored, the client would believe what it sent had been
+	// processed.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return coreerrors.Invalid(codeInvalidBody, "istek gövdesi tek bir JSON belgesi olmalı")
+		return coreerrors.Invalid(codeInvalidBody, "request body has to be a single JSON document")
 	}
 	return nil
 }
 
-// pathID yol parametresini okur.
+// pathID reads a path parameter.
 func pathID(r *http.Request, name string) string {
 	return chi.URLParam(r, name)
 }
 
-// pageParams sorgu dizesinden sayfalama parametrelerini okur.
+// pageParams reads the paging parameters from the query string.
 //
-// Eksik parametre sıfır döner ve servis varsayılanı uygular; SAYIYA
-// ÇEVRİLEMEYEN bir değer ise hata döner — sessizce sıfıra düşmek, istemcinin
-// istediği sayfa yerine ilk sayfayı almasına yol açardı.
+// A missing parameter returns zero and the service applies the default; a value
+// that CANNOT BE CONVERTED TO A NUMBER returns an error — silently falling back
+// to zero would hand the client the first page instead of the page it asked
+// for.
 func pageParams(r *http.Request) (limit, offset int32, err error) {
 	limit, err = intParam(r, "limit")
 	if err != nil {
@@ -276,7 +289,8 @@ func pageParams(r *http.Request) (limit, offset int32, err error) {
 	return limit, offset, nil
 }
 
-// intParam tek bir sayısal sorgu parametresini okur; yoksa sıfır döner.
+// intParam reads a single numeric query parameter; it returns zero when the
+// parameter is absent.
 func intParam(r *http.Request, name string) (int32, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -285,55 +299,56 @@ func intParam(r *http.Request, name string) (int32, error) {
 	value, err := strconv.ParseInt(raw, 10, 32)
 	if err != nil {
 		return 0, coreerrors.Invalid(codeInvalidBody,
-			"%q parametresi tam sayı olmalı, %q verildi", name, raw)
+			"the %q parameter has to be an integer, %q was given", name, raw)
 	}
 	return int32(value), nil
 }
 
-// Hesaplama ucunun sorgu parametreleri.
+// The calculation endpoint's query parameters.
 //
-// Ayrılmış adlar ucun POST hâlindeki JSON alan adlarının AYNISIDIR; taşınırken
-// yeniden adlandırılmadılar. Yeni bir ad kümesi istemciye metot değişikliğinin
-// üstüne bir de ad değişikliği yüklerdi ve karşılığında hiçbir şey
-// kazandırmazdı. Biçimleri modülün öbür sorgu parametreleriyle de aynıdır
-// (limit, offset): düz snake_case.
+// The reserved names are the SAME as the JSON field names of the endpoint's
+// POST form; they were not renamed when it moved. A new set of names would have
+// loaded a name change on top of the method change onto the client and gained
+// nothing in return. Their form matches the module's other query parameters
+// too (limit, offset): plain snake_case.
 const (
-	// paramCurrencyCode istenen para birimidir (ISO 4217).
+	// paramCurrencyCode is the requested currency (ISO 4217).
 	paramCurrencyCode = "currency_code"
-	// paramQuantity hesaplamanın yapılacağı adettir.
+	// paramQuantity is the quantity the calculation is made for.
 	paramQuantity = "quantity"
-	// paramAt hesaplama anıdır (RFC 3339).
+	// paramAt is the moment of the calculation (RFC 3339).
 	paramAt = "at"
-	// paramAttrPrefix kural bağlamı alanlarının sorgu önekidir.
+	// paramAttrPrefix is the query prefix of the rule context fields.
 	paramAttrPrefix = "attr_"
 )
 
-// calculateQuery hesaplama bağlamını sorgu dizesinden okur.
+// calculateQuery reads the calculation context from the query string.
 //
-// TANINMAYAN parametre hatadır; bu, ucun POST hâlindeki [decodeBody]
-// katılığının GET karşılığıdır. Sessizce yok sayılsalardı "?qty=10" yazan bir
-// istemci 10 adetlik fiyat sorduğunu sanırken tek adetlik fiyatı okurdu —
-// hata dönmeyen, yalnızca YANLIŞ cevap veren bir arıza.
+// An UNRECOGNIZED parameter is an error; this is the GET counterpart of the
+// strictness of [decodeBody] in the endpoint's POST form. Were they silently
+// ignored, a client writing "?qty=10" would read the price for a single unit
+// while believing it had asked for the price of 10 — a failure that returns no
+// error and only gives a WRONG answer.
 //
-// Aynı parametrenin iki kez verilmesi de hatadır: net/url ikinci değeri
-// saklar ama url.Values.Get yalnızca ilkini döner ve sessiz seçim, istemcinin
-// gönderdiğinden BAŞKA bir bağlamda hesap yapmak demektir. Kural bağlamı da
-// bir eşlemedir; bir alanın iki değeri olamaz.
+// Giving the same parameter twice is an error too: net/url keeps the second
+// value, but url.Values.Get returns only the first, and a silent choice means
+// calculating in a context OTHER than the one the client sent. The rule context
+// is a map as well; a field cannot have two values.
 func calculateQuery(r *http.Request) (service.CalculateParams, error) {
 	attributes := map[string]string{}
 	for name, values := range r.URL.Query() {
 		if len(values) > 1 {
 			return service.CalculateParams{}, coreerrors.Invalid(codeInvalidBody,
-				"%q parametresi birden çok kez verildi", name)
+				"the %q parameter was given more than once", name)
 		}
 		switch {
 		case name == paramCurrencyCode, name == paramQuantity, name == paramAt:
-			// Ayrılmış adlar; değerleri aşağıda tek tek okunur.
+			// Reserved names; their values are read one by one below.
 		case strings.HasPrefix(name, paramAttrPrefix):
 			attributes[strings.TrimPrefix(name, paramAttrPrefix)] = values[0]
 		default:
 			return service.CalculateParams{}, coreerrors.Invalid(codeInvalidBody,
-				"%q parametresi tanınmıyor; kural bağlamı %q önekiyle verilir",
+				"the %q parameter is not recognized; the rule context is given with the %q prefix",
 				name, paramAttrPrefix)
 		}
 	}
@@ -347,8 +362,9 @@ func calculateQuery(r *http.Request) (service.CalculateParams, error) {
 		return service.CalculateParams{}, err
 	}
 
-	// Doğrulama YAPILMAZ: para biriminin geçerliliğine, adet sınırlarına ve
-	// varsayılanlara servis karar verir (bkz. dto.go'daki toPriceInputs).
+	// NO validation is done here: the service decides on the validity of the
+	// currency, the quantity bounds and the defaults (see toPriceInputs in
+	// dto.go).
 	return service.CalculateParams{
 		CurrencyCode: r.URL.Query().Get(paramCurrencyCode),
 		Quantity:     quantity,
@@ -357,11 +373,13 @@ func calculateQuery(r *http.Request) (service.CalculateParams, error) {
 	}, nil
 }
 
-// timeParam tek bir zaman sorgu parametresini okur; yoksa sıfır zaman döner.
+// timeParam reads a single time query parameter; it returns the zero time when
+// the parameter is absent.
 //
-// Sıfır zaman servis için "şimdi" demektir. Çözülemeyen bir damga sessizce
-// "şimdi"ye DÜŞMEZ: geçmiş ya da gelecek bir an için sorulmuş fiyata bugünün
-// kampanyalarıyla cevap vermek, sessiz yanlışın en pahalı biçimidir.
+// For the service the zero time means "now". A timestamp that cannot be parsed
+// does NOT silently FALL BACK to "now": answering a price asked for a past or
+// future moment with today's campaigns is the most expensive form of silent
+// wrongness.
 func timeParam(r *http.Request, name string) (time.Time, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -370,15 +388,16 @@ func timeParam(r *http.Request, name string) (time.Time, error) {
 	value, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
 		return time.Time{}, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidBody,
-			"%q parametresi RFC 3339 biçiminde olmalı, %q verildi", name, raw)
+			"the %q parameter has to be in RFC 3339 form, %q was given", name, raw)
 	}
 	return value.UTC(), nil
 }
 
-// listTypeOrNil fiyat listesi türünü dize işaretçisi olarak döner; boşsa nil.
+// listTypeOrNil returns the price list type as a string pointer; nil when it is
+// empty.
 //
-// Taban fiyatta liste türü yoktur ve JSON'da boş dize yerine null görünmesi,
-// "liste yok" ile "türü boş liste" ayrımını korur.
+// A base price has no list type, and showing null rather than an empty string
+// in JSON keeps "no list" apart from "a list whose type is empty".
 func listTypeOrNil(t models.PriceListType) *string {
 	if t == "" {
 		return nil

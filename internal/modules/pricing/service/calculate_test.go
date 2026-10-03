@@ -15,17 +15,18 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// Bu dosya CalculatePrice'ın seçim kuralının HER DALINI kanıtlar.
+// This file proves EVERY BRANCH of CalculatePrice's selection rule.
 //
-// Testlerin ortak tasarım ilkesi: bir ölçütün kanıtlandığı senaryoda DİĞER TÜM
-// ölçütler kaybedeni kayırır. Böylece bir ölçüt koddan çıkarıldığında test
-// kaçınılmaz olarak düşer — "yanlış nedenle geçen test" bu yolla engellenir.
+// The tests' shared design principle: in the scenario where one criterion is
+// proven, ALL THE OTHER criteria favor the loser. That way, when a criterion is
+// removed from the code, the test inevitably fails — this is how "a test that
+// passes for the wrong reason" is prevented.
 
-// TestSelectPrefersOverrideOverSale liste önceliğinin ilk ölçüt olduğunu
-// kanıtlar: override, sale'i yener.
+// TestSelectPrefersOverrideOverSale proves that list precedence is the first
+// criterion: override beats sale.
 //
-// Kaybeden (sale) DAHA UCUZ ve DAHA DAR aralıklıdır; yani sonraki tüm ölçütler
-// onu kayırır. Kazanan yalnızca liste önceliğiyle kazanabilir.
+// The loser (sale) is CHEAPER and has a NARROWER range; that is, every later
+// criterion favors it. The winner can win only through list precedence.
 func TestSelectPrefersOverrideOverSale(t *testing.T) {
 	sale := withList(basePrice("price_a", "TRY", 1000, 5, ptr(int32(6))), "plist_sale",
 		activeList("plist_sale", models.PriceListSale))
@@ -35,12 +36,12 @@ func TestSelectPrefersOverrideOverSale(t *testing.T) {
 	got, ok := selectPrice([]models.PriceCandidate{sale, override}, "TRY", 5, nil, testNow)
 
 	require.True(t, ok)
-	assert.Equal(t, "price_b", got.PriceID, "override listesi sale'i yenmeli")
+	assert.Equal(t, "price_b", got.PriceID, "the override list has to beat sale")
 	assert.Equal(t, models.PriceListOverride, got.PriceListType)
 }
 
-// TestSelectPrefersListOverBase liste fiyatının taban fiyatı yendiğini
-// kanıtlar. Taban fiyat daha ucuzdur; yalnızca öncelik ölçütü karar verebilir.
+// TestSelectPrefersListOverBase proves that a list price beats the base price.
+// The base price is cheaper; only the precedence criterion can decide.
 func TestSelectPrefersListOverBase(t *testing.T) {
 	base := basePrice("price_a", "TRY", 1000, 1, nil)
 	sale := withList(basePrice("price_b", "TRY", 9000, 1, nil), "plist_sale",
@@ -49,14 +50,15 @@ func TestSelectPrefersListOverBase(t *testing.T) {
 	got, ok := selectPrice([]models.PriceCandidate{base, sale}, "TRY", 1, nil, testNow)
 
 	require.True(t, ok)
-	assert.Equal(t, "price_b", got.PriceID, "kampanya listesi taban fiyatı yenmeli")
+	assert.Equal(t, "price_b", got.PriceID, "the campaign list has to beat the base price")
 }
 
-// TestSelectPrefersMoreSpecificRules kural sayısının ikinci ölçüt olduğunu
-// kanıtlar.
+// TestSelectPrefersMoreSpecificRules proves that the number of rules is the
+// second criterion.
 //
-// İki aday da AYNI listededir (öncelik eşit). Çok kurallı aday DAHA PAHALI ve
-// DAHA GENİŞ aralıklıdır; span ve tutar ölçütleri az kurallıyı kayırır.
+// Both candidates are in the SAME list (equal precedence). The candidate with
+// more rules is MORE EXPENSIVE and has a WIDER range; the span and amount
+// criteria favor the one with fewer rules.
 func TestSelectPrefersMoreSpecificRules(t *testing.T) {
 	attrs := map[string]string{"region_id": "reg_1", "customer_group_id": "vip"}
 
@@ -69,15 +71,16 @@ func TestSelectPrefersMoreSpecificRules(t *testing.T) {
 	got, ok := selectPrice([]models.PriceCandidate{single, double}, "TRY", 5, attrs, testNow)
 
 	require.True(t, ok)
-	assert.Equal(t, "price_b", got.PriceID, "daha çok kural sağlayan fiyat daha belirgindir")
+	assert.Equal(t, "price_b", got.PriceID, "the price that satisfies more rules is more specific")
 	assert.Equal(t, 2, got.MatchedRules)
 }
 
-// TestSelectPrefersNarrowerQuantityRange aralık genişliğinin üçüncü ölçüt
-// olduğunu kanıtlar.
+// TestSelectPrefersNarrowerQuantityRange proves that the width of the range is
+// the third criterion.
 //
-// Kural sayısı ve liste önceliği eşittir; dar aralıklı aday DAHA PAHALIDIR,
-// yani tutar ölçütü geniş olanı kayırır.
+// The number of rules and the list precedence are equal; the candidate with the
+// narrower range is MORE EXPENSIVE, that is, the amount criterion favors the
+// wide one.
 func TestSelectPrefersNarrowerQuantityRange(t *testing.T) {
 	wide := basePrice("price_a", "TRY", 1000, 1, nil)
 	narrow := basePrice("price_b", "TRY", 9000, 10, ptr(int32(20)))
@@ -85,11 +88,11 @@ func TestSelectPrefersNarrowerQuantityRange(t *testing.T) {
 	got, ok := selectPrice([]models.PriceCandidate{wide, narrow}, "TRY", 10, nil, testNow)
 
 	require.True(t, ok)
-	assert.Equal(t, "price_b", got.PriceID, "dar adet aralığı toptan kademesini kazandırmalı")
+	assert.Equal(t, "price_b", got.PriceID, "the narrow quantity range has to make the wholesale tier win")
 }
 
-// TestSelectPrefersLowerAmount tutar ölçütünün dördüncü sırada olduğunu
-// kanıtlar. Diğer tüm ölçütler eşittir.
+// TestSelectPrefersLowerAmount proves that the amount criterion comes fourth.
+// Every other criterion is equal.
 func TestSelectPrefersLowerAmount(t *testing.T) {
 	expensive := basePrice("price_a", "TRY", 9000, 1, ptr(int32(10)))
 	cheap := basePrice("price_b", "TRY", 1000, 1, ptr(int32(10)))
@@ -97,11 +100,12 @@ func TestSelectPrefersLowerAmount(t *testing.T) {
 	got, ok := selectPrice([]models.PriceCandidate{expensive, cheap}, "TRY", 1, nil, testNow)
 
 	require.True(t, ok)
-	assert.Equal(t, "price_b", got.PriceID, "eşdeğer adaylarda müşteri lehine karar verilmeli")
+	assert.Equal(t, "price_b", got.PriceID, "between equivalent candidates the decision has to favor the customer")
 }
 
-// TestSelectIsDeterministicOnFullTie tam eşitlikte kimliğin karar verdiğini ve
-// sonucun adayların GELİŞ SIRASINDAN bağımsız olduğunu kanıtlar.
+// TestSelectIsDeterministicOnFullTie proves that on a full tie the id decides,
+// and that the result is independent of the ORDER IN WHICH the candidates
+// arrive.
 func TestSelectIsDeterministicOnFullTie(t *testing.T) {
 	first := basePrice("price_a", "TRY", 1000, 1, ptr(int32(10)))
 	second := basePrice("price_b", "TRY", 1000, 1, ptr(int32(10)))
@@ -112,24 +116,24 @@ func TestSelectIsDeterministicOnFullTie(t *testing.T) {
 	require.True(t, ok)
 
 	assert.Equal(t, "price_a", forward.PriceID)
-	assert.Equal(t, forward.PriceID, backward.PriceID, "sonuç aday sırasından bağımsız olmalı")
+	assert.Equal(t, forward.PriceID, backward.PriceID, "the result has to be independent of the candidate order")
 }
 
-// TestSelectFiltersByCurrency para birimi elemesini kanıtlar.
+// TestSelectFiltersByCurrency proves the currency elimination.
 func TestSelectFiltersByCurrency(t *testing.T) {
 	usd := basePrice("price_usd", "USD", 100, 1, nil)
 	try := basePrice("price_try", "TRY", 5000, 1, nil)
 
 	got, ok := selectPrice([]models.PriceCandidate{usd, try}, "TRY", 1, nil, testNow)
 	require.True(t, ok)
-	assert.Equal(t, "price_try", got.PriceID, "başka para birimindeki daha ucuz fiyat seçilemez")
+	assert.Equal(t, "price_try", got.PriceID, "a cheaper price in another currency cannot be selected")
 
 	_, ok = selectPrice([]models.PriceCandidate{usd}, "EUR", 1, nil, testNow)
-	assert.False(t, ok, "hiç eşleşen para birimi yoksa aday kalmamalı")
+	assert.False(t, ok, "if no currency matches at all, no candidate may remain")
 }
 
-// TestSelectFiltersByQuantityRange adet aralığı elemesini uç değerleriyle
-// kanıtlar; sınırlar KAPSAYICIDIR.
+// TestSelectFiltersByQuantityRange proves the quantity range elimination at its
+// edge values; the bounds are INCLUSIVE.
 func TestSelectFiltersByQuantityRange(t *testing.T) {
 	tiered := basePrice("price_tier", "TRY", 1000, 10, ptr(int32(20)))
 	candidates := []models.PriceCandidate{tiered}
@@ -139,11 +143,11 @@ func TestSelectFiltersByQuantityRange(t *testing.T) {
 		quantity int32
 		want     bool
 	}{
-		{"alt sınırın altında", 9, false},
-		{"alt sınırda", 10, true},
-		{"aralık içinde", 15, true},
-		{"üst sınırda", 20, true},
-		{"üst sınırın üstünde", 21, false},
+		{"below the lower bound", 9, false},
+		{"at the lower bound", 10, true},
+		{"inside the range", 15, true},
+		{"at the upper bound", 20, true},
+		{"above the upper bound", 21, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, ok := selectPrice(candidates, "TRY", tc.quantity, nil, testNow)
@@ -152,17 +156,17 @@ func TestSelectFiltersByQuantityRange(t *testing.T) {
 	}
 }
 
-// TestSelectSkipsUnusablePriceLists yalnızca durumu active olan listelerin
-// fiyat sunabildiğini kanıtlar.
+// TestSelectSkipsUnusablePriceLists proves that only lists whose status is
+// active can offer a price.
 func TestSelectSkipsUnusablePriceLists(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		status models.PriceListStatus
 		want   bool
 	}{
-		{"taslak liste fiyat sunmaz", models.PriceListDraft, false},
-		{"sonlandırılmış liste fiyat sunmaz", models.PriceListExpired, false},
-		{"yayındaki liste fiyat sunar", models.PriceListActive, true},
+		{"a draft list offers no price", models.PriceListDraft, false},
+		{"an expired list offers no price", models.PriceListExpired, false},
+		{"a published list offers a price", models.PriceListActive, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			info := &models.PriceListInfo{ID: "plist_1", Type: models.PriceListSale, Status: tc.status}
@@ -174,8 +178,8 @@ func TestSelectSkipsUnusablePriceLists(t *testing.T) {
 	}
 }
 
-// TestSelectHonoursPriceListWindow tarih penceresinin uçlarını kanıtlar.
-// Uçlar KAPSAYICIDIR: tam başlangıç ve tam bitiş anında liste geçerlidir.
+// TestSelectHonoursPriceListWindow proves the edges of the date window. The
+// edges are INCLUSIVE: the list is valid at the exact start and the exact end.
 func TestSelectHonoursPriceListWindow(t *testing.T) {
 	starts := testNow.Add(-time.Hour)
 	ends := testNow.Add(time.Hour)
@@ -185,11 +189,11 @@ func TestSelectHonoursPriceListWindow(t *testing.T) {
 		at   time.Time
 		want bool
 	}{
-		{"başlangıçtan önce", starts.Add(-time.Second), false},
-		{"tam başlangıçta", starts, true},
-		{"pencere içinde", testNow, true},
-		{"tam bitişte", ends, true},
-		{"bitişten sonra", ends.Add(time.Second), false},
+		{"before the start", starts.Add(-time.Second), false},
+		{"exactly at the start", starts, true},
+		{"inside the window", testNow, true},
+		{"exactly at the end", ends, true},
+		{"after the end", ends.Add(time.Second), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			info := &models.PriceListInfo{
@@ -207,8 +211,8 @@ func TestSelectHonoursPriceListWindow(t *testing.T) {
 	}
 }
 
-// TestSelectSkipsPriceWithDeletedList listesi silinmiş bir fiyatın (liste
-// kimliği dolu ama üstverisi yok) elendiğini kanıtlar.
+// TestSelectSkipsPriceWithDeletedList proves that a price whose list was deleted
+// (the list id is set but there is no metadata) is eliminated.
 func TestSelectSkipsPriceWithDeletedList(t *testing.T) {
 	orphan := withList(basePrice("price_orphan", "TRY", 100, 1, nil), "plist_gone", nil)
 	base := basePrice("price_base", "TRY", 5000, 1, nil)
@@ -216,10 +220,10 @@ func TestSelectSkipsPriceWithDeletedList(t *testing.T) {
 	got, ok := selectPrice([]models.PriceCandidate{orphan, base}, "TRY", 1, nil, testNow)
 
 	require.True(t, ok)
-	assert.Equal(t, "price_base", got.PriceID, "listesi silinmiş fiyat hesaba katılmamalı")
+	assert.Equal(t, "price_base", got.PriceID, "a price whose list was deleted must not be counted")
 }
 
-// TestSelectRequiresAllRulesToMatch kuralların VE ile birleştiğini kanıtlar.
+// TestSelectRequiresAllRulesToMatch proves that the rules are combined with AND.
 func TestSelectRequiresAllRulesToMatch(t *testing.T) {
 	candidate := withRules(basePrice("price_a", "TRY", 100, 1, nil),
 		rule("region_id", models.OpEq, "reg_1"),
@@ -228,15 +232,15 @@ func TestSelectRequiresAllRulesToMatch(t *testing.T) {
 
 	_, ok := selectPrice(candidates, "TRY", 1,
 		map[string]string{"region_id": "reg_1", "customer_group_id": "vip"}, testNow)
-	assert.True(t, ok, "tüm kurallar sağlanınca fiyat geçerli olmalı")
+	assert.True(t, ok, "when every rule is satisfied the price has to be valid")
 
 	_, ok = selectPrice(candidates, "TRY", 1,
 		map[string]string{"region_id": "reg_1", "customer_group_id": "normal"}, testNow)
-	assert.False(t, ok, "tek bir kural bile sağlanmazsa fiyat elenmeli")
+	assert.False(t, ok, "if even a single rule is not satisfied, the price has to be eliminated")
 }
 
-// TestSelectComputesTotal sonucun toplam alanının tutar × adet olduğunu
-// kanıtlar.
+// TestSelectComputesTotal proves that the result's total field is amount ×
+// quantity.
 func TestSelectComputesTotal(t *testing.T) {
 	candidate := basePrice("price_a", "TRY", 1250, 1, nil)
 
@@ -248,22 +252,22 @@ func TestSelectComputesTotal(t *testing.T) {
 	assert.Equal(t, int64(5000), got.Total)
 }
 
-// TestSelectReturnsNoCandidate boş aday kümesinde seçim yapılamadığını
-// bildirir.
+// TestSelectReturnsNoCandidate states that no selection can be made from an
+// empty set of candidates.
 func TestSelectReturnsNoCandidate(t *testing.T) {
 	_, ok := selectPrice(nil, "TRY", 1, nil, testNow)
 	assert.False(t, ok)
 }
 
-// TestQuantitySpanUnbounded üst sınırsız aralığın azami genişlik saydığını
-// kanıtlar; "dar olan kazanır" kuralı buna dayanır.
+// TestQuantitySpanUnbounded proves that a range without an upper bound counts
+// as the maximum width; the "the narrow one wins" rule rests on this.
 func TestQuantitySpanUnbounded(t *testing.T) {
 	assert.Equal(t, int64(math.MaxInt64), quantitySpan(models.Price{MinQuantity: 1}))
 	assert.Equal(t, int64(9), quantitySpan(models.Price{MinQuantity: 1, MaxQuantity: ptr(int32(10))}))
 }
 
-// TestMatchRuleOperators her işlecin hem eşleşen hem eşleşmeyen dalını
-// kanıtlar.
+// TestMatchRuleOperators proves both the matching and the non-matching branch
+// of every operator.
 func TestMatchRuleOperators(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -271,29 +275,29 @@ func TestMatchRuleOperators(t *testing.T) {
 		attrs map[string]string
 		want  bool
 	}{
-		{"eq eşleşir", rule("k", models.OpEq, "a"), map[string]string{"k": "a"}, true},
-		{"eq eşleşmez", rule("k", models.OpEq, "a"), map[string]string{"k": "b"}, false},
-		{"ne eşleşir", rule("k", models.OpNe, "a"), map[string]string{"k": "b"}, true},
-		{"ne eşleşmez", rule("k", models.OpNe, "a"), map[string]string{"k": "a"}, false},
-		{"in eşleşir", rule("k", models.OpIn, "a", "b"), map[string]string{"k": "b"}, true},
-		{"in eşleşmez", rule("k", models.OpIn, "a", "b"), map[string]string{"k": "c"}, false},
-		{"nin eşleşir", rule("k", models.OpNin, "a", "b"), map[string]string{"k": "c"}, true},
-		{"nin eşleşmez", rule("k", models.OpNin, "a", "b"), map[string]string{"k": "a"}, false},
-		{"gt eşleşir", rule("k", models.OpGt, "10"), map[string]string{"k": "11"}, true},
-		{"gt sınırda eşleşmez", rule("k", models.OpGt, "10"), map[string]string{"k": "10"}, false},
-		{"gte sınırda eşleşir", rule("k", models.OpGte, "10"), map[string]string{"k": "10"}, true},
-		{"gte eşleşmez", rule("k", models.OpGte, "10"), map[string]string{"k": "9"}, false},
-		{"lt eşleşir", rule("k", models.OpLt, "10"), map[string]string{"k": "9"}, true},
-		{"lt sınırda eşleşmez", rule("k", models.OpLt, "10"), map[string]string{"k": "10"}, false},
-		{"lte sınırda eşleşir", rule("k", models.OpLte, "10"), map[string]string{"k": "10"}, true},
-		{"lte eşleşmez", rule("k", models.OpLte, "10"), map[string]string{"k": "11"}, false},
+		{"eq matches", rule("k", models.OpEq, "a"), map[string]string{"k": "a"}, true},
+		{"eq does not match", rule("k", models.OpEq, "a"), map[string]string{"k": "b"}, false},
+		{"ne matches", rule("k", models.OpNe, "a"), map[string]string{"k": "b"}, true},
+		{"ne does not match", rule("k", models.OpNe, "a"), map[string]string{"k": "a"}, false},
+		{"in matches", rule("k", models.OpIn, "a", "b"), map[string]string{"k": "b"}, true},
+		{"in does not match", rule("k", models.OpIn, "a", "b"), map[string]string{"k": "c"}, false},
+		{"nin matches", rule("k", models.OpNin, "a", "b"), map[string]string{"k": "c"}, true},
+		{"nin does not match", rule("k", models.OpNin, "a", "b"), map[string]string{"k": "a"}, false},
+		{"gt matches", rule("k", models.OpGt, "10"), map[string]string{"k": "11"}, true},
+		{"gt does not match at the bound", rule("k", models.OpGt, "10"), map[string]string{"k": "10"}, false},
+		{"gte matches at the bound", rule("k", models.OpGte, "10"), map[string]string{"k": "10"}, true},
+		{"gte does not match", rule("k", models.OpGte, "10"), map[string]string{"k": "9"}, false},
+		{"lt matches", rule("k", models.OpLt, "10"), map[string]string{"k": "9"}, true},
+		{"lt does not match at the bound", rule("k", models.OpLt, "10"), map[string]string{"k": "10"}, false},
+		{"lte matches at the bound", rule("k", models.OpLte, "10"), map[string]string{"k": "10"}, true},
+		{"lte does not match", rule("k", models.OpLte, "10"), map[string]string{"k": "11"}, false},
 
-		{"alan bağlamda yoksa eşleşmez", rule("k", models.OpEq, "a"), map[string]string{"x": "a"}, false},
-		{"olumsuz işleç de alan yokluğunda eşleşmez",
+		{"a field absent from the context does not match", rule("k", models.OpEq, "a"), map[string]string{"x": "a"}, false},
+		{"a negative operator does not match an absent field either",
 			rule("k", models.OpNe, "a"), map[string]string{"x": "a"}, false},
-		{"sayısal işleç metin bağlamda eşleşmez",
+		{"a numeric operator does not match a text context",
 			rule("k", models.OpGt, "10"), map[string]string{"k": "abc"}, false},
-		{"tanınmayan işleç eşleşmez",
+		{"an unrecognized operator does not match",
 			rule("k", models.RuleOperator("regex"), "a"), map[string]string{"k": "a"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -302,15 +306,16 @@ func TestMatchRuleOperators(t *testing.T) {
 	}
 }
 
-// TestMatchRulesEmptyIsUnconditional kuralsız fiyatın koşulsuz olduğunu
-// kanıtlar.
+// TestMatchRulesEmptyIsUnconditional proves that a price without rules is
+// unconditional.
 func TestMatchRulesEmptyIsUnconditional(t *testing.T) {
 	assert.True(t, matchRules(nil, nil))
 	assert.True(t, matchRules([]models.PriceRule{}, map[string]string{"k": "v"}))
 }
 
-// TestCalculatePriceUsesServiceClock At verilmediğinde servisin saatinin
-// kullanıldığını kanıtlar: pencere dışında kalan liste elenir.
+// TestCalculatePriceUsesServiceClock proves that, when At is not given, the
+// service's clock is used: a list that falls outside its window is
+// eliminated.
 func TestCalculatePriceUsesServiceClock(t *testing.T) {
 	ended := testNow.Add(-time.Minute)
 	info := &models.PriceListInfo{
@@ -332,11 +337,11 @@ func TestCalculatePriceUsesServiceClock(t *testing.T) {
 		CalculateParams{CurrencyCode: "TRY"})
 
 	require.NoError(t, err)
-	assert.Equal(t, "price_base", got.PriceID, "süresi dolmuş kampanya seçilmemeli")
+	assert.Equal(t, "price_base", got.PriceID, "an expired campaign must not be selected")
 }
 
-// TestCalculatePriceNormalizesCurrency küçük harfli para biriminin
-// büyütüldüğünü kanıtlar.
+// TestCalculatePriceNormalizesCurrency proves that a lower-case currency is
+// raised to upper case.
 func TestCalculatePriceNormalizesCurrency(t *testing.T) {
 	repo := newStubRepo()
 	repo.listCandidatesFn = func(context.Context, string) ([]models.PriceCandidate, error) {
@@ -350,8 +355,8 @@ func TestCalculatePriceNormalizesCurrency(t *testing.T) {
 	assert.Equal(t, "TRY", got.CurrencyCode)
 }
 
-// TestCalculatePriceDefaultsQuantityToOne adet verilmediğinde 1 kabul
-// edildiğini kanıtlar.
+// TestCalculatePriceDefaultsQuantityToOne proves that, when no quantity is
+// given, 1 is assumed.
 func TestCalculatePriceDefaultsQuantityToOne(t *testing.T) {
 	repo := newStubRepo()
 	repo.listCandidatesFn = func(context.Context, string) ([]models.PriceCandidate, error) {
@@ -366,16 +371,17 @@ func TestCalculatePriceDefaultsQuantityToOne(t *testing.T) {
 	assert.Equal(t, int64(700), got.Total)
 }
 
-// TestCalculatePriceDistinguishesMissingSetFromMissingPrice iki NotFound
-// durumunun FARKLI kodlarla döndüğünü kanıtlar: kap yok vs kap boş.
+// TestCalculatePriceDistinguishesMissingSetFromMissingPrice proves that the two
+// NotFound cases come back with DIFFERENT codes: no container vs an empty
+// container.
 func TestCalculatePriceDistinguishesMissingSetFromMissingPrice(t *testing.T) {
-	t.Run("kap yok", func(t *testing.T) {
+	t.Run("no container", func(t *testing.T) {
 		repo := newStubRepo()
 		repo.listCandidatesFn = func(context.Context, string) ([]models.PriceCandidate, error) {
 			return nil, nil
 		}
 		repo.getPriceSetFn = func(context.Context, string) (models.PriceSet, error) {
-			return models.PriceSet{}, errors.NotFound("price_set_not_found", "yok")
+			return models.PriceSet{}, errors.NotFound("price_set_not_found", "missing")
 		}
 
 		_, err := newTestService(repo).CalculatePrice(context.Background(), "pset_1",
@@ -386,7 +392,7 @@ func TestCalculatePriceDistinguishesMissingSetFromMissingPrice(t *testing.T) {
 		assert.Equal(t, "price_set_not_found", errors.CodeOf(err))
 	})
 
-	t.Run("kap var ama fiyatı yok", func(t *testing.T) {
+	t.Run("the container exists but has no price", func(t *testing.T) {
 		repo := newStubRepo()
 		repo.listCandidatesFn = func(context.Context, string) ([]models.PriceCandidate, error) {
 			return nil, nil
@@ -404,8 +410,9 @@ func TestCalculatePriceDistinguishesMissingSetFromMissingPrice(t *testing.T) {
 	})
 }
 
-// TestCalculatePriceSkipsExistenceCheckWhenPricesExist mutlu yolun TEK gidiş
-// dönüş yaptığını kanıtlar; ikinci sorgu yalnızca boş sonuçta açılır.
+// TestCalculatePriceSkipsExistenceCheckWhenPricesExist proves that the happy
+// path makes a SINGLE round trip; the second query is opened only on an empty
+// result.
 func TestCalculatePriceSkipsExistenceCheckWhenPricesExist(t *testing.T) {
 	repo := newStubRepo()
 	repo.listCandidatesFn = func(context.Context, string) ([]models.PriceCandidate, error) {
@@ -416,25 +423,25 @@ func TestCalculatePriceSkipsExistenceCheckWhenPricesExist(t *testing.T) {
 		CalculateParams{CurrencyCode: "TRY"})
 
 	require.NoError(t, err)
-	assert.Zero(t, repo.calls["GetPriceSet"], "fiyat varken kap varlığı ayrıca sorulmamalı")
+	assert.Zero(t, repo.calls["GetPriceSet"], "while there is a price, the container's existence must not be asked separately")
 	assert.Equal(t, 1, repo.calls["ListPriceCandidates"])
 }
 
-// TestCalculatePriceRejectsBadInput girdi doğrulamasının veritabanına GİTMEDEN
-// önce çalıştığını kanıtlar.
+// TestCalculatePriceRejectsBadInput proves that the input validation runs
+// BEFORE anything REACHES the database.
 func TestCalculatePriceRejectsBadInput(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		setID  string
 		params CalculateParams
 	}{
-		{"kimlik öneki yanlış", "variant_1", CalculateParams{CurrencyCode: "TRY"}},
-		{"kimlik boş", "", CalculateParams{CurrencyCode: "TRY"}},
-		{"para birimi eksik", "pset_1", CalculateParams{}},
-		{"para birimi dört harf", "pset_1", CalculateParams{CurrencyCode: "TRYX"}},
-		{"para birimi harf değil", "pset_1", CalculateParams{CurrencyCode: "T1L"}},
-		{"adet negatif", "pset_1", CalculateParams{CurrencyCode: "TRY", Quantity: -1}},
-		{"adet sınırın üstünde", "pset_1",
+		{"wrong id prefix", "variant_1", CalculateParams{CurrencyCode: "TRY"}},
+		{"empty id", "", CalculateParams{CurrencyCode: "TRY"}},
+		{"missing currency", "pset_1", CalculateParams{}},
+		{"four-letter currency", "pset_1", CalculateParams{CurrencyCode: "TRYX"}},
+		{"currency not letters", "pset_1", CalculateParams{CurrencyCode: "T1L"}},
+		{"negative quantity", "pset_1", CalculateParams{CurrencyCode: "TRY", Quantity: -1}},
+		{"quantity above the bound", "pset_1",
 			CalculateParams{CurrencyCode: "TRY", Quantity: models.MaxQuantity + 1}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -444,13 +451,13 @@ func TestCalculatePriceRejectsBadInput(t *testing.T) {
 
 			require.Error(t, err)
 			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-			assert.Empty(t, repo.calls, "geçersiz girdi depoya hiç gitmemeli")
+			assert.Empty(t, repo.calls, "invalid input must never reach the repository")
 		})
 	}
 }
 
-// TestCalculateAmountMatchesCalculatePrice modüller arası dar yüzeyin aynı
-// seçim kuralını kullandığını kanıtlar.
+// TestCalculateAmountMatchesCalculatePrice proves that the narrow cross-module
+// surface uses the same selection rule.
 func TestCalculateAmountMatchesCalculatePrice(t *testing.T) {
 	repo := newStubRepo()
 	repo.listCandidatesFn = func(context.Context, string) ([]models.PriceCandidate, error) {
@@ -472,16 +479,17 @@ func TestCalculateAmountMatchesCalculatePrice(t *testing.T) {
 	assert.Equal(t, int64(800), amount)
 }
 
-// TestMatchRuleWithoutValuesDoesNotMatch değersiz bir kuralın PANİK ETMEDEN
-// eşleşmez sayıldığını kanıtlar.
+// TestMatchRuleWithoutValuesDoesNotMatch proves that a rule without values is
+// counted as not matching, WITHOUT PANICKING.
 //
-// Servis doğrulaması boş değer listesini reddeder, ama veritabanındaki CHECK
-// kısıtı tek başına yeterli bir kapı değildir (bkz. migration 000002) ve
-// doğrudan SQL çalıştıran bir bakım betiği böyle bir satır üretebilir. Kural
-// değeri okunamıyorsa doğru davranış, tanınmayan işleçteki gerekçenin aynısıdır:
-// kural sessizce devre dışı kalıp fiyatı herkese AÇMAMALIDIR. "nin" ve "ne"
-// dalları bu yüzden ayrıca kanıtlanır — sınır denetimi olmasa ikisi de değersiz
-// kuralı SAĞLANMIŞ sayardı.
+// The service validation rejects an empty value list, but the CHECK constraint
+// in the database is not a sufficient gate on its own (see migration 000002),
+// and a maintenance script running SQL directly can produce such a row. If the
+// rule's value cannot be read, the right behavior has the same reason as for an
+// unrecognized operator: the rule must not silently switch itself off and OPEN
+// the price to everyone. That is why the "nin" and "ne" branches are proven
+// separately — without the bounds check, both would count a valueless rule as
+// SATISFIED.
 func TestMatchRuleWithoutValuesDoesNotMatch(t *testing.T) {
 	for _, op := range []models.RuleOperator{
 		models.OpEq, models.OpNe, models.OpIn, models.OpNin,
@@ -490,19 +498,20 @@ func TestMatchRuleWithoutValuesDoesNotMatch(t *testing.T) {
 		t.Run(string(op), func(t *testing.T) {
 			empty := models.PriceRule{Attribute: "k", Operator: op, Values: []string{}}
 			assert.False(t, matchRule(empty, map[string]string{"k": "10"}),
-				"değersiz kural eşleşmemeli")
+				"a valueless rule must not match")
 
 			nilValues := models.PriceRule{Attribute: "k", Operator: op}
 			assert.False(t, matchRule(nilValues, map[string]string{"k": "10"}),
-				"nil değerli kural eşleşmemeli")
+				"a rule with nil values must not match")
 		})
 	}
 }
 
-// TestSelectSkipsPriceWithValuelessRule değersiz kuralı olan fiyatın seçime hiç
-// girmediğini ve hesabı düşürmediğini kanıtlar.
+// TestSelectSkipsPriceWithValuelessRule proves that a price with a valueless
+// rule never enters the selection and does not bring the calculation down.
 //
-// Değersiz kurallı aday DAHA UCUZ ve DAHA BELİRGİNDİR; elenmezse kazanırdı.
+// The candidate with the valueless rule is CHEAPER and MORE SPECIFIC; were it
+// not eliminated, it would win.
 func TestSelectSkipsPriceWithValuelessRule(t *testing.T) {
 	broken := withRules(basePrice("price_a", "TRY", 1, 1, nil),
 		models.PriceRule{Attribute: "region_id", Operator: models.OpEq})
@@ -512,22 +521,23 @@ func TestSelectSkipsPriceWithValuelessRule(t *testing.T) {
 		map[string]string{"region_id": "reg_1"}, testNow)
 
 	require.True(t, ok)
-	assert.Equal(t, "price_b", got.PriceID, "değersiz kurallı fiyat elenmeli")
+	assert.Equal(t, "price_b", got.PriceID, "a price with a valueless rule has to be eliminated")
 }
 
-// batchItem bu testlerdeki toplu fiyat isteğinin tek bir kalemidir.
+// batchItem is a single item of the batch price request in these tests.
 type batchItem struct {
 	setID    string
 	quantity int32
 }
 
-// batchFixture seçim kuralının HER boyutunu sınayan fiyat kapları döner: düz
-// bir taban fiyat, bir adet kademesi, tabanı yenen bir kampanya listesi,
-// yalnızca tek bir bölgeye uyan bir kural, yalnızca başka para biriminde fiyatı
-// olan bir kap ve boş bir kap.
+// batchFixture returns price containers that test EVERY dimension of the
+// selection rule: a plain base price, a quantity tier, a campaign list that
+// beats the base, a rule that fits only a single region, a container whose only
+// price is in another currency, and an empty container.
 //
-// Aşağıdaki denklik testi ancak bu fikstür kadar değerlidir: buradaki bir kap
-// iki seçim kuralını birbirinden ayıramıyorsa test ikisi için de geçerdi.
+// The equivalence test below is worth only as much as this fixture: if a
+// container here cannot tell two selection rules apart, the test would pass
+// for both.
 func batchFixture() map[string][]models.PriceCandidate {
 	return map[string][]models.PriceCandidate{
 		"pset_base": {basePrice("price_base", "TRY", 1000, 1, nil)},
@@ -550,8 +560,8 @@ func batchFixture() map[string][]models.PriceCandidate {
 	}
 }
 
-// batchRepo iki aday sorgusunu da AYNI fikstürden karşılar; iki yolu
-// karşılaştırılabilir kılan şey budur.
+// batchRepo answers both candidate queries from the SAME fixture; that is what
+// makes the two paths comparable.
 func batchRepo(fixture map[string][]models.PriceCandidate) *stubRepo {
 	repo := newStubRepo()
 	repo.listCandidatesFn = func(_ context.Context, id string) ([]models.PriceCandidate, error) {
@@ -566,14 +576,15 @@ func batchRepo(fixture map[string][]models.PriceCandidate) *stubRepo {
 	}
 	repo.getPriceSetFn = func(_ context.Context, id string) (models.PriceSet, error) {
 		if _, ok := fixture[id]; !ok {
-			return models.PriceSet{}, errors.NotFound(CodeInvalidInput, "price set yok: %s", id)
+			return models.PriceSet{}, errors.NotFound(CodeInvalidInput, "price set missing: %s", id)
 		}
 		return models.PriceSet{ID: id}, nil
 	}
 	return repo
 }
 
-// callBatch isteği kodlar, toplu yüzeyi çağırır ve yanıtı çözer.
+// callBatch encodes the request, calls the batch surface and decodes the
+// response.
 func callBatch(t *testing.T, svc *Service, currency string, attrs map[string]string, items []batchItem) calculateAmountsResponse {
 	t.Helper()
 
@@ -592,13 +603,13 @@ func callBatch(t *testing.T, svc *Service, currency string, attrs map[string]str
 	return resp
 }
 
-// TestCalculateAmountsJSONMatchesCalculateAmount toplu yüzeyin, kalem başına
-// yüzeyin seçtiği tutarın AYNISINI seçtiğini kanıtlar.
+// TestCalculateAmountsJSONMatchesCalculateAmount proves that the batch surface
+// selects the SAME amount the per-item surface selects.
 //
-// Sepet hesabının toplu okumaya geçmesi bu iddiaya dayanır: farklı bir fiyat
-// seçen toplu okuma müşteriden farklı bir tutar tahsil ederdi ve aşağıdaki
-// hiçbir denetim bunu göremezdi — toplamlar iki hâlde de kendi içinde
-// tutarlıdır.
+// The cart calculation's move to a batch read rests on this claim: a batch read
+// that selected a different price would charge the customer a different amount,
+// and no check downstream could see it — the totals are internally consistent
+// in both cases.
 func TestCalculateAmountsJSONMatchesCalculateAmount(t *testing.T) {
 	fixture := batchFixture()
 	svc := newTestService(batchRepo(fixture))
@@ -623,27 +634,28 @@ func TestCalculateAmountsJSONMatchesCalculateAmount(t *testing.T) {
 		if err != nil {
 			require.True(t, errors.IsNotFound(err), "%s: %v", item.setID, err)
 			assert.False(t, resp.Items[i].Priced,
-				"%s tekil yolda fiyatsız, toplu yolda fiyatlı görünüyor", item.setID)
-			assert.Zero(t, resp.Items[i].Amount, "fiyatsız kalemin tutarı sıfırdır")
+				"%s shows as unpriced on the single path and priced on the batch path", item.setID)
+			assert.Zero(t, resp.Items[i].Amount, "an unpriced item's amount is zero")
 			continue
 		}
 		priced++
-		assert.True(t, resp.Items[i].Priced, "%s tekil yolda fiyatlı", item.setID)
-		assert.Equal(t, amount, resp.Items[i].Amount, "%s (adet %d)", item.setID, item.quantity)
+		assert.True(t, resp.Items[i].Priced, "%s is priced on the single path", item.setID)
+		assert.Equal(t, amount, resp.Items[i].Amount, "%s (quantity %d)", item.setID, item.quantity)
 	}
-	require.Equal(t, 5, priced, "fikstürün fiyatlanan kalemleri gerçekten fiyatlanmalı")
+	require.Equal(t, 5, priced, "the fixture's priced items have to really be priced")
 
-	// Kademe ile kampanya listesi yanıtı GERÇEKTEN değiştirmiş olmalı; yoksa
-	// yukarıdaki denklik hiçbir şey kanıtlamayan bir fikstür için de geçerdi.
-	assert.Equal(t, int64(800), resp.Items[1].Amount, "adet kademesi seçilmeli")
-	assert.Equal(t, int64(1000), resp.Items[2].Amount, "kademe dışında geniş fiyat seçilmeli")
-	assert.Equal(t, int64(9000), resp.Items[3].Amount, "kampanya listesi taban fiyatı yenmeli")
-	assert.Equal(t, int64(6000), resp.Items[4].Amount, "bölge kuralı eşleşen fiyat seçilmeli")
+	// The tier and the campaign list have to have REALLY changed the response;
+	// otherwise the equivalence above would hold for a fixture that proves
+	// nothing as well.
+	assert.Equal(t, int64(800), resp.Items[1].Amount, "the quantity tier has to be selected")
+	assert.Equal(t, int64(1000), resp.Items[2].Amount, "outside the tier the wide price has to be selected")
+	assert.Equal(t, int64(9000), resp.Items[3].Amount, "the campaign list has to beat the base price")
+	assert.Equal(t, int64(6000), resp.Items[4].Amount, "the price whose region rule matches has to be selected")
 }
 
-// TestCalculateAmountsJSONWithoutAttributesMatchesCalculateAmount kural bağlamı
-// YOKKEN de iki yolun aynı yanıtı verdiğini kanıtlar: kurallı fiyat ikisinde de
-// elenmelidir.
+// TestCalculateAmountsJSONWithoutAttributesMatchesCalculateAmount proves that
+// the two paths give the same answer when there is NO rule context as well: the
+// ruled price has to be eliminated on both.
 func TestCalculateAmountsJSONWithoutAttributesMatchesCalculateAmount(t *testing.T) {
 	fixture := batchFixture()
 	svc := newTestService(batchRepo(fixture))
@@ -654,15 +666,15 @@ func TestCalculateAmountsJSONWithoutAttributesMatchesCalculateAmount(t *testing.
 	require.NoError(t, err)
 	require.Len(t, resp.Items, 1)
 	assert.Equal(t, amount, resp.Items[0].Amount)
-	assert.Equal(t, int64(7000), resp.Items[0].Amount, "bağlamsız istekte kurallı fiyat elenmeli")
+	assert.Equal(t, int64(7000), resp.Items[0].Amount, "in a request without a context the ruled price has to be eliminated")
 }
 
-// TestCalculateAmountsJSONReadsCandidatesOnce toplu yüzeyin varlık sebebini
-// kanıtlar: kalem sayısından BAĞIMSIZ olarak tek bir depo okuması.
+// TestCalculateAmountsJSONReadsCandidatesOnce proves the batch surface's reason
+// to exist: a single repository read, INDEPENDENT of the number of items.
 //
-// Kalem başına yol her kalem için iki sorgu açar (adaylar + kurallar); bu yol
-// toplamda iki tane açar. gobit_load'a karşı ölçüldü: 100 kap tek tek 9,9 ms,
-// toplu 0,33 ms (metodun godoc'una bakınız).
+// The per-item path opens two queries for every item (candidates + rules); this
+// path opens two in total. Measured against gobit_load: 100 containers one by
+// one 9.9 ms, in a batch 0.33 ms (see the method's godoc).
 func TestCalculateAmountsJSONReadsCandidatesOnce(t *testing.T) {
 	fixture := batchFixture()
 	repo := batchRepo(fixture)
@@ -682,24 +694,25 @@ func TestCalculateAmountsJSONReadsCandidatesOnce(t *testing.T) {
 	})
 
 	require.Len(t, resp.Items, 4)
-	assert.Equal(t, 1, repo.calls["ListPriceCandidatesBySets"], "kalem başına değil, tek okuma")
-	assert.Zero(t, repo.calls["ListPriceCandidates"], "tekil aday sorgusu kullanılmamalı")
-	assert.Equal(t, []string{"pset_base", "pset_tier"}, asked, "aynı kap iki kez sorulmamalı")
+	assert.Equal(t, 1, repo.calls["ListPriceCandidatesBySets"], "a single read, not one per item")
+	assert.Zero(t, repo.calls["ListPriceCandidates"], "the single candidate query must not be used")
+	assert.Equal(t, []string{"pset_base", "pset_tier"}, asked, "the same container must not be asked for twice")
 
-	// Okumanın tekilleştirilmesi YANITI tekilleştirmemeli: aynı kap iki farklı
-	// adetle sorulduğunda iki farklı kademeye düşebilir.
+	// Deduplicating the read must not deduplicate the RESPONSE: the same
+	// container asked for at two different quantities can fall into two
+	// different tiers.
 	assert.Equal(t, int64(1000), resp.Items[0].Amount)
 	assert.Equal(t, int64(800), resp.Items[1].Amount)
 	assert.Equal(t, int64(1000), resp.Items[2].Amount)
 	assert.Equal(t, int64(1000), resp.Items[3].Amount)
 }
 
-// TestCalculateAmountsJSONReadsClockOnce bir isteğin tüm kalemlerinin AYNI an
-// ile değerlendirildiğini kanıtlar.
+// TestCalculateAmountsJSONReadsClockOnce proves that every item of a request is
+// evaluated against the SAME moment.
 //
-// İsteğin ortasında biten bir kampanya, aynı sepetin iki satırını iki farklı
-// dünyadan fiyatlamamalı; saati kalem başına okumak tam olarak buna izin
-// verirdi.
+// A campaign that ends in the middle of the request must not price two lines of
+// the same cart from two different worlds; reading the clock per item would
+// allow exactly that.
 func TestCalculateAmountsJSONReadsClockOnce(t *testing.T) {
 	fixture := batchFixture()
 	var reads int
@@ -719,7 +732,7 @@ func TestCalculateAmountsJSONReadsClockOnce(t *testing.T) {
 	_, err = svc.CalculateAmountsJSON(context.Background(), payload)
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, reads, "saat kalem başına değil istek başına okunur")
+	assert.Equal(t, 1, reads, "the clock is read per request, not per item")
 }
 
 // TestCalculateAmountsJSONPreservesOrder proves the response lines up with the
@@ -747,9 +760,9 @@ func TestCalculateAmountsJSONPreservesOrder(t *testing.T) {
 	}, resp.Items)
 }
 
-// TestCalculateAmountsJSONNormalizesCurrencyAndQuantity toplu yüzeyin girdiyi
-// kalem başına yüzeyle AYNI biçimde düzelttiğini kanıtlar: para birimi büyük
-// harfe çevrilir, adet 0 ise 1 sayılır.
+// TestCalculateAmountsJSONNormalizesCurrencyAndQuantity proves that the batch
+// surface corrects the input THE SAME WAY as the per-item surface: the currency
+// is turned to upper case, and a quantity of 0 counts as 1.
 func TestCalculateAmountsJSONNormalizesCurrencyAndQuantity(t *testing.T) {
 	fixture := batchFixture()
 	svc := newTestService(batchRepo(fixture))
@@ -760,14 +773,15 @@ func TestCalculateAmountsJSONNormalizesCurrencyAndQuantity(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.Items, 1)
 	assert.Equal(t, amount, resp.Items[0].Amount)
-	assert.Equal(t, int64(1000), resp.Items[0].Amount, "adet 0, 1 sayılır ve kademe dışında kalır")
+	assert.Equal(t, int64(1000), resp.Items[0].Amount, "a quantity of 0 counts as 1 and stays outside the tier")
 }
 
-// TestCalculateAmountsJSONRejectsBadRequest bozuk bir isteğin BÜTÜN olarak
-// reddedildiğini ve veritabanına hiç ulaşmadığını kanıtlar.
+// TestCalculateAmountsJSONRejectsBadRequest proves that a malformed request is
+// rejected AS A WHOLE and never reaches the database.
 //
-// Atlamak yerine reddetmek önemlidir: sessizce düşürülen bir kalem, çağırana
-// isteğinden KISA bir yanıt bırakır ve çağıranın dayandığı hizalama kaybolur.
+// Rejecting instead of skipping matters: a silently dropped item leaves the
+// caller a response SHORTER than its request, and the alignment the caller
+// relies on is lost.
 func TestCalculateAmountsJSONRejectsBadRequest(t *testing.T) {
 	oversized := make([]calculateAmountsItem, MaxCalculateItems+1)
 	for i := range oversized {
@@ -778,27 +792,27 @@ func TestCalculateAmountsJSONRejectsBadRequest(t *testing.T) {
 		request calculateAmountsRequest
 		message string
 	}{
-		"para birimi boş": {
+		"empty currency": {
 			request: calculateAmountsRequest{Items: []calculateAmountsItem{{PriceSetID: "pset_base", Quantity: 1}}},
 		},
-		"kap kimliği boş": {
+		"empty container id": {
 			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: []calculateAmountsItem{{Quantity: 1}}},
 			message: "item 0 of the batch price request",
 		},
-		"kap kimliği yanlış önekli": {
+		"container id with a wrong prefix": {
 			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: []calculateAmountsItem{
 				{PriceSetID: "pset_base", Quantity: 1},
 				{PriceSetID: "price_1", Quantity: 1},
 			}},
 			message: "item 1 of the batch price request",
 		},
-		"adet negatif": {
+		"negative quantity": {
 			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: []calculateAmountsItem{
 				{PriceSetID: "pset_base", Quantity: -1},
 			}},
 			message: "item 0 of the batch price request",
 		},
-		"kalem sayısı tavanı aşıyor": {
+		"item count exceeds the ceiling": {
 			request: calculateAmountsRequest{CurrencyCode: "TRY", Items: oversized},
 			message: strconv.Itoa(MaxCalculateItems),
 		},
@@ -815,20 +829,20 @@ func TestCalculateAmountsJSONRejectsBadRequest(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 			if tc.message != "" {
-				assert.Contains(t, err.Error(), tc.message, "hangi kalemin reddedildiği yazılmalı")
+				assert.Contains(t, err.Error(), tc.message, "which item was rejected has to be written")
 			}
-			assert.Empty(t, repo.calls, "geçersiz istek depoya hiç gitmemeli")
+			assert.Empty(t, repo.calls, "an invalid request must never reach the repository")
 		})
 	}
 }
 
-// TestCalculateAmountsJSONRejectsUnreadableBody boş ya da bozuk bir gövdenin
-// boş yanıt değil TİPLİ bir hata ürettiğini kanıtlar.
+// TestCalculateAmountsJSONRejectsUnreadableBody proves that an empty or
+// malformed body produces a TYPED error, not an empty response.
 func TestCalculateAmountsJSONRejectsUnreadableBody(t *testing.T) {
 	for name, body := range map[string]json.RawMessage{
-		"boş gövde":   nil,
-		"bozuk gövde": json.RawMessage(`{"items":`),
-		"dizi gövde":  json.RawMessage(`[]`),
+		"empty body":     nil,
+		"malformed body": json.RawMessage(`{"items":`),
+		"array body":     json.RawMessage(`[]`),
 	} {
 		t.Run(name, func(t *testing.T) {
 			repo := batchRepo(batchFixture())
@@ -842,8 +856,9 @@ func TestCalculateAmountsJSONRejectsUnreadableBody(t *testing.T) {
 	}
 }
 
-// TestCalculateAmountsJSONAcceptsEmptyItemList kalemsiz bir isteğin hata değil
-// BOŞ yanıt olduğunu kanıtlar: satırsız bir sepet geçerli bir sepettir.
+// TestCalculateAmountsJSONAcceptsEmptyItemList proves that a request without
+// items is an EMPTY response, not an error: a cart with no lines is a valid
+// cart.
 func TestCalculateAmountsJSONAcceptsEmptyItemList(t *testing.T) {
 	repo := batchRepo(batchFixture())
 	svc := newTestService(repo)
@@ -859,8 +874,9 @@ func TestCalculateAmountsJSONAcceptsEmptyItemList(t *testing.T) {
 	assert.Empty(t, resp.Items)
 }
 
-// TestCalculateAmountsJSONUnconfiguredServiceFailsTyped deposu olmayan bir
-// serviste toplu yüzeyin de diğerleri gibi tipli hata verdiğini kanıtlar.
+// TestCalculateAmountsJSONUnconfiguredServiceFailsTyped proves that, on a
+// service without a repository, the batch surface returns a typed error like
+// the others.
 func TestCalculateAmountsJSONUnconfiguredServiceFailsTyped(t *testing.T) {
 	payload, err := json.Marshal(calculateAmountsRequest{
 		CurrencyCode: "TRY",

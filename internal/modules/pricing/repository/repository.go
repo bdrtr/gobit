@@ -1,13 +1,14 @@
-// Package repository pricing modülünün veritabanı erişim katmanıdır.
+// Package repository is the pricing module's database access layer.
 //
-// sqlc'nin ürettiği pricingdb paketi bu paketin İÇİNDE kalır: dışarıya yalnızca
-// [models] domain tipleri verilir, pgtype hiçbir imzada görünmez. Bu sınır
-// bilinçlidir — servis ve API katmanları depolama ayrıntısına bağlanmaz ve
-// üretilen kod yeniden üretildiğinde yalnızca bu paket etkilenir.
+// The pricingdb package that sqlc generates stays INSIDE this package: only
+// the [models] domain types are handed out, and pgtype appears in no
+// signature. The boundary is deliberate — the service and API layers do not
+// bind to storage details, and when the generated code is regenerated only
+// this package is affected.
 //
-// Ham hatalar da sınırı geçmez: pgx.ErrNoRows ve PostgreSQL kısıt ihlalleri
-// burada core/errors'ın tipli hatalarına çevrilir, böylece HTTP katmanı
-// status kodunu doğru seçer (plan Bölüm 2.7).
+// Raw errors do not cross the boundary either: pgx.ErrNoRows and PostgreSQL
+// constraint violations are translated here into core/errors' typed errors,
+// so the HTTP layer picks the right status code (plan Section 2.7).
 package repository
 
 import (
@@ -24,25 +25,27 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/repository/pricingdb"
 )
 
-// Hata kodları; çağıran taraf errors.CodeOf ile bunlara bakabilir.
+// Error codes; the caller can look at them with errors.CodeOf.
 const (
-	// CodePriceSetNotFound istenen price set'in bulunamadığını bildirir.
+	// CodePriceSetNotFound reports that the requested price set was not found.
 	CodePriceSetNotFound = "price_set_not_found"
-	// CodePriceNotFound istenen fiyatın bulunamadığını bildirir.
+	// CodePriceNotFound reports that the requested price was not found.
 	CodePriceNotFound = "price_not_found"
-	// CodePriceListNotFound istenen fiyat listesinin bulunamadığını bildirir.
+	// CodePriceListNotFound reports that the requested price list was not
+	// found.
 	CodePriceListNotFound = "price_list_not_found"
-	// CodePriceRuleNotFound istenen fiyat kuralının bulunamadığını bildirir.
+	// CodePriceRuleNotFound reports that the requested price rule was not
+	// found.
 	CodePriceRuleNotFound = "price_rule_not_found"
-	// CodeConstraintViolation veritabanı kısıtının ihlal edildiğini bildirir.
+	// CodeConstraintViolation reports that a database constraint was violated.
 	CodeConstraintViolation = "pricing_constraint_violation"
-	// CodeDuplicate benzersizlik ihlalini bildirir.
+	// CodeDuplicate reports a uniqueness violation.
 	CodeDuplicate = "pricing_duplicate"
-	// CodeQueryFailed beklenmeyen bir veritabanı hatasını bildirir.
+	// CodeQueryFailed reports an unexpected database error.
 	CodeQueryFailed = "pricing_query_failed"
-	// CodeCanceled bağlam iptalini bildirir.
+	// CodeCanceled reports a context cancellation.
 	CodeCanceled = "pricing_canceled"
-	// CodeTxFailed işlem (transaction) yönetiminin başarısızlığını bildirir.
+	// CodeTxFailed reports a failure of transaction management.
 	CodeTxFailed = "pricing_tx_failed"
 	// CodeHistoryUnreadable reports a price history snapshot that could not be
 	// encoded or decoded (ADR 0167). The writer and the migration's seed share one
@@ -50,7 +53,7 @@ const (
 	CodeHistoryUnreadable = "pricing_history_unreadable"
 )
 
-// PostgreSQL SQLSTATE kodları (ihtiyaç duyulanlar).
+// PostgreSQL SQLSTATE codes (the ones needed).
 const (
 	sqlstateCheckViolation       = "23514"
 	sqlstateUniqueViolation      = "23505"
@@ -59,16 +62,16 @@ const (
 	sqlstateStringDataRightTrunc = "22001"
 )
 
-// Repo pricing tablolarına erişimi sağlar. Eşzamanlı kullanıma güvenlidir.
+// Repo provides access to the pricing tables. It is safe for concurrent use.
 type Repo struct {
 	pool *pgxpool.Pool
 	q    *pricingdb.Queries
 }
 
-// New verilen havuz üzerinde çalışan bir depo üretir.
+// New builds a repository that runs on the given pool.
 //
-// pool nil ise bu, kurulumda değil ilk çağrıda tipli bir hata olarak bildirilir;
-// kurulum yolu panik üretmez.
+// If pool is nil, that is reported as a typed error on the first call, not at
+// setup; the setup path does not panic.
 func New(pool *pgxpool.Pool) *Repo {
 	r := &Repo{pool: pool}
 	if pool != nil {
@@ -77,20 +80,22 @@ func New(pool *pgxpool.Pool) *Repo {
 	return r
 }
 
-// ready havuzun kullanılabilir olduğunu doğrular.
+// ready verifies that the pool can be used.
 func (r *Repo) ready() error {
 	if r == nil || r.pool == nil || r.q == nil {
-		return errors.Unavailable(CodeQueryFailed, "pricing veritabanı havuzu kurulmamış")
+		return errors.Unavailable(CodeQueryFailed, "the pricing database pool is not set up")
 	}
 	return nil
 }
 
-// inTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem GERİ ALINIR.
+// inTx runs fn in a single transaction; if fn returns an error the transaction
+// is ROLLED BACK.
 //
-// Atomiklik SetPrices için zorunludur: bir price set'in fiyatları topluca
-// yazılırken eski fiyatların silinmesiyle yenilerinin eklenmesi arasında hata
-// oluşursa, kap fiyatsız kalırdı. İşlem, kabın ya eski ya yeni fiyat kümesiyle
-// görünmesini garanti eder.
+// Atomicity is required for SetPrices: while a price set's prices are written
+// in bulk, had an error struck between deleting the old prices and inserting
+// the new ones, the container would be left without prices. The transaction
+// guarantees that the container is seen with either the old price set or the
+// new one.
 func (r *Repo) inTx(ctx context.Context, fn func(q *pricingdb.Queries) error) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -98,10 +103,10 @@ func (r *Repo) inTx(ctx context.Context, fn func(q *pricingdb.Queries) error) er
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return wrapDB(err, "işlem başlatılamadı")
+		return wrapDB(err, "the transaction could not be started")
 	}
-	// Rollback, Commit'ten sonra çağrıldığında pgx.ErrTxClosed döner ve
-	// yok sayılır; bu, başarılı yolda da defer'ın güvenle kalmasını sağlar.
+	// Rollback called after Commit returns pgx.ErrTxClosed, which is ignored;
+	// that is what lets the defer stay in place safely on the success path too.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	if err := fn(r.q.WithTx(tx)); err != nil {
@@ -109,16 +114,17 @@ func (r *Repo) inTx(ctx context.Context, fn func(q *pricingdb.Queries) error) er
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return wrapDB(err, "işlem tamamlanamadı")
+		return wrapDB(err, "the transaction could not be completed")
 	}
 	return nil
 }
 
-// wrapDB ham bir veritabanı hatasını tipli hataya çevirir.
+// wrapDB turns a raw database error into a typed error.
 //
-// Sınıflandırma bilinçlidir: kısıt ihlali İSTEMCİ hatasıdır (422), benzersizlik
-// ihlali çakışmadır (409), iptal geçici erişilemezliktir (503); geri kalan her
-// şey sunucu hatasıdır ve mesajı istemciye SIZDIRILMAZ (bkz. core/http).
+// The classification is deliberate: a constraint violation is a CLIENT error
+// (422), a uniqueness violation is a conflict (409), a cancellation is a
+// temporary unavailability (503); everything else is a server error and its
+// message is NOT LEAKED to the client (see core/http).
 func wrapDB(err error, format string, a ...any) error {
 	if err == nil {
 		return nil
@@ -135,18 +141,19 @@ func wrapDB(err error, format string, a ...any) error {
 		switch pgErr.Code {
 		case sqlstateUniqueViolation:
 			return errors.Wrap(err, errors.KindConflict, CodeDuplicate,
-				"%s (kısıt: %s)", sprintf(format, a...), pgErr.ConstraintName)
+				"%s (constraint: %s)", sprintf(format, a...), pgErr.ConstraintName)
 		case sqlstateCheckViolation, sqlstateForeignKeyViolation,
 			sqlstateNotNullViolation, sqlstateStringDataRightTrunc:
 			return errors.Wrap(err, errors.KindInvalid, CodeConstraintViolation,
-				"%s (kısıt: %s)", sprintf(format, a...), pgErr.ConstraintName)
+				"%s (constraint: %s)", sprintf(format, a...), pgErr.ConstraintName)
 		}
 	}
 
 	return errors.Wrap(err, errors.KindInternal, CodeQueryFailed, format, a...)
 }
 
-// notFoundOr pgx.ErrNoRows'u NotFound'a, diğer her şeyi wrapDB'ye çevirir.
+// notFoundOr turns pgx.ErrNoRows into NotFound and everything else into
+// wrapDB's result.
 func notFoundOr(err error, code, format string, a ...any) error {
 	if err == nil {
 		return nil
@@ -157,10 +164,11 @@ func notFoundOr(err error, code, format string, a ...any) error {
 	return wrapDB(err, format, a...)
 }
 
-// sprintf hata mesajını bir kez biçimlendirir.
+// sprintf formats the error message once.
 //
-// Argümansız çağrılarda format DEĞİŞTİRİLMEDEN döner; aksi hâlde mesajdaki bir
-// yüzde işareti (örn. "%!d(MISSING)") kullanıcıya bozuk metin olarak giderdi.
+// A call with no arguments returns the format UNCHANGED; otherwise a percent
+// sign in the message would reach the user as garbled text (e.g.
+// "%!d(MISSING)").
 func sprintf(format string, a ...any) string {
 	if len(a) == 0 {
 		return format
@@ -168,11 +176,11 @@ func sprintf(format string, a ...any) string {
 	return fmt.Sprintf(format, a...)
 }
 
-// toTime NULL olmayan bir zaman damgasını UTC time.Time'a çevirir.
+// toTime turns a non-NULL timestamp into a UTC time.Time.
 //
-// Geçersiz (NULL) damga sıfır zaman döner: NOT NULL sütunlarda bu durum
-// oluşamaz, oluşursa da sıfır zaman panik üretmeyen ve testte göze batan bir
-// değerdir.
+// An invalid (NULL) timestamp returns the zero time: on NOT NULL columns that
+// cannot happen, and if it ever does, the zero time is a value that does not
+// panic and that stands out in a test.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -180,7 +188,7 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// toTimePtr NULL olabilen bir zaman damgasını *time.Time'a çevirir.
+// toTimePtr turns a nullable timestamp into a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
 		return nil
@@ -189,12 +197,13 @@ func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// fromTime bir zamanı NOT NULL damgaya çevirir; daima UTC yazılır.
+// fromTime turns a time into a NOT NULL timestamp; it is always written in
+// UTC.
 func fromTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }
 
-// fromTimePtr isteğe bağlı bir zamanı damgaya çevirir; nil ise SQL NULL.
+// fromTimePtr turns an optional time into a timestamp; nil becomes SQL NULL.
 func fromTimePtr(t *time.Time) pgtype.Timestamptz {
 	if t == nil {
 		return pgtype.Timestamptz{}

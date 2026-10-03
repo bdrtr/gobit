@@ -1,6 +1,3 @@
-// This file is English because ADR 0012 makes language a property of the FILE
-// and every new file is English; module.go next to it stays Turkish.
-//
 // These tests need NO database and carry no build tag. A declaration is a
 // property of the code rather than of the data — the same sentence on an empty
 // installation and a full one — which is why [personaldata.Declarer] takes no

@@ -1,9 +1,5 @@
 //go:build integration
 
-// This file is English because ADR 0012 makes language a property of the FILE
-// and every new file is English; inventory_integration_test.go beside it stays
-// Turkish and lends its helpers.
-//
 // The tests here run against a real PostgreSQL; to run them:
 // make test-integration
 //
@@ -27,11 +23,6 @@ import (
 )
 
 // replacementService builds a service on the real store.
-//
-// The Turkish-named helpers beside this file do the same thing, and they are
-// deliberately NOT called: the language ratchet reads a file's identifiers as
-// well as its prose (ADR 0012), so an English file that borrowed them would
-// count as Turkish debt it does not carry.
 func replacementService(t *testing.T) *service.Service {
 	t.Helper()
 

@@ -6,18 +6,20 @@ import (
 	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
-// storeGetPriceSet bir price set'i fiyatlarıyla döner
+// storeGetPriceSet returns a price set with its prices
 // (GET /store/v1/price-sets/{id}).
 //
-// Store tarafındaki TEK pricing uç noktasıdır. Müşteriye giden fiyat normalde
-// product'ın store listelemesinden, Query katmanı üzerinden gelir (ADR 0004);
-// bu uç nokta, kimliği zaten bilinen bir kabın fiyatlarını doğrudan okumak
-// isteyen istemciler içindir.
+// It is the ONLY pricing endpoint on the store side. The price that reaches the
+// customer normally comes from product's store listing, through the Query layer
+// (ADR 0004); this endpoint is for clients that want to read the prices of a
+// container whose id they already know directly.
 //
-// Yazma yüzeyi store tarafında YOKTUR: fiyat değiştirmek yönetim işidir.
+// There is NO write surface on the store side: changing a price is an
+// administration job.
 //
-// Gövde YALNIZCA gösterilebilir fiyatları taşır ve kural koşullarını İÇERMEZ;
-// yönetim yüzeyindeki karşılığı (GET /admin/v1/price-sets/{id}) ikisini de gösterir.
+// The body carries ONLY displayable prices and does NOT INCLUDE rule
+// conditions; its counterpart on the admin surface
+// (GET /admin/v1/price-sets/{id}) shows both.
 func (a *API) storeGetPriceSet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := pathID(r, "id")
@@ -28,8 +30,8 @@ func (a *API) storeGetPriceSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Müşteri yüzeyi SÜZGEÇLİ yolu kullanır: taslak/süresi geçmiş kampanya
-	// fiyatları ve kurala bağlı fiyatlar dışarı çıkmaz (bkz. ListStorePrices).
+	// The customer surface uses the FILTERED path: draft or expired campaign
+	// prices and prices bound to a rule do not go out (see ListStorePrices).
 	prices, err := a.svc.ListStorePrices(ctx, id)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)

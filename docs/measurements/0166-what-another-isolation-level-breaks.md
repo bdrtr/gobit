@@ -53,11 +53,11 @@ green on the same tree the same day.
 | `internal/modules/fulfillment` | `TestConcurrentCancelMakesOneProviderCall` | serialization failure (40001) where a waiter was meant to proceed |
 | `internal/modules/fulfillment` | `TestConcurrentPolicyWritesLeaveNoTornRecord` | serialization failure (40001) where a waiter was meant to proceed |
 | `internal/modules/inventory` | `TestACloseAndAStockWriteCannotBothWin` | **silent** — a close and a stock write both succeeded |
-| `internal/modules/inventory` | `TestEszamanliReserveSonAdediTekKazanir` | serialization failure (40001) where a waiter was meant to proceed |
-| `internal/modules/inventory` | `TestEszamanliReserveStoguAsmaz` | serialization failure (40001) where a waiter was meant to proceed |
-| `internal/modules/inventory` | `TestReserveIleSeviyeYazmaKilitlenmez` | serialization failure (40001) where a waiter was meant to proceed |
-| `internal/modules/inventory` | `TestReserveIleKalemSilmeKilitlenmez` | serialization failure (40001) where a waiter was meant to proceed |
-| `internal/modules/inventory` | `TestEszamanliReleaseTekSeferDuser` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/inventory` | `TestConcurrentReservesLeaveTheLastUnitToOneWinner` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/inventory` | `TestConcurrentReservesDoNotExceedTheStock` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/inventory` | `TestReserveAndALevelWriteDoNotDeadlock` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/inventory` | `TestReserveAndAnItemDeleteDoNotDeadlock` | serialization failure (40001) where a waiter was meant to proceed |
+| `internal/modules/inventory` | `TestConcurrentReleasesGiveTheStockBackOnce` | serialization failure (40001) where a waiter was meant to proceed |
 | `internal/modules/invoice` | `TestConcurrentIssuesTakeDistinctConsecutiveNumbers` | serialization failure (40001) where a waiter was meant to proceed |
 | `internal/modules/order` | `TestConcurrentCreditsCannotPassTheCeiling` | **silent** — 10,000 credited on a 6,100 order, every round |
 | `internal/modules/order` | `TestConcurrentLineCancellationsCannotExceedTheLine` | **silent** — 16 cancellations won on a 3-unit line |

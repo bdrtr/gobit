@@ -14,32 +14,24 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory/service"
 )
 
-// Testlerde kullanılan sabit kimlikler.
+// The fixed IDs the tests use.
 const (
 	itemID  = "invitem_TEST"
 	locA    = "sloc_A"
 	locB    = "sloc_B"
 	resID   = "invres_TEST"
-	unknown = "invitem_YOK"
+	unknown = "invitem_MISSING"
 )
 
-// yeniServis sahte depo üzerinde çalışan bir servis kurar.
-func yeniServis(t *testing.T) (*service.Service, *fakeStore) {
-	t.Helper()
-
-	store := newFakeStore()
-	return service.New(store, nil), store
-}
-
-// TestAvailableQuantityTumLokasyonlariToplar satılabilir adedin TÜM
-// lokasyonlardaki (stocked - reserved) farklarının toplamı olduğunu doğrular.
+// TestAvailableQuantitySumsEveryLocation proves the sellable quantity is the sum
+// of the (stocked - reserved) differences across ALL locations.
 //
-// Fikstür bilinçlidir: iki lokasyonun rezerve adetleri FARKLIDIR ve toplam
-// fiziksel adet (30) ile toplam satılabilir adet (18) birbirinden uzaktır.
-// Rezerveyi düşmeyi unutan ya da yalnızca tek lokasyonu toplayan bir uygulama
-// bu sayıyı tutturamaz.
-func TestAvailableQuantityTumLokasyonlariToplar(t *testing.T) {
-	svc, store := yeniServis(t)
+// The fixture is deliberate: the two locations' reserved quantities DIFFER, and
+// the total physical quantity (30) is far from the total sellable quantity
+// (18). An implementation that forgot to subtract the reserved part, or summed
+// only one location, cannot hit this number.
+func TestAvailableQuantitySumsEveryLocation(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 4)
 	store.seedLevel(itemID, locB, 20, 8)
@@ -47,13 +39,13 @@ func TestAvailableQuantityTumLokasyonlariToplar(t *testing.T) {
 	available, err := svc.AvailableQuantity(context.Background(), itemID)
 
 	require.NoError(t, err)
-	assert.Equal(t, int64(18), available, "(10-4) + (20-8) = 18 olmalı")
+	assert.Equal(t, int64(18), available, "(10-4) + (20-8) has to be 18")
 }
 
-// TestAvailableQuantitySeviyesizKalemSifir hiç stok seviyesi olmayan kalemin
-// sıfır döndürdüğünü doğrular; bu bir hata değildir.
-func TestAvailableQuantitySeviyesizKalemSifir(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestAvailableQuantityOfAnItemWithNoLevelIsZero proves an item with no stock
+// level at all returns zero; that is not an error.
+func TestAvailableQuantityOfAnItemWithNoLevelIsZero(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 
 	available, err := svc.AvailableQuantity(context.Background(), itemID)
@@ -62,11 +54,11 @@ func TestAvailableQuantitySeviyesizKalemSifir(t *testing.T) {
 	assert.Zero(t, available)
 }
 
-// TestAvailableQuantityOlmayanKalemNotFound olmayan bir kalem için sıfır
-// değil, NotFound dönüldüğünü doğrular: "stoğu yok" ile "kendisi yok" farklı
-// durumlardır ve çağıran ikisini ayırt edebilmelidir.
-func TestAvailableQuantityOlmayanKalemNotFound(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestAvailableQuantityOfAMissingItemIsNotFound proves a missing item returns
+// NotFound, not zero: "it has no stock" and "it does not exist" are different
+// situations and the caller has to be able to tell them apart.
+func TestAvailableQuantityOfAMissingItemIsNotFound(t *testing.T) {
+	svc, _ := newService(t)
 
 	_, err := svc.AvailableQuantity(context.Background(), unknown)
 
@@ -74,16 +66,17 @@ func TestAvailableQuantityOlmayanKalemNotFound(t *testing.T) {
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestLocationsWithStockYalnizcaYeterliLokasyonlariDoner eşiği karşılamayan
-// lokasyonun listeden çıktığını doğrular.
+// TestLocationsWithStockReturnsOnlyTheLocationsThatSuffice proves a location
+// that does not meet the threshold drops out of the list.
 //
-// Fikstür bilinçlidir: İKİ LOKASYONUN FİZİKSEL ADEDİ DE 10'dur, yalnızca
-// rezerve adetleri farklıdır. Rezerveyi düşmeyi unutup stocked_quantity'ye
-// bakan bir uygulama ikisini de döndürür ve bu testi geçemez. locA'nın
-// satılabilir adedi eşiğe TAM eşittir (5); sınır ">" değil ">=" olmalıdır,
-// çünkü Reserve de tam son adedi ayırmaya izin verir.
-func TestLocationsWithStockYalnizcaYeterliLokasyonlariDoner(t *testing.T) {
-	svc, store := yeniServis(t)
+// The fixture is deliberate: BOTH LOCATIONS HOLD 10 PHYSICAL UNITS, and only
+// their reserved quantities differ. An implementation that forgot to subtract
+// the reserved part and looked at stocked_quantity would return both and fail
+// this test. locA's sellable quantity is EXACTLY equal to the threshold (5); the
+// bound has to be ">=" and not ">", because Reserve also allows setting aside
+// exactly the last unit.
+func TestLocationsWithStockReturnsOnlyTheLocationsThatSuffice(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 5)
 	store.seedLevel(itemID, locB, 10, 6)
@@ -92,25 +85,26 @@ func TestLocationsWithStockYalnizcaYeterliLokasyonlariDoner(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{locA}, locations,
-		"locA'da 10-5=5 (yeterli), locB'de 10-6=4 (yetersiz)")
+		"locA has 10-5=5 (enough), locB has 10-6=4 (not enough)")
 }
 
-// TestLocationsWithStockRezervasyonMusaitligiDusurur bir rezervasyondan sonra
-// lokasyonun listeden çıktığını doğrular.
+// TestLocationsWithStockAReservationLowersAvailability proves a location drops
+// out of the list after a reservation.
 //
-// Asıl kanıt sondaki iki iddiadır: liste ile [service.Service.Reserve] AYNI
-// "satılabilir" tanımını kullanır, dolayısıyla listede olmayan bir lokasyon
-// Reserve'de de Conflict alır. İki tanım ayrışsaydı, aday olarak dönen bir
-// lokasyon rezervasyonda patlar ve saga sebebini bulamazdı.
-func TestLocationsWithStockRezervasyonMusaitligiDusurur(t *testing.T) {
+// The real proof is the two assertions at the end: the list and
+// [service.Service.Reserve] use THE SAME definition of "sellable", so a location
+// missing from the list also gets a Conflict from Reserve. Had the two
+// definitions drifted apart, a location returned as a candidate would blow up at
+// the reservation and the saga could not find out why.
+func TestLocationsWithStockAReservationLowersAvailability(t *testing.T) {
 	ctx := context.Background()
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 0)
 
 	locations, err := svc.LocationsWithStock(ctx, itemID, 5)
 	require.NoError(t, err)
-	require.Equal(t, []string{locA}, locations, "rezervasyondan önce aday olmalı")
+	require.Equal(t, []string{locA}, locations, "before the reservation it has to be a candidate")
 
 	_, err = svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: itemID, LocationID: locA, Quantity: 6,
@@ -119,29 +113,29 @@ func TestLocationsWithStockRezervasyonMusaitligiDusurur(t *testing.T) {
 
 	locations, err = svc.LocationsWithStock(ctx, itemID, 5)
 	require.NoError(t, err)
-	assert.Empty(t, locations, "rezervasyon satılabilir adedi 4'e düşürdü; 5 için aday kalmadı")
+	assert.Empty(t, locations, "the reservation lowered the sellable quantity to 4; no candidate is left for 5")
 
 	_, err = svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: itemID, LocationID: locA, Quantity: 5,
 	})
 	require.Error(t, err)
 	assert.Equal(t, service.CodeInsufficientStock, errors.CodeOf(err),
-		"liste ile Reserve aynı tanımı kullanmalı")
+		"the list and Reserve have to use the same definition")
 }
 
-// TestLocationsWithStockSiralamaDeterministiktir sonucun lokasyon kimliğine
-// göre artan sırada döndüğünü doğrular.
+// TestLocationsWithStockOrderIsDeterministic proves the result comes back in
+// ascending order of location ID.
 //
-// Fikstür depo sırasını beklenen sıradan AYIRIR (bkz.
-// [fakeStore.seedLevelWithID]): depo seviyeleri locC, locB, locA sırasında
-// döner, sonuç locA, locB, locC olmalıdır. Sıra bir stok olgusunun sırasıdır;
-// "en çok stoklu önce" gibi bir tercih sırası kargo politikası olurdu ve o
-// karar fulfillment'a aittir — bu yüzden üç lokasyonun adetleri de FARKLIDIR
-// ama sonucu etkilemez.
-func TestLocationsWithStockSiralamaDeterministiktir(t *testing.T) {
+// The fixture SEPARATES the store's order from the expected order (see
+// [fakeStore.seedLevelWithID]): the store returns the levels in the order locC,
+// locB, locA, and the result has to be locA, locB, locC. The order is the order
+// of a stock fact; a preference order such as "most stocked first" would be a
+// shipping policy, and that decision belongs to fulfillment — which is why the
+// three locations' quantities DIFFER too, without affecting the result.
+func TestLocationsWithStockOrderIsDeterministic(t *testing.T) {
 	const locC = "sloc_C"
 
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevelWithID("invlevel_3", itemID, locA, 10, 0)
 	store.seedLevelWithID("invlevel_1", itemID, locC, 30, 0)
@@ -151,48 +145,49 @@ func TestLocationsWithStockSiralamaDeterministiktir(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{locA, locB, locC}, locations)
-	assert.True(t, slices.IsSorted(locations), "sıra lokasyon kimliğine göre artan olmalı")
+	assert.True(t, slices.IsSorted(locations), "the order has to be ascending by location ID")
 }
 
-// TestLocationsWithStockAdaySizsaBosDilim yeterli lokasyon olmadığında BOŞ ve
-// nil OLMAYAN bir dilim döndüğünü doğrular.
+// TestLocationsWithStockWithNoCandidateIsAnEmptySlice proves that when no
+// location suffices an EMPTY, NON-nil slice comes back.
 //
-// "Yeterli stok yok" bir arıza değil bir cevaptır: hata dönmek, çağıranın
-// (saga) durumu kendi bağlamında yorumlama hakkını elinden alırdı. nil yerine
-// boş dilim dönmek ise çağıranın "yok" ile "hiç sorulmadı" ayrımı yapmak
-// zorunda kalmamasını sağlar.
-func TestLocationsWithStockAdaySizsaBosDilim(t *testing.T) {
+// "Not enough stock" is an answer, not a fault: returning an error would take
+// away the caller's (the saga's) right to interpret the situation in its own
+// context. Returning an empty slice rather than nil spares the caller from
+// having to tell "none" apart from "never asked".
+func TestLocationsWithStockWithNoCandidateIsAnEmptySlice(t *testing.T) {
 	ctx := context.Background()
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 
 	locations, err := svc.LocationsWithStock(ctx, itemID, 5)
 	require.NoError(t, err)
-	assert.Empty(t, locations, "hiç seviyesi olmayan kalem için aday yok")
-	assert.NotNil(t, locations, "boş dilim dönmeli, nil değil")
+	assert.Empty(t, locations, "an item with no level at all has no candidate")
+	assert.NotNil(t, locations, "an empty slice has to come back, not nil")
 
 	store.seedLevel(itemID, locA, 10, 8)
 
 	locations, err = svc.LocationsWithStock(ctx, itemID, 5)
 	require.NoError(t, err)
-	assert.Empty(t, locations, "10-8=2 eşiği karşılamıyor")
-	assert.NotNil(t, locations, "boş dilim dönmeli, nil değil")
+	assert.Empty(t, locations, "10-8=2 does not meet the threshold")
+	assert.NotNil(t, locations, "an empty slice has to come back, not nil")
 }
 
-// TestLocationsWithStockPozitifOlmayanAdetInvalid sıfır ve negatif eşiğin
-// reddedildiğini doğrular.
+// TestLocationsWithStockNonPositiveQuantityIsInvalid proves a zero and a
+// negative threshold are refused.
 //
-// Sessizce tüm lokasyonları döndürmek, Reserve'ün DOĞRUDAN reddedeceği bir
-// adet için aday listelemek olurdu; boş liste dönmek ise çağıranın hatasını
-// "stok yok" gibi gösterip gizlerdi. İkisi de sebebi çağırandan uzaklaştırır.
-func TestLocationsWithStockPozitifOlmayanAdetInvalid(t *testing.T) {
+// Silently returning every location would list candidates for a quantity
+// Reserve refuses OUTRIGHT; returning an empty list would hide the caller's
+// mistake by making it look like "no stock". Both move the cause away from the
+// caller.
+func TestLocationsWithStockNonPositiveQuantityIsInvalid(t *testing.T) {
 	ctx := context.Background()
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 0)
 
-	for _, adet := range []int64{0, -1} {
-		_, err := svc.LocationsWithStock(ctx, itemID, adet)
+	for _, quantity := range []int64{0, -1} {
+		_, err := svc.LocationsWithStock(ctx, itemID, quantity)
 
 		require.Error(t, err)
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
@@ -200,11 +195,12 @@ func TestLocationsWithStockPozitifOlmayanAdetInvalid(t *testing.T) {
 	}
 }
 
-// TestLocationsWithStockOlmayanKalemNotFound olmayan kalem için boş liste
-// değil NotFound dönüldüğünü doğrular; [service.Service.AvailableQuantity] ile
-// aynı ayrım: "stoğu yok" ile "kendisi yok" çağıran için farklı durumlardır.
-func TestLocationsWithStockOlmayanKalemNotFound(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestLocationsWithStockMissingItemIsNotFound proves a missing item returns
+// NotFound, not an empty list; the same distinction as
+// [service.Service.AvailableQuantity]: "it has no stock" and "it does not exist"
+// are different situations for the caller.
+func TestLocationsWithStockMissingItemIsNotFound(t *testing.T) {
+	svc, _ := newService(t)
 
 	_, err := svc.LocationsWithStock(context.Background(), unknown, 1)
 
@@ -212,11 +208,10 @@ func TestLocationsWithStockOlmayanKalemNotFound(t *testing.T) {
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestAdjustInventoryNegatifStoguReddeder stoğu negatife düşürecek bir
-// düzeltmenin Conflict ile reddedildiğini ve HİÇBİR ŞEYİN yazılmadığını
-// doğrular.
-func TestAdjustInventoryNegatifStoguReddeder(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestAdjustInventoryRefusesNegativeStock proves a correction that would take
+// the stock negative is refused with Conflict and NOTHING is written.
+func TestAdjustInventoryRefusesNegativeStock(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 5, 0)
 
@@ -226,13 +221,13 @@ func TestAdjustInventoryNegatifStoguReddeder(t *testing.T) {
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, service.CodeInsufficientStock, errors.CodeOf(err))
 	assert.Equal(t, int64(5), store.level(itemID, locA).StockedQuantity,
-		"reddedilen düzeltme stoğa dokunmamalı")
+		"a refused correction must not touch the stock")
 }
 
-// TestAdjustInventorySifiraKadarInebilir sınırın tam olarak sıfır olduğunu
-// doğrular: -5 kabul edilir, -6 edilmez.
-func TestAdjustInventorySifiraKadarInebilir(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestAdjustInventoryCanGoDownToZero proves the bound is exactly zero: -5 is
+// accepted, -6 is not.
+func TestAdjustInventoryCanGoDownToZero(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 5, 0)
 
@@ -243,12 +238,12 @@ func TestAdjustInventorySifiraKadarInebilir(t *testing.T) {
 	assert.Zero(t, level.Available())
 }
 
-// TestAdjustInventoryRezerveAdedinAltinaInemez rezerve edilmiş adedin altına
-// inen bir düzeltmenin reddedildiğini doğrular. Sınır sıfır DEĞİL, rezerve
-// adettir: 5 fiziksel / 3 rezerve stokta -3 düzeltmesi fiziksel adedi 2'ye
-// indirirdi ve satılabilir adet -1 olurdu.
-func TestAdjustInventoryRezerveAdedinAltinaInemez(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestAdjustInventoryCannotGoBelowReserved proves a correction that goes below
+// the reserved quantity is refused. The bound is NOT zero, it is the reserved
+// quantity: on stock of 5 physical / 3 reserved, a correction of -3 would bring
+// the physical quantity down to 2 and the sellable quantity would be -1.
+func TestAdjustInventoryCannotGoBelowReserved(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 5, 3)
 
@@ -258,17 +253,17 @@ func TestAdjustInventoryRezerveAdedinAltinaInemez(t *testing.T) {
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, int64(5), store.level(itemID, locA).StockedQuantity)
 
-	// Rezerve adede kadar inmek serbesttir.
+	// Going down as far as the reserved quantity is allowed.
 	level, err := svc.AdjustInventory(context.Background(), itemID, locA, -2)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), level.StockedQuantity)
 	assert.Zero(t, level.Available())
 }
 
-// TestAdjustInventoryStoguArtirir pozitif düzeltmenin stoğu artırdığını ve
-// rezerve adede dokunmadığını doğrular.
-func TestAdjustInventoryStoguArtirir(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestAdjustInventoryRaisesStock proves a positive correction raises the stock
+// and does not touch the reserved quantity.
+func TestAdjustInventoryRaisesStock(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 5, 2)
 
@@ -276,14 +271,14 @@ func TestAdjustInventoryStoguArtirir(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, int64(12), level.StockedQuantity)
-	assert.Equal(t, int64(2), level.ReservedQuantity, "rezerve adet değişmemeli")
+	assert.Equal(t, int64(2), level.ReservedQuantity, "the reserved quantity must not change")
 	assert.Equal(t, int64(10), level.Available())
 }
 
-// TestAdjustInventoryDeltaSifirInvalid anlamsız bir düzeltmenin sessizce
-// başarılı sayılmadığını doğrular.
-func TestAdjustInventoryDeltaSifirInvalid(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestAdjustInventoryZeroDeltaIsInvalid proves a meaningless correction is not
+// silently counted as a success.
+func TestAdjustInventoryZeroDeltaIsInvalid(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 5, 0)
 
@@ -293,11 +288,11 @@ func TestAdjustInventoryDeltaSifirInvalid(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestAdjustInventorySeviyeYoksaNotFound olmayan bir (kalem, lokasyon) çifti
-// için düzeltmenin NotFound döndüğünü doğrular; seviye kendiliğinden
-// oluşturulmaz.
-func TestAdjustInventorySeviyeYoksaNotFound(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestAdjustInventoryWithoutALevelIsNotFound proves a correction for an (item,
+// location) pair that has no level returns NotFound; the level is not created
+// on its own.
+func TestAdjustInventoryWithoutALevelIsNotFound(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 
 	_, err := svc.AdjustInventory(context.Background(), itemID, locA, 5)
@@ -306,9 +301,9 @@ func TestAdjustInventorySeviyeYoksaNotFound(t *testing.T) {
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestSetInventoryLevelOlusturur seviye yoksa oluşturulduğunu doğrular.
-func TestSetInventoryLevelOlusturur(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestSetInventoryLevelCreates proves the level is created when there is none.
+func TestSetInventoryLevelCreates(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLocation(locA)
 
@@ -322,10 +317,10 @@ func TestSetInventoryLevelOlusturur(t *testing.T) {
 	assert.NotEmpty(t, level.ID)
 }
 
-// TestSetInventoryLevelGunceller var olan seviyenin fiziksel adedini mutlak
-// olarak yazdığını, rezerve adede DOKUNMADIĞINI doğrular.
-func TestSetInventoryLevelGunceller(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestSetInventoryLevelUpdates proves an existing level's physical quantity is
+// written as an absolute value and the reserved quantity is NOT TOUCHED.
+func TestSetInventoryLevelUpdates(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 5, 3)
 
@@ -337,10 +332,10 @@ func TestSetInventoryLevelGunceller(t *testing.T) {
 	assert.Equal(t, int64(6), level.Available())
 }
 
-// TestSetInventoryLevelRezerveAdedinAltinaInemez sayım düzeltmesinin söz
-// verilmiş stoğu yok edemeyeceğini doğrular.
-func TestSetInventoryLevelRezerveAdedinAltinaInemez(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestSetInventoryLevelCannotGoBelowReserved proves a stock count correction
+// cannot destroy promised stock.
+func TestSetInventoryLevelCannotGoBelowReserved(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 5, 3)
 
@@ -351,10 +346,10 @@ func TestSetInventoryLevelRezerveAdedinAltinaInemez(t *testing.T) {
 	assert.Equal(t, int64(5), store.level(itemID, locA).StockedQuantity)
 }
 
-// TestSetInventoryLevelNegatifAdetInvalid negatif fiziksel adedin
-// reddedildiğini doğrular.
-func TestSetInventoryLevelNegatifAdetInvalid(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestSetInventoryLevelNegativeQuantityIsInvalid proves a negative physical
+// quantity is refused.
+func TestSetInventoryLevelNegativeQuantityIsInvalid(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 
 	_, err := svc.SetInventoryLevel(context.Background(), itemID, locA, -1)
@@ -363,10 +358,10 @@ func TestSetInventoryLevelNegatifAdetInvalid(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestSetInventoryLevelOlmayanKalemNotFound olmayan bir kalem için seviye
-// açılamadığını doğrular.
-func TestSetInventoryLevelOlmayanKalemNotFound(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestSetInventoryLevelMissingItemIsNotFound proves no level can be opened for
+// a missing item.
+func TestSetInventoryLevelMissingItemIsNotFound(t *testing.T) {
+	svc, _ := newService(t)
 
 	_, err := svc.SetInventoryLevel(context.Background(), unknown, locA, 5)
 
@@ -374,11 +369,11 @@ func TestSetInventoryLevelOlmayanKalemNotFound(t *testing.T) {
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestReserveRezerveAdediArtirir başarılı rezervasyonun rezerve adedi
-// artırdığını, fiziksel adede DOKUNMADIĞINI ve aktif bir kayıt bıraktığını
-// doğrular.
-func TestReserveRezerveAdediArtirir(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestReserveRaisesReservedQuantity proves a successful reservation raises the
+// reserved quantity, does NOT TOUCH the physical quantity and leaves an active
+// record.
+func TestReserveRaisesReservedQuantity(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 2)
 
@@ -395,18 +390,18 @@ func TestReserveRezerveAdediArtirir(t *testing.T) {
 	assert.Equal(t, "li_1", res.LineItemID)
 
 	level := store.level(itemID, locA)
-	assert.Equal(t, int64(10), level.StockedQuantity, "fiziksel adet değişmemeli")
+	assert.Equal(t, int64(10), level.StockedQuantity, "the physical quantity must not change")
 	assert.Equal(t, int64(5), level.ReservedQuantity)
 	assert.Equal(t, int64(5), level.Available())
 }
 
-// TestReserveYetersizStokConflict satılabilir adetten fazlasının
-// rezerve edilemediğini ve reddedilen isteğin hiçbir iz bırakmadığını
-// doğrular. Sınır fiziksel adet DEĞİL, satılabilir adettir.
-func TestReserveYetersizStokConflict(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestReserveInsufficientStockIsConflict proves more than the sellable quantity
+// cannot be reserved and the refused request leaves no trace. The bound is NOT
+// the physical quantity, it is the sellable one.
+func TestReserveInsufficientStockIsConflict(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
-	store.seedLevel(itemID, locA, 10, 8) // satılabilir: 2
+	store.seedLevel(itemID, locA, 10, 8) // sellable: 2
 
 	_, err := svc.Reserve(context.Background(), service.ReserveInput{
 		InventoryItemID: itemID, LocationID: locA, Quantity: 3,
@@ -416,13 +411,13 @@ func TestReserveYetersizStokConflict(t *testing.T) {
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Equal(t, service.CodeInsufficientStock, errors.CodeOf(err))
 	assert.Equal(t, int64(8), store.level(itemID, locA).ReservedQuantity,
-		"reddedilen rezervasyon rezerve adede dokunmamalı")
+		"a refused reservation must not touch the reserved quantity")
 }
 
-// TestReserveTamSonAdet satılabilir adedin TAMAMININ rezerve edilebildiğini
-// doğrular; sınır "<" değil "<=" olmalıdır.
-func TestReserveTamSonAdet(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestReserveExactlyTheLastUnit proves ALL of the sellable quantity can be
+// reserved; the bound has to be "<=" and not "<".
+func TestReserveExactlyTheLastUnit(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 8)
 
@@ -436,10 +431,10 @@ func TestReserveTamSonAdet(t *testing.T) {
 	assert.Zero(t, level.Available())
 }
 
-// TestReservePozitifOlmayanAdetInvalid sıfır ve negatif adedin reddedildiğini
-// doğrular.
-func TestReservePozitifOlmayanAdetInvalid(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestReserveNonPositiveQuantityIsInvalid proves a zero and a negative quantity
+// are refused.
+func TestReserveNonPositiveQuantityIsInvalid(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 0)
 
@@ -447,19 +442,20 @@ func TestReservePozitifOlmayanAdetInvalid(t *testing.T) {
 		_, err := svc.Reserve(context.Background(), service.ReserveInput{
 			InventoryItemID: itemID, LocationID: locA, Quantity: qty,
 		})
-		require.Error(t, err, "adet %d reddedilmeli", qty)
+		require.Error(t, err, "a quantity of %d has to be refused", qty)
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	}
 }
 
-// TestReserveRezervasyonYazilamazsaStokGeriAlinir rezervasyon kaydı
-// oluşturulamadığında seviye güncellemesinin de geri alındığını doğrular:
-// stok ile rezervasyon kaydı aynı işlemde yaşar, biri olmadan diğeri kalamaz.
-func TestReserveRezervasyonYazilamazsaStokGeriAlinir(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestReserveRollsBackStockWhenTheReservationCannotBeWritten proves that when
+// the reservation record cannot be created, the level update is rolled back
+// too: the stock and the reservation record live in the same transaction, and
+// neither can remain without the other.
+func TestReserveRollsBackStockWhenTheReservationCannotBeWritten(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 0)
-	store.failCreateReservation = errors.Internal("test_hata", "rezervasyon yazılamadı")
+	store.failCreateReservation = errors.Internal("test_hata", "the reservation could not be written")
 
 	_, err := svc.Reserve(context.Background(), service.ReserveInput{
 		InventoryItemID: itemID, LocationID: locA, Quantity: 4,
@@ -467,18 +463,18 @@ func TestReserveRezervasyonYazilamazsaStokGeriAlinir(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Zero(t, store.level(itemID, locA).ReservedQuantity,
-		"işlem geri alındığı için rezerve adet artmamalı")
+		"the transaction was rolled back, so the reserved quantity must not grow")
 }
 
-// TestReleaseReservationIdempotent telafinin iki kez çağrılabildiğini ve
-// ikinci çağrının stoğa DOKUNMADIĞINI doğrular.
+// TestReleaseReservationIdempotent proves the compensation can be called twice
+// and the second call does NOT TOUCH the stock.
 //
-// Saga telafisi yeniden çalıştırılabilir olmak zorundadır; ikinci çağrı hata
-// verirse workflow'un geri alma yolu patlar. İkinci çağrının rezerve adedi bir
-// kez daha düşürmemesi de en az bunun kadar önemlidir — düşürseydi stok
-// yoktan var edilirdi.
+// A saga compensation has to be safe to run again; if the second call returned
+// an error, the workflow's rollback path would blow up. That the second call
+// does not lower the reserved quantity once more matters at least as much — had
+// it done so, stock would have been created out of nothing.
 func TestReleaseReservationIdempotent(t *testing.T) {
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 3)
 	store.seedReservation(resID, itemID, locA, 3, models.ReservationActive)
@@ -487,32 +483,32 @@ func TestReleaseReservationIdempotent(t *testing.T) {
 	assert.Zero(t, store.level(itemID, locA).ReservedQuantity)
 	assert.Equal(t, models.ReservationReleased, store.reservation(resID).Status)
 
-	yazmaSayisi := store.updateLevelCalls
+	writes := store.updateLevelCalls
 
 	require.NoError(t, svc.ReleaseReservation(context.Background(), resID),
-		"ikinci çağrı hata vermemeli")
+		"the second call must not return an error")
 	assert.Zero(t, store.level(itemID, locA).ReservedQuantity,
-		"ikinci çağrı rezerve adedi bir kez daha düşürmemeli")
+		"the second call must not lower the reserved quantity once more")
 	assert.Equal(t, int64(10), store.level(itemID, locA).StockedQuantity)
-	assert.Equal(t, yazmaSayisi, store.updateLevelCalls,
-		"ikinci çağrı stok seviyesine hiç yazmamalı")
+	assert.Equal(t, writes, store.updateLevelCalls,
+		"the second call must not write to the stock level at all")
 }
 
-// TestReleaseReservationBilinmeyenKimlikNotFound idempotentliğin "her şeyi
-// yut" anlamına gelmediğini doğrular: hiç var olmamış bir kimlik hatadır.
-func TestReleaseReservationBilinmeyenKimlikNotFound(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestReleaseReservationUnknownIDIsNotFound proves idempotency does not mean
+// "swallow everything": an ID that never existed is an error.
+func TestReleaseReservationUnknownIDIsNotFound(t *testing.T) {
+	svc, _ := newService(t)
 
-	err := svc.ReleaseReservation(context.Background(), "invres_YOK")
+	err := svc.ReleaseReservation(context.Background(), "invres_MISSING")
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestReleaseReservationOnaylanmisConflict onaylanmış bir rezervasyonun geri
-// alınamayacağını doğrular; stok fiziksel olarak düşülmüştür.
-func TestReleaseReservationOnaylanmisConflict(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestReleaseReservationConfirmedIsConflict proves a confirmed reservation
+// cannot be taken back; the stock has been physically deducted.
+func TestReleaseReservationConfirmedIsConflict(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 7, 0)
 	store.seedReservation(resID, itemID, locA, 3, models.ReservationConfirmed)
@@ -525,11 +521,12 @@ func TestReleaseReservationOnaylanmisConflict(t *testing.T) {
 	assert.Equal(t, int64(7), store.level(itemID, locA).StockedQuantity)
 }
 
-// TestReleaseReservationTutarsizDurumInternal rezerve adedin rezervasyondan
-// küçük olduğu bozuk veride sessizce sıfıra kırpılmadığını, hata dönüldüğünü
-// doğrular. Kırpma, veri tutarsızlığını kalıcı olarak gizlerdi.
-func TestReleaseReservationTutarsizDurumInternal(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestReleaseReservationInconsistentStateIsInternal proves that on corrupt data,
+// where the reserved quantity is smaller than the reservation, the quantity is
+// not silently clipped to zero and an error comes back. Clipping would hide the
+// inconsistency for good.
+func TestReleaseReservationInconsistentStateIsInternal(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 1)
 	store.seedReservation(resID, itemID, locA, 5, models.ReservationActive)
@@ -540,48 +537,48 @@ func TestReleaseReservationTutarsizDurumInternal(t *testing.T) {
 	assert.Equal(t, errors.KindInternal, errors.KindOf(err))
 	assert.Equal(t, service.CodeInconsistentState, errors.CodeOf(err))
 	assert.Equal(t, models.ReservationActive, store.reservation(resID).Status,
-		"hata durumunda rezervasyon durumu değişmemeli")
+		"on an error the reservation's status must not change")
 }
 
-// TestConfirmReservationStoktanDuser onayın hem fiziksel hem rezerve adedi
-// düşürdüğünü, satılabilir adedi ise DEĞİŞTİRMEDİĞİNİ doğrular.
-func TestConfirmReservationStoktanDuser(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestConfirmReservationDeductsStock proves the confirmation lowers both the
+// physical and the reserved quantity and DOES NOT CHANGE the sellable quantity.
+func TestConfirmReservationDeductsStock(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 4)
 	store.seedReservation(resID, itemID, locA, 4, models.ReservationActive)
-	oncekiAvailable := store.level(itemID, locA).Available()
+	availableBefore := store.level(itemID, locA).Available()
 
 	require.NoError(t, svc.ConfirmReservation(context.Background(), resID, testSaleOrderID))
 
 	level := store.level(itemID, locA)
 	assert.Equal(t, int64(6), level.StockedQuantity)
 	assert.Zero(t, level.ReservedQuantity)
-	assert.Equal(t, oncekiAvailable, level.Available(),
-		"onay satılabilir adedi değiştirmemeli; adet zaten söz verilmişti")
+	assert.Equal(t, availableBefore, level.Available(),
+		"the confirmation must not change the sellable quantity; the units had already been promised")
 	assert.Equal(t, models.ReservationConfirmed, store.reservation(resID).Status)
 }
 
-// TestConfirmReservationIdempotent onayın ikinci kez çağrılabildiğini ve
-// stoğu ikinci kez düşürmediğini doğrular.
+// TestConfirmReservationIdempotent proves the confirmation can be called a
+// second time and does not deduct the stock a second time.
 func TestConfirmReservationIdempotent(t *testing.T) {
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 4)
 	store.seedReservation(resID, itemID, locA, 4, models.ReservationActive)
 
 	require.NoError(t, svc.ConfirmReservation(context.Background(), resID, testSaleOrderID))
-	yazmaSayisi := store.updateLevelCalls
+	writes := store.updateLevelCalls
 
 	require.NoError(t, svc.ConfirmReservation(context.Background(), resID, testSaleOrderID))
 	assert.Equal(t, int64(6), store.level(itemID, locA).StockedQuantity)
-	assert.Equal(t, yazmaSayisi, store.updateLevelCalls)
+	assert.Equal(t, writes, store.updateLevelCalls)
 }
 
-// TestConfirmReservationSerbestBirakilmisConflict serbest bırakılmış bir
-// rezervasyonun onaylanamayacağını doğrular.
-func TestConfirmReservationSerbestBirakilmisConflict(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestConfirmReservationReleasedIsConflict proves a released reservation cannot
+// be confirmed.
+func TestConfirmReservationReleasedIsConflict(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 0)
 	store.seedReservation(resID, itemID, locA, 4, models.ReservationReleased)
@@ -593,16 +590,16 @@ func TestConfirmReservationSerbestBirakilmisConflict(t *testing.T) {
 	assert.Equal(t, int64(10), store.level(itemID, locA).StockedQuantity)
 }
 
-// TestReserveReleaseReserveDongusu telafiden sonra stoğun gerçekten yeniden
-// satılabilir olduğunu doğrular. Faz 6'da bir saga başarısız olup yeniden
-// denendiğinde bu döngü yaşanır.
-func TestReserveReleaseReserveDongusu(t *testing.T) {
+// TestReserveReleaseReserveCycle proves the stock really is sellable again
+// after the compensation. This cycle happens when a saga fails and is retried
+// in Phase 6.
+func TestReserveReleaseReserveCycle(t *testing.T) {
 	ctx := context.Background()
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 1, 0)
 
-	ilk, err := svc.Reserve(ctx, service.ReserveInput{
+	first, err := svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: itemID, LocationID: locA, Quantity: 1,
 	})
 	require.NoError(t, err)
@@ -610,22 +607,22 @@ func TestReserveReleaseReserveDongusu(t *testing.T) {
 	_, err = svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: itemID, LocationID: locA, Quantity: 1,
 	})
-	require.Error(t, err, "son adet ayrılmışken ikinci rezervasyon olmamalı")
+	require.Error(t, err, "with the last unit set aside there must be no second reservation")
 
-	require.NoError(t, svc.ReleaseReservation(ctx, ilk.ID))
+	require.NoError(t, svc.ReleaseReservation(ctx, first.ID))
 
-	ikinci, err := svc.Reserve(ctx, service.ReserveInput{
+	second, err := svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: itemID, LocationID: locA, Quantity: 1,
 	})
-	require.NoError(t, err, "telafiden sonra adet yeniden satılabilir olmalı")
-	assert.NotEqual(t, ilk.ID, ikinci.ID)
+	require.NoError(t, err, "after the compensation the unit has to be sellable again")
+	assert.NotEqual(t, first.ID, second.ID)
 	assert.Equal(t, int64(1), store.level(itemID, locA).ReservedQuantity)
 }
 
-// TestDeleteInventoryItemAktifRezervasyonVarsaConflict söz verilmiş stoğu olan
-// bir kalemin silinemediğini doğrular.
-func TestDeleteInventoryItemAktifRezervasyonVarsaConflict(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestDeleteInventoryItemWithActiveReservationIsConflict proves an item with
+// promised stock cannot be deleted.
+func TestDeleteInventoryItemWithActiveReservationIsConflict(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 2)
 	store.seedReservation(resID, itemID, locA, 2, models.ReservationActive)
@@ -637,14 +634,14 @@ func TestDeleteInventoryItemAktifRezervasyonVarsaConflict(t *testing.T) {
 	assert.Equal(t, service.CodeItemHasReservations, errors.CodeOf(err))
 
 	_, getErr := svc.GetInventoryItem(context.Background(), itemID)
-	require.NoError(t, getErr, "kalem silinmemiş olmalı")
+	require.NoError(t, getErr, "the item must not have been deleted")
 }
 
-// TestDeleteInventoryItemSeviyeleriyleSiler sonlanmış rezervasyonların silmeyi
-// engellemediğini ve kalemin seviyeleriyle birlikte silindiğini doğrular.
-func TestDeleteInventoryItemSeviyeleriyleSiler(t *testing.T) {
+// TestDeleteInventoryItemDeletesItsLevels proves finished reservations do not
+// block the deletion and the item is deleted together with its levels.
+func TestDeleteInventoryItemDeletesItsLevels(t *testing.T) {
 	ctx := context.Background()
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 0)
 	store.seedReservation(resID, itemID, locA, 2, models.ReservationReleased)
@@ -653,13 +650,13 @@ func TestDeleteInventoryItemSeviyeleriyleSiler(t *testing.T) {
 
 	_, err := svc.GetInventoryItem(ctx, itemID)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
-	assert.Empty(t, store.level(itemID, locA).ID, "seviyeler de silinmeli")
+	assert.Empty(t, store.level(itemID, locA).ID, "the levels have to be deleted too")
 }
 
-// TestCreateInventoryItemVarsayilanSevkiyatGerektirir alan gönderilmediğinde
-// kalemin sevkiyat gerektirdiğinin varsayıldığını doğrular.
-func TestCreateInventoryItemVarsayilanSevkiyatGerektirir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestCreateInventoryItemRequiresShippingByDefault proves that when the field is
+// not sent, the item is assumed to require shipping.
+func TestCreateInventoryItemRequiresShippingByDefault(t *testing.T) {
+	svc, _ := newService(t)
 
 	item, err := svc.CreateInventoryItem(context.Background(), service.CreateInventoryItemInput{
 		SKU: " SKU-BOSLUKLU ",
@@ -667,27 +664,27 @@ func TestCreateInventoryItemVarsayilanSevkiyatGerektirir(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, item.RequiresShipping)
-	assert.Equal(t, "SKU-BOSLUKLU", item.SKU, "sku'daki boşluklar kırpılmalı")
+	assert.Equal(t, "SKU-BOSLUKLU", item.SKU, "the spaces around the sku have to be trimmed")
 	assert.Contains(t, item.ID, models.InventoryItemIDPrefix)
 }
 
-// TestCreateInventoryItemSevkiyatKapatilabilir açıkça false gönderilirse
-// varsayılanın ezildiğini doğrular.
-func TestCreateInventoryItemSevkiyatKapatilabilir(t *testing.T) {
-	svc, _ := yeniServis(t)
-	sevkiyatYok := false
+// TestCreateInventoryItemShippingCanBeTurnedOff proves an explicit false
+// overrides the default.
+func TestCreateInventoryItemShippingCanBeTurnedOff(t *testing.T) {
+	svc, _ := newService(t)
+	noShipping := false
 
 	item, err := svc.CreateInventoryItem(context.Background(), service.CreateInventoryItemInput{
-		SKU: "DIJITAL-1", RequiresShipping: &sevkiyatYok,
+		SKU: "DIJITAL-1", RequiresShipping: &noShipping,
 	})
 
 	require.NoError(t, err)
 	assert.False(t, item.RequiresShipping)
 }
 
-// TestCreateInventoryItemBosSKUInvalid boş SKU'nun reddedildiğini doğrular.
-func TestCreateInventoryItemBosSKUInvalid(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestCreateInventoryItemEmptySKUIsInvalid proves an empty SKU is refused.
+func TestCreateInventoryItemEmptySKUIsInvalid(t *testing.T) {
+	svc, _ := newService(t)
 
 	_, err := svc.CreateInventoryItem(context.Background(), service.CreateInventoryItemInput{SKU: "   "})
 
@@ -695,28 +692,29 @@ func TestCreateInventoryItemBosSKUInvalid(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestCreateStockLocationUlkeKoduDogrulanir ülke kodunun iki harfe
-// normalleştirildiğini ve geçersizinin reddedildiğini doğrular.
-func TestCreateStockLocationUlkeKoduDogrulanir(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestCreateStockLocationValidatesCountryCode proves the country code is
+// normalized to two letters and an invalid one is refused.
+func TestCreateStockLocationValidatesCountryCode(t *testing.T) {
+	svc, _ := newService(t)
 
 	loc, err := svc.CreateStockLocation(context.Background(), service.CreateStockLocationInput{
-		Name: "Merkez Depo", CountryCode: "tr", City: "İstanbul",
+		Name: "Merkez Depo", CountryCode: "tr", City: "Istanbul",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "TR", loc.CountryCode)
 	assert.Contains(t, loc.ID, models.StockLocationIDPrefix)
 
 	_, err = svc.CreateStockLocation(context.Background(), service.CreateStockLocationInput{
-		Name: "Hatalı", CountryCode: "TUR",
+		Name: "Faulty", CountryCode: "TUR",
 	})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestCreateStockLocationBosAdInvalid adsız lokasyonun reddedildiğini doğrular.
-func TestCreateStockLocationBosAdInvalid(t *testing.T) {
-	svc, _ := yeniServis(t)
+// TestCreateStockLocationEmptyNameIsInvalid proves a location without a name is
+// refused.
+func TestCreateStockLocationEmptyNameIsInvalid(t *testing.T) {
+	svc, _ := newService(t)
 
 	_, err := svc.CreateStockLocation(context.Background(), service.CreateStockLocationInput{Name: " "})
 
@@ -724,23 +722,22 @@ func TestCreateStockLocationBosAdInvalid(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestListSayfalamaSinirlari limit/offset doğrulamasını ve varsayılanı
-// sınar.
-func TestListSayfalamaSinirlari(t *testing.T) {
+// TestListPaginationLimits tests the limit/offset validation and the default.
+func TestListPaginationLimits(t *testing.T) {
 	ctx := context.Background()
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	for _, id := range []string{"sloc_1", "sloc_2", "sloc_3"} {
 		store.locations[id] = models.StockLocation{ID: id, Name: id}
 	}
 
-	sayfa, count, err := svc.ListStockLocations(ctx, service.ListStockLocationsInput{Page: service.Page{Limit: 2}})
+	page, count, err := svc.ListStockLocations(ctx, service.ListStockLocationsInput{Page: service.Page{Limit: 2}})
 	require.NoError(t, err)
-	assert.Len(t, sayfa, 2)
-	assert.Equal(t, int64(3), count, "count sayfayı değil toplamı bildirmeli")
+	assert.Len(t, page, 2)
+	assert.Equal(t, int64(3), count, "count has to report the total, not the page")
 
-	sayfa, _, err = svc.ListStockLocations(ctx, service.ListStockLocationsInput{Page: service.Page{Limit: 2, Offset: 2}})
+	page, _, err = svc.ListStockLocations(ctx, service.ListStockLocationsInput{Page: service.Page{Limit: 2, Offset: 2}})
 	require.NoError(t, err)
-	assert.Len(t, sayfa, 1)
+	assert.Len(t, page, 1)
 
 	_, _, err = svc.ListStockLocations(ctx, service.ListStockLocationsInput{Page: service.Page{Limit: service.MaxLimit + 1}})
 	require.Error(t, err)
@@ -751,10 +748,10 @@ func TestListSayfalamaSinirlari(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestListInventoryItemsFiltreler SKU ve sevkiyat filtrelerini sınar.
-func TestListInventoryItemsFiltreler(t *testing.T) {
+// TestListInventoryItemsFilters tests the SKU and shipping filters.
+func TestListInventoryItemsFilters(t *testing.T) {
 	ctx := context.Background()
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	store.seedItem("invitem_1", "SKU-1")
 	store.seedItem("invitem_2", "SKU-2")
 
@@ -765,17 +762,17 @@ func TestListInventoryItemsFiltreler(t *testing.T) {
 	assert.Equal(t, "invitem_2", items[0].ID)
 	assert.Equal(t, int64(1), count)
 
-	sevkiyatYok := false
-	items, _, err = svc.ListInventoryItems(ctx, service.ListInventoryItemsInput{RequiresShipping: &sevkiyatYok})
+	noShipping := false
+	items, _, err = svc.ListInventoryItems(ctx, service.ListInventoryItemsInput{RequiresShipping: &noShipping})
 	require.NoError(t, err)
 	assert.Empty(t, items)
 }
 
-// TestAdjustInventoryTasmayiYakalar int64 sınırını aşan bir düzeltmenin sessiz
-// sarma yerine hata ürettiğini doğrular. Sarma olsaydı sonuç negatife döner ve
-// tüm adet kontrollerini atlatırdı.
-func TestAdjustInventoryTasmayiYakalar(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestAdjustInventoryCatchesOverflow proves a correction past the int64 limit
+// produces an error instead of silently wrapping. Had it wrapped, the result
+// would turn negative and slip past every quantity check.
+func TestAdjustInventoryCatchesOverflow(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, math.MaxInt64, 0)
 
@@ -786,10 +783,11 @@ func TestAdjustInventoryTasmayiYakalar(t *testing.T) {
 	assert.Equal(t, int64(math.MaxInt64), store.level(itemID, locA).StockedQuantity)
 }
 
-// TestConfirmReservationFizikselStokYetmezseInternal onayın fiziksel stoğu
-// negatife düşüreceği bozuk durumda yazma yapmadığını doğrular.
-func TestConfirmReservationFizikselStokYetmezseInternal(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestConfirmReservationInsufficientPhysicalStockIsInternal proves the
+// confirmation writes nothing in the corrupt state where it would take the
+// physical stock negative.
+func TestConfirmReservationInsufficientPhysicalStockIsInternal(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 2, 5)
 	store.seedReservation(resID, itemID, locA, 3, models.ReservationActive)
@@ -802,11 +800,12 @@ func TestConfirmReservationFizikselStokYetmezseInternal(t *testing.T) {
 	assert.Equal(t, int64(2), store.level(itemID, locA).StockedQuantity)
 }
 
-// TestConfirmReservationRezerveAdetYetmezseInternal rezerve adedin
-// rezervasyondan küçük olduğu bozuk durumda onayın reddedildiğini doğrular.
-// Fiziksel stok burada YETERLİDİR; hatayı doğuran yalnızca rezerve adettir.
-func TestConfirmReservationRezerveAdetYetmezseInternal(t *testing.T) {
-	svc, store := yeniServis(t)
+// TestConfirmReservationInsufficientReservedQuantityIsInternal proves the
+// confirmation is refused in the corrupt state where the reserved quantity is
+// smaller than the reservation. The physical stock IS ENOUGH here; only the
+// reserved quantity causes the error.
+func TestConfirmReservationInsufficientReservedQuantityIsInternal(t *testing.T) {
+	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 1)
 	store.seedReservation(resID, itemID, locA, 5, models.ReservationActive)
@@ -819,17 +818,17 @@ func TestConfirmReservationRezerveAdetYetmezseInternal(t *testing.T) {
 	assert.Equal(t, int64(10), store.level(itemID, locA).StockedQuantity)
 }
 
-// TestKilitSirasiKalemdenSeviyeye seviyeye dokunan HER akışın kilitleri aynı
-// sırada — önce kalem, sonra seviye — aldığını doğrular.
+// TestLockOrderItemBeforeLevel proves EVERY flow that touches a level takes the
+// locks in the same order — the item first, then the level.
 //
-// Sıra bir eşzamanlılık sözleşmesidir: bir akış seviyeyi kalemden önce
-// kilitlerse, kalemi önce kilitleyen bir akışla karşılaştığında veritabanı
-// kilitlenmeyi (deadlock) saptayıp işlemlerden birini öldürür. İhlal gerçek
-// veritabanında yalnızca YARIŞ altında görünür; burada doğrudan okunur.
-func TestKilitSirasiKalemdenSeviyeye(t *testing.T) {
-	akislar := []struct {
-		ad    string
-		cagir func(ctx context.Context, svc *service.Service) error
+// The order is a concurrency contract: if a flow locked the level before the
+// item, then on meeting a flow that locks the item first, the database would
+// detect the deadlock and kill one of the transactions. Against the real
+// database a violation shows only under a RACE; here it is read directly.
+func TestLockOrderItemBeforeLevel(t *testing.T) {
+	flows := []struct {
+		name string
+		call func(ctx context.Context, svc *service.Service) error
 	}{
 		{"SetInventoryLevel", func(ctx context.Context, svc *service.Service) error {
 			_, err := svc.SetInventoryLevel(ctx, itemID, locA, 12)
@@ -853,20 +852,20 @@ func TestKilitSirasiKalemdenSeviyeye(t *testing.T) {
 		}},
 	}
 
-	for _, akis := range akislar {
-		t.Run(akis.ad, func(t *testing.T) {
-			svc, store := yeniServis(t)
+	for _, flow := range flows {
+		t.Run(flow.name, func(t *testing.T) {
+			svc, store := newService(t)
 			store.seedItem(itemID, "SKU-1")
 			store.seedLevel(itemID, locA, 10, 5)
 			store.seedReservation(resID, itemID, locA, 5, models.ReservationActive)
 
-			require.NoError(t, akis.cagir(context.Background(), svc))
+			require.NoError(t, flow.call(context.Background(), svc))
 
-			kilitler := store.kilitSirasi()
-			require.Contains(t, kilitler, "item", "akış kalem kilidini hiç almamış: %v", kilitler)
-			require.Contains(t, kilitler, "level", "akış seviye kilidini hiç almamış: %v", kilitler)
-			assert.Less(t, slices.Index(kilitler, "item"), slices.Index(kilitler, "level"),
-				"kalem kilidi seviye kilidinden ÖNCE alınmalı, alınan sıra: %v", kilitler)
+			locks := store.lockOrder()
+			require.Contains(t, locks, "item", "the flow never took the item lock: %v", locks)
+			require.Contains(t, locks, "level", "the flow never took the level lock: %v", locks)
+			assert.Less(t, slices.Index(locks, "item"), slices.Index(locks, "level"),
+				"the item lock has to be taken BEFORE the level lock, order taken: %v", locks)
 		})
 	}
 }

@@ -1,5 +1,3 @@
-// This file is English because ADR 0012 makes language a property of the FILE
-// and every new file is English; service_test.go beside it stays Turkish.
 package service_test
 
 import (

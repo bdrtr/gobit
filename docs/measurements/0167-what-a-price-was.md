@@ -85,7 +85,7 @@ caller of a one-level helper, to take a snapshot; `TestEveryWriterLeavesASnapsho
 walks the eight writes on a real server.
 
 One write takes none on purpose: a rule written to a DELETED price, which the
-foreign key admits (`TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz`) and which
+foreign key admits (`TestARuleCanBeWrittenToADeletedPriceButIsUnreachable`) and which
 changes nothing the ladder reads.
 
 Triggers were weighed as the stronger guarantee — a direct SQL write could not

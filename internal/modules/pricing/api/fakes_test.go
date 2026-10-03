@@ -11,11 +11,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/service"
 )
 
-// memRepo [service.Repository]'nin bellek içi uygulamasıdır.
+// memRepo is an in-memory implementation of [service.Repository].
 //
-// HTTP katmanı testleri gerçek servisi kullanır; yalnızca depo taklit edilir.
-// Böylece doğrulama, hata sınıflandırması ve zarf biçimi uçtan uca sınanır ve
-// handler'ların status kodu seçmediği (core/http'nin seçtiği) kanıtlanabilir.
+// The HTTP layer tests use the real service; only the repository is faked.
+// That way validation, error classification and envelope shape are tested end
+// to end, and it can be proven that handlers do not choose the status code
+// (core/http does).
 type memRepo struct {
 	sets   map[string]models.PriceSet
 	prices map[string][]models.Price
@@ -31,7 +32,7 @@ type memRepo struct {
 
 var _ service.Repository = (*memRepo)(nil)
 
-// newMemRepo boş bir bellek içi depo üretir.
+// newMemRepo builds an empty in-memory repository.
 func newMemRepo() *memRepo {
 	return &memRepo{
 		sets:   map[string]models.PriceSet{},
@@ -50,8 +51,9 @@ func (m *memRepo) CreatePriceSet(
 	set := models.PriceSet{ID: id, CreatedAt: now, UpdatedAt: now}
 	m.sets[id] = set
 
-	// Gerçek depo kabı ve fiyatlarını TEK işlemde yazar; sahte depo aynı sözü
-	// fiyat yazımı hata verdiğinde kabı geri alarak tutar.
+	// The real repository writes the container and its prices in ONE
+	// transaction; the fake keeps the same promise by taking the container back
+	// when the price write fails.
 	if _, err := m.ReplacePrices(ctx, id, prices, func() time.Time { return now }); err != nil {
 		delete(m.sets, id)
 		return models.PriceSet{}, err
@@ -62,7 +64,7 @@ func (m *memRepo) CreatePriceSet(
 func (m *memRepo) GetPriceSet(_ context.Context, id string) (models.PriceSet, error) {
 	set, ok := m.sets[id]
 	if !ok {
-		return models.PriceSet{}, errors.NotFound("price_set_not_found", "price set bulunamadı: %s", id)
+		return models.PriceSet{}, errors.NotFound("price_set_not_found", "price set not found: %s", id)
 	}
 	return set, nil
 }
@@ -96,7 +98,7 @@ func (m *memRepo) GetPriceSetsByIDs(_ context.Context, ids []string) ([]models.P
 
 func (m *memRepo) DeletePriceSet(_ context.Context, id string, _ time.Time) error {
 	if _, ok := m.sets[id]; !ok {
-		return errors.NotFound("price_set_not_found", "price set bulunamadı: %s", id)
+		return errors.NotFound("price_set_not_found", "price set not found: %s", id)
 	}
 	delete(m.sets, id)
 	delete(m.prices, id)
@@ -170,7 +172,7 @@ func (m *memRepo) ReplacePrices(
 ) ([]models.Price, error) {
 	now := clock()
 	if _, ok := m.sets[priceSetID]; !ok {
-		return nil, errors.NotFound("price_set_not_found", "price set bulunamadı: %s", priceSetID)
+		return nil, errors.NotFound("price_set_not_found", "price set not found: %s", priceSetID)
 	}
 
 	written := make([]models.Price, 0, len(prices))
@@ -196,7 +198,7 @@ func (m *memRepo) GetPrice(_ context.Context, id string) (models.Price, error) {
 			}
 		}
 	}
-	return models.Price{}, errors.NotFound("price_not_found", "fiyat bulunamadı: %s", id)
+	return models.Price{}, errors.NotFound("price_not_found", "price not found: %s", id)
 }
 
 func (m *memRepo) CreatePriceRule(
@@ -217,7 +219,7 @@ func (m *memRepo) GetPriceRule(_ context.Context, id string) (models.PriceRule, 
 			}
 		}
 	}
-	return models.PriceRule{}, errors.NotFound("price_rule_not_found", "kural bulunamadı: %s", id)
+	return models.PriceRule{}, errors.NotFound("price_rule_not_found", "rule not found: %s", id)
 }
 
 func (m *memRepo) ListPriceRules(_ context.Context, priceID string) ([]models.PriceRule, error) {
@@ -233,7 +235,7 @@ func (m *memRepo) DeletePriceRule(_ context.Context, id string, _ time.Time) err
 			}
 		}
 	}
-	return errors.NotFound("price_rule_not_found", "kural bulunamadı: %s", id)
+	return errors.NotFound("price_rule_not_found", "rule not found: %s", id)
 }
 
 func (m *memRepo) CreatePriceList(
@@ -249,7 +251,7 @@ func (m *memRepo) CreatePriceList(
 func (m *memRepo) GetPriceList(_ context.Context, id string) (models.PriceList, error) {
 	list, ok := m.lists[id]
 	if !ok {
-		return models.PriceList{}, errors.NotFound("price_list_not_found", "fiyat listesi bulunamadı: %s", id)
+		return models.PriceList{}, errors.NotFound("price_list_not_found", "price list not found: %s", id)
 	}
 	return list, nil
 }
@@ -279,7 +281,7 @@ func (m *memRepo) UpdatePriceList(
 	now := clock()
 	existing, ok := m.lists[list.ID]
 	if !ok {
-		return models.PriceList{}, errors.NotFound("price_list_not_found", "fiyat listesi bulunamadı: %s", list.ID)
+		return models.PriceList{}, errors.NotFound("price_list_not_found", "price list not found: %s", list.ID)
 	}
 	list.CreatedAt = existing.CreatedAt
 	list.UpdatedAt = now
@@ -289,7 +291,7 @@ func (m *memRepo) UpdatePriceList(
 
 func (m *memRepo) DeletePriceList(_ context.Context, id string, _ time.Time) error {
 	if _, ok := m.lists[id]; !ok {
-		return errors.NotFound("price_list_not_found", "fiyat listesi bulunamadı: %s", id)
+		return errors.NotFound("price_list_not_found", "price list not found: %s", id)
 	}
 	delete(m.lists, id)
 	return nil

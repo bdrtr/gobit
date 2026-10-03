@@ -54,7 +54,7 @@ func (s *Service) setInventoryLevel(
 	}
 	if stockedQty < 0 {
 		return models.InventoryLevel{}, errors.Invalid(CodeInvalidInput,
-			"stok adedi negatif olamaz: %d", stockedQty)
+			"the stocked quantity cannot be negative: %d", stockedQty)
 	}
 
 	var out models.InventoryLevel
@@ -68,8 +68,9 @@ func (s *Service) setInventoryLevel(
 
 		level, err := s.store.LockInventoryLevel(ctx, itemID, locationID)
 		if err != nil {
-			// Kalem bu noktada kilitli ve var olduğu doğrulanmıştır; buradaki
-			// tek "bulunamadı" olasılığı seviyenin henüz olmamasıdır.
+			// The item is locked at this point and its existence has been
+			// verified; the only "not found" possible here is that the level
+			// does not exist yet.
 			if !errors.HasKind(err, errors.KindNotFound) {
 				return err
 			}
@@ -90,7 +91,7 @@ func (s *Service) setInventoryLevel(
 		}
 		if stockedQty < level.ReservedQuantity {
 			return errors.Conflict(CodeInsufficientStock,
-				"fiziksel adet (%d) rezerve adedin (%d) altına indirilemez; önce rezervasyonları serbest bırakın",
+				"the physical quantity (%d) cannot be lowered below the reserved quantity (%d); release the reservations first",
 				stockedQty, level.ReservedQuantity)
 		}
 
@@ -139,7 +140,7 @@ func stockUnmoved(read *int64, current int64, locationID string) error {
 // wrong, and the admin endpoint would have to invent one for every request.
 func (s *Service) AdjustInventory(ctx context.Context, itemID, locationID string, delta int64) (models.InventoryLevel, error) {
 	if delta == 0 {
-		return models.InventoryLevel{}, errors.Invalid(CodeInvalidInput, "delta sıfır olamaz")
+		return models.InventoryLevel{}, errors.Invalid(CodeInvalidInput, "delta cannot be zero")
 	}
 
 	return s.adjust(ctx, itemID, locationID, delta, models.MovementAdjustment)
@@ -200,13 +201,13 @@ func (s *Service) adjust(
 		if err != nil {
 			return err
 		}
-		// Tek kontrol iki kuralı birden karşılar: rezerve adet veritabanı
-		// kısıtı gereği asla negatif olamadığı için "newStocked >= reserved"
-		// koşulu "newStocked >= 0" koşulunu da kapsar. İkinci bir if yazmak,
-		// hiçbir girdinin ulaşamayacağı ölü bir dal bırakırdı.
+		// One check covers both rules: since the reserved quantity can never
+		// be negative, by the database constraint, the condition
+		// "newStocked >= reserved" also covers "newStocked >= 0". Writing a
+		// second if would leave a dead branch that no input could reach.
 		if newStocked < level.ReservedQuantity {
 			return errors.Conflict(CodeInsufficientStock,
-				"stok bu kadar düşürülemez: sonuç %d olurdu (mevcut %d, rezerve %d); satılabilir adet negatife düşemez",
+				"the stock cannot be lowered that far: the result would be %d (current %d, reserved %d); the sellable quantity cannot go negative",
 				newStocked, level.StockedQuantity, level.ReservedQuantity)
 		}
 
@@ -223,24 +224,26 @@ func (s *Service) adjust(
 	return out, nil
 }
 
-// ListInventoryLevels kalemin tüm lokasyonlardaki stok seviyelerini döner.
-// Kalem yoksa errors.NotFound döner; seviyesi olmayan kalem için boş dilim.
+// ListInventoryLevels returns the item's stock levels across every location.
+// When the item does not exist it returns errors.NotFound; for an item with no
+// level, an empty slice.
 func (s *Service) ListInventoryLevels(ctx context.Context, itemID string) ([]models.InventoryLevel, error) {
 	if err := requireText("inventory_item_id", itemID); err != nil {
 		return nil, err
 	}
-	// Varlık kontrolü, olmayan bir kalem için "stok yok" yerine "kalem yok"
-	// denmesini sağlar; ikisi çağıran için farklı şeylerdir.
+	// The existence check makes a missing item answer "no such item" rather
+	// than "no stock"; the two mean different things to the caller.
 	if _, err := s.store.GetInventoryItem(ctx, itemID); err != nil {
 		return nil, err
 	}
 	return s.store.ListInventoryLevels(ctx, itemID)
 }
 
-// AvailableQuantity kalemin TÜM lokasyonlardaki satılabilir toplamını döner.
+// AvailableQuantity returns the item's sellable total across ALL locations.
 //
-// Toplam, her seviyenin stocked - reserved farkından türetilir. Kalem yoksa
-// errors.NotFound döner; hiç seviyesi olmayan kalem için 0.
+// The total is derived from each level's stocked - reserved difference. When
+// the item does not exist it returns errors.NotFound; for an item with no level
+// at all, 0.
 func (s *Service) AvailableQuantity(ctx context.Context, itemID string) (int64, error) {
 	levels, err := s.ListInventoryLevels(ctx, itemID)
 	if err != nil {
@@ -254,17 +257,18 @@ func (s *Service) AvailableQuantity(ctx context.Context, itemID string) (int64, 
 	return total, nil
 }
 
-// AvailableQuantitiesByLocation satılabilir adedi kalem ve LOKASYON kırılımıyla
-// döner.
+// AvailableQuantitiesByLocation returns the sellable quantity broken down by
+// item and LOCATION.
 //
-// # Neden kırılım, süzülmüş toplam değil
+// # Why a breakdown and not a filtered total
 //
-// Bunu isteyen okuma Query katmanından (ADR 0004) geçen bir vitrin okumasıdır
-// ve bir GENİŞLETME süzgeç taşımaz: sağlayıcıya kimlikler ve alan adları
-// verilir, "hangi lokasyonları sayabilirsin" verilmez. Dolayısıyla hepsi
-// döner ve çağıran, satış kanalının sevk ettiklerini toplar (ADR 0092).
+// The read that asks for this is a storefront read passing through the Query
+// layer (ADR 0004), and an EXPANSION carries no filter: the provider is given
+// IDs and field names, not "which locations you may count". So all of them come
+// back, and the caller sums the ones the sales channel ships from (ADR 0092).
 //
-// Boş kalan lokasyon haritada YOKTUR; olmayan bir lokasyon sıfır katkı verir.
+// A location left empty is ABSENT from the map; a missing location contributes
+// zero.
 func (s *Service) AvailableQuantitiesByLocation(
 	ctx context.Context, itemIDs []string,
 ) (map[string]map[string]int64, error) {
@@ -275,11 +279,11 @@ func (s *Service) AvailableQuantitiesByLocation(
 	return s.store.AvailableByItemLocation(ctx, itemIDs)
 }
 
-// AvailableQuantities verilen kalemlerin satılabilir toplamlarını TEK sorguda
-// döner. Hiç seviyesi olmayan kalem sonuçta sıfırla yer alır.
+// AvailableQuantities returns the sellable totals of the given items in ONE
+// query. An item with no level at all appears in the result with zero.
 //
-// Query sağlayıcısı bunu kullanır: product'ın mağaza listelemesi, kaç ürün
-// olursa olsun stok için tek tur yapar (N+1 yok).
+// The Query provider uses it: product's storefront listing makes a single round
+// trip for stock however many products there are (no N+1).
 func (s *Service) AvailableQuantities(ctx context.Context, itemIDs []string) (map[string]int64, error) {
 	if len(itemIDs) == 0 {
 		return map[string]int64{}, nil
@@ -297,48 +301,53 @@ func (s *Service) AvailableQuantities(ctx context.Context, itemIDs []string) (ma
 	return out, nil
 }
 
-// LocationsWithStock kalemden EN AZ quantity adet ayrılabilen lokasyonların
-// kimliklerini döner.
+// LocationsWithStock returns the IDs of the locations from which AT LEAST
+// quantity units of the item can be reserved.
 //
-// "Ayrılabilir" tanımı [Service.Reserve] ile AYNIDIR: her seviyenin
-// [models.InventoryLevel.Available] değeri, yani stocked - reserved. Liste,
-// [Service.AvailableQuantity]'nin topladığı seviyelerin ta kendisinden
-// süzülür; ikinci bir "müsait" tanımı yazmak (örneğin yalnızca fiziksel adede
-// bakan ayrı bir sorgu) listede görünen ama Reserve'de errors.Conflict alan
-// lokasyonlar üretirdi.
+// "Reservable" is defined THE SAME way as in [Service.Reserve]: each level's
+// [models.InventoryLevel.Available] value, that is stocked - reserved. The list
+// is filtered from the very levels [Service.AvailableQuantity] sums; writing a
+// second definition of "available" (a separate query that looks only at the
+// physical quantity, for example) would produce locations that show up in the
+// list but get errors.Conflict from Reserve.
 //
-// # Sıra bir OLGUDUR, politika değil
+// # The order is a FACT, not a policy
 //
-// Sonuç LOKASYON KİMLİĞİNE göre artan sıradadır ve bu sıra DETERMİNİSTİKTİR.
-// "En çok stoklu önce" gibi bir sıra cazip görünür ama yanlıştır: hangi
-// depodan gönderileceği bir KARGO KARARIDIR ve fulfillment'a aittir; bu metot
-// yalnızca bir stok olgusu döner. Sıraya politika saklamak, kararı hiç
-// kimsenin bakmadığı bir yerde — stok modülünün sıralamasında — verirdi.
+// The result is in ascending order of LOCATION ID, and that order is
+// DETERMINISTIC. An order such as "most stocked first" looks tempting but is
+// wrong: which warehouse ships is a SHIPPING DECISION and belongs to
+// fulfillment; this method returns only a stock fact. Hiding policy in the
+// order would make the decision in a place nobody looks — the stock module's
+// sorting.
 //
-// # Sonuç bir ADAY listesidir
+// # The result is a list of CANDIDATES
 //
-// Liste kilitsiz okunur, dolayısıyla dönüş anında bayatlayabilir: araya giren
-// bir sepet son adedi alabilir. Yeterliliğin TEK yetkilisi, kararını işlem
-// içinde ve satır kilidi altında veren [Service.Reserve]'dir. Bu metot onun
-// yerine geçmez, yalnızca Reserve'ün DENENEBİLECEĞİ lokasyonları daraltır.
+// The list is read without locks, so it can be stale the moment it is
+// returned: a cart that comes in between can take the last unit. The ONE
+// authority on sufficiency is [Service.Reserve], which decides inside a
+// transaction and under the row lock. This method does not replace it; it only
+// narrows down the locations where Reserve CAN BE TRIED.
 //
-// Hiçbir lokasyon yetmiyorsa BOŞ dilim döner, hata değil: "yeterli stok yok"
-// bir arıza değil bir cevaptır ve çağıran onu kendi bağlamında (saga adımında)
-// Conflict'e çevirmeyi seçer. Kalem yoksa errors.NotFound döner; "stoğu yok"
-// ile "kendisi yok" çağıran için farklı durumlardır.
+// When no location is enough it returns an EMPTY slice, not an error: "not
+// enough stock" is an answer, not a fault, and the caller chooses to turn it
+// into a Conflict in its own context (in the saga step). When the item does not
+// exist it returns errors.NotFound; "it has no stock" and "it does not exist"
+// are different situations for the caller.
 //
-// quantity POZİTİF olmalıdır, aksi hâlde errors.Invalid döner. Sıfır ya da
-// negatif bir eşik, Reserve'ün doğrudan reddedeceği bir adet için lokasyon
-// listelemek olurdu: dönen her lokasyon rezervasyonda patlardı. Sessizce boş
-// liste dönmek ise çağıranın hatasını "stok yok" gibi göstererek gizlerdi.
+// quantity has to be POSITIVE, otherwise errors.Invalid is returned. A zero or
+// negative threshold would list locations for a quantity Reserve refuses
+// outright: every location returned would blow up at the reservation. Silently
+// returning an empty list, on the other hand, would hide the caller's mistake
+// by making it look like "no stock".
 func (s *Service) LocationsWithStock(ctx context.Context, itemID string, quantity int64) ([]string, error) {
 	if quantity <= 0 {
 		return nil, errors.Invalid(CodeInvalidInput,
-			"istenen adet pozitif olmalı: %d", quantity)
+			"the requested quantity has to be positive: %d", quantity)
 	}
 
-	// Kalem kimliğinin doğrulaması ve varlık kontrolü ListInventoryLevels'te
-	// yapılır; burada tekrarlamak aynı kuralın iki yere ayrışması olurdu.
+	// The item ID is validated and its existence checked in
+	// ListInventoryLevels; repeating that here would let the same rule drift
+	// apart in two places.
 	levels, err := s.ListInventoryLevels(ctx, itemID)
 	if err != nil {
 		return nil, err
@@ -350,56 +359,59 @@ func (s *Service) LocationsWithStock(ctx context.Context, itemID string, quantit
 			out = append(out, level.LocationID)
 		}
 	}
-	// Seviyeler (kalem, lokasyon) çiftinde benzersiz olduğu için listede
-	// tekrar oluşmaz; sıralamak tek başına yeterlidir.
+	// Levels are unique per (item, location) pair, so the list holds no
+	// duplicates; sorting alone is enough.
 	slices.Sort(out)
 	return out, nil
 }
 
-// ReserveInput bir rezervasyon isteğidir.
+// ReserveInput is a reservation request.
 type ReserveInput struct {
-	// InventoryItemID rezerve edilecek kalemdir; zorunludur.
+	// InventoryItemID is the item to reserve; required.
 	InventoryItemID string
-	// LocationID stoğun ayrılacağı lokasyondur; zorunludur.
+	// LocationID is the location the stock is set aside at; required.
 	LocationID string
-	// Quantity ayrılacak adettir; pozitif olmalıdır.
+	// Quantity is the number of units to set aside; it has to be positive.
 	Quantity int64
-	// LineItemID rezervasyonu isteyen sepet/sipariş satırıdır; isteğe bağlıdır.
-	// cart modülüne ait bir kimliktir, burada foreign key değildir.
+	// LineItemID is the cart/order line asking for the reservation; optional.
+	// It is an ID belonging to the cart module and is not a foreign key here.
 	LineItemID string
-	// Description isteğe bağlı serbest açıklamadır.
+	// Description is an optional free-text description.
 	Description string
-	// Purpose stoğun NİÇİN ayrıldığıdır; boş bırakılırsa
-	// [models.PurposeSale] okunur.
+	// Purpose is WHY the stock is set aside; left empty, it reads as
+	// [models.PurposeSale].
 	//
-	// Onayın yazacağı hareket sebebini belirleyen alan budur: mal ambardan
-	// çıktığında defter "satış" mı "yerine gönderim" mi olduğunu bu sözden
-	// öğrenir. Sebebi onaya parametre olarak vermek reddedildi — onay saga'dan,
-	// yeniden denemeden ve kurtarma yolundan çağrılıyor ve üçüncüsünde
-	// çağıranın elinde o bilgi yok.
+	// This is the field that decides the movement reason the confirmation will
+	// write: when the goods leave the warehouse, the ledger learns from this
+	// promise whether it was a "sale" or a "replacement". Passing the reason to
+	// the confirmation as a parameter was rejected — the confirmation is called
+	// from the saga, from a retry and from the recovery path, and in the third
+	// the caller does not have that information.
 	Purpose models.ReservationPurpose
 }
 
-// Reserve satılabilir stoktan istenen adedi ayırır.
+// Reserve sets the requested quantity aside from the sellable stock.
 //
-// Yeterli stok yoksa errors.Conflict (kod: [CodeInsufficientStock]) döner ve
-// hiçbir şey yazılmaz. Seviye satırı işlem boyunca kilitli olduğu için son bir
-// adet için yarışan iki çağrıdan TAM OLARAK BİRİ kazanır.
+// When there is not enough stock it returns errors.Conflict (code:
+// [CodeInsufficientStock]) and nothing is written. The level row is locked for
+// the whole transaction, so of two calls racing for the last unit EXACTLY ONE
+// wins.
 //
-// Kilitler kalem -> seviye sırasında alınır (bkz. [Store] "Kilit sırası").
-// Kalem kilidi PAYLAŞIMLIDIR: eşzamanlı rezervasyonları seri hâle getirmez,
-// yalnızca kalemi yapısal olarak değiştiren akışlarla (SetInventoryLevel,
-// DeleteInventoryItem) çakışır. Kalem yoksa errors.NotFound döner.
+// The locks are taken item -> level (see "Lock order" on [Store]). The item
+// lock is SHARED: it does not serialize concurrent reservations, and conflicts
+// only with the flows that change the item structurally (SetInventoryLevel,
+// DeleteInventoryItem). When the item does not exist it returns
+// errors.NotFound.
 //
-// Faz 6'daki complete_cart saga'sının stok adımı budur; telafisi
-// [Service.ReleaseReservation]'dır.
+// This is the stock step of Phase 6's complete_cart saga; its compensation is
+// [Service.ReleaseReservation].
 func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservation, error) {
 	if err := requireIDs(in.InventoryItemID, in.LocationID); err != nil {
 		return models.Reservation{}, err
 	}
 	if in.Quantity <= 0 {
 		return models.Reservation{}, errors.Invalid(CodeInvalidInput,
-			"rezervasyon adedi pozitif olmalı: %d", in.Quantity)
+			"the reservation quantity has to be positive: %d", in.Quantity)
 	}
 	if err := checkTextLen("line_item_id", in.LineItemID); err != nil {
 		return models.Reservation{}, err
@@ -413,7 +425,7 @@ func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservat
 	}
 	if !purpose.Valid() {
 		return models.Reservation{}, errors.Invalid(CodeInvalidInput,
-			"bilinmeyen rezervasyon amacı: %q", in.Purpose)
+			"unknown reservation purpose: %q", in.Purpose)
 	}
 
 	var out models.Reservation
@@ -430,7 +442,7 @@ func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservat
 		available := level.Available()
 		if available < in.Quantity {
 			return errors.Conflict(CodeInsufficientStock,
-				"yetersiz stok: satılabilir %d, istenen %d (kalem: %s, lokasyon: %s)",
+				"insufficient stock: %d sellable, %d requested (item: %s, location: %s)",
 				available, in.Quantity, in.InventoryItemID, in.LocationID)
 		}
 
@@ -467,25 +479,25 @@ func (s *Service) Reserve(ctx context.Context, in ReserveInput) (models.Reservat
 	return out, nil
 }
 
-// ReleaseReservation rezervasyonu geri alır; ayrılan adet yeniden satılabilir
-// hâle gelir.
+// ReleaseReservation takes the reservation back; the reserved quantity becomes
+// sellable again.
 //
-// SAGA TELAFİSİ BUDUR ve İDEMPOTENTTİR: zaten serbest bırakılmış bir
-// rezervasyon için hata dönmez ve stoğa İKİNCİ KEZ dokunulmaz. Telafi adımı
-// yeniden çalıştırılabilir olmak zorundadır — bir workflow yeniden denendiğinde
-// ya da çift tetiklendiğinde ikinci çağrı akışı patlatmamalıdır.
+// THIS IS THE SAGA COMPENSATION and it is IDEMPOTENT: an already released
+// reservation returns no error and the stock is not touched a SECOND TIME. A
+// compensation step has to be safe to run again — when a workflow is retried
+// or triggered twice, the second call must not blow up the flow.
 //
-// Bilinmeyen bir kimlik için errors.NotFound döner: idempotentlik "her şeyi
-// sessizce yut" demek değildir; iki kez bırakılan GERÇEK bir rezervasyon ile
-// hiç var olmamış bir kimlik farklı durumlardır ve ikincisi çağıran tarafta bir
-// hatadır. Rezervasyon kaydı silinmediği (yalnızca durumu değiştiği) için ilk
-// durum her zaman ayırt edilebilir.
+// An unknown ID returns errors.NotFound: idempotency does not mean "silently
+// swallow everything"; a REAL reservation released twice and an ID that never
+// existed are different situations, and the second is a mistake on the
+// caller's side. The reservation record is never deleted (only its status
+// changes), so the first situation can always be told apart.
 //
-// Onaylanmış bir rezervasyon serbest bırakılamaz (errors.Conflict): stok çoktan
-// fiziksel olarak düşülmüştür, geri almak stok yaratmak olurdu.
+// A confirmed reservation cannot be released (errors.Conflict): the stock has
+// already been physically deducted, and taking it back would create stock.
 //
-// Kilitler rezervasyon -> kalem -> seviye sırasında alınır (bkz. [Store]
-// "Kilit sırası"); kalem kilidi seviye kilidinden ÖNCE gelir.
+// The locks are taken reservation -> item -> level (see "Lock order" on
+// [Store]); the item lock comes BEFORE the level lock.
 func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) error {
 	if err := requireText("reservation_id", reservationID); err != nil {
 		return err
@@ -499,17 +511,17 @@ func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) 
 
 		switch reservation.Status {
 		case models.ReservationReleased:
-			s.log.DebugContext(ctx, "rezervasyon zaten serbest bırakılmış, işlem yapılmadı",
-				"rezervasyon", reservationID)
+			s.log.DebugContext(ctx, "reservation already released, nothing done",
+				"reservation_id", reservationID)
 			return nil
 		case models.ReservationConfirmed:
 			return errors.Conflict(CodeReservationNotActive,
-				"onaylanmış rezervasyon serbest bırakılamaz: %s", reservationID)
+				"a confirmed reservation cannot be released: %s", reservationID)
 		case models.ReservationActive:
-			// Aşağıda ele alınır.
+			// Handled below.
 		default:
 			return errors.Internal(CodeInconsistentState,
-				"bilinmeyen rezervasyon durumu %q (%s)", reservation.Status, reservationID)
+				"unknown reservation status %q (%s)", reservation.Status, reservationID)
 		}
 
 		if err := s.store.LockInventoryItemShared(ctx, reservation.InventoryItemID); err != nil {
@@ -523,7 +535,7 @@ func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) 
 		newReserved := level.ReservedQuantity - reservation.Quantity
 		if newReserved < 0 {
 			return errors.Internal(CodeInconsistentState,
-				"rezerve adet (%d) rezervasyonun adedinden (%d) küçük (%s)",
+				"the reserved quantity (%d) is smaller than the reservation's quantity (%d) (%s)",
 				level.ReservedQuantity, reservation.Quantity, reservationID)
 		}
 
@@ -536,15 +548,17 @@ func (s *Service) ReleaseReservation(ctx context.Context, reservationID string) 
 	})
 }
 
-// ConfirmReservation rezervasyonu düşülmüş stoğa çevirir: ayrılan adet hem
-// fiziksel hem rezerve adetten düşer, satılabilir adet DEĞİŞMEZ.
+// ConfirmReservation turns the reservation into deducted stock: the reserved
+// quantity comes off both the physical and the reserved quantity, and the
+// sellable quantity DOES NOT CHANGE.
 //
-// [Service.ReleaseReservation] gibi idempotenttir: zaten onaylanmış bir
-// rezervasyon için hata dönmez. Serbest bırakılmış bir rezervasyon onaylanamaz
-// (errors.Conflict); stok geri verilmiştir, düşülecek bir söz kalmamıştır.
+// Like [Service.ReleaseReservation] it is idempotent: an already confirmed
+// reservation returns no error. A released reservation cannot be confirmed
+// (errors.Conflict); the stock has been given back and no promise is left to
+// deduct.
 //
-// Kilitler rezervasyon -> kalem -> seviye sırasında alınır (bkz. [Store]
-// "Kilit sırası"); kalem kilidi seviye kilidinden ÖNCE gelir.
+// The locks are taken reservation -> item -> level (see "Lock order" on
+// [Store]); the item lock comes BEFORE the level lock.
 func (s *Service) ConfirmReservation(ctx context.Context, reservationID, orderID string) error {
 	if err := requireText("reservation_id", reservationID); err != nil {
 		return err
@@ -558,17 +572,17 @@ func (s *Service) ConfirmReservation(ctx context.Context, reservationID, orderID
 
 		switch reservation.Status {
 		case models.ReservationConfirmed:
-			s.log.DebugContext(ctx, "rezervasyon zaten onaylanmış, işlem yapılmadı",
-				"rezervasyon", reservationID)
+			s.log.DebugContext(ctx, "reservation already confirmed, nothing done",
+				"reservation_id", reservationID)
 			return nil
 		case models.ReservationReleased:
 			return errors.Conflict(CodeReservationNotActive,
-				"serbest bırakılmış rezervasyon onaylanamaz: %s", reservationID)
+				"a released reservation cannot be confirmed: %s", reservationID)
 		case models.ReservationActive:
-			// Aşağıda ele alınır.
+			// Handled below.
 		default:
 			return errors.Internal(CodeInconsistentState,
-				"bilinmeyen rezervasyon durumu %q (%s)", reservation.Status, reservationID)
+				"unknown reservation status %q (%s)", reservation.Status, reservationID)
 		}
 
 		if err := s.store.LockInventoryItemShared(ctx, reservation.InventoryItemID); err != nil {
@@ -583,7 +597,7 @@ func (s *Service) ConfirmReservation(ctx context.Context, reservationID, orderID
 		newReserved := level.ReservedQuantity - reservation.Quantity
 		if newStocked < 0 || newReserved < 0 {
 			return errors.Internal(CodeInconsistentState,
-				"onay stoğu negatife düşürürdü: fiziksel %d, rezerve %d, rezervasyon %d (%s)",
+				"the confirmation would take the stock negative: physical %d, reserved %d, reservation %d (%s)",
 				level.StockedQuantity, level.ReservedQuantity, reservation.Quantity, reservationID)
 		}
 
@@ -591,10 +605,11 @@ func (s *Service) ConfirmReservation(ctx context.Context, reservationID, orderID
 		// one that leaves a movement: the units are gone from the warehouse and
 		// the row names the promise they went out against (ADR 0068).
 		//
-		// Hareketin sebebini SÖZÜN KENDİSİ söylüyor: satış için ayrılmış stok
-		// satış olarak, bir talebi karşılamak için ayrılmış stok yerine gönderim
-		// olarak düşülür. Onayın burada bir seçimi yok, çünkü seçim rezervasyon
-		// yazılırken yapıldı.
+		// The PROMISE ITSELF says what the movement's reason is: stock set aside
+		// for a sale is deducted as a sale, stock set aside to settle a claim as
+		// a replacement. The confirmation has no choice to make here, because
+		// the choice was made when the reservation was written.
+		//
 		// The ORDER is written onto the movement, and it is the only thing on this
 		// row that points outside the warehouse.
 		//
@@ -613,7 +628,8 @@ func (s *Service) ConfirmReservation(ctx context.Context, reservationID, orderID
 	})
 }
 
-// GetReservation rezervasyonu kimliğiyle döner; yoksa errors.NotFound.
+// GetReservation returns the reservation by its ID; errors.NotFound when there
+// is none.
 func (s *Service) GetReservation(ctx context.Context, reservationID string) (models.Reservation, error) {
 	if err := requireText("reservation_id", reservationID); err != nil {
 		return models.Reservation{}, err
@@ -647,7 +663,7 @@ func (s *Service) requireOpenLocation(ctx context.Context, locationID string) er
 	return nil
 }
 
-// requireIDs kalem ve lokasyon kimliklerini birlikte doğrular.
+// requireIDs validates the item and location IDs together.
 func requireIDs(itemID, locationID string) error {
 	if err := requireText("inventory_item_id", itemID); err != nil {
 		return err
@@ -655,16 +671,17 @@ func requireIDs(itemID, locationID string) error {
 	return requireText("location_id", locationID)
 }
 
-// addQuantity current'e delta ekler ve yukarı taşmayı yakalar.
+// addQuantity adds delta to current and catches an upward overflow.
 //
-// current DAİMA negatif değildir (veritabanı kısıtı bunu garanti eder), bu
-// yüzden yalnızca yukarı taşma mümkündür: aşağı yönde en küçük sonuç
-// 0 + MinInt64'tür ve o da taşmaz. Taşma sessiz bırakılsaydı sonuç negatife
-// sarar, tüm adet kontrollerini ve CHECK kısıtlarını atlatabilirdi.
+// current is NEVER negative (the database constraint guarantees it), so only
+// an upward overflow is possible: downward, the smallest result is
+// 0 + MinInt64, and that does not overflow. Left silent, an overflow would wrap
+// the result to a negative number and could slip past every quantity check and
+// the CHECK constraints.
 func addQuantity(current, delta int64) (int64, error) {
 	if delta > 0 && current > math.MaxInt64-delta {
 		return 0, errors.Invalid(CodeInvalidInput,
-			"adet taşması: %d + %d int64 sınırını aşıyor", current, delta)
+			"quantity overflow: %d + %d exceeds the int64 limit", current, delta)
 	}
 	return current + delta, nil
 }

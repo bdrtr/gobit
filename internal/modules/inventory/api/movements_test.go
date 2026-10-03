@@ -1,5 +1,3 @@
-// This file is English because ADR 0012 makes language a property of the FILE
-// and every new file is English; api_test.go beside it stays Turkish.
 package api_test
 
 import (
@@ -145,7 +143,7 @@ func TestTheHandlerPassesEveryParameterItDescribes(t *testing.T) {
 			"?limit=5&location_id=sloc_2&after="+cursor)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-	in := svc.gorulenMovementInput
+	in := svc.lastMovementInput
 	assert.Equal(t, "invitem_1", in.InventoryItemID)
 	assert.Equal(t, "sloc_2", in.LocationID)
 	assert.Equal(t, int64(5), in.Limit)

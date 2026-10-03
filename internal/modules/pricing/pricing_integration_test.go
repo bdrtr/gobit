@@ -1,13 +1,13 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are separated with the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Burada kanıtlanan iddialar birim testiyle KANITLANAMAZ: migration'ın geri
-// alınabilirliği, SetPrices'in gerçekten tek işlemde çalışması, veritabanı
-// CHECK kısıtlarının servis doğrulamasını ikinci kez kapatması ve query
-// sağlayıcısının gerçek sorgularla toplu davranışı.
+// The claims proven here CANNOT BE PROVEN with a unit test: that the migration
+// can be rolled back, that SetPrices really runs in a single transaction, that
+// the database CHECK constraints close the service validation a second time,
+// and how the query provider batches with real queries.
 package pricing_test
 
 import (
@@ -39,9 +39,9 @@ import (
 const postgresImage = "postgres:16-alpine"
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur; şema TestMain'de kurulur.
+	// testPool is the pool every test shares; the schema is set up in TestMain.
 	testPool *db.Pool
-	// testDSN havuzun bağlantı adresidir; migration testleri buna ihtiyaç duyar.
+	// testDSN is the pool's connection address; the migration tests need it.
 	testDSN string
 )
 
@@ -49,8 +49,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs every test on
+// it. It is a separate function because os.Exit skips defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -62,42 +62,42 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "could not stop the postgres container: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not start the postgres container: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not get the connection address: %v\n", err)
 		return 1
 	}
 
 	testPool, err = db.New(ctx, db.DefaultConfig(testDSN), nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not open the connection pool: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
 	if err := db.Migrate(ctx, testDSN, pricing.New(nil).Migrations(), pricing.Name); err != nil {
-		fmt.Fprintf(os.Stderr, "pricing şeması kurulamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "could not set up the pricing schema: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// newService gerçek depo üzerinde çalışan bir servis üretir.
+// newService builds a service that runs on the real repository.
 func newService(t *testing.T) *service.Service {
 	t.Helper()
 	return service.New(repository.New(testPool.Pool()), service.Options{})
 }
 
-// tableExists bir tablonun var olup olmadığını bildirir.
+// tableExists reports whether a table exists.
 func tableExists(ctx context.Context, t *testing.T, dsn, table string) bool {
 	t.Helper()
 
@@ -128,20 +128,20 @@ func TestMigrationsAreReversible(t *testing.T) {
 
 	require.NoError(t, db.Migrate(ctx, dsn, src, pricing.Name))
 	for _, table := range tables {
-		assert.True(t, tableExists(ctx, t, dsn, table), "%s tablosu oluşmalı", table)
+		assert.True(t, tableExists(ctx, t, dsn, table), "the %s table has to be created", table)
 	}
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, src, pricing.Name, 0))
 	for _, table := range tables {
-		assert.False(t, tableExists(ctx, t, dsn, table), "%s tablosu geri alınmalı", table)
+		assert.False(t, tableExists(ctx, t, dsn, table), "the %s table has to be rolled back", table)
 	}
 
-	// Yeniden uygulanabilirlik: down sonrası up temiz çalışmalıdır.
+	// Reapplicability: up after down has to run cleanly.
 	require.NoError(t, db.Migrate(ctx, dsn, src, pricing.Name))
 	assert.True(t, tableExists(ctx, t, dsn, "price"))
 }
 
-// TestPriceSetLifecycle uçtan uca CRUD akışını gerçek veritabanında kanıtlar.
+// TestPriceSetLifecycle proves the end-to-end CRUD flow on the real database.
 func TestPriceSetLifecycle(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -153,7 +153,7 @@ func TestPriceSetLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, set.ID)
 	assert.False(t, set.CreatedAt.IsZero())
-	assert.Equal(t, time.UTC, set.CreatedAt.Location(), "zamanlar UTC dönmeli")
+	assert.Equal(t, time.UTC, set.CreatedAt.Location(), "times have to come back in UTC")
 
 	fetched, err := svc.GetPriceSet(ctx, set.ID)
 	require.NoError(t, err)
@@ -164,7 +164,7 @@ func TestPriceSetLifecycle(t *testing.T) {
 	require.Len(t, prices, 2)
 	for _, price := range prices {
 		assert.Equal(t, price.CurrencyCode, upper(price.CurrencyCode),
-			"para birimi BÜYÜK harf saklanmalı")
+			"the currency has to be stored in UPPER case")
 	}
 
 	require.NoError(t, svc.DeletePriceSet(ctx, set.ID))
@@ -173,30 +173,31 @@ func TestPriceSetLifecycle(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 
-	// Soft delete: satır durur, yalnızca okumalardan gizlenir.
+	// Soft delete: the row stays, it is only hidden from reads.
 	var deletedAt *time.Time
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		"SELECT deleted_at FROM price_set WHERE id = $1", set.ID).Scan(&deletedAt))
-	assert.NotNil(t, deletedAt, "silme SOFT olmalı; satır durmalı")
+	assert.NotNil(t, deletedAt, "the delete has to be SOFT; the row has to stay")
 
 	var livePrices int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		"SELECT count(*) FROM price WHERE price_set_id = $1 AND deleted_at IS NULL",
 		set.ID).Scan(&livePrices))
-	assert.Zero(t, livePrices, "kap silinince fiyatları da gizlenmeli")
+	assert.Zero(t, livePrices, "when the container is deleted its prices have to be hidden too")
 }
 
-// TestSetPricesIsAtomic toplu yazmanın gerçekten TEK İŞLEMDE çalıştığını
-// kanıtlar.
+// TestSetPricesIsAtomic proves that the bulk write really runs in a SINGLE
+// TRANSACTION.
 //
-// Senaryo: ikinci fiyat var olmayan bir fiyat listesine bağlıdır ve veritabanı
-// onu foreign key ile reddeder. İşlem olmasaydı, eski fiyatların silinmesi
-// ÇOKTAN yazılmış olurdu ve kap fiyatsız kalırdı. Test eski fiyatların yerinde
-// durduğunu doğrular.
+// Scenario: the second price is bound to a price list that does not exist, and
+// the database rejects it with a foreign key. Without a transaction, the
+// deletion of the old prices would ALREADY have been written and the container
+// would be left without prices. The test verifies that the old prices stay in
+// place.
 //
-// ADR 0047'den sonra bu testin taşıdığı yük arttı: silme artık damga değil,
-// satırın kendisinin kaldırılmasıdır, dolayısıyla geri alma başarısız olsaydı
-// eski fiyatlar gizlenmiş değil YOK olurdu.
+// After ADR 0047 the load this test carries grew: deletion is no longer a stamp
+// but the removal of the row itself, so had the rollback failed, the old prices
+// would not be hidden but GONE.
 func TestSetPricesIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -213,25 +214,25 @@ func TestSetPricesIsAtomic(t *testing.T) {
 
 	_, err = svc.SetPrices(ctx, set.ID, []service.PriceInput{
 		{CurrencyCode: "EUR", Amount: 300},
-		{CurrencyCode: "GBP", Amount: 400, PriceListID: ptr("plist_OLMAYAN")},
+		{CurrencyCode: "GBP", Amount: 400, PriceListID: ptr("plist_MISSING")},
 	})
-	require.Error(t, err, "olmayan fiyat listesine bağlı fiyat reddedilmeli")
+	require.Error(t, err, "a price bound to a missing price list has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
 	after, err := svc.ListPrices(ctx, set.ID)
 	require.NoError(t, err)
-	require.Len(t, after, 2, "başarısız toplu yazma eski fiyatları KORUMALI")
+	require.Len(t, after, 2, "a failed bulk write has to KEEP the old prices")
 
 	currencies := map[string]bool{}
 	for _, price := range after {
 		currencies[price.CurrencyCode] = true
 	}
 	assert.True(t, currencies["TRY"] && currencies["USD"])
-	assert.False(t, currencies["EUR"], "işlem geri alındığı için yeni fiyat yazılmamalı")
+	assert.False(t, currencies["EUR"], "because the transaction was rolled back, the new price must not be written")
 }
 
-// TestSetPricesReplacesAndKeepsRules başarılı toplu yazmanın eski fiyatları
-// değiştirdiğini ve kuralları birlikte yazdığını kanıtlar.
+// TestSetPricesReplacesAndKeepsRules proves that a successful bulk write
+// replaces the old prices and writes the rules along with them.
 func TestSetPricesReplacesAndKeepsRules(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -253,9 +254,9 @@ func TestSetPricesReplacesAndKeepsRules(t *testing.T) {
 
 	reread, err := svc.ListPrices(ctx, set.ID)
 	require.NoError(t, err)
-	require.Len(t, reread, 1, "yerine koyma eski fiyatı silmeli")
+	require.Len(t, reread, 1, "the replacement has to delete the old price")
 	assert.Equal(t, int64(9000), reread[0].Amount)
-	require.Len(t, reread[0].Rules, 2, "kurallar fiyatla birlikte okunmalı")
+	require.Len(t, reread[0].Rules, 2, "the rules have to be read together with the price")
 
 	values := map[string][]string{}
 	for _, rule := range reread[0].Rules {
@@ -265,11 +266,11 @@ func TestSetPricesReplacesAndKeepsRules(t *testing.T) {
 	assert.Equal(t, []string{"vip", "b2b"}, values["customer_group_id"])
 }
 
-// TestDatabaseRejectsInvalidMoney veritabanı CHECK kısıtlarının servis
-// doğrulamasından BAĞIMSIZ ikinci bir kapı olduğunu kanıtlar.
+// TestDatabaseRejectsInvalidMoney proves that the database CHECK constraints are
+// a second gate INDEPENDENT of the service validation.
 //
-// Doğrulama yalnızca uygulamada olsaydı, doğrudan SQL çalıştıran bir bakım
-// betiği negatif fiyat yazabilirdi.
+// Were the validation only in the application, a maintenance script running
+// SQL directly could write a negative price.
 func TestDatabaseRejectsInvalidMoney(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -284,31 +285,31 @@ func TestDatabaseRejectsInvalidMoney(t *testing.T) {
 		minQty   int32
 		maxQty   any
 	}{
-		{"negatif tutar", "TRY", -1, 1, nil},
-		{"aşırı büyük tutar", "TRY", models.MaxAmount + 1, 1, nil},
-		{"küçük harf para birimi", "try", 100, 1, nil},
-		{"iki harfli para birimi", "TR", 100, 1, nil},
-		{"sıfır asgari adet", "TRY", 100, 0, nil},
-		{"azami adet asgariden küçük", "TRY", 100, 10, int32(5)},
+		{"negative amount", "TRY", -1, 1, nil},
+		{"excessively large amount", "TRY", models.MaxAmount + 1, 1, nil},
+		{"lower-case currency", "try", 100, 1, nil},
+		{"two-letter currency", "TR", 100, 1, nil},
+		{"zero minimum quantity", "TRY", 100, 0, nil},
+		{"maximum quantity below the minimum", "TRY", 100, 10, int32(5)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := testPool.Pool().Exec(ctx, `
 				INSERT INTO price (id, price_set_id, currency_code, amount, min_quantity, max_quantity, created_at, updated_at)
 				VALUES ($1, $2, $3, $4, $5, $6, now(), now())`,
 				models.NewPriceID(time.Now()), set.ID, tc.currency, tc.amount, tc.minQty, tc.maxQty)
-			require.Error(t, err, "veritabanı bu satırı reddetmeli")
+			require.Error(t, err, "the database has to reject this row")
 		})
 	}
 }
 
-// TestCalculatePriceWithPriceList gerçek veritabanı üzerinden liste
-// önceliğini kanıtlar: yayındaki kampanya taban fiyatı ezer, taslak ezmez.
+// TestCalculatePriceWithPriceList proves list precedence over the real
+// database: a published campaign overrides the base price, a draft does not.
 func TestCalculatePriceWithPriceList(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
 	list, err := svc.CreatePriceList(ctx, service.PriceListInput{
-		Title:  "Yaz kampanyası",
+		Title:  "Summer campaign",
 		Type:   models.PriceListSale,
 		Status: models.PriceListDraft,
 	})
@@ -322,7 +323,7 @@ func TestCalculatePriceWithPriceList(t *testing.T) {
 
 	calculated, err := svc.CalculatePrice(ctx, set.ID, service.CalculateParams{CurrencyCode: "TRY"})
 	require.NoError(t, err)
-	assert.Equal(t, int64(10000), calculated.Amount, "taslak kampanya fiyat sunmamalı")
+	assert.Equal(t, int64(10000), calculated.Amount, "a draft campaign must not offer a price")
 
 	_, err = svc.UpdatePriceList(ctx, list.ID, service.PriceListInput{
 		Title:  list.Title,
@@ -333,20 +334,21 @@ func TestCalculatePriceWithPriceList(t *testing.T) {
 
 	calculated, err = svc.CalculatePrice(ctx, set.ID, service.CalculateParams{CurrencyCode: "TRY"})
 	require.NoError(t, err)
-	assert.Equal(t, int64(7500), calculated.Amount, "yayındaki kampanya taban fiyatı ezmeli")
+	assert.Equal(t, int64(7500), calculated.Amount, "a published campaign has to override the base price")
 	require.NotNil(t, calculated.PriceListID)
 	assert.Equal(t, list.ID, *calculated.PriceListID)
 	assert.Equal(t, models.PriceListSale, calculated.PriceListType)
 }
 
-// TestCalculatePriceSkipsDeletedPriceList listesi silinmiş bir fiyatın gerçek
-// sorguda da elendiğini kanıtlar; LEFT JOIN'in deleted_at koşulu buna dayanır.
+// TestCalculatePriceSkipsDeletedPriceList proves that a price whose list was
+// deleted is eliminated in the real query too; the LEFT JOIN's deleted_at
+// condition rests on this.
 func TestCalculatePriceSkipsDeletedPriceList(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
 	list, err := svc.CreatePriceList(ctx, service.PriceListInput{
-		Title:  "Silinecek kampanya",
+		Title:  "Campaign to be deleted",
 		Type:   models.PriceListOverride,
 		Status: models.PriceListActive,
 	})
@@ -366,11 +368,11 @@ func TestCalculatePriceSkipsDeletedPriceList(t *testing.T) {
 
 	calculated, err = svc.CalculatePrice(ctx, set.ID, service.CalculateParams{CurrencyCode: "TRY"})
 	require.NoError(t, err)
-	assert.Equal(t, int64(10000), calculated.Amount, "listesi silinmiş fiyat hesaba katılmamalı")
+	assert.Equal(t, int64(10000), calculated.Amount, "a price whose list was deleted must not be counted")
 }
 
-// TestCalculatePriceUsesRules kuralların gerçek veritabanı turunda da
-// uygulandığını kanıtlar.
+// TestCalculatePriceUsesRules proves that the rules are applied on a real
+// database round trip too.
 func TestCalculatePriceUsesRules(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -389,7 +391,7 @@ func TestCalculatePriceUsesRules(t *testing.T) {
 
 	withoutContext, err := svc.CalculatePrice(ctx, set.ID, service.CalculateParams{CurrencyCode: "TRY"})
 	require.NoError(t, err)
-	assert.Equal(t, int64(10000), withoutContext.Amount, "bağlam yoksa kurallı fiyat elenmeli")
+	assert.Equal(t, int64(10000), withoutContext.Amount, "without a context the ruled price has to be eliminated")
 	assert.Zero(t, withoutContext.MatchedRules)
 
 	withContext, err := svc.CalculatePrice(ctx, set.ID, service.CalculateParams{
@@ -397,12 +399,12 @@ func TestCalculatePriceUsesRules(t *testing.T) {
 		Attributes:   map[string]string{"region_id": "reg_tr"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(6000), withContext.Amount, "kural eşleşince belirgin fiyat kazanmalı")
+	assert.Equal(t, int64(6000), withContext.Amount, "when the rule matches, the specific price has to win")
 	assert.Equal(t, 1, withContext.MatchedRules)
 }
 
-// TestQueryProviderBatchesRealQueries sağlayıcının gerçek sorgularla toplu
-// çalıştığını ve fiyatları taşıdığını kanıtlar (ADR 0004).
+// TestQueryProviderBatchesRealQueries proves that the provider batches with real
+// queries and carries the prices (ADR 0004).
 func TestQueryProviderBatchesRealQueries(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -416,34 +418,34 @@ func TestQueryProviderBatchesRealQueries(t *testing.T) {
 		require.NoError(t, err)
 		ids = append(ids, set.ID)
 	}
-	// Bulunamayan kimlik hata değildir; kayıt dönmez.
-	ids = append(ids, "pset_OLMAYAN")
+	// An id that is not found is not an error; no record is returned.
+	ids = append(ids, "pset_MISSING")
 
 	records, err := provider.FetchByIDs(ctx, ids, nil)
 	require.NoError(t, err)
-	require.Len(t, records, 3, "olmayan kimlik sessizce atlanmalı")
+	require.Len(t, records, 3, "a missing id has to be skipped silently")
 
 	byID := map[string]query.Record{}
 	for _, record := range records {
 		id, ok := record[query.IDField].(string)
-		require.True(t, ok, "kayıt kimliği dize olmalı")
+		require.True(t, ok, "the record id has to be a string")
 		byID[id] = record
 	}
 
 	for i, id := range ids[:3] {
 		record, ok := byID[id]
-		require.True(t, ok, "%s kaydı dönmeli", id)
+		require.True(t, ok, "the %s record has to be returned", id)
 
 		prices, ok := record["prices"].([]map[string]any)
-		require.True(t, ok, "fiyatlar kayıtla birlikte gelmeli")
+		require.True(t, ok, "the prices have to come with the record")
 		require.Len(t, prices, 1)
 		assert.Equal(t, int64(1000*(i+1)), prices[0]["amount"])
 		assert.Equal(t, "TRY", prices[0]["currency_code"])
 	}
 }
 
-// TestQueryProviderListFiltersByID sağlayıcının kimlik filtresini gerçek
-// sorguyla uyguladığını kanıtlar.
+// TestQueryProviderListFiltersByID proves that the provider applies the id
+// filter with a real query.
 func TestQueryProviderListFiltersByID(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -466,11 +468,11 @@ func TestQueryProviderListFiltersByID(t *testing.T) {
 	assert.Equal(t, int64(4242), prices[0]["amount"])
 }
 
-// TestPriceRuleCascadesWithPrice kuralların fiyatla aynı modül içinde foreign
-// key ile bağlı olduğunu kanıtlar: fiyat satırı kalkarsa kural da kalkar.
+// TestPriceRuleCascadesWithPrice proves that rules are bound to the price with a
+// foreign key inside the same module: if the price row goes, the rule goes too.
 //
-// Modül İÇİ FK serbesttir ve kullanılmalıdır; yasak olan cross-module FK'dır
-// (Prensip 2.2).
+// An FK WITHIN a module is allowed and should be used; what is forbidden is a
+// cross-module FK (Principle 2.2).
 func TestPriceRuleCascadesWithPrice(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -499,11 +501,11 @@ func TestPriceRuleCascadesWithPrice(t *testing.T) {
 
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		"SELECT count(*) FROM price_rule WHERE price_id = $1", priceID).Scan(&ruleCount))
-	assert.Zero(t, ruleCount, "fiyat düşünce kuralları da düşmeli")
+	assert.Zero(t, ruleCount, "when the price goes, its rules have to go too")
 }
 
-// TestNoCrossModuleForeignKeys pricing tablolarının YALNIZCA kendi tablolarına
-// referans verdiğini kanıtlar (Prensip 2.2).
+// TestNoCrossModuleForeignKeys proves that pricing's tables reference ONLY its
+// own tables (Principle 2.2).
 func TestNoCrossModuleForeignKeys(t *testing.T) {
 	ctx := context.Background()
 
@@ -524,17 +526,18 @@ func TestNoCrossModuleForeignKeys(t *testing.T) {
 		var table, referenced string
 		require.NoError(t, rows.Scan(&table, &referenced))
 		assert.True(t, owned[referenced],
-			"%s tablosu %s'e referans veriyor; cross-module FK yasaktır", table, referenced)
+			"the %s table references %s; a cross-module FK is forbidden", table, referenced)
 		found++
 	}
 	require.NoError(t, rows.Err())
-	assert.Positive(t, found, "modül içi FK'ler kurulmuş olmalı")
+	assert.Positive(t, found, "the in-module FKs have to be set up")
 }
 
-// ptr bir değerin adresini döner.
+// ptr returns the address of a value.
 func ptr[T any](v T) *T { return &v }
 
-// upper bir dizeyi ASCII büyük harfe çevirir; testte para birimi denetimi için.
+// upper converts a string to ASCII upper case; it is for the currency check in
+// the tests.
 func upper(s string) string {
 	out := []rune(s)
 	for i, r := range out {
@@ -545,13 +548,13 @@ func upper(s string) string {
 	return string(out)
 }
 
-// TestDatabaseRejectsValuelessRule kural değerleri kısıtının GERÇEKTEN
-// kapandığını kanıtlar (migration 000002).
+// TestDatabaseRejectsValuelessRule proves that the rule values constraint REALLY
+// closes (migration 000002).
 //
-// 000001'deki CHECK (array_length(rule_values, 1) >= 1) boş diziyi geçiriyordu:
-// array_length('{}', 1) NULL döner ve sonucu NULL olan bir CHECK sağlanmış
-// sayılır. Değersiz bir kural, koşulu okunamaz bir fiyat demektir; kapının veri
-// düzeyinde de durması bu yüzden gerekir.
+// The CHECK (array_length(rule_values, 1) >= 1) in 000001 let the empty array
+// through: array_length('{}', 1) returns NULL, and a CHECK whose result is NULL
+// counts as satisfied. A rule without values means a price whose condition
+// cannot be read; that is why the gate has to stand at the data level too.
 func TestDatabaseRejectsValuelessRule(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -567,9 +570,10 @@ func TestDatabaseRejectsValuelessRule(t *testing.T) {
 		INSERT INTO price_rule (id, price_id, attribute, operator, rule_values, created_at, updated_at)
 		VALUES ($1, $2, 'region_id', 'eq', '{}', now(), now())`,
 		models.NewPriceRuleID(time.Now()), prices[0].ID)
-	require.Error(t, err, "veritabanı değersiz kuralı reddetmeli")
+	require.Error(t, err, "the database has to reject a valueless rule")
 
-	// Aynı satır tek değerle KABUL edilmelidir; kısıt her şeyi reddetmiyor.
+	// The same row with a single value has to be ACCEPTED; the constraint does
+	// not reject everything.
 	_, err = testPool.Pool().Exec(ctx, `
 		INSERT INTO price_rule (id, price_id, attribute, operator, rule_values, created_at, updated_at)
 		VALUES ($1, $2, 'region_id', 'eq', '{reg_1}', now(), now())`,
@@ -577,14 +581,15 @@ func TestDatabaseRejectsValuelessRule(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestCreatePriceSetIsAtomic kap ile fiyatlarının TEK işlemde yazıldığını
-// kanıtlar.
+// TestCreatePriceSetIsAtomic proves that the container and its prices are
+// written in ONE transaction.
 //
-// Senaryo: fiyatlardan biri var olmayan bir fiyat listesine bağlıdır ve
-// veritabanı onu foreign key ile reddeder. İki ayrı işlemde kap ÇOKTAN commit
-// edilmiş olurdu ve çağıran hata alsa bile geride fiyatsız, kimseye bağlanmamış
-// bir kap kalırdı. Servis doğrulaması bu dalı yakalayamaz: kimlik biçimi
-// geçerlidir, yalnızca kayıt yoktur.
+// Scenario: one of the prices is bound to a price list that does not exist, and
+// the database rejects it with a foreign key. With two separate transactions
+// the container would ALREADY have been committed, and even though the caller
+// got an error, a container without prices, bound to nothing, would be left
+// behind. The service validation cannot catch this branch: the id's format is
+// valid, only the record is missing.
 func TestCreatePriceSetIsAtomic(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -599,28 +604,29 @@ func TestCreatePriceSetIsAtomic(t *testing.T) {
 
 	_, err := svc.CreatePriceSet(ctx, []service.PriceInput{
 		{CurrencyCode: "TRY", Amount: 100},
-		{CurrencyCode: "USD", Amount: 200, PriceListID: ptr("plist_OLMAYAN")},
+		{CurrencyCode: "USD", Amount: 200, PriceListID: ptr("plist_MISSING")},
 	})
-	require.Error(t, err, "olmayan fiyat listesine bağlı fiyat reddedilmeli")
+	require.Error(t, err, "a price bound to a missing price list has to be rejected")
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 
-	assert.Equal(t, before, countSets(), "reddedilen yazma geride yetim bir kap BIRAKMAMALI")
+	assert.Equal(t, before, countSets(), "a rejected write must NOT LEAVE an orphan container behind")
 }
 
-// TestConcurrentSetPricesDoesNotMerge eşzamanlı iki yazımın "yerine koyma"
-// semantiğini bozmadığını kanıtlar.
+// TestConcurrentSetPricesDoesNotMerge proves that two concurrent writes do not
+// break the "replace" semantics.
 //
-// Senaryo, ReplacePrices'in SQL dizisinin birebir aynısını iki işlemde
-// çalıştırır. Kabın varlık denetimi KİLİTSİZ olsaydı ikinci işlemin "eski
-// fiyatları sil" adımı, READ COMMITTED altında kendi statement snapshot'ında
-// birincinin YENİ satırlarını göremez ve onları silmezdi; kapta iki yazımın
-// fiyatları birlikte canlı kalır ve iki çağıran da hatasız dönerdi. Yanlış
-// fiyat tam olarak böyle doğar.
+// The scenario runs exactly the same SQL sequence as ReplacePrices in two
+// transactions. Were the container's existence check WITHOUT A LOCK, the second
+// transaction's "delete the old prices" step, under READ COMMITTED, could not
+// see the first one's NEW rows in its own statement snapshot and would not
+// delete them; the prices of both writes would stay live together in the
+// container and both callers would return without an error. That is exactly
+// how a wrong price is born.
 //
-// Elle yürütülen adım ADR 0047 ile birlikte DELETE'e çevrildi. Taklidin damga
-// olarak kalması testi yeşil bırakırdı ama iddiasını boşaltırdı: burada
-// kanıtlanan şey kilidin gerçek yazma yolunu seri hâle getirmesidir ve taklit
-// gerçek yoldan ayrılırsa artık onu kanıtlamaz.
+// The hand-run step was turned into a DELETE along with ADR 0047. Leaving the
+// imitation as a stamp would have kept the test green but emptied its claim:
+// what is proven here is that the lock serializes the real write path, and if
+// the imitation departs from the real path it no longer proves that.
 func TestConcurrentSetPricesDoesNotMerge(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
@@ -628,7 +634,7 @@ func TestConcurrentSetPricesDoesNotMerge(t *testing.T) {
 	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{{CurrencyCode: "TRY", Amount: 100}})
 	require.NoError(t, err)
 
-	// Birinci yazan: ReplacePrices'in adımlarını elle yürütür ve AÇIK kalır.
+	// The first writer: runs ReplacePrices' steps by hand and stays OPEN.
 	first, err := testPool.Pool().Begin(ctx)
 	require.NoError(t, err)
 	defer func() { _ = first.Rollback(ctx) }()
@@ -648,7 +654,8 @@ func TestConcurrentSetPricesDoesNotMerge(t *testing.T) {
 		models.NewPriceID(time.Now()), set.ID)
 	require.NoError(t, err)
 
-	// İkinci yazan: gerçek yazma yolu. Birinci açıkken beklemeye girmelidir.
+	// The second writer: the real write path. It has to start waiting while the
+	// first one is open.
 	done := make(chan error, 1)
 	go func() {
 		_, setErr := svc.SetPrices(ctx, set.ID, []service.PriceInput{{CurrencyCode: "EUR", Amount: 700}})
@@ -657,7 +664,7 @@ func TestConcurrentSetPricesDoesNotMerge(t *testing.T) {
 	requireLockWait(ctx, t, done)
 
 	require.NoError(t, first.Commit(ctx))
-	require.NoError(t, <-done, "birinci yazan bitince ikincisi tamamlanmalı")
+	require.NoError(t, <-done, "once the first writer finishes, the second has to complete")
 
 	prices, err := svc.ListPrices(ctx, set.ID)
 	require.NoError(t, err)
@@ -667,14 +674,14 @@ func TestConcurrentSetPricesDoesNotMerge(t *testing.T) {
 		currencies = append(currencies, price.CurrencyCode)
 	}
 	assert.Equal(t, []string{"EUR"}, currencies,
-		"ikinci yazma birincinin fiyatını da silmeli; yerine koyma BİRLEŞMEYE dönüşmemeli")
+		"the second write has to delete the first one's price too; the replacement must not turn into a MERGE")
 }
 
-// requireLockWait ikinci yazanın gerçekten kilit beklediğini doğrular.
+// requireLockWait verifies that the second writer really is waiting on a lock.
 //
-// Sabit bir bekleme yerine veritabanına sorulur: bekleyen bir backend görünene
-// kadar yoklanır, bu arada işlem tamamlanırsa test hemen düşer. Böylece
-// zamanlamaya değil, gözlemlenen duruma dayanılır.
+// Instead of a fixed wait, the database is asked: it is polled until a waiting
+// backend shows up, and if the transaction completes in the meantime the test
+// fails at once. That way it rests on the observed state, not on timing.
 func requireLockWait(ctx context.Context, t *testing.T, done <-chan error) {
 	t.Helper()
 
@@ -682,7 +689,7 @@ func requireLockWait(ctx context.Context, t *testing.T, done <-chan error) {
 	for {
 		select {
 		case err := <-done:
-			t.Fatalf("ikinci yazma kilit beklemeden tamamlandı: %v", err)
+			t.Fatalf("the second write completed without waiting on the lock: %v", err)
 		default:
 		}
 
@@ -694,26 +701,27 @@ func requireLockWait(ctx context.Context, t *testing.T, done <-chan error) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("ikinci yazma kilit beklemeye hiç girmedi")
+			t.Fatal("the second write never started waiting on the lock")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 }
 
-// TestQueryProviderHidesUnpublishedListPrices okuma yüzeyinin, hesaplamanın
-// GEÇERSİZ saydığı fiyatları sızdırmadığını kanıtlar.
+// TestQueryProviderHidesUnpublishedListPrices proves that the read surface does
+// not leak prices the calculation counts as INVALID.
 //
-// Sağlayıcı hesaplama bağlamı taşımaz; taşımadığı bir bağlama koşullu fiyatı
-// dönerse tüketici (product'ın store listelemesi) onu eleyemez ve vitrin
-// yayınlanmamış bir kampanyayı gösterir. Testin ikinci yarısı süzgecin AŞIRI
-// olmadığını da kanıtlar: liste yayına alınınca fiyat görünür.
+// The provider carries no calculation context; if it returns a price that is
+// conditional on a context it does not carry, the consumer (product's store
+// listing) cannot eliminate it and the storefront shows an unpublished
+// campaign. The second half of the test proves the filter is not EXCESSIVE
+// either: once the list is published, the price shows.
 func TestQueryProviderHidesUnpublishedListPrices(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 	provider := service.NewQueryProvider(svc)
 
 	list, err := svc.CreatePriceList(ctx, service.PriceListInput{
-		Title:  "Yayınlanmamış kampanya",
+		Title:  "Unpublished campaign",
 		Type:   models.PriceListSale,
 		Status: models.PriceListDraft,
 	})
@@ -725,14 +733,15 @@ func TestQueryProviderHidesUnpublishedListPrices(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Hesaplama taslak kampanyayı zaten elemektedir; okuma yüzeyi de elemelidir.
+	// The calculation already eliminates the draft campaign; the read surface has
+	// to eliminate it too.
 	calculated, err := svc.CalculatePrice(ctx, set.ID, service.CalculateParams{CurrencyCode: "TRY"})
 	require.NoError(t, err)
 	require.Equal(t, int64(10000), calculated.Amount)
 
 	amounts := providerAmounts(ctx, t, provider, set.ID)
 	assert.Equal(t, []int64{10000}, amounts,
-		"yayınlanmamış kampanyanın fiyatı okuma yüzeyine SIZMAMALI")
+		"an unpublished campaign's price must NOT LEAK to the read surface")
 
 	_, err = svc.UpdatePriceList(ctx, list.ID, service.PriceListInput{
 		Title:  list.Title,
@@ -743,10 +752,11 @@ func TestQueryProviderHidesUnpublishedListPrices(t *testing.T) {
 
 	amounts = providerAmounts(ctx, t, provider, set.ID)
 	assert.ElementsMatch(t, []int64{10000, 1}, amounts,
-		"yayına alınan kampanyanın fiyatı görünmeli")
+		"a published campaign's price has to show")
 }
 
-// providerAmounts bir kabın sağlayıcı üzerinden görünen fiyat tutarlarını döner.
+// providerAmounts returns the price amounts of a container as seen through the
+// provider.
 func providerAmounts(
 	ctx context.Context,
 	t *testing.T,
@@ -760,62 +770,64 @@ func providerAmounts(
 	require.Len(t, records, 1)
 
 	prices, ok := records[0]["prices"].([]map[string]any)
-	require.True(t, ok, "fiyatlar kayıtla birlikte gelmeli")
+	require.True(t, ok, "the prices have to come with the record")
 
 	amounts := make([]int64, 0, len(prices))
 	for _, price := range prices {
 		amount, isInt := price["amount"].(int64)
-		require.True(t, isInt, "tutar tam sayı minor unit olmalı")
+		require.True(t, isInt, "the amount has to be an integer in minor units")
 		amounts = append(amounts, amount)
 	}
 	return amounts
 }
 
-// TestStorePricesHideDraftListsAndRules müşteri yüzeyinin yayınlanmamış kampanya
-// fiyatlarını ve kural koşullarını SIZDIRMADIĞINI kanıtlar.
+// TestStorePricesHideDraftListsAndRules proves that the customer surface does
+// NOT LEAK unpublished campaign prices or rule conditions.
 //
-// Regresyon: Query sağlayıcısı süzgeci uygularken GET /store/v1/price-sets/{id}
-// süzgeçsiz ListPrices yolunu kullanıyordu. Sonuç: taslak bir kampanyanın
-// fiyatı ve bir müşteri segmentine bağlı kuralın koşulu (ör. customer_group_id)
-// müşteri gövdesine çıkıyordu. İki müşteri yüzeyi artık AYNI süzgeci kullanır.
+// Regression: while the Query provider applied the filter,
+// GET /store/v1/price-sets/{id} used the unfiltered ListPrices path. The result:
+// the price of a draft campaign and the condition of a rule bound to a customer
+// segment (e.g. customer_group_id) went out in the customer body. The two
+// customer surfaces now use the SAME filter.
 func TestStorePricesHideDraftListsAndRules(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	taslak, err := svc.CreatePriceList(ctx, service.PriceListInput{
-		Title:  "Yayınlanmamış kampanya",
+	draft, err := svc.CreatePriceList(ctx, service.PriceListInput{
+		Title:  "Unpublished campaign",
 		Type:   models.PriceListSale,
 		Status: models.PriceListDraft,
 	})
 	require.NoError(t, err)
 
 	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{
-		{CurrencyCode: "TRY", Amount: 10000},                      // taban: görünmeli
-		{CurrencyCode: "TRY", Amount: 1, PriceListID: &taslak.ID}, // taslak: GÖRÜNMEMELİ
-		{CurrencyCode: "TRY", Amount: 2, Rules: []service.RuleInput{ // kurala bağlı: GÖRÜNMEMELİ
+		{CurrencyCode: "TRY", Amount: 10000},                     // base: has to show
+		{CurrencyCode: "TRY", Amount: 1, PriceListID: &draft.ID}, // draft: must NOT SHOW
+		{CurrencyCode: "TRY", Amount: 2, Rules: []service.RuleInput{ // rule-bound: must NOT SHOW
 			{Attribute: "customer_group_id", Operator: models.OpEq, Values: []string{"vip"}},
 		}},
 	})
 	require.NoError(t, err)
 
-	// Yönetim yüzeyi HER ŞEYİ görür: operatör taslak kampanyayı ve kuralı
-	// görebilmelidir.
+	// The admin surface sees EVERYTHING: the operator has to be able to see the
+	// draft campaign and the rule.
 	adminPrices, err := svc.ListPrices(ctx, set.ID)
 	require.NoError(t, err)
-	assert.Len(t, adminPrices, 3, "yönetim yüzeyi tüm fiyatları görmeli")
+	assert.Len(t, adminPrices, 3, "the admin surface has to see every price")
 
-	// Müşteri yüzeyi YALNIZCA taban fiyatı görür.
+	// The customer surface sees ONLY the base price.
 	storePrices, err := svc.ListStorePrices(ctx, set.ID)
 	require.NoError(t, err)
-	require.Len(t, storePrices, 1, "müşteriye yalnızca gösterilebilir fiyat çıkmalı: %+v", storePrices)
+	require.Len(t, storePrices, 1, "only a displayable price may go out to the customer: %+v", storePrices)
 	assert.Equal(t, int64(10000), storePrices[0].Price.Amount)
-	assert.Nil(t, storePrices[0].Price.PriceListID, "taslak kampanya fiyatı sızdı")
-	assert.Empty(t, storePrices[0].Price.Rules, "kural koşulları müşteriye çıkmamalı")
+	assert.Nil(t, storePrices[0].Price.PriceListID, "the draft campaign price leaked")
+	assert.Empty(t, storePrices[0].Price.Rules, "rule conditions must not go out to the customer")
 
-	// Kampanya yayına alınınca müşteri yüzeyinde GÖRÜNMELİ — süzgeç kalıcı
-	// olarak gizlemiyor, yalnızca yayında olmayanı eliyor.
-	_, err = svc.UpdatePriceList(ctx, taslak.ID, service.PriceListInput{
-		Title:  taslak.Title,
+	// Once the campaign is published it has to SHOW on the customer surface —
+	// the filter does not hide it permanently, it only eliminates what is not
+	// published.
+	_, err = svc.UpdatePriceList(ctx, draft.ID, service.PriceListInput{
+		Title:  draft.Title,
 		Type:   models.PriceListSale,
 		Status: models.PriceListActive,
 	})
@@ -823,18 +835,19 @@ func TestStorePricesHideDraftListsAndRules(t *testing.T) {
 
 	storePrices, err = svc.ListStorePrices(ctx, set.ID)
 	require.NoError(t, err)
-	assert.Len(t, storePrices, 2, "yayına alınan kampanya müşteriye görünmeli")
+	assert.Len(t, storePrices, 2, "a published campaign has to be visible to the customer")
 }
 
-// countingTracer havuzun açtığı sorguları sayar.
+// countingTracer counts the queries the pool opens.
 //
-// Sayaç, "toplu okuma kalem başına sorgu açmaz" iddiasının tek doğrudan
-// kanıtıdır: süre ölçmek testi makineye bağlar, sorgu sayısı bağlamaz.
+// The counter is the one direct proof of the claim "a batch read does not open
+// a query per item": measuring time ties the test to the machine, counting
+// queries does not.
 type countingTracer struct {
 	count atomic.Int64
 }
 
-// TraceQueryStart her sorgu başlangıcında sayacı artırır.
+// TraceQueryStart increments the counter at the start of every query.
 func (c *countingTracer) TraceQueryStart(
 	ctx context.Context,
 	_ *pgx.Conn,
@@ -844,13 +857,15 @@ func (c *countingTracer) TraceQueryStart(
 	return ctx
 }
 
-// TraceQueryEnd sözleşme gereği vardır; sayım başlangıçta yapılır.
+// TraceQueryEnd exists because the contract requires it; the counting is done
+// at the start.
 func (c *countingTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
-// newCountingService sorgularını sayan KENDİ havuzu üzerinde bir servis üretir.
+// newCountingService builds a service on a pool of ITS OWN that counts its
+// queries.
 //
-// Havuz tek bağlantılıdır: çok bağlantılı bir havuzda ısınma sorguları sayıma
-// karışır ve sayı makineye göre değişirdi.
+// The pool has a single connection: in a pool with many connections, warm-up
+// queries would mix into the count and the number would vary by machine.
 func newCountingService(t *testing.T) (*service.Service, *countingTracer) {
 	t.Helper()
 
@@ -867,30 +882,32 @@ func newCountingService(t *testing.T) (*service.Service, *countingTracer) {
 	return service.New(repository.New(pool), service.Options{}), tracer
 }
 
-// TestCalculateAmountsJSONMatchesPerSetOnRealData toplu fiyat yolunun GERÇEK
-// sorgularla kap başına yolla AYNI tutarı seçtiğini ve kalem sayısından
-// bağımsız olarak SABİT sayıda sorgu açtığını kanıtlar.
+// TestCalculateAmountsJSONMatchesPerSetOnRealData proves that, with REAL
+// queries, the batch price path selects the SAME amount as the per-container
+// path, and that it opens a CONSTANT number of queries regardless of the number
+// of items.
 //
-// İki iddia da birim testiyle kanıtlanamaz: eşitlik, iki ayrı SQL'in aynı aday
-// satırlarını döndürmesine dayanır (biri "= $1", diğeri "= ANY($1)") ve sorgu
-// sayısı ancak gerçek bir havuzda sayılabilir.
+// Neither claim can be proven with a unit test: the equality rests on two
+// separate SQL statements returning the same candidate rows (one "= $1", the
+// other "= ANY($1)"), and the number of queries can only be counted on a real
+// pool.
 //
-// Sepet hesabının tamamı bu eşitliğe dayanır: farklı bir fiyat seçen bir toplu
-// okuma müşteriden başka bir tutar tahsil eder ve sonraki hiçbir denetim bunu
-// görmez — toplamlar iki durumda da kendi içinde tutarlıdır.
+// The whole cart calculation rests on this equality: a batch read that selects
+// a different price charges the customer a different amount and no later check
+// sees it — the totals are internally consistent in both cases.
 func TestCalculateAmountsJSONMatchesPerSetOnRealData(t *testing.T) {
 	ctx := context.Background()
 	svc, tracer := newCountingService(t)
 
 	list, err := svc.CreatePriceList(ctx, service.PriceListInput{
-		Title:  "Toplu okuma kampanyası",
+		Title:  "Batch read campaign",
 		Type:   models.PriceListSale,
 		Status: models.PriceListActive,
 	})
 	require.NoError(t, err)
 
-	// Kaplar seçim kuralının her dalını taşır: taban fiyat, adet kademesi,
-	// yayındaki kampanya, bölge kuralı ve başka para birimi.
+	// The containers carry every branch of the selection rule: base price,
+	// quantity tier, published campaign, region rule and another currency.
 	setIDs := make([]string, 0, 8)
 	for i := range 8 {
 		inputs := []service.PriceInput{{CurrencyCode: "TRY", Amount: int64(1000 + i)}}
@@ -920,16 +937,17 @@ func TestCalculateAmountsJSONMatchesPerSetOnRealData(t *testing.T) {
 	}
 
 	attrs := map[string]string{"region_id": "reg_1"}
-	type kalem struct {
+	type lineItem struct {
 		setID    string
 		quantity int32
 	}
-	items := make([]kalem, 0, len(setIDs)+2)
+	items := make([]lineItem, 0, len(setIDs)+2)
 	for i, id := range setIDs {
-		items = append(items, kalem{id, int32(1 + i%15)})
+		items = append(items, lineItem{id, int32(1 + i%15)})
 	}
-	// Aynı kap iki farklı adette ve fiyatı olmayan bir kap da isteğe girer.
-	items = append(items, kalem{setIDs[1], 12}, kalem{"pset_OLMAYAN", 1})
+	// The same container at two different quantities, and a container with no
+	// price, go into the request too.
+	items = append(items, lineItem{setIDs[1], 12}, lineItem{"pset_MISSING", 1})
 
 	request := map[string]any{
 		"currency_code": "TRY",
@@ -945,8 +963,8 @@ func TestCalculateAmountsJSONMatchesPerSetOnRealData(t *testing.T) {
 	payload, err := json.Marshal(request)
 	require.NoError(t, err)
 
-	// Isınma: ilk çalıştırma bağlantıyı açar ve deyimleri hazırlar; sayım
-	// bundan sonra başlar.
+	// Warm-up: the first run opens the connection and prepares the statements;
+	// the counting starts after it.
 	_, err = svc.CalculateAmountsJSON(ctx, payload)
 	require.NoError(t, err)
 	_, err = svc.CalculateAmount(ctx, setIDs[0], "TRY", 1, attrs)
@@ -971,40 +989,42 @@ func TestCalculateAmountsJSONMatchesPerSetOnRealData(t *testing.T) {
 		amount, err := svc.CalculateAmount(ctx, item.setID, "TRY", item.quantity, attrs)
 		if err != nil {
 			require.True(t, errors.IsNotFound(err), "%s: %v", item.setID, err)
-			assert.False(t, resp.Items[i].Priced, "%s toplu yolda fiyatlı görünüyor", item.setID)
+			assert.False(t, resp.Items[i].Priced, "%s shows as priced on the batch path", item.setID)
 			continue
 		}
-		require.True(t, resp.Items[i].Priced, "%s toplu yolda fiyatsız görünüyor", item.setID)
+		require.True(t, resp.Items[i].Priced, "%s shows as unpriced on the batch path", item.setID)
 		assert.Equal(t, amount, resp.Items[i].Amount,
-			"%s (adet %d) iki yolda farklı fiyatlandı", item.setID, item.quantity)
+			"%s (quantity %d) was priced differently on the two paths", item.setID, item.quantity)
 	}
 	perSetQueries := tracer.count.Load() - before
 
 	assert.Equal(t, int64(2), batchQueries,
-		"toplu yol kalem sayısından bağımsız olarak iki sorgu açmalı (adaylar + kurallar)")
+		"the batch path has to open two queries regardless of the number of items (candidates + rules)")
 	assert.Greater(t, perSetQueries, int64(2*len(items)-2),
-		"kap başına yol kalem başına en az iki sorgu açar; ölçülen: %d", perSetQueries)
+		"the per-container path opens at least two queries per item; measured: %d", perSetQueries)
 }
 
-// TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz foreign key'in yumuşak silmeyi
-// YAKALAMADIĞINI ve bunun sonucunun ne olduğunu birlikte ölçer.
+// TestARuleCanBeWrittenToADeletedPriceButIsUnreachable measures, together, that
+// the foreign key does NOT CATCH a soft delete and what the consequence of that
+// is.
 //
-// CreatePriceRule bir yazma yolu olmasına rağmen TEK depo çağrısı yapar: kural
-// hangi fiyata bağlanacaksa onu çağıran verir, servis öncesinde hiçbir şey
-// okumaz. Yani "oku → karar ver → yaz" yarışı burada YOKTUR ve tax'taki kusurun
-// biçimi bu modülde hiçbir metotta bulunmaz.
+// Although CreatePriceRule is a write path, it makes a SINGLE repository call:
+// the caller supplies the price the rule is to be bound to, and the service
+// reads nothing beforehand. So there is NO "read → decide → write" race here,
+// and the shape of the defect in tax is found in no method of this module.
 //
-// Yine de yazılan kural, silinmiş bir fiyatın altına inebilir: price_rule
-// price(id)'ye referans verir ama silme YUMUŞAKTIR ve satırı yerinde bırakır.
-// Test bunu kanıtlar ve HEMEN ARDINDAN sonucu ölçer: fiyatın kendisi zaten
-// silinmiş olduğu için aday sorgusuna girmez, dolayısıyla kural hiçbir hesabı
-// değiştiremez. Ölçülen sonuç ULAŞILAMAZ bir satırdır — müşterinin ödediği
-// tutar değişmez.
+// Even so, the rule written can land under a deleted price: price_rule
+// references price(id), but deletion is SOFT and leaves the row in place. The
+// test proves this and RIGHT AFTER measures the consequence: because the price
+// itself is already deleted, it does not enter the candidate query, so the rule
+// cannot change any calculation. The measured consequence is an UNREACHABLE
+// row — the amount the customer pays does not change.
 //
-// Test bir kusuru değil, repository.CreatePriceRule godoc'undaki cümleyi tutar:
-// o cümle bir süre "kuralın yetim kalması yapısal olarak imkânsızdır" diyordu
-// ve ölçüm bunun yanlış olduğunu gösterdi (2026-09-06).
-func TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz(t *testing.T) {
+// The test does not hold a defect; it holds the sentence in the
+// repository.CreatePriceRule godoc: for a while that sentence said "a rule
+// being orphaned is structurally impossible", and the measurement showed that
+// to be wrong (2026-09-06).
+func TestARuleCanBeWrittenToADeletedPriceButIsUnreachable(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
@@ -1018,7 +1038,8 @@ func TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz(t *testing.T) {
 	require.Len(t, prices, 1)
 	priceID := prices[0].ID
 
-	// Kap silinince fiyatları da yumuşak silinir; satırlar yerinde kalır.
+	// When the container is deleted its prices are soft-deleted too; the rows
+	// stay in place.
 	require.NoError(t, svc.DeletePriceSet(ctx, set.ID))
 
 	_, err = svc.CreatePriceRule(ctx, priceID, service.RuleInput{
@@ -1027,123 +1048,125 @@ func TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz(t *testing.T) {
 		Values:    []string{"reg_1"},
 	})
 	require.NoError(t, err,
-		"foreign key yumuşak silmeyi yakalamaz: silinmiş fiyatın altına kural yazılabilir")
+		"the foreign key does not catch a soft delete: a rule can be written under a deleted price")
 
-	// SONUÇ: kural yazıldı ama hiçbir hesap yolu ona ulaşamaz, çünkü fiyatın
-	// kendisi aday sorgusundan elenir.
+	// CONSEQUENCE: the rule was written, but no calculation path can reach it,
+	// because the price itself is eliminated from the candidate query.
 	_, err = svc.CalculatePrice(ctx, set.ID, service.CalculateParams{
 		CurrencyCode: "TRY",
 		Attributes:   map[string]string{"region_id": "reg_1"},
 	})
-	require.Error(t, err, "silinmiş kabın fiyatı hesaba girmemeli")
+	require.Error(t, err, "the price of a deleted container must not enter the calculation")
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestYerineKonanFiyatSatirdanSilinir yerine koymanın geride SATIR
-// bırakmadığını kanıtlar (ADR 0047).
+// TestAReplacedPriceIsDeletedAsARow proves that a replacement leaves no ROW
+// behind (ADR 0047).
 //
-// Düzenek kararın ölçtüğü düzeneğin aynısıdır: tek bir kap dört kuşaktan
-// geçirilir — 10000, 12000, 9000, 15000 — ve her kuşak bir kural taşır. Damga
-// sürerken modülün kendi okuması BİR satır, aynı kap üzerindeki filtresiz
-// count(*) DÖRT satır dönüyordu.
+// The setup is the same as the one the decision measured: a single container
+// is taken through four generations — 10000, 12000, 9000, 15000 — and every
+// generation carries a rule. While the stamp was in force, the module's own
+// read returned ONE row and an unfiltered count(*) on the same container
+// returned FOUR.
 //
-// Sayımın filtresiz olması testin özüdür. Modülün her okuması deleted_at IS
-// NULL taşıdığı için, modülün okuduğu gibi sayan bir test damga altında da
-// yeşil kalırdı; birikimin bu tablolar üzerinde bir entegrasyon takımı varken
-// fark edilmemesinin sebebi tam olarak budur. Bu yüzden burada okuma yüzeyine
-// değil tablonun kendisine bakılır.
-func TestYerineKonanFiyatSatirdanSilinir(t *testing.T) {
+// That the count is unfiltered is the heart of the test. Because every read of
+// the module carries deleted_at IS NULL, a test that counted the way the module
+// reads would have stayed green under the stamp too; that is exactly why the
+// accumulation went unnoticed while there was an integration suite on these
+// tables. That is why this test looks at the table itself, not at the read
+// surface.
+func TestAReplacedPriceIsDeletedAsARow(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	kural := func(bolge string) []service.RuleInput {
+	ruleFor := func(region string) []service.RuleInput {
 		return []service.RuleInput{
-			{Attribute: "region_id", Operator: models.OpEq, Values: []string{bolge}},
+			{Attribute: "region_id", Operator: models.OpEq, Values: []string{region}},
 		}
 	}
 
 	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{
-		{CurrencyCode: "TRY", Amount: 10000, Rules: kural("reg_1")},
+		{CurrencyCode: "TRY", Amount: 10000, Rules: ruleFor("reg_1")},
 	})
 	require.NoError(t, err)
 
-	ilk, err := svc.ListPrices(ctx, set.ID)
+	first, err := svc.ListPrices(ctx, set.ID)
 	require.NoError(t, err)
-	require.Len(t, ilk, 1)
-	fiyatIDleri := []string{ilk[0].ID}
+	require.Len(t, first, 1)
+	priceIDs := []string{first[0].ID}
 
-	for _, kusak := range []struct {
-		tutar int64
-		bolge string
+	for _, generation := range []struct {
+		amount int64
+		region string
 	}{
 		{12000, "reg_2"},
 		{9000, "reg_3"},
 		{15000, "reg_4"},
 	} {
-		yazilan, err := svc.SetPrices(ctx, set.ID, []service.PriceInput{
-			{CurrencyCode: "TRY", Amount: kusak.tutar, Rules: kural(kusak.bolge)},
+		written, err := svc.SetPrices(ctx, set.ID, []service.PriceInput{
+			{CurrencyCode: "TRY", Amount: generation.amount, Rules: ruleFor(generation.region)},
 		})
 		require.NoError(t, err)
-		require.Len(t, yazilan, 1)
-		fiyatIDleri = append(fiyatIDleri, yazilan[0].ID)
+		require.Len(t, written, 1)
+		priceIDs = append(priceIDs, written[0].ID)
 	}
 
-	// Kuşakların kimlikleri ayrıdır; damgalı satırlar bir iplik oluşturmuyordu.
-	benzersiz := map[string]bool{}
-	for _, id := range fiyatIDleri {
-		benzersiz[id] = true
+	// The generations' ids are distinct; the stamped rows did not form a thread.
+	unique := map[string]bool{}
+	for _, id := range priceIDs {
+		unique[id] = true
 	}
-	require.Len(t, benzersiz, 4, "her yerine koyma YENİ kimlik üretir")
+	require.Len(t, unique, 4, "every replacement produces a NEW id")
 
-	var toplamSatir int
+	var totalRows int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		"SELECT count(*) FROM price WHERE price_set_id = $1", set.ID).Scan(&toplamSatir))
-	assert.Equal(t, 1, toplamSatir,
-		"yerine konan fiyat damgalanıp bırakılmamalı, tablodan SİLİNMELİ")
+		"SELECT count(*) FROM price WHERE price_set_id = $1", set.ID).Scan(&totalRows))
+	assert.Equal(t, 1, totalRows,
+		"a replaced price must not be stamped and left behind, it has to be DELETED from the table")
 
-	// Kurallar yeni bir ifadeyle değil, price_rule.price_id üzerindeki
-	// cascade ile düşer; damga bu cascade'i hiç tetiklemiyordu.
-	var kuralSatiri int
+	// The rules go not with a new statement but with the cascade on
+	// price_rule.price_id; the stamp never triggered that cascade.
+	var ruleRows int
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		"SELECT count(*) FROM price_rule WHERE price_id = ANY($1)", fiyatIDleri).Scan(&kuralSatiri))
-	assert.Equal(t, 1, kuralSatiri,
-		"eski kuşakların kuralları ebeveyniyle birlikte düşmeli")
+		"SELECT count(*) FROM price_rule WHERE price_id = ANY($1)", priceIDs).Scan(&ruleRows))
+	assert.Equal(t, 1, ruleRows,
+		"the old generations' rules have to go together with their parent")
 
-	canli, err := svc.ListPrices(ctx, set.ID)
+	live, err := svc.ListPrices(ctx, set.ID)
 	require.NoError(t, err)
-	require.Len(t, canli, 1)
-	assert.Equal(t, int64(15000), canli[0].Amount, "ayakta kalan satır SON kuşak olmalı")
-	require.Len(t, canli[0].Rules, 1)
-	assert.Equal(t, []string{"reg_4"}, canli[0].Rules[0].Values)
+	require.Len(t, live, 1)
+	assert.Equal(t, int64(15000), live[0].Amount, "the row left standing has to be the LAST generation")
+	require.Len(t, live[0].Rules, 1)
+	assert.Equal(t, []string{"reg_4"}, live[0].Rules[0].Values)
 }
 
-// TestSilinenKabinFiyatlariDamgalanir kap silmenin YUMUŞAK kaldığını kanıtlar.
+// TestADeletedSetsPricesAreStamped proves that deleting a container stays SOFT.
 //
-// ADR 0047 tek bir çağrı yerini sertleştirdi; bu ikincisi yerinde durmak
-// zorundadır, çünkü silinmiş bir kabın fiyatını hesaptan gizleyen tek şey bu
-// damgadır: ListPriceCandidates price_set'e JOIN yapmaz ve servis kabı yalnızca
-// sıfır aday döndüğünde okur.
+// ADR 0047 hardened a single call site; this second one has to stay as it is,
+// because the stamp is the only thing that hides a deleted container's price
+// from the calculation: ListPriceCandidates does not JOIN price_set, and the
+// service reads the container only when zero candidates come back.
 //
-// CANLI fiyat sayısına bakan bir test bu ayrımı GÖREMEZ — kap silmesi de sert
-// silmeye çevrilse canlı sayı yine sıfır olurdu — bu yüzden satırın kendisi
-// aranır ve damgası okunur.
-func TestSilinenKabinFiyatlariDamgalanir(t *testing.T) {
+// A test that looks at the number of LIVE prices CANNOT SEE this distinction —
+// were the container delete turned into a hard delete too, the live count
+// would still be zero — so the row itself is looked up and its stamp is read.
+func TestADeletedSetsPricesAreStamped(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
 	set, err := svc.CreatePriceSet(ctx, []service.PriceInput{{CurrencyCode: "TRY", Amount: 100}})
 	require.NoError(t, err)
 
-	fiyatlar, err := svc.ListPrices(ctx, set.ID)
+	prices, err := svc.ListPrices(ctx, set.ID)
 	require.NoError(t, err)
-	require.Len(t, fiyatlar, 1)
-	fiyatID := fiyatlar[0].ID
+	require.Len(t, prices, 1)
+	priceID := prices[0].ID
 
 	require.NoError(t, svc.DeletePriceSet(ctx, set.ID))
 
-	var damga *time.Time
+	var stamp *time.Time
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
-		"SELECT deleted_at FROM price WHERE id = $1", fiyatID).Scan(&damga),
-		"kap silmesi fiyat satırını KALDIRMAMALI; satır bulunamadı")
-	assert.NotNil(t, damga, "kap silmesi fiyat satırını damgalamalı")
+		"SELECT deleted_at FROM price WHERE id = $1", priceID).Scan(&stamp),
+		"deleting the container must NOT REMOVE the price row; the row was not found")
+	assert.NotNil(t, stamp, "deleting the container has to stamp the price row")
 }

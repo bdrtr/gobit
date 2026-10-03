@@ -6,10 +6,10 @@ import (
 	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
-// createPriceSet yeni bir price set oluşturur (POST /admin/v1/price-sets).
+// createPriceSet creates a new price set (POST /admin/v1/price-sets).
 //
-// Gövdedeki fiyatlar aynı istekte yazılır; biri geçersizse hiçbiri yazılmaz ve
-// kap da oluşturulmaz.
+// The prices in the body are written in the same request; if one of them is
+// invalid, none is written and the container is not created either.
 func (a *API) createPriceSet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -33,11 +33,11 @@ func (a *API) createPriceSet(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toPriceSetDTO(set, prices))
 }
 
-// listPriceSets price set'leri sayfalayarak listeler (GET /admin/v1/price-sets).
+// listPriceSets lists price sets page by page (GET /admin/v1/price-sets).
 //
-// Liste yanıtında fiyatlar YOKTUR: bir sayfa dolusu kabın tüm fiyatlarını
-// getirmek, çağıranın neredeyse hiç kullanmadığı büyük bir gövde üretirdi.
-// Fiyatlar tekil uç noktadan ya da Query katmanından okunur.
+// The list response carries NO prices: fetching every price of a page full of
+// containers would produce a large body the caller almost never uses. Prices
+// are read from the single-record endpoint or from the Query layer.
 func (a *API) listPriceSets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -55,7 +55,7 @@ func (a *API) listPriceSets(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toPriceSetSummaryDTO)
 }
 
-// getPriceSet tek bir price set'i fiyatlarıyla döner
+// getPriceSet returns a single price set with its prices
 // (GET /admin/v1/price-sets/{id}).
 func (a *API) getPriceSet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -75,7 +75,7 @@ func (a *API) getPriceSet(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toPriceSetDTO(set, prices))
 }
 
-// deletePriceSet price set'i ve fiyatlarını soft delete ile siler
+// deletePriceSet soft-deletes the price set and its prices
 // (DELETE /admin/v1/price-sets/{id}).
 func (a *API) deletePriceSet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -87,7 +87,7 @@ func (a *API) deletePriceSet(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// listPrices bir kabın fiyatlarını döner
+// listPrices returns a container's prices
 // (GET /admin/v1/price-sets/{id}/prices).
 func (a *API) listPrices(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -100,10 +100,11 @@ func (a *API) listPrices(w http.ResponseWriter, r *http.Request) {
 	writeItems(w, r, toPriceDTOs(prices))
 }
 
-// setPrices bir kabın fiyatlarını topluca DEĞİŞTİRİR
+// setPrices REPLACES a container's prices in bulk
 // (POST /admin/v1/price-sets/{id}/prices).
 //
-// İşlem yerine koymadır: gövdede olmayan fiyatlar silinir. Yazma atomiktir.
+// The operation is a replacement: prices absent from the body are deleted. The
+// write is atomic.
 func (a *API) setPrices(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -121,33 +122,35 @@ func (a *API) setPrices(w http.ResponseWriter, r *http.Request) {
 	writeItems(w, r, toPriceDTOs(prices))
 }
 
-// calculatePrice bir kabın verilen bağlamdaki geçerli fiyatını seçer
+// calculatePrice selects a container's valid price in the given context
 // (GET /admin/v1/price-sets/{id}/calculate).
 //
-// POST değil GET'tir. Uç eskiden POST'tu ve gerekçesi "bağlam yapılandırılmış
-// bir gövdedir, sorgu dizesine düzleştirilirse iç içe değerler kaybolur" diye
-// yazılmıştı; bu gerekçenin tiplerde karşılığı yok: service.CalculateParams
-// düzdür ve kural bağlamı map[string]string'tir — kaybolacak iç içe değer
-// yoktur. Bedeli ise somuttu: yetki sözlüğü metoda baktığı için (bkz.
-// [API.Routes]) hiçbir şey yazmayan bu uç [ScopeWrite] istiyordu ve fiyatı
-// yalnızca okuyan entegrasyonlar — fiyat karşılaştırma, dışa aktarma — fiyat
-// YAZABİLEN bir kimlikle çalışmak zorunda kalıyordu.
+// It is a GET, not a POST. The endpoint used to be a POST, and the reason was
+// written down as "the context is a structured body; flattened into a query
+// string, nested values are lost". That reason has no counterpart in the
+// types: service.CalculateParams is flat and the rule context is a
+// map[string]string — there is no nested value to lose. The cost, on the other
+// hand, was concrete: because the scope vocabulary looks at the method (see
+// [API.Routes]), this endpoint, which writes nothing, asked for [ScopeWrite],
+// and integrations that only read prices — price comparison, export — had to
+// run with an identity that CAN WRITE prices.
 //
-// Sorgu biçimi:
+// Query shape:
 //
 //	?currency_code=TRY&quantity=10&at=2026-06-15T12:00:00Z&attr_region_id=reg_1
 //
-// Kural bağlamı tek bir yapılı değer yerine [paramAttrPrefix] ÖNEKLİ ayrı
-// parametrelerle taşınır: alan adları modelin kendi snake_case adlarıdır ve
-// önek onları ayrılmış parametrelerden ([paramCurrencyCode], [paramQuantity],
-// [paramAt]) ayırmaya yeter. İki alternatif elendi: sorguya gömülü bir JSON
-// nesnesi ("attributes={...}") ve "attributes[region_id]" biçimi. İkisi de
-// URL'i elle okunamaz kılar ve HTTP katmanına ikinci bir çözümleyici sokar;
-// karşılığında çözecekleri bir iç içe yapı yoktur.
+// The rule context is carried not as a single structured value but as
+// separate parameters with the [paramAttrPrefix] PREFIX: the field names are
+// the model's own snake_case names, and the prefix is enough to tell them apart
+// from the reserved parameters ([paramCurrencyCode], [paramQuantity],
+// [paramAt]). Two alternatives were ruled out: a JSON object embedded in the
+// query ("attributes={...}") and the "attributes[region_id]" form. Both make
+// the URL unreadable by hand and bring a second parser into the HTTP layer,
+// and in return there is no nested structure for them to parse.
 //
-// Zaman damgası RFC 3339'dur ve saat dilimi ofsetindeki "+" sorgu dizesinde
-// yüzde kodlanmalıdır ("%2B"); yoksa net/url onu boşluk olarak çözer. "Z"
-// biçimi bu tuzağı hiç yaşamaz.
+// The timestamp is RFC 3339, and the "+" in a time zone offset has to be
+// percent-encoded in the query string ("%2B"); otherwise net/url decodes it as
+// a space. The "Z" form never runs into this trap.
 func (a *API) calculatePrice(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -165,7 +168,7 @@ func (a *API) calculatePrice(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toCalculatedPriceDTO(calculated))
 }
 
-// createPriceList yeni bir fiyat listesi oluşturur (POST /admin/v1/price-lists).
+// createPriceList creates a new price list (POST /admin/v1/price-lists).
 func (a *API) createPriceList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -183,7 +186,7 @@ func (a *API) createPriceList(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toPriceListDTO(list))
 }
 
-// listPriceLists fiyat listelerini sayfalayarak döner
+// listPriceLists returns price lists page by page
 // (GET /admin/v1/price-lists).
 func (a *API) listPriceLists(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -202,7 +205,7 @@ func (a *API) listPriceLists(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toPriceListDTO)
 }
 
-// getPriceList tek bir fiyat listesini döner (GET /admin/v1/price-lists/{id}).
+// getPriceList returns a single price list (GET /admin/v1/price-lists/{id}).
 func (a *API) getPriceList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -214,10 +217,11 @@ func (a *API) getPriceList(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toPriceListDTO(list))
 }
 
-// updatePriceList fiyat listesinin tüm alanlarını yazar
+// updatePriceList writes every field of the price list
 // (PUT /admin/v1/price-lists/{id}).
 //
-// PUT'tur çünkü kısmi güncelleme değildir: gövdede olmayan alanlar sıfırlanır.
+// It is a PUT because it is not a partial update: fields absent from the body
+// are reset.
 func (a *API) updatePriceList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -235,7 +239,7 @@ func (a *API) updatePriceList(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toPriceListDTO(list))
 }
 
-// deletePriceList fiyat listesini soft delete ile siler
+// deletePriceList soft-deletes the price list
 // (DELETE /admin/v1/price-lists/{id}).
 func (a *API) deletePriceList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -247,7 +251,7 @@ func (a *API) deletePriceList(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// listPriceRules bir fiyatın kurallarını döner
+// listPriceRules returns a price's rules
 // (GET /admin/v1/prices/{price_id}/rules).
 func (a *API) listPriceRules(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -260,7 +264,7 @@ func (a *API) listPriceRules(w http.ResponseWriter, r *http.Request) {
 	writeItems(w, r, toPriceRuleDTOs(rules))
 }
 
-// createPriceRule bir fiyata kural ekler
+// createPriceRule adds a rule to a price
 // (POST /admin/v1/prices/{price_id}/rules).
 func (a *API) createPriceRule(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -280,7 +284,7 @@ func (a *API) createPriceRule(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toPriceRuleDTO(rule))
 }
 
-// deletePriceRule kuralı soft delete ile siler
+// deletePriceRule soft-deletes the rule
 // (DELETE /admin/v1/price-rules/{id}).
 func (a *API) deletePriceRule(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

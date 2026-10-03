@@ -13,11 +13,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// TestCreatePriceSetValidatesBeforeWriting geçersiz bir fiyat verildiğinde
-// KABIN HİÇ OLUŞTURULMADIĞINI kanıtlar.
+// TestCreatePriceSetValidatesBeforeWriting proves that, when an invalid price
+// is given, the container is NEVER CREATED.
 //
-// Bu, "önce yarat sonra doğrula" sırasının bıraktığı yetim kayıtları engelleyen
-// davranıştır; sıra tersine dönerse test düşer.
+// This is the behavior that prevents the orphan records a "create first,
+// validate later" order leaves behind; if the order is reversed, the test
+// fails.
 func TestCreatePriceSetValidatesBeforeWriting(t *testing.T) {
 	repo := newStubRepo()
 	repo.createPriceSetFn = func(
@@ -33,11 +34,11 @@ func TestCreatePriceSetValidatesBeforeWriting(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-	assert.Zero(t, repo.calls["CreatePriceSet"], "geçersiz fiyat varken kap oluşturulmamalı")
+	assert.Zero(t, repo.calls["CreatePriceSet"], "no container may be created while there is an invalid price")
 }
 
-// TestCreatePriceSetReportsFailingIndex hangi fiyatın reddedildiğinin hatada
-// bildirildiğini kanıtlar.
+// TestCreatePriceSetReportsFailingIndex proves that the error reports which
+// price was rejected.
 func TestCreatePriceSetReportsFailingIndex(t *testing.T) {
 	repo := newStubRepo()
 
@@ -52,8 +53,8 @@ func TestCreatePriceSetReportsFailingIndex(t *testing.T) {
 	assert.Equal(t, 1, typed.Details["index"])
 }
 
-// TestCreatePriceSetWithoutPricesWritesEmptySet fiyat verilmediğinde kabın
-// boş fiyat kümesiyle yazıldığını kanıtlar.
+// TestCreatePriceSetWithoutPricesWritesEmptySet proves that, when no price is
+// given, the container is written with an empty set of prices.
 func TestCreatePriceSetWithoutPricesWritesEmptySet(t *testing.T) {
 	repo := newStubRepo()
 	var gotPrices []models.Price
@@ -72,13 +73,15 @@ func TestCreatePriceSetWithoutPricesWritesEmptySet(t *testing.T) {
 	assert.Empty(t, gotPrices)
 }
 
-// TestCreatePriceSetWritesSetAndPricesInOneCall kabın ve fiyatlarının depoya
-// TEK çağrıda geçtiğini kanıtlar.
+// TestCreatePriceSetWritesSetAndPricesInOneCall proves that the container and
+// its prices reach the repository in ONE call.
 //
-// İkinci bir yazma turu (ReplacePrices) açılsaydı o tur AYRI bir işlem olurdu ve
-// veritabanı fiyatı reddettiğinde kap çoktan commit edilmiş, yani fiyatsız ve
-// kimseye bağlanmamış bir kap geride kalmış olurdu. stubRepo'nun ReplacePrices'i
-// betiklenmemiştir; çağrılırsa hata döner ve test bu yüzden de düşer.
+// Had a second write round (ReplacePrices) been opened, that round would be a
+// SEPARATE transaction, and when the database rejected a price, the container
+// would already have been committed — that is, a container without prices,
+// bound to nothing, would have been left behind. stubRepo's ReplacePrices is
+// not scripted; if it is called it returns an error, and the test fails for
+// that reason too.
 func TestCreatePriceSetWritesSetAndPricesInOneCall(t *testing.T) {
 	repo := newStubRepo()
 	var gotPrices []models.Price
@@ -96,15 +99,15 @@ func TestCreatePriceSetWritesSetAndPricesInOneCall(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(set.ID, models.PriceSetIDPrefix))
-	require.Len(t, gotPrices, 2, "fiyatlar kabı yaratan çağrıya geçmeli")
+	require.Len(t, gotPrices, 2, "the prices have to go to the call that creates the container")
 	assert.Equal(t, "TRY", gotPrices[0].CurrencyCode)
 	assert.Equal(t, "USD", gotPrices[1].CurrencyCode)
-	assert.Zero(t, repo.calls["ReplacePrices"], "kap ve fiyatları AYRI turda yazılmamalı")
+	assert.Zero(t, repo.calls["ReplacePrices"], "the container and its prices must not be written in SEPARATE rounds")
 }
 
-// TestSetPricesNormalizesInput girdinin depoya normalleştirilmiş hâlde
-// geçtiğini kanıtlar: para birimi büyük harf, asgari adet varsayılanı 1,
-// kimlikler önekli.
+// TestSetPricesNormalizesInput proves that the input reaches the repository
+// normalized: the currency upper case, the minimum quantity defaulting to 1,
+// the ids prefixed.
 func TestSetPricesNormalizesInput(t *testing.T) {
 	var written []models.Price
 	repo := newStubRepo()
@@ -131,11 +134,12 @@ func TestSetPricesNormalizesInput(t *testing.T) {
 	require.Len(t, written[0].Rules, 1)
 	assert.True(t, strings.HasPrefix(written[0].Rules[0].ID, models.PriceRuleIDPrefix))
 	assert.Equal(t, written[0].ID, written[0].Rules[0].PriceID,
-		"kural, ait olduğu fiyata bağlanmalı")
+		"the rule has to be bound to the price it belongs to")
 }
 
-// TestSetPricesRejectsInvalidBeforeWriting geçersiz girdide depoya HİÇ
-// gidilmediğini kanıtlar; atomikliğin uygulama tarafındaki yarısı budur.
+// TestSetPricesRejectsInvalidBeforeWriting proves that on invalid input the
+// repository is NEVER reached; this is the application-side half of the
+// atomicity.
 func TestSetPricesRejectsInvalidBeforeWriting(t *testing.T) {
 	repo := newStubRepo()
 
@@ -146,11 +150,11 @@ func TestSetPricesRejectsInvalidBeforeWriting(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-	assert.Zero(t, repo.calls["ReplacePrices"], "geçersiz girdi depoya gitmemeli")
+	assert.Zero(t, repo.calls["ReplacePrices"], "invalid input must not reach the repository")
 }
 
-// TestSetPricesAcceptsEmptySlice boş dilimin "tüm fiyatları kaldır" anlamına
-// geldiğini kanıtlar.
+// TestSetPricesAcceptsEmptySlice proves that an empty slice means "remove every
+// price".
 func TestSetPricesAcceptsEmptySlice(t *testing.T) {
 	var written []models.Price
 	repo := newStubRepo()
@@ -168,8 +172,8 @@ func TestSetPricesAcceptsEmptySlice(t *testing.T) {
 	assert.Equal(t, 1, repo.calls["ReplacePrices"])
 }
 
-// TestSetPricesRejectsWrongIDPrefix yanlış türde bir kimliğin doğrulama
-// hatasıyla (bulunamadı değil) döndüğünü kanıtlar.
+// TestSetPricesRejectsWrongIDPrefix proves that an id of the wrong kind comes
+// back with a validation error (not "not found").
 func TestSetPricesRejectsWrongIDPrefix(t *testing.T) {
 	repo := newStubRepo()
 
@@ -180,23 +184,23 @@ func TestSetPricesRejectsWrongIDPrefix(t *testing.T) {
 	assert.Empty(t, repo.calls)
 }
 
-// TestListPricesChecksSetExists olmayan bir kabın fiyat listesinin boş dilim
-// değil NotFound döndüğünü kanıtlar.
+// TestListPricesChecksSetExists proves that the price listing of a missing
+// container returns NotFound, not an empty slice.
 func TestListPricesChecksSetExists(t *testing.T) {
 	repo := newStubRepo()
 	repo.getPriceSetFn = func(context.Context, string) (models.PriceSet, error) {
-		return models.PriceSet{}, errors.NotFound("price_set_not_found", "yok")
+		return models.PriceSet{}, errors.NotFound("price_set_not_found", "missing")
 	}
 
 	_, err := newTestService(repo).ListPrices(context.Background(), "pset_1")
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
-	assert.Zero(t, repo.calls["ListPrices"], "kap yoksa fiyat sorgusu açılmamalı")
+	assert.Zero(t, repo.calls["ListPrices"], "with no container, no price query may be opened")
 }
 
-// TestListPriceSetsReportsAppliedPaging zarfa yazılan limit/offset'in
-// UYGULANAN değerler olduğunu kanıtlar.
+// TestListPriceSetsReportsAppliedPaging proves that the limit/offset written to
+// the envelope are the APPLIED values.
 func TestListPriceSetsReportsAppliedPaging(t *testing.T) {
 	var gotLimit, gotOffset int32
 	repo := newStubRepo()
@@ -208,16 +212,16 @@ func TestListPriceSetsReportsAppliedPaging(t *testing.T) {
 	page, err := newTestService(repo).ListPriceSets(context.Background(), MaxLimit+50, 10)
 
 	require.NoError(t, err)
-	assert.Equal(t, MaxLimit, gotLimit, "depoya kırpılmış limit gitmeli")
+	assert.Equal(t, MaxLimit, gotLimit, "the clipped limit has to reach the repository")
 	assert.Equal(t, int32(10), gotOffset)
-	assert.Equal(t, MaxLimit, page.Limit, "zarf uygulanan limiti bildirmeli")
+	assert.Equal(t, MaxLimit, page.Limit, "the envelope has to report the applied limit")
 	assert.Equal(t, int32(10), page.Offset)
 	assert.Equal(t, int64(42), page.Count)
 	assert.Len(t, page.Items, 1)
 }
 
-// TestCreatePriceListDefaultsToDraft durum verilmediğinde listenin YAYINA
-// alınmadığını kanıtlar.
+// TestCreatePriceListDefaultsToDraft proves that, when no status is given, the
+// list is NOT PUBLISHED.
 func TestCreatePriceListDefaultsToDraft(t *testing.T) {
 	var written models.PriceList
 	repo := newStubRepo()
@@ -227,7 +231,7 @@ func TestCreatePriceListDefaultsToDraft(t *testing.T) {
 	}
 
 	_, err := newTestService(repo).CreatePriceList(context.Background(), PriceListInput{
-		Title: "Yaz kampanyası",
+		Title: "Summer campaign",
 		Type:  models.PriceListSale,
 	})
 
@@ -236,8 +240,8 @@ func TestCreatePriceListDefaultsToDraft(t *testing.T) {
 	assert.True(t, strings.HasPrefix(written.ID, models.PriceListIDPrefix))
 }
 
-// TestCreatePriceListValidation fiyat listesi doğrulamasının her dalını
-// kanıtlar.
+// TestCreatePriceListValidation proves every branch of the price list
+// validation.
 func TestCreatePriceListValidation(t *testing.T) {
 	early := testNow
 	late := testNow.Add(time.Hour)
@@ -247,17 +251,17 @@ func TestCreatePriceListValidation(t *testing.T) {
 		in   PriceListInput
 		ok   bool
 	}{
-		{"geçerli", PriceListInput{Title: "K", Type: models.PriceListSale}, true},
-		{"pencere sıralı", PriceListInput{
+		{"valid", PriceListInput{Title: "K", Type: models.PriceListSale}, true},
+		{"window in order", PriceListInput{
 			Title: "K", Type: models.PriceListOverride, StartsAt: &early, EndsAt: &late}, true},
-		{"başlık boş", PriceListInput{Title: "   ", Type: models.PriceListSale}, false},
-		{"tür tanımsız", PriceListInput{Title: "K", Type: models.PriceListType("bogus")}, false},
-		{"tür boş", PriceListInput{Title: "K"}, false},
-		{"durum tanımsız", PriceListInput{
+		{"blank title", PriceListInput{Title: "   ", Type: models.PriceListSale}, false},
+		{"undefined type", PriceListInput{Title: "K", Type: models.PriceListType("bogus")}, false},
+		{"empty type", PriceListInput{Title: "K"}, false},
+		{"undefined status", PriceListInput{
 			Title: "K", Type: models.PriceListSale, Status: models.PriceListStatus("bogus")}, false},
-		{"pencere ters", PriceListInput{
+		{"window reversed", PriceListInput{
 			Title: "K", Type: models.PriceListSale, StartsAt: &late, EndsAt: &early}, false},
-		{"pencere uçları aynı", PriceListInput{
+		{"window ends equal", PriceListInput{
 			Title: "K", Type: models.PriceListSale, StartsAt: &early, EndsAt: &early}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -278,12 +282,12 @@ func TestCreatePriceListValidation(t *testing.T) {
 	}
 }
 
-// TestListPriceRulesChecksPriceExists olmayan bir fiyatın kurallarının boş
-// dilim değil NotFound döndüğünü kanıtlar.
+// TestListPriceRulesChecksPriceExists proves that the rules of a missing price
+// return NotFound, not an empty slice.
 func TestListPriceRulesChecksPriceExists(t *testing.T) {
 	repo := newStubRepo()
 	repo.getPriceFn = func(context.Context, string) (models.Price, error) {
-		return models.Price{}, errors.NotFound("price_not_found", "yok")
+		return models.Price{}, errors.NotFound("price_not_found", "missing")
 	}
 
 	_, err := newTestService(repo).ListPriceRules(context.Background(), "price_1")
@@ -293,8 +297,8 @@ func TestListPriceRulesChecksPriceExists(t *testing.T) {
 	assert.Zero(t, repo.calls["ListPriceRules"])
 }
 
-// TestServiceRejectsWrongIDPrefixes her uç noktanın kendi kimlik önekini
-// beklediğini kanıtlar.
+// TestServiceRejectsWrongIDPrefixes proves that every endpoint expects its own
+// id prefix.
 func TestServiceRejectsWrongIDPrefixes(t *testing.T) {
 	ctx := context.Background()
 	repo := newStubRepo()
@@ -319,11 +323,11 @@ func TestServiceRejectsWrongIDPrefixes(t *testing.T) {
 			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 		})
 	}
-	assert.Empty(t, repo.calls, "önek hataları depoya hiç gitmemeli")
+	assert.Empty(t, repo.calls, "prefix errors must never reach the repository")
 }
 
-// TestUnconfiguredServiceFailsTyped deposuz servisin panik değil tipli hata
-// döndüğünü kanıtlar.
+// TestUnconfiguredServiceFailsTyped proves that a service without a repository
+// returns a typed error, not a panic.
 func TestUnconfiguredServiceFailsTyped(t *testing.T) {
 	svc := New(nil, Options{})
 
@@ -333,8 +337,8 @@ func TestUnconfiguredServiceFailsTyped(t *testing.T) {
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
 }
 
-// TestSetBasePricesIsDeterministic modüller arası yüzeyin para birimlerini
-// SIRALI yazdığını kanıtlar; harita dolaşım sırası rastgeledir.
+// TestSetBasePricesIsDeterministic proves that the cross-module surface writes
+// the currencies IN ORDER; map iteration order is random.
 func TestSetBasePricesIsDeterministic(t *testing.T) {
 	var seen []string
 	repo := newStubRepo()
@@ -356,8 +360,8 @@ func TestSetBasePricesIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestSetBasePricesWritesBasePrices yazılan fiyatların listesiz ve kuralsız
-// olduğunu kanıtlar; "taban" tanımı budur.
+// TestSetBasePricesWritesBasePrices proves that the prices written have no list
+// and no rules; that is the definition of "base".
 func TestSetBasePricesWritesBasePrices(t *testing.T) {
 	var written []models.Price
 	repo := newStubRepo()
@@ -373,13 +377,13 @@ func TestSetBasePricesWritesBasePrices(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Len(t, written, 1)
-	assert.Nil(t, written[0].PriceListID, "taban fiyat listeye bağlanmamalı")
-	assert.Empty(t, written[0].Rules, "taban fiyat koşulsuz olmalı")
+	assert.Nil(t, written[0].PriceListID, "a base price must not be bound to a list")
+	assert.Empty(t, written[0].Rules, "a base price has to be unconditional")
 	assert.Equal(t, int64(19900), written[0].Amount)
 }
 
-// TestCreateEmptyPriceSetReturnsID modüller arası yüzeyin yalnızca kimlik
-// döndüğünü kanıtlar.
+// TestCreateEmptyPriceSetReturnsID proves that the cross-module surface returns
+// only an id.
 func TestCreateEmptyPriceSetReturnsID(t *testing.T) {
 	repo := newStubRepo()
 	var gotPrices []models.Price
@@ -394,16 +398,17 @@ func TestCreateEmptyPriceSetReturnsID(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, strings.HasPrefix(id, models.PriceSetIDPrefix))
-	assert.Empty(t, gotPrices, "fiyatsız kap yaratılmalı")
+	assert.Empty(t, gotPrices, "a container without prices has to be created")
 }
 
-// TestCreatePriceSetReportsFailingRuleIndex kural düzeyindeki bir hatanın HEM
-// fiyat HEM kural sırasını taşıdığını kanıtlar.
+// TestCreatePriceSetReportsFailingRuleIndex proves that a rule-level error
+// carries BOTH the price's AND the rule's position.
 //
-// İki seviye aynı ayrıntı anahtarını kullansaydı dıştaki fiyat indeksi içteki
-// kural indeksini EZER ve istemci "prices[1].rules[2] geçersiz" durumunda
-// yalnızca index=1 görüp hatayı fiyatın kendisinde arardı. İki indeks bu yüzden
-// FARKLI değerlerle kurulur; biri diğerinin yerine yazılsa test düşer.
+// Had the two levels used the same detail key, the outer price index would
+// OVERWRITE the inner rule index, and in the case "prices[1].rules[2] is
+// invalid" the client would see only index=1 and look for the error in the
+// price itself. That is why the two indexes are set up with DIFFERENT values;
+// if one were written in place of the other, the test would fail.
 func TestCreatePriceSetReportsFailingRuleIndex(t *testing.T) {
 	repo := newStubRepo()
 
@@ -412,14 +417,14 @@ func TestCreatePriceSetReportsFailingRuleIndex(t *testing.T) {
 		{CurrencyCode: "TRY", Amount: 200, Rules: []RuleInput{
 			{Attribute: "region_id", Operator: models.OpEq, Values: []string{"reg_1"}},
 			{Attribute: "customer_group_id", Operator: models.OpIn, Values: []string{"vip"}},
-			{Attribute: "customer_age", Operator: models.OpGt, Values: []string{"on sekiz"}},
+			{Attribute: "customer_age", Operator: models.OpGt, Values: []string{"eighteen"}},
 		}},
 	})
 
 	require.Error(t, err)
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed))
-	assert.Equal(t, 1, typed.Details[detailIndex], "kaçıncı fiyat")
-	assert.Equal(t, 2, typed.Details[detailRuleIndex], "o fiyatın kaçıncı kuralı")
-	assert.Zero(t, repo.calls["CreatePriceSet"], "geçersiz kural varken kap oluşturulmamalı")
+	assert.Equal(t, 1, typed.Details[detailIndex], "which price")
+	assert.Equal(t, 2, typed.Details[detailRuleIndex], "which rule of that price")
+	assert.Zero(t, repo.calls["CreatePriceSet"], "no container may be created while there is an invalid rule")
 }

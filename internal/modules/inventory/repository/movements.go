@@ -1,8 +1,5 @@
 package repository
 
-// This file is English because ADR 0012 makes language a property of the FILE
-// and every new file is English; repository.go beside it stays Turkish.
-
 import (
 	"context"
 	"errors"

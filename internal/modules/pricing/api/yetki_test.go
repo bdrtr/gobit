@@ -14,66 +14,69 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/api"
 )
 
-// Bu dosya pricing'in yönetim uçlarındaki YETKİ katmanını sınar.
+// This file tests the SCOPE layer on pricing's admin endpoints.
 //
-// Kimlik katmanı (corehttp.RequireAdmin) burada taklit edilir: testin
-// kanıtlamak istediği şey "kimlik doğru çözülüyor mu" değil, "çözülmüş
-// kimliğin YETKİSİ uç bazında zorlanıyor mu" sorusudur. İkisi ayrı
-// sınandığında, kimlik doğrulaması kusursuz çalışırken yetkilendirmenin hiç
-// bağlanmamış olduğu durum — yani düzeltilen arıza — görünür kalır.
+// The identity layer (corehttp.RequireAdmin) is faked here: what the test
+// wants to prove is not "is the identity resolved correctly" but "is the
+// resolved identity's SCOPE enforced endpoint by endpoint". When the two are
+// tested separately, the case where authentication works flawlessly while
+// authorization was never wired up — that is, the fault that was fixed — stays
+// visible.
 //
-// Servis GERÇEKTİR (bellek içi depoyla): reddedilen bir isteğin depoyu
-// değiştirmediği ancak gerçek bir yazma yolu varken anlamlı biçimde
-// doğrulanabilir.
+// The service is REAL (with an in-memory repository): that a rejected request
+// did not change the repository can only be verified meaningfully when there
+// is a real write path.
 
-// yetkiliIstek verilen yetkileri taşıyan bir kimlikle istek yapar.
+// requestWithScopes makes a request with an identity carrying the given scopes.
 //
-// Hiç yetki verilmemesi geçerli bir durumdur ve "kimliği var ama yetkisi yok"
-// çağıranı üretir — arızanın ta kendisi bu kullanıcıydı.
-func yetkiliIstek(
-	t *testing.T, r chi.Router, method, yol, govde string, scopes ...string,
+// Granting no scope at all is a valid case and produces the "has an identity
+// but no scope" caller — that user was the fault itself.
+func requestWithScopes(
+	t *testing.T, r chi.Router, method, path, body string, scopes ...string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(method, yol, strings.NewReader(govde))
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-		ID:     "usr_dar",
+		ID:     "usr_narrow",
 		Kind:   "user",
 		Scopes: scopes,
 	}))
 
-	kayit := httptest.NewRecorder()
-	r.ServeHTTP(kayit, req)
-	return kayit
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
 }
 
-// kimliksizIstek context'e HİÇ kimlik koymadan istek yapar.
-func kimliksizIstek(t *testing.T, r chi.Router, method, yol, govde string) *httptest.ResponseRecorder {
+// requestWithoutPrincipal makes a request without putting ANY identity into the
+// context.
+func requestWithoutPrincipal(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequest(method, yol, strings.NewReader(govde))
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
-	kayit := httptest.NewRecorder()
-	r.ServeHTTP(kayit, req)
-	return kayit
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	return rec
 }
 
-// yetkiFiksturu tam yetkili bir kimlikle bir fiyat seti, bir fiyat listesi ve
-// bir fiyat kaydı oluşturur.
+// scopeFixture creates a price set, a price list and a price record with a
+// fully privileged identity.
 //
-// Okuma uçlarının 200 dönebilmesi için gerçek kimlikler gerekir: var olmayan
-// bir kaydı okumak 404 dönerdi ve test, yetki katmanının izin verdiğini değil
-// kaydın bulunamadığını ölçerdi. Fikstür do() ile kurulur; o yardımcı isteğe
-// tam yetkili kimliği ekler.
-func yetkiFiksturu(t *testing.T, r chi.Router) (priceSetID, priceID, priceListID string) {
+// For the read endpoints to be able to return 200 they need real ids: reading
+// a record that does not exist would return 404, and the test would measure
+// that the record was not found rather than that the scope layer let the
+// request through. The fixture is built with do(); that helper adds the fully
+// privileged identity to the request.
+func scopeFixture(t *testing.T, r chi.Router) (priceSetID, priceID, priceListID string) {
 	t.Helper()
 
 	set := decodeItem(t, do(t, r, http.MethodPost, "/admin/v1/price-sets",
 		`{"prices":[{"currency_code":"TRY","amount":19900}]}`))
 	priceSetID, ok := set["id"].(string)
-	require.True(t, ok, "fiyat seti kimliği okunamadı")
+	require.True(t, ok, "the price set id could not be read")
 
 	prices, ok := set["prices"].([]any)
 	require.True(t, ok)
@@ -81,193 +84,197 @@ func yetkiFiksturu(t *testing.T, r chi.Router) (priceSetID, priceID, priceListID
 	first, ok := prices[0].(map[string]any)
 	require.True(t, ok)
 	priceID, ok = first["id"].(string)
-	require.True(t, ok, "fiyat kimliği okunamadı")
+	require.True(t, ok, "the price id could not be read")
 
-	liste := decodeItem(t, do(t, r, http.MethodPost, "/admin/v1/price-lists",
-		`{"title":"Yaz kampanyası","type":"sale"}`))
-	priceListID, ok = liste["id"].(string)
-	require.True(t, ok, "fiyat listesi kimliği okunamadı")
+	priceList := decodeItem(t, do(t, r, http.MethodPost, "/admin/v1/price-lists",
+		`{"title":"Summer campaign","type":"sale"}`))
+	priceListID, ok = priceList["id"].(string)
+	require.True(t, ok, "the price list id could not be read")
 
 	return priceSetID, priceID, priceListID
 }
 
-// TestYazmaUcuDarYetkiliCagiraniReddeder yazma uçlarının [api.ScopeWrite]
-// istediğini kanıtlar.
+// TestWriteEndpointRejectsNarrowScopedCaller proves that the write endpoints
+// ask for [api.ScopeWrite].
 //
-// Çağıran GERÇEK bir kimliktir ve okuma yetkisi vardır; eksik olan tek şey
-// yazma yetkisidir. Arızanın kendisi tam buydu: kimliği doğrulanmış her
-// çağıran, yetkisine bakılmadan bütün fiyatları değiştirebiliyordu.
-func TestYazmaUcuDarYetkiliCagiraniReddeder(t *testing.T) {
+// The caller is a REAL identity and has the read scope; the only thing it
+// lacks is the write scope. That was exactly the fault: every authenticated
+// caller could change every price, whatever its scopes.
+func TestWriteEndpointRejectsNarrowScopedCaller(t *testing.T) {
 	r, _ := newTestRouter(t)
-	setID, priceID, listID := yetkiFiksturu(t, r)
+	setID, priceID, listID := scopeFixture(t, r)
 
-	uclar := map[string]struct {
+	endpoints := map[string]struct {
 		method string
-		yol    string
-		govde  string
+		path   string
+		body   string
 	}{
-		"fiyat seti oluşturma": {http.MethodPost, "/admin/v1/price-sets", `{"prices":[]}`},
-		"fiyat seti silme":     {http.MethodDelete, "/admin/v1/price-sets/" + setID, ""},
-		"fiyat yazma": {
+		"create price set": {http.MethodPost, "/admin/v1/price-sets", `{"prices":[]}`},
+		"delete price set": {http.MethodDelete, "/admin/v1/price-sets/" + setID, ""},
+		"write prices": {
 			http.MethodPost, "/admin/v1/price-sets/" + setID + "/prices",
 			`{"prices":[{"currency_code":"TRY","amount":1}]}`,
 		},
-		"fiyat listesi oluşturma": {
+		"create price list": {
 			http.MethodPost, "/admin/v1/price-lists", `{"title":"x","type":"sale"}`,
 		},
-		"fiyat listesi güncelleme": {
+		"update price list": {
 			http.MethodPut, "/admin/v1/price-lists/" + listID, `{"title":"x","type":"sale"}`,
 		},
-		"fiyat listesi silme": {http.MethodDelete, "/admin/v1/price-lists/" + listID, ""},
-		"kural oluşturma": {
+		"delete price list": {http.MethodDelete, "/admin/v1/price-lists/" + listID, ""},
+		"create rule": {
 			http.MethodPost, "/admin/v1/prices/" + priceID + "/rules",
 			`{"attribute":"region_id","operator":"eq","values":["reg_1"]}`,
 		},
-		"kural silme": {http.MethodDelete, "/admin/v1/price-rules/prule_1", ""},
+		"delete rule": {http.MethodDelete, "/admin/v1/price-rules/prule_1", ""},
 	}
 
-	for ad, tt := range uclar {
-		t.Run(ad, func(t *testing.T) {
-			kayit := yetkiliIstek(t, r, tt.method, tt.yol, tt.govde, api.ScopeRead)
+	for name, tt := range endpoints {
+		t.Run(name, func(t *testing.T) {
+			rec := requestWithScopes(t, r, tt.method, tt.path, tt.body, api.ScopeRead)
 
-			assert.Equal(t, http.StatusForbidden, kayit.Code,
-				"okuma yetkili çağıran yazma ucunda 403 almalı; gövde: %s", kayit.Body.String())
-			assert.Equal(t, corehttp.CodeForbidden, errorCode(t, kayit))
+			assert.Equal(t, http.StatusForbidden, rec.Code,
+				"a caller with the read scope has to get 403 on a write endpoint; body: %s", rec.Body.String())
+			assert.Equal(t, corehttp.CodeForbidden, errorCode(t, rec))
 		})
 	}
 
-	// Reddedilen istek servise HİÇ ulaşmamalıdır. Status kodu tek başına bunu
-	// kanıtlamaz: 403'ü yazmadan ÖNCE silmiş bir handler da aynı kodu dönerdi.
+	// A rejected request must NEVER reach the service. The status code alone does
+	// not prove that: a handler that deleted BEFORE writing the 403 would return
+	// the same code.
 	assert.Equal(t, http.StatusOK, do(t, r, http.MethodGet, "/admin/v1/price-sets/"+setID, "").Code,
-		"reddedilen silme isteği fiyat setini silmemeli")
+		"the rejected delete request must not delete the price set")
 	assert.Equal(t, http.StatusOK, do(t, r, http.MethodGet, "/admin/v1/price-lists/"+listID, "").Code,
-		"reddedilen silme isteği fiyat listesini silmemeli")
+		"the rejected delete request must not delete the price list")
 
-	fiyatlar, _, _, _ := decodeList(t, do(t, r, http.MethodGet, "/admin/v1/price-sets/"+setID+"/prices", ""))
-	require.Len(t, fiyatlar, 1, "reddedilen fiyat yazma isteği fiyatları değiştirmemeli")
-	assert.InDelta(t, 19900, fiyatlar[0]["amount"], 0)
+	prices, _, _, _ := decodeList(t, do(t, r, http.MethodGet, "/admin/v1/price-sets/"+setID+"/prices", ""))
+	require.Len(t, prices, 1, "the rejected price write request must not change the prices")
+	assert.InDelta(t, 19900, prices[0]["amount"], 0)
 }
 
-// TestOkumaUcuDarYetkiyleCalisir okuma uçlarının aynı dar kimliği GEÇİRDİĞİNİ
-// kanıtlar.
+// TestReadEndpointWorksWithNarrowScope proves that the read endpoints LET THE
+// SAME narrow identity THROUGH.
 //
-// Ayrı bir test olması bilinçlidir: her isteği reddeden bir middleware
-// yukarıdaki tabloyu kusursuz geçer ama yönetim yüzeyini tümüyle kilitlerdi.
-// [api.ScopeRead] yalnızca yazmayı kapalı tutmak için vardır; okumayı da
-// admin'e bağlamak, fiyatı raporlayan dar yetkili bir entegrasyonun fiyat
-// yazabilen bir kimlikle çalışmasını zorunlu kılardı.
-func TestOkumaUcuDarYetkiyleCalisir(t *testing.T) {
+// That it is a separate test is deliberate: a middleware that rejects every
+// request would pass the table above flawlessly but lock the whole admin
+// surface. [api.ScopeRead] exists only to keep writing closed; tying reading
+// to admin as well would force a narrow-scoped integration that reports prices
+// to run with an identity that can write prices.
+func TestReadEndpointWorksWithNarrowScope(t *testing.T) {
 	r, _ := newTestRouter(t)
-	setID, priceID, listID := yetkiFiksturu(t, r)
+	setID, priceID, listID := scopeFixture(t, r)
 
-	uclar := map[string]string{
-		"fiyat seti listesi":    "/admin/v1/price-sets",
-		"tekil fiyat seti":      "/admin/v1/price-sets/" + setID,
-		"fiyat listesi":         "/admin/v1/price-sets/" + setID + "/prices",
-		"fiyat listeleri":       "/admin/v1/price-lists",
-		"tekil fiyat listesi":   "/admin/v1/price-lists/" + listID,
-		"fiyatın kural listesi": "/admin/v1/prices/" + priceID + "/rules",
-		"fiyat hesaplama":       "/admin/v1/price-sets/" + setID + "/calculate?currency_code=TRY",
+	endpoints := map[string]string{
+		"price set list":         "/admin/v1/price-sets",
+		"single price set":       "/admin/v1/price-sets/" + setID,
+		"price listing":          "/admin/v1/price-sets/" + setID + "/prices",
+		"price lists":            "/admin/v1/price-lists",
+		"single price list":      "/admin/v1/price-lists/" + listID,
+		"a price's rule listing": "/admin/v1/prices/" + priceID + "/rules",
+		"price calculation":      "/admin/v1/price-sets/" + setID + "/calculate?currency_code=TRY",
 	}
 
-	for ad, yol := range uclar {
-		t.Run(ad, func(t *testing.T) {
-			kayit := yetkiliIstek(t, r, http.MethodGet, yol, "", api.ScopeRead)
+	for name, path := range endpoints {
+		t.Run(name, func(t *testing.T) {
+			rec := requestWithScopes(t, r, http.MethodGet, path, "", api.ScopeRead)
 
-			assert.Equal(t, http.StatusOK, kayit.Code,
-				"okuma yetkisi okuma ucuna yetmeli; gövde: %s", kayit.Body.String())
+			assert.Equal(t, http.StatusOK, rec.Code,
+				"the read scope has to be enough for a read endpoint; body: %s", rec.Body.String())
 		})
 	}
 }
 
-// TestHesaplamaUcuOkumaYetkisiyleCalisir düzeltilen arızanın kendisini
-// kanıtlar: fiyat HESAPLATMAK için fiyat YAZABİLEN bir kimlik gerekmez.
+// TestCalculateEndpointWorksWithReadScope proves the fixed fault itself: getting
+// a price CALCULATED does not take an identity that CAN WRITE prices.
 //
-// Uç eskiden POST'tu; yetki sözlüğü metoda baktığı için (bkz. api.API.Routes)
-// [api.ScopeWrite] istiyordu ve fiyatı yalnızca raporlayan bir entegrasyon —
-// fiyat karşılaştırma, dışa aktarma — tek istekte bütün kataloğu
-// değiştirebilen bir kimlikle çalışmak zorunda kalıyordu.
+// The endpoint used to be a POST; because the scope vocabulary looks at the
+// method (see api.API.Routes) it asked for [api.ScopeWrite], and an
+// integration that only reports prices — price comparison, export — had to run
+// with an identity that could change the whole catalog in a single request.
 //
-// İkinci iddia aynı testte durur ve bilinçlidir: hesaplama okumaya açılırken
-// YAZMA yüzeyi kapalı kalmalıdır. Yalnızca ilk iddia sınansaydı, dar kimliğe
-// yazma yetkisi de veren bir gerileme testi geçerdi ve düzeltme arızayı
-// büyütmüş olurdu.
-func TestHesaplamaUcuOkumaYetkisiyleCalisir(t *testing.T) {
+// The second assertion stands in the same test, and deliberately: while the
+// calculation is opened to reading, the WRITE surface has to stay closed. Had
+// only the first assertion been tested, a regression that also granted the
+// narrow identity the write scope would pass the test, and the fix would have
+// enlarged the fault.
+func TestCalculateEndpointWorksWithReadScope(t *testing.T) {
 	r, _ := newTestRouter(t)
-	setID, _, _ := yetkiFiksturu(t, r)
+	setID, _, _ := scopeFixture(t, r)
 
-	kayit := yetkiliIstek(t, r, http.MethodGet,
+	rec := requestWithScopes(t, r, http.MethodGet,
 		"/admin/v1/price-sets/"+setID+"/calculate?currency_code=TRY&quantity=2", "",
 		api.ScopeRead)
 
-	require.Equal(t, http.StatusOK, kayit.Code,
-		"okuma yetkisi fiyat hesaplamaya yetmeli; gövde: %s", kayit.Body.String())
-	hesap := decodeItem(t, kayit)
-	assert.InDelta(t, 19900, hesap["amount"], 0)
-	assert.InDelta(t, 39800, hesap["total"], 0, "hesap gerçekten yapılmalı, boş zarf dönmemeli")
+	require.Equal(t, http.StatusOK, rec.Code,
+		"the read scope has to be enough to calculate a price; body: %s", rec.Body.String())
+	calculated := decodeItem(t, rec)
+	assert.InDelta(t, 19900, calculated["amount"], 0)
+	assert.InDelta(t, 39800, calculated["total"], 0, "the calculation has to really be made, not return an empty envelope")
 
-	yazma := yetkiliIstek(t, r, http.MethodPost, "/admin/v1/price-sets/"+setID+"/prices",
+	writeAttempt := requestWithScopes(t, r, http.MethodPost, "/admin/v1/price-sets/"+setID+"/prices",
 		`{"prices":[{"currency_code":"TRY","amount":1}]}`, api.ScopeRead)
 
-	assert.Equal(t, http.StatusForbidden, yazma.Code,
-		"aynı dar kimlik fiyat yazamamalı; gövde: %s", yazma.Body.String())
+	assert.Equal(t, http.StatusForbidden, writeAttempt.Code,
+		"the same narrow identity must not be able to write prices; body: %s", writeAttempt.Body.String())
 }
 
-// TestAdminUstYetkidir corehttp.ScopeAdmin'in "pricing:write" ayrıca
-// verilmeden de yazmaya yettiğini kanıtlar.
-func TestAdminUstYetkidir(t *testing.T) {
+// TestAdminIsASuperscope proves that corehttp.ScopeAdmin is enough to write
+// without "pricing:write" being granted separately.
+func TestAdminIsASuperscope(t *testing.T) {
 	r, _ := newTestRouter(t)
 
-	kayit := yetkiliIstek(t, r, http.MethodPost, "/admin/v1/price-sets",
+	rec := requestWithScopes(t, r, http.MethodPost, "/admin/v1/price-sets",
 		`{"prices":[{"currency_code":"TRY","amount":100}]}`, corehttp.ScopeAdmin)
 
-	assert.Equal(t, http.StatusCreated, kayit.Code,
-		"admin yetkisi tek başına yazmaya yetmeli; gövde: %s", kayit.Body.String())
+	assert.Equal(t, http.StatusCreated, rec.Code,
+		"the admin scope alone has to be enough to write; body: %s", rec.Body.String())
 }
 
-// TestYetkisizKullaniciFiyatlaraErisemez yetkisi hiç olmayan bir yönetim
-// kullanıcısının okuma ucuna da erişemediğini kanıtlar.
+// TestUserWithoutScopesCannotReachPrices proves that an admin user with no
+// scope at all cannot reach the read endpoint either.
 //
-// auth service.CreateUserInput.Scopes godoc'u boş yetki listesinin "giriş
-// yapabilir ama hiçbir yönetim ucuna erişemez" bir kullanıcı ürettiğini
-// söylüyor; bu test o cümlenin pricing tarafındaki karşılığıdır.
-func TestYetkisizKullaniciFiyatlaraErisemez(t *testing.T) {
+// The godoc of auth service.CreateUserInput.Scopes says an empty scope list
+// produces a user who "can sign in but cannot reach any admin endpoint"; this
+// test is that sentence's counterpart on the pricing side.
+func TestUserWithoutScopesCannotReachPrices(t *testing.T) {
 	r, _ := newTestRouter(t)
 
-	kayit := yetkiliIstek(t, r, http.MethodGet, "/admin/v1/price-sets", "")
+	rec := requestWithScopes(t, r, http.MethodGet, "/admin/v1/price-sets", "")
 
-	assert.Equal(t, http.StatusForbidden, kayit.Code,
-		"yetkisiz kullanıcı okuma ucunda 403 almalı; gövde: %s", kayit.Body.String())
-	assert.Equal(t, corehttp.CodeForbidden, errorCode(t, kayit))
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"a user without scopes has to get 403 on a read endpoint; body: %s", rec.Body.String())
+	assert.Equal(t, corehttp.CodeForbidden, errorCode(t, rec))
 }
 
-// TestMagazaUcuYetkiIstemez /store/v1 ucunun yetki SORMADIĞINI kanıtlar.
+// TestStoreEndpointRequiresNoScope proves that the /store/v1 endpoint does NOT
+// ASK for a scope.
 //
-// Mağaza yüzeyinin kimliği publishable anahtardır ve o anahtar tanımı gereği
-// yetki TAŞIMAZ. Bu uca bir scope eklenseydi, hiçbir mağaza istemcisi fiyat
-// okuyamazdı.
-func TestMagazaUcuYetkiIstemez(t *testing.T) {
+// The storefront surface's identity is the publishable key, and that key by
+// definition CARRIES no scope. Had a scope been added to this endpoint, no
+// storefront client could read prices.
+func TestStoreEndpointRequiresNoScope(t *testing.T) {
 	r, _ := newTestRouter(t)
-	setID, _, _ := yetkiFiksturu(t, r)
+	setID, _, _ := scopeFixture(t, r)
 
-	kayit := kimliksizIstek(t, r, http.MethodGet, "/store/v1/price-sets/"+setID, "")
+	rec := requestWithoutPrincipal(t, r, http.MethodGet, "/store/v1/price-sets/"+setID, "")
 
-	assert.Equal(t, http.StatusOK, kayit.Code,
-		"mağaza ucu yetki istememeli; gövde: %s", kayit.Body.String())
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"the store endpoint must not ask for a scope; body: %s", rec.Body.String())
 }
 
-// TestKimliksizYonetimIstegi401Dondurur kimliğin hiç olmadığı durumda yetki
-// katmanının 403 DEĞİL 401 döndüğünü kanıtlar.
+// TestAdminRequestWithoutPrincipalReturns401 proves that, when there is no
+// identity at all, the scope layer returns 401, NOT 403.
 //
-// Ayrım istemci için anlamlıdır: 401 "kim olduğunu söyle", 403 "kim olduğunu
-// biliyorum ama yetkin yok" demektir. 403 dönseydi, kimlik başlığını unutan
-// bir istemci jetonunu yenilemek yerine yetki istemeye giderdi.
-func TestKimliksizYonetimIstegi401Dondurur(t *testing.T) {
+// The distinction matters to the client: 401 means "tell me who you are", 403
+// means "I know who you are but you do not have the scope". Had it returned
+// 403, a client that forgot the identity header would go off to ask for a
+// scope instead of refreshing its token.
+func TestAdminRequestWithoutPrincipalReturns401(t *testing.T) {
 	r, _ := newTestRouter(t)
 
-	kayit := kimliksizIstek(t, r, http.MethodGet, "/admin/v1/price-sets", "")
+	rec := requestWithoutPrincipal(t, r, http.MethodGet, "/admin/v1/price-sets", "")
 
-	assert.Equal(t, http.StatusUnauthorized, kayit.Code, "gövde: %s", kayit.Body.String())
-	assert.Equal(t, "Bearer", kayit.Header().Get("WWW-Authenticate"),
-		"RFC 9110: 401 hangi şemanın beklendiğini bildirmeli")
+	assert.Equal(t, http.StatusUnauthorized, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, "Bearer", rec.Header().Get("WWW-Authenticate"),
+		"RFC 9110: a 401 has to state which scheme is expected")
 }

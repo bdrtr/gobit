@@ -122,9 +122,6 @@ func runStockSearch(t *testing.T, seed int64) {
 	t.Helper()
 
 	ctx := context.Background()
-	// The service is built here rather than through the package's own helper:
-	// that helper is named in Turkish and this file is English, and the
-	// language ratchet counts an identifier as much as a sentence (ADR 0012).
 	store := newFakeStore()
 	svc := service.New(store, nil)
 	store.seedItem(itemID, "SKU-SEARCH")

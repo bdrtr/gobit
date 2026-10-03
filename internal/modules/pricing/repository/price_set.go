@@ -8,15 +8,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/repository/pricingdb"
 )
 
-// CreatePriceSet verilen kimlikle bir price set oluşturur ve fiyatlarını AYNI
-// İŞLEMDE yazar.
+// CreatePriceSet creates a price set with the given id and writes its prices in
+// the SAME TRANSACTION.
 //
-// Kap ile fiyatları tek işlemde olmak ZORUNDADIR: iki ayrı işlemde, fiyat
-// yazımını veritabanı reddettiğinde (örn. var olmayan bir fiyat listesine bağlı
-// fiyat) kap çoktan commit edilmiş olur ve çağıran hata alsa bile geride
-// fiyatsız, kimseye bağlanmamış bir kap kalırdı.
+// The container and its prices HAVE TO be in one transaction: with two separate
+// transactions, when the database refuses the price write (e.g. a price bound
+// to a price list that does not exist), the container would already be
+// committed, and even though the caller got an error, a container without
+// prices, bound to nothing, would be left behind.
 //
-// prices boş olabilir; o durumda yalnızca kap yazılır.
+// prices may be empty; in that case only the container is written.
 func (r *Repo) CreatePriceSet(
 	ctx context.Context,
 	id string,
@@ -31,12 +32,12 @@ func (r *Repo) CreatePriceSet(
 			CreatedAt: fromTime(now),
 		})
 		if err != nil {
-			return wrapDB(err, "price set oluşturulamadı")
+			return wrapDB(err, "the price set could not be created")
 		}
 		set = toPriceSet(row)
 
-		// Kap bu işlemde yaratıldığı için başkası ona henüz erişemez; yerine
-		// koymadaki satır kilidine burada gerek yoktur.
+		// Because the container is created in this transaction, nobody else can
+		// reach it yet; the row lock the replacement takes is not needed here.
 		if _, err = insertPrices(ctx, q, id, prices, now); err != nil {
 			return err
 		}
@@ -50,7 +51,8 @@ func (r *Repo) CreatePriceSet(
 	return set, nil
 }
 
-// GetPriceSet kimliğe göre price set döner; yoksa errors.NotFound.
+// GetPriceSet returns the price set with the given id; errors.NotFound if
+// there is none.
 func (r *Repo) GetPriceSet(ctx context.Context, id string) (models.PriceSet, error) {
 	if err := r.ready(); err != nil {
 		return models.PriceSet{}, err
@@ -58,15 +60,16 @@ func (r *Repo) GetPriceSet(ctx context.Context, id string) (models.PriceSet, err
 
 	row, err := r.q.GetPriceSet(ctx, id)
 	if err != nil {
-		return models.PriceSet{}, notFoundOr(err, CodePriceSetNotFound, "price set bulunamadı: %s", id)
+		return models.PriceSet{}, notFoundOr(err, CodePriceSetNotFound, "price set not found: %s", id)
 	}
 	return toPriceSet(row), nil
 }
 
-// ListPriceSets sayfalanmış price set listesini ve TOPLAM kayıt sayısını döner.
+// ListPriceSets returns a paged list of price sets and the TOTAL number of
+// records.
 //
-// Toplam sayı sayfa uzunluğundan bağımsızdır; API zarfındaki "count" alanı
-// istemcinin kaç sayfa olduğunu bilmesini sağlar.
+// The total is independent of the page length; the "count" field in the API
+// envelope lets the client know how many pages there are.
 func (r *Repo) ListPriceSets(ctx context.Context, limit, offset int32) ([]models.PriceSet, int64, error) {
 	if err := r.ready(); err != nil {
 		return nil, 0, err
@@ -74,12 +77,12 @@ func (r *Repo) ListPriceSets(ctx context.Context, limit, offset int32) ([]models
 
 	rows, err := r.q.ListPriceSets(ctx, pricingdb.ListPriceSetsParams{Limit: limit, Offset: offset})
 	if err != nil {
-		return nil, 0, wrapDB(err, "price set listesi alınamadı")
+		return nil, 0, wrapDB(err, "the price set list could not be read")
 	}
 
 	total, err := r.q.CountPriceSets(ctx)
 	if err != nil {
-		return nil, 0, wrapDB(err, "price set sayısı alınamadı")
+		return nil, 0, wrapDB(err, "the price set count could not be read")
 	}
 
 	sets := make([]models.PriceSet, 0, len(rows))
@@ -89,9 +92,9 @@ func (r *Repo) ListPriceSets(ctx context.Context, limit, offset int32) ([]models
 	return sets, total, nil
 }
 
-// GetPriceSetsByIDs verilen kimliklere karşılık gelen price set'leri TEK
-// sorguda döner. Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir
-// (Query katmanının FetchByIDs sözleşmesi, ADR 0004).
+// GetPriceSetsByIDs returns the price sets matching the given ids in ONE query.
+// No record is returned for an id that is not found; that is not an error (the
+// Query layer's FetchByIDs contract, ADR 0004).
 func (r *Repo) GetPriceSetsByIDs(ctx context.Context, ids []string) ([]models.PriceSet, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -102,7 +105,7 @@ func (r *Repo) GetPriceSetsByIDs(ctx context.Context, ids []string) ([]models.Pr
 
 	rows, err := r.q.GetPriceSetsByIDs(ctx, ids)
 	if err != nil {
-		return nil, wrapDB(err, "price set'ler alınamadı")
+		return nil, wrapDB(err, "the price sets could not be read")
 	}
 
 	sets := make([]models.PriceSet, 0, len(rows))
@@ -112,33 +115,34 @@ func (r *Repo) GetPriceSetsByIDs(ctx context.Context, ids []string) ([]models.Pr
 	return sets, nil
 }
 
-// DeletePriceSet price set'i soft delete ile siler; yoksa errors.NotFound.
+// DeletePriceSet soft-deletes the price set; errors.NotFound if there is none.
 //
-// Fiyatlar da aynı işlemde damgalanır: kabı silip fiyatlarını canlı bırakmak,
-// silinmiş bir kabın fiyatlarının listelerde görünmesi demekti. Bu damga
-// vazgeçilmezdir çünkü hesaplama yolunda kabın canlılığını denetleyen başka bir
-// şey YOKTUR — ListPriceCandidates price_set'e hiç JOIN yapmaz ve servis kabı
-// yalnızca sıfır aday döndüğünde okur.
+// The prices are stamped in the same transaction: deleting the container and
+// leaving its prices live meant that a deleted container's prices showed up in
+// listings. This stamp is indispensable, because NOTHING ELSE on the
+// calculation path checks that the container is live — ListPriceCandidates
+// never JOINs price_set, and the service reads the container only when zero
+// candidates come back.
 //
-// ADR 0047'den sonra burası price.deleted_at'in TEK yazanıdır: yerine koyma
-// artık damgalamıyor, siliyor (bkz. [Repo.ReplacePrices]). Sütunun tek bir
-// anlamı olması bundandır — damgalı bir fiyat satırı yalnızca silinmiş bir
-// kaptan gelmiş olabilir — ve bu, şemadan değil çağıranların sayısından
-// gelir.
+// After ADR 0047 this is the ONLY writer of price.deleted_at: the replacement no
+// longer stamps, it deletes (see [Repo.ReplacePrices]). That is why the column
+// has a single meaning — a stamped price row can only have come from a deleted
+// container — and that comes not from the schema but from the number of
+// callers.
 func (r *Repo) DeletePriceSet(ctx context.Context, id string, now time.Time) error {
 	return r.inTx(ctx, func(q *pricingdb.Queries) error {
 		if _, err := q.SoftDeletePriceSet(ctx, pricingdb.SoftDeletePriceSetParams{
 			ID:        id,
 			DeletedAt: fromTime(now),
 		}); err != nil {
-			return notFoundOr(err, CodePriceSetNotFound, "price set bulunamadı: %s", id)
+			return notFoundOr(err, CodePriceSetNotFound, "price set not found: %s", id)
 		}
 
 		if err := q.SoftDeletePricesBySet(ctx, pricingdb.SoftDeletePricesBySetParams{
 			PriceSetID: id,
 			DeletedAt:  fromTime(now),
 		}); err != nil {
-			return wrapDB(err, "price set fiyatları silinemedi: %s", id)
+			return wrapDB(err, "the price set's prices could not be deleted: %s", id)
 		}
 
 		// A deleted set offers no price from now on, and its history says so
@@ -147,7 +151,7 @@ func (r *Repo) DeletePriceSet(ctx context.Context, id string, now time.Time) err
 	})
 }
 
-// toPriceSet üretilen satırı domain modeline çevirir.
+// toPriceSet turns the generated row into the domain model.
 func toPriceSet(row pricingdb.PriceSet) models.PriceSet {
 	return models.PriceSet{
 		ID:        row.ID,

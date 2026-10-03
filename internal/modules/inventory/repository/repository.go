@@ -1,28 +1,29 @@
-// Package repository inventory modülünün veritabanı erişimidir.
+// Package repository is the database access of the inventory module.
 //
-// SADECE bu modülün tablolarına dokunur (plan Bölüm 4). sqlc üretimi kod
-// repository/inventorydb altındadır ve elle düzenlenmez; bu paket onun üstüne
-// iki şey ekler:
+// It touches ONLY this module's tables (plan Section 4). The sqlc-generated code
+// lives under repository/inventorydb and is not edited by hand; this package
+// adds two things on top of it:
 //
-//   - Çeviri: pgtype ve üretilmiş satır tipleri BU PAKETİN DIŞINA ÇIKMAZ,
-//     models tiplerine çevrilir.
-//   - Sınıflandırma: sürücü hataları core/errors tipli hatalarına çevrilir;
-//     satır bulunamaması NotFound, benzersizlik ihlali Conflict olur.
+//   - Conversion: pgtype and the generated row types DO NOT LEAVE THIS PACKAGE,
+//     they are converted to models types.
+//   - Classification: driver errors are converted into core/errors typed errors;
+//     a missing row becomes NotFound, a uniqueness violation becomes Conflict.
 //
-// # İşlem (transaction) taşınması
+// # Carrying the transaction
 //
-// [Repository.WithTx] bir işlem açar ve onu CONTEXT'e koyar; işlem boyunca
-// çağrılan tüm repository metodları o context'i aldıkları sürece aynı işlemde
-// çalışır. Bunun alternatifi, işlem tutamağını taşıyan ayrı bir arayüz tipini
-// metot imzalarına koymaktı; o durumda servis kendi paketinde tanımladığı dar
-// arayüzle bu paketi YAPISAL OLARAK eşleştiremezdi — Go'da imzadaki adlandırılmış
-// tipler birebir aynı olmak zorundadır, yani servis repository'yi import etmek
-// zorunda kalırdı. Context ile taşımak imzaları iki tarafın da paylaştığı
-// tiplere (context.Context, models.*) indirger.
+// [Repository.WithTx] opens a transaction and puts it into the CONTEXT; every
+// repository method called during the transaction runs in that same transaction
+// as long as it receives that context. The alternative was to put a separate
+// interface type carrying the transaction handle into the method signatures; in
+// that case the service could not have matched this package STRUCTURALLY with
+// the narrow interface it declares in its own package — in Go the named types in
+// a signature have to be identical one for one, meaning the service would have
+// been forced to import the repository. Carrying it in the context reduces the
+// signatures to the types both sides share (context.Context, models.*).
 //
-// Kilit alan metotlar (Lock...) işlem DIŞINDA çağrılırsa hata döner: FOR UPDATE
-// kilidi işlem bitince serbest kalacağı için, işlemsiz bir kilit sessizce
-// hiçbir şey korumazdı.
+// Locking methods (Lock...) return an error if they are called OUTSIDE a
+// transaction: because a FOR UPDATE lock is released once the transaction ends,
+// a lock without a transaction would silently protect nothing.
 package repository
 
 import (
@@ -40,8 +41,8 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory/repository/inventorydb"
 )
 
-// Hata kodları. Çağıran taraf errors.CodeOf ile bunlara bakabilir; API
-// katmanı da aynı kodları istemciye geçirir.
+// Error codes. The caller can look at them with errors.CodeOf; the API layer
+// passes the same codes on to the client.
 const (
 	codeItemNotFound        = "inventory_item_not_found"
 	codeLocationNotFound    = "inventory_location_not_found"
@@ -55,8 +56,8 @@ const (
 	codeConcurrentUpdate    = "inventory_concurrent_update"
 )
 
-// Kısıt adları; sürücü hatasını anlamlı bir tipli hataya çevirmek için
-// kullanılır. Adlar migration'daki adlarla birebir aynıdır.
+// Constraint names; they are used to turn a driver error into a meaningful
+// typed error. The names are identical to the ones in the migration.
 const (
 	constraintSKUUniq       = "inventory_items_sku_uniq"
 	constraintLevelUniq     = "inventory_levels_item_location_uniq"
@@ -64,7 +65,7 @@ const (
 	constraintStockedNonneg = "inventory_levels_stocked_nonneg"
 )
 
-// PostgreSQL SQLSTATE kodları.
+// PostgreSQL SQLSTATE codes.
 const (
 	sqlStateUniqueViolation     = "23505"
 	sqlStateForeignKeyViolation = "23503"
@@ -72,37 +73,40 @@ const (
 	sqlStateDeadlockDetected    = "40P01"
 )
 
-// rollbackTimeout iptal edilmiş bir bağlamda geri almaya tanınan süredir.
-// Geri alma, çağıranın ctx'i dolmuş olsa da denenmelidir; aksi hâlde işlem
-// bağlantı havuza dönene kadar açık kalırdı.
+// rollbackTimeout is the time granted to a rollback on a canceled context.
+// The rollback must be attempted even if the caller's ctx has expired;
+// otherwise the transaction would stay open until the connection returned to
+// the pool.
 const rollbackTimeout = 5 * time.Second
 
-// txKeyType context anahtarının tipidir; dışarıdan üretilemesin diye
-// dışa açık değildir.
+// txKeyType is the type of the context key; it is not exported so that it
+// cannot be produced from the outside.
 type txKeyType struct{}
 
-// txKey işlem tutamağının context'teki anahtarıdır.
+// txKey is the key of the transaction handle in the context.
 var txKey = txKeyType{}
 
-// Repository inventory tablolarına erişimdir. Eşzamanlı kullanıma güvenlidir.
+// Repository is the access to the inventory tables. It is safe for concurrent
+// use.
 type Repository struct {
 	pool *pgxpool.Pool
 }
 
-// New verilen havuz üzerinde çalışan bir Repository üretir.
+// New produces a Repository working on the given pool.
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
 }
 
-// WithTx fn'i tek bir veritabanı işleminde çalıştırır.
+// WithTx runs fn in a single database transaction.
 //
-// fn'e verilen context işlemi taşır; o context ile çağrılan tüm repository
-// metodları aynı işlemde koşar. fn hata dönerse ya da panikler ise işlem geri
-// alınır, hata (panikte panik) yukarı verilir.
+// The context given to fn carries the transaction; every repository method
+// called with that context runs in the same transaction. If fn returns an error
+// or panics, the transaction is rolled back and the error (on a panic, the
+// panic) is passed upwards.
 //
-// Çağrı iç içe gelirse yeni bir işlem AÇILMAZ, var olan kullanılır: iç içe
-// işlem açmak PostgreSQL'de savepoint demektir ve dıştaki işlemin atomikliği
-// konusunda yanıltıcı bir güven verirdi.
+// If the call nests, a new transaction is NOT opened, the existing one is used:
+// opening a nested transaction means a savepoint in PostgreSQL and would give a
+// misleading confidence about the atomicity of the outer transaction.
 func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if _, ok := txFromContext(ctx); ok {
 		return fn(ctx)
@@ -110,7 +114,7 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return classify(err, "inventory_tx_begin_failed", "işlem başlatılamadı")
+		return classify(err, "inventory_tx_begin_failed", "could not begin transaction")
 	}
 
 	committed := false
@@ -118,8 +122,9 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 		if committed {
 			return
 		}
-		// Bağlamdan bağımsız kısa ömürlü bir context kullanılır: çağıranın ctx'i
-		// iptal edilmişse onunla yapılan geri alma da anında düşerdi.
+		// A short-lived context independent of the caller's is used: if the
+		// caller's ctx has been canceled, a rollback made with it would drop
+		// instantly too.
 		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
 		defer cancel()
 		_ = tx.Rollback(rollbackCtx)
@@ -130,20 +135,20 @@ func (r *Repository) WithTx(ctx context.Context, fn func(ctx context.Context) er
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return classify(err, "inventory_tx_commit_failed", "işlem tamamlanamadı")
+		return classify(err, "inventory_tx_commit_failed", "could not commit transaction")
 	}
 	committed = true
 	return nil
 }
 
-// txFromContext context'teki işlem tutamağını döner.
+// txFromContext returns the transaction handle in the context.
 func txFromContext(ctx context.Context) (pgx.Tx, bool) {
 	tx, ok := ctx.Value(txKey).(pgx.Tx)
 	return tx, ok
 }
 
-// queries context'e uygun sorgu kümesini döner: işlem varsa ona, yoksa havuza
-// bağlı olanı.
+// queries returns the query set appropriate for the context: the one bound to
+// the transaction if there is one, otherwise the one bound to the pool.
 func (r *Repository) queries(ctx context.Context) *inventorydb.Queries {
 	if tx, ok := txFromContext(ctx); ok {
 		return inventorydb.New(tx)
@@ -151,18 +156,18 @@ func (r *Repository) queries(ctx context.Context) *inventorydb.Queries {
 	return inventorydb.New(r.pool)
 }
 
-// requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.
+// requireTx verifies that locking methods are called inside a transaction.
 func requireTx(ctx context.Context, op string) error {
 	if _, ok := txFromContext(ctx); !ok {
 		return errors.Internal(codeTxRequired,
-			"%s işlem (transaction) içinde çağrılmalı; işlemsiz bir FOR UPDATE kilidi hiçbir şeyi korumaz", op)
+			"%s must be called inside a transaction; a FOR UPDATE lock without a transaction protects nothing", op)
 	}
 	return nil
 }
 
 // --- stock locations ---------------------------------------------------------
 
-// CreateStockLocation yeni bir stok lokasyonu kaydeder.
+// CreateStockLocation records a new stock location.
 func (r *Repository) CreateStockLocation(ctx context.Context, loc models.StockLocation) (models.StockLocation, error) {
 	row, err := r.queries(ctx).CreateStockLocation(ctx, inventorydb.CreateStockLocationParams{
 		ID:          loc.ID,
@@ -298,10 +303,10 @@ func (r *Repository) ListStockLocations(ctx context.Context, limit, offset int64
 	return out, total, nil
 }
 
-// --- stok kalemleri ----------------------------------------------------------
+// --- inventory items ---------------------------------------------------------
 
-// CreateInventoryItem yeni bir stok kalemi kaydeder.
-// Aynı SKU yaşayan bir kalemde varsa Conflict döner.
+// CreateInventoryItem records a new inventory item.
+// It returns Conflict if a living item already carries the same SKU.
 func (r *Repository) CreateInventoryItem(ctx context.Context, item models.InventoryItem) (models.InventoryItem, error) {
 	row, err := r.queries(ctx).CreateInventoryItem(ctx, inventorydb.CreateInventoryItemParams{
 		ID:               item.ID,
@@ -311,65 +316,67 @@ func (r *Repository) CreateInventoryItem(ctx context.Context, item models.Invent
 		RequiresShipping: item.RequiresShipping,
 	})
 	if err != nil {
-		return models.InventoryItem{}, classify(err, codeQueryFailed, "stok kalemi oluşturulamadı")
+		return models.InventoryItem{}, classify(err, codeQueryFailed, "the inventory item could not be created")
 	}
 	return toInventoryItem(row), nil
 }
 
-// GetInventoryItem kalemi kimliğiyle döner; yoksa NotFound.
+// GetInventoryItem returns the item by its id, or NotFound.
 func (r *Repository) GetInventoryItem(ctx context.Context, id string) (models.InventoryItem, error) {
 	row, err := r.queries(ctx).GetInventoryItem(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return models.InventoryItem{}, errors.NotFound(codeItemNotFound, "stok kalemi bulunamadı: %s", id)
+			return models.InventoryItem{}, errors.NotFound(codeItemNotFound, "the inventory item was not found: %s", id)
 		}
-		return models.InventoryItem{}, classify(err, codeQueryFailed, "stok kalemi okunamadı")
+		return models.InventoryItem{}, classify(err, codeQueryFailed, "the inventory item could not be read")
 	}
 	return toInventoryItem(row), nil
 }
 
-// LockInventoryItem kalemi işlem boyunca kilitler ve var olduğunu doğrular.
-// İşlem dışında çağrılırsa hata döner.
+// LockInventoryItem locks the item for the transaction and verifies that it
+// exists. It returns an error if called outside a transaction.
 func (r *Repository) LockInventoryItem(ctx context.Context, id string) error {
 	if err := requireTx(ctx, "LockInventoryItem"); err != nil {
 		return err
 	}
 	if _, err := r.queries(ctx).LockInventoryItem(ctx, id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errors.NotFound(codeItemNotFound, "stok kalemi bulunamadı: %s", id)
+			return errors.NotFound(codeItemNotFound, "the inventory item was not found: %s", id)
 		}
-		return classify(err, codeQueryFailed, "stok kalemi kilitlenemedi")
+		return classify(err, codeQueryFailed, "the inventory item could not be locked")
 	}
 	return nil
 }
 
-// LockInventoryItemShared kalemi işlem boyunca PAYLAŞIMLI kilitler ve var
-// olduğunu doğrular. İşlem dışında çağrılırsa hata döner.
+// LockInventoryItemShared locks the item in SHARED mode for the transaction and
+// verifies that it exists. It returns an error if called outside a
+// transaction.
 //
-// Seviye ya da rezervasyon satırına dokunan akışlar kilit sırasının ilk adımı
-// olarak bunu alır; paylaşımlı olduğu için eşzamanlı rezervasyonları birbirine
-// beklettirmez ama [Repository.LockInventoryItem]'ın dışlayıcı kilidiyle
-// çakışır (bkz. queries/inventory_items.sql).
+// The flows that touch a level or reservation row take it as the first step of
+// the lock order; because it is shared, it does not make concurrent
+// reservations wait for each other, but it collides with the exclusive lock of
+// [Repository.LockInventoryItem] (see queries/inventory_items.sql).
 func (r *Repository) LockInventoryItemShared(ctx context.Context, id string) error {
 	if err := requireTx(ctx, "LockInventoryItemShared"); err != nil {
 		return err
 	}
 	if _, err := r.queries(ctx).LockInventoryItemShared(ctx, id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return errors.NotFound(codeItemNotFound, "stok kalemi bulunamadı: %s", id)
+			return errors.NotFound(codeItemNotFound, "the inventory item was not found: %s", id)
 		}
-		return classify(err, codeQueryFailed, "stok kalemi kilitlenemedi")
+		return classify(err, codeQueryFailed, "the inventory item could not be locked")
 	}
 	return nil
 }
 
-// ListInventoryItems kalemleri filtreleyerek ve sayfalayarak döner.
-// İkinci dönüş değeri filtreye uyan TÜM satırların sayısıdır.
+// ListInventoryItems returns the items filtered and paginated.
+// The second return value is the count of ALL the rows matching the filter.
 //
-// Toplam AYRI bir sorgudan gelir ve listeyle aynı filtreleri uygular; sayfa
-// aralık dışında olsa ve hiç satır dönmese de doğrudur. İki sorgu arasında
-// yazılan bir satır toplamı bir değiştirebilir: toplam, sayfalama zarfının
-// bilgilendirici alanıdır, işlem kararı ona dayandırılmaz.
+// The total comes from a SEPARATE query and applies the same filters as the
+// list; it is right even when the page is out of range and returns no row at
+// all. A row written between the two queries can change the total by one: the
+// total is an informational field of the pagination envelope, and no
+// transactional decision is based on it.
 func (r *Repository) ListInventoryItems(ctx context.Context, filter models.InventoryItemFilter) ([]models.InventoryItem, int64, error) {
 	rows, err := r.queries(ctx).ListInventoryItems(ctx, inventorydb.ListInventoryItemsParams{
 		Sku:              filter.SKU,
@@ -378,7 +385,7 @@ func (r *Repository) ListInventoryItems(ctx context.Context, filter models.Inven
 		RowOffset:        filter.Offset,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "stok kalemleri listelenemedi")
+		return nil, 0, classify(err, codeQueryFailed, "the inventory items could not be listed")
 	}
 
 	total, err := r.queries(ctx).CountInventoryItems(ctx, inventorydb.CountInventoryItemsParams{
@@ -386,7 +393,7 @@ func (r *Repository) ListInventoryItems(ctx context.Context, filter models.Inven
 		RequiresShipping: filter.RequiresShipping,
 	})
 	if err != nil {
-		return nil, 0, classify(err, codeQueryFailed, "stok kalemleri sayılamadı")
+		return nil, 0, classify(err, codeQueryFailed, "the inventory items could not be counted")
 	}
 
 	out := make([]models.InventoryItem, 0, len(rows))
@@ -396,15 +403,15 @@ func (r *Repository) ListInventoryItems(ctx context.Context, filter models.Inven
 	return out, total, nil
 }
 
-// InventoryItemsByIDs verilen kimliklerin kalemlerini TEK sorguda döner.
-// Bulunamayan kimlik için satır dönmez; bu bir hata değildir.
+// InventoryItemsByIDs returns the items of the given ids in a SINGLE query.
+// No row comes back for an id that is not found; that is not an error.
 func (r *Repository) InventoryItemsByIDs(ctx context.Context, ids []string) ([]models.InventoryItem, error) {
 	if len(ids) == 0 {
 		return []models.InventoryItem{}, nil
 	}
 	rows, err := r.queries(ctx).GetInventoryItemsByIDs(ctx, ids)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "stok kalemleri okunamadı")
+		return nil, classify(err, codeQueryFailed, "the inventory items could not be read")
 	}
 
 	out := make([]models.InventoryItem, 0, len(rows))
@@ -414,34 +421,37 @@ func (r *Repository) InventoryItemsByIDs(ctx context.Context, ids []string) ([]m
 	return out, nil
 }
 
-// SoftDeleteInventoryItem kalemi yumuşak siler (deleted_at). Kalem yoksa ya da
-// zaten silinmişse NotFound döner.
+// SoftDeleteInventoryItem soft-deletes the item (deleted_at). It returns
+// NotFound if the item does not exist or has already been deleted.
 func (r *Repository) SoftDeleteInventoryItem(ctx context.Context, id string) error {
 	affected, err := r.queries(ctx).SoftDeleteInventoryItem(ctx, id)
 	if err != nil {
-		return classify(err, codeQueryFailed, "stok kalemi silinemedi")
+		return classify(err, codeQueryFailed, "the inventory item could not be deleted")
 	}
 	if affected == 0 {
-		return errors.NotFound(codeItemNotFound, "stok kalemi bulunamadı: %s", id)
+		return errors.NotFound(codeItemNotFound, "the inventory item was not found: %s", id)
 	}
 	return nil
 }
 
-// SoftDeleteInventoryLevelsByItem kalemin tüm stok seviyelerini yumuşak siler.
+// SoftDeleteInventoryLevelsByItem soft-deletes all of the item's inventory
+// levels.
 func (r *Repository) SoftDeleteInventoryLevelsByItem(ctx context.Context, itemID string) error {
 	if err := r.queries(ctx).SoftDeleteInventoryLevelsByItem(ctx, itemID); err != nil {
-		return classify(err, codeQueryFailed, "stok seviyeleri silinemedi")
+		return classify(err, codeQueryFailed, "the inventory levels could not be deleted")
 	}
 	return nil
 }
 
-// --- stok seviyeleri ---------------------------------------------------------
+// --- inventory levels --------------------------------------------------------
 
-// LockInventoryLevel (kalem, lokasyon) seviyesini işlem boyunca kilitler ve
-// güncel hâlini döner. Seviye yoksa NotFound; işlem dışında çağrılırsa hata.
+// LockInventoryLevel locks the (item, location) level for the transaction and
+// returns its current state. NotFound if there is no level; an error if called
+// outside a transaction.
 //
-// Stok adedini değiştiren her akış okumasını BU metotla yapar: kilit
-// alınmadan okunan bir adet, yazma anında bayat olabilirdi.
+// Every flow that changes a stock quantity does its read through THIS method: a
+// quantity read without taking the lock could be stale by the time it is
+// written.
 func (r *Repository) LockInventoryLevel(ctx context.Context, itemID, locationID string) (models.InventoryLevel, error) {
 	if err := requireTx(ctx, "LockInventoryLevel"); err != nil {
 		return models.InventoryLevel{}, err
@@ -454,12 +464,12 @@ func (r *Repository) LockInventoryLevel(ctx context.Context, itemID, locationID 
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.InventoryLevel{}, levelNotFound(itemID, locationID)
 		}
-		return models.InventoryLevel{}, classify(err, codeQueryFailed, "stok seviyesi kilitlenemedi")
+		return models.InventoryLevel{}, classify(err, codeQueryFailed, "the inventory level could not be locked")
 	}
 	return toInventoryLevel(row), nil
 }
 
-// CreateInventoryLevel yeni bir stok seviyesi kaydeder.
+// CreateInventoryLevel records a new inventory level.
 func (r *Repository) CreateInventoryLevel(ctx context.Context, level models.InventoryLevel) (models.InventoryLevel, error) {
 	row, err := r.queries(ctx).CreateInventoryLevel(ctx, inventorydb.CreateInventoryLevelParams{
 		ID:               level.ID,
@@ -469,16 +479,17 @@ func (r *Repository) CreateInventoryLevel(ctx context.Context, level models.Inve
 		ReservedQuantity: level.ReservedQuantity,
 	})
 	if err != nil {
-		return models.InventoryLevel{}, classify(err, codeQueryFailed, "stok seviyesi oluşturulamadı")
+		return models.InventoryLevel{}, classify(err, codeQueryFailed, "the inventory level could not be created")
 	}
 	return toInventoryLevel(row), nil
 }
 
-// UpdateInventoryLevelQuantities seviyenin adetlerini MUTLAK değerlerle yazar.
+// UpdateInventoryLevelQuantities writes the level's quantities as ABSOLUTE
+// values.
 //
-// Artımlı (quantity = quantity + n) bir güncelleme kasten kullanılmaz: yeni
-// değer, kilit altında okunan değerden hesaplanır ve kararı veren kodun
-// gördüğü sayı ile yazılan sayı aynı olur.
+// An incremental update (quantity = quantity + n) is deliberately not used: the
+// new value is computed from the value read under the lock, so the number the
+// deciding code saw and the number written are the same.
 func (r *Repository) UpdateInventoryLevelQuantities(ctx context.Context, levelID string, stocked, reserved int64) (models.InventoryLevel, error) {
 	row, err := r.queries(ctx).UpdateInventoryLevelQuantities(ctx, inventorydb.UpdateInventoryLevelQuantitiesParams{
 		ID:               levelID,
@@ -488,18 +499,18 @@ func (r *Repository) UpdateInventoryLevelQuantities(ctx context.Context, levelID
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.InventoryLevel{}, errors.NotFound(codeLevelNotFound,
-				"stok seviyesi bulunamadı: %s", levelID)
+				"the inventory level was not found: %s", levelID)
 		}
-		return models.InventoryLevel{}, classify(err, codeQueryFailed, "stok seviyesi güncellenemedi")
+		return models.InventoryLevel{}, classify(err, codeQueryFailed, "the inventory level could not be updated")
 	}
 	return toInventoryLevel(row), nil
 }
 
-// ListInventoryLevels kalemin tüm lokasyonlardaki seviyelerini döner.
+// ListInventoryLevels returns the item's levels at all locations.
 func (r *Repository) ListInventoryLevels(ctx context.Context, itemID string) ([]models.InventoryLevel, error) {
 	rows, err := r.queries(ctx).ListInventoryLevels(ctx, itemID)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "stok seviyeleri listelenemedi")
+		return nil, classify(err, codeQueryFailed, "the inventory levels could not be listed")
 	}
 
 	out := make([]models.InventoryLevel, 0, len(rows))
@@ -509,16 +520,16 @@ func (r *Repository) ListInventoryLevels(ctx context.Context, itemID string) ([]
 	return out, nil
 }
 
-// AvailableByItemIDs kalem başına TÜM lokasyonların satılabilir toplamını
-// TEK sorguda döner. Hiç seviyesi olmayan kalem sonuçta yer almaz; çağıran
-// onu sıfır saymalıdır.
+// AvailableByItemIDs returns, per item, the sellable total across ALL
+// locations in a SINGLE query. An item with no level at all is absent from the
+// result; the caller must count it as zero.
 func (r *Repository) AvailableByItemIDs(ctx context.Context, ids []string) (map[string]int64, error) {
 	if len(ids) == 0 {
 		return map[string]int64{}, nil
 	}
 	rows, err := r.queries(ctx).AvailableQuantityByItemIDs(ctx, ids)
 	if err != nil {
-		return nil, classify(err, codeQueryFailed, "satılabilir adet hesaplanamadı")
+		return nil, classify(err, codeQueryFailed, "the available quantity could not be computed")
 	}
 
 	out := make(map[string]int64, len(rows))
@@ -528,12 +539,13 @@ func (r *Repository) AvailableByItemIDs(ctx context.Context, ids []string) (map[
 	return out, nil
 }
 
-// AvailableByItemLocation satılabilir adedi kalem ve LOKASYON kırılımıyla döner.
+// AvailableByItemLocation returns the sellable quantity broken down by item and
+// LOCATION.
 //
-// Boş kalan lokasyon haritada YOKTUR: sorgu satır döner, sayım değil (bkz.
-// [Repository.AvailableByItemIDs]). Çağıran, kanalının sevk ettiği lokasyonları
-// toplar; olmayan bir lokasyon sıfır katkı verir ve ayrıca yazılmasına gerek
-// yoktur.
+// A location left empty is ABSENT from the map: the query returns rows, not a
+// count (see [Repository.AvailableByItemIDs]). The caller sums the locations
+// its channel ships from; a missing location contributes zero and does not need
+// to be written out separately.
 func (r *Repository) AvailableByItemLocation(
 	ctx context.Context, ids []string,
 ) (map[string]map[string]int64, error) {
@@ -545,7 +557,7 @@ func (r *Repository) AvailableByItemLocation(
 	rows, err := r.queries(ctx).AvailableByItemAndLocation(ctx, ids)
 	if err != nil {
 		return nil, classify(err, codeQueryFailed,
-			"satılabilir adet lokasyon kırılımıyla hesaplanamadı")
+			"the available quantity per location could not be computed")
 	}
 
 	for _, row := range rows {
@@ -560,9 +572,9 @@ func (r *Repository) AvailableByItemLocation(
 	return out, nil
 }
 
-// --- rezervasyonlar ----------------------------------------------------------
+// --- reservations ------------------------------------------------------------
 
-// CreateReservation yeni bir rezervasyon kaydeder.
+// CreateReservation records a new reservation.
 func (r *Repository) CreateReservation(ctx context.Context, res models.Reservation) (models.Reservation, error) {
 	row, err := r.queries(ctx).CreateReservation(ctx, inventorydb.CreateReservationParams{
 		ID:              res.ID,
@@ -575,16 +587,17 @@ func (r *Repository) CreateReservation(ctx context.Context, res models.Reservati
 		Purpose:         res.Purpose.String(),
 	})
 	if err != nil {
-		return models.Reservation{}, classify(err, codeQueryFailed, "rezervasyon oluşturulamadı")
+		return models.Reservation{}, classify(err, codeQueryFailed, "the reservation could not be created")
 	}
 	return toReservation(row), nil
 }
 
-// LockReservation rezervasyonu işlem boyunca kilitler ve güncel hâlini döner.
+// LockReservation locks the reservation for the transaction and returns its
+// current state.
 //
-// Durum geçişleri yalnızca bu kilit altında yapılır: aynı rezervasyonu aynı
-// anda serbest bırakmaya çalışan iki çağrıdan ikincisi, birincinin yazdığı
-// durumu görür ve stoğu ikinci kez iade etmez.
+// Status transitions are made only under this lock: of two calls trying to
+// release the same reservation at the same moment, the second sees the status
+// the first one wrote and does not give the stock back a second time.
 func (r *Repository) LockReservation(ctx context.Context, id string) (models.Reservation, error) {
 	if err := requireTx(ctx, "LockReservation"); err != nil {
 		return models.Reservation{}, err
@@ -593,64 +606,66 @@ func (r *Repository) LockReservation(ctx context.Context, id string) (models.Res
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Reservation{}, errors.NotFound(codeReservationNotFound,
-				"rezervasyon bulunamadı: %s", id)
+				"the reservation was not found: %s", id)
 		}
-		return models.Reservation{}, classify(err, codeQueryFailed, "rezervasyon kilitlenemedi")
+		return models.Reservation{}, classify(err, codeQueryFailed, "the reservation could not be locked")
 	}
 	return toReservation(row), nil
 }
 
-// GetReservation rezervasyonu kilitlemeden döner; yoksa NotFound.
+// GetReservation returns the reservation without locking it, or NotFound.
 func (r *Repository) GetReservation(ctx context.Context, id string) (models.Reservation, error) {
 	row, err := r.queries(ctx).GetReservation(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return models.Reservation{}, errors.NotFound(codeReservationNotFound,
-				"rezervasyon bulunamadı: %s", id)
+				"the reservation was not found: %s", id)
 		}
-		return models.Reservation{}, classify(err, codeQueryFailed, "rezervasyon okunamadı")
+		return models.Reservation{}, classify(err, codeQueryFailed, "the reservation could not be read")
 	}
 	return toReservation(row), nil
 }
 
-// SetReservationStatus rezervasyonun durumunu yazar; kayıt yoksa NotFound.
+// SetReservationStatus writes the reservation's status; NotFound if there is
+// no such record.
 func (r *Repository) SetReservationStatus(ctx context.Context, id string, status models.ReservationStatus) error {
 	affected, err := r.queries(ctx).SetReservationStatus(ctx, inventorydb.SetReservationStatusParams{
 		ID:     id,
 		Status: status.String(),
 	})
 	if err != nil {
-		return classify(err, codeQueryFailed, "rezervasyon durumu güncellenemedi")
+		return classify(err, codeQueryFailed, "the reservation status could not be updated")
 	}
 	if affected == 0 {
-		return errors.NotFound(codeReservationNotFound, "rezervasyon bulunamadı: %s", id)
+		return errors.NotFound(codeReservationNotFound, "the reservation was not found: %s", id)
 	}
 	return nil
 }
 
-// CountActiveReservations kalemin aktif rezervasyon sayısını döner.
+// CountActiveReservations returns the number of the item's active
+// reservations.
 func (r *Repository) CountActiveReservations(ctx context.Context, itemID string) (int64, error) {
 	count, err := r.queries(ctx).CountActiveReservationsByItem(ctx, itemID)
 	if err != nil {
-		return 0, classify(err, codeQueryFailed, "aktif rezervasyonlar sayılamadı")
+		return 0, classify(err, codeQueryFailed, "the active reservations could not be counted")
 	}
 	return count, nil
 }
 
-// --- çeviri ve hata sınıflandırma --------------------------------------------
+// --- conversion and error classification ------------------------------------
 
-// levelNotFound eksik seviye için ortak hatayı üretir.
+// levelNotFound produces the shared error for a missing level.
 func levelNotFound(itemID, locationID string) error {
 	return errors.NotFound(codeLevelNotFound,
-		"stok seviyesi bulunamadı (kalem: %s, lokasyon: %s)", itemID, locationID)
+		"the inventory level was not found (item: %s, location: %s)", itemID, locationID)
 }
 
-// classify sürücü hatasını tipli hataya çevirir.
+// classify converts a driver error into a typed error.
 //
-// Benzersizlik, foreign key ve CHECK ihlalleri istemcinin düzeltebileceği
-// durumlardır; sınıflandırılmazsa hepsi 500 olarak görünür ve gerçek sebep
-// yalnızca logda kalırdı. Kilitlenme (deadlock) de aynı sebeple ayrı ele
-// alınır: işlemin kendisinde bir yanlışlık yoktur, YENİDEN DENENEBİLİR.
+// Uniqueness, foreign key and CHECK violations are cases the client can correct;
+// if they were not classified they would all appear as 500 and the real reason
+// would remain only in the log. A deadlock is handled separately for the same
+// reason: there is nothing wrong with the transaction itself, it CAN BE RETRIED.
 func classify(err error, code, format string, a ...any) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -662,37 +677,38 @@ func classify(err error, code, format string, a ...any) error {
 		switch pgErr.ConstraintName {
 		case constraintSKUUniq:
 			return errors.Wrap(err, errors.KindConflict, codeSKUExists,
-				"bu SKU zaten kullanılıyor")
+				"this SKU is already in use")
 		case constraintLevelUniq:
 			return errors.Wrap(err, errors.KindConflict, codeLevelExists,
-				"bu kalem için bu lokasyonda stok seviyesi zaten var")
+				"this item already has an inventory level at this location")
 		}
 	case sqlStateForeignKeyViolation:
-		// Seviye/rezervasyon satırı, olmayan bir kaleme ya da lokasyona
-		// bağlanamaz. Hangisi olduğunu kısıt adı söyler.
+		// A level/reservation row cannot be bound to an item or a location that
+		// does not exist. The constraint name says which one it is.
 		if strings.Contains(pgErr.ConstraintName, "location_id") {
 			return errors.Wrap(err, errors.KindNotFound, codeLocationNotFound,
 				"the stock location was not found")
 		}
 		return errors.Wrap(err, errors.KindNotFound, codeItemNotFound,
-			"stok kalemi bulunamadı")
+			"the inventory item was not found")
 	case sqlStateCheckViolation:
 		switch pgErr.ConstraintName {
 		case constraintAvailable, constraintStockedNonneg:
 			return errors.Wrap(err, errors.KindConflict, codeInsufficientStock,
-				"stok yetersiz: satılabilir adet negatife düşemez")
+				"insufficient stock: the available quantity cannot fall below zero")
 		}
 	case sqlStateDeadlockDetected:
-		// Kilit sırası tekleştirildiği için normal akışlarda oluşmaz; burası
-		// son savunmadır. İşlem geri alınmıştır, aynı istek olduğu gibi
-		// yeniden denenebilir — bu yüzden Internal (500) değil Conflict.
+		// Because the lock order has been made uniform this does not occur in
+		// the normal flows; this is the last line of defense. The transaction
+		// has been rolled back, the same request can be retried as it is —
+		// which is why this is Conflict and not Internal (500).
 		return errors.Wrap(err, errors.KindConflict, codeConcurrentUpdate,
-			"eşzamanlı bir işlemle çakışıldı; istek yeniden denenebilir")
+			"conflicted with a concurrent transaction; the request can be retried")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
 
-// nullString boş dizeyi SQL NULL'a çevirir.
+// nullString turns an empty string into SQL NULL.
 func nullString(s string) *string {
 	if s == "" {
 		return nil
@@ -700,7 +716,7 @@ func nullString(s string) *string {
 	return &s
 }
 
-// stringValue SQL NULL'ı boş dizeye çevirir.
+// stringValue turns SQL NULL into an empty string.
 func stringValue(p *string) string {
 	if p == nil {
 		return ""
@@ -708,7 +724,7 @@ func stringValue(p *string) string {
 	return *p
 }
 
-// timeValue pgtype damgasını UTC time.Time'a çevirir.
+// timeValue turns a pgtype stamp into a UTC time.Time.
 func timeValue(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -731,7 +747,7 @@ func timePointer(ts pgtype.Timestamptz) *time.Time {
 	return &at
 }
 
-// toStockLocation üretilmiş satırı alan modeline çevirir.
+// toStockLocation converts the generated row into the domain model.
 func toStockLocation(row inventorydb.StockLocation) models.StockLocation {
 	return models.StockLocation{
 		ID:          row.ID,
@@ -748,7 +764,7 @@ func toStockLocation(row inventorydb.StockLocation) models.StockLocation {
 	}
 }
 
-// toInventoryItem üretilmiş satırı alan modeline çevirir.
+// toInventoryItem converts the generated row into the domain model.
 func toInventoryItem(row inventorydb.InventoryItem) models.InventoryItem {
 	return models.InventoryItem{
 		ID:               row.ID,
@@ -761,7 +777,7 @@ func toInventoryItem(row inventorydb.InventoryItem) models.InventoryItem {
 	}
 }
 
-// toInventoryLevel üretilmiş satırı alan modeline çevirir.
+// toInventoryLevel converts the generated row into the domain model.
 func toInventoryLevel(row inventorydb.InventoryLevel) models.InventoryLevel {
 	return models.InventoryLevel{
 		ID:               row.ID,
@@ -774,7 +790,7 @@ func toInventoryLevel(row inventorydb.InventoryLevel) models.InventoryLevel {
 	}
 }
 
-// toReservation üretilmiş satırı alan modeline çevirir.
+// toReservation converts the generated row into the domain model.
 func toReservation(row inventorydb.InventoryReservation) models.Reservation {
 	return models.Reservation{
 		ID:              row.ID,

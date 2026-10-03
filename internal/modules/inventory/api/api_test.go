@@ -2,29 +2,24 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/bdrtr/gobit/core/errors"
-	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/inventory/api"
 	"github.com/bdrtr/gobit/internal/modules/inventory/models"
 	"github.com/bdrtr/gobit/internal/modules/inventory/service"
 )
 
-// fakeInventory api.Inventory'nin test karşılığıdır. Handler'ların HTTP
-// davranışını (status kodu, zarf, hata eşlemesi) veritabanı olmadan
-// sınayabilmek için vardır.
+// fakeInventory is the test counterpart of api.Inventory. It exists so that
+// the handlers' HTTP behavior (status code, envelope, error mapping) can be
+// exercised without a database.
 type fakeInventory struct {
-	// Dönüş değerleri.
+	// Return values.
 	location  models.StockLocation
 	item      models.InventoryItem
 	level     models.InventoryLevel
@@ -34,335 +29,294 @@ type fakeInventory struct {
 	count     int64
 	err       error
 
-	// Kaydedilen çağrı bilgileri.
-	gorulenLocationInput service.ListStockLocationsInput
-	gorulenItemInput     service.CreateInventoryItemInput
-	gorulenListInput     service.ListInventoryItemsInput
-	gorulenID            string
-	gorulenLocationID    string
-	gorulenStocked       int64
-	gorulenDelta         int64
-	gorulenMovementInput service.ListMovementsInput
+	// The recorded call details.
+	lastLocationInput service.ListStockLocationsInput
+	lastItemInput     service.CreateInventoryItemInput
+	lastListInput     service.ListInventoryItemsInput
+	lastID            string
+	lastLocationID    string
+	lastStocked       int64
+	lastDelta         int64
+	lastMovementInput service.ListMovementsInput
 }
 
-// Sahtenin handler'ın beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That the fake satisfies the surface the handler expects is verified at
+// compile time.
 var _ api.Inventory = (*fakeInventory)(nil)
 
-// CreateStockLocation lokasyon oluşturma çağrısını kaydeder.
+// CreateStockLocation answers the location creation call; it records no input.
 func (f *fakeInventory) CreateStockLocation(_ context.Context, _ service.CreateStockLocationInput) (models.StockLocation, error) {
 	return f.location, f.err
 }
 
-// GetStockLocation istenen lokasyon kimliğini kaydeder.
+// GetStockLocation records the requested location id.
 func (f *fakeInventory) GetStockLocation(_ context.Context, id string) (models.StockLocation, error) {
-	f.gorulenID = id
+	f.lastID = id
 	return f.location, f.err
 }
 
 // ListStockLocations records the listing input.
 func (f *fakeInventory) ListStockLocations(_ context.Context, in service.ListStockLocationsInput) ([]models.StockLocation, int64, error) {
-	f.gorulenLocationInput = in
+	f.lastLocationInput = in
 	return []models.StockLocation{f.location}, f.count, f.err
 }
 
 // CloseStockLocation records the id that was closed.
 func (f *fakeInventory) CloseStockLocation(_ context.Context, id string) (models.StockLocation, error) {
-	f.gorulenID = id
+	f.lastID = id
 	return f.location, f.err
 }
 
-// CreateInventoryItem kalem oluşturma girdisini kaydeder.
+// CreateInventoryItem records the item creation input.
 func (f *fakeInventory) CreateInventoryItem(_ context.Context, in service.CreateInventoryItemInput) (models.InventoryItem, error) {
-	f.gorulenItemInput = in
+	f.lastItemInput = in
 	return f.item, f.err
 }
 
-// GetInventoryItem istenen kimliği kaydeder.
+// GetInventoryItem records the requested id.
 func (f *fakeInventory) GetInventoryItem(_ context.Context, id string) (models.InventoryItem, error) {
-	f.gorulenID = id
+	f.lastID = id
 	return f.item, f.err
 }
 
-// ListInventoryItems listeleme girdisini kaydeder.
+// ListInventoryItems records the listing input.
 func (f *fakeInventory) ListInventoryItems(_ context.Context, in service.ListInventoryItemsInput) ([]models.InventoryItem, int64, error) {
-	f.gorulenListInput = in
+	f.lastListInput = in
 	return f.items, f.count, f.err
 }
 
-// DeleteInventoryItem silinen kimliği kaydeder.
+// DeleteInventoryItem records the deleted id.
 func (f *fakeInventory) DeleteInventoryItem(_ context.Context, id string) error {
-	f.gorulenID = id
+	f.lastID = id
 	return f.err
 }
 
-// ListInventoryLevels kalemin seviyelerini döner.
+// ListInventoryLevels returns the item's levels.
 func (f *fakeInventory) ListInventoryLevels(_ context.Context, itemID string) ([]models.InventoryLevel, error) {
-	f.gorulenID = itemID
+	f.lastID = itemID
 	return f.levels, f.err
 }
 
-// SetInventoryLevel yazılan adedi kaydeder.
+// SetInventoryLevel records the quantity written.
 func (f *fakeInventory) SetInventoryLevel(_ context.Context, itemID, locationID string, stockedQty int64) (models.InventoryLevel, error) {
-	f.gorulenID, f.gorulenLocationID, f.gorulenStocked = itemID, locationID, stockedQty
+	f.lastID, f.lastLocationID, f.lastStocked = itemID, locationID, stockedQty
 	return f.level, f.err
 }
 
-// AdjustInventory düzeltme miktarını kaydeder.
+// AdjustInventory records the adjustment amount.
 func (f *fakeInventory) AdjustInventory(_ context.Context, itemID, locationID string, delta int64) (models.InventoryLevel, error) {
-	f.gorulenID, f.gorulenLocationID, f.gorulenDelta = itemID, locationID, delta
+	f.lastID, f.lastLocationID, f.lastDelta = itemID, locationID, delta
 	return f.level, f.err
 }
 
 // ListMovements records the listing input the handler assembled.
 func (f *fakeInventory) ListMovements(_ context.Context, in service.ListMovementsInput) ([]models.Movement, error) {
-	f.gorulenMovementInput = in
+	f.lastMovementInput = in
 	return f.movements, f.err
 }
 
-// yeniSunucu handler'ları bağlı bir router ve sahte servis döner.
-func yeniSunucu(t *testing.T) (chi.Router, *fakeInventory) {
-	t.Helper()
+// The helpers these tests use live beside the files that introduced them:
+// newRouter, sendRequest and jsonBody in close_test.go, sendRequestWithBody in
+// saleschannel_test.go. Every request they send carries a FULLY PRIVILEGED
+// identity, so the tests here exercise the stock behavior rather than the
+// scope layer; the scope ITSELF is tested in a separate file (yetki_test.go).
 
-	svc := &fakeInventory{}
-	router := chi.NewRouter()
-	api.NewHandler(svc, newFakeBindings()).Routes(router)
-	return router, svc
-}
-
-// istek verilen isteği router'a gönderir ve yanıtı döner.
-//
-// İstek TAM YETKİLİ bir kimlik taşır. Üretimde kimliği corehttp.RequireAdmin
-// context'e koyar; bu testler router'ı doğrudan kurduğu için o middleware
-// devrede değildir ve kimlik elle konur. Gerekçesi, yönetim uçlarına
-// corehttp.RequireScope eklenmesidir: kimliksiz bir istek artık handler'a hiç
-// ulaşmadan 401 alır ve buradaki testler stok davranışı yerine yetki katmanını
-// sınamış olurdu. Yetkinin KENDİSİ ayrı bir dosyada sınanır (yetki_test.go);
-// bu dosyanın iddiaları değişmedi.
-func istek(t *testing.T, router chi.Router, method, path, body string) *httptest.ResponseRecorder {
-	t.Helper()
-
-	var reader *strings.Reader
-	if body == "" {
-		reader = strings.NewReader("")
-	} else {
-		reader = strings.NewReader(body)
-	}
-	req := httptest.NewRequest(method, path, reader)
-	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(corehttp.WithPrincipal(req.Context(), corehttp.Principal{
-		ID:     "usr_test",
-		Kind:   "user",
-		Scopes: []string{corehttp.ScopeAdmin},
-	}))
-
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	return rec
-}
-
-// govde yanıt gövdesini haritaya çözer.
-func govde(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
-	t.Helper()
-
-	var out map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), "yanıt JSON olmalı: %s", rec.Body.String())
-	return out
-}
-
-// TestCreateStockLocation başarılı oluşturmanın 201 ve tekil zarf döndüğünü
-// doğrular.
+// TestCreateStockLocation verifies that a successful create returns 201 and the
+// single-record envelope.
 func TestCreateStockLocation(t *testing.T) {
-	router, svc := yeniSunucu(t)
+	router, svc := newRouter(t)
 	svc.location = models.StockLocation{
 		ID: "sloc_1", Name: "Merkez", CountryCode: "TR",
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
 
-	rec := istek(t, router, http.MethodPost, "/admin/v1/stock-locations",
+	rec := sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/stock-locations",
 		`{"name":"Merkez","country_code":"TR"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	data, ok := govde(t, rec)["data"].(map[string]any)
-	require.True(t, ok, "yanıt data zarfı taşımalı")
+	data, ok := jsonBody(t, rec)["data"].(map[string]any)
+	require.True(t, ok, "the response has to carry the data envelope")
 	assert.Equal(t, "sloc_1", data["id"])
 	assert.Equal(t, "Merkez", data["name"])
 }
 
-// TestGetStockLocation tekil lokasyon okumasının zarfını ve hata eşlemesini
-// doğrular.
+// TestGetStockLocation verifies the envelope and the error mapping of a single
+// location read.
 func TestGetStockLocation(t *testing.T) {
-	router, svc := yeniSunucu(t)
+	router, svc := newRouter(t)
 	svc.location = models.StockLocation{ID: "sloc_1", Name: "Merkez"}
 
-	rec := istek(t, router, http.MethodGet, "/admin/v1/stock-locations/sloc_1", "")
+	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/stock-locations/sloc_1", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, "sloc_1", svc.gorulenID)
-	data, ok := govde(t, rec)["data"].(map[string]any)
+	assert.Equal(t, "sloc_1", svc.lastID)
+	data, ok := jsonBody(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "Merkez", data["name"])
 
-	svc.err = errors.NotFound("inventory_location_not_found", "lokasyon yok")
-	rec = istek(t, router, http.MethodGet, "/admin/v1/stock-locations/sloc_YOK", "")
+	svc.err = errors.NotFound("inventory_location_not_found", "no such location")
+	rec = sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/stock-locations/sloc_missing", "")
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
 
-// TestListStockLocationsZarfi liste zarfının dört alanını da doğrular.
-func TestListStockLocationsZarfi(t *testing.T) {
-	router, svc := yeniSunucu(t)
+// TestListStockLocationsEnvelope verifies all four fields of the list envelope.
+func TestListStockLocationsEnvelope(t *testing.T) {
+	router, svc := newRouter(t)
 	svc.location = models.StockLocation{ID: "sloc_1", Name: "Merkez"}
 	svc.count = 42
 
-	rec := istek(t, router, http.MethodGet, "/admin/v1/stock-locations?limit=10&offset=20", "")
+	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/stock-locations?limit=10&offset=20", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	body := govde(t, rec)
+	body := jsonBody(t, rec)
 	assert.Len(t, body["data"], 1)
 	assert.InDelta(t, 42, body["count"], 0)
 	assert.InDelta(t, 20, body["offset"], 0)
 	assert.InDelta(t, 10, body["limit"], 0)
-	assert.Equal(t, service.Page{Limit: 10, Offset: 20}, svc.gorulenLocationInput.Page)
-	assert.False(t, svc.gorulenLocationInput.IncludeClosed,
+	assert.Equal(t, service.Page{Limit: 10, Offset: 20}, svc.lastLocationInput.Page)
+	assert.False(t, svc.lastLocationInput.IncludeClosed,
 		"a closed location must not enter the listing UNLESS it is asked for")
 }
 
-// TestListVarsayilanLimit limit verilmediğinde varsayılanın uygulandığını ve
-// yanıtta GÖRÜNDÜĞÜNÜ doğrular; istemci uygulanan sınırı bilmelidir.
-func TestListVarsayilanLimit(t *testing.T) {
-	router, svc := yeniSunucu(t)
+// TestListDefaultLimit verifies that the default is applied when no limit is
+// given and that it SHOWS in the response; the client has to know the bound
+// that was applied.
+func TestListDefaultLimit(t *testing.T) {
+	router, svc := newRouter(t)
 
-	rec := istek(t, router, http.MethodGet, "/admin/v1/stock-locations", "")
+	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/stock-locations", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.InDelta(t, float64(service.DefaultLimit), govde(t, rec)["limit"], 0)
-	assert.Equal(t, service.DefaultLimit, svc.gorulenLocationInput.Page.Limit)
+	assert.InDelta(t, float64(service.DefaultLimit), jsonBody(t, rec)["limit"], 0)
+	assert.Equal(t, service.DefaultLimit, svc.lastLocationInput.Page.Limit)
 }
 
-// TestListGecersizLimit sayı olmayan limit parametresinin 422 ürettiğini
-// doğrular.
-func TestListGecersizLimit(t *testing.T) {
-	router, _ := yeniSunucu(t)
+// TestListInvalidLimit verifies that a limit parameter that is not a number
+// produces a 422.
+func TestListInvalidLimit(t *testing.T) {
+	router, _ := newRouter(t)
 
-	rec := istek(t, router, http.MethodGet, "/admin/v1/stock-locations?limit=abc", "")
+	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/stock-locations?limit=abc", "")
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-// TestCreateItemVarsayilanSevkiyat gövdede alan yoksa servise nil geçtiğini
-// (yani varsayılan kararının serviste verildiğini) doğrular.
-func TestCreateItemVarsayilanSevkiyat(t *testing.T) {
-	router, svc := yeniSunucu(t)
+// TestCreateItemDefaultShipping verifies that nil is passed to the service when
+// the field is absent from the body (that is, that the default is decided in
+// the service).
+func TestCreateItemDefaultShipping(t *testing.T) {
+	router, svc := newRouter(t)
 	svc.item = models.InventoryItem{ID: "invitem_1", SKU: "SKU-1", RequiresShipping: true}
 
-	rec := istek(t, router, http.MethodPost, "/admin/v1/inventory-items", `{"sku":"SKU-1"}`)
+	rec := sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/inventory-items", `{"sku":"SKU-1"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Nil(t, svc.gorulenItemInput.RequiresShipping)
+	assert.Nil(t, svc.lastItemInput.RequiresShipping)
 
-	rec = istek(t, router, http.MethodPost, "/admin/v1/inventory-items",
+	rec = sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/inventory-items",
 		`{"sku":"SKU-2","requires_shipping":false}`)
 	require.Equal(t, http.StatusCreated, rec.Code)
-	require.NotNil(t, svc.gorulenItemInput.RequiresShipping,
-		"alan gönderildiyse servise taşınmalı")
-	assert.False(t, *svc.gorulenItemInput.RequiresShipping)
+	require.NotNil(t, svc.lastItemInput.RequiresShipping,
+		"a field that was sent has to be carried to the service")
+	assert.False(t, *svc.lastItemInput.RequiresShipping)
 }
 
-// TestCreateItemTaninmayanAlan gövdedeki fazladan alanın sessizce yutulmayıp
-// 422 ürettiğini doğrular.
-func TestCreateItemTaninmayanAlan(t *testing.T) {
-	router, _ := yeniSunucu(t)
+// TestCreateItemUnknownField verifies that an extra field in the body is not
+// silently swallowed but produces a 422.
+func TestCreateItemUnknownField(t *testing.T) {
+	router, _ := newRouter(t)
 
-	rec := istek(t, router, http.MethodPost, "/admin/v1/inventory-items",
+	rec := sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/inventory-items",
 		`{"sku":"SKU-1","fiyat":100}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-// TestCreateItemBosGovde boş gövdenin 422 ürettiğini doğrular.
-func TestCreateItemBosGovde(t *testing.T) {
-	router, _ := yeniSunucu(t)
+// TestCreateItemEmptyBody verifies that an empty body produces a 422.
+func TestCreateItemEmptyBody(t *testing.T) {
+	router, _ := newRouter(t)
 
-	rec := istek(t, router, http.MethodPost, "/admin/v1/inventory-items", "")
+	rec := sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/inventory-items", "")
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-// TestListItemsFiltreleri sorgu parametrelerinin servise taşındığını doğrular.
-func TestListItemsFiltreleri(t *testing.T) {
-	router, svc := yeniSunucu(t)
+// TestListItemsFilters verifies that the query parameters are carried to the
+// service.
+func TestListItemsFilters(t *testing.T) {
+	router, svc := newRouter(t)
 
-	rec := istek(t, router, http.MethodGet,
+	rec := sendRequestWithBody(t, router, http.MethodGet,
 		"/admin/v1/inventory-items?sku=SKU-1&requires_shipping=false", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.NotNil(t, svc.gorulenListInput.SKU)
-	assert.Equal(t, "SKU-1", *svc.gorulenListInput.SKU)
-	require.NotNil(t, svc.gorulenListInput.RequiresShipping)
-	assert.False(t, *svc.gorulenListInput.RequiresShipping)
+	require.NotNil(t, svc.lastListInput.SKU)
+	assert.Equal(t, "SKU-1", *svc.lastListInput.SKU)
+	require.NotNil(t, svc.lastListInput.RequiresShipping)
+	assert.False(t, *svc.lastListInput.RequiresShipping)
 }
 
-// TestListItemsGecersizFiltre mantıksal olmayan requires_shipping değerinin
-// 422 ürettiğini doğrular.
-func TestListItemsGecersizFiltre(t *testing.T) {
-	router, _ := yeniSunucu(t)
+// TestListItemsInvalidFilter verifies that a requires_shipping value that is
+// not a boolean produces a 422.
+func TestListItemsInvalidFilter(t *testing.T) {
+	router, _ := newRouter(t)
 
-	rec := istek(t, router, http.MethodGet, "/admin/v1/inventory-items?requires_shipping=belki", "")
+	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/inventory-items?requires_shipping=belki", "")
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-// TestGetItemBulunamadi servisin NotFound hatasının 404'e çevrildiğini ve
-// hata kodunun gövdede korunduğunu doğrular. Handler status kodu SEÇMEZ;
-// eşleme çekirdekte yapılır.
-func TestGetItemBulunamadi(t *testing.T) {
-	router, svc := yeniSunucu(t)
-	svc.err = errors.NotFound("inventory_item_not_found", "kalem yok")
+// TestGetItemNotFound verifies that the service's NotFound error is turned into
+// a 404 and that the error code is preserved in the body. The handler does NOT
+// CHOOSE the status code; the mapping is done in the core.
+func TestGetItemNotFound(t *testing.T) {
+	router, svc := newRouter(t)
+	svc.err = errors.NotFound("inventory_item_not_found", "no such item")
 
-	rec := istek(t, router, http.MethodGet, "/admin/v1/inventory-items/invitem_YOK", "")
+	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/inventory-items/invitem_missing", "")
 
 	require.Equal(t, http.StatusNotFound, rec.Code)
-	assert.Equal(t, "invitem_YOK", svc.gorulenID)
-	hata, ok := govde(t, rec)["error"].(map[string]any)
+	assert.Equal(t, "invitem_missing", svc.lastID)
+	apiErr, ok := jsonBody(t, rec)["error"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "inventory_item_not_found", hata["code"])
+	assert.Equal(t, "inventory_item_not_found", apiErr["code"])
 }
 
-// TestDeleteItem silme başarılıysa gövdesiz 204 döndüğünü doğrular.
+// TestDeleteItem verifies that a successful delete returns 204 with no body.
 func TestDeleteItem(t *testing.T) {
-	router, svc := yeniSunucu(t)
+	router, svc := newRouter(t)
 
-	rec := istek(t, router, http.MethodDelete, "/admin/v1/inventory-items/invitem_1", "")
+	rec := sendRequestWithBody(t, router, http.MethodDelete, "/admin/v1/inventory-items/invitem_1", "")
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Empty(t, rec.Body.String())
-	assert.Equal(t, "invitem_1", svc.gorulenID)
+	assert.Equal(t, "invitem_1", svc.lastID)
 }
 
-// TestDeleteItemCakisma aktif rezervasyon Conflict'inin 409'a çevrildiğini
-// doğrular.
-func TestDeleteItemCakisma(t *testing.T) {
-	router, svc := yeniSunucu(t)
-	svc.err = errors.Conflict(service.CodeItemHasReservations, "aktif rezervasyon var")
+// TestDeleteItemConflict verifies that the active reservation Conflict is
+// turned into a 409.
+func TestDeleteItemConflict(t *testing.T) {
+	router, svc := newRouter(t)
+	svc.err = errors.Conflict(service.CodeItemHasReservations, "the item has an active reservation")
 
-	rec := istek(t, router, http.MethodDelete, "/admin/v1/inventory-items/invitem_1", "")
+	rec := sendRequestWithBody(t, router, http.MethodDelete, "/admin/v1/inventory-items/invitem_1", "")
 
 	assert.Equal(t, http.StatusConflict, rec.Code)
 }
 
-// TestListLevelsSatilabilirAdetIcerir seviye yanıtının türetilmiş satılabilir
-// adedi taşıdığını doğrular.
-func TestListLevelsSatilabilirAdetIcerir(t *testing.T) {
-	router, svc := yeniSunucu(t)
+// TestListLevelsIncludesAvailableQuantity verifies that the level response
+// carries the derived available quantity.
+func TestListLevelsIncludesAvailableQuantity(t *testing.T) {
+	router, svc := newRouter(t)
 	svc.levels = []models.InventoryLevel{
 		{ID: "invlevel_1", InventoryItemID: "invitem_1", LocationID: "sloc_1",
 			StockedQuantity: 10, ReservedQuantity: 4},
 	}
 
-	rec := istek(t, router, http.MethodGet, "/admin/v1/inventory-items/invitem_1/levels", "")
+	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/inventory-items/invitem_1/levels", "")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	body := govde(t, rec)
+	body := jsonBody(t, rec)
 	assert.InDelta(t, 1, body["count"], 0)
 	data, ok := body["data"].([]any)
 	require.True(t, ok)
@@ -374,92 +328,95 @@ func TestListLevelsSatilabilirAdetIcerir(t *testing.T) {
 	assert.InDelta(t, 6, level["available_quantity"], 0)
 }
 
-// TestSetLevel gövdedeki adedin servise taşındığını doğrular.
+// TestSetLevel verifies that the quantity in the body is carried to the service.
 func TestSetLevel(t *testing.T) {
-	router, svc := yeniSunucu(t)
+	router, svc := newRouter(t)
 	svc.level = models.InventoryLevel{ID: "invlevel_1", StockedQuantity: 25}
 
-	rec := istek(t, router, http.MethodPost, "/admin/v1/inventory-items/invitem_1/levels",
+	rec := sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/inventory-items/invitem_1/levels",
 		`{"location_id":"sloc_1","stocked_quantity":25}`)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, "invitem_1", svc.gorulenID)
-	assert.Equal(t, "sloc_1", svc.gorulenLocationID)
-	assert.Equal(t, int64(25), svc.gorulenStocked)
+	assert.Equal(t, "invitem_1", svc.lastID)
+	assert.Equal(t, "sloc_1", svc.lastLocationID)
+	assert.Equal(t, int64(25), svc.lastStocked)
 }
 
-// TestSetLevelSifirAdet sıfır adedin "alan gönderilmedi" ile karışmadığını
-// doğrular: işaretçi kullanılmasaydı 0 gönderen istemci 422 alırdı.
-func TestSetLevelSifirAdet(t *testing.T) {
-	router, svc := yeniSunucu(t)
+// TestSetLevelZeroQuantity verifies that a zero quantity is not confused with
+// "the field was not sent": without a pointer a client sending 0 would get a
+// 422.
+func TestSetLevelZeroQuantity(t *testing.T) {
+	router, svc := newRouter(t)
 
-	rec := istek(t, router, http.MethodPost, "/admin/v1/inventory-items/invitem_1/levels",
+	rec := sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/inventory-items/invitem_1/levels",
 		`{"location_id":"sloc_1","stocked_quantity":0}`)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, int64(0), svc.gorulenStocked)
+	assert.Equal(t, int64(0), svc.lastStocked)
 }
 
-// TestSetLevelAdetZorunlu adet alanı gönderilmezse 422 dönüldüğünü doğrular.
-func TestSetLevelAdetZorunlu(t *testing.T) {
-	router, _ := yeniSunucu(t)
+// TestSetLevelQuantityRequired verifies that a 422 is returned when the
+// quantity field is not sent.
+func TestSetLevelQuantityRequired(t *testing.T) {
+	router, _ := newRouter(t)
 
-	rec := istek(t, router, http.MethodPost, "/admin/v1/inventory-items/invitem_1/levels",
+	rec := sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/inventory-items/invitem_1/levels",
 		`{"location_id":"sloc_1"}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-// TestSetLevelYetersizStok servisin Conflict hatasının 409'a çevrildiğini
-// doğrular.
-func TestSetLevelYetersizStok(t *testing.T) {
-	router, svc := yeniSunucu(t)
-	svc.err = errors.Conflict(service.CodeInsufficientStock, "rezerve adedin altına inilemez")
+// TestSetLevelInsufficientStock verifies that the service's Conflict error is
+// turned into a 409.
+func TestSetLevelInsufficientStock(t *testing.T) {
+	router, svc := newRouter(t)
+	svc.err = errors.Conflict(service.CodeInsufficientStock, "cannot go below the reserved quantity")
 
-	rec := istek(t, router, http.MethodPost, "/admin/v1/inventory-items/invitem_1/levels",
+	rec := sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/inventory-items/invitem_1/levels",
 		`{"location_id":"sloc_1","stocked_quantity":1}`)
 
 	require.Equal(t, http.StatusConflict, rec.Code)
-	hata, ok := govde(t, rec)["error"].(map[string]any)
+	apiErr, ok := jsonBody(t, rec)["error"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, service.CodeInsufficientStock, hata["code"])
+	assert.Equal(t, service.CodeInsufficientStock, apiErr["code"])
 }
 
-// TestAdjustLevel yol parametrelerinin ve negatif delta'nın doğru taşındığını
-// doğrular.
+// TestAdjustLevel verifies that the path parameters and a negative delta are
+// carried correctly.
 func TestAdjustLevel(t *testing.T) {
-	router, svc := yeniSunucu(t)
+	router, svc := newRouter(t)
 	svc.level = models.InventoryLevel{ID: "invlevel_1", StockedQuantity: 3}
 
-	rec := istek(t, router, http.MethodPost,
+	rec := sendRequestWithBody(t, router, http.MethodPost,
 		"/admin/v1/inventory-items/invitem_1/levels/sloc_1/adjust", `{"delta":-2}`)
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	assert.Equal(t, "invitem_1", svc.gorulenID)
-	assert.Equal(t, "sloc_1", svc.gorulenLocationID)
-	assert.Equal(t, int64(-2), svc.gorulenDelta)
+	assert.Equal(t, "invitem_1", svc.lastID)
+	assert.Equal(t, "sloc_1", svc.lastLocationID)
+	assert.Equal(t, int64(-2), svc.lastDelta)
 }
 
-// TestAdjustLevelDeltaZorunlu delta alanı yoksa 422 dönüldüğünü doğrular.
-func TestAdjustLevelDeltaZorunlu(t *testing.T) {
-	router, _ := yeniSunucu(t)
+// TestAdjustLevelDeltaRequired verifies that a 422 is returned when the delta
+// field is absent.
+func TestAdjustLevelDeltaRequired(t *testing.T) {
+	router, _ := newRouter(t)
 
-	rec := istek(t, router, http.MethodPost,
+	rec := sendRequestWithBody(t, router, http.MethodPost,
 		"/admin/v1/inventory-items/invitem_1/levels/sloc_1/adjust", `{}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }
 
-// TestStokMagazayaAcilmaz store route'u tanımlanmadığını doğrular: müşteri
-// tarafı stoğu yalnızca Query katmanı üzerinden görür.
-func TestStokMagazayaAcilmaz(t *testing.T) {
-	router, _ := yeniSunucu(t)
+// TestStockIsNotOpenToTheStore verifies that no store route is defined: the
+// customer side sees stock only through the Query layer.
+func TestStockIsNotOpenToTheStore(t *testing.T) {
+	router, _ := newRouter(t)
 
 	for _, path := range []string{
 		"/store/v1/inventory-items",
 		"/store/v1/stock-locations",
 	} {
-		rec := istek(t, router, http.MethodGet, path, "")
-		assert.Equal(t, http.StatusNotFound, rec.Code, "%s açık olmamalı", path)
+		rec := sendRequestWithBody(t, router, http.MethodGet, path, "")
+		assert.Equal(t, http.StatusNotFound, rec.Code, "%s must not be open", path)
 	}
 }

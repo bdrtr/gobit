@@ -168,7 +168,7 @@ the refusal is what the driver would do anyway.
 The first draft of `recordMovement` refused a reason offered for a write that
 changed nothing, on the grounds that a reason with no delta is a movement of
 zero units. It was wrong about a real path, and the module's own integration
-suite found it: `TestReserveIleSeviyeYazmaKilitlenmez` sets a level to the count
+suite found it: `TestReserveAndALevelWriteDoNotDeadlock` sets a level to the count
 it already holds, and the call started returning
 `inventory_inconsistent_state`.
 

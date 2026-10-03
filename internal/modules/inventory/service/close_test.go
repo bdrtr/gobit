@@ -22,12 +22,6 @@ import (
 // them while the operator saw a retired warehouse.
 
 // newService builds a service over a fresh fake store.
-//
-// The package's existing helper does exactly this under a Turkish name, and this
-// file is English (ADR 0012, decision 3 — language is a property of the FILE):
-// reaching for it would drag the old name into a translated file and the
-// language check would fail, correctly. admin_test.go's newAdmin makes the same
-// choice for the same reason.
 func newService(t *testing.T) (*service.Service, *fakeStore) {
 	t.Helper()
 
@@ -202,7 +196,7 @@ func TestTheLocationLockComesFirst(t *testing.T) {
 
 			require.NoError(t, flow.call(context.Background(), svc))
 
-			locks := store.kilitSirasi()
+			locks := store.lockOrder()
 			require.Contains(t, locks, "location", "the flow never took the location lock: %v", locks)
 			require.Contains(t, locks, "item", "the flow never took the item lock: %v", locks)
 			assert.Less(t, slices.Index(locks, "location"), slices.Index(locks, "item"),
@@ -235,7 +229,7 @@ func TestTheLocationLockComesFirst(t *testing.T) {
 
 			require.NoError(t, flow.call(context.Background(), svc))
 
-			assert.NotContains(t, store.kilitSirasi(), "location",
+			assert.NotContains(t, store.lockOrder(), "location",
 				"a reservation flow takes no location lock; the omission is the decision")
 		})
 	}
@@ -247,7 +241,7 @@ func TestTheLocationLockComesFirst(t *testing.T) {
 		_, err := svc.CloseStockLocation(context.Background(), locA)
 
 		require.NoError(t, err)
-		assert.Equal(t, []string{"location"}, store.kilitSirasi(),
+		assert.Equal(t, []string{"location"}, store.lockOrder(),
 			"the close locks the location and nothing else; locking levels would reverse the order")
 	})
 }

@@ -147,7 +147,7 @@ Region is also the contrast that shows what pinning looks like: its service
 tests already assert both that a flag left out of an update is unchanged and
 that an explicit false is WRITTEN rather than read as "do not touch". Inventory
 pins its equivalent default too —
-`TestCreateInventoryItemVarsayilanSevkiyatGerektirir` fails at once when
+`TestCreateInventoryItemRequiresShippingByDefault` fails at once when
 `requires_shipping` is flipped. Product pinned none of its four until
 2026-09-06, and that contrast is what makes this a gap rather than a house
 convention. What was pinned, and what it cost to find out it was not, is D2.

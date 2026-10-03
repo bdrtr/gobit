@@ -1,21 +1,24 @@
-// Package api inventory modülünün HTTP yüzeyidir.
+// Package api is the inventory module's HTTP surface.
 //
-// Yalnızca yönetim (admin) route'ları vardır. STOK MAĞAZAYA DOĞRUDAN AÇILMAZ:
-// müşteri tarafı stoğu ürün listelemesi üzerinden, Query katmanının
-// "inventory_item" sağlayıcısıyla görür (bkz. service.QueryProvider). Böylece
-// stok yüzeyi tek bir okuma yolundan geçer ve mağazaya lokasyon kırılımı gibi
-// iç ayrıntılar sızmaz.
+// There are admin routes only. STOCK IS NOT OPENED DIRECTLY TO THE STORE: the
+// customer side sees stock through the product listing, via the Query layer's
+// "inventory_item" provider (see service.QueryProvider). That way the stock
+// surface goes through a single read path, and internal details such as the
+// per-location breakdown do not leak to the store.
 //
-// Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
-// corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
+// Handlers do NOT CHOOSE the status code: the service returns its core/errors
+// typed error and corehttp.WriteError writes the code that fits its class
+// (plan Section 8).
 //
-// # Yetki
+// # Scopes
 //
-// /admin/v1 uçları yetki ister ve sözlük ikiye ayrılır: GET uçları [ScopeRead],
-// POST/PUT/PATCH/DELETE uçları [ScopeWrite] (bkz. [Handler.Routes]).
-// corehttp.ScopeAdmin ÜST YETKİDİR ve ikisini de tek başına karşılar.
+// The /admin/v1 endpoints ask for a scope and the dictionary splits in two: GET
+// endpoints ask for [ScopeRead], POST/PUT/PATCH/DELETE endpoints for
+// [ScopeWrite] (see [Handler.Routes]). corehttp.ScopeAdmin is a SUPERSCOPE and
+// satisfies both on its own.
 //
-// Modülün /store/v1 ucu YOKTUR, dolayısıyla yetkisiz bir yüzeyi de yoktur.
+// The module has NO /store/v1 endpoint, and so it has no unscoped surface
+// either.
 package api
 
 import (
@@ -35,9 +38,9 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory/service"
 )
 
-// Route yolları. Modül route'ları TAM YOL ile kaydedilir; "/admin/v1" gibi bir
-// ön ek MOUNT EDİLMEZ, çünkü mount eden ilk modül o alt ağacın tamamını sahiplenir
-// ve aynı ön eki kullanan diğer modüllerle çakışırdı.
+// Route paths. Module routes are registered with the FULL PATH; a prefix such
+// as "/admin/v1" is NOT MOUNTED, because the first module to mount it would own
+// that whole subtree and collide with the other modules using the same prefix.
 const (
 	pathStockLocations = "/admin/v1/stock-locations"
 	pathStockLocation  = "/admin/v1/stock-locations/{id}"
@@ -56,48 +59,50 @@ const (
 	pathItemMovements = "/admin/v1/inventory-items/{id}/movements"
 )
 
-// maxBodyBytes istek gövdesi için üst sınırdır. Sınır olmadan tek bir istek
-// sunucunun belleğini tüketebilirdi.
+// maxBodyBytes is the upper bound on a request body. Without a bound a single
+// request could exhaust the server's memory.
 const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
-// codeInvalidRequest gövde/parametre çözümlenemediğinde dönen hata kodudur.
+// codeInvalidRequest is the error code returned when a body or a parameter
+// cannot be parsed.
 const codeInvalidRequest = "inventory_invalid_request"
 
-// codeLinkUnavailable kanal bağlama uçlarının link servisi olmadan
-// çağrıldığını bildirir (bkz. saleschannel.go).
+// codeLinkUnavailable reports that the channel binding endpoints were called
+// without the link service (see saleschannel.go).
 const codeLinkUnavailable = "inventory_link_unavailable"
 
-// Yetki sözlüğü: inventory'nin yönetim uçlarının istediği yetkiler.
+// The scope dictionary: the scopes inventory's admin endpoints ask for.
 //
-// Sözlük tüm modüllerde AYNI biçimdedir ve BİLİNÇLİ olarak iki girdiden
-// ibarettir: okuma ve yazma. Kaynak başına ayrı yetki ("stock-locations:write",
-// "levels:read" …) tanımlamak listeyi büyütür ama bugün verilebilecek hiçbir
-// yeni kararı mümkün kılmaz; ayrım gerçekten gerektiğinde eklenir.
+// The dictionary has the SAME shape in every module and DELIBERATELY consists
+// of two entries: read and write. Defining a separate scope per resource
+// ("stock-locations:write", "levels:read" …) makes the list longer but makes no
+// new decision possible that could be made today; the distinction is added
+// when it is really needed.
 const (
-	// ScopeRead inventory yönetim yüzeyindeki OKUMA uçlarının istediği
-	// yetkidir.
+	// ScopeRead is the scope the READ endpoints on inventory's admin surface ask
+	// for.
 	//
-	// Lokasyonları, stok kalemlerini ve seviyeleri okumaya yeter; hiçbir yazma
-	// ucunu açmaz. Tam yetkili kimliklere ayrıca verilmesi gerekmez:
-	// corehttp.ScopeAdmin taşıyan bir çağıran bunu da karşılar (bkz.
+	// It is enough to read locations, inventory items and levels; it opens no
+	// write endpoint. Fully privileged identities do not need to be granted it
+	// separately: a caller carrying corehttp.ScopeAdmin satisfies it too (see
 	// corehttp.Principal.HasScope).
 	ScopeRead = "inventory:read"
 
-	// ScopeWrite inventory yönetim yüzeyindeki YAZMA uçlarının istediği
-	// yetkidir.
+	// ScopeWrite is the scope the WRITE endpoints on inventory's admin surface
+	// ask for.
 	//
-	// Ayrım burada özellikle işe yarar: stoğu yalnızca RAPORLAYAN bir
-	// entegrasyon (depo panosu, satış tahmini) [ScopeRead] ile çalışabilir ve
-	// bir hata durumunda gerçek stoğu bozamaz.
+	// The distinction is especially useful here: an integration that only
+	// REPORTS stock (a warehouse dashboard, a sales forecast) can work with
+	// [ScopeRead], and when it goes wrong it cannot corrupt the real stock.
 	ScopeWrite = "inventory:write"
 )
 
-// Inventory handler'ların servisten ihtiyaç duyduğu yüzeydir.
+// Inventory is the surface the handlers need from the service.
 //
-// Dar tutulması testleri sadeleştirir: HTTP davranışı, gerçek bir veritabanı
-// olmadan birkaç satırlık bir sahte ile doğrulanabilir.
+// Keeping it narrow keeps the tests simple: the HTTP behavior can be verified
+// without a real database, with a fake a few lines long.
 type Inventory interface {
-	// CreateStockLocation yeni bir stok lokasyonu oluşturur.
+	// CreateStockLocation creates a new stock location.
 	CreateStockLocation(ctx context.Context, in service.CreateStockLocationInput) (models.StockLocation, error)
 	// GetStockLocation returns the location by its id, the closed ones too.
 	GetStockLocation(ctx context.Context, id string) (models.StockLocation, error)
@@ -106,90 +111,94 @@ type Inventory interface {
 	// CloseStockLocation closes the location; Conflict when it is not empty.
 	CloseStockLocation(ctx context.Context, id string) (models.StockLocation, error)
 
-	// CreateInventoryItem yeni bir stok kalemi oluşturur.
+	// CreateInventoryItem creates a new inventory item.
 	CreateInventoryItem(ctx context.Context, in service.CreateInventoryItemInput) (models.InventoryItem, error)
-	// GetInventoryItem kalemi kimliğiyle döner.
+	// GetInventoryItem returns the item by its id.
 	GetInventoryItem(ctx context.Context, id string) (models.InventoryItem, error)
-	// ListInventoryItems kalemleri sayfalar.
+	// ListInventoryItems pages the items.
 	ListInventoryItems(ctx context.Context, in service.ListInventoryItemsInput) ([]models.InventoryItem, int64, error)
-	// DeleteInventoryItem kalemi yumuşak siler.
+	// DeleteInventoryItem soft-deletes the item.
 	DeleteInventoryItem(ctx context.Context, id string) error
 
-	// ListInventoryLevels kalemin stok seviyelerini döner.
+	// ListInventoryLevels returns the item's stock levels.
 	ListInventoryLevels(ctx context.Context, itemID string) ([]models.InventoryLevel, error)
-	// SetInventoryLevel fiziksel adedi mutlak olarak yazar.
+	// SetInventoryLevel writes the physical quantity as an absolute value.
 	SetInventoryLevel(ctx context.Context, itemID, locationID string, stockedQty int64) (models.InventoryLevel, error)
-	// AdjustInventory fiziksel adedi delta kadar değiştirir.
+	// AdjustInventory changes the physical quantity by delta.
 	AdjustInventory(ctx context.Context, itemID, locationID string, delta int64) (models.InventoryLevel, error)
 	// ListMovements returns a page of the item's stock movements, newest first.
 	ListMovements(ctx context.Context, in service.ListMovementsInput) ([]models.Movement, error)
 }
 
-// Handler inventory modülünün HTTP handler kümesidir.
+// Handler is the inventory module's set of HTTP handlers.
 type Handler struct {
 	svc Inventory
-	// links, depo↔kanal bağını yazan çekirdek servistir. NIL OLABİLİR ve o
-	// hâlde yalnızca bağlama uçları KAPALI biter (bkz. Handler.bindings);
-	// modülün geri kalanı link servisi olmayan bir kurulumda da çalışır.
+	// links is the core service that writes the warehouse↔channel binding. IT
+	// MAY BE NIL, and then only the binding endpoints fail CLOSED (see
+	// Handler.bindings); the rest of the module works in an installation
+	// without a link service too.
 	links ChannelBindings
 }
 
-// NewHandler verilen servis üzerinde çalışan handler kümesini üretir.
+// NewHandler builds the set of handlers working over the given service.
 func NewHandler(svc Inventory, links ChannelBindings) *Handler {
 	return &Handler{svc: svc, links: links}
 }
 
-// Routes modülün admin route'larını router'a bağlar.
+// Routes binds the module's admin routes to the router.
 //
-// # KORUMA
+// # PROTECTION
 //
-// İki katman vardır ve ikisi de gereklidir:
+// There are two layers and both are needed:
 //
-//  1. KİMLİK — uçlar corehttp.RequireAdmin ile korunur. O middleware bu
-//     modülde değil, router'ı kuran tarafta takılır (bkz. corehttp.APIGuards).
-//  2. YETKİ — uçlar BURADA, uç uç corehttp.RequireScope ile işaretlenir:
-//     GET uçları [ScopeRead], POST/DELETE uçları [ScopeWrite] ister.
+//  1. IDENTITY — the endpoints are protected by corehttp.RequireAdmin. That
+//     middleware is attached not in this module but on the side that builds
+//     the router (see corehttp.APIGuards).
+//  2. SCOPE — the endpoints are marked HERE, one by one, with
+//     corehttp.RequireScope: GET endpoints ask for [ScopeRead], POST/DELETE
+//     endpoints for [ScopeWrite].
 //
-// İkinci katman olmasaydı kimlik doğrulama yetkilendirmenin yerine geçerdi:
-// yetkileri boşaltılmış bir yönetim kullanıcısı giriş yapıp stok seviyelerini
-// yazabilir ya da kalemleri silebilirdi. Stok, satılabilirliği belirleyen
-// sayıdır; yanlış yazılması doğrudan satış kaybı ya da fazla satıştır.
+// Without the second layer authentication would stand in for authorization:
+// an admin user whose scopes had been emptied could log in and write stock
+// levels or delete items. Stock is the number that decides what can be sold;
+// writing it wrong is directly a lost sale or an oversell.
 func (h *Handler) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
-	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+	read := r.With(corehttp.RequireScope(ScopeRead))
+	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	yazma.Post(pathStockLocations, h.createStockLocation)
-	okuma.Get(pathStockLocations, h.listStockLocations)
-	okuma.Get(pathStockLocation, h.getStockLocation)
-	yazma.Post(pathStockLocationClose, h.closeStockLocation)
+	write.Post(pathStockLocations, h.createStockLocation)
+	read.Get(pathStockLocations, h.listStockLocations)
+	read.Get(pathStockLocation, h.getStockLocation)
+	write.Post(pathStockLocationClose, h.closeStockLocation)
 
-	yazma.Post(pathItems, h.createItem)
-	okuma.Get(pathItems, h.listItems)
-	okuma.Get(pathItem, h.getItem)
-	yazma.Delete(pathItem, h.deleteItem)
+	write.Post(pathItems, h.createItem)
+	read.Get(pathItems, h.listItems)
+	read.Get(pathItem, h.getItem)
+	write.Delete(pathItem, h.deleteItem)
 
-	okuma.Get(pathItemLevels, h.listLevels)
-	yazma.Post(pathItemLevels, h.setLevel)
-	yazma.Post(pathItemLevelAdjust, h.adjustLevel)
+	read.Get(pathItemLevels, h.listLevels)
+	write.Post(pathItemLevels, h.setLevel)
+	write.Post(pathItemLevelAdjust, h.adjustLevel)
 
 	// The ledger is READ authority and not a third scope. The module's
 	// dictionary is deliberately two entries (see above), and this listing shows
 	// the history of the same numbers GET .../levels already shows to the same
 	// audience; a scope of its own would name a power nobody has to grant
 	// separately (ADR 0068).
-	okuma.Get(pathItemMovements, h.listMovements)
+	read.Get(pathItemMovements, h.listMovements)
 
-	// Deponun hangi satış kanalları için sevk ettiği. Bağ bu modülün tablosu
-	// DEĞİL, core/link'in bağıdır: kanal auth modülünün kaydı ve modüller arası
-	// foreign key yasak (Prensip 2.2). Gerekçesi service.Definitions'ta.
-	okuma.Get(pathLocationChannels, h.listLocationSalesChannels)
-	yazma.Post(pathLocationChannels, h.bindLocationSalesChannel)
-	yazma.Delete(pathLocationChannel, h.unbindLocationSalesChannel)
+	// Which sales channels the warehouse ships for. The binding is NOT this
+	// module's table but core/link's: the channel is the auth module's record
+	// and foreign keys between modules are forbidden (Principle 2.2). The
+	// reasoning is in service.Definitions.
+	read.Get(pathLocationChannels, h.listLocationSalesChannels)
+	write.Post(pathLocationChannels, h.bindLocationSalesChannel)
+	write.Delete(pathLocationChannel, h.unbindLocationSalesChannel)
 }
 
-// --- stok lokasyonları -------------------------------------------------------
+// --- stock locations ---------------------------------------------------------
 
-// createStockLocationRequest POST /admin/v1/stock-locations gövdesidir.
+// createStockLocationRequest is the body of POST /admin/v1/stock-locations.
 type createStockLocationRequest struct {
 	Name     string `json:"name"`
 	Address1 string `json:"address_1"`
@@ -203,7 +212,7 @@ type createStockLocationRequest struct {
 	CountryCode string `json:"country_code"`
 }
 
-// createStockLocation yeni bir stok lokasyonu oluşturur.
+// createStockLocation creates a new stock location.
 func (h *Handler) createStockLocation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -229,7 +238,7 @@ func (h *Handler) createStockLocation(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toLocationDTO(loc)})
 }
 
-// getStockLocation lokasyonu kimliğiyle döner.
+// getStockLocation returns the location by its id.
 func (h *Handler) getStockLocation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -299,19 +308,19 @@ func (h *Handler) listStockLocations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- stok kalemleri ----------------------------------------------------------
+// --- inventory items ---------------------------------------------------------
 
-// createItemRequest POST /admin/v1/inventory-items gövdesidir.
+// createItemRequest is the body of POST /admin/v1/inventory-items.
 type createItemRequest struct {
 	SKU         string `json:"sku"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
-	// RequiresShipping gönderilmezse true varsayılır; işaretçi olması bu
-	// ayrımı korur.
+	// RequiresShipping is taken to be true when it is not sent; its being a
+	// pointer is what preserves that distinction.
 	RequiresShipping *bool `json:"requires_shipping"`
 }
 
-// createItem yeni bir stok kalemi oluşturur.
+// createItem creates a new inventory item.
 func (h *Handler) createItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -334,7 +343,7 @@ func (h *Handler) createItem(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toItemDTO(item)})
 }
 
-// listItems kalemleri sayfalayarak döner.
+// listItems returns the items page by page.
 func (h *Handler) listItems(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -352,7 +361,7 @@ func (h *Handler) listItems(w http.ResponseWriter, r *http.Request) {
 		flag, parseErr := strconv.ParseBool(raw)
 		if parseErr != nil {
 			corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
-				"requires_shipping mantıksal bir değer olmalı: %q", raw))
+				"requires_shipping has to be a boolean: %q", raw))
 			return
 		}
 		in.RequiresShipping = &flag
@@ -376,7 +385,7 @@ func (h *Handler) listItems(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getItem kalemi kimliğiyle döner.
+// getItem returns the item by its id.
 func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -388,7 +397,7 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toItemDTO(item)})
 }
 
-// deleteItem kalemi yumuşak siler.
+// deleteItem soft-deletes the item.
 func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -399,12 +408,13 @@ func (h *Handler) deleteItem(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// --- stok seviyeleri ---------------------------------------------------------
+// --- stock levels ------------------------------------------------------------
 
-// listLevels kalemin tüm lokasyonlardaki seviyelerini döner.
+// listLevels returns the item's levels at every location.
 //
-// Bu uç sayfalanmaz: bir kalemin seviye sayısı lokasyon sayısıyla sınırlıdır.
-// Zarf yine de tutarlıdır; count satır sayısıdır.
+// This endpoint is not paged: the number of levels an item has is bounded by
+// the number of locations. The envelope is consistent all the same; count is
+// the number of rows.
 func (h *Handler) listLevels(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -426,14 +436,15 @@ func (h *Handler) listLevels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// setLevelRequest POST /admin/v1/inventory-items/{id}/levels gövdesidir.
+// setLevelRequest is the body of POST /admin/v1/inventory-items/{id}/levels.
 type setLevelRequest struct {
 	LocationID string `json:"location_id"`
-	// StockedQuantity FİZİKSEL adettir; rezerve adet bu uçtan değiştirilmez.
+	// StockedQuantity is the PHYSICAL quantity; the reserved quantity is not
+	// changed through this endpoint.
 	StockedQuantity *int64 `json:"stocked_quantity"`
 }
 
-// setLevel bir lokasyondaki fiziksel adedi mutlak olarak yazar.
+// setLevel writes the physical quantity at a location as an absolute value.
 func (h *Handler) setLevel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -444,7 +455,7 @@ func (h *Handler) setLevel(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.StockedQuantity == nil {
 		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
-			"stocked_quantity zorunludur"))
+			"stocked_quantity is required"))
 		return
 	}
 
@@ -456,13 +467,14 @@ func (h *Handler) setLevel(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toLevelDTO(level)})
 }
 
-// adjustLevelRequest adjust ucunun gövdesidir.
+// adjustLevelRequest is the body of the adjust endpoint.
 type adjustLevelRequest struct {
-	// Delta fiziksel adede eklenecek (negatifse çıkarılacak) miktardır.
+	// Delta is the amount to add to the physical quantity (to subtract when it
+	// is negative).
 	Delta *int64 `json:"delta"`
 }
 
-// adjustLevel fiziksel adedi delta kadar değiştirir.
+// adjustLevel changes the physical quantity by delta.
 func (h *Handler) adjustLevel(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -472,7 +484,7 @@ func (h *Handler) adjustLevel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Delta == nil {
-		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest, "delta zorunludur"))
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest, "delta is required"))
 		return
 	}
 
@@ -485,27 +497,28 @@ func (h *Handler) adjustLevel(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toLevelDTO(level)})
 }
 
-// --- zarflar, DTO'lar ve yardımcılar -----------------------------------------
+// --- envelopes, DTOs and helpers ---------------------------------------------
 
-// singleEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).
+// singleEnvelope is the envelope of single-record responses (plan Section 8).
 type singleEnvelope struct {
-	// Data yanıtın gövdesidir.
+	// Data is the body of the response.
 	Data any `json:"data"`
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data sayfadaki kayıtlardır.
+	// Data are the records on the page.
 	Data any `json:"data"`
-	// Count filtreye uyan TÜM kayıtların sayısıdır; sayfadaki satır sayısı değil.
+	// Count is the number of ALL the records matching the filter, not the
+	// number of rows on the page.
 	Count int64 `json:"count"`
-	// Offset atlanan kayıt sayısıdır.
+	// Offset is the number of records skipped.
 	Offset int64 `json:"offset"`
-	// Limit istenen sayfa boyutudur.
+	// Limit is the requested page size.
 	Limit int64 `json:"limit"`
 }
 
-// stockLocationDTO stok lokasyonunun dış gösterimidir.
+// stockLocationDTO is the external representation of a stock location.
 type stockLocationDTO struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -529,7 +542,7 @@ type stockLocationDTO struct {
 	ClosedAt *time.Time `json:"closed_at"`
 }
 
-// inventoryItemDTO stok kaleminin dış gösterimidir.
+// inventoryItemDTO is the external representation of an inventory item.
 type inventoryItemDTO struct {
 	ID               string    `json:"id"`
 	SKU              string    `json:"sku"`
@@ -540,11 +553,11 @@ type inventoryItemDTO struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
-// inventoryLevelDTO stok seviyesinin dış gösterimidir.
+// inventoryLevelDTO is the external representation of a stock level.
 //
-// AvailableQuantity saklanan bir alan değildir, stocked - reserved farkından
-// türetilir; istemcinin aynı çıkarımı kendi yapmasına gerek kalmasın diye
-// yanıta konur.
+// AvailableQuantity is not a stored field; it is derived from the difference
+// stocked - reserved, and it is put into the response so that the client does
+// not have to make the same derivation itself.
 type inventoryLevelDTO struct {
 	ID                string    `json:"id"`
 	InventoryItemID   string    `json:"inventory_item_id"`
@@ -556,7 +569,7 @@ type inventoryLevelDTO struct {
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
-// toLocationDTO modeli dış gösterime çevirir.
+// toLocationDTO converts the model to its external representation.
 func toLocationDTO(loc models.StockLocation) stockLocationDTO {
 	return stockLocationDTO{
 		ID:          loc.ID,
@@ -573,7 +586,7 @@ func toLocationDTO(loc models.StockLocation) stockLocationDTO {
 	}
 }
 
-// toItemDTO modeli dış gösterime çevirir.
+// toItemDTO converts the model to its external representation.
 func toItemDTO(item models.InventoryItem) inventoryItemDTO {
 	return inventoryItemDTO{
 		ID:               item.ID,
@@ -586,7 +599,7 @@ func toItemDTO(item models.InventoryItem) inventoryItemDTO {
 	}
 }
 
-// toLevelDTO modeli dış gösterime çevirir.
+// toLevelDTO converts the model to its external representation.
 func toLevelDTO(level models.InventoryLevel) inventoryLevelDTO {
 	return inventoryLevelDTO{
 		ID:                level.ID,
@@ -600,10 +613,11 @@ func toLevelDTO(level models.InventoryLevel) inventoryLevelDTO {
 	}
 }
 
-// decodeBody istek gövdesini çözer.
+// decodeBody decodes the request body.
 //
-// Gövde boyutu sınırlanır ve TANINMAYAN ALANLAR reddedilir: sessizce yutulan
-// bir alan, istemcinin gönderdiğini sandığı ama uygulanmayan bir ayar demektir.
+// The body size is bounded and UNKNOWN FIELDS are rejected: a field that is
+// silently swallowed means a setting the client believes it sent and that is
+// never applied.
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
@@ -611,20 +625,20 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
-			return coreerrors.Invalid(codeInvalidRequest, "istek gövdesi boş olamaz")
+			return coreerrors.Invalid(codeInvalidRequest, "request body cannot be empty")
 		}
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"istek gövdesi çözümlenemedi")
+			"request body could not be parsed")
 	}
-	// Tek bir JSON değerinden fazlası gönderilmişse bu da bir istemci hatasıdır.
+	// More than a single JSON value having been sent is a client error as well.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return coreerrors.Invalid(codeInvalidRequest,
-			"istek gövdesi tek bir JSON nesnesi olmalı")
+			"request body has to be a single JSON object")
 	}
 	return nil
 }
 
-// parsePage limit/offset sorgu parametrelerini çözer.
+// parsePage parses the limit/offset query parameters.
 func parsePage(r *http.Request) (service.Page, error) {
 	limit, err := parseInt64Param(r, "limit")
 	if err != nil {
@@ -636,14 +650,15 @@ func parsePage(r *http.Request) (service.Page, error) {
 	}
 	page := service.Page{Limit: limit, Offset: offset}
 	if page.Limit == 0 {
-		// Yanıttaki limit alanının gerçekten uygulanan sınırı göstermesi için
-		// varsayılan burada da görünür kılınır.
+		// The default is made visible here too, so that the limit field of the
+		// response shows the bound that is really applied.
 		page.Limit = service.DefaultLimit
 	}
 	return page, nil
 }
 
-// parseInt64Param bir sorgu parametresini tam sayıya çevirir; yoksa 0 döner.
+// parseInt64Param converts a query parameter to an integer; it returns 0 when
+// the parameter is absent.
 func parseInt64Param(r *http.Request, name string) (int64, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {

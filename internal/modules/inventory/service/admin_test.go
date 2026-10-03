@@ -32,12 +32,6 @@ type adminLevel struct {
 }
 
 // newAdmin builds a service with its admin surface over a fresh fake store.
-//
-// The service is constructed here rather than through the package's existing
-// helper on purpose: that helper still carries a Turkish name, and this file is
-// English (ADR 0012, decision 3 — language is a property of the FILE). Reaching
-// for it would drag the old name into a translated file and the language check
-// would fail, correctly.
 func newAdmin(t *testing.T) (*service.AdminSurface, *service.Service, *fakeStore) {
 	t.Helper()
 

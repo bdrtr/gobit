@@ -3,11 +3,6 @@
 // The tests in this file need a real PostgreSQL instance and share the
 // container, the pool and the schema that inventory_integration_test.go's
 // TestMain sets up. To run them: make test-integration
-//
-// This file is English because ADR 0012 makes language a property of the FILE
-// and every new file is English; the Turkish files it sits next to are on
-// internal/arch/testdata/turkish_ledger.txt and stay as they are. Nothing here
-// calls a helper from those files, so no identifier crosses the boundary.
 package inventory_test
 
 import (

@@ -1,24 +1,25 @@
-// Package inventory stok modülüdür: stok kalemleri, lokasyonlar, seviyeler ve
-// rezervasyonlar (plan Bölüm 6, Faz 4).
+// Package inventory is the stock module: inventory items, locations, levels and
+// reservations (plan Section 6, Phase 4).
 //
-// Modül kendi tablolarına sahiptir ve başka HİÇBİR modülü import etmez
-// (Prensip 2.1/2.4, ADR 0001). Dışarıya beş yüzey açar:
+// The module owns its own tables and imports NO other module (Principle
+// 2.1/2.4, ADR 0001). It exposes five surfaces:
 //
-//   - Servis: container'da [ServiceName] adıyla. Faz 6'daki complete_cart
-//     saga'sı stok adımını ve telafisini buradan çağırır.
-//   - Modüller arası İLKEL yüzey: container'da [InteropName] adıyla (ADR 0006).
-//     Servisten AYRI kaydedilir, çünkü yalnızca ilkel tiplerle konuşur;
-//     checkout ve returns akışları stoğa buradan dokunur.
-//   - Query sağlayıcısı: container'da "inventory_item.query" adıyla (ADR 0004).
-//     Kayıtlar toplam satılabilir adetle birlikte döner; product'ın mağaza
-//     listelemesi ürünü ve stoğunu tek çağrıda görür.
-//   - YÖNETİM YAZMA yüzeyi: container'da [AdminName] adıyla (ADR 0013).
-//     Yönetim panelinin (internal/adminui) çözdüğü ad budur.
-//   - Admin API: /admin/v1/stock-locations ve /admin/v1/inventory-items.
+//   - Service: in the container under [ServiceName]. The complete_cart saga of
+//     Phase 6 calls the stock step and its compensation from here.
+//   - The cross-module PRIMITIVE surface: in the container under [InteropName]
+//     (ADR 0006). It is registered SEPARATELY from the service, because it
+//     speaks only in primitive types; the checkout and returns flows touch
+//     stock through it.
+//   - Query provider: in the container under "inventory_item.query" (ADR 0004).
+//     Records come back together with their total sellable quantity; product's
+//     storefront listing sees the product and its stock in one call.
+//   - The ADMIN WRITE surface: in the container under [AdminName] (ADR 0013).
+//     It is the name the admin panel (internal/adminui) resolves.
+//   - Admin API: /admin/v1/stock-locations and /admin/v1/inventory-items.
 //
-// Link tanımı BİLDİRMEZ: varyant ile stok kalemi arasındaki
-// "product_variant_inventory" bağını, ilişkinin sahibi olan product modülü
-// bildirir.
+// It DOES NOT declare the link definition: the "product_variant_inventory" link
+// between a variant and an inventory item is declared by the product module,
+// which owns the relationship.
 package inventory
 
 import (
@@ -42,37 +43,40 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory/service"
 )
 
-// Container adları.
+// Container names.
 const (
-	// ModuleName modülün adıdır; migration versiyon tablosunun da önekidir.
+	// ModuleName is the module's name; it is also the prefix of the migration
+	// version table.
 	ModuleName = "inventory"
-	// ServiceName modül servisinin container'daki adıdır. Başka modüller
-	// servisi bu adla çözer ve KENDİ paketlerinde tanımladıkları dar bir
-	// arayüzle kullanır (ADR 0001).
+	// ServiceName is the module service's name in the container. Other modules
+	// resolve the service by this name and use it through a narrow interface
+	// they define in their OWN packages (ADR 0001).
 	ServiceName = ModuleName + ".service"
-	// InteropName modüller arası ilkel yüzeyin container'daki adıdır (ADR 0006).
+	// InteropName is the cross-module primitive surface's name in the container
+	// (ADR 0006).
 	//
-	// Servisten AYRI kaydedilir: servis inventory'nin zengin tipleriyle konuşur,
-	// bu yüzey yalnızca ilkel ve stdlib tipleriyle. Saga'lar onu kendi
-	// tanımladıkları dar arayüzle çözer.
+	// It is registered SEPARATELY from the service: the service speaks in
+	// inventory's rich types, this surface only in primitive and stdlib types.
+	// Sagas resolve it through a narrow interface they define themselves.
 	InteropName = ModuleName + ".interop"
-	// ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
+	// ProviderName is the query provider's name in the container (ADR 0004).
 	ProviderName = service.EntityName + query.ProviderSuffix
-	// AdminName modülün YÖNETİM YAZMA yüzeyinin container'daki adıdır
-	// (ADR 0013). Yazmanın yanında bir OKUMA da taşır: sorgu sağlayıcısı
-	// lokasyon kırılımını sunmaz ve operatör toplamla stok düzenleyemez.
+	// AdminName is the name of the module's ADMIN WRITE surface in the container
+	// (ADR 0013). Besides writing it also carries a READ: the query provider
+	// does not offer the per-location breakdown, and an operator cannot adjust
+	// stock from a total.
 	AdminName = ModuleName + ".admin"
-	// dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
+	// dbServiceName is the core database pool's name in the container.
 	dbServiceName = "core.db"
-	// linkServiceName çekirdek bağ servisinin container'daki adıdır.
+	// linkServiceName is the core link service's name in the container.
 	linkServiceName = "core.link"
 )
 
-// Kişisel veri bildiriminde geçen tablo adları.
+// The table names the personal data declaration mentions.
 //
-// Sabitler yazım hatasını tek yere indirir, doğruluğu kanıtlamaz: bildirimin
-// gerçekten şemadaki sütunları adlandırdığını migration'ları okuyan denetim
-// gösterir (erasure_test.go).
+// The constants bring a typo down to one place; they do not prove correctness:
+// that the declaration really names columns in the schema is shown by the
+// audit that reads the migrations (erasure_test.go).
 const (
 	tableStockLocations = "stock_locations"
 	tableInventoryItems = "inventory_items"
@@ -82,69 +86,74 @@ const (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// migrationsRoot migration dosyalarının kök dizinidir.
+// migrationsRoot is the root directory of the migration files.
 //
-// golang-migrate kaynağı köke bakar (iofs.New(src, ".")), embed.FS ise dosyaları
-// "migrations/" altında tutar; alt ağaç bu yüzden bir kez burada açılır.
+// The golang-migrate source looks at the root (iofs.New(src, ".")), whereas the
+// embed.FS keeps the files under "migrations/"; that is why the subtree is
+// opened once, here.
 var migrationsRoot = mustSub(migrationsFS, "migrations")
 
-// Module inventory modülünün çekirdek sözleşmesini uygular.
+// Module implements the inventory module's core contract.
 type Module struct {
 	svc *service.Service
-	// links, depo↔kanal bağını yazan çekirdek servistir; Register'da çözülür.
+	// links is the core service that writes the warehouse↔channel binding; it
+	// is resolved in Register.
 	links api.ChannelBindings
 }
 
-// Modülün çekirdek sözleşmesini karşıladığı derleme zamanında doğrulanır.
+// That the module satisfies the core contract is verified at compile time.
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe itself for the document is pinned down at compile time
+// too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca stok uçları belgeden sessizce düşerdi. Bu satır o
-// sessizliği kapatır.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it with a TYPE ASSERTION; should the method name or signature drift,
+// nothing would break at compile time — only the stock endpoints would
+// silently fall out of the document. This line closes that silence.
 var _ openapi.Describer = (*Module)(nil)
 
-// Kişisel veriyi bildirebildiği de aynı sebeple sabitlenir.
+// That it can declare personal data is pinned down for the same reason.
 //
-// [personaldata.Declarer] de opsiyoneldir ve süpürücü onu TİP İDDİASIYLA arar; pin
-// bu yüzden [openapi.Describer]'ınkinin yanındadır. Modül [personaldata.Eraser]'ı
-// UYGULAMAZ ve bu bir yarım iş değildir: silme öznesi müşteri kimliği ile
-// e-posta taşır, bu modülün hiçbir sütunu ikisinden birini tutmaz, yani modül
-// bir kişiyi bulamaz. Bildiren ama silemeyen bir tutucuyu koordinatör her
-// raporda RETAINED olarak listeler — bildirim, modülün bir veri sahibine
-// verilen cevapta görünür olmasının tek yoludur.
+// [personaldata.Declarer] is optional too and the sweeper looks for it with a
+// TYPE ASSERTION; that is why the pin sits next to [openapi.Describer]'s. The
+// module does NOT implement [personaldata.Eraser], and that is not unfinished
+// work: an erasure subject carries a customer ID and an email address, no
+// column of this module holds either of them, so the module cannot find a
+// person. The coordinator lists a holder that declares but cannot erase as
+// RETAINED in every report — the declaration is the only way the module becomes
+// visible in the answer given to a data subject.
 var _ personaldata.Declarer = (*Module)(nil)
 
-// New kaydedilmeye hazır bir inventory modülü üretir.
+// New produces an inventory module ready to be registered.
 func New() *Module {
 	return &Module{}
 }
 
-// Name modülün adını döner.
+// Name returns the module's name.
 func (m *Module) Name() string {
 	return ModuleName
 }
 
-// Register servisi ve Query sağlayıcısını container'a kaydeder.
+// Register registers the service and the query provider in the container.
 //
-// Yalnızca ÇEKİRDEK servisi (core.db) çözülür; başka bir modülün servisi burada
-// çözülmez, çünkü bu aşamada henüz kayıtlı olmayabilir (bkz. module.Module
-// sözleşmesi). core.db, modüller ayağa kalkmadan önce main.go'da hazır değer
-// olarak kaydedildiği için burada çözülmesi güvenlidir ve eksikliği modülün
-// hiç çalışamayacağı bir kurulum hatasıdır — sessizce ertelenmez.
+// Only the CORE service (core.db) is resolved; no other module's service is
+// resolved here, because at this stage it may not be registered yet (see the
+// module.Module contract). Resolving core.db here is safe because main.go
+// registers it as a ready value before the modules come up, and its absence is
+// a setup error under which the module could never work — it is not quietly
+// postponed.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, dbServiceName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), "inventory_db_unavailable",
-			"%s modülü %q servisini çözemedi", ModuleName, dbServiceName)
+			"the %s module could not resolve the %q service", ModuleName, dbServiceName)
 	}
 
 	links, err := container.Resolve[link.LinkService](c, linkServiceName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), "inventory_link_unavailable",
-			"%s modülü %q servisini çözemedi", ModuleName, linkServiceName)
+			"the %s module could not resolve the %q service", ModuleName, linkServiceName)
 	}
 
 	svc := service.New(repository.New(pool.Pool()), slog.Default())
@@ -158,115 +167,126 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
 		return err
 	}
-	// Yönetim yüzeyi AYRI bir adla kaydedilir; gerekçesi [AdminName]'de.
+	// The admin surface is registered under a SEPARATE name; the reason is at
+	// [AdminName].
 	if err := c.Provide(AdminName, service.NewAdminSurface(svc)); err != nil {
 		return err
 	}
 
-	// Bağ tanımları BURADA bildirilir: şema tanımın yanında durur ve her
-	// açılışta idempotent doğrulanır (ADR 0005). Bağın tabloları core/link'e
-	// aittir, bu yüzden modülün migration'larında yeri yoktur.
+	// The link definitions are declared HERE: the schema stays next to the
+	// definition and is verified idempotently on every startup (ADR 0005). The
+	// link's tables belong to core/link, which is why they have no place in the
+	// module's migrations.
 	for _, def := range service.Definitions() {
 		if err := links.Define(ctx, def); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), "inventory_link_define_failed",
-				"%q bağ tanımı bildirilemedi", def.Name)
+				"the %q link definition could not be declared", def.Name)
 		}
 	}
 
 	m.svc = svc
 	m.links = links
-	slog.Default().DebugContext(ctx, "inventory modülü kaydedildi",
-		"servis", ServiceName, "saglayici", ProviderName)
+	slog.Default().DebugContext(ctx, "inventory module registered",
+		"service", ServiceName, "provider", ProviderName)
 	return nil
 }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS {
 	return migrationsRoot
 }
 
-// Routes modülün admin route'larını router'a bağlar.
+// Routes mounts the module's admin routes on the router.
 //
-// Register çağrılmadan route bağlanmaz: servissiz bir handler her isteği
-// panikle karşılardı; sessiz kalmak (route yok -> 404) daha güvenlidir ve
-// Bootstrap zaten Register'ı Routes'tan önce çalıştırır.
+// No route is mounted before Register is called: a handler without a service
+// would meet every request with a panic; staying quiet (no route -> 404) is
+// safer, and Bootstrap runs Register before Routes anyway.
 func (m *Module) Routes(r chi.Router) {
 	if m.svc == nil {
-		slog.Default().Warn("inventory modülü Register edilmeden Routes çağrıldı, route bağlanmadı")
+		slog.Default().Warn("Routes was called on the inventory module without Register, no route was mounted")
 		return
 	}
 	api.NewHandler(m.svc, m.links).Routes(r)
 }
 
-// Describe modülün yönetim uçlarını OpenAPI belgesine işler.
+// Describe writes the module's admin endpoints into the OpenAPI document.
 //
-// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
-// tiplerinden türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
-// yüzeyini genişletirdi.
+// The description itself lives in [api.Describe]: the body schemas are derived
+// from that package's unexported types, and exporting the types only for the
+// sake of the document would widen the module's surface.
 //
-// [Module.Routes]'un tersine servis kontrolü YOKTUR ve gerekmez: şema
-// tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
-// belgesini de sessizce boşaltırdı.
+// Unlike [Module.Routes] there is NO service check, and none is needed: the
+// schema comes from the types, not from the service. Adding a check would
+// silently empty the document of a module that is not set up, too.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// PersonalData modülün kişisel veriyi nerede tuttuğunu söyler (ADR 0029).
+// PersonalData says where the module keeps personal data (ADR 0029).
 //
-// Bağlam almaz ve veritabanına dokunmaz: bildirim KODUN özelliğidir, boş bir
-// kurulumda da dolu bir kurulumda da aynı cümledir, ve bir denetim onu
-// bağlantısız okur. Bu yüzden [Module.Routes]'un aksine servis kontrolü de
-// yoktur; Register edilmemiş bir modül de ne tuttuğunu söyleyebilmelidir.
+// It takes no context and does not touch the database: the declaration is a
+// property of the CODE, the same sentence on an empty install and on a full
+// one, and an audit reads it without a connection. That is also why, unlike
+// [Module.Routes], there is no service check; a module that has not been
+// registered must still be able to say what it holds.
 //
-// Holder BOŞ bırakılır. Koordinatör onu kayıt defterindeki adla doldurur; adı
-// bir de buraya yazmak, iki yerin sessizce ayrışabileceği bir kopya olurdu.
+// Holder is left EMPTY. The coordinator fills it in with the name from the
+// registry; writing the name here as well would be a copy the two places could
+// silently drift apart on.
 //
-// # Bu adres kimin adresi
+// # Whose address this is
 //
-// Aşağıdaki bildirimin ağırlığı bir DEPO adresidir ve depo, alışveriş eden
-// kişinin değil İŞLETMECİNİN kendi yeridir. Küçük bir kurulumda çoğu zaman
-// işletmecinin EV adresidir: gerçek bir insana ait kişisel veri, ama o insan
-// mağazadan alışveriş eden veri sahibi değil, tüccarın kendisi. Ayrım iki
-// sonucu birden doğurur ve ikisi de bilerek verilmiştir.
+// The weight of the declaration below is a WAREHOUSE address, and a warehouse
+// is the OPERATOR's own premises, not the shopper's. In a small install it is
+// often the operator's HOME address: personal data belonging to a real human
+// being, but that human being is not a data subject shopping at the store, it
+// is the trader themselves. The distinction has two consequences at once, and
+// both were chosen deliberately.
 //
-// BİLDİRİLİR. Bildirim "bu kurulum kişisel veriyi nerede tutuyor" sorusunun
-// cevabıdır, "şu kişinin verisi nerede" sorusunun değil. Bildirilmezse
-// işletmecinin KENDİ erişim ya da silme talebi cevaplanamaz kalır, üstelik
-// modül hiçbir raporda hiç görünmez. Fatura modülü seller_address için aynı
-// sonuca vardı: şahıs işletmesinde satıcı bir gerçek kişidir.
+// It IS DECLARED. The declaration answers the question "where does this
+// install keep personal data", not "where is this person's data". Left
+// undeclared, the operator's OWN access or erasure request would go
+// unanswered, and on top of that the module would never appear in any report
+// at all. The invoice module came to the same conclusion for seller_address: in
+// a sole proprietorship the seller is a natural person.
 //
-// SİLİNMEZ. Bir müşterinin silme talebi mağazanın deposunu boşaltamaz.
-// Modülün [personaldata.Eraser]'ı uygulamamasının ilk sebebi özneyi zaten
-// çözemiyor olması; ikincisi budur — bir alışverişçinin süpürmesinde bu
-// tabloda yapılacak iş YOKTUR.
+// It IS NOT ERASED. A customer's erasure request cannot empty the store's
+// warehouse. The first reason the module does not implement
+// [personaldata.Eraser] is that it cannot resolve the subject in the first
+// place; this is the second — in a shopper's sweep there is NO work to do in
+// this table.
 //
-// # Sözleşme bu ayrımı taşıyamıyor
+// # The contract cannot carry this distinction
 //
-// [personaldata.Holding] Table, Column, Kind ve Why taşır; VERİ SAHİBİNİN SINIFINI
-// söyleyecek alanı yoktur. Ayrım bu yüzden her Why'ın ilk cümleciğine yazıldı
-// ("the operator's own premises rather than a shopper's"). Bugün elde olan tek
-// yer budur ve YETMEZ: süpürme raporu Why'ı taşımaz — bildirip silmeyen bir
-// tutucuyu RETAINED'a çeviren yol yalnızca "tablo.sütun" listeler ve cümleyi
-// kendisi yazar — yani ayrım yalnızca GET /admin/v1/personal-data
-// belgesinde görünür. Bir alışverişçiye verilen raporda deponun yedi sütunu,
-// kimin olduğunu söylemeden durur.
+// [personaldata.Holding] carries Table, Column, Kind and Why; it has no field
+// to state the CLASS OF THE DATA SUBJECT. That is why the distinction was
+// written into the first clause of every Why ("the operator's own premises
+// rather than a shopper's"). That is the only place available today and it IS
+// NOT ENOUGH: the sweep report does not carry Why — the path that turns a
+// holder that declares but does not erase into RETAINED lists only
+// "table.column" and writes the sentence itself — so the distinction is
+// visible only in the GET /admin/v1/personal-data document. In a report given
+// to a shopper, the warehouse's seven columns stand there without saying whose
+// they are.
 //
-// # Named ile Open
+// # Named versus Open
 //
-// stock_locations'ın sütunlarını gobit TANIMLADI: address_1 bir posta adresi
-// satırıdır ve çerçeve alanın NE OLDUĞUNU bilir. Değeri operatörün yazmış
-// olması bunu değiştirmez; müşterinin adını da müşteri yazar. Serbest metin
-// alanları (title, description) Open'dır: içine ne konduğuna yalnızca gömen
-// uygulama karar verebilir ve gobit onları okumaz (ADR 0029).
+// gobit DEFINED the columns of stock_locations: address_1 is a postal address
+// line and the framework knows WHAT the field IS. That the operator wrote the
+// value does not change that; the customer's name is written by the customer,
+// too. The free-text fields (title, description) are Open: only the embedding
+// application can decide what goes into them, and gobit does not read them
+// (ADR 0029).
 //
-// # Bildirilmeyenler
+// # What is not declared
 //
-// inventory_levels HİÇ geçmez: iki kimlik ve iki sayıdan ibarettir, kişiye
-// dair tek bir metin taşımaz. inventory_reservations.line_item_id de geçmez —
-// sepet satırını gösteren çıplak bir yabancı kimliktir ve yanındaki sütunlar
-// anonimleştikten sonra hiç kimseyi göstermez. sku bir MAL kodudur.
-// Buna karşılık inventory_reservations.description modüldeki tek KİŞİ BAŞINA
-// satırın serbest metnidir — rezervasyon bir alışverişçinin sepet satırından
-// doğar — yani mağaza müşterisine ait kişisel verinin bu modülde durabileceği
-// tek yerdir.
+// inventory_levels does not appear AT ALL: it consists of two IDs and two
+// numbers and carries not a single piece of text about a person.
+// inventory_reservations.line_item_id does not appear either — it is a bare
+// foreign ID pointing at a cart line, and once the columns beside it are
+// anonymized it points at nobody. sku is a GOODS code. By contrast,
+// inventory_reservations.description is the free text of the module's only
+// PER-PERSON row — a reservation is born from a shopper's cart line — so it is
+// the one place in this module where personal data belonging to a store
+// customer can sit.
 func (m *Module) PersonalData() personaldata.Declaration {
 	return personaldata.Declaration{
 		Holdings: []personaldata.Holding{
@@ -324,15 +344,16 @@ func (m *Module) PersonalData() personaldata.Declaration {
 	}
 }
 
-// mustSub alt dosya sistemini açar; açılamazsa panikler.
+// mustSub opens the sub file system; it panics if it cannot be opened.
 //
-// //go:embed dizinin varlığını derleme zamanında garanti ettiği için hata yolu
-// erişilemezdir. Yine de sessizce nil dönmek, modülün migration'sız (yani
-// tablosuz) ayağa kalkması demek olurdu; kurulum hatası açıkça patlamalıdır.
+// The error path is unreachable, because //go:embed guarantees at compile time
+// that the directory exists. Returning nil silently would nevertheless mean the
+// module coming up without migrations (that is, without tables); a setup error
+// must blow up openly.
 func mustSub(fsys fs.FS, dir string) fs.FS {
 	sub, err := fs.Sub(fsys, dir)
 	if err != nil {
-		panic("inventory: migration dizini açılamadı: " + err.Error())
+		panic("inventory: the migration directory could not be opened: " + err.Error())
 	}
 	return sub
 }

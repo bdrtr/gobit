@@ -11,7 +11,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// TestNormalizeCurrency para birimi doğrulamasının her dalını kanıtlar.
+// TestNormalizeCurrency proves every branch of the currency validation.
 func TestNormalizeCurrency(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -19,16 +19,16 @@ func TestNormalizeCurrency(t *testing.T) {
 		want  string
 		ok    bool
 	}{
-		{"büyük harf korunur", "TRY", "TRY", true},
-		{"küçük harf büyütülür", "try", "TRY", true},
-		{"karışık harf büyütülür", "TrY", "TRY", true},
-		{"baş/son boşluk kırpılır", "  eur  ", "EUR", true},
-		{"boş reddedilir", "", "", false},
-		{"iki harf reddedilir", "TR", "", false},
-		{"dört harf reddedilir", "TRYX", "", false},
-		{"rakam reddedilir", "TR1", "", false},
-		{"simge reddedilir", "TR$", "", false},
-		{"iç boşluk reddedilir", "T R", "", false},
+		{"upper case is kept", "TRY", "TRY", true},
+		{"lower case is raised", "try", "TRY", true},
+		{"mixed case is raised", "TrY", "TRY", true},
+		{"leading/trailing space is trimmed", "  eur  ", "EUR", true},
+		{"empty is rejected", "", "", false},
+		{"two letters are rejected", "TR", "", false},
+		{"four letters are rejected", "TRYX", "", false},
+		{"a digit is rejected", "TR1", "", false},
+		{"a symbol is rejected", "TR$", "", false},
+		{"inner space is rejected", "T R", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := normalizeCurrency(tc.input)
@@ -43,23 +43,23 @@ func TestNormalizeCurrency(t *testing.T) {
 	}
 }
 
-// TestValidateAmount tutarın minor unit sınırlarını kanıtlar.
+// TestValidateAmount proves the minor unit bounds of the amount.
 //
-// Üst sınır bir tercihtir değil bir gerekliliktir: MaxAmount × MaxQuantity
-// int64'e sığmalıdır. Test bu değişmezi de doğrular.
+// The upper bound is not a preference but a necessity: MaxAmount × MaxQuantity
+// has to fit into an int64. The test verifies that invariant too.
 func TestValidateAmount(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		amount int64
 		ok     bool
 	}{
-		{"sıfır kabul edilir", 0, true},
-		{"pozitif kabul edilir", 1999, true},
-		{"üst sınırda kabul edilir", models.MaxAmount, true},
-		{"negatif reddedilir", -1, false},
-		{"çok negatif reddedilir", math.MinInt64, false},
-		{"üst sınırın üstü reddedilir", models.MaxAmount + 1, false},
-		{"çok büyük reddedilir", math.MaxInt64, false},
+		{"zero is accepted", 0, true},
+		{"positive is accepted", 1999, true},
+		{"the upper bound is accepted", models.MaxAmount, true},
+		{"negative is rejected", -1, false},
+		{"very negative is rejected", math.MinInt64, false},
+		{"above the upper bound is rejected", models.MaxAmount + 1, false},
+		{"very large is rejected", math.MaxInt64, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := validateAmount(tc.amount)
@@ -72,29 +72,30 @@ func TestValidateAmount(t *testing.T) {
 		})
 	}
 
-	t.Run("sınırlar taşmayı imkânsız kılar", func(t *testing.T) {
+	t.Run("the bounds make overflow impossible", func(t *testing.T) {
 		assert.Less(t, models.MaxAmount, math.MaxInt64/int64(models.MaxQuantity),
-			"tutar × adet çarpımı int64'e sığmalı")
+			"the product amount × quantity has to fit into an int64")
 	})
 }
 
-// TestNormalizeQuantityRange adet aralığı doğrulamasının her dalını kanıtlar.
+// TestNormalizeQuantityRange proves every branch of the quantity range
+// validation.
 func TestNormalizeQuantityRange(t *testing.T) {
-	t.Run("sıfır asgari adet bire çekilir", func(t *testing.T) {
+	t.Run("a zero minimum quantity is raised to one", func(t *testing.T) {
 		minQty, maxQty, err := normalizeQuantityRange(0, nil)
 		require.NoError(t, err)
 		assert.Equal(t, int32(1), minQty)
 		assert.Nil(t, maxQty)
 	})
 
-	t.Run("üst sınır kopyalanır", func(t *testing.T) {
+	t.Run("the upper bound is copied", func(t *testing.T) {
 		original := int32(10)
 		_, maxQty, err := normalizeQuantityRange(1, &original)
 		require.NoError(t, err)
 		require.NotNil(t, maxQty)
 
 		original = 99
-		assert.Equal(t, int32(10), *maxQty, "çağıranın işaretçisi paylaşılmamalı")
+		assert.Equal(t, int32(10), *maxQty, "the caller's pointer must not be shared")
 	})
 
 	for _, tc := range []struct {
@@ -102,51 +103,51 @@ func TestNormalizeQuantityRange(t *testing.T) {
 		minQty int32
 		maxQty *int32
 	}{
-		{"negatif asgari", -1, nil},
-		{"asgari sınırın üstünde", models.MaxQuantity + 1, nil},
-		{"azami sıfır", 1, ptr(int32(0))},
-		{"azami negatif", 1, ptr(int32(-5))},
-		{"azami sınırın üstünde", 1, ptr(models.MaxQuantity + 1)},
-		{"azami asgariden küçük", 10, ptr(int32(5))},
+		{"negative minimum", -1, nil},
+		{"minimum above the bound", models.MaxQuantity + 1, nil},
+		{"zero maximum", 1, ptr(int32(0))},
+		{"negative maximum", 1, ptr(int32(-5))},
+		{"maximum above the bound", 1, ptr(models.MaxQuantity + 1)},
+		{"maximum below the minimum", 10, ptr(int32(5))},
 	} {
-		t.Run(tc.name+" reddedilir", func(t *testing.T) {
+		t.Run(tc.name+" is rejected", func(t *testing.T) {
 			_, _, err := normalizeQuantityRange(tc.minQty, tc.maxQty)
 			require.Error(t, err)
 			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 		})
 	}
 
-	t.Run("azami asgariye eşit olabilir", func(t *testing.T) {
+	t.Run("the maximum may equal the minimum", func(t *testing.T) {
 		_, _, err := normalizeQuantityRange(5, ptr(int32(5)))
 		assert.NoError(t, err)
 	})
 }
 
-// TestValidateRule kural doğrulamasının her dalını kanıtlar.
+// TestValidateRule proves every branch of the rule validation.
 func TestValidateRule(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		in   RuleInput
 		ok   bool
 	}{
-		{"eq tek değerle geçerli",
+		{"eq is valid with a single value",
 			RuleInput{Attribute: "region_id", Operator: models.OpEq, Values: []string{"reg_1"}}, true},
-		{"in çok değerle geçerli",
+		{"in is valid with several values",
 			RuleInput{Attribute: "grp", Operator: models.OpIn, Values: []string{"a", "b"}}, true},
-		{"gt sayısal değerle geçerli",
-			RuleInput{Attribute: "yas", Operator: models.OpGt, Values: []string{"18"}}, true},
-		{"alan adı boş reddedilir",
+		{"gt is valid with a numeric value",
+			RuleInput{Attribute: "age", Operator: models.OpGt, Values: []string{"18"}}, true},
+		{"a blank field name is rejected",
 			RuleInput{Attribute: "  ", Operator: models.OpEq, Values: []string{"a"}}, false},
-		{"işleç tanımsız reddedilir",
+		{"an undefined operator is rejected",
 			RuleInput{Attribute: "k", Operator: models.RuleOperator("regex"), Values: []string{"a"}}, false},
-		{"değer yok reddedilir",
+		{"no value is rejected",
 			RuleInput{Attribute: "k", Operator: models.OpEq}, false},
-		{"tek değerli işlece iki değer reddedilir",
+		{"two values for a single-value operator are rejected",
 			RuleInput{Attribute: "k", Operator: models.OpEq, Values: []string{"a", "b"}}, false},
-		{"boş değer reddedilir",
+		{"an empty value is rejected",
 			RuleInput{Attribute: "k", Operator: models.OpIn, Values: []string{"a", ""}}, false},
-		{"sayısal işlece metin reddedilir",
-			RuleInput{Attribute: "k", Operator: models.OpLte, Values: []string{"onsekiz"}}, false},
+		{"text for a numeric operator is rejected",
+			RuleInput{Attribute: "k", Operator: models.OpLte, Values: []string{"eighteen"}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := validateRule(tc.in)
@@ -160,19 +161,19 @@ func TestValidateRule(t *testing.T) {
 	}
 }
 
-// TestRequireID kimlik doğrulamasının her dalını kanıtlar.
+// TestRequireID proves every branch of the id validation.
 func TestRequireID(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		id   string
 		ok   bool
 	}{
-		{"doğru önek geçerli", "pset_ABC", true},
-		{"boş reddedilir", "", false},
-		{"yanlış önek reddedilir", "variant_ABC", false},
-		{"öneksiz reddedilir", "ABC", false},
-		{"baş boşluk reddedilir", " pset_ABC", false},
-		{"son boşluk reddedilir", "pset_ABC ", false},
+		{"the right prefix is valid", "pset_ABC", true},
+		{"empty is rejected", "", false},
+		{"a wrong prefix is rejected", "variant_ABC", false},
+		{"no prefix is rejected", "ABC", false},
+		{"a leading space is rejected", " pset_ABC", false},
+		{"a trailing space is rejected", "pset_ABC ", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := requireID(tc.id, models.PriceSetIDPrefix, "price set id")
@@ -185,7 +186,7 @@ func TestRequireID(t *testing.T) {
 		})
 	}
 
-	t.Run("aşırı uzun kimlik reddedilir", func(t *testing.T) {
+	t.Run("an excessively long id is rejected", func(t *testing.T) {
 		long := models.PriceSetIDPrefix
 		for len(long) <= maxIDLen {
 			long += "A"
@@ -196,42 +197,42 @@ func TestRequireID(t *testing.T) {
 	})
 }
 
-// TestNormalizePaging sayfalama kırpmasının her dalını kanıtlar.
+// TestNormalizePaging proves every branch of the paging clipping.
 func TestNormalizePaging(t *testing.T) {
-	t.Run("limit yoksa varsayılan uygulanır", func(t *testing.T) {
+	t.Run("with no limit the default is applied", func(t *testing.T) {
 		limit, offset, err := normalizePaging(0, 0)
 		require.NoError(t, err)
 		assert.Equal(t, DefaultLimit, limit)
 		assert.Equal(t, int32(0), offset)
 	})
 
-	t.Run("negatif limit varsayılana düşer", func(t *testing.T) {
+	t.Run("a negative limit falls back to the default", func(t *testing.T) {
 		limit, _, err := normalizePaging(-5, 0)
 		require.NoError(t, err)
 		assert.Equal(t, DefaultLimit, limit)
 	})
 
-	t.Run("aşırı limit azamiye kırpılır", func(t *testing.T) {
+	t.Run("an excessive limit is clipped to the maximum", func(t *testing.T) {
 		limit, _, err := normalizePaging(MaxLimit+1, 0)
 		require.NoError(t, err)
 		assert.Equal(t, MaxLimit, limit)
 	})
 
-	t.Run("geçerli limit korunur", func(t *testing.T) {
+	t.Run("a valid limit is kept", func(t *testing.T) {
 		limit, offset, err := normalizePaging(7, 21)
 		require.NoError(t, err)
 		assert.Equal(t, int32(7), limit)
 		assert.Equal(t, int32(21), offset)
 	})
 
-	t.Run("negatif offset reddedilir", func(t *testing.T) {
+	t.Run("a negative offset is rejected", func(t *testing.T) {
 		_, _, err := normalizePaging(10, -1)
 		require.Error(t, err)
 		assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 	})
 }
 
-// TestClampToInt32 int -> int32 dönüşümünün sarmadığını kanıtlar.
+// TestClampToInt32 proves that the int -> int32 conversion does not wrap around.
 func TestClampToInt32(t *testing.T) {
 	assert.Equal(t, int32(42), clampToInt32(42))
 	assert.Equal(t, int32(math.MaxInt32), clampToInt32(math.MaxInt32))
@@ -242,27 +243,28 @@ func TestClampToInt32(t *testing.T) {
 	}
 }
 
-// TestWithIndexAddsDetail toplu yazmada hangi girdinin reddedildiğinin hataya
-// eklendiğini kanıtlar.
+// TestWithIndexAddsDetail proves that, in a bulk write, which input was
+// rejected is added to the error.
 func TestWithIndexAddsDetail(t *testing.T) {
-	err := withIndex(errors.Invalid("x", "bozuk"), detailIndex, 3)
+	err := withIndex(errors.Invalid("x", "broken"), detailIndex, 3)
 
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed))
 	assert.Equal(t, 3, typed.Details["index"])
 }
 
-// TestWithIndexKeepsNestedLevels iç içe iki indeksin birbirini EZMEDİĞİNİ
-// kanıtlar.
+// TestWithIndexKeepsNestedLevels proves that two nested indexes do NOT
+// OVERWRITE each other.
 //
-// Aynı anahtar iki kez kullanılsaydı errors.WithDetails ikincisiyle birincisini
-// ezer ve dıştaki fiyat indeksi içteki kural indeksini yok ederdi.
+// Had the same key been used twice, errors.WithDetails would overwrite the
+// first with the second, and the outer price index would wipe out the inner
+// rule index.
 func TestWithIndexKeepsNestedLevels(t *testing.T) {
-	inner := withIndex(errors.Invalid("x", "bozuk"), detailRuleIndex, 3)
+	inner := withIndex(errors.Invalid("x", "broken"), detailRuleIndex, 3)
 	err := withIndex(inner, detailIndex, 7)
 
 	var typed *errors.Error
 	require.True(t, errors.As(err, &typed))
 	assert.Equal(t, 7, typed.Details[detailIndex])
-	assert.Equal(t, 3, typed.Details[detailRuleIndex], "kural indeksi korunmalı")
+	assert.Equal(t, 3, typed.Details[detailRuleIndex], "the rule index has to be kept")
 }

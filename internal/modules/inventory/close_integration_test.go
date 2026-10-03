@@ -24,11 +24,6 @@ import (
 )
 
 // newService builds a service over the shared test pool.
-//
-// This file carries its own fixtures because the package's existing ones do the
-// same work under Turkish names, and this file is English (ADR 0012, decision 3
-// — language is a property of the FILE): reaching for them would drag the old
-// names into a translated file and the language check would fail, correctly.
 func newService(t *testing.T) *service.Service {
 	t.Helper()
 

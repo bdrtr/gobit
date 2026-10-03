@@ -13,28 +13,30 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory/service"
 )
 
-// yeniSaglayici sahte depo üzerinde çalışan bir Query sağlayıcısı kurar.
-func yeniSaglayici(t *testing.T) (*service.QueryProvider, *fakeStore) {
+// newTestProvider builds a Query provider running over the fake store.
+func newTestProvider(t *testing.T) (*service.QueryProvider, *fakeStore) {
 	t.Helper()
 
-	svc, store := yeniServis(t)
+	svc, store := newService(t)
 	return service.NewQueryProvider(svc), store
 }
 
-// TestProviderEntity sağlayıcının container'a kaydedileceği adla tutarlı
-// olduğunu doğrular; Query kayıt adının önekiyle Entity()'yi karşılaştırır.
+// TestProviderEntity proves the provider is consistent with the name it will be
+// registered in the container under; it compares Entity() with the prefix of
+// the Query registration name.
 func TestProviderEntity(t *testing.T) {
-	provider, _ := yeniSaglayici(t)
+	provider, _ := newTestProvider(t)
 
 	assert.Equal(t, "inventory_item", provider.Entity())
 	assert.Equal(t, service.EntityName, provider.Entity())
 }
 
-// TestFetchByIDsSatilabilirAdetIcerir sağlayıcının kalemi TOPLAM satılabilir
-// adediyle döndürdüğünü doğrular. product'ın mağaza listelemesi stoğu tek
-// çağrıda bu alandan okur; alan eksik ya da yanlış olursa ürün stoksuz görünür.
-func TestFetchByIDsSatilabilirAdetIcerir(t *testing.T) {
-	provider, store := yeniSaglayici(t)
+// TestFetchByIDsCarriesTheSellableQuantity proves the provider returns the item
+// with its TOTAL sellable quantity. product's storefront listing reads the stock
+// from this field in a single call; if the field is missing or wrong, the
+// product looks out of stock.
+func TestFetchByIDsCarriesTheSellableQuantity(t *testing.T) {
+	provider, store := newTestProvider(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 4)
 	store.seedLevel(itemID, locB, 5, 1)
@@ -46,15 +48,16 @@ func TestFetchByIDsSatilabilirAdetIcerir(t *testing.T) {
 	assert.Equal(t, itemID, records[0][query.IDField])
 	assert.Equal(t, "SKU-1", records[0][service.FieldSKU])
 	assert.Equal(t, int64(10), records[0][service.FieldAvailableQuantity],
-		"(10-4) + (5-1) = 10 olmalı")
+		"(10-4) + (5-1) has to be 10")
 	assert.Equal(t, true, records[0][service.FieldRequiresShipping])
 }
 
-// TestFetchByIDsSeviyesizKalemSifirDoner hiç stok seviyesi olmayan kalemin
-// kayıttan DÜŞMEDİĞİNİ, satılabilir adedinin sıfır geldiğini doğrular.
-// Düşseydi stoksuz ürünler mağaza listelemesinden tamamen kaybolurdu.
-func TestFetchByIDsSeviyesizKalemSifirDoner(t *testing.T) {
-	provider, store := yeniSaglayici(t)
+// TestFetchByIDsReturnsZeroForAnItemWithNoLevel proves an item with no stock
+// level at all is NOT DROPPED from the records and its sellable quantity comes
+// back as zero. Were it dropped, out-of-stock products would vanish from the
+// storefront listing altogether.
+func TestFetchByIDsReturnsZeroForAnItemWithNoLevel(t *testing.T) {
+	provider, store := newTestProvider(t)
 	store.seedItem(itemID, "SKU-1")
 
 	records, err := provider.FetchByIDs(context.Background(), []string{itemID}, nil)
@@ -64,10 +67,11 @@ func TestFetchByIDsSeviyesizKalemSifirDoner(t *testing.T) {
 	assert.Equal(t, int64(0), records[0][service.FieldAvailableQuantity])
 }
 
-// TestFetchByIDsTekTurdaCalisir kaç kalem istenirse istensin satılabilirlik
-// için TEK sorgu yapıldığını doğrular (ADR 0004: N+1 yapısal olarak yasak).
-func TestFetchByIDsTekTurdaCalisir(t *testing.T) {
-	provider, store := yeniSaglayici(t)
+// TestFetchByIDsRunsInOneRoundTrip proves a SINGLE query is made for
+// availability however many items are asked for (ADR 0004: N+1 is structurally
+// forbidden).
+func TestFetchByIDsRunsInOneRoundTrip(t *testing.T) {
+	provider, store := newTestProvider(t)
 	ids := []string{}
 	for _, id := range []string{"invitem_1", "invitem_2", "invitem_3"} {
 		store.seedItem(id, "SKU-"+id)
@@ -79,13 +83,13 @@ func TestFetchByIDsTekTurdaCalisir(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Len(t, records, 3)
-	assert.Equal(t, 1, store.availableCalls, "kayıt başına değil, toplu tek çağrı yapılmalı")
+	assert.Equal(t, 1, store.availableCalls, "one batched call has to be made, not one per record")
 }
 
-// TestFetchByIDsBulunamayanKimlikHataDegil bulunamayan kimlik için kayıt
-// dönmediğini ama hata da dönmediğini doğrular (ADR 0004).
-func TestFetchByIDsBulunamayanKimlikHataDegil(t *testing.T) {
-	provider, store := yeniSaglayici(t)
+// TestFetchByIDsMissingIDIsNotAnError proves no record comes back for an ID that
+// is not found, and no error either (ADR 0004).
+func TestFetchByIDsMissingIDIsNotAnError(t *testing.T) {
+	provider, store := newTestProvider(t)
 	store.seedItem(itemID, "SKU-1")
 
 	records, err := provider.FetchByIDs(context.Background(), []string{itemID, unknown}, nil)
@@ -94,10 +98,10 @@ func TestFetchByIDsBulunamayanKimlikHataDegil(t *testing.T) {
 	assert.Len(t, records, 1)
 }
 
-// TestFetchByIDsBosKimlikListesi boş kimlik listesinin sağlayıcıya hiç
-// gitmeden boş sonuç döndürdüğünü doğrular.
-func TestFetchByIDsBosKimlikListesi(t *testing.T) {
-	provider, store := yeniSaglayici(t)
+// TestFetchByIDsEmptyIDList proves an empty ID list returns an empty result
+// without ever reaching the store.
+func TestFetchByIDsEmptyIDList(t *testing.T) {
+	provider, store := newTestProvider(t)
 
 	records, err := provider.FetchByIDs(context.Background(), nil, nil)
 
@@ -106,10 +110,10 @@ func TestFetchByIDsBosKimlikListesi(t *testing.T) {
 	assert.Zero(t, store.availableCalls)
 }
 
-// TestFetchByIDsAlanSecimi yalnızca istenen alanların döndüğünü ve satılabilir
-// adet istenmediğinde HİÇ HESAPLANMADIĞINI doğrular.
-func TestFetchByIDsAlanSecimi(t *testing.T) {
-	provider, store := yeniSaglayici(t)
+// TestFetchByIDsFieldSelection proves only the requested fields come back and
+// that the sellable quantity is NOT COMPUTED AT ALL when it is not requested.
+func TestFetchByIDsFieldSelection(t *testing.T) {
+	provider, store := newTestProvider(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 4)
 
@@ -121,13 +125,13 @@ func TestFetchByIDsAlanSecimi(t *testing.T) {
 	assert.Len(t, records[0], 2)
 	assert.Equal(t, "SKU-1", records[0][service.FieldSKU])
 	assert.NotContains(t, records[0], service.FieldAvailableQuantity)
-	assert.Zero(t, store.availableCalls, "istenmeyen alan için sorgu yapılmamalı")
+	assert.Zero(t, store.availableCalls, "no query may be made for a field nobody asked for")
 }
 
-// TestFetchByIDsBilinmeyenAlanInvalid sunulmayan bir alan istendiğinde
-// errors.Invalid dönüldüğünü doğrular (ADR 0004).
-func TestFetchByIDsBilinmeyenAlanInvalid(t *testing.T) {
-	provider, store := yeniSaglayici(t)
+// TestFetchByIDsUnknownFieldIsInvalid proves asking for a field that is not
+// offered returns errors.Invalid (ADR 0004).
+func TestFetchByIDsUnknownFieldIsInvalid(t *testing.T) {
+	provider, store := newTestProvider(t)
 	store.seedItem(itemID, "SKU-1")
 
 	_, err := provider.FetchByIDs(context.Background(), []string{itemID}, []string{"fiyat"})
@@ -137,9 +141,9 @@ func TestFetchByIDsBilinmeyenAlanInvalid(t *testing.T) {
 	assert.Contains(t, err.Error(), "fiyat")
 }
 
-// TestListSKUFiltresi kök listelemede sku filtresinin uygulandığını doğrular.
-func TestListSKUFiltresi(t *testing.T) {
-	provider, store := yeniSaglayici(t)
+// TestListSKUFilter proves the sku filter is applied in the root listing.
+func TestListSKUFilter(t *testing.T) {
+	provider, store := newTestProvider(t)
 	store.seedItem("invitem_1", "SKU-1")
 	store.seedItem("invitem_2", "SKU-2")
 	store.seedLevel("invitem_2", locA, 3, 0)
@@ -154,11 +158,11 @@ func TestListSKUFiltresi(t *testing.T) {
 	assert.Equal(t, int64(3), records[0][service.FieldAvailableQuantity])
 }
 
-// TestListBilinmeyenFiltreInvalid desteklenmeyen filtrenin sessizce
-// yok sayılmadığını doğrular; yok sayılsaydı çağıran süzülmemiş bir listeyi
-// süzülmüş sanırdı.
-func TestListBilinmeyenFiltreInvalid(t *testing.T) {
-	provider, _ := yeniSaglayici(t)
+// TestListUnknownFilterIsInvalid proves an unsupported filter is not silently
+// ignored; were it ignored, the caller would take an unfiltered list for a
+// filtered one.
+func TestListUnknownFilterIsInvalid(t *testing.T) {
+	provider, _ := newTestProvider(t)
 
 	_, err := provider.List(context.Background(), query.ListOptions{
 		Filters: map[string]any{"renk": "kirmizi"},
@@ -169,10 +173,9 @@ func TestListBilinmeyenFiltreInvalid(t *testing.T) {
 	assert.Contains(t, err.Error(), "renk")
 }
 
-// TestListFiltreTipiDogrulanir filtre değerinin tipinin denetlendiğini
-// doğrular.
-func TestListFiltreTipiDogrulanir(t *testing.T) {
-	provider, _ := yeniSaglayici(t)
+// TestListFilterTypeIsValidated proves the type of a filter value is checked.
+func TestListFilterTypeIsValidated(t *testing.T) {
+	provider, _ := newTestProvider(t)
 
 	_, err := provider.List(context.Background(), query.ListOptions{
 		Filters: map[string]any{service.FieldSKU: 42},
@@ -182,9 +185,9 @@ func TestListFiltreTipiDogrulanir(t *testing.T) {
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
 }
 
-// TestListSayfalar limit/offset'in kök listelemede uygulandığını doğrular.
-func TestListSayfalar(t *testing.T) {
-	provider, store := yeniSaglayici(t)
+// TestListPages proves limit/offset are applied in the root listing.
+func TestListPages(t *testing.T) {
+	provider, store := newTestProvider(t)
 	for _, id := range []string{"invitem_1", "invitem_2", "invitem_3"} {
 		store.seedItem(id, "SKU-"+id)
 	}
@@ -198,54 +201,55 @@ func TestListSayfalar(t *testing.T) {
 	assert.Len(t, records, 1)
 }
 
-// TestProviderQuerySozlesmesiniKarsilar sağlayıcının çekirdeğin beklediği
-// arayüzü karşıladığını çalışma zamanında da doğrular; container'dan adla
-// çözüm bu dönüşümü yapar.
-func TestProviderQuerySozlesmesiniKarsilar(t *testing.T) {
-	provider, _ := yeniSaglayici(t)
+// TestProviderSatisfiesTheQueryContract proves, at run time as well, that the
+// provider satisfies the interface the core expects; resolving it by name from
+// the container makes exactly this conversion.
+func TestProviderSatisfiesTheQueryContract(t *testing.T) {
+	provider, _ := newTestProvider(t)
 
 	var asProvider any = provider
 	_, ok := asProvider.(query.Provider)
 
-	assert.True(t, ok, "QueryProvider, query.Provider arayüzünü karşılamalı")
+	assert.True(t, ok, "QueryProvider has to satisfy the query.Provider interface")
 }
 
-// TestListLimitTavanaKirpilir çekirdekten gelen limitin sağlayıcının sayfa
-// tavanına kırpıldığını doğrular.
+// TestListLimitIsClippedToTheCeiling proves a limit coming from the core is
+// clipped to the provider's page ceiling.
 //
-// Çekirdek sözleşmesinde Limit=0 "sınırsız" demektir. Bu sağlayıcı sınırsız
-// listeleme sunmaz; sınırsız isteği varsayılan sayfa boyutuna indirseydi
-// çağıran hata almadan EKSİK veri alır ve hepsini aldığını sanırdı. Tavanı
-// aşan bir limit de reddedilmez: çekirdek yolunda hata dönmek, tek bir sayı
-// yüzünden hiç veri döndürmemek olurdu.
-func TestListLimitTavanaKirpilir(t *testing.T) {
-	provider, store := yeniSaglayici(t)
-	// Fikstür hem MaxLimit'in (100) hem DefaultLimit'in (50) üstündedir;
-	// ikisi arasındaki farkı ancak böyle bir küme gösterir.
-	const kalemSayisi = 120
-	for i := range kalemSayisi {
+// In the core contract Limit=0 means "unbounded". This provider offers no
+// unbounded listing; had it brought an unbounded request down to the default
+// page size, the caller would get INCOMPLETE data without an error and believe
+// it had all of it. A limit above the ceiling is not refused either: returning
+// an error on the core path would mean returning no data at all because of a
+// single number.
+func TestListLimitIsClippedToTheCeiling(t *testing.T) {
+	provider, store := newTestProvider(t)
+	// The fixture is above both MaxLimit (100) and DefaultLimit (50); only a set
+	// like this shows the difference between the two.
+	const itemCount = 120
+	for i := range itemCount {
 		id := fmt.Sprintf("invitem_%03d", i)
 		store.seedItem(id, "SKU-"+id)
 	}
-	tavan := int(service.MaxLimit)
+	ceiling := int(service.MaxLimit)
 
-	durumlar := []struct {
-		ad       string
+	cases := []struct {
+		name     string
 		limit    int
-		beklenen int
+		expected int
 	}{
-		{"sınırsız istek tavana çıkar", 0, tavan},
-		{"tavanı aşan limit kırpılır", tavan + 1, tavan},
-		{"tavanın kendisi geçerlidir", tavan, tavan},
-		{"tavanın altı aynen uygulanır", 7, 7},
+		{"an unbounded request goes up to the ceiling", 0, ceiling},
+		{"a limit above the ceiling is clipped", ceiling + 1, ceiling},
+		{"the ceiling itself is valid", ceiling, ceiling},
+		{"below the ceiling it is applied as is", 7, 7},
 	}
 
-	for _, durum := range durumlar {
-		t.Run(durum.ad, func(t *testing.T) {
-			records, err := provider.List(context.Background(), query.ListOptions{Limit: durum.limit})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			records, err := provider.List(context.Background(), query.ListOptions{Limit: tc.limit})
 
-			require.NoError(t, err, "sağlayıcı limiti hata değil, kırpma sebebi saymalı")
-			assert.Len(t, records, durum.beklenen)
+			require.NoError(t, err, "the provider has to treat the limit as a reason to clip, not as an error")
+			assert.Len(t, records, tc.expected)
 		})
 	}
 }

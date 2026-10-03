@@ -1644,6 +1644,20 @@ var markdownTestNameReference = regexp.MustCompile("`(Test[A-Z_][A-Za-z0-9_]*)`"
 // how the omission stays visible.
 var testNameReferenceExemptions = []pathReferenceExemption{
 	{
+		file: "docs/adr/0047-a-replaced-price-is-deleted.md",
+		path: "TestSilinenKabinFiyatlariDamgalanir",
+		reason: "ADR 0047 is in the historical range 0001-0051, which takes no edit but " +
+			"its Summary, and it names the test as it was called before the pricing " +
+			"module was translated; the test is TestADeletedSetsPricesAreStamped now.",
+	},
+	{
+		file: "docs/adr/0047-a-replaced-price-is-deleted.md",
+		path: "TestYerineKonanFiyatSatirdanSilinir",
+		reason: "ADR 0047 is in the historical range 0001-0051, which takes no edit but " +
+			"its Summary, and it names the test as it was called before the pricing " +
+			"module was translated; the test is TestAReplacedPriceIsDeletedAsARow now.",
+	},
+	{
 		file: "docs/adr/0012-repository-language-and-solid.md",
 		path: "TestKayitBayatlamiyor",
 		reason: "The ADR's argument is that transliterated Turkish survives a " +

@@ -1,15 +1,15 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are separated behind the `integration` tag so `make test` stays
+// fast. To run them: make test-integration
 //
-// Birim testleri sahte bir depo ile servisin KARARLARINI kanıtlar. Buradaki
-// testler kararların dayandığı ZEMİNİ kanıtlar: migration'ın geri alınabildiğini,
-// kısıtların gerçekten uygulandığını ve eşzamanlılık iddiasının veritabanı
-// düzeyinde tuttuğunu. Özellikle "iki eşzamanlı Reserve aynı son adedi alamaz"
-// iddiası yalnızca burada, gerçek goroutine'lerle gerçek satır kilitleri
-// üzerinde sınanabilir.
+// The unit tests prove the service's DECISIONS against a fake store. The tests
+// here prove the GROUND those decisions stand on: that the migration can be
+// rolled back, that the constraints are really enforced and that the
+// concurrency claim holds at the database level. The claim "two concurrent
+// Reserve calls cannot both take the same last unit" in particular can only be
+// tried here, with real goroutines on real row locks.
 package inventory_test
 
 import (
@@ -43,17 +43,17 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
-// listeyi kullanır.
-var modulTablolari = []string{
+// moduleTables are the tables the module owns; the migration tests use this
+// list.
+var moduleTables = []string{
 	"stock_locations", "inventory_items", "inventory_levels", "inventory_reservations",
 	"inventory_movements",
 }
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool every test shares.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection address for the migration calls.
 	testDSN string
 )
 
@@ -61,8 +61,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres starts a single Postgres container and runs every test on
+// it. It is a separate function because os.Exit skips deferred calls.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -74,48 +74,48 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection string could not be read: %v\n", err)
 		return 1
 	}
 
 	cfg := db.DefaultConfig(testDSN)
-	// Eşzamanlılık testi onlarca goroutine'i aynı anda koşturur; her işlem bir
-	// bağlantı tuttuğu için havuz varsayılandan geniş açılır.
+	// The concurrency test runs dozens of goroutines at once; since every
+	// transaction holds a connection, the pool is opened wider than the default.
 	cfg.MaxConns = 24
 	testPool, err = db.New(ctx, cfg, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
 	if err := db.Migrate(ctx, testDSN, inventory.New().Migrations(), inventory.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// yeniServis gerçek depo üzerinde çalışan bir servis kurar.
-func yeniServis(t *testing.T) *service.Service {
+// newDBService builds a service that works on the real store.
+func newDBService(t *testing.T) *service.Service {
 	t.Helper()
 
 	return service.New(repository.New(testPool.Pool()), nil)
 }
 
-// yeniKalem test için benzersiz SKU'lu bir stok kalemi oluşturur.
-func yeniKalem(ctx context.Context, t *testing.T, svc *service.Service) models.InventoryItem {
+// newItem creates an inventory item with a unique SKU for the test.
+func newItem(ctx context.Context, t *testing.T, svc *service.Service) models.InventoryItem {
 	t.Helper()
 
 	item, err := svc.CreateInventoryItem(ctx, service.CreateInventoryItemInput{
@@ -126,26 +126,27 @@ func yeniKalem(ctx context.Context, t *testing.T, svc *service.Service) models.I
 	return item
 }
 
-// yeniLokasyon test için bir stok lokasyonu oluşturur.
-func yeniLokasyon(ctx context.Context, t *testing.T, svc *service.Service) models.StockLocation {
+// newLocation creates a stock location for the test.
+func newLocation(ctx context.Context, t *testing.T, svc *service.Service) models.StockLocation {
 	t.Helper()
 
 	loc, err := svc.CreateStockLocation(ctx, service.CreateStockLocationInput{
-		Name:        "Depo " + t.Name(),
-		City:        "İstanbul",
+		Name:        "Warehouse " + t.Name(),
+		City:        "Istanbul",
 		CountryCode: "TR",
 	})
 	require.NoError(t, err)
 	return loc
 }
 
-// stoklu kalem, lokasyon ve verilen fiziksel adetle bir seviye kurar.
-func stoklu(ctx context.Context, t *testing.T, svc *service.Service, adet int64) (models.InventoryItem, models.StockLocation) {
+// withStock sets up an item, a location and a level with the given physical
+// quantity.
+func withStock(ctx context.Context, t *testing.T, svc *service.Service, quantity int64) (models.InventoryItem, models.StockLocation) {
 	t.Helper()
 
-	item := yeniKalem(ctx, t, svc)
-	loc := yeniLokasyon(ctx, t, svc)
-	_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, adet)
+	item := newItem(ctx, t, svc)
+	loc := newLocation(ctx, t, svc)
+	_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, quantity)
 	require.NoError(t, err)
 	return item, loc
 }
@@ -160,70 +161,70 @@ func TestTheMigrationCanBeRolledBack(t *testing.T) {
 	dsn := testdb.New(t, testDSN, "inventory_migration")
 	require.NoError(t, db.Migrate(ctx, dsn, src, inventory.ModuleName))
 
-	for _, table := range modulTablolari {
+	for _, table := range moduleTables {
 		require.True(t, testdb.TableExists(t, dsn, table), "%s must exist at the start", table)
 	}
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, src, inventory.ModuleName, 0))
-	for _, table := range modulTablolari {
+	for _, table := range moduleTables {
 		assert.False(t, testdb.TableExists(t, dsn, table), "%s must not remain after the rollback", table)
 	}
 
 	require.NoError(t, db.Migrate(ctx, dsn, src, inventory.ModuleName))
-	for _, table := range modulTablolari {
+	for _, table := range moduleTables {
 		assert.True(t, testdb.TableExists(t, dsn, table), "%s must be applied again", table)
 	}
 
 	version, dirty, err := db.Version(ctx, dsn, inventory.ModuleName)
 	require.NoError(t, err)
 	assert.False(t, dirty, "no migration may be left half-applied")
-	assert.Equal(t, enYuksekMigrationSurumu(t, src), version)
+	assert.Equal(t, highestMigrationVersion(t, src), version)
 }
 
-// enYuksekMigrationSurumu gömülü migration kümesindeki en büyük sürüm
-// numarasını döner.
+// highestMigrationVersion returns the largest version number in the embedded
+// migration set.
 //
-// Sayı ELLE YAZILMIYOR: sabit bir sayı, modüle her migration eklendiğinde bu
-// testi kırar ve kıran şey bir kusur değil, testin kendi eskimiş beklentisidir
-// — 000005 eklenirken tam olarak bu oldu. Kümeden okunduğunda iddia da doğru
-// olanına dönüşüyor: "geri almadan sonra HER ŞEY yeniden uygulandı", "sayı
-// beştir" değil. Aynı yardımcının sipariş modülündeki eşi
-// highestMigrationVersion'dır; test paketleri birbirini içe aktaramadığı için
-// tekrar ediyor.
-func enYuksekMigrationSurumu(t *testing.T, src fs.FS) uint {
+// The number is NOT WRITTEN BY HAND: a literal number breaks this test every
+// time a migration is added to the module, and what breaks it is not a defect
+// but the test's own stale expectation — exactly that happened when 000005 was
+// added. Read from the set, the claim also becomes the right one: "after the
+// rollback EVERYTHING was applied again", not "the number is five". The
+// order module's twin of this helper carries the same name; it is repeated
+// because test packages cannot import each other.
+func highestMigrationVersion(t *testing.T, src fs.FS) uint {
 	t.Helper()
 
 	entries, err := fs.ReadDir(src, ".")
 	require.NoError(t, err)
 
-	var enYuksek uint
+	var highest uint
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".up.sql") {
 			continue
 		}
 
-		basamaklar := name[:strings.IndexByte(name, '_')]
-		n, convErr := strconv.ParseUint(basamaklar, 10, 32)
-		require.NoError(t, convErr, "%s bir sürüm numarasıyla başlamıyor", name)
+		digits := name[:strings.IndexByte(name, '_')]
+		n, convErr := strconv.ParseUint(digits, 10, 32)
+		require.NoError(t, convErr, "%s does not start with a version number", name)
 
-		if uint(n) > enYuksek {
-			enYuksek = uint(n)
+		if uint(n) > highest {
+			highest = uint(n)
 		}
 	}
 
-	require.Positive(t, enYuksek, "gömülü migration kümesi boş görünüyor")
+	require.Positive(t, highest, "the embedded migration set looks empty")
 
-	return enYuksek
+	return highest
 }
 
-// TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
-// yine modülün kendi tablolarına gittiğini doğrular (Prensip 2.2).
+// TestNoCrossModuleForeignKey verifies that EVERY foreign key in the module's
+// tables points back at the module's own tables (Principle 2.2).
 //
-// Özellikle inventory_reservations.line_item_id cart modülüne ait bir kimliktir
-// ve foreign key OLAMAZ; bu test o kuralın şemada gerçekten tutulduğunu
-// gösterir.
-func TestCrossModuleForeignKeyYok(t *testing.T) {
+// inventory_reservations.line_item_id in particular is an ID that belongs to
+// the cart module and CANNOT be a foreign key; this test shows that the rule
+// really holds in the schema.
+func TestNoCrossModuleForeignKey(t *testing.T) {
 	ctx := context.Background()
 
 	rows, err := testPool.Pool().Query(ctx,
@@ -231,48 +232,48 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
          FROM pg_constraint c
          JOIN pg_class src ON src.oid = c.conrelid
          JOIN pg_class tgt ON tgt.oid = c.confrelid
-         WHERE c.contype = 'f' AND src.relname = ANY($1)`, modulTablolari)
+         WHERE c.contype = 'f' AND src.relname = ANY($1)`, moduleTables)
 	require.NoError(t, err)
 	defer rows.Close()
 
-	sahipli := make(map[string]struct{}, len(modulTablolari))
-	for _, table := range modulTablolari {
-		sahipli[table] = struct{}{}
+	owned := make(map[string]struct{}, len(moduleTables))
+	for _, table := range moduleTables {
+		owned[table] = struct{}{}
 	}
 
-	var sayi int
+	var foreignKeys int
 	for rows.Next() {
 		var name, src, tgt string
 		require.NoError(t, rows.Scan(&name, &src, &tgt))
-		assert.Contains(t, sahipli, tgt,
-			"%s kısıtı modül dışına referans veriyor (%s -> %s)", name, src, tgt)
-		sayi++
+		assert.Contains(t, owned, tgt,
+			"the %s constraint references outside the module (%s -> %s)", name, src, tgt)
+		foreignKeys++
 	}
 	require.NoError(t, rows.Err())
-	assert.Positive(t, sayi, "modül içi foreign key'ler kullanılmalı")
+	assert.Positive(t, foreignKeys, "foreign keys inside the module must be in use")
 }
 
-// TestKalemYasamDongusu kalem oluşturma, okuma, listeleme ve yumuşak silmeyi
-// uçtan uca doğrular.
-func TestKalemYasamDongusu(t *testing.T) {
+// TestItemLifecycle verifies creating, reading, listing and soft-deleting an
+// item end to end.
+func TestItemLifecycle(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
 	sku := "SKU-" + models.NewInventoryItemID()
 	item, err := svc.CreateInventoryItem(ctx, service.CreateInventoryItemInput{
-		SKU: sku, Title: "Kırmızı Tişört", Description: "M beden",
+		SKU: sku, Title: "Red T-Shirt", Description: "Size M",
 	})
 	require.NoError(t, err)
 	assert.True(t, item.RequiresShipping)
-	assert.False(t, item.CreatedAt.IsZero(), "created_at veritabanından gelmeli")
-	assert.Equal(t, item.CreatedAt.Location().String(), "UTC", "zaman UTC olmalı")
+	assert.False(t, item.CreatedAt.IsZero(), "created_at must come from the database")
+	assert.Equal(t, item.CreatedAt.Location().String(), "UTC", "the time must be UTC")
 
-	okunan, err := svc.GetInventoryItem(ctx, item.ID)
+	fetched, err := svc.GetInventoryItem(ctx, item.ID)
 	require.NoError(t, err)
-	assert.Equal(t, item.ID, okunan.ID)
-	assert.Equal(t, "Kırmızı Tişört", okunan.Title)
+	assert.Equal(t, item.ID, fetched.ID)
+	assert.Equal(t, "Red T-Shirt", fetched.Title)
 
-	// Aynı SKU ikinci kez alınamaz.
+	// The same SKU cannot be taken a second time.
 	_, err = svc.CreateInventoryItem(ctx, service.CreateInventoryItemInput{SKU: sku})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
@@ -285,27 +286,26 @@ func TestKalemYasamDongusu(t *testing.T) {
 	require.NoError(t, svc.DeleteInventoryItem(ctx, item.ID))
 
 	_, err = svc.GetInventoryItem(ctx, item.ID)
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "yumuşak silinen kalem okunamamalı")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "a soft-deleted item must not be readable")
 
 	_, count, err = svc.ListInventoryItems(ctx, service.ListInventoryItemsInput{SKU: &sku})
 	require.NoError(t, err)
-	assert.Zero(t, count, "yumuşak silinen kalem listede görünmemeli")
+	assert.Zero(t, count, "a soft-deleted item must not appear in the listing")
 
-	// SKU yeniden kullanılabilir olmalı: benzersizlik yalnızca yaşayan
-	// kalemler arasındadır.
+	// The SKU must be reusable: uniqueness holds only among living items.
 	_, err = svc.CreateInventoryItem(ctx, service.CreateInventoryItemInput{SKU: sku})
-	require.NoError(t, err, "silinen kalemin SKU'su yeniden kullanılabilmeli")
+	require.NoError(t, err, "the SKU of a deleted item must be reusable")
 }
 
-// TestStokSeviyesiVeSatilabilirAdet seviye yazma, düzeltme ve satılabilir
-// adedin lokasyonlar arası toplamını doğrular.
-func TestStokSeviyesiVeSatilabilirAdet(t *testing.T) {
+// TestStockLevelAndAvailableQuantity verifies writing and adjusting a level and
+// the sum of the available quantity across locations.
+func TestStockLevelAndAvailableQuantity(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
-	item := yeniKalem(ctx, t, svc)
-	locA := yeniLokasyon(ctx, t, svc)
-	locB := yeniLokasyon(ctx, t, svc)
+	item := newItem(ctx, t, svc)
+	locA := newLocation(ctx, t, svc)
+	locB := newLocation(ctx, t, svc)
 
 	_, err := svc.SetInventoryLevel(ctx, item.ID, locA.ID, 10)
 	require.NoError(t, err)
@@ -316,14 +316,14 @@ func TestStokSeviyesiVeSatilabilirAdet(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(15), available)
 
-	// Aynı çağrı ikinci kez seviye yaratmaz, günceller.
+	// The same call a second time does not create a level, it updates it.
 	level, err := svc.SetInventoryLevel(ctx, item.ID, locA.ID, 7)
 	require.NoError(t, err)
 	assert.Equal(t, int64(7), level.StockedQuantity)
 
 	levels, err := svc.ListInventoryLevels(ctx, item.ID)
 	require.NoError(t, err)
-	assert.Len(t, levels, 2, "lokasyon başına tek seviye olmalı")
+	assert.Len(t, levels, 2, "there must be a single level per location")
 
 	level, err = svc.AdjustInventory(ctx, item.ID, locB.ID, -3)
 	require.NoError(t, err)
@@ -331,45 +331,46 @@ func TestStokSeviyesiVeSatilabilirAdet(t *testing.T) {
 
 	_, err = svc.AdjustInventory(ctx, item.ID, locB.ID, -3)
 	require.Error(t, err)
-	assert.Equal(t, errors.KindConflict, errors.KindOf(err), "stok negatife düşemez")
+	assert.Equal(t, errors.KindConflict, errors.KindOf(err), "stock cannot fall below zero")
 
 	available, err = svc.AvailableQuantity(ctx, item.ID)
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), available, "7 + 2 = 9")
 }
 
-// TestOlmayanLokasyonaSeviyeAcilamaz proves that a level cannot be opened at a
-// location that does not exist.
+// TestALevelCannotBeOpenedAtAMissingLocation proves that a level cannot be
+// opened at a location that does not exist.
 //
 // Until 2026-09-08 the error was CLASSIFIED out of the driver's foreign key
 // violation. It now comes from the shared location lock that is the first step
 // of the write path (ADR 0055), with the foreign key still in place as the last
 // defense. The error CODE is unchanged and so is what the caller sees of it:
 // something the client can fix stays a 404 rather than a 500.
-func TestOlmayanLokasyonaSeviyeAcilamaz(t *testing.T) {
+func TestALevelCannotBeOpenedAtAMissingLocation(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	item := yeniKalem(ctx, t, svc)
+	svc := newDBService(t)
+	item := newItem(ctx, t, svc)
 
-	_, err := svc.SetInventoryLevel(ctx, item.ID, "sloc_OLMAYAN", 5)
+	_, err := svc.SetInventoryLevel(ctx, item.ID, "sloc_MISSING", 5)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 	assert.Equal(t, "inventory_location_not_found", errors.CodeOf(err))
 }
 
-// TestSatilabilirAdetSQLVeServisAyniSonucuVerir toplu (SQL tarafında
-// hesaplanan) satılabilirlik ile tek kalem üzerinden (Go tarafında toplanan)
-// hesabın aynı sayıyı verdiğini doğrular.
+// TestAvailableQuantityAgreesInSQLAndInTheService verifies that the batch
+// availability (computed on the SQL side) and the calculation over a single
+// item (summed on the Go side) give the same number.
 //
-// İki yol da gerekli: biri Query sağlayıcısının tek turluk toplu yolu, diğeri
-// tekil sorgunun yolu. Ayrışırlarsa stok, bakılan yere göre farklı görünürdü.
-func TestSatilabilirAdetSQLVeServisAyniSonucuVerir(t *testing.T) {
+// Both paths are needed: one is the query provider's single-round-trip batch
+// path, the other the path of the single-item query. If they diverged, stock
+// would look different depending on where one looked.
+func TestAvailableQuantityAgreesInSQLAndInTheService(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
-	item, loc := stoklu(ctx, t, svc, 10)
-	locB := yeniLokasyon(ctx, t, svc)
+	item, loc := withStock(ctx, t, svc, 10)
+	locB := newLocation(ctx, t, svc)
 	_, err := svc.SetInventoryLevel(ctx, item.ID, locB.ID, 6)
 	require.NoError(t, err)
 
@@ -378,40 +379,40 @@ func TestSatilabilirAdetSQLVeServisAyniSonucuVerir(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	tekil, err := svc.AvailableQuantity(ctx, item.ID)
+	single, err := svc.AvailableQuantity(ctx, item.ID)
 	require.NoError(t, err)
 
-	toplu, err := svc.AvailableQuantities(ctx, []string{item.ID})
+	batch, err := svc.AvailableQuantities(ctx, []string{item.ID})
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(12), tekil, "(10-4) + 6 = 12")
-	assert.Equal(t, tekil, toplu[item.ID], "iki hesap yolu aynı sonucu vermeli")
+	assert.Equal(t, int64(12), single, "(10-4) + 6 = 12")
+	assert.Equal(t, single, batch[item.ID], "the two calculation paths must give the same result")
 }
 
-// TestLocationsWithStockYeterliLokasyonlariSiraliDoner aday lokasyon listesini
-// gerçek veritabanı üzerinde doğrular: eşiği karşılamayan lokasyon listede
-// yoktur ve sıra lokasyon kimliğine göre artandır.
+// TestLocationsWithStockReturnsTheSufficientLocationsInOrder verifies the
+// candidate location list on a real database: a location that does not meet
+// the threshold is not in the list, and the order is ascending by location ID.
 //
-// Fikstür seviyeleri KİMLİK SIRASININ TERSİNE yazar. Sebep budur:
-// ListInventoryLevels satırları created_at'e göre döndürür, yani deponun
-// verdiği sıra beklenen sıranın tam tersidir. Seviyeler kimlik sırasında
-// yazılsaydı iki sıra çakışır ve hiç sıralamayan bir uygulama da bu testi
-// geçerdi.
-func TestLocationsWithStockYeterliLokasyonlariSiraliDoner(t *testing.T) {
+// The fixture writes the levels in REVERSE ID ORDER. This is why:
+// ListInventoryLevels returns the rows by created_at, so the order the store
+// gives is the exact reverse of the expected order. Had the levels been written
+// in ID order, the two orders would coincide and an implementation that does no
+// sorting at all would pass this test too.
+func TestLocationsWithStockReturnsTheSufficientLocationsInOrder(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
-	item := yeniKalem(ctx, t, svc)
+	item := newItem(ctx, t, svc)
 	ids := []string{
-		yeniLokasyon(ctx, t, svc).ID,
-		yeniLokasyon(ctx, t, svc).ID,
-		yeniLokasyon(ctx, t, svc).ID,
+		newLocation(ctx, t, svc).ID,
+		newLocation(ctx, t, svc).ID,
+		newLocation(ctx, t, svc).ID,
 	}
 	slices.Sort(ids)
 
-	adetler := map[string]int64{ids[0]: 10, ids[1]: 4, ids[2]: 6}
+	quantities := map[string]int64{ids[0]: 10, ids[1]: 4, ids[2]: 6}
 	for i := len(ids) - 1; i >= 0; i-- {
-		_, err := svc.SetInventoryLevel(ctx, item.ID, ids[i], adetler[ids[i]])
+		_, err := svc.SetInventoryLevel(ctx, item.ID, ids[i], quantities[ids[i]])
 		require.NoError(t, err)
 	}
 
@@ -419,25 +420,26 @@ func TestLocationsWithStockYeterliLokasyonlariSiraliDoner(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, []string{ids[0], ids[2]}, locations,
-		"4 adetlik lokasyon eşiği karşılamıyor; kalanlar kimlik sırasında dönmeli")
-	assert.True(t, slices.IsSorted(locations), "sıra deterministik olmalı")
+		"the location with 4 units does not meet the threshold; the rest must come back in ID order")
+	assert.True(t, slices.IsSorted(locations), "the order must be deterministic")
 }
 
-// TestLocationsWithStockRezervasyonSonrasiAdaydanCikar rezervasyonun aday
-// listesini düşürdüğünü ve serbest bırakmanın geri getirdiğini doğrular.
+// TestLocationsWithStockDropsACandidateAfterAReservation verifies that a
+// reservation brings the candidate list down and that a release brings it back.
 //
-// Testin çekirdeği ortadaki iki iddiadır: liste ile [service.Service.Reserve]
-// AYNI "satılabilir" tanımını kullanır. Ayrışsalardı, listede görünen bir
-// lokasyon rezervasyonda Conflict alır ve saga adayı olan bir depoda sipariş
-// veremediğini açıklayamazdı.
-func TestLocationsWithStockRezervasyonSonrasiAdaydanCikar(t *testing.T) {
+// The core of the test is the two assertions in the middle: the list and
+// [service.Service.Reserve] use the SAME definition of "available". If they
+// diverged, a location that appears in the list would get Conflict on the
+// reservation, and the saga could not explain why it cannot place an order at a
+// warehouse that was a candidate.
+func TestLocationsWithStockDropsACandidateAfterAReservation(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	item, loc := stoklu(ctx, t, svc, 10)
+	svc := newDBService(t)
+	item, loc := withStock(ctx, t, svc, 10)
 
 	locations, err := svc.LocationsWithStock(ctx, item.ID, 6)
 	require.NoError(t, err)
-	require.Equal(t, []string{loc.ID}, locations, "rezervasyondan önce aday olmalı")
+	require.Equal(t, []string{loc.ID}, locations, "it must be a candidate before the reservation")
 
 	res, err := svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 5,
@@ -446,359 +448,366 @@ func TestLocationsWithStockRezervasyonSonrasiAdaydanCikar(t *testing.T) {
 
 	locations, err = svc.LocationsWithStock(ctx, item.ID, 6)
 	require.NoError(t, err)
-	assert.Empty(t, locations, "10-5=5 adet, 6'lık istek için yetmez")
+	assert.Empty(t, locations, "10-5=5 units are not enough for a request of 6")
 
 	_, err = svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 6,
 	})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
-		"listede olmayan lokasyon Reserve'de de reddedilmeli")
+		"a location that is not in the list must be refused by Reserve as well")
 
 	locations, err = svc.LocationsWithStock(ctx, item.ID, 5)
 	require.NoError(t, err)
-	assert.Equal(t, []string{loc.ID}, locations, "kalan 5 adet için hâlâ aday")
+	assert.Equal(t, []string{loc.ID}, locations, "still a candidate for the remaining 5 units")
 
 	require.NoError(t, svc.ReleaseReservation(ctx, res.ID))
 
 	locations, err = svc.LocationsWithStock(ctx, item.ID, 6)
 	require.NoError(t, err)
-	assert.Equal(t, []string{loc.ID}, locations, "serbest bırakma adaylığı geri getirmeli")
+	assert.Equal(t, []string{loc.ID}, locations, "the release must bring the candidacy back")
 }
 
-// TestLocationsWithStockAdaySizsaBosDilim aday yokken hata değil BOŞ dilim
-// döndüğünü, olmayan kalem içinse NotFound döndüğünü doğrular.
+// TestLocationsWithStockReturnsAnEmptySliceWithoutACandidate verifies that
+// with no candidate an EMPTY slice comes back rather than an error, and that
+// NotFound comes back for an item that does not exist.
 //
-// "Yeterli stok yok" bir arıza değil bir cevaptır; saga onu kendi bağlamında
-// Conflict'e çevirmeyi seçer. Olmayan kalem ise çağıranın hatasıdır ve boş
-// listeye karışmamalıdır.
-func TestLocationsWithStockAdaySizsaBosDilim(t *testing.T) {
+// "Not enough stock" is not a fault but an answer; the saga chooses to turn it
+// into Conflict in its own context. An item that does not exist, on the other
+// hand, is the caller's mistake and must not be mixed up with an empty list.
+func TestLocationsWithStockReturnsAnEmptySliceWithoutACandidate(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
-	stoksuz := yeniKalem(ctx, t, svc)
-	locations, err := svc.LocationsWithStock(ctx, stoksuz.ID, 1)
+	unstocked := newItem(ctx, t, svc)
+	locations, err := svc.LocationsWithStock(ctx, unstocked.ID, 1)
 	require.NoError(t, err)
-	assert.Empty(t, locations, "hiç seviyesi olmayan kalem için aday yok")
-	assert.NotNil(t, locations, "boş dilim dönmeli, nil değil")
+	assert.Empty(t, locations, "no candidate for an item with no level at all")
+	assert.NotNil(t, locations, "an empty slice must come back, not nil")
 
-	item, _ := stoklu(ctx, t, svc, 3)
+	item, _ := withStock(ctx, t, svc, 3)
 	locations, err = svc.LocationsWithStock(ctx, item.ID, 4)
 	require.NoError(t, err)
-	assert.Empty(t, locations, "3 adet 4'lük isteği karşılamaz")
-	assert.NotNil(t, locations, "boş dilim dönmeli, nil değil")
+	assert.Empty(t, locations, "3 units do not meet a request of 4")
+	assert.NotNil(t, locations, "an empty slice must come back, not nil")
 
-	_, err = svc.LocationsWithStock(ctx, "invitem_YOK", 1)
+	_, err = svc.LocationsWithStock(ctx, "invitem_MISSING", 1)
 	require.Error(t, err)
 	assert.Equal(t, errors.KindNotFound, errors.KindOf(err))
 }
 
-// TestInteropLokasyonYuzeyiAdiylaCozulur modüller arası yüzeyin container'dan
-// SABİT ADIYLA ve tüketicinin yazacağı DAR ARAYÜZLE çözülebildiğini doğrular.
+// TestTheInteropLocationSurfaceResolvesByName verifies that the cross-module
+// surface can be resolved from the container by its FIXED NAME and through the
+// NARROW INTERFACE the consumer will write.
 //
-// İmza bir sözleşmedir ve tüketici bu modülü import edemez (ADR 0006); bir
-// kayma ancak çözüm anında görünür. Test o anı erkene çeker ve yüzeyi gerçek
-// veriyle bir kez çağırarak kablolamanın da doğru olduğunu gösterir.
-func TestInteropLokasyonYuzeyiAdiylaCozulur(t *testing.T) {
+// The signature is a contract and the consumer cannot import this module
+// (ADR 0006); a drift only becomes visible at resolution time. The test brings
+// that moment forward and, by calling the surface once with real data, shows
+// that the wiring is right too.
+func TestTheInteropLocationSurfaceResolvesByName(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
-	// Bağ servisi ZORUNLU: modül depo↔kanal bağını açılışta bildiriyor
-	// (service.Definitions), ve bildiremezse hiç kaydolmuyor. Ürün modülü de
-	// aynı şekilde davranıyor.
+	// The link service is MANDATORY: the module declares the warehouse↔channel
+	// link at startup (service.Definitions), and if it cannot declare it, it
+	// does not register at all. The product module behaves the same way.
 	require.NoError(t, c.Provide("core.link", link.New(testPool, nil)))
 	require.NoError(t, inventory.New().Register(ctx, c))
 
-	// Tüketicinin kendi paketinde yazacağı dar arayüzün birebir kopyası.
+	// An exact copy of the narrow interface the consumer will write in its own
+	// package.
 	type stockLocations interface {
 		LocationsWithStock(ctx context.Context, inventoryItemID string, quantity int64) ([]string, error)
 	}
 
-	// Ad ELDE yazılır; sabiti kullanmak testi totolojiye çevirirdi.
-	yuzey, err := container.Resolve[stockLocations](c, "inventory.interop")
-	require.NoError(t, err, "yüzey sabit adıyla ve dar arayüzle çözülebilmeli")
+	// The name is written BY HAND; using the constant would turn the test into
+	// a tautology.
+	surface, err := container.Resolve[stockLocations](c, "inventory.interop")
+	require.NoError(t, err, "the surface must be resolvable by its fixed name and through the narrow interface")
 	assert.Equal(t, "inventory.interop", inventory.InteropName,
-		"ad değişirse tüketici akışlar yüzeyi bulamaz")
+		"if the name changes the consuming flows cannot find the surface")
 
-	svc := yeniServis(t)
-	item, loc := stoklu(ctx, t, svc, 7)
+	svc := newDBService(t)
+	item, loc := withStock(ctx, t, svc, 7)
 
-	locations, err := yuzey.LocationsWithStock(ctx, item.ID, 7)
+	locations, err := surface.LocationsWithStock(ctx, item.ID, 7)
 	require.NoError(t, err)
-	assert.Equal(t, []string{loc.ID}, locations, "tam son adet de yeterlidir")
+	assert.Equal(t, []string{loc.ID}, locations, "exactly the last unit is enough as well")
 
-	locations, err = yuzey.LocationsWithStock(ctx, item.ID, 8)
+	locations, err = surface.LocationsWithStock(ctx, item.ID, 8)
 	require.NoError(t, err)
 	assert.Empty(t, locations)
 }
 
-// TestEszamanliReserveSonAdediTekKazanir eşzamanlılık iddiasının çekirdeğini
-// kanıtlar: son bir adet için yarışan çok sayıda çağrıdan TAM OLARAK BİRİ
-// kazanır.
+// TestConcurrentReservesLeaveTheLastUnitToOneWinner proves the core of the
+// concurrency claim: of many calls racing for one last unit, EXACTLY ONE wins.
 //
-// Uygulama katmanında yapılan bir "önce oku sonra yaz" kontrolü bu testi
-// geçemez; kazananın tek olması satır kilidinden gelir.
-func TestEszamanliReserveSonAdediTekKazanir(t *testing.T) {
+// A "read first, then write" check done in the application layer cannot pass
+// this test; that there is a single winner comes from the row lock.
+func TestConcurrentReservesLeaveTheLastUnitToOneWinner(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	item, loc := stoklu(ctx, t, svc, 1)
+	svc := newDBService(t)
+	item, loc := withStock(ctx, t, svc, 1)
 
-	const yarismaci = 8
-	basla := make(chan struct{})
-	sonuclar := make([]error, yarismaci)
+	const contenders = 8
+	start := make(chan struct{})
+	results := make([]error, contenders)
 
 	var wg sync.WaitGroup
-	for i := range yarismaci {
+	for i := range contenders {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			<-basla
+			<-start
 			_, err := svc.Reserve(ctx, service.ReserveInput{
 				InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 1,
 			})
-			sonuclar[i] = err
+			results[i] = err
 		}(i)
 	}
-	close(basla)
+	close(start)
 	wg.Wait()
 
-	var kazanan int
-	for i, err := range sonuclar {
+	var winners int
+	for i, err := range results {
 		if err == nil {
-			kazanan++
+			winners++
 			continue
 		}
 		assert.Equal(t, errors.KindConflict, errors.KindOf(err),
-			"kaybeden çağrı %d Conflict almalı, aldığı: %v", i, err)
+			"losing call %d must get Conflict, it got: %v", i, err)
 		assert.Equal(t, service.CodeInsufficientStock, errors.CodeOf(err))
 	}
-	assert.Equal(t, 1, kazanan, "son adedi tam olarak bir çağrı almalı")
+	assert.Equal(t, 1, winners, "exactly one call must take the last unit")
 
 	available, err := svc.AvailableQuantity(ctx, item.ID)
 	require.NoError(t, err)
 	assert.Zero(t, available)
-	assert.Equal(t, int64(1), aktifRezervasyonAdedi(ctx, t, item.ID),
-		"kazanan sayısı kadar rezervasyon kaydı olmalı")
+	assert.Equal(t, int64(1), activeReservationCount(ctx, t, item.ID),
+		"there must be as many reservation records as winners")
 }
 
-// TestEszamanliReserveStoguAsmaz stoktan fazla eşzamanlı istek geldiğinde tam
-// olarak stok kadarının kazandığını doğrular.
+// TestConcurrentReservesDoNotExceedTheStock verifies that when more concurrent
+// requests arrive than there is stock, exactly as many win as there is stock.
 //
-// Tek adetlik yarışın aksine burada birden çok kazanan vardır; iddia
-// kazananların TOPLAM adedinin stoğu aşmamasıdır. Kilit yerine artımlı bir
-// güncelleme kullanılsaydı rezerve adet stoğun üstüne çıkabilirdi.
-func TestEszamanliReserveStoguAsmaz(t *testing.T) {
+// Unlike the single-unit race there are several winners here; the claim is
+// that the TOTAL quantity of the winners does not exceed the stock. Had an
+// incremental update been used instead of the lock, the reserved quantity could
+// have risen above the stock.
+func TestConcurrentReservesDoNotExceedTheStock(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
-	const stok = 10
-	const yarismaci = 25
-	item, loc := stoklu(ctx, t, svc, stok)
+	const stock = 10
+	const contenders = 25
+	item, loc := withStock(ctx, t, svc, stock)
 
-	basla := make(chan struct{})
-	sonuclar := make([]error, yarismaci)
+	start := make(chan struct{})
+	results := make([]error, contenders)
 
 	var wg sync.WaitGroup
-	for i := range yarismaci {
+	for i := range contenders {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			<-basla
+			<-start
 			_, err := svc.Reserve(ctx, service.ReserveInput{
 				InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 1,
 			})
-			sonuclar[i] = err
+			results[i] = err
 		}(i)
 	}
-	close(basla)
+	close(start)
 	wg.Wait()
 
-	var kazanan int
-	for _, err := range sonuclar {
+	var winners int
+	for _, err := range results {
 		if err == nil {
-			kazanan++
+			winners++
 			continue
 		}
-		assert.Equal(t, errors.KindConflict, errors.KindOf(err), "beklenmeyen hata: %v", err)
+		assert.Equal(t, errors.KindConflict, errors.KindOf(err), "unexpected error: %v", err)
 	}
-	assert.Equal(t, stok, kazanan)
+	assert.Equal(t, stock, winners)
 
 	levels, err := svc.ListInventoryLevels(ctx, item.ID)
 	require.NoError(t, err)
 	require.Len(t, levels, 1)
-	assert.Equal(t, int64(stok), levels[0].ReservedQuantity, "rezerve adet stoğu aşamaz")
+	assert.Equal(t, int64(stock), levels[0].ReservedQuantity, "the reserved quantity cannot exceed the stock")
 	assert.Zero(t, levels[0].Available())
-	assert.Equal(t, int64(stok), aktifRezervasyonAdedi(ctx, t, item.ID))
+	assert.Equal(t, int64(stock), activeReservationCount(ctx, t, item.ID))
 }
 
-// TestReserveIleSeviyeYazmaKilitlenmez KARIŞIK akışların birbirini
-// kilitlemediğini kanıtlar: aynı kalem üzerinde Reserve ile SetInventoryLevel
-// gerçek goroutine'lerle yarıştırılır.
+// TestReserveAndALevelWriteDoNotDeadlock proves that MIXED flows do not
+// deadlock each other: Reserve and SetInventoryLevel are raced on the same item
+// with real goroutines.
 //
-// Bu, tek tip yarışlardan (Reserve x N) BAŞKA bir hata sınıfıdır. İki akış aynı
-// iki satırı ters sırada kilitlerse PostgreSQL kilitlenmeyi (SQLSTATE 40P01)
-// saptar ve işlemlerden birini öldürür: müşterinin rezervasyonu, yöneticinin
-// stok güncellemesiyle çakıştığı için — hem de kilitlenme zaman aşımı kadar
-// bekledikten sonra — hata alır. Kilit sırası TEK olduğu sürece her tur temiz
-// geçer; bu yüzden testin iddiası "hiçbir çağrı hata almaz"dır.
+// This is a DIFFERENT class of fault from the single-kind races (Reserve x N).
+// If two flows lock the same two rows in opposite orders, PostgreSQL detects
+// the deadlock (SQLSTATE 40P01) and kills one of the transactions: the
+// customer's reservation fails because it collided with the admin's stock
+// update — and only after waiting as long as the deadlock timeout, at that. As
+// long as the lock order is a SINGLE one, every round passes cleanly; that is
+// why the test's claim is "no call gets an error".
 //
-// Stok her turda yeniden 1000'e yazıldığı ve turda yalnızca 1 adet ayrıldığı
-// için iş kuralı gereği düşecek bir çağrı YOKTUR; dolayısıyla görülen her hata
-// eşzamanlılık hatasıdır.
-func TestReserveIleSeviyeYazmaKilitlenmez(t *testing.T) {
+// Because the stock is written back to 1000 in every round and only 1 unit is
+// set aside per round, there is NO call that should fail by a business rule;
+// any error seen is therefore a concurrency error.
+func TestReserveAndALevelWriteDoNotDeadlock(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
-	const stok int64 = 1000
-	item, loc := stoklu(ctx, t, svc, stok)
+	const stock int64 = 1000
+	item, loc := withStock(ctx, t, svc, stock)
 
-	const tur = 40
-	hatalar := make(chan error, 2*tur)
-	for range tur {
-		basla := make(chan struct{})
+	const rounds = 40
+	errs := make(chan error, 2*rounds)
+	for range rounds {
+		start := make(chan struct{})
 		var wg sync.WaitGroup
 
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			<-basla
+			<-start
 			_, err := svc.Reserve(ctx, service.ReserveInput{
 				InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 1,
 			})
-			hatalar <- err
+			errs <- err
 		}()
 		go func() {
 			defer wg.Done()
-			<-basla
-			_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, stok)
-			hatalar <- err
+			<-start
+			_, err := svc.SetInventoryLevel(ctx, item.ID, loc.ID, stock)
+			errs <- err
 		}()
 
-		close(basla)
+		close(start)
 		wg.Wait()
 	}
-	close(hatalar)
+	close(errs)
 
-	for err := range hatalar {
-		require.NoError(t, err, "Reserve ile SetInventoryLevel birbirini kilitlememeli")
+	for err := range errs {
+		require.NoError(t, err, "Reserve and SetInventoryLevel must not deadlock each other")
 	}
 }
 
-// TestReserveIleKalemSilmeKilitlenmez Reserve ile DeleteInventoryItem'i aynı
-// kalem üzerinde yarıştırır ve iki şeyi birden kanıtlar: akışlar kilitlenmez ve
-// yarışı TAM OLARAK BİRİ kazanır.
+// TestReserveAndAnItemDeleteDoNotDeadlock races Reserve and DeleteInventoryItem
+// on the same item and proves two things at once: the flows do not deadlock,
+// and EXACTLY ONE of them wins the race.
 //
-// Kazanan hangisi olursa olsun sonuç tutarlıdır: rezervasyon önce yazıldıysa
-// silme "aktif rezervasyon var" diye Conflict alır, silme önce bittiyse
-// rezervasyon kalemi bulamaz. İkisinin birden başarılı olması, silinmiş bir
-// kalemin arkasında aktif rezervasyon bırakırdı.
-func TestReserveIleKalemSilmeKilitlenmez(t *testing.T) {
+// Whichever wins, the outcome is consistent: if the reservation was written
+// first, the delete gets Conflict for "there is an active reservation"; if the
+// delete finished first, the reservation cannot find the item. Both succeeding
+// would leave an active reservation behind a deleted item.
+func TestReserveAndAnItemDeleteDoNotDeadlock(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
-	const tur = 25
-	for range tur {
-		item, loc := stoklu(ctx, t, svc, 10)
+	const rounds = 25
+	for range rounds {
+		item, loc := withStock(ctx, t, svc, 10)
 
-		basla := make(chan struct{})
-		var hatalar [2]error
+		start := make(chan struct{})
+		var errs [2]error
 		var wg sync.WaitGroup
 
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			<-basla
-			_, hatalar[0] = svc.Reserve(ctx, service.ReserveInput{
+			<-start
+			_, errs[0] = svc.Reserve(ctx, service.ReserveInput{
 				InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 1,
 			})
 		}()
 		go func() {
 			defer wg.Done()
-			<-basla
-			hatalar[1] = svc.DeleteInventoryItem(ctx, item.ID)
+			<-start
+			errs[1] = svc.DeleteInventoryItem(ctx, item.ID)
 		}()
 
-		close(basla)
+		close(start)
 		wg.Wait()
 
-		if hatalar[0] != nil {
-			assert.Equal(t, errors.KindNotFound, errors.KindOf(hatalar[0]),
-				"rezervasyon yalnızca kalem silinmiş olduğu için düşebilir: %v", hatalar[0])
+		if errs[0] != nil {
+			assert.Equal(t, errors.KindNotFound, errors.KindOf(errs[0]),
+				"the reservation may fail only because the item was deleted: %v", errs[0])
 		}
-		if hatalar[1] != nil {
-			assert.Equal(t, errors.KindConflict, errors.KindOf(hatalar[1]),
-				"silme yalnızca aktif rezervasyon yüzünden düşebilir: %v", hatalar[1])
-			assert.Equal(t, service.CodeItemHasReservations, errors.CodeOf(hatalar[1]))
+		if errs[1] != nil {
+			assert.Equal(t, errors.KindConflict, errors.KindOf(errs[1]),
+				"the delete may fail only because of an active reservation: %v", errs[1])
+			assert.Equal(t, service.CodeItemHasReservations, errors.CodeOf(errs[1]))
 		}
-		require.True(t, (hatalar[0] == nil) != (hatalar[1] == nil),
-			"tam olarak biri kazanmalı (rezervasyon: %v, silme: %v)", hatalar[0], hatalar[1])
+		require.True(t, (errs[0] == nil) != (errs[1] == nil),
+			"exactly one must win (reservation: %v, delete: %v)", errs[0], errs[1])
 	}
 }
 
-// TestKilitlenmeConflictOlarakSiniflanir kilitlenme (40P01) hatasının tipli
-// hataya çevrildiğini doğrular.
+// TestADeadlockIsClassifiedAsConflict verifies that a deadlock (40P01) error is
+// converted into a typed error.
 //
-// Kilit sırası tekleştirildiği için normal akışlarda kilitlenme oluşmaz; bu
-// test SON SAVUNMAYI sınar. İki işlem iki kalemi bilerek ters sırada kilitler.
-// Sınıflandırma olmasaydı kurban işlem errors.Internal (HTTP 500) alırdı ve
-// çağıran, isteğin yeniden denenebilir olduğunu anlayamazdı.
-func TestKilitlenmeConflictOlarakSiniflanir(t *testing.T) {
+// Because the lock order has been made uniform, no deadlock occurs in the
+// normal flows; this test tries the LAST DEFENSE. Two transactions lock two
+// items in opposite orders on purpose. Without the classification the victim
+// transaction would get errors.Internal (HTTP 500) and the caller could not
+// tell that the request can be retried.
+func TestADeadlockIsClassifiedAsConflict(t *testing.T) {
 	ctx := context.Background()
 	repo := repository.New(testPool.Pool())
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
-	ilkKalem := yeniKalem(ctx, t, svc)
-	ikinciKalem := yeniKalem(ctx, t, svc)
+	firstItem := newItem(ctx, t, svc)
+	secondItem := newItem(ctx, t, svc)
 
-	ilkKilitli, ikinciKilitli := make(chan struct{}), make(chan struct{})
-	hatalar := make(chan error, 2)
+	firstLocked, secondLocked := make(chan struct{}), make(chan struct{})
+	errs := make(chan error, 2)
 
 	go func() {
-		hatalar <- repo.WithTx(ctx, func(ctx context.Context) error {
-			if err := repo.LockInventoryItem(ctx, ilkKalem.ID); err != nil {
+		errs <- repo.WithTx(ctx, func(ctx context.Context) error {
+			if err := repo.LockInventoryItem(ctx, firstItem.ID); err != nil {
 				return err
 			}
-			close(ilkKilitli)
-			<-ikinciKilitli
-			return repo.LockInventoryItem(ctx, ikinciKalem.ID)
+			close(firstLocked)
+			<-secondLocked
+			return repo.LockInventoryItem(ctx, secondItem.ID)
 		})
 	}()
 	go func() {
-		hatalar <- repo.WithTx(ctx, func(ctx context.Context) error {
-			if err := repo.LockInventoryItem(ctx, ikinciKalem.ID); err != nil {
+		errs <- repo.WithTx(ctx, func(ctx context.Context) error {
+			if err := repo.LockInventoryItem(ctx, secondItem.ID); err != nil {
 				return err
 			}
-			close(ikinciKilitli)
-			<-ilkKilitli
-			return repo.LockInventoryItem(ctx, ilkKalem.ID)
+			close(secondLocked)
+			<-firstLocked
+			return repo.LockInventoryItem(ctx, firstItem.ID)
 		})
 	}()
 
-	var kurban int
+	var victims int
 	for range 2 {
-		err := <-hatalar
+		err := <-errs
 		if err == nil {
 			continue
 		}
-		kurban++
+		victims++
 		assert.Equal(t, errors.KindConflict, errors.KindOf(err),
-			"kilitlenme kurbanı yeniden denenebilir bir hata almalı, aldığı: %v", err)
-		// Kod ELDE yazılır: sabiti kullanmak, sabit yanlış olsa bile geçen bir
-		// totoloji üretirdi.
+			"the deadlock victim must get a retryable error, it got: %v", err)
+		// The code is written BY HAND: using the constant would produce a
+		// tautology that passes even if the constant is wrong.
 		assert.Equal(t, "inventory_concurrent_update", errors.CodeOf(err))
 	}
-	assert.Equal(t, 1, kurban, "kilitlenmede tam olarak bir işlem öldürülür")
+	assert.Equal(t, 1, victims, "exactly one transaction is killed in a deadlock")
 }
 
-// TestReserveReleaseReserveDongusu telafiden sonra adedin gerçekten yeniden
-// satılabilir olduğunu doğrular. Faz 6'daki saga başarısız olup yeniden
-// denendiğinde bu döngü yaşanır.
-func TestReserveReleaseReserveDongusu(t *testing.T) {
+// TestTheReserveReleaseReserveCycle verifies that after the compensation the
+// quantity is really sellable again. This cycle happens when the Phase 6 saga
+// fails and is retried.
+func TestTheReserveReleaseReserveCycle(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	item, loc := stoklu(ctx, t, svc, 1)
+	svc := newDBService(t)
+	item, loc := withStock(ctx, t, svc, 1)
 
-	ilk, err := svc.Reserve(ctx, service.ReserveInput{
+	first, err := svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 1, LineItemID: "li_1",
 	})
 	require.NoError(t, err)
@@ -806,33 +815,33 @@ func TestReserveReleaseReserveDongusu(t *testing.T) {
 	_, err = svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 1,
 	})
-	require.Error(t, err, "son adet ayrılmışken ikinci rezervasyon olmamalı")
+	require.Error(t, err, "there must be no second reservation while the last unit is set aside")
 
-	require.NoError(t, svc.ReleaseReservation(ctx, ilk.ID))
+	require.NoError(t, svc.ReleaseReservation(ctx, first.ID))
 
 	available, err := svc.AvailableQuantity(ctx, item.ID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), available, "telafi adedi geri vermeli")
+	assert.Equal(t, int64(1), available, "the compensation must give the quantity back")
 
-	ikinci, err := svc.Reserve(ctx, service.ReserveInput{
+	second, err := svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 1,
 	})
 	require.NoError(t, err)
-	assert.NotEqual(t, ilk.ID, ikinci.ID)
+	assert.NotEqual(t, first.ID, second.ID)
 
-	serbest, err := svc.GetReservation(ctx, ilk.ID)
+	released, err := svc.GetReservation(ctx, first.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.ReservationReleased, serbest.Status)
-	assert.Equal(t, "li_1", serbest.LineItemID, "cart satırı kimliği korunmalı")
+	assert.Equal(t, models.ReservationReleased, released.Status)
+	assert.Equal(t, "li_1", released.LineItemID, "the cart line ID must be kept")
 }
 
-// TestReleaseReservationIdempotentVeritabaninda telafinin veritabanı üzerinde
-// de idempotent olduğunu doğrular: ikinci çağrı hata vermez ve rezerve adedi
-// ikinci kez düşürmez.
-func TestReleaseReservationIdempotentVeritabaninda(t *testing.T) {
+// TestReleaseReservationIsIdempotentInTheDatabase verifies that the
+// compensation is idempotent on the database too: the second call returns no
+// error and does not decrease the reserved quantity a second time.
+func TestReleaseReservationIsIdempotentInTheDatabase(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	item, loc := stoklu(ctx, t, svc, 5)
+	svc := newDBService(t)
+	item, loc := withStock(ctx, t, svc, 5)
 
 	res, err := svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 3,
@@ -840,84 +849,85 @@ func TestReleaseReservationIdempotentVeritabaninda(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, svc.ReleaseReservation(ctx, res.ID))
-	require.NoError(t, svc.ReleaseReservation(ctx, res.ID), "ikinci çağrı hata vermemeli")
-	require.NoError(t, svc.ReleaseReservation(ctx, res.ID), "üçüncü çağrı da hata vermemeli")
+	require.NoError(t, svc.ReleaseReservation(ctx, res.ID), "the second call must not return an error")
+	require.NoError(t, svc.ReleaseReservation(ctx, res.ID), "the third call must not return an error either")
 
 	levels, err := svc.ListInventoryLevels(ctx, item.ID)
 	require.NoError(t, err)
 	require.Len(t, levels, 1)
-	assert.Zero(t, levels[0].ReservedQuantity, "rezerve adet yalnızca bir kez düşmeli")
+	assert.Zero(t, levels[0].ReservedQuantity, "the reserved quantity must decrease only once")
 	assert.Equal(t, int64(5), levels[0].StockedQuantity)
-	assert.Equal(t, int64(5), levels[0].Available(), "stok yoktan var edilmemeli")
+	assert.Equal(t, int64(5), levels[0].Available(), "stock must not be created out of nothing")
 }
 
-// TestEszamanliReleaseTekSeferDuser aynı rezervasyonu aynı anda serbest
-// bırakmaya çalışan çağrıların hepsinin başarılı döndüğünü ve stoğun yalnızca
-// bir kez iade edildiğini doğrular.
+// TestConcurrentReleasesGiveTheStockBackOnce verifies that calls trying to
+// release the same reservation at the same time all return successfully and
+// that the stock is given back only once.
 //
-// Kritik nokta rezervasyon satırının da kilitlenmesidir. Kilitsiz okunsaydı iki
-// çağrı da durumu "active" görür, ikincisi seviye kilidini birinciden sonra
-// alır ve rezerve adedi (artık düşülmüş olan) değerden bir kez daha düşmeye
-// çalışıp tutarsızlık hatası verirdi — yani telafi eşzamanlılık altında
-// idempotent OLMAKTAN ÇIKARDI.
+// The critical point is that the reservation row is locked as well. Had it been
+// read without a lock, both calls would see the status as "active", the second
+// would take the level lock after the first, and it would try to decrease the
+// reserved quantity once more from the (already decreased) value and return an
+// inconsistency error — that is, the compensation would STOP BEING idempotent
+// under concurrency.
 //
-// Yarış birden çok TURDA denenir: tek tur, zamanlama nedeniyle pencereyi
-// ıskalayabilir. Turların hepsinde her çağrı başarılı dönmelidir.
-func TestEszamanliReleaseTekSeferDuser(t *testing.T) {
+// The race is tried over several ROUNDS: a single round can miss the window
+// because of timing. Every call must return successfully in every round.
+func TestConcurrentReleasesGiveTheStockBackOnce(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
-	const tur = 5
-	const cagiran = 6
+	const rounds = 5
+	const callers = 6
 
-	for round := range tur {
-		item, loc := stoklu(ctx, t, svc, 5)
+	for round := range rounds {
+		item, loc := withStock(ctx, t, svc, 5)
 		res, err := svc.Reserve(ctx, service.ReserveInput{
 			InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 3,
 		})
 		require.NoError(t, err)
 
-		basla := make(chan struct{})
-		hatalar := make([]error, cagiran)
+		start := make(chan struct{})
+		errs := make([]error, callers)
 
 		var wg sync.WaitGroup
-		for i := range cagiran {
+		for i := range callers {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				<-basla
-				hatalar[i] = svc.ReleaseReservation(ctx, res.ID)
+				<-start
+				errs[i] = svc.ReleaseReservation(ctx, res.ID)
 			}(i)
 		}
-		close(basla)
+		close(start)
 		wg.Wait()
 
-		for i, err := range hatalar {
-			require.NoError(t, err, "tur %d: eşzamanlı telafi %d hata vermemeli", round, i)
+		for i, err := range errs {
+			require.NoError(t, err, "round %d: concurrent compensation %d must not return an error", round, i)
 		}
 
 		levels, err := svc.ListInventoryLevels(ctx, item.ID)
 		require.NoError(t, err)
 		require.Len(t, levels, 1)
-		assert.Zero(t, levels[0].ReservedQuantity, "tur %d", round)
-		assert.Equal(t, int64(5), levels[0].StockedQuantity, "tur %d", round)
+		assert.Zero(t, levels[0].ReservedQuantity, "round %d", round)
+		assert.Equal(t, int64(5), levels[0].StockedQuantity, "round %d", round)
 	}
 }
 
-// TestConfirmReservationStoktanDuser onayın fiziksel stoğu düşürdüğünü,
-// satılabilir adedi değiştirmediğini ve serbest bırakmayı kilitlediğini
-// doğrular.
-func TestConfirmReservationStoktanDuser(t *testing.T) {
+// TestConfirmReservationDeductsTheStock verifies that a confirmation decreases
+// the physical stock, does not change the available quantity and locks out a
+// release.
+func TestConfirmReservationDeductsTheStock(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	item, loc := stoklu(ctx, t, svc, 10)
+	svc := newDBService(t)
+	item, loc := withStock(ctx, t, svc, 10)
 
 	res, err := svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 4,
 	})
 	require.NoError(t, err)
 
-	oncekiAvailable, err := svc.AvailableQuantity(ctx, item.ID)
+	availableBefore, err := svc.AvailableQuantity(ctx, item.ID)
 	require.NoError(t, err)
 
 	require.NoError(t, svc.ConfirmReservation(ctx, res.ID, testSaleOrderID))
@@ -925,31 +935,32 @@ func TestConfirmReservationStoktanDuser(t *testing.T) {
 	levels, err := svc.ListInventoryLevels(ctx, item.ID)
 	require.NoError(t, err)
 	require.Len(t, levels, 1)
-	assert.Equal(t, int64(6), levels[0].StockedQuantity, "fiziksel stok düşmeli")
+	assert.Equal(t, int64(6), levels[0].StockedQuantity, "the physical stock must decrease")
 	assert.Zero(t, levels[0].ReservedQuantity)
-	assert.Equal(t, oncekiAvailable, levels[0].Available(),
-		"onay satılabilir adedi değiştirmemeli")
+	assert.Equal(t, availableBefore, levels[0].Available(),
+		"the confirmation must not change the available quantity")
 
-	onaylanan, err := svc.GetReservation(ctx, res.ID)
+	confirmed, err := svc.GetReservation(ctx, res.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.ReservationConfirmed, onaylanan.Status)
+	assert.Equal(t, models.ReservationConfirmed, confirmed.Status)
 
-	require.NoError(t, svc.ConfirmReservation(ctx, res.ID, testSaleOrderID), "onay idempotent olmalı")
-	assert.Equal(t, int64(6), stokAdedi(ctx, t, item.ID, loc.ID),
-		"ikinci onay stoğu bir kez daha düşürmemeli")
+	require.NoError(t, svc.ConfirmReservation(ctx, res.ID, testSaleOrderID), "the confirmation must be idempotent")
+	assert.Equal(t, int64(6), stockedQuantityOf(ctx, t, item.ID, loc.ID),
+		"a second confirmation must not decrease the stock once more")
 
 	err = svc.ReleaseReservation(ctx, res.ID)
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
-		"onaylanmış rezervasyon serbest bırakılamaz")
+		"a confirmed reservation cannot be released")
 }
 
-// TestAktifRezervasyonluKalemSilinemez söz verilmiş stoğu olan kalemin
-// silinemediğini, rezervasyon sonlandıktan sonra silinebildiğini doğrular.
-func TestAktifRezervasyonluKalemSilinemez(t *testing.T) {
+// TestAnItemWithAnActiveReservationCannotBeDeleted verifies that an item with
+// promised stock cannot be deleted, and that it can be deleted once the
+// reservation has ended.
+func TestAnItemWithAnActiveReservationCannotBeDeleted(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	item, loc := stoklu(ctx, t, svc, 5)
+	svc := newDBService(t)
+	item, loc := withStock(ctx, t, svc, 5)
 
 	res, err := svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 2,
@@ -965,18 +976,19 @@ func TestAktifRezervasyonluKalemSilinemez(t *testing.T) {
 	require.NoError(t, svc.DeleteInventoryItem(ctx, item.ID))
 
 	_, err = svc.ListInventoryLevels(ctx, item.ID)
-	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "seviyeler de silinmeli")
+	assert.Equal(t, errors.KindNotFound, errors.KindOf(err), "the levels must be deleted too")
 }
 
-// TestVeritabaniKisitiSonSavunma servis atlanıp doğrudan SQL yazılsa bile
-// satılabilir adedin negatife düşürülemediğini doğrular.
+// TestTheDatabaseConstraintIsTheLastDefense verifies that the available
+// quantity cannot be pushed below zero even if the service is bypassed and SQL
+// is written directly.
 //
-// Bu kısıt olmasaydı, servis dışından yapılan tek bir müdahale stoğu sessizce
-// tutarsız hâle getirebilirdi.
-func TestVeritabaniKisitiSonSavunma(t *testing.T) {
+// Without this constraint, a single intervention from outside the service could
+// silently leave the stock inconsistent.
+func TestTheDatabaseConstraintIsTheLastDefense(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
-	item, loc := stoklu(ctx, t, svc, 5)
+	svc := newDBService(t)
+	item, loc := withStock(ctx, t, svc, 5)
 
 	_, err := svc.Reserve(ctx, service.ReserveInput{
 		InventoryItemID: item.ID, LocationID: loc.ID, Quantity: 3,
@@ -986,74 +998,75 @@ func TestVeritabaniKisitiSonSavunma(t *testing.T) {
 	_, err = testPool.Pool().Exec(ctx,
 		`UPDATE inventory_levels SET stocked_quantity = 1
          WHERE inventory_item_id = $1 AND location_id = $2`, item.ID, loc.ID)
-	require.Error(t, err, "rezerve adedin altına inen doğrudan güncelleme reddedilmeli")
+	require.Error(t, err, "a direct update that goes below the reserved quantity must be refused")
 
 	_, err = testPool.Pool().Exec(ctx,
 		`UPDATE inventory_levels SET stocked_quantity = -1
          WHERE inventory_item_id = $1 AND location_id = $2`, item.ID, loc.ID)
-	require.Error(t, err, "negatif fiziksel adet reddedilmeli")
+	require.Error(t, err, "a negative physical quantity must be refused")
 
 	_, err = testPool.Pool().Exec(ctx,
 		`INSERT INTO inventory_reservations (id, inventory_item_id, location_id, quantity)
          VALUES ($1, $2, $3, 0)`, models.NewReservationID(), item.ID, loc.ID)
-	require.Error(t, err, "sıfır adetli rezervasyon reddedilmeli")
+	require.Error(t, err, "a reservation of zero units must be refused")
 }
 
-// TestAralikDisiSayfadaToplamKorunur listenin toplam sayısının, sayfada hiç
-// satır olmasa bile doğru kaldığını doğrular.
+// TestTheTotalSurvivesAnOutOfRangePage verifies that the listing's total count
+// stays right even when the page holds no row at all.
 //
-// Toplam sayfa satırlarından türetilirse (örn. satırla birlikte dönen bir
-// pencere fonksiyonundan okunursa) aralık dışı bir sayfa için hiç satır
-// dönmediğinden toplam 0 görünür; istemci "hiç kayıt yok" sonucuna varır.
-// Zarfın count alanı ise sayfanın değil, FİLTREYE UYAN TÜM kayıtların
-// sayısıdır. Sahte depo bu ayrımı gösteremez, çünkü orada sayım zaten
-// satırlardan bağımsızdır; ayrım yalnızca gerçek SQL'de vardır.
-func TestAralikDisiSayfadaToplamKorunur(t *testing.T) {
+// If the total were derived from the page rows (for example, read from a window
+// function returned along with each row), no row would come back for an
+// out-of-range page and the total would look like 0; the client would conclude
+// "there are no records". The envelope's count field, however, is the count not
+// of the page but of ALL the records MATCHING THE FILTER. The fake store cannot
+// show this distinction, because there the count is independent of the rows
+// anyway; the distinction exists only in real SQL.
+func TestTheTotalSurvivesAnOutOfRangePage(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 
-	t.Run("kalem", func(t *testing.T) {
-		item := yeniKalem(ctx, t, svc)
+	t.Run("item", func(t *testing.T) {
+		item := newItem(ctx, t, svc)
 
-		items, toplam, err := svc.ListInventoryItems(ctx, service.ListInventoryItemsInput{
+		items, total, err := svc.ListInventoryItems(ctx, service.ListInventoryItemsInput{
 			SKU: &item.SKU, Page: service.Page{Limit: 10},
 		})
 		require.NoError(t, err)
 		require.Len(t, items, 1)
-		require.Equal(t, int64(1), toplam)
+		require.Equal(t, int64(1), total)
 
-		items, toplam, err = svc.ListInventoryItems(ctx, service.ListInventoryItemsInput{
+		items, total, err = svc.ListInventoryItems(ctx, service.ListInventoryItemsInput{
 			SKU: &item.SKU, Page: service.Page{Limit: 10, Offset: 50},
 		})
 		require.NoError(t, err)
-		assert.Empty(t, items, "aralık dışı sayfada satır olmamalı")
-		assert.Equal(t, int64(1), toplam,
-			"toplam filtreye uyan TÜM kayıtların sayısıdır; sayfadaki satır sayısı değil")
+		assert.Empty(t, items, "an out-of-range page must hold no row")
+		assert.Equal(t, int64(1), total,
+			"the total is the count of ALL the records matching the filter, not the number of rows on the page")
 	})
 
-	t.Run("lokasyon", func(t *testing.T) {
-		yeniLokasyon(ctx, t, svc)
+	t.Run("location", func(t *testing.T) {
+		newLocation(ctx, t, svc)
 
-		locs, toplam, err := svc.ListStockLocations(ctx, service.ListStockLocationsInput{
+		locs, total, err := svc.ListStockLocations(ctx, service.ListStockLocationsInput{
 			Page: service.Page{Limit: 10, Offset: 1_000_000},
 		})
 
 		require.NoError(t, err)
-		assert.Empty(t, locs, "aralık dışı sayfada satır olmamalı")
-		assert.Positive(t, toplam, "en az bir lokasyon var; toplam sayfayla birlikte sıfırlanamaz")
+		assert.Empty(t, locs, "an out-of-range page must hold no row")
+		assert.Positive(t, total, "there is at least one location; the total cannot drop to zero along with the page")
 	})
 }
 
-// TestQuerySaglayicisiStoklaBirlikteDoner sağlayıcının kalemi TOPLAM
-// satılabilir adediyle döndürdüğünü gerçek veritabanı üzerinde doğrular.
-// product'ın mağaza listelemesi stoğu bu yoldan okur.
-func TestQuerySaglayicisiStoklaBirlikteDoner(t *testing.T) {
+// TestTheQueryProviderReturnsItemsWithTheirStock verifies on a real database
+// that the provider returns the item with its TOTAL available quantity.
+// product's storefront listing reads stock this way.
+func TestTheQueryProviderReturnsItemsWithTheirStock(t *testing.T) {
 	ctx := context.Background()
-	svc := yeniServis(t)
+	svc := newDBService(t)
 	provider := service.NewQueryProvider(svc)
 
-	item, locA := stoklu(ctx, t, svc, 10)
-	locB := yeniLokasyon(ctx, t, svc)
+	item, locA := withStock(ctx, t, svc, 10)
+	locB := newLocation(ctx, t, svc)
 	_, err := svc.SetInventoryLevel(ctx, item.ID, locB.ID, 5)
 	require.NoError(t, err)
 	_, err = svc.Reserve(ctx, service.ReserveInput{
@@ -1061,32 +1074,33 @@ func TestQuerySaglayicisiStoklaBirlikteDoner(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	stoksuz := yeniKalem(ctx, t, svc)
+	unstocked := newItem(ctx, t, svc)
 
-	records, err := provider.FetchByIDs(ctx, []string{item.ID, stoksuz.ID}, nil)
+	records, err := provider.FetchByIDs(ctx, []string{item.ID, unstocked.ID}, nil)
 	require.NoError(t, err)
 	require.Len(t, records, 2)
 
 	byID := map[string]query.Record{}
 	for _, record := range records {
 		id, ok := record[query.IDField].(string)
-		require.True(t, ok, "kayıt kimliği metin olmalı")
+		require.True(t, ok, "the record ID must be a string")
 		byID[id] = record
 	}
 
 	assert.Equal(t, int64(11), byID[item.ID][service.FieldAvailableQuantity], "(10-4) + 5 = 11")
-	assert.Equal(t, int64(0), byID[stoksuz.ID][service.FieldAvailableQuantity],
-		"seviyesi olmayan kalem sıfırla dönmeli")
+	assert.Equal(t, int64(0), byID[unstocked.ID][service.FieldAvailableQuantity],
+		"an item with no level must come back with zero")
 	assert.Equal(t, item.SKU, byID[item.ID][service.FieldSKU])
 }
 
-// TestModulKaydiCozulebilir modülün container'a kaydettiği adların gerçekten
-// çözülebildiğini ve beklenen arayüzleri karşıladığını doğrular.
+// TestTheModuleRegistrationResolves verifies that the names the module
+// registers in the container really resolve and satisfy the expected
+// interfaces.
 //
-// ADR 0001'in bedeli buydu: sağlayıcı ile tüketici arasında derleme zamanı
-// bağı yoktur, uyumsuzluk ancak çözüm anında görünür. Bu test o anı erkene
-// çeker.
-func TestModulKaydiCozulebilir(t *testing.T) {
+// This was the price of ADR 0001: there is no compile-time tie between provider
+// and consumer, and a mismatch becomes visible only at resolution time. This
+// test brings that moment forward.
+func TestTheModuleRegistrationResolves(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
@@ -1096,23 +1110,25 @@ func TestModulKaydiCozulebilir(t *testing.T) {
 	require.NoError(t, mod.Register(ctx, c))
 
 	svc, err := container.Resolve[*service.Service](c, "inventory.service")
-	require.NoError(t, err, "servis, sabit adıyla çözülebilmeli")
+	require.NoError(t, err, "the service must be resolvable by its fixed name")
 	require.NotNil(t, svc)
 	assert.Equal(t, "inventory.service", inventory.ServiceName,
-		"servis adı değişirse tüketici modüller onu bulamaz")
+		"if the service name changes the consuming modules cannot find it")
 
-	// Ad, ADR 0004'ün kuralıyla ELDE hesaplanır: sağlayıcı "<entity>.query"
-	// adıyla aranır. Sabiti kullanmak testi totolojiye çevirirdi — sabit
-	// yanlışsa test de yanlış adı arardı.
+	// The name is computed BY HAND with ADR 0004's rule: the provider is looked
+	// up under "<entity>.query". Using the constant would turn the test into a
+	// tautology — if the constant were wrong the test would look up the wrong
+	// name too.
 	provider, err := container.Resolve[query.Provider](c, "inventory_item"+query.ProviderSuffix)
-	require.NoError(t, err, "Query sağlayıcısı adıyla çözülebilmeli (ADR 0004)")
+	require.NoError(t, err, "the query provider must be resolvable by its name (ADR 0004)")
 	assert.Equal(t, "inventory_item", provider.Entity(),
-		"kayıt adının öneki Entity() ile aynı olmalı")
+		"the prefix of the registered name must equal Entity()")
 
-	// Asıl kanıt: çekirdeğin Query katmanı, modülü hiç tanımadan yalnızca
-	// entity adıyla sağlayıcıyı bulup veriyi çekebilmeli.
-	item := yeniKalem(ctx, t, svc)
-	_, err = svc.SetInventoryLevel(ctx, item.ID, yeniLokasyon(ctx, t, svc).ID, 4)
+	// The real proof: the core's query layer must be able to find the provider
+	// by the entity name alone, without knowing the module at all, and fetch
+	// the data.
+	item := newItem(ctx, t, svc)
+	_, err = svc.SetInventoryLevel(ctx, item.ID, newLocation(ctx, t, svc).ID, 4)
 	require.NoError(t, err)
 
 	records, err := query.New(nil, c, nil).Graph(ctx, query.GraphSpec{
@@ -1125,8 +1141,9 @@ func TestModulKaydiCozulebilir(t *testing.T) {
 	assert.Equal(t, int64(4), records[0][service.FieldAvailableQuantity])
 }
 
-// aktifRezervasyonAdedi kalemin aktif rezervasyon kaydı sayısını döner.
-func aktifRezervasyonAdedi(ctx context.Context, t *testing.T, itemID string) int64 {
+// activeReservationCount returns the number of the item's active reservation
+// records.
+func activeReservationCount(ctx context.Context, t *testing.T, itemID string) int64 {
 	t.Helper()
 
 	var count int64
@@ -1138,8 +1155,9 @@ func aktifRezervasyonAdedi(ctx context.Context, t *testing.T, itemID string) int
 	return count
 }
 
-// stokAdedi seviyenin fiziksel adedini doğrudan veritabanından okur.
-func stokAdedi(ctx context.Context, t *testing.T, itemID, locationID string) int64 {
+// stockedQuantityOf reads the level's physical quantity directly from the
+// database.
+func stockedQuantityOf(ctx context.Context, t *testing.T, itemID, locationID string) int64 {
 	t.Helper()
 
 	var stocked int64
@@ -1154,29 +1172,30 @@ func stokAdedi(ctx context.Context, t *testing.T, itemID, locationID string) int
 	return stocked
 }
 
-// TestKilitliOkumaIslemDisindaReddedilir kilit alan depo metotlarının işlem
-// dışında çağrıldığında hata döndüğünü doğrular.
+// TestALockingReadOutsideATransactionIsRefused verifies that the store methods
+// that take a lock return an error when called outside a transaction.
 //
-// İşlemsiz bir FOR UPDATE kilidi ifade biter bitmez serbest kalır; yani hiçbir
-// şeyi korumaz ama koruyormuş gibi görünür. Sessizce çalışmasına izin vermek,
-// eşzamanlılık güvencesini fark edilmeden kaybetmenin en kolay yoludur.
-func TestKilitliOkumaIslemDisindaReddedilir(t *testing.T) {
+// A FOR UPDATE lock without a transaction is released as soon as the statement
+// ends; that is, it protects nothing but looks as if it does. Letting it run
+// silently is the easiest way to lose the concurrency guarantee without
+// noticing.
+func TestALockingReadOutsideATransactionIsRefused(t *testing.T) {
 	ctx := context.Background()
 	repo := repository.New(testPool.Pool())
-	svc := yeniServis(t)
-	item, loc := stoklu(ctx, t, svc, 3)
+	svc := newDBService(t)
+	item, loc := withStock(ctx, t, svc, 3)
 
 	_, err := repo.LockInventoryLevel(ctx, item.ID, loc.ID)
-	require.Error(t, err, "seviye kilidi işlem dışında alınamamalı")
-	assert.Contains(t, err.Error(), "işlem")
+	require.Error(t, err, "the level lock must not be taken outside a transaction")
+	assert.Contains(t, err.Error(), "inside a transaction")
 
 	err = repo.LockInventoryItem(ctx, item.ID)
-	require.Error(t, err, "kalem kilidi işlem dışında alınamamalı")
+	require.Error(t, err, "the item lock must not be taken outside a transaction")
 
 	_, err = repo.LockReservation(ctx, "invres_x")
-	require.Error(t, err, "rezervasyon kilidi işlem dışında alınamamalı")
+	require.Error(t, err, "the reservation lock must not be taken outside a transaction")
 
-	// Aynı çağrılar işlem içinde başarılı olmalı.
+	// The same calls must succeed inside a transaction.
 	require.NoError(t, repo.WithTx(ctx, func(ctx context.Context) error {
 		if lockErr := repo.LockInventoryItem(ctx, item.ID); lockErr != nil {
 			return lockErr
@@ -1186,14 +1205,14 @@ func TestKilitliOkumaIslemDisindaReddedilir(t *testing.T) {
 	}))
 }
 
-// TestIslemHataliBitersegeriAlinir işlemin hata durumunda gerçekten geri
-// alındığını veritabanı üzerinde doğrular.
-func TestIslemHataliBitersegeriAlinir(t *testing.T) {
+// TestAFailedTransactionIsRolledBack verifies on the database that a
+// transaction is really rolled back when it fails.
+func TestAFailedTransactionIsRolledBack(t *testing.T) {
 	ctx := context.Background()
 	repo := repository.New(testPool.Pool())
 	sku := "SKU-" + models.NewInventoryItemID()
 
-	bilerek := errors.Internal("test_hata", "işlem geri alınmalı")
+	deliberate := errors.Internal("test_hata", "the transaction must be rolled back")
 	err := repo.WithTx(ctx, func(ctx context.Context) error {
 		_, createErr := repo.CreateInventoryItem(ctx, models.InventoryItem{
 			ID: models.NewInventoryItemID(), SKU: sku, RequiresShipping: true,
@@ -1201,13 +1220,13 @@ func TestIslemHataliBitersegeriAlinir(t *testing.T) {
 		if createErr != nil {
 			return createErr
 		}
-		return bilerek
+		return deliberate
 	})
 
-	require.ErrorIs(t, err, bilerek)
+	require.ErrorIs(t, err, deliberate)
 
 	var count int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT COUNT(*) FROM inventory_items WHERE sku = $1`, sku).Scan(&count))
-	assert.Zero(t, count, "geri alınan işlemin yazdığı satır kalmamalı")
+	assert.Zero(t, count, "no row written by the rolled-back transaction may remain")
 }

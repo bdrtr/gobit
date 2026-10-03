@@ -23,11 +23,6 @@ import (
 // it, and the surface says so.
 
 // newRouter binds the handlers over a fake service.
-//
-// The package's existing helper does exactly this under a Turkish name, and this
-// file is English (ADR 0012, decision 3 — language is a property of the FILE):
-// reaching for it would drag the old name into a translated file and the
-// language check would fail, correctly.
 func newRouter(t *testing.T) (chi.Router, *fakeInventory) {
 	t.Helper()
 
@@ -86,7 +81,7 @@ func TestClosingALocationReturnsTheClosedRow(t *testing.T) {
 	rec := sendRequest(t, router, http.MethodPost, "/admin/v1/stock-locations/sloc_1/close")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "sloc_1", svc.gorulenID)
+	assert.Equal(t, "sloc_1", svc.lastID)
 	data, ok := jsonBody(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "2026-09-08T10:00:00Z", data["closed_at"])
@@ -106,7 +101,7 @@ func TestAnOpenLocationReportsClosedAtAsNull(t *testing.T) {
 	rec := sendRequest(t, router, http.MethodGet, "/admin/v1/stock-locations/sloc_1")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "sloc_1", svc.gorulenID)
+	assert.Equal(t, "sloc_1", svc.lastID)
 	data, ok := jsonBody(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
 	require.Contains(t, data, "closed_at")
@@ -135,7 +130,7 @@ func TestTheListingAsksForClosedLocationsOnlyWhenTold(t *testing.T) {
 	rec := sendRequest(t, router, http.MethodGet, "/admin/v1/stock-locations?include_closed=true")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.True(t, svc.gorulenLocationInput.IncludeClosed)
+	assert.True(t, svc.lastLocationInput.IncludeClosed)
 }
 
 // TestAnUnreadableIncludeClosedIsRejected proves the flag is read as a boolean

@@ -65,7 +65,7 @@ type Store interface {
 	// fn returns an error.
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
 
-	// CreateStockLocation yeni bir stok lokasyonu kaydeder.
+	// CreateStockLocation records a new stock location.
 	CreateStockLocation(ctx context.Context, loc models.StockLocation) (models.StockLocation, error)
 	// GetStockLocation returns the location by its id; NotFound when there is
 	// none. A CLOSED location is returned too: the levels and reservations that
@@ -90,7 +90,7 @@ type Store interface {
 	// at the location.
 	CountActiveReservationsAtLocation(ctx context.Context, locationID string) (int64, error)
 
-	// CreateInventoryItem yeni bir stok kalemi kaydeder.
+	// CreateInventoryItem records a new inventory item.
 	CreateInventoryItem(ctx context.Context, item models.InventoryItem) (models.InventoryItem, error)
 	// GetInventoryItem returns the item by its id, or NotFound.
 	GetInventoryItem(ctx context.Context, id string) (models.InventoryItem, error)
@@ -116,7 +116,7 @@ type Store interface {
 	// LockInventoryLevel locks the level and returns its current state, or
 	// NotFound.
 	LockInventoryLevel(ctx context.Context, itemID, locationID string) (models.InventoryLevel, error)
-	// CreateInventoryLevel yeni bir seviye kaydeder.
+	// CreateInventoryLevel records a new level.
 	CreateInventoryLevel(ctx context.Context, level models.InventoryLevel) (models.InventoryLevel, error)
 	// UpdateInventoryLevelQuantities writes the quantities as ABSOLUTE values.
 	UpdateInventoryLevelQuantities(ctx context.Context, levelID string, stocked, reserved int64) (models.InventoryLevel, error)
@@ -125,20 +125,21 @@ type Store interface {
 	// AvailableByItemIDs returns the sellable total per item in ONE query.
 	// An item with no level at all is absent from the result.
 	AvailableByItemIDs(ctx context.Context, ids []string) (map[string]int64, error)
-	// AvailableByItemLocation, satılabilir adedi kalem ve LOKASYON kırılımıyla
-	// tek sorguda döner. Boş kalan lokasyon haritada yoktur.
+	// AvailableByItemLocation returns the sellable quantity broken down by item
+	// and LOCATION in a single query. A location left empty is absent from the
+	// map.
 	AvailableByItemLocation(
 		ctx context.Context, ids []string,
 	) (map[string]map[string]int64, error)
 
-	// CreateReservation yeni bir rezervasyon kaydeder.
+	// CreateReservation records a new reservation.
 	CreateReservation(ctx context.Context, res models.Reservation) (models.Reservation, error)
 	// LockReservation locks the reservation and returns its current state, or
 	// NotFound.
 	LockReservation(ctx context.Context, id string) (models.Reservation, error)
 	// GetReservation returns the reservation without locking it, or NotFound.
 	GetReservation(ctx context.Context, id string) (models.Reservation, error)
-	// SetReservationStatus rezervasyonun durumunu yazar.
+	// SetReservationStatus writes the reservation's status.
 	SetReservationStatus(ctx context.Context, id string, status models.ReservationStatus) error
 	// CountActiveReservations returns how many active reservations the item has.
 	CountActiveReservations(ctx context.Context, itemID string) (int64, error)

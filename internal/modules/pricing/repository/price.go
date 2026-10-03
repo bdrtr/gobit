@@ -10,7 +10,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/repository/pricingdb"
 )
 
-// ListPrices bir price set'in canlı fiyatlarını kurallarıyla birlikte döner.
+// ListPrices returns a price set's live prices together with their rules.
 func (r *Repo) ListPrices(ctx context.Context, priceSetID string) ([]models.Price, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -18,7 +18,7 @@ func (r *Repo) ListPrices(ctx context.Context, priceSetID string) ([]models.Pric
 
 	rows, err := r.q.ListPricesBySet(ctx, priceSetID)
 	if err != nil {
-		return nil, wrapDB(err, "fiyatlar alınamadı: %s", priceSetID)
+		return nil, wrapDB(err, "the prices could not be read: %s", priceSetID)
 	}
 
 	prices := make([]models.Price, 0, len(rows))
@@ -31,16 +31,17 @@ func (r *Repo) ListPrices(ctx context.Context, priceSetID string) ([]models.Pric
 	return prices, nil
 }
 
-// ListPriceCandidatesBySets birden çok price set'in fiyat adaylarını TEK
-// sorguda döner ve kap kimliğine göre gruplar.
+// ListPriceCandidatesBySets returns the price candidates of several price sets
+// in ONE query and groups them by container id.
 //
-// Toplu olması Query katmanının N+1 yasağı içindir (ADR 0004): product'ın store
-// listelemesi yüz varyantın fiyatını tek çağrıda okur. Kurallar da ikinci ve
-// SON bir sorguyla toplu getirilir.
+// It is batched because of the Query layer's N+1 ban (ADR 0004): product's
+// store listing reads the price of a hundred variants in one call. The rules
+// are fetched in bulk too, with a second and LAST query.
 //
-// Fiyat yerine ADAY dönmesi bilinçlidir: liste üstverisi taşınmasaydı okuma
-// yüzeyi yayınlanmamış bir kampanyanın fiyatını taban fiyattan ayırt edemez ve
-// hesaplamanın elediği bir fiyatı vitrine sızdırırdı.
+// Returning CANDIDATES instead of prices is deliberate: without the list
+// metadata, the read surface could not tell an unpublished campaign's price
+// from the base price and would leak to the storefront a price the calculation
+// eliminates.
 func (r *Repo) ListPriceCandidatesBySets(
 	ctx context.Context,
 	priceSetIDs []string,
@@ -54,7 +55,7 @@ func (r *Repo) ListPriceCandidatesBySets(
 
 	rows, err := r.q.ListPriceCandidatesBySets(ctx, priceSetIDs)
 	if err != nil {
-		return nil, wrapDB(err, "fiyat adayları toplu alınamadı")
+		return nil, wrapDB(err, "the price candidates could not be read in bulk")
 	}
 
 	candidates := make([]models.PriceCandidate, 0, len(rows))
@@ -87,11 +88,11 @@ func (r *Repo) ListPriceCandidatesBySets(
 	return grouped, nil
 }
 
-// ListPriceCandidates hesaplamaya girecek fiyatları, bağlı oldukları listenin
-// üstverisi ve kurallarıyla birlikte döner.
+// ListPriceCandidates returns the prices that will enter the calculation,
+// together with the metadata of the list they are bound to and their rules.
 //
-// Eleme YAPILMAZ: para birimi, adet aralığı ve liste geçerliliği süzgeci servis
-// katmanındaki saf seçim fonksiyonundadır.
+// NO elimination is done here: the currency, quantity range and list validity
+// filter lives in the pure selection function in the service layer.
 func (r *Repo) ListPriceCandidates(ctx context.Context, priceSetID string) ([]models.PriceCandidate, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -99,7 +100,7 @@ func (r *Repo) ListPriceCandidates(ctx context.Context, priceSetID string) ([]mo
 
 	rows, err := r.q.ListPriceCandidates(ctx, priceSetID)
 	if err != nil {
-		return nil, wrapDB(err, "fiyat adayları alınamadı: %s", priceSetID)
+		return nil, wrapDB(err, "the price candidates could not be read: %s", priceSetID)
 	}
 
 	candidates := make([]models.PriceCandidate, 0, len(rows))
@@ -190,10 +191,11 @@ func (r *Repo) ReplacePrices(
 	return written, nil
 }
 
-// insertPrices verilen fiyatları ve kurallarını AÇIK BİR İŞLEM İÇİNDE ekler.
+// insertPrices inserts the given prices and their rules INSIDE AN OPEN
+// TRANSACTION.
 //
-// Çağıranın işlemini paylaşır (q, tx'e bağlı Queries'tir); bu yüzden kabın
-// oluşturulmasıyla fiyatlarının yazılması tek bir atomik adım olabilir.
+// It shares the caller's transaction (q is a Queries bound to tx); that is why
+// creating the container and writing its prices can be a single atomic step.
 func insertPrices(
 	ctx context.Context,
 	q *pricingdb.Queries,
@@ -215,7 +217,7 @@ func insertPrices(
 			CreatedAt:    fromTime(now),
 		})
 		if err != nil {
-			return nil, wrapDB(err, "fiyat eklenemedi (%s %d)", price.CurrencyCode, price.Amount)
+			return nil, wrapDB(err, "the price could not be inserted (%s %d)", price.CurrencyCode, price.Amount)
 		}
 
 		created := toPrice(row)
@@ -231,7 +233,7 @@ func insertPrices(
 				CreatedAt:  fromTime(now),
 			})
 			if err != nil {
-				return nil, wrapDB(err, "fiyat kuralı eklenemedi (%s %s)", rule.Attribute, rule.Operator)
+				return nil, wrapDB(err, "the price rule could not be inserted (%s %s)", rule.Attribute, rule.Operator)
 			}
 			created.Rules = append(created.Rules, toPriceRule(ruleRow))
 		}
@@ -240,7 +242,8 @@ func insertPrices(
 	return written, nil
 }
 
-// GetPrice kimliğe göre fiyatı kurallarıyla döner; yoksa errors.NotFound.
+// GetPrice returns the price with the given id together with its rules;
+// errors.NotFound if there is none.
 func (r *Repo) GetPrice(ctx context.Context, id string) (models.Price, error) {
 	if err := r.ready(); err != nil {
 		return models.Price{}, err
@@ -248,7 +251,7 @@ func (r *Repo) GetPrice(ctx context.Context, id string) (models.Price, error) {
 
 	row, err := r.q.GetPrice(ctx, id)
 	if err != nil {
-		return models.Price{}, notFoundOr(err, CodePriceNotFound, "fiyat bulunamadı: %s", id)
+		return models.Price{}, notFoundOr(err, CodePriceNotFound, "price not found: %s", id)
 	}
 
 	price := toPrice(row)
@@ -259,10 +262,11 @@ func (r *Repo) GetPrice(ctx context.Context, id string) (models.Price, error) {
 	return prices[0], nil
 }
 
-// attachRules verilen fiyatların kurallarını TEK sorguda getirip yerine yazar.
+// attachRules fetches the given prices' rules in ONE query and writes them in
+// place.
 //
-// Fiyat başına sorgu açılmaz; maliyet fiyat sayısıyla değil, sabit bir gidiş
-// dönüşle sınırlıdır.
+// No query is opened per price; the cost is bounded not by the number of prices
+// but by a constant number of round trips.
 func (r *Repo) attachRules(ctx context.Context, prices []models.Price) error {
 	return attachRulesWith(ctx, r.q, prices)
 }
@@ -299,12 +303,12 @@ func attachRulesWith(ctx context.Context, q *pricingdb.Queries, prices []models.
 	return nil
 }
 
-// attachCandidateRules adayların fiyat kurallarını TEK sorguda getirip yerine
-// yazar.
+// attachCandidateRules fetches the candidates' price rules in ONE query and
+// writes them in place.
 //
-// Aday listesi doğrudan [Repo.attachRules]'a verilemez (o []models.Price
-// bekler); dönüşüm burada bir kez yapılır ki iki aday sorgusu aynı yolu
-// paylaşsın.
+// The candidate list cannot be handed to [Repo.attachRules] directly (it
+// expects []models.Price); the conversion is done here once so that the two
+// candidate queries share the same path.
 func (r *Repo) attachCandidateRules(ctx context.Context, candidates []models.PriceCandidate) error {
 	prices := make([]models.Price, 0, len(candidates))
 	for i := range candidates {
@@ -319,7 +323,8 @@ func (r *Repo) attachCandidateRules(ctx context.Context, candidates []models.Pri
 	return nil
 }
 
-// toPrice üretilen satırı domain modeline çevirir. Kurallar ayrı doldurulur.
+// toPrice turns the generated row into the domain model. The rules are filled
+// in separately.
 func toPrice(row pricingdb.Price) models.Price {
 	return models.Price{
 		ID:           row.ID,
@@ -335,14 +340,16 @@ func toPrice(row pricingdb.Price) models.Price {
 	}
 }
 
-// toPriceListInfo aday satırındaki liste üstverisini çevirir.
+// toPriceListInfo converts the list metadata in a candidate row.
 //
-// Fiyat bir listeye bağlı DEĞİLSE ya da bağlı olduğu liste silinmişse nil
-// döner; ikinci durumu servis katmanı fiyatı eleyerek yorumlar.
+// It returns nil if the price is NOT bound to a list or if the list it is bound
+// to was deleted; the service layer interprets the second case by eliminating
+// the price.
 //
-// Satır tipi değil ALANLAR alınır: tekil ve toplu aday sorguları sqlc'de ayrı
-// satır tipleri üretir, aynı beş sütunu taşısalar da. Alanları geçmek tek bir
-// dönüşümün iki sorguya da hizmet etmesini sağlar.
+// It takes the FIELDS, not the row type: the single and batch candidate
+// queries produce separate row types in sqlc, even though they carry the same
+// five columns. Passing the fields lets a single conversion serve both
+// queries.
 func toPriceListInfo(
 	id, listType, status *string,
 	startsAt, endsAt pgtype.Timestamptz,

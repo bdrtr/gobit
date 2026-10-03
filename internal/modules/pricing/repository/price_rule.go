@@ -8,22 +8,26 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/repository/pricingdb"
 )
 
-// CreatePriceRule bir fiyata kural ekler.
+// CreatePriceRule adds a rule to a price.
 //
-// Fiyat HİÇ YOKSA foreign key ihlali oluşur ve errors.Invalid dönülür.
+// If the price DOES NOT EXIST AT ALL, a foreign key violation occurs and
+// errors.Invalid is returned.
 //
-// Fiyat SİLİNMİŞSE foreign key SUSAR ve kural yazılır: silme yumuşaktır, satır
-// yerinde durur ve FK satırın deleted_at'ine değil VARLIĞINA bakar. Bir süre
-// burada "kuralın yetim kalması yapısal olarak imkânsızdır" yazıyordu; ölçüldü
-// ve yanlış çıktı (2026-09-06, bkz. pricing_integration_test.go'daki
-// TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz).
+// If the price was DELETED, the foreign key STAYS SILENT and the rule is
+// written: deletion is soft, the row stays in place, and the FK looks at the
+// row's EXISTENCE, not at its deleted_at. For a while this comment said "a rule
+// being orphaned is structurally impossible"; that was measured and turned out
+// to be wrong (2026-09-06, see
+// TestARuleCanBeWrittenToADeletedPriceButIsUnreachable in
+// pricing_integration_test.go).
 //
-// Kilit EKLENMEDİ ve bu bilinçlidir. Eklenecek kilidin koruyacağı bir karar
-// yoktur: bu yol TEK depo çağrısı yapar ve servis öncesinde hiçbir şey okumaz,
-// yani "oku → karar ver → yaz" yarışı oluşamaz. Yazılan kuralın sonucu da
-// ULAŞILAMAZ bir satırdır — fiyatın kendisi silinmiş olduğu için aday
-// sorgusuna girmez ve müşterinin ödediği tutar değişmez. Testin ikinci yarısı
-// tam olarak bunu tutar.
+// NO lock was ADDED, and that is deliberate. There is no decision for a lock to
+// protect: this path makes a SINGLE repository call and the service reads
+// nothing beforehand, so a "read → decide → write" race cannot arise. The
+// consequence of the rule written is an UNREACHABLE row as well — because the
+// price itself was deleted, it does not enter the candidate query and the
+// amount the customer pays does not change. The second half of the test holds
+// exactly that.
 func (r *Repo) CreatePriceRule(ctx context.Context, rule models.PriceRule, now time.Time) (models.PriceRule, error) {
 	if err := r.ready(); err != nil {
 		return models.PriceRule{}, err
@@ -40,7 +44,7 @@ func (r *Repo) CreatePriceRule(ctx context.Context, rule models.PriceRule, now t
 			CreatedAt:  fromTime(now),
 		})
 		if err != nil {
-			return wrapDB(err, "fiyat kuralı eklenemedi: %s", rule.PriceID)
+			return wrapDB(err, "the price rule could not be inserted: %s", rule.PriceID)
 		}
 		created = toPriceRule(row)
 
@@ -55,7 +59,8 @@ func (r *Repo) CreatePriceRule(ctx context.Context, rule models.PriceRule, now t
 	return created, nil
 }
 
-// GetPriceRule kimliğe göre kuralı döner; yoksa errors.NotFound.
+// GetPriceRule returns the rule with the given id; errors.NotFound if there is
+// none.
 func (r *Repo) GetPriceRule(ctx context.Context, id string) (models.PriceRule, error) {
 	if err := r.ready(); err != nil {
 		return models.PriceRule{}, err
@@ -63,12 +68,12 @@ func (r *Repo) GetPriceRule(ctx context.Context, id string) (models.PriceRule, e
 
 	row, err := r.q.GetPriceRule(ctx, id)
 	if err != nil {
-		return models.PriceRule{}, notFoundOr(err, CodePriceRuleNotFound, "fiyat kuralı bulunamadı: %s", id)
+		return models.PriceRule{}, notFoundOr(err, CodePriceRuleNotFound, "price rule not found: %s", id)
 	}
 	return toPriceRule(row), nil
 }
 
-// ListPriceRules bir fiyatın canlı kurallarını döner.
+// ListPriceRules returns a price's live rules.
 func (r *Repo) ListPriceRules(ctx context.Context, priceID string) ([]models.PriceRule, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -76,7 +81,7 @@ func (r *Repo) ListPriceRules(ctx context.Context, priceID string) ([]models.Pri
 
 	rows, err := r.q.ListPriceRulesByPrice(ctx, priceID)
 	if err != nil {
-		return nil, wrapDB(err, "fiyat kuralları alınamadı: %s", priceID)
+		return nil, wrapDB(err, "the price rules could not be read: %s", priceID)
 	}
 
 	rules := make([]models.PriceRule, 0, len(rows))
@@ -86,7 +91,7 @@ func (r *Repo) ListPriceRules(ctx context.Context, priceID string) ([]models.Pri
 	return rules, nil
 }
 
-// DeletePriceRule kuralı soft delete ile siler; yoksa errors.NotFound.
+// DeletePriceRule soft-deletes the rule; errors.NotFound if there is none.
 func (r *Repo) DeletePriceRule(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -95,14 +100,14 @@ func (r *Repo) DeletePriceRule(ctx context.Context, id string, now time.Time) er
 	return r.inTx(ctx, func(q *pricingdb.Queries) error {
 		rule, err := q.GetPriceRule(ctx, id)
 		if err != nil {
-			return notFoundOr(err, CodePriceRuleNotFound, "fiyat kuralı bulunamadı: %s", id)
+			return notFoundOr(err, CodePriceRuleNotFound, "price rule not found: %s", id)
 		}
 
 		if _, err := q.SoftDeletePriceRule(ctx, pricingdb.SoftDeletePriceRuleParams{
 			ID:        id,
 			DeletedAt: fromTime(now),
 		}); err != nil {
-			return notFoundOr(err, CodePriceRuleNotFound, "fiyat kuralı bulunamadı: %s", id)
+			return notFoundOr(err, CodePriceRuleNotFound, "price rule not found: %s", id)
 		}
 
 		// The price the rule held back competes again (ADR 0167).
@@ -110,7 +115,7 @@ func (r *Repo) DeletePriceRule(ctx context.Context, id string, now time.Time) er
 	})
 }
 
-// toPriceRule üretilen satırı domain modeline çevirir.
+// toPriceRule turns the generated row into the domain model.
 func toPriceRule(row pricingdb.PriceRule) models.PriceRule {
 	return models.PriceRule{
 		ID:        row.ID,

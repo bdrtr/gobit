@@ -225,7 +225,7 @@ func fromHistoryPrice(priceSetID string, price historyPrice) models.Price {
 // recordSetOfPrice records the set a price belongs to, when the price is live.
 //
 // A rule can be written to a deleted price — the foreign key looks at the row,
-// not at its deleted_at, and TestSilinmisFiyataKuralYazilabilirAmaUlasilamaz
+// not at its deleted_at, and TestARuleCanBeWrittenToADeletedPriceButIsUnreachable
 // keeps that — and such a rule changes nothing the ladder reads, so it leaves
 // no snapshot.
 func recordSetOfPrice(ctx context.Context, q *pricingdb.Queries, priceID string, now time.Time) error {

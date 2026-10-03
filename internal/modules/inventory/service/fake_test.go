@@ -13,19 +13,21 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/inventory/service"
 )
 
-// txMarkerKey sahte deponun "işlem içindeyiz" işaretidir.
+// txMarkerKey is the fake store's "we are inside a transaction" marker.
 type txMarkerKey struct{}
 
-// fakeStore service.Store'un bellek içi karşılığıdır.
+// fakeStore is the in-memory counterpart of service.Store.
 //
-// İki davranışı gerçek depodan BİLİNÇLİ olarak taklit eder, çünkü servisin
-// doğruluğu bunlara dayanır:
+// It DELIBERATELY imitates two behaviors of the real store, because the
+// service's correctness rests on them:
 //
-//  1. Kilit alan metotlar işlem DIŞINDA çağrılırsa hata döner. Servis bir
-//     akışta WithTx'i unutursa birim testi bunu yakalar; gerçek veritabanında
-//     bu hata, kilitsiz okuma yüzünden ancak yarış altında görünürdü.
-//  2. İşlem hatayla biterse yazılanlar GERİ ALINIR. "Hata döndü ve hiçbir şey
-//     yazılmadı" iddiası ancak böyle sınanabilir.
+//  1. The methods that take a lock return an error when called OUTSIDE a
+//     transaction. If the service forgets WithTx in some flow, the unit test
+//     catches it; against the real database the mistake would show only under
+//     a race, as an unlocked read.
+//  2. When the transaction ends in an error, what was written is ROLLED BACK.
+//     That is the only way the claim "an error came back and nothing was
+//     written" can be tested.
 type fakeStore struct {
 	mu           sync.Mutex
 	items        map[string]models.InventoryItem
@@ -37,19 +39,19 @@ type fakeStore struct {
 	// first, and a map would hand the assertion whatever it liked.
 	movements []models.Movement
 
-	// updateLevelCalls stok seviyesine kaç kez yazıldığını sayar; idempotent
-	// akışların stoğa İKİNCİ KEZ dokunmadığı bununla kanıtlanır.
+	// updateLevelCalls counts how many times a stock level was written; it is
+	// how the idempotent flows are proven not to touch the stock a SECOND TIME.
 	updateLevelCalls int
-	// kilitler alınan kilitleri SIRASIYLA kaydeder ("item", "level",
-	// "reservation"). Kilit sırası bir eşzamanlılık sözleşmesidir ve gerçek
-	// veritabanında ihlali ancak yarış altında (kilitlenme olarak) görünür;
-	// burada sıra doğrudan okunabilir.
-	kilitler []string
-	// availableCalls toplu satılabilirlik sorgusunun çağrı sayısıdır.
+	// locks records the locks taken, IN ORDER ("item", "level",
+	// "reservation"). The lock order is a concurrency contract, and against the
+	// real database a violation shows only under a race (as a deadlock); here
+	// the order can be read directly.
+	locks []string
+	// availableCalls is the number of calls to the batched availability query.
 	availableCalls int
 
-	// failCreateReservation ayarlanırsa CreateReservation bu hatayı döner;
-	// işlem geri alma yolunu sınamak için kullanılır.
+	// failCreateReservation, when set, is the error CreateReservation returns;
+	// it is used to test the transaction's rollback path.
 	failCreateReservation error
 	// failSetReservationStatus makes the status write fail, which is the LAST
 	// step of a confirm — after the level and the movement have been written.
@@ -58,7 +60,7 @@ type fakeStore struct {
 	failSetReservationStatus error
 }
 
-// newFakeStore boş bir sahte depo üretir.
+// newFakeStore builds an empty fake store.
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		items:        map[string]models.InventoryItem{},
@@ -68,16 +70,17 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-// Sahte deponun servisin beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That the fake store satisfies the surface the service expects is checked at
+// compile time.
 var _ service.Store = (*fakeStore)(nil)
 
-// levelKey (kalem, lokasyon) çiftinin harita anahtarıdır.
+// levelKey is the map key of an (item, location) pair.
 func levelKey(itemID, locationID string) string {
 	return itemID + "\x00" + locationID
 }
 
-// WithTx fn'i "işlem" içinde çalıştırır; hata dönerse durumu geri alır.
+// WithTx runs fn inside a "transaction"; when it returns an error the state is
+// rolled back.
 func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if ctx.Value(txMarkerKey{}) != nil {
 		return fn(ctx)
@@ -113,15 +116,16 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 	return nil
 }
 
-// requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.
+// requireTx verifies that the methods that take a lock are called inside a
+// transaction.
 func requireTx(ctx context.Context, op string) error {
 	if ctx.Value(txMarkerKey{}) == nil {
-		return errors.Internal("fake_tx_required", "%s işlem dışında çağrıldı", op)
+		return errors.Internal("fake_tx_required", "%s called outside a transaction", op)
 	}
 	return nil
 }
 
-// CreateStockLocation lokasyonu kaydeder.
+// CreateStockLocation records the location.
 func (f *fakeStore) CreateStockLocation(_ context.Context, loc models.StockLocation) (models.StockLocation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -131,19 +135,19 @@ func (f *fakeStore) CreateStockLocation(_ context.Context, loc models.StockLocat
 	return loc, nil
 }
 
-// GetStockLocation lokasyonu döner.
+// GetStockLocation returns the location.
 func (f *fakeStore) GetStockLocation(_ context.Context, id string) (models.StockLocation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	loc, ok := f.locations[id]
 	if !ok {
-		return models.StockLocation{}, errors.NotFound("inventory_location_not_found", "lokasyon yok: %s", id)
+		return models.StockLocation{}, errors.NotFound("inventory_location_not_found", "there is no such location: %s", id)
 	}
 	return loc, nil
 }
 
-// ListStockLocations lokasyonları sayfalar.
+// ListStockLocations pages the locations.
 func (f *fakeStore) ListStockLocations(_ context.Context, limit, offset int64, includeClosed bool) ([]models.StockLocation, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -164,7 +168,7 @@ func (f *fakeStore) LockStockLocation(ctx context.Context, id string) (models.St
 	if err := requireTx(ctx, "LockStockLocation"); err != nil {
 		return models.StockLocation{}, err
 	}
-	f.kilitKaydet("location")
+	f.recordLock("location")
 	return f.GetStockLocation(ctx, id)
 }
 
@@ -173,7 +177,7 @@ func (f *fakeStore) LockStockLocationShared(ctx context.Context, id string) (mod
 	if err := requireTx(ctx, "LockStockLocationShared"); err != nil {
 		return models.StockLocation{}, err
 	}
-	f.kilitKaydet("location")
+	f.recordLock("location")
 	return f.GetStockLocation(ctx, id)
 }
 
@@ -225,14 +229,14 @@ func (f *fakeStore) CountActiveReservationsAtLocation(_ context.Context, locatio
 	return count, nil
 }
 
-// CreateInventoryItem kalemi kaydeder.
+// CreateInventoryItem records the item.
 func (f *fakeStore) CreateInventoryItem(_ context.Context, item models.InventoryItem) (models.InventoryItem, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	for _, existing := range f.items {
 		if existing.SKU == item.SKU {
-			return models.InventoryItem{}, errors.Conflict("inventory_sku_exists", "sku kullanımda: %s", item.SKU)
+			return models.InventoryItem{}, errors.Conflict("inventory_sku_exists", "sku already in use: %s", item.SKU)
 		}
 	}
 	item.CreatedAt, item.UpdatedAt = time.Now().UTC(), time.Now().UTC()
@@ -240,59 +244,59 @@ func (f *fakeStore) CreateInventoryItem(_ context.Context, item models.Inventory
 	return item, nil
 }
 
-// GetInventoryItem kalemi döner.
+// GetInventoryItem returns the item.
 func (f *fakeStore) GetInventoryItem(_ context.Context, id string) (models.InventoryItem, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	item, ok := f.items[id]
 	if !ok {
-		return models.InventoryItem{}, errors.NotFound("inventory_item_not_found", "kalem yok: %s", id)
+		return models.InventoryItem{}, errors.NotFound("inventory_item_not_found", "there is no such item: %s", id)
 	}
 	return item, nil
 }
 
-// LockInventoryItem kalemi "kilitler".
+// LockInventoryItem "locks" the item.
 func (f *fakeStore) LockInventoryItem(ctx context.Context, id string) error {
 	if err := requireTx(ctx, "LockInventoryItem"); err != nil {
 		return err
 	}
-	f.kilitKaydet("item")
+	f.recordLock("item")
 	_, err := f.GetInventoryItem(ctx, id)
 	return err
 }
 
-// LockInventoryItemShared kalemi "paylaşımlı kilitler".
+// LockInventoryItemShared "locks" the item in shared mode.
 //
-// Bellek içi depoda kilitler gerçek değildir; taklit edilen davranış, kilidin
-// işlem içinde alınması, kalemin VARLIĞININ doğrulanması ve kilit SIRASININ
-// kaydedilmesidir.
+// In the in-memory store the locks are not real; the behavior imitated is that
+// the lock is taken inside a transaction, that the item's EXISTENCE is
+// verified, and that the lock ORDER is recorded.
 func (f *fakeStore) LockInventoryItemShared(ctx context.Context, id string) error {
 	if err := requireTx(ctx, "LockInventoryItemShared"); err != nil {
 		return err
 	}
-	f.kilitKaydet("item")
+	f.recordLock("item")
 	_, err := f.GetInventoryItem(ctx, id)
 	return err
 }
 
-// kilitKaydet alınan kilidi sıraya ekler.
-func (f *fakeStore) kilitKaydet(tur string) {
+// recordLock appends the lock taken to the order.
+func (f *fakeStore) recordLock(kind string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	f.kilitler = append(f.kilitler, tur)
+	f.locks = append(f.locks, kind)
 }
 
-// kilitSirasi alınan kilitleri sırasıyla döner.
-func (f *fakeStore) kilitSirasi() []string {
+// lockOrder returns the locks taken, in order.
+func (f *fakeStore) lockOrder() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	return slices.Clone(f.kilitler)
+	return slices.Clone(f.locks)
 }
 
-// ListInventoryItems kalemleri filtreleyip sayfalar.
+// ListInventoryItems filters and pages the items.
 func (f *fakeStore) ListInventoryItems(_ context.Context, filter models.InventoryItemFilter) ([]models.InventoryItem, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -311,7 +315,7 @@ func (f *fakeStore) ListInventoryItems(_ context.Context, filter models.Inventor
 	return paginate(matched, filter.Limit, filter.Offset), int64(len(matched)), nil
 }
 
-// InventoryItemsByIDs kimlik kümesini döner.
+// InventoryItemsByIDs returns the set of IDs.
 func (f *fakeStore) InventoryItemsByIDs(_ context.Context, ids []string) ([]models.InventoryItem, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -325,19 +329,19 @@ func (f *fakeStore) InventoryItemsByIDs(_ context.Context, ids []string) ([]mode
 	return out, nil
 }
 
-// SoftDeleteInventoryItem kalemi siler.
+// SoftDeleteInventoryItem deletes the item.
 func (f *fakeStore) SoftDeleteInventoryItem(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if _, ok := f.items[id]; !ok {
-		return errors.NotFound("inventory_item_not_found", "kalem yok: %s", id)
+		return errors.NotFound("inventory_item_not_found", "there is no such item: %s", id)
 	}
 	delete(f.items, id)
 	return nil
 }
 
-// SoftDeleteInventoryLevelsByItem kalemin seviyelerini siler.
+// SoftDeleteInventoryLevelsByItem deletes the item's levels.
 func (f *fakeStore) SoftDeleteInventoryLevelsByItem(_ context.Context, itemID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -350,16 +354,16 @@ func (f *fakeStore) SoftDeleteInventoryLevelsByItem(_ context.Context, itemID st
 	return nil
 }
 
-// LockInventoryLevel seviyeyi "kilitler" ve döner.
+// LockInventoryLevel "locks" the level and returns it.
 func (f *fakeStore) LockInventoryLevel(ctx context.Context, itemID, locationID string) (models.InventoryLevel, error) {
 	if err := requireTx(ctx, "LockInventoryLevel"); err != nil {
 		return models.InventoryLevel{}, err
 	}
-	f.kilitKaydet("level")
+	f.recordLock("level")
 	return f.GetInventoryLevel(ctx, itemID, locationID)
 }
 
-// GetInventoryLevel seviyeyi döner.
+// GetInventoryLevel returns the level.
 func (f *fakeStore) GetInventoryLevel(_ context.Context, itemID, locationID string) (models.InventoryLevel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -367,26 +371,26 @@ func (f *fakeStore) GetInventoryLevel(_ context.Context, itemID, locationID stri
 	level, ok := f.levels[levelKey(itemID, locationID)]
 	if !ok {
 		return models.InventoryLevel{}, errors.NotFound("inventory_level_not_found",
-			"seviye yok (%s, %s)", itemID, locationID)
+			"there is no such level (%s, %s)", itemID, locationID)
 	}
 	return level, nil
 }
 
-// CreateInventoryLevel seviyeyi kaydeder.
+// CreateInventoryLevel records the level.
 func (f *fakeStore) CreateInventoryLevel(_ context.Context, level models.InventoryLevel) (models.InventoryLevel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	key := levelKey(level.InventoryItemID, level.LocationID)
 	if _, ok := f.levels[key]; ok {
-		return models.InventoryLevel{}, errors.Conflict("inventory_level_exists", "seviye zaten var")
+		return models.InventoryLevel{}, errors.Conflict("inventory_level_exists", "the level already exists")
 	}
 	level.CreatedAt, level.UpdatedAt = time.Now().UTC(), time.Now().UTC()
 	f.levels[key] = level
 	return level, nil
 }
 
-// UpdateInventoryLevelQuantities adetleri yazar.
+// UpdateInventoryLevelQuantities writes the quantities.
 func (f *fakeStore) UpdateInventoryLevelQuantities(_ context.Context, levelID string, stocked, reserved int64) (models.InventoryLevel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -401,10 +405,10 @@ func (f *fakeStore) UpdateInventoryLevelQuantities(_ context.Context, levelID st
 		f.levels[key] = level
 		return level, nil
 	}
-	return models.InventoryLevel{}, errors.NotFound("inventory_level_not_found", "seviye yok: %s", levelID)
+	return models.InventoryLevel{}, errors.NotFound("inventory_level_not_found", "there is no such level: %s", levelID)
 }
 
-// ListInventoryLevels kalemin seviyelerini döner.
+// ListInventoryLevels returns the item's levels.
 func (f *fakeStore) ListInventoryLevels(_ context.Context, itemID string) ([]models.InventoryLevel, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -419,7 +423,7 @@ func (f *fakeStore) ListInventoryLevels(_ context.Context, itemID string) ([]mod
 	return out, nil
 }
 
-// AvailableByItemIDs kalem başına satılabilir toplamı döner.
+// AvailableByItemIDs returns the sellable total per item.
 func (f *fakeStore) AvailableByItemIDs(_ context.Context, ids []string) (map[string]int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -439,7 +443,7 @@ func (f *fakeStore) AvailableByItemIDs(_ context.Context, ids []string) (map[str
 	return out, nil
 }
 
-// CreateReservation rezervasyonu kaydeder.
+// CreateReservation records the reservation.
 func (f *fakeStore) CreateReservation(_ context.Context, res models.Reservation) (models.Reservation, error) {
 	if f.failCreateReservation != nil {
 		return models.Reservation{}, f.failCreateReservation
@@ -453,16 +457,16 @@ func (f *fakeStore) CreateReservation(_ context.Context, res models.Reservation)
 	return res, nil
 }
 
-// LockReservation rezervasyonu "kilitler" ve döner.
+// LockReservation "locks" the reservation and returns it.
 func (f *fakeStore) LockReservation(ctx context.Context, id string) (models.Reservation, error) {
 	if err := requireTx(ctx, "LockReservation"); err != nil {
 		return models.Reservation{}, err
 	}
-	f.kilitKaydet("reservation")
+	f.recordLock("reservation")
 	return f.GetReservation(ctx, id)
 }
 
-// GetReservation rezervasyonu döner.
+// GetReservation returns the reservation.
 func (f *fakeStore) GetReservation(_ context.Context, id string) (models.Reservation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -470,12 +474,12 @@ func (f *fakeStore) GetReservation(_ context.Context, id string) (models.Reserva
 	res, ok := f.reservations[id]
 	if !ok {
 		return models.Reservation{}, errors.NotFound("inventory_reservation_not_found",
-			"rezervasyon yok: %s", id)
+			"there is no such reservation: %s", id)
 	}
 	return res, nil
 }
 
-// SetReservationStatus durumu yazar.
+// SetReservationStatus writes the status.
 func (f *fakeStore) SetReservationStatus(_ context.Context, id string, status models.ReservationStatus) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -486,7 +490,7 @@ func (f *fakeStore) SetReservationStatus(_ context.Context, id string, status mo
 
 	res, ok := f.reservations[id]
 	if !ok {
-		return errors.NotFound("inventory_reservation_not_found", "rezervasyon yok: %s", id)
+		return errors.NotFound("inventory_reservation_not_found", "there is no such reservation: %s", id)
 	}
 	res.Status = status
 	res.UpdatedAt = time.Now().UTC()
@@ -494,7 +498,7 @@ func (f *fakeStore) SetReservationStatus(_ context.Context, id string, status mo
 	return nil
 }
 
-// CountActiveReservations aktif rezervasyonları sayar.
+// CountActiveReservations counts the active reservations.
 func (f *fakeStore) CountActiveReservations(_ context.Context, itemID string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -509,9 +513,9 @@ func (f *fakeStore) CountActiveReservations(_ context.Context, itemID string) (i
 	return count, nil
 }
 
-// --- test kurulum yardımcıları ----------------------------------------------
+// --- test setup helpers -----------------------------------------------------
 
-// seedItem sahte depoya bir kalem koyar.
+// seedItem puts an item into the fake store.
 func (f *fakeStore) seedItem(id, sku string) models.InventoryItem {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -589,18 +593,18 @@ func (f *fakeStore) seedMovement(
 	return mv
 }
 
-// seedLevel sahte depoya bir stok seviyesi koyar.
+// seedLevel puts a stock level into the fake store.
 func (f *fakeStore) seedLevel(itemID, locationID string, stocked, reserved int64) models.InventoryLevel {
 	return f.seedLevelWithID("invlevel_"+itemID+"_"+locationID, itemID, locationID, stocked, reserved)
 }
 
-// seedLevelWithID sahte depoya kimliği VERİLEN bir stok seviyesi koyar.
+// seedLevelWithID puts a stock level with a GIVEN ID into the fake store.
 //
-// [fakeStore.ListInventoryLevels] seviyeleri kimliğe göre sıralı döner ve
-// [fakeStore.seedLevel]'ın ürettiği kimlik lokasyon kimliğini içerir; yani iki
-// sıra kendiliğinden birbirini tutar. Sıralamayı sınayan bir test bu fikstürle
-// HİÇ SIRALAMAYAN bir uygulamada da geçerdi. Bu yardımcı, deponun döndürdüğü
-// sırayı beklenen sıradan bilinçli olarak AYIRMAK için vardır.
+// [fakeStore.ListInventoryLevels] returns the levels sorted by ID, and the ID
+// [fakeStore.seedLevel] produces contains the location ID; so the two orders
+// agree on their own. A test of the sorting would, with that fixture, pass
+// against an implementation that DOES NOT SORT AT ALL. This helper exists to
+// deliberately SEPARATE the order the store returns from the expected order.
 func (f *fakeStore) seedLevelWithID(levelID, itemID, locationID string, stocked, reserved int64) models.InventoryLevel {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -620,7 +624,7 @@ func (f *fakeStore) seedLevelWithID(levelID, itemID, locationID string, stocked,
 	return level
 }
 
-// seedReservation sahte depoya bir rezervasyon koyar.
+// seedReservation puts a reservation into the fake store.
 func (f *fakeStore) seedReservation(id, itemID, locationID string, qty int64, status models.ReservationStatus) models.Reservation {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -636,7 +640,7 @@ func (f *fakeStore) seedReservation(id, itemID, locationID string, qty int64, st
 	return res
 }
 
-// level testte doğrulama için seviyeyi döner.
+// level returns the level, for the test's assertions.
 func (f *fakeStore) level(itemID, locationID string) models.InventoryLevel {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -644,7 +648,7 @@ func (f *fakeStore) level(itemID, locationID string) models.InventoryLevel {
 	return f.levels[levelKey(itemID, locationID)]
 }
 
-// reservation testte doğrulama için rezervasyonu döner.
+// reservation returns the reservation, for the test's assertions.
 func (f *fakeStore) reservation(id string) models.Reservation {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -836,8 +840,8 @@ func (f *fakeStore) movementsFor(itemID string) []models.Movement {
 	return out
 }
 
-// sortedValues haritanın değerlerini anahtar işlevine göre sıralı döner.
-// Sıra sabit olmadan liste testleri rastgele başarısız olurdu.
+// sortedValues returns the map's values sorted by the key function. Without a
+// fixed order the list tests would fail at random.
 func sortedValues[T any](m map[string]T, key func(T) string) []T {
 	out := make([]T, 0, len(m))
 	for _, value := range m {
@@ -847,7 +851,7 @@ func sortedValues[T any](m map[string]T, key func(T) string) []T {
 	return out
 }
 
-// paginate dilime limit/offset uygular.
+// paginate applies limit/offset to the slice.
 func paginate[T any](all []T, limit, offset int64) []T {
 	if offset >= int64(len(all)) {
 		return []T{}
@@ -859,11 +863,11 @@ func paginate[T any](all []T, limit, offset int64) []T {
 	return rest
 }
 
-// AvailableByItemLocation aynı sayıları LOKASYON kırılımıyla döner.
+// AvailableByItemLocation returns the same numbers broken down by LOCATION.
 //
-// Satılabiliri kalmamış seviye haritada YOKTUR; gerçek sorgu da onu satır
-// olarak döndürmüyor. Sıfır yazan bir sahte, çağıranın "bu lokasyonda yok"
-// dalını sınanmamış bırakırdı.
+// A level with nothing sellable left is ABSENT from the map; the real query does
+// not return it as a row either. A fake that wrote a zero would leave the
+// caller's "none at this location" branch untested.
 func (f *fakeStore) AvailableByItemLocation(
 	_ context.Context, ids []string,
 ) (map[string]map[string]int64, error) {

@@ -44,7 +44,7 @@ import (
 // discountable true->false) and the WHOLE product suite — unit and integration,
 // against a real PostgreSQL — stayed green on every one. The inventory module's
 // equivalent default is pinned (its requires_shipping mutation fails
-// TestCreateInventoryItemVarsayilanSevkiyatGerektirir at once), which is what
+// TestCreateInventoryItemRequiresShippingByDefault at once), which is what
 // makes the absence here a gap rather than a house convention.
 //
 // # Why the values are asserted separately and not as a whole struct

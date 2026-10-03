@@ -8,11 +8,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
-// stubRepo [Repository]'nin testler için betiklenebilir uygulamasıdır.
+// stubRepo is a scriptable implementation of [Repository] for the tests.
 //
-// Her metot bir işlev alanına delege eder; alan doldurulmamışsa test o metodun
-// çağrılmasını beklemiyordur ve çağrı tipli bir hata döner. Sessiz sıfır değer
-// dönmek, testin yanlış nedenle geçmesine yol açardı.
+// Every method delegates to a function field; if the field is not filled in,
+// the test does not expect that method to be called and the call returns a
+// typed error. Silently returning a zero value would let the test pass for the
+// wrong reason.
 type stubRepo struct {
 	createPriceSetFn       func(ctx context.Context, id string, prices []models.Price, now time.Time) (models.PriceSet, error)
 	getPriceSetFn          func(ctx context.Context, id string) (models.PriceSet, error)
@@ -36,18 +37,19 @@ type stubRepo struct {
 	priceSetHistoryFn      func(ctx context.Context, ids []string) ([]models.PriceSetSnapshot, error)
 	priceListHistoryFn     func(ctx context.Context, ids []string) (map[string][]models.PriceListSnapshot, error)
 
-	// calls metot adı -> çağrı sayısıdır; toplu (batch) davranışın kanıtı budur.
+	// calls is method name -> call count; it is the proof of the batch
+	// behavior.
 	calls map[string]int
 }
 
 var _ Repository = (*stubRepo)(nil)
 
-// newStubRepo boş bir sahte depo üretir.
+// newStubRepo builds an empty fake repository.
 func newStubRepo() *stubRepo {
 	return &stubRepo{calls: map[string]int{}}
 }
 
-// record bir çağrıyı sayar.
+// record counts a call.
 func (s *stubRepo) record(name string) {
 	if s.calls == nil {
 		s.calls = map[string]int{}
@@ -55,9 +57,9 @@ func (s *stubRepo) record(name string) {
 	s.calls[name]++
 }
 
-// unset betiklenmemiş bir metot çağrıldığında dönen hatadır.
+// unset is the error returned when a method that was not scripted is called.
 func unset(name string) error {
-	return errors.Internal("stub_unset", "%s testte betiklenmedi", name)
+	return errors.Internal("stub_unset", "%s was not scripted in the test", name)
 }
 
 func (s *stubRepo) CreatePriceSet(
@@ -265,20 +267,21 @@ func (s *stubRepo) PriceListHistory(
 	return s.priceListHistoryFn(ctx, ids)
 }
 
-// --- test yardımcıları ------------------------------------------------------
+// --- test helpers -----------------------------------------------------------
 
-// testNow testlerin sabit saatidir; zamana bağlı dallar belirlenimci olur.
+// testNow is the tests' fixed clock; branches that depend on time become
+// deterministic.
 var testNow = time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
 
-// newTestService sabit saatli bir servis üretir.
+// newTestService builds a service with a fixed clock.
 func newTestService(repo Repository) *Service {
 	return New(repo, Options{Now: func() time.Time { return testNow }})
 }
 
-// ptr bir değerin adresini döner; testlerde isteğe bağlı alanlar için.
+// ptr returns the address of a value; it is for optional fields in the tests.
 func ptr[T any](v T) *T { return &v }
 
-// basePrice kuralsız, listesiz bir fiyat adayı üretir.
+// basePrice builds a price candidate with no rules and no list.
 func basePrice(id, currency string, amount int64, minQty int32, maxQty *int32) models.PriceCandidate {
 	return models.PriceCandidate{
 		Price: models.Price{
@@ -292,25 +295,25 @@ func basePrice(id, currency string, amount int64, minQty int32, maxQty *int32) m
 	}
 }
 
-// withList bir adayı verilen fiyat listesine bağlar.
+// withList binds a candidate to the given price list.
 func withList(c models.PriceCandidate, listID string, info *models.PriceListInfo) models.PriceCandidate {
 	c.Price.PriceListID = &listID
 	c.List = info
 	return c
 }
 
-// withRules bir adaya kural ekler.
+// withRules adds rules to a candidate.
 func withRules(c models.PriceCandidate, rules ...models.PriceRule) models.PriceCandidate {
 	c.Price.Rules = append(c.Price.Rules, rules...)
 	return c
 }
 
-// rule tek bir kural üretir.
+// rule builds a single rule.
 func rule(attribute string, op models.RuleOperator, values ...string) models.PriceRule {
 	return models.PriceRule{Attribute: attribute, Operator: op, Values: values}
 }
 
-// activeList her zaman kullanılabilir bir liste üstverisi üretir.
+// activeList builds list metadata that is always usable.
 func activeList(id string, listType models.PriceListType) *models.PriceListInfo {
 	return &models.PriceListInfo{ID: id, Type: listType, Status: models.PriceListActive}
 }
