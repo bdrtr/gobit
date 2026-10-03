@@ -12,7 +12,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// newTestQueryProvider tohumlanmış bir Query sağlayıcısı kurar.
+// newTestQueryProvider builds a seeded Query provider.
 func newTestQueryProvider(t *testing.T) (*QueryProvider, *memRepo) {
 	t.Helper()
 
@@ -26,19 +26,19 @@ func newTestQueryProvider(t *testing.T) (*QueryProvider, *memRepo) {
 	return NewQueryProvider(svc), repo
 }
 
-// TestQueryProviderEntityAdi sağlayıcının kayıt adıyla tutarlı olduğunu
-// doğrular.
+// TestQueryProviderEntityName checks that the provider is consistent with its
+// registration name.
 //
-// Query, sağlayıcıyı "<entity>.query" adıyla arar ve Entity() ile adın
-// örtüştüğünü denetler; ikisi ayrışırsa sağlayıcı hiç bulunmaz.
-func TestQueryProviderEntityAdi(t *testing.T) {
+// Query looks the provider up by the name "<entity>.query" and checks that
+// Entity() and the name agree; if the two diverge the provider is never found.
+func TestQueryProviderEntityName(t *testing.T) {
 	provider, _ := newTestQueryProvider(t)
 	assert.Equal(t, "tax_region", provider.Entity())
 	assert.Equal(t, Entity, provider.Entity())
 }
 
-// TestQueryProviderTumAlanlar varsayılan alan kümesini doğrular.
-func TestQueryProviderTumAlanlar(t *testing.T) {
+// TestQueryProviderAllFields checks the default field set.
+func TestQueryProviderAllFields(t *testing.T) {
 	provider, _ := newTestQueryProvider(t)
 
 	records, err := provider.FetchByIDs(context.Background(), []string{trRegionID}, nil)
@@ -48,38 +48,38 @@ func TestQueryProviderTumAlanlar(t *testing.T) {
 	record := records[0]
 	assert.Equal(t, trRegionID, record["id"])
 	assert.Equal(t, "TR", record["country_code"])
-	assert.Equal(t, "", record["province_code"], "kök bölgede eyalet kodu boş dize olmalı")
+	assert.Equal(t, "", record["province_code"], "a root region's province code has to be an empty string")
 	assert.Equal(t, "", record["parent_id"])
 	assert.Equal(t, "", record["provider_id"])
 	assert.Contains(t, record, "created_at")
 	assert.Contains(t, record, "updated_at")
 
 	rates, ok := record["rates"].([]map[string]any)
-	require.True(t, ok, "oranlar alt kayıt dilimi olmalı: %#v", record["rates"])
+	require.True(t, ok, "the rates have to be a slice of sub-records: %#v", record["rates"])
 	require.Len(t, rates, 2)
-	assert.Equal(t, rateA, rates[0]["id"], "varsayılan oran başta olmalı")
+	assert.Equal(t, rateA, rates[0]["id"], "the default rate has to come first")
 	assert.Equal(t, int32(2000), rates[0]["rate_bps"])
 	assert.Equal(t, true, rates[0]["is_default"])
 }
 
-// TestQueryProviderAlanSecimi Fields ile alan daraltmayı doğrular.
-func TestQueryProviderAlanSecimi(t *testing.T) {
+// TestQueryProviderFieldSelection checks narrowing the fields with Fields.
+func TestQueryProviderFieldSelection(t *testing.T) {
 	provider, repo := newTestQueryProvider(t)
 
 	records, err := provider.FetchByIDs(context.Background(), []string{trRegionID}, []string{"country_code"})
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 
-	assert.Contains(t, records[0], "id", "kimlik istenmese de eklenmeli (birleştirme anahtarı)")
+	assert.Contains(t, records[0], "id", "the id has to be added even when not asked for (the join key)")
 	assert.Contains(t, records[0], "country_code")
 	assert.NotContains(t, records[0], "rates")
 	assert.Zero(t, repo.callCount("ListTaxRatesByRegions"),
-		"oranlar istenmediyse oran sorgusu HİÇ yapılmamalı")
+		"if the rates were not asked for, the rate query must NOT be made at all")
 }
 
-// TestQueryProviderBilinmeyenAlanReddedilir alan doğrulamasının sağlayıcıya
-// ait olduğunu doğrular (ADR 0004).
-func TestQueryProviderBilinmeyenAlanReddedilir(t *testing.T) {
+// TestQueryProviderRejectsAnUnknownField checks that field validation belongs
+// to the provider (ADR 0004).
+func TestQueryProviderRejectsAnUnknownField(t *testing.T) {
 	provider, _ := newTestQueryProvider(t)
 
 	_, err := provider.FetchByIDs(context.Background(), []string{trRegionID}, []string{"tax_rate"})
@@ -88,9 +88,9 @@ func TestQueryProviderBilinmeyenAlanReddedilir(t *testing.T) {
 	assert.Contains(t, err.Error(), "tax_region")
 }
 
-// TestQueryProviderTopluOkur genişletme başına SABİT sorgu yapıldığını
-// doğrular.
-func TestQueryProviderTopluOkur(t *testing.T) {
+// TestQueryProviderReadsInBulk checks that a FIXED number of queries is made
+// per expansion.
+func TestQueryProviderReadsInBulk(t *testing.T) {
 	provider, repo := newTestQueryProvider(t)
 
 	records, err := provider.FetchByIDs(context.Background(),
@@ -100,16 +100,16 @@ func TestQueryProviderTopluOkur(t *testing.T) {
 
 	assert.Equal(t, 1, repo.callCount("GetTaxRegionsByIDs"))
 	assert.Equal(t, 1, repo.callCount("ListTaxRatesByRegions"),
-		"bölge başına oran sorgusu yapılmamalı (N+1 yok)")
+		"no rate query may be made per region (no N+1)")
 }
 
-// TestQueryProviderBulunamayanKimlikHataDegil eksik kimliğin sessizce
-// atlandığını doğrular (ADR 0004).
-func TestQueryProviderBulunamayanKimlikHataDegil(t *testing.T) {
+// TestQueryProviderAnIDNotFoundIsNotAnError checks that a missing id is
+// skipped silently (ADR 0004).
+func TestQueryProviderAnIDNotFoundIsNotAnError(t *testing.T) {
 	provider, _ := newTestQueryProvider(t)
 
 	records, err := provider.FetchByIDs(context.Background(),
-		[]string{trRegionID, models.TaxRegionIDPrefix + "YOK"}, nil)
+		[]string{trRegionID, models.TaxRegionIDPrefix + "MISSING"}, nil)
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
@@ -118,10 +118,9 @@ func TestQueryProviderBulunamayanKimlikHataDegil(t *testing.T) {
 	assert.Empty(t, records)
 }
 
-// TestQueryProviderListSuzgecleri desteklenen ve desteklenmeyen filtreleri
-// doğrular.
-func TestQueryProviderListSuzgecleri(t *testing.T) {
-	t.Run("kimlik dizesi", func(t *testing.T) {
+// TestQueryProviderListFilters checks the supported and unsupported filters.
+func TestQueryProviderListFilters(t *testing.T) {
+	t.Run("id string", func(t *testing.T) {
 		provider, _ := newTestQueryProvider(t)
 		records, err := provider.List(context.Background(), query.ListOptions{
 			Filters: map[string]any{"id": trRegionID},
@@ -131,7 +130,7 @@ func TestQueryProviderListSuzgecleri(t *testing.T) {
 		assert.Equal(t, trRegionID, records[0]["id"])
 	})
 
-	t.Run("kimlik dilimi", func(t *testing.T) {
+	t.Run("id slice", func(t *testing.T) {
 		provider, _ := newTestQueryProvider(t)
 		records, err := provider.List(context.Background(), query.ListOptions{
 			Filters: map[string]any{"id": []string{trRegionID, usRegionID}},
@@ -140,7 +139,7 @@ func TestQueryProviderListSuzgecleri(t *testing.T) {
 		assert.Len(t, records, 2)
 	})
 
-	t.Run("boş kimlik dilimi hiçbir kayıt demektir", func(t *testing.T) {
+	t.Run("an empty id slice means no records", func(t *testing.T) {
 		provider, _ := newTestQueryProvider(t)
 		records, err := provider.List(context.Background(), query.ListOptions{
 			Filters: map[string]any{"id": []string{}},
@@ -149,16 +148,16 @@ func TestQueryProviderListSuzgecleri(t *testing.T) {
 		assert.Empty(t, records)
 	})
 
-	t.Run("ülke kodu", func(t *testing.T) {
+	t.Run("country code", func(t *testing.T) {
 		provider, _ := newTestQueryProvider(t)
 		records, err := provider.List(context.Background(), query.ListOptions{
 			Filters: map[string]any{"country_code": "TR"},
 		})
 		require.NoError(t, err)
-		assert.Len(t, records, 2, "TR kökü ve eyaleti dönmeli")
+		assert.Len(t, records, 2, "the TR root and its province have to come back")
 	})
 
-	t.Run("desteklenmeyen filtre", func(t *testing.T) {
+	t.Run("unsupported filter", func(t *testing.T) {
 		provider, _ := newTestQueryProvider(t)
 		_, err := provider.List(context.Background(), query.ListOptions{
 			Filters: map[string]any{"province_code": "34"},
@@ -167,7 +166,7 @@ func TestQueryProviderListSuzgecleri(t *testing.T) {
 		assert.True(t, errors.IsInvalid(err))
 	})
 
-	t.Run("filtre tipi yanlış", func(t *testing.T) {
+	t.Run("wrong filter type", func(t *testing.T) {
 		provider, _ := newTestQueryProvider(t)
 		_, err := provider.List(context.Background(), query.ListOptions{
 			Filters: map[string]any{"id": 42},
@@ -177,13 +176,13 @@ func TestQueryProviderListSuzgecleri(t *testing.T) {
 	})
 }
 
-// TestQueryProviderKimlikFiltresiYalnizBasinaKullanilir kimlik filtresinin
-// yanına konan daraltmanın SESSİZCE düşürülmediğini doğrular.
+// TestQueryProviderTheIDFilterIsUsedOnItsOwn checks that a narrowing put next
+// to the id filter is NOT dropped SILENTLY.
 //
-// Sessiz düşürme, desteklenmeyen bir filtreyi reddeden bu sağlayıcının kendi
-// ilkesine aykırıdır: çağıran gönderdiği daraltmanın uygulandığını sanır ve
-// istediğinden daha geniş bir kümeyi eline alır.
-func TestQueryProviderKimlikFiltresiYalnizBasinaKullanilir(t *testing.T) {
+// Dropping it silently goes against the principle of this very provider, which
+// rejects an unsupported filter: the caller believes the narrowing it sent was
+// applied and ends up with a wider set than it asked for.
+func TestQueryProviderTheIDFilterIsUsedOnItsOwn(t *testing.T) {
 	provider, _ := newTestQueryProvider(t)
 
 	_, err := provider.List(context.Background(), query.ListOptions{
@@ -192,14 +191,14 @@ func TestQueryProviderKimlikFiltresiYalnizBasinaKullanilir(t *testing.T) {
 			fieldCountryCode: "TR",
 		},
 	})
-	require.Error(t, err, "ülke süzgeci sessizce yok sayılmamalı")
+	require.Error(t, err, "the country filter must not be ignored silently")
 	assert.True(t, errors.IsInvalid(err))
 	assert.Equal(t, CodeInvalidInput, errors.CodeOf(err))
 }
 
-// TestQueryProviderListSayfalar limit sıfırken sınırsız DEĞİL varsayılan
-// sayfa boyunun uygulandığını doğrular.
-func TestQueryProviderListSayfalar(t *testing.T) {
+// TestQueryProviderListPages checks that while the limit is zero the default
+// page size applies, NOT an unbounded one.
+func TestQueryProviderListPages(t *testing.T) {
 	provider, _ := newTestQueryProvider(t)
 
 	records, err := provider.List(context.Background(), query.ListOptions{Limit: 1})
@@ -208,12 +207,12 @@ func TestQueryProviderListSayfalar(t *testing.T) {
 
 	all, err := provider.List(context.Background(), query.ListOptions{})
 	require.NoError(t, err)
-	assert.Len(t, all, 3, "limit verilmezse varsayılan sayfa boyu uygulanmalı")
+	assert.Len(t, all, 3, "if no limit is given the default page size has to apply")
 }
 
-// TestQueryProviderKurulmamisServis nil depo ile panik yerine tipli hata
-// döndüğünü doğrular.
-func TestQueryProviderKurulmamisServis(t *testing.T) {
+// TestQueryProviderUnconfiguredService checks that with a nil repository a
+// typed error comes back instead of a panic.
+func TestQueryProviderUnconfiguredService(t *testing.T) {
 	provider := NewQueryProvider(New(nil, Options{}))
 
 	_, err := provider.List(context.Background(), query.ListOptions{})

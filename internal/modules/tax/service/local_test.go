@@ -11,12 +11,13 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// TestRateTableVarsayilanOranKurallarindanEtkilenmez elle yazılmış bir kuralın
-// varsayılan oranın kapsamını DARALTMADIĞINI doğrular.
+// TestRateTableTheDefaultRateIsUnaffectedByItsRules checks that a rule written
+// by hand does NOT NARROW the default rate's scope.
 //
-// Servis ve depo katmanı varsayılan bir orana kural yazılmasını reddeder; bu
-// test doğrudan SQL ile açılmış bir kaydın hesabı bozmadığını gösterir.
-func TestRateTableVarsayilanOranKurallarindanEtkilenmez(t *testing.T) {
+// The service and repository layers refuse to write a rule onto a default
+// rate; this test shows that a record opened directly with SQL does not break
+// the calculation.
+func TestRateTableTheDefaultRateIsUnaffectedByItsRules(t *testing.T) {
 	table := newRateTable(
 		[]string{trRegionID},
 		[]models.TaxRate{{ID: rateA, TaxRegionID: trRegionID, RateBps: 2000, IsDefault: true}},
@@ -24,13 +25,13 @@ func TestRateTableVarsayilanOranKurallarindanEtkilenmez(t *testing.T) {
 	)
 
 	rate, ok := table.selectRate(nil)
-	require.True(t, ok, "kuralsız bir kalem yine de varsayılana düşmeli")
+	require.True(t, ok, "a line item with no rule still has to fall to the default")
 	assert.Equal(t, rateA, rate.ID)
 }
 
-// TestRateTableIkinciVarsayilanKucukKimlikKazanir bozuk bir veri kümesinde bile
-// sonucun BELİRLENİMCİ kaldığını doğrular.
-func TestRateTableIkinciVarsayilanKucukKimlikKazanir(t *testing.T) {
+// TestRateTableOnASecondDefaultTheSmallerIDWins checks that the result stays
+// DETERMINISTIC even on a broken data set.
+func TestRateTableOnASecondDefaultTheSmallerIDWins(t *testing.T) {
 	for range 20 {
 		table := newRateTable(
 			[]string{trRegionID},
@@ -43,57 +44,57 @@ func TestRateTableIkinciVarsayilanKucukKimlikKazanir(t *testing.T) {
 
 		rate, ok := table.selectRate(nil)
 		require.True(t, ok)
-		assert.Equal(t, rateA, rate.ID, "kimliği küçük varsayılan korunmalı")
+		assert.Equal(t, rateA, rate.ID, "the default with the smaller id has to be kept")
 	}
 }
 
-// TestRateTableZincirEnOzeldenGeneleYurur zincir sırasının sonucu belirlediğini
-// doğrular.
-func TestRateTableZincirEnOzeldenGeneleYurur(t *testing.T) {
+// TestRateTableTheChainWalksFromTheMostSpecificToTheGeneral checks that the
+// chain order decides the result.
+func TestRateTableTheChainWalksFromTheMostSpecificToTheGeneral(t *testing.T) {
 	rates := []models.TaxRate{
 		{ID: rateA, TaxRegionID: trRegionID, RateBps: 2000, IsDefault: true},
 		{ID: rateB, TaxRegionID: trIstanbul, RateBps: 800, IsDefault: true},
 	}
 
-	ozelOnce := newRateTable([]string{trIstanbul, trRegionID}, rates, nil)
-	rate, ok := ozelOnce.selectRate(nil)
+	specificFirst := newRateTable([]string{trIstanbul, trRegionID}, rates, nil)
+	rate, ok := specificFirst.selectRate(nil)
 	require.True(t, ok)
-	assert.Equal(t, rateB, rate.ID, "zincirin başı kazanmalı")
+	assert.Equal(t, rateB, rate.ID, "the head of the chain has to win")
 
-	genelOnce := newRateTable([]string{trRegionID, trIstanbul}, rates, nil)
-	rate, ok = genelOnce.selectRate(nil)
+	generalFirst := newRateTable([]string{trRegionID, trIstanbul}, rates, nil)
+	rate, ok = generalFirst.selectRate(nil)
 	require.True(t, ok)
-	assert.Equal(t, rateA, rate.ID, "sıra tersine dönerse sonuç da dönmeli")
+	assert.Equal(t, rateA, rate.ID, "if the order is reversed the result has to reverse too")
 }
 
-// TestRateTableEslesmeYoksaOranBulunmaz hiç oran vermeyen bir tablonun sıfır
-// vergi ürettiğini doğrular.
-func TestRateTableEslesmeYoksaOranBulunmaz(t *testing.T) {
+// TestRateTableWithoutAMatchNoRateIsFound checks that a table that yields no
+// rate at all produces zero tax.
+func TestRateTableWithoutAMatchNoRateIsFound(t *testing.T) {
 	table := newRateTable(
 		[]string{trRegionID},
 		[]models.TaxRate{{ID: rateB, TaxRegionID: trRegionID, RateBps: 100}},
 		[]models.TaxRateRule{{ID: ruleA, TaxRateID: rateB, Reference: models.ReferenceProduct, ReferenceID: "prod_1"}},
 	)
 
-	_, ok := table.selectRate([]matchKey{{models.ReferenceProduct, "prod_baska"}})
+	_, ok := table.selectRate([]matchKey{{models.ReferenceProduct, "prod_other"}})
 	assert.False(t, ok)
 
-	applied, err := table.applyTo([]matchKey{{models.ReferenceProduct, "prod_baska"}}, "li_1", 10_000, false)
+	applied, err := table.applyTo([]matchKey{{models.ReferenceProduct, "prod_other"}}, "li_1", 10_000, false)
 	require.NoError(t, err)
-	// Taban, oran bulunmasa da BİLDİRİLİR ve tutarın kendisidir. Vergi
-	// dahil pazarda doğrulama "taban + vergi = gönderilen tutar" eşitliğini
-	// arıyor; sıfır bir taban orada eşitliği bozardı ve oranı olmayan her
-	// kalem sözleşme dışı sayılırdı.
+	// The base is REPORTED even when no rate is found, and it is the amount
+	// itself. In a tax-inclusive market the validation looks for the equality
+	// "base + tax = amount sent"; a zero base would break that equality there,
+	// and every line item without a rate would count as out of contract.
 	assert.Equal(t, ProviderItemTax{ID: "li_1", TaxableAmount: 10_000}, applied,
-		"oran yoksa vergi sıfır, kimlik boş, taban ise tutarın kendisi olmalı")
+		"without a rate the tax has to be zero, the id empty, and the base the amount itself")
 }
 
-// TestRateTableReferansTuruEslesmesiKatidir aynı kimliğin farklı referans
-// türünde eşleşmediğini doğrular.
+// TestRateTableReferenceKindMatchingIsStrict checks that the same id does not
+// match under a different reference kind.
 //
-// Bu, ürün kimliği ile kargo seçeneği kimliğinin kazara çakışması durumunda
-// yanlış oranın uygulanmasını engelleyen kuraldır.
-func TestRateTableReferansTuruEslesmesiKatidir(t *testing.T) {
+// This is the rule that prevents the wrong rate from being applied when a
+// product id and a shipping option id collide by accident.
+func TestRateTableReferenceKindMatchingIsStrict(t *testing.T) {
 	table := newRateTable(
 		[]string{trRegionID},
 		[]models.TaxRate{{ID: rateB, TaxRegionID: trRegionID, RateBps: 100}},
@@ -101,14 +102,14 @@ func TestRateTableReferansTuruEslesmesiKatidir(t *testing.T) {
 	)
 
 	_, ok := table.selectRate([]matchKey{{models.ReferenceProduct, "x_1"}})
-	assert.False(t, ok, "ürün anahtarı kargo kuralıyla eşleşmemeli")
+	assert.False(t, ok, "a product key must not match a shipping rule")
 
 	_, ok = table.selectRate([]matchKey{{models.ReferenceShippingOption, "x_1"}})
 	assert.True(t, ok)
 }
 
-// TestItemKeysBosKimlikleriAtlar boş alanların anahtar üretmediğini doğrular.
-func TestItemKeysBosKimlikleriAtlar(t *testing.T) {
+// TestItemKeysSkipsEmptyIDs checks that empty fields produce no keys.
+func TestItemKeysSkipsEmptyIDs(t *testing.T) {
 	assert.Empty(t, itemKeys(TaxableItem{ID: "li_1"}))
 	assert.Equal(t,
 		[]matchKey{{models.ReferenceProduct, "p"}},
@@ -119,9 +120,9 @@ func TestItemKeysBosKimlikleriAtlar(t *testing.T) {
 	assert.Nil(t, shippingKeys(ShippingInput{Amount: 100, Taxable: true}))
 }
 
-// TestLocalProviderBolgeYoksaSorguYapmaz zincir boşken hiç okuma yapılmadığını
-// doğrular.
-func TestLocalProviderBolgeYoksaSorguYapmaz(t *testing.T) {
+// TestLocalProviderMakesNoQueryWithoutARegion checks that no read is made at
+// all while the chain is empty.
+func TestLocalProviderMakesNoQueryWithoutARegion(t *testing.T) {
 	repo := newMemRepo()
 	provider := NewLocalProvider(repo)
 
@@ -133,14 +134,14 @@ func TestLocalProviderBolgeYoksaSorguYapmaz(t *testing.T) {
 
 	require.Len(t, result.Items, 1)
 	assert.Equal(t, ProviderItemTax{ID: "li_1", TaxableAmount: 1_000}, result.Items[0],
-		"bölge yokken de taban tutarın kendisidir")
+		"without a region the base is the amount itself too")
 	assert.Zero(t, repo.callCount("ListTaxRatesByRegions"))
 	assert.Zero(t, repo.callCount("ListTaxRateRulesByRates"))
 }
 
-// TestLocalProviderKuralsizBolgedeKuralSorgusuYapilmaz yalnızca varsayılan
-// oranı olan bir bölgede ikinci turun atlandığını doğrular.
-func TestLocalProviderKuralsizBolgedeKuralSorgusuYapilmaz(t *testing.T) {
+// TestLocalProviderMakesNoRuleQueryInARegionWithoutRules checks that the
+// second round trip is skipped in a region that has only a default rate.
+func TestLocalProviderMakesNoRuleQueryInARegionWithoutRules(t *testing.T) {
 	repo := newMemRepo()
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -155,15 +156,15 @@ func TestLocalProviderKuralsizBolgedeKuralSorgusuYapilmaz(t *testing.T) {
 
 	assert.Equal(t, 1, repo.callCount("ListTaxRatesByRegions"))
 	assert.Zero(t, repo.callCount("ListTaxRateRulesByRates"),
-		"kurallı oran yoksa kural sorgusu hiç yapılmamalı")
+		"without a ruled rate the rule query must not be made at all")
 }
 
-// TestLocalProviderOranKaynagiHatasiYukselir okuma hatasının yutulmadığını
-// doğrular.
-func TestLocalProviderOranKaynagiHatasiYukselir(t *testing.T) {
+// TestLocalProviderSurfacesARateSourceError checks that a read error is not
+// swallowed.
+func TestLocalProviderSurfacesARateSourceError(t *testing.T) {
 	repo := newMemRepo()
 	repo.seedRootRegion(trRegionID, "TR")
-	repo.failOn["ListTaxRatesByRegions"] = errors.Unavailable("db_down", "veritabanı erişilemez")
+	repo.failOn["ListTaxRatesByRegions"] = errors.Unavailable("db_down", "the database is unreachable")
 	provider := NewLocalProvider(repo)
 
 	_, err := provider.Calculate(context.Background(), ProviderInput{
@@ -175,13 +176,14 @@ func TestLocalProviderOranKaynagiHatasiYukselir(t *testing.T) {
 	assert.Equal(t, "db_down", errors.CodeOf(err))
 }
 
-// TestProviderRegistryKayitVeCozum sağlayıcı kaydının sözleşmesini doğrular.
-func TestProviderRegistryKayitVeCozum(t *testing.T) {
+// TestProviderRegistryRegistrationAndResolution checks the provider registry's
+// contract.
+func TestProviderRegistryRegistrationAndResolution(t *testing.T) {
 	registry := NewProviderRegistry()
 	local := NewLocalProvider(newMemRepo())
 	require.NoError(t, registry.Register(local))
 
-	t.Run("aynı kimlik ikinci kez reddedilir", func(t *testing.T) {
+	t.Run("the same id is rejected a second time", func(t *testing.T) {
 		err := registry.Register(NewLocalProvider(newMemRepo()))
 		require.Error(t, err)
 		assert.True(t, errors.IsConflict(err))
@@ -189,23 +191,23 @@ func TestProviderRegistryKayitVeCozum(t *testing.T) {
 
 		got, getErr := registry.Get(LocalProviderID)
 		require.NoError(t, getErr)
-		assert.Same(t, local, got, "çakışmada MEVCUT sağlayıcı korunmalı")
+		assert.Same(t, local, got, "on a conflict the EXISTING provider has to be kept")
 	})
 
-	t.Run("boş kimlik yerel sağlayıcıya düşer", func(t *testing.T) {
+	t.Run("an empty id falls to the local provider", func(t *testing.T) {
 		got, err := registry.Get("")
 		require.NoError(t, err)
 		assert.Equal(t, LocalProviderID, got.ID())
 	})
 
-	t.Run("bilinmeyen kimlik NotFound", func(t *testing.T) {
+	t.Run("an unknown id is NotFound", func(t *testing.T) {
 		_, err := registry.Get("avalara")
 		require.Error(t, err)
 		assert.True(t, errors.IsNotFound(err))
-		assert.Contains(t, err.Error(), LocalProviderID, "mesaj kayıtlı kimlikleri yazmalı")
+		assert.Contains(t, err.Error(), LocalProviderID, "the message has to name the registered ids")
 	})
 
-	t.Run("nil ve boş kimlikli sağlayıcı reddedilir", func(t *testing.T) {
+	t.Run("a nil provider and one with an empty id are rejected", func(t *testing.T) {
 		require.Error(t, registry.Register(nil))
 
 		err := registry.Register(&stubProvider{id: "   "})
@@ -213,7 +215,7 @@ func TestProviderRegistryKayitVeCozum(t *testing.T) {
 		assert.True(t, errors.IsInvalid(err))
 	})
 
-	t.Run("kimlik listesi sıralıdır", func(t *testing.T) {
+	t.Run("the id list is sorted", func(t *testing.T) {
 		r := NewProviderRegistry()
 		require.NoError(t, r.Register(&stubProvider{id: "zeta"}))
 		require.NoError(t, r.Register(&stubProvider{id: "alfa"}))

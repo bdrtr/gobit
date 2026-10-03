@@ -15,55 +15,60 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// txMarkerKey sahte deponun "işlem içindeyiz" işaretidir.
+// txMarkerKey is the fake store's "we are inside a transaction" marker.
 type txMarkerKey struct{}
 
-// fakeStore service.Store'un bellek içi karşılığıdır.
+// fakeStore is the in-memory counterpart of service.Store.
 //
-// Üç davranışı gerçek depodan BİLİNÇLİ olarak taklit eder, çünkü servisin
-// doğruluğu bunlara dayanır:
+// It DELIBERATELY imitates three behaviors of the real store, because the
+// service's correctness rests on them:
 //
-//  1. Kilit alan metotlar işlem DIŞINDA çağrılırsa hata döner. Servis bir
-//     akışta WithTx'i unutursa birim testi bunu yakalar; gerçek veritabanında
-//     bu hata, kilitsiz okuma yüzünden ancak yarış altında görünürdü.
-//  2. İşlem hatayla biterse yazılanlar GERİ ALINIR. "Hata döndü ve hiçbir şey
-//     yazılmadı" iddiası ancak böyle sınanabilir.
-//  3. Bir oturumdan en fazla BİR tahsilat çıkar; benzersizlik kısıtının
-//     karşılığıdır ve Capture'ın idempotentliği ona dayanır.
+//  1. A method that takes a lock returns an error when it is called OUTSIDE a
+//     transaction. If the service forgets WithTx in a flow, the unit test
+//     catches it; on the real database this bug would only show under a race,
+//     because of the unlocked read.
+//  2. When a transaction ends in an error, what it wrote is ROLLED BACK. The
+//     claim "an error came back and nothing was written" can only be tested
+//     this way.
+//  3. At most ONE capture comes out of a session; this is the counterpart of
+//     the unique constraint, and Capture's idempotency rests on it.
 type fakeStore struct {
 	mu          sync.Mutex
 	collections map[string]models.PaymentCollection
 	sessions    map[string]models.PaymentSession
 	payments    map[string]models.Payment
 	refunds     map[string]models.Refund
-	// outbox işlem içinde yazılan olayları SIRASIYLA tutar. Sıra önemli:
-	// olayın para hareketinden SONRA yazıldığını görmek istiyoruz.
+	// outbox holds the events written inside a transaction IN ORDER. The order
+	// matters: we want to see that the event is written AFTER the money movement.
 	outbox []outboxRow
 
-	// kilitler alınan kilitleri SIRASIYLA kaydeder ("collection", "session",
-	// "payment"). Kilit sırası bir eşzamanlılık sözleşmesidir ve gerçek
-	// veritabanında ihlali ancak yarış altında (kilitlenme olarak) görünür;
-	// burada sıra doğrudan okunabilir.
-	kilitler []string
-	// collectionWrites koleksiyon satırına kaç kez yazıldığını sayar;
-	// idempotent dalların tutarlara İKİNCİ KEZ dokunmadığı bununla kanıtlanır.
+	// locks records the locks taken IN ORDER ("collection", "session",
+	// "payment"). The lock order is a concurrency contract, and on the real
+	// database a violation only shows under a race (as a deadlock); here the
+	// order can be read directly.
+	locks []string
+	// collectionWrites counts how many times the collection row was written;
+	// it is how the idempotent branches are proved not to touch the amounts A
+	// SECOND TIME.
 	collectionWrites int
-	// sessionWrites oturum satırına kaç kez yazıldığını sayar.
+	// sessionWrites counts how many times the session row was written.
 	sessionWrites int
 
-	// failCreatePayment ayarlanırsa CreatePayment bu hatayı döner; işlem geri
-	// alma yolunu sınamak için kullanılır.
+	// failCreatePayment, when set, makes CreatePayment return this error; it is
+	// used to test the transaction rollback path.
 	failCreatePayment error
 
-	// credit müşteri+para birimi başına kredi defteridir (ADR 0152).
+	// credit is the credit ledger per customer and currency (ADR 0152).
 	//
-	// Gerçek tabloda bakiye satırların TOPLAMI; sahte de öyle tutuyor — tek bir
-	// sayı tutsaydı, blokajı eksi yazan bir hata testlerde görünmezdi.
+	// In the real table the balance is the SUM of the rows; the fake keeps it the
+	// same way — had it kept a single number, a bug that writes the hold as a
+	// negative would be invisible in the tests.
 	credit map[string][]models.StoreCreditEntry
 	// creditLocks are the balances LockStoreCreditBalance was asked for.
 	creditLocks []string
 
-	// loyalty puan defteridir ve müşteri+para birimi başına tutuluyor (ADR 0164).
+	// loyalty is the points ledger, and it is kept per customer and currency
+	// (ADR 0164).
 	loyalty map[string][]models.LoyaltyEntry
 
 	// journal is what JournalMovements returns, and journalCalls records how it
@@ -88,7 +93,7 @@ type fakeStore struct {
 	giftValidity []int32
 }
 
-// newFakeStore boş bir sahte depo üretir.
+// newFakeStore builds an empty fake store.
 func newFakeStore() *fakeStore {
 	return &fakeStore{
 		collections: map[string]models.PaymentCollection{},
@@ -98,20 +103,22 @@ func newFakeStore() *fakeStore {
 	}
 }
 
-// Sahte deponun servisin beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// It is verified at compile time that the fake store meets the surface the
+// service expects.
 var _ service.Store = (*fakeStore)(nil)
 
-// WithTx fn'i "işlem" içinde çalıştırır; hata dönerse durumu geri alır.
+// WithTx runs fn inside a "transaction"; if fn returns an error, it rolls the
+// state back.
 func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if ctx.Value(txMarkerKey{}) != nil {
 		return fn(ctx)
 	}
 
 	f.mu.Lock()
-	// İKİ DEFTER de anlık görüntüye giriyor. Girmeselerdi "işlem geri alındı, o
-	// yüzden satır yazılmadı" diyen bir test YEŞİL geçerdi ve kanıtladığı şeyin
-	// tersi doğru olurdu: gerçek işlem satırı geri alır, sahte harita almaz.
+	// BOTH LEDGERS go into the snapshot as well. Had they not, a test saying "the
+	// transaction was rolled back, so the row was not written" would pass GREEN
+	// while the opposite of what it proves was true: a real transaction rolls the
+	// row back, a fake map does not.
 	snapshot := struct {
 		collections map[string]models.PaymentCollection
 		sessions    map[string]models.PaymentSession
@@ -147,15 +154,15 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 	return nil
 }
 
-// WriteOutboxEvent olayı kaydeder ve işlem dışında REDDEDER.
+// WriteOutboxEvent records the event and REFUSES outside a transaction.
 //
-// Reddi taklit etmek önemli: gerçek depo işlem dışında yazmayı reddediyor ve
-// sahte kabul etseydi, olayı yanlış yerde yazan bir kod birim testinde yeşil
-// geçerdi.
+// Imitating the refusal matters: the real store refuses to write outside a
+// transaction, and had the fake accepted, code that writes the event in the
+// wrong place would pass green in the unit test.
 func (f *fakeStore) WriteOutboxEvent(ctx context.Context, id, name string, data map[string]any) error {
 	if ctx.Value(txMarkerKey{}) == nil {
 		return errors.Internal("payment_query_failed",
-			"bir outbox olayı yalnızca işlem içinde yazılabilir: %s", name)
+			"an outbox event can only be written inside a transaction: %s", name)
 	}
 
 	f.mu.Lock()
@@ -165,45 +172,46 @@ func (f *fakeStore) WriteOutboxEvent(ctx context.Context, id, name string, data 
 	return nil
 }
 
-// outboxRow sahtenin tuttuğu outbox satırı.
+// outboxRow is an outbox row as the fake keeps it.
 type outboxRow struct {
 	ID   string
 	Name string
 	Data map[string]any
 }
 
-// requireTx kilit alan metotların işlem içinde çağrıldığını doğrular.
+// requireTx verifies that a method taking a lock is called inside a
+// transaction.
 func requireTx(ctx context.Context, op string) error {
 	if ctx.Value(txMarkerKey{}) == nil {
-		return errors.Internal("fake_tx_required", "%s işlem dışında çağrıldı", op)
+		return errors.Internal("fake_tx_required", "%s was called outside a transaction", op)
 	}
 	return nil
 }
 
-// kilitKaydet alınan kilidi sırasıyla kaydeder.
-func (f *fakeStore) kilitKaydet(ad string) {
+// recordLock records a lock taken, in order.
+func (f *fakeStore) recordLock(name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.kilitler = append(f.kilitler, ad)
+	f.locks = append(f.locks, name)
 }
 
-// kilitSirasi kaydedilen kilit sırasını döner.
-func (f *fakeStore) kilitSirasi() []string {
+// lockOrder returns the recorded lock order.
+func (f *fakeStore) lockOrder() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.kilitler)
+	return slices.Clone(f.locks)
 }
 
-// yazimlar koleksiyon ve oturum yazma sayaçlarını döner.
-func (f *fakeStore) yazimlar() (collections, sessions int) {
+// writes returns the collection and session write counters.
+func (f *fakeStore) writes() (collections, sessions int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.collectionWrites, f.sessionWrites
 }
 
-// --- koleksiyonlar -----------------------------------------------------------
+// --- collections -------------------------------------------------------------
 
-// CreatePaymentCollection koleksiyonu kaydeder.
+// CreatePaymentCollection records the collection.
 func (f *fakeStore) CreatePaymentCollection(
 	_ context.Context,
 	col models.PaymentCollection,
@@ -217,7 +225,7 @@ func (f *fakeStore) CreatePaymentCollection(
 	return col, nil
 }
 
-// GetPaymentCollection koleksiyonu döner.
+// GetPaymentCollection returns the collection.
 func (f *fakeStore) GetPaymentCollection(_ context.Context, id string) (models.PaymentCollection, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -225,21 +233,21 @@ func (f *fakeStore) GetPaymentCollection(_ context.Context, id string) (models.P
 	col, ok := f.collections[id]
 	if !ok {
 		return models.PaymentCollection{}, errors.NotFound("fake_collection_not_found",
-			"koleksiyon yok: %s", id)
+			"collection not found: %s", id)
 	}
 	return col, nil
 }
 
-// LockPaymentCollection koleksiyonu kilitler.
+// LockPaymentCollection locks the collection.
 func (f *fakeStore) LockPaymentCollection(ctx context.Context, id string) (models.PaymentCollection, error) {
 	if err := requireTx(ctx, "LockPaymentCollection"); err != nil {
 		return models.PaymentCollection{}, err
 	}
-	f.kilitKaydet("collection")
+	f.recordLock("collection")
 	return f.GetPaymentCollection(ctx, id)
 }
 
-// ListPaymentCollections koleksiyonları süzer ve sayfalar.
+// ListPaymentCollections filters and pages the collections.
 func (f *fakeStore) ListPaymentCollections(
 	_ context.Context,
 	filter models.CollectionFilter,
@@ -247,7 +255,7 @@ func (f *fakeStore) ListPaymentCollections(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	var eslesen []models.PaymentCollection
+	var matched []models.PaymentCollection
 	for _, id := range slices.Sorted(maps.Keys(f.collections)) {
 		col := f.collections[id]
 		if filter.Reference != nil && col.Reference != *filter.Reference {
@@ -256,18 +264,18 @@ func (f *fakeStore) ListPaymentCollections(
 		if filter.Status != nil && col.Status.String() != *filter.Status {
 			continue
 		}
-		eslesen = append(eslesen, col)
+		matched = append(matched, col)
 	}
 
-	total := int64(len(eslesen))
+	total := int64(len(matched))
 	if filter.Offset >= total {
 		return []models.PaymentCollection{}, total, nil
 	}
-	son := min(filter.Offset+filter.Limit, total)
-	return slices.Clone(eslesen[filter.Offset:son]), total, nil
+	end := min(filter.Offset+filter.Limit, total)
+	return slices.Clone(matched[filter.Offset:end]), total, nil
 }
 
-// PaymentCollectionsByIDs kimlik kümesini döner.
+// PaymentCollectionsByIDs returns the collections of a set of ids.
 func (f *fakeStore) PaymentCollectionsByIDs(_ context.Context, ids []string) ([]models.PaymentCollection, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -369,7 +377,7 @@ func (f *fakeStore) PaymentMovementsByCollectionIDs(
 	return out, nil
 }
 
-// UpdatePaymentCollectionTotals tutarları ve durumu yazar.
+// UpdatePaymentCollectionTotals writes the amounts and the status.
 func (f *fakeStore) UpdatePaymentCollectionTotals(
 	_ context.Context,
 	id string,
@@ -382,7 +390,7 @@ func (f *fakeStore) UpdatePaymentCollectionTotals(
 	col, ok := f.collections[id]
 	if !ok {
 		return models.PaymentCollection{}, errors.NotFound("fake_collection_not_found",
-			"koleksiyon yok: %s", id)
+			"collection not found: %s", id)
 	}
 	col.Status = status
 	col.AuthorizedAmount = authorized
@@ -394,9 +402,9 @@ func (f *fakeStore) UpdatePaymentCollectionTotals(
 	return col, nil
 }
 
-// --- oturumlar ---------------------------------------------------------------
+// --- sessions ----------------------------------------------------------------
 
-// CreatePaymentSession oturumu kaydeder.
+// CreatePaymentSession records the session.
 func (f *fakeStore) CreatePaymentSession(
 	_ context.Context,
 	ses models.PaymentSession,
@@ -408,7 +416,7 @@ func (f *fakeStore) CreatePaymentSession(
 		if f.sessions[id].ProviderID == ses.ProviderID &&
 			f.sessions[id].IdempotencyKey == ses.IdempotencyKey {
 			return models.PaymentSession{}, errors.Conflict("fake_session_exists",
-				"bu anahtarla oturum var: %s", ses.IdempotencyKey)
+				"a session with this key exists: %s", ses.IdempotencyKey)
 		}
 	}
 
@@ -419,28 +427,28 @@ func (f *fakeStore) CreatePaymentSession(
 	return ses, nil
 }
 
-// GetPaymentSession oturumu döner.
+// GetPaymentSession returns the session.
 func (f *fakeStore) GetPaymentSession(_ context.Context, id string) (models.PaymentSession, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	ses, ok := f.sessions[id]
 	if !ok {
-		return models.PaymentSession{}, errors.NotFound("fake_session_not_found", "oturum yok: %s", id)
+		return models.PaymentSession{}, errors.NotFound("fake_session_not_found", "session not found: %s", id)
 	}
 	return ses, nil
 }
 
-// LockPaymentSession oturumu kilitler.
+// LockPaymentSession locks the session.
 func (f *fakeStore) LockPaymentSession(ctx context.Context, id string) (models.PaymentSession, error) {
 	if err := requireTx(ctx, "LockPaymentSession"); err != nil {
 		return models.PaymentSession{}, err
 	}
-	f.kilitKaydet("session")
+	f.recordLock("session")
 	return f.GetPaymentSession(ctx, id)
 }
 
-// PaymentSessionByIdempotencyKey oturumu anahtarıyla döner.
+// PaymentSessionByIdempotencyKey returns the session by its key.
 func (f *fakeStore) PaymentSessionByIdempotencyKey(
 	_ context.Context,
 	providerID, key string,
@@ -455,10 +463,10 @@ func (f *fakeStore) PaymentSessionByIdempotencyKey(
 		}
 	}
 	return models.PaymentSession{}, errors.NotFound("fake_session_not_found",
-		"anahtarla oturum yok: %s", key)
+		"no session with key: %s", key)
 }
 
-// ListPaymentSessionsByCollection koleksiyonun oturumlarını döner.
+// ListPaymentSessionsByCollection returns the collection's sessions.
 func (f *fakeStore) ListPaymentSessionsByCollection(
 	_ context.Context,
 	collectionID string,
@@ -568,7 +576,7 @@ func (f *fakeStore) ListSessionsForReconciliation(
 	return out, nil
 }
 
-// SessionCounts koleksiyonun oturumlarını duruma göre sayar.
+// SessionCounts counts the collection's sessions by status.
 func (f *fakeStore) SessionCounts(_ context.Context, collectionID string) (models.SessionCounts, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -587,19 +595,19 @@ func (f *fakeStore) SessionCounts(_ context.Context, collectionID string) (model
 		case models.SessionFailed:
 			counts.Failed++
 		case models.SessionCaptured:
-			// Tahsil edilmiş oturum hiçbir sayıma girmez; koleksiyonun durumu
-			// zaten tahsilat tutarından türetilir.
+			// A captured session enters no count; the collection's status is
+			// derived from the captured amount anyway.
 		}
 	}
 	return counts, nil
 }
 
-// LiveSessionAmount canlı oturumların rezerve ettiği tutarı toplar.
+// LiveSessionAmount sums the amount the live sessions reserve.
 //
-// Gerçek sorgunun kuralı BİREBİR taklit edilir: bekleyen oturum kendi
-// tutarını, yetkilendirilmiş oturum bloke edilen tutarı rezerve eder. Kural
-// burada gevşetilseydi, "iki tam tutarlı oturum açılamaz" iddiası birim
-// testinde tutar ama gerçek veritabanında tutmazdı.
+// The real query's rule is imitated EXACTLY: a pending session reserves its own
+// amount, an authorized session the authorized amount. Had the rule been
+// loosened here, the claim "two full-amount sessions cannot be opened" would
+// hold in the unit test but not on the real database.
 func (f *fakeStore) LiveSessionAmount(_ context.Context, collectionID string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -616,13 +624,13 @@ func (f *fakeStore) LiveSessionAmount(_ context.Context, collectionID string) (i
 		case models.SessionAuthorized:
 			reserved += ses.AuthorizedAmount
 		case models.SessionCaptured, models.SessionCanceled, models.SessionFailed:
-			// Sonlanmış oturum tutar rezerve etmez.
+			// A terminated session reserves no amount.
 		}
 	}
 	return reserved, nil
 }
 
-// UpdatePaymentSessionState oturumun durumunu yazar.
+// UpdatePaymentSessionState writes the session's state.
 func (f *fakeStore) UpdatePaymentSessionState(
 	_ context.Context,
 	id string,
@@ -636,7 +644,7 @@ func (f *fakeStore) UpdatePaymentSessionState(
 
 	ses, ok := f.sessions[id]
 	if !ok {
-		return models.PaymentSession{}, errors.NotFound("fake_session_not_found", "oturum yok: %s", id)
+		return models.PaymentSession{}, errors.NotFound("fake_session_not_found", "session not found: %s", id)
 	}
 	ses.Status = status
 	ses.AuthorizedAmount = authorizedAmount
@@ -648,9 +656,9 @@ func (f *fakeStore) UpdatePaymentSessionState(
 	return ses, nil
 }
 
-// --- tahsilatlar ve iadeler --------------------------------------------------
+// --- captures and refunds ----------------------------------------------------
 
-// CreatePayment tahsilatı kaydeder; oturum başına en fazla bir tane.
+// CreatePayment records the capture; at most one per session.
 func (f *fakeStore) CreatePayment(_ context.Context, pay models.Payment) (models.Payment, error) {
 	if f.failCreatePayment != nil {
 		return models.Payment{}, f.failCreatePayment
@@ -662,7 +670,7 @@ func (f *fakeStore) CreatePayment(_ context.Context, pay models.Payment) (models
 	for id := range f.payments {
 		if f.payments[id].PaymentSessionID == pay.PaymentSessionID {
 			return models.Payment{}, errors.Conflict("fake_payment_exists",
-				"bu oturumdan tahsilat çıkmış: %s", pay.PaymentSessionID)
+				"a capture has already come out of this session: %s", pay.PaymentSessionID)
 		}
 	}
 
@@ -672,28 +680,28 @@ func (f *fakeStore) CreatePayment(_ context.Context, pay models.Payment) (models
 	return pay, nil
 }
 
-// GetPayment tahsilatı döner.
+// GetPayment returns the capture.
 func (f *fakeStore) GetPayment(_ context.Context, id string) (models.Payment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	pay, ok := f.payments[id]
 	if !ok {
-		return models.Payment{}, errors.NotFound("fake_payment_not_found", "tahsilat yok: %s", id)
+		return models.Payment{}, errors.NotFound("fake_payment_not_found", "capture not found: %s", id)
 	}
 	return pay, nil
 }
 
-// LockPayment tahsilatı kilitler.
+// LockPayment locks the capture.
 func (f *fakeStore) LockPayment(ctx context.Context, id string) (models.Payment, error) {
 	if err := requireTx(ctx, "LockPayment"); err != nil {
 		return models.Payment{}, err
 	}
-	f.kilitKaydet("payment")
+	f.recordLock("payment")
 	return f.GetPayment(ctx, id)
 }
 
-// PaymentBySession oturumdan doğan tahsilatı döner.
+// PaymentBySession returns the capture born of the session.
 func (f *fakeStore) PaymentBySession(_ context.Context, sessionID string) (models.Payment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -704,10 +712,10 @@ func (f *fakeStore) PaymentBySession(_ context.Context, sessionID string) (model
 		}
 	}
 	return models.Payment{}, errors.NotFound("fake_payment_not_found",
-		"oturumdan tahsilat yok: %s", sessionID)
+		"no capture from session: %s", sessionID)
 }
 
-// ListPaymentsByCollection koleksiyonun tahsilatlarını döner.
+// ListPaymentsByCollection returns the collection's captures.
 func (f *fakeStore) ListPaymentsByCollection(_ context.Context, collectionID string) ([]models.Payment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -721,7 +729,7 @@ func (f *fakeStore) ListPaymentsByCollection(_ context.Context, collectionID str
 	return out, nil
 }
 
-// UpdatePaymentRefundedAmount iade edilen tutarı yazar.
+// UpdatePaymentRefundedAmount writes the refunded amount.
 func (f *fakeStore) UpdatePaymentRefundedAmount(
 	_ context.Context,
 	id string,
@@ -732,7 +740,7 @@ func (f *fakeStore) UpdatePaymentRefundedAmount(
 
 	pay, ok := f.payments[id]
 	if !ok {
-		return models.Payment{}, errors.NotFound("fake_payment_not_found", "tahsilat yok: %s", id)
+		return models.Payment{}, errors.NotFound("fake_payment_not_found", "capture not found: %s", id)
 	}
 	pay.RefundedAmount = refunded
 	pay.UpdatedAt = time.Now().UTC()
@@ -740,7 +748,7 @@ func (f *fakeStore) UpdatePaymentRefundedAmount(
 	return pay, nil
 }
 
-// CreateRefund iadeyi kaydeder.
+// CreateRefund records the refund.
 func (f *fakeStore) CreateRefund(_ context.Context, ref models.Refund) (models.Refund, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -751,7 +759,7 @@ func (f *fakeStore) CreateRefund(_ context.Context, ref models.Refund) (models.R
 	return ref, nil
 }
 
-// ListRefundsByPayment tahsilatın iadelerini döner.
+// ListRefundsByPayment returns the capture's refunds.
 func (f *fakeStore) ListRefundsByPayment(_ context.Context, paymentID string) ([]models.Refund, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -765,50 +773,50 @@ func (f *fakeStore) ListRefundsByPayment(_ context.Context, paymentID string) ([
 	return out, nil
 }
 
-// --- sahte sağlayıcı ---------------------------------------------------------
+// --- fake provider -----------------------------------------------------------
 
-// fakeProvider senaryolanabilir bir ödeme sağlayıcısıdır.
+// fakeProvider is a payment provider whose answers a test sets as a scenario.
 //
-// Gerçek sağlayıcı yerine kullanılır ki servisin KARARLARI, sağlayıcının
-// davranışından bağımsız olarak sınanabilsin: reddi, hatayı ve kısmi
-// yetkilendirmeyi burada tek satırla kurmak mümkündür.
+// It is used instead of a real provider so that the service's DECISIONS can be
+// tested independently of the provider's behavior: a decline, an error and a
+// partial authorization can each be set up here in a single line.
 type fakeProvider struct {
 	mu sync.Mutex
 
 	id string
-	// nextStatus bir sonraki Authorize'ın döneceği durumdur.
+	// nextStatus is the status the next Authorize returns.
 	nextStatus coreprovider.SessionStatus
-	// authorizedAmount sıfır değilse Authorize bu tutarı bildirir.
+	// authorizedAmount, when non-zero, is the amount Authorize reports.
 	authorizedAmount int64
-	// declineReason ret sebebidir.
+	// declineReason is the reason for a decline.
 	declineReason string
-	// authorizeData Authorize'ın döneceği ham gövdedir. Boş bırakılması
-	// GERÇEKÇİDİR: sağlayıcıların çoğu yetkilendirme yanıtında gövde döndürmez
-	// ve modülün o hâlde oturumun mevcut verisini KORUMASI gerekir.
+	// authorizeData is the raw body Authorize returns. Leaving it empty is
+	// REALISTIC: most providers return no body in their authorization response,
+	// and the module then has to KEEP the session's existing data.
 	authorizeData json.RawMessage
-	// authorizeErr ayarlanırsa Authorize bu hatayı döner.
+	// authorizeErr, when set, makes Authorize return this error.
 	authorizeErr error
-	// captureErr ayarlanırsa Capture bu hatayı döner.
+	// captureErr, when set, makes Capture return this error.
 	captureErr error
-	// cancelErr ayarlanırsa Cancel bu hatayı döner.
+	// cancelErr, when set, makes Cancel return this error.
 	cancelErr error
-	// createErr ayarlanırsa CreateSession bu hatayı döner.
+	// createErr, when set, makes CreateSession return this error.
 	createErr error
 
-	// createCalls, authorizeCalls, captureCalls, refundCalls, cancelCalls
-	// sağlayıcıya KAÇ KEZ gidildiğini sayar. İdempotent dalların sağlayıcıya
-	// hiç gitmediği bu sayaçlarla kanıtlanır.
+	// createCalls, authorizeCalls, captureCalls, refundCalls and cancelCalls
+	// count HOW MANY TIMES the provider was called. These counters are how the
+	// idempotent branches are proved never to reach the provider.
 	createCalls    int
 	authorizeCalls int
 	captureCalls   int
 	refundCalls    int
 	cancelCalls    int
 
-	// sessions açılmış sağlayıcı oturumlarıdır (anahtar -> kimlik).
+	// sessions are the provider sessions opened (key -> id).
 	sessions map[string]string
 }
 
-// newFakeProvider varsayılan davranışı "yetkilendir" olan bir sağlayıcı üretir.
+// newFakeProvider builds a provider whose default behavior is "authorize".
 func newFakeProvider(id string) *fakeProvider {
 	return &fakeProvider{
 		id:         id,
@@ -817,14 +825,14 @@ func newFakeProvider(id string) *fakeProvider {
 	}
 }
 
-// Sahte sağlayıcının çekirdek sözleşmesini karşıladığı derleme zamanında
-// doğrulanır.
+// It is verified at compile time that the fake provider meets the core
+// contract.
 var _ coreprovider.PaymentProvider = (*fakeProvider)(nil)
 
-// ID sağlayıcının kimliğini döner.
+// ID returns the provider's id.
 func (p *fakeProvider) ID() string { return p.id }
 
-// CreateSession sağlayıcı tarafında bir oturum açar.
+// CreateSession opens a session on the provider's side.
 func (p *fakeProvider) CreateSession(
 	_ context.Context,
 	in coreprovider.CreateSessionInput,
@@ -851,7 +859,7 @@ func (p *fakeProvider) CreateSession(
 	}, nil
 }
 
-// Authorize senaryolanmış sonucu döner.
+// Authorize returns the result the scenario set.
 func (p *fakeProvider) Authorize(_ context.Context, _ string) (coreprovider.AuthResult, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -868,7 +876,7 @@ func (p *fakeProvider) Authorize(_ context.Context, _ string) (coreprovider.Auth
 	}, nil
 }
 
-// Capture tahsilatı kaydeder.
+// Capture records the capture.
 func (p *fakeProvider) Capture(_ context.Context, _ string, _ int64) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -880,7 +888,7 @@ func (p *fakeProvider) Capture(_ context.Context, _ string, _ int64) error {
 	return nil
 }
 
-// Refund iadeyi kaydeder.
+// Refund records the refund.
 func (p *fakeProvider) Refund(_ context.Context, _ string, _ int64) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -888,7 +896,7 @@ func (p *fakeProvider) Refund(_ context.Context, _ string, _ int64) error {
 	return nil
 }
 
-// Cancel iptali kaydeder.
+// Cancel records the cancellation.
 func (p *fakeProvider) Cancel(_ context.Context, _ string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -900,15 +908,15 @@ func (p *fakeProvider) Cancel(_ context.Context, _ string) error {
 	return nil
 }
 
-// cagrilar sağlayıcıya yapılan çağrı sayılarını döner.
-func (p *fakeProvider) cagrilar() (create, authorize, capture, refund, cancel int) {
+// calls returns how many calls were made to the provider, per method.
+func (p *fakeProvider) calls() (create, authorize, capture, refund, cancel int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.createCalls, p.authorizeCalls, p.captureCalls, p.refundCalls, p.cancelCalls
 }
 
-// senaryo sağlayıcının bir sonraki yanıtını ayarlar.
-func (p *fakeProvider) senaryo(status coreprovider.SessionStatus, amount int64, reason string) {
+// scenario sets the provider's next answer.
+func (p *fakeProvider) scenario(status coreprovider.SessionStatus, amount int64, reason string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.nextStatus = status
@@ -916,21 +924,21 @@ func (p *fakeProvider) senaryo(status coreprovider.SessionStatus, amount int64, 
 	p.declineReason = reason
 }
 
-// yetkilendirmeVerisi Authorize'ın döneceği ham gövdeyi ayarlar.
-func (p *fakeProvider) yetkilendirmeVerisi(data json.RawMessage) {
+// setAuthorizeData sets the raw body Authorize returns.
+func (p *fakeProvider) setAuthorizeData(data json.RawMessage) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.authorizeData = data
 }
 
-// --- mağaza kredisi defteri (ADR 0152) ---------------------------------------
+// --- store credit ledger (ADR 0152) ------------------------------------------
 
-// creditKey defterin anahtarıdır: kredi para birimi başına ayrı tutulur.
+// creditKey is the ledger's key: credit is kept separately per currency.
 func creditKey(customerID, currencyCode string) string {
 	return customerID + "\x00" + currencyCode
 }
 
-// AppendStoreCreditEntry deftere tek bir olay ekler.
+// AppendStoreCreditEntry appends a single event to the ledger.
 func (f *fakeStore) AppendStoreCreditEntry(
 	_ context.Context, entry models.StoreCreditEntry,
 ) (models.StoreCreditEntry, error) {
@@ -1057,9 +1065,9 @@ func (f *fakeStore) ListStoreCreditEntries(
 	return out, total, nil
 }
 
-// --- sadakat puanı defteri (ADR 0164) ----------------------------------------
+// --- loyalty points ledger (ADR 0164) ----------------------------------------
 
-// AppendLoyaltyEntry puan defterine tek bir satır ekler.
+// AppendLoyaltyEntry appends a single row to the points ledger.
 func (f *fakeStore) AppendLoyaltyEntry(
 	_ context.Context, entry models.LoyaltyEntry,
 ) (models.LoyaltyEntry, error) {
@@ -1075,11 +1083,12 @@ func (f *fakeStore) AppendLoyaltyEntry(
 	return entry, nil
 }
 
-// LoyaltyPointsForReference bir koleksiyonun yazılmış puanlarını toplar.
+// LoyaltyPointsForReference sums the points written for a collection.
 //
-// Defter müşteri anahtarıyla tutulduğu için toplam BÜTÜN anahtarlarda aranıyor:
-// hedefin öznesi koleksiyon, saklamanın anahtarı müşteri ve ikisini karıştırmak
-// tam olarak gerçek sorgunun yapmadığı şey olurdu.
+// Because the ledger is kept under the customer's key, the total is searched
+// across ALL keys: the target's subject is the collection, the storage's key is
+// the customer, and mixing the two up would be exactly what the real query does
+// not do.
 func (f *fakeStore) LoyaltyPointsForReference(_ context.Context, reference string) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1088,8 +1097,8 @@ func (f *fakeStore) LoyaltyPointsForReference(_ context.Context, reference strin
 	for key := range f.loyalty {
 		entries := f.loyalty[key]
 		for i := range entries {
-			// Yalnızca kazanım satırları, gerçek sorgunun kind süzgeci gibi: bir
-			// harcama satırı koleksiyona referans verse bile hedefe girmez.
+			// Only the earning rows, like the real query's kind filter: a spend
+			// row does not enter the target even if it references the collection.
 			if entries[i].Reference == reference &&
 				(entries[i].Kind == models.LoyaltyEarn || entries[i].Kind == models.LoyaltyReverse) {
 				points += entries[i].Points
@@ -1125,7 +1134,7 @@ func (f *fakeStore) CollectionNetCapturedExcludingProviders(
 	return net, nil
 }
 
-// LoyaltyBalance satırların toplamını döner.
+// LoyaltyBalance returns the sum of the rows.
 func (f *fakeStore) LoyaltyBalance(
 	_ context.Context, customerID, currencyCode string,
 ) (int64, error) {
@@ -1141,7 +1150,7 @@ func (f *fakeStore) LoyaltyBalance(
 	return points, nil
 }
 
-// ListLoyaltyEntries geçmişi yeniden eskiye döner.
+// ListLoyaltyEntries returns the history newest first.
 func (f *fakeStore) ListLoyaltyEntries(
 	_ context.Context, customerID, currencyCode string, limit, offset int64,
 ) ([]models.LoyaltyEntry, int64, error) {

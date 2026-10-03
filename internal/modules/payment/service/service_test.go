@@ -16,20 +16,21 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// Testlerde kullanılan sabitler.
+// Constants the tests use.
 const (
-	saglayiciID = "fake"
-	referans    = "cart_TEST"
-	paraKodu    = "TRY"
-	tutar       = int64(10_000)
+	testProviderID = "fake"
+	testReference  = "cart_TEST"
+	testCurrency   = "TRY"
+	testAmount     = int64(10_000)
 )
 
-// yeniServis sahte depo ve sahte sağlayıcı üzerinde çalışan bir servis kurar.
-func yeniServis(t *testing.T) (*service.Service, *fakeStore, *fakeProvider) {
+// newTestService builds a service that runs over a fake store and a fake
+// provider.
+func newTestService(t *testing.T) (*service.Service, *fakeStore, *fakeProvider) {
 	t.Helper()
 
 	store := newFakeStore()
-	prov := newFakeProvider(saglayiciID)
+	prov := newFakeProvider(testProviderID)
 	registry := service.NewProviderRegistry()
 	require.NoError(t, registry.Register(prov))
 
@@ -41,17 +42,19 @@ func yeniServis(t *testing.T) (*service.Service, *fakeStore, *fakeProvider) {
 	return svc, store, prov
 }
 
-// yeniServisOtobusle yeniServis ile aynı servisi kurar ve otobüsü de döner.
+// newTestServiceWithBus builds the same service as newTestService and returns
+// the bus as well.
 //
-// Ayrı bir yardımcı olmasının sebebi çağıranların çoğu: testlerin neredeyse
-// tamamı otobüsle ilgilenmez ve dördüncü bir dönüş değeri hepsine "_" yazdırırdı.
-// Yayımlanan olaya bakan testler bunu çağırır.
-func yeniServisOtobusle(t *testing.T) (*service.Service, *fakeStore, *fakeBus) {
+// The reason it is a separate helper is most of its callers: nearly all of the
+// tests do not care about the bus, and a fourth return value would make every
+// one of them write "_". The tests that look at the published event call this
+// one.
+func newTestServiceWithBus(t *testing.T) (*service.Service, *fakeStore, *fakeBus) {
 	t.Helper()
 
 	store := newFakeStore()
 	registry := service.NewProviderRegistry()
-	require.NoError(t, registry.Register(newFakeProvider(saglayiciID)))
+	require.NoError(t, registry.Register(newFakeProvider(testProviderID)))
 
 	bus := newFakeBus()
 	svc, err := service.New(service.Options{
@@ -62,16 +65,16 @@ func yeniServisOtobusle(t *testing.T) (*service.Service, *fakeStore, *fakeBus) {
 	return svc, store, bus
 }
 
-// fakeBus olayları toplar ve hiçbirini yaymaz.
+// fakeBus collects events and publishes none of them.
 type fakeBus struct {
 	mu        sync.Mutex
 	published []eventbus.Event
 }
 
-// newFakeBus boş bir otobüs verir.
+// newFakeBus returns an empty bus.
 func newFakeBus() *fakeBus { return &fakeBus{} }
 
-// Publish olayı kaydeder.
+// Publish records the event.
 func (b *fakeBus) Publish(_ context.Context, e eventbus.Event) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -80,7 +83,7 @@ func (b *fakeBus) Publish(_ context.Context, e eventbus.Event) error {
 	return nil
 }
 
-// events yayımlanmış olayların kopyasını verir.
+// events returns a copy of the published events.
 func (b *fakeBus) events() []eventbus.Event {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -88,35 +91,35 @@ func (b *fakeBus) events() []eventbus.Event {
 	return slices.Clone(b.published)
 }
 
-// koleksiyonAc test için bir ödeme koleksiyonu açar.
-func koleksiyonAc(t *testing.T, svc *service.Service, amount int64) models.PaymentCollection {
+// openCollection opens a payment collection for a test.
+func openCollection(t *testing.T, svc *service.Service, amount int64) models.PaymentCollection {
 	t.Helper()
 
 	col, err := svc.CreatePaymentCollection(context.Background(), service.CreateCollectionInput{
-		Reference:    referans,
+		Reference:    testReference,
 		Amount:       amount,
-		CurrencyCode: paraKodu,
+		CurrencyCode: testCurrency,
 	})
 	require.NoError(t, err)
 	return col
 }
 
-// oturumAc test için bir ödeme oturumu açar.
-func oturumAc(t *testing.T, svc *service.Service, collectionID, key string) models.PaymentSession {
+// openPaymentSession opens a payment session for a test.
+func openPaymentSession(t *testing.T, svc *service.Service, collectionID, key string) models.PaymentSession {
 	t.Helper()
 
-	ses, err := svc.CreateSession(context.Background(), collectionID, saglayiciID,
+	ses, err := svc.CreateSession(context.Background(), collectionID, testProviderID,
 		service.CreateSessionInput{IdempotencyKey: key})
 	require.NoError(t, err)
 	return ses
 }
 
-// TestServisEksikBagimlilikIleKurulamaz kurulum hatasının AÇIKÇA döndüğünü
-// doğrular.
+// TestServiceCannotBeBuiltWithAMissingDependency verifies that the setup error
+// comes back EXPLICITLY.
 //
-// nil bir depoyla kurulmuş servis ilk istekte panik üretirdi ve hata,
-// kurulumdan çok sonra ortaya çıkardı.
-func TestServisEksikBagimlilikIleKurulamaz(t *testing.T) {
+// A service set up with a nil store would panic on its first request, and the
+// error would surface long after the setup.
+func TestServiceCannotBeBuiltWithAMissingDependency(t *testing.T) {
 	_, err := service.New(service.Options{Providers: service.NewProviderRegistry()})
 	require.Error(t, err)
 
@@ -124,224 +127,226 @@ func TestServisEksikBagimlilikIleKurulamaz(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestCreatePaymentCollectionNotPaidDogar yeni koleksiyonun durumunu ve
-// alanlarını doğrular.
-func TestCreatePaymentCollectionNotPaidDogar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestCreatePaymentCollectionIsBornNotPaid verifies a new collection's status
+// and fields.
+func TestCreatePaymentCollectionIsBornNotPaid(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
 	col, err := svc.CreatePaymentCollection(context.Background(), service.CreateCollectionInput{
-		Reference:    "  " + referans + "  ",
-		Amount:       tutar,
+		Reference:    "  " + testReference + "  ",
+		Amount:       testAmount,
 		CurrencyCode: "try",
-		Metadata:     map[string]any{"kaynak": "test"},
+		Metadata:     map[string]any{"source": "test"},
 	})
 
 	require.NoError(t, err)
 	assert.Equal(t, models.CollectionNotPaid, col.Status)
-	assert.Equal(t, referans, col.Reference, "referans kırpılmalı")
-	assert.Equal(t, "TRY", col.CurrencyCode, "para birimi BÜYÜK harfe çevrilmeli")
-	assert.Equal(t, tutar, col.Amount)
+	assert.Equal(t, testReference, col.Reference, "the reference must be trimmed")
+	assert.Equal(t, "TRY", col.CurrencyCode, "the currency must be turned to UPPER case")
+	assert.Equal(t, testAmount, col.Amount)
 	assert.Zero(t, col.AuthorizedAmount)
 	assert.Zero(t, col.CapturedAmount)
 	assert.Zero(t, col.RefundedAmount)
 	assert.Equal(t, models.PaymentCollectionIDPrefix, col.ID[:len(models.PaymentCollectionIDPrefix)])
 }
 
-// TestCreatePaymentCollectionParaDogrulamasi tutar ve para birimi
-// doğrulamasının her dalını sınar.
+// TestCreatePaymentCollectionMoneyValidation tests every branch of the amount
+// and currency validation.
 //
-// Sıfır tutarın reddedilmesi bilinçlidir: tutarı sıfır olan bir koleksiyon
-// hiçbir zaman "captured" olamayacağı için sonsuza kadar ödeme bekleyen ölü
-// bir kayıt olurdu.
-func TestCreatePaymentCollectionParaDogrulamasi(t *testing.T) {
+// Rejecting a zero amount is deliberate: a collection whose amount is zero could
+// never become "captured", so it would be a dead record waiting for payment
+// forever.
+func TestCreatePaymentCollectionMoneyValidation(t *testing.T) {
 	tests := []struct {
-		ad string
-		in service.CreateCollectionInput
+		name string
+		in   service.CreateCollectionInput
 	}{
-		{"referanssiz", service.CreateCollectionInput{Amount: tutar, CurrencyCode: paraKodu}},
-		{"bosluktan ibaret referans", service.CreateCollectionInput{
-			Reference: "   ", Amount: tutar, CurrencyCode: paraKodu,
+		{"no reference", service.CreateCollectionInput{Amount: testAmount, CurrencyCode: testCurrency}},
+		{"reference of only whitespace", service.CreateCollectionInput{
+			Reference: "   ", Amount: testAmount, CurrencyCode: testCurrency,
 		}},
-		{"sifir tutar", service.CreateCollectionInput{
-			Reference: referans, Amount: 0, CurrencyCode: paraKodu,
+		{"zero amount", service.CreateCollectionInput{
+			Reference: testReference, Amount: 0, CurrencyCode: testCurrency,
 		}},
-		{"negatif tutar", service.CreateCollectionInput{
-			Reference: referans, Amount: -1, CurrencyCode: paraKodu,
+		{"negative amount", service.CreateCollectionInput{
+			Reference: testReference, Amount: -1, CurrencyCode: testCurrency,
 		}},
-		{"tavani asan tutar", service.CreateCollectionInput{
-			Reference: referans, Amount: models.MaxAmount + 1, CurrencyCode: paraKodu,
+		{"amount above the ceiling", service.CreateCollectionInput{
+			Reference: testReference, Amount: models.MaxAmount + 1, CurrencyCode: testCurrency,
 		}},
-		{"para birimi yok", service.CreateCollectionInput{Reference: referans, Amount: tutar}},
-		{"para birimi uzun", service.CreateCollectionInput{
-			Reference: referans, Amount: tutar, CurrencyCode: "TRYX",
+		{"no currency", service.CreateCollectionInput{Reference: testReference, Amount: testAmount}},
+		{"currency too long", service.CreateCollectionInput{
+			Reference: testReference, Amount: testAmount, CurrencyCode: "TRYX",
 		}},
-		{"para birimi rakamli", service.CreateCollectionInput{
-			Reference: referans, Amount: tutar, CurrencyCode: "TR1",
+		{"currency with a digit", service.CreateCollectionInput{
+			Reference: testReference, Amount: testAmount, CurrencyCode: "TR1",
 		}},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.ad, func(t *testing.T) {
-			svc, _, _ := yeniServis(t)
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _, _ := newTestService(t)
 
 			_, err := svc.CreatePaymentCollection(context.Background(), tt.in)
 
 			require.Error(t, err)
-			assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+			assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 			assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err))
 		})
 	}
 }
 
-// TestListPaymentCollectionsSuzgecVeSayfalama süzgecin ve sayfalama zarfının
-// birlikte doğru çalıştığını doğrular.
+// TestListPaymentCollectionsFilterAndPaging verifies that the filter and the
+// paging envelope work correctly together.
 //
-// Toplam sayının SAYFANIN değil SÜZGECİN sayısı olduğu ayrıca sınanır: sayfa
-// boyutu bir olsa da toplam üç dönmelidir, aksi hâlde istemci ikinci sayfanın
-// var olduğunu bilemez.
-func TestListPaymentCollectionsSuzgecVeSayfalama(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// That the total count is the count of the FILTER and not of the PAGE is tested
+// separately: even with a page size of one the total must come back as three,
+// otherwise the client cannot know that a second page exists.
+func TestListPaymentCollectionsFilterAndPaging(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 	for range 3 {
-		koleksiyonAc(t, svc, tutar)
+		openCollection(t, svc, testAmount)
 	}
 	_, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
-		Reference: "cart_BASKA", Amount: tutar, CurrencyCode: paraKodu,
+		Reference: "cart_OTHER", Amount: testAmount, CurrencyCode: testCurrency,
 	})
 	require.NoError(t, err)
 
-	reference := referans
-	sayfa, count, err := svc.ListPaymentCollections(ctx, service.ListCollectionsInput{
+	reference := testReference
+	firstPage, count, err := svc.ListPaymentCollections(ctx, service.ListCollectionsInput{
 		Reference: &reference,
 		Page:      service.Page{Limit: 1},
 	})
 
 	require.NoError(t, err)
-	assert.Len(t, sayfa, 1, "sayfa boyutu bir olmalı")
-	assert.Equal(t, int64(3), count, "toplam süzgecin sayısıdır, sayfanın değil")
+	assert.Len(t, firstPage, 1, "the page size must be one")
+	assert.Equal(t, int64(3), count, "the total is the filter's count, not the page's")
 }
 
-// TestListPaymentCollectionsSayfalamaDogrulamasi geçersiz sayfalama
-// parametrelerinin reddedildiğini doğrular.
-func TestListPaymentCollectionsSayfalamaDogrulamasi(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestListPaymentCollectionsPagingValidation verifies that invalid paging
+// parameters are rejected.
+func TestListPaymentCollectionsPagingValidation(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
 	tests := map[string]service.Page{
-		"negatif limit":  {Limit: -1},
-		"negatif offset": {Offset: -1},
-		"tavani asan":    {Limit: service.MaxLimit + 1},
+		"negative limit":    {Limit: -1},
+		"negative offset":   {Offset: -1},
+		"above the ceiling": {Limit: service.MaxLimit + 1},
 	}
-	for ad, page := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, page := range tests {
+		t.Run(name, func(t *testing.T) {
 			_, _, err := svc.ListPaymentCollections(ctx, service.ListCollectionsInput{Page: page})
 
 			require.Error(t, err)
-			assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+			assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 		})
 	}
 }
 
-// TestListPaymentCollectionsTaninmayanDurumReddedilir süzgece yazılan bir
-// yazım hatasının sessizce "sonuç yok" dönmediğini doğrular.
+// TestListPaymentCollectionsRejectsAnUnknownStatus verifies that a typo written
+// into the filter does not silently return "no results".
 //
-// Tanınmayan durumu sessizce süzmek, istemcinin gerçekten hiç kayıt olmadığını
-// sanmasına yol açardı.
-func TestListPaymentCollectionsTaninmayanDurumReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	durum := "paid"
+// Silently filtering on an unknown status would lead the client to believe that
+// there really are no records at all.
+func TestListPaymentCollectionsRejectsAnUnknownStatus(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	status := "paid"
 
 	_, _, err := svc.ListPaymentCollections(context.Background(), service.ListCollectionsInput{
-		Status: &durum,
+		Status: &status,
 	})
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 }
 
-// TestOkumalarBilinmeyenKimlikteNotFound okuma yüzeyinin eksik kayıtta
-// NotFound döndüğünü doğrular.
-func TestOkumalarBilinmeyenKimlikteNotFound(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestReadsOfAnUnknownIDAreNotFound verifies that the read surface returns
+// NotFound for a missing record.
+func TestReadsOfAnUnknownIDAreNotFound(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
-	_, err := svc.GetPaymentCollection(ctx, "paycol_YOK")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, err := svc.GetPaymentCollection(ctx, "paycol_MISSING")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 
-	_, err = svc.GetPaymentSession(ctx, "payses_YOK")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, err = svc.GetPaymentSession(ctx, "payses_MISSING")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 
-	_, err = svc.GetPayment(ctx, "pay_YOK")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, err = svc.GetPayment(ctx, "pay_MISSING")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 
-	_, err = svc.ListPaymentSessions(ctx, "paycol_YOK")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, err = svc.ListPaymentSessions(ctx, "paycol_MISSING")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 
-	_, err = svc.ListPayments(ctx, "paycol_YOK")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, err = svc.ListPayments(ctx, "paycol_MISSING")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 
-	_, err = svc.ListRefunds(ctx, "pay_YOK")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, err = svc.ListRefunds(ctx, "pay_MISSING")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 }
 
-// TestBosKimlikInvalidDonurur boş kimliğin "bulunamadı" değil "geçersiz"
-// olduğunu doğrular; ikisi çağıran için farklı hatalardır.
-func TestBosKimlikInvalidDonurur(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestAnEmptyIDIsInvalid verifies that an empty id is "invalid", not "not
+// found"; for the caller those are two different errors.
+func TestAnEmptyIDIsInvalid(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
 	_, err := svc.GetPaymentCollection(ctx, "")
-	assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 
-	_, err = svc.CreateSession(ctx, "", saglayiciID, service.CreateSessionInput{IdempotencyKey: "k"})
-	assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+	_, err = svc.CreateSession(ctx, "", testProviderID, service.CreateSessionInput{IdempotencyKey: "k"})
+	assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 
 	_, err = svc.AuthorizePayment(ctx, " ")
-	assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 
 	assert.True(t, errors.HasKind(svc.CancelPayment(ctx, ""), errors.KindInvalid))
 }
 
-// TestProviderIDsKayitliSaglayicilariDoner vitrinin hangi yolları göreceğini
-// doğrular.
-func TestProviderIDsKayitliSaglayicilariDoner(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestProviderIDsReturnsTheRegisteredProviders verifies which payment methods
+// the storefront will see.
+func TestProviderIDsReturnsTheRegisteredProviders(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
-	assert.Equal(t, []string{saglayiciID}, svc.ProviderIDs(context.Background()))
+	assert.Equal(t, []string{testProviderID}, svc.ProviderIDs(context.Background()))
 }
 
-// --- mağaza kredisi ----------------------------------------------------------
+// --- store credit ------------------------------------------------------------
 
-// Mağaza kredisinin SERVİS yarısı (ADR 0152): operatörün verdiği kredi ve
-// okunan bakiye. Harcama tarafı sağlayıcıda ve orada sınanıyor.
+// The SERVICE half of store credit (ADR 0152): the credit the operator issues
+// and the balance that is read. The spending side is in the provider and is
+// tested there.
 
-// TestVerilenKrediBakiyeyeGirer kararın en kısa hâli.
-func TestVerilenKrediBakiyeyeGirer(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestIssuedCreditEntersTheBalance is the decision in its shortest form.
+func TestIssuedCreditEntersTheBalance(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
 	entry, err := svc.IssueCredit(ctx, service.IssueCreditInput{
 		CustomerID:   "cus_1",
 		CurrencyCode: "try",
 		Amount:       5_000,
-		Reason:       "iade yerine kredi",
+		Reason:       "credit instead of a refund",
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, models.StoreCreditIssue, entry.Kind)
 	assert.Equal(t, int64(5_000), entry.Amount)
 	assert.Equal(t, "TRY", entry.CurrencyCode,
-		"para birimi NORMALLEŞTİRİLİR: 'try' ile 'TRY' aynı defteri okumalı, yoksa "+
-			"aynı müşterinin iki bakiyesi olurdu")
+		"the currency is NORMALIZED: 'try' and 'TRY' must read the same ledger, otherwise "+
+			"the same customer would have two balances")
 
 	balance, err := svc.StoreCreditBalance(ctx, "cus_1", "TRY")
 	require.NoError(t, err)
 	assert.Equal(t, int64(5_000), balance)
 }
 
-// TestGerekcesizKrediReddedilir bakiye kolonunun tutamadığı yarıyı korur.
-func TestGerekcesizKrediReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestCreditWithoutAReasonIsRefused guards the half that the balance column
+// cannot hold.
+func TestCreditWithoutAReasonIsRefused(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
 	_, err := svc.IssueCredit(context.Background(), service.IssueCreditInput{
 		CustomerID:   "cus_1",
@@ -353,21 +358,22 @@ func TestGerekcesizKrediReddedilir(t *testing.T) {
 	assert.Equal(t, service.CodeStoreCreditInvalidInput, errors.CodeOf(err))
 }
 
-// TestEksiKrediReddedilir operatörün bakiyeyi sıfırın altına indirmesini engeller.
+// TestNegativeCreditIsRefused stops the operator from taking the balance below
+// zero.
 //
-// "Krediyi geri al" ayrı bir karar: eksi tutar yazmak, müşterinin harcadığı parayı
-// geri almanın gizli yolu olurdu ve defterde bir GERİ ALMA olarak değil bir VERİŞ
-// olarak görünürdü.
-func TestEksiKrediReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// "Take the credit back" is a separate decision: writing a negative amount would
+// be a hidden way of taking back money the customer has spent, and it would show
+// in the ledger not as a TAKE-BACK but as an ISSUE.
+func TestNegativeCreditIsRefused(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
-	for ad, tutar := range map[string]int64{"eksi": -100, "sıfır": 0} {
-		t.Run(ad, func(t *testing.T) {
+	for name, amount := range map[string]int64{"negative": -100, "zero": 0} {
+		t.Run(name, func(t *testing.T) {
 			_, err := svc.IssueCredit(context.Background(), service.IssueCreditInput{
 				CustomerID:   "cus_1",
 				CurrencyCode: "TRY",
-				Amount:       tutar,
-				Reason:       "deneme",
+				Amount:       amount,
+				Reason:       "test",
 			})
 
 			require.Error(t, err)
@@ -376,13 +382,13 @@ func TestEksiKrediReddedilir(t *testing.T) {
 	}
 }
 
-// TestBakiyePARABIRIMIBasinadir bir para birimindeki kredinin ötekinde kredi
-// olmadığını çiviler.
+// TestTheBalanceIsPerCURRENCY pins that credit in one currency is not credit in
+// another.
 //
-// Kur çevirmek bu modülün işi değil ve sessizce çevirmek müşteriye vaat edilenden
-// başka bir tutar vermek olurdu.
-func TestBakiyePARABIRIMIBasinadir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// Converting between currencies is not this module's job, and converting
+// silently would give the customer an amount other than the one promised.
+func TestTheBalanceIsPerCURRENCY(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
 	_, err := svc.IssueCredit(ctx, service.IssueCreditInput{
@@ -392,28 +398,29 @@ func TestBakiyePARABIRIMIBasinadir(t *testing.T) {
 
 	other, err := svc.StoreCreditBalance(ctx, "cus_1", "EUR")
 	require.NoError(t, err)
-	assert.Zero(t, other, "TRY kredisi EUR bakiyesinde görünmemeli")
+	assert.Zero(t, other, "TRY credit must not show in the EUR balance")
 }
 
-// TestKredisiOlmayanMusteriSIFIRDondurur yokluğu sıfırdan ayırmaz.
+// TestACustomerWithoutCreditReturnsZERO does not tell absence apart from zero.
 //
-// Hiç kredi verilmemiş biriyle verilip tamamı harcanmış biri aynı miktarda paraya
-// sahiptir; aradaki farkı defterin kendisi anlatıyor.
-func TestKredisiOlmayanMusteriSIFIRDondurur(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// Someone who was never issued credit and someone who was issued credit and
+// spent all of it hold the same amount of money; the ledger itself tells the
+// difference between them.
+func TestACustomerWithoutCreditReturnsZERO(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
-	balance, err := svc.StoreCreditBalance(context.Background(), "cus_yok", "TRY")
+	balance, err := svc.StoreCreditBalance(context.Background(), "cus_missing", "TRY")
 
 	require.NoError(t, err)
 	assert.Zero(t, balance)
 }
 
-// TestKrediGecmisiYenidenEskiyeDoner operatörün "neden" sorusunu cevaplar.
-func TestKrediGecmisiYenidenEskiyeDoner(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestCreditHistoryIsNewestFirst answers the operator's "why" question.
+func TestCreditHistoryIsNewestFirst(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
-	for _, reason := range []string{"birinci", "ikinci"} {
+	for _, reason := range []string{"first", "second"} {
 		_, err := svc.IssueCredit(ctx, service.IssueCreditInput{
 			CustomerID: "cus_1", CurrencyCode: "TRY", Amount: 1_000, Reason: reason,
 		})
@@ -427,14 +434,14 @@ func TestKrediGecmisiYenidenEskiyeDoner(t *testing.T) {
 
 	assert.Equal(t, int64(2), total)
 	require.Len(t, entries, 2)
-	assert.Equal(t, "ikinci", entries[0].Reason, "en yeni satır başta")
+	assert.Equal(t, "second", entries[0].Reason, "the newest row comes first")
 }
 
 // TestACreditIsReadForTheOrderItCompensates is ADR 0274: an issue keeps the
 // order it names, and the history narrowed to that order holds its credits
 // alone.
 func TestACreditIsReadForTheOrderItCompensates(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
 
 	named, err := svc.IssueCredit(ctx, service.IssueCreditInput{
@@ -463,7 +470,7 @@ func TestACreditIsReadForTheOrderItCompensates(t *testing.T) {
 
 // TestAnOrderIDThatIsNoIdentifierIsRefused bounds the field to an id's size.
 func TestAnOrderIDThatIsNoIdentifierIsRefused(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _, _ := newTestService(t)
 
 	_, err := svc.IssueCredit(context.Background(), service.IssueCreditInput{
 		CustomerID: "cus_1", CurrencyCode: "TRY", Amount: 5_000, Reason: "a late delivery",

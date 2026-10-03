@@ -1,46 +1,49 @@
-// Package api payment modülünün HTTP yüzeyidir.
+// Package api is the payment module's HTTP surface.
 //
-// İki yüzey vardır ve yetkileri farklıdır:
+// There are two surfaces and their authority differs:
 //
-//   - /admin/v1 — ödemenin TÜM aşamalarını yönetir: koleksiyon açma, oturum
-//     açma, yetkilendirme, tahsilat, iptal ve iade.
-//   - /store/v1 — müşterinin ödeme akışı için gereken EN AZ yüzey: koleksiyonu
-//     okumak ve bir sağlayıcıda oturum açmak. Yetkilendirme ve tahsilat mağaza
-//     tarafından TETİKLENMEZ; onları sipariş tamamlama workflow'u yürütür
-//     (plan Faz 6). Müşterinin kendi tarayıcısından tahsilat tetikleyebilmesi,
-//     siparişi hiç oluşmamış bir sepetten para çekilmesi demek olurdu.
+//   - /admin/v1 — manages ALL stages of the payment: opening a collection,
+//     opening a session, authorization, capture, cancellation and refund.
+//   - /store/v1 — the LEAST surface the customer's payment flow needs: reading
+//     the collection and opening a session at a provider. Authorization and
+//     capture are NOT TRIGGERED by the store; the order completion workflow
+//     runs them (plan Phase 6). A customer being able to trigger a capture from
+//     their own browser would mean money being taken from a cart whose order
+//     never came into being.
 //
-// Aynı gerekçe mağaza yüzeyindeki oturum açma ucunun GÖVDESİNİ de daraltır:
-// tutar istemciden alınmaz (her zaman koleksiyonun kalanının tamamı) ve
-// sağlayıcının davranış anahtarları reddedilir. Tahsilatı tetikleyemeyen ama
-// ödemenin tutarını ya da sonucunu yazabilen bir uç, aynı kapıyı arka taraftan
-// açardı.
+// The same reasoning also narrows the BODY of the session-opening endpoint on
+// the store surface: the amount is not taken from the client (it is always the
+// whole of the collection's remainder) and the provider's behavior keys are
+// rejected. An endpoint that cannot trigger the capture but can write the
+// payment's amount or outcome would open the same gate from the back.
 //
-// # Yetki
+// # Scopes
 //
-// Yönetim uçları yetki İSTER ve yetki uç uç zorlanır (bkz. [Handler.Routes]):
+// The admin endpoints REQUIRE a scope, and the scope is enforced endpoint by
+// endpoint (see [Handler.Routes]):
 //
-//   - [ScopeRead] ("payment:read") — bu modülün /admin/v1 altında bağladığı
-//     BÜTÜN GET uçlarını açar.
-//   - [ScopeWrite] ("payment:write") — bu modülün /admin/v1 altında bağladığı
-//     BÜTÜN POST uçlarını açar.
+//   - [ScopeRead] ("payment:read") — opens ALL the GET endpoints this module
+//     binds under /admin/v1.
+//   - [ScopeWrite] ("payment:write") — opens ALL the POST endpoints this module
+//     binds under /admin/v1.
 //
-// İkisi de YÜZEYİ adlandırıyor, kaynakları saymıyor. Sayan bir cümle vardı ve
-// bayattı: ADR 0152 üç mağaza kredisi ucu bağladı, hiçbir listeye girmedi ve
-// hiçbir kapı bunu söylemedi; ADR 0164 iki puan ucu daha ekledi. Bir düzyazı
-// listesi, nüfusu büyüdüğü an sessizce yanlış olur (D111, ve D102 aynı onarımı
-// bir hedef listesi için yaptı).
+// Both name the SURFACE; they do not count the resources. There was a sentence
+// that counted them and it was stale: ADR 0152 bound three store credit
+// endpoints, none of them entered any list and no gate said so; ADR 0164 added
+// two more points endpoints. A prose list silently becomes wrong the moment its
+// population grows (D111, and D102 made the same repair for a target list).
 //
-// corehttp.ScopeAdmin ("admin") ÜST YETKİDİR; ikisini de tek başına karşılar
-// (bkz. corehttp.Principal.HasScope).
+// corehttp.ScopeAdmin ("admin") is a SUPERSCOPE; it satisfies both on its own
+// (see corehttp.Principal.HasScope).
 //
-// Mağaza uçlarına yetki EKLENMEZ: /store/v1'in kimliği publishable anahtardır
-// ve o anahtar tanımı gereği yetki taşımaz. Mağaza yüzeyini dar tutan şey
-// yetki değil, yüzeyin KENDİSİDİR — yukarıda sayılan sebeple orada tahsilat
-// ucu hiç yoktur.
+// The store endpoints get NO scope: the identity of /store/v1 is the
+// publishable key, and that key by definition carries no scope. What keeps the
+// store surface narrow is not a scope but the surface ITSELF — for the reason
+// given above, there is no capture endpoint there at all.
 //
-// Handler'lar status kodu SEÇMEZ: servis core/errors tipli hatasını döner,
-// corehttp.WriteError sınıfına uygun kodu yazar (plan Bölüm 8).
+// Handlers do NOT CHOOSE the status code: the service returns a core/errors
+// typed error, and corehttp.WriteError writes the code that fits its kind (plan
+// Section 8).
 package api
 
 import (
@@ -60,31 +63,34 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// Route yolları. Modül route'ları TAM YOL ile kaydedilir; "/admin/v1" gibi bir
-// ön ek MOUNT EDİLMEZ, çünkü mount eden ilk modül o alt ağacın tamamını
-// sahiplenir ve aynı ön eki kullanan diğer modüllerle çakışırdı.
+// Route paths. Module routes are registered with the FULL PATH; a prefix such
+// as "/admin/v1" is NOT MOUNTED, because the first module to mount it would own
+// that whole subtree and collide with the other modules that use the same
+// prefix.
 const (
 	pathAdminProviders = "/admin/v1/payment-providers"
-	// pathAdminStoreCredits ve pathAdminStoreCreditBalance mağaza kredisinin iki
-	// yönetim ucudur (ADR 0152).
+	// pathAdminStoreCredits and pathAdminStoreCreditBalance are the two admin
+	// endpoints of store credit (ADR 0152).
 	//
-	// Bakiye AYRI bir adres, listeye eklenmiş bir alan değil: liste zarfı
-	// {data, count, offset, limit} ve içine beşinci bir alan koymak, o zarfı
-	// okuyan her istemciye bu uca özel bir dal yazdırırdı. İki soru, iki adres.
+	// The balance is a SEPARATE address, not a field added to the list: the
+	// list envelope is {data, count, offset, limit}, and putting a fifth field
+	// into it would make every client that reads that envelope write a branch
+	// special to this endpoint. Two questions, two addresses.
 	//
-	// Aşağıdaki iki satırdaki bastırmanın gerekçesi: G101 adın içinde "cred"
-	// gördüğü için bunları bir sır sanıyor. İkisi de ROTA ADRESİ — belgeye giren,
-	// istemcinin yazdığı metin — ve adın taşıdığı sözcük "credential" değil
-	// "credit".
-	pathAdminStoreCredits       = "/admin/v1/store-credits"         //nolint:gosec // G101: bir rota adresi, sır değil
-	pathAdminStoreCreditBalance = "/admin/v1/store-credits/balance" //nolint:gosec // G101: bir rota adresi, sır değil
+	// The reason for the suppression on the two lines below: G101 takes them
+	// for a secret because it sees "cred" in the name. Both are ROUTE ADDRESSES
+	// — text that goes into the document and that the client writes — and the
+	// word the name carries is "credit", not "credential".
+	pathAdminStoreCredits       = "/admin/v1/store-credits"         //nolint:gosec // G101: a route address, not a secret
+	pathAdminStoreCreditBalance = "/admin/v1/store-credits/balance" //nolint:gosec // G101: a route address, not a secret
 
-	// pathAdminLoyaltyPoints ve pathAdminLoyaltyPointsBalance sadakat puanının
-	// iki yönetim ucudur (ADR 0164).
+	// pathAdminLoyaltyPoints and pathAdminLoyaltyPointsBalance are the two admin
+	// endpoints of loyalty points (ADR 0164).
 	//
-	// Mağaza kredisinin şekli: bakiye AYRI bir adres, listeye eklenmiş bir alan
-	// değil. İki soru, iki adres. Yazma ucu YOK — puanı yazan tek şey paranın
-	// kendisi ve onu bir operatör elle kımıldatamıyor.
+	// Store credit's shape: the balance is a SEPARATE address, not a field added
+	// to the list. Two questions, two addresses. There is NO write endpoint —
+	// the only thing that writes points is the money itself, and an operator
+	// cannot move them by hand.
 	pathAdminLoyaltyPoints        = "/admin/v1/loyalty-points"
 	pathAdminLoyaltyPointsBalance = "/admin/v1/loyalty-points/balance"
 
@@ -102,40 +108,43 @@ const (
 	pathStoreProviders   = "/store/v1/payment-providers"
 	pathStoreCollection  = "/store/v1/payment-collections/{id}"
 	pathStoreCollectSess = "/store/v1/payment-collections/{id}/payment-sessions"
-	// pathStoreSessionCancel müşterinin KENDİ açtığı oturumu bırakmasıdır.
+	// pathStoreSessionCancel is the customer releasing a session they opened
+	// THEMSELVES.
 	//
-	// Rezervasyon koleksiyon düzeyinde tutulur (açık bir oturum, koleksiyonun
-	// kalan tutarını kapatır) — çift tahsilatı bu engelliyor. Bırakma yolu
-	// olmasaydı vitrinde "kredi kartı" seçip sonra "havale"ye dönmek isteyen
-	// müşteri, bir YÖNETİCİ oturumu elle iptal edene kadar kilitli kalırdı.
+	// The reservation is held at the collection level (an open session covers
+	// the collection's remaining amount) — that is what prevents a double
+	// capture. Without a way to release it, a customer who chose "credit card"
+	// on the storefront and then wanted to switch to "bank transfer" would stay
+	// locked until an ADMINISTRATOR canceled the session by hand.
 	pathStoreSessionCancel = "/store/v1/payment-sessions/{id}/cancel"
 )
 
-// maxBodyBytes istek gövdesi için üst sınırdır. Sınır olmadan tek bir istek
-// sunucunun belleğini tüketebilirdi.
+// maxBodyBytes is the upper bound for the request body. Without a bound a
+// single request could exhaust the server's memory.
 const maxBodyBytes int64 = 1 << 20 // 1 MiB
 
-// codeInvalidRequest gövde/parametre çözümlenemediğinde dönen hata kodudur.
+// codeInvalidRequest is the error code returned when the body or a parameter
+// cannot be parsed.
 const codeInvalidRequest = "payment_invalid_request"
 
-// Payments handler'ların servisten ihtiyaç duyduğu yüzeydir.
+// Payments is the surface the handlers need from the service.
 //
-// Dar tutulması testleri sadeleştirir: HTTP davranışı, gerçek bir veritabanı
-// olmadan birkaç satırlık bir sahte ile doğrulanabilir.
+// Keeping it narrow simplifies the tests: the HTTP behavior can be verified
+// without a real database, with a fake of a few lines.
 type Payments interface {
-	// ProviderIDs kayıtlı sağlayıcı kimliklerini döner.
+	// ProviderIDs returns the IDs of the registered providers.
 	ProviderIDs(ctx context.Context) []string
 
-	// IssueCredit bir müşteriye mağaza kredisi verir (ADR 0152).
+	// IssueCredit issues store credit to a customer (ADR 0152).
 	IssueCredit(ctx context.Context, in service.IssueCreditInput) (models.StoreCreditEntry, error)
-	// StoreCreditBalance müşterinin tek bir para birimindeki bakiyesini döner.
+	// StoreCreditBalance returns the customer's balance in a single currency.
 	StoreCreditBalance(ctx context.Context, customerID, currencyCode string) (int64, error)
-	// ListStoreCredit müşterinin kredi geçmişini sayfalar.
+	// ListStoreCredit pages the customer's credit history.
 	ListStoreCredit(
 		ctx context.Context, in service.ListStoreCreditInput,
 	) ([]models.StoreCreditEntry, int64, error)
 
-	// LoyaltyBalance müşterinin tek bir para birimindeki puanını döner.
+	// LoyaltyBalance returns the customer's points in a single currency.
 	LoyaltyBalance(ctx context.Context, customerID, currencyCode string) (int64, error)
 
 	// Journal derives the module's books over a window (ADR 0186).
@@ -153,42 +162,42 @@ type Payments interface {
 	ReplaceGiftCardCode(ctx context.Context, id string) (service.IssuedGiftCard, error)
 	// DisableGiftCard closes a card and voids what it held (ADR 0213).
 	DisableGiftCard(ctx context.Context, id, reason string) (service.GiftCardWithBalance, error)
-	// ListLoyalty müşterinin puan geçmişini sayfalar.
+	// ListLoyalty pages the customer's points history.
 	ListLoyalty(
 		ctx context.Context, in service.ListLoyaltyInput,
 	) ([]models.LoyaltyEntry, int64, error)
 
-	// CreatePaymentCollection yeni bir ödeme koleksiyonu oluşturur.
+	// CreatePaymentCollection creates a new payment collection.
 	CreatePaymentCollection(ctx context.Context, in service.CreateCollectionInput) (models.PaymentCollection, error)
-	// GetPaymentCollection koleksiyonu kimliğiyle döner.
+	// GetPaymentCollection returns the collection by its ID.
 	GetPaymentCollection(ctx context.Context, id string) (models.PaymentCollection, error)
-	// ListPaymentCollections koleksiyonları sayfalar.
+	// ListPaymentCollections pages the collections.
 	ListPaymentCollections(ctx context.Context, in service.ListCollectionsInput) ([]models.PaymentCollection, int64, error)
 
-	// CreateSession bir sağlayıcıda ödeme oturumu açar.
+	// CreateSession opens a payment session at a provider.
 	CreateSession(ctx context.Context, collectionID, providerID string, in service.CreateSessionInput) (models.PaymentSession, error)
-	// GetPaymentSession oturumu kimliğiyle döner.
+	// GetPaymentSession returns the session by its ID.
 	GetPaymentSession(ctx context.Context, id string) (models.PaymentSession, error)
-	// ListPaymentSessions koleksiyonun oturumlarını döner.
+	// ListPaymentSessions returns the collection's sessions.
 	ListPaymentSessions(ctx context.Context, collectionID string) ([]models.PaymentSession, error)
-	// AuthorizePayment oturumu yetkilendirir.
+	// AuthorizePayment authorizes the session.
 	AuthorizePayment(ctx context.Context, sessionID string) (models.PaymentSession, error)
-	// CapturePayment bloke tutarı tahsil eder.
+	// CapturePayment captures the held amount.
 	CapturePayment(ctx context.Context, sessionID string, amount int64) (models.Payment, error)
-	// CancelPayment oturumu iptal eder (saga telafisi).
+	// CancelPayment cancels the session (saga compensation).
 	CancelPayment(ctx context.Context, sessionID string) error
 
-	// GetPayment tahsilatı kimliğiyle döner.
+	// GetPayment returns the capture by its ID.
 	GetPayment(ctx context.Context, id string) (models.Payment, error)
-	// ListPayments koleksiyonun tahsilatlarını döner.
+	// ListPayments returns the collection's captures.
 	ListPayments(ctx context.Context, collectionID string) ([]models.Payment, error)
-	// RefundPayment tahsilatı iade eder.
+	// RefundPayment refunds the capture.
 	RefundPayment(ctx context.Context, paymentID string, amount int64, reason string) (models.Refund, error)
-	// ListRefunds tahsilatın iadelerini döner.
+	// ListRefunds returns the capture's refunds.
 	ListRefunds(ctx context.Context, paymentID string) ([]models.Refund, error)
 }
 
-// Handler payment modülünün HTTP handler kümesidir.
+// Handler is the payment module's set of HTTP handlers.
 type Handler struct {
 	svc Payments
 	// identity proves the customer a storefront balance read names; nil
@@ -196,114 +205,117 @@ type Handler struct {
 	identity corehttp.Identity
 }
 
-// New verilen servis üzerinde çalışan handler kümesini üretir.
+// New produces the set of handlers working on the given service.
 func New(svc Payments) *Handler { return &Handler{svc: svc} }
 
-// Yetki sözlüğü: payment'ın yönetim uçlarının istediği yetkiler.
+// The scope vocabulary: the scopes payment's admin endpoints ask for.
 //
-// Ayrım OKUMA/YAZMA üzerinedir, kaynak üzerine değil. "payment_refunds:write"
-// gibi kaynak başına yetkiler listeyi büyütür ama bugün verilebilecek yeni bir
-// karar üretmez: iade yapabilen ama tahsilat yapamayan bir kimliğe olan
-// ihtiyaç henüz yok ve olmayan bir ihtiyaç için tanımlanan yetki adı, ilk kez
-// verildiği gün ne işe yaradığı bilinmeyen bir addır.
+// The split is on READ/WRITE, not on the resource. Per-resource scopes such as
+// "payment_refunds:write" grow the list but produce no new decision that can
+// be made today: there is no need yet for an identity that can refund but
+// cannot capture, and a scope name defined for a need that does not exist is a
+// name whose purpose nobody knows on the day it is first granted.
 const (
-	// ScopeRead payment yönetim yüzeyindeki OKUMA uçlarının istediği yetkidir.
+	// ScopeRead is the scope the READ endpoints on payment's admin surface ask
+	// for.
 	//
-	// Modülün /admin/v1 altındaki her GET ucunu açar ve para hareketi doğuran
-	// hiçbir ucu açmaz. Neyi okuduğunu tek tek saymıyor, çünkü sayan bir cümle
-	// büyüyen bir nüfusun gerisinde kalır (D111): ne okunabileceğini
-	// [Handler.Routes] söyler, ve okunabilenler arasında müşterinin mağaza
-	// kredisi ve sadakat puanı da var. Tam yetkili kimliklere ayrıca verilmesi
-	// gerekmez: corehttp.ScopeAdmin taşıyan bir çağıran bunu da karşılar
-	// (bkz. corehttp.Principal.HasScope).
+	// It opens every GET endpoint of the module under /admin/v1 and opens no
+	// endpoint that gives rise to a money movement. It does not count what it
+	// reads one by one, because a sentence that counts falls behind a growing
+	// population (D111): what can be read is what [Handler.Routes] says, and
+	// among what can be read are the customer's store credit and loyalty points
+	// too. Fully authorized identities need not be granted it separately: a
+	// caller carrying corehttp.ScopeAdmin satisfies this one too
+	// (see corehttp.Principal.HasScope).
 	ScopeRead = "payment:read"
 
-	// ScopeWrite payment yönetim yüzeyindeki YAZMA uçlarının istediği
-	// yetkidir.
+	// ScopeWrite is the scope the WRITE endpoints on payment's admin surface
+	// ask for.
 	//
-	// Bu modülde yazma, PARA HAREKETİ demektir: tahsilat müşterinin kartından
-	// çeker, iade kasadan çıkarır, iptal bloke tutarı serbest bırakır, kredi
-	// vermek müşterinin harcayabileceği para yaratır. Okuma yetkisinden
-	// ayrılmasının sebebi budur — raporlama için verilen bir kimliğin kasaya
-	// erişmemesi gerekir.
+	// In this module, writing means a MONEY MOVEMENT: a capture takes from the
+	// customer's card, a refund takes out of the till, a cancellation releases
+	// the held amount, issuing credit creates money the customer can spend.
+	// That is why it is separate from the read scope — an identity granted for
+	// reporting must not reach the till.
 	//
-	// Cümlenin kapsamı bir KARARI da tutuyor: sadakat puanının yazma ucu YOK,
-	// çünkü puanı kımıldatan tek şey paranın kendisi ve elle bir düzeltme bu
-	// cümleyi yanlış yapardı (ADR 0164).
+	// The sentence's scope also holds a DECISION: loyalty points have NO write
+	// endpoint, because the only thing that moves points is the money itself,
+	// and a manual correction would make this sentence wrong (ADR 0164).
 	ScopeWrite = "payment:write"
 )
 
-// Routes modülün admin ve store route'larını router'a bağlar.
+// Routes binds the module's admin and store routes to the router.
 //
-// # KORUMA
+// # PROTECTION
 //
-// Yönetim uçları iki katmanla korunur ve ikisi de gereklidir:
+// The admin endpoints are protected by two layers, and both are needed:
 //
-//  1. KİMLİK — corehttp.RequireAdmin, router'ı kuran tarafta takılır (bkz.
-//     corehttp.APIGuards); bu modülün işi değildir.
-//  2. YETKİ — uçlar BURADA, uç uç corehttp.RequireScope ile işaretlenir.
+//  1. IDENTITY — corehttp.RequireAdmin is mounted on the side that builds the
+//     router (see corehttp.APIGuards); it is not this module's job.
+//  2. SCOPE — the endpoints are marked HERE, endpoint by endpoint, with
+//     corehttp.RequireScope.
 //
-// İkinci katman olmadan kimlik doğrulama yetkilendirmenin yerine geçerdi:
-// yetkileri BOŞ bırakılmış bir yönetim kullanıcısı giriş yapıp bir tahsilatı
-// iade edebilirdi. Kimlik "kim" sorusunu yanıtlar, "ne yapabilir" sorusunu
-// değil.
+// Without the second layer authentication would stand in for authorization:
+// an admin user whose scopes were left EMPTY could log in and refund a
+// capture. Identity answers the question "who", not "what may they do".
 //
-// Mağaza uçları AYNI KALIR: oradaki kimlik publishable anahtardır ve yetki
-// taşımaz. İki yüzeyin PAYLAŞTIĞI handler'lar (listProviders, getCollection)
-// yalnızca yönetim yolunda yetki ister; yetki route'a takılır, handler'a
-// değil.
+// The store endpoints STAY THE SAME: the identity there is the publishable key
+// and it carries no scope. The handlers the two surfaces SHARE (listProviders,
+// getCollection) ask for a scope only on the admin path; the scope is attached
+// to the route, not to the handler.
 func (h *Handler) Routes(r chi.Router) {
-	okuma := r.With(corehttp.RequireScope(ScopeRead))
-	yazma := r.With(corehttp.RequireScope(ScopeWrite))
+	read := r.With(corehttp.RequireScope(ScopeRead))
+	write := r.With(corehttp.RequireScope(ScopeWrite))
 
-	okuma.Get(pathAdminProviders, h.listProviders)
+	read.Get(pathAdminProviders, h.listProviders)
 
-	// Mağaza kredisi: vermek bir YAZMA, bakiye ve geçmiş OKUMA. Krediyi veren
-	// eylem müşterinin harcayabileceği para yaratıyor, yani ödeme yazma yetkisinin
-	// altında (ADR 0152).
-	yazma.Post(pathAdminStoreCredits, h.issueStoreCredit)
-	okuma.Get(pathAdminStoreCredits, h.listStoreCredit)
-	okuma.Get(pathAdminStoreCreditBalance, h.storeCreditBalance)
+	// Store credit: issuing is a WRITE, the balance and the history a READ. The
+	// action that issues credit creates money the customer can spend, so it is
+	// under the payment write scope (ADR 0152).
+	write.Post(pathAdminStoreCredits, h.issueStoreCredit)
+	read.Get(pathAdminStoreCredits, h.listStoreCredit)
+	read.Get(pathAdminStoreCreditBalance, h.storeCreditBalance)
 
-	// Sadakat puanı: yalnızca OKUMA. Puanı yazan eylem tahsilatın kendisi, yani
-	// bu modülde zaten yazma yetkisinin altında olan bir şey; ayrı bir yazma ucu
-	// operatöre parayla ilgisi olmayan bir puan kımıldatma yolu açardı ve
-	// ScopeWrite'ın "yazma PARA HAREKETİ demektir" cümlesini yanlış yapardı
-	// (ADR 0164).
-	okuma.Get(pathAdminLoyaltyPoints, h.listLoyaltyPoints)
-	okuma.Get(pathAdminLoyaltyPointsBalance, h.loyaltyPointBalance)
+	// Loyalty points: READ only. The action that writes points is the capture
+	// itself, that is, something already under the write scope in this module;
+	// a separate write endpoint would open the operator a way to move points
+	// that has nothing to do with money, and would make ScopeWrite's sentence
+	// "writing means a MONEY MOVEMENT" wrong (ADR 0164).
+	read.Get(pathAdminLoyaltyPoints, h.listLoyaltyPoints)
+	read.Get(pathAdminLoyaltyPointsBalance, h.loyaltyPointBalance)
 
-	okuma.Get(pathAdminPaymentJournal, h.paymentJournal)
+	read.Get(pathAdminPaymentJournal, h.paymentJournal)
 
 	// Gift cards (ADR 0208): issuing one creates money a holder can spend, so it
 	// is a write under the payment scope, as store credit's issue is.
-	yazma.Post(pathAdminGiftCards, h.issueGiftCard)
-	okuma.Get(pathAdminGiftCards, h.listGiftCards)
-	okuma.Get(pathAdminGiftCard, h.getGiftCard)
-	okuma.Get(pathAdminGiftCardEntries, h.listGiftCardEntries)
-	yazma.Post(pathAdminGiftCardCode, h.replaceGiftCardCode)
-	yazma.Post(pathAdminGiftCardDisable, h.disableGiftCard)
+	write.Post(pathAdminGiftCards, h.issueGiftCard)
+	read.Get(pathAdminGiftCards, h.listGiftCards)
+	read.Get(pathAdminGiftCard, h.getGiftCard)
+	read.Get(pathAdminGiftCardEntries, h.listGiftCardEntries)
+	write.Post(pathAdminGiftCardCode, h.replaceGiftCardCode)
+	write.Post(pathAdminGiftCardDisable, h.disableGiftCard)
 
-	yazma.Post(pathAdminCollections, h.createCollection)
-	okuma.Get(pathAdminCollections, h.listCollections)
-	okuma.Get(pathAdminCollection, h.getCollection)
-	okuma.Get(pathAdminCollectionSess, h.listSessions)
-	yazma.Post(pathAdminCollectionSess, h.createSession)
-	okuma.Get(pathAdminCollectionPays, h.listPayments)
+	write.Post(pathAdminCollections, h.createCollection)
+	read.Get(pathAdminCollections, h.listCollections)
+	read.Get(pathAdminCollection, h.getCollection)
+	read.Get(pathAdminCollectionSess, h.listSessions)
+	write.Post(pathAdminCollectionSess, h.createSession)
+	read.Get(pathAdminCollectionPays, h.listPayments)
 
-	okuma.Get(pathAdminSession, h.getSession)
-	yazma.Post(pathAdminSessionAuthorize, h.authorizeSession)
-	yazma.Post(pathAdminSessionCapture, h.captureSession)
-	yazma.Post(pathAdminSessionCancel, h.cancelSession)
+	read.Get(pathAdminSession, h.getSession)
+	write.Post(pathAdminSessionAuthorize, h.authorizeSession)
+	write.Post(pathAdminSessionCapture, h.captureSession)
+	write.Post(pathAdminSessionCancel, h.cancelSession)
 
-	okuma.Get(pathAdminPayment, h.getPayment)
-	okuma.Get(pathAdminPaymentRefund, h.listRefunds)
-	yazma.Post(pathAdminPaymentRefund, h.refundPayment)
+	read.Get(pathAdminPayment, h.getPayment)
+	read.Get(pathAdminPaymentRefund, h.listRefunds)
+	write.Post(pathAdminPaymentRefund, h.refundPayment)
 
 	r.Get(pathStoreProviders, h.listProviders)
 	r.Get(pathStoreCollection, h.getCollection)
-	// Oturum açma iki yüzeyde de vardır ama AYNI handler değildir: mağaza ucu
-	// tutarı ve sağlayıcı davranışını istemciye bırakmaz.
+	// Opening a session exists on both surfaces but it is NOT the same handler:
+	// the store endpoint does not leave the amount and the provider behavior to
+	// the client.
 	r.Post(pathStoreCollectSess, h.createStoreSession)
 	r.Post(pathStoreSessionCancel, h.cancelStoreSession)
 
@@ -312,27 +324,28 @@ func (h *Handler) Routes(r chi.Router) {
 	r.Get(pathStoreOwnLoyalty, h.ownLoyaltyBalance)
 }
 
-// --- zarflar ve DTO'lar ------------------------------------------------------
+// --- envelopes and DTOs -------------------------------------------------------
 
-// singleEnvelope tekil yanıtların zarfıdır (plan Bölüm 8).
+// singleEnvelope is the envelope of single-record responses (plan Section 8).
 type singleEnvelope struct {
-	// Data yanıtın gövdesidir.
+	// Data is the body of the response.
 	Data any `json:"data"`
 }
 
-// listEnvelope liste yanıtlarının zarfıdır (plan Bölüm 8).
+// listEnvelope is the envelope of list responses (plan Section 8).
 type listEnvelope struct {
-	// Data sayfadaki kayıtlardır.
+	// Data is the records on the page.
 	Data any `json:"data"`
-	// Count süzgece uyan TÜM kayıtların sayısıdır; sayfadaki satır sayısı değil.
+	// Count is the number of ALL records matching the filter; not the number of
+	// rows on the page.
 	Count int64 `json:"count"`
-	// Offset atlanan kayıt sayısıdır.
+	// Offset is the number of records skipped.
 	Offset int64 `json:"offset"`
-	// Limit istenen sayfa boyutudur.
+	// Limit is the requested page size.
 	Limit int64 `json:"limit"`
 }
 
-// collectionDTO ödeme koleksiyonunun dış gösterimidir.
+// collectionDTO is the external representation of a payment collection.
 type collectionDTO struct {
 	ID               string         `json:"id"`
 	Reference        string         `json:"reference"`
@@ -347,12 +360,12 @@ type collectionDTO struct {
 	UpdatedAt        time.Time      `json:"updated_at"`
 }
 
-// sessionDTO ödeme oturumunun dış gösterimidir.
+// sessionDTO is the external representation of a payment session.
 //
-// DeclineReason yalnızca ret hâlinde doludur ve TEŞHİS içindir; müşteriye
-// gösterilecek bir metin değildir. Mağaza yüzeyinde de görünür olması
-// bilinçlidir: alanı gizlemek, entegrasyonu yazan geliştiricinin reddin
-// sebebini hiç görememesi demek olurdu.
+// DeclineReason is filled only in the declined state and is for DIAGNOSIS; it
+// is not a text to show the customer. That it is visible on the store surface
+// too is deliberate: hiding the field would mean the developer writing the
+// integration could never see the reason for the decline.
 type sessionDTO struct {
 	ID                  string          `json:"id"`
 	PaymentCollectionID string          `json:"payment_collection_id"`
@@ -368,7 +381,7 @@ type sessionDTO struct {
 	UpdatedAt           time.Time       `json:"updated_at"`
 }
 
-// paymentDTO tahsilatın dış gösterimidir.
+// paymentDTO is the external representation of a capture.
 type paymentDTO struct {
 	ID                  string    `json:"id"`
 	PaymentSessionID    string    `json:"payment_session_id"`
@@ -381,7 +394,7 @@ type paymentDTO struct {
 	UpdatedAt           time.Time `json:"updated_at"`
 }
 
-// refundDTO iadenin dış gösterimidir.
+// refundDTO is the external representation of a refund.
 type refundDTO struct {
 	ID        string `json:"id"`
 	PaymentID string `json:"payment_id"`
@@ -394,7 +407,7 @@ type refundDTO struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// toCollectionDTO modeli dış gösterime çevirir.
+// toCollectionDTO converts the model into the external representation.
 func toCollectionDTO(col models.PaymentCollection) collectionDTO {
 	return collectionDTO{
 		ID:               col.ID,
@@ -411,7 +424,7 @@ func toCollectionDTO(col models.PaymentCollection) collectionDTO {
 	}
 }
 
-// toSessionDTO modeli dış gösterime çevirir.
+// toSessionDTO converts the model into the external representation.
 func toSessionDTO(ses models.PaymentSession) sessionDTO {
 	return sessionDTO{
 		ID:                  ses.ID,
@@ -429,7 +442,7 @@ func toSessionDTO(ses models.PaymentSession) sessionDTO {
 	}
 }
 
-// toPaymentDTO modeli dış gösterime çevirir.
+// toPaymentDTO converts the model into the external representation.
 func toPaymentDTO(pay models.Payment) paymentDTO {
 	return paymentDTO{
 		ID:                  pay.ID,
@@ -444,7 +457,7 @@ func toPaymentDTO(pay models.Payment) paymentDTO {
 	}
 }
 
-// toRefundDTO modeli dış gösterime çevirir.
+// toRefundDTO converts the model into the external representation.
 func toRefundDTO(ref models.Refund) refundDTO {
 	return refundDTO{
 		ID:        ref.ID,
@@ -457,12 +470,13 @@ func toRefundDTO(ref models.Refund) refundDTO {
 	}
 }
 
-// --- yardımcılar -------------------------------------------------------------
+// --- helpers ------------------------------------------------------------------
 
-// decodeBody istek gövdesini çözer.
+// decodeBody decodes the request body.
 //
-// Gövde boyutu sınırlanır ve TANINMAYAN ALANLAR reddedilir: sessizce yutulan
-// bir alan, istemcinin gönderdiğini sandığı ama uygulanmayan bir ayar demektir.
+// The body size is bounded and UNKNOWN FIELDS are rejected: a silently
+// swallowed field means a setting the client believes it sent but that is never
+// applied.
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 
@@ -470,20 +484,20 @@ func decodeBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
-			return coreerrors.Invalid(codeInvalidRequest, "istek gövdesi boş olamaz")
+			return coreerrors.Invalid(codeInvalidRequest, "request body cannot be empty")
 		}
 		return coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"istek gövdesi çözümlenemedi")
+			"request body could not be parsed")
 	}
-	// Tek bir JSON değerinden fazlası gönderilmişse bu da bir istemci hatasıdır.
+	// If more than a single JSON value was sent, that is a client error too.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return coreerrors.Invalid(codeInvalidRequest,
-			"istek gövdesi tek bir JSON nesnesi olmalı")
+			"request body has to be a single JSON document")
 	}
 	return nil
 }
 
-// parsePage limit/offset sorgu parametrelerini çözer.
+// parsePage parses the limit/offset query parameters.
 func parsePage(r *http.Request) (service.Page, error) {
 	limit, err := parseInt64Param(r, "limit")
 	if err != nil {
@@ -495,14 +509,15 @@ func parsePage(r *http.Request) (service.Page, error) {
 	}
 	page := service.Page{Limit: limit, Offset: offset}
 	if page.Limit == 0 {
-		// Yanıttaki limit alanının gerçekten uygulanan sınırı göstermesi için
-		// varsayılan burada da görünür kılınır.
+		// The default is made visible here too, so that the limit field in the
+		// response shows the bound that is really applied.
 		page.Limit = service.DefaultLimit
 	}
 	return page, nil
 }
 
-// parseInt64Param bir sorgu parametresini tam sayıya çevirir; yoksa 0 döner.
+// parseInt64Param converts a query parameter to an integer; returns 0 if it is
+// absent.
 func parseInt64Param(r *http.Request, name string) (int64, error) {
 	raw := r.URL.Query().Get(name)
 	if raw == "" {
@@ -516,11 +531,12 @@ func parseInt64Param(r *http.Request, name string) (int64, error) {
 	return value, nil
 }
 
-// writeList bir dilimi liste zarfıyla yazar.
+// writeList writes a slice with the list envelope.
 //
-// Sayfalanmayan uçlarda (bir koleksiyonun oturumları gibi) count satır
-// sayısıdır ve limit ile aynıdır: zarf her yerde aynı şekle sahiptir, istemci
-// iki farklı yanıt biçimi öğrenmek zorunda kalmaz.
+// On endpoints that are not paged (such as a collection's sessions) count is
+// the number of rows and is the same as limit: the envelope has the same shape
+// everywhere, and the client does not have to learn two different response
+// formats.
 func writeList[T any](ctx context.Context, w http.ResponseWriter, items []T) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
 		Data:   items,

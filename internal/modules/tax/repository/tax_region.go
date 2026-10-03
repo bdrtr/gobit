@@ -9,12 +9,13 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/repository/taxdb"
 )
 
-// CreateTaxRegion yeni bir vergi bölgesi yazar.
+// CreateTaxRegion writes a new tax region.
 //
-// Aynı ülkeye ikinci bir KÖK bölge yazılırsa kısmi benzersiz indeks ihlali
-// oluşur ve errors.Conflict dönülür. Eyalet bölgesinin ülkesi ebeveyninin
-// ülkesinden farklıysa bileşik foreign key ihlali oluşur ve errors.Invalid
-// dönülür; ikisi de servis denetimlerinin ARDINDAKİ son savunmadır.
+// If a second ROOT region is written for the same country a partial unique
+// index violation occurs and errors.Conflict is returned. If a province
+// region's country differs from its parent's country a composite foreign key
+// violation occurs and errors.Invalid is returned; both are the last line of
+// defense BEHIND the service's checks.
 func (r *Repo) CreateTaxRegion(ctx context.Context, region models.TaxRegion, now time.Time) (models.TaxRegion, error) {
 	if err := r.ready(); err != nil {
 		return models.TaxRegion{}, err
@@ -38,13 +39,13 @@ func (r *Repo) CreateTaxRegion(ctx context.Context, region models.TaxRegion, now
 		CreatedAt: fromTime(now),
 	})
 	if err != nil {
-		return models.TaxRegion{}, wrapDB(err, "vergi bölgesi eklenemedi: %s/%s",
+		return models.TaxRegion{}, wrapDB(err, "the tax region could not be inserted: %s/%s",
 			region.CountryCode, region.Province())
 	}
 	return toTaxRegion(row)
 }
 
-// GetTaxRegion kimliğe göre bölge döner; yoksa errors.NotFound.
+// GetTaxRegion returns the region by id; errors.NotFound if there is none.
 func (r *Repo) GetTaxRegion(ctx context.Context, id string) (models.TaxRegion, error) {
 	if err := r.ready(); err != nil {
 		return models.TaxRegion{}, err
@@ -53,29 +54,30 @@ func (r *Repo) GetTaxRegion(ctx context.Context, id string) (models.TaxRegion, e
 	row, err := r.queries(ctx).GetTaxRegion(ctx, id)
 	if err != nil {
 		return models.TaxRegion{}, notFoundOr(err, CodeTaxRegionNotFound,
-			"vergi bölgesi bulunamadı: %s", id)
+			"tax region not found: %s", id)
 	}
 	return toTaxRegion(row)
 }
 
-// LockTaxRegion bölgeyi PAYLAŞIMLI kilitle okur; kilit işlem sonuna kadar
-// tutulur.
+// LockTaxRegion reads the region with a SHARED lock; the lock is held until the
+// end of the transaction.
 //
-// YALNIZCA [Repo.WithTx] içinde çağrılabilir ve dışarıda çağrılırsa hata
-// döner: FOR SHARE kilidi işlem bitince serbest kalır, yani işlemsiz bir kilit
-// hiçbir şeyi korumaz ama koruduğu sanılır.
+// It can be called ONLY inside [Repo.WithTx], and returns an error when called
+// outside it: a FOR SHARE lock is released when the transaction ends, so a lock
+// without a transaction protects nothing but is believed to protect something.
 //
-// Bölgeye bir şey BAĞLAYAN her akış bunu kullanır — eyalet bölgesi ekleme ve
-// oran ekleme. İkisi de "bölge canlı mı" denetimini yapıp ardından yazar ve
-// denetim ile yazma AYNI işlemde olmalıdır. Kilitsiz [Repo.GetTaxRegion] ile
-// yapılan denetimin bedeli ölçülmüştür: araya giren bir
-// [Repo.DeleteTaxRegion] denetimden sonra tamamlanır, yazma yine de başarılı
-// olur ve silinmiş bir bölgeye bağlı CANLI bir satır kalır. Foreign key bunu
-// yakalayamaz çünkü silme YUMUŞAKTIR: satır yerinde durur.
+// Every flow that BINDS something to a region uses it — adding a province
+// region and adding a rate. Both make the "is the region live" check and then
+// write, and the check and the write have to be in the SAME transaction. The
+// cost of a check made with the lock-free [Repo.GetTaxRegion] has been
+// measured: a [Repo.DeleteTaxRegion] slipping in completes after the check,
+// the write succeeds anyway, and a LIVE row bound to a deleted region is left
+// behind. A foreign key cannot catch this, because the delete is SOFT: the row
+// stays in place.
 //
-// Kilit PAYLAŞIMLIDIR: aynı bölgeye eşzamanlı iki oran eklemenin birbirini
-// beklemesi için sebep yoktur, beklemesi gereken tek akış silmedir ve o TEKİL
-// kilit alır.
+// The lock is SHARED: there is no reason for two concurrent rate inserts into
+// the same region to wait for each other; the only flow that has to wait is
+// the delete, and it takes an EXCLUSIVE lock.
 func (r *Repo) LockTaxRegion(ctx context.Context, id string) (models.TaxRegion, error) {
 	if err := r.ready(); err != nil {
 		return models.TaxRegion{}, err
@@ -87,13 +89,13 @@ func (r *Repo) LockTaxRegion(ctx context.Context, id string) (models.TaxRegion, 
 	row, err := r.queries(ctx).GetTaxRegionForShare(ctx, id)
 	if err != nil {
 		return models.TaxRegion{}, notFoundOr(err, CodeTaxRegionNotFound,
-			"vergi bölgesi bulunamadı: %s", id)
+			"tax region not found: %s", id)
 	}
 	return toTaxRegion(row)
 }
 
-// GetTaxRegionsByIDs verilen kimliklere karşılık gelen bölgeleri TEK turda
-// döner; bulunamayan kimlik için kayıt dönmez.
+// GetTaxRegionsByIDs returns the regions matching the given ids in a SINGLE
+// round trip; no record comes back for an id that is not found.
 func (r *Repo) GetTaxRegionsByIDs(ctx context.Context, ids []string) ([]models.TaxRegion, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -104,16 +106,17 @@ func (r *Repo) GetTaxRegionsByIDs(ctx context.Context, ids []string) ([]models.T
 
 	rows, err := r.queries(ctx).GetTaxRegionsByIDs(ctx, ids)
 	if err != nil {
-		return nil, wrapDB(err, "vergi bölgeleri alınamadı")
+		return nil, wrapDB(err, "the tax regions could not be read")
 	}
 	return toTaxRegions(rows)
 }
 
-// ListTaxRegions sayfalanmış bölge listesini ve TOPLAM sayıyı döner.
+// ListTaxRegions returns the paged list of regions and the TOTAL count.
 //
-// countryCode boşsa süzgeç uygulanmaz. Toplam sayı ayrı bir sorguyla alınır:
-// sayfa boyu kadar satırla toplam kayıt sayısı bilinemez ve API zarfı
-// (plan Bölüm 8) "count" alanını taşımak zorundadır.
+// If countryCode is empty no filter is applied. The total count is taken with a
+// separate query: a page's worth of rows cannot tell the total number of
+// records, and the API envelope (plan Section 8) has to carry the "count"
+// field.
 func (r *Repo) ListTaxRegions(
 	ctx context.Context,
 	countryCode string,
@@ -129,12 +132,12 @@ func (r *Repo) ListTaxRegions(
 		CountryCode: countryCode,
 	})
 	if err != nil {
-		return nil, 0, wrapDB(err, "vergi bölgeleri listelenemedi")
+		return nil, 0, wrapDB(err, "the tax regions could not be listed")
 	}
 
 	total, err := r.queries(ctx).CountTaxRegions(ctx, countryCode)
 	if err != nil {
-		return nil, 0, wrapDB(err, "vergi bölgeleri sayılamadı")
+		return nil, 0, wrapDB(err, "the tax regions could not be counted")
 	}
 
 	regions, err := toTaxRegions(rows)
@@ -144,12 +147,14 @@ func (r *Repo) ListTaxRegions(
 	return regions, total, nil
 }
 
-// ResolveTaxRegions ülkenin kökünü ve (verilmişse) eyalet bölgesini döner.
+// ResolveTaxRegions returns the country's root and (if given) its province
+// region.
 //
-// Sıra EYALET ÖNCE, ülke sonradır; hesap zinciri en ÖZELDEN genele yürür
-// (bkz. service.CalculateTax). Hiç bölge yoksa BOŞ dilim döner ve bu bir hata
-// DEĞİLDİR: vergisi yapılandırılmamış bir ülke, hata değil sıfır vergi
-// üretmelidir (gerekçe service/calculate.go godoc'unda).
+// The order is PROVINCE FIRST, country after; the calculation chain walks from
+// the most SPECIFIC to the general (see service.CalculateTax). If there is no
+// region at all an EMPTY slice comes back, and that is NOT an error: a country
+// whose tax is not configured has to produce zero tax, not an error (the
+// reasoning is in the service/calculate.go godoc).
 func (r *Repo) ResolveTaxRegions(ctx context.Context, countryCode, provinceCode string) ([]models.TaxRegion, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -160,18 +165,19 @@ func (r *Repo) ResolveTaxRegions(ctx context.Context, countryCode, provinceCode 
 		ProvinceCode: provinceCode,
 	})
 	if err != nil {
-		return nil, wrapDB(err, "vergi bölgesi çözülemedi: %s/%s", countryCode, provinceCode)
+		return nil, wrapDB(err, "the tax region could not be resolved: %s/%s", countryCode, provinceCode)
 	}
 	return toTaxRegions(rows)
 }
 
-// DeleteTaxRegion bölgeyi, alt bölgelerini, onların oranlarını ve o oranların
-// kurallarını TEK işlemde yumuşak siler.
+// DeleteTaxRegion soft-deletes the region, its child regions, their rates and
+// those rates' rules in a SINGLE transaction.
 //
-// Ağaç silinir çünkü ülke kökü olmadan eyalet bölgesi bulunamaz hâle gelir:
-// çözüm yolu daima ülkeden başlar. Yetim kalan bir eyalet kaydı hiçbir hesaba
-// girmez ama aynı ülkeye açılan yeni bir kök onun yerini alamaz — eyalet
-// benzersizliği eski (silinmemiş) satıra bağlı kalırdı.
+// The tree is deleted because without the country root a province region
+// becomes unreachable: the resolution path always starts from the country. An
+// orphaned province record enters no calculation, but a new root opened for the
+// same country could not take its place — the province uniqueness would stay
+// bound to the old (undeleted) row.
 func (r *Repo) DeleteTaxRegion(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -180,14 +186,15 @@ func (r *Repo) DeleteTaxRegion(ctx context.Context, id string, now time.Time) er
 	return r.WithTx(ctx, func(ctx context.Context) error {
 		q := r.queries(ctx)
 
-		// Kilit, aynı bölgeye eşzamanlı bir oran ya da eyalet ekleme akışıyla
-		// yarışı engeller: o akışlar da bölgeyi [Repo.LockTaxRegion] ile
-		// PAYLAŞIMLI kilitle okur ve FOR SHARE ile FOR UPDATE çakışır. Kilit
-		// olmadan yumuşak silme onlara görünmezdi — foreign key satırın
-		// VARLIĞINA bakar, deleted_at'ine değil, yani silinmiş bir bölgeye
-		// yazılan oran hiçbir kısıta takılmaz.
+		// The lock prevents a race with a concurrent flow adding a rate or a
+		// province to the same region: those flows read the region with a
+		// SHARED lock through [Repo.LockTaxRegion], and FOR SHARE conflicts with
+		// FOR UPDATE. Without the lock the soft delete would be invisible to
+		// them — a foreign key looks at the row's EXISTENCE, not at its
+		// deleted_at, so a rate written to a deleted region trips no
+		// constraint.
 		if _, err := q.GetTaxRegionForUpdate(ctx, id); err != nil {
-			return notFoundOr(err, CodeTaxRegionNotFound, "vergi bölgesi bulunamadı: %s", id)
+			return notFoundOr(err, CodeTaxRegionNotFound, "tax region not found: %s", id)
 		}
 
 		regionIDs, err := q.SoftDeleteTaxRegionTree(ctx, taxdb.SoftDeleteTaxRegionTreeParams{
@@ -195,13 +202,13 @@ func (r *Repo) DeleteTaxRegion(ctx context.Context, id string, now time.Time) er
 			DeletedAt: fromTime(now),
 		})
 		if err != nil {
-			return wrapDB(err, "vergi bölgesi silinemedi: %s", id)
+			return wrapDB(err, "the tax region could not be deleted: %s", id)
 		}
 		if len(regionIDs) == 0 {
-			// Kilitli okuma satırı gördüğüne göre buraya düşülemez; yine de
-			// sessizce başarılı dönmek, silinmediği hâlde silindi sanılan bir
-			// bölge demek olurdu.
-			return errors.NotFound(CodeTaxRegionNotFound, "vergi bölgesi bulunamadı: %s", id)
+			// Since the locked read saw the row, this cannot be reached; still,
+			// returning success silently would mean a region believed deleted
+			// although it was not.
+			return errors.NotFound(CodeTaxRegionNotFound, "tax region not found: %s", id)
 		}
 
 		rateIDs, err := q.SoftDeleteTaxRatesByRegions(ctx, taxdb.SoftDeleteTaxRatesByRegionsParams{
@@ -209,7 +216,7 @@ func (r *Repo) DeleteTaxRegion(ctx context.Context, id string, now time.Time) er
 			DeletedAt: fromTime(now),
 		})
 		if err != nil {
-			return wrapDB(err, "bölgenin vergi oranları silinemedi: %s", id)
+			return wrapDB(err, "the region's tax rates could not be deleted: %s", id)
 		}
 		if len(rateIDs) == 0 {
 			return nil
@@ -219,13 +226,13 @@ func (r *Repo) DeleteTaxRegion(ctx context.Context, id string, now time.Time) er
 			RateIds:   rateIDs,
 			DeletedAt: fromTime(now),
 		}); err != nil {
-			return wrapDB(err, "bölgenin vergi kuralları silinemedi: %s", id)
+			return wrapDB(err, "the region's tax rules could not be deleted: %s", id)
 		}
 		return nil
 	})
 }
 
-// toTaxRegion üretilen satırı domain modeline çevirir.
+// toTaxRegion turns a generated row into the domain model.
 func toTaxRegion(row taxdb.TaxRegion) (models.TaxRegion, error) {
 	metadata, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -247,7 +254,7 @@ func toTaxRegion(row taxdb.TaxRegion) (models.TaxRegion, error) {
 	}, nil
 }
 
-// toTaxRegions satır dilimini domain modellerine çevirir.
+// toTaxRegions turns a slice of rows into domain models.
 func toTaxRegions(rows []taxdb.TaxRegion) ([]models.TaxRegion, error) {
 	out := make([]models.TaxRegion, 0, len(rows))
 	for i := range rows {

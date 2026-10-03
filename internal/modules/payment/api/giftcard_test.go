@@ -19,14 +19,6 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// giftCardRouter mounts the payment routes over the fake.
-func giftCardRouter(svc *fakePayments) chi.Router {
-	r := chi.NewRouter()
-	api.New(svc).Routes(r)
-
-	return r
-}
-
 // giftCardRequest sends a request as the given principal; the router is built
 // without the identity ring, so the principal is put in place by hand.
 func giftCardRequest(
@@ -59,7 +51,7 @@ func TestAnIssuedGiftCardAnswersWithItsCodeOnce(t *testing.T) {
 		issuedCard: service.IssuedGiftCard{Card: card, Code: "ABCD-EFGH-JKMN-PQRS", Balance: 5_000},
 		giftCards:  []service.GiftCardWithBalance{{Card: card, Balance: 5_000}},
 	}
-	r := giftCardRouter(svc)
+	r := newTestRouter(svc)
 
 	issued := giftCardRequest(t, r, http.MethodPost, "/admin/v1/gift-cards",
 		`{"currency_code":"try","amount":5000,"reason":"a gift"}`, operator)
@@ -90,7 +82,7 @@ func TestAGiftCardIsIssuedUnderThePaymentWrite(t *testing.T) {
 	t.Parallel()
 
 	svc := &fakePayments{}
-	r := giftCardRouter(svc)
+	r := newTestRouter(svc)
 	reader := corehttp.Principal{ID: "user_reader", Kind: "user", Scopes: []string{api.ScopeRead}}
 
 	refused := giftCardRequest(t, r, http.MethodPost, "/admin/v1/gift-cards",
@@ -112,7 +104,7 @@ func TestAReplacedCodeIsAnsweredOnceUnderThePaymentWrite(t *testing.T) {
 		Card: models.GiftCard{ID: "gcard_1", CodeTail: "WXYZ", CurrencyCode: "TRY", Source: models.GiftCardSold},
 		Code: "QRST-UVWX-YZ01-WXYZ", Balance: 3_000,
 	}}
-	r := giftCardRouter(svc)
+	r := newTestRouter(svc)
 	reader := corehttp.Principal{ID: "user_reader", Kind: "user", Scopes: []string{api.ScopeRead}}
 
 	refused := giftCardRequest(t, r, http.MethodPost, "/admin/v1/gift-cards/gcard_1/code", "", reader)
@@ -135,7 +127,7 @@ func TestAGiftCardIsClosedWithAReasonUnderThePaymentWrite(t *testing.T) {
 	svc := &fakePayments{giftCards: []service.GiftCardWithBalance{{Card: models.GiftCard{
 		ID: "gcard_1", CodeTail: "WXYZ", CurrencyCode: "TRY", DisabledAt: &closedAt, DisableReason: "sold by mistake",
 	}}}}
-	r := giftCardRouter(svc)
+	r := newTestRouter(svc)
 	reader := corehttp.Principal{ID: "user_reader", Kind: "user", Scopes: []string{api.ScopeRead}}
 
 	refused := giftCardRequest(t, r, http.MethodPost, "/admin/v1/gift-cards/gcard_1/disable",

@@ -7,32 +7,35 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
-// CreateCollectionInput yeni bir ödeme koleksiyonunun alanlarıdır.
+// CreateCollectionInput holds the fields of a new payment collection.
 type CreateCollectionInput struct {
-	// Reference çağıranın kendi kaydının kimliğidir (sepet ya da sipariş);
-	// zorunludur. FOREIGN KEY DEĞİLDİR ve varlığı burada doğrulanmaz.
+	// Reference is the identifier of the caller's own record (a cart or an
+	// order); it is required. IT IS NOT A FOREIGN KEY and its existence is not
+	// validated here.
 	Reference string
-	// Amount toplanması gereken toplam tutardır (minor unit); pozitif olmalıdır.
+	// Amount is the total amount that has to be collected (minor unit); it has
+	// to be positive.
 	Amount int64
-	// CurrencyCode ISO 4217 kodudur; zorunludur.
+	// CurrencyCode is the ISO 4217 code; it is required.
 	CurrencyCode string
-	// CustomerID koleksiyonun KİMİN parasını topladığıdır; boş bırakılabilir.
+	// CustomerID is WHOSE money the collection gathers; it can be left empty.
 	//
-	// Kartla ödeyen bir misafir kimseyi adlandırmaz. Fonları bir KİŞİYE ait olan
-	// ödeme yöntemleri (mağaza kredisi) bu alan olmadan çalışamaz ve alternatifi
-	// sahibi istemcinin verisinden okumaktı — yani başkasının bakiyesini adını
-	// yazarak harcamak (ADR 0152).
+	// A guest paying by card names nobody. The tenders whose funds belong to a
+	// PERSON (store credit) cannot work without this field, and the alternative
+	// was to read the owner from the client's data — that is, spending somebody
+	// else's balance by writing their name (ADR 0152).
 	CustomerID string
-	// Metadata çağıranın serbest ek verisidir.
+	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 }
 
-// CreatePaymentCollection yeni bir ödeme koleksiyonu oluşturur.
+// CreatePaymentCollection creates a new payment collection.
 //
-// Koleksiyon "not_paid" durumunda doğar: henüz açılmış bir oturum ve tahsilat
-// yoktur. Tutar SIFIR OLAMAZ (bkz. [models.MinAmount]); tutarı sıfır olan bir
-// sipariş için ödeme toplanmaz ve böyle bir koleksiyon hiçbir zaman "captured"
-// olamayacağı için sonsuza kadar ödeme bekleyen ölü bir kayıt olurdu.
+// The collection is born in the "not_paid" status: no session has been opened
+// and nothing has been captured yet. The amount CANNOT BE ZERO (see
+// [models.MinAmount]); no payment is collected for an order whose amount is
+// zero, and since such a collection could never become "captured" it would be
+// a dead record waiting for payment forever.
 func (s *Service) CreatePaymentCollection(
 	ctx context.Context,
 	in CreateCollectionInput,
@@ -60,7 +63,8 @@ func (s *Service) CreatePaymentCollection(
 	})
 }
 
-// GetPaymentCollection koleksiyonu kimliğiyle döner; yoksa errors.NotFound.
+// GetPaymentCollection returns the collection by its identifier; errors.NotFound
+// if there is none.
 func (s *Service) GetPaymentCollection(ctx context.Context, id string) (models.PaymentCollection, error) {
 	if err := requireText("id", id); err != nil {
 		return models.PaymentCollection{}, err
@@ -68,18 +72,20 @@ func (s *Service) GetPaymentCollection(ctx context.Context, id string) (models.P
 	return s.store.GetPaymentCollection(ctx, id)
 }
 
-// ListCollectionsInput koleksiyon listelemesinin girdisidir.
+// ListCollectionsInput is the input of a collection listing.
 type ListCollectionsInput struct {
-	// Reference verilirse yalnızca o referansa bağlı koleksiyonlar döner.
+	// Reference, if given, returns only the collections attached to that
+	// reference.
 	Reference *string
-	// Status verilirse yalnızca o durumdaki koleksiyonlar döner.
+	// Status, if given, returns only the collections in that status.
 	Status *string
-	// Page sayfalama parametreleridir.
+	// Page holds the paging parameters.
 	Page Page
 }
 
-// ListPaymentCollections koleksiyonları sayfalayarak döner.
-// İkinci dönüş değeri sayfaya değil, süzgece uyan TÜM satırlara ait sayıdır.
+// ListPaymentCollections returns the collections page by page.
+// The second return value is the count of ALL the rows matching the filter,
+// not of the page.
 func (s *Service) ListPaymentCollections(
 	ctx context.Context,
 	in ListCollectionsInput,
@@ -109,8 +115,9 @@ func (s *Service) ListPaymentCollections(
 	return s.store.ListPaymentCollections(ctx, filter)
 }
 
-// ListPaymentCollectionsByIDs verilen kimliklerin koleksiyonlarını TEK sorguda
-// döner. Bulunamayan kimlik için kayıt dönmez; bu bir hata değildir.
+// ListPaymentCollectionsByIDs returns the collections of the given identifiers
+// in a SINGLE query. No record is returned for an identifier that is not
+// found; that is not an error.
 func (s *Service) ListPaymentCollectionsByIDs(
 	ctx context.Context,
 	ids []string,
@@ -151,10 +158,11 @@ func (s *Service) ListPaymentMovementsByIDs(
 	return s.store.PaymentMovementsByCollectionIDs(ctx, ids)
 }
 
-// ListPaymentSessions koleksiyonun oturumlarını döner.
+// ListPaymentSessions returns the collection's sessions.
 //
-// Koleksiyonun varlığı önce doğrulanır: olmayan bir koleksiyon için "oturum
-// yok" yerine "koleksiyon yok" denmelidir; ikisi çağıran için farklı şeylerdir.
+// The collection's existence is verified first: for a collection that does not
+// exist the answer has to be "no collection" rather than "no sessions"; the two
+// mean different things to the caller.
 func (s *Service) ListPaymentSessions(ctx context.Context, collectionID string) ([]models.PaymentSession, error) {
 	if err := requireText("payment_collection_id", collectionID); err != nil {
 		return nil, err
@@ -165,7 +173,7 @@ func (s *Service) ListPaymentSessions(ctx context.Context, collectionID string) 
 	return s.store.ListPaymentSessionsByCollection(ctx, collectionID)
 }
 
-// ListPayments koleksiyonun tahsilatlarını döner.
+// ListPayments returns the collection's captures.
 func (s *Service) ListPayments(ctx context.Context, collectionID string) ([]models.Payment, error) {
 	if err := requireText("payment_collection_id", collectionID); err != nil {
 		return nil, err
@@ -176,7 +184,8 @@ func (s *Service) ListPayments(ctx context.Context, collectionID string) ([]mode
 	return s.store.ListPaymentsByCollection(ctx, collectionID)
 }
 
-// GetPaymentSession oturumu kimliğiyle döner; yoksa errors.NotFound.
+// GetPaymentSession returns the session by its identifier; errors.NotFound if
+// there is none.
 func (s *Service) GetPaymentSession(ctx context.Context, id string) (models.PaymentSession, error) {
 	if err := requireText("id", id); err != nil {
 		return models.PaymentSession{}, err
@@ -184,7 +193,8 @@ func (s *Service) GetPaymentSession(ctx context.Context, id string) (models.Paym
 	return s.store.GetPaymentSession(ctx, id)
 }
 
-// GetPayment tahsilatı kimliğiyle döner; yoksa errors.NotFound.
+// GetPayment returns the capture by its identifier; errors.NotFound if there is
+// none.
 func (s *Service) GetPayment(ctx context.Context, id string) (models.Payment, error) {
 	if err := requireText("id", id); err != nil {
 		return models.Payment{}, err
@@ -192,7 +202,7 @@ func (s *Service) GetPayment(ctx context.Context, id string) (models.Payment, er
 	return s.store.GetPayment(ctx, id)
 }
 
-// ListRefunds tahsilatın iadelerini döner.
+// ListRefunds returns the capture's refunds.
 func (s *Service) ListRefunds(ctx context.Context, paymentID string) ([]models.Refund, error) {
 	if err := requireText("payment_id", paymentID); err != nil {
 		return nil, err

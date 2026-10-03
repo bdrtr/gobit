@@ -11,42 +11,46 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
-// txMarkerKey sahte deponun "işlem içindeyiz" işaretidir.
+// txMarkerKey is the fake store's "we are inside a transaction" marker.
 type txMarkerKey struct{}
 
-// memStore manual.Store'un bellek içi karşılığıdır.
+// memStore is the in-memory counterpart of manual.Store.
 //
-// Üç davranışı gerçek depodan BİLİNÇLİ olarak taklit eder, çünkü sağlayıcının
-// doğruluğu bunlara dayanır:
+// It DELIBERATELY imitates three behaviors of the real store, because the
+// provider's correctness rests on them:
 //
-//  1. LockManualSession işlem DIŞINDA çağrılırsa hata döner. Sağlayıcı bir
-//     akışta WithTx'i unutursa birim testi bunu yakalar.
-//  2. İşlem hatayla biterse yazılanlar GERİ ALINIR; "hata döndü ve defter
-//     değişmedi" iddiası ancak böyle sınanabilir.
-//  3. InsertManualSessionIfAbsent aynı anahtarla ikinci kez yazmaz ve HATA
-//     DÖNMEZ; idempotency sözleşmesinin zemini budur.
+//  1. LockManualSession returns an error if it is called OUTSIDE a
+//     transaction. If the provider forgets WithTx in a flow, the unit test
+//     catches it.
+//  2. If the transaction ends with an error, what was written is ROLLED BACK;
+//     the claim "an error was returned and the ledger did not change" can
+//     only be exercised this way.
+//  3. InsertManualSessionIfAbsent does not write a second time with the same
+//     key and does NOT RETURN AN ERROR; that is the ground the idempotency
+//     contract stands on.
 type memStore struct {
 	mu       sync.Mutex
 	sessions map[string]models.ManualSession
 
-	// insertCalls kaç kez GERÇEK yazma yapıldığını sayar; aynı anahtarla
-	// ikinci CreateSession'ın yeni satır açmadığı bununla kanıtlanır.
+	// insertCalls counts how many REAL writes were made; it is what proves
+	// that a second CreateSession with the same key opens no new row.
 	insertCalls int
-	// updateCalls kaç kez durum yazıldığını sayar; idempotent dalların
-	// deftere İKİNCİ KEZ dokunmadığı bununla kanıtlanır.
+	// updateCalls counts how many times a state was written; it is what proves
+	// that the idempotent branches do not touch the ledger A SECOND TIME.
 	updateCalls int
 }
 
-// newMemStore boş bir bellek içi defter üretir.
+// newMemStore builds an empty in-memory ledger.
 func newMemStore() *memStore {
 	return &memStore{sessions: map[string]models.ManualSession{}}
 }
 
-// Sahte deponun sağlayıcının beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That the fake store satisfies the surface the provider expects is verified
+// at compile time.
 var _ manual.Store = (*memStore)(nil)
 
-// WithTx fn'i "işlem" içinde çalıştırır; hata dönerse defteri geri alır.
+// WithTx runs fn inside a "transaction"; if it returns an error, the ledger is
+// rolled back.
 func (m *memStore) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	if ctx.Value(txMarkerKey{}) != nil {
 		return fn(ctx)
@@ -65,7 +69,7 @@ func (m *memStore) WithTx(ctx context.Context, fn func(ctx context.Context) erro
 	return nil
 }
 
-// InsertManualSessionIfAbsent oturumu yalnızca anahtar boştaysa yazar.
+// InsertManualSessionIfAbsent writes the session only if the key is free.
 func (m *memStore) InsertManualSessionIfAbsent(
 	_ context.Context,
 	ses models.ManualSession,
@@ -86,7 +90,7 @@ func (m *memStore) InsertManualSessionIfAbsent(
 	return ses, true, nil
 }
 
-// ManualSessionByIdempotencyKey oturumu anahtarıyla döner.
+// ManualSessionByIdempotencyKey returns the session by its key.
 func (m *memStore) ManualSessionByIdempotencyKey(_ context.Context, key string) (models.ManualSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -96,31 +100,33 @@ func (m *memStore) ManualSessionByIdempotencyKey(_ context.Context, key string) 
 			return m.sessions[id], nil
 		}
 	}
-	return models.ManualSession{}, errors.NotFound("fake_not_found", "oturum yok: %s", key)
+	return models.ManualSession{}, errors.NotFound("fake_not_found", "no session: %s", key)
 }
 
-// ManualSession oturumu kimliğiyle döner.
+// ManualSession returns the session by its identifier.
 func (m *memStore) ManualSession(_ context.Context, id string) (models.ManualSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	ses, ok := m.sessions[id]
 	if !ok {
-		return models.ManualSession{}, errors.NotFound("fake_not_found", "oturum yok: %s", id)
+		return models.ManualSession{}, errors.NotFound("fake_not_found", "no session: %s", id)
 	}
 	return ses, nil
 }
 
-// LockManualSession oturumu döner; işlem dışında çağrılırsa hata verir.
+// LockManualSession returns the session; it returns an error if it is called
+// outside a transaction.
 func (m *memStore) LockManualSession(ctx context.Context, id string) (models.ManualSession, error) {
 	if ctx.Value(txMarkerKey{}) == nil {
 		return models.ManualSession{}, errors.Internal("fake_tx_required",
-			"LockManualSession işlem dışında çağrıldı")
+			"LockManualSession was called outside a transaction")
 	}
 	return m.ManualSession(ctx, id)
 }
 
-// UpdateManualSessionState durumu ve tutarları mutlak değerlerle yazar.
+// UpdateManualSessionState writes the status and the amounts as absolute
+// values.
 func (m *memStore) UpdateManualSessionState(
 	_ context.Context,
 	id string,
@@ -133,7 +139,7 @@ func (m *memStore) UpdateManualSessionState(
 
 	ses, ok := m.sessions[id]
 	if !ok {
-		return models.ManualSession{}, errors.NotFound("fake_not_found", "oturum yok: %s", id)
+		return models.ManualSession{}, errors.NotFound("fake_not_found", "no session: %s", id)
 	}
 	ses.Status = status
 	ses.AuthorizedAmount = authorized
@@ -146,8 +152,8 @@ func (m *memStore) UpdateManualSessionState(
 	return ses, nil
 }
 
-// sayimlar yazma sayaçlarını birlikte döner.
-func (m *memStore) sayimlar() (inserts, updates int) {
+// counts returns the write counters together.
+func (m *memStore) counts() (inserts, updates int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.insertCalls, m.updateCalls

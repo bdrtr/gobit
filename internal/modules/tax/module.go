@@ -1,60 +1,67 @@
-// Package tax vergi modülüdür (plan Bölüm 6, Faz 7).
+// Package tax is the tax module (plan Section 6, Phase 7).
 //
-// Sorumluluğu tek cümleyle: bir satışın hangi coğrafyada, hangi oranla
-// vergilendirileceğini bilmek ve bir kalem listesinin vergisini hesaplamak.
-// Modül TaxRegion, TaxRate ve TaxRateRule verisinin TEK yazma yetkilisidir
-// (Prensip 2.3).
+// Its responsibility in one sentence: to know in which geography and at which
+// rate a sale is taxed, and to compute the tax of a list of line items. The
+// module is the SOLE writer of TaxRegion, TaxRate and TaxRateRule data
+// (Principle 2.3).
 //
-// # region'dan devralınan iş
+// # The work inherited from region
 //
-// Faz 5'te vergi GEÇİCİ olarak region modülünde duruyordu: region tablosunda
-// tek bir tax_rate (baz puan) ve automatic_taxes bayrağı vardı ve sepet akışı
-// onları okuyordu. region'ın godoc'u bunu açıkça "Faz 7'de tax modülü
-// devralacak" diye işaretlemişti. Devralmayı bu modül sağlar.
+// In Phase 5 tax lived TEMPORARILY in the region module: the region table had a
+// single tax_rate (basis points) and an automatic_taxes flag, and the cart flow
+// read them. region's godoc marked this explicitly as "the tax module will take
+// over in Phase 7". This module provides that takeover.
 //
-// Devralma bu turda region'a DOKUNMADAN yapılır (ADR 0001: modüller birbirini
-// import etmez ve birbirinin tablosunu görmez). tax kendi şemasını ve yüzeyini
-// kurar; sepet akışının "region.service" yerine "tax.interop" çözmesi ayrı bir
-// kablolama adımıdır. İki yüzeyin karşılığı birebirdir:
+// The takeover is done in this round WITHOUT TOUCHING region (ADR 0001: modules
+// do not import one another and do not see one another's tables). tax sets up
+// its own schema and surface; having the cart flow resolve "tax.interop"
+// instead of "region.service" is a separate wiring step. The two surfaces
+// correspond one to one:
 //
 //	region: RegionTax(ctx, regionID)   -> (rateBps int32, automatic bool, err error)
 //	tax:    RateForCountry(ctx, code)  -> (rateBps int32, found bool, err error)
 //
-// İkinci dönüş değerinin anlamı DEĞİŞMİŞTİR ve bu bilinçlidir: region'daki
-// bayrak "vergiyi uygula/uygulama" tercihiydi, buradaki ise "yapılandırma var
-// mı" bilgisidir. Tercih artık verinin kendisinde ifade edilir — vergi
-// istenmiyorsa o ülke için bölge açılmaz ya da varsayılan oran sıfır yazılır.
+// The meaning of the second return value has CHANGED, and deliberately so: the
+// flag in region was an "apply/do not apply tax" preference, while here it is
+// the fact "is there a configuration". The preference is now expressed in the
+// data itself — if tax is not wanted, no region is opened for that country or
+// the default rate is written as zero.
 //
-// # Sağlayıcı soyutlaması ÇEKİRDEKTE DEĞİL
+// # The provider abstraction is NOT IN THE CORE
 //
-// Plan "TaxProvider" der, ama core/provider'da vergi sağlayıcısı YOKTUR (orada
-// ödeme, kargo, bildirim ve dosya sözleşmeleri ile ErrorReporter tanımlıdır)
-// ve bu modül çekirdeğe dokunamaz. Sözleşme bu yüzden modülün kendi
-// paketindedir ([service.TaxProvider]) ve kutudan çıkan uygulama yerel
-// hesaplamadır ([service.LocalProvider]). Karar AÇIKÇA geçicidir; taşıma koşulu
-// ve yolu service paketinin godoc'unda yazılıdır.
+// The plan says "TaxProvider", but core/provider has NO tax provider (it
+// defines the payment, shipping, notification and file contracts and
+// ErrorReporter), and this module cannot touch the core. The contract
+// therefore lives in the module's own package ([service.TaxProvider]), and the
+// implementation that ships in the box is the local calculation
+// ([service.LocalProvider]). The decision is EXPLICITLY temporary; the
+// condition and the path for moving it are written in the service package's
+// godoc.
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// tax hiçbir modülü import etmez. Ülke kodları region'ın verisidir ama bu
-// modül onu okumaz: ISO 3166-1 kodunun BİÇİMİNİ doğrular, TANIMLI olup
-// olmadığını sormaz. Kural kayıtlarındaki ürün/ürün tipi/kargo seçeneği
-// kimlikleri de serbest metindir ve foreign key DEĞİLDİR (Prensip 2.2).
+// tax imports no module. Country codes are region's data, but this module does
+// not read them: it validates the FORMAT of an ISO 3166-1 code and does not ask
+// whether it is DEFINED. The product/product type/shipping option ids in rule
+// records are free text too, and they are NOT foreign keys (Principle 2.2).
 //
-// Bu yüzden modül HİÇBİR link tanımı bildirmez: bağın sahibi vergi değil,
-// vergiye ihtiyaç duyan taraftır.
+// That is why the module declares NO link definition: the owner of the bond is
+// not tax but the side that needs tax.
 //
-// # Dışarıya açtığı yüzeyler
+// # The surfaces it exposes
 //
-//   - "tax.service" — modül içi zengin yüzey (domain tipleriyle).
-//   - "tax.interop" — modüller arası İLKEL yüzey (ADR 0001/0006); sepet akışı
-//     vergiyi buradan hesaplatır.
-//   - "tax.providers" — sağlayıcı kaydı; bir eklenti buraya sağlayıcı ekleyebilir,
-//     ama core/plugin bu ad için sabit yayımlamaz (aşağıdaki ProvidersName).
-//   - "tax_region.query" — Query katmanına açılan okuma sağlayıcısı (ADR 0004).
-//   - /admin/v1/tax-regions, /admin/v1/tax-rates (+ kurallar) — yönetim API'si.
+//   - "tax.service" — the rich in-module surface (with domain types).
+//   - "tax.interop" — the PRIMITIVE cross-module surface (ADR 0001/0006); the
+//     cart flow has the tax computed through it.
+//   - "tax.providers" — the provider registry; a plugin can add a provider to
+//     it, but core/plugin publishes no constant for this name (see
+//     ProvidersName below).
+//   - "tax_region.query" — the read provider opened to the Query layer
+//     (ADR 0004).
+//   - /admin/v1/tax-regions, /admin/v1/tax-rates (+ rules) — the admin API.
 //
-// Store API'si YOKTUR; gerekçesi internal/modules/tax/api paket yorumundadır.
+// There is NO Store API; the reasoning is in the internal/modules/tax/api
+// package comment.
 package tax
 
 import (
@@ -76,48 +83,51 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/service"
 )
 
-// Container'daki adlar.
+// The names in the container.
 const (
-	// ModuleName modülün benzersiz adıdır; migration versiyon tablosunun
-	// öneki de budur.
+	// ModuleName is the module's unique name; it is also the prefix of the
+	// migration version table.
 	ModuleName = "tax"
-	// ServiceName servisin container'daki adıdır. Tüketici modüller onu bu adla
-	// ve KENDİ tanımladıkları dar arayüzle çözer (ADR 0001).
+	// ServiceName is the service's name in the container. Consumer modules
+	// resolve it by this name and through the narrow interface they define
+	// THEMSELVES (ADR 0001).
 	ServiceName = ModuleName + ".service"
-	// InteropName modüller arası ilkel yüzeyin container'daki adıdır (ADR 0006).
+	// InteropName is the container name of the primitive cross-module surface
+	// (ADR 0006).
 	//
-	// Servisin kendisinden AYRI kaydedilir: servis tax'ın zengin tipleriyle
-	// konuşur, bu yüzey yalnızca ilkel ve stdlib tipleriyle. Sepet akışı onu
-	// kendi dar arayüzüyle çözer.
+	// It is registered SEPARATELY from the service itself: the service speaks
+	// in tax's rich types, this surface only in primitive and stdlib types.
+	// The cart flow resolves it through its own narrow interface.
 	InteropName = ModuleName + ".interop"
-	// ProvidersName sağlayıcı kaydının container'daki adıdır.
+	// ProvidersName is the provider registry's name in the container.
 	//
-	// Bir eklenti kendi vergi sağlayıcısını bu kaydı çözüp ekler ve modülün
-	// kodunu değiştirmesi gerekmez. Mekanizma hazır ve ödeme yuvasında
-	// kanıtlı (plugins/paymentpaytr); bu yuvayı dolduran eklenti henüz yok.
+	// A plugin adds its own tax provider by resolving this registry, and it
+	// does not have to change the module's code. The mechanism is ready and
+	// proven in the payment slot (plugins/paymentpaytr); no plugin fills this
+	// slot yet.
 	//
-	// AMA diğer dört aileden BİR FARKI var ve 2026-09-09'da yazıldı:
-	// core/plugin bu ad için bir sabit YAYIMLAMIYOR. Ödeme, kargo, bildirim ve
-	// dosya kayıtlarının her birinin orada bir sabiti var ve internal/arch
-	// ikisinin eşitliğini iddia ediyor; burada öyle bir sabit olmadığı için bir
-	// eklenti bu kayda ancak "tax.providers" dizesini ELİYLE yazarak ulaşır
-	// (Host.Container üzerinden), yani sabitlerin önlediği sürüklenmeye açık
-	// kalır.
+	// BUT it has ONE DIFFERENCE from the other four families, and it was
+	// written down on 2026-09-09: core/plugin does NOT PUBLISH a constant for
+	// this name. The payment, shipping, notification and file registries each
+	// have a constant there, and internal/arch asserts that the two are equal;
+	// since there is no such constant here, a plugin can reach this registry
+	// only by writing the string "tax.providers" BY HAND (through
+	// Host.Container), so it stays open to the drift the constants prevent.
 	//
-	// Bu bir eksiklik değil, aynı gerekçenin sonucu: yayımlanmış bir ad
-	// 1.0.0'a kadar tutulan bir sözdür (ADR 0026) ve tüketicisi olmayan bir
-	// yetenek yayımlanmaz (ADR 0063). Bir vergi eklentisi yazıldığı gün sabit
-	// ve eklenti AYNI değişiklikle gelir. O güne kadar durum
-	// internal/arch'ta providerFamiliesWithoutAPublishedName içinde yazılıdır —
-	// sessizlik değil, yazılı bir karar.
+	// This is not a gap but the result of the same reasoning: a published name
+	// is a promise kept until 1.0.0 (ADR 0026), and a capability with no
+	// consumer is not published (ADR 0063). The day a tax plugin is written,
+	// the constant and the plugin come in the SAME change. Until then the
+	// situation is written down in internal/arch in
+	// providerFamiliesWithoutAPublishedName — not silence, a written decision.
 	ProvidersName = ModuleName + ".providers"
-	// ProviderName query sağlayıcısının container'daki adıdır (ADR 0004).
+	// ProviderName is the query provider's name in the container (ADR 0004).
 	ProviderName = service.Entity + query.ProviderSuffix
-	// dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
+	// dbServiceName is the core database pool's name in the container.
 	dbServiceName = "core.db"
 )
 
-// Hata kodları.
+// Error codes.
 const (
 	codeSetupFailed      = "tax_module_setup_failed"
 	codeProviderRegister = "tax_module_provider_register_failed"
@@ -126,14 +136,14 @@ const (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// migrationsRoot migration dosyalarının kök dizinidir.
+// migrationsRoot is the root directory of the migration files.
 //
-// golang-migrate kaynağı köke bakar (iofs.New(src, ".")), embed.FS ise
-// dosyaları "migrations/" altında tutar; alt ağaç bu yüzden bir kez burada
-// açılır.
+// The golang-migrate source looks at the root (iofs.New(src, ".")), while the
+// embed.FS keeps the files under "migrations/"; the subtree is therefore
+// opened once, here.
 var migrationsRoot = mustSub(migrationsFS, "migrations")
 
-// Module tax modülünün [module.Module] uygulamasıdır.
+// Module is the tax module's [module.Module] implementation.
 type Module struct {
 	svc *service.Service
 	api *api.API
@@ -142,16 +152,16 @@ type Module struct {
 
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe the document is pinned at compile time too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca vergi uçları belgeden sessizce düşerdi. Bu satır o
-// sessizliği kapatır.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it with a TYPE ASSERTION; if the method's name or signature drifted,
+// nothing would break at compile time, only the tax endpoints would silently
+// drop out of the document. This line closes that silence.
 var _ openapi.Describer = (*Module)(nil)
 
-// New kurulmamış bir tax modülü üretir; servis [Module.Register] içinde
-// kurulur. log nil ise loglar atılır.
+// New builds a tax module that is not set up yet; the service is set up in
+// [Module.Register]. If log is nil, logs are discarded.
 func New(log *slog.Logger) *Module {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -159,27 +169,28 @@ func New(log *slog.Logger) *Module {
 	return &Module{log: log}
 }
 
-// Name modülün adını döner.
+// Name returns the module's name.
 func (m *Module) Name() string { return ModuleName }
 
-// Register servisi, modüller arası yüzeyi, sağlayıcı kaydını ve query
-// sağlayıcısını container'a kaydeder.
+// Register registers the service, the cross-module surface, the provider
+// registry and the query provider in the container.
 //
-// tax hiçbir MODÜLÜN servisine ihtiyaç duymaz; yalnızca çekirdek havuzunu
-// çözer. Havuz Bootstrap'tan ÖNCE kaydedildiği için burada doğrudan çözmek
-// güvenlidir — modül sırasına bağımlılık yaratan tek şey başka bir MODÜLÜN
-// servisini çözmek olurdu ve bu yapılmaz.
+// tax needs no MODULE's service; it resolves only the core pool. Since the
+// pool is registered BEFORE Bootstrap, resolving it directly here is safe —
+// the only thing that would create a dependency on module order is resolving
+// another MODULE's service, and that is not done.
 //
-// Varsayılan sağlayıcı ([service.LocalProvider]) burada kaydedilir ve aynı
-// depo örneğini oran kaynağı olarak kullanır. Kayıt AÇIKÇA yapılır (servisin
-// örtük varsayılanına bırakılmaz) ki container'daki "tax.providers" değeri ile
-// servisin kullandığı kayıt AYNI nesne olsun; iki ayrı kayıt olsaydı bir
-// eklentinin eklediği sağlayıcı hesapta hiç görünmezdi.
+// The default provider ([service.LocalProvider]) is registered here and uses
+// the same repository instance as its rate source. The registration is done
+// EXPLICITLY (not left to the service's implicit default) so that the
+// "tax.providers" value in the container and the registry the service uses are
+// the SAME object; were there two separate registries, a provider added by a
+// plugin would never show up in the calculation.
 func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, dbServiceName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindUnavailable, codeSetupFailed,
-			"tax modülü %q servisini çözemedi", dbServiceName)
+			"the tax module could not resolve the %q service", dbServiceName)
 	}
 
 	repo := repository.New(pool.Pool())
@@ -187,7 +198,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	providers := service.NewProviderRegistry()
 	if err := providers.Register(service.NewLocalProvider(repo)); err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
-			"tax modülü varsayılan sağlayıcıyı kaydedemedi")
+			"the tax module could not register the default provider")
 	}
 
 	m.svc = service.New(repo, service.Options{Logger: m.log, Providers: providers})
@@ -206,58 +217,60 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return err
 	}
 
-	m.log.InfoContext(ctx, "tax modülü kaydedildi",
-		slog.String("servis", ServiceName),
+	m.log.InfoContext(ctx, "tax module registered",
+		slog.String("service", ServiceName),
 		slog.String("interop", InteropName),
-		slog.Any("saglayicilar", providers.IDs()),
+		slog.Any("providers", providers.IDs()),
 		slog.String("query", ProviderName),
 	)
 	return nil
 }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Routes modülün admin route'larını router'a bağlar.
+// Routes binds the module's admin routes to the router.
 //
-// Register'dan SONRA çağrılır (bkz. module.Registry.Bootstrap); api bu yüzden
-// kurulmuş olur. Yine de nil kontrolü vardır: Register hata verip Bootstrap
-// yarıda kesilirse Routes hiç çağrılmaz, ama modül elle kullanılırsa panik
-// yerine sessiz bir no-op daha güvenlidir.
+// It is called AFTER Register (see module.Registry.Bootstrap), so api is set up
+// by then. There is a nil check all the same: if Register fails and Bootstrap
+// is cut short, Routes is never called, but if the module is used by hand, a
+// silent no-op is safer than a panic.
 func (m *Module) Routes(r chi.Router) {
 	if m.api == nil {
-		m.log.Warn("tax modülü Register edilmeden Routes çağrıldı, route bağlanmadı")
+		m.log.Warn("Routes was called on the tax module without Register, no route was mounted")
 		return
 	}
 	m.api.Routes(r)
 }
 
-// Describe modülün uçlarını OpenAPI belgesine işler.
+// Describe writes the module's endpoints into the OpenAPI document.
 //
-// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
-// DTO'larından türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
-// yüzeyini genişletirdi.
+// The description itself is in [api.Describe]: the body schemas are derived
+// from that package's unexported DTOs, and exporting the types just for the
+// sake of the document would widen the module's surface.
 //
-// [Module.Routes]'un tersine api kontrolü YOKTUR ve gerekmez: şema tiplerden
-// gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün belgesini de
-// sessizce boşaltırdı.
+// Unlike [Module.Routes] there is NO api check, and none is needed: the schema
+// comes from the types, not from the service. Adding a check would silently
+// empty the document of a module that is not set up, too.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// Service kurulmuş servisi döner; Register çağrılmadıysa nil.
+// Service returns the set-up service; nil if Register was not called.
 //
-// Modülü doğrudan kullanan testler ve gömen uygulamalar içindir; normal akışta
-// servis container'dan [ServiceName] adıyla çözülür.
+// It is for tests that use the module directly and for applications that
+// embed it; in the normal flow the service is resolved from the container by
+// the name [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
 
-// mustSub alt dosya sistemini açar; açılamazsa panikler.
+// mustSub opens the sub file system; it panics if it cannot be opened.
 //
-// //go:embed dizinin varlığını derleme zamanında garanti ettiği için hata yolu
-// erişilemezdir. Yine de sessizce nil dönmek, modülün migration'sız (yani
-// tablosuz) ayağa kalkması demek olurdu; kurulum hatası açıkça patlamalıdır.
+// Since //go:embed guarantees the directory exists at compile time, the error
+// path is unreachable. Still, silently returning nil would mean the module
+// coming up without migrations (that is, without tables); a setup error has to
+// blow up openly.
 func mustSub(fsys fs.FS, dir string) fs.FS {
 	sub, err := fs.Sub(fsys, dir)
 	if err != nil {
-		panic("tax: migration dizini açılamadı: " + err.Error())
+		panic("tax: the migration directory could not be opened: " + err.Error())
 	}
 	return sub
 }

@@ -14,92 +14,95 @@ import (
 	"github.com/bdrtr/gobit/plugins/paymentstripe"
 )
 
-// sahteKayit payment modülünün sağlayıcı kaydını taklit eder.
-type sahteKayit struct {
-	kayitli []coreprovider.PaymentProvider
+// fakeRegistry stands in for the payment module's provider registry.
+type fakeRegistry struct {
+	registered []coreprovider.PaymentProvider
 }
 
-// Register sağlayıcıyı listeye alır.
-func (k *sahteKayit) Register(p coreprovider.PaymentProvider) error {
-	k.kayitli = append(k.kayitli, p)
+// Register takes the provider into the list.
+func (k *fakeRegistry) Register(p coreprovider.PaymentProvider) error {
+	k.registered = append(k.registered, p)
 
 	return nil
 }
 
-// kurulum eklentiyi verilen ayarlarla kurup Start'a kadar götürür.
-func kurulum(t *testing.T, ayarlar map[string]string) (*sahteKayit, error) {
+// install sets the plugin up with the given settings and takes it as far as
+// Start.
+func install(t *testing.T, settings map[string]string) (*fakeRegistry, error) {
 	t.Helper()
 
 	log := slog.New(slog.DiscardHandler)
 	c := container.New(log)
 	t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
-	kayit := &sahteKayit{}
-	require.NoError(t, c.Provide(coreplugin.PaymentProvidersName, kayit))
+	registry := &fakeRegistry{}
+	require.NoError(t, c.Provide(coreplugin.PaymentProvidersName, registry))
 
 	reg := coreplugin.NewRegistry(log)
 	reg.Add(paymentstripe.New())
 
-	h := coreplugin.NewHost(c, nil, nil, log, ayarlar)
+	h := coreplugin.NewHost(c, nil, nil, log, settings)
 	if err := reg.Install(t.Context(), h); err != nil {
-		return kayit, err
+		return registry, err
 	}
 
-	return kayit, reg.Start(t.Context(), h)
+	return registry, reg.Start(t.Context(), h)
 }
 
-// TestEklentiSaglayiciyiKaydeder eklentinin çekirdeğe dokunmadan takıldığını
-// ve sağlayıcının kimliğiyle SEÇİLEBİLİR olduğunu doğrular (Faz 9 DoD).
-func TestEklentiSaglayiciyiKaydeder(t *testing.T) {
+// TestThePluginRegistersTheProvider proves the plugin plugs in without
+// touching the core and that the provider is SELECTABLE by its identity (phase
+// 9 definition of done).
+func TestThePluginRegistersTheProvider(t *testing.T) {
 	t.Parallel()
 
-	kayit, err := kurulum(t, map[string]string{"STRIPE_API_KEY": "sk_test_1"})
+	registry, err := install(t, map[string]string{"STRIPE_API_KEY": "sk_test_1"})
 	require.NoError(t, err)
 
-	require.Len(t, kayit.kayitli, 1)
-	assert.Equal(t, paymentstripe.ProviderID, kayit.kayitli[0].ID())
+	require.Len(t, registry.registered, 1)
+	assert.Equal(t, paymentstripe.ProviderID, registry.registered[0].ID())
 }
 
-// TestAnahtarsizKurulumReddedilir yapılandırma eksikliğinin AÇILIŞTA
-// patladığını doğrular.
+// TestASetupWithoutAKeyIsRefused proves a missing configuration blows up AT
+// STARTUP.
 //
-// Sessizce atlansaydı, "stripe kurulu" sanılan bir mağaza hiç ödeme alamaz ve
-// bu ancak ilk müşteri denemesinde görülürdü.
-func TestAnahtarsizKurulumReddedilir(t *testing.T) {
+// Skipped silently, a shop believed to "have Stripe" would take no payments,
+// and that would be seen only at the first customer's attempt.
+func TestASetupWithoutAKeyIsRefused(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]map[string]string{
-		"ayar hiç yok":  nil,
-		"ayar boş":      {"STRIPE_API_KEY": ""},
-		"sadece boşluk": {"STRIPE_API_KEY": "   "},
+		"no setting at all": nil,
+		"an empty setting":  {"STRIPE_API_KEY": ""},
+		"only whitespace":   {"STRIPE_API_KEY": "   "},
 	}
 
-	for name, ayarlar := range tests {
+	for name, settings := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			kayit, err := kurulum(t, ayarlar)
+			registry, err := install(t, settings)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "STRIPE_API_KEY")
-			assert.Empty(t, kayit.kayitli, "eksik yapılandırmada sağlayıcı kaydedilmemeli")
+			assert.Empty(t, registry.registered, "no provider may be registered with a missing configuration")
 		})
 	}
 }
 
-// TestParaHareketiMetodlariSahteBasariDonmez iskeletin hiçbir metodunun
-// sessizce "başarılı" DÖNMEDİĞİNİ doğrular.
+// TestTheMoneyMovingMethodsReturnNoFakeSuccess proves none of the skeleton's
+// methods silently returns "success".
 //
-// Bu testin koruduğu senaryo şudur: iskelet kazara üretime alınırsa, sahte
-// başarı dönen bir Capture siparişleri ödenmiş gösterir ve mağaza hiç ödeme
-// almadan mal gönderir. Gürültülü hata, sessiz yalandan ucuzdur.
-func TestParaHareketiMetodlariSahteBasariDonmez(t *testing.T) {
+// The scenario this test guards: if the skeleton reached production by
+// accident, a Capture returning a fake success would show orders as paid and
+// the shop would ship goods without ever taking a payment. A loud error is
+// cheaper than a silent lie.
+func TestTheMoneyMovingMethodsReturnNoFakeSuccess(t *testing.T) {
 	t.Parallel()
 
-	kayit, err := kurulum(t, map[string]string{"STRIPE_API_KEY": "sk_test_1"})
+	registry, err := install(t, map[string]string{"STRIPE_API_KEY": "sk_test_1"})
 	require.NoError(t, err)
-	require.Len(t, kayit.kayitli, 1)
+	require.Len(t, registry.registered, 1)
 
-	p := kayit.kayitli[0]
+	p := registry.registered[0]
 	ctx := t.Context()
 
 	t.Run("CreateSession", func(t *testing.T) {
@@ -135,18 +138,18 @@ func TestParaHareketiMetodlariSahteBasariDonmez(t *testing.T) {
 	})
 }
 
-// TestAnahtarHataMesajinaSizmaz gizli anahtarın hata metinlerine
-// karışmadığını doğrular.
-func TestAnahtarHataMesajinaSizmaz(t *testing.T) {
+// TestTheKeyDoesNotLeakIntoAnErrorMessage proves the secret key does not end
+// up in an error's text.
+func TestTheKeyDoesNotLeakIntoAnErrorMessage(t *testing.T) {
 	t.Parallel()
 
-	const sir = "sk_live_COKGIZLI123"
+	const secret = "sk_live_VERYSECRET123"
 
-	kayit, err := kurulum(t, map[string]string{"STRIPE_API_KEY": sir})
+	registry, err := install(t, map[string]string{"STRIPE_API_KEY": secret})
 	require.NoError(t, err)
-	require.Len(t, kayit.kayitli, 1)
+	require.Len(t, registry.registered, 1)
 
-	_, hata := kayit.kayitli[0].Authorize(t.Context(), "sess_1")
-	require.Error(t, hata)
-	assert.NotContains(t, hata.Error(), sir, "gizli anahtar hata mesajına sızmamalı")
+	_, refused := registry.registered[0].Authorize(t.Context(), "sess_1")
+	require.Error(t, refused)
+	assert.NotContains(t, refused.Error(), secret, "the secret key must not leak into an error message")
 }

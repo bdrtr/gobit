@@ -7,64 +7,68 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// CreateTaxRateInput yeni bir vergi oranının yazma girdisidir.
+// CreateTaxRateInput is the write input of a new tax rate.
 type CreateTaxRateInput struct {
-	// TaxRegionID oranın ekleneceği bölgedir; zorunludur.
+	// TaxRegionID is the region the rate is added to; it is required.
 	TaxRegionID string
-	// Name oranın görünen adıdır (örn. "KDV"); zorunludur.
+	// Name is the rate's display name (e.g. "KDV"); it is required.
 	Name string
-	// Code dış sistemlerle mutabakat kodudur; boş bırakılabilir.
+	// Code is the reconciliation code for external systems; it may be left empty.
 	Code string
-	// RateBps orandır (baz puan; 2000 = %20).
+	// RateBps is the rate (basis points; 2000 = 20%).
 	RateBps int32
-	// IsDefault bölgenin varsayılan oranı olup olmadığıdır.
+	// IsDefault is whether this is the region's default rate.
 	IsDefault bool
-	// StacksOnID bu oranın ÜSTÜNDE duracağı orandır; boş bırakılabilir.
+	// StacksOnID is the rate this rate will stand ON TOP OF; it may be left
+	// empty.
 	//
-	// Dolu ise oran hiçbir zaman seçilmez: seçilen oranın genişletilmesiyle
-	// ulaşılır. Bu yüzden varsayılan OLAMAZ ve kural TAŞIYAMAZ (ADR 0095).
+	// If it is filled the rate is never selected: it is reached by expanding
+	// the selected rate. That is why it CANNOT be the default and CANNOT carry
+	// rules (ADR 0095).
 	StacksOnID string
-	// Compound, oranın altındakilerin vergisi ÜZERİNDEN hesaplanıp
-	// hesaplanmayacağıdır; StacksOnID boşken doğru olamaz.
+	// Compound is whether the rate is computed ON TOP OF the tax of the ones
+	// below it; it cannot be true while StacksOnID is empty.
 	Compound bool
-	// Metadata serbest üstveridir.
+	// Metadata is free-form metadata.
 	Metadata map[string]any
 }
 
-// CreateTaxRate bir bölgeye vergi oranı ekler.
+// CreateTaxRate adds a tax rate to a region.
 //
-// # İkinci varsayılan oran
+// # A second default rate
 //
-// Reddedilir (errors.Conflict, kod [CodeDefaultExists]). Servis bunu önce
-// okuyarak denetler; son savunma veritabanındaki kısmi benzersiz indekstir
-// (tax_rate_default_uniq). İki eşzamanlı istek "önce oku, sonra yaz"
-// denetimini birlikte geçebilir ve o andan sonra hangi oranın uygulandığı satır
-// sırasına kalırdı.
+// It is refused (errors.Conflict, code [CodeDefaultExists]). The service checks
+// this by reading first; the last line of defense is the partial unique index
+// in the database (tax_rate_default_uniq). Two concurrent requests can pass the
+// "read first, then write" check together, and from then on which rate applies
+// would be left to row order.
 //
-// # Bölge yoksa
+// # If there is no region
 //
-// errors.NotFound döner ve hiçbir satır yazılmaz. Denetim burada okunabilir bir
-// hatayla, veritabanında ise foreign key ile iki kez yapılır; ikincisi yalnızca
-// doğrudan SQL ile yapılan müdahaleyi kapsar.
+// errors.NotFound is returned and no row is written. The check is made twice:
+// here with a readable error, and in the database with a foreign key; the
+// second only covers an intervention made directly with SQL.
 //
-// # Denetim ile yazma AYNI işlemdedir
+// # The check and the write are in the SAME transaction
 //
-// Bölge denetimi ile oranın yazılması tek bir işlemde koşar ve bölge satırı
-// PAYLAŞIMLI kilitle okunur (Repository.LockTaxRegion). Bu çerçeve eklenmeden
-// önceki durum ÖLÇÜLDÜ: iki çağrı ayrı ayrı otomatik commit'lenen ifadelerdi ve
-// aralarındaki boşluğa giren bir [Service.DeleteTaxRegion] denetimden sonra
-// tamamlanıyor, oran yine de yazılıyordu. Foreign key bunu YAKALAMAZ — silme
-// YUMUŞAKTIR, bölge satırı yerinde durur — ve geriye silinmiş bir bölgeye bağlı
-// CANLI bir oran kalıyordu. O oran hiçbir hesaba girmez ama defterde durur;
-// repository.DeleteTaxRegion'ın işlemi tam olarak bu satırın oluşmaması için
-// vardır ve servis tarafındaki boşluk onu atlıyordu.
+// The region check and the rate write run in a single transaction, and the
+// region row is read with a SHARED lock (Repository.LockTaxRegion). The
+// situation before this frame was added was MEASURED: the two calls were
+// separately auto-committed statements, and a [Service.DeleteTaxRegion]
+// slipping into the gap between them completed after the check, and the rate
+// was written anyway. A foreign key does NOT CATCH this — the delete is SOFT,
+// the region row stays in place — and what was left behind was a LIVE rate
+// bound to a deleted region. That rate enters no calculation but stays in the
+// ledger; repository.DeleteTaxRegion's transaction exists precisely so that
+// this row never comes about, and the gap on the service side was going around
+// it.
 //
-// Varsayılan oran denetimi ([Service.assertNoDefaultRate]) de işlemin
-// İÇİNDEDİR ama tekilliği o SAĞLAMAZ: paylaşımlı kilit iki eşzamanlı oran
-// eklemeyi birbirinden ayırmaz (ayırması da istenmez) ve iki istek denetimi
-// birlikte geçebilir. Son savunma yine kısmi benzersiz indekstir; denetimin
-// buradaki işi, yarışın kaybedeni değil, sıradan çağıran için okunabilir bir
-// hata üretmektir.
+// The default rate check ([Service.assertNoDefaultRate]) is INSIDE the
+// transaction too, but it does NOT GUARANTEE uniqueness: the shared lock does
+// not separate two concurrent rate inserts (nor is it meant to), and two
+// requests can pass the check together. The last line of defense is still the
+// partial unique index; the check's job here is to produce a readable error for
+// the ordinary caller, not for the loser of the race.
 func (s *Service) CreateTaxRate(ctx context.Context, in CreateTaxRateInput) (models.TaxRate, error) {
 	if err := s.ready(); err != nil {
 		return models.TaxRate{}, err
@@ -128,7 +132,7 @@ func (s *Service) CreateTaxRate(ctx context.Context, in CreateTaxRateInput) (mod
 	return created, nil
 }
 
-// assertNoDefaultRate bölgenin henüz varsayılan oranı olmadığını doğrular.
+// assertNoDefaultRate verifies that the region has no default rate yet.
 func (s *Service) assertNoDefaultRate(ctx context.Context, regionID string) error {
 	existing, err := s.repo.ListTaxRates(ctx, regionID)
 	if err != nil {
@@ -137,28 +141,29 @@ func (s *Service) assertNoDefaultRate(ctx context.Context, regionID string) erro
 	for i := range existing {
 		if existing[i].IsDefault {
 			return errors.Conflict(CodeDefaultExists,
-				"%s bölgesinin varsayılan oranı zaten var: %s", regionID, existing[i].ID)
+				"region %s already has a default rate: %s", regionID, existing[i].ID)
 		}
 	}
 	return nil
 }
 
-// GetTaxRate kimliğe göre oranı döner; yoksa errors.NotFound.
+// GetTaxRate returns the rate by id; errors.NotFound if there is none.
 func (s *Service) GetTaxRate(ctx context.Context, id string) (models.TaxRate, error) {
 	if err := s.ready(); err != nil {
 		return models.TaxRate{}, err
 	}
-	if err := requireID(id, models.TaxRateIDPrefix, "vergi oranı kimliği"); err != nil {
+	if err := requireID(id, models.TaxRateIDPrefix, "tax rate id"); err != nil {
 		return models.TaxRate{}, err
 	}
 	return s.repo.GetTaxRate(ctx, id)
 }
 
-// ListTaxRates bir bölgenin oranlarını döner; varsayılan oran BAŞTADIR.
+// ListTaxRates returns a region's rates; the default rate comes FIRST.
 //
-// Sayfalama YOKTUR ve bilinçlidir: bir bölgedeki oran sayısı yönetilebilir bir
-// listedir (standart, indirimli, muaf …) ve tamamı tek yanıtta görünmelidir.
-// Sayfalama, yöneticinin ikinci sayfadaki bir oranı gözden kaçırması demekti.
+// There is NO paging, and that is deliberate: the number of rates in a region
+// is a manageable list (standard, reduced, exempt …) and all of it should show
+// in a single response. Paging would mean an administrator overlooking a rate
+// on the second page.
 func (s *Service) ListTaxRates(ctx context.Context, regionID string) ([]models.TaxRate, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
@@ -172,40 +177,40 @@ func (s *Service) ListTaxRates(ctx context.Context, regionID string) ([]models.T
 	return s.repo.ListTaxRates(ctx, regionID)
 }
 
-// UpdateTaxRateInput bir oranın KISMİ güncelleme girdisidir.
+// UpdateTaxRateInput is the PARTIAL update input of a rate.
 //
-// nil alan "dokunma" demektir. Tam gövde istenseydi, gövdesinde rate_bps
-// göndermeyi unutan bir istemci oranı sessizce sıfırlardı.
+// A nil field means "leave it alone". Had a full body been required, a client
+// that forgot to send rate_bps in its body would silently reset the rate.
 type UpdateTaxRateInput struct {
-	// Name yeni addır; nil ise ad değişmez.
+	// Name is the new name; if nil the name does not change.
 	Name *string
-	// Code yeni mutabakat kodudur; nil ise kod değişmez. Kodu KALDIRMAK için
-	// boş dizeye işaret eden bir işaretçi verilir.
+	// Code is the new reconciliation code; if nil the code does not change. To
+	// REMOVE the code, a pointer to an empty string is given.
 	Code *string
-	// RateBps yeni orandır (baz puan); nil ise oran değişmez.
+	// RateBps is the new rate (basis points); if nil the rate does not change.
 	RateBps *int32
-	// IsDefault varsayılanlık bayrağıdır; nil ise değişmez.
+	// IsDefault is the default flag; if nil it does not change.
 	IsDefault *bool
-	// Metadata yeni üstveridir; nil ise üstveri değişmez.
+	// Metadata is the new metadata; if nil the metadata does not change.
 	Metadata map[string]any
 }
 
-// UpdateTaxRate oranın verilen alanlarını günceller.
+// UpdateTaxRate updates the given fields of the rate.
 //
-// Hiçbir alan verilmezse errors.Invalid döner: boş bir yama, istemcinin
-// gönderdiğini sandığı alanın adını yanlış yazdığının en olası göstergesidir
-// ve sessizce başarılı dönmek o hatayı gizlerdi.
+// If no field is given errors.Invalid is returned: an empty patch is the most
+// likely sign that the client misspelled the name of the field it believes it
+// sent, and returning success silently would hide that mistake.
 //
-// Bir oranı VARSAYILAN yapmak iki ek koşula bağlıdır ve ikisi de depo
-// katmanında, satır KİLİDİ ALTINDA denetlenir: bölgede başka bir varsayılan
-// oran olmamalı (kısmi benzersiz indeks) ve oranın hiç kuralı olmamalıdır.
-// Denetimlerin kilit altında olması şarttır — araya giren bir kural ekleme,
-// aksi hâlde kurallı bir oranı varsayılan yapabilirdi.
+// Making a rate the DEFAULT depends on two extra conditions, and both are
+// checked in the repository layer, UNDER the row LOCK: the region must have no
+// other default rate (partial unique index), and the rate must have no rules
+// at all. The checks have to be under the lock — otherwise a rule insert
+// slipping in between could make a ruled rate the default.
 func (s *Service) UpdateTaxRate(ctx context.Context, id string, in UpdateTaxRateInput) (models.TaxRate, error) {
 	if err := s.ready(); err != nil {
 		return models.TaxRate{}, err
 	}
-	if err := requireID(id, models.TaxRateIDPrefix, "vergi oranı kimliği"); err != nil {
+	if err := requireID(id, models.TaxRateIDPrefix, "tax rate id"); err != nil {
 		return models.TaxRate{}, err
 	}
 
@@ -219,11 +224,11 @@ func (s *Service) UpdateTaxRate(ctx context.Context, id string, in UpdateTaxRate
 	return s.repo.UpdateTaxRate(ctx, id, patch, s.clock())
 }
 
-// buildRatePatch güncelleme girdisini doğrular ve yamaya çevirir.
+// buildRatePatch validates the update input and turns it into a patch.
 //
-// Doğrulama yalnızca DOLU alanlara uygulanır: dokunulmayan bir alanın mevcut
-// değeri, bugün geçerli olmayan bir kuralı ihlal etse bile güncellemeyi
-// düşürmemelidir.
+// Validation is applied only to the fields that are FILLED: the current value
+// of a field that is not touched must not fail the update, even if it violates
+// a rule that is not valid today.
 func buildRatePatch(in UpdateTaxRateInput) (models.TaxRatePatch, error) {
 	var patch models.TaxRatePatch
 
@@ -256,12 +261,13 @@ func buildRatePatch(in UpdateTaxRateInput) (models.TaxRatePatch, error) {
 	return patch, nil
 }
 
-// DeleteTaxRate oranı ve kurallarını yumuşak siler; yoksa errors.NotFound.
+// DeleteTaxRate soft-deletes the rate and its rules; errors.NotFound if there
+// is none.
 func (s *Service) DeleteTaxRate(ctx context.Context, id string) error {
 	if err := s.ready(); err != nil {
 		return err
 	}
-	if err := requireID(id, models.TaxRateIDPrefix, "vergi oranı kimliği"); err != nil {
+	if err := requireID(id, models.TaxRateIDPrefix, "tax rate id"); err != nil {
 		return err
 	}
 	return s.repo.DeleteTaxRate(ctx, id, s.clock())

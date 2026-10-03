@@ -1644,6 +1644,13 @@ var markdownTestNameReference = regexp.MustCompile("`(Test[A-Z_][A-Za-z0-9_]*)`"
 // how the omission stays visible.
 var testNameReferenceExemptions = []pathReferenceExemption{
 	{
+		file: "docs/adr/0009-cok-kiracililik-kurulum-siniri.md",
+		path: "TestCrossModuleForeignKeyYok",
+		reason: "ADR 0009 is in the historical range 0001-0051, which takes no edit but " +
+			"its Summary. The name was one several modules gave their foreign-key gate " +
+			"before they were translated; it is TestNoCrossModuleForeignKeys now.",
+	},
+	{
 		file: "docs/adr/0047-a-replaced-price-is-deleted.md",
 		path: "TestSilinenKabinFiyatlariDamgalanir",
 		reason: "ADR 0047 is in the historical range 0001-0051, which takes no edit but " +

@@ -13,7 +13,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// taxOfItem sonuçtaki bir kalemi kimliğiyle bulur.
+// taxOfItem finds a line item in the result by its id.
 func taxOfItem(t *testing.T, result CalculateTaxResult, id string) ItemTax {
 	t.Helper()
 
@@ -22,15 +22,16 @@ func taxOfItem(t *testing.T, result CalculateTaxResult, id string) ItemTax {
 			return result.Items[i]
 		}
 	}
-	t.Fatalf("%q kalemi sonuçta yok: %+v", id, result.Items)
+	t.Fatalf("line item %q is not in the result: %+v", id, result.Items)
 	return ItemTax{}
 }
 
-// requireTotalIdentity toplam kimliğini doğrular: TaxTotal = Σ kalem + kargo.
+// requireTotalIdentity checks the total identity: TaxTotal = Σ lines +
+// shipping.
 //
-// Kimlik her testte ayrıca denetlenir çünkü toplam sağlayıcıdan alınmaz,
-// serviste yeniden toplanır; toplama hatası tek bir testte değil HER senaryoda
-// görünmelidir.
+// The identity is checked separately in every test because the total is not
+// taken from the provider but summed again in the service; a summing error has
+// to show in EVERY scenario, not in a single test.
 func requireTotalIdentity(t *testing.T, result CalculateTaxResult) {
 	t.Helper()
 
@@ -39,12 +40,12 @@ func requireTotalIdentity(t *testing.T, result CalculateTaxResult) {
 		sum += result.Items[i].TaxAmount
 	}
 	sum += result.Shipping.TaxAmount
-	require.Equal(t, sum, result.TaxTotal, "toplam vergi, kalem vergilerinin toplamı olmalı")
+	require.Equal(t, sum, result.TaxTotal, "the total tax has to be the sum of the line taxes")
 }
 
-// TestCalculateTaxVarsayilanOranUygulanir kuralsız bir kalemin bölgenin
-// varsayılan oranına düştüğünü doğrular.
-func TestCalculateTaxVarsayilanOranUygulanir(t *testing.T) {
+// TestCalculateTaxAppliesTheDefaultRate checks that a line item with no rule
+// falls back to the region's default rate.
+func TestCalculateTaxAppliesTheDefaultRate(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -68,66 +69,66 @@ func TestCalculateTaxVarsayilanOranUygulanir(t *testing.T) {
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxKuralliOranYalnizcaEslesenKaleme kurallı oranın kapsamının
-// gerçekten daraldığını doğrular.
-func TestCalculateTaxKuralliOranYalnizcaEslesenKaleme(t *testing.T) {
+// TestCalculateTaxARuledRateAppliesOnlyToTheMatchingLine checks that a ruled
+// rate's scope really narrows.
+func TestCalculateTaxARuledRateAppliesOnlyToTheMatchingLine(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
 	repo.seedRuledRate(rateB, trRegionID, 100)
-	repo.seedRule(ruleA, rateB, models.ReferenceProduct, "prod_kitap")
+	repo.seedRule(ruleA, rateB, models.ReferenceProduct, "prod_book")
 
 	result, err := svc.CalculateTax(context.Background(), CalculateTaxInput{
 		CountryCode: "TR",
 		Items: []TaxableItem{
-			{ID: "li_kitap", ProductID: "prod_kitap", Amount: 10_000},
-			{ID: "li_diger", ProductID: "prod_diger", Amount: 10_000},
+			{ID: "li_book", ProductID: "prod_book", Amount: 10_000},
+			{ID: "li_other", ProductID: "prod_other", Amount: 10_000},
 		},
 	})
 	require.NoError(t, err)
 
-	kitap := taxOfItem(t, result, "li_kitap")
-	assert.Equal(t, int32(100), kitap.RateBps, "kuralla eşleşen kalem indirimli orana düşmeli")
-	assert.Equal(t, int64(100), kitap.TaxAmount)
+	book := taxOfItem(t, result, "li_book")
+	assert.Equal(t, int32(100), book.RateBps, "the line matching the rule has to fall to the reduced rate")
+	assert.Equal(t, int64(100), book.TaxAmount)
 
-	diger := taxOfItem(t, result, "li_diger")
-	assert.Equal(t, int32(2000), diger.RateBps, "eşleşmeyen kalem varsayılana düşmeli")
-	assert.Equal(t, int64(2000), diger.TaxAmount)
+	other := taxOfItem(t, result, "li_other")
+	assert.Equal(t, int32(2000), other.RateBps, "the line that does not match has to fall to the default")
+	assert.Equal(t, int64(2000), other.TaxAmount)
 
 	assert.Equal(t, int64(2100), result.TaxTotal)
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxUrunKuraliUrunTipiKuraliniYener belirginlik sırasını
-// doğrular.
-func TestCalculateTaxUrunKuraliUrunTipiKuraliniYener(t *testing.T) {
+// TestCalculateTaxAProductRuleBeatsAProductTypeRule checks the specificity
+// order.
+func TestCalculateTaxAProductRuleBeatsAProductTypeRule(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
-	// Kimliği BÜYÜK olan oran ürün kuralını taşır: kazanmasının tek sebebi
-	// belirginlik olmalı, sıra değil.
+	// The rate with the LARGER id carries the product rule: the only reason it
+	// wins has to be specificity, not order.
 	repo.seedRuledRate(rateB, trRegionID, 800)
-	repo.seedRule(ruleA, rateB, models.ReferenceProductType, "ptyp_gida")
+	repo.seedRule(ruleA, rateB, models.ReferenceProductType, "ptyp_food")
 	repo.seedRuledRate(rateC, trRegionID, 100)
-	repo.seedRule(ruleB, rateC, models.ReferenceProduct, "prod_ekmek")
+	repo.seedRule(ruleB, rateC, models.ReferenceProduct, "prod_bread")
 
 	result, err := svc.CalculateTax(context.Background(), CalculateTaxInput{
 		CountryCode: "TR",
 		Items: []TaxableItem{
-			{ID: "li_1", ProductID: "prod_ekmek", ProductTypeID: "ptyp_gida", Amount: 10_000},
+			{ID: "li_1", ProductID: "prod_bread", ProductTypeID: "ptyp_food", Amount: 10_000},
 		},
 	})
 	require.NoError(t, err)
 
 	line := taxOfItem(t, result, "li_1")
-	assert.Equal(t, int32(100), line.RateBps, "ürün kuralı ürün tipi kuralını yenmeli")
+	assert.Equal(t, int32(100), line.RateBps, "the product rule has to beat the product type rule")
 	assert.Equal(t, rateC, line.RateID)
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxEsitBelirginliktKucukKimlikKazanir eşitlik bozma kuralının
-// BELİRLENİMCİ olduğunu doğrular.
-func TestCalculateTaxEsitBelirginliktKucukKimlikKazanir(t *testing.T) {
+// TestCalculateTaxOnEqualSpecificityTheSmallerIDWins checks that the
+// tie-break rule is DETERMINISTIC.
+func TestCalculateTaxOnEqualSpecificityTheSmallerIDWins(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedRuledRate(rateB, trRegionID, 1000)
@@ -135,22 +136,22 @@ func TestCalculateTaxEsitBelirginliktKucukKimlikKazanir(t *testing.T) {
 	repo.seedRuledRate(rateC, trRegionID, 2000)
 	repo.seedRule(ruleB, rateC, models.ReferenceProduct, "prod_1")
 
-	// Aynı girdi defalarca çalıştırılır: harita dolaşım sırasına bağlı bir
-	// seçim burada kararsız sonuç verirdi.
+	// The same input is run many times: a selection that depended on map
+	// iteration order would give an unstable result here.
 	for i := range 20 {
 		result, err := svc.CalculateTax(context.Background(), CalculateTaxInput{
 			CountryCode: "TR",
 			Items:       []TaxableItem{{ID: "li_1", ProductID: "prod_1", Amount: 10_000}},
 		})
-		require.NoError(t, err, "tur %d", i)
+		require.NoError(t, err, "round %d", i)
 		assert.Equal(t, rateB, taxOfItem(t, result, "li_1").RateID,
-			"tur %d: kimliği küçük oran kazanmalı", i)
+			"round %d: the rate with the smaller id has to win", i)
 	}
 }
 
-// TestCalculateTaxEyaletUlkeyiEzer eyalet varsayılanının ülke oranını
-// tamamen değiştirdiğini ve oranların TOPLANMADIĞINI doğrular.
-func TestCalculateTaxEyaletUlkeyiEzer(t *testing.T) {
+// TestCalculateTaxTheProvinceOverridesTheCountry checks that the province's
+// default replaces the country rate entirely and that rates are NOT ADDED.
+func TestCalculateTaxTheProvinceOverridesTheCountry(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(usRegionID, "US")
 	repo.seedProvinceRegion(trIstanbul, "US", "CA", usRegionID)
@@ -164,44 +165,45 @@ func TestCalculateTaxEyaletUlkeyiEzer(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, trIstanbul, result.RegionID, "en özel bölge sonuçta görünmeli")
+	assert.Equal(t, trIstanbul, result.RegionID, "the most specific region has to show in the result")
 	line := taxOfItem(t, result, "li_1")
-	assert.Equal(t, int32(725), line.RateBps, "eyalet oranı ülkeyi EZMELİ")
-	assert.Equal(t, int64(725), line.TaxAmount, "oranlar TOPLANMAMALI (2725 değil)")
+	assert.Equal(t, int32(725), line.RateBps, "the province rate has to OVERRIDE the country")
+	assert.Equal(t, int64(725), line.TaxAmount, "rates must NOT BE ADDED (not 2725)")
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxEyaletOranVermezseUlkeyeDuser üst halkaya geçişi doğrular.
-func TestCalculateTaxEyaletOranVermezseUlkeyeDuser(t *testing.T) {
+// TestCalculateTaxFallsBackToTheCountryWhenTheProvinceGivesNoRate checks the
+// move up the chain.
+func TestCalculateTaxFallsBackToTheCountryWhenTheProvinceGivesNoRate(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(usRegionID, "US")
 	repo.seedProvinceRegion(trIstanbul, "US", "CA", usRegionID)
 	repo.seedDefaultRate(rateA, usRegionID, 2000)
-	// Eyalette YALNIZCA tek bir ürüne yazılmış kurallı oran var.
+	// The province has ONLY a ruled rate written for a single product.
 	repo.seedRuledRate(rateB, trIstanbul, 0)
-	repo.seedRule(ruleA, rateB, models.ReferenceProduct, "prod_muaf")
+	repo.seedRule(ruleA, rateB, models.ReferenceProduct, "prod_exempt")
 
 	result, err := svc.CalculateTax(context.Background(), CalculateTaxInput{
 		CountryCode:  "US",
 		ProvinceCode: "CA",
 		Items: []TaxableItem{
-			{ID: "li_muaf", ProductID: "prod_muaf", Amount: 10_000},
+			{ID: "li_exempt", ProductID: "prod_exempt", Amount: 10_000},
 			{ID: "li_normal", ProductID: "prod_normal", Amount: 10_000},
 		},
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, int32(0), taxOfItem(t, result, "li_muaf").RateBps,
-		"eyaletin kuralı eşleşen kaleme uygulanmalı")
+	assert.Equal(t, int32(0), taxOfItem(t, result, "li_exempt").RateBps,
+		"the province's rule has to apply to the matching line")
 	assert.Equal(t, int32(2000), taxOfItem(t, result, "li_normal").RateBps,
-		"eyalet oran vermeyen kalem ülkeye düşmeli")
+		"a line the province gives no rate to has to fall back to the country")
 	assert.Equal(t, int64(2000), result.TaxTotal)
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxBilinmeyenEyaletUlkeyeDuser tanımlanmamış bir eyalet
-// kodunun hata değil ülke oranı ürettiğini doğrular.
-func TestCalculateTaxBilinmeyenEyaletUlkeyeDuser(t *testing.T) {
+// TestCalculateTaxAnUnknownProvinceFallsBackToTheCountry checks that an
+// undefined province code produces the country rate, not an error.
+func TestCalculateTaxAnUnknownProvinceFallsBackToTheCountry(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(usRegionID, "US")
 	repo.seedDefaultRate(rateA, usRegionID, 2000)
@@ -218,9 +220,10 @@ func TestCalculateTaxBilinmeyenEyaletUlkeyeDuser(t *testing.T) {
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxBolgeYoksaSifirVergi bölge bulunamadığında hata DEĞİL sıfır
-// vergi döndüğünü ve durumun sonuçta GÖRÜNÜR olduğunu doğrular.
-func TestCalculateTaxBolgeYoksaSifirVergi(t *testing.T) {
+// TestCalculateTaxWithoutARegionIsZeroTax checks that when no region is found
+// zero tax comes back, NOT an error, and that the situation is VISIBLE in the
+// result.
+func TestCalculateTaxWithoutARegionIsZeroTax(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -229,25 +232,25 @@ func TestCalculateTaxBolgeYoksaSifirVergi(t *testing.T) {
 		CountryCode: "DE",
 		Items:       []TaxableItem{{ID: "li_1", Amount: 10_000}},
 	})
-	require.NoError(t, err, "yapılandırılmamış ülke sepeti düşürmemeli")
+	require.NoError(t, err, "an unconfigured country must not fail the cart")
 
-	assert.False(t, result.RegionFound, "çağıran yapılandırma eksiğini görebilmeli")
+	assert.False(t, result.RegionFound, "the caller has to be able to see the missing configuration")
 	assert.Empty(t, result.RegionID)
 	assert.Empty(t, result.ProviderID)
 	assert.Equal(t, int64(0), result.TaxTotal)
 
 	line := taxOfItem(t, result, "li_1")
-	assert.Equal(t, int64(10_000), line.TaxableAmount, "taban yine de raporlanmalı")
+	assert.Equal(t, int64(10_000), line.TaxableAmount, "the base has to be reported all the same")
 	assert.Equal(t, int64(0), line.TaxAmount)
 	assert.Empty(t, line.RateID)
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxBolgeVarOranYoksaSifirVergi bölgesi olan ama hiç oranı
-// olmayan bir ülkenin sıfır vergi ürettiğini doğrular.
+// TestCalculateTaxARegionWithoutARateIsZeroTax checks that a country that has
+// a region but no rate at all produces zero tax.
 //
-// Bölge YOK durumundan ayrıdır: RegionFound true kalır.
-func TestCalculateTaxBolgeVarOranYoksaSifirVergi(t *testing.T) {
+// It is separate from the NO region case: RegionFound stays true.
+func TestCalculateTaxARegionWithoutARateIsZeroTax(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 
@@ -263,9 +266,9 @@ func TestCalculateTaxBolgeVarOranYoksaSifirVergi(t *testing.T) {
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxSifirTaban sıfır tabanın sıfır vergi ürettiğini ve oranın
-// yine de raporlandığını doğrular.
-func TestCalculateTaxSifirTaban(t *testing.T) {
+// TestCalculateTaxZeroBase checks that a zero base produces zero tax and that
+// the rate is reported all the same.
+func TestCalculateTaxZeroBase(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -278,13 +281,13 @@ func TestCalculateTaxSifirTaban(t *testing.T) {
 
 	line := taxOfItem(t, result, "li_1")
 	assert.Equal(t, int64(0), line.TaxAmount)
-	assert.Equal(t, int32(2000), line.RateBps, "sıfır taban oranı görünmez yapmamalı")
+	assert.Equal(t, int32(2000), line.RateBps, "a zero base must not make the rate invisible")
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxKalemsizSepet kalemi olmayan bir hesabın geçerli olduğunu
-// doğrular.
-func TestCalculateTaxKalemsizSepet(t *testing.T) {
+// TestCalculateTaxCartWithoutLineItems checks that a calculation with no line
+// items is valid.
+func TestCalculateTaxCartWithoutLineItems(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -298,9 +301,9 @@ func TestCalculateTaxKalemsizSepet(t *testing.T) {
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxKargoVarsayilanOlarakVergilenmez sepet akışının bugünkü
-// sözleşmesinin korunduğunu doğrular.
-func TestCalculateTaxKargoVarsayilanOlarakVergilenmez(t *testing.T) {
+// TestCalculateTaxShippingIsNotTaxedByDefault checks that the cart flow's
+// current contract is kept.
+func TestCalculateTaxShippingIsNotTaxedByDefault(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -312,15 +315,15 @@ func TestCalculateTaxKargoVarsayilanOlarakVergilenmez(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(0), result.Shipping.TaxAmount, "kargo tabana GİRMEMELİ")
+	assert.Equal(t, int64(0), result.Shipping.TaxAmount, "shipping must NOT ENTER the base")
 	assert.Equal(t, int64(0), result.Shipping.TaxableAmount)
 	assert.Equal(t, int64(2000), result.TaxTotal)
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxKargoIstenirseVergilenir açık talebin kargoyu tabana
-// soktuğunu ve varsayılan orana düştüğünü doğrular.
-func TestCalculateTaxKargoIstenirseVergilenir(t *testing.T) {
+// TestCalculateTaxShippingIsTaxedWhenAskedFor checks that an explicit request
+// puts shipping into the base and that it falls back to the default rate.
+func TestCalculateTaxShippingIsTaxedWhenAskedFor(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -339,45 +342,45 @@ func TestCalculateTaxKargoIstenirseVergilenir(t *testing.T) {
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxKargoKendiOraniniSecer "shipping_option" kuralının kargo
-// satırına uygulandığını ve KALEMLERE uygulanmadığını doğrular.
-func TestCalculateTaxKargoKendiOraniniSecer(t *testing.T) {
+// TestCalculateTaxShippingChoosesItsOwnRate checks that a "shipping_option"
+// rule applies to the shipping line and NOT to the line items.
+func TestCalculateTaxShippingChoosesItsOwnRate(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
 	repo.seedRuledRate(rateB, trRegionID, 800)
-	repo.seedRule(ruleA, rateB, models.ReferenceShippingOption, "sopt_hizli")
+	repo.seedRule(ruleA, rateB, models.ReferenceShippingOption, "sopt_express")
 
 	result, err := svc.CalculateTax(context.Background(), CalculateTaxInput{
 		CountryCode: "TR",
-		Items:       []TaxableItem{{ID: "li_1", ProductID: "sopt_hizli", Amount: 10_000}},
-		Shipping:    ShippingInput{OptionID: "sopt_hizli", Amount: 10_000, Taxable: true},
+		Items:       []TaxableItem{{ID: "li_1", ProductID: "sopt_express", Amount: 10_000}},
+		Shipping:    ShippingInput{OptionID: "sopt_express", Amount: 10_000, Taxable: true},
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, int32(800), result.Shipping.RateBps, "kargo kendi kuralına düşmeli")
+	assert.Equal(t, int32(800), result.Shipping.RateBps, "shipping has to fall to its own rule")
 	assert.Equal(t, int32(2000), taxOfItem(t, result, "li_1").RateBps,
-		"kargo kuralı, aynı kimliği taşıyan bir ÜRÜNE uygulanmamalı")
+		"the shipping rule must not apply to a PRODUCT carrying the same id")
 	requireTotalIdentity(t, result)
 }
 
-// TestCalculateTaxYuvarlamaAsagi yuvarlama yönünün müşteri lehine olduğunu
-// doğrular.
-func TestCalculateTaxYuvarlamaAsagi(t *testing.T) {
+// TestCalculateTaxRoundsDown checks that the rounding direction is in the
+// customer's favor.
+func TestCalculateTaxRoundsDown(t *testing.T) {
 	tests := []struct {
 		name    string
 		base    int64
 		rateBps int32
 		want    int64
 	}{
-		// 1999 × %18 = 359,82 -> 359
-		{"kesirli kalan aşağı iner", 1999, 1800, 359},
-		// 1 × %20 = 0,2 -> 0
-		{"bir kuruşun altı sıfırlanır", 1, 2000, 0},
-		// 5 × %50 = 2,5 -> 2 (yakına yuvarlama 3 verirdi)
-		{"tam yarım aşağı iner", 5, 5000, 2},
-		// 10000 × %20 = 2000 -> tam
-		{"tam bölünen değişmez", 10_000, 2000, 2000},
+		// 1999 × 18% = 359.82 -> 359
+		{"a fractional remainder goes down", 1999, 1800, 359},
+		// 1 × 20% = 0.2 -> 0
+		{"below one cent becomes zero", 1, 2000, 0},
+		// 5 × 50% = 2.5 -> 2 (rounding to nearest would give 3)
+		{"an exact half goes down", 5, 5000, 2},
+		// 10000 × 20% = 2000 -> exact
+		{"an exact division does not change", 10_000, 2000, 2000},
 	}
 
 	for _, tt := range tests {
@@ -397,13 +400,14 @@ func TestCalculateTaxYuvarlamaAsagi(t *testing.T) {
 	}
 }
 
-// TestCalculateTaxKalemBasinaYuvarlamaFarki belgelenen AYRIŞMAYI sayısal
-// olarak sabitler.
+// TestCalculateTaxPerLineRoundingDifference pins the documented DIVERGENCE
+// numerically.
 //
-// Üç kalemin her biri 333 ve oran %20: kalem başına 66 (333×0,2 = 66,6),
-// toplam 198. Sepetin tamamı üzerinden hesaplansaydı 999×0,2 = 199,8 -> 199
-// olurdu. Fark tam 1 minor unit'tir ve MÜŞTERİ LEHİNE kalır.
-func TestCalculateTaxKalemBasinaYuvarlamaFarki(t *testing.T) {
+// Three line items of 333 each at a rate of 20%: 66 per line (333×0.2 = 66.6),
+// 198 in total. Computed over the whole cart it would have been 999×0.2 =
+// 199.8 -> 199. The difference is exactly 1 minor unit and stays IN THE
+// CUSTOMER'S FAVOR.
+func TestCalculateTaxPerLineRoundingDifference(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -423,17 +427,17 @@ func TestCalculateTaxKalemBasinaYuvarlamaFarki(t *testing.T) {
 	}
 	assert.Equal(t, int64(198), result.TaxTotal)
 
-	tekSeferde, err := TaxOf(999, 2000)
+	inOneGo, err := TaxOf(999, 2000)
 	require.NoError(t, err)
-	assert.Equal(t, int64(199), tekSeferde)
-	assert.Less(t, result.TaxTotal, tekSeferde,
-		"kalem başına hesap, sepet tabanı üzerinden hesaptan KÜÇÜK ya da eşit olmalı")
+	assert.Equal(t, int64(199), inOneGo)
+	assert.Less(t, result.TaxTotal, inOneGo,
+		"the per-line calculation has to be LESS than or equal to the one over the cart base")
 }
 
-// TestCalculateTaxTasmaReddedilir int64 sınırlarının hem kalem hem toplam
-// düzeyinde uygulandığını doğrular.
-func TestCalculateTaxTasmaReddedilir(t *testing.T) {
-	t.Run("kalem tabanı tavanı aşarsa", func(t *testing.T) {
+// TestCalculateTaxRejectsOverflow checks that the int64 bounds are applied at
+// both the line and the total level.
+func TestCalculateTaxRejectsOverflow(t *testing.T) {
+	t.Run("a line base above the ceiling", func(t *testing.T) {
 		svc, repo := newTestService(t)
 		repo.seedRootRegion(trRegionID, "TR")
 		repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -445,10 +449,10 @@ func TestCalculateTaxTasmaReddedilir(t *testing.T) {
 		require.Error(t, err)
 		assert.True(t, errors.IsInvalid(err))
 		assert.Equal(t, CodeAmountOverflow, errors.CodeOf(err))
-		assert.Zero(t, repo.callCount("ResolveTaxRegions"), "girdi hatası için veritabanına gidilmemeli")
+		assert.Zero(t, repo.callCount("ResolveTaxRegions"), "an input error must not go to the database")
 	})
 
-	t.Run("kalem tabanı negatifse", func(t *testing.T) {
+	t.Run("a negative line base", func(t *testing.T) {
 		svc, repo := newTestService(t)
 		repo.seedRootRegion(trRegionID, "TR")
 
@@ -461,12 +465,13 @@ func TestCalculateTaxTasmaReddedilir(t *testing.T) {
 		assert.Zero(t, repo.callCount("ResolveTaxRegions"))
 	})
 
-	t.Run("vergi toplamı tavanı aşarsa", func(t *testing.T) {
+	t.Run("a tax total above the ceiling", func(t *testing.T) {
 		svc, repo := newTestService(t)
 		repo.seedRootRegion(trRegionID, "TR")
 		repo.seedDefaultRate(rateA, trRegionID, models.MaxRateBps)
 
-		// Her kalem tek başına geçerli; %100 oranla toplam vergi tavanı aşar.
+		// Each line item is valid on its own; at a 100% rate the total tax
+		// exceeds the ceiling.
 		items := make([]TaxableItem, 0, 3)
 		for i := range 3 {
 			items = append(items, TaxableItem{
@@ -484,28 +489,28 @@ func TestCalculateTaxTasmaReddedilir(t *testing.T) {
 	})
 }
 
-// TestCalculateTaxGecersizGirdiReddedilir girdi doğrulamasının veritabanına
-// GİTMEDEN yapıldığını doğrular.
-func TestCalculateTaxGecersizGirdiReddedilir(t *testing.T) {
+// TestCalculateTaxRejectsInvalidInput checks that input validation is done
+// WITHOUT GOING to the database.
+func TestCalculateTaxRejectsInvalidInput(t *testing.T) {
 	tests := map[string]CalculateTaxInput{
-		"ülke kodu boş":       {Items: []TaxableItem{{ID: "li_1", Amount: 1}}},
-		"ülke kodu üç harf":   {CountryCode: "TUR"},
-		"ülke kodu rakamlı":   {CountryCode: "T1"},
-		"eyalet kodu tireyle": {CountryCode: "US", ProvinceCode: "-CA"},
-		"eyalet kodu uzun":    {CountryCode: "US", ProvinceCode: "CALIFORNIAAA"},
-		"kalem kimliği boş": {
+		"empty country code":          {Items: []TaxableItem{{ID: "li_1", Amount: 1}}},
+		"three-letter country code":   {CountryCode: "TUR"},
+		"country code with a digit":   {CountryCode: "T1"},
+		"province code with a hyphen": {CountryCode: "US", ProvinceCode: "-CA"},
+		"province code too long":      {CountryCode: "US", ProvinceCode: "CALIFORNIAAA"},
+		"empty line item id": {
 			CountryCode: "TR",
 			Items:       []TaxableItem{{Amount: 1}},
 		},
-		"kalem kimliği tekrar": {
+		"repeated line item id": {
 			CountryCode: "TR",
 			Items:       []TaxableItem{{ID: "li_1", Amount: 1}, {ID: "li_1", Amount: 2}},
 		},
-		"kalem kimliği kargoya ayrılmış": {
+		"line item id reserved for shipping": {
 			CountryCode: "TR",
 			Items:       []TaxableItem{{ID: ShippingLineID, Amount: 1}},
 		},
-		"kargo tutarı negatif": {
+		"negative shipping amount": {
 			CountryCode: "TR",
 			Shipping:    ShippingInput{Amount: -5, Taxable: true},
 		},
@@ -518,15 +523,15 @@ func TestCalculateTaxGecersizGirdiReddedilir(t *testing.T) {
 
 			_, err := svc.CalculateTax(context.Background(), in)
 			require.Error(t, err)
-			assert.True(t, errors.IsInvalid(err), "hata: %v", err)
+			assert.True(t, errors.IsInvalid(err), "error: %v", err)
 			assert.Zero(t, repo.callCount("ResolveTaxRegions"))
 		})
 	}
 }
 
-// TestCalculateTaxKalemSayisiSinirli sınırsız bir listenin reddedildiğini
-// doğrular.
-func TestCalculateTaxKalemSayisiSinirli(t *testing.T) {
+// TestCalculateTaxBoundsTheNumberOfLineItems checks that an unbounded list is
+// rejected.
+func TestCalculateTaxBoundsTheNumberOfLineItems(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 
@@ -544,9 +549,9 @@ func TestCalculateTaxKalemSayisiSinirli(t *testing.T) {
 	assert.Zero(t, repo.callCount("ResolveTaxRegions"))
 }
 
-// TestCalculateTaxSorguSayisiKalemSayisindanBagimsiz N+1 olmadığını
-// kanıtlar.
-func TestCalculateTaxSorguSayisiKalemSayisindanBagimsiz(t *testing.T) {
+// TestCalculateTaxQueryCountIsIndependentOfLineCount proves that there is no
+// N+1.
+func TestCalculateTaxQueryCountIsIndependentOfLineCount(t *testing.T) {
 	counts := map[int]int{}
 
 	for _, itemCount := range []int{1, 50} {
@@ -574,15 +579,14 @@ func TestCalculateTaxSorguSayisiKalemSayisindanBagimsiz(t *testing.T) {
 			repo.callCount("ListTaxRateRulesByRates")
 	}
 
-	assert.Equal(t, 3, counts[1], "bölge + oran + kural: üç sorgu")
+	assert.Equal(t, 3, counts[1], "region + rate + rule: three queries")
 	assert.Equal(t, counts[1], counts[50],
-		"sorgu sayısı kalem sayısıyla BÜYÜMEMELİ (N+1 yok)")
+		"the number of queries must NOT GROW with the number of line items (no N+1)")
 }
 
-// TestCalculateTaxBilinmeyenSaglayiciKurulumHatasidir bölgenin kayıtlı
-// olmayan bir sağlayıcıya işaret etmesinin sessizce yerele DÜŞMEDİĞİNİ
-// doğrular.
-func TestCalculateTaxBilinmeyenSaglayiciKurulumHatasidir(t *testing.T) {
+// TestCalculateTaxAnUnknownProviderIsASetupError checks that a region pointing
+// to a provider that is not registered does NOT silently FALL BACK to local.
+func TestCalculateTaxAnUnknownProviderIsASetupError(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRegion(models.TaxRegion{ID: trRegionID, CountryCode: "TR", ProviderID: "avalara"})
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -594,19 +598,20 @@ func TestCalculateTaxBilinmeyenSaglayiciKurulumHatasidir(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, CodeProviderMisconfigured, errors.CodeOf(err))
 	assert.True(t, errors.HasKind(err, errors.KindInternal),
-		"kurulum hatası istemciye 404 olarak değil sunucu hatası olarak dönmeli")
+		"a setup error has to come back as a server error, not as a 404 to the client")
 }
 
-// TestCalculateTaxSaglayiciZincirdenDevralinir eyalet bölgesinin ülkenin DIŞ
-// vergi sağlayıcısını sessizce YERELE düşürmediğini doğrular.
+// TestCalculateTaxInheritsTheProviderAlongTheChain checks that a province
+// region does not silently DROP the country's EXTERNAL tax provider to LOCAL.
 //
-// Senaryo GÖRÜNMEYEN bir para hatasıdır: ülke kökü dış bir otoriteye bağlıyken
-// tek bir istisna için açılan eyalet bölgesinin provider_id'si boş kalırsa, o
-// eyaletteki her sepet yanlış otoriteyle vergilenir ve fatura hatalı çıkar.
-// Sahte sağlayıcılar bilinçli olarak yerel hesabın ÜRETEMEYECEĞİ tutarlar
-// döner; sonuçtaki tutar, hesabı kimin yaptığının kanıtıdır.
-func TestCalculateTaxSaglayiciZincirdenDevralinir(t *testing.T) {
-	const eyaletKodu = "34"
+// The scenario is an INVISIBLE money bug: while the country root is bound to an
+// external authority, if a province region opened for a single exception
+// keeps an empty provider_id, every cart in that province is taxed by the
+// wrong authority and the invoice comes out wrong. The fake providers
+// deliberately return amounts the local calculation CANNOT PRODUCE; the amount
+// in the result is the proof of who made the calculation.
+func TestCalculateTaxInheritsTheProviderAlongTheChain(t *testing.T) {
+	const provinceCode = "34"
 
 	avalara := &stubProvider{id: "avalara", result: ProviderResult{
 		Items: []ProviderItemTax{{ID: "li_1", RateBps: 1000, TaxAmount: 999}},
@@ -615,23 +620,24 @@ func TestCalculateTaxSaglayiciZincirdenDevralinir(t *testing.T) {
 		Items: []ProviderItemTax{{ID: "li_1", RateBps: 500, TaxAmount: 111}},
 	}}
 
-	// kur ülkesi "avalara"ya bağlı, eyaleti verilen sağlayıcıyı taşıyan bir
-	// servis üretir.
-	kur := func(t *testing.T, eyaletSaglayici string) *Service {
+	// build produces a service whose country is bound to "avalara" and whose
+	// province carries the given provider.
+	build := func(t *testing.T, provinceProvider string) *Service {
 		t.Helper()
 
 		repo := newMemRepo()
 		repo.seedRegion(models.TaxRegion{ID: trRegionID, CountryCode: "TR", ProviderID: "avalara"})
-		province, parent := eyaletKodu, trRegionID
+		province, parent := provinceCode, trRegionID
 		repo.seedRegion(models.TaxRegion{
 			ID:           trIstanbul,
 			CountryCode:  "TR",
 			ProvinceCode: &province,
 			ParentID:     &parent,
-			ProviderID:   eyaletSaglayici,
+			ProviderID:   provinceProvider,
 		})
-		// Eyaletin kendi varsayılan oranı vardır: yerele düşen bir hesap 725
-		// bulur ve sahte sağlayıcıların tutarlarından ayırt edilir.
+		// The province has its own default rate: a calculation that falls back
+		// to local finds 725 and is distinguishable from the fake providers'
+		// amounts.
 		repo.seedDefaultRate(rateA, trIstanbul, 725)
 
 		registry := NewProviderRegistry()
@@ -641,44 +647,44 @@ func TestCalculateTaxSaglayiciZincirdenDevralinir(t *testing.T) {
 		return New(repo, Options{Providers: registry, Now: func() time.Time { return testNow }})
 	}
 
-	// hesapla eyalet için tek kalemlik bir hesap çalıştırır.
-	hesapla := func(t *testing.T, svc *Service) CalculateTaxResult {
+	// calculate runs a single-line calculation for the province.
+	calculate := func(t *testing.T, svc *Service) CalculateTaxResult {
 		t.Helper()
 
 		result, err := svc.CalculateTax(context.Background(), CalculateTaxInput{
 			CountryCode:  "TR",
-			ProvinceCode: eyaletKodu,
+			ProvinceCode: provinceCode,
 			Items:        []TaxableItem{{ID: "li_1", Amount: 10_000}},
 		})
 		require.NoError(t, err)
 		return result
 	}
 
-	t.Run("boş bırakılan eyalet ülkenin sağlayıcısını devralır", func(t *testing.T) {
-		result := hesapla(t, kur(t, ""))
+	t.Run("a province left empty inherits the country's provider", func(t *testing.T) {
+		result := calculate(t, build(t, ""))
 
 		assert.Equal(t, "avalara", result.ProviderID,
-			"eyaletin boş provider_id'si ülkenin dış otoritesini yerele DÜŞÜRMEMELİ")
+			"the province's empty provider_id must NOT DROP the country's external authority to local")
 		line := taxOfItem(t, result, "li_1")
-		assert.Equal(t, int64(999), line.TaxAmount, "hesabı ülkenin sağlayıcısı yapmalı")
+		assert.Equal(t, int64(999), line.TaxAmount, "the country's provider has to make the calculation")
 		assert.Equal(t, int32(1000), line.RateBps)
-		assert.Equal(t, trIstanbul, result.RegionID, "hesap yine EN ÖZEL bölgeye dayanır")
+		assert.Equal(t, trIstanbul, result.RegionID, "the calculation still rests on the MOST SPECIFIC region")
 		requireTotalIdentity(t, result)
 	})
 
-	t.Run("eyalet yerel hesabı AÇIKÇA seçebilir", func(t *testing.T) {
-		result := hesapla(t, kur(t, LocalProviderID))
+	t.Run("a province can choose the local calculation EXPLICITLY", func(t *testing.T) {
+		result := calculate(t, build(t, LocalProviderID))
 
 		assert.Equal(t, LocalProviderID, result.ProviderID,
-			"devralma, yerelin açıkça seçilmesini engellememeli")
+			"inheritance must not prevent local from being chosen explicitly")
 		line := taxOfItem(t, result, "li_1")
 		assert.Equal(t, int32(725), line.RateBps)
 		assert.Equal(t, int64(725), line.TaxAmount)
 		requireTotalIdentity(t, result)
 	})
 
-	t.Run("eyaletin kendi sağlayıcısı ülkeyi ezer", func(t *testing.T) {
-		result := hesapla(t, kur(t, "taxjar"))
+	t.Run("the province's own provider overrides the country", func(t *testing.T) {
+		result := calculate(t, build(t, "taxjar"))
 
 		assert.Equal(t, "taxjar", result.ProviderID)
 		assert.Equal(t, int64(111), taxOfItem(t, result, "li_1").TaxAmount)
@@ -686,32 +692,32 @@ func TestCalculateTaxSaglayiciZincirdenDevralinir(t *testing.T) {
 	})
 }
 
-// TestCalculateTaxSaglayiciSonucuDogrulanir dış bir sağlayıcının sözleşme dışı
-// çıktısının sepet toplamına SIZMADIĞINI doğrular.
-func TestCalculateTaxSaglayiciSonucuDogrulanir(t *testing.T) {
+// TestCalculateTaxValidatesTheProviderResult checks that an external provider's
+// out-of-contract output does NOT LEAK into the cart total.
+func TestCalculateTaxValidatesTheProviderResult(t *testing.T) {
 	tests := map[string]ProviderResult{
-		"vergi tabandan büyük": {
+		"tax larger than the base": {
 			Items: []ProviderItemTax{{ID: "li_1", RateBps: 2000, TaxAmount: 10_001}},
 		},
-		"vergi negatif": {
+		"negative tax": {
 			Items: []ProviderItemTax{{ID: "li_1", RateBps: 2000, TaxAmount: -1}},
 		},
-		"oran aralık dışı": {
+		"rate out of range": {
 			Items: []ProviderItemTax{{ID: "li_1", RateBps: 20_000, TaxAmount: 10}},
 		},
-		"kalem eksik": {
+		"missing line item": {
 			Items: []ProviderItemTax{},
 		},
-		"bilinmeyen kalem": {
-			Items: []ProviderItemTax{{ID: "li_yok", RateBps: 0, TaxAmount: 0}},
+		"unknown line item": {
+			Items: []ProviderItemTax{{ID: "li_unknown", RateBps: 0, TaxAmount: 0}},
 		},
-		"kalem tekrar": {
+		"repeated line item": {
 			Items: []ProviderItemTax{
 				{ID: "li_1", RateBps: 0, TaxAmount: 0},
 				{ID: "li_1", RateBps: 0, TaxAmount: 0},
 			},
 		},
-		"kargo vergisi vergilenmeyen kargoya yazılmış": {
+		"shipping tax written onto untaxed shipping": {
 			Items:    []ProviderItemTax{{ID: "li_1", RateBps: 2000, TaxAmount: 2000}},
 			Shipping: ProviderItemTax{ID: ShippingLineID, RateBps: 2000, TaxAmount: 500},
 		},
@@ -720,10 +726,10 @@ func TestCalculateTaxSaglayiciSonucuDogrulanir(t *testing.T) {
 	for name, result := range tests {
 		t.Run(name, func(t *testing.T) {
 			repo := newMemRepo()
-			repo.seedRegion(models.TaxRegion{ID: trRegionID, CountryCode: "TR", ProviderID: "sahte"})
+			repo.seedRegion(models.TaxRegion{ID: trRegionID, CountryCode: "TR", ProviderID: "fake"})
 
 			registry := NewProviderRegistry()
-			require.NoError(t, registry.Register(&stubProvider{id: "sahte", result: result}))
+			require.NoError(t, registry.Register(&stubProvider{id: "fake", result: result}))
 			svc := New(repo, Options{Providers: registry, Now: func() time.Time { return testNow }})
 
 			_, err := svc.CalculateTax(context.Background(), CalculateTaxInput{
@@ -738,9 +744,9 @@ func TestCalculateTaxSaglayiciSonucuDogrulanir(t *testing.T) {
 	}
 }
 
-// TestDefaultRateForCountry sade yolun davranışını doğrular.
+// TestDefaultRateForCountry checks the behavior of the plain path.
 func TestDefaultRateForCountry(t *testing.T) {
-	t.Run("varsayılan oran döner", func(t *testing.T) {
+	t.Run("the default rate comes back", func(t *testing.T) {
 		svc, repo := newTestService(t)
 		repo.seedRootRegion(trRegionID, "TR")
 		repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -749,10 +755,10 @@ func TestDefaultRateForCountry(t *testing.T) {
 		rate, found, err := svc.DefaultRateForCountry(context.Background(), "tr")
 		require.NoError(t, err)
 		assert.True(t, found)
-		assert.Equal(t, int32(2000), rate, "kurallı oran sade yolda görünmemeli")
+		assert.Equal(t, int32(2000), rate, "a ruled rate must not show on the plain path")
 	})
 
-	t.Run("bölge yoksa found false", func(t *testing.T) {
+	t.Run("found is false without a region", func(t *testing.T) {
 		svc, _ := newTestService(t)
 
 		rate, found, err := svc.DefaultRateForCountry(context.Background(), "DE")
@@ -761,17 +767,17 @@ func TestDefaultRateForCountry(t *testing.T) {
 		assert.Equal(t, int32(0), rate)
 	})
 
-	t.Run("varsayılan oran yoksa found false", func(t *testing.T) {
+	t.Run("found is false without a default rate", func(t *testing.T) {
 		svc, repo := newTestService(t)
 		repo.seedRootRegion(trRegionID, "TR")
 		repo.seedRuledRate(rateB, trRegionID, 100)
 
 		_, found, err := svc.DefaultRateForCountry(context.Background(), "TR")
 		require.NoError(t, err)
-		assert.False(t, found, "yalnızca kurallı oranı olan bölge sade yolda oran vermemeli")
+		assert.False(t, found, "a region with only a ruled rate must give no rate on the plain path")
 	})
 
-	t.Run("eyalet oranı sade yolda görünmez", func(t *testing.T) {
+	t.Run("the province rate does not show on the plain path", func(t *testing.T) {
 		svc, repo := newTestService(t)
 		repo.seedRootRegion(usRegionID, "US")
 		repo.seedProvinceRegion(trIstanbul, "US", "CA", usRegionID)
@@ -784,11 +790,11 @@ func TestDefaultRateForCountry(t *testing.T) {
 		assert.Equal(t, int32(2000), rate)
 	})
 
-	t.Run("sözleşme dışı oran hata döner", func(t *testing.T) {
+	t.Run("an out-of-contract rate returns an error", func(t *testing.T) {
 		svc, repo := newTestService(t)
 		repo.seedRootRegion(trRegionID, "TR")
 		repo.seedRate(models.TaxRate{
-			ID: rateA, TaxRegionID: trRegionID, Name: "bozuk", RateBps: 99_999, IsDefault: true,
+			ID: rateA, TaxRegionID: trRegionID, Name: "broken", RateBps: 99_999, IsDefault: true,
 		})
 
 		_, _, err := svc.DefaultRateForCountry(context.Background(), "TR")
@@ -796,7 +802,7 @@ func TestDefaultRateForCountry(t *testing.T) {
 		assert.Equal(t, CodeRateOutOfRange, errors.CodeOf(err))
 	})
 
-	t.Run("geçersiz ülke kodu reddedilir", func(t *testing.T) {
+	t.Run("an invalid country code is rejected", func(t *testing.T) {
 		svc, repo := newTestService(t)
 
 		_, _, err := svc.DefaultRateForCountry(context.Background(), "TUR")
@@ -806,11 +812,11 @@ func TestDefaultRateForCountry(t *testing.T) {
 	})
 }
 
-// stubProvider betiklenmiş bir sonuç dönen sahte sağlayıcıdır.
+// stubProvider is a fake provider that returns a scripted result.
 //
-// Amacı, servisin sağlayıcı çıktısını DOĞRULADIĞINI kanıtlamaktır; yerel
-// sağlayıcı hiçbir zaman sözleşme dışı çıktı üretmediği için bu yol ancak
-// sahteyle sınanabilir.
+// Its purpose is to prove that the service VALIDATES the provider's output;
+// since the local provider never produces out-of-contract output, this path
+// can be tested only with a fake.
 type stubProvider struct {
 	id     string
 	result ProviderResult
@@ -818,10 +824,10 @@ type stubProvider struct {
 
 var _ TaxProvider = (*stubProvider)(nil)
 
-// ID sağlayıcının kimliğini döner.
+// ID returns the provider's id.
 func (p *stubProvider) ID() string { return p.id }
 
-// Calculate betiklenmiş sonucu döner.
+// Calculate returns the scripted result.
 func (p *stubProvider) Calculate(_ context.Context, _ ProviderInput) (ProviderResult, error) {
 	return p.result, nil
 }

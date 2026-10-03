@@ -12,21 +12,24 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// interopYuzeyi tüketici tarafındaki DAR arayüzün birebir kopyasıdır.
+// interopSurface is an exact copy of the NARROW interface on the consumer's
+// side.
 //
-// Sepet akışı (internal/workflows/cart) tax modülünü import EDEMEZ ve bu iki
-// imzayı kendi paketinde tekrar tanımlayacaktır. Buradaki bildirim, somut
-// [Interop] tipinin o arayüzü YAPISAL olarak karşıladığını derleme zamanında
-// sabitler: imza değişirse bu test dosyası derlenmez ve uyumsuzluk ancak
-// çalışma zamanında çözüm anında görülmek yerine BURADA yakalanır.
-type interopYuzeyi interface {
+// The cart flow (internal/workflows/cart) CANNOT import the tax module and will
+// define these two signatures again in its own package. The declaration here
+// pins at compile time that the concrete [Interop] type satisfies that
+// interface STRUCTURALLY: if a signature changes, this test file does not
+// compile, and the mismatch is caught HERE instead of being seen only at run
+// time, at the moment of resolution.
+type interopSurface interface {
 	CalculateTaxJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
 	RateForCountry(ctx context.Context, countryCode string) (rateBps int32, found bool, err error)
 }
 
-var _ interopYuzeyi = (*Interop)(nil)
+var _ interopSurface = (*Interop)(nil)
 
-// newTestInterop bellek içi depo üzerinde çalışan bir interop yüzeyi kurar.
+// newTestInterop builds an interop surface that runs on an in-memory
+// repository.
 func newTestInterop(t *testing.T) (*Interop, *memRepo) {
 	t.Helper()
 
@@ -34,14 +37,14 @@ func newTestInterop(t *testing.T) (*Interop, *memRepo) {
 	return NewInterop(svc), repo
 }
 
-// TestCalculateTaxJSONSemasi istek ve yanıt şemasının BELGELENEN alan adlarını
-// kullandığını doğrular.
+// TestCalculateTaxJSONSchema checks that the request and response schemas use
+// the DOCUMENTED field names.
 //
-// Alan adları dış sözleşmedir: tüketici bu adlarla kendi şemasını yazar ve
-// derleyici iki tarafı karşılaştıramaz. Bu yüzden adlar HAM JSON üzerinden
-// denetlenir; Go tipleri üzerinden yapılan bir iddia, etiketi değişen bir alanı
-// yakalayamazdı.
-func TestCalculateTaxJSONSemasi(t *testing.T) {
+// The field names are an external contract: the consumer writes its own schema
+// with these names and the compiler cannot compare the two sides. That is why
+// the names are checked on the RAW JSON; an assertion made through the Go types
+// could not catch a field whose tag changed.
+func TestCalculateTaxJSONSchema(t *testing.T) {
 	interop, repo := newTestInterop(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -65,7 +68,7 @@ func TestCalculateTaxJSONSemasi(t *testing.T) {
 	assert.Equal(t, float64(600), body["tax_total"])
 
 	items, ok := body["items"].([]any)
-	require.True(t, ok, "items dizi olmalı: %s", raw)
+	require.True(t, ok, "items has to be an array: %s", raw)
 	require.Len(t, items, 1)
 
 	line, ok := items[0].(map[string]any)
@@ -79,16 +82,16 @@ func TestCalculateTaxJSONSemasi(t *testing.T) {
 	shipping, ok := body["shipping"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, ShippingLineID, shipping["id"])
-	assert.Equal(t, float64(0), shipping["tax_amount"], "kargo istenmedikçe vergilenmez")
+	assert.Equal(t, float64(0), shipping["tax_amount"], "shipping is not taxed unless asked for")
 }
 
-// TestCalculateTaxJSONKalemSirasiKorunur yanıtın istekteki sırayı koruduğunu
-// doğrular.
+// TestCalculateTaxJSONKeepsTheLineOrder checks that the response keeps the
+// order in the request.
 //
-// Sıra sözleşmenin parçasıdır: tüketici kalemleri kimlikle eşleştirmek yerine
-// sırayla okumayı seçerse, kararsız bir sıra vergileri satırlar arasında
-// kaydırırdı.
-func TestCalculateTaxJSONKalemSirasiKorunur(t *testing.T) {
+// The order is part of the contract: if the consumer chooses to read the line
+// items in order instead of matching them by id, an unstable order would shift
+// the taxes between the lines.
+func TestCalculateTaxJSONKeepsTheLineOrder(t *testing.T) {
 	interop, repo := newTestInterop(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -120,9 +123,9 @@ func TestCalculateTaxJSONKalemSirasiKorunur(t *testing.T) {
 	assert.Equal(t, int64(60), body.Items[2].TaxAmount)
 }
 
-// TestCalculateTaxJSONKargoVergilendirilebilir kargo bayrağının JSON'dan
-// geçtiğini doğrular.
-func TestCalculateTaxJSONKargoVergilendirilebilir(t *testing.T) {
+// TestCalculateTaxJSONShippingCanBeTaxed checks that the shipping flag passes
+// through the JSON.
+func TestCalculateTaxJSONShippingCanBeTaxed(t *testing.T) {
 	interop, repo := newTestInterop(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -148,9 +151,9 @@ func TestCalculateTaxJSONKargoVergilendirilebilir(t *testing.T) {
 	assert.Equal(t, int64(500), body.TaxTotal)
 }
 
-// TestCalculateTaxJSONBolgeYoksaGorunurDoner yapılandırma eksiğinin yanıtta
-// AÇIKÇA göründüğünü doğrular.
-func TestCalculateTaxJSONBolgeYoksaGorunurDoner(t *testing.T) {
+// TestCalculateTaxJSONAMissingRegionIsVisible checks that a missing
+// configuration shows EXPLICITLY in the response.
+func TestCalculateTaxJSONAMissingRegionIsVisible(t *testing.T) {
 	interop, _ := newTestInterop(t)
 
 	raw, err := interop.CalculateTaxJSON(context.Background(), json.RawMessage(`{
@@ -169,16 +172,16 @@ func TestCalculateTaxJSONBolgeYoksaGorunurDoner(t *testing.T) {
 	assert.Equal(t, int64(0), body.TaxTotal)
 }
 
-// TestCalculateTaxJSONBozukIstekReddedilir katı çözümlemeyi doğrular.
-func TestCalculateTaxJSONBozukIstekReddedilir(t *testing.T) {
+// TestCalculateTaxJSONRejectsAMalformedRequest checks the strict decoding.
+func TestCalculateTaxJSONRejectsAMalformedRequest(t *testing.T) {
 	tests := map[string]string{
-		"boş gövde":               ``,
-		"bozuk JSON":              `{"country_code":`,
-		"bilinmeyen alan":         `{"country_code":"TR","tax_rate":2000}`,
-		"kalemde bilinmeyen alan": `{"country_code":"TR","items":[{"id":"li_1","amount":1,"vat":5}]}`,
-		"kesirli tutar":           `{"country_code":"TR","items":[{"id":"li_1","amount":30.5}]}`,
-		"tutar dize":              `{"country_code":"TR","items":[{"id":"li_1","amount":"3000"}]}`,
-		"ikinci belge":            `{"country_code":"TR"}{"country_code":"DE"}`,
+		"empty body":                   ``,
+		"malformed JSON":               `{"country_code":`,
+		"unknown field":                `{"country_code":"TR","tax_rate":2000}`,
+		"unknown field in a line item": `{"country_code":"TR","items":[{"id":"li_1","amount":1,"vat":5}]}`,
+		"fractional amount":            `{"country_code":"TR","items":[{"id":"li_1","amount":30.5}]}`,
+		"amount as a string":           `{"country_code":"TR","items":[{"id":"li_1","amount":"3000"}]}`,
+		"second document":              `{"country_code":"TR"}{"country_code":"DE"}`,
 	}
 
 	for name, request := range tests {
@@ -188,27 +191,27 @@ func TestCalculateTaxJSONBozukIstekReddedilir(t *testing.T) {
 
 			_, err := interop.CalculateTaxJSON(context.Background(), json.RawMessage(request))
 			require.Error(t, err)
-			assert.True(t, errors.IsInvalid(err), "hata: %v", err)
+			assert.True(t, errors.IsInvalid(err), "error: %v", err)
 			assert.Equal(t, CodeInteropRequestInvalid, errors.CodeOf(err))
 			assert.Zero(t, repo.callCount("ResolveTaxRegions"))
 		})
 	}
 }
 
-// TestCalculateTaxJSONServisHatasiYukselir servis doğrulamasının yüzeyden
-// geçtiğini doğrular.
-func TestCalculateTaxJSONServisHatasiYukselir(t *testing.T) {
+// TestCalculateTaxJSONSurfacesTheServiceError checks that the service's
+// validation passes through the surface.
+func TestCalculateTaxJSONSurfacesTheServiceError(t *testing.T) {
 	interop, _ := newTestInterop(t)
 
 	_, err := interop.CalculateTaxJSON(context.Background(), json.RawMessage(`{"country_code":"TUR"}`))
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err))
 	assert.Equal(t, CodeInvalidInput, errors.CodeOf(err),
-		"servis hatası interop koduna dönüştürülmemeli")
+		"a service error must not be converted into an interop code")
 }
 
-// TestRateForCountryYuzeyi sade yolun ilkel imzasını doğrular.
-func TestRateForCountryYuzeyi(t *testing.T) {
+// TestRateForCountrySurface checks the plain path's primitive signature.
+func TestRateForCountrySurface(t *testing.T) {
 	interop, repo := newTestInterop(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -221,19 +224,19 @@ func TestRateForCountryYuzeyi(t *testing.T) {
 	rate, found, err = interop.RateForCountry(context.Background(), "DE")
 	require.NoError(t, err)
 	assert.False(t, found)
-	assert.Equal(t, int32(0), rate, "found false iken oran daima sıfır olmalı")
+	assert.Equal(t, int32(0), rate, "while found is false the rate has to always be zero")
 }
 
-// TestRateForCountrySaglayiciyiCagirmaz sade yolun dış sağlayıcıya
-// GİTMEDİĞİNİ doğrular.
+// TestRateForCountryDoesNotCallTheProvider checks that the plain path does NOT
+// GO to the external provider.
 //
-// Aksi hâlde sepetin her turu bir ağ çağrısı üretirdi.
-func TestRateForCountrySaglayiciyiCagirmaz(t *testing.T) {
+// Otherwise every cart round would produce a network call.
+func TestRateForCountryDoesNotCallTheProvider(t *testing.T) {
 	repo := newMemRepo()
-	repo.seedRegion(models.TaxRegion{ID: trRegionID, CountryCode: "TR", ProviderID: "sahte"})
+	repo.seedRegion(models.TaxRegion{ID: trRegionID, CountryCode: "TR", ProviderID: "fake"})
 	repo.seedDefaultRate(rateA, trRegionID, 1800)
 
-	stub := &countingProvider{id: "sahte"}
+	stub := &countingProvider{id: "fake"}
 	registry := NewProviderRegistry()
 	require.NoError(t, registry.Register(stub))
 	interop := NewInterop(New(repo, Options{Providers: registry}))
@@ -242,12 +245,12 @@ func TestRateForCountrySaglayiciyiCagirmaz(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, found)
 	assert.Equal(t, int32(1800), rate)
-	assert.Zero(t, stub.calls, "sade yol sağlayıcıyı çağırmamalı")
+	assert.Zero(t, stub.calls, "the plain path must not call the provider")
 }
 
-// TestInteropKurulmamisServis nil servisin panik yerine tipli hata
-// döndürdüğünü doğrular.
-func TestInteropKurulmamisServis(t *testing.T) {
+// TestInteropUnconfiguredService checks that a nil service returns a typed
+// error instead of panicking.
+func TestInteropUnconfiguredService(t *testing.T) {
 	var interop *Interop
 
 	_, err := interop.CalculateTaxJSON(context.Background(), json.RawMessage(`{"country_code":"TR"}`))
@@ -259,7 +262,7 @@ func TestInteropKurulmamisServis(t *testing.T) {
 	assert.Equal(t, CodeUnconfigured, errors.CodeOf(err))
 }
 
-// countingProvider çağrı sayan bir sahte sağlayıcıdır.
+// countingProvider is a fake provider that counts calls.
 type countingProvider struct {
 	id    string
 	calls int
@@ -267,10 +270,10 @@ type countingProvider struct {
 
 var _ TaxProvider = (*countingProvider)(nil)
 
-// ID sağlayıcının kimliğini döner.
+// ID returns the provider's id.
 func (p *countingProvider) ID() string { return p.id }
 
-// Calculate çağrıyı sayar ve boş sonuç döner.
+// Calculate counts the call and returns an empty result.
 func (p *countingProvider) Calculate(_ context.Context, in ProviderInput) (ProviderResult, error) {
 	p.calls++
 	out := ProviderResult{

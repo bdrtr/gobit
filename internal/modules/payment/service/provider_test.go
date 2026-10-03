@@ -13,20 +13,20 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// TestQueryProviderEntityAdi sağlayıcının kayıtlı olduğu adla örtüştüğünü
-// doğrular; Query bunu kayıt anında denetler (ADR 0004).
-func TestQueryProviderEntityAdi(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestQueryProviderEntityName verifies that the provider matches the name it is
+// registered under; Query checks this at registration time (ADR 0004).
+func TestQueryProviderEntityName(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
 	assert.Equal(t, "payment_collection", service.NewQueryProvider(svc).Entity())
 	assert.Equal(t, service.EntityName, service.NewQueryProvider(svc).Entity())
 }
 
-// TestQueryProviderListAlanlariUretir alan seçiminin çalıştığını doğrular.
-func TestQueryProviderListAlanlariUretir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestQueryProviderListProducesTheFields verifies that field selection works.
+func TestQueryProviderListProducesTheFields(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
+	col := openCollection(t, svc, testAmount)
 	p := service.NewQueryProvider(svc)
 
 	records, err := p.List(ctx, query.ListOptions{
@@ -36,16 +36,16 @@ func TestQueryProviderListAlanlariUretir(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, records, 1)
 	assert.Equal(t, col.ID, records[0][service.FieldID])
-	assert.Equal(t, tutar, records[0][service.FieldAmount])
+	assert.Equal(t, testAmount, records[0][service.FieldAmount])
 	assert.Equal(t, models.CollectionNotPaid.String(), records[0][service.FieldStatus])
-	assert.Len(t, records[0], 3, "yalnızca istenen alanlar dönmeli")
+	assert.Len(t, records[0], 3, "only the requested fields must come back")
 }
 
-// TestQueryProviderAlansizIstekTumAlanlariDoner alan verilmediğinde sunulan
-// tüm alanların döndüğünü doğrular.
-func TestQueryProviderAlansizIstekTumAlanlariDoner(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	koleksiyonAc(t, svc, tutar)
+// TestQueryProviderRequestWithoutFieldsReturnsAllFields verifies that when no
+// field is given, all of the offered fields come back.
+func TestQueryProviderRequestWithoutFieldsReturnsAllFields(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	openCollection(t, svc, testAmount)
 	p := service.NewQueryProvider(svc)
 
 	records, err := p.List(context.Background(), query.ListOptions{})
@@ -59,92 +59,92 @@ func TestQueryProviderAlansizIstekTumAlanlariDoner(t *testing.T) {
 	assert.Contains(t, records[0], service.FieldRefundedAmount)
 	assert.Contains(t, records[0], service.FieldCreatedAt)
 	assert.Contains(t, records[0], service.FieldUpdatedAt)
-	assert.NotContains(t, records[0], "metadata", "metadata bilinçli olarak sunulmaz")
+	assert.NotContains(t, records[0], "metadata", "metadata is deliberately not offered")
 }
 
-// TestQueryProviderTaninmayanAlanReddedilir ADR 0004'ün şartını doğrular:
-// sağlayıcı desteklemediği bir alan görürse errors.Invalid dönmelidir.
-func TestQueryProviderTaninmayanAlanReddedilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestQueryProviderRejectsAnUnknownField verifies ADR 0004's requirement: when
+// the provider sees a field it does not support, it must return errors.Invalid.
+func TestQueryProviderRejectsAnUnknownField(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	p := service.NewQueryProvider(svc)
 	ctx := context.Background()
 
 	_, err := p.List(ctx, query.ListOptions{Fields: []string{"metadata"}})
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 
 	_, err = p.FetchByIDs(ctx, []string{"paycol_X"}, []string{"secret"})
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 }
 
-// TestQueryProviderSuzgecleri desteklenen ve desteklenmeyen süzgeçleri sınar.
-func TestQueryProviderSuzgecleri(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestQueryProviderFilters tests the supported and the unsupported filters.
+func TestQueryProviderFilters(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	koleksiyonAc(t, svc, tutar)
+	openCollection(t, svc, testAmount)
 	p := service.NewQueryProvider(svc)
 
 	records, err := p.List(ctx, query.ListOptions{
-		Filters: map[string]any{service.FieldReference: referans},
+		Filters: map[string]any{service.FieldReference: testReference},
 	})
 	require.NoError(t, err)
 	assert.Len(t, records, 1)
 
 	records, err = p.List(ctx, query.ListOptions{
-		Filters: map[string]any{service.FieldReference: "cart_YOK"},
+		Filters: map[string]any{service.FieldReference: "cart_MISSING"},
 	})
 	require.NoError(t, err)
 	assert.Empty(t, records)
 
 	_, err = p.List(ctx, query.ListOptions{Filters: map[string]any{"amount": "x"}})
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 
 	_, err = p.List(ctx, query.ListOptions{Filters: map[string]any{service.FieldStatus: 42}})
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindInvalid), "süzgeç metin olmalı: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid), "the filter must be text: %v", err)
 }
 
-// TestQueryProviderFetchByIDsBatch kimlik kümesinin tek turda çözüldüğünü ve
-// eksik kimliğin hata OLMADIĞINI doğrular (ADR 0004).
+// TestQueryProviderFetchByIDsBatch verifies that a set of ids is resolved in a
+// single round and that a missing id is NOT an error (ADR 0004).
 func TestQueryProviderFetchByIDsBatch(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	ilk := koleksiyonAc(t, svc, tutar)
-	ikinci := koleksiyonAc(t, svc, tutar)
+	first := openCollection(t, svc, testAmount)
+	second := openCollection(t, svc, testAmount)
 	p := service.NewQueryProvider(svc)
 
-	records, err := p.FetchByIDs(ctx, []string{ilk.ID, ikinci.ID, "paycol_YOK"}, []string{service.FieldID})
+	records, err := p.FetchByIDs(ctx, []string{first.ID, second.ID, "paycol_MISSING"}, []string{service.FieldID})
 
 	require.NoError(t, err)
-	assert.Len(t, records, 2, "bulunamayan kimlik için kayıt DÖNMEZ")
+	assert.Len(t, records, 2, "NO record comes back for an id that was not found")
 
-	bos, err := p.FetchByIDs(ctx, nil, nil)
+	empty, err := p.FetchByIDs(ctx, nil, nil)
 	require.NoError(t, err)
-	assert.Empty(t, bos)
+	assert.Empty(t, empty)
 }
 
-// TestQueryProviderLimitTavanaKirpilir çekirdeğin "sınırsız" limitinin
-// sağlayıcı tavanına indirildiğini doğrular.
+// TestQueryProviderLimitIsClampedToTheCeiling verifies that the core's
+// "unlimited" limit is brought down to the provider's ceiling.
 //
-// Sınırsız bir kök sorgu tüm koleksiyon tablosunu belleğe alırdı; kırpma
-// sessizdir ve hata dönmez, çünkü buradaki limit istemci girdisi değil başka
-// bir modülün sorgu tanımından gelir.
-func TestQueryProviderLimitTavanaKirpilir(t *testing.T) {
-	svc, store, _ := yeniServis(t)
+// An unlimited root query would pull the whole collection table into memory;
+// the clamping is silent and returns no error, because the limit here does not
+// come from client input but from another module's query definition.
+func TestQueryProviderLimitIsClampedToTheCeiling(t *testing.T) {
+	svc, store, _ := newTestService(t)
 	ctx := context.Background()
-	koleksiyonAc(t, svc, tutar)
+	openCollection(t, svc, testAmount)
 	p := service.NewQueryProvider(svc)
 
 	for _, limit := range []int{0, -5, int(service.MaxLimit) + 1} {
 		_, err := p.List(ctx, query.ListOptions{Limit: limit})
-		require.NoError(t, err, "limit %d hata vermemeli", limit)
+		require.NoError(t, err, "limit %d must not fail", limit)
 	}
 
-	// Kırpmanın gerçekten uygulandığı, servisin sayfalama doğrulamasını
-	// geçmesinden anlaşılır: tavanı aşan bir limit doğrudan geçseydi
-	// errors.Invalid dönerdi.
+	// That the clamping really is applied shows in the request passing the
+	// service's paging validation: had a limit above the ceiling gone straight
+	// through, errors.Invalid would have come back.
 	_, count, err := store.ListPaymentCollections(ctx, models.CollectionFilter{Limit: service.MaxLimit})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count)

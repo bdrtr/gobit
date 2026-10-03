@@ -14,165 +14,165 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// TestCreateSessionKoleksiyonuAwaitingYapar oturum açmanın koleksiyonun
-// türetilmiş durumunu güncellediğini doğrular.
-func TestCreateSessionKoleksiyonuAwaitingYapar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestCreateSessionMakesTheCollectionAwaiting verifies that opening a session
+// updates the collection's derived status.
+func TestCreateSessionMakesTheCollectionAwaiting(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
+	col := openCollection(t, svc, testAmount)
 
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 
 	assert.Equal(t, models.SessionPending, ses.Status)
-	assert.Equal(t, tutar, ses.Amount, "tutar verilmezse koleksiyonun kalanı kullanılır")
-	assert.Equal(t, paraKodu, ses.CurrencyCode, "para birimi koleksiyondan gelir")
-	assert.Equal(t, "ext_key-1", ses.ExternalID, "sağlayıcının kimliği saklanmalı")
+	assert.Equal(t, testAmount, ses.Amount, "when no amount is given, the collection's remainder is used")
+	assert.Equal(t, testCurrency, ses.CurrencyCode, "the currency comes from the collection")
+	assert.Equal(t, "ext_key-1", ses.ExternalID, "the provider's id must be stored")
 
-	guncel, err := svc.GetPaymentCollection(ctx, col.ID)
+	updated, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionAwaiting, guncel.Status)
+	assert.Equal(t, models.CollectionAwaiting, updated.Status)
 }
 
-// TestAyniAnahtarlaIkinciCreateSessionTekOturumUretir plan Bölüm 2.6'nın
-// idempotency şartını doğrular.
+// TestASecondCreateSessionWithTheSameKeyYieldsOneSession verifies the
+// idempotency requirement of plan Section 2.6.
 //
-// Yalnızca dönen kimliğin aynı olması yetmez: SAĞLAYICIYA ikinci kez
-// gidilmediği de kanıtlanır. Sağlayıcıya her seferinde giden bir uygulama,
-// idempotency'yi tamamen sağlayıcının insafına bırakmış olurdu ve her sağlayıcı
-// bunu sunmaz.
-func TestAyniAnahtarlaIkinciCreateSessionTekOturumUretir(t *testing.T) {
-	svc, store, prov := yeniServis(t)
+// It is not enough that the returned id is the same: it is also proved that the
+// PROVIDER is not called a second time. An implementation that went to the
+// provider every time would have left idempotency entirely at the provider's
+// mercy, and not every provider offers it.
+func TestASecondCreateSessionWithTheSameKeyYieldsOneSession(t *testing.T) {
+	svc, store, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
+	col := openCollection(t, svc, testAmount)
 
-	ilk := oturumAc(t, svc, col.ID, "key-1")
-	ikinci := oturumAc(t, svc, col.ID, "key-1")
+	first := openPaymentSession(t, svc, col.ID, "key-1")
+	second := openPaymentSession(t, svc, col.ID, "key-1")
 
-	assert.Equal(t, ilk.ID, ikinci.ID, "aynı anahtar aynı oturumu dönmeli")
-	create, _, _, _, _ := prov.cagrilar()
-	assert.Equal(t, 1, create, "sağlayıcıya YALNIZCA bir kez gidilmeli")
+	assert.Equal(t, first.ID, second.ID, "the same key must return the same session")
+	create, _, _, _, _ := prov.calls()
+	assert.Equal(t, 1, create, "the provider must be called ONLY once")
 
-	oturumlar, err := store.ListPaymentSessionsByCollection(ctx, col.ID)
+	sessions, err := store.ListPaymentSessionsByCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Len(t, oturumlar, 1, "tek oturum kaydı olmalı")
+	assert.Len(t, sessions, 1, "there must be a single session record")
 }
 
-// TestAyniAnahtarBaskaKoleksiyondaCakisir idempotency anahtarının yeniden
-// kullanımını reddettiğimizi doğrular.
+// TestTheSameKeyOnAnotherCollectionConflicts verifies that we refuse the reuse
+// of an idempotency key.
 //
-// Sessizce mevcut oturumu dönmek, çağıranın BAŞKA bir sipariş için açtığını
-// sandığı oturumun aslında eski siparişe ait olması demekti; ödeme yanlış
-// koleksiyona yazılırdı.
-func TestAyniAnahtarBaskaKoleksiyondaCakisir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// Silently returning the existing session would mean that the session the
+// caller believes it opened for ANOTHER order actually belongs to the old order;
+// the payment would be written to the wrong collection.
+func TestTheSameKeyOnAnotherCollectionConflicts(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	ilkKol := koleksiyonAc(t, svc, tutar)
-	ikinciKol := koleksiyonAc(t, svc, tutar)
-	oturumAc(t, svc, ilkKol.ID, "key-1")
+	firstCol := openCollection(t, svc, testAmount)
+	secondCol := openCollection(t, svc, testAmount)
+	openPaymentSession(t, svc, firstCol.ID, "key-1")
 
-	_, err := svc.CreateSession(ctx, ikinciKol.ID, saglayiciID,
+	_, err := svc.CreateSession(ctx, secondCol.ID, testProviderID,
 		service.CreateSessionInput{IdempotencyKey: "key-1"})
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 	assert.Equal(t, service.CodeIdempotencyMismatch, errors.CodeOf(err))
 }
 
-// TestCreateSessionKalanTutariAsamaz koleksiyondan fazlasının bloke
-// edilemeyeceğini doğrular.
-func TestCreateSessionKalanTutariAsamaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestCreateSessionCannotExceedTheRemainingAmount verifies that no more than the
+// collection can be authorized.
+func TestCreateSessionCannotExceedTheRemainingAmount(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
+	col := openCollection(t, svc, testAmount)
 
-	_, err := svc.CreateSession(ctx, col.ID, saglayiciID, service.CreateSessionInput{
-		Amount:         tutar + 1,
+	_, err := svc.CreateSession(ctx, col.ID, testProviderID, service.CreateSessionInput{
+		Amount:         testAmount + 1,
 		IdempotencyKey: "key-1",
 	})
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 }
 
-// TestAcikOturumluKoleksiyonaIkinciTamOturumAcilamaz ÇİFT TAHSİLATIN kapısını
-// kapatan kuralı doğrular.
+// TestASecondFullSessionCannotOpenOnACollectionWithAnOpenSession verifies the
+// rule that closes the gate to a DOUBLE CAPTURE.
 //
-// Kalan tutar yalnızca YETKİLENDİRİLMİŞ tutara bakılarak hesaplanırsa, henüz
-// hiçbiri yetkilendirilmemişken aynı koleksiyona her biri TAM tutarlı iki
-// oturum açılabilir. İkisi de yetkilendirilince koleksiyonun İKİ KATI bloke
-// edilir, ikisi de tahsil edilince müşteriden iki kez para çekilir ve
-// koleksiyon ödenmiş görünür. Açık oturum da tutar REZERVE eder.
-func TestAcikOturumluKoleksiyonaIkinciTamOturumAcilamaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// If the remaining amount is computed by looking only at the AUTHORIZED amount,
+// two sessions, each for the FULL amount, can be opened on the same collection
+// while neither has been authorized yet. Once both are authorized, TWICE the
+// collection is held; once both are captured, the customer is charged twice and
+// the collection looks paid. An open session RESERVES an amount too.
+func TestASecondFullSessionCannotOpenOnACollectionWithAnOpenSession(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ilk := oturumAc(t, svc, col.ID, "key-1")
-	require.Equal(t, models.SessionPending, ilk.Status, "ilk oturum henüz yetkilendirilmedi")
+	col := openCollection(t, svc, testAmount)
+	first := openPaymentSession(t, svc, col.ID, "key-1")
+	require.Equal(t, models.SessionPending, first.Status, "the first session is not authorized yet")
 
-	_, err := svc.CreateSession(ctx, col.ID, saglayiciID, service.CreateSessionInput{IdempotencyKey: "key-2"})
+	_, err := svc.CreateSession(ctx, col.ID, testProviderID, service.CreateSessionInput{IdempotencyKey: "key-2"})
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 	assert.Equal(t, service.CodeCollectionClosed, errors.CodeOf(err))
 }
 
-// TestAcikOturumlarinToplamiKoleksiyonuAsamaz bölünmüş ödemenin de tavanı
-// olduğunu doğrular.
+// TestOpenSessionsCannotSumPastTheCollection verifies that a split payment has
+// a ceiling too.
 //
-// Kalan tutar açık oturumları saydığı için ikinci oturum yalnızca ARTAN tutar
-// kadar açılabilir; fazlası çakışma verir. Bölme işleminin kendisi meşrudur,
-// toplamın koleksiyonu aşması değildir.
-func TestAcikOturumlarinToplamiKoleksiyonuAsamaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// Because the remaining amount counts the open sessions, the second session can
+// open only for the amount LEFT OVER; anything more is a conflict. Splitting the
+// payment is legitimate in itself; the total exceeding the collection is not.
+func TestOpenSessionsCannotSumPastTheCollection(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	_, err := svc.CreateSession(ctx, col.ID, saglayiciID, service.CreateSessionInput{
-		Amount:         tutar / 4,
+	col := openCollection(t, svc, testAmount)
+	_, err := svc.CreateSession(ctx, col.ID, testProviderID, service.CreateSessionInput{
+		Amount:         testAmount / 4,
 		IdempotencyKey: "key-1",
 	})
 	require.NoError(t, err)
 
-	_, err = svc.CreateSession(ctx, col.ID, saglayiciID, service.CreateSessionInput{
-		Amount:         tutar,
+	_, err = svc.CreateSession(ctx, col.ID, testProviderID, service.CreateSessionInput{
+		Amount:         testAmount,
 		IdempotencyKey: "key-2",
 	})
-	require.Error(t, err, "kalan yalnızca dörtte üçtür")
+	require.Error(t, err, "only three quarters remain")
 	assert.Equal(t, service.CodeInvalidTransition, errors.CodeOf(err))
 
-	kalan, err := svc.CreateSession(ctx, col.ID, saglayiciID,
+	remainder, err := svc.CreateSession(ctx, col.ID, testProviderID,
 		service.CreateSessionInput{IdempotencyKey: "key-3"})
-	require.NoError(t, err, "kalanın tamamı için oturum açılabilmeli")
-	assert.Equal(t, tutar-tutar/4, kalan.Amount)
+	require.NoError(t, err, "a session for the whole remainder must be able to open")
+	assert.Equal(t, testAmount-testAmount/4, remainder.Amount)
 }
 
-// TestIptalEdilenOturumRezervasyonuSerbestBirakir telafi sonrasında
-// koleksiyonun yeniden ödenebildiğini doğrular.
+// TestACanceledSessionReleasesItsReservation verifies that after compensation
+// the collection can be paid again.
 //
-// Açık oturumların tutar rezerve etmesi, iptal edilen bir oturumun
-// koleksiyonu sonsuza kadar kilitlemesi anlamına GELMEMELİDİR; saga bir adımı
-// telafi ettikten sonra müşteri yeni bir ödeme yolu deneyebilmelidir.
-func TestIptalEdilenOturumRezervasyonuSerbestBirakir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// That open sessions reserve an amount MUST NOT mean that a canceled session
+// locks the collection forever; after the saga compensates a step, the customer
+// must be able to try a new payment method.
+func TestACanceledSessionReleasesItsReservation(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ilk := oturumAc(t, svc, col.ID, "key-1")
-	require.NoError(t, svc.CancelPayment(ctx, ilk.ID))
+	col := openCollection(t, svc, testAmount)
+	first := openPaymentSession(t, svc, col.ID, "key-1")
+	require.NoError(t, svc.CancelPayment(ctx, first.ID))
 
-	ikinci, err := svc.CreateSession(ctx, col.ID, saglayiciID,
+	second, err := svc.CreateSession(ctx, col.ID, testProviderID,
 		service.CreateSessionInput{IdempotencyKey: "key-2"})
 
 	require.NoError(t, err)
-	assert.Equal(t, tutar, ikinci.Amount, "iptal edilen oturumun rezervasyonu düşmeli")
+	assert.Equal(t, testAmount, second.Amount, "the canceled session's reservation must drop")
 }
 
-// TestSonlanmisOturumunAnahtariYenidenKullanilamaz telafi sonrası aynı
-// anahtarla ilerlemenin AÇIKÇA reddedildiğini doğrular.
+// TestATerminalSessionsKeyCannotBeReused verifies that going on with the same
+// key after compensation is refused EXPLICITLY.
 //
-// İptal edilmiş oturumu olduğu gibi dönmek, çağıranın bir sonraki adımda
-// anlaşılmaz bir geçiş çakışması alması demekti: iptal edilmiş oturum
-// yetkilendirilemez ve saga sonsuza kadar aynı hatayla düşerdi. Hata kodu
-// çağırana YENİ bir anahtar gerektiğini söyler.
-func TestSonlanmisOturumunAnahtariYenidenKullanilamaz(t *testing.T) {
+// Returning the canceled session as it is would mean the caller gets an
+// incomprehensible transition conflict at the next step: a canceled session
+// cannot be authorized, and the saga would fail with the same error forever. The
+// error code tells the caller that a NEW key is needed.
+func TestATerminalSessionsKeyCannotBeReused(t *testing.T) {
 	tests := map[string]func(t *testing.T, svc *service.Service, sessionID string){
 		"canceled": func(t *testing.T, svc *service.Service, sessionID string) {
 			require.NoError(t, svc.CancelPayment(context.Background(), sessionID))
@@ -183,239 +183,241 @@ func TestSonlanmisOturumunAnahtariYenidenKullanilamaz(t *testing.T) {
 		},
 	}
 
-	for ad, hazirla := range tests {
-		t.Run(ad, func(t *testing.T) {
-			svc, _, prov := yeniServis(t)
+	for name, prepare := range tests {
+		t.Run(name, func(t *testing.T) {
+			svc, _, prov := newTestService(t)
 			ctx := context.Background()
-			col := koleksiyonAc(t, svc, tutar)
-			ses := oturumAc(t, svc, col.ID, "key-1")
-			prov.senaryo(coreprovider.SessionFailed, 0, "kart reddedildi")
-			hazirla(t, svc, ses.ID)
+			col := openCollection(t, svc, testAmount)
+			ses := openPaymentSession(t, svc, col.ID, "key-1")
+			prov.scenario(coreprovider.SessionFailed, 0, "card declined")
+			prepare(t, svc, ses.ID)
 
-			_, err := svc.CreateSession(ctx, col.ID, saglayiciID,
+			_, err := svc.CreateSession(ctx, col.ID, testProviderID,
 				service.CreateSessionInput{IdempotencyKey: "key-1"})
 
 			require.Error(t, err)
-			assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+			assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 			assert.Equal(t, service.CodeSessionTerminal, errors.CodeOf(err))
 		})
 	}
 }
 
-// TestTamBlokeliKoleksiyondaYeniOturumCakisir koleksiyonun tamamı bloke
-// edilmişken açılacak tutar kalmadığını doğrular.
-func TestTamBlokeliKoleksiyondaYeniOturumCakisir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestANewSessionOnAFullyAuthorizedCollectionConflicts verifies that no amount
+// is left to open while the whole collection is authorized.
+func TestANewSessionOnAFullyAuthorizedCollectionConflicts(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
 
-	_, err = svc.CreateSession(ctx, col.ID, saglayiciID, service.CreateSessionInput{IdempotencyKey: "key-2"})
+	_, err = svc.CreateSession(ctx, col.ID, testProviderID, service.CreateSessionInput{IdempotencyKey: "key-2"})
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 	assert.Equal(t, service.CodeCollectionClosed, errors.CodeOf(err))
 }
 
-// TestTahsilatliKoleksiyondaYeniOturumCakisir çift tahsilatın kapısını kapatan
-// kuralı doğrular.
-func TestTahsilatliKoleksiyondaYeniOturumCakisir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestANewSessionOnACapturedCollectionConflicts verifies the rule that closes
+// the gate to a double capture.
+func TestANewSessionOnACapturedCollectionConflicts(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
 	_, err = svc.CapturePayment(ctx, ses.ID, 0)
 	require.NoError(t, err)
 
-	_, err = svc.CreateSession(ctx, col.ID, saglayiciID, service.CreateSessionInput{IdempotencyKey: "key-2"})
+	_, err = svc.CreateSession(ctx, col.ID, testProviderID, service.CreateSessionInput{IdempotencyKey: "key-2"})
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 	assert.Equal(t, service.CodeCollectionClosed, errors.CodeOf(err))
 }
 
-// TestKayitsizSaglayiciNotFound sağlayıcının kaydedilmeyi unutulmasının
-// teşhis edilebilir bir hata verdiğini doğrular.
-func TestKayitsizSaglayiciNotFound(t *testing.T) {
-	svc, _, _ := yeniServis(t)
-	col := koleksiyonAc(t, svc, tutar)
+// TestAnUnregisteredProviderIsNotFound verifies that forgetting to register a
+// provider gives an error that can be diagnosed.
+func TestAnUnregisteredProviderIsNotFound(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	col := openCollection(t, svc, testAmount)
 
 	_, err := svc.CreateSession(context.Background(), col.ID, "stripe",
 		service.CreateSessionInput{IdempotencyKey: "key-1"})
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
-	assert.Contains(t, err.Error(), saglayiciID, "mesaj KAYITLI sağlayıcıları yazmalı")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
+	assert.Contains(t, err.Error(), testProviderID, "the message must name the REGISTERED providers")
 }
 
-// TestCreateSessionHatasindaHicbirSeyYazilmaz sağlayıcı patladığında işlemin
-// geri alındığını doğrular.
-func TestCreateSessionHatasindaHicbirSeyYazilmaz(t *testing.T) {
-	svc, store, prov := yeniServis(t)
+// TestCreateSessionWritesNothingOnError verifies that the transaction is rolled
+// back when the provider blows up.
+func TestCreateSessionWritesNothingOnError(t *testing.T) {
+	svc, store, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	prov.createErr = errors.Unavailable("saglayici_kapali", "sağlayıcıya ulaşılamadı")
+	col := openCollection(t, svc, testAmount)
+	prov.createErr = errors.Unavailable("saglayici_kapali", "the provider could not be reached")
 
-	_, err := svc.CreateSession(ctx, col.ID, saglayiciID, service.CreateSessionInput{IdempotencyKey: "key-1"})
+	_, err := svc.CreateSession(ctx, col.ID, testProviderID, service.CreateSessionInput{IdempotencyKey: "key-1"})
 
 	require.Error(t, err)
-	oturumlar, listErr := store.ListPaymentSessionsByCollection(ctx, col.ID)
+	sessions, listErr := store.ListPaymentSessionsByCollection(ctx, col.ID)
 	require.NoError(t, listErr)
-	assert.Empty(t, oturumlar, "işlem geri alınmalı")
+	assert.Empty(t, sessions, "the transaction must be rolled back")
 
-	guncel, getErr := svc.GetPaymentCollection(ctx, col.ID)
+	updated, getErr := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, getErr)
-	assert.Equal(t, models.CollectionNotPaid, guncel.Status, "koleksiyon durumu değişmemeli")
+	assert.Equal(t, models.CollectionNotPaid, updated.Status, "the collection's status must not change")
 }
 
-// TestAuthorizeKoleksiyonuAuthorizedYapar mutlu yolu doğrular.
-func TestAuthorizeKoleksiyonuAuthorizedYapar(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestAuthorizeMakesTheCollectionAuthorized verifies the happy path.
+func TestAuthorizeMakesTheCollectionAuthorized(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 
-	guncelOturum, err := svc.AuthorizePayment(ctx, ses.ID)
+	updatedSession, err := svc.AuthorizePayment(ctx, ses.ID)
 
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionAuthorized, guncelOturum.Status)
-	assert.Equal(t, tutar, guncelOturum.AuthorizedAmount,
-		"sağlayıcı sıfır bildirdiyse oturumun tamamı bloke sayılır")
+	assert.Equal(t, models.SessionAuthorized, updatedSession.Status)
+	assert.Equal(t, testAmount, updatedSession.AuthorizedAmount,
+		"if the provider reported zero, the whole session counts as authorized")
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	updatedCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionAuthorized, guncelKol.Status)
-	assert.Equal(t, tutar, guncelKol.AuthorizedAmount)
+	assert.Equal(t, models.CollectionAuthorized, updatedCol.Status)
+	assert.Equal(t, testAmount, updatedCol.AuthorizedAmount)
 }
 
-// TestIkinciAuthorizeSaglayiciyaGitmez idempotent dalın sağlayıcıya
-// gitmediğini ve tutarı İKİNCİ KEZ eklemediğini doğrular.
+// TestASecondAuthorizeDoesNotReachTheProvider verifies that the idempotent
+// branch does not go to the provider and does not add the amount A SECOND TIME.
 //
-// Koleksiyonun bloke tutarına iki kez eklemek, iki kat bloke edilmiş gibi
-// görünmesi ve koleksiyonun kalanının yanlış hesaplanması demek olurdu.
-func TestIkinciAuthorizeSaglayiciyaGitmez(t *testing.T) {
-	svc, _, prov := yeniServis(t)
+// Adding to the collection's authorized amount twice would make it look as if
+// twice the amount were held, and the collection's remainder would be computed
+// wrongly.
+func TestASecondAuthorizeDoesNotReachTheProvider(t *testing.T) {
+	svc, _, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
 
-	tekrar, err := svc.AuthorizePayment(ctx, ses.ID)
+	again, err := svc.AuthorizePayment(ctx, ses.ID)
 
-	require.NoError(t, err, "ikinci yetkilendirme hata VERMEMELİ")
-	assert.Equal(t, models.SessionAuthorized, tekrar.Status)
-	_, authorize, _, _, _ := prov.cagrilar()
-	assert.Equal(t, 1, authorize, "sağlayıcıya YALNIZCA bir kez gidilmeli")
+	require.NoError(t, err, "a second authorization must NOT fail")
+	assert.Equal(t, models.SessionAuthorized, again.Status)
+	_, authorize, _, _, _ := prov.calls()
+	assert.Equal(t, 1, authorize, "the provider must be called ONLY once")
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	updatedCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, tutar, guncelKol.AuthorizedAmount, "bloke tutar İKİ KAT olmamalı")
+	assert.Equal(t, testAmount, updatedCol.AuthorizedAmount, "the authorized amount must not DOUBLE")
 }
 
-// TestAuthorizeRedHataDondururAmaOturumuKaliciYazar Faz 6 saga'sının ödeme
-// adımını patlatan davranışı doğrular.
+// TestAuthorizeDeclineReturnsAnErrorButPersistsTheSession verifies the behavior
+// that makes the payment step of the Phase 6 saga fail.
 //
-// İki iddia birden kritiktir ve birbirini tamamlar:
+// Two claims are critical at once, and they complement each other:
 //
-//   - Metot HATA döner. Ret sessizce başarı sayılsaydı, durumu kontrol etmeyi
-//     unutan bir akış ödenmemiş bir siparişi onaylardı.
-//   - Oturum yine de "failed" olarak KALICI yazılır. Hata dönmek için işlemi
-//     geri alan bir uygulama reddi de silerdi ve oturum sonsuza kadar "pending"
-//     görünürdü.
-func TestAuthorizeRedHataDondururAmaOturumuKaliciYazar(t *testing.T) {
-	svc, _, prov := yeniServis(t)
+//   - The method returns an ERROR. Had a decline silently counted as success, a
+//     flow that forgets to check the status would confirm an unpaid order.
+//   - The session is nevertheless PERSISTED as "failed". An implementation that
+//     rolled the transaction back in order to return an error would erase the
+//     decline too, and the session would look "pending" forever.
+func TestAuthorizeDeclineReturnsAnErrorButPersistsTheSession(t *testing.T) {
+	svc, _, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
-	prov.senaryo(coreprovider.SessionFailed, 0, "yetersiz bakiye")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
+	prov.scenario(coreprovider.SessionFailed, 0, "insufficient funds")
 
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 	assert.Equal(t, service.CodeAuthorizationDeclined, errors.CodeOf(err))
-	assert.Contains(t, err.Error(), "yetersiz bakiye")
+	assert.Contains(t, err.Error(), "insufficient funds")
 
-	guncelOturum, getErr := svc.GetPaymentSession(ctx, ses.ID)
+	updatedSession, getErr := svc.GetPaymentSession(ctx, ses.ID)
 	require.NoError(t, getErr)
-	assert.Equal(t, models.SessionFailed, guncelOturum.Status, "ret KALICI yazılmalı")
-	assert.Equal(t, "yetersiz bakiye", guncelOturum.DeclineReason)
+	assert.Equal(t, models.SessionFailed, updatedSession.Status, "the decline must be PERSISTED")
+	assert.Equal(t, "insufficient funds", updatedSession.DeclineReason)
 
-	guncelKol, getErr := svc.GetPaymentCollection(ctx, col.ID)
+	updatedCol, getErr := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, getErr)
-	assert.Zero(t, guncelKol.AuthorizedAmount)
-	assert.Equal(t, models.CollectionNotPaid, guncelKol.Status,
-		"yalnızca reddedilmiş oturumu olan koleksiyon yeniden denenebilir olmalı")
+	assert.Zero(t, updatedCol.AuthorizedAmount)
+	assert.Equal(t, models.CollectionNotPaid, updatedCol.Status,
+		"a collection whose only session was declined must be retryable")
 }
 
-// TestAuthorizeKismiBlokeKoleksiyonuAwaitingBirakir kısmi yetkilendirmenin
-// koleksiyonu "authorized" YAPMADIĞINI doğrular.
+// TestAPartialAuthorizationLeavesTheCollectionAwaiting verifies that a partial
+// authorization does NOT make the collection "authorized".
 //
-// Eksik bloke edilmiş bir koleksiyonu "authorized" saymak, tahsilat adımının
-// olmayan parayı çekmeye çalışması demek olurdu.
-func TestAuthorizeKismiBlokeKoleksiyonuAwaitingBirakir(t *testing.T) {
-	svc, _, prov := yeniServis(t)
+// Counting an under-authorized collection as "authorized" would mean the capture
+// step trying to take money that is not there.
+func TestAPartialAuthorizationLeavesTheCollectionAwaiting(t *testing.T) {
+	svc, _, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
-	prov.senaryo(coreprovider.SessionAuthorized, tutar/2, "")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
+	prov.scenario(coreprovider.SessionAuthorized, testAmount/2, "")
 
-	guncelOturum, err := svc.AuthorizePayment(ctx, ses.ID)
+	updatedSession, err := svc.AuthorizePayment(ctx, ses.ID)
 
 	require.NoError(t, err)
-	assert.Equal(t, tutar/2, guncelOturum.AuthorizedAmount)
+	assert.Equal(t, testAmount/2, updatedSession.AuthorizedAmount)
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	updatedCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionAwaiting, guncelKol.Status)
-	assert.Equal(t, tutar/2, guncelKol.AuthorizedAmount)
+	assert.Equal(t, models.CollectionAwaiting, updatedCol.Status)
+	assert.Equal(t, testAmount/2, updatedCol.AuthorizedAmount)
 }
 
-// TestBosSaglayiciYanitiOturumVerisiniSilmez sağlayıcının GÖVDESİZ yanıtının
-// oturumda saklanan veriyi korudugunu doğrular.
+// TestAnEmptyProviderResponseDoesNotEraseSessionData verifies that a provider
+// response WITHOUT A BODY keeps the data stored on the session.
 //
-// Gerçek sağlayıcıların çoğu yetkilendirme yanıtında gövde döndürmez. Boş
-// yanıtla üzerine yazan bir uygulama, oturum açılırken saklanan bilgiyi (örn.
-// istemcinin kullanacağı client_secret) silerdi ve hata ancak üretimde, ödeme
-// akışının ortasında görünürdü.
-func TestBosSaglayiciYanitiOturumVerisiniSilmez(t *testing.T) {
-	svc, _, prov := yeniServis(t)
+// Most real providers return no body in their authorization response. An
+// implementation that overwrote with the empty response would erase what was
+// stored when the session was opened (e.g. the client_secret the client will
+// use), and the bug would only show in production, in the middle of a payment
+// flow.
+func TestAnEmptyProviderResponseDoesNotEraseSessionData(t *testing.T) {
+	svc, _, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
-	require.NotEmpty(t, ses.Data, "oturum açılışta sağlayıcı verisi saklamalı")
-	prov.yetkilendirmeVerisi(nil)
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
+	require.NotEmpty(t, ses.Data, "the session must store provider data when it opens")
+	prov.setAuthorizeData(nil)
 
-	guncel, err := svc.AuthorizePayment(ctx, ses.ID)
+	updated, err := svc.AuthorizePayment(ctx, ses.ID)
 
 	require.NoError(t, err)
-	assert.JSONEq(t, string(ses.Data), string(guncel.Data),
-		"boş yanıt mevcut veriyi SİLMEMELİ")
+	assert.JSONEq(t, string(ses.Data), string(updated.Data),
+		"an empty response must NOT ERASE the existing data")
 }
 
-// TestSaglayiciYanitiVarsaOturumVerisiUzerineYazilir dolu bir yanıtın
-// gerçekten uygulandığını doğrular; koruma kuralı "hiç güncelleme" demek
-// değildir.
-func TestSaglayiciYanitiVarsaOturumVerisiUzerineYazilir(t *testing.T) {
-	svc, _, prov := yeniServis(t)
+// TestAProviderResponseOverwritesSessionData verifies that a non-empty response
+// really is applied; the keeping rule does not mean "never update".
+func TestAProviderResponseOverwritesSessionData(t *testing.T) {
+	svc, _, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
-	prov.yetkilendirmeVerisi(json.RawMessage(`{"client_secret":"cs_1"}`))
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
+	prov.setAuthorizeData(json.RawMessage(`{"client_secret":"cs_1"}`))
 
-	guncel, err := svc.AuthorizePayment(ctx, ses.ID)
+	updated, err := svc.AuthorizePayment(ctx, ses.ID)
 
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"client_secret":"cs_1"}`, string(guncel.Data))
+	assert.JSONEq(t, `{"client_secret":"cs_1"}`, string(updated.Data))
 }
 
-// TestAuthorizeGecersizGecisler durum makinesinin çakışma dallarını doğrular.
-func TestAuthorizeGecersizGecisler(t *testing.T) {
+// TestAuthorizeInvalidTransitions verifies the state machine's conflict
+// branches.
+func TestAuthorizeInvalidTransitions(t *testing.T) {
 	tests := map[string]func(t *testing.T, svc *service.Service, sessionID string){
 		"captured": func(t *testing.T, svc *service.Service, sessionID string) {
 			_, err := svc.AuthorizePayment(context.Background(), sessionID)
@@ -428,184 +430,186 @@ func TestAuthorizeGecersizGecisler(t *testing.T) {
 		},
 	}
 
-	for ad, hazirla := range tests {
-		t.Run(ad, func(t *testing.T) {
-			svc, _, _ := yeniServis(t)
-			col := koleksiyonAc(t, svc, tutar)
-			ses := oturumAc(t, svc, col.ID, "key-1")
-			hazirla(t, svc, ses.ID)
+	for name, prepare := range tests {
+		t.Run(name, func(t *testing.T) {
+			svc, _, _ := newTestService(t)
+			col := openCollection(t, svc, testAmount)
+			ses := openPaymentSession(t, svc, col.ID, "key-1")
+			prepare(t, svc, ses.ID)
 
 			_, err := svc.AuthorizePayment(context.Background(), ses.ID)
 
 			require.Error(t, err)
-			assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+			assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 			assert.Equal(t, service.CodeInvalidTransition, errors.CodeOf(err))
 		})
 	}
 }
 
-// TestReddedilmisOturumYenidenYetkilendirilemez ret nihaidir; yeni bir oturum
-// açılmalıdır.
-func TestReddedilmisOturumYenidenYetkilendirilemez(t *testing.T) {
-	svc, _, prov := yeniServis(t)
+// TestADeclinedSessionCannotBeReauthorized: a decline is final; a new session
+// has to be opened.
+func TestADeclinedSessionCannotBeReauthorized(t *testing.T) {
+	svc, _, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
-	prov.senaryo(coreprovider.SessionFailed, 0, "kart reddedildi")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
+	prov.scenario(coreprovider.SessionFailed, 0, "card declined")
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.Error(t, err)
 
-	prov.senaryo(coreprovider.SessionAuthorized, 0, "")
+	prov.scenario(coreprovider.SessionAuthorized, 0, "")
 	_, err = svc.AuthorizePayment(ctx, ses.ID)
 
 	require.Error(t, err)
 	assert.Equal(t, service.CodeInvalidTransition, errors.CodeOf(err))
 }
 
-// TestAuthorizeSaglayiciSozlesmeIhlalleri sözleşme dışı yanıtların Internal
-// olarak sınıflandırıldığını doğrular.
+// TestAuthorizeProviderContractViolations verifies that responses outside the
+// contract are classified as Internal.
 //
-// Sözleşme ihlali istemcinin düzeltebileceği bir şey değildir; 409 dönmek
-// entegrasyonu yazanın sorunu kendi tarafında aramasına yol açardı.
-func TestAuthorizeSaglayiciSozlesmeIhlalleri(t *testing.T) {
+// A contract violation is not something the client can fix; returning 409 would
+// send whoever wrote the integration looking for the problem on their own side.
+func TestAuthorizeProviderContractViolations(t *testing.T) {
 	tests := map[string]struct {
 		status coreprovider.SessionStatus
 		amount int64
 	}{
-		"beklenmeyen durum":      {status: coreprovider.SessionPending},
-		"taninmayan durum":       {status: coreprovider.SessionStatus("weird")},
-		"tutari asan bloke":      {status: coreprovider.SessionAuthorized, amount: tutar + 1},
-		"negatif bloke tutari":   {status: coreprovider.SessionAuthorized, amount: -1},
-		"iptal edilmis bildirim": {status: coreprovider.SessionCanceled},
+		"unexpected status":             {status: coreprovider.SessionPending},
+		"unknown status":                {status: coreprovider.SessionStatus("weird")},
+		"hold above the amount":         {status: coreprovider.SessionAuthorized, amount: testAmount + 1},
+		"negative authorized amount":    {status: coreprovider.SessionAuthorized, amount: -1},
+		"canceled reported as a result": {status: coreprovider.SessionCanceled},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
-			svc, _, prov := yeniServis(t)
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			svc, _, prov := newTestService(t)
 			ctx := context.Background()
-			col := koleksiyonAc(t, svc, tutar)
-			ses := oturumAc(t, svc, col.ID, "key-1")
-			prov.senaryo(tt.status, tt.amount, "")
+			col := openCollection(t, svc, testAmount)
+			ses := openPaymentSession(t, svc, col.ID, "key-1")
+			prov.scenario(tt.status, tt.amount, "")
 
 			_, err := svc.AuthorizePayment(ctx, ses.ID)
 
 			require.Error(t, err)
-			assert.True(t, errors.HasKind(err, errors.KindInternal), "hata: %v", err)
+			assert.True(t, errors.HasKind(err, errors.KindInternal), "error: %v", err)
 			assert.Equal(t, service.CodeProviderContract, errors.CodeOf(err))
 		})
 	}
 }
 
-// TestAuthorizeKilitSirasi kilitlerin KANONİK sırada alındığını doğrular.
+// TestAuthorizeLockOrder verifies that the locks are taken in the CANONICAL
+// order.
 //
-// Sıra bir eşzamanlılık sözleşmesidir: koleksiyon her zaman oturumdan ÖNCE
-// kilitlenir. Gerçek veritabanında ihlali ancak yarış altında, kilitlenme
-// (deadlock) olarak görünürdü; burada sıra doğrudan okunur.
-func TestAuthorizeKilitSirasi(t *testing.T) {
-	svc, store, _ := yeniServis(t)
+// The order is a concurrency contract: the collection is always locked BEFORE
+// the session. On the real database a violation would only show under a race,
+// as a deadlock; here the order is read directly.
+func TestAuthorizeLockOrder(t *testing.T) {
+	svc, store, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
 
-	sira := store.kilitSirasi()
-	require.GreaterOrEqual(t, len(sira), 2)
-	assert.Equal(t, []string{"collection", "collection", "session"}, sira,
-		"önce oturum açılırken koleksiyon, sonra yetkilendirmede koleksiyon -> oturum")
+	order := store.lockOrder()
+	require.GreaterOrEqual(t, len(order), 2)
+	assert.Equal(t, []string{"collection", "collection", "session"}, order,
+		"first the collection while the session opens, then collection -> session in the authorization")
 }
 
-// TestCancelIkiKezCagrilabilir saga telafisinin İDEMPOTENT olduğunu doğrular.
+// TestCancelCanBeCalledTwice verifies that the saga's compensation is
+// IDEMPOTENT.
 //
-// Faz 6 saga'sı ödeme adımı patladığında bunu çağırır. İkinci çağrının hata
-// vermemesi yetmez: sağlayıcıya ikinci kez GİTMEDİĞİ ve koleksiyonun bloke
-// tutarına İKİNCİ KEZ dokunmadığı da kanıtlanır — aksi hâlde tutar negatife
-// düşerdi.
-func TestCancelIkiKezCagrilabilir(t *testing.T) {
-	svc, store, prov := yeniServis(t)
+// The Phase 6 saga calls this when the payment step fails. It is not enough
+// that the second call does not fail: it is also proved that it does NOT GO to
+// the provider a second time and does not touch the collection's authorized
+// amount A SECOND TIME — otherwise the amount would drop below zero.
+func TestCancelCanBeCalledTwice(t *testing.T) {
+	svc, store, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
 
 	require.NoError(t, svc.CancelPayment(ctx, ses.ID))
-	oncekiKol, _ := store.yazimlar()
+	colWritesBefore, _ := store.writes()
 
-	require.NoError(t, svc.CancelPayment(ctx, ses.ID), "ikinci iptal hata VERMEMELİ")
+	require.NoError(t, svc.CancelPayment(ctx, ses.ID), "a second cancel must NOT fail")
 
-	sonrakiKol, _ := store.yazimlar()
-	assert.Equal(t, oncekiKol, sonrakiKol, "ikinci iptal koleksiyona yazmamalı")
-	_, _, _, _, cancel := prov.cagrilar()
-	assert.Equal(t, 1, cancel, "sağlayıcıya YALNIZCA bir kez gidilmeli")
+	colWritesAfter, _ := store.writes()
+	assert.Equal(t, colWritesBefore, colWritesAfter, "a second cancel must not write to the collection")
+	_, _, _, _, cancel := prov.calls()
+	assert.Equal(t, 1, cancel, "the provider must be called ONLY once")
 }
 
-// TestCancelBlokajiSerbestBirakir iptalin koleksiyonun bloke tutarını geri
-// aldığını ve durumu "canceled" yaptığını doğrular.
-func TestCancelBlokajiSerbestBirakir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestCancelReleasesTheHold verifies that a cancellation takes the
+// collection's authorized amount back and makes its status "canceled".
+func TestCancelReleasesTheHold(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
 
 	require.NoError(t, svc.CancelPayment(ctx, ses.ID))
 
-	guncelOturum, err := svc.GetPaymentSession(ctx, ses.ID)
+	updatedSession, err := svc.GetPaymentSession(ctx, ses.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionCanceled, guncelOturum.Status)
-	assert.Zero(t, guncelOturum.AuthorizedAmount)
+	assert.Equal(t, models.SessionCanceled, updatedSession.Status)
+	assert.Zero(t, updatedSession.AuthorizedAmount)
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	updatedCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Zero(t, guncelKol.AuthorizedAmount, "blokaj koleksiyondan da düşmeli")
-	assert.Equal(t, models.CollectionCanceled, guncelKol.Status)
+	assert.Zero(t, updatedCol.AuthorizedAmount, "the hold must drop from the collection as well")
+	assert.Equal(t, models.CollectionCanceled, updatedCol.Status)
 }
 
-// TestCancelBekleyenOturumdaCalisir yetkilendirilmemiş bir oturumun da
-// kapatılabildiğini doğrular; saga oturumu açtıktan sonra başka bir adımda
-// patlarsa telafi tam olarak bu durumu bulur.
-func TestCancelBekleyenOturumdaCalisir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestCancelWorksOnAPendingSession verifies that a session that was never
+// authorized can be closed too; if the saga fails at another step after
+// opening the session, this is exactly the state the compensation finds.
+func TestCancelWorksOnAPendingSession(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 
 	require.NoError(t, svc.CancelPayment(ctx, ses.ID))
 
-	guncelOturum, err := svc.GetPaymentSession(ctx, ses.ID)
+	updatedSession, err := svc.GetPaymentSession(ctx, ses.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionCanceled, guncelOturum.Status)
+	assert.Equal(t, models.SessionCanceled, updatedSession.Status)
 }
 
-// TestCancelReddedilmisOturumuKapatir ret yüzünden patlayan bir akışın
-// telafisinin hata VERMEDİĞİNİ doğrular.
-func TestCancelReddedilmisOturumuKapatir(t *testing.T) {
-	svc, _, prov := yeniServis(t)
+// TestCancelClosesADeclinedSession verifies that compensating a flow that
+// failed because of a decline does NOT return an error.
+func TestCancelClosesADeclinedSession(t *testing.T) {
+	svc, _, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
-	prov.senaryo(coreprovider.SessionFailed, 0, "kart reddedildi")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
+	prov.scenario(coreprovider.SessionFailed, 0, "card declined")
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.Error(t, err)
 
 	require.NoError(t, svc.CancelPayment(ctx, ses.ID))
 
-	guncelOturum, getErr := svc.GetPaymentSession(ctx, ses.ID)
+	updatedSession, getErr := svc.GetPaymentSession(ctx, ses.ID)
 	require.NoError(t, getErr)
-	assert.Equal(t, models.SessionCanceled, guncelOturum.Status)
-	assert.Equal(t, "kart reddedildi", guncelOturum.DeclineReason, "ret sebebi korunmalı")
+	assert.Equal(t, models.SessionCanceled, updatedSession.Status)
+	assert.Equal(t, "card declined", updatedSession.DeclineReason, "the decline reason must be kept")
 }
 
-// TestCancelTahsilEdilmisOturumdaCakisir çekilen paranın iptalle geri
-// alınamayacağını doğrular; yol iadedir.
-func TestCancelTahsilEdilmisOturumdaCakisir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestCancelConflictsOnACapturedSession verifies that money taken cannot be
+// given back by a cancellation; the way is a refund.
+func TestCancelConflictsOnACapturedSession(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
 	_, err = svc.CapturePayment(ctx, ses.ID, 0)
@@ -614,142 +618,144 @@ func TestCancelTahsilEdilmisOturumdaCakisir(t *testing.T) {
 	err = svc.CancelPayment(ctx, ses.ID)
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 	assert.Equal(t, service.CodeInvalidTransition, errors.CodeOf(err))
 }
 
-// TestCancelBilinmeyenOturumNotFound idempotentliğin "her şeyi sessizce yut"
-// demek OLMADIĞINI doğrular.
-func TestCancelBilinmeyenOturumNotFound(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// TestCancelOfAnUnknownSessionIsNotFound verifies that idempotency does NOT mean
+// "silently swallow everything".
+func TestCancelOfAnUnknownSessionIsNotFound(t *testing.T) {
+	svc, _, _ := newTestService(t)
 
-	err := svc.CancelPayment(context.Background(), "payses_YOK")
+	err := svc.CancelPayment(context.Background(), "payses_MISSING")
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 }
 
-// TestCancelSaglayiciHatasindaHicbirSeyYazilmaz sağlayıcı iptali reddederse
-// modülün de kaydını değiştirmediğini doğrular.
+// TestCancelWritesNothingOnAProviderError verifies that when the provider
+// refuses the cancellation, the module does not change its record either.
 //
-// Sağlayıcıda hâlâ açık olan bir blokajı modülde "iptal edildi" diye yazmak,
-// müşterinin parasının asılı kalması ve kimsenin bunu fark etmemesi demekti.
-func TestCancelSaglayiciHatasindaHicbirSeyYazilmaz(t *testing.T) {
-	svc, _, prov := yeniServis(t)
+// Writing a hold that is still open at the provider as "canceled" in the module
+// would mean the customer's money is left hanging and nobody notices.
+func TestCancelWritesNothingOnAProviderError(t *testing.T) {
+	svc, _, prov := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
 	_, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
-	prov.cancelErr = errors.Unavailable("saglayici_kapali", "sağlayıcıya ulaşılamadı")
+	prov.cancelErr = errors.Unavailable("saglayici_kapali", "the provider could not be reached")
 
 	err = svc.CancelPayment(ctx, ses.ID)
 
 	require.Error(t, err)
-	guncelOturum, getErr := svc.GetPaymentSession(ctx, ses.ID)
+	updatedSession, getErr := svc.GetPaymentSession(ctx, ses.ID)
 	require.NoError(t, getErr)
-	assert.Equal(t, models.SessionAuthorized, guncelOturum.Status, "işlem geri alınmalı")
+	assert.Equal(t, models.SessionAuthorized, updatedSession.Status, "the transaction must be rolled back")
 
-	guncelKol, getErr := svc.GetPaymentCollection(ctx, col.ID)
+	updatedCol, getErr := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, getErr)
-	assert.Equal(t, tutar, guncelKol.AuthorizedAmount)
+	assert.Equal(t, testAmount, updatedCol.AuthorizedAmount)
 }
 
-// TestCancelKilitSirasi iptal akışının kilit sırasını doğrular.
-func TestCancelKilitSirasi(t *testing.T) {
-	svc, store, _ := yeniServis(t)
+// TestCancelLockOrder verifies the cancel flow's lock order.
+func TestCancelLockOrder(t *testing.T) {
+	svc, store, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ses := oturumAc(t, svc, col.ID, "key-1")
-	store.kilitler = nil
+	col := openCollection(t, svc, testAmount)
+	ses := openPaymentSession(t, svc, col.ID, "key-1")
+	store.locks = nil
 
 	require.NoError(t, svc.CancelPayment(ctx, ses.ID))
 
-	assert.Equal(t, []string{"collection", "session"}, store.kilitSirasi())
+	assert.Equal(t, []string{"collection", "session"}, store.lockOrder())
 }
 
-// TestKismiTahsilatinKalaniIcinYeniOturumAcilabilir ADR 0118'in açtığı yoldur:
-// kısmen tahsil edilmiş bir koleksiyonun kalanı toplanabilir.
+// TestANewSessionCanOpenForThePartialCapturesRemainder is the path ADR 0118
+// opened: the remainder of a partially captured collection can be collected.
 //
-// Kısmi tahsilat uydurma bir hâl değil, yayımlanmış bir uçtan üretilen birinci
-// sınıf bir durum: admin tahsilat ucu tutarı OPSİYONEL alır ve [Service.
-// CapturePayment] onu yalnızca YUKARIDAN sınırlar, yani operatör bloke edilen
-// tutarın bir kısmını çekebilir. Bir sağlayıcının kısmen yetkilendirmesi de
-// aynı yere çıkar. Şema o hâli adıyla tanıyor
+// A partial capture is not an invented case but a first-class state produced by
+// a published endpoint: the admin capture endpoint takes the amount as OPTIONAL
+// and [Service.CapturePayment] bounds it only FROM ABOVE, so the operator can
+// take part of the authorized amount. A provider authorizing only part of the
+// amount ends up in the same place. The schema knows that case by name
 // ([models.CollectionPartiallyCaptured]).
 //
-// ADR 0118'e kadar kalan bir daha toplanamıyordu: kapı koleksiyonun HİÇ bir şey
-// alıp almadığını soruyordu ve kısmi tahsilat da "almış" sayılıyordu. Bayrağın
-// ayıramadığı iki durumu aritmetik ayırır.
-func TestKismiTahsilatinKalaniIcinYeniOturumAcilabilir(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// Until ADR 0118 the remainder could never be collected again: the gate asked
+// whether the collection had received ANYTHING at all, and a partial capture
+// counted as "received". Arithmetic tells apart the two states the flag could
+// not.
+func TestANewSessionCanOpenForThePartialCapturesRemainder(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ilk := oturumAc(t, svc, col.ID, "key-1")
-	_, err := svc.AuthorizePayment(ctx, ilk.ID)
+	col := openCollection(t, svc, testAmount)
+	first := openPaymentSession(t, svc, col.ID, "key-1")
+	_, err := svc.AuthorizePayment(ctx, first.ID)
 	require.NoError(t, err)
 
-	_, err = svc.CapturePayment(ctx, ilk.ID, tutar/4)
-	require.NoError(t, err, "bloke tutarın bir kısmı tahsil edilebilir")
+	_, err = svc.CapturePayment(ctx, first.ID, testAmount/4)
+	require.NoError(t, err, "part of the authorized amount can be captured")
 
-	kalan, err := svc.CreateSession(ctx, col.ID, saglayiciID,
+	remainder, err := svc.CreateSession(ctx, col.ID, testProviderID,
 		service.CreateSessionInput{IdempotencyKey: "key-2"})
 
-	require.NoError(t, err, "kısmen tahsil edilmiş koleksiyonun kalanı toplanabilmeli")
-	assert.Equal(t, tutar-tutar/4, kalan.Amount,
-		"yeni oturum yalnızca kalan tutar kadar açılır")
+	require.NoError(t, err, "the remainder of a partially captured collection must be collectable")
+	assert.Equal(t, testAmount-testAmount/4, remainder.Amount,
+		"the new session opens only for the remaining amount")
 }
 
-// TestKismiTahsilattanSonraKalandanFazlasiAcilamaz kalanın bir TAVAN olduğunu
-// doğrular, yalnızca bir izin olmadığını.
+// TestNoMoreThanTheRemainderCanOpenAfterAPartialCapture verifies that the
+// remainder is a CEILING, not merely a permission.
 //
-// Bu, ADR 0118'in en pahalı hatasının kapısı: tahsil edileni saymayan bir hesap
-// kalanı TAM tutar gösterir, oturum açılır, sağlayıcı parayı çeker ve ancak
-// ondan sonra `captured_amount <= amount` kısıtına çarpılır — sağlayıcıda para,
-// defterde hiçbir şey.
-func TestKismiTahsilattanSonraKalandanFazlasiAcilamaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// This is the gate to ADR 0118's most expensive bug: an arithmetic that does not
+// count what was captured shows the FULL amount as the remainder, the session
+// opens, the provider takes the money, and only after that does it hit the
+// `captured_amount <= amount` constraint — money at the provider, nothing in the
+// ledger.
+func TestNoMoreThanTheRemainderCanOpenAfterAPartialCapture(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ilk := oturumAc(t, svc, col.ID, "key-1")
-	_, err := svc.AuthorizePayment(ctx, ilk.ID)
+	col := openCollection(t, svc, testAmount)
+	first := openPaymentSession(t, svc, col.ID, "key-1")
+	_, err := svc.AuthorizePayment(ctx, first.ID)
 	require.NoError(t, err)
-	_, err = svc.CapturePayment(ctx, ilk.ID, tutar/4)
+	_, err = svc.CapturePayment(ctx, first.ID, testAmount/4)
 	require.NoError(t, err)
 
-	_, err = svc.CreateSession(ctx, col.ID, saglayiciID, service.CreateSessionInput{
-		Amount:         tutar,
+	_, err = svc.CreateSession(ctx, col.ID, testProviderID, service.CreateSessionInput{
+		Amount:         testAmount,
 		IdempotencyKey: "key-2",
 	})
 
-	require.Error(t, err, "kalan yalnızca dörtte üçtür")
+	require.Error(t, err, "only three quarters remain")
 	assert.Equal(t, service.CodeInvalidTransition, errors.CodeOf(err))
 }
 
-// TestTamIadeEdilmisKoleksiyonYenidenAcilmaz ADR 0118'in BİLİNÇLİ olarak
-// yapmadığı şeydir.
+// TestAFullyRefundedCollectionDoesNotReopen is what ADR 0118 DELIBERATELY does
+// not do.
 //
-// Bir iade tahsil edilen toplamı küçültmez, o yüzden kalan kapasite sıfır
-// kalır ve koleksiyon yeniden ödenebilir hâle GELMEZ. ADR 0117 bunun tetiğini
-// adıyla yazmıştı ("once it owes nothing"), ve o tetiğin bugün tüketicisi yok:
-// üretimdeki iki iade çağıranı da parayı yalnızca geri gönderiyor, hiçbiri
-// sonradan yeniden tahsil etmiyor. Tüketicisi olmayan yetenek yayımlanmaz
-// (ADR 0063), ve bu test o kararı kapıya bağlar.
-func TestTamIadeEdilmisKoleksiyonYenidenAcilmaz(t *testing.T) {
-	svc, _, _ := yeniServis(t)
+// A refund does not shrink the captured total, so the remaining capacity stays
+// at zero and the collection does NOT become payable again. ADR 0117 named the
+// trigger for this ("once it owes nothing"), and that trigger has no consumer
+// today: both refund callers in production only send the money back, and
+// neither captures again afterwards. A capability without a consumer is not
+// published (ADR 0063), and this test ties that decision to a gate.
+func TestAFullyRefundedCollectionDoesNotReopen(t *testing.T) {
+	svc, _, _ := newTestService(t)
 	ctx := context.Background()
-	col := koleksiyonAc(t, svc, tutar)
-	ilk := oturumAc(t, svc, col.ID, "key-1")
-	_, err := svc.AuthorizePayment(ctx, ilk.ID)
+	col := openCollection(t, svc, testAmount)
+	first := openPaymentSession(t, svc, col.ID, "key-1")
+	_, err := svc.AuthorizePayment(ctx, first.ID)
 	require.NoError(t, err)
-	odeme, err := svc.CapturePayment(ctx, ilk.ID, 0)
+	payment, err := svc.CapturePayment(ctx, first.ID, 0)
 	require.NoError(t, err)
-	_, err = svc.RefundPayment(ctx, odeme.ID, 0, "")
-	require.NoError(t, err, "tamamı iade edilir")
+	_, err = svc.RefundPayment(ctx, payment.ID, 0, "")
+	require.NoError(t, err, "all of it is refunded")
 
-	_, err = svc.CreateSession(ctx, col.ID, saglayiciID,
+	_, err = svc.CreateSession(ctx, col.ID, testProviderID,
 		service.CreateSessionInput{IdempotencyKey: "key-2"})
 
-	require.Error(t, err, "iade koleksiyonu yeniden ödenebilir yapmaz")
+	require.Error(t, err, "a refund does not make the collection payable again")
 	assert.Equal(t, service.CodeCollectionClosed, errors.CodeOf(err))
 }

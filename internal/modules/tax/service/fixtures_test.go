@@ -7,14 +7,16 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// testNow testlerin sabit saatidir; zamana bağlı alanlar belirlenimci olur.
+// testNow is the tests' fixed clock; time-dependent fields become
+// deterministic.
 var testNow = time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC)
 
-// Testlerde kullanılan sabit kimlikler.
+// The fixed ids used in the tests.
 //
-// Kimlikler ELLE seçilir çünkü oran seçiminin eşitlik bozma kuralı ("kimliği
-// küçük olan kazanır") ancak sıraları bilinen kimliklerle sınanabilir; üretici
-// rastgele gövde ürettiği için o kural üretilmiş kimliklerle kanıtlanamazdı.
+// The ids are chosen BY HAND because the rate selection's tie-break rule ("the
+// one with the smaller id wins") can be tested only with ids whose order is
+// known; since the generator produces a random body, that rule could not be
+// proven with generated ids.
 const (
 	trRegionID = models.TaxRegionIDPrefix + "TR0000000000000000000000000"
 	trIstanbul = models.TaxRegionIDPrefix + "TR34000000000000000000000000"
@@ -30,7 +32,7 @@ const (
 	ruleC = models.TaxRateRuleIDPrefix + "C0000000000000000000000000"
 )
 
-// newTestService bellek içi depo üzerinde çalışan bir servis kurar.
+// newTestService builds a service that runs on an in-memory repository.
 func newTestService(t *testing.T) (*Service, *memRepo) {
 	t.Helper()
 
@@ -39,10 +41,11 @@ func newTestService(t *testing.T) (*Service, *memRepo) {
 	return svc, repo
 }
 
-// seedRegion depoya doğrudan bir bölge yazar ve kimliğini döner.
+// seedRegion writes a region directly into the repository and returns it.
 //
-// Servisin doğrulamalarını ATLAR: amaç, hesabın dayandığı VERİYİ kurmaktır ve
-// oraya giden yolun kuralları ayrı testlerde sınanır.
+// It SKIPS the service's validations: the aim is to set up the DATA the
+// calculation rests on, and the rules of the path that leads there are tested
+// separately.
 func (m *memRepo) seedRegion(region models.TaxRegion) models.TaxRegion {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -53,12 +56,12 @@ func (m *memRepo) seedRegion(region models.TaxRegion) models.TaxRegion {
 	return region
 }
 
-// seedRootRegion bir ülke kökü yazar.
+// seedRootRegion writes a country root.
 func (m *memRepo) seedRootRegion(id, countryCode string) models.TaxRegion {
 	return m.seedRegion(models.TaxRegion{ID: id, CountryCode: countryCode})
 }
 
-// seedProvinceRegion bir kökün altına eyalet bölgesi yazar.
+// seedProvinceRegion writes a province region under a root.
 func (m *memRepo) seedProvinceRegion(id, countryCode, provinceCode, parentID string) models.TaxRegion {
 	province := provinceCode
 	parent := parentID
@@ -70,7 +73,7 @@ func (m *memRepo) seedProvinceRegion(id, countryCode, provinceCode, parentID str
 	})
 }
 
-// seedRate depoya doğrudan bir oran yazar.
+// seedRate writes a rate directly into the repository.
 func (m *memRepo) seedRate(rate models.TaxRate) models.TaxRate {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -84,21 +87,22 @@ func (m *memRepo) seedRate(rate models.TaxRate) models.TaxRate {
 	return rate
 }
 
-// seedDefaultRate bir bölgeye varsayılan oran yazar.
+// seedDefaultRate writes a default rate into a region.
 func (m *memRepo) seedDefaultRate(id, regionID string, rateBps int32) models.TaxRate {
 	return m.seedRate(models.TaxRate{
-		ID: id, TaxRegionID: regionID, Name: "varsayılan", RateBps: rateBps, IsDefault: true,
+		ID: id, TaxRegionID: regionID, Name: "default", RateBps: rateBps, IsDefault: true,
 	})
 }
 
-// seedRuledRate bir bölgeye kurallı oran yazar (kuralları ayrıca eklenir).
+// seedRuledRate writes a ruled rate into a region (its rules are added
+// separately).
 func (m *memRepo) seedRuledRate(id, regionID string, rateBps int32) models.TaxRate {
 	return m.seedRate(models.TaxRate{
-		ID: id, TaxRegionID: regionID, Name: "kurallı", RateBps: rateBps,
+		ID: id, TaxRegionID: regionID, Name: "ruled", RateBps: rateBps,
 	})
 }
 
-// seedRule depoya doğrudan bir kural yazar.
+// seedRule writes a rule directly into the repository.
 func (m *memRepo) seedRule(id, rateID string, reference models.RuleReference, referenceID string) models.TaxRateRule {
 	m.mu.Lock()
 	defer m.mu.Unlock()

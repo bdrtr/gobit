@@ -72,7 +72,7 @@ done is the planner's, and it was not forced.
 ## 5. A test that passed by file order (D135)
 
 The integration test first failed on another test:
-`TestMigrationVeriVarkenGeriAlinabilir` rolled the module back in the shared
+`TestTheMigrationRollsBackWithDataPresent` rolled the module back in the shared
 database, and 000006's down refuses a point ledger holding a spend row, by its
 own design. The journal test spends points, and its file sorts before
 `payment_integration_test.go`, so for the first time a test spending points ran

@@ -11,35 +11,36 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/service"
 )
 
-// TestBenzersizlikIhlaliKisitAdinaGoreKodlanir yarışı kaybeden isteğin,
-// servisin "önce oku" denetimine takılan istekle AYNI kodu aldığını doğrular.
+// TestAUniquenessViolationIsCodedByConstraintName checks that the request that
+// loses the race gets the SAME code as the request caught by the service's
+// "read first" check.
 //
-// İki yol aynı durumu anlatır: ülkeye ikinci kök bölge, bölgeye ikinci
-// varsayılan oran. Kod ayrışsaydı, koda göre dallanan bir yönetim arayüzü
-// eşzamanlı iki istekte aynı durumu iki farklı koddan görür ve mesajı yanlış
-// eşlerdi.
+// Both paths describe the same situation: a second root region for a country,
+// a second default rate for a region. Had the codes diverged, an admin UI that
+// branches on the code would see the same situation under two different codes
+// across two concurrent requests and map the message wrongly.
 //
-// Test gerçek bir veritabanı gerektirmez: kanıtlanan şey SQLSTATE 23505'in
-// kısıt ADINA göre eşlenmesidir ve kısıt adlarının gerçekten bunlar olduğu
-// entegrasyon testlerinde ayrıca gösterilir.
-func TestBenzersizlikIhlaliKisitAdinaGoreKodlanir(t *testing.T) {
+// The test needs no real database: what it proves is that SQLSTATE 23505 is
+// mapped by constraint NAME, and that the constraint names really are these is
+// shown separately in the integration tests.
+func TestAUniquenessViolationIsCodedByConstraintName(t *testing.T) {
 	tests := map[string]struct {
 		constraint string
 		wantCode   string
 	}{
-		"ülkenin ikinci kök bölgesi": {
+		"a country's second root region": {
 			constraint: constraintRegionCountryRoot,
 			wantCode:   service.CodeRootExists,
 		},
-		"bölgenin ikinci varsayılan oranı": {
+		"a region's second default rate": {
 			constraint: constraintRateDefault,
 			wantCode:   service.CodeDefaultExists,
 		},
-		"servis karşılığı olmayan kısıt": {
+		"a constraint with no service counterpart": {
 			constraint: "tax_rate_rule_uniq",
 			wantCode:   CodeDuplicate,
 		},
-		"kısıt adı bildirilmemiş": {
+		"no constraint name reported": {
 			constraint: "",
 			wantCode:   CodeDuplicate,
 		},
@@ -50,13 +51,13 @@ func TestBenzersizlikIhlaliKisitAdinaGoreKodlanir(t *testing.T) {
 			err := wrapDB(&pgconn.PgError{
 				Code:           sqlstateUniqueViolation,
 				ConstraintName: tc.constraint,
-			}, "kayıt yazılamadı")
+			}, "the record could not be written")
 
 			require.Error(t, err)
-			assert.True(t, errors.IsConflict(err), "benzersizlik ihlali ÇAKIŞMADIR")
+			assert.True(t, errors.IsConflict(err), "a uniqueness violation is a CONFLICT")
 			assert.Equal(t, tc.wantCode, errors.CodeOf(err))
 			assert.Contains(t, err.Error(), tc.constraint,
-				"mesaj hangi kuralın çiğnendiğini yazmalı")
+				"the message has to name the rule that was broken")
 		})
 	}
 }

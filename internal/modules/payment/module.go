@@ -1,9 +1,9 @@
-// Package payment ödeme modülüdür (plan Bölüm 6, Faz 6).
+// Package payment is the payment module (plan Section 6, Phase 6).
 //
-// Sorumluluğu tek cümleyle: bir sepet ya da sipariş için PARANIN hangi
-// aşamada olduğunu bilmek — bloke mi, çekildi mi, iade mi edildi. Modül
-// PaymentCollection, PaymentSession, Payment ve Refund verisinin TEK yazma
-// yetkilisidir (Prensip 2.3).
+// Its responsibility in one sentence: to know which stage the MONEY for a cart
+// or an order is at — held, taken, or refunded. The module is the SOLE writer
+// of PaymentCollection, PaymentSession, Payment and Refund data (Principle
+// 2.3).
 //
 // # The provider abstraction
 //
@@ -22,39 +22,40 @@
 // adds its own provider to the registry in the container without touching the
 // core or this module — plugins/paymentpaytr does exactly that.
 //
-// # Saga telafisi
+// # Saga compensation
 //
-// Faz 6'nın complete_cart saga'sı ödeme adımını [service.Service.CancelPayment]
-// ile geri alır ve o metot İDEMPOTENTTİR: iki kez çağrılırsa ikinci çağrı hata
-// vermez. Telafinin tekrar çalıştırılabilir olması bir tercih değil, saga'nın
-// çalışma şartıdır (plan Bölüm 5.5).
+// Phase 6's complete_cart saga undoes the payment step with
+// [service.Service.CancelPayment], and that method is IDEMPOTENT: called twice,
+// the second call returns no error. That compensation can be run again is not a
+// preference but a condition for the saga to work (plan Section 5.5).
 //
-// # Neyi bilmez
+// # What it does not know
 //
-// Modül hiçbir modülü import etmez ve bir ödemenin HANGİ sepete ya da siparişe
-// ait olduğunu bilmez. reference serbest bir metindir, foreign key DEĞİLDİR
-// (Prensip 2.2) ve varlığı burada doğrulanmaz; bağ bir link ile kurulur.
-// ~~Bu yüzden bu modül HİÇBİR link tanımı bildirmez: bağın sahibi ödeme değil,
-// ödemeye ihtiyaç duyan taraftır.~~
+// The module imports no module and does not know WHICH cart or order a payment
+// belongs to. reference is free text, NOT a foreign key (Principle 2.2), and
+// its existence is not verified here; the connection is made with a link.
+// ~~That is why this module declares NO link definition: the owner of the
+// connection is not payment but the side that needs the payment.~~
 //
-// **2026-09-07: tanımı BU modül bildirir.** Bağ hâlâ foreign key ile değil
-// link ile kurulur, ama bir tanım YALNIZCA BİR KEZ bildirilebilir ve bildiren
-// taraf, bağın taşıdığı kaydı YAZAN taraftır — ödeme tahsilatı. Bu yüzden
-// "order_payment" burada bildirilir (bkz. [service.LinkOrderPayment]),
-// sipariş modülü ise hiçbir tanım bildirmez. Tanımı bildirmek siparişi bilmek
-// değildir: tanım yalnızca iki varlığın adını taşır, bu modül hâlâ hiçbir
-// siparişi çözmez ve hiçbir reference'ı doğrulamaz.
+// **2026-09-07: THIS module declares the definition.** The connection is still
+// made with a link rather than a foreign key, but a definition can be declared
+// ONLY ONCE, and the side that declares it is the side that WRITES the record
+// the connection carries — the payment capture. That is why "order_payment" is
+// declared here (see [service.LinkOrderPayment]) and the order module declares
+// no definition. Declaring the definition is not knowing the order: the
+// definition carries only the names of the two entities, and this module still
+// resolves no order and verifies no reference.
 //
-// # Dışarıya açtığı yüzeyler
+// # The surfaces it exposes
 //
-//   - "payment.service" — modül içi zengin yüzey (domain tipleriyle).
-//   - "payment.interop" — modüller arası İLKEL yüzey (ADR 0001/0006); Faz 6
-//     saga'sı ödeme adımlarını buradan yürütür.
-//   - "payment.providers" — sağlayıcı kaydı; eklentiler buraya sağlayıcı ekler.
-//   - "payment_collection.query" — Query katmanına açılan okuma sağlayıcısı
+//   - "payment.service" — the rich in-module surface (with domain types).
+//   - "payment.interop" — the PRIMITIVE cross-module surface (ADR 0001/0006);
+//     the Phase 6 saga runs the payment steps through it.
+//   - "payment.providers" — the provider registry; plugins add providers here.
+//   - "payment_collection.query" — the read provider opened to the Query layer
 //     (ADR 0004).
-//   - /admin/v1/payment-collections … — yönetim API'si.
-//   - /store/v1/payment-collections/{id} … — müşterinin ödeme akışı.
+//   - /admin/v1/payment-collections … — the admin API.
+//   - /store/v1/payment-collections/{id} … — the customer's payment flow.
 package payment
 
 import (
@@ -82,46 +83,49 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/storecredit"
 )
 
-// ModuleName modülün adıdır; container adlarının ve migration sürüm defterinin
-// önekidir.
+// ModuleName is the module's name; it is the prefix of the container names and
+// of the migration version ledger.
 const ModuleName = "payment"
 
-// ServiceName modül servisinin container'daki adıdır.
+// ServiceName is the module service's name in the container.
 //
-// Başka modüller ve workflow'lar (ADR 0001/0006 gereği bu paketi import
-// ETMEDEN) servise bu adla ulaşır ve KENDİ paketlerinde tanımladıkları dar bir
-// arayüzle kullanır.
+// Other modules and workflows reach the service under this name (WITHOUT
+// importing this package, as ADR 0001/0006 requires) and use it through a
+// narrow interface they define in THEIR OWN packages.
 const ServiceName = ModuleName + ".service"
 
-// InteropName modüller arası ilkel yüzeyin container'daki adıdır (ADR 0006).
+// InteropName is the cross-module primitive surface's name in the container
+// (ADR 0006).
 //
-// Servisin kendisinden AYRI kaydedilir: servis payment'ın zengin tipleriyle
-// konuşur, bu yüzey yalnızca ilkel ve stdlib tipleriyle. Sipariş tamamlama
-// saga'sı onu kendi dar arayüzüyle çözer.
+// It is registered SEPARATELY from the service itself: the service speaks in
+// payment's rich types, this surface only in primitive and stdlib types. The
+// order completion saga resolves it with its own narrow interface.
 const InteropName = ModuleName + ".interop"
 
-// ProvidersName sağlayıcı kaydının container'daki adıdır.
+// ProvidersName is the provider registry's name in the container.
 //
-// Bir eklenti kendi PaymentProvider'ını bu kaydı çözüp ekler ve modülün kodunu
-// değiştirmesi gerekmez; plugins/paymentpaytr bunun çalışan örneğidir.
+// A plugin adds its own PaymentProvider by resolving this registry and does not
+// have to change the module's code; plugins/paymentpaytr is the working example
+// of this.
 const ProvidersName = ModuleName + ".providers"
 
-// ProviderName Query sağlayıcısının container'daki adıdır (ADR 0004).
+// ProviderName is the Query provider's name in the container (ADR 0004).
 const ProviderName = service.EntityName + query.ProviderSuffix
 
-// dbServiceName çekirdek veritabanı havuzunun container'daki adıdır.
+// dbServiceName is the core database pool's name in the container.
 const dbServiceName = "core.db"
 
-// eventBusServiceName olay otobüsünün konteynerdeki adı.
+// eventBusServiceName is the event bus's name in the container.
 const eventBusServiceName = "core.eventbus"
 
-// linkServiceName Module Links servisinin container'daki adıdır.
+// linkServiceName is the Module Links service's name in the container.
 const linkServiceName = "core.link"
 
-// codeLinkDefine link tanımının açılışta bildirilemediğini raporlar.
+// codeLinkDefine reports that a link definition could not be declared at
+// startup.
 const codeLinkDefine = "payment_module_link_define_failed"
 
-// Hata kodları.
+// Error codes.
 const (
 	codeSetupFailed      = "payment_module_setup_failed"
 	codeProviderRegister = "payment_module_provider_register_failed"
@@ -130,8 +134,8 @@ const (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
-// migrationsRoot gömülü dosyaların "migrations/" öneki soyulmuş hâlidir:
-// db.Migrate kaynağı kökten okur.
+// migrationsRoot is the embedded files with the "migrations/" prefix stripped:
+// db.Migrate reads the source from the root.
 var migrationsRoot = mustSub(migrationFiles, "migrations")
 
 // Module is the payment module as the core sees it.
@@ -146,21 +150,22 @@ type Module struct {
 	personal *service.PersonalData
 }
 
-// Çekirdek sözleşmesinin karşılandığı derleme zamanında sabitlenir.
+// That the core's contract is satisfied is pinned down at compile time.
 var _ module.Module = (*Module)(nil)
 
-// Belgeyi anlatabildiği de derleme zamanında sabitlenir.
+// That it can describe itself in the document is pinned down at compile time
+// too.
 //
-// [openapi.Describer] OPSİYONEL bir arayüzdür ve kompozisyon kökü onu TİP
-// İDDİASIYLA arar; metot adı ya da imzası kayarsa hiçbir şey derlemede
-// kırılmaz, yalnızca ödemenin uçları belgeden sessizce düşerdi. Bu satır o
-// sessizliği kapatır.
+// [openapi.Describer] is an OPTIONAL interface and the composition root looks
+// for it with a TYPE ASSERTION; if the method's name or signature drifted,
+// nothing would break at compile time, the payment endpoints would only drop
+// out of the document silently. This line closes that silence.
 var _ openapi.Describer = (*Module)(nil)
 
-// New kaydedilmeye hazır bir payment modülü üretir.
+// New produces a payment module ready to be registered.
 //
-// Bağımlılıklar burada değil Register sırasında çözülür: container o ana kadar
-// çekirdek servisleri kurmuş olmayabilir.
+// Dependencies are resolved during Register, not here: until that moment the
+// container may not have set up the core services.
 func New(opts ...Options) *Module {
 	m := &Module{}
 	if len(opts) > 0 {
@@ -199,37 +204,40 @@ type Options struct {
 	// one has to be in OfflineMethods.
 	OfflineWaitDays map[string]int
 
-	// PersonBoundTenders bir KİŞİNİN bakiyesini harcayan iki sağlayıcının —
-	// mağaza kredisi (ADR 0152) ve sadakat puanı (ADR 0165) — kaydedilip
-	// kaydedilmeyeceğidir.
+	// PersonBoundTenders is whether the two providers that spend a PERSON's
+	// balance — store credit (ADR 0152) and loyalty points (ADR 0165) — are
+	// registered.
 	//
-	// # Neden kapatılabilir bir şey, ve neden TEK ayar
+	// # Why it is something that can be turned off, and why it is ONE setting
 	//
-	// Çünkü harcanan bakiye BİR KİŞİNİN ve o kişinin kimliği sepetin müşteri
-	// alanından geliyor. ADR 0125'ten beri müşteri adlandıran bir sepet gövdesi
-	// KANITLANMAK zorunda — ama bir kurulum eski davranışa
-	// (STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM) dönebiliyor ve orada iddia
-	// sorgulanmıyor. O kurulumda bu tender'lar, bir müşterinin adını yazan
-	// herkesin onun bakiyesini harcaması demek olurdu.
+	// Because the balance being spent is A PERSON's, and that person's identity
+	// comes from the cart's customer field. Since ADR 0125 a cart body that names
+	// a customer has to be PROVEN — but an installation can return to the old
+	// behavior (STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM), and there the claim
+	// is not questioned. In that installation these tenders would mean that
+	// anyone who writes a customer's name could spend that customer's balance.
 	//
-	// Bu yüzden birleşim YAPILANDIRILAMIYOR: kurulum kök, iddiaya güvenen bir
-	// kurulumda ikisini de HİÇ KAYDETMİYOR. Gerekçe krediye ya da puana değil
-	// KİŞİYE ait olduğu için ayar tektir; iki ayar, aynı güvenlik kararının iki
-	// kopyası olurdu. Ayarı burada tutmak, modülün yapılandırmayı okumasını
-	// gerektirmeden (İlke 2.4) o kararı tek bir yerde bırakıyor.
+	// That is why the combination CANNOT BE CONFIGURED: the composition root
+	// registers NEITHER of them in an installation that trusts the claim.
+	// Because the reason belongs to the PERSON, not to the credit or the points,
+	// the setting is a single one; two settings would be two copies of the same
+	// security decision. Keeping the setting here leaves that decision in one
+	// place without requiring the module to read configuration (Principle
+	// 2.4).
 	PersonBoundTenders bool
 
-	// LoyaltyEarnBasisPoints tahsil edilen paranın her minor unit'inin kaç puan
-	// kazandırdığıdır, on binde olarak (ADR 0164).
+	// LoyaltyEarnBasisPoints is how many points each minor unit of captured
+	// money earns, in basis points (ADR 0164).
 	//
-	// SIFIR kazanmayı KAPATIR ve varsayılan odur: defter var, içine hiçbir şey
-	// yazılmaz, okuma sıfır döner. Güvenli taraf o, çünkü kimsenin istemediği
-	// bir puan programı mağazanın vermediği bir söz demek.
+	// ZERO TURNS earning OFF, and it is the default: the ledger exists, nothing
+	// is written into it, and a read returns zero. That is the safe side,
+	// because a points program nobody asked for is a promise the shop did not
+	// make.
 	//
-	// Tavan minor unit başına bir puandır ve aşan bir değer kuruluşta REDDEDİLİR
-	// (bkz. [service.MaxLoyaltyEarnBasisPoints]). Ayarı burada tutmak, modülün
-	// yapılandırmayı okumasını gerektirmeden (İlke 2.4) oranı tek bir yerde
-	// bırakıyor.
+	// The ceiling is one point per minor unit, and a value above it is REJECTED
+	// at setup (see [service.MaxLoyaltyEarnBasisPoints]). Keeping the setting
+	// here leaves the rate in one place without requiring the module to read
+	// configuration (Principle 2.4).
 	LoyaltyEarnBasisPoints int64
 
 	// GiftCardValidityDays is how many days a gift card pays for when nobody
@@ -238,20 +246,20 @@ type Options struct {
 	GiftCardValidityDays int
 }
 
-// Name modülün benzersiz adını döner.
+// Name returns the module's unique name.
 func (m *Module) Name() string { return ModuleName }
 
-// Migrations modülün migration dosyalarını döner.
+// Migrations returns the module's migration files.
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
-// Register servisi, modüller arası yüzeyi, sağlayıcı kaydını ve Query
-// sağlayıcısını container'a kaydeder.
+// Register registers the service, the cross-module surface, the provider
+// registry and the Query provider with the container.
 //
-// Yalnızca ÇEKİRDEK servisler çözülür; başka modüllerin servisleri bu aşamada
-// henüz kayıtlı olmayabilir (bkz. module.Module belgesi). core.db modüller
-// ayağa kalkmadan önce main.go'da hazır değer olarak kaydedildiği için burada
-// çözülmesi güvenlidir ve eksikliği modülün hiç çalışamayacağı bir kurulum
-// hatasıdır — sessizce ertelenmez.
+// Only CORE services are resolved; other modules' services may not be
+// registered yet at this stage (see the module.Module documentation). Because
+// core.db is registered in main.go as a ready value before the modules come
+// up, resolving it here is safe, and its absence is a setup error that makes
+// the module unable to run at all — it is not silently deferred.
 //
 // The manual provider ([manual.Provider]) is registered here when
 // [Options.ManualProvider] asks for it. It uses the same repository but writes
@@ -261,24 +269,24 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	pool, err := container.Resolve[*db.Pool](c, dbServiceName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü veritabanı havuzunu çözemedi (%q)", ModuleName, dbServiceName)
+			"the %s module could not resolve the database pool (%q)", ModuleName, dbServiceName)
 	}
 
 	links, err := container.Resolve[link.LinkService](c, linkServiceName)
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s modülü link servisini çözemedi (%q)", ModuleName, linkServiceName)
+			"the %s module could not resolve the link service (%q)", ModuleName, linkServiceName)
 	}
 
-	// Link tanımları BURADA bildirilir: şema tanımın yanında durur ve her
-	// açılışta idempotent olarak doğrulanır (ADR 0005). Bir tanım YALNIZCA BİR
-	// KEZ bildirilebilir, o yüzden order_payment'ı sipariş modülü değil bu
-	// modül bildiriyor — bağın taşıdığı kaydı yazan taraf burası (bkz.
-	// [service.LinkOrderPayment]).
+	// The link definitions are declared HERE: the schema stays next to the
+	// definition and is verified idempotently at every startup (ADR 0005). A
+	// definition can be declared ONLY ONCE, so order_payment is declared by this
+	// module rather than the order module — this is the side that writes the
+	// record the connection carries (see [service.LinkOrderPayment]).
 	for _, def := range service.Definitions() {
 		if err := links.Define(ctx, def); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), codeLinkDefine,
-				"%q link tanımı bildirilemedi", def.Name)
+				"the %q link definition could not be declared", def.Name)
 		}
 	}
 
@@ -300,7 +308,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 			"the %s module could not resolve the event bus as a subscriber (%q)", ModuleName, eventBusServiceName)
 	}
 
-	log := slog.Default().With("modul", ModuleName)
+	log := slog.Default().With("module", ModuleName)
 	repo := repository.New(pool.Pool())
 
 	providers := service.NewProviderRegistry()
@@ -310,16 +318,16 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 				"the %s module could not register the manual provider", ModuleName)
 		}
 	}
-	// Mağaza kredisi ve sadakat puanı da birer ödeme yöntemi ve kutudan çıkıyor
-	// (ADR 0152, ADR 0165): eklenti gerektirmiyorlar, çünkü harcadıkları bakiye
-	// bu modülün kendi defterlerinde. Kredisi ya da puanı olmayan bir kurulumda
-	// hiçbir şey değişmiyor — sağlayıcı kayıtlı ama bakiyesi sıfır olan kimse
-	// onunla ödeyemiyor.
+	// Store credit and loyalty points are payment methods too, and they come in
+	// the box (ADR 0152, ADR 0165): they need no plugin, because the balance they
+	// spend is in this module's own ledgers. In an installation with no credit
+	// or points nothing changes — the provider is registered, but nobody whose
+	// balance is zero can pay with it.
 	//
-	// KAYDEDİLMEDİKLERİ hâl ise bir güvenlik kararı ve gerekçesi
-	// [Options.PersonBoundTenders] üzerinde: müşteri iddiasına kanıtsız güvenen
-	// bir kurulumda bu sağlayıcılar başkasının bakiyesini harcatırdı, o yüzden
-	// birleşim yapılandırılamıyor.
+	// The case where they are NOT REGISTERED is a security decision, and its
+	// reason is on [Options.PersonBoundTenders]: in an installation that trusts
+	// the customer claim without proof these providers would let someone spend
+	// another person's balance, so the combination cannot be configured.
 	// A gift card is registered in every installation (ADR 0208). It is not
 	// person-bound: its owner is whoever presents the code, so the claim the two
 	// tenders above depend on plays no part in it.
@@ -330,11 +338,11 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if m.opts.PersonBoundTenders {
 		if err := providers.Register(storecredit.New(repo, log)); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
-				"%s modülü mağaza kredisi sağlayıcısını kaydedemedi", ModuleName)
+				"the %s module could not register the store credit provider", ModuleName)
 		}
 		if err := providers.Register(loyaltypoints.New(repo, log)); err != nil {
 			return errors.Wrap(err, errors.KindOf(err), codeProviderRegister,
-				"%s modülü sadakat puanı sağlayıcısını kaydedemedi", ModuleName)
+				"the %s module could not register the loyalty points provider", ModuleName)
 		}
 	}
 	// The offline methods come after the providers in the box, so a method
@@ -364,7 +372,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	})
 	if err != nil {
 		return errors.Wrap(err, errors.KindOf(err), codeSetupFailed,
-			"%s servisi kurulamadı", ModuleName)
+			"the %s service could not be set up", ModuleName)
 	}
 
 	if err := c.Provide(ServiceName, svc); err != nil {
@@ -387,8 +395,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := c.Provide(ProvidersName, providers); err != nil {
 		return err
 	}
-	// Sağlayıcı adı "<entity>.query" biçimindedir; Query onu bu adla arar ve
-	// Entity() ile adın örtüştüğünü doğrular (ADR 0004).
+	// The provider's name has the form "<entity>.query"; Query looks it up under
+	// that name and verifies with Entity() that the name matches (ADR 0004).
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
 		return err
 	}
@@ -398,61 +406,65 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	m.personal = service.NewPersonalData(repo, log)
 	m.handler = api.New(svc).WithIdentity(storefrontIdentity(c, log))
 
-	log.DebugContext(ctx, "payment modülü kaydedildi",
-		"servis", ServiceName,
+	log.DebugContext(ctx, "payment module registered",
+		"service", ServiceName,
 		"interop", InteropName,
-		"saglayicilar", providers.IDs(),
+		"providers", providers.IDs(),
 		"query", ProviderName,
 	)
 	return nil
 }
 
-// Routes modülün store ve admin uçlarını router'a bağlar.
+// Routes mounts the module's store and admin endpoints on the router.
 //
-// Register çalışmadıysa hiçbir uç bağlanmaz: servisi olmayan bir handler'ın
-// ilk istekte panik üretmesindense ucun hiç var olmaması yeğdir.
+// If Register did not run, no endpoint is mounted: rather than a handler
+// without a service panicking on the first request, it is better for the
+// endpoint not to exist at all.
 func (m *Module) Routes(r chi.Router) {
 	if m.handler == nil {
-		slog.Default().Warn("payment modülü Register edilmeden Routes çağrıldı, route bağlanmadı")
+		slog.Default().Warn("Routes was called on the payment module without Register, no route was mounted")
 		return
 	}
 	m.handler.Routes(r)
 }
 
-// Describe modülün store ve admin uçlarını OpenAPI belgesine işler.
+// Describe writes the module's store and admin endpoints into the OpenAPI
+// document.
 //
-// Anlatımın kendisi [api.Describe]'dedir: gövde şemaları o paketin dışa kapalı
-// DTO'larından türetilir ve tipleri yalnızca belge uğruna dışa açmak modülün
-// yüzeyini genişletirdi. Hangi uçların anlatılmadığı ve NEDEN anlatılmadığı da
-// orada yazılıdır.
+// The description itself lives in [api.Describe]: the body schemas are derived
+// from that package's unexported DTOs, and exporting those types only for the
+// sake of the document would widen the module's surface. Which endpoints are
+// not described and WHY they are not described is written there too.
 //
-// [Module.Routes]'un tersine Register kontrolü YOKTUR ve gerekmez: şema
-// tiplerden gelir, servisten değil. Kontrol koymak, kurulmamış bir modülün
-// belgesini de sessizce boşaltırdı.
+// Unlike [Module.Routes] there is NO Register check, and none is needed: the
+// schema comes from the types, not from the service. Putting a check there
+// would silently empty the document of an unregistered module too.
 func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 
-// Service modülün servisini döner; Register çağrılmadıysa nil'dir.
+// Service returns the module's service; it is nil if Register was not called.
 //
-// Testler ve gömülü kullanım içindir; normal akışta servis container'dan
-// [ServiceName] adıyla çözülür.
+// It is meant for tests and embedded use; in the normal flow the service is
+// resolved from the container under the name [ServiceName].
 func (m *Module) Service() *service.Service { return m.svc }
 
-// Providers modülün sağlayıcı kaydını döner; Register çağrılmadıysa nil'dir.
+// Providers returns the module's provider registry; it is nil if Register was
+// not called.
 //
-// Gömen uygulama kendi sağlayıcısını buraya ekleyebilir; normal akışta kayıt
-// container'dan [ProvidersName] adıyla çözülür.
+// The embedding application can add its own provider here; in the normal flow
+// the registry is resolved from the container under the name [ProvidersName].
 func (m *Module) Providers() *service.ProviderRegistry { return m.providers }
 
-// mustSub alt dizini açar; açılamazsa panikler.
+// mustSub opens the subdirectory; it panics if it cannot be opened.
 //
-// Panik burada güvenlidir: dizin adı derleme zamanında sabittir ve go:embed
-// dosyaların varlığını zaten derleme zamanında doğrulamıştır. Yine de sessizce
-// nil dönmek, modülün migration'sız (yani tablosuz) ayağa kalkması demek
-// olurdu; kurulum hatası açıkça patlamalıdır.
+// The panic is safe here: the directory name is constant at compile time and
+// the go:embed directive has already verified at compile time that the files
+// exist. Returning nil silently would nevertheless mean the module coming up
+// without migrations (that is, without tables); a setup error must blow up
+// openly.
 func mustSub(files embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(files, dir)
 	if err != nil {
-		panic("payment: gömülü migration dizini açılamadı: " + err.Error())
+		panic("payment: the embedded migration directory could not be opened: " + err.Error())
 	}
 	return sub
 }

@@ -18,5 +18,5 @@ import (
 func TestTheProviderIsCompliant(t *testing.T) {
 	t.Parallel()
 
-	providertest.Identity(t, &saglayici{})
+	providertest.Identity(t, &stripeProvider{})
 }

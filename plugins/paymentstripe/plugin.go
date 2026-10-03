@@ -1,30 +1,30 @@
-// Package paymentstripe gobit'e Stripe ödeme sağlayıcısı ekleyen örnek
-// eklentidir.
+// Package paymentstripe is an example plugin that adds a Stripe payment
+// provider to gobit.
 //
-// # Bu bir İSKELETTİR
+// # This is a SKELETON
 //
-// Kayıt, yapılandırma ve yaşam döngüsü TAM olarak çalışır; Stripe'ın HTTP
-// API'sine yapılacak çağrılar YAPILMAMIŞTIR. Para hareketi üreten her metod
-// açık bir "uygulanmadı" hatası döner.
+// Registration, configuration and the life cycle work IN FULL; the calls to
+// Stripe's HTTP API are NOT MADE. Every method that would move money returns
+// an explicit "not implemented" error.
 //
-// Bu bilinçlidir. Sahte "başarılı" dönen bir tahsilat metodu, iskeletin
-// kazara üretime alınması hâlinde siparişleri ödenmiş gösterirdi — yani
-// hiç ödeme almadan mal göndermek. Gürültülü bir hata, sessiz bir yalandan
-// her zaman ucuzdur.
+// That is deliberate. A capture method that returned a fake "success" would,
+// if the skeleton reached production by accident, show orders as paid — that
+// is, ship goods without ever taking a payment. A loud error is always cheaper
+// than a silent lie.
 //
-// # Eklentinin gösterdiği şey
+// # What the plugin shows
 //
-// Bu paket hiçbir commerce modülünü import ETMEZ. Sağlayıcı sözleşmesini
-// çekirdekteki [coreprovider] paketinden, kayıt noktasını ise
-// [coreplugin.Host] üzerinden alır. Yani payment modülünün kodu bu eklentiden
-// haberdar değildir ve eklenti eklemek çekirdeği DEĞİŞTİRMEZ: kurulum
-// dosyasına tek satır eklenir.
+// This package imports NO commerce module. It takes the provider contract from
+// the core's [coreprovider] package and its point of registration from
+// [coreplugin.Host]. So the payment module's code does not know this plugin
+// exists, and adding a plugin does NOT CHANGE the core: one line is added to
+// the installation's setup.
 //
-// # Kullanım
+// # Usage
 //
 //	plugins.Add(paymentstripe.New())
 //
-// ve ortamda STRIPE_API_KEY tanımlı olmalıdır.
+// and STRIPE_API_KEY has to be set in the environment.
 package paymentstripe
 
 import (
@@ -36,116 +36,119 @@ import (
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 )
 
-// Name eklentinin kayıttaki adıdır.
+// Name is the plugin's name in the registry.
 const Name = "payment-stripe"
 
-// ProviderID sağlayıcının kimliğidir.
+// ProviderID is the provider's identity.
 //
-// Bu değer ödeme oturumlarıyla birlikte veritabanına YAZILIR; değiştirmek
-// eski kayıtları çözümlenemez hâle getirir. Sürümler arası sabit kalmalıdır.
+// This value is WRITTEN to the database with the payment sessions; changing it
+// makes the old records unresolvable. It has to stay the same across releases.
 const ProviderID = "stripe"
 
-// apiKeySetting Stripe gizli anahtarının ayar ADIDIR — anahtarın kendisi
-// değil. Değer yalnızca ortamdan okunur ve hiçbir yere yazılmaz.
-const apiKeySetting = "STRIPE_API_KEY" //nolint:gosec // G101: bu bir ortam değişkeni adı, gömülü kimlik bilgisi değil
+// apiKeySetting is the setting NAME of the Stripe secret key — not the key
+// itself. The value is read only from the environment and written nowhere.
+const apiKeySetting = "STRIPE_API_KEY" //nolint:gosec // G101: an environment variable name, not an embedded credential
 
-// livePrefix canlı (test olmayan) Stripe anahtarlarının önekidir.
+// livePrefix is the prefix of live (non-test) Stripe keys.
 const livePrefix = "sk_live_"
 
-// Hata kodları.
+// Error codes.
 const (
 	codeMissingKey     = "stripe_api_key_missing"
 	codeNotImplemented = "stripe_not_implemented"
 )
 
-// Plugin Stripe eklentisidir.
+// Plugin is the Stripe plugin.
 type Plugin struct{}
 
-// New eklentiyi kurar.
+// New builds the plugin.
 func New() *Plugin { return &Plugin{} }
 
-// Name eklentinin adını döner.
+// Name returns the plugin's name.
 func (p *Plugin) Name() string { return Name }
 
-// Setup yapılandırmayı doğrular ve sağlayıcıyı kaydeder.
+// Setup validates the configuration and registers the provider.
 //
-// STRIPE_API_KEY yoksa kurulum HATA döner. Sessizce atlamak, "stripe kurulu"
-// sanılan bir mağazanın ödeme alamaması ve bunun ancak ilk müşteri denemesinde
-// görülmesi demek olurdu; yapılandırma hatası açılışta patlamalıdır.
+// Without STRIPE_API_KEY the setup returns an ERROR. Skipping silently would
+// mean a shop believed to "have Stripe" taking no payments, and that being seen
+// only at the first customer's attempt; a configuration error has to blow up at
+// startup.
 func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	key, ok := h.Setting(apiKeySetting)
 	if !ok {
 		return coreerrors.Invalid(codeMissingKey,
-			"%s eklentisi %s ayarı olmadan kurulamaz", Name, apiKeySetting)
+			"the %s plugin cannot be set up without the %s setting", Name, apiKeySetting)
 	}
 
-	// Anahtarın KENDİSİ değil, yalnızca canlı olup olmadığı loglanır.
-	h.Logger().Info("stripe sağlayıcısı kaydediliyor",
+	// Not the key ITSELF, only whether it is live, is logged.
+	h.Logger().Info("registering the stripe provider",
 		"provider_id", ProviderID,
-		"canli_anahtar", strings.HasPrefix(key, livePrefix))
+		"live_key", strings.HasPrefix(key, livePrefix))
 
-	h.RegisterPaymentProvider(&saglayici{apiKey: key})
+	h.RegisterPaymentProvider(&stripeProvider{apiKey: key})
 
 	return nil
 }
 
-// saglayici Stripe'ın [coreprovider.PaymentProvider] uygulamasıdır.
-type saglayici struct {
-	// apiKey Stripe gizli anahtarıdır. ASLA loglanmaz ve hata mesajlarına
-	// konmaz; sızarsa mağazanın tüm ödeme geçmişi ve iade yetkisi ele geçer.
+// stripeProvider is Stripe's [coreprovider.PaymentProvider] implementation.
+type stripeProvider struct {
+	// apiKey is the Stripe secret key. It is NEVER logged and never put in an
+	// error message; leaked, it hands over the shop's whole payment history and
+	// the power to refund.
 	apiKey string
 }
 
-// ID sağlayıcının kimliğini döner.
-func (s *saglayici) ID() string { return ProviderID }
+// ID returns the provider's identity.
+func (s *stripeProvider) ID() string { return ProviderID }
 
-// CreateSession Stripe'ta bir PaymentIntent açacaktır.
+// CreateSession will open a PaymentIntent at Stripe.
 //
-// İskelet: gerçek çağrı yapılmamıştır.
-func (s *saglayici) CreateSession(
+// Skeleton: the real call is not made.
+func (s *stripeProvider) CreateSession(
 	_ context.Context, _ coreprovider.CreateSessionInput,
 ) (coreprovider.Session, error) {
-	return coreprovider.Session{}, s.uygulanmadi("CreateSession")
+	return coreprovider.Session{}, s.notImplemented("CreateSession")
 }
 
-// Authorize tutarı Stripe'ta bloke edecektir.
+// Authorize will place a hold on the amount at Stripe.
 //
-// İskelet: gerçek çağrı yapılmamıştır.
-func (s *saglayici) Authorize(
+// Skeleton: the real call is not made.
+func (s *stripeProvider) Authorize(
 	_ context.Context, _ string,
 ) (coreprovider.AuthResult, error) {
-	return coreprovider.AuthResult{}, s.uygulanmadi("Authorize")
+	return coreprovider.AuthResult{}, s.notImplemented("Authorize")
 }
 
-// Capture bloke edilmiş tutarı tahsil edecektir.
+// Capture will collect an amount on hold.
 //
-// İskelet: gerçek çağrı yapılmamıştır.
-func (s *saglayici) Capture(_ context.Context, _ string, _ int64) error {
-	return s.uygulanmadi("Capture")
+// Skeleton: the real call is not made.
+func (s *stripeProvider) Capture(_ context.Context, _ string, _ int64) error {
+	return s.notImplemented("Capture")
 }
 
-// Refund tahsil edilmiş tutarı iade edecektir.
+// Refund will give back a collected amount.
 //
-// İskelet: gerçek çağrı yapılmamıştır.
-func (s *saglayici) Refund(_ context.Context, _ string, _ int64) error {
-	return s.uygulanmadi("Refund")
+// Skeleton: the real call is not made.
+func (s *stripeProvider) Refund(_ context.Context, _ string, _ int64) error {
+	return s.notImplemented("Refund")
 }
 
-// Cancel yetkilendirilmiş ama tahsil edilmemiş oturumu iptal edecektir.
+// Cancel will cancel a session that was authorized and not captured.
 //
-// İskelet: gerçek çağrı yapılmamıştır. Saga telafisi budur; gerçek uygulamada
-// İDEMPOTENT olmalı, yani zaten iptal edilmiş bir oturum için hata DEĞİL
-// başarı dönmelidir. Aksi hâlde telafi tekrar denendiğinde sonsuza dek
-// başarısız olur.
-func (s *saglayici) Cancel(_ context.Context, _ string) error {
-	return s.uygulanmadi("Cancel")
+// Skeleton: the real call is not made. This is the saga's compensation; a real
+// implementation has to be IDEMPOTENT, answering success, NOT an error, for a
+// session already canceled. Otherwise a compensation that is retried fails
+// forever.
+func (s *stripeProvider) Cancel(_ context.Context, _ string) error {
+	return s.notImplemented("Cancel")
 }
 
-// uygulanmadi iskelette gerçeklenmemiş bir metod için hata üretir.
+// notImplemented builds the error for a method the skeleton does not
+// implement.
 //
-// [coreerrors.KindUnavailable] seçilmiştir: bu bir istemci hatası (4xx) değil,
-// sunucu tarafında eksik bir yetenektir ve 503 ile raporlanır.
-func (s *saglayici) uygulanmadi(metod string) error {
+// [coreerrors.KindUnavailable] is chosen: this is not a client error (4xx) but
+// a capability missing on the server's side, and it is reported as 503.
+func (s *stripeProvider) notImplemented(method string) error {
 	return coreerrors.Unavailable(codeNotImplemented,
-		"%s sağlayıcısının %s metodu bu iskelette uygulanmadı", ProviderID, metod)
+		"the %s provider's %s method is not implemented in this skeleton", ProviderID, method)
 }

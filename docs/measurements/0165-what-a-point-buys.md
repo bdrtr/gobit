@@ -479,12 +479,12 @@ it, and "not recorded" where neither ran it.
 | 15 | the query excludes store credit too (`NOT IN ($2, 'store_credit')`) | `TestCreditThatIsSpentStillEarns` | survived every lane: "credit that is spent still earns" had no witness |
 | 16 | the earn path stops writing reverses | `TestABalanceBelowZeroIsAState` | red |
 | 17 | 000006's sign CHECK admits any sign | `TestTheLedgerRefusesASignThatContradictsItsKind`, exactly the five sign cases | red |
-| 18 | 000006's down keeps `payment_loyalty_sessions` | `TestMigrationVeriVarkenGeriAlinabilir` | red |
+| 18 | 000006's down keeps `payment_loyalty_sessions` | `TestTheMigrationRollsBackWithDataPresent` | red |
 | 19 | `earnLoyaltyPoints` stops calling its door (the named door inert) | `TestEveryPaymentLedgerWriteEntersThroughANamedDoor` | survived: the tender's calls satisfied the consumer count |
 | 20 | `IssueCredit` stops calling its door | same | survived, same reason |
 | 21 | `LoyaltyTenderID` renamed | same | not recorded |
 | 22 | a third writer: `IssueCredit` also appends a point row | same | not recorded |
-| 23 | the history endpoint loses its unit sentence | `TestTutarTasiyanUclarBirimiYaziyor`, that endpoint | survived: `points` was outside the audit's field population |
+| 23 | the history endpoint loses its unit sentence | `TestAmountCarryingEndpointsStateTheUnit`, that endpoint | survived: `points` was outside the audit's field population |
 | 24 | the composition root passes the trust setting to `PersonBoundTenders` without its negation | both smoke processes' provider-list subtests | survived every lane: unit and arch, and the app, e2e and payment integration packages, all green |
 | 25 | the e2e harness earns at half the ceiling | `TestPointsPayForAnOrder`, at its first assertion | the guard compared the rate with itself, and the test failed later, at the balance, with a message about the wrong thing |
 

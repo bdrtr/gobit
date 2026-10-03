@@ -13,21 +13,23 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/repository/paymentdb"
 )
 
-// Bu dosya pgtype <-> domain modeli dönüşümlerinin ve sürücü hatası
-// sınıflandırmasının TEK yeridir.
+// This file is the ONLY place for the pgtype <-> domain model conversions and
+// for the classification of driver errors.
 //
-// Sınırın burada olması bilinçlidir: sürücüye özgü tipler (pgtype.Timestamptz,
-// jsonb için []byte, *pgconn.PgError) repository'nin dışına ÇIKMAZ. Servis ve
-// API katmanı time.Time, json.RawMessage ve core/errors tipli hatalarını görür.
+// The boundary being here is deliberate: driver-specific types
+// (pgtype.Timestamptz, []byte for jsonb, *pgconn.PgError) do NOT LEAVE the
+// repository. The service and API layers see time.Time, json.RawMessage and
+// core/errors typed errors.
 
-// Hata kodları. Çağıran taraf errors.CodeOf ile bunlara bakabilir; API katmanı
-// da aynı kodları istemciye geçirir.
+// Error codes. The caller can look at these with errors.CodeOf; the API layer
+// passes the same codes on to the client as well.
 const (
 	codeCollectionNotFound = "payment_collection_not_found"
 	codeSessionNotFound    = "payment_session_not_found"
-	// codeStoreCreditSessionNotFound mağaza-kredisi sağlayıcısının kendi
-	// defterinde bulunmayan oturum içindir; modülün oturumundan AYRI bir kayıttır
-	// ve karışmaları hangi defterin konuştuğunu belirsizleştirirdi (ADR 0152).
+	// codeStoreCreditSessionNotFound is for a session missing from the
+	// store-credit provider's own ledger; that is a SEPARATE record from the
+	// module's session, and mixing them up would blur which ledger is speaking
+	// (ADR 0152).
 	codeStoreCreditSessionNotFound = "payment_store_credit_session_not_found"
 	// codeLoyaltySessionNotFound is the same distinction for the loyalty-points
 	// provider's own sessions (ADR 0165).
@@ -48,45 +50,49 @@ const (
 	codeConcurrentUpdate       = "payment_concurrent_update"
 )
 
-// Kısıt ve indeks adları; sürücü hatasını anlamlı bir tipli hataya çevirmek
-// için kullanılır. Adlar migration'daki adlarla BİREBİR aynıdır.
+// Constraint and index names; they are used to turn a driver error into a
+// meaningful typed error. The names are EXACTLY the names in the migration.
 const (
 	constraintSessionIdempotencyUniq = "payment_sessions_provider_idempotency_uniq"
 	constraintManualIdempotencyUniq  = "payment_manual_sessions_idempotency_uniq"
 	constraintPaymentSessionUniq     = "payments_session_uniq"
-	// constraintCurrencySuffix para birimi biçimini denetleyen tüm CHECK
-	// kısıtlarının ortak sonekidir; tek tek saymak yerine sonekle tanınırlar.
+	// constraintCurrencySuffix is the common suffix of every CHECK constraint
+	// that checks the currency format; they are recognized by the suffix
+	// instead of being listed one by one.
 	constraintCurrencySuffix = "_currency_format"
-	// constraintStatusSuffix durum değerini denetleyen CHECK kısıtlarının
-	// ortak sonekidir.
+	// constraintStatusSuffix is the common suffix of the CHECK constraints that
+	// check the status value.
 	constraintStatusSuffix = "_status_valid"
-	// constraintPositiveSuffix pozitif tutar şartı koyan CHECK kısıtlarının
-	// ortak sonekidir.
+	// constraintPositiveSuffix is the common suffix of the CHECK constraints
+	// that require a positive amount.
 	constraintPositiveSuffix = "_amount_positive"
 )
 
-// Tutar kısıtlarının ortak açıklamaları.
+// The shared descriptions of the amount constraints.
 const (
-	// msgAuthorizedNonneg bloke tutarın negatife düşemeyeceğini bildirir.
-	msgAuthorizedNonneg = "yetkilendirilen tutar negatif olamaz"
-	// msgCapturedNonneg tahsil edilen tutarın negatife düşemeyeceğini bildirir.
-	msgCapturedNonneg = "tahsil edilen tutar negatif olamaz"
-	// msgRefundedNonneg iade edilen tutarın negatife düşemeyeceğini bildirir.
-	msgRefundedNonneg = "iade edilen tutar negatif olamaz"
-	// msgRefundLeCapture iadenin tahsilatı aşamayacağını bildirir.
-	msgRefundLeCapture = "iade edilen tutar tahsil edilen tutarı aşamaz"
+	// msgAuthorizedNonneg reports that the held amount cannot drop below zero.
+	msgAuthorizedNonneg = "the authorized amount cannot be negative"
+	// msgCapturedNonneg reports that the captured amount cannot drop below
+	// zero.
+	msgCapturedNonneg = "the captured amount cannot be negative"
+	// msgRefundedNonneg reports that the refunded amount cannot drop below
+	// zero.
+	msgRefundedNonneg = "the refunded amount cannot be negative"
+	// msgRefundLeCapture reports that a refund cannot exceed the capture.
+	msgRefundLeCapture = "the refunded amount cannot exceed the captured amount"
 )
 
-// tutarKisitlari tutarlar arası tutarlılığı denetleyen CHECK kısıtlarıdır.
-// İhlalleri istemcinin düzeltebileceği ÇAKIŞMA durumlarıdır: olmayan parayı
-// iade etmek ya da bloke edilenden fazlasını çekmek gibi.
-var tutarKisitlari = map[string]string{
+// amountConstraints are the CHECK constraints that check the consistency
+// between the amounts. Their violations are CONFLICT situations the client can
+// correct: such as refunding money that does not exist, or taking more than
+// was held.
+var amountConstraints = map[string]string{
 	"payment_collections_refund_le_capture":     msgRefundLeCapture,
-	"payment_collections_authorized_le_amount":  "yetkilendirilen tutar koleksiyon tutarını aşamaz",
-	"payment_collections_captured_le_amount":    "tahsil edilen tutar koleksiyon tutarını aşamaz",
-	"payment_sessions_authorized_le_amount":     "yetkilendirilen tutar oturum tutarını aşamaz",
-	"payments_refund_le_amount":                 "iade edilen tutar tahsilat tutarını aşamaz",
-	"payment_manual_sessions_captured_le_auth":  "tahsil edilen tutar yetkilendirilen tutarı aşamaz",
+	"payment_collections_authorized_le_amount":  "the authorized amount cannot exceed the collection amount",
+	"payment_collections_captured_le_amount":    "the captured amount cannot exceed the collection amount",
+	"payment_sessions_authorized_le_amount":     "the authorized amount cannot exceed the session amount",
+	"payments_refund_le_amount":                 "the refunded amount cannot exceed the capture amount",
+	"payment_manual_sessions_captured_le_auth":  "the captured amount cannot exceed the authorized amount",
 	"payment_manual_sessions_refund_le_capture": msgRefundLeCapture,
 	"payment_collections_authorized_nonneg":     msgAuthorizedNonneg,
 	"payment_collections_captured_nonneg":       msgCapturedNonneg,
@@ -98,7 +104,7 @@ var tutarKisitlari = map[string]string{
 	"payment_manual_sessions_refunded_nonneg":   msgRefundedNonneg,
 }
 
-// PostgreSQL SQLSTATE kodları.
+// PostgreSQL SQLSTATE codes.
 const (
 	sqlStateUniqueViolation     = "23505"
 	sqlStateForeignKeyViolation = "23503"
@@ -106,33 +112,35 @@ const (
 	sqlStateDeadlockDetected    = "40P01"
 )
 
-// collectionNotFound eksik koleksiyon için ortak hatayı üretir.
+// collectionNotFound builds the shared error for a missing collection.
 func collectionNotFound(id string) error {
-	return errors.NotFound(codeCollectionNotFound, "ödeme koleksiyonu bulunamadı: %s", id)
+	return errors.NotFound(codeCollectionNotFound, "payment collection not found: %s", id)
 }
 
-// sessionNotFound eksik oturum için ortak hatayı üretir.
+// sessionNotFound builds the shared error for a missing session.
 func sessionNotFound(id string) error {
-	return errors.NotFound(codeSessionNotFound, "ödeme oturumu bulunamadı: %s", id)
+	return errors.NotFound(codeSessionNotFound, "payment session not found: %s", id)
 }
 
-// paymentNotFound eksik tahsilat için ortak hatayı üretir.
+// paymentNotFound builds the shared error for a missing capture.
 func paymentNotFound(id string) error {
-	return errors.NotFound(codePaymentNotFound, "tahsilat bulunamadı: %s", id)
+	return errors.NotFound(codePaymentNotFound, "capture not found: %s", id)
 }
 
-// manualSessionNotFound eksik sağlayıcı oturumu için ortak hatayı üretir.
+// manualSessionNotFound builds the shared error for a missing provider
+// session.
 func manualSessionNotFound(id string) error {
 	return errors.NotFound(codeManualSessionNotFound,
-		"manuel sağlayıcı oturumu bulunamadı: %s", id)
+		"manual provider session not found: %s", id)
 }
 
-// classify sürücü hatasını tipli hataya çevirir.
+// classify turns a driver error into a typed error.
 //
-// Benzersizlik, foreign key ve CHECK ihlalleri istemcinin düzeltebileceği
-// durumlardır; sınıflandırılmazsa hepsi 500 olarak görünür ve gerçek sebep
-// yalnızca logda kalırdı. Kilitlenme (deadlock) de aynı sebeple ayrı ele
-// alınır: işlemin kendisinde bir yanlışlık yoktur, YENİDEN DENENEBİLİR.
+// Uniqueness, foreign key and CHECK violations are situations the client can
+// correct; if they were not classified, they would all show up as 500 and the
+// real cause would stay only in the log. A deadlock is handled separately for
+// the same reason: there is nothing wrong with the transaction itself, it CAN
+// BE RETRIED.
 func classify(err error, code, format string, a ...any) error {
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) {
@@ -144,68 +152,71 @@ func classify(err error, code, format string, a ...any) error {
 		switch pgErr.ConstraintName {
 		case constraintSessionIdempotencyUniq, constraintManualIdempotencyUniq:
 			return errors.Wrap(err, errors.KindConflict, codeSessionExists,
-				"bu idempotency anahtarıyla açılmış bir oturum zaten var")
+				"a session opened with this idempotency key already exists")
 		case constraintPaymentSessionUniq:
 			return errors.Wrap(err, errors.KindConflict, codePaymentExists,
-				"bu oturumdan zaten bir tahsilat çıkmış")
+				"a capture has already come out of this session")
 		}
 	case sqlStateForeignKeyViolation:
 		return foreignKeyError(err, pgErr.ConstraintName)
 	case sqlStateCheckViolation:
 		return checkError(err, pgErr.ConstraintName, code, format, a...)
 	case sqlStateDeadlockDetected:
-		// Kilit sırası tekleştirildiği için normal akışlarda oluşmaz; burası
-		// son savunmadır. İşlem geri alınmıştır, aynı istek olduğu gibi
-		// yeniden denenebilir — bu yüzden Internal (500) değil Conflict.
+		// Because the lock order is made uniform, this does not happen in the
+		// normal flows; this is the last line of defense. The transaction has
+		// been rolled back and the same request can be retried as it is —
+		// hence Conflict, not Internal (500).
 		return errors.Wrap(err, errors.KindConflict, codeConcurrentUpdate,
-			"eşzamanlı bir işlemle çakışıldı; istek yeniden denenebilir")
+			"the request collided with a concurrent transaction; it can be retried")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
 
-// foreignKeyError foreign key ihlalini eksik üst kayıt hatasına çevirir.
+// foreignKeyError turns a foreign key violation into a missing-parent-record
+// error.
 //
-// Hangi üst kaydın eksik olduğunu kısıt adı söyler: oturum ve tahsilat
-// satırları koleksiyona, tahsilat ayrıca oturuma, iade ise tahsilata bağlıdır.
+// The constraint name tells which parent record is missing: session and
+// capture rows belong to a collection, a capture also belongs to a session,
+// and a refund belongs to a capture.
 func foreignKeyError(err error, constraint string) error {
 	switch {
 	case strings.Contains(constraint, "payment_session_id"):
 		return errors.Wrap(err, errors.KindNotFound, codeSessionNotFound,
-			"ödeme oturumu bulunamadı")
+			"payment session not found")
 	case strings.Contains(constraint, "payment_collection_id"):
 		return errors.Wrap(err, errors.KindNotFound, codeCollectionNotFound,
-			"ödeme koleksiyonu bulunamadı")
+			"payment collection not found")
 	case strings.Contains(constraint, "payment_id"):
 		return errors.Wrap(err, errors.KindNotFound, codePaymentNotFound,
-			"tahsilat bulunamadı")
+			"capture not found")
 	default:
 		return errors.Wrap(err, errors.KindNotFound, codeCollectionNotFound,
-			"bağlı kayıt bulunamadı")
+			"the linked record was not found")
 	}
 }
 
-// checkError CHECK kısıtı ihlalini anlamlı bir tipli hataya çevirir.
+// checkError turns a CHECK constraint violation into a meaningful typed error.
 func checkError(err error, constraint, code, format string, a ...any) error {
-	if message, ok := tutarKisitlari[constraint]; ok {
+	if message, ok := amountConstraints[constraint]; ok {
 		return errors.Wrap(err, errors.KindConflict, codeInconsistentAmounts, "%s", message)
 	}
 	switch {
 	case strings.HasSuffix(constraint, constraintPositiveSuffix):
 		return errors.Wrap(err, errors.KindInvalid, codeAmountOutOfRange,
-			"tutar pozitif olmalı")
+			"the amount has to be positive")
 	case strings.HasSuffix(constraint, constraintCurrencySuffix):
 		return errors.Wrap(err, errors.KindInvalid, codeCurrencyInvalid,
 			"the currency has to be a three-letter ISO 4217 code")
 	case strings.HasSuffix(constraint, constraintStatusSuffix):
 		return errors.Wrap(err, errors.KindInvalid, codeStatusInvalid,
-			"tanımsız durum değeri")
+			"undefined status value")
 	}
 	return errors.Wrap(err, errors.KindInternal, code, format, a...)
 }
 
-// --- çeviri ------------------------------------------------------------------
+// --- conversion --------------------------------------------------------------
 
-// toTime pgtype damgasını UTC time.Time'a çevirir.
+// toTime converts a pgtype timestamp into a UTC time.Time.
 func toTime(ts pgtype.Timestamptz) time.Time {
 	if !ts.Valid {
 		return time.Time{}
@@ -213,7 +224,7 @@ func toTime(ts pgtype.Timestamptz) time.Time {
 	return ts.Time.UTC()
 }
 
-// toTimePtr nullable damgayı *time.Time'a çevirir.
+// toTimePtr converts a nullable timestamp into a *time.Time.
 func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	if !ts.Valid {
 		return nil
@@ -222,7 +233,7 @@ func toTimePtr(ts pgtype.Timestamptz) *time.Time {
 	return &t
 }
 
-// fromTime time.Time'ı pgtype damgasına çevirir.
+// fromTime converts a time.Time into a pgtype timestamp.
 func fromTime(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
 }
@@ -235,7 +246,7 @@ func fromTimePtr(t *time.Time) pgtype.Timestamptz {
 	return fromTime(*t)
 }
 
-// nullString boş dizeyi SQL NULL'a çevirir.
+// nullString turns an empty string into SQL NULL.
 func nullString(s string) *string {
 	if s == "" {
 		return nil
@@ -243,7 +254,7 @@ func nullString(s string) *string {
 	return &s
 }
 
-// stringValue SQL NULL'ı boş dizeye çevirir.
+// stringValue turns SQL NULL into an empty string.
 func stringValue(p *string) string {
 	if p == nil {
 		return ""
@@ -251,10 +262,11 @@ func stringValue(p *string) string {
 	return *p
 }
 
-// jsonOrEmpty boş bir JSON gövdesini '{}' ile doldurur.
+// jsonOrEmpty fills an empty JSON body with '{}'.
 //
-// Sütun NOT NULL'dur ve "veri yok" ile "veri boş" ayrımı bu modülde bir şey
-// ifade etmez; sağlayıcı verisi olmayan bir oturum boş nesne taşır.
+// The column is NOT NULL and the distinction between "no data" and "empty
+// data" means nothing in this module; a session without provider data carries
+// an empty object.
 func jsonOrEmpty(raw []byte) []byte {
 	if len(raw) == 0 {
 		return []byte("{}")
@@ -262,7 +274,7 @@ func jsonOrEmpty(raw []byte) []byte {
 	return raw
 }
 
-// toJSONRaw jsonb sütununu ham JSON'a çevirir. Boş sütun nil döner.
+// toJSONRaw converts a jsonb column into raw JSON. An empty column returns nil.
 func toJSONRaw(raw []byte) json.RawMessage {
 	if len(raw) == 0 || string(raw) == "null" || string(raw) == "{}" {
 		return nil
@@ -272,10 +284,11 @@ func toJSONRaw(raw []byte) json.RawMessage {
 	return out
 }
 
-// toJSONMap jsonb sütununu haritaya çevirir.
+// toJSONMap converts a jsonb column into a map.
 //
-// Boş ya da JSON null değer nil harita döner; böylece API yanıtında
-// "metadata": null yerine alan hiç görünmez (omitempty).
+// An empty or JSON null value returns a nil map; that way, instead of
+// "metadata": null, the field does not appear in the API response at all
+// (omitempty).
 func toJSONMap(raw []byte) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -283,7 +296,7 @@ func toJSONMap(raw []byte) (map[string]any, error) {
 	var out map[string]any
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, codeDataInvalid,
-			"JSON alanı çözümlenemedi")
+			"the JSON field could not be decoded")
 	}
 	if len(out) == 0 {
 		return nil, nil
@@ -291,7 +304,7 @@ func toJSONMap(raw []byte) (map[string]any, error) {
 	return out, nil
 }
 
-// fromJSONMap haritayı jsonb sütununa yazılacak bayta çevirir.
+// fromJSONMap converts a map into the bytes to write to a jsonb column.
 func fromJSONMap(m map[string]any) ([]byte, error) {
 	if len(m) == 0 {
 		return []byte("{}"), nil
@@ -299,12 +312,12 @@ func fromJSONMap(m map[string]any) ([]byte, error) {
 	raw, err := json.Marshal(m)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInvalid, codeDataInvalid,
-			"JSON alanı kodlanamadı")
+			"the JSON field could not be encoded")
 	}
 	return raw, nil
 }
 
-// toCollection veritabanı satırını domain modeline çevirir.
+// toCollection converts a database row into the domain model.
 func toCollection(row paymentdb.PaymentCollection) (models.PaymentCollection, error) {
 	meta, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -326,7 +339,7 @@ func toCollection(row paymentdb.PaymentCollection) (models.PaymentCollection, er
 	}, nil
 }
 
-// toSession veritabanı satırını domain modeline çevirir.
+// toSession converts a database row into the domain model.
 func toSession(row paymentdb.PaymentSession) models.PaymentSession {
 	return models.PaymentSession{
 		ID:                  row.ID,
@@ -345,7 +358,7 @@ func toSession(row paymentdb.PaymentSession) models.PaymentSession {
 	}
 }
 
-// toPayment veritabanı satırını domain modeline çevirir.
+// toPayment converts a database row into the domain model.
 func toPayment(row paymentdb.Payment) models.Payment {
 	return models.Payment{
 		ID:                  row.ID,
@@ -360,7 +373,7 @@ func toPayment(row paymentdb.Payment) models.Payment {
 	}
 }
 
-// toRefund veritabanı satırını domain modeline çevirir.
+// toRefund converts a database row into the domain model.
 func toRefund(row paymentdb.Refund) models.Refund {
 	return models.Refund{
 		ID:        row.ID,
@@ -373,7 +386,7 @@ func toRefund(row paymentdb.Refund) models.Refund {
 	}
 }
 
-// toManualSession veritabanı satırını sağlayıcının defter modeline çevirir.
+// toManualSession converts a database row into the provider's ledger model.
 func toManualSession(row paymentdb.PaymentManualSession) models.ManualSession {
 	return models.ManualSession{
 		ID:               row.ID,
@@ -392,11 +405,11 @@ func toManualSession(row paymentdb.PaymentManualSession) models.ManualSession {
 	}
 }
 
-// derefText bir nullable metin kolonunu boş dizeye çevirir.
+// derefText turns a nullable text column into an empty string.
 //
-// NULL ile boş dize bu modülde AYNI anlama gelir ve şema ikincisini yazmayı
-// reddeder: "sahibi yok" tek bir biçimde saklanır, okuyan taraf da tek bir
-// biçimde okur.
+// NULL and the empty string mean the SAME thing in this module, and the schema
+// refuses to write the second: "has no owner" is stored in one form, and the
+// reading side reads it in one form too.
 func derefText(value *string) string {
 	if value == nil {
 		return ""

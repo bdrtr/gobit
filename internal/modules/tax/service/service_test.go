@@ -12,28 +12,28 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// TestCreateTaxRegionUlkeKoku kök bölge oluşturmanın mutlu yolunu doğrular.
-func TestCreateTaxRegionUlkeKoku(t *testing.T) {
+// TestCreateTaxRegionCountryRoot checks the happy path of creating a root
+// region.
+func TestCreateTaxRegionCountryRoot(t *testing.T) {
 	svc, _ := newTestService(t)
 
 	region, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{
 		CountryCode: " tr ",
-		Metadata:    map[string]any{"kaynak": "test"},
+		Metadata:    map[string]any{"source": "test"},
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "TR", region.CountryCode, "ülke kodu kırpılıp BÜYÜK harfe çevrilmeli")
+	assert.Equal(t, "TR", region.CountryCode, "the country code has to be trimmed and turned into UPPER case")
 	assert.True(t, region.IsRoot())
 	assert.Nil(t, region.ProvinceCode)
 	assert.True(t, strings.HasPrefix(region.ID, models.TaxRegionIDPrefix))
 	assert.Len(t, region.ID, len(models.TaxRegionIDPrefix)+models.IDBodyLength())
 	assert.Equal(t, testNow, region.CreatedAt)
-	assert.Equal(t, map[string]any{"kaynak": "test"}, region.Metadata)
+	assert.Equal(t, map[string]any{"source": "test"}, region.Metadata)
 }
 
-// TestCreateTaxRegionIkinciKokReddedilir ülke başına tek kök kuralını
-// doğrular.
-func TestCreateTaxRegionIkinciKokReddedilir(t *testing.T) {
+// TestCreateTaxRegionRejectsASecondRoot checks the one-root-per-country rule.
+func TestCreateTaxRegionRejectsASecondRoot(t *testing.T) {
 	svc, _ := newTestService(t)
 	_, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{CountryCode: "TR"})
 	require.NoError(t, err)
@@ -44,27 +44,27 @@ func TestCreateTaxRegionIkinciKokReddedilir(t *testing.T) {
 	assert.Equal(t, CodeRootExists, errors.CodeOf(err))
 }
 
-// TestCreateTaxRegionSaglayiciDogrulanir sağlayıcı kimliğinin bölge YAZILMADAN
-// ÖNCE kayda karşı doğrulandığını gösterir.
+// TestCreateTaxRegionValidatesTheProvider shows that the provider id is
+// validated against the registry BEFORE the region is WRITTEN.
 //
-// Doğrulanmayan bir kimliğin bedeli gecikmeli ve büyüktür: yazım hatası yazma
-// anında değil, o ülkedeki İLK sepet hesabında KindInternal (500) olarak çıkar
-// ve o ana kadar ülkedeki her sepet kapanmaz.
-func TestCreateTaxRegionSaglayiciDogrulanir(t *testing.T) {
-	t.Run("kayıtlı olmayan sağlayıcı yazılmadan reddedilir", func(t *testing.T) {
+// The cost of an id that is not validated is delayed and large: a typo shows up
+// not at write time but at the FIRST cart calculation in that country, as
+// KindInternal (500), and until then no cart in the country closes.
+func TestCreateTaxRegionValidatesTheProvider(t *testing.T) {
+	t.Run("a provider that is not registered is rejected before anything is written", func(t *testing.T) {
 		svc, repo := newTestService(t)
 
 		_, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{
-			CountryCode: "DE", ProviderID: "  bo yle bir saglayici yok  ",
+			CountryCode: "DE", ProviderID: "  no such provider exists  ",
 		})
 		require.Error(t, err)
-		assert.True(t, errors.IsInvalid(err), "yönetici yazım hatası 500 değil 422 olmalı")
+		assert.True(t, errors.IsInvalid(err), "an administrator's typo has to be a 422, not a 500")
 		assert.Equal(t, CodeProviderNotFound, errors.CodeOf(err))
-		assert.Contains(t, err.Error(), LocalProviderID, "mesaj kayıtlı kimlikleri yazmalı")
-		assert.Zero(t, repo.callCount("CreateTaxRegion"), "hiçbir satır yazılmamalı")
+		assert.Contains(t, err.Error(), LocalProviderID, "the message has to name the registered ids")
+		assert.Zero(t, repo.callCount("CreateTaxRegion"), "no row may be written")
 	})
 
-	t.Run("sınırsız sağlayıcı kimliği reddedilir", func(t *testing.T) {
+	t.Run("an unbounded provider id is rejected", func(t *testing.T) {
 		svc, repo := newTestService(t)
 
 		_, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{
@@ -75,7 +75,7 @@ func TestCreateTaxRegionSaglayiciDogrulanir(t *testing.T) {
 		assert.Zero(t, repo.callCount("CreateTaxRegion"))
 	})
 
-	t.Run("kimlik kırpılarak saklanır", func(t *testing.T) {
+	t.Run("the id is stored trimmed", func(t *testing.T) {
 		svc, _ := newTestService(t)
 
 		region, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{
@@ -83,20 +83,21 @@ func TestCreateTaxRegionSaglayiciDogrulanir(t *testing.T) {
 		})
 		require.NoError(t, err)
 		assert.Equal(t, LocalProviderID, region.ProviderID,
-			"saklanan değer, hesapta uygulanan değerden AYRIŞMAMALI")
+			"the stored value must NOT DIVERGE from the value applied in the calculation")
 	})
 
-	t.Run("boş kimlik serbesttir", func(t *testing.T) {
+	t.Run("an empty id is allowed", func(t *testing.T) {
 		svc, _ := newTestService(t)
 
 		region, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{CountryCode: "DE"})
 		require.NoError(t, err)
-		assert.Empty(t, region.ProviderID, "boş kimlik devralma/yerel demektir ve serbesttir")
+		assert.Empty(t, region.ProviderID, "an empty id means inherit/local and is allowed")
 	})
 }
 
-// TestCreateTaxRegionEyalet eyalet bölgesinin köke bağlandığını doğrular.
-func TestCreateTaxRegionEyalet(t *testing.T) {
+// TestCreateTaxRegionProvince checks that a province region is bound to the
+// root.
+func TestCreateTaxRegionProvince(t *testing.T) {
 	svc, _ := newTestService(t)
 	root, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{CountryCode: "US"})
 	require.NoError(t, err)
@@ -109,18 +110,18 @@ func TestCreateTaxRegionEyalet(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, province.IsRoot())
-	assert.Equal(t, "CA", province.Province(), "eyalet kodu BÜYÜK harfe çevrilmeli")
+	assert.Equal(t, "CA", province.Province(), "the province code has to be turned into UPPER case")
 	assert.Equal(t, root.ID, province.Parent())
 }
 
-// TestCreateTaxRegionYarimHiyerarsiReddedilir ebeveyn/eyalet ikilisinin
-// birlikte verilmesi şartını doğrular.
-func TestCreateTaxRegionYarimHiyerarsiReddedilir(t *testing.T) {
+// TestCreateTaxRegionRejectsAHalfHierarchy checks the requirement that the
+// parent/province pair is given together.
+func TestCreateTaxRegionRejectsAHalfHierarchy(t *testing.T) {
 	svc, _ := newTestService(t)
 	root, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{CountryCode: "US"})
 	require.NoError(t, err)
 
-	t.Run("eyalet kodu var ebeveyn yok", func(t *testing.T) {
+	t.Run("a province code but no parent", func(t *testing.T) {
 		_, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{
 			CountryCode: "US", ProvinceCode: "CA",
 		})
@@ -128,7 +129,7 @@ func TestCreateTaxRegionYarimHiyerarsiReddedilir(t *testing.T) {
 		assert.True(t, errors.IsInvalid(err))
 	})
 
-	t.Run("ebeveyn var eyalet kodu yok", func(t *testing.T) {
+	t.Run("a parent but no province code", func(t *testing.T) {
 		_, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{
 			CountryCode: "US", ParentID: root.ID,
 		})
@@ -137,9 +138,9 @@ func TestCreateTaxRegionYarimHiyerarsiReddedilir(t *testing.T) {
 	})
 }
 
-// TestCreateTaxRegionEbeveynDogrulanir kökün varlığı, türü ve ÜLKESİ
-// denetimlerini doğrular.
-func TestCreateTaxRegionEbeveynDogrulanir(t *testing.T) {
+// TestCreateTaxRegionValidatesTheParent checks the root's existence, kind and
+// COUNTRY checks.
+func TestCreateTaxRegionValidatesTheParent(t *testing.T) {
 	svc, _ := newTestService(t)
 	usRoot, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{CountryCode: "US"})
 	require.NoError(t, err)
@@ -148,16 +149,16 @@ func TestCreateTaxRegionEbeveynDogrulanir(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	t.Run("ebeveyn yok", func(t *testing.T) {
+	t.Run("no parent", func(t *testing.T) {
 		_, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{
 			CountryCode: "US", ProvinceCode: "NY",
-			ParentID: models.TaxRegionIDPrefix + "YOK000000000000000000000000",
+			ParentID: models.TaxRegionIDPrefix + "MISSING00000000000000000000",
 		})
 		require.Error(t, err)
 		assert.True(t, errors.IsNotFound(err))
 	})
 
-	t.Run("ebeveyn eyalet olamaz", func(t *testing.T) {
+	t.Run("the parent cannot be a province", func(t *testing.T) {
 		_, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{
 			CountryCode: "US", ProvinceCode: "NY", ParentID: province.ID,
 		})
@@ -166,7 +167,7 @@ func TestCreateTaxRegionEbeveynDogrulanir(t *testing.T) {
 		assert.Equal(t, CodeParentInvalid, errors.CodeOf(err))
 	})
 
-	t.Run("ebeveynin ülkesi farklı olamaz", func(t *testing.T) {
+	t.Run("the parent's country cannot differ", func(t *testing.T) {
 		_, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{
 			CountryCode: "DE", ProvinceCode: "BY", ParentID: usRoot.ID,
 		})
@@ -174,18 +175,18 @@ func TestCreateTaxRegionEbeveynDogrulanir(t *testing.T) {
 		assert.Equal(t, CodeParentInvalid, errors.CodeOf(err))
 	})
 
-	t.Run("ebeveyn kimliği yanlış türde olamaz", func(t *testing.T) {
+	t.Run("the parent id cannot be of the wrong kind", func(t *testing.T) {
 		_, err := svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{
 			CountryCode: "DE", ProvinceCode: "BY", ParentID: rateA,
 		})
 		require.Error(t, err)
-		assert.True(t, errors.IsInvalid(err), "önek denetimi 404 değil doğrulama hatası vermeli")
+		assert.True(t, errors.IsInvalid(err), "the prefix check has to give a validation error, not a 404")
 	})
 }
 
-// TestDeleteTaxRegionAgaciKapsar silmenin alt bölgeleri, oranları ve
-// kuralları da kapsadığını doğrular.
-func TestDeleteTaxRegionAgaciKapsar(t *testing.T) {
+// TestDeleteTaxRegionCoversTheTree checks that the delete covers the child
+// regions, the rates and the rules too.
+func TestDeleteTaxRegionCoversTheTree(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(usRegionID, "US")
 	repo.seedProvinceRegion(trIstanbul, "US", "CA", usRegionID)
@@ -198,35 +199,35 @@ func TestDeleteTaxRegionAgaciKapsar(t *testing.T) {
 	_, err := svc.GetTaxRegion(context.Background(), usRegionID)
 	assert.True(t, errors.IsNotFound(err))
 	_, err = svc.GetTaxRegion(context.Background(), trIstanbul)
-	assert.True(t, errors.IsNotFound(err), "alt bölge de silinmeli")
+	assert.True(t, errors.IsNotFound(err), "the child region has to be deleted too")
 	_, err = svc.GetTaxRate(context.Background(), rateA)
-	assert.True(t, errors.IsNotFound(err), "kök bölgenin oranı da silinmeli")
+	assert.True(t, errors.IsNotFound(err), "the root region's rate has to be deleted too")
 	_, err = svc.GetTaxRate(context.Background(), rateB)
-	assert.True(t, errors.IsNotFound(err), "alt bölgenin oranı da silinmeli")
+	assert.True(t, errors.IsNotFound(err), "the child region's rate has to be deleted too")
 
 	rules, err := repo.ListTaxRateRules(context.Background(), rateB)
 	require.NoError(t, err)
-	assert.Empty(t, rules, "oranın kuralları da silinmeli")
+	assert.Empty(t, rules, "the rate's rules have to be deleted too")
 
-	// Silme sonrası aynı ülkeye yeni bir kök açılabilmelidir; aksi hâlde
-	// silme, ülkeyi kalıcı olarak yapılandırılamaz bırakırdı.
+	// After the delete a new root has to be openable for the same country;
+	// otherwise the delete would leave the country permanently impossible to
+	// configure.
 	_, err = svc.CreateTaxRegion(context.Background(), CreateTaxRegionInput{CountryCode: "US"})
 	require.NoError(t, err)
 }
 
-// TestDeleteTaxRegionOlmayanKayit silinmiş/bulunmayan bölgede NotFound
-// döndüğünü doğrular.
-func TestDeleteTaxRegionOlmayanKayit(t *testing.T) {
+// TestDeleteTaxRegionMissingRecord checks that NotFound comes back for a
+// deleted/missing region.
+func TestDeleteTaxRegionMissingRecord(t *testing.T) {
 	svc, _ := newTestService(t)
 
-	err := svc.DeleteTaxRegion(context.Background(), models.TaxRegionIDPrefix+"YOK")
+	err := svc.DeleteTaxRegion(context.Background(), models.TaxRegionIDPrefix+"MISSING")
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err))
 }
 
-// TestListTaxRegionsSuzerVeSayfalar süzgeç ve sayfalama sözleşmesini
-// doğrular.
-func TestListTaxRegionsSuzerVeSayfalar(t *testing.T) {
+// TestListTaxRegionsFiltersAndPages checks the filter and paging contract.
+func TestListTaxRegionsFiltersAndPages(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedRootRegion(usRegionID, "US")
@@ -235,27 +236,27 @@ func TestListTaxRegionsSuzerVeSayfalar(t *testing.T) {
 	all, err := svc.ListTaxRegions(context.Background(), "", 0, 0)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), all.Count)
-	assert.Equal(t, DefaultLimit, all.Limit, "limit verilmezse varsayılan uygulanmalı")
+	assert.Equal(t, DefaultLimit, all.Limit, "if no limit is given the default has to apply")
 
 	tr, err := svc.ListTaxRegions(context.Background(), "tr", 0, 0)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), tr.Count, "ülke süzgeci küçük harfle de çalışmalı")
+	assert.Equal(t, int64(2), tr.Count, "the country filter has to work in lower case too")
 
 	capped, err := svc.ListTaxRegions(context.Background(), "", MaxLimit+1000, 0)
 	require.NoError(t, err)
-	assert.Equal(t, MaxLimit, capped.Limit, "kırpılan limit sonuçta bildirilmeli")
+	assert.Equal(t, MaxLimit, capped.Limit, "the clamped limit has to be reported in the result")
 
 	_, err = svc.ListTaxRegions(context.Background(), "TUR", 0, 0)
 	require.Error(t, err)
-	assert.True(t, errors.IsInvalid(err), "biçimsiz süzgeç sessizce yok sayılmamalı")
+	assert.True(t, errors.IsInvalid(err), "a malformed filter must not be ignored silently")
 
 	_, err = svc.ListTaxRegions(context.Background(), "", 0, -1)
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err))
 }
 
-// TestCreateTaxRateMutluYol oran oluşturmayı doğrular.
-func TestCreateTaxRateMutluYol(t *testing.T) {
+// TestCreateTaxRateHappyPath checks creating a rate.
+func TestCreateTaxRateHappyPath(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 
@@ -268,7 +269,7 @@ func TestCreateTaxRateMutluYol(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "KDV", rate.Name, "ad kırpılmalı")
+	assert.Equal(t, "KDV", rate.Name, "the name has to be trimmed")
 	assert.Equal(t, "KDV20", rate.RateCode())
 	assert.True(t, strings.HasPrefix(rate.ID, models.TaxRateIDPrefix))
 
@@ -277,37 +278,37 @@ func TestCreateTaxRateMutluYol(t *testing.T) {
 	assert.Equal(t, int32(0), remainder)
 }
 
-// TestCreateTaxRateIkinciVarsayilanReddedilir bölge başına tek varsayılan
-// kuralını doğrular.
-func TestCreateTaxRateIkinciVarsayilanReddedilir(t *testing.T) {
+// TestCreateTaxRateRejectsASecondDefault checks the one-default-per-region
+// rule.
+func TestCreateTaxRateRejectsASecondDefault(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
 
 	_, err := svc.CreateTaxRate(context.Background(), CreateTaxRateInput{
-		TaxRegionID: trRegionID, Name: "İkinci", RateBps: 1000, IsDefault: true,
+		TaxRegionID: trRegionID, Name: "Second", RateBps: 1000, IsDefault: true,
 	})
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 	assert.Equal(t, CodeDefaultExists, errors.CodeOf(err))
 
-	// Varsayılan OLMAYAN ikinci oran serbesttir.
+	// A second rate that is NOT the default is allowed.
 	_, err = svc.CreateTaxRate(context.Background(), CreateTaxRateInput{
-		TaxRegionID: trRegionID, Name: "İndirimli", RateBps: 100,
+		TaxRegionID: trRegionID, Name: "Reduced", RateBps: 100,
 	})
 	require.NoError(t, err)
 }
 
-// TestCreateTaxRateGecersizGirdi oran doğrulamalarını doğrular.
-func TestCreateTaxRateGecersizGirdi(t *testing.T) {
+// TestCreateTaxRateInvalidInput checks the rate validations.
+func TestCreateTaxRateInvalidInput(t *testing.T) {
 	tests := map[string]CreateTaxRateInput{
-		"bölge kimliği boş":          {Name: "KDV", RateBps: 100},
-		"bölge kimliği yanlış türde": {TaxRegionID: rateA, Name: "KDV", RateBps: 100},
-		"ad boş":                     {TaxRegionID: trRegionID, RateBps: 100},
-		"ad kontrol karakteri":       {TaxRegionID: trRegionID, Name: "KDV\nyeni", RateBps: 100},
-		"kod boşluklu":               {TaxRegionID: trRegionID, Name: "KDV", Code: "KDV 20", RateBps: 100},
-		"oran negatif":               {TaxRegionID: trRegionID, Name: "KDV", RateBps: -1},
-		"oran yüzde yüzü aşar":       {TaxRegionID: trRegionID, Name: "KDV", RateBps: models.MaxRateBps + 1},
+		"empty region id":                  {Name: "KDV", RateBps: 100},
+		"region id of the wrong kind":      {TaxRegionID: rateA, Name: "KDV", RateBps: 100},
+		"empty name":                       {TaxRegionID: trRegionID, RateBps: 100},
+		"name with a control character":    {TaxRegionID: trRegionID, Name: "KDV\nnew", RateBps: 100},
+		"code with whitespace":             {TaxRegionID: trRegionID, Name: "KDV", Code: "KDV 20", RateBps: 100},
+		"negative rate":                    {TaxRegionID: trRegionID, Name: "KDV", RateBps: -1},
+		"rate exceeds one hundred percent": {TaxRegionID: trRegionID, Name: "KDV", RateBps: models.MaxRateBps + 1},
 	}
 
 	for name, in := range tests {
@@ -317,14 +318,15 @@ func TestCreateTaxRateGecersizGirdi(t *testing.T) {
 
 			_, err := svc.CreateTaxRate(context.Background(), in)
 			require.Error(t, err)
-			assert.True(t, errors.IsInvalid(err), "hata: %v", err)
-			assert.Zero(t, repo.callCount("CreateTaxRate"), "geçersiz girdi depoya ulaşmamalı")
+			assert.True(t, errors.IsInvalid(err), "error: %v", err)
+			assert.Zero(t, repo.callCount("CreateTaxRate"), "invalid input must not reach the repository")
 		})
 	}
 }
 
-// TestCreateTaxRateBolgeYoksa bölgesi olmayan oranın reddedildiğini doğrular.
-func TestCreateTaxRateBolgeYoksa(t *testing.T) {
+// TestCreateTaxRateWithoutARegion checks that a rate without a region is
+// rejected.
+func TestCreateTaxRateWithoutARegion(t *testing.T) {
 	svc, _ := newTestService(t)
 
 	_, err := svc.CreateTaxRate(context.Background(), CreateTaxRateInput{
@@ -334,9 +336,9 @@ func TestCreateTaxRateBolgeYoksa(t *testing.T) {
 	assert.True(t, errors.IsNotFound(err))
 }
 
-// TestUpdateTaxRateKismidir yamanın yalnızca verilen alanlara dokunduğunu
-// doğrular.
-func TestUpdateTaxRateKismidir(t *testing.T) {
+// TestUpdateTaxRateIsPartial checks that the patch touches only the given
+// fields.
+func TestUpdateTaxRateIsPartial(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	code := "KDV20"
@@ -345,34 +347,34 @@ func TestUpdateTaxRateKismidir(t *testing.T) {
 		RateBps: 2000, IsDefault: true, Metadata: map[string]any{"a": "b"},
 	})
 
-	yeniOran := int32(1800)
-	updated, err := svc.UpdateTaxRate(context.Background(), rateA, UpdateTaxRateInput{RateBps: &yeniOran})
+	newRate := int32(1800)
+	updated, err := svc.UpdateTaxRate(context.Background(), rateA, UpdateTaxRateInput{RateBps: &newRate})
 	require.NoError(t, err)
 
 	assert.Equal(t, int32(1800), updated.RateBps)
-	assert.Equal(t, "KDV", updated.Name, "dokunulmayan ad değişmemeli")
-	assert.Equal(t, "KDV20", updated.RateCode(), "dokunulmayan kod değişmemeli")
-	assert.True(t, updated.IsDefault, "dokunulmayan bayrak değişmemeli")
+	assert.Equal(t, "KDV", updated.Name, "a name not touched must not change")
+	assert.Equal(t, "KDV20", updated.RateCode(), "a code not touched must not change")
+	assert.True(t, updated.IsDefault, "a flag not touched must not change")
 	assert.Equal(t, map[string]any{"a": "b"}, updated.Metadata)
 }
 
-// TestUpdateTaxRateKodKaldirilir boş dizenin kodu SİLDİĞİNİ doğrular.
-func TestUpdateTaxRateKodKaldirilir(t *testing.T) {
+// TestUpdateTaxRateRemovesTheCode checks that an empty string DELETES the code.
+func TestUpdateTaxRateRemovesTheCode(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	code := "KDV20"
 	repo.seedRate(models.TaxRate{ID: rateA, TaxRegionID: trRegionID, Name: "KDV", Code: &code, RateBps: 2000})
 
-	bos := ""
-	updated, err := svc.UpdateTaxRate(context.Background(), rateA, UpdateTaxRateInput{Code: &bos})
+	empty := ""
+	updated, err := svc.UpdateTaxRate(context.Background(), rateA, UpdateTaxRateInput{Code: &empty})
 	require.NoError(t, err)
 	assert.Nil(t, updated.Code)
 	assert.Empty(t, updated.RateCode())
 }
 
-// TestUpdateTaxRateBosYamaReddedilir sessiz başarıya izin verilmediğini
-// doğrular.
-func TestUpdateTaxRateBosYamaReddedilir(t *testing.T) {
+// TestUpdateTaxRateRejectsAnEmptyPatch checks that a silent success is not
+// allowed.
+func TestUpdateTaxRateRejectsAnEmptyPatch(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -383,37 +385,37 @@ func TestUpdateTaxRateBosYamaReddedilir(t *testing.T) {
 	assert.Zero(t, repo.callCount("UpdateTaxRate"))
 }
 
-// TestUpdateTaxRateKuralliOranVarsayilanYapilamaz kapsam çakışmasının
-// engellendiğini doğrular.
-func TestUpdateTaxRateKuralliOranVarsayilanYapilamaz(t *testing.T) {
+// TestUpdateTaxRateARuledRateCannotBeMadeTheDefault checks that the scope
+// conflict is prevented.
+func TestUpdateTaxRateARuledRateCannotBeMadeTheDefault(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedRuledRate(rateB, trRegionID, 100)
 	repo.seedRule(ruleA, rateB, models.ReferenceProduct, "prod_1")
 
-	varsayilan := true
-	_, err := svc.UpdateTaxRate(context.Background(), rateB, UpdateTaxRateInput{IsDefault: &varsayilan})
+	isDefault := true
+	_, err := svc.UpdateTaxRate(context.Background(), rateB, UpdateTaxRateInput{IsDefault: &isDefault})
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 }
 
-// TestUpdateTaxRateIkinciVarsayilanYapilamaz güncelleme yolunun da tekillik
-// kısıtına tabi olduğunu doğrular.
-func TestUpdateTaxRateIkinciVarsayilanYapilamaz(t *testing.T) {
+// TestUpdateTaxRateCannotMakeASecondDefault checks that the update path is
+// subject to the uniqueness constraint too.
+func TestUpdateTaxRateCannotMakeASecondDefault(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
 	repo.seedRuledRate(rateB, trRegionID, 100)
 
-	varsayilan := true
-	_, err := svc.UpdateTaxRate(context.Background(), rateB, UpdateTaxRateInput{IsDefault: &varsayilan})
+	isDefault := true
+	_, err := svc.UpdateTaxRate(context.Background(), rateB, UpdateTaxRateInput{IsDefault: &isDefault})
 	require.Error(t, err)
 	assert.True(t, errors.IsConflict(err))
 }
 
-// TestDeleteTaxRateKurallariDaSiler oranla birlikte kurallarının silindiğini
-// doğrular.
-func TestDeleteTaxRateKurallariDaSiler(t *testing.T) {
+// TestDeleteTaxRateDeletesItsRulesToo checks that the rate's rules are deleted
+// together with it.
+func TestDeleteTaxRateDeletesItsRulesToo(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedRuledRate(rateB, trRegionID, 100)
@@ -426,12 +428,12 @@ func TestDeleteTaxRateKurallariDaSiler(t *testing.T) {
 	assert.Empty(t, rules)
 
 	err = svc.DeleteTaxRate(context.Background(), rateB)
-	require.Error(t, err, "ikinci silme NotFound dönmeli")
+	require.Error(t, err, "a second delete has to return NotFound")
 	assert.True(t, errors.IsNotFound(err))
 }
 
-// TestCreateRateRuleMutluYol kural oluşturmayı doğrular.
-func TestCreateRateRuleMutluYol(t *testing.T) {
+// TestCreateRateRuleHappyPath checks creating a rule.
+func TestCreateRateRuleHappyPath(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedRuledRate(rateB, trRegionID, 100)
@@ -439,17 +441,17 @@ func TestCreateRateRuleMutluYol(t *testing.T) {
 	rule, err := svc.CreateRateRule(context.Background(), CreateRateRuleInput{
 		TaxRateID:   rateB,
 		Reference:   "product_type",
-		ReferenceID: "ptyp_gida",
+		ReferenceID: "ptyp_food",
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, models.ReferenceProductType, rule.Reference)
-	assert.Equal(t, "ptyp_gida", rule.ReferenceID)
+	assert.Equal(t, "ptyp_food", rule.ReferenceID)
 	assert.True(t, strings.HasPrefix(rule.ID, models.TaxRateRuleIDPrefix))
 }
 
-// TestCreateRateRuleVarsayilanOranaEklenemez kapsam kuralını doğrular.
-func TestCreateRateRuleVarsayilanOranaEklenemez(t *testing.T) {
+// TestCreateRateRuleCannotBeAddedToTheDefaultRate checks the scope rule.
+func TestCreateRateRuleCannotBeAddedToTheDefaultRate(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedDefaultRate(rateA, trRegionID, 2000)
@@ -461,15 +463,15 @@ func TestCreateRateRuleVarsayilanOranaEklenemez(t *testing.T) {
 	assert.True(t, errors.IsConflict(err))
 }
 
-// TestCreateRateRuleGecersizGirdi kural doğrulamalarını doğrular.
-func TestCreateRateRuleGecersizGirdi(t *testing.T) {
+// TestCreateRateRuleInvalidInput checks the rule validations.
+func TestCreateRateRuleInvalidInput(t *testing.T) {
 	tests := map[string]CreateRateRuleInput{
-		"oran kimliği boş":          {Reference: "product", ReferenceID: "prod_1"},
-		"oran kimliği yanlış tür":   {TaxRateID: trRegionID, Reference: "product", ReferenceID: "prod_1"},
-		"referans tanımsız":         {TaxRateID: rateB, Reference: "variant", ReferenceID: "var_1"},
-		"referans boş":              {TaxRateID: rateB, ReferenceID: "prod_1"},
-		"referans kimliği boş":      {TaxRateID: rateB, Reference: "product"},
-		"referans kimliği boşluklu": {TaxRateID: rateB, Reference: "product", ReferenceID: " prod_1"},
+		"empty rate id":                {Reference: "product", ReferenceID: "prod_1"},
+		"rate id of the wrong kind":    {TaxRateID: trRegionID, Reference: "product", ReferenceID: "prod_1"},
+		"undefined reference":          {TaxRateID: rateB, Reference: "variant", ReferenceID: "var_1"},
+		"empty reference":              {TaxRateID: rateB, ReferenceID: "prod_1"},
+		"empty reference id":           {TaxRateID: rateB, Reference: "product"},
+		"reference id with whitespace": {TaxRateID: rateB, Reference: "product", ReferenceID: " prod_1"},
 	}
 
 	for name, in := range tests {
@@ -480,15 +482,15 @@ func TestCreateRateRuleGecersizGirdi(t *testing.T) {
 
 			_, err := svc.CreateRateRule(context.Background(), in)
 			require.Error(t, err)
-			assert.True(t, errors.IsInvalid(err), "hata: %v", err)
+			assert.True(t, errors.IsInvalid(err), "error: %v", err)
 			assert.Zero(t, repo.callCount("CreateTaxRateRule"))
 		})
 	}
 }
 
-// TestDeleteRateRuleOranVarsayilanYapmaz son kuralın silinmesinin oranı
-// SESSİZCE genişletmediğini doğrular.
-func TestDeleteRateRuleOranVarsayilanYapmaz(t *testing.T) {
+// TestDeleteRateRuleDoesNotMakeTheRateTheDefault checks that deleting the last
+// rule does not SILENTLY widen the rate.
+func TestDeleteRateRuleDoesNotMakeTheRateTheDefault(t *testing.T) {
 	svc, repo := newTestService(t)
 	repo.seedRootRegion(trRegionID, "TR")
 	repo.seedRuledRate(rateB, trRegionID, 100)
@@ -498,18 +500,18 @@ func TestDeleteRateRuleOranVarsayilanYapmaz(t *testing.T) {
 
 	rate, err := svc.GetTaxRate(context.Background(), rateB)
 	require.NoError(t, err)
-	assert.False(t, rate.IsDefault, "kuralsız kalan oran varsayılan OLMAMALI")
+	assert.False(t, rate.IsDefault, "a rate left without rules must NOT BE the default")
 
 	result, err := svc.CalculateTax(context.Background(), CalculateTaxInput{
 		CountryCode: "TR",
 		Items:       []TaxableItem{{ID: "li_1", ProductID: "prod_1", Amount: 10_000}},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), result.TaxTotal, "kuralsız kalan oran hiçbir kaleme uygulanmamalı")
+	assert.Equal(t, int64(0), result.TaxTotal, "a rate left without rules must apply to no line item")
 }
 
-// TestListRateRulesOranYoksa bulunmayan oranın NotFound döndüğünü doğrular.
-func TestListRateRulesOranYoksa(t *testing.T) {
+// TestListRateRulesWithoutARate checks that a missing rate returns NotFound.
+func TestListRateRulesWithoutARate(t *testing.T) {
 	svc, _ := newTestService(t)
 
 	_, err := svc.ListRateRules(context.Background(), rateB)
@@ -517,9 +519,9 @@ func TestListRateRulesOranYoksa(t *testing.T) {
 	assert.True(t, errors.IsNotFound(err))
 }
 
-// TestKurulmamisServisPanikUretmez depo verilmeden kurulan servisin tipli
-// hata döndüğünü doğrular.
-func TestKurulmamisServisPanikUretmez(t *testing.T) {
+// TestAnUnconfiguredServiceDoesNotPanic checks that a service set up without a
+// repository returns a typed error.
+func TestAnUnconfiguredServiceDoesNotPanic(t *testing.T) {
 	svc := New(nil, Options{})
 
 	_, err := svc.CalculateTax(context.Background(), CalculateTaxInput{CountryCode: "TR"})

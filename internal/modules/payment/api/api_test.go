@@ -17,23 +17,24 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
-// yeniRouter sahte servis üzerinde çalışan bir router kurar.
-func yeniRouter(svc *fakePayments) chi.Router {
+// newTestRouter builds a router running over the fake service.
+func newTestRouter(svc *fakePayments) chi.Router {
 	r := chi.NewRouter()
 	api.New(svc).Routes(r)
 	return r
 }
 
-// yonetici testlerin varsayılan kimliğidir: tam yetkili bir yönetim
-// kullanıcısı.
+// adminPrincipal is the tests' default identity: a fully privileged admin
+// user.
 //
-// Router burada DOĞRUDAN kuruluyor, yani corehttp.RequireAdmin zincirde yok ve
-// context'e kimliği koyan kimse yok. Yönetim uçları artık
-// corehttp.RequireScope ile korunduğu için kimliksiz istek 401 döner ve
-// testlerin asıl doğruladığı davranışa (zarf, status eşlemesi, gövde çözümü)
-// hiç sıra gelmezdi. Bu yüzden kimlik testin kendisi tarafından eklenir;
-// testlerin NE doğruladığı değişmez, yalnızca eksik olan kimlik tamamlanır.
-func yonetici() corehttp.Principal {
+// The router is built DIRECTLY here, that is, corehttp.RequireAdmin is not in
+// the chain and nobody puts the principal into the context. Because the admin
+// endpoints are now protected with corehttp.RequireScope, a request without a
+// principal returns 401 and the behavior the tests actually verify (envelope,
+// status mapping, body decoding) would never get its turn. This is why the
+// principal is added by the test itself; WHAT the tests verify does not
+// change, only the missing identity is supplied.
+func adminPrincipal() corehttp.Principal {
 	return corehttp.Principal{
 		ID:     "user_test",
 		Kind:   "user",
@@ -41,20 +42,21 @@ func yonetici() corehttp.Principal {
 	}
 }
 
-// istek verilen isteği tam yetkili bir kimlikle router'a uygular ve yanıtı
-// döner.
-func istek(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
+// do applies the given request to the router with a fully privileged identity
+// and returns the response.
+func do(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
-	return kimlikliIstek(t, r, method, path, body, yonetici())
+	return doAs(t, r, method, path, body, adminPrincipal())
 }
 
-// kimlikliIstek verilen isteği belirtilen kimlikle uygular ve yanıtı döner.
+// doAs applies the given request with the specified identity and returns the
+// response.
 //
-// Yetki denetimini sınayan testler için ayrıdır: [istek] her zaman tam yetkili
-// çağırır, burada dar yetkili bir kimlik verilebilir.
-func kimlikliIstek(
-	t *testing.T, r chi.Router, method, path, body string, kimlik corehttp.Principal,
+// It is separate for the tests that exercise scope enforcement: [do] always
+// calls fully privileged, here a narrowly scoped identity can be given.
+func doAs(
+	t *testing.T, r chi.Router, method, path, body string, principal corehttp.Principal,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -66,15 +68,15 @@ func kimlikliIstek(
 	}
 	req := httptest.NewRequest(method, path, reader)
 	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(corehttp.WithPrincipal(req.Context(), kimlik))
+	req = req.WithContext(corehttp.WithPrincipal(req.Context(), principal))
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	return rec
 }
 
-// govde yanıt gövdesini haritaya çevirir.
-func govde(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
+// decodeResponse turns the response body into a map.
+func decodeResponse(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
 	var out map[string]any
@@ -82,495 +84,508 @@ func govde(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 	return out
 }
 
-// hataKodu hata zarfındaki kodu döner.
+// errorCode returns the code in the error envelope.
 //
-// Hata gövdesi tek bir "error" anahtarı altında toplanır (bkz.
-// corehttp.ErrorResponse); testler bu şekli doğrudan okur ki zarfın
-// değişmesi sessiz kalmasın.
-func hataKodu(t *testing.T, rec *httptest.ResponseRecorder) string {
+// The error body is gathered under a single "error" key (see
+// corehttp.ErrorResponse); the tests read this shape directly so that a change
+// to the envelope does not go unnoticed.
+func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
 
-	hata, ok := govde(t, rec)["error"].(map[string]any)
-	require.True(t, ok, "hata zarfı bekleniyordu: %s", rec.Body.String())
-	kod, ok := hata["code"].(string)
-	require.True(t, ok, "kod metin olmalı: %s", rec.Body.String())
-	return kod
+	errBody, ok := decodeResponse(t, rec)["error"].(map[string]any)
+	require.True(t, ok, "an error envelope was expected: %s", rec.Body.String())
+	code, ok := errBody["code"].(string)
+	require.True(t, ok, "the code has to be a string: %s", rec.Body.String())
+	return code
 }
 
-// TestKoleksiyonOlusturma201VeZarfDoner mutlu yolu doğrular.
-func TestKoleksiyonOlusturma201VeZarfDoner(t *testing.T) {
+// TestCreateCollectionReturns201AndEnvelope verifies the happy path.
+func TestCreateCollectionReturns201AndEnvelope(t *testing.T) {
 	svc := &fakePayments{collection: models.PaymentCollection{
 		ID: "paycol_1", Reference: "cart_1", Amount: 1000,
 		CurrencyCode: "TRY", Status: models.CollectionNotPaid,
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payment-collections",
+	rec := do(t, r, http.MethodPost, "/admin/v1/payment-collections",
 		`{"reference":"cart_1","amount":1000,"currency_code":"TRY"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	data, ok := govde(t, rec)["data"].(map[string]any)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "paycol_1", data["id"])
 	assert.InDelta(t, 1000, data["amount"], 0)
 	assert.Equal(t, "not_paid", data["status"])
-	assert.Equal(t, int64(1000), svc.sonCollectionInput.Amount)
+	assert.Equal(t, int64(1000), svc.lastCollectionInput.Amount)
 }
 
-// TestKoleksiyonOlusturmaTutarZorunlu eksik alanın 422 ürettiğini doğrular.
+// TestCreateCollectionRequiresAmount verifies that a missing field produces
+// 422.
 //
-// İşaretçi kullanılması bilinçlidir: alanı hiç göndermeyen bir istemci sıfır
-// tutar göndermiş sayılsaydı, hata mesajı "tutar pozitif olmalı" olur ve
-// istemci alanı gönderdiğini sanırdı.
-func TestKoleksiyonOlusturmaTutarZorunlu(t *testing.T) {
-	r := yeniRouter(&fakePayments{})
+// Using a pointer is deliberate: had a client that does not send the field at
+// all been taken to have sent a zero amount, the error message would be
+// "amount must be positive" and the client would believe it had sent the
+// field.
+func TestCreateCollectionRequiresAmount(t *testing.T) {
+	r := newTestRouter(&fakePayments{})
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payment-collections",
+	rec := do(t, r, http.MethodPost, "/admin/v1/payment-collections",
 		`{"reference":"cart_1","currency_code":"TRY"}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 }
 
-// TestBilinmeyenAlanReddedilir sessizce yutulan bir alanın olmadığını
-// doğrular; yutulan alan, istemcinin uygulandığını sandığı bir ayardır.
-func TestBilinmeyenAlanReddedilir(t *testing.T) {
-	r := yeniRouter(&fakePayments{})
+// TestUnknownFieldIsRejected verifies that no field is silently swallowed; a
+// swallowed field is a setting the client believes was applied.
+func TestUnknownFieldIsRejected(t *testing.T) {
+	r := newTestRouter(&fakePayments{})
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payment-collections",
+	rec := do(t, r, http.MethodPost, "/admin/v1/payment-collections",
 		`{"reference":"cart_1","amount":1,"currency_code":"TRY","typo":true}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 }
 
-// TestBosGovdeReddedilir gövdesi zorunlu uçlarda boş isteğin reddedildiğini
-// doğrular.
-func TestBosGovdeReddedilir(t *testing.T) {
-	r := yeniRouter(&fakePayments{})
+// TestEmptyBodyIsRejected verifies that an empty request is rejected on the
+// endpoints whose body is required.
+func TestEmptyBodyIsRejected(t *testing.T) {
+	r := newTestRouter(&fakePayments{})
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payment-collections", "")
+	rec := do(t, r, http.MethodPost, "/admin/v1/payment-collections", "")
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 }
 
-// TestHataSiniflariStatusKodunaEslenir handler'ın status kodu SEÇMEDİĞİNİ,
-// servisin hata sınıfının eşlendiğini doğrular (plan Bölüm 8).
-func TestHataSiniflariStatusKodunaEslenir(t *testing.T) {
+// TestErrorKindsMapToStatusCodes verifies that the handler DOES NOT CHOOSE the
+// status code, that the service's error kind is mapped (plan Section 8).
+func TestErrorKindsMapToStatusCodes(t *testing.T) {
 	tests := map[string]struct {
 		err    error
 		status int
 	}{
 		"not found": {notFound(), http.StatusNotFound},
 		"invalid": {
-			errors.Invalid("payment_invalid_input", "tutar pozitif olmalı"),
+			errors.Invalid("payment_invalid_input", "amount must be positive"),
 			http.StatusUnprocessableEntity,
 		},
 		"conflict": {
-			errors.Conflict("payment_invalid_transition", "geçersiz geçiş"),
+			errors.Conflict("payment_invalid_transition", "invalid transition"),
 			http.StatusConflict,
 		},
 		"unavailable": {
-			errors.Unavailable("payment_provider_down", "sağlayıcıya ulaşılamadı"),
+			errors.Unavailable("payment_provider_down", "the provider could not be reached"),
 			http.StatusServiceUnavailable,
 		},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
-			r := yeniRouter(&fakePayments{err: tt.err})
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			r := newTestRouter(&fakePayments{err: tt.err})
 
-			rec := istek(t, r, http.MethodGet, "/admin/v1/payment-collections/paycol_1", "")
+			rec := do(t, r, http.MethodGet, "/admin/v1/payment-collections/paycol_1", "")
 
 			assert.Equal(t, tt.status, rec.Code, rec.Body.String())
-			assert.Equal(t, errors.CodeOf(tt.err), hataKodu(t, rec))
+			assert.Equal(t, errors.CodeOf(tt.err), errorCode(t, rec))
 		})
 	}
 }
 
-// TestReddedilenYetkilendirme409Doner ödeme reddinin sunucu hatası olarak
-// raporlanmadığını doğrular.
+// TestDeclinedAuthorizationReturns409 verifies that a payment decline is not
+// reported as a server error.
 //
-// 500 dönmek, entegrasyonu yazanın sorunu kendi tarafında araması demek
-// olurdu; reddin sebebi sunucuda değil, karttadır.
-func TestReddedilenYetkilendirme409Doner(t *testing.T) {
-	r := yeniRouter(&fakePayments{
-		err: errors.Conflict("payment_authorization_declined", "ödeme reddedildi"),
+// Returning 500 would mean whoever wrote the integration looking for the
+// problem on their own side; the cause of the decline is not on the server but
+// on the card.
+func TestDeclinedAuthorizationReturns409(t *testing.T) {
+	r := newTestRouter(&fakePayments{
+		err: errors.Conflict("payment_authorization_declined", "payment declined"),
 	})
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payment-sessions/payses_1/authorize", "")
+	rec := do(t, r, http.MethodPost, "/admin/v1/payment-sessions/payses_1/authorize", "")
 
 	assert.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-	assert.Equal(t, "payment_authorization_declined", hataKodu(t, rec))
+	assert.Equal(t, "payment_authorization_declined", errorCode(t, rec))
 }
 
-// TestListeZarfiTutarli liste zarfının plan Bölüm 8'deki şekle uyduğunu
-// doğrular.
-func TestListeZarfiTutarli(t *testing.T) {
+// TestListEnvelopeIsConsistent verifies that the list envelope matches the
+// shape in plan Section 8.
+func TestListEnvelopeIsConsistent(t *testing.T) {
 	svc := &fakePayments{
 		collections: []models.PaymentCollection{{ID: "paycol_1", Status: models.CollectionNotPaid}},
 		count:       7,
 	}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/payment-collections?limit=1&offset=2", "")
+	rec := do(t, r, http.MethodGet, "/admin/v1/payment-collections?limit=1&offset=2", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	body := govde(t, rec)
-	assert.InDelta(t, 7, body["count"], 0, "count SÜZGECİN sayısıdır, sayfanın değil")
+	body := decodeResponse(t, rec)
+	assert.InDelta(t, 7, body["count"], 0, "count is the FILTER's count, not the page's")
 	assert.InDelta(t, 2, body["offset"], 0)
 	assert.InDelta(t, 1, body["limit"], 0)
 	assert.Len(t, body["data"], 1)
-	assert.Equal(t, int64(1), svc.sonListInput.Page.Limit)
-	assert.Equal(t, int64(2), svc.sonListInput.Page.Offset)
+	assert.Equal(t, int64(1), svc.lastListInput.Page.Limit)
+	assert.Equal(t, int64(2), svc.lastListInput.Page.Offset)
 }
 
-// TestSuzgecParametreleriServiseGecer sorgu parametrelerinin servise
-// ulaştığını doğrular.
-func TestSuzgecParametreleriServiseGecer(t *testing.T) {
+// TestFilterParametersReachTheService verifies that the query parameters reach
+// the service.
+func TestFilterParametersReachTheService(t *testing.T) {
 	svc := &fakePayments{}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet,
+	rec := do(t, r, http.MethodGet,
 		"/admin/v1/payment-collections?reference=cart_1&status=captured", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.NotNil(t, svc.sonListInput.Reference)
-	assert.Equal(t, "cart_1", *svc.sonListInput.Reference)
-	require.NotNil(t, svc.sonListInput.Status)
-	assert.Equal(t, "captured", *svc.sonListInput.Status)
+	require.NotNil(t, svc.lastListInput.Reference)
+	assert.Equal(t, "cart_1", *svc.lastListInput.Reference)
+	require.NotNil(t, svc.lastListInput.Status)
+	assert.Equal(t, "captured", *svc.lastListInput.Status)
 }
 
-// TestGecersizSayfalamaParametresi422 tam sayı olmayan limitin reddedildiğini
-// doğrular.
-func TestGecersizSayfalamaParametresi422(t *testing.T) {
-	r := yeniRouter(&fakePayments{})
+// TestInvalidPagingParameterReturns422 verifies that a limit that is not an
+// integer is rejected.
+func TestInvalidPagingParameterReturns422(t *testing.T) {
+	r := newTestRouter(&fakePayments{})
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/payment-collections?limit=abc", "")
+	rec := do(t, r, http.MethodGet, "/admin/v1/payment-collections?limit=abc", "")
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 }
 
-// TestOturumAcma201VeVeriGecisi gövdedeki serbest verinin servise BOZULMADAN
-// ulaştığını doğrular.
+// TestCreateSessionReturns201AndPassesData verifies that the free-form data in
+// the body reaches the service UNALTERED.
 //
-// Sayının json.Number olarak çözülmesi kritiktir: float64'e dönen bir tam sayı
-// yeniden kodlanırken üstel gösterime kayabilir ve sağlayıcı tarafında tam sayı
-// olarak okunamaz (plan Bölüm 8). Sağlayıcı davranışını yönlendiren anahtar
-// bilinçli olarak YÖNETİM ucundan gönderilir; mağaza ucu onu kabul etmez.
-func TestOturumAcma201VeVeriGecisi(t *testing.T) {
+// Decoding the number as json.Number is critical: an integer turned into a
+// float64 can slip into exponent notation when re-encoded and then cannot be
+// read as an integer on the provider's side (plan Section 8). The key that
+// steers the provider's behavior is sent from the ADMIN endpoint on purpose;
+// the store endpoint does not accept it.
+func TestCreateSessionReturns201AndPassesData(t *testing.T) {
 	svc := &fakePayments{session: models.PaymentSession{
 		ID: "payses_1", ProviderID: "manual", Status: models.SessionPending, Amount: 1000,
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payment-collections/paycol_1/payment-sessions",
+	rec := do(t, r, http.MethodPost, "/admin/v1/payment-collections/paycol_1/payment-sessions",
 		`{"provider_id":"manual","idempotency_key":"key-1","data":{"manual_authorized_amount":1000000000000}}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Equal(t, "key-1", svc.sonCreateSession.IdempotencyKey)
+	assert.Equal(t, "key-1", svc.lastCreateSession.IdempotencyKey)
 
-	deger, ok := svc.sonCreateSession.Data["manual_authorized_amount"].(json.Number)
-	require.True(t, ok, "sayı json.Number olarak çözülmeli, %T geldi",
-		svc.sonCreateSession.Data["manual_authorized_amount"])
-	assert.Equal(t, "1000000000000", deger.String())
+	value, ok := svc.lastCreateSession.Data["manual_authorized_amount"].(json.Number)
+	require.True(t, ok, "the number has to be decoded as json.Number, got %T",
+		svc.lastCreateSession.Data["manual_authorized_amount"])
+	assert.Equal(t, "1000000000000", value.String())
 }
 
-// TestMagazaOturumuTutarKabulEtmez müşterinin ödeyeceği tutarı KENDİSİNİN
-// belirleyemediğini doğrular.
+// TestStoreSessionAcceptsNoAmount verifies that the customer CANNOT decide
+// THEMSELVES the amount they will pay.
 //
-// Bulgunun tam senaryosu buydu: {"amount":1} ile açılan bir oturum,
-// 50.000'lik bir koleksiyondan 1 birim tahsil edilmesine ve siparişin ödenmiş
-// görünmesine yol açıyordu. Mağaza gövdesinde alan HİÇ YOKTUR; tanınmayan alan
-// olarak reddedilir.
-func TestMagazaOturumuTutarKabulEtmez(t *testing.T) {
+// This was the exact scenario of the finding: a session opened with
+// {"amount":1} led to 1 unit being captured from a collection of 50,000 and to
+// the order looking paid. The field DOES NOT EXIST AT ALL in the store body;
+// it is rejected as an unrecognized field.
+func TestStoreSessionAcceptsNoAmount(t *testing.T) {
 	svc := &fakePayments{session: models.PaymentSession{ID: "payses_1", Amount: 1000}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/store/v1/payment-collections/paycol_1/payment-sessions",
+	rec := do(t, r, http.MethodPost, "/store/v1/payment-collections/paycol_1/payment-sessions",
 		`{"provider_id":"manual","idempotency_key":"key-1","amount":1}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-	assert.Zero(t, svc.sonCreateSession.IdempotencyKey, "istek servise HİÇ ulaşmamalı")
+	assert.Zero(t, svc.lastCreateSession.IdempotencyKey, "the request must NEVER reach the service")
 }
 
-// TestMagazaOturumuKalanTutarinTamaminiKapar mağaza ucunun servise tutar
-// GEÇMEDİĞİNİ doğrular; sıfır, "koleksiyonun kalanının tamamı" demektir.
-func TestMagazaOturumuKalanTutarinTamaminiKapar(t *testing.T) {
+// TestStoreSessionCoversTheWholeRemainingAmount verifies that the store
+// endpoint DOES NOT PASS an amount to the service; zero means "the whole of
+// the collection's remainder".
+func TestStoreSessionCoversTheWholeRemainingAmount(t *testing.T) {
 	svc := &fakePayments{session: models.PaymentSession{ID: "payses_1", Amount: 1000}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/store/v1/payment-collections/paycol_1/payment-sessions",
+	rec := do(t, r, http.MethodPost, "/store/v1/payment-collections/paycol_1/payment-sessions",
 		`{"provider_id":"manual","idempotency_key":"key-1"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Zero(t, svc.sonCreateSession.Amount, "tutar istemciden alınmamalı")
-	assert.Equal(t, "key-1", svc.sonCreateSession.IdempotencyKey)
+	assert.Zero(t, svc.lastCreateSession.Amount, "the amount must not be taken from the client")
+	assert.Equal(t, "key-1", svc.lastCreateSession.IdempotencyKey)
 }
 
-// TestMagazaOturumuSaglayiciDavranisAnahtarlariniReddeder müşterinin kendi
-// ödemesinin SONUCUNU yazamadığını doğrular.
+// TestStoreSessionRejectsProviderBehaviorKeys verifies that the customer
+// cannot write the OUTCOME of their own payment.
 //
-// Anahtarlar oturumla birlikte saklanır ve yetkilendirmenin sonucunu belirler;
-// mağaza ucundan geçselerdi müşteri 1 birim bloke ettirip siparişi ödenmiş
-// gösterebilirdi. Sessizce süzmek yerine REDDEDİLİR: yutulan bir alan,
-// istemcinin gönderdiğini sandığı ama uygulanmayan bir ayardır.
-func TestMagazaOturumuSaglayiciDavranisAnahtarlariniReddeder(t *testing.T) {
-	govdeler := map[string]string{
-		"kismi yetkilendirme": `{"provider_id":"manual","idempotency_key":"k",` +
+// The keys are stored with the session and decide the outcome of the
+// authorization; had they passed through the store endpoint, the customer
+// could have had 1 unit blocked and shown the order as paid. Instead of being
+// silently filtered they are REJECTED: a swallowed field is a setting the
+// client believes it sent but that is not applied.
+func TestStoreSessionRejectsProviderBehaviorKeys(t *testing.T) {
+	bodies := map[string]string{
+		"partial authorization": `{"provider_id":"manual","idempotency_key":"k",` +
 			`"data":{"manual_authorized_amount":1}}`,
-		"sonuc": `{"provider_id":"manual","idempotency_key":"k","data":{"manual_outcome":"authorize"}}`,
-		"ret sebebi": `{"provider_id":"manual","idempotency_key":"k",` +
+		"outcome": `{"provider_id":"manual","idempotency_key":"k","data":{"manual_outcome":"authorize"}}`,
+		"decline reason": `{"provider_id":"manual","idempotency_key":"k",` +
 			`"data":{"manual_decline_reason":"x"}}`,
 	}
 
-	for ad, govde := range govdeler {
-		t.Run(ad, func(t *testing.T) {
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
 			svc := &fakePayments{session: models.PaymentSession{ID: "payses_1"}}
-			r := yeniRouter(svc)
+			r := newTestRouter(svc)
 
-			rec := istek(t, r, http.MethodPost,
-				"/store/v1/payment-collections/paycol_1/payment-sessions", govde)
+			rec := do(t, r, http.MethodPost,
+				"/store/v1/payment-collections/paycol_1/payment-sessions", body)
 
 			assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
-			assert.Empty(t, svc.sonCreateSession.Data, "istek servise HİÇ ulaşmamalı")
+			assert.Empty(t, svc.lastCreateSession.Data, "the request must NEVER reach the service")
 		})
 	}
 }
 
-// TestMagazaOturumuSaglayiciyaOzguVeriyiGecirir beyaz listeye değil kara
-// listeye dayanan kuralın MEŞRU veriyi engellemediğini doğrular; kart tokenı
-// gibi alanlar sağlayıcıya ulaşmak zorundadır.
-func TestMagazaOturumuSaglayiciyaOzguVeriyiGecirir(t *testing.T) {
+// TestStoreSessionPassesProviderSpecificData verifies that the rule, which
+// rests on a denylist rather than an allowlist, does not block LEGITIMATE
+// data; fields such as a card token have to reach the provider.
+func TestStoreSessionPassesProviderSpecificData(t *testing.T) {
 	svc := &fakePayments{session: models.PaymentSession{ID: "payses_1"}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/store/v1/payment-collections/paycol_1/payment-sessions",
+	rec := do(t, r, http.MethodPost, "/store/v1/payment-collections/paycol_1/payment-sessions",
 		`{"provider_id":"manual","idempotency_key":"key-1","data":{"card_token":"tok_1"}}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Equal(t, "tok_1", svc.sonCreateSession.Data["card_token"])
+	assert.Equal(t, "tok_1", svc.lastCreateSession.Data["card_token"])
 }
 
-// TestOturumAcmaBozukData422 nesne olmayan bir data alanının reddedildiğini
-// doğrular.
-func TestOturumAcmaBozukData422(t *testing.T) {
-	r := yeniRouter(&fakePayments{})
+// TestCreateSessionMalformedDataReturns422 verifies that a data field that is
+// not an object is rejected.
+func TestCreateSessionMalformedDataReturns422(t *testing.T) {
+	r := newTestRouter(&fakePayments{})
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payment-collections/paycol_1/payment-sessions",
+	rec := do(t, r, http.MethodPost, "/admin/v1/payment-collections/paycol_1/payment-sessions",
 		`{"provider_id":"manual","idempotency_key":"key-1","data":[1,2]}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
 }
 
-// TestTahsilatGovdesiIstegeBagli gövdesiz bir tahsilat isteğinin "tamamı"
-// anlamına geldiğini doğrular.
+// TestCaptureBodyIsOptional verifies that a capture request without a body
+// means "all of it".
 //
-// Boş gövdeyi hata saymak, en yaygın çağrıyı gereksiz bir JSON nesnesi yazmaya
-// zorlardı.
-func TestTahsilatGovdesiIstegeBagli(t *testing.T) {
+// Counting an empty body as an error would force the most common call to
+// write an unnecessary JSON object.
+func TestCaptureBodyIsOptional(t *testing.T) {
 	svc := &fakePayments{payment: models.Payment{ID: "pay_1", Amount: 1000}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payment-sessions/payses_1/capture", "")
+	rec := do(t, r, http.MethodPost, "/admin/v1/payment-sessions/payses_1/capture", "")
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Zero(t, svc.sonCaptureAmount, "gövdesiz istek sıfır tutar demektir")
+	assert.Zero(t, svc.lastCaptureAmount, "a request without a body means a zero amount")
 }
 
-// TestTahsilatTutarliGovde açık tutarın servise geçtiğini doğrular.
-func TestTahsilatTutarliGovde(t *testing.T) {
+// TestCaptureBodyWithAmount verifies that an explicit amount reaches the
+// service.
+func TestCaptureBodyWithAmount(t *testing.T) {
 	svc := &fakePayments{payment: models.Payment{ID: "pay_1", Amount: 400}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payment-sessions/payses_1/capture", `{"amount":400}`)
+	rec := do(t, r, http.MethodPost, "/admin/v1/payment-sessions/payses_1/capture", `{"amount":400}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Equal(t, int64(400), svc.sonCaptureAmount)
+	assert.Equal(t, int64(400), svc.lastCaptureAmount)
 }
 
-// TestIptal204Doner telafi ucunun gövdesiz başarı döndüğünü doğrular.
-func TestIptal204Doner(t *testing.T) {
+// TestCancelReturns204 verifies that the compensation endpoint answers success
+// without a body.
+func TestCancelReturns204(t *testing.T) {
 	svc := &fakePayments{}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payment-sessions/payses_1/cancel", "")
+	rec := do(t, r, http.MethodPost, "/admin/v1/payment-sessions/payses_1/cancel", "")
 
 	assert.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
-	assert.True(t, svc.cancelCagrisi)
+	assert.True(t, svc.cancelCalled)
 	assert.Empty(t, rec.Body.String())
 }
 
-// TestIadeIstegi201VeArgumanlar iade gövdesinin servise geçtiğini doğrular.
-func TestIadeIstegi201VeArgumanlar(t *testing.T) {
-	svc := &fakePayments{refund: models.Refund{ID: "refund_1", Amount: 250, Reason: "müşteri talebi"}}
-	r := yeniRouter(svc)
+// TestRefundRequestReturns201AndPassesArguments verifies that the refund body
+// reaches the service.
+func TestRefundRequestReturns201AndPassesArguments(t *testing.T) {
+	svc := &fakePayments{refund: models.Refund{ID: "refund_1", Amount: 250, Reason: "customer request"}}
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/payments/pay_1/refunds",
-		`{"amount":250,"reason":"müşteri talebi"}`)
+	rec := do(t, r, http.MethodPost, "/admin/v1/payments/pay_1/refunds",
+		`{"amount":250,"reason":"customer request"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	assert.Equal(t, int64(250), svc.sonRefundAmount)
-	assert.Equal(t, "müşteri talebi", svc.sonRefundReason)
+	assert.Equal(t, int64(250), svc.lastRefundAmount)
+	assert.Equal(t, "customer request", svc.lastRefundReason)
 }
 
-// TestSaglayiciListesi vitrinin ve yönetimin aynı listeyi gördüğünü doğrular.
-func TestSaglayiciListesi(t *testing.T) {
+// TestProviderList verifies that the storefront and the admin see the same
+// list.
+func TestProviderList(t *testing.T) {
 	svc := &fakePayments{providerIDs: []string{"manual"}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
 	for _, path := range []string{"/admin/v1/payment-providers", "/store/v1/payment-providers"} {
-		rec := istek(t, r, http.MethodGet, path, "")
+		rec := do(t, r, http.MethodGet, path, "")
 
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		body := govde(t, rec)
+		body := decodeResponse(t, rec)
 		assert.Equal(t, []any{"manual"}, body["data"])
 		assert.InDelta(t, 1, body["count"], 0)
 	}
 }
 
-// TestMagazaYuzeyiTahsilatAcmaz müşterinin kendi tarayıcısından PARA HAREKETİ
-// tetikleyemediğini doğrular.
+// TestStoreSurfaceDoesNotExposeCapture verifies that the customer cannot
+// trigger a MONEY MOVEMENT from their own browser.
 //
-// Mağaza tarafında tahsilat ucu olsaydı, siparişi hiç oluşmamış bir sepetten
-// para çekilebilirdi; yetkilendirme, tahsilat ve iade sipariş tamamlama
-// workflow'una aittir.
+// Had there been a capture endpoint on the store side, money could have been
+// taken from a cart whose order never came into being; authorization, capture
+// and refund belong to the order completion workflow.
 //
-// İptal bu listede DEĞİLDİR ve olmamalıdır: para hareket ettirmez, müşterinin
-// KENDİ açtığı rezervasyonu bırakır (bkz. TestMagazaYuzeyiOturumIptaliniAcar).
-func TestMagazaYuzeyiTahsilatAcmaz(t *testing.T) {
-	r := yeniRouter(&fakePayments{})
+// Cancellation is NOT on this list and must not be: it moves no money, it
+// releases the reservation the customer opened THEMSELVES (see
+// TestStoreSurfaceExposesSessionCancel).
+func TestStoreSurfaceDoesNotExposeCapture(t *testing.T) {
+	r := newTestRouter(&fakePayments{})
 
 	for _, path := range []string{
 		"/store/v1/payment-sessions/payses_1/authorize",
 		"/store/v1/payment-sessions/payses_1/capture",
 		"/store/v1/payments/pay_1/refunds",
 	} {
-		rec := istek(t, r, http.MethodPost, path, "")
+		rec := do(t, r, http.MethodPost, path, "")
 
-		assert.Equal(t, http.StatusNotFound, rec.Code, "%s mağazaya açılmamalı", path)
+		assert.Equal(t, http.StatusNotFound, rec.Code, "%s must not be open to the store", path)
 	}
 }
 
-// TestMagazaYuzeyiOturumIptaliniAcar müşterinin kendi ödeme oturumunu
-// bırakabildiğini doğrular.
+// TestStoreSurfaceExposesSessionCancel verifies that the customer can release
+// their own payment session.
 //
-// Regresyon: çift tahsilatı engelleyen rezervasyon koleksiyon düzeyinde
-// tutulur — açık bir oturum koleksiyonun kalan tutarını kapatır. Vitrinde
-// bırakma yolu olmadığında "kredi kartı" seçip sonra "havale"ye dönmek isteyen
-// müşteri, bir YÖNETİCİ oturumu elle iptal edene kadar kilitli kalıyordu.
+// Regression: the reservation that prevents a double capture is held at the
+// collection level — an open session takes up the collection's remaining
+// amount. While the storefront had no way to release it, a customer who picked
+// "credit card" and then wanted to switch to "bank transfer" stayed locked
+// until an ADMINISTRATOR canceled the session by hand.
 //
-// İptalin para hareketi olmaması, onu authorize/capture/refund'dan ayıran
-// şeydir; o üçü mağazaya kapalı kalır.
-func TestMagazaYuzeyiOturumIptaliniAcar(t *testing.T) {
+// That a cancellation is not a money movement is what sets it apart from
+// authorize/capture/refund; those three stay closed to the store.
+func TestStoreSurfaceExposesSessionCancel(t *testing.T) {
 	fake := &fakePayments{}
-	r := yeniRouter(fake)
+	r := newTestRouter(fake)
 
-	rec := istek(t, r, http.MethodPost, "/store/v1/payment-sessions/payses_1/cancel", "")
+	rec := do(t, r, http.MethodPost, "/store/v1/payment-sessions/payses_1/cancel", "")
 
 	assert.Equal(t, http.StatusNoContent, rec.Code,
-		"müşteri kendi rezervasyonunu bırakabilmeli; aksi hâlde ödeme yöntemi değiştirilemez")
+		"the customer has to be able to release their own reservation; otherwise the payment method cannot be changed")
 }
 
-// TestOturumDTOsuRetSebebiniTasir teşhis alanının yanıtta göründüğünü
-// doğrular; alanı gizlemek, entegrasyonu yazanın reddin sebebini hiç
-// görememesi demek olurdu.
-func TestOturumDTOsuRetSebebiniTasir(t *testing.T) {
+// TestSessionDTOCarriesDeclineReason verifies that the diagnostic field shows
+// in the response; hiding the field would mean whoever writes the integration
+// never gets to see the reason for the decline.
+func TestSessionDTOCarriesDeclineReason(t *testing.T) {
 	svc := &fakePayments{session: models.PaymentSession{
-		ID: "payses_1", Status: models.SessionFailed, DeclineReason: "yetersiz bakiye",
+		ID: "payses_1", Status: models.SessionFailed, DeclineReason: "insufficient funds",
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/payment-sessions/payses_1", "")
+	rec := do(t, r, http.MethodGet, "/admin/v1/payment-sessions/payses_1", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	data, ok := govde(t, rec)["data"].(map[string]any)
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "failed", data["status"])
-	assert.Equal(t, "yetersiz bakiye", data["decline_reason"])
+	assert.Equal(t, "insufficient funds", data["decline_reason"])
 }
 
-// darYetkili yalnızca [api.ScopeRead] taşıyan bir yönetim kimliği döner.
-func darYetkili() corehttp.Principal {
+// readOnlyPrincipal returns an admin identity carrying only [api.ScopeRead].
+func readOnlyPrincipal() corehttp.Principal {
 	return corehttp.Principal{
-		ID:     "user_dar",
+		ID:     "user_readonly",
 		Kind:   "user",
 		Scopes: []string{api.ScopeRead},
 	}
 }
 
-// TestDarYetkiliKimlikYazmaUcunda403Alir okuma yetkisinin yazmaya
-// yetmediğini doğrular.
+// TestReadOnlyPrincipalGets403OnWriteEndpoint verifies that the read scope
+// does not suffice for writing.
 //
-// Buradaki uç PARA ÇIKARIR. Yetki denetimi olmasaydı kimlik doğrulama tek
-// başına yetkilendirme yerine geçerdi: yalnızca rapor okusun diye verilmiş bir
-// kimlik kasadan iade yapabilirdi.
-func TestDarYetkiliKimlikYazmaUcunda403Alir(t *testing.T) {
+// The endpoint here MOVES MONEY OUT. Without scope enforcement, authentication
+// alone would stand in for authorization: an identity granted only to read
+// reports could make a refund out of the till.
+func TestReadOnlyPrincipalGets403OnWriteEndpoint(t *testing.T) {
 	svc := &fakePayments{}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := kimlikliIstek(t, r, http.MethodPost, "/admin/v1/payments/pay_1/refunds",
-		`{"amount":500,"reason":"müşteri iadesi"}`, darYetkili())
+	rec := doAs(t, r, http.MethodPost, "/admin/v1/payments/pay_1/refunds",
+		`{"amount":500,"reason":"customer refund"}`, readOnlyPrincipal())
 
 	require.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Equal(t, corehttp.CodeForbidden, hataKodu(t, rec))
-	assert.Zero(t, svc.sonRefundAmount, "yetki yetmiyorsa servise hiç gidilmemeli")
+	assert.Equal(t, corehttp.CodeForbidden, errorCode(t, rec))
+	assert.Zero(t, svc.lastRefundAmount, "when the scope is insufficient the service must not be reached at all")
 }
 
-// TestDarYetkiliKimlikOkumaUcundaGecer aynı kimliğin okuma ucunda geçtiğini
-// doğrular.
+// TestReadOnlyPrincipalPassesOnReadEndpoint verifies that the same identity
+// passes on a read endpoint.
 //
-// Çift eşlik eden test budur: 403 dönen bir uç, yetki haritasının fazla dar
-// olmasından da kaynaklanabilirdi. Aynı kimliğin okumada geçmesi, reddin
-// yetki AYRIMINDAN geldiğini gösterir.
-func TestDarYetkiliKimlikOkumaUcundaGecer(t *testing.T) {
+// This is the test that accompanies it as a pair: an endpoint returning 403
+// could also have stemmed from the scope map being too narrow. That the same
+// identity passes on the read shows that the refusal comes from the scope
+// DISTINCTION.
+func TestReadOnlyPrincipalPassesOnReadEndpoint(t *testing.T) {
 	svc := &fakePayments{
 		collections: []models.PaymentCollection{{ID: "pcol_1", Amount: 1000, CurrencyCode: "TRY"}},
 		count:       1,
 	}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := kimlikliIstek(t, r, http.MethodGet, "/admin/v1/payment-collections", "", darYetkili())
+	rec := doAs(t, r, http.MethodGet, "/admin/v1/payment-collections", "", readOnlyPrincipal())
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, float64(1), govde(t, rec)["count"])
+	assert.Equal(t, float64(1), decodeResponse(t, rec)["count"])
 }
 
-// TestYetkisizKimlikYonetimUcunuAcamaz yetkileri BOŞ bırakılmış bir yönetim
-// kullanıcısının hiçbir yönetim ucuna erişemediğini doğrular.
+// TestPrincipalWithoutScopesCannotOpenAdminEndpoint verifies that an admin
+// user whose scopes were left EMPTY can reach no admin endpoint.
 //
-// Kimlik geçerlidir — giriş yapabilir, kim olduğu bilinir — ama yetkisi
-// yoktur. Bu ayrım olmasaydı yetki listesi boş bırakılan bir kullanıcı
-// "hiçbir şeye erişemez" sanılırken tahsilat tetikleyebilirdi.
-func TestYetkisizKimlikYonetimUcunuAcamaz(t *testing.T) {
-	yetkisiz := corehttp.Principal{ID: "user_bos", Kind: "user", Scopes: []string{}}
+// The identity is valid — it can log in, it is known who it is — but it has no
+// scope. Without this distinction, a user whose scope list was left empty
+// would be believed to "reach nothing" while being able to trigger a capture.
+func TestPrincipalWithoutScopesCannotOpenAdminEndpoint(t *testing.T) {
+	noScopes := corehttp.Principal{ID: "user_empty", Kind: "user", Scopes: []string{}}
 
 	for _, tc := range []struct {
-		ad     string
+		name   string
 		method string
-		yol    string
+		path   string
 	}{
-		{ad: "okuma", method: http.MethodGet, yol: "/admin/v1/payment-collections"},
-		{ad: "yazma", method: http.MethodPost, yol: "/admin/v1/payment-sessions/pses_1/capture"},
+		{name: "read", method: http.MethodGet, path: "/admin/v1/payment-collections"},
+		{name: "write", method: http.MethodPost, path: "/admin/v1/payment-sessions/pses_1/capture"},
 	} {
-		t.Run(tc.ad, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			svc := &fakePayments{}
-			r := yeniRouter(svc)
+			r := newTestRouter(svc)
 
-			rec := kimlikliIstek(t, r, tc.method, tc.yol, "", yetkisiz)
+			rec := doAs(t, r, tc.method, tc.path, "", noScopes)
 
 			assert.Equal(t, http.StatusForbidden, rec.Code)
-			assert.Zero(t, svc.sonCaptureAmount, "yetkisiz kimlik için servise hiç gidilmemeli")
+			assert.Zero(t, svc.lastCaptureAmount, "for a principal without scopes the service must not be reached at all")
 		})
 	}
 }
 
-// TestKimliksizIstek401Alir kimliği hiç olmayan isteğin 403 DEĞİL 401
-// aldığını doğrular.
+// TestRequestWithoutPrincipalGets401 verifies that a request with no identity
+// at all gets 401, NOT 403.
 //
-// Ayrım istemci için anlamlıdır: 401 "kim olduğunu söyle" (kimlikle tekrar
-// dene), 403 "kim olduğunu biliyorum ama yetkin yok" (tekrar denemenin
-// anlamı yok) demektir.
-func TestKimliksizIstek401Alir(t *testing.T) {
-	r := yeniRouter(&fakePayments{})
+// The distinction is meaningful for the client: 401 means "tell me who you
+// are" (try again with an identity), 403 means "I know who you are but you
+// have no scope" (there is no point in trying again).
+func TestRequestWithoutPrincipalGets401(t *testing.T) {
+	r := newTestRouter(&fakePayments{})
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/payment-collections", strings.NewReader(""))
 	rec := httptest.NewRecorder()
@@ -579,317 +594,325 @@ func TestKimliksizIstek401Alir(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
-// TestMagazaUclariYetkiIstemez mağaza uçlarının yetki taşımayan bir kimlikle
-// çalıştığını doğrular.
+// TestStoreEndpointsRequireNoScope verifies that the store endpoints work with
+// an identity that carries no scope.
 //
-// /store/v1'in kimliği publishable anahtardır ve o anahtar tanımı gereği yetki
-// TAŞIMAZ. Yönetim yetkisi eklerken mağaza ucunu da kapatmak tüm vitrini
-// düşürürdü; bu risk gerçektir, çünkü sağlayıcı listesi ve koleksiyon okuma
-// uçları iki yüzeyde AYNI handler'ı paylaşır.
-func TestMagazaUclariYetkiIstemez(t *testing.T) {
+// The identity of /store/v1 is the publishable key and that key by definition
+// CARRIES NO scope. Closing the store endpoint too while adding the admin
+// scopes would have brought the whole storefront down; the risk is real,
+// because the provider list and the collection read endpoints share the SAME
+// handler on the two surfaces.
+func TestStoreEndpointsRequireNoScope(t *testing.T) {
 	svc := &fakePayments{
 		providerIDs: []string{"manual"},
 		collection:  models.PaymentCollection{ID: "pcol_1", Amount: 1000, CurrencyCode: "TRY"},
 	}
-	magaza := corehttp.Principal{ID: "pk_1", Kind: "api_key", Scopes: []string{}}
-	r := yeniRouter(svc)
+	storefront := corehttp.Principal{ID: "pk_1", Kind: "api_key", Scopes: []string{}}
+	r := newTestRouter(svc)
 
-	for _, yol := range []string{
+	for _, path := range []string{
 		"/store/v1/payment-providers",
 		"/store/v1/payment-collections/pcol_1",
 	} {
-		t.Run(yol, func(t *testing.T) {
-			rec := kimlikliIstek(t, r, http.MethodGet, yol, "", magaza)
+		t.Run(path, func(t *testing.T) {
+			rec := doAs(t, r, http.MethodGet, path, "", storefront)
 
 			assert.Equal(t, http.StatusOK, rec.Code)
 		})
 	}
 }
 
-// --- okuma yüzeyi ------------------------------------------------------------
+// --- read surface ------------------------------------------------------------
 //
-// Aşağıdaki dört uç (koleksiyonun oturumları, koleksiyonun tahsilatları,
-// tahsilatın kendisi, tahsilatın iadeleri) operatörün PARA KAYITLARINA tek
-// bakış yüzeyidir. Yazma uçlarından farkları, hata verdiklerinde kimsenin
-// haberi olmamasıdır: yanlış kaydı okuyan bir uç da 200 döner, boş yerine null
-// dönen bir liste de. Bu yüzden her biri ayrı ayrı sınanır.
+// The four endpoints below (the collection's sessions, the collection's
+// payments, the payment itself, the payment's refunds) are the operator's only
+// view of the MONEY RECORDS. What sets them apart from the write endpoints is
+// that nobody hears about it when they fail: an endpoint reading the wrong
+// record still returns 200, and so does a list that returns null instead of
+// empty. That is why each of them is tested separately.
 
-// TestOkumaUclariKaydinKimliginiYoldanAlir okuma uçlarının URL'deki kaydı
-// sorduğunu doğrular.
+// TestReadEndpointsTakeTheRecordIDFromThePath verifies that the read endpoints
+// ask for the record in the URL.
 //
-// Bir okuma handler'ının tek işi budur: yoldan gelen kimliği servise geçirmek.
-// Kimlik kaybolsa (boş dizeye düşse) ya da başka bir yol parçasından okunsa uç
-// yine 200 döner ve zarf yine doğru görünür — operatör, sorduğu tahsilatın
-// yanıtını aldığını sanır. Para kayıtlarında bu, bir iadeyi başka bir
-// tahsilatın altında aramak demektir.
-func TestOkumaUclariKaydinKimliginiYoldanAlir(t *testing.T) {
+// This is a read handler's only job: passing the ID from the path on to the
+// service. Were the ID lost (dropped to an empty string) or read from another
+// path segment, the endpoint would still return 200 and the envelope would
+// still look right — the operator would believe they got the answer for the
+// payment they asked about. With money records, that means looking for a
+// refund under another payment.
+func TestReadEndpointsTakeTheRecordIDFromThePath(t *testing.T) {
 	tests := map[string]struct {
 		path    string
-		beklHam string
-		sorulan func(*fakePayments) string
+		wantID  string
+		askedID func(*fakePayments) string
 	}{
-		"koleksiyonun oturumları": {
+		"the collection's sessions": {
 			path:    "/admin/v1/payment-collections/paycol_9/payment-sessions",
-			beklHam: "paycol_9",
-			sorulan: func(f *fakePayments) string { return f.sonOturumListesiKimligi },
+			wantID:  "paycol_9",
+			askedID: func(f *fakePayments) string { return f.lastSessionListID },
 		},
-		"koleksiyonun tahsilatları": {
+		"the collection's payments": {
 			path:    "/admin/v1/payment-collections/paycol_9/payments",
-			beklHam: "paycol_9",
-			sorulan: func(f *fakePayments) string { return f.sonTahsilatListesiKimligi },
+			wantID:  "paycol_9",
+			askedID: func(f *fakePayments) string { return f.lastPaymentListID },
 		},
-		"tahsilatın kendisi": {
+		"the payment itself": {
 			path:    "/admin/v1/payments/pay_9",
-			beklHam: "pay_9",
-			sorulan: func(f *fakePayments) string { return f.sonTahsilatKimligi },
+			wantID:  "pay_9",
+			askedID: func(f *fakePayments) string { return f.lastPaymentID },
 		},
-		"tahsilatın iadeleri": {
+		"the payment's refunds": {
 			path:    "/admin/v1/payments/pay_9/refunds",
-			beklHam: "pay_9",
-			sorulan: func(f *fakePayments) string { return f.sonIadeListesiKimligi },
+			wantID:  "pay_9",
+			askedID: func(f *fakePayments) string { return f.lastRefundListID },
 		},
 	}
 
-	for ad, tt := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
 			svc := &fakePayments{}
-			r := yeniRouter(svc)
+			r := newTestRouter(svc)
 
-			rec := istek(t, r, http.MethodGet, tt.path, "")
+			rec := do(t, r, http.MethodGet, tt.path, "")
 
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-			assert.Equal(t, tt.beklHam, tt.sorulan(svc),
-				"uç, yoldaki kaydı değil başka bir kimliği sordu")
+			assert.Equal(t, tt.wantID, tt.askedID(svc),
+				"the endpoint asked for some other ID, not the record in the path")
 		})
 	}
 }
 
-// TestBosOkumaListeleriBosDiziDoner kaydı olmayan bir listenin null DEĞİL boş
-// dizi döndüğünü doğrular.
+// TestEmptyReadListsReturnAnEmptyArray verifies that a list with no records
+// returns an empty array, NOT null.
 //
-// Go'da nil bir dilim JSON'da null olarak kodlanır. Zarfın "data" alanı null
-// dönerse istemci tarafındaki her döngü ya patlar ya da sessizce atlanır; daha
-// kötüsü, "bu tahsilatın iadesi yok" ile "iade listesi alınamadı" ayırt
-// edilemez hâle gelir. Operatörün mutabakat sorusu tam olarak budur ve iki
-// yanıt farklı şeyler demektir.
-func TestBosOkumaListeleriBosDiziDoner(t *testing.T) {
+// In Go a nil slice is encoded as null in JSON. If the envelope's "data" field
+// comes back null, every loop on the client side either blows up or is
+// silently skipped; worse, "this payment has no refund" and "the refund list
+// could not be fetched" become indistinguishable. That is exactly the
+// operator's reconciliation question, and the two answers mean different
+// things.
+func TestEmptyReadListsReturnAnEmptyArray(t *testing.T) {
 	paths := map[string]string{
-		"koleksiyonun oturumları":   "/admin/v1/payment-collections/paycol_1/payment-sessions",
-		"koleksiyonun tahsilatları": "/admin/v1/payment-collections/paycol_1/payments",
-		"tahsilatın iadeleri":       "/admin/v1/payments/pay_1/refunds",
+		"the collection's sessions": "/admin/v1/payment-collections/paycol_1/payment-sessions",
+		"the collection's payments": "/admin/v1/payment-collections/paycol_1/payments",
+		"the payment's refunds":     "/admin/v1/payments/pay_1/refunds",
 	}
 
-	for ad, path := range paths {
-		t.Run(ad, func(t *testing.T) {
-			r := yeniRouter(&fakePayments{})
+	for name, path := range paths {
+		t.Run(name, func(t *testing.T) {
+			r := newTestRouter(&fakePayments{})
 
-			rec := istek(t, r, http.MethodGet, path, "")
+			rec := do(t, r, http.MethodGet, path, "")
 
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-			body := govde(t, rec)
+			body := decodeResponse(t, rec)
 			assert.Equal(t, []any{}, body["data"],
-				"kayıt yokken liste null değil boş dizi olmalı: %s", rec.Body.String())
+				"with no records the list has to be an empty array, not null: %s", rec.Body.String())
 			assert.InDelta(t, 0, body["count"], 0)
 		})
 	}
 }
 
-// TestOkumaUclariServisinHataSinifiniKorur okuma uçlarının da status kodu
-// SEÇMEDİĞİNİ doğrular.
+// TestReadEndpointsKeepTheServiceErrorKind verifies that the read endpoints
+// too DO NOT CHOOSE the status code.
 //
-// Olmayan bir koleksiyonun oturumları sorulduğunda 404 dönmelidir; 500 dönmek,
-// kimliği yanlış yazan operatöre "sunucu bozuldu" demek ve onu kendi hatasını
-// aramak yerine bir olay kaydı açmaya göndermek olurdu. Yazma uçları için
-// zaten sınanan bu kural (bkz. TestHataSiniflariStatusKodunaEslenir) okuma
-// uçlarında ayrıca doğrulanır: dördü de hatayı kendi elleriyle yazmaya kalksa
-// diğer testlerin hiçbiri kırılmazdı.
-func TestOkumaUclariServisinHataSinifiniKorur(t *testing.T) {
+// When the sessions of a collection that does not exist are asked for, the
+// answer has to be 404; returning 500 would tell an operator who mistyped the
+// ID "the server broke" and send them to open an incident instead of looking
+// for their own mistake. This rule, already tested for the write endpoints
+// (see TestErrorKindsMapToStatusCodes), is verified separately on the read
+// endpoints: had all four of them set out to write the error by their own
+// hand, none of the other tests would have broken.
+func TestReadEndpointsKeepTheServiceErrorKind(t *testing.T) {
 	paths := map[string]string{
-		"koleksiyonun oturumları":   "/admin/v1/payment-collections/paycol_yok/payment-sessions",
-		"koleksiyonun tahsilatları": "/admin/v1/payment-collections/paycol_yok/payments",
-		"tahsilatın kendisi":        "/admin/v1/payments/pay_yok",
-		"tahsilatın iadeleri":       "/admin/v1/payments/pay_yok/refunds",
+		"the collection's sessions": "/admin/v1/payment-collections/paycol_missing/payment-sessions",
+		"the collection's payments": "/admin/v1/payment-collections/paycol_missing/payments",
+		"the payment itself":        "/admin/v1/payments/pay_missing",
+		"the payment's refunds":     "/admin/v1/payments/pay_missing/refunds",
 	}
 
-	for ad, path := range paths {
-		t.Run(ad, func(t *testing.T) {
-			r := yeniRouter(&fakePayments{err: notFound()})
+	for name, path := range paths {
+		t.Run(name, func(t *testing.T) {
+			r := newTestRouter(&fakePayments{err: notFound()})
 
-			rec := istek(t, r, http.MethodGet, path, "")
+			rec := do(t, r, http.MethodGet, path, "")
 
 			assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
-			assert.Equal(t, "payment_collection_not_found", hataKodu(t, rec),
-				"hata kodu servisten geldiği gibi taşınmalı")
+			assert.Equal(t, "payment_collection_not_found", errorCode(t, rec),
+				"the error code has to be carried as it came from the service")
 		})
 	}
 }
 
-// TestIadeListesiMutabakatIcinTutariVeSebebiTasir yapılmış bir iadenin
-// listede TAM olarak göründüğünü doğrular.
+// TestRefundListCarriesAmountAndReasonForReconciliation verifies that a refund
+// that was made shows up IN FULL on the list.
 //
-// Bu uç, operatörün "bu tahsilattan ne kadar geri gitti ve neden" sorusuna
-// verilen tek yanıttır. Tutarı düşen bir DTO, kısmi iadeleri toplamı tutmayan
-// bir tabloya çevirir; sebebi düşen bir DTO ise iki iadeyi birbirinden ayırt
-// edilemez kılar. İkisi de sessizdir: yanıt yine 200 ve yine dolu bir liste
-// olur. Zarfın "count" alanı da sayfanın değil dönen satırların sayısıdır ve
-// sayfalanmayan uçlarda istemcinin gördüğü tek sayıdır.
-func TestIadeListesiMutabakatIcinTutariVeSebebiTasir(t *testing.T) {
+// This endpoint is the only answer to the operator's question "how much went
+// back from this payment, and why". A DTO that drops the amount turns partial
+// refunds into a table whose total does not add up; a DTO that drops the
+// reason makes two refunds indistinguishable from each other. Both are silent:
+// the answer is still 200 and still a full list. The envelope's "count" field,
+// too, is the number of rows returned, not of the page, and on endpoints that
+// are not paged it is the only number the client sees.
+func TestRefundListCarriesAmountAndReasonForReconciliation(t *testing.T) {
 	svc := &fakePayments{refunds: []models.Refund{
-		{ID: "refund_2", PaymentID: "pay_1", Amount: 250, Reason: "müşteri talebi"},
-		{ID: "refund_1", PaymentID: "pay_1", Amount: 750, Reason: "hasarlı ürün"},
+		{ID: "refund_2", PaymentID: "pay_1", Amount: 250, Reason: "customer request"},
+		{ID: "refund_1", PaymentID: "pay_1", Amount: 750, Reason: "damaged item"},
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/payments/pay_1/refunds", "")
+	rec := do(t, r, http.MethodGet, "/admin/v1/payments/pay_1/refunds", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	body := govde(t, rec)
-	assert.InDelta(t, 2, body["count"], 0, "count dönen satır sayısı olmalı")
+	body := decodeResponse(t, rec)
+	assert.InDelta(t, 2, body["count"], 0, "count has to be the number of rows returned")
 
 	data, ok := body["data"].([]any)
-	require.True(t, ok, "iade listesi bekleniyordu: %s", rec.Body.String())
+	require.True(t, ok, "a refund list was expected: %s", rec.Body.String())
 	require.Len(t, data, 2)
 
-	ilk, ok := data[0].(map[string]any)
+	first, ok := data[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "refund_2", ilk["id"])
-	assert.Equal(t, "pay_1", ilk["payment_id"], "iade hangi tahsilata ait olduğunu taşımalı")
-	assert.InDelta(t, 250, ilk["amount"], 0, "iade tutarı yanıtta görünmeli")
-	assert.Equal(t, "müşteri talebi", ilk["reason"], "iadenin sebebi yanıtta görünmeli")
+	assert.Equal(t, "refund_2", first["id"])
+	assert.Equal(t, "pay_1", first["payment_id"], "the refund has to carry which payment it belongs to")
+	assert.InDelta(t, 250, first["amount"], 0, "the refund amount has to show in the response")
+	assert.Equal(t, "customer request", first["reason"], "the refund's reason has to show in the response")
 
-	ikinci, ok := data[1].(map[string]any)
+	second, ok := data[1].(map[string]any)
 	require.True(t, ok)
-	assert.InDelta(t, 750, ikinci["amount"], 0)
-	assert.Equal(t, "hasarlı ürün", ikinci["reason"])
+	assert.InDelta(t, 750, second["amount"], 0)
+	assert.Equal(t, "damaged item", second["reason"])
 }
 
-// TestTahsilatDetayiIadeEdilenTutariGosterir tahsilatın tekil okumasının
-// iade edilmiş tutarı taşıdığını doğrular.
+// TestPaymentDetailShowsTheRefundedAmount verifies that the single read of a
+// payment carries the refunded amount.
 //
-// "Bu tahsilattan ne kadarı hâlâ bizde" sorusunun yanıtı tek bir alandır ve
-// listeden değil, buradan okunur. Alan düşerse tahsilat tam tutarıyla
-// görünmeye devam eder — yani tamamı iade edilmiş bir tahsilat, hiç iade
-// edilmemiş bir tahsilattan ayırt edilemez. Yanıtın tekil zarfla (liste
-// zarfıyla değil) döndüğü de burada sabitlenir; iki şekil arasında geçiş
-// istemcinin okumasını sessizce boşa çıkarırdı.
-func TestTahsilatDetayiIadeEdilenTutariGosterir(t *testing.T) {
+// The answer to "how much of this payment do we still hold" is a single field,
+// and it is read here, not from the list. If the field drops, the payment
+// keeps showing with its full amount — that is, a fully refunded payment
+// cannot be told apart from one that was never refunded. That the answer comes
+// back in the single envelope (not the list envelope) is pinned here too; a
+// switch between the two shapes would silently void the client's read.
+func TestPaymentDetailShowsTheRefundedAmount(t *testing.T) {
 	svc := &fakePayments{payment: models.Payment{
 		ID: "pay_1", PaymentSessionID: "payses_1", PaymentCollectionID: "paycol_1",
 		Amount: 1000, CurrencyCode: "TRY", RefundedAmount: 400,
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/payments/pay_1", "")
+	rec := do(t, r, http.MethodGet, "/admin/v1/payments/pay_1", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	data, ok := govde(t, rec)["data"].(map[string]any)
-	require.True(t, ok, "tekil zarf bekleniyordu: %s", rec.Body.String())
+	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
+	require.True(t, ok, "a single envelope was expected: %s", rec.Body.String())
 	assert.Equal(t, "pay_1", data["id"])
 	assert.InDelta(t, 1000, data["amount"], 0)
 	assert.InDelta(t, 400, data["refunded_amount"], 0,
-		"iade edilen tutar görünmezse tamamı iade edilmiş tahsilat dokunulmamış görünür")
+		"if the refunded amount does not show, a fully refunded payment looks untouched")
 	assert.Equal(t, "paycol_1", data["payment_collection_id"])
 }
 
-// TestOturumListesiKoleksiyonunOturumlariniDoner koleksiyonun oturum
-// listesinin satırları taşıdığını doğrular.
+// TestSessionListReturnsTheCollectionsSessions verifies that a collection's
+// session list carries the rows.
 //
-// Koleksiyonda birden çok oturum olması normaldir: reddedilen ya da bırakılan
-// her deneme bir satır bırakır ve "müşteri neden ödeyemedi" sorusu ancak bu
-// listeye bakılarak yanıtlanır. Liste yalnızca sonuncuyu ya da yalnızca
-// açık olanı gösterirse o soru cevapsız kalır.
-func TestOturumListesiKoleksiyonunOturumlariniDoner(t *testing.T) {
+// A collection having more than one session is normal: every declined or
+// released attempt leaves a row behind, and the question "why could the
+// customer not pay" can only be answered by looking at this list. If the list
+// showed only the last one, or only the open one, that question would go
+// unanswered.
+func TestSessionListReturnsTheCollectionsSessions(t *testing.T) {
 	svc := &fakePayments{sessions: []models.PaymentSession{
 		{ID: "payses_2", PaymentCollectionID: "paycol_1", Status: models.SessionPending, Amount: 1000},
 		{
 			ID: "payses_1", PaymentCollectionID: "paycol_1", Status: models.SessionFailed,
-			Amount: 1000, DeclineReason: "yetersiz bakiye",
+			Amount: 1000, DeclineReason: "insufficient funds",
 		},
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet,
+	rec := do(t, r, http.MethodGet,
 		"/admin/v1/payment-collections/paycol_1/payment-sessions", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	body := govde(t, rec)
+	body := decodeResponse(t, rec)
 	assert.InDelta(t, 2, body["count"], 0)
 
 	data, ok := body["data"].([]any)
-	require.True(t, ok, "oturum listesi bekleniyordu: %s", rec.Body.String())
-	require.Len(t, data, 2, "başarısız deneme de listede kalmalı")
+	require.True(t, ok, "a session list was expected: %s", rec.Body.String())
+	require.Len(t, data, 2, "the failed attempt has to stay on the list too")
 
-	basarisiz, ok := data[1].(map[string]any)
+	failed, ok := data[1].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "failed", basarisiz["status"])
-	assert.Equal(t, "yetersiz bakiye", basarisiz["decline_reason"],
-		"reddin sebebi listede de görünmeli; teşhis tek tek oturum okumaya kalmamalı")
+	assert.Equal(t, "failed", failed["status"])
+	assert.Equal(t, "insufficient funds", failed["decline_reason"],
+		"the reason for the decline has to show on the list too; diagnosis must not be left to reading sessions one by one")
 }
 
-// TestTahsilatListesiKoleksiyonunTahsilatlariniDoner koleksiyonun tahsilat
-// listesinin satırları taşıdığını doğrular.
+// TestPaymentListReturnsTheCollectionsPayments verifies that a collection's
+// payment list carries the rows.
 //
-// Kısmi tahsilat birden çok satır üretir ve koleksiyonun captured_amount
-// alanı bunların TOPLAMIDIR. Toplam ile satırlar ayrışırsa bu ancak listeye
-// bakılarak görülür; tek bir toplam sayı hangi tahsilatın eksik yazıldığını
-// söylemez.
-func TestTahsilatListesiKoleksiyonunTahsilatlariniDoner(t *testing.T) {
+// A partial capture produces several rows, and the collection's
+// captured_amount field is their SUM. If the sum and the rows diverge, that
+// can only be seen by looking at the list; a single total does not say which
+// payment was written short.
+func TestPaymentListReturnsTheCollectionsPayments(t *testing.T) {
 	svc := &fakePayments{payments: []models.Payment{
 		{ID: "pay_2", PaymentCollectionID: "paycol_1", Amount: 400, CurrencyCode: "TRY"},
 		{ID: "pay_1", PaymentCollectionID: "paycol_1", Amount: 600, CurrencyCode: "TRY"},
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet, "/admin/v1/payment-collections/paycol_1/payments", "")
+	rec := do(t, r, http.MethodGet, "/admin/v1/payment-collections/paycol_1/payments", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	body := govde(t, rec)
+	body := decodeResponse(t, rec)
 	assert.InDelta(t, 2, body["count"], 0)
 
 	data, ok := body["data"].([]any)
-	require.True(t, ok, "tahsilat listesi bekleniyordu: %s", rec.Body.String())
-	require.Len(t, data, 2, "kısmi tahsilatların HEPSİ listede olmalı")
+	require.True(t, ok, "a payment list was expected: %s", rec.Body.String())
+	require.Len(t, data, 2, "ALL the partial captures have to be on the list")
 
-	var toplam float64
+	var total float64
 	for i := range data {
-		satir, satirOK := data[i].(map[string]any)
-		require.True(t, satirOK)
-		tutar, tutarOK := satir["amount"].(float64)
-		require.True(t, tutarOK, "tutar alanı olmalı: %s", rec.Body.String())
-		toplam += tutar
+		row, rowOK := data[i].(map[string]any)
+		require.True(t, rowOK)
+		amount, amountOK := row["amount"].(float64)
+		require.True(t, amountOK, "the amount field has to be present: %s", rec.Body.String())
+		total += amount
 	}
-	assert.InDelta(t, 1000, toplam, 0,
-		"satırların toplamı koleksiyonun tahsil edilen tutarını vermeli")
+	assert.InDelta(t, 1000, total, 0,
+		"the sum of the rows has to give the collection's captured amount")
 }
 
-// --- mağaza kredisi ----------------------------------------------------------
+// --- store credit ------------------------------------------------------------
 
-// Mağaza kredisinin yönetim uçları (ADR 0152).
+// The store credit admin endpoints (ADR 0152).
 //
-// Bu katmanın tek işi çeviri: gövdeyi oku, servise ilet, zarfı yaz. O yüzden her
-// test servise NE ULAŞTIĞINI ya da istemcinin NE GÖRDÜĞÜNÜ tutuyor.
+// This layer's only job is translation: read the body, pass it to the service,
+// write the envelope. That is why each test holds WHAT REACHES the service or
+// WHAT the client SEES.
 
-// TestKrediVermeGovdesiServiseUlasir handler'ın tek işini çiviler.
-func TestKrediVermeGovdesiServiseUlasir(t *testing.T) {
+// TestIssueCreditBodyReachesTheService nails down the handler's only job.
+func TestIssueCreditBodyReachesTheService(t *testing.T) {
 	svc := &fakePayments{creditEntry: models.StoreCreditEntry{
 		ID:           "scredit_1",
 		CustomerID:   "cus_1",
 		CurrencyCode: "TRY",
 		Amount:       5_000,
 		Kind:         models.StoreCreditIssue,
-		Reason:       "iade yerine kredi",
+		Reason:       "credit in place of a refund",
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/store-credits",
-		`{"customer_id":"cus_1","currency_code":"TRY","amount":5000,"reason":"iade yerine kredi"}`)
+	rec := do(t, r, http.MethodPost, "/admin/v1/store-credits",
+		`{"customer_id":"cus_1","currency_code":"TRY","amount":5000,"reason":"credit in place of a refund"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	assert.Equal(t, "cus_1", svc.lastCreditInput.CustomerID)
 	assert.Equal(t, int64(5_000), svc.lastCreditInput.Amount)
-	assert.Equal(t, "iade yerine kredi", svc.lastCreditInput.Reason,
-		"gerekçe servise ULAŞMALI: doğrulaması orada ve burada düşürülürse her kredi "+
-			"gerekçesiz görünürdü")
+	assert.Equal(t, "credit in place of a refund", svc.lastCreditInput.Reason,
+		"the reason has to REACH the service: its validation is there, and if it were "+
+			"dropped here every credit would look as if it had no reason")
 
 	var envelope struct {
 		Data struct {
@@ -903,15 +926,16 @@ func TestKrediVermeGovdesiServiseUlasir(t *testing.T) {
 	assert.Equal(t, "issue", envelope.Data.Kind)
 }
 
-// TestBakiyeUcuSorulanDefteriIletir bakiyenin hangi deftere ait olduğunu tutar.
+// TestBalanceEndpointPassesTheLedgerAsked holds which ledger the balance
+// belongs to.
 //
-// Müşteri ve para birimi birlikte bir defteri adlandırıyor; biri düşerse cevap
-// başka birinin parasını ya da başka bir para birimini gösterirdi.
-func TestBakiyeUcuSorulanDefteriIletir(t *testing.T) {
+// The customer and the currency together name one ledger; if either were
+// dropped, the answer would show somebody else's money or another currency.
+func TestBalanceEndpointPassesTheLedgerAsked(t *testing.T) {
 	svc := &fakePayments{creditBalance: 7_500}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet,
+	rec := do(t, r, http.MethodGet,
 		"/admin/v1/store-credits/balance?customer_id=cus_1&currency_code=try", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -927,18 +951,18 @@ func TestBakiyeUcuSorulanDefteriIletir(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
 	assert.Equal(t, int64(7_500), envelope.Data.Balance)
 	assert.Equal(t, "TRY", envelope.Data.CurrencyCode,
-		"yanıt HANGİ defteri okuduğunu söylemeli: 'try' gönderen istemci 'TRY' görmeli")
+		"the answer has to say WHICH ledger it read: a client sending 'try' has to see 'TRY'")
 }
 
-// TestKrediGecmisiListeZarfiDoner zarfın şeklini çiviler.
-func TestKrediGecmisiListeZarfiDoner(t *testing.T) {
+// TestCreditHistoryReturnsTheListEnvelope nails down the envelope's shape.
+func TestCreditHistoryReturnsTheListEnvelope(t *testing.T) {
 	svc := &fakePayments{creditHistory: []models.StoreCreditEntry{
 		{ID: "scredit_2", Kind: models.StoreCreditHold, Amount: -5_000},
 		{ID: "scredit_1", Kind: models.StoreCreditIssue, Amount: 5_000},
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet,
+	rec := do(t, r, http.MethodGet,
 		"/admin/v1/store-credits?customer_id=cus_1&currency_code=TRY", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -957,41 +981,43 @@ func TestKrediGecmisiListeZarfiDoner(t *testing.T) {
 	require.Len(t, envelope.Data, 2)
 	assert.Equal(t, "hold", envelope.Data[0].Kind)
 	assert.Equal(t, int64(-5_000), envelope.Data[0].Amount,
-		"blokaj EKSİ görünür: bakiye satırların toplamı ve istemci de onu böyle okur")
+		"a hold reads NEGATIVE: the balance is the sum of the rows and the client reads it that way too")
 }
 
-// TestKrediVermeOKUMAYetkisineKapali yetkinin route'a takılı olduğunu çiviler.
+// TestIssueCreditIsClosedToTheREADScope nails down that the scope is attached
+// to the route.
 //
-// Kredi vermek müşterinin harcayabileceği PARA YARATIYOR — mağazanın kasasından
-// çıkacak parayı. Yalnızca rapor okusun diye verilmiş bir kimlik bunu
-// yapabilseydi kimlik doğrulama tek başına yetkilendirme yerine geçerdi.
-func TestKrediVermeOKUMAYetkisineKapali(t *testing.T) {
+// Issuing credit CREATES MONEY the customer can spend — money that will leave
+// the shop's till. Had an identity granted only to read reports been able to
+// do this, authentication alone would stand in for authorization.
+func TestIssueCreditIsClosedToTheREADScope(t *testing.T) {
 	svc := &fakePayments{}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := kimlikliIstek(t, r, http.MethodPost, "/admin/v1/store-credits",
+	rec := doAs(t, r, http.MethodPost, "/admin/v1/store-credits",
 		`{"customer_id":"cus_1","currency_code":"TRY","amount":5000,"reason":"x"}`,
-		darYetkili())
+		readOnlyPrincipal())
 
 	require.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Empty(t, svc.lastCreditInput.CustomerID, "yetki yetmiyorsa servise hiç gidilmemeli")
+	assert.Empty(t, svc.lastCreditInput.CustomerID, "when the scope is insufficient the service must not be reached at all")
 }
 
-// TestKrediOkumaUclariOKUMAYetkisiyleGecer reddin yetki AYRIMINDAN geldiğini
-// gösterir.
+// TestCreditReadsPassWithTheREADScope shows that the refusal comes from the
+// scope DISTINCTION.
 //
-// Eşlik eden çift budur: tek başına bir 403, yetki haritasının topluca fazla dar
-// olmasından da gelebilirdi. Aynı kimliğin iki okuma ucunda geçmesi, ayrımın
-// yazma/okuma ekseninde olduğunu söylüyor.
-func TestKrediOkumaUclariOKUMAYetkisiyleGecer(t *testing.T) {
-	for ad, yol := range map[string]string{
-		"bakiye": "/admin/v1/store-credits/balance?customer_id=cus_1&currency_code=TRY",
-		"geçmiş": "/admin/v1/store-credits?customer_id=cus_1&currency_code=TRY",
+// This is the accompanying pair: a lone 403 could also have come from the
+// scope map being too narrow across the board. The same identity passing on
+// the two read endpoints says that the distinction lies on the write/read
+// axis.
+func TestCreditReadsPassWithTheREADScope(t *testing.T) {
+	for name, path := range map[string]string{
+		"balance": "/admin/v1/store-credits/balance?customer_id=cus_1&currency_code=TRY",
+		"history": "/admin/v1/store-credits?customer_id=cus_1&currency_code=TRY",
 	} {
-		t.Run(ad, func(t *testing.T) {
-			r := yeniRouter(&fakePayments{})
+		t.Run(name, func(t *testing.T) {
+			r := newTestRouter(&fakePayments{})
 
-			rec := kimlikliIstek(t, r, http.MethodGet, yol, "", darYetkili())
+			rec := doAs(t, r, http.MethodGet, path, "", readOnlyPrincipal())
 
 			assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		})
@@ -1005,9 +1031,9 @@ func TestKrediOkumaUclariOKUMAYetkisiyleGecer(t *testing.T) {
 // caller did not ask for, and the answer repeats them so a client can see which.
 func TestTheLoyaltyBalanceEndpointNamesTheLedgerItRead(t *testing.T) {
 	svc := &fakePayments{loyaltyBalance: 340}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet,
+	rec := do(t, r, http.MethodGet,
 		"/admin/v1/loyalty-points/balance?customer_id=cus_1&currency_code=try", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -1035,9 +1061,9 @@ func TestTheLoyaltyHistoryReturnsTheListEnvelope(t *testing.T) {
 		{ID: "lpoint_2", Kind: models.LoyaltyReverse, Points: -25, Reference: "paycol_1"},
 		{ID: "lpoint_1", Kind: models.LoyaltyEarn, Points: 100, Reference: "paycol_1"},
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodGet,
+	rec := do(t, r, http.MethodGet,
 		"/admin/v1/loyalty-points?customer_id=cus_1&currency_code=TRY&limit=5&offset=10", "")
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -1077,9 +1103,9 @@ func TestTheLoyaltyReadsAreOpenToTheReadScope(t *testing.T) {
 		"/admin/v1/loyalty-points/balance?customer_id=cus_1&currency_code=TRY",
 	} {
 		t.Run(path, func(t *testing.T) {
-			r := yeniRouter(&fakePayments{})
+			r := newTestRouter(&fakePayments{})
 
-			rec := kimlikliIstek(t, r, http.MethodGet, path, "", darYetkili())
+			rec := doAs(t, r, http.MethodGet, path, "", readOnlyPrincipal())
 
 			assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		})
@@ -1094,9 +1120,9 @@ func TestACreditNamesTheOrderItCompensates(t *testing.T) {
 		ID: "scredit_1", CustomerID: "cus_1", CurrencyCode: "TRY", Amount: 5_000,
 		Kind: models.StoreCreditIssue, Reason: "a late delivery", OrderID: "order_7",
 	}}
-	r := yeniRouter(svc)
+	r := newTestRouter(svc)
 
-	rec := istek(t, r, http.MethodPost, "/admin/v1/store-credits",
+	rec := do(t, r, http.MethodPost, "/admin/v1/store-credits",
 		`{"customer_id":"cus_1","currency_code":"TRY","amount":5000,"reason":"a late delivery","order_id":"order_7"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
@@ -1109,7 +1135,7 @@ func TestACreditNamesTheOrderItCompensates(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
 	assert.Equal(t, "order_7", envelope.Data.OrderID)
 
-	rec = istek(t, r, http.MethodGet, "/admin/v1/store-credits?customer_id=cus_1&currency_code=TRY&order_id=order_7", "")
+	rec = do(t, r, http.MethodGet, "/admin/v1/store-credits?customer_id=cus_1&currency_code=TRY&order_id=order_7", "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, "order_7", svc.lastCreditList.OrderID, "the history is read for the order named")
 }

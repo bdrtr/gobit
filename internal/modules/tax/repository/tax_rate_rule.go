@@ -9,11 +9,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/repository/taxdb"
 )
 
-// CreateTaxRateRule bir orana kural ekler.
+// CreateTaxRateRule adds a rule to a rate.
 //
-// Oran KİLİT ALTINDA okunur ve varsayılan olup olmadığı orada denetlenir:
-// denetim kilitsiz yapılsaydı, araya giren bir güncelleme oranı varsayılan
-// yapabilir ve kural yine de yazılırdı. Varsayılan oranın kuralı olmaz.
+// The rate is read UNDER A LOCK and whether it is the default is checked
+// there: had the check been made without the lock, an update slipping in
+// between could make the rate the default and the rule would be written
+// anyway. A default rate has no rules.
 func (r *Repo) CreateTaxRateRule(
 	ctx context.Context,
 	rule models.TaxRateRule,
@@ -30,21 +31,21 @@ func (r *Repo) CreateTaxRateRule(
 		rate, err := q.GetTaxRateForUpdate(ctx, rule.TaxRateID)
 		if err != nil {
 			return notFoundOr(err, CodeTaxRateNotFound,
-				"vergi oranı bulunamadı: %s", rule.TaxRateID)
+				"tax rate not found: %s", rule.TaxRateID)
 		}
 		if rate.IsDefault {
 			return errors.Conflict(CodeConstraintViolation,
-				"%s bölgenin VARSAYILAN oranıdır ve kuralı olamaz; "+
-					"kurallı bir oran için ayrı bir oran tanımlayın", rule.TaxRateID)
+				"%s is the region's DEFAULT rate and cannot have rules; "+
+					"define a separate rate for a ruled rate", rule.TaxRateID)
 		}
 		if rate.StacksOnID != nil {
-			// Üstte duran oran SEÇİLMEZ, tabanın genişletilmesiyle uygulanır.
-			// Kural yazmak onu eşleşmeye bağlardı: oran yalnızca kuralı tuttuğu
-			// zaman uygulanır olurdu ve bu, kimsenin bildirmediği ikinci bir
-			// kapsam düzeneğidir. Yığının kapsamını TABAN belirler.
+			// A rate standing on top is NOT SELECTED; it applies by expanding the
+			// base. Writing a rule would tie it to a match: the rate would apply
+			// only when its rule held, and that is a second scoping mechanism
+			// nobody declared. The BASE decides the stack's scope.
 			return errors.Conflict(CodeConstraintViolation,
-				"%s oranı başka bir oranın üstünde duruyor ve kuralı olamaz; "+
-					"yığının kapsamını TABAN oranın kuralları belirler", rule.TaxRateID)
+				"the rate %s stands on another rate and cannot have rules; "+
+					"the rules of the BASE rate decide the stack's scope", rule.TaxRateID)
 		}
 
 		row, err := q.InsertTaxRateRule(ctx, taxdb.InsertTaxRateRuleParams{
@@ -55,7 +56,7 @@ func (r *Repo) CreateTaxRateRule(
 			CreatedAt:   fromTime(now),
 		})
 		if err != nil {
-			return wrapDB(err, "vergi kuralı eklenemedi: %s/%s",
+			return wrapDB(err, "the tax rule could not be inserted: %s/%s",
 				rule.Reference, rule.ReferenceID)
 		}
 
@@ -68,7 +69,7 @@ func (r *Repo) CreateTaxRateRule(
 	return out, nil
 }
 
-// GetTaxRateRule kimliğe göre kuralı döner; yoksa errors.NotFound.
+// GetTaxRateRule returns the rule by id; errors.NotFound if there is none.
 func (r *Repo) GetTaxRateRule(ctx context.Context, id string) (models.TaxRateRule, error) {
 	if err := r.ready(); err != nil {
 		return models.TaxRateRule{}, err
@@ -77,12 +78,12 @@ func (r *Repo) GetTaxRateRule(ctx context.Context, id string) (models.TaxRateRul
 	row, err := r.queries(ctx).GetTaxRateRule(ctx, id)
 	if err != nil {
 		return models.TaxRateRule{}, notFoundOr(err, CodeTaxRateRuleNotFound,
-			"vergi kuralı bulunamadı: %s", id)
+			"tax rule not found: %s", id)
 	}
 	return toTaxRateRule(row), nil
 }
 
-// ListTaxRateRules bir oranın canlı kurallarını döner.
+// ListTaxRateRules returns a rate's live rules.
 func (r *Repo) ListTaxRateRules(ctx context.Context, rateID string) ([]models.TaxRateRule, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -90,13 +91,13 @@ func (r *Repo) ListTaxRateRules(ctx context.Context, rateID string) ([]models.Ta
 
 	rows, err := r.queries(ctx).ListTaxRateRulesByRate(ctx, rateID)
 	if err != nil {
-		return nil, wrapDB(err, "vergi kuralları alınamadı: %s", rateID)
+		return nil, wrapDB(err, "the tax rules could not be read: %s", rateID)
 	}
 	return toTaxRateRules(rows), nil
 }
 
-// ListTaxRateRulesByRates birden çok oranın kurallarını TEK sorguda döner
-// (hesap yolunun okuma biçimi; N+1 yoktur).
+// ListTaxRateRulesByRates returns the rules of several rates in a SINGLE query
+// (the calculation path's way of reading; there is no N+1).
 func (r *Repo) ListTaxRateRulesByRates(ctx context.Context, rateIDs []string) ([]models.TaxRateRule, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -107,12 +108,12 @@ func (r *Repo) ListTaxRateRulesByRates(ctx context.Context, rateIDs []string) ([
 
 	rows, err := r.queries(ctx).ListTaxRateRulesByRates(ctx, rateIDs)
 	if err != nil {
-		return nil, wrapDB(err, "vergi kuralları alınamadı")
+		return nil, wrapDB(err, "the tax rules could not be read")
 	}
 	return toTaxRateRules(rows), nil
 }
 
-// DeleteTaxRateRule kuralı yumuşak siler; yoksa errors.NotFound.
+// DeleteTaxRateRule soft-deletes the rule; errors.NotFound if there is none.
 func (r *Repo) DeleteTaxRateRule(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -122,12 +123,12 @@ func (r *Repo) DeleteTaxRateRule(ctx context.Context, id string, now time.Time) 
 		ID:        id,
 		DeletedAt: fromTime(now),
 	}); err != nil {
-		return notFoundOr(err, CodeTaxRateRuleNotFound, "vergi kuralı bulunamadı: %s", id)
+		return notFoundOr(err, CodeTaxRateRuleNotFound, "tax rule not found: %s", id)
 	}
 	return nil
 }
 
-// toTaxRateRule üretilen satırı domain modeline çevirir.
+// toTaxRateRule turns a generated row into the domain model.
 func toTaxRateRule(row taxdb.TaxRateRule) models.TaxRateRule {
 	return models.TaxRateRule{
 		ID:          row.ID,
@@ -140,7 +141,7 @@ func toTaxRateRule(row taxdb.TaxRateRule) models.TaxRateRule {
 	}
 }
 
-// toTaxRateRules satır dilimini domain modellerine çevirir.
+// toTaxRateRules turns a slice of rows into domain models.
 func toTaxRateRules(rows []taxdb.TaxRateRule) []models.TaxRateRule {
 	out := make([]models.TaxRateRule, 0, len(rows))
 	for i := range rows {

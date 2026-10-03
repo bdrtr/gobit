@@ -9,84 +9,87 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// ShippingLineID kargo satırının sonuçtaki sabit kimliğidir.
+// ShippingLineID is the fixed id of the shipping line in the result.
 //
-// Kargo bir kalem değildir ve çağıranın verdiği bir kimliği yoktur; sonuçta
-// yine de adlandırılması gerekir ki JSON yüzeyi ([Interop.CalculateTaxJSON])
-// kalemlerle aynı şekli kullanabilsin. Sabit bir ad, çağıranın kalem
-// kimliklerinden ayırt edilebilir olmalıdır: alt çizgiyle başlaması, hiçbir
-// modülün önekiyle çakışmamasını sağlar.
+// Shipping is not a line item and has no id given by the caller; it still has
+// to be named in the result so that the JSON surface
+// ([Interop.CalculateTaxJSON]) can use the same shape as the line items. A
+// fixed name has to be distinguishable from the caller's line item ids:
+// starting with an underscore keeps it from colliding with any module's prefix.
 const ShippingLineID = "_shipping"
 
-// TaxableItem vergilendirilecek tek bir kalemdir.
+// TaxableItem is a single line item to be taxed.
 //
-// # Taban İNDİRİM SONRASIDIR
+// # The base is AFTER DISCOUNT
 //
-// [TaxableItem.Amount] çağıranın hesapladığı, indirimi DÜŞÜLMÜŞ tabandır. Bu
-// modül indirim hesaplamaz ve indirim verisini görmez; tabanı olduğu gibi
-// vergiler. Karar sepet akışının bugünkü sözleşmesiyle birebir aynıdır
-// (internal/workflows/cart, "Vergi sözleşmesi"): vergi fiilen ödenen bedeli
-// izler, indirim öncesi tutarı vergilemek müşteriden hiç alınmayan bir paranın
-// vergisini almak olurdu. Faz 7'de promotion modülü indirimi doldurduğunda
-// tabanın TANIMI değişmez; yalnızca değeri küçülür.
+// [TaxableItem.Amount] is the base computed by the caller with the discount
+// SUBTRACTED. This module does not compute discounts and does not see discount
+// data; it taxes the base as it is. The decision is exactly the cart flow's
+// current contract (internal/workflows/cart, "Tax contract"): tax follows the
+// price actually paid, and taxing the pre-discount amount would mean taking
+// tax on money never taken from the customer. When the promotion module fills
+// in the discount in Phase 7, the base's DEFINITION does not change; only its
+// value shrinks.
 type TaxableItem struct {
-	// ID kalemin ÇAĞIRAN tarafındaki kimliğidir (örn. sepet satırı) ve
-	// sonuçta aynen döner. Bu modül onu doğrulamaz ve saklamaz.
+	// ID is the line item's id on the CALLER's side (e.g. a cart line) and is
+	// returned as is in the result. This module neither validates nor stores
+	// it.
 	ID string
-	// ProductID kural eşleşmesi için ürün kimliğidir; boş bırakılabilir.
+	// ProductID is the product id for rule matching; it may be left empty.
 	ProductID string
-	// ProductTypeID kural eşleşmesi için ürün tipi kimliğidir; boş
-	// bırakılabilir.
+	// ProductTypeID is the product type id for rule matching; it may be left
+	// empty.
 	ProductTypeID string
-	// TaxClassID kural eşleşmesi için ürünün VERGİ SINIFIDIR ve ÇAĞIRAN
-	// DOLDURMAZ: [Service.CalculateTax] onu kendi tablosundan çözer.
+	// TaxClassID is the product's TAX CLASS for rule matching, and the CALLER
+	// DOES NOT FILL IT: [Service.CalculateTax] resolves it from its own table.
 	//
-	// Sebep, PricesIncludeTax'ınkiyle aynı: sınıflandırma bu modülün kendi
-	// verisidir, çağıranın değil. Kabloya bir alan eklemek, sepetin her
-	// isteğinde tekrar edilmesi gereken ve yanlış doldurulabilecek bir cevap
-	// yaratırdı.
+	// The reason is the same as PricesIncludeTax's: the classification is this
+	// module's own data, not the caller's. Adding a field to the wire would
+	// create an answer that has to be repeated on every cart request and can be
+	// filled in wrongly.
 	TaxClassID string
-	// Amount vergilendirilebilir tabandır (minor unit, İNDİRİM SONRASI).
+	// Amount is the taxable base (minor unit, AFTER DISCOUNT).
 	Amount int64
 }
 
-// ShippingInput kargo satırının hesap girdisidir.
+// ShippingInput is the calculation input of the shipping line.
 type ShippingInput struct {
-	// OptionID kargo seçeneğinin kimliğidir; kural eşleşmesi için kullanılır.
+	// OptionID is the id of the shipping option; it is used for rule matching.
 	OptionID string
-	// Amount kargo tutarıdır (minor unit).
+	// Amount is the shipping amount (minor unit).
 	Amount int64
-	// Taxable kargonun vergilendirilip vergilendirilmeyeceğidir.
+	// Taxable is whether shipping is to be taxed.
 	//
-	// Varsayılan FALSE'tur ve çağıran AÇIKÇA istemedikçe kargo tabana
-	// GİRMEZ; gerekçe [Service.CalculateTax] godoc'undadır.
+	// The default is FALSE and shipping does NOT ENTER the base unless the
+	// caller asks for it EXPLICITLY; the reasoning is in the
+	// [Service.CalculateTax] godoc.
 	Taxable bool
 }
 
-// CalculateTaxInput bir vergi hesabının girdisidir.
+// CalculateTaxInput is the input of a tax calculation.
 type CalculateTaxInput struct {
-	// CountryCode ISO 3166-1 alpha-2 kodudur; zorunludur.
+	// CountryCode is the ISO 3166-1 alpha-2 code; it is required.
 	CountryCode string
-	// ProvinceCode eyalet/il kodudur; isteğe bağlıdır.
+	// ProvinceCode is the state/province code; it is optional.
 	ProvinceCode string
-	// Items vergilendirilecek kalemlerdir; boş olabilir.
+	// Items are the line items to be taxed; it may be empty.
 	Items []TaxableItem
-	// Shipping kargo satırıdır.
+	// Shipping is the shipping line.
 	Shipping ShippingInput
 }
 
-// ItemTax tek bir kalemin hesaplanan vergisidir.
+// ItemTax is the computed tax of a single line item.
 type ItemTax struct {
-	// ID kalemin çağıran tarafındaki kimliğidir; kargo satırında
-	// [ShippingLineID].
+	// ID is the line item's id on the caller's side; on the shipping line it
+	// is [ShippingLineID].
 	ID string
-	// RateID uygulanan oranın kimliğidir; oran bulunamadıysa boş.
+	// RateID is the id of the rate applied; empty if no rate was found.
 	RateID string
-	// RateBps uygulanan orandır (baz puan); oran bulunamadıysa sıfır.
+	// RateBps is the rate applied (basis points); zero if no rate was found.
 	RateBps int32
-	// TaxableAmount verginin hesaplandığı tabandır (minor unit).
+	// TaxableAmount is the base the tax was computed on (minor unit).
 	TaxableAmount int64
-	// TaxAmount hesaplanan vergidir (minor unit).
+	// TaxAmount is the computed tax (minor unit).
 	TaxAmount int64
 	// Components is the per-rate breakdown when a STACK taxed this line, base
 	// first; it is empty when a single rate applied ([RateID], [RateBps]).
@@ -97,105 +100,114 @@ type ItemTax struct {
 	Components []TaxComponent
 }
 
-// CalculateTaxResult bir vergi hesabının sonucudur.
+// CalculateTaxResult is the result of a tax calculation.
 //
-// Kimlik daima sağlanır: TaxTotal = Σ(Items[i].TaxAmount) + Shipping.TaxAmount.
+// The identity always holds: TaxTotal = Σ(Items[i].TaxAmount) + Shipping.TaxAmount.
 type CalculateTaxResult struct {
-	// RegionID hesabın dayandığı EN ÖZEL bölgedir (eyalet varsa o, yoksa
-	// ülke kökü); bölge bulunamadıysa boş.
+	// RegionID is the MOST SPECIFIC region the calculation rests on (the
+	// province if there is one, otherwise the country root); empty if no
+	// region was found.
 	RegionID string
-	// PricesIncludeTax, hesabın vergi DAHİL fiyat üzerinden yapıldığını
-	// söyler.
+	// PricesIncludeTax says that the calculation was made on tax-INCLUSIVE
+	// prices.
 	//
-	// Alanın var olması, [ItemTax.TaxableAmount]'un ne anlama geldiğini
-	// çağıranın OKUYABİLMESİ içindir: kapsayıcı hesapta taban gönderilen
-	// tutardan KÜÇÜKTÜR, ve bunu bilmeyen bir çağıran farkı bir hata sanardı.
-	// Sepet tarafındaki doğrulama tam olarak bu alana dallanıyor.
+	// The field exists so that the caller CAN READ what
+	// [ItemTax.TaxableAmount] means: in an inclusive calculation the base is
+	// SMALLER than the amount sent, and a caller that did not know that would
+	// take the difference for an error. The validation on the cart side
+	// branches on exactly this field.
 	PricesIncludeTax bool
-	// RegionFound ülkeye ait bir vergi bölgesi bulunup bulunmadığıdır.
+	// RegionFound is whether a tax region was found for the country.
 	//
-	// Alan ZORUNLUDUR: sıfır vergi iki farklı sebepten doğabilir — oran
-	// gerçekten sıfırdır ya da o ülke için hiç yapılandırma yoktur. İkisini
-	// ayırt edemeyen bir çağıran, yapılandırma eksiğini "vergisiz ülke" sanıp
-	// sessizce satış yapardı.
+	// The field is REQUIRED: zero tax can arise for two different reasons —
+	// the rate really is zero, or there is no configuration at all for that
+	// country. A caller unable to tell the two apart would take a missing
+	// configuration for a "tax-free country" and sell silently.
 	RegionFound bool
-	// ProviderID hesabı yapan sağlayıcının kimliğidir; bölge yoksa boş.
+	// ProviderID is the id of the provider that made the calculation; empty if
+	// there is no region.
 	ProviderID string
-	// Items kalem başına vergidir; girdideki SIRAYLA döner.
+	// Items is the per-line tax; it comes back in the input's ORDER.
 	Items []ItemTax
-	// Shipping kargo satırının vergisidir; vergilendirilmediyse sıfır.
+	// Shipping is the tax of the shipping line; zero if it was not taxed.
 	Shipping ItemTax
-	// TaxTotal toplam vergidir.
+	// TaxTotal is the total tax.
 	TaxTotal int64
 }
 
-// CalculateTax verilen ülke/eyalet ve kalemler için vergiyi hesaplar.
+// CalculateTax computes the tax for the given country/province and line items.
 //
-// BU METOT MODÜLÜN KALBİDİR. Aldığı kararlar ve gerekçeleri:
+// THIS METHOD IS THE HEART OF THE MODULE. The decisions it makes and their
+// reasons:
 //
-// # 1. Vergi tabanı İNDİRİM SONRASIDIR
+// # 1. The tax base is AFTER DISCOUNT
 //
-// Kalemin [TaxableItem.Amount] alanı, çağıranın indirimi düşerek hesapladığı
-// tabandır; bu modül indirimi görmez. Karar sepet akışının bugünkü
-// sözleşmesiyle aynıdır (internal/workflows/cart paket yorumu): vergi fiilen
-// ödenen bedeli izler.
+// A line item's [TaxableItem.Amount] field is the base the caller computed by
+// subtracting the discount; this module does not see the discount. The
+// decision is the same as the cart flow's current contract (the
+// internal/workflows/cart package comment): tax follows the price actually
+// paid.
 //
-// # 2. YUVARLAMA: kalem başına, AŞAĞI
+// # 2. ROUNDING: per line, DOWN
 //
-// Vergi her kalem için AYRI hesaplanır ve tam sayı bölmesiyle AŞAĞI yuvarlanır
-// (bkz. [TaxOf]). Toplam vergi, YUVARLANMIŞ kalem vergilerinin TOPLAMIDIR —
-// kalem tabanlarının toplamı üzerinden yeniden hesaplanmaz.
+// Tax is computed SEPARATELY for each line and rounded DOWN by integer division
+// (see [TaxOf]). The total tax is the SUM of the ROUNDED line taxes — it is not
+// recomputed over the sum of the line bases.
 //
-// Bu ayrım bir FARK üretir ve farkın nerede kaldığı açıkça belgelenmelidir:
-// Σ(floor(tabanᵢ × oran)) ≤ floor(Σtabanᵢ × oran) olduğu için kalem başına
-// hesap, sepetin tamamı üzerinden yapılan hesaptan en fazla (kalem sayısı - 1)
-// minor unit AZ çıkar. Fark MÜŞTERİ LEHİNE kalır; satıcı hiçbir durumda fazla
-// tahsil etmez.
+// This distinction produces a DIFFERENCE, and where the difference stays has to
+// be documented explicitly: since
+// Σ(floor(baseᵢ × rate)) ≤ floor(Σbaseᵢ × rate), the per-line calculation comes
+// out at most (number of lines - 1) minor units LESS than a calculation over
+// the whole cart. The difference stays IN THE CUSTOMER'S FAVOR; the seller
+// never collects too much.
 //
-// Kalem başına hesaplamanın seçilmesinin iki sebebi vardır: (a) faturada her
-// satırın vergisi tek tek açıklanabilir olmalıdır, (b) satırlara FARKLI
-// oranlar uygulanabildiği için sepet tabanını tek seferde vergilemek zaten
-// mümkün değildir.
+// The per-line calculation was chosen for two reasons: (a) on an invoice the
+// tax of every line has to be explainable one by one, (b) since DIFFERENT rates
+// can apply to different lines, taxing the cart base in one go is not possible
+// anyway.
 //
-// # 3. KARGO varsayılan olarak VERGİLENMEZ
+// # 3. SHIPPING is NOT TAXED by default
 //
-// [ShippingInput.Taxable] açıkça true verilmedikçe kargo tabana girmez ve
-// sonuçtaki kargo vergisi sıfırdır. Sepet akışı bugün kargoyu tabana KATMIYOR
-// ve bu modül o davranışı değiştirmez; kargonun vergilenip vergilenmediği
-// yargı bölgesine göre değişir ve "malla aynıdır" varsaymak sessiz bir
-// tahmindir. Vergilendirme açıldığında kargo satırı da kendi oranını seçer:
-// "shipping_option" kuralıyla eşleşen bir oran varsa o, yoksa bölgenin
-// varsayılan oranı uygulanır.
+// Unless [ShippingInput.Taxable] is given explicitly as true, shipping does not
+// enter the base and the shipping tax in the result is zero. The cart flow does
+// NOT ADD shipping to the base today, and this module does not change that
+// behavior; whether shipping is taxed varies by jurisdiction, and assuming "it
+// is the same as the goods" is a silent guess. When taxation is turned on, the
+// shipping line chooses its own rate too: a rate matching a "shipping_option"
+// rule if there is one, otherwise the region's default rate.
 //
-// # 4. EYALET ÜLKEYİ EZER; oranlar TOPLANMAZ
+// # 4. THE PROVINCE OVERRIDES THE COUNTRY; rates are NOT ADDED
 //
-// Eyalet bölgesi varsa oranları önce denenir; yalnızca eyalet hiçbir oran
-// vermediğinde (ne eşleşen kural ne varsayılan) ülke oranına düşülür. Toplama
-// yapılmaz — gerekçesi ve reddedilen alternatif [LocalProvider] godoc'undadır.
+// If there is a province region its rates are tried first; the country rate is
+// fallen back to only when the province yields no rate at all (neither a
+// matching rule nor a default). No addition is made — the reasoning and the
+// rejected alternative are in the [LocalProvider] godoc.
 //
-// # 5. VERGİ BÖLGESİ YOKSA: sıfır vergi, HATA DEĞİL
+// # 5. IF THERE IS NO TAX REGION: zero tax, NOT AN ERROR
 //
-// Ülkeye ait kök bölge bulunamazsa tüm vergiler sıfır döner,
-// [CalculateTaxResult.RegionFound] false olur ve durum UYARI olarak loglanır.
-// Hata dönmek, vergisi henüz yapılandırılmamış bir ülkedeki her sepetin hiç
-// açılamaması demek olurdu; sepet hesabı bu metodu her turda çağırır. Buna
-// karşılık sessizlik de kabul edilemez: RegionFound alanı ve log kaydı,
-// yapılandırma eksiğini çağıran için GÖRÜNÜR kılar ve çağıran (örn. sepet
-// akışı) isterse reddetmeyi seçebilir.
+// If no root region is found for the country, every tax comes back zero,
+// [CalculateTaxResult.RegionFound] is false, and the situation is logged as a
+// WARNING. Returning an error would mean that every cart in a country whose tax
+// is not configured yet could not be opened at all; the cart calculation calls
+// this method on every round. Silence is not acceptable either, though: the
+// RegionFound field and the log entry make the missing configuration VISIBLE to
+// the caller, and the caller (e.g. the cart flow) can choose to refuse if it
+// wants to.
 //
-// Ülke kodunun BİÇİMİ geçersizse errors.Invalid döner; "geçersiz kod" ile
-// "yapılandırılmamış ülke" ayrı durumlardır.
+// If the country code's FORMAT is invalid, errors.Invalid is returned; "invalid
+// code" and "unconfigured country" are separate situations.
 //
-// # 6. Sağlayıcı zincirden DEVRALINIR, sonucu DOĞRULANIR
+// # 6. The provider is INHERITED along the chain, its result is VALIDATED
 //
-// Hesabı [TaxProvider] yapar; hangi sağlayıcının çağrılacağını zincirdeki EN
-// ÖZEL DOLU provider_id söyler. Eyaletin alanı boşsa ülkenin sağlayıcısı
-// devralınır — gerekçe [Service.providerFor] godoc'undadır — ve hiçbiri dolu
-// değilse yerel hesaplama uygulanır. Dönen sonuç körü körüne kabul EDİLMEZ:
-// her kalem kimliği girdide bulunmalı, hiçbir kalem eksik ya da tekrar
-// olmamalı, oran [0, %100] ve vergi [0, taban] aralığında kalmalıdır. Toplam
-// da sağlayıcıdan alınmaz, BURADA yeniden toplanır; böylece kimlik
-// (TaxTotal = Σ kalem + kargo) sağlayıcının doğruluğuna bağlı olmaz.
+// The [TaxProvider] makes the calculation; which provider is called is said by
+// the MOST SPECIFIC NON-EMPTY provider_id in the chain. If the province's field
+// is empty the country's provider is inherited — the reasoning is in the
+// [Service.providerFor] godoc — and if none is filled in, the local calculation
+// applies. The returned result is NOT accepted blindly: every line id has to be
+// in the input, no line may be missing or repeated, the rate has to stay within
+// [0, 100%] and the tax within [0, base]. The total is not taken from the
+// provider either; it is summed again HERE, so that the identity (TaxTotal = Σ
+// lines + shipping) does not depend on the provider's correctness.
 func (s *Service) CalculateTax(ctx context.Context, in CalculateTaxInput) (CalculateTaxResult, error) {
 	if err := s.ready(); err != nil {
 		return CalculateTaxResult{}, err
@@ -211,7 +223,7 @@ func (s *Service) CalculateTax(ctx context.Context, in CalculateTaxInput) (Calcu
 		return CalculateTaxResult{}, err
 	}
 	if len(chain) == 0 {
-		s.log.WarnContext(ctx, "vergi bölgesi yapılandırılmamış, vergi sıfır hesaplandı",
+		s.log.WarnContext(ctx, "no tax region is configured, the tax was computed as zero",
 			slog.String("country_code", normalized.CountryCode),
 			slog.String("province_code", normalized.ProvinceCode),
 			slog.Int("item_count", len(normalized.Items)),
@@ -224,8 +236,9 @@ func (s *Service) CalculateTax(ctx context.Context, in CalculateTaxInput) (Calcu
 		regionIDs = append(regionIDs, chain[i].ID)
 	}
 
-	// Sağlayıcıyı zincirdeki EN ÖZEL DOLU provider_id belirler: eyalet kendi
-	// vergi otoritesini seçebilir, seçmediyse ülkeninkini DEVRALIR.
+	// The MOST SPECIFIC NON-EMPTY provider_id in the chain decides the
+	// provider: a province can choose its own tax authority, and if it did not,
+	// it INHERITS the country's.
 	provider, err := s.providerFor(chain)
 	if err != nil {
 		return CalculateTaxResult{}, err
@@ -233,10 +246,10 @@ func (s *Service) CalculateTax(ctx context.Context, in CalculateTaxInput) (Calcu
 
 	included := pricesIncludeTax(chain)
 
-	// Kalemlerin vergi sınıfı BURADA çözülür: tek sorgu, kalem sayısından
-	// bağımsız. Sağlayıcı çağrısından önce, çünkü sınıf bir eşleşme
-	// anahtarıdır ve sağlayıcı onu kendi tablosundan okuyamaz — harici bir
-	// sağlayıcının bu modülün tabloları yoktur.
+	// The line items' tax class is resolved HERE: one query, independent of the
+	// number of lines. Before the provider call, because the class is a match
+	// key and the provider cannot read it from its own table — an external
+	// provider does not have this module's tables.
 	if err := s.attachTaxClasses(ctx, normalized.Items); err != nil {
 		return CalculateTaxResult{}, err
 	}
@@ -263,15 +276,15 @@ func (s *Service) CalculateTax(ctx context.Context, in CalculateTaxInput) (Calcu
 	return result, nil
 }
 
-// attachTaxClasses kalemlere ürünlerinin vergi sınıfını yazar.
+// attachTaxClasses writes the tax class of their products onto the line items.
 //
-// Tek sorgu, kalem sayısından bağımsız: sepette kaç satır olursa olsun tur
-// sayısı değişmez (N+1 yok). Hiçbir kalemin ürün kimliği yoksa sorgu HİÇ
-// yapılmaz.
+// One query, independent of the number of lines: however many lines the cart
+// has, the number of round trips does not change (no N+1). If no line item has
+// a product id, the query is NOT made at all.
 //
-// Sınıfı olmayan ürün haritada YOKTUR ve kalemin sınıfı boş kalır — o kalem
-// yalnızca ürün ve tip anahtarlarıyla eşleşir, yani sınıf var olmadan önceki
-// davranışın aynısı.
+// A product with no class is ABSENT from the map and the line's class stays
+// empty — that line matches only on the product and type keys, which is
+// exactly the behavior from before classes existed.
 func (s *Service) attachTaxClasses(ctx context.Context, items []TaxableItem) error {
 	productIDs := make([]string, 0, len(items))
 	seen := make(map[string]bool, len(items))
@@ -299,17 +312,17 @@ func (s *Service) attachTaxClasses(ctx context.Context, items []TaxableItem) err
 	return nil
 }
 
-// pricesIncludeTax bölge ZİNCİRİNDEN fiyatların vergi dahil yazılıp
-// yazılmadığını çözer; zincir en özelden geneledir.
+// pricesIncludeTax resolves from the region CHAIN whether prices are written
+// tax inclusive; the chain runs from the most specific to the general.
 //
-// Devralma [Service.providerFor]'un aynısıdır ve bilinçli olarak öyle: bir
-// eyalet kendi cevabını verebilir, vermediyse ülkenin cevabını DEVRALIR. Hiç
-// kimse cevap vermediyse fiyatlar vergi HARİÇ'tir — alan var olmadan önce her
-// kurulumun yaptığı şey budur, ve mevcut bir satır kendisine yazılmamış bir
-// görüş edinmemelidir.
+// The inheritance is the same as [Service.providerFor]'s, and deliberately so:
+// a province can give its own answer, and if it did not, it INHERITS the
+// country's answer. If nobody gave an answer, prices are tax EXCLUSIVE — that
+// is what every installation did before the field existed, and an existing row
+// must not acquire a view that was never written into it.
 //
-// İkinci bir devralma kuralı icat etmemek de karardır: sağlayıcıda "boş =
-// devral", burada "nil = devral". Aynı zincir, aynı cümle.
+// Not inventing a second inheritance rule is a decision too: in the provider
+// "empty = inherit", here "nil = inherit". The same chain, the same sentence.
 func pricesIncludeTax(chain []models.TaxRegion) bool {
 	for i := range chain {
 		if chain[i].PricesIncludeTax != nil {
@@ -319,35 +332,38 @@ func pricesIncludeTax(chain []models.TaxRegion) bool {
 	return false
 }
 
-// providerFor bölge ZİNCİRİNİN sağlayıcısını çözer; zincir en özelden geneledir.
+// providerFor resolves the provider of the region CHAIN; the chain runs from
+// the most specific to the general.
 //
-// # Boş provider_id DEVRALIR
+// # An empty provider_id INHERITS
 //
-// Zincirde en özelden genele yürünür ve İLK DOLU provider_id kazanır; hiçbiri
-// dolu değilse [LocalProviderID] uygulanır. Yani boş bir alan "yerel" değil
-// "ebeveynimin otoritesi" demektir.
+// The chain is walked from the most specific to the general and the FIRST
+// NON-EMPTY provider_id wins; if none is filled in, [LocalProviderID] applies.
+// So an empty field does not mean "local" but "my parent's authority".
 //
-// Karar bir para hatasını kapatır. Bir eyalet bölgesi çoğu zaman TEK BİR
-// İSTİSNA için açılır (bkz. [LocalProvider]) ve o satıra sağlayıcı yazmak
-// akla gelmez; boş değer yerel sayılsaydı, ülkesi dış bir otoriteye (Avalara,
-// TaxJar …) bağlı bir kurulumda o eyaletteki HER sepet sessizce yerel tablodan
-// vergilenirdi. Yanlış otoriteyle kesilmiş fatura, hatanın hiç fark
-// edilmemesi demektir.
+// The decision closes a money bug. A province region is most often opened for
+// A SINGLE EXCEPTION (see [LocalProvider]), and writing a provider into that
+// row does not occur to anyone; had an empty value counted as local, in an
+// installation whose country is bound to an external authority (Avalara,
+// TaxJar …), EVERY cart in that province would silently be taxed from the
+// local table. An invoice issued under the wrong authority means the error is
+// never noticed.
 //
-// Reddedilen alternatif: eyalet oluşturulurken ebeveynin sağlayıcısı doluyken
-// çocuğun boş bırakılmasını YASAKLAMAK. Yasak, boş dizeyi "yerel" anlamında
-// bırakacağı için veri modelinde "ebeveynimin sağlayıcısını kullan" ifadesini
-// hâlâ imkânsız kılardı ve doğrudan SQL ile yazılan satırları hiç kapsamazdı.
-// Devralmada her niyet ifade edilebilir: boş = devral, "local" = açıkça yerel,
-// başka bir kimlik = o sağlayıcı.
+// The rejected alternative: FORBIDDING the child's field to be left empty when
+// a province is created while the parent's provider is filled in. The ban would
+// leave the empty string meaning "local", so the data model would still be
+// unable to express "use my parent's provider", and it would not cover rows
+// written directly with SQL at all. With inheritance every intent can be
+// expressed: empty = inherit, "local" = explicitly local, any other id = that
+// provider.
 //
-// # Kayıtlı olmayan kimlik
+// # An id that is not registered
 //
-// KURULUM hatasıdır ve KindInternal'a çevrilir. Kayıt katmanının NotFound'u
-// olduğu gibi geçseydi, sepet toplamı isteyen istemci 404 alır ve sepetinin ya
-// da ürününün kaybolduğunu sanırdı. Sessizce yerele düşmek ise daha kötüdür:
-// yanlış otoritenin oranıyla hesaplanmış bir fatura, hatanın hiç fark
-// edilmemesi demektir.
+// It is a SETUP error and is turned into KindInternal. Had the registry layer's
+// NotFound passed through as is, a client asking for a cart total would get a
+// 404 and believe its cart or its product had vanished. Silently falling back
+// to local is worse still: an invoice computed with the wrong authority's rate
+// means the error is never noticed.
 func (s *Service) providerFor(chain []models.TaxRegion) (TaxProvider, error) {
 	if s.providers == nil {
 		return nil, errors.Internal(CodeProviderMisconfigured,
@@ -368,17 +384,17 @@ func (s *Service) providerFor(chain []models.TaxRegion) (TaxProvider, error) {
 	provider, err := s.providers.Get(providerID)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindInternal, CodeProviderMisconfigured,
-			"%s bölgesi kayıtlı olmayan %q vergi sağlayıcısına işaret ediyor",
+			"region %s points to the tax provider %q, which is not registered",
 			regionID, providerID)
 	}
 	return provider, nil
 }
 
-// normalizeCalculateInput hesap girdisini doğrular ve normalleştirir.
+// normalizeCalculateInput validates and normalizes the calculation input.
 //
-// Doğrulama VERİTABANINA GİTMEDEN yapılır: sonucu baştan belli bir istek için
-// bölge sorgusu çalıştırmak, hatalı bir istemcinin veritabanını meşgul etmesi
-// demektir.
+// Validation is done WITHOUT GOING TO THE DATABASE: running a region query for
+// a request whose outcome is known up front would mean a faulty client keeping
+// the database busy.
 func (s *Service) normalizeCalculateInput(in CalculateTaxInput) (CalculateTaxInput, error) {
 	country, err := NormalizeCountryCode(in.CountryCode)
 	if err != nil {
@@ -390,7 +406,7 @@ func (s *Service) normalizeCalculateInput(in CalculateTaxInput) (CalculateTaxInp
 	}
 	if len(in.Items) > MaxItems {
 		return CalculateTaxInput{}, errors.Invalid(CodeInvalidInput,
-			"tek hesapta en fazla %d kalem olabilir, %d verildi", MaxItems, len(in.Items))
+			"a single calculation can have at most %d line items, %d were given", MaxItems, len(in.Items))
 	}
 
 	items := make([]TaxableItem, 0, len(in.Items))
@@ -399,27 +415,27 @@ func (s *Service) normalizeCalculateInput(in CalculateTaxInput) (CalculateTaxInp
 		item := in.Items[i]
 		if item.ID == "" {
 			return CalculateTaxInput{}, errors.Invalid(CodeInvalidInput,
-				"%d. kalemin kimliği boş", i)
+				"the id of line item %d is empty", i)
 		}
 		if item.ID == ShippingLineID {
-			// Kargo satırının kimliği ayrılmıştır; bir kalem onu kullanırsa
-			// sonuçtaki iki satır ayırt edilemez hâle gelirdi.
+			// The shipping line's id is reserved; if a line item used it, the
+			// two lines in the result could not be told apart.
 			return CalculateTaxInput{}, errors.Invalid(CodeInvalidInput,
-				"%q kimliği kargo satırına ayrılmıştır ve kalem kimliği olamaz", ShippingLineID)
+				"the id %q is reserved for the shipping line and cannot be a line item id", ShippingLineID)
 		}
 		if _, dup := seen[item.ID]; dup {
 			return CalculateTaxInput{}, errors.Invalid(CodeInvalidInput,
-				"%q kalem kimliği birden çok kez verildi", item.ID)
+				"the line item id %q was given more than once", item.ID)
 		}
 		seen[item.ID] = struct{}{}
 
-		if err := checkTaxableAmount("kalem vergi tabanı", item.Amount); err != nil {
+		if err := checkTaxableAmount("the line item's tax base", item.Amount); err != nil {
 			return CalculateTaxInput{}, err
 		}
 		items = append(items, item)
 	}
 
-	if err := checkTaxableAmount("kargo tutarı", in.Shipping.Amount); err != nil {
+	if err := checkTaxableAmount("the shipping amount", in.Shipping.Amount); err != nil {
 		return CalculateTaxInput{}, err
 	}
 
@@ -431,7 +447,8 @@ func (s *Service) normalizeCalculateInput(in CalculateTaxInput) (CalculateTaxInp
 	}, nil
 }
 
-// zeroResult vergisiz bir sonuç üretir; kalemler girdideki sırayla döner.
+// zeroResult produces a result with no tax; the line items come back in the
+// input's order.
 func zeroResult(in CalculateTaxInput) CalculateTaxResult {
 	items := make([]ItemTax, 0, len(in.Items))
 	for i := range in.Items {
@@ -445,12 +462,12 @@ func zeroResult(in CalculateTaxInput) CalculateTaxResult {
 	return CalculateTaxResult{Items: items, Shipping: shipping}
 }
 
-// assembleResult sağlayıcının çıktısını DOĞRULAR ve sonuca çevirir.
+// assembleResult VALIDATES the provider's output and turns it into the result.
 //
-// Doğrulamanın sağlayıcıya değil buraya ait olması bilinçlidir: sağlayıcı
-// üçüncü taraf olabilir ve kendi çıktısını denetlemesi beklenemez. Toplam da
-// burada, yuvarlanmış kalem vergileri üzerinden toplanır — kimlik
-// (TaxTotal = Σ kalem + kargo) sağlayıcının aritmetiğine bağlı kalmaz.
+// That the validation belongs here and not to the provider is deliberate: the
+// provider can be a third party and cannot be expected to check its own output.
+// The total is summed here too, over the rounded line taxes — the identity
+// (TaxTotal = Σ lines + shipping) does not depend on the provider's arithmetic.
 func assembleResult(
 	in CalculateTaxInput, raw ProviderResult, providerID string, included bool,
 ) (CalculateTaxResult, error) {
@@ -459,13 +476,13 @@ func assembleResult(
 		line := raw.Items[i]
 		if _, dup := byID[line.ID]; dup {
 			return CalculateTaxResult{}, errors.Internal(CodeProviderInvalidResult,
-				"%q sağlayıcısı %q kalemi için iki sonuç döndürdü", providerID, line.ID)
+				"provider %q returned two results for line %q", providerID, line.ID)
 		}
 		byID[line.ID] = line
 	}
 	if len(byID) != len(in.Items) {
 		return CalculateTaxResult{}, errors.Internal(CodeProviderInvalidResult,
-			"%q sağlayıcısı %d kalem için %d sonuç döndürdü",
+			"provider %q was given %d line items and returned %d results",
 			providerID, len(in.Items), len(byID))
 	}
 
@@ -479,7 +496,7 @@ func assembleResult(
 		line, ok := byID[in.Items[i].ID]
 		if !ok {
 			return CalculateTaxResult{}, errors.Internal(CodeProviderInvalidResult,
-				"%q sağlayıcısı %q kalemi için sonuç döndürmedi", providerID, in.Items[i].ID)
+				"provider %q returned no result for line %q", providerID, in.Items[i].ID)
 		}
 		item, err := validateLine(providerID, line, in.Items[i].ID, in.Items[i].Amount, included)
 		if err != nil {
@@ -511,40 +528,42 @@ func assembleResult(
 	return out, nil
 }
 
-// validateLine tek bir sağlayıcı satırını doğrular ve sonuç satırına çevirir.
+// validateLine validates a single provider line and turns it into a result
+// line.
 //
-// Üst sınırın TABAN olması bilinçlidir: oran en fazla %100 olabildiğine göre
-// vergi hiçbir koşulda tabanı aşamaz. Aşan bir değer, sağlayıcının kuruş ile
-// birim karıştırdığının (ya da bir para birimi çevrimini atladığının) en olası
-// göstergesidir ve sessizce geçseydi müşteriye iki kat fatura çıkardı.
+// That the upper bound is the BASE is deliberate: since the rate can be at most
+// 100%, the tax can under no condition exceed the base. A value that does is
+// the most likely sign that the provider mixed up cents and units (or skipped a
+// currency conversion), and had it passed silently it would invoice the
+// customer twice over.
 func validateLine(
 	providerID string, line ProviderItemTax, wantID string, amount int64, included bool,
 ) (ItemTax, error) {
 	if line.RateBps < models.MinRateBps || line.RateBps > models.MaxRateBps {
 		return ItemTax{}, errors.Internal(CodeProviderInvalidResult,
-			"%q sağlayıcısı %q kalemi için sözleşme dışı oran döndürdü: %d baz puan ([%d, %d] beklenir)",
+			"provider %q returned an out-of-contract rate for line %q: %d basis points ([%d, %d] expected)",
 			providerID, wantID, line.RateBps, models.MinRateBps, models.MaxRateBps)
 	}
 	if line.TaxAmount < 0 || line.TaxAmount > amount {
 		return ItemTax{}, errors.Internal(CodeProviderInvalidResult,
-			"%q sağlayıcısı %q kalemi için sözleşme dışı vergi döndürdü: %d ([0, %d] beklenir)",
+			"provider %q returned an out-of-contract tax for line %q: %d ([0, %d] expected)",
 			providerID, wantID, line.TaxAmount, amount)
 	}
 
-	// Kapsayıcı OLMAYAN pazarda taban gönderilen tutarın kendisidir ve
-	// sağlayıcının bildirdiği taban OKUNMAZ. Bu, alanı hiç doldurmayan bir
-	// sağlayıcının bugünkü gibi çalışmaya devam etmesini sağlar.
+	// In a market that is NOT inclusive the base is the amount sent itself, and
+	// the base the provider reports is NOT READ. This lets a provider that never
+	// fills the field keep working as it does today.
 	base := amount
 	if included {
-		// Kapsayıcı pazarda taban ZORUNLU ve doğrulanır. Denetim "aralıkta mı"
-		// değil EŞİTLİK: taban ile vergi toplandığında gönderilen brüt
-		// çıkmalıdır. Aralık denetimi bir kuruşluk kaymayı geçirirdi ve
-		// müşteriden etiketin üstünde tahsil edilirdi — kapsayıcı
-		// fiyatlandırmanın var olma sebebi tam olarak bu.
+		// In an inclusive market the base is REQUIRED and validated. The check
+		// is not "is it in range" but EQUALITY: adding the base and the tax has
+		// to give the gross that was sent. A range check would let a one-cent
+		// drift through and the customer would be charged above the label —
+		// which is exactly the reason inclusive pricing exists.
 		if line.TaxableAmount < 0 || line.TaxableAmount+line.TaxAmount != amount {
 			return ItemTax{}, errors.Internal(CodeProviderInvalidResult,
-				"%q sağlayıcısı %q kalemi için vergi dahil fiyatı tutturmadı: "+
-					"taban %d + vergi %d = %d, gönderilen brüt %d",
+				"provider %q did not hit the tax-inclusive price for line %q: "+
+					"base %d + tax %d = %d, gross sent %d",
 				providerID, wantID, line.TaxableAmount, line.TaxAmount,
 				line.TaxableAmount+line.TaxAmount, amount)
 		}
@@ -565,26 +584,27 @@ func validateLine(
 	}, nil
 }
 
-// DefaultRateForCountry bir ülke kökünün VARSAYILAN oranını baz puan olarak
-// döner.
+// DefaultRateForCountry returns the DEFAULT rate of a country root in basis
+// points.
 //
-// Sepet akışının en sade yoludur ve region modülünün GEÇİCİ RegionTax
-// metodunun karşılığıdır; modüller arası ilkel imzası [Interop.RateForCountry]
-// olarak yayımlanır.
+// It is the cart flow's plainest path and the counterpart of the region
+// module's TEMPORARY RegionTax method; its primitive cross-module signature is
+// published as [Interop.RateForCountry].
 //
-// # Neyi DEĞERLENDİRMEZ
+// # What it does NOT EVALUATE
 //
-// Eyalet bölgeleri, kurallar ve kargo bu yolda hiç bakılmaz; bunlara ihtiyaç
-// duyan çağıran [Service.CalculateTax] kullanmalıdır. Bölgenin SAĞLAYICISI da
-// çağrılmaz: dış bir vergi servisine yalnızca "bu ülkenin oranı nedir" diye
-// sormak, sepetin her turunda ağ çağrısı demek olurdu ve dış servislerin
-// yanıtı zaten kaleme bağlıdır.
+// Province regions, rules and shipping are not looked at on this path at all; a
+// caller that needs them has to use [Service.CalculateTax]. The region's
+// PROVIDER is not called either: asking an external tax service only "what is
+// this country's rate" would mean a network call on every cart round, and the
+// answers of external services depend on the line item anyway.
 //
-// # İki durumun ayrımı
+// # Telling the two situations apart
 //
-// found false ise ülkenin kök vergi bölgesi ya hiç yoktur ya da varsayılan
-// oranı yoktur; oran o hâlde daima sıfırdır. Ayrım olmadan çağıran,
-// yapılandırma eksiğini "vergisiz ülke" sanardı.
+// If found is false, the country's root tax region either does not exist at
+// all or has no default rate; the rate is then always zero. Without the
+// distinction the caller would take a missing configuration for a "tax-free
+// country".
 func (s *Service) DefaultRateForCountry(ctx context.Context, countryCode string) (rateBps int32, found bool, err error) {
 	if err := s.ready(); err != nil {
 		return 0, false, err
@@ -619,12 +639,12 @@ func (s *Service) DefaultRateForCountry(ctx context.Context, countryCode string)
 		if !rates[i].IsDefault {
 			continue
 		}
-		// Sözleşme dışı bir oran (elle SQL ile yazılmış olabilir) sessizce
-		// geçmez: çağıran onu doğrudan tutarla çarpar ve %1000'lik bir oran
-		// sepeti on katına çıkarırdı.
+		// An out-of-contract rate (it may have been written by hand with SQL)
+		// does not pass silently: the caller multiplies the amount by it
+		// directly, and a 1000% rate would multiply the cart tenfold.
 		if rates[i].RateBps < models.MinRateBps || rates[i].RateBps > models.MaxRateBps {
 			return 0, false, errors.Internal(CodeRateOutOfRange,
-				"%s oranı sözleşme dışı: %d baz puan ([%d, %d] beklenir)",
+				"rate %s is out of contract: %d basis points ([%d, %d] expected)",
 				rates[i].ID, rates[i].RateBps, models.MinRateBps, models.MaxRateBps)
 		}
 		return rates[i].RateBps, true, nil

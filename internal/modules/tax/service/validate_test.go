@@ -11,12 +11,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// TestNormalizeCountryCode ülke kodu normalleştirmesini doğrular.
+// TestNormalizeCountryCode checks the country code normalization.
 func TestNormalizeCountryCode(t *testing.T) {
-	t.Run("kabul edilenler", func(t *testing.T) {
-		// Dilim kullanılır, harita değil: girdilerin bir kısmı BİLEREK boşluk
-		// taşır (kırpma sınanır) ve boşluklu harita anahtarları okurken
-		// yazım hatası gibi görünürdü.
+	t.Run("accepted", func(t *testing.T) {
+		// A slice is used, not a map: some of the inputs carry whitespace ON
+		// PURPOSE (trimming is tested), and map keys with whitespace would look
+		// like typos when read.
 		tests := []struct{ in, want string }{
 			{"TR", "TR"},
 			{"tr", "TR"},
@@ -25,33 +25,37 @@ func TestNormalizeCountryCode(t *testing.T) {
 		}
 		for _, tt := range tests {
 			got, err := NormalizeCountryCode(tt.in)
-			require.NoError(t, err, "girdi: %q", tt.in)
+			require.NoError(t, err, "input: %q", tt.in)
 			assert.Equal(t, tt.want, got)
 		}
 	})
 
-	t.Run("reddedilenler", func(t *testing.T) {
-		for _, in := range []string{"", "T", "TUR", "T1", "T-", "T R", "TÜ"} {
+	t.Run("rejected", func(t *testing.T) {
+		// "T\u00dc" is a T followed by a U with diaeresis (U+00DC): two runes, one
+		// of them a letter outside ASCII.
+		for _, in := range []string{"", "T", "TUR", "T1", "T-", "T R", "T\u00dc"} {
 			_, err := NormalizeCountryCode(in)
-			require.Error(t, err, "girdi: %q kabul edilmemeli", in)
+			require.Error(t, err, "input: %q must not be accepted", in)
 			assert.True(t, errors.IsInvalid(err))
 		}
 	})
 
-	// Bu, gerçek bir tuzaktır: Unicode'un basit büyük harf eşlemesi noktasız
-	// "ı"yı ASCII "I"ya taşır. Denetim çevrimden SONRA yapılsaydı "ıs"
-	// sessizce "IS" (İzlanda) olurdu.
-	t.Run("ASCII dışı harf büyük harfe çevrilerek kaçamaz", func(t *testing.T) {
-		for _, in := range []string{"ıs", "ſe", "İs"} {
+	// This is a real trap: Unicode's simple upper-case mapping moves the
+	// dotless i (U+0131) onto the ASCII "I". Had the check been made AFTER the
+	// conversion, a dotless i followed by "s" would silently become "IS"
+	// (Iceland). The inputs are the dotless i (U+0131) followed by "s", "ſe",
+	// and the dotted capital I (U+0130) followed by "s".
+	t.Run("a non-ASCII letter cannot slip through by being upper-cased", func(t *testing.T) {
+		for _, in := range []string{"\u0131s", "ſe", "\u0130s"} {
 			_, err := NormalizeCountryCode(in)
-			require.Error(t, err, "girdi: %q", in)
+			require.Error(t, err, "input: %q", in)
 		}
 	})
 }
 
-// TestNormalizeProvinceCode eyalet kodu normalleştirmesini doğrular.
+// TestNormalizeProvinceCode checks the province code normalization.
 func TestNormalizeProvinceCode(t *testing.T) {
-	t.Run("kabul edilenler", func(t *testing.T) {
+	t.Run("accepted", func(t *testing.T) {
 		tests := []struct{ in, want string }{
 			{"", ""},
 			{"  ", ""},
@@ -63,29 +67,31 @@ func TestNormalizeProvinceCode(t *testing.T) {
 		}
 		for _, tt := range tests {
 			got, err := NormalizeProvinceCode(tt.in)
-			require.NoError(t, err, "girdi: %q", tt.in)
+			require.NoError(t, err, "input: %q", tt.in)
 			assert.Equal(t, tt.want, got)
 		}
 	})
 
-	t.Run("reddedilenler", func(t *testing.T) {
-		for _, in := range []string{"-CA", "C A", "CA!", "ABCDEFGHIJK", "Kİ"} {
+	t.Run("rejected", func(t *testing.T) {
+		// "K\u0130" is a K followed by the dotted capital I (U+0130), a letter
+		// outside ASCII.
+		for _, in := range []string{"-CA", "C A", "CA!", "ABCDEFGHIJK", "K\u0130"} {
 			_, err := NormalizeProvinceCode(in)
-			require.Error(t, err, "girdi: %q kabul edilmemeli", in)
+			require.Error(t, err, "input: %q must not be accepted", in)
 			assert.True(t, errors.IsInvalid(err))
 		}
 	})
 
-	t.Run("veritabanı kısıtıyla uyumlu", func(t *testing.T) {
+	t.Run("consistent with the database constraint", func(t *testing.T) {
 		assert.Equal(t, 10, models.MaxProvinceCodeLength,
-			"sınır migration'daki CHECK ile aynı olmalı; ayrışırsa servis kabul ettiğini yazamaz")
+			"the bound has to be the same as the CHECK in the migration; if they diverge the service cannot write what it accepts")
 	})
 }
 
-// TestRequireIDOnekDenetimi yanlış türde kimliğin doğrulama hatası (404
-// değil) ürettiğini doğrular.
-func TestRequireIDOnekDenetimi(t *testing.T) {
-	require.NoError(t, requireID(trRegionID, models.TaxRegionIDPrefix, "bölge"))
+// TestRequireIDChecksThePrefix checks that an id of the wrong kind produces a
+// validation error (not a 404).
+func TestRequireIDChecksThePrefix(t *testing.T) {
+	require.NoError(t, requireID(trRegionID, models.TaxRegionIDPrefix, "region"))
 
 	for _, id := range []string{
 		"",
@@ -94,33 +100,33 @@ func TestRequireIDOnekDenetimi(t *testing.T) {
 		rateA,
 		"reg_0000",
 	} {
-		err := requireID(id, models.TaxRegionIDPrefix, "bölge")
-		require.Error(t, err, "kimlik: %q", id)
+		err := requireID(id, models.TaxRegionIDPrefix, "region")
+		require.Error(t, err, "id: %q", id)
 		assert.True(t, errors.IsInvalid(err))
 	}
 
-	uzun := models.TaxRegionIDPrefix
+	tooLong := models.TaxRegionIDPrefix
 	for range maxIDLen {
-		uzun += "X"
+		tooLong += "X"
 	}
-	require.Error(t, requireID(uzun, models.TaxRegionIDPrefix, "bölge"))
+	require.Error(t, requireID(tooLong, models.TaxRegionIDPrefix, "region"))
 }
 
-// TestRequireReferenceIDOnekDenetlemez yabancı kimliklerin önek şartına tabi
-// OLMADIĞINI doğrular.
+// TestRequireReferenceIDDoesNotCheckThePrefix checks that foreign ids are NOT
+// subject to the prefix requirement.
 //
-// Kural bilinçlidir: kimlik başka bir modüle aittir ve o modülün önek
-// sözleşmesini burada tekrarlamak, önek değiştiğinde tax'ın sessizce kural
-// kabul etmemesi demek olurdu.
-func TestRequireReferenceIDOnekDenetlemez(t *testing.T) {
+// The rule is deliberate: the id belongs to another module, and repeating that
+// module's prefix contract here would mean tax silently refusing rules when
+// the prefix changed.
+func TestRequireReferenceIDDoesNotCheckThePrefix(t *testing.T) {
 	require.NoError(t, requireReferenceID("prod_1"))
-	require.NoError(t, requireReferenceID("herhangi-bir-kimlik"))
+	require.NoError(t, requireReferenceID("any-id-at-all"))
 
 	require.Error(t, requireReferenceID(""))
 	require.Error(t, requireReferenceID(" prod_1"))
 }
 
-// TestNormalizeCode mutabakat kodu doğrulamasını doğrular.
+// TestNormalizeCode checks the reconciliation code validation.
 func TestNormalizeCode(t *testing.T) {
 	got, err := normalizeCode("  KDV20  ")
 	require.NoError(t, err)
@@ -128,16 +134,16 @@ func TestNormalizeCode(t *testing.T) {
 
 	got, err = normalizeCode("   ")
 	require.NoError(t, err)
-	assert.Empty(t, got, "boşluktan ibaret kod, kodun YOKLUĞU demektir")
+	assert.Empty(t, got, "a code made only of whitespace means the ABSENCE of a code")
 
 	for _, in := range []string{"KDV 20", "KDV\t20", "KDV\n20"} {
 		_, err := normalizeCode(in)
-		require.Error(t, err, "girdi: %q", in)
+		require.Error(t, err, "input: %q", in)
 	}
 }
 
-// TestNormalizePagingSinirlari sayfalama kırpmasını doğrular.
-func TestNormalizePagingSinirlari(t *testing.T) {
+// TestNormalizePagingBounds checks the paging clamp.
+func TestNormalizePagingBounds(t *testing.T) {
 	limit, offset, err := normalizePaging(0, 0)
 	require.NoError(t, err)
 	assert.Equal(t, DefaultLimit, limit)
@@ -152,7 +158,7 @@ func TestNormalizePagingSinirlari(t *testing.T) {
 	assert.True(t, errors.IsInvalid(err))
 }
 
-// TestClampToInt32 int32 sınırına sıkıştırmayı doğrular.
+// TestClampToInt32 checks clamping to the int32 bound.
 func TestClampToInt32(t *testing.T) {
 	assert.Equal(t, int32(5), clampToInt32(5))
 	assert.Equal(t, int32(math.MaxInt32), clampToInt32(math.MaxInt64))

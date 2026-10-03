@@ -14,16 +14,17 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// paymentInterop saga'nın (internal/workflows) payment modülünden ihtiyaç
-// duyduğu yüzeyin BİREBİR kopyasıdır.
+// paymentInterop is an EXACT copy of the surface the saga (internal/workflows)
+// needs from the payment module.
 //
-// Testin asıl işi budur: saga bu modülü import EDEMEZ (ADR 0006) ve yalnızca
-// ilkel tiplerle yazılmış bir arayüz tanımlayabilir. Somut [service.Interop]
-// tipinin o arayüzü YAPISAL olarak karşıladığı derleyici tarafından burada
-// kanıtlanır; imza kayması container'dan çözüm anına kalmaz.
+// This is the test's real job: the saga CANNOT import this module (ADR 0006) and
+// can only define an interface written in primitive types. That the concrete
+// [service.Interop] type meets that interface STRUCTURALLY is proved here by the
+// compiler; a signature drift is not left to the moment of resolving from the
+// container.
 //
-// Buradaki tanımın workflow tarafındaki tanımla aynı kalması bir sözleşmedir;
-// ayrışırlarsa e2e testi düşer.
+// That the definition here stays the same as the definition on the workflow side
+// is a contract; if they diverge, the e2e test fails.
 type paymentInterop interface {
 	CreateCollection(
 		ctx context.Context, reference, customerID, currencyCode string, amount int64,
@@ -46,219 +47,223 @@ type paymentInterop interface {
 	SessionStatus(ctx context.Context, sessionID string) (string, error)
 }
 
-// Interop'un saga'nın beklediği İLKEL yüzeyi karşıladığı derleme zamanında
-// sabitlenir.
+// That Interop meets the PRIMITIVE surface the saga expects is pinned at
+// compile time.
 var _ paymentInterop = (*service.Interop)(nil)
 
-// yeniInterop sahte depo üzerinde çalışan bir interop yüzeyi kurar.
-func yeniInterop(t *testing.T) (*service.Interop, *fakeProvider) {
+// newTestInterop builds an interop surface that runs over the fake store.
+func newTestInterop(t *testing.T) (*service.Interop, *fakeProvider) {
 	t.Helper()
 
-	svc, _, prov := yeniServis(t)
+	svc, _, prov := newTestService(t)
 	return service.NewInterop(svc), prov
 }
 
-// TestInteropUctanUcaAkis saga'nın izleyeceği yolu ilkel yüzeyden yürütür.
-func TestInteropUctanUcaAkis(t *testing.T) {
-	iop, _ := yeniInterop(t)
+// TestInteropEndToEndFlow walks the path the saga will follow, through the
+// primitive surface.
+func TestInteropEndToEndFlow(t *testing.T) {
+	iop, _ := newTestInterop(t)
 	ctx := context.Background()
 
-	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, testReference, "", testCurrency, testAmount)
 	require.NoError(t, err)
 	assert.NotEmpty(t, colID)
 
-	sesID, err := iop.OpenSession(ctx, colID, saglayiciID, "key-1")
+	sesID, err := iop.OpenSession(ctx, colID, testProviderID, "key-1")
 	require.NoError(t, err)
 
-	durum, bloke, err := iop.Authorize(ctx, sesID)
+	status, authorized, err := iop.Authorize(ctx, sesID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionAuthorized.String(), durum)
-	assert.Equal(t, tutar, bloke, "yüzey bloke edilen TUTARI da taşımalı")
+	assert.Equal(t, models.SessionAuthorized.String(), status)
+	assert.Equal(t, testAmount, authorized, "the surface must carry the authorized AMOUNT too")
 
 	payID, err := iop.Capture(ctx, sesID, 0)
 	require.NoError(t, err)
 	assert.NotEmpty(t, payID)
 
-	kolDurum, kolTutar, kolBloke, kolTahsil, kolIade := koleksiyon(t, iop, colID)
-	assert.Equal(t, models.CollectionCaptured.String(), kolDurum)
-	assert.Equal(t, tutar, kolTutar)
-	assert.Zero(t, kolBloke, "tahsilat blokajı kapatır")
-	assert.Equal(t, tutar, kolTahsil)
-	assert.Zero(t, kolIade)
+	colStatus, colAmount, colAuthorized, colCaptured, colRefunded := collectionOf(t, iop, colID)
+	assert.Equal(t, models.CollectionCaptured.String(), colStatus)
+	assert.Equal(t, testAmount, colAmount)
+	assert.Zero(t, colAuthorized, "the capture closes the hold")
+	assert.Equal(t, testAmount, colCaptured)
+	assert.Zero(t, colRefunded)
 
-	refundID, err := iop.Refund(ctx, payID, 0, "test iadesi")
+	refundID, err := iop.Refund(ctx, payID, 0, "test refund")
 	require.NoError(t, err)
 	assert.NotEmpty(t, refundID)
 
-	kolDurum, _, _, _, kolIade = koleksiyon(t, iop, colID)
-	assert.Equal(t, models.CollectionRefunded.String(), kolDurum)
-	assert.Equal(t, tutar, kolIade)
+	colStatus, _, _, _, colRefunded = collectionOf(t, iop, colID)
+	assert.Equal(t, models.CollectionRefunded.String(), colStatus)
+	assert.Equal(t, testAmount, colRefunded)
 }
 
-// koleksiyon interop yüzeyinden koleksiyonun durumunu ve tutarlarını okur.
-func koleksiyon(t *testing.T, iop *service.Interop, colID string) (
-	durum string,
-	tutar, bloke, tahsil, iade int64,
+// collectionOf reads the collection's status and amounts through the interop
+// surface.
+func collectionOf(t *testing.T, iop *service.Interop, colID string) (
+	status string,
+	amount, authorized, captured, refunded int64,
 ) {
 	t.Helper()
 
-	durum, tutar, bloke, tahsil, iade, err := iop.Collection(context.Background(), colID)
+	status, amount, authorized, captured, refunded, err := iop.Collection(context.Background(), colID)
 	require.NoError(t, err)
-	return durum, tutar, bloke, tahsil, iade
+	return status, amount, authorized, captured, refunded
 }
 
-// TestInteropEksikTahsilatTutarlardanGorunur saga'nın ödemenin TAM olduğunu kendi
-// doğrulayabildiğini kanıtlar.
+// TestInteropShortCaptureShowsInTheAmounts proves that the saga can verify by
+// itself that the payment is FULL.
 //
-// Faz 6'nın ödeme atlatması tam buradan geçiyordu: yüzey yalnızca durum dizesi
-// döndüğü için saga'nın kontrol edecek hiçbir sayısı yoktu. Tutarlar
-// döndüğünde kural tek satırdır — captured >= amount değilse sipariş
-// onaylanmaz.
-func TestInteropEksikTahsilatTutarlardanGorunur(t *testing.T) {
-	iop, prov := yeniInterop(t)
+// Phase 6's payment bypass went through exactly here: because the surface only
+// returned a status string, the saga had no number to check. Once the amounts
+// are returned the rule is a single line — unless captured >= amount, the order
+// is not confirmed.
+func TestInteropShortCaptureShowsInTheAmounts(t *testing.T) {
+	iop, prov := newTestInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, testReference, "", testCurrency, testAmount)
 	require.NoError(t, err)
-	sesID, err := iop.OpenSession(ctx, colID, saglayiciID, "key-1")
+	sesID, err := iop.OpenSession(ctx, colID, testProviderID, "key-1")
 	require.NoError(t, err)
-	prov.senaryo(coreprovider.SessionAuthorized, 1, "")
+	prov.scenario(coreprovider.SessionAuthorized, 1, "")
 
-	durum, bloke, err := iop.Authorize(ctx, sesID)
+	status, authorized, err := iop.Authorize(ctx, sesID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionAuthorized.String(), durum,
-		"kısmi bloke de sağlayıcı açısından başarılıdır")
-	assert.Equal(t, int64(1), bloke, "saga eksik blokajı SAYIDAN görmeli")
+	assert.Equal(t, models.SessionAuthorized.String(), status,
+		"a partial hold is a success too as far as the provider is concerned")
+	assert.Equal(t, int64(1), authorized, "the saga must see the short hold FROM THE NUMBER")
 
 	_, err = iop.Capture(ctx, sesID, 0)
 	require.NoError(t, err)
 
-	kolDurum, kolTutar, _, kolTahsil, _ := koleksiyon(t, iop, colID)
-	assert.Less(t, kolTahsil, kolTutar, "ödeme EKSİKTİR")
-	assert.Equal(t, models.CollectionPartiallyCaptured.String(), kolDurum,
-		"eksik tahsilat koleksiyonu captured YAPMAMALI")
+	colStatus, colAmount, _, colCaptured, _ := collectionOf(t, iop, colID)
+	assert.Less(t, colCaptured, colAmount, "the payment is SHORT")
+	assert.Equal(t, models.CollectionPartiallyCaptured.String(), colStatus,
+		"a short capture must NOT make the collection captured")
 }
 
-// TestInteropAyniAnahtarTekOturum saga'nın bir adımı yeniden denemesinin
-// müşteriden ikinci kez tahsilat denemesine yol açmadığını doğrular.
-func TestInteropAyniAnahtarTekOturum(t *testing.T) {
-	iop, prov := yeniInterop(t)
+// TestInteropSameKeyOneSession verifies that the saga retrying a step does not
+// lead to a second attempt to charge the customer.
+func TestInteropSameKeyOneSession(t *testing.T) {
+	iop, prov := newTestInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, testReference, "", testCurrency, testAmount)
 	require.NoError(t, err)
 
-	ilk, err := iop.OpenSession(ctx, colID, saglayiciID, "key-1")
+	first, err := iop.OpenSession(ctx, colID, testProviderID, "key-1")
 	require.NoError(t, err)
-	ikinci, err := iop.OpenSession(ctx, colID, saglayiciID, "key-1")
+	second, err := iop.OpenSession(ctx, colID, testProviderID, "key-1")
 	require.NoError(t, err)
 
-	assert.Equal(t, ilk, ikinci)
-	create, _, _, _, _ := prov.cagrilar()
+	assert.Equal(t, first, second)
+	create, _, _, _, _ := prov.calls()
 	assert.Equal(t, 1, create)
 }
 
-// TestInteropCancelIkiKezCagrilabilir saga telafisinin ilkel yüzeyde de
-// idempotent olduğunu doğrular.
-func TestInteropCancelIkiKezCagrilabilir(t *testing.T) {
-	iop, _ := yeniInterop(t)
+// TestInteropCancelCanBeCalledTwice verifies that the saga's compensation is
+// idempotent on the primitive surface too.
+func TestInteropCancelCanBeCalledTwice(t *testing.T) {
+	iop, _ := newTestInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, testReference, "", testCurrency, testAmount)
 	require.NoError(t, err)
-	sesID, err := iop.OpenSession(ctx, colID, saglayiciID, "key-1")
+	sesID, err := iop.OpenSession(ctx, colID, testProviderID, "key-1")
 	require.NoError(t, err)
 	_, _, err = iop.Authorize(ctx, sesID)
 	require.NoError(t, err)
 
 	require.NoError(t, iop.Cancel(ctx, sesID))
-	require.NoError(t, iop.Cancel(ctx, sesID), "ikinci telafi hata VERMEMELİ")
+	require.NoError(t, iop.Cancel(ctx, sesID), "a second compensation must NOT fail")
 
-	durum, err := iop.SessionStatus(ctx, sesID)
+	status, err := iop.SessionStatus(ctx, sesID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionCanceled.String(), durum)
+	assert.Equal(t, models.SessionCanceled.String(), status)
 }
 
-// TestInteropAuthorizeRedHataDondurur saga'nın ödeme adımının PATLADIĞINI
-// doğrular.
+// TestInteropAuthorizeDeclineReturnsAnError verifies that the saga's payment
+// step FAILS.
 //
-// Faz 6'nın DoD'si bunu şart koşar: ödeme adımı başarısızken telafi zinciri
-// çalışmalıdır ve zincirin tetiklenmesi için adımın hata dönmesi gerekir.
-func TestInteropAuthorizeRedHataDondurur(t *testing.T) {
-	iop, prov := yeniInterop(t)
+// Phase 6's DoD requires it: when the payment step fails, the compensation chain
+// must run, and for the chain to be triggered the step has to return an error.
+func TestInteropAuthorizeDeclineReturnsAnError(t *testing.T) {
+	iop, prov := newTestInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, testReference, "", testCurrency, testAmount)
 	require.NoError(t, err)
-	sesID, err := iop.OpenSession(ctx, colID, saglayiciID, "key-1")
+	sesID, err := iop.OpenSession(ctx, colID, testProviderID, "key-1")
 	require.NoError(t, err)
-	prov.senaryo(coreprovider.SessionFailed, 0, "test reddi")
+	prov.scenario(coreprovider.SessionFailed, 0, "test decline")
 
 	_, _, err = iop.Authorize(ctx, sesID)
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 	assert.Equal(t, service.CodeAuthorizationDeclined, errors.CodeOf(err))
 }
 
-// TestInteropOpenSessionWithDataSayilariBozmaz para taşıyan bir davranış
-// anahtarının kayan noktaya uğramadan sağlayıcıya ulaştığını doğrular.
+// TestInteropOpenSessionWithDataDoesNotCorruptNumbers verifies that a behavior
+// key carrying money reaches the provider without passing through floating
+// point.
 //
-// Harita üzerinden geçen bir tam sayı float64'e dönerse yeniden kodlanırken
-// üstel gösterime kayabilir ("1e+15") ve sağlayıcı tarafında tam sayı olarak
-// çözülemez. Para hiçbir aşamada kayan noktaya uğramamalıdır (plan Bölüm 8).
-func TestInteropOpenSessionWithDataSayilariBozmaz(t *testing.T) {
-	iop, _ := yeniInterop(t)
+// An integer that passes through a map and turns into a float64 can slip into
+// exponent notation ("1e+15") when it is encoded again, and then cannot be
+// decoded as an integer on the provider's side. Money must never pass through
+// floating point at any stage (plan Section 8).
+func TestInteropOpenSessionWithDataDoesNotCorruptNumbers(t *testing.T) {
+	iop, _ := newTestInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, models.MaxAmount)
+	colID, err := iop.CreateCollection(ctx, testReference, "", testCurrency, models.MaxAmount)
 	require.NoError(t, err)
 
-	sesID, err := iop.OpenSessionWithData(ctx, colID, saglayiciID, "key-1",
+	sesID, err := iop.OpenSessionWithData(ctx, colID, testProviderID, "key-1",
 		json.RawMessage(`{"manual_authorized_amount":1000000000000}`))
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, sesID)
 }
 
-// TestInteropBozukDataReddedilir gövdesi JSON nesnesi olmayan bir isteğin
-// açıkça reddedildiğini doğrular.
-func TestInteropBozukDataReddedilir(t *testing.T) {
-	iop, _ := yeniInterop(t)
+// TestInteropMalformedDataIsRejected verifies that a request whose body is not a
+// JSON object is rejected explicitly.
+func TestInteropMalformedDataIsRejected(t *testing.T) {
+	iop, _ := newTestInterop(t)
 	ctx := context.Background()
-	colID, err := iop.CreateCollection(ctx, referans, "", paraKodu, tutar)
+	colID, err := iop.CreateCollection(ctx, testReference, "", testCurrency, testAmount)
 	require.NoError(t, err)
 
-	_, err = iop.OpenSessionWithData(ctx, colID, saglayiciID, "key-1", json.RawMessage(`[1,2]`))
+	_, err = iop.OpenSessionWithData(ctx, colID, testProviderID, "key-1", json.RawMessage(`[1,2]`))
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 }
 
-// TestInteropHatalariOlduguGibiTasir yüzeyin hataları sarmalayıp
-// sınıflandırmasını DEĞİŞTİRMEDİĞİNİ doğrular.
+// TestInteropCarriesErrorsAsTheyAre verifies that the surface does NOT CHANGE
+// the classification of the errors it wraps.
 //
-// Interop hiçbir karar vermez; bir hatayı burada yeniden sınıflandırmak, aynı
-// kuralın iki yerde ayrışması demek olurdu.
-func TestInteropHatalariOlduguGibiTasir(t *testing.T) {
-	iop, _ := yeniInterop(t)
+// Interop makes no decisions; reclassifying an error here would mean the same
+// rule diverging in two places.
+func TestInteropCarriesErrorsAsTheyAre(t *testing.T) {
+	iop, _ := newTestInterop(t)
 	ctx := context.Background()
 
-	_, err := iop.CreateCollection(ctx, "", "", paraKodu, tutar)
-	assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+	_, err := iop.CreateCollection(ctx, "", "", testCurrency, testAmount)
+	assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 
-	_, err = iop.OpenSession(ctx, "paycol_YOK", saglayiciID, "key-1")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, err = iop.OpenSession(ctx, "paycol_MISSING", testProviderID, "key-1")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 
-	_, _, err = iop.Authorize(ctx, "payses_YOK")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, _, err = iop.Authorize(ctx, "payses_MISSING")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 
-	_, err = iop.Capture(ctx, "payses_YOK", 0)
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, err = iop.Capture(ctx, "payses_MISSING", 0)
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 
-	assert.True(t, errors.HasKind(iop.Cancel(ctx, "payses_YOK"), errors.KindNotFound))
+	assert.True(t, errors.HasKind(iop.Cancel(ctx, "payses_MISSING"), errors.KindNotFound))
 
-	_, err = iop.Refund(ctx, "pay_YOK", 0, "")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, err = iop.Refund(ctx, "pay_MISSING", 0, "")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 
-	_, _, _, _, _, err = iop.Collection(ctx, "paycol_YOK")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, _, _, _, _, err = iop.Collection(ctx, "paycol_MISSING")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 
-	_, err = iop.SessionStatus(ctx, "payses_YOK")
-	assert.True(t, errors.HasKind(err, errors.KindNotFound), "hata: %v", err)
+	_, err = iop.SessionStatus(ctx, "payses_MISSING")
+	assert.True(t, errors.HasKind(err, errors.KindNotFound), "error: %v", err)
 }

@@ -9,11 +9,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/repository/taxdb"
 )
 
-// CreateTaxRate bir bölgeye oran ekler.
+// CreateTaxRate adds a rate to a region.
 //
-// Bölge yoksa foreign key ihlali oluşur ve errors.Invalid dönülür; oranın
-// yetim kalması yapısal olarak imkânsızdır. Bölgede zaten bir varsayılan oran
-// varsa kısmi benzersiz indeks ihlali oluşur ve errors.Conflict dönülür.
+// If the region does not exist a foreign key violation occurs and
+// errors.Invalid is returned; an orphaned rate is structurally impossible. If
+// the region already has a default rate a partial unique index violation
+// occurs and errors.Conflict is returned.
 func (r *Repo) CreateTaxRate(ctx context.Context, rate models.TaxRate, now time.Time) (models.TaxRate, error) {
 	if err := r.ready(); err != nil {
 		return models.TaxRate{}, err
@@ -37,12 +38,12 @@ func (r *Repo) CreateTaxRate(ctx context.Context, rate models.TaxRate, now time.
 		CreatedAt:   fromTime(now),
 	})
 	if err != nil {
-		return models.TaxRate{}, wrapDB(err, "vergi oranı eklenemedi: %s", rate.TaxRegionID)
+		return models.TaxRate{}, wrapDB(err, "the tax rate could not be inserted: %s", rate.TaxRegionID)
 	}
 	return toTaxRate(row)
 }
 
-// GetTaxRate kimliğe göre oranı döner; yoksa errors.NotFound.
+// GetTaxRate returns the rate by id; errors.NotFound if there is none.
 func (r *Repo) GetTaxRate(ctx context.Context, id string) (models.TaxRate, error) {
 	if err := r.ready(); err != nil {
 		return models.TaxRate{}, err
@@ -50,12 +51,12 @@ func (r *Repo) GetTaxRate(ctx context.Context, id string) (models.TaxRate, error
 
 	row, err := r.queries(ctx).GetTaxRate(ctx, id)
 	if err != nil {
-		return models.TaxRate{}, notFoundOr(err, CodeTaxRateNotFound, "vergi oranı bulunamadı: %s", id)
+		return models.TaxRate{}, notFoundOr(err, CodeTaxRateNotFound, "tax rate not found: %s", id)
 	}
 	return toTaxRate(row)
 }
 
-// ListTaxRates bir bölgenin canlı oranlarını döner; varsayılan oran BAŞTADIR.
+// ListTaxRates returns a region's live rates; the default rate comes FIRST.
 func (r *Repo) ListTaxRates(ctx context.Context, regionID string) ([]models.TaxRate, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -63,15 +64,15 @@ func (r *Repo) ListTaxRates(ctx context.Context, regionID string) ([]models.TaxR
 
 	rows, err := r.queries(ctx).ListTaxRatesByRegion(ctx, regionID)
 	if err != nil {
-		return nil, wrapDB(err, "vergi oranları alınamadı: %s", regionID)
+		return nil, wrapDB(err, "the tax rates could not be read: %s", regionID)
 	}
 	return toTaxRates(rows)
 }
 
-// ListTaxRatesByRegions birden çok bölgenin oranlarını TEK sorguda döner.
+// ListTaxRatesByRegions returns the rates of several regions in a SINGLE query.
 //
-// Hesap yolunun okuma biçimidir: bölge zinciri (eyalet + ülke) tek turda
-// okunur, bölge başına ayrı sorgu yapılmaz.
+// It is the calculation path's way of reading: the region chain (province +
+// country) is read in one round trip, with no separate query per region.
 func (r *Repo) ListTaxRatesByRegions(ctx context.Context, regionIDs []string) ([]models.TaxRate, error) {
 	if err := r.ready(); err != nil {
 		return nil, err
@@ -82,17 +83,18 @@ func (r *Repo) ListTaxRatesByRegions(ctx context.Context, regionIDs []string) ([
 
 	rows, err := r.queries(ctx).ListTaxRatesByRegions(ctx, regionIDs)
 	if err != nil {
-		return nil, wrapDB(err, "vergi oranları alınamadı")
+		return nil, wrapDB(err, "the tax rates could not be read")
 	}
 	return toTaxRates(rows)
 }
 
-// UpdateTaxRate oranın verilen alanlarını KİLİT ALTINDA günceller.
+// UpdateTaxRate updates the given fields of the rate UNDER A LOCK.
 //
-// Yama, kilitli okunan satırın üstüne uygulanır: kilitsiz iki eşzamanlı
-// güncelleme birbirinin alanını geri alabilirdi (lost update). Kilit ayrıca
-// "bu oranın kuralı var mı" denetimini de güvenilir kılar — denetim ile yazma
-// arasına giren bir kural ekleme, kurallı bir oranı varsayılan yapabilirdi.
+// The patch is applied on top of the row read under the lock: two concurrent
+// updates without a lock could undo each other's field (lost update). The lock
+// also makes the "does this rate have rules" check reliable — a rule insert
+// slipping between the check and the write could make a ruled rate the
+// default.
 func (r *Repo) UpdateTaxRate(
 	ctx context.Context,
 	id string,
@@ -109,7 +111,7 @@ func (r *Repo) UpdateTaxRate(
 
 		row, err := q.GetTaxRateForUpdate(ctx, id)
 		if err != nil {
-			return notFoundOr(err, CodeTaxRateNotFound, "vergi oranı bulunamadı: %s", id)
+			return notFoundOr(err, CodeTaxRateNotFound, "tax rate not found: %s", id)
 		}
 		current, err := toTaxRate(row)
 		if err != nil {
@@ -118,16 +120,17 @@ func (r *Repo) UpdateTaxRate(
 
 		updated := current.Patched(patch)
 		if updated.IsDefault && !current.IsDefault {
-			// Varsayılan yapılan bir oranın kuralı olamaz: "kuralsız oran her
-			// şeye uygulanır" ile "kurallı oran yalnızca eşleşene uygulanır"
-			// aynı satırda birleşseydi oranın kapsamı okunamaz hâle gelirdi.
+			// A rate made the default cannot have rules: had "a rate without
+			// rules applies to everything" and "a ruled rate applies only to what
+			// it matches" been combined in the same row, the rate's scope would
+			// become unreadable.
 			count, countErr := q.CountTaxRateRulesByRate(ctx, id)
 			if countErr != nil {
-				return wrapDB(countErr, "vergi oranının kuralları sayılamadı: %s", id)
+				return wrapDB(countErr, "the tax rate's rules could not be counted: %s", id)
 			}
 			if count > 0 {
 				return errors.Conflict(CodeConstraintViolation,
-					"%s oranının %d kuralı var; kurallı bir oran varsayılan yapılamaz", id, count)
+					"the rate %s has %d rules; a ruled rate cannot be made the default", id, count)
 			}
 		}
 
@@ -148,7 +151,7 @@ func (r *Repo) UpdateTaxRate(
 			UpdatedAt:  fromTime(now),
 		})
 		if err != nil {
-			return wrapDB(err, "vergi oranı güncellenemedi: %s", id)
+			return wrapDB(err, "the tax rate could not be updated: %s", id)
 		}
 
 		out, err = toTaxRate(written)
@@ -160,11 +163,11 @@ func (r *Repo) UpdateTaxRate(
 	return out, nil
 }
 
-// DeleteTaxRate oranı ve kurallarını TEK işlemde yumuşak siler.
+// DeleteTaxRate soft-deletes the rate and its rules in a SINGLE transaction.
 //
-// Kurallar da silinir: silinmiş bir orana bağlı canlı kural hiçbir hesaba
-// girmez ama aynı referansa yazılmak istenen yeni bir kuralın benzersizlik
-// indeksiyle çakışırdı.
+// The rules are deleted too: a live rule bound to a deleted rate enters no
+// calculation, but it would collide in the uniqueness index with a new rule
+// meant to be written for the same reference.
 func (r *Repo) DeleteTaxRate(ctx context.Context, id string, now time.Time) error {
 	if err := r.ready(); err != nil {
 		return err
@@ -177,20 +180,20 @@ func (r *Repo) DeleteTaxRate(ctx context.Context, id string, now time.Time) erro
 			ID:        id,
 			DeletedAt: fromTime(now),
 		}); err != nil {
-			return notFoundOr(err, CodeTaxRateNotFound, "vergi oranı bulunamadı: %s", id)
+			return notFoundOr(err, CodeTaxRateNotFound, "tax rate not found: %s", id)
 		}
 
 		if err := q.SoftDeleteTaxRateRulesByRates(ctx, taxdb.SoftDeleteTaxRateRulesByRatesParams{
 			RateIds:   []string{id},
 			DeletedAt: fromTime(now),
 		}); err != nil {
-			return wrapDB(err, "vergi oranının kuralları silinemedi: %s", id)
+			return wrapDB(err, "the tax rate's rules could not be deleted: %s", id)
 		}
 		return nil
 	})
 }
 
-// toTaxRate üretilen satırı domain modeline çevirir.
+// toTaxRate turns a generated row into the domain model.
 func toTaxRate(row taxdb.TaxRate) (models.TaxRate, error) {
 	metadata, err := toJSONMap(row.Metadata)
 	if err != nil {
@@ -212,7 +215,7 @@ func toTaxRate(row taxdb.TaxRate) (models.TaxRate, error) {
 	}, nil
 }
 
-// toTaxRates satır dilimini domain modellerine çevirir.
+// toTaxRates turns a slice of rows into domain models.
 func toTaxRates(rows []taxdb.TaxRate) ([]models.TaxRate, error) {
 	out := make([]models.TaxRate, 0, len(rows))
 	for i := range rows {

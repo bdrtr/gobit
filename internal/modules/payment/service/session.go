@@ -11,63 +11,70 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
-// fieldSessionID oturum kimliğinin alan adıdır; doğrulama mesajlarında ve hata
-// ayrıntılarında AYNI ad kullanılır ki istemci iki farklı isim öğrenmesin.
+// fieldSessionID is the field name of the session identifier; the SAME name is
+// used in validation messages and in error details so that the client does not
+// have to learn two different names.
 const fieldSessionID = "payment_session_id"
 
-// CreateSessionInput bir ödeme oturumu açma isteğidir.
+// CreateSessionInput is a request to open a payment session.
 type CreateSessionInput struct {
-	// Amount bloke edilecek tutardır (minor unit). SIFIR verilirse
-	// koleksiyonun KALAN tutarı kullanılır; sağlayıcı sözleşmesindeki
-	// "sıfır = tamamı" kuralıyla aynı anlamdadır.
+	// Amount is the amount to put on hold (minor unit). If it is given as
+	// ZERO, the collection's REMAINING amount is used; it means the same as the
+	// "zero = all of it" rule in the provider contract.
 	//
-	// Kalan tutar, koleksiyonun tutarından AÇIK oturumların rezerve ettiği
-	// toplamın düşülmesiyle bulunur; bu alan yalnızca ödemeyi birden çok
-	// oturuma BÖLMEK içindir ve toplamı hiçbir zaman koleksiyonu aşamaz.
+	// The remaining amount is found by subtracting the total reserved by OPEN
+	// sessions from the collection's amount; this field exists only to SPLIT
+	// the payment across more than one session, and their total can never
+	// exceed the collection.
 	Amount int64
-	// IdempotencyKey aynı oturumun iki kez açılmasını engeller; zorunludur.
+	// IdempotencyKey prevents the same session from being opened twice; it is
+	// required.
 	IdempotencyKey string
-	// Data sağlayıcıya özgü serbest veridir (kart tokenı, dönüş adresi vb.).
+	// Data is provider-specific free-form data (a card token, a return URL,
+	// etc.).
 	Data map[string]any
 }
 
-// CreateSession koleksiyon için bir sağlayıcıda ödeme oturumu açar.
+// CreateSession opens a payment session at a provider for the collection.
 //
-// Aynı (sağlayıcı, IdempotencyKey) çifti ile ikinci çağrı YENİ oturum AÇMAZ;
-// mevcut oturum döner ve sağlayıcıya hiç gidilmez (plan Bölüm 2.6). Anahtar
-// aynı ama koleksiyon FARKLIYSA errors.Conflict döner: idempotency "aynı
-// isteği tekrarlamak" demektir, "başka bir isteği eski anahtarla göndermek"
-// değil.
+// A second call with the same (provider, IdempotencyKey) pair DOES NOT OPEN a
+// NEW session; the existing session is returned and the provider is not called
+// at all (plan Section 2.6). If the key is the same but the collection is
+// DIFFERENT, errors.Conflict is returned: idempotency means "repeating the
+// same request", not "sending another request with an old key".
 //
-// # Sonlanmış oturumun anahtarı yeniden KULLANILAMAZ
+// # A terminated session's key CANNOT be reused
 //
-// Anahtarın oturumu iptal edilmiş ya da reddedilmişse errors.Conflict
-// ([CodeSessionTerminal]) döner. Mevcut oturumu olduğu gibi dönmek, çağıranın
-// bir sonraki adımda ("yetkilendir") anlaşılmaz bir geçiş çakışması almasına
-// yol açardı: telafi bir kez çalıştıktan sonra AYNI anahtarla ilerlemenin yolu
-// yoktur. Saga bir adımı yeniden denerken anahtarını yürütmeye göre üretir;
-// telafiden SONRA yeniden denenen bir akış YENİ bir anahtar üretmek zorundadır
-// ve bu hata kodu ona bunu söyler.
+// If the key's session was canceled or declined, errors.Conflict
+// ([CodeSessionTerminal]) is returned. Returning the existing session as it is
+// would make the caller hit an incomprehensible transition conflict at the
+// next step ("authorize"): once the compensation has run, there is no way
+// forward with the SAME key. The saga derives a step's key from the execution
+// when it retries the step; a flow retried AFTER the compensation has to derive
+// a NEW key, and this error code tells it so.
 //
-// # Kalan tutar TAHSİL EDİLENİ de AÇIK OTURUMLARI da sayar
+// # The remaining amount counts both what was CAPTURED and the OPEN SESSIONS
 //
-// Açılacak tutar, koleksiyonun tutarından tahsil edilmiş toplamın VE canlı
-// oturumların rezerve ettiğinin düşülmesiyle bulunur
-// (bkz. [Service.remainingToOpen]); kalan sıfırsa oturum açılmaz
-// (errors.Conflict), tutar verilmezse kalanın tamamı için açılır.
+// The amount to open is found by subtracting the captured total AND what live
+// sessions have reserved from the collection's amount
+// (see [Service.remainingToOpen]); if the remainder is zero no session is
+// opened (errors.Conflict), and if no amount is given the session is opened for
+// the whole remainder.
 //
-// Rezerv payı olmasa, aynı koleksiyonda her biri TAM tutarlı birden çok oturum
-// açılabilir ve hepsi yetkilendirilince ÇİFT TAHSİLAT olurdu. Tahsil edilen
-// payı olmasa aynı şey ARDIŞIK olarak olurdu: tahsilat oturumun rezervini
-// kapattığı için kalan yeniden tam tutar görünürdü.
+// Without the reserved share, more than one session, each for the FULL amount,
+// could be opened on the same collection, and once all of them were authorized
+// there would be a DOUBLE CAPTURE. Without the captured share the same thing
+// would happen SEQUENTIALLY: since a capture closes the session's reservation,
+// the remainder would look like the full amount again.
 //
-// ADR 0118'e kadar tahsil edilen payı burada değildi ve yerine "tahsilatı
-// başlamış koleksiyona yeni oturum açılamaz" diye bir bayrak duruyordu. Bayrak
-// çift tahsilatı engelliyordu ama KISMİ bir tahsilatın kalanını da sonsuza
-// kadar toplanamaz yapıyordu; aritmetik iki durumu ayırır, bayrak ayıramazdı.
+// Until ADR 0118 the captured share was not here, and in its place stood a
+// flag saying "no new session can be opened on a collection whose capture has
+// begun". The flag prevented the double capture, but it also made the
+// remainder of a PARTIAL capture uncollectable forever; arithmetic tells the
+// two cases apart, the flag could not.
 //
-// Kilit sırası: koleksiyon. Sağlayıcı çağrısı bu kilit ALTINDA yapılır
-// (gerekçe için paket belgesine bakın).
+// Lock order: collection. The provider call is made UNDER this lock (see the
+// package documentation for the reasoning).
 func (s *Service) CreateSession(
 	ctx context.Context,
 	collectionID, providerID string,
@@ -104,24 +111,24 @@ func (s *Service) CreateSession(
 		case err == nil:
 			if existing.PaymentCollectionID != collectionID {
 				return errors.Conflict(CodeIdempotencyMismatch,
-					"bu idempotency anahtarı %s koleksiyonu için kullanılmış: %s",
+					"this idempotency key was used for collection %s: %s",
 					existing.PaymentCollectionID, key)
 			}
 			if existing.Status.Terminal() {
 				return errors.Conflict(CodeSessionTerminal,
-					"bu idempotency anahtarının oturumu %q durumunda; yeni bir anahtar gerekir: %s",
+					"this idempotency key's session is in the %q status; a new key is needed: %s",
 					existing.Status, existing.ID).
 					WithDetails(map[string]any{
 						fieldSessionID: existing.ID,
 						"status":       existing.Status.String(),
 					})
 			}
-			s.log.DebugContext(ctx, "mevcut ödeme oturumu döndürüldü",
-				"oturum", existing.ID, "anahtar", key)
+			s.log.DebugContext(ctx, "the existing payment session was returned",
+				"session", existing.ID, "key", key)
 			out = existing
 			return nil
 		case errors.HasKind(err, errors.KindNotFound):
-			// Beklenen dal: anahtar ilk kez kullanılıyor.
+			// The expected branch: the key is being used for the first time.
 		default:
 			return err
 		}
@@ -132,7 +139,7 @@ func (s *Service) CreateSession(
 		}
 		if remaining <= 0 {
 			return errors.Conflict(CodeCollectionClosed,
-				"koleksiyonda açılacak tutar kalmadı: tutar %d, tahsil edilen %d, açık oturumlarca rezerve edilen %d (%s)",
+				"no amount is left to open on the collection: amount %d, captured %d, reserved by open sessions %d (%s)",
 				col.Amount, col.CapturedAmount, reserved, col.ID)
 		}
 		amount := in.Amount
@@ -141,21 +148,22 @@ func (s *Service) CreateSession(
 		}
 		if amount > remaining {
 			return errors.Conflict(CodeInvalidTransition,
-				"oturum tutarı kalan tutarı aşamaz: istenen %d, kalan %d (%s)",
+				"the session amount cannot exceed the remaining amount: %d requested, %d remaining (%s)",
 				amount, remaining, col.ID)
 		}
 
 		session, err := prov.CreateSession(ctx, coreprovider.CreateSessionInput{
 			Amount:       amount,
 			CurrencyCode: col.CurrencyCode,
-			// Reference sağlayıcı tarafında KOLEKSİYON kimliğidir; mutabakatta
-			// iki sistemi eşleştiren alan budur.
+			// On the provider side Reference is the COLLECTION identifier; it is
+			// the field that matches up the two systems during reconciliation.
 			Reference:      col.ID,
 			IdempotencyKey: key,
-			// Müşteri KOLEKSİYONDAN geliyor, Data'dan değil (ADR 0152): Data
-			// istemcinin ve fonları bir kişiye ait olan bir ödeme yöntemi sahibini
-			// oradan alsaydı, müşteri başkasının adını yazarak onun bakiyesini
-			// harcardı. Çoğu sağlayıcı bu alanı hiç okumuyor.
+			// The customer comes from the COLLECTION, not from Data (ADR 0152):
+			// Data is the client's, and if a tender whose funds belong to a
+			// person took its owner from there, a shopper would spend somebody
+			// else's balance by writing their name. Most providers never read
+			// this field.
 			CustomerID: col.CustomerID,
 			Data:       in.Data,
 		})
@@ -168,7 +176,7 @@ func (s *Service) CreateSession(
 		}
 		if strings.TrimSpace(session.ID) == "" {
 			return errors.Internal(CodeProviderContract,
-				"%q sağlayıcısı kimliksiz bir oturum döndü", prov.ID())
+				"provider %q returned a session without an identifier", prov.ID())
 		}
 
 		created, err := s.store.CreatePaymentSession(ctx, models.PaymentSession{
@@ -186,8 +194,8 @@ func (s *Service) CreateSession(
 			return err
 		}
 
-		// Oturum yazıldıktan SONRA türetilir: sayım yeni oturumu görmeli ve
-		// koleksiyon "awaiting" olmalıdır.
+		// Derived AFTER the session is written: the count has to see the new
+		// session, and the collection has to become "awaiting".
 		if _, err := s.writeCollectionTotals(ctx, col,
 			col.AuthorizedAmount, col.CapturedAmount, col.RefundedAmount); err != nil {
 			return err
@@ -202,35 +210,39 @@ func (s *Service) CreateSession(
 	return out, nil
 }
 
-// remainingToOpen koleksiyonda yeni bir oturumun kapabileceği tutarı döner;
-// hiç kalmadıysa 0. İkinci dönüş, canlı oturumların rezerve ettiği toplamdır ve
-// yalnızca hata mesajını doğru yazmak için verilir.
+// remainingToOpen returns the amount a new session can cover on the
+// collection; 0 if none is left. The second return is the total reserved by
+// live sessions, and it is given only to write the error message correctly.
 //
-// Hesap koleksiyonun tutarından İKİ şeyi düşer: ZATEN TAHSİL EDİLMİŞ tutarı ve
-// CANLI oturumların rezerve ettiğini.
+// The computation subtracts TWO things from the collection's amount: the
+// amount ALREADY CAPTURED and what LIVE sessions have reserved.
 //
-// Rezerv payı için: yalnızca yetkilendirilmiş tutara bakmak yetmez, çünkü
-// hiçbiri yetkilendirilmemişken aynı koleksiyona her biri TAM tutarlı iki oturum
-// açılabilir, ikisi de yetkilendirilince koleksiyonun iki katı bloke edilir ve
-// ikisi de tahsil edilince müşteriden iki kez para çekilirdi.
+// On the reserved share: looking only at the authorized amount is not enough,
+// because while none of them is authorized two sessions, each for the FULL
+// amount, could be opened on the same collection; once both were authorized
+// twice the collection's amount would be on hold, and once both were captured
+// the customer would be charged twice.
 //
-// # Tahsil edilen payı, ve neden ADR 0118'e kadar burada değildi
+// # The captured share, and why it was not here until ADR 0118
 //
-// Bu hesap tahsil edileni HİÇ okumuyordu, ve çift tahsilatın kapısını tek
-// başına [Service.CreateSession] içindeki "tahsilatı başlamış koleksiyona yeni
-// oturum açılamaz" satırı tutuyordu. O satır bir BAKİYE değil BİRİKİMLİ SAYAÇ
-// okuyordu — "şu an bir şey tutuyor mu" değil "hiç bir şey almış mı" — ve
-// kısmen tahsil edilmiş bir koleksiyonun kalanını sonsuza kadar toplanamaz
-// yapıyordu. Aritmetik buraya taşındığında o satıra gerek kalmadı: kalan sıfırsa
-// kapı zaten kapanıyor, ve tam tahsil edilmiş bir koleksiyonda kalan sıfırdır.
+// This computation did NOT read the captured amount AT ALL, and the gate
+// against the double capture was held on its own by a line in
+// [Service.CreateSession]: "no new session can be opened on a collection whose
+// capture has begun". That line read a CUMULATIVE COUNTER, not a BALANCE — not
+// "is it holding something right now" but "has it ever taken anything" — and
+// it made the remainder of a partially captured collection uncollectable
+// forever. Once the arithmetic moved here the line was no longer needed: if the
+// remainder is zero the gate closes anyway, and on a fully captured collection
+// the remainder is zero.
 //
-// Bir İADE kalanı BÜYÜTMEZ, çünkü tahsil edilen toplam iade yazılırken
-// değişmiyor (bkz. [Service.RefundPayment]). Bu bilinçlidir: iade edilmiş bir
-// koleksiyonu yeniden ödenebilir yapmanın bugün tüketicisi yok (ADR 0063), ve
-// `captured_amount <= amount` kısıtı aynı hesabın arkasındaki ikinci duvardır.
+// A REFUND DOES NOT GROW the remainder, because the captured total does not
+// change when a refund is written (see [Service.RefundPayment]). This is
+// deliberate: making a refunded collection payable again has no consumer today
+// (ADR 0063), and the `captured_amount <= amount` constraint is the second wall
+// behind the same computation.
 //
-// İşlem İÇİNDE ve koleksiyonun kilidi ALTINDA çağrılmalıdır; kilitsiz okunan
-// bir toplam, araya giren bir oturum açılışıyla bayatlar.
+// It has to be called INSIDE a transaction and UNDER the collection's lock; a
+// total read without the lock goes stale when a session opening interleaves.
 func (s *Service) remainingToOpen(
 	ctx context.Context, col models.PaymentCollection,
 ) (remaining, reserved int64, err error) {
@@ -247,30 +259,31 @@ func (s *Service) remainingToOpen(
 	return col.Amount - taken, reserved, nil
 }
 
-// AuthorizePayment oturumun tutarını müşterinin üzerinde BLOKE eder.
+// AuthorizePayment puts the session's amount ON HOLD on the customer.
 //
-// Geçiş tablosu için bkz. [models.SessionStatus.AuthorizeAction]. Zaten
-// yetkilendirilmiş bir oturum için sağlayıcıya GİDİLMEZ ve hata dönmez; geçersiz
-// bir geçiş (tahsil edilmiş, iptal edilmiş ya da reddedilmiş oturum)
-// errors.Conflict döner.
+// For the transition table see [models.SessionStatus.AuthorizeAction]. For an
+// already authorized session the provider IS NOT CALLED and no error is
+// returned; an invalid transition (a captured, canceled or declined session)
+// returns errors.Conflict.
 //
-// # Ret bir HATADIR
+// # A decline IS AN ERROR
 //
-// Sağlayıcı reddederse oturum "failed" olarak KALICI yazılır ve metot
-// errors.Conflict ([CodeAuthorizationDeclined]) döner. Ret bir sunucu hatası
-// değildir ama çağıran açısından istenen geçiş GERÇEKLEŞMEMİŞTİR; sessizce
-// başarı dönmek, durumu kontrol etmeyi unutan bir akışın ödenmemiş bir siparişi
-// onaylaması demek olurdu. Ret sebebi hatanın Details alanında taşınır.
+// If the provider declines, the session is written PERMANENTLY as "failed" and
+// the method returns errors.Conflict ([CodeAuthorizationDeclined]). A decline
+// is not a server error, but from the caller's point of view the requested
+// transition DID NOT HAPPEN; silently returning success would mean that a flow
+// which forgets to check the status confirms an unpaid order. The decline
+// reason is carried in the error's Details field.
 //
-// Ret yazısı, hata dönülmeden ÖNCE işlenmiş olur: işlem başarıyla kapanır,
-// hata işlemin dışında üretilir. Aksi hâlde geri alma reddi de silerdi ve
-// oturum sonsuza kadar "pending" görünürdü.
+// The decline is committed BEFORE the error is returned: the transaction closes
+// successfully and the error is produced outside it. Otherwise the rollback
+// would erase the decline too, and the session would look "pending" forever.
 //
-// # Eşzamanlılık
+// # Concurrency
 //
-// Kilit sırası: koleksiyon -> oturum. Aynı oturumu aynı anda yetkilendiren iki
-// çağrıdan TAM OLARAK BİRİ sağlayıcıya gider; ikincisi birincinin yazdığı
-// durumu görüp no-op'a düşer.
+// Lock order: collection -> session. Of two calls authorizing the same session
+// at the same time, EXACTLY ONE goes to the provider; the second sees the
+// status the first one wrote and falls into the no-op.
 func (s *Service) AuthorizePayment(ctx context.Context, sessionID string) (models.PaymentSession, error) {
 	if err := requireText(fieldSessionID, sessionID); err != nil {
 		return models.PaymentSession{}, err
@@ -293,14 +306,14 @@ func (s *Service) AuthorizePayment(ctx context.Context, sessionID string) (model
 
 		switch ses.Status.AuthorizeAction() {
 		case models.ActionNoop:
-			s.log.DebugContext(ctx, "oturum zaten yetkilendirilmiş, işlem yapılmadı",
-				"oturum", ses.ID)
+			s.log.DebugContext(ctx, "the session is already authorized, nothing was done",
+				"session", ses.ID)
 			out = ses
 			return nil
 		case models.ActionConflict:
-			return conflictTransition("yetkilendirilemez", ses)
+			return conflictTransition("cannot be authorized", ses)
 		case models.ActionProceed:
-			// Aşağıda ele alınır.
+			// Handled below.
 		}
 
 		result, err := prov.Authorize(ctx, ses.ExternalID)
@@ -345,7 +358,7 @@ func (s *Service) AuthorizePayment(ctx context.Context, sessionID string) (model
 
 		default:
 			return errors.Internal(CodeProviderContract,
-				"%q sağlayıcısı yetkilendirmeden %q durumu döndü; beklenen %q ya da %q",
+				"provider %q returned the %q status from an authorization; %q or %q was expected",
 				ses.ProviderID, status, models.SessionAuthorized, models.SessionFailed)
 		}
 	})
@@ -358,25 +371,26 @@ func (s *Service) AuthorizePayment(ctx context.Context, sessionID string) (model
 	return out, nil
 }
 
-// CancelPayment oturumu kapatır ve blokaj varsa serbest bırakır.
+// CancelPayment closes the session and releases the hold, if there is one.
 //
-// SAGA TELAFİSİ BUDUR ve İDEMPOTENTTİR: zaten iptal edilmiş bir oturum için
-// hata dönmez, sağlayıcıya ikinci kez gidilmez ve koleksiyonun tutarına İKİNCİ
-// KEZ dokunulmaz. Telafi adımı yeniden çalıştırılabilir olmak zorundadır — bir
-// workflow yeniden denendiğinde ya da çift tetiklendiğinde ikinci çağrı akışı
-// patlatmamalıdır.
+// THIS IS THE SAGA COMPENSATION, and IT IS IDEMPOTENT: for an already canceled
+// session no error is returned, the provider is not called a second time and
+// the collection's amounts are not touched A SECOND TIME. A compensation step
+// has to be re-runnable — when a workflow is retried or triggered twice, the
+// second call must not blow up the flow.
 //
-// Bilinmeyen bir kimlik için errors.NotFound döner: idempotentlik "her şeyi
-// sessizce yut" demek değildir. İki kez iptal edilen GERÇEK bir oturum ile hiç
-// var olmamış bir kimlik farklı durumlardır ve ikincisi çağıran tarafta bir
-// hatadır. Oturum kaydı silinmediği (yalnızca durumu değiştiği) için ilk durum
-// her zaman ayırt edilebilir.
+// For an unknown identifier errors.NotFound is returned: idempotency does not
+// mean "silently swallow everything". A REAL session canceled twice and an
+// identifier that never existed are different situations, and the second is a
+// fault on the caller's side. Since the session record is not deleted (only its
+// status changes), the first situation can always be told apart.
 //
-// Tahsil edilmiş bir oturum iptal EDİLEMEZ (errors.Conflict): para çekilmiştir
-// ve geri almanın yolu [Service.RefundPayment]'tır. Reddedilmiş bir oturum ise
-// iptal EDİLEBİLİR; kapatılır ve ret sebebi decline_reason'da korunur.
+// A captured session CANNOT be canceled (errors.Conflict): the money has been
+// taken, and the way to give it back is [Service.RefundPayment]. A declined
+// session, on the other hand, CAN be canceled; it is closed and the decline
+// reason is kept in decline_reason.
 //
-// Kilit sırası: koleksiyon -> oturum.
+// Lock order: collection -> session.
 func (s *Service) CancelPayment(ctx context.Context, sessionID string) error {
 	if err := requireText(fieldSessionID, sessionID); err != nil {
 		return err
@@ -395,13 +409,13 @@ func (s *Service) CancelPayment(ctx context.Context, sessionID string) error {
 
 		switch ses.Status.CancelAction() {
 		case models.ActionNoop:
-			s.log.DebugContext(ctx, "oturum zaten iptal edilmiş, işlem yapılmadı",
-				"oturum", ses.ID)
+			s.log.DebugContext(ctx, "the session is already canceled, nothing was done",
+				"session", ses.ID)
 			return nil
 		case models.ActionConflict:
-			return conflictTransition("iptal edilemez; iade kullanın", ses)
+			return conflictTransition("cannot be canceled; use a refund", ses)
 		case models.ActionProceed:
-			// Aşağıda ele alınır.
+			// Handled below.
 		}
 
 		if err := prov.Cancel(ctx, ses.ExternalID); err != nil {
@@ -411,7 +425,7 @@ func (s *Service) CancelPayment(ctx context.Context, sessionID string) error {
 		released := ses.AuthorizedAmount
 		if released > col.AuthorizedAmount {
 			return errors.Internal(CodeInconsistentState,
-				"koleksiyonun bloke tutarı (%d) oturumunkinden (%d) küçük (%s)",
+				"the collection's held amount (%d) is smaller than the session's (%d) (%s)",
 				col.AuthorizedAmount, released, ses.ID)
 		}
 
@@ -425,13 +439,13 @@ func (s *Service) CancelPayment(ctx context.Context, sessionID string) error {
 	})
 }
 
-// providerForSession oturumun sağlayıcısını çözer.
+// providerForSession resolves the session's provider.
 //
-// Oturum işlem DIŞINDA, kilitsiz okunur: buradaki amaç yalnızca hangi
-// sağlayıcının ve hangi koleksiyonun söz konusu olduğunu öğrenmektir. Karar
-// verdiren okuma her zaman işlem içinde, kilit altında YENİDEN yapılır
-// (bkz. [Service.lockCollectionAndSession]); bu yüzden araya giren bir
-// değişiklik kararı bozamaz.
+// The session is read OUTSIDE the transaction, without a lock: the only purpose
+// here is to learn which provider and which collection are involved. The read
+// a decision rests on is always made AGAIN inside the transaction, under the
+// lock (see [Service.lockCollectionAndSession]); that is why an interleaving
+// change cannot corrupt the decision.
 func (s *Service) providerForSession(ctx context.Context, sessionID string) (coreprovider.PaymentProvider, error) {
 	ses, err := s.store.GetPaymentSession(ctx, sessionID)
 	if err != nil {
@@ -440,12 +454,12 @@ func (s *Service) providerForSession(ctx context.Context, sessionID string) (cor
 	return s.providers.Get(ses.ProviderID)
 }
 
-// lockCollectionAndSession kilitleri KANONİK sırada alır: önce koleksiyon,
-// sonra oturum.
+// lockCollectionAndSession takes the locks in the CANONICAL order: the
+// collection first, then the session.
 //
-// Koleksiyon kimliği için oturumun kilitsiz bir okuması gerekir; sıranın ters
-// dönmemesi için bu okuma kilit ALMADAN yapılır ve oturum, koleksiyon
-// kilitlendikten sonra yeniden ve kilitli okunur.
+// The collection identifier needs an unlocked read of the session; so that the
+// order is not inverted, this read is made WITHOUT taking a lock, and the
+// session is read again, locked, after the collection is locked.
 func (s *Service) lockCollectionAndSession(
 	ctx context.Context,
 	sessionID string,
@@ -465,36 +479,37 @@ func (s *Service) lockCollectionAndSession(
 		return models.PaymentCollection{}, models.PaymentSession{}, err
 	}
 	if ses.PaymentCollectionID != col.ID {
-		// Oturum kilitlenene kadar başka bir koleksiyona taşınmış olamaz;
-		// böyle bir sapma veri bozulmasıdır ve sessiz kalmamalıdır.
+		// The session cannot have moved to another collection by the time it is
+		// locked; such a deviation is data corruption and must not stay silent.
 		return models.PaymentCollection{}, models.PaymentSession{}, errors.Internal(CodeInconsistentState,
-			"oturum %s koleksiyonu kilitlendikten sonra %s koleksiyonunda bulundu",
+			"after collection %s was locked, the session was found in collection %s",
 			col.ID, ses.PaymentCollectionID)
 	}
 	return col, ses, nil
 }
 
-// providerStatus çekirdek sözleşmesinin durum değerini modülün durumuna
-// çevirir ve tanınmayan bir değeri sözleşme ihlali olarak bildirir.
+// providerStatus converts the core contract's status value into the module's
+// status and reports an unrecognized value as a contract violation.
 func providerStatus(status coreprovider.SessionStatus, providerID string) (models.SessionStatus, error) {
 	converted := models.SessionStatus(status)
 	if !converted.Valid() {
 		return "", errors.Internal(CodeProviderContract,
-			"%q sağlayıcısı tanınmayan bir oturum durumu döndü: %q", providerID, status)
+			"provider %q returned an unrecognized session status: %q", providerID, status)
 	}
 	return converted, nil
 }
 
-// authorizedAmount sağlayıcının bildirdiği bloke tutarı doğrular.
+// authorizedAmount validates the held amount the provider reports.
 //
-// Sıfır "tamamı" demektir; sözleşmenin Capture ve Refund için koyduğu kuralın
-// aynısı burada da uygulanır ki alanı doldurmayan bir sağlayıcı, sıfır tutar
-// bloke etmiş sayılmasın. Oturum tutarını AŞAN bir bloke ise sözleşme
-// ihlalidir: müşteriden istenenden fazlası bloke edilmiş olurdu.
+// Zero means "all of it"; the same rule the contract sets for Capture and
+// Refund is applied here too, so that a provider that leaves the field empty is
+// not taken to have held a zero amount. A hold that EXCEEDS the session amount,
+// on the other hand, is a contract violation: more would have been held than
+// the customer was asked for.
 func authorizedAmount(reported int64, ses models.PaymentSession) (int64, error) {
 	if reported < 0 {
 		return 0, errors.Internal(CodeProviderContract,
-			"%q sağlayıcısı negatif bloke tutarı döndü: %d (%s)",
+			"provider %q returned a negative held amount: %d (%s)",
 			ses.ProviderID, reported, ses.ID)
 	}
 	if reported == 0 {
@@ -502,17 +517,18 @@ func authorizedAmount(reported int64, ses models.PaymentSession) (int64, error) 
 	}
 	if reported > ses.Amount {
 		return 0, errors.Internal(CodeProviderContract,
-			"%q sağlayıcısı oturum tutarından fazlasını bloke etti: %d > %d (%s)",
+			"provider %q held more than the session amount: %d > %d (%s)",
 			ses.ProviderID, reported, ses.Amount, ses.ID)
 	}
 	return reported, nil
 }
 
-// mergeData sağlayıcının döndürdüğü ham veriyi seçer; boşsa mevcut veri korunur.
+// mergeData picks the raw data the provider returned; if it is empty, the
+// existing data is kept.
 //
-// Sağlayıcı her çağrıda gövde döndürmek zorunda değildir; boş bir yanıtla
-// mevcut veriyi silmek, oturumun açılışında saklanan bilgiyi (örn. istemcinin
-// kullanacağı client_secret) kaybetmek olurdu.
+// A provider does not have to return a body on every call; erasing the
+// existing data with an empty response would lose the information stored when
+// the session was opened (e.g. the client_secret the client will use).
 func mergeData(current, incoming json.RawMessage) []byte {
 	if len(incoming) == 0 {
 		return current
@@ -520,20 +536,20 @@ func mergeData(current, incoming json.RawMessage) []byte {
 	return incoming
 }
 
-// conflictTransition geçersiz bir durum geçişi için ortak hatayı üretir.
+// conflictTransition builds the shared error for an invalid status transition.
 func conflictTransition(action string, ses models.PaymentSession) error {
 	return errors.Conflict(CodeInvalidTransition,
-		"%q durumundaki ödeme oturumu %s: %s", ses.Status, action, ses.ID).
+		"a payment session in the %q status %s: %s", ses.Status, action, ses.ID).
 		WithDetails(map[string]any{
 			fieldSessionID: ses.ID,
 			"status":       ses.Status.String(),
 		})
 }
 
-// declineError reddedilmiş bir yetkilendirme için ortak hatayı üretir.
+// declineError builds the shared error for a declined authorization.
 func declineError(ses models.PaymentSession) error {
 	return errors.Conflict(CodeAuthorizationDeclined,
-		"ödeme reddedildi: %s (%s)", ses.DeclineReason, ses.ID).
+		"the payment was declined: %s (%s)", ses.DeclineReason, ses.ID).
 		WithDetails(map[string]any{
 			fieldSessionID:   ses.ID,
 			"provider_id":    ses.ProviderID,

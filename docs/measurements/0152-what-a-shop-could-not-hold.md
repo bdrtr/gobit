@@ -107,7 +107,7 @@ receives: `stubPayments.lastCollectionCustomer`.
 Mutation 84 is the other half of a gate that was measured too narrow. The
 module's schema test requires every amount-carrying endpoint to write the minor
 unit note, and derives the population from the schema rather than from a list —
-correctly — but `tutarAlani` matched `amount` and `*_amount` only. A balance is
+correctly — but `isAmountField` matched `amount` and `*_amount` only. A balance is
 an amount, in minor units, and the balance endpoint was invisible to the rule its
 own sentence states. Widened, then proven with the mutation above.
 

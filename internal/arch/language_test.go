@@ -293,6 +293,14 @@ const generatedMarker = "Code generated"
 //     'Curaçao', 'Türkiye' (ISO 3166 reference names, not translatable, and
 //     they reach the DATABASE, so escaping them is not available)
 var diacriticDataExemptions = map[string][]string{
+	// The region module's seed holds ISO 3166-1 short names as data, and two
+	// of them carry a letter this lane reads: Curaçao, and Türkiye, the name
+	// ISO and the United Nations register for TR. Spelling either in ASCII
+	// would seed a wrong country name into every installation; the comments
+	// around them are English.
+	"internal/modules/region/migrations/000002_region_seed.up.sql": {
+		"('CW', 'Curaçao'),", "('TR', 'Türkiye'),",
+	},
 	"docs/adr/0012-repository-language-and-solid.md": {"`çğıöşüÇĞİÖŞÜ`"},
 	// ADR 0015 records the same defect and has to quote the same two words to
 	// show it: the whole finding is that one of them does not match the other.
@@ -892,7 +900,26 @@ func TestDetectorIsNotBlind(t *testing.T) {
 		}
 	}
 
+	// The identifier lane reads Go source alone, and once no Go file is left on
+	// the ledger it has nothing to find: the identifiers' migration is complete
+	// while prose debt remains elsewhere. Its teeth are then proven only by the
+	// planted control ([TestDetectorFindsPlantedTurkish]), and a hit would be a
+	// Go file outside the ledger, which [TestNoTurkishOutsideLedger] reports.
+	goLeft := false
+	for rel := range loadLedger(t, turkishLedgerPath) {
+		if strings.HasSuffix(rel, ".go") {
+			goLeft = true
+
+			break
+		}
+	}
 	for _, lane := range []string{laneDiacritic, laneWord, laneIdentifier} {
+		if lane == laneIdentifier && !goLeft {
+			assert.Zero(t, perLane[lane],
+				"the ledger lists no Go file, so no Go identifier may carry Turkish")
+
+			continue
+		}
 		assert.Positive(t, perLane[lane],
 			"the %s lane found nothing in the whole repository. Either the migration "+
 				"is complete — in which case %s is empty and this assertion should be "+

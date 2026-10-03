@@ -9,12 +9,12 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// fakePayments api.Payments'in senaryolanabilir karşılığıdır.
+// fakePayments is a scriptable stand-in for api.Payments.
 //
-// HTTP davranışının gerçek bir veritabanı olmadan sınanabilmesi için vardır:
-// handler'ların işi status kodu SEÇMEK değil, servisin tipli hatasını
-// corehttp.WriteError'a vermektir ve bu ancak servis yerine bir sahte konarak
-// tek tek doğrulanabilir.
+// It exists so that the HTTP behavior can be exercised without a real
+// database: the handlers' job is not to CHOOSE a status code but to hand the
+// service's typed error to corehttp.WriteError, and that can only be verified
+// case by case by putting a fake in place of the service.
 type fakePayments struct {
 	providerIDs []string
 
@@ -29,24 +29,26 @@ type fakePayments struct {
 	payments    []models.Payment
 	refunds     []models.Refund
 
-	// creditEntry, creditBalance ve creditHistory mağaza kredisi uçlarının
-	// senaryolandırılmış cevaplarıdır (ADR 0152).
+	// creditEntry, creditBalance and creditHistory are the scripted answers
+	// of the store credit endpoints (ADR 0152).
 	creditEntry   models.StoreCreditEntry
 	creditBalance int64
 	creditHistory []models.StoreCreditEntry
-	// lastCreditInput handler'ın servise ilettiği girdidir; uçların tek işi bu
-	// çeviri olduğu için doğruluğu ancak burada görünür.
+	// lastCreditInput is the input the handler passed to the service; since
+	// this translation is the endpoints' only job, its correctness is visible
+	// only here.
 	lastCreditInput service.IssueCreditInput
-	// lastCreditQuery bakiyenin hangi müşteri ve para birimi için sorulduğudur.
+	// lastCreditQuery is which customer and currency the balance was asked for.
 	lastCreditQuery [2]string
 	// lastCreditList is the whole input the history was read with (ADR 0274).
 	lastCreditList service.ListStoreCreditInput
 
-	// loyaltyBalance ve loyaltyHistory sadakat puanı uçlarının senaryolandırılmış
-	// cevaplarıdır (ADR 0164).
+	// loyaltyBalance and loyaltyHistory are the scripted answers of the
+	// loyalty points endpoints (ADR 0164).
 	loyaltyBalance int64
 	loyaltyHistory []models.LoyaltyEntry
-	// lastLoyaltyQuery puanın hangi müşteri ve para birimi için sorulduğudur.
+	// lastLoyaltyQuery is which customer and currency the points were asked
+	// for.
 	lastLoyaltyQuery [2]string
 
 	// journal is the scripted journal and journalQueries how it was asked.
@@ -63,59 +65,61 @@ type fakePayments struct {
 	lastGiftID    string
 	// lastDisableReason is the reason a close was asked with (ADR 0213).
 	lastDisableReason string
-	// lastLoyaltyPage listeleme ucunun servise ilettiği sayfalamadır.
+	// lastLoyaltyPage is the paging the list endpoint passed to the service.
 	lastLoyaltyPage service.Page
 
-	// err ayarlanırsa çağrılan her metot bu hatayı döner; hata sınıfının
-	// status koduna doğru eşlendiği böyle sınanır.
+	// If err is set, every method called returns this error; that is how the
+	// error kind's correct mapping to a status code is tested.
 	err error
 
-	// sonCreateSession son CreateSession çağrısının girdisidir; gövdenin
-	// servise BOZULMADAN ulaştığı bununla kanıtlanır.
-	sonCreateSession service.CreateSessionInput
-	// sonCollectionInput son CreatePaymentCollection çağrısının girdisidir.
-	sonCollectionInput service.CreateCollectionInput
-	// sonListInput son ListPaymentCollections çağrısının girdisidir.
-	sonListInput service.ListCollectionsInput
-	// sonCaptureAmount son CapturePayment çağrısının tutarıdır.
-	sonCaptureAmount int64
-	// sonRefundAmount ve sonRefundReason son RefundPayment çağrısının
-	// argümanlarıdır.
-	sonRefundAmount int64
-	sonRefundReason string
-	// cancelCagrisi CancelPayment'ın çağrılıp çağrılmadığını bildirir.
-	cancelCagrisi bool
+	// lastCreateSession is the input of the last CreateSession call; it proves
+	// that the body reaches the service UNALTERED.
+	lastCreateSession service.CreateSessionInput
+	// lastCollectionInput is the input of the last CreatePaymentCollection
+	// call.
+	lastCollectionInput service.CreateCollectionInput
+	// lastListInput is the input of the last ListPaymentCollections call.
+	lastListInput service.ListCollectionsInput
+	// lastCaptureAmount is the amount of the last CapturePayment call.
+	lastCaptureAmount int64
+	// lastRefundAmount and lastRefundReason are the arguments of the last
+	// RefundPayment call.
+	lastRefundAmount int64
+	lastRefundReason string
+	// cancelCalled reports whether CancelPayment was called.
+	cancelCalled bool
 
-	// Okuma uçlarına YOLDAN gelen kimlikler. Okuma handler'larının tek işi,
-	// URL'deki kaydı servise sormaktır; sahte servis her zaman senaryolanmış
-	// yanıtı döndüğü için yanıta bakarak "doğru kaydı sordu mu" ayırt
-	// EDİLEMEZ. Sorulan kimlik bu yüzden ayrıca kaydedilir.
-	sonOturumListesiKimligi   string
-	sonTahsilatListesiKimligi string
-	sonTahsilatKimligi        string
-	sonIadeListesiKimligi     string
+	// The IDs that reach the read endpoints FROM THE PATH. A read handler's
+	// only job is to ask the service for the record in the URL; since the fake
+	// service always returns its scripted answer, "did it ask for the right
+	// record" CANNOT be told apart by looking at the answer. The ID asked for
+	// is therefore recorded separately.
+	lastSessionListID string
+	lastPaymentListID string
+	lastPaymentID     string
+	lastRefundListID  string
 }
 
-// Sahtenin handler'ın beklediği yüzeyi karşıladığı derleme zamanında
-// doğrulanır.
+// That the fake satisfies the surface the handler expects is verified at
+// compile time.
 var _ api.Payments = (*fakePayments)(nil)
 
-// ProviderIDs kayıtlı sağlayıcı kimliklerini döner.
+// ProviderIDs returns the registered provider IDs.
 func (f *fakePayments) ProviderIDs(_ context.Context) []string { return f.providerIDs }
 
-// CreatePaymentCollection senaryolanmış koleksiyonu döner.
+// CreatePaymentCollection returns the scripted collection.
 func (f *fakePayments) CreatePaymentCollection(
 	_ context.Context,
 	in service.CreateCollectionInput,
 ) (models.PaymentCollection, error) {
-	f.sonCollectionInput = in
+	f.lastCollectionInput = in
 	if f.err != nil {
 		return models.PaymentCollection{}, f.err
 	}
 	return f.collection, nil
 }
 
-// GetPaymentCollection senaryolanmış koleksiyonu döner.
+// GetPaymentCollection returns the scripted collection.
 func (f *fakePayments) GetPaymentCollection(_ context.Context, _ string) (models.PaymentCollection, error) {
 	if f.err != nil {
 		return models.PaymentCollection{}, f.err
@@ -123,32 +127,32 @@ func (f *fakePayments) GetPaymentCollection(_ context.Context, _ string) (models
 	return f.collection, nil
 }
 
-// ListPaymentCollections senaryolanmış sayfayı döner.
+// ListPaymentCollections returns the scripted page.
 func (f *fakePayments) ListPaymentCollections(
 	_ context.Context,
 	in service.ListCollectionsInput,
 ) ([]models.PaymentCollection, int64, error) {
-	f.sonListInput = in
+	f.lastListInput = in
 	if f.err != nil {
 		return nil, 0, f.err
 	}
 	return f.collections, f.count, nil
 }
 
-// CreateSession senaryolanmış oturumu döner.
+// CreateSession returns the scripted session.
 func (f *fakePayments) CreateSession(
 	_ context.Context,
 	_, _ string,
 	in service.CreateSessionInput,
 ) (models.PaymentSession, error) {
-	f.sonCreateSession = in
+	f.lastCreateSession = in
 	if f.err != nil {
 		return models.PaymentSession{}, f.err
 	}
 	return f.session, nil
 }
 
-// GetPaymentSession senaryolanmış oturumu döner.
+// GetPaymentSession returns the scripted session.
 func (f *fakePayments) GetPaymentSession(_ context.Context, _ string) (models.PaymentSession, error) {
 	if f.err != nil {
 		return models.PaymentSession{}, f.err
@@ -156,19 +160,19 @@ func (f *fakePayments) GetPaymentSession(_ context.Context, _ string) (models.Pa
 	return f.session, nil
 }
 
-// ListPaymentSessions senaryolanmış oturumları döner.
+// ListPaymentSessions returns the scripted sessions.
 func (f *fakePayments) ListPaymentSessions(
 	_ context.Context,
 	collectionID string,
 ) ([]models.PaymentSession, error) {
-	f.sonOturumListesiKimligi = collectionID
+	f.lastSessionListID = collectionID
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.sessions, nil
 }
 
-// AuthorizePayment senaryolanmış oturumu döner.
+// AuthorizePayment returns the scripted session.
 func (f *fakePayments) AuthorizePayment(_ context.Context, _ string) (models.PaymentSession, error) {
 	if f.err != nil {
 		return models.PaymentSession{}, f.err
@@ -176,70 +180,70 @@ func (f *fakePayments) AuthorizePayment(_ context.Context, _ string) (models.Pay
 	return f.session, nil
 }
 
-// CapturePayment senaryolanmış tahsilatı döner.
+// CapturePayment returns the scripted payment.
 func (f *fakePayments) CapturePayment(_ context.Context, _ string, amount int64) (models.Payment, error) {
-	f.sonCaptureAmount = amount
+	f.lastCaptureAmount = amount
 	if f.err != nil {
 		return models.Payment{}, f.err
 	}
 	return f.payment, nil
 }
 
-// CancelPayment iptali kaydeder.
+// CancelPayment records the cancellation.
 func (f *fakePayments) CancelPayment(_ context.Context, _ string) error {
-	f.cancelCagrisi = true
+	f.cancelCalled = true
 	return f.err
 }
 
-// GetPayment senaryolanmış tahsilatı döner.
+// GetPayment returns the scripted payment.
 func (f *fakePayments) GetPayment(_ context.Context, paymentID string) (models.Payment, error) {
-	f.sonTahsilatKimligi = paymentID
+	f.lastPaymentID = paymentID
 	if f.err != nil {
 		return models.Payment{}, f.err
 	}
 	return f.payment, nil
 }
 
-// ListPayments senaryolanmış tahsilatları döner.
+// ListPayments returns the scripted payments.
 func (f *fakePayments) ListPayments(_ context.Context, collectionID string) ([]models.Payment, error) {
-	f.sonTahsilatListesiKimligi = collectionID
+	f.lastPaymentListID = collectionID
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.payments, nil
 }
 
-// RefundPayment senaryolanmış iadeyi döner.
+// RefundPayment returns the scripted refund.
 func (f *fakePayments) RefundPayment(
 	_ context.Context,
 	_ string,
 	amount int64,
 	reason string,
 ) (models.Refund, error) {
-	f.sonRefundAmount, f.sonRefundReason = amount, reason
+	f.lastRefundAmount, f.lastRefundReason = amount, reason
 	if f.err != nil {
 		return models.Refund{}, f.err
 	}
 	return f.refund, nil
 }
 
-// ListRefunds senaryolanmış iadeleri döner.
+// ListRefunds returns the scripted refunds.
 func (f *fakePayments) ListRefunds(_ context.Context, paymentID string) ([]models.Refund, error) {
-	f.sonIadeListesiKimligi = paymentID
+	f.lastRefundListID = paymentID
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.refunds, nil
 }
 
-// notFound testlerde kullanılan tipli hatadır.
+// notFound is the typed error the tests use.
 func notFound() error {
-	return errors.NotFound("payment_collection_not_found", "koleksiyon bulunamadı")
+	return errors.NotFound("payment_collection_not_found", "collection not found")
 }
 
-// --- mağaza kredisi (ADR 0152) ----------------------------------------------
+// --- store credit (ADR 0152) ------------------------------------------------
 
-// IssueCredit girdiyi kaydeder ve senaryolandırılmış satırı döner.
+// IssueCredit records the input and returns the scripted row.
 func (f *fakePayments) IssueCredit(
 	_ context.Context, in service.IssueCreditInput,
 ) (models.StoreCreditEntry, error) {
@@ -251,7 +255,7 @@ func (f *fakePayments) IssueCredit(
 	return f.creditEntry, nil
 }
 
-// StoreCreditBalance sorulan defteri kaydeder ve bakiyeyi döner.
+// StoreCreditBalance records the ledger asked for and returns the balance.
 func (f *fakePayments) StoreCreditBalance(
 	_ context.Context, customerID, currencyCode string,
 ) (int64, error) {
@@ -276,7 +280,7 @@ func (f *fakePayments) ListStoreCredit(
 	return f.creditHistory, int64(len(f.creditHistory)), nil
 }
 
-// LoyaltyBalance müşterinin puanını döner.
+// LoyaltyBalance returns the customer's points.
 func (f *fakePayments) LoyaltyBalance(
 	_ context.Context, customerID, currencyCode string,
 ) (int64, error) {
@@ -288,7 +292,7 @@ func (f *fakePayments) LoyaltyBalance(
 	return f.loyaltyBalance, nil
 }
 
-// ListLoyalty puan geçmişini döner.
+// ListLoyalty returns the points history.
 func (f *fakePayments) ListLoyalty(
 	_ context.Context, in service.ListLoyaltyInput,
 ) ([]models.LoyaltyEntry, int64, error) {

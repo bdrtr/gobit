@@ -1,48 +1,52 @@
-// Package manual gerçek bir ağ çağrısı yapmayan test/manuel ödeme
-// sağlayıcısıdır (plan Faz 6).
+// Package manual is the test/manual payment provider, which makes no real
+// network call (plan Phase 6).
 //
-// [Provider], core/provider'daki PaymentProvider sözleşmesini
-// karşılar ve o sözleşmenin godoc'unda yazılı İDEMPOTENCY şartlarını yerine
-// getirir:
+// [Provider] satisfies the PaymentProvider contract in core/provider and meets
+// the IDEMPOTENCY requirements written in that contract's godoc:
 //
-//   - Aynı IdempotencyKey ile ikinci [Provider.CreateSession] YENİ oturum
-//     açmaz, mevcut oturumu döner.
-//   - [Provider.Authorize], [Provider.Capture] ve [Provider.Refund] aynı oturum
-//     üzerinde tekrar çağrılabilir; ikinci çağrı hata DEĞİL, mevcut durumu döner.
-//   - [Provider.Cancel] saga telafisidir ve İDEMPOTENTTİR: iki kez iptal edilen
-//     bir oturum ikinci çağrıda hata vermez.
+//   - A second [Provider.CreateSession] with the same IdempotencyKey does NOT
+//     open a NEW session; it returns the existing one.
+//   - [Provider.Authorize], [Provider.Capture] and [Provider.Refund] can be
+//     called again on the same session; the second call is NOT an error, it
+//     returns the current state.
+//   - [Provider.Cancel] is the saga compensation and is IDEMPOTENT: a session
+//     canceled twice returns no error on the second call.
 //
-// # Durum neden VERİTABANINDA tutulur
+// # Why the state is kept in the DATABASE
 //
-// Bellekte tutulan bir defter, sürecin her yeniden başlatılışında sıfırlanırdı.
-// Bunun bedeli üç yerde ödenirdi:
+// A ledger kept in memory would be reset every time the process restarts. The
+// price would be paid in three places:
 //
-//   - e2e akışları (internal/e2e) ve Faz 9 yük testi, süreç yeniden
-//     başladığında AÇILMIŞ bir oturumu bulabilmelidir; aksi hâlde ödeme adımı
-//     "oturum bulunamadı" ile düşer.
-//   - Saga telafisi tam da sürecin düştüğü senaryoda çalışmalıdır. Belleğe
-//     dayanan bir sağlayıcıda Cancel, yeniden başlatma sonrası hiçbir zaman
-//     çalışamaz ve bloke edilmiş tutar sonsuza kadar asılı kalırdı.
-//   - Birden çok süreç (ya da yatay ölçek) aynı oturumu görmezdi; sağlayıcı
-//     yalnızca tek örnekli çalışan bir sunucuda doğru davranırdı.
+//   - The e2e flows (internal/e2e) and the Phase 9 load test must be able to
+//     find a session that was OPENED before the process restarted; otherwise
+//     the payment step fails with "session not found".
+//   - The saga compensation has to work in exactly the scenario where the
+//     process went down. With a provider that relies on memory, Cancel could
+//     never run after a restart and the held amount would stay hanging
+//     forever.
+//   - Several processes (or horizontal scaling) would not see the same
+//     session; the provider would behave correctly only on a server running a
+//     single instance.
 //
-// Gerçek bir ödeme kuruluşunun durumu da kendi sistemindedir ve süreç
-// yeniden başlatmalarından etkilenmez; taklit bu yüzden kalıcı olmalıdır.
+// A real payment institution's state also lives in its own system and is not
+// affected by process restarts; the imitation therefore has to be durable.
 //
-// # Defterin ayrılığı
+// # The separate ledger
 //
-// Sağlayıcının durumu payment_manual_sessions tablosundadır ve payment
-// servisinin tablolarından AYRIDIR. Servis bu tabloya hiç dokunmaz; sağlayıcıya
-// yalnızca PaymentProvider arayüzünden ulaşır. Ayrım, modülün kazara
-// sağlayıcının iç durumunu okumasını yapısal olarak engeller — gerçek bir
-// sağlayıcıda da böyle bir okuma mümkün değildir.
+// The provider's state is in the payment_manual_sessions table and is SEPARATE
+// from the payment service's tables. The service never touches this table; it
+// reaches the provider only through the PaymentProvider interface. The
+// separation structurally prevents the module from accidentally reading the
+// provider's internal state — with a real provider such a read is not possible
+// either.
 //
-// # Test için başarısızlık enjeksiyonu
+// # Failure injection for tests
 //
-// Saga testleri ödeme adımını PATLATABİLMELİDİR. Davranış, oturum açılırken
-// verilen Data alanından okunur ve oturumla birlikte kalıcı olarak saklanır;
-// böylece süreç yeniden başlasa da aynı oturum aynı biçimde davranır. Bkz.
-// [DataKeyOutcome], [DataKeyDeclineReason] ve [DataKeyAuthorizedAmount].
+// Saga tests MUST BE ABLE TO BLOW UP the payment step. The behavior is read
+// from the Data field given when the session is opened and is stored durably
+// with the session, so the same session behaves the same way even if the
+// process restarts. See [DataKeyOutcome], [DataKeyDeclineReason] and
+// [DataKeyAuthorizedAmount].
 package manual
 
 import (
@@ -57,87 +61,96 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
-// ID sağlayıcının kimliğidir; oturumlar bu adla açılır.
+// ID is the provider's identifier; sessions are opened under this name.
 const ID = "manual"
 
-// Sağlayıcının davranışını yönlendiren Data anahtarları.
+// The Data keys that steer the provider's behavior.
 //
-// Anahtarlar oturumun Data alanında gelir ve oturumla birlikte SAKLANIR.
-// Saklanmaları şart: yetkilendirme, oturumun açıldığı çağrıdan farklı bir
-// istekte (hatta farklı bir süreçte) yapılır ve o çağrının elinde yalnızca
-// oturum kimliği vardır.
+// The keys arrive in the session's Data field and are STORED with the session.
+// Storing them is necessary: authorization happens in a different request from
+// the call that opened the session (even in a different process), and that
+// call holds nothing but the session identifier.
 const (
-	// DataKeyOutcome yetkilendirmenin sonucunu belirler; değerleri
-	// [OutcomeAuthorize], [OutcomeDecline] ve [OutcomeError]'dır. Verilmezse
-	// [OutcomeAuthorize] varsayılır.
+	// DataKeyOutcome decides the outcome of the authorization; its values are
+	// [OutcomeAuthorize], [OutcomeDecline] and [OutcomeError]. If it is not
+	// given, [OutcomeAuthorize] is assumed.
 	DataKeyOutcome = "manual_outcome"
-	// DataKeyDeclineReason reddin sebebini belirler; yalnızca
-	// [OutcomeDecline] ile anlamlıdır.
+	// DataKeyDeclineReason sets the reason for the decline; it is meaningful
+	// only with [OutcomeDecline].
 	DataKeyDeclineReason = "manual_decline_reason"
-	// DataKeyAuthorizedAmount KISMİ yetkilendirmeyi sınar: verilirse oturum
-	// tutarı yerine bu tutar bloke edilir. Oturum tutarından büyük olamaz.
+	// DataKeyAuthorizedAmount exercises PARTIAL authorization: if it is given,
+	// this amount is held instead of the session amount. It cannot be greater
+	// than the session amount.
 	DataKeyAuthorizedAmount = "manual_authorized_amount"
 )
 
-// Yetkilendirme sonuçları ([DataKeyOutcome] değerleri).
+// Authorization outcomes (the values of [DataKeyOutcome]).
 const (
-	// OutcomeAuthorize tutarı bloke eder; varsayılan davranıştır.
+	// OutcomeAuthorize holds the amount; it is the default behavior.
 	OutcomeAuthorize = "authorize"
-	// OutcomeDecline yetkilendirmeyi REDDEDER: oturum "failed" olur ve
-	// AuthResult ret sebebini taşır. Hata DÖNMEZ; ret, sağlayıcı açısından
-	// başarılı bir yanıttır.
+	// OutcomeDecline DECLINES the authorization: the session becomes "failed"
+	// and the AuthResult carries the decline reason. It does NOT return an
+	// error; from the provider's point of view a decline is a successful
+	// response.
 	OutcomeDecline = "decline"
-	// OutcomeError sağlayıcının ERİŞİLEMEDİĞİNİ taklit eder: metot hata döner
-	// ve oturumun durumu DEĞİŞMEZ. Saga'nın "adım patladı" dalını sınamak
-	// içindir; [OutcomeDecline]'dan farkı, tekrar denenebilir olmasıdır.
+	// OutcomeError imitates the provider being UNREACHABLE: the method returns
+	// an error and the session's state does NOT CHANGE. It is there to exercise
+	// the saga's "the step blew up" branch; what sets it apart from
+	// [OutcomeDecline] is that it can be retried.
 	OutcomeError = "error"
 )
 
-// Hata kodları. İstemciler bunlara göre dallanabilir; mesajlar değişebilir,
-// kodlar değişmez.
+// Error codes. Clients may branch on these; the messages may change, the codes
+// do not.
 const (
-	// CodeInvalidInput girdinin doğrulamadan geçmediğini bildirir.
+	// CodeInvalidInput reports that the input did not pass validation.
 	CodeInvalidInput = "payment_manual_invalid_input"
-	// CodeInvalidState oturumun durumunda geçersiz bir geçiş denendiğini
-	// bildirir.
+	// CodeInvalidState reports that an invalid transition of the session's
+	// state was attempted.
 	CodeInvalidState = "payment_manual_invalid_state"
-	// CodeIdempotencyMismatch aynı anahtarın FARKLI bir gövdeyle yeniden
-	// kullanıldığını bildirir.
+	// CodeIdempotencyMismatch reports that the same key was reused with a
+	// DIFFERENT body.
 	CodeIdempotencyMismatch = "payment_manual_idempotency_mismatch"
-	// CodeSimulatedFailure test için enjekte edilmiş başarısızlığı bildirir.
+	// CodeSimulatedFailure reports a failure injected for a test.
 	CodeSimulatedFailure = "payment_manual_simulated_failure"
-	// CodeDataInvalid oturum verisinin çözümlenemediğini bildirir.
+	// CodeDataInvalid reports that the session data could not be decoded.
 	CodeDataInvalid = "payment_manual_data_invalid"
 )
 
-// declineReasonDefault sebep verilmediğinde kullanılan ret gerekçesidir.
-const declineReasonDefault = "manuel sağlayıcı reddetti (test)"
+// declineReasonDefault is the decline reason used when no reason is given.
+const declineReasonDefault = "declined by the manual provider (test)"
 
-// Store sağlayıcının ihtiyaç duyduğu kalıcılık yüzeyidir.
+// Store is the persistence surface the provider needs.
 //
-// Arayüz TÜKETEN tarafta, yani burada tanımlıdır (ADR 0001'in örüntüsü).
-// Sağlayıcı repository paketini import ETMEZ; somut depo bu imzaları yapısal
-// olarak karşılar ve bağlantı module.go'da kurulur. Böylece sağlayıcının
-// idempotency davranışı gerçek bir veritabanı olmadan, birkaç satırlık bir
-// sahte depo ile sınanabilir.
+// The interface is defined on the CONSUMING side, that is, here (the pattern
+// of ADR 0001). The provider DOES NOT import the repository package; the
+// concrete store satisfies these signatures structurally and the wiring is
+// done in module.go. That way the provider's idempotency behavior can be
+// exercised without a real database, with a fake store a few lines long.
 //
-// Kilit alan metot ([Store.LockManualSession]) yalnızca [Store.WithTx] içinde
-// çağrılabilir: işlemsiz bir FOR UPDATE kilidi hiçbir şeyi korumaz.
+// The method that takes a lock ([Store.LockManualSession]) may only be called
+// inside [Store.WithTx]: a FOR UPDATE lock without a transaction protects
+// nothing.
 type Store interface {
-	// WithTx fn'i tek bir işlemde çalıştırır; fn hata dönerse işlem geri alınır.
+	// WithTx runs fn in a single transaction; if fn returns an error the
+	// transaction is rolled back.
 	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
 
-	// InsertManualSessionIfAbsent oturumu yalnızca idempotency anahtarı henüz
-	// kullanılmamışsa yazar. İkinci dönüş değeri satırın yazılıp
-	// yazılmadığıdır; çakışma HATA DEĞİLDİR.
+	// InsertManualSessionIfAbsent writes the session only if the idempotency
+	// key has not been used yet. The second return value reports whether the
+	// row was written; a conflict is NOT AN ERROR.
 	InsertManualSessionIfAbsent(ctx context.Context, ses models.ManualSession) (models.ManualSession, bool, error)
-	// ManualSessionByIdempotencyKey oturumu anahtarıyla döner; yoksa NotFound.
+	// ManualSessionByIdempotencyKey returns the session by its key; NotFound if
+	// there is none.
 	ManualSessionByIdempotencyKey(ctx context.Context, key string) (models.ManualSession, error)
-	// ManualSession oturumu kimliğiyle döner; yoksa NotFound.
+	// ManualSession returns the session by its identifier; NotFound if there is
+	// none.
 	ManualSession(ctx context.Context, id string) (models.ManualSession, error)
-	// LockManualSession oturumu işlem boyunca kilitler ve güncel hâlini döner.
+	// LockManualSession locks the session for the rest of the transaction and
+	// returns its current state.
 	LockManualSession(ctx context.Context, id string) (models.ManualSession, error)
-	// UpdateManualSessionState durumu ve tutarları MUTLAK değerlerle yazar.
+	// UpdateManualSessionState writes the status and the amounts as ABSOLUTE
+	// values.
 	UpdateManualSessionState(
 		ctx context.Context,
 		id string,
@@ -147,18 +160,18 @@ type Store interface {
 	) (models.ManualSession, error)
 }
 
-// Provider manuel/test ödeme sağlayıcısıdır. Eşzamanlı kullanıma güvenlidir.
+// Provider is the manual/test payment provider. It is safe for concurrent use.
 type Provider struct {
 	store Store
 	log   *slog.Logger
 }
 
-// Provider'ın çekirdek sözleşmesini karşıladığı derleme zamanında doğrulanır;
-// imza kayması çalışma zamanına kalmaz.
+// That Provider satisfies the core contract is verified at compile time; a
+// signature drift is not left to run time.
 var _ coreprovider.PaymentProvider = (*Provider)(nil)
 
-// New verilen depo üzerinde çalışan bir manuel sağlayıcı üretir.
-// log nil verilirse loglar atılır.
+// New builds a manual provider that works on the given store.
+// If log is nil, the logs are discarded.
 func New(store Store, log *slog.Logger) *Provider {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -166,25 +179,26 @@ func New(store Store, log *slog.Logger) *Provider {
 	return &Provider{store: store, log: log}
 }
 
-// Sağlayıcının, çekirdeğin İSTEĞE BAĞLI mutabakat yeteneğini de karşıladığı
-// derleme zamanında sabitlenir.
+// That the provider also satisfies the core's OPTIONAL reconciliation
+// capability is pinned at compile time.
 //
-// [coreprovider.SessionInspector] bir tip iddiasıyla aranır: imza kaysaydı
-// hiçbir şey kırılmaz, mutabakat işi yalnızca "bu sağlayıcı sorulamıyor" der
-// ve para farkı görünmez kalırdı. Bu satır o sessizliği kapatır.
+// [coreprovider.SessionInspector] is looked up with a type assertion: had the
+// signature drifted, nothing would break, the reconciliation job would only say
+// "this provider cannot be asked" and a money discrepancy would stay invisible.
+// This line closes that silence.
 var _ coreprovider.SessionInspector = (*Provider)(nil)
 
-// ID sağlayıcının kimliğini döner.
+// ID returns the provider's identifier.
 func (p *Provider) ID() string { return ID }
 
-// CreateSession sağlayıcının defterinde bir ödeme oturumu açar.
+// CreateSession opens a payment session in the provider's ledger.
 //
-// Aynı IdempotencyKey ile ikinci çağrı YENİ oturum açmaz, mevcut oturumu döner
-// (çekirdek sözleşmesinin şartı). Anahtar aynı ama tutar ya da para birimi
-// FARKLIYSA errors.Conflict döner: idempotency "aynı isteği tekrarlamak"
-// demektir, "farklı bir isteği eski anahtarla göndermek" değil — ikincisini
-// sessizce kabul etmek, çağıranın gönderdiğini sandığı tutarın hiç
-// uygulanmaması demek olurdu.
+// A second call with the same IdempotencyKey does NOT open a NEW session; it
+// returns the existing one (a requirement of the core contract). If the key is
+// the same but the amount or the currency is DIFFERENT, errors.Conflict is
+// returned: idempotency means "repeating the same request", not "sending a
+// different request under an old key" — accepting the second silently would
+// mean the amount the caller believes it sent is never applied.
 func (p *Provider) CreateSession(
 	ctx context.Context,
 	in coreprovider.CreateSessionInput,
@@ -196,11 +210,11 @@ func (p *Provider) CreateSession(
 	}
 	reference := strings.TrimSpace(in.Reference)
 	if reference == "" {
-		return coreprovider.Session{}, errors.Invalid(CodeInvalidInput, "reference zorunludur")
+		return coreprovider.Session{}, errors.Invalid(CodeInvalidInput, "the reference is required")
 	}
 	if in.Amount < models.MinAmount || in.Amount > models.MaxAmount {
 		return coreprovider.Session{}, errors.Invalid(CodeInvalidInput,
-			"tutar %d ile %d arasında olmalı: %d", models.MinAmount, models.MaxAmount, in.Amount)
+			"the amount has to be between %d and %d: %d", models.MinAmount, models.MaxAmount, in.Amount)
 	}
 	currency := strings.ToUpper(strings.TrimSpace(in.CurrencyCode))
 	if len(currency) != 3 {
@@ -211,10 +225,11 @@ func (p *Provider) CreateSession(
 	raw, err := json.Marshal(in.Data)
 	if err != nil {
 		return coreprovider.Session{}, errors.Wrap(err, errors.KindInvalid, CodeDataInvalid,
-			"oturum verisi kodlanamadı")
+			"the session data could not be encoded")
 	}
-	// Veri erken doğrulanır: bozuk bir davranış anahtarı, oturum açılırken
-	// söylenmeli; yetkilendirme anında patlaması teşhisi zorlaştırırdı.
+	// The data is validated early: a broken behavior key should be reported
+	// when the session is opened; having it blow up at authorization time would
+	// make it harder to diagnose.
 	if _, err := parseSessionData(raw); err != nil {
 		return coreprovider.Session{}, err
 	}
@@ -241,23 +256,24 @@ func (p *Provider) CreateSession(
 	}
 	if existing.Amount != in.Amount || existing.CurrencyCode != currency {
 		return coreprovider.Session{}, errors.Conflict(CodeIdempotencyMismatch,
-			"aynı idempotency anahtarı farklı bir tutarla kullanıldı: mevcut %d %s, istenen %d %s",
+			"the same idempotency key was used with a different amount: existing %d %s, requested %d %s",
 			existing.Amount, existing.CurrencyCode, in.Amount, currency)
 	}
-	p.log.DebugContext(ctx, "manuel sağlayıcı mevcut oturumu döndürdü",
-		"oturum", existing.ID, "anahtar", key)
+	p.log.DebugContext(ctx, "the manual provider returned the existing session",
+		"session", existing.ID, "key", key)
 	return toProviderSession(existing), nil
 }
 
-// Authorize tutarı müşterinin üzerinde BLOKE eder; tahsilat yapmaz.
+// Authorize HOLDS the amount on the customer; it does not capture.
 //
-// Zaten sonlanmış bir oturum için hata DÖNMEZ, mevcut durumu döner (çekirdek
-// sözleşmesinin şartı). Ret ([OutcomeDecline]) de hata değildir: sonuç
-// SessionFailed durumuyla ve ret sebebiyle döner. Yalnızca [OutcomeError]
-// gerçek bir hata üretir ve o hâlde oturumun durumu DEĞİŞMEZ.
+// For a session that has already concluded it does NOT return an error; it
+// returns the current state (a requirement of the core contract). A decline
+// ([OutcomeDecline]) is not an error either: the result comes back with the
+// SessionFailed status and the decline reason. Only [OutcomeError] produces a
+// real error, and in that case the session's state does NOT CHANGE.
 func (p *Provider) Authorize(ctx context.Context, sessionID string) (coreprovider.AuthResult, error) {
 	if strings.TrimSpace(sessionID) == "" {
-		return coreprovider.AuthResult{}, errors.Invalid(CodeInvalidInput, "oturum kimliği zorunludur")
+		return coreprovider.AuthResult{}, errors.Invalid(CodeInvalidInput, "the session identifier is required")
 	}
 
 	var out coreprovider.AuthResult
@@ -268,7 +284,7 @@ func (p *Provider) Authorize(ctx context.Context, sessionID string) (coreprovide
 		}
 
 		if ses.Status != models.SessionPending {
-			// Sonlanmış oturum: mevcut durum olduğu gibi döner.
+			// A concluded session: the current state is returned as it is.
 			out = coreprovider.AuthResult{
 				Status:           coreprovider.SessionStatus(ses.Status),
 				AuthorizedAmount: ses.AuthorizedAmount,
@@ -304,22 +320,24 @@ func (p *Provider) Authorize(ctx context.Context, sessionID string) (coreprovide
 	return out, nil
 }
 
-// Capture bloke edilmiş tutarı tahsil eder. amount sıfırsa tamamı çekilir ve
-// yetkilendirilen tutardan büyük OLAMAZ.
+// Capture captures the held amount. If amount is zero the whole of it is
+// taken, and amount CANNOT be greater than the authorized amount.
 //
-// Kısmi tahsilatta ÇEKİLMEYEN blokaj serbest bırakılır: defterdeki bloke tutar
-// çekilen tutara iner. Oturum artık iptal edilemeyeceği için fark bırakılmazsa
-// sonsuza kadar asılı kalırdı.
+// On a partial capture the hold that is NOT TAKEN is released: the held amount
+// in the ledger drops to the captured amount. Since the session can no longer
+// be canceled, the difference would stay hanging forever if it were not
+// released.
 //
-// Zaten tahsil edilmiş bir oturumda aynı tutarla (ya da sıfırla) yapılan ikinci
-// çağrı hata DÖNMEZ; farklı bir tutar istenirse errors.Conflict döner, çünkü bu
-// artık bir tekrar değil, yeni bir istektir.
+// A second call on an already captured session with the same amount (or with
+// zero) does NOT return an error; if a different amount is requested,
+// errors.Conflict is returned, because that is no longer a repeat, it is a new
+// request.
 func (p *Provider) Capture(ctx context.Context, sessionID string, amount int64) error {
 	if strings.TrimSpace(sessionID) == "" {
-		return errors.Invalid(CodeInvalidInput, "oturum kimliği zorunludur")
+		return errors.Invalid(CodeInvalidInput, "the session identifier is required")
 	}
 	if amount < 0 {
-		return errors.Invalid(CodeInvalidInput, "tahsilat tutarı negatif olamaz: %d", amount)
+		return errors.Invalid(CodeInvalidInput, "the capture amount cannot be negative: %d", amount)
 	}
 
 	return p.store.WithTx(ctx, func(ctx context.Context) error {
@@ -332,16 +350,16 @@ func (p *Provider) Capture(ctx context.Context, sessionID string, amount int64) 
 		case models.ActionNoop:
 			if amount != 0 && amount != ses.CapturedAmount {
 				return errors.Conflict(CodeInvalidState,
-					"oturum %d tutarıyla tahsil edilmiş; %d ile yeniden tahsil edilemez (%s)",
+					"the session was captured with an amount of %d; it cannot be captured again with %d (%s)",
 					ses.CapturedAmount, amount, sessionID)
 			}
-			p.log.DebugContext(ctx, "manuel sağlayıcı oturumu zaten tahsil edilmiş", "oturum", sessionID)
+			p.log.DebugContext(ctx, "the manual provider's session is already captured", "session", sessionID)
 			return nil
 		case models.ActionConflict:
 			return errors.Conflict(CodeInvalidState,
-				"%q durumundaki oturum tahsil edilemez: %s", ses.Status, sessionID)
+				"a session in the %q state cannot be captured: %s", ses.Status, sessionID)
 		case models.ActionProceed:
-			// Aşağıda ele alınır.
+			// Handled below.
 		}
 
 		captured := amount
@@ -350,32 +368,34 @@ func (p *Provider) Capture(ctx context.Context, sessionID string, amount int64) 
 		}
 		if captured > ses.AuthorizedAmount {
 			return errors.Conflict(CodeInvalidState,
-				"tahsilat tutarı yetkilendirilen tutarı aşamaz: istenen %d, bloke %d (%s)",
+				"the capture amount cannot exceed the authorized amount: %d requested, %d held (%s)",
 				captured, ses.AuthorizedAmount, sessionID)
 		}
 
-		// Çekilmeyen blokaj serbest bırakılır: defterdeki bloke tutar fiilen
-		// çekilen tutara iner. Gerçek sağlayıcılar da tahsilatta kalan blokajı
-		// bırakır; taklidin defteri modülün kaydıyla ayrışmamalıdır.
+		// The hold that is not taken is released: the held amount in the ledger
+		// drops to the amount actually captured. Real providers also release the
+		// remaining hold on capture; the imitation's ledger must not diverge
+		// from the module's record.
 		_, err = p.store.UpdateManualSessionState(ctx, ses.ID,
 			models.SessionCaptured, captured, captured, ses.RefundedAmount, ses.DeclineReason)
 		return err
 	})
 }
 
-// Refund tahsil edilmiş tutarı iade eder. amount sıfırsa KALAN tutarın tamamı
-// iade edilir.
+// Refund refunds a captured amount. If amount is zero, the whole REMAINING
+// amount is refunded.
 //
-// Tamamı iade edilmiş bir oturumda amount sıfırla yapılan ikinci çağrı hata
-// DÖNMEZ: kalan sıfırdır ve hiçbir şey yapılmaz. Böylece tam iade isteği
-// güvenle yeniden denenebilir. Kalanı AŞAN açık bir tutar ise errors.Conflict
-// üretir; o bir tekrar değil, olmayan parayı iade etme isteğidir.
+// A second call with amount zero on a fully refunded session does NOT return
+// an error: the remainder is zero and nothing is done. That way a full refund
+// request can be retried safely. An explicit amount that EXCEEDS the
+// remainder, on the other hand, produces errors.Conflict; that is not a
+// repeat, it is a request to refund money that does not exist.
 func (p *Provider) Refund(ctx context.Context, sessionID string, amount int64) error {
 	if strings.TrimSpace(sessionID) == "" {
-		return errors.Invalid(CodeInvalidInput, "oturum kimliği zorunludur")
+		return errors.Invalid(CodeInvalidInput, "the session identifier is required")
 	}
 	if amount < 0 {
-		return errors.Invalid(CodeInvalidInput, "iade tutarı negatif olamaz: %d", amount)
+		return errors.Invalid(CodeInvalidInput, "the refund amount cannot be negative: %d", amount)
 	}
 
 	return p.store.WithTx(ctx, func(ctx context.Context) error {
@@ -385,22 +405,22 @@ func (p *Provider) Refund(ctx context.Context, sessionID string, amount int64) e
 		}
 		if ses.Status != models.SessionCaptured {
 			return errors.Conflict(CodeInvalidState,
-				"%q durumundaki oturumdan iade yapılamaz: %s", ses.Status, sessionID)
+				"a session in the %q state cannot be refunded: %s", ses.Status, sessionID)
 		}
 
 		remaining := ses.RefundableAmount()
 		refund := amount
 		if refund == 0 {
 			if remaining == 0 {
-				p.log.DebugContext(ctx, "manuel sağlayıcı oturumu zaten tamamen iade edilmiş",
-					"oturum", sessionID)
+				p.log.DebugContext(ctx, "the manual provider's session is already fully refunded",
+					"session", sessionID)
 				return nil
 			}
 			refund = remaining
 		}
 		if refund > remaining {
 			return errors.Conflict(CodeInvalidState,
-				"iade tutarı kalan tutarı aşamaz: istenen %d, kalan %d (%s)",
+				"the refund amount cannot exceed the remaining amount: %d requested, %d remaining (%s)",
 				refund, remaining, sessionID)
 		}
 
@@ -411,21 +431,21 @@ func (p *Provider) Refund(ctx context.Context, sessionID string, amount int64) e
 	})
 }
 
-// Cancel oturumu kapatır ve blokaj varsa serbest bırakır.
+// Cancel closes the session and releases the hold, if there is one.
 //
-// SAGA TELAFİSİ BUDUR ve İDEMPOTENTTİR: zaten iptal edilmiş bir oturum için
-// hata dönmez ve defterde ikinci kez değişiklik yapılmaz. Tahsil edilmiş bir
-// oturum iptal EDİLEMEZ (errors.Conflict); para çekilmiştir ve geri almanın
-// yolu iadedir.
+// THIS IS THE SAGA COMPENSATION and it is IDEMPOTENT: for a session that is
+// already canceled it returns no error and makes no second change to the
+// ledger. A captured session CANNOT be canceled (errors.Conflict); the money
+// has been taken and the way to reverse it is a refund.
 //
-// Bilinmeyen bir kimlik için errors.NotFound döner: idempotentlik "her şeyi
-// sessizce yut" demek değildir. İki kez iptal edilen GERÇEK bir oturum ile hiç
-// var olmamış bir kimlik farklı durumlardır ve ikincisi çağıran tarafta bir
-// hatadır. Oturum kaydı silinmediği (yalnızca durumu değiştiği) için ilk durum
-// her zaman ayırt edilebilir.
+// For an unknown identifier errors.NotFound is returned: idempotency does not
+// mean "silently swallow everything". A REAL session canceled twice and an
+// identifier that never existed are different situations, and the second is a
+// fault on the caller's side. Because the session record is never deleted
+// (only its status changes), the first situation can always be told apart.
 func (p *Provider) Cancel(ctx context.Context, sessionID string) error {
 	if strings.TrimSpace(sessionID) == "" {
-		return errors.Invalid(CodeInvalidInput, "oturum kimliği zorunludur")
+		return errors.Invalid(CodeInvalidInput, "the session identifier is required")
 	}
 
 	return p.store.WithTx(ctx, func(ctx context.Context) error {
@@ -436,63 +456,66 @@ func (p *Provider) Cancel(ctx context.Context, sessionID string) error {
 
 		switch ses.Status.CancelAction() {
 		case models.ActionNoop:
-			p.log.DebugContext(ctx, "manuel sağlayıcı oturumu zaten iptal edilmiş", "oturum", sessionID)
+			p.log.DebugContext(ctx, "the manual provider's session is already canceled", "session", sessionID)
 			return nil
 		case models.ActionConflict:
 			return errors.Conflict(CodeInvalidState,
-				"%q durumundaki oturum iptal edilemez; iade kullanın: %s", ses.Status, sessionID)
+				"a session in the %q state cannot be canceled; use a refund: %s", ses.Status, sessionID)
 		case models.ActionProceed:
-			// Aşağıda ele alınır.
+			// Handled below.
 		}
 
-		// Blokaj serbest bırakılır: bloke tutar sıfırlanır. Ret sebebi
-		// KORUNUR; iptal edilen bir oturumun neden reddedildiği teşhis için
-		// hâlâ okunabilir olmalıdır.
+		// The hold is released: the held amount is set to zero. The decline
+		// reason is KEPT; why a canceled session was declined must still be
+		// readable for diagnosis.
 		_, err = p.store.UpdateManualSessionState(ctx, ses.ID,
 			models.SessionCanceled, 0, ses.CapturedAmount, ses.RefundedAmount, ses.DeclineReason)
 		return err
 	})
 }
 
-// GetSession sağlayıcının defterindeki oturumu döner; yoksa errors.NotFound.
+// GetSession returns the session in the provider's ledger; errors.NotFound if
+// there is none.
 //
-// Çekirdek sözleşmesinde YOKTUR ve payment servisi bunu ÇAĞIRMAZ. Yalnızca
-// entegrasyon testleri ve teşhis içindir: bir oturumun sağlayıcı tarafındaki
-// durumunu, modülün kendi kaydına bakmadan doğrulamak gerekir — iki defterin
-// ayrıştığı bir hata ancak böyle görülebilir.
+// It is NOT part of the core contract and the payment service does NOT CALL
+// it. It exists only for integration tests and diagnosis: a session's state on
+// the provider's side has to be verified without looking at the module's own
+// record — a fault in which the two ledgers diverge can only be seen that
+// way.
 func (p *Provider) GetSession(ctx context.Context, sessionID string) (models.ManualSession, error) {
 	if strings.TrimSpace(sessionID) == "" {
-		return models.ManualSession{}, errors.Invalid(CodeInvalidInput, "oturum kimliği zorunludur")
+		return models.ManualSession{}, errors.Invalid(CodeInvalidInput, "the session identifier is required")
 	}
 	return p.store.ManualSession(ctx, sessionID)
 }
 
-// authorizeDecision yetkilendirme kararının sonucudur.
+// authorizeDecision is the result of the authorization decision.
 type authorizeDecision struct {
-	// Status oturumun yeni durumudur.
+	// Status is the session's new status.
 	Status models.SessionStatus
-	// AuthorizedAmount bloke edilecek tutardır.
+	// AuthorizedAmount is the amount to hold.
 	AuthorizedAmount int64
-	// DeclineReason yalnızca Status [models.SessionFailed] iken doludur.
+	// DeclineReason is set only while Status is [models.SessionFailed].
 	DeclineReason string
 }
 
-// sessionData sağlayıcının davranışını yönlendiren Data alanlarıdır.
+// sessionData holds the Data fields that steer the provider's behavior.
 //
-// Tanınmayan alanlar YOK SAYILIR: Data, çağıranın sağlayıcıya ilettiği serbest
-// veridir (kart tokenı, dönüş adresi) ve sağlayıcının anlamadığı bir alan hata
-// değildir.
+// Unrecognized fields are IGNORED: Data is free-form data the caller passes to
+// the provider (a card token, a return address), and a field the provider does
+// not understand is not an error.
 //
-// AuthorizedAmount İŞARETÇİDİR: sıfır tutarlı bir yetkilendirme ile "alan hiç
-// verilmedi" ayrımı korunmalıdır. Değer tipi kullanılsaydı, alanı hiç
-// göndermeyen bir çağrı sıfır tutar bloke etmiş sayılırdı.
+// AuthorizedAmount is a POINTER: the distinction between an authorization of a
+// zero amount and "the field was never given" has to be preserved. Had a value
+// type been used, a call that never sends the field would count as having held
+// a zero amount.
 type sessionData struct {
 	Outcome          string `json:"manual_outcome"`
 	DeclineReason    string `json:"manual_decline_reason"`
 	AuthorizedAmount *int64 `json:"manual_authorized_amount"`
 }
 
-// parseSessionData oturum verisindeki davranış anahtarlarını çözer.
+// parseSessionData decodes the behavior keys in the session data.
 func parseSessionData(raw []byte) (sessionData, error) {
 	var out sessionData
 	if len(raw) == 0 || string(raw) == "null" {
@@ -500,7 +523,7 @@ func parseSessionData(raw []byte) (sessionData, error) {
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return sessionData{}, errors.Wrap(err, errors.KindInvalid, CodeDataInvalid,
-			"oturum verisi çözümlenemedi")
+			"the session data could not be decoded")
 	}
 
 	switch out.Outcome {
@@ -508,16 +531,17 @@ func parseSessionData(raw []byte) (sessionData, error) {
 		return out, nil
 	default:
 		return sessionData{}, errors.Invalid(CodeInvalidInput,
-			"%q tanınmayan bir %s değeri; %q, %q ya da %q olmalı",
+			"%q is not a recognized %s value; it has to be %q, %q or %q",
 			out.Outcome, DataKeyOutcome, OutcomeAuthorize, OutcomeDecline, OutcomeError)
 	}
 }
 
-// decideAuthorize bekleyen bir oturumun yetkilendirme sonucunu belirler.
+// decideAuthorize decides the authorization outcome of a pending session.
 //
-// Saf bir karardır: veritabanına dokunmaz, yalnızca oturumun kendisine ve
-// saklanmış davranış anahtarlarına bakar. Ayrılığı bilinçlidir — enjekte
-// edilmiş her başarısızlık dalı, veritabanı olmadan tek tek sınanabilir.
+// It is a pure decision: it does not touch the database and looks only at the
+// session itself and its stored behavior keys. Keeping it apart is deliberate
+// — every injected failure branch can be exercised one by one without a
+// database.
 func decideAuthorize(ses models.ManualSession) (authorizeDecision, error) {
 	data, err := parseSessionData(ses.Data)
 	if err != nil {
@@ -527,7 +551,7 @@ func decideAuthorize(ses models.ManualSession) (authorizeDecision, error) {
 	switch data.Outcome {
 	case OutcomeError:
 		return authorizeDecision{}, errors.Unavailable(CodeSimulatedFailure,
-			"manuel sağlayıcıya ulaşılamadı (test için enjekte edilmiş hata): %s", ses.ID)
+			"the manual provider could not be reached (an error injected for a test): %s", ses.ID)
 	case OutcomeDecline:
 		reason := strings.TrimSpace(data.DeclineReason)
 		if reason == "" {
@@ -541,14 +565,14 @@ func decideAuthorize(ses models.ManualSession) (authorizeDecision, error) {
 		authorized = *data.AuthorizedAmount
 		if authorized <= 0 || authorized > ses.Amount {
 			return authorizeDecision{}, errors.Invalid(CodeInvalidInput,
-				"%s 1 ile %d arasında olmalı: %d", DataKeyAuthorizedAmount, ses.Amount, authorized)
+				"%s has to be between 1 and %d: %d", DataKeyAuthorizedAmount, ses.Amount, authorized)
 		}
 	}
 	return authorizeDecision{Status: models.SessionAuthorized, AuthorizedAmount: authorized}, nil
 }
 
-// toProviderSession defter kaydını çekirdek sözleşmesinin oturum tipine
-// çevirir.
+// toProviderSession converts a ledger record into the core contract's session
+// type.
 func toProviderSession(ses models.ManualSession) coreprovider.Session {
 	return coreprovider.Session{
 		ID:           ses.ID,
@@ -559,19 +583,19 @@ func toProviderSession(ses models.ManualSession) coreprovider.Session {
 	}
 }
 
-// InspectSession sağlayıcının kendi defterindeki oturumu ÇEKİRDEĞİN nötr
-// biçiminde döner.
+// InspectSession returns the session in the provider's own ledger in the
+// CORE's neutral form.
 //
-// [GetSession]'dan farkı tipi: o, modülün kendi ManualSession'ını verir ve
-// yalnızca bu modülün testlerine yarar; bu ise
-// [coreprovider.SessionInspector]'ı karşılar, yani mutabakat işi sağlayıcının
-// hangisi olduğunu bilmeden sorabilir.
+// What sets it apart from [GetSession] is the type: that one gives the
+// module's own ManualSession and is useful only to this module's tests; this
+// one satisfies [coreprovider.SessionInspector], so the reconciliation job can
+// ask without knowing which provider it is.
 //
-// Manuel sağlayıcının defteri AYRI bir tablodur ve payment servisinin [Store]
-// arayüzünde o tabloya erişecek metot yoktur — yani modül, sağlayıcının
-// defterini tip düzeyinde göremez. Mutabakatın karşılaştırdığı iki defterin
-// gerçekten ayrı olmasının sebebi budur; aynı satırı iki kez okusaydı hiçbir
-// ayrışma göremezdi.
+// The manual provider's ledger is a SEPARATE table and the payment service's
+// [Store] interface has no method that would reach that table — so the module
+// cannot see the provider's ledger at the type level. That is why the two
+// ledgers reconciliation compares are really separate; had it read the same
+// row twice, it could see no divergence.
 func (p *Provider) InspectSession(
 	ctx context.Context, sessionID string,
 ) (coreprovider.SessionInspection, error) {

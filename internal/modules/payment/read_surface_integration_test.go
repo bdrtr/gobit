@@ -495,7 +495,7 @@ func TestTheCollectionFilterReachesTheCountAsWellAsTheRows(t *testing.T) {
 
 // newCollectionFor opens a payment collection under the given reference.
 //
-// It exists next to yeniKoleksiyon because the listing tests need a reference
+// It exists next to newCollection because the listing tests need a reference
 // of their OWN: the database is shared by every test in this package, and a
 // listing filtered on the package-wide reference would count rows written by
 // tests that have nothing to do with it.

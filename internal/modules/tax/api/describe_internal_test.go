@@ -14,20 +14,20 @@ import (
 	"github.com/bdrtr/gobit/core/openapi"
 )
 
-// Test DAHİLİ pakettedir çünkü anlatılan gövdeler ([createTaxRateRequest],
-// [taxRateDTO] …) dışa kapalıdır. Dışarıdan sınamanın tek yolu tipleri dışa
-// açmak olurdu; belgeyi sınamak uğruna modülün yüzeyini genişletmek, sınanan
-// şeyin kendisini bozardı.
+// The test is in the INTERNAL package because the bodies it describes
+// ([createTaxRateRequest], [taxRateDTO] …) are unexported. The only way to test
+// them from outside would be to export the types; widening the module's surface
+// for the sake of testing the document would break the thing under test.
 
-// belge Describe'ın çıktısını GERÇEK route ağacına karşı üretip JSON'dan geri
-// okunmuş hâlini döner.
+// document builds Describe's output against the REAL route tree and returns it
+// as read back from JSON.
 //
-// Doğrudan [openapi.Doc.Build] çıktısına bakmak yetmezdi: işlemler orada Go
-// struct'ıdır ve incelenen davranış tam olarak alanların JSON'a yazılıp
-// yazılmadığıdır. Router da gerçek olmalıdır — açıklama ile route'un yolu
-// ayrışırsa hata BURADA görünsün, üretimde /openapi.json'a bakan birinde
-// değil.
-func belge(t *testing.T) (yollar, bilesenler map[string]any) {
+// Looking at [openapi.Doc.Build]'s output directly would not be enough: the
+// operations are Go structs there, and the behavior under test is exactly which
+// fields are written to JSON. The router has to be real too — if a description
+// and a route's path drift apart, the failure shows HERE, not to somebody
+// reading /openapi.json in production.
+func document(t *testing.T) (paths, components map[string]any) {
 	t.Helper()
 
 	doc := openapi.New("test", "v1")
@@ -43,471 +43,477 @@ func belge(t *testing.T) (yollar, bilesenler map[string]any) {
 	r := chi.NewRouter()
 	New(nil).Routes(r)
 
-	ham, err := doc.Build(r)
+	raw, err := doc.Build(r)
 	require.NoError(t, err)
 	require.Empty(t, doc.UnmatchedDescriptions(),
-		"anlatılan her uç bir route ile eşleşmeli; eşleşmeyen kayıt belgeye hiç girmez")
+		"every described endpoint has to match a route; an unmatched one never enters the document")
 
-	kodlanmis, err := json.Marshal(ham)
+	encoded, err := json.Marshal(raw)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(kodlanmis, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
 
 	var ok bool
 
-	bilesenler, ok = cozulmus["components"].(map[string]any)["schemas"].(map[string]any)
+	components, ok = decoded["components"].(map[string]any)["schemas"].(map[string]any)
 	require.True(t, ok)
 
-	yollar, ok = cozulmus["paths"].(map[string]any)
+	paths, ok = decoded["paths"].(map[string]any)
 	require.True(t, ok)
 
-	return yollar, bilesenler
+	return paths, components
 }
 
-// islem belgeden tek bir yol+metod işlemini döner.
-func islem(t *testing.T, yollar map[string]any, metod, yol string) map[string]any {
+// operation returns one path+method operation from the document.
+func operation(t *testing.T, paths map[string]any, method, path string) map[string]any {
 	t.Helper()
 
-	yolIslemleri, ok := yollar[yol].(map[string]any)
-	require.True(t, ok, "%s belgede olmalı", yol)
+	pathOperations, ok := paths[path].(map[string]any)
+	require.True(t, ok, "%s has to be in the document", path)
 
-	op, ok := yolIslemleri[strings.ToLower(metod)].(map[string]any)
-	require.True(t, ok, "%s %s belgede olmalı", metod, yol)
+	op, ok := pathOperations[strings.ToLower(method)].(map[string]any)
+	require.True(t, ok, "%s %s has to be in the document", method, path)
 
 	return op
 }
 
-// semaCoz "$ref" atıflarını belgedeki bileşene çözer.
-func semaCoz(t *testing.T, bilesenler, sema map[string]any) map[string]any {
+// resolve follows a "$ref" to the component in the document.
+func resolve(t *testing.T, components, schema map[string]any) map[string]any {
 	t.Helper()
 
-	ref, refli := sema["$ref"].(string)
-	if !refli {
-		return sema
+	ref, isRef := schema["$ref"].(string)
+	if !isRef {
+		return schema
 	}
 
-	hedef, ok := bilesenler[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
-	require.True(t, ok, "%q bileşeni kayıtlı olmalı", ref)
+	target, ok := components[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
+	require.True(t, ok, "the %q component has to be registered", ref)
 
-	return hedef
+	return target
 }
 
-// govdeSemasi bir yanıt ya da istek gövdesi tanımından JSON şemasını çıkarır.
-func govdeSemasi(t *testing.T, tanim map[string]any) map[string]any {
+// bodySchema extracts the JSON schema from a response or request body
+// definition.
+func bodySchema(t *testing.T, definition map[string]any) map[string]any {
 	t.Helper()
 
-	icerik, ok := tanim["content"].(map[string]any)
-	require.True(t, ok, "gövde tanımında content olmalı: %#v", tanim)
+	content, ok := definition["content"].(map[string]any)
+	require.True(t, ok, "a body definition has to have content: %#v", definition)
 
-	json_, ok := icerik["application/json"].(map[string]any)
-	require.True(t, ok, "gövde application/json olmalı")
+	jsonBody, ok := content["application/json"].(map[string]any)
+	require.True(t, ok, "the body has to be application/json")
 
-	sema, ok := json_["schema"].(map[string]any)
-	require.True(t, ok, "gövdenin şeması olmalı")
+	schema, ok := jsonBody["schema"].(map[string]any)
+	require.True(t, ok, "the body has to have a schema")
 
-	return sema
+	return schema
 }
 
-// alanlar şemanın "properties" anahtarlarını döner.
-func alanlar(t *testing.T, bilesenler, sema map[string]any) []string {
+// fields returns the keys of a schema's "properties".
+func fields(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ozellikler, ok := semaCoz(t, bilesenler, sema)["properties"].(map[string]any)
-	require.True(t, ok, "şemada properties olmalı: %#v", sema)
+	properties, ok := resolve(t, components, schema)["properties"].(map[string]any)
+	require.True(t, ok, "the schema has to have properties: %#v", schema)
 
-	return anahtarlar(ozellikler)
+	return keys(properties)
 }
 
-// zorunlular şemanın "required" listesini döner.
-func zorunlular(t *testing.T, bilesenler, sema map[string]any) []string {
+// required returns a schema's "required" list.
+func required(t *testing.T, components, schema map[string]any) []string {
 	t.Helper()
 
-	ham, _ := semaCoz(t, bilesenler, sema)["required"].([]any)
+	raw, _ := resolve(t, components, schema)["required"].([]any)
 
-	adlar := make([]string, 0, len(ham))
-	for _, ad := range ham {
-		metin, ok := ad.(string)
+	names := make([]string, 0, len(raw))
+	for _, name := range raw {
+		text, ok := name.(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, metin)
+		names = append(names, text)
 	}
 
-	return adlar
+	return names
 }
 
-// anahtarlar bir haritanın anahtarlarını döner.
-func anahtarlar[T any](m map[string]T) []string {
-	adlar := make([]string, 0, len(m))
-	for ad := range m {
-		adlar = append(adlar, ad)
+// keys returns the keys of a map.
+func keys[T any](m map[string]T) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// jsonAnahtarlari değeri encoding/json ile kodlayıp anahtarlarını döner.
+// jsonKeys encodes a value with encoding/json and returns its keys.
 //
-// Karşılaştırmanın diğer ucu budur: şema, tel üzerinde GERÇEKTEN ne olduğunu
-// anlatmalıdır ve bunu bilen tek şey encoding/json'un kendisidir.
-func jsonAnahtarlari(t *testing.T, v any) []string {
+// This is the other end of the comparison: the schema has to describe what is
+// REALLY on the wire, and the only thing that knows is encoding/json itself.
+func jsonKeys(t *testing.T, v any) []string {
 	t.Helper()
 
-	ham, err := json.Marshal(v)
+	raw, err := json.Marshal(v)
 	require.NoError(t, err)
 
-	var cozulmus map[string]any
-	require.NoError(t, json.Unmarshal(ham, &cozulmus))
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(raw, &decoded))
 
-	return anahtarlar(cozulmus)
+	return keys(decoded)
 }
 
-// sifirDegeri verilen örneğin tipinin sıfır değerini döner.
+// zeroValue returns the zero value of the given example's type.
 //
-// Sıfır değerde JSON'a yazılan anahtarlar tam olarak "her zaman yazılanlar"dır,
-// yani şemanın "required" kümesi. Örneği elle ikinci kez yazmak yerine tipten
-// türetilir: iki örnek arasında bir alan unutulduğunda test yanlış nedenle
-// düşerdi.
-func sifirDegeri(v any) any {
+// The keys written to JSON at the zero value are exactly "the ones always
+// written", which is the schema's "required" set. It is derived from the type
+// rather than written a second time by hand: when a field was forgotten between
+// two examples the test would fail for the wrong reason.
+func zeroValue(v any) any {
 	return reflect.New(reflect.TypeOf(v)).Elem().Interface()
 }
 
-// ucBeklentisi anlatılan tek bir ucun sözleşmesidir.
-type ucBeklentisi struct {
-	metod string
-	yol   string
-	// durum başarılı yanıtın GERÇEK status kodudur; handler'ın yazdığı kodla
-	// aynı olmalıdır (bkz. admin.go).
-	durum string
-	// istek istek gövdesinin TÜM alanlarını taşıyan örnektir; nil ise uç gövde
-	// almaz.
-	istek any
-	// yanit başarılı yanıttaki KAYDIN tüm alanlarını taşıyan örnektir; nil ise
-	// yanıtın gövdesi yoktur (204).
-	yanit any
-	// liste yanıtın liste zarfıyla mı döndüğünü bildirir.
-	liste bool
+// endpointExpectation is the contract of one described endpoint.
+type endpointExpectation struct {
+	method string
+	path   string
+	// status is the REAL status code of the successful response; it has to be
+	// the code the handler writes (see admin.go).
+	status string
+	// request is an example carrying EVERY field of the request body; nil when
+	// the endpoint takes no body.
+	request any
+	// response is an example carrying every field of the RECORD in the
+	// successful response; nil when the response has no body (204).
+	response any
+	// list says whether the response comes in the list envelope.
+	list bool
 }
 
-// anahtar işlemin "METOD yol" kimliğini döner.
-func (u ucBeklentisi) anahtar() string { return u.metod + " " + u.yol }
+// key returns the operation's "METHOD path" identity.
+func (e endpointExpectation) key() string { return e.method + " " + e.path }
 
-// anlatilanUclar anlatılan uçların beklentileridir.
+// endpoints are the expectations of the described endpoints.
 //
-// Yanıt örnekleri DOLUDUR: omitempty taşıyan metadata alanı sıfırdan farklı bir
-// değer alır, çünkü karşılaştırma "şemanın properties kümesi = kodlanan anahtar
-// kümesi" biçimindedir ve boş bir örnek o alanı hiç yazmazdı.
-func anlatilanUclar() []ucBeklentisi {
-	return []ucBeklentisi{
+// The response examples are FULL: the metadata field, which carries omitempty,
+// gets a non-zero value, because the comparison is "the schema's properties =
+// the encoded keys" and an empty example would not write that field at all.
+func endpoints() []endpointExpectation {
+	return []endpointExpectation{
 		{
-			metod: http.MethodPost, yol: pathAdminRegions, durum: "201",
-			istek: createTaxRegionRequest{}, yanit: doluBolge(),
+			method: http.MethodPost, path: pathAdminRegions, status: "201",
+			request: createTaxRegionRequest{}, response: fullRegion(),
 		},
 		{
-			metod: http.MethodGet, yol: pathAdminRegions, durum: "200",
-			yanit: doluBolge(), liste: true,
+			method: http.MethodGet, path: pathAdminRegions, status: "200",
+			response: fullRegion(), list: true,
 		},
 		{
-			metod: http.MethodGet, yol: pathAdminRegion, durum: "200",
-			yanit: doluBolge(),
+			method: http.MethodGet, path: pathAdminRegion, status: "200",
+			response: fullRegion(),
 		},
-		{metod: http.MethodDelete, yol: pathAdminRegion, durum: "204"},
+		{method: http.MethodDelete, path: pathAdminRegion, status: "204"},
 		{
-			metod: http.MethodGet, yol: pathAdminRegionRates, durum: "200",
-			yanit: doluOran(), liste: true,
+			method: http.MethodGet, path: pathAdminRegionRates, status: "200",
+			response: fullRate(), list: true,
 		},
 
 		{
-			metod: http.MethodPost, yol: pathAdminClasses, durum: "201",
-			istek: createTaxClassRequest{}, yanit: doluSinif(),
+			method: http.MethodPost, path: pathAdminClasses, status: "201",
+			request: createTaxClassRequest{}, response: fullClass(),
 		},
 		{
-			metod: http.MethodGet, yol: pathAdminClasses, durum: "200",
-			yanit: doluSinif(), liste: true,
+			method: http.MethodGet, path: pathAdminClasses, status: "200",
+			response: fullClass(), list: true,
 		},
 		{
-			metod: http.MethodGet, yol: pathAdminClass, durum: "200",
-			yanit: doluSinif(),
+			method: http.MethodGet, path: pathAdminClass, status: "200",
+			response: fullClass(),
 		},
-		{metod: http.MethodDelete, yol: pathAdminClass, durum: "204"},
+		{method: http.MethodDelete, path: pathAdminClass, status: "204"},
 		{
-			metod: http.MethodGet, yol: pathAdminClassProducts, durum: "200",
-			yanit: doluUyelik(), liste: true,
+			method: http.MethodGet, path: pathAdminClassProducts, status: "200",
+			response: fullMembership(), list: true,
 		},
 		{
-			metod: http.MethodPost, yol: pathAdminClassProducts, durum: "201",
-			istek: taxClassMemberRequest{}, yanit: doluUyelik(),
+			method: http.MethodPost, path: pathAdminClassProducts, status: "201",
+			request: taxClassMemberRequest{}, response: fullMembership(),
 		},
-		{metod: http.MethodDelete, yol: pathAdminClassProduct, durum: "204"},
+		{method: http.MethodDelete, path: pathAdminClassProduct, status: "204"},
 
 		{
-			metod: http.MethodPost, yol: pathAdminRates, durum: "201",
-			istek: createTaxRateRequest{}, yanit: doluOran(),
+			method: http.MethodPost, path: pathAdminRates, status: "201",
+			request: createTaxRateRequest{}, response: fullRate(),
 		},
 		{
-			metod: http.MethodGet, yol: pathAdminRates, durum: "200",
-			yanit: doluOran(), liste: true,
+			method: http.MethodGet, path: pathAdminRates, status: "200",
+			response: fullRate(), list: true,
 		},
 		{
-			metod: http.MethodGet, yol: pathAdminRate, durum: "200",
-			yanit: doluOran(),
+			method: http.MethodGet, path: pathAdminRate, status: "200",
+			response: fullRate(),
 		},
 		{
-			metod: http.MethodPut, yol: pathAdminRate, durum: "200",
-			istek: updateTaxRateRequest{}, yanit: doluOran(),
+			method: http.MethodPut, path: pathAdminRate, status: "200",
+			request: updateTaxRateRequest{}, response: fullRate(),
 		},
-		{metod: http.MethodDelete, yol: pathAdminRate, durum: "204"},
+		{method: http.MethodDelete, path: pathAdminRate, status: "204"},
 
 		{
-			metod: http.MethodPost, yol: pathAdminRateRules, durum: "201",
-			istek: createTaxRateRuleRequest{}, yanit: taxRateRuleDTO{},
+			method: http.MethodPost, path: pathAdminRateRules, status: "201",
+			request: createTaxRateRuleRequest{}, response: taxRateRuleDTO{},
 		},
 		{
-			metod: http.MethodGet, yol: pathAdminRateRules, durum: "200",
-			yanit: taxRateRuleDTO{}, liste: true,
+			method: http.MethodGet, path: pathAdminRateRules, status: "200",
+			response: taxRateRuleDTO{}, list: true,
 		},
-		{metod: http.MethodDelete, yol: pathAdminRateRule, durum: "204"},
+		{method: http.MethodDelete, path: pathAdminRateRule, status: "204"},
 	}
 }
 
-// doluBolge omitempty alanları da yazılan bir vergi bölgesi kaydı üretir.
-func doluBolge() taxRegionDTO {
+// fullRegion produces a tax region record with its omitempty fields written
+// too.
+func fullRegion() taxRegionDTO {
 	return taxRegionDTO{Metadata: map[string]any{"k": "v"}}
 }
 
-// doluOran omitempty alanları da yazılan bir vergi oranı kaydı üretir.
-func doluOran() taxRateDTO {
+// fullRate produces a tax rate record with its omitempty fields written too.
+func fullRate() taxRateDTO {
 	return taxRateDTO{Metadata: map[string]any{"k": "v"}}
 }
 
-// TestAnlatilanUclarGovdeleriniAnlatir her ucun ne ALDIĞINI ve ne DÖNDÜĞÜNÜ
-// söylediğini doğrular.
+// TestEveryEndpointDescribesItsBodies checks that every endpoint says what it
+// TAKES and what it RETURNS.
 //
-// Bulgunun tam karşılığı budur: gövdesiz bir şema istemciye "bu uç var ve
-// şöyle başarısız olabilir" der, ne göndereceğini söylemez; istemci üreteci de
-// her şeyi 'any' olan, dönüş tipi 'void' olan bir metot üretir.
+// This is the finding's exact counterpart: a schema without bodies tells the
+// client "this endpoint exists and can fail like so" without saying what to
+// send; a client generator then produces a method where everything is 'any' and
+// the return type is 'void'.
 //
-// Alan kümeleri DTO'nun encoding/json çıktısıyla karşılaştırılır, elle yazılmış
-// bir listeyle değil: elle yazılmış liste, DTO'ya alan eklendiği gün eksik
-// kalır ve test bunu görmezdi.
-func TestAnlatilanUclarGovdeleriniAnlatir(t *testing.T) {
+// The field sets are compared with the DTO's encoding/json output rather than
+// with a hand-written list: a hand-written list falls short the day a field is
+// added to the DTO, and the test would not see it.
+func TestEveryEndpointDescribesItsBodies(t *testing.T) {
 	t.Parallel()
 
-	yollar, bilesenler := belge(t)
+	paths, components := document(t)
 
-	for _, uc := range anlatilanUclar() {
-		t.Run(uc.anahtar(), func(t *testing.T) {
+	for _, endpoint := range endpoints() {
+		t.Run(endpoint.key(), func(t *testing.T) {
 			t.Parallel()
 
-			op := islem(t, yollar, uc.metod, uc.yol)
-			assert.NotEmpty(t, op["summary"], "uç tek satırla anlatılmalı")
+			op := operation(t, paths, endpoint.method, endpoint.path)
+			assert.NotEmpty(t, op["summary"], "the endpoint has to be described in one line")
 
-			istekTanimi, govdeVar := op["requestBody"].(map[string]any)
-			require.Equal(t, uc.istek != nil, govdeVar,
-				"gövde alan uçta requestBody olmalı, almayanda olmamalı")
+			requestDefinition, hasBody := op["requestBody"].(map[string]any)
+			require.Equal(t, endpoint.request != nil, hasBody,
+				"an endpoint that takes a body has a requestBody, one that does not has none")
 
-			if uc.istek != nil {
-				sema := govdeSemasi(t, istekTanimi)
-				assert.ElementsMatch(t, jsonAnahtarlari(t, uc.istek),
-					alanlar(t, bilesenler, sema),
-					"istek gövdesinin alanları DTO ile örtüşmeli")
+			if endpoint.request != nil {
+				schema := bodySchema(t, requestDefinition)
+				assert.ElementsMatch(t, jsonKeys(t, endpoint.request),
+					fields(t, components, schema),
+					"the request body's fields have to match the DTO")
 			}
 
-			yanitlar, ok := op["responses"].(map[string]any)
+			responses, ok := op["responses"].(map[string]any)
 			require.True(t, ok)
 
-			tanim, ok := yanitlar[uc.durum].(map[string]any)
-			require.True(t, ok, "handler'ın GERÇEKTEN yazdığı kod belgelenmeli: %s", uc.durum)
+			definition, ok := responses[endpoint.status].(map[string]any)
+			require.True(t, ok, "the code the handler REALLY writes has to be documented: %s", endpoint.status)
 
-			if uc.yanit == nil {
-				assert.NotContains(t, tanim, "content",
-					"204'ün gövdesi yoktur; şema gövde vaat etmemeli")
+			if endpoint.response == nil {
+				assert.NotContains(t, definition, "content",
+					"a 204 has no body; the schema must not promise one")
 
 				return
 			}
 
-			kayit := zarfKaydi(t, bilesenler, govdeSemasi(t, tanim), uc.liste)
+			record := envelopeRecord(t, components, bodySchema(t, definition), endpoint.list)
 
-			assert.ElementsMatch(t, jsonAnahtarlari(t, uc.yanit),
-				alanlar(t, bilesenler, kayit),
-				"yanıt kaydının alanları DTO ile örtüşmeli")
-			assert.ElementsMatch(t, jsonAnahtarlari(t, sifirDegeri(uc.yanit)),
-				zorunlular(t, bilesenler, kayit),
-				"required, encoding/json'un HER ZAMAN yazdığı anahtarlarla aynı olmalı")
+			assert.ElementsMatch(t, jsonKeys(t, endpoint.response),
+				fields(t, components, record),
+				"the response record's fields have to match the DTO")
+			assert.ElementsMatch(t, jsonKeys(t, zeroValue(endpoint.response)),
+				required(t, components, record),
+				"required has to be the keys encoding/json ALWAYS writes")
 		})
 	}
 }
 
-// zarfKaydi zarfın taşıdığı KAYIT şemasını döner.
+// envelopeRecord returns the RECORD schema the envelope carries.
 //
-// Tekil zarf kaydı doğrudan "data" altında tutar; liste zarfı onu bir dizinin
-// öğesi yapar. Zarfın kendi alanları da denetlenir: biçim plan Bölüm 8'de
-// sabittir ve bozulması istemcinin yanıtı hiç çözememesi demektir.
-func zarfKaydi(t *testing.T, bilesenler, zarf map[string]any, liste bool) map[string]any {
+// The single envelope holds the record directly under "data"; the list
+// envelope makes it the item of an array. The envelope's own fields are
+// checked too: the shape is fixed in plan Section 8, and breaking it means the
+// client cannot decode the response at all.
+func envelopeRecord(t *testing.T, components, envelope map[string]any, list bool) map[string]any {
 	t.Helper()
 
-	if liste {
+	if list {
 		assert.ElementsMatch(t, []string{"data", "count", "offset", "limit"},
-			alanlar(t, bilesenler, zarf), "liste zarfı plan Bölüm 8'deki biçimdir")
+			fields(t, components, envelope), "the list envelope is the shape in plan Section 8")
 	} else {
-		assert.ElementsMatch(t, []string{"data"}, alanlar(t, bilesenler, zarf),
-			"tekil yanıtlar {\"data\": …} zarfıyla döner")
+		assert.ElementsMatch(t, []string{"data"}, fields(t, components, envelope),
+			"single responses come back in the {\"data\": …} envelope")
 	}
 
-	ozellikler, ok := semaCoz(t, bilesenler, zarf)["properties"].(map[string]any)
+	properties, ok := resolve(t, components, envelope)["properties"].(map[string]any)
 	require.True(t, ok)
 
-	veri, ok := ozellikler["data"].(map[string]any)
+	data, ok := properties["data"].(map[string]any)
 	require.True(t, ok)
 
-	if !liste {
-		return veri
+	if !list {
+		return data
 	}
 
-	oge, ok := veri["items"].(map[string]any)
-	require.True(t, ok, "liste zarfının öğe şeması olmalı")
+	item, ok := data["items"].(map[string]any)
+	require.True(t, ok, "the list envelope has to have an item schema")
 
-	return oge
+	return item
 }
 
-// TestOranListesiZorunluParametreyiAnlatir tax_region_id'nin ZORUNLU
-// işaretlendiğini doğrular.
+// TestTheRateListDescribesItsRequiredParameter checks that tax_region_id is
+// marked REQUIRED.
 //
-// Eksik verildiğinde handler 422 döner. İsteğe bağlı göstermek, istemci
-// üretecinin çağrılabilir sandığı ama her zaman hata dönen bir metot üretmesi
-// demekti.
-func TestOranListesiZorunluParametreyiAnlatir(t *testing.T) {
+// When it is missing the handler returns 422. Showing it as optional would mean
+// a client generator producing a method it believes callable that always
+// returns an error.
+func TestTheRateListDescribesItsRequiredParameter(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
-	op := islem(t, yollar, http.MethodGet, pathAdminRates)
+	paths, _ := document(t)
+	op := operation(t, paths, http.MethodGet, pathAdminRates)
 
 	params, _ := op["parameters"].([]any)
 
-	var bulundu bool
+	var found bool
 
-	for _, ham := range params {
-		p, ok := ham.(map[string]any)
+	for _, raw := range params {
+		p, ok := raw.(map[string]any)
 		require.True(t, ok)
 
 		if p["name"] != "tax_region_id" {
 			continue
 		}
 
-		bulundu = true
+		found = true
 
 		assert.Equal(t, "query", p["in"])
 		assert.Equal(t, true, p["required"],
-			"tax_region_id eksikse handler 422 döner; şema onu zorunlu göstermeli")
+			"the handler returns 422 when tax_region_id is missing; the schema has to show it as required")
 	}
 
-	require.True(t, bulundu, "tax_region_id parametresi belgede olmalı")
+	require.True(t, found, "the tax_region_id parameter has to be in the document")
 
-	// Sayfalama parametreleri BİLİNÇLİ olarak yoktur: bu uç sorgu dizesinden
-	// yalnızca tax_region_id okur ve listeyi sayfalamaz.
-	assert.ElementsMatch(t, []string{"tax_region_id"}, parametreAdlari(t, op, "query"))
+	// The paging parameters are DELIBERATELY absent: this endpoint reads only
+	// tax_region_id from the query string and does not page the list.
+	assert.ElementsMatch(t, []string{"tax_region_id"}, parameterNames(t, op, "query"))
 }
 
-// TestSayfalanmayanListelerSorguParametresiVaatEtmez oran ve kural
-// listelemelerinin okunmayan bir parametre duyurmadığını doğrular.
+// TestUnpagedListsPromiseNoQueryParameter checks that the rate and rule
+// listings do not announce a parameter they never read.
 //
-// İkisi de [writeAll] ile yazılır ve sorgu dizesini hiç okumaz. Şemaya
-// limit/offset yazmak, istemci üretecinin metoda argüman koyması ve çağıranın
-// onu doldurup sunucunun sessizce yok sayması demekti.
-func TestSayfalanmayanListelerSorguParametresiVaatEtmez(t *testing.T) {
+// Both are written with [writeAll] and never read the query string. Writing
+// limit/offset into the schema would mean the client generator putting an
+// argument on the method, the caller filling it, and the server silently
+// ignoring it.
+func TestUnpagedListsPromiseNoQueryParameter(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
+	paths, _ := document(t)
 
-	for _, yol := range []string{pathAdminRegionRates, pathAdminRateRules} {
-		op := islem(t, yollar, http.MethodGet, yol)
-		assert.Empty(t, parametreAdlari(t, op, "query"),
-			"%s sayfalanmaz; sayfalama parametresi duyurulmamalı", yol)
+	for _, path := range []string{pathAdminRegionRates, pathAdminRateRules} {
+		op := operation(t, paths, http.MethodGet, path)
+		assert.Empty(t, parameterNames(t, op, "query"),
+			"%s is not paged; no paging parameter may be announced", path)
 	}
 }
 
-// TestBolgeListesiOkunanParametreleriAnlatir sorgu parametrelerinin handler'ın
-// GERÇEKTEN okuduklarıyla aynı olduğunu doğrular.
-func TestBolgeListesiOkunanParametreleriAnlatir(t *testing.T) {
+// TestTheRegionListDescribesTheParametersItReads checks that the query
+// parameters are the same as the ones the handler REALLY reads.
+func TestTheRegionListDescribesTheParametersItReads(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
-	op := islem(t, yollar, http.MethodGet, pathAdminRegions)
+	paths, _ := document(t)
+	op := operation(t, paths, http.MethodGet, pathAdminRegions)
 
 	assert.ElementsMatch(t, []string{"limit", "offset", "country_code"},
-		parametreAdlari(t, op, "query"),
-		"parametreler listRegions'ın okuduklarıyla aynı olmalı")
+		parameterNames(t, op, "query"),
+		"the parameters have to be the same as the ones listRegions reads")
 }
 
-// parametreAdlari işlemin verilen yerdeki parametre adlarını döner.
-func parametreAdlari(t *testing.T, op map[string]any, yer string) []string {
+// parameterNames returns the operation's parameter names in the given place.
+func parameterNames(t *testing.T, op map[string]any, in string) []string {
 	t.Helper()
 
 	params, _ := op["parameters"].([]any)
 
-	adlar := make([]string, 0, len(params))
+	names := make([]string, 0, len(params))
 
-	for _, ham := range params {
-		p, ok := ham.(map[string]any)
+	for _, raw := range params {
+		p, ok := raw.(map[string]any)
 		require.True(t, ok)
 
-		if p["in"] != yer {
+		if p["in"] != in {
 			continue
 		}
 
-		ad, ok := p["name"].(string)
+		name, ok := p["name"].(string)
 		require.True(t, ok)
 
-		adlar = append(adlar, ad)
+		names = append(names, name)
 	}
 
-	return adlar
+	return names
 }
 
-// TestAnlatilanUclarinTumuTabloda anlatılmamış bir uç kalmadığını doğrular.
+// TestEveryEndpointIsDescribed checks that no endpoint is left undescribed.
 //
-// Yeni bir uç eklenip anlatılmadığında bu test düşer. Uyarı olmasaydı arıza
-// SESSİZ olurdu: uç belgede yolu ve güvenliğiyle görünür, yalnızca gövdesi
-// olmaz — yani şema "var ama ne aldığı bilinmiyor" der ve kimse fark etmez.
-func TestAnlatilanUclarinTumuTabloda(t *testing.T) {
+// The test fails when an endpoint is added and not described. Without the
+// warning the fault would be SILENT: the endpoint shows in the document with
+// its path and its security, only without a body — the schema says "it
+// exists, and what it takes is unknown", and nobody notices.
+func TestEveryEndpointIsDescribed(t *testing.T) {
 	t.Parallel()
 
-	yollar, _ := belge(t)
+	paths, _ := document(t)
 
-	var bulunan []string
+	var found []string
 
-	for yol, islemler := range yollar {
-		islemHaritasi, ok := islemler.(map[string]any)
-		require.True(t, ok, "yol girdisi metot haritası olmalı")
+	for path, operations := range paths {
+		byMethod, ok := operations.(map[string]any)
+		require.True(t, ok, "a path entry has to be a map of methods")
 
-		for metod, ham := range islemHaritasi {
-			op, ok := ham.(map[string]any)
+		for method, raw := range byMethod {
+			op, ok := raw.(map[string]any)
 			require.True(t, ok)
 
-			assert.NotEmpty(t, op["summary"], "%s %s anlatılmalı", metod, yol)
-			bulunan = append(bulunan, strings.ToUpper(metod)+" "+yol)
+			assert.NotEmpty(t, op["summary"], "%s %s has to be described", method, path)
+			found = append(found, strings.ToUpper(method)+" "+path)
 		}
 	}
 
-	beklenen := make([]string, 0, len(anlatilanUclar()))
-	for _, uc := range anlatilanUclar() {
-		beklenen = append(beklenen, uc.anahtar())
+	expected := make([]string, 0, len(endpoints()))
+	for _, endpoint := range endpoints() {
+		expected = append(expected, endpoint.key())
 	}
 
-	assert.ElementsMatch(t, beklenen, bulunan,
-		"tabloda olmayan bir uç sınanmamış demektir")
+	assert.ElementsMatch(t, expected, found,
+		"an endpoint missing from the table is an endpoint nothing tests")
 }
 
-// doluSinif omitempty alanları da yazılmış bir vergi sınıfı üretir.
-func doluSinif() taxClassDTO {
+// fullClass produces a tax class with its omitempty fields written too.
+func fullClass() taxClassDTO {
 	return taxClassDTO{
 		ID:       "taxcls_1",
-		Name:     "Kitap",
+		Name:     "Books",
 		Metadata: map[string]any{"k": "v"},
 	}
 }
 
-// doluUyelik bir sınıf üyeliği üretir.
-func doluUyelik() taxClassMemberDTO {
+// fullMembership produces a class membership.
+func fullMembership() taxClassMemberDTO {
 	return taxClassMemberDTO{TaxClassID: "taxcls_1", ProductID: "prod_1"}
 }

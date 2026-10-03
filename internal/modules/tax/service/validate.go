@@ -9,65 +9,70 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// Uzunluk sınırları. Sınırsız bir metin alanı, tek istekle tabloya
-// megabaytlarca veri yazmanın en ucuz yoludur.
+// Length bounds. An unbounded text field is the cheapest way to write megabytes
+// of data into a table with a single request.
 const (
-	// maxNameLen oran adının azami bayt uzunluğudur.
+	// maxNameLen is the maximum byte length of a rate name.
 	maxNameLen = 255
-	// maxCodeLen mutabakat kodunun azami bayt uzunluğudur.
+	// maxCodeLen is the maximum byte length of a reconciliation code.
 	maxCodeLen = 64
-	// maxIDLen dışarıdan gelen kimlikler için üst sınırdır; core/link ve diğer
-	// modüller de aynı sınırı uygular.
+	// maxIDLen is the upper bound for ids coming from outside; core/link and the
+	// other modules apply the same bound.
 	maxIDLen = 255
 )
 
-// NormalizeCountryCode ISO 3166-1 alpha-2 ülke kodunu doğrular ve BÜYÜK harfe
-// çevirir.
+// NormalizeCountryCode validates an ISO 3166-1 alpha-2 country code and turns
+// it into UPPER case.
 //
-// Kabul edilen biçim tam iki HARFTİR. Baştaki/sondaki boşluklar kırpılır (kod
-// zaten büyük harfe dönüştürülerek normalleştiriliyor; boşluk için ayrı bir
-// katılık tutarsız olurdu), ama harf dışı hiçbir karakter kabul edilmez.
+// The accepted form is exactly two LETTERS. Leading/trailing whitespace is
+// trimmed (the code is already normalized by converting it to upper case; a
+// separate strictness for whitespace would be inconsistent), but no character
+// other than a letter is accepted.
 //
-// Yalnızca BİÇİM denetlenir. Kodun ISO'da tanımlı olup olmadığı bu modülde
-// bilinmez: ülke listesi region modülünün verisidir ve tax onu import edemez
-// (ADR 0001). Ayrım önemlidir — "XX" biçimsel olarak geçerli ama tanımsız bir
-// koddur ve bu modülde yalnızca "vergi bölgesi yok" sonucunu doğurur.
+// Only the FORMAT is checked. Whether the code is defined in ISO is not known
+// in this module: the country list is the region module's data and tax cannot
+// import it (ADR 0001). The distinction matters — "XX" is a formally valid but
+// undefined code, and in this module it only leads to the result "no tax
+// region".
 //
-// Dışa açıktır çünkü aynı normalleştirme hem servis girdilerinde hem de
-// modüller arası yüzeyde (bkz. interop.go) kullanılır; iki yerin ayrışması, bir
-// yoldan geçen kodun diğerinden geçmemesi demek olurdu.
+// It is exported because the same normalization is used both on the service's
+// inputs and on the cross-module surface (see interop.go); the two places
+// diverging would mean a code that passes through one path does not pass
+// through the other.
 func NormalizeCountryCode(code string) (string, error) {
 	trimmed := strings.TrimSpace(code)
-	// Uzunluk BAYT değil RUNE sayısıyla ölçülür: iki baytlık tek bir karakter
-	// aksi hâlde uzunluk denetimini geçer, harf denetiminde takılırdı ve mesaj
-	// yanlış sebebi gösterirdi.
+	// Length is measured in RUNES, not BYTES: otherwise a single two-byte
+	// character would pass the length check and get stuck at the letter check,
+	// and the message would report the wrong reason.
 	if len([]rune(trimmed)) != models.CountryCodeLength {
 		return "", errors.Invalid(CodeInvalidInput,
-			"ülke kodu tam %d harf olmalı (ISO 3166-1 alpha-2), %q verildi",
+			"the country code has to be exactly %d letters (ISO 3166-1 alpha-2), %q was given",
 			models.CountryCodeLength, code)
 	}
-	// ASCII denetimi büyük harfe çevirmeden ÖNCE yapılır. Sıra kritiktir:
-	// Unicode'un basit büyük harf eşlemesi bazı ASCII DIŞI harfleri ASCII
-	// harflere taşır (noktasız "ı" -> "I"); denetim sonra yapılsaydı "ıs"
-	// sessizce "IS" (İzlanda) olurdu.
+	// The ASCII check is made BEFORE the conversion to upper case. The order is
+	// critical: Unicode's simple upper-case mapping moves some NON-ASCII letters
+	// onto ASCII letters (the dotless i, U+0131, -> "I"); had the check been made
+	// afterwards, a dotless i followed by "s" would silently become "IS"
+	// (Iceland).
 	for _, r := range trimmed {
 		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') {
 			return "", errors.Invalid(CodeInvalidInput,
-				"ülke kodu yalnızca ASCII harf içerebilir (ISO 3166-1 alpha-2), %q verildi", code)
+				"the country code can only contain ASCII letters (ISO 3166-1 alpha-2), %q was given", code)
 		}
 	}
 	return strings.ToUpper(trimmed), nil
 }
 
-// NormalizeProvinceCode eyalet/il kodunu doğrular ve BÜYÜK harfe çevirir.
+// NormalizeProvinceCode validates a state/province code and turns it into UPPER
+// case.
 //
-// Boş girdi boş çıktı döner ve HATA DEĞİLDİR: eyalet kodu isteğe bağlıdır ve
-// boşluğu "ülke düzeyi" demektir. Dolu girdide kabul edilen alfabe ASCII harf,
-// rakam ve tiredir — ISO 3166-2'nin ülke içi bölümü (örn. "US-CA" içindeki
-// "CA"), Kanada eyaletleri ve Türkiye'nin plaka kodları ("34") bu kümeye
-// girer. Kod RAKAMLA da başlayabilir; kısıt yalnızca ilk karakterin tire
-// OLMAMASIDIR ("-CA" gibi bir değer, ayırıcının yanlışlıkla kopyalandığının
-// göstergesidir).
+// An empty input returns an empty output and is NOT AN ERROR: the province code
+// is optional and its absence means "country level". On a non-empty input the
+// accepted alphabet is ASCII letters, digits and the hyphen — the in-country
+// part of ISO 3166-2 (e.g. "CA" in "US-CA"), Canadian provinces and Turkey's
+// license plate codes ("34") fall into this set. The code can also start WITH
+// A DIGIT; the only restriction is that the first character is NOT a hyphen (a
+// value like "-CA" is a sign that the separator was copied by mistake).
 func NormalizeProvinceCode(code string) (string, error) {
 	trimmed := strings.TrimSpace(code)
 	if trimmed == "" {
@@ -77,7 +82,7 @@ func NormalizeProvinceCode(code string) (string, error) {
 	runes := []rune(trimmed)
 	if len(runes) > models.MaxProvinceCodeLength {
 		return "", errors.Invalid(CodeInvalidInput,
-			"eyalet kodu en fazla %d karakter olabilir, %q verildi",
+			"the province code can be at most %d characters, %q was given",
 			models.MaxProvinceCodeLength, code)
 	}
 	for i, r := range runes {
@@ -89,36 +94,38 @@ func NormalizeProvinceCode(code string) (string, error) {
 			continue
 		}
 		return "", errors.Invalid(CodeInvalidInput,
-			"eyalet kodu ASCII harf, rakam ve tire içerebilir ve tireyle başlayamaz, %q verildi", code)
+			"the province code can contain ASCII letters, digits and hyphens and cannot start with a hyphen, %q was given", code)
 	}
 	return strings.ToUpper(trimmed), nil
 }
 
-// normalizeName bir oranın adını doğrular ve baş/son boşluklarını kırpar.
+// normalizeName validates a rate's name and trims its leading/trailing
+// whitespace.
 func normalizeName(name string) (string, error) {
 	trimmed := strings.TrimSpace(name)
 	if trimmed == "" {
-		return "", errors.Invalid(CodeInvalidInput, "vergi oranı adı boş olamaz")
+		return "", errors.Invalid(CodeInvalidInput, "the tax rate name cannot be empty")
 	}
 	if len(trimmed) > maxNameLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"vergi oranı adı en fazla %d bayt olabilir, %d bayt verildi", maxNameLen, len(trimmed))
+			"the tax rate name can be at most %d bytes, %d bytes were given", maxNameLen, len(trimmed))
 	}
 	for _, r := range trimmed {
-		// Kontrol karakterleri (satır sonu dâhil) bir ad değildir ve log ile
-		// yönetim arayüzünü bozar.
+		// Control characters (line breaks included) are not a name, and they
+		// break logs and the admin UI.
 		if unicode.IsControl(r) {
-			return "", errors.Invalid(CodeInvalidInput, "vergi oranı adı kontrol karakteri içeremez")
+			return "", errors.Invalid(CodeInvalidInput, "the tax rate name cannot contain control characters")
 		}
 	}
 	return trimmed, nil
 }
 
-// normalizeCode mutabakat kodunu doğrular; boş girdi boş çıktı döner.
+// normalizeCode validates the reconciliation code; an empty input returns an
+// empty output.
 //
-// Boşluk "kod yok" demektir ve depoda SQL NULL'a çevrilir. Boş dizeyi kod
-// saymak, bölge içindeki benzersizlik indeksinde iki kodsuz oranın çakışması
-// demek olurdu.
+// Blank means "no code" and is turned into SQL NULL in the repository. Counting
+// the empty string as a code would mean two rates without a code colliding in
+// the uniqueness index within the region.
 func normalizeCode(code string) (string, error) {
 	trimmed := strings.TrimSpace(code)
 	if trimmed == "" {
@@ -126,40 +133,40 @@ func normalizeCode(code string) (string, error) {
 	}
 	if len(trimmed) > maxCodeLen {
 		return "", errors.Invalid(CodeInvalidInput,
-			"vergi oranı kodu en fazla %d bayt olabilir, %d bayt verildi", maxCodeLen, len(trimmed))
+			"the tax rate code can be at most %d bytes, %d bytes were given", maxCodeLen, len(trimmed))
 	}
 	for _, r := range trimmed {
 		if unicode.IsControl(r) || unicode.IsSpace(r) {
 			return "", errors.Invalid(CodeInvalidInput,
-				"vergi oranı kodu boşluk ya da kontrol karakteri içeremez: %q", code)
+				"the tax rate code cannot contain whitespace or control characters: %q", code)
 		}
 	}
 	return trimmed, nil
 }
 
-// validateRateBps oranın izin verilen aralıkta olduğunu doğrular.
+// validateRateBps verifies that the rate is within the allowed range.
 //
-// Oran BAZ PUANDIR (2000 = %20). Üst sınır %100'dür: daha büyük bir oran veri
-// giriş hatasıdır ve sepet toplamını sessizce ikiye katlardı.
+// The rate is in BASIS POINTS (2000 = 20%). The upper bound is 100%: a larger
+// rate is a data entry error and would silently double the cart total.
 func validateRateBps(rateBps int32) error {
 	if rateBps < models.MinRateBps {
 		return errors.Invalid(CodeInvalidInput,
-			"vergi oranı negatif olamaz, %d verildi (baz puan)", rateBps)
+			"the tax rate cannot be negative, %d was given (basis points)", rateBps)
 	}
 	if rateBps > models.MaxRateBps {
 		return errors.Invalid(CodeInvalidInput,
-			"vergi oranı en fazla %d baz puan (%%100) olabilir, %d verildi",
+			"the tax rate can be at most %d basis points (100%%), %d was given",
 			models.MaxRateBps, rateBps)
 	}
 	return nil
 }
 
-// requireID dışarıdan gelen bir kimliğin kullanılabilir ve DOĞRU TÜRDE
-// olduğunu doğrular.
+// requireID verifies that an id coming from outside is usable and of the RIGHT
+// KIND.
 //
-// Önek kontrolü bilinçlidir: önekli kimliklerin varlık sebebi, yanlış türde bir
-// kimliğin (örn. bir oran kimliğinin bölge yerine geçmesi) "bulunamadı" olarak
-// değil, ne olduğu belli bir doğrulama hatası olarak dönmesidir.
+// The prefix check is deliberate: the reason prefixed ids exist is that an id
+// of the wrong kind (e.g. a rate id standing in for a region) comes back not
+// as "not found" but as a validation error that says what it is.
 func requireID(id, prefix, label string) error {
 	if id == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
@@ -169,45 +176,45 @@ func requireID(id, prefix, label string) error {
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
-			"%s en fazla %d bayt olabilir, %d bayt verildi", label, maxIDLen, len(id))
+			"%s can be at most %d bytes, %d bytes were given", label, maxIDLen, len(id))
 	}
 	if !strings.HasPrefix(id, prefix) {
 		return errors.Invalid(CodeInvalidInput,
-			"%s %q önekiyle başlamalı, %q verildi", label, prefix, id)
+			"%s has to start with the %q prefix, %q was given", label, prefix, id)
 	}
 	return nil
 }
 
-// requireReferenceID kuralın baktığı YABANCI kimliğin kullanılabilir olduğunu
-// doğrular.
+// requireReferenceID verifies that the FOREIGN id a rule looks at is usable.
 //
-// Önek denetimi YAPILMAZ: kimlik başka bir modüle aittir (ürün, ürün tipi,
-// kargo seçeneği) ve o modüllerin önek sözleşmesini burada tekrarlamak, bir
-// modül önekini değiştirdiğinde tax'ın sessizce kural kabul etmemesi demek
-// olurdu (ADR 0001 — tax o modülleri tanımaz).
+// NO prefix check is made: the id belongs to another module (product, product
+// type, shipping option), and repeating those modules' prefix contract here
+// would mean tax silently refusing rules when a module changed its prefix
+// (ADR 0001 — tax does not know those modules).
 func requireReferenceID(id string) error {
 	if id == "" {
-		return errors.Invalid(CodeInvalidInput, "kural referans kimliği boş olamaz")
+		return errors.Invalid(CodeInvalidInput, "the rule reference id cannot be empty")
 	}
 	if strings.TrimSpace(id) != id {
 		return errors.Invalid(CodeInvalidInput,
-			"kural referans kimliği baş/son boşluk içeremez: %q", id)
+			"the rule reference id cannot contain leading/trailing whitespace: %q", id)
 	}
 	if len(id) > maxIDLen {
 		return errors.Invalid(CodeInvalidInput,
-			"kural referans kimliği en fazla %d bayt olabilir, %d bayt verildi", maxIDLen, len(id))
+			"the rule reference id can be at most %d bytes, %d bytes were given", maxIDLen, len(id))
 	}
 	return nil
 }
 
-// normalizePaging sayfalama parametrelerini uygulanabilir değerlere çevirir.
+// normalizePaging turns the paging parameters into applicable values.
 //
-// Limit 0 veya negatifse varsayılan, [MaxLimit]'i aşıyorsa azami değer
-// uygulanır; kırpma hata DEĞİLDİR ama uygulanan değer sonuçta geri bildirilir
-// (bkz. [Page]). Negatif offset ise düzeltilemez bir istektir ve reddedilir.
+// If the limit is 0 or negative the default applies, and if it exceeds
+// [MaxLimit] the maximum applies; clamping is NOT an error, but the value
+// applied is reported back in the result (see [Page]). A negative offset, on
+// the other hand, is a request that cannot be corrected and is refused.
 func normalizePaging(limit, offset int32) (outLimit, outOffset int32, err error) {
 	if offset < 0 {
-		return 0, 0, errors.Invalid(CodeInvalidInput, "offset negatif olamaz, %d verildi", offset)
+		return 0, 0, errors.Invalid(CodeInvalidInput, "the offset cannot be negative, %d was given", offset)
 	}
 	if limit <= 0 {
 		limit = DefaultLimit
@@ -218,12 +225,12 @@ func normalizePaging(limit, offset int32) (outLimit, outOffset int32, err error)
 	return limit, offset, nil
 }
 
-// clampToInt32 bir int değeri int32 aralığına sıkıştırır.
+// clampToInt32 clamps an int value into the int32 range.
 //
-// Query katmanının ListOptions alanları int'tir; 64 bit bir platformda oradan
-// gelen devasa bir değer int32'ye dönüşürken SARARDI ve negatif bir limit
-// üretebilirdi. Sıkıştırma bu sarmayı imkânsız kılar; sınırın kendisi zaten
-// normalizePaging'de [MaxLimit]'e indirilir.
+// The Query layer's ListOptions fields are int; on a 64-bit platform a huge
+// value coming from there would WRAP when converted to int32 and could produce
+// a negative limit. The clamp makes that wrapping impossible; the bound itself
+// is brought down to [MaxLimit] in normalizePaging anyway.
 func clampToInt32(value int) int32 {
 	if value > math.MaxInt32 {
 		return math.MaxInt32

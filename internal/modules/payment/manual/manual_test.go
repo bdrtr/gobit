@@ -13,29 +13,29 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
-// Testlerde kullanılan sabitler.
+// Constants used in the tests.
 const (
-	referans = "paycol_TEST"
-	paraKodu = "TRY"
-	tutar    = int64(12_500)
+	testReference = "paycol_TEST"
+	testCurrency  = "TRY"
+	testAmount    = int64(12_500)
 )
 
-// yeniSaglayici bellek içi defter üzerinde çalışan bir sağlayıcı kurar.
-func yeniSaglayici(t *testing.T) (*manual.Provider, *memStore) {
+// newProvider sets up a provider that works on an in-memory ledger.
+func newProvider(t *testing.T) (*manual.Provider, *memStore) {
 	t.Helper()
 
 	store := newMemStore()
 	return manual.New(store, nil), store
 }
 
-// oturumAc test için bir oturum açar ve kimliğini döner.
-func oturumAc(t *testing.T, p *manual.Provider, key string, data map[string]any) string {
+// openSession opens a session for a test and returns its identifier.
+func openSession(t *testing.T, p *manual.Provider, key string, data map[string]any) string {
 	t.Helper()
 
 	ses, err := p.CreateSession(context.Background(), coreprovider.CreateSessionInput{
-		Amount:         tutar,
-		CurrencyCode:   paraKodu,
-		Reference:      referans,
+		Amount:         testAmount,
+		CurrencyCode:   testCurrency,
+		Reference:      testReference,
 		IdempotencyKey: key,
 		Data:           data,
 	})
@@ -43,158 +43,161 @@ func oturumAc(t *testing.T, p *manual.Provider, key string, data map[string]any)
 	return ses.ID
 }
 
-// TestAyniAnahtarlaIkinciCreateSessionYeniOturumAcmaz çekirdek sözleşmesinin
-// idempotency şartını doğrular.
+// TestSecondCreateSessionWithTheSameKeyOpensNoNewSession verifies the core
+// contract's idempotency requirement.
 //
-// Yalnızca dönen kimliğin aynı olması yetmez: deftere GERÇEKTEN ikinci bir
-// satır yazılmadığı da kanıtlanır. Kimliği aynı döndürüp arka planda ikinci bir
-// oturum açan bir uygulama, müşteriden iki kez tahsilat denemesine yol açardı.
-func TestAyniAnahtarlaIkinciCreateSessionYeniOturumAcmaz(t *testing.T) {
-	p, store := yeniSaglayici(t)
+// It is not enough for the returned identifier to be the same: the test also
+// proves that a second row was REALLY not written to the ledger. An
+// implementation that returned the same identifier while opening a second
+// session in the background would lead to two capture attempts on the
+// customer.
+func TestSecondCreateSessionWithTheSameKeyOpensNoNewSession(t *testing.T) {
+	p, store := newProvider(t)
 	ctx := context.Background()
 
 	in := coreprovider.CreateSessionInput{
-		Amount:         tutar,
-		CurrencyCode:   paraKodu,
-		Reference:      referans,
+		Amount:         testAmount,
+		CurrencyCode:   testCurrency,
+		Reference:      testReference,
 		IdempotencyKey: "key-1",
 	}
 
-	ilk, err := p.CreateSession(ctx, in)
+	first, err := p.CreateSession(ctx, in)
 	require.NoError(t, err)
-	ikinci, err := p.CreateSession(ctx, in)
+	second, err := p.CreateSession(ctx, in)
 	require.NoError(t, err)
 
-	assert.Equal(t, ilk.ID, ikinci.ID, "aynı anahtar aynı oturumu dönmeli")
-	inserts, _ := store.sayimlar()
-	assert.Equal(t, 1, inserts, "deftere yalnızca BİR satır yazılmalı")
+	assert.Equal(t, first.ID, second.ID, "the same key must return the same session")
+	inserts, _ := store.counts()
+	assert.Equal(t, 1, inserts, "only ONE row must be written to the ledger")
 }
 
-// TestAyniAnahtarFarkliTutarlaCakisir idempotency anahtarının yeniden
-// kullanımını reddettiğimizi doğrular.
+// TestTheSameKeyWithADifferentAmountConflicts verifies that we refuse the reuse
+// of an idempotency key.
 //
-// Sessizce mevcut oturumu dönmek, çağıranın gönderdiğini sandığı tutarın hiç
-// uygulanmaması demek olurdu; sonuç, beklenenden farklı bir tutarın tahsil
-// edilmesidir.
-func TestAyniAnahtarFarkliTutarlaCakisir(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// Silently returning the existing session would mean the amount the caller
+// believes it sent is never applied; the result would be capturing an amount
+// different from the one expected.
+func TestTheSameKeyWithADifferentAmountConflicts(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
 
 	_, err := p.CreateSession(ctx, coreprovider.CreateSessionInput{
-		Amount: tutar, CurrencyCode: paraKodu, Reference: referans, IdempotencyKey: "key-1",
+		Amount: testAmount, CurrencyCode: testCurrency, Reference: testReference, IdempotencyKey: "key-1",
 	})
 	require.NoError(t, err)
 
 	_, err = p.CreateSession(ctx, coreprovider.CreateSessionInput{
-		Amount: tutar + 1, CurrencyCode: paraKodu, Reference: referans, IdempotencyKey: "key-1",
+		Amount: testAmount + 1, CurrencyCode: testCurrency, Reference: testReference, IdempotencyKey: "key-1",
 	})
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 	assert.Equal(t, manual.CodeIdempotencyMismatch, errors.CodeOf(err))
 }
 
-// TestCreateSessionGirdiDogrulamasi para doğrulamasının her dalını sınar.
-func TestCreateSessionGirdiDogrulamasi(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// TestCreateSessionInputValidation exercises every branch of the money
+// validation.
+func TestCreateSessionInputValidation(t *testing.T) {
+	p, _ := newProvider(t)
 
 	tests := []struct {
-		ad string
-		in coreprovider.CreateSessionInput
+		name string
+		in   coreprovider.CreateSessionInput
 	}{
-		{"anahtarsiz", coreprovider.CreateSessionInput{Amount: tutar, CurrencyCode: paraKodu, Reference: referans}},
-		{"referanssiz", coreprovider.CreateSessionInput{Amount: tutar, CurrencyCode: paraKodu, IdempotencyKey: "k"}},
-		{"sifir tutar", coreprovider.CreateSessionInput{
-			Amount: 0, CurrencyCode: paraKodu, Reference: referans, IdempotencyKey: "k",
+		{"without a key", coreprovider.CreateSessionInput{Amount: testAmount, CurrencyCode: testCurrency, Reference: testReference}},
+		{"without a reference", coreprovider.CreateSessionInput{Amount: testAmount, CurrencyCode: testCurrency, IdempotencyKey: "k"}},
+		{"zero amount", coreprovider.CreateSessionInput{
+			Amount: 0, CurrencyCode: testCurrency, Reference: testReference, IdempotencyKey: "k",
 		}},
-		{"negatif tutar", coreprovider.CreateSessionInput{
-			Amount: -1, CurrencyCode: paraKodu, Reference: referans, IdempotencyKey: "k",
+		{"negative amount", coreprovider.CreateSessionInput{
+			Amount: -1, CurrencyCode: testCurrency, Reference: testReference, IdempotencyKey: "k",
 		}},
-		{"tavani asan tutar", coreprovider.CreateSessionInput{
-			Amount: models.MaxAmount + 1, CurrencyCode: paraKodu, Reference: referans, IdempotencyKey: "k",
+		{"amount above the ceiling", coreprovider.CreateSessionInput{
+			Amount: models.MaxAmount + 1, CurrencyCode: testCurrency, Reference: testReference, IdempotencyKey: "k",
 		}},
-		{"gecersiz para birimi", coreprovider.CreateSessionInput{
-			Amount: tutar, CurrencyCode: "TRYY", Reference: referans, IdempotencyKey: "k",
+		{"invalid currency", coreprovider.CreateSessionInput{
+			Amount: testAmount, CurrencyCode: "TRYY", Reference: testReference, IdempotencyKey: "k",
 		}},
-		{"taninmayan outcome", coreprovider.CreateSessionInput{
-			Amount: tutar, CurrencyCode: paraKodu, Reference: referans, IdempotencyKey: "k",
-			Data: map[string]any{manual.DataKeyOutcome: "bilinmeyen"},
+		{"unrecognized outcome", coreprovider.CreateSessionInput{
+			Amount: testAmount, CurrencyCode: testCurrency, Reference: testReference, IdempotencyKey: "k",
+			Data: map[string]any{manual.DataKeyOutcome: "unknown"},
 		}},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.ad, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			_, err := p.CreateSession(context.Background(), tt.in)
 
 			require.Error(t, err)
-			assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+			assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 		})
 	}
 }
 
-// TestAuthorizeTutariBlokeEder mutlu yolu doğrular.
-func TestAuthorizeTutariBlokeEder(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// TestAuthorizeHoldsTheAmount verifies the happy path.
+func TestAuthorizeHoldsTheAmount(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 
 	result, err := p.Authorize(ctx, id)
 
 	require.NoError(t, err)
 	assert.Equal(t, coreprovider.SessionAuthorized, result.Status)
-	assert.Equal(t, tutar, result.AuthorizedAmount)
+	assert.Equal(t, testAmount, result.AuthorizedAmount)
 	assert.Empty(t, result.DeclineReason)
 }
 
-// TestIkinciAuthorizeHataVermezVeDefteriDegistirmez çekirdek sözleşmesinin
-// "tekrar çağrılabilir" şartını doğrular.
+// TestSecondAuthorizeReturnsNoErrorAndLeavesTheLedgerAlone verifies the core
+// contract's "can be called again" requirement.
 //
-// Yazma sayacı, ikinci çağrının deftere hiç dokunmadığını kanıtlar; yalnızca
-// dönen değere bakan bir test, tutarı ikinci kez bloke eden bir uygulamayı
-// yakalayamazdı.
-func TestIkinciAuthorizeHataVermezVeDefteriDegistirmez(t *testing.T) {
-	p, store := yeniSaglayici(t)
+// The write counter proves that the second call does not touch the ledger at
+// all; a test that looked only at the returned value could not catch an
+// implementation that held the amount a second time.
+func TestSecondAuthorizeReturnsNoErrorAndLeavesTheLedgerAlone(t *testing.T) {
+	p, store := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 
 	require.NoError(t, mustAuthorize(t, p, id))
-	_, oncekiUpdates := store.sayimlar()
+	_, updatesBefore := store.counts()
 
 	result, err := p.Authorize(ctx, id)
 
 	require.NoError(t, err)
 	assert.Equal(t, coreprovider.SessionAuthorized, result.Status)
-	_, sonrakiUpdates := store.sayimlar()
-	assert.Equal(t, oncekiUpdates, sonrakiUpdates, "ikinci Authorize deftere yazmamalı")
+	_, updatesAfter := store.counts()
+	assert.Equal(t, updatesBefore, updatesAfter, "the second Authorize must not write to the ledger")
 }
 
-// TestAuthorizeRedEnjeksiyonu saga testlerinin ödeme adımını PATLATABİLMESİ
-// için gereken davranışı doğrular.
+// TestAuthorizeDeclineInjection verifies the behavior the saga tests need to
+// be ABLE TO BLOW UP the payment step.
 //
-// Ret bir HATA DEĞİLDİR: sağlayıcı başarıyla yanıt vermiştir ve sonucu
-// "failed"tır. Hata dönmek, saga'nın telafi zincirini yanlış sebeple
-// tetiklemesi ve ret sebebinin kaybolması demek olurdu.
-func TestAuthorizeRedEnjeksiyonu(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// A decline is NOT AN ERROR: the provider has responded successfully and its
+// result is "failed". Returning an error would mean the saga triggering its
+// compensation chain for the wrong reason and the decline reason being lost.
+func TestAuthorizeDeclineInjection(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", map[string]any{
+	id := openSession(t, p, "key-1", map[string]any{
 		manual.DataKeyOutcome:       manual.OutcomeDecline,
-		manual.DataKeyDeclineReason: "yetersiz bakiye",
+		manual.DataKeyDeclineReason: "insufficient funds",
 	})
 
 	result, err := p.Authorize(ctx, id)
 
-	require.NoError(t, err, "ret sağlayıcı açısından başarılı bir yanıttır")
+	require.NoError(t, err, "from the provider's point of view a decline is a successful response")
 	assert.Equal(t, coreprovider.SessionFailed, result.Status)
-	assert.Equal(t, "yetersiz bakiye", result.DeclineReason)
+	assert.Equal(t, "insufficient funds", result.DeclineReason)
 	assert.Zero(t, result.AuthorizedAmount)
 }
 
-// TestAuthorizeRedSebepsizVarsayilaniKullanir sebep verilmediğinde de bir
-// gerekçe yazıldığını doğrular; boş bir sebep teşhiste hiçbir işe yaramaz.
-func TestAuthorizeRedSebepsizVarsayilaniKullanir(t *testing.T) {
-	p, _ := yeniSaglayici(t)
-	id := oturumAc(t, p, "key-1", map[string]any{manual.DataKeyOutcome: manual.OutcomeDecline})
+// TestAuthorizeDeclineWithoutAReasonUsesTheDefault verifies that a reason is
+// written even when none is given; an empty reason is of no use in diagnosis.
+func TestAuthorizeDeclineWithoutAReasonUsesTheDefault(t *testing.T) {
+	p, _ := newProvider(t)
+	id := openSession(t, p, "key-1", map[string]any{manual.DataKeyOutcome: manual.OutcomeDecline})
 
 	result, err := p.Authorize(context.Background(), id)
 
@@ -203,35 +206,36 @@ func TestAuthorizeRedSebepsizVarsayilaniKullanir(t *testing.T) {
 	assert.NotEmpty(t, result.DeclineReason)
 }
 
-// TestAuthorizeHataEnjeksiyonuDurumuDegistirmez sağlayıcının erişilemez
-// olduğu senaryoyu doğrular.
+// TestAuthorizeErrorInjectionLeavesTheStateAlone verifies the scenario where
+// the provider is unreachable.
 //
-// Ret ile hata arasındaki fark burada görünür: hata YENİDEN DENENEBİLİR olmak
-// zorundadır, bu yüzden oturum "pending" kalmalıdır. Durumu "failed" yazan bir
-// uygulama, geçici bir ağ hatasını kalıcı bir redde çevirirdi.
-func TestAuthorizeHataEnjeksiyonuDurumuDegistirmez(t *testing.T) {
-	p, store := yeniSaglayici(t)
+// The difference between a decline and an error shows here: an error HAS TO
+// be RETRYABLE, so the session must stay "pending". An implementation that
+// wrote the state as "failed" would turn a transient network error into a
+// permanent decline.
+func TestAuthorizeErrorInjectionLeavesTheStateAlone(t *testing.T) {
+	p, store := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", map[string]any{manual.DataKeyOutcome: manual.OutcomeError})
+	id := openSession(t, p, "key-1", map[string]any{manual.DataKeyOutcome: manual.OutcomeError})
 
 	_, err := p.Authorize(ctx, id)
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "error: %v", err)
 
 	ses, getErr := p.GetSession(ctx, id)
 	require.NoError(t, getErr)
-	assert.Equal(t, models.SessionPending, ses.Status, "durum değişmemeli; istek yeniden denenebilir")
-	_, updates := store.sayimlar()
-	assert.Zero(t, updates, "hata dalında deftere yazılmamalı")
+	assert.Equal(t, models.SessionPending, ses.Status, "the state must not change; the request can be retried")
+	_, updates := store.counts()
+	assert.Zero(t, updates, "the error branch must not write to the ledger")
 }
 
-// TestAuthorizeKismiTutar kısmi yetkilendirmenin sınanabilir olduğunu
-// doğrular; çekirdek sözleşmesi AuthorizedAmount'ın istenenden küçük
-// olabileceğini açıkça söyler.
-func TestAuthorizeKismiTutar(t *testing.T) {
-	p, _ := yeniSaglayici(t)
-	id := oturumAc(t, p, "key-1", map[string]any{manual.DataKeyAuthorizedAmount: 5_000})
+// TestAuthorizePartialAmount verifies that partial authorization can be
+// exercised; the core contract says explicitly that AuthorizedAmount may be
+// smaller than the amount requested.
+func TestAuthorizePartialAmount(t *testing.T) {
+	p, _ := newProvider(t)
+	id := openSession(t, p, "key-1", map[string]any{manual.DataKeyAuthorizedAmount: 5_000})
 
 	result, err := p.Authorize(context.Background(), id)
 
@@ -240,54 +244,56 @@ func TestAuthorizeKismiTutar(t *testing.T) {
 	assert.Equal(t, int64(5_000), result.AuthorizedAmount)
 }
 
-// TestAuthorizeKismiTutarSinirlari oturum tutarını aşan ya da sıfır olan bir
-// kısmi tutarın reddedildiğini doğrular.
-func TestAuthorizeKismiTutarSinirlari(t *testing.T) {
-	for ad, deger := range map[string]int64{"asan": tutar + 1, "sifir": 0, "negatif": -5} {
-		t.Run(ad, func(t *testing.T) {
-			p, _ := yeniSaglayici(t)
-			id := oturumAc(t, p, "key-"+ad, map[string]any{manual.DataKeyAuthorizedAmount: deger})
+// TestAuthorizePartialAmountBounds verifies that a partial amount exceeding
+// the session amount, or one that is zero, is refused.
+func TestAuthorizePartialAmountBounds(t *testing.T) {
+	for name, value := range map[string]int64{"above": testAmount + 1, "zero": 0, "negative": -5} {
+		t.Run(name, func(t *testing.T) {
+			p, _ := newProvider(t)
+			id := openSession(t, p, "key-"+name, map[string]any{manual.DataKeyAuthorizedAmount: value})
 
 			_, err := p.Authorize(context.Background(), id)
 
 			require.Error(t, err)
-			assert.True(t, errors.HasKind(err, errors.KindInvalid), "hata: %v", err)
+			assert.True(t, errors.HasKind(err, errors.KindInvalid), "error: %v", err)
 		})
 	}
 }
 
-// TestCaptureVeIkinciCapture tahsilatın ve tekrarının davranışını doğrular.
-func TestCaptureVeIkinciCapture(t *testing.T) {
-	p, store := yeniSaglayici(t)
+// TestCaptureAndSecondCapture verifies the behavior of a capture and of its
+// repeat.
+func TestCaptureAndSecondCapture(t *testing.T) {
+	p, store := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 	require.NoError(t, mustAuthorize(t, p, id))
 
-	require.NoError(t, p.Capture(ctx, id, 0), "sıfır tutar bloke edilenin tamamını çeker")
+	require.NoError(t, p.Capture(ctx, id, 0), "a zero amount takes the whole held amount")
 
 	ses, err := p.GetSession(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, models.SessionCaptured, ses.Status)
-	assert.Equal(t, tutar, ses.CapturedAmount)
+	assert.Equal(t, testAmount, ses.CapturedAmount)
 
-	_, oncekiUpdates := store.sayimlar()
-	require.NoError(t, p.Capture(ctx, id, 0), "ikinci çağrı hata vermemeli")
-	require.NoError(t, p.Capture(ctx, id, tutar), "aynı tutarla tekrar da hata vermemeli")
-	_, sonrakiUpdates := store.sayimlar()
-	assert.Equal(t, oncekiUpdates, sonrakiUpdates, "tekrarlar deftere yazmamalı")
+	_, updatesBefore := store.counts()
+	require.NoError(t, p.Capture(ctx, id, 0), "the second call must not return an error")
+	require.NoError(t, p.Capture(ctx, id, testAmount), "a repeat with the same amount must not return an error either")
+	_, updatesAfter := store.counts()
+	assert.Equal(t, updatesBefore, updatesAfter, "the repeats must not write to the ledger")
 }
 
-// TestKismiCaptureKalanBlokajiSerbestBirakir defterdeki bloke tutarın fiilen
-// çekilen tutara indiğini doğrular.
+// TestPartialCaptureReleasesTheRemainingHold verifies that the held amount in
+// the ledger drops to the amount actually captured.
 //
-// Gerçek sağlayıcılar tahsilatta kalan blokajı bırakır. Taklit bırakmasaydı
-// sağlayıcının defteri ile modülün kaydı ayrışır ve mutabakatta müşterinin
-// üzerinde olmayan bir blokaj görünürdü; oturum "captured" olduğu için iptal
-// yoluyla düzeltmek de mümkün değildir.
-func TestKismiCaptureKalanBlokajiSerbestBirakir(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// Real providers release the remaining hold on capture. Had the imitation not
+// released it, the provider's ledger and the module's record would diverge and
+// reconciliation would show a hold that is not on the customer; since the
+// session is "captured", correcting it by way of a cancel is not possible
+// either.
+func TestPartialCaptureReleasesTheRemainingHold(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 	require.NoError(t, mustAuthorize(t, p, id))
 
 	require.NoError(t, p.Capture(ctx, id, 1))
@@ -296,55 +302,55 @@ func TestKismiCaptureKalanBlokajiSerbestBirakir(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), ses.CapturedAmount)
 	assert.Equal(t, int64(1), ses.AuthorizedAmount,
-		"çekilmeyen blokaj defterde ASILI kalmamalı")
+		"the hold that was not taken must not stay HANGING in the ledger")
 }
 
-// TestCaptureFarkliTutarlaCakisir tahsil edilmiş bir oturumun BAŞKA bir
-// tutarla yeniden çekilemeyeceğini doğrular; o bir tekrar değil, yeni bir
-// istektir.
-func TestCaptureFarkliTutarlaCakisir(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// TestCaptureWithADifferentAmountConflicts verifies that a captured session
+// cannot be captured again with ANOTHER amount; that is not a repeat, it is a
+// new request.
+func TestCaptureWithADifferentAmountConflicts(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 	require.NoError(t, mustAuthorize(t, p, id))
-	require.NoError(t, p.Capture(ctx, id, tutar))
+	require.NoError(t, p.Capture(ctx, id, testAmount))
 
-	err := p.Capture(ctx, id, tutar-1)
+	err := p.Capture(ctx, id, testAmount-1)
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 }
 
-// TestCaptureBlokeTutariAsamaz bloke edilenden fazlasının çekilemeyeceğini
-// doğrular.
-func TestCaptureBlokeTutariAsamaz(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// TestCaptureCannotExceedTheHeldAmount verifies that more than what was held
+// cannot be taken.
+func TestCaptureCannotExceedTheHeldAmount(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", map[string]any{manual.DataKeyAuthorizedAmount: 5_000})
+	id := openSession(t, p, "key-1", map[string]any{manual.DataKeyAuthorizedAmount: 5_000})
 	require.NoError(t, mustAuthorize(t, p, id))
 
 	err := p.Capture(ctx, id, 5_001)
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 }
 
-// TestCaptureYetkilendirilmemisOturumdaCakisir geçersiz geçişi doğrular.
-func TestCaptureYetkilendirilmemisOturumdaCakisir(t *testing.T) {
-	p, _ := yeniSaglayici(t)
-	id := oturumAc(t, p, "key-1", nil)
+// TestCaptureOnAnUnauthorizedSessionConflicts verifies the invalid transition.
+func TestCaptureOnAnUnauthorizedSessionConflicts(t *testing.T) {
+	p, _ := newProvider(t)
+	id := openSession(t, p, "key-1", nil)
 
 	err := p.Capture(context.Background(), id, 0)
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 }
 
-// TestRefundKismiVeTamIade iade akışını doğrular.
-func TestRefundKismiVeTamIade(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// TestRefundPartialAndFull verifies the refund flow.
+func TestRefundPartialAndFull(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 	require.NoError(t, mustAuthorize(t, p, id))
 	require.NoError(t, p.Capture(ctx, id, 0))
 
@@ -353,94 +359,97 @@ func TestRefundKismiVeTamIade(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(2_500), ses.RefundedAmount)
 
-	require.NoError(t, p.Refund(ctx, id, 0), "sıfır tutar KALANI iade eder")
+	require.NoError(t, p.Refund(ctx, id, 0), "a zero amount refunds the REMAINDER")
 	ses, err = p.GetSession(ctx, id)
 	require.NoError(t, err)
-	assert.Equal(t, tutar, ses.RefundedAmount)
+	assert.Equal(t, testAmount, ses.RefundedAmount)
 }
 
-// TestTamIadeSonrasiIkinciSifirIadeHataVermez çekirdek sözleşmesinin "Refund
-// tekrar çağrılabilir" şartını doğrular.
+// TestSecondZeroRefundAfterAFullRefundReturnsNoError verifies the core
+// contract's "Refund can be called again" requirement.
 //
-// Kalan sıfırdır ve hiçbir şey yapılmaz; böylece tam iade isteği güvenle
-// yeniden denenebilir.
-func TestTamIadeSonrasiIkinciSifirIadeHataVermez(t *testing.T) {
-	p, store := yeniSaglayici(t)
+// The remainder is zero and nothing is done; that way a full refund request
+// can be retried safely.
+func TestSecondZeroRefundAfterAFullRefundReturnsNoError(t *testing.T) {
+	p, store := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 	require.NoError(t, mustAuthorize(t, p, id))
 	require.NoError(t, p.Capture(ctx, id, 0))
 	require.NoError(t, p.Refund(ctx, id, 0))
-	_, oncekiUpdates := store.sayimlar()
+	_, updatesBefore := store.counts()
 
 	require.NoError(t, p.Refund(ctx, id, 0))
 
-	_, sonrakiUpdates := store.sayimlar()
-	assert.Equal(t, oncekiUpdates, sonrakiUpdates, "iade edilecek bir şey kalmamışken yazılmamalı")
+	_, updatesAfter := store.counts()
+	assert.Equal(t, updatesBefore, updatesAfter, "nothing must be written when nothing is left to refund")
 }
 
-// TestRefundKalaniAsamaz olmayan parayı iade etme isteğinin reddedildiğini
-// doğrular.
-func TestRefundKalaniAsamaz(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// TestRefundCannotExceedTheRemainder verifies that a request to refund money
+// that does not exist is refused.
+func TestRefundCannotExceedTheRemainder(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 	require.NoError(t, mustAuthorize(t, p, id))
 	require.NoError(t, p.Capture(ctx, id, 0))
 
-	err := p.Refund(ctx, id, tutar+1)
+	err := p.Refund(ctx, id, testAmount+1)
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 }
 
-// TestRefundTahsilEdilmemisOturumdaCakisir geçersiz geçişi doğrular.
-func TestRefundTahsilEdilmemisOturumdaCakisir(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// TestRefundOnAnUncapturedSessionConflicts verifies the invalid transition.
+func TestRefundOnAnUncapturedSessionConflicts(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 	require.NoError(t, mustAuthorize(t, p, id))
 
 	err := p.Refund(ctx, id, 100)
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 }
 
-// TestCancelIkiKezCagrilabilir saga telafisinin İDEMPOTENT olduğunu doğrular.
+// TestCancelCanBeCalledTwice verifies that the saga compensation is
+// IDEMPOTENT.
 //
-// Faz 6 saga'sı ödeme adımı patladığında bunu çağırır ve bir workflow yeniden
-// denendiğinde ya da çift tetiklendiğinde ikinci çağrı akışı patlatmamalıdır.
-// Yazma sayacı, ikinci çağrının deftere hiç dokunmadığını da kanıtlar.
-func TestCancelIkiKezCagrilabilir(t *testing.T) {
-	p, store := yeniSaglayici(t)
+// The Phase 6 saga calls this when the payment step blows up, and when a
+// workflow is retried or triggered twice the second call must not blow up the
+// flow. The write counter also proves that the second call does not touch the
+// ledger at all.
+func TestCancelCanBeCalledTwice(t *testing.T) {
+	p, store := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 	require.NoError(t, mustAuthorize(t, p, id))
 
 	require.NoError(t, p.Cancel(ctx, id))
 	ses, err := p.GetSession(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, models.SessionCanceled, ses.Status)
-	assert.Zero(t, ses.AuthorizedAmount, "blokaj serbest bırakılmalı")
+	assert.Zero(t, ses.AuthorizedAmount, "the hold must be released")
 
-	_, oncekiUpdates := store.sayimlar()
-	require.NoError(t, p.Cancel(ctx, id), "ikinci iptal hata VERMEMELİ")
-	_, sonrakiUpdates := store.sayimlar()
-	assert.Equal(t, oncekiUpdates, sonrakiUpdates, "ikinci iptal deftere yazmamalı")
+	_, updatesBefore := store.counts()
+	require.NoError(t, p.Cancel(ctx, id), "the second cancel must NOT return an error")
+	_, updatesAfter := store.counts()
+	assert.Equal(t, updatesBefore, updatesAfter, "the second cancel must not write to the ledger")
 }
 
-// TestCancelReddedilmisOturumuKapatirVeSebebiKorur reddedilmiş bir oturumun
-// iptal edilebildiğini ve ret sebebinin KAYBOLMADIĞINI doğrular.
+// TestCancelClosesADeclinedSessionAndKeepsTheReason verifies that a declined
+// session can be canceled and that its decline reason is NOT LOST.
 //
-// Saga, oturumu açan adımın telafisi olarak Cancel çağırır; ret yüzünden
-// patlayan bir akışta o oturum "failed" durumdadır ve telafi hata vermemelidir.
-func TestCancelReddedilmisOturumuKapatirVeSebebiKorur(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// The saga calls Cancel as the compensation of the step that opened the
+// session; in a flow that blew up because of a decline, that session is in the
+// "failed" state and the compensation must not return an error.
+func TestCancelClosesADeclinedSessionAndKeepsTheReason(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", map[string]any{
+	id := openSession(t, p, "key-1", map[string]any{
 		manual.DataKeyOutcome:       manual.OutcomeDecline,
-		manual.DataKeyDeclineReason: "kart reddedildi",
+		manual.DataKeyDeclineReason: "card declined",
 	})
 	_, err := p.Authorize(ctx, id)
 	require.NoError(t, err)
@@ -450,44 +459,45 @@ func TestCancelReddedilmisOturumuKapatirVeSebebiKorur(t *testing.T) {
 	ses, err := p.GetSession(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, models.SessionCanceled, ses.Status)
-	assert.Equal(t, "kart reddedildi", ses.DeclineReason, "ret sebebi korunmalı")
+	assert.Equal(t, "card declined", ses.DeclineReason, "the decline reason must be kept")
 }
 
-// TestCancelTahsilEdilmisOturumdaCakisir çekilen paranın iptalle geri
-// alınamayacağını doğrular; yol iadedir.
-func TestCancelTahsilEdilmisOturumdaCakisir(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// TestCancelOnACapturedSessionConflicts verifies that money that has been
+// taken cannot be reversed with a cancel; the way is a refund.
+func TestCancelOnACapturedSessionConflicts(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
-	id := oturumAc(t, p, "key-1", nil)
+	id := openSession(t, p, "key-1", nil)
 	require.NoError(t, mustAuthorize(t, p, id))
 	require.NoError(t, p.Capture(ctx, id, 0))
 
 	err := p.Cancel(ctx, id)
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 }
 
-// TestBilinmeyenOturumNotFound idempotentliğin "her şeyi sessizce yut" demek
-// OLMADIĞINI doğrular.
+// TestUnknownSessionIsNotFound verifies that idempotency does NOT mean
+// "silently swallow everything".
 //
-// İki kez iptal edilen gerçek bir oturum ile hiç var olmamış bir kimlik farklı
-// durumlardır; ikincisi çağıran tarafta bir hatadır ve görünmelidir.
-func TestBilinmeyenOturumNotFound(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// A real session canceled twice and an identifier that never existed are
+// different situations; the second is a fault on the caller's side and has to
+// be visible.
+func TestUnknownSessionIsNotFound(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
 
-	assert.True(t, errors.HasKind(p.Cancel(ctx, "manses_YOK"), errors.KindNotFound))
-	assert.True(t, errors.HasKind(p.Capture(ctx, "manses_YOK", 0), errors.KindNotFound))
-	assert.True(t, errors.HasKind(p.Refund(ctx, "manses_YOK", 0), errors.KindNotFound))
-	_, err := p.Authorize(ctx, "manses_YOK")
+	assert.True(t, errors.HasKind(p.Cancel(ctx, "manses_MISSING"), errors.KindNotFound))
+	assert.True(t, errors.HasKind(p.Capture(ctx, "manses_MISSING", 0), errors.KindNotFound))
+	assert.True(t, errors.HasKind(p.Refund(ctx, "manses_MISSING", 0), errors.KindNotFound))
+	_, err := p.Authorize(ctx, "manses_MISSING")
 	assert.True(t, errors.HasKind(err, errors.KindNotFound))
 }
 
-// TestBosOturumKimligiInvalid boş kimliğin "bulunamadı" değil "geçersiz"
-// olduğunu doğrular; ikisi çağıran için farklı hatalardır.
-func TestBosOturumKimligiInvalid(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// TestEmptySessionIdentifierIsInvalid verifies that an empty identifier is
+// "invalid", not "not found"; the two are different errors for the caller.
+func TestEmptySessionIdentifierIsInvalid(t *testing.T) {
+	p, _ := newProvider(t)
 	ctx := context.Background()
 
 	assert.True(t, errors.HasKind(p.Cancel(ctx, "  "), errors.KindInvalid))
@@ -501,15 +511,16 @@ func TestBosOturumKimligiInvalid(t *testing.T) {
 	assert.True(t, errors.HasKind(err, errors.KindInvalid))
 }
 
-// TestSaglayiciKimligi kaydın ve akışların kullandığı kimliği doğrular.
-func TestSaglayiciKimligi(t *testing.T) {
-	p, _ := yeniSaglayici(t)
+// TestProviderIdentity verifies the identifier the registration and the flows
+// use.
+func TestProviderIdentity(t *testing.T) {
+	p, _ := newProvider(t)
 	assert.Equal(t, manual.ID, p.ID())
 	assert.Equal(t, "manual", p.ID())
 }
 
-// mustAuthorize oturumu yetkilendirir ve sonucun gerçekten "authorized"
-// olduğunu doğrular.
+// mustAuthorize authorizes the session and verifies that the result really is
+// "authorized".
 func mustAuthorize(t *testing.T, p *manual.Provider, sessionID string) error {
 	t.Helper()
 

@@ -1,16 +1,16 @@
 //go:build integration
 
-// Bu dosyadaki testler gerçek bir PostgreSQL örneği (dolayısıyla Docker)
-// gerektirir; `make test` hızlı kalsın diye `integration` etiketiyle
-// ayrılmıştır. Çalıştırmak için: make test-integration
+// The tests in this file need a real PostgreSQL instance (and therefore
+// Docker); they are kept apart under the `integration` tag so that `make test`
+// stays fast. To run them: make test-integration
 //
-// Birim testleri sahte bir depo ile servisin KARARLARINI kanıtlar. Buradaki
-// testler kararların dayandığı ZEMİNİ kanıtlar: migration'ın VERİ VARKEN geri
-// alınabildiğini, kısıtların gerçekten uygulandığını, sağlayıcının durumunun
-// süreç dışında yaşadığını ve eşzamanlılık iddiasının veritabanı düzeyinde
-// tuttuğunu. Özellikle "eşzamanlı iki Authorize tek yetkilendirme üretir"
-// iddiası yalnızca burada, gerçek goroutine'lerle gerçek satır kilitleri
-// üzerinde sınanabilir.
+// The unit tests prove the service's DECISIONS with a fake store. The tests
+// here prove the GROUND those decisions stand on: that the migration can be
+// rolled back WHILE DATA IS PRESENT, that the constraints are really enforced,
+// that the provider's state lives outside the process, and that the
+// concurrency claim holds at the database level. The claim "two concurrent
+// Authorize calls produce a single authorization" in particular can be tested
+// only here, with real goroutines on real row locks.
 package payment_test
 
 import (
@@ -54,25 +54,26 @@ import (
 
 const postgresImage = "postgres:16-alpine"
 
-// modulTablolari modülün sahip olduğu tablolardır; migration testleri bu
-// listeyi kullanır.
-var modulTablolari = []string{
+// moduleTables are the tables the module owns; the migration tests use this
+// list.
+var moduleTables = []string{
 	"payment_collections", "payment_sessions", "payments", "refunds",
 	"payment_manual_sessions",
-	// Mağaza kredisinin iki tablosu (ADR 0152): defter modülün, oturumlar
-	// sağlayıcının.
+	// Store credit's two tables (ADR 0152): the ledger is the module's, the
+	// sessions are the provider's.
 	"payment_store_credit_entries", "payment_store_credit_sessions",
-	// Sadakat puanı defteri (ADR 0164) ve puanı harcayan sağlayıcının kendi
-	// oturumları (ADR 0165): kredideki ayrımın aynısı, defter modülün, oturumlar
-	// sağlayıcının.
+	// The loyalty points ledger (ADR 0164) and the sessions of the provider that
+	// spends the points (ADR 0165): the same split as for credit, the ledger is
+	// the module's, the sessions are the provider's.
 	"payment_loyalty_entries", "payment_loyalty_sessions",
 	// The gift cards, their ledger and the gift-card provider's sessions
 	// (ADR 0208).
 	"payment_gift_cards", "payment_gift_card_entries", "payment_gift_card_sessions",
 }
 
-// Test verisinde kullanılan sabitler. Referans BAŞKA bir modüle (sepet ya da
-// sipariş) aittir; bu modül varlığını doğrulamaz (Prensip 2.2).
+// Constants used in the test data. The reference belongs to ANOTHER module (a
+// cart or an order); this module does not verify that it exists (Principle
+// 2.2).
 const (
 	testReference = "cart_TEST"
 	testCurrency  = "TRY"
@@ -80,9 +81,9 @@ const (
 )
 
 var (
-	// testPool tüm testlerin paylaştığı havuzdur.
+	// testPool is the pool all tests share.
 	testPool *db.Pool
-	// testDSN migration çağrıları için bağlantı adresidir.
+	// testDSN is the connection address for the migration calls.
 	testDSN string
 )
 
@@ -90,8 +91,8 @@ func TestMain(m *testing.M) {
 	os.Exit(runWithPostgres(m))
 }
 
-// runWithPostgres tek bir Postgres konteyneri kaldırıp tüm testleri onun
-// üzerinde çalıştırır. os.Exit defer'ları atladığı için ayrı fonksiyondadır.
+// runWithPostgres brings up a single Postgres container and runs every test on
+// it. It is a separate function because os.Exit skips the defers.
 func runWithPostgres(m *testing.M) int {
 	ctx := context.Background()
 
@@ -103,53 +104,53 @@ func runWithPostgres(m *testing.M) int {
 	)
 	defer func() {
 		if termErr := testcontainers.TerminateContainer(ctr); termErr != nil {
-			fmt.Fprintf(os.Stderr, "postgres konteyneri durdurulamadı: %v\n", termErr)
+			fmt.Fprintf(os.Stderr, "the postgres container could not be stopped: %v\n", termErr)
 		}
 	}()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "postgres konteyneri başlatılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the postgres container could not be started: %v\n", err)
 		return 1
 	}
 
 	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı adresi alınamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection address could not be obtained: %v\n", err)
 		return 1
 	}
 
 	cfg := db.DefaultConfig(testDSN)
-	// Eşzamanlılık testleri onlarca goroutine'i aynı anda koşturur; her işlem
-	// bir bağlantı tuttuğu için havuz varsayılandan geniş açılır.
+	// The concurrency tests run dozens of goroutines at once; because every
+	// transaction holds a connection, the pool is opened wider than the default.
 	cfg.MaxConns = 24
 	testPool, err = db.New(ctx, cfg, nil)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "bağlantı havuzu açılamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the connection pool could not be opened: %v\n", err)
 		return 1
 	}
 	defer testPool.Close()
 
 	if err := db.Migrate(ctx, testDSN, payment.New().Migrations(), payment.ModuleName); err != nil {
-		fmt.Fprintf(os.Stderr, "migration uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the migration could not be applied: %v\n", err)
 		return 1
 	}
 
-	// Outbox bir ÇEKİRDEK şeması ve modül ona kendi işleminin içinde yazıyor
-	// (ADR 0121), yani düzeneğin onu da uygulaması gerekiyor — bileşim kökünün
-	// çekirdek şemalarını modül şemalarından önce uygulaması gibi.
+	// The outbox is a CORE schema and the module writes to it inside its own
+	// transaction (ADR 0121), so the harness has to apply it too — the way the
+	// composition root applies the core schemas before the module schemas.
 	//
-	// Bu satır ödeme modülünün göçlerinin event_outbox'a DOKUNMAMASI gerektiği
-	// için var: tabloyu core/eventbus/outbox sahipleniyor ve iki sahip aynı
-	// tabloyu ayrı sürümlerden ilerletemez.
+	// This line exists because the payment module's migrations must NOT TOUCH
+	// event_outbox: core/eventbus/outbox owns the table, and two owners cannot
+	// advance the same table from separate versions.
 	if err := db.Migrate(ctx, testDSN, outbox.Migrations(), outbox.MigrationOwner); err != nil {
-		fmt.Fprintf(os.Stderr, "outbox migration'ı uygulanamadı: %v\n", err)
+		fmt.Fprintf(os.Stderr, "the outbox migration could not be applied: %v\n", err)
 		return 1
 	}
 
 	return m.Run()
 }
 
-// newService gerçek depo ve GERÇEK manuel sağlayıcı üzerinde çalışan bir
-// servis kurar.
+// newService sets up a service running on the real repository and the REAL
+// manual provider.
 func newService(t *testing.T) (*service.Service, *manual.Provider) {
 	t.Helper()
 
@@ -163,15 +164,15 @@ func newService(t *testing.T) (*service.Service, *manual.Provider) {
 	return svc, prov
 }
 
-// sayanSaglayici gerçek sağlayıcıyı sarar ve ÇAĞRI SAYAR.
+// countingProvider wraps the real provider and COUNTS THE CALLS.
 //
-// "Tek yetkilendirme üretilir" iddiası ancak böyle KESİN olarak sınanabilir:
-// manuel sağlayıcı kendi içinde idempotent olduğu için, ikinci bir çağrının
-// yaptığı işi para tutarına bakarak ayırt etmek mümkün değildir — iki çağrı da
-// aynı sonucu yazar. Ölçülmesi gereken şey tutar değil, sağlayıcıya KAÇ KEZ
-// GİDİLDİĞİDİR: satır kilidi olmadan birden çok goroutine oturumu "pending"
-// görür ve hepsi sağlayıcıya gider.
-type sayanSaglayici struct {
+// The claim "a single authorization is produced" can be tested DEFINITELY only
+// this way: because the manual provider is idempotent within itself, the work a
+// second call did cannot be told apart by looking at the money amount — both
+// calls write the same result. What has to be measured is not the amount but
+// HOW MANY TIMES THE PROVIDER WAS CALLED: without the row lock, several
+// goroutines see the session as "pending" and all of them go to the provider.
+type countingProvider struct {
 	inner *manual.Provider
 
 	mu        sync.Mutex
@@ -180,72 +181,72 @@ type sayanSaglayici struct {
 	cancel    int
 }
 
-// Dekoratörün çekirdek sözleşmesini karşıladığı derleme zamanında doğrulanır.
-var _ coreprovider.PaymentProvider = (*sayanSaglayici)(nil)
+// That the decorator satisfies the core contract is verified at compile time.
+var _ coreprovider.PaymentProvider = (*countingProvider)(nil)
 
-// ID sarılan sağlayıcının kimliğini döner; oturumlar aynı adla açılır.
-func (s *sayanSaglayici) ID() string { return s.inner.ID() }
+// ID returns the wrapped provider's id; sessions are opened under the same name.
+func (s *countingProvider) ID() string { return s.inner.ID() }
 
-// CreateSession çağrıyı olduğu gibi iletir.
-func (s *sayanSaglayici) CreateSession(
+// CreateSession forwards the call as it is.
+func (s *countingProvider) CreateSession(
 	ctx context.Context,
 	in coreprovider.CreateSessionInput,
 ) (coreprovider.Session, error) {
 	return s.inner.CreateSession(ctx, in)
 }
 
-// Authorize çağrıyı sayar ve iletir.
-func (s *sayanSaglayici) Authorize(ctx context.Context, sessionID string) (coreprovider.AuthResult, error) {
+// Authorize counts the call and forwards it.
+func (s *countingProvider) Authorize(ctx context.Context, sessionID string) (coreprovider.AuthResult, error) {
 	s.mu.Lock()
 	s.authorize++
 	s.mu.Unlock()
 	return s.inner.Authorize(ctx, sessionID)
 }
 
-// Capture çağrıyı sayar ve iletir.
-func (s *sayanSaglayici) Capture(ctx context.Context, sessionID string, amount int64) error {
+// Capture counts the call and forwards it.
+func (s *countingProvider) Capture(ctx context.Context, sessionID string, amount int64) error {
 	s.mu.Lock()
 	s.capture++
 	s.mu.Unlock()
 	return s.inner.Capture(ctx, sessionID, amount)
 }
 
-// Refund çağrıyı olduğu gibi iletir.
-func (s *sayanSaglayici) Refund(ctx context.Context, sessionID string, amount int64) error {
+// Refund forwards the call as it is.
+func (s *countingProvider) Refund(ctx context.Context, sessionID string, amount int64) error {
 	return s.inner.Refund(ctx, sessionID, amount)
 }
 
-// Cancel çağrıyı sayar ve iletir.
-func (s *sayanSaglayici) Cancel(ctx context.Context, sessionID string) error {
+// Cancel counts the call and forwards it.
+func (s *countingProvider) Cancel(ctx context.Context, sessionID string) error {
 	s.mu.Lock()
 	s.cancel++
 	s.mu.Unlock()
 	return s.inner.Cancel(ctx, sessionID)
 }
 
-// sayimlar sağlayıcıya yapılan çağrı sayılarını döner.
-func (s *sayanSaglayici) sayimlar() (authorize, capture, cancel int) {
+// callCounts returns the numbers of calls made to the provider.
+func (s *countingProvider) callCounts() (authorize, capture, cancel int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.authorize, s.capture, s.cancel
 }
 
-// yeniSayanServis çağrıları sayan bir sağlayıcı üzerinde servis kurar.
-func yeniSayanServis(t *testing.T) (*service.Service, *sayanSaglayici) {
+// newCountingService sets up a service on a provider that counts the calls.
+func newCountingService(t *testing.T) (*service.Service, *countingProvider) {
 	t.Helper()
 
 	repo := repository.New(testPool.Pool())
-	sayan := &sayanSaglayici{inner: manual.New(repo, nil)}
+	counting := &countingProvider{inner: manual.New(repo, nil)}
 	registry := service.NewProviderRegistry()
-	require.NoError(t, registry.Register(sayan))
+	require.NoError(t, registry.Register(counting))
 
 	svc, err := service.New(service.Options{Store: repo, Providers: registry, Events: eventbus.NewInMemory(nil)})
 	require.NoError(t, err)
-	return svc, sayan
+	return svc, counting
 }
 
-// yeniKoleksiyon test için bir ödeme koleksiyonu açar.
-func yeniKoleksiyon(ctx context.Context, t *testing.T, svc *service.Service) models.PaymentCollection {
+// newCollection opens a payment collection for a test.
+func newCollection(ctx context.Context, t *testing.T, svc *service.Service) models.PaymentCollection {
 	t.Helper()
 
 	col, err := svc.CreatePaymentCollection(ctx, service.CreateCollectionInput{
@@ -305,15 +306,15 @@ func tableExistsIn(ctx context.Context, t *testing.T, pool *db.Pool, table strin
 	return exists
 }
 
-// TestMigrationVeriVarkenGeriAlinabilir migration'ın DOLU bir şemada
-// uygulanıp geri alınabildiğini doğrular.
+// TestTheMigrationRollsBackWithDataPresent verifies that the migration can be
+// applied and rolled back on a POPULATED schema.
 //
-// internal/arch'taki kapı yalnızca BOŞ bir veritabanında up -> down -> up
-// koşar ve veriye bağlı geri alma hatalarını yakalayamaz — Faz 5'te tam o
-// açıktan bir hata geçmişti. Buradaki test önce koleksiyon, oturum, tahsilat,
-// iade ve sağlayıcı oturumundan oluşan TAM grafiği yazar; foreign key sırasını
-// yanlış kuran bir down dosyası ancak böyle düşer.
-func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
+// The gate in internal/arch runs up -> down -> up only on an EMPTY database
+// and cannot catch rollback errors that depend on data — in Phase 5 a bug got
+// through exactly that gap. The test here first writes the FULL graph of
+// collection, session, capture, refund and provider session; a down file that
+// gets the foreign key order wrong fails only this way.
+func TestTheMigrationRollsBackWithDataPresent(t *testing.T) {
 	ctx := context.Background()
 	src := payment.New().Migrations()
 	// The test drops and re-creates the module's schema, so it runs in a
@@ -323,12 +324,12 @@ func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
 	// points, which file order happened to arrange.
 	dsn, pool := isolatedDatabase(ctx, t, "payment_migration")
 	svc := serviceOnPool(t, pool)
-	tabloVar := func(ctx context.Context, t *testing.T, table string) bool {
+	tableExists := func(ctx context.Context, t *testing.T, table string) bool {
 		t.Helper()
 		return tableExistsIn(ctx, t, pool, table)
 	}
 
-	col := yeniKoleksiyon(ctx, t, svc)
+	col := newCollection(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "migration-key",
 	})
@@ -337,44 +338,46 @@ func TestMigrationVeriVarkenGeriAlinabilir(t *testing.T) {
 	require.NoError(t, err)
 	pay, err := svc.CapturePayment(ctx, ses.ID, 0)
 	require.NoError(t, err)
-	_, err = svc.RefundPayment(ctx, pay.ID, 1_000, "migration testi")
+	_, err = svc.RefundPayment(ctx, pay.ID, 1_000, "migration test")
 	require.NoError(t, err)
 
-	for _, table := range modulTablolari {
-		require.True(t, tabloVar(ctx, t, table), "%s başlangıçta var olmalı", table)
+	for _, table := range moduleTables {
+		require.True(t, tableExists(ctx, t, table), "%s should exist at the start", table)
 	}
 
 	require.NoError(t, db.MigrateDown(ctx, dsn, src, payment.ModuleName, 0),
-		"down başarısız — bu, modülün bir daha migrate EDİLEMEMESİ demektir")
-	for _, table := range modulTablolari {
-		assert.False(t, tabloVar(ctx, t, table), "%s geri alma sonrası kalmamalı", table)
+		"down failed — this means the module can NEVER BE MIGRATED again")
+	for _, table := range moduleTables {
+		assert.False(t, tableExists(ctx, t, table), "%s should not remain after the rollback", table)
 	}
 
 	require.NoError(t, db.Migrate(ctx, dsn, src, payment.ModuleName))
-	for _, table := range modulTablolari {
-		assert.True(t, tabloVar(ctx, t, table), "%s yeniden uygulanmalı", table)
+	for _, table := range moduleTables {
+		assert.True(t, tableExists(ctx, t, table), "%s should be applied again", table)
 	}
 
 	version, dirty, err := db.Version(ctx, dsn, payment.ModuleName)
 	require.NoError(t, err)
-	assert.False(t, dirty, "yarıda kalmış migration olmamalı")
-	assert.Equal(t, enYuksekSurum(t, src), version,
-		"yeniden uygulama TÜM migration'ları koşturmalı, en son olanı değil")
+	assert.False(t, dirty, "there should be no half-finished migration")
+	assert.Equal(t, highestVersion(t, src), version,
+		"re-applying should run ALL migrations, not just the latest one")
 }
 
-// enYuksekSurum gömülü migration kümesindeki en büyük sürüm numarasını döner.
+// highestVersion returns the largest version number in the embedded migration
+// set.
 //
-// Sayı SABİT YAZILMAZ: sabit yazıldığında test, modüle her migration
-// eklendiğinde kırılır ve kıran şey bir hata değil, testin kendi eskimiş
-// beklentisidir. Kümeden okununca sınanan şey de doğrusu oluyor — "geri
-// alındıktan sonra HEPSİ yeniden uygulandı" — yalnızca "sayı bir".
-func enYuksekSurum(t *testing.T, src fs.FS) uint {
+// The number is NOT HARD-CODED: hard-coded, the test breaks every time a
+// migration is added to the module, and what breaks it is not a bug but the
+// test's own outdated expectation. Read from the set, what is tested becomes
+// the right thing too — "after the rollback ALL of them were applied again" —
+// rather than just "the number is one".
+func highestVersion(t *testing.T, src fs.FS) uint {
 	t.Helper()
 
 	entries, err := fs.ReadDir(src, ".")
 	require.NoError(t, err)
 
-	var en uint
+	var highest uint
 	for _, entry := range entries {
 		name := entry.Name()
 		if !strings.HasSuffix(name, ".up.sql") {
@@ -383,24 +386,23 @@ func enYuksekSurum(t *testing.T, src fs.FS) uint {
 
 		digits := name[:strings.IndexByte(name, '_')]
 		n, convErr := strconv.ParseUint(digits, 10, 32)
-		require.NoError(t, convErr, "%s bir sürüm numarasıyla başlamıyor", name)
+		require.NoError(t, convErr, "%s does not start with a version number", name)
 
-		if uint(n) > en {
-			en = uint(n)
+		if uint(n) > highest {
+			highest = uint(n)
 		}
 	}
 
-	require.Positive(t, en, "gömülü migration kümesi boş görünüyor")
-	return en
+	require.Positive(t, highest, "the embedded migration set looks empty")
+	return highest
 }
 
-// TestCrossModuleForeignKeyYok modülün tablolarındaki TÜM foreign key'lerin
-// yine modülün kendi tablolarına gittiğini doğrular (Prensip 2.2).
+// TestNoCrossModuleForeignKeys verifies that ALL foreign keys on the module's
+// tables lead to the module's own tables again (Principle 2.2).
 //
-// Özellikle payment_collections.reference bir sepet ya da sipariş kimliğidir
-// ve foreign key OLAMAZ; bu test o kuralın şemada gerçekten tutulduğunu
-// gösterir.
-func TestCrossModuleForeignKeyYok(t *testing.T) {
+// payment_collections.reference in particular is a cart or order id and CANNOT
+// be a foreign key; this test shows that the rule really holds in the schema.
+func TestNoCrossModuleForeignKeys(t *testing.T) {
 	ctx := context.Background()
 
 	rows, err := testPool.Pool().Query(ctx,
@@ -408,36 +410,37 @@ func TestCrossModuleForeignKeyYok(t *testing.T) {
          FROM pg_constraint c
          JOIN pg_class src ON src.oid = c.conrelid
          JOIN pg_class tgt ON tgt.oid = c.confrelid
-         WHERE c.contype = 'f' AND src.relname = ANY($1)`, modulTablolari)
+         WHERE c.contype = 'f' AND src.relname = ANY($1)`, moduleTables)
 	require.NoError(t, err)
 	defer rows.Close()
 
-	sahipli := make(map[string]struct{}, len(modulTablolari))
-	for _, table := range modulTablolari {
-		sahipli[table] = struct{}{}
+	owned := make(map[string]struct{}, len(moduleTables))
+	for _, table := range moduleTables {
+		owned[table] = struct{}{}
 	}
 
-	var sayi int
+	var count int
 	for rows.Next() {
 		var name, src, tgt string
 		require.NoError(t, rows.Scan(&name, &src, &tgt))
-		assert.Contains(t, sahipli, tgt,
-			"%s kısıtı modül dışına referans veriyor (%s -> %s)", name, src, tgt)
-		sayi++
+		assert.Contains(t, owned, tgt,
+			"the %s constraint references outside the module (%s -> %s)", name, src, tgt)
+		count++
 	}
 	require.NoError(t, rows.Err())
-	assert.Positive(t, sayi, "modül içi foreign key'ler kullanılmalı")
+	assert.Positive(t, count, "in-module foreign keys should be in use")
 }
 
-// TestUctanUcaOdemeAkisi Faz 6'nın istediği tam akışı GERÇEK sağlayıcıyla
-// yürütür: CreateSession -> Authorize -> Capture -> Refund.
+// TestTheEndToEndPaymentFlow runs the full flow Phase 6 asks for with the REAL
+// provider: CreateSession -> Authorize -> Capture -> Refund.
 //
-// Her adımda hem modülün kaydı hem SAĞLAYICININ defteri denetlenir; ikisinin
-// ayrıştığı bir hata ancak iki tarafa birden bakılarak görülür.
-func TestUctanUcaOdemeAkisi(t *testing.T) {
+// At every step both the module's record and the PROVIDER's ledger are
+// checked; a bug in which the two diverge is visible only by looking at both
+// sides at once.
+func TestTheEndToEndPaymentFlow(t *testing.T) {
 	ctx := context.Background()
 	svc, prov := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	col := newCollection(ctx, t, svc)
 
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "e2e-" + col.ID,
@@ -445,72 +448,72 @@ func TestUctanUcaOdemeAkisi(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.SessionPending, ses.Status)
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionAwaiting, guncelKol.Status)
+	assert.Equal(t, models.CollectionAwaiting, freshCol.Status)
 
 	authorized, err := svc.AuthorizePayment(ctx, ses.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.SessionAuthorized, authorized.Status)
 	assert.Equal(t, testAmount, authorized.AuthorizedAmount)
 
-	saglayiciOturum, err := prov.GetSession(ctx, ses.ExternalID)
+	providerSession, err := prov.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionAuthorized, saglayiciOturum.Status,
-		"sağlayıcının defteri de yetkilendirilmiş olmalı")
+	assert.Equal(t, models.SessionAuthorized, providerSession.Status,
+		"the provider's ledger should show the session authorized too")
 
-	guncelKol, err = svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err = svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionAuthorized, guncelKol.Status)
-	assert.Equal(t, testAmount, guncelKol.AuthorizedAmount)
+	assert.Equal(t, models.CollectionAuthorized, freshCol.Status)
+	assert.Equal(t, testAmount, freshCol.AuthorizedAmount)
 
 	pay, err := svc.CapturePayment(ctx, ses.ID, 0)
 	require.NoError(t, err)
 	assert.Equal(t, testAmount, pay.Amount)
 	assert.Equal(t, testCurrency, pay.CurrencyCode)
 
-	saglayiciOturum, err = prov.GetSession(ctx, ses.ExternalID)
+	providerSession, err = prov.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err)
-	assert.Equal(t, testAmount, saglayiciOturum.CapturedAmount)
+	assert.Equal(t, testAmount, providerSession.CapturedAmount)
 
-	guncelKol, err = svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err = svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionCaptured, guncelKol.Status)
+	assert.Equal(t, models.CollectionCaptured, freshCol.Status)
 
-	refund, err := svc.RefundPayment(ctx, pay.ID, testAmount/2, "kısmi iade")
+	refund, err := svc.RefundPayment(ctx, pay.ID, testAmount/2, "partial refund")
 	require.NoError(t, err)
 	assert.Equal(t, testAmount/2, refund.Amount)
 
-	guncelKol, err = svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err = svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionPartiallyRefunded, guncelKol.Status)
+	assert.Equal(t, models.CollectionPartiallyRefunded, freshCol.Status)
 
-	_, err = svc.RefundPayment(ctx, pay.ID, 0, "kalan iade")
+	_, err = svc.RefundPayment(ctx, pay.ID, 0, "remaining refund")
 	require.NoError(t, err)
 
-	guncelKol, err = svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err = svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionRefunded, guncelKol.Status)
-	assert.Equal(t, testAmount, guncelKol.RefundedAmount)
+	assert.Equal(t, models.CollectionRefunded, freshCol.Status)
+	assert.Equal(t, testAmount, freshCol.RefundedAmount)
 
-	saglayiciOturum, err = prov.GetSession(ctx, ses.ExternalID)
+	providerSession, err = prov.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err)
-	assert.Equal(t, testAmount, saglayiciOturum.RefundedAmount,
-		"iade sağlayıcının defterine de yansımalı")
+	assert.Equal(t, testAmount, providerSession.RefundedAmount,
+		"the refund should be reflected in the provider's ledger too")
 }
 
-// TestEszamanliIkiAuthorizeTekYetkilendirmeUretir eşzamanlılık iddiasını
-// gerçek satır kilitleri üzerinde sınar.
+// TestTwoConcurrentAuthorizesProduceOneAuthorization tests the concurrency claim
+// on real row locks.
 //
-// İki goroutine aynı oturumu aynı anda yetkilendirmeye çalışır. Koleksiyon
-// satırının kilidi ikisini seri hâle getirir; ikinci çağrı birincinin yazdığı
-// durumu görür ve no-op'a düşer. Kilit alınmasaydı ikisi de "pending" okur,
-// ikisi de sağlayıcıya gider ve koleksiyonun bloke tutarı İKİ KAT olurdu —
-// aşağıdaki tutar iddiası tam olarak bunu yakalar.
-func TestEszamanliIkiAuthorizeTekYetkilendirmeUretir(t *testing.T) {
+// Two goroutines try to authorize the same session at the same time. The lock
+// on the collection row serializes them; the second call sees the state the
+// first one wrote and falls through to a no-op. Without the lock both would
+// read "pending", both would go to the provider and the collection's held
+// amount would be DOUBLE — the amount assertion below catches exactly that.
+func TestTwoConcurrentAuthorizesProduceOneAuthorization(t *testing.T) {
 	ctx := context.Background()
-	svc, sayan := yeniSayanServis(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	svc, counting := newCountingService(t)
+	col := newCollection(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "concurrent-auth-" + col.ID,
 	})
@@ -518,10 +521,10 @@ func TestEszamanliIkiAuthorizeTekYetkilendirmeUretir(t *testing.T) {
 
 	const goroutines = 8
 	var (
-		wg       sync.WaitGroup
-		mu       sync.Mutex
-		hatalar  []error
-		basarili int
+		wg        sync.WaitGroup
+		mu        sync.Mutex
+		errs      []error
+		succeeded int
 	)
 	wg.Add(goroutines)
 	for range goroutines {
@@ -532,84 +535,86 @@ func TestEszamanliIkiAuthorizeTekYetkilendirmeUretir(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			if authErr != nil {
-				hatalar = append(hatalar, authErr)
+				errs = append(errs, authErr)
 				return
 			}
-			basarili++
+			succeeded++
 		}()
 	}
 	wg.Wait()
 
-	assert.Empty(t, hatalar, "tüm çağrılar başarılı olmalı (biri yetkilendirir, kalanı no-op)")
-	assert.Equal(t, goroutines, basarili)
+	assert.Empty(t, errs, "every call should succeed (one authorizes, the rest are no-ops)")
+	assert.Equal(t, goroutines, succeeded)
 
-	authorizeCagrilari, _, _ := sayan.sayimlar()
-	assert.Equal(t, 1, authorizeCagrilari,
-		"SAĞLAYICIYA yalnızca bir kez gidilmeli; kalan çağrılar no-op'a düşmeli")
+	authorizeCalls, _, _ := counting.callCounts()
+	assert.Equal(t, 1, authorizeCalls,
+		"the PROVIDER should be called only once; the remaining calls should fall through to a no-op")
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, testAmount, guncelKol.AuthorizedAmount,
-		"bloke tutar TEK yetkilendirme kadar olmalı, katları değil")
-	assert.Equal(t, models.CollectionAuthorized, guncelKol.Status)
+	assert.Equal(t, testAmount, freshCol.AuthorizedAmount,
+		"the held amount should equal ONE authorization, not a multiple of it")
+	assert.Equal(t, models.CollectionAuthorized, freshCol.Status)
 }
 
-// TestEszamanliIkiCreateSessionTekOturumUretir idempotency anahtarının
-// eşzamanlı çağrılar altında da tuttuğunu doğrular.
+// TestTwoConcurrentCreateSessionsProduceOneSession verifies that the idempotency
+// key holds under concurrent calls too.
 //
-// "Önce oku, yoksa yaz" iki adımı arasına giren bir çağrı, koleksiyon kilidi
-// olmasaydı ikinci bir oturum açardı; benzersiz indeks son savunmadır ama
-// önce kilidin çalıştığı burada görülür.
-func TestEszamanliIkiCreateSessionTekOturumUretir(t *testing.T) {
+// A call that slipped in between the two steps of "read first, write if
+// absent" would open a second session if the collection lock were not there;
+// the unique index is the last line of defense, but it is here that the lock
+// is first seen working.
+func TestTwoConcurrentCreateSessionsProduceOneSession(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
-	anahtar := "concurrent-create-" + col.ID
+	col := newCollection(ctx, t, svc)
+	key := "concurrent-create-" + col.ID
 
 	const goroutines = 8
 	var (
-		wg        sync.WaitGroup
-		mu        sync.Mutex
-		kimlikler = map[string]int{}
-		hatalar   []error
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		ids  = map[string]int{}
+		errs []error
 	)
 	wg.Add(goroutines)
 	for range goroutines {
 		go func() {
 			defer wg.Done()
 			ses, createErr := svc.CreateSession(ctx, col.ID, manual.ID,
-				service.CreateSessionInput{IdempotencyKey: anahtar})
+				service.CreateSessionInput{IdempotencyKey: key})
 
 			mu.Lock()
 			defer mu.Unlock()
 			if createErr != nil {
-				hatalar = append(hatalar, createErr)
+				errs = append(errs, createErr)
 				return
 			}
-			kimlikler[ses.ID]++
+			ids[ses.ID]++
 		}()
 	}
 	wg.Wait()
 
-	assert.Empty(t, hatalar, "aynı anahtarla eşzamanlı çağrılar hata vermemeli")
-	assert.Len(t, kimlikler, 1, "tüm çağrılar AYNI oturumu dönmeli")
+	assert.Empty(t, errs, "concurrent calls with the same key should not return an error")
+	assert.Len(t, ids, 1, "every call should return the SAME session")
 
-	oturumlar, err := svc.ListPaymentSessions(ctx, col.ID)
+	sessions, err := svc.ListPaymentSessions(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Len(t, oturumlar, 1, "veritabanında tek oturum satırı olmalı")
+	assert.Len(t, sessions, 1, "the database should hold a single session row")
 }
 
-// TestCancelIdempotencyGercekVeritabaninda saga telafisinin gerçek satırlar
-// üzerinde de idempotent olduğunu doğrular.
+// TestCancelIdempotencyOnTheRealDatabase verifies that the saga compensation
+// is idempotent on real rows too.
 //
-// İkinci çağrının hata vermemesi yetmez: koleksiyonun bloke tutarına İKİNCİ
-// KEZ dokunulmadığı da kanıtlanır. Dokunulsaydı tutar negatife düşer ve
-// CHECK kısıtı işlemi patlatırdı — yani sessiz bir hata değil, üretimde
-// telafiyi tamamen kilitleyen bir hata olurdu.
-func TestCancelIdempotencyGercekVeritabaninda(t *testing.T) {
+// That the second call returns no error is not enough: it is also proven that
+// the collection's held amount is not touched a SECOND TIME. Had it been
+// touched, the amount would drop below zero and the CHECK constraint would blow
+// up the transaction — that is, it would not be a silent bug but one that
+// locks the compensation up completely in production.
+func TestCancelIdempotencyOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc, prov := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	col := newCollection(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "cancel-" + col.ID,
 	})
@@ -618,30 +623,30 @@ func TestCancelIdempotencyGercekVeritabaninda(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, svc.CancelPayment(ctx, ses.ID))
-	require.NoError(t, svc.CancelPayment(ctx, ses.ID), "ikinci telafi hata VERMEMELİ")
-	require.NoError(t, svc.CancelPayment(ctx, ses.ID), "üçüncü telafi de hata vermemeli")
+	require.NoError(t, svc.CancelPayment(ctx, ses.ID), "the second compensation should NOT return an error")
+	require.NoError(t, svc.CancelPayment(ctx, ses.ID), "the third compensation should not return an error either")
 
-	guncelOturum, err := svc.GetPaymentSession(ctx, ses.ID)
+	freshSession, err := svc.GetPaymentSession(ctx, ses.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionCanceled, guncelOturum.Status)
+	assert.Equal(t, models.SessionCanceled, freshSession.Status)
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Zero(t, guncelKol.AuthorizedAmount)
-	assert.Equal(t, models.CollectionCanceled, guncelKol.Status)
+	assert.Zero(t, freshCol.AuthorizedAmount)
+	assert.Equal(t, models.CollectionCanceled, freshCol.Status)
 
-	saglayiciOturum, err := prov.GetSession(ctx, ses.ExternalID)
+	providerSession, err := prov.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionCanceled, saglayiciOturum.Status)
-	assert.Zero(t, saglayiciOturum.AuthorizedAmount)
+	assert.Equal(t, models.SessionCanceled, providerSession.Status)
+	assert.Zero(t, providerSession.AuthorizedAmount)
 }
 
-// TestEszamanliIkiCancelTekTelafiUretir telafinin yarış altında da tek kez
-// uygulandığını doğrular.
-func TestEszamanliIkiCancelTekTelafiUretir(t *testing.T) {
+// TestTwoConcurrentCancelsProduceOneCompensation verifies that the compensation is
+// applied only once under a race too.
+func TestTwoConcurrentCancelsProduceOneCompensation(t *testing.T) {
 	ctx := context.Background()
-	svc, sayan := yeniSayanServis(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	svc, counting := newCountingService(t)
+	col := newCollection(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "concurrent-cancel-" + col.ID,
 	})
@@ -651,9 +656,9 @@ func TestEszamanliIkiCancelTekTelafiUretir(t *testing.T) {
 
 	const goroutines = 8
 	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		hatalar []error
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
 	)
 	wg.Add(goroutines)
 	for range goroutines {
@@ -661,77 +666,78 @@ func TestEszamanliIkiCancelTekTelafiUretir(t *testing.T) {
 			defer wg.Done()
 			if cancelErr := svc.CancelPayment(ctx, ses.ID); cancelErr != nil {
 				mu.Lock()
-				hatalar = append(hatalar, cancelErr)
+				errs = append(errs, cancelErr)
 				mu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
 
-	assert.Empty(t, hatalar, "eşzamanlı telafiler hata vermemeli")
+	assert.Empty(t, errs, "concurrent compensations should not return an error")
 
-	_, _, cancelCagrilari := sayan.sayimlar()
-	assert.Equal(t, 1, cancelCagrilari, "SAĞLAYICIYA yalnızca bir kez gidilmeli")
+	_, _, cancelCalls := counting.callCounts()
+	assert.Equal(t, 1, cancelCalls, "the PROVIDER should be called only once")
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Zero(t, guncelKol.AuthorizedAmount, "blokaj yalnızca BİR KEZ geri alınmalı")
+	assert.Zero(t, freshCol.AuthorizedAmount, "the hold should be released only ONCE")
 }
 
-// TestRedliAkisTelafiyeAcik saga'nın ödeme adımı patladığında telafinin
-// çalıştığını uçtan uca doğrular.
+// TestADeclinedFlowIsOpenToCompensation verifies end to end that the compensation runs
+// when the saga's payment step blows up.
 //
-// Faz 6'nın DoD'si bunu şart koşar. Ret, oturumun Data alanına yazılan
-// davranış anahtarıyla ENJEKTE edilir ve anahtar oturumla birlikte
-// saklandığı için yetkilendirme AYRI bir istekte de aynı biçimde davranır.
-func TestRedliAkisTelafiyeAcik(t *testing.T) {
+// Phase 6's DoD requires this. The decline is INJECTED with the behavior key
+// written into the session's Data field, and because the key is stored with
+// the session, the authorization behaves the same way in a SEPARATE request
+// too.
+func TestADeclinedFlowIsOpenToCompensation(t *testing.T) {
 	ctx := context.Background()
 	svc, prov := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	col := newCollection(ctx, t, svc)
 
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "declined-" + col.ID,
 		Data: map[string]any{
 			manual.DataKeyOutcome:       manual.OutcomeDecline,
-			manual.DataKeyDeclineReason: "test reddi",
+			manual.DataKeyDeclineReason: "test decline",
 		},
 	})
 	require.NoError(t, err)
 
 	_, err = svc.AuthorizePayment(ctx, ses.ID)
-	require.Error(t, err, "ödeme adımı PATLAMALI ki saga telafiye geçsin")
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	require.Error(t, err, "the payment step MUST blow up so that the saga moves on to compensation")
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 	assert.Equal(t, service.CodeAuthorizationDeclined, errors.CodeOf(err))
 
-	reddedilen, err := svc.GetPaymentSession(ctx, ses.ID)
+	declined, err := svc.GetPaymentSession(ctx, ses.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionFailed, reddedilen.Status, "ret KALICI yazılmalı")
-	assert.Equal(t, "test reddi", reddedilen.DeclineReason)
+	assert.Equal(t, models.SessionFailed, declined.Status, "the decline should be written PERMANENTLY")
+	assert.Equal(t, "test decline", declined.DeclineReason)
 
-	// Telafi: oturumu açan adımın geri alınması.
+	// Compensation: undoing the step that opened the session.
 	require.NoError(t, svc.CancelPayment(ctx, ses.ID))
-	require.NoError(t, svc.CancelPayment(ctx, ses.ID), "telafi tekrar çalıştırılabilmeli")
+	require.NoError(t, svc.CancelPayment(ctx, ses.ID), "the compensation should be runnable again")
 
-	kapanan, err := svc.GetPaymentSession(ctx, ses.ID)
+	closed, err := svc.GetPaymentSession(ctx, ses.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionCanceled, kapanan.Status)
-	assert.Equal(t, "test reddi", kapanan.DeclineReason, "ret sebebi korunmalı")
+	assert.Equal(t, models.SessionCanceled, closed.Status)
+	assert.Equal(t, "test decline", closed.DeclineReason, "the decline reason should be kept")
 
-	saglayiciOturum, err := prov.GetSession(ctx, ses.ExternalID)
+	providerSession, err := prov.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionCanceled, saglayiciOturum.Status)
+	assert.Equal(t, models.SessionCanceled, providerSession.Status)
 }
 
-// TestSaglayiciHatasiEnjeksiyonuIslemiGeriAlir sağlayıcıya ulaşılamadığında
-// hiçbir şeyin yazılmadığını doğrular.
+// TestAnInjectedProviderErrorRollsTheOperationBack verifies that nothing is written
+// when the provider cannot be reached.
 //
-// Ret ile hata arasındaki fark burada görünür: hata YENİDEN DENENEBİLİR olmak
-// zorundadır, bu yüzden oturum "pending" kalmalı ve aynı istek tekrar
-// edilebilmelidir.
-func TestSaglayiciHatasiEnjeksiyonuIslemiGeriAlir(t *testing.T) {
+// The difference between a decline and an error shows here: an error has to be
+// RETRYABLE, so the session must stay "pending" and the same request must be
+// repeatable.
+func TestAnInjectedProviderErrorRollsTheOperationBack(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	col := newCollection(ctx, t, svc)
 
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "provider-error-" + col.ID,
@@ -741,126 +747,128 @@ func TestSaglayiciHatasiEnjeksiyonuIslemiGeriAlir(t *testing.T) {
 
 	_, err = svc.AuthorizePayment(ctx, ses.ID)
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindUnavailable), "error: %v", err)
 
-	guncelOturum, err := svc.GetPaymentSession(ctx, ses.ID)
+	freshSession, err := svc.GetPaymentSession(ctx, ses.ID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionPending, guncelOturum.Status, "durum değişmemeli")
+	assert.Equal(t, models.SessionPending, freshSession.Status, "the status should not change")
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Zero(t, guncelKol.AuthorizedAmount)
-	assert.Equal(t, models.CollectionAwaiting, guncelKol.Status)
+	assert.Zero(t, freshCol.AuthorizedAmount)
+	assert.Equal(t, models.CollectionAwaiting, freshCol.Status)
 }
 
-// TestSaglayiciDurumuSurecDisindaYasar manuel sağlayıcının durumunun BELLEKTE
-// DEĞİL veritabanında tutulduğunu doğrular.
+// TestTheProviderStateLivesOutsideTheProcess verifies that the manual provider's
+// state is kept in the database, NOT IN MEMORY.
 //
-// Yeni bir sağlayıcı örneği kurmak, sürecin yeniden başlamasının taklididir:
-// bellekte tutulan bir defter bu noktada sıfırlanmış olurdu ve oturum
-// "bulunamadı" derdi. e2e akışları ve Faz 9 yük testi süreç yeniden
-// başladığında açılmış bir oturumu bulabilmelidir; saga telafisi de tam o
-// senaryoda çalışmak zorundadır.
-func TestSaglayiciDurumuSurecDisindaYasar(t *testing.T) {
+// Setting up a new provider instance imitates the process restarting: a ledger
+// kept in memory would have been reset at this point and the session would say
+// "not found". The e2e flows and the Phase 9 load test must be able to find a
+// session that was opened before the process restarted; the saga compensation
+// has to work in exactly that scenario too.
+func TestTheProviderStateLivesOutsideTheProcess(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	col := newCollection(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "restart-" + col.ID,
 	})
 	require.NoError(t, err)
 
-	// "Süreç yeniden başladı": tamamen YENİ bir sağlayıcı ve servis örneği.
-	yenidenSvc, yenidenProv := newService(t)
+	// "The process restarted": a completely NEW provider and service instance.
+	restartedSvc, restartedProv := newService(t)
 
-	saglayiciOturum, err := yenidenProv.GetSession(ctx, ses.ExternalID)
-	require.NoError(t, err, "sağlayıcı oturumu yeniden başlatmadan sonra da bulunmalı")
-	assert.Equal(t, models.SessionPending, saglayiciOturum.Status)
+	providerSession, err := restartedProv.GetSession(ctx, ses.ExternalID)
+	require.NoError(t, err, "the provider session should still be found after the restart")
+	assert.Equal(t, models.SessionPending, providerSession.Status)
 
-	authorized, err := yenidenSvc.AuthorizePayment(ctx, ses.ID)
-	require.NoError(t, err, "yeniden başlatma sonrası yetkilendirme çalışmalı")
+	authorized, err := restartedSvc.AuthorizePayment(ctx, ses.ID)
+	require.NoError(t, err, "authorization should work after the restart")
 	assert.Equal(t, models.SessionAuthorized, authorized.Status)
 
-	require.NoError(t, yenidenSvc.CancelPayment(ctx, ses.ID),
-		"telafi yeniden başlatma sonrası da çalışmalı")
+	require.NoError(t, restartedSvc.CancelPayment(ctx, ses.ID),
+		"the compensation should work after the restart too")
 }
 
-// TestAyniAnahtarSaglayiciDefterindeDeTekOturumAcar sağlayıcının kendi
-// idempotency kısıtının gerçekten uygulandığını doğrular.
+// TestTheSameKeyOpensOneSessionInTheProviderLedgerToo verifies that the
+// provider's own idempotency constraint is really enforced.
 //
-// Modülün kaydı silinse bile sağlayıcı aynı anahtarla ikinci bir oturum
-// açmamalıdır; kısıt son savunmadır ve doğrudan sağlayıcıya gidilerek sınanır.
-func TestAyniAnahtarSaglayiciDefterindeDeTekOturumAcar(t *testing.T) {
+// Even if the module's record were deleted, the provider must not open a
+// second session with the same key; the constraint is the last line of defense
+// and is tested by going to the provider directly.
+func TestTheSameKeyOpensOneSessionInTheProviderLedgerToo(t *testing.T) {
 	ctx := context.Background()
 	svc, prov := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
-	anahtar := "provider-idem-" + col.ID
+	col := newCollection(ctx, t, svc)
+	key := "provider-idem-" + col.ID
 
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
-		IdempotencyKey: anahtar,
+		IdempotencyKey: key,
 	})
 	require.NoError(t, err)
 
-	var sayi int64
+	var count int64
 	require.NoError(t, testPool.Pool().QueryRow(ctx,
 		`SELECT COUNT(*) FROM payment_manual_sessions WHERE idempotency_key = $1`,
-		anahtar).Scan(&sayi))
-	assert.Equal(t, int64(1), sayi)
+		key).Scan(&count))
+	assert.Equal(t, int64(1), count)
 
-	saglayiciOturum, err := prov.GetSession(ctx, ses.ExternalID)
+	providerSession, err := prov.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err)
-	assert.Equal(t, anahtar, saglayiciOturum.IdempotencyKey)
-	assert.Equal(t, col.ID, saglayiciOturum.Reference,
-		"sağlayıcı mutabakat için koleksiyon kimliğini saklamalı")
+	assert.Equal(t, key, providerSession.IdempotencyKey)
+	assert.Equal(t, col.ID, providerSession.Reference,
+		"the provider should keep the collection id for reconciliation")
 }
 
-// TestVeritabaniKisitlariSonSavunmadir servis atlansa bile şemanın parayı
-// koruduğunu doğrular.
+// TestTheDatabaseConstraintsAreTheLastDefense verifies that the schema protects the
+// money even when the service is bypassed.
 //
-// Kısıtlar servis katmanının kopyası değildir; DOĞRUDAN SQL ile yapılan bir
-// müdahalenin de negatif tutar yazamamasını, tanımsız durum koyamamasını ve
-// olmayan parayı iade edememesini sağlarlar.
-func TestVeritabaniKisitlariSonSavunmadir(t *testing.T) {
+// The constraints are not a copy of the service layer; they make sure that an
+// intervention made with DIRECT SQL cannot write a negative amount either,
+// cannot set an undefined status, and cannot refund money that does not exist.
+func TestTheDatabaseConstraintsAreTheLastDefense(t *testing.T) {
 	ctx := context.Background()
 
 	tests := map[string]string{
-		"negatif tutar": `INSERT INTO payment_collections (id, reference, amount, currency_code)
+		"negative amount": `INSERT INTO payment_collections (id, reference, amount, currency_code)
                           VALUES ('paycol_neg', 'cart_x', -1, 'TRY')`,
-		"sifir tutar": `INSERT INTO payment_collections (id, reference, amount, currency_code)
+		"zero amount": `INSERT INTO payment_collections (id, reference, amount, currency_code)
                         VALUES ('paycol_zero', 'cart_x', 0, 'TRY')`,
-		"gecersiz para birimi": `INSERT INTO payment_collections (id, reference, amount, currency_code)
+		"invalid currency": `INSERT INTO payment_collections (id, reference, amount, currency_code)
                                  VALUES ('paycol_cur', 'cart_x', 100, 'try')`,
-		"taninmayan durum": `INSERT INTO payment_collections (id, reference, amount, currency_code, status)
+		"unknown status": `INSERT INTO payment_collections (id, reference, amount, currency_code, status)
                              VALUES ('paycol_st', 'cart_x', 100, 'TRY', 'paid')`,
-		"tahsilattan fazla iade": `INSERT INTO payment_collections
+		"refund above the capture": `INSERT INTO payment_collections
                                    (id, reference, amount, currency_code, captured_amount, refunded_amount)
                                    VALUES ('paycol_ref', 'cart_x', 100, 'TRY', 10, 20)`,
-		// Koleksiyon toplanacak paranın TAVANIDIR: aşan bir bloke ya da tahsilat,
-		// müşteriden siparişten fazlasının alınması demektir. Servis bunu zaten
-		// reddeder; kısıt doğrudan SQL ile yapılan müdahaleyi de durdurur.
-		"koleksiyondan fazla bloke": `INSERT INTO payment_collections
+		// The collection is the CEILING of the money to be collected: a hold or a
+		// capture above it means taking more than the order from the customer. The
+		// service already refuses this; the constraint stops an intervention made
+		// with direct SQL too.
+		"hold above the collection": `INSERT INTO payment_collections
                                       (id, reference, amount, currency_code, authorized_amount)
                                       VALUES ('paycol_auth', 'cart_x', 100, 'TRY', 101)`,
-		"koleksiyondan fazla tahsilat": `INSERT INTO payment_collections
+		"capture above the collection": `INSERT INTO payment_collections
                                          (id, reference, amount, currency_code, captured_amount)
                                          VALUES ('paycol_cap', 'cart_x', 100, 'TRY', 101)`,
 	}
 
-	for ad, sorgu := range tests {
-		t.Run(ad, func(t *testing.T) {
-			_, err := testPool.Pool().Exec(ctx, sorgu)
-			require.Error(t, err, "kısıt uygulanmalı")
+	for name, stmt := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := testPool.Pool().Exec(ctx, stmt)
+			require.Error(t, err, "the constraint should be enforced")
 		})
 	}
 }
 
-// TestKismiTahsilatDurumuSemadaTanimli türetilen yeni durumun status CHECK
-// listesinde bulunduğunu doğrular.
+// TestThePartialCaptureStatusIsDefinedInTheSchema verifies that the new derived status is
+// in the status CHECK list.
 //
-// Durum sütunu bir beyaz liste ile korunur: listeye yazılmayan bir değer,
-// servis onu türettiği anda işlemi patlatır ve hata ancak KISMİ tahsilat
-// yapılan bir üretim akışında görünürdü.
-func TestKismiTahsilatDurumuSemadaTanimli(t *testing.T) {
+// The status column is guarded by an allow-list: a value not written into the
+// list blows up the transaction the moment the service derives it, and the
+// error would show only in a production flow that makes a PARTIAL capture.
+func TestThePartialCaptureStatusIsDefinedInTheSchema(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := testPool.Pool().Exec(ctx,
@@ -873,23 +881,23 @@ func TestKismiTahsilatDurumuSemadaTanimli(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestModulContainerdaAdlariKaydeder modülün yayımladığı yüzeylerin
-// container'dan ADLA çözülebildiğini doğrular.
+// TestTheModuleRegistersItsNamesInTheContainer verifies that the surfaces the module
+// publishes can be resolved from the container BY NAME.
 //
-// Bu, ADR 0001/0004/0006'nın çalışma zamanı karşılığıdır: tüketiciler bu
-// modülü import ETMEDEN, yalnızca adla erişir. Bir adın yanlış yazılması ya da
-// bir kaydın unutulması derleme zamanında değil, ancak burada görünür.
-func TestModulContainerdaAdlariKaydeder(t *testing.T) {
+// This is the runtime counterpart of ADR 0001/0004/0006: consumers reach this
+// module only by name, WITHOUT importing it. A misspelled name or a forgotten
+// registration shows up not at compile time but only here.
+func TestTheModuleRegistersItsNamesInTheContainer(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
-	// Link servisi de veriliyor ve bu isteğe bağlı değil: modül artık
-	// "order_payment" tanımını açılışta bildiriyor (ADR 0005), yani onsuz
-	// kaydolamaz. Ürün modülü de aynı gereksinimi taşıyor.
+	// The link service is provided too, and that is not optional: the module now
+	// declares the "order_payment" definition at startup (ADR 0005), so it cannot
+	// register without it. The product module carries the same requirement.
 	require.NoError(t, c.Provide("core.link", link.New(testPool, slog.New(slog.DiscardHandler))))
-	// Olay otobüsü de zorunlu (ADR 0121): modül para hareketlerini yayımlıyor
-	// ve kaybolan bir para olayının telafisi yok. Ayrı bir testte reddin
-	// kendisi doğrulanıyor.
+	// The event bus is mandatory too (ADR 0121): the module publishes money
+	// movements, and a lost money event has no compensation. The refusal itself
+	// is verified in a separate test.
 	require.NoError(t, c.Provide("core.eventbus", eventbus.NewInMemory(nil)))
 
 	mod := payment.New()
@@ -914,13 +922,13 @@ func TestModulContainerdaAdlariKaydeder(t *testing.T) {
 	assert.Equal(t, service.EntityName, provider.Entity())
 }
 
-// TestModulOtobussuzKaydolmaz olay otobüsünün ZORUNLU olduğunu doğrular.
+// TestTheModuleDoesNotRegisterWithoutABus verifies that the event bus is MANDATORY.
 //
-// İsteğe bağlı olsaydı, otobüssüz bir kurulum sağlıklı görünür ve hiçbir şey
-// söylemezdi: tahsilatlar çalışır, iadeler çalışır, siparişin kaydı hiç
-// öğrenmez. Kaybolan bir para olayının telafisi yok — bu yüzden hata açılışta
-// verilir, ilk para hareketinde değil.
-func TestModulOtobussuzKaydolmaz(t *testing.T) {
+// Were it optional, an installation without a bus would look healthy and say
+// nothing: captures work, refunds work, and the order's record never learns of
+// them. A lost money event has no compensation — that is why the error is
+// raised at startup, not at the first money movement.
+func TestTheModuleDoesNotRegisterWithoutABus(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
@@ -928,22 +936,23 @@ func TestModulOtobussuzKaydolmaz(t *testing.T) {
 
 	err := payment.New().Register(ctx, c)
 
-	require.Error(t, err, "otobüssüz kurulum AÇILIŞTA durmalı")
+	require.Error(t, err, "an installation without a bus should stop AT STARTUP")
 	assert.Contains(t, err.Error(), "core.eventbus",
-		"hata, eksik olan servisi ADIYLA söylemeli; operatörün düzeltmesi gereken şey o")
+		"the error should name the missing service BY NAME; that is what the operator has to fix")
 }
 
-// TestInteropUctanUcaAkisGercekVeritabaninda saga'nın kullanacağı İLKEL
-// yüzeyin gerçek veritabanı üzerinde çalıştığını doğrular.
+// TestTheInteropFlowEndToEndOnTheRealDatabase verifies that the PRIMITIVE
+// surface the saga will use works on a real database.
 //
-// Yüzeyin İMZASI artık derleme zamanında denetleniyor (ADR 0136): internal/arch
-// içindeki pin dosyası bu tipi tüketicisinin bildirdiği arayüze atıyor, yani
-// eksilen bir metot yapıyı düşürür.
+// The surface's SIGNATURE is now checked at compile time (ADR 0136): the pin
+// file in internal/arch assigns this type to the interface its consumer
+// declares, so a missing method breaks the build.
 //
-// Bu testin kanıtladığı şey o değil ve olmadı da: ilkel yüzeyin GERÇEK
-// bağımlılıklarla koştuğunu, yani SQL'in, işlemin ve dönen değerlerin doğru
-// olduğunu gösteriyor. İmza denetlenebilir, davranış denetlenemez.
-func TestInteropUctanUcaAkisGercekVeritabaninda(t *testing.T) {
+// That is not what this test proves, and it never was: it shows that the
+// primitive surface runs with REAL dependencies, that is, that the SQL, the
+// transaction and the returned values are right. A signature can be checked,
+// behavior cannot.
+func TestTheInteropFlowEndToEndOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
 	iop := service.NewInterop(svc)
@@ -954,38 +963,39 @@ func TestInteropUctanUcaAkisGercekVeritabaninda(t *testing.T) {
 	sesID, err := iop.OpenSession(ctx, colID, manual.ID, "interop-"+colID)
 	require.NoError(t, err)
 
-	durum, bloke, err := iop.Authorize(ctx, sesID)
+	status, held, err := iop.Authorize(ctx, sesID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionAuthorized.String(), durum)
-	assert.Equal(t, testAmount, bloke, "yüzey bloke edilen TUTARI da taşımalı")
+	assert.Equal(t, models.SessionAuthorized.String(), status)
+	assert.Equal(t, testAmount, held, "the surface should carry the held AMOUNT too")
 
 	payID, err := iop.Capture(ctx, sesID, 0)
 	require.NoError(t, err)
 
-	kolDurum, kolTutar, _, kolTahsil, _, err := iop.Collection(ctx, colID)
+	colStatus, colAmount, _, colCaptured, _, err := iop.Collection(ctx, colID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionCaptured.String(), kolDurum)
-	assert.Equal(t, testAmount, kolTutar)
-	assert.Equal(t, testAmount, kolTahsil, "saga ödemenin TAM olduğunu sayıdan doğrulayabilmeli")
+	assert.Equal(t, models.CollectionCaptured.String(), colStatus)
+	assert.Equal(t, testAmount, colAmount)
+	assert.Equal(t, testAmount, colCaptured, "the saga should be able to verify from the number that the payment is FULL")
 
-	refundID, err := iop.Refund(ctx, payID, 0, "interop iadesi")
+	refundID, err := iop.Refund(ctx, payID, 0, "interop refund")
 	require.NoError(t, err)
 	assert.NotEmpty(t, refundID)
 
-	kolDurum, _, _, _, kolIade, err := iop.Collection(ctx, colID)
+	colStatus, _, _, _, colRefunded, err := iop.Collection(ctx, colID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionRefunded.String(), kolDurum)
-	assert.Equal(t, testAmount, kolIade)
+	assert.Equal(t, models.CollectionRefunded.String(), colStatus)
+	assert.Equal(t, testAmount, colRefunded)
 }
 
-// TestInteropEksikOdemeGercekVeritabaninda saga'nın ödemenin EKSİK olduğunu
-// ilkel yüzeyden görebildiğini gerçek veritabanı ve GERÇEK sağlayıcı üzerinde
-// doğrular.
+// TestTheInteropShortPaymentOnTheRealDatabase verifies on a real database and the
+// REAL provider that the saga can see from the primitive surface that the
+// payment is SHORT.
 //
-// Faz 6'nın ödeme atlatması tam buradaydı: sağlayıcı kısmi yetkilendirdiğinde
-// durum yine "authorized", kısmi tahsilatta koleksiyon yine "captured"
-// görünüyordu ve saga'nın bakacağı hiçbir sayı yoktu.
-func TestInteropEksikOdemeGercekVeritabaninda(t *testing.T) {
+// Phase 6's payment bypass was exactly here: when the provider authorized
+// partially the status still looked "authorized", on a partial capture the
+// collection still looked "captured", and there was no number for the saga to
+// look at.
+func TestTheInteropShortPaymentOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
 	iop := service.NewInterop(svc)
@@ -996,34 +1006,34 @@ func TestInteropEksikOdemeGercekVeritabaninda(t *testing.T) {
 		[]byte(`{"manual_authorized_amount":1}`))
 	require.NoError(t, err)
 
-	durum, bloke, err := iop.Authorize(ctx, sesID)
+	status, held, err := iop.Authorize(ctx, sesID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionAuthorized.String(), durum)
-	assert.Equal(t, int64(1), bloke, "sağlayıcı yalnızca 1 birim bloke etti")
+	assert.Equal(t, models.SessionAuthorized.String(), status)
+	assert.Equal(t, int64(1), held, "the provider held only 1 unit")
 
 	_, err = iop.Capture(ctx, sesID, 0)
 	require.NoError(t, err)
 
-	kolDurum, kolTutar, kolBloke, kolTahsil, _, err := iop.Collection(ctx, colID)
+	colStatus, colAmount, colHeld, colCaptured, _, err := iop.Collection(ctx, colID)
 	require.NoError(t, err)
-	assert.Equal(t, models.CollectionPartiallyCaptured.String(), kolDurum)
-	assert.Equal(t, testAmount, kolTutar)
-	assert.Zero(t, kolBloke, "çekilmeyen blokaj asılı kalmamalı")
-	assert.Equal(t, int64(1), kolTahsil)
-	assert.Less(t, kolTahsil, kolTutar, "saga bu karşılaştırmayla siparişi onaylamamalı")
+	assert.Equal(t, models.CollectionPartiallyCaptured.String(), colStatus)
+	assert.Equal(t, testAmount, colAmount)
+	assert.Zero(t, colHeld, "the hold that was not captured should not be left hanging")
+	assert.Equal(t, int64(1), colCaptured)
+	assert.Less(t, colCaptured, colAmount, "with this comparison the saga should not confirm the order")
 }
 
-// TestAyniKoleksiyondaIkiTamOturumAcilamazGercekVeritabaninda ÇİFT TAHSİLATIN
-// kapısının gerçek sorgularla da kapalı olduğunu doğrular.
+// TestTwoFullSessionsCannotOpenOnOneCollectionOnTheRealDatabase verifies that
+// the gate to DOUBLE CAPTURE is closed with real queries too.
 //
-// Bulgunun senaryosu buydu: hiçbiri yetkilendirilmemişken açılan iki TAM
-// tutarlı oturum, ikisi de yetkilendirilip tahsil edilince koleksiyonun iki
-// katını çekiyordu. Kalan tutarın hesabı açık oturumları saymak zorundadır ve
-// bu ancak gerçek toplama sorgusuyla kanıtlanır.
-func TestAyniKoleksiyondaIkiTamOturumAcilamazGercekVeritabaninda(t *testing.T) {
+// This was the finding's scenario: two sessions for the FULL amount, opened
+// while neither was authorized, captured twice the collection once both were
+// authorized and captured. The remaining amount's calculation has to count the
+// open sessions, and that can be proven only with the real aggregate query.
+func TestTwoFullSessionsCannotOpenOnOneCollectionOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	col := newCollection(ctx, t, svc)
 
 	_, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "double-1-" + col.ID,
@@ -1035,20 +1045,21 @@ func TestAyniKoleksiyondaIkiTamOturumAcilamazGercekVeritabaninda(t *testing.T) {
 	})
 
 	require.Error(t, err)
-	assert.True(t, errors.HasKind(err, errors.KindConflict), "hata: %v", err)
+	assert.True(t, errors.HasKind(err, errors.KindConflict), "error: %v", err)
 	assert.Equal(t, service.CodeCollectionClosed, errors.CodeOf(err))
 }
 
-// TestKismiTahsilatGercekVeritabaninda kısmi tahsilatın iki deftere de aynı
-// biçimde yazıldığını doğrular.
+// TestAPartialCaptureOnTheRealDatabase verifies that a partial capture is
+// written to both ledgers the same way.
 //
-// Çekilmeyen blokaj serbest bırakılmazsa oturum "captured" olduğu için bir
-// daha iptal edilemez ve tutar sonsuza kadar asılı kalır; sağlayıcının defteri
-// ile modülün kaydının ayrışması da ancak iki tarafa birden bakılarak görülür.
-func TestKismiTahsilatGercekVeritabaninda(t *testing.T) {
+// If the hold that was not captured is not released, the session cannot be
+// canceled again because it is "captured", and the amount stays hanging
+// forever; a divergence between the provider's ledger and the module's record
+// is also visible only by looking at both sides at once.
+func TestAPartialCaptureOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc, prov := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	col := newCollection(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "partial-capture-" + col.ID,
 	})
@@ -1059,25 +1070,25 @@ func TestKismiTahsilatGercekVeritabaninda(t *testing.T) {
 	_, err = svc.CapturePayment(ctx, ses.ID, 1)
 	require.NoError(t, err)
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Zero(t, guncelKol.AuthorizedAmount, "çekilmeyen blokaj koleksiyonda KALMAMALI")
-	assert.Equal(t, int64(1), guncelKol.CapturedAmount)
-	assert.Equal(t, models.CollectionPartiallyCaptured, guncelKol.Status)
+	assert.Zero(t, freshCol.AuthorizedAmount, "the hold that was not captured should NOT REMAIN on the collection")
+	assert.Equal(t, int64(1), freshCol.CapturedAmount)
+	assert.Equal(t, models.CollectionPartiallyCaptured, freshCol.Status)
 
-	saglayiciOturum, err := prov.GetSession(ctx, ses.ExternalID)
+	providerSession, err := prov.GetSession(ctx, ses.ExternalID)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), saglayiciOturum.AuthorizedAmount,
-		"sağlayıcının defteri de kalan blokajı bırakmalı")
-	assert.Equal(t, int64(1), saglayiciOturum.CapturedAmount)
+	assert.Equal(t, int64(1), providerSession.AuthorizedAmount,
+		"the provider's ledger should release the remaining hold too")
+	assert.Equal(t, int64(1), providerSession.CapturedAmount)
 
 	require.Error(t, svc.CancelPayment(ctx, ses.ID),
-		"tahsil edilmiş oturum iptal edilemez; serbest bırakma tahsilat anında olmalı")
+		"a captured session cannot be canceled; the release has to happen at capture time")
 }
 
-// TestInteropRedliOturumTelafiEdilebilir saga'nın patlayan ödeme adımını ilkel
-// yüzeyden telafi edebildiğini doğrular.
-func TestInteropRedliOturumTelafiEdilebilir(t *testing.T) {
+// TestTheInteropCanCompensateADeclinedSession verifies that the saga can compensate
+// the payment step that blew up through the primitive surface.
+func TestTheInteropCanCompensateADeclinedSession(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
 	iop := service.NewInterop(svc)
@@ -1086,105 +1097,107 @@ func TestInteropRedliOturumTelafiEdilebilir(t *testing.T) {
 	require.NoError(t, err)
 
 	sesID, err := iop.OpenSessionWithData(ctx, colID, manual.ID, "interop-decline-"+colID,
-		[]byte(`{"manual_outcome":"decline","manual_decline_reason":"saga testi"}`))
+		[]byte(`{"manual_outcome":"decline","manual_decline_reason":"saga test"}`))
 	require.NoError(t, err)
 
 	_, _, err = iop.Authorize(ctx, sesID)
-	require.Error(t, err, "ödeme adımı patlamalı")
+	require.Error(t, err, "the payment step should blow up")
 
 	require.NoError(t, iop.Cancel(ctx, sesID))
 	require.NoError(t, iop.Cancel(ctx, sesID))
 
-	durum, err := iop.SessionStatus(ctx, sesID)
+	status, err := iop.SessionStatus(ctx, sesID)
 	require.NoError(t, err)
-	assert.Equal(t, models.SessionCanceled.String(), durum)
+	assert.Equal(t, models.SessionCanceled.String(), status)
 }
 
-// TestQuerySaglayicisiGercekVeritabaninda Query katmanına açılan okuma
-// yüzeyinin gerçek satırlar üzerinde çalıştığını doğrular (ADR 0004).
-func TestQuerySaglayicisiGercekVeritabaninda(t *testing.T) {
+// TestTheQueryProviderOnTheRealDatabase verifies that the read surface opened
+// to the Query layer works on real rows (ADR 0004).
+func TestTheQueryProviderOnTheRealDatabase(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	col := newCollection(ctx, t, svc)
 	p := service.NewQueryProvider(svc)
 
-	records, err := p.FetchByIDs(ctx, []string{col.ID, "paycol_YOK"},
+	records, err := p.FetchByIDs(ctx, []string{col.ID, "paycol_MISSING"},
 		[]string{service.FieldID, service.FieldReference, service.FieldAmount, service.FieldStatus})
 
 	require.NoError(t, err)
-	require.Len(t, records, 1, "bulunamayan kimlik için kayıt DÖNMEZ")
+	require.Len(t, records, 1, "NO record is returned for an id that is not found")
 	assert.Equal(t, col.ID, records[0][service.FieldID])
 	assert.Equal(t, testReference, records[0][service.FieldReference])
 	assert.Equal(t, testAmount, records[0][service.FieldAmount])
 	assert.Equal(t, models.CollectionNotPaid.String(), records[0][service.FieldStatus])
 }
 
-// TestEszamanliFarkliOturumlarKoleksiyonTutariniKaybetmez koleksiyon satırı
-// kilidinin KAYIP GÜNCELLEMEYİ engellediğini doğrular.
+// TestConcurrentSeparateSessionsDoNotLoseTheCollectionAmount verifies that the
+// collection row lock prevents a LOST UPDATE.
 //
-// Aynı koleksiyonda iki AYRI oturum, yarısı yarısına, aynı anda yetkilendirilir.
-// Doğru sonuç ikisinin TOPLAMIDIR. Koleksiyon kilidi alınmasaydı iki akış da
-// bloke tutarı sıfır okur, her biri kendi tutarını yazar ve son yazan diğerini
-// EZERDİ — koleksiyon yarı ödenmiş görünür, tahsilat adımı eksik para çekerdi.
+// Two SEPARATE sessions on the same collection, half and half, are authorized
+// at the same time. The right result is their SUM. Without the collection lock
+// both flows would read the held amount as zero, each would write its own
+// amount, and the last writer would OVERWRITE the other — the collection would
+// look half paid and the capture step would take too little money.
 //
-// Bu iddia "tek yetkilendirme" iddiasından farklıdır ve onunla aynı testte
-// sınanamaz: orada aynı oturum, burada FARKLI oturumlar yarışır.
-func TestEszamanliFarkliOturumlarKoleksiyonTutariniKaybetmez(t *testing.T) {
+// This claim is different from the "single authorization" claim and cannot be
+// tested in the same test: there the same session races, here DIFFERENT
+// sessions do.
+func TestConcurrentSeparateSessionsDoNotLoseTheCollectionAmount(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newService(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	col := newCollection(ctx, t, svc)
 
-	yarim := testAmount / 2
-	ilk, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
-		Amount:         yarim,
+	half := testAmount / 2
+	first, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
+		Amount:         half,
 		IdempotencyKey: "split-1-" + col.ID,
 	})
 	require.NoError(t, err)
-	ikinci, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
-		Amount:         yarim,
+	second, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
+		Amount:         half,
 		IdempotencyKey: "split-2-" + col.ID,
 	})
 	require.NoError(t, err)
 
 	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		hatalar []error
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
 	)
 	wg.Add(2)
-	for _, sessionID := range []string{ilk.ID, ikinci.ID} {
+	for _, sessionID := range []string{first.ID, second.ID} {
 		go func() {
 			defer wg.Done()
 			if _, authErr := svc.AuthorizePayment(ctx, sessionID); authErr != nil {
 				mu.Lock()
-				hatalar = append(hatalar, authErr)
+				errs = append(errs, authErr)
 				mu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
 
-	assert.Empty(t, hatalar)
+	assert.Empty(t, errs)
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, testAmount, guncelKol.AuthorizedAmount,
-		"iki oturumun bloke tutarı TOPLANMALI; biri diğerini ezmemeli")
-	assert.Equal(t, models.CollectionAuthorized, guncelKol.Status)
+	assert.Equal(t, testAmount, freshCol.AuthorizedAmount,
+		"the held amounts of the two sessions should ADD UP; one should not overwrite the other")
+	assert.Equal(t, models.CollectionAuthorized, freshCol.Status)
 }
 
-// TestEszamanliIkiCaptureTekTahsilatUretir bir oturumdan yalnızca BİR
-// tahsilat çıktığını yarış altında doğrular.
+// TestTwoConcurrentCapturesProduceOneCapture verifies under a race that only ONE
+// capture comes out of a session.
 //
-// Oturum kilidi olmasaydı iki akış da oturumu "authorized" görür, ikisi de
-// tahsilat satırı yazmaya çalışır ve benzersiz indekse çarpardı: biri
-// errors.Conflict alır. Aşağıdaki "hiç hata olmamalı" iddiası tam olarak bunu
-// yakalar — kilit, kısıtın patlamasını değil, ikinci akışın no-op'a düşmesini
-// sağlar.
-func TestEszamanliIkiCaptureTekTahsilatUretir(t *testing.T) {
+// Without the session lock both flows would see the session as "authorized",
+// both would try to write a capture row and would hit the unique index: one of
+// them gets errors.Conflict. The "there should be no error at all" assertion
+// below catches exactly that — the lock makes the second flow fall through to a
+// no-op rather than the constraint blowing up.
+func TestTwoConcurrentCapturesProduceOneCapture(t *testing.T) {
 	ctx := context.Background()
-	svc, sayan := yeniSayanServis(t)
-	col := yeniKoleksiyon(ctx, t, svc)
+	svc, counting := newCountingService(t)
+	col := newCollection(ctx, t, svc)
 	ses, err := svc.CreateSession(ctx, col.ID, manual.ID, service.CreateSessionInput{
 		IdempotencyKey: "concurrent-capture-" + col.ID,
 	})
@@ -1194,10 +1207,10 @@ func TestEszamanliIkiCaptureTekTahsilatUretir(t *testing.T) {
 
 	const goroutines = 8
 	var (
-		wg        sync.WaitGroup
-		mu        sync.Mutex
-		hatalar   []error
-		kimlikler = map[string]int{}
+		wg   sync.WaitGroup
+		mu   sync.Mutex
+		errs []error
+		ids  = map[string]int{}
 	)
 	wg.Add(goroutines)
 	for range goroutines {
@@ -1208,34 +1221,34 @@ func TestEszamanliIkiCaptureTekTahsilatUretir(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			if capErr != nil {
-				hatalar = append(hatalar, capErr)
+				errs = append(errs, capErr)
 				return
 			}
-			kimlikler[pay.ID]++
+			ids[pay.ID]++
 		}()
 	}
 	wg.Wait()
 
-	assert.Empty(t, hatalar, "eşzamanlı tahsilatlar hata vermemeli")
-	assert.Len(t, kimlikler, 1, "tüm çağrılar AYNI tahsilatı dönmeli")
+	assert.Empty(t, errs, "concurrent captures should not return an error")
+	assert.Len(t, ids, 1, "every call should return the SAME capture")
 
-	_, captureCagrilari, _ := sayan.sayimlar()
-	assert.Equal(t, 1, captureCagrilari, "SAĞLAYICIYA yalnızca bir kez gidilmeli")
+	_, captureCalls, _ := counting.callCounts()
+	assert.Equal(t, 1, captureCalls, "the PROVIDER should be called only once")
 
-	tahsilatlar, err := svc.ListPayments(ctx, col.ID)
+	payments, err := svc.ListPayments(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Len(t, tahsilatlar, 1, "veritabanında tek tahsilat satırı olmalı")
+	assert.Len(t, payments, 1, "the database should hold a single capture row")
 
-	guncelKol, err := svc.GetPaymentCollection(ctx, col.ID)
+	freshCol, err := svc.GetPaymentCollection(ctx, col.ID)
 	require.NoError(t, err)
-	assert.Equal(t, testAmount, guncelKol.CapturedAmount,
-		"tahsil edilen tutar TEK tahsilat kadar olmalı, katları değil")
+	assert.Equal(t, testAmount, freshCol.CapturedAmount,
+		"the captured amount should equal ONE capture, not a multiple of it")
 }
 
-// --- mağaza kredisi ----------------------------------------------------------
+// --- store credit ------------------------------------------------------------
 
 // TestTheManualProviderIsRegisteredWhereItIsAskedFor is the companion of
-// [TestModulContainerdaAdlariKaydeder] for the manual provider: the default
+// [TestTheModuleRegistersItsNamesInTheContainer] for the manual provider: the default
 // leaves it out, and the setting is what puts it in (ADR 0283).
 func TestTheManualProviderIsRegisteredWhereItIsAskedFor(t *testing.T) {
 	ctx := context.Background()
@@ -1251,10 +1264,10 @@ func TestTheManualProviderIsRegisteredWhereItIsAskedFor(t *testing.T) {
 	assert.ElementsMatch(t, []string{giftcard.ID, manual.ID}, registry.IDs())
 }
 
-// TestModulAyarAcikkenKrediSaglayicisiniKaydeder proves the providers are
+// TestTheModuleRegistersTheBalanceProvidersWhileTheSettingIsOn proves the providers are
 // registered while the setting is ON.
 //
-// It is the companion of [TestModulContainerdaAdlariKaydeder], which pins that
+// It is the companion of [TestTheModuleRegistersItsNamesInTheContainer], which pins that
 // a default installation registers only the gift card; that claim alone would
 // hold if the providers were never registered at all. Together the two say the
 // refusal is the SETTING's decision — and that setting is a security decision:
@@ -1262,7 +1275,7 @@ func TestTheManualProviderIsRegisteredWhereItIsAskedFor(t *testing.T) {
 // person-bound tender would mean anybody who types someone's name spends their
 // balance (ADR 0152). The setting is ONE and opens both tenders (ADR 0165):
 // there is no installation where credit is registered and points are not.
-func TestModulAyarAcikkenKrediSaglayicisiniKaydeder(t *testing.T) {
+func TestTheModuleRegistersTheBalanceProvidersWhileTheSettingIsOn(t *testing.T) {
 	ctx := context.Background()
 	c := container.New(nil)
 	require.NoError(t, c.Provide("core.db", testPool))
@@ -1573,16 +1586,17 @@ func TestAnAuthorizationWaitsOnTheBalanceLock(t *testing.T) {
 	}
 }
 
-// Defterin yalnızca EKLENEN bir kayıt olduğunu okuyan kapı buradan TAŞINDI:
-// internal/arch'taki TestThePaymentLedgersAreAppendOnlyInSQL (ADR 0164).
+// The gate that reads that the ledger is a record that is only APPENDED TO was
+// MOVED from here: TestThePaymentLedgersAreAppendOnlyInSQL in internal/arch
+// (ADR 0164).
 //
-// Buradaki sürümün öznesi bir DOSYAydı — adıyla okunan tek bir yol — ve modülün
-// ikinci defteri eklendiği gün onu göremezdi. Taşınan sürümün öznesi DİZİN, iki
-// tabloyu da adıyla arıyor, dosya taşındığında sessizce boş dize okumak yerine
-// kırmızı oluyor ve entegrasyon etiketinin arkasında değil hızlı şeritte
-// koşuyor.
+// The version here had a FILE as its subject — a single path read by its name —
+// and could not have seen the module's second ledger on the day it was added.
+// The moved version's subject is the DIRECTORY; it looks for both tables by
+// name, turns red instead of silently reading an empty string when the file
+// moves, and runs in the fast lane rather than behind the integration tag.
 
-// --- sadakat puanı defteri (ADR 0164) ----------------------------------------
+// --- loyalty points ledger (ADR 0164) ----------------------------------------
 
 // earningService builds a real-repository service that earns at the given rate.
 func earningService(t *testing.T, basisPoints int64) *service.Service {

@@ -13,27 +13,27 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/service"
 )
 
-// listProviders kayıtlı ödeme sağlayıcılarının kimliklerini döner.
+// listProviders returns the IDs of the registered payment providers.
 //
-// Hem admin hem store yüzeyine bağlıdır: vitrinin ödeme adımı hangi yolların
-// açık olduğunu bilmek zorundadır ve bu bilgi gizli değildir.
+// It is bound to both the admin and the store surface: the storefront's payment
+// step has to know which ways are open, and that information is not secret.
 func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	writeList(ctx, w, h.svc.ProviderIDs(ctx))
 }
 
-// createCollectionRequest POST /admin/v1/payment-collections gövdesidir.
+// createCollectionRequest is the body of POST /admin/v1/payment-collections.
 type createCollectionRequest struct {
 	Reference string `json:"reference"`
-	// Amount minor unit TAM SAYIDIR; işaretçi olması "gönderilmedi" ile
-	// "sıfır gönderildi" ayrımını korur ve ikisi de reddedilir ama farklı
-	// mesajla.
+	// Amount is a minor unit INTEGER; being a pointer keeps the distinction
+	// between "not sent" and "zero sent", and both are rejected, but with
+	// different messages.
 	Amount       *int64         `json:"amount"`
 	CurrencyCode string         `json:"currency_code"`
 	Metadata     map[string]any `json:"metadata"`
 }
 
-// createCollection yeni bir ödeme koleksiyonu oluşturur.
+// createCollection creates a new payment collection.
 func (h *Handler) createCollection(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -43,7 +43,7 @@ func (h *Handler) createCollection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body.Amount == nil {
-		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest, "amount zorunludur"))
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest, "amount is required"))
 		return
 	}
 
@@ -60,7 +60,7 @@ func (h *Handler) createCollection(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toCollectionDTO(col)})
 }
 
-// listCollections koleksiyonları sayfalayarak döner.
+// listCollections returns the collections, paged.
 func (h *Handler) listCollections(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -96,7 +96,7 @@ func (h *Handler) listCollections(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getCollection koleksiyonu kimliğiyle döner.
+// getCollection returns the collection by its ID.
 func (h *Handler) getCollection(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -108,55 +108,62 @@ func (h *Handler) getCollection(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toCollectionDTO(col)})
 }
 
-// createSessionRequest ADMIN yüzeyinin ödeme oturumu açma gövdesidir.
+// createSessionRequest is the ADMIN surface's body for opening a payment
+// session.
 type createSessionRequest struct {
 	ProviderID string `json:"provider_id"`
-	// Amount verilmezse koleksiyonun KALAN tutarının tamamı için oturum
-	// açılır. Ödemeyi birden çok oturuma bölmek yönetim işidir; mağaza
-	// yüzeyinde bu alan YOKTUR (bkz. [createStoreSessionRequest]).
+	// If Amount is not given, the session is opened for the whole of the
+	// collection's REMAINING amount. Splitting the payment across more than one
+	// session is admin work; this field DOES NOT EXIST on the store surface
+	// (see [createStoreSessionRequest]).
 	Amount int64 `json:"amount"`
-	// IdempotencyKey zorunludur: aynı anahtarla ikinci istek YENİ oturum açmaz.
+	// IdempotencyKey is required: a second request with the same key does NOT
+	// open a NEW session.
 	IdempotencyKey string `json:"idempotency_key"`
-	// Data sağlayıcıya iletilen serbest veridir.
+	// Data is free-form data passed on to the provider.
 	Data json.RawMessage `json:"data"`
 }
 
-// createStoreSessionRequest MAĞAZA yüzeyinin ödeme oturumu açma gövdesidir.
+// createStoreSessionRequest is the STORE surface's body for opening a payment
+// session.
 //
-// Tutar alanı BİLİNÇLİ OLARAK yoktur: mağaza ucundan açılan oturum her zaman
-// koleksiyonun kalan tutarının tamamını kapar. Müşterinin kendi tarayıcısından
-// oturumun tutarını belirleyebilmesi, 50.000'lik bir sipariş için 1 birimlik
-// oturum açıp ödemeyi atlatması demekti. Alan gövdede gönderilirse istek
-// reddedilir (bkz. [decodeBody] — tanınmayan alanlar hata verir).
+// The amount field is absent ON PURPOSE: a session opened from the store
+// endpoint always covers the whole of the collection's remaining amount. A
+// customer being able to set the session's amount from their own browser would
+// have meant opening a session of 1 unit for an order of 50,000 and getting
+// past the payment. If the field is sent in the body, the request is rejected
+// (see [decodeBody] — unknown fields are an error).
 type createStoreSessionRequest struct {
 	ProviderID string `json:"provider_id"`
-	// IdempotencyKey zorunludur: aynı anahtarla ikinci istek YENİ oturum açmaz.
+	// IdempotencyKey is required: a second request with the same key does NOT
+	// open a NEW session.
 	IdempotencyKey string `json:"idempotency_key"`
-	// Data sağlayıcıya iletilen serbest veridir; sağlayıcının DAVRANIŞINI
-	// yönlendiren anahtarlar burada kabul edilmez.
+	// Data is free-form data passed on to the provider; keys that steer the
+	// provider's BEHAVIOR are not accepted here.
 	Data json.RawMessage `json:"data"`
 }
 
-// storeBlockedDataKeys mağaza yüzeyinin sağlayıcıya İLETMEDİĞİ veri
-// anahtarlarıdır.
+// storeBlockedDataKeys are the data keys the store surface does NOT PASS ON to
+// the provider.
 //
-// Manuel sağlayıcının test kancaları (ret enjeksiyonu, kısmi yetkilendirme)
-// oturumun serbest verisinden okunur ve oturumla birlikte saklanır. Müşteriye
-// açık uçtan geçirilirlerse müşteri kendi ödemesinin sonucunu yazabilir:
-// 50.000'lik bir koleksiyonda 1 birim bloke ettirip siparişi ödenmiş
-// gösterebilirdi. Kancalar yönetim yüzeyinde kalır; orayı çağıran zaten
-// tahsilatı da tetikleyebilir.
+// The manual provider's test hooks (decline injection, partial authorization)
+// are read from the session's free-form data and stored with the session. If
+// they were passed through the endpoint open to the customer, the customer
+// could write the outcome of their own payment: on a collection of 50,000 they
+// could have 1 unit held and show the order as paid. The hooks stay on the
+// admin surface; whoever calls there can already trigger the capture too.
 //
-// Liste sessizce SÜZÜLMEZ, istek REDDEDİLİR: yutulan bir alan, istemcinin
-// gönderdiğini sandığı ama uygulanmayan bir ayardır (aynı gerekçe için bkz.
-// [decodeBody]).
+// The list is not silently FILTERED, the request is REJECTED: a swallowed field
+// is a setting the client believes it sent but that is never applied (for the
+// same reasoning see [decodeBody]).
 var storeBlockedDataKeys = []string{
 	manual.DataKeyOutcome,
 	manual.DataKeyDeclineReason,
 	manual.DataKeyAuthorizedAmount,
 }
 
-// createSession ADMIN yüzeyinden koleksiyon için ödeme oturumu açar.
+// createSession opens a payment session for the collection from the ADMIN
+// surface.
 func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -184,11 +191,13 @@ func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toSessionDTO(ses)})
 }
 
-// createStoreSession MAĞAZA yüzeyinden koleksiyon için ödeme oturumu açar.
+// createStoreSession opens a payment session for the collection from the STORE
+// surface.
 //
-// Admin ucundan iki farkı vardır ve ikisi de müşterinin ödeme akışını kendi
-// lehine yönlendirmesini engeller: tutar İSTEMCİDEN alınmaz (her zaman kalanın
-// tamamı) ve sağlayıcının davranış anahtarları reddedilir.
+// It differs from the admin endpoint in two ways, and both prevent the customer
+// from steering the payment flow in their own favor: the amount is NOT taken
+// FROM THE CLIENT (it is always the whole of the remainder) and the provider's
+// behavior keys are rejected.
 func (h *Handler) createStoreSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -206,13 +215,14 @@ func (h *Handler) createStoreSession(w http.ResponseWriter, r *http.Request) {
 	for _, key := range storeBlockedDataKeys {
 		if _, ok := data[key]; ok {
 			corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
-				"%s alanı mağaza yüzeyinde kabul edilmiyor: %q", "data", key))
+				"a %s key the store surface does not accept: %q", "data", key))
 			return
 		}
 	}
 
 	ses, err := h.svc.CreateSession(ctx, chi.URLParam(r, "id"), body.ProviderID, service.CreateSessionInput{
-		// Tutar verilmez: koleksiyonun KALAN tutarının tamamı için oturum açılır.
+		// No amount is given: the session is opened for the whole of the
+		// collection's REMAINING amount.
 		IdempotencyKey: body.IdempotencyKey,
 		Data:           data,
 	})
@@ -223,7 +233,7 @@ func (h *Handler) createStoreSession(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toSessionDTO(ses)})
 }
 
-// listSessions koleksiyonun oturumlarını döner.
+// listSessions returns the collection's sessions.
 func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -240,7 +250,7 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	writeList(ctx, w, data)
 }
 
-// getSession oturumu kimliğiyle döner.
+// getSession returns the session by its ID.
 func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -252,10 +262,11 @@ func (h *Handler) getSession(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toSessionDTO(ses)})
 }
 
-// authorizeSession oturumu yetkilendirir.
+// authorizeSession authorizes the session.
 //
-// Sağlayıcı reddederse servis errors.Conflict döner ve yanıt 409 olur: ret bir
-// sunucu hatası değildir ama istenen geçiş de gerçekleşmemiştir.
+// If the provider declines, the service returns errors.Conflict and the
+// response is 409: a decline is not a server error, but the requested
+// transition did not happen either.
 func (h *Handler) authorizeSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -267,13 +278,13 @@ func (h *Handler) authorizeSession(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toSessionDTO(ses)})
 }
 
-// amountRequest yalnızca tutar taşıyan gövdelerin şeklidir.
+// amountRequest is the shape of bodies that carry only an amount.
 type amountRequest struct {
-	// Amount sıfır ya da hiç verilmezse "tamamı" anlamına gelir.
+	// Amount, when zero or not given at all, means "the whole".
 	Amount int64 `json:"amount"`
 }
 
-// captureSession bloke edilmiş tutarı tahsil eder.
+// captureSession captures the held amount.
 func (h *Handler) captureSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -291,9 +302,9 @@ func (h *Handler) captureSession(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toPaymentDTO(payment)})
 }
 
-// cancelSession oturumu iptal eder (saga telafisi).
+// cancelSession cancels the session (saga compensation).
 //
-// İDEMPOTENTTİR: zaten iptal edilmiş bir oturum için de 204 döner.
+// It is IDEMPOTENT: it returns 204 for a session that is already canceled too.
 func (h *Handler) cancelSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -304,17 +315,20 @@ func (h *Handler) cancelSession(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// cancelStoreSession müşterinin kendi açtığı ödeme oturumunu bırakmasıdır.
+// cancelStoreSession is the customer releasing a payment session they opened
+// themselves.
 //
-// Yönetim yüzeyindeki [Handler.cancelSession] ile AYNI servis çağrısını yapar;
-// ayrı bir uç olmasının sebebi yetkilendirmedir (Faz 8'de store ve admin
-// yüzeyleri farklı korunacak), davranış farkı değildir.
+// It makes the SAME service call as [Handler.cancelSession] on the admin
+// surface; the reason it is a separate endpoint is authorization (in Phase 8
+// the store and admin surfaces will be protected differently), not a
+// difference in behavior.
 //
-// Var olma sebebi rezervasyondur: açık bir oturum koleksiyonun kalan tutarını
-// kapatır ve çift tahsilatı bu engeller. Bırakma yolu olmadan müşteri ödeme
-// YÖNTEMİNİ değiştiremez ve bir yönetici müdahalesine kadar kilitli kalırdı.
+// Its reason to exist is the reservation: an open session covers the
+// collection's remaining amount, and that is what prevents a double capture.
+// Without a way to release it the customer could not change the payment METHOD
+// and would stay locked until an administrator stepped in.
 //
-// İDEMPOTENTTİR: zaten iptal edilmiş bir oturum için de 204 döner.
+// It is IDEMPOTENT: it returns 204 for a session that is already canceled too.
 func (h *Handler) cancelStoreSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -325,7 +339,7 @@ func (h *Handler) cancelStoreSession(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// listPayments koleksiyonun tahsilatlarını döner.
+// listPayments returns the collection's captures.
 func (h *Handler) listPayments(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -342,7 +356,7 @@ func (h *Handler) listPayments(w http.ResponseWriter, r *http.Request) {
 	writeList(ctx, w, data)
 }
 
-// getPayment tahsilatı kimliğiyle döner.
+// getPayment returns the capture by its ID.
 func (h *Handler) getPayment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -354,14 +368,15 @@ func (h *Handler) getPayment(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toPaymentDTO(payment)})
 }
 
-// refundRequest POST /admin/v1/payments/{id}/refunds gövdesidir.
+// refundRequest is the body of POST /admin/v1/payments/{id}/refunds.
 type refundRequest struct {
-	// Amount sıfır ya da hiç verilmezse kalan tutarın tamamı iade edilir.
+	// If Amount is zero or not given at all, the whole of the remaining amount
+	// is refunded.
 	Amount int64  `json:"amount"`
 	Reason string `json:"reason"`
 }
 
-// refundPayment tahsilatı iade eder.
+// refundPayment refunds the capture.
 func (h *Handler) refundPayment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -379,7 +394,7 @@ func (h *Handler) refundPayment(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusCreated, singleEnvelope{Data: toRefundDTO(refund)})
 }
 
-// listRefunds tahsilatın iadelerini döner.
+// listRefunds returns the capture's refunds.
 func (h *Handler) listRefunds(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -396,11 +411,11 @@ func (h *Handler) listRefunds(w http.ResponseWriter, r *http.Request) {
 	writeList(ctx, w, data)
 }
 
-// decodeOptionalAmount gövdesi İSTEĞE BAĞLI olan tutar isteklerini çözer.
+// decodeOptionalAmount decodes amount requests whose body is OPTIONAL.
 //
-// Tahsilat ve iptal uçlarında gövde göndermemek geçerlidir ve "tamamı"
-// anlamına gelir; boş gövdeyi hata saymak, en yaygın çağrıyı gereksiz bir JSON
-// nesnesi yazmaya zorlardı.
+// On the capture and cancel endpoints sending no body is valid and means "the
+// whole"; counting an empty body as an error would force the most common call
+// to write a needless JSON object.
 func decodeOptionalAmount(w http.ResponseWriter, r *http.Request) (amountRequest, error) {
 	var body amountRequest
 	if r.ContentLength == 0 {
@@ -412,11 +427,13 @@ func decodeOptionalAmount(w http.ResponseWriter, r *http.Request) (amountRequest
 	return body, nil
 }
 
-// decodeSessionData sağlayıcıya iletilecek ham veriyi haritaya çevirir.
+// decodeSessionData converts the raw data to be passed on to the provider into
+// a map.
 //
-// Sayılar json.Number olarak çözülür: haritadan geçen bir tam sayı float64'e
-// dönerse yeniden kodlanırken üstel gösterime kayabilir ve para hiçbir aşamada
-// kayan noktaya uğramamalıdır (plan Bölüm 8).
+// Numbers are decoded as json.Number: an integer that passes through the map
+// and turns into a float64 can slip into exponent notation when it is
+// re-encoded, and money must not touch floating point at any stage (plan
+// Section 8).
 func decodeSessionData(raw json.RawMessage) (map[string]any, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
@@ -428,7 +445,7 @@ func decodeSessionData(raw json.RawMessage) (map[string]any, error) {
 	var out map[string]any
 	if err := dec.Decode(&out); err != nil {
 		return nil, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidRequest,
-			"data alanı JSON nesnesi olmalı")
+			"the data field has to be a JSON object")
 	}
 	return out, nil
 }

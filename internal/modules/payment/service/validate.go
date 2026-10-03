@@ -7,10 +7,10 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/payment/models"
 )
 
-// currencyCodeLength ISO 4217 kodunun harf sayısıdır.
+// currencyCodeLength is the number of letters in an ISO 4217 code.
 const currencyCodeLength = 3
 
-// requireText zorunlu bir metin alanını doğrular.
+// requireText validates a required text field.
 func requireText(label, value string) error {
 	if strings.TrimSpace(value) == "" {
 		return errors.Invalid(CodeInvalidInput, "%s cannot be empty", label)
@@ -18,7 +18,7 @@ func requireText(label, value string) error {
 	return checkTextLen(label, value)
 }
 
-// checkTextLen metin alanının uzunluk sınırını doğrular.
+// checkTextLen validates a text field's length limit.
 func checkTextLen(label, value string) error {
 	if len(value) > maxTextLen {
 		return errors.Invalid(CodeInvalidInput,
@@ -27,10 +27,10 @@ func checkTextLen(label, value string) error {
 	return nil
 }
 
-// normalizeCurrency para birimi kodunu doğrular ve BÜYÜK harfe çevirir.
+// normalizeCurrency validates a currency code and converts it to UPPER case.
 //
-// Kod her yerde büyük harf saklanır; aksi hâlde "try" ve "TRY" iki farklı para
-// birimi gibi davranır ve tutarlar sessizce ayrışırdı.
+// The code is stored in upper case everywhere; otherwise "try" and "TRY" would
+// behave as two different currencies and the amounts would silently diverge.
 func normalizeCurrency(code string) (string, error) {
 	normalized := strings.ToUpper(strings.TrimSpace(code))
 	if len(normalized) != currencyCodeLength {
@@ -40,36 +40,37 @@ func normalizeCurrency(code string) (string, error) {
 	for _, r := range normalized {
 		if r < 'A' || r > 'Z' {
 			return "", errors.Invalid(CodeInvalidInput,
-				"para birimi yalnızca harf içerebilir: %q", code)
+				"the currency can only contain letters: %q", code)
 		}
 	}
 	return normalized, nil
 }
 
-// requireAmount bir tutarın izin verilen aralıkta olduğunu doğrular.
+// requireAmount validates that an amount is within the permitted range.
 //
-// Üst sınır keyfi değildir: koleksiyonun bloke, tahsil ve iade tutarları aynı
-// tavana tabidir ve toplamları int64'e sığmalıdır (bkz. [models.MaxAmount]).
-// Sınırsız bir tutar, toplama sırasında sessizce negatife sarabilirdi.
+// The upper limit is not arbitrary: the collection's held, captured and
+// refunded amounts are subject to the same ceiling and their sum has to fit
+// into an int64 (see [models.MaxAmount]). An unbounded amount could silently
+// wrap around to negative during the summing.
 func requireAmount(label string, amount int64) error {
 	if amount < models.MinAmount || amount > models.MaxAmount {
 		return errors.Invalid(CodeInvalidInput,
-			"%s %d ile %d arasında olmalı: %d", label, models.MinAmount, models.MaxAmount, amount)
+			"%s has to be between %d and %d: %d", label, models.MinAmount, models.MaxAmount, amount)
 	}
 	return nil
 }
 
-// invalidStatus tanınmayan bir koleksiyon durumu için ortak hatayı üretir.
+// invalidStatus builds the shared error for an unrecognized collection status.
 func invalidStatus(value string) error {
 	return errors.Invalid(CodeInvalidInput,
-		"%q tanınmayan bir ödeme koleksiyonu durumu; geçerli olanlar: %s",
+		"%q is not a recognized payment collection status; the valid ones are: %s",
 		value, strings.Join(collectionStatusNames(), ", "))
 }
 
-// collectionStatusNames geçerli koleksiyon durumlarını sabit sırada döner.
+// collectionStatusNames returns the valid collection statuses in a fixed order.
 //
-// Sıra bilinçli olarak sabittir ve ödemenin yaşam döngüsünü izler; hata
-// mesajının okunması, alfabetik ya da rastgele bir listeden kolaydır.
+// The order is fixed on purpose and follows the payment's life cycle; an error
+// message reads more easily that way than from an alphabetical or random list.
 func collectionStatusNames() []string {
 	return []string{
 		models.CollectionNotPaid.String(),
@@ -83,18 +84,18 @@ func collectionStatusNames() []string {
 	}
 }
 
-// requireOptionalAmount sıfırın "belirtilmedi" anlamına geldiği bir tutarı
-// doğrular.
+// requireOptionalAmount validates an amount for which zero means "not
+// given".
 //
-// Sıfır, sağlayıcı sözleşmesinde de "tamamı" demektir (bkz.
-// core/provider: Capture ve Refund). Aynı anlam servis yüzeyinde de
-// korunur ki çağıran iki farklı sıfır kuralı öğrenmek zorunda kalmasın.
+// In the provider contract, too, zero means "all of it" (see
+// core/provider: Capture and Refund). The service surface keeps the same
+// meaning so that the caller does not have to learn two different zero rules.
 func requireOptionalAmount(label string, amount int64) error {
 	if amount == 0 {
 		return nil
 	}
 	if amount < 0 {
-		return errors.Invalid(CodeInvalidInput, "%s negatif olamaz: %d", label, amount)
+		return errors.Invalid(CodeInvalidInput, "%s cannot be negative: %d", label, amount)
 	}
 	return requireAmount(label, amount)
 }

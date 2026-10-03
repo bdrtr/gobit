@@ -11,22 +11,23 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// memRepo [Repository]'nin bellek içi uygulamasıdır.
+// memRepo is an in-memory implementation of [Repository].
 //
-// Amacı, servisin KURALLARINI veritabanı olmadan doğrulayabilmektir: kimlik
-// üretimi, normalleştirme, oran seçimi, yuvarlama, hata sınıflandırması ve
-// yapılan SORGU SAYISI. Veritabanına özgü iddialar (kısmi benzersiz indeksin
-// ikinci kök bölgeyi reddetmesi, bileşik foreign key'in eyalet-ülke
-// tutarsızlığını engellemesi, satır kilidinin eşzamanlı iki güncellemeyi
-// ayırması) BURADA DEĞİL, entegrasyon testlerinde kanıtlanır — sahte bir depo
-// kendi yazdığı kuralı doğrulayamaz.
+// Its purpose is to be able to verify the service's RULES without a database:
+// id generation, normalization, rate selection, rounding, error classification
+// and the NUMBER OF QUERIES made. Database-specific claims (the partial unique
+// index refusing a second root region, the composite foreign key preventing a
+// province-country mismatch, the row lock separating two concurrent updates)
+// are proven NOT HERE but in the integration tests — a fake repository cannot
+// verify a rule it wrote itself.
 //
-// Yine de aynı kısıtların bellek içi karşılıkları uygulanır: servis o
-// hataların SINIFINA göre dallanır ve sahte depo onları hiç üretmeseydi
-// servisin çakışma yolları hiç sınanmazdı.
+// The in-memory counterparts of the same constraints are applied all the same:
+// the service branches on the CLASS of those errors, and had the fake
+// repository never produced them, the service's conflict paths would never be
+// tested.
 //
-// Depo çağrıları sayılır (calls): "kalem başına sorgu yapılmıyor" iddiasının
-// kanıtı budur.
+// Repository calls are counted (calls): that is the proof of the claim "no
+// query is made per line item".
 type memRepo struct {
 	mu sync.Mutex
 
@@ -34,21 +35,21 @@ type memRepo struct {
 	rates   map[string]models.TaxRate
 	rules   map[string]models.TaxRateRule
 	classes map[string]models.TaxClass
-	// members ürün kimliğinden sınıf kimliğine bağdır; gerçek şemadaki
-	// tax_class_member_product_uniq'in aynısı, yani bir ürün EN FAZLA bir
-	// sınıfta.
+	// members binds a product id to a class id; the same as
+	// tax_class_member_product_uniq in the real schema, so a product is in AT
+	// MOST one class.
 	members map[string]string
 
-	// calls metot adına göre çağrı sayacıdır.
+	// calls is the call counter by method name.
 	calls map[string]int
-	// failOn dolu bir metot adı için o çağrının döneceği hatadır.
+	// failOn holds, for a method name that is set, the error that call returns.
 	failOn map[string]error
 }
 
 var _ Repository = (*memRepo)(nil)
 var _ RateSource = (*memRepo)(nil)
 
-// newMemRepo boş bir bellek içi depo üretir.
+// newMemRepo builds an empty in-memory repository.
 func newMemRepo() *memRepo {
 	return &memRepo{
 		regions: map[string]models.TaxRegion{},
@@ -61,7 +62,7 @@ func newMemRepo() *memRepo {
 	}
 }
 
-// enter çağrıyı sayar ve betiklenmiş hatayı döner.
+// enter counts the call and returns the scripted error.
 func (m *memRepo) enter(name string) error {
 	m.calls[name]++
 	if err, ok := m.failOn[name]; ok {
@@ -70,19 +71,19 @@ func (m *memRepo) enter(name string) error {
 	return nil
 }
 
-// WithTx fn'i OLDUĞU GİBİ çalıştırır; GERİ ALMA YAPMAZ.
+// WithTx runs fn AS IS; it does NOT ROLL BACK.
 //
-// Bu, taklidin bilerek eksik bıraktığı yerdir ve eksikliği yazılı olmak
-// zorundadır: bellek içi bir depo işlem açamaz, dolayısıyla bu metodun
-// geçmesi "yazma atomikti" demek DEĞİLDİR. Burada kanıtlanan tek şey servisin
-// işlem çerçevesini ÇAĞIRDIĞIDIR (çağrı sayacı üzerinden görünür). Çerçevenin
-// gerçekten geri aldığı ve kilidin gerçekten beklettiği yalnızca entegrasyon
-// testlerinde, gerçek satır kilitleri üzerinde gösterilebilir — sahte bir depo
-// kendi yazdığı kuralı doğrulayamaz.
+// This is where the fake is deliberately incomplete, and the gap has to be
+// written down: an in-memory repository cannot open a transaction, so this
+// method passing does NOT mean "the write was atomic". The only thing proven
+// here is that the service CALLS the transaction frame (visible through the
+// call counter). That the frame really rolls back and the lock really makes
+// others wait can be shown only in the integration tests, on real row locks —
+// a fake repository cannot verify a rule it wrote itself.
 //
-// Geri alma taklit EDİLMEDİ; edilseydi daha da kötü olurdu: bellekte inandırıcı
-// biçimde geri alınan bir yazma, veritabanında geri alınmayan bir yazmayı
-// gizlerdi ve testler tam da o an yeşil kalırdı.
+// The rollback was NOT imitated; had it been, it would be even worse: a write
+// convincingly rolled back in memory would hide a write the database does not
+// roll back, and the tests would stay green at exactly that moment.
 func (m *memRepo) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
 	m.mu.Lock()
 	err := m.enter("WithTx")
@@ -93,7 +94,8 @@ func (m *memRepo) WithTx(ctx context.Context, fn func(ctx context.Context) error
 	return fn(ctx)
 }
 
-// LockTaxRegion canlı bölgeyi döner; kilit YOKTUR (bkz. [memRepo.WithTx]).
+// LockTaxRegion returns the live region; there is NO lock (see
+// [memRepo.WithTx]).
 func (m *memRepo) LockTaxRegion(_ context.Context, id string) (models.TaxRegion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -104,12 +106,12 @@ func (m *memRepo) LockTaxRegion(_ context.Context, id string) (models.TaxRegion,
 	region, ok := m.regions[id]
 	if !ok || region.DeletedAt != nil {
 		return models.TaxRegion{}, errors.NotFound("tax_region_not_found",
-			"vergi bölgesi bulunamadı: %s", id)
+			"tax region not found: %s", id)
 	}
 	return region, nil
 }
 
-// CreateTaxRegion bölgeyi yazar; ülkenin ikinci kökünü reddeder.
+// CreateTaxRegion writes the region; it rejects a country's second root.
 func (m *memRepo) CreateTaxRegion(_ context.Context, region models.TaxRegion, now time.Time) (models.TaxRegion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -117,31 +119,32 @@ func (m *memRepo) CreateTaxRegion(_ context.Context, region models.TaxRegion, no
 		return models.TaxRegion{}, err
 	}
 
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for key := range m.regions {
 		existing := m.regions[key]
 		if existing.DeletedAt != nil || existing.CountryCode != region.CountryCode {
 			continue
 		}
 		if region.IsRoot() && existing.IsRoot() {
-			// Kod, gerçek deponun kısıt adına göre ürettiğiyle AYNIDIR
-			// (repository.duplicateCode); sahte depo genel "tax_duplicate"i
-			// dönseydi servisin gördüğü hata gerçekte olduğundan farklı olurdu.
+			// The code is the SAME as the one the real repository produces by
+			// constraint name (repository.duplicateCode); had the fake returned
+			// the general "tax_duplicate", the error the service sees would
+			// differ from the real one.
 			return models.TaxRegion{}, errors.Conflict(CodeRootExists,
-				"kök bölge zaten var (kısıt: tax_region_country_root_uniq)")
+				"a root region already exists (constraint: tax_region_country_root_uniq)")
 		}
 		if !region.IsRoot() && !existing.IsRoot() &&
 			existing.Parent() == region.Parent() && existing.Province() == region.Province() {
 			return models.TaxRegion{}, errors.Conflict("tax_duplicate",
-				"eyalet bölgesi zaten var (kısıt: tax_region_province_uniq)")
+				"a province region already exists (constraint: tax_region_province_uniq)")
 		}
 	}
 	if !region.IsRoot() {
 		parent, ok := m.regions[region.Parent()]
 		if !ok || parent.DeletedAt != nil || parent.CountryCode != region.CountryCode {
 			return models.TaxRegion{}, errors.Invalid("tax_constraint_violation",
-				"ebeveyn bulunamadı (kısıt: tax_region_parent_fk)")
+				"the parent was not found (constraint: tax_region_parent_fk)")
 		}
 	}
 
@@ -151,7 +154,7 @@ func (m *memRepo) CreateTaxRegion(_ context.Context, region models.TaxRegion, no
 	return region, nil
 }
 
-// GetTaxRegion kimliğe göre canlı bölgeyi döner.
+// GetTaxRegion returns the live region by id.
 func (m *memRepo) GetTaxRegion(_ context.Context, id string) (models.TaxRegion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -162,12 +165,12 @@ func (m *memRepo) GetTaxRegion(_ context.Context, id string) (models.TaxRegion, 
 	region, ok := m.regions[id]
 	if !ok || region.DeletedAt != nil {
 		return models.TaxRegion{}, errors.NotFound("tax_region_not_found",
-			"vergi bölgesi bulunamadı: %s", id)
+			"tax region not found: %s", id)
 	}
 	return region, nil
 }
 
-// GetTaxRegionsByIDs verilen kimliklerin canlı bölgelerini döner.
+// GetTaxRegionsByIDs returns the live regions of the given ids.
 func (m *memRepo) GetTaxRegionsByIDs(_ context.Context, ids []string) ([]models.TaxRegion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -185,7 +188,7 @@ func (m *memRepo) GetTaxRegionsByIDs(_ context.Context, ids []string) ([]models.
 	return out, nil
 }
 
-// ListTaxRegions sayfalanmış bölge listesini döner.
+// ListTaxRegions returns the paged list of regions.
 func (m *memRepo) ListTaxRegions(_ context.Context, countryCode string, limit, offset int32) ([]models.TaxRegion, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -194,8 +197,8 @@ func (m *memRepo) ListTaxRegions(_ context.Context, countryCode string, limit, o
 	}
 
 	all := make([]models.TaxRegion, 0, len(m.regions))
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for key := range m.regions {
 		region := m.regions[key]
 		if region.DeletedAt != nil {
@@ -216,8 +219,8 @@ func (m *memRepo) ListTaxRegions(_ context.Context, countryCode string, limit, o
 	return slices.Clone(all[offset:end]), total, nil
 }
 
-// ResolveTaxRegions ülkenin kökünü ve (verilmişse) eyaletini döner; eyalet
-// ÖNCE gelir.
+// ResolveTaxRegions returns the country's root and (if given) its province;
+// the province comes FIRST.
 func (m *memRepo) ResolveTaxRegions(_ context.Context, countryCode, provinceCode string) ([]models.TaxRegion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -226,8 +229,8 @@ func (m *memRepo) ResolveTaxRegions(_ context.Context, countryCode, provinceCode
 	}
 
 	var root, province []models.TaxRegion
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for key := range m.regions {
 		region := m.regions[key]
 		if region.DeletedAt != nil || region.CountryCode != countryCode {
@@ -245,7 +248,8 @@ func (m *memRepo) ResolveTaxRegions(_ context.Context, countryCode, provinceCode
 	return append(province, root...), nil
 }
 
-// DeleteTaxRegion bölgeyi, alt bölgelerini, oranlarını ve kurallarını siler.
+// DeleteTaxRegion deletes the region, its child regions, their rates and their
+// rules.
 func (m *memRepo) DeleteTaxRegion(_ context.Context, id string, now time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -255,13 +259,13 @@ func (m *memRepo) DeleteTaxRegion(_ context.Context, id string, now time.Time) e
 
 	region, ok := m.regions[id]
 	if !ok || region.DeletedAt != nil {
-		return errors.NotFound("tax_region_not_found", "vergi bölgesi bulunamadı: %s", id)
+		return errors.NotFound("tax_region_not_found", "tax region not found: %s", id)
 	}
 
 	deleted := now.UTC()
 	regionIDs := map[string]bool{}
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for regionID := range m.regions {
 		candidate := m.regions[regionID]
 		if candidate.DeletedAt != nil {
@@ -277,8 +281,8 @@ func (m *memRepo) DeleteTaxRegion(_ context.Context, id string, now time.Time) e
 	}
 
 	rateIDs := map[string]bool{}
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for rateID := range m.rates {
 		rate := m.rates[rateID]
 		if rate.DeletedAt != nil || !regionIDs[rate.TaxRegionID] {
@@ -289,8 +293,8 @@ func (m *memRepo) DeleteTaxRegion(_ context.Context, id string, now time.Time) e
 		m.rates[rateID] = rate
 		rateIDs[rateID] = true
 	}
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for ruleID := range m.rules {
 		rule := m.rules[ruleID]
 		if rule.DeletedAt != nil || !rateIDs[rule.TaxRateID] {
@@ -303,7 +307,7 @@ func (m *memRepo) DeleteTaxRegion(_ context.Context, id string, now time.Time) e
 	return nil
 }
 
-// CreateTaxRate oranı yazar; bölgenin ikinci varsayılanını reddeder.
+// CreateTaxRate writes the rate; it rejects a region's second default.
 func (m *memRepo) CreateTaxRate(_ context.Context, rate models.TaxRate, now time.Time) (models.TaxRate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -314,12 +318,12 @@ func (m *memRepo) CreateTaxRate(_ context.Context, rate models.TaxRate, now time
 	region, ok := m.regions[rate.TaxRegionID]
 	if !ok || region.DeletedAt != nil {
 		return models.TaxRate{}, errors.Invalid("tax_constraint_violation",
-			"bölge bulunamadı (kısıt: tax_rate_region_fk)")
+			"the region was not found (constraint: tax_rate_region_fk)")
 	}
 	if rate.IsDefault && m.defaultRateLocked(rate.TaxRegionID) != "" {
-		// Kod gerçek deponunkiyle aynıdır; bkz. CreateTaxRegion.
+		// The code is the same as the real repository's; see CreateTaxRegion.
 		return models.TaxRate{}, errors.Conflict(CodeDefaultExists,
-			"varsayılan oran zaten var (kısıt: tax_rate_default_uniq)")
+			"a default rate already exists (constraint: tax_rate_default_uniq)")
 	}
 
 	rate.CreatedAt = now.UTC()
@@ -328,11 +332,11 @@ func (m *memRepo) CreateTaxRate(_ context.Context, rate models.TaxRate, now time
 	return rate, nil
 }
 
-// defaultRateLocked bölgenin varsayılan oran kimliğini döner; çağıran kilidi
-// tutuyor olmalıdır.
+// defaultRateLocked returns the id of the region's default rate; the caller
+// has to hold the lock.
 func (m *memRepo) defaultRateLocked(regionID string) string {
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for id := range m.rates {
 		rate := m.rates[id]
 		if rate.DeletedAt == nil && rate.TaxRegionID == regionID && rate.IsDefault {
@@ -342,7 +346,7 @@ func (m *memRepo) defaultRateLocked(regionID string) string {
 	return ""
 }
 
-// GetTaxRate kimliğe göre canlı oranı döner.
+// GetTaxRate returns the live rate by id.
 func (m *memRepo) GetTaxRate(_ context.Context, id string) (models.TaxRate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -352,12 +356,12 @@ func (m *memRepo) GetTaxRate(_ context.Context, id string) (models.TaxRate, erro
 
 	rate, ok := m.rates[id]
 	if !ok || rate.DeletedAt != nil {
-		return models.TaxRate{}, errors.NotFound("tax_rate_not_found", "vergi oranı bulunamadı: %s", id)
+		return models.TaxRate{}, errors.NotFound("tax_rate_not_found", "tax rate not found: %s", id)
 	}
 	return rate, nil
 }
 
-// ListTaxRates bir bölgenin canlı oranlarını döner.
+// ListTaxRates returns a region's live rates.
 func (m *memRepo) ListTaxRates(_ context.Context, regionID string) ([]models.TaxRate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -367,7 +371,7 @@ func (m *memRepo) ListTaxRates(_ context.Context, regionID string) ([]models.Tax
 	return m.ratesForLocked([]string{regionID}), nil
 }
 
-// ListTaxRatesByRegions birden çok bölgenin canlı oranlarını döner.
+// ListTaxRatesByRegions returns the live rates of several regions.
 func (m *memRepo) ListTaxRatesByRegions(_ context.Context, regionIDs []string) ([]models.TaxRate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -377,12 +381,12 @@ func (m *memRepo) ListTaxRatesByRegions(_ context.Context, regionIDs []string) (
 	return m.ratesForLocked(regionIDs), nil
 }
 
-// ratesForLocked verilen bölgelerin canlı oranlarını sıralı döner; çağıran
-// kilidi tutuyor olmalıdır.
+// ratesForLocked returns the live rates of the given regions in order; the
+// caller has to hold the lock.
 func (m *memRepo) ratesForLocked(regionIDs []string) []models.TaxRate {
 	out := make([]models.TaxRate, 0, len(m.rates))
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for key := range m.rates {
 		rate := m.rates[key]
 		if rate.DeletedAt == nil && slices.Contains(regionIDs, rate.TaxRegionID) {
@@ -404,7 +408,7 @@ func (m *memRepo) ratesForLocked(regionIDs []string) []models.TaxRate {
 	return out
 }
 
-// UpdateTaxRate yamayı uygular; varsayılanlık kısıtlarını denetler.
+// UpdateTaxRate applies the patch; it checks the default-rate constraints.
 func (m *memRepo) UpdateTaxRate(_ context.Context, id string, patch models.TaxRatePatch, now time.Time) (models.TaxRate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -414,18 +418,18 @@ func (m *memRepo) UpdateTaxRate(_ context.Context, id string, patch models.TaxRa
 
 	current, ok := m.rates[id]
 	if !ok || current.DeletedAt != nil {
-		return models.TaxRate{}, errors.NotFound("tax_rate_not_found", "vergi oranı bulunamadı: %s", id)
+		return models.TaxRate{}, errors.NotFound("tax_rate_not_found", "tax rate not found: %s", id)
 	}
 
 	updated := current.Patched(patch)
 	if updated.IsDefault && !current.IsDefault {
 		if m.ruleCountLocked(id) > 0 {
 			return models.TaxRate{}, errors.Conflict("tax_constraint_violation",
-				"kurallı bir oran varsayılan yapılamaz: %s", id)
+				"a ruled rate cannot be made the default: %s", id)
 		}
 		if other := m.defaultRateLocked(current.TaxRegionID); other != "" && other != id {
 			return models.TaxRate{}, errors.Conflict(CodeDefaultExists,
-				"varsayılan oran zaten var (kısıt: tax_rate_default_uniq)")
+				"a default rate already exists (constraint: tax_rate_default_uniq)")
 		}
 	}
 
@@ -434,12 +438,12 @@ func (m *memRepo) UpdateTaxRate(_ context.Context, id string, patch models.TaxRa
 	return updated, nil
 }
 
-// ruleCountLocked oranın canlı kural sayısını döner; çağıran kilidi tutuyor
-// olmalıdır.
+// ruleCountLocked returns the number of the rate's live rules; the caller has
+// to hold the lock.
 func (m *memRepo) ruleCountLocked(rateID string) int {
 	count := 0
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for key := range m.rules {
 		rule := m.rules[key]
 		if rule.DeletedAt == nil && rule.TaxRateID == rateID {
@@ -449,7 +453,7 @@ func (m *memRepo) ruleCountLocked(rateID string) int {
 	return count
 }
 
-// DeleteTaxRate oranı ve kurallarını siler.
+// DeleteTaxRate deletes the rate and its rules.
 func (m *memRepo) DeleteTaxRate(_ context.Context, id string, now time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -459,7 +463,7 @@ func (m *memRepo) DeleteTaxRate(_ context.Context, id string, now time.Time) err
 
 	rate, ok := m.rates[id]
 	if !ok || rate.DeletedAt != nil {
-		return errors.NotFound("tax_rate_not_found", "vergi oranı bulunamadı: %s", id)
+		return errors.NotFound("tax_rate_not_found", "tax rate not found: %s", id)
 	}
 
 	deleted := now.UTC()
@@ -467,8 +471,8 @@ func (m *memRepo) DeleteTaxRate(_ context.Context, id string, now time.Time) err
 	rate.UpdatedAt = deleted
 	m.rates[id] = rate
 
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for ruleID := range m.rules {
 		rule := m.rules[ruleID]
 		if rule.DeletedAt == nil && rule.TaxRateID == id {
@@ -480,7 +484,8 @@ func (m *memRepo) DeleteTaxRate(_ context.Context, id string, now time.Time) err
 	return nil
 }
 
-// CreateTaxRateRule kuralı yazar; varsayılan orana kural eklemeyi reddeder.
+// CreateTaxRateRule writes the rule; it rejects adding a rule to a default
+// rate.
 func (m *memRepo) CreateTaxRateRule(_ context.Context, rule models.TaxRateRule, now time.Time) (models.TaxRateRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -491,20 +496,20 @@ func (m *memRepo) CreateTaxRateRule(_ context.Context, rule models.TaxRateRule, 
 	rate, ok := m.rates[rule.TaxRateID]
 	if !ok || rate.DeletedAt != nil {
 		return models.TaxRateRule{}, errors.NotFound("tax_rate_not_found",
-			"vergi oranı bulunamadı: %s", rule.TaxRateID)
+			"tax rate not found: %s", rule.TaxRateID)
 	}
 	if rate.IsDefault {
 		return models.TaxRateRule{}, errors.Conflict("tax_constraint_violation",
-			"varsayılan oranın kuralı olamaz: %s", rule.TaxRateID)
+			"a default rate cannot have rules: %s", rule.TaxRateID)
 	}
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for key := range m.rules {
 		existing := m.rules[key]
 		if existing.DeletedAt == nil && existing.TaxRateID == rule.TaxRateID &&
 			existing.Reference == rule.Reference && existing.ReferenceID == rule.ReferenceID {
 			return models.TaxRateRule{}, errors.Conflict("tax_duplicate",
-				"kural zaten var (kısıt: tax_rate_rule_uniq)")
+				"the rule already exists (constraint: tax_rate_rule_uniq)")
 		}
 	}
 
@@ -514,7 +519,7 @@ func (m *memRepo) CreateTaxRateRule(_ context.Context, rule models.TaxRateRule, 
 	return rule, nil
 }
 
-// GetTaxRateRule kimliğe göre canlı kuralı döner.
+// GetTaxRateRule returns the live rule by id.
 func (m *memRepo) GetTaxRateRule(_ context.Context, id string) (models.TaxRateRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -525,12 +530,12 @@ func (m *memRepo) GetTaxRateRule(_ context.Context, id string) (models.TaxRateRu
 	rule, ok := m.rules[id]
 	if !ok || rule.DeletedAt != nil {
 		return models.TaxRateRule{}, errors.NotFound("tax_rate_rule_not_found",
-			"vergi kuralı bulunamadı: %s", id)
+			"tax rule not found: %s", id)
 	}
 	return rule, nil
 }
 
-// ListTaxRateRules bir oranın canlı kurallarını döner.
+// ListTaxRateRules returns a rate's live rules.
 func (m *memRepo) ListTaxRateRules(_ context.Context, rateID string) ([]models.TaxRateRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -540,7 +545,7 @@ func (m *memRepo) ListTaxRateRules(_ context.Context, rateID string) ([]models.T
 	return m.rulesForLocked([]string{rateID}), nil
 }
 
-// ListTaxRateRulesByRates birden çok oranın canlı kurallarını döner.
+// ListTaxRateRulesByRates returns the live rules of several rates.
 func (m *memRepo) ListTaxRateRulesByRates(_ context.Context, rateIDs []string) ([]models.TaxRateRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -550,11 +555,11 @@ func (m *memRepo) ListTaxRateRulesByRates(_ context.Context, rateIDs []string) (
 	return m.rulesForLocked(rateIDs), nil
 }
 
-// rulesForLocked verilen oranların canlı kurallarını sıralı döner.
+// rulesForLocked returns the live rules of the given rates in order.
 func (m *memRepo) rulesForLocked(rateIDs []string) []models.TaxRateRule {
 	out := make([]models.TaxRateRule, 0, len(m.rules))
-	// Anahtar üzerinden dolaşılır: değerle dolaşmak her turda modelin
-	// tamamını kopyalar.
+	// The loop runs over the keys: ranging over the values would copy the
+	// whole model on every iteration.
 	for key := range m.rules {
 		rule := m.rules[key]
 		if rule.DeletedAt == nil && slices.Contains(rateIDs, rule.TaxRateID) {
@@ -570,7 +575,7 @@ func (m *memRepo) rulesForLocked(rateIDs []string) []models.TaxRateRule {
 	return out
 }
 
-// DeleteTaxRateRule kuralı siler.
+// DeleteTaxRateRule deletes the rule.
 func (m *memRepo) DeleteTaxRateRule(_ context.Context, id string, now time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -580,7 +585,7 @@ func (m *memRepo) DeleteTaxRateRule(_ context.Context, id string, now time.Time)
 
 	rule, ok := m.rules[id]
 	if !ok || rule.DeletedAt != nil {
-		return errors.NotFound("tax_rate_rule_not_found", "vergi kuralı bulunamadı: %s", id)
+		return errors.NotFound("tax_rate_rule_not_found", "tax rule not found: %s", id)
 	}
 
 	deleted := now.UTC()
@@ -590,18 +595,19 @@ func (m *memRepo) DeleteTaxRateRule(_ context.Context, id string, now time.Time)
 	return nil
 }
 
-// callCount bir metodun çağrı sayısını döner.
+// callCount returns the number of calls of a method.
 func (m *memRepo) callCount(name string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.calls[name]
 }
 
-// sortRegions bölgeleri belirlenimci sıraya koyar: kök ÖNCE, sonra kimlik.
+// sortRegions puts the regions in a deterministic order: the root FIRST, then
+// by id.
 //
-// Gerçek sorgudaki sıra ile aynı olması şart değildir; şart olan, sahte deponun
-// harita dolaşım sırasına GÖRE DEĞİŞMEMESİDİR. Aksi hâlde testler kendi
-// içinde kararsız olurdu.
+// It does not have to be the same as the order in the real query; what is
+// required is that the fake repository does NOT CHANGE WITH the map iteration
+// order. Otherwise the tests would be unstable among themselves.
 func sortRegions(regions []models.TaxRegion) {
 	slices.SortFunc(regions, func(a, b models.TaxRegion) int {
 		if a.IsRoot() != b.IsRoot() {
@@ -614,9 +620,9 @@ func sortRegions(regions []models.TaxRegion) {
 	})
 }
 
-// --- vergi sınıfı ------------------------------------------------------------
+// --- tax class ---------------------------------------------------------------
 
-// CreateTaxClass sınıfı yazar.
+// CreateTaxClass writes the class.
 func (m *memRepo) CreateTaxClass(
 	_ context.Context, class models.TaxClass, now time.Time,
 ) (models.TaxClass, error) {
@@ -632,7 +638,7 @@ func (m *memRepo) CreateTaxClass(
 	return class, nil
 }
 
-// GetTaxClass sınıfı kimliğiyle okur.
+// GetTaxClass reads the class by id.
 func (m *memRepo) GetTaxClass(_ context.Context, id string) (models.TaxClass, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -643,13 +649,13 @@ func (m *memRepo) GetTaxClass(_ context.Context, id string) (models.TaxClass, er
 	class, ok := m.classes[id]
 	if !ok {
 		return models.TaxClass{}, errors.NotFound("tax_class_not_found",
-			"vergi sınıfı bulunamadı: %s", id)
+			"tax class not found: %s", id)
 	}
 
 	return class, nil
 }
 
-// ListTaxClasses canlı sınıfları döner.
+// ListTaxClasses returns the live classes.
 func (m *memRepo) ListTaxClasses(_ context.Context) ([]models.TaxClass, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -672,10 +678,11 @@ func (m *memRepo) ListTaxClasses(_ context.Context) ([]models.TaxClass, error) {
 	return out, nil
 }
 
-// DeleteTaxClass ürün taşımayan sınıfı siler.
+// DeleteTaxClass deletes a class that carries no products.
 //
-// Ürün sayısı GERÇEK depodaki gibi burada da kontrol edilir: sayıyı sormayan
-// bir sahte, servisin "dolu sınıf silinmez" dalını sınanamaz yapardı.
+// The number of products is checked here too, as in the REAL repository: a fake
+// that did not ask for the count would make the service's "a class with
+// products is not deleted" branch untestable.
 func (m *memRepo) DeleteTaxClass(_ context.Context, id string, _ time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -684,12 +691,12 @@ func (m *memRepo) DeleteTaxClass(_ context.Context, id string, _ time.Time) erro
 	}
 
 	if _, ok := m.classes[id]; !ok {
-		return errors.NotFound("tax_class_not_found", "vergi sınıfı bulunamadı: %s", id)
+		return errors.NotFound("tax_class_not_found", "tax class not found: %s", id)
 	}
 	for _, classID := range m.members {
 		if classID == id {
 			return errors.Conflict("tax_constraint_violation",
-				"%s sınıfı hâlâ ürün taşıyor", id)
+				"class %s still carries products", id)
 		}
 	}
 	delete(m.classes, id)
@@ -697,7 +704,8 @@ func (m *memRepo) DeleteTaxClass(_ context.Context, id string, _ time.Time) erro
 	return nil
 }
 
-// SetTaxClassMember ürünü sınıfa bağlar; başka sınıftaysa TAŞIR.
+// SetTaxClassMember binds the product to the class; if it is in another class
+// it MOVES it.
 func (m *memRepo) SetTaxClassMember(
 	_ context.Context, member models.TaxClassMember, now time.Time,
 ) (models.TaxClassMember, error) {
@@ -709,7 +717,7 @@ func (m *memRepo) SetTaxClassMember(
 
 	if _, ok := m.classes[member.TaxClassID]; !ok {
 		return models.TaxClassMember{}, errors.NotFound("tax_class_not_found",
-			"vergi sınıfı bulunamadı: %s", member.TaxClassID)
+			"tax class not found: %s", member.TaxClassID)
 	}
 	m.members[member.ProductID] = member.TaxClassID
 	member.CreatedAt, member.UpdatedAt = now, now
@@ -717,7 +725,7 @@ func (m *memRepo) SetTaxClassMember(
 	return member, nil
 }
 
-// RemoveTaxClassMember ürünü sınıfından çıkarır.
+// RemoveTaxClassMember takes the product out of its class.
 func (m *memRepo) RemoveTaxClassMember(_ context.Context, productID string, _ time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -727,14 +735,14 @@ func (m *memRepo) RemoveTaxClassMember(_ context.Context, productID string, _ ti
 
 	if _, ok := m.members[productID]; !ok {
 		return errors.NotFound("tax_class_not_found",
-			"ürün hiçbir vergi sınıfında değil: %s", productID)
+			"the product is in no tax class: %s", productID)
 	}
 	delete(m.members, productID)
 
 	return nil
 }
 
-// ListTaxClassMembers sınıfın ürünlerini döner.
+// ListTaxClassMembers returns the class's products.
 func (m *memRepo) ListTaxClassMembers(
 	_ context.Context, classID string,
 ) ([]models.TaxClassMember, error) {
@@ -759,10 +767,11 @@ func (m *memRepo) ListTaxClassMembers(
 	return out, nil
 }
 
-// ClassesOfProducts ürünlerin sınıflarını tek çağrıda döner.
+// ClassesOfProducts returns the products' classes in one call.
 //
-// Sınıfı olmayan ürün haritada YOKTUR — gerçek sorgu da satır döndürmüyor —
-// çünkü sıfır yazan bir sahte, çağıranın "sınıfsız" dalını sınanamaz bırakırdı.
+// A product with no class is ABSENT from the map — the real query returns no
+// row for it either — because a fake that wrote a zero value would leave the
+// caller's "no class" branch untestable.
 func (m *memRepo) ClassesOfProducts(
 	_ context.Context, productIDs []string,
 ) (map[string]string, error) {

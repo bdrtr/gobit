@@ -8,7 +8,7 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/service"
 )
 
-// createRegion POST /admin/v1/tax-regions handler'ıdır.
+// createRegion is the POST /admin/v1/tax-regions handler.
 func (a *API) createRegion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -26,10 +26,10 @@ func (a *API) createRegion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toTaxRegionDTO(region))
 }
 
-// listRegions GET /admin/v1/tax-regions handler'ıdır.
+// listRegions is the GET /admin/v1/tax-regions handler.
 //
-// "country_code" sorgu parametresi listeyi tek ülkeye daraltır; verilmezse tüm
-// bölgeler döner.
+// The "country_code" query parameter narrows the list to a single country;
+// without it every region comes back.
 func (a *API) listRegions(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -47,7 +47,7 @@ func (a *API) listRegions(w http.ResponseWriter, r *http.Request) {
 	writePage(w, r, page, toTaxRegionDTO)
 }
 
-// getRegion GET /admin/v1/tax-regions/{id} handler'ıdır.
+// getRegion is the GET /admin/v1/tax-regions/{id} handler.
 func (a *API) getRegion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -59,12 +59,12 @@ func (a *API) getRegion(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toTaxRegionDTO(region))
 }
 
-// deleteRegion DELETE /admin/v1/tax-regions/{id} handler'ıdır.
+// deleteRegion is the DELETE /admin/v1/tax-regions/{id} handler.
 //
-// Silme AĞACI kapsar: alt bölgeler, oranları ve o oranların kuralları da
-// yumuşak silinir (bkz. service.Service.DeleteTaxRegion). Yanıt gövdesizdir;
-// silinen ağacın dökümünü döndürmek, istemcinin ihtiyacı olmayan bir listeyi
-// her çağrıda üretmek olurdu.
+// The delete covers the TREE: the child regions, their rates and those rates'
+// rules are soft-deleted too (see service.Service.DeleteTaxRegion). The
+// response has no body; returning a dump of the deleted tree would mean
+// producing, on every call, a list the client does not need.
 func (a *API) deleteRegion(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -75,7 +75,7 @@ func (a *API) deleteRegion(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// listRegionRates GET /admin/v1/tax-regions/{id}/tax-rates handler'ıdır.
+// listRegionRates is the GET /admin/v1/tax-regions/{id}/tax-rates handler.
 func (a *API) listRegionRates(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -87,7 +87,7 @@ func (a *API) listRegionRates(w http.ResponseWriter, r *http.Request) {
 	writeAll(w, r, rates, toTaxRateDTO)
 }
 
-// createRate POST /admin/v1/tax-rates handler'ıdır.
+// createRate is the POST /admin/v1/tax-rates handler.
 func (a *API) createRate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -105,18 +105,18 @@ func (a *API) createRate(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toTaxRateDTO(rate))
 }
 
-// listRates GET /admin/v1/tax-rates handler'ıdır.
+// listRates is the GET /admin/v1/tax-rates handler.
 //
-// "tax_region_id" sorgu parametresi ZORUNLUDUR: oranlar daima bir bölgeye
-// aittir ve bölgesiz bir oran listesi, hangi coğrafyaya ait olduğu okunamayan
-// bir tablodur. Eksikse errors.Invalid döner.
+// The "tax_region_id" query parameter is REQUIRED: rates always belong to a
+// region, and a list of rates without a region is a table that does not say
+// which geography it belongs to. If it is missing errors.Invalid is returned.
 func (a *API) listRates(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	regionID := r.URL.Query().Get("tax_region_id")
 	if regionID == "" {
 		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidBody,
-			"%q sorgu parametresi zorunludur", "tax_region_id"))
+			"the %q query parameter is required", "tax_region_id"))
 		return
 	}
 
@@ -128,7 +128,7 @@ func (a *API) listRates(w http.ResponseWriter, r *http.Request) {
 	writeAll(w, r, rates, toTaxRateDTO)
 }
 
-// getRate GET /admin/v1/tax-rates/{id} handler'ıdır.
+// getRate is the GET /admin/v1/tax-rates/{id} handler.
 func (a *API) getRate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -140,12 +140,12 @@ func (a *API) getRate(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toTaxRateDTO(rate))
 }
 
-// updateRate PUT /admin/v1/tax-rates/{id} handler'ıdır.
+// updateRate is the PUT /admin/v1/tax-rates/{id} handler.
 //
-// Yöntem PUT olsa da semantik KISMİDİR: verilmeyen alan değişmez. Bu bilinçli
-// bir sadeleştirmedir — PATCH'i ayrı bir yöntem olarak sunmak, iki gövde şekli
-// ve iki doğrulama yolu demek olurdu; kısmi olmayan bir PUT ise göndermeyi
-// unutulan bir oranı sessizce sıfırlardı.
+// Although the method is PUT, the semantics are PARTIAL: a field not given does
+// not change. This is a deliberate simplification — offering PATCH as a
+// separate method would mean two body shapes and two validation paths, while a
+// PUT that is not partial would silently reset a rate somebody forgot to send.
 func (a *API) updateRate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -163,7 +163,7 @@ func (a *API) updateRate(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusOK, toTaxRateDTO(rate))
 }
 
-// deleteRate DELETE /admin/v1/tax-rates/{id} handler'ıdır.
+// deleteRate is the DELETE /admin/v1/tax-rates/{id} handler.
 func (a *API) deleteRate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -174,10 +174,11 @@ func (a *API) deleteRate(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(ctx, w, http.StatusNoContent, nil)
 }
 
-// createRule POST /admin/v1/tax-rates/{id}/rules handler'ıdır.
+// createRule is the POST /admin/v1/tax-rates/{id}/rules handler.
 //
-// Oran kimliği YOLDAN alınır: kural, oranın alt kaynağıdır ve gövdede ikinci
-// kez taşınsaydı yol ile gövde çelişebilirdi.
+// The rate id is taken FROM THE PATH: the rule is a sub-resource of the rate,
+// and were the id carried a second time in the body, the path and the body
+// could contradict each other.
 func (a *API) createRule(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -199,7 +200,7 @@ func (a *API) createRule(w http.ResponseWriter, r *http.Request) {
 	writeItem(w, r, http.StatusCreated, toTaxRateRuleDTO(rule))
 }
 
-// listRules GET /admin/v1/tax-rates/{id}/rules handler'ıdır.
+// listRules is the GET /admin/v1/tax-rates/{id}/rules handler.
 func (a *API) listRules(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -211,12 +212,12 @@ func (a *API) listRules(w http.ResponseWriter, r *http.Request) {
 	writeAll(w, r, rules, toTaxRateRuleDTO)
 }
 
-// deleteRule DELETE /admin/v1/tax-rates/{id}/rules/{ruleID} handler'ıdır.
+// deleteRule is the DELETE /admin/v1/tax-rates/{id}/rules/{ruleID} handler.
 //
-// Yoldaki oran kimliği yalnızca kaynağın yerini belirtir; silme kural
-// kimliğiyle yapılır. İkisinin tutarlılığı ayrıca denetlenmez — başka bir
-// oranın kuralını bu yol üzerinden silmek yalnızca yolun anlamsız yazılması
-// demektir ve sonuç yine doğru kaydı siler.
+// The rate id in the path only states where the resource lives; the delete is
+// done by rule id. Whether the two agree is not checked separately — deleting
+// another rate's rule through this path only means the path was written
+// nonsensically, and the outcome still deletes the right record.
 func (a *API) deleteRule(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
