@@ -12,6 +12,10 @@ import (
 // order is worth.
 const CodeCreditExceedsOrder = "order_credit_exceeds_order" //nolint:gosec // G101: not a credential, a constant error CODE returned to the client
 
+// CodeCreditMoved refuses a credit whose order had more or less credited than
+// the caller read (ADR 0388).
+const CodeCreditMoved = "order_credit_moved" //nolint:gosec // G101: not a credential, a constant error CODE returned to the client
+
 // CreateCreditLineInput is the request to write off part of what an order owes.
 type CreateCreditLineInput struct {
 	// Amount is the credited amount (minor unit); it has to be POSITIVE.
@@ -24,6 +28,10 @@ type CreateCreditLineInput struct {
 	Reason string
 	// Note is free-form detail; it may be empty.
 	Note string
+	// ReadCredited, when given, is the credited total the caller read; the
+	// credit is refused with [CodeCreditMoved] when that has changed, so a form
+	// sent twice credits once (ADR 0388).
+	ReadCredited *int64
 }
 
 // CreateCreditLine writes off part of what the order owes.
@@ -85,6 +93,11 @@ func (s *Service) CreateCreditLine(
 		credited, sumErr := s.store.CreditedTotal(ctx, orderID)
 		if sumErr != nil {
 			return sumErr
+		}
+		if in.ReadCredited != nil && credited != *in.ReadCredited {
+			return errors.Conflict(CodeCreditMoved,
+				"order %s has %d credited now, not %d; draw the page again",
+				orderID, credited, *in.ReadCredited)
 		}
 
 		next, addErr := addAmount(credited, in.Amount)

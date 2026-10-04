@@ -68,19 +68,37 @@ func (i *Interop) ShipInParcel(ctx context.Context, orderID, fulfillmentID strin
 
 // CorrectShippingAddress corrects where an order ships; the rules are
 // [Workflows.CorrectShippingAddress]'s. The address travels as the order
-// module's JSON both ways.
+// module's JSON both ways, and readAddressID, the row the caller read or "",
+// comes after it so it cannot be swapped with the order's id.
 func (i *Interop) CorrectShippingAddress(
-	ctx context.Context, orderID string, address json.RawMessage,
+	ctx context.Context, orderID string, address json.RawMessage, readAddressID string,
 ) (json.RawMessage, error) {
-	return i.w.CorrectShippingAddress(ctx, orderID, address)
+	return i.w.CorrectShippingAddress(ctx, orderID, address, readAddressID)
 }
 
 // ChangeDelivery puts one of an order's deliveries on another option; the
-// rules are [Workflows.ChangeDelivery]'s.
+// rules are [Workflows.ChangeDelivery]'s. quotedAmount is the price the caller
+// showed, or nil.
 func (i *Interop) ChangeDelivery(
-	ctx context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string,
+	ctx context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string, quotedAmount *int64,
 ) (json.RawMessage, error) {
-	return i.w.ChangeDelivery(ctx, orderID, shippingMethodID, shippingOptionID, collectionID)
+	return i.w.ChangeDelivery(ctx, orderID, shippingMethodID, shippingOptionID, collectionID, quotedAmount)
+}
+
+// DeliveryQuoteJSON lists the options the order's deliveries can be put on,
+// each as {"id","name","amount"} in the order's currency (ADR 0388); the
+// rules are [Workflows.QuoteDelivery]'s.
+func (i *Interop) DeliveryQuoteJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	quotes, err := i.w.QuoteDelivery(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(quotes)
+	if err != nil {
+		return nil, errors.Internal(CodeQuoteFailed, "the quote of order %s could not be encoded", orderID)
+	}
+
+	return encoded, nil
 }
 
 // ShipmentsOfOrderJSON lists the shipments bound to an order.

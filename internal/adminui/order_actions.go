@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -110,6 +111,9 @@ type afterSaleOutcome struct {
 	// Warnings are what the act did right and the world did not; each needs a
 	// human.
 	Warnings []string
+	// Typed is what a refused address correction was sent with, drawn back
+	// into its form (ADR 0388); nil for every other act.
+	Typed url.Values
 }
 
 // afterSaleForm is one act a record offers on the page, and what its form

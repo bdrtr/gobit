@@ -320,16 +320,21 @@ func TestTheReadLayerCarriesWhereAnOrderGoes(t *testing.T) {
 	held, err := e.store.OrderAddressesByOrderIDs(ctx, []string{parent.ID})
 	require.NoError(t, err)
 	var latest time.Time
+	currentRow := ""
 	for _, address := range held[parent.ID] {
 		if address.SupersededAt != nil && address.SupersededAt.After(latest) {
 			latest = *address.SupersededAt
 		}
+		if address.Type == models.AddressShipping && address.Current() {
+			currentRow = address.ID
+		}
 	}
+	require.NotEmpty(t, currentRow)
 
 	reads = e.store.addressReads
 	page, err := p.List(ctx, query.ListOptions{Fields: []string{
 		service.FieldID, service.FieldShippingAddress, service.FieldBillingAddress,
-		service.FieldShippingAddressCorrectedAt,
+		service.FieldShippingAddressCorrectedAt, service.FieldShippingAddressID,
 	}})
 	require.NoError(t, err)
 	assert.Equal(t, reads+1, e.store.addressReads, "one address read for the whole page")
@@ -346,9 +351,12 @@ func TestTheReadLayerCarriesWhereAnOrderGoes(t *testing.T) {
 			}, record[service.FieldBillingAddress])
 			assert.Equal(t, latest, record[service.FieldShippingAddressCorrectedAt],
 				"after two corrections the page reads the LATER one")
+			assert.Equal(t, currentRow, record[service.FieldShippingAddressID],
+				"the row a correction names is the current one, not one it closed (ADR 0388)")
 		case addition.ID:
 			assert.Nil(t, record[service.FieldShippingAddress], "an order with no address reads nil")
 			assert.Nil(t, record[service.FieldShippingAddressCorrectedAt], "never corrected")
+			assert.Nil(t, record[service.FieldShippingAddressID], "no row to name")
 		}
 	}
 }

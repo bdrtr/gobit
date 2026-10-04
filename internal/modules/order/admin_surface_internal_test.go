@@ -3,6 +3,7 @@ package order
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,6 +27,74 @@ func (f *recordingFulfilling) OpenForOrder(
 ) (fulfillmentID string, alreadyOpen bool, err error) {
 	f.orderID, f.request = orderID, request
 	return "ful_1", f.already, nil
+}
+
+// changingFulfilling records the delivery changes, corrections and quotes
+// the surface hands the flow, each parameter in its own field (ADR 0388).
+type changingFulfilling struct {
+	api.Fulfilling
+	calls []string
+}
+
+func (f *changingFulfilling) ChangeDelivery(
+	_ context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string, quotedAmount *int64,
+) (json.RawMessage, error) {
+	quoted := "nil"
+	if quotedAmount != nil {
+		quoted = fmt.Sprint(*quotedAmount)
+	}
+	f.calls = append(f.calls, "change order="+orderID+" method="+shippingMethodID+
+		" option="+shippingOptionID+" collection="+collectionID+" quoted="+quoted)
+
+	return json.RawMessage(`null`), nil
+}
+
+func (f *changingFulfilling) CorrectShippingAddress(
+	_ context.Context, orderID string, address json.RawMessage, readAddressID string,
+) (json.RawMessage, error) {
+	f.calls = append(f.calls, "correct order="+orderID+" address="+string(address)+" read="+readAddressID)
+
+	return address, nil
+}
+
+func (f *changingFulfilling) DeliveryQuoteJSON(_ context.Context, orderID string) (json.RawMessage, error) {
+	f.calls = append(f.calls, "quote order="+orderID)
+
+	return json.RawMessage(`[]`), nil
+}
+
+// TestThePanelChangesAndCorrectsThroughTheFlowTheAPICalls is ADR 0388: the
+// surface hands the fulfilling flow the order, the delivery, the option, the
+// collection and the price shown, each to its own parameter, and the row an
+// address correction was drawn from beside its address; a surface without the
+// flow is unavailable.
+func TestThePanelChangesAndCorrectsThroughTheFlowTheAPICalls(t *testing.T) {
+	t.Parallel()
+
+	flow := &changingFulfilling{}
+	surface := &AfterSalesSurface{fulfilling: flow}
+	ctx := context.Background()
+
+	_, err := surface.ChangeDelivery(ctx, "o1", "d1", "so1", "pc1", 700)
+	require.NoError(t, err)
+	require.NoError(t, surface.CorrectShippingAddress(ctx, "o1", json.RawMessage(`{"address_1":"a"}`), "oadr1"))
+	_, err = surface.DeliveryQuoteJSON(ctx, "o1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"change order=o1 method=d1 option=so1 collection=pc1 quoted=700",
+		`correct order=o1 address={"address_1":"a"} read=oadr1`,
+		"quote order=o1",
+	}, flow.calls)
+
+	bare := &AfterSalesSurface{}
+	_, err = bare.ChangeDelivery(ctx, "o1", "d1", "so1", "", 700)
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err), "%v", err)
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(bare.CorrectShippingAddress(ctx, "o1", nil, "oadr1")))
+	_, err = bare.DeliveryQuoteJSON(ctx, "o1")
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err), "%v", err)
+	_, err = bare.CreditLinesJSON(ctx, "o1")
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err), "%v", err)
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(bare.CreditOrder(ctx, "o1", 0, 1, "r", "")))
 }
 
 // TestThePanelOpensAParcelThroughTheFlowTheAPICalls is ADR 0324: named no

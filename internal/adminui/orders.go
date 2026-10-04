@@ -155,6 +155,14 @@ type orderDetail struct {
 	// CorrectedAt is the latest correction of the shipping address; the zero
 	// time when it was never corrected (ADR 0195).
 	CorrectedAt time.Time
+	// ShipToID is the current shipping address row, which the correction
+	// form carries as read; ShipToForm the form's fields, ShipToCountry the
+	// country a correction keeps, and AddressRefused that the form is drawn
+	// with what a refused correction typed (ADR 0388).
+	ShipToID       string
+	ShipToForm     map[string]string
+	ShipToCountry  string
+	AddressRefused bool
 	// PlacedBy is the operator who placed the order; empty on a shopper's
 	// (ADR 0298).
 	PlacedBy string
@@ -166,6 +174,16 @@ type orderDetail struct {
 	// AdditionsUnread says the additions could not be read. The page still
 	// shows the order: a secondary read failing is not the order failing.
 	AdditionsUnread bool
+
+	// Credits are the order's credits, oldest first (ADR 0388); CreditedTotal
+	// is their sum as printed and CreditedRead the same sum in minor units,
+	// which the credit form carries. CreditsShown says the order module's
+	// surface lists them, and CreditsUnread that the read failed.
+	Credits       []orderCredit
+	CreditedTotal string
+	CreditedRead  int64
+	CreditsShown  bool
+	CreditsUnread bool
 
 	// Lines are the order's lines in the order they were written, each add-on
 	// under the line it belongs to.
@@ -432,7 +450,7 @@ func (u *UI) renderOrder(
 			fieldID, fieldDisplayID, fieldStatus, fieldEmail, fieldCurrencyCod,
 			fieldSubtotal, fieldDiscount, fieldTax, fieldShipping, fieldTotal,
 			fieldPlacedAt, fieldAddsToOrderID, fieldShippingAddress,
-			fieldBillingAddress, fieldShippingAddressCorrectedAt, FieldPlacedBy,
+			fieldBillingAddress, fieldShippingAddressCorrectedAt, FieldPlacedBy, fieldShippingAddressID,
 		},
 		Filters: map[string]any{filterID: []string{id}},
 		Limit:   1,
@@ -460,10 +478,13 @@ func (u *UI) renderOrder(
 	detail.ShipTo = addressLines(record[fieldShippingAddress])
 	detail.BillTo = addressLines(record[fieldBillingAddress])
 	detail.CorrectedAt = recordTime(record, fieldShippingAddressCorrectedAt)
+	detail.ShipToID = recordString(record, fieldShippingAddressID)
+	shipToForm(&detail, record[fieldShippingAddress], outcome)
 	detail.PlacedBy = recordString(record, FieldPlacedBy)
 	detail.Parent = u.parentOrder(r, recordString(record, fieldAddsToOrderID))
 	detail.Additions, detail.AdditionsUnread = u.additionsOf(r, detail.ID, scales)
 	detail.Lines, detail.LinesMore, detail.LinesUnread = u.linesOf(r, detail.ID, detail.Currency, scales)
+	u.creditsOf(r, &detail, scales)
 
 	detail.PaymentHidden = !principal.HasScope(scopePaymentRead)
 	if !detail.PaymentHidden {
@@ -481,6 +502,7 @@ func (u *UI) renderOrder(
 		detail.Notifications, detail.NotificationsMore, detail.NotificationsUnread = u.notificationsOf(r, detail.ID)
 	}
 
+	deliveries, deliveriesRead := u.deliveriesOf(r, detail.ID)
 	u.templates.render(w, r, status, "order.gohtml", map[string]any{
 		titleKey:                "Order " + detail.DisplayID,
 		"Outcome":               outcome,
@@ -493,11 +515,14 @@ func (u *UI) renderOrder(
 		"FulfillmentPrivilege":  scopeFulfillmentRead,
 		"ParcelMoves":           parcelMoves,
 		"CanMoveParcels":        u.canMoveParcels(r),
-		"ParcelOpening":         u.parcelOpeningFor(r, detail.ID),
+		"ParcelOpening":         u.parcelOpeningFor(r, deliveries, deliveriesRead),
+		"Deliveries":            u.deliveriesView(r, &detail, deliveries, deliveriesRead, scales),
 		"Invoice":               u.invoiceOf(r, detail.ID),
 		"CanCancel":             u.canCancelOrder(r, detail.Status),
 		"CloseMove":             u.orderCloseMove(r, detail.Status),
 		"CanWriteOff":           u.canWriteOff(r, detail.Status),
+		"CanCredit":             u.canCredit(r, &detail),
+		"CanCorrectAddress":     u.canCorrectAddress(r, &detail),
 		"CanAttachEvidence":     u.canAttachEvidence(r),
 		"CanDetachEvidence":     u.canDetachEvidence(r),
 		"NotificationsShown":    u.notifications != nil,

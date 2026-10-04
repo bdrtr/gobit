@@ -45,6 +45,11 @@ type fakeFulfilling struct {
 	gotOptionID  string
 
 	gotCollection string
+	// gotReadAddress and gotQuoted are what the handler named as read and as
+	// shown: the API names neither (ADR 0388). quotedNamed says a price was
+	// named at all.
+	gotReadAddress string
+	quotedNamed    bool
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -82,11 +87,12 @@ func (f *fakeFulfilling) ShipmentsOfOrderJSON(
 
 // CorrectShippingAddress records the call and the body verbatim.
 func (f *fakeFulfilling) CorrectShippingAddress(
-	_ context.Context, orderID string, address json.RawMessage,
+	_ context.Context, orderID string, address json.RawMessage, readAddressID string,
 ) (json.RawMessage, error) {
 	f.correctCalls++
 	f.gotOrderID = orderID
 	f.gotBody = address
+	f.gotReadAddress = readAddressID
 
 	if f.err != nil {
 		return nil, f.err
@@ -106,15 +112,21 @@ func (f *fakeFulfilling) ShipInParcel(_ context.Context, orderID, fulfillmentID 
 
 // ChangeDelivery records the call.
 func (f *fakeFulfilling) ChangeDelivery(
-	_ context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string,
+	_ context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string, quotedAmount *int64,
 ) (json.RawMessage, error) {
 	f.changeCalls++
+	f.quotedNamed = f.quotedNamed || quotedAmount != nil
 	f.gotOrderID = orderID
 	f.gotMethodID = shippingMethodID
 	f.gotOptionID = shippingOptionID
 	f.gotCollection = collectionID
 
 	return json.RawMessage("null"), f.err
+}
+
+// DeliveryQuoteJSON is the panel's quote, which no endpoint asks.
+func (f *fakeFulfilling) DeliveryQuoteJSON(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage("[]"), f.err
 }
 
 // newRouterWithFulfilling wires a router with the given fulfilling flow.
@@ -381,6 +393,7 @@ func TestTheCorrectionEndpointPassesTheAddressThrough(t *testing.T) {
 	assert.Equal(t, 1, flow.correctCalls)
 	assert.Equal(t, "order_1", flow.gotOrderID)
 	assert.JSONEq(t, body, string(flow.gotBody))
+	assert.Empty(t, flow.gotReadAddress, "the API names no row read (ADR 0388)")
 	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
 	assert.Contains(t, data, "shipping_address", "the answer is the admin record")
@@ -436,6 +449,7 @@ func TestTheDeliveryChangeEndpointNamesTheMethodInThePath(t *testing.T) {
 	assert.Equal(t, "order_1", flow.gotOrderID)
 	assert.Equal(t, "oship_1", flow.gotMethodID)
 	assert.Equal(t, "so_pickup", flow.gotOptionID)
+	assert.False(t, flow.quotedNamed, "the API names no price shown (ADR 0388)")
 	data, ok := decodeResponse(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
 	methods, ok := data["shipping_methods"].([]any)

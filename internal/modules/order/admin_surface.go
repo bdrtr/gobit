@@ -25,7 +25,9 @@ const AdminName = ModuleName + ".admin"
 // primitives, as a cross-module surface does (ADR 0006).
 //
 // It opens an order's parcel as well (ADR 0324), through the fulfilling flow
-// the API's open endpoint calls.
+// the API's open endpoint calls. And it credits an order, puts a delivery on
+// another option and corrects where an order ships, each from what the page
+// was drawn with, so a form sent twice acts once (ADR 0388).
 type AfterSalesSurface struct {
 	svc        *service.Service
 	flow       api.ReturnReceiving
@@ -68,6 +70,9 @@ type adminDelivery struct {
 	ID               string `json:"id"`
 	ShippingOptionID string `json:"shipping_option_id"`
 	Name             string `json:"name"`
+	// Amount is what the delivery costs as it stands, its latest change's
+	// price when it was changed (ADR 0388).
+	Amount int64 `json:"amount"`
 }
 
 // DeliveriesJSON lists the order's deliveries as they stand after their
@@ -80,7 +85,7 @@ func (s *AfterSalesSurface) DeliveriesJSON(ctx context.Context, orderID string) 
 	out := make([]adminDelivery, 0, len(deliveries))
 	for _, delivery := range deliveries {
 		out = append(out, adminDelivery{
-			ID: delivery.ID, ShippingOptionID: delivery.ShippingOptionID, Name: delivery.Name,
+			ID: delivery.ID, ShippingOptionID: delivery.ShippingOptionID, Name: delivery.Name, Amount: delivery.Amount,
 		})
 	}
 	body, err := json.Marshal(out)
@@ -419,6 +424,108 @@ func (s *AfterSalesSurface) CancelOrderLine(
 	_, err := s.svc.CancelOrderLine(ctx, orderID, service.CancelOrderLineInput{
 		OrderLineItemID: lineID, Quantity: quantity, Reason: reason, Note: note, ReadSpokenFor: &readSpokenFor,
 	})
+
+	return err
+}
+
+// adminCredit is one of an order's credits as the panel lists it; the json
+// tags are the contract with the panel (ADR 0388).
+type adminCredit struct {
+	ID        string    `json:"id"`
+	Amount    int64     `json:"amount"`
+	Reason    string    `json:"reason"`
+	Note      string    `json:"note"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// adminCredits is an order's credits with their sum, the credited total the
+// module's ceiling reads under the order's lock.
+type adminCredits struct {
+	CreditedTotal int64         `json:"credited_total"`
+	Lines         []adminCredit `json:"lines"`
+}
+
+// CreditLinesJSON lists the order's credits, oldest first, with their sum:
+// the credited total a credit from the panel names (ADR 0388).
+func (s *AfterSalesSurface) CreditLinesJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	if s == nil || s.svc == nil {
+		return nil, errors.Unavailable(codeSetupFailed, "the order service is not set up")
+	}
+	credits, err := s.svc.ListCreditLines(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	out := adminCredits{Lines: make([]adminCredit, 0, len(credits))}
+	for i := range credits {
+		out.CreditedTotal += credits[i].Amount
+		out.Lines = append(out.Lines, adminCredit{
+			ID: credits[i].ID, Amount: credits[i].Amount, Reason: credits[i].Reason,
+			Note: credits[i].Note, CreatedAt: credits[i].CreatedAt,
+		})
+	}
+	body, err := json.Marshal(out)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, codeSetupFailed, "the credits could not be encoded")
+	}
+
+	return body, nil
+}
+
+// CreditOrder writes off part of what the order owes, with the reason and
+// the note, as the API's credit does; readCredited is the credited total the
+// operator read, and the module refuses when that has changed, so a form
+// sent twice credits once (ADR 0388).
+func (s *AfterSalesSurface) CreditOrder(
+	ctx context.Context, orderID string, readCredited, amount int64, reason, note string,
+) error {
+	if s == nil || s.svc == nil {
+		return errors.Unavailable(codeSetupFailed, "the order service is not set up")
+	}
+	_, err := s.svc.CreateCreditLine(ctx, orderID, service.CreateCreditLineInput{
+		Amount: amount, Reason: reason, Note: note, ReadCredited: &readCredited,
+	})
+
+	return err
+}
+
+// DeliveryQuoteJSON lists the options the order's deliveries can be put on,
+// each with the price a change to it would write, through the fulfilling flow
+// the API's change calls (ADR 0388).
+func (s *AfterSalesSurface) DeliveryQuoteJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	if s == nil || s.fulfilling == nil {
+		return nil, errors.Unavailable(codeSetupFailed, "the fulfilling flow is not set up")
+	}
+
+	return s.fulfilling.DeliveryQuoteJSON(ctx, orderID)
+}
+
+// ChangeDelivery puts the order's delivery on another option through the
+// flow the API's change calls, at the price quotedAmount the operator was
+// shown: a quote that moved since is refused (ADR 0388). A dearer option
+// names the collection that took the difference (ADR 0200). The answer is the
+// change written, or JSON null when the delivery was on that option already.
+func (s *AfterSalesSurface) ChangeDelivery(
+	ctx context.Context, orderID, deliveryID, optionID, collectionID string, quotedAmount int64,
+) (json.RawMessage, error) {
+	if s == nil || s.fulfilling == nil {
+		return nil, errors.Unavailable(codeSetupFailed, "the fulfilling flow is not set up")
+	}
+
+	return s.fulfilling.ChangeDelivery(ctx, orderID, deliveryID, optionID, collectionID, &quotedAmount)
+}
+
+// CorrectShippingAddress corrects where the order ships through the flow the
+// API's correction calls, from the shipping address row readAddressID the
+// operator's form was drawn from; the module refuses when the order holds
+// another row, and keeps the row's metadata (ADR 0388). The address is the
+// order API's JSON.
+func (s *AfterSalesSurface) CorrectShippingAddress(
+	ctx context.Context, orderID string, address json.RawMessage, readAddressID string,
+) error {
+	if s == nil || s.fulfilling == nil {
+		return errors.Unavailable(codeSetupFailed, "the fulfilling flow is not set up")
+	}
+	_, err := s.fulfilling.CorrectShippingAddress(ctx, orderID, address, readAddressID)
 
 	return err
 }

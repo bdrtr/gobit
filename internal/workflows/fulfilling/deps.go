@@ -103,8 +103,10 @@ type Orders interface {
 	// CorrectShippingAddressJSON replaces the order's current shipping address
 	// and returns the one that is current afterwards (ADR 0195). The order
 	// module holds the rules it can check; whether a parcel is underway is this
-	// flow's.
-	CorrectShippingAddressJSON(ctx context.Context, orderID string, address json.RawMessage) (json.RawMessage, error)
+	// flow's. readAddressID names the row the caller read, or "" (ADR 0388).
+	CorrectShippingAddressJSON(
+		ctx context.Context, orderID string, address json.RawMessage, readAddressID string,
+	) (json.RawMessage, error)
 	// ShippingOptionOf returns the shipping option the order's delivery is on
 	// when it has exactly one, and "" otherwise (ADR 0198, 0199).
 	ShippingOptionOf(ctx context.Context, orderID string) (string, error)

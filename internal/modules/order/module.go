@@ -856,7 +856,7 @@ func (p *fulfillingFlow) ShipmentsOfOrderJSON(
 
 // CorrectShippingAddress corrects where the order ships.
 func (p *fulfillingFlow) CorrectShippingAddress(
-	ctx context.Context, orderID string, address json.RawMessage,
+	ctx context.Context, orderID string, address json.RawMessage, readAddressID string,
 ) (json.RawMessage, error) {
 	p.once.Do(func() { p.resolve(ctx) })
 
@@ -864,7 +864,7 @@ func (p *fulfillingFlow) CorrectShippingAddress(
 		return nil, p.err
 	}
 
-	return p.svc.CorrectShippingAddress(ctx, orderID, address)
+	return p.svc.CorrectShippingAddress(ctx, orderID, address, readAddressID)
 }
 
 // ShipInParcel lets the order travel in its parent's parcel.
@@ -880,7 +880,7 @@ func (p *fulfillingFlow) ShipInParcel(ctx context.Context, orderID, fulfillmentI
 
 // ChangeDelivery puts one of the order's deliveries on another option.
 func (p *fulfillingFlow) ChangeDelivery(
-	ctx context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string,
+	ctx context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string, quotedAmount *int64,
 ) (json.RawMessage, error) {
 	p.once.Do(func() { p.resolve(ctx) })
 
@@ -888,7 +888,18 @@ func (p *fulfillingFlow) ChangeDelivery(
 		return nil, p.err
 	}
 
-	return p.svc.ChangeDelivery(ctx, orderID, shippingMethodID, shippingOptionID, collectionID)
+	return p.svc.ChangeDelivery(ctx, orderID, shippingMethodID, shippingOptionID, collectionID, quotedAmount)
+}
+
+// DeliveryQuoteJSON lists the options the order's deliveries can be put on.
+func (p *fulfillingFlow) DeliveryQuoteJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return p.svc.DeliveryQuoteJSON(ctx, orderID)
 }
 
 // resolve looks the flow up in the container and remembers the outcome.

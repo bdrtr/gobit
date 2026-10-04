@@ -34,7 +34,7 @@ func TestAParcelOnItsWayStopsTheCorrection(t *testing.T) {
 			orders := &fakeOrders{}
 			flow := newFlow(t, orders, &fakeFulfillments{status: status, links: links}, links)
 
-			current, err := flow.CorrectShippingAddress(context.Background(), "order_1", correction)
+			current, err := flow.CorrectShippingAddress(context.Background(), "order_1", correction, "")
 
 			if allowed {
 				require.NoError(t, err)
@@ -61,9 +61,30 @@ func TestAnOrderWithNoParcelIsCorrected(t *testing.T) {
 	orders := &fakeOrders{}
 	flow := newFlow(t, orders, &fakeFulfillments{links: links}, links)
 
-	_, err := flow.CorrectShippingAddress(context.Background(), "order_1", correction)
+	_, err := flow.CorrectShippingAddress(context.Background(), "order_1", correction, "")
 	require.NoError(t, err)
 	assert.Equal(t, 1, orders.corrected)
+}
+
+// TestTheRowReadReachesTheOrderModule hands the order module the row the
+// correction was drawn from beside the order it names, each to its own
+// parameter (ADR 0388).
+func TestTheRowReadReachesTheOrderModule(t *testing.T) {
+	t.Parallel()
+
+	links := newFakeLinks()
+	orders := &fakeOrders{}
+	flow := newFlow(t, orders, &fakeFulfillments{links: links}, links)
+
+	_, err := flow.CorrectShippingAddress(context.Background(), "o1", correction, "oadr1")
+	require.NoError(t, err)
+	assert.Equal(t, "o1", orders.correctedOrder)
+	assert.Equal(t, "oadr1", orders.correctedFrom)
+
+	_, err = fulfilling.NewInterop(flow).CorrectShippingAddress(context.Background(), "o1", correction, "oadr2")
+	require.NoError(t, err)
+	assert.Equal(t, "o1", orders.correctedOrder)
+	assert.Equal(t, "oadr2", orders.correctedFrom, "the surface hands it on")
 }
 
 // TestAnUnreadableParcelStopsTheCorrection fails closed: a status nobody could
@@ -76,7 +97,7 @@ func TestAnUnreadableParcelStopsTheCorrection(t *testing.T) {
 	orders := &fakeOrders{}
 	flow := newFlow(t, orders, &fakeFulfillments{statusErr: errors.New("unreachable"), links: links}, links)
 
-	_, err := flow.CorrectShippingAddress(context.Background(), "order_1", correction)
+	_, err := flow.CorrectShippingAddress(context.Background(), "order_1", correction, "")
 
 	require.Error(t, err)
 	assert.Zero(t, orders.corrected)

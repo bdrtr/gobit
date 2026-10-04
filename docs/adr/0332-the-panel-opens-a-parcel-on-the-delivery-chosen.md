@@ -7,6 +7,7 @@ when the form is sent. Closes D207.
 
 - **Status:** Accepted
 - **Date:** 2026-10-02
+- **Amended by:** [0388](0388-the-order-page-credits-changes-a-delivery-and-corrects-the-address.md): a delivery is put on another option in the panel; a parcel on an option no delivery stands on stays on the admin API
 
 ## Context
 

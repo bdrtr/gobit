@@ -66,6 +66,30 @@ timeline and in the person's file, not here.
         {{ if not .Order.CorrectedAt.IsZero }}
         <span class="muted">corrected {{ .Order.CorrectedAt.Format "2006-01-02 15:04" }} UTC</span>
         {{ end }}
+        {{ if $.CanCorrectAddress }}
+        {{/* Where a pending order ships, corrected from the address row the
+        page was drawn with (ADR 0388): the module refuses the form when the
+        address was corrected since, and a refused form comes back with what
+        was typed. The country stays, as the tax and the shipping price rest
+        on it (ADR 0195). */}}
+        <details{{ if .Order.AddressRefused }} open{{ end }}>
+          <summary>Correct the address</summary>
+          <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/shipping-address">
+            <input type="hidden" name="read_address" value="{{ .Order.ShipToID }}">
+            <input name="first_name" value="{{ index .Order.ShipToForm "first_name" }}" placeholder="first name" aria-label="first name">
+            <input name="last_name" value="{{ index .Order.ShipToForm "last_name" }}" placeholder="last name" aria-label="last name">
+            <input name="company" value="{{ index .Order.ShipToForm "company" }}" placeholder="company" aria-label="company">
+            <input name="address_1" value="{{ index .Order.ShipToForm "address_1" }}" placeholder="first line" aria-label="first line" required>
+            <input name="address_2" value="{{ index .Order.ShipToForm "address_2" }}" placeholder="second line" aria-label="second line">
+            <input name="postal_code" value="{{ index .Order.ShipToForm "postal_code" }}" placeholder="postal code" aria-label="postal code">
+            <input name="city" value="{{ index .Order.ShipToForm "city" }}" placeholder="city" aria-label="city" required>
+            <input name="province" value="{{ index .Order.ShipToForm "province" }}" placeholder="province, e.g. an il" aria-label="province">
+            <input name="phone" value="{{ index .Order.ShipToForm "phone" }}" placeholder="phone" aria-label="phone" type="tel">
+            <span class="muted">in {{ .Order.ShipToCountry }}, which a correction keeps</span>
+            <button type="submit">Correct</button>
+          </form>
+        </details>
+        {{ end }}
       </td>
     </tr>
     <tr>
@@ -155,6 +179,52 @@ timeline and in the person's file, not here.
   </tbody>
 </table>
 
+{{ if .Order.CreditsShown }}
+{{/*
+A credit writes off part of what the order owes and moves no money (ADR 0105).
+The form carries the credited total drawn with the page, and the module
+refuses it when another credit was written since, so a form sent twice
+credits once (ADR 0388). A canceled order is offered none.
+*/}}
+<h2>Credits</h2>
+
+{{ if .Order.CreditsUnread }}
+<p class="muted">The credits could not be read.</p>
+{{ else }}
+{{ if .Order.Credits }}
+<table>
+  <thead><tr><th class="num">Amount</th><th>Reason</th><th>Note</th><th>Written</th></tr></thead>
+  <tbody>
+    {{ range .Order.Credits }}
+    <tr>
+      <td class="num">{{ .Printed }}</td>
+      <td>{{ .Reason }}</td>
+      <td>{{ .Note }}</td>
+      <td>{{ if not .CreatedAt.IsZero }}{{ .CreatedAt.Format "2006-01-02 15:04" }}{{ end }}</td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p class="muted">Nothing has been credited on this order.</p>
+{{ end }}
+<p>Credited in all: <strong class="num">{{ .Order.CreditedTotal }}</strong></p>
+{{ if $.CanCredit }}
+<details>
+  <summary>Credit the order</summary>
+  <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/credit-lines">
+    <input type="hidden" name="read_credited" value="{{ .Order.CreditedRead }}">
+    <input name="amount" inputmode="decimal" placeholder="amount" aria-label="amount{{ if .Order.Minor }} in minor units{{ end }}" required>
+    <input type="hidden" name="currency" value="{{ .Order.Currency }}">{{ if .Order.Minor }}<input type="hidden" name="minor" value="1">{{ end }}
+    <input name="reason" placeholder="why, e.g. goodwill" aria-label="reason" required>
+    <input name="note" placeholder="note" aria-label="note">
+    <button type="submit">Credit</button>
+  </form>
+</details>
+{{ end }}
+{{ end }}
+{{ end }}
+
 {{/*
 The payment and the parcels are other modules' data, reached through the
 order's links. Each is read and printed only for an operator holding that
@@ -203,6 +273,49 @@ module's own privilege (ADR 0251); the order's privilege opens the page.
 {{ end }}
 {{ else }}
 <p class="muted">No payment is linked to this order.</p>
+{{ end }}
+
+{{ with .Deliveries }}
+{{/*
+The order's deliveries as they stand after their changes, for an operator who
+may write orders (ADR 0388). A pending order's delivery is put on another
+option the shop quotes for it while no parcel is on its way: the form carries
+the price drawn, and the flow refuses it when the quote moved. A cheaper option
+credits the order; a dearer one names the collection that took the difference
+(ADR 0200).
+*/}}
+<h2>Deliveries</h2>
+
+{{ if .Rows }}
+<table>
+  <thead><tr><th>Delivery</th><th class="num">Costs</th>{{ if .Changeable }}<th>Change</th>{{ end }}</tr></thead>
+  <tbody>
+    {{ range .Rows }}
+    <tr>
+      <td>{{ .Name }}</td>
+      <td class="num">{{ .Printed }}</td>
+      {{ if $.Deliveries.Changeable }}<td>
+        {{ if .Choices }}
+        <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/deliveries/{{ .ID }}">
+          <select name="option" aria-label="option" required>
+            {{ range .Choices }}<option value="{{ .Value }}">{{ .Label }}</option>{{ end }}
+          </select>
+          <input name="collection_id" placeholder="collection that took the difference" aria-label="collection">
+          <input type="hidden" name="currency" value="{{ $.Order.Currency }}">
+          <button type="submit">Change the delivery</button>
+        </form>
+        {{ else }}
+        <span class="muted">No other option is quoted for this order.</span>
+        {{ end }}
+      </td>{{ end }}
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ if .QuoteUnread }}<p class="muted">The options could not be quoted.</p>{{ end }}
+{{ else }}
+<p class="muted">This order was sold no delivery.</p>
+{{ end }}
 {{ end }}
 
 <h2>Parcels</h2>

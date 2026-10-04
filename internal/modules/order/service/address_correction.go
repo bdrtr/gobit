@@ -21,6 +21,10 @@ const (
 	CodeAddressMissing = "order_address_missing"
 	// CodeAddressCountryChanged refuses a correction into another country.
 	CodeAddressCountryChanged = "order_address_country_changed"
+	// CodeAddressRevised refuses a correction drawn from a shipping address
+	// row the order no longer holds, unless it says what the current one says
+	// (ADR 0388).
+	CodeAddressRevised = "order_address_revised"
 )
 
 // CorrectShippingAddress replaces the order's current shipping address and
@@ -50,6 +54,20 @@ const (
 // can read the parcels asks that first.
 func (s *Service) CorrectShippingAddress(
 	ctx context.Context, orderID string, corrected models.OrderAddress,
+) (models.OrderAddress, error) {
+	return s.CorrectShippingAddressFrom(ctx, orderID, corrected, "")
+}
+
+// CorrectShippingAddressFrom is [Service.CorrectShippingAddress] for a caller
+// that drew its correction from the shipping address row readAddressID, the
+// one [FieldShippingAddressID] published (ADR 0388). Under the order's lock,
+// a correction naming a row keeps that row's metadata, writes nothing when it
+// says what the current address says, and is refused with
+// [CodeAddressRevised] when the order holds another row: a correction writes
+// the whole address, and one drawn before another would write back what that
+// one changed. An empty readAddressID is the API's correction, as before.
+func (s *Service) CorrectShippingAddressFrom(
+	ctx context.Context, orderID string, corrected models.OrderAddress, readAddressID string,
 ) (models.OrderAddress, error) {
 	if err := requireID("order_id", orderID); err != nil {
 		return models.OrderAddress{}, err
@@ -113,10 +131,19 @@ func (s *Service) CorrectShippingAddress(
 				orderID, shipping.CountryCode, country)
 		}
 		corrected.CountryCode = country
+		// The form shows no metadata, so a correction drawn from a row keeps
+		// that row's; one that moved is refused below before it is written.
+		if readAddressID != "" {
+			corrected.Metadata = shipping.Metadata
+		}
 
 		if sameAddress(*shipping, corrected) {
 			current = *shipping
 			return nil
+		}
+		if readAddressID != "" && shipping.ID != readAddressID {
+			return errors.Conflict(CodeAddressRevised,
+				"order %s's shipping address was corrected since it was read; draw the page again", orderID)
 		}
 
 		if _, err := s.store.SupersedeOrderAddress(ctx, orderID, models.AddressShipping); err != nil {

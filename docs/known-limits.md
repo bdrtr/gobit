@@ -841,8 +841,18 @@ past and is not corrected retroactively.
   a return with each line's part of the refund and a replacement with one
   variant the order never sold
   ([ADR 0279](adr/0279-the-panel-opens-a-return-and-a-replacement-with-their-detail.md)).
-  A replacement that sends more than one such variant, and a claim's evidence,
-  are still `/admin/v1` calls.
+  A replacement that sends more than one such variant is still an `/admin/v1`
+  call.
+
+- **The order page corrects an order as the API does, less the price.** Any
+  order but a canceled one takes a credit, and a pending one has its delivery
+  put on a quoted option and its shipping address corrected
+  ([ADR 0388](adr/0388-the-order-page-credits-changes-a-delivery-and-corrects-the-address.md)). A price or tax corrected
+  upwards has no act in the order module, the billing address is not corrected
+  before an invoice is issued
+  ([ADR 0195](adr/0195-a-shipping-address-can-be-corrected.md)), and opening a
+  parcel on an option no delivery stands on stays an `/admin/v1` call
+  ([ADR 0332](adr/0332-the-panel-opens-a-parcel-on-the-delivery-chosen.md)).
 
 - **A return parcel is an admin API call and buys no label.**
   `POST /admin/v1/fulfillments` opens one naming its return

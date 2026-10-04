@@ -13,7 +13,8 @@ import (
 	corehttp "github.com/bdrtr/gobit/core/http"
 )
 
-// Fulfilling is the part of the fulfilling flow this module's endpoints call.
+// Fulfilling is the part of the fulfilling flow this module's endpoints and
+// its panel surface call.
 //
 // It is declared HERE, on the consumer's side, and carries only primitives and
 // JSON: the flow lives in internal/workflows and this module cannot import it
@@ -45,8 +46,12 @@ type Fulfilling interface {
 	// CorrectShippingAddress corrects where the order ships and returns the
 	// address that is current afterwards (ADR 0195). It lives on the flow
 	// because the one question this module cannot answer — is a parcel already
-	// on its way — is the flow's.
-	CorrectShippingAddress(ctx context.Context, orderID string, address json.RawMessage) (json.RawMessage, error)
+	// on its way — is the flow's. readAddressID is the shipping address row
+	// the caller drew the correction from, refused when the order holds
+	// another; the API names none (ADR 0388).
+	CorrectShippingAddress(
+		ctx context.Context, orderID string, address json.RawMessage, readAddressID string,
+	) (json.RawMessage, error)
 
 	// ShipInParcel lets the order's goods travel in a parcel of the order it
 	// adds to (ADR 0197).
@@ -56,10 +61,16 @@ type Fulfilling interface {
 	// option at the price the fulfillment module quotes for the order
 	// (ADR 0199), a dearer one paid by the named collection (ADR 0200). It
 	// lives on the flow because the quote, the parcels and the collection are
-	// the flow's to read.
+	// the flow's to read. quotedAmount is the price the caller showed, refused
+	// when the quote moved; the API names none (ADR 0388).
 	ChangeDelivery(
-		ctx context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string,
+		ctx context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string, quotedAmount *int64,
 	) (json.RawMessage, error)
+
+	// DeliveryQuoteJSON lists the options the order's deliveries can be put
+	// on at the price a change would write, as [{"id","name","amount"}]
+	// (ADR 0388).
+	DeliveryQuoteJSON(ctx context.Context, orderID string) (json.RawMessage, error)
 }
 
 // changeDeliveryRequest is the body of the delivery change endpoint.
@@ -179,7 +190,7 @@ func (h *Handler) adminCorrectShippingAddress(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if _, err := flow.CorrectShippingAddress(ctx, orderID(r), body); err != nil {
+	if _, err := flow.CorrectShippingAddress(ctx, orderID(r), body, ""); err != nil {
 		corehttp.WriteError(ctx, w, err)
 
 		return
@@ -235,7 +246,7 @@ func (h *Handler) adminChangeDelivery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := flow.ChangeDelivery(ctx, orderID(r), chi.URLParam(r, paramShippingMethodID),
-		body.ShippingOptionID, body.PaymentCollectionID); err != nil {
+		body.ShippingOptionID, body.PaymentCollectionID, nil); err != nil {
 		corehttp.WriteError(ctx, w, err)
 
 		return

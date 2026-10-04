@@ -228,14 +228,14 @@ func TestTheInteropReadsTheCorrectionByItsWireNames(t *testing.T) {
 	raw, err := interop.CorrectShippingAddressJSON(ctx, order.ID, json.RawMessage(
 		`{"first_name":"Ada","address_1":"12 Right St","address_2":"Flat 3","city":"Springfield",`+
 			`"province":"North","postal_code":"62701","country_code":"TR","phone":"+90",`+
-			`"metadata":{"gate_code":"4411"}}`))
+			`"metadata":{"gate_code":"4411"}}`), "")
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"first_name":"Ada","address_1":"12 Right St","address_2":"Flat 3",`+
 		`"city":"Springfield","province":"North","postal_code":"62701","country_code":"TR",`+
 		`"phone":"+90","metadata":{"gate_code":"4411"}}`, string(raw))
 
 	_, err = interop.CorrectShippingAddressJSON(ctx, order.ID,
-		json.RawMessage(`{"address_1":"12 Right St","district":"North"}`))
+		json.RawMessage(`{"address_1":"12 Right St","district":"North"}`), "")
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err), "%v", err)
 }

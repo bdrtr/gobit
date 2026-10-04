@@ -235,7 +235,12 @@
 // back, or marks it completed, and a completed one's archives it
 // ([UI.completeOrder], [UI.archiveOrder], ADR 0340); each of its lines
 // writes off units from the count spoken for when the page was drawn
-// ([UI.cancelOrderLine], ADR 0341). It names the order's invoice and issues one
+// ([UI.cancelOrderLine], ADR 0341). It lists the order's credits and writes
+// one from the credited total the page was drawn with ([UI.creditOrder]),
+// puts a pending order's delivery on another quoted option at the price drawn
+// ([UI.changeDelivery]), and corrects where it ships from the address row the
+// page was drawn with ([UI.correctShippingAddress], ADR 0388). It names the
+// order's invoice and issues one
 // ([UI.issueInvoice]) through the order module's surface and the invoicing
 // flow, on a series the invoice module's surface lists (ADR 0335). A claim on
 // it lists its evidence and takes a

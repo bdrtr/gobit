@@ -89,6 +89,10 @@ const (
 	// FieldShippingAddressCorrectedAt is the moment of the latest correction
 	// of the shipping address (ADR 0195); nil when it was never corrected.
 	FieldShippingAddressCorrectedAt = "shipping_address_corrected_at"
+	// FieldShippingAddressID is the id of the current shipping address row,
+	// the one a correction names as read (ADR 0388); nil when the order
+	// recorded none.
+	FieldShippingAddressID = "shipping_address_id"
 )
 
 // The address's column names. They are also its names in the order API and in
@@ -117,6 +121,13 @@ var addressFieldGetters = map[string]func(addresses []models.OrderAddress) any{
 	FieldBillingAddress: func(addresses []models.OrderAddress) any {
 		_, billing := splitAddresses(addresses)
 		return addressRecord(billing)
+	},
+	FieldShippingAddressID: func(addresses []models.OrderAddress) any {
+		shipping, _ := splitAddresses(addresses)
+		if shipping == nil {
+			return nil
+		}
+		return shipping.ID
 	},
 	FieldShippingAddressCorrectedAt: func(addresses []models.OrderAddress) any {
 		var latest *time.Time

@@ -116,6 +116,22 @@ design. It is fixed with `1.0.0`.
   refuses it with the stack's message; before, the value was written, and a
   cart line whose floored stack components summed past its amount then failed
   with 500.
+- **The order page credits, changes a delivery and corrects the address**
+  (ADR 0388, D238). **For operators:** an order's page lists its credits and,
+  under `order:write`, credits any order but a canceled one with a reason and
+  a note; an operator who may write orders sees the order's deliveries with
+  what each costs, and on a pending order puts one on another option the shop
+  quotes at the price shown, refused when that price moved; and a pending
+  order's shipping address is corrected from a form prefilled with it, the
+  country fixed, refused when the address was corrected since unless it says
+  what the order ships to now, and a refused form keeps what was typed. The
+  same form sent twice acts once. **For integrators:** a credit may name the
+  credited total read, refused with `order_credit_moved`; the fulfilling flow
+  lists the options an order's delivery can be put on and a change may name
+  the price it was shown, refused with `fulfilling_quote_moved`; a correction
+  may name the shipping address row read, which the order entity publishes as
+  `shipping_address_id`, refused with `order_address_revised` unless it says
+  what the current row says. The admin API is unchanged.
 
 - **A completed order says so on the bus** (ADR 0386, D235). **For integrators:**
   completing an order, through the API, the panel or the interop surface,

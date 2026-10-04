@@ -70,6 +70,8 @@ type parcelDelivery struct {
 	ID               string `json:"id"`
 	ShippingOptionID string `json:"shipping_option_id"`
 	Name             string `json:"name"`
+	// Amount is what the delivery costs as it stands (ADR 0388).
+	Amount int64 `json:"amount"`
 }
 
 // parcelOpening is what the open form draws: the key it carries, and the
@@ -162,30 +164,45 @@ func newParcelKey() string {
 	return "panel-" + hex.EncodeToString(key[:])
 }
 
+// deliveriesOf reads the order's deliveries for an operator who may open a
+// parcel, once for the page: the open form and the delivery change draw from
+// the same read. read says they were read; a surface that cannot list them,
+// or a read that failed, leaves it false.
+func (u *UI) deliveriesOf(r *http.Request, orderID string) (deliveries []parcelDelivery, read bool) {
+	if !u.canOpenParcels(r) {
+		return nil, false
+	}
+	lister, ok := u.afterSales.(DeliveryLister)
+	if !ok {
+		return nil, false
+	}
+	ctx := r.Context()
+	raw, err := lister.DeliveriesJSON(ctx, orderID)
+	if err == nil {
+		err = json.Unmarshal(raw, &deliveries)
+	}
+	if err != nil {
+		corehttp.LoggerFromContext(ctx).WarnContext(ctx,
+			"the panel could not read the order's deliveries", "error", err, "order_id", orderID)
+
+		return nil, false
+	}
+
+	return deliveries, true
+}
+
 // parcelOpeningFor is what the open form draws, nil for an operator who may
 // not open a parcel, who is drawn no form. An order sold one delivery is
 // opened on it by the flow, so only an order sold several is asked which
 // (ADR 0332); deliveries the surface cannot list leave the choice to the flow,
 // which refuses an order it cannot default.
-func (u *UI) parcelOpeningFor(r *http.Request, orderID string) *parcelOpening {
+func (u *UI) parcelOpeningFor(r *http.Request, deliveries []parcelDelivery, read bool) *parcelOpening {
 	if !u.canOpenParcels(r) {
 		return nil
 	}
 	opening := &parcelOpening{Key: newParcelKey()}
-	lister, ok := u.afterSales.(DeliveryLister)
-	if !ok {
-		return opening
-	}
-	ctx := r.Context()
-	var deliveries []parcelDelivery
-	raw, err := lister.DeliveriesJSON(ctx, orderID)
-	if err == nil {
-		err = json.Unmarshal(raw, &deliveries)
-	}
 	switch {
-	case err != nil:
-		corehttp.LoggerFromContext(ctx).WarnContext(ctx,
-			"the panel could not read the order's deliveries", "error", err, "order_id", orderID)
+	case !read:
 	case len(deliveries) == 0:
 		opening.NoDelivery = true
 	case len(deliveries) > 1:

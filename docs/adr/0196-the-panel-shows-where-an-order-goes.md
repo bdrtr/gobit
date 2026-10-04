@@ -7,6 +7,7 @@ costs one batch read of addresses per page that asks for them.
 
 - **Status:** Accepted
 - **Date:** 2026-09-26
+- **Amended by:** [0388](0388-the-order-page-credits-changes-a-delivery-and-corrects-the-address.md): the page corrects the shipping address
 
 Measurement: [measurements/0196](../measurements/0196-a-screen-that-showed-amounts.md)
 

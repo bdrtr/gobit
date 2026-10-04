@@ -134,6 +134,10 @@ type fakeOrders struct {
 	// correctedWith is the last body.
 	corrected     int
 	correctedWith json.RawMessage
+	// correctedOrder and correctedFrom are the order and the row read the
+	// last correction named (ADR 0388).
+	correctedOrder string
+	correctedFrom  string
 	// parent and parentErr are ShippingParentOf's answer.
 	parent    string
 	parentErr error
@@ -190,10 +194,11 @@ func (f *fakeOrders) ShippingParentOf(context.Context, string) (string, error) {
 
 // CorrectShippingAddressJSON records the correction and echoes the body.
 func (f *fakeOrders) CorrectShippingAddressJSON(
-	_ context.Context, _ string, address json.RawMessage,
+	_ context.Context, orderID string, address json.RawMessage, readAddressID string,
 ) (json.RawMessage, error) {
 	f.corrected++
 	f.correctedWith = address
+	f.correctedOrder, f.correctedFrom = orderID, readAddressID
 
 	return address, nil
 }

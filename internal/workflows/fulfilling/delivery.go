@@ -22,6 +22,9 @@ const (
 	// CodeCollectionNotSettled refuses a payment collection that does not
 	// hold exactly what it was opened for.
 	CodeCollectionNotSettled = "fulfilling_collection_not_settled"
+	// CodeQuoteMoved refuses a change that named the price it was shown when
+	// the option is quoted at another one now (ADR 0388).
+	CodeQuoteMoved = "fulfilling_quote_moved"
 )
 
 // deliveryFacts is the order module's DeliveryFactsJSON answer. The producing
@@ -87,6 +90,9 @@ type deliveryChangeRequest struct {
 //
 // The quote and the write are not one transaction. A price changed between
 // them is the price the operator was quoted, which is the one they asked for.
+// A caller that showed a price names it in quotedAmount, and a quote that
+// moved since is refused with [CodeQuoteMoved] (ADR 0388); nil quotes as the
+// admin API does.
 //
 // # A dearer delivery is paid first (ADR 0200)
 //
@@ -98,7 +104,7 @@ type deliveryChangeRequest struct {
 // for anything else. The money is taken through the payment module's own
 // endpoints, as an exchange's is (ADR 0120).
 func (w *Workflows) ChangeDelivery(
-	ctx context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string,
+	ctx context.Context, orderID, shippingMethodID, shippingOptionID, collectionID string, quotedAmount *int64,
 ) (json.RawMessage, error) {
 	shippingOptionID = strings.TrimSpace(shippingOptionID)
 	switch {
@@ -115,6 +121,10 @@ func (w *Workflows) ChangeDelivery(
 	option, currency, err := w.quoteForOrder(ctx, orderID, shippingOptionID)
 	if err != nil {
 		return nil, err
+	}
+	if quotedAmount != nil && option.Amount != *quotedAmount {
+		return nil, errors.Conflict(CodeQuoteMoved,
+			"%s costs %d now, not %d; draw the page again", option.Name, option.Amount, *quotedAmount)
 	}
 
 	var paid int64
@@ -181,19 +191,70 @@ func (w *Workflows) heldForOrder(ctx context.Context, orderID, currency, collect
 	return amount, nil
 }
 
+// QuoteDelivery lists the options the order's deliveries can be put on, at
+// the price a change to each would write (ADR 0388): the options the
+// fulfillment module quotes for the order's facts, admin-only ones among
+// them, with no return option and none priced in another currency. It is
+// the list [Workflows.ChangeDelivery] picks from, so an option listed here is
+// one a change accepts at the price listed while the quote holds.
+func (w *Workflows) QuoteDelivery(ctx context.Context, orderID string) ([]DeliveryQuote, error) {
+	if strings.TrimSpace(orderID) == "" {
+		return nil, errors.Invalid(CodeInvalidInput, "the order id is required")
+	}
+	options, _, err := w.quotesForOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DeliveryQuote, 0, len(options))
+	for i := range options {
+		out = append(out, DeliveryQuote{ID: options[i].ID, Name: options[i].Name, Amount: options[i].Amount})
+	}
+
+	return out, nil
+}
+
+// DeliveryQuote is one option an order's delivery can be put on, priced in
+// the order's currency.
+type DeliveryQuote struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Amount int64  `json:"amount"`
+}
+
 // quoteForOrder prices the order's options and returns the one asked for, and
 // the order's currency.
 func (w *Workflows) quoteForOrder(
 	ctx context.Context, orderID, shippingOptionID string,
 ) (option quotedOption, currency string, err error) {
+	options, currency, err := w.quotesForOrder(ctx, orderID)
+	if err != nil {
+		return quotedOption{}, "", err
+	}
+	for i := range options {
+		if options[i].ID == shippingOptionID {
+			return options[i], currency, nil
+		}
+	}
+
+	return quotedOption{}, "", errors.Conflict(CodeOptionUnavailable,
+		"the shipping option %q is not available for order %s", shippingOptionID, orderID)
+}
+
+// quotesForOrder prices the order's options on its own facts and returns the
+// ones a delivery can go on, and the order's currency: admin-only options are
+// listed, because the operator is the one changing it, and return options are
+// not.
+func (w *Workflows) quotesForOrder(
+	ctx context.Context, orderID string,
+) (options []quotedOption, currency string, err error) {
 	raw, err := w.orders.DeliveryFactsJSON(ctx, orderID)
 	if err != nil {
-		return quotedOption{}, "", errors.Wrap(err, errors.KindOf(err), CodeOrderUnreadable,
-			"order %s could not be read, so its delivery was not changed", orderID)
+		return nil, "", errors.Wrap(err, errors.KindOf(err), CodeOrderUnreadable,
+			"order %s could not be read, so its delivery was not quoted", orderID)
 	}
 	var facts deliveryFacts
 	if err := json.Unmarshal(raw, &facts); err != nil {
-		return quotedOption{}, "", errors.Wrap(err, errors.KindInternal, CodeOrderUnreadable,
+		return nil, "", errors.Wrap(err, errors.KindInternal, CodeOrderUnreadable,
 			"order %s's delivery facts could not be parsed", orderID)
 	}
 
@@ -209,35 +270,30 @@ func (w *Workflows) quoteForOrder(
 		IncludeAdminOnly: true,
 	})
 	if err != nil {
-		return quotedOption{}, "", errors.Wrap(err, errors.KindInternal, CodeQuoteFailed,
+		return nil, "", errors.Wrap(err, errors.KindInternal, CodeQuoteFailed,
 			"the quote request for order %s could not be built", orderID)
 	}
 
 	answer, err := w.fulfillments.ListOptionsJSON(ctx, request)
 	if err != nil {
-		return quotedOption{}, "", errors.Wrap(err, errors.KindOf(err), CodeQuoteFailed,
+		return nil, "", errors.Wrap(err, errors.KindOf(err), CodeQuoteFailed,
 			"the shipping options could not be quoted for order %s", orderID)
 	}
 	var quoted optionsResponse
 	if err := json.Unmarshal(answer, &quoted); err != nil {
-		return quotedOption{}, "", errors.Wrap(err, errors.KindInternal, CodeQuoteFailed,
+		return nil, "", errors.Wrap(err, errors.KindInternal, CodeQuoteFailed,
 			"the shipping quote for order %s could not be parsed", orderID)
 	}
 
+	options = make([]quotedOption, 0, len(quoted.Options))
 	for i := range quoted.Options {
-		candidate := quoted.Options[i]
-		if candidate.ID != shippingOptionID || candidate.IsReturn {
-			continue
-		}
 		// A quote in another currency would be subtracted from the order's
 		// amount as a bare integer.
-		if candidate.CurrencyCode != facts.CurrencyCode {
-			break
+		if quoted.Options[i].IsReturn || quoted.Options[i].CurrencyCode != facts.CurrencyCode {
+			continue
 		}
-
-		return candidate, facts.CurrencyCode, nil
+		options = append(options, quoted.Options[i])
 	}
 
-	return quotedOption{}, "", errors.Conflict(CodeOptionUnavailable,
-		"the shipping option %q is not available for order %s", shippingOptionID, orderID)
+	return options, facts.CurrencyCode, nil
 }

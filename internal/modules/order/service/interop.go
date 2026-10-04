@@ -917,10 +917,11 @@ func (i *Interop) ShippingAddressJSON(ctx context.Context, orderID string) (json
 // A field the schema does not name is refused rather than dropped: the body is
 // the operator's, and an address saved without the field they typed is a
 // parcel sent somewhere they did not say. The rules are
-// [Service.CorrectShippingAddress]'s; whether a parcel is already on its way is
-// the caller's question, because this module cannot read parcels.
+// [Service.CorrectShippingAddressFrom]'s, readAddressID the row the caller
+// read or ""; whether a parcel is already on its way is the caller's question,
+// because this module cannot read parcels.
 func (i *Interop) CorrectShippingAddressJSON(
-	ctx context.Context, orderID string, address json.RawMessage,
+	ctx context.Context, orderID string, address json.RawMessage, readAddressID string,
 ) (json.RawMessage, error) {
 	decoder := json.NewDecoder(bytes.NewReader(address))
 	decoder.DisallowUnknownFields()
@@ -930,7 +931,7 @@ func (i *Interop) CorrectShippingAddressJSON(
 			"the corrected address could not be read")
 	}
 
-	current, err := i.svc.CorrectShippingAddress(ctx, orderID, models.OrderAddress{
+	current, err := i.svc.CorrectShippingAddressFrom(ctx, orderID, models.OrderAddress{
 		FirstName:   in.FirstName,
 		LastName:    in.LastName,
 		Company:     in.Company,
@@ -942,7 +943,7 @@ func (i *Interop) CorrectShippingAddressJSON(
 		CountryCode: in.CountryCode,
 		Phone:       in.Phone,
 		Metadata:    in.Metadata,
-	})
+	}, readAddressID)
 	if err != nil {
 		return nil, err
 	}

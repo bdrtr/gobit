@@ -33,8 +33,12 @@ const statusReturned = "returned"
 // both flows share. It needs two operators acting on one order at the same
 // instant, and the parcel it produces carries the address the order held when
 // it was opened, which the timeline dates.
+//
+// readAddressID is the shipping address row the caller drew its form from,
+// or "" for a caller that names none; the order module refuses a correction
+// whose row was corrected since (ADR 0388).
 func (w *Workflows) CorrectShippingAddress(
-	ctx context.Context, orderID string, address json.RawMessage,
+	ctx context.Context, orderID string, address json.RawMessage, readAddressID string,
 ) (json.RawMessage, error) {
 	if strings.TrimSpace(orderID) == "" {
 		return nil, errors.Invalid(CodeInvalidInput, "the order id is required")
@@ -44,7 +48,7 @@ func (w *Workflows) CorrectShippingAddress(
 		return nil, err
 	}
 
-	return w.orders.CorrectShippingAddressJSON(ctx, orderID, address)
+	return w.orders.CorrectShippingAddressJSON(ctx, orderID, address, readAddressID)
 }
 
 // refuseWhileUnderway refuses while any parcel of the order is pending,

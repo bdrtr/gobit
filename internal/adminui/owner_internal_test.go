@@ -765,6 +765,28 @@ func (a recordingAfterSales) CancelOrderLine(context.Context, string, string, in
 	return a.surfaces.reach(ServiceOrderAdmin)
 }
 
+func (a recordingAfterSales) CreditLinesJSON(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage(`{"credited_total":0,"lines":[]}`), a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) CreditOrder(context.Context, string, int64, int64, string, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) DeliveryQuoteJSON(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage(`[]`), a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) ChangeDelivery(
+	context.Context, string, string, string, string, int64,
+) (json.RawMessage, error) {
+	return json.RawMessage(`null`), a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) CorrectShippingAddress(context.Context, string, json.RawMessage, string) error {
+	return a.surfaces.reach(ServiceOrderAdmin)
+}
+
 func (a recordingAfterSales) CompleteOrder(context.Context, string) error {
 	return a.surfaces.reach(ServiceOrderAdmin)
 }
@@ -1152,6 +1174,17 @@ var walkForms = map[string]url.Values{
 	// Writing off units of a line (ADR 0341).
 	routeKey(http.MethodPost, OrderLineCancellationsPath): {
 		formWriteOffLine: {"oli_walk"}, formReadSpokenFor: {"0"}, formWriteOffQuantity: {"1"}, formWriteOffReason: {"walk"},
+	},
+	// Crediting an order, changing its delivery and correcting where it
+	// ships (ADR 0388).
+	routeKey(http.MethodPost, OrderCreditLinesPath): {
+		formReadCredited: {"0"}, "amount": {"1"}, formCreditReason: {"walk"},
+	},
+	routeKey(http.MethodPost, OrderDeliveryPath): {formDeliveryOption: {"so_walk|0"}},
+	routeKey(http.MethodPost, OrderShippingAddressPath): {
+		formReadAddress: {"oadr_walk"}, "first_name": {""}, "last_name": {""}, "company": {""},
+		"address_1": {"1 Walk St"}, "address_2": {""}, "city": {"Walk"}, "province": {""},
+		"postal_code": {""}, "phone": {""},
 	},
 	// Completing and archiving an order (ADR 0340).
 	routeKey(http.MethodPost, OrderCompletePath): {},

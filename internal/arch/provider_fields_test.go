@@ -860,6 +860,10 @@ var panelSurfaceContracts = map[string]string{
 	// An order's deliveries as they stand after their changes, which the
 	// order's read provider does not publish (ADR 0332).
 	"order_parcels.go": "order.admin's deliveries",
+	// An order's credits, and the options its delivery can be put on, which
+	// no read provider publishes (ADR 0388).
+	"order_credit.go":   "order.admin's credit lines",
+	"order_delivery.go": "order.admin's delivery quote and change",
 	// The providers and the profiles a shipping option is written on, which
 	// no read provider publishes (ADR 0334).
 	"shipping_options.go": "fulfillment.admin's option choices",

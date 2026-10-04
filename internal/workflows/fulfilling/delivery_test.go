@@ -37,7 +37,7 @@ func TestADeliveryIsChangedAtTheQuotedPrice(t *testing.T) {
 	}}
 	flow := newFlow(t, orders, ful, newFakeLinks())
 
-	_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", " sopt_pickup ", "")
+	_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", " sopt_pickup ", "", nil)
 	require.NoError(t, err)
 
 	assert.JSONEq(t, `{"region_id":"reg_tr","currency_code":"TRY","country_code":"TR",
@@ -66,7 +66,7 @@ func TestAnOptionTheOrderCannotGoOnIsRefused(t *testing.T) {
 			orders := &fakeOrders{facts: orderFacts}
 			flow := newFlow(t, orders, &fakeFulfillments{options: options}, newFakeLinks())
 
-			_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_back", "")
+			_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_back", "", nil)
 
 			require.Error(t, err)
 			assert.True(t, coreerrors.IsConflict(err), "%v", err)
@@ -96,7 +96,7 @@ func TestAParcelOnItsWayStopsTheDeliveryChange(t *testing.T) {
 				options: []map[string]any{quoted("sopt_pickup", "Pickup", 0, "TRY")}}
 			flow := newFlow(t, orders, ful, links)
 
-			_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_pickup", "")
+			_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_pickup", "", nil)
 
 			if allowed {
 				require.NoError(t, err)
@@ -120,7 +120,7 @@ func TestAFailedQuoteChangesNothing(t *testing.T) {
 	ful := &fakeFulfillments{quoteErr: coreerrors.Unavailable("x", "the carrier is down")}
 	flow := newFlow(t, orders, ful, newFakeLinks())
 
-	_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_pickup", "")
+	_, err := flow.ChangeDelivery(context.Background(), "order_1", "", "sopt_pickup", "", nil)
 
 	require.Error(t, err)
 	assert.Equal(t, fulfilling.CodeQuoteFailed, coreerrors.CodeOf(err))
@@ -137,7 +137,7 @@ func TestADeliveryChangeNeedsAnOrderAndAnOption(t *testing.T) {
 	flow := newFlow(t, orders, ful, newFakeLinks())
 
 	for _, ids := range [][2]string{{"", "sopt_pickup"}, {"order_1", " "}} {
-		_, err := flow.ChangeDelivery(context.Background(), ids[0], "", ids[1], "")
+		_, err := flow.ChangeDelivery(context.Background(), ids[0], "", ids[1], "", nil)
 		require.Error(t, err)
 		assert.True(t, coreerrors.IsInvalid(err), "%v", err)
 	}
@@ -196,7 +196,7 @@ func TestADearerDeliveryNamesWhatItsCollectionHolds(t *testing.T) {
 		reference: "order_1", currency: "TRY", amount: 1500, captured: 1500,
 	})
 
-	_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", "sopt_express", " pay_col_1 ")
+	_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", "sopt_express", " pay_col_1 ", nil)
 	require.NoError(t, err)
 
 	require.Equal(t, 1, orders.changed)
@@ -232,7 +232,7 @@ func TestACollectionThatIsNotTheOrdersPaysForNothing(t *testing.T) {
 			payments := tc.payments
 			flow, orders := payingFlow(t, &payments)
 
-			_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", "sopt_express", "pay_col_1")
+			_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", "sopt_express", "pay_col_1", nil)
 
 			require.Error(t, err)
 			assert.True(t, coreerrors.IsConflict(err), "%v", err)
@@ -249,7 +249,7 @@ func TestAnUnreadableCollectionChangesNothing(t *testing.T) {
 
 	flow, orders := payingFlow(t, &fakePayments{err: coreerrors.NotFound("x", "no such collection")})
 
-	_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", "sopt_express", "pay_col_1")
+	_, err := flow.ChangeDelivery(context.Background(), "order_1", "oship_1", "sopt_express", "pay_col_1", nil)
 
 	require.Error(t, err)
 	assert.True(t, coreerrors.IsNotFound(err), "%v", err)
