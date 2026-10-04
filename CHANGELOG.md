@@ -56,6 +56,12 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **An account is told what changed** (ADR 0379). **For integrators:**
+  `contrib/identity-session` takes an optional `Options.AccountNotices`; bound,
+  it is called with the account's address after a password reset or change and
+  with the old and the new address after an account moves. A notice that
+  cannot be sent is logged and the request still succeeds.
+
 - **The panel corrects a tax rate** (ADR 0378). **For operators:** each rate
   on the Taxes screen corrects its name and its rate, typed as a percent, for
   an operator holding `tax:write`; a rate someone else changed since the page

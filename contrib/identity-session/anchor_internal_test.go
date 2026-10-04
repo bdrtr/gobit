@@ -60,6 +60,7 @@ type anchoredStore struct {
 	reads      int // credentials read by customer
 	endErr     error
 	readErr    error
+	putErr     error
 	// rounds writes a moment at a microsecond, rounding, which is what
 	// PostgreSQL does to a timestamp it is sent as text.
 	rounds bool
@@ -80,6 +81,9 @@ func (s *anchoredStore) Credential(_ context.Context, email string) (customerID,
 func (s *anchoredStore) Put(_ context.Context, customerID, email, passwordHash string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.putErr != nil {
+		return s.putErr
+	}
 	s.customerID, s.email, s.hash = customerID, foldEmail(email), passwordHash
 	s.puts++
 

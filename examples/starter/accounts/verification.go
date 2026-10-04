@@ -77,3 +77,24 @@ func (v LogOnlyVerification) SendAddressProof(ctx context.Context, email, token 
 
 	return nil
 }
+
+// SendPasswordChanged logs that an account's password was replaced (ADR
+// 0379). It carries no secret, and in production it is the message that
+// lets a person notice a change they did not make.
+func (v LogOnlyVerification) SendPasswordChanged(ctx context.Context, email string) error {
+	v.log.WarnContext(ctx,
+		"DEVELOPMENT ONLY: a password change notice was written to the log instead of being sent",
+		"email", email, "notice", "password_changed")
+
+	return nil
+}
+
+// SendAddressChanged logs that an account moved to another address, as the
+// notice to the address it left would say (ADR 0379).
+func (v LogOnlyVerification) SendAddressChanged(ctx context.Context, oldEmail, newEmail string) error {
+	v.log.WarnContext(ctx,
+		"DEVELOPMENT ONLY: an address change notice was written to the log instead of being sent",
+		"email", oldEmail, "new_email", newEmail, "notice", "address_changed")
+
+	return nil
+}

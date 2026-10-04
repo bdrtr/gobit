@@ -126,6 +126,10 @@ type Options struct {
 	//
 	// Zero means [DefaultAddressChangeTTL].
 	AddressChangeTTL time.Duration
+	// AccountNotices tells a person that their account's password was replaced
+	// or that it moved to another address (ADR 0379). Nil sends neither; the
+	// changes themselves do not depend on it.
+	AccountNotices AccountNotices
 	// Limiter bounds how often the registration, password reset and address
 	// change endpoints may be called, one quota for all: each makes the shop
 	// send mail.

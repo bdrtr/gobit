@@ -46,6 +46,7 @@ var (
 	_ identitysession.AddressChanges = (*accounts.Module)(nil)
 	_ identitysession.PasswordReset  = accounts.LogOnlyVerification{}
 	_ identitysession.AddressProof   = accounts.LogOnlyVerification{}
+	_ identitysession.AccountNotices = accounts.LogOnlyVerification{}
 )
 
 func main() {
@@ -83,8 +84,8 @@ func main() {
 		//
 		// The same stand-in carries a password reset link (ADR 0373), which
 		// mounts the storefront's "forgot my password" pair, and the link that
-		// proves a new address (ADR 0377); a real shop binds its mailer here as
-		// well.
+		// proves a new address (ADR 0377), and tells an account its password or
+		// address changed (ADR 0379); a real shop binds its mailer here as well.
 		Add(identitysession.New(identitysession.Options{
 			Secret:         []byte(os.Getenv("SESSION_SECRET")),
 			RetiredSecrets: retiredSecrets(os.Getenv("SESSION_SECRET_RETIRED")),
@@ -92,6 +93,7 @@ func main() {
 			Verification:   accounts.NewLogOnlyVerification(nil),
 			PasswordReset:  accounts.NewLogOnlyVerification(nil),
 			AddressProof:   accounts.NewLogOnlyVerification(nil),
+			AccountNotices: accounts.NewLogOnlyVerification(nil),
 		}))
 
 	if err := shop.Main(os.Args[1:], os.Stdout); err != nil {

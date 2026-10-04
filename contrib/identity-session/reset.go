@@ -195,6 +195,7 @@ func (m *Module) confirmPasswordReset(w http.ResponseWriter, r *http.Request) {
 
 	m.log.InfoContext(r.Context(), "identity-session replaced a password from a proven address",
 		"customer_id", customerID)
+	m.notifyPasswordChanged(r.Context(), customerID, email)
 
 	m.sessions.Issue(w, customerID)
 	corehttp.WriteJSON(r.Context(), w, http.StatusNoContent, nil)

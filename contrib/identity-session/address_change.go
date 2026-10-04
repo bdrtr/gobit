@@ -228,7 +228,7 @@ func (m *Module) confirmAddressChange(w http.ResponseWriter, r *http.Request) {
 	}
 
 	credentials, _ := m.store.(CustomerCredentials)
-	_, hash, err := credentials.CredentialOf(r.Context(), customerID)
+	oldEmail, hash, err := credentials.CredentialOf(r.Context(), customerID)
 	if err != nil {
 		m.unavailable(w, r, "the credential could not be read", err)
 
@@ -255,6 +255,7 @@ func (m *Module) confirmAddressChange(w http.ResponseWriter, r *http.Request) {
 
 	m.log.InfoContext(r.Context(), "identity-session moved an account to a proven address",
 		"customer_id", customerID)
+	m.notifyAddressChanged(r.Context(), customerID, oldEmail, email)
 
 	corehttp.WriteJSON(r.Context(), w, http.StatusNoContent, nil)
 }
