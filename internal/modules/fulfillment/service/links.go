@@ -2,7 +2,8 @@ package service
 
 import "github.com/bdrtr/gobit/core/link"
 
-// LinkOrderFulfillment binds an order to the shipments opened for it.
+// LinkOrderFulfillment binds an order to the outgoing shipments opened for it; a
+// parcel bringing a return back is not bound (ADR 0384).
 //
 // # Why THIS module declares a link whose left side is an order
 //

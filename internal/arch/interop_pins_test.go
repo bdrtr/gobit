@@ -261,7 +261,7 @@ var pinnedNames = map[string]string{
 	"workflows.returns.interop":    "the order module's receive endpoint",
 	"workflows.segment.interop":    "the customer module's segment preview",
 	"workflows.invoicing.interop":  "the order module's invoice endpoint",
-	"workflows.fulfilling.interop": "the order module's shipment reads and the fulfillment module's dispatch bound",
+	"workflows.fulfilling.interop": "the order module's shipment reads and the fulfillment module's dispatch and return bounds",
 	"file.interop":                 "the product module reading an upload back",
 	"b2b.interop":                  "the order module asking the spending policy",
 	"order.interop":                "the notification module's contact read, and four flows",

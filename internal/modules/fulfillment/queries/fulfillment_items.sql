@@ -26,7 +26,8 @@ WHERE fulfillment_id = ANY (sqlc.arg('fulfillment_ids')::text[])
 ORDER BY fulfillment_id, created_at, seq;
 
 -- CommittedQuantitiesForFulfillments sums, per order line, the units of that
--- line that a live parcel holds.
+-- line that a live OUTGOING parcel holds; a parcel bringing a return back never
+-- left with the order's goods (ADR 0384).
 --
 -- "Live" means not canceled: a canceled parcel's goods never left the building,
 -- so its units are still in the warehouse and still sellable, while a shipped,
@@ -44,5 +45,21 @@ FROM fulfillment_items i
 JOIN fulfillments f ON f.id = i.fulfillment_id
 WHERE i.fulfillment_id = ANY (sqlc.arg('fulfillment_ids')::text[])
   AND f.status <> 'canceled'
+  AND f.return_id IS NULL
+GROUP BY i.line_item_id
+ORDER BY i.line_item_id;
+
+-- ReturningQuantitiesForReturn sums, per order line, the units the live parcels
+-- bringing one return back hold (ADR 0384).
+--
+-- "Live" is pending, shipped or delivered. A canceled parcel never traveled and
+-- a returned one came back to the customer undelivered, so neither holds any of
+-- the return's units any more.
+-- name: ReturningQuantitiesForReturn :many
+SELECT i.line_item_id, SUM(i.quantity)::bigint AS quantity
+FROM fulfillment_items i
+JOIN fulfillments f ON f.id = i.fulfillment_id
+WHERE f.return_id = sqlc.arg('return_id')::text
+  AND f.status IN ('pending', 'shipped', 'delivered')
 GROUP BY i.line_item_id
 ORDER BY i.line_item_id;

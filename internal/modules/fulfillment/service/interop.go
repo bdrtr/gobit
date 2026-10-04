@@ -306,6 +306,10 @@ func (i *Interop) RankLocations(
 // to open a single fulfillment for the whole order, and per-item partial
 // shipment is the admin API's subject.
 //
+// It carries no return either, so it opens outgoing parcels only: a return
+// option answers errors.Invalid with [CodeOptionDirectionMismatch], and a
+// parcel bringing a return back is opened through the admin API (ADR 0384).
+//
 // destination is the order's shipping address as JSON, in the schema of
 // [interopDestination], or empty / "null" when the order has none. It is handed
 // to the provider and not stored here (ADR 0194).
@@ -467,7 +471,8 @@ func interopInt(value json.Number, field string) (int64, error) {
 	return parsed, nil
 }
 
-// CommittedQuantities sums, per order line, the units a live parcel holds.
+// CommittedQuantities sums, per order line, the units a live outgoing parcel
+// holds.
 //
 // # Why a cancellation needs it
 //
@@ -484,7 +489,8 @@ func interopInt(value json.Number, field string) (int64, error) {
 // back, so counting them as gone here is what keeps each act with one effect. And
 // a PENDING parcel counts as gone because the warehouse is already picking it, and
 // treating those units as available would let a cancellation put back goods that
-// are in a box.
+// are in a box. A parcel bringing a return back never counts, whatever list names
+// it: its units never left with the order's goods (ADR 0384).
 //
 // The parcels are named by the caller rather than looked up from an order,
 // because the binding between the two is the "order_fulfillment" LINK and this

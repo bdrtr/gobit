@@ -23,6 +23,10 @@ type DispatchBound interface {
 	DispatchableQuantities(
 		ctx context.Context, orderID string, lineItemIDs []string,
 	) (map[string]int64, error)
+	// ReturnLines answers whether order orderID's return returnID still awaits its
+	// goods and, per order line it names, how many units it brings back. A return of
+	// another order awaits nothing on this one.
+	ReturnLines(ctx context.Context, orderID, returnID string) (awaited bool, lines map[string]int64, err error)
 }
 
 // refuseOverDispatch refuses a parcel that would hold more than the order owes.
@@ -57,17 +61,19 @@ type DispatchBound interface {
 //
 // # A retry is not a second parcel
 //
-// The idempotency key is looked up first. A key that already names a fulfillment is
-// a retry: that parcel's units are ALREADY counted as committed, so re-checking the
-// bound would refuse the very request that must be answered with the existing
-// shipment. The item list of a retry is guarded by the mismatch check the
-// transaction already makes.
+// It is not asked for a retry at all ([Service.isRetry]).
+//
+// # A parcel coming back is bounded by its return
+//
+// A parcel naming a return carries goods the customer sends back, not goods the
+// order still owes, so the order's bound would refuse it for every unit already
+// shipped (D234). It is bounded by what that return still awaits instead
+// ([Service.refuseOverReturn], ADR 0384).
 func (s *Service) refuseOverDispatch(
-	ctx context.Context, reference, idempotencyKey string, items []FulfillmentItemInput,
+	ctx context.Context, reference, returnID string, items []FulfillmentItemInput,
 ) error {
-	if existing, err := s.store.FulfillmentByIdempotencyKey(ctx, idempotencyKey); err == nil &&
-		existing.ID != "" {
-		return nil
+	if returnID != "" {
+		return s.refuseOverReturn(ctx, reference, returnID, items)
 	}
 
 	if s.bound == nil {
@@ -105,4 +111,24 @@ func (s *Service) refuseOverDispatch(
 	}
 
 	return nil
+}
+
+// isRetry reports whether the idempotency key already names a fulfillment.
+//
+// # A retry is not a second parcel
+//
+// A key that already names a fulfillment is a retry: that parcel's units are
+// ALREADY counted as committed, so re-checking the bound would refuse the very
+// request that must be answered with the existing shipment. The item list, the
+// option and the return of a retry are guarded by the mismatch check the
+// transaction already makes.
+//
+// # The direction is not asked again either
+//
+// An option's is_return can be changed after a parcel was opened on it, so the
+// option's direction today is not the parcel's. A retry is answered from the row
+// the key names, whose return_id is the direction it was opened with (ADR 0384).
+func (s *Service) isRetry(ctx context.Context, idempotencyKey string) bool {
+	existing, err := s.store.FulfillmentByIdempotencyKey(ctx, idempotencyKey)
+	return err == nil && existing.ID != ""
 }

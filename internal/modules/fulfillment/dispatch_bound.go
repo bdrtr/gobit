@@ -58,6 +58,29 @@ func newDispatchBound(c *container.Container, log *slog.Logger) *dispatchBound {
 func (b *dispatchBound) DispatchableQuantities(
 	ctx context.Context, orderID string, lineItemIDs []string,
 ) (map[string]int64, error) {
+	svc, err := b.resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return svc.DispatchableQuantities(ctx, orderID, lineItemIDs)
+}
+
+// ReturnLines answers what an order return still brings back (ADR 0384), from the
+// same flow and with the same failure as [dispatchBound.DispatchableQuantities].
+func (b *dispatchBound) ReturnLines(
+	ctx context.Context, orderID, returnID string,
+) (awaited bool, lines map[string]int64, err error) {
+	svc, err := b.resolve(ctx)
+	if err != nil {
+		return false, nil, err
+	}
+
+	return svc.ReturnLines(ctx, orderID, returnID)
+}
+
+// resolve binds the flow on first use and remembers the outcome, error included.
+func (b *dispatchBound) resolve(ctx context.Context) (service.DispatchBound, error) {
 	b.once.Do(func() {
 		b.svc, b.err = container.Resolve[service.DispatchBound](b.c, fulfillingFlowName)
 		if b.err != nil {
@@ -70,9 +93,6 @@ func (b *dispatchBound) DispatchableQuantities(
 		}
 		b.log.InfoContext(ctx, "dispatch bound flow bound", "flow", fulfillingFlowName)
 	})
-	if b.err != nil {
-		return nil, b.err
-	}
 
-	return b.svc.DispatchableQuantities(ctx, orderID, lineItemIDs)
+	return b.svc, b.err
 }

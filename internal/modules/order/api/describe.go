@@ -318,12 +318,17 @@ func describeFulfilling(d *openapi.Doc) {
 			"delivery: the parcel then goes on its option, or on the one it was changed to " +
 			"since (ADR 0198, 0199). An order sold none or several has to be told which. " +
 			"The order may have SEVERAL shipments, and since ADR 0197 a parcel may also carry " +
-			"an addition that joined it.",
+			"an addition that joined it. " +
+			"Every parcel opened here goes out to the customer: a return option answers 422 " +
+			"\"fulfilling_create_failed\", and goods coming back travel in a parcel opened " +
+			"through POST /admin/v1/fulfillments naming its \"return_id\" (ADR 0384).",
 		RequestBody: d.RequestBody(openShipmentRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The shipment that was already open",
 				d.Item(shipmentOpenedDTO{})),
 			"201": openapi.Response("The opened shipment", d.Item(shipmentOpenedDTO{})),
+			"422": openapi.ErrorResponse("The request is invalid; a return option is refused " +
+				"here (ADR 0384)."),
 		},
 	})
 

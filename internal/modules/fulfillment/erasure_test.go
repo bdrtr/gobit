@@ -8,14 +8,16 @@ import (
 )
 
 // notPersonalColumns lists the fulfillment columns that hold nothing about a
-// person (ADR 0278). A parcel's identifiers, its order and option, its
-// provider's id, its state and its stamps describe the shipment; its lines are
-// quantities of order lines; and the shipping options, their rules, profiles
-// and locations are the shop's configuration, the same for every buyer.
+// person (ADR 0278). A parcel's identifiers, its order, the return it brings
+// back and its option, its provider's id, its state and its stamps describe the
+// shipment; its lines are quantities of order lines; and the shipping options,
+// their rules, profiles and locations are the shop's configuration, the same for
+// every buyer.
 var notPersonalColumns = map[string][]string{
 	"fulfillments": {
 		"id", "reference", "shipping_option_id", "provider_id", "external_id", "status",
 		"shipped_at", "delivered_at", "canceled_at", "returned_at", "created_at", "updated_at",
+		"return_id",
 	},
 	"fulfillment_items": {
 		"id", "fulfillment_id", "line_item_id", "quantity", "seq", "created_at", "updated_at",

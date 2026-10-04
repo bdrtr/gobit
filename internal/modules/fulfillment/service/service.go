@@ -304,10 +304,14 @@ type Store interface {
 	// FulfillmentItemsByFulfillments returns the items for MULTIPLE fulfillments
 	// in a SINGLE query (no N+1).
 	FulfillmentItemsByFulfillments(ctx context.Context, fulfillmentIDs []string) ([]models.FulfillmentItem, error)
-	// CommittedQuantities sums, per order line, the units a LIVE parcel holds —
-	// one that was not canceled. It is what a cancellation asks before putting
-	// stock back.
+	// CommittedQuantities sums, per order line, the units a LIVE outgoing parcel
+	// holds — one that was not canceled and brings no return back (ADR 0384). It
+	// is what a cancellation asks before putting stock back.
 	CommittedQuantities(ctx context.Context, fulfillmentIDs []string) (map[string]int64, error)
+	// ReturningQuantities sums, per order line, the units the LIVE parcels
+	// bringing order return returnID back hold — pending, shipped or delivered
+	// (ADR 0384).
+	ReturningQuantities(ctx context.Context, returnID string) (map[string]int64, error)
 }
 
 // Options are the service's construction dependencies.

@@ -71,7 +71,8 @@ const (
 	//
 	// This module already had an answer for a parcel the customer sends BACK
 	// after receiving it, and that answer stands: a new fulfillment is opened
-	// with a shipping option marked IsReturn (see [FulfillmentStatus.CancelAction]).
+	// with a shipping option marked IsReturn, naming the order return it brings
+	// back (ADR 0384; see [FulfillmentStatus.CancelAction]).
 	// That is a second shipment — a second waybill, bought and paid for, going
 	// the other way.
 	//
@@ -180,8 +181,9 @@ func (a Action) String() string {
 //	delivered -> conflict  (delivery HAS HAPPENED; the parcel is in the
 //	                        customer's hands and "cancel" would be a lie about
 //	                        the physical world. The remedy is a RETURN: a new
-//	                        fulfillment is opened with a shipping option marked
-//	                        is_return. The rule is the same as a captured
+//	                        fulfillment on a shipping option marked is_return,
+//	                        naming the return it brings back (ADR 0384). The
+//	                        rule is the same as a captured
 //	                        session in payment not being cancelable but
 //	                        refundable.)
 //	returned  -> conflict  (the parcel already traveled out and back; there is
@@ -286,7 +288,8 @@ func (s FulfillmentStatus) DeliverAction() Action {
 //	delivered -> conflict  (the recipient HAS the parcel. Sending it back after
 //	                        that is a customer return, and this module's answer
 //	                        to that is a SECOND fulfillment on an is_return
-//	                        option — see [StatusReturned] and
+//	                        option naming its return (ADR 0384) — see
+//	                        [StatusReturned] and
 //	                        [FulfillmentStatus.CancelAction].)
 //	returned  -> noop      (idempotency is provided here)
 //	canceled  -> conflict  (we recalled the parcel ourselves; the carrier

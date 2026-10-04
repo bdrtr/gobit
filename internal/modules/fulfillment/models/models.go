@@ -238,8 +238,10 @@ type ShippingOption struct {
 	// every region. It is the region module's identifier and is NOT A FOREIGN
 	// KEY (Principle 2.2).
 	RegionID string
-	// IsReturn says the option is for a RETURN shipment. Return options are not
-	// listed in the normal purchase flow.
+	// IsReturn says the option is for a RETURN shipment: a parcel on it names the
+	// order return it brings back and is bounded by it, and a parcel without one
+	// is refused (ADR 0384). Return options are not listed in the normal purchase
+	// flow.
 	IsReturn bool
 	// AdminOnly says the option appears only on the admin surface (e.g. "hand
 	// delivery"). It does NOT REACH the storefront surface.
@@ -311,6 +313,10 @@ type Fulfillment struct {
 	TrackingURL    string
 	// IdempotencyKey prevents the same fulfillment from being created twice.
 	IdempotencyKey string
+	// ReturnID is the order return a parcel on an is_return option brings back;
+	// "" on a parcel going out to the customer (ADR 0384). It is the order
+	// module's identifier and NOT A FOREIGN KEY (Principle 2.2).
+	ReturnID string
 	// ShippedAt, DeliveredAt, CanceledAt and ReturnedAt are the moments of the
 	// respective transition (UTC); nil if the transition has not happened.
 	//

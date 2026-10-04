@@ -21,11 +21,14 @@
 -- single statement and the losing side WAITS until the winner's transaction
 -- finishes — so the row it reads is already completed with the provider's
 -- response.
+--
+-- return_id is the order return a parcel on an is_return option brings back, and
+-- NULL on every other parcel (ADR 0384).
 -- name: InsertFulfillmentIfAbsent :one
 INSERT INTO fulfillments (
     id, reference, shipping_option_id, provider_id, status, idempotency_key,
-    data, metadata
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    data, metadata, return_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (idempotency_key) DO NOTHING
 RETURNING *;
 

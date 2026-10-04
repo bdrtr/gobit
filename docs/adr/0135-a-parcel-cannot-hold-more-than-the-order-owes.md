@@ -7,6 +7,7 @@ upwards, and closes an admin endpoint that validated nothing.
 
 - **Status:** Accepted
 - **Date:** 2026-09-11
+- **Amended by:** [0384](0384-a-return-parcel-brings-back-the-return-it-names.md): a parcel on a return option is bounded by the return it names, not by what the order owes
 
 ## Context
 

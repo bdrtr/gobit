@@ -41,6 +41,9 @@ type dispatchableLine struct {
 // A returned unit shipped, came back and was restocked when it arrived. Whether it
 // ships again is a new decision rather than a quantity still owed, and subtracting
 // it would bound a parcel by goods that already left once.
+//
+// A parcel bringing a return back is bound to no order, so it is never committed
+// (ADR 0384).
 func (w *Workflows) DispatchableQuantities(
 	ctx context.Context, orderID string, lineItemIDs []string,
 ) (map[string]int64, error) {

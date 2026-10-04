@@ -4,12 +4,16 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	fulfillmentmanual "github.com/bdrtr/gobit/internal/modules/fulfillment/manual"
+	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 	paymentmanual "github.com/bdrtr/gobit/internal/modules/payment/manual"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
 )
@@ -459,4 +463,143 @@ func TestAReturnAnOperatorOpensComesBackToStock(t *testing.T) {
 	assert.Equal(t, 1, receipt.Data.RestockedLines, "the line the operator named is restocked")
 	assert.Equal(t, returnedQuantity, receipt.Data.RestockedUnits)
 	assert.Equal(t, stockAfterReceipt, stockLevel(ctx, t, inventoryItemID).StockedQuantity)
+}
+
+// TestACustomerSendsGoodsBackInAReturnParcel is D234 (ADR 0384): the parcel the
+// module's documents always sent goods back in, on an is_return option, was
+// refused 409 for units already shipped. Three are bought and two shipped and
+// delivered, so the order still owes one; the customer sends both delivered
+// units back, which the order's bound refused because it owes only one.
+func TestACustomerSendsGoodsBackInAReturnParcel(t *testing.T) {
+	ctx := t.Context()
+
+	customerID, email := newCustomer(ctx, t)
+	variantID, inventoryItemID := newStockedVariant(ctx, t, "E2E Return Parcel Product",
+		map[string]int64{taxedCurrency: cancelUnitPrice}, cancelInitialStock)
+	cartID, _ := prepareCart(ctx, t, customerID, variantID, cancelQuantity)
+	placed, err := orderWorkflows.CompleteCart(ctx, checkoutwf.CompleteCartInput{
+		CartID:            cartID,
+		LocationID:        stockLocationID,
+		PaymentProviderID: paymentmanual.ID,
+		PaymentData:       paymentBehavior(t, paymentmanual.OutcomeAuthorize),
+		Email:             email,
+		ExpectedTotal:     cancelTotal,
+	})
+	require.NoError(t, err)
+	order, err := orderSvc.GetOrder(ctx, placed.OrderID)
+	require.NoError(t, err)
+	lineID := order.Items[0].ID
+
+	profileID := newShippingProfile(ctx, t, "E2E Return Parcel Profile")
+	outgoingID := newShippingOption(ctx, t, profileID, "E2E Return Parcel Out", shippingOptionFee, false)
+	option, err := shippingSvc.CreateShippingOption(ctx, fulfillmentsvc.CreateOptionInput{
+		Name:              fmt.Sprintf("E2E Return Parcel Back %d", fixtureCounter.Add(1)),
+		ProviderID:        fulfillmentmanual.ID,
+		ShippingProfileID: profileID,
+		Amount:            shippingOptionFee,
+		CurrencyCode:      taxedCurrency,
+		RegionID:          taxedRegionID,
+		IsReturn:          true,
+	})
+	require.NoError(t, err)
+	returnOptionID := option.ID
+
+	parcel := func(key, optionID, returnID string, quantity int64) *httptest.ResponseRecorder {
+		t.Helper()
+		body := map[string]any{
+			"reference": placed.OrderID, "shipping_option_id": optionID,
+			"idempotency_key": key + "-" + placed.OrderID,
+			"items":           []map[string]any{{"line_item_id": lineID, "quantity": quantity}},
+		}
+		if returnID != "" {
+			body["return_id"] = returnID
+		}
+		rec, err := adminRequestWithBody(http.MethodPost, "/admin/v1/fulfillments", body)
+		require.NoError(t, err)
+		return rec
+	}
+	move := func(id string, steps ...string) {
+		t.Helper()
+		for _, step := range steps {
+			rec, err := adminRequestWithBody(http.MethodPost, "/admin/v1/fulfillments/"+id+"/"+step, nil)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, rec.Code, "%s: %s", step, rec.Body.String())
+		}
+	}
+	idOf := func(rec *httptest.ResponseRecorder) string {
+		t.Helper()
+		var opened struct {
+			Data struct {
+				ID       string `json:"id"`
+				ReturnID string `json:"return_id"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &opened), rec.Body.String())
+		require.NotEmpty(t, opened.Data.ID)
+		return opened.Data.ID
+	}
+
+	out := parcel("return-parcel-out", outgoingID, "", 2)
+	require.Equal(t, http.StatusCreated, out.Code, out.Body.String())
+	move(idOf(out), "ship", "deliver")
+
+	requested := storefrontRequest(t, http.MethodPost, "/store/v1/orders/"+placed.OrderID+"/returns",
+		`{"lines":[{"order_line_item_id":"`+lineID+`","quantity":2}]}`)
+	require.Equal(t, http.StatusCreated, requested.Code, requested.Body.String())
+	var opened afterSalesRecordResponse
+	require.NoError(t, json.Unmarshal(requested.Body.Bytes(), &opened))
+	returnID := opened.Data.ID
+
+	// The reproduction is the request the tree before ADR 0384 had: no return_id,
+	// which that tree's body did not take. It answered 409
+	// fulfillment_line_not_dispatchable there, because the order owes one unit
+	// (measurements/0384); it is now refused for its direction, before any bound.
+	unnamed := parcel("return-parcel-unnamed", returnOptionID, "", 2)
+	assert.Equal(t, http.StatusUnprocessableEntity, unnamed.Code, unnamed.Body.String())
+	assert.Contains(t, unnamed.Body.String(), fulfillmentsvc.CodeOptionDirectionMismatch)
+
+	back := parcel("return-parcel-back", returnOptionID, returnID, 2)
+	require.Equal(t, http.StatusCreated, back.Code,
+		"the parcel bringing the return back is bounded by the return; body: %s", back.Body.String())
+	backID := idOf(back)
+	assert.Contains(t, back.Body.String(), `"return_id":"`+returnID+`"`)
+
+	again := parcel("return-parcel-again", returnOptionID, returnID, 1)
+	assert.Equal(t, http.StatusConflict, again.Code, again.Body.String())
+	assert.Contains(t, again.Body.String(), "fulfillment_line_not_dispatchable",
+		"the return's two units are already on their way back")
+
+	listed := adminCartRequest(t, http.MethodGet, "/admin/v1/orders/"+placed.OrderID+"/fulfillments", "")
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	var shipments struct {
+		Data []struct {
+			FulfillmentID string `json:"fulfillment_id"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &shipments))
+	assert.Len(t, shipments.Data, 1, "the parcel coming back is not one of the order's shipments")
+
+	rest := parcel("return-parcel-rest", outgoingID, "", 1)
+	assert.Equal(t, http.StatusCreated, rest.Code,
+		"the unit the order still owes can still ship; the parcel coming back took none of it. body: %s",
+		rest.Body.String())
+
+	move(backID, "ship", "deliver")
+	received, err := adminRequestWithBody(http.MethodPost,
+		"/admin/v1/orders/"+placed.OrderID+"/returns/"+returnID+"/receive",
+		map[string]any{"location_id": stockLocationID})
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, received.Code, received.Body.String())
+	assert.Equal(t, cancelStockAfterSale+2, stockLevel(ctx, t, inventoryItemID).StockedQuantity,
+		"receiving the return restocks its two units, and delivering its parcel moved none")
+
+	late := parcel("return-parcel-late", returnOptionID, returnID, 1)
+	assert.Equal(t, http.StatusConflict, late.Code, late.Body.String())
+	assert.Contains(t, late.Body.String(), "fulfillment_return_not_awaited")
+
+	door, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+placed.OrderID+"/fulfillments",
+		map[string]any{"idempotency_key": "return-parcel-door-" + placed.OrderID, "shipping_option_id": returnOptionID})
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusUnprocessableEntity, door.Code,
+		"the order's door opens outgoing parcels only; body: %s", door.Body.String())
 }

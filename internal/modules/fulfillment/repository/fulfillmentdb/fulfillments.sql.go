@@ -32,7 +32,7 @@ func (q *Queries) CountFulfillments(ctx context.Context, arg CountFulfillmentsPa
 }
 
 const getFulfillment = `-- name: GetFulfillment :one
-SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at FROM fulfillments
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at, return_id FROM fulfillments
 WHERE id = $1
 `
 
@@ -57,12 +57,13 @@ func (q *Queries) GetFulfillment(ctx context.Context, id string) (Fulfillment, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReturnedAt,
+		&i.ReturnID,
 	)
 	return i, err
 }
 
 const getFulfillmentByIdempotencyKey = `-- name: GetFulfillmentByIdempotencyKey :one
-SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at FROM fulfillments
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at, return_id FROM fulfillments
 WHERE idempotency_key = $1
 `
 
@@ -87,12 +88,13 @@ func (q *Queries) GetFulfillmentByIdempotencyKey(ctx context.Context, idempotenc
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReturnedAt,
+		&i.ReturnID,
 	)
 	return i, err
 }
 
 const getFulfillmentsByIDs = `-- name: GetFulfillmentsByIDs :many
-SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at FROM fulfillments
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at, return_id FROM fulfillments
 WHERE id = ANY ($1::text[])
 ORDER BY id
 `
@@ -126,6 +128,7 @@ func (q *Queries) GetFulfillmentsByIDs(ctx context.Context, ids []string) ([]Ful
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ReturnedAt,
+			&i.ReturnID,
 		); err != nil {
 			return nil, err
 		}
@@ -141,10 +144,10 @@ const insertFulfillmentIfAbsent = `-- name: InsertFulfillmentIfAbsent :one
 
 INSERT INTO fulfillments (
     id, reference, shipping_option_id, provider_id, status, idempotency_key,
-    data, metadata
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    data, metadata, return_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (idempotency_key) DO NOTHING
-RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at
+RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at, return_id
 `
 
 type InsertFulfillmentIfAbsentParams struct {
@@ -156,6 +159,7 @@ type InsertFulfillmentIfAbsentParams struct {
 	IdempotencyKey   string
 	Data             []byte
 	Metadata         []byte
+	ReturnID         *string
 }
 
 // fulfillments queries.
@@ -180,6 +184,9 @@ type InsertFulfillmentIfAbsentParams struct {
 // single statement and the losing side WAITS until the winner's transaction
 // finishes — so the row it reads is already completed with the provider's
 // response.
+//
+// return_id is the order return a parcel on an is_return option brings back, and
+// NULL on every other parcel (ADR 0384).
 func (q *Queries) InsertFulfillmentIfAbsent(ctx context.Context, arg InsertFulfillmentIfAbsentParams) (Fulfillment, error) {
 	row := q.db.QueryRow(ctx, insertFulfillmentIfAbsent,
 		arg.ID,
@@ -190,6 +197,7 @@ func (q *Queries) InsertFulfillmentIfAbsent(ctx context.Context, arg InsertFulfi
 		arg.IdempotencyKey,
 		arg.Data,
 		arg.Metadata,
+		arg.ReturnID,
 	)
 	var i Fulfillment
 	err := row.Scan(
@@ -210,12 +218,13 @@ func (q *Queries) InsertFulfillmentIfAbsent(ctx context.Context, arg InsertFulfi
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReturnedAt,
+		&i.ReturnID,
 	)
 	return i, err
 }
 
 const listFulfillments = `-- name: ListFulfillments :many
-SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at FROM fulfillments
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at, return_id FROM fulfillments
 WHERE ($1::text IS NULL OR reference = $1::text)
   AND ($2::text IS NULL OR status = $2::text)
 ORDER BY created_at DESC, id DESC
@@ -261,6 +270,7 @@ func (q *Queries) ListFulfillments(ctx context.Context, arg ListFulfillmentsPara
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.ReturnedAt,
+			&i.ReturnID,
 		); err != nil {
 			return nil, err
 		}
@@ -273,7 +283,7 @@ func (q *Queries) ListFulfillments(ctx context.Context, arg ListFulfillmentsPara
 }
 
 const lockFulfillment = `-- name: LockFulfillment :one
-SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at FROM fulfillments
+SELECT id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at, return_id FROM fulfillments
 WHERE id = $1
 FOR UPDATE
 `
@@ -306,6 +316,7 @@ func (q *Queries) LockFulfillment(ctx context.Context, id string) (Fulfillment, 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReturnedAt,
+		&i.ReturnID,
 	)
 	return i, err
 }
@@ -322,7 +333,7 @@ SET external_id      = $2,
     canceled_at      = $9,
     updated_at       = now()
 WHERE id = $1
-RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at
+RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at, return_id
 `
 
 type UpdateFulfillmentProviderResultParams struct {
@@ -373,6 +384,7 @@ func (q *Queries) UpdateFulfillmentProviderResult(ctx context.Context, arg Updat
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReturnedAt,
+		&i.ReturnID,
 	)
 	return i, err
 }
@@ -388,7 +400,7 @@ SET status          = $2,
     returned_at     = $8,
     updated_at      = now()
 WHERE id = $1
-RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at
+RETURNING id, reference, shipping_option_id, provider_id, external_id, status, tracking_number, tracking_url, idempotency_key, shipped_at, delivered_at, canceled_at, data, metadata, created_at, updated_at, returned_at, return_id
 `
 
 type UpdateFulfillmentStatusParams struct {
@@ -446,6 +458,7 @@ func (q *Queries) UpdateFulfillmentStatus(ctx context.Context, arg UpdateFulfill
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ReturnedAt,
+		&i.ReturnID,
 	)
 	return i, err
 }

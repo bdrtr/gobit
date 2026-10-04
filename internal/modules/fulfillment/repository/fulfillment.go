@@ -38,6 +38,7 @@ func (r *Repository) InsertFulfillmentIfAbsent(
 		IdempotencyKey:   ful.IdempotencyKey,
 		Data:             fromJSONRaw(ful.Data),
 		Metadata:         meta,
+		ReturnID:         fromOptionalText(ful.ReturnID),
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -284,7 +285,7 @@ func (r *Repository) FulfillmentItemsByFulfillments(
 	return out, nil
 }
 
-// CommittedQuantities sums, per order line, the units a LIVE parcel holds.
+// CommittedQuantities sums, per order line, the units a LIVE outgoing parcel holds.
 //
 // It is the question a cancellation asks before putting stock back: units in a
 // parcel that was not canceled have left the warehouse, and units nowhere near a
@@ -300,6 +301,28 @@ func (r *Repository) CommittedQuantities(
 	rows, err := r.queries(ctx).CommittedQuantitiesForFulfillments(ctx, fulfillmentIDs)
 	if err != nil {
 		return nil, classify(err, codeQueryFailed, "could not sum the committed quantities")
+	}
+
+	out := make(map[string]int64, len(rows))
+	for i := range rows {
+		out[rows[i].LineItemID] = rows[i].Quantity
+	}
+
+	return out, nil
+}
+
+// ReturningQuantities sums, per order line, the units the LIVE parcels bringing
+// return returnID back hold (ADR 0384).
+//
+// Live is pending, shipped or delivered: a canceled parcel never traveled and a
+// returned one came back to the customer undelivered.
+func (r *Repository) ReturningQuantities(
+	ctx context.Context,
+	returnID string,
+) (map[string]int64, error) {
+	rows, err := r.queries(ctx).ReturningQuantitiesForReturn(ctx, returnID)
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "could not sum the quantities coming back")
 	}
 
 	out := make(map[string]int64, len(rows))

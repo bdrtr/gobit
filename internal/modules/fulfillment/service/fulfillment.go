@@ -48,6 +48,9 @@ type CreateFulfillmentInput struct {
 	Data map[string]any
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
+	// ReturnID is the order return this parcel brings back; required on a return
+	// option and refused on any other (ADR 0384). Not validated here (Principle 2.2).
+	ReturnID string
 }
 
 // CreateFulfillment opens a fulfillment at the provider and produces its record.
@@ -104,6 +107,11 @@ type CreateFulfillmentInput struct {
 // The rationale is in the package documentation: had the lock been released
 // before the provider, the second caller would read a HALF fulfillment whose
 // provider identifier had not been written yet.
+//
+// # A parcel bringing a return back is bound to no order
+//
+// Its units never left with the order's goods, so every reader that counts the
+// order's parcels through the link must not see it (ADR 0384).
 func (s *Service) CreateFulfillment(
 	ctx context.Context,
 	in CreateFulfillmentInput,
@@ -125,20 +133,30 @@ func (s *Service) CreateFulfillment(
 		return models.Fulfillment{}, err
 	}
 	optionID := strings.TrimSpace(in.ShippingOptionID)
+	returnID := strings.TrimSpace(in.ReturnID)
 
-	// The bound is checked BEFORE the transaction opens: asking another module
-	// while holding this one's locks takes a second connection from the same pool
-	// (ADR 0130's measurement, ADR 0135's reason).
-	if err := s.refuseOverDispatch(ctx, reference, key, items); err != nil {
+	// The option is read ONCE, before the bound: which bound applies depends on
+	// its direction (ADR 0384). The read held no lock inside the transaction
+	// either, so moving it out changes nothing the transaction relied on.
+	option, err := s.store.GetShippingOption(ctx, optionID)
+	if err != nil {
 		return models.Fulfillment{}, err
+	}
+	if !s.isRetry(ctx, key) {
+		if err := refuseWrongDirection(option, returnID, items); err != nil {
+			return models.Fulfillment{}, err
+		}
+
+		// The bound is checked BEFORE the transaction opens: asking another module
+		// while holding this one's locks takes a second connection from the same
+		// pool (ADR 0130's measurement, ADR 0135's reason).
+		if err := s.refuseOverDispatch(ctx, reference, returnID, items); err != nil {
+			return models.Fulfillment{}, err
+		}
 	}
 
 	var out models.Fulfillment
 	err = s.store.WithTx(ctx, func(ctx context.Context) error {
-		option, err := s.store.GetShippingOption(ctx, optionID)
-		if err != nil {
-			return err
-		}
 		provider, err := s.providers.Get(option.ProviderID)
 		if err != nil {
 			return err
@@ -152,6 +170,7 @@ func (s *Service) CreateFulfillment(
 			Status:           models.StatusPending,
 			IdempotencyKey:   key,
 			Metadata:         in.Metadata,
+			ReturnID:         returnID,
 		})
 		if err != nil {
 			return err
@@ -161,10 +180,13 @@ func (s *Service) CreateFulfillment(
 			if err != nil {
 				return err
 			}
-			if existing.Reference != reference || existing.ShippingOptionID != option.ID {
+			if existing.Reference != reference || existing.ShippingOptionID != option.ID ||
+				existing.ReturnID != returnID {
 				return errors.Conflict(CodeIdempotencyMismatch,
-					"the same idempotency key was used for a different fulfillment: existing %s/%s, requested %s/%s",
-					existing.Reference, existing.ShippingOptionID, reference, option.ID)
+					"the same idempotency key was used for a different fulfillment: existing %s/%s "+
+						"bringing back %q, requested %s/%s bringing back %q",
+					existing.Reference, existing.ShippingOptionID, existing.ReturnID,
+					reference, option.ID, returnID)
 			}
 			out, err = s.withItems(ctx, existing)
 			if err != nil {
@@ -231,8 +253,10 @@ func (s *Service) CreateFulfillment(
 		return models.Fulfillment{}, err
 	}
 
-	if err := s.bindToReference(ctx, out.ID, reference); err != nil {
-		return models.Fulfillment{}, err
+	if returnID == "" {
+		if err := s.bindToReference(ctx, out.ID, reference); err != nil {
+			return models.Fulfillment{}, err
+		}
 	}
 
 	return out, nil
@@ -626,8 +650,9 @@ func (s *Service) MarkDelivered(ctx context.Context, id string) (models.Fulfillm
 // # What this is NOT
 //
 // It is not the customer sending goods back after receiving them. That is a
-// SECOND fulfillment opened on a shipping option marked is_return, it is the
-// module's standing answer, and it is unaffected by this method. The difference
+// SECOND fulfillment, opened on a shipping option marked is_return and naming the
+// order return it brings back in ReturnID; it holds at most what that return
+// still awaits and is bound to no order (ADR 0384). The difference
 // is physical rather than terminological — the case here has one waybill and
 // the other has two — and the whole argument is at [models.StatusReturned].
 //
@@ -657,7 +682,7 @@ func (s *Service) MarkReturned(ctx context.Context, id string) (models.Fulfillme
 		case models.ActionConflict, models.ActionRecord:
 			return errors.Conflict(CodeInvalidTransition,
 				"a fulfillment in the %q state cannot be returned to the sender; "+
-					"a parcel the customer sends back is a new fulfillment on an is_return option: %s",
+					"a parcel the customer sends back is a new fulfillment on an is_return option naming its return_id: %s",
 				ful.Status, id)
 		case models.ActionProceed:
 			// Handled below.
@@ -896,10 +921,12 @@ func stampFor(status, target models.FulfillmentStatus, now time.Time) *time.Time
 	return &stamp
 }
 
-// CommittedQuantities sums, per order line, the units a live parcel holds.
+// CommittedQuantities sums, per order line, the units a live outgoing parcel
+// holds.
 //
 // The rule about which parcels count is in the SQL and named on
-// [Interop.CommittedQuantities]: everything but a canceled one.
+// [Interop.CommittedQuantities]: everything but a canceled one and one bringing a
+// return back.
 func (s *Service) CommittedQuantities(
 	ctx context.Context, fulfillmentIDs []string,
 ) (map[string]int64, error) {

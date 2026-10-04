@@ -361,6 +361,7 @@ func filledFulfillment() fulfillmentDTO {
 		DeliveredAt:    &now,
 		CanceledAt:     &now,
 		ReturnedAt:     &now,
+		ReturnID:       "ret_1",
 		Data:           json.RawMessage(`{"k":"v"}`),
 		Metadata:       map[string]any{"k": "v"},
 		Items:          []fulfillmentItemDTO{{}},

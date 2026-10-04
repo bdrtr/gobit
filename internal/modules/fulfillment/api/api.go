@@ -440,6 +440,9 @@ type storeOptionDTO struct {
 }
 
 // fulfillmentDTO is the external representation of a fulfillment.
+//
+// ReturnID is the order return the parcel brings back, absent on a parcel going
+// out (ADR 0384).
 type fulfillmentDTO struct {
 	ID               string               `json:"id"`
 	Reference        string               `json:"reference"`
@@ -453,6 +456,7 @@ type fulfillmentDTO struct {
 	DeliveredAt      *time.Time           `json:"delivered_at,omitempty"`
 	CanceledAt       *time.Time           `json:"canceled_at,omitempty"`
 	ReturnedAt       *time.Time           `json:"returned_at,omitempty"`
+	ReturnID         string               `json:"return_id,omitempty"`
 	Data             json.RawMessage      `json:"data,omitempty"`
 	Metadata         map[string]any       `json:"metadata,omitempty"`
 	Items            []fulfillmentItemDTO `json:"items"`
@@ -574,6 +578,7 @@ func toFulfillmentDTO(ful models.Fulfillment) fulfillmentDTO {
 		DeliveredAt:      ful.DeliveredAt,
 		CanceledAt:       ful.CanceledAt,
 		ReturnedAt:       ful.ReturnedAt,
+		ReturnID:         ful.ReturnID,
 		Data:             ful.Data,
 		Metadata:         ful.Metadata,
 		Items:            items,

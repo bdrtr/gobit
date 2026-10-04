@@ -817,6 +817,14 @@ past and is not corrected retroactively.
   A replacement that sends more than one such variant, and a claim's evidence,
   are still `/admin/v1` calls.
 
+- **A return parcel is an admin API call and buys no label.**
+  `POST /admin/v1/fulfillments` opens one naming its return
+  ([ADR 0384](adr/0384-a-return-parcel-brings-back-the-return-it-names.md)); the
+  provider is handed no destination and no direction, the panel and the
+  storefront open none, and the order's shipment list, its timeline and the
+  Parcels screen's order column do not show it. Receiving a return does not
+  look at its parcel, and cancelling a return leaves its parcel to the operator.
+
 - **The in-process harness consumes events like a server.** `InProcess` opens the
   whole application, so its modules subscribe — which is what a test wants, and
   what makes it a member of the consumer group when the installation is on the

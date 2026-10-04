@@ -300,6 +300,17 @@ func TestMigrationRollsBackWithDataPresent(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	// A parcel bringing a return back fills return_id, its CHECK and its partial
+	// index, which the down file drops (ADR 0384).
+	_, err = svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
+		Reference:        testReference,
+		ShippingOptionID: newReturnOption(ctx, t, svc, profile.ID).ID,
+		IdempotencyKey:   "migration-return-" + option.ID,
+		ReturnID:         "ret_migration",
+		Items:            []service.FulfillmentItemInput{{LineItemID: generousReturnLine, Quantity: 1}},
+	})
+	require.NoError(t, err)
+
 	// The warehouse policy is written too, and it is written TOGETHER WITH ITS
 	// REGION BINDING: there is an in-module foreign key between the two tables,
 	// and that the rollback drops them in the right ORDER can only be exercised
@@ -1612,6 +1623,119 @@ func TestARepeatedKeyReturnsTheCanceledShipment(t *testing.T) {
 			"every shipment rather than the live ones")
 }
 
+// TestAReturnParcelIsNotAGoodGoneOut runs ADR 0384's two sums on the real
+// schema: committed units count only parcels that name no return, and a
+// return's units count only its own live parcels.
+func TestAReturnParcelIsNotAGoodGoneOut(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	repo := repository.New(testPool.Pool())
+
+	profile := newProfile(ctx, t, svc)
+	outgoing := newOption(ctx, t, svc, profile.ID, 1_000)
+	back := newReturnOption(ctx, t, svc, profile.ID)
+	suffix := models.NewFulfillmentID()
+	retA, retB, retC := "ret_A"+suffix, "ret_B"+suffix, "ret_C"+suffix
+
+	open := func(optionID, returnID string, quantity int64) models.Fulfillment {
+		t.Helper()
+		ful, err := svc.CreateFulfillment(ctx, service.CreateFulfillmentInput{
+			Reference:        testReference,
+			ShippingOptionID: optionID,
+			IdempotencyKey:   "gone-out-" + models.NewFulfillmentID(),
+			ReturnID:         returnID,
+			Items: []service.FulfillmentItemInput{
+				{LineItemID: generousReturnLine, Quantity: quantity},
+			},
+		})
+		require.NoError(t, err)
+		return ful
+	}
+	out := open(outgoing.ID, "", 2)
+	parcelA := open(back.ID, retA, 1)
+	parcelB := open(back.ID, retB, 1)
+	assert.Equal(t, retA, parcelA.ReturnID)
+
+	committed, err := repo.CommittedQuantities(ctx, []string{out.ID, parcelA.ID, parcelB.ID})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{generousReturnLine: 2}, committed,
+		"a parcel bringing a return back never left with the order's goods, even "+
+			"when a caller names it among the order's parcels")
+
+	returning, err := repo.ReturningQuantities(ctx, retA)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{generousReturnLine: 1}, returning,
+		"a return counts its own parcel, not another return's or an outgoing one")
+
+	require.NoError(t, svc.CancelFulfillment(ctx, parcelA.ID))
+	returning, err = repo.ReturningQuantities(ctx, retA)
+	require.NoError(t, err)
+	assert.Empty(t, returning, "a canceled parcel holds none of the return's units")
+
+	_, err = svc.MarkShipped(ctx, parcelB.ID, "", "")
+	require.NoError(t, err)
+	returning, err = repo.ReturningQuantities(ctx, retB)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{generousReturnLine: 1}, returning, "a shipped one does")
+	_, err = svc.MarkReturned(ctx, parcelB.ID)
+	require.NoError(t, err)
+	returning, err = repo.ReturningQuantities(ctx, retB)
+	require.NoError(t, err)
+	assert.Empty(t, returning,
+		"a parcel that came back to the customer undelivered holds none of the return's units")
+
+	parcelC := open(back.ID, retC, 1)
+	_, err = svc.MarkShipped(ctx, parcelC.ID, "", "")
+	require.NoError(t, err)
+	_, err = svc.MarkDelivered(ctx, parcelC.ID)
+	require.NoError(t, err)
+	returning, err = repo.ReturningQuantities(ctx, retC)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{generousReturnLine: 1}, returning,
+		"a delivered one does: the goods reached the shop and the return is not received yet")
+}
+
+// TestTheReturnIDCheckRefusesAnEmptyString holds the column to "a return or
+// NULL": an empty string would be a parcel that names a return nobody can find.
+func TestTheReturnIDCheckRefusesAnEmptyString(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+
+	profile := newProfile(ctx, t, svc)
+	option := newReturnOption(ctx, t, svc, profile.ID)
+
+	_, err := testPool.Pool().Exec(ctx,
+		`INSERT INTO fulfillments (id, reference, shipping_option_id, provider_id,
+                                   idempotency_key, status, return_id)
+         VALUES ($1, $2, $3, 'manual', $4, 'pending', '')`,
+		models.NewFulfillmentID(), testReference, option.ID, "empty-return-"+models.NewFulfillmentID())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `check constraint "fulfillments_return_id_check"`)
+}
+
+// newReturnOption opens an is_return option for the test.
+func newReturnOption(
+	ctx context.Context, t *testing.T, svc *service.Service, profileID string,
+) models.ShippingOption {
+	t.Helper()
+
+	option, err := svc.CreateShippingOption(ctx, service.CreateOptionInput{
+		Name:              "return-" + models.NewShippingOptionID(),
+		ProviderID:        manual.ID,
+		ShippingProfileID: profileID,
+		Amount:            1_000,
+		CurrencyCode:      testCurrency,
+		RegionID:          testRegion,
+		IsReturn:          true,
+	})
+	require.NoError(t, err)
+	return option
+}
+
+// generousReturnLine is the line every return answers generously for.
+const generousReturnLine = "line_returned"
+
 // generousBound answers that every line asked about owes a thousand units.
 //
 // The module fails CLOSED when it cannot read what an order still owes, which is
@@ -1629,4 +1753,12 @@ func (generousBound) DispatchableQuantities(
 	}
 
 	return out, nil
+}
+
+// ReturnLines answers that every return awaits a thousand units of
+// [generousReturnLine] (ADR 0384).
+func (generousBound) ReturnLines(
+	context.Context, string, string,
+) (awaited bool, lines map[string]int64, err error) {
+	return true, map[string]int64{generousReturnLine: 1000}, nil
 }

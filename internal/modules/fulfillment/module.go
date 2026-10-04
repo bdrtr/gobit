@@ -260,7 +260,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		Events:    bus,
 		// The module owns the "order_fulfillment" definition, so since ADR 0140 it
 		// is also the side that WRITES it — both ways of opening a parcel go
-		// through CreateFulfillment, and only one of them used to bind.
+		// through CreateFulfillment, and only one of them used to bind. It binds
+		// an order to the outgoing shipments opened for it; a parcel bringing a
+		// return back is not bound (ADR 0384).
 		Links: links,
 		// Resolved on first use rather than now: the flow that answers is built
 		// after every module has registered (ADR 0135).

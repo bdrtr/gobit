@@ -416,9 +416,10 @@ func (i *Interop) SetOrderSummaryTotals(
 
 // ReturnDetailJSON returns a return with its lines and their variants.
 //
-// The schema is documented on [Service.ReturnDetailJSON]. The consumer is the
-// return flow, which needs the variant of every line coming back in order to
-// put its stock back.
+// The schema is documented on [Service.ReturnDetailJSON]. It has two
+// consumers. The return flow needs the variant of every line coming back in
+// order to put its stock back. The fulfilling flow bounds a parcel bringing the
+// return back by its order, its lines and its "awaits_goods" (ADR 0384).
 func (i *Interop) ReturnDetailJSON(ctx context.Context, returnID string) (json.RawMessage, error) {
 	return i.svc.ReturnDetailJSON(ctx, returnID)
 }

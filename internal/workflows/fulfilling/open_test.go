@@ -145,6 +145,10 @@ type fakeOrders struct {
 	// changedWith is the last request.
 	changed     int
 	changedWith json.RawMessage
+	// returnDetail is what ReturnDetailJSON answers, written as the producer
+	// writes it; returnErr is its error.
+	returnDetail json.RawMessage
+	returnErr    error
 }
 
 // testLine is the order module's answer as a CONSUMER writes it.
@@ -220,6 +224,15 @@ func (f *fakeOrders) DispatchableLinesJSON(context.Context, string) (json.RawMes
 	}
 
 	return json.Marshal(f.lines)
+}
+
+// ReturnDetailJSON answers the scripted return.
+func (f *fakeOrders) ReturnDetailJSON(context.Context, string) (json.RawMessage, error) {
+	if f.returnErr != nil {
+		return nil, f.returnErr
+	}
+
+	return f.returnDetail, nil
 }
 
 // fakeFulfillments stands in for the fulfillment module's surface.

@@ -46,7 +46,8 @@ func describeOptionRecords(d *openapi.Doc) {
 			"\n\n" +
 			"\"admin_only\" keeps the option off the storefront while leaving it usable from " +
 			"the admin surface — a courier an operator can pick for a phone order but a " +
-			"shopper cannot choose. \"is_return\" marks an option that ships the OTHER WAY.",
+			"shopper cannot choose. \"is_return\" marks an option that ships the OTHER WAY: " +
+			"a parcel on it brings back the order return its return_id names.",
 		RequestBody: d.RequestBody(createOptionRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The created option", d.Item(optionDTO{})),

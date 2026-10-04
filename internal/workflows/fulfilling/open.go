@@ -132,10 +132,10 @@ func (w *Workflows) OpenForOrder(
 
 	// The binding is NOT written here any more. The fulfillment module owns the
 	// "order_fulfillment" definition and writes it inside CreateFulfillment, which
-	// is the call above — so both ways of opening a parcel bind, where before only
-	// this one did and the admin endpoint's item-carrying parcels were attributable
-	// to no order at all (ADR 0140). A second write here would be the same rule in
-	// two places.
+	// is the call above — so both ways of opening an outgoing parcel bind, where
+	// before only this one did and the admin endpoint's item-carrying parcels were
+	// attributable to no order at all (ADR 0140). A second write here would be the
+	// same rule in two places.
 
 	return result, nil
 }

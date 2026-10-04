@@ -11,6 +11,15 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **A parcel on a return option names the return it brings back** (ADR 0384,
+  D234). **For integrators:** `POST /admin/v1/fulfillments` takes `return_id`;
+  a return option without one, or an outgoing option with one, answers 422
+  `fulfillment_option_direction_mismatch`, and
+  `POST /admin/v1/orders/{id}/fulfillments` on a return option answers 422
+  where it used to open a parcel. An unknown option answers 404 before the
+  dispatch bound is asked. **For operators:** migration 000006 adds
+  `fulfillments.return_id`.
+
 - **A passkey whose counter does not advance is suspended** (ADR 0382, D232).
   **For integrators:** `identitypasskey.Credentials.Used(ctx, credentialID)` is
   replaced by `SignedIn(ctx, identitypasskey.Assertion)`, which compares the
@@ -77,6 +86,12 @@ design. It is fixed with `1.0.0`.
   operator who can sign in can protect their account.
 
 ### Fixes
+
+- **Goods a customer sends back travel in a parcel of their own** (ADR 0384,
+  D234): the parcel is bounded by its return, not refused as more than the
+  order owes, and is bound to no order, so the dispatch bound and both stock
+  targets never count it. A return that awaits no goods answers 409
+  `fulfillment_return_not_awaited`, and a parcel's record carries `return_id`.
 
 - **An operator generates a VAPID key with the binary** (ADR 0383, D233).
   **For operators:** `gobit webpush-key` prints a new web-push signing key

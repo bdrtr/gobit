@@ -26,6 +26,9 @@ type createFulfillmentRequest struct {
 	Items          []fulfillmentItemInput `json:"items"`
 	Data           map[string]any         `json:"data"`
 	Metadata       map[string]any         `json:"metadata"`
+	// ReturnID is the order return a parcel on an is_return option brings back;
+	// required there and refused on any other option (ADR 0384).
+	ReturnID string `json:"return_id"`
 }
 
 // fulfillmentItemInput is the body of a fulfillment item.
@@ -66,6 +69,7 @@ func (h *Handler) createFulfillment(w http.ResponseWriter, r *http.Request) {
 		Items:            items,
 		Data:             body.Data,
 		Metadata:         body.Metadata,
+		ReturnID:         body.ReturnID,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)

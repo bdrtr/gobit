@@ -26,6 +26,7 @@ type Fulfillment struct {
 	CreatedAt        pgtype.Timestamptz
 	UpdatedAt        pgtype.Timestamptz
 	ReturnedAt       pgtype.Timestamptz
+	ReturnID         *string
 }
 
 type FulfillmentItem struct {

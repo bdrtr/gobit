@@ -137,3 +137,12 @@ func (i *Interop) DispatchableQuantities(
 ) (map[string]int64, error) {
 	return i.w.DispatchableQuantities(ctx, orderID, lineItemIDs)
 }
+
+// ReturnLines answers whether an order return still awaits its goods and, per
+// line, how many units it brings back. The fulfillment module's create endpoint
+// asks it before it opens a parcel on a return option (ADR 0384).
+func (i *Interop) ReturnLines(
+	ctx context.Context, orderID, returnID string,
+) (awaited bool, lines map[string]int64, err error) {
+	return i.w.ReturnLines(ctx, orderID, returnID)
+}

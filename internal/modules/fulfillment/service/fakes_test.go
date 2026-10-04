@@ -785,10 +785,36 @@ func (f *fakeStore) CommittedQuantities(
 			continue
 		}
 		parcel, known := f.fuls[item.FulfillmentID]
-		if known && parcel.Status == models.StatusCanceled {
+		if known && (parcel.Status == models.StatusCanceled || parcel.ReturnID != "") {
 			continue
 		}
 		out[item.LineItemID] += item.Quantity
+	}
+
+	return out, nil
+}
+
+// ReturningQuantities sums the units of the live parcels bringing a return back,
+// the way the SQL does: pending, shipped or delivered (ADR 0384).
+func (f *fakeStore) ReturningQuantities(
+	_ context.Context,
+	returnID string,
+) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := map[string]int64{}
+	for _, id := range slices.Sorted(maps.Keys(f.items)) {
+		item := f.items[id]
+		parcel, known := f.fuls[item.FulfillmentID]
+		if !known || parcel.ReturnID != returnID {
+			continue
+		}
+		switch parcel.Status {
+		case models.StatusPending, models.StatusShipped, models.StatusDelivered:
+			out[item.LineItemID] += item.Quantity
+		case models.StatusCanceled, models.StatusReturned:
+		}
 	}
 
 	return out, nil
@@ -1081,6 +1107,42 @@ type fakeDispatchBound struct {
 	mu sync.Mutex
 	// calls counts the questions, which is how a test proves a retry asks NOTHING.
 	calls int
+
+	// returnLines is what a return brings back, per line (ADR 0384); a test about
+	// return parcels sets it, and nil names no line at all.
+	returnLines map[string]int64
+	// notAwaited answers that the return awaits no goods.
+	notAwaited bool
+	// returnErr is ReturnLines' error.
+	returnErr error
+	// returnCalls counts the return questions.
+	returnCalls int
+}
+
+// returnAsked returns how many return questions this fake was given.
+func (f *fakeDispatchBound) returnAsked() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.returnCalls
+}
+
+// ReturnLines answers what a return still brings back.
+func (f *fakeDispatchBound) ReturnLines(
+	_ context.Context, _, _ string,
+) (awaited bool, lines map[string]int64, err error) {
+	f.mu.Lock()
+	f.returnCalls++
+	f.mu.Unlock()
+
+	if f.returnErr != nil {
+		return false, nil, f.returnErr
+	}
+	if f.notAwaited {
+		return false, nil, nil
+	}
+
+	return true, f.returnLines, nil
 }
 
 // asked returns how many questions this fake was given.

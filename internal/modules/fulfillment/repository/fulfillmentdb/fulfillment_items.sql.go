@@ -15,6 +15,7 @@ FROM fulfillment_items i
 JOIN fulfillments f ON f.id = i.fulfillment_id
 WHERE i.fulfillment_id = ANY ($1::text[])
   AND f.status <> 'canceled'
+  AND f.return_id IS NULL
 GROUP BY i.line_item_id
 ORDER BY i.line_item_id
 `
@@ -25,7 +26,8 @@ type CommittedQuantitiesForFulfillmentsRow struct {
 }
 
 // CommittedQuantitiesForFulfillments sums, per order line, the units of that
-// line that a live parcel holds.
+// line that a live OUTGOING parcel holds; a parcel bringing a return back never
+// left with the order's goods (ADR 0384).
 //
 // "Live" means not canceled: a canceled parcel's goods never left the building,
 // so its units are still in the warehouse and still sellable, while a shipped,
@@ -160,6 +162,47 @@ func (q *Queries) ListFulfillmentItemsByFulfillments(ctx context.Context, fulfil
 			&i.UpdatedAt,
 			&i.Seq,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const returningQuantitiesForReturn = `-- name: ReturningQuantitiesForReturn :many
+SELECT i.line_item_id, SUM(i.quantity)::bigint AS quantity
+FROM fulfillment_items i
+JOIN fulfillments f ON f.id = i.fulfillment_id
+WHERE f.return_id = $1::text
+  AND f.status IN ('pending', 'shipped', 'delivered')
+GROUP BY i.line_item_id
+ORDER BY i.line_item_id
+`
+
+type ReturningQuantitiesForReturnRow struct {
+	LineItemID string
+	Quantity   int64
+}
+
+// ReturningQuantitiesForReturn sums, per order line, the units the live parcels
+// bringing one return back hold (ADR 0384).
+//
+// "Live" is pending, shipped or delivered. A canceled parcel never traveled and
+// a returned one came back to the customer undelivered, so neither holds any of
+// the return's units any more.
+func (q *Queries) ReturningQuantitiesForReturn(ctx context.Context, returnID string) ([]ReturningQuantitiesForReturnRow, error) {
+	rows, err := q.db.Query(ctx, returningQuantitiesForReturn, returnID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReturningQuantitiesForReturnRow{}
+	for rows.Next() {
+		var i ReturningQuantitiesForReturnRow
+		if err := rows.Scan(&i.LineItemID, &i.Quantity); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

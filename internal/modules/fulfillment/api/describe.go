@@ -268,7 +268,12 @@ func describeEligibility(d *openapi.Doc) {
 // describeFulfillments describes the fulfillment endpoints.
 func describeFulfillments(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminFulfillments, openapi.Operation{
-		Summary:     "Opens a new fulfillment at the provider.",
+		Summary: "Opens a new fulfillment at the provider.",
+		Description: "A parcel on an is_return option names the order return it brings back " +
+			"in return_id and holds at most what that return still awaits; it is bound to no " +
+			"order. A return option without return_id, or return_id on another option, is " +
+			"422 fulfillment_option_direction_mismatch; a return that awaits nothing is 409 " +
+			"fulfillment_return_not_awaited.",
 		RequestBody: d.RequestBody(createFulfillmentRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The opened fulfillment", d.Item(fulfillmentDTO{})),
@@ -363,7 +368,8 @@ func describeFulfillments(d *openapi.Doc) {
 		Description: "The carriers' \"iade\": the parcel could not be delivered and came " +
 			"back under the ORIGINAL waybill. It is IDEMPOTENT and TAKES no body. It is " +
 			"not the same thing as a customer sending goods back after receiving them — " +
-			"that is a new fulfillment on a shipping option with is_return set. Only a " +
+			"that is a new fulfillment on a shipping option with is_return set, opened with " +
+			"POST /admin/v1/fulfillments naming its return_id (ADR 0384). Only a " +
 			"shipped fulfillment can come back; anything else is a 409.",
 		Responses: map[string]any{
 			"200": openapi.Response("The returned fulfillment", d.Item(fulfillmentDTO{})),

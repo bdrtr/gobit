@@ -416,11 +416,28 @@ func toFulfillment(row fulfillmentdb.Fulfillment) (models.Fulfillment, error) {
 		DeliveredAt:      toTimePtr(row.DeliveredAt),
 		CanceledAt:       toTimePtr(row.CanceledAt),
 		ReturnedAt:       toTimePtr(row.ReturnedAt),
+		ReturnID:         toOptionalText(row.ReturnID),
 		Data:             toJSONRaw(row.Data),
 		Metadata:         meta,
 		CreatedAt:        toTime(row.CreatedAt),
 		UpdatedAt:        toTime(row.UpdatedAt),
 	}, nil
+}
+
+// fromOptionalText is a nullable text column's value: nil for "".
+func fromOptionalText(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// toOptionalText is a nullable text column read back: "" for NULL.
+func toOptionalText(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // toItem converts a database row to the domain model.

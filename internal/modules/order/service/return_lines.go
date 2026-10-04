@@ -33,6 +33,10 @@ type ReturnDetail struct {
 	OrderID  string
 	// Status is the return's current status.
 	Status string
+	// AwaitsGoods says goods may still arrive for the return: receiving it in its
+	// status would proceed. It is this module's rule, answered here so a flow
+	// compares no status word (ADR 0384).
+	AwaitsGoods bool
 	// ReceivedLocationID is where the goods arrived; empty until they do.
 	ReceivedLocationID string
 	// Lines are the lines coming back, with their variants.
@@ -84,6 +88,7 @@ func (s *Service) ReturnDetailJSON(ctx context.Context, returnID string) (json.R
 		ReturnID:           ret.ID,
 		OrderID:            ret.OrderID,
 		Status:             ret.Status.String(),
+		AwaitsGoods:        ret.Status.ReceiveAction() == models.AfterSalesProceed,
 		ReceivedLocationID: ret.ReceivedLocationID,
 		Lines:              make([]returnLineJSON, 0, len(items)),
 	}
@@ -114,6 +119,7 @@ type returnDetailJSON struct {
 	ReturnID           string           `json:"return_id"`
 	OrderID            string           `json:"order_id"`
 	Status             string           `json:"status"`
+	AwaitsGoods        bool             `json:"awaits_goods"`
 	ReceivedLocationID string           `json:"received_location_id"`
 	Lines              []returnLineJSON `json:"lines"`
 }

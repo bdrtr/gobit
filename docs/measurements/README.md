@@ -186,3 +186,4 @@ truth: a report says what was true on the day it was taken.
 | [The carts nobody came back for — measured 2026-10-01](0301-the-carts-nobody-came-back-for.md) | 30 |
 | [A promotion's latest uses — measured 2026-10-01](0313-latest-uses.md) | 41 |
 | [A copied passkey — measured 2026-10-04](0382-a-copied-passkey.md) | 119 |
+| [A parcel coming back — measured 2026-10-04](0384-a-return-parcel.md) | 86 |

@@ -129,6 +129,10 @@ type Orders interface {
 	// had, more units than were sold, or units somebody had already been told were
 	// canceled (ADR 0135).
 	DispatchableLinesJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+	// ReturnDetailJSON returns an order return with its order, its lines and
+	// whether it still awaits its goods (`awaits_goods`). It bounds a parcel
+	// bringing that return back (ADR 0384).
+	ReturnDetailJSON(ctx context.Context, returnID string) (json.RawMessage, error)
 }
 
 // Fulfillments is the part of the fulfillment module this flow uses.
@@ -146,7 +150,8 @@ type Fulfillments interface {
 	) (string, error)
 	// FulfillmentStatus returns the shipment's status.
 	FulfillmentStatus(ctx context.Context, fulfillmentID string) (string, error)
-	// CommittedQuantities sums, per order line, the units a LIVE parcel holds.
+	// CommittedQuantities sums, per order line, the units a LIVE outgoing parcel
+	// holds.
 	//
 	// Live means not canceled: a canceled parcel's goods never left, so its units
 	// are still dispatchable. The parcels are named by this flow, because the
