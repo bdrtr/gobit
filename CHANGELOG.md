@@ -56,6 +56,13 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **An account is told its passkeys changed** (ADR 0381). **For
+  integrators:** `contrib/identity-passkey` takes an optional
+  `Options.KeyNotices`; bound, it is called with the customer id and the key's
+  id after a key the account did not hold is registered and after a key is
+  removed, and the installation finds the address. A notice that cannot be
+  sent is logged and the request still succeeds.
+
 - **An account notice outlives the caller, not the mailer** (D231). **For
   integrators:** `contrib/identity-session` sends `AccountNotices` on a context
   the caller hanging up does not cancel, ended after

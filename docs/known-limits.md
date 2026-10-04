@@ -100,11 +100,17 @@ past and is not corrected retroactively.
       register its own key and remove the owner's. The rule those endpoints enforce
       is "an account keeps a way in", not "only the owner changes credentials", and
       a gate that looked like the second while enforcing the first would be worse
-      than none — so it is named instead of guarded. Changing the password is the
-      exception: it asks for the current one
-      ([ADR 0375](adr/0375-a-signed-in-shopper-changes-their-password.md)). What
-      a shop can do about the rest is outside these modules: a shorter TTL, a
-      re-authentication step of its own.
+      than none — so it is named instead of guarded. Changing the password and
+      moving the account are the exceptions: each asks for the current one
+      ([ADR 0375](adr/0375-a-signed-in-shopper-changes-their-password.md),
+      [ADR 0377](adr/0377-a-shopper-moves-their-account-by-proving-the-new-address.md)).
+      What these modules do about the rest is tell: a password replaced or an
+      account moved ([ADR 0379](adr/0379-an-account-is-told-what-changed.md)), a
+      passkey added or removed
+      ([ADR 0381](adr/0381-an-account-is-told-its-passkeys-changed.md)), each
+      only when the installation binds the seam. Telling is not stopping, and
+      stopping it is outside these modules: a shorter TTL, a re-authentication
+      step of its own.
     - **A credential store an installation binds itself may answer nothing at all.**
       `Credentials` exists so a shop can keep keys in LDAP or a users table it
       already has, and such a store cannot erase rows out of gobit's tables or hold

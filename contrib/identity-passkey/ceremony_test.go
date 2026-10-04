@@ -144,8 +144,12 @@ func newHarnessWith(t *testing.T, other identitypasskey.OtherSignIn) *harness {
 // The returned harness's store field is left nil unless the caller is using the
 // in-memory one — a test that binds something else has no business reaching into
 // a map it does not own.
+//
+// adjust changes the options before the module is built, for a test about an
+// option the other constructors leave unset.
 func newHarnessWithStore(
 	t *testing.T, other identitypasskey.OtherSignIn, credentials identitypasskey.Credentials,
+	adjust ...func(*identitypasskey.Options),
 ) *harness {
 	t.Helper()
 
@@ -158,7 +162,7 @@ func newHarnessWithStore(
 	require.NoError(t, session.Register(t.Context(), c))
 
 	logs := &lockedBuffer{}
-	m := identitypasskey.New(identitypasskey.Options{
+	opts := identitypasskey.Options{
 		Logger:      slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
 		Session:     session,
 		RPID:        testRPID,
@@ -166,7 +170,11 @@ func newHarnessWithStore(
 		DisplayName: "Example Shop",
 		Credentials: credentials,
 		OtherSignIn: other,
-	})
+	}
+	for _, change := range adjust {
+		change(&opts)
+	}
+	m := identitypasskey.New(opts)
 	require.NoError(t, m.Register(t.Context(), c))
 
 	r := chi.NewRouter()
@@ -530,7 +538,14 @@ func (h *harness) do(
 ) *httptest.ResponseRecorder {
 	t.Helper()
 
-	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
+	return h.doIn(t.Context(), method, path, body, cookies...)
+}
+
+// doIn is [harness.do] on the given context.
+func (h *harness) doIn(
+	ctx context.Context, method, path, body string, cookies ...*http.Cookie,
+) *httptest.ResponseRecorder {
+	req := httptest.NewRequestWithContext(ctx, method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 
 	var sent []string
@@ -619,6 +634,10 @@ type memoryCredentials struct {
 	// from the rule refusing and the handler has to tell them apart.
 	listErr   error
 	removeErr error
+	putErr    error
+	// afterWrite runs once a Put or a Remove has succeeded, as a caller hanging
+	// up the moment the change is made.
+	afterWrite func()
 	// phantomKeys makes ListForCustomer report MORE rows than Remove holds.
 	//
 	// It is the concurrency window written as a fixture: the handler counts
@@ -655,6 +674,9 @@ func (s *memoryCredentials) ByCredentialID(
 func (s *memoryCredentials) Put(
 	_ context.Context, customerID string, credential webauthn.Credential,
 ) error {
+	if s.putErr != nil {
+		return s.putErr
+	}
 	if s.byCustomer == nil {
 		s.byCustomer = map[string][]webauthn.Credential{}
 	}
@@ -672,13 +694,22 @@ func (s *memoryCredentials) Put(
 	for i := range existing {
 		if bytes.Equal(existing[i].ID, credential.ID) {
 			existing[i] = credential
+			s.wrote()
 
 			return nil
 		}
 	}
 	s.byCustomer[customerID] = append(s.byCustomer[customerID], credential)
+	s.wrote()
 
 	return nil
+}
+
+// wrote runs afterWrite, if one is set.
+func (s *memoryCredentials) wrote() {
+	if s.afterWrite != nil {
+		s.afterWrite()
+	}
 }
 
 // Used records the stamp.
@@ -747,6 +778,7 @@ func (s *memoryCredentials) Remove(
 	}
 
 	s.byCustomer[customerID] = append(credentials[:at], credentials[at+1:]...)
+	s.wrote()
 
 	return held - 1, nil
 }

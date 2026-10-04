@@ -36,7 +36,8 @@
 //
 // It does not ask who holds the session. Whoever it proves may add a key or remove
 // one, and the one rule a removal keeps is that the account is left a way in
-// (ADR 0130).
+// (ADR 0130). What it adds is telling: with [Options.KeyNotices] bound, the
+// account hears of each key added or removed (ADR 0381).
 package identitypasskey
 
 import (
@@ -124,6 +125,10 @@ type Options struct {
 	// A shop with no passwords wires [NoOtherSignIn], and the consequence is the
 	// honest one: the last passkey is never removable.
 	OtherSignIn OtherSignIn
+	// KeyNotices tells an account that a passkey was added to it or removed
+	// from it (ADR 0381). Nil tells nobody; registering and removing do not
+	// depend on it.
+	KeyNotices KeyNotices
 	// Logger is optional.
 	Logger *slog.Logger
 }
@@ -140,6 +145,12 @@ type Module struct {
 	// relying party id, which is at least true.
 	displayName string
 	log         *slog.Logger
+	// keyNotices is Options.KeyNotices, or nil when it holds nothing a call
+	// could reach; decided once, in [New].
+	keyNotices KeyNotices
+	// noticeTimeout bounds one notice: the session module's
+	// [identitysession.DefaultNoticeTimeout].
+	noticeTimeout time.Duration
 }
 
 // The contracts are pinned at compile time; the describer is OPTIONAL and the
@@ -157,7 +168,12 @@ func New(opts Options) *Module {
 		log = slog.New(slog.DiscardHandler)
 	}
 
-	return &Module{opts: opts, log: log}
+	m := &Module{opts: opts, log: log, noticeTimeout: identitysession.DefaultNoticeTimeout}
+	if !isNil(opts.KeyNotices) {
+		m.keyNotices = opts.KeyNotices
+	}
+
+	return m
 }
 
 // Name is the module's unique name.

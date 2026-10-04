@@ -158,6 +158,7 @@ func (m *Module) removeKey(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	m.notifyKeyRemoved(r.Context(), customerID, credentialID)
 
 	corehttp.WriteJSON(r.Context(), w, http.StatusNoContent, nil)
 }

@@ -179,6 +179,7 @@ func (m *Module) finishRegistration(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	m.notifyKeyAdded(r.Context(), customerID, credential.ID)
 
 	corehttp.WriteJSON(r.Context(), w, http.StatusNoContent, nil)
 }
