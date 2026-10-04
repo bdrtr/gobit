@@ -191,3 +191,4 @@ truth: a report says what was true on the day it was taken.
 | [An order's end on the bus — measured 2026-10-05](0386-a-completed-order-says-so-on-the-bus.md) | 100 |
 | [A rate against its period — measured 2026-10-05](0387-a-rate-against-its-period.md) | 183 |
 | [An order pushed once — measured 2026-10-05](0389-an-order-confirmation-is-pushed-at-most-once.md) | 123 |
+| [Who would call an analytics contract — measured 2026-10-05](0390-an-analytics-product-hears-gobit-through-the-bus.md) | 175 |

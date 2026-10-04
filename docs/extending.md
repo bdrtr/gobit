@@ -70,6 +70,11 @@ The plugins show four different ways of extending:
 | `error-otlp` | **real feature** — reports the same faults to an OpenTelemetry collector as a LOG RECORD | the same slot, a SECOND implementation |
 | `ai-anthropic` | **real feature** — answers a closed question about a piece of text with Anthropic's Messages API | a core-owned slot whose CONSUMER is optional too: installing the plugin is what turns the feature on |
 
+There is no slot for an outside analytics product (ADR 0390): no module or core
+function would call one. A plugin reaches such a product by subscribing to the
+topics it reports, with a record keyed on the event id, or an operator registers
+a `webhook-out` receiver.
+
 ### Error reporting (`error-sentry`, `error-otlp`)
 
 ```bash

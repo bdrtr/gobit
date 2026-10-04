@@ -10,21 +10,24 @@ import (
 //
 // # Why it is here and not in a module
 //
-// For the same reason as the other four contracts in this package: the concrete
-// reporter lives in a plugin, the plugin may import no module (Principle 2.4),
-// and the code that PRODUCES the failures is the core itself. A contract in a
-// module would make error reporting depend on a commerce module being installed.
+// The concrete reporter lives in a plugin, the plugin may import no module
+// (Principle 2.4), and the code that PRODUCES the failures is the core itself.
+// A contract in a module would make error reporting depend on a commerce module
+// being installed.
 //
-// # How it differs from the other four
+// # How it differs from the other contracts
 //
-// The other providers are SELECTED per transaction: a payment goes to the
-// provider whose ID the order names, and picking the wrong one is a bug the
-// checkout can see. A reporter is not selected, it is INSTALLED — there is at
-// most one, nothing chooses it, and no request outcome depends on it. That is
-// why [ErrorReporter] does not embed [Provider]: an ID that nothing selects by
-// would be a promise of a lookup that does not exist. The reporter still names
-// itself, for the startup log and for the operator who has to know which
-// collector the process is talking to.
+// The payment and fulfillment providers are SELECTED per transaction: a payment
+// goes to the provider whose ID its session names, and picking the wrong one is
+// a bug the checkout can see. The notification and file providers are chosen
+// once, by an ID in the configuration, among those registered; a stored file is
+// still read through the provider its record names. A reporter is chosen by
+// nothing, it is INSTALLED: there is at most one, and no request outcome
+// depends on it. The classifier is installed the same way (ADR 0072) and still
+// embeds [Provider]; [ErrorReporter] does not, because an ID that nothing
+// selects by would be a promise of a lookup that does not exist. The reporter
+// still names itself, for the startup log and for the operator who has to know
+// which collector the process is talking to.
 
 // ErrorEvent is one failure, as much of it as the core is willing to send.
 //

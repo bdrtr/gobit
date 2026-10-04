@@ -794,6 +794,22 @@ past and is not corrected retroactively.
   the pass runs once a minute
   ([ADR 0275](adr/0275-a-webhook-receiver-sets-its-rate.md)).
 
+- **No analytics contract: an outside analytics product hears gobit through the
+  bus.** `core/provider` holds no analytics slot
+  ([ADR 0390](adr/0390-an-analytics-product-hears-gobit-through-the-bus.md)). An
+  installation registers a `webhook-out` receiver and runs whatever turns its
+  signed envelope into the product's request; the delivery id is the key that
+  drops a repeat. A plugin that subscribes and speaks the product's protocol
+  itself receives every outbox event twice and a failing handler is called only
+  three times in about a second, so without a record keyed on the event id and
+  a send that outlives an outage the product counts twice and loses an outage's
+  events. Such a plugin also receives `order.placed`'s `customer_id`, which
+  `webhook-out` withholds. A page's events join the server's on the cart id and
+  on the customer, and the cart id only where the page can read it: a storefront
+  that keeps it in an HttpOnly cookie has to send the event from its server or
+  hand the page the id. An anonymous visit before a cart has no id the server
+  knows.
+
 - **An order's archiving and its after-sales transitions publish nothing.**
   Placing, canceling and completing an order publish `order.placed`,
   `order.canceled` and `order.completed`; archiving one and moving a return, a

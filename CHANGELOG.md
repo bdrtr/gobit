@@ -1357,6 +1357,14 @@ design. It is fixed with `1.0.0`.
 
 ### Decisions
 
+- **An analytics product hears gobit through the bus** (ADR 0390, D240).
+  **For contributors:** `core/provider` gains no analytics contract; an
+  installation reaches an outside analytics product through a `webhook-out`
+  receiver, and a plugin through `Host.Subscribe` with a record keyed on the
+  event id, since every outbox event arrives twice. An architecture test fails
+  for a contract in `core/provider` whose methods no module or core function
+  calls, so a contract cannot land before its caller. Two godocs no longer count
+  the contracts and registrations beside them.
 - **A workflow step has no observer** (ADR 0385). **For contributors:** the
   saga engine takes no hook, observer or step callback, and an architecture
   test pins the engine's imports and every place it accepts code it does not

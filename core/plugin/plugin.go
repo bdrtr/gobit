@@ -575,8 +575,9 @@ func (h *Host) RegisterCallback(rt corehttp.CallbackRoute) {
 //
 // # Why this one is not queued
 //
-// The other four registrations wait for [Registry.Start] because they need a
-// module's registry to exist. This one needs nothing: the reporter goes into
+// The payment, fulfillment, notification and file registrations and
+// [Host.RegisterCallback] wait for [Registry.Start], because the registry each
+// one goes into is not necessarily in the container yet. This one needs nothing: the reporter goes into
 // the container under a name the CORE owns, and the core is already there.
 //
 // Waiting would also cost the reports worth the most. The modules come up

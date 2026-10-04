@@ -18,6 +18,15 @@
 // that module and Phase 9's goal — "add a provider without touching the core" —
 // would break. Keeping the contract in the core makes the plugin and the module
 // independent of each other.
+//
+// # What is not here
+//
+// There is no analytics contract (ADR 0390). Every contract in this package is
+// called from the core's side of the plugin boundary, by a module or by the
+// core itself, and what an outside analytics product would be told is already
+// on the bus, where a plugin hears it through core/plugin's Host.Subscribe.
+// TestEveryProviderContractHasACaller in internal/arch refuses a contract whose
+// methods nothing on that side calls.
 package provider
 
 // Provider is the surface every provider has in common.
