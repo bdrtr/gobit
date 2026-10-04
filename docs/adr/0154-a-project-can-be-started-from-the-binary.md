@@ -5,7 +5,7 @@ embedded in the binary, requiring the library at the version that binary was
 built from. It costs a template tree that is a second copy of things this
 repository already has, and it gives a stranger a working shop in two commands.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0383](0383-an-operator-generates-a-vapid-key-with-the-binary.md), whose `webpush-key` also reads no configuration
 - **Date:** 2026-09-12
 
 ## Context

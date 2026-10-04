@@ -24,9 +24,12 @@
 //
 // A module and one event subscription. Nothing else — no provider, no
 // container name, no link definition. It is the plugins/searchpg shape: the
-// plugin owns a table, a migration and its endpoints, and is named nowhere
-// except one line in the composition root's catalog. It is removable with
-// `rm -rf plugins/webpush` plus that line.
+// plugin owns a table, a migration and its endpoints. Outside its own directory
+// it is named in two places: one line in the composition root's catalog, and
+// the binary's `webpush-key` command (internal/app/webpushkey.go, ADR 0383),
+// which prints a key for it. Removing it is `rm -rf plugins/webpush` plus that
+// line and that command: its file, its test, its dispatch case and its usage
+// line.
 //
 // # The VAPID key is durable state on the order of the database
 //
@@ -40,6 +43,7 @@
 // # Usage
 //
 //	PLUGINS=web-push
+//	# `gobit webpush-key` prints this line filled in.
 //	WEBPUSH_VAPID_PRIVATE_KEY=<base64url of the raw 32-byte P-256 scalar>
 //	WEBPUSH_VAPID_SUBJECT=mailto:ops@example.test
 //	WEBPUSH_TEMPLATE_DIR=/etc/gobit/push
@@ -78,6 +82,26 @@ const (
 	settingTemplates  = "WEBPUSH_TEMPLATE_DIR"
 )
 
+// KeyCommand is the binary's command that prints a fresh signing key pair:
+// `gobit webpush-key` (ADR 0383).
+//
+// It is declared here, beside the setting it fills, because every error a
+// missing or malformed key produces names it ([keyHint]) and a plugin cannot
+// import the composition root that dispatches it. The root's own test runs
+// those errors and fails when one names a command the root does not answer.
+const KeyCommand = "webpush-key"
+
+// keyHint ends every error about a missing or malformed private key.
+//
+// The operator who reaches any of them, with no key, a hex dump, or the public
+// half pasted in place of the private one, needs the same next step. It names
+// the program `gobit` because a plugin does not know what an embedding program
+// calls itself.
+func keyHint() string {
+	return "generate one with `gobit " + KeyCommand +
+		"` (a program that embeds gobit answers the same command under its own name)"
+}
+
 // Error codes.
 const (
 	codeMissingSetting = "webpush_setting_missing"
@@ -114,7 +138,8 @@ func (p *Plugin) Setup(_ context.Context, h *coreplugin.Host) error {
 	rawKey, ok := h.Setting(settingPrivateKey)
 	if !ok {
 		return coreerrors.Invalid(codeMissingSetting,
-			"the %s plugin cannot be set up without the %s setting", Name, settingPrivateKey)
+			"the %s plugin cannot be set up without the %s setting; %s",
+			Name, settingPrivateKey, keyHint())
 	}
 
 	subject, ok := h.Setting(settingSubject)
@@ -195,18 +220,18 @@ func parseVAPIDKey(raw string) (*ecdsa.PrivateKey, error) {
 	decoded, err := decodeKey(raw)
 	if err != nil {
 		return nil, coreerrors.Invalid(codeInvalidSetting,
-			"%s is not base64url; generate one with the command in .env.example", settingPrivateKey)
+			"%s is not base64url; %s", settingPrivateKey, keyHint())
 	}
 	if len(decoded) != 32 {
 		return nil, coreerrors.Invalid(codeInvalidSetting,
-			"%s has to be the raw 32-byte P-256 scalar; %d bytes were given",
-			settingPrivateKey, len(decoded))
+			"%s has to be the raw 32-byte P-256 scalar; %d bytes were given; %s",
+			settingPrivateKey, len(decoded), keyHint())
 	}
 
 	key, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), decoded)
 	if err != nil {
 		return nil, coreerrors.Wrap(err, coreerrors.KindInvalid, codeInvalidSetting,
-			"%s is not a valid P-256 private key", settingPrivateKey)
+			"%s is not a valid P-256 private key; %s", settingPrivateKey, keyHint())
 	}
 
 	return key, nil
@@ -215,10 +240,12 @@ func parseVAPIDKey(raw string) (*ecdsa.PrivateKey, error) {
 // GenerateKey mints a signing key pair and returns both halves base64url
 // encoded.
 //
-// It exists so the documentation can tell an operator how to produce a key
-// without reaching for openssl and a PEM conversion. The public half is
-// returned alongside because it is what a storefront needs, and printing only
-// the private one would send someone deriving it by hand.
+// Its caller outside this package's tests is the binary's [KeyCommand], which
+// prints both halves, so an operator produces a key without reaching for
+// openssl and a PEM conversion. The public half is returned alongside so the
+// operator can check the running plugin against it: the plugin logs it at
+// startup and GET /store/v1/webpush/vapid-key serves it, which is where a
+// storefront takes it from.
 func GenerateKey() (privateKey, publicKey string, err error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

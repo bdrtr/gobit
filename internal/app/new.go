@@ -18,13 +18,15 @@ import (
 
 // newCommand writes a new project that embeds gobit (ADR 0154).
 //
-// # It is the ONE verb that reads no configuration
+// # It reads no configuration
 //
-// Every other subcommand calls config.Load, and that is deliberate: run inside
-// the running container, they are already pointed at the right database. This one
-// runs on a developer's laptop before anything exists — there is no database, no
-// .env and no environment — so touching the configuration would make the front
-// door of the framework depend on the thing the front door is supposed to set up.
+// Every subcommand that acts on an installation calls config.Load, and that is
+// deliberate: run inside the running container, they are already pointed at the
+// right database. This one runs on a developer's laptop before anything exists —
+// there is no database, no .env and no environment — so touching the
+// configuration would make the front door of the framework depend on the thing
+// the front door is supposed to set up. [webpushKeyCommand] reads none for the
+// same reason: its key is a setting the installation does not have yet.
 const newCommand = "new"
 
 // The flags of `gobit new`.

@@ -218,6 +218,8 @@ func Main(args []string, out io.Writer, opts Options) error {
 		return runNew(args[1:], out, opts)
 	case mcpCommand:
 		return runMCP(args[1:], out, opts)
+	case webpushKeyCommand:
+		return runWebpushKey(args[1:], out)
 	default:
 		if err := writeReport(out, usageText(opts.name(), opts.version())); err != nil {
 			return err

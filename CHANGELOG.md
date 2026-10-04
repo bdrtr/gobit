@@ -78,6 +78,15 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **An operator generates a VAPID key with the binary** (ADR 0383, D233).
+  **For operators:** `gobit webpush-key` prints a new web-push signing key
+  pair, the private half as the `WEBPUSH_VAPID_PRIVATE_KEY=` line and the
+  public half as a comment to check the running plugin against (the storefront
+  still reads its `applicationServerKey` from `GET /store/v1/webpush/vapid-key`);
+  it needs no configuration. Every plugin error for a missing or malformed key
+  names it, where one named a command that did not exist and the others named
+  none.
+
 - **An account is told its passkeys changed** (ADR 0381). **For
   integrators:** `contrib/identity-passkey` takes an optional
   `Options.KeyNotices`; bound, it is called with the customer id and the key's

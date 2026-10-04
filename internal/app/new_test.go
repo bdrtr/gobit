@@ -24,10 +24,11 @@ import (
 
 // TestNewReadsNoConfiguration is the property that makes the verb usable at all.
 //
-// Every other subcommand calls config.Load, which is right: run inside the
-// container they are already pointed at the right database. This one runs on a
-// laptop where nothing exists yet, so touching the configuration would make the
-// front door of the framework depend on the thing the front door sets up.
+// Every subcommand that acts on an installation calls config.Load, which is
+// right: run inside the container they are already pointed at the right
+// database. This one runs on a laptop where nothing exists yet, so touching the
+// configuration would make the front door of the framework depend on the thing
+// the front door sets up.
 //
 // The environment is emptied for the call. A DATABASE_URL is not set, so any
 // config.Load on this path would fail and the write would never happen.
@@ -43,7 +44,7 @@ func TestNewReadsNoConfiguration(t *testing.T) {
 	err := runNew([]string{dir, "-" + flagReplace, "."}, &out, Options{})
 
 	require.NoError(t, err,
-		"the one verb that must work before anything is configured read the configuration")
+		"a verb that must work before anything is configured read the configuration")
 	assert.Contains(t, out.String(), "wrote "+dir)
 	for _, name := range scaffold.Written() {
 		assert.Contains(t, out.String(), name,

@@ -49,7 +49,7 @@ func TestEveryPrintedCommandNamesTheProgram(t *testing.T) {
 
 	subcommands := []string{
 		cmdMigrate, stuckCommand, recoverCommand, jobsCommand, deadLettersCommand, seedCommand,
-		refoldInvoicesCommand, mfaResetCommand, newCommand, mcpCommand, cmdHelp,
+		refoldInvoicesCommand, mfaResetCommand, newCommand, mcpCommand, webpushKeyCommand, cmdHelp,
 	}
 	named := regexp.MustCompile(`\b` + regexp.QuoteMeta(binaryName) + ` (` + strings.Join(subcommands, "|") + `)\b`)
 	for what, text := range texts {

@@ -103,7 +103,7 @@ core                  # the PUBLISHED contracts — twenty packages (ADR 0026,
 internal/app          # the COMPOSITION ROOT (ADR 0027): config -> logger ->
                       # container -> router -> listen; the operator subcommands
                       # (migrate, stuck, recover, jobs, deadletters, seed,
-                      # refold-invoices, mfa-reset, new)
+                      # refold-invoices, mfa-reset, new, mcp, webpush-key)
 internal/scaffold     # what `gobit new` writes: the embedded project templates
                       # and the version a generated go.mod requires (ADR 0154)
 cmd/server            # the binary: the smallest program that can run gobit —
@@ -252,7 +252,7 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 381 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 382 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
 | [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: fifty-five items in seven groups — identity and authorization, sales channel scope, the category tree, a product's history, tax, installation and operation, the limit of the invariants |
