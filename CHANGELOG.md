@@ -1284,6 +1284,13 @@ design. It is fixed with `1.0.0`.
 
 ### Decisions
 
+- **A workflow step has no observer** (ADR 0385). **For contributors:** the
+  saga engine takes no hook, observer or step callback, and an architecture
+  test pins the engine's imports and every place it accepts code it does not
+  own. A step's timing and attempts are in `workflow_execution_steps`, read by
+  SQL; a saga that wants a span opens it in its own steps. A second saga on the
+  engine reopens the decision, and a test fails the day it lands.
+
 - **A count is read in English** (ADR 0380, D228). **For contributors:** the
   count gate reads the number a document states for a population in digits and
   English words alone. A count written in Turkish is read by no gate, and the

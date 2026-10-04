@@ -499,6 +499,17 @@ past and is not corrected retroactively.
   the capability — an embedded interface carries only its own methods. The
   decision is in
   [ADR 0017](adr/0017-recovering-abandoned-sagas-from-the-record.md).
+- **A workflow step cannot be watched as it runs, and its timing is read by
+  SQL.** The saga engine takes no hook, observer or step callback. Each step's
+  name, status, attempts, start and end are written to
+  `workflow_execution_steps` as it ends; `gobit stuck` prints a held saga's
+  steps by name and status, and how long a step took or how often it was tried
+  is a query against that table. A compensated step's row is the exception: its
+  `ended_at` is the compensation's end and its `attempts` counts Invoke alone,
+  while compensation retries are in the log. A failed step is logged at ERROR,
+  and the error collector receives its workflow and step. A saga that wants a
+  span opens it inside its steps. The decision is in
+  [ADR 0385](adr/0385-a-workflow-step-has-no-observer.md).
 - **Error reporting is a SIGN, not a copy of the event.** The `error-sentry` and
   `error-otlp` plugins ([ADR 0014](adr/0014-error-reporting.md)) send the
   collector the failure code, the safe message and the `request_id`; everything

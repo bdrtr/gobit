@@ -56,7 +56,9 @@
 // for step 1's compensation not running; cutting the chain there would leave
 // work hanging that could have been undone. The errors are joined with
 // errors.Join and the execution becomes StatusCompensationFailed — that state
-// NEEDS A HUMAN and should be the first thing monitoring counts.
+// NEEDS A HUMAN: the engine logs it at ERROR as it writes it, and `gobit stuck`
+// lists it for as long as the record exists. The repair is done by hand, and no
+// command closes the record.
 //
 // # Retrying
 //
@@ -158,6 +160,18 @@
 // the caller's type assertion does not depend on a race — on the repeat path the
 // output is read from the Store, where the Go type has already been lost. For
 // typed reading see RunInto.
+//
+// # No observer
+//
+// The engine takes no hook, observer or step callback (ADR 0385). A step's
+// name, status, attempts, start and end are the StepRecord the executor hands
+// to Store.AppendStep after every step; they are kept, and today they are read
+// by SQL. A saga that wants a span or a timer opens it in its own steps: Invoke's
+// context carries the caller's values, its trace among them. Wrapping the Store
+// to watch AppendStep is not offered: an embedding wrapper hides ClaimingStore.
+//
+// A second saga reopens this, because that is when the same watching would be
+// written twice; internal/arch fails that day.
 package workflow
 
 import (
