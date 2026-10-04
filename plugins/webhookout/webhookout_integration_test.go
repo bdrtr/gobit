@@ -22,11 +22,11 @@
 // lease, and giving up is a CASE inside the failure statement. None of that
 // exists in Go, so none of it can be tested in Go.
 //
-// This file also carries the migration's rollback certification. THE
-// ARCHITECTURE GATES DO NOT COVER IT: both rollback tests walk moduleNames(t),
-// which reads internal/modules/ only, so a plugin that brings a table has its
-// up/down pair certified by nothing. ADR 0018 made that a requirement rather
-// than a nicety.
+// This file also carries the migration's rollback with rows in the tables. The
+// architecture gates round-trip this plugin's migrations too (migrationDirs,
+// since 2026-09-06), but on an EMPTY schema, and their own godoc says a
+// rollback that rows block is invisible to them. ADR 0018 made carrying that
+// test a requirement rather than a nicety.
 package webhookout
 
 import (
@@ -276,7 +276,9 @@ func runPass(t *testing.T, m *webhookModule) error {
 
 // --- the migration ----------------------------------------------------------
 
-// TestTheMigrationIsReallyReversible is the gate no architecture test provides.
+// TestTheMigrationIsReallyReversible rolls the embedded schema back under the
+// plugin's own ledger name; the architecture gates round-trip the same
+// directory from the file system.
 func TestTheMigrationIsReallyReversible(t *testing.T) {
 	ctx := t.Context()
 

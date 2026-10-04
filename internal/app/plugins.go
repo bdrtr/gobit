@@ -46,7 +46,7 @@ const codeUnknownPlugin = "plugin_unknown"
 // notificationsmtp and files3 register a PROVIDER into a module's registry (the
 // payment, notification and file modules' extension points); searchpg and
 // webpush bring THEIR OWN MODULE —
-// with its own table, its own migration and its own routes — and opens a new
+// with its own tables, its own migrations and its own routes — and opens a new
 // endpoint (GET /store/v1/sales-channels/{sales_channel_id}/search) without
 // being named anywhere except the line below; errorsentry and errorotlp fill a slot the CORE owns, so they need no
 // module to exist at all.

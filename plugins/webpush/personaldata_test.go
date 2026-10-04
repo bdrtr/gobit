@@ -49,11 +49,14 @@ func TestTheDeclarationCoversEveryPersonColumnInTheSchema(t *testing.T) {
 	schemaaudit.Cover(t, module.Migrations(), module.PersonalData(), notPersonalColumns)
 }
 
-// notPersonalColumns are the subscription's columns that hold nothing about
-// a person: its id and stamps, the locale — a preference, see PersonalData —
-// and the fingerprint of the SERVER key the subscription was minted against.
+// notPersonalColumns are the columns that hold nothing about a person: the
+// subscription's id and stamps, the locale — a preference, see PersonalData —
+// and the fingerprint of the SERVER key the subscription was minted against;
+// and the pushed event's id and moment (ADR 0389), which name an event, not
+// its customer or a device.
 var notPersonalColumns = map[string][]string{
 	tableSubscription: {"id", "locale", "vapid_fingerprint", "created_at", "updated_at"},
+	tableClaimedEvent: {"event_id", "claimed_at"},
 }
 
 // TestErasingByEmailAloneReportsZeroRatherThanFailing pins the answer this

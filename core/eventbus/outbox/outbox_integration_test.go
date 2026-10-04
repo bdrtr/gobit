@@ -12,14 +12,13 @@
 // itself. The starvation this package was changed to fix was FOUND by running
 // the old code against a real database, not by reading it.
 //
-// # And why the migration is certified here
+// # And why the migration is rolled back here as well
 //
-// The architecture gate that runs every up/down/up on a live database walks
-// internal/modules only, so a core owner's migration pair is certified by
-// nothing else (ADR 0018 recorded the same reasoning for the job schema). The
-// outbox is a core owner, and 000002 drops an index and adds a constraint —
-// two of the three shapes that leave golang-migrate's ledger dirty when the
-// down is wrong.
+// The architecture gates round-trip this schema too (migrationDirs walks
+// core/, since 2026-09-06), all the way down and up again on an empty schema.
+// 000002 drops an index and adds a constraint, and its down owes 000001's index
+// back: a round trip that ends at the newest version cannot see that index
+// missing, and the rollback test here takes one step and looks for it.
 package outbox_test
 
 import (

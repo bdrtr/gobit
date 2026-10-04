@@ -24,12 +24,12 @@
 //
 // A module and one event subscription. Nothing else — no provider, no
 // container name, no link definition. It is the plugins/searchpg shape: the
-// plugin owns a table, a migration and its endpoints. Outside its own directory
-// it is named in two places: one line in the composition root's catalog, and
-// the binary's `webpush-key` command (internal/app/webpushkey.go, ADR 0383),
-// which prints a key for it. Removing it is `rm -rf plugins/webpush` plus that
-// line and that command: its file, its test, its dispatch case and its usage
-// line.
+// plugin owns two tables, their migrations and its endpoints. Outside its own
+// directory it is named in two places: one line in the composition root's
+// catalog, and the binary's `webpush-key` command (internal/app/webpushkey.go,
+// ADR 0383), which prints a key for it. Removing it is `rm -rf plugins/webpush`
+// plus that line and that command: its file, its test, its dispatch case and
+// its usage line.
 //
 // # The VAPID key is durable state on the order of the database
 //

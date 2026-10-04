@@ -3,9 +3,10 @@
 // These tests need a real PostgreSQL (and therefore Docker); they sit behind
 // the `integration` tag so `make test` stays fast.
 //
-// The migration rollback is here for the reason ADR 0018 recorded: the
-// architecture gates walk internal/modules/ only, so a plugin's up/down pair is
-// certified by nothing. The rest is here because the callback's rules — a
+// The architecture gates round-trip this plugin's migrations too (migrationDirs,
+// since 2026-09-06); the rollback test here runs the embedded files the binary
+// ships under the plugin's own ledger name, and checks the table is gone by
+// name, which they do not. The rest is here because the callback's rules — a
 // replayed notification changes nothing, a mismatched signature is refused, a
 // failed write is NOT acknowledged — are rules about a row, and a fake store
 // would only prove that the fake behaves as written.
@@ -173,7 +174,9 @@ func callbackRouter(t *testing.T, m *paytrModule) chi.Router {
 
 // --- the migration ----------------------------------------------------------
 
-// TestTheMigrationIsReallyReversible is the gate no architecture test provides.
+// TestTheMigrationIsReallyReversible rolls the embedded schema back and checks
+// the table is gone; the architecture gates round-trip the same directory from
+// the file system.
 func TestTheMigrationIsReallyReversible(t *testing.T) {
 	ctx := t.Context()
 	dsn := testdb.New(t, testDSN, "paytr_migration")

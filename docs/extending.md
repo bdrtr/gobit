@@ -376,6 +376,10 @@ delivery and two retries. The confirmation is asked of every provider.
 > ([ADR 0240](adr/0240-a-failing-handler-is-called-again.md)). Return an error
 > for a fault that may pass and nil for one that never will; a handler must be
 > idempotent, since the second call may follow a first that did part of the work.
+> An outbox event reaches every handler twice under one id, once from the publish
+> after the commit and once from the relay; a handler that acts on the outside
+> world keeps a record keyed on that id or on the record the event names, as
+> `analytics`, `webhook-out`, `web-push` and the notification module do.
 
 ---
 

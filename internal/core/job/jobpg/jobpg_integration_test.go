@@ -10,9 +10,9 @@
 // than a lease: it has no duration to tune because nothing is waiting on a
 // clock.
 //
-// The migration rollback is here for the reason ADR 0018 recorded: the
-// architecture gates walk internal/modules/ only, so a core owner's up/down
-// pair added outside that tree is certified by nothing else either.
+// The architecture gates round-trip this schema too (migrationDirs, since
+// 2026-09-06); the rollback test here runs the embedded files under the
+// owner's ledger name and checks the table is gone by name, which they do not.
 package jobpg
 
 import (

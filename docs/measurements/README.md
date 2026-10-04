@@ -190,3 +190,4 @@ truth: a report says what was true on the day it was taken.
 | [Who would watch a workflow step — measured 2026-10-04](0385-workflow-step-observers.md) | 140 |
 | [An order's end on the bus — measured 2026-10-05](0386-a-completed-order-says-so-on-the-bus.md) | 100 |
 | [A rate against its period — measured 2026-10-05](0387-a-rate-against-its-period.md) | 183 |
+| [An order pushed once — measured 2026-10-05](0389-an-order-confirmation-is-pushed-at-most-once.md) | 123 |

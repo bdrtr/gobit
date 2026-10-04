@@ -196,9 +196,10 @@ func TestTheNamesAreAContract(t *testing.T) {
 
 // TestTheMigrationsCanBeRolledBack verifies that every up file has a down pair.
 //
-// The gate of the same name in internal/arch scans ONLY under internal/modules;
-// the plugins/ tree is in no architecture test's scope. A migration that cannot
-// be rolled back makes a schema applied at startup impossible to roll back.
+// The gate of the same name in internal/arch reads this directory from the file
+// system (migrationDirs); this one reads the files the module hands the
+// migrator, which are what an installation applies. A migration that cannot be
+// rolled back makes a schema applied at startup impossible to roll back.
 func TestTheMigrationsCanBeRolledBack(t *testing.T) {
 	t.Parallel()
 

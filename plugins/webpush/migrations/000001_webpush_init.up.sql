@@ -2,7 +2,8 @@
 --
 -- The schema belongs to the PLUGIN and so does its version ledger
 -- (webpush_schema_migrations, see core/db.MigrationsTable): removing the plugin
--- leaves only these two tables behind and touches no module's ledger.
+-- leaves only its own tables and this ledger behind and touches no module's
+-- ledger.
 --
 -- # Why this table exists at all
 --

@@ -558,9 +558,12 @@ func TestRegisterResolvesFromTheCore(t *testing.T) {
 // TestTheMigrationCanBeRolledBackAndReapplied verifies that the schema survives
 // an up -> down -> up cycle.
 //
-// internal/arch's gate of the same name scans only under internal/modules; a
-// migration that cannot be rolled back leaves golang-migrate's version ledger
-// "dirty", and from that point on the server does NOT COME UP again.
+// internal/arch's TestMigrationsCanReallyBeRolledBack round-trips this
+// directory from the file system (migrationDirs); this one runs the embedded
+// files under the plugin's ledger name, checks the table is gone by name and
+// searches the reapplied schema. A migration that cannot be rolled back leaves
+// golang-migrate's version ledger "dirty", and from that point on the server
+// does NOT COME UP again.
 //
 // The test is placed LAST: it drops the table and creates it again, so any test
 // running after it would start with an empty table.

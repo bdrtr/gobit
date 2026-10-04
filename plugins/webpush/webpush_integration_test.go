@@ -6,12 +6,11 @@
 //
 // Two claims here cannot be proved by any smaller test.
 //
-// The first is that the migration is really reversible. THE ARCHITECTURE GATES
-// DO NOT COVER THIS FILE'S MIGRATION: both TestMigrationsCanBeRolledBack and
-// TestMigrationsCanReallyBeRolledBack walk moduleNames(t), which reads
-// internal/modules/ only — a plugin that brings a table has its up/down pair
-// certified by nothing. This test is that certification, and it is a
-// requirement of ADR 0018 rather than a nicety.
+// The first is that the migration is reversible with rows in its tables. The
+// architecture gates walk every migration directory, this plugin's included
+// (migrationDirs, since 2026-09-06), and run each up, down and up again on an
+// EMPTY schema; a rollback that rows block is invisible to them, and their own
+// godoc says so. Carrying that test here is a requirement of ADR 0018.
 //
 // The second is that a 401 does NOT delete a subscription while a 410 does. It
 // is the sharpest rule in the plugin — getting it backwards wipes the whole
@@ -25,13 +24,22 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"io/fs"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/fstest"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -104,11 +112,11 @@ func runWithPostgres(m *testing.M) int {
 	return m.Run()
 }
 
-// freshStore empties the table and returns a store over it.
+// freshStore empties the tables and returns a store over them.
 func freshStore(t *testing.T) *store {
 	t.Helper()
 
-	_, err := testPool.Pool().Exec(t.Context(), `TRUNCATE webpush_subscription`)
+	_, err := testPool.Pool().Exec(t.Context(), `TRUNCATE webpush_subscription, webpush_claimed_event`)
 	require.NoError(t, err)
 
 	return newStore(testPool.Pool())
@@ -162,12 +170,19 @@ func countRows(t *testing.T) int {
 
 // --- the migration ----------------------------------------------------------
 
-// TestTheMigrationIsReallyReversible is the gate no architecture test provides.
+// TestTheMigrationIsReallyReversible rolls the plugin's schema back one step
+// at a time through the embedded files the binary ships, under the plugin's own
+// ledger name, and finds each step back where it started.
 //
-// moduleNames(t) in internal/arch reads internal/modules/ only, so a plugin's
-// migration pair is certified by nothing. Without this test a down migration
-// that does not parse would ship, and it would be discovered by an operator
-// trying to move between versions — at the worst possible moment.
+// The architecture gates round-trip the same directory from the file system
+// (migrationDirs), and so does the second up here, but neither sees a leftover:
+// every up file creates with IF NOT EXISTS and applies over one without a word.
+// So the schema is read from the catalog instead. The ups are applied one
+// version at a time and every relation taken down after each; each down step
+// then has to return the schema to the census of the version below it. A table
+// or index a later migration adds and its down forgets is caught without this
+// test naming it, including an index on 000001's table, which a rollback all
+// the way would drop with the table.
 //
 // It runs on its OWN database rather than the shared one: rolling the shared
 // schema back would pull the table out from under every other test in the file.
@@ -175,29 +190,38 @@ func TestTheMigrationIsReallyReversible(t *testing.T) {
 	ctx := t.Context()
 
 	dsn := testdb.New(t, testDSN, "webpush_migration")
+	pool := testPoolFor(t, dsn)
+	ledger, err := db.MigrationsTable(ModuleName)
+	require.NoError(t, err)
 
-	require.NoError(t, db.Migrate(ctx, dsn, migrationsRoot, ModuleName),
-		"the up migration has to apply")
+	// census[i] is the schema below versions[i]; the last is the newest.
+	versions := migrationVersions(t)
+	census := []map[string]bool{schemaRelations(ctx, t, pool, ledger)}
+	for _, v := range versions {
+		require.NoError(t, db.Migrate(ctx, dsn, migrationsUpTo(t, v), ModuleName),
+			"the up to version %d has to apply", v)
+		census = append(census, schemaRelations(ctx, t, pool, ledger))
+	}
 
 	version, dirty, err := db.Version(ctx, dsn, ModuleName)
 	require.NoError(t, err)
 	require.False(t, dirty, "the ledger must not be dirty after a clean apply")
-	require.Equal(t, uint(1), version)
+	require.Equal(t, versions[len(versions)-1], version)
 
-	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 1),
-		"the down migration has to roll back")
+	// The subjects by name: a census that does not hold them has gone blind.
+	require.Contains(t, census[len(census)-1], tableSubscription)
+	require.Contains(t, census[len(census)-1], tableClaimedEvent)
 
-	var exists bool
-	require.NoError(t, testPoolFor(t, dsn).Pool().QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM information_schema.tables
-			WHERE table_name = 'webpush_subscription'
-		)`).Scan(&exists))
-	assert.False(t, exists, "the table has to be gone after the rollback")
+	for i := len(versions) - 1; i >= 0; i-- {
+		require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 1),
+			"the down of version %d has to roll back", versions[i])
+		assert.Equalf(t, sortedNames(census[i]), sortedNames(schemaRelations(ctx, t, pool, ledger)),
+			"the down of version %d has to leave the schema as the version below it had it", versions[i])
+	}
 
-	// Applying again proves the pair is a CYCLE rather than a one-way trip: a
-	// down migration that leaves an index behind passes the check above and
-	// fails here.
+	// Applying again proves the ledger came back to zero and the ups run
+	// again; a leftover is the census's to find, since IF NOT EXISTS hides it
+	// here.
 	require.NoError(t, db.Migrate(ctx, dsn, migrationsRoot, ModuleName),
 		"the schema has to apply again after a rollback")
 }
@@ -223,11 +247,14 @@ func TestTheMigrationIsReversibleWithDataInIt(t *testing.T) {
 		CustomerID: "cust_1", Fingerprint: "fp",
 	})
 	require.NoError(t, err)
+	_, err = pool.Pool().Exec(ctx,
+		`INSERT INTO webpush_claimed_event (event_id) VALUES ('order.placed:order_withdata')`)
+	require.NoError(t, err)
 
 	// Every step, not one: the table this pins is 000001's, and one step back
 	// would be whichever migration is newest (D185).
 	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, 0),
-		"the rollback has to work with rows in the table, not only on an empty one")
+		"the rollback has to work with rows in the tables, not only on empty ones")
 }
 
 // --- the store's rules ------------------------------------------------------
@@ -303,11 +330,24 @@ func TestAGuestOrderReachesNobody(t *testing.T) {
 
 // pushServer is a fake push service that answers with a fixed status and
 // records what it received.
+//
+// The handler may run on two goroutines at once — the bus delivers each event
+// in its own — so what it received is read and written under a lock.
 type pushServer struct {
 	*httptest.Server
-	status   int
+	status int
+
+	mu       sync.Mutex
 	requests []*http.Request
 	bodies   [][]byte
+}
+
+// received returns the requests the service has answered so far.
+func (p *pushServer) received() []*http.Request {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return slices.Clone(p.requests)
 }
 
 // newPushServer starts a fake push service.
@@ -318,8 +358,10 @@ func newPushServer(t *testing.T, status int) *pushServer {
 	p.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body := make([]byte, r.ContentLength)
 		_, _ = r.Body.Read(body)
+		p.mu.Lock()
 		p.requests = append(p.requests, r.Clone(context.Background()))
 		p.bodies = append(p.bodies, body)
+		p.mu.Unlock()
 		w.WriteHeader(p.status)
 	}))
 	t.Cleanup(p.Close)
@@ -362,15 +404,25 @@ func newTestModule(t *testing.T, st *store) *webpushModule {
 	return m
 }
 
-// placedEvent builds an order.placed event.
+// placedEvents numbers the events placedEvent builds.
+var placedEvents atomic.Int64
+
+// placedEvent builds an order.placed event for an order placed now.
+//
+// Each carries an id of its own, as two orders do: the handler pushes an id
+// once (ADR 0389), so two events that shared one would be one event.
 func placedEvent(customerID string) eventbus.Event {
+	n := placedEvents.Add(1)
+
 	return eventbus.Event{
+		ID:   fmt.Sprintf("order.placed:order_%d", n),
 		Name: orderPlacedEvent,
 		Data: map[string]any{
-			"order_id":    "order_1",
-			"display_id":  "1001",
-			"customer_id": customerID,
-			"item_count":  "2",
+			fieldOrderID:    fmt.Sprintf("order_%d", n),
+			fieldDisplayID:  "1001",
+			fieldCustomerID: customerID,
+			fieldItemCount:  "2",
+			fieldPlacedAt:   time.Now().UTC().Format(time.RFC3339Nano),
 		},
 	}
 }
@@ -439,7 +491,7 @@ func TestASubscriptionFromAnotherKeyIsDrained(t *testing.T) {
 	require.NoError(t, m.onOrderPlaced(t.Context(), placedEvent("cust_1")))
 
 	assert.Equal(t, 0, countRows(t), "a row from a vanished key has to be removed")
-	assert.Empty(t, push.requests, "and it must not be pushed to first")
+	assert.Empty(t, push.received(), "and it must not be pushed to first")
 }
 
 // TestTheRequestCarriesEveryMandatoryHeader pins the headers whose absence is
@@ -457,12 +509,14 @@ func TestTheRequestCarriesEveryMandatoryHeader(t *testing.T) {
 
 	require.NoError(t, m.onOrderPlaced(t.Context(), placedEvent("cust_1")))
 
-	require.Len(t, push.requests, 1)
-	got := push.requests[0]
+	requests := push.received()
+	require.Len(t, requests, 1)
+	got := requests[0]
 	assert.Equal(t, "aes128gcm", got.Header.Get("Content-Encoding"))
 	assert.Equal(t, "application/octet-stream", got.Header.Get("Content-Type"))
 	assert.NotEmpty(t, got.Header.Get("TTL"), "RFC 8030 requires TTL; without it the answer is 400")
-	assert.NotEmpty(t, got.Header.Get("Topic"), "the topic collapses a duplicate the bus delivered twice")
+	assert.NotEmpty(t, got.Header.Get("Topic"),
+		"the topic lets the push service replace a push it has not handed over")
 	assert.Contains(t, got.Header.Get("Authorization"), "vapid t=")
 	assert.Contains(t, got.Header.Get("Authorization"), ", k=")
 
@@ -479,16 +533,15 @@ func TestAGuestOrderPushesNothing(t *testing.T) {
 
 	require.NoError(t, m.onOrderPlaced(t.Context(), placedEvent("")))
 
-	assert.Empty(t, push.requests, "an order with no customer must reach no device")
+	assert.Empty(t, push.received(), "an order with no customer must reach no device")
 }
 
-// TestAFailedPushDoesNotFailTheEvent proves the subscriber never asks for a
-// replay.
+// TestAFailedPushDoesNotFailTheEvent proves a failed push asks for no retry.
 //
-// Returning an error would make the bus redeliver, and a redelivery re-pushes
-// to every device that already received the message. The order is already
-// written; nothing about a courtesy notification is worth replaying an event
-// for.
+// The bus calls a handler again on an error (ADR 0240), and after the record a
+// call pushes nothing (ADR 0389), so a failed push is retried by nobody; an
+// error here would only cost two calls that do nothing. The order is already
+// written; a courtesy notification is not worth more.
 func TestAFailedPushDoesNotFailTheEvent(t *testing.T) {
 	st := freshStore(t)
 	push := newPushServer(t, http.StatusInternalServerError)
@@ -501,6 +554,122 @@ func TestAFailedPushDoesNotFailTheEvent(t *testing.T) {
 }
 
 // --- helpers ----------------------------------------------------------------
+
+// migrationVersions lists the versions of the plugin's migration files, in
+// order. They are read from the files rather than written as numbers, which
+// would be the size of the tree the day they were written.
+func migrationVersions(t *testing.T) []uint {
+	t.Helper()
+
+	names, err := fs.Glob(migrationsRoot, "*.up.sql")
+	require.NoError(t, err)
+	require.NotEmpty(t, names, "the plugin carries no up migration")
+
+	versions := make([]uint, 0, len(names))
+	for _, name := range names {
+		versions = append(versions, migrationVersion(t, name))
+	}
+	slices.Sort(versions)
+
+	return versions
+}
+
+// migrationVersion reads the version a migration file's name starts with.
+func migrationVersion(t *testing.T, name string) uint {
+	t.Helper()
+
+	number, _, found := strings.Cut(name, "_")
+	require.True(t, found, "%s is not named NNNNNN_description.{up,down}.sql", name)
+	v, err := strconv.ParseUint(number, 10, 32)
+	require.NoError(t, err, "%s does not start with its version", name)
+
+	return uint(v)
+}
+
+// migrationsUpTo is the plugin's migration files up to and including version,
+// for a migrator that should stop there.
+func migrationsUpTo(t *testing.T, version uint) fs.FS {
+	t.Helper()
+
+	names, err := fs.Glob(migrationsRoot, "*.sql")
+	require.NoError(t, err)
+
+	out := fstest.MapFS{}
+	for _, name := range names {
+		if migrationVersion(t, name) > version {
+			continue
+		}
+		body, err := fs.ReadFile(migrationsRoot, name)
+		require.NoError(t, err)
+		out[name] = &fstest.MapFile{Data: body}
+	}
+
+	return out
+}
+
+// rollBackTo rolls the plugin's schema back to the given version.
+//
+// MigrateDown counts STEPS, and a step count written as a number is the size of
+// the tree the day it was written: the next migration makes it undo the wrong
+// one (D185). The count is derived from the version the database is at, and a
+// database already there is left alone, since zero steps means every one.
+func rollBackTo(ctx context.Context, t *testing.T, dsn string, version uint) {
+	t.Helper()
+
+	current, dirty, err := db.Version(ctx, dsn, ModuleName)
+	require.NoError(t, err)
+	require.False(t, dirty)
+	require.GreaterOrEqual(t, current, version)
+	if current == version {
+		return
+	}
+	require.NoError(t, db.MigrateDown(ctx, dsn, migrationsRoot, ModuleName, int(current-version)),
+		"the migrations after %d could not be rolled back", version)
+}
+
+// schemaRelations lists every table, index, sequence and view in the pool's
+// current schema by name, leaving out the migration ledger, which a rollback
+// keeps.
+func schemaRelations(ctx context.Context, t *testing.T, pool *db.Pool, ledger string) map[string]bool {
+	t.Helper()
+
+	rows, err := pool.Pool().Query(ctx, `
+		SELECT c.relname
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = current_schema()`)
+	require.NoError(t, err)
+	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	require.NoError(t, err)
+
+	out := make(map[string]bool, len(names))
+	for _, name := range names {
+		if !strings.HasPrefix(name, ledger) {
+			out[name] = true
+		}
+	}
+
+	return out
+}
+
+// sortedNames is the set's names in order, for a comparison that prints them.
+func sortedNames(set map[string]bool) []string {
+	return slices.Sorted(maps.Keys(set))
+}
+
+// tableExists reports whether the table exists in the pool's database.
+func tableExists(ctx context.Context, t *testing.T, pool *db.Pool, table string) bool {
+	t.Helper()
+
+	var exists bool
+	require.NoError(t, pool.Pool().QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.tables
+			WHERE table_name = $1 AND table_schema = current_schema()
+		)`, table).Scan(&exists))
+
+	return exists
+}
 
 // testPoolFor opens a pool against one of the temporary databases.
 func testPoolFor(t *testing.T, dsn string) *db.Pool {

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -42,7 +43,8 @@ type subscription struct {
 	Fingerprint string
 }
 
-// store is the plugin's data access. It owns exactly one table.
+// store is the plugin's data access. It owns two tables: the device registry and
+// the record of the events it pushed (ADR 0389).
 type store struct {
 	pool *pgxpool.Pool
 }
@@ -292,6 +294,75 @@ func (s *store) deleteByCustomer(ctx context.Context, customerID string) (int64,
 		WHERE customer_id = $1`, customerID)
 	if err != nil {
 		return 0, wrapDB(err, "the customer's devices could not be deleted")
+	}
+
+	return tag.RowsAffected(), nil
+}
+
+// tableClaimedEvent is the record of the order events the plugin pushed
+// (ADR 0389, D236).
+const tableClaimedEvent = "webpush_claimed_event"
+
+// claimRetention is how long the record keeps an event's id.
+//
+// It has to exceed [pushHorizon] plus any skew between the application's clock,
+// which judges an order's age, and the database's, which judges a row's: an id
+// the record has forgotten must belong to an order the age check already
+// refuses, or a late delivery of it pushes again. A day is six times the
+// horizon, far more than any skew.
+const claimRetention = 24 * time.Hour
+
+// claimSQL records an event's id, and returns it only when this statement wrote
+// the row.
+//
+// A second INSERT of an id another transaction has written but not committed
+// waits for that transaction, and then does nothing: the primary key, not a
+// read before the write, decides which of two deliveries arriving together is
+// the first.
+const claimSQL = `
+INSERT INTO webpush_claimed_event (event_id)
+VALUES ($1)
+ON CONFLICT (event_id) DO NOTHING
+RETURNING event_id`
+
+// claim records that the plugin is about to push for an event, and reports
+// whether this call is the first to do so.
+//
+// An id already recorded is (false, nil), not an error: a second delivery is
+// the ordinary case the record exists for. pgx answers it with ErrNoRows, which
+// [wrapDB] would make a NotFound, so it is read before the error is wrapped.
+func (s *store) claim(ctx context.Context, eventID string) (bool, error) {
+	var recorded string
+	err := s.pool.QueryRow(ctx, claimSQL, eventID).Scan(&recorded)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, wrapDB(err, "the pushed event could not be recorded")
+	}
+
+	return true, nil
+}
+
+// forgetSQL deletes the records older than the retention.
+//
+// now() is the DATABASE's clock, as the outbox relay's due check uses it
+// (core/eventbus/outbox/relay.go): claimed_at is written by the same clock, so
+// both sides of the comparison come from one. The retention is bound as seconds
+// in a float, since a Go duration is nanoseconds.
+const forgetSQL = `
+DELETE FROM webpush_claimed_event
+WHERE claimed_at < now() - make_interval(secs => $1::float8)`
+
+// forget deletes the records older than retention and reports how many went.
+//
+// It is a statement of its own rather than part of [claimSQL]: a DELETE and an
+// INSERT ... ON CONFLICT on the same key in one statement see one snapshot, and
+// which of them wins is not something to depend on.
+func (s *store) forget(ctx context.Context, retention time.Duration) (int64, error) {
+	tag, err := s.pool.Exec(ctx, forgetSQL, retention.Seconds())
+	if err != nil {
+		return 0, wrapDB(err, "the old pushed-event records could not be deleted")
 	}
 
 	return tag.RowsAffected(), nil

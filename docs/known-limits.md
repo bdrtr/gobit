@@ -801,6 +801,15 @@ past and is not corrected retroactively.
   react to them, and there is no generic transition hook
   ([ADR 0386](adr/0386-a-completed-order-says-so-on-the-bus.md)).
 
+- **An order confirmation is pushed at most once, and not late.** The
+  `web-push` plugin records an order's event before it pushes, so a process
+  that stops between the two, or a push service that refuses a device, leaves
+  that push unsent; an order placed more than four hours before its event
+  arrives, a redriven one included, is not pushed. The exception is an order
+  whose `placed_at` cannot be read: a delivery of it that arrives after the
+  record has forgotten its id, a day later, pushes it again
+  ([ADR 0389](adr/0389-an-order-confirmation-is-pushed-at-most-once.md)).
+
 - **No lane proves a generated project works at the version it PINS.** Every
   out-of-tree proof rewrites the generated `go.mod` to point at the checkout, so
   the lane compiles the template against the tip of the tree. It cannot tell

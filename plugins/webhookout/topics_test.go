@@ -33,9 +33,10 @@ import (
 //
 // Because the assertion is about THIS plugin's list, and a gate that lives away
 // from the thing it constrains is a gate somebody deletes while refactoring the
-// other end. The precedent is ADR 0018's: plugin migrations are covered by no
-// arch gate either, so plugins/webpush carries its own rollback test, "a
-// requirement of this decision rather than a nicety".
+// other end. The precedent is ADR 0018's: plugins/webpush carries its own
+// rollback test with rows in its tables, which the arch gates' empty schema
+// cannot run, and it is "still a requirement of this decision, but for what
+// the gates cannot give".
 
 // repoRoot is the repository root, from this package's directory.
 const repoRoot = "../.."

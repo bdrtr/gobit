@@ -146,7 +146,8 @@ func (s *Service) publishOrderPlaced(ctx context.Context, order models.Order, it
 // it republishes the row the direct publish already sent, and the bus does not
 // deduplicate by id. Both carry the same id, so a subscriber that is idempotent
 // on it — which the bus's at-least-once contract already requires — handles the
-// event once; one that is not acts twice (D236).
+// event once; one that is not acts twice, as the web-push plugin did until it
+// recorded what it pushed (D236, ADR 0389).
 //
 // # A failure here FAILS the order
 //

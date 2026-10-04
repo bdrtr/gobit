@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -52,6 +53,8 @@ type webpushModule struct {
 	opts   moduleOptions
 	store  *store
 	sender *sender
+	// now is the clock an order's age is judged by.
+	now func() time.Time
 }
 
 // The core's module contract is satisfied at compile time.
@@ -63,7 +66,7 @@ func newModule(opts moduleOptions) *webpushModule {
 		opts.log = slogDiscard()
 	}
 
-	return &webpushModule{opts: opts}
+	return &webpushModule{opts: opts, now: time.Now}
 }
 
 // Name returns the module's unique name.
@@ -168,23 +171,69 @@ func (m *webpushModule) Routes(r chi.Router) {
 	})
 }
 
+// The fields of `order.placed` the handler reads.
+//
+// They are the order module's EventField* values
+// (internal/modules/order/service/events.go), which a plugin may not import;
+// TestTheFieldsReadAreTheOrderModules parses this package for every field*
+// constant and every [field] call and holds them to that file.
+const (
+	fieldOrderID    = "order_id"
+	fieldCustomerID = "customer_id"
+	fieldDisplayID  = "display_id"
+	fieldItemCount  = "item_count"
+	fieldPlacedAt   = "placed_at"
+)
+
+// pushHorizon is the age past which an order's confirmation is not pushed.
+//
+// It is the push's own TTL ([ttlSeconds]): the plugin has already decided that a
+// message about an order is worth four hours of a push service's patience and
+// no more, and a delivery that arrives later than that — a redrive, a consumer
+// back from an outage — would push what the push service itself would have
+// dropped.
+const pushHorizon = ttlSeconds * time.Second
+
+// tooLate reports whether the order was placed more than [pushHorizon] before
+// now; readable is false when the payload's placed_at cannot be read as the
+// RFC 3339 instant the order module writes.
+func tooLate(e eventbus.Event, now time.Time) (late, readable bool) {
+	placedAt, err := time.Parse(time.RFC3339Nano, field(e, fieldPlacedAt))
+	if err != nil {
+		return false, false
+	}
+
+	return now.Sub(placedAt) > pushHorizon, true
+}
+
 // onOrderPlaced pushes the confirmation to the customer's devices.
 //
-// # It never fails the event
+// # Once per event (ADR 0389, D236)
 //
-// A subscriber that returns an error makes the event bus call it again
-// (ADR 0240), and a second call re-pushes to every device that already received
-// the message. The push is a
-// courtesy on top of an order that is already written; nothing about it is
-// worth replaying an event for. Faults are logged with counts instead.
+// The outbox delivers every `order.placed` twice under one id, and the bus
+// deduplicates nothing. Before the fan-out, and only when the customer has a
+// device, the handler records the event's id in webpush_claimed_event; a
+// delivery whose id is already there pushes nothing, and the table's primary
+// key decides between two that arrive together. An event with an empty or
+// blank id cannot be told from its second delivery and is not pushed. An order placed more than
+// [pushHorizon] before is not pushed either, since the record forgets an id
+// after [claimRetention]; a placed_at that cannot be read is pushed and logged.
+//
+// # What it returns
+//
+// An error for a device read or a record that failed, which the bus answers by
+// calling it again (ADR 0240): both come before the fan-out, so a retry cannot
+// push twice. nil for everything after the fan-out has started — the record is
+// written by then, so a call made again would push nothing, and a push that
+// failed is logged with counts rather than retried.
 func (m *webpushModule) onOrderPlaced(ctx context.Context, e eventbus.Event) error {
 	// Every field is read as a STRING, because that is how the order module
 	// publishes them and the reason is the transport: the Redis backend
 	// serializes to JSON, where a number comes back as float64 while the
 	// in-memory backend keeps it an int64. A field read as a number would
 	// therefore have a different Go type in development and in production.
-	orderID := field(e, "order_id")
-	customerID := field(e, "customer_id")
+	orderID := field(e, fieldOrderID)
+	customerID := field(e, fieldCustomerID)
 
 	if customerID == "" {
 		// A guest order has no customer, so it has no devices. This is the
@@ -204,20 +253,66 @@ func (m *webpushModule) onOrderPlaced(ctx context.Context, e eventbus.Event) err
 		return nil
 	}
 
-	devices, err := m.store.byCustomer(ctx, customerID)
-	if err != nil {
-		m.opts.log.WarnContext(ctx, "the customer's push devices could not be read",
-			"order_id", orderID, "error", err)
+	if strings.TrimSpace(e.ID) == "" {
+		// An empty or blank id. The bus fills an empty one and the outbox
+		// refuses one, so an empty id comes only from a direct call; a blank
+		// one passes both. The record's CHECK would refuse either; refusing it
+		// here keeps that from turning into three failed calls.
+		m.opts.log.WarnContext(ctx, "the order event carries no id, so its second delivery could "+
+			"not be told from the first; nothing was pushed",
+			"order_id", orderID)
 
 		return nil
+	}
+
+	late, readable := tooLate(e, m.now())
+	if !readable {
+		// Pushed rather than refused: the moment is the order module's to
+		// write, and refusing every order the day its format moved would be a
+		// silent outage. The record still stops the second delivery.
+		m.opts.log.WarnContext(ctx, "the order's placement moment could not be read; "+
+			"it is pushed without the age check",
+			"order_id", orderID, "placed_at", field(e, fieldPlacedAt))
+	}
+	if late {
+		m.opts.log.InfoContext(ctx, "the order was placed more than four hours ago; nothing was pushed",
+			"order_id", orderID, "event_id", e.ID)
+
+		return nil
+	}
+
+	devices, err := m.store.byCustomer(ctx, customerID)
+	if err != nil {
+		m.opts.log.WarnContext(ctx, "the customer's push devices could not be read; "+
+			"the bus calls the handler again",
+			"order_id", orderID, "error", err)
+
+		return err
 	}
 	if len(devices) == 0 {
 		// Logged once per order, at INFO, and this is the truthful record that
 		// replaces the notification ledger's "sent": there was nobody to send
 		// to. A delivery row saying "sent" here would be a lie that also
-		// blocks the resend.
+		// blocks the resend. No row is written in webpush_claimed_event either:
+		// a row says a fan-out was claimed, about to start, and there is none
+		// to claim.
 		m.opts.log.InfoContext(ctx, "the customer has no registered push device; nothing was sent",
 			"order_id", orderID)
+
+		return nil
+	}
+
+	first, err := m.store.claim(ctx, e.ID)
+	if err != nil {
+		m.opts.log.WarnContext(ctx, "the pushed event could not be recorded; nothing was pushed "+
+			"and the bus calls the handler again",
+			"order_id", orderID, "event_id", e.ID, "error", err)
+
+		return err
+	}
+	if !first {
+		m.opts.log.DebugContext(ctx, "the order event was already pushed; this delivery pushes nothing",
+			"order_id", orderID, "event_id", e.ID)
 
 		return nil
 	}
@@ -228,20 +323,27 @@ func (m *webpushModule) onOrderPlaced(ctx context.Context, e eventbus.Event) err
 	// customer-to-device binding is an unverified claim (ADR 0008). An
 	// installation that wants the amount can put it in its own template.
 	data := map[string]string{
-		"order_id":   orderID,
-		"display_id": field(e, "display_id"),
-		"item_count": field(e, "item_count"),
+		fieldOrderID:   orderID,
+		fieldDisplayID: field(e, fieldDisplayID),
+		fieldItemCount: field(e, fieldItemCount),
 	}
 
 	result := fanOut(ctx, m.sender, m.store, m.opts.log, devices, m.opts.fingerprint,
 		func(sub subscription) ([]byte, error) {
 			return m.opts.templates.render(orderPlacedEvent, sub.Locale, data)
 		},
-		// The topic lets the push service replace a duplicate that has not
-		// reached the device yet. One already shown is shown again, and every
-		// outbox event is delivered twice (D236). It is per order and per event,
-		// so two different orders never collapse into one another.
+		// The topic lets the push service replace a push it has not yet handed
+		// to the device; a second delivery of the event is stopped by the
+		// record above (ADR 0389), not by the topic. It is per order and per
+		// event, so two different orders never collapse into one another.
 		topicFor(orderPlacedEvent, orderID))
+
+	if _, err := m.store.forget(ctx, claimRetention); err != nil {
+		// Not fatal: the rows wait for the next push to delete them, and an id
+		// kept longer only stops a delivery the age check already stops.
+		m.opts.log.WarnContext(ctx, "the old pushed-event records could not be deleted",
+			"error", err)
+	}
 
 	m.opts.log.InfoContext(ctx, "the order confirmation was pushed",
 		"order_id", orderID,
@@ -280,7 +382,7 @@ func topicFor(event, id string) string {
 // The panic is safe here: the directory name is constant at compile time and
 // the embed directive has already verified at compile time that the files
 // exist. Returning nil silently would mean the module coming up without
-// migrations — that is, without its table.
+// migrations — that is, without its tables.
 func mustSub(files embed.FS, dir string) fs.FS {
 	sub, err := fs.Sub(files, dir)
 	if err != nil {

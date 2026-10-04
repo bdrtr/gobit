@@ -87,6 +87,17 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **An order confirmation is pushed at most once** (ADR 0389, D236). The
+  outbox delivers `order.placed` twice and the `web-push` plugin pushed to an
+  online device both times; it now records the event's id before it pushes,
+  and pushes nothing for an id it holds or for an order placed more than four
+  hours before (the push's TTL). A failed record or device read is returned to
+  the bus for its retry. **For operators:** migration 000002 adds
+  `webpush_claimed_event`, whose rows are deleted after a day. A push the push
+  service refused, or one a stopped process did not finish, is no longer sent
+  again by the relay's delivery. An order whose `placed_at` cannot be read is
+  pushed without the age check, and again by a delivery a day later.
+
 - **A tax rate can be tried on past orders** (ADR 0387). **For API consumers:**
   `GET /admin/v1/tax-rates/{id}/trial?from=&to=` with `rate_bps`, repeated
   `rule=reference:reference_id` and repeated `drop_rule` taxes every taxable
