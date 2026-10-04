@@ -1,7 +1,9 @@
 package identitypasskey
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -28,6 +30,12 @@ const (
 	// CodeUnavailable is a failure on this module's side.
 	CodeUnavailable = "identity_passkey_unavailable"
 )
+
+// errHeldKeyReplaced is a registration that names a key the account holds and
+// carries another public key (D229). It is answered as every refused ceremony
+// is, with [CodeCeremonyRefused].
+var errHeldKeyReplaced = errors.New(
+	"identity-passkey: a key the account holds came back with another public key")
 
 // ceremonyCookie carries the library's session data between begin and finish.
 //
@@ -139,7 +147,34 @@ func (m *Module) finishRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := m.store.Put(r.Context(), customerID, *credential); err != nil {
+	// A key the account holds may come back only as itself, and as itself it
+	// writes nothing (D229). The library does not compare the id with the keys
+	// it was given, and the store writes a known id over its row, so whatever
+	// the client sent would land on the owner's key: another public key, or the
+	// same one with flags the owner's authenticator will not match at sign-in.
+	// Neither is hard to send — a "none" attestation proves nothing about
+	// holding the key, and a public key is no secret — and either would leave
+	// the owner locked out while the listing showed the key they know. The
+	// same key is a client repeating a finish whose answer it lost, and is
+	// answered as the first finish was.
+	if held := heldKey(user.WebAuthnCredentials(), credential.ID); held != nil {
+		if !bytes.Equal(held.PublicKey, credential.PublicKey) {
+			m.refuse(w, r, errHeldKeyReplaced)
+
+			return
+		}
+		corehttp.WriteJSON(r.Context(), w, http.StatusNoContent, nil)
+
+		return
+	}
+
+	switch err := m.store.Put(r.Context(), customerID, *credential); {
+	case errors.Is(err, ErrCredentialBelongsToAnother):
+		// Another account's key id is a refused ceremony, not a fault here.
+		m.refuse(w, r, err)
+
+		return
+	case err != nil:
 		m.unavailable(w, r, "the credential could not be stored", err)
 
 		return
@@ -248,9 +283,12 @@ func (m *Module) holdCeremony(w http.ResponseWriter, r *http.Request, session *w
 
 // takeCeremony reads the ceremony back and CLEARS it.
 //
-// Clearing is not tidiness. A challenge is single-use: leaving it readable would
-// let a caller replay a finish, and the library cannot notice because the
-// signature over that challenge is genuinely valid.
+// Clearing stops a browser from finishing the same ceremony twice. It cannot
+// stop a client that kept its copy, because the ceremony is sealed into the
+// cookie rather than recorded here, and the library cannot notice a second use
+// of a challenge whose signature is valid; what such a client can finish again
+// is bounded by [CeremonyTTL] and, for a registration, by the rule for a key
+// the account holds (D229).
 func (m *Module) takeCeremony(w http.ResponseWriter, r *http.Request) (*webauthn.SessionData, bool) {
 	cookie, err := r.Cookie(ceremonyCookie)
 	if err != nil {
@@ -295,6 +333,17 @@ func (m *Module) refuse(w http.ResponseWriter, r *http.Request, err error) {
 func (m *Module) unavailable(w http.ResponseWriter, r *http.Request, what string, err error) {
 	m.log.ErrorContext(r.Context(), "identity-passkey: "+what, "error", err)
 	corehttp.WriteError(r.Context(), w, coreerrors.Internal(CodeUnavailable, "%s", what))
+}
+
+// heldKey finds the key with the given id among an account's, or nil.
+func heldKey(credentials []webauthn.Credential, id []byte) *webauthn.Credential {
+	for i := range credentials {
+		if bytes.Equal(credentials[i].ID, id) {
+			return &credentials[i]
+		}
+	}
+
+	return nil
 }
 
 // excluding turns a person's credentials into the list an authenticator checks

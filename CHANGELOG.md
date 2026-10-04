@@ -56,6 +56,14 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **A passkey is not written over under its id** (D229). **For integrators:**
+  `POST /store/v1/auth/passkey/register/finish` answers 401
+  `identity_passkey_refused` to a key that names one the account holds with
+  another public key, and to one naming another account's key, which answered
+  500; the account's own key sent again answers 204 and writes nothing. A
+  caller holding the session could replace the owner's key, or rewrite its
+  flags so the owner's device stopped signing in.
+
 - **The environment template and the Makefile are English** (D227). **For
   operators:** the comments of `.env.example` are English; its settings are
   unchanged. **For contributors:** `make seed` takes `PRODUCTS` and `MULTI`,

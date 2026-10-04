@@ -9,16 +9,17 @@ import (
 // docTag groups this module's endpoints in the document.
 const docTag = "Identity"
 
-// Describe writes the four ceremony endpoints into the OpenAPI document.
+// Describe writes the four ceremony endpoints, and the two over a person's keys
+// (ADR 0130), into the OpenAPI document.
 //
 // # Why the bodies are not schemas here
 //
-// Three of the four carry what the browser's own WebAuthn API produces and
-// consumes, verbatim. Writing a schema for those would be this module's copy of
-// a specification it does not own, going stale the first time an authenticator
-// sends a field the copy has not heard of. What the descriptions say instead is
-// which browser call the body belongs to, which is the sentence an integrator
-// can act on.
+// Three of the four ceremony bodies carry what the browser's own WebAuthn API
+// produces and consumes, verbatim. Writing a schema for those would be this
+// module's copy of a specification it does not own, going stale the first time
+// an authenticator sends a field the copy has not heard of. What the
+// descriptions say instead is which browser call the body belongs to, which is
+// the sentence an integrator can act on.
 func (m *Module) Describe(d *openapi.Doc) {
 	d.Describe(http.MethodPost, "/store/v1/auth/passkey/register/begin", openapi.Operation{
 		Summary: "Starts adding a passkey to the CALLER's account.",

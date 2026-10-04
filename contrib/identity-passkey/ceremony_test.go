@@ -258,12 +258,14 @@ func TestRegisteringAndSigningInWithAPasskey(t *testing.T) {
 		"the key's use is stamped, and it is the key that actually signed")
 }
 
-// TestABegunCeremonyCannotBeReplayed is why the finish CLEARS the cookie.
-//
-// A challenge is single-use and the library cannot notice a second use: the
-// signature over that challenge is genuinely valid. What stops it is that the
-// ceremony is gone.
-func TestABegunCeremonyCannotBeReplayed(t *testing.T) {
+// TestARepeatedFinishWritesNothing: the finish clears the ceremony cookie, but
+// a client that kept its copy can send it again for two minutes, and the
+// library cannot notice a second use of a challenge whose signature is valid.
+// The same key a second time is answered as the first finish was and written
+// nowhere; another key, or the same one carrying other flags, cannot land on
+// the held one ([TestAHeldKeyIsNotReplacedUnderItsID],
+// [TestAHeldKeyIsNotRewrittenUnderItsID]).
+func TestARepeatedFinishWritesNothing(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
@@ -286,9 +288,111 @@ func TestABegunCeremonyCannotBeReplayed(t *testing.T) {
 	// The SAME body and the SAME cookie, sent again.
 	second := h.post(t, "/store/v1/auth/passkey/register/finish", attestation, signedIn, ceremony)
 	assert.Equal(t, http.StatusNoContent, second.Code,
-		"re-registering the same key is idempotent by the store's conflict target")
+		"re-registering the same key is answered as the first finish was")
 	assert.Len(t, h.store.byCustomer[testCustomer], 1,
 		"and it is still ONE key, not two rows signing the same challenge")
+}
+
+// TestAHeldKeyIsNotReplacedUnderItsID: a registration that names a key the
+// account holds and carries another public key is refused, and the owner's key
+// still signs in (D229). A client chooses its credential id, so whoever holds
+// the session could otherwise swap the owner's key for their own while the
+// listing showed the same key.
+func TestAHeldKeyIsNotReplacedUnderItsID(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	signedIn := h.signedInAs(t, testCustomer)
+	owners := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	registered := h.register(t, signedIn, owners)
+	require.Equal(t, http.StatusNoContent, registered.Code, registered.Body.String())
+	require.Len(t, h.store.byCustomer[testCustomer], 1)
+	before := bytes.Clone(h.store.byCustomer[testCustomer][0].PublicKey)
+
+	theirs := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	theirs.ID = owners.ID
+	refused := h.register(t, signedIn, theirs)
+	assert.Equal(t, http.StatusUnauthorized, refused.Code, refused.Body.String())
+	assert.Contains(t, refused.Body.String(), identitypasskey.CodeCeremonyRefused)
+	require.Len(t, h.store.byCustomer[testCustomer], 1)
+	assert.Equal(t, before, h.store.byCustomer[testCustomer][0].PublicKey,
+		"the owner's key is the one stored")
+
+	h.auth.AddCredential(owners)
+	signingIn := h.post(t, "/store/v1/auth/passkey/sign-in/begin", "", nil)
+	require.Equal(t, http.StatusOK, signingIn.Code, signingIn.Body.String())
+	options, err := virtualwebauthn.ParseAssertionOptions(signingIn.Body.String())
+	require.NoError(t, err)
+	in := h.post(t, "/store/v1/auth/passkey/sign-in/finish",
+		virtualwebauthn.CreateAssertionResponse(h.rp, h.auth, owners, *options), ceremonyCookieOf(t, signingIn))
+	assert.Equal(t, http.StatusNoContent, in.Code, "the owner still signs in: %s", in.Body.String())
+}
+
+// TestAHeldKeyIsNotRewrittenUnderItsID: the owner's own public key sent again
+// under its id, with authenticator flags the owner's device does not have,
+// writes nothing, and the owner still signs in (D229). Stored, the flipped
+// backup-eligible flag would fail every sign-in of the real device.
+func TestAHeldKeyIsNotRewrittenUnderItsID(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	signedIn := h.signedInAs(t, testCustomer)
+	owners := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	require.Equal(t, http.StatusNoContent, h.register(t, signedIn, owners).Code)
+	before := h.store.byCustomer[testCustomer][0]
+
+	forged := virtualwebauthn.NewAuthenticatorWithOptions(virtualwebauthn.AuthenticatorOptions{
+		UserHandle: []byte(testCustomer), BackupEligible: true,
+	})
+	again := h.registerFrom(t, forged, signedIn, owners)
+	assert.Equal(t, http.StatusNoContent, again.Code, "a held key sent again is answered as before: %s",
+		again.Body.String())
+	require.Len(t, h.store.byCustomer[testCustomer], 1)
+	assert.Equal(t, before.Flags, h.store.byCustomer[testCustomer][0].Flags, "the stored key is untouched")
+
+	h.auth.AddCredential(owners)
+	signingIn := h.post(t, "/store/v1/auth/passkey/sign-in/begin", "", nil)
+	require.Equal(t, http.StatusOK, signingIn.Code, signingIn.Body.String())
+	options, err := virtualwebauthn.ParseAssertionOptions(signingIn.Body.String())
+	require.NoError(t, err)
+	in := h.post(t, "/store/v1/auth/passkey/sign-in/finish",
+		virtualwebauthn.CreateAssertionResponse(h.rp, h.auth, owners, *options), ceremonyCookieOf(t, signingIn))
+	assert.Equal(t, http.StatusNoContent, in.Code, "the owner still signs in: %s", in.Body.String())
+}
+
+// TestASecondKeyIsAdded: a key with an id of its own is a second device, and
+// D229's check leaves it alone.
+func TestASecondKeyIsAdded(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	signedIn := h.signedInAs(t, testCustomer)
+	require.Equal(t, http.StatusNoContent,
+		h.register(t, signedIn, virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)).Code)
+	second := h.register(t, signedIn, virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2))
+	assert.Equal(t, http.StatusNoContent, second.Code, second.Body.String())
+	assert.Len(t, h.store.byCustomer[testCustomer], 2)
+}
+
+// TestAnotherAccountsKeyIDIsRefused: a registration naming a key id another
+// account holds is a refused ceremony, as the store's named error says, and
+// not a failure of this module.
+func TestAnotherAccountsKeyIDIsRefused(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	owners := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	require.Equal(t, http.StatusNoContent, h.register(t, h.signedInAs(t, testCustomer), owners).Code)
+
+	theirs := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+	theirs.ID = owners.ID
+	other := virtualwebauthn.NewAuthenticatorWithOptions(virtualwebauthn.AuthenticatorOptions{
+		UserHandle: []byte("cus_another"),
+	})
+	refused := h.registerFrom(t, other, h.signedInAs(t, "cus_another"), theirs)
+	assert.Equal(t, http.StatusUnauthorized, refused.Code, refused.Body.String())
+	assert.Contains(t, refused.Body.String(), identitypasskey.CodeCeremonyRefused)
+	assert.Empty(t, h.store.byCustomer["cus_another"])
 }
 
 // TestACeremonyBegunByAnotherAccountIsRefused closes the window between the two
@@ -383,6 +487,32 @@ func (h *harness) signedInAs(t *testing.T, customerID string) *http.Cookie {
 	h.sessions.Issue(rec, customerID)
 
 	return sessionCookieOf(t, rec)
+}
+
+// register adds credential to the signed-in account through both registration
+// calls, and answers the finish.
+func (h *harness) register(
+	t *testing.T, signedIn *http.Cookie, credential virtualwebauthn.Credential,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return h.registerFrom(t, h.auth, signedIn, credential)
+}
+
+// registerFrom is [harness.register] with the attestation made by auth.
+func (h *harness) registerFrom(
+	t *testing.T, auth virtualwebauthn.Authenticator, signedIn *http.Cookie,
+	credential virtualwebauthn.Credential,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
+	begun := h.post(t, "/store/v1/auth/passkey/register/begin", "", signedIn)
+	require.Equal(t, http.StatusOK, begun.Code, begun.Body.String())
+	options, err := virtualwebauthn.ParseAttestationOptions(begun.Body.String())
+	require.NoError(t, err)
+	attestation := virtualwebauthn.CreateAttestationResponse(h.rp, auth, credential, *options)
+
+	return h.post(t, "/store/v1/auth/passkey/register/finish", attestation, signedIn, ceremonyCookieOf(t, begun))
 }
 
 // post sends a POST carrying whichever cookies the test hands it.
@@ -520,12 +650,23 @@ func (s *memoryCredentials) ByCredentialID(
 	return "", webauthn.Credential{}, identitypasskey.ErrNoCredential
 }
 
-// Put stores a credential, replacing one with the same id.
+// Put stores a credential, replacing one with the same id, and refuses an id
+// another customer holds as the Postgres store does.
 func (s *memoryCredentials) Put(
 	_ context.Context, customerID string, credential webauthn.Credential,
 ) error {
 	if s.byCustomer == nil {
 		s.byCustomer = map[string][]webauthn.Credential{}
+	}
+	for owner, credentials := range s.byCustomer {
+		if owner == customerID {
+			continue
+		}
+		for i := range credentials {
+			if bytes.Equal(credentials[i].ID, credential.ID) {
+				return identitypasskey.ErrCredentialBelongsToAnother
+			}
+		}
 	}
 	existing := s.byCustomer[customerID]
 	for i := range existing {

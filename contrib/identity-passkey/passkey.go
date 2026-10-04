@@ -14,8 +14,9 @@
 //			DisplayName: "Example Shop",
 //		}))
 //
-// It brings four storefront endpoints — register begin/finish and sign-in
-// begin/finish — a table of its own, and nothing else. Signing in with a passkey
+// It brings six storefront endpoints — register begin/finish, sign-in
+// begin/finish, and since ADR 0130 a person's keys listed and one removed — a
+// table of its own, and nothing else. Signing in with a passkey
 // issues the SAME session cookie a password does, because a session is a session
 // however the person proved they own it.
 //
@@ -33,9 +34,9 @@
 // signed in. A passkey is added to an account, and deciding who may create an
 // account is the question identity-session left alone for the same reason.
 //
-// It removes nothing. Listing and deleting a person's keys is a real need and a
-// separate one: a delete endpoint that can remove a person's last key turns a
-// convenience into a lockout, and the rule for that is not written yet.
+// It does not ask who holds the session. Whoever it proves may add a key or remove
+// one, and the one rule a removal keeps is that the account is left a way in
+// (ADR 0130).
 package identitypasskey
 
 import (
@@ -70,9 +71,11 @@ const ModuleName = "identity_passkey"
 // CeremonyTTL is how long a begun ceremony stays valid.
 //
 // Two minutes is a person picking up their phone and touching a sensor, with
-// room for them to look for it. Long enough is the whole requirement: the
-// challenge is single-use by construction, so the window is about a person's
-// patience rather than an attacker's budget.
+// room for them to look for it. Long enough is the whole requirement. A
+// finish clears the cookie, which stops a browser finishing twice, but a client
+// that kept its copy can finish the same ceremony again inside the window; for
+// a registration that gains it nothing its session could not begin anew, since
+// a key the account holds is answered without a write (D229).
 const CeremonyTTL = 2 * time.Minute
 
 // Options are the installation's choices.
@@ -266,17 +269,20 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	return nil
 }
 
-// Store returns the credential store, for an embedder listing or removing a
-// person's keys from its own code.
+// Store returns the credential store, for an embedder reading, writing or
+// removing a person's keys from its own code.
 //
-// This module ships neither: a delete endpoint that can remove somebody's LAST
-// key turns a convenience into a lockout, and the rule for that is not written
-// here. What it can do is not stand in the way of an embedder who has decided.
+// It is the store the module's own endpoints use, without their rules: a key
+// removed through it may be the account's last way in (ADR 0130), and a
+// credential put through it is written over a held key of the same id,
+// whatever it carries (D229). An embedder writing through it keeps those rules,
+// or others, itself.
 //
 // It answers nil until [Module.Register] has run.
 func (m *Module) Store() Credentials { return m.store }
 
-// Routes mounts the four ceremony endpoints.
+// Routes mounts the four ceremony endpoints and the two over a person's keys
+// (ADR 0130).
 func (m *Module) Routes(r chi.Router) {
 	if m.web == nil || m.store == nil || m.sessions == nil || m.otherSignIn == nil {
 		m.log.Warn("identity-passkey: Routes ran without Register, no endpoint was mounted")

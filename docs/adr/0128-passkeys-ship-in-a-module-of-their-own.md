@@ -5,7 +5,7 @@ the session identity, in a separate Go module so the library lands only in the
 graph that asked for it. It costs a fourth tree the lanes had to learn and buys a
 sign-in with no password to steal.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0130](0130-a-person-can-see-their-passkeys-and-remove-one.md), which lists a person's keys and removes one while another way in remains
 - **Date:** 2026-09-11
 
 ## Context
