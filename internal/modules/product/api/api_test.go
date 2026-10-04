@@ -203,7 +203,7 @@ func newRouter(catalog api.Catalog) chi.Router {
 // request with no identity now gets a 401 without ever reaching the handler and
 // the tests here would end up exercising the scope layer instead of the
 // envelope/error mapping. The scope ITSELF is exercised in a separate file
-// (yetki_test.go); the assertions of this file did not change.
+// (authorization_test.go); the assertions of this file did not change.
 func do(t *testing.T, r chi.Router, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 

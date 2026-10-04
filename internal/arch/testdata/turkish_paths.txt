@@ -16,5 +16,3 @@ docs/adr/0009-cok-kiracililik-kurulum-siniri.md
 docs/adr/0010-depo-secim-politikasi.md
 docs/adr/0011-yonetim-paneli-dorduncu-agac.md
 docs/mimari.md
-internal/modules/inventory/api/yetki_test.go
-internal/modules/pricing/api/yetki_test.go

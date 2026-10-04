@@ -210,7 +210,7 @@ func TestAdminEndpointsRequireAScope(t *testing.T) {
 	// 401. The distinction is corehttp.RequireScope's contract — 401 would
 	// mean "tell me who you are", and the client would retry forever with the
 	// same identity.
-	unscoped := corehttp.Principal{ID: "user_yetkisiz", Kind: "user", Scopes: []string{}}
+	unscoped := corehttp.Principal{ID: "user_unscoped", Kind: "user", Scopes: []string{}}
 
 	count := 0
 	for pattern, methods := range routeTree(t, r) {

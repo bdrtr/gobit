@@ -169,7 +169,7 @@ func newSystem(t *testing.T) system {
 // was added to the admin endpoints: a request without a principal now gets a
 // 401 without ever reaching the handler, and the tests here would measure the
 // authorization layer instead of the Phase 4 DoD. Authorization ITSELF is
-// exercised in api/yetki_test.go; the claims of this file have not changed.
+// exercised in api/authorization_test.go; the claims of this file have not changed.
 func (s system) request(t *testing.T, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 

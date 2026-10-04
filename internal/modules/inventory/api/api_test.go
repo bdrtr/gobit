@@ -119,7 +119,7 @@ func (f *fakeInventory) ListMovements(_ context.Context, in service.ListMovement
 // newRouter, sendRequest and jsonBody in close_test.go, sendRequestWithBody in
 // saleschannel_test.go. Every request they send carries a FULLY PRIVILEGED
 // identity, so the tests here exercise the stock behavior rather than the
-// scope layer; the scope ITSELF is tested in a separate file (yetki_test.go).
+// scope layer; the scope ITSELF is tested in a separate file (authorization_test.go).
 
 // TestCreateStockLocation verifies that a successful create returns 201 and the
 // single-record envelope.

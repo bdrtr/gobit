@@ -43,7 +43,7 @@ func newTestRouter(t *testing.T) (chi.Router, *memRepo) {
 // added to the admin endpoints: a request without an identity now gets 401
 // before it ever reaches a handler, and the tests here would have tested the
 // scope layer instead of pricing behavior. The scope ITSELF is tested in a
-// separate file (yetki_test.go); this file's assertions did not change.
+// separate file (authorization_test.go); this file's assertions did not change.
 func do(t *testing.T, r chi.Router, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 
