@@ -172,7 +172,7 @@ func project(rec query.Record, fields []string) query.Record {
 	return out
 }
 
-// --- sahte link servisi -----------------------------------------------------
+// --- fake link service ------------------------------------------------------
 
 // fakeLinks imitates link.LinkService inside the process and counts the calls.
 //

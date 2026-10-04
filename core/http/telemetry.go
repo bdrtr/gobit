@@ -81,7 +81,7 @@ func Telemetry(serviceName string) func(http.Handler) http.Handler {
 		slog.Default().Warn("the request duration metric could not be built", "error", err)
 	}
 
-	aktif, err := meter.Int64UpDownCounter("http.server.active_requests",
+	active, err := meter.Int64UpDownCounter("http.server.active_requests",
 		metric.WithDescription("the HTTP requests being handled right now"))
 	if err != nil {
 		slog.Default().Warn("the in-flight request metric could not be built", "error", err)
@@ -119,17 +119,17 @@ func Telemetry(serviceName string) func(http.Handler) http.Handler {
 
 			started := time.Now()
 
-			if aktif != nil {
-				aktif.Add(ctx, 1, constantMeasurement)
-				defer aktif.Add(ctx, -1, constantMeasurement)
+			if active != nil {
+				active.Add(ctx, 1, constantMeasurement)
+				defer active.Add(ctx, -1, constantMeasurement)
 			}
 
 			next.ServeHTTP(wrapped, r)
 
-			desen := routePattern(r)
-			span.SetName(r.Method + " " + desen)
+			pattern := routePattern(r)
+			span.SetName(r.Method + " " + pattern)
 			span.SetAttributes(
-				attribute.String("http.route", desen),
+				attribute.String("http.route", pattern),
 				attribute.Int("http.response.status_code", wrapped.status),
 			)
 
@@ -149,7 +149,7 @@ func Telemetry(serviceName string) func(http.Handler) http.Handler {
 				measurementAttrs = append(measurementAttrs, constantAttrs...)
 				measurementAttrs = append(measurementAttrs,
 					attribute.String("http.request.method", r.Method),
-					attribute.String("http.route", desen),
+					attribute.String("http.route", pattern),
 					attribute.Int("http.response.status_code", wrapped.status),
 				)
 
@@ -170,8 +170,8 @@ func routePattern(r *http.Request) string {
 		return unknownRoute
 	}
 
-	if desen := rctx.RoutePattern(); desen != "" {
-		return desen
+	if pattern := rctx.RoutePattern(); pattern != "" {
+		return pattern
 	}
 
 	return unknownRoute

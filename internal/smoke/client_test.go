@@ -89,7 +89,7 @@ func (s *proc) storefrontRequest(method, path, key string, body any) (code int, 
 	return s.jsonRequest(method, path, body, headers)
 }
 
-// zarfVerisi resolves the data field of a single response envelope into the
+// envelopeData resolves the data field of a single response envelope into the
 // target type.
 //
 // The envelope ({"data": …}) is the contract of plan Section 8 and the
@@ -98,7 +98,7 @@ func (s *proc) storefrontRequest(method, path, key string, body any) (code int, 
 // startup_test.go: a shared Go type would leave the test green even if a field
 // name changed — whereas the thing that changed is precisely the contract the
 // client sees.
-func zarfVerisi[T any](t *testing.T, response string) T {
+func envelopeData[T any](t *testing.T, response string) T {
 	t.Helper()
 
 	var envelope struct {
@@ -115,7 +115,7 @@ func zarfVerisi[T any](t *testing.T, response string) T {
 // The code is looked at, not the message: the message is free text and can
 // change, whereas the code is the contract the client branches on (see
 // core/http ErrorBody). The core's envelope TYPE is again not imported; the
-// reasoning is in the zarfVerisi godoc.
+// reasoning is in the envelopeData godoc.
 func errorCode(t *testing.T, response string) string {
 	t.Helper()
 
@@ -144,7 +144,7 @@ func openSalesChannel(t *testing.T, s *proc, token, name string) string {
 		map[string]any{"name": name})
 	require.Equal(t, http.StatusCreated, code, "could not open the sales channel; body: %s", body)
 
-	channel := zarfVerisi[struct {
+	channel := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body)
 	require.NotEmpty(t, channel.ID, "the sales channel has to return an id; body: %s", body)
@@ -167,7 +167,7 @@ func fetchStorefrontKey(t *testing.T, s *proc, token, channelID string) string {
 	})
 	require.Equal(t, http.StatusCreated, code, "could not create the publishable key; body: %s", body)
 
-	key := zarfVerisi[struct {
+	key := envelopeData[struct {
 		Key string `json:"key"`
 	}](t, body)
 	require.NotEmpty(t, key.Key, "the response has to carry the plain key; body: %s", body)

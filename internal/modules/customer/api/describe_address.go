@@ -23,10 +23,9 @@ import (
 //
 // # Why a separate file
 //
-// describe.go is one of the files still on the language ledger; ADR 0012's
-// ratchet says a NEW file is English and the ledger may only shrink. Splitting
-// on the file boundary keeps both true without translating a file this change
-// has no reason to touch.
+// These descriptions were written on 2026-09-07 in a file of their own because
+// describe.go was then on the language ledger (ADR 0012), which a new file could
+// not join. The ledger has been empty since 2026-10-03 (D228).
 func describeAddresses(d *openapi.Doc) {
 	for _, surface := range []struct {
 		prefix   string

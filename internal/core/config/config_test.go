@@ -134,7 +134,7 @@ func TestLoadInvalidEnv(t *testing.T) {
 		"an unknown level":              {"LOG_LEVEL", "trace"},
 		"an unknown format":             {"LOG_FORMAT", "logfmt"},
 		"an unknown bus":                {"EVENT_BUS", "kafka"},
-		"negatif timeout":               {"SHUTDOWN_TIMEOUT", "-1s"},
+		"a negative timeout":            {"SHUTDOWN_TIMEOUT", "-1s"},
 		"a zero probe budget":           {"READINESS_DEGRADED_TIMEOUT", "0s"},
 		"a non-numeric port":            {"APP_PORT", "abc"},
 		"a moment that is not RFC 3339": {"ADMIN_SECOND_FACTOR_REQUIRED_FROM", "2026-11-01"},
@@ -199,7 +199,7 @@ func TestValidateRejectsEmptyURLs(t *testing.T) {
 // production with the hard-coded gobit:gobit credential and sslmode=disable.
 func TestProductionRejectsLocalDefaults(t *testing.T) {
 	tests := map[string]func(t *testing.T){
-		"env hic set edilmemis": func(t *testing.T) {},
+		"no env set at all": func(t *testing.T) {},
 		"an empty env string": func(t *testing.T) {
 			t.Setenv("DATABASE_URL", "")
 			t.Setenv("REDIS_URL", "")
@@ -244,7 +244,7 @@ func TestDevelopmentAllowsLocalDefaults(t *testing.T) {
 	clearEnv(t)
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("Load() wantErr verdi: %v", err)
+		t.Fatalf("Load() returned an error: %v", err)
 	}
 	if cfg.DatabaseURL != config.DefaultDatabaseURL {
 		t.Errorf("DatabaseURL = %q, the default was expected", cfg.DatabaseURL)
@@ -286,10 +286,10 @@ func TestDefaultTagsMatchConstants(t *testing.T) {
 
 func TestTimeoutValidation(t *testing.T) {
 	tests := map[string]struct{ key, value string }{
-		"read timeout sifir":            {"READ_TIMEOUT", "0s"},
-		"write timeout negatif":         {"WRITE_TIMEOUT", "-1s"},
-		"idle timeout sifir":            {"IDLE_TIMEOUT", "0s"},
-		"read < read-header (tutarsiz)": {"READ_TIMEOUT", "5s"},
+		"a zero read timeout":               {"READ_TIMEOUT", "0s"},
+		"a negative write timeout":          {"WRITE_TIMEOUT", "-1s"},
+		"a zero idle timeout":               {"IDLE_TIMEOUT", "0s"},
+		"read < read-header (inconsistent)": {"READ_TIMEOUT", "5s"},
 	}
 
 	for name, tt := range tests {
@@ -518,7 +518,7 @@ func TestProductionRequiresStrongJWTSecret(t *testing.T) {
 	tests := map[string]string{
 		"no secret given at all": "",
 		"far too short a secret": "short",
-		"31 karakter":            "0123456789abcdef0123456789abcde",
+		"31 characters":          "0123456789abcdef0123456789abcde",
 	}
 
 	for name, secret := range tests {
@@ -588,10 +588,10 @@ func TestValidateChecksTheNewSettings(t *testing.T) {
 		},
 	}
 
-	for name, boz := range tests {
+	for name, corrupt := range tests {
 		t.Run(name, func(t *testing.T) {
 			cfg := base
-			boz(&cfg)
+			corrupt(&cfg)
 
 			if err := cfg.Validate(); err == nil {
 				t.Error("an invalid value was accepted")
@@ -600,7 +600,7 @@ func TestValidateChecksTheNewSettings(t *testing.T) {
 	}
 
 	// The boundary values have to be ACCEPTED.
-	for name, ayarla := range map[string]func(c *config.Config){
+	for name, configure := range map[string]func(c *config.Config){
 		"a zero sample ratio":    func(c *config.Config) { c.TraceSampleRatio = 0 },
 		"a sample ratio of one":  func(c *config.Config) { c.TraceSampleRatio = 1 },
 		"a zero proxy hop count": func(c *config.Config) { c.TrustedProxyHops = 0 },
@@ -611,7 +611,7 @@ func TestValidateChecksTheNewSettings(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := base
-			ayarla(&cfg)
+			configure(&cfg)
 
 			if err := cfg.Validate(); err != nil {
 				t.Errorf("a valid boundary value was rejected: %v", err)
@@ -918,8 +918,8 @@ func TestASharedEnvironmentWantsASeedPasswordLength(t *testing.T) {
 		password    string
 		rejected    bool
 	}{
-		"staging 15 karakter":           {environment: "staging", password: "onbes-karakter1", rejected: true},
-		"staging 16 karakter":           {environment: "staging", password: "onalti-karakter1"},
+		"staging, 15 characters":        {environment: "staging", password: "onbes-karakter1", rejected: true},
+		"staging, 16 characters":        {environment: "staging", password: "onalti-karakter1"},
 		"production, a short password":  {environment: "production", password: "short", rejected: true},
 		"production, a long password":   {environment: "production", password: "a-sufficiently-long-password"},
 		"development, a short password": {environment: "development", password: "short"},
@@ -978,8 +978,8 @@ func TestTheRedisKeyPrefixFormIsValidated(t *testing.T) {
 		prefix   string
 		rejected bool
 	}{
-		"sade name":                 {prefix: "gobit"},
-		"tireli name":               {prefix: "gobit-staging"},
+		"a plain name":              {prefix: "gobit"},
+		"a name with a hyphen":      {prefix: "gobit-staging"},
 		"a name with an underscore": {prefix: "gobit_prod"},
 		"a name with a dot":         {prefix: "magaza.42"},
 		"containing a separator":    {prefix: "gobit:staging", rejected: true},
@@ -1134,32 +1134,32 @@ func TestTheFileSettingsFormIsValidated(t *testing.T) {
 	base := validConfig(t)
 
 	tests := map[string]struct {
-		boz      func(c *config.Config)
-		degisken string
+		corrupt  func(c *config.Config)
+		variable string
 	}{
 		"an empty provider":          {func(c *config.Config) { c.FileProvider = "" }, "FILE_PROVIDER"},
 		"a provider with whitespace": {func(c *config.Config) { c.FileProvider = " local" }, "FILE_PROVIDER"},
 		"an empty root":              {func(c *config.Config) { c.FileRoot = "" }, "FILE_ROOT"},
 		"a root with whitespace":     {func(c *config.Config) { c.FileRoot = "/data/uploads " }, "FILE_ROOT"},
 		"a zero maximum size":        {func(c *config.Config) { c.FileMaxUploadBytes = 0 }, "FILE_MAX_UPLOAD_BYTES"},
-		"azami boyut negatif":        {func(c *config.Config) { c.FileMaxUploadBytes = -1 }, "FILE_MAX_UPLOAD_BYTES"},
+		"a negative maximum size":    {func(c *config.Config) { c.FileMaxUploadBytes = -1 }, "FILE_MAX_UPLOAD_BYTES"},
 		"an empty allow list":        {func(c *config.Config) { c.FileAllowedTypes = nil }, "FILE_ALLOWED_TYPES"},
 		"an empty type":              {func(c *config.Config) { c.FileAllowedTypes = []string{"image/png", ""} }, "FILE_ALLOWED_TYPES"},
-		"tip parametreli":            {func(c *config.Config) { c.FileAllowedTypes = []string{"text/plain; charset=utf-8"} }, "FILE_ALLOWED_TYPES"},
+		"a type with parameters":     {func(c *config.Config) { c.FileAllowedTypes = []string{"text/plain; charset=utf-8"} }, "FILE_ALLOWED_TYPES"},
 		"a type in upper case":       {func(c *config.Config) { c.FileAllowedTypes = []string{"Image/PNG"} }, "FILE_ALLOWED_TYPES"},
 		"a type without a slash":     {func(c *config.Config) { c.FileAllowedTypes = []string{"png"} }, "FILE_ALLOWED_TYPES"},
-		"tip iki kez":                {func(c *config.Config) { c.FileAllowedTypes = []string{"image/png", "image/png"} }, "FILE_ALLOWED_TYPES"},
+		"a type given twice":         {func(c *config.Config) { c.FileAllowedTypes = []string{"image/png", "image/png"} }, "FILE_ALLOWED_TYPES"},
 	}
 
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			cfg := base
-			tt.boz(&cfg)
+			tt.corrupt(&cfg)
 
 			err := cfg.Validate()
 
 			require.Error(t, err, "a malformed file setting must not be accepted quietly")
-			assert.Contains(t, err.Error(), tt.degisken,
+			assert.Contains(t, err.Error(), tt.variable,
 				"the error message has to say which variable is wrong")
 		})
 	}
@@ -1183,9 +1183,9 @@ func TestANonDurableFileRootOpensTheWarningGate(t *testing.T) {
 
 	tests := map[string]struct {
 		environment string
-		saglayici   string
+		provider    string
 		root        string
-		kalici      bool
+		durable     bool
 	}{
 		"development, a relative root":          {"development", "local", "./data/uploads", false},
 		"production, a relative root":           {"production", "local", "./data/uploads", false},
@@ -1210,10 +1210,10 @@ func TestANonDurableFileRootOpensTheWarningGate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := base
 			cfg.AppEnv = tt.environment
-			cfg.FileProvider = tt.saglayici
+			cfg.FileProvider = tt.provider
 			cfg.FileRoot = tt.root
 
-			assert.Equal(t, tt.kalici, cfg.LocalFileRootIsDurable())
+			assert.Equal(t, tt.durable, cfg.LocalFileRootIsDurable())
 		})
 	}
 }
@@ -1231,7 +1231,7 @@ func TestTheRateLimitKeyDoesNotFallToTheClientBehindAProxy(t *testing.T) {
 
 	tests := map[string]struct {
 		limit     int
-		atlama    int
+		hops      int
 		perClient bool
 	}{
 		"limit on, no hops":       {600, 0, false},
@@ -1246,7 +1246,7 @@ func TestTheRateLimitKeyDoesNotFallToTheClientBehindAProxy(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := base
 			cfg.RateLimitPerMinute = tt.limit
-			cfg.TrustedProxyHops = tt.atlama
+			cfg.TrustedProxyHops = tt.hops
 
 			assert.Equal(t, tt.perClient, cfg.RateLimitKeyIsPerClient())
 		})
@@ -1347,7 +1347,7 @@ func TestTheGraphQLLimitsAreValidatedAtStartup(t *testing.T) {
 	// the expected text is written per case.
 	tests := map[string]struct{ key, value, expected string }{
 		"a zero depth":                {"GRAPHQL_MAX_DEPTH", "0", "GRAPHQL_MAX_DEPTH"},
-		"derinlik negatif":            {"GRAPHQL_MAX_DEPTH", "-1", "GRAPHQL_MAX_DEPTH"},
+		"a negative depth":            {"GRAPHQL_MAX_DEPTH", "-1", "GRAPHQL_MAX_DEPTH"},
 		"a non-numeric depth":         {"GRAPHQL_MAX_DEPTH", "deep", "GraphQLMaxDepth"},
 		"a zero complexity":           {"GRAPHQL_MAX_COMPLEXITY", "0", "GRAPHQL_MAX_COMPLEXITY"},
 		"a negative complexity":       {"GRAPHQL_MAX_COMPLEXITY", "-100", "GRAPHQL_MAX_COMPLEXITY"},
@@ -1438,11 +1438,11 @@ func TestThePoolLimitsAreValidatedAtStartup(t *testing.T) {
 			map[string]string{"DB_MAX_CONNS": "0", "DB_MIN_CONNS": "0"},
 			"DB_MAX_CONNS has to be at least 1",
 		},
-		"azami negatif": {
+		"a negative maximum": {
 			map[string]string{"DB_MAX_CONNS": "-1", "DB_MIN_CONNS": "0"},
 			"DB_MAX_CONNS has to be at least 1",
 		},
-		"asgari negatif": {
+		"a negative minimum": {
 			map[string]string{"DB_MIN_CONNS": "-1"},
 			"DB_MIN_CONNS cannot be negative",
 		},

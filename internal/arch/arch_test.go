@@ -296,13 +296,13 @@ func moduleNames(t *testing.T) []string {
 func modulePrefix(t *testing.T) string {
 	t.Helper()
 
-	ham, err := os.ReadFile(filepath.Join(repoRoot, goModFileName))
+	content, err := os.ReadFile(filepath.Join(repoRoot, goModFileName))
 	require.NoError(t, err, "%s could not be read", goModFileName)
 
 	declared := ""
-	for _, line := range strings.Split(string(ham), "\n") {
-		if kalan, bulundu := strings.CutPrefix(strings.TrimSpace(line), "module "); bulundu {
-			declared = strings.TrimSpace(kalan)
+	for _, line := range strings.Split(string(content), "\n") {
+		if rest, found := strings.CutPrefix(strings.TrimSpace(line), "module "); found {
+			declared = strings.TrimSpace(rest)
 			break
 		}
 	}
@@ -451,13 +451,13 @@ var (
 	// sqlCommentRe catches line and block comments. The comments are stripped BEFORE
 	// the scan: an explanation like "-- no REFERENCES to another module's table" would
 	// otherwise be taken for a violation.
-	sqlLineCommentRe = regexp.MustCompile(`--[^\n]*`)
-	sqlBlokYorumRe   = regexp.MustCompile(`(?s)/\*.*?\*/`)
+	sqlLineCommentRe  = regexp.MustCompile(`--[^\n]*`)
+	sqlBlockCommentRe = regexp.MustCompile(`(?s)/\*.*?\*/`)
 )
 
 // stripSQLComments removes the comments from an SQL body.
 func stripSQLComments(body string) string {
-	body = sqlBlokYorumRe.ReplaceAllString(body, " ")
+	body = sqlBlockCommentRe.ReplaceAllString(body, " ")
 	return sqlLineCommentRe.ReplaceAllString(body, " ")
 }
 
@@ -661,11 +661,10 @@ func TestThereIsNoCrossModuleForeignKey(t *testing.T) {
 			"cross-module.")
 	require.Positive(t, linksSeen,
 		"no REFERENCES was found in the scanned SQL; the foreign key read must have gone BLIND "+
-			"(referencesRe does not match, or the relations are now formed with ALTER TABLE ... ADD CONSTRAINT "+
-			"ile kuruluyor olabilir).\n"+
+			"(referencesRe does not match, or the relations are now formed with ALTER TABLE ... ADD CONSTRAINT).\n"+
 			"If the repository really did drop all its foreign keys, the scope of this check "+
-			"has to be rewritten as well; staying silently green would be a claim that the ban "+
-			"izlenimini verir.")
+			"has to be rewritten as well; staying silently green would give the impression that "+
+			"the ban holds.")
 }
 
 // TestMigrationsCanBeRolledBack enforces the up/down requirement of plan Section 8.
@@ -740,9 +739,9 @@ var moneyWords = map[string]bool{
 }
 
 // isMoneyName says whether a field name suggests that it holds money.
-func isMoneyName(ad string) bool {
-	for _, sozcuk := range nameParts(ad) {
-		if moneyWords[sozcuk] {
+func isMoneyName(name string) bool {
+	for _, word := range nameParts(name) {
+		if moneyWords[word] {
 			return true
 		}
 	}
@@ -754,30 +753,30 @@ func isMoneyName(ad string) bool {
 // Both camelCase ("UnitPrice" -> unit, price) and snake_case ("unit_price") are
 // handled; consecutive capitals ("URLTotal") are not counted as separate parts,
 // because splitting an acronym would produce meaningless parts like "u", "r", "l".
-func nameParts(ad string) []string {
-	var parcalar []string
-	var kelime strings.Builder
+func nameParts(name string) []string {
+	var parts []string
+	var current strings.Builder
 
 	end := func() {
-		if kelime.Len() > 0 {
-			parcalar = append(parcalar, strings.ToLower(kelime.String()))
-			kelime.Reset()
+		if current.Len() > 0 {
+			parts = append(parts, strings.ToLower(current.String()))
+			current.Reset()
 		}
 	}
-	for i, r := range ad {
+	for i, r := range name {
 		switch {
 		case r == '_':
 			end()
-		case unicode.IsUpper(r) && i > 0 && !unicode.IsUpper(rune(ad[i-1])):
+		case unicode.IsUpper(r) && i > 0 && !unicode.IsUpper(rune(name[i-1])):
 			end()
-			kelime.WriteRune(r)
+			current.WriteRune(r)
 		default:
-			kelime.WriteRune(r)
+			current.WriteRune(r)
 		}
 	}
 	end()
 
-	return parcalar
+	return parts
 }
 
 // floatTypeNames are the two types this rule refuses to see money written in.
@@ -929,7 +928,7 @@ func TestGodocFormat(t *testing.T) {
 	// The unit being checked is the DEFINITION with a godoc, not the file: the scope
 	// can empty out while the files stay in place (if the generated-code sieve widens,
 	// or if the godocs come loose from their definitions and the doc field stays nil).
-	denetlenenTanim := 0
+	checkedDefinitions := 0
 
 	var files []string
 	for _, tree := range productionTrees {
@@ -973,7 +972,7 @@ func TestGodocFormat(t *testing.T) {
 			if doc == nil || name == "" || name == "_" || len(doc.List) == 0 {
 				continue
 			}
-			denetlenenTanim++
+			checkedDefinitions++
 
 			first := doc.List[0].Text
 			if m := godocComma.FindStringSubmatch(first); m != nil {
@@ -997,7 +996,7 @@ func TestGodocFormat(t *testing.T) {
 		}
 	}
 
-	require.Positive(t, denetlenenTanim,
+	require.Positive(t, checkedDefinitions,
 		"not a SINGLE definition with a checked godoc was found in the production trees; "+
 			"the check must have gone BLIND.\n"+
 			"Possible reasons: the sources moved outside productionTrees, the parsing is done "+

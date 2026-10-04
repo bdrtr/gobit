@@ -115,9 +115,8 @@ type countedPopulation struct {
 	// anchor is the population's own path, and it is what admits a sentence into
 	// the audit (see [countAnchored]). It is not where the size comes from.
 	anchor string
-	// nouns matches a token naming ONE MEMBER of the population, in either
-	// language. The tree's prose is Turkish in two files by decision (ADR 0012's
-	// ledger), and a count is written in words there as often as here.
+	// nouns matches a token naming ONE MEMBER of the population. The nouns are
+	// English because every document and comment this audit reads is English.
 	nouns *regexp.Regexp
 	// floor is the smallest size [countedPopulation.size] may return before the
 	// computation is treated as blind rather than as an answer. A population that
@@ -140,28 +139,28 @@ var countedPopulations = []countedPopulation{
 	{
 		name:   "the commerce modules under internal/modules",
 		anchor: modulesDir,
-		nouns:  regexp.MustCompile(`^(modules|modul|modulu|moduller|modulunu)$`),
+		nouns:  regexp.MustCompile(`^modules$`),
 		floor:  10,
 		size:   func(t *testing.T) int { return len(moduleNames(t)) },
 	},
 	{
 		name:   "the published packages under core/",
 		anchor: "core",
-		nouns:  regexp.MustCompile(`^(packages|paket|paketi|paketler|paketleri)$`),
+		nouns:  regexp.MustCompile(`^packages$`),
 		floor:  10,
 		size:   func(t *testing.T) int { return len(countGoPackageDirs(t, "core")) },
 	},
 	{
 		name:   "the in-tree plugins",
 		anchor: "plugins",
-		nouns:  regexp.MustCompile(`^(plugins|eklenti|eklentisi|eklentiler|eklentileri|eklentinin)$`),
+		nouns:  regexp.MustCompile(`^plugins$`),
 		floor:  5,
 		size:   func(t *testing.T) int { return len(countSubdirectories(t, "plugins")) },
 	},
 	{
 		name:   "the flow packages under internal/workflows",
 		anchor: workflowsDirName,
-		nouns:  regexp.MustCompile(`^(workflows|flows|akis|akislar|akisi)$`),
+		nouns:  regexp.MustCompile(`^(workflows|flows)$`),
 		floor:  3,
 		size:   func(t *testing.T) int { return len(countSubdirectories(t, workflowsDirName)) },
 	},
@@ -180,42 +179,42 @@ var countedPopulations = []countedPopulation{
 		// subscriber that nothing resolves at all.
 		name:   "the sagas under internal/workflows",
 		anchor: workflowsDirName,
-		nouns:  regexp.MustCompile(`^(sagas|saga|sagalar|saga'lar)$`),
+		nouns:  regexp.MustCompile(`^sagas?$`),
 		floor:  1,
 		size:   countSagaPackages,
 	},
 	{
 		name:   "the decision records under docs/adr",
 		anchor: "docs/adr",
-		nouns:  regexp.MustCompile(`^(records|record|kayit|kayitlar|adr|adrs)$`),
+		nouns:  regexp.MustCompile(`^(records|record|adr|adrs)$`),
 		floor:  20,
 		size:   countADRRecords,
 	},
 	{
 		name:   "the reports under docs/measurements",
 		anchor: "docs/measurements",
-		nouns:  regexp.MustCompile(`^(measurements|reports|olcum|olcumler|rapor|raporlar)$`),
+		nouns:  regexp.MustCompile(`^(measurements|reports)$`),
 		floor:  10,
 		size:   countMeasurementReports,
 	},
 	{
 		name:   "the entries of docs/known-limits.md",
 		anchor: knownLimitsDoc,
-		nouns:  regexp.MustCompile(`^(items|entries|madde|maddeler)$`),
+		nouns:  regexp.MustCompile(`^(items|entries)$`),
 		floor:  10,
 		size:   func(t *testing.T) int { return countMarkdownLines(t, knownLimitsDoc, "- ") },
 	},
 	{
 		name:   "the groups of docs/known-limits.md",
 		anchor: knownLimitsDoc,
-		nouns:  regexp.MustCompile(`^(groups|kume|kumeler|grup|gruplar)$`),
+		nouns:  regexp.MustCompile(`^groups$`),
 		floor:  2,
 		size:   func(t *testing.T) int { return countMarkdownLines(t, knownLimitsDoc, "## ") },
 	},
 	{
 		name:   "the topics plugins/webhookout forwards",
 		anchor: forwardedTopicsAnchor,
-		nouns:  regexp.MustCompile(`^(topics|topic|konu|konular|konuyu|konusu)$`),
+		nouns:  regexp.MustCompile(`^topics?$`),
 		floor:  3,
 		size:   countForwardedTopics,
 	},
@@ -275,8 +274,8 @@ func countForwardedTopics(t *testing.T) int {
 	return total
 }
 
-// knownLimitsDoc is the document whose entries and groups the reading tables of
-// both READMEs price.
+// knownLimitsDoc is the document whose entries and groups the README's reading
+// table prices.
 const knownLimitsDoc = "docs/known-limits.md"
 
 // countSubdirectories returns the immediate subdirectories of a tree, which is what
@@ -396,35 +395,10 @@ func countMarkdownLines(t *testing.T, doc, prefix string) int {
 // (docs/measurements/…)" read as fourteen measurements.
 var countWord = regexp.MustCompile(`[\p{L}\p{N}_][\p{L}\p{N}_'’./-]*`)
 
-// countASCIIFold flattens the six Turkish letters outside ASCII onto their ASCII
-// shapes, so every table below can be written in plain ASCII.
-//
-// The pairs are written as \u ESCAPES rather than as letters. That is this
-// repository's stated preference wherever the letters are DATA rather than prose —
-// the same solution the product module's fold map and the case-folding probe took —
-// and it keeps this file out of the language ledger without an exemption entry.
-// The code points, in order: DOTLESS SMALL I, CAPITAL I WITH DOT ABOVE, SMALL and
-// CAPITAL G WITH BREVE, SMALL and CAPITAL C WITH CEDILLA, SMALL and CAPITAL S WITH
-// CEDILLA, SMALL and CAPITAL O WITH DIAERESIS, SMALL and CAPITAL U WITH DIAERESIS.
-//
-// Folding also buys the diacriticless spelling for free, which matters: the
-// language detector is knowingly blind to Turkish written without diacritics, and a
-// count claim spelled that way is the same claim.
-var countASCIIFold = strings.NewReplacer(
-	"\u0131", "i", "\u0130", "i",
-	"\u011F", "g", "\u011E", "g",
-	"\u00E7", "c", "\u00C7", "c",
-	"\u015F", "s", "\u015E", "s",
-	"\u00F6", "o", "\u00D6", "o",
-	"\u00FC", "u", "\u00DC", "u",
-)
-
-// countFold puts a token into the shape the tables below are written in.
-//
-// The fold runs BEFORE the lowering on purpose: Go lowers the Turkish capital I
-// with a dot into two runes, and the table would never match it again.
+// countFold puts a token into the shape the tables below are written in, which is
+// lower case: "Seventeen" opening a sentence is the same number as "seventeen".
 func countFold(word string) string {
-	return strings.ToLower(countASCIIFold.Replace(word))
+	return strings.ToLower(word)
 }
 
 // countEnglishUnits are the English words for one through nineteen.
@@ -441,31 +415,14 @@ var countEnglishTens = map[string]int{
 	"sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
 }
 
-// countNumeralsFile holds the Turkish half of the vocabulary.
-//
-// It is a file rather than a table in this source for one reason, and the reason is
-// the language rule: one of the Turkish number words is on the detector's own
-// safe-word list, so writing it here would put a new line in the language ledger
-// for what is a lookup table, and the ledger may only shrink. An escape does not
-// help — the detector unquotes a literal before reading it, which is correct of it.
-const countNumeralsFile = "testdata/turkish-numerals.txt"
-
 // countNumerals is the number vocabulary one scan reads with.
 type countNumerals struct {
-	// units are the words for one through nineteen, in both languages.
+	// units are the words for one through nineteen.
 	units map[string]int
-	// tens are the words for the round tens from twenty up, in both languages.
+	// tens are the words for the round tens from twenty up.
 	tens map[string]int
-	// turkishTen is the word for ten in Turkish, and it is the one word in the
-	// vocabulary that is never a number on its own: it is also the English
-	// preposition, and this repository's prose carries "on both tables" and "ON
-	// ALL TABLES IN SCHEMA public". [countNumerals.at] reads it ONLY as the head
-	// of a compound, where the next token is a Turkish unit. The ambiguity is
-	// paid on the side that stays SILENT rather than the side that invents a
-	// claim: a Turkish sentence pricing a population at exactly ten goes unread.
-	turkishTen string
 	// scales are the words that multiply the number in front of them —
-	// "hundred", "thousand" and their Turkish counterparts.
+	// "hundred", "thousand" and "million".
 	//
 	// They are a HARD STOP rather than a multiplier, and a claim that reaches
 	// one is read as no claim at all. Without them "one hundred records" reads
@@ -481,31 +438,28 @@ type countNumerals struct {
 	// reader has always read. The scale words stay a hard stop so a sentence
 	// that spells one out is reported as unpriced instead of being misread.
 	scales map[string]bool
-	// turkishScales are the scale words read out of [countNumeralsFile], kept in
-	// order so a test can name one WITHOUT spelling it: a Turkish word written
-	// into this file would put a line in the language ledger for what is a
-	// lookup table, and the ledger may only shrink (ADR 0012).
-	turkishScales []string
 }
 
-// countEnglishScales are the English scale words. Their Turkish counterparts are
-// in [countNumeralsFile] with a value of 0, because one of them is an ordinary
-// English word this repository writes in its own source.
+// countEnglishScales are the scale words.
 var countEnglishScales = map[string]bool{
 	"hundred": true, "hundreds": true,
 	"thousand": true, "thousands": true,
 	"million": true, "millions": true,
 }
 
-// countNumeralWords builds the vocabulary, English inline and Turkish from
-// [countNumeralsFile].
+// countNumeralWords builds the vocabulary from the English tables above.
 //
-// A short read is refused. A vocabulary that has lost its Turkish half reports the
-// two Turkish documents as carrying no claim at all, which is the same clean tree
-// nobody walked that this whole audit exists to refuse.
-func countNumeralWords(t *testing.T) countNumerals {
-	t.Helper()
-
+// The vocabulary is English because every document and comment this audit reads
+// is English. It had a Turkish half for the two documents ADR 0012's ledger kept
+// Turkish, and that half was removed when the ledger emptied and no Turkish prose
+// was left for it to read (D228).
+//
+// It costs this: Turkish written without diacritics and without a word from the
+// language detector's closed lists ([safeTurkishWords], [turkishStems]) is now
+// read by neither gate, so a count written that way goes unread. The premise that
+// no Turkish prose is left is held by [TestNoTurkishOutsideLedger] with the ledger
+// empty.
+func countNumeralWords() countNumerals {
 	vocabulary := countNumerals{
 		units:  map[string]int{},
 		tens:   map[string]int{},
@@ -520,49 +474,6 @@ func countNumeralWords(t *testing.T) countNumerals {
 	for word, value := range countEnglishTens {
 		vocabulary.tens[word] = value
 	}
-
-	body, err := os.ReadFile(countNumeralsFile)
-	require.NoError(t, err, "%s could not be read", countNumeralsFile)
-
-	units, tens, scales := 0, 0, 0
-	for _, line := range strings.Split(string(body), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		head, word, found := strings.Cut(trimmed, " ")
-		require.True(t, found, "%s: %q is not a value and a word", countNumeralsFile, line)
-		value, err := strconv.Atoi(head)
-		require.NoError(t, err, "%s: %q does not open with a value", countNumeralsFile, line)
-		word = strings.TrimSpace(word)
-
-		switch {
-		case value == 0:
-			vocabulary.scales[word] = true
-			vocabulary.turkishScales = append(vocabulary.turkishScales, word)
-			scales++
-		case value == 10:
-			vocabulary.turkishTen = word
-		case value < 10:
-			vocabulary.units[word] = value
-			units++
-		default:
-			vocabulary.tens[word] = value
-			tens++
-		}
-	}
-
-	require.GreaterOrEqual(t, units, 9,
-		"%s lost its units; the Turkish documents would report no claim at all",
-		countNumeralsFile)
-	require.GreaterOrEqual(t, tens, 8,
-		"%s lost its tens; a compound over twenty would go unread", countNumeralsFile)
-	require.NotEmpty(t, vocabulary.turkishTen,
-		"%s names no ten, so no teen compound can be read", countNumeralsFile)
-	require.GreaterOrEqual(t, scales, 2,
-		"%s lost its scale words, so a Turkish sentence above ninety-nine would be "+
-			"read as the number in front of the scale rather than left alone",
-		countNumeralsFile)
 
 	return vocabulary
 }
@@ -596,26 +507,23 @@ var countFunctionWords = map[string]bool{
 	"than": true, "then": true, "not": true, "no": true, "only": true, "just": true,
 	"each": true, "every": true, "any": true, "some": true, "all": true, "both": true,
 	"which": true, "who": true, "what": true, "when": true, "where": true, "there": true,
-	"ve": true, "ile": true, "bu": true, "su": true, "gibi": true,
-	"ise": true, "ki": true, "da": true, "de": true,
 }
 
 // at reads the number the token at an index carries, if it carries one, together
 // with how many tokens that number consumed.
 //
-// The span is two for a Turkish compound — a ten followed by a unit, written as two
-// words — and one for everything else, since an English compound is hyphenated and
-// already arrives as a single token. Consuming both tokens is what stops the unit
-// half from being read a second time as a claim of its own: "fifty-one records"
-// written the Turkish way would otherwise also say "one record", which is a
-// sentence nobody wrote.
+// The span is two for a compound written as two words — a ten followed by a unit,
+// "fifty one" — and one for everything else, since a hyphenated compound arrives as
+// a single token. Consuming both tokens is what stops the unit half from being read
+// a second time as a claim of its own: "fifty one records" would otherwise also say
+// "one record", which is a sentence nobody wrote.
 func (n countNumerals) at(tokens []string, index int) (value, span int) {
 	word := countFold(tokens[index])
 
 	// A scale word yields nothing, and so does any number standing in front of
 	// one. "one hundred records" is a claim this reader cannot compose, and the
 	// vocabulary's rule for what it cannot compose is silence rather than a
-	// wrong number — the same rule the Turkish ten is read under.
+	// wrong number.
 	if n.scales[word] {
 		return -1, 0
 	}
@@ -653,14 +561,6 @@ func (n countNumerals) at(tokens []string, index int) (value, span int) {
 		}
 
 		return tens, 1
-	}
-	// The Turkish ten heads a compound and is read nowhere else; see [countNumerals].
-	if word == n.turkishTen {
-		if unit > 0 {
-			return 10 + unit, 2
-		}
-
-		return -1, 0
 	}
 	if head, ok := n.units[word]; ok {
 		return head, 1
@@ -727,8 +627,8 @@ func countUnquoted(line string) string {
 // "the four core packages" and "two plugins each believing they own the reporting"
 // would both anchor, and both are subsets. A single segment therefore anchors only
 // in the DIRECTORY-LAYOUT column, where it opens the line and a run of spaces
-// separates it from the description — the shape both READMEs draw their tree in,
-// and a shape prose does not fall into by accident.
+// separates it from the description — the shape the README draws its tree in, and
+// a shape prose does not fall into by accident.
 //
 // tokens are the line's, read once for every population (D212).
 func countAnchored(line string, tokens []string, anchor string) bool {
@@ -889,7 +789,7 @@ func countClaimsInLine(line countLine, population countedPopulation, numerals co
 func collectCountClaims(t *testing.T) []countClaim {
 	t.Helper()
 
-	numerals := countNumeralWords(t)
+	numerals := countNumeralWords()
 	claims := collectMarkdownCountClaims(t, numerals)
 
 	return append(claims, collectCommentCountClaims(t, numerals)...)
@@ -1057,7 +957,7 @@ func TestTheCountsInTheProseAreTrue(t *testing.T) {
 	}
 }
 
-// countClaimedToday names the population each README is known to price.
+// countClaimedToday names the populations the README is known to price.
 //
 // It is a LIST OF NAMES rather than a count of claims, and that is the whole
 // repair. The control shipped as "at least eight claims, at least four
@@ -1072,16 +972,17 @@ func TestTheCountsInTheProseAreTrue(t *testing.T) {
 // being claimed has to leave this list, which puts the decision in a diff
 // somebody reads — the doctrine the size side already uses with its floors.
 //
-// The two READMEs are the same list because they are translations of one
-// another: a count in one and not the other is itself a defect, and this gate
-// found exactly that shape on the day it was written, where the two files
-// disagreed with each other about the number of limits entries.
+// The list is read against README.md, the repository's top-level README; the
+// Turkish one it was once paired with is gone (D228).
 //
-// Three of the eight populations in the vocabulary — the plugins, the workflow
-// packages and the measurement reports — are priced NOWHERE in the tree, so
-// they are absent here. They are kept in the vocabulary because the sentence
-// that prices them is the one this gate exists to catch on the day somebody
-// writes it.
+// What the list leaves out is every population the README does not price: the
+// plugins, the flow packages, the sagas, the measurement reports and the topics
+// plugins/webhookout forwards. Absence here says nothing about the rest of the
+// tree — the plugins and the forwarded topics are priced in godocs pinned in
+// [countClaimedElsewhere], and docs/mimari.md prices the sagas — and a
+// population no sentence prices stays in the vocabulary, because the sentence
+// that prices it is the one this gate exists to catch on the day somebody writes
+// it.
 var countClaimedToday = []string{
 	"the published packages under core/",
 	"the commerce modules under internal/modules",
@@ -1090,15 +991,15 @@ var countClaimedToday = []string{
 	"the groups of docs/known-limits.md",
 }
 
-// countClaimedElsewhere pins the totals stated OUTSIDE the two READMEs.
+// countClaimedElsewhere pins totals that Go comments state outside the README.
 //
 // They are pinned for a sharper reason than the README's. A total in a godoc is
 // written inside a wrapped paragraph, and gofmt or an edit can move the number
 // onto a different line from the noun — at which point the claim leaves this
 // audit's population WITHOUT the sentence changing meaning to a reader. That is
-// not hypothetical: all three of these were found stale on 2026-09-09 and two
-// of them were invisible for exactly that reason, the count having wrapped away
-// from its noun.
+// not hypothetical: the three module totals below were found stale on 2026-09-09
+// and two of them were invisible for exactly that reason, the count having
+// wrapped away from its noun.
 //
 // So the list is the counterweight to the anchor rule. The anchor is what keeps
 // subsets out; this is what stops a total from slipping out of scope on a
@@ -1109,6 +1010,7 @@ var countClaimedElsewhere = []struct{ file, population string }{
 	{"internal/arch/module_sql_test.go", "the in-tree plugins"},
 	{"internal/smoke/process_test.go", "the commerce modules under internal/modules"},
 	{"internal/smoke/race_test.go", "the commerce modules under internal/modules"},
+	{"plugins/webhookout/module.go", "the topics plugins/webhookout forwards"},
 }
 
 // TestTheCountClaimScannerIsNotBlind pins down what [collectCountClaims] sees and,
@@ -1194,38 +1096,36 @@ func TestTheCountClaimExclusionsHold(t *testing.T) {
 }
 
 // TestTheCountNumberReaderReadsBothForms pins the number reader to the forms this
-// tree actually writes.
+// tree actually writes: digits and words.
 //
 // The form was MEASURED before it was chosen: across the documents and the Go
 // comments, a count under twenty is written as a WORD far more often than as a
-// digit, the two Turkish files write theirs as Turkish words, and both compound
-// forms occur — hyphenated in English, and written as two separate words in
-// Turkish. A reader that handled digits alone would have found ZERO of the six
-// live defects this gate opened with.
+// digit, and a compound is written hyphenated. A reader that handled digits alone
+// would have found ZERO of the six live defects this gate opened with.
 //
-// The Turkish cases are built FROM the vocabulary rather than spelled here, for
-// the reason [countNumeralsFile] carries, and building them proves the file is
-// readable as well: a table that reads back nothing would fail the lookup below
-// before it failed an assertion.
+// The tables are held whole as well as by example. The vocabulary is inline, so a
+// word dropped from it is a diff rather than a short read, and a value with no word
+// would leave every sentence that spells it unread with nothing to say so.
 func TestTheCountNumberReaderReadsBothForms(t *testing.T) {
 	t.Parallel()
 
-	numerals := countNumeralWords(t)
-	turkish := func(value int) string {
-		for word, held := range numerals.units {
-			if held == value && countEnglishUnits[word] == 0 {
-				return word
-			}
-		}
-		for word, held := range numerals.tens {
-			if held == value && countEnglishTens[word] == 0 {
-				return word
-			}
-		}
-		require.Fail(t, "the vocabulary holds no Turkish word for %d", value)
+	numerals := countNumeralWords()
 
-		return ""
+	held := map[int]bool{}
+	for _, value := range numerals.units {
+		held[value] = true
 	}
+	for _, value := range numerals.tens {
+		held[value] = true
+	}
+	for value := 1; value <= 19; value++ {
+		assert.True(t, held[value], "the vocabulary has no word for %d", value)
+	}
+	for value := 20; value <= 90; value += 10 {
+		assert.True(t, held[value], "the vocabulary has no word for %d", value)
+	}
+	assert.Len(t, numerals.units, 19, "a unit is one through nineteen, one word each")
+	assert.Len(t, numerals.tens, 8, "a round ten is twenty through ninety, one word each")
 
 	for _, testCase := range []struct {
 		name   string
@@ -1237,11 +1137,7 @@ func TestTheCountNumberReaderReadsBothForms(t *testing.T) {
 		{"an English unit", []string{"seventeen"}, 17, 1},
 		{"an English compound", []string{"fifty-one"}, 51, 1},
 		{"an English round ten", []string{"ninety"}, 90, 1},
-		{"a Turkish unit", []string{turkish(7)}, 7, 1},
-		{"a Turkish teen", []string{numerals.turkishTen, turkish(7)}, 17, 2},
-		{"a Turkish compound ending in one", []string{turkish(50), turkish(1)}, 51, 2},
-		{"a Turkish compound with a diacritic", []string{"yirmi", "\u00FC\u00E7"}, 23, 2},
-		{"a diacriticless Turkish compound", []string{turkish(20), turkish(3)}, 23, 2},
+		{"an English compound written as two words", []string{"fifty", "one"}, 51, 2},
 		{"capitalisation", []string{"Seventeen"}, 17, 1},
 	} {
 		value, span := numerals.at(testCase.tokens, 0)
@@ -1257,8 +1153,6 @@ func TestTheCountNumberReaderReadsBothForms(t *testing.T) {
 		{"a migration number", []string{"000003"}},
 		{"a version", []string{"16.14"}},
 		{"a path", []string{"docs/adr/0044-the-sales-channel-moves-into-the-catalog-path.md"}},
-		{"the English preposition", []string{numerals.turkishTen, "both"}},
-		{"the English preposition before a table", []string{numerals.turkishTen, "all"}},
 		{"an ordinary word", []string{"modules"}},
 		// The scale words. Each of these read as a number before the hard stop
 		// went in, and every one of them read the WRONG number: "one hundred"
@@ -1274,20 +1168,19 @@ func TestTheCountNumberReaderReadsBothForms(t *testing.T) {
 		assert.Equal(t, -1, value, "%s: %q was read as a number", testCase.name, testCase.tokens)
 	}
 
-	// The Turkish scales are taken from the vocabulary rather than written
-	// here, so this stays true of whatever the data file holds and no Turkish
-	// word enters the source to say it.
-	require.NotEmpty(t, numerals.turkishScales)
-
-	for _, scale := range numerals.turkishScales {
+	// Every scale word is held, not one by example: a scale word dropped from the
+	// table turns "two millions" back into a claim of two.
+	assert.Len(t, numerals.scales, len(countEnglishScales),
+		"the vocabulary lost a scale word between the table and the reader")
+	assert.Len(t, countEnglishScales, 6, "a scale is hundred, thousand and million, each singular and plural")
+	for scale := range countEnglishScales {
 		for _, tokens := range [][]string{
 			{scale},
-			{turkish(2), scale},
+			{"two", scale},
 			{"7", scale},
 		} {
 			value, _ := numerals.at(tokens, 0)
-			assert.Equal(t, -1, value,
-				"a Turkish scale: %q was read as a number", tokens)
+			assert.Equal(t, -1, value, "a scale word: %q was read as a number", tokens)
 		}
 	}
 }
@@ -1302,7 +1195,7 @@ func TestTheCountNumberReaderReadsBothForms(t *testing.T) {
 func TestTheCountClaimShapeBitesAndStops(t *testing.T) {
 	t.Parallel()
 
-	numerals := countNumeralWords(t)
+	numerals := countNumeralWords()
 
 	modules := countedPopulations[0]
 	require.Equal(t, modulesDir, modules.anchor, "the first entry is the module population")
@@ -1315,10 +1208,16 @@ func TestTheCountClaimShapeBitesAndStops(t *testing.T) {
 	require.Len(t, found, 1, "the layout block's own line is the shape this audit exists for")
 	assert.Equal(t, 17, found[0].stated)
 
+	// A compound written as two words is one number. The reader consumes both
+	// tokens and the claim loop steps past both, so the unit half is neither the
+	// start of a second claim ("one isolated commerce modules") nor a number
+	// standing in the gap that ends the first.
 	found = countClaimsIn(
-		"internal/modules      # on yedi izole commerce mod\u00FCl\u00FC (product, pricing,", modules, numerals)
-	require.Len(t, found, 1, "the Turkish layout line is the same claim in the other language")
-	assert.Equal(t, 17, found[0].stated, "the Turkish compound was not read as a whole")
+		"internal/modules      # fifty one isolated commerce modules (product,", modules, numerals)
+	require.Len(t, found, 1,
+		"\"fifty one isolated commerce modules\" is one claim; the unit half was read again "+
+			"as a claim of its own, or ended the gap before the noun")
+	assert.Equal(t, 51, found[0].stated, "the two-word compound was not read whole")
 
 	found = countClaimsIn("core                  # the PUBLISHED contracts — sixteen packages (ADR 0026):", core, numerals)
 	require.Len(t, found, 1, "a single-segment anchor is read in the layout column")

@@ -61,7 +61,7 @@ var notSecretComparisons = map[string][]string{
 	// The fingerprint of the caller's own request, compared with the one the
 	// same key stored: it identifies a request, and the caller holds both.
 	"core/http/callback_guard.go": {"record.Fingerprint == keys.fingerprint"},
-	"core/http/idempotency.go":    {"rec.Fingerprint != izi"},
+	"core/http/idempotency.go":    {"rec.Fingerprint != digest"},
 	// A configured backend against a constant.
 	"internal/app/guards.go": {"cfg.GuardBackend == config.BackendRedis"},
 	// A step's status against constants.

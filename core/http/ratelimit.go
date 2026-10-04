@@ -194,14 +194,14 @@ func TrustedProxyIPKey(hops int) KeyFunc {
 			return ClientIPKey(r)
 		}
 
-		ham := r.Header.Get(forwardedForHeader)
-		if ham == "" {
+		raw := r.Header.Get(forwardedForHeader)
+		if raw == "" {
 			// strings.Split produces a ONE-element slice from an empty string; without
 			// the early return "no entries at all" would count as a one-entry chain.
 			return ClientIPKey(r)
 		}
 
-		parts := strings.Split(ham, ",")
+		parts := strings.Split(raw, ",")
 
 		// The hops-th entry from the right: the leftmost address written by trusted proxies.
 		idx := len(parts) - hops

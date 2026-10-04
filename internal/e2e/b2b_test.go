@@ -58,7 +58,7 @@ const (
 	b2bStock int64 = 20
 )
 
-// b2bCalisan makes the customer an employee of a new company and returns the
+// b2bEmployee makes the customer an employee of a new company and returns the
 // company.
 //
 // Every scenario sets up its OWN company: were the company shared, one
@@ -68,7 +68,7 @@ const (
 //
 // If limit is passed as nil the employee is UNLIMITED (see
 // [b2bsvc.EmployeeInput]).
-func b2bCalisan(
+func b2bEmployee(
 	ctx context.Context,
 	t *testing.T,
 	customerID string,
@@ -137,7 +137,7 @@ func TestB2BOrderOverTheLimitIsRejectedAndNoMoneyIsTaken(t *testing.T) {
 
 	// The limit is BELOW the cart's total: 50_000 < 120_000.
 	limit := int64(50_000)
-	b2bCalisan(ctx, t, customerID, &limit, b2bmodels.ResetNever)
+	b2bEmployee(ctx, t, customerID, &limit, b2bmodels.ResetNever)
 
 	cartID, _ := prepareCart(ctx, t, customerID, variantID, b2bQuantity)
 
@@ -189,7 +189,7 @@ func TestB2BSpendingAccumulatesWithinTheWindow(t *testing.T) {
 	// The limit lets a single order through (120_000 ≤ 200_000) but not two
 	// (240_000 > 200_000).
 	limit := int64(200_000)
-	b2bCalisan(ctx, t, customerID, &limit, b2bmodels.ResetNever)
+	b2bEmployee(ctx, t, customerID, &limit, b2bmodels.ResetNever)
 
 	firstCart, _ := prepareCart(ctx, t, customerID, variantID, b2bQuantity)
 	first, err := b2bCompleteCart(ctx, t, firstCart, email)
@@ -220,7 +220,7 @@ func TestB2BUnlimitedEmployeeIsUnaffected(t *testing.T) {
 	variantID, _ := newStockedVariant(ctx, t, "E2E B2B Unlimited",
 		map[string]int64{taxedCurrency: b2bUnitPrice}, b2bStock)
 
-	b2bCalisan(ctx, t, customerID, nil, b2bmodels.ResetMonthly)
+	b2bEmployee(ctx, t, customerID, nil, b2bmodels.ResetMonthly)
 
 	cartID, _ := prepareCart(ctx, t, customerID, variantID, b2bQuantity)
 	result, err := b2bCompleteCart(ctx, t, cartID, email)
@@ -245,7 +245,7 @@ func TestNonB2BCustomerIsUnaffected(t *testing.T) {
 	variantID, _ := newStockedVariant(ctx, t, "E2E B2C Unaffected",
 		map[string]int64{taxedCurrency: b2bUnitPrice}, b2bStock)
 
-	// b2bCalisan is deliberately NOT CALLED: the customer belongs to no company.
+	// b2bEmployee is deliberately NOT CALLED: the customer belongs to no company.
 	cartID, _ := prepareCart(ctx, t, customerID, variantID, b2bQuantity)
 	result, err := b2bCompleteCart(ctx, t, cartID, email)
 

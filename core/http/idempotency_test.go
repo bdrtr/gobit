@@ -20,7 +20,7 @@ import (
 // countingHandler is a handler that counts how many times it was called and returns a fixed response.
 type countingHandler struct {
 	mu     sync.Mutex
-	cagri  int
+	calls  int
 	status int
 	body   string
 }
@@ -28,8 +28,8 @@ type countingHandler struct {
 // ServeHTTP counts the call and writes the configured response.
 func (h *countingHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	h.mu.Lock()
-	h.cagri++
-	n := h.cagri
+	h.calls++
+	n := h.calls
 	h.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -42,7 +42,7 @@ func (h *countingHandler) count() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	return h.cagri
+	return h.calls
 }
 
 // postRequest builds a POST request with the given key and body.
@@ -220,9 +220,9 @@ func TestIdempotencyAClientErrorIsRecorded(t *testing.T) {
 func TestIdempotencyItIsRetryableAfterAPanic(t *testing.T) {
 	t.Parallel()
 
-	patlasin := true
+	shouldPanic := true
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if patlasin {
+		if shouldPanic {
 			panic("the handler blew up")
 		}
 
@@ -235,7 +235,7 @@ func TestIdempotencyItIsRetryableAfterAPanic(t *testing.T) {
 		mw.ServeHTTP(httptest.NewRecorder(), postRequest("idem_1", "/x", `{"a":1}`))
 	})
 
-	patlasin = false
+	shouldPanic = false
 
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, postRequest("idem_1", "/x", `{"a":1}`))
@@ -279,7 +279,7 @@ func TestIdempotencySafeMethodsAreNotRecorded(t *testing.T) {
 		require.Equal(t, http.StatusOK, w.Code)
 	}
 
-	assert.Equal(t, 2, h.count(), "GET kaydedilmemeli")
+	assert.Equal(t, 2, h.count(), "a GET must not be recorded")
 }
 
 // TestIdempotencyANilStoreIsANoOp verifies that an unconfigured store does not
@@ -349,26 +349,26 @@ func TestIdempotencyAnOverlargeBodyIsRejected(t *testing.T) {
 func TestIdempotencyAConcurrentSecondRequestConflicts(t *testing.T) {
 	t.Parallel()
 
-	basladi := make(chan struct{})
+	started := make(chan struct{})
 	proceed := make(chan struct{})
 
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		close(basladi)
+		close(started)
 		<-proceed
 		w.WriteHeader(http.StatusCreated)
 	})
 
 	mw := corehttp.Idempotency(corehttp.NewMemoryIdempotencyStore(time.Hour, 0))(h)
 
-	ilk := make(chan int, 1)
+	first := make(chan int, 1)
 
 	go func() {
 		w := httptest.NewRecorder()
 		mw.ServeHTTP(w, postRequest("idem_1", "/x", `{"a":1}`))
-		ilk <- w.Code
+		first <- w.Code
 	}()
 
-	<-basladi
+	<-started
 
 	w2 := httptest.NewRecorder()
 	mw.ServeHTTP(w2, postRequest("idem_1", "/x", `{"a":1}`))
@@ -377,7 +377,7 @@ func TestIdempotencyAConcurrentSecondRequestConflicts(t *testing.T) {
 	assert.Contains(t, w2.Body.String(), corehttp.CodeIdempotencyInFlight)
 
 	close(proceed)
-	assert.Equal(t, http.StatusCreated, <-ilk)
+	assert.Equal(t, http.StatusCreated, <-first)
 }
 
 // TestIdempotencySeparatesKeys verifies that different keys do not affect each
@@ -425,7 +425,7 @@ func TestIdempotencyASingleRunUnderARace(t *testing.T) {
 
 // failingStore is a fake store returning an error on the Complete call.
 type failingStore struct {
-	ic          *corehttp.MemoryIdempotencyStore
+	inner       *corehttp.MemoryIdempotencyStore
 	completeErr error
 }
 
@@ -433,7 +433,7 @@ type failingStore struct {
 func (d *failingStore) Begin(
 	ctx context.Context, key, fp string,
 ) (*corehttp.IdempotentResponse, bool, error) {
-	return d.ic.Begin(ctx, key, fp)
+	return d.inner.Begin(ctx, key, fp)
 }
 
 // Complete returns the configured error and does NOT WRITE the record.
@@ -445,7 +445,7 @@ func (d *failingStore) Complete(
 
 // Abort delegates the call to the real store.
 func (d *failingStore) Abort(ctx context.Context, key string) error {
-	return d.ic.Abort(ctx, key)
+	return d.inner.Abort(ctx, key)
 }
 
 // TestIdempotencyTheKeyIsNotLeftLockedWhenTheRecordCannotBeWritten verifies that
@@ -458,7 +458,7 @@ func TestIdempotencyTheKeyIsNotLeftLockedWhenTheRecordCannotBeWritten(t *testing
 	t.Parallel()
 
 	store := &failingStore{
-		ic:          corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
+		inner:       corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
 		completeErr: errors.New("the store could not be written"),
 	}
 
@@ -683,7 +683,7 @@ type closeState struct {
 
 // closeCapturingStore records which context Complete/Abort were reached with.
 type closeCapturingStore struct {
-	ic *corehttp.MemoryIdempotencyStore
+	inner *corehttp.MemoryIdempotencyStore
 
 	mu       sync.Mutex
 	complete closeState
@@ -694,7 +694,7 @@ type closeCapturingStore struct {
 func (d *closeCapturingStore) Begin(
 	ctx context.Context, key, fp string,
 ) (*corehttp.IdempotentResponse, bool, error) {
-	return d.ic.Begin(ctx, key, fp)
+	return d.inner.Begin(ctx, key, fp)
 }
 
 // Complete records the state of the context and delegates the write to the real store.
@@ -705,7 +705,7 @@ func (d *closeCapturingStore) Complete(
 	d.complete = readState(ctx)
 	d.mu.Unlock()
 
-	return d.ic.Complete(ctx, key, resp)
+	return d.inner.Complete(ctx, key, resp)
 }
 
 // Abort records the state of the context and undoes the reservation in the real store.
@@ -714,7 +714,7 @@ func (d *closeCapturingStore) Abort(ctx context.Context, key string) error {
 	d.abort = readState(ctx)
 	d.mu.Unlock()
 
-	return d.ic.Abort(ctx, key)
+	return d.inner.Abort(ctx, key)
 }
 
 // closes reads the recorded states safely.
@@ -741,12 +741,12 @@ func readState(ctx context.Context) closeState {
 func TestIdempotencyTheRecordIsWrittenEvenIfTheClientDisconnects(t *testing.T) {
 	t.Parallel()
 
-	store := &closeCapturingStore{ic: corehttp.NewMemoryIdempotencyStore(time.Hour, 0)}
+	store := &closeCapturingStore{inner: corehttp.NewMemoryIdempotencyStore(time.Hour, 0)}
 
-	ctx, iptal := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(t.Context())
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// The client dropped the connection while the response was being written.
-		iptal()
+		cancel()
 		w.WriteHeader(http.StatusCreated)
 	})
 
@@ -776,14 +776,14 @@ func TestIdempotencyTheRecordIsWrittenEvenIfTheClientDisconnects(t *testing.T) {
 func TestIdempotencyTheReservationIsUndoneEvenIfTheClientDisconnects(t *testing.T) {
 	t.Parallel()
 
-	store := &closeCapturingStore{ic: corehttp.NewMemoryIdempotencyStore(time.Hour, 0)}
+	store := &closeCapturingStore{inner: corehttp.NewMemoryIdempotencyStore(time.Hour, 0)}
 
-	ctx, iptal := context.WithCancel(t.Context())
+	ctx, cancel := context.WithCancel(t.Context())
 	h := &countingHandler{status: http.StatusInternalServerError}
 
 	mw := corehttp.Idempotency(store)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
-			iptal()
+			cancel()
 			h.ServeHTTP(w, r)
 		}))
 

@@ -91,7 +91,7 @@ import (
 // WHAT STAYS IN SCOPE is everything else, which is most of the prose:
 // docs/adr/README.md — the index, rewritten whenever a record is added, so it
 // speaks about today — every file under docs/measurements, docs/gaps.md,
-// docs/known-limits.md and the other guides, both READMEs, and every Go comment in
+// docs/known-limits.md and the other guides, the README, and every Go comment in
 // the tree, tests included. Measured on the day this was written: 68 addresses in
 // 16 documents and 325 in Go comments are audited; 98 addresses in the records are
 // not. [TestTheRouteClaimScannerIsNotBlind] holds a floor under each of those

@@ -1,13 +1,14 @@
 # syntax=docker/dockerfile:1
 
-# --- derleme aşaması ---
+# --- build stage ---
 FROM golang:1.26-alpine AS build
 
 ARG VERSION=dev
 
 WORKDIR /src
 
-# Bağımlılıkları önce çek: kaynak değişse de bu katman cache'te kalır.
+# Fetch the dependencies first: this layer stays in the cache even when the
+# source changes.
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
@@ -18,7 +19,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -ldflags "-s -w -X main.version=${VERSION}" \
       -o /out/gobit ./cmd/server
 
-# --- çalışma aşaması ---
+# --- runtime stage ---
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/gobit /usr/local/bin/gobit

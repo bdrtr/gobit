@@ -60,7 +60,7 @@ func TestAnOfflineMethodPlacesAnOrderTheShopCapturesLater(t *testing.T) {
 		}
 		paid = order.Summary.PaidTotal
 		return paid == total
-	}, olayBeklemeSuresi, 20*time.Millisecond,
+	}, eventWaitTimeout, 20*time.Millisecond,
 		"the money the shop recorded reaches the order (expected %d, last read %d)", total, paid)
 	assert.Equal(t, map[string]int64{offlineMethod: total}, captures(t, cartID))
 }
@@ -98,7 +98,7 @@ func TestAnOfflineOrderNeverPaidGivesItsStockBack(t *testing.T) {
 		}
 		stocked = levels[0].StockedQuantity
 		return stocked == 5
-	}, olayBeklemeSuresi, 20*time.Millisecond,
+	}, eventWaitTimeout, 20*time.Millisecond,
 		"the canceled order's unit comes back to the shelf (last read %d)", stocked)
 
 	var status string
@@ -108,6 +108,6 @@ func TestAnOfflineOrderNeverPaidGivesItsStockBack(t *testing.T) {
             JOIN payment_collections c ON c.id = s.payment_collection_id
             WHERE c.reference = $1 AND s.provider_id = $2`, cartID, offlineMethod).Scan(&status)
 		return readErr == nil && status == "canceled"
-	}, olayBeklemeSuresi, 20*time.Millisecond,
+	}, eventWaitTimeout, 20*time.Millisecond,
 		"the transfer the canceled order was promised is closed (last read %q)", status)
 }

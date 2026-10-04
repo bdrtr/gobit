@@ -156,8 +156,8 @@ var pluginsWithNoPersonalData = map[string]string{
 //
 // The list is DATA that decides what gets verified, so it is checked against disk
 // by [TestThePersonalDataRootsCoverEveryTreeOfUnits] rather than trusted — the
-// same reason the language detector checks its own roots and the module list is
-// derived from the go.mod files that exist.
+// same reason the module list is derived from the go.mod files that exist and
+// the language scan's population has been git's file list since D227.
 var personalDataRoots = []string{"plugins", "contrib"}
 
 // TestThePersonalDataRootsCoverEveryTreeOfUnits closes the blindness the roots

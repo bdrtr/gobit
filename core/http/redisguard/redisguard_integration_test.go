@@ -111,9 +111,9 @@ func TestTheQuotaRenewsWhenTheWindowExpires(t *testing.T) {
 	lim, err := redisguard.NewLimiter(redisClient(t), defaultPrefix, 1, window)
 	require.NoError(t, err)
 
-	ilk, err := lim.Allow(t.Context(), "client-a")
+	first, err := lim.Allow(t.Context(), "client-a")
 	require.NoError(t, err)
-	require.True(t, ilk.Allowed)
+	require.True(t, first.Allowed)
 
 	refused, err := lim.Allow(t.Context(), "client-a")
 	require.NoError(t, err)
@@ -155,22 +155,22 @@ func TestDifferentClientsDoNotSpendEachOthersQuota(t *testing.T) {
 func TestTwoProcessesShareOneQuota(t *testing.T) {
 	uri := startRedis(t)
 
-	birinci, err := redisguard.NewLimiter(openClient(t, uri), defaultPrefix, 2, time.Minute)
+	firstInstance, err := redisguard.NewLimiter(openClient(t, uri), defaultPrefix, 2, time.Minute)
 	require.NoError(t, err)
-	ikinci, err := redisguard.NewLimiter(openClient(t, uri), defaultPrefix, 2, time.Minute)
+	secondInstance, err := redisguard.NewLimiter(openClient(t, uri), defaultPrefix, 2, time.Minute)
 	require.NoError(t, err)
 
-	d1, err := birinci.Allow(t.Context(), "client-a")
+	d1, err := firstInstance.Allow(t.Context(), "client-a")
 	require.NoError(t, err)
 	assert.True(t, d1.Allowed)
 	assert.Equal(t, 1, d1.Remaining)
 
-	d2, err := ikinci.Allow(t.Context(), "client-a")
+	d2, err := secondInstance.Allow(t.Context(), "client-a")
 	require.NoError(t, err)
 	assert.True(t, d2.Allowed)
 	assert.Zero(t, d2.Remaining, "the second instance has to see what the FIRST spent")
 
-	d3, err := birinci.Allow(t.Context(), "client-a")
+	d3, err := firstInstance.Allow(t.Context(), "client-a")
 	require.NoError(t, err)
 	assert.False(t, d3.Allowed, "the quota must not be multiplied by the instance count")
 }
@@ -332,27 +332,27 @@ func TestTheRecordDisappearsWhenTheTTLExpires(t *testing.T) {
 func TestTwoProcessesSeeOneRecord(t *testing.T) {
 	uri := startRedis(t)
 
-	birinci, err := redisguard.NewIdempotencyStore(openClient(t, uri), defaultPrefix, time.Hour)
+	firstInstance, err := redisguard.NewIdempotencyStore(openClient(t, uri), defaultPrefix, time.Hour)
 	require.NoError(t, err)
-	ikinci, err := redisguard.NewIdempotencyStore(openClient(t, uri), defaultPrefix, time.Hour)
+	secondInstance, err := redisguard.NewIdempotencyStore(openClient(t, uri), defaultPrefix, time.Hour)
 	require.NoError(t, err)
 
 	const key = "tenant-1:key"
 
-	_, _, err = birinci.Begin(t.Context(), key, "izi-1")
+	_, _, err = firstInstance.Begin(t.Context(), key, "izi-1")
 	require.NoError(t, err)
 
-	_, _, err = ikinci.Begin(t.Context(), key, "izi-1")
+	_, _, err = secondInstance.Begin(t.Context(), key, "izi-1")
 	require.ErrorIs(t, err, corehttp.ErrIdempotencyKeyInFlight,
 		"the second instance has to see the first's reservation")
 
-	require.NoError(t, birinci.Complete(t.Context(), key, corehttp.IdempotentResponse{
+	require.NoError(t, firstInstance.Complete(t.Context(), key, corehttp.IdempotentResponse{
 		Status:      http.StatusCreated,
 		Body:        []byte(`{"id":"order_01"}`),
 		Fingerprint: "izi-1",
 	}))
 
-	record, done, err := ikinci.Begin(t.Context(), key, "izi-1")
+	record, done, err := secondInstance.Begin(t.Context(), key, "izi-1")
 	require.NoError(t, err)
 	require.True(t, done, "the second instance has to read the record the first wrote")
 	assert.Equal(t, []byte(`{"id":"order_01"}`), record.Body)
@@ -380,9 +380,9 @@ func TestLimitersWithDifferentPrefixesDoNotSpendEachOthersQuota(t *testing.T) {
 	// rather than on the key.
 	const key = "client-a"
 
-	ilk, err := staging.Allow(t.Context(), key)
+	first, err := staging.Allow(t.Context(), key)
 	require.NoError(t, err)
-	require.True(t, ilk.Allowed)
+	require.True(t, first.Allowed)
 
 	again, err := staging.Allow(t.Context(), key)
 	require.NoError(t, err)

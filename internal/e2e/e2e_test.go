@@ -627,7 +627,7 @@ func setUpHarness(ctx context.Context) error {
 	if err := ctr.Provide(svcEventBus, bus); err != nil {
 		return err
 	}
-	if err := eventLog.abone(bus); err != nil {
+	if err := eventLog.subscribe(bus); err != nil {
 		return err
 	}
 

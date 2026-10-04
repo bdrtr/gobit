@@ -1,5 +1,5 @@
 # gobit — Go Headless Commerce Framework
-# Tüm hedefler için: make help
+# For every target: make help
 
 BIN_DIR     := $(CURDIR)/bin
 COMPOSE     := docker compose -f deploy/docker-compose.yml
@@ -12,13 +12,14 @@ VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 
 # numbers CI never produces.
 export GOTOOLCHAIN := go$(shell sed -n 's/^go //p' go.mod)
 
-# `gobit new`'in üretilen go.mod'a yazacağı sürümü belirleyen DERLEME OLGULARI
-# (ADR 0154). Üçü de git'ten OLDUĞU GİBİ alınır; aritmetiği (yamanın bir
-# artırılması, damganın biçimi, hash'in kısaltılması) Go tarafında ve TESTLİ.
+# The BUILD FACTS that decide the version `gobit new` writes into the go.mod it
+# generates (ADR 0154). All three are taken from git AS THEY ARE; the
+# arithmetic (incrementing the patch by one, the stamp's format, shortening the
+# hash) is on the Go side and TESTED.
 #
-# RELEASE yalnızca commit'in ÜSTÜNDE bir etiket varsa doluyor: `git describe
-# --exact-match` başka her durumda başarısız oluyor, yani etiketli olmayan bir
-# derleme kendisini sürüm sanamıyor.
+# RELEASE is filled only when a tag sits ON the commit: `git describe
+# --exact-match` fails in every other case, so a build that is not tagged
+# cannot take itself for a release.
 BUILD_RELEASE    := $(shell git describe --tags --exact-match 2>/dev/null)
 BUILD_BASE_TAG   := $(shell git describe --tags --abbrev=0 2>/dev/null)
 BUILD_COMMIT     := $(shell git rev-parse HEAD 2>/dev/null)
@@ -34,66 +35,71 @@ GOLANGCI_VERSION := v2.13.1
 GOVULN_VERSION   := v1.1.4
 SQLC_VERSION     := v1.31.1
 
-# Ayrı go.mod'u olan modüller — kök DAHİL.
+# The modules with a go.mod of their own — the root INCLUDED.
 #
-# Liste ve SAYI birlikte duruyor ve sayı bir TABAN: bir glob hiçbir şey
-# eşleştirmezse döngü hiç dönmez ve hedef yine 0 döner, yani "hiçbir açık yok"
-# ile "hiçbir yere bakmadım" aynı çıkış koduyla anlatılamaz. Listeye bir modül
-# eklerken sayı da artar, ve artmazsa taban düşer.
+# The list and the COUNT stand together and the count is a FLOOR: if a glob
+# matches nothing, the loop never turns and the target still returns 0, so
+# "there is no vulnerability" and "I looked nowhere" cannot be told apart by
+# exit code. Adding a module to the list raises the count too, and if it does
+# not, the floor drops.
 SEPARATE_MODULES      := . examples/starter examples/storefront examples/plugin contrib/identity-session contrib/identity-passkey
 SEPARATE_MODULE_COUNT := 6
 GOLANGCI         := $(BIN_DIR)/golangci-lint
 GOVULN           := $(BIN_DIR)/govulncheck
 SQLC             := $(BIN_DIR)/sqlc
 
-# .env, make'in `include` mekanizmasıyla DEĞİL, POSIX kabuk semantiğiyle yüklenir.
-# `include .env` + `export` kullanılamaz çünkü make:
-#   - değerin içindeki `#` karakterinden sonrasını yorum sayıp keser
-#     (pa#ss içeren parola -> "pa"),
-#   - `$` karakterini değişken genişletmesi olarak yorumlar (se$cret -> "seret"),
-#   - tırnakları değerin parçası bırakır (LOG_FORMAT="text" -> `"text"`).
-# Parola içeren gerçek bir DSN bu yolla sessizce bozuluyordu.
+# .env is loaded with POSIX shell semantics, NOT with make's `include`
+# mechanism. `include .env` + `export` cannot be used, because make:
+#   - takes everything after a `#` inside a value for a comment and cuts it
+#     (a password containing pa#ss -> "pa"),
+#   - reads the `$` character as variable expansion (se$cret -> "seret"),
+#   - leaves the quotes as part of the value (LOG_FORMAT="text" -> `"text"`).
+# A real DSN containing a password was being corrupted this way, silently.
 #
-# ÖNCELİK: komut satırından verilen değişken .env'i EZER, tersi değil. Düz
-# `. ./.env` bunun tam tersini yapıyordu ve arıza SESSİZDİ: README'nin
-# `cp .env.example .env` adımını izleyen geliştiricinin ardından yazdığı
-# `OTEL_EXPORTER_OTLP_ENDPOINT=… make run`, `PLUGINS=… make run` ve
-# `ADMIN_BOOTSTRAP_EMAIL=… make run` komutlarının hepsi .env'deki BOŞ değerle
-# eziliyordu — izleme açılmıyor, eklenti yüklenmiyor, ilk yönetici
-# tohumlanmıyordu ve hiçbiri hata vermiyordu (ölçüldü: `eklentiler=[]`).
-# Öncelik docker compose'unkiyle aynı yöne çevrildi: ortam > .env.
+# PRECEDENCE: a variable given on the command line OVERRIDES .env, not the
+# other way round. A plain `. ./.env` did exactly the opposite and the fault
+# was SILENT: the commands that a developer who followed the README's
+# `cp .env.example .env` step typed next,
+# `OTEL_EXPORTER_OTLP_ENDPOINT=… make run`, `PLUGINS=… make run` and
+# `ADMIN_BOOTSTRAP_EMAIL=… make run`, were all overridden by the EMPTY value
+# in .env — tracing did not switch on, the plugin did not load, the first
+# admin was not seeded, and none of them raised an error (measured: the
+# startup log printed an empty plugin list). The precedence was turned to
+# match docker compose's: environment > .env.
 #
-# Yöntem AYRIŞTIRMAZ: çağıranın dışa verilmiş ortamı `export -p` ile
-# saklanır, .env kabukla yüklenir, sonra saklanan ortam geri uygulanır.
-# `KEY=$${KEY:-değer}` gibi bir sed dönüşümü .env'in içeriğine bağımlı olurdu
-# (satır sonundaki yorum, çok satırlı değer) — tam da bu dosyada kaçınılan şey.
-DOTENV = set -a; [ -f .env ] && { __cagiran_ortam=$$(export -p); . ./.env; eval "$$__cagiran_ortam"; }; set +a;
+# The method does NOT PARSE: the caller's exported environment is saved with
+# `export -p`, .env is loaded by the shell, then the saved environment is
+# applied again. A sed transformation such as `KEY=$${KEY:-value}` would depend
+# on the contents of .env (a comment at the end of a line, a multi-line value)
+# — exactly what this file avoids.
+DOTENV = set -a; [ -f .env ] && { __caller_env=$$(export -p); . ./.env; eval "$$__caller_env"; }; set +a;
 
 .DEFAULT_GOAL := help
 .PHONY: help run build test test-integration smoke seed load-test fuzz openapi-schema openapi-client openapi-validate lint fmt tidy gen up up-tracing down logs psql redis-cli migrate-status migrate-up migrate-down tools clean rename-module
 
-help: ## Bu yardım metnini göster
+help: ## Show this help text
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
 
-## --- Uygulama ---
+## --- Application ---
 
-run: ## Sunucuyu yerelde çalıştır
+run: ## Run the server locally
 	@$(DOTENV) go run -ldflags '$(LDFLAGS)' ./cmd/server
 
-build: ## Binary'yi bin/gobit olarak derle
+build: ## Build the binary as bin/gobit
 	@mkdir -p $(BIN_DIR)
 	go build -ldflags '$(LDFLAGS)' -o $(BIN_DIR)/gobit ./cmd/server
-	@echo "derlendi: $(BIN_DIR)/gobit ($(VERSION))"
+	@echo "built: $(BIN_DIR)/gobit ($(VERSION))"
 
-## --- Kalite ---
+## --- Quality ---
 
-# Test şeritleri testlere ORTAMDAN veritabanı VERMEZ (ADR 0163). Ayarların
-# varsayılanı localhost:5432 ve localhost:6379'u gösteriyor ve bir geliştirme
-# makinesinde ikisi de dinliyor; kendi kurulumunu başlatmayı unutan bir test o
-# yüzden burada yeşil geçip koşucuda kırmızı olur — D107 tam olarak böyle oldu.
-# Adres aynı, port hiçbir şeyin dinlemediği 1: değer AYRIŞIYOR ama hâlâ
-# ÇÖZÜMLENİYOR, yani yalnızca bağlanmak başarısız oluyor; config'i başka bir şey
-# için yükleyen testler etkilenmiyor.
+# The test lanes give the tests NO database FROM THE ENVIRONMENT (ADR 0163).
+# The configuration's defaults point at localhost:5432 and localhost:6379, and
+# on a development machine both are listening; a test that forgets to start
+# its own setup therefore passes green here and turns red on the runner
+# — D107 happened exactly this way. The address is the same, the port is 1,
+# where nothing listens: the value still PARSES and still RESOLVES, so only
+# connecting fails; tests that load the config for something else are not
+# affected.
 NO_AMBIENT_SERVICES := DATABASE_URL='postgres://gobit:gobit@127.0.0.1:1/gobit?sslmode=disable' REDIS_URL='redis://:gobit@127.0.0.1:1/0'
 
 # Every package process of one `go test` shares ONE testcontainers reaper, and
@@ -105,55 +111,58 @@ NO_AMBIENT_SERVICES := DATABASE_URL='postgres://gobit:gobit@127.0.0.1:1/gobit?ss
 # every recipe that starts containers to carrying it.
 REAPER_WAITS_OUT_THE_GAP := TESTCONTAINERS_RYUK_RECONNECTION_TIMEOUT=5m
 
-test: ## Birim testlerini çalıştır (race + coverage)
-	# -coverpkg olmadan yalnızca test edilen paketin KENDİ kodu sayılır; bir
-	# paketi başka paketin testi kapsadığında görünmez. Buradaki sayı YALNIZCA
-	# birim testlerinindir (~%55); deponun gerçek kapsamı entegrasyon
-	# testleriyle birlikte ölçülür (make test-integration, ~%76).
+test: ## Run the unit tests (race + coverage)
+	# Without -coverpkg only the tested package's OWN code is counted; a
+	# package covered by another package's test does not show. The figure
+	# here belongs to the unit tests ALONE (~55%); the repository's real
+	# coverage is measured together with the integration tests
+	# (make test-integration, ~76%).
 	$(NO_AMBIENT_SERVICES) go test -race -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
 
-test-integration: ## Entegrasyon testlerini çalıştır (testcontainers gerektirir)
+test-integration: ## Run the integration tests (requires testcontainers)
 	$(NO_AMBIENT_SERVICES) $(REAPER_WAITS_OUT_THE_GAP) go test -race -tags=integration -count=1 -timeout 15m -coverpkg=./... \
 		-coverprofile=coverage-integration.out -covermode=atomic ./...
 	@go tool cover -func=coverage-integration.out | tail -1
 
-# Smoke testleri ikiliyi DERLER ve gerçek süreçler başlatır; entegrasyon
-# etiketine karıştırılmadılar çünkü karıştırılsalardı süreç başlatmayan
-# yüzlerce test de bu maliyeti her koşumda öderdi (bkz. internal/smoke).
+# The smoke tests BUILD the binary and start real processes; they were not
+# folded into the integration tag because, had they been, hundreds of tests
+# that start no process would pay that cost on every run too (see
+# internal/smoke).
 #
-# -race YOKTUR ve bunun bir anlamı var: yarış dedektörü test SÜRECİNİ
-# izler, sınanan sunucu ise AYRI bir süreçtir ve kapsanmaz. Bayrağı koymak,
-# ölçmediği bir güvenceyi ima ederdi.
+# There is NO -race, and that means something: the race detector watches the
+# test PROCESS, while the server under test is a SEPARATE process and is not
+# covered. Setting the flag would imply a guarantee it does not measure.
 #
-# Zaman aşımı açıkça verilir: varsayılan 10 dakika, konteyner çekme +
-# derleme + beş senaryonun toplamı için soğuk bir makinede dar kalabilir.
-smoke: ## Smoke testleri: gerçek ikiliyi açıp süreç davranışını sınar (Docker gerektirir)
+# The timeout is given explicitly: the default 10 minutes can be tight on a
+# cold machine for pulling the containers + building + five scenarios in total.
+smoke: ## Smoke tests: start the real binary and test process behavior (requires Docker)
 	$(NO_AMBIENT_SERVICES) $(REAPER_WAITS_OUT_THE_GAP) go test -tags=smoke -count=1 -timeout 20m ./internal/smoke/
 
-# Benchmark'lar veritabanına DOKUNMAZ: hepsi saf fonksiyonlar ya da sahte
-# servisler üzerinde koşar. Deponun geri kalan ölçümü SQL tarafındaydı
-# (EXPLAIN, 52 bin satırlık fikstür); buradaki rakamlar Go tarafının kendi
-# maliyetidir ve iki ölçüm birbirinin yerine geçmez.
+# The benchmarks do NOT TOUCH the database: all of them run on pure functions
+# or fake services. The rest of the repository's measurement was on the SQL
+# side (EXPLAIN, a 52-thousand-row fixture); the figures here are the Go
+# side's own cost, and neither measurement stands in for the other.
 #
-# BENCH ile tek bir benchmark seçilebilir: make bench BENCH=StorefrontQuery
-bench: ## Go tarafı benchmark'ları çalıştır (tahsisat sayısıyla birlikte)
+# BENCH selects a single benchmark: make bench BENCH=StorefrontQuery
+bench: ## Run the Go-side benchmarks (with allocation counts)
 	go test -run '^$$' -bench '$(or $(BENCH),.)' -benchmem ./...
 
-# Fuzz hedeflerinin TOHUMLARI olağan test şeridinde koşar; burası üretilen
-# girdilerin şerididir ve ELLE koşulur. CI'da bir iş değil: bir fuzz koşusunun
-# değeri süreyle artar ve her push'ta 30 saniye koşmak, tohumların zaten
-# yaptığı işi ikinci kez yapmaktır.
+# The SEEDS of the fuzz targets run in the ordinary test lane; this is the lane
+# of generated inputs and it is run BY HAND. It is not a CI job: a fuzz run's
+# value grows with its duration, and running for 30 seconds on every push
+# would do a second time the work the seeds already do.
 #
-# `-fuzz` deseni ÇAPALIDIR ve gerekçesi ÖLÇÜLDÜ: `go test` onu çapasız bir
-# regexp gibi okur ve birden çok hedefe uyunca fuzz'lamayı REDDEDER — aynı
-# pakete `FuzzMulDivModAgain` eklenip `-fuzz FuzzMulDivMod` denendiğinde
-# "will not fuzz, -fuzz matches more than one fuzz test" deyip 1 ile çıkıyor.
-# Yani çapasız desende, önek paylaşan ikinci bir hedefin eklendiği gün bu
-# döngü orada durur ve KALAN hedeflerin hiçbiri koşmaz.
+# The `-fuzz` pattern is ANCHORED and the reason was MEASURED: `go test` reads
+# it as an unanchored regexp and REFUSES to fuzz when it matches more than one
+# target — with `FuzzMulDivModAgain` added to the same package, trying
+# `-fuzz FuzzMulDivMod` says "will not fuzz, -fuzz matches more than one fuzz
+# test" and exits 1. So with an unanchored pattern, the day a second target
+# sharing a prefix is added this loop stops there and NONE of the REMAINING
+# targets runs.
 #
-# FUZZTIME ile süre ayarlanır: make fuzz FUZZTIME=5m
+# FUZZTIME sets the duration: make fuzz FUZZTIME=5m
 FUZZTIME ?= 30s
-fuzz: ## Fuzz hedeflerini sırayla çalıştır (FUZZTIME ile ayarlanır)
+fuzz: ## Run the fuzz targets one after another (set with FUZZTIME)
 	@found=0; \
 	for pkg in $$(go list ./...); do \
 		for target in $$(go test -list '^Fuzz' $$pkg 2>/dev/null | grep '^Fuzz'); do \
@@ -163,56 +172,59 @@ fuzz: ## Fuzz hedeflerini sırayla çalıştır (FUZZTIME ile ayarlanır)
 		done; \
 	done; \
 	if [ "$$found" -eq 0 ]; then \
-		echo "fuzz: hiçbir hedef bulunamadı, en az bir tane bekleniyordu" >&2; exit 1; \
+		echo "fuzz: no target found, at least one was expected" >&2; exit 1; \
 	fi
 
-# Ölçüm düzeneği artık DEPODAN kurulur.
+# The measurement rig is now built FROM THE REPOSITORY.
 #
-# 52 bin ürünlük katalog aylarca tek bir Docker biriminde yaşadı ve depoda onu
-# yeniden kuracak hiçbir şey yoktu: seed dosyası yok, seed hedefi yok, seed
-# programı yok. `docker compose down -v` ile 28 dosyadaki her zamanlama cümlesi
-# doğrulanamaz düzyazıya dönüşüyordu — "performans cümlesi ölçülmeden yazılmaz"
-# kuralı bir Docker birimine bağlıydı.
+# The 52-thousand-product catalog lived for months in a single Docker volume
+# and the repository had nothing that could build it again: no seed file, no
+# seed target, no seed program. With `docker compose down -v`, every timing
+# sentence in 28 files was turning into unverifiable prose — the rule "a
+# performance sentence is not written without being measured" hung on a
+# Docker volume.
 #
-# Hedef AYRI BİR BETİK DEĞİL, ikilinin kendi alt komutudur ve bu zorunludur:
-# şema modüllerin KENDİ migration'larından gelir, üstelik üç link tablosu
-# (link_product_variant_price_set, link_product_variant_inventory,
-# link_product_sales_channel) hiçbir migration'da yoktur — core/link onları
-# AÇILIŞTA, Define çağrısıyla yaratır. Saf bir `psql -f seed.sql` bu yüzden ilk
-# link INSERT'ünde patlardı.
+# The target is NOT A SEPARATE SCRIPT, it is the binary's own subcommand, and
+# that is required: the schema comes from the modules' OWN migrations, and on
+# top of that three link tables (link_product_variant_price_set,
+# link_product_variant_inventory, link_product_sales_channel) are in no
+# migration — core/link creates them AT STARTUP, with the Define call. A plain
+# `psql -f seed.sql` would therefore blow up on the first link INSERT.
 #
-# BOYUT parametredir ve varsayılanı düzeneğin kendi şeklidir (50.000 tek
-# varyantlı + 2.000 çift varyantlı ürün = 52.004). Küçük bir katalog için:
-#   make seed URUNLER=200 COKLU=20
-# Değişken verilmediğinde bayrak HİÇ GEÇİLMEZ; varsayılan sayı burada DEĞİL,
-# ikilinin içindedir (internal/rig). İkinci bir yerde tekrarlansaydı, biri
-# değiştiğinde Makefile sessizce eski şekli kurmaya devam ederdi.
+# The SIZE is a parameter and its default is the rig's own shape (50,000
+# single-variant + 2,000 two-variant products = 52,004). For a small catalog:
+#   make seed PRODUCTS=200 MULTI=20
+# When a variable is not given, the flag is NOT PASSED AT ALL; the default
+# count lives NOT here but inside the binary (internal/rig). Were it repeated
+# in a second place, the day one of them changed, the Makefile would silently
+# go on building the old shape.
 #
-# HEDEF VERİTABANI ortamdan gelir (DATABASE_URL) — sunucununkiyle aynı ayar.
+# The TARGET DATABASE comes from the environment (DATABASE_URL) — the same
+# setting as the server's.
 #
-# SİLME (-reset) BU HEDEFTE YOKTUR ve gerekçe migrate-down'unkiyle aynıdır:
-# onay, veritabanı adının TEKRARIDIR; bir Makefile değişkeni onayı da beraberinde
-# taşısaydı silme "yanlışlıkla çalıştırılabilir" hâle gelirdi. Silmeli hâli elle
-# yazılır:
-#   go run ./cmd/server seed -reset -confirm <veritabanı-adı>
-SEED_FLAGS := $(if $(URUNLER),-products $(URUNLER)) $(if $(COKLU),-multi $(COKLU))
+# DELETION (-reset) is NOT IN THIS TARGET, and the reason is the same as
+# migrate-down's: the confirmation is a REPETITION of the database name; had a
+# Makefile variable carried the confirmation along with it, deleting would
+# have become "runnable by accident". The deleting form is written by hand:
+#   go run ./cmd/server seed -reset -confirm <database-name>
+SEED_FLAGS := $(if $(PRODUCTS),-products $(PRODUCTS)) $(if $(MULTI),-multi $(MULTI))
 
-seed: ## Ölçüm kataloğunu kur (URUNLER/COKLU ile boyutlandırılır)
+seed: ## Build the measurement catalog (sized with PRODUCTS/MULTI)
 	@$(DOTENV) go run -ldflags '$(LDFLAGS)' ./cmd/server seed $(SEED_FLAGS)
 
-load-test: ## Temel yük testini çalıştır (REQUESTS/CONCURRENCY ile ayarlanır)
+load-test: ## Run the baseline load test (set with REQUESTS/CONCURRENCY)
 	GOBIT_LOAD_REQUESTS=$(or $(REQUESTS),5000) \
 	GOBIT_LOAD_CONCURRENCY=$(or $(CONCURRENCY),32) \
 	$(REAPER_WAITS_OUT_THE_GAP) go test -tags=integration -count=1 -v -run TestStaysCorrectUnderBaselineLoad ./internal/e2e/
 
-lint: $(GOLANGCI) ## golangci-lint çalıştır (kök + ayrı modüller)
+lint: $(GOLANGCI) ## Run golangci-lint (root + separate modules)
 	$(GOLANGCI) run ./...
-	@# Ayrı bir go.mod ayrı bir derleme birimidir ve `run ./...` ona ULAŞMIYOR.
-	@# Aynı yapılandırmayla koşuluyor: kuralı kökten farklı olan bir ağaç, aynı
-	@# depoda iki farklı üsluba izin verirdi.
+	@# A separate go.mod is a separate build unit and `run ./...` does NOT REACH it.
+	@# It is run with the same configuration: a tree whose rules differed from
+	@# the root's would allow two different styles in one repository.
 	@#
-	@# Sayaç vuln hedefinin sayacıyla aynı sebeple: bir glob hiçbir şey
-	@# eşleştirmezse döngü hiç dönmez ve hedef yine 0 döner.
+	@# The counter is there for the same reason as the vuln target's: if a glob
+	@# matches nothing, the loop never turns and the target still returns 0.
 	@found=0; \
 	for mod in $(SEPARATE_MODULES); do \
 		[ "$$mod" = "." ] && continue; \
@@ -222,35 +234,35 @@ lint: $(GOLANGCI) ## golangci-lint çalıştır (kök + ayrı modüller)
 		found=$$((found+1)); \
 	done; \
 	if [ "$$found" -lt $$(($(SEPARATE_MODULE_COUNT) - 1)) ]; then \
-		echo "lint: yalnızca $$found ayrı modül denetlendi" >&2; exit 1; \
+		echo "lint: only $$found separate modules were checked" >&2; exit 1; \
 	fi
 
-# vuln, bilinen açıkları SEPARATE_MODULES'un tamamında arar: kök, örnekler ve
-# contrib ağaçları.
+# vuln looks for known vulnerabilities across the whole of SEPARATE_MODULES:
+# the root, the examples and the contrib trees.
 #
-# Sayı burada YAZILI DEĞİL, ve bir kez yazılıydı: "ÜÇ modülde birden" diyordu,
-# liste altıya çıkmıştı ve cümle üçte kalmıştı. Elle yazılmış bir sayım, saydığı
-# şey büyüdüğünde sessizce yanlış olur.
+# The count is NOT WRITTEN here, and once it was: it said "in THREE modules at
+# once", the list had grown to six and the sentence had stayed at three. A
+# count written by hand goes silently wrong when the thing it counts grows.
 #
-# Örnekler dahildir çünkü gobit bir KÜTÜPHANEDIR (ADR 0025) ve onlar, gömen bir
-# projenin gerçekten derlediği şeyin en yakın örneğidir. Kökün graf'ı temiz olup
-# starter'ınkinin olmaması mümkündür.
+# The examples are included because gobit is a LIBRARY (ADR 0025) and they are
+# the closest example of what an embedding project actually builds. The root's
+# graph can be clean while the starter's is not.
 #
-# `|| exit 1` DÖNGÜNÜN İÇİNDE, ve bu satır hedefin tek kırılgan yeri: bir shell
-# `for` döngüsü SON yinelemenin çıkış kodunu döndürür, yani kök kırmızı +
-# örnekler yeşil = make 0 döner. Yanlış yeşil. Aynı koruma `gen` hedefinde de
-# var ve aynı sebeple.
+# `|| exit 1` is INSIDE THE LOOP, and this line is the target's one fragile
+# spot: a shell `for` loop returns the exit code of the LAST iteration, so a
+# red root + green examples = make returns 0. A false green. The same guard is
+# in the `gen` target, for the same reason.
 #
-# `found` sayacı ise ikinci yarısı: bir glob hiçbir şey eşleştirmezse döngü hiç
-# dönmez ve hedef yine 0 döner — "hiçbir açık yok" ile "hiçbir yere bakmadım"
-# aynı çıkış koduyla anlatılamaz.
+# The `found` counter is the second half: if a glob matches nothing, the loop
+# never turns and the target still returns 0 — "there is no vulnerability" and
+# "I looked nowhere" cannot be told apart by exit code.
 #
-# BULGU VARSA BUILD KIRMIZI OLUR, ve düzeltmesi olmayan bir tavsiye için bir
-# muafiyet mekanizması BİLEREK yazılmadı: tüketicisi olmayan bir yetenek bu
-# deponun reddettiği şekildir (ADR 0009). O gün geldiğinde seçenekler pinlemek,
-# yamalamak ya da o gün yazılmış bir muafiyettir — üçü de birinin karar verdiği
-# şeyler, bugünden kurulmuş bir kaçış yolu değil.
-vuln: $(GOVULN) ## Bilinen açıkları ara (kök + ayrı modüller)
+# IF THERE IS A FINDING THE BUILD GOES RED, and an exemption mechanism for an
+# advisory that has no fix was DELIBERATELY not written: a capability with no
+# consumer is the shape this repository rejects (ADR 0009). When that day
+# comes, the options are pinning, patching, or an exemption written that day —
+# all three are things somebody decides, not an escape route built in advance.
+vuln: $(GOVULN) ## Look for known vulnerabilities (root + separate modules)
 	@found=0; \
 	for mod in $(SEPARATE_MODULES); do \
 		[ -f "$$mod/go.mod" ] || continue; \
@@ -259,20 +271,20 @@ vuln: $(GOVULN) ## Bilinen açıkları ara (kök + ayrı modüller)
 		found=$$((found+1)); \
 	done; \
 	if [ "$$found" -lt $(SEPARATE_MODULE_COUNT) ]; then \
-		echo "vuln: yalnızca $$found modül tarandı, $(SEPARATE_MODULE_COUNT) bekleniyordu" >&2; exit 1; \
+		echo "vuln: only $$found modules were scanned, $(SEPARATE_MODULE_COUNT) were expected" >&2; exit 1; \
 	fi
 
-# Ayrı go.mod'u olan her modülün testleri.
+# The tests of every module that has a go.mod of its own.
 #
-# `go test ./...` kökten koşulduğunda bu modüllere ULAŞMIYOR: ayrı bir modül,
-# ayrı bir derleme birimidir. contrib/identity-session yirmi sekiz test taşıyor
-# ve hiçbir şerit onları koşmuyordu; koşulmayan bir test, olmayan bir testten
-# KÖTÜDÜR, çünkü kapsam varmış gibi görünür.
+# `go test ./...` run from the root does NOT REACH these modules: a separate
+# module is a separate build unit. contrib/identity-session carries
+# twenty-eight tests and no lane was running them; a test that is not run is
+# WORSE than a test that does not exist, because it looks like coverage.
 #
-# Örnek modüllerin testi yok ve derlenmeleri arch süitindeki
-# TestTheOutOfTreeExamplesCompile ile kanıtlanıyor; bu hedef onları da koşuyor,
-# çünkü "testi yok" bugünün olgusu, kuralın değil.
-test-modules: ## Ayrı modüllerin testlerini koştur
+# The example modules have no tests, and that they build is proven by
+# TestTheOutOfTreeExamplesCompile in the arch suite; this target runs them
+# too, because "has no tests" is a fact about today, not the rule.
+test-modules: ## Run the separate modules' tests
 	@found=0; \
 	for mod in $(SEPARATE_MODULES); do \
 		[ -f "$$mod/go.mod" ] || continue; \
@@ -281,26 +293,26 @@ test-modules: ## Ayrı modüllerin testlerini koştur
 		found=$$((found+1)); \
 	done; \
 	if [ "$$found" -lt $(SEPARATE_MODULE_COUNT) ]; then \
-		echo "test-modules: yalnızca $$found modül koşuldu, $(SEPARATE_MODULE_COUNT) bekleniyordu" >&2; exit 1; \
+		echo "test-modules: only $$found modules ran, $(SEPARATE_MODULE_COUNT) were expected" >&2; exit 1; \
 	fi
 
-# Ayrı modüllerin ENTEGRASYON testleri.
+# The INTEGRATION tests of the separate modules.
 #
-# Ayrı bir hedef, cunku `test-modules` CI'nin Test isinde kosuyor ve orada Docker
-# YOK. Bu hedef Integration isine ait.
+# A separate target, because `test-modules` runs in CI's Test job and there is
+# NO Docker there. This target belongs to the Integration job.
 #
-# Taban MODUL BASINA degil, TOPLAMDA birdir.
+# The floor is one IN TOTAL, not PER MODULE.
 #
-# Hangi modulun entegrasyon testi olacagi bugunun olgusu — ornek moduller hic
-# test tasimiyor — ve modul basina bir taban, yazilmamis bir kurali dayatirdi.
-# Ama tabansiz birakmak olculdu ve KOTU cikti: tarama bozulunca hedef hicbir
-# sey kosmadan 0 donuyor, ki "hepsi gecti" ile "hicbirine bakmadim" yine ayni
-# cikis kodu demek.
+# Which module has integration tests is a fact about today — the example
+# modules carry no tests at all — and a floor per module would impose a rule
+# nobody has written. But leaving it without a floor was measured and came out
+# BAD: when the scan breaks, the target runs nothing and returns 0, and "all
+# passed" and "I looked at none" are once again the same exit code.
 #
-# Bir taban ikisini birden veriyor: kimseye test yazma borcu yuklemiyor, ve
-# tarama sessizce bosa dustugunde duruyor. Bugun bir modul kosuyor; o da
-# kalmayacaksa bu satir birinin KARAR vermesini istiyor.
-test-modules-integration: ## Ayrı modüllerin entegrasyon testlerini koştur (Docker)
+# One floor gives both: it puts no debt of writing tests on anybody, and it
+# stops when the scan silently comes up empty. Today one module runs; if that
+# one goes too, this line asks somebody to make a DECISION.
+test-modules-integration: ## Run the separate modules' integration tests (Docker)
 	@found=0; \
 	for mod in $(SEPARATE_MODULES); do \
 		[ "$$mod" = "." ] && continue; \
@@ -311,137 +323,144 @@ test-modules-integration: ## Ayrı modüllerin entegrasyon testlerini koştur (D
 		found=$$((found+1)); \
 	done; \
 	if [ "$$found" -lt 1 ]; then \
-		echo "test-modules-integration: hicbir ayri modul kosulmadi" >&2; exit 1; \
+		echo "test-modules-integration: no separate module ran" >&2; exit 1; \
 	fi
 
-fmt: $(GOLANGCI) ## Kaynakları biçimlendir (gofmt + goimports)
+fmt: $(GOLANGCI) ## Format the sources (gofmt + goimports)
 	@$(GOLANGCI) fmt ./...
 	@go mod tidy
 
-tidy: ## go.mod/go.sum'ı düzenle ve doğrula
+tidy: ## Tidy and verify go.mod/go.sum
 	go mod tidy
 	go mod verify
 
-## --- Altyapı ---
+## --- Infrastructure ---
 
-up: ## Postgres + Redis'i ayağa kaldır (sağlıklı olana kadar bekler)
+up: ## Bring up Postgres + Redis (waits until healthy)
 	@$(DOTENV) $(COMPOSE) up -d --wait
-	@echo "postgres ve redis hazır."
+	@echo "postgres and redis are ready."
 
-up-tracing: ## Altyapıyı Jaeger izleme toplayıcısıyla birlikte kaldır
+up-tracing: ## Bring up the infrastructure with the Jaeger trace collector
 	@$(DOTENV) $(COMPOSE) --profile tracing up -d --wait
-	@echo "postgres, redis ve jaeger hazır."
-	@echo "izlemeyi açmak için: OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 OTEL_EXPORTER_OTLP_INSECURE=true make run"
-	@echo "arayüz: http://localhost:$${JAEGER_UI_PORT:-16686}"
+	@echo "postgres, redis and jaeger are ready."
+	@echo "to turn tracing on: OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4317 OTEL_EXPORTER_OTLP_INSECURE=true make run"
+	@echo "UI: http://localhost:$${JAEGER_UI_PORT:-16686}"
 
-down: ## Servisleri durdur (veri korunur)
+down: ## Stop the services (data is kept)
 	@$(DOTENV) $(COMPOSE) --profile tracing down
 
-logs: ## Servis loglarını izle
+logs: ## Follow the service logs
 	@$(DOTENV) $(COMPOSE) logs -f
 
-psql: ## Postgres'e psql ile bağlan
+psql: ## Connect to Postgres with psql
 	@$(DOTENV) $(COMPOSE) exec postgres psql -U "$${POSTGRES_USER:-gobit}" -d "$${POSTGRES_DB:-gobit}"
 
-redis-cli: ## Redis'e redis-cli ile bağlan
+redis-cli: ## Connect to Redis with redis-cli
 	@$(DOTENV) $(COMPOSE) exec redis redis-cli --no-auth-warning -a "$${REDIS_PASSWORD:-gobit}"
 
 ## --- Migration ---
 #
-# İLERİ YÖN İÇİN AYRI BİR KOMUT YOKTUR ve bu bilinçlidir: migration'lar
-# uygulama AÇILIŞINDA, modül başına ve golang-migrate'in kilidiyle uygulanır
-# (bkz. core/db.Migrate ve module.Registry.Bootstrap). Ayrı bir komut, "şemayı
-# güncellemeyi unuttum" hatasını mümkün kılardı — kod ile şemanın ayrı adımlarda
-# ilerlediği her kurulumda er geç olan budur.
+# There is NO SEPARATE COMMAND FOR THE FORWARD DIRECTION, and that is
+# deliberate: migrations are applied AT APPLICATION STARTUP, per module and
+# under golang-migrate's lock (see core/db.Migrate and
+# module.Registry.Bootstrap). A separate command would make the "I forgot to
+# update the schema" fault possible — which is what sooner or later happens in
+# every installation where the code and the schema move forward in separate
+# steps.
 #
-# Eşzamanlı açılış güvenlidir: birden çok örnek aynı anda açıldığında
-# golang-migrate'in kilidi birini geçirir, ötekiler bekler (gerçek sunucuyla
-# üç örnekle doğrulandı).
+# Concurrent startup is safe: when several instances start at once,
+# golang-migrate's lock lets one through and the others wait (verified with
+# three instances against a real server).
 #
-# GERİ ALMA ise ikilinin kendi alt komutudur; aşağıdaki hedefler onu sarar.
-# Sunucu hâlâ ARGÜMANSIZ çalıştırıldığında başlar ve başka hiçbir biçimde
-# başlamaz.
+# ROLLING BACK, on the other hand, is the binary's own subcommand; the targets
+# below wrap it. The server still starts when run WITHOUT ARGUMENTS and starts
+# in no other form.
 
-migrate-status: ## Her sahibin şema sürümünü ve dirty durumunu bildirir
+migrate-status: ## Reports each owner's schema version and dirty state
 	@$(DOTENV) go run -ldflags '$(LDFLAGS)' ./cmd/server migrate status
 
-migrate-up: ## Migration'lar açılışta otomatik uygulanır (ayrı komut yok)
-	@echo "migrate-up: ayrı bir komut YOKTUR."
-	@echo "  Migration'lar 'make run' ile açılışta, modül başına uygulanır."
-	@echo "  Yalnızca şemayı kurmak için: DATABASE_URL=... go run ./cmd/server (açıldıktan sonra durdurun)."
-	@echo "  Uygulanmış sürümleri görmek için: make migrate-status"
+migrate-up: ## Migrations are applied automatically at startup (no separate command)
+	@echo "migrate-up: there is NO separate command."
+	@echo "  Migrations are applied at startup by 'make run', per module."
+	@echo "  To install only the schema: DATABASE_URL=... go run ./cmd/server (stop it once it has started)."
+	@echo "  To see the applied versions: make migrate-status"
 
-# ONAY, sahip adının TEKRARIDIR ve bu hedef onu VERMEZ: make migrate-down
-# OWNER=cart yalnızca planı basar ve sıfırdan farklı kodla döner. Onaylı hâli
-# elle yazılır, çünkü bir Makefile değişkeni onayı da beraberinde taşısaydı
-# geri alma "yanlışlıkla çalıştırılabilir" hâle gelirdi — .down.sql dosyaları
-# yarattıkları şeyi DROP eder ve satırlar geri gelmez.
-migrate-down: ## Bir modülün şemasını geri alma PLANINI basar (OWNER=<modül>)
-	@test -n "$(OWNER)" || { echo "migrate-down: OWNER=<modül> gerekir (sahipler için: make migrate-status)"; exit 2; }
+# The CONFIRMATION is a REPETITION of the owner name and this target does NOT
+# GIVE it: make migrate-down OWNER=cart only prints the plan and returns a
+# non-zero code. The confirmed form is written by hand, because had a Makefile
+# variable carried the confirmation along with it, rolling back would have
+# become "runnable by accident" — the .down.sql files DROP what they created
+# and the rows do not come back.
+migrate-down: ## Prints the PLAN for rolling back one module's schema (OWNER=<module>)
+	@test -n "$(OWNER)" || { echo "migrate-down: OWNER=<module> is required (for the owners: make migrate-status)"; exit 2; }
 	@$(DOTENV) go run -ldflags '$(LDFLAGS)' ./cmd/server migrate down "$(OWNER)"
 
-## --- İstemci üretimi ---
+## --- Client generation ---
 
-# Şema router'dan üretildiği ve gövdeler Go tiplerinden türetildiği için
-# istemci ELDE TUTULMAZ: depoda bir SDK vendorlamak, ikinci bir artefaktı
-# sürümlemek ve şemayla senkron tutmak demektir. Bunun yerine komut belgelenir
-# ve isteyen kendi dilinde üretir.
+# Because the schema is generated from the router and the bodies are derived
+# from Go types, the client is NOT KEPT IN THE TREE: vendoring an SDK in the
+# repository means versioning a second artifact and keeping it in sync with
+# the schema. The command is documented instead, and whoever wants a client
+# generates it in their own language.
 #
-# openapi-client, çalışan bir sunucudan şemayı çeker; sunucu ayakta olmalıdır
-# (make up && make run). DIL değişkeniyle hedef değiştirilir:
-#   make openapi-client DIL=go
-#   make openapi-client DIL=python
+# openapi-client pulls the schema from a running server; the server must be up
+# (make up && make run). The CLIENT_LANG variable changes the target:
+#   make openapi-client CLIENT_LANG=go
+#   make openapi-client CLIENT_LANG=python
 
 OPENAPI_URL ?= http://localhost:$(or $(APP_PORT),9000)/openapi.json
-DIL         ?= typescript-fetch
+CLIENT_LANG ?= typescript-fetch
 
-openapi-schema: ## Çalışan sunucudan OpenAPI şemasını indir (openapi.json)
+openapi-schema: ## Download the OpenAPI schema from a running server (openapi.json)
 	@curl -sSf $(OPENAPI_URL) -o openapi.json
-	@echo "yazıldı: openapi.json ($$(wc -c < openapi.json) bayt)"
+	@echo "written: openapi.json ($$(wc -c < openapi.json) bytes)"
 
-# Üreteç konteyneri varsayılan olarak root koşar ve bağlanan dizine root'a ait
-# dosyalar yazar: üretilen istemci o an okunabilir ama `make clean` onu SİLEMEZ
-# ("Permission denied") ve geliştirici kendi çalışma ağacında sudo'ya muhtaç
-# kalır (yaşandı). --user, üretilen dosyaların sahibini çağırana sabitler.
+# The generator container runs as root by default and writes root-owned files
+# into the mounted directory: the generated client is readable at the time,
+# but `make clean` CANNOT DELETE it ("Permission denied") and the developer is
+# left needing sudo in their own working tree (this happened). --user pins the
+# owner of the generated files to the caller.
 DOCKER_USER := --user $(shell id -u):$(shell id -g)
 
-openapi-client: openapi-schema ## Şemadan istemci üret (DIL=... ile dil seçilir)
+openapi-client: openapi-schema ## Generate a client from the schema (CLIENT_LANG=... selects the language)
 	@docker run --rm $(DOCKER_USER) -v $(CURDIR):/local \
 		openapitools/openapi-generator-cli:v7.10.0 \
-		generate -i /local/openapi.json -g $(DIL) -o /local/clients/$(DIL)
-	@echo "üretildi: clients/$(DIL)"
+		generate -i /local/openapi.json -g $(CLIENT_LANG) -o /local/clients/$(CLIENT_LANG)
+	@echo "generated: clients/$(CLIENT_LANG)"
 
-openapi-validate: openapi-schema ## Şemayı gerçek OpenAPI üreteciyle doğrula
+openapi-validate: openapi-schema ## Validate the schema with the real OpenAPI generator
 	@docker run --rm -v $(CURDIR):/local \
 		openapitools/openapi-generator-cli:v7.10.0 \
 		validate -i /local/openapi.json
 
-## --- Kod üretimi ---
+## --- Code generation ---
 
-gen: $(SQLC) ## Üretilen kodu yenile: sqlc (repository) + gqlgen (GraphQL)
+gen: $(SQLC) ## Refresh the generated code: sqlc (repository) + gqlgen (GraphQL)
 	@found=0; \
 	for cfg in internal/modules/*/sqlc.yaml; do \
 		[ -e "$$cfg" ] || continue; \
 		mod=$$(basename $$(dirname $$cfg)); \
 		if [ -z "$$(ls -A $$(dirname $$cfg)/queries 2>/dev/null)" ]; then \
-			echo "  $$mod: sorgu yok, atlanıyor"; continue; \
+			echo "  $$mod: no queries, skipping"; continue; \
 		fi; \
 		echo "  $$mod: sqlc generate"; \
 		$(SQLC) generate -f "$$cfg" || exit 1; \
 		found=$$((found+1)); \
 	done; \
-	if [ "$$found" = "0" ]; then echo "gen: üretilecek sorgu bulunamadı"; fi
-	@# gqlgen, sqlc'den İKİ noktada ayrılır ve ikisi de bilinçlidir:
+	if [ "$$found" = "0" ]; then echo "gen: no queries found to generate"; fi
+	@# gqlgen departs from sqlc at TWO points, and both are deliberate:
 	@#
-	@# 1. Üreteç bin/ altına KURULMAZ, `go tool` ile go.mod'daki sürümden
-	@#    çalıştırılır (go.mod'daki "tool" satırı). Sebep: üretilen kod, kendisini
-	@#    çalıştıran kütüphaneyle AYNI sürümden gelmelidir. İkinci bir sürüm pini
-	@#    (burada bir GQLGEN_VERSION) ayrıştığı gün, üretilen kod imzası değişmiş
-	@#    bir yardımcıyı çağırır ve hata şemayla ilgisi olmayan bir yerde çıkar.
+	@# 1. The generator is NOT INSTALLED under bin/; it runs with `go tool`
+	@#    from the version in go.mod (the "tool" line in go.mod). Reason: the
+	@#    generated code must come from the SAME version as the library that
+	@#    runs it. The day a second version pin (a GQLGEN_VERSION here) drifted
+	@#    apart, the generated code would call a helper whose signature had
+	@#    changed, and the error would surface somewhere unrelated to the schema.
 	@#
-	@# 2. Modül dizinine GİRİLİR. gqlgen yolları çalışma dizinine göre çözer;
-	@#    kökten çalıştırmak hata vermez, sessizce BOŞ bir şema okuyup kökte bir
-	@#    graph/ dizini üretir (denendi). "cd", o sessiz arızayı imkânsız kılar.
+	@# 2. It ENTERS the module directory. gqlgen resolves paths relative to the
+	@#    working directory; running it from the root gives no error, it
+	@#    silently reads an EMPTY schema and generates a graph/ directory at the
+	@#    root (tried). The "cd" makes that silent failure impossible.
 	@for cfg in internal/modules/*/gqlgen.yml; do \
 		[ -e "$$cfg" ] || continue; \
 		mod=$$(basename $$(dirname $$cfg)); \
@@ -449,14 +468,14 @@ gen: $(SQLC) ## Üretilen kodu yenile: sqlc (repository) + gqlgen (GraphQL)
 		(cd $$(dirname $$cfg) && go tool gqlgen generate --config $$(basename $$cfg)) || exit 1; \
 	done
 
-## --- Araçlar ---
+## --- Tools ---
 
-tools: $(GOLANGCI) $(SQLC) $(GOVULN) ## Sabitlenmiş sürümlerle yerel araçları kur
+tools: $(GOLANGCI) $(SQLC) $(GOVULN) ## Install the local tools at their pinned versions
 
-hooks: ## Push öncesi kapıyı bu klona kur (.githooks/pre-push)
+hooks: ## Install the pre-push gate in this clone (.githooks/pre-push)
 	git config core.hooksPath .githooks
-	@echo "core.hooksPath = .githooks — push öncesi build + lint çalışacak."
-	@echo "Bilerek atlamak için: git push --no-verify"
+	@echo "core.hooksPath = .githooks — build + lint will run before every push."
+	@echo "To skip it deliberately: git push --no-verify"
 
 $(GOLANGCI):
 	@mkdir -p $(BIN_DIR)
@@ -470,18 +489,18 @@ $(GOVULN):
 	@mkdir -p $(BIN_DIR)
 	GOBIN=$(BIN_DIR) go install golang.org/x/vuln/cmd/govulncheck@$(GOVULN_VERSION)
 
-clean: ## Üretilmiş dosyaları temizle
+clean: ## Remove the generated files
 	rm -rf $(BIN_DIR) coverage.out coverage-integration.out openapi.json clients
 
-rename-module: ## Go modul yolunu degistir: make rename-module MODULE=github.com/kullanici/repo
-	@test -n "$(MODULE)" || (echo "kullanim: make rename-module MODULE=github.com/kullanici/repo" >&2 && exit 1)
+rename-module: ## Change the Go module path: make rename-module MODULE=github.com/user/repo
+	@test -n "$(MODULE)" || (echo "usage: make rename-module MODULE=github.com/user/repo" >&2 && exit 1)
 	@old=$$(head -1 go.mod | awk '{print $$2}'); \
-	if [ "$$old" = "$(MODULE)" ]; then echo "modul yolu zaten $(MODULE)"; exit 0; fi; \
+	if [ "$$old" = "$(MODULE)" ]; then echo "module path is already $(MODULE)"; exit 0; fi; \
 	files=$$(grep -rlI --exclude-dir=.git --exclude-dir=bin --exclude-dir=vendor -- "$$old" . || true); \
-	if [ -z "$$files" ]; then echo "hata: $$old hicbir dosyada bulunamadi" >&2; exit 1; fi; \
+	if [ -z "$$files" ]; then echo "error: $$old was found in no file" >&2; exit 1; fi; \
 	echo "$$files" | xargs sed -i "s|$$old|$(MODULE)|g"; \
-	kalan=$$(grep -rlI --exclude-dir=.git --exclude-dir=bin --exclude-dir=vendor -- "$$old" . || true); \
-	if [ -n "$$kalan" ]; then echo "hata: eski yol hala su dosyalarda: $$kalan" >&2; exit 1; fi; \
-	echo "modul yolu $$old -> $(MODULE) ($$(echo "$$files" | wc -l) dosya guncellendi)"; \
-	echo "not: .golangci.yml depguard kurallari ve README dahil edildi."
+	remaining=$$(grep -rlI --exclude-dir=.git --exclude-dir=bin --exclude-dir=vendor -- "$$old" . || true); \
+	if [ -n "$$remaining" ]; then echo "error: the old path is still in these files: $$remaining" >&2; exit 1; fi; \
+	echo "module path $$old -> $(MODULE) ($$(echo "$$files" | wc -l) files updated)"; \
+	echo "note: the .golangci.yml depguard rules and the README were included."
 	@go mod tidy

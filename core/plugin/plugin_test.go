@@ -798,8 +798,8 @@ func newModuleRouter(t *testing.T, path, body string) chi.Router {
 }
 
 // routePlugin produces a plugin registering the given route function.
-func routePlugin(ad string, fn func(r chi.Router)) testPlugin {
-	return testPlugin{name: ad, setup: func(_ context.Context, h *coreplugin.Host) error {
+func routePlugin(name string, fn func(r chi.Router)) testPlugin {
+	return testPlugin{name: name, setup: func(_ context.Context, h *coreplugin.Host) error {
 		h.AddRoutes(fn)
 
 		return nil

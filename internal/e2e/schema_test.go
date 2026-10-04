@@ -201,7 +201,7 @@ func objectField(t *testing.T, source map[string]any, field, where string) map[s
 	t.Helper()
 
 	value, found := source[field]
-	require.True(t, found, "%s must have a %q field; present: %v", where, field, anahtarlar(source))
+	require.True(t, found, "%s must have a %q field; present: %v", where, field, keysOf(source))
 
 	object, ok := value.(map[string]any)
 	require.True(t, ok, "the %q in %s must be an object, found %T", field, where, value)
@@ -253,7 +253,7 @@ func requestSchema(t *testing.T, definition map[string]any, where string) map[st
 	t.Helper()
 
 	content := objectField(t, definition, "content", where)
-	mediaTypes := anahtarlar(content)
+	mediaTypes := keysOf(content)
 	require.Len(t, mediaTypes, 1,
 		"%s must describe a single media type; more than one leaves the choice to the client (got: %v)",
 		where, mediaTypes)
@@ -339,11 +339,11 @@ func recordFields(t *testing.T, doc map[string]any, method, pattern, code string
 
 	record := recordSchema(t, doc, jsonSchema(t, definition, method+" "+pattern+" "+code))
 
-	return anahtarlar(objectField(t, record, "properties", "record schema")), stringSlice(t, record["required"])
+	return keysOf(objectField(t, record, "properties", "record schema")), stringSlice(t, record["required"])
 }
 
-// anahtarlar returns a map's keys in sorted order.
-func anahtarlar[T any](m map[string]T) []string {
+// keysOf returns a map's keys in sorted order.
+func keysOf[T any](m map[string]T) []string {
 	names := make([]string, 0, len(m))
 	for name := range m {
 		names = append(names, name)
@@ -452,7 +452,7 @@ func responseFields(t *testing.T, body []byte) []string {
 	require.NoError(t, json.Unmarshal(body, &envelope), "the response could not be decoded; body: %s", string(body))
 	require.NotEmpty(t, envelope.Data, "the response must carry a data envelope; body: %s", string(body))
 
-	return anahtarlar(envelope.Data)
+	return keysOf(envelope.Data)
 }
 
 // TestSchemaDescribesEndpointsWithTheirBodies verifies that every described
@@ -496,14 +496,14 @@ func TestSchemaDescribesEndpointsWithTheirBodies(t *testing.T) {
 
 			var successes []string
 
-			for _, code := range anahtarlar(responses) {
+			for _, code := range keysOf(responses) {
 				if strings.HasPrefix(code, "2") {
 					successes = append(successes, code)
 				}
 			}
 
 			require.NotEmpty(t, successes,
-				"a described endpoint must carry at least one 2xx response; only error responses present: %v", anahtarlar(responses))
+				"a described endpoint must carry at least one 2xx response; only error responses present: %v", keysOf(responses))
 
 			for _, code := range successes {
 				definition := objectField(t, responses, code, endpoint+" responses")
@@ -530,7 +530,7 @@ func TestSchemaDescribesEndpointsWithTheirBodies(t *testing.T) {
 				record := recordSchema(t, doc, jsonSchema(t, definition, endpoint+" "+code))
 				assert.True(t, shapeIsKnown(record),
 					"the SHAPE of the %s response record must be known; an empty schema leaves the client guessing (got: %v)",
-					code, anahtarlar(record))
+					code, keysOf(record))
 			}
 
 			if _, isWrite := bodyBearingMethods[method]; !isWrite {
@@ -747,7 +747,7 @@ func TestSchemaCarriesRootKeysAndSharedComponents(t *testing.T) {
 		"a code and a message are ALWAYS present in the error body")
 
 	errorFields := objectField(t, innerError, "properties", "Error.error")
-	mustBeSubset(t, []string{"code", "message", "request_id", "details"}, anahtarlar(errorFields),
+	mustBeSubset(t, []string{"code", "message", "request_id", "details"}, keysOf(errorFields),
 		"the fields of the error envelope must be described in full")
 
 	// The untyped list envelope is NOT PUBLISHED (see [reservedNames]); the
@@ -758,14 +758,14 @@ func TestSchemaCarriesRootKeysAndSharedComponents(t *testing.T) {
 		"an unused generic component must not be published; it becomes a dead class in every client")
 
 	security := objectField(t, objectField(t, doc, "components", "document"), "securitySchemes", "components")
-	mustBeSubset(t, []string{"bearerAuth", "publishableKey"}, anahtarlar(security),
+	mustBeSubset(t, []string{"bearerAuth", "publishableKey"}, keysOf(security),
 		"the security scheme of both surfaces must be defined")
 
 	// Derived schemas must stand BESIDE the shared ones: if only Error and List
 	// are there, the body description has not run at all, and the $ref test in
 	// this file would audit nothing either.
 	assert.Greater(t, len(schemas), len(reservedNames),
-		"there must also be component schemas derived from the bodies; present: %v", anahtarlar(schemas))
+		"there must also be component schemas derived from the bodies; present: %v", keysOf(schemas))
 }
 
 // TestEverySchemaRefResolves verifies that all references arrive at a
@@ -909,16 +909,15 @@ func schemaStrings(value any, path string, into map[string]string) {
 // TestTheSchemaProseIsEnglish verifies that the document the server publishes
 // carries no Turkish letter.
 //
-// The language gate (ADR 0012) reads FILES, and a file in its ledger may still
-// hold Turkish. A describe block in such a file writes that Turkish into
-// /openapi.json, which every API client and every model client (ADR 0161)
-// reads, and the file gate stays green. This gate's subject is the served
-// document, so a Turkish letter fails here whichever file it came from.
+// The language gate (ADR 0012) reads FILES: every text file git lists (D227),
+// and its ledger has been empty since 2026-10-03 (D228). A describe block writes
+// its prose into /openapi.json, which every API client and every model client
+// (ADR 0161) reads. This gate's subject is the served document rather than the
+// files, so a Turkish letter fails here whichever way it reached the document.
 //
 // It reads letters and not words. Transliterated Turkish passes it; the word
 // list that would catch it lives in the language gate's own file, which is the
-// one file allowed to carry it, and that gate reads every file outside the
-// ledger.
+// one file allowed to carry it, and that gate reads every text file git lists.
 func TestTheSchemaProseIsEnglish(t *testing.T) {
 	_, doc := schemaDocument(t)
 
@@ -1012,7 +1011,7 @@ func TestSchemaMatchesRealResponses(t *testing.T) {
 	// The cart detail flattens an EMBEDDED DTO; that the field set comes out on
 	// the wire in that same flattened form can only be seen here.
 	t.Run("GET /store/v1/carts/{id}", func(t *testing.T) {
-		recorder := magazaIstegi(t, "/store/v1/carts/"+cartID, publishableKey)
+		recorder := storeRequest(t, "/store/v1/carts/"+cartID, publishableKey)
 		require.Equal(t, http.StatusOK, recorder.Code, "the cart must be readable; body: %s", recorder.Body.String())
 
 		fields, required := recordFields(t, doc, http.MethodGet, "/store/v1/carts/{id}", "200")

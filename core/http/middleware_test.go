@@ -208,7 +208,7 @@ func TestRecovererDoesNotBreakAHalfWrittenResponse(t *testing.T) {
 	const halfBody = `{"items":[1,2`
 
 	// A handler that panics but has already started writing the body.
-	yarimHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	halfWritingHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(halfBody))
 		panic("blew up while writing the body")
@@ -216,24 +216,24 @@ func TestRecovererDoesNotBreakAHalfWrittenResponse(t *testing.T) {
 
 	tests := map[string]func(log *slog.Logger) http.Handler{
 		"the recoverer on its own": func(log *slog.Logger) http.Handler {
-			return corehttp.Recoverer(log)(yarimHandler)
+			return corehttp.Recoverer(log)(halfWritingHandler)
 		},
 		"the recoverer outermost, the logger inside": func(log *slog.Logger) http.Handler {
-			return corehttp.Recoverer(log)(corehttp.RequestLogger(log)(yarimHandler))
+			return corehttp.Recoverer(log)(corehttp.RequestLogger(log)(halfWritingHandler))
 		},
 		"a foreign wrapper got in between": func(log *slog.Logger) http.Handler {
-			return corehttp.RequestLogger(log)(transparentLayer(corehttp.Recoverer(log)(transparentLayer(yarimHandler))))
+			return corehttp.RequestLogger(log)(transparentLayer(corehttp.Recoverer(log)(transparentLayer(halfWritingHandler))))
 		},
 	}
 
-	for name, kur := range tests {
+	for name, build := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			log, buf := testLogger()
 			rec := httptest.NewRecorder()
 			require.NotPanics(t, func() {
-				kur(log).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stream", http.NoBody))
+				build(log).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stream", http.NoBody))
 			})
 
 			assert.Equal(t, halfBody, rec.Body.String(),
@@ -572,19 +572,19 @@ func TestResponseWriterCountsFlushAsStartingTheResponse(t *testing.T) {
 	})
 
 	assert.True(t, hasFlusher, "the wrapper must not hide http.Flusher")
-	assert.True(t, rec.Flushed, "Flush alttaki writer'a iletilmeli")
+	assert.True(t, rec.Flushed, "Flush must reach the underlying writer")
 	assert.Empty(t, rec.Body.String(), "Flush starts the response; no error body must be written on top")
 }
 
 // hijackWriter is a fake writer providing Hijack.
 type hijackWriter struct {
 	*httptest.ResponseRecorder
-	cagrildi bool
+	called bool
 }
 
 // Hijack records having been called; it does not produce a real connection.
 func (h *hijackWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	h.cagrildi = true
+	h.called = true
 	return nil, bufio.NewReadWriter(bufio.NewReader(strings.NewReader("")), bufio.NewWriter(io.Discard)), nil
 }
 
@@ -616,7 +616,7 @@ func TestResponseWriterDoesNotHideHijack(t *testing.T) {
 
 	assert.True(t, hijacker, "the wrapper must not hide http.Hijacker")
 	assert.NoError(t, err)
-	assert.True(t, under.cagrildi, "Hijack alttaki writer'a iletilmeli")
+	assert.True(t, under.called, "Hijack must reach the underlying writer")
 	assert.Empty(t, under.Body.String(), "no error body must be written to a taken-over connection")
 }
 

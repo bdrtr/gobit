@@ -8,7 +8,7 @@ import (
 
 // The schema for the loyalty point endpoints (ADR 0164, ADR 0165).
 //
-// It is a file of its own for describe_storecredit.go's reason: the two
+// It is a file of its own for describe_storecredit.go's reason: the
 // endpoints answer one subject, and what a reader needs to be told about them —
 // that the points are earned from money that moved, and spent as a tender —
 // does not belong in the middle of the sessions.
@@ -20,7 +20,7 @@ import (
 // currency's smallest coin — the sentence ADR 0164 declined to say while the
 // installation held no number to say it with.
 
-// describeLoyaltyPoints describes the two loyalty point endpoints.
+// describeLoyaltyPoints describes the loyalty point endpoints.
 func describeLoyaltyPoints(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathAdminLoyaltyPointsBalance, openapi.Operation{
 		Summary: "Reads how many loyalty points a customer holds.",

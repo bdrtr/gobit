@@ -54,7 +54,7 @@ truth: a report says what was true on the day it was taken.
 | [The widening lane — measured 2026-09-10](0116-the-widening-lane.md) | 115 |
 | [Extracting a tax and re-taxing the remainder — measured 2026-09-09](0086-tax-inclusive-rounding.md) | 92 |
 | [Where a stack's rounding residue goes — written 2026-09-09](0095-stacked-tax-rounding.md) | 75 |
-| [What a count claim is, and what auditing one costs — measured 2026-09-08](0070-count-claims.md) | 210 |
+| [What a count claim is, and what auditing one costs — measured 2026-09-08](0070-count-claims.md) | 203 |
 | [Narrowing the moderation queue by what a model proposed — measured 2026-09-09](0073-review-suggestion-filter.md) | 119 |
 | [What the agreement report costs — measured 2026-09-09](0074-suggestion-agreement.md) | 57 |
 | [The inventory movement ledger — measured 2026-09-08](0068-the-movement-ledger.md) | 179 |

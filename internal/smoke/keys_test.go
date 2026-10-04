@@ -82,7 +82,7 @@ func TestPublishableKeyWithoutChannelIsRejectedByStorefront(t *testing.T) {
 		status, body := s.adminRequest(http.MethodGet, "/admin/v1/api-keys/"+keyID, token, nil)
 		require.Equal(t, http.StatusOK, status, "the key could not be read; body: %s", body)
 
-		view := zarfVerisi[struct {
+		view := envelopeData[struct {
 			Redacted string `json:"redacted"`
 		}](t, body)
 		assert.NotEmpty(t, view.Redacted,
@@ -153,7 +153,7 @@ func createKeyWithoutChannel(t *testing.T, s *proc, token string) (keyID, key st
 			"creation time, the README's sentence 'a key is created even with an empty "+
 			"list' would be wrong. body: %s", body)
 
-	created := zarfVerisi[struct {
+	created := envelopeData[struct {
 		APIKey struct {
 			ID string `json:"id"`
 		} `json:"api_key"`

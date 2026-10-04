@@ -54,8 +54,8 @@ func setUpTracer(t *testing.T) *tracetest.SpanRecorder {
 func setUpMeter(t *testing.T) *sdkmetric.ManualReader {
 	t.Helper()
 
-	okuyucu := sdkmetric.NewManualReader()
-	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(okuyucu))
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 
 	previous := otel.GetMeterProvider()
 	otel.SetMeterProvider(mp)
@@ -67,7 +67,7 @@ func setUpMeter(t *testing.T) *sdkmetric.ManualReader {
 		_ = mp.Shutdown(context.Background())
 	})
 
-	return okuyucu
+	return reader
 }
 
 // attributeOf reads one attribute off a span.
@@ -364,7 +364,7 @@ func TestTelemetryAnEmptyServiceNameWritesNoAttribute(t *testing.T) {
 // process lifetime, three requests still fall into a SINGLE series. Had a value
 // that changes per request been added, this assertion would break at once.
 func TestTelemetryTheServiceNameIsWrittenToTheMetricWithoutMultiplyingSeries(t *testing.T) {
-	okuyucu := setUpMeter(t)
+	reader := setUpMeter(t)
 	r := setUpRouterNamed(t, "gobit-magaza")
 
 	for _, id := range []string{"prod_01", "prod_02", "prod_03"} {
@@ -375,7 +375,7 @@ func TestTelemetryTheServiceNameIsWrittenToTheMetricWithoutMultiplyingSeries(t *
 	}
 
 	var rm metricdata.ResourceMetrics
-	require.NoError(t, okuyucu.Collect(t.Context(), &rm))
+	require.NoError(t, reader.Collect(t.Context(), &rm))
 
 	points := histogramPoints(t, &rm, "http.server.request.duration")
 	require.Len(t, points, 1, "a constant service name must not multiply the number of series")
@@ -394,7 +394,7 @@ func TestTelemetryTheServiceNameIsWrittenToTheMetricWithoutMultiplyingSeries(t *
 // would form, one stuck permanently at +3 and the other at -3, and the "how many
 // requests are in flight" dashboard would never come back to the truth.
 func TestTelemetryTheInFlightCounterReturnsToZero(t *testing.T) {
-	okuyucu := setUpMeter(t)
+	reader := setUpMeter(t)
 	r := setUpRouterNamed(t, "gobit-magaza")
 
 	for range 3 {
@@ -405,7 +405,7 @@ func TestTelemetryTheInFlightCounterReturnsToZero(t *testing.T) {
 	}
 
 	var rm metricdata.ResourceMetrics
-	require.NoError(t, okuyucu.Collect(t.Context(), &rm))
+	require.NoError(t, reader.Collect(t.Context(), &rm))
 
 	points := sumPoints(t, &rm, "http.server.active_requests")
 	require.Len(t, points, 1, "the increment and the decrement have to collect into a SINGLE series")

@@ -94,7 +94,7 @@ const storefrontVariantTitle = "Smoke Storefront Product"
 
 // storefrontLineItem holds the cart and order line item fields the scenario reads.
 //
-// The modules' DTO types are NOT imported; the rationale is in the [zarfVerisi]
+// The modules' DTO types are NOT imported; the rationale is in the [envelopeData]
 // documentation.
 type storefrontLineItem struct {
 	ID        string `json:"id"`
@@ -199,7 +199,7 @@ func TestStorefrontFromCartToOrderInARealProcess(t *testing.T) {
 				"A 404 says the endpoint IS NOT MOUNTED; the status code tells the two "+
 				"apart. body: %s", body)
 
-		item := zarfVerisi[storefrontLineItem](t, body)
+		item := envelopeData[storefrontLineItem](t, body)
 		assert.Equal(t, storefrontUnitPrice, item.UnitPrice,
 			"the unit price must come from the catalog; the client sent no price at all")
 		assert.Equal(t, storefrontVariantTitle, item.Title,
@@ -212,7 +212,7 @@ func TestStorefrontFromCartToOrderInARealProcess(t *testing.T) {
 		status, body := s.storefrontRequest(http.MethodGet, "/store/v1/carts/"+cartID, storefrontKey, nil)
 		require.Equal(t, http.StatusOK, status, "the cart could not be read; body: %s", body)
 
-		cart := zarfVerisi[storefrontCart](t, body)
+		cart := envelopeData[storefrontCart](t, body)
 		assert.Equal(t, storefrontSubtotal, cart.Subtotal)
 		assert.Equal(t, storefrontTax, cart.TaxTotal,
 			"the tax must be computed with the region's rate; had the totals pass not run it would have stayed zero")
@@ -237,7 +237,7 @@ func TestStorefrontFromCartToOrderInARealProcess(t *testing.T) {
 				"completion endpoint is not mounted. The status code says which one it "+
 				"is. body: %s", body)
 
-		result := zarfVerisi[storefrontCompletionResult](t, body)
+		result := envelopeData[storefrontCompletionResult](t, body)
 		require.NotEmpty(t, result.OrderID, "the response must carry the order's id; body: %s", body)
 		assert.Equal(t, cartID, result.CartID, "the result must record the cart it was born from")
 		assert.Equal(t, storefrontCurrency, result.CurrencyCode)
@@ -253,7 +253,7 @@ func TestStorefrontFromCartToOrderInARealProcess(t *testing.T) {
 		status, body := s.adminRequest(http.MethodGet, "/admin/v1/orders/"+orderID, token, nil)
 		require.Equal(t, http.StatusOK, status, "the order could not be read from the admin endpoint; body: %s", body)
 
-		order := zarfVerisi[storefrontOrder](t, body)
+		order := envelopeData[storefrontOrder](t, body)
 		assert.Equal(t, string(ordermodels.OrderPending), order.Status)
 		assert.Equal(t, cartID, order.CartID, "the order must record the cart it was born from")
 		assert.Equal(t, email, order.Email,
@@ -303,7 +303,7 @@ func openStorefrontRegion(t *testing.T, s *proc, token string) string {
 	})
 	require.Equal(t, http.StatusCreated, status, "the region could not be opened; body: %s", body)
 
-	region := zarfVerisi[struct {
+	region := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body)
 	require.NotEmpty(t, region.ID, "the region must return an id; body: %s", body)
@@ -350,7 +350,7 @@ func createStorefrontVariant(t *testing.T, s *proc, token string) string {
 	})
 	require.Equal(t, http.StatusCreated, status, "the product could not be opened; body: %s", body)
 
-	productID := zarfVerisi[struct {
+	productID := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body).ID
 	require.NotEmpty(t, productID, "the product must return an id; body: %s", body)
@@ -359,7 +359,7 @@ func createStorefrontVariant(t *testing.T, s *proc, token string) string {
 		map[string]any{"title": storefrontVariantTitle})
 	require.Equal(t, http.StatusCreated, status, "the variant could not be opened; body: %s", body)
 
-	variantID := zarfVerisi[struct {
+	variantID := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body).ID
 	require.NotEmpty(t, variantID, "the variant must return an id; body: %s", body)
@@ -378,7 +378,7 @@ func bindStorefrontPrice(t *testing.T, s *proc, token, variantID string) {
 	})
 	require.Equal(t, http.StatusCreated, status, "the price set could not be opened; body: %s", body)
 
-	priceSetID := zarfVerisi[struct {
+	priceSetID := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body).ID
 	require.NotEmpty(t, priceSetID, "the price set must return an id; body: %s", body)
@@ -398,7 +398,7 @@ func bindStorefrontStock(t *testing.T, s *proc, token, variantID string) {
 		map[string]any{"name": "Smoke Storefront Warehouse"})
 	require.Equal(t, http.StatusCreated, status, "the stock location could not be opened; body: %s", body)
 
-	locationID := zarfVerisi[struct {
+	locationID := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body).ID
 	require.NotEmpty(t, locationID, "the location must return an id; body: %s", body)
@@ -407,7 +407,7 @@ func bindStorefrontStock(t *testing.T, s *proc, token, variantID string) {
 		map[string]any{"sku": "SMOKE-STOREFRONT-1", "title": storefrontVariantTitle})
 	require.Equal(t, http.StatusCreated, status, "the inventory item could not be opened; body: %s", body)
 
-	inventoryItemID := zarfVerisi[struct {
+	inventoryItemID := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body).ID
 	require.NotEmpty(t, inventoryItemID, "the inventory item must return an id; body: %s", body)
@@ -447,7 +447,7 @@ func openStorefrontCart(t *testing.T, s *proc, key, regionID, email string) stri
 		"the cart could not be opened; a 404 shows the storefront endpoints are not "+
 			"mounted, a 422 that the body carries a field the server determines. body: %s", body)
 
-	cart := zarfVerisi[storefrontCart](t, body)
+	cart := envelopeData[storefrontCart](t, body)
 	require.NotEmpty(t, cart.ID, "the cart must return an id; body: %s", body)
 	require.Equal(t, regionID, cart.RegionID,
 		"the cart must be opened in THE COUNTRY'S region; a divergence shows the "+

@@ -64,7 +64,7 @@ func TestAProductNamesTheAddOnsItsLinesTake(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, body)
 	assert.Equal(t, []string{engraving, wrap}, listed())
 
-	shown := magazaIstegi(t, catalogPath(testChannelID, "/products/"+ring.Handle+"/add-ons"), publishableKey)
+	shown := storeRequest(t, catalogPath(testChannelID, "/products/"+ring.Handle+"/add-ons"), publishableKey)
 	require.Equal(t, http.StatusOK, shown.Code, shown.Body.String())
 	var store struct {
 		Data []struct {

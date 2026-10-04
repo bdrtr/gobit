@@ -119,7 +119,7 @@ type dummyModule struct {
 var _ query.Provider = (*dummyModule)(nil)
 
 // newModule creates the table for the given entity from scratch and returns the module.
-func newModule(t *testing.T, entity, kolonlar string) *dummyModule {
+func newModule(t *testing.T, entity, columns string) *dummyModule {
 	t.Helper()
 
 	m := &dummyModule{entity: entity, table: "dummy_" + entity, pool: testPool.Pool()}
@@ -127,14 +127,14 @@ func newModule(t *testing.T, entity, kolonlar string) *dummyModule {
 	_, err := m.pool.Exec(t.Context(), "DROP TABLE IF EXISTS "+m.table)
 	require.NoError(t, err)
 	_, err = m.pool.Exec(t.Context(),
-		fmt.Sprintf("CREATE TABLE %s (id TEXT PRIMARY KEY, %s)", m.table, kolonlar))
+		fmt.Sprintf("CREATE TABLE %s (id TEXT PRIMARY KEY, %s)", m.table, columns))
 	require.NoError(t, err)
 
 	return m
 }
 
 // insert writes a single record into the module's table.
-func (m *dummyModule) insert(t *testing.T, kolonlar string, values ...any) {
+func (m *dummyModule) insert(t *testing.T, columns string, values ...any) {
 	t.Helper()
 
 	placeholders := make([]string, len(values))
@@ -142,7 +142,7 @@ func (m *dummyModule) insert(t *testing.T, kolonlar string, values ...any) {
 		placeholders[i] = fmt.Sprintf("$%d", i+1)
 	}
 	_, err := m.pool.Exec(t.Context(),
-		fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", m.table, kolonlar, strings.Join(placeholders, ", ")),
+		fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", m.table, columns, strings.Join(placeholders, ", ")),
 		values...)
 	require.NoError(t, err)
 }
@@ -229,8 +229,8 @@ func TestGraphEndToEndWithTwoDummyModules(t *testing.T) {
 		Fields:  []string{"title"},
 		Filters: map[string]any{"status": "published"},
 		Expand: []query.Expansion{
-			{Link: "item_price", As: "fiyatlar", Fields: []string{"amount", "currency"}},
-			{Link: "item_main_price", As: "ana_fiyat"},
+			{Link: "item_price", As: "prices", Fields: []string{"amount", "currency"}},
+			{Link: "item_main_price", As: "main_price"},
 		},
 	})
 	require.NoError(t, err)
@@ -242,23 +242,23 @@ func TestGraphEndToEndWithTwoDummyModules(t *testing.T) {
 	assert.NotContains(t, got[0], "status", "an unselected field must not come back")
 
 	// OneToMany: a slice, in the link's order.
-	fiyatlar, ok := got[0]["fiyatlar"].([]query.Record)
+	firstPrices, ok := got[0]["prices"].([]query.Record)
 	require.Truef(t, ok, "OneToMany has to write a slice; the type that arrived: %T", got[0]["prices"])
-	require.Len(t, fiyatlar, 2)
-	assert.Equal(t, "price_1", fiyatlar[0]["id"])
-	assert.Equal(t, int64(1990), fiyatlar[0]["amount"])
-	assert.Equal(t, "TRY", fiyatlar[0]["currency"])
-	assert.Equal(t, "price_2", fiyatlar[1]["id"])
+	require.Len(t, firstPrices, 2)
+	assert.Equal(t, "price_1", firstPrices[0]["id"])
+	assert.Equal(t, int64(1990), firstPrices[0]["amount"])
+	assert.Equal(t, "TRY", firstPrices[0]["currency"])
+	assert.Equal(t, "price_2", firstPrices[1]["id"])
 
 	// OneToOne: a single record, nil on a root with no link.
-	ana, ok := got[0]["ana_fiyat"].(query.Record)
+	mainPrice, ok := got[0]["main_price"].(query.Record)
 	require.Truef(t, ok, "OneToOne has to write a single record; the type that arrived: %T", got[0]["main_price"])
-	assert.Equal(t, "price_1", ana["id"])
+	assert.Equal(t, "price_1", mainPrice["id"])
 
-	ikinci, ok := got[1]["fiyatlar"].([]query.Record)
+	secondPrices, ok := got[1]["prices"].([]query.Record)
 	require.True(t, ok)
-	require.Len(t, ikinci, 1)
-	assert.Equal(t, "price_3", ikinci[0]["id"])
+	require.Len(t, secondPrices, 1)
+	assert.Equal(t, "price_3", secondPrices[0]["id"])
 	assert.Nil(t, got[1]["main_price"], "a single-ended expansion has to be nil on a root with no link")
 
 	// No N+1: one query per expansion, one List for the root.
@@ -303,10 +303,10 @@ func TestGraphResolvesTheReverseDirectionWithTheRealLinkService(t *testing.T) {
 	}
 	require.NotNil(t, linked, "at least one linked price record was expected")
 
-	urunler, ok := linked["product"].([]query.Record)
+	products, ok := linked["product"].([]query.Record)
 	if ok {
-		require.NotEmpty(t, urunler)
-		assert.Contains(t, urunler[0], "id")
+		require.NotEmpty(t, products)
+		assert.Contains(t, products[0], "id")
 	} else {
 		product, single := linked["product"].(query.Record)
 		require.True(t, single, "an expansion has to be a Record or []Record, got: %T", linked["product"])

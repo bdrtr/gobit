@@ -14,13 +14,13 @@ import (
 // crockford is the alphabet permitted in an identifier body (Crockford Base32).
 const crockford = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-// TestKimlikBicimi verifies that the produced identifiers keep the prefix +
+// TestIDFormat verifies that the produced identifiers keep the prefix +
 // 26-character body format.
 //
 // The format is a CONTRACT: an order identifier travels in the log, in the
 // support record and in the saga's snapshot; the prefix disappearing or the
 // body shortening (uniqueness weakening) must not pass silently.
-func TestKimlikBicimi(t *testing.T) {
+func TestIDFormat(t *testing.T) {
 	cases := map[string]struct {
 		gen    func() string
 		prefix string
@@ -49,7 +49,7 @@ func TestKimlikBicimi(t *testing.T) {
 	}
 }
 
-// TestKimliklerZamanaGoreSiralanir verifies that the identifier itself carries
+// TestIDsSortByTime verifies that the identifier itself carries
 // the creation order.
 //
 // Sortability is not idle decoration: under a primary key scan the records
@@ -62,7 +62,7 @@ func TestKimlikBicimi(t *testing.T) {
 // why the test waits between rounds; the assertion is not "every identifier is
 // greater than the previous one" but "identifiers produced in different
 // milliseconds keep the time order".
-func TestKimliklerZamanaGoreSiralanir(t *testing.T) {
+func TestIDsSortByTime(t *testing.T) {
 	const (
 		rounds = 12
 		wait   = 2 * time.Millisecond
@@ -78,9 +78,9 @@ func TestKimliklerZamanaGoreSiralanir(t *testing.T) {
 	}
 }
 
-// TestKimliklerTekildir verifies that identifiers produced in the same
+// TestIDsAreUnique verifies that identifiers produced in the same
 // millisecond do not collide.
-func TestKimliklerTekildir(t *testing.T) {
+func TestIDsAreUnique(t *testing.T) {
 	const count = 1000
 
 	seen := make(map[string]struct{}, count)
@@ -122,9 +122,9 @@ func TestOrderTotalsIdentity(t *testing.T) {
 	assert.False(t, excessDiscount.DiscountWithinSubtotal(), "the discount bound must be violated")
 }
 
-// TestOrderDurumYardimcilari verifies that the status-based helpers answer
+// TestOrderStatusHelpers verifies that the status-based helpers answer
 // correctly.
-func TestOrderDurumYardimcilari(t *testing.T) {
+func TestOrderStatusHelpers(t *testing.T) {
 	assert.True(t, models.Order{Status: models.OrderCanceled}.Canceled())
 	assert.False(t, models.Order{Status: models.OrderPending}.Canceled())
 

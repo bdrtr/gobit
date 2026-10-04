@@ -157,21 +157,21 @@ func (l *Limiter) Allow(ctx context.Context, key string) (corehttp.Decision, err
 			"the rate limit script returned %d values, 2 were expected", len(result))
 	}
 
-	counter, kalanMs := result[0], result[1]
+	counter, remainingMs := result[0], result[1]
 
-	yenilenme := time.Duration(kalanMs) * time.Millisecond
-	if yenilenme <= 0 {
+	retryAfter := time.Duration(remainingMs) * time.Millisecond
+	if retryAfter <= 0 {
 		// The counter was on its last breath when we read it. A zero duration
 		// means "no wait"; it is rounded up to the full window so the client is
 		// not sent to retry instantly and collect a second 429.
-		yenilenme = l.window
+		retryAfter = l.window
 	}
 
 	if counter > int64(l.limit) {
 		return corehttp.Decision{
 			Limit:      l.limit,
 			Remaining:  0,
-			RetryAfter: yenilenme,
+			RetryAfter: retryAfter,
 		}, nil
 	}
 
@@ -180,6 +180,6 @@ func (l *Limiter) Allow(ctx context.Context, key string) (corehttp.Decision, err
 		Allowed:    true,
 		Limit:      l.limit,
 		Remaining:  l.limit - int(counter),
-		RetryAfter: yenilenme,
+		RetryAfter: retryAfter,
 	}, nil
 }

@@ -197,14 +197,7 @@ dropped is the owner's call.
 
 1. **The Lines column of `docs/measurements/README.md`** — correct it or drop
    it. Section 6 has the reasoning; it is not gated either way.
-2. **Where the Turkish number words live.** They are in
-   `internal/arch/testdata/turkish-numerals.txt`, and the `.txt` extension is
-   what puts them outside the language scan — the words are DATA for a scanner,
-   not prose, and spelling them in a Go file would add lines to a ledger that
-   may only shrink (ADR 0012). The existing alternative was
-   `diacriticDataExemptions`, which would have kept them in the source and
-   named them as data there instead. The file was chosen because the ledger
-   stays untouched either way and a table in its own file can be read without
-   reading the gate; the exemption list is the smaller change and remains
-   available if the owner would rather have one place for that kind of
-   declaration.
+2. ~~**Where the Turkish number words live.**~~ **Closed 2026-10-04 (D228):** the
+   Turkish half of the vocabulary and the data file that held it were removed
+   once ADR 0012's ledger emptied and no Turkish prose was left for the gate to
+   read; the number words are now the English tables in the gate's own source.

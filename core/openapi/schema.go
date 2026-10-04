@@ -153,9 +153,9 @@ func cursored(opts []ListOption) bool {
 // are REQUIRED; for the endpoint whose counter is optional there is
 // [Doc.ListOptionalCount].
 func (d *Doc) List(v any, opts ...ListOption) map[string]any {
-	oge := d.schemaOfType(listRecord(reflect.TypeOf(v)), map[reflect.Type]bool{})
+	elem := d.schemaOfType(listRecord(reflect.TypeOf(v)), map[reflect.Type]bool{})
 
-	return listSchema(oge, true, cursored(opts))
+	return listSchema(elem, true, cursored(opts))
 }
 
 // ListOptionalCount produces the list envelope's schema with the "count" field
@@ -182,9 +182,9 @@ func (d *Doc) List(v any, opts ...ListOption) map[string]any {
 // api listEnvelope) — writing nullable would describe a value that never appears
 // in the body.
 func (d *Doc) ListOptionalCount(v any, opts ...ListOption) map[string]any {
-	oge := d.schemaOfType(listRecord(reflect.TypeOf(v)), map[reflect.Type]bool{})
+	elem := d.schemaOfType(listRecord(reflect.TypeOf(v)), map[reflect.Type]bool{})
 
-	return listSchema(oge, false, cursored(opts))
+	return listSchema(elem, false, cursored(opts))
 }
 
 // RequestBody produces a REQUIRED JSON request body definition from the given type.
@@ -307,9 +307,9 @@ func (d *Doc) schemaOfType(t reflect.Type, seen map[reflect.Type]bool) map[strin
 // encoding/json really does call that encoder and we cannot know its wire shape
 // from here.
 func (d *Doc) pointerSchema(t reflect.Type, seen map[reflect.Type]bool) map[string]any {
-	oge := t.Elem()
+	elem := t.Elem()
 
-	if hasCustomEncoder(t) && !hasCustomEncoder(oge) {
+	if hasCustomEncoder(t) && !hasCustomEncoder(elem) {
 		return map[string]any{}
 	}
 
@@ -320,7 +320,7 @@ func (d *Doc) pointerSchema(t reflect.Type, seen map[reflect.Type]bool) map[stri
 	seen[t] = true
 	defer delete(seen, t)
 
-	return nullable(d.schemaOfType(oge, seen))
+	return nullable(d.schemaOfType(elem, seen))
 }
 
 // hasCustomEncoder reports whether the type decides its own JSON shape.
@@ -398,14 +398,14 @@ func isByteSlice(t reflect.Type) bool {
 		return false
 	}
 
-	oge := t.Elem()
-	if oge.Kind() != reflect.Uint8 {
+	elem := t.Elem()
+	if elem.Kind() != reflect.Uint8 {
 		return false
 	}
 
 	// If the element type has its own encoder, encoding/json does not fall to
 	// base64 and writes the array element by element.
-	return !oge.Implements(marshalerType) && !oge.Implements(textMarshalerType)
+	return !elem.Implements(marshalerType) && !elem.Implements(textMarshalerType)
 }
 
 // nullable adds JSON null to the schema.
@@ -749,7 +749,7 @@ func itemSchema(rec map[string]any) map[string]any {
 //
 // With countRequired false, "count" only drops out of the required list; nothing
 // changes in the properties or in its type (see [Doc.ListOptionalCount]).
-func listSchema(oge map[string]any, countRequired, cursored bool) map[string]any {
+func listSchema(elem map[string]any, countRequired, cursored bool) map[string]any {
 	required := []string{schemaFieldData}
 	if countRequired {
 		required = append(required, schemaFieldCount)
@@ -758,7 +758,7 @@ func listSchema(oge map[string]any, countRequired, cursored bool) map[string]any
 	required = append(required, schemaFieldOffset, schemaFieldLimit)
 
 	properties := map[string]any{
-		schemaFieldData:   map[string]any{schemaType: typeArray, schemaItems: oge},
+		schemaFieldData:   map[string]any{schemaType: typeArray, schemaItems: elem},
 		schemaFieldCount:  map[string]any{schemaType: typeInteger},
 		schemaFieldOffset: map[string]any{schemaType: typeInteger},
 		schemaFieldLimit:  map[string]any{schemaType: typeInteger},

@@ -347,15 +347,15 @@ func validPrefixRune(r rune) bool {
 // config does not know; the side building the application (internal/app) knows, and
 // it rejects an unknown name there.
 func (c Config) validatePlugins() error {
-	gorulen := make(map[string]struct{}, len(c.Plugins))
+	seen := make(map[string]struct{}, len(c.Plugins))
 	for i, name := range c.Plugins {
 		if strings.TrimSpace(name) == "" {
 			return fmt.Errorf("config: there is an empty name at position %d of the PLUGINS list", i+1)
 		}
-		if _, dup := gorulen[name]; dup {
+		if _, dup := seen[name]; dup {
 			return fmt.Errorf("config: %q appears twice in the PLUGINS list", name)
 		}
-		gorulen[name] = struct{}{}
+		seen[name] = struct{}{}
 	}
 	return nil
 }
@@ -499,8 +499,8 @@ func (c Config) LocalFileRootIsDurable() bool {
 	if isUnder(root, filepath.Clean(os.TempDir())) {
 		return false
 	}
-	for _, gecici := range temporaryRoots {
-		if isUnder(root, gecici) {
+	for _, temporary := range temporaryRoots {
+		if isUnder(root, temporary) {
 			return false
 		}
 	}
@@ -562,7 +562,7 @@ func (c Config) validateFileTypes() error {
 			DefaultFileAllowedTypes)
 	}
 
-	gorulen := make(map[string]struct{}, len(c.FileAllowedTypes))
+	seen := make(map[string]struct{}, len(c.FileAllowedTypes))
 	for i, mediaType := range c.FileAllowedTypes {
 		switch {
 		case strings.TrimSpace(mediaType) == "":
@@ -578,17 +578,17 @@ func (c Config) validateFileTypes() error {
 				mediaType, "image/png")
 		}
 
-		if _, tehlikeli := browserExecutableTypes[mediaType]; tehlikeli || strings.HasPrefix(mediaType, "text/") {
+		if _, dangerous := browserExecutableTypes[mediaType]; dangerous || strings.HasPrefix(mediaType, "text/") {
 			return fmt.Errorf(
 				"config: FILE_ALLOWED_TYPES cannot accept %q: the browser runs this type as a DOCUMENT "+
 					"and, because the files are served from the same origin, it becomes stored XSS (nosniff does not stop this, "+
 					"because the response really is of that type)", mediaType)
 		}
 
-		if _, dup := gorulen[mediaType]; dup {
+		if _, dup := seen[mediaType]; dup {
 			return fmt.Errorf("config: %q appears twice in the FILE_ALLOWED_TYPES list", mediaType)
 		}
-		gorulen[mediaType] = struct{}{}
+		seen[mediaType] = struct{}{}
 	}
 
 	return nil

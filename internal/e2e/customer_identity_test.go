@@ -204,7 +204,7 @@ func TestTheB2BStorefrontRefusesAStrangersCompany(t *testing.T) {
 
 	customerID, _ := newCustomer(ctx, t)
 	limit := int64(500_000)
-	b2bCalisan(ctx, t, customerID, &limit, b2bmodels.ResetNever)
+	b2bEmployee(ctx, t, customerID, &limit, b2bmodels.ResetNever)
 
 	for _, path := range []string{
 		"/store/v1/b2b/customers/" + customerID + "/company",
@@ -229,7 +229,7 @@ func TestTheB2BStorefrontAnswersTheProvenCustomer(t *testing.T) {
 
 	customerID, _ := newCustomer(ctx, t)
 	limit := int64(500_000)
-	b2bCalisan(ctx, t, customerID, &limit, b2bmodels.ResetNever)
+	b2bEmployee(ctx, t, customerID, &limit, b2bmodels.ResetNever)
 
 	answered := identifiedStorefrontRequest(t, customerID, http.MethodGet,
 		"/store/v1/b2b/customers/"+customerID+"/employee", "")

@@ -274,8 +274,8 @@ func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 		// header, so the endpoint is identity-free; but every request does a database
 		// read, and having no limit means a load that can be thrown at us without
 		// paying the authentication cost.
-		for _, onek := range opts.OpenPrefixes {
-			stack = append(stack, Scoped(onek, nil, limit))
+		for _, prefix := range opts.OpenPrefixes {
+			stack = append(stack, Scoped(prefix, nil, limit))
 		}
 	}
 

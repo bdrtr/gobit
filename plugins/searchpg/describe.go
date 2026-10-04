@@ -31,7 +31,8 @@ const (
 // the composition root's type assertion finds this method with no special case.
 // Nothing ever stopped this plugin from having one; until 2026-09-07 its two
 // endpoints simply had no description and nothing in the repository could say so
-// (ADR 0035). They were the last two lines on the ledger that audit reads.
+// (ADR 0035). They were the last two lines of
+// internal/e2e/testdata/undescribed_routes.txt, the ledger that audit reads.
 //
 // # The search result's item is an OPEN object, and that is not laziness
 //

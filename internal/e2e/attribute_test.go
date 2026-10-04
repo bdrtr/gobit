@@ -61,7 +61,7 @@ func TestAStorefrontFiltersAndCountsByAttributes(t *testing.T) {
 		{"attribute": fabric, "options": []string{"wool"}}, {"attribute": chest, "number": 120},
 	})
 
-	vocabulary := magazaIstegi(t, "/store/v1/product-attributes", publishableKey)
+	vocabulary := storeRequest(t, "/store/v1/product-attributes", publishableKey)
 	require.Equal(t, http.StatusOK, vocabulary.Code, vocabulary.Body.String())
 	assert.Contains(t, vocabulary.Body.String(), `"handle":"`+fabric+`"`)
 
@@ -79,7 +79,7 @@ func TestAStorefrontFiltersAndCountsByAttributes(t *testing.T) {
 	assert.Equal(t, []string{shirt.ID}, listed(chest+":..110"))
 	assert.Empty(t, listed(fabric+":wool", chest+":..110"), "two attributes are ANDed")
 
-	facets := magazaIstegi(t, catalogPath(testChannelID, "/product-facets")+"?"+url.Values{
+	facets := storeRequest(t, catalogPath(testChannelID, "/product-facets")+"?"+url.Values{
 		"collection_id": {collection.ID}, "attribute": {fabric + ":cotton"},
 	}.Encode(), publishableKey)
 	require.Equal(t, http.StatusOK, facets.Code, facets.Body.String())
@@ -107,7 +107,7 @@ func TestAStorefrontFiltersAndCountsByAttributes(t *testing.T) {
 	assert.NotContains(t, graph.Body.String(), shirt.ID)
 	assert.Contains(t, graph.Body.String(), `"handle":"wool"`)
 
-	refused := magazaIstegi(t, catalogPath(testChannelID, "/products")+"?"+url.Values{
+	refused := storeRequest(t, catalogPath(testChannelID, "/products")+"?"+url.Values{
 		"attribute": {fabric + ":silk"},
 	}.Encode(), publishableKey)
 	assert.Equal(t, http.StatusUnprocessableEntity, refused.Code, refused.Body.String())

@@ -49,25 +49,15 @@ linters:
         - name: package-comments
     misspell:
       locale: US
-      # Turkish words are mistaken for English misspellings. While a file is
-      # still Turkish this is unavoidable, so the exception is kept word by
-      # word.
-      #
-      # THE TRADE-OFF IS ACCEPTED OPENLY: the exception holds REPOSITORY-WIDE,
-      # which means a real typo in an English text passes silently too. The
-      # alternative was to change the word at every Turkish occurrence or to
-      # sprinkle nolint around; both wreck the comments.
-      #
-      # The list is DATA, not prose: dropping an entry is not a translation but
-      # a behavior change, and it belongs to the day the language ratchet
-      # (ADR 0012) reaches zero — not to the translation of the file that
-      # happens to contain the word. Each entry documents what it stands in for:
-      #   paralel  -> mistaken for "parallel"
-      #   mamal    -> inside "acmamalidir", mistaken for "mammal"
+      # The language detector's stem list (internal/arch/language_test.go)
+      # holds Turkish words as data, and misspell takes one of them for an
+      # English misspelling. The exception holds repository-wide, so a real
+      # typo of that spelling in English passes too, which is the accepted
+      # price of not sprinkling nolint through a lookup table:
       #   adres    -> mistaken for "address"
+      # The repository has held no Turkish prose since D227, and the words that
+      # stood in for it went with it.
       ignore-rules:
-        - paralel
-        - mamal
         - adres
     gocritic:
       enabled-tags: [diagnostic, style, performance]

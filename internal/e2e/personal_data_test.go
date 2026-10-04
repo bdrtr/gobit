@@ -391,7 +391,7 @@ func requireAnswer(
 		"the %q holder did not answer the sweep at all. It holds personal data, so its "+
 			"silence is invisible in the report and the controller would file an answer "+
 			"that never asked it. Holders that did answer: %v",
-		holder, anahtarlar(answers))
+		holder, keysOf(answers))
 
 	return result
 }

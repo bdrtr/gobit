@@ -51,7 +51,7 @@ func TestAGiftBoxNamesWhatItIsMadeOf(t *testing.T) {
 	require.NoError(t, err)
 	product, err := productSvc.GetProduct(ctx, variant.ProductID)
 	require.NoError(t, err)
-	shown := magazaIstegi(t, catalogPath(testChannelID, "/products/"+product.Handle), publishableKey)
+	shown := storeRequest(t, catalogPath(testChannelID, "/products/"+product.Handle), publishableKey)
 	require.Equal(t, http.StatusOK, shown.Code, shown.Body.String())
 	var store struct {
 		Data struct {

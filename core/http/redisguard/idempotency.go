@@ -231,7 +231,7 @@ func (s *IdempotencyStore) Begin(
 func (s *IdempotencyStore) Complete(
 	ctx context.Context, key string, resp corehttp.IdempotentResponse,
 ) error {
-	ham, err := json.Marshal(record{
+	payload, err := json.Marshal(record{
 		Status:      resp.Status,
 		Header:      resp.Header,
 		Body:        resp.Body,
@@ -242,7 +242,7 @@ func (s *IdempotencyStore) Complete(
 			CodeIdempotencyStoreFailed, "the idempotency record could not be turned into JSON")
 	}
 
-	if err := s.client.Set(ctx, s.prefix+key, markDone+string(ham), s.ttl).Err(); err != nil {
+	if err := s.client.Set(ctx, s.prefix+key, markDone+string(payload), s.ttl).Err(); err != nil {
 		return coreerrors.Wrap(err, coreerrors.KindUnavailable,
 			CodeIdempotencyStoreFailed, "the idempotency record could not be written")
 	}

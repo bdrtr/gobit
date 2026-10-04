@@ -98,12 +98,12 @@ func Describe(d *openapi.Doc) {
 		},
 	})
 
-	// Store credit's three endpoints; why they live in a separate file is in
+	// Store credit's endpoints; why they live in a separate file is in
 	// describe_storecredit.go (ADR 0152).
 	describeStoreCredits(d)
 
-	// Loyalty points' two read endpoints; the reason for a separate file is
-	// the same (ADR 0164).
+	// Loyalty points' read endpoints; the reason for a separate file is the
+	// same (ADR 0164).
 	describeLoyaltyPoints(d)
 	describeJournal(d)
 	describeGiftCards(d)

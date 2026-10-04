@@ -605,9 +605,9 @@ func TestGraphRefusesAnInvalidSpec(t *testing.T) {
 	q := query.New(newLinks(productVariant), newContainer(t, products), nil)
 
 	tests := map[string]query.GraphSpec{
-		"an empty entity": {Entity: ""},
-		"negatif limit":   {Entity: "product", Limit: -1},
-		"negatif offset":  {Entity: "product", Offset: -1},
+		"an empty entity":   {Entity: ""},
+		"a negative limit":  {Entity: "product", Limit: -1},
+		"a negative offset": {Entity: "product", Offset: -1},
 		"an empty link name": {
 			Entity: "product",
 			Expand: []query.Expansion{{Link: ""}},
@@ -858,7 +858,7 @@ func TestGraphReturnsUnavailableForARawContextError(t *testing.T) {
 	// A provider and a link service may return an UNTYPED context error (that is
 	// what pgx returns directly). If that error falls to KindInternal, the API
 	// boundary produces a 500 with a masked message instead of a 503.
-	t.Run("kok list", func(t *testing.T) {
+	t.Run("the root list", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		products.listErr = context.DeadlineExceeded
 		q := query.New(newLinks(), newContainer(t, products), nil)
@@ -870,7 +870,7 @@ func TestGraphReturnsUnavailableForARawContextError(t *testing.T) {
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 
-	t.Run("genisletme fetch", func(t *testing.T) {
+	t.Run("the expansion fetch", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		variants := newProvider("variant", query.Record{"id": "var_1"})
 		variants.fetchErr = context.Canceled
@@ -888,7 +888,7 @@ func TestGraphReturnsUnavailableForARawContextError(t *testing.T) {
 		assert.ErrorIs(t, err, context.Canceled)
 	})
 
-	t.Run("link servisi", func(t *testing.T) {
+	t.Run("the link service", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		variants := newProvider("variant", query.Record{"id": "var_1"})
 
@@ -906,7 +906,7 @@ func TestGraphReturnsUnavailableForARawContextError(t *testing.T) {
 		assert.ErrorIs(t, err, context.DeadlineExceeded)
 	})
 
-	t.Run("link tanimi", func(t *testing.T) {
+	t.Run("the link definition", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		variants := newProvider("variant", query.Record{"id": "var_1"})
 
@@ -1001,7 +1001,7 @@ func TestGraphRefusesAnOverlyWideExpansion(t *testing.T) {
 	// A spec staying UNDER the depth limit but carrying many expansions opens
 	// hundreds of round trips in one request too; the cost grows with the number
 	// of expansions rather than with the depth.
-	t.Run("tek seviye", func(t *testing.T) {
+	t.Run("one level", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		q := query.New(newLinks(productVariant), newContainer(t, products), nil)
 
@@ -1016,23 +1016,23 @@ func TestGraphRefusesAnOverlyWideExpansion(t *testing.T) {
 		assert.Zero(t, products.calls().list, "an invalid spec must not reach the provider at all")
 	})
 
-	t.Run("ic ice", func(t *testing.T) {
+	t.Run("nested", func(t *testing.T) {
 		products := newProvider("product", query.Record{"id": "prod_1"})
 		q := query.New(newLinks(productVariant), newContainer(t, products), nil)
 
 		// 3 levels, 4 siblings at each: 4 + 16 + 64 = 84 expansions.
 		// The depth limit (10) does not stop this spec.
-		var derinlestir func(kalan int) []query.Expansion
-		derinlestir = func(kalan int) []query.Expansion {
-			if kalan == 0 {
+		var deepen func(remaining int) []query.Expansion
+		deepen = func(remaining int) []query.Expansion {
+			if remaining == 0 {
 				return nil
 			}
 			out := make([]query.Expansion, 0, 4)
 			for i := range 4 {
 				out = append(out, query.Expansion{
 					Link:   "product_variant",
-					As:     fmt.Sprintf("s%d_%d", kalan, i),
-					Expand: derinlestir(kalan - 1),
+					As:     fmt.Sprintf("s%d_%d", remaining, i),
+					Expand: deepen(remaining - 1),
 				})
 			}
 			return out
@@ -1040,7 +1040,7 @@ func TestGraphRefusesAnOverlyWideExpansion(t *testing.T) {
 
 		_, err := q.Graph(t.Context(), query.GraphSpec{
 			Entity: "product",
-			Expand: derinlestir(3),
+			Expand: deepen(3),
 		})
 		require.Error(t, err)
 		assert.True(t, errors.IsInvalid(err), "the expected class is Invalid, got: %v", err)

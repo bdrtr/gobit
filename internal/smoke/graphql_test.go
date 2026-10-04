@@ -146,7 +146,7 @@ func publishStorefrontProduct(t *testing.T, s *proc, token, channelID, title, ha
 	})
 	require.Equal(t, http.StatusCreated, status, "the product could not be opened; body: %s", body)
 
-	product := zarfVerisi[struct {
+	product := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body)
 	require.NotEmpty(t, product.ID, "the product has to return an id; body: %s", body)

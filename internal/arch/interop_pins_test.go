@@ -252,9 +252,9 @@ var _ returnswf.Shipping = (*fulfillingwf.Interop)(nil)
 // say the list is complete. Without it the file would be the thing this repository
 // keeps finding wrong — a hand-kept list that decides what gets verified and is
 // checked against nothing, so a surface added tomorrow is simply absent and silent
-// (the language detector's roots, the documentation scan's trees, the separate
-// module list, the personal-data audit's trees: four of them, all closed the same
-// way).
+// (the documentation scan's trees, the separate module list, the personal-data
+// audit's trees, all closed the same way; the language detector's roots were a
+// fourth until D227 replaced them with git's file list).
 var pinnedNames = map[string]string{
 	"workflows.cart.interop":       "the cart module's storefront endpoints and the promotion and price list trials",
 	"workflows.checkout.interop":   "the cart module's completion endpoint",

@@ -69,9 +69,9 @@ func pagingParameters() []openapi.Parameter {
 //
 // # Why a separate file
 //
-// describe.go is on the language ledger and ADR 0012's ratchet says a new file
-// is English. Splitting on the file boundary keeps both true without translating
-// a file this change has no reason to touch.
+// These descriptions were written on 2026-09-07 in a file of their own because
+// describe.go was then on the language ledger (ADR 0012), which a new file could
+// not join. The ledger has been empty since 2026-10-03 (D228).
 func describeCollections(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminCollections, openapi.Operation{
 		Summary: "Opens a payment collection for an order or a cart.",

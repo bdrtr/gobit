@@ -93,7 +93,7 @@ You can generate a client from the schema:
 
 ```bash
 make openapi-validate              # validate with the real generator
-make openapi-client DIL=go         # or typescript-fetch, python, …
+make openapi-client CLIENT_LANG=go # or typescript-fetch, python, …
 ```
 
 The SDK is **not vendored** into the repository: since the schema is generated

@@ -230,16 +230,16 @@ func (k *fakeCatalog) StoreProductsByIDsJSON(
 }
 
 // visible reports whether the product appears in the requested channels.
-func (k *fakeCatalog) visible(id string, istenen []string) bool {
-	if istenen == nil {
+func (k *fakeCatalog) visible(id string, wanted []string) bool {
+	if wanted == nil {
 		return true
 	}
-	atanan, ok := k.channels[id]
-	if !ok || len(atanan) == 0 {
+	assigned, ok := k.channels[id]
+	if !ok || len(assigned) == 0 {
 		return true
 	}
-	for _, channel := range atanan {
-		if slices.Contains(istenen, channel) {
+	for _, channel := range assigned {
+		if slices.Contains(wanted, channel) {
 			return true
 		}
 	}
@@ -252,7 +252,7 @@ type fakeGraph struct {
 	mu sync.Mutex
 
 	ids       []string
-	offsetler []int
+	offsets   []int
 	lastSpec  query.GraphSpec
 	err       error
 	errOffset int
@@ -264,7 +264,7 @@ func (g *fakeGraph) Graph(_ context.Context, spec query.GraphSpec) ([]query.Reco
 	defer g.mu.Unlock()
 
 	g.lastSpec = spec
-	g.offsetler = append(g.offsetler, spec.Offset)
+	g.offsets = append(g.offsets, spec.Offset)
 	if g.err != nil && spec.Offset == g.errOffset {
 		return nil, g.err
 	}
@@ -272,10 +272,10 @@ func (g *fakeGraph) Graph(_ context.Context, spec query.GraphSpec) ([]query.Reco
 	if spec.Offset >= len(g.ids) {
 		return []query.Record{}, nil
 	}
-	son := min(spec.Offset+spec.Limit, len(g.ids))
+	end := min(spec.Offset+spec.Limit, len(g.ids))
 
-	out := make([]query.Record, 0, son-spec.Offset)
-	for _, id := range g.ids[spec.Offset:son] {
+	out := make([]query.Record, 0, end-spec.Offset)
+	for _, id := range g.ids[spec.Offset:end] {
 		out = append(out, query.Record{query.IDField: id})
 	}
 
@@ -336,8 +336,8 @@ func searchURL(channel, params string) string {
 }
 
 // event produces an event with the given name and product id.
-func event(ad, productID string) eventbus.Event {
-	return eventbus.Event{Name: ad, Data: map[string]any{eventFieldProductID: productID}}
+func event(name, productID string) eventbus.Event {
+	return eventbus.Event{Name: name, Data: map[string]any{eventFieldProductID: productID}}
 }
 
 // TestProductWrittenReadsTheCatalogAndIndexes verifies that on receiving the
@@ -463,14 +463,14 @@ func TestABrokenEventPayloadIsRefused(t *testing.T) {
 		"the wrong type": {eventFieldProductID: []string{"prod_1"}},
 	}
 
-	for ad, yuk := range tests {
-		t.Run(ad, func(t *testing.T) {
+	for name, payload := range tests {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			d := newFakeStore()
 			m := testModule(d, newFakeCatalog())
 
-			err := m.productWritten(t.Context(), eventbus.Event{Name: eventProductCreated, Data: yuk})
+			err := m.productWritten(t.Context(), eventbus.Event{Name: eventProductCreated, Data: payload})
 
 			require.Error(t, err)
 			assert.True(t, coreerrors.IsInvalid(err), "a payload error has to be KindInvalid: %v", err)
@@ -751,13 +751,13 @@ func TestReindexing(t *testing.T) {
 	m := testModule(d, k)
 	m.graph = graph
 
-	sonuc, err := m.reindex(t.Context())
+	result, err := m.reindex(t.Context())
 
 	require.NoError(t, err)
-	assert.Equal(t, total, sonuc.Indexed)
-	assert.Equal(t, 3, sonuc.Pages)
-	assert.Equal(t, []int{0, reindexPageSize, reindexPageSize * 2}, graph.offsetler,
-		"paging offset'i sayfa boyu kadar ilerlemeli")
+	assert.Equal(t, total, result.Indexed)
+	assert.Equal(t, 3, result.Pages)
+	assert.Equal(t, []int{0, reindexPageSize, reindexPageSize * 2}, graph.offsets,
+		"the paging offset has to advance by the page size")
 	assert.Len(t, d.ids(), total)
 
 	assert.Equal(t, catalogEntity, graph.lastSpec.Entity)
@@ -805,14 +805,14 @@ func TestTheReindexEndpointRequiresTheScope(t *testing.T) {
 	m := testModule(newFakeStore(), newFakeCatalog())
 	m.graph = &fakeGraph{}
 
-	t.Run("kimliksiz", func(t *testing.T) {
+	t.Run("without an identity", func(t *testing.T) {
 		t.Parallel()
 
 		rec := request(m, http.MethodPost, ReindexPath, nil)
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
 
-	t.Run("yetkisiz", func(t *testing.T) {
+	t.Run("without the scope", func(t *testing.T) {
 		t.Parallel()
 
 		rec := request(m, http.MethodPost, ReindexPath,

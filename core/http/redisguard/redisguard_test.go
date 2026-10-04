@@ -31,19 +31,19 @@ const validPrefix = "gobit"
 func TestNewLimiterRefusesAnInvalidSetting(t *testing.T) {
 	t.Parallel()
 
-	durumlar := map[string]struct {
+	cases := map[string]struct {
 		limit  int
 		window time.Duration
 	}{
-		"a zero limit":    {limit: 0, window: time.Minute},
-		"negatif limit":   {limit: -1, window: time.Minute},
-		"a zero window":   {limit: 10, window: 0},
-		"negatif pencere": {limit: 10, window: -time.Second},
-		"both zero":       {limit: 0, window: 0},
+		"a zero limit":      {limit: 0, window: time.Minute},
+		"a negative limit":  {limit: -1, window: time.Minute},
+		"a zero window":     {limit: 10, window: 0},
+		"a negative window": {limit: 10, window: -time.Second},
+		"both zero":         {limit: 0, window: 0},
 	}
 
-	for ad, d := range durumlar {
-		t.Run(ad, func(t *testing.T) {
+	for name, d := range cases {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			lim, err := redisguard.NewLimiter(fakeClient(), validPrefix, d.limit, d.window)
@@ -112,11 +112,11 @@ func asInterface(l *redisguard.Limiter) corehttp.RateLimiter { return l }
 func TestNewIdempotencyStoreFallsBackOnAnInvalidTTL(t *testing.T) {
 	t.Parallel()
 
-	for ad, ttl := range map[string]time.Duration{
-		"zero":    0,
-		"negatif": -time.Hour,
+	for name, ttl := range map[string]time.Duration{
+		"zero":     0,
+		"negative": -time.Hour,
 	} {
-		t.Run(ad, func(t *testing.T) {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			store, err := redisguard.NewIdempotencyStore(fakeClient(), validPrefix, ttl)
@@ -138,7 +138,7 @@ func TestNewIdempotencyStoreFallsBackOnAnInvalidTTL(t *testing.T) {
 func TestConstructorsRefuseAnInvalidPrefix(t *testing.T) {
 	t.Parallel()
 
-	onekler := map[string]string{
+	prefixes := map[string]string{
 		// That means no namespace at all, while the caller asked for one by
 		// passing the prefix parameter.
 		"empty": "",
@@ -161,8 +161,8 @@ func TestConstructorsRefuseAnInvalidPrefix(t *testing.T) {
 		"a non-Latin letter": "gоbit",
 	}
 
-	for ad, prefix := range onekler {
-		t.Run(ad, func(t *testing.T) {
+	for name, prefix := range prefixes {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			lim, err := redisguard.NewLimiter(fakeClient(), prefix, 10, time.Minute)
@@ -190,7 +190,7 @@ func TestConstructorsAcceptAValidPrefix(t *testing.T) {
 	t.Parallel()
 
 	for _, prefix := range []string{
-		"gobit", "gobit-staging", "gobit_prod", "magaza.42", "GOBIT", "g",
+		"gobit", "gobit-staging", "gobit_prod", "store.42", "GOBIT", "g",
 	} {
 		t.Run(prefix, func(t *testing.T) {
 			t.Parallel()

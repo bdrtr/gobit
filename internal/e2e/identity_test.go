@@ -55,8 +55,8 @@ func adminRequest(t *testing.T, method, path, authorization string) *httptest.Re
 	return rec
 }
 
-// magazaIstegi makes a store request with the given publishable key.
-func magazaIstegi(t *testing.T, path, key string) *httptest.ResponseRecorder {
+// storeRequest makes a store request with the given publishable key.
+func storeRequest(t *testing.T, path, key string) *httptest.ResponseRecorder {
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodGet, path, http.NoBody)
@@ -86,8 +86,8 @@ func loginRequest(t *testing.T, email, password string) *httptest.ResponseRecord
 	return rec
 }
 
-// jetonAl extracts the session token from a successful login.
-func jetonAl(t *testing.T, email, password string) string {
+// obtainToken extracts the session token from a successful login.
+func obtainToken(t *testing.T, email, password string) string {
 	t.Helper()
 
 	rec := loginRequest(t, email, password)
@@ -186,7 +186,7 @@ func TestUndefinedAdminPathIsGuardedToo(t *testing.T) {
 // TestAdminLoginReachesProtectedEndpointWithToken is the second leg of the
 // Phase 8 DoD: login -> token -> access to a protected endpoint.
 func TestAdminLoginReachesProtectedEndpointWithToken(t *testing.T) {
-	token := jetonAl(t, adminEmail, adminPassword)
+	token := obtainToken(t, adminEmail, adminPassword)
 
 	identity := readIdentity(t, "Bearer "+token)
 
@@ -218,7 +218,7 @@ func TestSecretKeyReachesTheAdminSurface(t *testing.T) {
 // VERIFIED: a stub that only checks "is there a header" cannot pass this
 // table.
 func TestInvalidCredentialsAreRejected(t *testing.T) {
-	validToken := jetonAl(t, adminEmail, adminPassword)
+	validToken := obtainToken(t, adminEmail, adminPassword)
 
 	tests := map[string]string{
 		"empty scheme":                   "Bearer",
@@ -243,11 +243,11 @@ func TestInvalidCredentialsAreRejected(t *testing.T) {
 // TestStoreRequestWithoutPublishableKeyIsRejected is the third leg of the
 // Phase 8 DoD.
 func TestStoreRequestWithoutPublishableKeyIsRejected(t *testing.T) {
-	withoutKey := magazaIstegi(t, catalogPath(testChannelID, "/products"), "")
+	withoutKey := storeRequest(t, catalogPath(testChannelID, "/products"), "")
 	assert.Equal(t, http.StatusUnauthorized, withoutKey.Code,
 		"a store request without a publishable key must be rejected; body: %s", withoutKey.Body.String())
 
-	withKey := magazaIstegi(t, catalogPath(testChannelID, "/products"), publishableKey)
+	withKey := storeRequest(t, catalogPath(testChannelID, "/products"), publishableKey)
 	assert.Equal(t, http.StatusOK, withKey.Code,
 		"a store request with the publishable key should pass; body: %s", withKey.Body.String())
 }
@@ -259,7 +259,7 @@ func TestStoreRequestWithoutPublishableKeyIsRejected(t *testing.T) {
 // header that is visible in the browser, admin authority would be embedded
 // inside the storefront code.
 func TestSecretKeyDoesNotPassInTheStoreHeader(t *testing.T) {
-	rec := magazaIstegi(t, catalogPath(testChannelID, "/products"), secretKey)
+	rec := storeRequest(t, catalogPath(testChannelID, "/products"), secretKey)
 
 	assert.Equal(t, http.StatusUnauthorized, rec.Code,
 		"the secret key must not be accepted in the store header; body: %s", rec.Body.String())

@@ -250,13 +250,13 @@ func TestAForeignChannelsVariantCannotBeAddedToTheCart(t *testing.T) {
 
 	// The reverse direction holds as well: the rule is not a one-way barrier,
 	// it is the two storefronts being closed to each other's catalog.
-	secondCart := openCartWithKey(t, catalog.ikinciAnahtar)
-	reverseRejected := tryAddLineItem(t, catalog.ikinciAnahtar, secondCart, ground.firstChannelVariant)
+	secondCart := openCartWithKey(t, catalog.secondKey)
+	reverseRejected := tryAddLineItem(t, catalog.secondKey, secondCart, ground.firstChannelVariant)
 
 	assert.Equal(t, http.StatusNotFound, reverseRejected.Code,
 		"the first channel's variant must not be addable in the second storefront either; body: %s",
 		reverseRejected.Body.String())
-	assert.Zero(t, cartLineCount(t, catalog.ikinciAnahtar, secondCart))
+	assert.Zero(t, cartLineCount(t, catalog.secondKey, secondCart))
 }
 
 // TestItsOwnChannelsVariantIsAddedToTheCart proves that the gate does not
@@ -279,11 +279,11 @@ func TestItsOwnChannelsVariantIsAddedToTheCart(t *testing.T) {
 
 	// The variant rejected in the first storefront must be accepted in ITS OWN
 	// storefront.
-	secondCart := openCartWithKey(t, catalog.ikinciAnahtar)
-	ownStorefront := tryAddLineItem(t, catalog.ikinciAnahtar, secondCart, ground.secondChannelVariant)
+	secondCart := openCartWithKey(t, catalog.secondKey)
+	ownStorefront := tryAddLineItem(t, catalog.secondKey, secondCart, ground.secondChannelVariant)
 	assert.Equal(t, http.StatusCreated, ownStorefront.Code,
 		"the hidden variant must be sellable in the storefront it belongs to; body: %s", ownStorefront.Body.String())
-	assert.Equal(t, 1, cartLineCount(t, catalog.ikinciAnahtar, secondCart))
+	assert.Equal(t, 1, cartLineCount(t, catalog.secondKey, secondCart))
 }
 
 // TestAnUnassignedVariantEntersTheCartInEveryStorefront verifies that the
@@ -299,7 +299,7 @@ func TestAnUnassignedVariantEntersTheCartInEveryStorefront(t *testing.T) {
 
 	for name, key := range map[string]string{
 		"first storefront":  publishableKey,
-		"second storefront": catalog.ikinciAnahtar,
+		"second storefront": catalog.secondKey,
 	} {
 		t.Run(name, func(t *testing.T) {
 			cartID := openCartWithKey(t, key)

@@ -459,7 +459,7 @@ func TestStorefrontB2BLimitRejectionReportsReason(t *testing.T) {
 
 	// The limit is BELOW the cart's grand total: 1_000 < 76_800.
 	limit := int64(1_000)
-	b2bCalisan(ctx, t, customerID, &limit, b2bmodels.ResetNever)
+	b2bEmployee(ctx, t, customerID, &limit, b2bmodels.ResetNever)
 
 	cartID := openStorefrontCart(t, customerID, email)
 	added := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/line-items",

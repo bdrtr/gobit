@@ -407,8 +407,8 @@ type gqlEnvelope struct {
 	} `json:"errors"`
 }
 
-// kimlikler returns the ids of the products in the list.
-func (z gqlEnvelope) kimlikler() []string {
+// ids returns the ids of the products in the list.
+func (z gqlEnvelope) ids() []string {
 	out := make([]string, 0, len(z.Data.Products.Items))
 	for _, product := range z.Data.Products.Items {
 		out = append(out, product.ID)
@@ -437,7 +437,7 @@ func (z gqlEnvelope) errorCode(t *testing.T) string {
 //
 // If the key is empty the header is NOT added at all: "no header" and "an empty
 // header" are different states and the 401 assertion targets the first one (same
-// rationale as [magazaIstegi]).
+// rationale as [storeRequest]).
 //
 // The address is read from [graph.Path] and not typed out by hand: the path is
 // the module's constant, and the test's own copy would silently exercise the
@@ -568,7 +568,7 @@ func TestGraphQLEndpointRejectsRequestWithoutPublishableKey(t *testing.T) {
 // gets an honest 405 instead of gqlgen's "transport not supported" 400 — and that
 // can be seen only on the REAL router.
 func TestGraphQLEndpointAcceptsOnlyPOST(t *testing.T) {
-	rec := magazaIstegi(t, graph.Path, publishableKey)
+	rec := storeRequest(t, graph.Path, publishableKey)
 
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code,
 		"the GraphQL endpoint should not accept GET; body: %s", rec.Body.String())
@@ -647,7 +647,7 @@ func TestGraphQLListReturnsProductsAndVariants(t *testing.T) {
 func TestGraphQLCatalogIsFilteredBySalesChannel(t *testing.T) {
 	stage := gqlFixture(t)
 
-	first := gqlCatalog(t, publishableKey, stage.collectionID, nil).kimlikler()
+	first := gqlCatalog(t, publishableKey, stage.collectionID, nil).ids()
 	assert.ElementsMatch(t,
 		[]string{stage.firstChannelProduct.id, stage.unassignedProduct.id}, first,
 		"the first storefront should see its own product and the UNASSIGNED product")
@@ -655,7 +655,7 @@ func TestGraphQLCatalogIsFilteredBySalesChannel(t *testing.T) {
 		"a product assigned to another channel must NOT BE VISIBLE in this storefront; if it "+
 			"is, the GraphQL surface is not looking at the request's identity at all")
 
-	second := gqlCatalog(t, stage.secondKey, stage.collectionID, nil).kimlikler()
+	second := gqlCatalog(t, stage.secondKey, stage.collectionID, nil).ids()
 	assert.ElementsMatch(t,
 		[]string{stage.secondChannelProduct.id, stage.unassignedProduct.id}, second,
 		"the second storefront should see its own product and the UNASSIGNED product")
@@ -742,7 +742,7 @@ func TestGraphQLChannelCannotBeForcedFromVariables(t *testing.T) {
 	// request.
 	smuggled := gqlCatalog(t, publishableKey, stage.collectionID,
 		map[string]any{"salesChannelIds": []string{stage.secondChannelID}})
-	assert.ElementsMatch(t, expected, smuggled.kimlikler(),
+	assert.ElementsMatch(t, expected, smuggled.ids(),
 		"an undeclared variable must NOT CHANGE the catalog")
 
 	// 3. With the query string: the GraphQL endpoint reads the body, but just as
@@ -764,7 +764,7 @@ func TestGraphQLChannelCannotBeForcedFromVariables(t *testing.T) {
 	testRouter.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
-	assert.ElementsMatch(t, expected, gqlDecode(t, rec).kimlikler(),
+	assert.ElementsMatch(t, expected, gqlDecode(t, rec).ids(),
 		"the channel id in the query string must BE IGNORED")
 }
 
@@ -779,7 +779,7 @@ func TestGraphQLChannelCannotBeForcedFromVariables(t *testing.T) {
 // "both surfaces ignore the identity" would pass the test as well.
 func TestGraphQLAndRESTReturnTheSameSet(t *testing.T) {
 	stage := gqlFixture(t)
-	query := koleksiyonSorgusu(stage.collectionID)
+	query := collectionQuery(stage.collectionID)
 
 	// The channel is carried beside the key because the REST catalog reads take
 	// it from the PATH (ADR 0044) while GraphQL still takes it from the identity.
@@ -799,7 +799,7 @@ func TestGraphQLAndRESTReturnTheSameSet(t *testing.T) {
 			rest := storefrontCatalog(t, key, storefront.channel, query)
 			gql := gqlCatalog(t, key, stage.collectionID, nil)
 
-			assert.ElementsMatch(t, rest.kimlikler(), gql.kimlikler(),
+			assert.ElementsMatch(t, rest.ids(), gql.ids(),
 				"REST and GraphQL should return the same set of products; if they diverge, the "+
 					"two surfaces are applying two different visibility rules")
 			assert.Equal(t, rest.Count, gql.Data.Products.Count,
@@ -811,7 +811,7 @@ func TestGraphQLAndRESTReturnTheSameSet(t *testing.T) {
 	// returns 404 while GraphQL returns null + an error. The codes must come from
 	// the SAME vocabulary — the core's error envelope is written from a single
 	// place on both surfaces (see graph.NewHandler).
-	restHidden := magazaIstegi(t,
+	restHidden := storeRequest(t,
 		catalogPath(testChannelID, "/products/"+stage.secondChannelProduct.handle), publishableKey)
 	require.Equal(t, http.StatusNotFound, restHidden.Code,
 		"REST should return 404 for the hidden product; body: %s", restHidden.Body.String())
@@ -863,7 +863,7 @@ func gqlAliasPileUp(n int) string {
 // document asks for a field that is not in the schema and dies in validation,
 // before the depth is ever measured. The rejecting side of the gate therefore
 // belongs to the unit test where the limit can be lowered
-// (graph.TestDerinlikSiniriAsilanBelgeyiReddeder); the side that falls here is
+// (graph.TestDepthLimitRejectsAnExceedingDocument); the side that falls here is
 // that the gate lets the LEGITIMATE document through, and that is exercised below
 // — this is exactly the symptom of a depth limit miscalibrated in production: one
 // day the storefront's deepest query silently starts being rejected.

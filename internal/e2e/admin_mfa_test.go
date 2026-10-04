@@ -165,7 +165,7 @@ func TestAnEnrolledAdministratorCannotSignInWithAPasswordAlone(t *testing.T) {
 	require.Equal(t, http.StatusOK, before.Code,
 		"an account with no factor signs in with its password; body: %s", before.Body.String())
 
-	secret := enrolSecondFactor(t, jetonAl(t, email, mfaTestPassword))
+	secret := enrolSecondFactor(t, obtainToken(t, email, mfaTestPassword))
 
 	refused := tokenRequest(t, email, mfaTestPassword, "")
 	require.Equal(t, http.StatusUnauthorized, refused.Code,
@@ -194,7 +194,7 @@ func TestAnEnrolledAdministratorCannotSignInWithAPasswordAlone(t *testing.T) {
 func TestAMachineIsUnaffectedByTheSecondFactor(t *testing.T) {
 	ctx := t.Context()
 	email := newMFAAdministrator(ctx, t)
-	enrolSecondFactor(t, jetonAl(t, email, mfaTestPassword))
+	enrolSecondFactor(t, obtainToken(t, email, mfaTestPassword))
 
 	recorder, err := adminRequestWithBody(http.MethodGet, "/admin/v1/users", nil)
 	require.NoError(t, err)
@@ -212,7 +212,7 @@ func TestRemovingTheFactorGivesTheAccountBack(t *testing.T) {
 	ctx := t.Context()
 	email := newMFAAdministrator(ctx, t)
 
-	secret := enrolSecondFactor(t, jetonAl(t, email, mfaTestPassword))
+	secret := enrolSecondFactor(t, obtainToken(t, email, mfaTestPassword))
 	token := tokenFrom(t, tokenRequest(t, email, mfaTestPassword, totpCodeAt(t, secret, time.Now())))
 
 	removed := tokenedRequest(t, http.MethodPost, authapi.MFARemovePath, token,
@@ -231,7 +231,7 @@ func TestASecondEnrolmentLeavesTheProvenPhoneWorking(t *testing.T) {
 	ctx := t.Context()
 	email := newMFAAdministrator(ctx, t)
 
-	first := enrolSecondFactor(t, jetonAl(t, email, mfaTestPassword))
+	first := enrolSecondFactor(t, obtainToken(t, email, mfaTestPassword))
 	token := tokenFrom(t, tokenRequest(t, email, mfaTestPassword, totpCodeAt(t, first, time.Now())))
 
 	// A new phone is scanned and the person is interrupted before proving it.
@@ -261,7 +261,7 @@ func TestAnOperatorGrantedOnlyTheCatalogCanProtectTheirAccount(t *testing.T) {
 	}, mfaTestPassword)
 	require.NoError(t, err)
 
-	secret := enrolSecondFactor(t, jetonAl(t, email, mfaTestPassword))
+	secret := enrolSecondFactor(t, obtainToken(t, email, mfaTestPassword))
 
 	demanded := tokenRequest(t, email, mfaTestPassword, "")
 	assert.Equal(t, http.StatusUnauthorized, demanded.Code,
@@ -276,7 +276,7 @@ func TestASessionAloneCannotChangeTheFactor(t *testing.T) {
 	ctx := t.Context()
 	email := newMFAAdministrator(ctx, t)
 
-	secret := enrolSecondFactor(t, jetonAl(t, email, mfaTestPassword))
+	secret := enrolSecondFactor(t, obtainToken(t, email, mfaTestPassword))
 	token := tokenFrom(t, tokenRequest(t, email, mfaTestPassword, totpCodeAt(t, secret, time.Now())))
 
 	for name, path := range map[string]string{"removing": authapi.MFARemovePath, "replacing": authapi.MFAEnrolPath} {

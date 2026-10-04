@@ -22,9 +22,10 @@ import (
 // The fixture this file builds on.
 //
 // The values repeat the neighboring tests' constants rather than borrowing
-// them: those names are Turkish, and the language ledger may only shrink, so a
-// new file that reads them would be adding to a debt this repository is paying
-// off (ADR 0012).
+// them. When this file was written (ADR 0164) those names were Turkish, and an
+// English file that read them would have counted as Turkish under ADR 0012.
+// They are English now and the language ledger has been empty since 2026-10-03
+// (D228); the repetition outlived its reason and costs nothing to keep.
 const (
 	// loyaltyCustomer is the customer who earns the points.
 	loyaltyCustomer = "cus_LOYAL"

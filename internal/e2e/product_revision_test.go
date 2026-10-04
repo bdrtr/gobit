@@ -99,7 +99,7 @@ func TestAProductsRevisionsAreReadAndRestoredOverTheAdminSurface(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 
-	store := magazaIstegi(t, catalogPath(testChannelID, "/products/"+handle), publishableKey)
+	store := storeRequest(t, catalogPath(testChannelID, "/products/"+handle), publishableKey)
 	require.Equal(t, http.StatusOK, store.Code, store.Body.String())
 	assert.NotContains(t, store.Body.String(), `"version"`, "the version is the admin surface's")
 }

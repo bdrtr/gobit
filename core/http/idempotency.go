@@ -186,8 +186,8 @@ func Idempotency(store IdempotencyStore) func(http.Handler) http.Handler {
 		}
 
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ham := strings.TrimSpace(r.Header.Get(IdempotencyKeyHeader))
-			if ham == "" || !idempotentMethod(r.Method) {
+			rawKey := strings.TrimSpace(r.Header.Get(IdempotencyKeyHeader))
+			if rawKey == "" || !idempotentMethod(r.Method) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -213,7 +213,7 @@ func Idempotency(store IdempotencyStore) func(http.Handler) http.Handler {
 				return
 			}
 
-			if len(ham) > maxIdempotencyKeyLen {
+			if len(rawKey) > maxIdempotencyKeyLen {
 				WriteError(r.Context(), w, coreerrors.Invalid(CodeIdempotencyKeyTooLong,
 					"the idempotency key can be at most %d characters", maxIdempotencyKeyLen))
 				return
@@ -228,11 +228,11 @@ func Idempotency(store IdempotencyStore) func(http.Handler) http.Handler {
 			// The key going to the store is not the RAW header but its form namespaced
 			// with the caller's bucket; the reasoning is in the godoc's "The identity
 			// namespace" section.
-			kova := idempotencyBucket(r.Context())
-			izi := fingerprint(kova, r, body)
-			key := storeKey(kova, ham)
+			bucket := idempotencyBucket(r.Context())
+			digest := fingerprint(bucket, r, body)
+			key := storeKey(bucket, rawKey)
 
-			rec, tamam, err := store.Begin(r.Context(), key, izi)
+			rec, done, err := store.Begin(r.Context(), key, digest)
 
 			switch {
 			case errors.Is(err, ErrIdempotencyKeyInFlight):
@@ -245,12 +245,12 @@ func Idempotency(store IdempotencyStore) func(http.Handler) http.Handler {
 				return
 			}
 
-			if tamam {
-				replay(r.Context(), w, rec, izi)
+			if done {
+				replay(r.Context(), w, rec, digest)
 				return
 			}
 
-			record(r.Context(), w, r, next, store, key, izi)
+			record(r.Context(), w, r, next, store, key, digest)
 		})
 	}
 }
@@ -265,23 +265,23 @@ func record(
 	r *http.Request,
 	next http.Handler,
 	store IdempotencyStore,
-	key, izi string,
+	key, digest string,
 ) {
 	rec := &recordingWriter{ResponseWriter: w, status: http.StatusOK}
 
 	// If the handler panics or returns a 5xx the reservation has to be undone;
 	// otherwise the key stays locked "in flight" and the client can never try again.
-	tamamlandi := false
+	completed := false
 
 	defer func() {
-		if tamamlandi {
+		if completed {
 			return
 		}
 
-		kapanis, iptal := closeContext(ctx)
-		defer iptal()
+		closeCtx, cancel := closeContext(ctx)
+		defer cancel()
 
-		if err := store.Abort(kapanis, key); err != nil {
+		if err := store.Abort(closeCtx, key); err != nil {
 			LoggerFromContext(ctx).ErrorContext(ctx,
 				"the idempotency reservation could not be undone, the key may stay locked",
 				"error", err)
@@ -305,14 +305,14 @@ func record(
 		return
 	}
 
-	kapanis, iptal := closeContext(ctx)
-	defer iptal()
+	closeCtx, cancel := closeContext(ctx)
+	defer cancel()
 
-	if err := store.Complete(kapanis, key, IdempotentResponse{
+	if err := store.Complete(closeCtx, key, IdempotentResponse{
 		Status:      rec.status,
 		Header:      rec.Header().Clone(),
 		Body:        rec.buf.Bytes(),
-		Fingerprint: izi,
+		Fingerprint: digest,
 	}); err != nil {
 		// The response has ALREADY been written to the client; we can no longer return
 		// an error. The only right thing left is to release the reservation: otherwise
@@ -326,7 +326,7 @@ func record(
 		return
 	}
 
-	tamamlandi = true
+	completed = true
 }
 
 // closeContext produces the context for the store calls made after the handler is done.
@@ -353,26 +353,26 @@ func closeContext(ctx context.Context) (context.Context, context.CancelFunc) {
 // different request with the same key is a client-side mistake, and quietly
 // returning the wrong response (another order's record, say) is silent data
 // corruption.
-func replay(ctx context.Context, w http.ResponseWriter, rec *IdempotentResponse, izi string) {
+func replay(ctx context.Context, w http.ResponseWriter, rec *IdempotentResponse, digest string) {
 	if rec == nil {
 		WriteError(ctx, w, coreerrors.Internal(defaultInternalCode,
 			"the idempotency record came back empty"))
 		return
 	}
 
-	if rec.Fingerprint != izi {
+	if rec.Fingerprint != digest {
 		WriteError(ctx, w, coreerrors.Conflict(CodeIdempotencyConflict,
 			"this idempotency key has been used for a different request"))
 
 		return
 	}
 
-	hedef := w.Header()
+	dst := w.Header()
 	for k, v := range rec.Header {
-		hedef[k] = append([]string(nil), v...)
+		dst[k] = append([]string(nil), v...)
 	}
 
-	hedef.Set(IdempotencyReplayedHeader, "true")
+	dst.Set(IdempotencyReplayedHeader, "true")
 	w.WriteHeader(rec.Status)
 	// The replayed body is not client input, it is the response THIS server produced
 	// earlier; its headers, Content-Type included, are replayed as they are. So it
@@ -447,8 +447,8 @@ func idempotencyBucket(ctx context.Context) string {
 // fall onto the same string. Since THE CLIENT picks the key, that would open the
 // namespace itself to the client — another door into the very leak we are trying
 // to close.
-func storeKey(kova, key string) string {
-	return strconv.Itoa(len(kova)) + ":" + kova + ":" + key
+func storeKey(bucket, key string) string {
+	return strconv.Itoa(len(bucket)) + ":" + bucket + ":" + key
 }
 
 // fingerprint derives the request's identity from the caller, the method, the path
@@ -462,9 +462,9 @@ func storeKey(kova, key string) string {
 // the namespace wrongly or carries rows written under an old schema, even if
 // another caller's record reached us the fingerprint would not match and that
 // response would not be replayed.
-func fingerprint(kova string, r *http.Request, body []byte) string {
+func fingerprint(bucket string, r *http.Request, body []byte) string {
 	h := sha256.New()
-	h.Write([]byte(kova))
+	h.Write([]byte(bucket))
 	h.Write([]byte{0})
 	h.Write([]byte(r.Method))
 	h.Write([]byte{0})
@@ -500,8 +500,8 @@ func idempotentMethod(m string) bool {
 // recordingWriter is the wrapper that both writes the response to the client and buffers it.
 type recordingWriter struct {
 	http.ResponseWriter
-	status  int
-	yazildi bool
+	status      int
+	wroteHeader bool
 	// overflowed reports that the body exceeded the buffer limit; an overflowing response is not recorded.
 	overflowed bool
 	buf        bytes.Buffer
@@ -509,18 +509,18 @@ type recordingWriter struct {
 
 // WriteHeader records the status code and forwards it.
 func (w *recordingWriter) WriteHeader(status int) {
-	if w.yazildi {
+	if w.wroteHeader {
 		return
 	}
 
 	w.status = status
-	w.yazildi = true
+	w.wroteHeader = true
 	w.ResponseWriter.WriteHeader(status)
 }
 
 // Write writes the body both into the buffer and to the client.
 func (w *recordingWriter) Write(b []byte) (int, error) {
-	if !w.yazildi {
+	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
 	}
 

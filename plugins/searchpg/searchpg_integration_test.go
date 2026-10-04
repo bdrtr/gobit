@@ -143,9 +143,9 @@ func TestTheIndexWritesSearchesAndDeletes(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"prod_1"}, ids)
 
-	silinen, err := i.Delete(t.Context(), "prod_1")
+	deleted, err := i.Delete(t.Context(), "prod_1")
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), silinen)
+	assert.Equal(t, int64(1), deleted)
 
 	ids, err = i.Search(t.Context(), "shirt", 10, 0)
 	require.NoError(t, err)
@@ -340,15 +340,15 @@ func TestPagingIsDeterministic(t *testing.T) {
 	}
 	write(t, i, documents...)
 
-	ilk, err := i.Search(t.Context(), "ayni", 2, 0)
+	firstPage, err := i.Search(t.Context(), "ayni", 2, 0)
 	require.NoError(t, err)
-	ikinci, err := i.Search(t.Context(), "ayni", 2, 2)
+	secondPage, err := i.Search(t.Context(), "ayni", 2, 2)
 	require.NoError(t, err)
-	ucuncu, err := i.Search(t.Context(), "ayni", 2, 4)
+	thirdPage, err := i.Search(t.Context(), "ayni", 2, 4)
 	require.NoError(t, err)
 
-	tum := append(append(append([]string{}, ilk...), ikinci...), ucuncu...)
-	assert.Equal(t, []string{"prod_0", "prod_1", "prod_2", "prod_3", "prod_4"}, tum,
+	combined := append(append(append([]string{}, firstPage...), secondPage...), thirdPage...)
+	assert.Equal(t, []string{"prod_0", "prod_1", "prod_2", "prod_3", "prod_4"}, combined,
 		"the pages have to give every record with no overlap and no gap")
 }
 
@@ -411,9 +411,9 @@ func TestTheSweepDeletesOnlyStaleRows(t *testing.T) {
 
 	write(t, i, document{productID: "prod_taze", title: "Yeni"})
 
-	silinen, err := i.Sweep(t.Context(), threshold)
+	deleted, err := i.Sweep(t.Context(), threshold)
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), silinen)
+	assert.Equal(t, int64(1), deleted)
 
 	ids, err := i.Search(t.Context(), "eski", 10, 0)
 	require.NoError(t, err)
@@ -537,7 +537,7 @@ func TestRegisterResolvesFromTheCore(t *testing.T) {
 		assert.Equal(t, codeSetupFailed, coreerrors.CodeOf(err))
 	})
 
-	t.Run("tam kurulum", func(t *testing.T) {
+	t.Run("a full setup", func(t *testing.T) {
 		c := container.New(log)
 		t.Cleanup(func() { _ = c.Shutdown(context.Background()) })
 
@@ -549,9 +549,9 @@ func TestRegisterResolvesFromTheCore(t *testing.T) {
 		require.NoError(t, m.Register(t.Context(), c))
 
 		// The endpoints are bound only AFTER the registration.
-		desenler := chiPatterns(testRouter(m))
-		assert.Contains(t, desenler, "GET "+SearchPath)
-		assert.Contains(t, desenler, "POST "+ReindexPath)
+		patterns := chiPatterns(testRouter(m))
+		assert.Contains(t, patterns, "GET "+SearchPath)
+		assert.Contains(t, patterns, "POST "+ReindexPath)
 	})
 }
 

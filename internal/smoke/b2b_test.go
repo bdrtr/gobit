@@ -30,7 +30,7 @@ const b2bNewLimit int64 = 250_000
 // b2bStoreEmployee holds the fields of the storefront's employee record that
 // the scenario reads.
 //
-// The module's DTO type is NOT imported; the rationale is in the [zarfVerisi]
+// The module's DTO type is NOT imported; the rationale is in the [envelopeData]
 // doc comment.
 type b2bStoreEmployee struct {
 	ID                       string     `json:"id"`
@@ -56,7 +56,7 @@ func b2bOpenCustomer(t *testing.T, s *proc, token, email string) string {
 		map[string]any{"email": email, "first_name": "Smoke", "last_name": "B2B"})
 	require.Equal(t, http.StatusCreated, code, "could not open the customer; body: %s", body)
 
-	customer := zarfVerisi[struct {
+	customer := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body)
 	require.NotEmpty(t, customer.ID, "the customer must return an id; body: %s", body)
@@ -76,7 +76,7 @@ func b2bOpenCompany(t *testing.T, s *proc, token, name, email, period string) st
 	})
 	require.Equal(t, http.StatusCreated, code, "could not open the company; body: %s", body)
 
-	company := zarfVerisi[struct {
+	company := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body)
 	require.NotEmpty(t, company.ID, "the company must return an id; body: %s", body)
@@ -94,7 +94,7 @@ func b2bReadStorefrontEmployee(t *testing.T, s *proc, key, customerID string) b2
 	require.Equal(t, http.StatusOK, code,
 		"could not read the storefront employee record; body: %s", body)
 
-	return zarfVerisi[b2bStoreEmployee](t, body)
+	return envelopeData[b2bStoreEmployee](t, body)
 }
 
 // b2bVerifySchema verifies that the b2b tables are created on a cold start.
@@ -231,7 +231,7 @@ func TestB2BEndToEndInARealProcess(t *testing.T) {
 	})
 	require.Equal(t, http.StatusCreated, code, "could not add the employee; body: %s", body)
 
-	employeeID := zarfVerisi[struct {
+	employeeID := envelopeData[struct {
 		ID string `json:"id"`
 	}](t, body).ID
 	require.NotEmpty(t, employeeID, "the employee must return an id; body: %s", body)
@@ -242,7 +242,7 @@ func TestB2BEndToEndInARealProcess(t *testing.T) {
 		require.Equal(t, http.StatusOK, code,
 			"the storefront company endpoint must return 200; body: %s", body)
 
-		company := zarfVerisi[struct {
+		company := envelopeData[struct {
 			ID                       string `json:"id"`
 			Name                     string `json:"name"`
 			CurrencyCode             string `json:"currency_code"`
@@ -414,5 +414,5 @@ func storefrontTenders(t *testing.T, s *proc, key string) []string {
 	code, body := s.storefrontRequest(http.MethodGet, "/store/v1/payment-providers", key, nil)
 	require.Equal(t, http.StatusOK, code, "the provider list must answer; body: %s", body)
 
-	return zarfVerisi[[]string](t, body)
+	return envelopeData[[]string](t, body)
 }

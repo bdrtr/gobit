@@ -186,7 +186,7 @@ func runDocumentedScript(t *testing.T, script string) string {
 		_, err := exec.LookPath(tool)
 		require.NoErrorf(t, err,
 			"%s is not on PATH. The documents are written to be pasted into a shell and "+
-				"this test runs them; both READMEs already list curl and jq among the "+
+				"this test runs them; the README already lists curl and jq among the "+
 				"tools this repository expects.", tool)
 	}
 

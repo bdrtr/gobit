@@ -8,11 +8,13 @@ import (
 
 // The schema for the store-credit endpoints (ADR 0152).
 //
-// It is a file of its own for the same reason describe_collection.go is: the
-// three endpoints answer one subject, and the descriptions that make them usable
-// are long enough that folding them into describe.go would bury the sessions.
+// It was written on 2026-09-12 in a file of its own because describe.go was
+// then Turkish and on the language ledger (ADR 0012), which a new file could not
+// join; the ledger has been empty since 2026-10-03 (D228). The endpoints answer
+// one subject, and their descriptions are long enough that folding them into
+// describe.go would bury the sessions, so the file stays.
 
-// describeStoreCredits describes the three store-credit endpoints.
+// describeStoreCredits describes the store-credit endpoints.
 func describeStoreCredits(d *openapi.Doc) {
 	d.Describe(http.MethodPost, pathAdminStoreCredits, openapi.Operation{
 		Summary: "Puts store credit on a customer's account.",

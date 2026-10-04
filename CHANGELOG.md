@@ -56,6 +56,12 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **The environment template and the Makefile are English** (D227). **For
+  operators:** the comments of `.env.example` are English; its settings are
+  unchanged. **For contributors:** `make seed` takes `PRODUCTS` and `MULTI`,
+  and `make openapi-client` takes `CLIENT_LANG`, where they took `URUNLER`,
+  `COKLU` and `DIL`; the old names are ignored without a word.
+
 - **An account is told what changed** (ADR 0379). **For integrators:**
   `contrib/identity-session` takes an optional `Options.AccountNotices`; bound,
   it is called with the account's address after a password reset or change and
@@ -1210,6 +1216,11 @@ design. It is fixed with `1.0.0`.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Decisions
+
+- **A count is read in English** (ADR 0380, D228). **For contributors:** the
+  count gate reads the number a document states for a population in digits and
+  English words alone. A count written in Turkish is read by no gate, and the
+  language gate refuses Turkish prose before this one would read it.
 
 - **A bundle variant is replaced from its catalog parts** (ADR 0244). **For
   operators:** an exchange's replacement that names a bundle variant, a gift box

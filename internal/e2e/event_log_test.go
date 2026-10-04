@@ -14,7 +14,7 @@ import (
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 )
 
-// olayBeklemeSuresi is the time granted for an event to arrive over the bus.
+// eventWaitTimeout is the time granted for an event to arrive over the bus.
 //
 // The wait is MANDATORY and its length is not a preference but a consequence of
 // the contract: [eventbus.EventBus].Publish does NOT WAIT for the handlers and the
@@ -22,7 +22,7 @@ import (
 // be visible in the log yet even though the order has already been written. The
 // duration is generous because the purpose of the test is not to show HOW FAST the
 // event arrives, but THAT it arrives.
-const olayBeklemeSuresi = 5 * time.Second
+const eventWaitTimeout = 5 * time.Second
 
 // orderEventLog is the test-side record of the "order.placed" events.
 //
@@ -42,12 +42,12 @@ type orderEventLog struct {
 	records []eventbus.Event
 }
 
-// abone wires the log to the bus.
+// subscribe wires the log to the bus.
 //
 // The wiring must happen BEFORE the modules come up: a subscriber attached later
 // CANNOT SEE the events published before it (the in-memory backend keeps no
 // history, it delivers AT MOST ONCE).
-func (l *orderEventLog) abone(bus eventbus.EventBus) error {
+func (l *orderEventLog) subscribe(bus eventbus.EventBus) error {
 	return bus.Subscribe(ordersvc.EventOrderPlaced, func(_ context.Context, e eventbus.Event) error {
 		l.mu.Lock()
 		defer l.mu.Unlock()
@@ -86,7 +86,7 @@ func (l *orderEventLog) waitFor(t *testing.T, orderID string) eventbus.Event {
 	require.Eventually(t, func() bool {
 		found = l.events(orderID)
 		return len(found) > 0
-	}, olayBeklemeSuresi, 20*time.Millisecond,
+	}, eventWaitTimeout, 20*time.Millisecond,
 		"the %q event must be published for order %s; if the event is not published, "+
 			"subscribers such as notification, accounting and the search index stay "+
 			"UNAWARE of the order and the gap is only noticed through a customer "+
@@ -98,7 +98,7 @@ func (l *orderEventLog) waitFor(t *testing.T, orderID string) eventbus.Event {
 	return found[0]
 }
 
-// olayAlani reads one field of the event's payload as a STRING.
+// eventField reads one field of the event's payload as a STRING.
 //
 // The type assertion is gathered into a separate helper because the contract
 // repeats it for every field: ALL values of the payload are strings and the numeric
@@ -107,7 +107,7 @@ func (l *orderEventLog) waitFor(t *testing.T, orderID string) eventbus.Event {
 // int64 comes back to the subscriber as a float64 on the Redis backend. This is why
 // the test asserts the type as well: were the field turned into a number, the
 // subscriber in production would fall over.
-func olayAlani(t *testing.T, event eventbus.Event, key string) string {
+func eventField(t *testing.T, event eventbus.Event, key string) string {
 	t.Helper()
 
 	raw, present := event.Data[key]

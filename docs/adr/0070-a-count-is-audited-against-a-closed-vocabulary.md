@@ -4,7 +4,7 @@
 must equal the number the tree computes; a universal negation gets no gate,
 because its object is a predicate no vocabulary can close.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0380](0380-a-count-is-read-in-english.md), which reads a count in digits and English words alone
 - **Date:** 2026-09-08
 
 ## Context

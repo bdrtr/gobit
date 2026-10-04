@@ -292,9 +292,9 @@ func TestCartToOrderHappyPath(t *testing.T) {
 	// --- 5) was order.placed published ---
 
 	event := eventLog.waitFor(t, result.OrderID)
-	require.Equal(t, result.OrderID, olayAlani(t, event, ordersvc.EventFieldOrderID),
+	require.Equal(t, result.OrderID, eventField(t, event, ordersvc.EventFieldOrderID),
 		"the event's payload must carry the order's ID")
-	require.Equal(t, "108000", olayAlani(t, event, ordersvc.EventFieldTotal),
+	require.Equal(t, "108000", eventField(t, event, ordersvc.EventFieldTotal),
 		"the event's payload must carry the order's total as a STRING without decimals")
 }
 
@@ -479,11 +479,11 @@ func TestSagaRollsBackWhenPaymentFails(t *testing.T) {
 	// exist today; the plan's Phase 6 only asks for order.placed. The day it is added,
 	// this block must grow to assert that both events reach the subscriber.
 	event := eventLog.waitFor(t, canceled.ID)
-	require.Equal(t, ordermodels.OrderPending.String(), olayAlani(t, event, ordersvc.EventFieldStatus),
+	require.Equal(t, ordermodels.OrderPending.String(), eventField(t, event, ordersvc.EventFieldStatus),
 		"the event carries the order's status AT THE MOMENT OF PUBLICATION and at that moment it "+
 			"was 'pending'; a cancellation after the event was published does NOT retroactively "+
 			"CHANGE the payload. The subscriber is obliged to read the current status from the order")
-	require.Equal(t, "119998", olayAlani(t, event, ordersvc.EventFieldTotal),
+	require.Equal(t, "119998", eventField(t, event, ordersvc.EventFieldTotal),
 		"the event must carry the order's total as a STRING without decimals")
 }
 
@@ -550,28 +550,28 @@ func TestOrderPlacedEventIsPublished(t *testing.T) {
 	order, err := orderSvc.GetOrder(ctx, result.OrderID)
 	require.NoError(t, err, "the order must be readable")
 
-	require.Equal(t, result.OrderID, olayAlani(t, event, ordersvc.EventFieldOrderID),
+	require.Equal(t, result.OrderID, eventField(t, event, ordersvc.EventFieldOrderID),
 		"the payload must carry the order's ID; it is the ONLY way for the subscriber to reach "+
 			"the details")
-	require.Equal(t, "14400", olayAlani(t, event, ordersvc.EventFieldTotal),
+	require.Equal(t, "14400", eventField(t, event, ordersvc.EventFieldTotal),
 		"the payload must carry the order's total as a STRING without decimals: %d minor units "+
 			"-> %q. Had it been carried as a number, it would resolve to a float64 on the Redis "+
 			"backend and amounts above 2^53 would be silently rounded (plan Section 8: NEVER "+
 			"float)", eventTotal, "14400")
-	require.Equal(t, ordermodels.OrderPending.String(), olayAlani(t, event, ordersvc.EventFieldStatus),
+	require.Equal(t, ordermodels.OrderPending.String(), eventField(t, event, ordersvc.EventFieldStatus),
 		"the payload must carry the order's status")
-	require.Equal(t, taxedRegionID, olayAlani(t, event, ordersvc.EventFieldRegionID),
+	require.Equal(t, taxedRegionID, eventField(t, event, ordersvc.EventFieldRegionID),
 		"the payload must carry the order's region")
-	require.Equal(t, customerID, olayAlani(t, event, ordersvc.EventFieldCustomerID),
+	require.Equal(t, customerID, eventField(t, event, ordersvc.EventFieldCustomerID),
 		"the payload must carry the order's customer")
-	require.Equal(t, taxedCurrency, olayAlani(t, event, ordersvc.EventFieldCurrencyCode),
+	require.Equal(t, taxedCurrency, eventField(t, event, ordersvc.EventFieldCurrencyCode),
 		"the payload must carry the order's currency; the amount alone is meaningless")
-	require.Equal(t, "1", olayAlani(t, event, ordersvc.EventFieldItemCount),
+	require.Equal(t, "1", eventField(t, event, ordersvc.EventFieldItemCount),
 		"the payload must carry the line count as a STRING without decimals")
-	require.NotEmpty(t, olayAlani(t, event, ordersvc.EventFieldDisplayID),
+	require.NotEmpty(t, eventField(t, event, ordersvc.EventFieldDisplayID),
 		"the payload must carry the order number shown to the customer")
 	require.Equal(t, order.PlacedAt.UTC().Format("2006-01-02"),
-		olayAlani(t, event, ordersvc.EventFieldPlacedAt)[:len("2006-01-02")],
+		eventField(t, event, ordersvc.EventFieldPlacedAt)[:len("2006-01-02")],
 		"the timestamp in the payload must come from the order's PlacedAt value")
 
 	// The e-mail is DELIBERATELY absent from the payload: events are written to Redis

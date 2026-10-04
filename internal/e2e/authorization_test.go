@@ -141,7 +141,7 @@ func adminRoutes(t *testing.T) []adminRoute {
 // red on every one of that module's endpoints; there is no path along which
 // forgetting stays silent.
 func TestUnauthorizedIdentityCanDoNoWorkOnAnyAdminEndpoint(t *testing.T) {
-	token := yetkisizYoneticiJetonu(t)
+	token := unauthorizedAdminToken(t)
 	routes := adminRoutes(t)
 
 	// The lower bound guards against the test itself breaking: if the router
@@ -172,19 +172,19 @@ func TestUnauthorizedIdentityCanDoNoWorkOnAnyAdminEndpoint(t *testing.T) {
 // If the two were not separated, an unauthorized user could never log in and
 // therefore could not even ask to be granted authorization.
 func TestUnauthorizedUserCanStillLogIn(t *testing.T) {
-	token := yetkisizYoneticiJetonu(t)
+	token := unauthorizedAdminToken(t)
 
 	identity := readIdentity(t, "Bearer "+token)
 	assert.Equal(t, authsvc.PrincipalKindUser, identity.Kind)
 	assert.Empty(t, identity.Scopes, "an unauthorized user's scope list must be empty")
 }
 
-// yetkisizYoneticiJetonu creates a user with an EMPTY scope list and returns
+// unauthorizedAdminToken creates a user with an EMPTY scope list and returns
 // its token.
 //
 // The user is created once and the tests share it; creating a new one in every
 // test would repeat the bcrypt cost across hundreds of subtests.
-func yetkisizYoneticiJetonu(t *testing.T) string {
+func unauthorizedAdminToken(t *testing.T) string {
 	t.Helper()
 
 	unauthorizedOnce.Do(func() {
@@ -201,7 +201,7 @@ func yetkisizYoneticiJetonu(t *testing.T) string {
 	})
 	require.NoError(t, unauthorizedSetupErr, "could not set up the unauthorized user")
 
-	return jetonAl(t, unauthorizedEmail, unauthorizedPassword)
+	return obtainToken(t, unauthorizedEmail, unauthorizedPassword)
 }
 
 // The constants of the unauthorized fixture user and the one-time setup state.

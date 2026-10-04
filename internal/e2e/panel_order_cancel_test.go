@@ -75,7 +75,7 @@ func TestAnOperatorCancelsAnOrderInThePanel(t *testing.T) {
 		}
 		stocked = levels[0].StockedQuantity
 		return stocked == 5
-	}, olayBeklemeSuresi, 20*time.Millisecond, "the canceled order's unit comes back to the shelf (last read %d)", stocked)
+	}, eventWaitTimeout, 20*time.Millisecond, "the canceled order's unit comes back to the shelf (last read %d)", stocked)
 
 	customerID, email := newCustomer(ctx, t)
 	paidVariant, _ := newStockedVariant(ctx, t, "E2E Panel Paid", map[string]int64{taxedCurrency: happyUnitPrice}, happyInitialStock)

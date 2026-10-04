@@ -245,14 +245,14 @@ func checkVariantReads(t *testing.T, file string, used []bool) int {
 	}
 
 	path := filepath.ToSlash(repoPath(file))
-	bulunan := 0
+	variantReaders := 0
 
 	for _, decl := range tree.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Body == nil || !readsVariants(fn) {
 			continue
 		}
-		bulunan++
+		variantReaders++
 
 		if exemption := markExemption(path, fn.Name.Name, used); exemption {
 			continue
@@ -262,7 +262,7 @@ func checkVariantReads(t *testing.T, file string, used []bool) int {
 		}
 
 		t.Errorf("%s:%d: %q reads variants but makes no visible decision about sales "+
-			"karar vermiyor.\n"+
+			"channels.\n"+
 			"The read has to carry the channels coming from the request's identity as a "+
 			"filter (see workflows/cart/saleschannel.go), or why it does not has to be "+
 			"written into variantReadExemptions WITH ITS JUSTIFICATION. An unscoped "+
@@ -270,16 +270,16 @@ func checkVariantReads(t *testing.T, file string, used []bool) int {
 			path, fset.Position(fn.Pos()).Line, fn.Name.Name)
 	}
 
-	return bulunan
+	return variantReaders
 }
 
 // readsVariants says whether a query.GraphSpec going to the `variant` entity is
 // built in the function's body.
 func readsVariants(fn *ast.FuncDecl) bool {
-	bulundu := false
+	found := false
 
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		if bulundu {
+		if found {
 			return false
 		}
 		lit, ok := n.(*ast.CompositeLit)
@@ -287,13 +287,13 @@ func readsVariants(fn *ast.FuncDecl) bool {
 			return true
 		}
 		if isVariantEntity(lit) {
-			bulundu = true
+			found = true
 		}
 
 		return true
 	})
 
-	return bulundu
+	return found
 }
 
 // isGraphSpec says whether a composite literal's type is query.GraphSpec.
@@ -334,28 +334,28 @@ func isVariantEntity(lit *ast.CompositeLit) bool {
 // makesChannelDecision says whether the function calls a helper that makes the
 // scope decision.
 func makesChannelDecision(fn *ast.FuncDecl) bool {
-	bulundu := false
+	found := false
 
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		if bulundu {
+		if found {
 			return false
 		}
-		cagri, ok := n.(*ast.CallExpr)
+		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
 
-		switch hedef := cagri.Fun.(type) {
+		switch fun := call.Fun.(type) {
 		case *ast.Ident:
-			bulundu = channelDecidingCalls[hedef.Name]
+			found = channelDecidingCalls[fun.Name]
 		case *ast.SelectorExpr:
-			bulundu = channelDecidingCalls[hedef.Sel.Name]
+			found = channelDecidingCalls[fun.Sel.Name]
 		}
 
 		return true
 	})
 
-	return bulundu
+	return found
 }
 
 // markExemption says whether the read is exempt and marks the exemption as USED.

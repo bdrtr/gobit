@@ -73,7 +73,7 @@ func TestSingleAttemptFailureIsNotCompensated(t *testing.T) {
 
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
 
-	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "tek_deneme", Steps: steps(a, b)}, nil)
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "single_attempt", Steps: steps(a, b)}, nil)
 
 	require.Error(t, err)
 	calls := rec.snapshot()
@@ -120,12 +120,12 @@ func TestCompensationRecordKeepsInvokeOutput(t *testing.T) {
 	rec := &recorder{}
 
 	var execID string
-	kere := 0
+	attempts := 0
 	a := step(rec, "reserve")
 	a.onInvoke = func(_ context.Context, sc *workflow.StepContext) (any, error) {
 		execID = sc.ExecutionID
-		kere++
-		if kere == 1 {
+		attempts++
+		if attempts == 1 {
 			return nil, errors.Unavailable("transient", "the first attempt blew up")
 		}
 		return map[string]string{"reservation_id": "res_42"}, nil
@@ -208,7 +208,7 @@ func TestCustomRetryableStillSkipsPanic(t *testing.T) {
 
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
 
-	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "ozel_yuklem_panik", Steps: steps(s)}, nil,
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "custom_predicate_panic", Steps: steps(s)}, nil,
 		workflow.WithRetry(workflow.RetryPolicy{
 			MaxAttempts: 3,
 			Retryable:   func(error) bool { return true },
@@ -225,7 +225,7 @@ func TestCustomRetryableStillSkipsCanceledContext(t *testing.T) {
 	rec := &recorder{}
 	calls := 0
 
-	s := step(rec, "iptal")
+	s := step(rec, "canceled")
 	s.onInvoke = func(context.Context, *workflow.StepContext) (any, error) {
 		calls++
 		// The dependency returns with a canceled sub-context; the engine's own
@@ -236,7 +236,7 @@ func TestCustomRetryableStillSkipsCanceledContext(t *testing.T) {
 
 	eng := workflow.New(workflow.NewMemoryStore(), testLogger())
 
-	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "ozel_yuklem_iptal", Steps: steps(s)}, nil,
+	_, err := eng.Run(t.Context(), workflow.Workflow{Name: "custom_predicate_cancel", Steps: steps(s)}, nil,
 		workflow.WithRetry(workflow.RetryPolicy{
 			MaxAttempts: 3,
 			Retryable:   func(error) bool { return true },
@@ -305,7 +305,7 @@ func TestWorkflowNameLengthIsValidated(t *testing.T) {
 	assert.True(t, errors.IsInvalid(err))
 
 	_, err = eng.Run(t.Context(),
-		workflow.Workflow{Name: "kisa", Steps: steps(step(rec, long))}, nil)
+		workflow.Workflow{Name: "short", Steps: steps(step(rec, long))}, nil)
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err), "the step name is bounded too")
 }

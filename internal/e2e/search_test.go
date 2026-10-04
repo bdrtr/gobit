@@ -86,7 +86,7 @@ import (
 // searchPollInterval is the time waited between two polls while the index is
 // refreshing.
 //
-// The ceiling on the wait is [olayBeklemeSuresi] and that constant is NOT
+// The ceiling on the wait is [eventWaitTimeout] and that constant is NOT
 // REPEATED here: what is being waited for is the same thing — the in-memory bus
 // carrying an event to a subscriber.
 const searchPollInterval = 20 * time.Millisecond
@@ -244,7 +244,7 @@ func callSearch(t *testing.T, key, channel string, query url.Values) *httptest.R
 
 	path := strings.Replace(searchpg.SearchPath, "{"+corehttp.SalesChannelIDParam+"}", channel, 1)
 
-	return magazaIstegi(t, path+"?"+query.Encode(), key)
+	return storeRequest(t, path+"?"+query.Encode(), key)
 }
 
 // searchEnvelope decodes the search response and verifies that the endpoint
@@ -284,7 +284,7 @@ func searchResults(t *testing.T, shop storefront, word string) storefrontEnvelop
 // and the tests run with -race. A synchronous loop has no such race; the caller
 // can safely assert on the last value it saw.
 func pollUntil(condition func() bool) bool {
-	deadline := time.Now().Add(olayBeklemeSuresi)
+	deadline := time.Now().Add(eventWaitTimeout)
 
 	for {
 		if condition() {
@@ -316,7 +316,7 @@ func waitForSearch(t *testing.T, shop storefront, word string, expected ...strin
 	// slices.Equal is ORDER sensitive; since the scenarios assert sets with a
 	// single ID this is enough, and it preserves the relevance order too.
 	pollUntil(func() bool {
-		last = searchResults(t, shop, word).kimlikler()
+		last = searchResults(t, shop, word).ids()
 
 		return slices.Equal(last, expected)
 	})
@@ -498,14 +498,14 @@ func TestSearchDoesNotBypassChannelFiltering(t *testing.T) {
 	// the proof that the index has been filled. The observation "it is not in
 	// the first storefront", made without waiting for this, could just as well
 	// be explained by the index not having been written yet.
-	waitForSearch(t, storefront{key: ground.ikinciAnahtar, channel: ground.secondChannelID},
+	waitForSearch(t, storefront{key: ground.secondKey, channel: ground.secondChannelID},
 		word, productID)
 
 	assert.True(t, indexRowExists(ctx, t, productID),
 		"the product MUST BE in the index; that the filter is applied in the catalog can only be seen while the row is standing")
 
 	first := searchResults(t, firstStorefront(), word)
-	assert.Empty(t, first.kimlikler(),
+	assert.Empty(t, first.ids(),
 		"a product assigned to another channel must not show up in this storefront's SEARCH; if it does, "+
 			"search has become a bypass of the channel filtering")
 	assert.Zero(t, first.Count, "the counter must reflect the filtered set too")
@@ -519,7 +519,7 @@ func TestSearchDoesNotBypassChannelFiltering(t *testing.T) {
 		"q":                {word},
 		"sales_channel_id": {ground.secondChannelID},
 	})
-	assert.Empty(t, bypass.kimlikler(),
+	assert.Empty(t, bypass.ids(),
 		"the channel ID in the query string MUST BE IGNORED")
 
 	// And the PATH cannot be used to widen either. This is the bypass the

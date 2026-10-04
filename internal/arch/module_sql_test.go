@@ -86,20 +86,21 @@ import (
 // Two different questions, and collapsing them was the trap. Deriving the
 // scanned components from ownership would make the criterion "does this
 // component create tables" — so a plugin that only READS somebody else's table
-// leaves the population by being the very thing the audit looks for. Seven of
-// the eleven plugins of plugins/ ship no migrations. [sqlSubjects] walks the
-// way every other component-scanning gate in this package does, and the
-// tree instead, the way every other component-scanning gate in this package
-// does, and the per-subject floor skips a subject that owns nothing rather than
-// failing it.
+// leaves the population by being the very thing the audit looks for, and so
+// does every plugin that ships no migrations. [sqlSubjects] walks the tree
+// instead, the way every other component-scanning gate in this package does:
+// every root [migrationDirs] reports, every directory under plugins/ and every
+// production package, so which plugins own tables is read from the tree on each
+// run rather than listed in this gate's code. [ownsAnyTable] lets the
+// per-subject check skip a subject that owns nothing rather than fail it.
 //
 // That walk was "the migration owners plus every directory under plugins/"
 // until later the same day, and it was STILL a proxy. A component that is
-// neither owner nor plugin sat outside the audit for exactly the reason the six
-// plugins had, one ring further out. Measured 2026-09-08 across the
-// repository's 156 production packages, precisely one names a table it does not
-// own: internal/rig, whose bulk INSERTs fill eleven tables belonging to
-// product, pricing and inventory. It is a development tool, it belongs to no
+// neither owner nor plugin sat outside the audit for exactly the reason the
+// migration-less plugins had, one ring further out. Measured 2026-09-08 across
+// the repository's 156 production packages, precisely one names a table it
+// does not own: internal/rig, whose bulk INSERTs fill eleven tables belonging
+// to product, pricing and inventory. It is a development tool, it belongs to no
 // module, and nothing looked at it.
 //
 // So the population is every production package, each judged as the subject

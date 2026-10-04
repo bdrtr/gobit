@@ -99,10 +99,10 @@ type channelCatalogProduct struct {
 type channelCatalog struct {
 	// secondChannelID is the second sales channel, separate from [testChannelID].
 	secondChannelID string
-	// ikinciAnahtar is the publishable key bound ONLY to the second channel.
-	ikinciAnahtar string
+	// secondKey is the publishable key bound ONLY to the second channel.
+	secondKey string
 	// siblingKey is a SECOND publishable key bound to the same channel as
-	// [channelCatalog.ikinciAnahtar].
+	// [channelCatalog.secondKey].
 	//
 	// It exists for the claim ADR 0044 turns on: with the channel in the URL the
 	// body is a function of the channel ALONE, so two different keys authorized
@@ -122,8 +122,8 @@ type channelCatalog struct {
 	// "the scope is whatever the key holds" — for a single-channel key those two
 	// produce the same answer. This one separates them.
 	unionKey string
-	// koleksiyonID is the collection all three products belong to.
-	koleksiyonID string
+	// collectionID is the collection all three products belong to.
+	collectionID string
 	// firstChannelProduct is assigned to the shared fixture channel only.
 	firstChannelProduct channelCatalogProduct
 	// secondChannelProduct is assigned to [channelCatalog.secondChannelID] only.
@@ -150,7 +150,7 @@ var (
 // The sales channel name and the product handle are UNIQUE; setting them up
 // again in every test would collide on the second call. Setup therefore lives
 // inside a [sync.Once] and the error is carried outwards (see
-// [yetkisizYoneticiJetonu], the same pattern).
+// [unauthorizedAdminToken], the same pattern).
 //
 // # Why it is isolated with a collection
 //
@@ -205,7 +205,7 @@ func setUpChannelCatalog(ctx context.Context) (channelCatalog, error) {
 	}
 	ground.secondChannelID = channel.ID
 
-	if _, ground.ikinciAnahtar, err = authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
+	if _, ground.secondKey, err = authSvc.CreateAPIKey(ctx, authsvc.CreateAPIKeyInput{
 		Type:      models.APIKeyPublishable,
 		Title:     "e2e second publishable key",
 		CreatedBy: adminID,
@@ -244,7 +244,7 @@ func setUpChannelCatalog(ctx context.Context) (channelCatalog, error) {
 	if err != nil {
 		return ground, fmt.Errorf("the isolation collection could not be set up: %w", err)
 	}
-	ground.koleksiyonID = collection.ID
+	ground.collectionID = collection.ID
 
 	if ground.firstChannelProduct, err = setUpChannelCatalogProduct(ctx, collection.ID, "first"); err != nil {
 		return ground, err
@@ -378,8 +378,8 @@ type storefrontEnvelope struct {
 	Count int `json:"count"`
 }
 
-// kimlikler returns the product identities in the envelope.
-func (e storefrontEnvelope) kimlikler() []string {
+// ids returns the product identities in the envelope.
+func (e storefrontEnvelope) ids() []string {
 	out := make([]string, 0, len(e.Data))
 	for _, product := range e.Data {
 		out = append(out, product.ID)
@@ -412,7 +412,7 @@ func catalogPath(channelID, suffix string) string {
 func storefrontCatalog(t *testing.T, key, channelID string, query url.Values) storefrontEnvelope {
 	t.Helper()
 
-	recorder := magazaIstegi(t, catalogPath(channelID, "/products")+"?"+query.Encode(), key)
+	recorder := storeRequest(t, catalogPath(channelID, "/products")+"?"+query.Encode(), key)
 	require.Equal(t, http.StatusOK, recorder.Code,
 		"the store list must return 200; body: %s", recorder.Body.String())
 
@@ -430,9 +430,9 @@ func decodeStorefrontEnvelope(t *testing.T, recorder *httptest.ResponseRecorder)
 	return envelope
 }
 
-// koleksiyonSorgusu produces the query string that narrows down to a
+// collectionQuery produces the query string that narrows down to a
 // collection.
-func koleksiyonSorgusu(collectionID string) url.Values {
+func collectionQuery(collectionID string) url.Values {
 	return url.Values{"collection_id": {collectionID}}
 }
 
@@ -444,9 +444,9 @@ func koleksiyonSorgusu(collectionID string) url.Values {
 // explanation for the lists diverging.
 func TestTheStorefrontCatalogIsFilteredByTheRequestsSalesChannel(t *testing.T) {
 	ground := channelCatalogFixture(t)
-	query := koleksiyonSorgusu(ground.koleksiyonID)
+	query := collectionQuery(ground.collectionID)
 
-	first := storefrontCatalog(t, publishableKey, testChannelID, query).kimlikler()
+	first := storefrontCatalog(t, publishableKey, testChannelID, query).ids()
 	assert.ElementsMatch(t,
 		[]string{ground.firstChannelProduct.id, ground.unassignedProduct.id}, first,
 		"the first storefront must see its own product and the UNASSIGNED product")
@@ -454,7 +454,7 @@ func TestTheStorefrontCatalogIsFilteredByTheRequestsSalesChannel(t *testing.T) {
 		"a product assigned to another channel MUST NOT be visible in this storefront; "+
 			"if it is, the filter is not looking at the request's identity at all")
 
-	second := storefrontCatalog(t, ground.ikinciAnahtar, ground.secondChannelID, query).kimlikler()
+	second := storefrontCatalog(t, ground.secondKey, ground.secondChannelID, query).ids()
 	assert.ElementsMatch(t,
 		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id}, second,
 		"the second storefront must see its own product and the UNASSIGNED product")
@@ -479,7 +479,7 @@ func TestTheStorefrontCatalogIsFilteredByTheRequestsSalesChannel(t *testing.T) {
 // that products are missing but the filter itself.
 func TestTheStorefrontCounterReflectsTheFilteredSet(t *testing.T) {
 	ground := channelCatalogFixture(t)
-	query := koleksiyonSorgusu(ground.koleksiyonID)
+	query := collectionQuery(ground.collectionID)
 
 	first := storefrontCatalog(t, publishableKey, testChannelID, query)
 	assert.Equal(t, 2, first.Count,
@@ -487,7 +487,7 @@ func TestTheStorefrontCounterReflectsTheFilteredSet(t *testing.T) {
 	assert.Len(t, first.Data, first.Count,
 		"in a result that fits on a single page the counter and the row count must not diverge")
 
-	second := storefrontCatalog(t, ground.ikinciAnahtar, ground.secondChannelID, query)
+	second := storefrontCatalog(t, ground.secondKey, ground.secondChannelID, query)
 	assert.Equal(t, 2, second.Count)
 	assert.Len(t, second.Data, second.Count)
 
@@ -498,7 +498,7 @@ func TestTheStorefrontCounterReflectsTheFilteredSet(t *testing.T) {
 		"the admin list must count all three products; if it does not, the filter has leaked into the wrong place")
 	assert.ElementsMatch(t,
 		[]string{ground.firstChannelProduct.id, ground.secondChannelProduct.id, ground.unassignedProduct.id},
-		admin.kimlikler())
+		admin.ids())
 }
 
 // adminCatalog calls the admin product list with the secret key.
@@ -550,19 +550,19 @@ func TestTheSingleProductStorefrontEndpointIsFilteredToo(t *testing.T) {
 			publishableKey, testChannelID, ground.unassignedProduct.handle, http.StatusOK,
 		},
 		"the hidden product in its own storefront": {
-			ground.ikinciAnahtar, ground.secondChannelID, ground.secondChannelProduct.id, http.StatusOK,
+			ground.secondKey, ground.secondChannelID, ground.secondChannelProduct.id, http.StatusOK,
 		},
 		"the first channel's product in the second storefront": {
-			ground.ikinciAnahtar, ground.secondChannelID, ground.firstChannelProduct.handle, http.StatusNotFound,
+			ground.secondKey, ground.secondChannelID, ground.firstChannelProduct.handle, http.StatusNotFound,
 		},
 		"the unassigned product in the second storefront": {
-			ground.ikinciAnahtar, ground.secondChannelID, ground.unassignedProduct.id, http.StatusOK,
+			ground.secondKey, ground.secondChannelID, ground.unassignedProduct.id, http.StatusOK,
 		},
 	}
 
 	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
-			recorder := magazaIstegi(t, catalogPath(tt.channel, "/products/"+tt.address), tt.key)
+			recorder := storeRequest(t, catalogPath(tt.channel, "/products/"+tt.address), tt.key)
 
 			assert.Equal(t, tt.expected, recorder.Code,
 				"the single-product storefront endpoint must return the expected code; body: %s", recorder.Body.String())
@@ -585,9 +585,9 @@ func TestTheSingleProductStorefrontEndpointIsFilteredToo(t *testing.T) {
 func TestAHiddenProductDoesNotRevealItselfViaTheErrorCode(t *testing.T) {
 	ground := channelCatalogFixture(t)
 
-	hidden := magazaIstegi(t,
+	hidden := storeRequest(t,
 		catalogPath(testChannelID, "/products/"+ground.secondChannelProduct.handle), publishableKey)
-	missing := magazaIstegi(t,
+	missing := storeRequest(t,
 		catalogPath(testChannelID, "/products/e2e-no-such-product-exists"), publishableKey)
 
 	require.Equal(t, http.StatusNotFound, hidden.Code, "body: %s", hidden.Body.String())
@@ -616,16 +616,16 @@ func TestAHiddenProductDoesNotRevealItselfViaTheErrorCode(t *testing.T) {
 func TestTheStorefrontDoesNotTakeTheChannelFromTheQueryString(t *testing.T) {
 	ground := channelCatalogFixture(t)
 
-	query := koleksiyonSorgusu(ground.koleksiyonID)
+	query := collectionQuery(ground.collectionID)
 	query.Set("sales_channel_id", ground.secondChannelID)
 
 	catalog := storefrontCatalog(t, publishableKey, testChannelID, query)
 
-	assert.NotContains(t, catalog.kimlikler(), ground.secondChannelProduct.id,
+	assert.NotContains(t, catalog.ids(), ground.secondChannelProduct.id,
 		"the channel identity in the query string MUST BE IGNORED; if it is not, the key's "+
 			"owner is able to read another storefront's catalog")
 	assert.ElementsMatch(t,
-		[]string{ground.firstChannelProduct.id, ground.unassignedProduct.id}, catalog.kimlikler(),
+		[]string{ground.firstChannelProduct.id, ground.unassignedProduct.id}, catalog.ids(),
 		"the catalog must stay bound to the key's OWN channel")
 	assert.Equal(t, 2, catalog.Count)
 }
@@ -656,11 +656,11 @@ func TestRemovingTheLastChannelBondShowsTheProductInEveryStorefront(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, bindChannel(product.id, ground.secondChannelID))
 
-	query := koleksiyonSorgusu(collection.ID)
-	require.Empty(t, storefrontCatalog(t, publishableKey, testChannelID, query).kimlikler(),
+	query := collectionQuery(collection.ID)
+	require.Empty(t, storefrontCatalog(t, publishableKey, testChannelID, query).ids(),
 		"at first the product must be in the second storefront only")
 	require.Equal(t, []string{product.id},
-		storefrontCatalog(t, ground.ikinciAnahtar, ground.secondChannelID, query).kimlikler())
+		storefrontCatalog(t, ground.secondKey, ground.secondChannelID, query).ids())
 
 	recorder, err := adminRequestWithBody(http.MethodDelete,
 		"/admin/v1/products/"+product.id+"/sales-channels/"+ground.secondChannelID, nil)
@@ -673,10 +673,10 @@ func TestRemovingTheLastChannelBondShowsTheProductInEveryStorefront(t *testing.T
 	require.Empty(t, remaining, "after the last bond is removed the channel list must become empty")
 
 	assert.Equal(t, []string{product.id},
-		storefrontCatalog(t, publishableKey, testChannelID, query).kimlikler(),
+		storefrontCatalog(t, publishableKey, testChannelID, query).ids(),
 		"a product left with no assignment must be visible in the FIRST storefront too")
 	assert.Equal(t, []string{product.id},
-		storefrontCatalog(t, ground.ikinciAnahtar, ground.secondChannelID, query).kimlikler(),
+		storefrontCatalog(t, ground.secondKey, ground.secondChannelID, query).ids(),
 		"a product left with no assignment must keep being visible in its own old storefront too")
 }
 
@@ -705,10 +705,10 @@ func TestTwoKeysOnOneChannelReceiveByteIdenticalBodies(t *testing.T) {
 	ground := channelCatalogFixture(t)
 
 	address := catalogPath(ground.secondChannelID, "/products") +
-		"?" + koleksiyonSorgusu(ground.koleksiyonID).Encode()
+		"?" + collectionQuery(ground.collectionID).Encode()
 
-	first := magazaIstegi(t, address, ground.ikinciAnahtar)
-	second := magazaIstegi(t, address, ground.siblingKey)
+	first := storeRequest(t, address, ground.secondKey)
+	second := storeRequest(t, address, ground.siblingKey)
 
 	require.Equal(t, http.StatusOK, first.Code, "body: %s", first.Body.String())
 	require.Equal(t, http.StatusOK, second.Code, "body: %s", second.Body.String())
@@ -723,7 +723,7 @@ func TestTwoKeysOnOneChannelReceiveByteIdenticalBodies(t *testing.T) {
 	envelope := decodeStorefrontEnvelope(t, first)
 	assert.ElementsMatch(t,
 		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id},
-		envelope.kimlikler(),
+		envelope.ids(),
 		"the identical bodies have to be the second storefront's real catalog")
 }
 
@@ -743,10 +743,10 @@ func TestTwoKeysOnOneChannelReceiveByteIdenticalBodies(t *testing.T) {
 func TestTheCatalogPathNarrowsAndNeverBroadens(t *testing.T) {
 	ground := channelCatalogFixture(t)
 
-	query := koleksiyonSorgusu(ground.koleksiyonID)
+	query := collectionQuery(ground.collectionID)
 	foreign := catalogPath(ground.secondChannelID, "/products") + "?" + query.Encode()
 
-	refused := magazaIstegi(t, foreign, publishableKey)
+	refused := storeRequest(t, foreign, publishableKey)
 	assert.Equal(t, http.StatusForbidden, refused.Code,
 		"a key must not reach a channel it is not bound to by naming it in the path; "+
 			"if this is served, the segment is the query-string mistake with a different "+
@@ -754,13 +754,13 @@ func TestTheCatalogPathNarrowsAndNeverBroadens(t *testing.T) {
 	assert.NotContains(t, refused.Body.String(), ground.secondChannelProduct.id,
 		"the refusal must not carry the catalog it refused")
 
-	served := magazaIstegi(t, foreign, ground.ikinciAnahtar)
+	served := storeRequest(t, foreign, ground.secondKey)
 	require.Equal(t, http.StatusOK, served.Code,
 		"the same address must be served to the key that holds the channel; body: %s",
 		served.Body.String())
 	assert.ElementsMatch(t,
 		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id},
-		decodeStorefrontEnvelope(t, served).kimlikler())
+		decodeStorefrontEnvelope(t, served).ids())
 }
 
 // TestEveryChannelScopedReadRefusesAForeignChannel verifies that the rule is
@@ -795,7 +795,7 @@ func TestEveryChannelScopedReadRefusesAForeignChannel(t *testing.T) {
 		t.Run(suffix, func(t *testing.T) {
 			path := strings.ReplaceAll(suffix, "{id}", ground.secondChannelProduct.handle)
 			require.NotContains(t, path, "{", "a path parameter this test does not fill: %s", suffix)
-			recorder := magazaIstegi(t, catalogPath(ground.secondChannelID, path), publishableKey)
+			recorder := storeRequest(t, catalogPath(ground.secondChannelID, path), publishableKey)
 
 			assert.Equal(t, http.StatusForbidden, recorder.Code,
 				"%s has to refuse a channel the key does not hold; body: %s",
@@ -818,19 +818,19 @@ func TestEveryChannelScopedReadRefusesAForeignChannel(t *testing.T) {
 // CONTENTS that differ.
 func TestAMultiChannelKeyReadsOneChannelPerRequest(t *testing.T) {
 	ground := channelCatalogFixture(t)
-	query := koleksiyonSorgusu(ground.koleksiyonID)
+	query := collectionQuery(ground.collectionID)
 
 	first := storefrontCatalog(t, ground.unionKey, testChannelID, query)
 	second := storefrontCatalog(t, ground.unionKey, ground.secondChannelID, query)
 
 	assert.ElementsMatch(t,
-		[]string{ground.firstChannelProduct.id, ground.unassignedProduct.id}, first.kimlikler(),
+		[]string{ground.firstChannelProduct.id, ground.unassignedProduct.id}, first.ids(),
 		"the first request has to answer with the FIRST channel's catalog only")
 	assert.ElementsMatch(t,
-		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id}, second.kimlikler(),
+		[]string{ground.secondChannelProduct.id, ground.unassignedProduct.id}, second.ids(),
 		"the second request has to answer with the SECOND channel's catalog only")
 
-	assert.NotContains(t, first.kimlikler(), ground.secondChannelProduct.id,
+	assert.NotContains(t, first.ids(), ground.secondChannelProduct.id,
 		"a two-channel key must NOT receive the union: a merged body varies with the key "+
 			"again, which is exactly what the channel segment exists to stop")
 	assert.Equal(t, 2, first.Count, "the counter has to count the path's channel, not the key's set")

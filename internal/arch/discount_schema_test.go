@@ -33,8 +33,9 @@ import (
 // the shop discounts, which is the worst shape of wrong answer: it looks like a
 // broken RULE and sends somebody to rewrite a rule that is correct.
 //
-// The same class as the language ledger's roots and the documentation scan's
-// trees: a rule whose population grows while the rule stays a sentence.
+// The same class as the documentation scan's trees and the language scan's
+// roots before D227 derived its population from git: a rule whose population
+// grows while the rule stays a sentence.
 //
 // # What it compares
 //

@@ -61,14 +61,14 @@ func TestTheStorefrontListsACategoryWithItsSubcategories(t *testing.T) {
 	product("elsewhere")
 
 	tree := storefrontCatalog(t, publishableKey, testChannelID, url.Values{"category_tree_id": {apparel.ID}})
-	assert.ElementsMatch(t, []string{underLinen, onApparel}, tree.kimlikler(),
+	assert.ElementsMatch(t, []string{underLinen, onApparel}, tree.ids(),
 		"the tree lists the category's product and its grandchild's")
 	assert.Equal(t, 2, tree.Count)
 
 	direct := storefrontCatalog(t, publishableKey, testChannelID, url.Values{"category_id": {apparel.ID}})
-	assert.Equal(t, []string{onApparel}, direct.kimlikler(), "category_id lists what is filed directly")
+	assert.Equal(t, []string{onApparel}, direct.ids(), "category_id lists what is filed directly")
 
-	facets := magazaIstegi(t, catalogPath(testChannelID, "/product-facets")+"?"+url.Values{
+	facets := storeRequest(t, catalogPath(testChannelID, "/product-facets")+"?"+url.Values{
 		"category_tree_id": {shirts.ID}, "attribute": {fit + ":slim"},
 	}.Encode(), publishableKey)
 	require.Equal(t, http.StatusOK, facets.Code, facets.Body.String())

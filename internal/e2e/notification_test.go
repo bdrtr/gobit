@@ -334,7 +334,7 @@ func notificationOrder(
 // (publication, subscription, idempotency) can break that on its own.
 func TestOrderConfirmationIsWrittenToDeliveryLog(t *testing.T) {
 	ctx := t.Context()
-	token := jetonAl(t, adminEmail, adminPassword)
+	token := obtainToken(t, adminEmail, adminPassword)
 
 	orderID, email, _ := notificationOrder(ctx, t, "E2E Notification Product")
 
@@ -387,7 +387,7 @@ func TestOrderConfirmationIsWrittenToDeliveryLog(t *testing.T) {
 // "for convenience", it breaks here.
 func TestNotificationRecipientIsReadFromOrderNotEvent(t *testing.T) {
 	ctx := t.Context()
-	token := jetonAl(t, adminEmail, adminPassword)
+	token := obtainToken(t, adminEmail, adminPassword)
 
 	orderID, email, total := notificationOrder(ctx, t, "E2E Notification Recipient Product")
 
@@ -418,7 +418,7 @@ func TestNotificationRecipientIsReadFromOrderNotEvent(t *testing.T) {
 	// And the event does NOT CARRY the address — so the address above could not
 	// have come from there.
 	event := eventLog.waitFor(t, orderID)
-	assert.Equal(t, orderID, olayAlani(t, event, ordersvc.EventFieldOrderID),
+	assert.Equal(t, orderID, eventField(t, event, ordersvc.EventFieldOrderID),
 		"the tie the event gives the subscriber is the order IDENTIFIER")
 
 	_, hasEmailField := event.Data["email"]
@@ -448,7 +448,7 @@ func TestNotificationRecipientIsReadFromOrderNotEvent(t *testing.T) {
 // arrive.
 func TestSecondEventForSameOrderProducesNoSecondNotification(t *testing.T) {
 	ctx := t.Context()
-	token := jetonAl(t, adminEmail, adminPassword)
+	token := obtainToken(t, adminEmail, adminPassword)
 
 	orderID, _, _ := notificationOrder(ctx, t, "E2E Duplicate Notification Product")
 
@@ -504,7 +504,7 @@ func TestDeliveryLogCannotBeReadUnauthenticated(t *testing.T) {
 	assert.Equal(t, "Bearer", anonymous.Header().Get("WWW-Authenticate"),
 		"RFC 9110: a 401 must report which scheme is expected")
 
-	token := jetonAl(t, adminEmail, adminPassword)
+	token := obtainToken(t, adminEmail, adminPassword)
 	authenticated := adminRequest(t, http.MethodGet, deliveryLogPath, "Bearer "+token)
 	require.Equal(t, http.StatusOK, authenticated.Code,
 		"the same address must work with a valid token; if it does not, the 401 would be "+

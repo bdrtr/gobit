@@ -8,9 +8,9 @@ import (
 
 // describeTrial describes the promotion trial (ADR 0176).
 //
-// It is a file of its own because the rest of this package's descriptions are
-// still waiting for translation (the repository's language ledger), and new
-// prose goes into a file that starts in English.
+// It became a file of its own while the rest of this package's descriptions
+// were still on the language ledger (ADR 0012), which has been empty since
+// 2026-10-03 (D228).
 func describeTrial(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathTrial, openapi.Operation{
 		Summary: "What the promotion would have done to the orders of a period.",

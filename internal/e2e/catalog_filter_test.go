@@ -368,7 +368,7 @@ func (c filteredCatalog) ids() []string {
 func filteredCatalogRequest(t *testing.T, ground catalogFilter, query url.Values) *http.Response {
 	t.Helper()
 
-	recorder := magazaIstegi(t,
+	recorder := storeRequest(t,
 		catalogPath(testChannelID, "/products")+"?"+
 			mergedFilterQuery(ground, query).Encode(), publishableKey)
 
@@ -379,7 +379,7 @@ func filteredCatalogRequest(t *testing.T, ground catalogFilter, query url.Values
 func filteredCatalogOf(t *testing.T, ground catalogFilter, query url.Values) filteredCatalog {
 	t.Helper()
 
-	recorder := magazaIstegi(t,
+	recorder := storeRequest(t,
 		catalogPath(testChannelID, "/products")+"?"+
 			mergedFilterQuery(ground, query).Encode(), publishableKey)
 	require.Equal(t, http.StatusOK, recorder.Code,
@@ -455,7 +455,7 @@ func TestTheStorefrontAnswersInStockOverTheRealInventoryModule(t *testing.T) {
 func TestTheStorefrontMatchesAnOptionValueAcrossItsSpellings(t *testing.T) {
 	ground := catalogFilterFixture(t)
 
-	recorder := magazaIstegi(t, catalogPath(testChannelID, "/option-values"), publishableKey)
+	recorder := storeRequest(t, catalogPath(testChannelID, "/option-values"), publishableKey)
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 
 	var vocabulary struct {

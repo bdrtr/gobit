@@ -35,7 +35,7 @@ func TestAContractPriceNamesItsBuyer(t *testing.T) {
 	contracted, contractedEmail := newCustomer(ctx, t)
 	colleague, _ := newCustomer(ctx, t)
 	stranger, _ := newCustomer(ctx, t)
-	companyID := b2bCalisan(ctx, t, contracted, nil, b2bmodels.ResetMonthly)
+	companyID := b2bEmployee(ctx, t, contracted, nil, b2bmodels.ResetMonthly)
 	_, err := b2bSvc.CreateEmployee(ctx, b2bsvc.EmployeeInput{CompanyID: companyID, CustomerID: colleague})
 	require.NoError(t, err)
 

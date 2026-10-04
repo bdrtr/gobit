@@ -58,8 +58,8 @@ func TestScopedRunsOnlyUnderThePrefix(t *testing.T) {
 		"the prefix inside as a string":  {path: "/x/admin/v1/users", expected: http.StatusOK},
 	}
 
-	for ad, tt := range cases {
-		t.Run(ad, func(t *testing.T) {
+	for name, tt := range cases {
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
 			h := corehttp.Scoped("/admin/v1", nil, rejecting)(
@@ -102,10 +102,10 @@ func TestScopedTheChainKeepsTheOrder(t *testing.T) {
 	t.Parallel()
 
 	var order []string
-	recording := func(ad string) func(http.Handler) http.Handler {
+	recording := func(name string) func(http.Handler) http.Handler {
 		return func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				order = append(order, ad)
+				order = append(order, name)
 				next.ServeHTTP(w, r)
 			})
 		}
@@ -314,8 +314,8 @@ func TestAPIGuardsAnUnconfiguredAuthenticatorRejectsEverything(t *testing.T) {
 	admin := call(r, httptest.NewRequest(http.MethodPost, "/admin/v1/users", http.NoBody))
 	assert.Equal(t, http.StatusUnauthorized, admin.Code)
 
-	magaza := call(r, httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody))
-	assert.Equal(t, http.StatusUnauthorized, magaza.Code)
+	store := call(r, httptest.NewRequest(http.MethodGet, "/store/v1/products", http.NoBody))
+	assert.Equal(t, http.StatusUnauthorized, store.Code)
 }
 
 // TestAPIGuardsAnExemptPathAsksForNoIdentity verifies that the login endpoint

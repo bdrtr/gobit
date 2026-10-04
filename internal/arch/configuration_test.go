@@ -152,10 +152,10 @@ func configSettings(t *testing.T) []settingField {
 	t.Helper()
 
 	var settings []settingField
-	var gez func(tip reflect.Type, onek, path string)
-	gez = func(tip reflect.Type, onek, path string) {
-		for i := range tip.NumField() {
-			field := tip.Field(i)
+	var walk func(typ reflect.Type, prefix, path string)
+	walk = func(typ reflect.Type, prefix, path string) {
+		for i := range typ.NumField() {
+			field := typ.Field(i)
 			if !field.IsExported() {
 				continue
 			}
@@ -164,12 +164,12 @@ func configSettings(t *testing.T) []settingField {
 				fieldType = fieldType.Elem()
 			}
 
-			name, etiketVar := field.Tag.Lookup("env")
-			if !etiketVar {
+			name, tagged := field.Tag.Lookup("env")
+			if !tagged {
 				// A STRUCT without an env tag is a node grouping settings; it is descended
 				// into.
 				if fieldType.Kind() == reflect.Struct {
-					gez(fieldType, onek+field.Tag.Get("envPrefix"), path+field.Name+".")
+					walk(fieldType, prefix+field.Tag.Get("envPrefix"), path+field.Name+".")
 					continue
 				}
 				// A plain field without an env tag cannot be filled from ANY environment
@@ -184,14 +184,14 @@ func configSettings(t *testing.T) []settingField {
 
 			def, hasDefault := field.Tag.Lookup("envDefault")
 			settings = append(settings, settingField{
-				name:       onek + name,
+				name:       prefix + name,
 				path:       path + field.Name,
 				def:        def,
 				hasDefault: hasDefault,
 			})
 		}
 	}
-	gez(reflect.TypeOf(config.Config{}), "", "")
+	walk(reflect.TypeOf(config.Config{}), "", "")
 
 	require.NotEmpty(t, settings, "no field with an env tag was found in config.Config; the walk must be broken")
 	return settings
@@ -206,11 +206,11 @@ func configSettings(t *testing.T) []settingField {
 func readEnvExample(t *testing.T) map[string]envAssignment {
 	t.Helper()
 
-	ham, err := os.ReadFile(filepath.Join(repoRoot, envExamplePath))
+	raw, err := os.ReadFile(filepath.Join(repoRoot, envExamplePath))
 	require.NoError(t, err, "%s could not be read", envExamplePath)
 
 	assignments := make(map[string]envAssignment)
-	for i, line := range strings.Split(string(ham), "\n") {
+	for i, line := range strings.Split(string(raw), "\n") {
 		no := i + 1
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
@@ -218,8 +218,8 @@ func readEnvExample(t *testing.T) map[string]envAssignment {
 		}
 		trimmed = strings.TrimPrefix(trimmed, "export ")
 
-		name, value, bulundu := strings.Cut(trimmed, "=")
-		if !bulundu {
+		name, value, hasEquals := strings.Cut(trimmed, "=")
+		if !hasEquals {
 			t.Errorf("%s:%d: the line %q is not an assignment.\n"+
 				"The file is loaded by a shell; a line that is not an assignment either does "+
 				"nothing silently or RUNS as a command.", envExamplePath, no, trimmed)
@@ -232,13 +232,13 @@ func readEnvExample(t *testing.T) map[string]envAssignment {
 		// a comment is not read wrongly.
 		value = strings.TrimSpace(value)
 		if !strings.HasPrefix(value, "'") && !strings.HasPrefix(value, `"`) {
-			if yorum := strings.Index(value, " #"); yorum >= 0 {
-				value = strings.TrimSpace(value[:yorum])
+			if comment := strings.Index(value, " #"); comment >= 0 {
+				value = strings.TrimSpace(value[:comment])
 			}
 		}
 		value = stripQuotes(value)
 
-		if previous, varmis := assignments[name]; varmis {
+		if previous, exists := assignments[name]; exists {
 			t.Errorf("%s:%d: %s is assigned TWICE (the previous one: line %d).\n"+
 				"In a shell the last one wins; the document, though, promises two values at "+
 				"once. Delete the extra one.", envExamplePath, no, name, previous.line)
@@ -256,8 +256,8 @@ func stripQuotes(value string) string {
 	if len(value) < 2 {
 		return value
 	}
-	ilk, son := value[0], value[len(value)-1]
-	if ilk == son && (ilk == '\'' || ilk == '"') {
+	first, last := value[0], value[len(value)-1]
+	if first == last && (first == '\'' || first == '"') {
 		return value[1 : len(value)-1]
 	}
 	return value
@@ -267,11 +267,11 @@ func stripQuotes(value string) string {
 func composeVariables(t *testing.T) map[string]composeVariable {
 	t.Helper()
 
-	ham, err := os.ReadFile(filepath.Join(repoRoot, composePath))
+	raw, err := os.ReadFile(filepath.Join(repoRoot, composePath))
 	require.NoError(t, err, "%s could not be read", composePath)
 
 	variables := make(map[string]composeVariable)
-	for _, e := range composeSubstitutionRe.FindAllStringSubmatch(string(ham), -1) {
+	for _, e := range composeSubstitutionRe.FindAllStringSubmatch(string(raw), -1) {
 		name := e[2]
 		// The same variable can appear more than once (one with a fallback, one
 		// without); the occurrence carrying the fallback is the decisive one.
@@ -279,7 +279,7 @@ func composeVariables(t *testing.T) map[string]composeVariable {
 			variables[name] = composeVariable{def: e[3], hasDefault: true}
 			continue
 		}
-		if _, varmis := variables[name]; !varmis {
+		if _, exists := variables[name]; !exists {
 			variables[name] = composeVariable{}
 		}
 	}
@@ -305,11 +305,11 @@ func pluginSettingNames(t *testing.T) map[string]bool {
 		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 			return nil
 		}
-		ham, okumaHatasi := os.ReadFile(path)
-		if okumaHatasi != nil {
-			return okumaHatasi
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
 		}
-		for _, e := range upperCaseStringRe.FindAllStringSubmatch(string(ham), -1) {
+		for _, e := range upperCaseStringRe.FindAllStringSubmatch(string(raw), -1) {
 			names[e[1]] = true
 		}
 		return nil
@@ -391,45 +391,45 @@ func TestTheEnvExampleAgreesWithTheConfigDefaults(t *testing.T) {
 	settings := configSettings(t)
 	assignments := readEnvExample(t)
 
-	for _, ayar := range settings {
-		atama, documented := assignments[ayar.name]
+	for _, setting := range settings {
+		assignment, documented := assignments[setting.name]
 		if !documented {
 			t.Errorf("the config.Config.%s setting (%s) is MISSING from %s.\n"+
 				"A setting not written in the document does not exist for the operator: they "+
 				"can learn neither its existence nor its default.",
-				ayar.path, ayar.name, envExamplePath)
+				setting.path, setting.name, envExamplePath)
 			continue
 		}
 
-		if gerekce, exempt := deliberateDivergences[ayar.name]; exempt {
+		if reason, exempt := deliberateDivergences[setting.name]; exempt {
 			// The exemption has to be LIVE. If the entry is not deleted once the
 			// divergence goes away, the list grows in a way that covers a real divergence
 			// too.
-			assert.NotEqual(t, ayar.def, atama.value,
+			assert.NotEqual(t, setting.def, assignment.value,
 				"there is a deliberate divergence record for %s (%q) but the value is now THE SAME as the default (%q).\n"+
 					"DELETE the record from deliberateDivergences; a rotten exemption lets "+
 					"tomorrow's real divergence through silently.",
-				ayar.name, gerekce, ayar.def)
+				setting.name, reason, setting.def)
 			continue
 		}
 
-		if !ayar.hasDefault {
-			assert.Equal(t, requiredSettingExampleValue, atama.value,
+		if !setting.hasDefault {
+			assert.Equal(t, requiredSettingExampleValue, assignment.value,
 				"%s:%d: the %s setting has NO envDefault, that is, it is a required setting; "+
 					"its value in %s has to be EMPTY, %q was written.\n"+
 					"This file is copied into .env as it is: an example secret written here "+
 					"produces a working installation that signs with a secret everybody knows. "+
 					"The place for an example value is a comment line.",
-				envExamplePath, atama.line, ayar.name, envExamplePath, atama.value)
+				envExamplePath, assignment.line, setting.name, envExamplePath, assignment.value)
 			continue
 		}
 
-		assert.Equal(t, ayar.def, atama.value,
+		assert.Equal(t, setting.def, assignment.value,
 			"%s:%d: the %s setting is %q in the document while the default of config.Config.%s is %q.\n"+
 				"The document and the default have to say the same thing. If the divergence is "+
 				"deliberate, add it to deliberateDivergences WITH ITS JUSTIFICATION; a silent "+
 				"divergence is the operator learning wrongly.",
-			envExamplePath, atama.line, ayar.name, atama.value, ayar.path, ayar.def)
+			envExamplePath, assignment.line, setting.name, assignment.value, setting.path, setting.def)
 	}
 }
 
@@ -459,26 +459,26 @@ func TestNoVariableInTheEnvExampleIsOrphaned(t *testing.T) {
 	t.Parallel()
 
 	assignments := readEnvExample(t)
-	ikameler := composeVariables(t)
-	eklentiAdlari := pluginSettingNames(t)
+	substitutions := composeVariables(t)
+	pluginNames := pluginSettingNames(t)
 
-	configAdlari := make(map[string]bool)
-	for _, ayar := range configSettings(t) {
-		configAdlari[ayar.name] = true
+	configNames := make(map[string]bool)
+	for _, setting := range configSettings(t) {
+		configNames[setting.name] = true
 	}
 
-	for name, atama := range assignments {
+	for name, assignment := range assignments {
 		switch {
-		case configAdlari[name]:
+		case configNames[name]:
 			// Within the first test's scope; its value is compared there.
-		case ikameler[name].hasDefault:
-			assert.Equal(t, ikameler[name].def, atama.value,
+		case substitutions[name].hasDefault:
+			assert.Equal(t, substitutions[name].def, assignment.value,
 				"%s:%d: %s is %q in the document while its fallback in %s is %q.\n"+
 					"If the two diverge, the stack brought up with \"make up\" runs with a "+
 					"configuration other than what the document describes.",
-				envExamplePath, atama.line, name, atama.value, composePath,
-				ikameler[name].def)
-		case eklentiAdlari[name]:
+				envExamplePath, assignment.line, name, assignment.value, composePath,
+				substitutions[name].def)
+		case pluginNames[name]:
 			// A plugin setting; its value belongs to the plugin's own contract.
 		default:
 			t.Errorf("%s:%d: nobody READS the %s variable.\n"+
@@ -486,7 +486,7 @@ func TestNoVariableInTheEnvExampleIsOrphaned(t *testing.T) {
 				"reader under %s. A variable that stands in the document but nobody reads "+
 				"promises the operator a knob that does not work: they turn it, nothing "+
 				"happens, and they get no error either.",
-				envExamplePath, atama.line, name, composePath, pluginsPath)
+				envExamplePath, assignment.line, name, composePath, pluginsPath)
 		}
 	}
 }
@@ -532,11 +532,11 @@ func TestTheComposeVariablesAreDocumented(t *testing.T) {
 func TestThePluginNamesInTheDocsAreReal(t *testing.T) {
 	t.Parallel()
 
-	kayitli := pluginRegistryNames(t)
+	registered := pluginRegistryNames(t)
 
 	readme, err := os.ReadFile(filepath.Join(repoRoot, readmePath))
 	require.NoError(t, err, "%s could not be read", readmePath)
-	ortamOrnegi, err := os.ReadFile(filepath.Join(repoRoot, envExamplePath))
+	envExample, err := os.ReadFile(filepath.Join(repoRoot, envExamplePath))
 	require.NoError(t, err, "%s could not be read", envExamplePath)
 
 	// The input of the forward direction is the PLUGINS=... examples, and that set
@@ -548,16 +548,16 @@ func TestThePluginNamesInTheDocsAreReal(t *testing.T) {
 	exampleCount := 0
 
 	for _, doc := range []struct {
-		name   string
-		icerik string
+		name    string
+		content string
 	}{
 		{readmePath, string(readme)},
-		{envExamplePath, string(ortamOrnegi)},
+		{envExamplePath, string(envExample)},
 	} {
-		for _, e := range pluginsAssignmentRe.FindAllStringSubmatch(doc.icerik, -1) {
+		for _, e := range pluginsAssignmentRe.FindAllStringSubmatch(doc.content, -1) {
 			exampleCount++
 			for _, name := range strings.Split(e[1], ",") {
-				assert.Contains(t, kayitli, name,
+				assert.Contains(t, registered, name,
 					"%s: the name %q in the PLUGINS=%s example is NOT registered.\n"+
 						"The registered names are the \"const Name\" values in the plugin source; "+
 						"they are NOT the package or directory name. An installation copying this "+
@@ -575,8 +575,8 @@ func TestThePluginNamesInTheDocsAreReal(t *testing.T) {
 			"installation copying it stops at startup with \"unknown plugin\". Because the "+
 			"reverse direction does a plain-text search, it DOES NOT SEE this loss.", readmePath, envExamplePath)
 
-	for name := range kayitli {
-		assert.Contains(t, string(ortamOrnegi), name,
+	for name := range registered {
+		assert.Contains(t, string(envExample), name,
 			"the %q plugin is registered but is never MENTIONED in %s.\n"+
 				"The PLUGINS section lists the recognized names; a plugin not written there "+
 				"is a capability nobody can install.", name, envExamplePath)
@@ -610,24 +610,24 @@ var testNameInDocsRe = regexp.MustCompile(`\bTest[A-Z][A-Za-z0-9]*[A-Z][A-Za-z0-
 func TestTheTestsMentionedInTheDocsAreReal(t *testing.T) {
 	t.Parallel()
 
-	ham, err := os.ReadFile("../../README.md")
+	raw, err := os.ReadFile("../../README.md")
 	require.NoError(t, err, "README.md could not be read")
 
-	anilanlar := testNameInDocsRe.FindAllString(string(ham), -1)
-	require.NotEmpty(t, anilanlar,
+	mentioned := testNameInDocsRe.FindAllString(string(raw), -1)
+	require.NotEmpty(t, mentioned,
 		"no test name was found in the README; the pattern may be broken — "+
 			"a check that finds nothing stays green in a vacuum")
 
-	mevcut := repositoryTestNames(t)
+	existing := repositoryTestNames(t)
 
-	gorulen := map[string]bool{}
-	for _, name := range anilanlar {
-		if gorulen[name] {
+	seen := map[string]bool{}
+	for _, name := range mentioned {
+		if seen[name] {
 			continue
 		}
-		gorulen[name] = true
+		seen[name] = true
 
-		if _, var_ := mevcut[name]; var_ {
+		if _, exists := existing[name]; exists {
 			continue
 		}
 		// assert.Contains is DELIBERATELY not used: when map membership fails it prints
@@ -679,15 +679,15 @@ func repositoryTestNames(t *testing.T) map[string]struct{} {
 		if perr != nil {
 			return perr
 		}
-		for _, tanim := range file.Decls {
-			fn, ok := tanim.(*ast.FuncDecl)
+		for _, topLevel := range file.Decls {
+			fn, ok := topLevel.(*ast.FuncDecl)
 			if ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, "Test") {
 				names[fn.Name.Name] = struct{}{}
 			}
 		}
 		return nil
 	})
-	require.NoError(t, err, "repo gezilemedi")
+	require.NoError(t, err, "the repository could not be walked")
 	require.NotEmpty(t, names, "no test was found in the repository")
 
 	return names

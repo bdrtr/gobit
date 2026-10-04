@@ -1,10 +1,13 @@
 package arch_test
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -184,31 +187,25 @@ var turkishStems = []string{
 	"yollar", "yonetim", "zaman",
 }
 
-// scannedExtensions are the file types the content scan reads.
+// scanWitnesses are files the content scan must read, named because each is a
+// kind of file it once did not (D227).
 //
-// `.tmpl` was added on 2026-09-12 with `gobit new` (ADR 0154), and the reason is
-// the direction the prose travels: a template is rendered into somebody else's
-// project, so Turkish left in one does not stay in this repository — it ships.
-// The obvious source for an environment template is `.env.example`, which is 833
-// lines of Turkish, so the risk is concrete rather than hypothetical.
+// The scan used to read seven extensions under a list of roots, and both lists
+// were taken from the files that had been checked rather than from the files
+// the repository has. On 2026-10-04 the ledger had been empty for a day while
+// a Turkish letter stood on 590 lines of `.env.example`, 210 of the Makefile,
+// 38 of `.gitignore` and 3 of `deploy/Dockerfile`: three have no extension on
+// the list and deploy/ was not a root. The list's own comment called
+// `.env.example` "833 lines of Turkish" and the file was still never read.
 //
-// `.js` was added on 2026-09-12 with the storefront example (ADR 0159), and it
-// had been missing for longer than that: the panel's review screen and the
-// analytics funnel were already shipping hand-written browser code that this scan
-// had never read. A script's prose is the most visible prose the repository has —
-// it is what an operator reads INSIDE the page, not in a comment — and it was the
-// one shipped text nothing checked.
-var scannedExtensions = []string{".go", ".sql", ".gohtml", ".md", ".graphqls", ".tmpl", ".js"}
-
-// scannedRoots are the trees the content scan walks, plus the repository root
-// itself for its top-level documents.
-//
-// The production trees come from [productionTrees] so that a promotion cannot
-// leave a tree unscanned for language; docs/ is added here because it holds no
-// Go source and so is not a production tree, and examples/ and contrib/ because
-// they are separate Go modules that this one cannot list as production trees and
-// whose files a reader still reads.
-var scannedRoots = append(append([]string{}, productionTrees...), "docs", "examples", "contrib")
+// The population is now every text file git lists, so no list can fall behind.
+// What a list cannot prove is that the derivation did not quietly narrow, and
+// a witness can: drop files without an extension, or a dot-directory, or a tree
+// outside the Go ones, and the witness for it goes missing.
+var scanWitnesses = []string{
+	".env.example", ".gitignore", ".github/workflows/ci.yml", "Makefile",
+	"deploy/Dockerfile", "deploy/docker-compose.yml", "go.mod",
+}
 
 // skippedDirs never hold hand-written source.
 //
@@ -235,63 +232,23 @@ const generatedMarker = "Code generated"
 // the same reason [TestTheDocsCarryNoLineNumberReference] forbids pointing at a
 // line number from a document.
 //
-// # Who is in it, and who is not yet
+// # Who is in it
 //
-// Five entries. The first is this rule's own decision record: ADR 0012 quotes
-// the letter class as data, so the file that DEFINES the rule would otherwise
-// be its first violation.
+// Text that an English sentence has to carry because the letters or the words
+// are its subject: the decision records and comments about case folding (ADR
+// 0012 quotes the letter class it defines; ADR 0015, the search plugin and the
+// compose file name the pair of words a C-locale cluster cannot fold),
+// quotations of text that was Turkish when it was quoted (ADR 0009, the
+// changelog), and reference names that reach the database as written (the
+// region seed's ISO names). Each entry carries its own argument at the map
+// literal below, where a reviewer weighing another will be standing.
 //
-// The second is the decision record that explains the database case-folding
-// probe. Its whole subject is that a C-locale cluster cannot fold non-ASCII
-// case, and it cannot say so without naming a pair of letters that differ only
-// in case outside ASCII. Replacing them with ASCII would make the file pass this
-// rule and make the argument say nothing — the ASCII pair folds on every
-// cluster, which is exactly the false all-clear the probe exists to prevent.
-//
-// ~~The probe itself, core/db/casefold.go, was the third.~~ **Corrected
-// 2026-09-07: it no longer needs an entry.** Its SQL now writes the pair as \u
-// escapes and names the code points in a comment beside each line, so the bytes
-// reaching the database are byte-for-byte what they were and the file is plain
-// ASCII. That is the escape-over-exemption preference below, applied to the file
-// that had been the standing argument for the other direction.
-//
-// The fourth and fifth arrived on 2026-09-07, each with the translation of the
-// file it covers, and neither widened the rule: the letters left behind are the
-// SUBJECT of the sentence they sit in, not its language. The search plugin's
-// package documentation has to name the two words its case-folding example is
-// about, and the letter outside ASCII in them is the point: spell that letter
-// the ASCII way and the paragraph would illustrate a non-ASCII folding problem
-// with a pair that holds no non-ASCII letter. ADR 0009's remaining Turkish is
-// entirely QUOTATION of text in files that are still Turkish — headings,
-// sentences and a task item — and a translated quotation stops being one: it
-// sends a reader looking for text that is not there. Both of these two entries
-// carry their own argument at the map literal below, because that is where a
-// reviewer weighing a sixth will be standing.
-//
-// ~~Three more files hold legitimate Turkish letters and are absent on purpose —
-// each still contains Turkish PROSE as well, so the ledger already covers
-// them.~~ **Corrected 2026-09-07: two of the three stopped needing an entry and
-// the paragraph did not notice.** The product module was translated in full, so
-// it has NO ledger line left to cover anything — and its two files did not join
-// this map either. They solved it a third way, which is the one worth copying:
-//
-//   - internal/modules/product/service/validate.go writes the turkishASCII map
-//     with \u escapes, so the file spells the letters it folds without
-//     CONTAINING them.
-//   - the product service's slug tests do the same with their fixtures.
-//
-// An escape is better than an exemption wherever the letters are DATA rather
-// than prose: an exemption is a hole somebody has to keep honest, while an
-// escaped literal is simply ASCII and no gate has to know about it. Two files
-// in the cart module were converted the same way on 2026-09-07 for the same
-// reason.
-//
-// One file is genuinely still waiting, and it needs an entry here the day the
-// region module is translated:
-//
-//   - internal/modules/region/migrations/000002_region_seed.up.sql —
-//     'Curaçao', 'Türkiye' (ISO 3166 reference names, not translatable, and
-//     they reach the DATABASE, so escaping them is not available)
+// An escape is better than an exemption wherever the letters are data in Go
+// source rather than prose: an exemption is a hole somebody has to keep honest,
+// while an escaped literal is simply ASCII and no gate has to know about it.
+// core/db/casefold.go, the product service's slug folding and the cart
+// module's erasure and disclosure fixtures spell their letters as \u escapes
+// for that reason.
 var diacriticDataExemptions = map[string][]string{
 	// The changelog was translated on 2026-10-03, and what keeps a Turkish
 	// letter is quotation. Two entries report test bindings that searched for a
@@ -316,14 +273,18 @@ var diacriticDataExemptions = map[string][]string{
 	"docs/adr/0015-postgresql-cluster-contract.md": {
 		"`çanta`", "`Çanta`", "q=çanta", "q=Çanta",
 	},
+	// The compose file's database comment tells the same story beside the
+	// setting it is about, and was read for the first time with D227.
+	"deploy/docker-compose.yml": {`"çanta"`, `"Çanta"`},
 	// The search plugin's package documentation, translated on 2026-09-07. Its
 	// two Turkish words are the SUBJECT of the paragraph they sit in, not prose:
 	// the point is that a C-locale cluster does not fold non-ASCII case, so the
 	// example words have to CARRY a letter outside ASCII. An all-ASCII pair
 	// would fold on every cluster and the paragraph would document a problem
-	// that does not exist — the same reasoning as core/db/casefold.go's entry
-	// above, which is where this behavior is actually probed, and where the
-	// pair really does differ only in a letter outside ASCII.
+	// that does not exist — the same reasoning as ADR 0015's entry above.
+	// core/db/casefold.go, where the behavior is actually probed, writes its
+	// pair as escapes, and there the pair really does differ only in a letter
+	// outside ASCII.
 	//
 	// The stemming example a few lines earlier ("kalem"/"kalemler") is Turkish
 	// too and is NOT here: it carries no diacritic, so this lane never sees it.
@@ -662,55 +623,44 @@ func repositoryFiles(t *testing.T) map[string]bool {
 	return files
 }
 
-// scannedFiles walks the repository and returns the repo-relative paths the
-// content scan covers, sorted.
+// scannedFiles returns the repo-relative paths the content scan covers, sorted:
+// every file of the repository ([repositoryFiles]) that is text, outside
+// [skippedDirs].
+//
+// Text is decided as git decides it, by a NUL byte in the first 8000, so an
+// image is the only kind of file left out and no list of kinds is kept (see
+// [scanWitnesses] for what a list cost). A file git still lists but the
+// working tree has deleted is not there to read, and not debt.
 func scannedFiles(t *testing.T) []string {
 	t.Helper()
 
 	var found []string
-	inRepo := repositoryFiles(t)
-	roots := append(slices.Clone(scannedRoots), ".")
+	for rel := range repositoryFiles(t) {
+		if slices.ContainsFunc(strings.Split(rel, "/"), func(segment string) bool {
+			return slices.Contains(skippedDirs, segment)
+		}) {
+			continue
+		}
 
-	for _, root := range roots {
-		abs := filepath.Join(repoRoot, root)
-		depth := root == "."
-
-		err := filepath.WalkDir(abs, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() {
-				if slices.Contains(skippedDirs, d.Name()) {
-					return filepath.SkipDir
-				}
-				// The repository root is walked only for its own files; its
-				// subtrees are covered by their own entries in scannedRoots.
-				if depth && path != abs {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !slices.Contains(scannedExtensions, filepath.Ext(path)) {
-				return nil
-			}
-			rel, relErr := filepath.Rel(repoRoot, path)
-			if relErr != nil {
-				return relErr
-			}
-			slash := filepath.ToSlash(rel)
-			// A file the repository does not carry is not the repository's
-			// language debt. See [repositoryFiles].
-			if !inRepo[slash] {
-				return nil
-			}
-			found = append(found, slash)
-			return nil
-		})
-		require.NoError(t, err, "%s could not be walked", root)
+		src, err := os.ReadFile(filepath.Join(repoRoot, rel))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		require.NoError(t, err, "%s could not be read", rel)
+		if !isText(src) {
+			continue
+		}
+		found = append(found, rel)
 	}
 
 	slices.Sort(found)
-	return slices.Compact(found)
+	return found
+}
+
+// isText reports whether src is text as git judges it: no NUL byte in its
+// first 8000.
+func isText(src []byte) bool {
+	return !bytes.Contains(src[:min(len(src), 8000)], []byte{0})
 }
 
 // loadLedger reads a ledger file into a path set.
@@ -869,14 +819,16 @@ func TestLedgerIsNotStale(t *testing.T) {
 
 // TestDetectorIsNotBlind pins the floor under every lane.
 //
-// A detector loses its teeth silently. Empty the word list, narrow the walk to
-// a tree that no longer exists, or tighten a pattern by one character, and the
-// suite stays green while the rule stops being enforced — the ledger would
-// then read as "almost done" precisely when the scan had stopped working.
+// A detector loses its teeth silently. Empty the word list, narrow the
+// population by a kind of file or a tree, or tighten a pattern by one
+// character, and the suite stays green while the rule stops being enforced —
+// the ledger would then read as "almost done" precisely when the scan had
+// stopped working.
 //
-// So each lane keeps its own counter and each must stay positive, and the
-// walked roots are counted separately: a root that contributes zero files was
-// not scanned, and every file under it would be silently excused.
+// So each lane keeps its own counter, every tree git lists must contribute a
+// file, and the kinds of file the scan once skipped are named and must be read:
+// a tree or a kind that contributes nothing was not scanned, and every file of
+// it would be silently excused.
 func TestDetectorIsNotBlind(t *testing.T) {
 	t.Parallel()
 
@@ -915,7 +867,9 @@ func TestDetectorIsNotBlind(t *testing.T) {
 	// scanned file. A finished lane's teeth are proven by the planted control
 	// ([TestDetectorFindsPlantedTurkish]), and a hit would be a file outside
 	// the ledger, which [TestNoTurkishOutsideLedger] reports. The ledger has
-	// been empty since 2026-10-03.
+	// been empty since 2026-10-03, and the migration complete since 2026-10-04,
+	// when the scan first read every file the ledger had been silent about
+	// (D227).
 	ledger := loadLedger(t, turkishLedgerPath)
 	goLeft := false
 	for rel := range ledger {
@@ -939,50 +893,30 @@ func TestDetectorIsNotBlind(t *testing.T) {
 				"files it reads; the lane is broken.", lane, turkishLedgerPath)
 	}
 
-	for _, root := range append(slices.Clone(scannedRoots), ".") {
+	// The trees are counted against git's list rather than against anything
+	// the scan was told, since a check that iterates the list it checks loses
+	// its assertion with the entry: when the trees were a list, deleting
+	// "plugins" from it left the suite green.
+	listed := map[string]bool{}
+	for rel := range repositoryFiles(t) {
+		root := "."
+		if idx := strings.Index(rel, "/"); idx >= 0 {
+			root = rel[:idx]
+		}
+		if !slices.Contains(skippedDirs, root) {
+			listed[root] = true
+		}
+	}
+	for _, root := range slices.Sorted(maps.Keys(listed)) {
 		assert.Positive(t, perRoot[root],
-			"no file was scanned under %q. The tree was moved or the walk is broken; "+
-				"either way everything under it is being excused.", root)
+			"git lists files under %q and the scan read none of them, so everything "+
+				"under it is being excused.", root)
 	}
 
-	// The counter above is not enough on its own, and the gap is worth naming:
-	// it iterates the SAME list it is meant to be checking, so dropping a tree
-	// from scannedRoots removes both the scan and the assertion that the scan
-	// happened. A mutation proved it — deleting "plugins" left the suite green.
-	//
-	// So the roots are checked against the DISK instead: any top-level
-	// directory holding files the scan would read must be listed.
-	entries, err := os.ReadDir(repoRoot)
-	require.NoError(t, err)
-
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") ||
-			slices.Contains(skippedDirs, entry.Name()) {
-			continue
-		}
-
-		scannable := 0
-		walkErr := filepath.WalkDir(filepath.Join(repoRoot, entry.Name()),
-			func(path string, d os.DirEntry, err error) error {
-				if err != nil {
-					return err
-				}
-				if d.IsDir() && slices.Contains(skippedDirs, d.Name()) {
-					return filepath.SkipDir
-				}
-				if !d.IsDir() && slices.Contains(scannedExtensions, filepath.Ext(path)) {
-					scannable++
-				}
-				return nil
-			})
-		require.NoError(t, walkErr)
-
-		if scannable == 0 {
-			continue
-		}
-		assert.Contains(t, scannedRoots, entry.Name(),
-			"%s/ holds %d file(s) the scan reads but is not in scannedRoots, so the "+
-				"whole tree is excused without a single ledger line.", entry.Name(), scannable)
+	for _, witness := range scanWitnesses {
+		assert.Contains(t, files, witness,
+			"%s is not read by the content scan; a kind of file the repository has "+
+				"has fallen out of the population (D227).", witness)
 	}
 
 	assert.Positive(t, generated,
@@ -992,9 +926,10 @@ func TestDetectorIsNotBlind(t *testing.T) {
 
 // TestDetectorFindsPlantedTurkish is the positive control.
 //
-// [TestDetectorIsNotBlind] proves the lanes still fire on the repository, but
-// the repository is mostly Turkish — a lane could keep firing on old files
-// while being unable to catch anything NEW. This test plants a known sample in
+// [TestDetectorIsNotBlind] proves the population is whole and, while the ledger
+// held files, that the lanes still fired on them; neither proves a lane can
+// catch anything NEW, and with the ledger empty a lane has nothing to fire on
+// at all. This test plants a known sample in
 // each lane and requires each to be caught, including the transliterated
 // spelling that the letter lane cannot see.
 func TestDetectorFindsPlantedTurkish(t *testing.T) {

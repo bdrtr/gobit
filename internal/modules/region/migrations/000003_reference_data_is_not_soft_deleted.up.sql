@@ -1,9 +1,5 @@
 -- country and currency lose their deleted_at columns.
 --
--- This file is English because ADR 0012 makes language a property of the FILE
--- and every new file is English; 000001 and 000002 are on the Turkish ledger
--- and stay as they are.
---
 -- # Why the columns go rather than gaining a writer
 --
 -- Both tables are REFERENCE DATA and 000001 says so in its own words. Their

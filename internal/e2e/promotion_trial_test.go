@@ -186,5 +186,5 @@ func scopedAdminToken(t *testing.T, scopes ...string) string {
 	}, password)
 	require.NoError(t, err, "the scoped admin user could not be created")
 
-	return jetonAl(t, email, password)
+	return obtainToken(t, email, password)
 }

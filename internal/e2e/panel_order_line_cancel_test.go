@@ -72,7 +72,7 @@ func TestAnOperatorWritesOffALineInThePanel(t *testing.T) {
 		}
 		stocked = levels[0].StockedQuantity
 		return stocked == 5
-	}, olayBeklemeSuresi, 20*time.Millisecond, "the written-off unit comes back to the shelf (last read %d)", stocked)
+	}, eventWaitTimeout, 20*time.Millisecond, "the written-off unit comes back to the shelf (last read %d)", stocked)
 
 	again := send(http.MethodPost, pagePath+"/line-cancellations", form)
 	require.Equal(t, http.StatusUnprocessableEntity, again.Code, again.Body.String())

@@ -292,11 +292,11 @@ func (s *MemoryIdempotencyStore) Begin(
 	}
 
 	// Return a copy: if the caller changes the returned record the store must not break.
-	kopya := *rec
-	kopya.Header = rec.Header.Clone()
-	kopya.Body = bytes.Clone(rec.Body)
+	clone := *rec
+	clone.Header = rec.Header.Clone()
+	clone.Body = bytes.Clone(rec.Body)
 
-	return &kopya, true, nil
+	return &clone, true, nil
 }
 
 // reserve reserves the key or returns the record to be replayed DIRECTLY (without
@@ -342,12 +342,12 @@ func (s *MemoryIdempotencyStore) Complete(
 ) error {
 	// The copy and the accounting are prepared OUTSIDE the lock; their measurement
 	// and reasoning are in [MemoryIdempotencyStore]'s lock section.
-	kopya := resp
-	kopya.Header = make(http.Header, len(resp.Header))
-	maps.Copy(kopya.Header, resp.Header)
-	kopya.Body = bytes.Clone(resp.Body)
+	clone := resp
+	clone.Header = make(http.Header, len(resp.Header))
+	maps.Copy(clone.Header, resp.Header)
+	clone.Body = bytes.Clone(resp.Body)
 
-	report, total := s.write(s.now(), key, &kopya, entryCharge(key, &kopya))
+	report, total := s.write(s.now(), key, &clone, entryCharge(key, &clone))
 	if report > 0 {
 		LoggerFromContext(ctx).WarnContext(ctx,
 			"the idempotency memory budget is full, dropping the oldest records",
@@ -367,7 +367,7 @@ func (s *MemoryIdempotencyStore) Complete(
 // throttling is applied here so the decision is made with the counters held under
 // the lock.
 func (s *MemoryIdempotencyStore) write(
-	now time.Time, key string, kopya *IdempotentResponse, charge int64,
+	now time.Time, key string, clone *IdempotentResponse, charge int64,
 ) (report int, total int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -384,18 +384,18 @@ func (s *MemoryIdempotencyStore) write(
 		s.queue.MoveToBack(g.node)
 	}
 
-	g.resp = kopya
+	g.resp = clone
 	g.expiresAt = now.Add(s.ttl)
 	g.charge = charge
 	s.charge += g.charge
 
-	dusen := s.fitBudget()
-	if dusen == 0 {
+	evicted := s.fitBudget()
+	if evicted == 0 {
 		return 0, s.evictedTotal
 	}
 
-	s.evictedTotal += int64(dusen)
-	s.evictionsPending += dusen
+	s.evictedTotal += int64(evicted)
+	s.evictionsPending += evicted
 
 	if now.Before(s.evictionLogAt) {
 		return 0, s.evictedTotal
@@ -454,20 +454,20 @@ func (s *MemoryIdempotencyStore) collect(now time.Time) {
 // arriving AT THE SAME TIME goes through as well, that is, the double processing
 // that was to be prevented happens at exactly that moment.
 func (s *MemoryIdempotencyStore) fitBudget() int {
-	dusen := 0
+	evicted := 0
 
 	for e := s.queue.Front(); e != nil && s.charge > s.budget; {
 		next := e.Next()
 
 		if g, ok := e.Value.(*entry); ok && g.resp != nil {
 			s.remove(g)
-			dusen++
+			evicted++
 		}
 
 		e = next
 	}
 
-	return dusen
+	return evicted
 }
 
 // remove takes the entry out of the map and the queue and deducts its charge from
@@ -509,13 +509,13 @@ func entryCharge(key string, resp *IdempotentResponse) int64 {
 		int64(len(resp.Body))
 
 	if len(resp.Header) > 0 {
-		grup := (len(resp.Header) + headerGroupSize - 1) / headerGroupSize
-		charge += int64(grup) * headerGroupCharge
+		groups := (len(resp.Header) + headerGroupSize - 1) / headerGroupSize
+		charge += int64(groups) * headerGroupCharge
 	}
 
-	for ad, degerler := range resp.Header {
-		charge += int64(len(ad))
-		for _, value := range degerler {
+	for name, values := range resp.Header {
+		charge += int64(len(name))
+		for _, value := range values {
 			charge += headerValueCharge + int64(len(value))
 		}
 	}

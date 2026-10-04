@@ -52,7 +52,7 @@ func TestEveryOperationNamesThePrivilegeItsRouteRefuses(t *testing.T) {
 	_, doc := schemaDocument(t)
 	paths, ok := doc["paths"].(map[string]any)
 	require.True(t, ok)
-	scopeless := "Bearer " + yetkisizYoneticiJetonu(t)
+	scopeless := "Bearer " + unauthorizedAdminToken(t)
 
 	refused := func(method, path, credential string) (int, string) {
 		req := httptest.NewRequest(strings.ToUpper(method), pathParamRe.ReplaceAllString(path, "privilege_probe_id"),

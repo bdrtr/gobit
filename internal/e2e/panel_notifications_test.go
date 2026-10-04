@@ -29,7 +29,7 @@ const panelDeliveryFailure = "e2e: the mail server did not answer"
 // too (ADR 0318).
 func TestAnOperatorSendsAnOrdersConfirmationAgainInThePanel(t *testing.T) {
 	ctx := t.Context()
-	token := jetonAl(t, adminEmail, adminPassword)
+	token := obtainToken(t, adminEmail, adminPassword)
 	orderID, _, _ := notificationOrder(ctx, t, "E2E Panel Notification Product")
 	record := awaitNotification(t, token, orderID)
 

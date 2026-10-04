@@ -63,16 +63,6 @@ func TestTheKnownLimitGroupsAreNamedCorrectly(t *testing.T) {
 			"same groups, in the same order. Adding a group means editing the count AND the "+
 			"list, and the count alone going green is what let this drift once already.",
 		knownLimitsDoc)
-
-	// The Turkish README says the same thing in Turkish, so only the SIZE of its
-	// list can be compared. Saying so is the point: an unchecked half that is
-	// named is one somebody can decide to close.
-	turkish := knownLimitGroupsNamedIn(t, "README.md")
-	assert.Lenf(t, turkish, len(headings),
-		"README.md lists %d group names and %s holds %d groups.\n"+
-			"The names themselves are a translation and are not compared here; the COUNT is, "+
-			"because the number and the list are updated by two different edits and only one "+
-			"of them had a gate.", len(turkish), knownLimitsDoc, len(headings))
 }
 
 // knownLimitHeadings returns the group headings of the limits document, in the

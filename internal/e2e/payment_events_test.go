@@ -144,7 +144,7 @@ func TestARefundThroughThePaymentRouteReachesTheOrdersSummary(t *testing.T) {
 		}
 		after = order.Summary.RefundedTotal
 		return after == directRefundAmount
-	}, olayBeklemeSuresi, 20*time.Millisecond,
+	}, eventWaitTimeout, 20*time.Millisecond,
 		"the ORDER's summary has to carry a refund made through the PAYMENT route "+
 			"(expected %d, last read %d); this is gap D55 and the subscriber of ADR 0121 "+
 			"is the only thing that closes it",

@@ -11,7 +11,7 @@ import (
 )
 
 // manualProviderID is the manual provider's id, spelled here rather than
-// imported for the reason [zarfVerisi] gives: the lane reads what the process
+// imported for the reason [envelopeData] gives: the lane reads what the process
 // answers, not what the module says it would.
 const manualProviderID = "manual"
 

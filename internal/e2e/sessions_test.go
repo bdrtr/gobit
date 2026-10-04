@@ -29,7 +29,7 @@ func TestAnOperatorClosesOneSessionAndThenTheOthers(t *testing.T) {
 	}, password)
 	require.NoError(t, err)
 
-	laptop, tablet, phone := jetonAl(t, email, password), jetonAl(t, email, password), jetonAl(t, email, password)
+	laptop, tablet, phone := obtainToken(t, email, password), obtainToken(t, email, password), obtainToken(t, email, password)
 
 	type listed struct {
 		ID      string `json:"id"`

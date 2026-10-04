@@ -33,9 +33,10 @@ var fullAddress = service.AddressInput{
 	SourceAddressID: "addr_book_1",
 	// The name is written with a \u escape rather than the letter itself: a
 	// non-ASCII first name is exactly what this erasure has to overwrite, and
-	// the letter in an English file would put the file in the language ledger
-	// (ADR 0012) for a piece of TEST DATA. internal/modules/product carries the
-	// same escape for the same reason.
+	// the letter would fail the language gate (ADR 0012) for a piece of TEST
+	// DATA, and since the ledger emptied on 2026-10-03 no file may carry one
+	// without an exemption (D228). internal/modules/product carries the same
+	// escape for the same reason.
 	FirstName:   "Ay\u015fe",
 	LastName:    "Y\u0131lmaz",
 	Company:     "Y\u0131lmaz Tasar\u0131m",

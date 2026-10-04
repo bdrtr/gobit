@@ -158,7 +158,7 @@ func TestAnOrderIsReservedOnlyFromTheWarehousesItsChannelShipsFrom(t *testing.T)
 func badgeInStock(t *testing.T, ground channelWarehouseGround, variantID string) bool {
 	t.Helper()
 
-	recorder := magazaIstegi(t, catalogPath(ground.channelID, "/products"), ground.key)
+	recorder := storeRequest(t, catalogPath(ground.channelID, "/products"), ground.key)
 	require.Equal(t, http.StatusOK, recorder.Code,
 		"the storefront listing must answer 200; body: %s", recorder.Body.String())
 

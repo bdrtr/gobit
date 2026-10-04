@@ -68,9 +68,11 @@ func TestEveryIdentityRuleFires(t *testing.T) {
 		"a trailing space":      {fixedID("stripe "), "would store"},
 		"whitespace inside":     {fixedID("my provider"), "contains whitespace"},
 		"a control character":   {fixedID("stri\x00pe"), "control character"},
-		// The escape rather than the letter: a non-ASCII rune written into a
-		// Go file here would be one more line in the language ledger for what
-		// is DATA — an example of the shape being refused (ADR 0012).
+		// The escape rather than the letter pins the one rune under test: a
+		// literal e-acute can be saved decomposed, as an e and a combining
+		// accent, and the case would then refuse a different string. The
+		// language gate does not flag this letter, which is outside its Turkish
+		// letter class, so the language ledger never bore on this case (D228).
 		"a non-ASCII identity":     {fixedID("caf\u00e9"), "not ASCII"},
 		"an identity that changes": {&countingID{}, "and then"},
 		"no provider at all":       {nil, "nil"},

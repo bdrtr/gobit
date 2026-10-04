@@ -1,9 +1,10 @@
-# Bu dosyanın kuralı: depoya yalnızca KAYNAK girer. Üretilebilen, indirilebilen,
-# makineye özgü ya da gizli olan hiçbir şey girmez. Bir satır eklerken sorulacak
-# soru "bu dosya rahatsız edici mi" değil, "bunu depodan silsem yeniden
-# üretilebilir mi" ve "bu bilgi bir başkasının makinesinde anlamlı mı"dır.
+# The rule of this file: only SOURCE enters the repository. Nothing that can be
+# generated or downloaded, nothing machine-specific and nothing secret goes in.
+# The question to ask when adding a line is not "is this file a nuisance" but
+# "if I deleted this from the repository, could it be produced again" and "does
+# this information mean anything on somebody else's machine".
 
-# --- derleme çıktıları: hepsi `make build` ile yeniden üretilir ---
+# --- build outputs: all of them are produced again by `make build` ---
 /bin/
 /dist/
 /gobit
@@ -13,10 +14,10 @@
 *.so
 *.dylib
 
-# --- test, kapsam ve profil çıktıları ---
+# --- test, coverage and profile outputs ---
 #
-# coverage.out bu depoda 100 MB'ı aşabiliyor (-coverpkg=./... bütün ağacı
-# sayıyor); bir kez commit'lenirse geçmişten çıkarılamaz.
+# coverage.out can exceed 100 MB in this repository (-coverpkg=./... counts the
+# whole tree); once committed, it cannot be taken out of the history.
 coverage.out
 coverage-integration.out
 coverage.html
@@ -31,18 +32,19 @@ trace.out
 # They are printed with the failure; the file only replays them locally.
 **/testdata/rapid/
 
-# --- ortam ve sırlar ---
+# --- environment and secrets ---
 #
-# .env.example TAKİPLİDİR ve öyle kalmalı: hangi ayarların var olduğunun tek
-# yazılı kaydı odur ve içinde hiçbir değer yoktur. Onun dışındaki her .env
-# makineye özgüdür.
+# .env.example IS TRACKED and must stay that way: it is the only written record
+# of which settings exist, and it holds no values. Every other .env is specific
+# to one machine.
 .env
 .env.*
 !.env.example
 .envrc
 
-# Anahtar ve sertifika: bir kez girerse geçmişten silinemez ve döndürülmesi
-# gerekir. Deponun bugün hiç ihtiyacı yok; kural buradaki yokluğu korumak için.
+# Keys and certificates: once one goes in, it cannot be deleted from the history
+# and has to be rotated. The repository needs none today; the rule is here to
+# keep that absence.
 *.pem
 *.key
 *.crt
@@ -50,20 +52,21 @@ trace.out
 *.pfx
 id_rsa*
 
-# --- yerel dosya deposu (FILE_ROOT varsayılanı) ---
+# --- local file store (the FILE_ROOT default) ---
 #
-# Yüklenen dosyalar depoya GİRMEZ: kullanıcı içeriğidir, sürüm kontrolüne ait
-# değildir ve tek bir görsel bile depoyu kalıcı olarak şişirir.
+# Uploaded files do NOT enter the repository: they are user content, they do not
+# belong in version control, and even a single image bloats the repository for
+# good.
 /data/
 
-# --- veritabanı dökümleri ve yedekler ---
+# --- database dumps and backups ---
 *.dump
 *.sql.gz
 *.bak
 *.orig
 *.rej
 
-# --- editör ve işletim sistemi ---
+# --- editor and operating system ---
 .idea/
 .vscode/
 *.iml
@@ -74,36 +77,38 @@ id_rsa*
 Thumbs.db
 desktop.ini
 
-# --- araç zinciri ---
+# --- toolchain ---
 #
-# go.work bir GELİŞTİRİCİNİN yerel çoklu-modül kurulumudur; depoya girerse
-# başkasının makinesinde var olmayan yolları işaret eder.
+# go.work is ONE DEVELOPER'S local multi-module setup; if it enters the
+# repository, it points at paths that do not exist on somebody else's machine.
 go.work
 go.work.sum
 node_modules/
 
-# --- openapi istemci üretimi ---
+# --- openapi client generation ---
 openapi.json
 clients/
 
-# --- çalışma notları: DEPODA DEĞİL, DİSKTE ---
+# --- working notes: ON DISK, NOT IN THE REPOSITORY ---
 #
-# Bu dosyalar bir tasarım defteridir: biri fazları anlatan uygulama planı,
-# öteki elle tutulan mimari notlar. İkisi de kararların KAYNAĞI değildir —
-# kararlar docs/adr/'de, ölçümler docs/gaps.md'de, mimarinin anlatısı
-# docs/mimari.md'dedir ve üçü de depodadır. Bir defteri depoda tutmak onu
-# okuyan herkesin onu bağlayıcı sanmasına yol açar, ve çeliştiğinde hangisinin
-# kazandığını ayrıca kurala bağlamak gerekir.
+# These files are a design notebook: one is the implementation plan that walks
+# through the phases, the other is hand-kept architecture notes. Neither is the
+# SOURCE of a decision — decisions are in docs/adr/, measurements in
+# docs/gaps.md, the architecture narrative in docs/mimari.md, and all three are
+# in the repository. Keeping a notebook in the repository leads everyone who
+# reads it to mistake it for binding, and when it contradicts those records,
+# which one wins has to be settled by a rule of its own.
 #
-# Üçüncüsü aynı sınıftan: özellik karşılaştırma ve iş listesi. Bir turun neyi
-# ölçtüğünün ÇALIŞMA kaydı, kararın kendisi değil — karar ADR'de, kanıtı
-# ölçümde. Buraya 2026-09-13'te girdi ve gerekçesi ikisiyle aynı olmakla
-# kalmıyor: izlenmeyen hâliyle depoda durduğu sürece dil şeridini de kırıyordu,
-# çünkü `git ls-files --others --exclude-standard` onu deponun bir dosyası
-# sayıyor ve içeriği Türkçe (ADR 0012). Defterle susturulamazdı da — o liste
-# yalnızca KÜÇÜLEBİLİR.
+# The third is of the same class: a feature comparison and work list. It is the
+# WORKING record of what a round measured, not the decision itself — the
+# decision is in the ADR, its evidence in the measurement. It came in here on
+# 2026-09-13, and its reason is not only the same as the other two: as long as
+# it sat untracked in the repository it also broke the language lane, because
+# `git ls-files --others --exclude-standard` counts it as a file of the
+# repository and its content is Turkish (ADR 0012). Nor could the ledger silence
+# it — that list can only SHRINK.
 #
-# Diskten SİLİNMEZ; yalnızca sürüm kontrolüne girmez.
+# They are NOT DELETED from disk; they only stay out of version control.
 /go-commerce-framework-plan.md
 /go-ecommerce-mimari.md
 /gobit-ozellik-listesi.md

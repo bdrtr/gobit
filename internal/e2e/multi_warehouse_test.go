@@ -323,10 +323,9 @@ func TestLineWithNoWarehouseReleasesPreviousReservation(t *testing.T) {
 	require.ErrorContains(t, err, checkoutwf.CodeReservationFailed,
 		"when there is NO candidate the outcome is drawn by the cart workflow and the "+
 			"code is its own; there is no sub-code to preserve because no module was asked")
-	// The fragment below stays Turkish ON PURPOSE. It is produced by
-	// internal/workflows/checkout/steps.go, which is still a Turkish file in the
-	// ledger; translating the literal here would break the assertion instead of
-	// translating anything. It flips when that file is translated.
+	// The fragment below is produced by
+	// internal/workflows/checkout/reserve_inventory.go; the assertion holds the
+	// two to the same words.
 	require.ErrorContains(t, err, "no location can reserve",
 		"the message must NAME the reason. Without this assertion the test would stay "+
 			"green in a fault where the candidate list was FULL but the policy eliminated "+

@@ -84,13 +84,14 @@ const (
 // had to be on this side of the line for the derivation to exist at all. The
 // module reads it back through [PersonalDataHoldings].
 //
-// # Why the reasons are in English in a package that is not
+// # Why the reasons are English whatever the package is written in
 //
 // The Why strings are DATA that crosses into core/personaldata and is read by
 // the embedder — not prose about the code. One dossier assembles the sentences
 // of every holder, so a per-file language rule would produce an answer to a data
 // subject written in two languages (ADR 0033, "The declaration text is English
-// even in a Turkish file").
+// even in a Turkish file"). This package was Turkish when the rule was written
+// and is English now (D228); the rule never depended on it.
 var personalDataHoldings = []personaldata.Holding{
 	{
 		Table: TableCustomer, Column: columnEmail, Kind: personaldata.Named,

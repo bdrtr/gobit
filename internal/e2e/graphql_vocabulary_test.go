@@ -74,7 +74,7 @@ func TestTheGraphQLStorefrontReadsTheVocabulary(t *testing.T) {
 		"/store/v1/collections?limit=100": idsOf(body.Data.Collections.Items),
 		"/store/v1/tags?limit=100":        idsOf(body.Data.Tags.Items),
 	} {
-		rest := magazaIstegi(t, path, publishableKey)
+		rest := storeRequest(t, path, publishableKey)
 		require.Equal(t, http.StatusOK, rest.Code, rest.Body.String())
 		var listing struct {
 			Data []struct {
@@ -154,7 +154,7 @@ func TestTheGraphQLStorefrontCountsWhatRESTCounts(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body), rec.Body.String())
 	require.Empty(t, body.Errors, rec.Body.String())
 
-	counted := magazaIstegi(t, catalogPath(testChannelID, "/product-facets")+"?"+url.Values{
+	counted := storeRequest(t, catalogPath(testChannelID, "/product-facets")+"?"+url.Values{
 		"collection_id": {collection.ID}, "attribute": {fit + ":slim"},
 	}.Encode(), publishableKey)
 	require.Equal(t, http.StatusOK, counted.Code, counted.Body.String())
@@ -171,7 +171,7 @@ func TestTheGraphQLStorefrontCountsWhatRESTCounts(t *testing.T) {
 		},
 	}, "the filtered attribute is counted without its own filter")
 
-	vocabulary := magazaIstegi(t, catalogPath(testChannelID, "/option-values")+"?limit=100", publishableKey)
+	vocabulary := storeRequest(t, catalogPath(testChannelID, "/option-values")+"?limit=100", publishableKey)
 	require.Equal(t, http.StatusOK, vocabulary.Code, vocabulary.Body.String())
 	var page struct {
 		Data []struct {

@@ -537,9 +537,9 @@ func pathParameters(path string) []Parameter {
 			continue
 		}
 
-		ad := strings.Trim(part, "{}")
+		name := strings.Trim(part, "{}")
 		params = append(params, Parameter{
-			Name:     ad,
+			Name:     name,
 			In:       "path",
 			Required: true,
 			Schema:   map[string]any{schemaType: typeString},

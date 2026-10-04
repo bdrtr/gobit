@@ -28,9 +28,10 @@ import (
 // The records below it are the historical account of how this repository was
 // built, and rewriting them would destroy the thing they are for. They carry a
 // two-line Summary instead. A ratchet that applies from the next record is the
-// same instrument the language ledger uses (ADR 0012), for the same reason: the
+// same instrument ADR 0012's language ledgers use, for the same reason: the
 // debt is bounded and the rule is real from today rather than after a cleanup
-// nobody schedules.
+// nobody schedules. The content ledger has been empty since 2026-10-03 (D228);
+// the ADRs below 0052 stay as they are.
 
 // adrLineLimit is the most lines an ADR may hold.
 //

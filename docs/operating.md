@@ -250,7 +250,7 @@ The default module path is `github.com/bdrtr/gobit`. To move it to your own
 repository:
 
 ```bash
-make rename-module MODULE=github.com/kullanici/repo
+make rename-module MODULE=github.com/user/repo
 ```
 
 ## Version
