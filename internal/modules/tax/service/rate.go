@@ -201,6 +201,10 @@ type UpdateTaxRateInput struct {
 // likely sign that the client misspelled the name of the field it believes it
 // sent, and returning success silently would hide that mistake.
 //
+// A new rate is checked against the stack the rate stands in, as creation
+// checks a new member: the stack together cannot take more than the line
+// ([CodeStackExceedsBase], gap D237).
+//
 // Making a rate the DEFAULT depends on two extra conditions, and both are
 // checked in the repository layer, UNDER the row LOCK: the region must have no
 // other default rate (partial unique index), and the rate must have no rules
@@ -221,7 +225,26 @@ func (s *Service) UpdateTaxRate(ctx context.Context, id string, in UpdateTaxRate
 	if patch.Empty() {
 		return models.TaxRate{}, errors.Invalid(CodeInvalidInput, "no field was given to update")
 	}
-	return s.repo.UpdateTaxRate(ctx, id, patch, s.clock())
+	if patch.RateBps == nil {
+		return s.repo.UpdateTaxRate(ctx, id, patch, s.clock())
+	}
+
+	// A new value changes the sum of the stack the rate stands in, so it is
+	// checked as creation checks a new member, in the write's transaction
+	// (gap D237).
+	var updated models.TaxRate
+	err = s.repo.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.assertValueWithinStack(ctx, id, *patch.RateBps); err != nil {
+			return err
+		}
+		var err error
+		updated, err = s.repo.UpdateTaxRate(ctx, id, patch, s.clock())
+		return err
+	})
+	if err != nil {
+		return models.TaxRate{}, err
+	}
+	return updated, nil
 }
 
 // buildRatePatch validates the update input and turns it into a patch.

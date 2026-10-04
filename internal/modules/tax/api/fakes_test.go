@@ -57,6 +57,12 @@ func (m *memRepo) LockTaxRegion(ctx context.Context, id string) (models.TaxRegio
 	return m.GetTaxRegion(ctx, id)
 }
 
+// LockTaxRegionForWrite returns the live region; there is NO lock (see
+// [memRepo.WithTx]).
+func (m *memRepo) LockTaxRegionForWrite(ctx context.Context, id string) (models.TaxRegion, error) {
+	return m.GetTaxRegion(ctx, id)
+}
+
 // CreateTaxRegion writes the region; it rejects a country's second root.
 func (m *memRepo) CreateTaxRegion(_ context.Context, region models.TaxRegion, now time.Time) (models.TaxRegion, error) {
 	// The loop runs over the keys: ranging over the values would copy the

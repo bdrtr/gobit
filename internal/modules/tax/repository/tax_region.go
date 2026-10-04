@@ -94,6 +94,30 @@ func (r *Repo) LockTaxRegion(ctx context.Context, id string) (models.TaxRegion, 
 	return toTaxRegion(row)
 }
 
+// LockTaxRegionForWrite reads the region with an EXCLUSIVE lock held until the
+// end of the transaction, and like [Repo.LockTaxRegion] it can be called only
+// inside [Repo.WithTx].
+//
+// A change to a rate's value takes it (gap D237): a stack's cap is a sum over
+// its members, and two writers raising two members under shared locks would
+// each pass the check against the other's old value. The exclusive lock makes
+// them wait for each other, and for a stack being built on the region.
+func (r *Repo) LockTaxRegionForWrite(ctx context.Context, id string) (models.TaxRegion, error) {
+	if err := r.ready(); err != nil {
+		return models.TaxRegion{}, err
+	}
+	if err := requireTx(ctx, "LockTaxRegionForWrite"); err != nil {
+		return models.TaxRegion{}, err
+	}
+
+	row, err := r.queries(ctx).GetTaxRegionForUpdate(ctx, id)
+	if err != nil {
+		return models.TaxRegion{}, notFoundOr(err, CodeTaxRegionNotFound,
+			"tax region not found: %s", id)
+	}
+	return toTaxRegion(row)
+}
+
 // GetTaxRegionsByIDs returns the regions matching the given ids in a SINGLE
 // round trip; no record comes back for an id that is not found.
 func (r *Repo) GetTaxRegionsByIDs(ctx context.Context, ids []string) ([]models.TaxRegion, error) {

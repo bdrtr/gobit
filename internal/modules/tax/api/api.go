@@ -18,7 +18,9 @@
 // Every admin endpoint asks for a scope, and the vocabulary has two entries:
 //
 //   - [ScopeRead] — opens the READ (GET, HEAD) endpoints under /admin/v1: tax
-//     regions, rates, rate rules, tax classes and their products can be read.
+//     regions, rates, rate rules, tax classes and their products can be read,
+//     and a rate can be tried on past orders, which asks for the order
+//     module's `order:read` beside it (ADR 0387).
 //   - [ScopeWrite] — opens the WRITE (POST, PUT, PATCH, DELETE) endpoints
 //     under /admin/v1: creating, updating and deleting regions/rates/rules,
 //     tax classes and class memberships.
@@ -75,6 +77,8 @@ const codeInvalidBody = "tax_invalid_body"
 // API holds tax's HTTP handlers.
 type API struct {
 	svc *service.Service
+	// trial is the flow the rate trial runs on; see [API.WithTrial].
+	trial service.RateTrialFlow
 }
 
 // New builds an API that runs on the given service.
@@ -130,6 +134,10 @@ func (a *API) Routes(r chi.Router) {
 	read.Get(pathAdminRate, a.getRate)
 	write.Put(pathAdminRate, a.updateRate)
 	write.Delete(pathAdminRate, a.deleteRate)
+
+	// The trial's answer is orders, so it asks for the order module's read
+	// privilege beside this module's (ADR 0387).
+	read.With(corehttp.RequireScope(orderReadScope)).Get(pathAdminRateTrial, a.trialRate)
 
 	write.Post(pathAdminRateRules, a.createRule)
 	read.Get(pathAdminRateRules, a.listRules)

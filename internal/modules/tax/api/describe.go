@@ -65,6 +65,7 @@ const (
 func Describe(d *openapi.Doc) {
 	describeRegions(d)
 	describeRates(d)
+	describeRateTrial(d)
 	describeRules(d)
 	describeClasses(d)
 }

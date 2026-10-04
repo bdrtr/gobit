@@ -258,6 +258,10 @@ func endpoints() []endpointExpectation {
 			request: updateTaxRateRequest{}, response: fullRate(),
 		},
 		{method: http.MethodDelete, path: pathAdminRate, status: "204"},
+		{
+			method: http.MethodGet, path: pathAdminRateTrial, status: "200",
+			response: fullRateTrialReport(),
+		},
 
 		{
 			method: http.MethodPost, path: pathAdminRateRules, status: "201",
@@ -275,6 +279,15 @@ func endpoints() []endpointExpectation {
 // too.
 func fullRegion() taxRegionDTO {
 	return taxRegionDTO{Metadata: map[string]any{"k": "v"}}
+}
+
+// fullRateTrialReport produces a rate trial report with its omitempty fields
+// written too.
+func fullRateTrialReport() taxRateTrialReportDTO {
+	bps := int32(800)
+	return taxRateTrialReportDTO{Change: rateChangeDTO{
+		RateBps: &bps, AddRules: []ruleKeyDTO{{}}, DropRules: []string{"taxrule_1"},
+	}}
 }
 
 // fullRate produces a tax rate record with its omitempty fields written too.

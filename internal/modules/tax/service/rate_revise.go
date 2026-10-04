@@ -14,7 +14,8 @@ const CodeTaxRateRevised = "tax_rate_revised"
 // ReviseTaxRate writes a rate's name and rate only while they are the ones
 // the caller read, and refuses with [CodeTaxRateRevised] when another writer
 // changed them since (ADR 0378). The terms are checked as the update checks
-// them; the code, the default and the stack are not touched.
+// them, and the new rate against the stack the rate stands in (gap D237); the
+// code, the default and the stack are not touched.
 func (s *Service) ReviseTaxRate(ctx context.Context, id string, read, next models.TaxRateTerms) (models.TaxRate, error) {
 	if err := s.ready(); err != nil {
 		return models.TaxRate{}, err
@@ -31,7 +32,18 @@ func (s *Service) ReviseTaxRate(ctx context.Context, id string, read, next model
 		return models.TaxRate{}, err
 	}
 
-	rate, revised, err := s.repo.ReviseTaxRate(ctx, id, read, next, s.clock())
+	var (
+		rate    models.TaxRate
+		revised bool
+	)
+	err = s.repo.WithTx(ctx, func(ctx context.Context) error {
+		if err := s.assertValueWithinStack(ctx, id, next.RateBps); err != nil {
+			return err
+		}
+		var err error
+		rate, revised, err = s.repo.ReviseTaxRate(ctx, id, read, next, s.clock())
+		return err
+	})
 	if err != nil || revised {
 		return rate, err
 	}

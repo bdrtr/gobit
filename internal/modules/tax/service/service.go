@@ -169,6 +169,10 @@ type Repository interface {
 	// LockTaxRegion reads the region with a SHARED lock held until the end of
 	// the transaction; NotFound if it is absent or already deleted.
 	LockTaxRegion(ctx context.Context, id string) (models.TaxRegion, error)
+	// LockTaxRegionForWrite reads the region with an EXCLUSIVE lock held until
+	// the end of the transaction; a change to a rate's value takes it, because
+	// a stack's cap is a sum two writers would otherwise check apart (gap D237).
+	LockTaxRegionForWrite(ctx context.Context, id string) (models.TaxRegion, error)
 
 	CreateTaxRegion(ctx context.Context, region models.TaxRegion, now time.Time) (models.TaxRegion, error)
 	GetTaxRegion(ctx context.Context, id string) (models.TaxRegion, error)

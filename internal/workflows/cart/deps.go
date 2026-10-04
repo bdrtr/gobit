@@ -469,18 +469,27 @@ type Discounts interface {
 // Taxes is the surface of the tax module ("tax.interop") that this package
 // uses.
 //
-// The surface has a SINGLE method. tax's interop publishes RateForCountry as
-// well and that one is the exact counterpart of region's temporary RegionTax
-// method — but the cart computation asks for tax PER ITEM (an invoice must be
-// explainable line by line and different rates per line may arrive depending on
-// the product class), and a single flat rate cannot give that. That is why the
-// computation is always done with [Taxes.CalculateTaxJSON].
+// The surface has TWO methods. [Taxes.CalculateTaxJSON] taxes a cart;
+// [Taxes.CompareRateJSON] taxes past orders' lines twice, with today's tables
+// and with a rate amended, for a tax rate trial (ADR 0387).
+//
+// tax's interop publishes RateForCountry as well and that one is the exact
+// counterpart of region's temporary RegionTax method — but the cart computation
+// asks for tax PER ITEM (an invoice must be explainable line by line and
+// different rates per line may arrive depending on the product class), and a
+// single flat rate cannot give that. That is why the computation is always done
+// with [Taxes.CalculateTaxJSON].
 //
 // The schema of the request and response bodies is defined in one place, in the
-// [taxRequest] and [taxResponse] types.
+// [taxRequest] and [taxResponse] types, and the comparison's in the
+// [taxCompareRequest] and [taxCompareResponse] types.
 type Taxes interface {
 	// CalculateTaxJSON computes the tax for the given country and items.
 	CalculateTaxJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
+
+	// CompareRateJSON taxes the lines of past orders with today's tables and
+	// with the rate amended by change; IT WRITES NOTHING (ADR 0387).
+	CompareRateJSON(ctx context.Context, rateID string, change, request json.RawMessage) (json.RawMessage, error)
 }
 
 // Shipping is the surface used by these flows of the fulfillment module.

@@ -61,6 +61,8 @@
 //     (ADR 0004).
 //   - /admin/v1/tax-regions, /admin/v1/tax-rates (+ rules),
 //     /admin/v1/tax-classes (+ products) — the admin API.
+//   - /admin/v1/tax-rates/{id}/trial — the rate trial (ADR 0387), which reads
+//     its orders through the cart flows' surface ([CartFlowsName]).
 //
 // There is NO Store API; the reasoning is in the internal/modules/tax/api
 // package comment.
@@ -149,9 +151,10 @@ var migrationsRoot = mustSub(migrationsFS, "migrations")
 
 // Module is the tax module's [module.Module] implementation.
 type Module struct {
-	svc *service.Service
-	api *api.API
-	log *slog.Logger
+	svc   *service.Service
+	api   *api.API
+	trial *rateTrial
+	log   *slog.Logger
 }
 
 var _ module.Module = (*Module)(nil)
@@ -206,7 +209,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 
 	m.svc = service.New(repo, service.Options{Logger: m.log, Providers: providers})
-	m.api = api.New(m.svc)
+	m.trial = &rateTrial{c: c, log: m.log}
+	m.api = api.New(m.svc).WithTrial(m.trial)
 
 	if err := c.Provide(ServiceName, m.svc); err != nil {
 		return err

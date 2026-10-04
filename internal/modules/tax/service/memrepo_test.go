@@ -111,6 +111,23 @@ func (m *memRepo) LockTaxRegion(_ context.Context, id string) (models.TaxRegion,
 	return region, nil
 }
 
+// LockTaxRegionForWrite returns the live region; there is NO lock (see
+// [memRepo.WithTx]). The call is counted, which is all a test here can see.
+func (m *memRepo) LockTaxRegionForWrite(_ context.Context, id string) (models.TaxRegion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.enter("LockTaxRegionForWrite"); err != nil {
+		return models.TaxRegion{}, err
+	}
+
+	region, ok := m.regions[id]
+	if !ok || region.DeletedAt != nil {
+		return models.TaxRegion{}, errors.NotFound("tax_region_not_found",
+			"tax region not found: %s", id)
+	}
+	return region, nil
+}
+
 // CreateTaxRegion writes the region; it rejects a country's second root.
 func (m *memRepo) CreateTaxRegion(_ context.Context, region models.TaxRegion, now time.Time) (models.TaxRegion, error) {
 	m.mu.Lock()

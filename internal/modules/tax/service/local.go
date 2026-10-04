@@ -117,9 +117,25 @@ func (p *LocalProvider) Calculate(ctx context.Context, in ProviderInput) (Provid
 // rate query per line item would turn the calculation into an N+1 that grows
 // with the size of the cart.
 func (p *LocalProvider) loadRates(ctx context.Context, regionIDs []string) (rateTable, error) {
-	rates, err := p.rates.ListTaxRatesByRegions(ctx, regionIDs)
+	rates, rules, err := loadRateRows(ctx, p.rates, regionIDs)
 	if err != nil {
 		return rateTable{}, err
+	}
+	return newRateTable(regionIDs, rates, rules), nil
+}
+
+// loadRateRows reads the rows [newRateTable] is built from: the chain's rates
+// and the rules of its ruled rates.
+//
+// It is the one read both the calculation and the rate trial build their table
+// from (ADR 0387), so a trial's baseline cannot come to read other rows than
+// the cart is charged from.
+func loadRateRows(
+	ctx context.Context, source RateSource, regionIDs []string,
+) ([]models.TaxRate, []models.TaxRateRule, error) {
+	rates, err := source.ListTaxRatesByRegions(ctx, regionIDs)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	ruledIDs := make([]string, 0, len(rates))
@@ -131,12 +147,12 @@ func (p *LocalProvider) loadRates(ctx context.Context, regionIDs []string) (rate
 
 	var rules []models.TaxRateRule
 	if len(ruledIDs) > 0 {
-		rules, err = p.rates.ListTaxRateRulesByRates(ctx, ruledIDs)
+		rules, err = source.ListTaxRateRulesByRates(ctx, ruledIDs)
 		if err != nil {
-			return rateTable{}, err
+			return nil, nil, err
 		}
 	}
-	return newRateTable(regionIDs, rates, rules), nil
+	return rates, rules, nil
 }
 
 // matchKey is a single property of a line item to be matched against rules.

@@ -31,7 +31,7 @@ import (
 // package the compiler cannot check the conformance, and the conformance can
 // only be proven by an integration test.
 //
-// # Why the surface has two methods
+// # Why the surface has three methods
 //
 // [Interop.CalculateTaxJSON] is the full calculation: province, rule, shipping
 // and the per-item rate. [Interop.RateForCountry] is the PLAIN path and is the
@@ -41,6 +41,10 @@ import (
 // the cost of JSON encoding/decoding, and simplifying the full calculation's
 // signature "with optional fields" would be hiding two different contracts in
 // one signature.
+//
+// [Interop.CompareRateJSON] is the rate trial's (ADR 0387): the same table
+// taxing past orders' lines twice, as it is and as amended; it lives here
+// because the rate table and its amendment are this module's.
 
 // Code constants; specific to the interop surface.
 const (
@@ -215,20 +219,10 @@ func (i *Interop) CalculateTaxJSON(ctx context.Context, request json.RawMessage)
 		return nil, err
 	}
 
-	items := make([]TaxableItem, 0, len(req.Items))
-	for idx := range req.Items {
-		items = append(items, TaxableItem{
-			ID:            req.Items[idx].ID,
-			ProductID:     req.Items[idx].ProductID,
-			ProductTypeID: req.Items[idx].ProductTypeID,
-			Amount:        req.Items[idx].Amount,
-		})
-	}
-
 	result, err := i.svc.CalculateTax(ctx, CalculateTaxInput{
 		CountryCode:  req.CountryCode,
 		ProvinceCode: req.ProvinceCode,
-		Items:        items,
+		Items:        taxableItems(req.Items),
 		Shipping: ShippingInput{
 			OptionID: req.Shipping.OptionID,
 			Amount:   req.Shipping.Amount,
@@ -289,29 +283,130 @@ func (i *Interop) RateForCountry(ctx context.Context, countryCode string) (rateB
 	return i.svc.DefaultRateForCountry(ctx, countryCode)
 }
 
-// decodeInteropRequest decodes the request body into the schema.
-func decodeInteropRequest(request json.RawMessage) (interopRequest, error) {
-	if len(request) == 0 {
-		return interopRequest{}, errors.Invalid(CodeInteropRequestInvalid,
-			"the tax calculation request cannot be empty")
+// compareRateRequest is the JSON schema of the [Interop.CompareRateJSON]
+// request: each order's lines as the cart sent them.
+//
+// Example:
+//
+//	{"entries": [
+//	  {"reference": "order_01J…", "country_code": "TR",
+//	   "items": [{"id": "oli_1", "product_id": "prod_1", "product_type_id": "", "amount": 20000}]}
+//	]}
+type compareRateRequest struct {
+	Entries []compareRateEntry `json:"entries"`
+}
+
+// compareRateEntry is one order in the comparison request.
+type compareRateEntry struct {
+	Reference   string        `json:"reference"`
+	CountryCode string        `json:"country_code"`
+	Items       []interopItem `json:"items"`
+}
+
+// compareRateResponse is the JSON schema of the [Interop.CompareRateJSON]
+// response; the entries come back in the request's order, and an order outside
+// the rate's country comes back with "outside" and no items.
+//
+// Example:
+//
+//	{"assumptions": ["todays_rates", "todays_tax_classes", "todays_price_inclusion"],
+//	 "entries": [{"reference": "order_01J…", "outside": false, "items": [
+//	   {"id": "oli_1", "reached": true,
+//	    "baseline": {"rate_id": "taxrate_01J…", "tax_amount": 4000},
+//	    "trial": {"rate_id": "taxrate_01K…", "tax_amount": 1600}}]}]}
+type compareRateResponse struct {
+	Assumptions []string        `json:"assumptions"`
+	Entries     []CompareAnswer `json:"entries"`
+}
+
+// CompareRateJSON taxes past orders' lines twice, with today's tables and with
+// a rate amended by change, for a tax rate trial; it writes nothing
+// (ADR 0387).
+//
+// change is a [RateChange] and request a [compareRateRequest], both decoded
+// strictly for the reason [Interop.CalculateTaxJSON] gives; the response is a
+// [compareRateResponse].
+func (i *Interop) CompareRateJSON(
+	ctx context.Context, rateID string, change, request json.RawMessage,
+) (json.RawMessage, error) {
+	if i == nil || i.svc == nil {
+		return nil, errors.Unavailable(CodeUnconfigured, "the tax service is not configured")
 	}
 
+	var amendment RateChange
+	if err := decodeStrict(change, &amendment, "the rate change"); err != nil {
+		return nil, err
+	}
+	var req compareRateRequest
+	if err := decodeStrict(request, &req, "the rate comparison request"); err != nil {
+		return nil, err
+	}
+
+	entries := make([]CompareEntry, 0, len(req.Entries))
+	for _, entry := range req.Entries {
+		entries = append(entries, CompareEntry{
+			Reference: entry.Reference, CountryCode: entry.CountryCode, Items: taxableItems(entry.Items),
+		})
+	}
+
+	answers, assumptions, err := i.svc.CompareRate(ctx, rateID, amendment, entries)
+	if err != nil {
+		return nil, err
+	}
+	payload, err := json.Marshal(compareRateResponse{Assumptions: assumptions, Entries: answers})
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindInternal, CodeInteropResponseInvalid,
+			"the rate comparison could not be converted to JSON")
+	}
+	return payload, nil
+}
+
+// taxableItems converts the lines of a request into the module's items. Both
+// [Interop.CalculateTaxJSON] and [Interop.CompareRateJSON] take their lines
+// through it, so a trial's lines carry exactly what a cart's are charged by.
+func taxableItems(items []interopItem) []TaxableItem {
+	out := make([]TaxableItem, 0, len(items))
+	for i := range items {
+		out = append(out, TaxableItem{
+			ID:            items[i].ID,
+			ProductID:     items[i].ProductID,
+			ProductTypeID: items[i].ProductTypeID,
+			Amount:        items[i].Amount,
+		})
+	}
+	return out
+}
+
+// decodeInteropRequest decodes the request body into the schema.
+func decodeInteropRequest(request json.RawMessage) (interopRequest, error) {
 	var req interopRequest
-	dec := json.NewDecoder(bytes.NewReader(request))
+	if err := decodeStrict(request, &req, "the tax calculation request"); err != nil {
+		return interopRequest{}, err
+	}
+	return req, nil
+}
+
+// decodeStrict decodes one JSON document into dst, refusing an empty body,
+// an unknown field and a second document; what names the body in the error.
+func decodeStrict(raw json.RawMessage, dst any, what string) error {
+	if len(raw) == 0 {
+		return errors.Invalid(CodeInteropRequestInvalid, "%s cannot be empty", what)
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		return interopRequest{}, errors.Wrap(err, errors.KindInvalid, CodeInteropRequestInvalid,
-			"the tax calculation request could not be decoded")
+	if err := dec.Decode(dst); err != nil {
+		return errors.Wrap(err, errors.KindInvalid, CodeInteropRequestInvalid,
+			"%s could not be decoded", what)
 	}
 
 	// A single JSON document is expected; were a second document following it
 	// ignored in silence, the caller would think what it sent had been
 	// processed.
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return interopRequest{}, errors.Invalid(CodeInteropRequestInvalid,
-			"the tax calculation request must be a single JSON document")
+		return errors.Invalid(CodeInteropRequestInvalid, "%s must be a single JSON document", what)
 	}
-	return req, nil
+	return nil
 }
 
 // toInteropItemTax converts a result line into the JSON schema.

@@ -12,19 +12,20 @@ import (
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
 )
 
-// interopSurface is the two-method surface [Interop] publishes across module
+// interopSurface is the three-method surface [Interop] publishes across module
 // boundaries.
 //
 // The cart flow (internal/workflows/cart) CANNOT import the tax module and
-// declares only CalculateTaxJSON in its own Taxes interface; the e2e suite's
-// taxSurface declares RateForCountry as well. The declaration here pins at
-// compile time that the concrete [Interop] type satisfies both signatures
-// STRUCTURALLY: if a signature changes, this test file does not compile, and
-// the mismatch is caught HERE instead of being seen only at run time, at the
-// moment of resolution.
+// declares CalculateTaxJSON and CompareRateJSON in its own Taxes interface;
+// the e2e suite's taxSurface declares RateForCountry as well. The declaration
+// here pins at compile time that the concrete [Interop] type satisfies every
+// signature STRUCTURALLY: if a signature changes, this test file does not
+// compile, and the mismatch is caught HERE instead of being seen only at run
+// time, at the moment of resolution.
 type interopSurface interface {
 	CalculateTaxJSON(ctx context.Context, request json.RawMessage) (json.RawMessage, error)
 	RateForCountry(ctx context.Context, countryCode string) (rateBps int32, found bool, err error)
+	CompareRateJSON(ctx context.Context, rateID string, change, request json.RawMessage) (json.RawMessage, error)
 }
 
 var _ interopSurface = (*Interop)(nil)
@@ -285,4 +286,64 @@ func (p *countingProvider) Calculate(_ context.Context, in ProviderInput) (Provi
 		out.Items = append(out.Items, ProviderItemTax{ID: in.Items[i].ID})
 	}
 	return out, nil
+}
+
+// TestCompareRateJSONRefusesUnknownFields: a field the tax module does not
+// read, in the change or in the request, is refused rather than ignored, as a
+// change the flow believes it sent would otherwise go untried; a well-formed
+// pair is answered in the published shape.
+func TestCompareRateJSONRefusesUnknownFields(t *testing.T) {
+	svc, repo := newTestService(t)
+	repo.seedRootRegion(trRegionID, "TR")
+	repo.seedDefaultRate(rateA, trRegionID, 2000)
+	interop := NewInterop(svc)
+	ctx := context.Background()
+	change := json.RawMessage(`{"rate_bps":1000}`)
+	request := json.RawMessage(`{"entries":[{"reference":"order_1","country_code":"TR",` +
+		`"items":[{"id":"li_1","product_id":"","product_type_id":"","amount":10000}]}]}`)
+
+	for name, pair := range map[string][2]json.RawMessage{
+		"change":        {json.RawMessage(`{"rate_bps":1000,"rate":10}`), request},
+		"request":       {change, json.RawMessage(`{"entries":[],"currency":"TRY"}`)},
+		"request line":  {change, json.RawMessage(`{"entries":[{"reference":"o","country_code":"TR","items":[{"id":"l","amount":1,"price":1}]}]}`)},
+		"empty change":  {nil, request},
+		"two documents": {json.RawMessage(`{"rate_bps":1000}{}`), request},
+	} {
+		_, err := interop.CompareRateJSON(ctx, rateA, pair[0], pair[1])
+		require.Error(t, err, name)
+		assert.Equal(t, CodeInteropRequestInvalid, errors.CodeOf(err), name)
+	}
+
+	raw, err := interop.CompareRateJSON(ctx, rateA, change, request)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"assumptions":["todays_rates","todays_tax_classes","todays_price_inclusion"],`+
+		`"entries":[{"reference":"order_1","outside":false,"items":[{"id":"li_1","reached":true,`+
+		`"baseline":{"rate_id":"`+rateA+`","tax_amount":2000},"trial":{"rate_id":"`+rateA+`","tax_amount":1000}}]}]}`,
+		string(raw))
+}
+
+// TestCompareRateJSONCarriesEachLinesType: the type a line is sent with
+// crosses the JSON surface, so a rule tried on a type moves the line in the
+// trial, and a type rule already written holds its line in both tables.
+func TestCompareRateJSONCarriesEachLinesType(t *testing.T) {
+	svc, repo := newTestService(t)
+	repo.seedRootRegion(trRegionID, "TR")
+	repo.seedDefaultRate(rateA, trRegionID, 2000)
+	repo.seedRuledRate(rateB, trRegionID, 1000)
+	repo.seedRuledRate(rateC, trRegionID, 500)
+	repo.seedRule(ruleA, rateC, models.ReferenceProductType, "ptyp_food")
+	change := json.RawMessage(`{"add_rules":[{"reference":"product_type","reference_id":"ptyp_books"}]}`)
+	request := json.RawMessage(`{"entries":[{"reference":"order_1","country_code":"TR","items":[` +
+		`{"id":"li_book","product_id":"prod_1","product_type_id":"ptyp_books","amount":10000},` +
+		`{"id":"li_food","product_id":"prod_2","product_type_id":"ptyp_food","amount":10000}]}]}`)
+
+	raw, err := NewInterop(svc).CompareRateJSON(context.Background(), rateB, change, request)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"assumptions":["todays_rates","todays_tax_classes","todays_price_inclusion"],`+
+		`"entries":[{"reference":"order_1","outside":false,"items":[`+
+		`{"id":"li_book","reached":true,`+
+		`"baseline":{"rate_id":"`+rateA+`","tax_amount":2000},"trial":{"rate_id":"`+rateB+`","tax_amount":1000}},`+
+		`{"id":"li_food","reached":false,`+
+		`"baseline":{"rate_id":"`+rateC+`","tax_amount":500},"trial":{"rate_id":"`+rateC+`","tax_amount":500}}]}]}`,
+		string(raw))
 }

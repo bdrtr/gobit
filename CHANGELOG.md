@@ -87,6 +87,36 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **A tax rate can be tried on past orders** (ADR 0387). **For API consumers:**
+  `GET /admin/v1/tax-rates/{id}/trial?from=&to=` with `rate_bps`, repeated
+  `rule=reference:reference_id` and repeated `drop_rule` taxes every taxable
+  line of the period's uncanceled orders in the rate's country with today's
+  tables and with the change, from the amount the cart sent; it answers per
+  currency `charged`, `baseline`, `trial`, `lines_reached` and
+  `lines_changed`, the hundred orders the change moves most, and what it
+  assumed. A change a write would refuse answers 409
+  `tax_trial_change_refused` or `tax_stack_exceeds_base`, a province's rate
+  409 `tax_trial_rate_unreached`, a rate under an external provider 409
+  `tax_trial_provider_external`, a malformed change 422
+  `tax_trial_invalid_change`, a `rate_bps` outside 0 to 10000 422
+  `tax_invalid_input`, and a missing or malformed `from` or `to`, or a
+  future `to`, 422 `tax_trial_invalid_period`. Both ends are RFC 3339 and in the past; a
+  period that ends before it starts or is longer than 93 days answers 422
+  `cart_workflow_trial_invalid`, one holding more than 5,000 orders 422
+  `cart_workflow_trial_too_wide`, and one whose orders hold more than
+  100,000 taxable lines 422 `tax_invalid_input` once they are read. It needs
+  `order:read` beside `tax:read`. Nothing is written. **For integrators:** the cart flows'
+  `Taxes` surface gains `CompareRateJSON`, so a `tax.interop` registered
+  without it fails wiring.
+
+- **A stack member is not raised past its line** (D237). **For API
+  consumers:** `PUT /admin/v1/tax-rates/{id}` with a `rate_bps` that makes the
+  rate's stack take more than the line answers 409 `tax_stack_exceeds_base`,
+  as creating such a stack always did, and the panel's correction of a rate
+  refuses it with the stack's message; before, the value was written, and a
+  cart line whose floored stack components summed past its amount then failed
+  with 500.
+
 - **A completed order says so on the bus** (ADR 0386, D235). **For integrators:**
   completing an order, through the API, the panel or the interop surface,
   publishes `order.completed` (`order_id`, `completed_at`), written into the

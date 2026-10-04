@@ -24,6 +24,7 @@ func trialLineRecord(id, orderID, variantID string, quantity, unitPrice, discoun
 	return query.Record{
 		"id": id, "order_id": orderID, "variant_id": variantID, "quantity": quantity,
 		"unit_price": unitPrice, "subtotal": unitPrice * quantity, "discount_total": discount,
+		"tax_total": int64(0), "is_giftcard": false,
 	}
 }
 

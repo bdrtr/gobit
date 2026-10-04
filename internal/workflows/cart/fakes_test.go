@@ -496,8 +496,10 @@ type stubCatalog struct {
 	scopedOut map[string]bool
 	// regionErr, when given, makes the region query fail with this error.
 	regionErr error
-	err       error
-	specs     []query.GraphSpec
+	// productErr, when given, makes the product query fail with this error.
+	productErr error
+	err        error
+	specs      []query.GraphSpec
 }
 
 // Graph returns variant or region records.
@@ -505,6 +507,9 @@ func (s *stubCatalog) Graph(_ context.Context, spec query.GraphSpec) ([]query.Re
 	s.specs = append(s.specs, spec)
 	if spec.Entity == EntityRegion {
 		return s.regionRecords(spec)
+	}
+	if spec.Entity == EntityProduct && s.productErr != nil {
+		return nil, s.productErr
 	}
 	if records, scripted := s.entities[spec.Entity]; scripted {
 		return entityPage(records, spec), nil
@@ -843,6 +848,22 @@ type stubTaxes struct {
 	requests []taxRequest
 	// calls is the number of calls.
 	calls int
+
+	// trialBps is the rate a rate comparison's trial side applies; the
+	// baseline applies rateBps. An entry outside compareCountry is outside.
+	trialBps       int32
+	compareCountry string
+	// reached, when it names a line, is whether the rate takes part in it,
+	// apart from the amounts; a line it does not name is reached when the
+	// two taxes differ.
+	reached map[string]bool
+	// compareRaw, when given, is the comparison's whole answer; compareErr
+	// makes the comparison fail.
+	compareRaw json.RawMessage
+	compareErr error
+	// compared and changes hold the comparisons asked, in order.
+	compared []taxCompareRequest
+	changes  []string
 }
 
 // newStubTaxes produces a tax fake with a 20% rate whose region was found.
@@ -895,6 +916,75 @@ func (s *stubTaxes) CalculateTaxJSON(_ context.Context, request json.RawMessage)
 		})
 		resp.TaxTotal += amount
 	}
+	return json.Marshal(resp)
+}
+
+// CompareRateJSON records the comparison and answers every line of an
+// in-country entry at rateBps as the baseline and at trialBps as the trial; a
+// line is reached as scripted in reached, or else when the two differ.
+func (s *stubTaxes) CompareRateJSON(
+	_ context.Context, rateID string, change, request json.RawMessage,
+) (json.RawMessage, error) {
+	var req taxCompareRequest
+	if err := json.Unmarshal(request, &req); err != nil {
+		return nil, err
+	}
+	s.compared = append(s.compared, req)
+	s.changes = append(s.changes, rateID+" "+string(change))
+	if s.compareErr != nil {
+		return nil, s.compareErr
+	}
+	if s.compareRaw != nil {
+		return s.compareRaw, nil
+	}
+
+	type line struct {
+		RateID    string `json:"rate_id"`
+		TaxAmount int64  `json:"tax_amount"`
+	}
+	type item struct {
+		ID       string `json:"id"`
+		Reached  bool   `json:"reached"`
+		Baseline line   `json:"baseline"`
+		Trial    line   `json:"trial"`
+	}
+	type entry struct {
+		Reference string `json:"reference"`
+		Outside   bool   `json:"outside"`
+		Items     []item `json:"items"`
+	}
+	country := s.compareCountry
+	if country == "" {
+		country = "TR"
+	}
+	resp := struct {
+		Assumptions []string `json:"assumptions"`
+		Entries     []entry  `json:"entries"`
+	}{Assumptions: []string{"todays_rates"}, Entries: []entry{}}
+	for _, e := range req.Entries {
+		answer := entry{Reference: e.Reference, Items: []item{}}
+		if e.CountryCode != country {
+			answer.Outside = true
+			resp.Entries = append(resp.Entries, answer)
+
+			continue
+		}
+		for _, it := range e.Items {
+			baseline := it.Amount * int64(s.rateBps) / BpsScale
+			trial := it.Amount * int64(s.trialBps) / BpsScale
+			reached, scripted := s.reached[it.ID]
+			if !scripted {
+				reached = baseline != trial
+			}
+			answer.Items = append(answer.Items, item{
+				ID: it.ID, Reached: reached,
+				Baseline: line{RateID: "taxrate_base", TaxAmount: baseline},
+				Trial:    line{RateID: "taxrate_base", TaxAmount: trial},
+			})
+		}
+		resp.Entries = append(resp.Entries, answer)
+	}
+
 	return json.Marshal(resp)
 }
 

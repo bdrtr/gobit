@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/tax/models"
@@ -208,6 +209,70 @@ func assertStackWithinBase(chain []models.TaxRate) error {
 	}
 
 	return nil
+}
+
+// assertValueWithinStack refuses a new value for a rate when the stack it
+// stands in would then take more than the line (ADR 0095, gap D237).
+//
+// Creation checks the stack a new rate joins ([Service.assertStackable]); a
+// value written later changes the same sum, so it is checked the same way, and
+// under the region's EXCLUSIVE lock: two writers raising two members of one
+// stack would otherwise each pass against the other's old value. It may only be
+// called inside a transaction.
+func (s *Service) assertValueWithinStack(ctx context.Context, rateID string, rateBps int32) error {
+	rate, err := s.repo.GetTaxRate(ctx, rateID)
+	if err != nil {
+		return err
+	}
+	if _, err := s.repo.LockTaxRegionForWrite(ctx, rate.TaxRegionID); err != nil {
+		return err
+	}
+	rates, err := s.repo.ListTaxRates(ctx, rate.TaxRegionID)
+	if err != nil {
+		return err
+	}
+
+	stack, err := stackHolding(rates, rateID, rateBps)
+	if err != nil || len(stack) < 2 {
+		return err
+	}
+
+	return assertStackWithinBase(stack)
+}
+
+// stackHolding returns the stack rateID stands in, base first and in the order
+// the calculation applies it, with rateID's value replaced by rateBps; a rate
+// that stands in no stack comes back alone, and one absent from rates comes
+// back as no stack at all.
+//
+// The walk goes DOWN from the rate to its base and the stack is then expanded
+// UP by the calculation's own [rateTable.stackFrom], so what is checked is the
+// list the calculation would apply.
+func stackHolding(rates []models.TaxRate, rateID string, rateBps int32) ([]models.TaxRate, error) {
+	amended := slices.Clone(rates)
+	byID := make(map[string]models.TaxRate, len(amended))
+	for i := range amended {
+		if amended[i].ID == rateID {
+			amended[i].RateBps = rateBps
+		}
+		byID[amended[i].ID] = amended[i]
+	}
+
+	base, ok := byID[rateID]
+	if !ok {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	for base.StacksOnID != nil && !seen[base.ID] {
+		seen[base.ID] = true
+		below, found := byID[*base.StacksOnID]
+		if !found {
+			break
+		}
+		base = below
+	}
+
+	return newRateTable(nil, amended, nil).stackFrom(base)
 }
 
 // regionChainOf resolves the region's own chain, most specific first.

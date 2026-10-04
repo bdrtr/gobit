@@ -16,7 +16,8 @@ import (
 // Error codes of the promotion trial.
 const (
 	// CodeTrialInvalid reports a trial asked for with an unusable period,
-	// promotion or price list.
+	// promotion, price list or tax rate, or a tax rate trial with no tax
+	// module wired.
 	CodeTrialInvalid = "cart_workflow_trial_invalid"
 	// CodeTrialTooWide reports a period holding more orders than one trial
 	// prices.
@@ -160,6 +161,10 @@ type TrialOrder struct {
 // promotion engine, rather than the order line's subtotal: where the prices
 // included their tax the order keeps the line's subtotal net of it (ADR 0246),
 // and a promotion never saw that figure.
+//
+// Its tax and its gift card flag are the order's, as the line was sold: a tax
+// rate trial reports the first as what was charged and leaves a line out on
+// the second, as the cart left it out (ADR 0387).
 type trialLine struct {
 	id            string
 	variantID     string
@@ -167,6 +172,8 @@ type trialLine struct {
 	unitPrice     int64
 	subtotal      int64
 	discountTotal int64
+	taxTotal      int64
+	giftCard      bool
 }
 
 // trialOrder is one order with its lines, in the order the lines were read.
@@ -458,7 +465,9 @@ func (w *Workflows) trialOrders(ctx context.Context, from, to time.Time) ([]tria
 	for offset := 0; ; offset += trialPageSize {
 		records, err := w.catalog.Graph(ctx, query.GraphSpec{
 			Entity: trialLineEntity,
-			Fields: []string{"id", "order_id", "variant_id", "quantity", "unit_price", "discount_total"},
+			Fields: []string{
+				"id", "order_id", "variant_id", "quantity", "unit_price", "discount_total", "tax_total", "is_giftcard",
+			},
 			Filters: map[string]any{
 				"placed_from": from,
 				"placed_to":   to,
@@ -546,6 +555,8 @@ func trialLineOf(record query.Record) (trialLine, string, error) {
 		func() (e error) { line.quantity, e = recordAmount(record, "quantity"); return },
 		func() (e error) { line.unitPrice, e = recordAmount(record, "unit_price"); return },
 		func() (e error) { line.discountTotal, e = recordAmount(record, "discount_total"); return },
+		func() (e error) { line.taxTotal, e = recordAmount(record, "tax_total"); return },
+		func() (e error) { line.giftCard, e = recordBool(record, "is_giftcard"); return },
 		func() (e error) { line.subtotal, e = mulAmount(line.unitPrice, line.quantity); return },
 	} {
 		if err := read(); err != nil {
@@ -633,4 +644,13 @@ func recordTime(record query.Record, name string) (time.Time, error) {
 	}
 
 	return time.Time{}, errors.Internal(CodeTrialReadInvalid, "the record's %q is %T, not a moment", name, record[name])
+}
+
+// recordBool reads a flag.
+func recordBool(record query.Record, name string) (bool, error) {
+	if value, ok := record[name].(bool); ok {
+		return value, nil
+	}
+
+	return false, errors.Internal(CodeTrialReadInvalid, "the record's %q is %T, not a flag", name, record[name])
 }

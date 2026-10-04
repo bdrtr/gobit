@@ -39,8 +39,9 @@ const InteropName = "workflows.cart.interop"
 // # Why not ALL of the workflows
 //
 // The surface carries the workflows that ARE another module's HTTP endpoints —
-// the storefront's cart writes, and the promotion trial the promotion module's
-// admin endpoint asks for (ADR 0176) — and no others. [Workflows.CalculateTotals]
+// the storefront's cart writes, and the promotion, price list and tax rate
+// trials the promotion, pricing and tax modules' admin endpoints ask for
+// (ADR 0176, ADR 0220, ADR 0387) — and no others. [Workflows.CalculateTotals]
 // is here ONLY inside [Interop.RepriceAfter], the step a write takes after itself
 // (ADR 0173); it is still not a capability a client can ask for, because running
 // the computation at the moment the client asks would tie the amount to the
@@ -283,6 +284,23 @@ func (i *Interop) TrialPriceListJSON(
 	ctx context.Context, listID string, from, to time.Time,
 ) (json.RawMessage, error) {
 	report, err := i.w.TrialPriceList(ctx, listID, from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(report)
+}
+
+// TrialTaxRateJSON taxes the lines of the orders placed in [from, to) with
+// today's tables and with a tax rate amended by change, and returns the
+// [TaxRateTrialReport] as JSON; it writes nothing (ADR 0387).
+//
+// Its consumer is the tax module's admin endpoint, for the reason
+// [Interop.TrialPromotionJSON] gives about the promotion module's.
+func (i *Interop) TrialTaxRateJSON(
+	ctx context.Context, rateID string, from, to time.Time, change json.RawMessage,
+) (json.RawMessage, error) {
+	report, err := i.w.TrialTaxRate(ctx, rateID, from, to, change)
 	if err != nil {
 		return nil, err
 	}

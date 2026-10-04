@@ -97,6 +97,7 @@ var (
 
 	_ promotionapi.PromotionTrial = (*cartwf.Interop)(nil)
 	_ pricingapi.PriceListTrial   = (*cartwf.Interop)(nil)
+	_ taxsvc.RateTrialFlow        = (*cartwf.Interop)(nil)
 	_ cartapi.CartOpening         = (*cartwf.Interop)(nil)
 	_ cartapi.CartCompletion      = (*checkoutwf.Interop)(nil)
 
@@ -256,7 +257,7 @@ var _ returnswf.Shipping = (*fulfillingwf.Interop)(nil)
 // audit's trees, all closed the same way; the language detector's roots were a
 // fourth until D227 replaced them with git's file list).
 var pinnedNames = map[string]string{
-	"workflows.cart.interop":       "the cart module's storefront endpoints and the promotion and price list trials",
+	"workflows.cart.interop":       "the cart module's storefront endpoints and the promotion, price list and tax rate trials",
 	"workflows.checkout.interop":   "the cart module's completion endpoint",
 	"workflows.returns.interop":    "the order module's receive endpoint",
 	"workflows.segment.interop":    "the customer module's segment preview",
@@ -270,7 +271,7 @@ var pinnedNames = map[string]string{
 	"fulfillment.interop":          "the cart, checkout, fulfilling and cancellation flows",
 	"payment.interop":              "the checkout and returns flows",
 	"promotion.interop":            "the cart and checkout flows",
-	"tax.interop":                  "the cart flow",
+	"tax.interop":                  "the cart flow's tax and its rate comparison",
 	"invoice.interop":              "the invoicing flow",
 	"settings.interop":             "the invoicing flow's store profile",
 	"product.interop":              "the searchpg plugin's catalog read",

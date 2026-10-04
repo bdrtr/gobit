@@ -234,6 +234,15 @@ past and is not corrected retroactively.
   "net minus net". The alternative — extracting a net discount too — needs a
   second rounding that has to cancel the first exactly, and ADR 0086 refuses to
   depend on that.
+- **A tax rate trial cannot try every change a write makes** (ADR 0387). It
+  amends one rate of a country's root, through the local table: a province's
+  rate is refused because the cart sends no province, a rate under an external
+  provider because that provider's table is not this module's, and a new
+  default rate, a rate standing on another, and a region's provider or
+  inclusion cannot be tried at all; each is charged on the next cart once
+  written. The trial taxes the lines with today's tables, classes and
+  catalog, so a figure for a product whose type changed since the sale is the
+  type's today.
 
 ## Installation and operation
 
