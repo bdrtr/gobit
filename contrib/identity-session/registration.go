@@ -161,7 +161,8 @@ func (m *Module) selfRegistrationMounted() bool {
 // password.
 //
 // Found by a test that built exactly that shape by accident. The reflection runs
-// once, at Routes time.
+// where the module is built, its routes mounted and its document described, and
+// in no handler.
 func isNil(seam any) bool {
 	if seam == nil {
 		return true

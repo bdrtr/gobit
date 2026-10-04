@@ -162,6 +162,12 @@ type Module struct {
 	log      *slog.Logger
 	// limitKey keys the registration endpoints' limit (see Options.LimitKey).
 	limitKey corehttp.KeyFunc
+	// notices is Options.AccountNotices, or nil when it holds nothing a call
+	// could reach; decided once, in [New].
+	notices AccountNotices
+	// noticeTimeout bounds one notice; [DefaultNoticeTimeout] unless a test
+	// shortens it.
+	noticeTimeout time.Duration
 }
 
 // That the published contract is satisfied is pinned down at compile time, and
@@ -188,7 +194,12 @@ func New(opts Options) *Module {
 		log = slog.New(slog.DiscardHandler)
 	}
 
-	return &Module{opts: opts, log: log}
+	m := &Module{opts: opts, log: log, noticeTimeout: DefaultNoticeTimeout}
+	if !isNil(opts.AccountNotices) {
+		m.notices = opts.AccountNotices
+	}
+
+	return m
 }
 
 // Name is the module's unique name.

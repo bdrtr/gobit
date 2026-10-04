@@ -61,6 +61,9 @@ type anchoredStore struct {
 	endErr     error
 	readErr    error
 	putErr     error
+	// afterPut runs once a write has succeeded, as a caller hanging up the
+	// moment the change is made.
+	afterPut func()
 	// rounds writes a moment at a microsecond, rounding, which is what
 	// PostgreSQL does to a timestamp it is sent as text.
 	rounds bool
@@ -86,6 +89,9 @@ func (s *anchoredStore) Put(_ context.Context, customerID, email, passwordHash s
 	}
 	s.customerID, s.email, s.hash = customerID, foldEmail(email), passwordHash
 	s.puts++
+	if s.afterPut != nil {
+		s.afterPut()
+	}
 
 	return nil
 }

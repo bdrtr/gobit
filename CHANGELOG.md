@@ -56,6 +56,12 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **An account notice outlives the caller, not the mailer** (D231). **For
+  integrators:** `contrib/identity-session` sends `AccountNotices` on a context
+  the caller hanging up does not cancel, ended after
+  `identitysession.DefaultNoticeTimeout` (fifteen seconds). A mailer that needs
+  longer queues the message and returns.
+
 - **A passkey is not written over under its id** (D229). **For integrators:**
   `POST /store/v1/auth/passkey/register/finish` answers 401
   `identity_passkey_refused` to a key that names one the account holds with
