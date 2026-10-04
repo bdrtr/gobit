@@ -80,7 +80,8 @@ type orderContact struct {
 // The laziness is mandatory: the Register order of the modules is not
 // guaranteed and while this module is being registered "order.interop" may not
 // be in the container yet (see the module.Module documentation). The resolution
-// is deferred to the first use, that is, to the first "order.placed" event.
+// is deferred to the first use, that is, to the first order event the module
+// handles.
 //
 // The return type is an INTERFACE: the caller (module.go) has no need for the
 // concrete type and the service asks for this interface anyway; in the tests a

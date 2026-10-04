@@ -109,11 +109,11 @@ const (
 	codeSetupFailed    = "webpush_module_setup_failed"
 )
 
-// orderPlacedEvent is the event the plugin subscribes to.
+// orderPlacedEvent is the one order event the plugin pushes.
 //
-// It is the ONLY order event the repository publishes today; shipped, delivered
-// and canceled pushes wait on the order module publishing them, which is that
-// module's change and not this plugin's.
+// The order module also publishes "order.line_canceled", "order.canceled" and
+// "order.completed"; none is pushed, because ADR 0051 names this plugin's
+// fan-out a standing authority and a second trigger would widen it (ADR 0386).
 const orderPlacedEvent = "order.placed"
 
 // Plugin is the web push plugin.

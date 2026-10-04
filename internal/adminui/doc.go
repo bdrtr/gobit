@@ -166,8 +166,8 @@
 //
 // The Notifications screen ([UI.listNotifications]) lists the notification
 // module's delivery log, the failed ones first or one order's, and sends a
-// failed order confirmation again ([UI.resendNotification]) through the
-// module's panel surface (ADR 0317). The order's page lists what was sent for
+// failed order mail again ([UI.resendNotification]), the confirmation or the
+// completion notice, through the module's panel surface (ADR 0317, 0386). The order's page lists what was sent for
 // it, for an operator who may read the log, and links to that screen on the
 // order (ADR 0318).
 //

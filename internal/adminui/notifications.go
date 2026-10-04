@@ -18,7 +18,8 @@ import (
 
 // The notifications screen (ADR 0317): the delivery log of the notification
 // module, one status at a time or one order's, and the resend of a failed
-// order confirmation, through the module's panel surface.
+// order mail (the confirmation or the completion notice, ADR 0386), through
+// the module's panel surface.
 
 // ServiceNotificationAdmin is the notification module's panel surface,
 // spelled by hand and pinned against the module's constant in internal/arch.

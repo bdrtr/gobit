@@ -24,7 +24,8 @@ import (
 // event arrives, but THAT it arrives.
 const eventWaitTimeout = 5 * time.Second
 
-// orderEventLog is the test-side record of the "order.placed" events.
+// orderEventLog is the test-side record of one order event, "order.placed" or
+// "order.canceled".
 //
 // # Why a SINGLE, PROCESS-LIFETIME subscriber
 //
@@ -38,6 +39,8 @@ const eventWaitTimeout = 5 * time.Second
 // The type is safe for concurrent use: handlers run in separate goroutines and the
 // write and the read share the same lock.
 type orderEventLog struct {
+	// topic is the one order event this log records.
+	topic   string
 	mu      sync.Mutex
 	records []eventbus.Event
 }
@@ -48,7 +51,7 @@ type orderEventLog struct {
 // CANNOT SEE the events published before it (the in-memory backend keeps no
 // history, it delivers AT MOST ONCE).
 func (l *orderEventLog) subscribe(bus eventbus.EventBus) error {
-	return bus.Subscribe(ordersvc.EventOrderPlaced, func(_ context.Context, e eventbus.Event) error {
+	return bus.Subscribe(l.topic, func(_ context.Context, e eventbus.Event) error {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		l.records = append(l.records, e)
@@ -90,7 +93,7 @@ func (l *orderEventLog) waitFor(t *testing.T, orderID string) eventbus.Event {
 		"the %q event must be published for order %s; if the event is not published, "+
 			"subscribers such as notification, accounting and the search index stay "+
 			"UNAWARE of the order and the gap is only noticed through a customer "+
-			"complaint", ordersvc.EventOrderPlaced, orderID)
+			"complaint", l.topic, orderID)
 
 	require.Len(t, found, 1,
 		"exactly ONE event must be published for order %s; a second event means that "+

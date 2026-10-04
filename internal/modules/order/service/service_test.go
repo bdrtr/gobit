@@ -37,7 +37,7 @@ func newEnv(t *testing.T) env {
 	t.Helper()
 
 	store := newFakeStore()
-	bus := newFakeBus()
+	bus := newFakeBus(t)
 
 	svc, err := service.New(service.Options{Repo: store, Events: bus})
 	require.NoError(t, err)
@@ -905,7 +905,7 @@ func TestSetOrderSummaryTotalsNotFoundOnAMissingOrder(t *testing.T) {
 // "order.placed" would never be published.
 func TestNewRejectsASetupWithAMissingDependency(t *testing.T) {
 	cases := map[string]service.Options{
-		"no store":    {Events: newFakeBus()},
+		"no store":    {Events: newFakeBus(t)},
 		"no data bus": {Repo: newFakeStore()},
 	}
 

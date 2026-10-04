@@ -87,6 +87,22 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **A completed order says so on the bus** (ADR 0386, D235). **For integrators:**
+  completing an order, through the API, the panel or the interop surface,
+  publishes `order.completed` (`order_id`, `completed_at`), written into the
+  outbox in the completion's transaction; a completion whose event cannot be
+  written is refused. The webhook plugin forwards it. Archiving publishes
+  nothing, and there is no transition hook beside the bus. **For operators:**
+  the notification module mails the order's address with template
+  `order.completed`; the SMTP provider is asked only once `SMTP_TEMPLATE_DIR`
+  holds `order.completed.tmpl`, the default `log` provider logs one more
+  warning per completed order, and another provider is asked for the template
+  as for any other. A failed completion mail is resent like a confirmation.
+  **For provider authors:** `core/provider` gains the optional
+  `TemplateHolder` (`HoldsTemplate(name string) bool`); a notification
+  provider that refuses a template it has no copy for implements it, or every
+  completed order becomes a failed delivery and two retries.
+
 - **Goods a customer sends back travel in a parcel of their own** (ADR 0384,
   D234): the parcel is bounded by its return, not refused as more than the
   order owes, and is bound to no order, so the dispatch bound and both stock

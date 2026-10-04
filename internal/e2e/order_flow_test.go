@@ -475,9 +475,9 @@ func TestSagaRollsBackWhenPaymentFails(t *testing.T) {
 	// status. That the payload contains a status field is meaningful for exactly this
 	// reason.
 	//
-	// A separate event announcing the cancellation (e.g. "order.canceled") does NOT
-	// exist today; the plan's Phase 6 only asks for order.placed. The day it is added,
-	// this block must grow to assert that both events reach the subscriber.
+	// The cancellation is announced by an event of its own, "order.canceled"
+	// (ADR 0288), and a subscriber hears both.
+	cancelLog.waitFor(t, canceled.ID)
 	event := eventLog.waitFor(t, canceled.ID)
 	require.Equal(t, ordermodels.OrderPending.String(), eventField(t, event, ordersvc.EventFieldStatus),
 		"the event carries the order's status AT THE MOMENT OF PUBLICATION and at that moment it "+

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -1761,6 +1762,11 @@ type fakeBus struct {
 	published []eventbus.Event
 	// failErr, when it is set, makes Publish return this error.
 	failErr error
+	// publishedInTx holds the events published inside a transaction. Publish
+	// refuses them, and the test that built the bus FAILS on any of them at its
+	// end: the service swallows a publish error, so a refusal alone is
+	// invisible.
+	publishedInTx []string
 }
 
 // That the fake bus satisfies the surface the service expects is verified at
@@ -1782,13 +1788,40 @@ func (b *fakeBus) eventsNamed(name string) []eventbus.Event {
 	return out
 }
 
-// newFakeBus produces an empty fake bus.
-func newFakeBus() *fakeBus { return &fakeBus{} }
+// newFakeBus produces an empty fake bus that fails t if anything was published
+// inside a transaction.
+func newFakeBus(t testing.TB) *fakeBus {
+	t.Helper()
+
+	b := &fakeBus{}
+	t.Cleanup(func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if len(b.publishedInTx) > 0 {
+			t.Errorf("published before the commit: %v", b.publishedInTx)
+		}
+	})
+
+	return b
+}
 
 // Publish records the event.
-func (b *fakeBus) Publish(_ context.Context, e eventbus.Event) error {
+//
+// It REFUSES a ctx that carries the fake store's transaction marker, as the
+// outbox's whole rule asks: an event published before the commit announces work
+// that may still roll back (ADR 0386). The service logs and swallows a publish
+// error, so the refusal alone would let an extra publish inside the transaction
+// pass every test that asserts nothing was published; the refused event is
+// therefore kept, and [newFakeBus] fails the test on it.
+func (b *fakeBus) Publish(ctx context.Context, e eventbus.Event) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if _, inTx := ctx.Value(txMarkerKey{}).(*txState); inTx {
+		b.publishedInTx = append(b.publishedInTx, e.Name)
+		return errors.Internal("fake_publish_in_tx",
+			"%s was published inside a transaction; publish after the commit", e.Name)
+	}
 
 	if b.failErr != nil {
 		return b.failErr

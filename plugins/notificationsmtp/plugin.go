@@ -17,7 +17,9 @@
 // without it. Embedding a default set was rejected: a framework that ships
 // English boilerplate for "your order has shipped" produces a store that mails
 // its customers in the wrong language and the wrong voice, and the day someone
-// notices is the day a customer complains.
+// notices is the day a customer complains. The provider says which templates it
+// holds, so the notification module does not ask it for the completion notice
+// until the installation writes one (ADR 0386).
 //
 // Templates are read and PARSED AT STARTUP. A syntax error in a template is a
 // configuration error, and configuration errors belong at startup, not at
@@ -338,8 +340,23 @@ type sender struct {
 // compile time rather than at the first send.
 var _ coreprovider.NotificationProvider = (*sender)(nil)
 
+// It answers which templates it holds, because it refuses one it has no copy
+// for (ADR 0386).
+var _ coreprovider.TemplateHolder = (*sender)(nil)
+
 // ID returns the provider's id.
 func (s *sender) ID() string { return ProviderID }
+
+// HoldsTemplate says whether the installation wrote a template with this name.
+//
+// It lets the notification module skip a mail this installation wrote no copy
+// for rather than record a refusal per event: the completion notice is opted
+// into by writing order.completed.tmpl (ADR 0386). It is the core's
+// [coreprovider.TemplateHolder].
+func (s *sender) HoldsTemplate(name string) bool {
+	_, ok := s.templates[name]
+	return ok
+}
 
 // Send renders the notification and delivers it over SMTP.
 //

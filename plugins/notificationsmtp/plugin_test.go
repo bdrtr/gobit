@@ -165,6 +165,16 @@ func TestSendRefusesAnUnknownTemplate(t *testing.T) {
 			"in the template name from a template that was never deployed")
 }
 
+// TestTheProviderSaysWhichTemplatesItHolds: the notification module asks this
+// before it mails a completion (ADR 0386), so the answer is the loaded set and
+// nothing wider or narrower.
+func TestTheProviderSaysWhichTemplatesItHolds(t *testing.T) {
+	s := newSender(t, "127.0.0.1", 1, false)
+
+	assert.True(t, s.HoldsTemplate("order.shipped"), "a loaded template is held")
+	assert.False(t, s.HoldsTemplate("order.completed"), "one the installation did not write is not")
+}
+
 // --- template loading -------------------------------------------------------
 
 // TestLoadTemplatesRefusesAFileMissingABlock proves the startup check.

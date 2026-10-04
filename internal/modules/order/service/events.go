@@ -142,10 +142,11 @@ func (s *Service) publishOrderPlaced(ctx context.Context, order models.Order, it
 // normally hears about an order in the same request; if the process dies before
 // that, the row is still committed and the relay sends it.
 //
-// The two cannot produce two events, and the id is what makes that true: both
-// carry the same one, the relay writes it, and the bus's own delivery is keyed
-// on it. A subscriber that is idempotent on the event id — which the bus's
-// at-least-once contract already requires — cannot tell the two apart.
+// The two DO produce two deliveries: only the relay marks a row published, so
+// it republishes the row the direct publish already sent, and the bus does not
+// deduplicate by id. Both carry the same id, so a subscriber that is idempotent
+// on it — which the bus's at-least-once contract already requires — handles the
+// event once; one that is not acts twice (D236).
 //
 // # A failure here FAILS the order
 //

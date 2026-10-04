@@ -277,14 +277,15 @@ integrations) listen to them. Which backend carries them is chosen by
 second rule below is about.
 
 Today there are ten subscribers: the search plugin `search-pg` (`product.*`),
-the notification module (`order.placed`), the browser push plugin `web-push`
+the notification module (`order.placed` and `order.completed`, ADR 0386), the
+browser push plugin `web-push`
 (`order.placed`), the **order module** itself (`payment.captured`,
 `payment.refunded`), the **payment module** (`order.canceled`, ADR 0288), the
 **gift card sale flow** (`payment.captured`, ADR 0210), the **cancellation
 flow** (`order.line_canceled`, `fulfillment.canceled`, ADR 0134 and 0139), the
 **return flow** (`fulfillment.canceled`, ADR 0239), the analytics plugin
 `analytics` (`cart.created`, `cart.completed`, `order.placed`, ADR 0153) and the
-outbound webhook plugin `webhook-out` (all eleven topics below; a receiver
+outbound webhook plugin `webhook-out` (all twelve topics below; a receiver
 narrows them by topic, filter and field, ADR 0218).
 
 The order and payment modules subscribe to each other for the reason a plugin
@@ -293,11 +294,17 @@ path, so nothing else could tell the order (ADR 0121); an order canceled by the
 shop or by the checkout's compensation has no flow on its path that holds its
 payment (ADR 0288).
 
+Archiving an order publishes nothing, and neither do the return, claim and
+exchange transitions: a topic arrives with the first subscriber inside gobit
+that acts on it (ADR 0063, ADR 0386). There is no transition hook beside the
+bus.
+
 | Event | Payload |
 |---|---|
 | `order.placed` | `order_id`, `display_id`, `status`, `region_id`, `customer_id`, `currency_code`, `total`, `item_count`, `placed_at` |
 | `order.line_canceled` | `order_id`, `order_line_item_id`, `variant_id`, `cancellation_id`, `canceled_quantity`, `canceled_before`, `bought_quantity`, `canceled_at` |
 | `order.canceled` | `order_id`, `canceled_at` |
+| `order.completed` | `order_id`, `completed_at` |
 | `product.created` / `product.updated` | `product_id`, `status` |
 | `product.deleted` | `product_id` |
 | `payment.captured` / `payment.refunded` | `payment_collection_id`, `occurred_at` |
@@ -310,7 +317,8 @@ filter or field list can name only a field the topic carries.
 
 `placed_at` is a timestamp, but it too is a string: the moment the order was
 placed, converted to UTC and formatted with `time.RFC3339Nano`
-(`EventFieldPlacedAt`). `occurred_at` is the same shape.
+(`EventFieldPlacedAt`). `occurred_at`, `canceled_at` and `completed_at` are the
+same shape.
 
 The payment events carry **no amount**, and it is worth saying why the narrow
 rule below is not the whole reason. A refund is deliberately not idempotent, so
@@ -350,12 +358,18 @@ customer marked in a region is quoted below the price recorded at the mark; the
 data adds `currency_code`, `previous_amount` and `amount`, both amounts in
 minor units (ADR 0216). The `stock-alert` job runs it every five minutes.
 
-**Notification** listens to `order.placed` and sends the order confirmation
-through the selected `NotificationProvider`. The recipient address is read
-**from the order record, not from the event** (`order.interop`), because
-personal data is not put into a durable stream. The default provider is `log`
-and it really does not send — it says so plainly at WARN level; real delivery is
-a plugin's job (`Host.RegisterNotificationProvider`).
+**Notification** listens to `order.placed` and sends the order confirmation, and
+to `order.completed` and sends the completion notice (ADR 0386), through the
+selected `NotificationProvider`. The recipient address is read **from the order
+record, not from the event** (`order.interop`), because personal data is not put
+into a durable stream. The default provider is `log` and it really does not
+send — it says so plainly at WARN level; real delivery is a plugin's job
+(`Host.RegisterNotificationProvider`). A provider that refuses a template it has
+no copy for should also implement the optional `provider.TemplateHolder`
+(`HoldsTemplate(name string) bool`): the completion notice is not asked of a
+provider that answers false, and a provider without the method is asked for
+every template, so a refusing one turns each completed order into a failed
+delivery and two retries. The confirmation is asked of every provider.
 
 > If a handler returns an error the bus calls it **twice more** within a second
 > and a quarter, and then logs the error and considers the event **handled**

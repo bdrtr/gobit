@@ -20,7 +20,7 @@ func TestAnOrderIsReadOnlyAtAMomentItExisted(t *testing.T) {
 	store := newFakeStore()
 	now := time.Now().Add(time.Hour)
 	svc, err := service.New(service.Options{
-		Repo: store, Events: newFakeBus(), Now: func() time.Time { return now },
+		Repo: store, Events: newFakeBus(t), Now: func() time.Time { return now },
 	})
 	require.NoError(t, err)
 

@@ -22,13 +22,15 @@
 // registered AFTER the modules come up — and the check is therefore at the
 // composition root (internal/app): an unknown name STOPS the startup.
 //
-// # The "order.placed" subscriber
+// # The "order.placed" and "order.completed" subscribers
 //
-// The module's only write trigger is an event. The subscription is set up
-// during Register and the handler is [service.Service.OrderPlaced]. The e-mail
-// DOES NOT COME FROM THE EVENT: the event payload carries no personal data and
-// the address is read from the order itself over the "order.interop" surface
-// (see service/orders.go).
+// The module's only write triggers are events. The subscriptions are set up
+// during Register and the handlers are [service.Service.OrderPlaced] and
+// [service.Service.OrderCompleted] (ADR 0386). The e-mail DOES NOT COME FROM
+// THE EVENT: the event payload carries no personal data and the address is read
+// from the order itself over the "order.interop" surface (see
+// service/orders.go). The completion notice is mailed only where the provider
+// does not say it lacks that template.
 //
 // # What it does not know
 //
@@ -95,7 +97,7 @@ const ProvidersName = ModuleName + ".providers"
 const InteropName = ModuleName + ".interop"
 
 // AdminName is the container name of the module's panel surface (ADR 0317):
-// the delivery log and the resend of a failed order confirmation.
+// the delivery log and the resend of a failed order mail (ADR 0386).
 const AdminName = ModuleName + ".admin"
 
 // DefaultProviderID is the id used when no provider is selected.
@@ -175,7 +177,7 @@ func (m *Module) Name() string { return ModuleName }
 func (m *Module) Migrations() fs.FS { return migrationsRoot }
 
 // Register registers the service and the provider registry into the container
-// and sets up the "order.placed" subscription.
+// and sets up the "order.placed" and "order.completed" subscriptions.
 //
 // Only the CORE services are resolved; other modules' services may not be
 // registered yet at this stage (see the module.Module documentation). Because
@@ -248,6 +250,10 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		return errors.Wrap(err, errors.KindOf(err), codeSubscribeFailed,
 			"the %s module could not subscribe to the %q event", ModuleName, service.EventOrderPlaced)
 	}
+	if err := bus.Subscribe(service.EventOrderCompleted, svc.OrderCompleted); err != nil {
+		return errors.Wrap(err, errors.KindOf(err), codeSubscribeFailed,
+			"the %s module could not subscribe to the %q event", ModuleName, service.EventOrderCompleted)
+	}
 
 	m.svc = svc
 	m.providers = providers
@@ -257,7 +263,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		"service", ServiceName,
 		"providers", providers.IDs(),
 		"selected_provider", m.opts.ProviderID,
-		"event", service.EventOrderPlaced,
+		"events", []string{service.EventOrderPlaced, service.EventOrderCompleted},
 	)
 	return nil
 }

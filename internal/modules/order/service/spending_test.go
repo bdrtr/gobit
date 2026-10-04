@@ -44,7 +44,7 @@ func limitedEnv(t *testing.T, payload json.RawMessage) (env, *fakeSpendingPolicy
 	t.Helper()
 
 	store := newFakeStore()
-	bus := newFakeBus()
+	bus := newFakeBus(t)
 	policy := &fakeSpendingPolicy{payload: payload}
 
 	svc, err := service.New(service.Options{

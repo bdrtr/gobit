@@ -7,6 +7,7 @@ surface, under `notification:read` and `notification:write`.
 
 - **Status:** Accepted
 - **Date:** 2026-10-01
+- **Amended by:** [0386](0386-a-completed-order-says-so-on-the-bus.md): the button is on a failed completion notice too, rebuilt from the order as the confirmation is
 
 ## Context
 

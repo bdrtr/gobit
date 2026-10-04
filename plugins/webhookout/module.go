@@ -59,7 +59,7 @@ var migrationsRoot = mustSub(migrationFiles, "migrations")
 //
 // So the list is written out, and it is the WHOLE set: a static census of every
 // eventbus.Event this repository can publish resolves to exactly this slice —
-// the eleven topics plugins/webhookout forwards.
+// the twelve topics plugins/webhookout forwards.
 //
 // The number and the path sit on ONE line deliberately. It is the only place
 // the size is written, and the count gate is LINE-ANCHORED: a sentence whose
@@ -104,6 +104,7 @@ var ForwardedTopics = []string{
 	topicCartCreated,
 	topicCartCompleted,
 	topicOrderCanceled,
+	topicOrderCompleted,
 }
 
 // The topics, as constants the arch gates can resolve.
@@ -173,6 +174,10 @@ const (
 	// needs no new redaction rule. A receiver that heard "order.placed" for an
 	// order the checkout then unwound hears this one too.
 	topicOrderCanceled = "order.canceled"
+	// topicOrderCompleted is published when the shop completes an order
+	// (ADR 0386); it carries the order and the moment. Archiving publishes
+	// nothing, so a receiver hears an order's end as completed or canceled.
+	topicOrderCompleted = "order.completed"
 )
 
 // redactedFields are the payload fields that never leave this installation, and
@@ -442,9 +447,10 @@ func (m *webhookModule) Routes(r chi.Router) {
 // was made, "order.placed" was the only topic written to the outbox and the
 // coverage would have been one in four. ADR 0121 put the payment module's
 // capture and refund there as well, and the order's write-offs, the parcel's
-// cancellation and the cart's two events followed, so it is now seven of the ten
-// this plugin forwards; the three product events are still published directly.
-// Seven in ten is still partial and the shape of the objection is unchanged,
+// cancellation, the cart's two events and the order's cancel and completion
+// followed, so it is now nine of the twelve this plugin forwards; the three
+// product events are still published directly. Nine in twelve is still partial
+// and the shape of the objection is unchanged,
 // which is why the refusal stands; the number is corrected here because a record whose stated
 // reason has quietly halved in force is the kind that gets rebuilt on.
 func (m *webhookModule) onEvent(ctx context.Context, e eventbus.Event) error {
@@ -733,6 +739,7 @@ var TopicFields = map[string][]string{
 	topicCartCreated:         {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
 	topicCartCompleted:       {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
 	topicOrderCanceled:       {fieldCanceledAt, fieldOrderID},
+	topicOrderCompleted:      {"completed_at", fieldOrderID},
 }
 
 // The payload fields more than one topic carries, spelled as their publishers

@@ -487,7 +487,10 @@ var (
 var stockLocationID string
 
 // eventLog is the test-side record of the published "order.placed" events.
-var eventLog = &orderEventLog{}
+var eventLog = &orderEventLog{topic: ordersvc.EventOrderPlaced}
+
+// cancelLog is the test-side record of the published "order.canceled" events.
+var cancelLog = &orderEventLog{topic: ordersvc.EventOrderCanceled}
 
 // fileRoot is the root directory the uploaded files are written to (the FILE_ROOT
 // counterpart).
@@ -628,6 +631,9 @@ func setUpHarness(ctx context.Context) error {
 		return err
 	}
 	if err := eventLog.subscribe(bus); err != nil {
+		return err
+	}
+	if err := cancelLog.subscribe(bus); err != nil {
 		return err
 	}
 

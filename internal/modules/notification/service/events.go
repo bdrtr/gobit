@@ -54,6 +54,16 @@ const EventOrderPlaced = "order.placed"
 // all orders.
 const TemplateOrderPlaced = EventOrderPlaced
 
+// EventOrderCompleted is the name of the order event that says the shop
+// finished with an order (the SAME value as the EventOrderCompleted constant of
+// the order service, ADR 0386). It is a cross-module contract repeated by hand,
+// for [EventOrderPlaced]'s reason.
+const EventOrderCompleted = "order.completed"
+
+// TemplateOrderCompleted is the name of the completion notice's template,
+// chosen the same as its event for [TemplateOrderPlaced]'s reason.
+const TemplateOrderCompleted = EventOrderCompleted
+
 // eventFieldOrderID is the ONLY field read from the event payload.
 //
 // Everything else the template needs is read from the RECORD the identifier
@@ -104,7 +114,7 @@ func (s *Service) OrderPlaced(ctx context.Context, e eventbus.Event) error {
 		return err
 	}
 
-	in, err := s.orderConfirmation(ctx, orderID)
+	in, err := s.orderMail(ctx, orderID, TemplateOrderPlaced)
 	if err != nil {
 		return err
 	}
@@ -112,9 +122,54 @@ func (s *Service) OrderPlaced(ctx context.Context, e eventbus.Event) error {
 	return s.Notify(ctx, in)
 }
 
-// orderConfirmation builds an order's confirmation from the order record, the
-// same way for the event and for an operator's resend (ADR 0243).
-func (s *Service) orderConfirmation(ctx context.Context, orderID string) (NotifyInput, error) {
+// OrderCompleted handles the "order.completed" event: it reads the contact
+// information of the order and mails the order's own address the completion
+// notice (ADR 0386).
+//
+// The address is read from the RECORD, not from the EVENT, for
+// [Service.OrderPlaced]'s reason; the event carries the order and the moment
+// alone.
+//
+// # Why only this template asks whether the provider holds it
+//
+// The completion notice is new to an installation that upgrades, and the copy
+// an operator writes for it is how it is opted into: a provider that says it
+// holds no such template ([coreprovider.TemplateHolder]) is not asked, so an SMTP installation without
+// order.completed.tmpl records no failed delivery per completed order. A
+// confirmation the provider has no copy for is a misconfiguration instead, and
+// its failed record is what an operator's resend repairs (ADR 0243), so
+// [Service.OrderPlaced] does not ask.
+//
+// The subscription itself is unconditional, so the question is asked here, per
+// event, and the bus's consumer group exists from the first start.
+func (s *Service) OrderCompleted(ctx context.Context, e eventbus.Event) error {
+	orderID, err := eventOrderID(e)
+	if err != nil {
+		return err
+	}
+
+	provider, err := s.providers.Get(s.providerID)
+	if err != nil {
+		return err
+	}
+	if holder, ok := provider.(coreprovider.TemplateHolder); ok && !holder.HoldsTemplate(TemplateOrderCompleted) {
+		s.log.InfoContext(ctx, "the provider holds no order.completed template; the completion was not mailed",
+			"provider_id", provider.ID(), "order_id", orderID)
+		return nil
+	}
+
+	in, err := s.orderMail(ctx, orderID, TemplateOrderCompleted)
+	if err != nil {
+		return err
+	}
+
+	return s.Notify(ctx, in)
+}
+
+// orderMail builds an order mail with the given template from the order
+// record, the same way for the event and for an operator's resend (ADR 0243,
+// ADR 0386). The confirmation and the completion notice carry the same data.
+func (s *Service) orderMail(ctx context.Context, orderID, template string) (NotifyInput, error) {
 	raw, err := s.contacts.OrderContactJSON(ctx, orderID)
 	if err != nil {
 		// The KIND is PRESERVED: when the order cannot be found NotFound comes,
@@ -130,7 +185,7 @@ func (s *Service) orderConfirmation(ctx context.Context, orderID string) (Notify
 	}
 
 	return NotifyInput{
-		Template:  TemplateOrderPlaced,
+		Template:  template,
 		Channel:   coreprovider.ChannelEmail,
 		Reference: orderID,
 		To:        contact.Email,

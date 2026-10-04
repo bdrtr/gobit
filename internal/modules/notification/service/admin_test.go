@@ -35,7 +35,7 @@ func panelRows(t *testing.T, surface *service.AdminSurface, status, reference st
 
 // TestThePanelListsTheDeliveriesAnOperatorMaySendAgain is ADR 0317: the
 // surface lists by status and by order, says which delivery the operator may
-// send again — a failed order confirmation, not another module's message —
+// send again — a failed order mail, not another module's message —
 // and carries the provider's reason.
 func TestThePanelListsTheDeliveriesAnOperatorMaySendAgain(t *testing.T) {
 	svc, store, prov, failed := failedConfirmation(t)

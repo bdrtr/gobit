@@ -45,6 +45,7 @@ func TestAFailedConfirmationIsSentAgainOnAnOperatorsWord(t *testing.T) {
 	assert.Empty(t, resent.Error)
 	assert.Equal(t, 2, prov.callCount())
 	assert.Equal(t, "customer@example.com", prov.lastNotification().To, "the address is read from the order again")
+	assert.Equal(t, service.TemplateOrderPlaced, prov.lastNotification().Template, "resent as a confirmation (ADR 0386)")
 }
 
 // TestAResendThatFailsAgainSaysSo keeps the record honest about a second
@@ -131,6 +132,7 @@ func TestAConfirmationADeadAttemptLeftPendingIsSentAgain(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, models.DeliverySent, resent.Status)
 	assert.Equal(t, 2, prov.callCount())
+	assert.Equal(t, service.TemplateOrderPlaced, prov.lastNotification().Template, "resent as a confirmation (ADR 0386)")
 }
 
 // TestAnAttemptStillInFlightIsNotRaced refuses a record an attempt claimed a

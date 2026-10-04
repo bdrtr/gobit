@@ -486,6 +486,67 @@ func TestSecondEventForSameOrderProducesNoSecondNotification(t *testing.T) {
 			"confirmation in the customer's inbox")
 }
 
+// sentWithTemplate returns the notifications the spy holds for an order under one
+// template.
+func sentWithTemplate(orderID, template string) []coreprovider.Notification {
+	var found []coreprovider.Notification
+	for _, n := range notificationSpy.notificationsFor(orderID) {
+		if n.Template == template {
+			found = append(found, n)
+		}
+	}
+	return found
+}
+
+// TestACompletedOrderIsMailedToItsAddress is ADR 0386 across the two REAL
+// modules: completing an order publishes "order.completed", the notification
+// module hears it in the production wiring, reads the address from the order and
+// mails it with the completion template, and the delivery log turns a second
+// delivery of the same event into no second mail. The spy answers no template
+// question, so it is asked to send, as any provider that cannot say is.
+func TestACompletedOrderIsMailedToItsAddress(t *testing.T) {
+	ctx := t.Context()
+	token := obtainToken(t, adminEmail, adminPassword)
+
+	orderID, email, _ := notificationOrder(ctx, t, "E2E Completion Notice Product")
+	require.Equal(t, "sent", awaitNotification(t, token, orderID).Status,
+		"the confirmation comes first")
+
+	_, err := orderSvc.CompleteOrder(ctx, orderID)
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		return len(sentWithTemplate(orderID, notificationsvc.TemplateOrderCompleted)) > 0
+	}, notificationWaitTimeout, notificationInterval,
+		"the completion notice must reach the provider for order %s", orderID)
+	notice := sentWithTemplate(orderID, notificationsvc.TemplateOrderCompleted)[0]
+	assert.Equal(t, "order.completed", notice.Template)
+	assert.Equal(t, email, notice.To, "the notice goes to the order's own address, read from the order")
+	assert.Equal(t, orderID, notice.Data[notificationDataKeyOrderID])
+
+	bus, err := container.Resolve[eventbus.EventBus](ctr, svcEventBus)
+	require.NoError(t, err, "the event bus must be resolvable")
+	require.NoError(t, bus.Publish(ctx, eventbus.Event{
+		ID:   ordersvc.EventOrderCompleted + ":" + orderID,
+		Name: ordersvc.EventOrderCompleted,
+		Data: map[string]any{ordersvc.EventFieldOrderID: orderID},
+	}), "the outbox relay delivers every event a second time")
+
+	require.Never(t, func() bool {
+		return len(sentWithTemplate(orderID, notificationsvc.TemplateOrderCompleted)) > 1
+	}, time.Second, notificationInterval,
+		"a second delivery of the completion must not mail the customer again")
+
+	completions := 0
+	for _, record := range readNotifications(t, token, orderID) {
+		if record.Template == notificationsvc.TemplateOrderCompleted {
+			completions++
+			assert.Equal(t, "sent", record.Status)
+		}
+	}
+	assert.Equal(t, 1, completions, "one (template, reference) record for the completion")
+}
+
 // TestDeliveryLogCannotBeReadUnauthenticated verifies that the delivery log is
 // protected.
 //

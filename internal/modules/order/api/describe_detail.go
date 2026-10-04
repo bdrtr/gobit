@@ -111,7 +111,9 @@ func describeOrderDetail(d *openapi.Doc) {
 		Description: "Completion is what says the shop is finished with the order. It takes " +
 			"no body: there is nothing to choose, and an endpoint that accepted one would " +
 			"invite somebody to pass the completion moment or the amounts from the client. " +
-			detailNote,
+			"The completion publishes \"order.completed\" with the order and the moment, " +
+			"written in the same transaction; the notification module mails the order's " +
+			"address unless the provider says it holds no such template (ADR 0386). " + detailNote,
 		Responses: map[string]any{
 			"200": openapi.Response("The order, now complete", d.Item(adminOrderDetailDTO{})),
 		},
@@ -191,7 +193,7 @@ func describeOrderDetail(d *openapi.Doc) {
 			"deleting anything; the record, its lines and its invoice stay exactly as they " +
 			"were. Only a COMPLETED order can be archived — archiving one still in flight " +
 			"would hide work that is not done. It takes no body for the same reason " +
-			"completion does not. " + detailNote,
+			"completion does not. Archiving publishes no event. " + detailNote,
 		Responses: map[string]any{
 			"200": openapi.Response("The order, now archived", d.Item(adminOrderDetailDTO{})),
 		},

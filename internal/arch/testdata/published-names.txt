@@ -533,6 +533,8 @@ core/provider SessionStatus
 core/provider ShipmentTracker
 core/provider ShipmentTracker.Track
 core/provider ShippingQuote
+core/provider TemplateHolder
+core/provider TemplateHolder.HoldsTemplate
 core/provider TrackingUpdate
 core/provider UploadInput
 core/providertest Classifier

@@ -5,9 +5,10 @@ A delivery is one attempt to tell somebody something: an order's confirmation,
 an invitation, a gift card's code. The failed ones come first, because the
 screen exists for the customer who says no e-mail arrived. An order's
 deliveries are found by its id, in every status. An operator who may write
-notifications sends a failed order confirmation again; the module rebuilds it
-from the order, and the other kinds are sent again by the modules that hold
-their content, so they offer no button.
+notifications sends a failed order mail again (the confirmation, or the
+completion notice since ADR 0386); the module rebuilds it from the order, and
+the other kinds are sent again by the modules that hold their content, so they
+offer no button.
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>

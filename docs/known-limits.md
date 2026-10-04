@@ -785,6 +785,13 @@ past and is not corrected retroactively.
   the pass runs once a minute
   ([ADR 0275](adr/0275-a-webhook-receiver-sets-its-rate.md)).
 
+- **An order's archiving and its after-sales transitions publish nothing.**
+  Placing, canceling and completing an order publish `order.placed`,
+  `order.canceled` and `order.completed`; archiving one and moving a return, a
+  claim or an exchange do not, so neither a plugin nor a webhook receiver can
+  react to them, and there is no generic transition hook
+  ([ADR 0386](adr/0386-a-completed-order-says-so-on-the-bus.md)).
+
 - **No lane proves a generated project works at the version it PINS.** Every
   out-of-tree proof rewrites the generated `go.mod` to point at the checkout, so
   the lane compiles the template against the tip of the tree. It cannot tell

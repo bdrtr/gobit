@@ -7,6 +7,7 @@ it is failed and rebuilds the message from the order.
 - **Status:** Accepted
 - **Date:** 2026-09-29
 - **Amended by:** [0245](0245-a-delivery-a-dead-attempt-left-pending-is-sent-again.md): a record a dead attempt left pending is sent again too
+- **Amended by:** [0386](0386-a-completed-order-says-so-on-the-bus.md): a failed completion notice is sent again too, rebuilt from the order as the confirmation is
 
 Measurement: [measurements/0243](../measurements/0243-the-mail-nobody-could-send.md)
 

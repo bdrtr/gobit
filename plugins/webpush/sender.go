@@ -107,9 +107,10 @@ func (s *sender) send(ctx context.Context, sub subscription, body []byte, topic 
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.Header.Set("TTL", strconv.Itoa(ttlSeconds))
 	if topic != "" {
-		// Topic lets the push service COLLAPSE an undelivered duplicate. The
-		// event bus delivers at least once, so the same order can produce two
-		// pushes; without this the customer sees the notification twice.
+		// Topic lets the push service replace a duplicate that has not reached
+		// the device yet. It does not reach one already shown: the outbox
+		// delivers every event twice, so a device that was online for the first
+		// push shows the second as well (D236).
 		req.Header.Set("Topic", topic)
 	}
 	req.ContentLength = int64(len(body))

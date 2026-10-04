@@ -264,7 +264,7 @@ func TestARefundIsBookedAgainstItsCause(t *testing.T) {
 		{ID: "claim_1", Kind: "claim", OrderID: "order_2", CurrencyCode: "TRY"},
 		{ID: "exch_1", Kind: "exchange", OrderID: "order_3", CurrencyCode: "TRY"},
 	}
-	svc, err := service.New(service.Options{Repo: store, Events: newFakeBus(), Refunds: scriptedRefunds{body: `[
+	svc, err := service.New(service.Options{Repo: store, Events: newFakeBus(t), Refunds: scriptedRefunds{body: `[
 		{"id":"refund_a","reference":"ret_1","amount":1200,"currency_code":"TRY","refunded_at":"2026-09-02T10:00:00Z"},
 		{"id":"refund_b","reference":"claim_1","amount":300,"currency_code":"TRY","refunded_at":"2026-09-03T10:00:00Z"},
 		{"id":"refund_c","reference":"exch_1","amount":900,"currency_code":"TRY","refunded_at":"2026-09-04T10:00:00Z"},
@@ -306,7 +306,7 @@ func TestARefundInAnotherCurrencyThanItsOrderIsAnError(t *testing.T) {
 
 	store := newFakeStore()
 	store.causes = []models.JournalCause{{ID: "ret_1", Kind: "return", OrderID: "order_1", CurrencyCode: "TRY"}}
-	svc, err := service.New(service.Options{Repo: store, Events: newFakeBus(), Refunds: scriptedRefunds{body: `[
+	svc, err := service.New(service.Options{Repo: store, Events: newFakeBus(t), Refunds: scriptedRefunds{body: `[
 		{"id":"refund_a","reference":"ret_1","amount":1200,"currency_code":"EUR","refunded_at":"2026-09-02T10:00:00Z"}
 	]`}})
 	require.NoError(t, err)

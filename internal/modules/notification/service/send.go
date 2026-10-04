@@ -200,19 +200,27 @@ func (s *Service) deliver(
 	return nil
 }
 
-// ResendDelivery sends a FAILED order confirmation again, on an operator's
+// orderTemplate says whether a template is one of the order mails this module
+// builds itself from the order record: the confirmation and the completion
+// notice (ADR 0386). Only those are resent here.
+func orderTemplate(template string) bool {
+	return template == TemplateOrderPlaced || template == TemplateOrderCompleted
+}
+
+// ResendDelivery sends a FAILED order mail again, on an operator's
 // decision (ADR 0243), or one a dead attempt left PENDING (ADR 0245): such a
 // record cannot say whether the mail went, as a failed one cannot, and the
 // operator who examined it has this to act with.
 //
-// # Why an operator, and why only this template
+// # Why an operator, and why only these templates
 //
 // A provider's error does not say the message did not go out (see [Service.Notify]),
 // so a failure is not sent again by itself: that would be a second e-mail for
 // every timeout the provider did process. This module said the resend was a
 // person's decision and gave the person no way to make it. It rebuilds the
 // message from the record, as the event does, which it can do for the order
-// confirmation it sends itself; the other templates are sent through its
+// confirmation and the completion notice it sends itself (ADR 0386); the
+// other templates are sent through its
 // interop by the modules that hold their content — an invitation, a gift card's
 // code, a stock alert — and are resent by them.
 //
@@ -223,7 +231,7 @@ func (s *Service) ResendDelivery(ctx context.Context, deliveryID string) (models
 	if err != nil {
 		return models.Delivery{}, err
 	}
-	if record.Template != TemplateOrderPlaced {
+	if !orderTemplate(record.Template) {
 		return models.Delivery{}, errors.Conflict(CodeNotResendable,
 			"delivery %s is a %q notification, which the module that sent it resends", deliveryID, record.Template)
 	}
@@ -233,7 +241,7 @@ func (s *Service) ResendDelivery(ctx context.Context, deliveryID string) (models
 				"is sent again", deliveryID, record.Status, staleAttempt)
 	}
 
-	in, err := s.orderConfirmation(ctx, record.Reference)
+	in, err := s.orderMail(ctx, record.Reference, record.Template)
 	if err != nil {
 		return models.Delivery{}, err
 	}

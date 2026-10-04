@@ -305,8 +305,9 @@ why a new one is named apart from the ones the shop has.
 {{ if .NotificationsShown }}
 {{/*
 What the notification module sent for the order (ADR 0318), read only for an
-operator holding its privilege; a failed confirmation is sent again on the
-Notifications screen, which the link opens on this order.
+operator holding its privilege; a failed order mail (the confirmation or the
+completion notice, ADR 0386) is sent again on the Notifications screen, which
+the link opens on this order.
 */}}
 <h2>Notifications</h2>
 
@@ -333,7 +334,7 @@ Notifications screen, which the link opens on this order.
 {{ else }}
 <p class="muted">Nothing has been sent for this order.</p>
 {{ end }}
-<p><a href="{{ .NotificationsPath }}?reference={{ .Order.ID }}">The order's notifications</a>, where a failed confirmation is sent again.</p>
+<p><a href="{{ .NotificationsPath }}?reference={{ .Order.ID }}">The order's notifications</a>, where a failed order mail is sent again.</p>
 {{ end }}
 {{ end }}
 

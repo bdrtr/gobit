@@ -84,3 +84,26 @@ type NotificationProvider interface {
 	// a request that timed out may have been processed on the other side.
 	Send(ctx context.Context, n Notification) error
 }
+
+// TemplateHolder is the OPTIONAL capability of saying whether a provider holds a
+// template.
+//
+// The notification module asks it before a mail an installation opts into by
+// writing its copy: the completion notice, "order.completed" (ADR 0386). A
+// provider that answers false is not asked to send that mail, and the module
+// records nothing for it. A provider that does not implement this is asked for
+// every template, which is right for one that renders any name it is given; a
+// provider that REFUSES a name it has no copy for should implement it, or every
+// completed order becomes a failed delivery and a retry.
+//
+// The order confirmation is sent without asking: a confirmation with no copy is
+// a misconfiguration, and its failed delivery is what an operator's resend
+// repairs (ADR 0243).
+type TemplateHolder interface {
+	NotificationProvider
+
+	// HoldsTemplate reports whether the provider holds a template with this
+	// name ([Notification.Template]). It is a READ and must be cheap: it is
+	// asked once per event.
+	HoldsTemplate(name string) bool
+}

@@ -35,7 +35,8 @@ import (
 // consumer side too).
 //
 // The SECOND consumer of the surface is the NOTIFICATION side that subscribes
-// to the "order.placed" event, and it only READS. The payload of the event is
+// to the "order.placed" and "order.completed" events (ADR 0386), and it only
+// READS. The payload of the event is
 // deliberately narrow and CARRIES NO personal data (rationale: the block on
 // [EventFieldTotal]); the subscriber cannot get the e-mail it needs for
 // delivery out of the event, it has to read the order with the order_id it
@@ -597,8 +598,8 @@ func (i *Interop) CompleteExchange(ctx context.Context, exchangeID string) error
 // CompleteOrder stamps the order as completed.
 //
 // It is NOT idempotent: a second call returns errors.Conflict (for the
-// rationale see [Service.CompleteOrder]). Because it is a forward step, the
-// saga's idempotency key already prevents the repetition.
+// rationale see [Service.CompleteOrder]). A caller that repeats it is told
+// Conflict; no saga calls it. It publishes [EventOrderCompleted] (ADR 0386).
 func (i *Interop) CompleteOrder(ctx context.Context, orderID string) error {
 	_, err := i.svc.CompleteOrder(ctx, orderID)
 	return err

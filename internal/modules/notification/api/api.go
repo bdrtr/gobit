@@ -50,7 +50,8 @@ import (
 // and would collide with the other modules that use the same prefix.
 const pathAdminDeliveries = "/admin/v1/notifications"
 
-// pathAdminResend sends a failed order confirmation again (ADR 0243).
+// pathAdminResend sends a failed order mail, the confirmation or the
+// completion notice, again (ADR 0243, ADR 0386).
 const pathAdminResend = "/admin/v1/notifications/{id}/resend"
 
 // codeInvalidQuery is the error code returned when a query parameter could not
@@ -108,7 +109,7 @@ func (h *Handler) Routes(r chi.Router) {
 }
 
 // resendDelivery is the POST /admin/v1/notifications/{id}/resend handler: it
-// sends a failed order confirmation again and answers with the record as it
+// sends a failed order mail again and answers with the record as it
 // stands, or with the error the provider gave, which the record now carries.
 func (h *Handler) resendDelivery(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

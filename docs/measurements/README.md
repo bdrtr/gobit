@@ -188,3 +188,4 @@ truth: a report says what was true on the day it was taken.
 | [A copied passkey — measured 2026-10-04](0382-a-copied-passkey.md) | 119 |
 | [A parcel coming back — measured 2026-10-04](0384-a-return-parcel.md) | 86 |
 | [Who would watch a workflow step — measured 2026-10-04](0385-workflow-step-observers.md) | 140 |
+| [An order's end on the bus — measured 2026-10-05](0386-a-completed-order-says-so-on-the-bus.md) | 100 |

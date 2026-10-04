@@ -9,8 +9,8 @@ import (
 )
 
 // AdminSurface is the notification module's panel surface (ADR 0317): the
-// delivery log a page at a time, and the resend of a failed order
-// confirmation. Only primitives and JSON cross it, as across every surface
+// delivery log a page at a time, and the resend of a failed order mail
+// (ADR 0386). Only primitives and JSON cross it, as across every surface
 // the panel resolves (ADR 0001).
 type AdminSurface struct {
 	svc *Service
@@ -64,7 +64,7 @@ func (a *AdminSurface) DeliveriesJSON(
 		out = append(out, adminDelivery{
 			ID: d.ID, Template: d.Template, Channel: d.Channel, Reference: d.Reference,
 			Status: string(d.Status), Error: d.Error, UpdatedAt: d.UpdatedAt,
-			Resendable: d.Template == TemplateOrderPlaced && resendable(*d),
+			Resendable: orderTemplate(d.Template) && resendable(*d),
 		})
 	}
 	body, err := json.Marshal(out)

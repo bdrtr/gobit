@@ -972,19 +972,35 @@ func (s *Service) cancelOrder(
 // Unlike [Service.CancelOrder] this method is NOT A COMPENSATION but a forward
 // step, and it does not need to be idempotent. Had completing an already
 // completed order been counted as a silent success, a flow in which the same
-// order is closed twice would produce an error nowhere. Retry safety is solved
-// not here but in the idempotency key of the workflow engine: a step that ends
-// SUCCESSFULLY is not run again. The same rationale holds in the cart module's
-// MarkCompleted as well; the behavior of the two modules on this subject is
-// deliberately the same.
+// order is closed twice would produce an error nowhere. No flow calls it: the
+// checkout leaves an order pending (internal/workflows/checkout's `Orders`), and
+// an operator or an interop caller that repeats it is told Conflict. The same
+// rationale holds in the cart module's MarkCompleted as well; the behavior of
+// the two modules on this subject is deliberately the same.
 //
 // A canceled order cannot be completed either: a cancellation is a TERMINAL
 // state (see the transition diagram in the models document).
+//
+// # It announces itself
+//
+// It writes [EventOrderCompleted] into the outbox in its transaction and
+// publishes it after the commit (ADR 0386); a completion whose event cannot be
+// written is not made.
 func (s *Service) CompleteOrder(ctx context.Context, orderID string) (models.Order, error) {
-	return s.transition(ctx, orderID, models.OrderPending, "completion",
+	completed, err := s.transition(ctx, orderID, models.OrderPending, "completion",
 		func(ctx context.Context, id string) (models.Order, error) {
-			return s.store.CompleteOrder(ctx, id)
+			order, err := s.store.CompleteOrder(ctx, id)
+			if err != nil {
+				return models.Order{}, err
+			}
+			return order, s.recordOrderCompleted(ctx, order)
 		})
+	if err != nil {
+		return models.Order{}, err
+	}
+
+	s.publishOrderCompleted(ctx, completed)
+	return completed, nil
 }
 
 // ArchiveOrder takes a completed order into the archive and records WHEN.
@@ -1025,6 +1041,12 @@ func (s *Service) CompleteOrder(ctx context.Context, orderID string) (models.Ord
 // They carry the status and a nil stamp, and nothing invents one for them. The
 // database allows exactly that asymmetry and no other: the constraint holds a
 // stamp to the status, not the status to a stamp (migration 000007).
+//
+// # It publishes nothing
+//
+// Archiving is the merchant filing the order away, which the shopper's timeline
+// does not show either, and nothing in gobit acts on it; a topic waits for a
+// subscriber that does (ADR 0386, ADR 0063).
 func (s *Service) ArchiveOrder(ctx context.Context, orderID string) (models.Order, error) {
 	return s.transition(ctx, orderID, models.OrderCompleted, "archiving",
 		func(ctx context.Context, id string) (models.Order, error) {

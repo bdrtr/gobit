@@ -237,9 +237,10 @@ func (m *webpushModule) onOrderPlaced(ctx context.Context, e eventbus.Event) err
 		func(sub subscription) ([]byte, error) {
 			return m.opts.templates.render(orderPlacedEvent, sub.Locale, data)
 		},
-		// The topic collapses a duplicate the event bus delivered twice. It is
-		// per order and per event, so two different orders never collapse into
-		// one another.
+		// The topic lets the push service replace a duplicate that has not
+		// reached the device yet. One already shown is shown again, and every
+		// outbox event is delivered twice (D236). It is per order and per event,
+		// so two different orders never collapse into one another.
 		topicFor(orderPlacedEvent, orderID))
 
 	m.opts.log.InfoContext(ctx, "the order confirmation was pushed",
