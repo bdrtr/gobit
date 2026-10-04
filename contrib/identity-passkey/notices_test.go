@@ -51,6 +51,10 @@ func (n *recordingKeyNotices) SendPasskeyRemoved(ctx context.Context, customerID
 	return n.record(ctx, "removed", customerID, keyID)
 }
 
+func (n *recordingKeyNotices) SendPasskeySuspended(ctx context.Context, customerID, keyID string) error {
+	return n.record(ctx, "suspended", customerID, keyID)
+}
+
 // noticedHarness is a harness whose module tells notices, over the in-memory
 // store.
 func noticedHarness(
@@ -253,6 +257,12 @@ func (stallingKeyNotices) SendPasskeyRemoved(ctx context.Context, _, _ string) e
 	return ctx.Err()
 }
 
+func (stallingKeyNotices) SendPasskeySuspended(ctx context.Context, _, _ string) error {
+	<-ctx.Done()
+
+	return ctx.Err()
+}
+
 // TestAStalledKeyNoticeDoesNotHoldTheRequest: a notice that never returns is
 // ended by its own bound, and the person is answered.
 func TestAStalledKeyNoticeDoesNotHoldTheRequest(t *testing.T) {
@@ -283,7 +293,7 @@ func TestAStalledKeyNoticeDoesNotHoldTheRequest(t *testing.T) {
 }
 
 // TestNoKeyNoticesIsAnOption: without notices bound, or with notices that hold
-// a nil pointer, registering and removing work as they did.
+// a nil pointer, registering, suspending and removing work as they did.
 func TestNoKeyNoticesIsAnOption(t *testing.T) {
 	t.Parallel()
 
@@ -299,8 +309,71 @@ func TestNoKeyNoticesIsAnOption(t *testing.T) {
 			key := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
 			require.NotPanics(t, func() {
 				assert.Equal(t, http.StatusNoContent, h.register(t, signedIn, key).Code)
+				assert.Equal(t, http.StatusNoContent, h.signIn(t, h.auth, key, 10).Code)
+				assert.Equal(t, http.StatusForbidden, h.signIn(t, h.auth, key, 4).Code)
 				assert.Equal(t, http.StatusNoContent, h.remove(t, keyIDOf(key), signedIn).Code)
 			})
 		})
 	}
+}
+
+// TestAnAccountIsToldOnceThatAKeyWasSuspended: the sign-in that suspends a key
+// tells the account (ADR 0382); the sign-ins before it and after it tell
+// nobody.
+func TestAnAccountIsToldOnceThatAKeyWasSuspended(t *testing.T) {
+	t.Parallel()
+
+	notices := &recordingKeyNotices{}
+	h := noticedHarness(t, notices, alwaysAnotherWayIn{})
+	key := h.registeredKey(t, h.auth)
+
+	require.Equal(t, http.StatusNoContent, h.signIn(t, h.auth, key, 10).Code)
+	require.Equal(t, http.StatusForbidden, h.signIn(t, h.auth, key, 4).Code)
+	require.Equal(t, http.StatusForbidden, h.signIn(t, h.auth, key, 11).Code)
+
+	assert.Equal(t, []string{
+		"added " + testCustomer + " " + keyIDOf(key) + " holding 1",
+		"suspended " + testCustomer + " " + keyIDOf(key) + " holding 1",
+	}, notices.sent)
+}
+
+// TestASuspensionNoticeThatCannotBeSentChangesNothing: the key is suspended by
+// the time the notice is sent, so one that fails is logged and the sign-in is
+// refused as it would have been.
+func TestASuspensionNoticeThatCannotBeSentChangesNothing(t *testing.T) {
+	t.Parallel()
+
+	notices := &recordingKeyNotices{err: errors.New("the mail server is down")}
+	h := noticedHarness(t, notices, alwaysAnotherWayIn{})
+	key := h.registeredKey(t, h.auth)
+	require.Equal(t, http.StatusNoContent, h.signIn(t, h.auth, key, 10).Code)
+
+	copied := h.signIn(t, h.auth, key, 4)
+	assert.Equal(t, http.StatusForbidden, copied.Code, copied.Body.String())
+	assert.Contains(t, copied.Body.String(), identitypasskey.CodeKeySuspended)
+	assert.Contains(t, h.logs.String(),
+		`level=WARN msg="identity-passkey: an account could not be told a passkey was suspended"`+
+			" customer_id="+testCustomer+" key_id="+keyIDOf(key))
+}
+
+// TestASuspensionNoticeOutlivesTheCallerHangingUp: whoever holds the copy
+// hanging up the moment the key is suspended does not cancel the owner's
+// notice.
+func TestASuspensionNoticeOutlivesTheCallerHangingUp(t *testing.T) {
+	t.Parallel()
+
+	notices := &recordingKeyNotices{}
+	h := noticedHarness(t, notices, alwaysAnotherWayIn{})
+	key := h.registeredKey(t, h.auth)
+	require.Equal(t, http.StatusNoContent, h.signIn(t, h.auth, key, 10).Code)
+
+	body, ceremony := h.assertion(t, h.auth, key, 4)
+	signingIn, hangUp := context.WithCancel(t.Context())
+	defer hangUp()
+	h.store.afterWrite = hangUp
+	require.Equal(t, http.StatusForbidden,
+		h.doIn(signingIn, http.MethodPost, signInFinish, body, ceremony).Code)
+
+	assert.Equal(t, "suspended "+testCustomer+" "+keyIDOf(key)+" holding 1",
+		notices.sent[len(notices.sent)-1])
 }

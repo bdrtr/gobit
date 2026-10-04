@@ -5,7 +5,7 @@ one, refusing the removal that would leave an account with no way in. It costs a
 row lock and a seam to whatever else signs somebody in, and buys a person the
 ability to revoke a device they no longer hold.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0382](0382-a-passkey-whose-counter-does-not-advance-is-suspended.md), under which a suspended key is listed, always removable and not counted as a way in
 - **Date:** 2026-09-11
 
 ## Context

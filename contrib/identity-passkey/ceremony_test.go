@@ -263,7 +263,7 @@ func TestRegisteringAndSigningInWithAPasskey(t *testing.T) {
 	assert.Equal(t, testCustomer, id,
 		"a passkey sign-in issues the SAME session a password does")
 	assert.Equal(t, credential.ID, anonymous.store.used,
-		"the key's use is stamped, and it is the key that actually signed")
+		"the sign-in is recorded, and on the key that actually signed")
 }
 
 // TestARepeatedFinishWritesNothing: the finish clears the ceremony cookie, but
@@ -635,9 +635,18 @@ type memoryCredentials struct {
 	listErr   error
 	removeErr error
 	putErr    error
-	// afterWrite runs once a Put or a Remove has succeeded, as a caller hanging
-	// up the moment the change is made.
+	// afterWrite runs once a Put, a Remove or a SignedIn has written, as a caller
+	// hanging up the moment the change is made.
 	afterWrite func()
+	// signedInErr is SignedIn failing: a broken store, or any answer a test
+	// names.
+	signedInErr error
+	// now is the store's clock, time.Now when nil; recordedAt is when each key's
+	// count was last recorded (its registration until it signs in) and suspended
+	// when each suspended key was, both keyed by the id as the column holds it.
+	now        func() time.Time
+	recordedAt map[string]time.Time
+	suspended  map[string]time.Time
 	// phantomKeys makes ListForCustomer report MORE rows than Remove holds.
 	//
 	// It is the concurrency window written as a fixture: the handler counts
@@ -700,9 +709,29 @@ func (s *memoryCredentials) Put(
 		}
 	}
 	s.byCustomer[customerID] = append(s.byCustomer[customerID], credential)
+	if s.recordedAt == nil {
+		s.recordedAt = map[string]time.Time{}
+	}
+	s.recordedAt[base64.RawURLEncoding.EncodeToString(credential.ID)] = s.clock()
 	s.wrote()
 
 	return nil
+}
+
+// clock is the store's moment.
+func (s *memoryCredentials) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+
+	return time.Now()
+}
+
+// isSuspended answers whether the key with this id is suspended.
+func (s *memoryCredentials) isSuspended(credentialID []byte) bool {
+	_, suspended := s.suspended[base64.RawURLEncoding.EncodeToString(credentialID)]
+
+	return suspended
 }
 
 // wrote runs afterWrite, if one is set.
@@ -712,9 +741,60 @@ func (s *memoryCredentials) wrote() {
 	}
 }
 
-// Used records the stamp.
-func (s *memoryCredentials) Used(_ context.Context, credentialID []byte) error {
-	s.used = credentialID
+// SignedIn applies the Postgres store's rule (ADR 0382) to the map: a count
+// that advanced, zero over zero, or any count of a backup-eligible key is
+// recorded; the same count within twice CeremonyTTL is a repeat; anything else
+// suspends the key.
+func (s *memoryCredentials) SignedIn(_ context.Context, a identitypasskey.Assertion) error {
+	if s.signedInErr != nil {
+		return s.signedInErr
+	}
+
+	credential := s.held(a.CredentialID)
+	if credential == nil || !bytes.Equal(credential.PublicKey, a.PublicKey) {
+		return identitypasskey.ErrNoCredential
+	}
+	if s.isSuspended(a.CredentialID) {
+		return identitypasskey.ErrKeySuspended
+	}
+
+	id := base64.RawURLEncoding.EncodeToString(a.CredentialID)
+	stored := credential.Authenticator.SignCount
+	switch {
+	case a.SignCount > stored || (a.SignCount == 0 && stored == 0) || credential.Flags.BackupEligible:
+		credential.Authenticator.SignCount = max(stored, a.SignCount)
+		credential.Flags.BackupState = a.BackupState
+		credential.Flags.UserVerified = credential.Flags.UserVerified || a.UserVerified
+		if s.recordedAt == nil {
+			s.recordedAt = map[string]time.Time{}
+		}
+		s.recordedAt[id] = s.clock()
+		s.used = a.CredentialID
+		s.wrote()
+
+		return nil
+	case a.SignCount == stored && s.clock().Sub(s.recordedAt[id]) < 2*identitypasskey.CeremonyTTL:
+		return identitypasskey.ErrCountRepeated
+	default:
+		if s.suspended == nil {
+			s.suspended = map[string]time.Time{}
+		}
+		s.suspended[id] = s.clock()
+		s.wrote()
+
+		return identitypasskey.ErrKeyCopied
+	}
+}
+
+// held is the stored credential with this id, to be written in place, or nil.
+func (s *memoryCredentials) held(credentialID []byte) *webauthn.Credential {
+	for _, credentials := range s.byCustomer {
+		for i := range credentials {
+			if bytes.Equal(credentials[i].ID, credentialID) {
+				return &credentials[i]
+			}
+		}
+	}
 
 	return nil
 }
@@ -730,11 +810,15 @@ func (s *memoryCredentials) ListForCustomer(
 	credentials := s.byCustomer[customerID]
 	out := make([]identitypasskey.Key, 0, len(credentials)+s.phantomKeys)
 	for i := range credentials {
-		out = append(out, identitypasskey.Key{
+		key := identitypasskey.Key{
 			ID:         base64.RawURLEncoding.EncodeToString(credentials[i].ID),
 			CreatedAt:  time.Unix(int64(1_700_000_000+i), 0).UTC(),
 			Transports: []string{"internal"},
-		})
+		}
+		if at, suspended := s.suspended[key.ID]; suspended {
+			key.SuspendedAt = &at
+		}
+		out = append(out, key)
 	}
 	for i := range s.phantomKeys {
 		out = append(out, identitypasskey.Key{
@@ -763,9 +847,12 @@ func (s *memoryCredentials) Remove(
 	}
 
 	credentials := s.byCustomer[customerID]
-	held := len(credentials)
+	held, waysIn := len(credentials), 0
 	at := -1
 	for i := range credentials {
+		if !s.isSuspended(credentials[i].ID) {
+			waysIn++
+		}
 		if bytes.Equal(credentials[i].ID, credentialID) {
 			at = i
 		}
@@ -773,7 +860,7 @@ func (s *memoryCredentials) Remove(
 	if at < 0 {
 		return held, identitypasskey.ErrNoCredential
 	}
-	if held < 2 && !allowLast {
+	if !s.isSuspended(credentialID) && waysIn < 2 && !allowLast {
 		return held, identitypasskey.ErrLastWayIn
 	}
 

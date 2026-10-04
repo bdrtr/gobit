@@ -64,8 +64,9 @@ type Credentials interface {
 	// counter, the attestation and the AAGUID are all in the credential and
 	// none of them is a person's business.
 	ListForCustomer(ctx context.Context, customerID string) ([]Key, error)
-	// Remove removes a credential, refusing the customer's LAST row unless the
-	// caller says another way in exists.
+	// Remove removes a credential, refusing the customer's LAST way in unless the
+	// caller says another way in exists. A way in is a row that is not suspended:
+	// a suspended row signs nobody in (ADR 0382).
 	//
 	// allowLast is a decided bool and not a question this store asks, and that
 	// placement is deliberate: the caller asks whatever it has to ask BEFORE the
@@ -75,19 +76,65 @@ type Credentials interface {
 	// wait for another.
 	//
 	// The guard is still applied under the lock, so a stale bool cannot widen it:
-	// with two rows held the count permits the removal whatever the bool says,
-	// and with one it is the bool that decides.
+	// a suspended target is removed whatever the bool says; otherwise, with two
+	// unsuspended rows held the count permits the removal, and with fewer it is
+	// the bool that decides.
 	//
-	// It answers how many of that customer's rows SURVIVE, so a caller can tell
-	// "removed" from "refused" without a second query.
+	// It answers how many of that customer's rows SURVIVE, suspended ones
+	// included, so a caller can tell "removed" from "refused" without a second
+	// query.
 	Remove(ctx context.Context, customerID string, credentialID []byte, allowLast bool) (surviving int, err error)
-	// Used stamps the moment a credential signed in.
+	// SignedIn records a sign-in the library accepted, and is the check that the
+	// key was not copied (ADR 0382). The session is issued only when it answers nil.
 	//
-	// A failure here is NOT a failed sign-in: the stamp is for a person choosing
-	// which of their keys to remove, and refusing the session over it would
-	// trade an account for a timestamp. The caller logs and carries on.
-	Used(ctx context.Context, credentialID []byte) error
+	// Under a lock on the key's row it compares the assertion's count with the
+	// stored one. A higher count, or zero over zero (a key that does not count),
+	// is recorded with the backup state, the latched user verification and the
+	// moment. A key whose stored credential is backup-eligible is never refused
+	// over its count, since it may live on several devices by design, and its
+	// stored count only moves up.
+	//
+	// Otherwise the same count, recorded less than twice [CeremonyTTL] ago, answers
+	// [ErrCountRepeated] and writes nothing; anything else marks the key suspended
+	// and answers [ErrKeyCopied]. A suspended key answers [ErrKeySuspended], and a
+	// key this store does not hold for its relying party under that public key
+	// answers [ErrNoCredential].
+	//
+	// Any other error refuses the sign-in: a count that could not be checked was
+	// not checked.
+	SignedIn(ctx context.Context, assertion Assertion) error
 }
+
+// Assertion is what one sign-in the library accepted says about the key that
+// signed it, read from that assertion's authenticator data (ADR 0382).
+type Assertion struct {
+	// CredentialID is the key that signed.
+	CredentialID []byte
+	// PublicKey is the key the signature was verified with. A store records the
+	// assertion only on a row that still holds it, so a key replaced under its id
+	// during the ceremony is not credited with the old key's count.
+	PublicKey []byte
+	// SignCount is the counter THIS assertion carried, not the library's record of
+	// it: when the count does not advance the library keeps the stored one.
+	SignCount uint32
+	// BackupState is whether the key reported itself synced at this sign-in.
+	BackupState bool
+	// UserVerified is whether this ceremony verified the person. A store latches
+	// it: a key that verified its person once stays recorded so.
+	UserVerified bool
+}
+
+// ErrKeySuspended is a key that signs nobody in: its signature counter failed to
+// advance, at this sign-in or an earlier one (ADR 0382). It stays so until the
+// key is removed.
+var ErrKeySuspended = errors.New("identity-passkey: that key is suspended")
+
+// ErrKeyCopied is [ErrKeySuspended] answered by the sign-in that suspended it.
+var ErrKeyCopied = fmt.Errorf("%w: its signature counter did not advance", ErrKeySuspended)
+
+// ErrCountRepeated is the count last recorded for a key, sent again moments
+// after: a finish whose answer was lost. Nothing is written.
+var ErrCountRepeated = errors.New("identity-passkey: that signature count was just recorded")
 
 // pgCredentials is the store on this module's own table.
 type pgCredentials struct {
@@ -233,13 +280,94 @@ func (s pgCredentials) Put(
 // uniqueViolation is PostgreSQL's code for a primary key collision.
 const uniqueViolation = "23505"
 
-// Used stamps the moment.
-func (s pgCredentials) Used(ctx context.Context, credentialID []byte) error {
-	if _, err := s.pool.Exec(ctx,
-		`UPDATE passkey_credentials SET last_used_at = now()
-		 WHERE credential_id = $1`+rpScope+`$2)`,
-		encodeCredentialID(credentialID), s.rpID); err != nil {
-		return fmt.Errorf("identity-passkey: the credential's use could not be stamped: %w", err)
+// repeatWindow is how long after a count is recorded the same count again is a
+// repeat and not a copy. A finish arrives at most [CeremonyTTL] after its begin
+// on the application's clock; twice that absorbs a step of it, and both ends of
+// the comparison are the database's.
+const repeatWindow = 2 * CeremonyTTL
+
+// SignedIn compares the count under the row's lock and records it, or suspends
+// the key.
+//
+// The count stays inside the credential's JSON, where the library reads it, and
+// it is merged in with `||` rather than `jsonb_set`, which returns the row
+// unchanged when a parent key is missing. `signCount` is absent from the JSON
+// at zero, so every read of it defaults. Every moment is `clock_timestamp()`,
+// the write's own moment under the lock (ADR 0241). [pgCredentials.Remove]
+// locks all of a customer's rows and this locks one and waits on nothing else,
+// so the two cannot deadlock.
+func (s pgCredentials) SignedIn(ctx context.Context, a Assertion) error {
+	// The spelling Put stored: the library's JSON carries the key as base64.
+	publicKey, err := json.Marshal(a.PublicKey)
+	if err != nil {
+		return fmt.Errorf("identity-passkey: the key could not be encoded: %w", err)
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("identity-passkey: the sign-in could not be started: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	id := encodeCredentialID(a.CredentialID)
+	var stored int64
+	var eligible, verified, suspended, recent bool
+	err = tx.QueryRow(ctx,
+		`SELECT COALESCE((credential #>> '{authenticator,signCount}')::bigint, 0),
+		        COALESCE((credential #>> '{flags,backupEligible}')::boolean, false),
+		        COALESCE((credential #>> '{flags,userVerified}')::boolean, false),
+		        suspended_at IS NOT NULL,
+		        COALESCE(last_used_at, created_at) > clock_timestamp() - make_interval(secs => $4)
+		 FROM passkey_credentials
+		 WHERE credential_id = $1`+rpScope+`$2) AND credential->'publicKey' = $3::jsonb
+		 FOR UPDATE`,
+		id, s.rpID, string(publicKey), repeatWindow.Seconds()).
+		Scan(&stored, &eligible, &verified, &suspended, &recent)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return ErrNoCredential
+	case err != nil:
+		return fmt.Errorf("identity-passkey: the key could not be locked: %w", err)
+	case suspended:
+		return ErrKeySuspended
+	}
+
+	// The row is held from here to the commit, so each write below lands on it:
+	// a removal or a Put of the same id waits for the lock.
+	presented := int64(a.SignCount)
+	switch {
+	case presented > stored || (presented == 0 && stored == 0) || eligible:
+		_, err := tx.Exec(ctx,
+			`UPDATE passkey_credentials
+			 SET credential = credential || jsonb_build_object(
+			       'authenticator', COALESCE(credential->'authenticator', '{}'::jsonb)
+			           || jsonb_build_object('signCount', $3::bigint),
+			       'flags', COALESCE(credential->'flags', '{}'::jsonb)
+			           || jsonb_build_object('backupState', $4::boolean, 'userVerified', $5::boolean)),
+			     last_used_at = clock_timestamp()
+			 WHERE credential_id = $1`+rpScope+`$2)`,
+			id, s.rpID, max(stored, presented), a.BackupState, verified || a.UserVerified)
+		if err != nil {
+			return fmt.Errorf("identity-passkey: the sign-in could not be recorded: %w", err)
+		}
+	case presented == stored && recent:
+		return ErrCountRepeated
+	default:
+		_, err := tx.Exec(ctx,
+			`UPDATE passkey_credentials SET suspended_at = clock_timestamp()
+			 WHERE credential_id = $1`+rpScope+`$2)`, id, s.rpID)
+		if err != nil {
+			return fmt.Errorf("identity-passkey: the key could not be suspended: %w", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return fmt.Errorf("identity-passkey: the suspension could not be committed: %w", err)
+		}
+
+		return ErrKeyCopied
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("identity-passkey: the sign-in could not be committed: %w", err)
 	}
 
 	return nil
@@ -303,13 +431,13 @@ type Key struct {
 	ID string
 	// CreatedAt is when the key was registered.
 	CreatedAt time.Time
-	// LastUsedAt is the last sign-in this module MANAGED to record.
-	//
-	// Not the last sign-in. A failed stamp is deliberately swallowed, because
-	// refusing a session over a timestamp trades an account for a record, so this
-	// column can lag reality — and the published description says so, since a
-	// sentence an integrator reads is a promise (ADR 0026).
+	// LastUsedAt is the last sign-in. A sign-in whose record cannot be written
+	// is refused (ADR 0382), so it does not lag.
 	LastUsedAt *time.Time
+	// SuspendedAt is when the key signed with a signature counter that did not
+	// advance, and nil for a key that signs in (ADR 0382). A suspended key signs
+	// nobody in, is always removable, and is not a way into the account.
+	SuspendedAt *time.Time
 	// Transports is how the authenticator said it can be reached.
 	//
 	// It is frozen at registration, and that is why it is publishable while the
@@ -326,7 +454,7 @@ func (s pgCredentials) ListForCustomer(
 	ctx context.Context, customerID string,
 ) ([]Key, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT credential_id, created_at, last_used_at,
+		`SELECT credential_id, created_at, last_used_at, suspended_at,
 		        COALESCE(credential->'transport', '[]'::jsonb)
 		 FROM passkey_credentials
 		 WHERE customer_id = $1`+rpScope+`$2)
@@ -340,7 +468,7 @@ func (s pgCredentials) ListForCustomer(
 	for rows.Next() {
 		var key Key
 		var transports []byte
-		if err := rows.Scan(&key.ID, &key.CreatedAt, &key.LastUsedAt, &transports); err != nil {
+		if err := rows.Scan(&key.ID, &key.CreatedAt, &key.LastUsedAt, &key.SuspendedAt, &transports); err != nil {
 			return nil, fmt.Errorf("identity-passkey: a key could not be scanned: %w", err)
 		}
 		if err := json.Unmarshal(transports, &key.Transports); err != nil {
@@ -358,7 +486,8 @@ func (s pgCredentials) ListForCustomer(
 	return out, nil
 }
 
-// Remove removes a credential, refusing the last one unless the caller permits it.
+// Remove removes a credential, refusing the last way in unless the caller permits
+// it.
 //
 // # Why the lock, and why it is this lock
 //
@@ -380,6 +509,9 @@ func (s pgCredentials) ListForCustomer(
 // hold two credentials on one authenticator, because nothing stops an
 // authenticator from minting a second one for a site it already has a key for
 // once the exclusion list is satisfied by a different device. The record says so.
+//
+// The guard counts ways in all the same where it can: a suspended row signs
+// nobody in, so it is not counted, and removing one is never refused (ADR 0382).
 func (s pgCredentials) Remove(
 	ctx context.Context, customerID string, credentialID []byte, allowLast bool,
 ) (int, error) {
@@ -390,7 +522,7 @@ func (s pgCredentials) Remove(
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	rows, err := tx.Query(ctx,
-		`SELECT credential_id FROM passkey_credentials
+		`SELECT credential_id, suspended_at IS NOT NULL FROM passkey_credentials
 		 WHERE customer_id = $1`+rpScope+`$2)
 		 FOR UPDATE`,
 		customerID, s.rpID)
@@ -398,19 +530,23 @@ func (s pgCredentials) Remove(
 		return 0, fmt.Errorf("identity-passkey: the keys could not be locked: %w", err)
 	}
 
-	held := 0
-	mine := false
+	held, waysIn := 0, 0
+	mine, targetSuspended := false, false
 	target := encodeCredentialID(credentialID)
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
+		var suspended bool
+		if err := rows.Scan(&id, &suspended); err != nil {
 			rows.Close()
 
 			return 0, fmt.Errorf("identity-passkey: a locked key could not be read: %w", err)
 		}
 		held++
+		if !suspended {
+			waysIn++
+		}
 		if id == target {
-			mine = true
+			mine, targetSuspended = true, suspended
 		}
 	}
 	rows.Close()
@@ -423,7 +559,7 @@ func (s pgCredentials) Remove(
 	if !mine {
 		return held, ErrNoCredential
 	}
-	if held < 2 && !allowLast {
+	if !targetSuspended && waysIn < 2 && !allowLast {
 		return held, ErrLastWayIn
 	}
 
@@ -480,7 +616,7 @@ func (s pgCredentials) PasskeyRecordsOf(
 	ctx context.Context, customerID string,
 ) ([]StoredKey, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT credential_id, rp_id, created_at, last_used_at, credential::text
+		`SELECT credential_id, rp_id, created_at, last_used_at, suspended_at, credential::text
 		 FROM passkey_credentials
 		 WHERE customer_id = $1
 		 ORDER BY created_at, credential_id`, customerID)
@@ -494,7 +630,7 @@ func (s pgCredentials) PasskeyRecordsOf(
 		var key StoredKey
 		var rpID *string
 		if err := rows.Scan(&key.CredentialID, &rpID, &key.CreatedAt,
-			&key.LastUsedAt, &key.Credential); err != nil {
+			&key.LastUsedAt, &key.SuspendedAt, &key.Credential); err != nil {
 			return nil, fmt.Errorf("identity-passkey: a passkey could not be scanned: %w", err)
 		}
 		if rpID != nil {

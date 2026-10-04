@@ -65,9 +65,10 @@ func (p passwordSignIn) Exists(ctx context.Context, customerID string) (bool, er
 // NoOtherSignIn states that a passkey is the ONLY way into an account here.
 //
 // A shop with no passwords wires this, and the consequence is the honest one: the
-// last passkey is never removable, because removing it would end the account. It
-// is a statement and not a limitation — the alternative is a person deleting
-// their way in and calling support.
+// last passkey that signs in is never removable, because removing it would end
+// the account. A suspended one is removable: it signs nobody in already (ADR
+// 0382). It is a statement and not a limitation — the alternative is a person
+// deleting their way in and calling support.
 func NoOtherSignIn() OtherSignIn { return noOtherSignIn{} }
 
 // noOtherSignIn always answers no.

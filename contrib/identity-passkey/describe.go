@@ -68,21 +68,25 @@ func (m *Module) Describe(d *openapi.Doc) {
 			"installation's identity proves, and a listing that accepted a customer id " +
 			"would be a listing of anybody's devices.\n\n" +
 			"Each key carries id (base64url, the only thing a removal can name), " +
-			"created_at, last_used_at, transports, removable and — only when removable " +
-			"is false — not_removable_reason.\n\n" +
+			"created_at, last_used_at, suspended_at, transports, removable and — only " +
+			"when removable is false — not_removable_reason: " +
+			"\"identity_passkey_last_way_in\", or \"identity_passkey_unavailable\" when " +
+			"whether the account has another way in could not be checked.\n\n" +
 			"removable is ADVISORY. It is what the rule says at the moment of this " +
 			"listing; the removal decides again under a lock, so a client that disables " +
 			"a button on it is right nearly always and the DELETE is what is " +
 			"authoritative.\n\n" +
-			"last_used_at is the last sign-in this module MANAGED TO RECORD, not the " +
-			"last sign-in. A failed stamp is deliberately swallowed — refusing somebody " +
-			"a session over a timestamp would trade an account for a record — so this " +
-			"value can lag reality.\n\n" +
+			"last_used_at is the last sign-in: a sign-in whose record cannot be written " +
+			"is refused, so it does not lag.\n\n" +
+			"suspended_at is when the key signed with a signature counter that did not " +
+			"advance, which is what a copied key does, and null for a key that signs " +
+			"in. A suspended key signs nobody in, is always removable, and is not " +
+			"counted as a way into the account.\n\n" +
 			"What it does NOT carry is deliberate: no public key, no AAGUID, no sign " +
-			"counter, no attestation, and no backup/synced flag. The flags are frozen at " +
-			"registration and a 'synced' label read from them would be wrong in the " +
-			"direction that locks somebody out; the rest are the person's hardware, not " +
-			"their account.\n\n" +
+			"counter, no attestation, and no backup/synced flag. The backup flag is the " +
+			"one the key's last sign-in reported, and a 'synced' label read from it says " +
+			"nothing about the next; the rest are the person's hardware, not their " +
+			"account.\n\n" +
 			"An empty list is an empty ARRAY under data, never null and never a 404.\n\n" +
 			"Keys registered under a DIFFERENT relying party id are not listed. A passkey " +
 			"is bound to that id by the authenticator that minted it, so an installation " +
@@ -95,24 +99,28 @@ func (m *Module) Describe(d *openapi.Doc) {
 			"401": openapi.ErrorResponse(
 				"The request proves no customer. Code \"identity_passkey_not_signed_in\"."),
 			"500": openapi.ErrorResponse(
-				"The keys could not be read, or whether the account has another way in " +
-					"could not be checked. Code \"identity_passkey_unavailable\"; the listing " +
-					"is never answered with removable omitted, because a client would have " +
-					"to guess and the guess that matters offers a button that ends an " +
-					"account."),
+				"The keys could not be read, or the account holds one key, it signs in, " +
+					"and whether the account has another way in could not be checked. Code " +
+					"\"identity_passkey_unavailable\"; the listing is never answered with " +
+					"removable omitted, because a client would have to guess and the guess " +
+					"that matters offers a button that ends an account. An account that also " +
+					"holds a suspended key is listed instead, with the key that signs in not " +
+					"removable, because removing the suspended one needs its id."),
 		},
 	})
 
 	d.Describe(http.MethodDelete, "/store/v1/auth/passkey/keys/{credential_id}", openapi.Operation{
 		Summary: "Removes one of the CALLER's own passkeys.",
-		Description: "The identifier is the id from the listing. A removal succeeds only " +
-			"when at least one way into the account survives it: another passkey, or a " +
-			"way in that is not a passkey at all — which this module asks the " +
-			"installation about and never derives, because what counts as a way in " +
-			"depends on what the installation bound.\n\n" +
-			"The count is of KEYS and not of devices. Nothing stops one authenticator " +
-			"from holding two credentials for this site, so two keys are not proof of " +
-			"two devices, and the refusal below says ANOTHER DEVICE for that reason.",
+		Description: "The identifier is the id from the listing. A suspended key is " +
+			"always removed: it signs nobody in. Any other key is removed only when at " +
+			"least one way into the account survives it: another passkey that is not " +
+			"suspended, or a way in that is not a passkey at all — which this module " +
+			"asks the installation about and never derives, because what counts as a " +
+			"way in depends on what the installation bound.\n\n" +
+			"The count is of KEYS that sign in and not of devices. Nothing stops one " +
+			"authenticator from holding two credentials for this site, so two keys are " +
+			"not proof of two devices, and the refusal below says ANOTHER DEVICE for " +
+			"that reason.",
 		Tags: []string{docTag},
 		Responses: map[string]any{
 			"204": openapi.Response("The passkey was removed", nil),
@@ -159,14 +167,30 @@ func (m *Module) Describe(d *openapi.Doc) {
 		Description: "Takes the credential object navigator.credentials.get() resolved " +
 			"with, and the ceremony cookie the begin call set. On success it sets the " +
 			"SAME session cookie a password sign-in sets: a session is a session however " +
-			"the person proved they own it.",
+			"the person proved they own it.\n\n" +
+			"The sign-in is recorded before the session is issued. A key that counts its " +
+			"signatures and cannot be synced has to present a higher count than the one " +
+			"recorded. The same count again within four minutes of its recording is " +
+			"refused and suspends nothing, because a finish sent twice looks like that, " +
+			"and so does a copy that lands on that count in those minutes; any other " +
+			"count that did not advance suspends the key. A key that can be synced, and " +
+			"one that always reports zero, is not refused over its count, so a finish of " +
+			"theirs sent twice within the ceremony's two minutes signs in twice.",
 		Tags: []string{docTag},
 		Responses: map[string]any{
 			"204": openapi.Response("The session cookie was set", nil),
 			"422": openapi.ErrorResponse(
 				"No ceremony is in progress. Code \"identity_passkey_ceremony_missing\"."),
 			"401": openapi.ErrorResponse(
-				"The ceremony was refused. Code \"identity_passkey_refused\"."),
+				"The ceremony was refused, a counting key's finish sent twice among them. Code " +
+					"\"identity_passkey_refused\"."),
+			"403": openapi.ErrorResponse(
+				"The key signed with a signature counter that did not advance, which is " +
+					"what a copied key does, so it signs nobody in until it is removed. " +
+					"Code \"identity_passkey_key_suspended\"."),
+			"500": openapi.ErrorResponse(
+				"The sign-in could not be recorded, so no session was issued. Code " +
+					"\"identity_passkey_unavailable\"."),
 		},
 	})
 }

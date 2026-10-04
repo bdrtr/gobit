@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/stretchr/testify/assert"
@@ -30,6 +31,7 @@ type listed struct {
 	Data []struct {
 		ID                 string   `json:"id"`
 		LastUsedAt         *string  `json:"last_used_at"`
+		SuspendedAt        *string  `json:"suspended_at"`
 		Transports         []string `json:"transports"`
 		Removable          bool     `json:"removable"`
 		NotRemovableReason string   `json:"not_removable_reason"`
@@ -261,6 +263,21 @@ func TestARemovalWithTwoKeysAsksNobody(t *testing.T) {
 		"a person with two keys needs no answer from another module")
 }
 
+// TestAListingWithTwoKeysAsksNobody: two keys that sign in are removable whatever
+// another module would answer, so the listing does not ask it.
+func TestAListingWithTwoKeysAsksNobody(t *testing.T) {
+	t.Parallel()
+
+	counting := &countingOtherSignIn{}
+	h := withKeys(t, counting, "phone", "laptop")
+
+	listing := h.get(t, "/store/v1/auth/passkey/keys", h.signedInAs(t, testCustomer))
+
+	require.Equal(t, http.StatusOK, listing.Code, "body: %s", listing.Body.String())
+	assert.Zero(t, counting.asked,
+		"a person with two keys that sign in needs no answer from another module")
+}
+
 // alwaysAnotherWayIn is an installation that says a password exists.
 type alwaysAnotherWayIn struct{}
 
@@ -361,4 +378,98 @@ func TestOneKeyHasONEName(t *testing.T) {
 	accepted := h.remove(t, canonical, signedIn)
 	require.Equal(t, http.StatusNoContent, accepted.Code,
 		"and the canonical spelling of the SAME key still works: %s", accepted.Body.String())
+}
+
+// TestASuspendedKeyIsNotAWayIn: a key suspended because its counter did not
+// advance signs nobody in (ADR 0382), so it is always removable and does not
+// make another key removable.
+func TestASuspendedKeyIsNotAWayIn(t *testing.T) {
+	t.Parallel()
+
+	suspended := base64.RawURLEncoding.EncodeToString([]byte("copied"))
+	good := base64.RawURLEncoding.EncodeToString([]byte("good"))
+	keysOf := func(t *testing.T, other identitypasskey.OtherSignIn) *harness {
+		t.Helper()
+
+		h := withKeys(t, other, "copied", "good")
+		h.store.suspended = map[string]time.Time{suspended: time.Now()}
+
+		return h
+	}
+	removable := func(t *testing.T, h *harness) map[string]string {
+		t.Helper()
+
+		var body listed
+		rec := h.get(t, "/store/v1/auth/passkey/keys", h.signedInAs(t, testCustomer))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		out := map[string]string{}
+		for _, key := range body.Data {
+			out[key.ID] = fmt.Sprintf("%v %s suspended=%v", key.Removable, key.NotRemovableReason,
+				key.SuspendedAt != nil)
+		}
+
+		return out
+	}
+
+	t.Run("without another way in", func(t *testing.T) {
+		t.Parallel()
+
+		h := keysOf(t, identitypasskey.NoOtherSignIn())
+		signedIn := h.signedInAs(t, testCustomer)
+		assert.Equal(t, map[string]string{
+			suspended: "true  suspended=true",
+			good:      "false " + identitypasskey.CodeLastWayIn + " suspended=false",
+		}, removable(t, h))
+
+		refused := h.remove(t, good, signedIn)
+		assert.Equal(t, http.StatusConflict, refused.Code, refused.Body.String())
+		removed := h.remove(t, suspended, signedIn)
+		assert.Equal(t, http.StatusNoContent, removed.Code, removed.Body.String())
+		assert.Len(t, h.store.byCustomer[testCustomer], 1)
+	})
+
+	t.Run("with a password", func(t *testing.T) {
+		t.Parallel()
+
+		h := keysOf(t, alwaysAnotherWayIn{})
+		assert.Equal(t, map[string]string{
+			suspended: "true  suspended=true",
+			good:      "true  suspended=false",
+		}, removable(t, h))
+
+		removed := h.remove(t, good, h.signedInAs(t, testCustomer))
+		assert.Equal(t, http.StatusNoContent, removed.Code, removed.Body.String())
+	})
+
+	t.Run("when nobody can say", func(t *testing.T) {
+		t.Parallel()
+
+		h := keysOf(t, cannotSay{})
+		assert.Equal(t, map[string]string{
+			suspended: "true  suspended=true",
+			good:      "false " + identitypasskey.CodeUnavailable + " suspended=false",
+		}, removable(t, h),
+			"the suspended key's remedy is a removal by the id only the listing gives, so "+
+				"a failed check does not withhold it; the key that signs in is not "+
+				"offered, and not for the reason of an answer nobody gave")
+		assert.Contains(t, h.logs.String(), "another way in could not be determined",
+			"the failure the listing went out despite is still an operator's to see")
+
+		removed := h.remove(t, suspended, h.signedInAs(t, testCustomer))
+		assert.Equal(t, http.StatusNoContent, removed.Code,
+			"a suspended key goes whatever the answer, so the question is not asked: %s",
+			removed.Body.String())
+	})
+
+	t.Run("when no key signs in", func(t *testing.T) {
+		t.Parallel()
+
+		counting := &countingOtherSignIn{}
+		h := withKeys(t, counting, "copied")
+		h.store.suspended = map[string]time.Time{suspended: time.Now()}
+		assert.Equal(t, map[string]string{suspended: "true  suspended=true"}, removable(t, h))
+		assert.Zero(t, counting.asked,
+			"with no key that signs in, the answer decides no flag, so nobody is asked")
+	})
 }

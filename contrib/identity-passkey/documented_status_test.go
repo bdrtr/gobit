@@ -68,7 +68,10 @@ type errorPath struct {
 // The table is the refusals a test can produce without an authenticator. What it
 // does NOT cover is named rather than implied: a ceremony the library refuses
 // (401 identity_passkey_refused) needs a real assertion and is exercised in
-// ceremony_test.go, and 500 identity_passkey_unavailable needs a broken store.
+// ceremony_test.go, and a suspended key on sign-in (403
+// identity_passkey_key_suspended) and a sign-in that cannot be recorded (500
+// identity_passkey_unavailable) are compared with the document in
+// counter_test.go.
 func TestEveryDocumentedRefusalIsTheOneTheRouteAnswers(t *testing.T) {
 	t.Parallel()
 

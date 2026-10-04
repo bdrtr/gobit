@@ -37,7 +37,8 @@
 // It does not ask who holds the session. Whoever it proves may add a key or remove
 // one, and the one rule a removal keeps is that the account is left a way in
 // (ADR 0130). What it adds is telling: with [Options.KeyNotices] bound, the
-// account hears of each key added or removed (ADR 0381).
+// account hears of each key added or removed (ADR 0381), and of a key
+// suspended because its signature counter did not advance (ADR 0382).
 package identitypasskey
 
 import (
@@ -115,19 +116,21 @@ type Options struct {
 	Credentials Credentials
 	// OtherSignIn states whether an account has a way in that is not a passkey.
 	//
-	// It decides one thing: whether a person's LAST passkey may be removed. Nil
-	// means [PasswordSignIn] over [Options.Session] — the ordinary arrangement,
-	// where a password in the session module is a way in — and [Module.Register]
-	// REFUSES that default when the identity this installation bound is not that
-	// session module's, because in such an installation a password there is a row
-	// nothing reads and the default would be confidently wrong (ADR 0130).
+	// It decides one thing: whether a person's LAST passkey that signs in may be
+	// removed. A suspended passkey signs nobody in, so it is removable whatever
+	// this answers (ADR 0382). Nil means [PasswordSignIn] over [Options.Session] —
+	// the ordinary arrangement, where a password in the session module is a way
+	// in — and [Module.Register] REFUSES that default when the identity this
+	// installation bound is not that session module's, because in such an
+	// installation a password there is a row nothing reads and the default would
+	// be confidently wrong (ADR 0130).
 	//
 	// A shop with no passwords wires [NoOtherSignIn], and the consequence is the
-	// honest one: the last passkey is never removable.
+	// honest one: the last passkey that signs in is never removable.
 	OtherSignIn OtherSignIn
-	// KeyNotices tells an account that a passkey was added to it or removed
-	// from it (ADR 0381). Nil tells nobody; registering and removing do not
-	// depend on it.
+	// KeyNotices tells an account that a passkey was added to it, removed from
+	// it (ADR 0381) or suspended (ADR 0382). Nil tells nobody; registering,
+	// removing and signing in do not depend on it.
 	KeyNotices KeyNotices
 	// Logger is optional.
 	Logger *slog.Logger
@@ -291,8 +294,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 // It is the store the module's own endpoints use, without their rules: a key
 // removed through it may be the account's last way in (ADR 0130), and a
 // credential put through it is written over a held key of the same id,
-// whatever it carries (D229). An embedder writing through it keeps those rules,
-// or others, itself.
+// whatever it carries (D229), its signature count among it (ADR 0382). An
+// embedder writing through it keeps those rules, or others, itself. It is also
+// how a shop removes a suspended key for a person with no other way in.
 //
 // It answers nil until [Module.Register] has run.
 func (m *Module) Store() Credentials { return m.store }

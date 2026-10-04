@@ -144,7 +144,7 @@ var pluginsWithNoPersonalData = map[string]string{
 	"plugins/paymentpaytr":     "holds a provider's payment references, keyed by the payment session",
 	"plugins/webpush":          "", // holds four, and declares them — see the audit below
 	"contrib/identity-session": "", // holds five, and declares them
-	"contrib/identity-passkey": "", // holds five, and declares them
+	"contrib/identity-passkey": "", // holds six, and declares them
 }
 
 // personalDataRoots are the trees of separately-shipped units this audit walks.

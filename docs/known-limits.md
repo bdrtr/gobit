@@ -111,6 +111,18 @@ past and is not corrected retroactively.
       only when the installation binds the seam. Telling is not stopping, and
       stopping it is outside these modules: a shorter TTL, a re-authentication
       step of its own.
+    - **A copied passkey is caught only by its signature counter, and only on a
+      device-bound key.** A key whose counter does not advance is suspended
+      ([ADR 0382](adr/0382-a-passkey-whose-counter-does-not-advance-is-suspended.md)),
+      so a copy that signs in ahead of the owner keeps its access until a
+      sign-in whose count does not advance, and the sessions it holds last until
+      they expire. A copy that lands on the count just recorded, within four
+      minutes of its recording, is refused as a finish sent twice is and
+      suspends nothing. A backup-eligible passkey, which is what a synced one
+      is, lives on several devices by design and is never refused over its
+      count. Two sign-ins of one counting key that finish in reverse order
+      suspend it, and a person whose only way in was a suspended key cannot sign
+      in to remove it: the shop removes it through `Store()`.
     - **A credential store an installation binds itself may answer nothing at all.**
       `Credentials` exists so a shop can keep keys in LDAP or a users table it
       already has, and such a store cannot erase rows out of gobit's tables or hold

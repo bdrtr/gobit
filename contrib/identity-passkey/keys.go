@@ -29,7 +29,10 @@ type keyDTO struct {
 	ID         string     `json:"id"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at"`
-	Transports []string   `json:"transports"`
+	// SuspendedAt is when the key's signature counter failed to advance, null
+	// for a key that signs in (ADR 0382).
+	SuspendedAt *time.Time `json:"suspended_at"`
+	Transports  []string   `json:"transports"`
 	// Removable is ADVISORY: it is what the rule says at the moment of the
 	// listing, and the removal decides again under a lock. A client that
 	// disabled its button on this is right nearly always and the endpoint is
@@ -66,34 +69,48 @@ func (m *Module) listKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Whether another way in exists is asked ONCE for the whole listing, and it
-	// is asked even when the person has several keys: the answer decides the
-	// advisory flag on the single-key case and costs one query.
+	// Whether another way in exists is asked ONCE for the whole listing, and
+	// only when exactly one key signs in, the one case whose advisory flag it
+	// decides. A suspended key is not a way in and is always removable, so with
+	// none signing in there is nothing to ask (ADR 0382).
 	//
 	// A failure here is NOT a listing with the flag omitted. A client reading a
 	// key without `removable` would have to guess, and the guess that matters is
-	// the one that offers a button that ends an account.
-	otherWayIn := false
-	if len(keys) < 2 {
+	// the one that offers a button that ends an account. So a failure answers
+	// 500, unless the account also holds a suspended key: its remedy is a
+	// removal by the id only this listing gives, so the listing goes out with the
+	// one key that signs in marked not removable for [CodeUnavailable].
+	ways := waysIn(keys)
+	otherWayIn, checked := false, true
+	if ways == 1 {
 		otherWayIn, err = m.otherSignIn.Exists(r.Context(), customerID)
-		if err != nil {
+		switch {
+		case err != nil && ways == len(keys):
 			m.cannotCheck(w, r, err)
 
 			return
+		case err != nil:
+			m.logCannotCheck(r, err)
+			checked = false
 		}
 	}
 
 	response := keysResponse{Data: make([]keyDTO, 0, len(keys))}
 	for _, key := range keys {
 		dto := keyDTO{
-			ID:         key.ID,
-			CreatedAt:  key.CreatedAt,
-			LastUsedAt: key.LastUsedAt,
-			Transports: key.Transports,
-			Removable:  len(keys) > 1 || otherWayIn,
+			ID:          key.ID,
+			CreatedAt:   key.CreatedAt,
+			LastUsedAt:  key.LastUsedAt,
+			SuspendedAt: key.SuspendedAt,
+			Transports:  key.Transports,
+			Removable:   key.SuspendedAt != nil || ways > 1 || otherWayIn,
 		}
-		if !dto.Removable {
+		switch {
+		case dto.Removable:
+		case checked:
 			dto.NotRemovableReason = CodeLastWayIn
+		default:
+			dto.NotRemovableReason = CodeUnavailable
 		}
 		if dto.Transports == nil {
 			dto.Transports = []string{}
@@ -131,11 +148,11 @@ func (m *Module) removeKey(w http.ResponseWriter, r *http.Request) {
 	// question can reach another module and a query made while this removal
 	// holds a row lock would take a second connection from the same pool.
 	//
-	// It is asked only when it can matter. A person with two keys never reaches
-	// across the boundary at all, and a stale answer cannot widen the rule: the
-	// guard is applied again under the lock, where the row count decides on its
-	// own whenever there is more than one.
-	allowLast, ok := m.mayRemoveTheLast(w, r, customerID)
+	// It is asked only when it can matter. A person with two keys that sign in
+	// never reaches across the boundary at all, and a stale answer cannot widen
+	// the rule: the guard is applied again under the lock, where the count of
+	// keys that sign in decides on its own whenever there is more than one.
+	allowLast, ok := m.mayRemoveTheLast(w, r, customerID, credentialID)
 	if !ok {
 		return
 	}
@@ -165,6 +182,10 @@ func (m *Module) removeKey(w http.ResponseWriter, r *http.Request) {
 
 // mayRemoveTheLast asks whether the account has a way in that is not a passkey.
 //
+// It is asked only when fewer than two keys sign in and the target is not
+// suspended: the store removes a suspended key whatever the answer, so asking
+// would only let a check that fails refuse a removal nothing guards.
+//
 // It answers the caller's second value as "carry on": a failure has already been
 // written to the response, because "we could not check" must not become "you have
 // no other way in" and must not become a removal either.
@@ -174,7 +195,7 @@ func (m *Module) removeKey(w http.ResponseWriter, r *http.Request) {
 // means it was asked when it need not have been, and the locked count permits the
 // removal regardless of the answer.
 func (m *Module) mayRemoveTheLast(
-	w http.ResponseWriter, r *http.Request, customerID string,
+	w http.ResponseWriter, r *http.Request, customerID string, credentialID []byte,
 ) (allowLast, carryOn bool) {
 	keys, err := m.store.ListForCustomer(r.Context(), customerID)
 	if err != nil {
@@ -182,8 +203,14 @@ func (m *Module) mayRemoveTheLast(
 
 		return false, false
 	}
-	if len(keys) > 1 {
+	if waysIn(keys) > 1 {
 		return false, true
+	}
+	target := encodeCredentialID(credentialID)
+	for _, key := range keys {
+		if key.ID == target && key.SuspendedAt != nil {
+			return false, true
+		}
 	}
 
 	allowLast, err = m.otherSignIn.Exists(r.Context(), customerID)
@@ -194,6 +221,18 @@ func (m *Module) mayRemoveTheLast(
 	}
 
 	return allowLast, true
+}
+
+// waysIn counts the keys that sign in: a suspended one does not (ADR 0382).
+func waysIn(keys []Key) int {
+	ways := 0
+	for _, key := range keys {
+		if key.SuspendedAt == nil {
+			ways++
+		}
+	}
+
+	return ways
 }
 
 // noSuchKey answers an id that is not the caller's.
@@ -210,10 +249,8 @@ func (m *Module) noSuchKey(w http.ResponseWriter, r *http.Request) {
 // installation. Folding them would tell somebody their account has one door when
 // nobody looked.
 func (m *Module) cannotCheck(w http.ResponseWriter, r *http.Request, err error) {
+	m.logCannotCheck(r, err)
 	if unknownOtherSignIn(err) {
-		m.log.ErrorContext(r.Context(),
-			"identity-passkey: whether the customer has another way in could not be determined",
-			"error", err)
 		corehttp.WriteError(r.Context(), w, coreerrors.Internal(CodeUnavailable,
 			"whether you have another way into this account could not be checked, so "+
 				"nothing was changed"))
@@ -221,5 +258,23 @@ func (m *Module) cannotCheck(w http.ResponseWriter, r *http.Request, err error) 
 		return
 	}
 
-	m.unavailable(w, r, "the other sign-in could not be asked", err)
+	corehttp.WriteError(r.Context(), w, coreerrors.Internal(CodeUnavailable, "%s",
+		otherSignInFailed))
+}
+
+// otherSignInFailed is what a broken answerer is logged and answered as.
+const otherSignInFailed = "the other sign-in could not be asked"
+
+// logCannotCheck logs a failed "is there another way in", in the sentence that
+// names which fault it was.
+func (m *Module) logCannotCheck(r *http.Request, err error) {
+	if unknownOtherSignIn(err) {
+		m.log.ErrorContext(r.Context(),
+			"identity-passkey: whether the customer has another way in could not be determined",
+			"error", err)
+
+		return
+	}
+
+	m.log.ErrorContext(r.Context(), "identity-passkey: "+otherSignInFailed, "error", err)
 }

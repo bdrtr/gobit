@@ -29,6 +29,13 @@ const (
 	CodeCeremonyRefused = "identity_passkey_refused"
 	// CodeUnavailable is a failure on this module's side.
 	CodeUnavailable = "identity_passkey_unavailable"
+	// CodeKeySuspended is a key whose signature counter did not advance, which is
+	// what a copied key does (ADR 0382). It signs nobody in until it is removed.
+	//
+	// It is not folded into [CodeCeremonyRefused]: it is answered only after the
+	// signature checked out, so only somebody holding the key learns it, and they
+	// can act on it — sign in another way and remove the key.
+	CodeKeySuspended = "identity_passkey_key_suspended"
 )
 
 // errHeldKeyReplaced is a registration that names a key the account holds and
@@ -205,15 +212,27 @@ func (m *Module) beginSignIn(w http.ResponseWriter, r *http.Request) {
 	corehttp.WriteJSON(r.Context(), w, http.StatusOK, assertion)
 }
 
-// finishSignIn checks the signature and issues the session cookie.
+// finishSignIn checks the signature, records the sign-in, and only then issues
+// the session cookie.
 func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request) {
 	session, ok := m.takeCeremony(w, r)
 	if !ok {
 		return
 	}
 
+	// Parsing is split from validating, which are the two calls the library's
+	// FinishDiscoverableLogin makes, because the counter this assertion carried
+	// is needed: on a count that did not advance the library returns the
+	// credential with the STORED count and a clone warning (ADR 0382).
+	parsed, err := protocol.ParseCredentialRequestResponse(r)
+	if err != nil {
+		m.refuse(w, r, err)
+
+		return
+	}
+
 	var signedIn string
-	credential, err := m.web.FinishDiscoverableLogin(
+	user, credential, err := m.web.ValidatePasskeyLogin(
 		func(_, userHandle []byte) (webauthn.User, error) {
 			// The handle IS the customer id (see [passkeyUser.WebAuthnID]), and
 			// the library has already matched the credential the authenticator
@@ -223,20 +242,71 @@ func (m *Module) finishSignIn(w http.ResponseWriter, r *http.Request) {
 			signedIn = string(userHandle)
 
 			return m.userOf(r, signedIn)
-		}, *session, r)
+		}, *session, parsed)
 	if err != nil {
 		m.refuse(w, r, err)
 
 		return
 	}
 
-	// The stamp is for a person choosing which key to remove. Failing the
-	// sign-in over it would trade an account for a timestamp.
-	if err := m.store.Used(r.Context(), credential.ID); err != nil {
-		m.log.ErrorContext(r.Context(), "identity-passkey: the key's use could not be stamped",
-			"error", err)
+	data := parsed.Response.AuthenticatorData
+	// The count the library compared with, for the log: on a count that
+	// advanced, the credential it returned already carries the new one.
+	var storedWhenRead uint32
+	if held := heldKey(user.WebAuthnCredentials(), credential.ID); held != nil {
+		storedWhenRead = held.Authenticator.SignCount
+	}
+	err = m.store.SignedIn(r.Context(), Assertion{
+		CredentialID: credential.ID,
+		PublicKey:    credential.PublicKey,
+		SignCount:    data.Counter,
+		BackupState:  data.Flags.HasBackupState(),
+		UserVerified: data.Flags.HasUserVerified(),
+	})
+	keyID := encodeCredentialID(credential.ID)
+	// ErrKeyCopied wraps ErrKeySuspended, so it is asked first.
+	switch {
+	case errors.Is(err, ErrKeyCopied):
+		m.log.WarnContext(r.Context(),
+			"identity-passkey: a key's signature counter did not advance, so the key is suspended",
+			"customer_id", signedIn, "credential_id", keyID,
+			"presented", data.Counter, "stored_when_read", storedWhenRead)
+		m.notifyKeySuspended(r.Context(), signedIn, credential.ID)
+		m.suspended(w, r)
+
+		return
+	case errors.Is(err, ErrKeySuspended):
+		m.log.InfoContext(r.Context(), "identity-passkey: a suspended key tried to sign in",
+			"customer_id", signedIn, "credential_id", keyID)
+		m.suspended(w, r)
+
+		return
+	case errors.Is(err, ErrNoCredential), errors.Is(err, ErrCountRepeated):
+		m.refuse(w, r, err)
+
+		return
+	case err != nil:
+		m.unavailable(w, r, "the sign-in could not be recorded", err)
+
+		return
 	}
 
+	// A store that answers nil to a count the library saw not advance has not
+	// checked it. A correct one never reaches this: the count it reads under its
+	// lock is at least the one the library read. A key that may live on several
+	// devices is not compared, here as in the store.
+	if credential.Authenticator.CloneWarning && !credential.Flags.BackupEligible {
+		m.log.ErrorContext(r.Context(),
+			"identity-passkey: the store recorded a count the library saw not advance; the sign-in was refused",
+			"customer_id", signedIn, "credential_id", keyID,
+			"presented", data.Counter, "stored_when_read", storedWhenRead)
+		m.refuse(w, r, ErrKeyCopied)
+
+		return
+	}
+
+	// Only now: Issue sets a header, so anything written before it carries no
+	// session and anything refused after it would carry a valid one.
 	m.sessions.Issue(w, signedIn)
 	corehttp.WriteJSON(r.Context(), w, http.StatusNoContent, nil)
 }
@@ -289,7 +359,10 @@ func (m *Module) holdCeremony(w http.ResponseWriter, r *http.Request, session *w
 // cookie rather than recorded here, and the library cannot notice a second use
 // of a challenge whose signature is valid; what such a client can finish again
 // is bounded by [CeremonyTTL] and, for a registration, by the rule for a key
-// the account holds (D229).
+// the account holds (D229). A sign-in finished again by a device-bound key that
+// counts carries the count the first finish recorded and is refused (ADR 0382);
+// a key that reports zero, and one that can be synced, can still finish it
+// again within [CeremonyTTL], since neither is compared by its count.
 func (m *Module) takeCeremony(w http.ResponseWriter, r *http.Request) (*webauthn.SessionData, bool) {
 	cookie, err := r.Cookie(ceremonyCookie)
 	if err != nil {
@@ -328,6 +401,13 @@ func (m *Module) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	m.log.InfoContext(r.Context(), "identity-passkey: a ceremony was refused", "error", err)
 	corehttp.WriteError(r.Context(), w, coreerrors.Unauthorized(CodeCeremonyRefused,
 		"the passkey ceremony was refused"))
+}
+
+// suspended answers a key that signs nobody in (ADR 0382).
+func (m *Module) suspended(w http.ResponseWriter, r *http.Request) {
+	corehttp.WriteError(r.Context(), w, coreerrors.Forbidden(CodeKeySuspended,
+		"this passkey signs nobody in: its signature counter did not advance, which is "+
+			"what a copied key does; sign in another way and remove it"))
 }
 
 // unavailable answers a failure on this module's side.

@@ -11,6 +11,28 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **A passkey whose counter does not advance is suspended** (ADR 0382, D232).
+  **For integrators:** `identitypasskey.Credentials.Used(ctx, credentialID)` is
+  replaced by `SignedIn(ctx, identitypasskey.Assertion)`, which compares the
+  assertion's signature counter with the stored one under a lock and records
+  the count, the backup state, the latched user verification and the moment; a
+  store bound through `Options.Credentials` implements it as its godoc says.
+  `identitypasskey.KeyNotices` gains `SendPasskeySuspended`, sent once by the
+  sign-in that suspends a key; a messenger bound through `Options.KeyNotices`
+  implements it. `POST /store/v1/auth/passkey/sign-in/finish` answers 403
+  `identity_passkey_key_suspended` to a device-bound key whose counter did not
+  advance and to every later sign-in with it, 401 `identity_passkey_refused` to
+  the same count again within four minutes, a finish sent twice among them,
+  and 500 `identity_passkey_unavailable` when the sign-in cannot be recorded;
+  it issued a session in all three cases. `GET /store/v1/auth/passkey/keys`
+  carries `suspended_at`, a suspended key is removable and is not counted as a
+  way in, and an account holding one is listed even when whether it has
+  another way in cannot be checked, its key that signs in not removable for
+  `identity_passkey_unavailable`. **For operators:** migration
+  000003 adds `passkey_credentials.suspended_at`, and a suspension is logged at
+  WARN as "identity-passkey: a key's signature counter did not advance, so the
+  key is suspended".
+
 - **A shopper does not change their address unproven** (ADR 0376, D224).
   **For integrators:** `PUT /store/v1/customers/{id}` no longer takes
   `email`; a body carrying it answers 422 `customer_invalid_body` and writes

@@ -197,6 +197,7 @@ func TestTheSchemaIsWhatTheModuleWrites(t *testing.T) {
 	require.NoError(t, rows.Err())
 	assert.Equal(t, []string{
 		"created_at", "credential", "credential_id", "customer_id", "last_used_at", "rp_id",
+		"suspended_at",
 	}, columns)
 
 	var kind string
@@ -261,6 +262,18 @@ func TestAKeyStoredInPostgresStillSignsIn(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, in.Code,
 		"a key that went through a JSONB column has to still sign in; body: %s",
 		in.Body.String())
+
+	// And the count it recorded is one the library reads back (ADR 0382): the
+	// same count later is a copy, and the key then signs nobody in.
+	require.Equal(t, http.StatusNoContent, h.signIn(t, h.auth, credential, 1).Code)
+	_, err = testPool.Exec(t.Context(),
+		`UPDATE passkey_credentials SET last_used_at = last_used_at - interval '1 hour'
+		 WHERE credential_id = $1`, encodedID(credential.ID))
+	require.NoError(t, err)
+	copied := h.signIn(t, h.auth, credential, 1)
+	assert.Equal(t, http.StatusForbidden, copied.Code, copied.Body.String())
+	assert.Contains(t, copied.Body.String(), identitypasskey.CodeKeySuspended)
+	assert.Equal(t, http.StatusForbidden, h.signIn(t, h.auth, credential, 2).Code)
 }
 
 // TestOneKeyStaysOneRow is the conflict target: a key registered twice is the
@@ -314,26 +327,288 @@ func TestAnUnknownCredentialIsNotFoundAndSaysNothingElse(t *testing.T) {
 	assert.ErrorIs(t, err, identitypasskey.ErrNoCredential)
 }
 
-// TestUsingAKeyStampsIt is the column a person reads when they decide which key
-// to remove.
-func TestUsingAKeyStampsIt(t *testing.T) {
+// assertionOf is what a sign-in of credential at count says, as the handler
+// builds it.
+func assertionOf(credential webauthn.Credential, count uint32) identitypasskey.Assertion {
+	return identitypasskey.Assertion{
+		CredentialID: credential.ID, PublicKey: credential.PublicKey, SignCount: count,
+	}
+}
+
+// rawField reads one path of a stored credential as the column holds it.
+func rawField(t *testing.T, credentialID []byte, path ...string) *string {
+	t.Helper()
+
+	var value *string
+	require.NoError(t, testPool.QueryRow(t.Context(),
+		`SELECT credential #>> $2::text[] FROM passkey_credentials WHERE credential_id = $1`,
+		encodedID(credentialID), path).Scan(&value))
+
+	return value
+}
+
+// suspendedAt reads a key's suspended_at.
+func suspendedAt(t *testing.T, credentialID []byte) *time.Time {
+	t.Helper()
+
+	var at *time.Time
+	require.NoError(t, testPool.QueryRow(t.Context(),
+		`SELECT suspended_at FROM passkey_credentials WHERE credential_id = $1`,
+		encodedID(credentialID)).Scan(&at))
+
+	return at
+}
+
+// TestSigningInRecordsTheCountInsideTheCredential: the count, the backup state
+// and the latched user verification land in the JSON the library reads, and
+// the moment in last_used_at (ADR 0382).
+func TestSigningInRecordsTheCountInsideTheCredential(t *testing.T) {
 	store := realStore(t)
 	credential := aCredential("cred_" + t.Name())
 	require.NoError(t, store.Put(t.Context(), testCustomer, credential))
+	require.Nil(t, rawField(t, credential.ID, "authenticator", "signCount"),
+		"the library leaves signCount out of the JSON at zero")
 
-	var before *string
+	var before *time.Time
 	require.NoError(t, testPool.QueryRow(t.Context(),
-		`SELECT last_used_at::text FROM passkey_credentials WHERE credential_id = $1`,
+		`SELECT last_used_at FROM passkey_credentials WHERE credential_id = $1`,
 		encodedID(credential.ID)).Scan(&before))
 	require.Nil(t, before, "a key that has never signed in carries no stamp")
 
-	require.NoError(t, store.Used(t.Context(), credential.ID))
+	first := assertionOf(credential, 3)
+	first.BackupState, first.UserVerified = true, true
+	require.NoError(t, store.SignedIn(t.Context(), first))
 
-	var after *string
+	assert.Equal(t, "3", *rawField(t, credential.ID, "authenticator", "signCount"))
+	assert.Equal(t, "true", *rawField(t, credential.ID, "flags", "backupState"))
+	_, read, err := store.ByCredentialID(t.Context(), credential.ID)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(3), read.Authenticator.SignCount, "the library reads the count back")
+	var after *time.Time
 	require.NoError(t, testPool.QueryRow(t.Context(),
-		`SELECT last_used_at::text FROM passkey_credentials WHERE credential_id = $1`,
+		`SELECT last_used_at FROM passkey_credentials WHERE credential_id = $1`,
 		encodedID(credential.ID)).Scan(&after))
-	assert.NotNil(t, after, "using it stamps it")
+	assert.NotNil(t, after, "signing in stamps it")
+
+	require.NoError(t, store.SignedIn(t.Context(), assertionOf(credential, 4)))
+	assert.Equal(t, "true", *rawField(t, credential.ID, "flags", "userVerified"),
+		"a key that verified its person once stays recorded so")
+	assert.Equal(t, "false", *rawField(t, credential.ID, "flags", "backupState"),
+		"the backup state is the last one reported")
+
+	// A row with no authenticator or flags object at all still takes the count.
+	bare := aCredential("bare_" + t.Name())
+	_, err = testPool.Exec(t.Context(),
+		`INSERT INTO passkey_credentials (credential_id, customer_id, credential, rp_id)
+		 VALUES ($1, $2, jsonb_build_object('id', 'eA', 'publicKey', $3::text), $4)`,
+		encodedID(bare.ID), testCustomer, base64.StdEncoding.EncodeToString(bare.PublicKey), testRPID)
+	require.NoError(t, err)
+	require.NoError(t, store.SignedIn(t.Context(), assertionOf(bare, 3)))
+	assert.Equal(t, "3", *rawField(t, bare.ID, "authenticator", "signCount"))
+
+	// A key that does not count signs in every time.
+	zero := aCredential("zero_" + t.Name())
+	require.NoError(t, store.Put(t.Context(), testCustomer, zero))
+	require.NoError(t, store.SignedIn(t.Context(), assertionOf(zero, 0)))
+	require.NoError(t, store.SignedIn(t.Context(), assertionOf(zero, 0)),
+		"zero over zero is a key that does not count, not a repeat")
+}
+
+// TestTheRealStoreSuspendsACountThatDidNotAdvance: a lower count, the same
+// count once its record is old, and zero after a count each suspend the key,
+// and a suspended key signs nobody in whatever it presents next.
+func TestTheRealStoreSuspendsACountThatDidNotAdvance(t *testing.T) {
+	store := realStore(t)
+
+	for name, tc := range map[string]struct {
+		age       string
+		presented uint32
+	}{
+		"a lower count":                  {"0", 3},
+		"the same count an hour later":   {"1 hour", 5},
+		"zero after a count":             {"0", 0},
+		"the same count four min. later": {"4 minutes 1 second", 5},
+	} {
+		t.Run(name, func(t *testing.T) {
+			credential := aCredential("cred_" + t.Name())
+			require.NoError(t, store.Put(t.Context(), testCustomer, credential))
+			require.NoError(t, store.SignedIn(t.Context(), assertionOf(credential, 5)))
+			_, err := testPool.Exec(t.Context(),
+				`UPDATE passkey_credentials SET last_used_at = last_used_at - $2::interval
+				 WHERE credential_id = $1`, encodedID(credential.ID), tc.age)
+			require.NoError(t, err)
+
+			err = store.SignedIn(t.Context(), assertionOf(credential, tc.presented))
+			require.ErrorIs(t, err, identitypasskey.ErrKeyCopied)
+			require.ErrorIs(t, err, identitypasskey.ErrKeySuspended)
+			assert.NotNil(t, suspendedAt(t, credential.ID), "the suspension is written")
+			assert.Equal(t, "5", *rawField(t, credential.ID, "authenticator", "signCount"),
+				"and the count is not")
+
+			err = store.SignedIn(t.Context(), assertionOf(credential, 99))
+			require.ErrorIs(t, err, identitypasskey.ErrKeySuspended)
+			assert.NotErrorIs(t, err, identitypasskey.ErrKeyCopied, "it was suspended once")
+		})
+	}
+}
+
+// TestTheRealStoreRefusesARepeatOnce: the count last recorded, sent again
+// within twice the ceremony's lifetime, is refused and writes nothing; a key
+// that has not signed in since it was registered repeats its registration.
+func TestTheRealStoreRefusesARepeatOnce(t *testing.T) {
+	store := realStore(t)
+
+	for name, tc := range map[string]struct {
+		signedIn bool
+		age      string
+	}{
+		"at once":                         {true, "0"},
+		"three minutes later":             {true, "3 minutes"},
+		"a registration's count, at once": {false, "0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			credential := aCredential("cred_" + t.Name())
+			if !tc.signedIn {
+				credential.Authenticator.SignCount = 5
+			}
+			require.NoError(t, store.Put(t.Context(), testCustomer, credential))
+			if tc.signedIn {
+				require.NoError(t, store.SignedIn(t.Context(), assertionOf(credential, 5)))
+			}
+			_, err := testPool.Exec(t.Context(),
+				`UPDATE passkey_credentials SET last_used_at = last_used_at - $2::interval
+				 WHERE credential_id = $1`, encodedID(credential.ID), tc.age)
+			require.NoError(t, err)
+
+			err = store.SignedIn(t.Context(), assertionOf(credential, 5))
+			require.ErrorIs(t, err, identitypasskey.ErrCountRepeated)
+			assert.Nil(t, suspendedAt(t, credential.ID), "a repeat suspends nothing")
+			assert.Equal(t, "5", *rawField(t, credential.ID, "authenticator", "signCount"))
+		})
+	}
+}
+
+// TestASyncableKeyKeepsItsHighestCount: a backup-eligible key is never refused
+// over its count, and its stored count only moves up.
+func TestASyncableKeyKeepsItsHighestCount(t *testing.T) {
+	store := realStore(t)
+	credential := aCredential("cred_" + t.Name())
+	credential.Flags.BackupEligible = true
+	require.NoError(t, store.Put(t.Context(), testCustomer, credential))
+
+	require.NoError(t, store.SignedIn(t.Context(), assertionOf(credential, 10)))
+	behind := assertionOf(credential, 4)
+	behind.BackupState = true
+	require.NoError(t, store.SignedIn(t.Context(), behind))
+
+	assert.Equal(t, "10", *rawField(t, credential.ID, "authenticator", "signCount"))
+	assert.Equal(t, "true", *rawField(t, credential.ID, "flags", "backupState"))
+	assert.Nil(t, suspendedAt(t, credential.ID))
+}
+
+// TestTwoSignInsWithOneCountRecordExactlyOne: two finishes of one count over a
+// lower stored one are serialized by the row lock, so one records it and the
+// other finds it already recorded.
+//
+// A third transaction holds the row first and both sign-ins queue behind it,
+// as in [TestTwoRemovalsCannotBOTHTakeTheLastKey]; without the lock the two
+// waiters are the UPDATEs and both record.
+func TestTwoSignInsWithOneCountRecordExactlyOne(t *testing.T) {
+	store := realStore(t)
+
+	for round := range raceRounds {
+		credential := aCredential(fmt.Sprintf("cred_%s_%d", t.Name(), round))
+		require.NoError(t, store.Put(t.Context(), testCustomer, credential))
+		require.NoError(t, store.SignedIn(t.Context(), assertionOf(credential, 6)))
+
+		gate, err := testPool.Begin(t.Context())
+		require.NoError(t, err)
+		_, err = gate.Exec(t.Context(),
+			`SELECT credential_id FROM passkey_credentials WHERE credential_id = $1 FOR UPDATE`,
+			encodedID(credential.ID))
+		require.NoError(t, err)
+
+		var wg sync.WaitGroup
+		errs := make([]error, 2)
+		for i := range errs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				errs[i] = store.SignedIn(context.Background(), assertionOf(credential, 7))
+			}()
+		}
+
+		waitForTwoBlockedBackends(t)
+		require.NoError(t, gate.Commit(t.Context()))
+		wg.Wait()
+
+		recorded := 0
+		for _, err := range errs {
+			if err == nil {
+				recorded++
+
+				continue
+			}
+			require.ErrorIs(t, err, identitypasskey.ErrCountRepeated, "round %d", round)
+		}
+		assert.Equal(t, 1, recorded, "round %d: exactly one sign-in records the count", round)
+		assert.Equal(t, "7", *rawField(t, credential.ID, "authenticator", "signCount"))
+	}
+}
+
+// TestTheCountLandsOnlyOnTheKeyThatSigned: a key replaced under its id during
+// the ceremony is not credited with the old key's count.
+func TestTheCountLandsOnlyOnTheKeyThatSigned(t *testing.T) {
+	store := realStore(t)
+	signed := aCredential("cred_" + t.Name())
+	require.NoError(t, store.Put(t.Context(), testCustomer, signed))
+	replacement := signed
+	replacement.PublicKey = []byte("another public key")
+	require.NoError(t, store.Put(t.Context(), testCustomer, replacement))
+
+	err := store.SignedIn(t.Context(), assertionOf(signed, 5))
+	require.ErrorIs(t, err, identitypasskey.ErrNoCredential)
+	assert.Nil(t, rawField(t, signed.ID, "authenticator", "signCount"), "the replacement is untouched")
+}
+
+// TestTheRealStoreDoesNotCountASuspendedKeyAsAWayIn: the guard counts the keys
+// that sign in, a suspended key is removed whatever the rule says, and both
+// readings of the rows carry the suspension.
+func TestTheRealStoreDoesNotCountASuspendedKeyAsAWayIn(t *testing.T) {
+	store := realStore(t)
+	customer := "cust_06G8SUSPENDEDWAYIN00000"
+	good := aCredential("good-" + customer)
+	copied := aCredential("copied-" + customer)
+	require.NoError(t, store.Put(t.Context(), customer, good))
+	require.NoError(t, store.Put(t.Context(), customer, copied))
+	require.NoError(t, store.SignedIn(t.Context(), assertionOf(copied, 5)))
+	require.ErrorIs(t, store.SignedIn(t.Context(), assertionOf(copied, 3)), identitypasskey.ErrKeyCopied)
+
+	keys, err := store.ListForCustomer(t.Context(), customer)
+	require.NoError(t, err)
+	suspended := map[string]bool{}
+	for _, key := range keys {
+		suspended[key.ID] = key.SuspendedAt != nil
+	}
+	assert.Equal(t, map[string]bool{encodedID(good.ID): false, encodedID(copied.ID): true}, suspended)
+
+	records, ok := store.(identitypasskey.PersonalRecords)
+	require.True(t, ok)
+	held, err := records.PasskeyRecordsOf(t.Context(), customer)
+	require.NoError(t, err)
+	disclosed := map[string]bool{}
+	for _, key := range held {
+		disclosed[key.CredentialID] = key.SuspendedAt != nil
+	}
+	assert.Equal(t, suspended, disclosed, "a dossier carries the suspension too")
+
+	surviving, err := store.Remove(t.Context(), customer, good.ID, false)
+	require.ErrorIs(t, err, identitypasskey.ErrLastWayIn, "the suspended key is not a way in")
+	assert.Equal(t, 2, surviving, "the count is still of rows")
+
+	surviving, err = store.Remove(t.Context(), customer, copied.ID, false)
+	require.NoError(t, err, "a suspended key is always removable")
+	assert.Equal(t, 1, surviving)
 }
 
 // TestTheChecksRefuseWhatTheStoreWouldNeverWrite runs them with raw SQL.
@@ -713,10 +988,19 @@ func TestAnAbandonedKeyCannotSignAnybodyIn(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, credentials, "this relying party has none of this person's keys")
 
-	// Stamping one is the same question asked by the sign-in's last step.
-	require.NoError(t, after.Used(t.Context(), []byte("abandoned-"+customer)),
-		"stamping a row this store cannot see is not an error — the sign-in already "+
-			"refused, and Used is deliberately forgiving (its own godoc)")
+	// Recording one is the same question asked by the sign-in's last step, and
+	// it is answered the same way whatever the count (ADR 0382): an advance, the
+	// count it holds, and one behind it.
+	counting := aCredential("counting-" + customer)
+	counting.Authenticator.SignCount = 5
+	require.NoError(t, before.Put(t.Context(), customer, counting))
+	for _, count := range []uint32{1, 5, 9} {
+		require.ErrorIs(t, after.SignedIn(t.Context(), assertionOf(aCredential("abandoned-"+customer), count)),
+			identitypasskey.ErrNoCredential)
+		require.ErrorIs(t, after.SignedIn(t.Context(), assertionOf(counting, count)),
+			identitypasskey.ErrNoCredential)
+	}
+	assert.Nil(t, suspendedAt(t, counting.ID), "nothing is suspended")
 
 	var stamped *time.Time
 	require.NoError(t, testPool.QueryRow(t.Context(),

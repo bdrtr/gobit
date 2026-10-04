@@ -4,7 +4,7 @@
 and key id, that a passkey was added to an account or removed from it, through
 an optional `KeyNotices` seam; the installation finds the address.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0382](0382-a-passkey-whose-counter-does-not-advance-is-suspended.md), which tells the account of a key suspended by the sign-in that suspends it
 - **Date:** 2026-10-04
 
 ## Context

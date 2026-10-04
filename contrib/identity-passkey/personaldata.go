@@ -71,8 +71,11 @@ type StoredKey struct {
 	RelyingPartyID string
 	// CreatedAt is when it was registered.
 	CreatedAt time.Time
-	// LastUsedAt is the last sign-in this module managed to record.
+	// LastUsedAt is the last sign-in.
 	LastUsedAt *time.Time
+	// SuspendedAt is when the key was suspended (ADR 0382), nil for one that
+	// signs in.
+	SuspendedAt *time.Time
 	// Credential is the whole stored credential, as JSON.
 	Credential string
 }
@@ -92,6 +95,7 @@ const (
 	columnCredential   = "credential"
 	columnCreatedAt    = "created_at"
 	columnLastUsedAt   = "last_used_at"
+	columnSuspendedAt  = "suspended_at"
 )
 
 // PersonalData says what this module keeps about a person.
@@ -139,8 +143,15 @@ func (m *Module) PersonalData() personaldata.Declaration {
 			{
 				Table: tablePasskeyCredentials, Column: columnLastUsedAt,
 				Kind: personaldata.Named,
-				Why: "the last sign-in with this device that this module managed to record; it " +
-					"says roughly when the person was last here and from which of their devices",
+				Why: "the last sign-in with this device; it says roughly when the person was " +
+					"last here and from which of their devices",
+				OnErasure: personaldata.Emptied,
+			},
+			{
+				Table: tablePasskeyCredentials, Column: columnSuspendedAt,
+				Kind: personaldata.Named,
+				Why: "when this person's device signed with a counter that did not advance, " +
+					"which is what a copied key does; a fact about their device at a moment",
 				OnErasure: personaldata.Emptied,
 			},
 		},
@@ -231,6 +242,7 @@ func (m *Module) PersonalDataOf(
 				{Column: columnCredential, Kind: personaldata.Named, Value: key.Credential},
 				{Column: columnCreatedAt, Kind: personaldata.Named, Value: key.CreatedAt},
 				{Column: columnLastUsedAt, Kind: personaldata.Named, Value: key.LastUsedAt},
+				{Column: columnSuspendedAt, Kind: personaldata.Named, Value: key.SuspendedAt},
 			},
 		})
 	}
