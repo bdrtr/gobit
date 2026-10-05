@@ -1398,6 +1398,16 @@ design. It is fixed with `1.0.0`.
 
 ### Decisions
 
+- **A sold line's price and tax are not raised** (ADR 0394, D247).
+  **For operators:** a line priced too low is the shop's unless the buyer buys
+  it again, on an addition to the pending order or an order of its own; only
+  then is the first line written off (before dispatch) or returned, and
+  credited or refunded. A tax charged too low is the shop's. **For
+  integrators:** `POST /admin/v1/orders/{id}/credit-lines` refuses a zero or
+  negative amount with `order_invalid_input` as before; its message now says a
+  credit is never withdrawn, and its description says what to do about a
+  price. `docs/known-limits.md` now says an order's invoice prints the sale and
+  nothing after it (D247).
 - **An analytics product hears gobit through the bus** (ADR 0390, D240).
   **For contributors:** `core/provider` gains no analytics contract; an
   installation reaches an outside analytics product through a `webhook-out`

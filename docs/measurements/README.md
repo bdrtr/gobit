@@ -194,3 +194,4 @@ truth: a report says what was true on the day it was taken.
 | [Who would call an analytics contract — measured 2026-10-05](0390-an-analytics-product-hears-gobit-through-the-bus.md) | 175 |
 | [What a catalog page is made of — measured 2026-10-05](0391-what-a-catalog-page-is-made-of.md) | 158 |
 | [A backordered line waiting — measured 2026-10-05](0392-a-backordered-line-waits.md) | 168 |
+| [A price the buyer agreed to — measured 2026-10-05](0394-a-price-the-buyer-agreed-to.md) | 138 |

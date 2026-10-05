@@ -59,6 +59,12 @@ type CreateCreditLineInput struct {
 // owes the customer" and is exactly what a refund then settles. What is not
 // legitimate is writing off more than the order was ever worth, which is a
 // data-entry error rather than a concession.
+//
+// # A credit is never negative
+//
+// A negative credit would withdraw a concession or charge for a line already
+// sold, and neither is done (ADR 0105, ADR 0394): a line priced too low is the
+// shop's unless the buyer buys it again.
 func (s *Service) CreateCreditLine(
 	ctx context.Context, orderID string, in CreateCreditLineInput,
 ) (models.OrderCreditLine, error) {
@@ -67,8 +73,8 @@ func (s *Service) CreateCreditLine(
 	}
 	if in.Amount <= 0 {
 		return models.OrderCreditLine{}, errors.Invalid(CodeInvalidInput,
-			"a credit has to be positive: %d. A negative credit is a CHARGE, which is a "+
-				"different act and does not belong on this endpoint", in.Amount)
+			"a credit has to be positive: %d. A credit is never withdrawn, and a placed "+
+				"order is not charged more for what it sold", in.Amount)
 	}
 	if err := checkAmount("amount", in.Amount, models.MaxTotal); err != nil {
 		return models.OrderCreditLine{}, err

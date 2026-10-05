@@ -510,9 +510,8 @@ type OrderCreditLine struct {
 	OrderID string
 	// Amount is the credited amount (minor unit); it is always POSITIVE.
 	//
-	// A negative credit is a CHARGE, which is a different verb with a different
-	// authorization — it would have to reach the payment module rather than this
-	// table.
+	// A negative credit would withdraw a concession or raise a sold line's price,
+	// and neither is done (ADR 0105, ADR 0394).
 	Amount int64
 	// Reason is the merchant's short word for why; this module does not
 	// enumerate it and does not accept it empty.

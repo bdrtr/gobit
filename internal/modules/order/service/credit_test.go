@@ -139,11 +139,13 @@ func TestACreditWithoutAReasonIsRefused(t *testing.T) {
 	assert.True(t, errors.IsInvalid(err))
 }
 
-// TestANegativeCreditIsRefused keeps "credit" the word for one act.
+// TestANegativeCreditIsRefused keeps "credit" the word for one act, and its
+// message says a credit is never withdrawn (ADR 0105, ADR 0394).
 //
-// Charging a customer more after the sale is a different verb with a different
-// authorization; it would have to reach the payment module rather than this
-// table.
+// The code alone does not tell the credit's own refusal from the amount check
+// behind it, which answers a negative amount with the same code; the sentence
+// does, and so a guard narrowed to zero leaves -1 and -100 to that check and
+// fails here.
 func TestANegativeCreditIsRefused(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -151,13 +153,18 @@ func TestANegativeCreditIsRefused(t *testing.T) {
 	order, err := e.svc.CreateOrder(ctx, validInput())
 	require.NoError(t, err)
 
-	for _, amount := range []int64{0, -100} {
+	for _, amount := range []int64{0, -1, -100} {
 		_, err = e.svc.CreateCreditLine(ctx, order.ID, service.CreateCreditLineInput{
 			Amount: amount, Reason: "wrong direction",
 		})
 		require.Error(t, err, "amount %d", amount)
-		assert.True(t, errors.IsInvalid(err))
+		assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err), "amount %d", amount)
+		assert.Contains(t, err.Error(), "never withdrawn", "amount %d", amount)
 	}
+
+	credits, err := e.svc.ListCreditLines(ctx, order.ID)
+	require.NoError(t, err)
+	assert.Empty(t, credits, "a refused credit wrote a row")
 }
 
 // TestTheCreditsAreListedOldestFirst is the order a support screen reads them

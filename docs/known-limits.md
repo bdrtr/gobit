@@ -246,6 +246,20 @@ past and is not corrected retroactively.
   written. The trial taxes the lines with today's tables, classes and
   catalog, so a figure for a product whose type changed since the sale is the
   type's today.
+- **An order's invoice prints the sale and nothing after it.** The invoicing
+  flow copies the order's lines and the carriage it was sold, and an order binds
+  one document, so a credit, a delivery change, an exchange's funding and a
+  return's, a claim's or an exchange's refund are booked by the order journal
+  and printed on no document, nor is a refund that settles a credit, which the
+  payment journal alone books; an invoice issued after a dearer delivery or a
+  funded exchange prints less than the buyer paid (D247).
+- **A tax charged too low is the shop's, and the order journal does not say
+  so.** A placed order keeps the tax it charged on its lines, its invoice and its
+  `tax_payable`, which then understates what the shop owes by the difference
+  ([ADR 0394](adr/0394-a-sold-lines-price-and-tax-are-not-raised.md)). A
+  restatement, sales against tax_payable with no money, is a record nothing
+  writes; ADR 0387's trial counts the orders a rate change would have taxed
+  differently.
 
 ## Installation and operation
 
@@ -696,7 +710,9 @@ past and is not corrected retroactively.
   order never sold, so an operator can promise a jacket against a shirt's
   difference and nothing will object. Pricing the item at settlement needs a
   pricing read and a decision about which price applies to a replacement, and
-  neither has been made.
+  neither has been made. An exchange that sends the line's own variant at a
+  difference is a sold line's price raised, which ADR 0394 forbids and nothing
+  refuses.
 
 - **A lost authenticator is answered only at the machine.** A person enrolls,
   replaces and removes their own factor in the panel
@@ -892,12 +908,17 @@ past and is not corrected retroactively.
   A replacement that sends more than one such variant is still an `/admin/v1`
   call.
 
-- **The order page corrects an order as the API does, less the price.** Any
-  order but a canceled one takes a credit, and a pending one has its delivery
-  put on a quoted option and its shipping address corrected
-  ([ADR 0388](adr/0388-the-order-page-credits-changes-a-delivery-and-corrects-the-address.md)). A price or tax corrected
-  upwards has no act in the order module, the billing address is not corrected
-  before an invoice is issued
+- **The order page corrects an order as the API does, and only an exchange can
+  raise a sold line's price.** Any order but a canceled one takes a credit, and
+  a pending one has its delivery put on a quoted option and its shipping address
+  corrected
+  ([ADR 0388](adr/0388-the-order-page-credits-changes-a-delivery-and-corrects-the-address.md)).
+  A price or tax charged too low is not raised after the sale
+  ([ADR 0394](adr/0394-a-sold-lines-price-and-tax-are-not-raised.md)): the buyer
+  buys the line again before it is written off or returned, or the shop bears
+  it. An exchange that sends the line's own variant at a difference raises it
+  anyway, and nothing refuses that (above). The billing address is not
+  corrected before an invoice is issued
   ([ADR 0195](adr/0195-a-shipping-address-can-be-corrected.md)), and opening a
   parcel on an option no delivery stands on stays an `/admin/v1` call
   ([ADR 0332](adr/0332-the-panel-opens-a-parcel-on-the-delivery-chosen.md)).

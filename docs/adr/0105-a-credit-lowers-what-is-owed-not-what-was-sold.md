@@ -6,6 +6,7 @@ read, and a ceiling checked under the order's lock.
 
 - **Status:** Accepted
 - **Date:** 2026-09-10
+- **Amended by:** [0394](0394-a-sold-lines-price-and-tax-are-not-raised.md): a charge after the sale is refused for a sold line
 
 ## Context
 

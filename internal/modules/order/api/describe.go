@@ -778,9 +778,13 @@ func describeCreditLines(d *openapi.Doc) {
 			"the outstanding amount negative, which is this module's word for \"the shop " +
 			"owes the customer\" and is what a refund then settles. " +
 			"\n\n" +
-			"The amount has to be POSITIVE. A negative credit is a CHARGE — a different act " +
-			"with a different authorization — and it does not belong on this endpoint. The " +
-			"reason is REQUIRED: a credit with no reason is a number nobody can answer a " +
+			"The amount has to be POSITIVE: a credit is never withdrawn, and a placed order " +
+			"is not charged more for a line it sold (ADR 0394). A line priced too low is bought " +
+			"again by the buyer, on a cart with adds_to_order_id or an order of its own. Only " +
+			"then is the first line given up: before dispatch it is written off on " +
+			"line-cancellations and credited here, and refunded if it was paid; after dispatch " +
+			"it is returned and refunded on the return's refund route, and not credited here. " +
+			"The reason is REQUIRED: a credit with no reason is a number nobody can answer a " +
 			"question about six months later.",
 		RequestBody: d.RequestBody(createCreditLineRequest{}),
 		Responses: map[string]any{
