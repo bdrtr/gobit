@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,7 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/container"
 	corehttp "github.com/bdrtr/gobit/core/http"
+	authmod "github.com/bdrtr/gobit/internal/modules/auth"
 	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
@@ -33,8 +36,8 @@ import (
 // even if the middleware had never been wired in at all — that was exactly the
 // situation before Phase 8.
 //
-// The router is built with the SAME guard stack as production (see e2e_test.go,
-// corehttp.APIGuards); the protection this test proves is the very one that
+// The router is the server's own: the ground opens the installation through
+// app.Open (ADR 0398), so the protection this test proves is the very one that
 // runs in production.
 
 // adminRequest makes an admin request with the given Authorization header.
@@ -274,7 +277,9 @@ func TestStoreIdentityCarriesTheSalesChannel(t *testing.T) {
 	// The store identity cannot be read from an admin endpoint (the publishable
 	// key does not pass there), so the authenticator is asked directly — this is
 	// the very identity the guard middleware puts into the context.
-	principal, err := testAuthn.AuthenticateStore(context.Background(), publishableKey)
+	authenticator, err := container.Resolve[corehttp.Authenticator](ctr, svcAuthInterop)
+	require.NoError(t, err)
+	principal, err := authenticator.AuthenticateStore(context.Background(), publishableKey)
 	require.NoError(t, err, "the publishable key should produce a store identity")
 
 	assert.Equal(t, authsvc.PrincipalKindAPIKey, principal.Kind)
@@ -379,4 +384,44 @@ func TestHealthEndpointsStayUnguarded(t *testing.T) {
 				"a health endpoint must not ask for an identity; body: %s", rec.Body.String())
 		})
 	}
+}
+
+// TestAnInviteeSetsAPasswordWithoutAnIdentity is ADR 0137 on the server's
+// guard stack: a colleague who was invited has no account to authenticate
+// with, so accepting the invitation is exempt from identity, and the password
+// it sets is one they can sign in with.
+//
+// The ground's own guard stack once exempted the sign-in alone, and no scenario
+// sent this request without a credential, so the exemption production depends
+// on was proven by nothing (D254). The message's user_id carried the token's
+// digest until D256.
+func TestAnInviteeSetsAPasswordWithoutAnIdentity(t *testing.T) {
+	ctx := t.Context()
+	email := fmt.Sprintf("e2e-invitee-%d@example.com", fixtureCounter.Add(1))
+	invitee, err := authSvc.CreateUser(ctx, authsvc.CreateUserInput{
+		Email: email, Scopes: []string{"order:read"},
+	}, "")
+	require.NoError(t, err)
+	require.NoError(t, authSvc.InviteUser(ctx, invitee.ID, adminID))
+
+	sent := notificationSpy.notificationsTo(email)
+	require.Len(t, sent, 1, "the invitation is carried by the installation's provider")
+	require.Equal(t, authmod.InvitationTemplate, sent[0].Template)
+	token := sent[0].Data["token"]
+	require.NotEmpty(t, token, "the invitation carries its token")
+	assert.Equal(t, invitee.ID, sent[0].Data["user_id"],
+		"the invitation's user_id names the invited account; a provider or template "+
+			"that links the message to the account reads it (D256)")
+
+	const password = "an-invitee-chose-this-42"
+	body, err := json.Marshal(map[string]string{"token": token, "password": password})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, authapi.AcceptInvitationPath, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	testRouter.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusNoContent, rec.Code,
+		"accepting an invitation needs no identity; body: %s", rec.Body.String())
+	assert.NotEmpty(t, obtainToken(t, email, password), "the password the invitee set signs them in")
 }

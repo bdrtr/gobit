@@ -5,7 +5,13 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/errorreport"
+	"github.com/bdrtr/gobit/core/module"
+	"github.com/bdrtr/gobit/core/openapi"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	"github.com/bdrtr/gobit/internal/core/config"
 	"github.com/bdrtr/gobit/internal/core/logger"
 )
@@ -20,8 +26,7 @@ import (
 // binds a port and blocks, and everything behind it — the migrations, the
 // registry, the router — is under internal/. So an embedder's only options were
 // to run the binary and talk to it over a socket, or to reimplement the
-// assembly, which is the copy this repository already has a gate against
-// (TestTheEndToEndGroundWiresEveryFlowProductionDoes).
+// assembly, which this repository did in internal/e2e until ADR 0398.
 //
 // # It is the SAME assembly
 //
@@ -54,6 +59,51 @@ import (
 // The returned function releases the pool and shuts the container down; a caller
 // that forgets it leaks a connection pool per call.
 func InProcess(ctx context.Context, opts Options) (http.Handler, func(), error) {
+	installation, closeAll, err := Open(ctx, opts)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return installation.Router, closeAll, nil
+}
+
+// Installation is an installation brought up without listening, with the parts
+// a test inside this repository reads.
+//
+// The container's names are not a contract (ADR 0001): this type is internal,
+// and the facade hands an embedder the router alone (ADR 0150).
+type Installation struct {
+	// Router is the handler the server would serve.
+	Router chi.Router
+	// Container holds every service the installation resolves by name.
+	Container *container.Container
+	// Modules is the registry's module list, the ones plugins brought included.
+	Modules []module.Module
+	// Schema is the document /openapi.json serves.
+	Schema *openapi.Doc
+	// Jobs are the scheduled jobs the plugins registered. Nothing runs them:
+	// an opened installation starts no clock.
+	Jobs []coreplugin.Job
+
+	describe func() *openapi.Doc
+}
+
+// Describe builds a fresh copy of the served document's descriptions, for a
+// caller that generates it against a router of its own.
+//
+// It is the assembly's own describing step and not a copy of it, so a test that
+// asks which endpoints are described asks the function the server runs.
+func (i *Installation) Describe() *openapi.Doc { return i.describe() }
+
+// Open brings the installation up without listening and returns it with the
+// parts a test inside this repository reads (ADR 0398).
+//
+// The container's names are not a contract (ADR 0001); only the facade and
+// internal/e2e may import this package, and
+// TestOnlyTheFacadeAndTheGroundOpenTheCompositionRoot keeps it so. Everything
+// [InProcess] says about the port, the clock and the configuration holds here,
+// because InProcess is this function keeping only the router.
+func Open(ctx context.Context, opts Options) (*Installation, func(), error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, nil, err
@@ -77,7 +127,7 @@ func InProcess(ctx context.Context, opts Options) (http.Handler, func(), error) 
 		return nil, nil, err
 	}
 
-	handler, err := assemble(ctx, cfg, log, app, opts)
+	router, err := assemble(ctx, cfg, log, app, opts)
 	if err != nil {
 		closeApp()
 
@@ -97,5 +147,17 @@ func InProcess(ctx context.Context, opts Options) (http.Handler, func(), error) 
 		closeApp()
 	}
 
-	return handler, closeAll, nil
+	modules := app.registry.Modules()
+	title, version := cfg.ServiceName+" API", opts.version()
+
+	return &Installation{
+		Router:    router,
+		Container: app.container,
+		Modules:   modules,
+		Schema:    app.schema,
+		Jobs:      app.host.Jobs(),
+		describe: func() *openapi.Doc {
+			return describeInstallation(title, version, modules)
+		},
+	}, closeAll, nil
 }

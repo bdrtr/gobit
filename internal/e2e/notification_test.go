@@ -18,6 +18,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/eventbus"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	notificationmod "github.com/bdrtr/gobit/internal/modules/notification"
 	"github.com/bdrtr/gobit/internal/modules/notification/logonly"
@@ -162,23 +163,42 @@ func (s *notificationProviderSpy) notificationsFor(orderID string) []coreprovide
 	return found
 }
 
-// setUpNotificationSpy adds the spy to the notification module's provider registry.
-//
-// The registry is resolved from the container BY NAME and it happens AFTER the
-// modules have come up; that is the path the plugin system follows too
-// (coreplugin.Host's RegisterNotificationProvider resolves the same name and calls
-// the same Register). Resolving the registry directly instead of writing a PLUGIN
-// into the harness for the test does not change what is being exercised, but it
-// does keep a plugin that does not exist in production out of the installation.
-//
-// The call cannot be made before Bootstrap: "notification.providers" is put into
-// the container by the module's Register.
-func setUpNotificationSpy() error {
-	registry, err := container.Resolve[*notificationsvc.ProviderRegistry](ctr, notificationmod.ProvidersName)
-	if err != nil {
-		return err
+// notificationsTo returns the captured notifications addressed to the recipient.
+func (s *notificationProviderSpy) notificationsTo(address string) []coreprovider.Notification {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var found []coreprovider.Notification
+	for i := range s.captured {
+		if s.captured[i].To == address {
+			found = append(found, s.captured[i])
+		}
 	}
-	return registry.Register(notificationSpy)
+	return found
+}
+
+// observersPlugin brings the ground's observers in the way an embedder's
+// provider would arrive, as a plugin; the installation it joins is the
+// server's (ADR 0398).
+//
+// It carries the notification spy, registered under NOTIFICATION_PROVIDER's
+// name, and the two order event logs. Both are applied at Start, after the
+// modules have come up: the provider registry is put into the container by the
+// notification module's Register, and a provider registered earlier would have
+// nowhere to go. The logs subscribe before any scenario runs, which is the only
+// moment that matters to them.
+type observersPlugin struct{}
+
+// Name is the plugin's name.
+func (observersPlugin) Name() string { return "e2e-observers" }
+
+// Setup registers the spy and subscribes the event logs.
+func (observersPlugin) Setup(_ context.Context, h *coreplugin.Host) error {
+	h.RegisterNotificationProvider(notificationSpy)
+	h.Subscribe(eventLog.topic, eventLog.handler())
+	h.Subscribe(cancelLog.topic, cancelLog.handler())
+
+	return nil
 }
 
 // notificationRecord is the response body of the delivery log endpoint.

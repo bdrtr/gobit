@@ -56,9 +56,12 @@ const invitationTokenBytes = 32
 type InvitationSender interface {
 	// SendInvitation carries a token to an address.
 	//
+	// The userID names the invited account, for whoever links the message to it.
 	// The reference is the caller's own record for the message, and it is half the
-	// notification module's idempotency key.
-	SendInvitation(ctx context.Context, email, token, reference string) error
+	// notification module's idempotency key. The two are separate arguments
+	// because they are different values: one account is invited more than once,
+	// and each invitation must be sent (D256).
+	SendInvitation(ctx context.Context, email, token, userID, reference string) error
 }
 
 // InviteUser opens an invitation for a user and has it carried to them.
@@ -114,7 +117,7 @@ func (s *Service) InviteUser(ctx context.Context, userID, invitedBy string) erro
 	// Recorded first, then sent. The other order hands somebody a link that cannot
 	// work; this order can leave a row nobody uses, and that row expires and is
 	// replaced the moment an administrator asks again.
-	if err := s.inviteSender.SendInvitation(ctx, user.Email, token, invitation.TokenHash); err != nil {
+	if err := s.inviteSender.SendInvitation(ctx, user.Email, token, userID, invitation.TokenHash); err != nil {
 		s.log.ErrorContext(ctx, "the invitation could not be sent; the row is written",
 			"user_id", userID, "error", err)
 

@@ -44,13 +44,14 @@ import (
 // # Why over HTTP, why this router
 //
 // A unit test of the resolver has the test ITSELF put the channel into the
-// context; here the production guard stack puts it there (see e2e_test.go,
-// corehttp.APIGuards). The difference between the two is the difference between
-// "the resolver reads the context correctly" and "the endpoint really filters in
-// production": the publishable key's channel will be resolved out of auth, the
-// core will put it on the Principal, and the graph resolver will take the channel
-// from that identity and NOT from the query. All three links of the chain can be
-// observed at the same time only here.
+// context; here the production guard stack puts it there (the ground opens the
+// server's installation through app.Open, ADR 0398). The difference between the
+// two is the difference between "the resolver reads the context correctly" and
+// "the endpoint really filters in production": the publishable key's channel
+// will be resolved out of auth, the core will put it on the Principal, and the
+// graph resolver will take the channel from that identity and NOT from the
+// query. All three links of the chain can be observed at the same time only
+// here.
 //
 // # Why it sets up its own products
 //
@@ -848,12 +849,12 @@ func gqlAliasPileUp(n int) string {
 // are REALLY wired in the production setup.
 //
 // The behavior of the limits is exercised in detail in the unit tests; what is
-// exercised here is the WIRING: on this ground too the module is set up with
-// ZERO-valued options just as in production (see e2e_test.go, the line where the
-// product module is added), and that a zero value means "the package default" and
-// NOT "unlimited" can be seen only in a real setup. If a copy ever appears on the
-// configuration path (if the module picks a default of its own), the unit tests
-// stay green and this test turns red.
+// exercised here is the WIRING: the ground opens the server's installation (ADR
+// 0398), so the product module receives the configuration's limits through
+// registerModules in internal/app, as it does in production. If that path stops
+// carrying a limit, the unit tests stay green and this test turns red. That a
+// zero option means "the package default" and not "unlimited" is graph's own
+// to hold (TestInvalidLimitFallsBackToTheDefault).
 //
 // # Why the depth limit is not here
 //
@@ -907,9 +908,9 @@ func TestGraphQLComplexityLimitIsEnforcedInProductionStack(t *testing.T) {
 // not take the place of complexity.
 //
 // What is exercised here is not the behavior exercised in detail in the unit
-// tests but that the gate is WIRED in the production setup: on the e2e ground too
-// the module is set up with zero-valued options, and that a zero value means "the
-// package default" and not "unlimited" can be seen only in a real setup.
+// tests but that the gate is WIRED in the production setup: the ground opens the
+// server's installation (ADR 0398), so the module receives the configuration's
+// repetition limit through registerModules in internal/app, as in production.
 func TestGraphQLFieldRepetitionLimitIsEnforcedInProductionStack(t *testing.T) {
 	gqlFixture(t)
 

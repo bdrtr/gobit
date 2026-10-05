@@ -179,7 +179,7 @@ func registerWebhook(t *testing.T, target string, topics ...string) (id, secret 
 func runWebhookJob(t *testing.T) error {
 	t.Helper()
 
-	for _, job := range pluginHost.Jobs() {
+	for _, job := range groundJobs {
 		if job.PluginName() != webhookout.Name {
 			continue
 		}

@@ -23,8 +23,9 @@ const manualProviderID = "manual"
 // The manual provider authorizes and captures whatever the caller names, so a
 // shopper who could choose it would place a paid order without paying. The hop
 // this lane holds and no other does is the composition root turning APP_ENV
-// into the payment module's ManualProvider, negated: the module's tests hand
-// the option in themselves and the e2e harness builds its own root. The
+// into the payment module's ManualProvider, negated, under production: the
+// module's tests hand the option in themselves, and the e2e ground opens the
+// root under staging alone (ADR 0398), where the provider is offered. The
 // development process of [TestTheB2BStorefrontRefusesAnUnverifiedClaimInARealProcess]
 // reads the same list and finds the provider there, so this one cannot pass
 // because the provider is gone everywhere.

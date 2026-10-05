@@ -545,8 +545,8 @@ func storefrontCompletionBody(t *testing.T, approvedTotal int64) string {
 // storefrontRequest makes a store request with the publishable key.
 //
 // The key passes through the PRODUCTION guard stack: the request goes not to an
-// unguarded router but to the one assembled in the same order as in cmd/server
-// (see setUpHarness).
+// unguarded router but to the router app.Open assembled, the server's (ADR
+// 0398).
 func storefrontRequest(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 

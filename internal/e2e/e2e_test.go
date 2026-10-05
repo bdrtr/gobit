@@ -46,26 +46,21 @@
 //
 // # Setup
 //
-// The tests share a single PostgreSQL container (testcontainers) and the setup
-// FOLLOWS the order in internal/app/app.go: the core services are registered in
-// the container by name (core.db, core.link, core.query, core.eventbus,
-// core.workflow), the core migrations are applied, the modules are brought up
-// with [module.Registry] and the workflows are built from surfaces resolved BY
-// NAME out of the container. The setup being real is the entire value of the
-// test: a computation that passes with a fake dependency does not prove it will
-// make the same computation in production.
+// The tests share a single PostgreSQL container (testcontainers), and the ground
+// opens the installation through app.Open, the function the server's assembly
+// and App.InProcess share (ADR 0398), under the shared profile (APP_ENV=staging).
+// Before it sets its own environment it clears every variable the configuration
+// reads, so a developer's shell or a runner cannot change it. It adds only what
+// an embedder adds: a module providing the storefront identity and two plugins
+// carrying the spies and the event logs. It builds no flow that subscribes and
+// provides no name outside a module's Register.
 //
-// The ground also installs the SEARCH PLUGIN in the production order (Install ->
-// Bootstrap -> Start): the module the plugin brings goes through the same
-// lifecycle as the core modules and its subscriptions are wired before the first
-// product. The whole decision, and why the payment plugin is NOT installed on the
-// ground, is at the top of search_test.go.
-//
-// The saga engine does not run IN MEMORY but on pgstore, as in production
-// (core.workflow.store). The difference changes what the test sees: the
-// idempotency key and the execution state really are written to the database, so
-// the claim "the same cart cannot be completed twice" exercises the behavior of
-// a durable record rather than that of an in-process map.
+// The plugins the ground runs are named in PLUGINS, as on a server, and the
+// saga engine runs on pgstore, as in production (core.workflow.store). The
+// difference changes what the test sees: the idempotency key and the execution
+// state really are written to the database, so the claim "the same cart cannot
+// be completed twice" exercises the behavior of a durable record rather than
+// that of an in-process map.
 //
 // # Why the expected amounts are written by hand
 //
@@ -84,48 +79,38 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"log/slog"
 	"os"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/db"
-	"github.com/bdrtr/gobit/core/eventbus"
-	"github.com/bdrtr/gobit/core/eventbus/outbox"
-	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/link"
 	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/core/openapi"
-	"github.com/bdrtr/gobit/core/query"
+	coreplugin "github.com/bdrtr/gobit/core/plugin"
+	"github.com/bdrtr/gobit/internal/app"
 	"github.com/bdrtr/gobit/internal/core/config"
-	"github.com/bdrtr/gobit/internal/core/workflow"
-	"github.com/bdrtr/gobit/internal/core/workflow/pgstore"
 	authmod "github.com/bdrtr/gobit/internal/modules/auth"
-	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
 	"github.com/bdrtr/gobit/internal/modules/auth/models"
 	authsvc "github.com/bdrtr/gobit/internal/modules/auth/service"
 	b2bmod "github.com/bdrtr/gobit/internal/modules/b2b"
 	b2bsvc "github.com/bdrtr/gobit/internal/modules/b2b/service"
 	cartmod "github.com/bdrtr/gobit/internal/modules/cart"
-	cartapi "github.com/bdrtr/gobit/internal/modules/cart/api"
 	cartsvc "github.com/bdrtr/gobit/internal/modules/cart/service"
 	customermod "github.com/bdrtr/gobit/internal/modules/customer"
 	customersvc "github.com/bdrtr/gobit/internal/modules/customer/service"
-	filemod "github.com/bdrtr/gobit/internal/modules/file"
 	fulfillmentmod "github.com/bdrtr/gobit/internal/modules/fulfillment"
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
 	inventorymod "github.com/bdrtr/gobit/internal/modules/inventory"
 	inventorysvc "github.com/bdrtr/gobit/internal/modules/inventory/service"
-	invoicemod "github.com/bdrtr/gobit/internal/modules/invoice"
-	notificationmod "github.com/bdrtr/gobit/internal/modules/notification"
 	ordermod "github.com/bdrtr/gobit/internal/modules/order"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	paymentmod "github.com/bdrtr/gobit/internal/modules/payment"
@@ -133,23 +118,15 @@ import (
 	pricingmod "github.com/bdrtr/gobit/internal/modules/pricing"
 	pricingsvc "github.com/bdrtr/gobit/internal/modules/pricing/service"
 	productmod "github.com/bdrtr/gobit/internal/modules/product"
-	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	promotionmod "github.com/bdrtr/gobit/internal/modules/promotion"
 	promotionsvc "github.com/bdrtr/gobit/internal/modules/promotion/service"
 	regionmod "github.com/bdrtr/gobit/internal/modules/region"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
-	reviewmod "github.com/bdrtr/gobit/internal/modules/review"
-	settingsmod "github.com/bdrtr/gobit/internal/modules/settings"
 	taxmod "github.com/bdrtr/gobit/internal/modules/tax"
 	taxsvc "github.com/bdrtr/gobit/internal/modules/tax/service"
 	cartwf "github.com/bdrtr/gobit/internal/workflows/cart"
 	checkoutwf "github.com/bdrtr/gobit/internal/workflows/checkout"
-	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
-	giftcardsalewf "github.com/bdrtr/gobit/internal/workflows/giftcardsale"
-	invoicingwf "github.com/bdrtr/gobit/internal/workflows/invoicing"
-	ordercancelwf "github.com/bdrtr/gobit/internal/workflows/ordercancel"
-	returnswf "github.com/bdrtr/gobit/internal/workflows/returns"
 	segmentwf "github.com/bdrtr/gobit/internal/workflows/segment"
 	stockalertwf "github.com/bdrtr/gobit/internal/workflows/stockalert"
 )
@@ -170,11 +147,6 @@ const (
 	svcLink     = "core.link"
 	svcQuery    = "core.query"
 	svcEventBus = "core.eventbus"
-	// svcWorkflow is the saga executor; the order completion workflow resolves
-	// it under this name (checkoutwf.ServiceWorkflow).
-	svcWorkflow = "core.workflow"
-	// svcWorkflowStore is the DURABLE store of the execution state.
-	svcWorkflowStore = "core.workflow.store"
 	// svcAuthInterop is the authenticator's name in the container; the core
 	// resolves it BY THAT NAME and does not import the auth module (ADR 0001).
 	svcAuthInterop = "auth.interop"
@@ -182,8 +154,8 @@ const (
 
 // The constants of the Phase 8 identity fixture.
 //
-// The secret is LONGER than 32 characters: the auth module does not reject a
-// short secret but logs a warning, and the test's output must stay assertions.
+// The secret is LONGER than 32 characters: under the shared profile the
+// configuration refuses a shorter one.
 const (
 	// testJWTSecret is the signing secret of the end-to-end tests.
 	testJWTSecret = "e2e-test-signing-secret-longer-than-32-bytes"
@@ -191,18 +163,21 @@ const (
 	// enroll. It is SEPARATE from the signing secret for the reason production
 	// keeps them apart: they are rotated at different hours.
 	testMFASecretKey = "e2e-mfa-sealing-key-longer-than-32-bytes"
-	// adminEmail is the e-mail address of the fixture administrator.
+	// adminEmail is the e-mail address of the fixture administrator, the one the
+	// seed step creates (ADMIN_BOOTSTRAP_EMAIL).
 	adminEmail = "admin@gobit.test"
-	// adminPassword is the password of the fixture administrator.
+	// adminPassword is the password of the fixture administrator. It is longer
+	// than the shared profile's floor for a bootstrap password.
 	adminPassword = "very-secret-password-42"
 	// testChannelName is the sales channel the publishable key is bound to.
 	testChannelName = "e2e-storefront"
-	// testRateLimit is the shared router's per-minute request limit.
+	// testRateLimit is the ground's per-minute request limit
+	// (RATE_LIMIT_PER_MINUTE).
 	//
-	// It is deliberately HIGHER than the production default (600): the shape of
-	// the stack stays the same as in production, but the limit must not fire in
-	// the middle of a scenario and take unrelated tests down. The limit's OWN
-	// behavior is exercised on its own router (see hardening_test.go).
+	// It is deliberately HIGHER than the production default (600): the stack is
+	// production's, but the limit must not fire in the middle of a scenario and
+	// take unrelated tests down. The limit's OWN behavior is exercised on its own
+	// router (see hardening_test.go).
 	testRateLimit = 1_000_000
 
 	// loyaltyEarnBasisPoints is the payment module's earn rate in the harness:
@@ -296,23 +271,18 @@ const (
 
 // The ground the tests share. TestMain fills it, the tests only read it.
 var (
+	// installation is what app.Open brought up; the variables below are its
+	// parts under the names the scenarios read.
+	installation *app.Installation
 	// testPool is the connection pool all modules share.
 	testPool *db.Pool
-	// testDSN is the connection address the migration calls use.
-	testDSN string
 	// ctr is the DI container the modules and the workflows are resolved from.
 	ctr *container.Container
 	// links is the core's Module Links service; it is handed to the container and
 	// to the Query engine, because extensions traverse the links through it.
 	links link.LinkService
-	// testAuthn is the authenticator bound to the guard middleware.
-	//
-	// The router has to be built BEFORE the modules come up (chi refuses r.Use
-	// being called after the routes), while the authenticator is born when the
-	// auth module registers. Production has the same gap and closes it with the
-	// same type (see internal/app/app.go).
-	testAuthn = &corehttp.DeferredAuthenticator{}
-	// testRouter is the router that carries the modules' routes.
+	// testRouter is the router the server would serve, guard stack, panel and
+	// schema included.
 	//
 	// The Phase 5 and Phase 6 scenarios call the workflows directly and never
 	// touch the router; the "store surface" scenario of Phase 7 exercises exactly
@@ -322,9 +292,10 @@ var (
 	// edge.
 	testRouter chi.Router
 	// testModules is the FULL list of the modules bound to the router (the ones
-	// plugins bring included). The schema tests can answer the question "which
-	// endpoints were described" only from this list; a second, hand-maintained
-	// list would silently leave a newly added module out of the description.
+	// plugins bring included), read from the installation's registry. The schema
+	// tests can answer the question "which endpoints were described" only from
+	// this list; a second, hand-maintained list would silently leave a newly
+	// added module out of the description.
 	testModules []module.Module
 	// testDoc is THE VERY document the /openapi.json endpoint serves.
 	//
@@ -334,18 +305,10 @@ var (
 	// also kept around is [openapi.Doc.UnmatchedDescriptions]: descriptions that
 	// match no route are INVISIBLE in the JSON body and can only be read off the
 	// document.
-	//
-	// ~~The test not building a separate copy is deliberate.~~ **Corrected
-	// 2026-09-07:** the document is the served one, but the LOOP that fills it
-	// ([describeDocument]) is a copy of the composition root's, and the sentence
-	// above read as though nothing were duplicated. It drifted the day the
-	// component namespace was added (ADR 0036) — production namespaced its
-	// components, this copy did not, and the harness's document stopped building
-	// because two modules' Address components collided in it. The pair is now
-	// audited from outside by TestTheDescribeLoopsAgree, for the same reason
-	// TestEveryRegisteredModuleIsSetUpInTheE2EHarness audits the module set: what
-	// enforces a promise is not a line written next to it.
 	testDoc *openapi.Doc
+	// groundJobs are the scheduled jobs the plugins registered. Nothing runs
+	// them on their own: a scenario that needs a pass runs it.
+	groundJobs []coreplugin.Job
 )
 
 // The identities the Phase 8 fixture produces; the tests only read them.
@@ -442,12 +405,12 @@ var workflows *cartwf.Workflows
 // container too.
 var orderWorkflows *checkoutwf.Workflows
 
-// stockAlerts is the stock alert flow the ground wires (ADR 0215); a scenario
-// runs its pass where production's job would.
+// stockAlerts is a stock alert flow built on the installation's container (ADR
+// 0215); a scenario runs its pass where production's job would.
 var stockAlerts *stockalertwf.Workflow
 
-// segments is the segment flow the ground wires (ADR 0217); a scenario runs a
-// pass through it as the customer-segments job does.
+// segments is a segment flow built on the installation's container (ADR 0217);
+// a scenario runs a pass through it as the customer-segments job does.
 var segments *segmentwf.Workflow
 
 // The identifiers of the fixture regions.
@@ -517,7 +480,7 @@ func TestMain(m *testing.M) {
 // exit code.
 //
 // It lives in a separate function because os.Exit skips the defers: the container
-// and the pool can only be closed safely here.
+// and the installation can only be closed safely here.
 func runWithPostgres(m *testing.M) int {
 	// The modules use slog.Default() at startup; the logs are discarded so that
 	// the test's output stays the computation assertions.
@@ -556,20 +519,17 @@ func runWithPostgres(m *testing.M) int {
 		return 1
 	}
 
-	testDSN, err = ctr.ConnectionString(ctx, "sslmode=disable")
+	dsn, err := ctr.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not obtain the connection address: %v\n", err)
 		return 1
 	}
 
-	testPool, err = db.New(ctx, db.DefaultConfig(testDSN), nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "could not open the connection pool: %v\n", err)
-		return 1
+	stop, err := setUpHarness(ctx, dsn)
+	if stop != nil {
+		defer stop()
 	}
-	defer testPool.Close()
-
-	if err := setUpHarness(ctx); err != nil {
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not set up the ground: %v\n", err)
 		return 1
 	}
@@ -577,330 +537,158 @@ func runWithPostgres(m *testing.M) int {
 	return m.Run()
 }
 
-// setUpHarness prepares the container, the modules, the workflows and the region
-// fixtures.
+// clearConfigEnvironment unsets every variable the configuration reads.
 //
-// The order is THE SAME as internal/app/app.go's and it has to be: the modules
-// resolve core.db, core.link and core.query during Register, so those three must
-// be registered BEFORE Bootstrap. If the order changes, a setup that would blow
-// up in production too blows up here — which is what we want.
-func setUpHarness(ctx context.Context) error {
-	ctr = container.New(nil)
-
-	if err := ctr.Provide(svcDB, testPool); err != nil {
-		return err
+// The names are read off config.Config's env tags rather than listed here: a
+// list would miss the next setting, and the setting it missed is the one a
+// developer's shell or a runner's environment would then decide for the ground.
+// Plugin settings need nothing: the plugins on the ground read none.
+func clearConfigEnvironment() error {
+	names := envTagNames(reflect.TypeFor[config.Config]())
+	if len(names) == 0 {
+		return fmt.Errorf("config.Config carries no env tag; the clearing has gone blind")
+	}
+	for _, name := range names {
+		if err := os.Unsetenv(name); err != nil {
+			return fmt.Errorf("could not unset %s: %w", name, err)
+		}
 	}
 
-	// The core migrations are applied BEFORE the module migrations; even though
-	// the cart workflows do not use the workflow engine, the setup order must stay
-	// the same as in production.
-	if err := db.Migrate(ctx, testDSN, pgstore.Migrations(), pgstore.MigrationOwner); err != nil {
-		return err
-	}
-	// The outbox is a core schema too, and the order module writes into it
-	// inside its own transaction — so an order cannot be placed without it.
-	if err := db.Migrate(ctx, testDSN, outbox.Migrations(), outbox.MigrationOwner); err != nil {
-		return err
+	return nil
+}
+
+// envTagNames returns the env tags of a struct type, nested structs included.
+func envTagNames(t reflect.Type) []string {
+	var names []string
+	for i := range t.NumField() {
+		field := t.Field(i)
+		if name, ok := field.Tag.Lookup("env"); ok {
+			names = append(names, strings.Split(name, ",")[0])
+
+			continue
+		}
+		if field.Type.Kind() == reflect.Struct {
+			names = append(names, envTagNames(field.Type)...)
+		}
 	}
 
-	links = link.New(testPool, nil)
-	if err := ctr.Provide(svcLink, links); err != nil {
-		return err
+	return names
+}
+
+// groundEnvironment is the configuration the ground runs under, on top of a
+// cleared environment.
+func groundEnvironment(dsn string) map[string]string {
+	return map[string]string{
+		"DATABASE_URL": dsn,
+		// The shared profile: what staging and production run, less the one
+		// branch that is production's alone (the manual payment provider).
+		"APP_ENV":       "staging",
+		"EVENT_BUS":     "inmemory",
+		"GUARD_BACKEND": "memory",
+		"LOG_LEVEL":     "error",
+		"JWT_SECRET":    testJWTSecret,
+		// The key that lets an administrator hold a second factor. Without one
+		// the module REFUSES to enroll, and the demand at login (ADR 0147) can
+		// only be exercised end to end by an account that really enrolled.
+		"MFA_SECRET_KEY":        testMFASecretKey,
+		"RATE_LIMIT_PER_MINUTE": strconv.Itoa(testRateLimit),
+		"PLUGINS":               strings.Join(groundPlugins, ","),
+		// The spy stands where a real plugin provider would (notification_test.go).
+		"NOTIFICATION_PROVIDER":   notificationSpyID,
+		"FILE_ROOT":               fileRoot,
+		"PAYMENT_OFFLINE_METHODS": offlineMethod,
+		// The earn rate is the CEILING — one point per minor unit — so that one
+		// paid order earns enough to pay for the next one entirely, which is what
+		// a spend scenario needs at a storefront that takes one tender for the
+		// whole order (ADR 0165).
+		"PAYMENT_LOYALTY_EARN_BASIS_POINTS": strconv.FormatInt(loyaltyEarnBasisPoints, 10),
+		// The first administrator is born from the seed step, as on a fresh
+		// server.
+		"ADMIN_BOOTSTRAP_EMAIL":    adminEmail,
+		"ADMIN_BOOTSTRAP_PASSWORD": adminPassword,
 	}
-	if err := ctr.Provide(svcQuery, query.New(links, ctr, nil)); err != nil {
-		return err
+}
+
+// setUpHarness opens the installation and prepares the fixtures.
+//
+// The returned function closes the installation; it is non-nil once the
+// installation is open, even when a later step fails.
+func setUpHarness(ctx context.Context, dsn string) (func(), error) {
+	if err := clearConfigEnvironment(); err != nil {
+		return nil, err
+	}
+	for name, value := range groundEnvironment(dsn) {
+		if err := os.Setenv(name, value); err != nil {
+			return nil, fmt.Errorf("could not set %s: %w", name, err)
+		}
 	}
 
-	// The saga engine is built on the DURABLE store (as in main.go). The in-memory
-	// engine (workflow.NewInMemory) leaves the idempotency guard at the process
-	// boundary; Phase 6's claim "the same cart cannot be completed twice" has to
-	// exercise exactly that guard in its database form.
-	persistentStore := pgstore.New(testPool, nil)
-	if err := ctr.Provide(svcWorkflowStore, persistentStore); err != nil {
-		return err
-	}
-	if err := ctr.Provide(svcWorkflow, workflow.New(persistentStore, nil)); err != nil {
-		return err
-	}
-
-	// The bus is kept in a separate variable: the "order.placed" subscriber has to
-	// be wired BEFORE the modules come up, otherwise an event published during
-	// bootstrap would be missed.
-	bus := eventbus.NewInMemory(nil)
-	if err := ctr.Provide(svcEventBus, bus); err != nil {
-		return err
-	}
-	if err := eventLog.subscribe(bus); err != nil {
-		return err
-	}
-	if err := cancelLog.subscribe(bus); err != nil {
-		return err
-	}
-
-	// The customer identity is the EMBEDDER's, and this harness is an embedder
-	// (ADR 0043, ADR 0057). Without one the storefront surfaces that name a
-	// customer are closed, which is the correct production default and would
-	// leave the flows below unable to open a cart for anybody — so the harness
-	// binds a verifier the way an installation does, under the core's name.
-	if err := ctr.Provide(corehttp.IdentityName, storefrontIdentity{}); err != nil {
-		return err
-	}
-
-	registry := module.NewRegistry(nil, func(ctx context.Context, src fs.FS, owner string) error {
-		return db.Migrate(ctx, testDSN, src, owner)
-	})
-	// The module set and its order are the same as internal/app/app.go's. The whole
-	// setup must be exercised: pruning a module for the test would hide from the
-	// test a conflict that production would only see at startup.
-	registry.Add(productmod.New(productmod.Options{}))
-	registry.Add(pricingmod.New(nil))
-	registry.Add(inventorymod.New())
-	registry.Add(regionmod.New(nil))
-	registry.Add(customermod.New(nil))
-	registry.Add(cartmod.New(cartmod.Options{}))
-	// The person-bound tenders are registered exactly as production registers
-	// them: `app.go` turns them on unless the installation trusts an unproven
-	// customer claim, and the default configuration does not (ADR 0152, 0165).
-	// Leaving them off here would mean the harness ran a payment module
-	// production never ships.
-	//
-	// The earn rate is the CEILING — one point per minor unit — so that one paid
-	// order earns enough to pay for the next one entirely, which is what a
-	// spend scenario needs at a storefront that takes one tender for the whole
-	// order. It is also the rate at which a points-paid capture that earned
-	// would earn itself back forever, so the scenario that proves it earns
-	// nothing runs at the rate where it matters most (ADR 0165).
-	registry.Add(paymentmod.New(paymentmod.Options{
-		ManualProvider:         true,
-		OfflineMethods:         []string{offlineMethod},
-		PersonBoundTenders:     true,
-		LoyaltyEarnBasisPoints: loyaltyEarnBasisPoints,
-	}))
-	registry.Add(ordermod.New())
-	// Phase 7: fulfillment, promotion, tax. All three are added in the ORDER of
-	// main.go.
-	registry.Add(fulfillmentmod.New())
-	registry.Add(promotionmod.New(nil))
-	registry.Add(taxmod.New(nil))
-	// Notification. That the "order.placed" subscriber REALLY is wired and that it
-	// can read the order's contact details off the real order module can only be
-	// exercised here — in the module's own integration test the order surface is a
-	// FAKE and the schemas of the two sides cannot be audited by the compiler
-	// (Principle 2.4).
-	//
-	// The provider chosen is NOT the out-of-the-box "log" one but a SPY (see
-	// notification_test.go). There is a single reason for it: the claim "the
-	// notification's recipient is the order's e-mail address" requires a place that
-	// SEES the address, and the address is deliberately stored nowhere — the
-	// delivery log has no column for it, and the "log" provider does not log it
-	// either. One place is left: the provider itself. The spy stands where a real
-	// plugin provider would stand; the rest of the chain is production code, and
-	// the out-of-the-box provider stays in the registry too.
-	registry.Add(notificationmod.New(notificationmod.Options{ProviderID: notificationSpyID}))
-	// File. That the address the upload produces REALLY can be used as a product
-	// image can only be exercised here: the two ends of the chain are in two
-	// separate modules (file uploads, product stores) and the two do not import
-	// each other, which means no unit test can see both at once (see
-	// file_test.go).
-	//
-	// The limit and the allow list are the PRODUCTION DEFAULTS (config constants);
-	// the test making up its own values would lead to e2e one day "proving" that it
-	// accepts a file production does not. The root directory, on the other hand,
-	// necessarily diverges (see [fileRoot]).
-	registry.Add(filemod.New(filemod.Options{
-		Root:           fileRoot,
-		MaxUploadBytes: config.DefaultFileMaxUploadBytes,
-		AllowedTypes:   strings.Split(config.DefaultFileAllowedTypes, ","),
-	}))
-	// Phase 8: identity.
-	registry.Add(authmod.New(authmod.Options{
-		JWTSecret: testJWTSecret,
-		JWTTTL:    time.Hour,
-		JWTIssuer: "gobit-e2e",
-		// The key that lets an administrator hold a second factor. It is set here
-		// because without one the module REFUSES to enroll, and the demand at login
-		// (ADR 0147) can only be exercised end to end by an account that really
-		// enrolled — a harness with no key would prove the refusal and nothing else.
-		MFASecretKey: testMFASecretKey,
-		// The bcrypt cost is LOWERED for the test: the default cost adds ~100ms to
-		// every login call and the identity scenarios perform dozens of logins. The
-		// cost parameter ITSELF is not exercised here; the behavior of password
-		// verification is.
-		BcryptCost: bcrypt.MinCost,
-	}))
-	// Section 10: B2B. It is registered as in PRODUCTION, because what is exercised
-	// is not the module's own endpoints but the fact that its being registered
-	// CHANGES the order module's behavior: order resolves the spend rule from the
-	// container under the name "b2b.interop", and without the registration it
-	// counts every customer as unlimited.
-	registry.Add(b2bmod.New(nil, b2bmod.Options{}))
-	// Invoice. It is here so its migration runs on a real database and its
-	// endpoints enter the scope of the authorization audit that walks the
-	// router tree. It binds to no other module, so nothing else in this harness
-	// changes because it is registered.
-	registry.Add(invoicemod.New(invoicemod.Options{}))
-	// Settings. The invoicing flow reads the shop's identity from it over the
-	// primitive surface, and that hop can only be exercised here: in the flow's
-	// own tests the profile is a FAKE, and the two ends spell the first field
-	// differently ("legal_name" against a party's "name"), which is exactly the
-	// kind of mismatch no compiler sees (ADR 0115).
-	registry.Add(settingsmod.New(nil))
-	// Review. It is here for the reason invoice is — its migration runs on a
-	// real database and its endpoints enter the authorization audit that walks
-	// the router tree — and for one this harness is the ONLY place that can
-	// serve: the module's whole claim is that an unapproved review is invisible
-	// on the storefront, and the storefront is a router built by the production
-	// guard stack. In the module's own tests the router is the module's; here
-	// the request goes through the same publishable-key check, the same quota
-	// and the same idempotency ring a shopper's would.
-	registry.Add(reviewmod.New(reviewmod.Options{}))
-
-	// The router is built as in PRODUCTION: the guard stack (rate limit -> identity
-	// -> idempotency) comes from the single definition in the core, the test has no
-	// copy of its own. Had there been a copy, the test would still verify the old
-	// order once production's order changed, and it would stay green.
-	testRouter = corehttp.NewRouter(corehttp.RouterOptions{
+	opened, stop, err := app.Open(ctx, app.Options{
 		Version: "e2e",
-		Middlewares: corehttp.APIGuards(corehttp.GuardOptions{
-			Authenticator:    testAuthn,
-			AdminExempt:      []string{authapi.LoginPath},
-			Limiter:          corehttp.NewMemoryLimiter(testRateLimit, time.Minute),
-			LimitKey:         corehttp.ClientIPKey,
-			IdempotencyStore: corehttp.NewMemoryIdempotencyStore(time.Hour, 0),
-			// The exemption list has to be the same as in PRODUCTION, otherwise
-			// this file exercises not an end-to-end setup but some other
-			// configuration it built itself. The difference bit exactly here: when
-			// cart creation was taken out of the ring in production, the tests
-			// here went on passing as before and started documenting a behavior
-			// that no longer existed.
-			IdempotencyExempt: []string{graph.Path, cartapi.StoreCartsPath},
-		}),
+		Modules: []module.Module{identityModule{}},
+		Plugins: []coreplugin.Plugin{carrierSpyPlugin{}, observersPlugin{}},
 	})
-
-	// The plugins are installed BEFORE the modules (the same order as main.go): the
-	// module a plugin BRINGS must go through the Register/migration/route cycle
-	// too. The rationale, and why installing them on the ground does not break the
-	// existing tests, is at the top of search_test.go.
-	if err := setUpPlugins(ctx, registry, bus); err != nil {
-		return fmt.Errorf("could not install the plugins: %w", err)
-	}
-
-	if err := registry.Bootstrap(ctx, ctr, testRouter); err != nil {
-		return err
-	}
-
-	// The authenticator is only in the container after Bootstrap.
-	authenticator, err := container.Resolve[corehttp.Authenticator](ctr, svcAuthInterop)
 	if err != nil {
-		return fmt.Errorf("could not resolve the authenticator: %w", err)
+		return nil, fmt.Errorf("could not open the installation: %w", err)
 	}
-	testAuthn.Bind(authenticator)
+	installation = opened
+	ctr, testRouter, testModules = opened.Container, opened.Router, opened.Modules
+	testDoc, groundJobs = opened.Schema, opened.Jobs
 
-	// The plugins' subscriptions and routes are applied AFTER the modules have come
-	// up; the provider registrations and the subscriptions can only be resolved at
-	// that moment.
-	if err := startPlugins(ctx); err != nil {
-		return fmt.Errorf("could not start the plugins: %w", err)
+	if testPool, err = container.Resolve[*db.Pool](ctr, svcDB); err != nil {
+		return stop, err
 	}
-
-	// The notification spy is registered at the SAME stage as the plugin providers,
-	// that is AFTER the modules have come up: "notification.providers" is put into
-	// the container in the module's Register, and trying earlier would take the
-	// ground down with an error where nothing is actually missing.
-	if err := setUpNotificationSpy(); err != nil {
-		return fmt.Errorf("could not set up the notification spy: %w", err)
+	if links, err = container.Resolve[link.LinkService](ctr, svcLink); err != nil {
+		return stop, err
 	}
-
-	// The OpenAPI endpoint is set up as in production too (Phase 9): the path, the
-	// method and the security are read off the router tree, while the BODY schemas
-	// come from the modules' descriptions. Running the description hook here as
-	// well is mandatory — had openapi.New been wired on its own, the e2e schema
-	// would stay bodyless and the claim "the schema the server serves is filled in"
-	// would have exercised a setup that never exists in production.
-	//
-	// The module list is READ from the registry (the same reasoning as main.go):
-	// the modules the plugins bring show up only there.
-	testModules = registry.Modules()
-	testDoc = describeDocument("gobit API", "e2e", testModules)
-	testRouter.Get(schemaPath, testDoc.Handler(testRouter))
-
 	if err := resolveModuleServices(); err != nil {
-		return err
+		return stop, err
 	}
 
-	var setupErr error
-	if workflows, setupErr = setUpCartWorkflows(); setupErr != nil {
-		return fmt.Errorf("could not set up the cart workflows: %w", setupErr)
+	// The flows below are built on the installation's container, and each one
+	// is a second instance of what production wired: none of them subscribes,
+	// and none is provided here.
+	if workflows, err = cartwf.FromContainer(ctr); err != nil {
+		return stop, fmt.Errorf("could not build the cart workflows: %w", err)
 	}
-	if orderWorkflows, setupErr = setUpCheckoutWorkflows(); setupErr != nil {
-		return fmt.Errorf("could not set up the order completion workflow: %w", setupErr)
+	if orderWorkflows, err = checkoutwf.FromContainer(ctr); err != nil {
+		return stop, fmt.Errorf("could not build the order completion workflow: %w", err)
 	}
-	if setupErr = setUpInvoicingWorkflow(); setupErr != nil {
-		return fmt.Errorf("could not set up the invoicing workflow: %w", setupErr)
+	if stockAlerts, err = stockalertwf.FromContainer(ctr, nil); err != nil {
+		return stop, fmt.Errorf("could not build the stock alert workflow: %w", err)
 	}
-	// BEFORE the return flow, and the order is a dependency rather than a
-	// preference: sending a replacement opens a parcel, so the return flow
-	// resolves this one by name. internal/app/setup.go wires them in the same
-	// order for the same reason.
-	if setupErr = setUpFulfillingWorkflow(); setupErr != nil {
-		return fmt.Errorf("could not set up the fulfilling workflow: %w", setupErr)
-	}
-	if setupErr = setUpReturnsWorkflow(); setupErr != nil {
-		return fmt.Errorf("could not set up the return workflow: %w", setupErr)
-	}
-	if setupErr = setUpOrderCancelWorkflow(); setupErr != nil {
-		return fmt.Errorf("could not set up the cancellation workflow: %w", setupErr)
-	}
-	if _, setupErr = giftcardsalewf.FromContainer(ctr, nil); setupErr != nil {
-		return fmt.Errorf("could not set up the gift card sale workflow: %w", setupErr)
-	}
-	// The stock alert flow runs on a job in production (ADR 0215); the ground
-	// keeps it to run a pass where a scenario needs one.
-	if stockAlerts, setupErr = stockalertwf.FromContainer(ctr, nil); setupErr != nil {
-		return fmt.Errorf("could not set up the stock alert workflow: %w", setupErr)
-	}
-	// The segment flow runs on a job in production and answers the customer
-	// module's preview (ADR 0217); the ground provides it under the same name
-	// and keeps it to run a pass where a scenario needs one.
-	if segments, setupErr = segmentwf.FromContainer(ctr, nil); setupErr != nil {
-		return fmt.Errorf("could not set up the segment workflow: %w", setupErr)
-	}
-	if setupErr = ctr.Provide(segmentwf.InteropName, segmentwf.NewInterop(segments)); setupErr != nil {
-		return fmt.Errorf("could not provide the segment workflow: %w", setupErr)
+	if segments, err = segmentwf.FromContainer(ctr, nil); err != nil {
+		return stop, fmt.Errorf("could not build the segment workflow: %w", err)
 	}
 
 	if err := setUpRegionFixtures(ctx); err != nil {
-		return err
+		return stop, err
 	}
 	if err := setUpTaxFixtures(ctx); err != nil {
-		return err
+		return stop, err
 	}
 	if err := setUpIdentityFixture(ctx); err != nil {
-		return err
+		return stop, err
 	}
-	return setUpStockLocation(ctx)
+
+	return stop, setUpStockLocation(ctx)
 }
 
 // setUpIdentityFixture produces the identities the Phase 8 scenarios share.
 //
-// The identities are created from the SERVICE and not over HTTP, and that is
-// deliberate: the admin endpoints themselves are guarded now, which means there
-// is no way to create the first administrator over HTTP. In a real setup the
-// first administrator is born from a seed step as well; the test imitates that
-// step.
+// The administrator is the one the seed step created (ADMIN_BOOTSTRAP_EMAIL),
+// read back rather than made: the admin endpoints are guarded, so a fresh
+// installation's first administrator can only come from that step. The keys
+// and the channel are created from the SERVICE.
 //
 // What is produced:
-//   - an admin user with a password (the login scenarios),
+//   - the seeded admin user and its password (the login scenarios),
 //   - a fully privileged SECRET key (tokenless admin access),
 //   - a sales channel and a PUBLISHABLE key bound to it (the storefront surface).
 func setUpIdentityFixture(ctx context.Context) error {
-	admin, err := authSvc.CreateUser(ctx, authsvc.CreateUserInput{
-		Email:     adminEmail,
-		FirstName: "E2E",
-		LastName:  "Admin",
-	}, adminPassword)
+	admin, err := authSvc.GetUserByEmail(ctx, adminEmail)
 	if err != nil {
-		return fmt.Errorf("could not set up the admin user: %w", err)
+		return fmt.Errorf("the seed step created no administrator: %w", err)
 	}
 	adminID = admin.ID
 
@@ -992,131 +780,6 @@ func resolveModuleServices() error {
 		return err
 	}
 	taxInterop, err = container.Resolve[taxSurface](ctr, taxmod.InteropName)
-	return err
-}
-
-// setUpCartWorkflows builds the cart workflows with the PRODUCTION wiring and
-// REGISTERS them in the container.
-//
-// [cartwf.FromContainer] resolves all six surfaces from the container by name;
-// the cart side is the primitive surface registered under the name "cart.interop"
-// (ADR 0006). There is no bridge and no fake in the test: if an incompatibility
-// turns up here, it turns up in production too.
-//
-// # Why the registration is MANDATORY
-//
-// Had the workflow only been written into this file's variable, the tests could
-// call it but the STORE ENDPOINTS could not: the cart module's storefront line
-// endpoints resolve the workflow from the container under the name
-// [cartwf.InteropName] and fail CLOSED when they cannot find it. The registration
-// is the same as registerWorkflows in cmd/server; without it e2e would exercise
-// not a setup that works in production but only the workflow itself.
-func setUpCartWorkflows() (*cartwf.Workflows, error) {
-	workflows, err := cartwf.FromContainer(ctr)
-	if err != nil {
-		return nil, err
-	}
-	if err := ctr.Provide(cartwf.InteropName, cartwf.NewInterop(workflows)); err != nil {
-		return nil, err
-	}
-	return workflows, nil
-}
-
-// setUpCheckoutWorkflows builds the order completion workflow with the PRODUCTION
-// wiring and REGISTERS it in the container.
-//
-// [checkoutwf.FromContainer] resolves seven surfaces from the container by name
-// (cart.interop, inventory.interop, order.interop, payment.interop, core.link,
-// core.query, core.workflow) and ALSO builds the cart computation itself on the
-// same container. There is no bridge and no fake in the test: an incompatibility
-// here blows up at startup in production too.
-//
-// The rationale for the registration is the same as [setUpCartWorkflows]'s: the
-// POST /store/v1/carts/{id}/complete endpoint resolves the workflow under the
-// name [checkoutwf.InteropName].
-func setUpCheckoutWorkflows() (*checkoutwf.Workflows, error) {
-	flows, err := checkoutwf.FromContainer(ctr)
-	if err != nil {
-		return nil, err
-	}
-	if err := ctr.Provide(checkoutwf.InteropName, checkoutwf.NewInterop(flows)); err != nil {
-		return nil, err
-	}
-	return flows, nil
-}
-
-// setUpInvoicingWorkflow builds the invoicing flow and registers its surface.
-//
-// It is wired here because the flow is what the order module's invoice
-// endpoints resolve BY NAME at request time: without it those endpoints fail
-// closed, and the scenario that exercises them would be proving that the
-// failure path works rather than that invoicing does.
-//
-// The flow itself is not kept: nothing in these tests calls it directly. The
-// whole point of the scenario is that the call arrives over HTTP.
-func setUpInvoicingWorkflow() error {
-	flow, err := invoicingwf.FromContainer(ctr)
-	if err != nil {
-		return err
-	}
-
-	return ctr.Provide(invoicingwf.InteropName, invoicingwf.NewInterop(flow))
-}
-
-// setUpFulfillingWorkflow builds the parcel flow and registers its surface.
-//
-// It is the flow that opens a SHIPMENT for an order and binds the two, and the
-// ground needs it for two callers: the order module's shipment endpoints, which
-// resolve it by name and fail closed without it, and the return flow, which
-// opens the parcel a replacement leaves in.
-func setUpFulfillingWorkflow() error {
-	flow, err := fulfillingwf.FromContainer(ctr)
-	if err != nil {
-		return err
-	}
-
-	return ctr.Provide(fulfillingwf.InteropName, fulfillingwf.NewInterop(flow))
-}
-
-// setUpReturnsWorkflow builds the after-sales flow and registers its surface.
-//
-// It is wired for the same reason [setUpInvoicingWorkflow] is, and the cost of
-// leaving it out is louder: the order module resolves this flow BY NAME at
-// request time and FAILS CLOSED when it is missing, so without the
-// registration every receive, refund and claim settlement answers 500 and a
-// scenario written against those endpoints would be proving that the
-// unavailable-flow branch works. The registration is the same one
-// internal/app/setup.go makes.
-//
-// The flow itself is not kept in a variable: nothing in these tests calls it
-// directly, and that is the point — the only way a return is received here is
-// the way an operator receives one, over HTTP.
-func setUpReturnsWorkflow() error {
-	flow, err := returnswf.FromContainer(ctr)
-	if err != nil {
-		return err
-	}
-
-	return ctr.Provide(returnswf.InteropName, returnswf.NewInterop(flow))
-}
-
-// setUpOrderCancelWorkflow builds the cancellation flow and SUBSCRIBES it.
-//
-// It registers no surface: nothing resolves this flow by name, because nothing
-// calls it — it is the repository's only flow that is driven entirely by the bus
-// (ADR 0134/0139). FromContainer subscribes as part of wiring, so building it IS
-// registering it.
-//
-// # Why its absence here was a defect and not an omission
-//
-// This ground was missing it, and it was the only one of the six flows
-// internal/app/setup.go wires that it was missing. That is exactly where two
-// faults hid: a write-off that returned units sitting in a box and a parcel
-// cancellation that released nothing, both green against fakes for weeks because
-// no scenario ever ran the flow against real modules (D75, D76, ADR 0141).
-func setUpOrderCancelWorkflow() error {
-	_, err := ordercancelwf.FromContainer(ctr, nil)
-
 	return err
 }
 

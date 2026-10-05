@@ -61,9 +61,9 @@ smallest program that can run gobit, and it is also the example one copies.
 The price of this is that the connections cannot be checked by the compiler: if
 the signature a module publishes and the signature its consumer expects drift
 apart, the error shows up at run time. The price was accepted deliberately and
-is met with two things: (1) the end-to-end tests build the production wiring
-**exactly**, (2) every interop surface has an integration test that runs against
-real dependencies.
+is met with two things: (1) the end-to-end tests run the production wiring
+itself, opening the installation the server serves (ADR 0398), (2) every
+interop surface has an integration test that runs against real dependencies.
 
 ---
 
@@ -101,10 +101,12 @@ other hand, register their routes on a flat router with the **full path**
 lost. `corehttp.Scoped` fills that gap: the scope is established inside the
 middleware itself rather than in the router tree.
 
-The stack's **order is written in a single place** (`corehttp.APIGuards`) and
-the end-to-end tests build that very stack. If the test had its own copy, then
-when the production order changed the test would verify the old order and stay
-green.
+The stack's **order is written in a single place** (`corehttp.APIGuards`), so
+there is one copy to change. The end-to-end tests do not build a stack: they open
+the installation through `app.Open`, the assembly the server runs, and drive the
+stack production built
+([ADR 0398](adr/0398-the-end-to-end-ground-opens-the-installation-the-server-serves.md)).
+Their own copy was how the ground drifted from production (D254).
 
 ### Error → status mapping
 
@@ -305,9 +307,10 @@ One of them is a shape worth naming on its own: the cancellation flow is driven
 **entirely by the event bus**. Nothing resolves it and nothing calls it; wiring
 it IS subscribing it. That makes it the only flow whose absence is silent — an
 unwired one breaks no request and reddens no test, and two faults lived in
-exactly that silence (D75, D76). The gate that keeps the end-to-end ground
-wiring what production wires exists for this shape
-([ADR 0141](adr/0141-the-end-to-end-ground-wires-what-production-wires.md)).
+exactly that silence (D75, D76). The end-to-end ground opens the same assembly as
+production, so a bus-driven flow that production stops wiring stops in every
+scenario too
+([ADR 0398](adr/0398-the-end-to-end-ground-opens-the-installation-the-server-serves.md)).
 
 **Multi-warehouse allocation** was added to the saga later and its seam is split
 across two modules: inventory states the fact of "which warehouses have enough
@@ -408,8 +411,8 @@ refused.
    `service`, `api`, `migrations`, `queries`, `sqlc.yaml`.
 2. Add a `module-isolation-<name>` depguard block to `.golangci.yml` **and** add
    the new module to the other modules' blocks.
-3. Add it to `registerModules` in `internal/app` and to the harness in
-   `internal/e2e` — the two carry the same order.
+3. Add it to `registerModules` in `internal/app`; the end-to-end ground opens
+   that assembly and has the module the moment production does.
 
 ### A new domain event
 

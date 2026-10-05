@@ -5,7 +5,7 @@ and returns its HTTP handler instead of listening. It costs one exported method
 and the discipline that the assembly lives in one function, and it buys an
 embedder the ability to test its own module against a real gobit.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0398](0398-the-end-to-end-ground-opens-the-installation-the-server-serves.md), whose ground is a caller of the one assembly while the facade is unchanged
 - **Date:** 2026-09-12
 
 ## Context

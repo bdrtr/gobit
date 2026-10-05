@@ -1704,6 +1704,20 @@ var testNameReferenceExemptions = []pathReferenceExemption{
 			"were when its mutations ran; ADR 0370 moved them into internal/core/identity, " +
 			"where the same row is TestAHandlerAskingForTheIdentityIsHandedNothing.",
 	},
+	{
+		file: "docs/adr/0036-a-component-name-carries-its-module.md",
+		path: "TestTheDescribeLoopsAgree",
+		reason: "ADR 0036 is in the historical range 0001-0051, which takes no edit but " +
+			"its Summary. The gate compared the end-to-end ground's describe loop with the " +
+			"root's; ADR 0398 gave the ground the root's own, and the gate went with the copy.",
+	},
+	{
+		file: "docs/gaps.md",
+		path: "TestProductionWiresEveryFlowTheGroundDoes",
+		reason: "D146 is a closed row and a closed row is never edited. The gate it names " +
+			"held production to the flows a hand-built ground imported; ADR 0398 retired the " +
+			"hand-built ground, and D255 records what the gate could not see.",
+	},
 }
 
 // findTestNameExemption is [findPathExemption] for the backticked-test-name list.

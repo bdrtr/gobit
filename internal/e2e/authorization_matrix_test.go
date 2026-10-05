@@ -5,6 +5,7 @@ package e2e
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/internal/adminui"
 )
 
 // This file audits the whole authorization matrix rather than one row of it.
@@ -53,13 +55,13 @@ import (
 // behind nothing or take the quota off a file endpoint that does a database
 // read per request.
 //
-// # What this matrix does NOT cover
+// # The panel tree is a surface of its own
 //
-// The panel tree. `/admin/ui` is not mounted in this harness, so its own ring —
-// identity, origin and the session cookie ADR 0076 widened — is audited in
-// internal/app against the real guard stack instead. A matrix that walked a
-// router the panel was missing from and said nothing about it would be claiming
-// coverage it does not have.
+// `/admin/ui` is mounted on this ground because the ground is the server's
+// installation (ADR 0398), and its ring — identity and origin — is the panel's
+// rather than the API's. Its row asks only what that ring owes an anonymous
+// caller; what a signed-in operator may do there is the panel scenarios' and
+// internal/app's.
 var openRoutes = map[string]string{
 	"/health": "the liveness probe; a checker that had to authenticate could not " +
 		"report that authentication is what is broken",
@@ -94,6 +96,8 @@ const (
 	// of what keeps one shopper out of another's addresses.
 	surfaceCustomer = "customer"
 	surfaceOpen     = "open"
+	// surfacePanel is the admin panel's tree, guarded by the panel's own ring.
+	surfacePanel = "panel"
 )
 
 // customerRoutes are the storefront endpoints that name a person.
@@ -153,6 +157,8 @@ func matrixRoutes(t *testing.T) []matrixRoute {
 		switch {
 		case strings.HasPrefix(pattern, corehttp.DefaultAdminPrefix):
 			route.surface = surfaceAdmin
+		case pattern == adminui.URLPrefix || strings.HasPrefix(pattern, adminui.URLPrefix+"/"):
+			route.surface = surfacePanel
 		case strings.HasPrefix(pattern, "/store/v1"):
 			route.surface = surfaceStore
 			if _, named := customerRoutes[pattern]; named {
@@ -211,7 +217,7 @@ func TestTheAuthorizationMatrixHoldsForEveryEndpoint(t *testing.T) {
 	// pairs — nine customer patterns are thirteen routes. Counting the pairs
 	// against a list of patterns would compare two different things, and the
 	// number it produced would be wrong in a way that looked like a finding.
-	var admin, store int
+	var admin, store, panel int
 
 	customer, open := map[string]bool{}, map[string]bool{}
 
@@ -221,6 +227,8 @@ func TestTheAuthorizationMatrixHoldsForEveryEndpoint(t *testing.T) {
 			admin++
 		case surfaceStore:
 			store++
+		case surfacePanel:
+			panel++
 		case surfaceCustomer:
 			customer[route.pattern] = true
 		case surfaceOpen:
@@ -232,6 +240,7 @@ func TestTheAuthorizationMatrixHoldsForEveryEndpoint(t *testing.T) {
 	// returned nothing would satisfy every assertion below by making none.
 	require.Greater(t, admin, 50, "the admin surface came back too small; the walk is broken")
 	require.Greater(t, store, 10, "the store surface came back too small; the walk is broken")
+	require.Greater(t, panel, 10, "the panel tree came back too small; the walk is broken or the panel is unmounted")
 	require.Equal(t, len(customerRoutes), len(customer),
 		"the customer-named storefront routes walked do not match the ones declared. A "+
 			"route left the list by being renamed, or one was added to the list that no "+
@@ -248,6 +257,8 @@ func TestTheAuthorizationMatrixHoldsForEveryEndpoint(t *testing.T) {
 				assertAdminRow(t, route)
 			case surfaceStore:
 				assertStoreRow(t, route)
+			case surfacePanel:
+				assertPanelRow(t, route)
 			case surfaceCustomer:
 				assertCustomerRow(t, route)
 			case surfaceOpen:
@@ -293,6 +304,37 @@ func assertAdminRow(t *testing.T, route matrixRoute) {
 			"a fully scoped admin key was refused; the endpoint's scope is one nothing "+
 				"grants, so no operator can ever reach it")
 	}
+}
+
+// assertPanelRow: what the panel's two rings owe an anonymous caller.
+//
+// The sign-in page, its submission and the stylesheet are the panel's own
+// exemptions and are skipped. A read is refused with 401, the identity ring's
+// sign-in answer. A write meets the origin check first, so it is sent twice:
+// with no Origin it must be refused with exactly 403 by the origin ring, and
+// with the panel's own origin it must pass that ring and be refused with
+// exactly 401 by the identity ring. One write request alone would only show
+// that SOME ring refused it, and either ring could be gone.
+func assertPanelRow(t *testing.T, route matrixRoute) {
+	t.Helper()
+
+	if slices.Contains(adminui.ExemptPaths(), route.pattern) {
+		return
+	}
+
+	if route.method == http.MethodGet {
+		assert.Equal(t, http.StatusUnauthorized, request(t, route, nil),
+			"an anonymous caller read a panel page; the panel's identity ring is missing")
+
+		return
+	}
+
+	assert.Equal(t, http.StatusForbidden, request(t, route, nil),
+		"an anonymous %s with no Origin was not refused by the panel's origin ring", route.method)
+
+	assert.Equal(t, http.StatusUnauthorized, request(t, route, func(r *http.Request) {
+		r.Header.Set("Origin", "http://"+r.Host)
+	}), "an anonymous same-origin %s was not refused by the panel's identity ring", route.method)
 }
 
 // assertStoreRow: who may reach a storefront endpoint.

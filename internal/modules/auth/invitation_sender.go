@@ -69,7 +69,7 @@ func newInvitationSender(c *container.Container, log *slog.Logger) *invitationSe
 // writes the invitation row first and then asks for it to be sent, so swallowing
 // the failure would leave a row nobody was told about — an invitation that exists
 // and that its owner will never hear of.
-func (s *invitationSender) SendInvitation(ctx context.Context, email, token, reference string) error {
+func (s *invitationSender) SendInvitation(ctx context.Context, email, token, userID, reference string) error {
 	s.once.Do(func() {
 		s.svc, s.err = container.Resolve[Messenger](s.c, notificationInteropName)
 		if s.err != nil {
@@ -88,7 +88,7 @@ func (s *invitationSender) SendInvitation(ctx context.Context, email, token, ref
 	return s.svc.Send(ctx, InvitationTemplate, coreprovider.ChannelEmail, reference, email,
 		map[string]string{
 			invitationFieldToken:   token,
-			invitationFieldUserID:  reference,
+			invitationFieldUserID:  userID,
 			invitationFieldExpires: "72",
 		})
 }

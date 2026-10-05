@@ -4,7 +4,7 @@
 `internal/e2e` imports and refuses a difference. It costs a deliberate edit when
 a flow is genuinely out of scope, and it closes the place two faults hid.
 
-- **Status:** Accepted
+- **Status:** Accepted; superseded by [0398](0398-the-end-to-end-ground-opens-the-installation-the-server-serves.md), which leaves the ground no composition of its own to compare
 - **Date:** 2026-09-11
 
 ## Context

@@ -404,10 +404,11 @@ func TestTheB2BStorefrontRefusesAnUnverifiedClaimInARealProcess(t *testing.T) {
 // It is the witness of one hop no other lane holds: the composition root
 // turning STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM into the payment module's
 // PersonBoundTenders, INVERTED. The module's tests hand the option in
-// themselves and the e2e harness builds its own root, so a dropped negation
-// would register the balance tenders exactly where anybody can name a
-// customer, with every other lane green. The two processes of this file hold
-// the two settings, and each reads the list.
+// themselves, and the e2e ground opens the root under the default alone (ADR
+// 0398), where a dropped negation turns the tenders off and reddens its spend
+// scenarios; the other value, where it would register them for anybody who can
+// name a customer, is held here alone. The two processes of this file hold the
+// two settings, and each reads the list.
 func storefrontTenders(t *testing.T, s *proc, key string) []string {
 	t.Helper()
 

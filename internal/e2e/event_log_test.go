@@ -33,8 +33,9 @@ const eventWaitTimeout = 5 * time.Second
 // takes no context, and a subscription is bound to the lifetime of the process.
 // Subscribing per test would therefore produce a pile of handlers that accumulates
 // as the run proceeds and records every event many times over. The single log is
-// wired once in TestMain and the tests filter their own orders BY ID; the filtering
-// makes it structurally impossible for one test to see another test's event.
+// subscribed once, before any scenario, and the tests filter their own orders BY
+// ID; the filtering makes it structurally impossible for one test to see another
+// test's event.
 //
 // The type is safe for concurrent use: handlers run in separate goroutines and the
 // write and the read share the same lock.
@@ -45,18 +46,19 @@ type orderEventLog struct {
 	records []eventbus.Event
 }
 
-// subscribe wires the log to the bus.
+// handler records every event it is handed.
 //
-// The wiring must happen BEFORE the modules come up: a subscriber attached later
-// CANNOT SEE the events published before it (the in-memory backend keeps no
-// history, it delivers AT MOST ONCE).
-func (l *orderEventLog) subscribe(bus eventbus.EventBus) error {
-	return bus.Subscribe(l.topic, func(_ context.Context, e eventbus.Event) error {
+// It is subscribed by the ground's observers plugin (see notification_test.go),
+// whose Setup runs before any scenario: a subscriber attached later CANNOT SEE
+// the events published before it (the in-memory backend keeps no history, it
+// delivers AT MOST ONCE).
+func (l *orderEventLog) handler() eventbus.Handler {
+	return func(_ context.Context, e eventbus.Event) error {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		l.records = append(l.records, e)
 		return nil
-	})
+	}
 }
 
 // events returns the records belonging to the given order.

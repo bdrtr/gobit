@@ -76,9 +76,8 @@ import (
 // on the way out; there is no DSN override anywhere in the package. A rig built
 // there dies with the container, which is the very property that made the old
 // rig worth rebuilding. Pointing the harness at a persistent database is a real
-// change and not a flag — two of its fixtures are non-idempotent by
-// construction, the admin user against a unique e-mail index and the region
-// fixture against a country that can belong to one region at a time.
+// change and not a flag — its region fixture is non-idempotent by
+// construction, against a country that can belong to one region at a time.
 //
 // What is left is where the work already lives. This binary's verb dispatch
 // already reaches the database with the server's own configuration

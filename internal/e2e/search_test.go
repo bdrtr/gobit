@@ -17,10 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/bdrtr/gobit/core/eventbus"
 	corehttp "github.com/bdrtr/gobit/core/http"
-	"github.com/bdrtr/gobit/core/module"
-	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	"github.com/bdrtr/gobit/plugins/analytics"
@@ -45,13 +42,13 @@ import (
 //
 // # Why the plugin is installed on the GROUND rather than inside the test
 //
-// In production, plugins are installed BEFORE module bootstrap and the module a
-// plugin brings is added to the SAME registry as the core modules
-// (see internal/app/app.go: Install -> Bootstrap -> Start -> MountRoutes).
-// Moving the installation into the test would require bringing that module up
-// with a SECOND [module.Registry] — a wiring that does not exist in production.
-// The test would then prove not how the plugin is installed in production, but
-// only that the thing it installed itself works.
+// The ground names it in PLUGINS, as a server's environment does, and the
+// installation app.Open brings up installs it in production's order (Install ->
+// Bootstrap -> Start -> MountRoutes): the module the plugin brings joins the
+// same registry as the core modules (ADR 0398). Installing it inside a test
+// would need a SECOND module registry — a wiring that does not exist in
+// production — and the test would prove only that the thing it installed itself
+// works.
 //
 // The second reason is timing: the subscriptions must be in place BEFORE the
 // first product. The in-memory bus keeps no history and delivers AT MOST ONCE
@@ -100,70 +97,19 @@ const searchPollInterval = 20 * time.Millisecond
 // silently reading some other table.
 const searchIndexTable = "searchpg_product"
 
-// The registry and the host of the plugins installed on the ground.
+// groundPlugins are the plugins from the box the ground names in PLUGINS.
 //
-// Both are filled in during the TestMain flow ([setUpPlugins]) and used in two
-// phases: the registrations are declared before the modules, the subscriptions
-// and the routes are applied after the modules have come up.
-var (
-	pluginRegistry *coreplugin.Registry
-	pluginHost     *coreplugin.Host
-)
-
-// setUpPlugins installs the plugins BEFORE THE MODULES.
+// The search plugin is the subject of this file. The outbound webhook plugin
+// costs the other scenarios nothing: with no receiver registered its subscriber
+// writes no row and its job is never run on its own. What it buys is
+// webhook_test.go, where the chain from a real order to a real signed HTTP
+// request is the only place that chain exists in one piece. The funnel plugin is
+// here for the same reason (ADR 0153): its three subscriptions are the only
+// place in the tree where the cart module's real events meet a real consumer.
 //
-// The module registry and the bus are handed in from outside because both are
-// the REAL ground the plugin will run on: the module the plugin brings must pass
-// through the same Bootstrap as the core modules, and its subscriptions must
-// listen to the real catalog events. Handing it a separate registry or a
-// separate bus would mean testing the plugin inside its own bubble.
-//
-// The settings map is nil: the search plugin does NOT WANT configuration (see
-// the searchpg package documentation). That a plugin which does want a setting
-// stops when the setting is missing is exercised separately (see
-// [TestSetupStopsWhenAPluginSettingIsMissing]).
-func setUpPlugins(ctx context.Context, modules *module.Registry, bus eventbus.EventBus) error {
-	pluginRegistry = coreplugin.NewRegistry(nil)
-	pluginRegistry.Add(searchpg.New())
-	pluginRegistry.Add(analytics.New())
-	// The outbound webhook plugin is installed on the same ground, and it costs
-	// the other scenarios nothing: with no receiver registered its subscriber
-	// writes no row and its job is never run by this harness. What it buys is
-	// webhook_test.go, where the chain from a real order to a real signed HTTP
-	// request is the only place that chain exists in one piece.
-	pluginRegistry.Add(webhookout.New())
-	// The funnel plugin is installed on the same ground for the same reason
-	// (ADR 0153): its three subscriptions are the only place in the tree where
-	// the cart module's real events meet a real consumer. It costs the other
-	// scenarios nothing — it writes a row per cart and reads none of them unless
-	// analytics_test.go asks.
-	//
-	// The spy carrier stands where a carrier plugin would (carrier_test.go): the
-	// destination a parcel is handed is stored nowhere, so the provider is the
-	// one place it can be read. It costs the other scenarios nothing — only an
-	// option naming it reaches it.
-	pluginRegistry.Add(carrierSpyPlugin{})
-
-	pluginHost = coreplugin.NewHost(ctr, modules, bus, nil, nil)
-
-	return pluginRegistry.Install(ctx, pluginHost)
-}
-
-// startPlugins applies the subscriptions and mounts the plugin routes.
-//
-// It is called AFTER THE MODULES HAVE COME UP; the order is the same as in
-// production. [coreplugin.Registry.MountRoutes] mounts nothing in this setup —
-// the search plugin's endpoints come not from the plugin hook but from the
-// Routes of the MODULE it brings. It is called anyway: skipping it would mean
-// that the next plugin, one that mounts its endpoints through the plugin hook,
-// silently ends up with no routes.
-func startPlugins(ctx context.Context) error {
-	if err := pluginRegistry.Start(ctx, pluginHost); err != nil {
-		return err
-	}
-
-	return pluginRegistry.MountRoutes(testRouter, pluginHost)
-}
+// None of the three reads a setting, so the cleared environment leaves them
+// nothing to miss.
+var groundPlugins = []string{searchpg.Name, analytics.Name, webhookout.Name}
 
 // searchWord produces a search word that appears nowhere else in the catalog.
 //

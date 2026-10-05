@@ -71,6 +71,24 @@ func describeAPI(title, apiVersion string, modules []module.Module) *openapi.Doc
 	return doc
 }
 
+// describeInstallation builds the document an installation serves: the modules'
+// descriptions, then the two surfaces that belong to no module.
+//
+// The personal-data endpoints and the audit log's reader are bound by the
+// composition root rather than by a module, so the registry walk in
+// [describeAPI] never asks about them; without the two calls after it they
+// would enter the document as bare paths. It is one function because two callers
+// need the same answer: the assembly, for the served document, and an opened
+// installation's Describe, for a document a test builds against a router of its
+// own (ADR 0398).
+func describeInstallation(title, apiVersion string, modules []module.Module) *openapi.Doc {
+	doc := describeAPI(title, apiVersion, modules)
+	describePersonalData(doc)
+	describeAuditLog(doc)
+
+	return doc
+}
+
 // registerWorkflows sets up the cross-module workflows and leaves them in the
 // container.
 //
@@ -417,6 +435,9 @@ type application struct {
 	// router is built, so the registry is created here, filled during
 	// Registry.Start and mounted before the plugin routes.
 	callbacks *corehttp.CallbackRegistry
+	// schema is the document the installation serves at /openapi.json. The
+	// assembly fills it; an opened installation hands it to its caller.
+	schema *openapi.Doc
 }
 
 // openApplication opens the database, brings up every module and wires the

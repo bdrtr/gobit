@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 
+	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/errors"
 	ordersvc "github.com/bdrtr/gobit/internal/modules/order/service"
 	paymentmanual "github.com/bdrtr/gobit/internal/modules/payment/manual"
@@ -99,8 +100,8 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 	}
 	customerID, email := newCustomer(ctx, t)
 	writeStoreProfile(t)
-	returnsFlow, err := returnswf.FromContainer(ctr)
-	require.NoError(t, err)
+	returnsFlow, err := container.Resolve[*returnswf.Interop](ctr, returnswf.InteropName)
+	require.NoError(t, err, "the return flow is the one the installation provides")
 
 	rapid.Check(t, func(rt *rapid.T) {
 		country := rapid.SampledFrom([]string{taxedCountry, inclusiveTaxCountry}).Draw(rt, "country")
@@ -268,20 +269,20 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 			}
 		}
 		beforeReceipt := shelf(rt)
-		receipt, err := returnsFlow.ReceiveReturn(ctx, opened.ID, stockLocationID)
+		_, restockedUnits, receiptWarnings, err := returnsFlow.ReceiveReturn(ctx, opened.ID, stockLocationID)
 		require.NoError(rt, err)
-		require.Empty(rt, receipt.Warnings)
-		require.Equal(rt, units, receipt.RestockedUnits)
+		require.Empty(rt, receiptWarnings)
+		require.Equal(rt, units, restockedUnits)
 		afterReceipt := shelf(rt)
 		for variant := range items {
 			require.Equal(rt, restocked[variant], afterReceipt[variant]-beforeReceipt[variant], "the return puts %s back", variant)
 		}
 
 		amount := rapid.Int64Range(1, stored.Total).Draw(rt, "refunded")
-		refund, err := returnsFlow.RefundReturn(ctx, opened.ID, amount, "property")
+		refunded, _, refundWarnings, err := returnsFlow.RefundReturn(ctx, opened.ID, amount, "property")
 		require.NoError(rt, err)
-		require.Empty(rt, refund.Warnings)
-		require.Equal(rt, amount, refund.RefundedAmount)
+		require.Empty(rt, refundWarnings)
+		require.Equal(rt, amount, refunded)
 		collection, err = paymentSvc.GetPaymentCollection(ctx, placed.PaymentCollectionID)
 		require.NoError(rt, err)
 		require.Equal(rt, amount, collection.RefundedAmount, "the refund is the collection's")

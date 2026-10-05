@@ -224,8 +224,9 @@ const (
 //     [GuardOptions.IdempotencyExempt] paths skip this ring — and ONLY this ring.
 //
 // The reason this function stands in the core is that the order is written in a
-// SINGLE place: the application and the end-to-end tests build the same stack,
-// that is, the guard we test is the very one in production.
+// SINGLE place. The end-to-end tests do not build a second stack from it: they
+// open the installation the server serves (ADR 0398), so the guard they test is
+// the very one in production.
 func APIGuards(opts GuardOptions) []func(http.Handler) http.Handler {
 	admin := opts.AdminPrefix
 	if admin == "" {

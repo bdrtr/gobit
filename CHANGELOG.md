@@ -128,6 +128,13 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **An invitation's `user_id` names the invited account** (D256). **For
+  integrators:** the `auth.user_invited` message hands the notification
+  provider the invited user's `user_` id under `user_id`; it carried the
+  invitation token's digest, so a template or provider that linked the message
+  to the account by that field pointed nowhere. The message's reference is
+  still the invitation's own record, so inviting the same account again still
+  sends a new message.
 - **The panel tries a promotion, a price list and a tax rate on past orders**
   (ADR 0395). **For operators:** a promotion's page, each row of the Price
   lists screen and each rate of a country on the Taxes screen offer a trial on
@@ -1455,6 +1462,19 @@ design. It is fixed with `1.0.0`.
 
 ### Decisions
 
+- **The end-to-end ground opens the installation the server serves** (ADR 0398,
+  D254, D255). **For contributors:** `internal/e2e` brings its ground up through
+  `app.Open`, the assembly `App.InProcess` and the server share. It runs under
+  `APP_ENV=staging`, clears the environment the configuration reads, and adds
+  only a module providing the storefront identity and two plugins carrying its
+  spies. The gates comparing a hand-built ground with the composition root are
+  gone. One gate refuses a name provided outside a module's Register, a
+  subscription outside a plugin's Setup, or a call into a subscribing flow;
+  another lets only the facade and `internal/e2e` import `internal/app`.
+  Accepting an invitation and reading the audit log are now proven end to end;
+  the panel tree and the personal-data and audit-log endpoints enter the
+  authorization walk, where an anonymous panel write must meet the origin check
+  and then the identity check.
 - **A sold line's price and tax are not raised** (ADR 0394, D247).
   **For operators:** a line priced too low is the shop's unless the buyer buys
   it again, on an addition to the pending order or an order of its own; only

@@ -28,7 +28,8 @@ func TestTheSenderCarriesTheTOKENAndNothingElseIdentifying(t *testing.T) {
 	sender := newInvitationSender(c, slog.New(slog.DiscardHandler))
 
 	require.NoError(t, sender.SendInvitation(t.Context(),
-		"colleague@example.test", "a-token-only-they-should-hold", "user_01SENDERTEST0000000"))
+		"colleague@example.test", "a-token-only-they-should-hold", "user_01SENDERTEST0000000",
+		"the-invitations-own-record"))
 
 	require.Len(t, spy.calls, 1)
 	call := spy.calls[0]
@@ -39,9 +40,12 @@ func TestTheSenderCarriesTheTOKENAndNothingElseIdentifying(t *testing.T) {
 	assert.Equal(t, "a-token-only-they-should-hold", call.data[invitationFieldToken],
 		"the token has to REACH the provider; a message without it is a message "+
 			"telling somebody an invitation exists and not how to use it")
-	assert.Equal(t, "user_01SENDERTEST0000000", call.reference,
+	assert.Equal(t, "the-invitations-own-record", call.reference,
 		"the reference is half the notification module's idempotency key, so a "+
 			"retried delivery of ONE invitation does not send twice")
+	assert.Equal(t, "user_01SENDERTEST0000000", call.data[invitationFieldUserID],
+		"user_id names the invited account; it once carried the reference, the "+
+			"token's digest, and pointed nowhere (D256)")
 }
 
 // TestAMissingNotificationModuleIsAnERROR holds the fail-closed direction.
@@ -53,7 +57,7 @@ func TestAMissingNotificationModuleIsAnERROR(t *testing.T) {
 
 	sender := newInvitationSender(container.New(nil), slog.New(slog.DiscardHandler))
 
-	err := sender.SendInvitation(t.Context(), "nobody@example.test", "t", "user_01NOMODULE00000000")
+	err := sender.SendInvitation(t.Context(), "nobody@example.test", "t", "user_01NOMODULE00000000", "r")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), notificationInteropName,

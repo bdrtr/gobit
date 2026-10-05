@@ -220,19 +220,24 @@ ignores, for `-rapid.failfile=…`. To search harder than the lanes do, run one
 with `-rapid.checks=100000` and, for a sequence of calls, `-rapid.steps=60`.
 
 **Smoke tests** (`internal/smoke`) go one step further: they compile the server
-binary and run it **as a process**. The end-to-end tests drive the router with
-`httptest`, which means they SKIP `main.go`'s wiring, the migrations at start-up,
-config loading and signal handling. In this repository, the four faults found by
-running the application by hand while the tests were green were hiding in exactly
-that place; the smoke tests close that class permanently (the concurrent start-up
-race, misconfigurations halting at start-up, OTLP address formats, SIGTERM
-behaviour).
+binary and run it **as a process**. The end-to-end tests drive the assembled router
+with `httptest`: they open the installation as the server does, configuration and
+start-up migrations included (ADR 0398), but they skip `main.go`'s flags, the
+listeners and signal handling. In this repository, four faults were found by
+running the application by hand while the tests were green: the concurrent
+start-up race, misconfigurations halting at start-up, OTLP address formats and
+SIGTERM behaviour. All four were hiding in what the end-to-end tests skipped
+then, and the smoke tests close that class permanently. Since ADR 0398 the
+end-to-end tests run two of those code paths too, the configuration's
+validation and the first administrator's seed, but they start one installation,
+never two at once, so the race and the last two remain the smoke tests' alone.
 
-The end-to-end tests (`internal/e2e`) set the modules up with **the production
-wiring**: the same container names, the same module order and the same guard
-stack (`corehttp.APIGuards`). The protection a test proves is the very one that
-runs in production; had the test carried its own copy, the order in production
-could change and the test would go on verifying the old order and stay green.
+The end-to-end tests (`internal/e2e`) open the installation through the assembly
+the server runs (`app.Open`, ADR 0398), under the shared profile: the same
+container, modules, guard stack, panel and schema. They clear the environment the
+configuration reads and set their own: the database, the signing keys, the first
+administrator and a rate limit no scenario reaches. A module and two plugins stand
+where an embedder's identity and providers would.
 
 ~~CI (`.github/workflows/ci.yml`) runs `gofmt`, the `go mod tidy` diff,
 `golangci-lint`, `go vet` and the race-enabled tests on every push and PR.~~

@@ -29,11 +29,6 @@ const (
 	compositionRoot = "internal/app"
 	// entryPoint is the function the reachability graph starts from.
 	entryPoint = "Main"
-	// e2eHarness is the package where the end-to-end tests bring the modules up
-	// with real migrations. That package sits behind the "integration" build
-	// tag; parsing does not care about the tag, so this audit runs even without
-	// an integration run.
-	e2eHarness = "internal/e2e"
 	// coreModulePackage is the core package where the
 	// [github.com/bdrtr/gobit/core/module.Module] contract and the
 	// [github.com/bdrtr/gobit/core/module.Registry] registry live.
@@ -143,20 +138,6 @@ var unregisteredModules = map[string]string{}
 // Today it is EMPTY: setup is synchronous and no exemption is needed.
 var setupsOffTheStartupPath = map[string]string{}
 
-// modulesOutsideE2EHarness holds the rationales of the module packages that are
-// DELIBERATELY not set up on the e2e harness; the key is the package's import
-// path.
-//
-// The reason a separate map is kept is that the two exemptions say DIFFERENT
-// things: [unregisteredModules] says "this module is not in production", this
-// map says "this module is in production but cannot be run on the end-to-end
-// harness" (for example a module with a hard dependency on an external service).
-// The second is a far lighter debt than the first, and standing in the same list
-// would make the heavy one look light.
-//
-// Today it is empty: the harness sets up every module production registers.
-var modulesOutsideE2EHarness = map[string]string{}
-
 // workflowsNotSetUp holds the rationales of the workflow packages that are
 // DELIBERATELY not set up in the composition root; the key is the package's
 // import path.
@@ -242,7 +223,7 @@ func TestEveryModuleIsRegisteredInTheCompositionRoot(t *testing.T) {
 		"no package implementing [module.Module] was found below internal/modules; "+
 			"the audit must have gone BLIND (did the contract change?)")
 
-	registered := registeredModulePackages(t, compositionRoot, false)
+	registered := registeredModulePackages(t, compositionRoot)
 
 	for _, path := range slices.Sorted(maps.Keys(modules)) {
 		if _, isRegistered := registered[path]; isRegistered {
@@ -279,96 +260,6 @@ func TestEveryModuleIsRegisteredInTheCompositionRoot(t *testing.T) {
 
 	checkStaleExemptions(t, unregisteredModules, modules,
 		"a package implementing [module.Module]", registered, compositionRoot)
-}
-
-// TestEveryRegisteredModuleIsSetUpInTheE2EHarness audits that every module
-// registered in the composition root is set up on the end-to-end harness as
-// well.
-//
-// # Why the second half of the invariant is needed
-//
-// The first half ([TestEveryModuleIsRegisteredInTheCompositionRoot]) asks "is
-// the module that was written registered in production". On its own that is not
-// enough, because REGISTRATION and RUNNING are not the same thing: the
-// registry.Add line compiles, it runs at startup, and that module's real
-// migration, real routes and cross-module link may still never have been tried
-// together in any test. b2b was exactly like this — the registration itself was
-// one line, and the only place that shows that line changing the order module's
-// behavior is the e2e harness.
-//
-// # Why the e2e harness and not some other harness
-//
-// The harness is the only copy of what the deployment looks like in production:
-// the same core service names, the same module.Registry, a real PostgreSQL, real
-// migrations and tests that do the authorization audit by walking the router
-// TREE (see the authorization test in internal/e2e, 196 admin endpoints). The
-// moment a module enters that harness it also enters the scope of the existing
-// tree-walking tests; until it does, no matter how many tests are written it
-// stays in its own bubble.
-//
-// # Would this test have seen the Phase 8/9 failure
-//
-// Not directly, the first half would have. But the requirement that the harness
-// and production hold the SAME set would have prevented the failure from
-// forming: the moment the Phase 8/9 modules were added to the harness this test
-// would have demanded the registration that was missing in production; had they
-// not been added to the harness either, the first half would already have
-// failed. The two halves together close the case "the module exists but is in no
-// composition root".
-//
-// # Why internal/e2e is not touched
-//
-// e2e_test.go already SAYS "The module set and its order are the same as the one
-// in internal/app/app.go". That is a comment's promise, and this repository's
-// third class of defect is exactly that: the godoc's promise drifting from the
-// code's behavior. What enforces a promise is not another line written next to
-// it but a test that audits it from the outside; the test does NOT CHANGE that
-// file, it only reads it.
-func TestEveryRegisteredModuleIsSetUpInTheE2EHarness(t *testing.T) {
-	t.Parallel()
-
-	production := filterToModulePackages(registeredModulePackages(t, compositionRoot, false))
-	harness := filterToModulePackages(registeredModulePackages(t, e2eHarness, true))
-
-	// Both ends are guarded separately. If the production end empties out the
-	// loop never turns and this test — even though its name says "every
-	// registered module" — passes without saying anything about any module.
-	// [TestEveryModuleIsRegisteredInTheCompositionRoot] fails loudly in that
-	// case, but RELYING on the neighbor failing is not a guard: the two tests
-	// can change independently of each other, and on that day the silence here
-	// would go unnoticed.
-	require.NotEmpty(t, production,
-		"no module registration was found in %s/; the audit must have gone BLIND — the "+
-			"registration form (Add on module.Registry) may have changed", compositionRoot)
-	require.NotEmpty(t, harness,
-		"no module registration was found on the e2e harness; the audit must have gone BLIND")
-
-	for _, path := range slices.Sorted(maps.Keys(production)) {
-		if _, isSetUp := harness[path]; isSetUp {
-			continue
-		}
-		if rationale, exempt := modulesOutsideE2EHarness[path]; exempt {
-			t.Logf("%s is deliberately NOT SET UP on the e2e harness: %s", path, rationale)
-			continue
-		}
-		t.Errorf("module %s is registered in %s/ (%s) but is NOT SET UP on the %s/ harness.\n"+
-			"The production wiring of a module that does not enter the harness is tried end "+
-			"to end nowhere: its migration does not run on a real database, its endpoints do "+
-			"not enter the scope of the authorization audit that walks the router tree, and "+
-			"its cross-module link is only exercised against FAKE counterparts.\n"+
-			"Either add it to the harness, or write the module with its rationale into the "+
-			"modulesOutsideE2EHarness map.",
-			path, compositionRoot, production[path], e2eHarness)
-	}
-
-	// The reverse direction is NOT audited HERE, and that is not a gap: a module
-	// that is set up on the harness but NOT registered in production is exactly
-	// the Phase 8/9 failure, and
-	// [TestEveryModuleIsRegisteredInTheCompositionRoot] already fails it. Two
-	// tests saying the same thing twice would mean that when one of them changes
-	// the other quietly becomes redundant.
-	checkStaleExemptions(t, modulesOutsideE2EHarness, production,
-		"a module registered in the composition root", harness, e2eHarness)
 }
 
 // TestEveryWorkflowIsSetUpInTheCompositionRoot audits the invariant "every
@@ -557,14 +448,12 @@ func TestEveryRegisteredModuleIsSetUpInTheE2EHarness(t *testing.T) {
 //
 // # Why there is NO e2e twin
 //
-// On the module side there is a second half
-// ([TestEveryRegisteredModuleIsSetUpInTheE2EHarness]) because there REGISTRATION
-// and RUNNING are separate things. Workflows have no such distinction: a
-// workflow only exists where it is set up, and if the harness does not set it up
-// the store endpoints fail CLOSED — that is, a person who forgets to set a
-// workflow up on the harness cannot see a green run; the storefront scenarios
-// take a 500 right then. Writing the rule a second time would be repeating a
-// requirement that already enforces itself.
+// There is no e2e twin for the flows that subscribe: the ground opens the
+// composition root itself (ADR 0398) and may not build one of them
+// ([TestTheEndToEndGroundIsTheProductionAssembly]), so one missing here is
+// missing in every scenario. The cart, checkout, fulfilling, stock alert and
+// segment flows are a second instance the ground builds for itself; for those,
+// this test is the only gate that production sets them up.
 func TestEveryWorkflowIsSetUpInTheCompositionRoot(t *testing.T) {
 	t.Parallel()
 
@@ -779,14 +668,13 @@ func satisfiesContract(
 // module.Registry registry in the given package; the value is the position of
 // the Add call.
 //
-// includeTestFiles is for the e2e harness: there the setup happens in the
-// TestMain flow and there is no production file.
-func registeredModulePackages(t *testing.T, root string, includeTestFiles bool) map[string]token.Position {
+// Only production files count: a test registering a module wires nothing.
+func registeredModulePackages(t *testing.T, root string) map[string]token.Position {
 	t.Helper()
 
 	dir := filepath.Join(repoRoot, root)
 	fset := token.NewFileSet()
-	files := parseDir(t, fset, dir, includeTestFiles)
+	files := parseDir(t, fset, dir, false)
 	require.NotEmpty(t, files, "there is no Go file to parse in %s", root)
 
 	// First the registry's VARIABLE names are collected: a method named "Add"
@@ -855,7 +743,7 @@ func registeredModulePackages(t *testing.T, root string, includeTestFiles bool) 
 //
 // Two sources are scanned: the variables the module.NewRegistry call is assigned
 // to, and the declarations whose type is *module.Registry (function parameters
-// included — the e2e harness passes the registry to a helper function as a
+// included — the composition root passes the registry to registerModules as a
 // PARAMETER).
 func registryVariableNames(files []parsedFile) map[string]bool {
 	names := map[string]bool{}

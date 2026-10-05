@@ -3,16 +3,20 @@
 package e2e
 
 import (
+	"context"
 	stderrors "errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/bdrtr/gobit/core/container"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	b2bmodels "github.com/bdrtr/gobit/internal/modules/b2b/models"
 )
@@ -78,6 +82,30 @@ func (storefrontIdentity) CustomerID(r *http.Request) (string, error) {
 
 	return id, nil
 }
+
+// identityModule fills the storefront identity slot the way an embedder's module
+// does (contrib/identity-session is the one gobit ships): it provides the
+// verifier under the core's name during Register.
+//
+// The customer identity is the EMBEDDER's (ADR 0043, ADR 0057). Without one the
+// storefront surfaces that name a customer are closed, which is the correct
+// production default and would leave the flows unable to open a cart for
+// anybody — so the ground adds the one module an installation would.
+type identityModule struct{}
+
+// Name is the module's name.
+func (identityModule) Name() string { return "e2e-identity" }
+
+// Register provides the verifier under the core's identity name.
+func (identityModule) Register(_ context.Context, c *container.Container) error {
+	return c.Provide(corehttp.IdentityName, storefrontIdentity{})
+}
+
+// Migrations returns nil: the module owns no table.
+func (identityModule) Migrations() fs.FS { return nil }
+
+// Routes binds nothing: the module serves no endpoint.
+func (identityModule) Routes(chi.Router) {}
 
 // errNoSession is the harness verifier's refusal of a request with no proof.
 var errNoSession = stderrors.New("this request carries no customer session")

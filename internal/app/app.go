@@ -379,11 +379,12 @@ func serve(opts Options) error {
 // callbacks and plugin routes mounted, the erasure and audit surfaces bound and
 // the schema built.
 //
-// The alternative was for the test harness to do those steps itself, and this
-// repository has the gate that says what that costs: internal/e2e builds its own
-// router and TestTheEndToEndGroundWiresEveryFlowProductionDoes exists because
-// that copy drifted. A second assembly is a second answer to "what is an
-// installation", and the one the tests use would be the one nobody deploys.
+// Every caller that brings an installation up goes through it: the server, the
+// MCP surface, the facade's InProcess and this repository's end-to-end ground
+// (ADR 0398). The ground once did these steps itself, and its copy of the guard
+// stack drifted where no gate looked (D254). A second assembly is a second
+// answer to "what is an installation", and the one the tests use would be the
+// one nobody deploys.
 //
 // What it deliberately does NOT do is anything with a PORT or a CLOCK: no
 // operator listener, no scheduled job, no HTTP server. Those are serve's, and a
@@ -499,15 +500,13 @@ func assemble(
 	// The module list is READ from the registry; no second list is kept here:
 	// modules brought in by plugins (see searchpg) appear only in the registry,
 	// and a hand-maintained list would silently leave them undescribed.
-	doc := describeAPI(cfg.ServiceName+" API", opts.version(), registry.Modules())
-	// The personal-data endpoints belong to no module, so the registry walk
-	// above never asks about them; without this line they enter the document as
-	// bare paths with no body and no response. An endpoint that hands back the
-	// most concentrated personal data in the system is the last one that should
-	// be undocumented.
-	describePersonalData(doc)
-	// The audit log's endpoint belongs to no module either.
-	describeAuditLog(doc)
+	//
+	// The personal-data endpoints and the audit log's reader belong to no
+	// module, so the registry walk never asks about them; [describeInstallation]
+	// describes them after it. An endpoint that hands back the most concentrated
+	// personal data in the system is the last one that should be undocumented.
+	doc := describeInstallation(cfg.ServiceName+" API", opts.version(), registry.Modules())
+	app.schema = doc
 	router.Get(openAPIPath, doc.Handler(router))
 	checkSchema(ctx, doc, router, log)
 

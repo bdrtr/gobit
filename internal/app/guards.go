@@ -66,10 +66,10 @@ func memoryIdempotencyStore(cfg config.Config) *corehttp.MemoryIdempotencyStore 
 //
 // The decision about order and scope lives in the core, in [corehttp.APIGuards];
 // only the parts that come from configuration (the rate limiter, the
-// idempotency store, the exempt paths) are chosen here. The reason for the
-// split is that the end-to-end tests must be able to build the SAME stack: had
-// the order been written here, the test would keep its own copy and the two
-// copies would silently diverge.
+// idempotency store, the exempt paths) are chosen here. The order lives in the
+// core so that it is written once. The end-to-end tests do not build a stack of
+// their own: they open the installation through app.Open (ADR 0398) and run
+// this one; the copy they once built drifted in its options (D254).
 //
 // # Choosing the backend
 //

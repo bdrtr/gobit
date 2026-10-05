@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
-	"github.com/bdrtr/gobit/core/module"
 	"github.com/bdrtr/gobit/core/openapi"
 	authapi "github.com/bdrtr/gobit/internal/modules/auth/api"
 )
@@ -113,38 +112,6 @@ var bodyBearingMethods = map[string]struct{}{
 // new module's new prefix cannot be left waiting to be added to a list.
 var recordIDPattern = regexp.MustCompile(`[a-z][a-z0-9]*_[0-9A-HJKMNP-TV-Z]{26}`)
 
-// describeDocument builds the OpenAPI document and runs it through the modules that
-// can describe themselves.
-//
-// It is the twin of the identically named function in cmd/server, and the
-// repetition is deliberate: [openapi.Describer] is an OPTIONAL interface, the
-// type assertion is made at the composition root, and the core does not know
-// the modules (Principle 2.4). e2e's composition root is TestMain; running the
-// hook here as well is the only way to build the SAME setup as in production.
-// The module list is repeated for exactly the same reason (see the registry Add
-// calls in TestMain).
-func describeDocument(title, version string, modules []module.Module) *openapi.Doc {
-	doc := openapi.New(title, version)
-
-	for _, mod := range modules {
-		describer, canDescribe := mod.(openapi.Describer)
-		if !canDescribe {
-			continue
-		}
-
-		// The module's own Name becomes the namespace of every component its
-		// description registers (ADR 0036), exactly as internal/app does it.
-		// This loop is a COPY of the composition root's and the copy has already
-		// drifted once: the namespace landed in production first, and the
-		// document this harness built then failed to build at all because two
-		// modules' Address components collided in the copy that had not been
-		// changed. TestTheDescribeLoopsAgree audits the pair from outside.
-		doc.ForModule(mod.Name(), func() { describer.Describe(doc) })
-	}
-
-	return doc
-}
-
 // describedEndpoints returns every "METHOD /path" record the modules describe.
 //
 // # Why it is generated against an empty router
@@ -160,7 +127,7 @@ func describeDocument(title, version string, modules []module.Module) *openapi.D
 func describedEndpoints(t *testing.T) []string {
 	t.Helper()
 
-	probe := describeDocument("probe", "e2e", testModules)
+	probe := installation.Describe()
 
 	_, err := probe.Build(chi.NewRouter())
 	require.NoError(t, err, "the probe document must build")

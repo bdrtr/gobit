@@ -62,6 +62,13 @@ func TestInvitingAgainREPLACESTheLink(t *testing.T) {
 
 	first, second := sender.sent[0].token, sender.sent[1].token
 	require.NotEqual(t, first, second, "each invitation mints its own token")
+	for _, sent := range sender.sent {
+		assert.Equal(t, testInviteUser, sent.userID,
+			"the message names the invited account, not the invitation (D256)")
+	}
+	assert.NotEqual(t, sender.sent[0].reference, sender.sent[1].reference,
+		"each invitation is its own message; a reference shared by both would let the "+
+			"notification module's idempotency key swallow the second")
 
 	require.Error(t, svc.AcceptInvitation(ctx, first, testFirstPassword),
 		"the FIRST link stopped working when the second was sent; two live links to one "+
@@ -181,15 +188,16 @@ type recordingSender struct {
 type sentInvitation struct {
 	email     string
 	token     string
+	userID    string
 	reference string
 }
 
 // SendInvitation records the message.
-func (s *recordingSender) SendInvitation(_ context.Context, email, token, reference string) error {
+func (s *recordingSender) SendInvitation(_ context.Context, email, token, userID, reference string) error {
 	if s.err != nil {
 		return s.err
 	}
-	s.sent = append(s.sent, sentInvitation{email: email, token: token, reference: reference})
+	s.sent = append(s.sent, sentInvitation{email: email, token: token, userID: userID, reference: reference})
 
 	return nil
 }
