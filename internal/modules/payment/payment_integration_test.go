@@ -1844,7 +1844,7 @@ func TestTwoConcurrentCapturesEarnTheTargetOnce(t *testing.T) {
 // what a spend of testAmount needs and not a point more. Points are only ever
 // EARNED: the ledger has no issue endpoint, so every balance below starts as a
 // capture through the manual provider. The repository is shared between the
-// service and the tender for yeniKrediServisi's reason: the hold and the session
+// service and the tender, as it is for store credit: the hold and the session
 // state are written in one transaction, or not at all.
 func pointsService(t *testing.T) *service.Service {
 	t.Helper()

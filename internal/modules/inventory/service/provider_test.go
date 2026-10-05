@@ -134,11 +134,11 @@ func TestFetchByIDsUnknownFieldIsInvalid(t *testing.T) {
 	provider, store := newTestProvider(t)
 	store.seedItem(itemID, "SKU-1")
 
-	_, err := provider.FetchByIDs(context.Background(), []string{itemID}, []string{"fiyat"})
+	_, err := provider.FetchByIDs(context.Background(), []string{itemID}, []string{"price"})
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
-	assert.Contains(t, err.Error(), "fiyat")
+	assert.Contains(t, err.Error(), "price")
 }
 
 // TestListSKUFilter proves the sku filter is applied in the root listing.

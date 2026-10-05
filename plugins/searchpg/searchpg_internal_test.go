@@ -181,7 +181,7 @@ func (k *fakeCatalog) addProduct(id, title, description string) {
 		"handle": "`+id+`-handle",
 		"title": "`+title+`",
 		"description": "`+description+`",
-		"variants": [{"id": "variant_`+id+`", "title": "Tek", "sku": "SKU-`+id+`"}],
+		"variants": [{"id": "variant_`+id+`", "title": "Single", "sku": "SKU-`+id+`"}],
 		"tags": [{"id": "ptag_1", "value": "new"}],
 		"price_set": {"amount": 1000}
 	}`))
@@ -410,7 +410,7 @@ func TestAProductNotVisibleInTheStorefrontLeavesTheIndex(t *testing.T) {
 	t.Parallel()
 
 	d, k := newFakeStore(), newFakeCatalog()
-	require.NoError(t, d.Upsert(t.Context(), []document{{productID: "prod_1", title: "Eski"}}))
+	require.NoError(t, d.Upsert(t.Context(), []document{{productID: "prod_1", title: "Old"}}))
 	m := testModule(d, k)
 
 	// The catalog returns this id NOT AT ALL: it was unpublished, archived or
@@ -429,7 +429,7 @@ func TestProductDeletedDoesNotReadTheCatalog(t *testing.T) {
 	t.Parallel()
 
 	d, k := newFakeStore(), newFakeCatalog()
-	require.NoError(t, d.Upsert(t.Context(), []document{{productID: "prod_1", title: "Eski"}}))
+	require.NoError(t, d.Upsert(t.Context(), []document{{productID: "prod_1", title: "Old"}}))
 	m := testModule(d, k)
 
 	require.NoError(t, m.productDeleted(t.Context(), event(eventProductDeleted, "prod_1")))

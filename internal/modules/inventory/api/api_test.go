@@ -174,25 +174,25 @@ func (f *fakeInventory) CancelSupplierReceipt(_ context.Context, itemID, receipt
 func TestCreateStockLocation(t *testing.T) {
 	router, svc := newRouter(t)
 	svc.location = models.StockLocation{
-		ID: "sloc_1", Name: "Merkez", CountryCode: "TR",
+		ID: "sloc_1", Name: "Central", CountryCode: "TR",
 		CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 	}
 
 	rec := sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/stock-locations",
-		`{"name":"Merkez","country_code":"TR"}`)
+		`{"name":"Central","country_code":"TR"}`)
 
 	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
 	data, ok := jsonBody(t, rec)["data"].(map[string]any)
 	require.True(t, ok, "the response has to carry the data envelope")
 	assert.Equal(t, "sloc_1", data["id"])
-	assert.Equal(t, "Merkez", data["name"])
+	assert.Equal(t, "Central", data["name"])
 }
 
 // TestGetStockLocation verifies the envelope and the error mapping of a single
 // location read.
 func TestGetStockLocation(t *testing.T) {
 	router, svc := newRouter(t)
-	svc.location = models.StockLocation{ID: "sloc_1", Name: "Merkez"}
+	svc.location = models.StockLocation{ID: "sloc_1", Name: "Central"}
 
 	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/stock-locations/sloc_1", "")
 
@@ -200,7 +200,7 @@ func TestGetStockLocation(t *testing.T) {
 	assert.Equal(t, "sloc_1", svc.lastID)
 	data, ok := jsonBody(t, rec)["data"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "Merkez", data["name"])
+	assert.Equal(t, "Central", data["name"])
 
 	svc.err = errors.NotFound("inventory_location_not_found", "no such location")
 	rec = sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/stock-locations/sloc_missing", "")
@@ -210,7 +210,7 @@ func TestGetStockLocation(t *testing.T) {
 // TestListStockLocationsEnvelope verifies all four fields of the list envelope.
 func TestListStockLocationsEnvelope(t *testing.T) {
 	router, svc := newRouter(t)
-	svc.location = models.StockLocation{ID: "sloc_1", Name: "Merkez"}
+	svc.location = models.StockLocation{ID: "sloc_1", Name: "Central"}
 	svc.count = 42
 
 	rec := sendRequestWithBody(t, router, http.MethodGet, "/admin/v1/stock-locations?limit=10&offset=20", "")
@@ -275,7 +275,7 @@ func TestCreateItemUnknownField(t *testing.T) {
 	router, _ := newRouter(t)
 
 	rec := sendRequestWithBody(t, router, http.MethodPost, "/admin/v1/inventory-items",
-		`{"sku":"SKU-1","fiyat":100}`)
+		`{"sku":"SKU-1","price":100}`)
 
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 }

@@ -418,13 +418,19 @@ func TestCreateAcceptsTrackingDetails(t *testing.T) {
 func TestCreateInputValidation(t *testing.T) {
 	t.Parallel()
 
+	// The message reaches the API caller, so it is asserted too: the reference's
+	// was Turkish until ADR 0408 (D263).
 	cases := []struct {
 		name  string
 		input coreprovider.CreateFulfillmentInput
+		says  string
 	}{
-		{"no key", coreprovider.CreateFulfillmentInput{Reference: "ful_1", OptionID: "sopt_1"}},
-		{"no reference", coreprovider.CreateFulfillmentInput{OptionID: "sopt_1", IdempotencyKey: "a"}},
-		{"no option", coreprovider.CreateFulfillmentInput{Reference: "ful_1", IdempotencyKey: "a"}},
+		{"no key", coreprovider.CreateFulfillmentInput{Reference: "ful_1", OptionID: "sopt_1"},
+			"the idempotency key is required"},
+		{"no reference", coreprovider.CreateFulfillmentInput{OptionID: "sopt_1", IdempotencyKey: "a"},
+			"the reference is required"},
+		{"no option", coreprovider.CreateFulfillmentInput{Reference: "ful_1", IdempotencyKey: "a"},
+			"the shipping option identifier is required"},
 	}
 
 	for _, tc := range cases {
@@ -435,6 +441,7 @@ func TestCreateInputValidation(t *testing.T) {
 			_, err := provider.Create(context.Background(), tc.input)
 			require.Error(t, err)
 			assert.True(t, errors.IsInvalid(err), "the error must be errors.Invalid: %v", err)
+			assert.Contains(t, err.Error(), tc.says)
 		})
 	}
 }

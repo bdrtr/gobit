@@ -455,7 +455,7 @@ func TestReserveRollsBackStockWhenTheReservationCannotBeWritten(t *testing.T) {
 	svc, store := newService(t)
 	store.seedItem(itemID, "SKU-1")
 	store.seedLevel(itemID, locA, 10, 0)
-	store.failCreateReservation = errors.Internal("test_hata", "the reservation could not be written")
+	store.failCreateReservation = errors.Internal("test_failure", "the reservation could not be written")
 
 	_, err := svc.Reserve(context.Background(), service.ReserveInput{
 		InventoryItemID: itemID, LocationID: locA, Quantity: 4,
@@ -698,7 +698,7 @@ func TestCreateStockLocationValidatesCountryCode(t *testing.T) {
 	svc, _ := newService(t)
 
 	loc, err := svc.CreateStockLocation(context.Background(), service.CreateStockLocationInput{
-		Name: "Merkez Depo", CountryCode: "tr", City: "Istanbul",
+		Name: "Central Warehouse", CountryCode: "tr", City: "Istanbul",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "TR", loc.CountryCode)

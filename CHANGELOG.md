@@ -201,6 +201,15 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **Turkish without its marks is read in Go text** (ADR 0408, D263). **For
+  integrators:** the manual fulfillment provider's refusal of a shipment
+  with no reference says "the reference is required"; its code,
+  `fulfillment_manual_invalid_input`, is unchanged, and a client matching on the
+  message text has to match the new one. **For contributors:** the language
+  gate reads every Go comment and string literal for the stems it already
+  read in names, so Turkish data kept on purpose takes an entry in
+  `diacriticDataExemptions` with its reason.
+
 - **A stack can stand on a ruled rate** (ADR 0405, D249). **For API consumers:**
   `POST /admin/v1/tax-rates` with `stacks_on_id` naming a rate that carries
   rules answers 201; it answered 409 `tax_stack_not_allowed`, while the same

@@ -197,7 +197,7 @@ func TestBeginReturnsTheRecordAfterComplete(t *testing.T) {
 
 	const key = "tenant-1:key"
 
-	_, done, err := store.Begin(t.Context(), key, "izi-1")
+	_, done, err := store.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err)
 	require.False(t, done)
 
@@ -208,11 +208,11 @@ func TestBeginReturnsTheRecordAfterComplete(t *testing.T) {
 			"Location":     []string{"/store/v1/orders/order_01"},
 		},
 		Body:        []byte(`{"id":"order_01"}`),
-		Fingerprint: "izi-1",
+		Fingerprint: "fp-1",
 	}
 	require.NoError(t, store.Complete(t.Context(), key, response))
 
-	record, done, err := store.Begin(t.Context(), key, "izi-1")
+	record, done, err := store.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err)
 	require.True(t, done, "a finished key has to return its record")
 	require.NotNil(t, record)
@@ -241,7 +241,7 @@ func TestABinaryBodySurvivesIntact(t *testing.T) {
 		Status:      http.StatusOK,
 		Header:      http.Header{"Content-Type": []string{"image/png"}},
 		Body:        body,
-		Fingerprint: "izi-1",
+		Fingerprint: "fp-1",
 	}))
 
 	record, done, err := store.Begin(t.Context(), "tenant-1:binary", "print-1")
@@ -256,12 +256,12 @@ func TestTheKeyCanBeReservedAgainAfterAbort(t *testing.T) {
 
 	const key = "tenant-1:key"
 
-	_, _, err = store.Begin(t.Context(), key, "izi-1")
+	_, _, err = store.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err)
 
 	require.NoError(t, store.Abort(t.Context(), key))
 
-	record, done, err := store.Begin(t.Context(), key, "izi-1")
+	record, done, err := store.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err, "a released key has to be reservable again")
 	assert.Nil(t, record)
 	assert.False(t, done)
@@ -279,17 +279,17 @@ func TestAbortDoesNotDeleteAFinishedRecord(t *testing.T) {
 
 	const key = "tenant-1:key"
 
-	_, _, err = store.Begin(t.Context(), key, "izi-1")
+	_, _, err = store.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err)
 	require.NoError(t, store.Complete(t.Context(), key, corehttp.IdempotentResponse{
 		Status:      http.StatusCreated,
 		Body:        []byte(`{"id":"order_01"}`),
-		Fingerprint: "izi-1",
+		Fingerprint: "fp-1",
 	}))
 
 	require.NoError(t, store.Abort(t.Context(), key))
 
-	record, done, err := store.Begin(t.Context(), key, "izi-1")
+	record, done, err := store.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err)
 	require.True(t, done, "a finished record must not be deleted by Abort")
 	require.NotNil(t, record)
@@ -304,20 +304,20 @@ func TestTheRecordDisappearsWhenTheTTLExpires(t *testing.T) {
 
 	const key = "tenant-1:key"
 
-	_, _, err = store.Begin(t.Context(), key, "izi-1")
+	_, _, err = store.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err)
 	require.NoError(t, store.Complete(t.Context(), key, corehttp.IdempotentResponse{
 		Status:      http.StatusCreated,
-		Fingerprint: "izi-1",
+		Fingerprint: "fp-1",
 	}))
 
-	_, done, err := store.Begin(t.Context(), key, "izi-1")
+	_, done, err := store.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err)
 	require.True(t, done, "the record has to stand before the ttl expires")
 
 	time.Sleep(ttl + 500*time.Millisecond)
 
-	record, done, err := store.Begin(t.Context(), key, "izi-1")
+	record, done, err := store.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err)
 	assert.Nil(t, record, "the record has to be gone once the ttl expires")
 	assert.False(t, done, "an expired key has to be reservable again")
@@ -339,20 +339,20 @@ func TestTwoProcessesSeeOneRecord(t *testing.T) {
 
 	const key = "tenant-1:key"
 
-	_, _, err = firstInstance.Begin(t.Context(), key, "izi-1")
+	_, _, err = firstInstance.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err)
 
-	_, _, err = secondInstance.Begin(t.Context(), key, "izi-1")
+	_, _, err = secondInstance.Begin(t.Context(), key, "fp-1")
 	require.ErrorIs(t, err, corehttp.ErrIdempotencyKeyInFlight,
 		"the second instance has to see the first's reservation")
 
 	require.NoError(t, firstInstance.Complete(t.Context(), key, corehttp.IdempotentResponse{
 		Status:      http.StatusCreated,
 		Body:        []byte(`{"id":"order_01"}`),
-		Fingerprint: "izi-1",
+		Fingerprint: "fp-1",
 	}))
 
-	record, done, err := secondInstance.Begin(t.Context(), key, "izi-1")
+	record, done, err := secondInstance.Begin(t.Context(), key, "fp-1")
 	require.NoError(t, err)
 	require.True(t, done, "the second instance has to read the record the first wrote")
 	assert.Equal(t, []byte(`{"id":"order_01"}`), record.Body)
@@ -412,12 +412,12 @@ func TestStoresWithDifferentPrefixesDoNotSeeEachOthersRecords(t *testing.T) {
 
 	const key = "tenant-1:key"
 
-	_, _, err = staging.Begin(t.Context(), key, "izi-staging")
+	_, _, err = staging.Begin(t.Context(), key, "fp-staging")
 	require.NoError(t, err)
 
 	// The reservation belongs to the namespace too: were the key staging holds
 	// to block production, one environment's traffic could stop the other's.
-	record, done, err := production.Begin(t.Context(), key, "izi-production")
+	record, done, err := production.Begin(t.Context(), key, "fp-production")
 	require.NoError(t, err, "a reservation under another prefix must not block this store")
 	assert.Nil(t, record)
 	assert.False(t, done)
@@ -425,24 +425,24 @@ func TestStoresWithDifferentPrefixesDoNotSeeEachOthersRecords(t *testing.T) {
 	require.NoError(t, staging.Complete(t.Context(), key, corehttp.IdempotentResponse{
 		Status:      http.StatusCreated,
 		Body:        []byte(`{"id":"staging_01"}`),
-		Fingerprint: "izi-staging",
+		Fingerprint: "fp-staging",
 	}))
 	require.NoError(t, production.Complete(t.Context(), key, corehttp.IdempotentResponse{
 		Status:      http.StatusCreated,
-		Body:        []byte(`{"id":"uretim_01"}`),
-		Fingerprint: "izi-production",
+		Body:        []byte(`{"id":"production_01"}`),
+		Fingerprint: "fp-production",
 	}))
 
-	stagingRecord, done, err := staging.Begin(t.Context(), key, "izi-staging")
+	stagingRecord, done, err := staging.Begin(t.Context(), key, "fp-staging")
 	require.NoError(t, err)
 	require.True(t, done)
 	assert.Equal(t, []byte(`{"id":"staging_01"}`), stagingRecord.Body,
 		"every installation has to read ITS OWN response")
 
-	productionRecord, done, err := production.Begin(t.Context(), key, "izi-production")
+	productionRecord, done, err := production.Begin(t.Context(), key, "fp-production")
 	require.NoError(t, err)
 	require.True(t, done)
-	assert.Equal(t, []byte(`{"id":"uretim_01"}`), productionRecord.Body,
+	assert.Equal(t, []byte(`{"id":"production_01"}`), productionRecord.Body,
 		"one installation's response must not go to the other's client")
 }
 

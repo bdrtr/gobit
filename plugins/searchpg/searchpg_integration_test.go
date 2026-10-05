@@ -107,7 +107,7 @@ func realIndex(t *testing.T) *index {
 	return newIndex(testPool.Pool())
 }
 
-// write verilen belgeleri indekse yazar.
+// write writes the given documents to the index.
 func write(t *testing.T, i *index, documents ...document) {
 	t.Helper()
 
@@ -335,16 +335,16 @@ func TestPagingIsDeterministic(t *testing.T) {
 	for n := range 5 {
 		documents = append(documents, document{
 			productID: "prod_" + strconv.Itoa(n),
-			title:     "Ayni title",
+			title:     "Same title",
 		})
 	}
 	write(t, i, documents...)
 
-	firstPage, err := i.Search(t.Context(), "ayni", 2, 0)
+	firstPage, err := i.Search(t.Context(), "same", 2, 0)
 	require.NoError(t, err)
-	secondPage, err := i.Search(t.Context(), "ayni", 2, 2)
+	secondPage, err := i.Search(t.Context(), "same", 2, 2)
 	require.NoError(t, err)
-	thirdPage, err := i.Search(t.Context(), "ayni", 2, 4)
+	thirdPage, err := i.Search(t.Context(), "same", 2, 4)
 	require.NoError(t, err)
 
 	combined := append(append(append([]string{}, firstPage...), secondPage...), thirdPage...)
@@ -379,19 +379,19 @@ func TestABrokenQueryDoesNotProduceA500(t *testing.T) {
 func TestUpsertUpdatesTheSameID(t *testing.T) {
 	i := realIndex(t)
 
-	write(t, i, document{productID: "prod_1", title: "Eski title"})
-	write(t, i, document{productID: "prod_1", title: "Yeni title"})
+	write(t, i, document{productID: "prod_1", title: "Old title"})
+	write(t, i, document{productID: "prod_1", title: "New title"})
 
 	var rowCount int
 	require.NoError(t, testPool.Pool().
 		QueryRow(t.Context(), "SELECT count(*) FROM searchpg_product").Scan(&rowCount))
 	assert.Equal(t, 1, rowCount, "there has to be one row per product")
 
-	ids, err := i.Search(t.Context(), "yeni", 10, 0)
+	ids, err := i.Search(t.Context(), "new", 10, 0)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"prod_1"}, ids)
 
-	ids, err = i.Search(t.Context(), "eski", 10, 0)
+	ids, err = i.Search(t.Context(), "old", 10, 0)
 	require.NoError(t, err)
 	assert.Empty(t, ids, "an updated document must not match its old text")
 }
@@ -404,24 +404,24 @@ func TestUpsertUpdatesTheSameID(t *testing.T) {
 func TestTheSweepDeletesOnlyStaleRows(t *testing.T) {
 	i := realIndex(t)
 
-	write(t, i, document{productID: "prod_bayat", title: "Eski"})
+	write(t, i, document{productID: "prod_stale", title: "Old"})
 
 	threshold, err := i.Now(t.Context())
 	require.NoError(t, err)
 
-	write(t, i, document{productID: "prod_taze", title: "Yeni"})
+	write(t, i, document{productID: "prod_fresh", title: "New"})
 
 	deleted, err := i.Sweep(t.Context(), threshold)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), deleted)
 
-	ids, err := i.Search(t.Context(), "eski", 10, 0)
+	ids, err := i.Search(t.Context(), "old", 10, 0)
 	require.NoError(t, err)
 	assert.Empty(t, ids, "a row older than the threshold has to have been deleted")
 
-	ids, err = i.Search(t.Context(), "yeni", 10, 0)
+	ids, err = i.Search(t.Context(), "new", 10, 0)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"prod_taze"}, ids, "a row refreshed during the round has to STAY")
+	assert.Equal(t, []string{"prod_fresh"}, ids, "a row refreshed during the round has to STAY")
 }
 
 // TestTheSchemaCreatesAGINIndex verifies that the migration really produces a

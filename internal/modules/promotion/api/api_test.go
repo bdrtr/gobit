@@ -119,7 +119,7 @@ func TestAdminCampaignLifecycle(t *testing.T) {
 
 	rec := do(t, r, http.MethodPost, "/admin/v1/campaigns", `{
 	  "name": "Summer Sale",
-	  "campaign_identifier": "YAZ-2026",
+	  "campaign_identifier": "SUMMER-2026",
 	  "budget_type": "spend",
 	  "budget_limit": 100000,
 	  "budget_currency_code": "TRY"
@@ -137,7 +137,7 @@ func TestAdminCampaignLifecycle(t *testing.T) {
 
 	rec = do(t, r, http.MethodPut, "/admin/v1/campaigns/"+id, `{
 	  "name": "Summer Sale 2",
-	  "campaign_identifier": "YAZ-2026",
+	  "campaign_identifier": "SUMMER-2026",
 	  "budget_type": "none"
 	}`)
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
@@ -158,11 +158,11 @@ func TestAdminCampaignLifecycle(t *testing.T) {
 func TestAdminPromotionLifecycle(t *testing.T) {
 	r, _ := newTestRouter(t)
 
-	id := createPromotion(t, r, `{"code": "yaz20", "status": "active", "is_automatic": true}`)
+	id := createPromotion(t, r, `{"code": "summer20", "status": "active", "is_automatic": true}`)
 
 	rec := do(t, r, http.MethodGet, "/admin/v1/promotions/"+id, "")
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "YAZ20", decodeItem(t, rec)["code"])
+	assert.Equal(t, "SUMMER20", decodeItem(t, rec)["code"])
 
 	rec = do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
 	  "type": "percentage", "target_type": "items", "allocation": "each", "value": 2000
@@ -236,11 +236,11 @@ func TestAdminPromotionUpdateResetsFieldsAbsentFromTheBody(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	id := createPromotion(t, r, `{
-	  "code": "yaz20",
+	  "code": "summer20",
 	  "status": "active",
 	  "is_automatic": true,
 	  "usage_limit": 5,
-	  "metadata": {"kanal": "eposta"}
+	  "metadata": {"channel": "email"}
 	}`)
 
 	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id, `{"code": "kis20"}`)
@@ -268,7 +268,7 @@ func TestAdminPromotionUpdateResetsFieldsAbsentFromTheBody(t *testing.T) {
 	assert.InDelta(t, 0, readBack["usage_count"], 0, "an edit does not touch the usage counter")
 
 	// The old code belongs to nobody any more and can be taken again.
-	rec = do(t, r, http.MethodPost, "/admin/v1/promotions", `{"code": "YAZ20"}`)
+	rec = do(t, r, http.MethodPost, "/admin/v1/promotions", `{"code": "SUMMER20"}`)
 	assert.Equal(t, http.StatusCreated, rec.Code,
 		"a code given up by an edit must not stay reserved; if it did, the code would not really have been written")
 }
@@ -284,7 +284,7 @@ func TestAdminUpdatingAMissingPromotionReturns404(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	rec := do(t, r, http.MethodPut,
-		"/admin/v1/promotions/promo_YOKYOKYOKYOKYOKYOKYOKYOKYO", `{"code": "YENI"}`)
+		"/admin/v1/promotions/promo_NOSUCHPROMOTIONNOSUCHPROMO", `{"code": "NEW"}`)
 
 	assert.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
 }
@@ -299,13 +299,13 @@ func TestAdminPromotionListCanBeFiltered(t *testing.T) {
 	assert.Equal(t, int64(1), count)
 	assert.Equal(t, "AKTIF", data[0]["code"])
 
-	rec := do(t, r, http.MethodGet, "/admin/v1/promotions?status=olmayan", "")
+	rec := do(t, r, http.MethodGet, "/admin/v1/promotions?status=nonexistent", "")
 	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "an undefined status filter is rejected")
 }
 
 func TestErrorKindBecomesStatusCode(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := createPromotion(t, r, `{"code": "YAZ20"}`)
+	id := createPromotion(t, r, `{"code": "SUMMER20"}`)
 
 	tests := []struct {
 		name   string
@@ -316,7 +316,7 @@ func TestErrorKindBecomesStatusCode(t *testing.T) {
 	}{
 		{
 			name: "promotion not found", method: http.MethodGet,
-			path: "/admin/v1/promotions/promo_YOKYOKYOKYOKYOKYOKYOKYOKYO", status: http.StatusNotFound,
+			path: "/admin/v1/promotions/promo_NOSUCHPROMOTIONNOSUCHPROMO", status: http.StatusNotFound,
 		},
 		{
 			name: "id with the wrong prefix", method: http.MethodGet,
@@ -328,7 +328,7 @@ func TestErrorKindBecomesStatusCode(t *testing.T) {
 		},
 		{
 			name: "unknown field", method: http.MethodPost,
-			path: "/admin/v1/promotions", body: `{"code": "YENI", "bilinmeyen": 1}`,
+			path: "/admin/v1/promotions", body: `{"code": "NEW", "unknown": 1}`,
 			status: http.StatusUnprocessableEntity,
 		},
 		{
@@ -337,7 +337,7 @@ func TestErrorKindBecomesStatusCode(t *testing.T) {
 		},
 		{
 			name: "duplicate code", method: http.MethodPost,
-			path: "/admin/v1/promotions", body: `{"code": "yaz20"}`, status: http.StatusConflict,
+			path: "/admin/v1/promotions", body: `{"code": "summer20"}`, status: http.StatusConflict,
 		},
 		{
 			name: "non-numeric paging parameter", method: http.MethodGet,
@@ -345,7 +345,7 @@ func TestErrorKindBecomesStatusCode(t *testing.T) {
 		},
 		{
 			name: "method on a missing promotion", method: http.MethodPut,
-			path:   "/admin/v1/promotions/promo_YOKYOKYOKYOKYOKYOKYOKYOKYO/application-method",
+			path:   "/admin/v1/promotions/promo_NOSUCHPROMOTIONNOSUCHPROMO/application-method",
 			body:   `{"type": "percentage", "target_type": "items", "value": 1000}`,
 			status: http.StatusNotFound,
 		},
@@ -366,7 +366,7 @@ func TestErrorKindBecomesStatusCode(t *testing.T) {
 
 func TestAdminComputeEndpoint(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := createPromotion(t, r, `{"code": "YAZ20", "status": "active", "is_automatic": true}`)
+	id := createPromotion(t, r, `{"code": "SUMMER20", "status": "active", "is_automatic": true}`)
 
 	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
 	  "type": "percentage", "target_type": "items", "allocation": "each", "value": 2000
@@ -376,7 +376,7 @@ func TestAdminComputeEndpoint(t *testing.T) {
 	rec = do(t, r, http.MethodPost, "/admin/v1/promotions/compute", `{
 	  "currency_code": "TRY",
 	  "items": [{"id": "li_1", "amount": 10000, "unit_amount": 10000, "quantity": 1}],
-	  "codes": ["HICYOK"]
+	  "codes": ["NOSUCHCODE"]
 	}`)
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
@@ -384,7 +384,7 @@ func TestAdminComputeEndpoint(t *testing.T) {
 	assert.InDelta(t, 2000, result["discount_total"], 0)
 	assert.InDelta(t, 2000, result["items_discount_total"], 0)
 	assert.InDelta(t, 0, result["shipping_discount_total"], 0)
-	assert.Equal(t, []any{"HICYOK"}, result["unmatched_codes"])
+	assert.Equal(t, []any{"NOSUCHCODE"}, result["unmatched_codes"])
 
 	items, ok := result["items"].([]any)
 	require.True(t, ok)
@@ -396,7 +396,7 @@ func TestAdminComputeEndpoint(t *testing.T) {
 
 func TestAdminRedeemAndRelease(t *testing.T) {
 	r, repo := newTestRouter(t)
-	id := createPromotion(t, r, `{"code": "YAZ20", "status": "active"}`)
+	id := createPromotion(t, r, `{"code": "SUMMER20", "status": "active"}`)
 
 	rec := do(t, r, http.MethodPost, "/admin/v1/promotions/"+id+"/redeem",
 		`{"reference": "order_1", "amount": 2500, "currency_code": "TRY"}`)
@@ -426,8 +426,8 @@ func TestAdminRedeemAndRelease(t *testing.T) {
 func TestStoreCouponValidationDoesNotLeak(t *testing.T) {
 	r, _ := newTestRouter(t)
 	id := createPromotion(t, r, `{
-	  "code": "YAZ20", "status": "active", "usage_limit": 5,
-	  "metadata": {"ic_not": "gizli"}
+	  "code": "SUMMER20", "status": "active", "usage_limit": 5,
+	  "metadata": {"internal_note": "secret"}
 	}`)
 
 	rec := do(t, r, http.MethodPut, "/admin/v1/promotions/"+id+"/application-method", `{
@@ -441,11 +441,11 @@ func TestStoreCouponValidationDoesNotLeak(t *testing.T) {
 	}`)
 	require.Equal(t, http.StatusCreated, rec.Code)
 
-	rec = do(t, r, http.MethodGet, "/store/v1/promotions/yaz20", "")
+	rec = do(t, r, http.MethodGet, "/store/v1/promotions/summer20", "")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 	coupon := decodeItem(t, rec)
-	assert.Equal(t, "YAZ20", coupon["code"])
+	assert.Equal(t, "SUMMER20", coupon["code"])
 	assert.Equal(t, "fixed", coupon["type"])
 	assert.Equal(t, "items", coupon["target_type"])
 	assert.InDelta(t, 5000, coupon["value"], 0)
@@ -461,7 +461,7 @@ func TestStoreCouponValidationDoesNotLeak(t *testing.T) {
 
 	// The value of the rule condition must appear NOWHERE in the body.
 	assert.NotContains(t, rec.Body.String(), "vip", "the rule condition must not leak to the customer")
-	assert.NotContains(t, rec.Body.String(), "gizli", "the metadata must not leak to the customer")
+	assert.NotContains(t, rec.Body.String(), "secret", "the metadata must not leak to the customer")
 }
 
 // errorCodeAndMessage decodes the error code and message in the response body.
@@ -547,7 +547,7 @@ func TestStoreHasNoWriteSurface(t *testing.T) {
 	r, _ := newTestRouter(t)
 
 	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
-		rec := do(t, r, method, "/store/v1/promotions/YAZ20", `{}`)
+		rec := do(t, r, method, "/store/v1/promotions/SUMMER20", `{}`)
 		assert.Equal(t, http.StatusMethodNotAllowed, rec.Code,
 			"%s: writing a coupon is an admin job", method)
 	}
@@ -603,7 +603,7 @@ func TestNarrowScopeDoesNotOpenWriteEndpoints(t *testing.T) {
 // over-restrictiveness.
 func TestNarrowScopePassesOnReadEndpoints(t *testing.T) {
 	r, _ := newTestRouter(t)
-	id := createPromotion(t, r, `{"code": "YAZ20", "status": "active"}`)
+	id := createPromotion(t, r, `{"code": "SUMMER20", "status": "active"}`)
 
 	for _, path := range []string{
 		"/admin/v1/campaigns",

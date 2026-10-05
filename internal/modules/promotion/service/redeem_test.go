@@ -18,7 +18,7 @@ import (
 func repoWithCoupon(campaign *models.Campaign, usageLimit *int64) *memRepo {
 	repo := newMemRepo()
 	promo := models.Promotion{
-		ID: "promo_1", Code: "YAZ20", Status: models.PromotionActive,
+		ID: "promo_1", Code: "SUMMER20", Status: models.PromotionActive,
 		Type: models.PromotionStandard, UsageLimit: usageLimit,
 	}
 	if campaign != nil {
@@ -80,7 +80,7 @@ func TestRedeemPromotionStopsAtTheUsageLimit(t *testing.T) {
 
 func TestRedeemPromotionConsumesAMoneyMeasuredBudget(t *testing.T) {
 	campaign := models.Campaign{
-		ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ",
+		ID: "camp_1", Name: "Summer", CampaignIdentifier: "SUMMER",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(10_000)), BudgetCurrencyCode: "TRY",
 	}
 	repo := repoWithCoupon(&campaign, nil)
@@ -96,7 +96,7 @@ func TestRedeemPromotionConsumesAMoneyMeasuredBudget(t *testing.T) {
 
 func TestRedeemPromotionConsumesOneOfACountMeasuredBudget(t *testing.T) {
 	campaign := models.Campaign{
-		ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ",
+		ID: "camp_1", Name: "Summer", CampaignIdentifier: "SUMMER",
 		BudgetType: models.BudgetUsage, BudgetLimit: ptr(int64(3)),
 	}
 	repo := repoWithCoupon(&campaign, nil)
@@ -112,7 +112,7 @@ func TestRedeemPromotionConsumesOneOfACountMeasuredBudget(t *testing.T) {
 
 func TestRedeemPromotionRefusesWhenTheBudgetIsExceeded(t *testing.T) {
 	campaign := models.Campaign{
-		ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ",
+		ID: "camp_1", Name: "Summer", CampaignIdentifier: "SUMMER",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(1000)),
 		BudgetUsed: 900, BudgetCurrencyCode: "TRY",
 	}
@@ -131,7 +131,7 @@ func TestRedeemPromotionRefusesWhenTheBudgetIsExceeded(t *testing.T) {
 
 func TestRedeemPromotionBudgetCurrencyMustMatch(t *testing.T) {
 	campaign := models.Campaign{
-		ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ",
+		ID: "camp_1", Name: "Summer", CampaignIdentifier: "SUMMER",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(10_000)), BudgetCurrencyCode: "TRY",
 	}
 	repo := repoWithCoupon(&campaign, nil)
@@ -147,7 +147,7 @@ func TestRedeemPromotionBudgetCurrencyMustMatch(t *testing.T) {
 
 func TestReleasePromotionReversesTheCounters(t *testing.T) {
 	campaign := models.Campaign{
-		ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ",
+		ID: "camp_1", Name: "Summer", CampaignIdentifier: "SUMMER",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(10_000)), BudgetCurrencyCode: "TRY",
 	}
 	repo := repoWithCoupon(&campaign, nil)
@@ -234,7 +234,7 @@ func TestRedeemPromotionResolvesByCode(t *testing.T) {
 	repo := repoWithCoupon(nil, nil)
 
 	redemption, err := newTestService(repo).RedeemPromotion(context.Background(), RedeemInput{
-		Code: "yaz20", Reference: "order_1", Amount: 100, CurrencyCode: "TRY",
+		Code: "summer20", Reference: "order_1", Amount: 100, CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
@@ -340,7 +340,7 @@ func TestRedeemPromotionRefusesAPromotionThatIsNotLive(t *testing.T) {
 	for _, status := range []models.PromotionStatus{models.PromotionDraft, models.PromotionInactive} {
 		t.Run(string(status), func(t *testing.T) {
 			campaign := models.Campaign{
-				ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ",
+				ID: "camp_1", Name: "Summer", CampaignIdentifier: "SUMMER",
 				BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(10_000)), BudgetCurrencyCode: "TRY",
 			}
 			repo := repoWithCoupon(&campaign, nil)
@@ -411,7 +411,7 @@ func TestRedeemPromotionRefusesWhenTheCampaignWindowIsClosed(t *testing.T) {
 // window is open must be redeemable normally.
 func TestRedeemPromotionWorksInsideAnOpenCampaignWindow(t *testing.T) {
 	campaign := models.Campaign{
-		ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ",
+		ID: "camp_1", Name: "Summer", CampaignIdentifier: "SUMMER",
 		StartsAt:   ptr(testNow.Add(-time.Hour)),
 		EndsAt:     ptr(testNow.Add(time.Hour)),
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(10_000)), BudgetCurrencyCode: "TRY",
@@ -458,7 +458,7 @@ func TestRedeemPromotionIdempotencyComesBeforeTheStatusCheck(t *testing.T) {
 // reversible too, otherwise the saga compensation would get stuck.
 func TestReleasePromotionReleasesAStoppedPromotionToo(t *testing.T) {
 	campaign := models.Campaign{
-		ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ",
+		ID: "camp_1", Name: "Summer", CampaignIdentifier: "SUMMER",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(10_000)), BudgetCurrencyCode: "TRY",
 	}
 	repo := repoWithCoupon(&campaign, nil)

@@ -76,7 +76,7 @@ func jsonBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
 func TestClosingALocationReturnsTheClosedRow(t *testing.T) {
 	router, svc := newRouter(t)
 	closedAt := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC)
-	svc.location = models.StockLocation{ID: "sloc_1", Name: "Merkez", ClosedAt: &closedAt}
+	svc.location = models.StockLocation{ID: "sloc_1", Name: "Central", ClosedAt: &closedAt}
 
 	rec := sendRequest(t, router, http.MethodPost, "/admin/v1/stock-locations/sloc_1/close")
 
@@ -96,7 +96,7 @@ func TestClosingALocationReturnsTheClosedRow(t *testing.T) {
 // polls to find out whether a warehouse is still in service.
 func TestAnOpenLocationReportsClosedAtAsNull(t *testing.T) {
 	router, svc := newRouter(t)
-	svc.location = models.StockLocation{ID: "sloc_1", Name: "Merkez"}
+	svc.location = models.StockLocation{ID: "sloc_1", Name: "Central"}
 
 	rec := sendRequest(t, router, http.MethodGet, "/admin/v1/stock-locations/sloc_1")
 

@@ -28,11 +28,11 @@ func TestCreatePromotionUppercasesTheCode(t *testing.T) {
 	repo := newMemRepo()
 
 	promo, err := newTestService(repo).CreatePromotion(context.Background(), PromotionInput{
-		Code: " yaz-20 ",
+		Code: " summer-20 ",
 	})
 	require.NoError(t, err)
 
-	assert.Equal(t, "YAZ-20", promo.Code, "the coupon code is stored normalized to upper case")
+	assert.Equal(t, "SUMMER-20", promo.Code, "the coupon code is stored normalized to upper case")
 	assert.Equal(t, models.PromotionDraft, promo.Status,
 		"without a status it becomes a DRAFT; an incomplete request must not go live by accident")
 	assert.Equal(t, models.PromotionStandard, promo.Type)
@@ -43,10 +43,10 @@ func TestCreatePromotionTheSameCodeCannotBeTakenTwice(t *testing.T) {
 	repo := newMemRepo()
 	svc := newTestService(repo)
 
-	_, err := svc.CreatePromotion(context.Background(), PromotionInput{Code: "YAZ20"})
+	_, err := svc.CreatePromotion(context.Background(), PromotionInput{Code: "SUMMER20"})
 	require.NoError(t, err)
 
-	_, err = svc.CreatePromotion(context.Background(), PromotionInput{Code: "yaz20"})
+	_, err = svc.CreatePromotion(context.Background(), PromotionInput{Code: "summer20"})
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
 		"the code is UNIQUE regardless of case")
@@ -126,36 +126,36 @@ func TestPromotionInputValidation(t *testing.T) {
 		reason string
 	}{
 		{name: "short code", in: PromotionInput{Code: "AB"}, reason: "a code is at least three characters"},
-		{name: "code with a space", in: PromotionInput{Code: "YAZ 20"}, reason: "a code cannot contain a space"},
+		{name: "code with a space", in: PromotionInput{Code: "SUMMER 20"}, reason: "a code cannot contain a space"},
 		{name: "long code", in: PromotionInput{Code: strings.Repeat("A", MaxCodeLen+1)}, reason: "code limit"},
 		{
 			name:   "undefined type",
-			in:     PromotionInput{Code: "YAZ20", Type: "olmayan"},
+			in:     PromotionInput{Code: "SUMMER20", Type: "nonexistent"},
 			reason: "an undefined type is refused",
 		},
 		{
 			name:   "undefined status",
-			in:     PromotionInput{Code: "YAZ20", Status: "olmayan"},
+			in:     PromotionInput{Code: "SUMMER20", Status: "nonexistent"},
 			reason: "an undefined status is refused",
 		},
 		{
 			name:   "campaign id with the wrong prefix",
-			in:     PromotionInput{Code: "YAZ20", CampaignID: ptr("promo_yanlis")},
+			in:     PromotionInput{Code: "SUMMER20", CampaignID: ptr("promo_wrong")},
 			reason: "the prefix check catches an id of the wrong kind",
 		},
 		{
 			name:   "negative usage limit",
-			in:     PromotionInput{Code: "YAZ20", UsageLimit: ptr(int64(-1))},
+			in:     PromotionInput{Code: "SUMMER20", UsageLimit: ptr(int64(-1))},
 			reason: "a negative limit is meaningless",
 		},
 		{
 			name:   "long metadata value",
-			in:     PromotionInput{Code: "YAZ20", Metadata: map[string]string{"not": longValue}},
+			in:     PromotionInput{Code: "SUMMER20", Metadata: map[string]string{"not": longValue}},
 			reason: "metadata value limit",
 		},
 		{
 			name:   "empty metadata key",
-			in:     PromotionInput{Code: "YAZ20", Metadata: map[string]string{"": "x"}},
+			in:     PromotionInput{Code: "SUMMER20", Metadata: map[string]string{"": "x"}},
 			reason: "an empty key is meaningless",
 		},
 	}
@@ -173,7 +173,7 @@ func TestUpdatePromotionKeepsTheUsageCounter(t *testing.T) {
 	repo := newMemRepo()
 	svc := newTestService(repo)
 
-	promo, err := svc.CreatePromotion(context.Background(), PromotionInput{Code: "YAZ20"})
+	promo, err := svc.CreatePromotion(context.Background(), PromotionInput{Code: "SUMMER20"})
 	require.NoError(t, err)
 
 	record := repo.promotions[promo.ID]
@@ -195,12 +195,12 @@ func TestUpdatePromotionIsAReplacement(t *testing.T) {
 	svc := newTestService(repo)
 
 	promo, err := svc.CreatePromotion(context.Background(), PromotionInput{
-		Code: "YAZ20", CampaignID: ptr("camp_1"), UsageLimit: ptr(int64(5)),
+		Code: "SUMMER20", CampaignID: ptr("camp_1"), UsageLimit: ptr(int64(5)),
 	})
 	require.NoError(t, err)
 	require.NotNil(t, promo.CampaignID)
 
-	updated, err := svc.UpdatePromotion(context.Background(), promo.ID, PromotionInput{Code: "YAZ20"})
+	updated, err := svc.UpdatePromotion(context.Background(), promo.ID, PromotionInput{Code: "SUMMER20"})
 	require.NoError(t, err)
 
 	assert.Nil(t, updated.CampaignID, "a field that is not given is RESET; it is not a partial update")
@@ -208,7 +208,7 @@ func TestUpdatePromotionIsAReplacement(t *testing.T) {
 }
 
 func TestCampaignBudgetValidation(t *testing.T) {
-	base := CampaignInput{Name: "Yaz", CampaignIdentifier: "YAZ-2026"}
+	base := CampaignInput{Name: "Summer", CampaignIdentifier: "SUMMER-2026"}
 
 	tests := []struct {
 		name   string
@@ -299,8 +299,8 @@ func TestCreateCampaignValidBudget(t *testing.T) {
 	repo := newMemRepo()
 
 	campaign, err := newTestService(repo).CreateCampaign(context.Background(), CampaignInput{
-		Name:               "Yaz",
-		CampaignIdentifier: "YAZ-2026",
+		Name:               "Summer",
+		CampaignIdentifier: "SUMMER-2026",
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(100_000)),
 		BudgetCurrencyCode: "try",
@@ -314,7 +314,7 @@ func TestCreateCampaignValidBudget(t *testing.T) {
 func TestCreateCampaignBusinessIdentifierIsUnique(t *testing.T) {
 	repo := newMemRepo()
 	svc := newTestService(repo)
-	in := CampaignInput{Name: "Yaz", CampaignIdentifier: "YAZ-2026"}
+	in := CampaignInput{Name: "Summer", CampaignIdentifier: "SUMMER-2026"}
 
 	_, err := svc.CreateCampaign(context.Background(), in)
 	require.NoError(t, err)
@@ -332,12 +332,12 @@ func TestSetApplicationMethodValidation(t *testing.T) {
 	}{
 		{
 			name:   "undefined type",
-			in:     ApplicationMethodInput{Type: "olmayan", TargetType: models.TargetItems},
+			in:     ApplicationMethodInput{Type: "nonexistent", TargetType: models.TargetItems},
 			reason: "an undefined type is refused",
 		},
 		{
 			name:   "undefined target",
-			in:     ApplicationMethodInput{Type: models.MethodPercentage, TargetType: "olmayan"},
+			in:     ApplicationMethodInput{Type: models.MethodPercentage, TargetType: "nonexistent"},
 			reason: "an undefined target is refused",
 		},
 		{
@@ -390,7 +390,7 @@ func TestSetApplicationMethodValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newMemRepo()
-			repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "YAZ20"}
+			repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "SUMMER20"}
 
 			_, err := newTestService(repo).SetApplicationMethod(context.Background(), "promo_1", tt.in)
 			require.Error(t, err, tt.reason)
@@ -401,7 +401,7 @@ func TestSetApplicationMethodValidation(t *testing.T) {
 
 func TestSetApplicationMethodForcesAcrossOnTheOrderTarget(t *testing.T) {
 	repo := newMemRepo()
-	repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "YAZ20"}
+	repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "SUMMER20"}
 
 	method, err := newTestService(repo).SetApplicationMethod(context.Background(), "promo_1",
 		ApplicationMethodInput{
@@ -430,7 +430,7 @@ func TestAddPromotionRuleValidation(t *testing.T) {
 	}{
 		{
 			name:   "undefined rule type",
-			in:     RuleInput{RuleType: "olmayan", Attribute: "a", Operator: models.OpEq, Values: []string{"x"}},
+			in:     RuleInput{RuleType: "nonexistent", Attribute: "a", Operator: models.OpEq, Values: []string{"x"}},
 			reason: "an undefined type is refused",
 		},
 		{
@@ -440,7 +440,7 @@ func TestAddPromotionRuleValidation(t *testing.T) {
 		},
 		{
 			name:   "undefined operator",
-			in:     RuleInput{RuleType: models.RuleContext, Attribute: "a", Operator: "olmayan", Values: []string{"x"}},
+			in:     RuleInput{RuleType: models.RuleContext, Attribute: "a", Operator: "nonexistent", Values: []string{"x"}},
 			reason: "an undefined operator is refused",
 		},
 		{
@@ -477,7 +477,7 @@ func TestAddPromotionRuleValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newMemRepo()
-			repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "YAZ20"}
+			repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "SUMMER20"}
 
 			_, err := newTestService(repo).AddPromotionRule(context.Background(), "promo_1", tt.in)
 			require.Error(t, err, tt.reason)
@@ -524,7 +524,7 @@ func TestAPromotionRuleCannotNameTheCartsBag(t *testing.T) {
 
 func TestAddPromotionRuleCopiesTheValues(t *testing.T) {
 	repo := newMemRepo()
-	repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "YAZ20"}
+	repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "SUMMER20"}
 
 	values := []string{"vip", "b2b"}
 	rule, err := newTestService(repo).AddPromotionRule(context.Background(), "promo_1", RuleInput{
@@ -533,7 +533,7 @@ func TestAddPromotionRuleCopiesTheValues(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	values[0] = "degistirildi"
+	values[0] = "changed"
 	assert.Equal(t, []string{"vip", "b2b"}, rule.Values,
 		"changing the caller's slice afterwards must not corrupt the written rule")
 }
@@ -572,13 +572,13 @@ func TestPagingLimitsAreApplied(t *testing.T) {
 
 func TestLookupStoreCouponReturnsOnlyAUsableCoupon(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YAZ20"},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SUMMER20"},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
-	coupon, err := newTestService(repo).LookupStoreCoupon(context.Background(), "yaz20")
+	coupon, err := newTestService(repo).LookupStoreCoupon(context.Background(), "summer20")
 	require.NoError(t, err)
 
-	assert.Equal(t, "YAZ20", coupon.Code)
+	assert.Equal(t, "SUMMER20", coupon.Code)
 	assert.Equal(t, models.MethodPercentage, coupon.MethodType)
 	assert.Equal(t, int64(2000), coupon.Value)
 	assert.Empty(t, coupon.CurrencyCode)
@@ -603,7 +603,7 @@ func TestLookupStoreCouponDoesNotLeak(t *testing.T) {
 		{
 			name:   "nonexistent code",
 			setup:  func(*memRepo) {},
-			code:   "HICYOK",
+			code:   "NOSUCHCODE",
 			reason: "a nonexistent code returns not found",
 		},
 		{
@@ -748,7 +748,7 @@ func TestGetPromotionByCodeAdminSeesTheDraft(t *testing.T) {
 // can catch that.
 func TestLookupStoreCouponReturnsACouponOfAnOpenCampaign(t *testing.T) {
 	campaign := models.Campaign{
-		ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ",
+		ID: "camp_1", Name: "Summer", CampaignIdentifier: "SUMMER",
 		StartsAt:   ptr(testNow.Add(-time.Hour)),
 		EndsAt:     ptr(testNow.Add(time.Hour)),
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(100_000)),
@@ -757,13 +757,13 @@ func TestLookupStoreCouponReturnsACouponOfAnOpenCampaign(t *testing.T) {
 	repo := newMemRepo()
 	repo.campaigns[campaign.ID] = campaign
 	seedPromotion(repo, models.Promotion{
-		ID: "promo_1", Code: "YAZ20", CampaignID: ptr(campaign.ID),
+		ID: "promo_1", Code: "SUMMER20", CampaignID: ptr(campaign.ID),
 	}, fixedMethod("promo_1", 1500, models.TargetItems, models.AllocationEach))
 
-	coupon, err := newTestService(repo).LookupStoreCoupon(context.Background(), "yaz20")
+	coupon, err := newTestService(repo).LookupStoreCoupon(context.Background(), "summer20")
 	require.NoError(t, err, "the coupon of a campaign whose window is open and whose budget remains is VISIBLE to the customer")
 
-	assert.Equal(t, "YAZ20", coupon.Code)
+	assert.Equal(t, "SUMMER20", coupon.Code)
 	assert.Equal(t, models.MethodFixed, coupon.MethodType)
 	assert.Equal(t, models.TargetItems, coupon.TargetType)
 	assert.Equal(t, int64(1500), coupon.Value)
@@ -775,11 +775,11 @@ func TestLookupStoreCouponReturnsACouponOfAnOpenCampaign(t *testing.T) {
 // unit (see [Service.UpdateCampaign]).
 func TestUpdateCampaignBudgetUnitCannotChangeWhileTheCounterIsNonZero(t *testing.T) {
 	countCampaign := models.Campaign{
-		ID: "camp_1", Name: "Adet", CampaignIdentifier: "ADET",
+		ID: "camp_1", Name: "Quantity", CampaignIdentifier: "QUANTITY",
 		BudgetType: models.BudgetUsage, BudgetLimit: ptr(int64(100)), BudgetUsed: 30,
 	}
 	moneyCampaign := models.Campaign{
-		ID: "camp_1", Name: "Para", CampaignIdentifier: "PARA",
+		ID: "camp_1", Name: "Money", CampaignIdentifier: "MONEY",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(100_000)),
 		BudgetUsed: 30_000, BudgetCurrencyCode: "TRY",
 	}
@@ -794,7 +794,7 @@ func TestUpdateCampaignBudgetUnitCannotChangeWhileTheCounterIsNonZero(t *testing
 			name:     "type from count to money",
 			existing: countCampaign,
 			request: CampaignInput{
-				Name: "Adet", CampaignIdentifier: "ADET",
+				Name: "Quantity", CampaignIdentifier: "QUANTITY",
 				BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(100_000)),
 				BudgetCurrencyCode: "TRY",
 			},
@@ -804,7 +804,7 @@ func TestUpdateCampaignBudgetUnitCannotChangeWhileTheCounterIsNonZero(t *testing
 			name:     "currency changes",
 			existing: moneyCampaign,
 			request: CampaignInput{
-				Name: "Para", CampaignIdentifier: "PARA",
+				Name: "Money", CampaignIdentifier: "MONEY",
 				BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(100_000)),
 				BudgetCurrencyCode: "USD",
 			},
@@ -835,20 +835,20 @@ func TestUpdateCampaignBudgetUnitCannotChangeWhileTheCounterIsNonZero(t *testing
 func TestUpdateCampaignDefinitionCanChangeWhileTheCounterIsNonZero(t *testing.T) {
 	repo := newMemRepo()
 	repo.campaigns["camp_1"] = models.Campaign{
-		ID: "camp_1", Name: "Eski", CampaignIdentifier: "YAZ",
+		ID: "camp_1", Name: "Old", CampaignIdentifier: "SUMMER",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(100_000)),
 		BudgetUsed: 30_000, BudgetCurrencyCode: "TRY",
 	}
 
 	campaign, err := newTestService(repo).UpdateCampaign(context.Background(), "camp_1", CampaignInput{
-		Name: "Yeni", CampaignIdentifier: "YAZ", Description: "updated",
+		Name: "New", CampaignIdentifier: "SUMMER", Description: "updated",
 		EndsAt:     ptr(testNow.Add(48 * time.Hour)),
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(250_000)),
 		BudgetCurrencyCode: "TRY",
 	})
 	require.NoError(t, err, "the name, description, window and budget LIMIT are independent of the counter")
 
-	assert.Equal(t, "Yeni", campaign.Name)
+	assert.Equal(t, "New", campaign.Name)
 	assert.Equal(t, int64(250_000), *campaign.BudgetLimit)
 	assert.Equal(t, int64(30_000), campaign.BudgetUsed, "the counter does not change through this path")
 }
@@ -859,12 +859,12 @@ func TestUpdateCampaignDefinitionCanChangeWhileTheCounterIsNonZero(t *testing.T)
 func TestUpdateCampaignBudgetUnitCanChangeWhileTheCounterIsZero(t *testing.T) {
 	repo := newMemRepo()
 	repo.campaigns["camp_1"] = models.Campaign{
-		ID: "camp_1", Name: "Adet", CampaignIdentifier: "ADET",
+		ID: "camp_1", Name: "Quantity", CampaignIdentifier: "QUANTITY",
 		BudgetType: models.BudgetUsage, BudgetLimit: ptr(int64(100)),
 	}
 
 	campaign, err := newTestService(repo).UpdateCampaign(context.Background(), "camp_1", CampaignInput{
-		Name: "Para", CampaignIdentifier: "ADET",
+		Name: "Money", CampaignIdentifier: "QUANTITY",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(100_000)),
 		BudgetCurrencyCode: "TRY",
 	})

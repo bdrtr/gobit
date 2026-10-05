@@ -16,9 +16,9 @@ import (
 
 func TestComputeDiscountsJSONMeetsTheSchema(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YAZ20", IsAutomatic: false},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SUMMER20", IsAutomatic: false},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
-	seedPromotion(repo, models.Promotion{ID: "promo_2", Code: "KARGO", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_2", Code: "SHIPPING", IsAutomatic: true},
 		percentageMethod("promo_2", 10000, models.TargetShippingMethods, models.AllocationEach))
 
 	interop := NewInterop(newTestService(repo))
@@ -27,7 +27,7 @@ func TestComputeDiscountsJSONMeetsTheSchema(t *testing.T) {
 	  "context": {"region_id": "reg_1"},
 	  "items": [{"id": "li_1", "amount": 25000, "unit_amount": 12500, "quantity": 2, "attributes": {"kategori": "giyim"}}],
 	  "shipping_methods": [{"id": "sm_1", "amount": 4990, "attributes": {}}],
-	  "codes": ["yaz20", "HICYOK"],
+	  "codes": ["summer20", "NOSUCHCODE"],
 	  "at": "2026-08-24T10:00:00Z"
 	}`)
 
@@ -57,12 +57,12 @@ func TestComputeDiscountsJSONMeetsTheSchema(t *testing.T) {
 	assert.Equal(t, int64(5000), decoded.ItemsDiscountTotal)
 	assert.Equal(t, int64(4990), decoded.ShippingDiscountTotal)
 	assert.Equal(t, int64(9990), decoded.DiscountTotal)
-	assert.Equal(t, []string{"HICYOK"}, decoded.UnmatchedCodes)
+	assert.Equal(t, []string{"NOSUCHCODE"}, decoded.UnmatchedCodes)
 
 	require.Len(t, decoded.Applied, 2)
-	assert.Equal(t, "YAZ20", decoded.Applied[0].Code)
+	assert.Equal(t, "SUMMER20", decoded.Applied[0].Code)
 	assert.False(t, decoded.Applied[0].IsAutomatic)
-	assert.Equal(t, "KARGO", decoded.Applied[1].Code)
+	assert.Equal(t, "SHIPPING", decoded.Applied[1].Code)
 	assert.True(t, decoded.Applied[1].IsAutomatic)
 
 	var appliedTotal int64
@@ -147,7 +147,7 @@ func TestComputeDiscountsJSONDoesNotCorruptLargeIntegers(t *testing.T) {
 func TestComputeDiscountsJSONTimestampSelectsTheCampaignWindow(t *testing.T) {
 	repo := newMemRepo()
 	repo.campaigns["camp_1"] = models.Campaign{
-		ID: "camp_1", Name: "Yaz", CampaignIdentifier: "YAZ", BudgetType: models.BudgetNone,
+		ID: "camp_1", Name: "Summer", CampaignIdentifier: "SUMMER", BudgetType: models.BudgetNone,
 		StartsAt: ptr(testNow.Add(-48 * time.Hour)), EndsAt: ptr(testNow.Add(-time.Hour)),
 	}
 	seedPromotion(repo, models.Promotion{
@@ -174,12 +174,12 @@ func TestInteropRedeemAndReleaseWorkThroughThePrimitiveSurface(t *testing.T) {
 	repo := repoWithCoupon(nil, nil)
 	interop := NewInterop(newTestService(repo))
 
-	id, err := interop.RedeemPromotion(context.Background(), "", "yaz20", "order_1", "TRY", 2500)
+	id, err := interop.RedeemPromotion(context.Background(), "", "summer20", "order_1", "TRY", 2500)
 	require.NoError(t, err)
 	assert.NotEmpty(t, id)
 	assert.Equal(t, int64(1), repo.promotions["promo_1"].UsageCount)
 
-	secondID, err := interop.RedeemPromotion(context.Background(), "", "yaz20", "order_1", "TRY", 2500)
+	secondID, err := interop.RedeemPromotion(context.Background(), "", "summer20", "order_1", "TRY", 2500)
 	require.NoError(t, err)
 	assert.Equal(t, id, secondID, "the primitive surface is idempotent too")
 	assert.Equal(t, int64(1), repo.promotions["promo_1"].UsageCount)

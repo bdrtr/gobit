@@ -101,7 +101,7 @@ var writeEndpoints = map[string]struct {
 	body   string
 }{
 	"creating a location": {
-		http.MethodPost, "/admin/v1/stock-locations", `{"name":"Merkez","country_code":"TR"}`,
+		http.MethodPost, "/admin/v1/stock-locations", `{"name":"Central","country_code":"TR"}`,
 	},
 	// Closing a location is a write and belongs here for the reason the godoc
 	// above gives (ADR 0055): the route sits on the write router, but until it

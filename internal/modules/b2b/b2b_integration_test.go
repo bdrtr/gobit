@@ -141,7 +141,7 @@ func newCompany(t *testing.T, svc *service.Service, period models.SpendingResetP
 
 	company, err := svc.CreateCompany(t.Context(), service.CompanyInput{
 		Name:                     t.Name(),
-		Email:                    "muhasebe@ornek.test",
+		Email:                    "accounting@example.test",
 		CurrencyCode:             "TRY",
 		SpendingLimitResetPeriod: string(period),
 	})
@@ -398,15 +398,15 @@ func TestConstraintsHoldInTheDatabase(t *testing.T) {
 
 	cases := map[string]string{
 		"upper-case e-mail": `INSERT INTO b2b_company (id, name, email, currency_code)
-             VALUES ('comp_kisit_1', 'X', 'BUYUK@ornek.test', 'TRY')`,
+             VALUES ('comp_check_1', 'X', 'UPPER@example.test', 'TRY')`,
 		"invalid currency": `INSERT INTO b2b_company (id, name, email, currency_code)
-             VALUES ('comp_kisit_2', 'X', 'x@ornek.test', 'TR')`,
+             VALUES ('comp_check_2', 'X', 'x@example.test', 'TR')`,
 		"undefined reset period": `INSERT INTO b2b_company
              (id, name, email, currency_code, spending_limit_reset_period)
-             VALUES ('comp_kisit_3', 'X', 'x@ornek.test', 'TRY', 'weekly')`,
+             VALUES ('comp_check_3', 'X', 'x@example.test', 'TRY', 'weekly')`,
 		"invalid country code": `INSERT INTO b2b_company
              (id, name, email, currency_code, country_code)
-             VALUES ('comp_kisit_4', 'X', 'x@ornek.test', 'TRY', 'TUR')`,
+             VALUES ('comp_check_4', 'X', 'x@example.test', 'TRY', 'TUR')`,
 	}
 
 	for name, sql := range cases {
@@ -422,7 +422,7 @@ func TestConstraintsHoldInTheDatabase(t *testing.T) {
 
 		_, err := testPool.Pool().Exec(ctx,
 			`INSERT INTO b2b_company_employee (id, company_id, spending_limit)
-             VALUES ('compemp_kisit_1', $1, -1)`, company.ID)
+             VALUES ('compemp_check_1', $1, -1)`, company.ID)
 		assert.Error(t, err, "a negative limit is not a bound but a meaningless number")
 	})
 
@@ -431,7 +431,7 @@ func TestConstraintsHoldInTheDatabase(t *testing.T) {
 		// address is settled, and the constraint has to ACCEPT that.
 		_, err := testPool.Pool().Exec(ctx,
 			`INSERT INTO b2b_company (id, name, email, currency_code, country_code)
-             VALUES ('comp_kisit_5', 'X', 'x@ornek.test', 'TRY', '')`)
+             VALUES ('comp_check_5', 'X', 'x@example.test', 'TRY', '')`)
 		assert.NoError(t, err)
 	})
 }

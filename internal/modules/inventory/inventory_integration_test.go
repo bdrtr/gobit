@@ -1212,7 +1212,7 @@ func TestAFailedTransactionIsRolledBack(t *testing.T) {
 	repo := repository.New(testPool.Pool())
 	sku := "SKU-" + models.NewInventoryItemID()
 
-	deliberate := errors.Internal("test_hata", "the transaction must be rolled back")
+	deliberate := errors.Internal("test_failure", "the transaction must be rolled back")
 	err := repo.WithTx(ctx, func(ctx context.Context) error {
 		_, createErr := repo.CreateInventoryItem(ctx, models.InventoryItem{
 			ID: models.NewInventoryItemID(), SKU: sku, RequiresShipping: true,

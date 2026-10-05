@@ -304,7 +304,7 @@ func (p *Provider) Create(
 	}
 	reference := strings.TrimSpace(in.Reference)
 	if reference == "" {
-		return coreprovider.Fulfillment{}, errors.Invalid(CodeInvalidInput, "reference zorunludur")
+		return coreprovider.Fulfillment{}, errors.Invalid(CodeInvalidInput, "the reference is required")
 	}
 	optionID := strings.TrimSpace(in.OptionID)
 	if optionID == "" {

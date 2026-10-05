@@ -541,7 +541,7 @@ func TestResponseWriterSwallowsASecondWriteHeader(t *testing.T) {
 	}))
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/urunler", http.NoBody))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/products", http.NoBody))
 
 	assert.Equal(t, http.StatusCreated, rec.Code, "the sent status must not change")
 

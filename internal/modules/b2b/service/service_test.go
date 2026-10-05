@@ -209,7 +209,7 @@ func TestACustomerCannotJoinASecondCompany(t *testing.T) {
 	first := newTestCompany(t, svc)
 
 	second, err := svc.CreateCompany(t.Context(), CompanyInput{
-		Name: "Beta Ltd.", Email: "beta@ornek.test", CurrencyCode: "TRY",
+		Name: "Beta Ltd.", Email: "beta@example.test", CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 
@@ -243,7 +243,7 @@ func TestDeleteCompanyClearsEmployeesAndBonds(t *testing.T) {
 
 	// The customer has to be addable to another company now.
 	next, err := svc.CreateCompany(t.Context(), CompanyInput{
-		Name: "Gamma Ltd.", Email: "gamma@ornek.test", CurrencyCode: "TRY",
+		Name: "Gamma Ltd.", Email: "gamma@example.test", CurrencyCode: "TRY",
 	})
 	require.NoError(t, err)
 	_, err = svc.CreateEmployee(t.Context(), EmployeeInput{CompanyID: next.ID, CustomerID: "cust_01"})
@@ -277,7 +277,7 @@ func TestMembershipReturnsOnlyTheirOwnCompany(t *testing.T) {
 
 	acme := newTestCompany(t, svc)
 	beta, err := svc.CreateCompany(t.Context(), CompanyInput{
-		Name: "Beta Ltd.", Email: "beta@ornek.test", CurrencyCode: "EUR",
+		Name: "Beta Ltd.", Email: "beta@example.test", CurrencyCode: "EUR",
 		SpendingLimitResetPeriod: string(models.ResetYearly),
 	})
 	require.NoError(t, err)

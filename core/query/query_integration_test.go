@@ -369,7 +369,7 @@ func TestGraphAProviderErrorDropsTheWholeCall(t *testing.T) {
 	// The provider refuses a filter it does not know (ADR 0004); Query must not swallow it.
 	got, err := q.Graph(t.Context(), query.GraphSpec{
 		Entity:  "shop_item",
-		Filters: map[string]any{"bilinmeyen_alan": "x"},
+		Filters: map[string]any{"unknown_field": "x"},
 		Expand:  []query.Expansion{{Link: "item_price"}},
 	})
 	require.Error(t, err)

@@ -224,7 +224,7 @@ func TestCampaignLifecycle(t *testing.T) {
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
 		Name:               "Summer Sale",
 		CampaignIdentifier: identifier,
-		Description:        "Yaz sezonu",
+		Description:        "Summer season",
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(100_000)),
 		BudgetCurrencyCode: "TRY",
@@ -250,7 +250,7 @@ func TestCampaignLifecycle(t *testing.T) {
 
 	// A deleted business identifier can be used again: the partial index covers
 	// only live records.
-	_, err = svc.CreateCampaign(ctx, service.CampaignInput{Name: "Yeniden", CampaignIdentifier: identifier})
+	_, err = svc.CreateCampaign(ctx, service.CampaignInput{Name: "Again", CampaignIdentifier: identifier})
 	assert.NoError(t, err, "a deleted business identifier must not stay reserved forever")
 }
 
@@ -339,7 +339,7 @@ func TestTheComputationRunsOnTheRealDatabase(t *testing.T) {
 	svc := newService(t)
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
-		Name:               "Yaz",
+		Name:               "Summer",
 		CampaignIdentifier: "HESAP-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
@@ -455,7 +455,7 @@ func TestConcurrentRedeemWritesOneRecordForTheSameReference(t *testing.T) {
 			<-start
 			redemption, err := svc.RedeemPromotion(ctx, service.RedeemInput{
 				PromotionID:  promo.ID,
-				Reference:    "order_tek",
+				Reference:    "order_single",
 				Amount:       250,
 				CurrencyCode: "TRY",
 			})
@@ -610,7 +610,7 @@ func TestReleaseWithoutAnyRedemptionDoesNotFail(t *testing.T) {
 	promo := activePromotion(ctx, t, svc, service.PromotionInput{})
 
 	released, err := svc.ReleasePromotion(ctx, service.ReleaseInput{
-		PromotionID: promo.ID, Reference: "hic_yazilmadi",
+		PromotionID: promo.ID, Reference: "never_written",
 	})
 
 	require.NoError(t, err, "the compensation of a step that blew up before writing must be able to run too")
@@ -713,7 +713,7 @@ func TestTheDatabaseConstraintsAreTheLastDefense(t *testing.T) {
 			name: "lower-case coupon code",
 			write: func() error {
 				_, err := repo.CreatePromotion(ctx, models.Promotion{
-					ID: models.NewPromotionID(now), Code: "kucuk",
+					ID: models.NewPromotionID(now), Code: "small",
 					Type: models.PromotionStandard, Status: models.PromotionDraft,
 				}, now)
 				return err
@@ -725,7 +725,7 @@ func TestTheDatabaseConstraintsAreTheLastDefense(t *testing.T) {
 			write: func() error {
 				_, err := repo.CreatePromotion(ctx, models.Promotion{
 					ID: models.NewPromotionID(now), Code: uniqueCode(),
-					Type: models.PromotionStandard, Status: "olmayan",
+					Type: models.PromotionStandard, Status: "nonexistent",
 				}, now)
 				return err
 			},
@@ -919,7 +919,7 @@ func TestRedeemRefusesAPromotionThatIsNotLiveOnTheRealDatabase(t *testing.T) {
 	for _, status := range []models.PromotionStatus{models.PromotionDraft, models.PromotionInactive} {
 		t.Run(string(status), func(t *testing.T) {
 			campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
-				Name:               "Yaz",
+				Name:               "Summer",
 				CampaignIdentifier: "TASLAK-" + uniqueCode(),
 				BudgetType:         models.BudgetSpend,
 				BudgetLimit:        ptr(int64(1_000_000)),
@@ -1001,7 +1001,7 @@ func TestUpdateCampaignBudgetUnitLockIsInTheDatabase(t *testing.T) {
 	identifier := "KILIT-" + uniqueCode()
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
-		Name:               "Yaz",
+		Name:               "Summer",
 		CampaignIdentifier: identifier,
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
@@ -1017,7 +1017,7 @@ func TestUpdateCampaignBudgetUnitLockIsInTheDatabase(t *testing.T) {
 	require.NoError(t, err)
 
 	_, err = svc.UpdateCampaign(ctx, campaign.ID, service.CampaignInput{
-		Name:               "Yaz",
+		Name:               "Summer",
 		CampaignIdentifier: identifier,
 		BudgetType:         models.BudgetUsage,
 		BudgetLimit:        ptr(int64(100)),
@@ -1027,7 +1027,7 @@ func TestUpdateCampaignBudgetUnitLockIsInTheDatabase(t *testing.T) {
 	assert.Equal(t, repository.CodeBudgetUnitLocked, errors.CodeOf(err))
 
 	_, err = svc.UpdateCampaign(ctx, campaign.ID, service.CampaignInput{
-		Name:               "Yaz",
+		Name:               "Summer",
 		CampaignIdentifier: identifier,
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
@@ -1037,14 +1037,14 @@ func TestUpdateCampaignBudgetUnitLockIsInTheDatabase(t *testing.T) {
 	assert.Equal(t, repository.CodeBudgetUnitLocked, errors.CodeOf(err))
 
 	updated, err := svc.UpdateCampaign(ctx, campaign.ID, service.CampaignInput{
-		Name:               "Yaz Sonu",
+		Name:               "Late Summer",
 		CampaignIdentifier: identifier,
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(2_000_000)),
 		BudgetCurrencyCode: "TRY",
 	})
 	require.NoError(t, err, "as long as the unit is kept, the definition and the LIMIT can be updated")
-	assert.Equal(t, "Yaz Sonu", updated.Name)
+	assert.Equal(t, "Late Summer", updated.Name)
 	assert.Equal(t, int64(2_000_000), *updated.BudgetLimit)
 	assert.Equal(t, int64(30_000), updated.BudgetUsed, "the counter does not change on this path")
 }
@@ -1440,7 +1440,7 @@ func TestUpdatingAPromotionChangesTheDefinitionAndLeavesTheUsageCounter(t *testi
 	svc := newService(t)
 
 	campaign, err := svc.CreateCampaign(ctx, service.CampaignInput{
-		Name:               "Yaz",
+		Name:               "Summer",
 		CampaignIdentifier: "GUNCELLEME-" + uniqueCode(),
 		BudgetType:         models.BudgetSpend,
 		BudgetLimit:        ptr(int64(1_000_000)),
@@ -1466,7 +1466,7 @@ func TestUpdatingAPromotionChangesTheDefinitionAndLeavesTheUsageCounter(t *testi
 		CampaignID: &campaign.ID,
 		Status:     models.PromotionInactive,
 		UsageLimit: ptr(int64(9)),
-		Metadata:   map[string]string{"kanal": "eposta"},
+		Metadata:   map[string]string{"channel": "email"},
 	})
 	require.NoError(t, err)
 
@@ -1474,7 +1474,7 @@ func TestUpdatingAPromotionChangesTheDefinitionAndLeavesTheUsageCounter(t *testi
 	assert.Equal(t, models.PromotionInactive, updated.Status)
 	require.NotNil(t, updated.UsageLimit)
 	assert.EqualValues(t, 9, *updated.UsageLimit)
-	assert.Equal(t, map[string]string{"kanal": "eposta"}, updated.Metadata)
+	assert.Equal(t, map[string]string{"channel": "email"}, updated.Metadata)
 
 	assert.EqualValues(t, 2, updated.UsageCount,
 		"an edit CANNOT ERASE the usage history; had it been reset, a used-up coupon could be distributed again")

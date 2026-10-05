@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,7 +38,7 @@ import (
 // line requires touching this file in a review. A new file is born clean
 // because nobody adds it to the ledger.
 //
-// # Why three lanes
+// # Why four lanes
 //
 // A detector that only looked for Turkish LETTERS would be satisfied by a
 // single transliteration pass. This was measured, not guessed: running
@@ -46,13 +47,15 @@ import (
 // repository already writes Turkish this way — of 2852 test function names,
 // zero carry a Turkish letter and hundreds are transliterated Turkish.
 //
-// So the letter scan is one lane of three, and the other two survive
+// So the letter scan is one lane of four, and the other three survive
 // transliteration:
 //
 //   - [laneDiacritic] — Turkish-specific letters anywhere in the file.
 //   - [laneWord] — Turkish function words that are not English words, in
 //     COMMENTS and STRING LITERALS only.
 //   - [laneIdentifier] — Turkish stems as whole parts of an identifier.
+//   - [laneTextStem] — the same stems as whole words of a Go comment or string
+//     literal (ADR 0408).
 //
 // A file is Turkish if ANY lane fires. The lanes report separately so the
 // message says what to fix.
@@ -80,6 +83,27 @@ const (
 	// substring matching produced 14 false-positive files and whole-part
 	// matching produced zero.
 	laneIdentifier = "identifier"
+
+	// laneTextStem scans Go comments and string literals for the stems
+	// [laneIdentifier] reads in names, matching whole words (ADR 0408, D263).
+	//
+	// The word lane holds prose to a list short enough to collide with nothing,
+	// so Turkish typed without its marks passed every lane wherever it used none
+	// of those words: on 2026-10-06, a day after the ledger was declared empty,
+	// the manual fulfillment provider returned "reference zorunludur" to API
+	// callers and 25 Go files kept 183 stem words in their comments and test
+	// data. The stems are content words this repository used, so they reach
+	// what a function-word list cannot.
+	//
+	// It reads a literal as WRITTEN, an escape blanked, rather than its value:
+	// an escaped literal is data the file chose to keep out of the letter lane
+	// (see [diacriticDataExemptions]), and the case-folding tests spell Turkish
+	// input that way on purpose. It reads Go alone. Markdown links name the
+	// historical records by their Turkish file names and quote dated search
+	// terms, and a lane that read them would live on exemptions; a name the
+	// path ledger carries is subtracted here for the same reason, since that
+	// debt is paid by a rename the path ledger already counts.
+	laneTextStem = "text stem"
 )
 
 // turkishLedgerPath lists every hand-written source file that still contains
@@ -133,6 +157,12 @@ const turkishLetters = "çğıöşüÇĞİÖŞÜ"
 // Both spellings are listed. The diacritic spellings are already caught by
 // [laneDiacritic], but a lane that depended on another lane for its coverage
 // would silently lose it the day someone transliterates the file.
+//
+// The last five came with ADR 0408: suffixed forms the stem list cannot see,
+// found in this tree on 2026-10-06 ("reference zorunludur" in an error message,
+// "olmayan", "gizli" and "degistirildi" in test data). Each was measured the
+// same way, as a whole word in the 7710 Go files of the go1.26.6 standard
+// library, and each had zero hits.
 var safeTurkishWords = []string{
 	"bir",
 	"cunku", "çünkü",
@@ -143,6 +173,11 @@ var safeTurkishWords = []string{
 	"veya",
 	"yalnizca", "yalnızca",
 	"yok",
+	"degistirildi", "değiştirildi",
+	"gizli",
+	"olmayan",
+	"zorunlu",
+	"zorunludur",
 }
 
 // turkishStems are Turkish word stems that appear as identifier parts.
@@ -225,7 +260,9 @@ var skippedDirs = []string{
 const generatedMarker = "Code generated"
 
 // diacriticDataExemptions lists text that carries a Turkish letter without
-// being Turkish prose.
+// being Turkish prose, and since ADR 0408 text that carries a Turkish word the
+// word or text stem lane reads, for the same reason. The name stayed: ADR 0009,
+// which takes no edit, names it.
 //
 // The key is a repo-relative path, the value the exact substrings to ignore.
 // Line numbers are deliberately not used: they rot on the first edit, which is
@@ -250,6 +287,38 @@ const generatedMarker = "Code generated"
 // module's erasure and disclosure fixtures spell their letters as \u escapes
 // for that reason.
 var diacriticDataExemptions = map[string][]string{
+	// The entries below came with ADR 0408 and carry no Turkish letter: each is
+	// a Turkish word the word or text stem lane reads, kept because it is data
+	// or a name quoted as written.
+	//
+	// The rig reproduces the catalog measured on 2026-09-03 character for
+	// character, and its package says why: a rebuilt rig must diff clean against
+	// the surviving one, and the selective search figure was measured against a
+	// q that matched exactly one of these titles. Translating them would keep
+	// every structural claim and quietly invalidate that one.
+	"internal/rig/catalog.go": {
+		`"Ana Depo"`, `'buyuk-' || n, 'Buyuk Urun ' || n`, `'tek'`,
+		`'urun-' || n, 'Urun ' || n`,
+	},
+	"internal/rig/rig.go": {"buyuk-<n>", "urun-<n>"},
+	// PayTR's API paths are the provider's contract, not this repository's
+	// prose; a translated path would reach no endpoint.
+	"plugins/paymentpaytr/provider.go": {`"/odeme/api/get-token"`, `"/odeme/iade"`},
+	// The incident this gate exists for quotes the Makefile's selector as it
+	// was written, and the matcher's own probe replays it.
+	"internal/arch/build_files_test.go": {"TestTemelYukAltindaDogruKalir"},
+	// The reference audit names a file and two tests as the records that take
+	// no edit wrote them (ADR 0012, ADR 0047, and this file's own example), and
+	// one comment gives three Turkish words as the example of what the link rule
+	// mistakes for a link.
+	"internal/arch/doc_references_test.go": {
+		`"hatayolu_test.go"`, `"TestYerineKonanFiyatSatirdanSilinir"`, `"TestKayitBayatlamiyor"`,
+		`"zorunlu", "sonuc" or "tanim"`,
+	},
+	// A slug test's expected handle is the ASCII fold of its Turkish input,
+	// which is spelled in escapes above it.
+	"internal/modules/product/service/internal_test.go": {`"cok-guzel"`},
+
 	// The changelog was translated on 2026-10-03, and what keeps a Turkish
 	// letter is quotation. Two entries report test bindings that searched for a
 	// message's Turkish text, and the dead text IS the report, as in ADR 0012's
@@ -416,7 +485,43 @@ func stemHit(ident string) string {
 	return ""
 }
 
-// scanSource runs the three lanes over one file.
+// textStemHit reports the first Turkish stem appearing as a whole word of a
+// comment or a literal as written, or "".
+//
+// The names in pathNames are taken out first, and an escape is blanked rather
+// than decoded (see [laneTextStem]). A word is split like an identifier too,
+// so a camelCase key inside a string is read part by part. A part of two
+// letters is passed over: in prose it is an abbreviation, and the one stem that
+// short, "ac", read every "ACKed" and "ACKing" of the event bus's comments.
+func textStemHit(text string, pathNames []string) string {
+	for _, name := range pathNames {
+		text = strings.ReplaceAll(text, name, " ")
+	}
+	text = goEscape.ReplaceAllString(text, " ")
+	for _, w := range letterWords(text) {
+		for _, part := range splitIdentifier(w) {
+			if len(part) > 2 && slices.Contains(turkishStems, foldTurkish(part)) {
+				return part
+			}
+		}
+	}
+	return ""
+}
+
+// goEscape matches one escape sequence of a Go string or rune literal.
+var goEscape = regexp.MustCompile(`\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|x[0-9a-fA-F]{2}|[0-7]{3}|.)`)
+
+// withoutExemptions removes a file's exempt substrings from a piece of its
+// text: an exemption says the text is data, which is a fact about the text
+// rather than about one lane.
+func withoutExemptions(text string, exempt []string) string {
+	for _, e := range exempt {
+		text = strings.ReplaceAll(text, e, "")
+	}
+	return text
+}
+
+// scanSource runs the four lanes over one file.
 //
 // The second result reports a generated file, which the caller drops: a
 // generated file's language is not editable, so flagging it would create debt
@@ -428,7 +533,10 @@ func stemHit(ident string) string {
 // and with one absent; reaching that by mutating the package variable made two
 // parallel tests write and read the same map, and `go test -race` reported the
 // data race. A parameter removes the shared state instead of guarding it.
-func scanSource(rel string, src []byte, exemptions map[string][]string) (hits []turkishHit, generated bool) {
+// pathNames is a parameter for the same reason: the base names of the files
+// the path ledger lists, which [laneTextStem] reads as names
+// ([pathLedgerNames]).
+func scanSource(rel string, src []byte, exemptions map[string][]string, pathNames []string) (hits []turkishHit, generated bool) {
 	text := string(src)
 	if idx := strings.Index(text, generatedMarker); idx >= 0 && idx < 2000 {
 		return nil, true
@@ -497,34 +605,43 @@ func scanSource(rel string, src []byte, exemptions map[string][]string) (hits []
 		return hits, false
 	}
 
-	wordFound, identFound := false, false
+	wordFound, identFound, textStemFound := false, false, false
 	record := func(lane, detail string, pos token.Pos) {
 		hits = append(hits, turkishHit{lane: lane, line: fset.Position(pos).Line, detail: detail})
 	}
 
 	for _, group := range file.Comments {
-		if wordFound {
-			break
-		}
 		for _, c := range group.List {
-			if w := wordHit(c.Text); w != "" {
+			text := withoutExemptions(c.Text, exempt)
+			if w := wordHit(text); w != "" && !wordFound {
 				record(laneWord, w, c.Pos())
 				wordFound = true
-				break
+			}
+			if s := textStemHit(text, pathNames); s != "" && !textStemFound {
+				record(laneTextStem, s, c.Pos())
+				textStemFound = true
 			}
 		}
 	}
 
 	ast.Inspect(file, func(n ast.Node) bool {
-		if wordFound && identFound {
+		if wordFound && identFound && textStemFound {
 			return false
 		}
 		switch node := n.(type) {
 		case *ast.BasicLit:
-			if wordFound || node.Kind != token.STRING {
+			if node.Kind != token.STRING {
 				return true
 			}
-			value := node.Value
+			written := withoutExemptions(node.Value, exempt)
+			if s := textStemHit(written, pathNames); s != "" && !textStemFound {
+				record(laneTextStem, s, node.Pos())
+				textStemFound = true
+			}
+			if wordFound {
+				return true
+			}
+			value := written
 			if unquoted, err := strconv.Unquote(value); err == nil {
 				value = unquoted
 			}
@@ -682,6 +799,19 @@ func loadLedger(t *testing.T, path string) map[string]bool {
 	return entries
 }
 
+// pathLedgerNames returns the base names of the files [turkishPathLedgerPath]
+// lists: names a comment or a literal mentions as names, whose Turkish is paid
+// by a rename rather than a translation (ADR 0408).
+func pathLedgerNames(t *testing.T) []string {
+	t.Helper()
+
+	var names []string
+	for _, rel := range slices.Sorted(maps.Keys(loadLedger(t, turkishPathLedgerPath))) {
+		names = append(names, filepath.Base(rel))
+	}
+	return names
+}
+
 // writeLedger rewrites a ledger file; see [ledgerUpdateEnv].
 func writeLedger(t *testing.T, path, header string, entries []string) {
 	t.Helper()
@@ -730,6 +860,7 @@ func TestNoTurkishOutsideLedger(t *testing.T) {
 	require.NotEmpty(t, files, "the scan found no files at all")
 
 	ledger := loadLedger(t, turkishLedgerPath)
+	names := pathLedgerNames(t)
 	update := os.Getenv(ledgerUpdateEnv) != ""
 
 	var dirty []string
@@ -742,7 +873,7 @@ func TestNoTurkishOutsideLedger(t *testing.T) {
 		src, err := os.ReadFile(filepath.Join(repoRoot, rel))
 		require.NoError(t, err)
 
-		hits, generated := scanSource(rel, src, diacriticDataExemptions)
+		hits, generated := scanSource(rel, src, diacriticDataExemptions, names)
 		if generated {
 			continue
 		}
@@ -786,6 +917,7 @@ func TestLedgerIsNotStale(t *testing.T) {
 	t.Parallel()
 
 	ledger := loadLedger(t, turkishLedgerPath)
+	names := pathLedgerNames(t)
 	scanned := map[string]bool{}
 	for _, rel := range scannedFiles(t) {
 		scanned[rel] = true
@@ -802,7 +934,7 @@ func TestLedgerIsNotStale(t *testing.T) {
 		src, err := os.ReadFile(filepath.Join(repoRoot, rel))
 		require.NoError(t, err)
 
-		hits, generated := scanSource(rel, src, diacriticDataExemptions)
+		hits, generated := scanSource(rel, src, diacriticDataExemptions, names)
 		if generated {
 			t.Errorf("ledger entry STALE: %q is generated code and is never scanned.\n"+
 				"Its language comes from the file it is generated from; list that one "+
@@ -833,6 +965,7 @@ func TestDetectorIsNotBlind(t *testing.T) {
 	t.Parallel()
 
 	files := scannedFiles(t)
+	names := pathLedgerNames(t)
 
 	perLane := map[string]int{}
 	perRoot := map[string]int{}
@@ -851,7 +984,7 @@ func TestDetectorIsNotBlind(t *testing.T) {
 		src, err := os.ReadFile(filepath.Join(repoRoot, rel))
 		require.NoError(t, err)
 
-		hits, gen := scanSource(rel, src, diacriticDataExemptions)
+		hits, gen := scanSource(rel, src, diacriticDataExemptions, names)
 		if gen {
 			generated++
 			continue
@@ -863,10 +996,10 @@ func TestDetectorIsNotBlind(t *testing.T) {
 
 	// A lane with nothing left on the ledger to read has nothing to find, and
 	// its zero is then the migration being complete rather than the lane being
-	// blind: the identifier lane reads Go source alone, the other two every
-	// scanned file. A finished lane's teeth are proven by the planted control
-	// ([TestDetectorFindsPlantedTurkish]), and a hit would be a file outside
-	// the ledger, which [TestNoTurkishOutsideLedger] reports. The ledger has
+	// blind: the identifier and text stem lanes read Go source alone, the other
+	// two every scanned file. A finished lane's teeth are proven by the planted
+	// control ([TestDetectorFindsPlantedTurkish]), and a hit would be a file
+	// outside the ledger, which [TestNoTurkishOutsideLedger] reports. The ledger has
 	// been empty since 2026-10-03, and the migration complete since 2026-10-04,
 	// when the scan first read every file the ledger had been silent about
 	// (D227).
@@ -879,8 +1012,8 @@ func TestDetectorIsNotBlind(t *testing.T) {
 			break
 		}
 	}
-	for _, lane := range []string{laneDiacritic, laneWord, laneIdentifier} {
-		finished := len(ledger) == 0 || (lane == laneIdentifier && !goLeft)
+	for _, lane := range []string{laneDiacritic, laneWord, laneIdentifier, laneTextStem} {
+		finished := len(ledger) == 0 || ((lane == laneIdentifier || lane == laneTextStem) && !goLeft)
 		if finished {
 			assert.Zero(t, perLane[lane],
 				"the %s lane has nothing left on %s to read, so nothing it reads may "+
@@ -960,13 +1093,38 @@ func TestDetectorFindsPlantedTurkish(t *testing.T) {
 			src:  "package p\n\nfunc yeniSablon() {}\n",
 			lane: laneIdentifier,
 		},
+		{
+			name: "suffixed Turkish in an error message",
+			src:  "package p\n\nfunc F() string { return \"reference zorunludur\" }\n",
+			lane: laneWord,
+		},
+		{
+			name: "transliterated stem in a comment",
+			src:  "package p\n\n// The siparis is read first.\nfunc F() {}\n",
+			lane: laneTextStem,
+		},
+		{
+			name: "transliterated stem in a string",
+			src:  "package p\n\nconst code = \"KARGO20\"\n",
+			lane: laneTextStem,
+		},
+		{
+			name: "transliterated stem after an escape",
+			src:  "package p\n\nconst body = \"line one\\nfiyat\"\n",
+			lane: laneTextStem,
+		},
+		{
+			name: "transliterated stem in a camelCase key",
+			src:  "package p\n\nconst key = `{\"musteriName\":\"Ada\"}`\n",
+			lane: laneTextStem,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			hits, generated := scanSource("planted.go", []byte(tc.src), diacriticDataExemptions)
+			hits, generated := scanSource("planted.go", []byte(tc.src), diacriticDataExemptions, nil)
 			require.False(t, generated)
 
 			lanes := make([]string, 0, len(hits))
@@ -985,23 +1143,33 @@ func TestDetectorFindsPlantedTurkish(t *testing.T) {
 // positive is answered by widening an exemption, and the rule dies by
 // exemption rather than by decision. The samples are the ones that actually
 // broke earlier versions of this scan — "module" read as "modul", "rollback"
-// as "rol", "reason" as "son", and the `x, ok` idiom that spells "yok".
+// as "rol", "reason" as "son", and the `x, ok` idiom that spells "yok" — and
+// the ones [laneTextStem] must pass: English words that begin like a stem
+// ("parade", "depot", "paragraph"), an escaped case-folding input, and a file
+// the path ledger lists, named in a comment.
 func TestDetectorPassesEnglishSource(t *testing.T) {
 	t.Parallel()
 
 	const src = `package p
 
 // The module resolves a reason from the JSON body and rolls back on failure.
+// A parade passes the depot, and the paragraph names the alarm. A message not
+// ACKed is delivered again.
 func Rollback(modules []string) error {
 	yok := len(modules) == 0
 	if yok {
-		return nil
+		return errors.New("the parade reached the depot: module rollback")
 	}
 	return nil
 }
+
+// The case-folding input is spelled as escapes, so no lane reads it as words.
+const folded = "\u00c7OK-\u0130Y\u0130"
+
+// The architecture document is docs/mimari.md, named by its file name.
 `
 
-	hits, generated := scanSource("english.go", []byte(src), diacriticDataExemptions)
+	hits, generated := scanSource("english.go", []byte(src), diacriticDataExemptions, pathLedgerNames(t))
 	require.False(t, generated)
 	assert.Empty(t, hits, "correct English source must not be flagged: %v", hits)
 }
@@ -1014,7 +1182,7 @@ func TestDetectorExemptsOnlyItself(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join(repoRoot, detectorFile))
 	require.NoError(t, err, "%s must exist", detectorFile)
 
-	hits, generated := scanSource(detectorFile, src, diacriticDataExemptions)
+	hits, generated := scanSource(detectorFile, src, diacriticDataExemptions, nil)
 	require.False(t, generated)
 	assert.NotEmpty(t, hits,
 		"%s no longer trips its own lanes, so the exemption has no reason to exist "+
@@ -1064,12 +1232,51 @@ func TestDiacriticDataExemptionsAreHonest(t *testing.T) {
 	// so this test cannot race the ones scanning the repository in parallel.
 	const fixture = "-- ISO 3166 reference data.\n('CW', 'Curaçao'),\n"
 
-	hits, _ := scanSource("fixture.sql", []byte(fixture), nil)
+	hits, _ := scanSource("fixture.sql", []byte(fixture), nil, nil)
 	require.NotEmpty(t, hits, "without an exemption the fixture must be flagged")
 
 	hits, _ = scanSource("fixture.sql", []byte(fixture),
-		map[string][]string{"fixture.sql": {"Curaçao"}})
+		map[string][]string{"fixture.sql": {"Curaçao"}}, nil)
 	assert.Empty(t, hits, "with the exemption in place the fixture must pass: %v", hits)
+
+	// In Go the comment and literal lanes take the exemption too (ADR 0408):
+	// an external API's path is a name its provider chose, and so is a word
+	// quoted as the subject of a sentence.
+	const goFixture = "package p\n\n// Its \"yok\" is the subject here.\n" +
+		"const path = \"/odeme/api/get-token\"\n"
+	hits, _ = scanSource("fixture.go", []byte(goFixture), nil, nil)
+	lanes := make([]string, 0, len(hits))
+	for _, h := range hits {
+		lanes = append(lanes, h.lane)
+	}
+	require.ElementsMatch(t, []string{laneWord, laneTextStem}, lanes,
+		"without an exemption the Go fixture must be flagged in both lanes")
+
+	hits, _ = scanSource("fixture.go", []byte(goFixture),
+		map[string][]string{"fixture.go": {`"yok"`, "/odeme/api/get-token"}}, nil)
+	assert.Empty(t, hits, "with the exemption in place the Go fixture must pass: %v", hits)
+}
+
+// TestThePathLedgerNamesAreNamesToTheTextStemLane proves a comment may name a
+// file the path ledger lists without the stems in the name counting as prose,
+// and that only the NAME is excused: the same stem as a word still counts.
+func TestThePathLedgerNamesAreNamesToTheTextStemLane(t *testing.T) {
+	t.Parallel()
+
+	names := pathLedgerNames(t)
+	require.Contains(t, names, "mimari.md", "the fixture leans on a file the path ledger lists")
+
+	named := "package p\n\n// docs/mimari.md prices the sagas.\nfunc F() {}\n"
+	hits, _ := scanSource("named.go", []byte(named), nil, names)
+	assert.Empty(t, hits, "a ledgered file's name is not prose: %v", hits)
+
+	hits, _ = scanSource("named.go", []byte(named), nil, nil)
+	assert.NotEmpty(t, hits, "without the ledger's names the fixture must be flagged")
+
+	prose := "package p\n\n// The mimari of mimari.md is read first.\nfunc F() {}\n"
+	hits, _ = scanSource("prose.go", []byte(prose), nil, names)
+	require.Len(t, hits, 1, "the stem outside the name still counts")
+	assert.Equal(t, laneTextStem, hits[0].lane)
 }
 
 // TestRepoPathsAreEnglishOutsideLedger covers the one layer the content scan

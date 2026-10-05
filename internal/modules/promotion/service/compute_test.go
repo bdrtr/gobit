@@ -167,7 +167,7 @@ func TestComputeDiscountsPercentageEachRoundsDown(t *testing.T) {
 
 func TestComputeDiscountsFixedAmountEachAppliesToTheQuantity(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SABIT10", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "FIXED10", IsAutomatic: true},
 		fixedMethod("promo_1", 1000, models.TargetItems, models.AllocationEach))
 
 	in := ComputeInput{
@@ -190,7 +190,7 @@ func TestComputeDiscountsFixedAmountEachIsBoundedByMaxQuantity(t *testing.T) {
 	repo := newMemRepo()
 	method := fixedMethod("promo_1", 1000, models.TargetItems, models.AllocationEach)
 	method.MaxQuantity = ptr(int64(2))
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SABIT10", IsAutomatic: true}, method)
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "FIXED10", IsAutomatic: true}, method)
 
 	in := ComputeInput{
 		CurrencyCode: "TRY",
@@ -227,7 +227,7 @@ func TestComputeDiscountsAcrossDistributesTheLeftoverCentAndTheTotalAddsUpExactl
 	// A fixed discount of 100 units is distributed across three equal lines:
 	// 33 + 33 + 33 = 99, and the leftover 1 cent goes, among those with an
 	// equal fractional remainder, to the one with the SMALLEST IDENTITY.
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SABIT100", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "FIXED100", IsAutomatic: true},
 		fixedMethod("promo_1", 100, models.TargetItems, models.AllocationAcross))
 
 	in := ComputeInput{
@@ -250,7 +250,7 @@ func TestComputeDiscountsAcrossDistributesTheLeftoverCentAndTheTotalAddsUpExactl
 
 func TestComputeDiscountsAcrossAllocationIsIndependentOfInputOrder(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SABIT100", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "FIXED100", IsAutomatic: true},
 		fixedMethod("promo_1", 100, models.TargetItems, models.AllocationAcross))
 	svc := newTestService(repo)
 
@@ -312,7 +312,7 @@ func TestComputeDiscountsAcrossPercentageRoundsOnce(t *testing.T) {
 func TestComputeDiscountsOrderTargetIsDistributedToAllItemsAndIgnoresTheTargetRule(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
-		models.Promotion{ID: "promo_1", Code: "SIPARIS10", IsAutomatic: true},
+		models.Promotion{ID: "promo_1", Code: "ORDER10", IsAutomatic: true},
 		percentageMethod("promo_1", 1000, models.TargetOrder, models.AllocationAcross),
 		models.PromotionRule{
 			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleTarget,
@@ -367,7 +367,7 @@ func TestComputeDiscountsTargetRuleFiltersItems(t *testing.T) {
 
 func TestComputeDiscountsShippingTarget(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "KARGOBEDAVA", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "FREESHIPPING", IsAutomatic: true},
 		percentageMethod("promo_1", 10000, models.TargetShippingMethods, models.AllocationEach))
 
 	in := ComputeInput{
@@ -473,7 +473,7 @@ func TestComputeDiscountsDiscountCannotExceedTheLineAmount(t *testing.T) {
 
 func TestComputeDiscountsZeroAmountItemGetsNoDiscount(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SABIT100", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "FIXED100", IsAutomatic: true},
 		fixedMethod("promo_1", 100, models.TargetItems, models.AllocationAcross))
 
 	in := ComputeInput{
@@ -768,7 +768,7 @@ func TestANegativeContextRuleDoesNotMatchAnAbsentField(t *testing.T) {
 
 func TestComputeDiscountsNonAutomaticIsNotAppliedWithoutItsCode(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "GIZLIKUPON", IsAutomatic: false},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SECRETCOUPON", IsAutomatic: false},
 		percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach))
 
 	in := ComputeInput{
@@ -784,13 +784,13 @@ func TestComputeDiscountsNonAutomaticIsNotAppliedWithoutItsCode(t *testing.T) {
 
 func TestComputeDiscountsCouponCodeIsCaseInsensitive(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YAZ20", IsAutomatic: false},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SUMMER20", IsAutomatic: false},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 	in := ComputeInput{
 		CurrencyCode: "TRY",
 		Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
-		Codes:        []string{"  yaz20 "},
+		Codes:        []string{"  summer20 "},
 	}
 	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 	require.NoError(t, err)
@@ -802,7 +802,7 @@ func TestComputeDiscountsCouponCodeIsCaseInsensitive(t *testing.T) {
 
 func TestComputeDiscountsSameCodeGivenTwiceAppliesOnce(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YAZ20", IsAutomatic: false},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SUMMER20", IsAutomatic: false},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 	in := ComputeInput{
@@ -811,7 +811,7 @@ func TestComputeDiscountsSameCodeGivenTwiceAppliesOnce(t *testing.T) {
 		// The same coupon twice, and an unmatchable code twice too: the first
 		// tests that the discount is not doubled, the second that the
 		// deduplication holds in the RESPONSE as well.
-		Codes: []string{"YAZ20", "yaz20", "HICYOK", "hicyok"},
+		Codes: []string{"SUMMER20", "summer20", "NOSUCHCODE", "nosuchcode"},
 	}
 	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 	require.NoError(t, err)
@@ -819,7 +819,7 @@ func TestComputeDiscountsSameCodeGivenTwiceAppliesOnce(t *testing.T) {
 	assertInvariants(t, in, res)
 	assert.Equal(t, int64(2000), res.DiscountTotal, "a repeated code must not double the discount")
 	require.Len(t, res.Applied, 1)
-	assert.Equal(t, []string{"HICYOK"}, res.UnmatchedCodes,
+	assert.Equal(t, []string{"NOSUCHCODE"}, res.UnmatchedCodes,
 		"an unmatchable code is reported once, however many times it is given")
 }
 
@@ -832,13 +832,13 @@ func TestComputeDiscountsUnmatchedCodesAreReported(t *testing.T) {
 	in := ComputeInput{
 		CurrencyCode: "TRY",
 		Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
-		Codes:        []string{"TASLAK", "HICYOK"},
+		Codes:        []string{"TASLAK", "NOSUCHCODE"},
 	}
 	res, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 	require.NoError(t, err)
 
 	assertInvariants(t, in, res)
-	assert.Equal(t, []string{"TASLAK", "HICYOK"}, res.UnmatchedCodes,
+	assert.Equal(t, []string{"TASLAK", "NOSUCHCODE"}, res.UnmatchedCodes,
 		"a draft promotion and a nonexistent code are reported the SAME way; a distinction would be a leak")
 }
 
@@ -938,10 +938,10 @@ func TestComputeDiscountsInputValidation(t *testing.T) {
 
 func TestComputeDiscountsDoesNotModifyTheInput(t *testing.T) {
 	repo := newMemRepo()
-	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "YAZ20", IsAutomatic: false},
+	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "SUMMER20", IsAutomatic: false},
 		percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
-	codes := []string{"yaz20"}
+	codes := []string{"summer20"}
 	attrs := map[string]string{"kategori": "giyim"}
 	in := ComputeInput{
 		CurrencyCode: "try",
@@ -951,7 +951,7 @@ func TestComputeDiscountsDoesNotModifyTheInput(t *testing.T) {
 	_, err := newTestService(repo).ComputeDiscounts(context.Background(), in)
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"yaz20"}, codes, "the caller's code slice must not be modified")
+	assert.Equal(t, []string{"summer20"}, codes, "the caller's code slice must not be modified")
 	assert.Equal(t, "try", in.CurrencyCode, "the caller's input must not change because of normalization")
 	assert.Equal(t, map[string]string{"kategori": "giyim"}, attrs)
 }
@@ -973,7 +973,7 @@ func TestComputeDiscountsPropagatesTheRepositoryError(t *testing.T) {
 func TestComputeDiscountsNeverWrites(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{
-		ID: "promo_1", Code: "YAZ20", IsAutomatic: true, UsageLimit: ptr(int64(5)),
+		ID: "promo_1", Code: "SUMMER20", IsAutomatic: true, UsageLimit: ptr(int64(5)),
 	}, percentageMethod("promo_1", 2000, models.TargetItems, models.AllocationEach))
 
 	svc := newTestService(repo)
@@ -1011,7 +1011,7 @@ func TestComputeDiscountsAcrossFullLineDoesNotHalveTheSecondPromotion(t *testing
 			Attribute: "kategori", Operator: models.OpEq, Values: []string{"a"},
 		},
 	)
-	seedPromotion(repo, models.Promotion{ID: "promo_2", Code: "SIPARIS", IsAutomatic: true},
+	seedPromotion(repo, models.Promotion{ID: "promo_2", Code: "ORDER", IsAutomatic: true},
 		percentageMethod("promo_2", 10000, models.TargetOrder, models.AllocationAcross))
 
 	in := ComputeInput{
@@ -1070,11 +1070,11 @@ func TestComputeDiscountsAcrossFixedAmountCannotExceedTheBase(t *testing.T) {
 // campaign_budget_currency_mismatch.
 func TestComputeDiscountsEliminatesOnCampaignBudgetCurrency(t *testing.T) {
 	tryBudget := models.Campaign{
-		ID: "camp_try", Name: "Yaz", CampaignIdentifier: "YAZ",
+		ID: "camp_try", Name: "Summer", CampaignIdentifier: "SUMMER",
 		BudgetType: models.BudgetSpend, BudgetLimit: ptr(int64(100_000)), BudgetCurrencyCode: "TRY",
 	}
 	usageBudget := models.Campaign{
-		ID: "camp_adet", Name: "Adet", CampaignIdentifier: "ADET",
+		ID: "camp_quantity", Name: "Quantity", CampaignIdentifier: "QUANTITY",
 		BudgetType: models.BudgetUsage, BudgetLimit: ptr(int64(10)),
 	}
 
@@ -1153,7 +1153,7 @@ func TestComputeDiscountsNumericRuleDoesNotMatchAnUnparsableValue(t *testing.T) 
 		t.Run(tt.name, func(t *testing.T) {
 			repo := newMemRepo()
 			seedPromotion(repo,
-				models.Promotion{ID: "promo_1", Code: "ESIK", IsAutomatic: true},
+				models.Promotion{ID: "promo_1", Code: "THRESHOLD", IsAutomatic: true},
 				percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach),
 				models.PromotionRule{
 					ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleContext,
@@ -1410,7 +1410,7 @@ func TestALineWithoutListsDoesNotMatchACATEGORYRule(t *testing.T) {
 func TestAShippingTargetDoesNotMatchACATEGORYRule(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo,
-		models.Promotion{ID: "promo_1", Code: "KARGO", IsAutomatic: true},
+		models.Promotion{ID: "promo_1", Code: "SHIPPING", IsAutomatic: true},
 		percentageMethod("promo_1", 10000, models.TargetShippingMethods, models.AllocationEach),
 		models.PromotionRule{
 			ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleTarget,

@@ -67,7 +67,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS campaign_identifier_uniq
 --
 -- code is both the coupon code and the name an operator refers to the promotion
 -- by; it is unique among live records and is always stored in UPPER case
--- (coupon codes must not distinguish case — "yaz20" and "YAZ20" are the same
+-- (coupon codes must not distinguish case — "summer20" and "SUMMER20" are the same
 -- coupon).
 --
 -- campaign_id is ON DELETE SET NULL: when a campaign is deleted its promotions
