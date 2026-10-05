@@ -6,6 +6,7 @@ order keeps each add-on bound to the line it was sold with.
 
 - **Status:** Accepted
 - **Date:** 2026-09-29
+- **Amended by:** [0393](0393-an-add-on-is-written-under-its-line.md): the invoice order and the raise are decided; a quote keeps counting an add-on
 
 Measurement: [measurements/0229](../measurements/0229-an-engraving-and-its-ring.md)
 

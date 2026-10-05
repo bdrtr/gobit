@@ -104,6 +104,26 @@ func TestTheDeliveryFactsReadTheGoodsAsTheCartQuotedThem(t *testing.T) {
 		"subtotal":3300,"item_count":3}`, string(raw))
 }
 
+// TestTheDeliveryFactsCountAnAddOnsUnits is ADR 0393's rejection held on a
+// delivery change: an add-on is an ordinary variant, so a ring of three and its
+// engraving of three are six units sold, as the cart's quote counted them.
+func TestTheDeliveryFactsCountAnAddOnsUnits(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
+
+	order, err := e.svc.CreateOrder(ctx, withEngraving("li_ring"))
+	require.NoError(t, err)
+
+	raw, err := interop.DeliveryFactsJSON(ctx, order.ID)
+	require.NoError(t, err)
+	var facts struct {
+		ItemCount int64 `json:"item_count"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &facts))
+	assert.Equal(t, int64(6), facts.ItemCount)
+}
+
 // TestTheInvoiceSurfaceSaysWhetherThePricesIncludeTax is ADR 0248 at the
 // order's end: the document holds its rows to the flag, and the invoicing
 // flow ignores fields it does not know, so the name has to be the one it reads.

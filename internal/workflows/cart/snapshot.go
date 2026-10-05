@@ -10,9 +10,9 @@ import (
 //
 // The type is the schema of the [Carts.CartSnapshotJSON] body: the cart module
 // produces these fields, this package reads them. The schema is DELIBERATELY
-// narrow — it is whatever enters the calculation and nothing more. Unrecognized
-// fields are silently skipped so that this package need not be updated when the
-// cart module grows the schema.
+// narrow — it is what a calculation round and a raise read (ADR 0393) and
+// nothing more. Unrecognized fields are silently skipped so that this package
+// need not be updated when the cart module grows the schema.
 //
 // The snapshot is taken in a SINGLE READ and is consistent: the lines, the
 // shipping methods and [Snapshot.Revision] belong to the same instant. Were
@@ -52,7 +52,8 @@ type Snapshot struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-// SnapshotItem is the set of fields of a cart line that enter the calculation.
+// SnapshotItem is the set of fields of a cart line that a calculation round or
+// a raise reads.
 //
 // The STORED amounts of the line are NOT here and must not be: every calculation
 // round fetches the price from pricing again. Reading a stored amount and
@@ -70,6 +71,9 @@ type SnapshotItem struct {
 	// (ADR 0223).
 	Metadata   map[string]any    `json:"metadata,omitempty"`
 	Properties map[string]string `json:"properties,omitempty"`
+	// ParentLineID is the line this one is an add-on of (ADR 0229); a raise
+	// asks a line's add-ons again (ADR 0393). Empty on a line of its own.
+	ParentLineID string `json:"parent_line_id,omitempty"`
 }
 
 // SnapshotShippingMethod is the set of fields of a shipping method that enter

@@ -127,9 +127,10 @@ func (w *Workflows) priceSetsFor(ctx context.Context, variantIDs []string) (map[
 // # The read is scoped to the request's SALES CHANNELS
 //
 // The query carries the channels coming from the request's authenticated identity as
-// a filter (see saleschannel.go). This is the ONE door through which a line enters
-// the cart, and the scope rule is applied on the write path here: for a variant out
-// of scope the catalog returns no record at all.
+// a filter (see saleschannel.go). This is the door through which a line is ADDED to
+// the cart, and a raise asks it again (ADR 0281), so the scope rule is applied on the
+// write path here: for a variant out of scope the catalog returns no record at all.
+// A merge moves lines already in a cart and does not come through it.
 //
 // # An out-of-scope variant returns "NOT FOUND"
 //

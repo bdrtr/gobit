@@ -6,6 +6,7 @@ completing still ask nothing.
 
 - **Status:** Accepted
 - **Date:** 2026-10-01
+- **Amended by:** [0393](0393-an-add-on-is-written-under-its-line.md): a raise asks the line's add-ons too
 
 ## Context
 

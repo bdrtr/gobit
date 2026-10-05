@@ -1032,10 +1032,15 @@ func pricedItem(priceSetID string, amount int64) priceResponseItem {
 	return priceResponseItem{Amount: amount, Priced: true, PriceID: "price_of_" + priceSetID}
 }
 
-// entityPage serves a scripted entity the way a provider does: an "id" filter
-// picks those records, otherwise the limit and offset page through the list.
+// entityPage serves a scripted entity the way a provider does: an "id" or an
+// "ids" filter picks those records, otherwise the limit and offset page through
+// the list.
 func entityPage(records []query.Record, spec query.GraphSpec) []query.Record {
-	if ids, ok := spec.Filters["id"].([]string); ok {
+	ids, ok := spec.Filters["id"].([]string)
+	if !ok {
+		ids, ok = spec.Filters[FilterIDs].([]string)
+	}
+	if ok {
 		out := []query.Record{}
 		for _, record := range records {
 			if id, _ := record["id"].(string); slices.Contains(ids, id) {

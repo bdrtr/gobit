@@ -245,3 +245,79 @@ func TestAMergeCarriesAddOnsWithTheirLine(t *testing.T) {
 	require.Len(t, opened, 1, "the engraving is bound to the ring the merge opened")
 	assert.Equal(t, engravingVariant, opened[0].VariantID)
 }
+
+// TestAMergeOpensEachAddOnUnderItsLine is ADR 0393 on the merge: a guest's two
+// engraved rings, the first wrapped as well, opened on an empty target, are
+// listed each followed by its own add-ons, as the cart that held them listed
+// them.
+func TestAMergeOpensEachAddOnUnderItsLine(t *testing.T) {
+	ctx := context.Background()
+	svc, _ := newService(t)
+	target := newCart(ctx, t, svc)
+	source := newCart(ctx, t, svc)
+	_, err := addRing(ctx, t, svc, source.ID, 1, engraved("Ada"), wrapped())
+	require.NoError(t, err)
+	_, err = addRing(ctx, t, svc, source.ID, 1, engraved("Bo"))
+	require.NoError(t, err)
+	// shape names each line by its variant and words, and an add-on by the
+	// position of its line.
+	shape := func(lines []models.LineItem) []string {
+		at := map[string]int{}
+		out := make([]string, len(lines))
+		for i := range lines {
+			at[lines[i].ID] = i
+			out[i] = lines[i].VariantID + " " + lines[i].Properties["Text"]
+			if lines[i].ParentLineID != nil {
+				parent, ok := at[*lines[i].ParentLineID]
+				require.True(t, ok, "line %d follows its own line", i)
+				out[i] += fmt.Sprintf(" under %d", parent)
+			}
+		}
+		return out
+	}
+	held := shape(linesOf(ctx, t, svc, source.ID))
+	require.Equal(t, []string{
+		variantA + " ", engravingVariant + " Ada under 0", wrapVariant + "  under 0",
+		variantA + " ", engravingVariant + " Bo under 3",
+	}, held, "the guest's cart lists each ring followed by its add-ons, as they were added")
+
+	_, err = svc.MergeCart(ctx, source.ID, target.ID)
+	require.NoError(t, err)
+
+	assert.Equal(t, held, shape(linesOf(ctx, t, svc, target.ID)), "in the order the guest's cart held them")
+}
+
+// TestAMergeRefusesAnAddOnWithoutItsLine: an add-on whose line the source does
+// not hold as a line of its own cannot be opened under anything, so the merge
+// is refused and the target is left as it was. The line may be gone, or be an
+// add-on itself. The service never writes such a line; the store is seeded
+// with one directly.
+func TestAMergeRefusesAnAddOnWithoutItsLine(t *testing.T) {
+	for name, parentOf := range map[string]func(ring models.LineItem, lines []models.LineItem) string{
+		"its line is gone": func(models.LineItem, []models.LineItem) string { return "cali_gone" },
+		"its line is an add-on": func(ring models.LineItem, lines []models.LineItem) string {
+			return addOnsOf(lines, ring.ID)[0].ID
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			svc, store := newService(t)
+			target := newCart(ctx, t, svc)
+			source := newCart(ctx, t, svc)
+			ring, err := addRing(ctx, t, svc, source.ID, 1, engraved("Ada"))
+			require.NoError(t, err)
+			parent := parentOf(ring, linesOf(ctx, t, svc, source.ID))
+			_, err = store.CreateLineItem(ctx, models.LineItem{
+				ID: models.NewLineItemID(), CartID: source.ID, VariantID: wrapVariant, Title: "Wrap",
+				Quantity: 1, UnitPrice: 1_000, ParentLineID: &parent,
+			})
+			require.NoError(t, err)
+
+			_, err = svc.MergeCart(ctx, source.ID, target.ID)
+
+			require.Error(t, err)
+			assert.Equal(t, service.CodeInvalidInput, errors.CodeOf(err), "%v", err)
+			assert.Empty(t, linesOf(ctx, t, svc, target.ID), "nothing is opened on the target")
+		})
+	}
+}

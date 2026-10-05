@@ -1378,17 +1378,30 @@ type orderSnapshotTaxComponent struct {
 	TaxAmount     int64  `json:"tax_amount"`
 }
 
-// lineOrder is the lines' indexes with every line standing on its own before
-// every add-on, each group in the plan's order.
+// lineOrder is the lines' indexes with each line standing on its own followed
+// by its add-ons, both in the plan's order (ADR 0229, ADR 0393): a parent comes
+// before the lines that name it, and an add-on is written under its own line.
+// A line nothing places, which validateAddOns refuses first, goes last.
 func (p *checkoutPlan) lineOrder() []int {
-	order := make([]int, 0, len(p.Lines))
+	addOns := make(map[string][]int, len(p.Lines))
 	for i := range p.Lines {
-		if p.Lines[i].ParentLineItemID == "" {
-			order = append(order, i)
+		if parent := p.Lines[i].ParentLineItemID; parent != "" {
+			addOns[parent] = append(addOns[parent], i)
+		}
+	}
+	order := make([]int, 0, len(p.Lines))
+	placed := make([]bool, len(p.Lines))
+	for i := range p.Lines {
+		if p.Lines[i].ParentLineItemID != "" {
+			continue
+		}
+		order, placed[i] = append(order, i), true
+		for _, j := range addOns[p.Lines[i].LineItemID] {
+			order, placed[j] = append(order, j), true
 		}
 	}
 	for i := range p.Lines {
-		if p.Lines[i].ParentLineItemID != "" {
+		if !placed[i] {
 			order = append(order, i)
 		}
 	}
@@ -1425,8 +1438,9 @@ func (p *checkoutPlan) validateAddOns() error {
 // existing order. A new execution gets a new identity, which means a flow
 // started after a compensated attempt may open a new order.
 func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage, error) {
-	// The lines standing on their own go first and the add-ons after them, so
-	// the order meets each parent before the lines that name it (ADR 0229).
+	// Each line standing on its own goes with its add-ons right after it, so
+	// the order meets each parent before the lines that name it and writes an
+	// add-on under its line (ADR 0229, ADR 0393).
 	items := make([]orderSnapshotItem, 0, len(p.Lines))
 	for _, i := range p.lineOrder() {
 		items = append(items, orderSnapshotItem{

@@ -88,6 +88,28 @@ func TestTheQuoteIsAskedWithTheCARTsFacts(t *testing.T) {
 	assert.Equal(t, int64(2000), got.Subtotal)
 }
 
+// TestTheQuoteCountsAnAddOnsUnits is ADR 0393's rejection held: an add-on is an
+// ordinary variant (ADR 0228), and its units are units sold, so a ring of two
+// and its engraving of two are four items to a per-item rate.
+func TestTheQuoteCountsAnAddOnsUnits(t *testing.T) {
+	h := shippingHarness(t)
+	h.carts.snapshotFn = func(_ context.Context, _ string) (json.RawMessage, error) {
+		return json.Marshal(Snapshot{
+			ID: testCartID, RegionID: testRegionID, CurrencyCode: testCurrency,
+			Items: []SnapshotItem{
+				{ID: "cli_1", VariantID: testVariantA, Quantity: 2},
+				{ID: "cli_2", VariantID: testVariantB, Quantity: 2, ParentLineID: "cli_1"},
+			},
+		})
+	}
+
+	_, err := h.wf.AddQuotedShippingMethod(context.Background(), testCartID, "so_1", nil)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, h.shipping.calls)
+	assert.Equal(t, int64(4), h.shipping.gotRequest.ItemCount)
+}
+
 // TestTheQuoteSubtotalIsTakenAFTERTheDiscount pins the basis of the threshold
 // rules.
 //

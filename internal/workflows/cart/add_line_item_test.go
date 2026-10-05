@@ -84,7 +84,7 @@ func TestAddLineItemResolvesPriceAndRefreshesTotals(t *testing.T) {
 // carried through WITHOUT being read by the workflow.
 //
 // The workflow does not take it into account and must not; but it is obliged to
-// carry it: this workflow is the only path that opens a line, and had it not
+// carry it: this workflow is the only path that adds a line, and had it not
 // been carried, the field the storefront sent would be silently dropped — "the
 // setting believed to be sent but never applied" is exactly why this API
 // rejects the fields it does not recognize.

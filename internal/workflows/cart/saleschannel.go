@@ -56,7 +56,8 @@ import (
 // would THEN be in the caller's hands: when a new write path forgot to pass the
 // parameter nothing would blow up, the scope would simply disappear in silence.
 // Reading from the context ties the decision to the catalog read itself — every path
-// that gets a variant into a cart goes through that read.
+// that adds a variant to a cart, or raises one, goes through that read; a merge
+// moves lines already in a cart and reads nothing (see below).
 //
 // The price, stated honestly: the dependency is INVISIBLE in the signature. That is
 // why a new variant read skipping the channel decision is not a compile error, and
@@ -65,14 +66,15 @@ import (
 //
 // # The scope is enforced AT THE ENTRANCE
 //
-// The check is where the variant ENTERS the cart. The path that updates a line's
-// quantity (see [Workflows.UpdateLineItem]) and the workflow that turns the cart
-// into an order (internal/workflows/checkout) do NOT ask for the catalog scope
-// AGAIN, and this is not an omission but a decision that was made:
+// The check is where units ENTER a cart: adding a line, and raising one's
+// quantity (ADR 0281), its add-ons' with it (ADR 0393). Lowering, removing,
+// merging a cart into another and the workflow that turns the cart into an
+// order (internal/workflows/checkout) do NOT ask for the catalog scope AGAIN,
+// and this is a decision that was made:
 //
-//   - The only path that can get a variant into a cart is adding a line; while that
-//     door is closed a foreign channel's variant can never enter the cart, so on the
-//     quantity update and completion paths there is nothing left to close.
+//   - A merge moves units that are already in a cart. A cart records no
+//     channel, and the completion does not ask the scope, so a merge asks
+//     nothing that completing the source cart would ask.
 //   - That a line which HAS ENTERED the cart is unaffected by the catalog changing
 //     afterwards is the product module's WRITTEN decision ("the name of a product
 //     added to a cart must remain resolvable even if that product is later moved to

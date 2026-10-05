@@ -68,3 +68,43 @@ func TestAnAddOnWithoutItsLineIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// TestEachAddOnIsWrittenUnderItsOwnLine is ADR 0393 on the wire the order
+// reads: two rings, each with its add-ons listed anywhere after it in the cart,
+// reach the order each followed by its own add-ons, in the cart's order, so a
+// reader that prints the order's lines as written prints each add-on under its
+// ring.
+func TestEachAddOnIsWrittenUnderItsOwnLine(t *testing.T) {
+	line := func(id, parent string) planLine {
+		return planLine{LineItemID: id, VariantID: "var_" + id, Quantity: 1, ParentLineItemID: parent}
+	}
+	plan := checkoutPlan{Lines: []planLine{
+		line("li_A", ""), line("li_B", ""), line("li_a1", "li_A"), line("li_b1", "li_B"), line("li_a2", "li_A"),
+	}}
+
+	raw, err := plan.orderSnapshotJSON("k")
+	require.NoError(t, err)
+	var sent struct {
+		Items []struct {
+			LineKey string `json:"line_key"`
+		} `json:"items"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &sent))
+	keys := make([]string, 0, len(sent.Items))
+	for _, item := range sent.Items {
+		keys = append(keys, item.LineKey)
+	}
+	assert.Equal(t, []string{"li_A", "li_a1", "li_a2", "li_B", "li_b1"}, keys)
+}
+
+// TestLineOrderPlacesEveryLine holds that the order drops no line: an add-on
+// naming a line the cart does not hold, which validateAddOns refuses first, is
+// still placed, last.
+func TestLineOrderPlacesEveryLine(t *testing.T) {
+	plan := checkoutPlan{Lines: []planLine{
+		{LineItemID: "li_a", ParentLineItemID: "li_gone"},
+		{LineItemID: "li_A"},
+	}}
+
+	assert.Equal(t, []int{1, 0}, plan.lineOrder())
+}

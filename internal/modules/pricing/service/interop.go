@@ -164,7 +164,7 @@ func (s *Service) CalculateAmount(
 //	   1,000   Seq Scan on price   5.30 ms
 //
 // The turn lies between 280 and 300, that is THREE TIMES below the ceiling.
-// Today it is unreachable (the only path that opens a line is subject to the
+// Today it is unreachable (every path that opens a line is subject to the
 // cart's own ceiling of 100) and it is not something to be fixed either: the
 // single query that falls to a scan is still far below asking for the same
 // containers one by one (300 × ~0.1 ms). The reason it is written here is the

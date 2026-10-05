@@ -58,12 +58,18 @@ type UpdateLineItemResult struct {
 //
 // # The sales channel scope is asked again when the quantity RISES
 //
-// The scope check is at the entry gate ([Workflows.AddLineItem]): a variant that
-// does not appear in the identity's channels can NEVER enter the cart. A raise
+// The scope check is at the entry gate ([Workflows.AddLineItem]): an add of a
+// variant that does not appear in the identity's channels is refused. A raise
 // asks for more units of a line, and that is an entry of more units, so it asks
 // the gate's question again (ADR 0281): a line whose product was moved out of
 // the request's channels after it entered the cart is refused a higher
 // quantity with the same 404 an add gets, and nothing is written.
+//
+// A raise of a line raises its add-ons (ADR 0229), so it asks each of them
+// what its add asked of it (ADR 0393): the line's product must still take it,
+// and the request's channels must still hold its variant. A list that dropped
+// it is refused with [CodeAddOnNotAccepted], and a channel that lost it with
+// the 404 an add gets; nothing is written.
 //
 // Lowering the quantity, removing the line and completing the cart as it is ask
 // nothing: the cart is a SNAPSHOT, and an administrator's catalog edit must not
@@ -141,10 +147,48 @@ func (w *Workflows) mayRaise(ctx context.Context, in UpdateLineItemInput) error 
 		if in.Quantity <= item.Quantity {
 			return nil
 		}
-		_, err := w.variantTitle(ctx, item.VariantID)
-
-		return err
+		if _, err := w.variantTitle(ctx, item.VariantID); err != nil {
+			return err
+		}
+		return w.mayRaiseAddOns(ctx, snap, item)
 	}
 
+	return nil
+}
+
+// mayRaiseAddOns asks each add-on of a raised line the two questions its add
+// asked (ADR 0393), in the add's order: the line's product must still take it,
+// and the request's channels must still hold its variant. One scoped read
+// answers the line's product and the add-ons' channel, where a variant missing
+// from the answer is refused with the 404 an add gets, and a second reads the
+// product's list. A line without add-ons reads nothing.
+func (w *Workflows) mayRaiseAddOns(ctx context.Context, snap Snapshot, line *SnapshotItem) error {
+	var addOns []AddOnRequest
+	ids := []string{line.VariantID}
+	for i := range snap.Items {
+		if snap.Items[i].ParentLineID == line.ID {
+			addOns = append(addOns, AddOnRequest{VariantID: snap.Items[i].VariantID})
+			ids = append(ids, snap.Items[i].VariantID)
+		}
+	}
+	if len(addOns) == 0 {
+		return nil
+	}
+	inScope, err := w.productIDsFor(ctx, ids)
+	if err != nil {
+		return err
+	}
+	productID, ok := inScope[line.VariantID]
+	if !ok {
+		return errors.NotFound(CodeVariantUnknown, "variant %s is not in the catalog", line.VariantID)
+	}
+	if err := w.productTakes(ctx, productID, addOns); err != nil {
+		return err
+	}
+	for _, id := range ids[1:] {
+		if _, ok := inScope[id]; !ok {
+			return errors.NotFound(CodeVariantUnknown, "variant %s is not in the catalog", id)
+		}
+	}
 	return nil
 }

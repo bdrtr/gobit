@@ -37,7 +37,8 @@ import (
 // A shopper may also choose a paid or a free delivery in their market and type
 // a 10% coupon that covers the other half of the pool. One variant is a gift
 // box sold from two of the pool's variants (ADR 0234), and one takes an
-// engraving as an add-on line of its own (ADR 0229).
+// engraving as an add-on line of its own (ADR 0229), which the order writes
+// under its line (ADR 0393).
 func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 	ctx := t.Context()
 
@@ -192,6 +193,18 @@ func TestEveryCartAShopperCanBuildIsSoldAsQuoted(t *testing.T) {
 		require.NoError(rt, err)
 		require.Equal(rt, stored.Total, order.Total)
 		require.Equal(rt, inclusive, order.PricesIncludeTax)
+		// Each add-on is written under its line (ADR 0393): right after it, or
+		// after another add-on of the same line.
+		for k, line := range order.Items {
+			if line.ParentLineItemID == nil {
+				continue
+			}
+			require.Positive(rt, k, "an add-on is not the order's first line")
+			above := order.Items[k-1]
+			require.True(rt, above.ID == *line.ParentLineItemID ||
+				(above.ParentLineItemID != nil && *above.ParentLineItemID == *line.ParentLineItemID),
+				"the add-on %s is written under its line", line.ID)
+		}
 		collection, err := paymentSvc.GetPaymentCollection(ctx, placed.PaymentCollectionID)
 		require.NoError(rt, err)
 		require.Equal(rt, stored.Total, collection.Amount)

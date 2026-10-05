@@ -180,11 +180,11 @@ An out-of-scope variant returns the **same** error as a variant that never exist
 (`404 cart_workflow_variant_unknown`) — a different class would give away the
 product's existence.
 
-> **Limit:** the check is where the variant **enters** the cart. The quantity
-> update and cart completion paths do not ask about the scope again; the only path
-> that can put a variant into a cart is adding a line, and a line already in a cart
-> does not become unpayable because of a later edit moving the product to another
-> channel. The decision is protected by
+> **Limit:** the check is where units **enter** the cart: a line added, and a
+> line raised with its add-ons (ADR 0281, ADR 0393). Lowering a line, merging two
+> carts and completing the cart do not ask about the scope again; a line already
+> in a cart does not become unpayable because of a later edit moving the product
+> to another channel. The decision is protected by
 > `TestVariantReadsGoThroughTheChannelDecision` (see `internal/arch`): a new variant
 > read either makes the channel decision or writes down its reason.
 

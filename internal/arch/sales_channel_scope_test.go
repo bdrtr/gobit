@@ -142,8 +142,9 @@ var variantReadExemptions = []variantReadExemption{
 	{
 		file:     "internal/workflows/checkout/plan.go",
 		function: "variantTitles",
-		why: "the scope is applied AT THE ENTRANCE: the only way a variant can get into " +
-			"a cart is adding a line, and that path is covered. This read copies the name " +
+		why: "the scope is applied AT THE ENTRANCE: adding a line and raising one with " +
+			"its add-ons are covered (ADR 0281, ADR 0393); a merge moves lines already in " +
+			"a cart and asks the scope no more than this read does. This read copies the name " +
 			"of a line that has ALREADY entered the cart onto an order line; filtering " +
 			"again would mean an administrator edit moving a product to another channel " +
 			"making the customer's full cart unpayable, and would contradict the product " +

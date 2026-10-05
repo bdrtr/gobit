@@ -53,7 +53,7 @@ storefront does its work not with its own service but with a cross-module FLOW:
 |---|---|---|
 | `POST /store/v1/carts` | the SERVER derives the region and the currency from `country_code`, validates the customer, opens the cart | `workflows/cart` create_cart |
 | `POST /store/v1/carts/{id}/line-items` | the SERVER decides the price and the title, adds the line — or raises the one of the same variant and `properties` (ADR 0223) — and refreshes the totals | `workflows/cart` add_line_item |
-| `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` | writes the quantity and REPRICES the line; a quantity of zero removes the line (204); a raise asks the line's channel again (ADR 0281) | `workflows/cart` update_line_item |
+| `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` | writes the quantity and REPRICES the line; a quantity of zero removes the line (204); a raise asks the line's channel again (ADR 0281), and each of its add-ons its product's list and channel (ADR 0393) | `workflows/cart` update_line_item |
 | `POST /store/v1/carts/{id}/complete` | reserves stock, opens the order, captures the payment — an offline method's part is authorized and left for the shop to capture (ADR 0284) — closes the cart | `workflows/checkout` complete_cart |
 
 ### The HTTP owner of a flow is the module

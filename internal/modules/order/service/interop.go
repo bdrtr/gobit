@@ -779,7 +779,9 @@ type interopInvoiceOrder struct {
 	// subtotal what is left once its tax is taken out (ADR 0246); the document
 	// prints its rows by it (ADR 0248).
 	PricesIncludeTax bool `json:"prices_include_tax"`
-	// Items are the lines, in the order they were written.
+	// Items are the lines, in the order they were written: each add-on right
+	// after its line on an order placed since ADR 0393, after every line of its
+	// own on one placed before.
 	Items []interopInvoiceItem `json:"items"`
 	// BillingAddress is whom the order was billed to; absent when the order
 	// recorded none. After an erasure it holds only the country, the one field
@@ -1038,12 +1040,12 @@ type interopDeliveryFacts struct {
 // on, in the schema of [interopDeliveryFacts] (ADR 0199).
 //
 // They are the sale's, as the cart's quote read them: the goods after discount
-// and the units sold. The goods are the lines' unit prices times their
-// quantities, which is what the quote read before any tax was worked out; the
-// order's subtotal is that only where the prices did not include their tax
-// (ADR 0246). The country is the current shipping address's rather than the
-// region's, since it is where the parcel goes, and ADR 0195 holds it to the
-// country the order was placed in.
+// and the units sold, an add-on's among them (ADR 0393). The goods are the
+// lines' unit prices times their quantities, which is what the quote read
+// before any tax was worked out; the order's subtotal is that only where the
+// prices did not include their tax (ADR 0246). The country is the current
+// shipping address's rather than the region's, since it is where the parcel
+// goes, and ADR 0195 holds it to the country the order was placed in.
 func (i *Interop) DeliveryFactsJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
 	detail, err := i.svc.GetOrder(ctx, orderID)
 	if err != nil {

@@ -105,6 +105,16 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **An add-on is written under its line and asked again when it rises**
+  (ADR 0393, D243, D244). **For storefront clients:**
+  `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` raising a line that
+  carries add-ons answers 422 `cart_workflow_add_on_not_accepted` when its
+  product no longer takes one of them, and 404 `cart_workflow_variant_unknown`
+  when one left the key's sales channels, writing nothing. A merged cart lists
+  each add-on under its line. **For order consumers:** an order placed from now
+  on lists each add-on right after its line in the order read,
+  `OrderInvoiceJSON`, the dossier and the line entity; earlier orders keep
+  theirs. A shipping quote still counts an add-on's units.
 - **A catalog read answers a revalidation** (ADR 0391, D241). **For
   integrators:** the storefront catalog's GET reads — the product listing, a
   product, its related products and add-ons, the facet counts, the option

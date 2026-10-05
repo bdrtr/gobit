@@ -226,6 +226,12 @@ func (w *Workflows) checkAddOns(ctx context.Context, variantID string, addOns []
 	if !ok {
 		return errors.NotFound(CodeVariantUnknown, "variant %s is not in the catalog", variantID)
 	}
+	return w.productTakes(ctx, productID, addOns)
+}
+
+// productTakes holds add-ons to the list productID accepts (ADR 0228), each
+// named once; a list that cannot be read takes none of them.
+func (w *Workflows) productTakes(ctx context.Context, productID string, addOns []AddOnRequest) error {
 	records, err := w.catalog.Graph(ctx, query.GraphSpec{
 		Entity:  EntityProduct,
 		Fields:  []string{query.IDField, FieldAddOnVariantIDs},

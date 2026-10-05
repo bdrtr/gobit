@@ -291,7 +291,7 @@ type Carts interface {
 	// line and may be left empty. This package DOES NOT READ it, it only carries
 	// it: the field is the storefront's intent (a gift note, personalization) and
 	// enters no step of the computation. Carrying it is mandatory nevertheless,
-	// because this flow is the only way to open a line; if it were not carried the
+	// because this flow is the only way to add a line; if it were not carried the
 	// field the client sent would silently be dropped, and a "setting believed to
 	// have been sent but never applied" is exactly the reason why this API rejects
 	// the fields it does not recognize.

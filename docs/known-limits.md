@@ -183,10 +183,13 @@ past and is not corrected retroactively.
   `internal/modules/product/repository/saleschannel.go`.
 - **The scope is enforced when units enter the cart, not at completion.** A line
   is scoped when it is added and again when its quantity rises
-  ([ADR 0281](adr/0281-raising-a-line-asks-the-channel-again.md)); lowering it,
-  removing it and completing the cart ask nothing. So a product moved to another
-  channel after it entered a cart can still be bought in the quantity the cart
-  holds, and no more of it. Asking at completion too was refused: a catalog edit
+  ([ADR 0281](adr/0281-raising-a-line-asks-the-channel-again.md)), and a raise
+  asks each of its add-ons its product's list and its channel, as their add did
+  ([ADR 0393](adr/0393-an-add-on-is-written-under-its-line.md)); lowering it,
+  removing it, a merge and completing the cart ask nothing. So a product moved to
+  another channel, or an add-on taken off its product's list, after it entered a
+  cart can still be bought in the quantity the cart holds, and no more of it.
+  Asking at completion too was refused: a catalog edit
   would make a customer's full cart unpayable, the alternative whose
   justification is written with the sales channel rule in
   [`docs/security.md`](security.md).
@@ -906,6 +909,18 @@ past and is not corrected retroactively.
   storefront open none, and the order's shipment list, its timeline and the
   Parcels screen's order column do not show it. Receiving a return does not
   look at its parcel, and cancelling a return leaves its parcel to the operator.
+
+- **A shipping quote counts every unit sold.** The cart's quote and a delivery
+  change price on the units, and an engraving or a wrap is a unit as its ring
+  is, so a per-item rate charges for it
+  ([ADR 0393](adr/0393-an-add-on-is-written-under-its-line.md)). A parcel takes
+  an add-on line as it takes any line. A gift card's units count too
+  ([gaps D246](gaps.md)).
+
+- **An order placed before ADR 0393 lists its add-ons after its lines.** Its
+  order read, its invoice, its dossier and the line entity print every line of
+  its own first; its page nests them
+  ([ADR 0250](adr/0250-an-orders-page-lists-what-was-sold.md)).
 
 - **The in-process harness consumes events like a server.** `InProcess` opens the
   whole application, so its modules subscribe — which is what a test wants, and

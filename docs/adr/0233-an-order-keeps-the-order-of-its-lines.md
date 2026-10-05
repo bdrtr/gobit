@@ -6,6 +6,7 @@ moment and then that sequence, so lines written together come back as written.
 
 - **Status:** Accepted
 - **Date:** 2026-09-29
+- **Amended by:** [0393](0393-an-add-on-is-written-under-its-line.md): an add-on is written right after its own line
 
 Measurement: [measurements/0233](../measurements/0233-twelve-lines-in-a-row.md)
 

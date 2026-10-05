@@ -182,17 +182,37 @@ func mergeable(source, target models.Cart) error {
 // foldLines carries the source's lines onto the target and reports how many
 // moved.
 //
-// It walks twice (ADR 0229): the lines standing on their own first, each merged
-// by its identity — variant, properties and the add-ons it carries — and then
-// the add-ons, each following its line. A line merged into one the target
-// already holds brings the same add-ons, which are already there and follow the
-// summed quantity; a line opened on the target opens its add-ons under it.
+// It walks once (ADR 0229, ADR 0393): each line standing on its own is merged
+// by its identity — variant, properties and the add-ons it carries. A line
+// merged into one the target already holds brings add-ons that are already
+// there and follow the summed quantity. A line opened on the target opens its
+// add-ons right after it, so the cart lists each under its line.
 func (s *Service) foldLines(
 	ctx context.Context, source, target models.Cart,
 ) (int, error) {
 	lines, err := s.store.ListLineItems(ctx, source.ID)
 	if err != nil {
 		return 0, err
+	}
+	// The add-ons are gathered under their lines, in the source's order, and
+	// one naming no line of its own in the source is refused before any write.
+	roots := make(map[string]bool, len(lines))
+	for i := range lines {
+		if lines[i].ParentLineID == nil {
+			roots[lines[i].ID] = true
+		}
+	}
+	addOnsOf := map[string][]models.LineItem{}
+	for i := range lines {
+		if lines[i].ParentLineID == nil {
+			continue
+		}
+		parent := *lines[i].ParentLineID
+		if !roots[parent] {
+			return 0, errors.Internal(CodeInvalidInput,
+				"the add-on line %s names %s, which the merge did not carry", lines[i].ID, parent)
+		}
+		addOnsOf[parent] = append(addOnsOf[parent], lines[i])
 	}
 	// The target's lines are counted once; every line the fold opens adds one,
 	// and the ceiling refuses the whole merge rather than half of it.
@@ -201,10 +221,6 @@ func (s *Service) foldLines(
 		return 0, err
 	}
 
-	// opened maps a source line to the target line it opened; raised holds the
-	// source lines merged into a target line, whose add-ons are already there.
-	opened := map[string]string{}
-	raised := map[string]bool{}
 	for i := range lines {
 		line := lines[i]
 		if line.ParentLineID != nil {
@@ -228,7 +244,6 @@ func (s *Service) foldLines(
 					return 0, err
 				}
 			}
-			raised[line.ID] = true
 		case errors.IsNotFound(err):
 			// The title, the unit price, the metadata and the properties travel
 			// with the line; the properties are also what it merged by (ADR 0223).
@@ -251,40 +266,27 @@ func (s *Service) foldLines(
 				return 0, err
 			}
 			held++
-			opened[line.ID] = created.ID
+			parentID := created.ID
+			for k := range addOnsOf[line.ID] {
+				addOn := &addOnsOf[line.ID][k]
+				if _, err := s.openLine(ctx, models.LineItem{
+					ID:           models.NewLineItemID(),
+					CartID:       target.ID,
+					VariantID:    addOn.VariantID,
+					Title:        addOn.Title,
+					Quantity:     addOn.Quantity,
+					UnitPrice:    addOn.UnitPrice,
+					Metadata:     addOn.Metadata,
+					Properties:   addOn.Properties,
+					ParentLineID: &parentID,
+				}, held); err != nil {
+					return 0, err
+				}
+				held++
+			}
 		default:
 			return 0, err
 		}
-	}
-
-	for i := range lines {
-		line := lines[i]
-		if line.ParentLineID == nil {
-			continue
-		}
-		parent := *line.ParentLineID
-		if raised[parent] {
-			continue
-		}
-		targetParent, ok := opened[parent]
-		if !ok {
-			return 0, errors.Internal(CodeInvalidInput,
-				"the add-on line %s names %s, which the merge did not carry", line.ID, parent)
-		}
-		if _, err := s.openLine(ctx, models.LineItem{
-			ID:           models.NewLineItemID(),
-			CartID:       target.ID,
-			VariantID:    line.VariantID,
-			Title:        line.Title,
-			Quantity:     line.Quantity,
-			UnitPrice:    line.UnitPrice,
-			Metadata:     line.Metadata,
-			Properties:   line.Properties,
-			ParentLineID: &targetParent,
-		}, held); err != nil {
-			return 0, err
-		}
-		held++
 	}
 
 	return len(lines), nil

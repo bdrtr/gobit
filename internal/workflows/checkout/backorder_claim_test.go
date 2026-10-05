@@ -398,11 +398,12 @@ func TestAClaimWhoseParcelsCannotBeReadIsNotSettled(t *testing.T) {
 	assert.Contains(t, out.Warnings[0], "parcels could not be read")
 }
 
-// TestAnAddOnAheadOfABackorderedLineIsNotItsOrderLine: the order keeps a root
-// line's add-ons after the roots (ADR 0229), so the cart [P1, an add-on of P1,
-// P2] is the order [P1, P2, add-on]. Only the position the cart line has in the
-// ORDER names P2's line: an add-on selling P2's variant and quantity would take
-// P2's claim, and one selling another would make the order look unlike the cart.
+// TestAnAddOnAheadOfABackorderedLineIsNotItsOrderLine: the order writes each
+// root line's add-ons right after it (ADR 0393), so the cart [P1, P2, an add-on
+// of P1] is the order [P1, add-on, P2]. Only the position the cart line has in
+// the ORDER names P2's line: an add-on selling P2's variant and quantity would
+// take P2's claim, and one selling another would make the order look unlike the
+// cart.
 func TestAnAddOnAheadOfABackorderedLineIsNotItsOrderLine(t *testing.T) {
 	for name, addOn := range map[string]struct {
 		variant  string
@@ -416,8 +417,8 @@ func TestAnAddOnAheadOfABackorderedLineIsNotItsOrderLine(t *testing.T) {
 			h.orders.linesFn = func(int) (json.RawMessage, error) {
 				raw, _ := json.Marshal([]orderLineAnswer{
 					{LineItemID: "oli_p1", Bought: 1, VariantID: testVariantA},
-					{LineItemID: "oli_p2", Bought: 1, VariantID: testVariantB},
 					{LineItemID: "oli_addon", Bought: addOn.quantity, VariantID: addOn.variant},
+					{LineItemID: "oli_p2", Bought: 1, VariantID: testVariantB},
 				})
 				return raw, nil
 			}
@@ -426,12 +427,12 @@ func TestAnAddOnAheadOfABackorderedLineIsNotItsOrderLine(t *testing.T) {
 				Lines: []planLine{
 					{LineItemID: "li_p1", VariantID: testVariantA, InventoryItemID: testItemA, Quantity: 1},
 					{
-						LineItemID: "li_addon", ParentLineItemID: "li_p1", VariantID: addOn.variant,
-						InventoryItemID: testItemB, Quantity: addOn.quantity,
-					},
-					{
 						LineItemID: "li_p2", VariantID: testVariantB, InventoryItemID: testItemB, Quantity: 1,
 						AllowBackorder: true,
+					},
+					{
+						LineItemID: "li_addon", ParentLineItemID: "li_p1", VariantID: addOn.variant,
+						InventoryItemID: testItemB, Quantity: addOn.quantity,
 					},
 				},
 			}

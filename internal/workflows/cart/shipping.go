@@ -336,6 +336,8 @@ func (w *Workflows) quoteRequestFor(ctx context.Context, snap Snapshot) (quoteRe
 		subtotal = next
 	}
 
+	// Every unit counts, an add-on's included: an add-on is an ordinary variant
+	// (ADR 0228, ADR 0393). A gift card's units count too, which is D246.
 	var itemCount int64
 	for i := range snap.Items {
 		next, err := addAmount(itemCount, snap.Items[i].Quantity)
