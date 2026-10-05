@@ -588,6 +588,18 @@ past and is not corrected retroactively.
 - **Deleting the last region binding does not hide the location, it opens it to
   ALL regions** — the same as the sales channel rule, with one difference: there
   the price is visibility, here it is a dropped order.
+- **A backordered line is filled whole, at one warehouse, from the warehouses
+  ranked when it was ordered.** Units that arrive go to the oldest waiting claim
+  they complete ([ADR 0392](adr/0392-a-backordered-line-waits-for-its-units.md)).
+  A claim waits until the units sellable at one of its warehouses reach it;
+  units short of it stay on sale meanwhile, other shoppers can buy them, and
+  later, smaller claims are filled first. A warehouse opened or bound to the
+  channel after the order does not fill its claim, a claim the checkout could not
+  rank is filled from nowhere, and a line whose claim the checkout failed to
+  record and an order placed before the upgrade have none. A claim the checkout
+  recorded but could not settle (a warning on its answer) still owes the units
+  written off before it. A filled claim opens no parcel, and no date is
+  promised (ADR 0048).
 - **A reduction's reference price is known only from the day the price history
   began.** Since [ADR 0167](adr/0167-a-price-keeps-its-history.md) every price
   write keeps a snapshot, and a storefront sale price carries the lowest price

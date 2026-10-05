@@ -53,6 +53,14 @@ type fakeStore struct {
 	// failCreateReservation, when set, is the error CreateReservation returns;
 	// it is used to test the transaction's rollback path.
 	failCreateReservation error
+	// backorders are the claims (ADR 0392); backorderSeq hands out the queue
+	// positions the identity column would.
+	backorders   map[string]models.Backorder
+	backorderSeq int64
+	// queueReads records the available argument of every LockWaitingBackordersAt
+	// call, in order: how many times a write read the queue, and with what.
+	queueReads []queueRead
+
 	// failSetReservationStatus makes the status write fail, which is the LAST
 	// step of a confirm — after the level and the movement have been written.
 	// It is what proves the ledger rolls back with the count rather than
@@ -67,7 +75,14 @@ func newFakeStore() *fakeStore {
 		locations:    map[string]models.StockLocation{},
 		levels:       map[string]models.InventoryLevel{},
 		reservations: map[string]models.Reservation{},
+		backorders:   map[string]models.Backorder{},
 	}
+}
+
+// queueRead is one read of a level's waiting claims.
+type queueRead struct {
+	itemID, locationID string
+	available          int64
 }
 
 // That the fake store satisfies the surface the service expects is checked at
@@ -93,6 +108,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		levels       map[string]models.InventoryLevel
 		reservations map[string]models.Reservation
 		movements    []models.Movement
+		backorders   map[string]models.Backorder
 	}{
 		items:        maps.Clone(f.items),
 		locations:    maps.Clone(f.locations),
@@ -101,7 +117,8 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		// The ledger is rolled back WITH the level, and that is the whole point
 		// of it being in the snapshot: a movement that survived a failed
 		// transaction would claim units moved that never did (ADR 0068).
-		movements: slices.Clone(f.movements),
+		movements:  slices.Clone(f.movements),
+		backorders: maps.Clone(f.backorders),
 	}
 	f.mu.Unlock()
 
@@ -109,7 +126,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		f.mu.Lock()
 		f.items, f.locations = snapshot.items, snapshot.locations
 		f.levels, f.reservations = snapshot.levels, snapshot.reservations
-		f.movements = snapshot.movements
+		f.movements, f.backorders = snapshot.movements, snapshot.backorders
 		f.mu.Unlock()
 		return err
 	}
@@ -772,10 +789,22 @@ func (f *fakeStore) SaleLocations(_ context.Context, reference string) (map[stri
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	// A claim's fill is left out, as the real query's NOT EXISTS leaves it
+	// out (ADR 0392).
+	fills := map[string]bool{}
+	for id := range f.backorders {
+		if f.backorders[id].ReservationID != "" {
+			fills[f.backorders[id].ReservationID] = true
+		}
+	}
+
 	out := map[string]string{}
 	for i := range f.movements {
 		mv := f.movements[i]
 		if mv.Reason != models.MovementSale || mv.Reference != reference || reference == "" {
+			continue
+		}
+		if fills[mv.ReservationID] {
 			continue
 		}
 		if _, seen := out[mv.InventoryItemID]; !seen {
@@ -896,4 +925,188 @@ func (f *fakeStore) AvailableByItemLocation(
 	}
 
 	return out, nil
+}
+
+// --- backorders (ADR 0392) ---------------------------------------------------
+
+// CreateBackorder records a claim, or reports false when the line already has
+// one for the item, as the unique index makes ON CONFLICT DO NOTHING answer.
+func (f *fakeStore) CreateBackorder(_ context.Context, b models.Backorder) (models.Backorder, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for id := range f.backorders {
+		if f.backorders[id].OrderLineItemID == b.OrderLineItemID &&
+			f.backorders[id].InventoryItemID == b.InventoryItemID {
+			return models.Backorder{}, false, nil
+		}
+	}
+	if _, ok := f.items[b.InventoryItemID]; !ok {
+		return models.Backorder{}, false, errors.NotFound("inventory_item_not_found",
+			"there is no such item: %s", b.InventoryItemID)
+	}
+	f.backorderSeq++
+	b.Seq = f.backorderSeq
+	b.Status = models.BackorderWaiting
+	b.CreatedAt, b.UpdatedAt = time.Now().UTC(), time.Now().UTC()
+	b.LocationIDs = slices.Clone(b.LocationIDs)
+	f.backorders[b.ID] = b
+
+	return b, true, nil
+}
+
+// GetBackorderOfLine returns the line's claim on the item.
+func (f *fakeStore) GetBackorderOfLine(_ context.Context, orderLineItemID, itemID string) (models.Backorder, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	for id := range f.backorders {
+		if f.backorders[id].OrderLineItemID == orderLineItemID && f.backorders[id].InventoryItemID == itemID {
+			return f.backorders[id], nil
+		}
+	}
+
+	return models.Backorder{}, errors.NotFound("inventory_backorder_not_found", "no claim")
+}
+
+// claimsInQueue returns the claims passing keep, in seq order; the caller holds
+// f.mu.
+func (f *fakeStore) claimsInQueue(keep func(models.Backorder) bool) []models.Backorder {
+	out := make([]models.Backorder, 0, len(f.backorders))
+	for id := range f.backorders {
+		if keep(f.backorders[id]) {
+			out = append(out, f.backorders[id])
+		}
+	}
+	slices.SortFunc(out, func(a, b models.Backorder) int { return int(a.Seq - b.Seq) })
+
+	return out
+}
+
+// LockBackordersOfLine "locks" the line's claims, in queue order.
+func (f *fakeStore) LockBackordersOfLine(ctx context.Context, orderLineItemID string) ([]models.Backorder, error) {
+	if err := requireTx(ctx, "LockBackordersOfLine"); err != nil {
+		return nil, err
+	}
+	f.recordLock("backorder")
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.claimsInQueue(func(c models.Backorder) bool { return c.OrderLineItemID == orderLineItemID }), nil
+}
+
+// LockWaitingBackordersAt "locks" the waiting claims that name the location and
+// fit, in queue order, and records the read.
+func (f *fakeStore) LockWaitingBackordersAt(
+	ctx context.Context, itemID, locationID string, available int64,
+) ([]models.Backorder, error) {
+	if err := requireTx(ctx, "LockWaitingBackordersAt"); err != nil {
+		return nil, err
+	}
+	f.recordLock("backorder")
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.queueReads = append(f.queueReads, queueRead{itemID: itemID, locationID: locationID, available: available})
+
+	return f.claimsInQueue(func(c models.Backorder) bool {
+		return c.InventoryItemID == itemID && c.Status == models.BackorderWaiting &&
+			slices.Contains(c.LocationIDs, locationID) && c.Owed() <= available
+	}), nil
+}
+
+// FillBackorder marks a waiting claim filled.
+func (f *fakeStore) FillBackorder(_ context.Context, id, reservationID, locationID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	claim, ok := f.backorders[id]
+	if !ok || claim.Status != models.BackorderWaiting {
+		return 0, nil
+	}
+	claim.Status, claim.ReservationID, claim.FilledLocationID = models.BackorderFilled, reservationID, locationID
+	claim.UpdatedAt = time.Now().UTC()
+	f.backorders[id] = claim
+
+	return 1, nil
+}
+
+// WithdrawBackorder writes a claim's withdrawn units and status, refusing what
+// the schema's CHECKs refuse.
+func (f *fakeStore) WithdrawBackorder(
+	_ context.Context, id string, withdrawn int64, status models.BackorderStatus,
+) (models.Backorder, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	claim, ok := f.backorders[id]
+	if !ok {
+		return models.Backorder{}, errors.NotFound("inventory_backorder_not_found", "no claim %s", id)
+	}
+	if withdrawn < 0 || withdrawn > claim.Quantity ||
+		(status == models.BackorderWithdrawn) != (withdrawn == claim.Quantity) {
+		return models.Backorder{}, errors.Invalid("fake_backorder_check",
+			"the schema's CHECKs refuse %d withdrawn of %d as %s", withdrawn, claim.Quantity, status)
+	}
+	claim.WithdrawnQuantity, claim.Status = withdrawn, status
+	claim.UpdatedAt = time.Now().UTC()
+	f.backorders[id] = claim
+
+	return claim, nil
+}
+
+// CountWaitingBackorders counts the item's waiting claims.
+func (f *fakeStore) CountWaitingBackorders(_ context.Context, itemID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return int64(len(f.claimsInQueue(func(c models.Backorder) bool {
+		return c.InventoryItemID == itemID && c.Status == models.BackorderWaiting
+	}))), nil
+}
+
+// ListBackorders pages the item's claims in queue order.
+func (f *fakeStore) ListBackorders(_ context.Context, filter models.BackorderFilter) ([]models.Backorder, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	matched := f.claimsInQueue(func(c models.Backorder) bool {
+		return c.InventoryItemID == filter.InventoryItemID && (filter.Status == "" || c.Status == filter.Status)
+	})
+
+	return paginate(matched, filter.Limit, filter.Offset), int64(len(matched)), nil
+}
+
+// OpenStockLocationIDs lists the open locations.
+func (f *fakeStore) OpenStockLocationIDs(_ context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := []string{}
+	for id := range f.locations {
+		if loc := f.locations[id]; !loc.Closed() {
+			out = append(out, id)
+		}
+	}
+	slices.Sort(out)
+
+	return out, nil
+}
+
+// backorder returns the claim, for the test's assertions.
+func (f *fakeStore) backorder(id string) models.Backorder {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.backorders[id]
+}
+
+// queueReadCount returns how many times a write read the queue.
+func (f *fakeStore) queueReadCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return len(f.queueReads)
 }

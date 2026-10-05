@@ -1220,7 +1220,10 @@ func interopLineTaxesOf(components []models.OrderLineTax) []interopLineTax {
 type interopDispatchableLine struct {
 	// LineItemID is the line.
 	LineItemID string `json:"line_item_id"`
-	// Bought is how many units the line sold. Stock was deducted for all of them.
+	// Bought is how many units the line sold. A line whose stock is counted had
+	// all of them deducted at the checkout, except a backordered line's: the
+	// inventory module owes it the units and deducts them when they arrive
+	// (ADR 0392).
 	Bought int64 `json:"bought"`
 	// Canceled is how many of them were written off and will not be delivered.
 	//

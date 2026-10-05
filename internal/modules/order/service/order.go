@@ -854,12 +854,14 @@ func (s *Service) CancelOrder(ctx context.Context, orderID, reason string) error
 // (ADR 0285).
 //
 // An order the checkout placed has its stock DEDUCTED: the last step confirms
-// the reservations. Stamping it canceled alone leaves those units off the shelf
-// with nobody sending them, which an order that owes its total makes routine
-// (ADR 0284): the customer who never transfers is the ordinary end of a bank
-// transfer. Each write-off is a line cancellation of the units left, written in
-// the cancel's transaction with its order.line_canceled event, so the flow that
-// puts written-off units back (ADR 0134) gives back what no live parcel holds.
+// the reservations, and a counted line it let through without stock is
+// deducted when its units arrive (ADR 0392). Stamping it canceled alone leaves
+// those units off the shelf with nobody sending them, which an order that owes
+// its total makes routine (ADR 0284): the customer who never transfers is the
+// ordinary end of a bank transfer. Each write-off is a line cancellation of the
+// units left, written in the cancel's transaction with its order.line_canceled
+// event, so the flow that puts written-off units back (ADR 0134) gives back
+// what no live parcel holds.
 //
 // It refuses what [Service.CancelOrder] refuses — a completed order and one
 // with money collected — and a second call writes nothing. A line that sold gift

@@ -3,11 +3,12 @@
 // # What was wrong
 //
 // The checkout's last step confirms the reservations, which DEDUCTS the stock. So
-// an order that exists has already had its units taken off the sellable figure,
-// and a line written off afterwards is a unit nobody will ever send and nobody
-// counts as stock either. Nothing put it back — neither the whole-order
-// cancellation nor the partial one, and the order module cannot: the units live in
-// another module (Principle 2.1/2.4, ADR 0006). Gap D70.
+// an order that exists has already had its units taken off the sellable figure
+// (a line the checkout let through without stock loses its units only when its
+// claim is filled, ADR 0392), and a line written off afterwards is a unit nobody
+// will ever send and nobody counts as stock either. Nothing put it back — neither
+// the whole-order cancellation nor the partial one, and the order module cannot:
+// the units live in another module (Principle 2.1/2.4, ADR 0006). Gap D70.
 //
 // # Why it is a SUBSCRIBER and not an endpoint
 //
@@ -103,8 +104,16 @@ const CodeNotReady = "order_cancel_not_ready"
 // Inventory is the slice of the inventory module this flow calls.
 type Inventory interface {
 	// SaleLocations answers where an order's units were deducted from, as
-	// inventory item to location.
+	// inventory item to location. A backordered line's fill is not among them;
+	// [Inventory.SettleBackorder] names its shelf.
 	SaleLocations(ctx context.Context, orderID string) (map[string]string, error)
+	// SettleBackorder withdraws from the line's waiting claims the units that
+	// will not leave and answers, per item, the units of the line the module
+	// never deducted and where a filled claim deducted the rest (ADR 0392). An
+	// error comes with the answers when only the fill that follows failed.
+	SettleBackorder(
+		ctx context.Context, orderLineItemID string, bought, window int64,
+	) (undeducted map[string]int64, filledAt map[string]string, err error)
 	// ReturnCanceled brings a LINE's returned units up to a target and reports
 	// whether the target was already met. It takes a target rather than a
 	// quantity because two acts put a line's units back and neither may compute a
@@ -217,7 +226,80 @@ func (w *Workflow) HandleLineCanceled(ctx context.Context, e eventbus.Event) err
 		return err
 	}
 
-	return w.putBack(ctx, in.orderID, parts, in.lineItemID, target, in.cancellationID)
+	owed, settleErr := w.settle(ctx, in.orderID, in.lineItemID, in.bought, target)
+	if owed == nil {
+		return settleErr
+	}
+
+	return errors.Join(w.putBack(ctx, parts, in.lineItemID, target, in.cancellationID, owed), settleErr)
+}
+
+// lineOwed is what the inventory module answers about a line's stock, per item:
+// the shelf the order's sale left from, the units of the line it never deducted
+// and the shelf a filled claim deducted at (ADR 0392). The last two are empty
+// for a line the checkout reserved.
+type lineOwed struct {
+	soldAt     map[string]string
+	undeducted map[string]int64
+	filledAt   map[string]string
+}
+
+// settle reads the shelves the order's sale left from, then withdraws from the
+// line's waiting claims the units that will not leave — window, the same number
+// the shelf's target is — and reads what the line's stock never lost.
+//
+// # Why the shelves are read FIRST
+//
+// The checkout records its claims before it confirms a reservation, so a sale of
+// the order seen here means the line's claim exists and the settlement after it
+// finds it. Read the other way round, a settlement that ran before the claim
+// answers "no claim", and a sale confirmed in between credits the shelf with the
+// whole window of a line whose stock lost nothing (D242).
+//
+// # Why the location comes from the LEDGER
+//
+// The units have to go back where they came from, and the reservation that knew
+// the location is keyed to the CART's line item, which an order does not carry.
+// So the sale movement is what remembers: the checkout writes the order onto it,
+// and this reads it back (ADR 0134). A backordered line's fill is not among
+// those sales; its claim names its own shelf.
+//
+// It returns no answer when a read or the withdrawal failed, and the act stops
+// there: putting the window back without knowing what the line never lost is
+// the fault D242 records. An error that comes WITH the answer is the fill that
+// runs after the withdrawal; the answer stands, and the error is returned after
+// the put-back so the bus tries the fill again.
+func (w *Workflow) settle(
+	ctx context.Context, orderID, lineItemID string, bought, window int64,
+) (*lineOwed, error) {
+	if w.inventory == nil {
+		return nil, errors.Internal(CodeNotReady,
+			"the cancellation flow is not wired, so a canceled line cannot be acted on")
+	}
+
+	soldAt, err := w.inventory.SaleLocations(ctx, orderID)
+	if err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
+			"the shelf the units of order %s left from could not be read", orderID)
+	}
+
+	undeducted, filledAt, err := w.inventory.SettleBackorder(ctx, lineItemID, bought, window)
+	if err != nil {
+		err = errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
+			"the backorder of line %s could not be settled", lineItemID)
+	}
+	if err != nil && len(undeducted) == 0 {
+		return nil, err
+	}
+
+	return &lineOwed{soldAt: soldAt, undeducted: undeducted, filledAt: filledAt}, err
+}
+
+// shelfTarget is how many of one part's units go back on the shelf: the line's
+// window times the part's units per line unit, less the units the line's stock
+// never lost, never below zero (ADR 0392).
+func shelfTarget(window, perUnit, undeducted int64) int64 {
+	return max(0, window*perUnit-undeducted)
 }
 
 // stockPart is one variant a line's units are made of, and how many of it ONE
@@ -251,15 +333,21 @@ func (w *Workflow) lineStock(ctx context.Context, orderID, lineItemID, variantID
 	return line.stockParts(), nil
 }
 
-// targetOnShelf is how many of a line's written-off units belong on the shelf.
+// targetOnShelf is how many of a line's written-off units will not leave.
 //
 // # One invariant, computed by both acts
 //
-// Stock was deducted for every unit bought. Units a live parcel holds have left
-// or are about to. So the units that were deducted and will not leave are
-// `bought - committed`, and of those the ones that were actually written off are
+// This is the number of the line's units that will not leave. Units a live
+// parcel holds have left or are about to, so of `bought - committed` the ones
+// that were actually written off are
 //
 //	min(canceledTotal, bought - committed)
+//
+// For a line the checkout reserved, every unit bought was deducted, so it is
+// also what goes back on the shelf. For a backordered line, the inventory module
+// withdraws these units from the claim and answers how many it never deducted;
+// the shelf's target is this minus those, never below zero (ADR 0392,
+// [shelfTarget]).
 //
 // Both sides move: a write-off grows `canceledTotal`, a parcel being canceled
 // shrinks `committed`. Each act computes this same number from the state it finds
@@ -325,24 +413,11 @@ func (w *Workflow) committedQuantity(ctx context.Context, orderID, lineItemID st
 	return committed[lineItemID], nil
 }
 
-// shelf answers which inventory item the variant tracks and which location its
-// units left from.
-//
-// # Why the location comes from the LEDGER
-//
-// The units have to go back where they came from, and the reservation that knew
-// the location is keyed to the CART's line item, which an order does not carry. So
-// the sale movement is what remembers: the checkout writes the order onto it, and
-// this reads it back (ADR 0134).
-//
-// An order with no sale movement is not an error. A checkout that failed before
-// its last step leaves reservations and no sale, and its compensation released
-// them — so there is nothing deducted and nothing to put back.
-func (w *Workflow) shelf(
-	ctx context.Context, orderID, variantID string,
-) (itemID, locationID string, found bool, err error) {
+// itemOf answers which inventory item the variant tracks; false for a variant
+// that tracks none.
+func (w *Workflow) itemOf(ctx context.Context, variantID string) (itemID string, tracked bool, err error) {
 	if w.links == nil || w.inventory == nil {
-		return "", "", false, errors.Internal(CodeNotReady,
+		return "", false, errors.Internal(CodeNotReady,
 			"the cancellation flow is not wired, so a canceled line cannot be acted on")
 	}
 
@@ -351,41 +426,19 @@ func (w *Workflow) shelf(
 	// link rather than a column, so neither module names the other.
 	linked, err := w.links.ListMany(ctx, linkVariantInventory, []string{variantID})
 	if err != nil {
-		return "", "", false, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
+		return "", false, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
 			"the inventory item of variant %s could not be read", variantID)
 	}
-
-	tracked := len(linked[variantID]) > 0
-	if tracked {
-		itemID = linked[variantID][0]
-	}
-	if !tracked {
+	if len(linked[variantID]) == 0 {
 		// A variant that tracks no stock has none to put back. It is an ordinary
 		// shape — a service, a digital good — rather than a fault.
 		w.log.DebugContext(ctx, "a canceled line sells a variant that tracks no stock",
 			"variant_id", variantID)
 
-		return "", "", false, nil
+		return "", false, nil
 	}
 
-	locations, err := w.inventory.SaleLocations(ctx, orderID)
-	if err != nil {
-		return "", "", false, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
-			"the shelf the units of order %s left from could not be read", orderID)
-	}
-
-	locationID, deducted := locations[itemID]
-	if !deducted {
-		w.log.WarnContext(ctx,
-			"a canceled line's stock cannot be put back: the ledger holds no sale for it, "+
-				"so either the checkout never deducted it or the movement was written "+
-				"without an order",
-			"order_id", orderID, "variant_id", variantID, "inventory_item_id", itemID)
-
-		return "", "", false, nil
-	}
-
-	return itemID, locationID, true, nil
+	return linked[variantID][0], true, nil
 }
 
 // canceledEvent is the payload, read.

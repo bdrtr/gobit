@@ -145,6 +145,7 @@ section names it.
 {{ if .CanBundle }}<p><a href="{{ .BundlePath }}">Edit the parts</a></p>{{ end }}
 
 <h2>Stock</h2>
+{{ with .StockFilled }}<p role="status">The count was saved. {{ . }} of these units went to orders that were waiting for them.</p>{{ end }}
 {{ if .Parts }}
   <p>A bundle counts no stock of its own; its parts' pages hold theirs.</p>
 {{ else if .Access.StockHidden }}

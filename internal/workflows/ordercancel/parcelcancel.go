@@ -121,8 +121,14 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 			continue
 		}
 
-		if err := w.putBack(ctx, orderID, line.stockParts(), lineItemID, target,
-			parcelReleaseReference(fulfillmentID, lineItemID)); err != nil {
+		// A backordered line's claim gives up what the released units no longer
+		// hold, and says what its stock never lost (ADR 0392).
+		owed, settleErr := w.settle(ctx, orderID, lineItemID, line.Bought, target)
+		if owed == nil {
+			return settleErr
+		}
+		if err := errors.Join(w.putBack(ctx, line.stockParts(), lineItemID, target,
+			parcelReleaseReference(fulfillmentID, lineItemID), owed), settleErr); err != nil {
 			return err
 		}
 
@@ -309,26 +315,55 @@ func (w *Workflow) committedQuantities(
 // It is the tail [Workflow.HandleLineCanceled] runs too, lifted out so the two
 // acts cannot disagree about which shelf or about what a repeated delivery means.
 //
-// The target is in the LINE's units and each part is brought up to it times
+// The window is in the LINE's units and each part is brought up to it times
 // its units per line unit (ADR 0235): a written-off gift box puts back one
 // towel and two soaps. The inventory module keeps each part's total per line
 // AND item, so the parts of one line are separate targets and a redelivery
 // finds each already there. A part that tracks no stock is skipped as a line
 // that tracks none is; an error stops the act and the bus delivers it again,
 // which the parts already back answer as done.
+//
+// A backordered line's part is credited only the units its stock lost, at the
+// warehouse its claim was filled from (ADR 0392, [shelfTarget]); a part whose
+// claim never filled lost none.
 func (w *Workflow) putBack(
-	ctx context.Context, orderID string, parts []stockPart, lineItemID string, target int64, reference string,
+	ctx context.Context, parts []stockPart, lineItemID string, window int64, reference string,
+	owed *lineOwed,
 ) error {
 	for _, part := range parts {
-		itemID, locationID, found, err := w.shelf(ctx, orderID, part.variantID)
+		itemID, tracked, err := w.itemOf(ctx, part.variantID)
 		if err != nil {
 			return err
 		}
-		if !found {
+		if !tracked {
 			continue
 		}
 
-		partTarget := target * part.perUnit
+		partTarget := shelfTarget(window, part.perUnit, owed.undeducted[itemID])
+		if partTarget == 0 {
+			w.log.DebugContext(ctx, "none of the part's written-off units left its shelf",
+				"reference", reference, "order_line_item_id", lineItemID, "inventory_item_id", itemID)
+
+			continue
+		}
+
+		locationID, found := owed.filledAt[itemID]
+		if !found {
+			locationID, found = owed.soldAt[itemID]
+		}
+		if !found {
+			// A checkout that failed before its last step leaves reservations
+			// and no sale, and its compensation released them: nothing was
+			// deducted, and no number of retries makes a sale appear.
+			w.log.WarnContext(ctx,
+				"a canceled line's stock cannot be put back: the ledger holds no sale for it, "+
+					"so either the checkout never deducted it or the movement was written "+
+					"without an order",
+				"reference", reference, "order_line_item_id", lineItemID, "inventory_item_id", itemID)
+
+			continue
+		}
+
 		alreadyBack, err := w.inventory.ReturnCanceled(
 			ctx, itemID, locationID, lineItemID, partTarget, reference)
 		if err != nil {

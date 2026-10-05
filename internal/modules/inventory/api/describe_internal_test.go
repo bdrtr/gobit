@@ -291,7 +291,19 @@ func describedEndpoints() []endpointExpectation {
 			response: filledMovement(), cursorPage: true,
 			queries: []string{"limit", "location_id", "after"},
 		},
+		{
+			// The queue of orders waiting for the item's units (ADR 0392).
+			method: http.MethodGet, path: pathItemBackorders, status: "200",
+			response: filledBackorder(), list: true,
+			queries: []string{"limit", "offset", "status"},
+		},
 	}
+}
+
+// filledBackorder produces a claim whose omitempty fields are written too: a
+// filled claim carries every key.
+func filledBackorder() backorderDTO {
+	return backorderDTO{ReservationID: "invres_1", FilledLocationID: "sloc_1", LocationIDs: []string{}}
 }
 
 // filledMovement produces a movement record whose omitempty fields are written

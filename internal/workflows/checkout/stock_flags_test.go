@@ -30,10 +30,14 @@ import (
 // nothing to count.
 func linkOnly(h *harness, links map[string][]string) {
 	h.links.listManyFn = func(_ context.Context, name string, _ []string) (map[string][]string, error) {
-		if name != LinkVariantInventory {
+		switch name {
+		case LinkVariantInventory:
+			return links, nil
+		case LinkOrderFulfillment:
+			return map[string][]string{}, nil
+		default:
 			return nil, errUnexpected("ListMany: " + name)
 		}
-		return links, nil
 	}
 }
 

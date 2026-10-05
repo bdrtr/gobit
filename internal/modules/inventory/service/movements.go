@@ -34,6 +34,9 @@ import (
 // A level opened EMPTY writes no movement, and that is not a shortcut: nothing
 // arrived. The row is the statement that this item is now tracked at this
 // location, which the level's own created_at already carries.
+//
+// A level opened with units fills the claims waiting there first, and the level
+// returned is the one after the fill (ADR 0392).
 func (s *Service) openLevel(
 	ctx context.Context,
 	itemID, locationID string,
@@ -54,11 +57,19 @@ func (s *Service) openLevel(
 		return models.InventoryLevel{}, err
 	}
 
-	return level, nil
+	// Units arriving where an order waits for them are deducted for it before
+	// anyone else can buy them (ADR 0392).
+	if level.Available() > 0 {
+		level, _, err = s.fillWaiting(ctx, level)
+	}
+
+	return level, err
 }
 
 // writeQuantities writes a level's quantities and, when the PHYSICAL count
-// moved, appends the movement that explains the move.
+// moved, appends the movement that explains the move. When the write raised the
+// sellable quantity, it then fills the claims waiting at the level and returns
+// the level after the fill.
 //
 // The reservation flows pass no reason and move no goods; every other caller
 // passes one. A physical change with no reason comes back as errors.Internal —
@@ -81,7 +92,16 @@ func (s *Service) writeQuantities(
 		return models.InventoryLevel{}, err
 	}
 
-	return updated, nil
+	// A write that made units sellable gives them to the orders waiting for
+	// them first, in this transaction and under the level's lock, so no
+	// shopper sees them on sale in between (ADR 0392). A write that raised
+	// nothing — a reservation, a confirm, a fill's own steps — leaves the
+	// queue unread.
+	if updated.Available() > level.Available() {
+		updated, _, err = s.fillWaiting(ctx, updated)
+	}
+
+	return updated, err
 }
 
 // recordMovement appends the ledger row for a physical change, or verifies that

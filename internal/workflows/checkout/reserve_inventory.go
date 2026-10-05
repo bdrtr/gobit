@@ -113,15 +113,23 @@ type reserveOutput struct {
 	// such a cart used to be indistinguishable from one whose identifiers went
 	// missing (see [reserveInventoryStep.Restore]).
 	//
-	// It is also the only place an operator can read WHICH line went out
-	// unreserved; a reservation that was never taken leaves no
-	// [reservationRef] to look for.
+	// It is also where an operator reads WHICH line went out unreserved, since
+	// a reservation that was never taken leaves no [reservationRef] to look
+	// for, and it is what the last step reads to claim a backordered line's
+	// units (ADR 0392).
 	Unreserved []string `json:"unreserved,omitempty"`
 	// UnreservedComponents names the components of bundle lines that finished
 	// the step with no reservation, for Unreserved's reasons (ADR 0235). A
 	// bundle line is traced per component: one part can be reserved while
 	// another is not counted.
 	UnreservedComponents []componentRef `json:"unreserved_components,omitempty"`
+}
+
+// unreservedRef is what the stock step left unreserved, carried to the last
+// step in the shared map (ADR 0392).
+type unreservedRef struct {
+	Lines      []string
+	Components []componentRef
 }
 
 // Name returns the step's name.
@@ -174,6 +182,7 @@ func (s *reserveInventoryStep) Restore(sc *workflow.StepContext, output json.Raw
 	}
 
 	sc.Shared[sharedReservations] = out.Reservations
+	sc.Shared[sharedUnreserved] = unreservedRef{Lines: out.Unreserved, Components: out.UnreservedComponents}
 
 	return nil
 }
@@ -236,8 +245,9 @@ func (s *reserveInventoryStep) Restore(sc *workflow.StepContext, output json.Raw
 // AFTER the reservation was attempted and no warehouse could cover it. The
 // distinction matters: stock that EXISTS is still reserved, and only the
 // refusal is lifted. What it does NOT do is take a level negative or promise a
-// date — the inventory module has neither, and pre-order is a decision of its
-// own.
+// date. The last step records the line as a claim the inventory module fills
+// from the next units that arrive where the order may ship from (ADR 0392);
+// pre-order remains a decision of its own.
 //
 // The one backorder line that is skipped WITHOUT asking is the one carrying no
 // inventory item at all. Nothing counts its stock, so no warehouse can ever
@@ -319,9 +329,9 @@ func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepCont
 				// The order is NOT refused and the line takes no reservation.
 				// It is logged at INFO rather than DEBUG because an operator
 				// answering "where does this line ship from" needs to see that
-				// the answer is "from stock the shop does not have yet"; the
-				// record names the line as unreserved but cannot say which
-				// warehouse it will one day come from.
+				// the answer is "from stock that has not arrived"; the last
+				// step records the line as a claim naming the warehouses it may
+				// come from (ADR 0392).
 				s.w.log.InfoContext(ctx, "no warehouse can cover the line; backorder is permitted so the order stands",
 					"cart_id", s.plan.CartID, "line_item_id", line.LineItemID,
 					"variant_id", line.VariantID, "inventory_item_id", line.InventoryItemID,
@@ -350,6 +360,7 @@ func (s *reserveInventoryStep) Invoke(ctx context.Context, sc *workflow.StepCont
 
 	s.w.log.DebugContext(ctx, "stock reserved",
 		"cart_id", s.plan.CartID, "lines", len(refs), "unreserved", len(unreserved)+len(unreservedParts))
+	sc.Shared[sharedUnreserved] = unreservedRef{Lines: unreserved, Components: unreservedParts}
 	return reserveOutput{Reservations: refs, Unreserved: unreserved, UnreservedComponents: unreservedParts}, nil
 }
 
@@ -406,7 +417,7 @@ func (s *reserveInventoryStep) locationFor(ctx context.Context, line planLine) (
 	// the fulfillment module's preference, which is where they belong: which
 	// warehouses HOLD the units is a fact, which of them this channel may ship
 	// from is the merchant's rule, and only then does the ordering matter.
-	kept := s.withinChannel(candidates)
+	kept := withinChannel(s.served, candidates)
 	if len(kept) == 0 {
 		return nil, errors.Conflict(CodeChannelHasNoStock,
 			"no warehouse serving this order's sales channel can reserve %d of item %s; "+
@@ -421,15 +432,17 @@ func (s *reserveInventoryStep) locationFor(ctx context.Context, line planLine) (
 //
 // With no restriction in force every candidate is kept, which is what makes an
 // installation that has bound nothing behave exactly as it did before the
-// binding existed.
-func (s *reserveInventoryStep) withinChannel(candidates []string) []string {
-	if len(s.served) == 0 {
+// binding existed. It is a function rather than the stock step's method because
+// the last step narrows a backordered line's warehouses the same way, from a
+// set it resolves again (ADR 0392).
+func withinChannel(served map[string]bool, candidates []string) []string {
+	if len(served) == 0 {
 		return candidates
 	}
 
 	kept := make([]string, 0, len(candidates))
 	for _, candidate := range candidates {
-		if s.served[candidate] {
+		if served[candidate] {
 			kept = append(kept, candidate)
 		}
 	}

@@ -262,3 +262,31 @@ func (q *Queries) LockStockLocationShared(ctx context.Context, id string) (Stock
 	)
 	return i, err
 }
+
+const openStockLocationIDs = `-- name: OpenStockLocationIDs :many
+SELECT id FROM stock_locations
+WHERE closed_at IS NULL
+ORDER BY created_at, id
+`
+
+// OpenStockLocationIDs lists every open location, oldest first. The checkout
+// ranks a backordered line's claim over them (ADR 0392).
+func (q *Queries) OpenStockLocationIDs(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, openStockLocationIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

@@ -102,8 +102,16 @@ LIMIT sqlc.arg('row_limit')::bigint;
 -- item and an order with two sale movements for one item at two locations has a
 -- real answer for each — the first is taken and the caller is told nothing about
 -- the second, which is a limit the record states rather than hides.
+--
+-- A claim's fill is left out: a backordered line names its own shelf (ADR 0392),
+-- and a fill that came before the checkout's confirm would otherwise be taken
+-- as the shelf another line of the order sold from.
 -- name: SaleLocationsForReference :many
 SELECT DISTINCT ON (inventory_item_id) inventory_item_id, location_id
 FROM inventory_movements
 WHERE reason = 'sale' AND reference = sqlc.arg('reference')::text
+  AND NOT EXISTS (
+    SELECT 1 FROM inventory_backorders b
+    WHERE b.reservation_id = inventory_movements.reservation_id
+  )
 ORDER BY inventory_item_id, created_at, id;

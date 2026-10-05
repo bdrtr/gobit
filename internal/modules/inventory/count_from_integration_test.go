@@ -38,13 +38,15 @@ func TestACountOverAMovedLevelIsRefusedOnTheRealSchema(t *testing.T) {
 	_, err = svc.AdjustInventory(ctx, item.ID, location.ID, -1)
 	require.NoError(t, err)
 
-	err = admin.SetStockLevel(ctx, item.ID, location.ID, 10, 12)
+	_, err = admin.SetStockLevel(ctx, item.ID, location.ID, 10, 12)
 	require.Error(t, err)
 	assert.Equal(t, service.CodeStockMoved, errors.CodeOf(err))
 
 	assert.Equal(t, int64(9), physicalCount(ctx, t, svc, item.ID, location.ID), "the unit that left is not written back")
 
-	require.NoError(t, admin.SetStockLevel(ctx, item.ID, location.ID, 9, 12))
+	stocked, err := admin.SetStockLevel(ctx, item.ID, location.ID, 9, 12)
+	require.NoError(t, err)
+	assert.Equal(t, int64(12), stocked)
 	assert.Equal(t, int64(12), physicalCount(ctx, t, svc, item.ID, location.ID))
 }
 

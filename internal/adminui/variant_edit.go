@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -68,9 +69,14 @@ type StockAdmin interface {
 	StockLevelsJSON(ctx context.Context, itemID string) (json.RawMessage, error)
 	// SetStockLevel sets the physical quantity at one location; read is the
 	// count the form was drawn with, and a level that moved since is refused
-	// (ADR 0280).
-	SetStockLevel(ctx context.Context, itemID, locationID string, read, quantity int64) error
+	// (ADR 0280). It answers the count after the write, lower than quantity
+	// when units went to orders waiting for them (ADR 0392).
+	SetStockLevel(ctx context.Context, itemID, locationID string, read, quantity int64) (int64, error)
 }
+
+// paramStockFilled carries, on the redirect after a stock save, how many of the
+// counted units went to orders that were waiting for them (ADR 0392).
+const paramStockFilled = "stock_filled"
 
 // stockLevelRow is one location's line on the variant page.
 //
@@ -183,12 +189,19 @@ func (u *UI) submitVariantStock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := u.stock.SetStockLevel(r.Context(), itemID, locationID, read, quantity); err != nil {
+	stocked, err := u.stock.SetStockLevel(r.Context(), itemID, locationID, read, quantity)
+	if err != nil {
 		u.afterWrite(w, r, err, productID, variantID, "The stock could not be saved")
 		return
 	}
 
-	corehttp.WriteRedirect(r.Context(), w, variantURL(productID, variantID))
+	// The count was saved and some of it went straight to orders waiting for
+	// it; the operator sees a lower number than they typed and is told why.
+	target := variantURL(productID, variantID)
+	if stocked < quantity {
+		target += "?" + url.Values{paramStockFilled: {strconv.FormatInt(quantity-stocked, 10)}}.Encode()
+	}
+	corehttp.WriteRedirect(r.Context(), w, target)
 }
 
 // afterWrite decides what a failed write shows.
@@ -291,6 +304,7 @@ func (u *UI) renderVariant(
 		"PriceSetID":    priceSetID,
 		"ItemID":        itemID,
 		"Levels":        u.stockRows(r.Context(), itemID),
+		"StockFilled":   stockFilledOf(r),
 		"Access":        access,
 		errorKey:        message,
 		"PricePath":     variantURL(productID, variantID) + "/price",
@@ -685,4 +699,15 @@ func parseAmount(text string, digits int, minor bool) (int64, error) {
 	}
 
 	return value, nil
+}
+
+// stockFilledOf reads how many counted units went to waiting orders, or 0 when
+// the page was not reached from a stock save that filled any.
+func stockFilledOf(r *http.Request) int64 {
+	filled, err := strconv.ParseInt(r.URL.Query().Get(paramStockFilled), 10, 64)
+	if err != nil || filled <= 0 {
+		return 0
+	}
+
+	return filled
 }

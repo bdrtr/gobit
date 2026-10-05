@@ -44,8 +44,8 @@ const (
 //
 // The module has NO storefront endpoint (see the package doc): a shopper sees
 // stock through the product listing, by way of the Query layer's provider. The
-// 12 endpoints here are therefore the WHOLE module, and must not be read as
-// "the storefront is undescribed".
+// endpoints here are therefore the WHOLE module, and must not be read as "the
+// storefront is undescribed".
 //
 // # The path constants are SHARED with the routes
 //
@@ -72,6 +72,27 @@ func Describe(d *openapi.Doc) {
 	describeItems(d)
 	describeLevels(d)
 	describeMovements(d)
+	describeBackorders(d)
+}
+
+// describeBackorders describes the queue of orders waiting for an item's units.
+func describeBackorders(d *openapi.Doc) {
+	d.Describe(http.MethodGet, pathItemBackorders, openapi.Operation{
+		Summary: "Reads the orders waiting for the item's units, in queue order.",
+		Description: "A claim is a line the checkout let through without stock. It is filled whole, " +
+			"at one of the warehouses ranked for its order, by the first write that makes enough " +
+			"units sellable there, in that write's transaction: the level answers the count after " +
+			"the fill and the ledger shows a `sale` naming the claim's reservation. Units that " +
+			"complete no waiting claim stay on sale. A write-off withdraws what the order will no " +
+			"longer take, and leaves what a live parcel holds.",
+		Parameters: append(pagingParameters(),
+			queryParameter(paramStatus, typeString,
+				"Narrows the queue to one status: waiting, filled or withdrawn; absent, every status."),
+		),
+		Responses: map[string]any{
+			"200": openapi.Response("A page of the item's claims", d.List(backorderDTO{})),
+		},
+	})
 }
 
 // describeLocations describes the stock location endpoints.
@@ -224,18 +245,22 @@ func describeLevels(d *openapi.Doc) {
 	})
 
 	d.Describe(http.MethodPost, pathItemLevels, openapi.Operation{
-		Summary:     "Writes the PHYSICAL quantity at a location, absolutely.",
+		Summary: "Writes the PHYSICAL quantity at a location, absolutely; units that complete an " +
+			"order waiting for them are deducted for it in the same write (ADR 0392).",
 		RequestBody: d.RequestBody(setLevelRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("The written stock level", d.Item(inventoryLevelDTO{})),
+			"200": openapi.Response("The stock level after the write and any claim it filled",
+				d.Item(inventoryLevelDTO{})),
 		},
 	})
 
 	d.Describe(http.MethodPost, pathItemLevelAdjust, openapi.Operation{
-		Summary:     "Changes the physical quantity at a location by a delta.",
+		Summary: "Changes the physical quantity at a location by a delta; units that complete an " +
+			"order waiting for them are deducted for it in the same write.",
 		RequestBody: d.RequestBody(adjustLevelRequest{}),
 		Responses: map[string]any{
-			"200": openapi.Response("The updated stock level", d.Item(inventoryLevelDTO{})),
+			"200": openapi.Response("The stock level after the write and any claim it filled",
+				d.Item(inventoryLevelDTO{})),
 		},
 	})
 }

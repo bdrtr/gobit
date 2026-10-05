@@ -5,7 +5,7 @@ on the shelf should BE, and the inventory module moves the difference under its
 own lock. It costs a column and the loss of a unique index, and it removes an
 ordering assumption that credited the shelf with units nobody canceled.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0392](0392-a-backordered-line-waits-for-its-units.md), whose target subtracts the units a backordered line's stock never lost
 - **Date:** 2026-09-11
 
 ## Context

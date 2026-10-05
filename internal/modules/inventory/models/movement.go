@@ -38,9 +38,10 @@ const (
 	// which is AdjustInventory reached from the admin API: breakage, a
 	// correction, a transfer recorded by hand.
 	MovementAdjustment MovementReason = "adjustment"
-	// MovementSale is a confirmed reservation — ConfirmReservation, called by
-	// the checkout saga: the promised units left the count for good. It is the
-	// one reason that names a reservation, and its delta is always negative.
+	// MovementSale is a confirmed reservation, either ConfirmReservation called
+	// by the checkout saga or the fill of a backordered line's claim (ADR 0392):
+	// the promised units left the count for good. It is the one reason that
+	// names a reservation, and its delta is always negative.
 	MovementSale MovementReason = "sale"
 	// MovementReturnRestock is goods arriving back at a location, which the
 	// cross-module surface calls Restock. It is an addition rather than the

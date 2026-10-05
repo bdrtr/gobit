@@ -60,6 +60,11 @@ import (
 // for the flows that put stock in to meet the close on one row. They take it
 // SHARED and the close takes it EXCLUSIVELY, so stocking two items at the same
 // warehouse does not serialize while a close waits for both.
+//
+// A claim (`inventory_backorders`, ADR 0392) comes AFTER the level: a fill holds
+// the level and locks the claims waiting there that fit, in queue order; a
+// settlement locks one line's claims, commits, and only then drains, so neither
+// holds what the other waits for.
 type Store interface {
 	// WithTx runs fn in a single transaction; the transaction is rolled back if
 	// fn returns an error.
@@ -173,4 +178,31 @@ type Store interface {
 	// ListMovements pages one item's movements, newest first. A page shorter
 	// than the filter's limit is the last page.
 	ListMovements(ctx context.Context, filter models.MovementFilter) ([]models.Movement, error)
+
+	// CreateBackorder records a claim and reports true, or writes nothing and
+	// reports false when the line already has one for the item.
+	CreateBackorder(ctx context.Context, b models.Backorder) (models.Backorder, bool, error)
+	// GetBackorderOfLine returns the line's claim on the item, or NotFound.
+	GetBackorderOfLine(ctx context.Context, orderLineItemID, itemID string) (models.Backorder, error)
+	// LockBackordersOfLine locks the line's claims, in queue order.
+	LockBackordersOfLine(ctx context.Context, orderLineItemID string) ([]models.Backorder, error)
+	// LockWaitingBackordersAt locks, in queue order, the item's waiting claims
+	// that name the location and owe no more than available.
+	LockWaitingBackordersAt(
+		ctx context.Context, itemID, locationID string, available int64,
+	) ([]models.Backorder, error)
+	// FillBackorder marks a waiting claim filled by the reservation at the
+	// location and returns how many rows it changed.
+	FillBackorder(ctx context.Context, id, reservationID, locationID string) (int64, error)
+	// WithdrawBackorder writes a claim's withdrawn units and status.
+	WithdrawBackorder(
+		ctx context.Context, id string, withdrawn int64, status models.BackorderStatus,
+	) (models.Backorder, error)
+	// CountWaitingBackorders returns how many of the item's claims still wait.
+	CountWaitingBackorders(ctx context.Context, itemID string) (int64, error)
+	// ListBackorders pages an item's claims in queue order; the second value is
+	// the total.
+	ListBackorders(ctx context.Context, filter models.BackorderFilter) ([]models.Backorder, int64, error)
+	// OpenStockLocationIDs lists every open location.
+	OpenStockLocationIDs(ctx context.Context) ([]string, error)
 }

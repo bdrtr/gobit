@@ -77,6 +77,12 @@ const (
 	CodeLocationNotEmpty = "inventory_location_not_empty"
 	// CodeLocationClosed reports that stock was written at a closed location.
 	CodeLocationClosed = "inventory_location_closed"
+	// CodeItemOwesOrders reports that an item an order still waits for was
+	// asked to be deleted (ADR 0392).
+	CodeItemOwesOrders = "inventory_item_owes_orders"
+	// CodeBackorderMismatch reports a second claim for a line naming another
+	// quantity than the first (ADR 0392).
+	CodeBackorderMismatch = "inventory_backorder_mismatch"
 	// CodeInconsistentState reports that the reserved quantity and the
 	// reservation records do not match each other; it does not occur in normal
 	// operation.
@@ -389,7 +395,9 @@ func (s *Service) ListInventoryItemsByIDs(ctx context.Context, ids []string) ([]
 // DeleteInventoryItem soft deletes the item and its stock levels.
 //
 // If the item has an ACTIVE reservation it returns errors.Conflict: deleting
-// would mean silently destroying promised stock. The check and the deletion are
+// would mean silently destroying promised stock. An item an order still waits
+// for is refused the same way ([CodeItemOwesOrders]): its claim could never be
+// filled. The check and the deletion are
 // done in the same transaction and under the EXCLUSIVE lock of the item; a
 // reservation slipping in between cannot dodge the check, because
 // [Service.Reserve] also starts its transaction by locking the item in shared
@@ -411,6 +419,16 @@ func (s *Service) DeleteInventoryItem(ctx context.Context, id string) error {
 		if active > 0 {
 			return errors.Conflict(CodeItemHasReservations,
 				"the item cannot be deleted: it has %d active reservations (%s)", active, id)
+		}
+		// A claim takes the item's lock shared, so one recorded while this
+		// waited is counted here (ADR 0392).
+		owed, err := s.store.CountWaitingBackorders(ctx, id)
+		if err != nil {
+			return err
+		}
+		if owed > 0 {
+			return errors.Conflict(CodeItemOwesOrders,
+				"the item cannot be deleted: %d orders still wait for its units (%s)", owed, id)
 		}
 		if err := s.store.SoftDeleteInventoryLevelsByItem(ctx, id); err != nil {
 			return err

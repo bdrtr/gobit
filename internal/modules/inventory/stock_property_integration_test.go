@@ -22,11 +22,25 @@ type promise struct {
 	status   models.ReservationStatus
 }
 
+// owed is the model's copy of one backordered line's claim (ADR 0392).
+type owed struct {
+	id, line  string
+	quantity  int64
+	withdrawn int64
+	status    models.BackorderStatus
+}
+
 // TestTheCountHoldsUnderAnySequence is ADR 0249 on the stock: any sequence of
 // counts, corrections, restocks, reservations, releases and confirmations
 // leaves the level where a model of them says, never below what is promised,
 // with a ledger that explains the count step by step, and each call is refused
 // exactly when the model says it has to be.
+//
+// Backordered lines join the sequence (ADR 0392): a claim waits, a write that
+// raises what is sellable fills the oldest waiting claims it can complete whole,
+// and a settlement withdraws up to a window and then fills from stock on hand.
+// The model keeps the queue first-fit in claim order and is checked after every
+// step, claims included.
 //
 // Every item is new, so its ledger begins at zero and its deltas add up to its
 // count, which is not true of stock older than the ledger (ADR 0068).
@@ -48,6 +62,20 @@ func TestTheCountHoldsUnderAnySequence(t *testing.T) {
 
 		var reserved int64
 		var promises []*promise
+		var claims []*owed
+		// fill is the model of a fill: every waiting claim, oldest first, that
+		// what is sellable can complete, whole.
+		fill := func() {
+			for _, c := range claims {
+				if c.status != models.BackorderWaiting {
+					continue
+				}
+				if need := c.quantity - c.withdrawn; need <= stocked-reserved {
+					stocked -= need
+					c.status = models.BackorderFilled
+				}
+			}
+		}
 		pick := func(rt *rapid.T) *promise {
 			if len(promises) == 0 {
 				rt.Skip("nothing is reserved yet")
@@ -73,7 +101,11 @@ func TestTheCountHoldsUnderAnySequence(t *testing.T) {
 					return
 				}
 				require.NoError(rt, err)
+				raised := count > stocked
 				stocked = count
+				if raised {
+					fill()
+				}
 			},
 			"correct": func(rt *rapid.T) {
 				delta := rapid.Int64Range(-10, 10).Filter(func(d int64) bool { return d != 0 }).Draw(rt, "delta")
@@ -84,12 +116,16 @@ func TestTheCountHoldsUnderAnySequence(t *testing.T) {
 				}
 				require.NoError(rt, err)
 				stocked += delta
+				if delta > 0 {
+					fill()
+				}
 			},
 			"restock": func(rt *rapid.T) {
 				quantity := rapid.Int64Range(1, 5).Draw(rt, "restocked")
 				_, err := svc.RestockInventory(ctx, item.ID, loc.ID, quantity)
 				require.NoError(rt, err)
 				stocked += quantity
+				fill()
 			},
 			"reserve": func(rt *rapid.T) {
 				quantity := rapid.Int64Range(1, 5).Draw(rt, "reserved")
@@ -116,6 +152,7 @@ func TestTheCountHoldsUnderAnySequence(t *testing.T) {
 					require.NoError(rt, err)
 					reserved -= p.quantity
 					p.status = models.ReservationReleased
+					fill()
 				}
 			},
 			"confirm": func(rt *rapid.T) {
@@ -133,11 +170,56 @@ func TestTheCountHoldsUnderAnySequence(t *testing.T) {
 					p.status = models.ReservationConfirmed
 				}
 			},
+			"claim": func(rt *rapid.T) {
+				quantity := rapid.Int64Range(1, 6).Draw(rt, "owed")
+				line := "oli_" + models.NewBackorderID()
+				claimed, err := svc.ClaimBackorder(ctx, service.ClaimBackorderInput{
+					InventoryItemID: item.ID, OrderID: testSaleOrderID, OrderLineItemID: line,
+					Quantity: quantity, LocationIDs: []string{loc.ID},
+				})
+				require.NoError(rt, err)
+				claims = append(claims, &owed{
+					id: claimed.ID, line: line, quantity: quantity, status: models.BackorderWaiting,
+				})
+			},
+			"settle": func(rt *rapid.T) {
+				if len(claims) == 0 {
+					rt.Skip("no line is backordered yet")
+				}
+				c := claims[rapid.IntRange(0, len(claims)-1).Draw(rt, "claim")]
+				window := rapid.Int64Range(0, c.quantity).Draw(rt, "window")
+				_, err := svc.SettleBackorder(ctx, c.line, c.quantity, window)
+				require.NoError(rt, err)
+				if c.status == models.BackorderWaiting {
+					c.withdrawn = max(c.withdrawn, window)
+					if c.withdrawn == c.quantity {
+						c.status = models.BackorderWithdrawn
+					}
+				}
+				if c.status == models.BackorderWaiting && stocked-reserved > 0 {
+					fill()
+				}
+			},
 			"": func(rt *rapid.T) {
 				requireCountHolds(ctx, rt, svc, item.ID, stocked, reserved)
+				requireClaimsHold(ctx, rt, svc, item.ID, claims)
 			},
 		})
 	})
+}
+
+// requireClaimsHold reads the item's claims and holds them to the model's.
+func requireClaimsHold(ctx context.Context, rt *rapid.T, svc *service.Service, itemID string, claims []*owed) {
+	listed, total, err := svc.ListBackorders(ctx, service.ListBackordersInput{
+		InventoryItemID: itemID, Page: service.Page{Limit: service.MaxLimit},
+	})
+	require.NoError(rt, err)
+	require.Equal(rt, int64(len(claims)), total)
+	for i, c := range claims {
+		require.Equal(rt, c.id, listed[i].ID, "the queue is in claim order")
+		require.Equal(rt, c.status, listed[i].Status, "claim %d", i)
+		require.Equal(rt, c.withdrawn, listed[i].WithdrawnQuantity, "claim %d", i)
+	}
 }
 
 // requireCountHolds reads the level and the whole ledger of a new item and holds

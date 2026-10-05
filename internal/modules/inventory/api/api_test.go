@@ -20,24 +20,26 @@ import (
 // exercised without a database.
 type fakeInventory struct {
 	// Return values.
-	location  models.StockLocation
-	item      models.InventoryItem
-	level     models.InventoryLevel
-	items     []models.InventoryItem
-	levels    []models.InventoryLevel
-	movements []models.Movement
-	count     int64
-	err       error
+	location   models.StockLocation
+	item       models.InventoryItem
+	level      models.InventoryLevel
+	items      []models.InventoryItem
+	levels     []models.InventoryLevel
+	movements  []models.Movement
+	backorders []models.Backorder
+	count      int64
+	err        error
 
 	// The recorded call details.
-	lastLocationInput service.ListStockLocationsInput
-	lastItemInput     service.CreateInventoryItemInput
-	lastListInput     service.ListInventoryItemsInput
-	lastID            string
-	lastLocationID    string
-	lastStocked       int64
-	lastDelta         int64
-	lastMovementInput service.ListMovementsInput
+	lastLocationInput  service.ListStockLocationsInput
+	lastItemInput      service.CreateInventoryItemInput
+	lastListInput      service.ListInventoryItemsInput
+	lastID             string
+	lastLocationID     string
+	lastStocked        int64
+	lastDelta          int64
+	lastMovementInput  service.ListMovementsInput
+	lastBackorderInput service.ListBackordersInput
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -113,6 +115,14 @@ func (f *fakeInventory) AdjustInventory(_ context.Context, itemID, locationID st
 func (f *fakeInventory) ListMovements(_ context.Context, in service.ListMovementsInput) ([]models.Movement, error) {
 	f.lastMovementInput = in
 	return f.movements, f.err
+}
+
+// ListBackorders records the queue listing input the handler assembled.
+func (f *fakeInventory) ListBackorders(
+	_ context.Context, in service.ListBackordersInput,
+) ([]models.Backorder, int64, error) {
+	f.lastBackorderInput = in
+	return f.backorders, f.count, f.err
 }
 
 // The helpers these tests use live beside the files that introduced them:

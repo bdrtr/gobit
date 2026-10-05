@@ -146,23 +146,27 @@
 //   - allow_backorder true — a line NO warehouse can cover does not refuse the
 //     order. Stock that exists is still reserved; only the refusal is lifted,
 //     and only for errors.Conflict, the class that means "not enough stock". It
-//     does not take a level negative and it promises no date: the inventory
-//     module has neither, and pre-order is a decision of its own. A counted
-//     variant with no inventory link at all is the same answer reached without
-//     asking: nothing counts its stock, so no warehouse can ever cover it, and
-//     the preparation lets it through with no item rather than refusing the
-//     order. That is ADR 0040's second in-stock clause, which the badge already
-//     spends and the till now reads too.
+//     does not take a level negative and it promises no date. The last step
+//     records the line as a claim the inventory module fills from the next
+//     units that arrive where the order may ship from (ADR 0392); pre-order
+//     remains a decision of its own. A counted variant with no inventory link
+//     at all is the same answer reached without asking: nothing counts its
+//     stock, so no warehouse can ever cover it, and the preparation lets it
+//     through with no item rather than refusing the order. That is ADR 0040's
+//     second in-stock clause, which the badge already spends and the till now
+//     reads too.
 //
 // The consequence for an operator is that a line with no reservation is now a
 // LEGITIMATE state rather than evidence of a fault. [reservationRef] exists so
 // that the "which warehouse" question can be answered by hand; for a line the
-// merchant asked not to count, or one that is being backordered, there is no
-// answer and there should not be. WHICH lines those were is in the record all
-// the same — the step names them under [reserveOutput.Unreserved], so that the
-// recovery path can tell a legitimately empty reservation list from one whose
-// identifiers went missing, and an operator can see which line went out with no
-// stock behind it. The backordered case is logged at INFO on top of that.
+// merchant asked not to count there is no answer and there should not be; a
+// backordered line's answer is its claim in the inventory module, which names
+// the warehouses it may be filled from and, once filled, the one it was (ADR
+// 0392). WHICH lines those were is in the record all the same — the step names
+// them under [reserveOutput.Unreserved], so that the recovery path can tell a
+// legitimately empty reservation list from one whose identifiers went missing,
+// and an operator can see which line went out with no stock behind it. The
+// backordered case is logged at INFO on top of that.
 //
 // # THE FULL PAYMENT RULE
 //

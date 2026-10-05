@@ -129,12 +129,20 @@ func (a *AdminSurface) StockLevelsJSON(ctx context.Context, itemID string) (json
 // another one by the time the write takes its lock is refused with
 // [CodeStockMoved] (ADR 0280): the count the operator typed was made against
 // what they saw.
-func (a *AdminSurface) SetStockLevel(ctx context.Context, itemID, locationID string, read, quantity int64) error {
+//
+// It answers the physical count after the write, which is lower than quantity
+// when units went to orders waiting for them (ADR 0392).
+func (a *AdminSurface) SetStockLevel(
+	ctx context.Context, itemID, locationID string, read, quantity int64,
+) (int64, error) {
 	if a == nil || a.svc == nil {
-		return errors.Unavailable(CodeInvalidInput, "the inventory service is not set up")
+		return 0, errors.Unavailable(CodeInvalidInput, "the inventory service is not set up")
 	}
 
-	_, err := a.svc.SetInventoryLevelFrom(ctx, itemID, locationID, read, quantity)
+	level, err := a.svc.SetInventoryLevelFrom(ctx, itemID, locationID, read, quantity)
+	if err != nil {
+		return 0, err
+	}
 
-	return err
+	return level.StockedQuantity, nil
 }

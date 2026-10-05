@@ -84,3 +84,10 @@ UPDATE stock_locations
 SET closed_at = now(), updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- OpenStockLocationIDs lists every open location, oldest first. The checkout
+-- ranks a backordered line's claim over them (ADR 0392).
+-- name: OpenStockLocationIDs :many
+SELECT id FROM stock_locations
+WHERE closed_at IS NULL
+ORDER BY created_at, id;

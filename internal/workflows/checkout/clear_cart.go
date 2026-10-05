@@ -52,8 +52,8 @@ func (s *clearCartStep) Name() string { return StepClearCart }
 // restore — not that it cannot be restored.
 func (s *clearCartStep) Restore(_ *workflow.StepContext, _ json.RawMessage) error { return nil }
 
-// Invoke stamps the cart completed, confirms the reservations and produces the
-// flow's result.
+// Invoke stamps the cart completed, records a claim for every line let through
+// without stock, confirms the reservations and produces the flow's result.
 //
 // # Module faults are NOT returned as errors
 //
@@ -136,6 +136,11 @@ func (s *clearCartStep) Invoke(ctx context.Context, sc *workflow.StepContext) (a
 	} else {
 		result.CartCompleted = true
 	}
+
+	// A line let through without stock is owed its units (ADR 0392). The claims
+	// come BEFORE the confirms, so whenever a sale of this order exists its
+	// claims exist too; the cancellation flow reads the sales first for that.
+	result.Warnings = append(result.Warnings, s.claimBackorders(ctx, sc, result.OrderID)...)
 
 	result.ReservationIDs = make([]string, 0, len(refs))
 	confirmed := true

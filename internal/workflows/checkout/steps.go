@@ -38,6 +38,10 @@ const (
 	// sharedRedeemed holds the promotion uses this saga has taken, so that the
 	// compensation can release exactly those and no others.
 	sharedRedeemed = "checkout.redeemed"
+	// sharedUnreserved holds the lines and bundle parts the stock step let
+	// through without a reservation, as [unreservedRef]; the last step claims
+	// a backordered one's units from it (ADR 0392).
+	sharedUnreserved = "checkout.unreserved"
 )
 
 // sharedRedemptions reads the promotion uses from the shared map.

@@ -11,6 +11,24 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **A backordered line waits for its units** (ADR 0392, D242). **For
+  integrators:** a line the checkout lets through without stock
+  (`allow_backorder`) is owed to its order. The next write that makes enough
+  units sellable at a warehouse ranked for the order deducts them for it in the
+  same transaction: a stock count, an adjustment, a return, a write-off coming
+  back or a released reservation. So `POST /admin/v1/inventory-items/{id}/levels`
+  and `…/levels/{location_id}/adjust` can answer a `stocked_quantity` lower than
+  the one written, the difference being a `sale` movement that names the claim's
+  reservation. A claim is filled whole at one warehouse, oldest first; units that
+  complete none stay on sale. `GET /admin/v1/inventory-items/{id}/backorders`
+  (`inventory:read`) lists an item's claims in queue order, and
+  `DELETE /admin/v1/inventory-items/{id}` answers 409
+  `inventory_item_owes_orders` while one waits. Writing off a backordered line
+  withdraws what will not leave, keeps what a live parcel holds, and puts back
+  only units that left, at the warehouse they left from. **For operators:**
+  inventory migration 000008 adds `inventory_backorders`; orders placed before it
+  have no claim. The panel's stock form says when units went to waiting orders.
+
 - **A parcel on a return option names the return it brings back** (ADR 0384,
   D234). **For integrators:** `POST /admin/v1/fulfillments` takes `return_id`;
   a return option without one, or an outgoing option with one, answers 422

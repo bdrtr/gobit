@@ -57,6 +57,8 @@ const (
 	// is no listing across items — the index leads on the item for the same
 	// reason (ADR 0068).
 	pathItemMovements = "/admin/v1/inventory-items/{id}/movements"
+	// The orders waiting for the item's units, in queue order (ADR 0392).
+	pathItemBackorders = "/admin/v1/inventory-items/{id}/backorders"
 )
 
 // maxBodyBytes is the upper bound on a request body. Without a bound a single
@@ -128,6 +130,8 @@ type Inventory interface {
 	AdjustInventory(ctx context.Context, itemID, locationID string, delta int64) (models.InventoryLevel, error)
 	// ListMovements returns a page of the item's stock movements, newest first.
 	ListMovements(ctx context.Context, in service.ListMovementsInput) ([]models.Movement, error)
+	// ListBackorders returns a page of the item's claims in queue order.
+	ListBackorders(ctx context.Context, in service.ListBackordersInput) ([]models.Backorder, int64, error)
 }
 
 // Handler is the inventory module's set of HTTP handlers.
@@ -186,6 +190,9 @@ func (h *Handler) Routes(r chi.Router) {
 	// audience; a scope of its own would name a power nobody has to grant
 	// separately (ADR 0068).
 	read.Get(pathItemMovements, h.listMovements)
+	// The queue is READ authority for the ledger's reason: it shows who the
+	// next units of the item go to, and nothing here writes it (ADR 0392).
+	read.Get(pathItemBackorders, h.listBackorders)
 
 	// Which sales channels the warehouse ships for. The binding is NOT this
 	// module's table but core/link's: the channel is the auth module's record

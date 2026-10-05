@@ -351,6 +351,14 @@ the dump goes to the operator.
 The decision and the rejected options:
 [ADR 0010](adr/0010-depo-secim-politikasi.md).
 
+### A line no warehouse covers
+
+A backorder-permitting line no warehouse can cover is not refused; the order
+records it as a claim in the inventory module, which deducts its units from the
+next arrival at a warehouse ranked for the order, before anyone else can buy them
+([ADR 0392](adr/0392-a-backordered-line-waits-for-its-units.md)). The queue is
+`GET /admin/v1/inventory-items/{id}/backorders`.
+
 ---
 
 ## B2B: the buyer is not an individual but an employee with limited authority

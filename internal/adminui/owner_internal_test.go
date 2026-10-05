@@ -528,8 +528,8 @@ func (s recordingStock) StockLevelsJSON(context.Context, string) (json.RawMessag
 	return json.RawMessage(`[{"location_id":"walk","location_name":"walk"}]`), nil
 }
 
-func (s recordingStock) SetStockLevel(context.Context, string, string, int64, int64) error {
-	return s.surfaces.reach(ServiceInventoryAdmin)
+func (s recordingStock) SetStockLevel(_ context.Context, _, _ string, _, quantity int64) (int64, error) {
+	return quantity, s.surfaces.reach(ServiceInventoryAdmin)
 }
 
 // recordingPayments records the payment module's surface (ADR 0287).

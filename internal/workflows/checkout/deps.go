@@ -38,6 +38,10 @@ const (
 	// typo does not stay silent — the link service returns NotFound for an
 	// undeclared name.
 	LinkOrderPayment = "order_payment"
+	// LinkOrderFulfillment is the link binding an order to its parcels, which
+	// the last step reads to know what a backordered line's live parcels hold
+	// (ADR 0392). It is repeated here for [LinkOrderPayment]'s reason.
+	LinkOrderFulfillment = "order_fulfillment"
 
 	// ServicePromotion is the promotion module's cross-module surface.
 	//
@@ -113,9 +117,11 @@ const (
 	// It decides ONE thing here and the bound is deliberate (ADR 0048): a line
 	// no warehouse can cover does not REFUSE the order — including the line
 	// whose variant is linked to no inventory item at all, which no warehouse
-	// can ever cover. It does not promise the unit — the inventory module has no
-	// negative level and no promised date — so a merchant who reads the checkbox
-	// as "pre-order" is expecting a feature this repository does not have yet.
+	// can ever cover. It does not take a level negative and promises no date,
+	// so a merchant who reads the checkbox as "pre-order" is expecting a
+	// feature this repository does not have yet. The order is owed the units:
+	// the last step records the line as a claim the inventory module fills from
+	// the next units that arrive where the order may ship from (ADR 0392).
 	FieldAllowBackorder = "allow_backorder"
 	// FieldProductID is the variant record's product. EntityProduct and
 	// FieldIsGiftcard name the product record's gift card flag, which the
@@ -353,6 +359,30 @@ type Inventory interface {
 	// this point the inventory cannot be released; a refund is a separate
 	// workflow.
 	ConfirmReservation(ctx context.Context, reservationID, orderID string) error
+
+	// ClaimBackorder records that an order line the stock step let through
+	// without stock is owed quantity units of the item, fillable at the
+	// warehouses in rank order (ADR 0392). A second call for the line and item
+	// is the first claim.
+	ClaimBackorder(
+		ctx context.Context,
+		inventoryItemID, orderID, orderLineItemID string,
+		quantity int64,
+		locationIDs []string,
+	) (backorderID string, err error)
+
+	// SettleBackorder withdraws from the line's waiting claims the units that
+	// will not leave, then fills what still waits from stock on hand. The
+	// last step calls it after the claim, against the write-offs and live
+	// parcels it reads after the claim, so a line written off before the
+	// checkout finished is withdrawn as far as no parcel holds it.
+	SettleBackorder(
+		ctx context.Context, orderLineItemID string, bought, window int64,
+	) (undeducted map[string]int64, filledAt map[string]string, err error)
+
+	// OpenLocations lists every open warehouse, the set a backordered line's
+	// claim is ranked over.
+	OpenLocations(ctx context.Context) ([]string, error)
 }
 
 // Fulfillment is the surface of the fulfillment module ("fulfillment.interop")
@@ -429,6 +459,11 @@ type Fulfillment interface {
 		destinationRegionID string,
 		candidateLocationIDs []string,
 	) (orderedLocationIDs []string, err error)
+
+	// CommittedQuantities sums, per order line, the units a live parcel of
+	// the given ones holds. The last step reads it to settle a backordered
+	// line against its write-offs as the cancellation flow does (ADR 0392).
+	CommittedQuantities(ctx context.Context, fulfillmentIDs []string) (map[string]int64, error)
 }
 
 // Orders is the surface of the order module ("order.interop") used by this
@@ -459,6 +494,12 @@ type Orders interface {
 	// reported value is kept — so calling it twice cannot shrink a total and the
 	// call is safe to repeat.
 	SetOrderSummaryTotals(ctx context.Context, orderID string, paidTotal, refundedTotal int64) error
+
+	// DispatchableLinesJSON answers the order's lines in the order they were
+	// placed, each with what it bought, what was written off and its variant,
+	// as a JSON array. The last step reads it to name a backordered line's
+	// order line and to settle its claim against the write-offs (ADR 0392).
+	DispatchableLinesJSON(ctx context.Context, orderID string) (json.RawMessage, error)
 }
 
 // Payments is the surface of the payment module ("payment.interop") used by

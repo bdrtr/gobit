@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strconv"
 	"sync"
@@ -33,9 +35,10 @@ const (
 
 // TestUnshippedUnitsGoBackAndShippedOnesDoNot is the rule in one table.
 //
-// Stock was deducted for every unit bought. Units a live parcel holds have left. So
-// what can come back is the window between them, and a second cancellation must not
-// put back what the first already did.
+// Every unit bought here was deducted; a backordered line is the other case.
+// Units a live parcel holds have left. So what can come back is the window
+// between them, and a second cancellation must not put back what the first
+// already did.
 func TestUnshippedUnitsGoBackAndShippedOnesDoNot(t *testing.T) {
 	t.Parallel()
 
@@ -409,26 +412,98 @@ type fakeInventory struct {
 	returnedPerLine map[string]int64
 	// returnedPerItem is what reached each item's shelf.
 	returnedPerItem map[string]int64
+	// returnedAt is what reached each shelf, by location.
+	returnedAt map[string]int64
+
+	// claims are the backordered lines' claims, by line, imitating the
+	// module's settlement (ADR 0392); settles records each call's window.
+	claims    map[string]*fakeClaim
+	settles   []int64
+	settleErr error
+	// drainErr is the error of a fill that failed after the withdrawal
+	// committed: the module answers what it settled AND the error.
+	drainErr error
+	// afterFirstRead, when set, runs once, after the first shelf read or
+	// settlement has answered: the checkout's last step finishing between two
+	// reads of the act.
+	afterFirstRead func(f *fakeInventory)
+}
+
+// firstReadDone runs afterFirstRead once.
+func (f *fakeInventory) firstReadDone() {
+	if f.afterFirstRead != nil {
+		next := f.afterFirstRead
+		f.afterFirstRead = nil
+		next(f)
+	}
+}
+
+// fakeClaim is one claim, as the inventory module keeps it.
+type fakeClaim struct {
+	itemID    string
+	quantity  int64
+	withdrawn int64
+	filled    bool
+	filledAt  string
+}
+
+// SettleBackorder imitates the module: a waiting claim is withdrawn up to the
+// window and never below what it already is, and the answer is the units never
+// deducted and the shelf a filled claim deducted at.
+func (f *fakeInventory) SettleBackorder(
+	_ context.Context, lineItemID string, bought, window int64,
+) (undeducted map[string]int64, filledAt map[string]string, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	defer f.firstReadDone()
+
+	f.settles = append(f.settles, window)
+	if f.settleErr != nil {
+		return map[string]int64{}, map[string]string{}, f.settleErr
+	}
+	undeducted, filledAt = map[string]int64{}, map[string]string{}
+	c, ok := f.claims[lineItemID]
+	if !ok {
+		return undeducted, filledAt, nil
+	}
+	perUnit := c.quantity / bought
+	if !c.filled {
+		c.withdrawn = max(c.withdrawn, min(c.quantity, window*perUnit))
+		undeducted[c.itemID] = c.quantity
+	} else {
+		undeducted[c.itemID] = c.withdrawn
+		filledAt[c.itemID] = c.filledAt
+	}
+
+	return undeducted, filledAt, f.drainErr
 }
 
 // SaleLocations answers where the units left from.
 func (f *fakeInventory) SaleLocations(context.Context, string) (map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	defer f.firstReadDone()
+
 	if f.locationErr != nil {
 		return nil, f.locationErr
 	}
 
-	return f.locations, nil
+	return maps.Clone(f.locations), nil
 }
 
 // ReturnCanceled records the units.
 func (f *fakeInventory) ReturnCanceled(
-	_ context.Context, itemID, _, lineItemID string, target int64, reference string,
+	_ context.Context, itemID, locationID, lineItemID string, target int64, reference string,
 ) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	if f.returnErr != nil {
 		return false, f.returnErr
+	}
+	if target <= 0 {
+		// The module refuses it (CodeInvalidInput), and so does the fake.
+		return false, fmt.Errorf("the target on the shelf has to be positive: %d", target)
 	}
 
 	// The module's own arithmetic, imitated: it brings the LINE's total up to the
@@ -447,6 +522,10 @@ func (f *fakeInventory) ReturnCanceled(
 	}
 	f.returnedPerLine[key] = target
 	f.returnedPerItem[itemID] += quantity
+	if f.returnedAt == nil {
+		f.returnedAt = map[string]int64{}
+	}
+	f.returnedAt[locationID] += quantity
 
 	f.calls = append(f.calls, quantity)
 	f.references = append(f.references, reference)

@@ -134,6 +134,9 @@ var readEndpoints = map[string]string{
 	// decision from becoming an accident — a listing that quietly fell off the
 	// read router would go red nowhere else.
 	"movement ledger": "/admin/v1/inventory-items/iitem_1/movements",
+	// The queue of orders waiting for the item's units is READ authority for
+	// the ledger's reason (ADR 0392).
+	"backorder queue": "/admin/v1/inventory-items/iitem_1/backorders",
 }
 
 // TestWriteEndpointRejectsNarrowScopedCaller proves that the write endpoints

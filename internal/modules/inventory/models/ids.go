@@ -21,6 +21,8 @@ const (
 	ReservationIDPrefix = "invres_"
 	// MovementIDPrefix is the prefix of stock movement ids.
 	MovementIDPrefix = "invmov_"
+	// BackorderIDPrefix is the prefix of backorder claim ids.
+	BackorderIDPrefix = "invbo_"
 )
 
 // idEncoding is the padless encoding over the Crockford Base32 alphabet. A
@@ -48,6 +50,9 @@ func NewReservationID() string { return newID(ReservationIDPrefix, time.Now()) }
 // it is the tiebreaker between two movements committed in one transaction, and
 // those two share a created_at exactly.
 func NewMovementID() string { return newID(MovementIDPrefix, time.Now()) }
+
+// NewBackorderID produces a new backorder claim id.
+func NewBackorderID() string { return newID(BackorderIDPrefix, time.Now()) }
 
 // newID produces a prefixed, time-ordered and unique id.
 //

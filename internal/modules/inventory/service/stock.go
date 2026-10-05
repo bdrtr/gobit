@@ -593,39 +593,61 @@ func (s *Service) ConfirmReservation(ctx context.Context, reservationID, orderID
 		if err != nil {
 			return err
 		}
-		newStocked := level.StockedQuantity - reservation.Quantity
-		newReserved := level.ReservedQuantity - reservation.Quantity
-		if newStocked < 0 || newReserved < 0 {
-			return errors.Internal(CodeInconsistentState,
-				"the confirmation would take the stock negative: physical %d, reserved %d, reservation %d (%s)",
-				level.StockedQuantity, level.ReservedQuantity, reservation.Quantity, reservationID)
-		}
 
-		// This is the ONE reservation transition that moves goods, so it is the
-		// one that leaves a movement: the units are gone from the warehouse and
-		// the row names the promise they went out against (ADR 0068).
-		//
-		// The PROMISE ITSELF says what the movement's reason is: stock set aside
-		// for a sale is deducted as a sale, stock set aside to settle a claim as
-		// a replacement. The confirmation has no choice to make here, because
-		// the choice was made when the reservation was written.
-		//
-		// The ORDER is written onto the movement, and it is the only thing on this
-		// row that points outside the warehouse.
-		//
-		// It exists so that units written off later can go back to the shelf they
-		// left. The reservation knew the location and is keyed to the CART's line
-		// item, which an order does not carry — so without this the way back is a
-		// chain through three modules, and with it it is one read.
-		//
-		// It may be empty: a replacement's goods leave against a claim rather than
-		// an order, and a caller with no order to name says so by naming none.
-		if _, err := s.writeQuantities(ctx, level, newStocked, newReserved,
-			reservation.Purpose.MovementReason(), reservationID, orderID, ""); err != nil {
-			return err
-		}
-		return s.store.SetReservationStatus(ctx, reservationID, models.ReservationConfirmed)
+		_, err = s.deductHeld(ctx, reservation, level, orderID)
+
+		return err
 	})
+}
+
+// deductHeld takes an ACTIVE reservation's units off both the physical and the
+// reserved quantity of its level, writes the movement that explains it and
+// marks the reservation confirmed. The caller holds the level's lock and, when
+// the reservation was not made in the same transaction, the reservation's.
+//
+// It is [Service.ConfirmReservation]'s body, and a backordered line's fill
+// (ADR 0392) runs it too: a fill is a reservation of the order confirmed at
+// once, so its ledger row is the sale a confirm writes.
+func (s *Service) deductHeld(
+	ctx context.Context, reservation models.Reservation, level models.InventoryLevel, orderID string,
+) (models.InventoryLevel, error) {
+	newStocked := level.StockedQuantity - reservation.Quantity
+	newReserved := level.ReservedQuantity - reservation.Quantity
+	if newStocked < 0 || newReserved < 0 {
+		return models.InventoryLevel{}, errors.Internal(CodeInconsistentState,
+			"the confirmation would take the stock negative: physical %d, reserved %d, reservation %d (%s)",
+			level.StockedQuantity, level.ReservedQuantity, reservation.Quantity, reservation.ID)
+	}
+
+	// This is the ONE reservation transition that moves goods, so it is the
+	// one that leaves a movement: the units are gone from the warehouse and
+	// the row names the promise they went out against (ADR 0068).
+	//
+	// The PROMISE ITSELF says what the movement's reason is: stock set aside
+	// for a sale is deducted as a sale, stock set aside to settle a claim as
+	// a replacement. The confirmation has no choice to make here, because
+	// the choice was made when the reservation was written.
+	//
+	// The ORDER is written onto the movement, and it is the only thing on this
+	// row that points outside the warehouse.
+	//
+	// It exists so that units written off later can go back to the shelf they
+	// left. The reservation knew the location and is keyed to the CART's line
+	// item, which an order does not carry — so without this the way back is a
+	// chain through three modules, and with it it is one read.
+	//
+	// It may be empty: a replacement's goods leave against a claim rather than
+	// an order, and a caller with no order to name says so by naming none.
+	updated, err := s.writeQuantities(ctx, level, newStocked, newReserved,
+		reservation.Purpose.MovementReason(), reservation.ID, orderID, "")
+	if err != nil {
+		return models.InventoryLevel{}, err
+	}
+	if err := s.store.SetReservationStatus(ctx, reservation.ID, models.ReservationConfirmed); err != nil {
+		return models.InventoryLevel{}, err
+	}
+
+	return updated, nil
 }
 
 // GetReservation returns the reservation by its ID; errors.NotFound when there

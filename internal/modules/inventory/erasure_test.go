@@ -59,6 +59,12 @@ import (
 //     cancellation or order line it moved for), an enum and two numbers. The
 //     reference and the line were added by ALTER statements this audit's own
 //     scanner never matched, and went unjudged until D190.
+//   - inventory_backorders is exempt WHOLE, for the ledger's reason. A claim
+//     (ADR 0392) is ids — its item, the order and order line it is owed to, the
+//     warehouses it may be filled at, the reservation and warehouse that filled
+//     it — two counts, a CHECK-constrained status and a queue position. Like
+//     the reservation's line, the order's ids resolve to nobody once the order
+//     module's own columns are anonymized.
 //   - The timestamps describe the record's state and are true of the row whether
 //     or not anybody is behind it.
 var notPersonalColumns = map[string][]string{
@@ -79,6 +85,11 @@ var notPersonalColumns = map[string][]string{
 	"inventory_movements": {
 		"id", "inventory_item_id", "location_id", "reservation_id", "reason",
 		"delta", "stocked_after", "created_at", "reference", "line_item_id",
+	},
+	"inventory_backorders": {
+		"id", "inventory_item_id", "order_id", "order_line_item_id", "quantity",
+		"withdrawn_quantity", "location_ids", "status", "reservation_id",
+		"filled_location_id", "seq", "created_at", "updated_at",
 	},
 }
 

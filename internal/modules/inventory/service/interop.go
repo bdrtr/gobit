@@ -22,8 +22,13 @@ import (
 // settle a claim, [Interop.ReserveForReplacement]), release what was set aside
 // ([Interop.ReleaseReservation]), turn it into deducted stock
 // ([Interop.ConfirmReservation]), ask for the sellable total
-// ([Interop.AvailableQuantity]) and list the locations that have enough stock
-// ([Interop.LocationsWithStock]). Every method added here is a CONTRACT: the
+// ([Interop.AvailableQuantity]), list the locations that have enough stock
+// ([Interop.LocationsWithStock]), hold a line the checkout let through without
+// stock until its units arrive ([Interop.ClaimBackorder]), withdraw what a
+// written-off line will not take and say how much of it never left and where
+// the rest did ([Interop.SettleBackorder]), and list the open warehouses a claim
+// may be ranked over ([Interop.OpenLocations]). Every method added here is a
+// CONTRACT: the
 // consumer writes it in its own package with exactly the same signature and the
 // match can be checked not by the compiler but only by tests.
 //
@@ -266,4 +271,52 @@ func (i *Interop) LocationsWithStock(
 	quantity int64,
 ) ([]string, error) {
 	return i.svc.LocationsWithStock(ctx, inventoryItemID, quantity)
+}
+
+// ClaimBackorder records that an order line is owed quantity units of the item,
+// fillable at locationIDs in that order. Every later write that makes units
+// sellable at one of those warehouses fills the oldest waiting claims it can
+// complete whole, in its own transaction (ADR 0392). It does not fill from stock
+// already there; [Interop.SettleBackorder] does. A second call for the same line
+// and item returns the same claim.
+func (i *Interop) ClaimBackorder(
+	ctx context.Context,
+	inventoryItemID, orderID, orderLineItemID string,
+	quantity int64,
+	locationIDs []string,
+) (backorderID string, err error) {
+	claim, err := i.svc.ClaimBackorder(ctx, ClaimBackorderInput{
+		InventoryItemID: inventoryItemID,
+		OrderID:         orderID,
+		OrderLineItemID: orderLineItemID,
+		Quantity:        quantity,
+		LocationIDs:     locationIDs,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return claim.ID, nil
+}
+
+// SettleBackorder brings each waiting claim of the line up to window of the
+// line's units withdrawn, the units the cancellation flow counts as never
+// leaving, then fills what still waits from stock on hand. It answers, per item,
+// the units this module never deducted for the line and the warehouse a filled
+// claim deducted at; a line with no claim answers neither.
+//
+// The answers are returned with an error from the fill, because they are true
+// without it; an error from the withdrawal answers nothing.
+func (i *Interop) SettleBackorder(
+	ctx context.Context, orderLineItemID string, bought, window int64,
+) (undeducted map[string]int64, filledAt map[string]string, err error) {
+	settled, err := i.svc.SettleBackorder(ctx, orderLineItemID, bought, window)
+
+	return settled.Undeducted, settled.FilledAt, err
+}
+
+// OpenLocations lists every open warehouse, the set the checkout ranks a
+// backordered line's claim over.
+func (i *Interop) OpenLocations(ctx context.Context) ([]string, error) {
+	return i.svc.OpenLocationIDs(ctx)
 }

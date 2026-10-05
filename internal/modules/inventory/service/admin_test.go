@@ -189,11 +189,33 @@ func TestSetStockWritesThePhysicalCount(t *testing.T) {
 	loc := addLocation(t, svc, "Main warehouse")
 	store.seedLevel(itemID, loc, 10, 4)
 
-	require.NoError(t, admin.SetStockLevel(context.Background(), itemID, loc, 10, 20))
+	stocked, err := admin.SetStockLevel(context.Background(), itemID, loc, 10, 20)
+	require.NoError(t, err)
+	assert.Equal(t, int64(20), stocked, "the count after the write")
 
 	level := store.level(itemID, loc)
 	assert.Equal(t, int64(20), level.StockedQuantity)
 	assert.Equal(t, int64(4), level.ReservedQuantity, "a count is not a reservation")
+}
+
+// TestACountAnswersWhatIsLeftAfterTheWaitingOrders: an order waits for two
+// where the operator counts five; the form is answered three, which is what the
+// panel's notice is drawn from (ADR 0392).
+func TestACountAnswersWhatIsLeftAfterTheWaitingOrders(t *testing.T) {
+	admin, svc, store := newAdmin(t)
+	store.seedItem(itemID, "SKU-1")
+	loc := addLocation(t, svc, "Main warehouse")
+	_, err := svc.ClaimBackorder(context.Background(), service.ClaimBackorderInput{
+		InventoryItemID: itemID, OrderID: "order_1", OrderLineItemID: "oli_1",
+		Quantity: 2, LocationIDs: []string{loc},
+	})
+	require.NoError(t, err)
+
+	stocked, err := admin.SetStockLevel(context.Background(), itemID, loc, 0, 5)
+	require.NoError(t, err)
+
+	assert.Equal(t, int64(3), stocked, "five counted, two went to the waiting order")
+	assert.Equal(t, int64(3), store.level(itemID, loc).StockedQuantity)
 }
 
 // TestSetStockKeepsThePromisedStock proves the surface does not bypass the
@@ -208,7 +230,7 @@ func TestSetStockKeepsThePromisedStock(t *testing.T) {
 	loc := addLocation(t, svc, "Main warehouse")
 	store.seedLevel(itemID, loc, 10, 4)
 
-	err := admin.SetStockLevel(context.Background(), itemID, loc, 10, 3)
+	_, err := admin.SetStockLevel(context.Background(), itemID, loc, 10, 3)
 
 	require.Error(t, err)
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err),
@@ -228,18 +250,19 @@ func TestACountOverAQuantityItDidNotSeeIsRefused(t *testing.T) {
 	empty := addLocation(t, svc, "Back room")
 	store.seedLevel(itemID, loc, 9, 0)
 
-	err := admin.SetStockLevel(context.Background(), itemID, loc, 10, 12)
+	_, err := admin.SetStockLevel(context.Background(), itemID, loc, 10, 12)
 	require.Error(t, err)
 	assert.Equal(t, service.CodeStockMoved, errors.CodeOf(err))
 	assert.Equal(t, errors.KindConflict, errors.KindOf(err))
 	assert.Contains(t, err.Error(), "is 9, not the 10")
 	assert.Equal(t, int64(9), store.level(itemID, loc).StockedQuantity, "the refused count changes nothing")
 
-	err = admin.SetStockLevel(context.Background(), itemID, empty, 3, 5)
+	_, err = admin.SetStockLevel(context.Background(), itemID, empty, 3, 5)
 	require.Error(t, err, "a location with no level holds zero, not three")
 	assert.Equal(t, service.CodeStockMoved, errors.CodeOf(err))
 
-	require.NoError(t, admin.SetStockLevel(context.Background(), itemID, empty, 0, 5))
+	_, err = admin.SetStockLevel(context.Background(), itemID, empty, 0, 5)
+	require.NoError(t, err)
 	assert.Equal(t, int64(5), store.level(itemID, empty).StockedQuantity)
 }
 
@@ -254,7 +277,7 @@ func TestAnUnwiredAdminSurfaceSaysSoRatherThanPanicking(t *testing.T) {
 	var admin *service.AdminSurface
 
 	_, readErr := admin.StockLevelsJSON(context.Background(), itemID)
-	writeErr := admin.SetStockLevel(context.Background(), itemID, "sloc_A", 0, 1)
+	_, writeErr := admin.SetStockLevel(context.Background(), itemID, "sloc_A", 0, 1)
 
 	require.Error(t, readErr)
 	require.Error(t, writeErr)

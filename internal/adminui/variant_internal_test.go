@@ -49,6 +49,9 @@ type fakeStockAdmin struct {
 	read       int64
 	quantity   int64
 	writeErr   error
+	// filled is how many of the written units the fake answers went to
+	// waiting orders (ADR 0392).
+	filled int64
 }
 
 func (f *fakeStockAdmin) StockLevelsJSON(_ context.Context, itemID string) (json.RawMessage, error) {
@@ -60,11 +63,14 @@ func (f *fakeStockAdmin) StockLevelsJSON(_ context.Context, itemID string) (json
 	return f.levels, nil
 }
 
-func (f *fakeStockAdmin) SetStockLevel(_ context.Context, itemID, locationID string, read, quantity int64) error {
+func (f *fakeStockAdmin) SetStockLevel(_ context.Context, itemID, locationID string, read, quantity int64) (int64, error) {
 	f.calls++
 	f.itemID, f.locationID, f.read, f.quantity = itemID, locationID, read, quantity
+	if f.writeErr != nil {
+		return 0, f.writeErr
+	}
 
-	return f.writeErr
+	return quantity - f.filled, nil
 }
 
 // newVariantPanel builds a panel wired to the two write surfaces.
@@ -296,6 +302,37 @@ func TestSavingStockReachesTheInventorySurface(t *testing.T) {
 	assert.Equal(t, "sloc_1", stock.locationID)
 	assert.Equal(t, int64(25), stock.quantity)
 	assert.Equal(t, int64(10), stock.read, "the count the form was drawn with (ADR 0280)")
+}
+
+// TestACountThatFilledWaitingOrdersSaysSo is ADR 0392: the operator types 5,
+// the module answers 3 because two units went to an order waiting for them, and
+// the page the save leads to says how many went, while a save that filled
+// nothing leads to the page with no notice.
+func TestACountThatFilledWaitingOrdersSaysSo(t *testing.T) {
+	t.Parallel()
+
+	stock := &fakeStockAdmin{levels: json.RawMessage(stockJSON), filled: 2}
+	panel := newVariantPanel(t, variantCatalog(2), nil, stock)
+
+	rec := postForm(panel, "/stock", url.Values{
+		"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"5"}, "read_quantity": {"10"},
+	})
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	location := rec.Header().Get("Location")
+	assert.Equal(t, variantURLFor()+"?stock_filled=2", location)
+
+	page := httptest.NewRecorder()
+	variantRouter(panel).ServeHTTP(page, asCatalogReader(httptest.NewRequest(http.MethodGet, location, http.NoBody)))
+	require.Equal(t, http.StatusOK, page.Code)
+	assert.Contains(t, page.Body.String(),
+		"The count was saved. 2 of these units went to orders that were waiting for them.")
+
+	plain := &fakeStockAdmin{levels: json.RawMessage(stockJSON)}
+	rec = postForm(newVariantPanel(t, variantCatalog(2), nil, plain), "/stock", url.Values{
+		"inventory_item_id": {"inv_1"}, "location_id": {"sloc_1"}, "quantity": {"5"}, "read_quantity": {"10"},
+	})
+	assert.Equal(t, variantURLFor(), rec.Header().Get("Location"), "nothing went to an order")
+	assert.NotContains(t, getVariant(panel).Body.String(), "went to orders")
 }
 
 // TestAFormThatDoesNotSayWhatItSawIsRefused is ADR 0280: a price or stock form

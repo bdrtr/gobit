@@ -8,6 +8,22 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type InventoryBackorder struct {
+	ID                string
+	InventoryItemID   string
+	OrderID           string
+	OrderLineItemID   string
+	Quantity          int64
+	WithdrawnQuantity int64
+	LocationIds       []string
+	Status            string
+	ReservationID     *string
+	FilledLocationID  *string
+	Seq               *int64
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
 type InventoryItem struct {
 	ID               string
 	Sku              string

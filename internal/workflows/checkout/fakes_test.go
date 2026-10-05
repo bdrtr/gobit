@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -277,6 +278,71 @@ type stubInventory struct {
 	// selection, on the other hand, raises the question "which line, from WHICH
 	// warehouse", and the answer lives only in the arguments.
 	reserved []reservedCall
+
+	// claimFn, settleFn and openFn script the backorder surface (ADR 0392);
+	// claims and settles keep the arguments of each call.
+	claimFn  func(itemID, orderLineItemID string, quantity int64, locationIDs []string) error
+	settleFn func(orderLineItemID string, bought, window int64) error
+	openFn   func() ([]string, error)
+	claims   []claimCall
+	settles  []settleCall
+}
+
+// claimCall holds the arguments of a single ClaimBackorder call.
+type claimCall struct {
+	ItemID, OrderID, OrderLineItemID string
+	Quantity                         int64
+	LocationIDs                      []string
+}
+
+// settleCall holds the arguments of a single SettleBackorder call.
+type settleCall struct {
+	OrderLineItemID string
+	Bought, Window  int64
+}
+
+// ClaimBackorder records the claim and applies the scripted behavior.
+func (s *stubInventory) ClaimBackorder(
+	_ context.Context, itemID, orderID, orderLineItemID string, quantity int64, locationIDs []string,
+) (string, error) {
+	s.rec.add("inventory:claim:" + orderLineItemID)
+	s.claims = append(s.claims, claimCall{
+		ItemID: itemID, OrderID: orderID, OrderLineItemID: orderLineItemID,
+		Quantity: quantity, LocationIDs: slices.Clone(locationIDs),
+	})
+	if s.claimFn != nil {
+		if err := s.claimFn(itemID, orderLineItemID, quantity, locationIDs); err != nil {
+			return "", err
+		}
+	}
+
+	return "invbo_" + orderLineItemID, nil
+}
+
+// SettleBackorder records the settlement and applies the scripted behavior.
+func (s *stubInventory) SettleBackorder(
+	_ context.Context, orderLineItemID string, bought, window int64,
+) (undeducted map[string]int64, filledAt map[string]string, err error) {
+	s.rec.add("inventory:settle:" + orderLineItemID)
+	s.settles = append(s.settles, settleCall{OrderLineItemID: orderLineItemID, Bought: bought, Window: window})
+	if s.settleFn != nil {
+		if err := s.settleFn(orderLineItemID, bought, window); err != nil {
+			return map[string]int64{}, map[string]string{}, err
+		}
+	}
+
+	return map[string]int64{}, map[string]string{}, nil
+}
+
+// OpenLocations answers the scripted open warehouses; it has NO default, for
+// LocationsWithStock's reason.
+func (s *stubInventory) OpenLocations(context.Context) ([]string, error) {
+	s.rec.add("inventory:open_locations")
+	if s.openFn == nil {
+		return nil, errUnexpected("OpenLocations")
+	}
+
+	return s.openFn()
 }
 
 // reservedCall holds the arguments of a single Reserve call.
@@ -358,6 +424,10 @@ type stubFulfillment struct {
 
 	rankFn func(ctx context.Context, destinationRegionID string, candidateLocationIDs []string) ([]string, error)
 
+	// committedFn is the scripted answer about what the order's live parcels
+	// hold; without one they hold nothing.
+	committedFn func(fulfillmentIDs []string) (map[string]int64, error)
+
 	// offered keeps, in order, the candidate lists passed to RankLocations.
 	//
 	// That the candidates are handed over exactly as they COME from the
@@ -407,6 +477,15 @@ func (s *stubFulfillment) RankLocations(
 	return s.rankFn(ctx, destinationRegionID, candidateLocationIDs)
 }
 
+// CommittedQuantities applies the scripted answer about live parcels.
+func (s *stubFulfillment) CommittedQuantities(_ context.Context, fulfillmentIDs []string) (map[string]int64, error) {
+	s.rec.add("fulfillment:committed_quantities")
+	if s.committedFn == nil {
+		return map[string]int64{}, nil
+	}
+	return s.committedFn(fulfillmentIDs)
+}
+
 // rankByGreatestID is a fulfillment surface behavior that orders the candidates
 // so that the one with the GREATEST identifier comes first.
 //
@@ -440,7 +519,44 @@ type stubOrders struct {
 	summaryFn func(ctx context.Context, orderID string, paidTotal, refundedTotal int64) error
 	// summaries keeps, in order, the totals reported onto each order.
 	summaries []reportedTotals
+
+	// linesFn scripts DispatchableLinesJSON; nil answers the last placed
+	// snapshot's lines, written off nothing, as order lines oli_0, oli_1 ….
+	// linesReads counts the reads.
+	linesFn    func(read int) (json.RawMessage, error)
+	linesReads int
 }
+
+// DispatchableLinesJSON answers the order's lines.
+func (s *stubOrders) DispatchableLinesJSON(context.Context, string) (json.RawMessage, error) {
+	s.rec.add("order:lines")
+	s.linesReads++
+	if s.linesFn != nil {
+		return s.linesFn(s.linesReads)
+	}
+	if len(s.placed) == 0 {
+		return nil, errUnexpected("DispatchableLinesJSON")
+	}
+
+	type line struct {
+		LineItemID string `json:"line_item_id"`
+		Bought     int64  `json:"bought"`
+		Canceled   int64  `json:"canceled"`
+		VariantID  string `json:"variant_id"`
+	}
+	items := s.placed[len(s.placed)-1].Items
+	out := make([]line, 0, len(items))
+	for k := range items {
+		out = append(out, line{
+			LineItemID: orderLineID(k), Bought: items[k].Quantity, VariantID: items[k].VariantID,
+		})
+	}
+
+	return json.Marshal(out)
+}
+
+// orderLineID is the order line the stub orders answer at position k.
+func orderLineID(k int) string { return "oli_" + strconv.Itoa(k) }
 
 // reportedTotals is one SetOrderSummaryTotals call.
 type reportedTotals struct {
@@ -833,6 +949,9 @@ func defaultLinks(_ context.Context, name string, _ []string) (map[string][]stri
 			testVariantA: {testPriceSetA},
 			testVariantB: {testPriceSetB},
 		}, nil
+	case LinkOrderFulfillment:
+		// The order has no parcel yet.
+		return map[string][]string{}, nil
 	default:
 		return nil, errUnexpected("ListMany: " + name)
 	}
