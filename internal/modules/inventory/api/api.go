@@ -59,6 +59,12 @@ const (
 	pathItemMovements = "/admin/v1/inventory-items/{id}/movements"
 	// The orders waiting for the item's units, in queue order (ADR 0392).
 	pathItemBackorders = "/admin/v1/inventory-items/{id}/backorders"
+	// The units suppliers owe the item's warehouses (ADR 0399). A receipt is
+	// closed by RECEIVING or CANCELING it, two verbs, because each is a fact of
+	// its own and neither deletes the row.
+	pathItemSupplierReceipts       = "/admin/v1/inventory-items/{id}/supplier-receipts"
+	pathItemSupplierReceiptReceive = "/admin/v1/inventory-items/{id}/supplier-receipts/{receipt_id}/receive"
+	pathItemSupplierReceiptCancel  = "/admin/v1/inventory-items/{id}/supplier-receipts/{receipt_id}/cancel"
 )
 
 // maxBodyBytes is the upper bound on a request body. Without a bound a single
@@ -132,6 +138,19 @@ type Inventory interface {
 	ListMovements(ctx context.Context, in service.ListMovementsInput) ([]models.Movement, error)
 	// ListBackorders returns a page of the item's claims in queue order.
 	ListBackorders(ctx context.Context, in service.ListBackordersInput) ([]models.Backorder, int64, error)
+
+	// RecordSupplierReceipt records units a supplier owes a warehouse.
+	RecordSupplierReceipt(ctx context.Context, in service.RecordSupplierReceiptInput) (models.SupplierReceipt, error)
+	// ListSupplierReceipts returns a page of the item's receipts by expected
+	// moment.
+	ListSupplierReceipts(ctx context.Context, in service.ListSupplierReceiptsInput) ([]models.SupplierReceipt, int64, error)
+	// ReceiveSupplierReceipt writes a receipt's counted units through the
+	// ledger and closes it.
+	ReceiveSupplierReceipt(
+		ctx context.Context, itemID, receiptID string, quantity int64,
+	) (models.SupplierReceipt, *models.InventoryLevel, error)
+	// CancelSupplierReceipt closes a receipt that will bring nothing.
+	CancelSupplierReceipt(ctx context.Context, itemID, receiptID string) (models.SupplierReceipt, error)
 }
 
 // Handler is the inventory module's set of HTTP handlers.
@@ -193,6 +212,12 @@ func (h *Handler) Routes(r chi.Router) {
 	// The queue is READ authority for the ledger's reason: it shows who the
 	// next units of the item go to, and nothing here writes it (ADR 0392).
 	read.Get(pathItemBackorders, h.listBackorders)
+	// Stock on its way (ADR 0399): recording, receiving and canceling write,
+	// and the listing reads.
+	write.Post(pathItemSupplierReceipts, h.recordSupplierReceipt)
+	read.Get(pathItemSupplierReceipts, h.listSupplierReceipts)
+	write.Post(pathItemSupplierReceiptReceive, h.receiveSupplierReceipt)
+	write.Post(pathItemSupplierReceiptCancel, h.cancelSupplierReceipt)
 
 	// Which sales channels the warehouse ships for. The binding is NOT this
 	// module's table but core/link's: the channel is the auth module's record
@@ -260,9 +285,9 @@ func (h *Handler) getStockLocation(w http.ResponseWriter, r *http.Request) {
 // closeStockLocation closes the location.
 //
 // A close is not a DELETE (ADR 0055): the row stays and goes on being read. The
-// service answers Conflict while the location still holds stock or an active
-// reservation, and on success the body of the closed location carries
-// closed_at.
+// service answers Conflict while the location still holds stock, an active
+// reservation or an expected supplier receipt (ADR 0399), and on success the
+// body of the closed location carries closed_at.
 func (h *Handler) closeStockLocation(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

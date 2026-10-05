@@ -634,6 +634,15 @@ past and is not corrected retroactively.
   recorded but could not settle (a warning on its answer) still owes the units
   written off before it. A filled claim opens no parcel, and no date is
   promised (ADR 0048).
+- **A restock date is an estimate.** `restock_expected_at` is the first moment
+  expected supplier receipts leave units for sale at the request's warehouses
+  after waiting backorders take theirs
+  ([ADR 0399](adr/0399-stock-on-its-way-has-a-date-the-storefront-shows.md)).
+  The checkout does not read it, no order line carries it, a bundle shows none,
+  a receipt whose moment has passed drops out until someone receives, cancels
+  or re-records it, and a changed date is a cancel and a new receipt. gobit
+  keeps no supplier, cost or purchase order: `reference` carries the
+  embedder's number.
 - **A reduction's reference price is known only from the day the price history
   began.** Since [ADR 0167](adr/0167-a-price-keeps-its-history.md) every price
   write keeps a snapshot, and a storefront sale price carries the lowest price

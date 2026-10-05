@@ -72,6 +72,21 @@ type InventoryReservation struct {
 	Purpose         string
 }
 
+type InventorySupplierReceipt struct {
+	ID               string
+	InventoryItemID  string
+	LocationID       string
+	Quantity         int64
+	ExpectedAt       pgtype.Timestamptz
+	Reference        *string
+	Status           string
+	ReceivedQuantity *int64
+	ReceivedAt       pgtype.Timestamptz
+	CanceledAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
 type StockLocation struct {
 	ID          string
 	Name        string

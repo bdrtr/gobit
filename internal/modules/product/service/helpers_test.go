@@ -165,6 +165,10 @@ type fakeGraph struct {
 	specs   []query.GraphSpec
 	records []query.Record
 	err     error
+	// errOnCall, when set, is the one call (counted from 1) that answers
+	// callErr; every other call answers as usual.
+	errOnCall int
+	callErr   error
 }
 
 // Graph returns the recorded records and records the call.
@@ -183,6 +187,9 @@ func (f *fakeGraph) Graph(_ context.Context, spec query.GraphSpec) ([]query.Reco
 	f.specs = append(f.specs, spec)
 	if f.err != nil {
 		return nil, f.err
+	}
+	if f.errOnCall != 0 && f.errOnCall == len(f.specs) {
+		return nil, f.callErr
 	}
 
 	asked := map[string]bool{query.IDField: true}

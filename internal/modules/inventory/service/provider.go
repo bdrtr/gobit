@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
@@ -35,9 +36,20 @@ const (
 	// channel ships from (ADR 0092).
 	//
 	// It is computed ONLY when it is asked for, like the total beside it, so a
-	// reader that does not narrow pays nothing for it. A location with nothing
-	// sellable is ABSENT from the map rather than present with a zero.
+	// reader that does not narrow pays nothing for it, and it is never in the
+	// default field set, so a reader naming no fields never receives it
+	// (ADR 0093, D258). A location with nothing sellable is ABSENT from the map
+	// rather than present with a zero.
 	FieldAvailableByLocation = "available_by_location"
+	// FieldRestockByLocation is, per warehouse with nothing sellable now, the
+	// first expected moment at which units are left for sale there once the
+	// waiting backorders take theirs, as a map[locationID]time.Time
+	// ([Service.RestockForecast], ADR 0399).
+	//
+	// It is computed only when it is named, with one forecast for the whole
+	// batch rather than one per record, and it is never in the default field
+	// set. A warehouse no receipt restocks is ABSENT from the map.
+	FieldRestockByLocation = "restock_by_location"
 	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt is the time of the last update.
@@ -62,7 +74,31 @@ var itemFieldGetters = map[string]func(in fieldInput) any{
 	FieldAvailableByLocation: func(in fieldInput) any {
 		return in.byLocation
 	},
+	FieldRestockByLocation: func(in fieldInput) any {
+		return in.restock
+	},
 }
+
+// perWarehouseFields are the fields computed per warehouse.
+//
+// A per-warehouse field is computed only when it is named; the default set is
+// what a shopper may see. The storefront publishes the record an expansion
+// naming no fields answers (ADR 0093), so a field here in the default set is a
+// shop's warehouse topology on every product page, computed on every read
+// (D258).
+var perWarehouseFields = []string{FieldAvailableByLocation, FieldRestockByLocation}
+
+// defaultItemFields is the field set a caller naming none receives: every
+// offered field except [perWarehouseFields].
+var defaultItemFields = func() []string {
+	out := make([]string, 0, len(itemFieldGetters))
+	for _, name := range slices.Sorted(maps.Keys(itemFieldGetters)) {
+		if !slices.Contains(perWarehouseFields, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}()
 
 // fieldInput is everything a getter may read.
 //
@@ -79,6 +115,9 @@ type fieldInput struct {
 	// byLocation is that total broken down; it is nil unless the caller asked
 	// for [FieldAvailableByLocation].
 	byLocation map[string]int64
+	// restock is the item's restock forecast; it is nil unless the caller asked
+	// for [FieldRestockByLocation].
+	restock map[string]time.Time
 }
 
 // QueryProvider is the read surface the inventory module opens to the Query
@@ -175,10 +214,14 @@ func (p *QueryProvider) FetchByIDs(ctx context.Context, ids, fields []string) ([
 // The sellable quantity is computed ONLY when it is asked for, and while it is
 // computed a single query is made for ALL the items; there is no query per
 // record (N+1).
+//
+// A caller naming no fields receives [defaultItemFields]: a per-warehouse field
+// is computed only when it is named, and the default set is what a shopper may
+// see.
 func (p *QueryProvider) records(ctx context.Context, items []models.InventoryItem, fields []string) ([]query.Record, error) {
 	selected := fields
 	if len(selected) == 0 {
-		selected = slices.Sorted(maps.Keys(itemFieldGetters))
+		selected = defaultItemFields
 	}
 
 	available := map[string]int64{}
@@ -205,6 +248,18 @@ func (p *QueryProvider) records(ctx context.Context, items []models.InventoryIte
 		}
 	}
 
+	restock := map[string]map[string]time.Time{}
+	if slices.Contains(selected, FieldRestockByLocation) && len(items) > 0 {
+		ids := make([]string, 0, len(items))
+		for _, item := range items {
+			ids = append(ids, item.ID)
+		}
+		var err error
+		if restock, err = p.svc.RestockForecast(ctx, ids); err != nil {
+			return nil, err
+		}
+	}
+
 	out := make([]query.Record, 0, len(items))
 	for _, item := range items {
 		record := make(query.Record, len(selected))
@@ -212,6 +267,7 @@ func (p *QueryProvider) records(ctx context.Context, items []models.InventoryIte
 			item:       item,
 			available:  available[item.ID],
 			byLocation: byLocation[item.ID],
+			restock:    restock[item.ID],
 		}
 		for _, name := range selected {
 			record[name] = itemFieldGetters[name](in)

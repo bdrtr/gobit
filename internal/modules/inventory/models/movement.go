@@ -15,7 +15,7 @@ import (
 // # It is also the answer to "who"
 //
 // The ledger carries no actor column, and this is the field that stands in its
-// place. Two of the reasons come from an admin request, which `audit_log`
+// place. Three of the reasons come from an admin request, which `audit_log`
 // already records together with the caller; the rest come from a flow with no
 // person behind it. So a reader who wants a name knows from the reason
 // whether there is one to look for and where — which is more than a nullable
@@ -40,8 +40,8 @@ const (
 	MovementAdjustment MovementReason = "adjustment"
 	// MovementSale is a confirmed reservation, either ConfirmReservation called
 	// by the checkout saga or the fill of a backordered line's claim (ADR 0392):
-	// the promised units left the count for good. It is the one reason that
-	// names a reservation, and its delta is always negative.
+	// the promised units left the count for good. It names a reservation, as a
+	// replacement does, and its delta is always negative.
 	MovementSale MovementReason = "sale"
 	// MovementReturnRestock is goods arriving back at a location, which the
 	// cross-module surface calls Restock. It is an addition rather than the
@@ -65,16 +65,20 @@ const (
 	// one reading 'return_restock' sees goods a customer sent back, and neither
 	// happened here — nobody counted anything and nothing arrived.
 	MovementCancellation MovementReason = "cancellation"
+	// MovementSupplierReceipt is goods a supplier delivered, received through
+	// the expected supplier receipt they close (ADR 0399); it names that
+	// receipt, and its delta is always positive.
+	MovementSupplierReceipt MovementReason = "supplier_receipt"
 )
 
-// ErrMovementAlreadyRecorded is a movement whose reference is already in the
-// ledger.
+// ErrMovementAlreadyRecorded says the units an act puts back are already back.
 //
-// It is not a failure. The only reason that carries a unique reference is a
-// cancellation, and a cancellation arrives on the event bus — which delivers at
-// least once. Adding stock is deliberately not idempotent, so the SECOND delivery
-// has to write nothing, and the caller has to be able to tell that from a write
-// that silently did nothing for a reason nobody chose.
+// It is not a failure: a cancellation arrives on the event bus, which delivers
+// at least once, and a replacement can be recalled twice; adding stock is not
+// idempotent, so the second act writes nothing and says so. No index answers
+// it (migration 000007): a line's write-off reads the sum it put back under the
+// level lock (ADR 0142), and a replacement recall asks for its cancellation
+// under the reservation's lock (ADR 0239).
 var ErrMovementAlreadyRecorded = errors.New(
 	"inventory: that movement is already in the ledger")
 
@@ -82,7 +86,7 @@ var ErrMovementAlreadyRecorded = errors.New(
 func (r MovementReason) Valid() bool {
 	switch r {
 	case MovementStockCount, MovementAdjustment, MovementSale, MovementReturnRestock,
-		MovementReplacement, MovementCancellation:
+		MovementReplacement, MovementCancellation, MovementSupplierReceipt:
 		return true
 	default:
 		return false
@@ -91,8 +95,11 @@ func (r MovementReason) Valid() bool {
 
 // CarriesAReference reports whether the reason names what the movement was FOR.
 //
-// A sale points at the order whose checkout deducted the units, and a
-// cancellation at the row that wrote them off. The other four point at nothing:
+// A sale points at the order whose checkout deducted the units; a
+// cancellation at the act that put them back -- the order's cancellation or the
+// canceled parcel for a written-off line, and the replacement's reservation for
+// a recalled replacement (ADR 0239); and a supplier receipt at the expected
+// receipt it closes. The other four point at nothing:
 // an operator's count, an operator's correction, goods arriving back, and a
 // replacement leaving are all facts about the warehouse rather than about a
 // record somewhere else.
@@ -101,7 +108,7 @@ func (r MovementReason) Valid() bool {
 // because a reference on the wrong reason is a column an operator would read as
 // meaning something.
 func (r MovementReason) CarriesAReference() bool {
-	return r == MovementSale || r == MovementCancellation
+	return r == MovementSale || r == MovementCancellation || r == MovementSupplierReceipt
 }
 
 // String returns the text representation of the reason.
@@ -123,10 +130,10 @@ func (r MovementReason) LeavesAgainstAPromise() bool {
 // admin request, which is to say whether `audit_log` holds a caller for it.
 //
 // It exists so the mapping is written ONCE. The reader publishes it as a field,
-// and an operator reading a movement should not have to remember which of four
+// and an operator reading a movement should not have to remember which of seven
 // reasons has a person behind it.
 func (r MovementReason) FromAdminRequest() bool {
-	return r == MovementStockCount || r == MovementAdjustment
+	return r == MovementStockCount || r == MovementAdjustment || r == MovementSupplierReceipt
 }
 
 // Movement is one change to the physical count of an item at a location.
@@ -161,7 +168,10 @@ type Movement struct {
 	// Reason is why the count changed.
 	Reason MovementReason
 	// Reference is what the movement was FOR, when its reason has something to
-	// point at: the order for a sale, the cancellation row for a cancellation.
+	// point at: the order for a sale; for a cancellation, the act that put the
+	// units back -- the order's cancellation or the canceled parcel of a
+	// written-off line, or the reservation of a recalled replacement (ADR 0239);
+	// the supplier receipt for a supplier receipt.
 	//
 	// Empty for every other reason. Two things rest on it — a sale's reference is
 	// how a later cancellation finds the LOCATION its units were taken from, and a
@@ -169,9 +179,13 @@ type Movement struct {
 	// the ledger for.
 	//
 	// It used to be the idempotency mechanism as well — one cancellation, one
-	// row, held by a unique index. It is not any more: two acts can put a line's
-	// units back and the same act can write twice as its target grows, so the
-	// guard moved to the SUM below (migration 000007, ADR 0142).
+	// row, held by a unique index. A cancellation's is not any more (migration
+	// 000007, ADR 0142): two acts can put a line's units back and the same act
+	// can write twice as its target grows, so the guard moved to the SUM below.
+	// A supplier receipt's is held unique by an index again (migration 000009),
+	// as a backstop only: a repeated receive is answered by the receipt's status
+	// under its lock, and a write that hit the index would fail rather than
+	// answer [ErrMovementAlreadyRecorded].
 	Reference string
 	// LineItemID is the order line a cancellation put units back for.
 	//

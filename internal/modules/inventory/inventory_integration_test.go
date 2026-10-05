@@ -47,7 +47,7 @@ const postgresImage = "postgres:16-alpine"
 // list.
 var moduleTables = []string{
 	"stock_locations", "inventory_items", "inventory_levels", "inventory_reservations",
-	"inventory_movements", "inventory_backorders",
+	"inventory_movements", "inventory_backorders", "inventory_supplier_receipts",
 }
 
 var (

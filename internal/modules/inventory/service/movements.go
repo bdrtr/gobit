@@ -36,12 +36,15 @@ import (
 // location, which the level's own created_at already carries.
 //
 // A level opened with units fills the claims waiting there first, and the level
-// returned is the one after the fill (ADR 0392).
+// returned is the one after the fill (ADR 0392). reference is what the movement
+// names, for a reason that names one: a supplier receipt opening the level names
+// its receipt (ADR 0399).
 func (s *Service) openLevel(
 	ctx context.Context,
 	itemID, locationID string,
 	stocked int64,
 	reason models.MovementReason,
+	reference string,
 ) (models.InventoryLevel, error) {
 	level, err := s.store.CreateInventoryLevel(ctx, models.InventoryLevel{
 		ID:              models.NewInventoryLevelID(),
@@ -53,7 +56,7 @@ func (s *Service) openLevel(
 		return models.InventoryLevel{}, err
 	}
 
-	if err := s.recordMovement(ctx, level, stocked, reason, "", "", ""); err != nil {
+	if err := s.recordMovement(ctx, level, stocked, reason, "", reference, ""); err != nil {
 		return models.InventoryLevel{}, err
 	}
 

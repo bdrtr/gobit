@@ -86,10 +86,10 @@ const (
 	// locations, published as service.FieldAvailableQuantity beside the
 	// provider that fills it.
 	//
-	// It is the ONLY thing this module reads about inventory's shape. Region
-	// does not enter the answer (ADR 0040 leaves that to a decision that would
-	// first have to say which locations serve which region), and no second
-	// inventory field is read here or anywhere else in this package.
+	// It and the two per-warehouse fields below are the only inventory fields
+	// this package reads (ADR 0093, ADR 0399). Region does not enter the answer
+	// (ADR 0040 leaves that to a decision that would first have to say which
+	// locations serve which region).
 	foreignAvailableQuantity = "available_quantity"
 
 	// foreignAvailableByLocation is the same total BROKEN DOWN by warehouse,
@@ -101,6 +101,17 @@ const (
 	// [StoreVariant.InventoryItem]. A shop's warehouse topology is not a
 	// shopper's business, and the record IS published.
 	foreignAvailableByLocation = "available_by_location"
+
+	// foreignRestockByLocation is inventory's restock forecast, per warehouse
+	// with nothing sellable now: the first expected moment at which units are
+	// left for sale there once the waiting backorders take theirs, published as
+	// service.FieldRestockByLocation (ADR 0399).
+	//
+	// It is asked for ONLY for the variants a page shows with nothing to sell,
+	// in one more graph call after any filter, never by the badge read
+	// ([Service.VariantsInStock]), and like the breakdown it never reaches the
+	// response: [StoreVariant.RestockExpectedAt] is computed from it.
+	foreignRestockByLocation = "restock_by_location"
 
 	// foreignPrices is the list of price sub-records pricing writes on a
 	// price set record. Only the prices that are unconditional and valid at the

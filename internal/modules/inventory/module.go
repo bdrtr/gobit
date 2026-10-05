@@ -81,6 +81,7 @@ const (
 	tableStockLocations = "stock_locations"
 	tableInventoryItems = "inventory_items"
 	tableReservations   = "inventory_reservations"
+	tableReceipts       = "inventory_supplier_receipts"
 )
 
 //go:embed migrations/*.sql
@@ -272,7 +273,8 @@ func (m *Module) Describe(d *openapi.Doc) { api.Describe(d) }
 // gobit DEFINED the columns of stock_locations: address_1 is a postal address
 // line and the framework knows WHAT the field IS. That the operator wrote the
 // value does not change that; the customer's name is written by the customer,
-// too. The free-text fields (title, description) are Open: only the embedding
+// too. The free-text fields (title, description, a receipt's reference) are
+// Open: only the embedding
 // application can decide what goes into them, and gobit does not read them
 // (ADR 0029).
 //
@@ -333,6 +335,11 @@ func (m *Module) PersonalData() personaldata.Declaration {
 			{
 				Table: tableInventoryItems, Column: "description", Kind: personaldata.Open,
 				Why:       "free text the shop types about a stock item; gobit puts nothing in it and never reads it, so whether a person is described there is the controller's judgement",
+				OnErasure: personaldata.Kept,
+			},
+			{
+				Table: tableReceipts, Column: "reference", Kind: personaldata.Open,
+				Why:       "free text the shop types to name the document a supplier delivery is on (ADR 0399); gobit keeps no supplier and never reads it, but a sole trader's supplier is a person and their invoice number can name them",
 				OnErasure: personaldata.Kept,
 			},
 			{

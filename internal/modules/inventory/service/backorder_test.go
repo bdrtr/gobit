@@ -188,6 +188,25 @@ func TestEveryWriteThatRaisesTheSellableQuantityFills(t *testing.T) {
 				return err
 			},
 		},
+		"a supplier receipt": {
+			seed: func(store *fakeStore) {
+				store.seedLevel(boItem, boLocA, 0, 0)
+				store.seedReceipt("invsup_in", boItem, boLocA, 2, receiptLater(1))
+			},
+			write: func(svc *service.Service) error {
+				_, _, err := svc.ReceiveSupplierReceipt(ctx, boItem, "invsup_in", 2)
+				return err
+			},
+		},
+		"a supplier receipt that opens the level": {
+			seed: func(store *fakeStore) {
+				store.seedReceipt("invsup_new", boItem, boLocA, 2, receiptLater(1))
+			},
+			write: func(svc *service.Service) error {
+				_, _, err := svc.ReceiveSupplierReceipt(ctx, boItem, "invsup_new", 2)
+				return err
+			},
+		},
 		"a reservation released": {
 			seed: func(store *fakeStore) {
 				store.seedLevel(boItem, boLocA, 2, 2)

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
@@ -297,7 +298,36 @@ func describedEndpoints() []endpointExpectation {
 			response: filledBackorder(), list: true,
 			queries: []string{"limit", "offset", "status"},
 		},
+		{
+			// Units a supplier owes (ADR 0399): a created receipt is a new
+			// resource, so 201.
+			method: http.MethodPost, path: pathItemSupplierReceipts, status: "201",
+			request: recordSupplierReceiptRequest{}, response: filledSupplierReceipt(),
+		},
+		{
+			method: http.MethodGet, path: pathItemSupplierReceipts, status: "200",
+			response: filledSupplierReceipt(), list: true,
+			queries: []string{"limit", "offset", "status"},
+		},
+		{
+			// A receive answers the receipt and the level after it, 200: it
+			// closes a resource that exists.
+			method: http.MethodPost, path: pathItemSupplierReceiptReceive, status: "200",
+			request: receiveSupplierReceiptRequest{}, response: receivedSupplierReceiptDTO{},
+		},
+		{
+			method: http.MethodPost, path: pathItemSupplierReceiptCancel, status: "200",
+			response: filledSupplierReceipt(),
+		},
 	}
+}
+
+// filledSupplierReceipt produces a receipt whose omitempty fields are written
+// too; no real receipt is both received and canceled, but the schema names
+// every key either can carry.
+func filledSupplierReceipt() supplierReceiptDTO {
+	at := time.Now().UTC()
+	return supplierReceiptDTO{Reference: "PO-1", ReceivedQuantity: 1, ReceivedAt: &at, CanceledAt: &at}
 }
 
 // filledBackorder produces a claim whose omitempty fields are written too: a
@@ -309,11 +339,11 @@ func filledBackorder() backorderDTO {
 // filledMovement produces a movement record whose omitempty fields are written
 // too.
 //
-// ReservationID is the omitempty field and it is FILLED here: the comparison is
-// "the schema's properties = the encoded key set", and a sale is the row shape
-// that carries every key.
+// ReservationID and Reference are the omitempty fields and they are FILLED
+// here: the comparison is "the schema's properties = the encoded key set", and
+// a sale is the row shape that carries every key.
 func filledMovement() movementDTO {
-	return movementDTO{ReservationID: "invres_1"}
+	return movementDTO{ReservationID: "invres_1", Reference: "order_1"}
 }
 
 // filledLocation produces a location record whose omitempty fields are written

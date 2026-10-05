@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
@@ -94,6 +96,10 @@ const (
 	// keyInventoryStock is where the per-warehouse breakdown lands, and it is a
 	// key of its OWN so that the published record never carries it.
 	keyInventoryStock = "inventory_stock"
+	// keyInventoryRestock is where the restock forecast lands, on the one more
+	// graph call only the published variants with nothing to sell make (ADR
+	// 0399).
+	keyInventoryRestock = "inventory_restock"
 )
 
 // codeProviderNotFound is the Query layer's "the provider of this entity is not
@@ -242,7 +248,7 @@ type StoreProduct struct {
 	// re-derive one definition.
 	//
 	// A product read through an endpoint that does NOT enrich (there is none
-	// today; every path into this type goes through [Service.toStoreProducts])
+	// today; every path into this type goes through [Service.enrichStoreProducts])
 	// would carry false here, which is the same direction the definition errs
 	// in everywhere else: never claiming stock it cannot see.
 	InStock bool `json:"in_stock"`
@@ -255,10 +261,12 @@ type StoreProduct struct {
 // from the Query layer (as loosely typed records). Not regaining type safety
 // here is deliberate; interpreting the fields would mean copying the
 // pricing/inventory schema into this module (the accepted price of ADR 0004).
-// The ONE exception to that sentence is [StoreVariant.InStock], and ADR 0040
-// makes it deliberately: computing it reads a single published field name out of
-// inventory's record. What that costs, and why nothing may quietly add a second,
-// is written where the field names are -- see catalogfilter.go.
+// The exceptions to that sentence are [StoreVariant.InStock], which ADR 0040
+// makes deliberately by reading a single published field name out of
+// inventory's record, and [StoreVariant.RestockExpectedAt], which ADR 0399 makes
+// by reading the same field and the restock forecast. What that costs, and why
+// nothing may quietly add another, is written where the field names are -- see
+// catalogfilter.go.
 type StoreVariant struct {
 	models.Variant
 	PriceSet      query.Record `json:"price_set,omitempty"`
@@ -270,6 +278,14 @@ type StoreVariant struct {
 	// stock moves, and keeping it fresh would mean the catalog subscribing to
 	// inventory's events for a value it can work out on read.
 	InStock bool `json:"in_stock"`
+	// RestockExpectedAt is, for a counted variant with nothing to sell at the
+	// request's warehouses, the first moment inventory expects units on sale
+	// there again, after the backordered lines waiting for them take theirs
+	// (ADR 0399); absent when no supplier receipt is expected to leave any.
+	//
+	// It is an estimate, not a promise: the checkout does not read it and no
+	// order line carries it. A bundle carries none.
+	RestockExpectedAt *time.Time `json:"restock_expected_at,omitempty"`
 }
 
 // locationsServingChannels is the set of warehouses the request's sales
@@ -462,8 +478,9 @@ type enrichedFilter func(StoreProduct) bool
 //
 // Returning nil rather than a function that always says yes is what keeps the
 // unfiltered listing on the path it has always taken: one list query, one count
-// and one Graph call, with the same bytes in the response as before this
-// existed.
+// and one enrichment Graph call, with the same bytes in the response as before
+// this existed -- plus the one restock call ADR 0399 adds when a variant on the
+// page has nothing to sell.
 //
 // The criteria are ANDed, and the aggregation to the product is an OR over its
 // variants for both of them. That is the same any-variant rule ADR 0040 and ADR
@@ -515,7 +532,8 @@ const (
 	//
 	// It is deliberately far larger than a page. The cost of a round is almost
 	// entirely round trips -- the listing query plus its bulk relation reads,
-	// and ONE batch Graph call for the whole chunk regardless of its size --
+	// and ONE batch enrichment Graph call for the whole chunk regardless of its
+	// size --
 	// so a chunk of a hundred costs about what a chunk of twenty costs and
 	// buys five times the ground. It is [MaxLimit] because the listing will
 	// not fetch more than that in one call anyway.
@@ -526,7 +544,8 @@ const (
 	// There has to be a bound: "in stock" can be false for every product in a
 	// catalog, and without one, a single request would enrich the whole of it
 	// looking for a twentieth match. Five chunks is the ceiling, so the worst
-	// request makes five list rounds and five Graph calls rather than one.
+	// request makes five list rounds and five enrichment Graph calls rather
+	// than one, plus the one restock call for the page it returns (ADR 0399).
 	//
 	// Stopping is SAFE in a way that stopping in the middle of a WHERE clause
 	// would not be: the cursor handed back names the last row examined, so the
@@ -567,6 +586,9 @@ const (
 // with_count parameter already produces, and the handler refuses an explicit
 // with_count=true beside these filters rather than letting the number go missing
 // without a word.
+//
+// The restock dates (ADR 0399) are asked once, for the page returned, after the
+// filter: a product the scan read and dropped is never dated.
 func (s *Service) scanStoreProducts(
 	ctx context.Context,
 	opts StoreListOptions,
@@ -593,6 +615,14 @@ func (s *Service) scanStoreProducts(
 	after := opts.After
 	out := make([]StoreProduct, 0, limit)
 	scanned := 0
+	// What the chunks read, kept so the page is dated once, after the filter:
+	// a product the filter drops is never asked for a date.
+	read := storeRead{extras: map[string]enrichment{}}
+	finish := func(next string) ListResult[StoreProduct] {
+		s.restockDates(ctx, out, read)
+
+		return storeScanResult(out, limit, next)
+	}
 
 	for {
 		page, err := s.ListProducts(ctx, ListProductsOptions{
@@ -619,10 +649,12 @@ func (s *Service) scanStoreProducts(
 			return ListResult[StoreProduct]{}, err
 		}
 
-		enriched, err := s.toStoreProducts(ctx, page.Items, opts.SalesChannelIDs)
+		enriched, chunkRead, err := s.enrichStoreProducts(ctx, page.Items, opts.SalesChannelIDs)
 		if err != nil {
 			return ListResult[StoreProduct]{}, err
 		}
+		maps.Copy(read.extras, chunkRead.extras)
+		read.served = chunkRead.served
 
 		for i := range enriched {
 			scanned++
@@ -644,20 +676,20 @@ func (s *Service) scanStoreProducts(
 					corepage.Cursor{Time: enriched[i].CreatedAt, ID: enriched[i].ID})
 			}
 
-			return storeScanResult(out, limit, next), nil
+			return finish(next), nil
 		}
 
 		// An unfilled chunk means the listing itself is exhausted: there is no
 		// row left to resume from and the catalog has been walked to its end.
 		if page.NextCursor == "" {
-			return storeScanResult(out, limit, ""), nil
+			return finish(""), nil
 		}
 
 		last := page.Items[len(page.Items)-1]
 		after = corepage.Cursor{Time: last.CreatedAt, ID: last.ID}
 
 		if scanned >= storeScanMaxRows {
-			return storeScanResult(out, limit, corepage.Encode(listing, after)), nil
+			return finish(corepage.Encode(listing, after)), nil
 		}
 	}
 }
@@ -796,6 +828,14 @@ func (s *Service) visibleStoreProduct(
 // A repeated id appears ONCE in the response; it keeps the position of its first
 // occurrence.
 func (s *Service) StoreProductsByIDs(ctx context.Context, ids, salesChannelIDs []string) ([]StoreProduct, error) {
+	return s.storeProductsByIDs(ctx, ids, salesChannelIDs, true)
+}
+
+// storeProductsByIDs is [Service.StoreProductsByIDs], with the restock dates
+// only when dated: the badge read publishes none of them.
+func (s *Service) storeProductsByIDs(
+	ctx context.Context, ids, salesChannelIDs []string, dated bool,
+) ([]StoreProduct, error) {
 	wanted, err := uniqueIDs("ids", ids)
 	if err != nil {
 		return nil, err
@@ -854,14 +894,44 @@ func (s *Service) StoreProductsByIDs(ctx context.Context, ids, salesChannelIDs [
 	if err := s.attachRelations(ctx, visible); err != nil {
 		return nil, err
 	}
-	return s.toStoreProducts(ctx, visible, salesChannelIDs)
+	if dated {
+		return s.toStoreProducts(ctx, visible, salesChannelIDs)
+	}
+	items, _, err := s.enrichStoreProducts(ctx, visible, salesChannelIDs)
+
+	return items, err
 }
 
-// toStoreProducts converts the products into the storefront shape and enriches
-// the variants.
+// storeRead is what one enrichment read beside the products it returned: the
+// other modules' records of each variant and the warehouses the read counted.
+// The restock dates are decided from it ([Service.restockDates]).
+type storeRead struct {
+	extras map[string]enrichment
+	served map[string]bool
+}
+
+// toStoreProducts converts the products into the storefront shape, enriches
+// the variants and dates the ones with nothing to sell: it is the path of a
+// caller that publishes every product it is handed.
 func (s *Service) toStoreProducts(
 	ctx context.Context, products []models.Product, salesChannelIDs []string,
 ) ([]StoreProduct, error) {
+	items, read, err := s.enrichStoreProducts(ctx, products, salesChannelIDs)
+	if err != nil {
+		return nil, err
+	}
+	s.restockDates(ctx, items, read)
+
+	return items, nil
+}
+
+// enrichStoreProducts converts the products into the storefront shape and
+// enriches the variants, without the restock dates: the scan dates only the
+// products its filter keeps, and the badge read ([Service.VariantsInStock])
+// dates none.
+func (s *Service) enrichStoreProducts(
+	ctx context.Context, products []models.Product, salesChannelIDs []string,
+) ([]StoreProduct, storeRead, error) {
 	variantIDs := make([]string, 0, len(products))
 	var componentIDs []string
 	for i := range products {
@@ -884,11 +954,11 @@ func (s *Service) toStoreProducts(
 	// (ADR 0235): their stock records are what the bundle's badge reads.
 	extras, err := s.enrichVariants(ctx, append(slices.Clone(variantIDs), componentIDs...), len(served) > 0)
 	if err != nil {
-		return nil, err
+		return nil, storeRead{}, err
 	}
 	parts, err := s.bundleParts(ctx, componentIDs)
 	if err != nil {
-		return nil, err
+		return nil, storeRead{}, err
 	}
 
 	out := make([]StoreProduct, 0, len(products))
@@ -919,7 +989,7 @@ func (s *Service) toStoreProducts(
 			InStock:  productInStock(variants),
 		})
 	}
-	return out, nil
+	return out, storeRead{extras: extras, served: served}, nil
 }
 
 // enrichVariants gathers the price and stock records of the variants with a
@@ -959,6 +1029,9 @@ func (s *Service) enrichVariants(
 
 	expansions := []query.Expansion{
 		{Link: LinkVariantPriceSet, As: keyPriceSet},
+		// It names no fields, so it is answered with inventory's default set,
+		// which carries no per-warehouse field (ADR 0093, D258): this record is
+		// the one [StoreVariant.InventoryItem] publishes.
 		{Link: LinkVariantInventory, As: keyInventory},
 	}
 	if narrowed {
@@ -1010,6 +1083,104 @@ func (s *Service) enrichVariants(
 	return out, nil
 }
 
+// restockDates writes [StoreVariant.RestockExpectedAt] on the products a
+// caller publishes (ADR 0399).
+//
+// Only a counted variant that is not a bundle, has an inventory record and has
+// nothing to sell at the request's warehouses asks -- a backorder-permitting
+// one too, since its badge says in stock while nothing is on the shelf. A
+// bundle's badge is read from its parts (ADR 0235), so a record of its own,
+// which a link landing beside the composition can leave (ADR 0234), dates
+// nothing. They ask together, in ONE more graph call, and products where every
+// variant has something to sell make none.
+//
+// The answer is the earliest moment over the warehouses the read counts, the
+// channel's when it is narrowed and every one when it is not, as
+// [unitsAvailable] decides. A failed call logs and leaves the dates absent: the
+// date is a display concern, and the catalog does not fail for it.
+func (s *Service) restockDates(ctx context.Context, items []StoreProduct, read storeRead) {
+	var asking []string
+	for i := range items {
+		for j := range items[i].Variants {
+			variant := &items[i].Variants[j]
+			extra := read.extras[variant.ID]
+			if !variant.ManageInventory || len(variant.BundleComponents) > 0 || extra.inventory == nil ||
+				unitsAvailable(extra, read.served) > 0 || slices.Contains(asking, variant.ID) {
+				continue
+			}
+			asking = append(asking, variant.ID)
+		}
+	}
+	if len(asking) == 0 || s.graph == nil {
+		return
+	}
+
+	records, err := s.graph.Graph(ctx, query.GraphSpec{
+		Entity:  EntityVariant,
+		Fields:  []string{filterID},
+		Filters: map[string]any{filterIDs: asking},
+		Limit:   len(asking),
+		Expand: []query.Expansion{{
+			Link: LinkVariantInventory, As: keyInventoryRestock,
+			Fields: []string{foreignRestockByLocation},
+		}},
+	})
+	if err != nil {
+		s.log.ErrorContext(ctx, "the restock dates could not be read; the storefront answers without them",
+			"variants", len(asking), "error", err)
+		return
+	}
+
+	dates := make(map[string]*time.Time, len(records))
+	for _, rec := range records {
+		id, ok := rec[filterID].(string)
+		if !ok || id == "" || !slices.Contains(asking, id) {
+			continue
+		}
+		if at := earliestRestock(restockByLocation(asRecord(rec[keyInventoryRestock])), read.served); at != nil {
+			dates[id] = at
+		}
+	}
+	for i := range items {
+		for j := range items[i].Variants {
+			if at, ok := dates[items[i].Variants[j].ID]; ok {
+				items[i].Variants[j].RestockExpectedAt = at
+			}
+		}
+	}
+}
+
+// restockByLocation reads the forecast out of its own expansion record; a
+// missing record or field answers nil, which is no date.
+func restockByLocation(record query.Record) map[string]time.Time {
+	if record == nil {
+		return nil
+	}
+	byLocation, ok := record[foreignRestockByLocation].(map[string]time.Time)
+	if !ok {
+		return nil
+	}
+
+	return byLocation
+}
+
+// earliestRestock is the first moment over the warehouses the read counts:
+// the served ones when the read is narrowed, every one when it is not.
+func earliestRestock(byLocation map[string]time.Time, served map[string]bool) *time.Time {
+	var earliest *time.Time
+	for locationID, at := range byLocation {
+		if len(served) > 0 && !served[locationID] {
+			continue
+		}
+		if earliest == nil || at.Before(*earliest) {
+			at := at.UTC()
+			earliest = &at
+		}
+	}
+
+	return earliest
+}
+
 // asRecord converts an expansion result into a record; if there is no match it
 // returns nil.
 //
@@ -1034,7 +1205,7 @@ func asRecord(v any) query.Record {
 // own: the variants' products go through the storefront's one path, so a
 // variant whose product is unpublished or invisible in the channels is absent,
 // and the badge is the one a shopper sees. The products are read [MaxLimit] at
-// a time.
+// a time, without the restock dates the badge does not need (ADR 0399).
 func (s *Service) VariantsInStock(ctx context.Context, variantIDs, salesChannelIDs []string) (map[string]bool, error) {
 	wanted, err := uniqueIDs("variant_ids", variantIDs)
 	if err != nil {
@@ -1061,8 +1232,8 @@ func (s *Service) VariantsInStock(ctx context.Context, variantIDs, salesChannelI
 		}
 	}
 	for start := 0; start < len(productIDs); start += MaxLimit {
-		products, err := s.StoreProductsByIDs(ctx, productIDs[start:min(start+MaxLimit, len(productIDs))],
-			salesChannelIDs)
+		products, err := s.storeProductsByIDs(ctx, productIDs[start:min(start+MaxLimit, len(productIDs))],
+			salesChannelIDs, false)
 		if err != nil {
 			return nil, err
 		}

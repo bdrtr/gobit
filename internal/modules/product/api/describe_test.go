@@ -272,8 +272,9 @@ func filledStoreVariant() service.StoreVariant {
 			OptionValues:     []models.OptionValue{{}},
 			BundleComponents: []models.BundleComponent{{VariantID: "variant_2", Quantity: 2}},
 		},
-		PriceSet:      query.Record{"id": "pset_1"},
-		InventoryItem: query.Record{"id": "iitem_1"},
+		PriceSet:          query.Record{"id": "pset_1"},
+		InventoryItem:     query.Record{"id": "iitem_1"},
+		RestockExpectedAt: &now,
 	}
 }
 

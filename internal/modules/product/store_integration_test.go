@@ -353,7 +353,10 @@ func TestStoreListingReturnsPriceAndStock(t *testing.T) {
 	// The records the pricing and inventory modules produce.
 	sys.pricing.put("pset_"+firstVariantID, query.Record{"currency_code": "try", "amount": int64(19900)})
 	sys.pricing.put("pset_"+secondVariantID, query.Record{"currency_code": "try", "amount": int64(24900)})
-	sys.inventory.put("invitem_"+firstVariantID, query.Record{"stocked_quantity": int64(12)})
+	// It has units to sell, so the listing below makes no restock call (ADR
+	// 0399) and the count proves the enrichment alone.
+	sys.inventory.put("invitem_"+firstVariantID,
+		query.Record{"stocked_quantity": int64(12), "available_quantity": int64(12)})
 
 	// The bindings are established in the admin flow.
 	for _, variantID := range []string{firstVariantID, secondVariantID} {
@@ -423,6 +426,18 @@ func TestStoreListingReturnsPriceAndStock(t *testing.T) {
 	single := itemData(t, rec)
 	assert.Equal(t, productID, single["id"])
 	require.Len(t, jsonField[[]any](t, single, "variants"), 2)
+
+	// --- Nothing left to sell ---
+	// A counted variant with nothing to sell asks for its restock date (ADR
+	// 0399): one more call for the page, not one per variant.
+	sys.inventory.put("invitem_"+firstVariantID,
+		query.Record{"stocked_quantity": int64(12), "available_quantity": int64(0)})
+	inventoryCallsBefore = sys.inventory.calls()
+	rec = sys.storeChannelRequest(t,
+		storeCatalogPath(channel, "?collection_id="+collection.ID), []string{channel})
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	assert.Equal(t, inventoryCallsBefore+2, sys.inventory.calls(),
+		"the enrichment and the restock date are one call each")
 }
 
 // TestStoreListingHidesDraftProducts verifies against the real database that

@@ -72,8 +72,9 @@ const (
 	// CodeItemHasReservations reports that an item with an active reservation was
 	// asked to be deleted.
 	CodeItemHasReservations = "inventory_item_has_reservations"
-	// CodeLocationNotEmpty reports that a location still holding stock or a live
-	// promise was asked to close (ADR 0055).
+	// CodeLocationNotEmpty reports that a location still holding stock, a live
+	// promise or an expected supplier receipt was asked to close (ADR 0055,
+	// ADR 0399).
 	CodeLocationNotEmpty = "inventory_location_not_empty"
 	// CodeLocationClosed reports that stock was written at a closed location.
 	CodeLocationClosed = "inventory_location_closed"
@@ -83,6 +84,12 @@ const (
 	// CodeBackorderMismatch reports a second claim for a line naming another
 	// quantity than the first (ADR 0392).
 	CodeBackorderMismatch = "inventory_backorder_mismatch"
+	// CodeItemExpectsUnits reports that an item a supplier receipt is still
+	// expected for was asked to be deleted (ADR 0399).
+	CodeItemExpectsUnits = "inventory_item_expects_units"
+	// CodeSupplierReceiptNotExpected reports a receive or a cancel of a receipt
+	// that is no longer expected and that the repeat does not match (ADR 0399).
+	CodeSupplierReceiptNotExpected = "inventory_supplier_receipt_not_expected"
 	// CodeInconsistentState reports that the reserved quantity and the
 	// reservation records do not match each other; it does not occur in normal
 	// operation.
@@ -244,7 +251,9 @@ func (s *Service) GetStockLocation(ctx context.Context, id string) (models.Stock
 //
 // An ACTIVE RESERVATION refuses the close in the same way, and for the reason
 // [Service.DeleteInventoryItem] gives: closing over a promise would strand a
-// quantity a sale is still waiting for. Release or confirm them first.
+// quantity a sale is still waiting for. Release or confirm them first. And so
+// does a supplier receipt the location still expects (ADR 0399): receive or
+// cancel it first.
 //
 // Closing an already closed location is not an error and does not move the
 // first closing moment: a decommission retried after a network failure has to
@@ -260,7 +269,7 @@ func (s *Service) CloseStockLocation(ctx context.Context, id string) (models.Sto
 
 	var out models.StockLocation
 	err := s.store.WithTx(ctx, func(ctx context.Context) error {
-		// The EXCLUSIVE lock is what makes the two counts below mean anything:
+		// The EXCLUSIVE lock is what makes the three counts below mean anything:
 		// every flow that writes stock holds this row shared first, so none of
 		// them can commit between the counting and the stamp.
 		location, err := s.store.LockStockLocation(ctx, id)
@@ -290,6 +299,18 @@ func (s *Service) CloseStockLocation(ctx context.Context, id string) (models.Sto
 			return errors.Conflict(CodeLocationNotEmpty,
 				"the location cannot be closed: %d reservations are still active there; "+
 					"release or confirm them first (%s)", active, id)
+		}
+
+		// Recording a receipt holds this row shared, so one recorded while the
+		// close waited is counted here (ADR 0399).
+		expected, err := s.store.CountExpectedSupplierReceiptsAtLocation(ctx, id)
+		if err != nil {
+			return err
+		}
+		if expected > 0 {
+			return errors.Conflict(CodeLocationNotEmpty,
+				"the location cannot be closed: %d supplier receipts are still expected there; "+
+					"receive or cancel them first (%s)", expected, id)
 		}
 
 		out, err = s.store.CloseStockLocation(ctx, id)
@@ -397,12 +418,14 @@ func (s *Service) ListInventoryItemsByIDs(ctx context.Context, ids []string) ([]
 // If the item has an ACTIVE reservation it returns errors.Conflict: deleting
 // would mean silently destroying promised stock. An item an order still waits
 // for is refused the same way ([CodeItemOwesOrders]): its claim could never be
-// filled. The check and the deletion are
-// done in the same transaction and under the EXCLUSIVE lock of the item; a
-// reservation slipping in between cannot dodge the check, because
-// [Service.Reserve] also starts its transaction by locking the item in shared
-// mode: either it finishes before the deletion and shows up in the count, or it
-// waits until the deletion is over and finds the item deleted.
+// filled. So is an item a supplier receipt is still expected for
+// ([CodeItemExpectsUnits]): its units could never be received. The checks and
+// the deletion are done in the same transaction and under the EXCLUSIVE lock of
+// the item; a reservation, a claim or a receipt slipping in between cannot
+// dodge the check, because [Service.Reserve], [Service.ClaimBackorder] and
+// [Service.RecordSupplierReceipt] also start their transactions by locking the
+// item in shared mode: either it finishes before the deletion and shows up in
+// the count, or it waits until the deletion is over and finds the item deleted.
 func (s *Service) DeleteInventoryItem(ctx context.Context, id string) error {
 	if err := requireText("id", id); err != nil {
 		return err
@@ -429,6 +452,17 @@ func (s *Service) DeleteInventoryItem(ctx context.Context, id string) error {
 		if owed > 0 {
 			return errors.Conflict(CodeItemOwesOrders,
 				"the item cannot be deleted: %d orders still wait for its units (%s)", owed, id)
+		}
+		// Recording a receipt takes the item's lock shared, so one recorded
+		// while this waited is counted here (ADR 0399).
+		expected, err := s.store.CountExpectedSupplierReceipts(ctx, id)
+		if err != nil {
+			return err
+		}
+		if expected > 0 {
+			return errors.Conflict(CodeItemExpectsUnits,
+				"the item cannot be deleted: %d supplier receipts are still expected for it; "+
+					"receive or cancel them first (%s)", expected, id)
 		}
 		if err := s.store.SoftDeleteInventoryLevelsByItem(ctx, id); err != nil {
 			return err

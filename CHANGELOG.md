@@ -11,6 +11,22 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **Stock on its way has a date the storefront shows** (ADR 0399, D257, D258).
+  **For integrators:** `POST /admin/v1/inventory-items/{id}/supplier-receipts`
+  records units a supplier owes an open warehouse (`location_id`, `quantity`,
+  `expected_at` in RFC 3339 with its offset, optional `reference`); `GET` lists
+  them in the order they are expected (`?status=expected|received|canceled`);
+  `POST …/{receipt_id}/receive` with the counted `quantity` (required) and
+  `POST …/{receipt_id}/cancel` close one, a repeat answering the receipt
+  unchanged and a conflicting one 409 `inventory_supplier_receipt_not_expected`.
+  The ledger gains a seventh `reason`, `supplier_receipt`, and every movement
+  may carry `reference`. A storefront variant with nothing to sell may carry
+  `restock_expected_at` (GraphQL `restockExpectedAt`). The storefront's
+  `inventory_item` no longer carries `available_by_location`, and a Query
+  caller naming no fields no longer receives it. Closing a location that
+  expects a receipt answers 409 `inventory_location_not_empty`; deleting an
+  item that expects one, 409 `inventory_item_expects_units`. **For operators:**
+  inventory migration 000009.
 - **A cart is priced in the sales channel it was opened in** (ADR 0397, D253).
   **For API consumers:** a cart opened through a publishable key bound to
   exactly one channel records it as `sales_channel_id`, and every price and

@@ -47,7 +47,7 @@ import (
 //     text fields beside it, ARE declared.
 //   - requires_shipping, quantity, status and a reservation's purpose are a
 //     boolean, a count and CHECK-constrained enums: a sentence about somebody
-//     cannot land in any of them. inventory_movements.reason is the same shape as status — four
+//     cannot land in any of them. inventory_movements.reason is the same shape as status — seven
 //     values, held to them by a CHECK — and delta and stocked_after are counts.
 //   - inventory_movements is exempt WHOLE, and it is the table where that is
 //     worth arguing rather than asserting. It is the ledger that explains the
@@ -56,7 +56,8 @@ import (
 //     and the other movements come from a flow with nobody behind them. Its
 //     only free field would have been an actor or a note, and it has neither —
 //     a row is ids (its item, its location, its reservation, and the order,
-//     cancellation or order line it moved for), an enum and two numbers. The
+//     cancellation, order line or supplier receipt it moved for), an enum and
+//     two numbers. The
 //     reference and the line were added by ALTER statements this audit's own
 //     scanner never matched, and went unjudged until D190.
 //   - inventory_backorders is exempt WHOLE, for the ledger's reason. A claim
@@ -65,6 +66,11 @@ import (
 //     it — two counts, a CHECK-constrained status and a queue position. Like
 //     the reservation's line, the order's ids resolve to nobody once the order
 //     module's own columns are anonymized.
+//   - inventory_supplier_receipts is exempt but for its reference (ADR 0399).
+//     A receipt is ids — its item and its warehouse — two counts, a moment
+//     the units are expected, a CHECK-constrained status and the moments it
+//     was received or canceled. Its reference is free text the shop types and
+//     is declared Open in the module's PersonalData.
 //   - The timestamps describe the record's state and are true of the row whether
 //     or not anybody is behind it.
 var notPersonalColumns = map[string][]string{
@@ -90,6 +96,10 @@ var notPersonalColumns = map[string][]string{
 		"id", "inventory_item_id", "order_id", "order_line_item_id", "quantity",
 		"withdrawn_quantity", "location_ids", "status", "reservation_id",
 		"filled_location_id", "seq", "created_at", "updated_at",
+	},
+	"inventory_supplier_receipts": {
+		"id", "inventory_item_id", "location_id", "quantity", "expected_at", "status",
+		"received_quantity", "received_at", "canceled_at", "created_at", "updated_at",
 	},
 }
 

@@ -401,27 +401,37 @@ func TestAnUnknownItemHasNoHistoryAndSaysSo(t *testing.T) {
 	assert.True(t, errors.HasKind(err, errors.KindNotFound))
 }
 
-// TestAReasonIsOneOfFour pins the closed set, in the type as well as in the
-// schema's CHECK. An open string would let a caller write its own vocabulary
-// into the one column an operator reads the table by.
-func TestAReasonIsOneOfFour(t *testing.T) {
-	valid := []models.MovementReason{
-		models.MovementStockCount, models.MovementAdjustment,
-		models.MovementSale, models.MovementReturnRestock,
+// TestEveryReasonSaysWhoAndWhatItNames pins the closed set, in the type as
+// well as in the schema's CHECK, and the three things each reason answers: who
+// is behind it (the audit log holds a caller), what it names (a reference), and
+// whether it leaves against a promise (a reservation). An open string would let
+// a caller write its own vocabulary into the one column an operator reads the
+// table by, and a predicate that forgot a reason would publish the wrong answer
+// for every row of it (ADR 0068, ADR 0399).
+func TestEveryReasonSaysWhoAndWhatItNames(t *testing.T) {
+	cases := []struct {
+		reason                models.MovementReason
+		fromAdmin, references bool
+		promise               bool
+	}{
+		{models.MovementStockCount, true, false, false},
+		{models.MovementAdjustment, true, false, false},
+		{models.MovementSale, false, true, true},
+		{models.MovementReturnRestock, false, false, false},
+		{models.MovementReplacement, false, false, true},
+		{models.MovementCancellation, false, true, false},
+		{models.MovementSupplierReceipt, true, true, false},
 	}
-	for _, reason := range valid {
-		assert.True(t, reason.Valid(), "%q is one of the four", reason)
+	for _, tc := range cases {
+		assert.True(t, tc.reason.Valid(), "%q is one of the seven", tc.reason)
+		assert.Equal(t, tc.fromAdmin, tc.reason.FromAdminRequest(), "%q: from an admin request", tc.reason)
+		assert.Equal(t, tc.references, tc.reason.CarriesAReference(), "%q: carries a reference", tc.reason)
+		assert.Equal(t, tc.promise, tc.reason.LeavesAgainstAPromise(), "%q: names a reservation", tc.reason)
 	}
 
 	assert.False(t, models.MovementReason("").Valid())
 	assert.False(t, models.MovementReason("transfer").Valid())
-
-	// The mapping the reader publishes: which reasons have a person behind them
-	// and therefore a row in audit_log naming the caller.
-	assert.True(t, models.MovementStockCount.FromAdminRequest())
-	assert.True(t, models.MovementAdjustment.FromAdminRequest())
-	assert.False(t, models.MovementSale.FromAdminRequest())
-	assert.False(t, models.MovementReturnRestock.FromAdminRequest())
+	assert.False(t, models.MovementReason("arrival").Valid())
 }
 
 // hoursAgo is a moment in the past, so a fixture's ordering is deliberate

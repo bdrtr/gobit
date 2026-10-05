@@ -27,8 +27,12 @@ type fakeInventory struct {
 	levels     []models.InventoryLevel
 	movements  []models.Movement
 	backorders []models.Backorder
-	count      int64
-	err        error
+	receipt    models.SupplierReceipt
+	receipts   []models.SupplierReceipt
+	// receivedLevel is the level a receive answers; nil is none.
+	receivedLevel *models.InventoryLevel
+	count         int64
+	err           error
 
 	// The recorded call details.
 	lastLocationInput  service.ListStockLocationsInput
@@ -40,6 +44,10 @@ type fakeInventory struct {
 	lastDelta          int64
 	lastMovementInput  service.ListMovementsInput
 	lastBackorderInput service.ListBackordersInput
+	lastReceiptInput   service.RecordSupplierReceiptInput
+	lastReceiptList    service.ListSupplierReceiptsInput
+	lastReceiptID      string
+	lastReceived       int64
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -123,6 +131,36 @@ func (f *fakeInventory) ListBackorders(
 ) ([]models.Backorder, int64, error) {
 	f.lastBackorderInput = in
 	return f.backorders, f.count, f.err
+}
+
+// RecordSupplierReceipt records the receipt input the handler assembled.
+func (f *fakeInventory) RecordSupplierReceipt(
+	_ context.Context, in service.RecordSupplierReceiptInput,
+) (models.SupplierReceipt, error) {
+	f.lastReceiptInput = in
+	return f.receipt, f.err
+}
+
+// ListSupplierReceipts records the receipt listing input.
+func (f *fakeInventory) ListSupplierReceipts(
+	_ context.Context, in service.ListSupplierReceiptsInput,
+) ([]models.SupplierReceipt, int64, error) {
+	f.lastReceiptList = in
+	return f.receipts, f.count, f.err
+}
+
+// ReceiveSupplierReceipt records the ids and the count received.
+func (f *fakeInventory) ReceiveSupplierReceipt(
+	_ context.Context, itemID, receiptID string, quantity int64,
+) (models.SupplierReceipt, *models.InventoryLevel, error) {
+	f.lastID, f.lastReceiptID, f.lastReceived = itemID, receiptID, quantity
+	return f.receipt, f.receivedLevel, f.err
+}
+
+// CancelSupplierReceipt records the ids canceled.
+func (f *fakeInventory) CancelSupplierReceipt(_ context.Context, itemID, receiptID string) (models.SupplierReceipt, error) {
+	f.lastID, f.lastReceiptID = itemID, receiptID
+	return f.receipt, f.err
 }
 
 // The helpers these tests use live beside the files that introduced them:

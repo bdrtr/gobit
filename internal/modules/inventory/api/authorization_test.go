@@ -119,6 +119,18 @@ var writeEndpoints = map[string]struct {
 	"adjusting a level": {
 		http.MethodPost, "/admin/v1/inventory-items/iitem_1/levels/sloc_1/adjust", `{"delta":3}`,
 	},
+	// Units a supplier owes are recorded, received and canceled as writes: a
+	// receipt changes the stock the shop sells (ADR 0399).
+	"recording a supplier receipt": {
+		http.MethodPost, "/admin/v1/inventory-items/iitem_1/supplier-receipts",
+		`{"location_id":"sloc_1","quantity":5,"expected_at":"2026-11-01T09:00:00Z"}`,
+	},
+	"receiving a supplier receipt": {
+		http.MethodPost, "/admin/v1/inventory-items/iitem_1/supplier-receipts/invsup_1/receive", `{"quantity":5}`,
+	},
+	"canceling a supplier receipt": {
+		http.MethodPost, "/admin/v1/inventory-items/iitem_1/supplier-receipts/invsup_1/cancel", "",
+	},
 }
 
 // readEndpoints are all the admin endpoints that ask for [api.ScopeRead].
@@ -137,6 +149,8 @@ var readEndpoints = map[string]string{
 	// The queue of orders waiting for the item's units is READ authority for
 	// the ledger's reason (ADR 0392).
 	"backorder queue": "/admin/v1/inventory-items/iitem_1/backorders",
+	// The units on their way are READ authority for the same reason (ADR 0399).
+	"supplier receipts": "/admin/v1/inventory-items/iitem_1/supplier-receipts",
 }
 
 // TestWriteEndpointRejectsNarrowScopedCaller proves that the write endpoints

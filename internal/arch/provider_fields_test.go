@@ -109,14 +109,19 @@ var panelDecodedProviderFields = map[string]string{
 // catalogReadForeignFields names every field the CATALOG reads out of another
 // module's loose record and can be bound to a published constant.
 //
-// One entry, and ADR 0040 grants exactly that one: the decision says in as many
-// words that it "does not license a second". The map is what turns that sentence
-// into something a test can fail on.
+// ADR 0040 granted the first entry and said in as many words that it "does not
+// license a second"; ADR 0093 licensed the breakdown and ADR 0399 the restock
+// forecast, each read only to compute an answer the catalog publishes in its
+// own words. The map is what turns those sentences into something a test can
+// fail on.
 var catalogReadForeignFields = map[string]string{
 	"available_quantity": "inventory",
 	// The same total broken down by warehouse, read only while a sales channel
 	// narrows the storefront to the warehouses it ships from (ADR 0092).
 	"available_by_location": "inventory",
+	// The restock forecast per warehouse, read only for the variants a page
+	// shows with nothing to sell (ADR 0399).
+	"restock_by_location": "inventory",
 }
 
 // catalogUnboundForeignFields names the fields the catalog reads that NO module

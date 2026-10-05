@@ -198,3 +198,4 @@ truth: a report says what was true on the day it was taken.
 | [Three rule matchers — measured 2026-10-05](0396-three-rule-matchers.md) | 119 |
 | [What a cart is priced in — measured 2026-10-05](0397-what-a-cart-is-priced-in.md) | 123 |
 | [The ground and the assembly — measured 2026-10-05](0398-the-ground-and-the-assembly.md) | 112 |
+| [Stock on its way — measured 2026-10-05](0399-stock-on-its-way.md) | 198 |

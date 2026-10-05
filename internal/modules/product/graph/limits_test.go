@@ -42,7 +42,7 @@ const allProductFields = `
   createdAt updatedAt inStock
   variants {
     id productId title sku barcode ean upc manageInventory allowBackorder
-    weight rank metadata createdAt updatedAt inStock priceSet inventoryItem
+    weight rank metadata createdAt updatedAt inStock restockExpectedAt priceSet inventoryItem
     optionValues { id optionId value rank optionTitle }
     bundleComponents { variantId quantity }
   }
@@ -863,23 +863,24 @@ func TestFieldRepetitionCountsDifferentTypesSeparately(t *testing.T) {
 // ADR 0219's "attributes" moved the four rows that select every field again,
 // by 250 per product and 250 per page product: from 2,390 / 6,440 / 28,880 /
 // 140,400, and the default page stays under the ceiling as limit=100 stays over.
-// ADR 0234's "bundleComponents" moved them by 200 per product, to the values
-// below; TestTheComplexityTableCopiesMatchThePinnedOne now holds the copies to
-// them (D158).
+// ADR 0234's "bundleComponents" moved them by 200 per product;
+// TestTheComplexityTableCopiesMatchThePinnedOne now holds the copies to them
+// (D158). ADR 0399's "restockExpectedAt" moved them by 10 per product, to the
+// values below.
 var calibrationDocuments = map[string]struct {
 	document   string
 	complexity int
 }{
 	"product page (PDP, everything included)": {
 		document:   `{ product(handle: "t-shirt") {` + allProductFields + `} }`,
-		complexity: 2840,
+		complexity: 2850,
 	},
 	"product page with its three related lists": {
 		document: `{ product(handle: "t-shirt") {` + allProductFields +
 			` crossSell: related(type: cross_sell) ` + relatedCard +
 			` upSell: related(type: up_sell) ` + relatedCard +
 			` substitutes: related(type: substitute) ` + relatedCard + ` } }`,
-		complexity: 6890,
+		complexity: 6900,
 	},
 	"related on every product of a page of 50": {
 		document:   `{ products(limit: 50) { items { id related(type: cross_sell) { id } } } }`,
@@ -896,11 +897,11 @@ var calibrationDocuments = map[string]struct {
 	},
 	"ALL fields on the default page (20 products x whole tree)": {
 		document:   `{ products { count offset limit items {` + allProductFields + `} } }`,
-		complexity: 37880,
+		complexity: 38080,
 	},
 	"ALL fields with limit=100": {
 		document:   `{ products(limit: 100) { count offset limit items {` + allProductFields + `} } }`,
-		complexity: 185400,
+		complexity: 186400,
 	},
 	"products { count } with 400 aliases": {
 		document:   aliasedStacking(400),

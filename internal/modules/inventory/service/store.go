@@ -39,9 +39,10 @@ import (
 // takes in advance, in the right place, the implicit item lock that the
 // reservation INSERT is going to ask for through its foreign key anyway.
 //
-// WHICH FLOWS TAKE WHICH. [Service.SetInventoryLevel] and
-// [Service.AdjustInventory] take all three. [Service.CloseStockLocation] takes
-// the location alone, exclusively. [Service.Reserve],
+// WHICH FLOWS TAKE WHICH. [Service.SetInventoryLevel],
+// [Service.AdjustInventory] and [Service.ReceiveSupplierReceipt] take all three;
+// [Service.RecordSupplierReceipt] takes the location and the item, shared.
+// [Service.CloseStockLocation] takes the location alone, exclusively. [Service.Reserve],
 // [Service.ReleaseReservation] and [Service.ConfirmReservation] take the item
 // and the level and NOT the location.
 //
@@ -65,6 +66,12 @@ import (
 // the level and locks the claims waiting there that fit, in queue order; a
 // settlement locks one line's claims, commits, and only then drains, so neither
 // holds what the other waits for.
+//
+// A SUPPLIER RECEIPT (`inventory_supplier_receipts`, ADR 0399) comes after the
+// level too. A receipt holds the location, the item (exclusively, since it may
+// open the level) and the level, then locks the receipt. A cancel locks the
+// receipt alone and writes no stock. The close and the item delete only COUNT
+// receipts, under their own exclusive locks, which recording waits on.
 type Store interface {
 	// WithTx runs fn in a single transaction; the transaction is rolled back if
 	// fn returns an error.
@@ -205,4 +212,34 @@ type Store interface {
 	ListBackorders(ctx context.Context, filter models.BackorderFilter) ([]models.Backorder, int64, error)
 	// OpenStockLocationIDs lists every open location.
 	OpenStockLocationIDs(ctx context.Context) ([]string, error)
+
+	// CreateSupplierReceipt records an expected supplier receipt.
+	CreateSupplierReceipt(ctx context.Context, r models.SupplierReceipt) (models.SupplierReceipt, error)
+	// GetSupplierReceipt returns the receipt without locking it, or NotFound.
+	GetSupplierReceipt(ctx context.Context, id string) (models.SupplierReceipt, error)
+	// LockSupplierReceipt locks the receipt and returns its current state, or
+	// NotFound.
+	LockSupplierReceipt(ctx context.Context, id string) (models.SupplierReceipt, error)
+	// ReceiveSupplierReceipt closes an expected receipt with the count and the
+	// moment of the supplier_receipt movement naming it, and returns how many
+	// rows it changed.
+	ReceiveSupplierReceipt(ctx context.Context, id string) (int64, error)
+	// CancelSupplierReceipt closes an expected receipt as canceled and returns
+	// how many rows it changed.
+	CancelSupplierReceipt(ctx context.Context, id string) (int64, error)
+	// ListSupplierReceipts pages an item's receipts by expected moment; the
+	// second value is the total.
+	ListSupplierReceipts(ctx context.Context, filter models.SupplierReceiptFilter) ([]models.SupplierReceipt, int64, error)
+	// CountExpectedSupplierReceipts returns how many of the item's receipts are
+	// still expected.
+	CountExpectedSupplierReceipts(ctx context.Context, itemID string) (int64, error)
+	// CountExpectedSupplierReceiptsAtLocation returns how many receipts the
+	// location still expects.
+	CountExpectedSupplierReceiptsAtLocation(ctx context.Context, locationID string) (int64, error)
+	// ExpectedSupplierReceiptsOfItems returns the items' receipts still expected
+	// and not yet due, unlocked; the forecast puts them in its own order.
+	ExpectedSupplierReceiptsOfItems(ctx context.Context, itemIDs []string) ([]models.SupplierReceipt, error)
+	// WaitingBackordersOfItems returns the items' waiting claims, unlocked; the
+	// forecast puts them in queue order itself.
+	WaitingBackordersOfItems(ctx context.Context, itemIDs []string) ([]models.Backorder, error)
 }

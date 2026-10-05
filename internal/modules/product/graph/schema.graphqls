@@ -571,6 +571,17 @@ type Variant {
   holds.
   """
   inStock: Boolean!
+  """
+  When units are expected on sale again, for a counted variant with nothing to
+  sell at the storefront's warehouses (ADR 0399).
+
+  It is the first moment an expected supplier receipt leaves units for sale
+  at one of the warehouses the request counts, after the backordered orders
+  waiting for them take theirs; null when none is expected to. It is an
+  estimate, not a promise: the checkout does not read it and no order line
+  carries it. A bundle carries none.
+  """
+  restockExpectedAt: Time
   "The values that place the variant in the option space (e.g. Size: S)."
   optionValues: [OptionValue!]!
   """

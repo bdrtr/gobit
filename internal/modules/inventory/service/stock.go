@@ -78,7 +78,7 @@ func (s *Service) setInventoryLevel(
 				return err
 			}
 			created, createErr := s.openLevel(ctx, itemID, locationID, stockedQty,
-				models.MovementStockCount)
+				models.MovementStockCount, "")
 			if createErr != nil {
 				return createErr
 			}
@@ -137,7 +137,9 @@ func stockUnmoved(read *int64, current int64, locationID string) error {
 // from a customer are the same arithmetic and a different fact, so they have
 // their own entry point ([Service.RestockInventory]) rather than a reason
 // parameter on this one: a reason a caller passes is a reason a caller can get
-// wrong, and the admin endpoint would have to invent one for every request.
+// wrong, and the admin endpoint would have to invent one for every request. And
+// goods a supplier delivers are received through their receipt
+// ([Service.ReceiveSupplierReceipt]).
 func (s *Service) AdjustInventory(ctx context.Context, itemID, locationID string, delta int64) (models.InventoryLevel, error) {
 	if delta == 0 {
 		return models.InventoryLevel{}, errors.Invalid(CodeInvalidInput, "delta cannot be zero")

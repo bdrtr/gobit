@@ -222,25 +222,26 @@ type ComplexityRoot struct {
 	}
 
 	Variant struct {
-		AllowBackorder   func(childComplexity int) int
-		Barcode          func(childComplexity int) int
-		BundleComponents func(childComplexity int) int
-		CreatedAt        func(childComplexity int) int
-		EAN              func(childComplexity int) int
-		ID               func(childComplexity int) int
-		InStock          func(childComplexity int) int
-		InventoryItem    func(childComplexity int) int
-		ManageInventory  func(childComplexity int) int
-		Metadata         func(childComplexity int) int
-		OptionValues     func(childComplexity int) int
-		PriceSet         func(childComplexity int) int
-		ProductID        func(childComplexity int) int
-		Rank             func(childComplexity int) int
-		SKU              func(childComplexity int) int
-		Title            func(childComplexity int) int
-		UPC              func(childComplexity int) int
-		UpdatedAt        func(childComplexity int) int
-		Weight           func(childComplexity int) int
+		AllowBackorder    func(childComplexity int) int
+		Barcode           func(childComplexity int) int
+		BundleComponents  func(childComplexity int) int
+		CreatedAt         func(childComplexity int) int
+		EAN               func(childComplexity int) int
+		ID                func(childComplexity int) int
+		InStock           func(childComplexity int) int
+		InventoryItem     func(childComplexity int) int
+		ManageInventory   func(childComplexity int) int
+		Metadata          func(childComplexity int) int
+		OptionValues      func(childComplexity int) int
+		PriceSet          func(childComplexity int) int
+		ProductID         func(childComplexity int) int
+		Rank              func(childComplexity int) int
+		RestockExpectedAt func(childComplexity int) int
+		SKU               func(childComplexity int) int
+		Title             func(childComplexity int) int
+		UPC               func(childComplexity int) int
+		UpdatedAt         func(childComplexity int) int
+		Weight            func(childComplexity int) int
 	}
 }
 
@@ -1139,6 +1140,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.ComplexityRoot.Variant.Rank(childComplexity), true
+	case "Variant.restockExpectedAt":
+		if e.ComplexityRoot.Variant.RestockExpectedAt == nil {
+			break
+		}
+
+		return e.ComplexityRoot.Variant.RestockExpectedAt(childComplexity), true
 	case "Variant.sku":
 		if e.ComplexityRoot.Variant.SKU == nil {
 			break
@@ -1631,6 +1638,8 @@ func (ec *executionContext) childFields_Variant(ctx context.Context, field graph
 		return ec.fieldContext_Variant_updatedAt(ctx, field)
 	case "inStock":
 		return ec.fieldContext_Variant_inStock(ctx, field)
+	case "restockExpectedAt":
+		return ec.fieldContext_Variant_restockExpectedAt(ctx, field)
 	case "optionValues":
 		return ec.fieldContext_Variant_optionValues(ctx, field)
 	case "bundleComponents":
@@ -5618,6 +5627,29 @@ func (ec *executionContext) fieldContext_Variant_inStock(_ context.Context, fiel
 	return graphql.NewScalarFieldContext("Variant", field, false, false, errors.New("field of type Boolean does not have child fields"))
 }
 
+func (ec *executionContext) _Variant_restockExpectedAt(ctx context.Context, field graphql.CollectedField, obj *service.StoreVariant) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return ec.fieldContext_Variant_restockExpectedAt(ctx, field)
+		},
+		func(ctx context.Context) (any, error) {
+			return obj.RestockExpectedAt, nil
+		},
+		nil,
+		func(ctx context.Context, selections ast.SelectionSet, v *time.Time) graphql.Marshaler {
+			return ec.marshalOTime2ᚖtimeᚐTime(ctx, selections, v)
+		},
+		true,
+		false,
+	)
+}
+func (ec *executionContext) fieldContext_Variant_restockExpectedAt(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	return graphql.NewScalarFieldContext("Variant", field, false, false, errors.New("field of type Time does not have child fields"))
+}
+
 func (ec *executionContext) _Variant_optionValues(ctx context.Context, field graphql.CollectedField, obj *service.StoreVariant) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -8491,6 +8523,11 @@ func (ec *executionContext) _Variant(ctx context.Context, sel ast.SelectionSet, 
 			if out.Values[i] == graphql.Null {
 				atomic.AddUint32(&out.Invalids, 1)
 			}
+		case "restockExpectedAt":
+			out.Values[i] = ec._Variant_restockExpectedAt(ctx, field, obj)
+			if out.Values[i] == graphql.RequiredNull {
+				atomic.AddUint32(&out.Invalids, 1)
+			}
 		case "optionValues":
 			out.Values[i] = ec._Variant_optionValues(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
@@ -9961,6 +9998,24 @@ func (ec *executionContext) marshalOString2ᚖstring(ctx context.Context, sel as
 	_ = sel
 	_ = ctx
 	res := graphql.MarshalString(*v)
+	return res
+}
+
+func (ec *executionContext) unmarshalOTime2ᚖtimeᚐTime(ctx context.Context, v any) (*time.Time, error) {
+	if v == nil {
+		return nil, nil
+	}
+	res, err := graphql.UnmarshalTime(v)
+	return &res, graphql.ErrorOnPath(ctx, err)
+}
+
+func (ec *executionContext) marshalOTime2ᚖtimeᚐTime(ctx context.Context, sel ast.SelectionSet, v *time.Time) graphql.Marshaler {
+	if v == nil {
+		return graphql.Null
+	}
+	_ = sel
+	_ = ctx
+	res := graphql.MarshalTime(*v)
 	return res
 }
 

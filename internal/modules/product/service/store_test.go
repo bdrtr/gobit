@@ -83,12 +83,13 @@ func TestListStoreProductsIncludesPriceAndInventory(t *testing.T) {
 		"the field should stay empty on a variant with no stock link")
 }
 
-// TestListStoreProductsUsesSingleGraphCall verifies that the enrichment is done
-// with a SINGLE Query call and that the spec follows the link contract.
+// TestListStoreProductsMakesOneEnrichmentCall verifies that the enrichment is
+// done with a SINGLE Query call and that the spec follows the link contract.
 //
 // This test is the proof that there is no N+1: for two products and two variants
-// Query is called exactly once.
-func TestListStoreProductsUsesSingleGraphCall(t *testing.T) {
+// the enrichment is one call, and the restock dates (ADR 0399) one more for the
+// variants with nothing to sell together.
+func TestListStoreProductsMakesOneEnrichmentCall(t *testing.T) {
 	t.Parallel()
 
 	fx := newStoreFixture(t)
@@ -96,9 +97,16 @@ func TestListStoreProductsUsesSingleGraphCall(t *testing.T) {
 	_, err := fx.svc.ListStoreProducts(context.Background(), service.StoreListOptions{})
 	require.NoError(t, err)
 
-	assert.Equal(t, 1, fx.graph.callCount(), "whatever the number of variants, a single graph call should be made")
+	// The shirt's record carries no available quantity, so it has nothing to
+	// sell and asks for its restock date in ONE more call (ADR 0399); the
+	// trousers, linked to no item, do not ask.
+	require.Equal(t, 2, fx.graph.callCount(),
+		"whatever the number of variants, the enrichment is a single graph call and the restock one more")
+	restock, ok := fx.graph.lastSpec(t).Filters["ids"].([]string)
+	require.True(t, ok)
+	assert.Equal(t, []string{fx.products[0].Variants[0].ID}, restock)
 
-	spec := fx.graph.lastSpec(t)
+	spec := fx.graph.specs[0]
 	assert.Equal(t, service.EntityVariant, spec.Entity,
 		"the root of the expansion is the variant; the links are made with the variant id")
 	require.Len(t, spec.Expand, 2)

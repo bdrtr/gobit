@@ -23,6 +23,8 @@ const (
 	MovementIDPrefix = "invmov_"
 	// BackorderIDPrefix is the prefix of backorder claim ids.
 	BackorderIDPrefix = "invbo_"
+	// SupplierReceiptIDPrefix is the prefix of expected supplier receipt ids.
+	SupplierReceiptIDPrefix = "invsup_"
 )
 
 // idEncoding is the padless encoding over the Crockford Base32 alphabet. A
@@ -53,6 +55,9 @@ func NewMovementID() string { return newID(MovementIDPrefix, time.Now()) }
 
 // NewBackorderID produces a new backorder claim id.
 func NewBackorderID() string { return newID(BackorderIDPrefix, time.Now()) }
+
+// NewSupplierReceiptID produces a new expected supplier receipt id.
+func NewSupplierReceiptID() string { return newID(SupplierReceiptIDPrefix, time.Now()) }
 
 // newID produces a prefixed, time-ordered and unique id.
 //

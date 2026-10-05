@@ -159,6 +159,14 @@ var variantReadExemptions = []variantReadExemption{
 			"the same request; a product outside the scope never reaches here.",
 	},
 	{
+		file:     "internal/modules/product/service/store.go",
+		function: "restockDates",
+		why: "the scope is applied at the same HIGHER step as enrichVariants': this read " +
+			"asks the restock date of the variants of the storefront page's already " +
+			"filtered products that have nothing to sell (ADR 0399), so a product outside " +
+			"the scope never reaches here; the request's warehouses narrow the answer.",
+	},
+	{
 		file:     "internal/modules/product/service/export.go",
 		function: "basePrices",
 		why: "the export is the ADMIN's whole catalog (ADR 0204): an administrator has no " +

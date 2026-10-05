@@ -4,7 +4,7 @@
 while it still holds stock or a live promise. The closed row stays readable and
 takes no stock, so availability goes on summing levels with no join.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0399](0399-stock-on-its-way-has-a-date-the-storefront-shows.md): a warehouse expecting a supplier receipt does not close
 - **Date:** 2026-09-08
 
 ## Context

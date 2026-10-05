@@ -135,11 +135,11 @@ const (
 	// fixture in graph/handler_test.go (a product with a 4 KiB description):
 	//
 	//	document                                       request   complexity   response
-	//	product page (PDP, everything included)          823 B        2,840    6.9 KiB
-	//	product page with its three related lists      1,162 B        6,890   13.2 KiB
+	//	product page (PDP, everything included)          841 B        2,850    7.0 KiB
+	//	product page with its three related lists      1,180 B        6,900   13.3 KiB
 	//	category list (24 products, card + price)        118 B        2,344   15.1 KiB
-	//	ALL fields on the default page (20 products)     832 B       37,880  138.6 KiB
-	//	ALL fields with limit=100                        844 B      185,400  693.1 KiB
+	//	ALL fields on the default page (20 products)     850 B       38,080  140.1 KiB
+	//	ALL fields with limit=100                        862 B      186,400  700.5 KiB
 	//	related on every product of a page of 50          73 B       51,600    4.6 KiB
 	//	a chain of three related lists                   118 B      113,000    1.3 KiB
 	//	products { count } with 400 aliases            9.7 KiB      408,000    8.5 KiB
@@ -154,14 +154,14 @@ const (
 	// record.
 	//
 	// 50,000 leaves comfortable room above the heaviest legitimate document
-	// (the default page, 37,880): when a field is added to the schema that
+	// (the default page, 38,080): when a field is added to the schema that
 	// query does not press against the limit. That is not a hope either --
 	// adding ADR 0040's "inStock" to the Product and Variant types on
 	// 2026-09-08 moved the row from 28,440 to 28,660, selecting typeId and
 	// altText, which the calibration had missed until ADR 0184 made it check
 	// (D134), moved it to 28,880, ADR 0219's attributes to 33,880 and ADR
-	// 0234's bundle components to 37,880: the size of step this margin is meant
-	// to absorb. A narrower ceiling would save today and force whoever adds a
+	// 0234's bundle components to 37,880 and ADR 0399's restockExpectedAt to
+	// 38,080: the size of step this margin is meant to absorb. A narrower ceiling would save today and force whoever adds a
 	// field tomorrow into a configuration change.
 	//
 	// The last two rows of the table show what the ceiling DOES NOT MEASURE and
@@ -237,7 +237,7 @@ const (
 	//
 	// 4 MiB rests on measurement: the HEAVIEST legitimate response that gets
 	// through today's ceilings (the default page x all fields, with products
-	// whose description is 4 KiB) is 138.6 KiB, that is, the limit leaves roughly
+	// whose description is 4 KiB) is 140.1 KiB, that is, the limit leaves roughly
 	// 30 times the room — a catalog with long descriptions and rich metadata
 	// stays comfortably below it. The measured attack, on the other hand, was
 	// producing 204.9 MiB; the limit cuts it by more than 50 times.

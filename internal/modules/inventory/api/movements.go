@@ -45,11 +45,17 @@ type movementDTO struct {
 	// It is derived from the reason and published anyway, because it is the
 	// answer to the question this ledger deliberately does not store: there is
 	// no actor column, and an operator reading a row should not have to
-	// remember which of four reasons has a person behind it (ADR 0068).
+	// remember which of seven reasons has a person behind it (ADR 0068).
 	FromAdminRequest bool `json:"from_admin_request"`
 	// ReservationID is the promise the units left against; it is present on a
-	// sale and absent on every other reason.
+	// sale and a replacement, absent on every other reason.
 	ReservationID string `json:"reservation_id,omitempty"`
+	// Reference is what the row was for: the order of a sale; for a
+	// cancellation, the act that put the units back -- the order's cancellation
+	// or the canceled parcel of a written-off line, or the reservation of a
+	// recalled replacement (ADR 0239); the supplier receipt of a supplier
+	// receipt (ADR 0399); absent on every other reason.
+	Reference string `json:"reference,omitempty"`
 	// Delta is the signed change; it is never zero.
 	Delta int64 `json:"delta"`
 	// StockedAfter is the physical count the change produced.
@@ -134,6 +140,7 @@ func movementPage(movements []models.Movement, limit int64) movementPageDTO {
 			Reason:           mv.Reason.String(),
 			FromAdminRequest: mv.Reason.FromAdminRequest(),
 			ReservationID:    mv.ReservationID,
+			Reference:        mv.Reference,
 			Delta:            mv.Delta,
 			StockedAfter:     mv.StockedAfter,
 			CreatedAt:        mv.CreatedAt.UTC(),
@@ -161,7 +168,7 @@ func describeMovements(d *openapi.Doc) {
 			"A RESERVATION IS NOT A MOVEMENT. Reserving and releasing change what is " +
 			"AVAILABLE, not what is present, so neither appears here; only the CONFIRM " +
 			"does, as a \"sale\", because only the confirm takes units out of the " +
-			"warehouse. A sale is the one reason that names its reservation." +
+			"warehouse. A sale and a replacement are the two reasons that name a reservation." +
 			"\n\n" +
 			"THE LEDGER BEGINS WHERE THE TABLE DOES. No opening balance was written for " +
 			"the stock that existed before it, so the deltas DO NOT SUM to the current " +
@@ -169,11 +176,16 @@ func describeMovements(d *openapi.Doc) {
 			"movement of an item names the balance the ledger inherited as its " +
 			"stocked_after minus its delta." +
 			"\n\n" +
-			"There is NO actor. Two of the four reasons come from an admin request, " +
-			"which the audit log already records together with the caller, and " +
-			"\"from_admin_request\" says which rows those are; the other two come from " +
-			"a flow with no person behind it — a checkout confirming its reservation, " +
-			"or goods received back from a customer." +
+			"There is NO actor. Three of the seven reasons come from an admin request — a " +
+			"count, an adjustment and a supplier receipt — which the audit log records " +
+			"with the caller, and \"from_admin_request\" says which rows those are; the " +
+			"other four come from a flow with no person behind it — a checkout or a filled " +
+			"backorder confirming its reservation, a replacement leaving, goods received " +
+			"back from a customer, or a written-off line or a canceled replacement parcel " +
+			"coming back. \"reference\" names what a row was for: the order of a sale; for " +
+			"a cancellation, the order's cancellation or the canceled parcel of a " +
+			"written-off line, or the reservation of a recalled replacement; the supplier " +
+			"receipt of a supplier receipt." +
 			"\n\n" +
 			"Paging is KEYSET, not offset. Send back the \"next_cursor\" of the previous " +
 			"page as \"after\"; when the response carries no cursor the listing is " +

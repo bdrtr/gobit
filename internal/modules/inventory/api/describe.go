@@ -73,6 +73,7 @@ func Describe(d *openapi.Doc) {
 	describeLevels(d)
 	describeMovements(d)
 	describeBackorders(d)
+	describeSupplierReceipts(d)
 }
 
 // describeBackorders describes the queue of orders waiting for an item's units.
@@ -132,7 +133,8 @@ func describeLocations(d *openapi.Doc) {
 	// (closed_at). It is not described as a DELETE, because a close is not a
 	// deletion (ADR 0055).
 	d.Describe(http.MethodPost, pathStockLocationClose, openapi.Operation{
-		Summary: "Closes the stock location; refused while it holds stock or an active reservation.",
+		Summary: "Closes the stock location; refused while it holds stock, an active reservation or an " +
+			"expected supplier receipt.",
 		Responses: map[string]any{
 			"200": openapi.Response("The closed location", d.Item(stockLocationDTO{})),
 		},

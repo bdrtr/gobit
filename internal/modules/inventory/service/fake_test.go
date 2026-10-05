@@ -61,6 +61,19 @@ type fakeStore struct {
 	// call, in order: how many times a write read the queue, and with what.
 	queueReads []queueRead
 
+	// receipts are the expected supplier receipts (ADR 0399).
+	receipts map[string]models.SupplierReceipt
+	// deletedItems are the items soft deleted: gone for every read, and still
+	// rows a foreign key accepts, as the table's are.
+	deletedItems map[string]bool
+	// forecastReads counts the forecast's reads of the receipts, and
+	// byLocationReads the breakdown's: how the provider is proven not to
+	// compute a per-warehouse field nobody named.
+	forecastReads, byLocationReads int
+	// now is the fake's clock for the forecast's "not yet due"; zero is the
+	// wall clock.
+	now time.Time
+
 	// failSetReservationStatus makes the status write fail, which is the LAST
 	// step of a confirm — after the level and the movement have been written.
 	// It is what proves the ledger rolls back with the count rather than
@@ -76,6 +89,8 @@ func newFakeStore() *fakeStore {
 		levels:       map[string]models.InventoryLevel{},
 		reservations: map[string]models.Reservation{},
 		backorders:   map[string]models.Backorder{},
+		receipts:     map[string]models.SupplierReceipt{},
+		deletedItems: map[string]bool{},
 	}
 }
 
@@ -109,6 +124,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		reservations map[string]models.Reservation
 		movements    []models.Movement
 		backorders   map[string]models.Backorder
+		receipts     map[string]models.SupplierReceipt
 	}{
 		items:        maps.Clone(f.items),
 		locations:    maps.Clone(f.locations),
@@ -119,6 +135,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		// transaction would claim units moved that never did (ADR 0068).
 		movements:  slices.Clone(f.movements),
 		backorders: maps.Clone(f.backorders),
+		receipts:   maps.Clone(f.receipts),
 	}
 	f.mu.Unlock()
 
@@ -127,6 +144,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(ctx context.Context) err
 		f.items, f.locations = snapshot.items, snapshot.locations
 		f.levels, f.reservations = snapshot.levels, snapshot.reservations
 		f.movements, f.backorders = snapshot.movements, snapshot.backorders
+		f.receipts = snapshot.receipts
 		f.mu.Unlock()
 		return err
 	}
@@ -355,6 +373,7 @@ func (f *fakeStore) SoftDeleteInventoryItem(_ context.Context, id string) error 
 		return errors.NotFound("inventory_item_not_found", "there is no such item: %s", id)
 	}
 	delete(f.items, id)
+	f.deletedItems[id] = true
 	return nil
 }
 
@@ -707,6 +726,18 @@ func (f *fakeStore) AppendMovement(ctx context.Context, mv models.Movement) (mod
 		return models.Movement{}, errors.Invalid("fake_movement_cancellation_sign",
 			"the schema's CHECK makes a cancellation add")
 	}
+	if mv.Reason == models.MovementSupplierReceipt {
+		if mv.Delta <= 0 {
+			return models.Movement{}, errors.Invalid("fake_movement_supplier_receipt_sign",
+				"the schema's CHECK makes a supplier receipt add")
+		}
+		for i := range f.movements {
+			if f.movements[i].Reason == models.MovementSupplierReceipt && f.movements[i].Reference == mv.Reference {
+				return models.Movement{}, errors.Conflict("fake_movement_supplier_receipt_once",
+					"the schema's unique index holds one movement per supplier receipt")
+			}
+		}
+	}
 	if (mv.Reference != "") != mv.Reason.CarriesAReference() {
 		return models.Movement{}, errors.Invalid("fake_movement_reference_mismatch",
 			"the schema's CHECKs tie a reference to the reasons that have something to "+
@@ -894,6 +925,8 @@ func paginate[T any](all []T, limit, offset int64) []T {
 
 // AvailableByItemLocation returns the same numbers broken down by LOCATION.
 //
+// It counts its reads, for the provider's default field set.
+//
 // A level with nothing sellable left is ABSENT from the map; the real query does
 // not return it as a row either. A fake that wrote a zero would leave the
 // caller's "none at this location" branch untested.
@@ -903,6 +936,7 @@ func (f *fakeStore) AvailableByItemLocation(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	f.byLocationReads++
 	wanted := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
 		wanted[id] = struct{}{}
@@ -1109,4 +1143,232 @@ func (f *fakeStore) queueReadCount() int {
 	defer f.mu.Unlock()
 
 	return len(f.queueReads)
+}
+
+// --- supplier receipts (ADR 0399) --------------------------------------------
+
+// CreateSupplierReceipt records an expected receipt, refusing what the schema
+// refuses.
+func (f *fakeStore) CreateSupplierReceipt(_ context.Context, r models.SupplierReceipt) (models.SupplierReceipt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// The foreign key, which a soft-deleted item still satisfies: only the
+	// item's lock keeps a receipt off it.
+	if _, ok := f.items[r.InventoryItemID]; !ok && !f.deletedItems[r.InventoryItemID] {
+		return models.SupplierReceipt{}, errors.NotFound("inventory_item_not_found", "there is no such item: %s", r.InventoryItemID)
+	}
+	if r.Quantity <= 0 || (r.Reference != "" && strings.TrimSpace(r.Reference) == "") {
+		return models.SupplierReceipt{}, errors.Invalid("fake_supplier_receipt_check", "the schema's CHECKs refuse this receipt")
+	}
+	r.Status = models.SupplierReceiptExpected
+	r.CreatedAt, r.UpdatedAt = time.Now().UTC(), time.Now().UTC()
+	f.receipts[r.ID] = r
+
+	return r, nil
+}
+
+// GetSupplierReceipt returns the receipt.
+func (f *fakeStore) GetSupplierReceipt(_ context.Context, id string) (models.SupplierReceipt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	r, ok := f.receipts[id]
+	if !ok {
+		return models.SupplierReceipt{}, errors.NotFound("inventory_supplier_receipt_not_found", "no receipt %s", id)
+	}
+
+	return r, nil
+}
+
+// LockSupplierReceipt "locks" the receipt and returns it.
+func (f *fakeStore) LockSupplierReceipt(ctx context.Context, id string) (models.SupplierReceipt, error) {
+	if err := requireTx(ctx, "LockSupplierReceipt"); err != nil {
+		return models.SupplierReceipt{}, err
+	}
+	f.recordLock("receipt")
+
+	return f.GetSupplierReceipt(ctx, id)
+}
+
+// ReceiveSupplierReceipt closes an expected receipt with the count and the
+// moment of the supplier_receipt movement naming it, as the query's join does.
+func (f *fakeStore) ReceiveSupplierReceipt(_ context.Context, id string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	r, ok := f.receipts[id]
+	if !ok || r.Status != models.SupplierReceiptExpected {
+		return 0, nil
+	}
+	for i := range f.movements {
+		mv := f.movements[i]
+		if mv.Reason != models.MovementSupplierReceipt || mv.Reference != id {
+			continue
+		}
+		at := mv.CreatedAt
+		r.Status, r.ReceivedQuantity, r.ReceivedAt, r.UpdatedAt = models.SupplierReceiptReceived, mv.Delta, &at, at
+		f.receipts[id] = r
+
+		return 1, nil
+	}
+
+	return 0, nil
+}
+
+// CancelSupplierReceipt closes an expected receipt as canceled.
+func (f *fakeStore) CancelSupplierReceipt(_ context.Context, id string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	r, ok := f.receipts[id]
+	if !ok || r.Status != models.SupplierReceiptExpected {
+		return 0, nil
+	}
+	at := time.Now().UTC()
+	r.Status, r.CanceledAt, r.UpdatedAt = models.SupplierReceiptCanceled, &at, at
+	f.receipts[id] = r
+
+	return 1, nil
+}
+
+// receiptsInOrder returns the receipts passing keep by (expected_at, id); the
+// caller holds f.mu.
+func (f *fakeStore) receiptsInOrder(keep func(models.SupplierReceipt) bool) []models.SupplierReceipt {
+	out := make([]models.SupplierReceipt, 0, len(f.receipts))
+	for id := range f.receipts {
+		if keep(f.receipts[id]) {
+			out = append(out, f.receipts[id])
+		}
+	}
+	slices.SortFunc(out, func(a, b models.SupplierReceipt) int {
+		if c := a.ExpectedAt.Compare(b.ExpectedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+
+	return out
+}
+
+// ListSupplierReceipts pages the item's receipts by expected moment.
+func (f *fakeStore) ListSupplierReceipts(
+	_ context.Context, filter models.SupplierReceiptFilter,
+) ([]models.SupplierReceipt, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	matched := f.receiptsInOrder(func(r models.SupplierReceipt) bool {
+		return r.InventoryItemID == filter.InventoryItemID && (filter.Status == "" || r.Status == filter.Status)
+	})
+
+	return paginate(matched, filter.Limit, filter.Offset), int64(len(matched)), nil
+}
+
+// CountExpectedSupplierReceipts counts the item's expected receipts.
+func (f *fakeStore) CountExpectedSupplierReceipts(_ context.Context, itemID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return int64(len(f.receiptsInOrder(func(r models.SupplierReceipt) bool {
+		return r.InventoryItemID == itemID && r.Status == models.SupplierReceiptExpected
+	}))), nil
+}
+
+// CountExpectedSupplierReceiptsAtLocation counts the location's expected
+// receipts.
+func (f *fakeStore) CountExpectedSupplierReceiptsAtLocation(_ context.Context, locationID string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return int64(len(f.receiptsInOrder(func(r models.SupplierReceipt) bool {
+		return r.LocationID == locationID && r.Status == models.SupplierReceiptExpected
+	}))), nil
+}
+
+// ExpectedSupplierReceiptsOfItems returns the items' expected receipts not yet
+// due, in the REVERSE of the order they are expected: the forecast promises its
+// own order rather than borrowing the store's, and a fake that handed it the
+// right one would let a forecast that never ordered pass.
+func (f *fakeStore) ExpectedSupplierReceiptsOfItems(_ context.Context, itemIDs []string) ([]models.SupplierReceipt, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.forecastReads++
+	now := f.now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	out := f.receiptsInOrder(func(r models.SupplierReceipt) bool {
+		return slices.Contains(itemIDs, r.InventoryItemID) && r.Status == models.SupplierReceiptExpected &&
+			r.ExpectedAt.After(now)
+	})
+	slices.Reverse(out)
+
+	return out, nil
+}
+
+// WaitingBackordersOfItems returns the items' waiting claims in the REVERSE of
+// queue order, for the reason the receipts above are.
+func (f *fakeStore) WaitingBackordersOfItems(_ context.Context, itemIDs []string) ([]models.Backorder, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := f.claimsInQueue(func(c models.Backorder) bool {
+		return slices.Contains(itemIDs, c.InventoryItemID) && c.Status == models.BackorderWaiting
+	})
+	slices.Reverse(out)
+
+	return out, nil
+}
+
+// seedReceipt puts an expected receipt into the fake store.
+func (f *fakeStore) seedReceipt(id, itemID, locationID string, quantity int64, at time.Time) models.SupplierReceipt {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.ensureLocation(locationID)
+	r := models.SupplierReceipt{
+		ID: id, InventoryItemID: itemID, LocationID: locationID, Quantity: quantity, ExpectedAt: at,
+		Status: models.SupplierReceiptExpected, CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
+	}
+	f.receipts[id] = r
+
+	return r
+}
+
+// markReceived closes a seeded receipt as received with its quantity, and
+// writes nothing to the stock: a received receipt as the forecast's read finds
+// it, whatever the shelf holds.
+func (f *fakeStore) markReceived(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	r := f.receipts[id]
+	at := time.Now().UTC()
+	r.Status, r.ReceivedQuantity, r.ReceivedAt = models.SupplierReceiptReceived, r.Quantity, &at
+	f.receipts[id] = r
+}
+
+// receipt returns the receipt, for the test's assertions.
+func (f *fakeStore) receipt(id string) models.SupplierReceipt {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.receipts[id]
+}
+
+// supplierMovements returns the item's supplier_receipt movements.
+func (f *fakeStore) supplierMovements(itemID string) []models.Movement {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var out []models.Movement
+	for i := range f.movements {
+		if f.movements[i].InventoryItemID == itemID && f.movements[i].Reason == models.MovementSupplierReceipt {
+			out = append(out, f.movements[i])
+		}
+	}
+
+	return out
 }
