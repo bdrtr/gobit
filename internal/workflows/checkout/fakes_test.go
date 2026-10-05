@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"maps"
 	"os"
 	"slices"
 	"strconv"
@@ -972,6 +973,8 @@ type variantScript struct {
 	giftcard bool
 	// components are what one unit of a bundle variant holds (ADR 0235).
 	components []bundlePart
+	// costs are what one unit costs the shop, by currency (ADR 0401).
+	costs map[string]int64
 }
 
 // productOf is the product a scripted variant belongs to.
@@ -983,8 +986,10 @@ func productOf(variantID string) string { return "prod_" + variantID }
 // Every field of the record is filled in, including the two flags. The real
 // provider refuses a field it does not publish and fills every field it does,
 // so a fake that omitted a key would let a consumer defaulting a missing flag
-// pass a test it must not pass.
-func catalogRecords(scripts map[string]variantScript, ids []string) []query.Record {
+// pass a test it must not pass. The unit costs are the exception the provider
+// makes: they are carried only when named, as the provider carries them
+// (ADR 0401), so a read that stopped naming them is refused here too.
+func catalogRecords(scripts map[string]variantScript, ids, fields []string) []query.Record {
 	out := make([]query.Record, 0, len(scripts))
 	for id, script := range scripts {
 		if ids != nil && !slices.Contains(ids, id) {
@@ -997,14 +1002,24 @@ func catalogRecords(scripts map[string]variantScript, ids []string) []query.Reco
 				FieldBundleComponentQuantity:  part.Quantity,
 			})
 		}
-		out = append(out, query.Record{
+		record := query.Record{
 			query.IDField:         id,
 			FieldTitle:            script.title,
 			FieldManageInventory:  script.manageInventory,
 			FieldAllowBackorder:   script.allowBackorder,
 			FieldProductID:        productOf(id),
 			FieldBundleComponents: components,
-		})
+		}
+		if slices.Contains(fields, FieldUnitCosts) {
+			costs := make([]query.Record, 0, len(script.costs))
+			for _, code := range slices.Sorted(maps.Keys(script.costs)) {
+				costs = append(costs, query.Record{
+					FieldUnitCostCurrencyCode: code, FieldUnitCostAmount: script.costs[code],
+				})
+			}
+			record[FieldUnitCosts] = costs
+		}
+		out = append(out, record)
 	}
 	return out
 }
@@ -1017,7 +1032,7 @@ func catalogAnswer(scripts map[string]variantScript, spec query.GraphSpec) []que
 		// components are read in a round of their own, and a fake that handed
 		// them back with the cart's variants would hide that round.
 		ids, _ := spec.Filters[FilterIDs].([]string)
-		return catalogRecords(scripts, ids)
+		return catalogRecords(scripts, ids, spec.Fields)
 	}
 	out := make([]query.Record, 0, len(scripts))
 	for id, script := range scripts {

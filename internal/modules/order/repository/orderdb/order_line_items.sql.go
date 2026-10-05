@@ -17,9 +17,9 @@ INSERT INTO order_line_items (
     id, order_id, variant_id, title, quantity,
     unit_price, subtotal, discount_total, tax_total, tax_rate_bps, total, metadata,
     price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, components,
-    product_title
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-RETURNING id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, seq, components, product_title
+    product_title, unit_cost
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+RETURNING id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, seq, components, product_title, unit_cost
 `
 
 type CreateOrderLineItemParams struct {
@@ -43,6 +43,7 @@ type CreateOrderLineItemParams struct {
 	ParentLineItemID *string
 	Components       []byte
 	ProductTitle     string
+	UnitCost         *int64
 }
 
 // order_line_items queries.
@@ -73,6 +74,7 @@ func (q *Queries) CreateOrderLineItem(ctx context.Context, arg CreateOrderLineIt
 		arg.ParentLineItemID,
 		arg.Components,
 		arg.ProductTitle,
+		arg.UnitCost,
 	)
 	var i OrderLineItem
 	err := row.Scan(
@@ -99,12 +101,13 @@ func (q *Queries) CreateOrderLineItem(ctx context.Context, arg CreateOrderLineIt
 		&i.Seq,
 		&i.Components,
 		&i.ProductTitle,
+		&i.UnitCost,
 	)
 	return i, err
 }
 
 const getOrderLineItemsByIDs = `-- name: GetOrderLineItemsByIDs :many
-SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, seq, components, product_title FROM order_line_items
+SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, seq, components, product_title, unit_cost FROM order_line_items
 WHERE id = ANY ($1::text[])
 ORDER BY id
 `
@@ -152,6 +155,7 @@ func (q *Queries) GetOrderLineItemsByIDs(ctx context.Context, ids []string) ([]O
 			&i.Seq,
 			&i.Components,
 			&i.ProductTitle,
+			&i.UnitCost,
 		); err != nil {
 			return nil, err
 		}
@@ -164,7 +168,7 @@ func (q *Queries) GetOrderLineItemsByIDs(ctx context.Context, ids []string) ([]O
 }
 
 const listOrderLineItems = `-- name: ListOrderLineItems :many
-SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, seq, components, product_title FROM order_line_items
+SELECT id, order_id, variant_id, title, quantity, unit_price, subtotal, discount_total, tax_total, total, metadata, created_at, updated_at, tax_rate_bps, price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, seq, components, product_title, unit_cost FROM order_line_items
 WHERE order_id = $1
 ORDER BY created_at, seq
 `
@@ -205,6 +209,7 @@ func (q *Queries) ListOrderLineItems(ctx context.Context, orderID string) ([]Ord
 			&i.Seq,
 			&i.Components,
 			&i.ProductTitle,
+			&i.UnitCost,
 		); err != nil {
 			return nil, err
 		}
@@ -217,7 +222,7 @@ func (q *Queries) ListOrderLineItems(ctx context.Context, orderID string) ([]Ord
 }
 
 const listOrderLineItemsFiltered = `-- name: ListOrderLineItemsFiltered :many
-SELECT li.id, li.order_id, li.variant_id, li.title, li.quantity, li.unit_price, li.subtotal, li.discount_total, li.tax_total, li.total, li.metadata, li.created_at, li.updated_at, li.tax_rate_bps, li.price_id, li.price_list_id, li.price_list_type, li.is_giftcard, li.properties, li.parent_line_item_id, li.seq, li.components, li.product_title FROM order_line_items li
+SELECT li.id, li.order_id, li.variant_id, li.title, li.quantity, li.unit_price, li.subtotal, li.discount_total, li.tax_total, li.total, li.metadata, li.created_at, li.updated_at, li.tax_rate_bps, li.price_id, li.price_list_id, li.price_list_type, li.is_giftcard, li.properties, li.parent_line_item_id, li.seq, li.components, li.product_title, li.unit_cost FROM order_line_items li
     JOIN orders o ON o.id = li.order_id
 WHERE ($1::text IS NULL OR li.order_id = $1::text)
   AND ($2::text IS NULL OR li.variant_id = $2::text)
@@ -305,6 +310,7 @@ func (q *Queries) ListOrderLineItemsFiltered(ctx context.Context, arg ListOrderL
 			&i.Seq,
 			&i.Components,
 			&i.ProductTitle,
+			&i.UnitCost,
 		); err != nil {
 			return nil, err
 		}

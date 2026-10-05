@@ -158,6 +158,10 @@ func (h *Handler) Routes(r chi.Router) {
 	// like the variant's own update.
 	read.Get(pathVariantBundle, h.adminGetBundle)
 	revising.Put(pathVariantBundle, h.adminSetBundle)
+	// What one unit of a variant costs the shop, per currency (ADR 0401). Not
+	// a revision: the costs are not in the product's view, as add-ons are not.
+	read.Get(pathVariantCosts, h.adminGetVariantCosts)
+	write.Put(pathVariantCosts, h.adminSetVariantCosts)
 
 	// --- Admin API: options ---
 	revising.Post("/admin/v1/products/{id}/options", h.adminCreateOption)

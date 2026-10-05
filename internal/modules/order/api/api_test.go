@@ -99,6 +99,12 @@ type fakeOrders struct {
 	// routes carry TWO record ids, and reading the claim's where the
 	// replacement's belongs is exactly the mistake one field could not see.
 	gotReplacementID string
+
+	// margins is what PlacedMargins answers (ADR 0401), and marginIDs what it
+	// was asked for. The read is not in calls: it rides on every admin order
+	// read, and the sequences asserted there are about the order itself.
+	margins   map[string]models.PlacedMargin
+	marginIDs [][]string
 }
 
 // That the fake satisfies the surface the handler expects is verified at
@@ -367,6 +373,18 @@ func (f *fakeOrders) CancelClaim(_ context.Context, claimID string) (models.Clai
 	f.record("CancelClaim")
 	f.gotChildID = claimID
 	return f.claim, f.err
+}
+
+// PlacedMargins returns the scripted margins of the orders asked for.
+func (f *fakeOrders) PlacedMargins(_ context.Context, orderIDs []string) (map[string]models.PlacedMargin, error) {
+	f.marginIDs = append(f.marginIDs, orderIDs)
+	out := map[string]models.PlacedMargin{}
+	for _, id := range orderIDs {
+		if m, ok := f.margins[id]; ok {
+			out[id] = m
+		}
+	}
+	return out, f.err
 }
 
 // sampleOrder is the order model used in the tests.

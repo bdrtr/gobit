@@ -144,6 +144,11 @@ type Store interface {
 	ReplaceBundleComponents(ctx context.Context, bundleID string, components []models.BundleComponent) error
 	ListBundlesContaining(ctx context.Context, componentIDs []string) (map[string][]string, error)
 	LockLiveVariantsForBundle(ctx context.Context, ids []string) (map[string]BundleCandidate, error)
+	// ListVariantCosts and ReplaceVariantCosts are what a variant's unit costs
+	// the shop, per currency (ADR 0401); see variant_cost.go. A write holds the
+	// variant's row through LockLiveVariantsForBundle first.
+	ListVariantCosts(ctx context.Context, variantIDs []string) (map[string][]models.VariantCost, error)
+	ReplaceVariantCosts(ctx context.Context, variantID string, costs []models.VariantCost) error
 	ReplaceProductAddOns(ctx context.Context, productID string, variantIDs []string) error
 	SoftDeleteProduct(ctx context.Context, id string) error
 	SoftDeleteProductChildren(ctx context.Context, productID string) error

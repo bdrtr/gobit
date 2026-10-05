@@ -61,7 +61,7 @@ func describeOrderDetail(d *openapi.Doc) {
 			"The record carries \"shipping_address\" and \"billing_address\", the two " +
 			"addresses the cart carried into the order, each ABSENT when the order " +
 			"recorded none. After an erasure they hold what the erasure keeps: the country " +
-			"and the free metadata (ADR 0193).",
+			"and the free metadata (ADR 0193).\n\n" + lineCostNote + placedMarginNote,
 		Responses: map[string]any{
 			"200": openapi.Response("The order with its lines", d.Item(adminOrderDetailDTO{})),
 		},
@@ -71,7 +71,8 @@ func describeOrderDetail(d *openapi.Doc) {
 		Summary: "Reads one order from the storefront.",
 		Description: detailNote +
 			"\n\n" +
-			"It is the record the admin surface returns WITHOUT the two addresses. The " +
+			"It is the record the admin surface returns WITHOUT the two addresses, the " +
+			"lines' costs and the placed margin. The " +
 			"storefront reaches it with the publishable key, which identifies the shop " +
 			"rather than the shopper, so the order id in the path is the only thing naming " +
 			"whose order this is — treat it as a capability and keep it out of anywhere it " +

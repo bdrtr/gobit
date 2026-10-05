@@ -240,7 +240,8 @@ func describedEndpoints() []endpointExpectation {
 	return []endpointExpectation{
 		{
 			method: http.MethodGet, path: "/admin/v1/orders", status: "200",
-			response: filledOrder(), shape: pagedList,
+			response: adminOrderRowDTO{orderDTO: filledOrder(), PlacedMargin: filledPlacedMargin()},
+			shape:    pagedList,
 		},
 		{
 			method: http.MethodGet, path: pathStoreOwnOrders, status: "200",
@@ -632,8 +633,9 @@ func filledOrderDetail() orderDetailDTO {
 	}
 }
 
-// filledAdminOrderDetail is [filledOrderDetail] with both addresses and the
-// operator who placed it, every field written.
+// filledAdminOrderDetail is [filledOrderDetail] with both addresses, the
+// operator who placed it, its lines' costs and its placed margin, every field
+// written.
 func filledAdminOrderDetail() adminOrderDetailDTO {
 	address := &orderAddressDTO{
 		FirstName: "A", LastName: "B", Company: "C", Address1: "1", Address2: "2",
@@ -641,12 +643,21 @@ func filledAdminOrderDetail() adminOrderDetailDTO {
 		Phone: "+90", Metadata: map[string]any{"k": "v"},
 	}
 
+	cost := int64(400)
 	return adminOrderDetailDTO{
 		orderDetailDTO:  filledOrderDetail(),
 		ShippingAddress: address,
 		BillingAddress:  address,
 		PlacedBy:        "user_operator",
+		Items:           []adminLineItemDTO{{lineItemDTO: filledOrderDetail().Items[0], UnitCost: &cost}},
+		PlacedMargin:    filledPlacedMargin(),
 	}
+}
+
+// filledPlacedMargin is a placed margin with its cost and margin written.
+func filledPlacedMargin() *placedMarginDTO {
+	cost, margin := int64(400), int64(600)
+	return &placedMarginDTO{CurrencyCode: "TRY", Sales: 1000, Cost: &cost, Margin: &margin}
 }
 
 // filledOrderPayment produces a payment position whose nullable moments are

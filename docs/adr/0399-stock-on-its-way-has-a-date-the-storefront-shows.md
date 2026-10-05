@@ -6,6 +6,7 @@ A storefront variant with nothing to sell shows when units are expected on sale 
 - **Status:** Accepted
 - **Date:** 2026-10-05
 - **Amends:** [0055](0055-a-location-closes-empty.md), whose close is also refused while the warehouse expects a supplier receipt
+- **Amended by:** [0401](0401-an-order-line-keeps-what-its-goods-cost.md): a variant carries a unit cost; a receipt still names none
 
 Measurement: [measurements/0399](../measurements/0399-stock-on-its-way.md)
 

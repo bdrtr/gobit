@@ -144,6 +144,24 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **An order line keeps what its goods cost** (ADR 0401). **For API
+  consumers:** `GET` and `PUT /admin/v1/variants/{id}/costs` read and replace a
+  variant's unit costs, one per currency, at most 50, net of tax
+  (`product:read`/`product:write`); a duplicate currency, a code that is not
+  three letters or an amount outside 0 to 10^12 answers 422
+  `product_invalid_input`, and an unknown or deleted variant 404
+  `product_not_found`. The checkout copies the cost in the order's currency
+  onto the line. The admin order record carries `items[].unit_cost` and
+  `placed_margin` (`currency_code`, `sales`, `cost`, `margin`,
+  `lines_without_cost`), and each row of `GET /admin/v1/orders` carries
+  `placed_margin`, except on an order whose lines are all gift cards; the
+  storefront's product and order carry neither. A
+  checkout whose variant record carries a cost list that does not read is
+  refused, as one with an unreadable title is. **For integrators:** the
+  `variant` read-layer entity offers `unit_costs` to a caller that names it,
+  and never in its default field set. **For operators:** product migration
+  000015 (`product_variant_cost`) and order migration 000041
+  (`order_line_items.unit_cost`).
 - **An invitation's `user_id` names the invited account** (D256). **For
   integrators:** the `auth.user_invited` message hands the notification
   provider the invited user's `user_` id under `user_id`; it carried the

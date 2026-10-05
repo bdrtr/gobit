@@ -137,6 +137,14 @@ const (
 	FieldBundleComponents         = "bundle_components"
 	FieldBundleComponentVariantID = "variant_id"
 	FieldBundleComponentQuantity  = "quantity"
+	// FieldUnitCosts is the variant record's unit costs: a list of records
+	// naming a currency and what one unit costs the shop in it, in minor units
+	// net of tax, empty for a variant with none (ADR 0401). The checkout copies
+	// the one in the order's currency onto the order line; the provider fills
+	// it only when it is named.
+	FieldUnitCosts            = "unit_costs"
+	FieldUnitCostCurrencyCode = "currency_code"
+	FieldUnitCostAmount       = "amount"
 	// FilterIDs is the BATCH identifier filter of the variant provider; thanks to
 	// this filter a separate query per line (N+1) is not needed.
 	FilterIDs = "ids"

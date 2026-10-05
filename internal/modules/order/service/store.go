@@ -412,6 +412,11 @@ type Store interface {
 	// JournalCauses reads which order each return or claim id belongs to
 	// (ADR 0189); an id that is neither has no row.
 	JournalCauses(ctx context.Context, ids []string) ([]models.JournalCause, error)
+
+	// PlacedMargins reads the sales, cost and uncosted lines of each given
+	// order's goods (ADR 0401), Margin unset; an order with no line that is not
+	// a gift card has no entry.
+	PlacedMargins(ctx context.Context, orderIDs []string) ([]models.PlacedMargin, error)
 }
 
 // EventPublisher is the NARROW surface the service needs from the event bus.

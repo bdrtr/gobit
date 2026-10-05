@@ -317,6 +317,12 @@ type OrderLineItem struct {
 	Quantity int64
 	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64
+	// UnitCost is what one unit cost the shop at the sale, in the order's
+	// currency, net of tax: the variant's cost, copied by the checkout as the
+	// title is (ADR 0401). nil is UNKNOWN — a line written before the column, a
+	// variant with no cost in that currency, a plan that carried none — and
+	// zero is a cost.
+	UnitCost *int64
 	// Subtotal is the line's subtotal (minor unit).
 	Subtotal int64
 	// DiscountTotal is the discount falling on the line (minor unit); it is
@@ -1092,4 +1098,21 @@ type CustomerOrderTotal struct {
 	Orders int64
 	// NetSpend is their totals less their refunds, in minor units.
 	NetSpend int64
+}
+
+// PlacedMargin is what an order's goods earned when it was placed (ADR 0401),
+// over its lines that did not sell gift cards; queries/margin.sql is the rule.
+type PlacedMargin struct {
+	OrderID string
+	// Sales is the lines' subtotal less their discount: the net base their tax
+	// was taken from, in minor units.
+	Sales int64
+	// Cost is the lines' unit cost times their quantity; nil when a line kept
+	// no cost, or when the sum passes [MaxTotal].
+	Cost *int64
+	// Margin is Sales less Cost, negative when the goods sold at a loss; nil
+	// when Cost is.
+	Margin *int64
+	// LinesWithoutCost counts the lines that kept no cost.
+	LinesWithoutCost int64
 }

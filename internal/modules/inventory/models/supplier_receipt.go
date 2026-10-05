@@ -46,7 +46,7 @@ type SupplierReceipt struct {
 	// warehouse, after put-away.
 	ExpectedAt time.Time
 	// Reference is the embedder's own document number; empty when none was
-	// given. gobit keeps no supplier, price or purchase order.
+	// given. A receipt names no supplier, price or purchase order.
 	Reference string
 	// Status is where the receipt stands.
 	Status SupplierReceiptStatus

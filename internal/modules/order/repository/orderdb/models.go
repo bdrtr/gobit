@@ -155,6 +155,7 @@ type OrderLineItem struct {
 	Seq              *int64
 	Components       []byte
 	ProductTitle     string
+	UnitCost         *int64
 }
 
 type OrderLineTax struct {

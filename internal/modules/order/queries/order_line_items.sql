@@ -10,8 +10,8 @@ INSERT INTO order_line_items (
     id, order_id, variant_id, title, quantity,
     unit_price, subtotal, discount_total, tax_total, tax_rate_bps, total, metadata,
     price_id, price_list_id, price_list_type, is_giftcard, properties, parent_line_item_id, components,
-    product_title
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+    product_title, unit_cost
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 RETURNING *;
 
 -- ListOrderLineItems reads an order's lines in the order they were written:

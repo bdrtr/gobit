@@ -340,6 +340,21 @@ func TestTheBundleNamesAgree(t *testing.T) {
 	assert.Equal(t, checkoutwf.FilterIDs, ordersvc.CatalogFilterIDs)
 }
 
+// TestTheCostNamesAgree binds the checkout's spelling of a variant's unit costs
+// to the product module's (ADR 0401), and the cost's bound to the unit amount
+// the checkout and the order accept. A renamed field is refused by the provider
+// and refuses every checkout; a bound wider on the catalog's side is a cost the
+// checkout reads as broken and refuses.
+func TestTheCostNamesAgree(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, productsvc.FieldUnitCosts, checkoutwf.FieldUnitCosts)
+	assert.Equal(t, productsvc.FieldUnitCostCurrencyCode, checkoutwf.FieldUnitCostCurrencyCode)
+	assert.Equal(t, productsvc.FieldUnitCostAmount, checkoutwf.FieldUnitCostAmount)
+	assert.Equal(t, productsvc.MaxCostAmount, checkoutwf.MaxAmount)
+	assert.Equal(t, productsvc.MaxCostAmount, ordermodels.MaxAmount)
+}
+
 // TestTheBuyerAttributeNamesAgree binds the two spellings of the attributes that
 // name the buyer (ADR 0185).
 //

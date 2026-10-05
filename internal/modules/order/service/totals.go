@@ -255,6 +255,13 @@ func validateOrderItem(index int, item CreateOrderItemInput, pricesIncludeTax bo
 	if err := checkAmount("items[].unit_price", item.UnitPrice, models.MaxAmount); err != nil {
 		return err
 	}
+	// The checkout refuses a cost out of this range when it reads the catalog;
+	// this is the second guard, at the module that stores it (ADR 0401).
+	if item.UnitCost != nil {
+		if err := checkAmount("items[].unit_cost", *item.UnitCost, models.MaxAmount); err != nil {
+			return err
+		}
+	}
 	for _, field := range []struct {
 		label string
 		value int64

@@ -45,6 +45,10 @@ type Catalog interface {
 	SetVariantBundle(
 		ctx context.Context, variantID string, components []models.BundleComponent,
 	) ([]models.BundleComponent, error)
+	// VariantCosts and SetVariantCosts are what one unit of a variant costs
+	// the shop, per currency (ADR 0401).
+	VariantCosts(ctx context.Context, variantID string) ([]models.VariantCost, error)
+	SetVariantCosts(ctx context.Context, variantID string, costs []models.VariantCost) ([]models.VariantCost, error)
 	// SetSchedule and ClearSchedule replace and take off a product's schedule
 	// (ADR 0177, ADR 0179).
 	SetSchedule(ctx context.Context, id string, schedule service.Schedule) (models.Product, error)

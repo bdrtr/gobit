@@ -756,7 +756,7 @@ func (v *variantProvider) List(ctx context.Context, opts query.ListOptions) ([]q
 	if err != nil {
 		return nil, err
 	}
-	return v.recordsWithBundles(ctx, variants, opts.Fields)
+	return v.variantRecords(ctx, variants, opts.Fields)
 }
 
 // fetch reads the variants by the narrowest criterion.
@@ -826,7 +826,83 @@ func (v *variantProvider) FetchByIDs(ctx context.Context, ids, fields []string) 
 	if err != nil {
 		return nil, err
 	}
-	return v.recordsWithBundles(ctx, variants, fields)
+	return v.variantRecords(ctx, variants, fields)
+}
+
+// variantRecords builds the records with the fields read from tables of their
+// own: the composition (ADR 0235) and the unit costs (ADR 0401).
+func (v *variantProvider) variantRecords(
+	ctx context.Context, variants []models.Variant, fields []string,
+) ([]query.Record, error) {
+	built, err := v.recordsWithBundles(ctx, variants, fields)
+	if err != nil {
+		return nil, err
+	}
+	if err := v.fillUnitCosts(ctx, variants, fields, built); err != nil {
+		return nil, err
+	}
+	return built, nil
+}
+
+// fillUnitCosts fills [FieldUnitCosts] with one batch read for every variant in
+// the page when the caller names it, and leaves it out of every record
+// otherwise. It is never in the default field set: a reader naming no fields may
+// publish the record as it came, and a cost is the shop's business (ADR 0401;
+// the same rule ADR 0399 gave inventory's per-warehouse fields, D258).
+func (v *variantProvider) fillUnitCosts(
+	ctx context.Context, variants []models.Variant, fields []string, built []query.Record,
+) error {
+	if !slices.Contains(fields, FieldUnitCosts) {
+		for i := range built {
+			delete(built[i], FieldUnitCosts)
+		}
+		return nil
+	}
+	if len(variants) == 0 {
+		return nil
+	}
+
+	ids := make([]string, 0, len(variants))
+	for i := range variants {
+		ids = append(ids, variants[i].ID)
+	}
+	byVariant, err := v.repo.ListVariantCosts(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for i := range built {
+		built[i][FieldUnitCosts] = unitCostRecords(byVariant[ids[i]])
+	}
+	return nil
+}
+
+// FieldUnitCosts carries what one unit of a variant costs the shop: one record
+// per currency with its "currency_code" and "amount" in minor units, net of
+// tax, in currency order, and an empty list for a variant with none
+// (ADR 0401). It is published for the checkout, which copies the one in the
+// order's currency onto the order line; it is computed only when named and is
+// never in the default field set. internal/arch binds the workflow's spelling
+// to this one.
+const FieldUnitCosts = "unit_costs"
+
+// The keys of one cost record inside [FieldUnitCosts].
+const (
+	FieldUnitCostCurrencyCode = "currency_code"
+	FieldUnitCostAmount       = "amount"
+)
+
+// unitCostRecords turns a variant's costs into the field's value; none is an
+// empty list, never nil, so a consumer reads "no cost" rather than a missing
+// field.
+func unitCostRecords(costs []models.VariantCost) []query.Record {
+	out := make([]query.Record, 0, len(costs))
+	for _, c := range costs {
+		out = append(out, query.Record{
+			FieldUnitCostCurrencyCode: c.CurrencyCode,
+			FieldUnitCostAmount:       c.Amount,
+		})
+	}
+	return out
 }
 
 // recordsWithBundles builds the records and fills the composition field when
@@ -1035,11 +1111,14 @@ func variantRecord(v models.Variant) query.Record {
 		// asked, for productRecord's reason: [project] refuses a key the record
 		// does not carry.
 		FieldBundleComponents: []query.Record{},
-		"weight":              derefInt32(v.Weight),
-		"rank":                v.Rank,
-		"metadata":            v.Metadata,
-		fieldCreatedAt:        v.CreatedAt,
-		fieldUpdatedAt:        v.UpdatedAt,
+		// Empty here, filled by [variantProvider.fillUnitCosts] when named and
+		// taken out of the record otherwise.
+		FieldUnitCosts: []query.Record{},
+		"weight":       derefInt32(v.Weight),
+		"rank":         v.Rank,
+		"metadata":     v.Metadata,
+		fieldCreatedAt: v.CreatedAt,
+		fieldUpdatedAt: v.UpdatedAt,
 	}
 }
 

@@ -34,6 +34,24 @@ const (
 const amountNote = "Amounts are MINOR UNIT integers (kurus/cent): " +
 	"for 100.50 TL you send 10050; a fractional value such as 100.50 is invalid."
 
+// lineCostNote is what the admin order says about its lines' costs
+// (ADR 0401); the storefront's order carries none.
+const lineCostNote = "Each line carries \"unit_cost\", what one unit cost the shop in the " +
+	"order's currency, net of tax, copied from the variant's cost when the order was placed; it " +
+	"is ABSENT when the variant had no cost in that currency or the line was sold before costs " +
+	"were kept. "
+
+// placedMarginNote is what the admin order and the admin order list say about
+// the margin they carry (ADR 0401); the storefront's order carries none.
+const placedMarginNote = "\"placed_margin\" is the order's margin at placement over its lines that did " +
+	"not sell gift cards: \"sales\" is their subtotal less their discount, \"cost\" their " +
+	"unit cost times their quantity, and \"margin\" the difference, negative for goods sold at " +
+	"a loss. \"cost\" and \"margin\" are ABSENT while \"lines_without_cost\" is above zero, and " +
+	"when the cost passes an order total's bound. A cancellation, a return, a credit, a " +
+	"provider's fee and a carrier's cost do not move it, a cost changed in the catalog " +
+	"afterwards does not either, and gobit converts no currency. \"placed_margin\" is ABSENT " +
+	"on an order with no line that is not a gift card."
+
 // Describe records order's ADMIN endpoints into the OpenAPI document.
 //
 // # Why in this package
@@ -168,9 +186,11 @@ func Describe(d *openapi.Doc) {
 					"together. When the response carries no \"next_cursor\" the listing is "+
 					"exhausted."),
 		},
+		Description: "Each row carries \"placed_margin\", the order's margin at placement, " +
+			"read for the whole page in one statement. " + placedMarginNote,
 		Responses: map[string]any{
 			"200": openapi.Response("Page of orders",
-				d.List(orderDTO{}, openapi.WithCursor())),
+				d.List(adminOrderRowDTO{}, openapi.WithCursor())),
 		},
 	})
 

@@ -299,6 +299,12 @@ type planLine struct {
 	Quantity int64 `json:"quantity"`
 	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64 `json:"unit_price"`
+	// UnitCost is what one unit of the variant cost the shop in the order's
+	// currency, net of tax, as the catalog said when the plan was made
+	// (ADR 0401). It is nil when the variant has no cost in that currency, and
+	// a plan saved before it was carried reads it nil: a pointer, so a cost of
+	// zero is written and told apart from none.
+	UnitCost *int64 `json:"unit_cost,omitempty"`
 	// Subtotal is the subtotal of the line: UnitPrice x Quantity, less
 	// TaxTotal where [checkoutPlan.PricesIncludeTax] is set.
 	Subtotal int64 `json:"subtotal"`
@@ -617,6 +623,7 @@ func (w *Workflows) planLines(ctx context.Context, snap Snapshot, totals cartwf.
 			ProductTitle:     facts[item.VariantID].ProductTitle,
 			Quantity:         item.Quantity,
 			UnitPrice:        amounts.UnitPrice,
+			UnitCost:         unitCostIn(facts[item.VariantID].UnitCosts, snap.CurrencyCode),
 			Subtotal:         amounts.Subtotal,
 			DiscountTotal:    amounts.DiscountTotal,
 			TaxTotal:         amounts.TaxTotal,
@@ -708,6 +715,19 @@ type variantFacts struct {
 	// Components are what one unit of a bundle variant holds (ADR 0235); empty
 	// for a variant that is no bundle.
 	Components []bundlePart
+	// UnitCosts are what one unit of the variant costs the shop, by currency
+	// (ADR 0401); read for the cart's own variants only, never for a bundle's
+	// components, whose cost is not the line's.
+	UnitCosts map[string]int64
+}
+
+// unitCostIn is the cost in the given currency, nil when there is none.
+func unitCostIn(costs map[string]int64, currency string) *int64 {
+	cost, ok := costs[currency]
+	if !ok {
+		return nil
+	}
+	return &cost
 }
 
 // bundlePart is one component of a bundle as the catalog names it.
@@ -752,6 +772,18 @@ type bundlePart struct {
 // publishes the name and fills it with something that is not a bool. Reading
 // that as false would decide "do not count this variant" out of a type error
 // and sell goods nobody reserved, so it is errors.Internal instead.
+//
+// # The cost list is read as strictly, in the first round only
+//
+// The cart's own variants are asked for their unit costs too (ADR 0401): one
+// more name in the first round's field list, which costs the catalog one batch
+// query and the checkout no round trip. A bundle's components are not asked: a
+// line costs its own variant's entry. A list that does not read -- missing, an
+// entry without a three-letter upper-case code or a whole amount from 0 to
+// [MaxAmount], a currency twice -- is errors.Internal like a flag that does not
+// read, and since the plan is made before any step runs, it refuses the
+// checkout before money moves. Read leniently, a list in the wrong shape would
+// leave every line uncosted with nothing to say why.
 func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map[string]variantFacts, error) {
 	facts := make(map[string]variantFacts, len(variantIDs))
 
@@ -760,12 +792,16 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 	// never a bundle (ADR 0234), so there is no third, and a component that
 	// reads as one is refused rather than expanded.
 	for round, ids := 0, variantIDs; len(ids) > 0; round++ {
+		fields := []string{
+			query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder, FieldProductID,
+			FieldBundleComponents,
+		}
+		if round == 0 {
+			fields = append(fields, FieldUnitCosts)
+		}
 		records, err := w.catalog.Graph(ctx, query.GraphSpec{
-			Entity: EntityVariant,
-			Fields: []string{
-				query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder, FieldProductID,
-				FieldBundleComponents,
-			},
+			Entity:  EntityVariant,
+			Fields:  fields,
 			Filters: map[string]any{FilterIDs: ids},
 			Limit:   len(ids),
 		})
@@ -786,6 +822,14 @@ func (w *Workflows) variantTitles(ctx context.Context, variantIDs []string) (map
 			if round > 0 && len(fact.Components) > 0 {
 				return nil, errors.Internal(CodeVariantUnknown,
 					"variant %s is a bundle's component and a bundle itself; a bundle holds no bundle", id)
+			}
+			if round == 0 {
+				costs, ok := readUnitCosts(records[i][FieldUnitCosts])
+				if !ok {
+					return nil, errors.Internal(CodeVariantUnknown,
+						"the cost list of variant %s could not be read: %v", id, records[i][FieldUnitCosts])
+				}
+				fact.UnitCosts = costs
 			}
 			facts[id] = fact
 		}
@@ -843,6 +887,66 @@ func readVariantFacts(record query.Record) (string, variantFacts, error) {
 // [MaxComponentQuantity] times. Anything else does not read: a composition
 // guessed at would reserve the wrong parts or none.
 func readBundleParts(value any) ([]bundlePart, bool) {
+	entries, ok := recordList(value)
+	if !ok {
+		return nil, false
+	}
+
+	parts := make([]bundlePart, 0, len(entries))
+	for _, entry := range entries {
+		id, idOK := entry[FieldBundleComponentVariantID].(string)
+		quantity, quantityOK := wholeNumber(entry[FieldBundleComponentQuantity])
+		if !idOK || id == "" || !quantityOK || quantity < 1 || quantity > MaxComponentQuantity ||
+			slices.ContainsFunc(parts, func(p bundlePart) bool { return p.VariantID == id }) {
+			return nil, false
+		}
+		parts = append(parts, bundlePart{VariantID: id, Quantity: quantity})
+	}
+	return parts, true
+}
+
+// readUnitCosts reads a variant record's unit costs (ADR 0401) into a map by
+// currency. The list is required -- the provider fills it for every variant it
+// is named for, empty for one with none -- and each entry names a three-letter
+// upper-case currency once, with a whole amount from 0 to [MaxAmount]. Anything
+// else does not read: a cost guessed at is a margin nobody can trust.
+func readUnitCosts(value any) (map[string]int64, bool) {
+	entries, ok := recordList(value)
+	if !ok {
+		return nil, false
+	}
+	costs := make(map[string]int64, len(entries))
+	for _, entry := range entries {
+		code, codeOK := entry[FieldUnitCostCurrencyCode].(string)
+		amount, amountOK := wholeNumber(entry[FieldUnitCostAmount])
+		if !codeOK || !isCurrencyCode(code) || !amountOK || amount < 0 || amount > MaxAmount {
+			return nil, false
+		}
+		if _, twice := costs[code]; twice {
+			return nil, false
+		}
+		costs[code] = amount
+	}
+	return costs, true
+}
+
+// isCurrencyCode reports whether the code is exactly three letters A to Z, the
+// form the catalog writes.
+func isCurrencyCode(code string) bool {
+	if len(code) != 3 {
+		return false
+	}
+	for _, r := range code {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
+// recordList reads a field that holds a list of records, in any of the shapes
+// it takes in process or across a JSON boundary; anything else does not read.
+func recordList(value any) ([]map[string]any, bool) {
 	var entries []map[string]any
 	switch list := value.(type) {
 	case []query.Record:
@@ -867,18 +971,7 @@ func readBundleParts(value any) ([]bundlePart, bool) {
 	default:
 		return nil, false
 	}
-
-	parts := make([]bundlePart, 0, len(entries))
-	for _, entry := range entries {
-		id, idOK := entry[FieldBundleComponentVariantID].(string)
-		quantity, quantityOK := wholeNumber(entry[FieldBundleComponentQuantity])
-		if !idOK || id == "" || !quantityOK || quantity < 1 || quantity > MaxComponentQuantity ||
-			slices.ContainsFunc(parts, func(p bundlePart) bool { return p.VariantID == id }) {
-			return nil, false
-		}
-		parts = append(parts, bundlePart{VariantID: id, Quantity: quantity})
-	}
-	return parts, true
+	return entries, true
 }
 
 // wholeNumber reads an integer that may have crossed a JSON boundary.
@@ -1313,6 +1406,10 @@ type orderSnapshotItem struct {
 	TaxTotal      int64  `json:"tax_total"`
 	TaxRateBps    int32  `json:"tax_rate_bps"`
 	Total         int64  `json:"total"`
+	// UnitCost is what one unit cost the shop in the order's currency
+	// (ADR 0401); absent when the variant had none. It lands in the change the
+	// order learns it, for TaxComponents' reason.
+	UnitCost *int64 `json:"unit_cost,omitempty"`
 	// TaxComponents is the per-rate breakdown of a stacked line; absent when a
 	// single rate applied.
 	//
@@ -1454,6 +1551,7 @@ func (p *checkoutPlan) orderSnapshotJSON(idempotencyKey string) (json.RawMessage
 			TaxTotal:      p.Lines[i].TaxTotal,
 			TaxRateBps:    p.Lines[i].TaxRateBps,
 			Total:         p.Lines[i].Total,
+			UnitCost:      p.Lines[i].UnitCost,
 			TaxComponents: snapshotComponentsOf(p.Lines[i].TaxComponents),
 			PriceID:       p.Lines[i].PriceID,
 			PriceListID:   p.Lines[i].PriceListID,

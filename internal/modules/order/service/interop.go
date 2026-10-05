@@ -221,6 +221,10 @@ type interopOrderItem struct {
 	TaxRateBps    int32          `json:"tax_rate_bps"`
 	Total         int64          `json:"total"`
 	Metadata      map[string]any `json:"metadata"`
+	// UnitCost is what one unit cost the shop in the order's currency
+	// (ADR 0401); absent when the variant had none. It changed together with
+	// the sender, for TaxComponents' reason below.
+	UnitCost *int64 `json:"unit_cost,omitempty"`
 	// TaxComponents is the per-rate breakdown when a STACK taxed the line, base
 	// FIRST; it is absent when a single rate applied and "tax_rate_bps" says it
 	// all.
@@ -305,6 +309,7 @@ func (i *Interop) PlaceOrderJSON(ctx context.Context, snapshot json.RawMessage) 
 			ProductTitle:  incoming.Items[k].ProductTitle,
 			Quantity:      incoming.Items[k].Quantity,
 			UnitPrice:     incoming.Items[k].UnitPrice,
+			UnitCost:      incoming.Items[k].UnitCost,
 			Subtotal:      incoming.Items[k].Subtotal,
 			DiscountTotal: incoming.Items[k].DiscountTotal,
 			TaxTotal:      incoming.Items[k].TaxTotal,

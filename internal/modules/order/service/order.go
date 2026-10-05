@@ -39,6 +39,10 @@ type CreateOrderItemInput struct {
 	Quantity int64
 	// UnitPrice is the unit price (minor unit).
 	UnitPrice int64
+	// UnitCost is what one unit cost the shop in the order's currency, as the
+	// checkout read it from the catalog (ADR 0401); nil when there was none,
+	// which is accepted. When given it is a unit amount, 0 to MaxAmount.
+	UnitCost *int64
 	// Subtotal is the subtotal of the line: UnitPrice x Quantity, less
 	// TaxTotal where [CreateOrderInput.PricesIncludeTax] is set.
 	Subtotal int64
@@ -410,6 +414,7 @@ func (s *Service) writeOrder(ctx context.Context, in CreateOrderInput, rule spen
 				ProductTitle:     strings.TrimSpace(in.Items[i].ProductTitle),
 				Quantity:         in.Items[i].Quantity,
 				UnitPrice:        in.Items[i].UnitPrice,
+				UnitCost:         in.Items[i].UnitCost,
 				Subtotal:         in.Items[i].Subtotal,
 				DiscountTotal:    in.Items[i].DiscountTotal,
 				TaxTotal:         in.Items[i].TaxTotal,

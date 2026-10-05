@@ -196,6 +196,10 @@ type Orders interface {
 	// because it moves money and therefore goes through a flow (see
 	// [ReturnReceiving.SettleClaim]).
 	CancelClaim(ctx context.Context, claimID string) (models.Claim, error)
+
+	// PlacedMargins returns the margin each given order's goods were placed at
+	// (ADR 0401); an order with no line that is not a gift card has no entry.
+	PlacedMargins(ctx context.Context, orderIDs []string) (map[string]models.PlacedMargin, error)
 }
 
 // ReturnReceiving is the surface used by this package of the flow that RECEIVES
@@ -440,7 +444,8 @@ type deliveryChangeDTO struct {
 }
 
 // adminOrderDetailDTO is the order as the operator reads it: the storefront's
-// record and where it went and whom it was billed to (ADR 0193).
+// record, where it went and whom it was billed to (ADR 0193), and what its
+// goods cost the shop (ADR 0401).
 //
 // The addresses are the admin surface's alone. The storefront reads an order
 // by its id with a key that names the shop rather than the shopper (ADR 0008),
@@ -457,6 +462,52 @@ type adminOrderDetailDTO struct {
 	// admin surface's alone, as the addresses are: a shopper reading the order
 	// would read the operator's identity.
 	PlacedBy string `json:"placed_by,omitempty"`
+	// Items SHADOWS the storefront record's lines with the admin's, which
+	// carry what each unit cost the shop (ADR 0401); encoding/json writes only
+	// this one.
+	Items []adminLineItemDTO `json:"items"`
+	// PlacedMargin is what the order's goods earned when it was placed
+	// (ADR 0401); absent on an order with no line that is not a gift card.
+	PlacedMargin *placedMarginDTO `json:"placed_margin,omitempty"`
+}
+
+// adminLineItemDTO is an order line as the operator reads it: the storefront's
+// line and what one unit of it cost the shop.
+//
+// The cost is the admin surface's alone. The storefront's order and its lines
+// are [orderDetailDTO] and [lineItemDTO], which carry none, and the shop's cost
+// is not a shopper's business.
+type adminLineItemDTO struct {
+	lineItemDTO
+	// UnitCost is what one unit cost the shop in the order's currency, net of
+	// tax, copied at the sale (ADR 0401); absent when the line kept none.
+	UnitCost *int64 `json:"unit_cost,omitempty"`
+}
+
+// placedMarginDTO is an order's margin at placement, over its lines that did
+// not sell gift cards (ADR 0401).
+type placedMarginDTO struct {
+	// CurrencyCode is the order's; every amount here is in its minor units.
+	CurrencyCode string `json:"currency_code"`
+	// Sales is the lines' subtotal less their discount, net of tax.
+	Sales int64 `json:"sales"`
+	// Cost is the lines' unit cost times their quantity; absent when a line
+	// kept no cost or the sum passes an order total's bound.
+	Cost *int64 `json:"cost,omitempty"`
+	// Margin is sales less cost, negative for goods sold at a loss; absent
+	// when cost is.
+	Margin *int64 `json:"margin,omitempty"`
+	// LinesWithoutCost counts the lines that kept no cost.
+	LinesWithoutCost int64 `json:"lines_without_cost"`
+}
+
+// adminOrderRowDTO is one row of the admin order list: the order and its
+// placed margin (ADR 0401). The storefront's list of a customer's orders is
+// [orderDTO] alone.
+type adminOrderRowDTO struct {
+	orderDTO
+	// PlacedMargin is absent on an order with no line that is not a gift card.
+	PlacedMargin *placedMarginDTO `json:"placed_margin,omitempty"`
 }
 
 // orderAddressDTO is one address the order was placed with, as the cart
@@ -703,13 +754,39 @@ func toOrderDetailDTO(detail models.OrderDetail) orderDetailDTO {
 	return out
 }
 
-// toAdminOrderDetailDTO is [toOrderDetailDTO] with the order's addresses.
-func toAdminOrderDetailDTO(detail models.OrderDetail) adminOrderDetailDTO {
-	return adminOrderDetailDTO{
+// toAdminOrderDetailDTO is [toOrderDetailDTO] with the order's addresses, its
+// lines' costs and its placed margin; margins is what
+// [Orders.PlacedMargins] answered for it.
+func toAdminOrderDetailDTO(detail models.OrderDetail, margins map[string]models.PlacedMargin) adminOrderDetailDTO {
+	out := adminOrderDetailDTO{
 		orderDetailDTO:  toOrderDetailDTO(detail),
 		ShippingAddress: toOrderAddressDTO(detail.ShippingAddress),
 		BillingAddress:  toOrderAddressDTO(detail.BillingAddress),
 		PlacedBy:        detail.PlacedBy,
+		Items:           make([]adminLineItemDTO, 0, len(detail.Items)),
+		PlacedMargin:    toPlacedMarginDTO(detail.Order, margins),
+	}
+	for i := range detail.Items {
+		out.Items = append(out.Items, adminLineItemDTO{
+			lineItemDTO: toLineItemDTO(detail.Items[i]),
+			UnitCost:    detail.Items[i].UnitCost,
+		})
+	}
+	return out
+}
+
+// toPlacedMarginDTO is the order's placed margin; nil when it has none.
+func toPlacedMarginDTO(order models.Order, margins map[string]models.PlacedMargin) *placedMarginDTO {
+	margin, ok := margins[order.ID]
+	if !ok {
+		return nil
+	}
+	return &placedMarginDTO{
+		CurrencyCode:     order.CurrencyCode,
+		Sales:            margin.Sales,
+		Cost:             margin.Cost,
+		Margin:           margin.Margin,
+		LinesWithoutCost: margin.LinesWithoutCost,
 	}
 }
 

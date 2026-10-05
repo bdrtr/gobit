@@ -55,6 +55,9 @@ type memStore struct {
 	// bundles is the bundle variant -> components mapping, in rank order
 	// (ADR 0234).
 	bundles map[string][]models.BundleComponent
+	// costs is the variant -> unit costs mapping, in currency order
+	// (ADR 0401).
+	costs map[string][]models.VariantCost
 	// imports are the catalog imports (ADR 0205), made on first use.
 	imports map[string]*memImport
 	// attributeState is the typed attributes (ADR 0219), made on first use.
@@ -104,6 +107,7 @@ func newMemStore() *memStore {
 		relations:     map[string]map[models.RelationType][]string{},
 		addOns:        map[string][]string{},
 		bundles:       map[string][]models.BundleComponent{},
+		costs:         map[string][]models.VariantCost{},
 		calls:         map[string]int{},
 		failOn:        map[string]error{},
 	}
@@ -1039,6 +1043,41 @@ func (m *memStore) ReplaceBundleComponents(
 		return nil
 	}
 	m.bundles[bundleID] = slices.Clone(components)
+	return nil
+}
+
+func (m *memStore) ListVariantCosts(
+	_ context.Context, variantIDs []string,
+) (map[string][]models.VariantCost, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ListVariantCosts"); err != nil {
+		return nil, err
+	}
+	out := map[string][]models.VariantCost{}
+	for _, id := range variantIDs {
+		if costs := m.costs[id]; len(costs) > 0 {
+			out[id] = slices.Clone(costs)
+		}
+	}
+	return out, nil
+}
+
+// ReplaceVariantCosts keeps the costs in currency order, as the table's read
+// returns them.
+func (m *memStore) ReplaceVariantCosts(_ context.Context, variantID string, costs []models.VariantCost) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.track("ReplaceVariantCosts"); err != nil {
+		return err
+	}
+	if len(costs) == 0 {
+		delete(m.costs, variantID)
+		return nil
+	}
+	sorted := slices.Clone(costs)
+	slices.SortFunc(sorted, func(a, b models.VariantCost) int { return strings.Compare(a.CurrencyCode, b.CurrencyCode) })
+	m.costs[variantID] = sorted
 	return nil
 }
 

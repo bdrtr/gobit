@@ -381,6 +381,7 @@ func toLineItem(row orderdb.OrderLineItem) (models.OrderLineItem, error) {
 		ProductTitle:     row.ProductTitle,
 		Quantity:         row.Quantity,
 		UnitPrice:        row.UnitPrice,
+		UnitCost:         row.UnitCost,
 		Subtotal:         row.Subtotal,
 		DiscountTotal:    row.DiscountTotal,
 		TaxTotal:         row.TaxTotal,

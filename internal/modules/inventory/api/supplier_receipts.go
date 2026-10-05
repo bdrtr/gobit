@@ -189,8 +189,8 @@ func (h *Handler) cancelSupplierReceipt(w http.ResponseWriter, r *http.Request) 
 // describeSupplierReceipts describes the four receipt endpoints.
 func describeSupplierReceipts(d *openapi.Doc) {
 	const meaning = "A supplier receipt is units a supplier owes one of the shop's warehouses, expected " +
-		"to be SELLABLE there at `expected_at` (after put-away). gobit keeps no supplier, cost or " +
-		"purchase order: `reference` carries the embedder's own document number. A receipt still " +
+		"to be SELLABLE there at `expected_at` (after put-away). A receipt names no supplier, cost " +
+		"or purchase order: `reference` carries the embedder's own document number. A receipt still " +
 		"expected keeps its warehouse from closing and its item from being deleted."
 
 	d.Describe(http.MethodPost, pathItemSupplierReceipts, openapi.Operation{

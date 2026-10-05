@@ -771,6 +771,7 @@ func describeAdminVariants(d *openapi.Doc) {
 	})
 
 	describeAdminBundle(d)
+	describeAdminVariantCosts(d)
 }
 
 // describeAdminBundle describes what a bundle variant is made of (ADR 0234).
@@ -800,6 +801,37 @@ func describeAdminBundle(d *openapi.Doc) {
 		RequestBody: d.RequestBody(setBundleRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The variant's components after the write", d.Item(bundleDTO{})),
+		},
+	})
+}
+
+// describeAdminVariantCosts describes what one unit of a variant costs the shop
+// (ADR 0401).
+func describeAdminVariantCosts(d *openapi.Doc) {
+	d.Describe(http.MethodGet, pathVariantCosts, openapi.Operation{
+		Summary: "Returns what one unit of a variant costs the shop, one entry per currency.",
+		Description: "Each amount is in the currency's minor units, net of tax, and the list is in " +
+			"currency order; an empty list is a variant with no cost. The checkout copies the " +
+			"entry in the order's currency onto the order line as \"unit_cost\", and the admin " +
+			"order reads its margin from it. Neither the storefront's product nor its order " +
+			"carries a cost. An unknown or deleted variant answers 404.",
+		Responses: map[string]any{
+			"200": openapi.Response("The variant's costs", d.Item(variantCostsDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodPut, pathVariantCosts, openapi.Operation{
+		Summary: "Replaces what one unit of a variant costs the shop.",
+		Description: "The body is the WHOLE list; an empty list clears it. A currency is three " +
+			"letters, upper-cased as given, and appears once; an amount is a whole number of " +
+			"minor units from 0 to " + strconv.FormatInt(service.MaxCostAmount, 10) + "; a list holds " +
+			"at most " + strconv.Itoa(service.MaxVariantCosts) + " entries. A list breaking any of " +
+			"that is refused with 422 and nothing is written; an unknown or deleted variant " +
+			"answers 404. A changed cost changes no order already placed. The write is not a " +
+			"revision of the product and takes no If-Match.",
+		RequestBody: d.RequestBody(setVariantCostsRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The variant's costs after the write", d.Item(variantCostsDTO{})),
 		},
 	})
 }

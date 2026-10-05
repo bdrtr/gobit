@@ -16,7 +16,8 @@ import (
 // Supported filters: customer_id, region_id and status. Line items are NOT
 // LOADED; fetching the children of dozens of orders per page would open the
 // list up to N+1. The detail of a single order is fetched with
-// /admin/v1/orders/{id}.
+// /admin/v1/orders/{id}. Each row carries its placed margin (ADR 0401), read
+// for the whole page in one statement.
 func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -65,11 +66,24 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := make([]orderDTO, 0, len(result.Items))
+	ids := make([]string, 0, len(result.Items))
+	for i := range result.Items {
+		ids = append(ids, result.Items[i].ID)
+	}
+	margins, err := h.svc.PlacedMargins(ctx, ids)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	data := make([]adminOrderRowDTO, 0, len(result.Items))
 	// The loop is walked by index: the order struct is large and copying it by
 	// value would carry a few hundred bytes for nothing on every turn.
 	for i := range result.Items {
-		data = append(data, toOrderDTO(result.Items[i]))
+		data = append(data, adminOrderRowDTO{
+			orderDTO:     toOrderDTO(result.Items[i]),
+			PlacedMargin: toPlacedMarginDTO(result.Items[i], margins),
+		})
 	}
 	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
 		Data:       data,
@@ -80,16 +94,10 @@ func (h *Handler) adminListOrders(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// adminGetOrder returns the order with its line items and summary.
+// adminGetOrder returns the order with its line items, summary and placed
+// margin.
 func (h *Handler) adminGetOrder(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
-	detail, err := h.svc.GetOrder(ctx, orderID(r))
-	if err != nil {
-		corehttp.WriteError(ctx, w, err)
-		return
-	}
-	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toAdminOrderDetailDTO(detail)})
+	h.writeCurrentOrder(w, r)
 }
 
 // orderPaymentDTO is the live payment view of an order.
@@ -220,6 +228,10 @@ func (h *Handler) adminArchiveOrder(w http.ResponseWriter, r *http.Request) {
 // and the response envelope has to be the SAME on all three endpoints — line
 // items and summary included. The extra read happens only on the rarely used
 // endpoints of the admin side.
+//
+// The admin record carries the order's placed margin (ADR 0401), read in a
+// second statement after the order; both describe the order as it was sold, so
+// a write between the two cannot make them disagree.
 func (h *Handler) writeCurrentOrder(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -228,7 +240,12 @@ func (h *Handler) writeCurrentOrder(w http.ResponseWriter, r *http.Request) {
 		corehttp.WriteError(ctx, w, err)
 		return
 	}
-	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toAdminOrderDetailDTO(detail)})
+	margins, err := h.svc.PlacedMargins(ctx, []string{detail.ID})
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+		return
+	}
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: toAdminOrderDetailDTO(detail, margins)})
 }
 
 // timelineEntryDTO is one thing that happened to an order.

@@ -11,8 +11,8 @@
 -- ledger as 'supplier_receipt' and closes the row in the same transaction;
 -- cancelling closes it with nothing written. A status leaves 'expected' once.
 --
--- reference is the embedder's own document number; gobit keeps no supplier,
--- price or purchase order.
+-- reference is the embedder's own document number. A receipt names no
+-- supplier, price or purchase order.
 CREATE TABLE IF NOT EXISTS inventory_supplier_receipts (
     id                TEXT        PRIMARY KEY,
     inventory_item_id TEXT        NOT NULL REFERENCES inventory_items (id),

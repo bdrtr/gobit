@@ -123,6 +123,20 @@ func (f *scopeCatalog) SetVariantBundle(
 	return []models.BundleComponent{}, nil
 }
 
+// VariantCosts counts the call.
+func (f *scopeCatalog) VariantCosts(context.Context, string) ([]models.VariantCost, error) {
+	f.count()
+	return []models.VariantCost{}, nil
+}
+
+// SetVariantCosts counts the call.
+func (f *scopeCatalog) SetVariantCosts(
+	context.Context, string, []models.VariantCost,
+) ([]models.VariantCost, error) {
+	f.count()
+	return []models.VariantCost{}, nil
+}
+
 // StoreProductAddOns counts the call.
 func (f *scopeCatalog) StoreProductAddOns(context.Context, string, []string) ([]service.StoreAddOn, error) {
 	f.count()
@@ -528,6 +542,7 @@ var writeEndpoints = map[string]struct {
 	"unlink inventory item": {
 		http.MethodDelete, "/admin/v1/variants/var_1/inventory-item", "",
 	},
+	"replace variant costs": {http.MethodPut, "/admin/v1/variants/var_1/costs", `{"costs":[]}`},
 	"link sales channel": {
 		http.MethodPost, "/admin/v1/products/prod_1/sales-channels", `{}`,
 	},
@@ -551,6 +566,7 @@ var readEndpoints = map[string]string{
 	"single variant":  "/admin/v1/variants/var_1",
 	"option list":     "/admin/v1/products/prod_1/options",
 	"variant links":   "/admin/v1/variants/var_1/links",
+	"variant costs":   "/admin/v1/variants/var_1/costs",
 	"sales channels":  "/admin/v1/products/prod_1/sales-channels",
 	"revision list":   "/admin/v1/products/prod_1/revisions",
 	"single revision": "/admin/v1/products/prod_1/revisions/1",

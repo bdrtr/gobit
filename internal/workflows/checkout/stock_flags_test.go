@@ -291,10 +291,10 @@ func TestTheStockFlagsRideOnTheTitleQuery(t *testing.T) {
 	assert.Equal(t,
 		[]string{
 			query.IDField, FieldTitle, FieldManageInventory, FieldAllowBackorder, FieldProductID,
-			FieldBundleComponents,
+			FieldBundleComponents, FieldUnitCosts,
 		},
 		specs[0].Fields,
-		"the two flags and the composition are more names in the field list the title already pays for")
+		"the two flags, the composition and the costs are more names in the field list the title already pays for")
 	assert.Equal(t, EntityProduct, specs[1].Entity)
 	assert.ElementsMatch(t, []string{productOf(testVariantA), productOf(testVariantB)}, specs[1].Filters[FilterIDs],
 		"every product of the cart in one batch")
@@ -317,6 +317,8 @@ func TestAFlagThatIsNotABoolIsRefused(t *testing.T) {
 			FieldAllowBackorder:   false,
 			FieldProductID:        productOf(testVariantA),
 			FieldBundleComponents: []query.Record{},
+			// The costs read, so the flag is the only thing that does not.
+			FieldUnitCosts: []query.Record{},
 		}}, nil
 	}
 

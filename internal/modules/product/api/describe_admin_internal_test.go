@@ -295,6 +295,15 @@ func adminEndpoints() []adminEndpoint {
 			record:  bundleDTO{Components: []models.BundleComponent{{VariantID: "variant_2", Quantity: 2}}},
 		},
 		{
+			method: http.MethodGet, path: pathVariantCosts, status: "200",
+			record: variantCostsDTO{VariantID: "variant_1", Costs: []models.VariantCost{{CurrencyCode: "TRY", Amount: 400}}},
+		},
+		{
+			method: http.MethodPut, path: pathVariantCosts, status: "200",
+			request: setVariantCostsRequest{},
+			record:  variantCostsDTO{VariantID: "variant_1", Costs: []models.VariantCost{{CurrencyCode: "TRY", Amount: 400}}},
+		},
+		{
 			method: http.MethodPost, path: "/admin/v1/products/{id}/variants", status: "201",
 			request: createVariantRequest{}, record: filledAdminVariant(),
 		},

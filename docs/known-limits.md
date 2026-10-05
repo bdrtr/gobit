@@ -658,8 +658,8 @@ past and is not corrected retroactively.
   ([ADR 0399](adr/0399-stock-on-its-way-has-a-date-the-storefront-shows.md)).
   The checkout does not read it, no order line carries it, a bundle shows none,
   a receipt whose moment has passed drops out until someone receives, cancels
-  or re-records it, and a changed date is a cancel and a new receipt. gobit
-  keeps no supplier, cost or purchase order: `reference` carries the
+  or re-records it, and a changed date is a cancel and a new receipt. A
+  receipt names no supplier, cost or purchase order: `reference` carries the
   embedder's number.
 - **A reduction's reference price is known only from the day the price history
   began.** Since [ADR 0167](adr/0167-a-price-keeps-its-history.md) every price
@@ -999,6 +999,18 @@ past and is not corrected retroactively.
   order read, its invoice, its dossier and the line entity print every line of
   its own first; its page nests them
   ([ADR 0250](adr/0250-an-orders-page-lists-what-was-sold.md)).
+
+- **An order's margin is the margin it was placed at, over its goods alone.**
+  Since [ADR 0401](adr/0401-an-order-line-keeps-what-its-goods-cost.md) a line
+  keeps its variant's cost in the order's currency, net of tax, and
+  `placed_margin` is the net sales of the order's lines that are not gift cards
+  less that cost. A canceled unit, a return, a credit, a provider's fee and a
+  carrier's cost do not move it. Exchange and replacement goods are outside it,
+  and an addition is an order with its own. A line sold before the upgrade or in
+  a currency its variant has no cost in has no cost, and the order then states
+  no margin; an order whose lines are all gift cards states none at all. A
+  bundle costs its own entry. gobit converts no currency, and the panel shows
+  neither the cost nor the margin.
 
 - **The in-process harness consumes events like a server.** `InProcess` opens the
   whole application, so its modules subscribe — which is what a test wants, and

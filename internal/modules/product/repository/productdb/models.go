@@ -218,6 +218,13 @@ type ProductVariant struct {
 	DeletedAt       pgtype.Timestamptz
 }
 
+type ProductVariantCost struct {
+	VariantID    string
+	CurrencyCode string
+	Amount       int64
+	CreatedAt    pgtype.Timestamptz
+}
+
 type ProductVariantOptionValue struct {
 	VariantID string
 	OptionID  string

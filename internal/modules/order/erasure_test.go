@@ -52,7 +52,7 @@ var notPersonalColumns = map[string][]string{
 		"id", "order_id", "variant_id", "title", "quantity", "unit_price", "subtotal",
 		"discount_total", "tax_total", "total", "created_at", "updated_at", "tax_rate_bps",
 		"price_id", "price_list_id", "price_list_type", "is_giftcard", "parent_line_item_id",
-		"seq", "components", "product_title",
+		"seq", "components", "product_title", "unit_cost",
 	},
 	"order_addresses": {
 		"id", "order_id", "address_type", "created_at", "updated_at", "superseded_at",

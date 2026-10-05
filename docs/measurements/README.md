@@ -200,3 +200,4 @@ truth: a report says what was true on the day it was taken.
 | [The ground and the assembly — measured 2026-10-05](0398-the-ground-and-the-assembly.md) | 112 |
 | [Stock on its way — measured 2026-10-05](0399-stock-on-its-way.md) | 198 |
 | [What a shopping agent already reaches — measured 2026-10-05](0400-a-shopping-agent-is-a-storefront-client.md) | 139 |
+| [What the goods cost — measured 2026-10-05](0401-what-the-goods-cost.md) | 283 |
