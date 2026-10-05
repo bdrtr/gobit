@@ -70,12 +70,15 @@ func AuditReadsOf(paths ...string) AuditOption {
 
 // Audit records who called which write and what came back.
 //
-// # Why it wraps writes only, and only where an identity exists
+// # Why it wraps writes and the reads it is told to, where an identity exists
 //
-// A row is worth writing when it names somebody. The storefront is
-// unauthenticated by decision (ADR 0008), so a row there would say "somebody"
-// and mean nothing; the caller scopes this middleware to the admin surface for
-// that reason.
+// A row is worth writing when it names somebody. A storefront request is
+// authenticated by a publishable key, which names a sales channel and not a
+// person (ADR 0043), so a row there would say "somebody" and mean nothing; the
+// caller scopes this middleware to the admin surface for that reason. The reads
+// it records are the exact paths in [AuditOptions.ReadPaths], and none when the
+// caller passes none; gobit's composition root lists one, the audit log's own
+// listing (ADR 0037).
 //
 // # Why the row is written AFTER the handler
 //

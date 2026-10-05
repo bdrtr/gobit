@@ -95,11 +95,11 @@ func TestTheToolListIsThisInstallationsOwnSchema(t *testing.T) {
 			"the %q tool's input schema is not an object; a client cannot fill it", tool.Name)
 	}
 
-	// Two endpoints this installation certainly has. The names are PATH-derived,
-	// and measuring taught that: not one operation in this document carries an
-	// operationId, so every tool is named from its address. That makes a tool's
-	// name move when its endpoint moves — which is the honest failure, because a
-	// tool that survived an endpoint's move would answer about something else.
+	// Two endpoints this installation certainly has. The names are the
+	// document's operationIds, which core/openapi derives from the method and the
+	// path for every operation (D259), so a tool's name moves when its endpoint
+	// moves — which is the honest failure, because a tool that survived an
+	// endpoint's move would answer about something else.
 	for _, expected := range []string{"get_admin_v1_orders", "get_admin_v1_products_id"} {
 		assert.Containsf(t, byName, expected,
 			"the tool list has no %q. It is derived from the served schema, so a missing "+

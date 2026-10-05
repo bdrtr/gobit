@@ -118,76 +118,7 @@ func guardStack(
 		auditor = audit.NewStore(pool.Pool())
 	}
 
-	opts := corehttp.GuardOptions{
-		Audit:         auditor,
-		Authenticator: authn,
-		AdminPrefix:   adminPrefix,
-		StorePrefix:   storePrefix,
-		// CORS is applied to the STORE surface only, and only when an
-		// installation configured origins; the reasoning is on
-		// [corehttp.GuardOptions.CORSOrigins].
-		CORSOrigins: cfg.CORSAllowedOrigins,
-		AuditID:     newAuditID,
-		AuditLogger: log,
-		// The audit log's OWN listing is the one read this framework records.
-		// The rule that excludes reads exists because "somebody listed the
-		// orders" answers no question; who read the record of who did what is
-		// the question an incident starts with (ADR 0037).
-		AuditedReads: []string{auditLogPath},
-		// The login endpoint is EXEMPT from the guard: the request whose
-		// identity is to be checked is the one about to establish it. The path
-		// is not spelled out here, it is read from the auth module's constant.
-		AdminExempt: []string{authapi.LoginPath, authapi.AcceptInvitationPath},
-		// Uploaded files are served WITHOUT identity (an <img> in a storefront
-		// cannot send a header) but NOT without a quota: every request performs
-		// a database read and a disk access. The prefix is not spelled out
-		// here, it is read from the provider's constant.
-		//
-		// /openapi.json is in the same class and is here for the same reason:
-		// the client is a code generator or an IDE and sends no header — but
-		// the endpoint is not free. Even with the document cached, every
-		// request walks the route tree to confirm the cache is still valid, and
-		// when the tree changes every module's DTOs are translated again
-		// through reflection. Identity and quota are SEPARATE decisions; the
-		// decision for this endpoint is "no identity, but a quota".
-		// The admin panel is NOT in the same class and enters this list not for
-		// identity but for the QUOTA: its own identity ring is attached just
-		// below, at the end of the stack. Were the prefix missing from this
-		// list the panel would face no rate limit at all — guard scope matches
-		// on a segment boundary and /admin/ui is NOT under /admin/v1.
-		OpenPrefixes: []string{filelocal.DefaultURLPrefix, openAPIPath, adminui.URLPrefix},
-		// The GraphQL storefront endpoint is a POST but it is a READ; there is
-		// no side effect for an idempotency record to protect, and because the
-		// GraphQL contract returns 200 even on an internal error, a record
-		// would replay a transient failure for the whole TTL. The full
-		// rationale is on the [corehttp.GuardOptions.IdempotencyExempt] field;
-		// the path is not spelled out here, it is read from the module's
-		// constant.
-		//
-		// Cart CREATION is exempt for a different reason, and it is a leak
-		// rather than a waste. The idempotency namespace is the caller's
-		// Principal, and on the storefront the Principal is the PUBLISHABLE
-		// KEY — the store's identity, identical for every shopper and visible
-		// in every browser. So all shoppers share one namespace, and the key
-		// that selects a record inside it is a header the CLIENT chooses.
-		//
-		// Every other storefront POST survives that, because the fingerprint
-		// includes the PATH and those paths carry the cart id: a second shopper
-		// reusing the key on their own cart gets 409 idempotency_key_reuse, not
-		// somebody else's data. Cart creation is the one endpoint whose path
-		// carries no capability and whose response CREATES one — so a second
-		// shopper sending the same key and the same body was handed the first
-		// shopper's cart id, which is a capability URL (there is no ownership
-		// check on a cart; see README's known limits). Measured, not deduced:
-		// two independent callers, `Idempotency-Key: cart-9`, identical bodies,
-		// identical cart id in both responses and `Idempotency-Replayed: true`
-		// on the second.
-		//
-		// Exempting it costs a duplicate cart when a client retries a timed-out
-		// creation. That is an abandoned row. The alternative was handing a
-		// stranger someone's cart.
-		IdempotencyExempt: []string{graph.Path, cartapi.StoreCartsPath},
-	}
+	opts := guardOptions(cfg, authn, auditor, log)
 
 	if cfg.GuardBackend == config.BackendRedis {
 		if rdb == nil {
@@ -255,6 +186,86 @@ func guardStack(
 	callbacks := newCallbackRegistry(opts, log)
 
 	return withPanelRing(opts, panel, callbacks), callbacks, nil
+}
+
+// guardOptions is the part of the guard options that is the same on every
+// backend: who is exempt from what, which reads are recorded, and where the two
+// surfaces are mounted. [guardStack] adds the store and the limiter its branch
+// chooses. It is a function of its own so that the list of audited reads can be
+// read without a database (D259).
+func guardOptions(
+	cfg config.Config, authn corehttp.Authenticator, auditor corehttp.AuditWriter, log *slog.Logger,
+) corehttp.GuardOptions {
+	return corehttp.GuardOptions{
+		Audit:         auditor,
+		Authenticator: authn,
+		AdminPrefix:   adminPrefix,
+		StorePrefix:   storePrefix,
+		// CORS is applied to the STORE surface only, and only when an
+		// installation configured origins; the reasoning is on
+		// [corehttp.GuardOptions.CORSOrigins].
+		CORSOrigins: cfg.CORSAllowedOrigins,
+		AuditID:     newAuditID,
+		AuditLogger: log,
+		// The audit log's OWN listing is the one read this installation records.
+		// The rule that excludes reads exists because "somebody listed the
+		// orders" answers no question; who read the record of who did what is
+		// the question an incident starts with (ADR 0037).
+		AuditedReads: []string{auditLogPath},
+		// The login endpoint is EXEMPT from the guard: the request whose
+		// identity is to be checked is the one about to establish it. The path
+		// is not spelled out here, it is read from the auth module's constant.
+		AdminExempt: []string{authapi.LoginPath, authapi.AcceptInvitationPath},
+		// Uploaded files are served WITHOUT identity (an <img> in a storefront
+		// cannot send a header) but NOT without a quota: every request performs
+		// a database read and a disk access. The prefix is not spelled out
+		// here, it is read from the provider's constant.
+		//
+		// /openapi.json is in the same class and is here for the same reason:
+		// the client is a code generator or an IDE and sends no header — but
+		// the endpoint is not free. Even with the document cached, every
+		// request walks the route tree to confirm the cache is still valid, and
+		// when the tree changes every module's DTOs are translated again
+		// through reflection. Identity and quota are SEPARATE decisions; the
+		// decision for this endpoint is "no identity, but a quota".
+		// The admin panel is NOT in the same class and enters this list not for
+		// identity but for the QUOTA: its own identity ring is attached just
+		// below, at the end of the stack. Were the prefix missing from this
+		// list the panel would face no rate limit at all — guard scope matches
+		// on a segment boundary and /admin/ui is NOT under /admin/v1.
+		OpenPrefixes: []string{filelocal.DefaultURLPrefix, openAPIPath, adminui.URLPrefix},
+		// The GraphQL storefront endpoint is a POST but it is a READ; there is
+		// no side effect for an idempotency record to protect, and because the
+		// GraphQL contract returns 200 even on an internal error, a record
+		// would replay a transient failure for the whole TTL. The full
+		// rationale is on the [corehttp.GuardOptions.IdempotencyExempt] field;
+		// the path is not spelled out here, it is read from the module's
+		// constant.
+		//
+		// Cart CREATION is exempt for a different reason, and it is a leak
+		// rather than a waste. The idempotency namespace is the caller's
+		// Principal, and on the storefront the Principal is the PUBLISHABLE
+		// KEY — the store's identity, identical for every shopper and visible
+		// in every browser. So all shoppers share one namespace, and the key
+		// that selects a record inside it is a header the CLIENT chooses.
+		//
+		// Every other storefront POST survives that, because the fingerprint
+		// includes the PATH and those paths carry the cart id: a second shopper
+		// reusing the key on their own cart gets 409 idempotency_key_reuse, not
+		// somebody else's data. Cart creation is the one endpoint whose path
+		// carries no capability and whose response CREATES one — so a second
+		// shopper sending the same key and the same body was handed the first
+		// shopper's cart id, which is a capability URL (there is no ownership
+		// check on a cart; see README's known limits). Measured, not deduced:
+		// two independent callers, `Idempotency-Key: cart-9`, identical bodies,
+		// identical cart id in both responses and `Idempotency-Replayed: true`
+		// on the second.
+		//
+		// Exempting it costs a duplicate cart when a client retries a timed-out
+		// creation. That is an abandoned row. The alternative was handing a
+		// stranger someone's cart.
+		IdempotencyExempt: []string{graph.Path, cartapi.StoreCartsPath},
+	}
 }
 
 // newCallbackRegistry gives the inbound-callback ring the same guard services

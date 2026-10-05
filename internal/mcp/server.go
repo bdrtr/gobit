@@ -28,7 +28,8 @@ const (
 type Options struct {
 	// Handler is the assembled router — the same one the server would serve.
 	// Every tool call goes through it, so every guard the admin surface has
-	// applies: identity, scope, quota and the audit log.
+	// applies: identity, scope and quota. The audit log records a tool call only
+	// when it reads the audit log itself (ADR 0037, D259).
 	Handler http.Handler
 	// Key is the secret key the tool calls present. It is the server's own
 	// credential and not an operator's: a model client is a caller, and a caller

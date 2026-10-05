@@ -171,6 +171,24 @@ past and is not corrected retroactively.
   declares the privilege. A plugin's screen is the plugin's own code and is
   walked by nothing, and a path a screen takes only for a particular value in a
   record is walked only as far as a record holding every asked-for field goes.
+- **gobit has no agent surface.** A shopping agent is a storefront client
+  ([ADR 0400](adr/0400-a-shopping-agent-is-a-storefront-client.md)): it reads
+  `/openapi.json` without a key and shops through `/store/v1` with the shop's
+  public publishable key. Whom it acts for is whatever your bound
+  `corehttp.Identity` proves, and only on routes that name a customer; a guest
+  cart asks nothing, and completing a cart asks nothing, because its id is the
+  capability. A provider's charge is bounded by whatever credential your
+  provider receives in `payment_data`, against an amount the client cannot set.
+  The one bound across orders is a company employee's spending limit (b2b),
+  which caps the customer's spend in its period whoever completes the cart.
+  Nothing else bounds what an agent spends: whoever holds a customer's cart id
+  spends that customer's store credit and points, a gift card code is a bearer
+  credential, and an offline method places the order owing — so an expired
+  delegation still completes a cart it opened. Nothing holds a category or line
+  bound or bounds one delegation's spend, nothing limits one agent apart from
+  its address, and no audit row names an agent. A discovery document
+  (`/.well-known/…`, `/llms.txt`) is yours to serve from a module on the shop's
+  origin, as `examples/storefront` serves its pages.
 
 ## Sales channel scope
 

@@ -815,6 +815,123 @@ func TestLoginEndpointIsExplicitlyUnsecuredInSchema(t *testing.T) {
 		"the storefront endpoint must ask for a publishable key")
 }
 
+// operationMethods are the keys of an OpenAPI path item that hold an operation;
+// a path item's other keys (its shared parameters, its summary) hold none.
+var operationMethods = []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+
+// documentOperations walks every operation of the served document, handing over
+// its method in upper case, its pattern and its body.
+func documentOperations(t *testing.T, doc map[string]any, visit func(method, pattern string, op map[string]any)) {
+	t.Helper()
+
+	for pattern, value := range objectField(t, doc, "paths", "document") {
+		item, ok := value.(map[string]any)
+		require.Truef(t, ok, "the path item %q must be an object, found %T", pattern, value)
+
+		for _, method := range operationMethods {
+			raw, present := item[method]
+			if !present {
+				continue
+			}
+
+			op, ok := raw.(map[string]any)
+			require.Truef(t, ok, "%s %s must be an object, found %T", method, pattern, raw)
+			visit(strings.ToUpper(method), pattern, op)
+		}
+	}
+}
+
+// TestEveryOperationIsNamedOnce holds every operation the document serves to an
+// operationId no other operation carries (ADR 0400).
+//
+// A client generator names a method by it and `gobit mcp` names a tool by it
+// (ADR 0161), so an operation without one is a method the generator invents,
+// and two sharing one are a call that reaches whichever the lookup finds first.
+// `core/openapi` derives it from the method and the path, and a describe block
+// may write its own; this audits what the two produce together.
+func TestEveryOperationIsNamedOnce(t *testing.T) {
+	_, doc := schemaDocument(t)
+
+	owners := map[string]string{}
+	seen := map[string]bool{}
+	documentOperations(t, doc, func(method, pattern string, op map[string]any) {
+		route := method + " " + pattern
+		seen[route] = true
+
+		id, _ := op["operationId"].(string)
+		if !assert.NotEmptyf(t, id, "%s carries no operationId; a client generator invents a "+
+			"method name for it and `gobit mcp` names its tool by the path", route) {
+			return
+		}
+
+		if first, taken := owners[id]; taken {
+			assert.Failf(t, "two operations share an operationId",
+				"%s and %s are both %q. A generated client has one method for two "+
+					"endpoints and a model client one tool, so a call reaches whichever "+
+					"the lookup finds first", first, route, id)
+
+			return
+		}
+		owners[id] = route
+	})
+
+	// The two operations the login test reads stand for both surfaces; a walk
+	// that missed them would agree with any document.
+	for _, route := range []string{
+		"GET /admin/v1/users",
+		"GET /store/v1/sales-channels/{sales_channel_id}/products",
+	} {
+		require.Truef(t, seen[route], "precondition: the walk must reach %s; it read %d "+
+			"operations and an empty walk names nothing twice", route, len(seen))
+	}
+}
+
+// TestEveryStoreOperationAsksForThePublishableKey holds every storefront
+// operation to the publishable key, under the header the guard reads (ADR 0400).
+//
+// The document is what a client that is not a browser reads to learn how to
+// call the store, and `RequireStore` guards the whole prefix: an operation
+// that asked for nothing, or a scheme naming another header, is a client built
+// from the document that every store request refuses. The scheme is checked by
+// name rather than by an exact requirement, because a route demanding a
+// privilege names it in the scheme (ADR 0263).
+func TestEveryStoreOperationAsksForThePublishableKey(t *testing.T) {
+	_, doc := schemaDocument(t)
+
+	schemes := objectField(t, objectField(t, doc, "components", "document"), "securitySchemes", "components")
+	scheme := objectField(t, schemes, "publishableKey", "securitySchemes")
+	assert.Equal(t, "apiKey", scheme["type"], "the publishable key is an API key")
+	assert.Equal(t, "header", scheme["in"], "the publishable key travels in a header")
+	assert.Equal(t, corehttp.PublishableKeyHeader, scheme["name"],
+		"the document names the header %q and the guard reads %q; a client built from the "+
+			"document sends the key where nothing looks for it", scheme["name"], corehttp.PublishableKeyHeader)
+
+	stores := 0
+	documentOperations(t, doc, func(method, pattern string, op map[string]any) {
+		if !strings.HasPrefix(pattern, "/store/v1/") {
+			return
+		}
+		stores++
+
+		requirement, ok := op["security"].([]any)
+		if !assert.Truef(t, ok && len(requirement) > 0,
+			"%s %s asks for no credential (security: %v), while the guard refuses every "+
+				"store request without the publishable key", method, pattern, op["security"]) {
+			return
+		}
+
+		for _, alternative := range requirement {
+			names, _ := alternative.(map[string]any)
+			assert.Containsf(t, names, "publishableKey",
+				"%s %s offers a way in without the publishable key (%v), while the guard "+
+					"refuses every store request without it", method, pattern, alternative)
+		}
+	})
+
+	require.NotZero(t, stores, "precondition: the document must hold store operations; with "+
+		"none, this test audits nothing")
+}
+
 // TestSchemaContainsNoRawRecordIDs verifies that the document publishes route
 // PATTERNS, not live data.
 //

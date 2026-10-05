@@ -1478,6 +1478,18 @@ design. It is fixed with `1.0.0`.
 
 ### Decisions
 
+- **A shopping agent is a storefront client** (ADR 0400, D259). **For
+  contributors:** gobit builds no policy read, discovery document, delegated
+  credential, per-agent limit or agent audit row; an agent shops through
+  `/store/v1` with the publishable key, reading `/openapi.json`. Two schema
+  tests now hold every operation to an `operationId` of its own, and every store
+  operation to the publishable key under the header the guard reads; a unit test
+  holds the installation's audited reads to the audit log's own listing.
+  `gobit mcp`'s comments no longer say its calls are audited or that the
+  document carries no operationId, and ADR 0161's Status line names the
+  amendment by ADR 0400, which corrects both. `corehttp.Audit` no longer calls
+  the storefront unauthenticated.
+
 - **The end-to-end ground opens the installation the server serves** (ADR 0398,
   D254, D255). **For contributors:** `internal/e2e` brings its ground up through
   `app.Open`, the assembly `App.InProcess` and the server share. It runs under

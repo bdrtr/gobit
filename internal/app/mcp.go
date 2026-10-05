@@ -48,10 +48,11 @@ const mcpKeyEnv = "MCP_API_KEY"
 // # Why the whole application is opened
 //
 // Because a tool call is a real request. It goes through the router this process
-// assembles — the same one `serve` would serve — so identity, scope, quota and
-// the audit log all apply, and a tool cannot reach what an admin client could
-// not. Nothing here is re-implemented, which is the reason the tool list is
-// derived from the document this process serves rather than written down.
+// assembles — the same one `serve` would serve — so identity, scope and quota
+// apply, the audit log records a tool call only when it reads the audit log
+// (ADR 0037, D259), and a tool cannot reach what an admin client could not.
+// Nothing here is re-implemented, which is the reason the tool list is derived
+// from the document this process serves rather than written down.
 //
 // The assembly publishes only (ADR 0160): it must not take a message the running
 // server is owed.

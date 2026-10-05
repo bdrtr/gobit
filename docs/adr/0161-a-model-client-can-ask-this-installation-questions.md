@@ -4,7 +4,7 @@
 OpenAPI document this process serves, and a tool call is an in-process GET
 through the assembled router.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0400](0400-a-shopping-agent-is-a-storefront-client.md), under which a tool's read is recorded only when it lists the audit log, its names are the operationIds the document derives from method and path, and what it rejected is hand-written ids
 - **Date:** 2026-09-12
 
 Measurement: [measurements/0161](../measurements/0161-a-hundred-and-twenty-one-tools.md)

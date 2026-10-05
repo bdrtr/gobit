@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/internal/core/config"
 )
 
 // TestTheAdminPrefixTheCompositionRootPinsIsTheCoresDefault ties two constants
@@ -34,4 +35,21 @@ func TestTheAdminPrefixTheCompositionRootPinsIsTheCoresDefault(t *testing.T) {
 	assert.Equal(t, corehttp.DefaultAdminPrefix, adminPrefixOf(corehttp.GuardOptions{}))
 	assert.Equal(t, "/elsewhere",
 		adminPrefixOf(corehttp.GuardOptions{AdminPrefix: "/elsewhere"}))
+}
+
+// TestTheOneAuditedReadIsTheAuditLogsOwnListing pins the composition root's list
+// of recorded reads (ADR 0037, D259).
+//
+// The core records a read of every path it is handed, and its own tests hand it
+// paths of their own, so nothing there reads this list. Deleting it leaves
+// "reading the audit log is itself recorded" untrue with every lane green, and
+// widening it fills the log with listings nobody asked about. Both are held
+// here, on the options every backend starts from.
+func TestTheOneAuditedReadIsTheAuditLogsOwnListing(t *testing.T) {
+	t.Parallel()
+
+	opts := guardOptions(config.Config{}, nil, nil, discardLogger())
+
+	assert.Equal(t, []string{auditLogPath}, opts.AuditedReads,
+		"the installation records a read of the audit log's own listing and of nothing else")
 }
