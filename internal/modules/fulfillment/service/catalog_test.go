@@ -278,7 +278,11 @@ func TestAmountIsZeroedWhenSwitchedToCalculated(t *testing.T) {
 }
 
 // TestRuleValidation proves that an operator expecting a single value cannot be
-// given two, and that a valueless rule is rejected.
+// given two, that a valueless rule is rejected, and that a numeric operator's
+// threshold has to be an integer: a `gte 500.5` rule matches no subtotal, so
+// writing it would hide its option from every cart (ADR 0396, D252). The
+// operator is trimmed before it is stored, so the threshold is asked about the
+// trimmed word too: " gte " asked as sent is no numeric word at all.
 //
 // Had it been swallowed silently, the administrator would only notice that the
 // condition they believed they had set is not running once the orders flowed
@@ -309,6 +313,15 @@ func TestRuleValidation(t *testing.T) {
 		{"two values for a single-value operator", service.CreateRuleInput{
 			Attribute: "region_id", Operator: "eq", Values: []string{"a", "b"},
 		}},
+		{"a fractional threshold", service.CreateRuleInput{
+			Attribute: "subtotal", Operator: "gte", Values: []string{"500.5"},
+		}},
+		{"a threshold in words", service.CreateRuleInput{
+			Attribute: "subtotal", Operator: "gte", Values: []string{"fifty thousand"},
+		}},
+		{"a fractional threshold under a spaced operator", service.CreateRuleInput{
+			Attribute: "subtotal", Operator: " gte ", Values: []string{"500.5"},
+		}},
 	}
 
 	for _, tc := range cases {
@@ -325,6 +338,45 @@ func TestRuleValidation(t *testing.T) {
 		service.CreateRuleInput{Attribute: "region_id", Operator: "in", Values: []string{"a", "b"}})
 	require.NoError(t, err, "the in operator has to take more than one value")
 	assert.Len(t, multiValue.Values, 2)
+}
+
+// TestASpacedThresholdIsStoredTrimmedAndMatches proves that the writer trims a
+// value before it asks whether the evaluator can read it.
+//
+// The evaluator reads a number exactly as written, so " 50000 " stored as sent
+// would match no cart; trimmed at the door it is the integer the
+// administrator meant, and the option opens at the threshold and not below it.
+func TestASpacedThresholdIsStoredTrimmedAndMatches(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	profileID := setup.createProfile(t, "default")
+	optionID := setup.createOption(t, service.CreateOptionInput{
+		Name:              "Free shipping",
+		ShippingProfileID: profileID,
+		Amount:            0,
+	})
+	rule, err := setup.svc.CreateShippingOptionRule(context.Background(), optionID,
+		service.CreateRuleInput{Attribute: "subtotal", Operator: "gte", Values: []string{" 50000 "}})
+	require.NoError(t, err, "a spaced integer is an integer once trimmed")
+	assert.Equal(t, []string{"50000"}, rule.Values, "the value has to be stored trimmed")
+
+	atThreshold, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+		CurrencyCode: "TRY",
+		Subtotal:     50_000,
+		TrustedFacts: true,
+	})
+	require.NoError(t, err)
+	require.Len(t, atThreshold, 1, "at the threshold the option has to be offered")
+	assert.Equal(t, optionID, atThreshold[0].Option.ID)
+
+	below, err := setup.svc.ListShippingOptionsFor(context.Background(), service.ListOptionsInput{
+		CurrencyCode: "TRY",
+		Subtotal:     49_999,
+		TrustedFacts: true,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, below, "below the threshold the option must not be offered")
 }
 
 // TestDeletingARuleMakesTheOptionUnconditional proves that the soft deletion of a

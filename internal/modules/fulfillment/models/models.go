@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"slices"
 	"time"
+
+	"github.com/bdrtr/gobit/internal/core/condition"
 )
 
 // Amount bounds.
@@ -128,39 +130,40 @@ func (p PriceType) Valid() bool {
 
 // RuleOperator is the comparison operator of a shipping option rule.
 //
-// The operator set is deliberately the same as the one for price rules in the
-// pricing module; an administrator should not have to learn two different
-// languages in two places. The package is NOT imported (Principle 2.4), the
-// definition is repeated here.
+// The operator set is the one price and promotion rules use, so an
+// administrator does not learn two languages in two places. Its words and the
+// function that reads a rule are [condition]'s, below every module; the pricing
+// module is still NOT imported (Principle 2.4), and the type, its Valid and the
+// table's CHECK stay this module's (ADR 0396).
 type RuleOperator string
 
 // The supported operators.
 //
-// eq/ne/in/nin are STRING comparisons; gt/gte/lt/lte convert both sides to
-// integers and compare NUMERICALLY (e.g. "subtotal" >= "50000"). A context
-// value that cannot be converted to a number makes the rule NOT MATCH rather
-// than producing an error: the context comes from outside and a single broken
-// field must not bring down the whole shipping list.
-//
-// The numeric comparison is over INTEGERS; money fields such as the subtotal
-// are minor units, so they never pass through floating point (plan Section 8).
+// eq/ne/in/nin are STRING comparisons; gt/gte/lt/lte compare base-10 INTEGERS
+// NUMERICALLY (e.g. "subtotal" >= "50000"). A context value that is not an
+// integer makes the rule NOT MATCH rather than fail: the context comes from
+// outside and a single broken field must not bring down the whole shipping
+// list. Money fields such as the subtotal are minor units, so they never pass
+// through floating point (plan Section 8). Fulfillment admits eight of the nine
+// words; `any_in` is promotion's (ADR 0144), and no record admits it for a
+// shipping rule.
 const (
 	// OpEq requires the value to equal the rule's single value.
-	OpEq RuleOperator = "eq"
+	OpEq = RuleOperator(condition.Eq)
 	// OpNe requires the value to differ from the rule's single value.
-	OpNe RuleOperator = "ne"
+	OpNe = RuleOperator(condition.Ne)
 	// OpIn requires the value to be present in the rule's set.
-	OpIn RuleOperator = "in"
+	OpIn = RuleOperator(condition.In)
 	// OpNin requires the value to be ABSENT from the rule's set.
-	OpNin RuleOperator = "nin"
+	OpNin = RuleOperator(condition.Nin)
 	// OpGt requires numeric greater-than.
-	OpGt RuleOperator = "gt"
+	OpGt = RuleOperator(condition.Gt)
 	// OpGte requires numeric greater-than-or-equal.
-	OpGte RuleOperator = "gte"
+	OpGte = RuleOperator(condition.Gte)
 	// OpLt requires numeric less-than.
-	OpLt RuleOperator = "lt"
+	OpLt = RuleOperator(condition.Lt)
 	// OpLte requires numeric less-than-or-equal.
-	OpLte RuleOperator = "lte"
+	OpLte = RuleOperator(condition.Lte)
 )
 
 // String returns the textual form of the operator.
@@ -177,22 +180,12 @@ func (o RuleOperator) Valid() bool {
 }
 
 // Numeric reports whether the operator performs a numeric comparison.
-func (o RuleOperator) Numeric() bool {
-	switch o {
-	case OpGt, OpGte, OpLt, OpLte:
-		return true
-	case OpEq, OpNe, OpIn, OpNin:
-		return false
-	default:
-		return false
-	}
-}
+func (o RuleOperator) Numeric() bool { return condition.Operator(o).Numeric() }
 
 // MultiValue reports whether the operator can take more than one value.
-// Every other operator requires a SINGLE value.
-func (o RuleOperator) MultiValue() bool {
-	return o == OpIn || o == OpNin
-}
+// Every other operator requires a SINGLE value. It answers for the whole
+// vocabulary, `any_in` included; [RuleOperator.Valid] refuses that word first.
+func (o RuleOperator) MultiValue() bool { return condition.Operator(o).MultiValue() }
 
 // ShippingProfile is the container of shipping options.
 //

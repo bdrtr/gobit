@@ -3,10 +3,10 @@ package service
 import (
 	"context"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/core/condition"
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
@@ -320,110 +320,18 @@ func matchRules(
 
 // matchRule reports whether a single rule matches the context.
 //
-// If the field the rule looks at is ABSENT from the context, the rule does not
-// match — even for negative operators such as "ne" (not equal). Otherwise a
-// request with an empty context would satisfy every negative rule and open the
-// segment discounts to everyone.
+// The reading is [condition.Match]'s, shared with pricing and fulfillment (ADR
+// 0396): a field ABSENT from the context does not match, even for negative
+// operators such as "ne", so an empty context cannot open the segment discounts
+// to everyone. A rule WITHOUT VALUES, a value no writer accepts and an
+// unrecognized operator do not match and do not panic: an unreadable condition
+// must NOT silently disable the rule and OPEN the discount to everyone.
 //
-// A rule WITHOUT VALUES does not match either and DOES NOT PANIC. Service
-// validation never produces such a record, but the computation has to withstand
-// every row it reads from the database: a maintenance script that runs SQL
-// directly or a partial restore can leave the values empty. The reasoning is the
-// same as for an unrecognized operator — an unreadable condition must NOT
-// silently disable the rule and OPEN the discount to everyone.
+// `any_in` reads only the context's LIST for the attribute and every other
+// operator only its single value; an empty list does not match (ADR 0144).
 func matchRule(
 	rule models.PromotionRule, attributes map[string]string, lists map[string][]string,
 ) bool {
-	if len(rule.Values) == 0 {
-		return false
-	}
-
-	// An operator that reads from the LIST side NEVER looks at the single value,
-	// and the reverse holds too. Mixing the two would mean a shipped `in` rule
-	// one day starting to read the list: a discount opens up for a customer
-	// whose sorted list does NOT start with vip, and a live discount changes
-	// without announcing anything (ADR 0144).
-	if rule.Operator.ReadsAList() {
-		return matchAnyIn(rule, lists[rule.Attribute])
-	}
-
 	value, ok := attributes[rule.Attribute]
-	if !ok {
-		return false
-	}
-
-	switch rule.Operator {
-	case models.OpEq:
-		return value == rule.Values[0]
-	case models.OpNe:
-		return value != rule.Values[0]
-	case models.OpIn:
-		return slices.Contains(rule.Values, value)
-	case models.OpNin:
-		return !slices.Contains(rule.Values, value)
-	case models.OpGt, models.OpGte, models.OpLt, models.OpLte:
-		return matchNumeric(rule, value)
-	default:
-		// An unrecognized operator DOES NOT MATCH: a value that leaked into the
-		// database later must not silently disable the rule and make the
-		// discount open to everyone.
-		return false
-	}
-}
-
-// matchAnyIn reports whether the context's SET of values intersects the rule's
-// values.
-//
-// An empty set does not match, and that is not an edge case but the right
-// answer: if the list was never sent, which groups the customer is in is
-// UNKNOWN, and counting an unknown segment as matched would open the segment
-// discount to everyone — the same answer [matchRule] gives for a field absent
-// from the context.
-//
-// The comparison loops nested over two small lists: a customer is in a handful
-// of groups and a rule carries a handful of values, so building a set would
-// cost more than it gains.
-func matchAnyIn(rule models.PromotionRule, values []string) bool {
-	for _, value := range values {
-		if slices.Contains(rule.Values, value) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// matchNumeric evaluates the numeric operators.
-//
-// Both sides have to be convertible to an integer; a context value that cannot
-// be converted makes the rule not match (it produces no error): the context
-// comes from outside, and a single broken field must not bring down the whole
-// discount computation.
-//
-// It is called ONLY from matchRule, and that the rule has at least one value is
-// guaranteed there; the first value is therefore read directly.
-func matchNumeric(rule models.PromotionRule, value string) bool {
-	left, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return false
-	}
-	right, err := strconv.ParseInt(rule.Values[0], 10, 64)
-	if err != nil {
-		return false
-	}
-
-	switch rule.Operator {
-	case models.OpGt:
-		return left > right
-	case models.OpGte:
-		return left >= right
-	case models.OpLt:
-		return left < right
-	case models.OpLte:
-		return left <= right
-	case models.OpEq, models.OpNe, models.OpIn, models.OpNin:
-		return false
-	default:
-		return false
-	}
+	return condition.Match(condition.Operator(rule.Operator), rule.Values, value, ok, lists[rule.Attribute])
 }

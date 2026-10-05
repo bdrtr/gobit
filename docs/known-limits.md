@@ -686,6 +686,19 @@ past and is not corrected retroactively.
   compiler never sees the two sides together — is what kept that file from being
   written, and while it stood two shipped storefront coupon endpoints answered
   500 to the first customer who typed a code (D73).
+- **A rule set is a conjunction over one operator vocabulary, not an
+  expression language.** A price, a shipping option and a promotion offer only
+  when every rule holds; `in` gives a choice within one attribute, and there is
+  no OR across attributes and no grouping
+  ([ADR 0396](adr/0396-a-rule-condition-is-read-by-one-evaluator.md)). The
+  three read a rule through `internal/core/condition`; `any_in` is promotion's
+  alone (ADR 0144; pricing refuses it, ADR 0327), a tax rate rule names a
+  reference by equality and the most specific wins (ADR 0094, ADR 0101), a
+  customer segment is evaluated by its own flow (ADR 0217), and a webhook
+  filter is equality (ADR 0218).
+  Pricing caps no value count and only fulfillment trims a value. A shipping
+  rule written before ADR 0396 with a non-integer threshold still hides its
+  option.
 - **`TestEveryWorkflowIsSetUpInTheCompositionRoot` is a SYNTACTIC proxy.** It
   asks the question "can a wrong configuration stop startup" as "does the path
   to setup go through a `go` expression"; when the `go` is hidden behind a

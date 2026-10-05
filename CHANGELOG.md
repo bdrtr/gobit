@@ -11,6 +11,15 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **A shipping rule's numeric threshold must be an integer** (ADR 0396, D252).
+  **For integrators:** `POST /admin/v1/shipping-options/{id}/rules` with `gt`,
+  `gte`, `lt` or `lte` and a value that is not a base-10 integer answers 422
+  `fulfillment_invalid_input`; it answered 201 and wrote a rule that offered
+  the option to no cart. Price, shipping and promotion rules are read by one
+  evaluator, which compares a number without trimming spaces and matches no
+  condition holding a value its writers refuse. **For operators:** a shipping
+  rule written earlier with such a value still hides its option; delete it and
+  write it again with an integer threshold in minor units.
 - **A backordered line waits for its units** (ADR 0392, D242). **For
   integrators:** a line the checkout lets through without stock
   (`allow_backorder`) is owed to its order. The next write that makes enough

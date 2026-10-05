@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/core/condition"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
@@ -148,6 +149,11 @@ func normalizeStatus(value string) (models.FulfillmentStatus, error) {
 // expects a single one been swallowed silently, the second value would never be
 // evaluated and the administrator would only notice that the condition they
 // believed they had set is not running once the orders flowed wrong.
+//
+// Every value is trimmed and then asked [condition.Readable]: the value of a
+// numeric operator (gt/gte/lt/lte) has to be an integer, because the evaluator
+// matches nothing else and the option would silently be offered to no cart
+// (D252).
 func validateRuleInput(attribute, operator string, values []string) (models.RuleOperator, []string, error) {
 	if err := requireText("the rule field", attribute); err != nil {
 		return "", nil, err
@@ -181,6 +187,13 @@ func validateRuleInput(attribute, operator string, values []string) (models.Rule
 		}
 		if err := checkTextLen("the rule value", trimmed); err != nil {
 			return "", nil, err
+		}
+		// The value is asked what the one evaluator will ask it: a numeric
+		// threshold that is not an integer matches no cart, and storing it
+		// would hide its option from every cart without a word (D252).
+		if !condition.Readable(condition.Operator(op), trimmed) {
+			return "", nil, errors.Invalid(CodeInvalidInput,
+				"the %q operator expects an integer, %q given (value %d)", op, trimmed, i+1)
 		}
 		out = append(out, trimmed)
 	}

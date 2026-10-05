@@ -2,10 +2,10 @@ package service
 
 import (
 	"math"
-	"strconv"
 	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/core/condition"
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 )
 
@@ -190,11 +190,9 @@ func validateRuleInput(in RuleInput) error {
 		if value == "" {
 			return errors.Invalid(CodeInvalidInput, "the values of the %q rule cannot be empty", in.Attribute)
 		}
-		if in.Operator.Numeric() {
-			if _, err := strconv.ParseInt(value, 10, 64); err != nil {
-				return errors.Invalid(CodeInvalidInput,
-					"the %q operator expects an integer, %q given", string(in.Operator), value)
-			}
+		if !condition.Readable(condition.Operator(in.Operator), value) {
+			return errors.Invalid(CodeInvalidInput,
+				"the %q operator expects an integer, %q given", string(in.Operator), value)
 		}
 	}
 	return nil

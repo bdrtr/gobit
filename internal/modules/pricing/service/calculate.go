@@ -3,11 +3,10 @@ package service
 import (
 	"context"
 	"math"
-	"slices"
-	"strconv"
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/core/condition"
 	"github.com/bdrtr/gobit/internal/modules/pricing/models"
 )
 
@@ -334,77 +333,13 @@ func matchRules(rules []models.PriceRule, attributes map[string]string) bool {
 
 // matchRule reports whether a single rule matches the context.
 //
-// If the field the rule looks at is NOT in the context, the rule does not
-// match — even for negative operators such as "ne" (not equal). Otherwise a
-// request with an empty context would satisfy every negative rule and open the
-// segment prices to everybody.
-//
-// A rule with NO VALUES does not match either, and it DOES NOT PANIC. Service
-// validation never produces such a record, but the calculation has to survive
-// every row it reads from the database: a maintenance script running raw SQL or
-// a partial restore can leave the values empty. The reason is the same as for
-// an unknown operator — a condition that cannot be read must not silently
-// disable the rule and OPEN the price to everybody.
+// The reading is [condition.Match]'s, shared with fulfillment and promotion
+// (ADR 0396): a field ABSENT from the context does not match, even for a
+// negative operator such as "ne", a rule with no values or a value no writer
+// accepts does not match and does not panic, and an unknown operator does not
+// match. A condition that cannot be read must not silently disable the rule and
+// open the price to everybody. Pricing reads no list, so it passes none.
 func matchRule(rule models.PriceRule, attributes map[string]string) bool {
-	if len(rule.Values) == 0 {
-		return false
-	}
-
 	value, ok := attributes[rule.Attribute]
-	if !ok {
-		return false
-	}
-
-	switch rule.Operator {
-	case models.OpEq:
-		return value == rule.Values[0]
-	case models.OpNe:
-		return value != rule.Values[0]
-	case models.OpIn:
-		return slices.Contains(rule.Values, value)
-	case models.OpNin:
-		return !slices.Contains(rule.Values, value)
-	case models.OpGt, models.OpGte, models.OpLt, models.OpLte:
-		return matchNumeric(rule, value)
-	default:
-		// An unknown operator DOES NOT MATCH: a value that later leaked into the
-		// database must not silently disable the rule and open the price to
-		// everybody.
-		return false
-	}
-}
-
-// matchNumeric evaluates the numeric operators.
-//
-// Both sides have to convert to an integer; a context value that does not
-// convert makes the rule not match (it produces no error): the context comes
-// from outside, and a single broken field must not bring down the whole price
-// calculation.
-//
-// It is called ONLY from matchRule, where the rule is guaranteed at least one
-// value, which is why the first value is read directly.
-func matchNumeric(rule models.PriceRule, value string) bool {
-	left, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return false
-	}
-	right, err := strconv.ParseInt(rule.Values[0], 10, 64)
-	if err != nil {
-		return false
-	}
-
-	switch rule.Operator {
-	case models.OpGt:
-		return left > right
-	case models.OpGte:
-		return left >= right
-	case models.OpLt:
-		return left < right
-	case models.OpLte:
-		return left <= right
-	case models.OpEq, models.OpNe, models.OpIn, models.OpNin:
-		return false
-	default:
-		return false
-	}
+	return condition.Match(condition.Operator(rule.Operator), rule.Values, value, ok, nil)
 }

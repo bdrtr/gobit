@@ -345,7 +345,7 @@ const MaxCartAttributes = 32
 // 1 and 1.0 are the same number and two different attribute values, so a rule
 // stored against one would silently miss the other. A merchant who wants a
 // numeric rule writes the number as a string — the numeric operators parse it
-// (see promotion's matchNumeric), so nothing is lost but the ambiguity.
+// (see condition.Match), so nothing is lost but the ambiguity.
 //
 // A non-string value is SKIPPED rather than formatted, and skipping is the safe
 // direction: the engine's own rule is that a line missing an attribute does not

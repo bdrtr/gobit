@@ -525,6 +525,7 @@ What sits under `internal/core/` is not published; it can still change.
 | `core/plugin` | The plugin contract + two-phase installation (`Install` → modules → `Start`) |
 | `internal/core/observability` | OpenTelemetry trace + metric setup; genuinely off when there is no collector |
 | `core/openapi` | OpenAPI schema generation from the router tree (`/openapi.json`); published so an out-of-tree module can describe its own endpoints (ADR 0035) |
+| `internal/core/condition` | The rule operators and the one function that reads a condition; pricing, fulfillment and promotion call it, each admitting its own subset (ADR 0396) |
 
 Which backend the event bus runs on, and what each one loses, is in
 [`docs/operating.md`](operating.md).

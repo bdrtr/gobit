@@ -10,7 +10,11 @@
 // are UTC.
 package models
 
-import "time"
+import (
+	"time"
+
+	"github.com/bdrtr/gobit/internal/core/condition"
+)
 
 // Amount, rate and quantity limits.
 //
@@ -382,31 +386,33 @@ type RuleOperator string
 
 // Supported operators.
 //
-// eq/ne/in/nin are STRING comparisons; gt/gte/lt/lte convert both sides to integers
-// and compare NUMERICALLY. A context value that cannot be converted to a number makes
-// the rule NOT MATCH, it does not produce an error: the context comes from outside
-// and a single broken field must not bring down the whole discount computation.
+// eq/ne/in/nin are STRING comparisons; gt/gte/lt/lte compare base-10 integers
+// NUMERICALLY. A context value that is not an integer makes the rule NOT MATCH,
+// it does not produce an error: the context comes from outside and a single
+// broken field must not bring down the whole discount computation.
 //
 // It is the SAME concept as PriceRule in the pricing module. That package CANNOT be
-// imported (Principle 2.4 / ADR 0001) and the type is redefined here; this is the
-// price of isolation, explicitly accepted in ADR 0001.
+// imported (Principle 2.4 / ADR 0001) and the rule type is redefined here; the
+// words and the function that reads one condition are [condition]'s, below
+// every module, so the spelling and the reading no longer drift (ADR 0396).
+// Promotion admits all nine words.
 const (
 	// OpEq wants the value to equal the rule's single value.
-	OpEq RuleOperator = "eq"
+	OpEq = RuleOperator(condition.Eq)
 	// OpNe wants the value to differ from the rule's single value.
-	OpNe RuleOperator = "ne"
+	OpNe = RuleOperator(condition.Ne)
 	// OpIn wants the value to be present in the rule's set.
-	OpIn RuleOperator = "in"
+	OpIn = RuleOperator(condition.In)
 	// OpNin wants the value to be ABSENT from the rule's set.
-	OpNin RuleOperator = "nin"
+	OpNin = RuleOperator(condition.Nin)
 	// OpGt wants numerical greater-than.
-	OpGt RuleOperator = "gt"
+	OpGt = RuleOperator(condition.Gt)
 	// OpGte wants numerical greater-than-or-equal.
-	OpGte RuleOperator = "gte"
+	OpGte = RuleOperator(condition.Gte)
 	// OpLt wants numerical less-than.
-	OpLt RuleOperator = "lt"
+	OpLt = RuleOperator(condition.Lt)
 	// OpLte wants numerical less-than-or-equal.
-	OpLte RuleOperator = "lte"
+	OpLte = RuleOperator(condition.Lte)
 	// OpAnyIn matches when the context's value SET intersects the rule's values.
 	//
 	// It is the only operator that reads a LIST out of the context rather than a
@@ -427,7 +433,7 @@ const (
 	// line's product's `category_ids` and `tag_ids`. That was the half ADR 0144
 	// left open: the operator existed, and a line had nothing set-shaped to offer
 	// it because the product module published no membership.
-	OpAnyIn RuleOperator = "any_in"
+	OpAnyIn = RuleOperator(condition.AnyIn)
 )
 
 // Valid reports whether the operator is defined.
@@ -441,22 +447,11 @@ func (o RuleOperator) Valid() bool {
 }
 
 // Numeric reports whether the operator performs a numerical comparison.
-func (o RuleOperator) Numeric() bool {
-	switch o {
-	case OpGt, OpGte, OpLt, OpLte:
-		return true
-	case OpEq, OpNe, OpIn, OpNin:
-		return false
-	default:
-		return false
-	}
-}
+func (o RuleOperator) Numeric() bool { return condition.Operator(o).Numeric() }
 
 // MultiValue reports whether the operator can take more than one value.
 // Every other operator wants a SINGLE value.
-func (o RuleOperator) MultiValue() bool {
-	return o == OpIn || o == OpNin || o == OpAnyIn
-}
+func (o RuleOperator) MultiValue() bool { return condition.Operator(o).MultiValue() }
 
 // ReadsAList reports whether the operator looks at the context's LIST side.
 //
@@ -464,9 +459,7 @@ func (o RuleOperator) MultiValue() bool {
 // [RuleOperator.MultiValue] takes several values in the RULE, and only this one
 // takes several in the CONTEXT. Folding them together is what would make a
 // shipped `in` rule start reading a list it was never written against.
-func (o RuleOperator) ReadsAList() bool {
-	return o == OpAnyIn
-}
+func (o RuleOperator) ReadsAList() bool { return condition.Operator(o).ReadsAList() }
 
 // RuleType reports WHAT a rule will look at.
 type RuleType string

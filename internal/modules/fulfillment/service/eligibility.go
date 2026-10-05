@@ -11,6 +11,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/errors"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
+	"github.com/bdrtr/gobit/internal/core/condition"
 	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
@@ -438,78 +439,17 @@ func matchRules(rules []models.ShippingOptionRule, attributes map[string]string)
 
 // matchRule reports whether a single rule matches the context.
 //
-// If the field the rule looks at is ABSENT from the context the rule does not
-// match — even on negative operators such as "ne" (not equal). Otherwise a
-// request with an empty context would satisfy every negative rule and open the
-// restricted options to everyone.
-//
-// A VALUELESS rule does not match either, and DOES NOT PANIC. Service validation
-// does not produce such a record, but the eligibility calculation has to be
-// resilient to every row it reads from the database: a maintenance script
-// running SQL directly, or a partial restore, can leave the values empty. The
-// rationale is the same as for an unrecognized operator — a condition that
-// cannot be read MUST NOT quietly disable the rule and open the option to
-// everyone.
+// The reading is [condition.Match]'s, shared with pricing and promotion (ADR
+// 0396): a field ABSENT from the context does not match, even on a negative
+// operator such as "ne", so an empty context cannot open the restricted options
+// to everyone. A VALUELESS rule, a value no writer accepts and an unrecognized
+// operator do not match and do not panic: the eligibility calculation has to be
+// resilient to every row it reads, and a condition that cannot be read MUST NOT
+// quietly disable the rule and open the option to everyone. A numeric operator
+// compares INTEGERS exactly as written; a threshold that is not one (e.g.
+// "500.5") is refused at the writer and matches nothing here (D252).
+// Fulfillment reads no list, so it passes none.
 func matchRule(rule models.ShippingOptionRule, attributes map[string]string) bool {
-	if len(rule.Values) == 0 {
-		return false
-	}
-
 	value, ok := attributes[rule.Attribute]
-	if !ok {
-		return false
-	}
-
-	switch rule.Operator {
-	case models.OpEq:
-		return value == rule.Values[0]
-	case models.OpNe:
-		return value != rule.Values[0]
-	case models.OpIn:
-		return slices.Contains(rule.Values, value)
-	case models.OpNin:
-		return !slices.Contains(rule.Values, value)
-	case models.OpGt, models.OpGte, models.OpLt, models.OpLte:
-		return matchNumeric(rule.Operator, value, rule.Values[0])
-	default:
-		return false
-	}
-}
-
-// matchNumeric evaluates the numeric operators over INTEGERS.
-//
-// If either side cannot be converted to an integer the rule DOES NOT MATCH and
-// no error is returned: the context comes from outside and a single malformed
-// field must not drop the whole shipping list.
-//
-// The comparison is NUMERIC, not lexical: had "9" and "50000" been compared as
-// strings, 9 would come out larger and the free-shipping threshold would be
-// inverted. Converting to an INTEGER, in turn, makes the rule not match instead
-// of silently accepting a fractional threshold (e.g. "500.5"); money is a
-// minor-unit integer and the rule's threshold has to be one too (plan
-// Section 8).
-func matchNumeric(operator models.RuleOperator, left, right string) bool {
-	lhs, err := strconv.ParseInt(strings.TrimSpace(left), 10, 64)
-	if err != nil {
-		return false
-	}
-	rhs, err := strconv.ParseInt(strings.TrimSpace(right), 10, 64)
-	if err != nil {
-		return false
-	}
-
-	switch operator {
-	case models.OpGt:
-		return lhs > rhs
-	case models.OpGte:
-		return lhs >= rhs
-	case models.OpLt:
-		return lhs < rhs
-	case models.OpLte:
-		return lhs <= rhs
-	case models.OpEq, models.OpNe, models.OpIn, models.OpNin:
-		return false
-	default:
-		return false
-	}
+	return condition.Match(condition.Operator(rule.Operator), rule.Values, value, ok, nil)
 }

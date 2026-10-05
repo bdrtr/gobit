@@ -8,7 +8,11 @@
 // separate field (plan Section 8); float is used nowhere. Times are UTC.
 package models
 
-import "time"
+import (
+	"time"
+
+	"github.com/bdrtr/gobit/internal/core/condition"
+)
 
 // Amount and quantity limits.
 //
@@ -79,28 +83,29 @@ type RuleOperator string
 
 // Supported operators.
 //
-// eq/ne/in/nin are STRING comparisons; gt/gte/lt/lte convert both sides to
-// integers and compare NUMERICALLY (e.g. "customer_age" > "18"). A context value
-// that cannot be converted to a number makes the rule NOT MATCH, it does not
-// produce an error: the context comes from outside and a single broken field
-// must not bring down the whole price calculation.
+// The words are [condition]'s, and the price calculation reads a rule through
+// [condition.Match]: eq/ne/in/nin are STRING comparisons, gt/gte/lt/lte compare
+// base-10 integers NUMERICALLY (e.g. "customer_age" > "18"), and a context value
+// that is not an integer makes the rule NOT MATCH rather than fail. Pricing
+// admits eight of the nine words; `any_in` is promotion's (ADR 0144), and
+// pricing refuses it because its ladder reads one group (ADR 0327).
 const (
 	// OpEq requires the value to equal the rule's single value.
-	OpEq RuleOperator = "eq"
+	OpEq = RuleOperator(condition.Eq)
 	// OpNe requires the value to differ from the rule's single value.
-	OpNe RuleOperator = "ne"
+	OpNe = RuleOperator(condition.Ne)
 	// OpIn requires the value to be present in the rule's set.
-	OpIn RuleOperator = "in"
+	OpIn = RuleOperator(condition.In)
 	// OpNin requires the value to be ABSENT from the rule's set.
-	OpNin RuleOperator = "nin"
+	OpNin = RuleOperator(condition.Nin)
 	// OpGt requires numeric greater-than.
-	OpGt RuleOperator = "gt"
+	OpGt = RuleOperator(condition.Gt)
 	// OpGte requires numeric greater-than-or-equal.
-	OpGte RuleOperator = "gte"
+	OpGte = RuleOperator(condition.Gte)
 	// OpLt requires numeric less-than.
-	OpLt RuleOperator = "lt"
+	OpLt = RuleOperator(condition.Lt)
 	// OpLte requires numeric less-than-or-equal.
-	OpLte RuleOperator = "lte"
+	OpLte = RuleOperator(condition.Lte)
 )
 
 // Valid reports whether the operator is defined.
@@ -114,22 +119,12 @@ func (o RuleOperator) Valid() bool {
 }
 
 // Numeric reports whether the operator performs a numeric comparison.
-func (o RuleOperator) Numeric() bool {
-	switch o {
-	case OpGt, OpGte, OpLt, OpLte:
-		return true
-	case OpEq, OpNe, OpIn, OpNin:
-		return false
-	default:
-		return false
-	}
-}
+func (o RuleOperator) Numeric() bool { return condition.Operator(o).Numeric() }
 
 // MultiValue reports whether the operator can take more than one value.
-// Every other operator requires a SINGLE value.
-func (o RuleOperator) MultiValue() bool {
-	return o == OpIn || o == OpNin
-}
+// Every other operator requires a SINGLE value. It answers for the whole
+// vocabulary, `any_in` included; [RuleOperator.Valid] refuses that word first.
+func (o RuleOperator) MultiValue() bool { return condition.Operator(o).MultiValue() }
 
 // PriceRule is the rule stating under which condition a price is valid.
 //

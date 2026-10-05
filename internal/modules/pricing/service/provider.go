@@ -209,7 +209,7 @@ func (p *QueryProvider) records(
 //   - The price MUST HAVE NO RULE. A rule looks at a context (region, customer
 //     group …); the provider does not carry that context and cannot evaluate the
 //     rule here. Ignoring a condition that cannot be evaluated would open the
-//     segment price to everyone — the very same rationale as in matchRule.
+//     segment price to everyone — the very same rationale as in condition.Match.
 func listablePrices(candidates []models.PriceCandidate, at time.Time) []models.PriceCandidate {
 	prices := make([]models.PriceCandidate, 0, len(candidates))
 	for i := range candidates {

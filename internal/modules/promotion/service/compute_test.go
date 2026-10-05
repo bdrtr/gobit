@@ -721,6 +721,51 @@ func TestComputeDiscountsWhenTheContextRuleIsSatisfied(t *testing.T) {
 	assert.Equal(t, int64(5000), res.DiscountTotal, "when the context rule is satisfied the promotion is applied")
 }
 
+// TestANegativeContextRuleDoesNotMatchAnAbsentField proves that a context rule
+// under ne or nin does not hold when the context does not carry its field.
+//
+// Otherwise a cart with an empty context would satisfy every negative rule and
+// a discount meant for everybody but the blocked group would open to carts
+// nobody has placed in any group. Each case first applies with the field
+// present, so the absence is what closes it (ADR 0396).
+func TestANegativeContextRuleDoesNotMatchAnAbsentField(t *testing.T) {
+	for _, op := range []models.RuleOperator{models.OpNe, models.OpNin} {
+		t.Run(string(op), func(t *testing.T) {
+			repo := newMemRepo()
+			seedPromotion(repo,
+				models.Promotion{ID: "promo_1", Code: "NOTBLOCKED", IsAutomatic: true},
+				percentageMethod("promo_1", 5000, models.TargetItems, models.AllocationEach),
+				models.PromotionRule{
+					ID: "prule_1", PromotionID: "promo_1", RuleType: models.RuleContext,
+					Attribute: "customer_group_id", Operator: op, Values: []string{"blocked"},
+				},
+			)
+			svc := newTestService(repo)
+
+			present := ComputeInput{
+				CurrencyCode: "TRY",
+				Context:      map[string]string{"customer_group_id": "vip"},
+				Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
+			}
+			res, err := svc.ComputeDiscounts(context.Background(), present)
+			require.NoError(t, err)
+			assertInvariants(t, present, res)
+			require.Equal(t, int64(5000), res.DiscountTotal, "with the field present the rule holds")
+
+			absent := ComputeInput{
+				CurrencyCode: "TRY",
+				Context:      map[string]string{"region_id": "reg_1"},
+				Items:        []ComputeItem{item("li_1", 10000, 1, nil)},
+			}
+			res, err = svc.ComputeDiscounts(context.Background(), absent)
+			require.NoError(t, err)
+			assertInvariants(t, absent, res)
+			assert.Zero(t, res.DiscountTotal, "a context without the field MUST NOT satisfy the negative rule")
+			assert.Empty(t, res.Applied)
+		})
+	}
+}
+
 func TestComputeDiscountsNonAutomaticIsNotAppliedWithoutItsCode(t *testing.T) {
 	repo := newMemRepo()
 	seedPromotion(repo, models.Promotion{ID: "promo_1", Code: "GIZLIKUPON", IsAutomatic: false},
@@ -1076,8 +1121,8 @@ func TestComputeDiscountsEliminatesOnCampaignBudgetCurrency(t *testing.T) {
 }
 
 // TestComputeDiscountsNumericRuleDoesNotMatchAnUnparsableValue pins the
-// decision in the [matchNumeric] godoc that "a value that cannot be converted
-// to an integer DOES NOT MATCH the rule".
+// decision in the [github.com/bdrtr/gobit/internal/core/condition.Match] godoc
+// that a value that does not parse as an integer makes the condition not match.
 //
 // The decision is load-bearing for security: otherwise a single broken or
 // malicious context field ("total": "abc") would open the threshold rules to
