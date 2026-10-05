@@ -428,6 +428,21 @@ func TestUnpaginatedListPromisesNoQueryParameter(t *testing.T) {
 		"the rule list is not paginated; no pagination parameter may be announced")
 }
 
+// TestTheRuleWriteDescribesTheReservedAttribute holds the 422 of ADR 0407 in
+// the document: a client generated from the schema has no other way to learn
+// that a `cart.` attribute is refused.
+func TestTheRuleWriteDescribesTheReservedAttribute(t *testing.T) {
+	t.Parallel()
+
+	paths, _ := document(t)
+	responses, ok := operation(t, paths, http.MethodPost, "/admin/v1/promotions/{id}/rules")["responses"].(map[string]any)
+	require.True(t, ok)
+	refusal, ok := responses["422"].(map[string]any)
+	require.True(t, ok, "the rule write describes its 422")
+	assert.Contains(t, refusal["description"], "cart.")
+	assert.Contains(t, refusal["description"], "promotion_rule_attribute_reserved")
+}
+
 // TestPromotionListDescribesTheParametersItReads verifies that the query
 // parameters are the same as the ones the handler REALLY reads.
 func TestPromotionListDescribesTheParametersItReads(t *testing.T) {

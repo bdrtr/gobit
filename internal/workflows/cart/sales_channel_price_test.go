@@ -41,7 +41,7 @@ func TestTheRuleContextCarriesTheCartsSalesChannel(t *testing.T) {
 			ctx = context.Background()
 		}
 
-		attributes, _, err := flows.ruleContext(ctx, tc.snap)
+		attributes, _, err := flows.priceContext(ctx, priceSubjectOf(tc.snap))
 
 		require.NoError(t, err, name)
 		if tc.want == "" {

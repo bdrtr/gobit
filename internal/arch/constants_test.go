@@ -52,6 +52,7 @@ import (
 	productmodels "github.com/bdrtr/gobit/internal/modules/product/models"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
 	"github.com/bdrtr/gobit/internal/modules/promotion"
+	promotionmodels "github.com/bdrtr/gobit/internal/modules/promotion/models"
 	regionmodule "github.com/bdrtr/gobit/internal/modules/region"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
 	"github.com/bdrtr/gobit/internal/modules/settings"
@@ -392,21 +393,24 @@ func TestTheSalesChannelAttributeNamesAgree(t *testing.T) {
 }
 
 // TestTheReservedRuleAttributeAgreesWithTheCartFlow binds the prefix pricing
-// refuses in a price rule to the one the cart writes its metadata under
-// (ADR 0403). A drift is silent: pricing would refuse a name the cart never
-// sends and accept the one it does, for a rule that matches no cart.
+// and promotion refuse in a rule, and the panel marks, to the one a cart's
+// metadata filled before ADR 0407 (ADR 0403). A drift is silent: a module would
+// refuse a name no stored rule carries and accept the one they do, for a rule
+// that matches no cart.
 //
-// The literal is pinned too: it is published (ADR 0111, ADR 0403) and stored
-// in the operators' promotion rules.
+// The literal is pinned too: it is published (ADR 0111, ADR 0403, ADR 0407)
+// and stored in the operators' rules.
 func TestTheReservedRuleAttributeAgreesWithTheCartFlow(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, pricingmodels.ReservedAttributePrefix, cartflow.CartAttributePrefix,
-		"pricing must refuse the prefix the cart writes its metadata under")
+		"pricing must refuse the prefix the cart's metadata once filled")
+	assert.Equal(t, promotionmodels.ReservedAttributePrefix, cartflow.CartAttributePrefix,
+		"promotion must refuse the prefix the cart's metadata once filled")
 	assert.Equal(t, "cart.", cartflow.CartAttributePrefix,
 		"the prefix ADR 0111 publishes and stored promotion rules use")
 	assert.Equal(t, cartflow.CartAttributePrefix, adminui.RuleAttributeCartPrefix,
-		"the panel must flag the prefix the cart writes its metadata under")
+		"the panel must flag the prefix the cart's metadata once filled")
 }
 
 // TestTheGraphQLLimitDefaultsAgreeWithTheConfig verifies that the GraphQL

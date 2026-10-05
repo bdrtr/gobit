@@ -46,6 +46,9 @@ const (
 	CodePromotionNotUsable = "promotion_not_usable"
 	// CodeUnconfigured reports that the service has not been set up.
 	CodeUnconfigured = "promotion_service_unconfigured"
+	// CodeRuleAttributeReserved refuses a promotion rule naming a cart's
+	// metadata, which reaches no rule (ADR 0407).
+	CodeRuleAttributeReserved = "promotion_rule_attribute_reserved"
 )
 
 // Paging bounds. If no limit is given the default is applied, if an excessively large

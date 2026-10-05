@@ -91,9 +91,9 @@ type createCartRequest struct {
 	// session).
 	//
 	// Unlike the region and the currency, this really is the CLIENT'S
-	// information; it becomes promotion rule context under `cart.` (ADR 0111),
-	// no price reads it (ADR 0403), and nothing else does. That is why it stays
-	// in the body and is carried over to the flow as it is. The decision is the same one made for the line item's
+	// information. It is stored and read back, and no price (ADR 0403) and no
+	// promotion (ADR 0407) reads it. That is why it stays in the body and is
+	// carried over to the flow as it is. The decision is the same one made for the line item's
 	// metadata (see [addLineItemRequest]).
 	Metadata map[string]any `json:"metadata"`
 }

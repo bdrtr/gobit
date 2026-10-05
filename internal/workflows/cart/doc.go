@@ -154,7 +154,7 @@
 //
 // The customer's groups go into both contexts, the price's and the discount's,
 // and they go in twice (see [Workflows.priceContext]). The cart's metadata goes
-// into the discount's alone (ADR 0403). The HEAD of the merchant's
+// into neither (ADR 0403, ADR 0407). The HEAD of the merchant's
 // ranking is the single value `eq` and `in` read, so one group decides a price
 // and nothing depends on map order (ADR 0049); the whole list is what `any_in`
 // reads, so a segment rule applies to everybody in the segment (ADR 0144).

@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"testing"
@@ -230,63 +229,6 @@ func newCouponPromotion(
 	require.NoError(t, err, "the fixture coupon's target rule could not be written")
 
 	return promotion.ID
-}
-
-// TestACartsOwnDataCanRuleAPromotion is the hook an embedder had no way to
-// reach.
-//
-// The discount engine's rule context was built from two names the cart flow
-// decides — the region and the customer's group — and `internal/app.Options`
-// takes only Modules and Plugins, so nobody could add a third. A shop selling two
-// brands from one installation could not write "10% off, brand A only" without a
-// column in the cart module for a concept that module has never heard of.
-//
-// It needs the real modules: the context crosses to promotion as JSON, the rule
-// is matched by promotion's own engine, and the prefix that keeps the bag from
-// shadowing the fixed names is decided on the cart side.
-func TestACartsOwnDataCanRuleAPromotion(t *testing.T) {
-	ctx := t.Context()
-
-	variantID := newVariant(ctx, t, "E2E Metadata Ruled", map[string]int64{
-		taxedCurrency: couponUnitPrice,
-	})
-
-	brand := fmt.Sprintf("brand-%d", fixtureCounter.Add(1))
-	promotionID := newContextRuledPromotion(ctx, t, couponRateBps,
-		cartwf.CartAttributePrefix+"brand", brand, []string{variantID})
-
-	// --- the cart that carries the brand gets the discount ---
-
-	ruled, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{
-		CountryCode: taxedCountry,
-		Metadata:    json.RawMessage(`{"brand":"` + brand + `"}`),
-	})
-	require.NoError(t, err, "the cart must open")
-
-	added, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
-		CartID: ruled.CartID, VariantID: variantID, Quantity: 1,
-	})
-	require.NoError(t, err)
-	require.Equal(t, couponDiscount, added.Totals.DiscountTotal,
-		"the promotion is ruled on the cart's OWN data and this cart carries it")
-
-	// --- and a cart that does not carry it gets nothing ---
-
-	plain, err := workflows.CreateCart(ctx, cartwf.CreateCartInput{CountryCode: taxedCountry})
-	require.NoError(t, err)
-
-	bare, err := workflows.AddLineItem(ctx, cartwf.AddLineItemInput{
-		CartID: plain.CartID, VariantID: variantID, Quantity: 1,
-	})
-	require.NoError(t, err)
-	assert.Zero(t, bare.Totals.DiscountTotal,
-		"a cart missing the attribute must not match: the engine's own rule is that "+
-			"an absent attribute does not match, and that is what keeps a segment "+
-			"discount from opening to everyone")
-
-	promotion, err := promotionSvc.GetPromotion(ctx, promotionID)
-	require.NoError(t, err)
-	require.Zero(t, promotion.UsageCount, "pricing spends nothing")
 }
 
 // newContextRuledPromotion sets up an automatic promotion ruled on a CONTEXT

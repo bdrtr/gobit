@@ -29,8 +29,7 @@ func TestTheRuleContextCarriesTheHighestRankedGroup(t *testing.T) {
 	}}
 	flows := &Workflows{customers: customers, log: slog.New(slog.DiscardHandler)}
 
-	attributes, _, err := flows.ruleContext(context.Background(),
-		Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
+	attributes, _, err := flows.priceContext(context.Background(), priceSubjectOf(Snapshot{CustomerID: "cus_1", RegionID: "reg_1"}))
 
 	require.NoError(t, err)
 	assert.Equal(t, "wholesale", attributes[AttrCustomerGroupID],
@@ -55,7 +54,7 @@ func TestAGuestCartOmitsTheGroupAttributeEntirely(t *testing.T) {
 
 	flows := &Workflows{customers: &stubCustomers{}, log: slog.New(slog.DiscardHandler)}
 
-	attributes, _, err := flows.ruleContext(context.Background(), Snapshot{RegionID: "reg_1"})
+	attributes, _, err := flows.priceContext(context.Background(), priceSubjectOf(Snapshot{RegionID: "reg_1"}))
 
 	require.NoError(t, err)
 	assert.NotContains(t, attributes, AttrCustomerGroupID,
@@ -71,8 +70,7 @@ func TestACustomerInNoGroupAlsoOmitsIt(t *testing.T) {
 
 	flows := &Workflows{customers: &stubCustomers{groups: map[string][]string{}}, log: slog.New(slog.DiscardHandler)}
 
-	attributes, _, err := flows.ruleContext(context.Background(),
-		Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
+	attributes, _, err := flows.priceContext(context.Background(), priceSubjectOf(Snapshot{CustomerID: "cus_1", RegionID: "reg_1"}))
 
 	require.NoError(t, err)
 	assert.NotContains(t, attributes, AttrCustomerGroupID)
@@ -90,8 +88,7 @@ func TestAFailedGroupReadStillPricesTheCart(t *testing.T) {
 	customers := &stubCustomers{groupErr: errors.New("customer module unavailable")}
 	flows := &Workflows{customers: customers, log: slog.New(slog.DiscardHandler)}
 
-	attributes, _, err := flows.ruleContext(context.Background(),
-		Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
+	attributes, _, err := flows.priceContext(context.Background(), priceSubjectOf(Snapshot{CustomerID: "cus_1", RegionID: "reg_1"}))
 
 	require.Error(t, err, "the caller has to be able to log that the segment was not applied")
 	assert.Equal(t, "reg_1", attributes[attrRegionID],
@@ -102,7 +99,7 @@ func TestAFailedGroupReadStillPricesTheCart(t *testing.T) {
 // TestEVERYGroupReachesTheWireAndTheHeadStaysWhereItWas is the witness the
 // producer feeds the consumer.
 //
-// The operator, the migration and the schema field can all ship while ruleContext
+// The operator, the migration and the schema field can all ship while priceContext
 // still sends one group — a ninth operator no request could ever satisfy, passing
 // every gate because no gate asks whether the producer feeds the consumer. So the
 // subject of this test is the CART FLOW and not the promotion engine (ADR 0144).
@@ -114,8 +111,7 @@ func TestEVERYGroupReachesTheWireAndTheHeadStaysWhereItWas(t *testing.T) {
 		log:       slog.New(slog.DiscardHandler),
 	}
 
-	attributes, lists, err := flows.ruleContext(context.Background(),
-		Snapshot{RegionID: "reg_1", CustomerID: "cus_1"})
+	attributes, lists, err := flows.priceContext(context.Background(), priceSubjectOf(Snapshot{RegionID: "reg_1", CustomerID: "cus_1"}))
 	require.NoError(t, err)
 
 	assert.Equal(t, "retail", attributes[AttrCustomerGroupID],
@@ -135,8 +131,7 @@ func TestACustomerWithNoGroupsSendsNoList(t *testing.T) {
 
 	flows := &Workflows{customers: &stubCustomers{}, log: slog.New(slog.DiscardHandler)}
 
-	attributes, lists, err := flows.ruleContext(context.Background(),
-		Snapshot{RegionID: "reg_1", CustomerID: "cus_1"})
+	attributes, lists, err := flows.priceContext(context.Background(), priceSubjectOf(Snapshot{RegionID: "reg_1", CustomerID: "cus_1"}))
 	require.NoError(t, err)
 
 	assert.NotContains(t, attributes, AttrCustomerGroupID)
@@ -172,8 +167,7 @@ func TestTheRuleContextNamesTheBuyer(t *testing.T) {
 		log:       slog.New(slog.DiscardHandler),
 	}
 
-	attributes, _, err := flows.ruleContext(context.Background(),
-		Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
+	attributes, _, err := flows.priceContext(context.Background(), priceSubjectOf(Snapshot{CustomerID: "cus_1", RegionID: "reg_1"}))
 
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{attrRegionID: "reg_1", AttrCustomerID: "cus_1", AttrCompanyID: "comp_1"},
@@ -194,8 +188,7 @@ func TestOnlyAnEmployeeCarriesACompany(t *testing.T) {
 		flows := &Workflows{customers: &stubCustomers{}, companies: companies,
 			log: slog.New(slog.DiscardHandler)}
 
-		attributes, _, err := flows.ruleContext(context.Background(),
-			Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
+		attributes, _, err := flows.priceContext(context.Background(), priceSubjectOf(Snapshot{CustomerID: "cus_1", RegionID: "reg_1"}))
 
 		require.NoError(t, err, name)
 		assert.NotContains(t, attributes, AttrCompanyID, name)
@@ -212,7 +205,7 @@ func TestAGuestNamesNobody(t *testing.T) {
 	flows := &Workflows{customers: &stubCustomers{}, companies: companies,
 		log: slog.New(slog.DiscardHandler)}
 
-	attributes, _, err := flows.ruleContext(context.Background(), Snapshot{RegionID: "reg_1"})
+	attributes, _, err := flows.priceContext(context.Background(), priceSubjectOf(Snapshot{RegionID: "reg_1"}))
 
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{attrRegionID: "reg_1"}, attributes)
@@ -232,8 +225,7 @@ func TestAnUnreadableCompanyStillPricesTheCart(t *testing.T) {
 		log:       slog.New(slog.DiscardHandler),
 	}
 
-	attributes, lists, err := flows.ruleContext(context.Background(),
-		Snapshot{CustomerID: "cus_1", RegionID: "reg_1"})
+	attributes, lists, err := flows.priceContext(context.Background(), priceSubjectOf(Snapshot{CustomerID: "cus_1", RegionID: "reg_1"}))
 
 	require.ErrorIs(t, err, failure)
 	assert.NotContains(t, attributes, AttrCompanyID)

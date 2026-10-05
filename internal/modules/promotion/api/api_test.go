@@ -193,6 +193,25 @@ func TestAdminPromotionLifecycle(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 }
 
+// TestARuleOnTheCartsBagIsRefused holds gap D261's refusal (ADR 0407) at the
+// route: the code is asserted as its literal, since a client matches on the
+// string the wire carries, and nothing is listed afterwards.
+func TestARuleOnTheCartsBagIsRefused(t *testing.T) {
+	r, _ := newTestRouter(t)
+	id := createPromotion(t, r, `{"code": "summer20", "status": "active", "is_automatic": true}`)
+
+	rec := do(t, r, http.MethodPost, "/admin/v1/promotions/"+id+"/rules", `{
+	  "rule_type": "context", "attribute": "cart.brand", "operator": "eq", "values": ["acme"]
+	}`)
+
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, "body: %s", rec.Body.String())
+	code, _ := errorCodeAndMessage(t, rec)
+	assert.Equal(t, "promotion_rule_attribute_reserved", code)
+	rules, count, _, _ := decodeList(t, do(t, r, http.MethodGet, "/admin/v1/promotions/"+id+"/rules", ""))
+	assert.Empty(t, rules)
+	assert.Equal(t, int64(0), count)
+}
+
 // TestAdminPromotionUpdateResetsFieldsAbsentFromTheBody proves that PUT is a
 // REPLACEMENT and NOT a partial update.
 //

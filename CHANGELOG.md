@@ -16,16 +16,29 @@ design. It is fixed with `1.0.0`.
   `POST /admin/v1/price-sets/{id}/prices` and
   `POST /admin/v1/prices/{price_id}/rules` answer 422
   `pricing_rule_attribute_reserved` for a rule whose attribute begins with
-  `cart.`, and a set write names it in `details` by `index` and `rule_index`;
-  promotion rules are unchanged. A full-set write that sends back a `cart.` rule the set already
+  `cart.`, and a set write names it in `details` by `index` and `rule_index`.
+  A full-set write that sends back a `cart.` rule the set already
   held is refused the same way: leave that price out of the body. **For
   operators:** a `cart.` price rule written before no longer prices a cart;
   the panel's forms and the catalog import carry it unchanged, and the
   variant page marks it as matching no cart.
   `SELECT price_id, attribute FROM price_rule WHERE attribute LIKE 'cart.%' AND deleted_at IS NULL`
   lists them. Remove the price, not the rule: a price whose `cart.` rule is
-  deleted applies to everybody its other rules match. A promotion ruled on a
-  `cart.` attribute is still met by any storefront caller (D261, open).
+  deleted applies to everybody its other rules match.
+- **A cart's metadata reaches no rule** (ADR 0407, D261). **For
+  integrators:** `POST /admin/v1/promotions/{id}/rules` answers 422
+  `promotion_rule_attribute_reserved` for an attribute beginning with `cart.`;
+  a cart's discount no longer reads its `metadata`, which
+  `POST /store/v1/carts` and `POST /admin/v1/carts` still store and return;
+  the promotion trial's `assumptions` no longer list `no_cart_metadata`.
+  **For operators:** a promotion ruled on a `cart.` attribute stops applying
+  to every cart; `POST /admin/v1/promotions/compute` still matches it when
+  asked with the attribute, and the promotion page marks it.
+  `SELECT promotion_id, rule_type, attribute FROM promotion_rule WHERE attribute LIKE 'cart.%' AND deleted_at IS NULL`
+  lists them. Put the condition on what the server decides first — a
+  publishable key bound to one sales channel and a `sales_channel_id` rule, a
+  customer group, or a code — then remove the `cart.` rule: removed alone, it
+  opens the promotion wherever its other rules hold.
 - **Stock on its way has a date the storefront shows** (ADR 0399, D257, D258).
   **For integrators:** `POST /admin/v1/inventory-items/{id}/supplier-receipts`
   records units a supplier owes an open warehouse (`location_id`, `quantity`,

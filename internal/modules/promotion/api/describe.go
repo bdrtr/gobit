@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/bdrtr/gobit/core/openapi"
+	"github.com/bdrtr/gobit/internal/modules/promotion/models"
+	"github.com/bdrtr/gobit/internal/modules/promotion/service"
 )
 
 // The JSON Schema names used in the parameter schemas.
@@ -232,6 +234,9 @@ func describeMethodsAndRules(d *openapi.Doc) {
 		RequestBody: d.RequestBody(promotionRuleRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("Added rule", d.Item(promotionRuleDTO{})),
+			"422": openapi.ErrorResponse("The body is invalid. A rule whose attribute begins with `" +
+				models.ReservedAttributePrefix + "` is refused with `" + service.CodeRuleAttributeReserved +
+				"`: a cart's metadata reaches no rule."),
 		},
 	})
 

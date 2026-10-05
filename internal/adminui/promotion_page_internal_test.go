@@ -90,6 +90,33 @@ func TestAPromotionsPageShowsWhatItGives(t *testing.T) {
 	assert.Contains(t, body, `href="`+PromotionsPath+`?status=active"`, "back to the promotion's own list")
 }
 
+// TestARuleOnTheCartsBagSaysItHoldsOnNoCart is ADR 0407: a rule on an
+// attribute a cart's metadata filled before is marked on the promotion's page
+// as holding on no cart, with the widening its removal brings, and a rule on
+// any other attribute is not.
+func TestARuleOnTheCartsBagSaysItHoldsOnNoCart(t *testing.T) {
+	t.Parallel()
+
+	reader := &fakePromotionReader{page: `{
+		"id":"promo_1","code":"BRAND","is_automatic":true,"type":"standard","status":"active",
+		"created_at":"2026-09-01T10:00:00Z",
+		"rules":[
+			{"type":"context","attribute":"cart.brand","operator":"eq","values":["A"]},
+			{"type":"context","attribute":"currency_code","operator":"in","values":["TRY"]}
+		]}`}
+	panel := newCatalogPanel(t, &fakeCatalog{})
+	panel.promotions = reader
+
+	rec := promotionPageRequest(panel, PromotionsPath+"/promo_1")
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, "<td>cart.brand (holds on no cart, ADR 0407; removing it opens the promotion "+
+		"wherever its other rules hold)</td>")
+	assert.Contains(t, body, "<td>currency_code</td>", "a rule on another attribute is not marked")
+	assert.Equal(t, 1, strings.Count(body, "holds on no cart"), "the mark is on the bag's rule alone")
+}
+
 // TestAFixedDiscountIsPrintedInItsCurrency: a fixed amount reads in its
 // currency's scale, and without a known scale it says it is in minor units
 // rather than guessing; an empty promotion says what is missing.

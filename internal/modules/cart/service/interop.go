@@ -90,20 +90,10 @@ type interopSnapshot struct {
 	// "the field is missing" would be asking about the wire rather than about the
 	// cart.
 	PromotionCodes []string `json:"promotion_codes"`
-	// Metadata is the cart's own free-form data.
-	//
-	// It crosses because the discount engine's rule CONTEXT was built from two
-	// fixed names and an embedder had no way to add a third: a shop that sells to
-	// two brands from one installation could not write "10% off, brand A only"
-	// without a column in this module for a concept this module has never heard
-	// of (ADR 0111). The cart already carries the bag; what was missing was the
-	// hop.
-	//
-	// It is the cart's, NOT the line's: a line's metadata is the shopper's intent
-	// (a gift note). The cart's is written by whoever holds the storefront's
-	// publishable key as well, since `POST /store/v1/carts` takes it from the
-	// body, so a promotion ruled on it is open to that caller (D261) and no
-	// price reads it (ADR 0403).
+	// Metadata is the cart's own free-form data, carried for any reader of the
+	// cart. The cart flow reads none of it (ADR 0403, ADR 0407): `POST
+	// /store/v1/carts` takes it from whoever holds the storefront's publishable
+	// key, so no price and no promotion may rest on it.
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 

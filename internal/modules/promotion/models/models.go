@@ -514,6 +514,12 @@ type PromotionRule struct {
 	UpdatedAt time.Time
 }
 
+// ReservedAttributePrefix begins every attribute a cart's metadata filled
+// before ADR 0407. Nothing fills it now, so a rule naming one would match no
+// cart; the rule write refuses it. The cart flow spells it too, and
+// internal/arch binds the two.
+const ReservedAttributePrefix = "cart."
+
 // Redemption is the record that a promotion was used for ONE single reference.
 //
 // The counter itself is the [Promotion.UsageCount] and [Campaign.BudgetUsed] columns;

@@ -385,16 +385,20 @@ past and is not corrected retroactively.
   from the region record; in an installation with no region defined at all one
   sees `19990 TRY (minor units)`. Assuming a fixed 100 would show the WRONG
   amount for currencies with 0 and 3 digits, such as JPY and KWD.
-- **A cart's metadata chooses no price.** A new price rule whose attribute
+- **A cart's metadata reaches no rule.** A new price rule whose attribute
   begins with `cart.` is refused with 422 `pricing_rule_attribute_reserved`
-  ([ADR 0403](adr/0403-a-carts-metadata-chooses-no-price.md)). One written
-  before stays on its set and matches no cart. The panel's forms and the import
-  carry it unchanged, and the variant page marks it as matching no cart; only
-  the admin calculator still matches it. To remove it, remove its *price*:
-  deleting the rule alone makes the price apply to everybody its other rules
-  match. A promotion still reads the metadata, which whoever holds the
-  storefront's publishable key writes, so a promotion ruled on a `cart.`
-  attribute is open to any storefront caller (D261).
+  ([ADR 0403](adr/0403-a-carts-metadata-chooses-no-price.md)), and a new
+  promotion rule with 422 `promotion_rule_attribute_reserved`
+  ([ADR 0407](adr/0407-a-carts-metadata-reaches-no-rule.md)). One written
+  before stays and matches no cart. The panel's price forms and the import
+  carry a price rule unchanged; the variant page and the promotion page mark
+  both kinds; the admin calculator and the admin computation still match them
+  when asked with the attribute. To retire a price rule, remove its *price*; to
+  retire a promotion rule, first put the condition on what the server decides
+  — a publishable key bound to one sales channel and a `sales_channel_id`
+  rule, a customer group, or a code — then remove it. Deleting either rule
+  alone makes its price or promotion apply wherever its other rules hold. A
+  fact only the embedder's server knows has no rule to reach.
 - **Search AND the e-mail guards depend on the database cluster's CTYPE setting,
   and that setting is fixed at initdb time.** Three things leave case folding to
   PostgreSQL: the storefront's own `?q=` filter (`title ILIKE`), the `search-pg`

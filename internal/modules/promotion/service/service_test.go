@@ -486,6 +486,42 @@ func TestAddPromotionRuleValidation(t *testing.T) {
 	}
 }
 
+// TestAPromotionRuleCannotNameTheCartsBag is gap D261 (ADR 0407): a cart's
+// metadata reaches no rule, so a rule on an attribute under the prefix it once
+// filled would be stored and never met. Every rule type is refused before
+// anything is written, and a name that merely starts like the prefix is not.
+func TestAPromotionRuleCannotNameTheCartsBag(t *testing.T) {
+	for _, ruleType := range []models.RuleType{models.RuleContext, models.RuleTarget, models.RuleBuy} {
+		t.Run(string(ruleType), func(t *testing.T) {
+			repo := newMemRepo()
+			repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "SUMMER20"}
+
+			_, err := newTestService(repo).AddPromotionRule(context.Background(), "promo_1", RuleInput{
+				RuleType: ruleType, Attribute: "cart.brand", Operator: models.OpEq, Values: []string{"A"},
+			})
+
+			require.Error(t, err, "a rule on the cart's bag is refused")
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err))
+			assert.Equal(t, CodeRuleAttributeReserved, errors.CodeOf(err))
+			assert.Empty(t, repo.rules["promo_1"], "nothing is written")
+		})
+	}
+
+	for _, attribute := range []string{"cart_brand", "cartridge", "brand"} {
+		t.Run("near miss "+attribute, func(t *testing.T) {
+			repo := newMemRepo()
+			repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "SUMMER20"}
+
+			_, err := newTestService(repo).AddPromotionRule(context.Background(), "promo_1", RuleInput{
+				RuleType: models.RuleContext, Attribute: attribute, Operator: models.OpEq, Values: []string{"A"},
+			})
+
+			require.NoError(t, err, "%q is not under the prefix", attribute)
+			assert.Len(t, repo.rules["promo_1"], 1)
+		})
+	}
+}
+
 func TestAddPromotionRuleCopiesTheValues(t *testing.T) {
 	repo := newMemRepo()
 	repo.promotions["promo_1"] = models.Promotion{ID: "promo_1", Code: "YAZ20"}

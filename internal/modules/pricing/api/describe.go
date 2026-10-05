@@ -271,7 +271,7 @@ func describeStore(d *openapi.Doc) {
 func reservedAttributeRefusal() map[string]any {
 	return openapi.ErrorResponse("The body is invalid. A rule whose attribute begins with `" +
 		models.ReservedAttributePrefix + "` is refused with `" + service.CodeRuleAttributeReserved +
-		"`: the cart's metadata reaches promotions and no price.")
+		"`: the cart's metadata reaches no rule.")
 }
 
 // pageParameters are the query parameters [pageParams] reads.

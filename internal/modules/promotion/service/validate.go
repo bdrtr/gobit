@@ -198,6 +198,22 @@ func validateRuleInput(in RuleInput) error {
 	return nil
 }
 
+// refuseReservedAttribute refuses a rule a caller writes on an attribute under
+// [models.ReservedAttributePrefix] (ADR 0407), whatever the rule's type.
+//
+// A cart's metadata reaches no rule, so such a rule would be stored and never
+// met. It is NOT part of [validateRuleInput]: a write that carries rules it did
+// not take must let a rule written before the refusal ride through, as pricing
+// found (ADR 0403).
+func refuseReservedAttribute(in RuleInput) error {
+	if strings.HasPrefix(in.Attribute, models.ReservedAttributePrefix) {
+		return errors.Invalid(CodeRuleAttributeReserved,
+			"a promotion rule cannot name %q: an attribute under %q is the cart's metadata, which reaches no rule",
+			in.Attribute, models.ReservedAttributePrefix)
+	}
+	return nil
+}
+
 // normalizeMetadata validates the metadata and returns it as a COPY.
 //
 // The copy is mandatory: had the caller's map been put into the model directly,

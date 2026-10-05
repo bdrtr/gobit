@@ -167,6 +167,8 @@ func TestATrialLeavesOutWhatItMustNotPrice(t *testing.T) {
 	assert.Contains(t, report.Assumptions, "todays_catalog", "the flow's own assumptions are published")
 	assert.Contains(t, report.Assumptions, "no_sales_channel",
 		"an order does not keep the channel its cart was opened in (ADR 0397)")
+	assert.NotContains(t, report.Assumptions, "no_cart_metadata",
+		"a cart's metadata reaches no live round either, so the trial sets nothing aside for it (ADR 0407)")
 	assert.Contains(t, report.Assumptions, "active", "the promotion module's assumptions are published")
 }
 

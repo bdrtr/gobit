@@ -6,6 +6,7 @@ Pricing refuses a new rule whose attribute begins with `cart.`, and carries one 
 - **Status:** Accepted
 - **Date:** 2026-10-05
 - **Amends:** [0111](0111-the-cart-carries-its-own-data-into-a-rule.md), whose bag now reaches promotions alone, and [0397](0397-a-cart-is-priced-in-the-channel-it-was-opened-in.md), whose list trial no longer says `no_cart_metadata`
+- **Amended by:** [0407](0407-a-carts-metadata-reaches-no-rule.md): its metadata reaches no promotion either, and D261 is closed
 
 Measurement: [measurements/0403](../measurements/0403-the-carts-bag-and-a-price.md)
 

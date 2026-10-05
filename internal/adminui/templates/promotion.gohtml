@@ -68,7 +68,7 @@ amount in its currency's decimals. */}}
   <thead><tr><th>Kind</th><th>Attribute</th><th>Operator</th><th>Values</th>{{ if .CanEditRules }}<th></th>{{ end }}</tr></thead>
   <tbody>
   {{ range .Rules }}
-    <tr><td>{{ .Type }}</td><td>{{ .Attribute }}</td><td>{{ .Operator }}</td><td>{{ .Values }}</td>
+    <tr><td>{{ .Type }}</td><td>{{ .Attribute }}{{ if .OnCartMetadata }} (holds on no cart, ADR 0407; removing it opens the promotion wherever its other rules hold){{ end }}</td><td>{{ .Operator }}</td><td>{{ .Values }}</td>
       {{ if $.CanEditRules }}<td>
         <form method="post" action="{{ $.Path }}/{{ $.Promotion.ID }}/rules/{{ .ID }}/remove">
           <button type="submit">Remove</button>

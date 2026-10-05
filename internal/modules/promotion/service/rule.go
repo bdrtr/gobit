@@ -52,7 +52,9 @@ type ApplicationMethodInput struct {
 }
 
 // AddPromotionRule adds a rule to a promotion; if the promotion does not exist or
-// has been deleted it returns errors.NotFound.
+// has been deleted it returns errors.NotFound. A rule on an attribute under
+// [models.ReservedAttributePrefix] is refused with [CodeRuleAttributeReserved]
+// (ADR 0407).
 //
 // The check that the promotion is LIVE is NOT made here but in the same
 // transaction as the write, under a row lock (see repository.CreatePromotionRule).
@@ -73,6 +75,9 @@ func (s *Service) AddPromotionRule(
 		return models.PromotionRule{}, err
 	}
 	if err := validateRuleInput(in); err != nil {
+		return models.PromotionRule{}, err
+	}
+	if err := refuseReservedAttribute(in); err != nil {
 		return models.PromotionRule{}, err
 	}
 

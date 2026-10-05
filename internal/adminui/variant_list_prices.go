@@ -119,10 +119,10 @@ func (u *UI) listPricesOf(r *http.Request, admin ListPriceAdmin, priceSetID stri
 	return views, false
 }
 
-// RuleAttributeCartPrefix begins every attribute the cart flow takes from the
-// cart's metadata. Such an attribute reaches promotions and no price
-// (ADR 0403), so a list price ruled on one, written before pricing refused it,
-// matches no cart. It is spelled by hand and pinned against the cart flow's
+// RuleAttributeCartPrefix begins every attribute the cart flow once took from
+// the cart's metadata. Such an attribute reaches no price and no promotion
+// (ADR 0403, ADR 0407), so a list price or a promotion ruled on one, written
+// before the refusals, matches no cart. It is spelled by hand and pinned against the cart flow's
 // constant in internal/arch.
 const RuleAttributeCartPrefix = "cart."
 

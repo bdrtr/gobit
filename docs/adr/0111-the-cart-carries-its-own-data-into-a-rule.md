@@ -7,6 +7,7 @@ about.
 
 - **Status:** Accepted; amended by [0403](0403-a-carts-metadata-chooses-no-price.md), which keeps the bag out of every price
 - **Date:** 2026-09-10
+- **Superseded by:** [0407](0407-a-carts-metadata-reaches-no-rule.md): the bag reaches no promotion either, and promotion refuses a new `cart.` rule
 
 ## Context
 

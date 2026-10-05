@@ -139,8 +139,8 @@ func validateRule(in RuleInput) error {
 // refuseReservedAttribute refuses a rule a caller writes on an attribute under
 // [models.ReservedAttributePrefix] (ADR 0403).
 //
-// The cart's metadata reaches promotions and no price, so such a rule would be
-// stored, matched by the admin calculator and never charged. It is NOT part of
+// The cart's metadata reaches no rule, so such a rule would be stored, matched
+// by the admin calculator and never charged. It is NOT part of
 // [validateRule]: the writes that keep a set's other prices revalidate every
 // rule they carry, and a rule written before the refusal has to ride through
 // them unchanged rather than answer 422 to a panel save or an import that only

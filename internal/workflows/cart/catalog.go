@@ -2,7 +2,6 @@ package cart
 
 import (
 	"context"
-	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/query"
@@ -266,9 +265,9 @@ func priceSubjectOf(snap Snapshot) priceSubject {
 // region, the sales channel the cart was opened in, the customer, their company
 // and their head group.
 //
-// The line, the totals, the wishlist quote and the price list trial call this;
-// the discount and the promotion trial call [Workflows.ruleContext], which adds
-// the cart's metadata.
+// Every round calls this: the line, the totals, the discount, the wishlist
+// quote and both trials. A cart's metadata reaches none of them (ADR 0403,
+// ADR 0407).
 //
 // # Why the group is resolved HERE and not at each call site
 //
@@ -366,78 +365,10 @@ func (w *Workflows) priceContext(
 	return attributes, lists, companyErr
 }
 
-// ruleContext builds the attribute map a PROMOTION rule reads for a cart: the
-// cart's [Workflows.priceContext] and its metadata under [CartAttributePrefix]
-// (ADR 0111). The bag is written after the names this flow decides and cannot
-// shadow them: every one of its keys carries the prefix, and no fixed name
-// does.
-func (w *Workflows) ruleContext(
-	ctx context.Context, snap Snapshot,
-) (attributes map[string]string, lists map[string][]string, err error) {
-	attributes, lists, err = w.priceContext(ctx, priceSubjectOf(snap))
-	addCartMetadata(attributes, snap.Metadata)
-
-	return attributes, lists, err
-}
-
-// CartAttributePrefix is what every attribute taken from the cart's metadata is
-// written under.
-//
-// It exists so that the bag CANNOT shadow the names this flow decides. A cart
-// whose metadata carried a key called "customer_group_id" would otherwise let
-// whoever writes that bag hand themselves a segment discount — and whoever
-// holds the storefront's publishable key writes it, since `POST /store/v1/carts`
-// takes it from the body, while the party that decides who is in which group
-// is the merchant. That caller can still meet a promotion ruled on a `cart.`
-// attribute (D261); a price never reads one, and pricing refuses a price rule
-// naming one (ADR 0403), under a spelling internal/arch binds to this one.
-//
-// The dot is deliberate: no fixed name contains one, so the two spaces cannot
-// collide by any spelling.
+// CartAttributePrefix is the attribute space ADR 0111 filled from a cart's
+// metadata. No context carries it: the bag reaches no price (ADR 0403) and no
+// promotion (ADR 0407), since whoever holds the storefront's publishable key
+// writes it. Pricing and promotion refuse a new rule naming it, and one written
+// before matches no cart, under spellings internal/arch binds to this one. It
+// stays reserved so that no later name wakes those rules.
 const CartAttributePrefix = "cart."
-
-// MaxCartAttributes bounds how many of the cart's metadata keys become rule
-// context.
-//
-// A bound has to exist: the bag is free-form and every attribute is copied into
-// the discount request on every totals round, so an unbounded one would let a
-// storefront make its own carts expensive to price. The keys are taken in SORTED
-// order, so which ones survive the bound is at least reproducible rather than
-// map-iteration order.
-const MaxCartAttributes = 32
-
-// addCartMetadata writes the cart's metadata into the promotion rule context,
-// prefixed.
-//
-// # Only STRING values cross
-//
-// The engine compares whole values, and a number would need a formatting rule:
-// 1 and 1.0 are the same number and two different attribute values, so a rule
-// stored against one would silently miss the other. A merchant who wants a
-// numeric rule writes the number as a string — the numeric operators parse it
-// (see condition.Match), so nothing is lost but the ambiguity.
-//
-// A non-string value is SKIPPED rather than formatted, and skipping is the safe
-// direction: the engine's own rule is that a line missing an attribute does not
-// match, so an unreadable value narrows a discount instead of widening it.
-func addCartMetadata(attributes map[string]string, metadata map[string]any) {
-	if len(metadata) == 0 {
-		return
-	}
-
-	keys := make([]string, 0, len(metadata))
-	for key := range metadata {
-		if _, ok := metadata[key].(string); ok {
-			keys = append(keys, key)
-		}
-	}
-	slices.Sort(keys)
-
-	for i, key := range keys {
-		if i >= MaxCartAttributes {
-			return
-		}
-		value, _ := metadata[key].(string)
-		attributes[CartAttributePrefix+key] = value
-	}
-}

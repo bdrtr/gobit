@@ -303,6 +303,12 @@ type ruleView struct {
 	Values    string
 }
 
+// OnCartMetadata reports a rule on an attribute a cart's metadata filled
+// before ADR 0407: it holds on no cart.
+func (r ruleView) OnCartMetadata() bool {
+	return strings.HasPrefix(r.Attribute, RuleAttributeCartPrefix)
+}
+
 // renderPromotion reads the promotion in the path and writes its page, with
 // a refused write's reason. An operator who may write and not read the
 // promotion is told the reason alone (ADR 0260).

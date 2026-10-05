@@ -1644,6 +1644,14 @@ var markdownTestNameReference = regexp.MustCompile("`(Test[A-Z_][A-Za-z0-9_]*)`"
 // how the omission stays visible.
 var testNameReferenceExemptions = []pathReferenceExemption{
 	{
+		file: "docs/measurements/0403-the-carts-bag-and-a-price.md",
+		path: "TestACartsOwnDataCanRuleAPromotion",
+		reason: "A dated measurement naming the e2e test of ADR 0111's feature, which still " +
+			"passed on its date because the bag still reached promotions. ADR 0407 took the " +
+			"bag out of promotions and deleted the test; TestACartsMetadataMeetsNoPromotion " +
+			"holds the opposite now.",
+	},
+	{
 		file: "docs/adr/0009-cok-kiracililik-kurulum-siniri.md",
 		path: "TestCrossModuleForeignKeyYok",
 		reason: "ADR 0009 is in the historical range 0001-0051, which takes no edit but " +
@@ -2330,11 +2338,16 @@ func TestTheReferencesInTheDocsResolve(t *testing.T) {
 
 	scan := scanDocReferences(t)
 	qualifiers := markdownQualifiers(t, scan)
+	used := make([]bool, len(markdownReferenceExemptions))
 
 	for _, doc := range markdownDocs(t) {
 		for _, reference := range markdownReferences(doc, qualifiers) {
 			reason := scan.resolveMarkdownReference(reference)
 			if reason == "" {
+				continue
+			}
+			if k := findMarkdownReferenceExemption(reference.doc, reference.raw); k >= 0 {
+				used[k] = true
 				continue
 			}
 			t.Errorf("%s:%d: the %q reference does not resolve — %s.\n"+
@@ -2346,6 +2359,47 @@ func TestTheReferencesInTheDocsResolve(t *testing.T) {
 				reference.doc, reference.line, reference.raw, reason)
 		}
 	}
+
+	for k, exemption := range markdownReferenceExemptions {
+		assert.True(t, used[k],
+			"exemption STALE: in %s the %q reference is no longer broken (either the "+
+				"reference was deleted or the name came into being again).\n"+
+				"Justification: %s",
+			exemption.file, exemption.path, exemption.reason)
+	}
+}
+
+// markdownReferenceExemptions are the symbol references in records that may not
+// be edited and name what a later record deleted. Shape and price are
+// [pathReferenceExemptions]': the day the name resolves again the test fails and
+// asks for the line to come off.
+//
+// A record in the historical range takes no edit but its Summary, and a later
+// record amends one by adding rather than editing (CLAUDE.md). Both say what
+// the code was on their day; the record that changed it names what replaced it.
+var markdownReferenceExemptions = []pathReferenceExemption{
+	{
+		file: "docs/adr/0049-one-group-decides-the-price-and-the-merchant-ranks-the-groups.md",
+		path: "Workflows.ruleContext",
+		reason: "ADR 0049 is in the historical range 0001-0051, which takes no edit but its " +
+			"Summary, and it names the method the head group was resolved in on its day. " +
+			"ADR 0407 deleted that method; the head is resolved in Workflows.priceContext now.",
+	},
+	{
+		file: "docs/adr/0111-the-cart-carries-its-own-data-into-a-rule.md",
+		path: "Snapshot.Metadata",
+		reason: "ADR 0111 is superseded by ADR 0407 and takes no edit but that line; its " +
+			"Decision names the field of the cart flow's snapshot that ADR 0407 deleted, so " +
+			"that a cart's metadata has no field to arrive in.",
+	},
+}
+
+// findMarkdownReferenceExemption is [findPathExemption] for the markdown symbol
+// list.
+func findMarkdownReferenceExemption(file, mentioned string) int {
+	return slices.IndexFunc(markdownReferenceExemptions, func(e pathReferenceExemption) bool {
+		return e.file == file && e.path == mentioned
+	})
 }
 
 // markdownResolverExample is the example, made of DELIBERATELY BROKEN references,

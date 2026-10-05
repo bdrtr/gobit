@@ -79,8 +79,10 @@ func TestTheInteropWritesAndRemovesACouponCode(t *testing.T) {
 		"the removal normalizes the same way the write does")
 }
 
-// TestTheSnapshotCarriesTheCartsMetadata is the PRODUCER's assertion about the
-// hop ADR 0111 opened.
+// TestTheSnapshotCarriesTheCartsMetadata is the PRODUCER's assertion that the
+// snapshot carries the cart's bag. ADR 0111 opened the hop for the cart flow,
+// which ignores the field since ADR 0407; the surface still carries it for any
+// other reader.
 //
 // The consumer declares its own copy of this schema and cannot be imported here.
 // ADR 0102 measured what happens when only the consumer is tested: the

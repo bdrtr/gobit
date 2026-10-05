@@ -411,12 +411,13 @@ func appliedPromotionsOf(resp discountResponse) []AppliedPromotion {
 //
 // # What goes into the context
 //
-// The region, the sales channel the cart was opened in (ADR 0397), the cart's
-// own metadata (ADR 0111), the customer, their company and their groups. This
-// paragraph said the opposite for a long time — "the customer group is NOT put
-// into the context … added here the day the customer surface publishes the group
-// list" — and that day had come and gone: [Workflows.ruleContext] has written it
-// since ADR 0049 published the ranked list. The sentence survived the change, and
+// The region, the sales channel the cart was opened in (ADR 0397), the
+// customer, their company and their groups; the cart's metadata is not among
+// them (ADR 0407). This paragraph said the opposite for a long time — "the
+// customer group is NOT put into the context … added here the day the customer
+// surface publishes the group list" — and that day had come and gone:
+// [Workflows.priceContext] has written it since ADR 0049 published the ranked
+// list. The sentence survived the change, and
 // a later round would have cited it as proof the leg was missing (ADR 0144).
 //
 // The groups go in TWICE and the two are different questions. The merchant-ranked
@@ -436,7 +437,7 @@ func appliedPromotionsOf(resp discountResponse) []AppliedPromotion {
 func (w *Workflows) discountRequestFor(
 	ctx context.Context, snap Snapshot, lines []LineTotals, flags map[string]productFacts,
 ) discountRequest {
-	attributes, lists, contextErr := w.ruleContext(ctx, snap)
+	attributes, lists, contextErr := w.priceContext(ctx, priceSubjectOf(snap))
 	if contextErr != nil {
 		w.log.WarnContext(ctx, "the customer's groups or company could not be read; discounting without them",
 			"error", contextErr, "customer_id", snap.CustomerID)
