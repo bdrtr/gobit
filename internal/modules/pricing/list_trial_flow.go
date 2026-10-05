@@ -10,6 +10,7 @@ import (
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/pricing/api"
+	"github.com/bdrtr/gobit/internal/modules/pricing/service"
 )
 
 // CartFlowsName is the container name of the cart flows' surface, where the
@@ -31,7 +32,10 @@ type listTrial struct {
 	err  error
 }
 
-var _ api.PriceListTrial = (*listTrial)(nil)
+var (
+	_ api.PriceListTrial    = (*listTrial)(nil)
+	_ service.ListTrialFlow = (*listTrial)(nil)
+)
 
 // TrialPriceListJSON prices the list against the orders of a period.
 func (t *listTrial) TrialPriceListJSON(

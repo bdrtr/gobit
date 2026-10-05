@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -251,6 +252,18 @@ func TestTheCartRetentionCeilingAgreesWithTheCartService(t *testing.T) {
 
 	assert.Equal(t, cartsvc.MaxRetentionDays, config.MaxCartRetentionDays,
 		"the config's cart retention ceiling must match the cart service's")
+}
+
+// TestThePanelTrialBoundAgreesWithTheCartFlows binds the panel's trial bound
+// in days to the cart flows' in time (ADR 0395). The panel counts the operator's
+// days and the flows the elapsed hours; a panel bound above the flows' sends a
+// period the flow refuses, and one below refuses at the form what the endpoint
+// runs.
+func TestThePanelTrialBoundAgreesWithTheCartFlows(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, cartflow.MaxTrialPeriod, time.Duration(adminui.TrialMaxDays)*24*time.Hour,
+		"the panel's trial bound in days must be the cart flows' MaxTrialPeriod")
 }
 
 // TestTheReceivableAccountAgrees binds the one account the payment and the order

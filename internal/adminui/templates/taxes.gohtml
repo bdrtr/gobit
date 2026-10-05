@@ -5,8 +5,9 @@ A tax region is a country, or a province under one, with the rates it
 charges: a rate with a rule is charged only on the items its rule matches,
 and the default rate, which has none, on the rest. A region with no provider
 of its own inherits its country's, and a country with none computes its tax
-in the module. A rate's name and rate are corrected here (ADR 0378); the
-admin API writes everything else.
+in the module. A rate's name and rate are corrected here (ADR 0378), and a
+country's rate is tried on past orders (ADR 0395); the admin API writes
+everything else.
 */ -}}
 {{ define "body" }}
 <h1>{{ .Title }}</h1>
@@ -21,11 +22,28 @@ admin API writes everything else.
     <tr><th>Country</th><th>Province</th><th>Rates</th><th>Provider</th></tr>
   </thead>
   <tbody>
-  {{ range .TaxRegions }}
+  {{ range $row := .TaxRegions }}
     <tr>
       <td>{{ .Country }}<br><span class="muted">{{ .ID }}</span></td>
       <td>{{ with .Province }}{{ . }}{{ else }}<span class="muted">the whole country</span>{{ end }}</td>
       <td>{{ range $i, $rate := .Rates }}{{ if $i }}<br>{{ end }}{{ $rate.Name }} {{ $rate.Percent }}%{{ with $rate.Code }} <span class="muted">{{ . }}</span>{{ end }}{{ if $rate.Default }} <span class="pill">default</span>{{ end }}
+        {{- if and $.CanTry $row.Tryable }}
+        {{/* A rate tried on past orders (ADR 0395): another value, or a rule
+        added, which a default rate does not take. */}}
+        <details>
+          <summary>Try on past orders</summary>
+          <form method="get" action="{{ $.Path }}/rates/{{ $rate.ID }}/trial">
+            <input type="date" name="from" value="{{ $.Trial.FromDay }}" aria-label="first day" required>
+            <input type="date" name="to" value="{{ $.Trial.ToDay }}" aria-label="last day" required>
+            <input name="rate" value="{{ $rate.Percent }}" aria-label="rate to try, percent" inputmode="decimal">%
+            {{ if $rate.Default }}<input type="hidden" name="value_only" value="1">{{ else }}
+            <select name="rule_reference" aria-label="rule reference">{{ range $.References }}<option value="{{ . }}">{{ . }}</option>{{ end }}</select>
+            <input name="rule_id" aria-label="rule reference id">
+            {{ end }}
+            <button type="submit">Try</button>
+          </form>
+        </details>
+        {{- end }}
         {{- if $.CanRevise }}
         {{/* The name and the rate corrected from the ones the rate was drawn
         with (ADR 0378); the code and the default are not among them. */}}

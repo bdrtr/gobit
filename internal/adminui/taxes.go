@@ -3,6 +3,7 @@ package adminui
 import (
 	"net/http"
 	"net/url"
+	"time"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/query"
@@ -12,7 +13,8 @@ import (
 // region entity, a country's own and its provinces', each with the rates it
 // charges, for an operator who may read the taxes, the codes printed as the
 // module stores them, upper-cased. Each rate corrects its name and rate for
-// an operator who may write the taxes (ADR 0378).
+// an operator who may write the taxes (ADR 0378), and is tried on past orders
+// for one who may read the orders too (ADR 0395).
 
 // TaxesPath lists the tax regions.
 const TaxesPath = URLPrefix + "/taxes"
@@ -23,6 +25,10 @@ const taxesLabel = "Taxes"
 // EntityTaxRegion is the tax module's tax region entity in the read layer,
 // pinned against the module's in internal/arch.
 const EntityTaxRegion = "tax_region"
+
+// localTaxProvider is the tax module's own provider, as it names it; a region
+// naming another one is taxed outside the module.
+const localTaxProvider = "local"
 
 // taxRegionsPerPage is the list's page size, the other lists'.
 const taxRegionsPerPage = 25
@@ -49,6 +55,11 @@ type taxRegionRow struct {
 	// its country's.
 	Provider string
 	Rates    []taxRateView
+	// Tryable says the region's rates can be tried on past orders (ADR
+	// 0395): a country's own, which a cart reaches, whose tax the module
+	// computes. A province's rate is reached by no cart, which sends no
+	// province, and an external provider's table cannot be amended.
+	Tryable bool
 }
 
 // taxRateView is one rate a tax region charges.
@@ -110,6 +121,7 @@ func (u *UI) renderTaxes(w http.ResponseWriter, r *http.Request, code int, refus
 			Province: recordString(record, fieldTaxProvince),
 			Provider: recordString(record, fieldTaxProvider),
 		}
+		row.Tryable = row.Province == "" && (row.Provider == "" || row.Provider == localTaxProvider)
 		for _, rate := range recordList(record[fieldTaxRates]) {
 			bps, _ := intValue(rate[fieldRateBps])
 			view := taxRateView{
@@ -126,10 +138,14 @@ func (u *UI) renderTaxes(w http.ResponseWriter, r *http.Request, code int, refus
 		rows = append(rows, row)
 	}
 
+	trial, _ := trialPeriodOf(nil, time.Now())
 	data := map[string]any{
 		titleKey:     taxesLabel,
 		"TaxRegions": rows,
 		canReviseKey: u.taxes != nil && principal.HasScope(scopeTaxWrite),
+		canTryKey:    u.taxTrials != nil && principal.HasScope(scopeOrderRead),
+		"Trial":      trial,
+		"References": trialRuleReferences,
 		writtenKey:   r.URL.Query().Get(paramWritten),
 		refusedKey:   refused,
 	}

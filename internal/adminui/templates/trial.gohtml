@@ -1,0 +1,67 @@
+{{- /*
+trial.gohtml is a promotion, a price list or a tax rate tried on the orders
+of a past period (ADR 0395).
+
+The module that owns the subject answers with the report its admin endpoint
+answers with; the screen draws its counts, its sums per currency, the orders
+it names and what it assumed. Nothing is written. The period's last day is
+included and a period reaching into today ends now.
+*/ -}}
+{{ define "body" }}
+<p><a href="{{ .Back }}">Back</a></p>
+<h1>{{ .Title }}</h1>
+
+{{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}
+
+<form method="get" action="{{ .Path }}">
+  <label>First day <input type="date" name="from" value="{{ .Period.FromDay }}" required></label>
+  <label>Last day <input type="date" name="to" value="{{ .Period.ToDay }}" required></label>
+  {{ with .Tax }}
+  <label>Rate <input name="rate" value="{{ .Rate }}" aria-label="rate, percent" inputmode="decimal">%</label>
+  {{ if .ValueOnly }}<input type="hidden" name="value_only" value="1">{{ else }}
+  <label>Add a rule on
+    <select name="rule_reference" aria-label="rule reference">
+      {{ range .References }}<option value="{{ . }}"{{ if eq . $.Tax.RuleReference }} selected{{ end }}>{{ . }}</option>{{ end }}
+    </select>
+  </label>
+  <input name="rule_id" value="{{ .RuleID }}" aria-label="rule reference id">
+  {{ end }}
+  {{ end }}
+  <button type="submit">Try</button>
+</form>
+
+{{ with .Report }}
+{{ with .Change }}<p>Tried {{ . }}.</p>{{ end }}
+<p>{{ range $i, $count := .Counts }}{{ if $i }} · {{ end }}{{ $count.Count }} {{ $count.Label }}{{ end }}</p>
+
+{{ if .Currencies }}
+<h2>Per currency</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>Currency</th>{{ range .CurrencyHeads }}<th>{{ . }}</th>{{ end }}</tr></thead>
+  <tbody>
+  {{ range .Currencies }}<tr>{{ range .Cells }}<td>{{ . }}</td>{{ end }}</tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ else }}
+<p class="muted">No order of the period was priced.</p>
+{{ end }}
+
+{{ if .Orders }}
+<h2>The orders it moves most</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>Order</th><th>Placed (UTC)</th>{{ range .OrderHeads }}<th>{{ . }}</th>{{ end }}</tr></thead>
+  <tbody>
+  {{ range .Orders }}<tr><td><a href="{{ $.OrdersPath }}/{{ .OrderID }}">#{{ .DisplayID }}</a></td><td>{{ .PlacedAt }}</td>{{ range .Cells }}<td>{{ . }}</td>{{ end }}</tr>
+  {{ end }}
+  </tbody>
+</table>
+</div>
+{{ end }}
+
+{{ with .Assumptions }}<p class="muted">Assumed: {{ range $i, $a := . }}{{ if $i }}, {{ end }}{{ $a }}{{ end }}.</p>{{ end }}
+{{ end }}
+{{ end }}

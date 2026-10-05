@@ -133,6 +133,7 @@ var pages = []string{
 	"sales_channels.gohtml",
 	"regions.gohtml",
 	"taxes.gohtml",
+	"trial.gohtml",
 	"parcels.gohtml",
 	"payments.gohtml",
 	"product_relations.gohtml",

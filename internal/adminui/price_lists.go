@@ -230,6 +230,7 @@ func (u *UI) renderPriceLists(
 		titleKey:     priceListsLabel,
 		"PriceLists": views,
 		canReviseKey: u.canRevisePriceLists(r),
+		canTryKey:    u.priceListTrials != nil && canTry(r),
 		totalKey:     total,
 		createdKey:   r.URL.Query().Get(paramCreated),
 		canCreateKey: u.canCreatePriceLists(r),

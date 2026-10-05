@@ -26,6 +26,7 @@ to an operator who may read the catalog.
     {{ if not .Promotion.CreatedAt.IsZero }}<tr><th>Created</th><td>{{ .Promotion.CreatedAt.Format "2006-01-02" }}</td></tr>{{ end }}
   </tbody>
 </table>
+{{ if .CanTry }}<p><a href="{{ .Path }}/{{ .Promotion.ID }}/trial">Try on past orders</a></p>{{ end }}
 
 <h2>Discount</h2>
 {{ with .Promotion.Method }}

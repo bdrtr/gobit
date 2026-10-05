@@ -126,6 +126,31 @@ func (s *Service) assertStackable(
 	return assertStackWithinBase(chain)
 }
 
+// assertNotStacked refuses making a rate that stands on another the region's
+// default (ADR 0095, gap D248).
+//
+// Creation refuses the pair in [Service.assertStackable]; an update reached it
+// by setting the flag on a rate already standing, and the calculation then
+// dropped the row from the candidates while the region listed it as its
+// default and held the default's slot. A rate's stack is written when it is
+// created and no write moves it, so the stored row answers without a lock.
+// The schema refuses the pair too (tax_rate_standing_default_check, migration
+// 000005); this says it with the code and the reason.
+func (s *Service) assertNotStacked(ctx context.Context, rateID string) error {
+	rate, err := s.repo.GetTaxRate(ctx, rateID)
+	if err != nil {
+		return err
+	}
+	if rate.StacksOnID != nil {
+		return errors.Conflict(CodeStackNotAllowed,
+			"rate %s stands on %s and cannot be made the default: the default is "+
+				"CHOSEN, while a standing rate applies by expanding what was chosen",
+			rateID, *rate.StacksOnID)
+	}
+
+	return nil
+}
+
 // assertNoRules refuses stacking onto a rate that carries rules.
 //
 // A ruled rate is chosen by matching; a rate standing on it would then apply

@@ -105,6 +105,40 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **The panel tries a promotion, a price list and a tax rate on past orders**
+  (ADR 0395). **For operators:** a promotion's page, each row of the Price
+  lists screen and each rate of a country on the Taxes screen offer a trial on
+  the orders of a period of days, the last one whole and ending now at the
+  latest, to an operator holding the module's read privilege and
+  `order:read`. The screen draws the report the admin endpoint answers with:
+  the counts, the sums per currency with the change's effect, the orders it
+  moves most, each linked to its page, and what it assumed. A tax rate is tried
+  at a value typed as a percent and with one rule added, a default rate at a
+  value only; a province's rate and one under an external provider offer no
+  trial. A refusal is drawn on the screen with its reason. Nothing is written.
+  **For integrators:** `promotion.admin`, `pricing.admin` and `tax.admin` gain
+  `TrialPromotionJSON`, `TrialPriceListJSON` and `TrialTaxRateJSON`, so a
+  registration under one of those names without the method fails the panel's
+  wiring.
+- **A stacked rate is not made the default** (D248). **For API consumers:**
+  `PUT /admin/v1/tax-rates/{id}` with `is_default: true` on a rate standing on
+  another answers 409 `tax_stack_not_allowed` and writes nothing. Creating
+  such a rate was always refused, with 422 and the same code. Before, the
+  update wrote the flag, the calculation left the rate out of the choice, and
+  the rate held the region's one default slot without being chosen.
+  **For operators:** tax migration 000005 clears the flag on every rate
+  that stands on another and adds a CHECK refusing it. In such a region, a
+  line that matched no rule found no default. In a country it was taxed at
+  zero, and in a province it fell to the country's default. The base also
+  could not be made the default. The upgrade does not change the tax: the
+  region still has no default until one is set. To find these regions before
+  upgrading, run `SELECT tax_region_id FROM tax_rate WHERE is_default AND
+  stacks_on_id IS NOT NULL AND deleted_at IS NULL`. After upgrading, make each
+  one's base, or another rate, the default.
+- **The cart flows' wiring warning names its surface under `service`** (D250).
+  **For operators:** the warning logged when the promotion or tax surface is
+  not registered carries the missing name under `service`, as every module's
+  line does, where it carried a Turkish key.
 - **An add-on is written under its line and asked again when it rises**
   (ADR 0393, D243, D244). **For storefront clients:**
   `PATCH /store/v1/carts/{id}/line-items/{line_item_id}` raising a line that

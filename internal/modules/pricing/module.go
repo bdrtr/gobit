@@ -129,7 +129,8 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 
 	repo := repository.New(pool.Pool())
 	m.svc = service.New(repo, service.Options{Logger: m.log})
-	m.api = api.New(m.svc).WithTrial(&listTrial{c: c, log: m.log})
+	trial := &listTrial{c: c, log: m.log}
+	m.api = api.New(m.svc).WithTrial(trial)
 
 	if err := c.Provide(ServiceName, m.svc); err != nil {
 		return err
@@ -139,7 +140,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	}
 	// The admin write surface is registered under a SEPARATE name; the reason
 	// is in [AdminName] and in ADR 0013.
-	if err := c.Provide(AdminName, service.NewAdminSurface(m.svc)); err != nil {
+	if err := c.Provide(AdminName, service.NewAdminSurface(m.svc).WithTrial(trial)); err != nil {
 		return err
 	}
 

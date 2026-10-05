@@ -176,12 +176,13 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := c.Provide(ProviderName, service.NewQueryProvider(svc)); err != nil {
 		return err
 	}
-	if err := c.Provide(AdminName, NewAdminSurface(svc)); err != nil {
+	trial := &promotionTrial{c: c, log: m.log}
+	if err := c.Provide(AdminName, NewAdminSurface(svc).WithTrial(trial)); err != nil {
 		return err
 	}
 
 	m.svc = svc
-	m.handler = api.New(svc).WithTrial(&promotionTrial{c: c, log: m.log})
+	m.handler = api.New(svc).WithTrial(trial)
 
 	m.log.InfoContext(ctx, "promotion module registered",
 		slog.String("service", ServiceName),

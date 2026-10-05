@@ -10,6 +10,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/openapi"
+	"github.com/bdrtr/gobit/internal/modules/pricing/service"
 )
 
 // pathListTrial is the price list trial's address (ADR 0220).
@@ -20,17 +21,10 @@ const pathListTrial = "/admin/v1/price-lists/{id}/trial"
 // amounts. The string is the order module's; this module cannot import it.
 const orderReadScope = "order:read"
 
-// Error codes of the trial endpoint.
-const (
-	// codeListTrialInvalidPeriod reports a from or to that is missing, malformed
-	// or in the future.
-	codeListTrialInvalidPeriod = "pricing_trial_invalid_period"
-	// codeListTrialUnavailable reports that the flow the trial runs on is not
-	// bound.
-	codeListTrialUnavailable = "pricing_trial_unavailable"
-	// codeListTrialAnswerInvalid reports a flow answer this endpoint cannot read.
-	codeListTrialAnswerInvalid = "pricing_trial_answer_invalid"
-)
+// codeListTrialAnswerInvalid reports a flow answer this endpoint cannot read;
+// the trial's other codes are the service's, which the panel's surface
+// answers with too.
+const codeListTrialAnswerInvalid = "pricing_trial_answer_invalid"
 
 // PriceListTrial is the surface of the flow that prices a price list against
 // past orders (ADR 0220).
@@ -118,12 +112,12 @@ func (a *API) trialPriceList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if to.After(time.Now()) {
-		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeListTrialInvalidPeriod,
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(service.CodeListTrialInvalidPeriod,
 			"a trial reads orders already placed; \"to\" is in the future: %s", to.Format(time.RFC3339)))
 		return
 	}
 	if a.trial == nil {
-		corehttp.WriteError(ctx, w, coreerrors.Internal(codeListTrialUnavailable,
+		corehttp.WriteError(ctx, w, coreerrors.Internal(service.CodeListTrialUnavailable,
 			"the price list trial flow is not bound; no order can be read"))
 		return
 	}
@@ -148,12 +142,12 @@ func (a *API) trialPriceList(w http.ResponseWriter, r *http.Request) {
 func listTrialMoment(r *http.Request, name string) (time.Time, error) {
 	value := r.URL.Query().Get(name)
 	if value == "" {
-		return time.Time{}, coreerrors.Invalid(codeListTrialInvalidPeriod,
+		return time.Time{}, coreerrors.Invalid(service.CodeListTrialInvalidPeriod,
 			"the %q query parameter is required: an RFC 3339 moment", name)
 	}
 	at, err := time.Parse(time.RFC3339, value)
 	if err != nil {
-		return time.Time{}, coreerrors.Wrap(err, coreerrors.KindInvalid, codeListTrialInvalidPeriod,
+		return time.Time{}, coreerrors.Wrap(err, coreerrors.KindInvalid, service.CodeListTrialInvalidPeriod,
 			"the %q query parameter has to be an RFC 3339 moment with a zone, %q given", name, value)
 	}
 	return at, nil

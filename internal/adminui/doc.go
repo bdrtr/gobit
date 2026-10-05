@@ -186,6 +186,13 @@
 // each charges (ADR 0355), each rate correcting its name and rate
 // ([UI.reviseTaxRate], ADR 0378).
 //
+// A promotion's page, each row of the Price lists screen and each rate of a
+// country on the Taxes screen are tried on the orders of a past period
+// ([UI.trialPromotion], [UI.trialPriceList], [UI.trialTaxRate], ADR 0395),
+// through the module's panel surface, for an operator who may read the orders
+// too: the screen draws the report the admin endpoint answers with, and
+// writes nothing.
+//
 // The Payments screen ([UI.listPayments]) lists the payment module's
 // collections across every order, one status at a time, the ones authorized
 // first, naming each one's order for an operator who may read the orders

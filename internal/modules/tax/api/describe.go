@@ -168,7 +168,11 @@ func describeRates(d *openapi.Doc) {
 		Summary: "Updates the given fields of a tax rate.",
 		Description: "The method is PUT but the semantics are PARTIAL: a field not given " +
 			"in the body does not change. To REMOVE the code, send an empty string in " +
-			"the code field.",
+			"the code field." +
+			"\n\n" +
+			"A rate standing on another cannot be made the default (409 " +
+			"tax_stack_not_allowed), and a new rate_bps is checked against the stack " +
+			"the rate stands in (409 tax_stack_exceeds_base).",
 		RequestBody: d.RequestBody(updateTaxRateRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The tax rate updated", d.Item(taxRateDTO{})),

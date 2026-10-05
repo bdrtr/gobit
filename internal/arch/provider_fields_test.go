@@ -889,6 +889,9 @@ var panelSurfaceContracts = map[string]string{
 	// A region's terms as the surface takes them (ADR 0362).
 	"region_revise.go": "region.admin's region terms",
 	"tax_revise.go":    "tax.admin's tax rate terms",
+	// The three trials' reports and a tax rate's change, as the cart flows
+	// and the tax module write them (ADR 0395).
+	"trial.go": "the promotion, price list and tax rate trials' reports",
 }
 
 // panelReadFields returns every field name the admin panel names in its own

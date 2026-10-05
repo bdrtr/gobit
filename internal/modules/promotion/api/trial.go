@@ -26,11 +26,12 @@ const orderReadScope = "order:read"
 
 // Error codes of the trial endpoint.
 const (
-	// codeTrialInvalidPeriod reports a from or to that is missing, malformed or
-	// in the future.
-	codeTrialInvalidPeriod = "promotion_trial_invalid_period"
-	// codeTrialUnavailable reports that the flow the trial runs on is not bound.
-	codeTrialUnavailable = "promotion_trial_unavailable"
+	// CodeTrialInvalidPeriod reports a from or to that is missing, malformed or
+	// in the future; the panel's surface refuses a future to with it too.
+	CodeTrialInvalidPeriod = "promotion_trial_invalid_period"
+	// CodeTrialUnavailable reports that the flow the trial runs on is not
+	// bound, here and on the panel's surface.
+	CodeTrialUnavailable = "promotion_trial_unavailable"
 	// codeTrialAnswerInvalid reports a flow answer this endpoint cannot read.
 	codeTrialAnswerInvalid = "promotion_trial_answer_invalid"
 )
@@ -144,12 +145,12 @@ func (a *API) trialPromotion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if to.After(time.Now()) {
-		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeTrialInvalidPeriod,
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(CodeTrialInvalidPeriod,
 			"a trial reads orders already placed; \"to\" is in the future: %s", to.Format(time.RFC3339)))
 		return
 	}
 	if a.trial == nil {
-		corehttp.WriteError(ctx, w, coreerrors.Internal(codeTrialUnavailable,
+		corehttp.WriteError(ctx, w, coreerrors.Internal(CodeTrialUnavailable,
 			"the promotion trial flow is not bound; no order can be read"))
 		return
 	}
@@ -175,12 +176,12 @@ func (a *API) trialPromotion(w http.ResponseWriter, r *http.Request) {
 func trialMoment(r *http.Request, name string) (time.Time, error) {
 	value := r.URL.Query().Get(name)
 	if value == "" {
-		return time.Time{}, coreerrors.Invalid(codeTrialInvalidPeriod,
+		return time.Time{}, coreerrors.Invalid(CodeTrialInvalidPeriod,
 			"the %q query parameter is required: an RFC 3339 moment", name)
 	}
 	at, err := time.Parse(time.RFC3339, value)
 	if err != nil {
-		return time.Time{}, coreerrors.Wrap(err, coreerrors.KindInvalid, codeTrialInvalidPeriod,
+		return time.Time{}, coreerrors.Wrap(err, coreerrors.KindInvalid, CodeTrialInvalidPeriod,
 			"the %q query parameter has to be an RFC 3339 moment with a zone, %q given", name, value)
 	}
 

@@ -1,7 +1,11 @@
 package cart
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -196,6 +200,35 @@ func TestFromContainerWiresWithoutOptionalSurfaces(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, TaxSourceRegion, totals.TaxSource)
 	assert.Zero(t, totals.DiscountTotal)
+}
+
+// TestTheMissingSurfacesAreNamedUnderTheServiceKey is gap D250: the wiring
+// warning for a missing promotion or tax surface names it under the "service"
+// key every module's log line uses, where it was written under a Turkish key
+// a translation had missed.
+func TestTheMissingSurfacesAreNamedUnderTheServiceKey(t *testing.T) {
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	h := newHarness(t)
+	c := container.New(nil)
+	provideAll(t, c, h)
+	_, err := FromContainer(c)
+	require.NoError(t, err)
+
+	named := map[string]bool{}
+	lines := bufio.NewScanner(&buf)
+	for lines.Scan() {
+		var record map[string]any
+		require.NoError(t, json.Unmarshal(lines.Bytes(), &record))
+		if service, ok := record["service"].(string); ok {
+			named[service] = true
+		}
+	}
+	assert.Equal(t, map[string]bool{ServicePromotion: true, ServiceTax: true}, named,
+		"each missing surface is named under the service key")
 }
 
 // TestFromContainerReportsMismatchedOptionalType verifies that an optional

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
+	"github.com/bdrtr/gobit/internal/modules/promotion/api"
 	"github.com/bdrtr/gobit/internal/modules/promotion/models"
 	"github.com/bdrtr/gobit/internal/modules/promotion/service"
 )
@@ -16,11 +17,38 @@ import (
 // primitives and JSON cross it, as across every surface the panel resolves
 // (ADR 0001).
 type AdminSurface struct {
-	svc *service.Service
+	svc   *service.Service
+	trial api.PromotionTrial
 }
 
 // NewAdminSurface builds the panel's surface over the service.
 func NewAdminSurface(svc *service.Service) *AdminSurface { return &AdminSurface{svc: svc} }
+
+// WithTrial binds the flow the panel's promotion trial runs on and returns the
+// surface; the module hands over the wrapper its endpoint uses.
+func (a *AdminSurface) WithTrial(trial api.PromotionTrial) *AdminSurface {
+	a.trial = trial
+
+	return a
+}
+
+// TrialPromotionJSON is the promotion trial the panel asks for (ADR 0395): the
+// flow's report as it is, after the endpoint's own refusals of a future end
+// and of an unbound flow.
+func (a *AdminSurface) TrialPromotionJSON(
+	ctx context.Context, promotionID string, from, to time.Time,
+) (json.RawMessage, error) {
+	if a == nil || a.trial == nil {
+		return nil, errors.Internal(api.CodeTrialUnavailable,
+			"the promotion trial flow is not bound; no order can be read")
+	}
+	if to.After(time.Now()) {
+		return nil, errors.Invalid(api.CodeTrialInvalidPeriod,
+			"a trial reads orders already placed; \"to\" is in the future: %s", to.Format(time.RFC3339))
+	}
+
+	return a.trial.TrialPromotionJSON(ctx, promotionID, from, to)
+}
 
 // codeAdminReadFailed reports a listing that could not be encoded.
 const codeAdminReadFailed = "promotion_admin_read_failed"

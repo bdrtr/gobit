@@ -6,6 +6,7 @@ refused with `tax_rate_revised` otherwise.
 
 - **Status:** Accepted
 - **Date:** 2026-10-03
+- **Amended by:** [0395](0395-the-panel-tries-a-rule-on-past-orders.md): its rates are tried there too
 
 ## Context
 

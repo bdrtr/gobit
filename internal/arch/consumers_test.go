@@ -539,8 +539,10 @@ func fieldExpr(value *ast.CompositeLit, field string) ast.Expr {
 //     it been taken into scope it would have turned a conditional resolution
 //     into a mandatory tie. The family's real constraint is a different one:
 //     WHO may mention this name is limited by
-//     [TestAdminSurfaceHasOneAudience], and whether the panel's name holds
-//     against the module's constant by [TestThePanelCatalogNamesAgree].
+//     [TestAdminSurfaceHasOneAudience], whether the panel's name holds
+//     against the module's constant by [TestThePanelCatalogNamesAgree], and
+//     whether the module's surface satisfies the panel's interface by
+//     [TestEveryInteropConsumerIsPinned] (gap D251).
 const (
 	interopFamily   = ".interop"
 	serviceFamily   = ".service"

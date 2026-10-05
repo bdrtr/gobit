@@ -520,6 +520,10 @@ func (p recordingPrices) SetBasePriceAmount(context.Context, string, string, int
 	return p.surfaces.reach(ServicePricingAdmin)
 }
 
+func (p recordingPrices) TrialPriceListJSON(context.Context, string, time.Time, time.Time) (json.RawMessage, error) {
+	return json.RawMessage(`{}`), p.surfaces.reach(ServicePricingAdmin)
+}
+
 // recordingStock is the inventory surface.
 type recordingStock struct{ surfaces *recordingSurfaces }
 
@@ -556,6 +560,10 @@ func (p recordingPromotions) PromotionsJSON(context.Context, string, int32, int3
 
 func (p recordingPromotions) SwitchPromotionStatus(context.Context, string, string, string) error {
 	return p.surfaces.reach(ServicePromotionAdmin)
+}
+
+func (p recordingPromotions) TrialPromotionJSON(context.Context, string, time.Time, time.Time) (json.RawMessage, error) {
+	return json.RawMessage(`{}`), p.surfaces.reach(ServicePromotionAdmin)
 }
 
 func (p recordingPromotions) CreateCoupon(
@@ -910,6 +918,12 @@ func (g recordingTaxes) ReviseTaxRate(context.Context, string, json.RawMessage, 
 	return g.surfaces.reach(ServiceTaxAdmin)
 }
 
+func (g recordingTaxes) TrialTaxRateJSON(
+	context.Context, string, time.Time, time.Time, json.RawMessage,
+) (json.RawMessage, error) {
+	return json.RawMessage(`{}`), g.surfaces.reach(ServiceTaxAdmin)
+}
+
 // recordingInvoices records the invoice module's surface (ADR 0335).
 type recordingInvoices struct{ surfaces *recordingSurfaces }
 
@@ -1007,7 +1021,7 @@ func (a recordingAfterSales) OpenReplacement(
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }
 
-// walkRequires are the privileges a write asks for beside its route's, in its
+// walkRequires are the privileges a route asks for beside its own, in its
 // handler. Adding a variant's price reaches the product module's surface,
 // which links the price set, and writes pricing's price, so it asks for
 // pricing:write as the import does (ADR 0207, ADR 0309). The walk holds them
@@ -1019,6 +1033,10 @@ var walkRequires = map[string][]string{
 	routeKey(http.MethodPost, VariantStockItemPath): {scopeInventoryWrite},
 	// And attaching a claim's evidence stores a file (ADR 0325).
 	routeKey(http.MethodPost, OrderClaimEvidencePath): {scopeFileWrite},
+	// A trial's report is orders (ADR 0395).
+	routeKey(http.MethodGet, PromotionTrialPath): {scopeOrderRead},
+	routeKey(http.MethodGet, PriceListTrialPath): {scopeOrderRead},
+	routeKey(http.MethodGet, TaxRateTrialPath):   {scopeOrderRead},
 }
 
 // requiredOwners are the modules whose write privilege the route's handler

@@ -226,8 +226,15 @@ type UI struct {
 	regions RegionReviser
 	// taxes corrects a tax rate (ADR 0378); nil where the tax module is not
 	// installed, and the Taxes screen then offers no correction.
-	taxes  TaxRateReviser
-	scopes map[string]string
+	taxes TaxRateReviser
+	// promotionTrials, priceListTrials and taxTrials try a promotion, a price
+	// list and a tax rate on past orders (ADR 0395); nil where the module is
+	// not installed (its `.admin` name is not registered), and its screen then
+	// offers no trial. A registered surface without the method fails wiring.
+	promotionTrials PromotionTrial
+	priceListTrials PriceListTrial
+	taxTrials       TaxRateTrial
+	scopes          map[string]string
 }
 
 // FromContainer builds the panel on the container.
@@ -359,6 +366,20 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	if err != nil {
 		return nil, err
 	}
+	// And the trials on past orders, each from its module's surface (ADR
+	// 0395).
+	promotionTrials, err := optionalService[PromotionTrial](c, ServicePromotionAdmin)
+	if err != nil {
+		return nil, err
+	}
+	priceListTrials, err := optionalService[PriceListTrial](c, ServicePricingAdmin)
+	if err != nil {
+		return nil, err
+	}
+	taxTrials, err := optionalService[TaxRateTrial](c, ServiceTaxAdmin)
+	if err != nil {
+		return nil, err
+	}
 
 	// The registrations are judged BEFORE the panel exists, so a malformed one
 	// stops startup instead of being discovered by an operator's click.
@@ -378,31 +399,34 @@ func FromContainer(c *container.Container, secureCookie bool, pages []Page) (*UI
 	templates.scopes = scopes
 
 	return &UI{
-		catalog:       catalog,
-		products:      products,
-		prices:        prices,
-		stock:         stock,
-		secondFactor:  secondFactor,
-		sessions:      sessions,
-		users:         users,
-		afterSales:    afterSales,
-		payments:      payments,
-		carts:         carts,
-		promotions:    promotions,
-		notifications: notifications,
-		memberships:   memberships,
-		parcels:       parcels,
-		files:         files,
-		invoices:      invoices,
-		settings:      settings,
-		regions:       regions,
-		taxes:         taxes,
-		session:       session,
-		authenticator: authenticator,
-		templates:     templates,
-		secureCookie:  secureCookie,
-		pages:         screens,
-		scopes:        scopes,
+		catalog:         catalog,
+		products:        products,
+		prices:          prices,
+		stock:           stock,
+		secondFactor:    secondFactor,
+		sessions:        sessions,
+		users:           users,
+		afterSales:      afterSales,
+		payments:        payments,
+		carts:           carts,
+		promotions:      promotions,
+		notifications:   notifications,
+		memberships:     memberships,
+		parcels:         parcels,
+		files:           files,
+		invoices:        invoices,
+		settings:        settings,
+		regions:         regions,
+		taxes:           taxes,
+		promotionTrials: promotionTrials,
+		priceListTrials: priceListTrials,
+		taxTrials:       taxTrials,
+		session:         session,
+		authenticator:   authenticator,
+		templates:       templates,
+		secureCookie:    secureCookie,
+		pages:           screens,
+		scopes:          scopes,
 	}, nil
 }
 

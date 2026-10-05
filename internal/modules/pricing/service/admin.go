@@ -29,8 +29,12 @@ import (
 // This surface closes that gap by reading ALL prices, changing exactly one, and
 // writing every other one back untouched.
 
-// AdminSurface is the pricing module's admin write surface.
-type AdminSurface struct{ svc *Service }
+// AdminSurface is the pricing module's admin write surface, and the panel's
+// price list trial (ADR 0395).
+type AdminSurface struct {
+	svc   *Service
+	trial ListTrialFlow
+}
 
 // NewAdminSurface builds the admin surface over the given service.
 func NewAdminSurface(svc *Service) *AdminSurface { return &AdminSurface{svc: svc} }

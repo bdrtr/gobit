@@ -728,11 +728,11 @@ func FromContainer(c *container.Container) (*Workflows, error) {
 	// warning lost in the noise is as good as one that never happened.
 	if discounts == nil {
 		log.Warn("the promotion surface is not registered; the cart discount will be computed as ZERO",
-			slog.String("servis", ServicePromotion))
+			slog.String("service", ServicePromotion))
 	}
 	if taxes == nil {
 		log.Warn("the tax surface is not registered; the tax will be computed with the region rate",
-			slog.String("servis", ServiceTax), slog.String("tax_source", TaxSourceRegion))
+			slog.String("service", ServiceTax), slog.String("tax_source", TaxSourceRegion))
 	}
 
 	return New(Deps{

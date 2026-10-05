@@ -440,3 +440,37 @@ func TestATrialAsksTheFlowOnlyWithAPastPeriodAndABoundFlow(t *testing.T) {
 	assert.Equal(t, 1, flow.calls)
 	assert.JSONEq(t, `{"rate_bps":900,"add_rules":[{"reference":"product","reference_id":"prod_9"}]}`, flow.change)
 }
+
+// TestThePanelTriesARate is ADR 0395 through the tax module's panel surface:
+// the change crosses as JSON, read strictly, and the trial is TryRate's, its
+// refusals included; a surface with no flow bound tries nothing.
+func TestThePanelTriesARate(t *testing.T) {
+	svc, _ := newRefusalWorld(t)
+	ctx := context.Background()
+	flow := &countingFlow{}
+	surface := NewAdminSurface(svc).WithTrial(flow)
+	change := json.RawMessage(`{"rate_bps":900,"add_rules":[{"reference":"product","reference_id":"prod_9"}]}`)
+
+	report, err := surface.TrialTaxRateJSON(ctx, rateB, testNow.Add(-time.Hour), testNow, change)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{}`, string(report), "the flow's report as it is")
+	assert.Equal(t, 1, flow.calls)
+	assert.JSONEq(t, string(change), flow.change)
+
+	for name, body := range map[string]string{
+		"an unknown field": `{"rate_bps":900,"rate":9}`,
+		"not a change":     `[`,
+	} {
+		_, err = surface.TrialTaxRateJSON(ctx, rateB, testNow.Add(-time.Hour), testNow, json.RawMessage(body))
+		require.Error(t, err, name)
+		assert.Equal(t, CodeTrialInvalidChange, errors.CodeOf(err), "%s: %v", name, err)
+	}
+	_, err = surface.TrialTaxRateJSON(ctx, rateB, testNow.Add(-time.Hour), testNow.Add(time.Second), change)
+	require.Error(t, err)
+	assert.Equal(t, CodeTrialInvalidPeriod, errors.CodeOf(err), "TryRate's refusal")
+	assert.Equal(t, 1, flow.calls, "a refused trial reads no order")
+
+	_, err = NewAdminSurface(svc).TrialTaxRateJSON(ctx, rateB, testNow.Add(-time.Hour), testNow, change)
+	require.Error(t, err)
+	assert.Equal(t, CodeTrialUnavailable, errors.CodeOf(err))
+}

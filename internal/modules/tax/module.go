@@ -103,7 +103,8 @@ const (
 	// in tax's rich types, this surface only in primitive and stdlib types.
 	// The cart flow resolves it through its own narrow interface.
 	InteropName = ModuleName + ".interop"
-	// AdminName is the panel surface's name in the container (ADR 0378).
+	// AdminName is the panel surface's name in the container (ADR 0378, ADR
+	// 0395).
 	AdminName = ModuleName + ".admin"
 	// ProvidersName is the provider registry's name in the container.
 	//
@@ -224,7 +225,7 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 	if err := c.Provide(ProviderName, service.NewQueryProvider(m.svc)); err != nil {
 		return err
 	}
-	if err := c.Provide(AdminName, service.NewAdminSurface(m.svc)); err != nil {
+	if err := c.Provide(AdminName, service.NewAdminSurface(m.svc).WithTrial(m.trial)); err != nil {
 		return err
 	}
 

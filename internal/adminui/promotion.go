@@ -354,6 +354,7 @@ func (u *UI) renderPromotionTyped(w http.ResponseWriter, r *http.Request, code i
 		pathKey:     PromotionsPath,
 		refusedKey:  refused,
 		writtenKey:  r.URL.Query().Get(paramWritten) != "",
+		canTryKey:   u.promotionTrials != nil && canTry(r),
 	}
 	if m := page.Method; m != nil {
 		gives := percentText(m.Value) + "% off"

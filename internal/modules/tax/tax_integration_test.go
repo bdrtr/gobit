@@ -241,7 +241,7 @@ func TestMigrationsRollBackWithDataInPlace(t *testing.T) {
 	// The head version is raised BY HAND when a migration joins the module. It
 	// is not derived from the files: derived, it would agree with itself and
 	// the sentence "the head was applied" would stop saying anything.
-	assert.Equal(t, uint(4), version)
+	assert.Equal(t, uint(5), version)
 	assert.Zero(t, countIn(ctx, t, pool, `SELECT count(*) FROM tax_region`),
 		"the schema was dropped and rebuilt, so no region may remain")
 }

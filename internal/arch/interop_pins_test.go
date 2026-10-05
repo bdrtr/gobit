@@ -41,6 +41,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/core/link"
@@ -66,6 +67,7 @@ import (
 	pricingapi "github.com/bdrtr/gobit/internal/modules/pricing/api"
 	pricingsvc "github.com/bdrtr/gobit/internal/modules/pricing/service"
 	productsvc "github.com/bdrtr/gobit/internal/modules/product/service"
+	"github.com/bdrtr/gobit/internal/modules/promotion"
 	promotionapi "github.com/bdrtr/gobit/internal/modules/promotion/api"
 	promotionsvc "github.com/bdrtr/gobit/internal/modules/promotion/service"
 	regionsvc "github.com/bdrtr/gobit/internal/modules/region/service"
@@ -214,15 +216,17 @@ var (
 // The ADMIN PANEL resolving a module's surface.
 //
 // The panel is the fourth tree and may import no module (ADR 0004), so it declares
-// five narrow interfaces of its own and resolves five names by hand. None of them
-// was pinned until ADR 0147, and the gap was not theoretical: widening
-// [authsvc.Service.Login] with the second factor's code broke `adminui.Session` and every
-// lane that compiles stayed green — the panel would have failed at BOOT, in the
-// smoke lane, with "does not implement".
+// a narrow interface of its own for every surface it uses and resolves each name by
+// hand. None of them was pinned until ADR 0147, and the gap was not theoretical:
+// widening [authsvc.Service.Login] with the second factor's code broke
+// `adminui.Session` and every lane that compiles stayed green — the panel would have
+// failed at BOOT, in the smoke lane, with "does not implement".
 //
-// Two of the five are OPTIONAL at resolution (a panel runs without the product
-// module), which makes the drift quieter still: the surface a missing module leaves
-// nil is indistinguishable from the surface a renamed method leaves unsatisfied.
+// Every `.admin` surface is OPTIONAL at resolution (a panel runs without the module
+// behind it), which makes the drift quieter still: the surface a missing module
+// leaves nil is indistinguishable from the surface a renamed method leaves
+// unsatisfied. The panel resolves them through optionalService, which no gate saw
+// until gap D251, and ten were unpinned until then.
 var (
 	_ adminui.Session       = (*authsvc.Service)(nil)
 	_ adminui.Catalog       = query.Query(nil)
@@ -238,6 +242,80 @@ var (
 	_ adminui.PaymentReceiver = (*payment.ReceivingSurface)(nil)
 	// The telephone order's cart (ADR 0290).
 	_ adminui.TelephoneCarts = (*cartapi.TelephoneSurface)(nil)
+	// The ten gap D251 found unpinned.
+	_ adminui.UserLister          = (*authsvc.AccountSurface)(nil)
+	_ adminui.PromotionLister     = (*promotion.AdminSurface)(nil)
+	_ adminui.NotificationLister  = (*notifsvc.AdminSurface)(nil)
+	_ adminui.GroupMembership     = (*customersvc.AdminSurface)(nil)
+	_ adminui.ParcelMover         = (*fulfillsvc.AdminSurface)(nil)
+	_ adminui.FileUploader        = (*filesvc.AdminSurface)(nil)
+	_ adminui.InvoiceSeriesLister = (*invoicesvc.AdminSurface)(nil)
+	_ adminui.StoreProfileAdmin   = (*settingssvc.AdminSurface)(nil)
+	_ adminui.RegionReviser       = (*regionsvc.AdminSurface)(nil)
+	_ adminui.TaxRateReviser      = (*taxsvc.AdminSurface)(nil)
+	// The trials on past orders (ADR 0395).
+	_ adminui.PromotionTrial = (*promotion.AdminSurface)(nil)
+	_ adminui.PriceListTrial = (*pricingsvc.AdminSurface)(nil)
+	_ adminui.TaxRateTrial   = (*taxsvc.AdminSurface)(nil)
+)
+
+// The capabilities the ADMIN PANEL asserts on a surface it resolved.
+//
+// A form the panel offers only when the resolved surface also has a method is
+// reached by a type assertion, `u.afterSales.(OrderCanceler)`, and a drift there
+// fails at no boot at all: the assertion answers false and the form is gone, as it
+// is on an installation that never offered it. None was pinned until gap D251;
+// [TestEveryPanelAssertionIsPinned] derives them from the panel's source.
+var (
+	_ adminui.DeliveryChanger          = (*order.AfterSalesSurface)(nil)
+	_ adminui.DeliveryLister           = (*order.AfterSalesSurface)(nil)
+	_ adminui.EvidenceKeeper           = (*order.AfterSalesSurface)(nil)
+	_ adminui.OrderCanceler            = (*order.AfterSalesSurface)(nil)
+	_ adminui.OrderCloser              = (*order.AfterSalesSurface)(nil)
+	_ adminui.OrderCreditor            = (*order.AfterSalesSurface)(nil)
+	_ adminui.OrderInvoicer            = (*order.AfterSalesSurface)(nil)
+	_ adminui.OrderLineCanceler        = (*order.AfterSalesSurface)(nil)
+	_ adminui.ParcelOpener             = (*order.AfterSalesSurface)(nil)
+	_ adminui.ShippingAddressCorrector = (*order.AfterSalesSurface)(nil)
+	_ adminui.InvoiceLister            = (*invoicesvc.AdminSurface)(nil)
+	_ adminui.InvoiceMover             = (*invoicesvc.AdminSurface)(nil)
+	_ adminui.InvoiceReader            = (*invoicesvc.AdminSurface)(nil)
+	_ adminui.AddressActs              = (*customersvc.AdminSurface)(nil)
+	_ adminui.AddressAdder             = (*customersvc.AdminSurface)(nil)
+	_ adminui.AddressReviser           = (*customersvc.AdminSurface)(nil)
+	_ adminui.ContactReviser           = (*customersvc.AdminSurface)(nil)
+	_ adminui.GroupCreator             = (*customersvc.AdminSurface)(nil)
+	_ adminui.GroupReviser             = (*customersvc.AdminSurface)(nil)
+	_ adminui.NotificationResender     = (*notifsvc.AdminSurface)(nil)
+	_ adminui.ShippingOptionCreator    = (*fulfillsvc.AdminSurface)(nil)
+	_ adminui.ShippingOptionReviser    = (*fulfillsvc.AdminSurface)(nil)
+	_ adminui.ListPriceAdmin           = (*pricingsvc.AdminSurface)(nil)
+	_ adminui.PriceListAdmin           = (*pricingsvc.AdminSurface)(nil)
+	_ adminui.PriceListReviser         = (*pricingsvc.AdminSurface)(nil)
+	_ adminui.PriceListSwitcher        = (*pricingsvc.AdminSurface)(nil)
+	_ adminui.ProductCreator           = (*productsvc.AdminSurface)(nil)
+	_ adminui.RevisionReader           = (*productsvc.AdminSurface)(nil)
+	_ adminui.RevisionRestorer         = (*productsvc.AdminSurface)(nil)
+	_ adminui.VariantPricer            = (*productsvc.AdminSurface)(nil)
+	_ adminui.VariantStocker           = (*productsvc.AdminSurface)(nil)
+	_ adminui.CampaignCreator          = (*promotion.AdminSurface)(nil)
+	_ adminui.CampaignLister           = (*promotion.AdminSurface)(nil)
+	_ adminui.CampaignPlacer           = (*promotion.AdminSurface)(nil)
+	_ adminui.CampaignReviser          = (*promotion.AdminSurface)(nil)
+	_ adminui.CouponCreator            = (*promotion.AdminSurface)(nil)
+	_ adminui.DiscountReviser          = (*promotion.AdminSurface)(nil)
+	_ adminui.PromotionReader          = (*promotion.AdminSurface)(nil)
+	_ adminui.PromotionSwitcher        = (*promotion.AdminSurface)(nil)
+	_ adminui.RuleEditor               = (*promotion.AdminSurface)(nil)
+	_ adminui.ChannelMaker             = (*authsvc.AccountSurface)(nil)
+	_ adminui.ChannelReviser           = (*authsvc.AccountSurface)(nil)
+	_ adminui.KeyLister                = (*authsvc.AccountSurface)(nil)
+	_ adminui.KeyMaker                 = (*authsvc.AccountSurface)(nil)
+	_ adminui.KeyRevoker               = (*authsvc.AccountSurface)(nil)
+	_ adminui.ScopeReviser             = (*authsvc.AccountSurface)(nil)
+	_ adminui.UserInviter              = (*authsvc.AccountSurface)(nil)
+	_ adminui.UserReader               = (*authsvc.AccountSurface)(nil)
+	_ adminui.UserRemover              = (*authsvc.AccountSurface)(nil)
 )
 
 // A FLOW resolving another FLOW's surface.
@@ -280,8 +358,21 @@ var pinnedNames = map[string]string{
 	"auth.service":                 "the admin panel's sign-in and sign-out",
 	"core.query":                   "the admin panel's catalog read",
 	"product.admin":                "the admin panel's product form",
-	"pricing.admin":                "the admin panel's price form",
+	"pricing.admin":                "the admin panel's price form and price list trial",
 	"inventory.admin":              "the admin panel's stock form",
+	"auth.admin":                   "the admin panel's second factor, sessions and user list",
+	"order.admin":                  "the admin panel's after-sales acts",
+	"payment.admin":                "the admin panel's payment receipt",
+	"cart.admin":                   "the admin panel's telephone order",
+	"promotion.admin":              "the admin panel's promotion list and trial",
+	"notification.admin":           "the admin panel's delivery log",
+	"customer.admin":               "the admin panel's customer groups",
+	"fulfillment.admin":            "the admin panel's parcel moves",
+	"file.admin":                   "the admin panel's claim evidence",
+	"invoice.admin":                "the admin panel's invoice series",
+	"settings.admin":               "the admin panel's store profile",
+	"region.admin":                 "the admin panel's region correction",
+	"tax.admin":                    "the admin panel's tax rate correction and trial",
 }
 
 // interopPinExemptions are the consumed interop names this file does NOT pin, and
@@ -299,15 +390,15 @@ var interopPinExemptions = map[string]string{
 		"below prices the interop family.",
 }
 
-// The names this file pins that the derivation does NOT price, and the measured
-// size of what is still unpriced.
+// The names this file pins that the derivation does NOT price, and what is still
+// unpriced.
 //
-// The scan below walks the `.interop` family. Measured on 2026-09-12 the tree
-// resolves TWENTY-THREE provided names from outside the module that owns them, of
-// which nineteen are that family; the other four families are the five panel names
-// above plus the core's own services (`core.db`, `core.eventbus`, `core.link`,
-// `core.query`, `core.workflow`, `core.workflow.store`), the provider registries
-// and four module services resolved by other modules.
+// The scans below walk the `.interop` family and, since gap D251, the `.admin`
+// family the panel resolves. What they leave are the core's own services
+// (`core.db`, `core.eventbus`, `core.link`, `core.query`, `core.workflow`,
+// `core.workflow.store`), the provider registries and the module services resolved
+// by other modules; the panel's `auth.service` and `core.query` are pinned above by
+// hand.
 //
 // Widening the derivation is a decision rather than an edit: a core service has one
 // consumer interface per module that resolves it, so "the" pin for `core.db` is a
@@ -318,10 +409,11 @@ var interopPinExemptions = map[string]string{
 //
 // # The population is DERIVED
 //
-// It is the interop names this repository both PROVIDES and RESOLVES from outside
-// the module that owns them — the same derivation
-// [TestTheInteropSurfacesHaveAConsumer] makes one file over, reused rather than
-// re-written so the two cannot come to disagree about what a consumed interop is.
+// It is the `.interop` and `.admin` names this repository both PROVIDES and
+// RESOLVES from outside the module that owns them — the derivation
+// [TestTheInteropSurfacesHaveAConsumer] makes one file over, with the resolving
+// calls widened to the generic helpers that forward to one ([sourceTree.resolvingCalls],
+// gap D251).
 //
 // # What it cannot see
 //
@@ -334,10 +426,11 @@ func TestEveryConsumedInteropNameIsPinned(t *testing.T) {
 
 	tree := scanProductionSource(t)
 	provided := tree.providedNames(t)
+	resolving := tree.resolvingCalls()
 
 	consuming := map[string][]string{}
 	for name, sites := range tree.calls {
-		if !strings.Contains(strings.ToLower(name), resolveCallFragment) {
+		if !resolving[name] {
 			continue
 		}
 		for _, site := range sites {
@@ -351,7 +444,7 @@ func TestEveryConsumedInteropNameIsPinned(t *testing.T) {
 
 	checked := 0
 	for _, name := range slices.Sorted(maps.Keys(provided)) {
-		if !strings.HasSuffix(name, interopFamily) {
+		if !pinnedFamily(name) {
 			continue
 		}
 
@@ -392,20 +485,22 @@ func TestEveryConsumedInteropNameIsPinned(t *testing.T) {
 // second flow resolving it under an interface of its own goes unchecked, and the
 // fulfilling flow's Payments was such a consumer of payment.interop until D226.
 //
-// The population is derived as the name gate's is: every call whose name carries
-// "resolve" and whose name argument is an interop name another module provides,
-// with the interface its type argument names. A generic helper's own body
-// resolves T and is skipped; its CALLERS name the interface.
+// The population is derived as the name gate's is: every resolving call
+// ([sourceTree.resolvingCalls]) whose name argument is an `.interop` or `.admin`
+// name another module provides, with the interface its type argument names. A
+// generic helper's own body resolves T and is skipped; its CALLERS name the
+// interface, the panel's optionalService callers among them (gap D251).
 func TestEveryInteropConsumerIsPinned(t *testing.T) {
 	t.Parallel()
 
 	tree := scanProductionSource(t)
 	provided := tree.providedNames(t)
+	resolving := tree.resolvingCalls()
 	pinned := pinnedConsumers(t)
 
-	checked := 0
+	checked, panel := 0, 0
 	for name, sites := range tree.calls {
-		if !strings.Contains(strings.ToLower(name), resolveCallFragment) {
+		if !resolving[name] {
 			continue
 		}
 		for _, site := range sites {
@@ -416,7 +511,7 @@ func TestEveryInteropConsumerIsPinned(t *testing.T) {
 			for _, arg := range site.call.Args {
 				for _, value := range tree.stringValues(site.file, site.fn, arg, 0) {
 					producer, ok := provided[value]
-					if !ok || !strings.HasSuffix(value, interopFamily) {
+					if !ok || !pinnedFamily(value) {
 						continue
 					}
 					if prefix := owningModulePrefix(producer); prefix != "" &&
@@ -427,6 +522,9 @@ func TestEveryInteropConsumerIsPinned(t *testing.T) {
 						continue
 					}
 					checked++
+					if strings.HasSuffix(value, adminFamily) {
+						panel++
+					}
 					assert.Truef(t, pinned[consumer],
 						"%s resolves %q as %s, and this file pins nothing for that "+
 							"interface.\nThe name gate passes because the name is pinned for "+
@@ -441,6 +539,196 @@ func TestEveryInteropConsumerIsPinned(t *testing.T) {
 
 	assert.GreaterOrEqual(t, checked, 20,
 		"only %d interop consumers were priced; the derivation has gone blind", checked)
+	assert.Positive(t, panel,
+		"no panel surface was priced; the derivation has gone blind to the helper the "+
+			"panel resolves its `.admin` surfaces through (gap D251)")
+}
+
+// pinnedFamily reports whether a provided name belongs to a family this file
+// prices: the `.interop` surfaces between modules and flows, and the `.admin`
+// surfaces the panel resolves (gap D251).
+func pinnedFamily(name string) bool {
+	return strings.HasSuffix(name, interopFamily) || strings.HasSuffix(name, adminFamily)
+}
+
+// resolvingCalls answers the names of the calls that resolve from the
+// container: every call whose name carries [resolveCallFragment], and every
+// generic function whose body hands its own type parameter to one of those, to
+// a fixpoint.
+//
+// The second half is gap D251. The panel resolves its optional surfaces through
+// optionalService, whose name carries no "resolve", so no gate saw its callers
+// and ten of its surfaces went unpinned while the gates stayed green.
+func (a *sourceTree) resolvingCalls() map[string]bool {
+	resolving := map[string]bool{}
+	for name := range a.calls {
+		if strings.Contains(strings.ToLower(name), resolveCallFragment) {
+			resolving[name] = true
+		}
+	}
+
+	for grown := true; grown; {
+		grown = false
+		for _, file := range a.files {
+			for _, decl := range file.tree.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil || fn.Type.TypeParams == nil || resolving[fn.Name.Name] {
+					continue
+				}
+				if forwardsTypeParameter(fn, resolving) {
+					resolving[fn.Name.Name] = true
+					grown = true
+				}
+			}
+		}
+	}
+
+	return resolving
+}
+
+// forwardsTypeParameter reports whether fn's body calls a resolving function
+// with one of fn's own type parameters as its type argument.
+func forwardsTypeParameter(fn *ast.FuncDecl, resolving map[string]bool) bool {
+	params := map[string]bool{}
+	for _, field := range fn.Type.TypeParams.List {
+		for _, name := range field.Names {
+			params[name.Name] = true
+		}
+	}
+
+	forwards := false
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || !resolving[callName(call.Fun)] {
+			return !forwards
+		}
+		if index, ok := call.Fun.(*ast.IndexExpr); ok {
+			if ident, ok := index.Index.(*ast.Ident); ok && params[ident.Name] {
+				forwards = true
+			}
+		}
+
+		return !forwards
+	})
+
+	return forwards
+}
+
+// TestEveryPanelAssertionIsPinned prices what the resolve gates cannot: an
+// interface the panel declares and asserts on a surface it already resolved
+// (gap D251). The assertion is the only place the panel names it, so a method the
+// producer renames hides the form, boots green and answers no test.
+//
+// The population is every type assertion in the panel's production source onto an
+// interface the panel declares, `x.(T)` and each case of a type switch; each
+// has to be pinned in this file.
+func TestEveryPanelAssertionIsPinned(t *testing.T) {
+	t.Parallel()
+
+	tree := scanProductionSource(t)
+	pinned := pinnedConsumers(t)
+
+	declared := map[string]bool{}
+	for _, file := range tree.files {
+		if !strings.HasPrefix(file.path, adminUIDirName+"/") {
+			continue
+		}
+		for _, decl := range file.tree.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				if typ, ok := spec.(*ast.TypeSpec); ok {
+					if _, isInterface := typ.Type.(*ast.InterfaceType); isInterface {
+						declared[typ.Name.Name] = true
+					}
+				}
+			}
+		}
+	}
+
+	checked := 0
+	for _, file := range tree.files {
+		if !strings.HasPrefix(file.path, adminUIDirName+"/") {
+			continue
+		}
+		for _, name := range assertedInterfaces(file.tree, declared) {
+			checked++
+			assert.Truef(t, pinned[file.importPath+"."+name.Name],
+				"%s asserts %s on a surface the panel resolved, and this file pins nothing for "+
+					"it.\nA producer that renames the method makes the assertion answer false: "+
+					"the form disappears and every lane stays green (gap D251). Add `var _ "+
+					"adminui.%s = (*<producer>)(nil)` above.",
+				tree.location(file, name.Pos()), name.Name, name.Name)
+		}
+	}
+
+	assert.Positive(t, checked,
+		"no assertion in the panel was priced; the scan has gone blind")
+}
+
+// assertedInterfaces answers every declared interface the tree asserts a value
+// onto: the type of an `x.(T)` and each type a type switch's cases name. A type
+// switch is an assertion whose type is nil, its interfaces in the case clauses.
+func assertedInterfaces(tree ast.Node, declared map[string]bool) []*ast.Ident {
+	var names []*ast.Ident
+	add := func(expr ast.Expr) {
+		if name, ok := expr.(*ast.Ident); ok && declared[name.Name] {
+			names = append(names, name)
+		}
+	}
+	ast.Inspect(tree, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.TypeAssertExpr:
+			if x.Type != nil {
+				add(x.Type)
+			}
+		case *ast.TypeSwitchStmt:
+			for _, stmt := range x.Body.List {
+				if clause, ok := stmt.(*ast.CaseClause); ok {
+					for _, expr := range clause.List {
+						add(expr)
+					}
+				}
+			}
+		}
+
+		return true
+	})
+
+	return names
+}
+
+// TestATypeSwitchOnAPanelInterfaceIsPriced holds the scan to both shapes of an
+// assertion (gap D251): the panel has no type switch on a surface today, so
+// the tree alone would not show a scan that reads only `x.(T)`.
+func TestATypeSwitchOnAPanelInterfaceIsPriced(t *testing.T) {
+	t.Parallel()
+
+	const src = `package adminui
+
+func reach(u, v any) {
+	if _, ok := u.(Canceler); ok {
+		return
+	}
+	switch s := v.(type) {
+	case Trial, Refunder:
+		_ = s
+	case string, nil:
+	}
+	_ = v.(Unknown)
+}
+`
+	file, err := parser.ParseFile(token.NewFileSet(), "reach.go", src, 0)
+	require.NoError(t, err)
+
+	var got []string
+	for _, name := range assertedInterfaces(file, map[string]bool{"Canceler": true, "Trial": true, "Refunder": true}) {
+		got = append(got, name.Name)
+	}
+	assert.Equal(t, []string{"Canceler", "Trial", "Refunder"}, got,
+		"an assertion and each case of a type switch onto a declared interface; nothing else")
 }
 
 // typeArgument answers the import path and name of the interface a generic

@@ -205,11 +205,13 @@ type UpdateTaxRateInput struct {
 // checks a new member: the stack together cannot take more than the line
 // ([CodeStackExceedsBase], gap D237).
 //
-// Making a rate the DEFAULT depends on two extra conditions, and both are
-// checked in the repository layer, UNDER the row LOCK: the region must have no
-// other default rate (partial unique index), and the rate must have no rules
-// at all. The checks have to be under the lock — otherwise a rule insert
-// slipping in between could make a ruled rate the default.
+// Making a rate the DEFAULT depends on three extra conditions. The rate must
+// not stand on another rate ([CodeStackNotAllowed], gap D248), as creation
+// refuses the pair. The other two are checked in the repository layer, UNDER
+// the row LOCK: the region must have no other default rate (partial unique
+// index), and the rate must have no rules at all. Those have to be under the
+// lock — otherwise a rule insert slipping in between could make a ruled rate
+// the default.
 func (s *Service) UpdateTaxRate(ctx context.Context, id string, in UpdateTaxRateInput) (models.TaxRate, error) {
 	if err := s.ready(); err != nil {
 		return models.TaxRate{}, err
@@ -224,6 +226,11 @@ func (s *Service) UpdateTaxRate(ctx context.Context, id string, in UpdateTaxRate
 	}
 	if patch.Empty() {
 		return models.TaxRate{}, errors.Invalid(CodeInvalidInput, "no field was given to update")
+	}
+	if patch.IsDefault != nil && *patch.IsDefault {
+		if err := s.assertNotStacked(ctx, id); err != nil {
+			return models.TaxRate{}, err
+		}
 	}
 	if patch.RateBps == nil {
 		return s.repo.UpdateTaxRate(ctx, id, patch, s.clock())

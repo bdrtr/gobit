@@ -51,7 +51,7 @@ when another operator revised the list first (ADR 0330).
   <tbody>
   {{ range $row := .PriceLists }}
     <tr>
-      <td>{{ .Title }} <span class="muted">{{ .ID }}</span>{{ with .Description }}<br><span class="muted">{{ . }}</span>{{ end }}</td>
+      <td>{{ .Title }} <span class="muted">{{ .ID }}</span>{{ with .Description }}<br><span class="muted">{{ . }}</span>{{ end }}{{ if $.CanTry }}<br><a href="{{ $.Path }}/{{ $row.ID }}/trial">Try on past orders</a>{{ end }}</td>
       <td>{{ .Type }}</td>
       <td><span class="pill">{{ .Status }}</span></td>
       <td>{{ with .StartsAt }}{{ .UTC.Format "2006-01-02 15:04" }}{{ else }}<span class="muted">always</span>{{ end }}</td>
