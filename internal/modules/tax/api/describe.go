@@ -133,7 +133,9 @@ func describeRates(d *openapi.Doc) {
 			"same region: the base rate is applied to the line first, then this rate, " +
 			"and when compound is true this rate's base also includes the tax of the " +
 			"rates beneath it. A rate on top is never SELECTED, so it cannot be the " +
-			"default and cannot carry rules; the BASE sets the stack's scope. A stack " +
+			"default and cannot carry rules; the BASE sets the stack's scope, and rules " +
+			"on the base, written before the stack or after it, select the whole " +
+			"stack. A stack " +
 			"cannot be built in a region whose prices are written tax INCLUSIVE " +
 			"(ADR 0086), and the stack's rates together cannot exceed the line.",
 		RequestBody: d.RequestBody(createTaxRateRequest{}),
@@ -193,7 +195,10 @@ func describeRules(d *openapi.Doc) {
 		Summary: "Adds a rule to a tax rate.",
 		Description: "The rate ID is taken from the PATH; carried a second time in the " +
 			"body, the path and the body could contradict each other. reference_id " +
-			"is ANOTHER module's ID and this module does not verify that it exists.",
+			"is ANOTHER module's ID and this module does not verify that it exists. " +
+			"A rule on the region's default rate or on a rate standing on another is " +
+			"refused (409 tax_constraint_violation); a rule on a rate a stack stands on " +
+			"selects the whole stack.",
 		RequestBody: d.RequestBody(createTaxRateRuleRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The rule added", d.Item(taxRateRuleDTO{})),

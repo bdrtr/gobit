@@ -4,7 +4,7 @@
 region, and the line is then taxed by the whole stack — each component floored
 on its own base.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0405](0405-a-stacks-base-carries-its-rules.md), whose base may carry rules written before or after the stack
 - **Date:** 2026-09-09
 
 ## Context

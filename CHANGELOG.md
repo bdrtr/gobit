@@ -158,6 +158,16 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **A stack can stand on a ruled rate** (ADR 0405, D249). **For API consumers:**
+  `POST /admin/v1/tax-rates` with `stacks_on_id` naming a rate that carries
+  rules answers 201; it answered 409 `tax_stack_not_allowed`, while the same
+  rule written onto the base after the stack was accepted, so one stack was
+  refused or kept by the order of two writes. In either order the base's rules
+  select the whole stack: a line they match is taxed by every rate of it, any
+  other line by none of them, and a rule added to or deleted from the base
+  moves every rate of the stack with it. A rule on a rate standing on another
+  still answers 409 `tax_constraint_violation`. **For operators:** nothing
+  stored changes and no migration runs.
 - **An order line keeps what its goods cost** (ADR 0401). **For API
   consumers:** `GET` and `PUT /admin/v1/variants/{id}/costs` read and replace a
   variant's unit costs, one per currency, at most 50, net of tax

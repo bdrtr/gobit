@@ -125,6 +125,63 @@ func TestAStackedRateIsNeverCHOSEN(t *testing.T) {
 			"the higher one and would have won any comparison it entered")
 }
 
+// TestAStackOnARuledBaseIsTheSameInEitherOrder is gap D249: the base's rule is
+// written before the stack or after it (ADR 0405), and either way the line it
+// matches is taxed by the whole stack and any other line by the default alone.
+func TestAStackOnARuledBaseIsTheSameInEitherOrder(t *testing.T) {
+	for _, order := range []struct {
+		name      string
+		ruleFirst bool
+	}{{"rule first", true}, {"stack first", false}} {
+		t.Run(order.name, func(t *testing.T) {
+			ctx := context.Background()
+			svc, repo := newTestService(t)
+			repo.seedRootRegion(trRegionID, "TR")
+			repo.seedDefaultRate(rateA, trRegionID, 500)
+			repo.seedRuledRate(rateB, trRegionID, 100)
+			addRule := func() {
+				_, err := svc.CreateRateRule(ctx, CreateRateRuleInput{
+					TaxRateID: rateB, Reference: string(models.ReferenceProduct), ReferenceID: "prod_1",
+				})
+				require.NoError(t, err)
+			}
+			if order.ruleFirst {
+				addRule()
+			}
+			top, err := svc.CreateTaxRate(ctx, CreateTaxRateInput{
+				TaxRegionID: trRegionID, Name: "on top", RateBps: 900, StacksOnID: rateB,
+			})
+			require.NoError(t, err, "a stack is built on a ruled base")
+			if !order.ruleFirst {
+				addRule()
+			}
+
+			_, err = svc.CreateRateRule(ctx, CreateRateRuleInput{
+				TaxRateID: top.ID, Reference: string(models.ReferenceProduct), ReferenceID: "prod_2",
+			})
+			require.Error(t, err, "a rate standing on another takes no rule of its own")
+			assert.Equal(t, "tax_constraint_violation", coreerrors.CodeOf(err))
+
+			result, err := svc.CalculateTax(ctx, CalculateTaxInput{CountryCode: "TR", Items: []TaxableItem{
+				{ID: "li_1", ProductID: "prod_1", Amount: 10000},
+				{ID: "li_2", ProductID: "prod_2", Amount: 10000},
+			}})
+			require.NoError(t, err)
+			require.Len(t, result.Items, 2)
+			assert.Equal(t, "li_1", result.Items[0].ID, "the result keeps the input's order")
+			assert.Equal(t, "li_2", result.Items[1].ID)
+			matched := taxOfItem(t, result, "li_1")
+			assert.Equal(t, rateB, matched.RateID)
+			assert.Equal(t, int64(100+900), matched.TaxAmount, "the base's rule chose the whole stack")
+			require.Len(t, matched.Components, 2)
+			assert.Equal(t, rateB, matched.Components[0].RateID)
+			assert.Equal(t, top.ID, matched.Components[1].RateID)
+			assert.Equal(t, int64(500), taxOfItem(t, result, "li_2").TaxAmount,
+				"a line the rule does not match is taxed by the default alone")
+		})
+	}
+}
+
 // TestAStackInATaxInclusiveRegionIsRefusedAtCalculation is the loud stop.
 //
 // Both writes that could produce this pair refuse it, so reaching the

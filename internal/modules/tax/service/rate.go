@@ -24,7 +24,8 @@ type CreateTaxRateInput struct {
 	//
 	// If it is filled the rate is never selected: it is reached by expanding
 	// the selected rate. That is why it CANNOT be the default and CANNOT carry
-	// rules (ADR 0095).
+	// rules (ADR 0095). The rate it stands on may carry rules, written before
+	// this one or after it, and they select the whole stack (ADR 0405).
 	StacksOnID string
 	// Compound is whether the rate is computed ON TOP OF the tax of the ones
 	// below it; it cannot be true while StacksOnID is empty.

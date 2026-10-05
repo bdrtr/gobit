@@ -76,9 +76,6 @@ func (s *Service) assertStackable(
 				"branch in two", stacksOnID)
 	}
 
-	if err := s.assertNoRules(ctx, base.ID); err != nil {
-		return err
-	}
 	if err := s.assertExclusiveRegion(ctx, regionID); err != nil {
 		return err
 	}
@@ -146,27 +143,6 @@ func (s *Service) assertNotStacked(ctx context.Context, rateID string) error {
 			"rate %s stands on %s and cannot be made the default: the default is "+
 				"CHOSEN, while a standing rate applies by expanding what was chosen",
 			rateID, *rate.StacksOnID)
-	}
-
-	return nil
-}
-
-// assertNoRules refuses stacking onto a rate that carries rules.
-//
-// A ruled rate is chosen by matching; a rate standing on it would then apply
-// only when that match happened, which is a second scoping mechanism nobody
-// declared. The base of a stack is therefore either the region's default or a
-// rate whose own rules decide the whole stack — and the second is the one this
-// refuses, because the rule belongs to the base and the stack is not the base.
-func (s *Service) assertNoRules(ctx context.Context, rateID string) error {
-	rules, err := s.repo.ListTaxRateRules(ctx, rateID)
-	if err != nil {
-		return err
-	}
-	if len(rules) > 0 {
-		return errors.Conflict(CodeStackNotAllowed,
-			"rate %s carries rules; a stack cannot be built on a ruled rate",
-			rateID)
 	}
 
 	return nil

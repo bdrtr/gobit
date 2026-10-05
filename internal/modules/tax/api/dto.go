@@ -134,9 +134,11 @@ type createTaxRateRequest struct {
 	//
 	// A stacked rate is never CHOSEN for a line — it is reached by expanding
 	// the rate that was chosen — so it may not be the region's default and it
-	// may not carry rules. The stack is set HERE and never by an update: where
-	// a rate sits in a stack is part of what it is, and moving it would reprice
-	// every line that follows while the rate kept its identity.
+	// may not carry rules. The rate it stands on may carry rules, written
+	// before this one or after it, and they select the whole stack (ADR 0405).
+	// The stack is set HERE and never by an update: where a rate sits in a
+	// stack is part of what it is, and moving it would reprice every line that
+	// follows while the rate kept its identity.
 	StacksOnID string `json:"stacks_on_id"`
 	// Compound says the rate is computed on the taxes below it as well as on
 	// the line's own amount. It cannot be true without stacks_on_id: there

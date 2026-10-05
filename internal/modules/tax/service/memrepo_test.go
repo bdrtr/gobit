@@ -523,7 +523,7 @@ func (m *memRepo) DeleteTaxRate(_ context.Context, id string, now time.Time) err
 }
 
 // CreateTaxRateRule writes the rule; it rejects adding a rule to a default
-// rate.
+// rate or to one standing on another.
 func (m *memRepo) CreateTaxRateRule(_ context.Context, rule models.TaxRateRule, now time.Time) (models.TaxRateRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -539,6 +539,10 @@ func (m *memRepo) CreateTaxRateRule(_ context.Context, rule models.TaxRateRule, 
 	if rate.IsDefault {
 		return models.TaxRateRule{}, errors.Conflict("tax_constraint_violation",
 			"a default rate cannot have rules: %s", rule.TaxRateID)
+	}
+	if rate.StacksOnID != nil {
+		return models.TaxRateRule{}, errors.Conflict("tax_constraint_violation",
+			"a rate standing on another cannot have rules: %s", rule.TaxRateID)
 	}
 	// The loop runs over the keys: ranging over the values would copy the
 	// whole model on every iteration.

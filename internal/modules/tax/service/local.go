@@ -241,7 +241,7 @@ func newRateTable(chain []string, rates []models.TaxRate, rules []models.TaxRate
 		if rate.StacksOnID != nil {
 			// A rate standing ON TOP of another rate is never SELECTED: it is
 			// reached by expanding the selected rate. Being the default and
-			// being built on a ruled rate are refused at write time; dropping it
+			// carrying rules are refused at write time; dropping it
 			// from the candidates here is that refusal's second line of
 			// defense, just as the same row drops a default rate's hand-written
 			// rules.

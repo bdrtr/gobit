@@ -90,8 +90,8 @@ const (
 	// take more than the line's own amount.
 	CodeStackExceedsBase = "tax_stack_exceeds_base"
 	// CodeStackNotAllowed reports a rate that may not stand on another: a
-	// default rate, one carrying rules, or one in a tax-inclusive region; and a
-	// rate standing on another that is to be made the default (gap D248).
+	// default rate or one in a tax-inclusive region; and a rate standing on
+	// another that is to be made the default (gap D248).
 	CodeStackNotAllowed = "tax_stack_not_allowed"
 	// CodeProviderExists reports that a provider with the same id is already
 	// registered.

@@ -27,6 +27,13 @@ type CreateRateRuleInput struct {
 // scope would become unreadable. The check is made in the repository layer,
 // under the rate's row LOCK.
 //
+// # A stack's base
+//
+// A rule on a rate others stand on is accepted and selects the whole stack,
+// as one written before the stack was (ADR 0405, gap D249). A rule on a rate
+// that stands on another is refused in the repository: the base's rules are
+// the stack's only scope.
+//
 // # ReferenceID is not validated
 //
 // The id belongs to other modules (product, fulfillment) and this module does
