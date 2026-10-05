@@ -194,8 +194,10 @@ func namesAnotherRow(lines []LineInput, rows map[string]models.Line) bool {
 	return false
 }
 
-// chargeRows reads the rows of the live sales amending the sale, a charge
-// named by except left out (ADR 0406).
+// chargeRows reads the rows the live sales amending the sale added, a charge
+// named by except left out (ADR 0406). A charge's line that names a sale row
+// raises that row's ceiling and is no row of its own: a refund names the sale
+// row, or the same charge would be given back from two ceilings.
 func (s *Service) chargeRows(ctx context.Context, saleID, except string) (map[string]models.Line, error) {
 	documents, err := s.repo.ListAmendmentsOf(ctx, saleID, MaxAmendments+1)
 	if err != nil {
@@ -216,7 +218,9 @@ func (s *Service) chargeRows(ctx context.Context, saleID, except string) (map[st
 			return nil, err
 		}
 		for i := range charge.Lines {
-			rows[charge.Lines[i].ID] = charge.Lines[i]
+			if charge.Lines[i].AmendsLineID == "" {
+				rows[charge.Lines[i].ID] = charge.Lines[i]
+			}
 		}
 	}
 
@@ -224,18 +228,24 @@ func (s *Service) chargeRows(ctx context.Context, saleID, except string) (map[st
 }
 
 // chargeLeavesRowsCovered refuses to withdraw a live charge that a refund
-// relies on (ADR 0406): with the charge gone, every row of the sale and of its
-// other live charges still holds what live refunds gave back on it, and no
-// live refund gave back on a row the charge added. It runs with the amended
-// sale locked, as an amendment does.
+// relies on (ADR 0406): no row of the sale or of its other live charges that
+// holds what live refunds gave back on it stops holding it without the
+// charge, and no live refund gave back on a row the charge added. A row
+// already over before, as a rejected charge can leave one, stays as it is and
+// does not hold this charge. It runs with the amended sale locked, as an
+// amendment does.
 func (s *Service) chargeLeavesRowsCovered(ctx context.Context, charge models.Invoice) error {
 	sale, err := s.repo.GetInvoice(ctx, charge.AmendsInvoiceID)
 	if err != nil {
 		return err
 	}
-	amended, err := s.repo.AmendedRows(ctx, sale.ID)
+	with, err := s.repo.AmendedRows(ctx, sale.ID)
 	if err != nil {
 		return err
+	}
+	amended := make(map[string]models.AmendedRow, len(with))
+	for id := range with {
+		amended[id] = with[id]
 	}
 	rows, err := s.chargeRows(ctx, sale.ID, charge.ID)
 	if err != nil {
@@ -273,9 +283,13 @@ func (s *Service) chargeLeavesRowsCovered(ctx context.Context, charge models.Inv
 	}
 
 	for id := range rows {
+		if fits(rows[id], with[id], 0, 0, nil) != nil {
+			continue
+		}
 		if err := fits(rows[id], amended[id], 0, 0, nil); err != nil {
 			return errors.Conflict(CodeAmendmentExceedsSale,
-				"invoice %s's live refunds rely on this charge (%v); cancel them first", sale.ID, err)
+				"row %d of invoice %s would give back more than it carried without this charge (%v); "+
+					"cancel the refunds that rely on it first", rows[id].Position, sale.ID, err)
 		}
 	}
 

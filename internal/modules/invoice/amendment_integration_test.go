@@ -393,11 +393,10 @@ func TestTheAmendableReadSaysWhatEachRowHasLeft(t *testing.T) {
 	assert.Equal(t, int64(168), read.Rows[0].Components[1].LeftTax)
 	assert.Equal(t, int64(2400-1200+120), read.Rows[1].LeftTotal, "the canceled refund gave nothing back")
 	assert.Equal(t, int64(400-200+20), read.Rows[1].LeftTax)
-	require.Len(t, read.ChargeRows, 2, "the two live charges' rows")
-	assert.Equal(t, sale.Lines[1].ID, read.ChargeRows[0].AmendsLineID)
-	assert.Equal(t, charge.ID, read.ChargeRows[1].InvoiceID)
-	assert.Empty(t, read.ChargeRows[1].AmendsLineID, "a row the sale did not have")
-	assert.Equal(t, int64(1500), read.ChargeRows[1].LeftTotal)
+	require.Len(t, read.ChargeRows, 1, "the row a charge added; the charge raising row 1 is in its left")
+	assert.Equal(t, charge.ID, read.ChargeRows[0].InvoiceID)
+	assert.Empty(t, read.ChargeRows[0].AmendsLineID, "a row the sale did not have")
+	assert.Equal(t, int64(1500), read.ChargeRows[0].LeftTotal)
 	assert.Len(t, read.Amendments, 5)
 }
 
@@ -484,4 +483,24 @@ func TestAChargesCancelAndARefundRelyingOnItRace(t *testing.T) {
 			assert.Equal(t, service.CodeAmendmentExceedsSale, coreerrors.CodeOf(err))
 		}
 	}
+}
+
+// TestARefundNamesTheSaleRowAChargeRaisedOnPostgres is the review's probe on
+// the real schema: sale row 2400/400, a charge of 1200/200 raising it, a
+// refund of 3600/600 on the row, and a refund of 1200/200 naming the charge's
+// line, which is refused.
+func TestARefundNamesTheSaleRowAChargeRaisedOnPostgres(t *testing.T) {
+	ctx := context.Background()
+	svc := newService(t)
+	sale := amendedSale(t, svc, "ACT")
+	charge, err := svc.Issue(ctx, amendRow("ACT", sale, 1, 1200, 200, models.ReasonPriceRaised))
+	require.NoError(t, err)
+
+	_, err = svc.Issue(ctx, amendRow("ACT", sale, 1, 3600, 600, models.ReasonReturned))
+	require.NoError(t, err)
+	twice := amendRow("ACT", sale, 1, 1200, 200, models.ReasonReturned)
+	twice.Lines[0].AmendsLineID = charge.Lines[0].ID
+	_, err = svc.Issue(ctx, twice)
+	require.Error(t, err, "the charge was given back with its row")
+	assert.True(t, coreerrors.IsInvalid(err), "got %v", err)
 }

@@ -203,6 +203,6 @@ truth: a report says what was true on the day it was taken.
 | [What the goods cost — measured 2026-10-05](0401-what-the-goods-cost.md) | 283 |
 | [Who would run an experiment — measured 2026-10-05](0402-who-would-run-an-experiment.md) | 71 |
 | [The cart's bag and a price — measured 2026-10-05](0403-the-carts-bag-and-a-price.md) | 97 |
-| [What an order documents — measured 2026-10-06](0406-what-an-order-documents.md) | 133 |
+| [What an order documents — measured 2026-10-06](0406-what-an-order-documents.md) | 135 |
 | [Who reads the cart's bag — measured 2026-10-06](0407-who-reads-the-carts-bag.md) | 84 |
 | [Turkish without its marks — measured 2026-10-06](0408-turkish-without-its-marks.md) | 76 |

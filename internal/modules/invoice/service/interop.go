@@ -226,9 +226,9 @@ type amendable struct {
 	PricesIncludeTax bool           `json:"prices_include_tax"`
 	AmendsInvoiceID  string         `json:"amends_invoice_id"`
 	Rows             []amendableRow `json:"rows"`
-	// ChargeRows are the rows the live sales amending this one carry, in the
-	// order they were issued: a row naming a sale row raises it, and a row
-	// naming none is one the sale did not have, given back from itself.
+	// ChargeRows are the rows the live sales amending this one added, in the
+	// order they were issued: rows the sale did not have, given back from
+	// themselves. A charge's line raising a sale row is in that row's left.
 	ChargeRows []amendableRow     `json:"charge_rows"`
 	Amendments []amendableHistory `json:"amendments"`
 }
@@ -317,6 +317,9 @@ func (i *Interop) AmendableJSON(ctx context.Context, id string) (json.RawMessage
 			return nil, err
 		}
 		for c := range charge.Lines {
+			if charge.Lines[c].AmendsLineID != "" {
+				continue
+			}
 			row := amendableRowOf(&charge.Lines[c], amended[charge.Lines[c].ID])
 			row.InvoiceID, row.AmendsLineID = charge.ID, charge.Lines[c].AmendsLineID
 			out.ChargeRows = append(out.ChargeRows, row)

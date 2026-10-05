@@ -18,7 +18,7 @@ design. It is fixed with `1.0.0`.
   amending row with a negative figure or a discount above its subtotal. A
   refund names why in `amendment_reason` (`returned` or `price_lowered`), sends
   no `buyer` and prints its sale's; a row names a row of the sale or one a live
-  charge on it added. A `sale` naming a sale is refused there. A refund of a
+  charge on it added, never a charge's line raising a sale row. A `sale` naming a sale is refused there. A refund of a
   rejected or canceled sale answers 409 `invoice_amends_void`, and one giving
   back more than its row carried and was charged since, in amount, in tax or
   under one of its rates, 409 `invoice_amendment_exceeds_sale`. Moving a sale to
@@ -37,7 +37,9 @@ design. It is fixed with `1.0.0`.
   with a delivery; the invoice module's 409 `invoice_amendment_exceeds_sale`
   and `invoice_amends_void` passed through; and 422 `invoice_invalid_input` or
   `order_invalid_input` past 500 amendments of the invoice or 500 acts of the
-  order. Its GET lists the order's acts with their documents. **For
+  order. Its GET lists the order's acts with their documents. A part's tax is
+  rounded on what its row has given back and never exceeds the part, so the
+  part that empties a row takes the tax it has left up to its own amount. **For
   operators:** the order page lists what moved after the sale and issues its
   document, an amendment's page links the invoice it amends, and an exchange's
   money is on no document.

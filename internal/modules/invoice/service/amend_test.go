@@ -541,3 +541,58 @@ func TestARateRemembersWhatItGaveBack(t *testing.T) {
 	assert.Equal(t, service.CodeAmendmentExceedsSale, errors.CodeOf(err))
 	require.NoError(t, refund(1134, 134, 0, 134))
 }
+
+// TestARefundNamesTheSaleRowAChargeRaised: a charge's line that raises a sale
+// row is that row's headroom, not a row of its own, so a refund naming it is
+// refused and the charge is given back once, from the sale row.
+func TestARefundNamesTheSaleRowAChargeRaised(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc := newService(newFakeRepo())
+	sale := issuedSale(t, svc)
+	charge, err := svc.Issue(ctx, chargeOf(sale, 1200, 200, false))
+	require.NoError(t, err)
+
+	_, err = svc.Issue(ctx, refundOf(sale, 3600, 600))
+	require.NoError(t, err, "the sale row and the charge raising it: 3600 with 600 tax")
+	again := refundOf(sale, 1200, 200)
+	again.Lines[0].AmendsLineID = charge.Lines[0].ID
+	_, err = svc.Issue(ctx, again)
+	require.Error(t, err, "the charge was given back with its row; naming its line would give it back twice")
+	assert.True(t, errors.IsInvalid(err), "got %v", err)
+}
+
+// TestACanceledChargeIsHeldOnlyByTheRowsItCovers: a row a rejected charge left
+// over its ceiling does not hold another charge's cancellation, and a row the
+// charge's removal would put over is named in the refusal.
+func TestACanceledChargeIsHeldOnlyByTheRowsItCovers(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	svc := newService(newFakeRepo())
+	sale := issuedSale(t, svc)
+	raise, err := svc.Issue(ctx, chargeOf(sale, 120, 20, false))
+	require.NoError(t, err)
+	added, err := svc.Issue(ctx, chargeOf(sale, 1500, 0, true))
+	require.NoError(t, err)
+	_, err = svc.Issue(ctx, refundOf(sale, 2520, 420))
+	require.NoError(t, err)
+	_, err = svc.MoveStatus(ctx, raise.ID, service.MoveInput{To: models.StatusSent})
+	require.NoError(t, err)
+	_, err = svc.MoveStatus(ctx, raise.ID, service.MoveInput{To: models.StatusRejected, Reason: "refused"})
+	require.NoError(t, err, "the rejection leaves the row over its ceiling")
+
+	_, err = svc.MoveStatus(ctx, added.ID, service.MoveInput{To: models.StatusCanceled, Reason: "typed twice"})
+	require.NoError(t, err, "no refund relies on this charge; the row already over stays as it is")
+
+	other := issuedSale(t, svc)
+	held, err := svc.Issue(ctx, chargeOf(other, 120, 20, false))
+	require.NoError(t, err)
+	_, err = svc.Issue(ctx, refundOf(other, 2520, 420))
+	require.NoError(t, err)
+	_, err = svc.MoveStatus(ctx, held.ID, service.MoveInput{To: models.StatusCanceled, Reason: "typed twice"})
+	require.Error(t, err)
+	assert.Equal(t, service.CodeAmendmentExceedsSale, errors.CodeOf(err))
+	assert.Contains(t, err.Error(), "row 1 of invoice "+other.ID, "the refusal names the row")
+}

@@ -107,7 +107,9 @@ of 1 180 with 180 tax given back as 6, 1 173 and 1:
 Rounded on its own, the last unit collected the parts' rounding and printed a
 negative net, which a document whose prices exclude tax refused and one whose
 prices include it issued. Rounded on the running total, no part's tax exceeds
-the part and the row still gives back exactly 180.
+the part and the row still gives back exactly 180. After a refund issued past
+the flow gave back 1 179 with no tax, the last unit takes 1 of the 180 left,
+and the 179 stay on the row with nothing left to carry them.
 
 ## 7. A delivery changed up and back on an order that shipped free
 

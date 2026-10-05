@@ -127,9 +127,11 @@ type rowPart struct {
 // (ADR 0406). Its tax is rounded on the running total the row has given back:
 // what the row's ratio gives on everything given back with this part, less
 // what it gave on everything before, so the parts of a row never collect the
-// rounding of the parts before them. The part that empties its row takes all
-// the tax the row has left, so a line returned whole gives back exactly the
-// tax it charged; no part takes more tax than its own amount. Each rate takes
+// rounding of the parts before them. The part that empties its row takes the
+// tax the row has left up to its own amount, so a line given back only through
+// this flow gives back exactly the tax it charged; no part takes more tax than
+// its own amount, and a refund issued outside the flow at a lower tax ratio
+// can leave tax no later part gives back. Each rate takes
 // the largest-remainder share of the part's tax over what the rates have
 // left, on a base never below its own tax.
 func amendingLine(part rowPart, pricesIncludeTax bool) documentLine {

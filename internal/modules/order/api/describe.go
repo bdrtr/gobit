@@ -323,7 +323,8 @@ func describeInvoicing(d *openapi.Doc) {
 			"carriage row because the order shipped free, a row of its own; the others by a " +
 			"\"refund\" naming the order's invoice and, row by row, the row it gives back part " +
 			"of, each row one unit carrying its share at its row's rates, its tax rounded on " +
-			"what the row has given back so far (ADR 0406). A delivery falls on the carriage " +
+			"what the row has given back so far and never above the part, so the part that " +
+			"empties a row takes the tax it has left up to its own amount (ADR 0406). A delivery falls on the carriage " +
 			"rows, the invoice's and those dearer deliveries added; a return's refund on the " +
 			"lines it took back, by the value of their units, then on the carriage; a credit's " +
 			"or a claim's on every row but a gift card's, by what each has left. \"rows\" may " +

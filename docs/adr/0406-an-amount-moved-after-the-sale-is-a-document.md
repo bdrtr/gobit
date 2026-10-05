@@ -55,7 +55,8 @@ return's or a claim's refund.
   has left. The request may name the rows; an amount that fits none is refused.
 - A row is one unit carrying its share. Its tax is rounded on what its row has
   given back so far, never above the part, and the part that empties a row
-  takes the tax it has left.
+  takes the tax it has left up to its own amount; a refund issued outside the
+  flow at a lower tax ratio can leave tax no later part gives back.
 - `POST /admin/v1/orders/{id}/invoice/amendments` issues an act's document,
   its GET lists the acts with theirs, the order page offers both, and an
   amendment's page links its sale.
