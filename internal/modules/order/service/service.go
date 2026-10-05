@@ -127,6 +127,9 @@ const (
 	CodeCatalogReadFailed = "order_catalog_read_failed"
 	// CodeOrderNotFound reports that the order does not exist.
 	CodeOrderNotFound = "order_not_found"
+	// CodeAfterSaleActUnknown reports that the order has no act after its
+	// sale of the kind and id named (ADR 0406).
+	CodeAfterSaleActUnknown = "order_after_sale_act_unknown"
 	// CodeSpendingCurrencyMismatch reports that the currency of the order
 	// differs from the currency of the spending limit; the two amounts cannot
 	// be compared without conversion.

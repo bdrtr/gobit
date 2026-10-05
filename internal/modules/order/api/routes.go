@@ -198,6 +198,8 @@ func (h *Handler) Routes(r chi.Router) {
 	// nothing about orders.
 	write.Post("/admin/v1/orders/{id}/invoice", h.adminIssueInvoice)
 	read.Get("/admin/v1/orders/{id}/invoice", h.adminGetOrderInvoice)
+	write.Post("/admin/v1/orders/{id}/invoice/amendments", h.adminIssueAmendment)
+	read.Get("/admin/v1/orders/{id}/invoice/amendments", h.adminListAmendments)
 
 	// Shipments. On the ORDER for the same reason invoicing is: "ship this
 	// order" is asked about an order, and until the binding existed nothing

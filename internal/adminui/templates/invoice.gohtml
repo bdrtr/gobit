@@ -11,6 +11,8 @@ from the one the page was drawn in; a rejection and a cancellation say why.
 <h1>Invoice {{ .Number }} <span class="pill">{{ .Status }}</span></h1>
 <p class="muted">{{ .Kind }} · {{ .ID }} · issued {{ .IssuedAt.UTC.Format "2006-01-02 15:04" }} UTC{{ with .ExternalID }} · {{ . }}{{ end }}</p>
 {{ with .StatusReason }}<p>Why: {{ . }}</p>{{ end }}
+{{/* An amendment names the sale document it amends (ADR 0406). */}}
+{{ with .Amends }}<p>Amends <a href="{{ $.Path }}/{{ .ID }}">{{ .Number }}</a> <span class="muted">{{ .Reason }}</span></p>{{ end }}
 {{ end }}
 
 {{ with .Refused }}<p role="alert">{{ . }}</p>{{ end }}

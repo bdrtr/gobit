@@ -77,6 +77,8 @@ type fakeStore struct {
 	journalCalls []journalCall
 	// caused is what CausedRefunds returns (ADR 0189).
 	caused []models.CausedRefund
+	// causedAsked records the causes CausedRefundsOf was asked for (ADR 0406).
+	causedAsked []string
 
 	// giftCards, giftDigests and giftEntries are the gift cards, their codes'
 	// digests and their ledger (ADR 0208); failGiftEntry makes the issue's

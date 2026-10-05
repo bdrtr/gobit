@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/internal/modules/order/models"
@@ -699,6 +700,12 @@ func (i *Interop) OrderContactJSON(ctx context.Context, orderID string) (json.Ra
 // [interopOrderItem] on the way in: they are minor-unit integers on both sides
 // and a string would only add a parse that can fail.
 type interopInvoiceItem struct {
+	// LineID is the order line's id: an amendment's return names the units it
+	// took back by it (ADR 0406).
+	LineID string `json:"line_id"`
+	// IsGiftcard says the line sold a gift card (ADR 0211); a price lowered
+	// after the sale falls on no card's row (ADR 0406).
+	IsGiftcard bool `json:"is_giftcard"`
 	// Title is what was sold, as it was copied from the catalog when the order
 	// was placed: the variant's title.
 	Title string `json:"title"`
@@ -830,6 +837,8 @@ func (i *Interop) OrderInvoiceJSON(ctx context.Context, orderID string) (json.Ra
 	items := make([]interopInvoiceItem, 0, len(detail.Items))
 	for k := range detail.Items {
 		items = append(items, interopInvoiceItem{
+			LineID:        detail.Items[k].ID,
+			IsGiftcard:    detail.Items[k].IsGiftcard,
 			Title:         detail.Items[k].Title,
 			ProductTitle:  detail.Items[k].ProductTitle,
 			Quantity:      detail.Items[k].Quantity,
@@ -1322,4 +1331,66 @@ func derefString(value *string) string {
 	}
 
 	return *value
+}
+
+// interopAfterSaleAct is one act of [Interop.AfterSaleActsJSON] (ADR 0406).
+type interopAfterSaleAct struct {
+	// Kind and ID are the order journal's entry.
+	Kind       string    `json:"kind"`
+	ID         string    `json:"id"`
+	OccurredAt time.Time `json:"occurred_at"`
+	// Amount is what the act moved, positive.
+	Amount int64 `json:"amount"`
+	// Documentable is false for an exchange's funding and refund.
+	Documentable bool `json:"documentable"`
+	// Returned are the units a return's refund paid for, by order line.
+	Returned []interopReturnedUnits `json:"returned"`
+}
+
+// interopReturnedUnits is how many units of one order line a return took back.
+type interopReturnedUnits struct {
+	LineID   string `json:"line_id"`
+	Quantity int64  `json:"quantity"`
+}
+
+// AfterSaleActsJSON lists the order's acts after its sale, oldest first, as a
+// JSON array of {kind, id, occurred_at, amount, documentable, returned}
+// (ADR 0406). The kinds and ids are the order journal's.
+func (i *Interop) AfterSaleActsJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
+	acts, err := i.svc.AfterSaleActs(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]interopAfterSaleAct, 0, len(acts))
+	for k := range acts {
+		out = append(out, interopAfterSaleActOf(acts[k]))
+	}
+
+	return json.Marshal(out)
+}
+
+// AfterSaleActJSON reads one of the order's acts after its sale by its journal
+// kind and id, in the shape [Interop.AfterSaleActsJSON] lists; NotFound when
+// the order has no such act.
+func (i *Interop) AfterSaleActJSON(ctx context.Context, orderID, kind, id string) (json.RawMessage, error) {
+	act, err := i.svc.AfterSaleAct(ctx, orderID, models.JournalKind(kind), id)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(interopAfterSaleActOf(act))
+}
+
+// interopAfterSaleActOf converts an act.
+func interopAfterSaleActOf(act AfterSaleAct) interopAfterSaleAct {
+	out := interopAfterSaleAct{
+		Kind: string(act.Kind), ID: act.ID, OccurredAt: act.OccurredAt.UTC(), Amount: act.Amount,
+		Documentable: act.Documentable, Returned: make([]interopReturnedUnits, 0, len(act.Returned)),
+	}
+	for _, units := range act.Returned {
+		out.Returned = append(out.Returned, interopReturnedUnits(units))
+	}
+
+	return out
 }

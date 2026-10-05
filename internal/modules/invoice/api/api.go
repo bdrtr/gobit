@@ -147,6 +147,9 @@ type lineDTO struct {
 	// It is published because a renderer that prints one rate for a row charged
 	// under two prints a figure the buyer's own arithmetic contradicts.
 	TaxComponents []lineTaxDTO `json:"tax_components,omitempty"`
+	// AmendsLineID is the row of the amended sale this row moves (ADR 0406);
+	// absent on a row that moves none.
+	AmendsLineID string `json:"amends_line_id,omitempty"`
 }
 
 // lineTaxDTO is one rate inside a document row's tax.
@@ -176,15 +179,21 @@ type invoiceDTO struct {
 	// PricesIncludeTax says a row's unit_price is the sticker and its subtotal
 	// what is left of unit_price x quantity once its tax_total is taken out
 	// (ADR 0248).
-	PricesIncludeTax bool           `json:"prices_include_tax"`
-	IssuedAt         time.Time      `json:"issued_at"`
-	ProviderID       string         `json:"provider_id"`
-	ExternalID       string         `json:"external_id"`
-	StatusReason     string         `json:"status_reason"`
-	Lines            []lineDTO      `json:"lines"`
-	Metadata         map[string]any `json:"metadata,omitempty"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
+	PricesIncludeTax bool      `json:"prices_include_tax"`
+	IssuedAt         time.Time `json:"issued_at"`
+	ProviderID       string    `json:"provider_id"`
+	ExternalID       string    `json:"external_id"`
+	StatusReason     string    `json:"status_reason"`
+	// AmendsInvoiceID, AmendmentReason and AmendmentKey name the sale document
+	// this one amends, why, and the act the invoicing flow documented
+	// (ADR 0406); absent on a document that amends nothing.
+	AmendsInvoiceID string         `json:"amends_invoice_id,omitempty"`
+	AmendmentReason string         `json:"amendment_reason,omitempty"`
+	AmendmentKey    string         `json:"amendment_key,omitempty"`
+	Lines           []lineDTO      `json:"lines"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
 }
 
 // seriesDTO is the external representation of a series.
@@ -225,6 +234,7 @@ func toInvoiceDTO(in models.Invoice) invoiceDTO {
 			TaxTotal:      in.Lines[i].TaxTotal,
 			Total:         in.Lines[i].Total,
 			TaxComponents: toLineTaxDTOs(in.Lines[i].TaxComponents),
+			AmendsLineID:  in.Lines[i].AmendsLineID,
 		})
 	}
 
@@ -246,6 +256,9 @@ func toInvoiceDTO(in models.Invoice) invoiceDTO {
 		ProviderID:       in.ProviderID,
 		ExternalID:       in.ExternalID,
 		StatusReason:     in.StatusReason,
+		AmendsInvoiceID:  in.AmendsInvoiceID,
+		AmendmentReason:  in.AmendmentReason.String(),
+		AmendmentKey:     in.AmendmentKey,
 		Lines:            lines,
 		Metadata:         in.Metadata,
 		CreatedAt:        in.CreatedAt,

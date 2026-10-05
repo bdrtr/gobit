@@ -15,6 +15,29 @@ import (
 type fakeOrders struct {
 	order fakeOrder
 	err   error
+	// acts are the order's acts after its sale, as the producer spells them
+	// (ADR 0406).
+	acts []map[string]any
+}
+
+// AfterSaleActsJSON returns the scripted acts.
+func (f *fakeOrders) AfterSaleActsJSON(_ context.Context, _ string) (json.RawMessage, error) {
+	if f.acts == nil {
+		return json.RawMessage(`[]`), nil
+	}
+
+	return json.Marshal(f.acts)
+}
+
+// AfterSaleActJSON returns the scripted act of the kind and id.
+func (f *fakeOrders) AfterSaleActJSON(_ context.Context, _, kind, id string) (json.RawMessage, error) {
+	for _, act := range f.acts {
+		if act["kind"] == kind && act["id"] == id {
+			return json.Marshal(act)
+		}
+	}
+
+	return nil, errors.NotFound("order_after_sale_act_unknown", "no %s act %s", kind, id)
 }
 
 // fakeOrder is the body the surface returns.
@@ -41,6 +64,8 @@ type fakeOrder struct {
 
 // fakeItem is one line of that order.
 type fakeItem struct {
+	LineID        string `json:"line_id,omitempty"`
+	IsGiftcard    bool   `json:"is_giftcard,omitempty"`
 	Title         string `json:"title"`
 	ProductTitle  string `json:"product_title,omitempty"`
 	Quantity      int64  `json:"quantity"`
@@ -88,6 +113,18 @@ type fakeInvoices struct {
 	issued map[string]json.RawMessage
 	// err scripts a failure.
 	err error
+	// amendable answers AmendableJSON when it is set (ADR 0406).
+	amendable func(id string) (json.RawMessage, error)
+}
+
+// AmendableJSON answers the scripted sale, or NotFound: the issue tests amend
+// nothing.
+func (f *fakeInvoices) AmendableJSON(_ context.Context, id string) (json.RawMessage, error) {
+	if f.amendable != nil {
+		return f.amendable(id)
+	}
+
+	return nil, errors.NotFound("invoice_not_found", "no sale %s", id)
 }
 
 // newFakeInvoices builds an empty fake.

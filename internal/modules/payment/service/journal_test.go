@@ -41,6 +41,27 @@ func (f *fakeStore) CausedRefunds(
 	return f.caused, nil
 }
 
+// CausedRefundsOf returns the scripted refunds whose reference is one of the
+// causes, and records what it was asked for.
+func (f *fakeStore) CausedRefundsOf(
+	_ context.Context, references []string, _ int32,
+) ([]models.CausedRefund, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.causedAsked = append(f.causedAsked, references...)
+	out := []models.CausedRefund{}
+	for _, refund := range f.caused {
+		for _, reference := range references {
+			if refund.Reference == reference {
+				out = append(out, refund)
+			}
+		}
+	}
+
+	return out, nil
+}
+
 // journalService builds a service over a fake store scripted with movements.
 func journalService(t *testing.T, movements ...models.JournalMovement) (*service.Service, *fakeStore) {
 	t.Helper()
@@ -270,4 +291,35 @@ func TestCausedRefundsAreReadOverACheckedWindow(t *testing.T) {
 	refunds, err := svc.CausedRefunds(t.Context(), journalQuery())
 	require.NoError(t, err)
 	assert.Equal(t, store.caused, refunds)
+}
+
+// TestCausedRefundsOfAsksOnlyForCauses: a blank cause names nothing and is not
+// asked for, no cause asks the store nothing, and more refunds than the
+// ceiling are refused rather than cut (ADR 0406).
+func TestCausedRefundsOfAsksOnlyForCauses(t *testing.T) {
+	t.Parallel()
+
+	svc, store := journalService(t)
+	store.caused = []models.CausedRefund{
+		{ID: "refund_1", Reference: "ret_1", Amount: 500, CurrencyCode: "TRY"},
+		{ID: "refund_2", Reference: "clm_1", Amount: 300, CurrencyCode: "TRY"},
+	}
+
+	none, err := svc.CausedRefundsOf(t.Context(), []string{"", "  "})
+	require.NoError(t, err)
+	assert.Empty(t, none)
+	assert.Empty(t, store.causedAsked, "no cause asks the store nothing")
+
+	refunds, err := svc.CausedRefundsOf(t.Context(), []string{"ret_1", " "})
+	require.NoError(t, err)
+	assert.Equal(t, store.caused[:1], refunds)
+	assert.Equal(t, []string{"ret_1"}, store.causedAsked)
+
+	many := make([]models.CausedRefund, service.MaxCausedRefundsOf+1)
+	for i := range many {
+		many[i] = models.CausedRefund{ID: "refund", Reference: "ret_many"}
+	}
+	store.caused = many
+	_, err = svc.CausedRefundsOf(t.Context(), []string{"ret_many"})
+	assert.True(t, errors.IsInvalid(err), "past the ceiling: %v", err)
 }

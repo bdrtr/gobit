@@ -50,6 +50,12 @@ type interopIssue struct {
 	// PricesIncludeTax is ADR 0248's flag; absent reads false.
 	PricesIncludeTax bool           `json:"prices_include_tax"`
 	Metadata         map[string]any `json:"metadata"`
+	// AmendsInvoiceID, AmendmentReason and AmendmentKey name the sale the
+	// document amends, why, and the act it documents (ADR 0406); absent on a
+	// document that amends nothing.
+	AmendsInvoiceID string `json:"amends_invoice_id"`
+	AmendmentReason string `json:"amendment_reason"`
+	AmendmentKey    string `json:"amendment_key"`
 }
 
 // interopParty is one side of the document on the way in.
@@ -75,6 +81,8 @@ type interopIssueLine struct {
 	// TaxComponents is the per-rate breakdown when a STACK taxed the row, base
 	// FIRST; it is absent when a single rate applied.
 	TaxComponents []interopIssueLineTax `json:"tax_components"`
+	// AmendsLineID is the sale row the row moves (ADR 0406).
+	AmendsLineID string `json:"amends_line_id"`
 }
 
 // interopIssueLineTax is one rate inside a stacked row's tax, on the way in.
@@ -124,6 +132,7 @@ func (i *Interop) IssueJSON(
 			TaxTotal:      body.Lines[i].TaxTotal,
 			Total:         body.Lines[i].Total,
 			TaxComponents: interopLineTaxInputs(body.Lines[i].TaxComponents),
+			AmendsLineID:  body.Lines[i].AmendsLineID,
 		})
 	}
 
@@ -140,6 +149,9 @@ func (i *Interop) IssueJSON(
 		Total:            body.Total,
 		PricesIncludeTax: body.PricesIncludeTax,
 		Metadata:         body.Metadata,
+		Amends:           body.AmendsInvoiceID,
+		AmendmentReason:  models.AmendmentReason(body.AmendmentReason),
+		AmendmentKey:     body.AmendmentKey,
 	})
 	if err != nil {
 		return "", "", err
@@ -198,4 +210,149 @@ func interopLineTaxInputs(components []interopIssueLineTax) []LineTaxInput {
 		})
 	}
 	return out
+}
+
+// MaxAmendments is the most documents one sale's amendable read lists; a sale
+// amended more often is refused rather than cut (ADR 0406).
+const MaxAmendments = 500
+
+// amendable is the answer of [Interop.AmendableJSON].
+type amendable struct {
+	ID               string         `json:"id"`
+	Number           string         `json:"number"`
+	Kind             string         `json:"kind"`
+	Status           string         `json:"status"`
+	CurrencyCode     string         `json:"currency_code"`
+	PricesIncludeTax bool           `json:"prices_include_tax"`
+	AmendsInvoiceID  string         `json:"amends_invoice_id"`
+	Rows             []amendableRow `json:"rows"`
+	// ChargeRows are the rows the live sales amending this one carry, in the
+	// order they were issued: a row naming a sale row raises it, and a row
+	// naming none is one the sale did not have, given back from itself.
+	ChargeRows []amendableRow     `json:"charge_rows"`
+	Amendments []amendableHistory `json:"amendments"`
+}
+
+// amendableRow is one row of the sale and what it has left to give back.
+type amendableRow struct {
+	LineID     string               `json:"line_id"`
+	Position   int32                `json:"position"`
+	Total      int64                `json:"total"`
+	TaxTotal   int64                `json:"tax_total"`
+	TaxRateBps int32                `json:"tax_rate_bps"`
+	LeftTotal  int64                `json:"left_total"`
+	LeftTax    int64                `json:"left_tax"`
+	Components []amendableComponent `json:"components"`
+	// InvoiceID and AmendsLineID are a charge row's document and the sale row
+	// it names; empty on the sale's own rows.
+	InvoiceID    string `json:"invoice_id,omitempty"`
+	AmendsLineID string `json:"amends_line_id,omitempty"`
+}
+
+// amendableComponent is one rate of a stacked row and the tax it has left.
+type amendableComponent struct {
+	Position      int32  `json:"position"`
+	RateID        string `json:"rate_id"`
+	RateBps       int32  `json:"rate_bps"`
+	Compound      bool   `json:"compound"`
+	TaxableAmount int64  `json:"taxable_amount"`
+	TaxAmount     int64  `json:"tax_amount"`
+	LeftTax       int64  `json:"left_tax"`
+}
+
+// amendableHistory is one document amending the sale.
+type amendableHistory struct {
+	ID              string `json:"id"`
+	Number          string `json:"number"`
+	Kind            string `json:"kind"`
+	Status          string `json:"status"`
+	AmendmentReason string `json:"amendment_reason"`
+	AmendmentKey    string `json:"amendment_key"`
+	Total           int64  `json:"total"`
+}
+
+// AmendableJSON returns a sale document as an amendment reads it (ADR 0406):
+// its rows with what each has left to give back, in amount, in tax and under
+// each rate, and the documents amending it in the order they were issued.
+//
+// What a row has left is the row and what live documents charged on it, less
+// what live documents gave back. The figures are read without a lock, so they
+// are what the invoicing flow splits an act by; the issue holds the split to
+// them again with the sale locked.
+func (i *Interop) AmendableJSON(ctx context.Context, id string) (json.RawMessage, error) {
+	sale, err := i.svc.GetInvoice(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	amended, err := i.svc.repo.AmendedRows(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	history, err := i.svc.repo.ListAmendmentsOf(ctx, id, MaxAmendments+1)
+	if err != nil {
+		return nil, err
+	}
+	if len(history) > MaxAmendments {
+		return nil, errors.Invalid(CodeInvalidInput,
+			"invoice %s is amended by more than %d documents", id, MaxAmendments)
+	}
+
+	out := amendable{
+		ID: sale.ID, Number: sale.Number, Kind: sale.Kind.String(), Status: sale.Status.String(),
+		CurrencyCode: sale.CurrencyCode, PricesIncludeTax: sale.PricesIncludeTax,
+		AmendsInvoiceID: sale.AmendsInvoiceID,
+		Rows:            make([]amendableRow, 0, len(sale.Lines)),
+		ChargeRows:      []amendableRow{},
+		Amendments:      make([]amendableHistory, 0, len(history)),
+	}
+	for k := range sale.Lines {
+		out.Rows = append(out.Rows, amendableRowOf(&sale.Lines[k], amended[sale.Lines[k].ID]))
+	}
+	for k := range history {
+		if history[k].Kind != models.KindSale || !history[k].Status.Live() {
+			continue
+		}
+		charge, err := i.svc.GetInvoice(ctx, history[k].ID)
+		if err != nil {
+			return nil, err
+		}
+		for c := range charge.Lines {
+			row := amendableRowOf(&charge.Lines[c], amended[charge.Lines[c].ID])
+			row.InvoiceID, row.AmendsLineID = charge.ID, charge.Lines[c].AmendsLineID
+			out.ChargeRows = append(out.ChargeRows, row)
+		}
+	}
+	for k := range history {
+		out.Amendments = append(out.Amendments, amendableHistory{
+			ID: history[k].ID, Number: history[k].Number, Kind: history[k].Kind.String(),
+			Status: history[k].Status.String(), AmendmentReason: history[k].AmendmentReason.String(),
+			AmendmentKey: history[k].AmendmentKey, Total: history[k].Total,
+		})
+	}
+
+	return json.Marshal(out)
+}
+
+// amendableRowOf is one row with what it has left: the row and what live
+// documents charged on it, less what live documents gave back.
+func amendableRowOf(line *models.Line, moved models.AmendedRow) amendableRow {
+	row := amendableRow{
+		LineID: line.ID, Position: line.Position, Total: line.Total, TaxTotal: line.TaxTotal,
+		TaxRateBps: line.TaxRateBps,
+		LeftTotal:  line.Total + moved.ChargedTotal - moved.RefundedTotal,
+		LeftTax:    line.TaxTotal + moved.ChargedTax - moved.RefundedTax,
+		Components: make([]amendableComponent, 0, len(line.TaxComponents)),
+	}
+	for c := range line.TaxComponents {
+		component := &line.TaxComponents[c]
+		given := moved.Components[component.Position]
+		row.Components = append(row.Components, amendableComponent{
+			Position: component.Position, RateID: component.RateID, RateBps: component.RateBps,
+			Compound: component.Compound, TaxableAmount: component.TaxableAmount,
+			TaxAmount: component.TaxAmount,
+			LeftTax:   component.TaxAmount + given.ChargedTax - given.RefundedTax,
+		})
+	}
+
+	return row
 }

@@ -131,3 +131,17 @@ type JournalCause struct {
 	OrderID      string
 	CurrencyCode string
 }
+
+// AfterSaleCause is one of an order's returns, claims or exchanges, as its acts
+// after the sale are read from it (ADR 0406).
+type AfterSaleCause struct {
+	// ID is the record's id, which a refund it caused carries as its
+	// reference (ADR 0187).
+	ID string
+	// Kind is "return", "claim" or "exchange".
+	Kind string
+	// FundedAt is when an exchange's difference was funded; nil otherwise.
+	FundedAt *time.Time
+	// DifferenceDue is an exchange's difference; zero otherwise.
+	DifferenceDue int64
+}

@@ -5,7 +5,7 @@ totals under `invoice:read` and moves its status under `invoice:write`
 through `invoice.admin`, from the status the page was drawn in; a move from
 a status the document has left is refused with `invoice_status_moved`.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0406](0406-an-amount-moved-after-the-sale-is-a-document.md), which keeps a sale from being canceled while a document amending it stands
 - **Date:** 2026-10-02
 
 ## Context

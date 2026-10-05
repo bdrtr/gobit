@@ -811,6 +811,16 @@ func (a recordingAfterSales) IssueInvoice(context.Context, string, string, json.
 	return "inv_walk", "GBT2026000000001", false, a.surfaces.reach(ServiceOrderAdmin)
 }
 
+func (a recordingAfterSales) AmendmentsOfOrder(context.Context, string) (json.RawMessage, error) {
+	return json.RawMessage(`[]`), a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) IssueAmendment(
+	context.Context, string, string, string, string,
+) (id, number string, already bool, err error) {
+	return "inv_walk", "GBT2026000000002", false, a.surfaces.reach(ServiceOrderAdmin)
+}
+
 // recordingSettings records the settings module's surface (ADR 0336).
 type recordingSettings struct{ surfaces *recordingSurfaces }
 
@@ -1211,6 +1221,10 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, OrderCancelPath): {formCancelReason: {"walk"}},
 	// Issuing an order's invoice (ADR 0335).
 	routeKey(http.MethodPost, OrderInvoicePath): {formInvoiceNewSeries: {"GBT"}},
+	// Documenting an act after the sale (ADR 0406).
+	routeKey(http.MethodPost, OrderAmendmentsPath): {
+		formInvoiceNewSeries: {"GBT"}, formAmendActKind: {"credit_line"}, formAmendActID: {"ocl_1"},
+	},
 	// Writing a shipping option (ADR 0334) and revising one (ADR 0333).
 	routeKey(http.MethodPost, ShippingOptionsPath): {
 		formGroupName: {"Walk"}, formOptionProvider: {"manual"}, formOptionProfile: {"sprof_walk"},

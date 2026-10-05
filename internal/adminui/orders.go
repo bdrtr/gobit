@@ -517,7 +517,7 @@ func (u *UI) renderOrder(
 		"CanMoveParcels":        u.canMoveParcels(r),
 		"ParcelOpening":         u.parcelOpeningFor(r, deliveries, deliveriesRead),
 		"Deliveries":            u.deliveriesView(r, &detail, deliveries, deliveriesRead, scales),
-		"Invoice":               u.invoiceOf(r, detail.ID),
+		"Invoice":               u.invoiceOf(r, detail.ID, detail.Currency, scales),
 		"CanCancel":             u.canCancelOrder(r, detail.Status),
 		"CloseMove":             u.orderCloseMove(r, detail.Status),
 		"CanWriteOff":           u.canWriteOff(r, detail.Status),

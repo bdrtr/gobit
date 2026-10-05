@@ -12,22 +12,85 @@ INSERT INTO invoices (
     buyer_name, buyer_tax_number, buyer_tax_office,
     buyer_email, buyer_email_folded, buyer_address, buyer_country_code,
     subtotal, discount_total, tax_total, total,
-    issued_at, metadata, prices_include_tax
+    issued_at, metadata, prices_include_tax,
+    amends_invoice_id, amendment_reason, amendment_key
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12,
     $13, $14, $15, $16, $17, $18, $19,
     $20, $21, $22, $23,
-    $24, $25, $26
+    $24, $25, $26,
+    sqlc.narg('amends_invoice_id'), sqlc.narg('amendment_reason'), sqlc.narg('amendment_key')
 )
 RETURNING *;
 
 -- name: CreateInvoiceLine :one
 INSERT INTO invoice_lines (
     id, invoice_id, position, description, quantity,
-    unit_price, subtotal, discount_total, tax_rate_bps, tax_total, total
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    unit_price, subtotal, discount_total, tax_rate_bps, tax_total, total,
+    amends_line_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, sqlc.narg('amends_line_id'))
 RETURNING *;
+
+-- LockInvoice reads a document and holds it until the transaction ends
+-- (ADR 0406): an amendment locks the sale it amends while it reads what the
+-- sale's rows have left, and a cancellation of the sale locks it while it
+-- counts the amendments still live.
+--
+-- name: LockInvoice :one
+SELECT * FROM invoices WHERE id = $1 FOR UPDATE;
+
+-- AmendedRows sums, per sale row, what the live amendments of a sale gave back
+-- and charged (ADR 0406). A rejected or canceled amendment moved nothing.
+--
+-- name: AmendedRows :many
+SELECT l.amends_line_id::text AS line_id,
+       COALESCE(SUM(l.total) FILTER (WHERE i.kind = 'refund'), 0)::bigint     AS refunded_total,
+       COALESCE(SUM(l.tax_total) FILTER (WHERE i.kind = 'refund'), 0)::bigint AS refunded_tax,
+       COALESCE(SUM(l.total) FILTER (WHERE i.kind = 'sale'), 0)::bigint       AS charged_total,
+       COALESCE(SUM(l.tax_total) FILTER (WHERE i.kind = 'sale'), 0)::bigint   AS charged_tax
+FROM invoice_lines l
+JOIN invoices i ON i.id = l.invoice_id
+WHERE i.amends_invoice_id = sqlc.arg('sale_id')::text
+  AND i.status IN ('issued', 'sent', 'accepted')
+  AND l.amends_line_id IS NOT NULL
+GROUP BY l.amends_line_id;
+
+-- AmendedComponents sums, per sale row and component position, the tax the
+-- live amendments of a sale gave back and charged under each rate.
+--
+-- name: AmendedComponents :many
+SELECT l.amends_line_id::text AS line_id, t.position,
+       COALESCE(SUM(t.tax_amount) FILTER (WHERE i.kind = 'refund'), 0)::bigint AS refunded_tax,
+       COALESCE(SUM(t.tax_amount) FILTER (WHERE i.kind = 'sale'), 0)::bigint   AS charged_tax
+FROM invoice_line_taxes t
+JOIN invoice_lines l ON l.id = t.invoice_line_id
+JOIN invoices i ON i.id = l.invoice_id
+WHERE i.amends_invoice_id = sqlc.arg('sale_id')::text
+  AND i.status IN ('issued', 'sent', 'accepted')
+  AND l.amends_line_id IS NOT NULL
+GROUP BY l.amends_line_id, t.position;
+
+-- name: CountLiveAmendments :one
+SELECT count(*) FROM invoices
+WHERE amends_invoice_id = sqlc.arg('sale_id')::text
+  AND status IN ('issued', 'sent', 'accepted');
+
+-- name: CountLiveAmendmentsWithKey :one
+SELECT count(*) FROM invoices
+WHERE amends_invoice_id = sqlc.arg('sale_id')::text
+  AND amendment_key = sqlc.arg('amendment_key')::text
+  AND status IN ('issued', 'sent', 'accepted');
+
+-- ListAmendmentsOf lists the documents amending a sale, in the order they were
+-- issued, whatever their status; one more than the caller's ceiling is read so
+-- a full answer can be told from a cut one.
+--
+-- name: ListAmendmentsOf :many
+SELECT * FROM invoices
+WHERE amends_invoice_id = sqlc.arg('sale_id')::text
+ORDER BY created_at, id
+LIMIT sqlc.arg('row_limit')::bigint;
 
 -- name: GetInvoice :one
 SELECT * FROM invoices WHERE id = $1;
@@ -56,6 +119,7 @@ ORDER BY invoice_id, position;
 SELECT * FROM invoices
 WHERE (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
   AND (sqlc.narg('kind')::text IS NULL OR kind = sqlc.narg('kind')::text)
+  AND (sqlc.narg('amends')::text IS NULL OR amends_invoice_id = sqlc.narg('amends')::text)
   AND (created_at, id) < (
     COALESCE(sqlc.narg('after_at')::timestamptz, 'infinity'::timestamptz),
     COALESCE(sqlc.narg('after_id')::text, '')
@@ -66,7 +130,8 @@ LIMIT sqlc.arg('row_limit')::bigint OFFSET sqlc.arg('row_offset')::bigint;
 -- name: CountInvoices :one
 SELECT count(*) FROM invoices
 WHERE (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text)
-  AND (sqlc.narg('kind')::text IS NULL OR kind = sqlc.narg('kind')::text);
+  AND (sqlc.narg('kind')::text IS NULL OR kind = sqlc.narg('kind')::text)
+  AND (sqlc.narg('amends')::text IS NULL OR amends_invoice_id = sqlc.narg('amends')::text);
 
 -- SetInvoiceStatus moves the document and records why.
 --

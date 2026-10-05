@@ -39,6 +39,16 @@ func (f *fakeStore) JournalCauses(_ context.Context, ids []string) ([]models.Jou
 	return out, nil
 }
 
+// OrderAfterSaleCauses returns the order's scripted causes (ADR 0406).
+func (f *fakeStore) OrderAfterSaleCauses(
+	_ context.Context, orderID string, _ int32,
+) ([]models.AfterSaleCause, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return slices.Clone(f.afterSaleCauses[orderID]), nil
+}
+
 // scriptedRefunds is the payment module's caused refunds, as a JSON answer.
 type scriptedRefunds struct{ body string }
 
@@ -47,6 +57,23 @@ func (s scriptedRefunds) CausedRefundsJSON(
 	_ context.Context, _, _ time.Time, _ string,
 ) (json.RawMessage, error) {
 	return json.RawMessage(s.body), nil
+}
+
+// CausedRefundsOfJSON returns the scripted refunds that name one of the
+// causes (ADR 0406).
+func (s scriptedRefunds) CausedRefundsOfJSON(_ context.Context, references []string) (json.RawMessage, error) {
+	var all []map[string]any
+	if err := json.Unmarshal([]byte(s.body), &all); err != nil {
+		return nil, err
+	}
+	out := []map[string]any{}
+	for _, refund := range all {
+		if reference, _ := refund["reference"].(string); slices.Contains(references, reference) {
+			out = append(out, refund)
+		}
+	}
+
+	return json.Marshal(out)
 }
 
 var orderJournalStart = time.Date(2026, time.September, 1, 0, 0, 0, 0, time.UTC)

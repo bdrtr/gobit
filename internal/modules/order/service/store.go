@@ -412,6 +412,9 @@ type Store interface {
 	// JournalCauses reads which order each return or claim id belongs to
 	// (ADR 0189); an id that is neither has no row.
 	JournalCauses(ctx context.Context, ids []string) ([]models.JournalCause, error)
+	// OrderAfterSaleCauses reads the order's returns, claims and exchanges,
+	// at most limit+1 of them (ADR 0406).
+	OrderAfterSaleCauses(ctx context.Context, orderID string, limit int32) ([]models.AfterSaleCause, error)
 
 	// PlacedMargins reads the sales, cost and uncosted lines of each given
 	// order's goods (ADR 0401), Margin unset; an order with no line that is not

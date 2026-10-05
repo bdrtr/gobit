@@ -110,15 +110,20 @@ func TestADeclaredColumnTheRefusalNeverReachesSaysSo(t *testing.T) {
 //     currency_code, prices_include_tax). They describe the sale.
 //   - STATE AND STAMPS (kind, status and every *_at). What the document is and
 //     when it moved.
+//   - AMENDMENT (amends_invoice_id, amendment_reason, amendment_key and
+//     amends_line_id, ADR 0406). They name the sale a document amends, why,
+//     the act it documents and the sale row a row moves; the key is a journal
+//     kind and an act's id.
 var notPersonalColumns = map[string][]string{
 	"invoices": {
 		"id", "number", "series_id", "kind", "status", "currency_code", "subtotal",
 		"discount_total", "tax_total", "total", "issued_at", "provider_id", "external_id",
 		"created_at", "updated_at", "prices_include_tax",
+		"amends_invoice_id", "amendment_reason", "amendment_key",
 	},
 	"invoice_lines": {
 		"id", "invoice_id", "position", "quantity", "unit_price", "subtotal", "discount_total",
-		"tax_total", "total", "tax_rate_bps",
+		"tax_total", "total", "tax_rate_bps", "amends_line_id",
 	},
 	"invoice_line_taxes": {
 		"id", "invoice_line_id", "position", "rate_id", "rate_bps", "compound",

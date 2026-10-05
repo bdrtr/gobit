@@ -275,8 +275,12 @@ var chargedTo = map[models.JournalKind]models.JournalAccount{
 // journal reads (ADR 0189): the refunds inside [from, to) that name their
 // cause, as a JSON array of {id, reference, amount, currency_code,
 // collection_id, refunded_at}.
+//
+// CausedRefundsOfJSON answers the same array for the refunds that name one of
+// the given causes, whenever they were made (ADR 0406).
 type CausedRefunds interface {
 	CausedRefundsJSON(ctx context.Context, from, to time.Time, currencyCode string) (json.RawMessage, error)
+	CausedRefundsOfJSON(ctx context.Context, references []string) (json.RawMessage, error)
 }
 
 // causedRefund is one element of [CausedRefunds.CausedRefundsJSON]'s answer.
@@ -290,6 +294,9 @@ type causedRefund struct {
 	CurrencyCode string    `json:"currency_code"`
 	RefundedAt   time.Time `json:"refunded_at"`
 }
+
+// causeExchange is the kind of cause an exchange is (ADR 0189, 0203).
+const causeExchange = "exchange"
 
 // refundFacts reads the refunds in the window that name one of this module's
 // returns or claims, as facts on the order they belong to (ADR 0189).
@@ -346,7 +353,7 @@ func (s *Service) refundFacts(
 		switch cause.Kind {
 		case "claim":
 			kind = models.JournalClaimRefunded
-		case "exchange":
+		case causeExchange:
 			kind = models.JournalExchangeRefunded
 		}
 		facts = append(facts, models.JournalFact{

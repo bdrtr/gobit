@@ -81,3 +81,22 @@ SELECT x.id, 'exchange'::text, x.order_id, o.currency_code
 FROM order_exchanges x
 JOIN orders o ON o.id = x.order_id
 WHERE x.id = ANY (sqlc.arg('ids')::text[]);
+
+-- One order's records a refund can name as its cause, and when an exchange's
+-- difference was funded (ADR 0406): what an order's acts after the sale are
+-- read from, beside its credit lines and its delivery changes. It takes one row
+-- more than the caller's limit, as the windowed reads above do.
+-- name: OrderAfterSaleCauses :many
+SELECT r.id, 'return'::text AS kind, NULL::timestamptz AS funded_at, 0::bigint AS difference_due
+FROM order_returns r
+WHERE r.order_id = sqlc.arg('order_id')
+UNION ALL
+SELECT c.id, 'claim'::text, NULL::timestamptz, 0::bigint
+FROM order_claims c
+WHERE c.order_id = sqlc.arg('order_id')
+UNION ALL
+SELECT x.id, 'exchange'::text, x.funded_at::timestamptz, x.difference_due
+FROM order_exchanges x
+WHERE x.order_id = sqlc.arg('order_id')
+ORDER BY 1
+LIMIT sqlc.arg('row_limit');

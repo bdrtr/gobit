@@ -281,13 +281,20 @@ past and is not corrected retroactively.
   written. The trial taxes the lines with today's tables, classes and
   catalog, so a figure for a product whose type changed since the sale is the
   type's today.
-- **An order's invoice prints the sale and nothing after it.** The invoicing
-  flow copies the order's lines and the carriage it was sold, and an order binds
-  one document, so a credit, a delivery change, an exchange's funding and a
-  return's, a claim's or an exchange's refund are booked by the order journal
-  and printed on no document, nor is a refund that settles a credit, which the
-  payment journal alone books; an invoice issued after a dearer delivery or a
-  funded exchange prints less than the buyer paid (D247).
+- **An amount moved after the sale is documented when someone asks.** A
+  credit, a delivery change, and a return's or a claim's refund each become a
+  document amending the order's sale document
+  ([ADR 0406](adr/0406-an-amount-moved-after-the-sale-is-a-document.md)), issued
+  on the order's page or `POST /admin/v1/orders/{id}/invoice/amendments`;
+  nothing issues one by itself, and an act moved before the order was invoiced
+  is documented after it. A row is one unit carrying its share. A registered
+  buyer's own return invoice is kept only as the shop's refund, with its number
+  in the metadata. The order journal still books each act whole to revenue, so
+  `tax_payable` keeps the tax a refund document gives back (D262).
+- **An exchange's money is on no document.** Its funding and its refund are
+  booked by the order journal and printed on nothing: the figure is typed by
+  the operator and names neither goods nor tax, so no row of the sale could
+  carry it (D247).
 - **A tax charged too low is the shop's, and the order journal does not say
   so.** A placed order keeps the tax it charged on its lines, its invoice and its
   `tax_payable`, which then understates what the shop owes by the difference
@@ -783,7 +790,7 @@ past and is not corrected retroactively.
   pricing read and a decision about which price applies to a replacement, and
   neither has been made. An exchange that sends the line's own variant at a
   difference is a sold line's price raised, which ADR 0394 forbids and nothing
-  refuses.
+  refuses, and it is printed on no document.
 
 - **A lost authenticator is answered only at the machine.** A person enrolls,
   replaces and removes their own factor in the panel

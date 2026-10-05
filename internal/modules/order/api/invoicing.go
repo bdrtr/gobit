@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
@@ -38,6 +39,16 @@ type Invoicing interface {
 	InvoiceOfOrder(ctx context.Context, orderID string) (
 		invoiceID, number, status string, err error,
 	)
+
+	// IssueAmendment documents one act after the order's sale on a document
+	// amending its sale document, or returns the one the act has (ADR 0406).
+	IssueAmendment(ctx context.Context, orderID string, request json.RawMessage) (
+		invoiceID, number string, alreadyIssued bool, err error,
+	)
+
+	// AmendmentsOfOrder lists the order's acts after its sale with the live
+	// document of each.
+	AmendmentsOfOrder(ctx context.Context, orderID string) (json.RawMessage, error)
 }
 
 // invoicingParty is one side of the document as the endpoint accepts it.
@@ -187,4 +198,131 @@ func (h *Handler) adminGetOrderInvoice(w http.ResponseWriter, r *http.Request) {
 		Number:    number,
 		Status:    status,
 	}})
+}
+
+// invoicingAct names an act after the sale by its order journal kind and id.
+type invoicingAct struct {
+	Kind string `json:"kind"`
+	ID   string `json:"id"`
+}
+
+// invoicingAmendmentRow puts part of an act's amount on one row of the sale
+// document: an order line's, or "carriage".
+type invoicingAmendmentRow struct {
+	LineID string `json:"line_id"`
+	Amount int64  `json:"amount"`
+}
+
+// invoicingAmendmentRequest is the body of the amendment endpoint; like the
+// issue endpoint's, it is passed through to the flow and described here.
+type invoicingAmendmentRequest struct {
+	// SeriesPrefix is the letters of the series to take the number from.
+	SeriesPrefix string `json:"series_prefix"`
+	// Act is the order journal's entry to document.
+	Act invoicingAct `json:"act"`
+	// Rows, when given, put the act's amount on the rows they name.
+	Rows []invoicingAmendmentRow `json:"rows,omitempty"`
+	// Metadata is free structured context for the document.
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
+// actDocumentDTO is the live document of an act.
+type actDocumentDTO struct {
+	InvoiceID string `json:"invoice_id"`
+	Number    string `json:"number"`
+	Kind      string `json:"kind"`
+	Status    string `json:"status"`
+}
+
+// orderActDTO is one act after the order's sale with its document.
+type orderActDTO struct {
+	Kind         string    `json:"kind"`
+	ID           string    `json:"id"`
+	OccurredAt   time.Time `json:"occurred_at"`
+	Amount       int64     `json:"amount"`
+	Documentable bool      `json:"documentable"`
+	// Document is the live document of the act; null when none stands.
+	Document *actDocumentDTO `json:"document"`
+}
+
+// adminIssueAmendment documents an act after the order's sale (ADR 0406).
+//
+// POST /admin/v1/orders/{id}/invoice/amendments
+//
+// It answers 201 when it issued the document and 200 when the act already
+// had one, as the issue endpoint does.
+func (h *Handler) adminIssueAmendment(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
+	if err != nil {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+			"the request body could not be read"))
+
+		return
+	}
+	if len(body) == 0 {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(codeInvalidRequest,
+			"the request body cannot be empty; it carries the series prefix and the act"))
+
+		return
+	}
+
+	flow, err := h.invoicingFlow()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	invoiceID, number, already, err := flow.IssueAmendment(ctx, orderID(r), body)
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	response := singleEnvelope{Data: invoiceIssuedDTO{
+		InvoiceID:     invoiceID,
+		Number:        number,
+		AlreadyIssued: already,
+	}}
+	if already {
+		corehttp.WriteJSON(ctx, w, http.StatusOK, response)
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusCreated, response)
+}
+
+// adminListAmendments lists the order's acts after its sale with the live
+// document of each (ADR 0406).
+//
+// GET /admin/v1/orders/{id}/invoice/amendments
+func (h *Handler) adminListAmendments(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	flow, err := h.invoicingFlow()
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+
+	raw, err := flow.AmendmentsOfOrder(ctx, orderID(r))
+	if err != nil {
+		corehttp.WriteError(ctx, w, err)
+
+		return
+	}
+	acts := []orderActDTO{}
+	if err := json.Unmarshal(raw, &acts); err != nil {
+		corehttp.WriteError(ctx, w, coreerrors.Wrap(err, coreerrors.KindInternal, codeInvalidRequest,
+			"the invoicing flow answered acts this endpoint cannot read"))
+
+		return
+	}
+
+	corehttp.WriteJSON(ctx, w, http.StatusOK, singleEnvelope{Data: acts})
 }

@@ -35,6 +35,9 @@ const (
 	// were dropped from the schema, which is the same silence that disqualified
 	// REVOKE DELETE as the mechanism (see the head of migration 000002).
 	SQLStateRetained = "GB001"
+
+	// sqlStateUniqueViolation is unique_violation.
+	sqlStateUniqueViolation = "23505"
 )
 
 // wrapDB turns a driver error into the module's typed error.
@@ -157,6 +160,9 @@ func toInvoice(row invoicedb.Invoice) (models.Invoice, error) {
 		TaxTotal:         row.TaxTotal,
 		Total:            row.Total,
 		PricesIncludeTax: row.PricesIncludeTax,
+		AmendsInvoiceID:  deref(row.AmendsInvoiceID),
+		AmendmentReason:  models.AmendmentReason(deref(row.AmendmentReason)),
+		AmendmentKey:     deref(row.AmendmentKey),
 		IssuedAt:         row.IssuedAt.Time,
 		ProviderID:       row.ProviderID,
 		ExternalID:       row.ExternalID,
@@ -223,5 +229,15 @@ func toLine(row invoicedb.InvoiceLine) models.Line {
 		TaxRateBps:    row.TaxRateBps,
 		TaxTotal:      row.TaxTotal,
 		Total:         row.Total,
+		AmendsLineID:  deref(row.AmendsLineID),
 	}
+}
+
+// deref returns the string a nullable column holds, or empty for NULL.
+func deref(v *string) string {
+	if v == nil {
+		return ""
+	}
+
+	return *v
 }

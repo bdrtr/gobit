@@ -730,6 +730,29 @@ var noCausedRefunds = json.RawMessage(`[]`)
 func (p *causedRefunds) CausedRefundsJSON(
 	ctx context.Context, from, to time.Time, currencyCode string,
 ) (json.RawMessage, error) {
+	if err := p.resolve(ctx); err != nil {
+		return nil, err
+	}
+	if p.svc == nil {
+		return noCausedRefunds, nil
+	}
+	return p.svc.CausedRefundsJSON(ctx, from, to, currencyCode)
+}
+
+// CausedRefundsOfJSON returns the payment module's refunds that name one of
+// the causes (ADR 0406).
+func (p *causedRefunds) CausedRefundsOfJSON(ctx context.Context, references []string) (json.RawMessage, error) {
+	if err := p.resolve(ctx); err != nil {
+		return nil, err
+	}
+	if p.svc == nil {
+		return noCausedRefunds, nil
+	}
+	return p.svc.CausedRefundsOfJSON(ctx, references)
+}
+
+// resolve finds the payment module's surface once.
+func (p *causedRefunds) resolve(ctx context.Context) error {
 	p.once.Do(func() {
 		svc, err := container.Resolve[service.CausedRefunds](p.c, CausedRefundsName)
 		switch {
@@ -743,13 +766,8 @@ func (p *causedRefunds) CausedRefundsJSON(
 				"the %s module could not resolve the caused refunds (%q)", ModuleName, CausedRefundsName)
 		}
 	})
-	if p.err != nil {
-		return nil, p.err
-	}
-	if p.svc == nil {
-		return noCausedRefunds, nil
-	}
-	return p.svc.CausedRefundsJSON(ctx, from, to, currencyCode)
+
+	return p.err
 }
 
 // invoicingFlow is the wrapper that resolves the invoicing flow ON FIRST USE.
@@ -793,6 +811,31 @@ func (p *invoicingFlow) InvoiceOfOrder(
 	}
 
 	return p.svc.InvoiceOfOrder(ctx, orderID)
+}
+
+// IssueAmendment documents an act after the order's sale (ADR 0406).
+func (p *invoicingFlow) IssueAmendment(
+	ctx context.Context, orderID string, request json.RawMessage,
+) (invoiceID, number string, alreadyIssued bool, err error) {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return "", "", false, p.err
+	}
+
+	return p.svc.IssueAmendment(ctx, orderID, request)
+}
+
+// AmendmentsOfOrder lists the order's acts after its sale with their
+// documents.
+func (p *invoicingFlow) AmendmentsOfOrder(ctx context.Context, orderID string) (json.RawMessage, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return p.svc.AmendmentsOfOrder(ctx, orderID)
 }
 
 // resolve looks the flow up in the container and remembers the outcome.

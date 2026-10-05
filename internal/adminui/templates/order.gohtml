@@ -395,6 +395,40 @@ why a new one is named apart from the ones the shop has.
 <p class="muted">The invoice of this order could not be read.</p>
 {{ else if .Found }}
 <p>Invoice <strong>{{ .Number }}</strong> <span class="pill">{{ .Status }}</span> <span class="muted">{{ .ID }}</span>{{ with .Open }} <a href="{{ . }}">Open the invoice</a>{{ end }}</p>
+{{/*
+What moved on the order after its sale, as its journal books it, each
+documented on request by a document amending the invoice (ADR 0406); an
+exchange's money names neither goods nor tax and no document carries it.
+*/}}
+{{ if .ActsUnread }}
+<p class="muted">What moved after the sale could not be read.</p>
+{{ else if .Acts }}
+<table>
+  <thead><tr><th>After the sale</th><th class="num">Amount</th><th>Document</th></tr></thead>
+  <tbody>
+    {{ range .Acts }}
+    <tr>
+      <td>{{ .Kind }} <span class="muted">{{ .ID }}</span></td>
+      <td class="num">{{ .Printed }}</td>
+      <td>
+        {{ if .Document }}<strong>{{ .Document.Number }}</strong> <span class="pill">{{ .Document.Status }}</span>{{ with .Open }} <a href="{{ . }}">Open</a>{{ end }}
+        {{ else if not .Documentable }}<span class="muted">No document carries it.</span>
+        {{ else if $.Invoice.CanAmend }}<form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/invoice/amendments">
+          <input type="hidden" name="act_kind" value="{{ .Kind }}">
+          <input type="hidden" name="act_id" value="{{ .ID }}">
+          {{ with $.Invoice.Prefixes }}<select name="series" aria-label="series">
+            {{ range . }}<option value="{{ . }}">{{ . }}</option>{{ end }}
+          </select>{{ end }}
+          <input name="new_series" placeholder="{{ if $.Invoice.Prefixes }}or a new series{{ else }}series, e.g. GBT{{ end }}" aria-label="new series" maxlength="3">
+          <button type="submit">Issue the document</button>
+        </form>
+        {{ else }}<span class="muted">Not documented.</span>{{ end }}
+      </td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ end }}
 {{ else }}
 <p class="muted">No invoice has been issued for this order.</p>
 {{ end }}

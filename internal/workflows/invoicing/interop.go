@@ -80,3 +80,51 @@ func (i *Interop) InvoiceOfOrder(
 ) (invoiceID, number, status string, err error) {
 	return i.w.InvoiceOfOrder(ctx, orderID)
 }
+
+// interopAmendRequest is the body [Interop.IssueAmendment] accepts.
+type interopAmendRequest struct {
+	// SeriesPrefix is the letters of the series to take the number from.
+	SeriesPrefix string `json:"series_prefix"`
+	// Act is the order journal's entry to document.
+	Act ActRef `json:"act"`
+	// Rows, when given, put the act's amount on the rows they name.
+	Rows []NamedRow `json:"rows"`
+	// Metadata is free structured context for the document.
+	Metadata map[string]any `json:"metadata"`
+}
+
+// IssueAmendment documents one act after the order's sale, or returns the
+// document it has (ADR 0406); alreadyIssued says which, as on
+// [Interop.IssueForOrder].
+func (i *Interop) IssueAmendment(
+	ctx context.Context, orderID string, request json.RawMessage,
+) (invoiceID, number string, alreadyIssued bool, err error) {
+	var body interopAmendRequest
+	if err := json.Unmarshal(request, &body); err != nil {
+		return "", "", false, errors.Invalid(CodeInvalidInput,
+			"the amendment request could not be read: %v", err)
+	}
+
+	out, err := i.w.IssueAmendment(ctx, AmendInput{
+		OrderID: orderID, SeriesPrefix: body.SeriesPrefix, Act: body.Act, Rows: body.Rows,
+		Metadata: body.Metadata,
+	})
+	if err != nil {
+		return "", "", false, err
+	}
+
+	return out.InvoiceID, out.Number, out.AlreadyIssued, nil
+}
+
+// AmendmentsOfOrder lists the order's acts after its sale with the live
+// document of each, as a JSON array of {kind, id, occurred_at, amount,
+// documentable, document} where document is {invoice_id, number, kind, status}
+// or null.
+func (i *Interop) AmendmentsOfOrder(ctx context.Context, orderID string) (json.RawMessage, error) {
+	acts, err := i.w.AmendmentsOfOrder(ctx, orderID)
+	if err != nil {
+		return nil, err
+	}
+
+	return json.Marshal(acts)
+}

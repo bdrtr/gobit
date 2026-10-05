@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
@@ -36,6 +37,13 @@ const (
 	// and migration 000002 enforces that in the schema, so a caller receiving
 	// this code has met a decision, not a broken query.
 	codeRetained = "invoice_retained"
+	// codeAmendmentExists reports a second live document for one act; it is
+	// the service's code, spelled again here because this package cannot
+	// import that one (ADR 0406).
+	codeAmendmentExists = "invoice_amendment_exists"
+	// liveAmendmentIndex is the unique index holding an act to one live
+	// document (migration 000006).
+	liveAmendmentIndex = "invoices_live_amendment_uniq"
 )
 
 // rollbackTimeout is the budget for the rollback of an interrupted transaction.
@@ -223,8 +231,21 @@ func (r *Repository) CreateInvoice(ctx context.Context, in models.Invoice) (mode
 		IssuedAt:         fromTime(in.IssuedAt),
 		Metadata:         metadata,
 		PricesIncludeTax: in.PricesIncludeTax,
+		AmendsInvoiceID:  optional(in.AmendsInvoiceID),
+		AmendmentReason:  optional(in.AmendmentReason.String()),
+		AmendmentKey:     optional(in.AmendmentKey),
 	})
 	if err != nil {
+		// The index is the last word on "one live document per act": two
+		// writers that both passed the service's check meet here, and the
+		// rollback takes the number back.
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == sqlStateUniqueViolation &&
+			pgErr.ConstraintName == liveAmendmentIndex {
+			return models.Invoice{}, coreerrors.Conflict(codeAmendmentExists,
+				"sale %s already has a live document for %s", in.AmendsInvoiceID, in.AmendmentKey)
+		}
+
 		return models.Invoice{}, wrapDB(err, codeQueryFailed, "the invoice could not be written")
 	}
 
@@ -248,6 +269,7 @@ func (r *Repository) CreateInvoice(ctx context.Context, in models.Invoice) (mode
 			TaxRateBps:    line.TaxRateBps,
 			TaxTotal:      line.TaxTotal,
 			Total:         line.Total,
+			AmendsLineID:  optional(line.AmendsLineID),
 		})
 		if lineErr != nil {
 			return models.Invoice{}, wrapDB(lineErr, codeQueryFailed,
@@ -334,6 +356,7 @@ func (r *Repository) ListInvoices(
 	rows, err := r.queries(ctx).ListInvoices(ctx, invoicedb.ListInvoicesParams{
 		Status:    filter.Status,
 		Kind:      filter.Kind,
+		Amends:    filter.Amends,
 		AfterAt:   afterAt,
 		AfterID:   afterID,
 		RowLimit:  filter.Limit,
@@ -346,6 +369,7 @@ func (r *Repository) ListInvoices(
 	total, err := r.queries(ctx).CountInvoices(ctx, invoicedb.CountInvoicesParams{
 		Status: filter.Status,
 		Kind:   filter.Kind,
+		Amends: filter.Amends,
 	})
 	if err != nil {
 		return nil, 0, wrapDB(err, codeQueryFailed, "the invoices could not be counted")
@@ -490,4 +514,100 @@ func (r *Repository) SetBuyerEmailFolded(ctx context.Context, id, folded string)
 	}
 
 	return nil
+}
+
+// LockInvoice reads a document, with its lines, and holds its row until the
+// transaction ends (ADR 0406).
+//
+// It refuses to run outside a transaction: a lock taken by a statement alone is
+// released when the statement ends, and the amendment it serializes would read
+// a sale another writer is amending.
+func (r *Repository) LockInvoice(ctx context.Context, id string) (models.Invoice, error) {
+	if _, ok := txFromContext(ctx); !ok {
+		return models.Invoice{}, coreerrors.Internal(codeTxRequired,
+			"a document is locked inside the transaction that amends or cancels it")
+	}
+	if _, err := r.queries(ctx).LockInvoice(ctx, id); err != nil {
+		return models.Invoice{}, wrapDB(err, codeNotFound, "the invoice could not be locked")
+	}
+
+	return r.GetInvoice(ctx, id)
+}
+
+// AmendedRows returns, per row of the sale, what its live amendments gave back
+// and charged, the stacked rows' components included.
+func (r *Repository) AmendedRows(ctx context.Context, saleID string) (map[string]models.AmendedRow, error) {
+	rows, err := r.queries(ctx).AmendedRows(ctx, saleID)
+	if err != nil {
+		return nil, wrapDB(err, codeQueryFailed, "what the sale's rows have moved could not be read")
+	}
+	components, err := r.queries(ctx).AmendedComponents(ctx, saleID)
+	if err != nil {
+		return nil, wrapDB(err, codeQueryFailed,
+			"what the sale's rows have moved under each rate could not be read")
+	}
+
+	out := make(map[string]models.AmendedRow, len(rows))
+	for i := range rows {
+		out[rows[i].LineID] = models.AmendedRow{
+			RefundedTotal: rows[i].RefundedTotal, RefundedTax: rows[i].RefundedTax,
+			ChargedTotal: rows[i].ChargedTotal, ChargedTax: rows[i].ChargedTax,
+		}
+	}
+	for i := range components {
+		row := out[components[i].LineID]
+		if row.Components == nil {
+			row.Components = map[int32]models.AmendedComponent{}
+		}
+		row.Components[components[i].Position] = models.AmendedComponent{
+			RefundedTax: components[i].RefundedTax, ChargedTax: components[i].ChargedTax,
+		}
+		out[components[i].LineID] = row
+	}
+
+	return out, nil
+}
+
+// CountLiveAmendments counts the issued, sent or accepted documents amending
+// the sale.
+func (r *Repository) CountLiveAmendments(ctx context.Context, saleID string) (int64, error) {
+	count, err := r.queries(ctx).CountLiveAmendments(ctx, saleID)
+	if err != nil {
+		return 0, wrapDB(err, codeQueryFailed, "the sale's live amendments could not be counted")
+	}
+
+	return count, nil
+}
+
+// CountLiveAmendmentsWithKey counts the live documents amending the sale for
+// one act.
+func (r *Repository) CountLiveAmendmentsWithKey(ctx context.Context, saleID, key string) (int64, error) {
+	count, err := r.queries(ctx).CountLiveAmendmentsWithKey(ctx,
+		invoicedb.CountLiveAmendmentsWithKeyParams{SaleID: saleID, AmendmentKey: key})
+	if err != nil {
+		return 0, wrapDB(err, codeQueryFailed, "the sale's documents for one act could not be counted")
+	}
+
+	return count, nil
+}
+
+// ListAmendmentsOf lists up to limit documents amending the sale, without
+// their lines, in the order they were issued.
+func (r *Repository) ListAmendmentsOf(ctx context.Context, saleID string, limit int64) ([]models.Invoice, error) {
+	rows, err := r.queries(ctx).ListAmendmentsOf(ctx,
+		invoicedb.ListAmendmentsOfParams{SaleID: saleID, RowLimit: limit})
+	if err != nil {
+		return nil, wrapDB(err, codeQueryFailed, "the sale's amendments could not be listed")
+	}
+
+	out := make([]models.Invoice, 0, len(rows))
+	for i := range rows {
+		invoice, convErr := toInvoice(rows[i])
+		if convErr != nil {
+			return nil, convErr
+		}
+		out = append(out, invoice)
+	}
+
+	return out, nil
 }

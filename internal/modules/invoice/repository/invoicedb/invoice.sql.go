@@ -11,19 +11,118 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const amendedComponents = `-- name: AmendedComponents :many
+SELECT l.amends_line_id::text AS line_id, t.position,
+       COALESCE(SUM(t.tax_amount) FILTER (WHERE i.kind = 'refund'), 0)::bigint AS refunded_tax,
+       COALESCE(SUM(t.tax_amount) FILTER (WHERE i.kind = 'sale'), 0)::bigint   AS charged_tax
+FROM invoice_line_taxes t
+JOIN invoice_lines l ON l.id = t.invoice_line_id
+JOIN invoices i ON i.id = l.invoice_id
+WHERE i.amends_invoice_id = $1::text
+  AND i.status IN ('issued', 'sent', 'accepted')
+  AND l.amends_line_id IS NOT NULL
+GROUP BY l.amends_line_id, t.position
+`
+
+type AmendedComponentsRow struct {
+	LineID      string
+	Position    int32
+	RefundedTax int64
+	ChargedTax  int64
+}
+
+// AmendedComponents sums, per sale row and component position, the tax the
+// live amendments of a sale gave back and charged under each rate.
+func (q *Queries) AmendedComponents(ctx context.Context, saleID string) ([]AmendedComponentsRow, error) {
+	rows, err := q.db.Query(ctx, amendedComponents, saleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AmendedComponentsRow{}
+	for rows.Next() {
+		var i AmendedComponentsRow
+		if err := rows.Scan(
+			&i.LineID,
+			&i.Position,
+			&i.RefundedTax,
+			&i.ChargedTax,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const amendedRows = `-- name: AmendedRows :many
+SELECT l.amends_line_id::text AS line_id,
+       COALESCE(SUM(l.total) FILTER (WHERE i.kind = 'refund'), 0)::bigint     AS refunded_total,
+       COALESCE(SUM(l.tax_total) FILTER (WHERE i.kind = 'refund'), 0)::bigint AS refunded_tax,
+       COALESCE(SUM(l.total) FILTER (WHERE i.kind = 'sale'), 0)::bigint       AS charged_total,
+       COALESCE(SUM(l.tax_total) FILTER (WHERE i.kind = 'sale'), 0)::bigint   AS charged_tax
+FROM invoice_lines l
+JOIN invoices i ON i.id = l.invoice_id
+WHERE i.amends_invoice_id = $1::text
+  AND i.status IN ('issued', 'sent', 'accepted')
+  AND l.amends_line_id IS NOT NULL
+GROUP BY l.amends_line_id
+`
+
+type AmendedRowsRow struct {
+	LineID        string
+	RefundedTotal int64
+	RefundedTax   int64
+	ChargedTotal  int64
+	ChargedTax    int64
+}
+
+// AmendedRows sums, per sale row, what the live amendments of a sale gave back
+// and charged (ADR 0406). A rejected or canceled amendment moved nothing.
+func (q *Queries) AmendedRows(ctx context.Context, saleID string) ([]AmendedRowsRow, error) {
+	rows, err := q.db.Query(ctx, amendedRows, saleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AmendedRowsRow{}
+	for rows.Next() {
+		var i AmendedRowsRow
+		if err := rows.Scan(
+			&i.LineID,
+			&i.RefundedTotal,
+			&i.RefundedTax,
+			&i.ChargedTotal,
+			&i.ChargedTax,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countInvoices = `-- name: CountInvoices :one
 SELECT count(*) FROM invoices
 WHERE ($1::text IS NULL OR status = $1::text)
   AND ($2::text IS NULL OR kind = $2::text)
+  AND ($3::text IS NULL OR amends_invoice_id = $3::text)
 `
 
 type CountInvoicesParams struct {
 	Status *string
 	Kind   *string
+	Amends *string
 }
 
 func (q *Queries) CountInvoices(ctx context.Context, arg CountInvoicesParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countInvoices, arg.Status, arg.Kind)
+	row := q.db.QueryRow(ctx, countInvoices, arg.Status, arg.Kind, arg.Amends)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -63,6 +162,38 @@ func (q *Queries) CountInvoicesByBuyerEmail(ctx context.Context, buyerEmailFolde
 	return count, err
 }
 
+const countLiveAmendments = `-- name: CountLiveAmendments :one
+SELECT count(*) FROM invoices
+WHERE amends_invoice_id = $1::text
+  AND status IN ('issued', 'sent', 'accepted')
+`
+
+func (q *Queries) CountLiveAmendments(ctx context.Context, saleID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveAmendments, saleID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countLiveAmendmentsWithKey = `-- name: CountLiveAmendmentsWithKey :one
+SELECT count(*) FROM invoices
+WHERE amends_invoice_id = $1::text
+  AND amendment_key = $2::text
+  AND status IN ('issued', 'sent', 'accepted')
+`
+
+type CountLiveAmendmentsWithKeyParams struct {
+	SaleID       string
+	AmendmentKey string
+}
+
+func (q *Queries) CountLiveAmendmentsWithKey(ctx context.Context, arg CountLiveAmendmentsWithKeyParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveAmendmentsWithKey, arg.SaleID, arg.AmendmentKey)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createInvoice = `-- name: CreateInvoice :one
 
 INSERT INTO invoices (
@@ -72,15 +203,17 @@ INSERT INTO invoices (
     buyer_name, buyer_tax_number, buyer_tax_office,
     buyer_email, buyer_email_folded, buyer_address, buyer_country_code,
     subtotal, discount_total, tax_total, total,
-    issued_at, metadata, prices_include_tax
+    issued_at, metadata, prices_include_tax,
+    amends_invoice_id, amendment_reason, amendment_key
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12,
     $13, $14, $15, $16, $17, $18, $19,
     $20, $21, $22, $23,
-    $24, $25, $26
+    $24, $25, $26,
+    $27, $28, $29
 )
-RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax
+RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax, amends_invoice_id, amendment_reason, amendment_key
 `
 
 type CreateInvoiceParams struct {
@@ -110,6 +243,9 @@ type CreateInvoiceParams struct {
 	IssuedAt          pgtype.Timestamptz
 	Metadata          []byte
 	PricesIncludeTax  bool
+	AmendsInvoiceID   *string
+	AmendmentReason   *string
+	AmendmentKey      *string
 }
 
 // invoices queries.
@@ -145,6 +281,9 @@ func (q *Queries) CreateInvoice(ctx context.Context, arg CreateInvoiceParams) (I
 		arg.IssuedAt,
 		arg.Metadata,
 		arg.PricesIncludeTax,
+		arg.AmendsInvoiceID,
+		arg.AmendmentReason,
+		arg.AmendmentKey,
 	)
 	var i Invoice
 	err := row.Scan(
@@ -179,6 +318,9 @@ func (q *Queries) CreateInvoice(ctx context.Context, arg CreateInvoiceParams) (I
 		&i.UpdatedAt,
 		&i.BuyerEmailFolded,
 		&i.PricesIncludeTax,
+		&i.AmendsInvoiceID,
+		&i.AmendmentReason,
+		&i.AmendmentKey,
 	)
 	return i, err
 }
@@ -186,9 +328,10 @@ func (q *Queries) CreateInvoice(ctx context.Context, arg CreateInvoiceParams) (I
 const createInvoiceLine = `-- name: CreateInvoiceLine :one
 INSERT INTO invoice_lines (
     id, invoice_id, position, description, quantity,
-    unit_price, subtotal, discount_total, tax_rate_bps, tax_total, total
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, invoice_id, position, description, quantity, unit_price, subtotal, discount_total, tax_rate_bps, tax_total, total
+    unit_price, subtotal, discount_total, tax_rate_bps, tax_total, total,
+    amends_line_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id, invoice_id, position, description, quantity, unit_price, subtotal, discount_total, tax_rate_bps, tax_total, total, amends_line_id
 `
 
 type CreateInvoiceLineParams struct {
@@ -203,6 +346,7 @@ type CreateInvoiceLineParams struct {
 	TaxRateBps    int32
 	TaxTotal      int64
 	Total         int64
+	AmendsLineID  *string
 }
 
 func (q *Queries) CreateInvoiceLine(ctx context.Context, arg CreateInvoiceLineParams) (InvoiceLine, error) {
@@ -218,6 +362,7 @@ func (q *Queries) CreateInvoiceLine(ctx context.Context, arg CreateInvoiceLinePa
 		arg.TaxRateBps,
 		arg.TaxTotal,
 		arg.Total,
+		arg.AmendsLineID,
 	)
 	var i InvoiceLine
 	err := row.Scan(
@@ -232,6 +377,7 @@ func (q *Queries) CreateInvoiceLine(ctx context.Context, arg CreateInvoiceLinePa
 		&i.TaxRateBps,
 		&i.TaxTotal,
 		&i.Total,
+		&i.AmendsLineID,
 	)
 	return i, err
 }
@@ -284,7 +430,7 @@ func (q *Queries) CreateInvoiceLineTax(ctx context.Context, arg CreateInvoiceLin
 }
 
 const getInvoice = `-- name: GetInvoice :one
-SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax FROM invoices WHERE id = $1
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax, amends_invoice_id, amendment_reason, amendment_key FROM invoices WHERE id = $1
 `
 
 func (q *Queries) GetInvoice(ctx context.Context, id string) (Invoice, error) {
@@ -322,12 +468,15 @@ func (q *Queries) GetInvoice(ctx context.Context, id string) (Invoice, error) {
 		&i.UpdatedAt,
 		&i.BuyerEmailFolded,
 		&i.PricesIncludeTax,
+		&i.AmendsInvoiceID,
+		&i.AmendmentReason,
+		&i.AmendmentKey,
 	)
 	return i, err
 }
 
 const getInvoiceByNumber = `-- name: GetInvoiceByNumber :one
-SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax FROM invoices WHERE number = $1
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax, amends_invoice_id, amendment_reason, amendment_key FROM invoices WHERE number = $1
 `
 
 func (q *Queries) GetInvoiceByNumber(ctx context.Context, number string) (Invoice, error) {
@@ -365,8 +514,81 @@ func (q *Queries) GetInvoiceByNumber(ctx context.Context, number string) (Invoic
 		&i.UpdatedAt,
 		&i.BuyerEmailFolded,
 		&i.PricesIncludeTax,
+		&i.AmendsInvoiceID,
+		&i.AmendmentReason,
+		&i.AmendmentKey,
 	)
 	return i, err
+}
+
+const listAmendmentsOf = `-- name: ListAmendmentsOf :many
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax, amends_invoice_id, amendment_reason, amendment_key FROM invoices
+WHERE amends_invoice_id = $1::text
+ORDER BY created_at, id
+LIMIT $2::bigint
+`
+
+type ListAmendmentsOfParams struct {
+	SaleID   string
+	RowLimit int64
+}
+
+// ListAmendmentsOf lists the documents amending a sale, in the order they were
+// issued, whatever their status; one more than the caller's ceiling is read so
+// a full answer can be told from a cut one.
+func (q *Queries) ListAmendmentsOf(ctx context.Context, arg ListAmendmentsOfParams) ([]Invoice, error) {
+	rows, err := q.db.Query(ctx, listAmendmentsOf, arg.SaleID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Invoice{}
+	for rows.Next() {
+		var i Invoice
+		if err := rows.Scan(
+			&i.ID,
+			&i.Number,
+			&i.SeriesID,
+			&i.Kind,
+			&i.Status,
+			&i.CurrencyCode,
+			&i.SellerName,
+			&i.SellerTaxNumber,
+			&i.SellerTaxOffice,
+			&i.SellerEmail,
+			&i.SellerAddress,
+			&i.SellerCountryCode,
+			&i.BuyerName,
+			&i.BuyerTaxNumber,
+			&i.BuyerTaxOffice,
+			&i.BuyerEmail,
+			&i.BuyerAddress,
+			&i.BuyerCountryCode,
+			&i.Subtotal,
+			&i.DiscountTotal,
+			&i.TaxTotal,
+			&i.Total,
+			&i.IssuedAt,
+			&i.ProviderID,
+			&i.ExternalID,
+			&i.StatusReason,
+			&i.Metadata,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.BuyerEmailFolded,
+			&i.PricesIncludeTax,
+			&i.AmendsInvoiceID,
+			&i.AmendmentReason,
+			&i.AmendmentKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listInvoiceBuyerEmailsForRefold = `-- name: ListInvoiceBuyerEmailsForRefold :many
@@ -464,7 +686,7 @@ func (q *Queries) ListInvoiceLineTaxes(ctx context.Context, invoiceID string) ([
 }
 
 const listInvoiceLines = `-- name: ListInvoiceLines :many
-SELECT id, invoice_id, position, description, quantity, unit_price, subtotal, discount_total, tax_rate_bps, tax_total, total FROM invoice_lines
+SELECT id, invoice_id, position, description, quantity, unit_price, subtotal, discount_total, tax_rate_bps, tax_total, total, amends_line_id FROM invoice_lines
 WHERE invoice_id = $1
 ORDER BY position
 `
@@ -490,6 +712,7 @@ func (q *Queries) ListInvoiceLines(ctx context.Context, invoiceID string) ([]Inv
 			&i.TaxRateBps,
 			&i.TaxTotal,
 			&i.Total,
+			&i.AmendsLineID,
 		); err != nil {
 			return nil, err
 		}
@@ -502,7 +725,7 @@ func (q *Queries) ListInvoiceLines(ctx context.Context, invoiceID string) ([]Inv
 }
 
 const listInvoiceLinesForInvoices = `-- name: ListInvoiceLinesForInvoices :many
-SELECT id, invoice_id, position, description, quantity, unit_price, subtotal, discount_total, tax_rate_bps, tax_total, total FROM invoice_lines
+SELECT id, invoice_id, position, description, quantity, unit_price, subtotal, discount_total, tax_rate_bps, tax_total, total, amends_line_id FROM invoice_lines
 WHERE invoice_id = ANY($1::text[])
 ORDER BY invoice_id, position
 `
@@ -528,6 +751,7 @@ func (q *Queries) ListInvoiceLinesForInvoices(ctx context.Context, invoiceIds []
 			&i.TaxRateBps,
 			&i.TaxTotal,
 			&i.Total,
+			&i.AmendsLineID,
 		); err != nil {
 			return nil, err
 		}
@@ -540,20 +764,22 @@ func (q *Queries) ListInvoiceLinesForInvoices(ctx context.Context, invoiceIds []
 }
 
 const listInvoices = `-- name: ListInvoices :many
-SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax FROM invoices
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax, amends_invoice_id, amendment_reason, amendment_key FROM invoices
 WHERE ($1::text IS NULL OR status = $1::text)
   AND ($2::text IS NULL OR kind = $2::text)
+  AND ($3::text IS NULL OR amends_invoice_id = $3::text)
   AND (created_at, id) < (
-    COALESCE($3::timestamptz, 'infinity'::timestamptz),
-    COALESCE($4::text, '')
+    COALESCE($4::timestamptz, 'infinity'::timestamptz),
+    COALESCE($5::text, '')
   )
 ORDER BY created_at DESC, id DESC
-LIMIT $6::bigint OFFSET $5::bigint
+LIMIT $7::bigint OFFSET $6::bigint
 `
 
 type ListInvoicesParams struct {
 	Status    *string
 	Kind      *string
+	Amends    *string
 	AfterAt   pgtype.Timestamptz
 	AfterID   *string
 	RowOffset int64
@@ -570,6 +796,7 @@ func (q *Queries) ListInvoices(ctx context.Context, arg ListInvoicesParams) ([]I
 	rows, err := q.db.Query(ctx, listInvoices,
 		arg.Status,
 		arg.Kind,
+		arg.Amends,
 		arg.AfterAt,
 		arg.AfterID,
 		arg.RowOffset,
@@ -614,6 +841,9 @@ func (q *Queries) ListInvoices(ctx context.Context, arg ListInvoicesParams) ([]I
 			&i.UpdatedAt,
 			&i.BuyerEmailFolded,
 			&i.PricesIncludeTax,
+			&i.AmendsInvoiceID,
+			&i.AmendmentReason,
+			&i.AmendmentKey,
 		); err != nil {
 			return nil, err
 		}
@@ -685,6 +915,56 @@ func (q *Queries) ListNonAsciiBuyerEmailsForRefold(ctx context.Context, arg List
 	return items, nil
 }
 
+const lockInvoice = `-- name: LockInvoice :one
+SELECT id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax, amends_invoice_id, amendment_reason, amendment_key FROM invoices WHERE id = $1 FOR UPDATE
+`
+
+// LockInvoice reads a document and holds it until the transaction ends
+// (ADR 0406): an amendment locks the sale it amends while it reads what the
+// sale's rows have left, and a cancellation of the sale locks it while it
+// counts the amendments still live.
+func (q *Queries) LockInvoice(ctx context.Context, id string) (Invoice, error) {
+	row := q.db.QueryRow(ctx, lockInvoice, id)
+	var i Invoice
+	err := row.Scan(
+		&i.ID,
+		&i.Number,
+		&i.SeriesID,
+		&i.Kind,
+		&i.Status,
+		&i.CurrencyCode,
+		&i.SellerName,
+		&i.SellerTaxNumber,
+		&i.SellerTaxOffice,
+		&i.SellerEmail,
+		&i.SellerAddress,
+		&i.SellerCountryCode,
+		&i.BuyerName,
+		&i.BuyerTaxNumber,
+		&i.BuyerTaxOffice,
+		&i.BuyerEmail,
+		&i.BuyerAddress,
+		&i.BuyerCountryCode,
+		&i.Subtotal,
+		&i.DiscountTotal,
+		&i.TaxTotal,
+		&i.Total,
+		&i.IssuedAt,
+		&i.ProviderID,
+		&i.ExternalID,
+		&i.StatusReason,
+		&i.Metadata,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.BuyerEmailFolded,
+		&i.PricesIncludeTax,
+		&i.AmendsInvoiceID,
+		&i.AmendmentReason,
+		&i.AmendmentKey,
+	)
+	return i, err
+}
+
 const setInvoiceBuyerEmailFolded = `-- name: SetInvoiceBuyerEmailFolded :execrows
 UPDATE invoices
 SET buyer_email_folded = $1::text
@@ -725,7 +1005,7 @@ SET status        = $1::text,
     updated_at    = now()
 WHERE id = $5::text
   AND status = $6::text
-RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax
+RETURNING id, number, series_id, kind, status, currency_code, seller_name, seller_tax_number, seller_tax_office, seller_email, seller_address, seller_country_code, buyer_name, buyer_tax_number, buyer_tax_office, buyer_email, buyer_address, buyer_country_code, subtotal, discount_total, tax_total, total, issued_at, provider_id, external_id, status_reason, metadata, created_at, updated_at, buyer_email_folded, prices_include_tax, amends_invoice_id, amendment_reason, amendment_key
 `
 
 type SetInvoiceStatusParams struct {
@@ -784,6 +1064,9 @@ func (q *Queries) SetInvoiceStatus(ctx context.Context, arg SetInvoiceStatusPara
 		&i.UpdatedAt,
 		&i.BuyerEmailFolded,
 		&i.PricesIncludeTax,
+		&i.AmendsInvoiceID,
+		&i.AmendmentReason,
+		&i.AmendmentKey,
 	)
 	return i, err
 }

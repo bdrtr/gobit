@@ -274,6 +274,7 @@ var (
 	_ adminui.OrderCloser              = (*order.AfterSalesSurface)(nil)
 	_ adminui.OrderCreditor            = (*order.AfterSalesSurface)(nil)
 	_ adminui.OrderInvoicer            = (*order.AfterSalesSurface)(nil)
+	_ adminui.OrderAmender             = (*order.AfterSalesSurface)(nil)
 	_ adminui.OrderLineCanceler        = (*order.AfterSalesSurface)(nil)
 	_ adminui.ParcelOpener             = (*order.AfterSalesSurface)(nil)
 	_ adminui.ShippingAddressCorrector = (*order.AfterSalesSurface)(nil)

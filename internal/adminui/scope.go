@@ -181,6 +181,9 @@ func builtInScopes() map[string]string {
 		// An order's invoice is issued by the order module, through the
 		// invoicing flow, under its write (ADR 0335).
 		routeKey(post, OrderInvoicePath): scopeOrderWrite,
+		// And documents an act after the sale on a document amending it
+		// (ADR 0406).
+		routeKey(post, OrderAmendmentsPath): scopeOrderWrite,
 		// And completes and archives it (ADR 0340).
 		routeKey(post, OrderCompletePath): scopeOrderWrite,
 		routeKey(post, OrderArchivePath):  scopeOrderWrite,

@@ -55,11 +55,10 @@ func Definitions() []link.LinkDefinition {
 			// constraint that turns out to be too tight fails LOUDLY while one
 			// that is too loose lets a wrong row in silently.
 			//
-			// It reopens the day a shop needs a second document against one
-			// sale. The nearest candidate is already in the model: a refund
-			// document (models.KindRefund) reverses part of a sale and is a
-			// document of its own — though nothing in the tree issues one
-			// today, so the trigger has not fired.
+			// It stays one to one when a sale is amended: a refund or a
+			// charge after the sale is a document naming the sale document
+			// (ADR 0406), found by the act it documents, and the order binds
+			// its sale document alone.
 			//
 			// This comment used to end "that day this becomes OneToMany and
 			// nothing else changes", the same sentence the payment module's

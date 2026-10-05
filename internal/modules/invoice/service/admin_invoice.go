@@ -52,6 +52,16 @@ type adminDocument struct {
 	ExternalID       string      `json:"external_id"`
 	Lines            []adminLine `json:"lines"`
 	Moves            []string    `json:"moves"`
+	// Amends is the sale document this one amends and why (ADR 0406); absent
+	// on a document that amends nothing.
+	Amends *adminAmended `json:"amends,omitempty"`
+}
+
+// adminAmended names the sale a document amends.
+type adminAmended struct {
+	ID     string `json:"id"`
+	Number string `json:"number"`
+	Reason string `json:"reason"`
 }
 
 // partyOf is the party as the page shows it.
@@ -89,6 +99,13 @@ func (a *AdminSurface) InvoiceJSON(ctx context.Context, id string) (json.RawMess
 		if invoice.Status.CanMoveTo(next) {
 			document.Moves = append(document.Moves, string(next))
 		}
+	}
+	if invoice.AmendsInvoiceID != "" {
+		sale, err := a.svc.GetInvoice(ctx, invoice.AmendsInvoiceID)
+		if err != nil {
+			return nil, err
+		}
+		document.Amends = &adminAmended{ID: sale.ID, Number: sale.Number, Reason: invoice.AmendmentReason.String()}
 	}
 	body, err := json.Marshal(document)
 	if err != nil {

@@ -54,6 +54,68 @@ func (s *Service) MoveStatus(
 			"moving a document to %q requires a reason", in.To)
 	}
 
+	if in.To == models.StatusCanceled {
+		return s.cancel(ctx, id, in)
+	}
+
+	return s.move(ctx, id, in)
+}
+
+// cancel withdraws the document, and refuses to withdraw a sale while a
+// document amending it stands (ADR 0406).
+//
+// The sale is locked while its amendments are counted, as an amendment locks
+// it while it checks the sale is live, so a cancellation and an amendment
+// arriving together cannot each see the other absent. A rejection is not
+// refused: it is a fact the receiving side reports, and it voids the sale for
+// every amendment that follows.
+//
+// A charge, a sale amending another, is withdrawn only while the refunds of
+// that sale still fit their rows without it; the sale it amends is locked
+// first, as an amendment locks it, so neither can pass the other's check.
+func (s *Service) cancel(ctx context.Context, id string, in MoveInput) (models.Invoice, error) {
+	var out models.Invoice
+	err := s.repo.WithTx(ctx, func(ctx context.Context) error {
+		head, err := s.repo.GetInvoice(ctx, id)
+		if err != nil {
+			return err
+		}
+		if head.Kind == models.KindSale && head.AmendsInvoiceID != "" {
+			if _, err := s.repo.LockInvoice(ctx, head.AmendsInvoiceID); err != nil {
+				return err
+			}
+		}
+		locked, err := s.repo.LockInvoice(ctx, id)
+		if err != nil {
+			return err
+		}
+		switch {
+		case locked.Kind == models.KindSale && locked.AmendsInvoiceID == "":
+			live, err := s.repo.CountLiveAmendments(ctx, id)
+			if err != nil {
+				return err
+			}
+			if live > 0 {
+				return errors.Conflict(CodeHasLiveAmendments,
+					"invoice %s is amended by %d live documents; cancel them first", id, live)
+			}
+		case locked.Kind == models.KindSale && locked.Status.Live():
+			if err := s.chargeLeavesRowsCovered(ctx, locked); err != nil {
+				return err
+			}
+		}
+
+		out, err = s.move(ctx, id, in)
+
+		return err
+	})
+
+	return out, err
+}
+
+// move makes the move once the request is known to be one a document may ask
+// for.
+func (s *Service) move(ctx context.Context, id string, in MoveInput) (models.Invoice, error) {
 	current, err := s.repo.GetInvoice(ctx, id)
 	if err != nil {
 		return models.Invoice{}, err

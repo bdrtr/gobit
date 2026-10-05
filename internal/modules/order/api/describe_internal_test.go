@@ -424,6 +424,27 @@ func describedEndpoints() []endpointExpectation {
 			},
 		},
 		{
+			// 201 when it issued the document, 200 when the act had one; the
+			// 201 is the one this table checks (ADR 0406).
+			method: http.MethodPost, path: "/admin/v1/orders/{id}/invoice/amendments", status: "201",
+			request: invoicingAmendmentRequest{
+				SeriesPrefix: "GBT", Act: invoicingAct{Kind: "credit_line", ID: "ocl_1"},
+				Rows:     []invoicingAmendmentRow{{LineID: "carriage", Amount: 100}},
+				Metadata: map[string]any{"ticket": "T-1"},
+			},
+			response: invoiceIssuedDTO{InvoiceID: "inv_2", Number: "GBT2026000000002", AlreadyIssued: false},
+		},
+		{
+			method: http.MethodGet, path: "/admin/v1/orders/{id}/invoice/amendments", status: "200",
+			response: orderActDTO{
+				Kind: "credit_line", ID: "ocl_1", OccurredAt: describeSampleTime, Amount: 100, Documentable: true,
+				Document: &actDocumentDTO{
+					InvoiceID: "inv_2", Number: "GBT2026000000002", Kind: "refund", Status: "issued",
+				},
+			},
+			shape: unpagedList,
+		},
+		{
 			// Like the issue endpoint, the open endpoint answers 201 when it
 			// opened a parcel and 200 when the idempotency key had already
 			// opened one. The 201 is the one this table checks.

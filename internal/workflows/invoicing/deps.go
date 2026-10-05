@@ -19,7 +19,9 @@
 // dispatch, monthly for a corporate buyer — and a framework that issued on
 // checkout would be deciding it. The same reasoning the after-sales flow uses
 // for refunds: the record is created when someone decides, not when something
-// happens.
+// happens. An amendment is issued when someone decides, too, one per act,
+// found by the act's key in the invoice module's unique index rather than by a
+// link (ADR 0406).
 //
 // # Issuing twice must not cost two numbers
 //
@@ -70,6 +72,20 @@ const (
 	// CodeSellerUnknown reports that the shop has not said who it is, so no
 	// document can name its issuer.
 	CodeSellerUnknown = "invoicing_seller_unknown"
+	// CodeNoSaleDocument reports an act documented on an order whose sale
+	// document was not issued (ADR 0406).
+	CodeNoSaleDocument = "invoicing_no_sale_document"
+	// CodeActUnknown reports an act the order does not have.
+	CodeActUnknown = "invoicing_act_unknown"
+	// CodeActNotDocumented reports an act no document carries: an exchange's
+	// funding or refund, whose figure names neither goods nor tax.
+	CodeActNotDocumented = "invoicing_act_not_documented"
+	// CodeActDoesNotFit reports an act's amount more than the sale's rows have
+	// left to carry it.
+	CodeActDoesNotFit = "invoicing_act_does_not_fit"
+	// CodeSaleDocumentDiffers reports a sale document that does not print the
+	// order as this flow prints it, so its rows cannot be named.
+	CodeSaleDocumentDiffers = "invoicing_sale_document_differs"
 )
 
 // Orders is the part of the order module this flow reads.
@@ -81,6 +97,12 @@ type Orders interface {
 	// OrderInvoiceJSON returns everything a document has to print about an
 	// order: its lines with their tax rates, its totals and its contact.
 	OrderInvoiceJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+	// AfterSaleActsJSON lists the order's acts after its sale, oldest first:
+	// the order journal's entries for it (ADR 0406).
+	AfterSaleActsJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+	// AfterSaleActJSON reads one act by its journal kind and id; NotFound when
+	// the order has none.
+	AfterSaleActJSON(ctx context.Context, orderID, kind, id string) (json.RawMessage, error)
 }
 
 // StoreProfile is the part of the settings module this flow reads.

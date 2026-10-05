@@ -42,7 +42,17 @@ func Describe(d *openapi.Doc) {
 			"printed order with the base first, and their \"tax_amount\" values must add up to " +
 			"the row's \"tax_total\". The field is LEFT OUT when a single rate applied, and " +
 			"\"tax_rate_bps\" then says it all; a breakdown of one is refused, because it " +
-			"repeats what the row already says.",
+			"repeats what the row already says. " +
+			"A \"refund\" names the sale document it reverses in \"amends_invoice_id\", why in " +
+			"\"amendment_reason\" (returned or price_lowered), and on every row the row it " +
+			"gives back part of in \"amends_line_id\": a row of the sale, or a row a live " +
+			"charge on it added. It prints the sale's buyer and takes none; a row with a " +
+			"negative figure or a discount above its subtotal answers 422; a row giving back " +
+			"more than its row carried and was charged since, in amount, in tax or under one " +
+			"of its rates, answers 409 invoice_amendment_exceeds_sale. A sale that was " +
+			"rejected or canceled answers 409 invoice_amends_void. A \"sale\" naming a sale " +
+			"is refused here: a price raised after a sale is issued by the invoicing flow " +
+			"(ADR 0406).",
 		RequestBody: d.RequestBody(issueRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The issued document", d.Item(invoiceDTO{})),
@@ -58,6 +68,8 @@ func Describe(d *openapi.Doc) {
 			queryParameter("status", typeString,
 				"Status filter: "+statusesText()+"."),
 			queryParameter("kind", typeString, "Kind filter: sale, refund."),
+			queryParameter("amends", typeString,
+				"Only the documents amending the sale document with this id (ADR 0406)."),
 			queryParameter("limit", typeInteger,
 				"Page size; when it is not given the service's default applies."),
 			queryParameter("offset", typeInteger, "Number of records to skip."),
@@ -89,7 +101,11 @@ func Describe(d *openapi.Doc) {
 			"would suggest the amounts could be edited too. " +
 			"A rejection and a cancellation require a reason — they are the two states a person " +
 			"later has to account for. The move is decided by the database as well as by the " +
-			"service, so two operators acting at the same moment cannot both win.",
+			"service, so two operators acting at the same moment cannot both win. " +
+			"A sale document is not canceled while a document amending it stands: that " +
+			"answers 409 invoice_has_live_amendments; a charge amending a sale is not " +
+			"canceled while a live refund relies on it, 409 invoice_amendment_exceeds_sale " +
+			"(ADR 0406).",
 		RequestBody: d.RequestBody(statusRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The moved document", d.Item(invoiceDTO{})),

@@ -11,6 +11,36 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **A refund document names the sale it amends** (ADR 0406, D247, D262). **For
+  integrators:** `POST /admin/v1/invoices` with `"kind":"refund"` and no
+  `amends_invoice_id`, with one of spaces alone, or with a row naming no
+  `amends_line_id`, answers 422 `invoice_invalid_input`, and so does an
+  amending row with a negative figure or a discount above its subtotal. A
+  refund names why in `amendment_reason` (`returned` or `price_lowered`), sends
+  no `buyer` and prints its sale's; a row names a row of the sale or one a live
+  charge on it added. A `sale` naming a sale is refused there. A refund of a
+  rejected or canceled sale answers 409 `invoice_amends_void`, and one giving
+  back more than its row carried and was charged since, in amount, in tax or
+  under one of its rates, 409 `invoice_amendment_exceeds_sale`. Moving a sale to
+  `canceled` while a document amending it stands answers 409
+  `invoice_has_live_amendments`, and a charge a live refund relies on 409
+  `invoice_amendment_exceeds_sale`. A document carries `amends_invoice_id`,
+  `amendment_reason` and `amendment_key`, a row `amends_line_id`, and
+  `GET /admin/v1/invoices?amends=` lists a sale's.
+  `POST /admin/v1/orders/{id}/invoice/amendments` documents an act after the
+  sale (`{"series_prefix", "act": {"kind", "id"}, "rows"?}`): 201, or 200 with
+  `already_issued` for an act that has one; 409 `invoicing_no_sale_document`,
+  `invoicing_act_not_documented`, `invoicing_act_does_not_fit` and
+  `invoicing_sale_document_differs`; 404 `invoicing_act_unknown`; 422
+  `invoicing_invalid_input` for named rows that name a row twice, a gift card's
+  row or none of the invoice's, that do not add up to the act, or that come
+  with a delivery; the invoice module's 409 `invoice_amendment_exceeds_sale`
+  and `invoice_amends_void` passed through; and 422 `invoice_invalid_input` or
+  `order_invalid_input` past 500 amendments of the invoice or 500 acts of the
+  order. Its GET lists the order's acts with their documents. **For
+  operators:** the order page lists what moved after the sale and issues its
+  document, an amendment's page links the invoice it amends, and an exchange's
+  money is on no document.
 - **A cart's metadata chooses no price** (ADR 0403, D260, D261). **For
   integrators:** `POST /admin/v1/price-sets`,
   `POST /admin/v1/price-sets/{id}/prices` and

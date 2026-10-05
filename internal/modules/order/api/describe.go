@@ -313,6 +313,53 @@ func describeInvoicing(d *openapi.Doc) {
 			"200": openapi.Response("The document's identity", d.Item(orderInvoiceDTO{})),
 		},
 	})
+
+	d.Describe(http.MethodPost, "/admin/v1/orders/{id}/invoice/amendments", openapi.Operation{
+		Summary: "Documents an act after the sale on a document amending the order's invoice.",
+		Description: "An act is an order journal entry after the sale, named by its kind and id " +
+			"as GET lists them: a credit_line, a delivery_changed (cheaper) or delivery_upgraded " +
+			"(dearer, paid), a return_refunded or a claim_refunded. A dearer delivery is " +
+			"documented by a \"sale\" charging the carriage row, or, on an invoice with no " +
+			"carriage row because the order shipped free, a row of its own; the others by a " +
+			"\"refund\" naming the order's invoice and, row by row, the row it gives back part " +
+			"of, each row one unit carrying its share at its row's rates, its tax rounded on " +
+			"what the row has given back so far (ADR 0406). A delivery falls on the carriage " +
+			"rows, the invoice's and those dearer deliveries added; a return's refund on the " +
+			"lines it took back, by the value of their units, then on the carriage; a credit's " +
+			"or a claim's on every row but a gift card's, by what each has left. \"rows\" may " +
+			"name the rows instead, by order line id or \"carriage\", and their amounts add up " +
+			"to the act's. An act is documented once: a second call answers 200 with " +
+			"\"already_issued\". Refusals: 409 invoicing_no_sale_document when the order has " +
+			"no invoice yet; 409 invoicing_act_not_documented for an exchange's funding or " +
+			"refund, whose figure names neither goods nor tax; 409 invoicing_act_does_not_fit " +
+			"when the rows have less left than the act moved, or a named row less than is put " +
+			"on it; 409 invoicing_sale_document_differs when the invoice does not print the " +
+			"order as the flow printed it; 404 invoicing_act_unknown for an act the order " +
+			"does not have; 422 invoicing_invalid_input for named rows that name a row twice, " +
+			"a gift card's row or no row of the invoice, that do not add up to the act, or " +
+			"that are sent with a delivery; the invoice module's 409 " +
+			"invoice_amendment_exceeds_sale (the invoice moved between the read and the " +
+			"issue), invoice_amends_void (a rejected or canceled invoice) and " +
+			"invoice_amendment_exists, which a second press answers as already issued; and " +
+			"422 invoice_invalid_input or order_invalid_input when the invoice is amended by " +
+			"more than 500 documents or the order has more than 500 acts or after-sale " +
+			"records, which are refused rather than cut.",
+		RequestBody: d.RequestBody(invoicingAmendmentRequest{}),
+		Responses: map[string]any{
+			"200": openapi.Response("The document the act already had", d.Item(invoiceIssuedDTO{})),
+			"201": openapi.Response("The issued document", d.Item(invoiceIssuedDTO{})),
+		},
+	})
+
+	d.Describe(http.MethodGet, "/admin/v1/orders/{id}/invoice/amendments", openapi.Operation{
+		Summary: "Lists the order's acts after its sale with the document of each.",
+		Description: "The order journal's entries for this order after its sale, oldest first, " +
+			"each with the live document amending the order's invoice for it, or null. " +
+			"\"documentable\" is false for an exchange's funding and refund (ADR 0406).",
+		Responses: map[string]any{
+			"200": openapi.Response("The acts", d.Item([]orderActDTO{})),
+		},
+	})
 }
 
 // describeFulfilling describes the two endpoints that reach the fulfilling flow.

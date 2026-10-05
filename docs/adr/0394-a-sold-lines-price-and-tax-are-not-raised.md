@@ -3,7 +3,7 @@
 **Summary:** Nothing raises the price or the tax of a line a placed order sold; the buyer buys it again or the shop bears it.
 It costs a second order where an edit would do, and the shop pays a tax it under-charged.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0406](0406-an-amount-moved-after-the-sale-is-a-document.md), which documents an amount moved after the sale on a document amending the order's
 - **Date:** 2026-10-05
 - **Amends:** [0105](0105-a-credit-lowers-what-is-owed-not-what-was-sold.md), whose "different act" this record refuses for a sold line
 

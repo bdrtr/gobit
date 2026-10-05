@@ -375,6 +375,41 @@ func (s *AfterSalesSurface) IssueInvoice(
 	return s.invoicing.IssueForOrder(ctx, orderID, request)
 }
 
+// AmendmentsOfOrder lists the order's acts after its sale with the live
+// document of each (ADR 0406).
+func (s *AfterSalesSurface) AmendmentsOfOrder(ctx context.Context, orderID string) (json.RawMessage, error) {
+	if s == nil || s.invoicing == nil {
+		return nil, errors.Unavailable(codeSetupFailed, "the invoicing flow is not set up")
+	}
+
+	return s.invoicing.AmendmentsOfOrder(ctx, orderID)
+}
+
+// IssueAmendment documents one act after the order's sale on the series the
+// prefix names, spreading its amount as the act's kind does, or returns the
+// document it has, reporting which (ADR 0406).
+func (s *AfterSalesSurface) IssueAmendment(
+	ctx context.Context, orderID, seriesPrefix, kind, id string,
+) (invoiceID, number string, alreadyIssued bool, err error) {
+	if s == nil || s.invoicing == nil {
+		return "", "", false, errors.Unavailable(codeSetupFailed, "the invoicing flow is not set up")
+	}
+	type act struct {
+		Kind string `json:"kind"`
+		ID   string `json:"id"`
+	}
+	request, err := json.Marshal(struct {
+		SeriesPrefix string `json:"series_prefix"`
+		Act          act    `json:"act"`
+	}{seriesPrefix, act{kind, id}})
+	if err != nil {
+		return "", "", false, errors.Wrap(err, errors.KindInternal, codeSetupFailed,
+			"the amendment request could not be encoded")
+	}
+
+	return s.invoicing.IssueAmendment(ctx, orderID, request)
+}
+
 // CancelOrder cancels an order the checkout placed and writes off every unit
 // not yet returned or written off, so their stock comes back (ADR 0285), as
 // the API's cancel does (ADR 0339). A completed order and one with money

@@ -23,9 +23,12 @@ import (
 type Kind string
 
 const (
-	// KindSale is the ordinary sales invoice.
+	// KindSale is the ordinary sales invoice. It also covers the price raised
+	// after a sale, naming the sale it amends (ADR 0406).
 	KindSale Kind = "sale"
-	// KindRefund is the document that reverses a sale, in whole or in part.
+	// KindRefund is the document that reverses a sale, in whole or in part. It
+	// names the sale it reverses and each row it moves, and it is refused
+	// without one (ADR 0406).
 	//
 	// It is a document of its own with a number of its own rather than an edit
 	// to the sale: an issued invoice cannot be changed, and the reversal has to
@@ -38,6 +41,36 @@ func (k Kind) Valid() bool { return k == KindSale || k == KindRefund }
 
 // String returns the kind as text.
 func (k Kind) String() string { return string(k) }
+
+// AmendmentReason is why a document amends a sale (ADR 0406).
+//
+// A provider transmits a return and a price changed after the sale as
+// different documents, and the reason is what tells it which without reading
+// an act's key.
+type AmendmentReason string
+
+const (
+	// ReasonReturned is goods sent back: a refund.
+	ReasonReturned AmendmentReason = "returned"
+	// ReasonPriceLowered is a price lowered after the sale: a refund.
+	ReasonPriceLowered AmendmentReason = "price_lowered"
+	// ReasonPriceRaised is a price raised after the sale: a sale.
+	ReasonPriceRaised AmendmentReason = "price_raised"
+)
+
+// Valid reports whether the reason is one this module knows.
+func (r AmendmentReason) Valid() bool {
+	return r == ReasonReturned || r == ReasonPriceLowered || r == ReasonPriceRaised
+}
+
+// Fits reports whether a document of the kind may carry the reason: a price
+// raised is a sale, and the other two are refunds.
+func (r AmendmentReason) Fits(kind Kind) bool {
+	return (r == ReasonPriceRaised) == (kind == KindSale)
+}
+
+// String returns the reason as text.
+func (r AmendmentReason) String() string { return string(r) }
 
 // Status is where the document is in its life.
 //
@@ -83,6 +116,13 @@ func (s Status) Valid() bool {
 
 // String returns the status as text.
 func (s Status) String() string { return string(s) }
+
+// Live reports whether a document in the status stands: issued, sent or
+// accepted. A rejected document never took effect and a canceled one was
+// withdrawn, so neither amends anything (ADR 0406).
+func (s Status) Live() bool {
+	return s == StatusIssued || s == StatusSent || s == StatusAccepted
+}
 
 // CanMoveTo reports whether the document may move from this status to the next.
 //
@@ -190,6 +230,9 @@ type Line struct {
 	TaxComponents []LineTax
 	// Total is Subtotal - DiscountTotal + TaxTotal.
 	Total int64
+	// AmendsLineID is the row of the amended sale this row moves; empty on a
+	// sale's own row and on a row an amending sale adds (ADR 0406).
+	AmendsLineID string
 }
 
 // LineTax is one rate applied inside a document row's tax.
@@ -266,6 +309,14 @@ type Invoice struct {
 	ExternalID string
 	// StatusReason carries WHY a rejection or a cancellation happened.
 	StatusReason string
+	// AmendsInvoiceID is the sale document this one amends; empty on a
+	// document that amends nothing (ADR 0406).
+	AmendsInvoiceID string
+	// AmendmentReason is why it amends the sale; empty when AmendsInvoiceID is.
+	AmendmentReason AmendmentReason
+	// AmendmentKey names the act the invoicing flow documented; one live
+	// document per key and sale. It is empty on a document issued directly.
+	AmendmentKey string
 	// Lines are the rows of the document, in printed order.
 	Lines []Line
 	// Metadata is free structured context.
@@ -281,6 +332,23 @@ type Invoice struct {
 // here: it reaches the document as a LINE, because that is how it is printed.
 func (i Invoice) TotalsConsistent() bool {
 	return i.Total == i.Subtotal-i.DiscountTotal+i.TaxTotal
+}
+
+// AmendedRow is what a sale row has moved since it was issued: what the live
+// documents amending the sale gave back on it and charged on it (ADR 0406).
+type AmendedRow struct {
+	// RefundedTotal and RefundedTax are what the live refunds gave back.
+	RefundedTotal, RefundedTax int64
+	// ChargedTotal and ChargedTax are what the live amending sales charged.
+	ChargedTotal, ChargedTax int64
+	// Components are, by the component's position, the tax given back and
+	// charged under each rate of a stacked row.
+	Components map[int32]AmendedComponent
+}
+
+// AmendedComponent is what one rate of a stacked sale row has moved.
+type AmendedComponent struct {
+	RefundedTax, ChargedTax int64
 }
 
 // Series is the source of invoice numbers.
@@ -333,6 +401,8 @@ type Filter struct {
 	Status *string
 	// Kind, when given, returns only the documents of that kind.
 	Kind *string
+	// Amends, when given, returns only the documents amending that sale.
+	Amends *string
 	// Limit is the maximum number of rows to return.
 	Limit int64
 	// Offset is the number of rows to skip.

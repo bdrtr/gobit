@@ -38,6 +38,18 @@ const (
 	CodeStatusMoved = "invoice_status_moved"
 	// CodeNumbering reports that a number could not be allocated.
 	CodeNumbering = "invoice_numbering_failed"
+	// CodeAmendmentExists reports a live document already amending the sale
+	// for the same act (ADR 0406).
+	CodeAmendmentExists = "invoice_amendment_exists"
+	// CodeAmendsVoid reports an amendment of a sale that was rejected or
+	// canceled: it took no effect, so there is nothing to amend.
+	CodeAmendsVoid = "invoice_amends_void"
+	// CodeAmendmentExceedsSale reports a refund row giving back more than its
+	// sale row carried, in amount, in tax or under one of its rates.
+	CodeAmendmentExceedsSale = "invoice_amendment_exceeds_sale"
+	// CodeHasLiveAmendments reports a sale moved to canceled while a document
+	// amending it still stands.
+	CodeHasLiveAmendments = "invoice_has_live_amendments"
 )
 
 // InvoiceListing names this listing inside a cursor.
@@ -87,6 +99,14 @@ type Repo interface {
 	SetStatus(
 		ctx context.Context, id string, from, to models.Status, reason, providerID, externalID string,
 	) (models.Invoice, error)
+	// The five below are here for amending a sale (ADR 0406). LockInvoice
+	// holds the document's row until the transaction ends, and it is called
+	// inside [Repo.WithTx].
+	LockInvoice(ctx context.Context, id string) (models.Invoice, error)
+	AmendedRows(ctx context.Context, saleID string) (map[string]models.AmendedRow, error)
+	CountLiveAmendments(ctx context.Context, saleID string) (int64, error)
+	CountLiveAmendmentsWithKey(ctx context.Context, saleID, key string) (int64, error)
+	ListAmendmentsOf(ctx context.Context, saleID string, limit int64) ([]models.Invoice, error)
 	// The two below are here for [Service.RefoldBuyerEmails], the one-time
 	// maintenance pass migration 000003 asks for, and for nothing else.
 	ListBuyerEmailsForRefold(ctx context.Context, afterID string, limit int32) ([]models.BuyerEmailHandle, error)

@@ -72,6 +72,60 @@ func (q *Queries) CausedRefunds(ctx context.Context, arg CausedRefundsParams) ([
 	return items, nil
 }
 
+const causedRefundsOf = `-- name: CausedRefundsOf :many
+SELECT r.id, r.reference, r.amount, r.created_at, p.currency_code, p.payment_collection_id
+FROM refunds r
+JOIN payments p ON p.id = r.payment_id
+WHERE r.reference <> ''
+  AND r.reference = ANY ($1::text[])
+ORDER BY r.created_at, r.id
+LIMIT $2
+`
+
+type CausedRefundsOfParams struct {
+	Refs     []string
+	RowLimit int32
+}
+
+type CausedRefundsOfRow struct {
+	ID                  string
+	Reference           string
+	Amount              int64
+	CreatedAt           pgtype.Timestamptz
+	CurrencyCode        string
+	PaymentCollectionID string
+}
+
+// The refunds that name one of the given causes, whenever they were made
+// (ADR 0406): what the order module documents a return's or a claim's refund
+// from. refunds_reference_idx serves the lookup.
+func (q *Queries) CausedRefundsOf(ctx context.Context, arg CausedRefundsOfParams) ([]CausedRefundsOfRow, error) {
+	rows, err := q.db.Query(ctx, causedRefundsOf, arg.Refs, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CausedRefundsOfRow{}
+	for rows.Next() {
+		var i CausedRefundsOfRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Reference,
+			&i.Amount,
+			&i.CreatedAt,
+			&i.CurrencyCode,
+			&i.PaymentCollectionID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const journalCaptures = `-- name: JournalCaptures :many
 
 SELECT p.id, p.amount, p.currency_code, p.captured_at, p.payment_collection_id,

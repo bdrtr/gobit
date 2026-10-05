@@ -19,6 +19,9 @@ type Invoices interface {
 	IssueJSON(ctx context.Context, document json.RawMessage) (invoiceID, number string, err error)
 	// InvoiceIdentityJSON returns the document's id, number and status.
 	InvoiceIdentityJSON(ctx context.Context, id string) (json.RawMessage, error)
+	// AmendableJSON returns a sale document's rows with what each has left to
+	// give back, and the documents amending it (ADR 0406).
+	AmendableJSON(ctx context.Context, id string) (json.RawMessage, error)
 }
 
 // shippingDescription is what a shipping line is called on the document.
@@ -34,6 +37,10 @@ const shippingDescription = "Shipping"
 // way the flows repeat container names: reaching into the module for a constant
 // would tie this package to it at compile time for the sake of a string.
 const kindSale = "sale"
+
+// kindRefund is the document kind a return or a price lowered produces
+// (ADR 0406).
+const kindRefund = "refund"
 
 // Party is one side of the document as this flow carries it.
 type Party struct {
@@ -109,6 +116,8 @@ type documentLine struct {
 	// TaxComponents is the per-rate breakdown when a STACK taxed the row, base
 	// first; it is absent when a single rate applied.
 	TaxComponents []documentLineTax `json:"tax_components,omitempty"`
+	// AmendsLineID is the sale row an amending row moves (ADR 0406).
+	AmendsLineID string `json:"amends_line_id,omitempty"`
 }
 
 // documentLineTax is one rate inside a stacked row's tax, on the way to the
@@ -137,6 +146,11 @@ type document struct {
 	// (ADR 0248).
 	PricesIncludeTax bool           `json:"prices_include_tax"`
 	Metadata         map[string]any `json:"metadata"`
+	// AmendsInvoiceID, AmendmentReason and AmendmentKey name the sale an
+	// amendment amends, why, and the act it documents (ADR 0406).
+	AmendsInvoiceID string `json:"amends_invoice_id,omitempty"`
+	AmendmentReason string `json:"amendment_reason,omitempty"`
+	AmendmentKey    string `json:"amendment_key,omitempty"`
 }
 
 // IssueForOrder issues the document for an order, or returns the one it has.
@@ -414,7 +428,13 @@ func nonEmpty(values ...string) []string {
 
 // invoiceOrderItem is one line of that order.
 type invoiceOrderItem struct {
-	Title string `json:"title"`
+	// LineID is the order line's id; an amendment's return names its units by
+	// it (ADR 0406).
+	LineID string `json:"line_id"`
+	// IsGiftcard says the line sold a gift card, which no price lowered falls
+	// on.
+	IsGiftcard bool   `json:"is_giftcard"`
+	Title      string `json:"title"`
 	// ProductTitle is the title of the line's product, kept since ADR 0365.
 	ProductTitle  string `json:"product_title"`
 	Quantity      int64  `json:"quantity"`

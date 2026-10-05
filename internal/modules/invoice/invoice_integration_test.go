@@ -403,16 +403,28 @@ func TestTheListingWalksEveryDocumentOnceAndCountsThemAll(t *testing.T) {
 	ctx := context.Background()
 	svc := newService(t)
 
-	// The documents of this test are the only REFUNDS in the database, which is
-	// what makes it independent of the tests that ran before it: every other
-	// test issues sales.
+	// The documents of this test are the only REFUNDS of the sale it issues,
+	// which is what makes it independent of the tests that ran before it: a
+	// refund names the sale it reverses (ADR 0406), and the walk lists that
+	// sale's.
 	const (
 		documents = 5
 		pageSize  = 2
 	)
 
+	sale, err := svc.Issue(ctx, issueFor("PAG"))
+	require.NoError(t, err)
 	refund := issueFor("PAG")
 	refund.Kind = models.KindRefund
+	refund.Buyer = models.Party{}
+	refund.Amends = sale.ID
+	refund.AmendmentReason = models.ReasonPriceLowered
+	// Five fifths of the sale's one row: the last one empties it.
+	refund.Lines = []service.LineInput{{
+		Description: "Red T-Shirt", Quantity: 1, UnitPrice: 400, Subtotal: 400,
+		TaxRateBps: 2000, TaxTotal: 80, Total: 480, AmendsLineID: sale.Lines[0].ID,
+	}}
+	refund.Subtotal, refund.TaxTotal, refund.Total = 400, 80, 480
 
 	written := map[string]string{}
 
@@ -432,6 +444,7 @@ func TestTheListingWalksEveryDocumentOnceAndCountsThemAll(t *testing.T) {
 	}
 
 	kind := models.KindRefund.String()
+	amends := sale.ID
 
 	seen := map[string]bool{}
 	pages := 0
@@ -440,9 +453,10 @@ func TestTheListingWalksEveryDocumentOnceAndCountsThemAll(t *testing.T) {
 
 	for {
 		found, err := svc.ListInvoices(ctx, models.Filter{
-			Kind:  &kind,
-			Limit: pageSize,
-			After: cursor,
+			Kind:   &kind,
+			Amends: &amends,
+			Limit:  pageSize,
+			After:  cursor,
 		})
 		require.NoError(t, err)
 

@@ -127,3 +127,27 @@ func (r *Repository) JournalCauses(ctx context.Context, ids []string) ([]models.
 
 	return out, nil
 }
+
+// OrderAfterSaleCauses reads the order's returns, claims and exchanges, with
+// when each exchange's difference was funded, at most limit+1 of them
+// (ADR 0406).
+func (r *Repository) OrderAfterSaleCauses(
+	ctx context.Context, orderID string, limit int32,
+) ([]models.AfterSaleCause, error) {
+	rows, err := r.queries(ctx).OrderAfterSaleCauses(ctx, orderdb.OrderAfterSaleCausesParams{
+		OrderID: orderID, RowLimit: limit + 1,
+	})
+	if err != nil {
+		return nil, classify(err, codeQueryFailed, "the after-sale records of order %s could not be read", orderID)
+	}
+
+	out := make([]models.AfterSaleCause, 0, len(rows))
+	for i := range rows {
+		out = append(out, models.AfterSaleCause{
+			ID: rows[i].ID, Kind: rows[i].Kind, FundedAt: toTimePtr(rows[i].FundedAt),
+			DifferenceDue: rows[i].DifferenceDue,
+		})
+	}
+
+	return out, nil
+}

@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/invoice/models"
 	"github.com/bdrtr/gobit/internal/modules/invoice/service"
@@ -21,6 +22,9 @@ type issueLineRequest struct {
 	// TaxComponents is the per-rate breakdown when a STACK taxed the row, base
 	// FIRST; it is left out when a single rate applied.
 	TaxComponents []issueLineTaxRequest `json:"tax_components"`
+	// AmendsLineID is the row of the amended sale a refund row gives back
+	// part of (ADR 0406).
+	AmendsLineID string `json:"amends_line_id"`
 }
 
 // issueLineTaxRequest is one rate inside a stacked row's tax.
@@ -62,6 +66,12 @@ type issueRequest struct {
 	// is unit price x quantity less its tax (ADR 0248).
 	PricesIncludeTax bool           `json:"prices_include_tax"`
 	Metadata         map[string]any `json:"metadata"`
+	// AmendsInvoiceID and AmendmentReason name the sale document a refund
+	// reverses and why (ADR 0406). There is no act's key here: an act is
+	// documented by the invoicing flow, and a key written here could take an
+	// act's place before the flow documented it.
+	AmendsInvoiceID string `json:"amends_invoice_id"`
+	AmendmentReason string `json:"amendment_reason"`
 }
 
 // statusRequest is the body of a status move.
@@ -101,6 +111,15 @@ func (h *Handler) adminIssue(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	// A sale amending another raises a price after the sale, which ADR 0394
+	// takes onto no order by hand; the invoicing flow issues it for a dearer
+	// delivery the order was paid for (ADR 0406).
+	if models.Kind(body.Kind) == models.KindSale && body.AmendsInvoiceID != "" {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(service.CodeInvalidInput,
+			"an amending sale is issued by the invoicing flow, for an act the order recorded"))
+
+		return
+	}
 
 	lines := make([]service.LineInput, 0, len(body.Lines))
 	for i := range body.Lines {
@@ -114,6 +133,7 @@ func (h *Handler) adminIssue(w http.ResponseWriter, r *http.Request) {
 			TaxTotal:      body.Lines[i].TaxTotal,
 			Total:         body.Lines[i].Total,
 			TaxComponents: lineTaxInputsOf(body.Lines[i].TaxComponents),
+			AmendsLineID:  body.Lines[i].AmendsLineID,
 		})
 	}
 
@@ -130,6 +150,8 @@ func (h *Handler) adminIssue(w http.ResponseWriter, r *http.Request) {
 		Total:            body.Total,
 		PricesIncludeTax: body.PricesIncludeTax,
 		Metadata:         body.Metadata,
+		Amends:           body.AmendsInvoiceID,
+		AmendmentReason:  models.AmendmentReason(body.AmendmentReason),
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
@@ -186,6 +208,7 @@ func (h *Handler) adminList(w http.ResponseWriter, r *http.Request) {
 	page, err := h.svc.ListInvoices(ctx, models.Filter{
 		Status: stringParam(r, "status"),
 		Kind:   stringParam(r, "kind"),
+		Amends: stringParam(r, "amends"),
 		Limit:  limit,
 		Offset: offset,
 		After:  after,

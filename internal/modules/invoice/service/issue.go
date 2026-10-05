@@ -38,13 +38,20 @@ type LineInput struct {
 	TaxComponents []LineTaxInput
 	// Total is Subtotal - DiscountTotal + TaxTotal.
 	Total int64
+	// AmendsLineID is the row of the amended sale this row moves (ADR 0406).
+	// Every row of a refund names one; a row of an amending sale may leave it
+	// empty when it charges something the sale had no row for, and a document
+	// that amends nothing names none.
+	AmendsLineID string
 }
 
 // LineTaxInput is one rate applied inside a document row's tax.
 //
 // The amounts are COPIED, not recomputed: each component was floored on its own
 // base where the tax was calculated, and a split derived here from the row's
-// total would print figures the buyer was never charged.
+// total would print figures the buyer was never charged. An amending row
+// carries the share of its sale row's components that the invoicing flow
+// computed, and this module holds it within that row (ADR 0406).
 type LineTaxInput struct {
 	// RateID is the tax module's rate id; it may be empty when an external
 	// provider carries no ids of its own. It is not validated here — it belongs
@@ -95,6 +102,16 @@ type IssueInput struct {
 	PricesIncludeTax bool
 	// Metadata is free structured context.
 	Metadata map[string]any
+	// Amends is the sale document this one amends (ADR 0406). A refund names
+	// one; an amending document leaves Buyer zero and prints its sale's.
+	Amends string
+	// AmendmentReason is why it amends the sale; it comes with Amends and
+	// fits the kind: a price raised is a sale, a return or a price lowered a
+	// refund.
+	AmendmentReason models.AmendmentReason
+	// AmendmentKey names the act the invoicing flow documented; one live
+	// document per key and sale. Empty on a document issued directly.
+	AmendmentKey string
 }
 
 // Issue brings a document into being and gives it its number.
@@ -133,6 +150,15 @@ type IssueInput struct {
 // than per document, and a series opened by one is visible in
 // [Service.ListSeries] with its numbering starting at 1.
 func (s *Service) Issue(ctx context.Context, in IssueInput) (models.Invoice, error) {
+	// A blank sale named is no amendment; one of spaces alone names nothing
+	// and is refused before any read (ADR 0406).
+	if in.Amends != "" {
+		trimmed := strings.TrimSpace(in.Amends)
+		if trimmed == "" {
+			return models.Invoice{}, errors.Invalid(CodeInvalidInput, "amends_invoice_id names no document")
+		}
+		in.Amends = trimmed
+	}
 	if err := in.validate(); err != nil {
 		return models.Invoice{}, err
 	}
@@ -172,6 +198,14 @@ func (s *Service) issueOnce(ctx context.Context, in IssueInput) (models.Invoice,
 
 	var issued models.Invoice
 	err := s.repo.WithTx(ctx, func(ctx context.Context) error {
+		// The sale is locked before the series: an amendment and a status move
+		// take the document first, and the number after it (ADR 0406).
+		if in.Amends != "" {
+			if err := s.amendedOf(ctx, &in); err != nil {
+				return err
+			}
+		}
+
 		// Opening the series and taking the number are ONE statement, so a year
 		// whose first two documents are issued at the same moment cannot make
 		// one of them fail: see the TakeNextNumber query for why a
@@ -224,6 +258,9 @@ func (in IssueInput) document(series models.Series, sequence int64, now time.Tim
 		PricesIncludeTax: in.PricesIncludeTax,
 		IssuedAt:         now,
 		Metadata:         in.Metadata,
+		AmendsInvoiceID:  in.Amends,
+		AmendmentReason:  in.AmendmentReason,
+		AmendmentKey:     in.AmendmentKey,
 	}
 
 	doc.Lines = make([]models.Line, 0, len(in.Lines))
@@ -242,6 +279,7 @@ func (in IssueInput) document(series models.Series, sequence int64, now time.Tim
 			TaxRateBps:    in.Lines[i].TaxRateBps,
 			TaxTotal:      in.Lines[i].TaxTotal,
 			Total:         in.Lines[i].Total,
+			AmendsLineID:  in.Lines[i].AmendsLineID,
 		}
 
 		line.TaxComponents = make([]models.LineTax, 0, len(in.Lines[i].TaxComponents))
@@ -287,7 +325,12 @@ func (in IssueInput) validate() error {
 	if strings.TrimSpace(in.Seller.Name) == "" {
 		return errors.Invalid(CodeInvalidInput, "the seller's name is required")
 	}
-	if strings.TrimSpace(in.Buyer.Name) == "" {
+	if err := in.validateAmendment(); err != nil {
+		return err
+	}
+	// An amendment prints its sale's buyer, copied under the sale's lock, so
+	// its own is zero here (ADR 0406).
+	if in.Amends == "" && strings.TrimSpace(in.Buyer.Name) == "" {
 		return errors.Invalid(CodeInvalidInput, "the buyer's name is required")
 	}
 	if len(in.Lines) == 0 {
@@ -295,6 +338,73 @@ func (in IssueInput) validate() error {
 	}
 
 	return in.validateAmounts()
+}
+
+// validateAmendment refuses an amendment the document itself contradicts
+// (ADR 0406): a refund that names no sale, a reason without a sale or one that
+// does not fit the kind, a key without a sale, a buyer of its own, and a row
+// naming a sale row on a document that amends none or none on a refund's row.
+func (in IssueInput) validateAmendment() error {
+	amends := in.Amends != ""
+	switch {
+	case in.Kind == models.KindRefund && !amends:
+		return errors.Invalid(CodeInvalidInput,
+			"a refund names the sale document it reverses: amends_invoice_id is required")
+	case amends != (in.AmendmentReason != ""):
+		return errors.Invalid(CodeInvalidInput,
+			"an amendment names the sale it amends and why, both or neither")
+	case in.AmendmentKey != "" && !amends:
+		return errors.Invalid(CodeInvalidInput, "an act's key is carried only by an amendment")
+	case in.AmendmentKey != "" && strings.TrimSpace(in.AmendmentKey) == "":
+		return errors.Invalid(CodeInvalidInput, "an act's key cannot be blank")
+	}
+	if !amends {
+		for i := range in.Lines {
+			if in.Lines[i].AmendsLineID != "" {
+				return errors.Invalid(CodeInvalidInput,
+					"line %d names a sale row, and the document amends no sale", i+1)
+			}
+		}
+
+		return nil
+	}
+
+	switch {
+	case !in.AmendmentReason.Valid():
+		return errors.Invalid(CodeInvalidInput, "unknown amendment reason: %q", in.AmendmentReason)
+	case !in.AmendmentReason.Fits(in.Kind):
+		return errors.Invalid(CodeInvalidInput,
+			"a %s document cannot amend a sale for %q: a price raised is a sale, "+
+				"a return or a price lowered a refund", in.Kind, in.AmendmentReason)
+	case in.Buyer != (models.Party{}):
+		return errors.Invalid(CodeInvalidInput,
+			"an amendment prints its sale's buyer and takes none of its own")
+	}
+	for i := range in.Lines {
+		if in.Kind == models.KindRefund && strings.TrimSpace(in.Lines[i].AmendsLineID) == "" {
+			return errors.Invalid(CodeInvalidInput,
+				"refund line %d names no sale row; a refund gives back part of a row the sale carried", i+1)
+		}
+		if err := movesForward(i, in.Lines[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// movesForward refuses an amending row that moves money the other way than
+// its document (ADR 0406): a negative unit price, subtotal, tax or total, or a
+// discount above the subtotal, would turn a refund into a charge on its row
+// and raise the row's ceiling. A negative component figure is refused for
+// every document by the breakdown's own check.
+func movesForward(i int, line LineInput) error {
+	if line.UnitPrice < 0 || line.Subtotal < 0 || line.TaxTotal < 0 || line.Total < 0 ||
+		line.DiscountTotal > line.Subtotal {
+		return errors.Invalid(CodeInvalidInput,
+			"amending line %d moves a negative amount: an amendment's rows give back or charge, never both", i+1)
+	}
+	return nil
 }
 
 // validateAmounts checks every line and then the document against its lines.

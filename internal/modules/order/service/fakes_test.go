@@ -82,6 +82,9 @@ type fakeStore struct {
 	journal []models.JournalFact
 	// causes are the returns and claims JournalCauses knows (ADR 0189).
 	causes []models.JournalCause
+	// afterSaleCauses are what OrderAfterSaleCauses reads, by order
+	// (ADR 0406).
+	afterSaleCauses map[string][]models.AfterSaleCause
 	// margins are what PlacedMargins returns (ADR 0401); the rule they are
 	// summed by is SQL's and is held by the integration test.
 	margins []models.PlacedMargin

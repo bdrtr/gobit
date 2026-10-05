@@ -197,6 +197,9 @@ func (m *memRepo) ListInvoices(
 		if filter.Kind != nil && row.Kind.String() != *filter.Kind {
 			continue
 		}
+		if filter.Amends != nil && row.AmendsInvoiceID != *filter.Amends {
+			continue
+		}
 
 		row.Lines = nil
 		matching = append(matching, row)
@@ -286,4 +289,75 @@ func (m *memRepo) ListNonAsciiBuyerEmailsForRefold(
 	_ context.Context, _ string, _ int32,
 ) ([]models.BuyerEmailHandle, error) {
 	return nil, nil
+}
+
+// LockInvoice returns the stored document, as the real read after its lock.
+func (m *memRepo) LockInvoice(ctx context.Context, id string) (models.Invoice, error) {
+	return m.GetInvoice(ctx, id)
+}
+
+// AmendedRows sums the rows of the live refunds and amending sales of the
+// sale, as the real query does.
+func (m *memRepo) AmendedRows(_ context.Context, saleID string) (map[string]models.AmendedRow, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := map[string]models.AmendedRow{}
+	for i := range m.stored {
+		doc := &m.stored[i]
+		if doc.AmendsInvoiceID != saleID || !doc.Status.Live() {
+			continue
+		}
+		for k := range doc.Lines {
+			line := &doc.Lines[k]
+			row := out[line.AmendsLineID]
+			if doc.Kind == models.KindRefund {
+				row.RefundedTotal += line.Total
+				row.RefundedTax += line.TaxTotal
+			} else {
+				row.ChargedTotal += line.Total
+				row.ChargedTax += line.TaxTotal
+			}
+			out[line.AmendsLineID] = row
+		}
+	}
+
+	return out, nil
+}
+
+// CountLiveAmendments counts the live documents amending the sale.
+func (m *memRepo) CountLiveAmendments(ctx context.Context, saleID string) (int64, error) {
+	return m.CountLiveAmendmentsWithKey(ctx, saleID, "")
+}
+
+// CountLiveAmendmentsWithKey counts the live documents amending the sale, for
+// one act when the key is not empty.
+func (m *memRepo) CountLiveAmendmentsWithKey(_ context.Context, saleID, key string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var count int64
+	for i := range m.stored {
+		doc := &m.stored[i]
+		if doc.AmendsInvoiceID == saleID && doc.Status.Live() && (key == "" || doc.AmendmentKey == key) {
+			count++
+		}
+	}
+
+	return count, nil
+}
+
+// ListAmendmentsOf lists the documents amending the sale in the order written.
+func (m *memRepo) ListAmendmentsOf(_ context.Context, saleID string, limit int64) ([]models.Invoice, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	out := []models.Invoice{}
+	for i := range m.stored {
+		if m.stored[i].AmendsInvoiceID == saleID && int64(len(out)) < limit {
+			out = append(out, m.stored[i])
+		}
+	}
+
+	return out, nil
 }

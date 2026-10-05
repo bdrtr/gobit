@@ -137,3 +137,27 @@ func TestAnInvoiceIsShownAndMovedOnItsPage(t *testing.T) {
 		campaignsRequest(lister, http.MethodPost, page+"/status", url.Values{formInvoiceTo: {"sent"}}, writer...).Code,
 		"nor move one")
 }
+
+// TestAnAmendmentLinksTheSaleItAmends: the page of a document amending a sale
+// names the sale's number and links its page (ADR 0406); a sale's names none.
+func TestAnAmendmentLinksTheSaleItAmends(t *testing.T) {
+	t.Parallel()
+
+	documents := &fakeInvoiceDocuments{document: `{"id":"inv_2","number":"GBT2026000000002","kind":"refund",
+		"status":"issued","currency_code":"TRY","total":1200,"issued_at":"2026-10-06T09:00:00Z",
+		"seller":{"name":"Gobit Shop"},"buyer":{"name":"Ada"},"lines":[],"moves":[],
+		"amends":{"id":"inv_1","number":"GBT2026000000001","reason":"returned"}}`}
+	panel := newCatalogPanel(t, linkedOrderCatalog())
+	panel.invoices = documents
+	panel.scopes = builtInScopes()
+
+	body := campaignsRequest(panel, http.MethodGet, InvoicesPath+"/inv_2", nil, scopeInvoiceRead).Body.String()
+	assert.Contains(t, body, `Amends <a href="`+InvoicesPath+`/inv_1">GBT2026000000001</a>`)
+	assert.Contains(t, body, "returned")
+
+	documents.document = strings.Replace(documents.document,
+		`,
+		"amends":{"id":"inv_1","number":"GBT2026000000001","reason":"returned"}`, "", 1)
+	body = campaignsRequest(panel, http.MethodGet, InvoicesPath+"/inv_2", nil, scopeInvoiceRead).Body.String()
+	assert.NotContains(t, body, "Amends")
+}

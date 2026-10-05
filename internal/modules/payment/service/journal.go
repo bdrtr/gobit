@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -263,6 +264,39 @@ func (s *Service) CausedRefunds(ctx context.Context, q JournalQuery) ([]models.C
 	if len(refunds) > MaxJournalEntries {
 		return nil, errors.Invalid(CodeInvalidInput,
 			"the window holds more than %d refunds that name a cause; ask for a narrower one", MaxJournalEntries)
+	}
+
+	return refunds, nil
+}
+
+// MaxCausedRefundsOf is the most refunds one read by cause returns; causes
+// refunded more often are refused rather than cut (ADR 0406).
+const MaxCausedRefundsOf = 500
+
+// CausedRefundsOf returns the refunds that name one of the given causes,
+// whenever they were made, oldest first (ADR 0406).
+//
+// The order module reads it to document a return's or a claim's refund on the
+// invoice amending its sale: the act is documented when someone asks, so it is
+// found by its cause and not by a window.
+func (s *Service) CausedRefundsOf(ctx context.Context, references []string) ([]models.CausedRefund, error) {
+	causes := make([]string, 0, len(references))
+	for _, reference := range references {
+		if reference = strings.TrimSpace(reference); reference != "" {
+			causes = append(causes, reference)
+		}
+	}
+	if len(causes) == 0 {
+		return nil, nil
+	}
+
+	refunds, err := s.store.CausedRefundsOf(ctx, causes, MaxCausedRefundsOf)
+	if err != nil {
+		return nil, err
+	}
+	if len(refunds) > MaxCausedRefundsOf {
+		return nil, errors.Invalid(CodeInvalidInput,
+			"the causes were refunded more than %d times", MaxCausedRefundsOf)
 	}
 
 	return refunds, nil

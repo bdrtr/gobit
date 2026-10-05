@@ -95,6 +95,12 @@ type invoiceDocument struct {
 	ExternalID       string        `json:"external_id"`
 	Lines            []invoiceLine `json:"lines"`
 	Moves            []string      `json:"moves"`
+	// Amends is the sale document this one amends and why (ADR 0406).
+	Amends *struct {
+		ID     string `json:"id"`
+		Number string `json:"number"`
+		Reason string `json:"reason"`
+	} `json:"amends"`
 	// The totals in the document's currency's decimals.
 	SubtotalText, DiscountText, TaxText string `json:"-"`
 }

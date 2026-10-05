@@ -40,6 +40,9 @@ type Invoice struct {
 	UpdatedAt         pgtype.Timestamptz
 	BuyerEmailFolded  string
 	PricesIncludeTax  bool
+	AmendsInvoiceID   *string
+	AmendmentReason   *string
+	AmendmentKey      *string
 }
 
 type InvoiceLine struct {
@@ -54,6 +57,7 @@ type InvoiceLine struct {
 	TaxRateBps    int32
 	TaxTotal      int64
 	Total         int64
+	AmendsLineID  *string
 }
 
 type InvoiceLineTax struct {

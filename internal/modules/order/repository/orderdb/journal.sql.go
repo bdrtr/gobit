@@ -380,3 +380,60 @@ func (q *Queries) JournalOrdersPlaced(ctx context.Context, arg JournalOrdersPlac
 	}
 	return items, nil
 }
+
+const orderAfterSaleCauses = `-- name: OrderAfterSaleCauses :many
+SELECT r.id, 'return'::text AS kind, NULL::timestamptz AS funded_at, 0::bigint AS difference_due
+FROM order_returns r
+WHERE r.order_id = $2
+UNION ALL
+SELECT c.id, 'claim'::text, NULL::timestamptz, 0::bigint
+FROM order_claims c
+WHERE c.order_id = $2
+UNION ALL
+SELECT x.id, 'exchange'::text, x.funded_at::timestamptz, x.difference_due
+FROM order_exchanges x
+WHERE x.order_id = $2
+ORDER BY 1
+LIMIT $1
+`
+
+type OrderAfterSaleCausesParams struct {
+	RowLimit int32
+	OrderID  string
+}
+
+type OrderAfterSaleCausesRow struct {
+	ID            string
+	Kind          string
+	FundedAt      pgtype.Timestamptz
+	DifferenceDue int64
+}
+
+// One order's records a refund can name as its cause, and when an exchange's
+// difference was funded (ADR 0406): what an order's acts after the sale are
+// read from, beside its credit lines and its delivery changes. It takes one row
+// more than the caller's limit, as the windowed reads above do.
+func (q *Queries) OrderAfterSaleCauses(ctx context.Context, arg OrderAfterSaleCausesParams) ([]OrderAfterSaleCausesRow, error) {
+	rows, err := q.db.Query(ctx, orderAfterSaleCauses, arg.RowLimit, arg.OrderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OrderAfterSaleCausesRow{}
+	for rows.Next() {
+		var i OrderAfterSaleCausesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.FundedAt,
+			&i.DifferenceDue,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

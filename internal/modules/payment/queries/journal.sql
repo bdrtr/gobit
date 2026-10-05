@@ -86,3 +86,15 @@ WHERE r.reference <> ''
   AND (sqlc.narg('currency_code')::text IS NULL OR p.currency_code = sqlc.narg('currency_code')::text)
 ORDER BY r.created_at, r.id
 LIMIT sqlc.arg('row_limit');
+
+-- The refunds that name one of the given causes, whenever they were made
+-- (ADR 0406): what the order module documents a return's or a claim's refund
+-- from. refunds_reference_idx serves the lookup.
+-- name: CausedRefundsOf :many
+SELECT r.id, r.reference, r.amount, r.created_at, p.currency_code, p.payment_collection_id
+FROM refunds r
+JOIN payments p ON p.id = r.payment_id
+WHERE r.reference <> ''
+  AND r.reference = ANY (sqlc.arg('refs')::text[])
+ORDER BY r.created_at, r.id
+LIMIT sqlc.arg('row_limit');

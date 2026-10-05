@@ -111,3 +111,36 @@ func TestThePanelMovesAnInvoiceFromTheStatusItRead(t *testing.T) {
 	assert.Equal(t, service.CodeTransition, errors.CodeOf(err),
 		"a caller that names no status read is checked as before: %v", err)
 }
+
+// TestThePanelReadsWhatADocumentAmends: an amendment names its sale's number
+// and why for the page to link (ADR 0406); a sale names none.
+func TestThePanelReadsWhatADocumentAmends(t *testing.T) {
+	t.Parallel()
+
+	svc := newService(newFakeRepo())
+	surface := service.NewAdminSurface(svc)
+	sale := issuedSale(t, svc)
+	refund, err := svc.Issue(context.Background(), refundOf(sale, 120, 20))
+	require.NoError(t, err)
+
+	var document struct {
+		Amends *struct {
+			ID     string `json:"id"`
+			Number string `json:"number"`
+			Reason string `json:"reason"`
+		} `json:"amends"`
+	}
+	raw, err := surface.InvoiceJSON(context.Background(), refund.ID)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &document))
+	require.NotNil(t, document.Amends)
+	assert.Equal(t, sale.ID, document.Amends.ID)
+	assert.Equal(t, sale.Number, document.Amends.Number)
+	assert.Equal(t, "returned", document.Amends.Reason)
+
+	raw, err = surface.InvoiceJSON(context.Background(), sale.ID)
+	require.NoError(t, err)
+	document.Amends = nil
+	require.NoError(t, json.Unmarshal(raw, &document))
+	assert.Nil(t, document.Amends)
+}
