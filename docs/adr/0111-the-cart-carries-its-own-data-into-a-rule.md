@@ -5,7 +5,7 @@
 snapshot and buys an embedder a rule attribute this framework never has to know
 about.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0403](0403-a-carts-metadata-chooses-no-price.md), which keeps the bag out of every price
 - **Date:** 2026-09-10
 
 ## Context

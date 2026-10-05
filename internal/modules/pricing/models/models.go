@@ -173,6 +173,12 @@ const AttrCustomerGroupID = "customer_group_id"
 // writes it, and internal/arch binds the two spellings.
 const AttrSalesChannelID = "sales_channel_id"
 
+// ReservedAttributePrefix begins every attribute the cart takes from its own
+// metadata, which reaches promotions and no price (ADR 0403). A price rule
+// naming one would match no cart, so pricing refuses it where a caller writes
+// a rule. The cart flow spells it too, and internal/arch binds the two.
+const ReservedAttributePrefix = "cart."
+
 // BuyerRank reports how narrowly the rule names the buyer: 2 for the customer,
 // 1 for their company, 0 for anything else.
 //

@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/bdrtr/gobit/core/openapi"
+	"github.com/bdrtr/gobit/internal/modules/pricing/models"
+	"github.com/bdrtr/gobit/internal/modules/pricing/service"
 )
 
 // The JSON Schema names parameter schemas use.
@@ -80,6 +82,7 @@ func describePriceSets(d *openapi.Doc) {
 			// [API.createPriceSet]); the response carries the set together with
 			// the prices just written.
 			"201": openapi.Response("The price set created", d.Item(priceSetDTO{})),
+			"422": reservedAttributeRefusal(),
 		},
 	})
 
@@ -133,6 +136,7 @@ func describePrices(d *openapi.Doc) {
 			// envelope ([API.setPrices] → [writeItems]). Writing 201 would
 			// generate a client method that falls into a "created" branch.
 			"200": openapi.Response("The set's new prices", d.List(priceDTO{})),
+			"422": reservedAttributeRefusal(),
 		},
 	})
 
@@ -227,6 +231,7 @@ func describePriceRules(d *openapi.Doc) {
 		RequestBody: d.RequestBody(ruleRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The rule added", d.Item(priceRuleDTO{})),
+			"422": reservedAttributeRefusal(),
 		},
 	})
 
@@ -258,6 +263,15 @@ func describeStore(d *openapi.Doc) {
 				d.Item(storePriceSetDTO{})),
 		},
 	})
+}
+
+// reservedAttributeRefusal is the 422 of the three writes that take a rule a
+// caller wrote. The body is not the only cause, but the reserved attribute is
+// the one a client cannot guess from the schema (ADR 0403).
+func reservedAttributeRefusal() map[string]any {
+	return openapi.ErrorResponse("The body is invalid. A rule whose attribute begins with `" +
+		models.ReservedAttributePrefix + "` is refused with `" + service.CodeRuleAttributeReserved +
+		"`: the cart's metadata reaches promotions and no price.")
 }
 
 // pageParameters are the query parameters [pageParams] reads.

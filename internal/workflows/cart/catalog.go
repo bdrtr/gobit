@@ -18,7 +18,7 @@ import (
 const attrRegionID = "region_id"
 
 // AttrCustomerGroupID is the name of the attribute that carries the customer's
-// segment in the rule context, under which [Workflows.ruleContext] writes the
+// segment in the rule context, under which [Workflows.priceContext] writes the
 // customer's groups twice.
 //
 // The attribute map holds a SINGLE value: a rule context is one value per
@@ -241,15 +241,42 @@ func (w *Workflows) productIDsFor(ctx context.Context, variantIDs []string) (map
 	return out, nil
 }
 
-// ruleContext builds the attribute map the rule engines are given for a cart.
+// priceSubject is what a cart's PRICE is chosen for: its region, the sales
+// channel it was opened in and its customer.
+//
+// It is a type of its own, and not the [Snapshot], so that the cart's metadata
+// has no field to arrive in: whoever holds the storefront's publishable key
+// writes that bag, so a price ruled on it would be a price the caller chooses
+// (ADR 0403). Its fields are named because three strings in a row are three
+// places to swap the buyer for the channel with nothing failing to compile.
+type priceSubject struct {
+	RegionID       string
+	SalesChannelID string
+	CustomerID     string
+}
+
+// priceSubjectOf is the subject a cart's own rounds price for: the line's
+// opening price, the totals and the discount all build it here, so none of
+// them can name a different buyer or channel.
+func priceSubjectOf(snap Snapshot) priceSubject {
+	return priceSubject{RegionID: snap.RegionID, SalesChannelID: snap.SalesChannelID, CustomerID: snap.CustomerID}
+}
+
+// priceContext builds the attribute map a cart's PRICE is chosen with: the
+// region, the sales channel the cart was opened in, the customer, their company
+// and their head group.
+//
+// The line, the totals, the wishlist quote and the price list trial call this;
+// the discount and the promotion trial call [Workflows.ruleContext], which adds
+// the cart's metadata.
 //
 // # Why the group is resolved HERE and not at each call site
 //
-// Three places build this context — the line-item price, the discount request
-// and the totals computation — and ADR 0049's decision is that they all send the
-// SAME single group. Three copies of "take the head of the slice" is three places
-// for them to drift apart, and the drift would be invisible: each engine would
-// simply price a different segment, with no error anywhere.
+// Every price and discount round builds this context, and ADR 0049's decision
+// is that they all send the SAME single group. A copy of "take the head of the
+// slice" per caller is a place for each to drift apart, and the drift would be
+// invisible: each engine would simply price a different segment, with no error
+// anywhere.
 //
 // # Why a guest OMITS the attribute rather than sending an empty one
 //
@@ -271,18 +298,16 @@ func (w *Workflows) productIDsFor(ctx context.Context, variantIDs []string) (map
 //
 // # Why the sales channel is the CART's and not the request's
 //
-// The channel goes in from the snapshot, the one the cart recorded when it was
-// opened (ADR 0397), and never from the principal of the request computing the
-// round. Every write reprices the whole cart under whichever principal made it —
-// a storefront key, an operator's asserted channel, an operator's address write
+// The subject's channel is the one the cart recorded when it was opened
+// (ADR 0397), and never the principal of the request computing the round.
+// Every write reprices the whole cart under whichever principal made it — a
+// storefront key, an operator's asserted channel, an operator's address write
 // carrying none — so a channel read off the request would price one cart at
 // two prices depending on who touched it last, and the completion's
 // `expected_total` would compare against a figure a different write produced.
 // A cart that names none omits the attribute, for the guest's reason above:
-// a channel price stays closed rather than matching "".
-//
-// It is written after the metadata and cannot be shadowed by it: every metadata
-// key carries [CartAttributePrefix].
+// a channel price stays closed rather than matching "". The quote and the list
+// trial name none, since neither has a cart.
 //
 // # Why a failure to read the groups or the company is NOT fatal
 //
@@ -291,24 +316,24 @@ func (w *Workflows) productIDsFor(ctx context.Context, variantIDs []string) (map
 // be read: the first stops the shop, the second charges the ordinary price. The
 // error is returned so the caller can log it, and the context comes back with
 // everything that WAS read.
-func (w *Workflows) ruleContext(
-	ctx context.Context, snap Snapshot,
+func (w *Workflows) priceContext(
+	ctx context.Context, subject priceSubject,
 ) (attributes map[string]string, lists map[string][]string, err error) {
-	attributes = map[string]string{attrRegionID: snap.RegionID}
-	addCartMetadata(attributes, snap.Metadata)
-	if snap.SalesChannelID != "" {
-		attributes[AttrSalesChannelID] = snap.SalesChannelID
+	attributes = map[string]string{attrRegionID: subject.RegionID}
+	if subject.SalesChannelID != "" {
+		attributes[AttrSalesChannelID] = subject.SalesChannelID
 	}
 
-	if snap.CustomerID == "" {
+	customerID := subject.CustomerID
+	if customerID == "" {
 		return attributes, nil, nil
 	}
-	attributes[AttrCustomerID] = snap.CustomerID
+	attributes[AttrCustomerID] = customerID
 
 	var companyErr error
 	if w.companies != nil {
 		var company string
-		company, companyErr = w.companies.CompanyOfCustomer(ctx, snap.CustomerID)
+		company, companyErr = w.companies.CompanyOfCustomer(ctx, customerID)
 		if companyErr == nil && company != "" {
 			attributes[AttrCompanyID] = company
 		}
@@ -317,7 +342,7 @@ func (w *Workflows) ruleContext(
 		return attributes, nil, companyErr
 	}
 
-	groups, groupErr := w.customers.CustomerGroupIDs(ctx, snap.CustomerID)
+	groups, groupErr := w.customers.CustomerGroupIDs(ctx, customerID)
 	if groupErr != nil {
 		return attributes, nil, errors.Join(companyErr, groupErr)
 	}
@@ -341,17 +366,34 @@ func (w *Workflows) ruleContext(
 	return attributes, lists, companyErr
 }
 
+// ruleContext builds the attribute map a PROMOTION rule reads for a cart: the
+// cart's [Workflows.priceContext] and its metadata under [CartAttributePrefix]
+// (ADR 0111). The bag is written after the names this flow decides and cannot
+// shadow them: every one of its keys carries the prefix, and no fixed name
+// does.
+func (w *Workflows) ruleContext(
+	ctx context.Context, snap Snapshot,
+) (attributes map[string]string, lists map[string][]string, err error) {
+	attributes, lists, err = w.priceContext(ctx, priceSubjectOf(snap))
+	addCartMetadata(attributes, snap.Metadata)
+
+	return attributes, lists, err
+}
+
 // CartAttributePrefix is what every attribute taken from the cart's metadata is
 // written under.
 //
 // It exists so that the bag CANNOT shadow the names this flow decides. A cart
 // whose metadata carried a key called "customer_group_id" would otherwise let
-// whoever writes that bag hand themselves a segment discount — the shopper does
-// not write the cart's metadata, but the storefront that does is not the party
-// that decides who is in which group.
+// whoever writes that bag hand themselves a segment discount — and whoever
+// holds the storefront's publishable key writes it, since `POST /store/v1/carts`
+// takes it from the body, while the party that decides who is in which group
+// is the merchant. That caller can still meet a promotion ruled on a `cart.`
+// attribute (D261); a price never reads one, and pricing refuses a price rule
+// naming one (ADR 0403), under a spelling internal/arch binds to this one.
 //
-// The dot is deliberate: neither fixed name contains one, so the two spaces
-// cannot collide by any spelling.
+// The dot is deliberate: no fixed name contains one, so the two spaces cannot
+// collide by any spelling.
 const CartAttributePrefix = "cart."
 
 // MaxCartAttributes bounds how many of the cart's metadata keys become rule
@@ -364,7 +406,8 @@ const CartAttributePrefix = "cart."
 // map-iteration order.
 const MaxCartAttributes = 32
 
-// addCartMetadata writes the cart's metadata into the rule context, prefixed.
+// addCartMetadata writes the cart's metadata into the promotion rule context,
+// prefixed.
 //
 // # Only STRING values cross
 //

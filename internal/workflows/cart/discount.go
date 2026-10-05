@@ -675,7 +675,7 @@ func lineLists(variantID string, flags map[string]productFacts) map[string][]str
 // no flags. The direction is the one this package has already chosen twice: a
 // missing discount OVERCHARGES the customer, who sees the price and says so,
 // whereas a cart that cannot be priced stops the shop (the same argument as the
-// customer-group read in [Workflows.ruleContext], and the mirror of why the tax
+// customer-group read in [Workflows.priceContext], and the mirror of why the tax
 // does not fall back to zero). What it costs is written down in ADR 0048: a shop
 // whose rules name these attributes gives NO discount at all until the read
 // recovers.

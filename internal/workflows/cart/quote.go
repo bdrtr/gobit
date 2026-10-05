@@ -13,9 +13,9 @@ import (
 // before any promotion (ADR 0216).
 //
 // It is the cart's own pricing asked without a cart: the region's currency, the
-// same rule context a cart of that customer carries that names no sales channel
-// — the region, the customer, their company and their head group (ADR 0397) —
-// and quantity one. So a price
+// same price context a cart of that customer carries that names no sales
+// channel — the region, the customer, their company and their head group
+// (ADR 0397, ADR 0403) — and quantity one. So a price
 // list that would price the customer's cart prices the quote, and a promotion,
 // which is the cart's discount and not its price, does not.
 //
@@ -61,9 +61,7 @@ func (w *Workflows) QuoteUnitPrices(
 		return currency, prices, nil
 	}
 
-	attributes, _, contextErr := w.ruleContext(ctx, Snapshot{
-		RegionID: regionID, CustomerID: customerID, CurrencyCode: currency,
-	})
+	attributes, _, contextErr := w.priceContext(ctx, priceSubject{RegionID: regionID, CustomerID: customerID})
 	if contextErr != nil {
 		w.log.WarnContext(ctx, "the customer's groups or company could not be read; quoting without them",
 			"error", contextErr, "customer_id", customerID)

@@ -489,6 +489,25 @@ func TestTheCalculationDescribesTheRuleContextInItsDescription(t *testing.T) {
 	assert.Contains(t, description, paramAttrPrefix)
 }
 
+// TestTheRuleWritesDescribeTheReservedAttribute holds the 422 of ADR 0403 in
+// the document on each of the three writes that take a caller's rule: a client
+// generated from the schema has no other way to learn that a `cart.` attribute
+// is refused.
+func TestTheRuleWritesDescribeTheReservedAttribute(t *testing.T) {
+	t.Parallel()
+
+	paths, _ := document(t)
+	for _, path := range []string{
+		"/admin/v1/price-sets", "/admin/v1/price-sets/{id}/prices", "/admin/v1/prices/{price_id}/rules",
+	} {
+		responses, ok := operation(t, paths, http.MethodPost, path)["responses"].(map[string]any)
+		require.True(t, ok, path)
+		refusal, ok := responses["422"].(map[string]any)
+		require.True(t, ok, "%s describes its 422", path)
+		assert.Contains(t, refusal["description"], "pricing_rule_attribute_reserved", path)
+	}
+}
+
 // parameterNames returns the operation's parameter names in the given place.
 func parameterNames(t *testing.T, op map[string]any, in string) []string {
 	t.Helper()

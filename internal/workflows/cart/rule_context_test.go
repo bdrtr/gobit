@@ -151,3 +151,54 @@ func TestACartWithNoMetadataCarriesNoExtraAttribute(t *testing.T) {
 
 	assert.Len(t, attributes, 1, "only the region: %v", attributes)
 }
+
+// bagKeys returns the attributes of a context taken from the cart's metadata.
+func bagKeys(attributes map[string]string) []string {
+	var keys []string
+	for key := range attributes {
+		if strings.HasPrefix(key, CartAttributePrefix) {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+// TestTheCartsBagReachesNoLinePrice holds the line's opening price to the
+// price context (ADR 0403, D260): whoever holds the storefront's key writes the
+// bag, so a price ruled on it would be a price the caller chooses. The same
+// round's discount request carrying the bag is the witness that the scenario
+// put one on the cart.
+func TestTheCartsBagReachesNoLinePrice(t *testing.T) {
+	h := newModuleHarness(t)
+	serveCartWithMetadata(h.carts, map[string]any{"arm": "B"})
+	recordAddLine(h.carts, testLineA)
+
+	_, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
+		CartID: testCartID, VariantID: testVariantA, Quantity: 1,
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, h.prices.seen, "the line was priced")
+	for i, call := range h.prices.seen {
+		assert.Empty(t, bagKeys(call.attributes), "price call %d carried the cart's bag", i)
+		assert.Equal(t, testRegionID, call.attributes[attrRegionID], "price call %d still names the region", i)
+	}
+	require.NotEmpty(t, h.discounts.requests)
+	assert.Equal(t, "B", h.discounts.requests[len(h.discounts.requests)-1].Context[CartAttributePrefix+"arm"],
+		"the promotion round still reads the bag")
+}
+
+// TestTheCartsBagReachesNoTotalsPrice is the same hold on the totals round's
+// batch price request, which is what the cart is charged.
+func TestTheCartsBagReachesNoTotalsPrice(t *testing.T) {
+	h := newModuleHarness(t)
+	serveCartWithMetadata(h.carts, map[string]any{"arm": "B"})
+
+	attributes := contextOf(t, h)
+
+	require.NotEmpty(t, h.prices.requests, "the round asked for prices")
+	request := h.prices.requests[len(h.prices.requests)-1]
+	assert.Empty(t, bagKeys(request.Attributes), "the totals price request carried the cart's bag")
+	assert.Equal(t, testRegionID, request.Attributes[attrRegionID])
+	assert.Equal(t, "B", attributes[CartAttributePrefix+"arm"], "the promotion round still reads the bag")
+}

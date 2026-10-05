@@ -158,9 +158,8 @@ The error surface moved to the country as well: a valid country with no region i
 a `404` (the operator has not opened sales to that country — the client can pick
 another one), and a malformed or empty code is a `422`. `metadata` STAYED in the
 body and is carried into the flow as it is; it is the client's data, and its
-string values become rule context under `cart.` for every price and promotion
-round (ADR 0111 decided it for promotions; the price rounds read the same
-context).
+string values become rule context under `cart.` for every promotion round
+(ADR 0111) and for no price round (ADR 0403).
 
 On the admin side the same field is LEGITIMATE and was not removed: the
 `currency_code` in the body of `POST /admin/v1/regions` DEFINES the region — there

@@ -48,6 +48,9 @@ const (
 	CodeInvalidInput = "pricing_invalid_input"
 	// CodeNotCalculable reports that no valid price was found in the given context.
 	CodeNotCalculable = "price_not_calculable"
+	// CodeRuleAttributeReserved refuses a price rule naming the cart's
+	// metadata, which chooses no price (ADR 0403).
+	CodeRuleAttributeReserved = "pricing_rule_attribute_reserved"
 )
 
 // Paging limits. If no limit is given the default is applied, if an excessively
@@ -214,9 +217,14 @@ type RuleInput struct {
 // written and the price set is not created either — this holds both when service
 // validation eliminates the input and when the database rejects it (e.g. a price
 // bound to a price list that does not exist): the container and its prices are
-// written in a SINGLE transaction.
+// written in a SINGLE transaction. A rule on an attribute under
+// [models.ReservedAttributePrefix] is refused with [CodeRuleAttributeReserved]
+// (ADR 0403).
 func (s *Service) CreatePriceSet(ctx context.Context, prices []PriceInput) (models.PriceSet, error) {
 	if err := s.ready(); err != nil {
+		return models.PriceSet{}, err
+	}
+	if err := refuseReservedAttributes(prices); err != nil {
 		return models.PriceSet{}, err
 	}
 
@@ -286,11 +294,17 @@ func (s *Service) DeletePriceSet(ctx context.Context, id string) error {
 // is a record built on purpose rather than the residue of a replace.
 //
 // An empty slice is a valid request and removes all of the container's prices.
+// A rule on an attribute under [models.ReservedAttributePrefix] is refused with
+// [CodeRuleAttributeReserved] (ADR 0403), one the set held before the refusal
+// included: a caller re-sending the set leaves out that rule's price.
 func (s *Service) SetPrices(ctx context.Context, priceSetID string, prices []PriceInput) ([]models.Price, error) {
 	if err := s.ready(); err != nil {
 		return nil, err
 	}
 	if err := requireID(priceSetID, models.PriceSetIDPrefix, "price set id"); err != nil {
+		return nil, err
+	}
+	if err := refuseReservedAttributes(prices); err != nil {
 		return nil, err
 	}
 

@@ -164,11 +164,12 @@ func (w *Workflows) AddLineItem(ctx context.Context, in AddLineItemInput) (AddLi
 	// The list is discarded here: these two callers are PRICING, and a price set
 	// is chosen by the merchant-ranked head alone (ADR 0049). "Any of my groups"
 	// is a discount question — two price sets both matching would be two prices
-	// with nothing deciding between them.
-	attributes, _, contextErr := w.ruleContext(ctx, snap)
+	// with nothing deciding between them. The cart's metadata is not asked for:
+	// it chooses no price (ADR 0403).
+	attributes, _, contextErr := w.priceContext(ctx, priceSubjectOf(snap))
 	if contextErr != nil {
 		// The base price is a worse answer than the segment or contract price
-		// and a far better one than no cart; see ruleContext.
+		// and a far better one than no cart; see priceContext.
 		w.log.WarnContext(ctx, "the customer's groups or company could not be read; pricing without them",
 			"error", contextErr, "customer_id", snap.CustomerID)
 	}
@@ -262,7 +263,7 @@ func (w *Workflows) productTakes(ctx context.Context, productID string, addOns [
 }
 
 // priceAddOns prices each add-on as the line is priced — its own price set, at
-// the line's quantity, in the cart's currency, under the same rule context —
+// the line's quantity, in the cart's currency, under the same price context —
 // and reads its title from the catalog, and returns them as the cart module
 // takes them; none is nil.
 func (w *Workflows) priceAddOns(

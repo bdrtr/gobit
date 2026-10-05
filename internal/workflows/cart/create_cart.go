@@ -28,7 +28,8 @@ type CreateCartInput struct {
 	//
 	// Opening the cart does not read it and lets it into none of its decisions,
 	// it only carries it to the cart; every later round puts its string values
-	// into the rule context under `cart.` (ADR 0111). The field really is the
+	// into the promotion rule context under `cart.` (ADR 0111), and no price
+	// reads them (ADR 0403). The field really is the
 	// caller's own data (the campaign source, the storefront session) and it has
 	// no counterpart that could be derived. The criterion of the distinction is
 	// the same as [CountryCode]'s — there what was put in the body was the

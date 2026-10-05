@@ -100,8 +100,10 @@ type interopSnapshot struct {
 	// hop.
 	//
 	// It is the cart's, NOT the line's: a line's metadata is the shopper's intent
-	// (a gift note) and the shopper must not be able to write the left-hand side
-	// of a discount rule.
+	// (a gift note). The cart's is written by whoever holds the storefront's
+	// publishable key as well, since `POST /store/v1/carts` takes it from the
+	// body, so a promotion ruled on it is open to that caller (D261) and no
+	// price reads it (ADR 0403).
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 

@@ -11,7 +11,7 @@ import (
 )
 
 // TestAQuoteIsTheCartsOwnPriceForOne is ADR 0216: the region's currency, the
-// rule context a cart of the customer carries, quantity one, and one bulk
+// price context a cart of the customer carries, quantity one, and one bulk
 // request for the variants that have a price set.
 func TestAQuoteIsTheCartsOwnPriceForOne(t *testing.T) {
 	t.Parallel()

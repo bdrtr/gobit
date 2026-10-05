@@ -391,6 +391,24 @@ func TestTheSalesChannelAttributeNamesAgree(t *testing.T) {
 		"the name ADR 0397 publishes and stored rules use")
 }
 
+// TestTheReservedRuleAttributeAgreesWithTheCartFlow binds the prefix pricing
+// refuses in a price rule to the one the cart writes its metadata under
+// (ADR 0403). A drift is silent: pricing would refuse a name the cart never
+// sends and accept the one it does, for a rule that matches no cart.
+//
+// The literal is pinned too: it is published (ADR 0111, ADR 0403) and stored
+// in the operators' promotion rules.
+func TestTheReservedRuleAttributeAgreesWithTheCartFlow(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, pricingmodels.ReservedAttributePrefix, cartflow.CartAttributePrefix,
+		"pricing must refuse the prefix the cart writes its metadata under")
+	assert.Equal(t, "cart.", cartflow.CartAttributePrefix,
+		"the prefix ADR 0111 publishes and stored promotion rules use")
+	assert.Equal(t, cartflow.CartAttributePrefix, adminui.RuleAttributeCartPrefix,
+		"the panel must flag the prefix the cart writes its metadata under")
+}
+
 // TestTheGraphQLLimitDefaultsAgreeWithTheConfig verifies that the GraphQL
 // hardening limits' defaults in TWO separate places are the same.
 //

@@ -115,12 +115,17 @@ func (s *Service) DeletePriceList(ctx context.Context, id string) error {
 	return s.repo.DeletePriceList(ctx, id, s.clock())
 }
 
-// CreatePriceRule adds a rule to an existing price.
+// CreatePriceRule adds a rule to an existing price. A rule on an attribute
+// under [models.ReservedAttributePrefix] is refused with
+// [CodeRuleAttributeReserved] (ADR 0403).
 func (s *Service) CreatePriceRule(ctx context.Context, priceID string, in RuleInput) (models.PriceRule, error) {
 	if err := s.ready(); err != nil {
 		return models.PriceRule{}, err
 	}
 	if err := requireID(priceID, models.PriceIDPrefix, "price id"); err != nil {
+		return models.PriceRule{}, err
+	}
+	if err := refuseReservedAttribute(in); err != nil {
 		return models.PriceRule{}, err
 	}
 

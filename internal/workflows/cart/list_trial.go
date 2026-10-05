@@ -19,12 +19,13 @@ import (
 // a price set, today's prices of every other list and of the base, and the
 // customer's groups and company as they are now. The list itself is offered as
 // if active with no window. A promotion is not recomputed: the figures are the
-// unit prices before any discount. Two facts of the sale an order does not keep
-// are absent: the cart's metadata and the sales channel it was opened in, so a
-// price ruled on either matches no order (ADR 0397).
+// unit prices before any discount. The sales channel the cart was opened in is
+// a fact of the sale an order does not keep, so a price ruled on it matches no
+// order (ADR 0397). The cart's metadata is not set aside: it chooses no cart's
+// price either (ADR 0403).
 var listTrialAssumptions = []string{
 	"todays_prices", "todays_price_set_links", "todays_customer_groups", "list_active_without_window",
-	"before_discounts", "no_cart_metadata", "no_sales_channel",
+	"before_discounts", "no_sales_channel",
 }
 
 // PriceListTrialReport is what a price list would have done to the prices of
@@ -105,9 +106,9 @@ type compareResponse struct {
 // # What is compared
 //
 // Each order that was not canceled is priced line by line, at the line's
-// quantity, in the order's currency, with the rule context a cart of that
-// customer in that region carries, less what an order does not keep: the cart's
-// metadata and its sales channel.
+// quantity, in the order's currency, with the price context a cart of that
+// customer in that region carries, less the sales channel an order does not keep
+// (ADR 0397, ADR 0403).
 // The list's effect is the difference between the two prices; what the line was
 // sold at is reported beside them, since today's ladder is not the one of the
 // sale.
@@ -247,10 +248,10 @@ func (w *Workflows) lineSets(ctx context.Context, orders []trialOrder) (map[stri
 	return out, nil
 }
 
-// compareRequestFor builds one comparison entry per order, with the rule
-// context a cart of its customer in its region carries, less what an order does
-// not keep: the cart's metadata and its sales channel. The context is read once
-// per customer, region and currency.
+// compareRequestFor builds one comparison entry per order, with the price
+// context a cart of its customer in its region carries, less the sales channel
+// an order does not keep. The context is read once per customer, region and
+// currency.
 func (w *Workflows) compareRequestFor(
 	ctx context.Context, orders []trialOrder, sets map[string]string,
 ) (compareRequest, error) {
@@ -262,9 +263,7 @@ func (w *Workflows) compareRequestFor(
 		attributes, ok := contexts[key]
 		if !ok {
 			var contextErr error
-			attributes, _, contextErr = w.ruleContext(ctx, Snapshot{
-				RegionID: order.regionID, CustomerID: order.customerID, CurrencyCode: order.currencyCode,
-			})
+			attributes, _, contextErr = w.priceContext(ctx, priceSubject{RegionID: order.regionID, CustomerID: order.customerID})
 			if contextErr != nil {
 				w.log.WarnContext(ctx, "the customer's groups or company could not be read; trying without them",
 					"error", contextErr, "customer_id", order.customerID)

@@ -11,6 +11,21 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **A cart's metadata chooses no price** (ADR 0403, D260, D261). **For
+  integrators:** `POST /admin/v1/price-sets`,
+  `POST /admin/v1/price-sets/{id}/prices` and
+  `POST /admin/v1/prices/{price_id}/rules` answer 422
+  `pricing_rule_attribute_reserved` for a rule whose attribute begins with
+  `cart.`, and a set write names it in `details` by `index` and `rule_index`;
+  promotion rules are unchanged. A full-set write that sends back a `cart.` rule the set already
+  held is refused the same way: leave that price out of the body. **For
+  operators:** a `cart.` price rule written before no longer prices a cart;
+  the panel's forms and the catalog import carry it unchanged, and the
+  variant page marks it as matching no cart.
+  `SELECT price_id, attribute FROM price_rule WHERE attribute LIKE 'cart.%' AND deleted_at IS NULL`
+  lists them. Remove the price, not the rule: a price whose `cart.` rule is
+  deleted applies to everybody its other rules match. A promotion ruled on a
+  `cart.` attribute is still met by any storefront caller (D261, open).
 - **Stock on its way has a date the storefront shows** (ADR 0399, D257, D258).
   **For integrators:** `POST /admin/v1/inventory-items/{id}/supplier-receipts`
   records units a supplier owes an open warehouse (`location_id`, `quantity`,
@@ -32,9 +47,8 @@ design. It is fixed with `1.0.0`.
   exactly one channel records it as `sales_channel_id`, and every price and
   promotion round asks with it; a key bound to several records none.
   `POST /admin/v1/carts` takes an optional `sales_channel_id`. A merge prices
-  the moved lines in the target cart's channel. The price list trial's
-  `assumptions` gain `no_cart_metadata` and `no_sales_channel`, the promotion
-  trial's `no_sales_channel`. **For operators:** a price or promotion rule
+  the moved lines in the target cart's channel. The price list trial's and the
+  promotion trial's `assumptions` gain `no_sales_channel`. **For operators:** a price or promotion rule
   naming `sales_channel_id` matched nothing before this release and starts
   matching carts opened through a single-channel key, so review such rules
   before upgrading. Cart migration 000010 adds `carts.sales_channel_id`; the
@@ -1495,6 +1509,12 @@ design. It is fixed with `1.0.0`.
   refusal of `gobit new` now names `go run` inside a checkout.
 
 ### Decisions
+
+- **An experiment runs outside gobit** (ADR 0402). **For contributors:** gobit
+  assigns no arm, records no exposure and computes no stopping rule; an
+  experiment product keyed on the embedder's own visitor hears gobit through
+  the bus. It reopens when a flow in this tree must act by arm, or the panel
+  must show an arm's result.
 
 - **A shopping agent is a storefront client** (ADR 0400, D259). **For
   contributors:** gobit builds no policy read, discovery document, delegated

@@ -384,3 +384,57 @@ func TestAPriceOverAnAmountItDidNotSeeIsRefused(t *testing.T) {
 	require.Len(t, fx.written, 1)
 	assert.Equal(t, int64(24990), fx.written[0].Amount)
 }
+
+// TestAnOldCartRuleRidesThroughEveryKeepingWrite holds ADR 0403's other half:
+// a `cart.` rule written before the refusal stays on its price through every
+// write that keeps a set's other prices. Those writes revalidate what they
+// carry, so a refusal placed where they validate would answer 422 to a save
+// that only carried the rule, and dropping the rule on the way would open its
+// list price to whoever its other rules match — here, everybody.
+func TestAnOldCartRuleRidesThroughEveryKeepingWrite(t *testing.T) {
+	t.Parallel()
+
+	armList, otherList := "plist_arm", "plist_other"
+	existing := []models.Price{
+		{ID: "price_base", PriceSetID: "pset_1", CurrencyCode: "TRY", Amount: 19990, MinQuantity: models.MinQuantity},
+		{ID: "price_arm", PriceSetID: "pset_1", CurrencyCode: "TRY", Amount: 14990, MinQuantity: models.MinQuantity,
+			PriceListID: &armList, Rules: []models.PriceRule{
+				{Attribute: "cart.arm", Operator: models.OpEq, Values: []string{"B"}},
+			}},
+		{ID: "price_other", PriceSetID: "pset_1", CurrencyCode: "TRY", Amount: 15990, MinQuantity: models.MinQuantity,
+			PriceListID: &otherList},
+	}
+	ctx := context.Background()
+
+	for name, write := range map[string]func(fx *adminFixture) error{
+		"the panel's price form": func(fx *adminFixture) error { return fx.setPrice(t, "TRY", 24990) },
+		"the interop's unit base prices": func(fx *adminFixture) error {
+			_, err := fx.surface.svc.SetUnitBasePrices(ctx, "pset_1", map[string]int64{"USD": 999})
+			return err
+		},
+		"the panel's list price added": func(fx *adminFixture) error {
+			return fx.surface.AddListPrice(ctx, "pset_1", "plist_new", "TRY", 13990, nil)
+		},
+		"the panel's list price removed": func(fx *adminFixture) error {
+			return fx.surface.RemoveListPrice(ctx, "pset_1", "price_other")
+		},
+	} {
+		fx := newAdminFixture(t, existing)
+		fx.repo.getPriceListFn = func(_ context.Context, id string) (models.PriceList, error) {
+			return models.PriceList{ID: id}, nil
+		}
+
+		require.NoError(t, write(fx), name)
+
+		var kept []models.PriceRule
+		for _, price := range fx.written {
+			if price.Amount == 14990 {
+				kept = price.Rules
+			}
+		}
+		require.Len(t, kept, 1, "%s: the arm's price keeps its one rule", name)
+		assert.Equal(t, "cart.arm", kept[0].Attribute, name)
+		assert.Equal(t, models.OpEq, kept[0].Operator, name)
+		assert.Equal(t, []string{"B"}, kept[0].Values, name)
+	}
+}

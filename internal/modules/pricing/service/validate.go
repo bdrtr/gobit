@@ -136,6 +136,38 @@ func validateRule(in RuleInput) error {
 	return nil
 }
 
+// refuseReservedAttribute refuses a rule a caller writes on an attribute under
+// [models.ReservedAttributePrefix] (ADR 0403).
+//
+// The cart's metadata reaches promotions and no price, so such a rule would be
+// stored, matched by the admin calculator and never charged. It is NOT part of
+// [validateRule]: the writes that keep a set's other prices revalidate every
+// rule they carry, and a rule written before the refusal has to ride through
+// them unchanged rather than answer 422 to a panel save or an import that only
+// carried it.
+func refuseReservedAttribute(in RuleInput) error {
+	if strings.HasPrefix(in.Attribute, models.ReservedAttributePrefix) {
+		return errors.Invalid(CodeRuleAttributeReserved,
+			"a price rule cannot name %q: an attribute under %q is the cart's metadata, which chooses no price",
+			in.Attribute, models.ReservedAttributePrefix)
+	}
+	return nil
+}
+
+// refuseReservedAttributes applies [refuseReservedAttribute] to every rule of
+// the prices a caller writes, with the price's and the rule's position in the
+// error as [Service.buildPrices] reports them.
+func refuseReservedAttributes(prices []PriceInput) error {
+	for i := range prices {
+		for j := range prices[i].Rules {
+			if err := refuseReservedAttribute(prices[i].Rules[j]); err != nil {
+				return withIndex(withIndex(err, detailRuleIndex, j), detailIndex, i)
+			}
+		}
+	}
+	return nil
+}
+
 // requireID validates that an id is usable and OF THE RIGHT TYPE.
 //
 // The prefix check is deliberate: prefixed ids exist so that an id of the wrong

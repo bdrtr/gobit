@@ -241,8 +241,9 @@ type Carts interface {
 	//
 	// metadata is the free-form data (a JSON object) the caller attaches to the
 	// CART and may be left empty. The field is the storefront's intent: opening
-	// a cart does not read it; every round puts its string values into the rule
-	// context under `cart.` (ADR 0111). Since this flow is the only way to open
+	// a cart does not read it; every round puts its string values into the
+	// promotion rule context under `cart.` (ADR 0111), and no price reads them
+	// (ADR 0403). Since this flow is the only way to open
 	// a cart, carrying it is mandatory; if it were not carried the field the
 	// client sent would silently be dropped.
 	//

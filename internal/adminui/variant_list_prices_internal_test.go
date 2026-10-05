@@ -110,6 +110,31 @@ func TestAVariantListsItsPricesOnLists(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "on price list plist_2", "the expansion's list price is kept then")
 }
 
+// TestAListPriceRuledOnTheCartsBagSaysItMatchesNoCart is ADR 0403 on the
+// variant page: a list price whose rule names a `cart.` attribute was written
+// before pricing refused one, and the page says it matches no cart instead of
+// printing it as a working condition; a rule on another attribute is printed
+// as it is.
+func TestAListPriceRuledOnTheCartsBagSaysItMatchesNoCart(t *testing.T) {
+	t.Parallel()
+
+	prices := &fakeListPrices{fakePriceLists: fakePriceLists{body: twoLists, total: 2}, listPrices: `[
+	{"id":"price_arm","price_list_id":"plist_1","price_list_title":"Wholesale 2026","currency_code":"TRY",
+	 "amount":15000,"min_quantity":1,"max_quantity":null,
+	 "rules":[{"attribute":"cart.arm","operator":"eq","values":["B"]}]},
+	{"id":"price_tier","price_list_id":"plist_2","price_list_title":"","currency_code":"TRY",
+	 "amount":18000,"min_quantity":1,"max_quantity":null,
+	 "rules":[{"attribute":"region_id","operator":"eq","values":["reg_1"]}]}]`}
+	panel, _ := listPricesPanel(t, prices)
+
+	rec := campaignsRequest(panel, http.MethodGet, variantURLFor(), nil, scopeProductRead, scopePricingRead)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	assert.Contains(t, body, "<td>1 or more, cart.arm eq B (matches no cart, ADR 0403)</td>")
+	assert.Contains(t, body, "<td>1 or more, region_id eq reg_1</td>")
+}
+
 // TestAPriceIsPutOnAListFromTheVariant: the form's list, currency, amount in
 // the currency's decimals and groups reach the surface with the set the form
 // names, and the variant comes back; with no group the price is for every

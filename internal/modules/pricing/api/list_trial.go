@@ -30,7 +30,7 @@ const codeListTrialAnswerInvalid = "pricing_trial_answer_invalid"
 // past orders (ADR 0220).
 //
 // The question is about a price list and belongs here, but the answer needs to
-// read orders and to build the rule context a cart carries; both belong to
+// read orders and to build the price context a cart carries; both belong to
 // internal/workflows/cart, which this module cannot import (ADR 0006).
 type PriceListTrial interface {
 	// TrialPriceListJSON prices the goods of the orders placed in [from, to)
@@ -55,8 +55,8 @@ type listTrialReportDTO struct {
 	To          time.Time `json:"to"`
 	// Assumptions are what the trial set aside, each a word: today's prices,
 	// price set links and customer groups, the list active with no window, the
-	// prices before any discount, and the cart's metadata and sales channel,
-	// which an order does not keep.
+	// prices before any discount, and the cart's sales channel, which an order
+	// does not keep.
 	Assumptions []string `json:"assumptions"`
 	// OrdersRead is every order placed in the period; OrdersCanceled were left
 	// out.
@@ -159,9 +159,9 @@ func describeListTrial(d *openapi.Doc) {
 	d.Describe(http.MethodGet, pathListTrial, openapi.Operation{
 		Summary: "Reads what a price list would do to the prices of the orders of a period.",
 		Description: "Every order placed in the period and not canceled is priced line by line, at " +
-			"the line's quantity, in the order's currency and with the rule context a cart of its " +
-			"customer in its region carries, less the cart's metadata and sales channel, which an " +
-			"order does not keep: once as if the list did not exist, and once as if it " +
+			"the line's quantity, in the order's currency and with the context a cart of its " +
+			"customer in its region is priced with, less the cart's sales channel, which an order " +
+			"does not keep: once as if the list did not exist, and once as if it " +
 			"were active with no window, whatever its status and dates. Both prices are today's " +
 			"ladder, so the list's effect is `trial` minus `baseline`; what the lines were sold " +
 			"at is `charged`, before discounts. Nothing is written. The period is at most 93 days " +

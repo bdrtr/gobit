@@ -385,6 +385,16 @@ past and is not corrected retroactively.
   from the region record; in an installation with no region defined at all one
   sees `19990 TRY (minor units)`. Assuming a fixed 100 would show the WRONG
   amount for currencies with 0 and 3 digits, such as JPY and KWD.
+- **A cart's metadata chooses no price.** A new price rule whose attribute
+  begins with `cart.` is refused with 422 `pricing_rule_attribute_reserved`
+  ([ADR 0403](adr/0403-a-carts-metadata-chooses-no-price.md)). One written
+  before stays on its set and matches no cart. The panel's forms and the import
+  carry it unchanged, and the variant page marks it as matching no cart; only
+  the admin calculator still matches it. To remove it, remove its *price*:
+  deleting the rule alone makes the price apply to everybody its other rules
+  match. A promotion still reads the metadata, which whoever holds the
+  storefront's publishable key writes, so a promotion ruled on a `cart.`
+  attribute is open to any storefront caller (D261).
 - **Search AND the e-mail guards depend on the database cluster's CTYPE setting,
   and that setting is fixed at initdb time.** Three things leave case folding to
   PostgreSQL: the storefront's own `?q=` filter (`title ILIKE`), the `search-pg`
@@ -905,6 +915,15 @@ past and is not corrected retroactively.
   that keeps it in an HttpOnly cookie has to send the event from its server or
   hand the page the id. An anonymous visit before a cart has no id the server
   knows.
+
+- **No experiment runs inside gobit.** The visitor key, the assignment and its
+  consent are the embedder's
+  ([ADR 0402](adr/0402-an-experiment-runs-outside-gobit.md)). On the bus a
+  guest's conversion joins on `cart.completed`'s cart id, but its revenue does
+  not: `order.placed` carries no cart id. The completion response and the order
+  read carry both. A price that differs by customer group is the merchant's
+  price: gobit does not guard it as an experiment or tell the shopper it is
+  personalized.
 
 - **An order's archiving and its after-sales transitions publish nothing.**
   Placing, canceling and completing an order publish `order.placed`,

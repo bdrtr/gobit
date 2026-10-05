@@ -563,3 +563,37 @@ func TestUnpagedListReportsRealLimit(t *testing.T) {
 	assert.Equal(t, priceCount, count)
 	assert.Equal(t, priceCount, limit, "it must not be clipped on the read path either")
 }
+
+// TestARuleOnTheCartsBagIsRefused is ADR 0403 over HTTP: the three writes that
+// take a caller's rule answer 422 with the code a client can branch on, and
+// the rule route writes nothing.
+func TestARuleOnTheCartsBagIsRefused(t *testing.T) {
+	r, _ := newTestRouter(t)
+
+	created := decodeItem(t, do(t, r, http.MethodPost, "/admin/v1/price-sets",
+		`{"prices":[{"currency_code":"TRY","amount":100}]}`))
+	setID, ok := created["id"].(string)
+	require.True(t, ok)
+	prices, ok := created["prices"].([]any)
+	require.True(t, ok)
+	first, ok := prices[0].(map[string]any)
+	require.True(t, ok)
+	priceID, ok := first["id"].(string)
+	require.True(t, ok)
+
+	ruled := `{"prices":[{"currency_code":"TRY","amount":90,"rules":[` +
+		`{"attribute":"cart.arm","operator":"eq","values":["B"]}]}]}`
+	for path, body := range map[string]string{
+		"/admin/v1/prices/" + priceID + "/rules":    `{"attribute":"cart.arm","operator":"eq","values":["B"]}`,
+		"/admin/v1/price-sets":                      ruled,
+		"/admin/v1/price-sets/" + setID + "/prices": ruled,
+	} {
+		rec := do(t, r, http.MethodPost, path, body)
+
+		assert.Equal(t, http.StatusUnprocessableEntity, rec.Code, "%s: %s", path, rec.Body.String())
+		assert.Equal(t, "pricing_rule_attribute_reserved", errorCode(t, rec), path)
+	}
+
+	data, _, _, _ := decodeList(t, do(t, r, http.MethodGet, "/admin/v1/prices/"+priceID+"/rules", ""))
+	assert.Empty(t, data, "the refused rule was not written")
+}

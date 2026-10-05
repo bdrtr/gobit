@@ -428,3 +428,82 @@ func TestCreatePriceSetReportsFailingRuleIndex(t *testing.T) {
 	assert.Equal(t, 2, typed.Details[detailRuleIndex], "which rule of that price")
 	assert.Zero(t, repo.calls["CreatePriceSet"], "no container may be created while there is an invalid rule")
 }
+
+// TestAPriceRuleCannotNameTheCartsBag holds ADR 0403 at the three writes that
+// take a rule a caller wrote: an attribute under `cart.` is the cart's
+// metadata, which reaches no price, so a rule naming it is refused before
+// anything is written. A name that merely starts with the letters, and a name
+// the cart does send, pass.
+func TestAPriceRuleCannotNameTheCartsBag(t *testing.T) {
+	const reserved = "pricing_rule_attribute_reserved"
+
+	writes := map[string]func(repo *stubRepo, rule RuleInput) error{
+		"CreatePriceRule": func(repo *stubRepo, rule RuleInput) error {
+			_, err := newTestService(repo).CreatePriceRule(context.Background(), "price_1", rule)
+			return err
+		},
+		"CreatePriceSet": func(repo *stubRepo, rule RuleInput) error {
+			_, err := newTestService(repo).CreatePriceSet(context.Background(), cartRulePrices(rule))
+			return err
+		},
+		"ReplacePrices": func(repo *stubRepo, rule RuleInput) error {
+			_, err := newTestService(repo).SetPrices(context.Background(), "pset_1", cartRulePrices(rule))
+			return err
+		},
+	}
+
+	for write, call := range writes {
+		for _, attribute := range []string{"cart.arm", "cart."} {
+			repo := writingRepo()
+			err := call(repo, RuleInput{Attribute: attribute, Operator: models.OpEq, Values: []string{"B"}})
+
+			require.Error(t, err, "%s with %q", write, attribute)
+			assert.Equal(t, errors.KindInvalid, errors.KindOf(err), "%s with %q", write, attribute)
+			assert.Equal(t, reserved, errors.CodeOf(err), "%s with %q", write, attribute)
+			assert.Zero(t, repo.calls[write], "%s with %q: nothing may be written", write, attribute)
+			if write == "CreatePriceRule" {
+				continue
+			}
+			var typed *errors.Error
+			require.True(t, errors.As(err, &typed), write)
+			assert.Equal(t, 2, typed.Details[detailIndex], "%s: which price", write)
+			assert.Equal(t, 1, typed.Details[detailRuleIndex], "%s: which rule of that price", write)
+		}
+		for _, attribute := range []string{"cartel", "region_id"} {
+			repo := writingRepo()
+			err := call(repo, RuleInput{Attribute: attribute, Operator: models.OpEq, Values: []string{"B"}})
+
+			require.NoError(t, err, "%s with %q", write, attribute)
+			assert.Equal(t, 1, repo.calls[write], "%s with %q is written", write, attribute)
+		}
+	}
+}
+
+// cartRulePrices is a base price, a quantity tier and a ruled price whose
+// SECOND rule is the given one, so the error has an index at both levels to
+// report and the two differ.
+func cartRulePrices(rule RuleInput) []PriceInput {
+	return []PriceInput{
+		{CurrencyCode: "TRY", Amount: 100},
+		{CurrencyCode: "TRY", Amount: 95, MinQuantity: 10},
+		{CurrencyCode: "TRY", Amount: 90, Rules: []RuleInput{
+			{Attribute: "region_id", Operator: models.OpEq, Values: []string{"reg_1"}},
+			rule,
+		}},
+	}
+}
+
+// writingRepo accepts the three writes a rule reaches pricing through.
+func writingRepo() *stubRepo {
+	repo := newStubRepo()
+	repo.createPriceSetFn = func(_ context.Context, id string, _ []models.Price, _ time.Time) (models.PriceSet, error) {
+		return models.PriceSet{ID: id}, nil
+	}
+	repo.replacePricesFn = func(_ context.Context, _ string, prices []models.Price, _ time.Time) ([]models.Price, error) {
+		return prices, nil
+	}
+	repo.createPriceRuleFn = func(_ context.Context, rule models.PriceRule, _ time.Time) (models.PriceRule, error) {
+		return rule, nil
+	}
+	return repo
+}

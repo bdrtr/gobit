@@ -648,8 +648,8 @@ func TestCreateCartUnknownCountryOpensNoCart(t *testing.T) {
 // data reaches the flow AS IT IS.
 //
 // The field is in a class separate from the region and the currency: it really is
-// the client's information, and it becomes rule context under `cart.` and nothing
-// else reads it. That is why it was not
+// the client's information, and it becomes promotion rule context under `cart.`
+// and nothing else reads it, no price included. That is why it was not
 // removed from the body — but carrying it is mandatory as well, because the only
 // way to open a cart now is the flow and had it not been carried the field the
 // client sent would silently fall away. The decision is the same one made for the

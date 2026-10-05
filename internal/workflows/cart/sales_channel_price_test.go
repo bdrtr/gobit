@@ -148,3 +148,38 @@ func TestTheDiscountRoundAsksInTheCartsChannel(t *testing.T) {
 
 	assert.Equal(t, "sc_A", attributes[AttrSalesChannelID])
 }
+
+// TestALineIsPricedForItsBuyerInItsChannel holds the line's opening price and
+// the totals' batch price to the cart's own buyer and channel, each in its own
+// attribute: a variant priced only by contract or by channel would otherwise
+// be refused to the very buyer it is priced for, or charged as another's.
+func TestALineIsPricedForItsBuyerInItsChannel(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness(t)
+	h.carts.snapshotFn = func(_ context.Context, cartID string) (json.RawMessage, error) {
+		snap := snapshotOf(1, []SnapshotItem{{ID: testLineA, VariantID: testVariantA, Quantity: 1}}, nil)
+		snap.ID = cartID
+		snap.CustomerID = testCustomerID
+		snap.SalesChannelID = "sc_A"
+
+		return json.Marshal(snap)
+	}
+	recordAddLine(h.carts, testLineA)
+
+	_, err := h.wf.AddLineItem(context.Background(), AddLineItemInput{
+		CartID: testCartID, VariantID: testVariantA, Quantity: 1,
+	})
+
+	require.NoError(t, err)
+	require.NotEmpty(t, h.prices.seen, "the line was priced")
+	require.NotEmpty(t, h.prices.requests, "the totals were priced")
+	for name, attributes := range map[string]map[string]string{
+		"the line":   h.prices.seen[0].attributes,
+		"the totals": h.prices.requests[len(h.prices.requests)-1].Attributes,
+	} {
+		assert.Equal(t, testCustomerID, attributes[AttrCustomerID], "%s: the cart's buyer", name)
+		assert.Equal(t, "sc_A", attributes[AttrSalesChannelID], "%s: the cart's channel", name)
+		assert.Equal(t, testRegionID, attributes[attrRegionID], "%s: the cart's region", name)
+	}
+}

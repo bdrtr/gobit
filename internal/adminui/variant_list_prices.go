@@ -119,8 +119,16 @@ func (u *UI) listPricesOf(r *http.Request, admin ListPriceAdmin, priceSetID stri
 	return views, false
 }
 
+// RuleAttributeCartPrefix begins every attribute the cart flow takes from the
+// cart's metadata. Such an attribute reaches promotions and no price
+// (ADR 0403), so a list price ruled on one, written before pricing refused it,
+// matches no cart. It is spelled by hand and pinned against the cart flow's
+// constant in internal/arch.
+const RuleAttributeCartPrefix = "cart."
+
 // forCustomers says which customers a list price is for: every one, the named
-// groups, or the conditions the panel did not write, spelled as they stand.
+// groups, or the conditions the panel did not write, spelled as they stand; a
+// condition on the cart's metadata is marked as matching no cart (ADR 0403).
 func forCustomers(row *listPriceRow, names map[string]string) string {
 	if len(row.Rules) == 0 {
 		return ", for every customer"
@@ -138,7 +146,11 @@ func forCustomers(row *listPriceRow, names map[string]string) string {
 			parts = append(parts, "for "+strings.Join(groups, ", "))
 			continue
 		}
-		parts = append(parts, rule.Attribute+" "+rule.Operator+" "+strings.Join(rule.Values, ", "))
+		condition := rule.Attribute + " " + rule.Operator + " " + strings.Join(rule.Values, ", ")
+		if strings.HasPrefix(rule.Attribute, RuleAttributeCartPrefix) {
+			condition += " (matches no cart, ADR 0403)"
+		}
+		parts = append(parts, condition)
 	}
 
 	return ", " + strings.Join(parts, "; ")

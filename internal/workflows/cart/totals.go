@@ -465,10 +465,10 @@ func assembleTotals(snap Snapshot, lines []LineTotals, shippingTotal int64, taxS
 type priceRequest struct {
 	// CurrencyCode is the cart's currency (ISO 4217).
 	CurrencyCode string `json:"currency_code"`
-	// Attributes is the context the price rules will look at, the cart's rule
-	// context ([Workflows.ruleContext]): the region, the sales channel the cart
-	// was opened in (ADR 0397), the cart's metadata, the customer, their company
-	// and their head group.
+	// Attributes is the context the price rules will look at, the cart's price
+	// context ([Workflows.priceContext]): the region, the sales channel the cart
+	// was opened in (ADR 0397), the customer, their company and their head
+	// group. The cart's metadata is never in it (ADR 0403).
 	Attributes map[string]string `json:"attributes"`
 	// Items are the items to be priced and they go in the cart's line ORDER.
 	Items []priceRequestItem `json:"items"`
@@ -602,8 +602,9 @@ func (w *Workflows) unitPrices(
 	// The list is discarded here: these two callers are PRICING, and a price set
 	// is chosen by the merchant-ranked head alone (ADR 0049). "Any of my groups"
 	// is a discount question — two price sets both matching would be two prices
-	// with nothing deciding between them.
-	attributes, _, contextErr := w.ruleContext(ctx, snap)
+	// with nothing deciding between them. The cart's metadata is not asked for:
+	// it chooses no price (ADR 0403).
+	attributes, _, contextErr := w.priceContext(ctx, priceSubjectOf(snap))
 	if contextErr != nil {
 		w.log.WarnContext(ctx, "the customer's groups or company could not be read; pricing without them",
 			"error", contextErr, "customer_id", snap.CustomerID)

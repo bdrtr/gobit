@@ -47,9 +47,11 @@ func TestAListTrialComparesTodaysPriceWithAndWithoutTheList(t *testing.T) {
 	assert.Equal(t, []int64{1500, 1300}, []int64{report.Orders[0].Baseline, report.Orders[0].Trial})
 	assert.Contains(t, report.Assumptions, "list_active_without_window")
 	// What an order does not keep is said, not priced as if it were there
-	// (ADR 0397, D253).
-	assert.Contains(t, report.Assumptions, "no_cart_metadata")
+	// (ADR 0397, D253). The cart's metadata is no longer such a fact: a cart's
+	// price does not read it either (ADR 0403, D260).
 	assert.Contains(t, report.Assumptions, "no_sales_channel")
+	assert.NotContains(t, report.Assumptions, "no_cart_metadata",
+		"the trial sets aside nothing a cart's price reads")
 
 	entry := h.prices.compared[0].Entries[0]
 	assert.Equal(t, testRegionID, entry.Attributes[attrRegionID])
