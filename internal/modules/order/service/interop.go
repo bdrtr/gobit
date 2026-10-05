@@ -1031,7 +1031,7 @@ func (i *Interop) ShippingOptionOf(ctx context.Context, orderID string) (string,
 //	  "currency_code": "TRY",
 //	  "country_code":  "TR",     // the current shipping address's; "" when none
 //	  "subtotal":      50000,    // the goods after discount, minor unit
-//	  "item_count":    3
+//	  "item_count":    3         // every unit sold but a gift card's
 //	}
 type interopDeliveryFacts struct {
 	RegionID     string `json:"region_id"`
@@ -1044,13 +1044,16 @@ type interopDeliveryFacts struct {
 // DeliveryFactsJSON returns the facts a new delivery for the order is quoted
 // on, in the schema of [interopDeliveryFacts] (ADR 0199).
 //
-// They are the sale's, as the cart's quote read them: the goods after discount
-// and the units sold, an add-on's among them (ADR 0393). The goods are the
-// lines' unit prices times their quantities, which is what the quote read
-// before any tax was worked out; the order's subtotal is that only where the
-// prices did not include their tax (ADR 0246). The country is the current
-// shipping address's rather than the region's, since it is where the parcel
-// goes, and ADR 0195 holds it to the country the order was placed in.
+// They are the sale's, as the cart's quote read them: the goods after discount,
+// and every unit sold but a gift card's, an add-on's among them (ADR 0393), the
+// card told by the flag the line kept (ADR 0211, ADR 0404). An order placed
+// before ADR 0404 was quoted with its cards, so a change can be quoted on fewer
+// units than its sale. The goods are the lines' unit prices times their
+// quantities, which is what the quote read before any tax was worked out; the
+// order's subtotal is that only where the prices did not include their tax
+// (ADR 0246). The country is the current shipping address's rather than the
+// region's, since it is where the parcel goes, and ADR 0195 holds it to the
+// country the order was placed in.
 func (i *Interop) DeliveryFactsJSON(ctx context.Context, orderID string) (json.RawMessage, error) {
 	detail, err := i.svc.GetOrder(ctx, orderID)
 	if err != nil {
@@ -1059,15 +1062,17 @@ func (i *Interop) DeliveryFactsJSON(ctx context.Context, orderID string) (json.R
 
 	var units, goods int64
 	for j := range detail.Items {
-		units, err = addAmount(units, detail.Items[j].Quantity)
-		if err != nil {
-			return nil, err
-		}
 		quoted, err := multiplyAmount(detail.Items[j].UnitPrice, detail.Items[j].Quantity)
 		if err != nil {
 			return nil, err
 		}
 		if goods, err = addAmount(goods, quoted); err != nil {
+			return nil, err
+		}
+		if detail.Items[j].IsGiftcard {
+			continue
+		}
+		if units, err = addAmount(units, detail.Items[j].Quantity); err != nil {
 			return nil, err
 		}
 	}

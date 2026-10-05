@@ -74,9 +74,10 @@ type quoteResponse struct {
 // # The facts are the CART's, never the caller's
 //
 // Everything the quote is computed from — region, currency, country, subtotal,
-// item count — is read from the cart's own record. The caller supplies exactly
-// two things: WHICH option, and the free-form data blob that is carried and
-// never read. There is no field a caller can send that changes the price.
+// item count — is read from the cart's own record and its products' flags. The
+// caller supplies exactly two things: WHICH option, and the free-form data blob
+// that is carried and never read. There is no field a caller can send that
+// changes the price.
 //
 // That is also why the call reaches fulfillment through the interop surface
 // rather than the storefront endpoint: interop marks the facts TRUSTED, which
@@ -336,10 +337,16 @@ func (w *Workflows) quoteRequestFor(ctx context.Context, snap Snapshot) (quoteRe
 		subtotal = next
 	}
 
-	// Every unit counts, an add-on's included: an add-on is an ordinary variant
-	// (ADR 0228, ADR 0393). A gift card's units count too, which is D246.
+	// Every unit sold counts but a gift card's: an add-on is an ordinary variant
+	// (ADR 0228, ADR 0393), and a card's code is mailed (ADR 0210, ADR 0404). A
+	// line whose product could not be read counts, as a failed read prices the
+	// cart without its discounts ([Workflows.lineProductFacts]).
+	cards := giftCardLines(snap, facts)
 	var itemCount int64
 	for i := range snap.Items {
+		if cards[snap.Items[i].ID] {
+			continue
+		}
 		next, err := addAmount(itemCount, snap.Items[i].Quantity)
 		if err != nil {
 			return quoteRequest{}, err

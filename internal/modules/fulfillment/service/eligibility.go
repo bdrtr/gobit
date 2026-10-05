@@ -30,7 +30,8 @@ const (
 	// AttrSubtotal is the cart's subtotal (minor unit INTEGER). "Free shipping"
 	// rules look at this field.
 	AttrSubtotal = "subtotal"
-	// AttrItemCount is the total number of items in the cart.
+	// AttrItemCount is the number of items the shipment is priced on, as the
+	// caller counts them.
 	AttrItemCount = "item_count"
 	// AttrTotalWeight is the total weight of the shipment (grams).
 	AttrTotalWeight = "total_weight"
@@ -129,8 +130,8 @@ type ListOptionsInput struct {
 	// Subtotal is the cart's subtotal (minor unit INTEGER);
 	// it has to be between 0 and [models.MaxAmount].
 	Subtotal int64
-	// ItemCount is the total number of items in the cart;
-	// it has to be between 0 and [models.MaxItemCount].
+	// ItemCount is the number of items the shipment is priced on, as the caller
+	// counts them; it has to be between 0 and [models.MaxItemCount].
 	ItemCount int64
 	// TotalWeight is the total weight of the shipment (grams); zero if unknown.
 	// It has to be between 0 and [models.MaxTotalWeight].

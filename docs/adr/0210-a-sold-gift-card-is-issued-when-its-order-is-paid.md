@@ -10,6 +10,7 @@ each code to the order's address. An operator can give a card a new code.
 - **Amended by:** [0212](0212-a-sweep-issues-the-cards-a-lost-delivery-did-not.md): a scheduled sweep issues what a lost delivery did not, and neither way issues for a canceled order
 - **Amended by:** [0214](0214-a-gift-card-can-expire.md): a sold card takes the installation's validity, and its mail carries `expires_at`
 - **Amended by:** [0398](0398-the-end-to-end-ground-opens-the-installation-the-server-serves.md): the gate holding production to the ground's flows is gone; the ground subscribes nothing of its own, so the gift card scenario runs on production's wiring
+- **Amended by:** [0404](0404-a-gift-card-is-no-item-to-the-shipping-quote.md): a card line's units are left out of the shipping quote's item count; the line is still stocked and parcelled
 
 Measurement: [measurements/0210](../measurements/0210-a-card-that-was-bought.md)
 

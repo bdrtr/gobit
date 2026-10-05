@@ -110,6 +110,60 @@ func TestTheQuoteCountsAnAddOnsUnits(t *testing.T) {
 	assert.Equal(t, int64(4), h.shipping.gotRequest.ItemCount)
 }
 
+// giftCardCart is a cart of three gift cards at 250 and, after them, two
+// ordinary units at 1000. The card line comes first, so a loop that stops at it
+// counts nothing.
+func giftCardCart(_ context.Context, _ string) (json.RawMessage, error) {
+	return json.Marshal(Snapshot{
+		ID: testCartID, RegionID: testRegionID, CurrencyCode: testCurrency,
+		Items: []SnapshotItem{
+			{ID: "cli_1", VariantID: testVariantB, Quantity: 3},
+			{ID: "cli_2", VariantID: testVariantA, Quantity: 2},
+		},
+	})
+}
+
+// TestTheQuoteLeavesAGiftCardsUnitsOut is gap D246: a card's code is mailed
+// (ADR 0210), so a per-item rate does not charge for it and an item_count rule
+// does not count it (ADR 0404). The subtotal keeps the card's price.
+func TestTheQuoteLeavesAGiftCardsUnitsOut(t *testing.T) {
+	h := shippingHarness(t)
+	installProductCatalog(h, map[string]productFacts{
+		testProductA: {Discountable: true},
+		testProductB: {IsGiftcard: true},
+	})
+	h.carts.snapshotFn = giftCardCart
+
+	_, err := h.wf.AddQuotedShippingMethod(context.Background(), testCartID, "so_1", nil)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, h.shipping.calls)
+	assert.Equal(t, int64(2), h.shipping.gotRequest.ItemCount, "the three cards are no items")
+	assert.Equal(t, int64(3*250+2*1000), h.shipping.gotRequest.Subtotal, "the cards are still goods")
+}
+
+// TestAQuoteThatCannotReadTheProductsCountsEveryUnit is ADR 0404's failed read:
+// a line whose product is not read counts, as a failed read prices the cart
+// without its discounts, and the quote is still given.
+func TestAQuoteThatCannotReadTheProductsCountsEveryUnit(t *testing.T) {
+	for name, fail := range map[string]bool{"the read fails": true, "the card is not answered": false} {
+		t.Run(name, func(t *testing.T) {
+			h := shippingHarness(t)
+			catalog := installProductCatalog(h, map[string]productFacts{testProductA: {Discountable: true}})
+			if fail {
+				catalog.err = coreerrors.Unavailable("query_unavailable", "the read layer is unreachable")
+			}
+			h.carts.snapshotFn = giftCardCart
+
+			_, err := h.wf.AddQuotedShippingMethod(context.Background(), testCartID, "so_1", nil)
+			require.NoError(t, err)
+
+			require.Equal(t, 1, h.shipping.calls)
+			assert.Equal(t, int64(5), h.shipping.gotRequest.ItemCount)
+		})
+	}
+}
+
 // TestTheQuoteSubtotalIsTakenAFTERTheDiscount pins the basis of the threshold
 // rules.
 //

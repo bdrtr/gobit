@@ -663,11 +663,14 @@ func lineLists(variantID string, flags map[string]productFacts) map[string][]str
 // there is no hop to hoist and the discount leg pays it alone, which is the
 // price the record already names.
 //
-// # It is not read at all when nothing would look at it
+// # It is read where something looks at it
 //
-// The only caller is [Workflows.applyDiscounts], which returns before this on an
-// installation with no promotion module — so a shop that does not discount pays
-// nothing, and neither does a cart with no lines.
+// The totals round reads it when the promotion or the tax module is installed
+// ([Workflows.computeTotals]), the region's rate reads it when it taxes
+// ([Workflows.applyRegionTax]), a promotion trial reads it for the orders it
+// tries ([Workflows.TrialPromotion]), and the shipping quote always reads it,
+// since its item count leaves a gift card's units out (ADR 0404). A cart with
+// no lines reads nothing.
 //
 // # A failure is degradation, not a dropped cart
 //

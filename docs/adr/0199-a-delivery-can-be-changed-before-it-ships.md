@@ -7,6 +7,7 @@ of changes beside the sold method, and a dearer change waits for a way to charge
 
 - **Status:** Accepted
 - **Date:** 2026-09-26
+- **Amended by:** [0404](0404-a-gift-card-is-no-item-to-the-shipping-quote.md): the delivery quote leaves a card line's units out, so an order placed before is quoted on fewer units than its sale
 
 Measurement: [measurements/0199](../measurements/0199-a-cheaper-courier.md)
 

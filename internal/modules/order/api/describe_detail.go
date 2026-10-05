@@ -151,7 +151,8 @@ func describeOrderDetail(d *openapi.Doc) {
 		Summary: "Changes which service a delivery goes on, while nothing is on its way.",
 		Description: "The option is priced by the fulfillment module on the order's own facts " +
 			"— its region, currency, the country of its shipping address, the goods after " +
-			"discount and the units sold — and has to be among the options it lists for them, " +
+			"discount and every unit sold but a gift card's — and has to be among the options " +
+			"it lists for them, " +
 			"admin-only ones included. The method keeps what the order was sold; the change is " +
 			"added to its \"changes\", and the last change is the delivery the order is on. The " +
 			"timeline dates it with an \"order.delivery_changed\" entry (ADR 0199).\n\n" +

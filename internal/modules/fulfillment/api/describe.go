@@ -409,7 +409,8 @@ func eligibilityParameters() []openapi.Parameter {
 		},
 		queryParameter("subtotal", typeInteger,
 			"The subtotal of the cart (minor unit)."),
-		queryParameter("item_count", typeInteger, "The number of items in the cart."),
+		queryParameter("item_count", typeInteger, "The number of items the shipment is priced on; "+
+			"the cart's own listing counts every unit but a gift card's."),
 		queryParameter("total_weight", typeInteger, "The total weight of the cart."),
 		queryParameter("is_return", typeBoolean,
 			"If true, return options are listed."),

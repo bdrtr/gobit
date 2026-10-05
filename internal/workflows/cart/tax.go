@@ -246,10 +246,11 @@ func (w *Workflows) applyTaxes(
 	return w.applyModuleTax(ctx, snap, country, shippingTotal, lines, facts, giftCardLines(snap, facts))
 }
 
-// giftCardLines names the lines whose product is a gift card, which carry no
-// tax (ADR 0247): a card is money its holder spends later, and the goods it
-// buys are taxed then. A line whose product could not be read is priced as any
-// line; the checkout reads the flag strictly and refuses a card that was taxed.
+// giftCardLines names the lines whose product is a gift card: they carry no tax
+// (ADR 0247), a card being money its holder spends later and the goods it buys
+// taxed then, and a shipping quote counts none of their units (ADR 0404). A line
+// whose product could not be read is priced and counted as any line; the
+// checkout reads the flag strictly and refuses a card that was taxed.
 func giftCardLines(snap Snapshot, facts map[string]productFacts) map[string]bool {
 	cards := make(map[string]bool)
 	for i := range snap.Items {

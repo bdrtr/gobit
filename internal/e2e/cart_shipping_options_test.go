@@ -13,7 +13,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	fulfillmentmanual "github.com/bdrtr/gobit/internal/modules/fulfillment/manual"
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
+	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
 )
 
 // TestACartListsTheOptionItsSubtotalOpens is ADR 0292 on the production
@@ -98,4 +100,98 @@ func TestAnOperatorChoosesAnAdminOnlyOption(t *testing.T) {
 	assert.Equal(t, http.StatusUnprocessableEntity, byShopper.Code, byShopper.Body.String())
 	byOperator := adminCartRequest(t, http.MethodPost, "/admin/v1/carts/"+cartID+"/shipping-methods", body)
 	assert.Equal(t, http.StatusCreated, byOperator.Code, byOperator.Body.String())
+}
+
+// TestAGiftCardIsNoItemToTheQuoteOrTheDeliveryChange is gap D246 on the
+// production wiring (ADR 0404). A cart of one ring and two gift cards is quoted
+// on one item: an option charging 700 an item lists at 700, and an option
+// ruled to exactly one item is listed. The order placed keeps the card line's
+// flag, and its delivery change is quoted on the same one item.
+func TestAGiftCardIsNoItemToTheQuoteOrTheDeliveryChange(t *testing.T) {
+	ctx := t.Context()
+	customerID, email := newCustomer(ctx, t)
+	ring, _ := newStockedVariant(ctx, t, "E2E Card Quote Ring", map[string]int64{
+		taxedCurrency: additionUnitPrice,
+	}, additionStock)
+	card := newGiftCardVariant(ctx, t, 5_000)
+	cartID := additionFixture{customerID: customerID, email: email, variantID: ring}.openCart(t, "")
+	added := addAdminLine(t, cartID, testChannelID, card, 2)
+	require.Equal(t, http.StatusCreated, added.Code, "body: %s", added.Body.String())
+	address := fmt.Sprintf(`{"first_name":"Ada","address_1":"12 Main St","city":"Springfield",`+
+		`"postal_code":"62701","country_code":%q}`, taxedCountry)
+	rec := storefrontRequest(t, http.MethodPut, "/store/v1/carts/"+cartID+"/shipping-address", address)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	profileID := newShippingProfile(ctx, t, "Card quote profile")
+	perItem, err := shippingSvc.CreateShippingOption(ctx, fulfillmentsvc.CreateOptionInput{
+		Name:              fmt.Sprintf("Per item %d", fixtureCounter.Add(1)),
+		ProviderID:        fulfillmentmanual.ID,
+		ShippingProfileID: profileID,
+		PriceType:         "calculated",
+		CurrencyCode:      taxedCurrency,
+		RegionID:          taxedRegionID,
+		Data:              map[string]any{fulfillmentmanual.DataKeyPerItemAmount: 700},
+	})
+	require.NoError(t, err)
+	oneItem := newShippingOption(ctx, t, profileID, "One item only", 300, false)
+	for _, operator := range []string{"gte", "lte"} {
+		_, err := shippingSvc.CreateShippingOptionRule(ctx, oneItem, fulfillmentsvc.CreateRuleInput{
+			Attribute: fulfillmentsvc.AttrItemCount, Operator: operator, Values: []string{"1"},
+		})
+		require.NoError(t, err)
+	}
+
+	listed := storefrontRequest(t, http.MethodGet, "/store/v1/carts/"+cartID+"/shipping-options", "")
+	require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+	var body struct {
+		Data []struct {
+			ID     string `json:"id"`
+			Amount int64  `json:"amount"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &body))
+	listedAt := map[string]int64{}
+	for _, option := range body.Data {
+		listedAt[option.ID] = option.Amount
+	}
+	require.Contains(t, listedAt, perItem.ID, listed.Body.String())
+	assert.Equal(t, int64(700), listedAt[perItem.ID], "the ring is the only item")
+	assert.Contains(t, listedAt, oneItem, "the cart holds one item to the rule")
+
+	chosen := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/shipping-methods",
+		fmt.Sprintf(`{"shipping_option_id":%q}`, perItem.ID))
+	require.Equal(t, http.StatusCreated, chosen.Code, chosen.Body.String())
+	read := storefrontRequest(t, http.MethodGet, "/store/v1/carts/"+cartID, "")
+	require.Equal(t, http.StatusOK, read.Code, read.Body.String())
+	total, ok := storefrontData(t, read)["total"].(float64)
+	require.True(t, ok, read.Body.String())
+	done := storefrontRequest(t, http.MethodPost, "/store/v1/carts/"+cartID+"/complete",
+		storefrontCompletionBody(t, int64(total)))
+	require.Equal(t, http.StatusOK, done.Code, "body: %s", done.Body.String())
+	orderID, _ := storefrontData(t, done)["order_id"].(string)
+	require.NotEmpty(t, orderID)
+
+	order, err := orderSvc.GetOrder(ctx, orderID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(700), order.ShippingTotal)
+	cards := 0
+	for i := range order.Items {
+		if order.Items[i].VariantID == card {
+			cards++
+			assert.True(t, order.Items[i].IsGiftcard, "the card line keeps its flag")
+		}
+	}
+	require.Equal(t, 1, cards)
+
+	flow, err := fulfillingwf.FromContainer(ctr)
+	require.NoError(t, err)
+	quotes, err := flow.QuoteDelivery(ctx, orderID)
+	require.NoError(t, err)
+	quotedAt := map[string]int64{}
+	for _, quote := range quotes {
+		quotedAt[quote.ID] = quote.Amount
+	}
+	require.Contains(t, quotedAt, perItem.ID)
+	assert.Equal(t, int64(700), quotedAt[perItem.ID], "a delivery change is quoted on the ring alone")
+	assert.Contains(t, quotedAt, oneItem, "the order holds one item to the rule")
 }

@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -88,4 +89,39 @@ func TestAGiftCardLineCannotBeWrittenOff(t *testing.T) {
 		OrderLineItemID: otherLine, Quantity: 1, Reason: "out of stock",
 	})
 	require.NoError(t, err, "the order's other line is written off as before")
+}
+
+// TestTheDeliveryFactsLeaveAGiftCardsUnitsOut is gap D246 on the order's side:
+// a delivery change is quoted on the units the sale shipped, and a card line
+// tells itself by the flag it kept (ADR 0211, ADR 0404). The goods keep the
+// card's price. The card line comes first, so a loop that stops at it counts
+// nothing.
+func TestTheDeliveryFactsLeaveAGiftCardsUnitsOut(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	interop := service.NewInterop(e.svc)
+
+	input := validInput()
+	input.Items = append([]service.CreateOrderItemInput{{
+		VariantID: secondVariantID, Title: "Gift card", Quantity: 2, UnitPrice: 2_500,
+		Subtotal: 5_000, Total: 5_000, IsGiftcard: true,
+	}}, input.Items...)
+	input.Subtotal += 5_000
+	input.Total += 5_000
+	order, err := e.svc.CreateOrder(ctx, input)
+	require.NoError(t, err)
+	detail, err := e.svc.GetOrder(ctx, order.ID)
+	require.NoError(t, err)
+	require.Len(t, detail.Items, 2)
+	require.True(t, detail.Items[0].IsGiftcard, "the fixture reads the card line first")
+
+	raw, err := interop.DeliveryFactsJSON(ctx, order.ID)
+	require.NoError(t, err)
+	var facts struct {
+		Subtotal  int64 `json:"subtotal"`
+		ItemCount int64 `json:"item_count"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &facts))
+	assert.Equal(t, int64(3), facts.ItemCount, "the two cards are no items")
+	assert.Equal(t, int64(5_000+3_000), facts.Subtotal, "the cards are still goods")
 }

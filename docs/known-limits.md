@@ -1007,12 +1007,15 @@ past and is not corrected retroactively.
   Parcels screen's order column do not show it. Receiving a return does not
   look at its parcel, and cancelling a return leaves its parcel to the operator.
 
-- **A shipping quote counts every unit sold.** The cart's quote and a delivery
-  change price on the units, and an engraving or a wrap is a unit as its ring
-  is, so a per-item rate charges for it
-  ([ADR 0393](adr/0393-an-add-on-is-written-under-its-line.md)). A parcel takes
-  an add-on line as it takes any line. A gift card's units count too
-  ([gaps D246](gaps.md)).
+- **A shipping quote counts every unit sold but a gift card's.** The cart's
+  quote and a delivery change price on the units, and an engraving or a wrap is
+  a unit as its ring is, so a per-item rate charges for it
+  ([ADR 0393](adr/0393-an-add-on-is-written-under-its-line.md)). A gift card's
+  units are left out
+  ([ADR 0404](adr/0404-a-gift-card-is-no-item-to-the-shipping-quote.md)),
+  except in a quote that cannot read the products and on an order line written
+  before order migration 000028; a shop that posts its cards cannot charge them
+  per item. A parcel takes an add-on line or a card line as it takes any line.
 
 - **An order placed before ADR 0393 lists its add-ons after its lines.** Its
   order read, its invoice, its dossier and the line entity print every line of

@@ -168,6 +168,19 @@ design. It is fixed with `1.0.0`.
   moves every rate of the stack with it. A rule on a rate standing on another
   still answers 409 `tax_constraint_violation`. **For operators:** nothing
   stored changes and no migration runs.
+
+- **A gift card is no item to the shipping quote** (ADR 0404, D246). **For
+  operators:** a per-item rate and an `item_count` rule count every unit sold
+  but a gift card's on the cart's listing, its shipping method and a delivery
+  change; a card line is still reserved and a parcel still takes it, and a
+  delivery change on an order placed before can be quoted on fewer units than
+  its sale. **For integrators:** a fulfillment provider's
+  `core/provider.QuoteInput.ItemCount` leaves a gift card's units out when a
+  cart or a delivery change is quoted, as does an order's delivery facts, and
+  the `item_count` parameter of `GET /store/v1/shipping-options` and
+  `GET /admin/v1/shipping-options/eligible` says the cart's listing counts
+  every unit but a gift card's.
+
 - **An order line keeps what its goods cost** (ADR 0401). **For API
   consumers:** `GET` and `PUT /admin/v1/variants/{id}/costs` read and replace a
   variant's unit costs, one per currency, at most 50, net of tax
