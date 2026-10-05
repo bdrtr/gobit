@@ -465,9 +465,10 @@ func assembleTotals(snap Snapshot, lines []LineTotals, shippingTotal int64, taxS
 type priceRequest struct {
 	// CurrencyCode is the cart's currency (ISO 4217).
 	CurrencyCode string `json:"currency_code"`
-	// Attributes is the context the price rules will look at; today only the
-	// region is put in it, and why the customer segment stayed out is in the
-	// package comment.
+	// Attributes is the context the price rules will look at, the cart's rule
+	// context ([Workflows.ruleContext]): the region, the sales channel the cart
+	// was opened in (ADR 0397), the cart's metadata, the customer, their company
+	// and their head group.
 	Attributes map[string]string `json:"attributes"`
 	// Items are the items to be priced and they go in the cart's line ORDER.
 	Items []priceRequestItem `json:"items"`

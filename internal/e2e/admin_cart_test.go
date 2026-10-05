@@ -74,8 +74,8 @@ func adminCartRequest(t *testing.T, method, path, body string) *httptest.Respons
 
 // openAdminCart opens a cart from the admin surface.
 //
-// It names no channel, because nothing on that path reads one; the channel is
-// claimed on each line write instead.
+// It names no channel, so the cart is priced in none (ADR 0397); the channel
+// that scopes the catalog is claimed on each line write instead.
 func openAdminCart(t *testing.T, customerID, email string) *httptest.ResponseRecorder {
 	t.Helper()
 

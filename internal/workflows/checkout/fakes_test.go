@@ -196,7 +196,7 @@ func (s *stubCarts) MarkCompleted(ctx context.Context, cartID string) error {
 // OpenCart completes the surface of the cart workflows; this package never calls
 // it.
 func (s *stubCarts) OpenCart(
-	_ context.Context, _, _, _, _, _, _ string, _ json.RawMessage,
+	_ context.Context, _, _, _, _, _, _, _ string, _ json.RawMessage,
 ) (string, error) {
 	return "", errUnexpected("OpenCart")
 }

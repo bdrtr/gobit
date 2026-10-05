@@ -29,6 +29,10 @@ type Snapshot struct {
 	CustomerID string `json:"customer_id"`
 	// CurrencyCode is the currency of the cart (ISO 4217).
 	CurrencyCode string `json:"currency_code"`
+	// SalesChannelID is the sales channel the cart was opened in; empty when
+	// it names none. Every round's rule context carries it, and no round reads
+	// the request's channel for the price (ADR 0397).
+	SalesChannelID string `json:"sales_channel_id"`
 	// Revision is the shape counter of the cart; it is the stamp of the calculation.
 	Revision int64 `json:"revision"`
 	// Completed reports whether the cart has been completed.

@@ -64,12 +64,15 @@ const (
 // trialFlowAssumptions are what THIS side of the trial sets aside, published
 // beside the promotion module's own.
 //
-// A purchase is rebuilt from its order, and three facts of the moment of sale
-// are not kept anywhere: the product's categories, tags and collection, the
-// customer's groups, and the cart's own metadata. The first two are read as they
-// are TODAY; the third is absent, so a rule on a `cart.` attribute matches no
-// order.
-var trialFlowAssumptions = []string{"todays_catalog", "todays_customer_groups", "no_cart_metadata"}
+// A purchase is rebuilt from its order, and four facts of the moment of sale
+// are not kept on the order: the product's categories, tags and collection, the
+// customer's groups, the cart's own metadata, and the channel the cart was
+// opened in. The first two are read as they are TODAY; the last two are absent,
+// so a rule on a `cart.` attribute or on `sales_channel_id` matches no order
+// (ADR 0397).
+var trialFlowAssumptions = []string{
+	"todays_catalog", "todays_customer_groups", "no_cart_metadata", "no_sales_channel",
+}
 
 // trialRequest is the consumer-side copy of the promotion module's trial
 // request schema; the producing side documents it.

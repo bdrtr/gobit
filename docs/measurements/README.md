@@ -196,3 +196,4 @@ truth: a report says what was true on the day it was taken.
 | [A backordered line waiting — measured 2026-10-05](0392-a-backordered-line-waits.md) | 168 |
 | [A price the buyer agreed to — measured 2026-10-05](0394-a-price-the-buyer-agreed-to.md) | 138 |
 | [Three rule matchers — measured 2026-10-05](0396-three-rule-matchers.md) | 119 |
+| [What a cart is priced in — measured 2026-10-05](0397-what-a-cart-is-priced-in.md) | 123 |

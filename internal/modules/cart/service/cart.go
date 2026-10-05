@@ -45,6 +45,11 @@ type CreateCartInput struct {
 	// surface; empty for a shopper (ADR 0296). The caller passes the identity
 	// the guard ring proved, never one a body named.
 	OpenedBy string
+	// SalesChannelID is the sales channel the cart is priced in; it is
+	// OPTIONAL (ADR 0397). Only its shape is validated here: the workflow
+	// derived it from the request's identity, and whether the channel exists
+	// is the auth module's question, which nothing asks (ADR 0146).
+	SalesChannelID string
 	// Metadata is the caller's free-form extra data.
 	Metadata map[string]any
 }
@@ -74,6 +79,11 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 			return models.Cart{}, err
 		}
 	}
+	if in.SalesChannelID != "" {
+		if err := requireID("sales_channel_id", in.SalesChannelID); err != nil {
+			return models.Cart{}, err
+		}
+	}
 	currency, err := normalizeCurrency(in.CurrencyCode)
 	if err != nil {
 		return models.Cart{}, err
@@ -92,14 +102,15 @@ func (s *Service) CreateCart(ctx context.Context, in CreateCartInput) (models.Ca
 	at := time.Now().UTC()
 	err = s.store.WithTx(ctx, func(ctx context.Context) error {
 		created, createErr := s.store.CreateCart(ctx, models.Cart{
-			ID:            models.NewCartID(),
-			RegionID:      in.RegionID,
-			CustomerID:    in.CustomerID,
-			Email:         email,
-			CurrencyCode:  currency,
-			AddsToOrderID: in.AddsToOrderID,
-			OpenedBy:      in.OpenedBy,
-			Metadata:      in.Metadata,
+			ID:             models.NewCartID(),
+			RegionID:       in.RegionID,
+			CustomerID:     in.CustomerID,
+			Email:          email,
+			CurrencyCode:   currency,
+			AddsToOrderID:  in.AddsToOrderID,
+			OpenedBy:       in.OpenedBy,
+			SalesChannelID: in.SalesChannelID,
+			Metadata:       in.Metadata,
 		})
 		if createErr != nil {
 			return createErr

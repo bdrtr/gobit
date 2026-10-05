@@ -240,18 +240,19 @@ type Carts interface {
 	// empty. Its counterpart in the cart service is CreateCart.
 	//
 	// metadata is the free-form data (a JSON object) the caller attaches to the
-	// CART and may be left empty. The rationale is the same as the metadata
-	// paragraph of [Carts.AddCartLineItem]: the field is the storefront's intent,
-	// this package DOES NOT READ it and it enters no computation — but since this
-	// flow is the only way to open a cart, carrying it is mandatory; if it were
-	// not carried the field the client sent would silently be dropped.
+	// CART and may be left empty. The field is the storefront's intent: opening
+	// a cart does not read it; every round puts its string values into the rule
+	// context under `cart.` (ADR 0111). Since this flow is the only way to open
+	// a cart, carrying it is mandatory; if it were not carried the field the
+	// client sent would silently be dropped.
 	//
 	// addsToOrderID is the order the cart is opened to add to, or empty; this
 	// package asked [Orders] about it before calling (ADR 0192). openedBy is the
-	// operator opening it, or empty for a shopper (ADR 0296).
+	// operator opening it, or empty for a shopper (ADR 0296). salesChannelID is
+	// the channel the cart is priced in, or empty (ADR 0397).
 	OpenCart(
 		ctx context.Context,
-		regionID, currencyCode, customerID, email, addsToOrderID, openedBy string,
+		regionID, currencyCode, customerID, email, addsToOrderID, openedBy, salesChannelID string,
 		metadata json.RawMessage,
 	) (cartID string, err error)
 

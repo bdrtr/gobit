@@ -29,6 +29,7 @@ type Cart struct {
 	AddsToOrderID    *string
 	PricesIncludeTax bool
 	OpenedBy         *string
+	SalesChannelID   *string
 }
 
 type CartAddress struct {

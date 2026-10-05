@@ -774,12 +774,16 @@ type cartDTO struct {
 	// AddsToOrderID is the order the cart was opened to add to; absent when it
 	// adds to nothing (ADR 0192).
 	AddsToOrderID string `json:"adds_to_order_id,omitempty"`
-	Subtotal      int64  `json:"subtotal"`
-	DiscountTotal int64  `json:"discount_total"`
-	TaxTotal      int64  `json:"tax_total"`
-	ShippingTotal int64  `json:"shipping_total"`
-	Total         int64  `json:"total"`
-	TotalsStale   bool   `json:"totals_stale"`
+	// SalesChannelID is the sales channel the cart was opened in, the one
+	// every price and promotion round asks in; absent when the cart names
+	// none (ADR 0397).
+	SalesChannelID string `json:"sales_channel_id,omitempty"`
+	Subtotal       int64  `json:"subtotal"`
+	DiscountTotal  int64  `json:"discount_total"`
+	TaxTotal       int64  `json:"tax_total"`
+	ShippingTotal  int64  `json:"shipping_total"`
+	Total          int64  `json:"total"`
+	TotalsStale    bool   `json:"totals_stale"`
 	// PricesIncludeTax says the totals were computed in a market whose prices
 	// include their tax: a line's unit_price is the sticker and its subtotal is
 	// what is left of it once its tax_total is taken out (ADR 0246).
@@ -873,6 +877,7 @@ func toCartDTO(cart models.Cart) cartDTO {
 		Email:            cart.Email,
 		CurrencyCode:     cart.CurrencyCode,
 		AddsToOrderID:    cart.AddsToOrderID,
+		SalesChannelID:   cart.SalesChannelID,
 		Subtotal:         cart.Subtotal,
 		DiscountTotal:    cart.DiscountTotal,
 		TaxTotal:         cart.TaxTotal,

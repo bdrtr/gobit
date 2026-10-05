@@ -73,8 +73,10 @@ import (
 // and this is a decision that was made:
 //
 //   - A merge moves units that are already in a cart. A cart records no
-//     channel, and the completion does not ask the scope, so a merge asks
-//     nothing that completing the source cart would ask.
+//     scope: the channel it records is the one it is priced in (ADR 0397)
+//     and narrows no catalog read. The completion does not ask the scope, so
+//     a merge asks nothing that completing the source cart would ask; the
+//     moved lines are priced in the target's channel.
 //   - That a line which HAS ENTERED the cart is unaffected by the catalog changing
 //     afterwards is the product module's WRITTEN decision ("the name of a product
 //     added to a cart must remain resolvable even if that product is later moved to
@@ -111,6 +113,24 @@ import (
 // compile and pass every behavioral table that was written before it drifted.
 func SalesChannelIDsFromContext(ctx context.Context) []string {
 	return corehttp.SalesChannelIDs(ctx)
+}
+
+// pricingChannel is the sales channel a cart opened under this request is
+// priced in (ADR 0397): the principal's channel when it holds EXACTLY one, and
+// "" otherwise.
+//
+// A key bound to several channels opens a cart that names none. Picking the
+// first would tie the price to the order the channels were stored in, and a
+// key with two channels has no single storefront to speak for. No principal
+// and the empty set name none for the same reason: there is no channel to
+// price in, and a channel price stays closed.
+func pricingChannel(ctx context.Context) string {
+	channels := SalesChannelIDsFromContext(ctx)
+	if len(channels) != 1 {
+		return ""
+	}
+
+	return channels[0]
 }
 
 // salesChannelFilter produces the channel filter to be added to the catalog query.

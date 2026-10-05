@@ -11,6 +11,20 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **A cart is priced in the sales channel it was opened in** (ADR 0397, D253).
+  **For API consumers:** a cart opened through a publishable key bound to
+  exactly one channel records it as `sales_channel_id`, and every price and
+  promotion round asks with it; a key bound to several records none.
+  `POST /admin/v1/carts` takes an optional `sales_channel_id`. A merge prices
+  the moved lines in the target cart's channel. The price list trial's
+  `assumptions` gain `no_cart_metadata` and `no_sales_channel`, the promotion
+  trial's `no_sales_channel`. **For operators:** a price or promotion rule
+  naming `sales_channel_id` matched nothing before this release and starts
+  matching carts opened through a single-channel key, so review such rules
+  before upgrading. Cart migration 000010 adds `carts.sales_channel_id`; the
+  telephone order form offers the channel and the cart page preselects it.
+  **For integrators:** `OpenCart` on `cart.interop` takes the channel after the
+  operator, so a registration with the old signature fails wiring.
 - **A shipping rule's numeric threshold must be an integer** (ADR 0396, D252).
   **For integrators:** `POST /admin/v1/shipping-options/{id}/rules` with `gt`,
   `gte`, `lt` or `lte` and a value that is not a base-10 integer answers 422

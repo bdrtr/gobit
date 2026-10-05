@@ -8,6 +8,7 @@ mark sits beside the stock mark on the same item, and each clears on its own.
 - **Status:** Accepted
 - **Date:** 2026-09-27
 - **Amends:** [0215](0215-a-wishlist-item-can-ask-for-its-stock.md), whose items could ask only for their stock
+- **Amended by:** [0397](0397-a-cart-is-priced-in-the-channel-it-was-opened-in.md): the quote is a cart's that names no channel
 
 Measurement: [measurements/0216](../measurements/0216-a-price-that-fell.md)
 

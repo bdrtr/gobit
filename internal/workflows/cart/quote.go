@@ -13,8 +13,9 @@ import (
 // before any promotion (ADR 0216).
 //
 // It is the cart's own pricing asked without a cart: the region's currency, the
-// same rule context a cart of that customer carries — the region, the
-// customer, their company and their head group — and quantity one. So a price
+// same rule context a cart of that customer carries that names no sales channel
+// — the region, the customer, their company and their head group (ADR 0397) —
+// and quantity one. So a price
 // list that would price the customer's cart prices the quote, and a promotion,
 // which is the cart's discount and not its price, does not.
 //

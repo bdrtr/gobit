@@ -50,6 +50,9 @@ const (
 	// surface, a user's or an API key's id; empty on a cart a shopper opened
 	// (ADR 0296).
 	FieldOpenedBy = "opened_by"
+	// FieldSalesChannelID is the sales channel the cart was opened in and is
+	// priced in; empty on a cart that names none (ADR 0397).
+	FieldSalesChannelID = "sales_channel_id"
 	// FilterOpenedByOperator keeps the carts an operator opened when true and
 	// the shoppers' when false (ADR 0296).
 	FilterOpenedByOperator = "opened_by_operator"
@@ -142,9 +145,10 @@ var cartFieldGetters = map[string]func(cart models.Cart) any{
 		}
 		return *c.CompletedAt
 	},
-	FieldCreatedAt: func(c models.Cart) any { return c.CreatedAt },
-	FieldUpdatedAt: func(c models.Cart) any { return c.UpdatedAt },
-	FieldOpenedBy:  func(c models.Cart) any { return c.OpenedBy },
+	FieldCreatedAt:      func(c models.Cart) any { return c.CreatedAt },
+	FieldUpdatedAt:      func(c models.Cart) any { return c.UpdatedAt },
+	FieldOpenedBy:       func(c models.Cart) any { return c.OpenedBy },
+	FieldSalesChannelID: func(c models.Cart) any { return c.SalesChannelID },
 }
 
 // QueryProvider is the read surface the cart module opens to the Query layer.

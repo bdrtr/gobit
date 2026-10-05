@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 
 	corehttp "github.com/bdrtr/gobit/core/http"
 )
@@ -14,9 +15,10 @@ import (
 //
 // Each method is the admin API's own act through the handler the API runs, so
 // the panel and the API refuse alike: the region comes from the country, the
-// price from the catalog of the channel the operator names ([scopeToChannel]),
-// an address write reprices the cart, and the completion takes only a method
-// whose money comes later.
+// variant from the catalog of the channel the operator names ([scopeToChannel]),
+// the price in the channel the cart was opened in (ADR 0397), an address write
+// reprices the cart, and the completion takes only a method whose money comes
+// later.
 type TelephoneSurface struct {
 	h *Handler
 }
@@ -42,8 +44,11 @@ const (
 )
 
 // OpenCart opens a cart for the country's region, for a customer or a guest
-// with an e-mail, and returns its id.
-func (s *TelephoneSurface) OpenCart(ctx context.Context, countryCode, customerID, email string) (string, error) {
+// with an e-mail, priced in the named sales channel or, when it is blank, in
+// none (ADR 0397), and returns its id.
+func (s *TelephoneSurface) OpenCart(
+	ctx context.Context, countryCode, customerID, email, salesChannelID string,
+) (string, error) {
 	flow, err := s.h.opening()
 	if err != nil {
 		return "", err
@@ -52,13 +57,19 @@ func (s *TelephoneSurface) OpenCart(ctx context.Context, countryCode, customerID
 	if err != nil {
 		return "", err
 	}
+	opening := ctx
+	if strings.TrimSpace(salesChannelID) != "" {
+		if opening, err = scopeToChannel(ctx, salesChannelID); err != nil {
+			return "", err
+		}
+	}
 
-	return flow.OpenCartForCountry(ctx, countryCode, customerID, email, "", openedBy, nil)
+	return flow.OpenCartForCountry(opening, countryCode, customerID, email, "", openedBy, nil)
 }
 
-// AddLine adds a variant priced by the catalog of the named sales channel and
-// returns the line's id; the quantity of a variant already in the cart is
-// raised.
+// AddLine adds a variant looked up in the named channel's catalog and priced in
+// the cart's channel, and returns the line's id; the quantity of a variant
+// already in the cart is raised.
 func (s *TelephoneSurface) AddLine(
 	ctx context.Context, cartID, salesChannelID, variantID string, quantity int64,
 ) (string, error) {

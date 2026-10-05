@@ -26,12 +26,13 @@ type CreateCartInput struct {
 	AddsToOrderID string
 	// Metadata is the FREE-FORM JSON object to attach to the cart; it is optional.
 	//
-	// The flow does NOT READ it and lets it into none of its decisions, it only
-	// carries it to the cart: the field really is the caller's own data (the
-	// campaign source, the storefront session) and it has no counterpart that
-	// could be derived. The criterion of the distinction is the same as
-	// [CountryCode]'s — there what was put in the body was the server's data,
-	// here it is not.
+	// Opening the cart does not read it and lets it into none of its decisions,
+	// it only carries it to the cart; every later round puts its string values
+	// into the rule context under `cart.` (ADR 0111). The field really is the
+	// caller's own data (the campaign source, the storefront session) and it has
+	// no counterpart that could be derived. The criterion of the distinction is
+	// the same as [CountryCode]'s — there what was put in the body was the
+	// server's data, here it is not.
 	Metadata json.RawMessage
 	// OpenedBy is the operator opening the cart, as the guard ring proved
 	// them; empty for a shopper (ADR 0296).
@@ -55,6 +56,9 @@ type CreateCartResult struct {
 	// AddsToOrderID is the order the cart adds to; empty when it adds to
 	// nothing.
 	AddsToOrderID string
+	// SalesChannelID is the sales channel the cart is priced in; empty when it
+	// names none (ADR 0397).
+	SalesChannelID string
 }
 
 // CreateCart resolves the region from the country code and creates the cart.
@@ -83,6 +87,14 @@ type CreateCartResult struct {
 // If the caller gave an email address the customer's is NOT OVERWRITTEN: the cart's
 // address is the address that order will be sent to, and not the current address in
 // the customer ledger.
+//
+// # The sales channel comes from the principal, not from the input
+//
+// The cart records the channel the request's identity holds when it holds
+// exactly one ([pricingChannel], ADR 0397): a storefront's key, or the channel
+// an operator asserted into their principal. There is no input field for it,
+// for the reason saleschannel.go gives for the scope: a parameter would let a
+// caller choose the channel its own prices are asked in.
 //
 // # Why the currency's decimal digits are not used
 //
@@ -128,23 +140,26 @@ func (w *Workflows) CreateCart(ctx context.Context, in CreateCartInput) (CreateC
 		}
 	}
 
-	cartID, err := w.carts.OpenCart(ctx, regionID, currency, in.CustomerID, email, addsTo, in.OpenedBy, in.Metadata)
+	channel := pricingChannel(ctx)
+	cartID, err := w.carts.OpenCart(ctx, regionID, currency, in.CustomerID, email, addsTo, in.OpenedBy, channel,
+		in.Metadata)
 	if err != nil {
 		return CreateCartResult{}, err
 	}
 
 	w.log.InfoContext(ctx, "cart opened",
 		"cart_id", cartID, "region_id", regionID, "currency_code", currency,
-		"guest", in.CustomerID == "", "adds_to_order_id", addsTo)
+		"guest", in.CustomerID == "", "adds_to_order_id", addsTo, "sales_channel_id", channel)
 
 	return CreateCartResult{
-		CartID:        cartID,
-		RegionID:      regionID,
-		CurrencyCode:  currency,
-		CustomerID:    in.CustomerID,
-		Email:         email,
-		Guest:         in.CustomerID == "",
-		AddsToOrderID: addsTo,
+		CartID:         cartID,
+		RegionID:       regionID,
+		CurrencyCode:   currency,
+		CustomerID:     in.CustomerID,
+		Email:          email,
+		Guest:          in.CustomerID == "",
+		AddsToOrderID:  addsTo,
+		SalesChannelID: channel,
 	}, nil
 }
 

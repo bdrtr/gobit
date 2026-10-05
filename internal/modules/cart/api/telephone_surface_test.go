@@ -50,7 +50,7 @@ func TestThePanelOpensACartThroughTheOpeningFlow(t *testing.T) {
 	opening := &fakeOpening{cartID: "cart_phone"}
 	surface := surfaceOver(api.Flows{Opening: opening}, operatorsCarts())
 
-	id, err := surface.OpenCart(operator(), "TR", "cus_1", "caller@example.com")
+	id, err := surface.OpenCart(operator(), "TR", "cus_1", "caller@example.com", "")
 
 	require.NoError(t, err)
 	assert.Equal(t, "cart_phone", id)
@@ -59,6 +59,26 @@ func TestThePanelOpensACartThroughTheOpeningFlow(t *testing.T) {
 	assert.Equal(t, "caller@example.com", opening.gotEmail)
 	assert.Empty(t, opening.gotAddsTo, "a telephone order adds to no order")
 	assert.Equal(t, "usr_panel", opening.gotOpenedBy, "the cart names the signed-in operator (ADR 0296)")
+}
+
+// TestThePanelOpensACartInTheChannelItNames: the channel the operator picks
+// reaches the opening flow asserted into the operator's identity, and a blank
+// one leaves that identity untouched (ADR 0397).
+func TestThePanelOpensACartInTheChannelItNames(t *testing.T) {
+	opening := &channelRecordingOpening{cartID: "cart_phone"}
+	surface := surfaceOver(api.Flows{Opening: opening}, operatorsCarts())
+
+	_, err := surface.OpenCart(operator(), "TR", "", "caller@example.com", " sc_shop ")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sc_shop"}, opening.gotChannels)
+	assert.Equal(t, "usr_panel", opening.gotPrincipal.ID, "the audit still names the operator")
+
+	opening.gotPrincipal = corehttp.Principal{}
+	_, err = surface.OpenCart(operator(), "TR", "", "caller@example.com", "  ")
+	require.NoError(t, err)
+	assert.Nil(t, opening.gotPrincipal.SalesChannelIDs, "a blank channel asserts none")
+	assert.Equal(t, "usr_panel", opening.gotPrincipal.ID)
+	assert.Equal(t, 2, opening.calls)
 }
 
 // TestThePanelOpensNoCartForNobody: a context with no operator in it is a
@@ -73,7 +93,7 @@ func TestThePanelOpensNoCartForNobody(t *testing.T) {
 			Kind: "user", Scopes: []string{"cart:write"},
 		}),
 	} {
-		_, err := surface.OpenCart(ctx, "TR", "", "caller@example.com")
+		_, err := surface.OpenCart(ctx, "TR", "", "caller@example.com", "")
 		require.Error(t, err, name)
 		assert.True(t, errors.HasKind(err, errors.KindInternal), name)
 	}
@@ -117,7 +137,7 @@ func TestALineWithoutAChannelIsRefused(t *testing.T) {
 func TestTheSurfaceWithoutItsFlowsRefuses(t *testing.T) {
 	surface := surfaceOver(api.Flows{}, operatorsCarts())
 
-	_, err := surface.OpenCart(operator(), "TR", "", "caller@example.com")
+	_, err := surface.OpenCart(operator(), "TR", "", "caller@example.com", "")
 	require.Error(t, err)
 	assert.True(t, errors.HasKind(err, errors.KindInternal))
 

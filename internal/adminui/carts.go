@@ -3,6 +3,7 @@ package adminui
 import (
 	"cmp"
 	"context"
+	"maps"
 	"net/http"
 	"net/url"
 	"slices"
@@ -57,10 +58,11 @@ const telephoneLabel = "Telephone order"
 // refuses what the API refuses.
 type TelephoneCarts interface {
 	// OpenCart opens a cart for the country's region, for a customer or a
-	// guest with an e-mail, and returns its id.
-	OpenCart(ctx context.Context, countryCode, customerID, email string) (string, error)
-	// AddLine adds a variant priced by the named channel's catalog and returns
-	// the line's id.
+	// guest with an e-mail, priced in the named sales channel or, when it is
+	// blank, in none (ADR 0397), and returns its id.
+	OpenCart(ctx context.Context, countryCode, customerID, email, salesChannelID string) (string, error)
+	// AddLine adds a variant looked up in the named channel's catalog and
+	// priced in the cart's channel, and returns the line's id.
 	AddLine(ctx context.Context, cartID, salesChannelID, variantID string, quantity int64) (string, error)
 	// SetShippingAddress writes the shipping address from the address keys
 	// and reprices the cart.
@@ -146,6 +148,9 @@ type cartPage struct {
 	// OpenedBy is the operator who opened the cart; empty on a shopper's,
 	// which the page only reads (ADR 0296, ADR 0299).
 	OpenedBy string
+	// SalesChannelID is the channel the cart is priced in; empty when it
+	// names none (ADR 0397).
+	SalesChannelID string
 	// TotalMinor is the total in minor units, carried by the completion form.
 	TotalMinor int64
 	// ShipTo is the shipping address, a line a part; Address its fields, to
@@ -240,6 +245,9 @@ const openCartsShown = 20
 const (
 	FieldCartOpenedBy      = "opened_by"
 	FilterOpenedByOperator = "opened_by_operator"
+	// FieldCartSalesChannel is the sales channel the cart is priced in (ADR
+	// 0397).
+	FieldCartSalesChannel = "sales_channel_id"
 )
 
 // openCart is one cart an operator opened and nobody completed, as the
@@ -434,11 +442,13 @@ func (u *UI) openTelephoneOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The country goes as typed: the flow trims it and the region's lookup
-	// reads it in either case.
+	// reads it in either case. The channel is optional: blank prices the cart
+	// in none (ADR 0397).
 	id, err := u.carts.OpenCart(r.Context(),
 		r.PostFormValue(formCountryCode),
 		strings.TrimSpace(r.PostFormValue(formCustomerID)),
-		strings.TrimSpace(r.PostFormValue(formEmail)))
+		strings.TrimSpace(r.PostFormValue(formEmail)),
+		strings.TrimSpace(r.PostFormValue(formSalesChannelID)))
 	switch {
 	case err == nil:
 		corehttp.WriteRedirect(r.Context(), w, CartsPath+"/"+id)
@@ -450,8 +460,9 @@ func (u *UI) openTelephoneOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 // renderOpenForm writes the form with a refusal and what was typed, the open
-// operator carts to an operator who may read carts (ADR 0296), and the
-// caller's customer records to one who may read customers (ADR 0297); each
+// operator carts to an operator who may read carts (ADR 0296), the caller's
+// customer records to one who may read customers (ADR 0297), and the sales
+// channels the cart may be priced in to one who may read them (ADR 0397); each
 // module's data is read under that module's privilege (ADR 0260).
 func (u *UI) renderOpenForm(w http.ResponseWriter, r *http.Request, status int, refused string, typed url.Values) {
 	principal, _ := corehttp.PrincipalFromContext(r.Context())
@@ -488,8 +499,17 @@ func (u *UI) renderOpenForm(w http.ResponseWriter, r *http.Request, status int, 
 		}
 	}
 
+	// The channel the cart is priced in is offered by name to an operator who
+	// may read the sales channels, and as an id box otherwise (ADR 0305, ADR
+	// 0397).
+	var channels []channelOption
+	if principal.HasScope(scopeAuthRead) {
+		channels, _ = u.channelsOf(r)
+	}
+
 	u.templates.render(w, r, status, "carts.gohtml", map[string]any{
 		titleKey:    telephoneLabel,
+		channelsKey: channels,
 		"CartsPath": CartsPath,
 		refusedKey:  refused,
 		typedKey:    typed,
@@ -566,7 +586,7 @@ func (u *UI) renderCart(
 			fieldSubtotal, fieldTax, fieldShipping, fieldTotal,
 			fieldCartTotalsStale, fieldCartCompleted, fieldCartLines,
 			fieldCartShippingAddress, fieldCartShippingMethods, FieldCartOpenedBy,
-			fieldCartBillingAddress,
+			fieldCartBillingAddress, FieldCartSalesChannel,
 		},
 		Filters: map[string]any{filterID: []string{id}},
 		Limit:   1,
@@ -606,7 +626,15 @@ func (u *UI) renderCart(
 		options, optionsRead = u.shippingOptionsOf(r, page, scales)
 	}
 	// The channel the line and the completion claim is offered by name to an
-	// operator who may read the sales channels (ADR 0260, ADR 0305).
+	// operator who may read the sales channels (ADR 0260, ADR 0305), the
+	// cart's own chosen until the operator types another (ADR 0397).
+	if page.SalesChannelID != "" && typed.Get(formSalesChannelID) == "" {
+		typed = maps.Clone(typed)
+		if typed == nil {
+			typed = url.Values{}
+		}
+		typed.Set(formSalesChannelID, page.SalesChannelID)
+	}
 	var channels []channelOption
 	if canWrite && !page.Completed && principal.HasScope(scopeAuthRead) {
 		channels, _ = u.channelsOf(r)
@@ -662,6 +690,8 @@ func cartPageOf(record query.Record, scales map[string]int) cartPage {
 		TotalsStale: record[fieldCartTotalsStale] == true,
 		Completed:   record[fieldCartCompleted] == true,
 		OpenedBy:    recordString(record, FieldCartOpenedBy),
+		// The channel the cart is priced in (ADR 0397).
+		SalesChannelID: recordString(record, FieldCartSalesChannel),
 	}
 	var known bool
 	page.Total, known = amountField(record, fieldTotal, page.Currency, scales)

@@ -411,7 +411,8 @@ func appliedPromotionsOf(resp discountResponse) []AppliedPromotion {
 //
 // # What goes into the context
 //
-// The region, the cart's own metadata (ADR 0111) and the customer's groups. This
+// The region, the sales channel the cart was opened in (ADR 0397), the cart's
+// own metadata (ADR 0111), the customer, their company and their groups. This
 // paragraph said the opposite for a long time — "the customer group is NOT put
 // into the context … added here the day the customer surface publishes the group
 // list" — and that day had come and gone: [Workflows.ruleContext] has written it

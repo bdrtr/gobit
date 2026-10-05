@@ -597,9 +597,11 @@ var channelAssertionGrants = []channelAssertionGrant{
 			"to say (ADR 0146). The claim is written into the principal so that the " +
 			"cart's scope rule runs unchanged rather than being skipped, the rest of " +
 			"the identity is carried over untouched so the audit row still names the " +
-			"administrator, and a request that makes no claim is refused with 422 " +
-			"rather than left with the empty scope that answers 404 for every product " +
-			"the shop has assigned to a channel.",
+			"administrator, and a line write or a completion that makes no claim is " +
+			"refused with 422 rather than left with the empty scope that answers 404 for " +
+			"every product the shop has assigned to a channel; opening a cart may name " +
+			"one, which the cart then records as the channel its prices are asked in, " +
+			"and a cart opened without one names none (ADR 0397).",
 	},
 }
 

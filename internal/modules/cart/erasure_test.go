@@ -46,9 +46,10 @@ import (
 //   - The identifiers are here on purpose. A synthetic key names a row, not a
 //     person, and after the columns beside it are anonymized it resolves to
 //     nobody; that is exactly the fact the anonymization rests on. region_id,
-//     variant_id and shipping_option_id name records in OTHER modules — a
-//     region, a product, a delivery option — and each of those modules answers
-//     for its own rows. carts.customer_id is the one identifier that IS
+//     variant_id, shipping_option_id and sales_channel_id name records in
+//     OTHER modules — a region, a product, a delivery option, a storefront
+//     (ADR 0397) — and each of those modules answers for its own rows.
+//     carts.customer_id is the one identifier that IS
 //     declared, because it is the installation's stable handle for the PERSON
 //     rather than for a thing. carts.adds_to_order_id names an ORDER, whose
 //     module declares and erases its own contact (ADR 0192). carts.opened_by is
@@ -69,7 +70,7 @@ import (
 //     for billing; it is true of the row with every name in it emptied.
 var notPersonalColumns = map[string][]string{
 	"carts": {
-		"id", "region_id", "currency_code", "adds_to_order_id", "opened_by",
+		"id", "region_id", "currency_code", "adds_to_order_id", "opened_by", "sales_channel_id",
 		"subtotal", "discount_total", "tax_total", "shipping_total", "total",
 		"prices_include_tax", "revision", "totals_revision",
 		"completed_at", "created_at", "updated_at", "deleted_at",

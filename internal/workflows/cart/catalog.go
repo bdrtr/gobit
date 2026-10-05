@@ -47,6 +47,15 @@ const AttrCustomerID = "customer_id"
 // buys for it. The spelling is bound to pricing's the way [AttrCustomerID] is.
 const AttrCompanyID = "company_id"
 
+// AttrSalesChannelID is the name of the attribute that carries the sales
+// channel the cart was opened in (ADR 0397).
+//
+// A price or a promotion ruled on it is that channel's: a storefront's own
+// price, asked by every cart opened through its key. The spelling is bound to
+// pricing's the way [AttrCustomerID] is, since a drift would leave every
+// channel price matching no cart.
+const AttrSalesChannelID = "sales_channel_id"
+
 // priceSetsFor resolves the price sets of the given variants with a SINGLE link
 // query.
 //
@@ -260,6 +269,21 @@ func (w *Workflows) productIDsFor(ctx context.Context, variantIDs []string) (map
 // omits the group below. Without the b2b surface the company is never there, and
 // a company price never matches.
 //
+// # Why the sales channel is the CART's and not the request's
+//
+// The channel goes in from the snapshot, the one the cart recorded when it was
+// opened (ADR 0397), and never from the principal of the request computing the
+// round. Every write reprices the whole cart under whichever principal made it —
+// a storefront key, an operator's asserted channel, an operator's address write
+// carrying none — so a channel read off the request would price one cart at
+// two prices depending on who touched it last, and the completion's
+// `expected_total` would compare against a figure a different write produced.
+// A cart that names none omits the attribute, for the guest's reason above:
+// a channel price stays closed rather than matching "".
+//
+// It is written after the metadata and cannot be shadowed by it: every metadata
+// key carries [CartAttributePrefix].
+//
 // # Why a failure to read the groups or the company is NOT fatal
 //
 // A cart total that cannot be computed because the customer or b2b module is
@@ -272,6 +296,9 @@ func (w *Workflows) ruleContext(
 ) (attributes map[string]string, lists map[string][]string, err error) {
 	attributes = map[string]string{attrRegionID: snap.RegionID}
 	addCartMetadata(attributes, snap.Metadata)
+	if snap.SalesChannelID != "" {
+		attributes[AttrSalesChannelID] = snap.SalesChannelID
+	}
 
 	if snap.CustomerID == "" {
 		return attributes, nil, nil

@@ -44,9 +44,12 @@ type stubCarts struct {
 	// openedAddsTo is the order the last opened cart was told it adds to.
 	openedAddsTo string
 	// openedBy is the operator the last opened cart was told opened it.
-	openedBy   string
-	snapshotFn func(ctx context.Context, cartID string) (json.RawMessage, error)
-	addLineFn  func(ctx context.Context, cartID, variantID, title string, quantity, unitPrice int64, metadata json.RawMessage) (string, error)
+	openedBy string
+	// openedChannel is the sales channel the last opened cart was told it is
+	// priced in (ADR 0397).
+	openedChannel string
+	snapshotFn    func(ctx context.Context, cartID string) (json.RawMessage, error)
+	addLineFn     func(ctx context.Context, cartID, variantID, title string, quantity, unitPrice int64, metadata json.RawMessage) (string, error)
 	// addedProperties are the properties of every AddCartLineItem call, in order.
 	addedProperties []map[string]string
 	// addedAddOns are the add-ons of every AddCartLineItem call, in order
@@ -92,7 +95,7 @@ func newStubCarts() *stubCarts {
 // scripts predate it, and the tests that care about it read the record.
 func (s *stubCarts) OpenCart(
 	ctx context.Context,
-	regionID, currencyCode, customerID, email, addsToOrderID, openedBy string,
+	regionID, currencyCode, customerID, email, addsToOrderID, openedBy, salesChannelID string,
 	metadata json.RawMessage,
 ) (string, error) {
 	if s.openCartFn == nil {
@@ -100,6 +103,7 @@ func (s *stubCarts) OpenCart(
 	}
 	s.openedAddsTo = addsToOrderID
 	s.openedBy = openedBy
+	s.openedChannel = salesChannelID
 	return s.openCartFn(ctx, regionID, currencyCode, customerID, email, metadata)
 }
 

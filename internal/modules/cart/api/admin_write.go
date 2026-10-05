@@ -40,14 +40,19 @@ import (
 // shop had assigned to a channel — and that 404 is deliberately indistinguishable
 // from "no such variant", so the operator would have had nothing to go on.
 //
-// # Why OPENING a cart names none
+// # Why OPENING a cart may name one
 //
-// Because nothing on that path reads one. The region and the currency are derived
-// from the country, the customer comes from the body, and no catalog is touched
-// until the first line — so a channel required here would be a claim asserted
-// into a context nobody consults, which is the defect this repository keeps
-// closing rather than a symmetry worth having. The claim is made where it is
-// READ.
+// Because the cart records the channel it is opened in and every price and
+// promotion round asks in it (ADR 0397); a shopper's cart takes it from the
+// publishable key, and an operator's from this body. It is optional: a cart
+// opened without one names none and is priced at the prices no channel rule
+// narrows, as a cart opened by a key bound to several channels is. Nothing
+// checks the channel exists (ADR 0146): a mistyped one is recorded and matches
+// no rule; the panel offers the enabled channels.
+//
+// It is asserted into the principal the flow reads, as the line write's is,
+// rather than passed beside it, so the cart workflow derives the cart's channel
+// the one way it derives a shopper's.
 
 // adminCreateCartRequest is the body an operator sends to open a cart.
 type adminCreateCartRequest struct {
@@ -68,20 +73,26 @@ type adminCreateCartRequest struct {
 	// orders, for a caller who rings to add to what they bought; empty adds to
 	// nothing (ADR 0192). It needs customer_id, and it has to be the order's.
 	AddsToOrderID string `json:"adds_to_order_id"`
+	// SalesChannelID is the sales channel the cart is priced in; it is
+	// optional, and blank records none (ADR 0397). It is trimmed, and a value
+	// longer than an id is refused.
+	SalesChannelID string `json:"sales_channel_id"`
 	// Metadata is the free-form object attached to the cart.
 	Metadata map[string]any `json:"metadata"`
 }
 
 // adminAddLineItemRequest is the body that writes one line.
 type adminAddLineItemRequest struct {
-	// SalesChannelID is REQUIRED on every write, and the cart does not remember
-	// one.
+	// SalesChannelID is REQUIRED on every write: it is the catalog the variant
+	// is looked up in, and the cart remembers only the channel it is PRICED in
+	// (ADR 0397), not the one its lines are scoped to.
 	//
 	// The storefront does not need it because its key carries it on every
 	// request; here it is the operator's claim, and a claim is made per request
 	// rather than once. What that costs is written in ADR 0146: two lines of one
 	// cart can be written under two channels, which is the operator's own doing
-	// and which the storefront cannot produce.
+	// and which the storefront cannot produce. Both are priced in the cart's
+	// channel.
 	SalesChannelID string `json:"sales_channel_id"`
 	// VariantID is the product variant being added.
 	VariantID string `json:"variant_id"`
@@ -100,7 +111,8 @@ type adminAddLineItemRequest struct {
 // adminCreateCart opens a cart an operator is building
 // (POST /admin/v1/carts).
 //
-// It names no sales channel; the reason is at the top of this file.
+// It may name the sales channel the cart is priced in; the reason is at the top
+// of this file.
 func (h *Handler) adminCreateCart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -132,7 +144,16 @@ func (h *Handler) adminCreateCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id, err := flow.OpenCartForCountry(ctx, body.CountryCode, body.CustomerID,
+	opening := ctx
+	if strings.TrimSpace(body.SalesChannelID) != "" {
+		if opening, err = scopeToChannel(ctx, body.SalesChannelID); err != nil {
+			corehttp.WriteError(ctx, w, err)
+
+			return
+		}
+	}
+
+	id, err := flow.OpenCartForCountry(opening, body.CountryCode, body.CustomerID,
 		body.Email, body.AddsToOrderID, openedBy, metadata)
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)
@@ -222,7 +243,8 @@ func (h *Handler) adminAddLineItem(w http.ResponseWriter, r *http.Request) {
 // channelScoped asserts the operator's channel into the request's identity.
 //
 // It is called from the line write, the only admin write whose flow reads a
-// catalog.
+// catalog, and from the completion, whose channel picks the warehouses. The
+// opening asserts an optional one through [scopeToChannel] (ADR 0397).
 //
 // # Why it is written into the PRINCIPAL and not passed as a parameter
 //

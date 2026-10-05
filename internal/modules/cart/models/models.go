@@ -87,6 +87,12 @@ type Cart struct {
 	// surface, as the guard ring proved them; empty on a cart a shopper opened
 	// (ADR 0296). It is written once, when the cart is opened.
 	OpenedBy string
+	// SalesChannelID is the sales channel the cart was opened in, the one its
+	// prices and promotions are asked in (ADR 0397); it belongs to the auth
+	// module and IS NOT A FOREIGN KEY. Empty on a cart opened by a key bound to
+	// several channels or to none, by an operator who named none, or before
+	// migration 000010. It is written once, when the cart is opened.
+	SalesChannelID string
 	// Subtotal is the sum of the line subtotals (minor unit).
 	Subtotal int64
 	// DiscountTotal is the total discount (minor unit); it is stored positive

@@ -359,6 +359,23 @@ func TestTheBuyerAttributeNamesAgree(t *testing.T) {
 		"the attribute a price list's group rule names must be the one the cart fills (ADR 0327)")
 }
 
+// TestTheSalesChannelAttributeNamesAgree binds the two spellings of the
+// attribute that carries the cart's sales channel (ADR 0397). A drift is
+// silent: the cart would send an attribute no channel price's rule asks for,
+// and every channel price would stop matching.
+//
+// The literal is pinned too: it is published (CHANGELOG, ADR 0397) and
+// stored in the operators' rules, so renaming both constants alike would
+// leave every stored channel rule matching nothing.
+func TestTheSalesChannelAttributeNamesAgree(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, pricingmodels.AttrSalesChannelID, cartflow.AttrSalesChannelID,
+		"the cart and the pricing ladder must spell the sales channel attribute alike")
+	assert.Equal(t, "sales_channel_id", cartflow.AttrSalesChannelID,
+		"the name ADR 0397 publishes and stored rules use")
+}
+
 // TestTheGraphQLLimitDefaultsAgreeWithTheConfig verifies that the GraphQL
 // hardening limits' defaults in TWO separate places are the same.
 //
@@ -993,6 +1010,9 @@ func TestThePanelCatalogNamesAgree(t *testing.T) {
 	// drift reads as "could not be read" on the telephone order's page and on
 	// the order list, so the names are held here.
 	assert.Equal(t, cartsvc.FieldOpenedBy, adminui.FieldCartOpenedBy)
+	// The channel the cart is priced in (ADR 0397): a drift reads as "could
+	// not be read" on the telephone order's page.
+	assert.Equal(t, cartsvc.FieldSalesChannelID, adminui.FieldCartSalesChannel)
 	// The telephone order's channel list (ADR 0305).
 	assert.Equal(t, authsvc.Entity, adminui.EntitySalesChannel)
 	// The Taxes screen (ADR 0355) and the Parcels screen (ADR 0356).

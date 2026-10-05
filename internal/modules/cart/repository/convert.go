@@ -230,6 +230,7 @@ func toCart(row cartdb.Cart) (models.Cart, error) {
 		CustomerID:       stringValue(row.CustomerID),
 		AddsToOrderID:    stringValue(row.AddsToOrderID),
 		OpenedBy:         stringValue(row.OpenedBy),
+		SalesChannelID:   stringValue(row.SalesChannelID),
 		Email:            stringValue(row.Email),
 		CurrencyCode:     row.CurrencyCode,
 		Subtotal:         row.Subtotal,

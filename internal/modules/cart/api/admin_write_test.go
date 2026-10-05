@@ -171,37 +171,48 @@ func TestAnAdminCartNamesNoOperatorABodyNames(t *testing.T) {
 	assert.Zero(t, opening.calls, "a refused body opens no cart")
 }
 
-// TestOpeningACartAsksForNoChannel verifies that the claim is NOT made where
-// nothing reads it.
+// TestOpeningACartMayNameItsChannel verifies that an operator's cart is opened
+// in the channel the body names, and in none when it names none (ADR 0397).
 //
-// Requiring a channel on both writes would have looked symmetrical and been
-// inert: cart creation derives the region and the currency from the country and
-// touches no catalog, so the claim would have been asserted into a context
-// nobody consults. The assertion is in two halves — a body without the field
-// succeeds, and a body WITH it is refused rather than ignored, because an
-// accepted-but-unused field is a promise the endpoint does not keep.
-func TestOpeningACartAsksForNoChannel(t *testing.T) {
+// The claim is asserted into the principal, so the flow derives the cart's
+// channel from it the one way it derives a shopper's. The three halves are the
+// three answers: a channel reaches the flow, a body without one leaves the
+// operator's identity untouched, and a blank one is read as none rather than
+// refused, since the field is optional here and mandatory only where a catalog
+// is read.
+func TestOpeningACartMayNameItsChannel(t *testing.T) {
 	opening := &channelRecordingOpening{cartID: "cart_1"}
 	h := newAdminWriteServer(t, opening, &channelRecordingPricing{})
 
-	without := doRequestAs(t, h, &adminWriter, http.MethodPost, "/admin/v1/carts",
-		`{"country_code":"tr"}`)
-	assert.Equal(t, http.StatusCreated, without.Code, without.Body.String())
-	assert.Empty(t, opening.gotChannels,
-		"the flow runs under the operator's own identity, which holds no channel")
-
 	with := doRequestAs(t, h, &adminWriter, http.MethodPost, "/admin/v1/carts",
-		`{"country_code":"tr","sales_channel_id":"sc_phone"}`)
-	assert.Equal(t, http.StatusUnprocessableEntity, with.Code,
-		"a channel sent here is refused, not silently dropped; body: %s", with.Body.String())
+		`{"country_code":"tr","sales_channel_id":" sc_phone "}`)
+	require.Equal(t, http.StatusCreated, with.Code, with.Body.String())
+	assert.Equal(t, []string{"sc_phone"}, opening.gotChannels,
+		"the flow opens the cart under the channel the operator named, trimmed")
+	assert.Equal(t, "user_operator", opening.gotPrincipal.ID, "the audit still names the operator")
+
+	for name, body := range map[string]string{
+		"absent": `{"country_code":"tr"}`,
+		"blank":  `{"country_code":"tr","sales_channel_id":"   "}`,
+	} {
+		opening.gotPrincipal = corehttp.Principal{}
+		rec := doRequestAs(t, h, &adminWriter, http.MethodPost, "/admin/v1/carts", body)
+		require.Equal(t, http.StatusCreated, rec.Code, "%s: %s", name, rec.Body.String())
+		assert.Nil(t, opening.gotPrincipal.SalesChannelIDs,
+			"%s: the flow runs under the operator's own identity, untouched", name)
+		assert.Equal(t, "user_operator", opening.gotPrincipal.ID, name)
+	}
+	assert.Equal(t, 3, opening.calls)
 }
 
 // TestAnAdminLineIsPricedUnderTheChannelTheRequestNames verifies the claim on the
 // write that reads the catalog.
 //
 // It is a separate case from the cart's, deliberately: the two handlers make the
-// claim independently, and a fixture asserting both through one request would let
-// an implementation that dropped it on the line write pass on the cart's.
+// claim independently — the opening's is optional and names the channel the cart
+// is priced in (ADR 0397), the line's is mandatory and names the catalog — and a
+// fixture asserting both through one request would let an implementation that
+// dropped it on the line write pass on the cart's.
 func TestAnAdminLineIsPricedUnderTheChannelTheRequestNames(t *testing.T) {
 	pricing := &channelRecordingPricing{lineID: "item_1"}
 	h := newAdminWriteServer(t, &channelRecordingOpening{}, pricing)
@@ -218,8 +229,9 @@ func TestAnAdminLineIsPricedUnderTheChannelTheRequestNames(t *testing.T) {
 	assert.Equal(t, int64(2), pricing.gotQuantity)
 }
 
-// TestAnAdminLineRefusesToGuessTheChannel verifies that the claim is made per
-// REQUEST: the cart does not remember the channel it was opened under.
+// TestAnAdminLineRefusesToGuessTheChannel verifies that the scope claim is made
+// per REQUEST: the channel the cart remembers prices it and does not scope its
+// lines (ADR 0397).
 func TestAnAdminLineRefusesToGuessTheChannel(t *testing.T) {
 	pricing := &channelRecordingPricing{lineID: "item_1"}
 	h := newAdminWriteServer(t, &channelRecordingOpening{}, pricing)

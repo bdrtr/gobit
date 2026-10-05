@@ -75,6 +75,9 @@ func Describe(d *openapi.Doc) {
 		Summary: "Opens a new cart; the server derives the region and the currency from the country.",
 		Description: "A body carrying customer_id has to PROVE that customer; a body " +
 			"without one opens a guest cart and is never asked for a proof. \n\n" +
+			"The cart records the sales channel of the publishable key when the key is " +
+			"bound to exactly one, as sales_channel_id, and every price and promotion " +
+			"round asks in it; a key bound to several records none (ADR 0397). \n\n" +
 			additionNote,
 		RequestBody: d.RequestBody(createCartRequest{}),
 		Responses: withAdditionRefusals(claimRefusals("201",
@@ -113,7 +116,8 @@ func Describe(d *openapi.Doc) {
 			"It is refused with 409 when the two carts are in different regions or " +
 			"currencies (a price is quoted FOR one of each), when the source belongs to " +
 			"another customer, when the two do not add to the same order (or both to " +
-			"none, ADR 0192), and when either cart is completed.",
+			"none, ADR 0192), and when either cart is completed. \n\n" +
+			"The lines are priced in this cart's sales channel (ADR 0397).",
 		RequestBody: d.RequestBody(mergeCartRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The surviving cart", d.Item(cartDTO{})),
@@ -355,25 +359,28 @@ func describeAdmin(d *openapi.Doc) {
 			"customer's name carries their history and their company's spending limit. " +
 			"An empty customer_id opens a guest cart. \n\n" +
 			"The region and the currency come from country_code, decided on the server " +
-			"exactly as on the storefront. No sales channel is asked for: nothing on " +
-			"this path reads one, and the line-item endpoint names it per request. \n\n" +
+			"exactly as on the storefront. sales_channel_id is optional and names the " +
+			"channel the cart is priced in: every price and promotion round asks in it " +
+			"(ADR 0397). It is trimmed, blank records none, and a value longer than an " +
+			"id is 422; nothing checks the channel exists. \n\n" +
 			additionNote,
 		RequestBody: d.RequestBody(adminCreateCartRequest{}),
 		Responses: withAdditionRefusals(map[string]any{
 			"201": openapi.Response("The opened cart and its children",
 				d.Item(cartDetailDTO{})),
 			"422": openapi.ErrorResponse(
-				"The body could not be read, or the country is not served by any region."),
+				"The body could not be read, the country is not served by any region, or " +
+					"sales_channel_id is longer than an id."),
 		}),
 	})
 
 	d.Describe(http.MethodPost, "/admin/v1/carts/{id}/line-items", openapi.Operation{
 		Summary: "Adds a line to a cart at the price the server quotes; no amount can be sent.",
-		Description: "sales_channel_id is MANDATORY on every write and the cart does not " +
-			"remember the one it was opened with: the storefront's key carries the claim " +
-			"on every request and here the operator makes it per request. Sending a " +
-			"different channel than the one the cart was opened under is possible and is " +
-			"the operator's own doing. \n\n" +
+		Description: "sales_channel_id is MANDATORY on every write: it scopes the catalog " +
+			"the variant is looked up in, and the storefront's key carries the claim on " +
+			"every request and here the operator makes it per request. The line is " +
+			"priced in the channel the cart was opened in (ADR 0397), whichever channel " +
+			"this write names. \n\n" +
 			"The variant is looked up in THAT channel's catalog, so a variant the channel " +
 			"does not carry is 404 — the same answer a shopper's request gets, and " +
 			"deliberately indistinguishable from a variant that does not exist. \n\n" +

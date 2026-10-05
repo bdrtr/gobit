@@ -9,6 +9,9 @@ and nobody completed, the newest first (ADR 0296).
 
 An operator who may read customers finds the caller by e-mail, and the form
 then offers the customer records holding it, the account chosen (ADR 0297).
+
+The sales channel the cart is priced in is optional: a list by name to an
+operator who may read the channels, the id box otherwise (ADR 0397).
 */ -}}
 {{ define "body" }}
 <h1>Telephone order</h1>
@@ -25,7 +28,7 @@ then offers the customer records holding it, the account chosen (ADR 0297).
 {{ end }}
 
 <form method="post" action="{{ .CartsPath }}">
-  <p>Open a cart for the caller. Its lines are priced by the catalog, as a shopper's are.</p>
+  <p>Open a cart for the caller. Its lines are priced by the catalog in the channel chosen here, as a shopper's are in their storefront's.</p>
   {{ if .CanFind }}{{ with .Caller }}<input type="hidden" name="caller" value="{{ . }}">{{ end }}{{ end }}
   <input name="country_code" value="{{ .Typed.Get "country_code" }}" placeholder="country, e.g. TR" aria-label="country" maxlength="2" required>
   <input name="email" value="{{ .Typed.Get "email" }}" placeholder="caller's e-mail" aria-label="e-mail" type="email">
@@ -37,6 +40,15 @@ then offers the customer records holding it, the account chosen (ADR 0297).
   </select>
   {{ else }}
   <input name="customer_id" value="{{ .Typed.Get "customer_id" }}" placeholder="customer id (optional)" aria-label="customer id">
+  {{ end }}
+  {{ if .Channels }}
+  <select name="sales_channel_id" aria-label="sales channel the cart is priced in">
+    <option value="">no channel — channel prices do not apply</option>
+    {{ range .Channels }}<option value="{{ .ID }}"{{ if eq .ID ($.Typed.Get "sales_channel_id") }} selected{{ end }}>{{ .Name }}</option>
+    {{ end }}
+  </select>
+  {{ else }}
+  <input name="sales_channel_id" value="{{ .Typed.Get "sales_channel_id" }}" placeholder="sales channel id (optional)" aria-label="sales channel the cart is priced in">
   {{ end }}
   <button type="submit">Open a cart</button>
 </form>

@@ -81,7 +81,7 @@ func TestTheInteropOpensACartForItsOperator(t *testing.T) {
 	svc, _ := newService(t)
 
 	id, err := service.NewInterop(svc).OpenCart(ctx, regionID, currency, "", "caller@example.com", "",
-		"usr_operator", nil)
+		"usr_operator", "", nil)
 	require.NoError(t, err)
 
 	detail, err := svc.GetCart(ctx, id)

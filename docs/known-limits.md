@@ -193,6 +193,23 @@ past and is not corrected retroactively.
   would make a customer's full cart unpayable, the alternative whose
   justification is written with the sales channel rule in
   [`docs/security.md`](security.md).
+- **A channel's price reaches the cart, not the catalog.** A cart opened through
+  a key bound to one channel is priced and discounted by rules naming
+  `sales_channel_id` ([ADR 0397](adr/0397-a-cart-is-priced-in-the-channel-it-was-opened-in.md)). The storefront's product
+  reads list only rule-free prices, and the wishlist price alert quotes a cart
+  naming no channel, so both show the price without the channel.
+- **The cart's channel prices it; the request's channels scope it and pick the
+  warehouses.** A line written through another storefront's key, or completed
+  under another channel, is charged the cart's channel's prices. A price ruled
+  on the channel alone ties with the region's and the cheaper wins; a channel
+  price meant to beat the region's names the region too. A channel price is not
+  a privilege: the key is in every browser of its storefront.
+- **Some carts name no channel.** A key bound to several channels opens such
+  carts, and so do an operator who names none and every cart opened before the
+  upgrade. A channel an operator mistypes is recorded and never matches. A merge
+  prices the moved lines in the target's channel.
+- **A channel has no currency, and an order does not record its channel.** The
+  trials price past orders without it and report `no_sales_channel`.
 
 ## The category tree
 

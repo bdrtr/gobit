@@ -157,15 +157,24 @@ removed; the party that knows about regions is now the flow.
 The error surface moved to the country as well: a valid country with no region is
 a `404` (the operator has not opened sales to that country — the client can pick
 another one), and a malformed or empty code is a `422`. `metadata` STAYED in the
-body and is carried into the flow as it is; it really is the client's data and it
-enters no calculation — the same decision was taken for line metadata.
+body and is carried into the flow as it is; it is the client's data, and its
+string values become rule context under `cart.` for every price and promotion
+round (ADR 0111 decided it for promotions; the price rounds read the same
+context).
 
 On the admin side the same field is LEGITIMATE and was not removed: the
 `currency_code` in the body of `POST /admin/v1/regions` DEFINES the region — there
 the operator writes the original, not a copy, and there is no source to copy from.
 The criterion is not "is the field in the body" but "is this value the caller's
-own data". On `cart`'s own `/admin/v1` surface the question never arises: that
-side only reads.
+own data". On `cart`'s own `/admin/v1` surface the body takes `country_code` as
+well, and an operator may name the sales channel the cart is priced in (ADR 0397).
+
+The cart's sales channel is derived the same way: the publishable key's channel
+when the key holds exactly one, recorded on the cart and put into the rule
+context on every round
+([ADR 0397](adr/0397-a-cart-is-priced-in-the-channel-it-was-opened-in.md)). A
+channel holds no currency; a channel's price is a price in a region's currency
+whose rule names the channel.
 
 ### The reason for a refusal reaches the storefront
 

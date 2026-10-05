@@ -28,14 +28,17 @@ type fakeCarts struct {
 	options    [][3]string
 	optionsErr error
 	opened     []string
-	added      []string
-	addressed  []map[string]string
-	shipped    []string
-	completed  []string
-	removed    []string
-	discarded  []string
-	billed     []map[string]string
-	err        error
+	// openedIn is the sales channel each opened cart was asked to be priced
+	// in (ADR 0397).
+	openedIn  []string
+	added     []string
+	addressed []map[string]string
+	shipped   []string
+	completed []string
+	removed   []string
+	discarded []string
+	billed    []map[string]string
+	err       error
 }
 
 func (f *fakeCarts) SetBillingAddress(_ context.Context, cartID string, address map[string]string) error {
@@ -56,8 +59,11 @@ func (f *fakeCarts) Discard(_ context.Context, cartID string) error {
 	return f.err
 }
 
-func (f *fakeCarts) OpenCart(_ context.Context, countryCode, customerID, email string) (string, error) {
+func (f *fakeCarts) OpenCart(
+	_ context.Context, countryCode, customerID, email, salesChannelID string,
+) (string, error) {
 	f.opened = append(f.opened, countryCode+"|"+customerID+"|"+email)
+	f.openedIn = append(f.openedIn, salesChannelID)
 	if f.err != nil {
 		return "", f.err
 	}

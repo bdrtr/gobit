@@ -661,7 +661,7 @@ func (p recordingPromotions) PromotionJSON(context.Context, string) (json.RawMes
 // recordingCarts records the cart module's surface (ADR 0290).
 type recordingCarts struct{ surfaces *recordingSurfaces }
 
-func (c recordingCarts) OpenCart(context.Context, string, string, string) (string, error) {
+func (c recordingCarts) OpenCart(context.Context, string, string, string, string) (string, error) {
 	return "", c.surfaces.reach(ServiceCartAdmin)
 }
 

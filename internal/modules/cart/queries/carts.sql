@@ -7,8 +7,9 @@
 
 -- name: CreateCart :one
 INSERT INTO carts (
-    id, region_id, customer_id, email, currency_code, metadata, adds_to_order_id, opened_by
-) VALUES ($1, $2, $3, $4, $5, $6, $7, sqlc.narg('opened_by'))
+    id, region_id, customer_id, email, currency_code, metadata, adds_to_order_id, opened_by,
+    sales_channel_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, sqlc.narg('opened_by'), sqlc.narg('sales_channel_id'))
 RETURNING *;
 
 -- name: GetCart :one

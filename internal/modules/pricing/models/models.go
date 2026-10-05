@@ -166,6 +166,13 @@ const (
 // writes it, and internal/arch binds the two spellings.
 const AttrCustomerGroupID = "customer_group_id"
 
+// AttrSalesChannelID carries the sales channel the cart was opened in (ADR
+// 0397): a price whose rule names it is that storefront's price. The ladder
+// gives it no rank of its own, so it is one more matched rule, and a price
+// ruled on the channel alone ties with one ruled on the region alone. The cart
+// writes it, and internal/arch binds the two spellings.
+const AttrSalesChannelID = "sales_channel_id"
+
 // BuyerRank reports how narrowly the rule names the buyer: 2 for the customer,
 // 1 for their company, 0 for anything else.
 //

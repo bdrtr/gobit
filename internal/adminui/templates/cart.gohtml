@@ -9,7 +9,8 @@ be read says it is in minor units.
 */ -}}
 {{/*
 channel is the sales channel a line or the completion claims: a list by name
-to an operator who may read the channels, the id box otherwise (ADR 0305).
+to an operator who may read the channels, the id box otherwise (ADR 0305); the
+cart's own channel is chosen until another is typed (ADR 0397).
 */}}
 {{ define "channel" }}
   {{ if .Channels }}
@@ -35,6 +36,7 @@ to an operator who may read the channels, the id box otherwise (ADR 0305).
     {{ if .Cart.Email }}{{ .Cart.Email }}{{ else }}<span class="muted">no address on this cart</span>{{ end }}
     {{ with .Cart.CustomerID }}<span class="muted">customer {{ . }}</span>{{ end }}
   </p>
+  <p class="muted">{{ with .Cart.SalesChannelID }}Priced in channel {{ . }}{{ else }}Priced in no channel: channel prices do not apply{{ end }}</p>
   {{ with .Cart.OpenedBy }}<p class="muted">opened by operator {{ . }}</p>{{ else }}
   <p class="muted">A shopper opened this cart; the panel reads it and changes nothing in it.</p>{{ end }}
 </div>

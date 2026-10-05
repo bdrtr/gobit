@@ -40,7 +40,8 @@ const CodeAdditionMismatch = "cart_addition_mismatch"
 // Only the LINES. The target's email, addresses, shipping method and metadata
 // are untouched: the merge moves goods and not identity, and the address a
 // member chose while signed in is not something a guest session gets to
-// overwrite.
+// overwrite. The target's sales channel stays too, so the moved lines are
+// priced in it, as they are for its customer (ADR 0397).
 //
 // # What is refused
 //
