@@ -49,7 +49,23 @@ func TestABrowserStorefrontCanAskPermission(t *testing.T) {
 	assert.Equal(t, testOrigin, rec.Header().Get("Access-Control-Allow-Origin"))
 	assert.Contains(t, rec.Header().Get("Access-Control-Allow-Headers"), corehttp.PublishableKeyHeader)
 	assert.Contains(t, rec.Header().Get("Access-Control-Allow-Methods"), http.MethodPost)
+	assert.Contains(t, rec.Header().Get("Access-Control-Allow-Headers"), "If-None-Match",
+		"a script revalidating a catalog read sends If-None-Match, and a preflight that "+
+			"does not allow it stops the request before the key is read (ADR 0391)")
 	assert.False(t, *reached, "a preflight must not reach the real handler")
+}
+
+// TestABrowserMayReadTheTag is the other half of the validator pair: a script
+// that cannot read the ETag has nothing to send back (ADR 0391).
+func TestABrowserMayReadTheTag(t *testing.T) {
+	h, _ := corsHandler([]string{testOrigin})
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, simpleRequest(testOrigin))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Header().Get("Access-Control-Expose-Headers"), "ETag",
+		"a browser hides every response header the origin does not expose")
 }
 
 // TestCredentialsAreNEVERAllowed is the CSRF decision, asserted.

@@ -205,7 +205,7 @@ func (d *Doc) RequestBody(v any) map[string]any {
 	return map[string]any{
 		"required": true,
 		"content": map[string]any{
-			"application/json": map[string]any{"schema": d.SchemaOf(v)},
+			"application/json": map[string]any{mediaSchema: d.SchemaOf(v)},
 		},
 	}
 }
@@ -218,9 +218,60 @@ func Response(description string, schema map[string]any) map[string]any {
 	return map[string]any{
 		schemaDescription: description,
 		"content": map[string]any{
-			"application/json": map[string]any{"schema": schema},
+			"application/json": map[string]any{mediaSchema: schema},
 		},
 	}
+}
+
+// Revalidated describes a read written by corehttp.WriteJSONWithValidator: the
+// If-None-Match header it accepts, the 304 it can answer and the ETag its 200
+// carries (ADR 0391).
+//
+// Headers the 200 already describes are kept beside the ETag. It returns a
+// copy and leaves op's maps and slices as they were: a description built once
+// and handed to two operations must not grow a second header through the first.
+func Revalidated(op Operation) Operation {
+	op.Parameters = append(slices.Clip(op.Parameters), Parameter{
+		Name:     "If-None-Match",
+		In:       "header",
+		Required: false,
+		Schema:   map[string]any{schemaType: typeString},
+		Description: "An ETag this read answered before. When the body the read would " +
+			"answer now carries that tag, the answer is 304 with no body; a weak tag " +
+			"(`W/\"…\"`) and `*` match too.",
+	})
+
+	responses := maps.Clone(op.Responses)
+	if responses == nil {
+		responses = map[string]any{}
+	}
+
+	if ok, isMap := responses["200"].(map[string]any); isMap {
+		widened := maps.Clone(ok)
+		// The headers the 200 already describes are kept: the tag is added to a
+		// copy of that map, never written over it or into it.
+		headers, _ := widened["headers"].(map[string]any)
+		headers = maps.Clone(headers)
+		if headers == nil {
+			headers = map[string]any{}
+		}
+		headers["ETag"] = map[string]any{
+			schemaDescription: "A strong tag of this body's bytes; send it back in " +
+				"If-None-Match to revalidate.",
+			mediaSchema: map[string]any{schemaType: typeString},
+		}
+		widened["headers"] = headers
+		responses["200"] = widened
+	}
+
+	responses["304"] = map[string]any{
+		schemaDescription: "The body this read would answer now is the one the " +
+			"If-None-Match tag names, or the request sent `*`, which asks only whether " +
+			"a body exists. There is no body; the ETag, and any Cache-Control, are the 200's.",
+	}
+	op.Responses = responses
+
+	return op
 }
 
 // listRecord returns the RECORD type of the value given to [Doc.List].

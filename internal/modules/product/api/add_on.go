@@ -97,7 +97,5 @@ func (h *Handler) storeAddOns(w http.ResponseWriter, r *http.Request) {
 	}
 	// The body is a function of the URL alone (ADR 0044), so it may be reused;
 	// how long and by whom is the installation's (ADR 0151).
-	h.allowCaching(w)
-
-	writeItem(w, r, http.StatusOK, addOns)
+	h.writeCatalog(w, r, itemEnvelope{Data: addOns})
 }

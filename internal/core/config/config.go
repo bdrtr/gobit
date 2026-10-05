@@ -892,8 +892,9 @@ type Config struct {
 	StorefrontTrustsUnverifiedCustomerClaim bool `env:"STOREFRONT_TRUST_UNVERIFIED_CUSTOMER_CLAIM" envDefault:"false"`
 
 	// CatalogCacheTTL is how long the CHANNEL-SCOPED catalog reads may be reused
-	// before they are fetched again, and ZERO — the default — writes no cache
-	// header at all (ADR 0151).
+	// before they are fetched again, and ZERO — the default — writes no
+	// `Cache-Control` at all (ADR 0151); the ETag those reads carry is written
+	// whatever this is (ADR 0391).
 	//
 	// # Why the default is off
 	//

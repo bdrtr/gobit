@@ -143,6 +143,13 @@ not a secret — but it is the shop's decision, so the flag defaults to false an
 shared installation is warned at boot. Refusals are never cacheable: a stored 401
 would lock a channel's catalog out for the length of the TTL.
 
+Since [ADR 0391](adr/0391-a-catalog-read-answers-a-revalidation.md) the catalog
+reads, the search among them, carry an `ETag` and answer a matching
+`If-None-Match` with 304, and the comparison is made only after the guard ring
+and the key's channel have answered: a key that does not hold the channel is
+refused whatever tag it sends, a cache revalidating for a caller with no key
+receives the 401, and a refusal never carries a tag.
+
 The binding is made from the admin side:
 
 ```

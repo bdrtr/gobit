@@ -82,28 +82,42 @@ func (h *Handler) adminCreateAttribute(w http.ResponseWriter, r *http.Request) {
 
 // adminListAttributes GET /admin/v1/product-attributes
 func (h *Handler) adminListAttributes(w http.ResponseWriter, r *http.Request) {
-	h.writeAttributes(w, r)
+	result, err := h.attributeList(r)
+	if err != nil {
+		corehttp.WriteError(r.Context(), w, err)
+
+		return
+	}
+	writeList(w, r, result)
 }
 
 // storeListAttributes GET /store/v1/product-attributes
 //
 // The vocabulary of the attribute filter: every definition and its options,
 // in the operator's order. Like the tags, it is not channel-scoped.
+//
+// It carries the tag without the freshness policy, as the other unscoped
+// vocabularies do (ADR 0391).
 func (h *Handler) storeListAttributes(w http.ResponseWriter, r *http.Request) {
-	h.writeAttributes(w, r)
-}
-
-// writeAttributes writes every definition as a list; there is no paging, since
-// a catalog defines at most models.MaxAttributes.
-func (h *Handler) writeAttributes(w http.ResponseWriter, r *http.Request) {
-	attributes, err := h.svc.ListAttributes(r.Context())
+	result, err := h.attributeList(r)
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
 
 		return
 	}
+	corehttp.WriteJSONWithValidator(w, r, listBody(result))
+}
+
+// attributeList reads every definition as one page; there is no paging, since
+// a catalog defines at most models.MaxAttributes.
+func (h *Handler) attributeList(r *http.Request) (service.ListResult[models.Attribute], error) {
+	attributes, err := h.svc.ListAttributes(r.Context())
+	if err != nil {
+		return service.ListResult[models.Attribute]{}, err
+	}
 	count := len(attributes)
-	writeList(w, r, service.ListResult[models.Attribute]{Items: attributes, Count: &count, Limit: count})
+
+	return service.ListResult[models.Attribute]{Items: attributes, Count: &count, Limit: count}, nil
 }
 
 // adminUpdateAttribute PATCH /admin/v1/product-attributes/{id}
@@ -272,8 +286,7 @@ func (h *Handler) storeFacets(w http.ResponseWriter, r *http.Request) {
 	if facets == nil {
 		facets = []service.Facet{}
 	}
-	h.allowCaching(w)
-	corehttp.WriteJSON(r.Context(), w, http.StatusOK, facetsResponse{Data: facets})
+	h.writeCatalog(w, r, facetsResponse{Data: facets})
 }
 
 // attributesParam reads the repeated "attribute" query parameter (ADR 0219).

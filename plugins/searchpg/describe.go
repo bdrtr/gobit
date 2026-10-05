@@ -49,7 +49,7 @@ const (
 // the rest of the document, and it is the honest one: a made-up field list here
 // would start lying the day product gains a field.
 func (m *searchModule) Describe(d *openapi.Doc) {
-	d.Describe(http.MethodGet, SearchPath, openapi.Operation{
+	d.Describe(http.MethodGet, SearchPath, openapi.Revalidated(openapi.Operation{
 		Summary: "Full-text search over the published catalog.",
 		Description: "The flow is two steps and the split matters: the index gives the " +
 			"matching product ids IN RELEVANCE ORDER, and the records are read from the " +
@@ -120,7 +120,7 @@ func (m *searchModule) Describe(d *openapi.Doc) {
 		Responses: map[string]any{
 			"200": openapi.Response("The matching products, most relevant first", searchEnvelopeSchema()),
 		},
-	})
+	}))
 
 	d.Describe(http.MethodPost, ReindexPath, openapi.Operation{
 		Summary: "Rebuilds the whole search index from the catalog.",

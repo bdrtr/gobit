@@ -157,17 +157,24 @@ type itemEnvelope struct {
 // able to treat the "data" field as an array every time is better than it
 // having to check for null in every response.
 func writeList[T any](w http.ResponseWriter, r *http.Request, res service.ListResult[T]) {
+	corehttp.WriteJSON(r.Context(), w, http.StatusOK, listBody(res))
+}
+
+// listBody wraps a paginated result in the envelope [writeList] writes; the
+// catalog reads hand it to their validated writer instead (ADR 0391).
+func listBody[T any](res service.ListResult[T]) listEnvelope {
 	items := res.Items
 	if items == nil {
 		items = []T{}
 	}
-	corehttp.WriteJSON(r.Context(), w, http.StatusOK, listEnvelope{
+
+	return listEnvelope{
 		Data:       items,
 		Count:      res.Count,
 		Offset:     res.Offset,
 		Limit:      res.Limit,
 		NextCursor: res.NextCursor,
-	})
+	}
 }
 
 // writeItem writes a single record wrapped in the envelope.

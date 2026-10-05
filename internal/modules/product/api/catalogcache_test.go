@@ -13,19 +13,21 @@ import (
 	"github.com/stretchr/testify/require"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
+	corehttp "github.com/bdrtr/gobit/core/http"
 	"github.com/bdrtr/gobit/internal/modules/product/api"
 	"github.com/bdrtr/gobit/internal/modules/product/graph"
 	"github.com/bdrtr/gobit/internal/modules/product/models"
 	"github.com/bdrtr/gobit/internal/modules/product/service"
 )
 
-// The catalog cache header (ADR 0151).
+// The catalog cache header (ADR 0151) and the validator that rides with it
+// (ADR 0391).
 //
 // # What these tests are really about
 //
 // Not that a header can be written. Three things decide whether this feature is
-// safe, and each has its own test: WHICH responses carry it (the three
-// channel-scoped reads and nothing else), WHEN it is written (on the success path,
+// safe, and each has its own test: WHICH responses carry it (the channel-scoped
+// reads, derived from the router, and nothing else), WHEN it is written (on the success path,
 // never on a refusal — a cached 404 is a product that stays missing for the length
 // of the TTL) and WHAT it says (`private` unless the installation asked for
 // `public`, which is the difference between a shopper's own client and a CDN
@@ -48,16 +50,60 @@ func cachingRouter(catalog api.Catalog, ttl time.Duration, shared bool) chi.Rout
 func storeRead(t *testing.T, r chi.Router, target string) *httptest.ResponseRecorder {
 	t.Helper()
 
+	return conditionalRead(t, r, target, nil, "")
+}
+
+// conditionalRead sends a storefront read carrying the given identity and, when
+// it is not empty, the given If-None-Match.
+func conditionalRead(
+	t *testing.T, r chi.Router, target string, principal *corehttp.Principal, ifNoneMatch string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+
 	req := httptest.NewRequest(http.MethodGet, target, http.NoBody)
+	if principal != nil {
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), *principal))
+	}
+	if ifNoneMatch != "" {
+		req.Header.Set("If-None-Match", ifNoneMatch)
+	}
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
 	return rec
 }
 
-// cachingCatalog answers every channel-scoped read with one record.
-func cachingCatalog() *fakeCatalog {
-	return &fakeCatalog{
+// readsCatalog answers every storefront catalog read with one record, so that
+// each read the router serves can be asked for its headers.
+//
+// It wraps [fakeCatalog] with the reads that fake does not carry; a read the
+// router gains and this fake does not answer panics on the nil interface, which
+// is the loud failure the walk below wants.
+type readsCatalog struct {
+	*fakeCatalog
+}
+
+func (readsCatalog) StoreRelatedProducts(
+	context.Context, string, models.RelationType, []string,
+) ([]service.StoreProduct, error) {
+	return []service.StoreProduct{{Product: models.Product{ID: "prod_2"}}}, nil
+}
+
+func (readsCatalog) StoreProductAddOns(context.Context, string, []string) ([]service.StoreAddOn, error) {
+	return []service.StoreAddOn{{VariantID: "variant_1"}}, nil
+}
+
+func (readsCatalog) StoreFacets(context.Context, service.StoreListOptions) ([]service.Facet, error) {
+	return []service.Facet{{Handle: "material", Title: "Material", Kind: models.AttributeSelect, Products: 1}}, nil
+}
+
+func (readsCatalog) ListAttributes(context.Context) ([]models.Attribute, error) {
+	return []models.Attribute{{ID: "pattr_1", Handle: "material"}}, nil
+}
+
+// cachingCatalog answers every storefront catalog read with one record.
+func cachingCatalog() readsCatalog {
+	return readsCatalog{fakeCatalog: &fakeCatalog{
 		listStoreProducts: func(
 			_ context.Context, _ service.StoreListOptions,
 		) (service.ListResult[service.StoreProduct], error) {
@@ -77,41 +123,181 @@ func cachingCatalog() *fakeCatalog {
 				Items: []models.OptionValuePair{{OptionTitle: "Color", Value: "red"}},
 			}, nil
 		},
+		listCollections: func(
+			_ context.Context, _, _ int,
+		) (service.ListResult[models.Collection], error) {
+			return service.ListResult[models.Collection]{
+				Items: []models.Collection{{ID: "pcol_1"}},
+			}, nil
+		},
+		listCategories: func(
+			_ context.Context, _ service.ListCategoriesOptions,
+		) (service.ListResult[models.Category], error) {
+			return service.ListResult[models.Category]{
+				Items: []models.Category{{ID: "pcat_1"}},
+			}, nil
+		},
+		listTags: func(
+			_ context.Context, _, _ int,
+		) (service.ListResult[models.Tag], error) {
+			return service.ListResult[models.Tag]{
+				Items: []models.Tag{{ID: "ptag_1"}},
+			}, nil
+		},
+	}}
+}
+
+// scopedByChannel says whether a storefront route carries the freshness policy:
+// the two directions the channel audit selects on (namesAChannel in
+// internal/arch), so that renaming the placeholder fails one of them rather than
+// shrinking the population.
+func scopedByChannel(pattern string) bool {
+	if strings.Contains(pattern, "/sales-channels/") {
+		return true
 	}
+	for _, part := range strings.Split(pattern, "/") {
+		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") && strings.Contains(part, "channel") {
+			return true
+		}
+	}
+
+	return false
 }
 
-// channelScopedReads are the three storefront reads whose body is a function of
-// the URL alone (ADR 0044).
+// catalogReadAddress turns a route pattern into an address the fixture answers.
+func catalogReadAddress(pattern string) string {
+	parts := strings.Split(pattern, "/")
+	for i, part := range parts {
+		if !strings.HasPrefix(part, "{") {
+			continue
+		}
+		parts[i] = "prod_1"
+		if strings.Contains(part, "channel") {
+			parts[i] = "sc_1"
+		}
+	}
+
+	return strings.Join(parts, "/")
+}
+
+// TestEveryCatalogReadCarriesItsValidator is the decision, over the reads the
+// router serves rather than a list of them (ADR 0391, D241).
 //
-// The list is DATA and the test below walks it: a fourth channel-scoped read that
-// arrives without a policy is the shape this feature fails in silently — half the
-// catalog cacheable and half not, so a storefront's product page is a minute
-// newer than the listing that linked to it.
-var channelScopedReads = map[string]string{
-	"the product listing":   "/store/v1/sales-channels/sc_1/products",
-	"a single product":      "/store/v1/sales-channels/sc_1/products/prod_1",
-	"the option vocabulary": "/store/v1/sales-channels/sc_1/option-values",
-}
-
-// TestTheChannelScopedReadsCarryThePolicy is the decision.
-func TestTheChannelScopedReadsCarryThePolicy(t *testing.T) {
+// Every storefront GET answers with a tag and a 304 for that tag; the
+// channel-scoped ones carry the policy on both, and the unscoped vocabularies
+// on neither. ADR 0151's test walked a hand-written list of three while six
+// carried the policy, so three could lose it with every test green — the shape
+// that list's own godoc named as how this feature fails silently.
+func TestEveryCatalogReadCarriesItsValidator(t *testing.T) {
 	t.Parallel()
 
-	for name, target := range channelScopedReads {
-		t.Run(name, func(t *testing.T) {
+	r := cachingRouter(cachingCatalog(), 90*time.Second, false)
+
+	var scoped, unscoped []string
+	require.NoError(t, chi.Walk(r, func(
+		method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler,
+	) error {
+		if method != http.MethodGet || !strings.HasPrefix(route, "/store/") {
+			return nil
+		}
+		if scopedByChannel(route) {
+			scoped = append(scoped, route)
+		} else {
+			unscoped = append(unscoped, route)
+		}
+
+		return nil
+	}))
+	// Neither half may be empty: a population that shrank to nothing would pass.
+	require.NotEmpty(t, scoped, "no channel-scoped storefront read was found; the walk is blind")
+	require.NotEmpty(t, unscoped, "no unscoped storefront read was found; the walk is blind")
+
+	for _, route := range append(scoped, unscoped...) {
+		policy := ""
+		if scopedByChannel(route) {
+			policy = "private, max-age=90"
+		}
+		t.Run(route, func(t *testing.T) {
 			t.Parallel()
 
-			r := cachingRouter(cachingCatalog(), 90*time.Second, false)
+			target := catalogReadAddress(route)
+			first := storeRead(t, r, target)
 
-			rec := storeRead(t, r, target)
+			require.Equal(t, http.StatusOK, first.Code, "body: %s", first.Body.String())
+			tag := first.Header().Get("ETag")
+			require.NotEmpty(t, tag, "every catalog read answers with a tag of its body")
+			assert.Equal(t, policy, first.Header().Get("Cache-Control"),
+				"the channel-scoped reads carry the policy and the unscoped ones do not; a "+
+					"storefront whose listing is cacheable and whose product page is not shows "+
+					"a shopper two answers about one product")
 
-			require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
-			assert.Equal(t, "private, max-age=90", rec.Header().Get("Cache-Control"),
-				"every channel-scoped read has to carry the same policy; a storefront whose "+
-					"listing is cacheable and whose product page is not shows a shopper two "+
-					"answers about one product")
+			again := conditionalRead(t, r, target, nil, tag)
+
+			require.Equal(t, http.StatusNotModified, again.Code, "body: %s", again.Body.String())
+			assert.Empty(t, again.Body.Bytes())
+			assert.Equal(t, tag, again.Header().Get("ETag"))
+			assert.Equal(t, policy, again.Header().Get("Cache-Control"),
+				"a 304 carries the policy the 200 would, or none")
 		})
 	}
+}
+
+// TestTheTagFollowsTheAnswerNotTheAddress is why the tag is a hash: the same
+// address answers different bytes after a write that bumps no version, and the
+// tag the client holds must stop matching.
+func TestTheTagFollowsTheAnswerNotTheAddress(t *testing.T) {
+	t.Parallel()
+
+	title := "First"
+	catalog := cachingCatalog()
+	catalog.getStoreProduct = func(_ context.Context, _ string, _ []string) (service.StoreProduct, error) {
+		return service.StoreProduct{Product: models.Product{ID: "prod_1", Title: title, Version: 1}}, nil
+	}
+	r := cachingRouter(catalog, 0, false)
+	target := "/store/v1/sales-channels/sc_1/products/prod_1"
+
+	held := storeRead(t, r, target)
+	require.Equal(t, http.StatusOK, held.Code)
+
+	title = "Second"
+	rec := conditionalRead(t, r, target, nil, held.Header().Get("ETag"))
+
+	require.Equal(t, http.StatusOK, rec.Code, "a changed body must be sent, not confirmed")
+	assert.Contains(t, rec.Body.String(), `"Second"`)
+	assert.NotEqual(t, held.Header().Get("ETag"), rec.Header().Get("ETag"))
+}
+
+// TestARefusalIsNeverValidated holds the position of the writer: a refusal is
+// written by the error path and carries no tag, so `*` cannot turn it into 304.
+func TestARefusalIsNeverValidated(t *testing.T) {
+	t.Parallel()
+
+	catalog := cachingCatalog()
+	catalog.getStoreProduct = func(_ context.Context, _ string, _ []string) (service.StoreProduct, error) {
+		return service.StoreProduct{}, coreerrors.NotFound("product_not_found", "no such product")
+	}
+	r := cachingRouter(catalog, time.Hour, true)
+
+	rec := conditionalRead(t, r, "/store/v1/sales-channels/sc_1/products/gone", nil, "*")
+
+	require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
+	assert.Empty(t, rec.Header().Get("ETag"), "a refusal carries no tag")
+}
+
+// TestAForeignChannelIsRefusedWhateverTheTag: the comparison runs after the
+// key's channel has been asked, so a key that does not hold the channel cannot
+// learn from a 304 that its tag is the channel's current body.
+func TestAForeignChannelIsRefusedWhateverTheTag(t *testing.T) {
+	t.Parallel()
+
+	r := cachingRouter(cachingCatalog(), time.Hour, true)
+	key := &corehttp.Principal{ID: "pk_1", Kind: "publishable_key", SalesChannelIDs: []string{"sc_a"}}
+
+	rec := conditionalRead(t, r, "/store/v1/sales-channels/sc_other/products", key, "*")
+
+	require.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
+	assert.Empty(t, rec.Header().Get("ETag"))
+	assert.Empty(t, rec.Header().Get("Cache-Control"))
 }
 
 // TestASharedPolicySaysPublic is the other value, and it is a security decision
@@ -132,13 +318,13 @@ func TestASharedPolicySaysPublic(t *testing.T) {
 	assert.Equal(t, "public, max-age=60", rec.Header().Get("Cache-Control"))
 }
 
-// TestTheDefaultWritesNoHeaderAtAll is what every existing installation gets.
+// TestTheDefaultWritesNoFreshnessPolicy is what every existing installation gets.
 //
-// A zero TTL is the default and it has to be indistinguishable from the state
-// before the setting existed: a `max-age=0` would still be a header, and a client
-// or a proxy that revalidates on it behaves differently from one that was told
-// nothing.
-func TestTheDefaultWritesNoHeaderAtAll(t *testing.T) {
+// A zero TTL is the default and it has to write no freshness: a `max-age=0`
+// would still be a header, and a client or a proxy that revalidates on it
+// behaves differently from one that was told nothing. The ETag is not this
+// question (ADR 0391): it is written at every TTL and adds no freshness.
+func TestTheDefaultWritesNoFreshnessPolicy(t *testing.T) {
 	t.Parallel()
 
 	// Both spellings of the default: a handler nobody set a policy on, and one set
@@ -158,7 +344,10 @@ func TestTheDefaultWritesNoHeaderAtAll(t *testing.T) {
 
 			require.Equal(t, http.StatusOK, rec.Code)
 			assert.Empty(t, rec.Header().Get("Cache-Control"),
-				"the default must leave the response exactly as it was")
+				"the default must write no freshness policy")
+			assert.NotEmpty(t, rec.Header().Get("ETag"),
+				"the tag is written whatever the TTL; the installation without one is the "+
+					"one whose clients revalidate most")
 		})
 	}
 }
@@ -257,4 +446,9 @@ func TestTheQueryStringIsPartOfTheKeyAndTheHeaderDoesNotSayOtherwise(t *testing.
 	assert.Empty(t, rec.Header().Get("Vary"),
 		"a Vary on this response would key the cache on a header again, which is the "+
 			"thing ADR 0044 moved into the path to stop")
+
+	again := conditionalRead(t, r, "/store/v1/sales-channels/sc_1/products?collection_id=pcol_1",
+		nil, rec.Header().Get("ETag"))
+	require.Equal(t, http.StatusNotModified, again.Code)
+	assert.Empty(t, again.Header().Get("Vary"), "the 304 reads no request header either")
 }

@@ -156,7 +156,9 @@ func (m *searchModule) search(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	corehttp.WriteJSON(ctx, w, http.StatusOK, listEnvelope{
+	// The answer carries a tag of its bytes and is a 304 when the request holds
+	// them already (ADR 0391); the tag covers the rank order too.
+	corehttp.WriteJSONWithValidator(w, r, listEnvelope{
 		Data:   products,
 		Count:  len(products),
 		Offset: offset,

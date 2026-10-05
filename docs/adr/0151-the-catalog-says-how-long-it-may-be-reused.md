@@ -7,6 +7,7 @@ edge cache ADR 0044 made possible.
 
 - **Status:** Accepted
 - **Date:** 2026-09-12
+- **Amended by:** [0391](0391-a-catalog-read-answers-a-revalidation.md): every read this record covers carries a strong ETag of its body and answers a matching If-None-Match with 304; "No `ETag`" no longer holds.
 
 ## Context
 

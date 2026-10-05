@@ -272,9 +272,7 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 	}
 	// The body is a function of the URL alone (ADR 0044), so it may be reused;
 	// how long and by whom is the installation's (ADR 0151).
-	h.allowCaching(w)
-
-	writeList(w, r, result)
+	h.writeCatalog(w, r, listBody(result))
 }
 
 // storeGetProduct GET /store/v1/sales-channels/{sales_channel_id}/products/{id}
@@ -304,9 +302,7 @@ func (h *Handler) storeGetProduct(w http.ResponseWriter, r *http.Request) {
 	}
 	// The body is a function of the URL alone (ADR 0044), so it may be reused;
 	// how long and by whom is the installation's (ADR 0151).
-	h.allowCaching(w)
-
-	writeItem(w, r, http.StatusOK, product)
+	h.writeCatalog(w, r, itemEnvelope{Data: product})
 }
 
 // storeChannelScope resolves the sales channels a catalog read is scoped to:
@@ -413,7 +409,9 @@ func (h *Handler) storeListCollections(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	writeList(w, r, result)
+	// The tag only: these are not channel-scoped, so they carry no freshness
+	// policy (ADR 0151), but a tag adds none and saves the transfer (ADR 0391).
+	corehttp.WriteJSONWithValidator(w, r, listBody(result))
 }
 
 // storeListCategories GET /store/v1/categories
@@ -440,7 +438,9 @@ func (h *Handler) storeListCategories(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	writeList(w, r, result)
+	// The tag only: these are not channel-scoped, so they carry no freshness
+	// policy (ADR 0151), but a tag adds none and saves the transfer (ADR 0391).
+	corehttp.WriteJSONWithValidator(w, r, listBody(result))
 }
 
 // storeListOptionValues
@@ -484,9 +484,7 @@ func (h *Handler) storeListOptionValues(w http.ResponseWriter, r *http.Request) 
 	}
 	// The body is a function of the URL alone (ADR 0044), so it may be reused;
 	// how long and by whom is the installation's (ADR 0151).
-	h.allowCaching(w)
-
-	writeList(w, r, result)
+	h.writeCatalog(w, r, listBody(result))
 }
 
 // storeListTags GET /store/v1/tags
@@ -504,5 +502,7 @@ func (h *Handler) storeListTags(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	writeList(w, r, result)
+	// The tag only: these are not channel-scoped, so they carry no freshness
+	// policy (ADR 0151), but a tag adds none and saves the transfer (ADR 0391).
+	corehttp.WriteJSONWithValidator(w, r, listBody(result))
 }

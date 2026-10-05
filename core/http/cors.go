@@ -40,16 +40,21 @@ const corsMaxAge = 10 * time.Minute
 // The list is CLOSED rather than reflected back from the request: echoing
 // whatever a browser asks for turns the allow-list into a formality, since the
 // asking side is the one being checked.
+//
+// It carries If-None-Match, the request half of the catalog's validator pair
+// (ADR 0391), so a script on an allowed origin can revalidate a read itself.
 var corsAllowedHeaders = []string{
 	"Content-Type",
 	"Accept",
 	PublishableKeyHeader,
 	IdempotencyKeyHeader,
 	requestIDHeader,
+	"If-None-Match",
 }
 
-// corsExposedHeaders are the response headers a browser may read.
-var corsExposedHeaders = []string{requestIDHeader}
+// corsExposedHeaders are the response headers a browser may read: the request
+// id, and the ETag that is the response half of the validator pair (ADR 0391).
+var corsExposedHeaders = []string{requestIDHeader, "ETag"}
 
 // corsAllowedMethods are the methods the store surface answers.
 var corsAllowedMethods = []string{

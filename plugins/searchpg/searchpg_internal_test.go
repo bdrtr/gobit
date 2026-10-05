@@ -20,6 +20,7 @@ import (
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
 	corehttp "github.com/bdrtr/gobit/core/http"
+	"github.com/bdrtr/gobit/core/openapi"
 	"github.com/bdrtr/gobit/core/query"
 )
 
@@ -299,7 +300,7 @@ func testRouter(m *searchModule) chi.Router {
 	return r
 }
 
-// request verilen hedefe request atar; kimlik verilirse context'e konur.
+// request sends a request to the target; a given identity goes into its context.
 func request(m *searchModule, method, target string, principal *corehttp.Principal) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, target, http.NoBody)
 	if principal != nil {
@@ -897,4 +898,75 @@ func TestABrokenCatalogRecordIsRefused(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, codeCatalogResponse, coreerrors.CodeOf(err))
 	assert.Empty(t, d.ids(), "a row whose primary key is empty must not be written")
+}
+
+// conditionalSearch sends a search carrying the given identity and
+// If-None-Match.
+func conditionalSearch(
+	m *searchModule, target string, principal *corehttp.Principal, ifNoneMatch string,
+) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, target, http.NoBody)
+	if principal != nil {
+		req = req.WithContext(corehttp.WithPrincipal(req.Context(), *principal))
+	}
+	req.Header.Set("If-None-Match", ifNoneMatch)
+	rec := httptest.NewRecorder()
+	testRouter(m).ServeHTTP(rec, req)
+
+	return rec
+}
+
+// TestASearchAnswersARevalidation is ADR 0391 on the plugin's route: the search
+// is a catalog read under the channel segment, so it tags its body and answers a
+// matching If-None-Match with 304 — and only after the key's channel has
+// answered.
+func TestASearchAnswersARevalidation(t *testing.T) {
+	t.Parallel()
+
+	d, k := newFakeStore(), newFakeCatalog()
+	k.addProduct("prod_1", "Shirt", "")
+	d.searchResult = []string{"prod_1"}
+	m := testModule(d, k)
+	target := searchURL(testChannel, "?q=shirt")
+
+	first := request(m, http.MethodGet, target, storePrincipal(testChannel))
+	require.Equal(t, http.StatusOK, first.Code, "body: %s", first.Body.String())
+	tag := first.Header().Get("ETag")
+	require.NotEmpty(t, tag, "a search answers with a tag of its body")
+
+	again := conditionalSearch(m, target, storePrincipal(testChannel), tag)
+	assert.Equal(t, http.StatusNotModified, again.Code)
+	assert.Empty(t, again.Body.Bytes())
+	assert.Equal(t, tag, again.Header().Get("ETag"))
+
+	foreign := conditionalSearch(m, searchURL("sc_pos", "?q=shirt"), storePrincipal(testChannel), "*")
+	assert.Equal(t, http.StatusForbidden, foreign.Code,
+		"a key that does not hold the channel is refused whatever tag it sends")
+	assert.Empty(t, foreign.Header().Get("ETag"))
+}
+
+// TestTheSearchDescribesItsValidator: the document says the search answers a
+// revalidation, so a generated client has a branch for the 304.
+func TestTheSearchDescribesItsValidator(t *testing.T) {
+	t.Parallel()
+
+	m := testModule(newFakeStore(), newFakeCatalog())
+	doc := openapi.New("test", "v1")
+	m.Describe(doc)
+
+	built, err := doc.Build(testRouter(m))
+	require.NoError(t, err)
+	paths, ok := built["paths"].(map[string]any)
+	require.True(t, ok)
+	operations, ok := paths[SearchPath].(map[string]any)
+	require.True(t, ok, "the search has to be in the document")
+	op, ok := operations["get"].(openapi.Operation)
+	require.True(t, ok, "the search's GET has to be in the document")
+
+	assert.Contains(t, op.Responses, "304")
+	names := make([]string, 0, len(op.Parameters))
+	for _, p := range op.Parameters {
+		names = append(names, p.In+":"+p.Name)
+	}
+	assert.Contains(t, names, "header:If-None-Match")
 }

@@ -87,6 +87,19 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **A catalog read answers a revalidation** (ADR 0391, D241). **For
+  integrators:** the storefront catalog's GET reads — the product listing, a
+  product, its related products and add-ons, the facet counts, the option
+  vocabulary, the collections, categories, tags and attribute vocabulary, and
+  the search — answer with a strong `ETag` of their body, and with 304 and no
+  body when `If-None-Match` names it (`W/"…"` and `*` match too); a refusal
+  carries no tag and is never a 304. Nothing is configured: the tag is written
+  whatever `STOREFRONT_CATALOG_CACHE_TTL` says, and `Cache-Control` stays where
+  it was. A 304 still runs the whole read, so a revalidating listing
+  pays its count unless it sends `with_count=false`. A browser on another
+  allowed origin may send `If-None-Match` and read `ETag`. **For embedders:**
+  `core/http` gains `WriteJSONWithValidator(w, r, v)` and `core/openapi` gains
+  `Revalidated(op)`.
 - **An order confirmation is pushed at most once** (ADR 0389, D236). The
   outbox delivers `order.placed` twice and the `web-push` plugin pushed to an
   online device both times; it now records the event's id before it pushes,

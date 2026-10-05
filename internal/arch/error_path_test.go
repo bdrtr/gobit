@@ -45,6 +45,14 @@ const errorWriterName = "WriteError"
 // the core.
 const successWriterName = "WriteJSON"
 
+// validatedWriterName is the success writer that answers a revalidation (ADR
+// 0391).
+//
+// It takes no status, so there is nothing for the status audit to resolve: it
+// answers 200, or 304, which has no body, so the masking the error path owns
+// has nothing to skip.
+const validatedWriterName = "WriteJSONWithValidator"
+
 // htmlWriterName is the single gate for the HTML body (ADR 0011).
 //
 // Unlike [successWriterName] there is NO 2xx requirement: returning the login
@@ -608,7 +616,7 @@ func verifyWriterDefinition(t *testing.T) {
 		}
 	}
 
-	for _, name := range []string{errorWriterName, successWriterName} {
+	for _, name := range []string{errorWriterName, successWriterName, validatedWriterName} {
 		if !found[name] {
 			t.Fatalf("%s no longer defines %q.\nThis file is EXEMPT from the scan because it "+
 				"is the place where the writers are defined; if a writer moved, "+
@@ -1158,6 +1166,10 @@ func (d *auditCtx) auditCall(call *ast.CallExpr, writers map[string]bool) {
 	switch {
 	case target.pkg == coreHTTPPath && (target.name == errorWriterName || target.name == successWriterName):
 		// Whether the status is 2xx is audited separately (see auditStatuses).
+		return
+	case target.pkg == coreHTTPPath && target.name == validatedWriterName:
+		// It takes no status. It answers 200, or 304, which has no body, so the
+		// masking the error path owns has nothing to skip.
 		return
 	case target.pkg != "" && safeWriterTakingCalls[target.pkg+"."+target.name] != "":
 		return

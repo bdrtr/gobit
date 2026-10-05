@@ -63,7 +63,7 @@ const (
 // reads the body, and the "deleted" field that reports the deletion really
 // happened would never reach the client.
 func Describe(d *openapi.Doc) {
-	d.Describe(http.MethodGet, pathStoreProducts, openapi.Operation{
+	d.Describe(http.MethodGet, pathStoreProducts, openapi.Revalidated(openapi.Operation{
 		Summary: "Lists the published products with their price and stock information.",
 		// The tag is written by hand because the core derives it from the FIRST
 		// path segment after the prefix, which is now "sales-channels". Left
@@ -233,9 +233,9 @@ func Describe(d *openapi.Doc) {
 				d.ListOptionalCount(service.StoreProduct{}, openapi.WithCursor())),
 			"403": channelRefusedResponse(),
 		},
-	})
+	}))
 
-	d.Describe(http.MethodGet, pathStoreProduct, openapi.Operation{
+	d.Describe(http.MethodGet, pathStoreProduct, openapi.Revalidated(openapi.Operation{
 		Summary: "Returns a single storefront product by id or by handle.",
 		Tags:    []string{tagProducts},
 		// Both path parameters are derived from the pattern by the core as well;
@@ -251,7 +251,7 @@ func Describe(d *openapi.Doc) {
 			"200": openapi.Response("Storefront product", d.Item(service.StoreProduct{})),
 			"403": channelRefusedResponse(),
 		},
-	})
+	}))
 
 	describeStorefrontRelated(d)
 	describeStorefrontAddOns(d)
@@ -281,15 +281,15 @@ func describeStorefrontVocabulary(d *openapi.Doc) {
 		queryParameter("offset", typeInteger, "Number of records to skip."),
 	}
 
-	d.Describe(http.MethodGet, "/store/v1/collections", openapi.Operation{
+	d.Describe(http.MethodGet, "/store/v1/collections", openapi.Revalidated(openapi.Operation{
 		Summary:    "Lists the collections, for the \"collection_id\" filter of the product listing.",
 		Parameters: paging,
 		Responses: map[string]any{
 			"200": openapi.Response("Collections", d.List(models.Collection{})),
 		},
-	})
+	}))
 
-	d.Describe(http.MethodGet, "/store/v1/categories", openapi.Operation{
+	d.Describe(http.MethodGet, "/store/v1/categories", openapi.Revalidated(openapi.Operation{
 		Summary: "Lists the categories a shopper may see.",
 		// What is NOT listed is worth stating in the document: a client that
 		// cannot see a category it knows exists needs to be able to find out
@@ -306,17 +306,17 @@ func describeStorefrontVocabulary(d *openapi.Doc) {
 					"(\"is_internal\": true) is NOT listed here, and neither is it counted.",
 				d.List(models.Category{})),
 		},
-	})
+	}))
 
-	d.Describe(http.MethodGet, "/store/v1/tags", openapi.Operation{
+	d.Describe(http.MethodGet, "/store/v1/tags", openapi.Revalidated(openapi.Operation{
 		Summary:    "Lists the product tags.",
 		Parameters: paging,
 		Responses: map[string]any{
 			"200": openapi.Response("Tags", d.List(models.Tag{})),
 		},
-	})
+	}))
 
-	d.Describe(http.MethodGet, pathStoreOptionValues, openapi.Operation{
+	d.Describe(http.MethodGet, pathStoreOptionValues, openapi.Revalidated(openapi.Operation{
 		Summary: "Lists the option vocabulary of the visible catalog.",
 		// Written by hand for the reason the product listing's is; left derived
 		// the tag would be "sales-channels".
@@ -340,7 +340,7 @@ func describeStorefrontVocabulary(d *openapi.Doc) {
 			"200": openapi.Response("Option values", d.List(models.OptionValuePair{})),
 			"403": channelRefusedResponse(),
 		},
-	})
+	}))
 }
 
 // graphqlRequest is the GraphQL request body.
@@ -537,7 +537,7 @@ func describeAdminProducts(d *openapi.Doc) {
 // describeStorefrontRelated describes the storefront read of a product's
 // relations (ADR 0180).
 func describeStorefrontRelated(d *openapi.Doc) {
-	d.Describe(http.MethodGet, pathStoreRelated, openapi.Operation{
+	d.Describe(http.MethodGet, pathStoreRelated, openapi.Revalidated(openapi.Operation{
 		Summary: "Lists one kind of a product's related products, as the storefront shows them.",
 		// Written by hand for the reason the product listing's is.
 		Tags: []string{tagProducts},
@@ -558,7 +558,7 @@ func describeStorefrontRelated(d *openapi.Doc) {
 			"200": openapi.Response("The related products", d.Item([]service.StoreProduct{})),
 			"403": channelRefusedResponse(),
 		},
-	})
+	}))
 }
 
 // relationTypeParameter is the storefront's required choice of kind.
@@ -643,7 +643,7 @@ func storeProductParameter() openapi.Parameter {
 // describeStorefrontAddOns describes the storefront read of a product's
 // add-ons (ADR 0228).
 func describeStorefrontAddOns(d *openapi.Doc) {
-	d.Describe(http.MethodGet, pathStoreAddOns, openapi.Operation{
+	d.Describe(http.MethodGet, pathStoreAddOns, openapi.Revalidated(openapi.Operation{
 		Summary: "Lists the add-ons a product's cart lines may carry, as the storefront shows them.",
 		Tags:    []string{tagProducts},
 		Description: "Each entry is an add-on variant — an engraving, a gift wrap — and its product, " +
@@ -659,7 +659,7 @@ func describeStorefrontAddOns(d *openapi.Doc) {
 			"200": openapi.Response("The product's add-ons", d.Item([]service.StoreAddOn{})),
 			"403": channelRefusedResponse(),
 		},
-	})
+	}))
 }
 
 // describeAdminAddOns describes a product's add-ons on the admin surface
@@ -1153,7 +1153,7 @@ func pagingParameters() []openapi.Parameter {
 	}
 }
 
-// salesChannelPathParameter describes the channel segment of the three
+// salesChannelPathParameter describes the channel segment of the
 // channel-scoped catalog reads.
 //
 // The core derives a bare "sales_channel_id, in path, string" from the pattern
@@ -1193,7 +1193,7 @@ func salesChannelPathParameter() openapi.Parameter {
 // The core adds a 403 to the admin surface and not to the storefront, and the
 // reason it gives is sound: a 403 is only meaningful where there is an
 // authorization step, and until ADR 0044 the storefront had none — the
-// publishable key carries no scope. These three routes now do have one, so the
+// publishable key carries no scope. These routes now do have one, so the
 // code is described HERE, by the module that knows the rule, rather than by
 // widening the core's default to every store route that still cannot produce it.
 func channelRefusedResponse() map[string]any {

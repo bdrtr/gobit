@@ -650,6 +650,7 @@ const (
 	schemaFormat               = "format"
 	schemaRef                  = "$ref"
 	schemaAny                  = "anyOf"
+	mediaSchema                = "schema"
 	typeObject                 = "object"
 	typeString                 = "string"
 	typeInteger                = "integer"

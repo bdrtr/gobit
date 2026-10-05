@@ -62,6 +62,9 @@ var notSecretComparisons = map[string][]string{
 	// same key stored: it identifies a request, and the caller holds both.
 	"core/http/callback_guard.go": {"record.Fingerprint == keys.fingerprint"},
 	"core/http/idempotency.go":    {"rec.Fingerprint != digest"},
+	// A request's If-None-Match member against the tag of the body about to be
+	// sent: the tag is a hash of bytes the caller is about to read (ADR 0391).
+	"core/http/response.go": {`strings.TrimPrefix(member, "W/") == tag`},
 	// A configured backend against a constant.
 	"internal/app/guards.go": {"cfg.GuardBackend == config.BackendRedis"},
 	// A step's status against constants.

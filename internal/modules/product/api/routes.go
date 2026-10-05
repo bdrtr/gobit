@@ -83,8 +83,8 @@ func (h *Handler) Routes(r chi.Router) {
 
 	// --- Store API (customer) ---
 	//
-	// The three CHANNEL-SCOPED reads carry the sales channel as a path segment
-	// (ADR 0044). The channel used to arrive in a request header, which left a
+	// The CHANNEL-SCOPED reads ADR 0044 moved carry the sales channel as a path
+	// segment. The channel used to arrive in a request header, which left a
 	// shared cache with no key it could see: one URL, one answer per key. Now
 	// the body is a function of the channel alone and the URL is the cache key.
 	// The paths are constants because each is written here and in [Describe]

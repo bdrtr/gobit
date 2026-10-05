@@ -804,6 +804,41 @@ func TestEveryStoreEndpointIsDescribed(t *testing.T) {
 	}, found)
 }
 
+// TestEveryStoreReadDescribesItsValidator: every storefront GET answers a
+// revalidation (ADR 0391), so every one describes the If-None-Match it reads,
+// the 304 it can answer and the ETag on its 200. A read left out is a client
+// generator with no branch for a 304 it will receive.
+func TestEveryStoreReadDescribesItsValidator(t *testing.T) {
+	t.Parallel()
+
+	paths, _ := storefrontDoc(t)
+
+	reads := 0
+	for path := range paths {
+		if !strings.HasPrefix(path, "/store/v1") {
+			continue
+		}
+		operations, ok := paths[path].(map[string]any)
+		require.True(t, ok)
+		if _, isRead := operations["get"]; !isRead {
+			continue
+		}
+		reads++
+		op := storefrontOperation(t, paths, http.MethodGet, path)
+
+		assert.Contains(t, parameterNames(t, op, "header"), "If-None-Match",
+			"%s has to describe the header it revalidates on", path)
+		responses, ok := op["responses"].(map[string]any)
+		require.True(t, ok, "%s has to describe its responses", path)
+		assert.Contains(t, responses, "304", "%s has to describe its 304", path)
+		success, ok := responses["200"].(map[string]any)
+		require.True(t, ok, "%s has to describe its 200", path)
+		headers, _ := success["headers"].(map[string]any)
+		assert.Contains(t, headers, "ETag", "%s has to describe the tag its 200 carries", path)
+	}
+	require.Positive(t, reads, "no storefront read was found in the document")
+}
+
 // TestGraphQLEndpointDescribesItsBodies verifies that the GraphQL endpoint
 // describes its request and response envelopes.
 //

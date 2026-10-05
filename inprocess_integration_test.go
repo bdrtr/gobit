@@ -197,13 +197,19 @@ func TestTheCatalogCachePolicyReachesTheWire(t *testing.T) {
 	// A read with no publishable key is refused by the guard ring, and the refusal
 	// must carry NO cache header: a CDN storing a 401 would lock a whole channel's
 	// catalog out for the length of the TTL.
-	refused := request(t, handler, http.MethodGet,
-		"/store/v1/sales-channels/sc_1/products", nil)
+	//
+	// The request names every tag (ADR 0391): a cache revalidating for a caller
+	// with no key must receive the refusal, not a 304 that confirms its copy.
+	req := httptest.NewRequest(http.MethodGet, "/store/v1/sales-channels/sc_1/products", http.NoBody)
+	req.Header.Set("If-None-Match", "*")
+	refused := httptest.NewRecorder()
+	handler.ServeHTTP(refused, req)
 	require.Equal(t, http.StatusUnauthorized, refused.Code)
 	assert.Empty(t, refused.Header().Get("Cache-Control"),
 		"a refusal must never be cacheable, and this one is produced by the RING rather "+
 			"than by the handler — which is why it is asserted here and not beside the "+
 			"handler's own tests")
+	assert.Empty(t, refused.Header().Get("ETag"), "a refusal carries no tag")
 }
 
 // TestTheHandlerIsUsableAfterTheContextThatBuiltItIsDone is the trap a harness

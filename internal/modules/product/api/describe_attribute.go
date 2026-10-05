@@ -32,7 +32,7 @@ func attributesParameter() openapi.Parameter {
 
 // describeAttributes records the attribute surface (ADR 0219).
 func describeAttributes(d *openapi.Doc) {
-	d.Describe(http.MethodGet, "/store/v1/product-attributes", openapi.Operation{
+	d.Describe(http.MethodGet, "/store/v1/product-attributes", openapi.Revalidated(openapi.Operation{
 		Summary: "Lists the attributes a shopper can filter on, with their options.",
 		Description: fmt.Sprintf("Every store-wide attribute in the operator's order, at most %d, "+
 			"so the list is not paged. A select attribute lists its options; their handles "+
@@ -41,9 +41,9 @@ func describeAttributes(d *openapi.Doc) {
 		Responses: map[string]any{
 			"200": openapi.Response("Every attribute", d.List(models.Attribute{})),
 		},
-	})
+	}))
 
-	d.Describe(http.MethodGet, pathStoreFacets, openapi.Operation{
+	d.Describe(http.MethodGet, pathStoreFacets, openapi.Revalidated(openapi.Operation{
 		Summary: "Counts the products holding each value of every attribute.",
 		Description: "It takes the listing's catalog filters, attribute filters included, " +
 			"and answers, among the published products they keep in this channel, how many " +
@@ -75,7 +75,7 @@ func describeAttributes(d *openapi.Doc) {
 			"200": openapi.Response("Every attribute with its counts", d.Item([]service.Facet{})),
 			"403": channelRefusedResponse(),
 		},
-	})
+	}))
 
 	d.Describe(http.MethodPost, "/admin/v1/product-attributes", openapi.Operation{
 		Summary: "Defines a store-wide attribute a product takes a value of.",

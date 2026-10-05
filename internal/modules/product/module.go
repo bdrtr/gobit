@@ -169,12 +169,12 @@ type Options struct {
 	// CatalogCacheTTL and CatalogCacheShared are the freshness policy of the
 	// CHANNEL-SCOPED storefront reads (ADR 0151).
 	//
-	// The zero TTL writes no cache header, so a module built with a zero Options
-	// serves exactly what it served before the setting existed. What the two mean
-	// and why the safe answer is the default is written where the configuration
-	// lives (config.Config.CatalogCacheTTL); this module does not interpret them,
-	// it passes them through — a default picked here would be a second definition
-	// of the same policy.
+	// The zero TTL writes no Cache-Control, so a module built with a zero
+	// Options states no freshness; the ETag is written at every TTL (ADR 0391).
+	// What the two mean and why the safe answer is the default is written where
+	// the configuration lives (config.Config.CatalogCacheTTL); this module does
+	// not interpret them, it passes them through — a default picked here would
+	// be a second definition of the same policy.
 	CatalogCacheTTL    time.Duration
 	CatalogCacheShared bool
 }

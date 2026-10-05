@@ -631,6 +631,14 @@ past and is not corrected retroactively.
   row is not committed yet, and the next page or window starts after it. The
   row is there once it commits: read a window that ended a few seconds ago, or
   read it again.
+- **A 304 from the catalog saves the wire, not the server.** Since
+  [ADR 0391](adr/0391-a-catalog-read-answers-a-revalidation.md) the catalog reads
+  tag their body and answer a matching `If-None-Match` with 304, but the tag is a
+  hash of the bytes, so the read, the enrichment and the encoding run before the
+  comparison; a listing's count runs too unless the client sends
+  `with_count=false`. A stamp that would let the read stop early was refused: the
+  body moves with the clock and with writes in three modules that publish no
+  version.
 
 ## The limit of the invariants
 

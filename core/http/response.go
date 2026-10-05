@@ -3,8 +3,11 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	coreerrors "github.com/bdrtr/gobit/core/errors"
 )
@@ -53,23 +56,43 @@ type ErrorBody struct {
 // not been sent yet, so the client gets a 500 rather than half a body. When v
 // is nil only the header and the status are written.
 func WriteJSON(ctx context.Context, w http.ResponseWriter, status int, v any) {
-	var buf bytes.Buffer
-	if v != nil {
-		if err := json.NewEncoder(&buf).Encode(v); err != nil {
-			LoggerFromContext(ctx).ErrorContext(ctx, "response body could not be encoded",
-				"error", err,
-				"request_id", RequestIDFromContext(ctx),
-			)
-			w.Header().Set("Content-Type", contentTypeJSON)
-			w.WriteHeader(http.StatusInternalServerError)
-			_, _ = w.Write([]byte(fallbackErrorBody))
-			return
-		}
+	buf, ok := encodeJSON(ctx, w, v)
+	if !ok {
+		return
 	}
 
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.WriteHeader(status)
+	writeBody(ctx, w, buf)
+}
 
+// encodeJSON encodes v into memory, or answers the fixed 500 and reports false.
+//
+// It is the step [WriteJSON] and [WriteJSONWithValidator] share: nothing has
+// been sent when it fails, which is what lets the failure still be a 500.
+func encodeJSON(ctx context.Context, w http.ResponseWriter, v any) (*bytes.Buffer, bool) {
+	var buf bytes.Buffer
+	if v == nil {
+		return &buf, true
+	}
+
+	if err := json.NewEncoder(&buf).Encode(v); err != nil {
+		LoggerFromContext(ctx).ErrorContext(ctx, "response body could not be encoded",
+			"error", err,
+			"request_id", RequestIDFromContext(ctx),
+		)
+		w.Header().Set("Content-Type", contentTypeJSON)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(fallbackErrorBody))
+
+		return nil, false
+	}
+
+	return &buf, true
+}
+
+// writeBody writes an encoded body after the status has gone out.
+func writeBody(ctx context.Context, w http.ResponseWriter, buf *bytes.Buffer) {
 	if buf.Len() == 0 {
 		return
 	}
@@ -81,6 +104,69 @@ func WriteJSON(ctx context.Context, w http.ResponseWriter, status int, v any) {
 			"request_id", RequestIDFromContext(ctx),
 		)
 	}
+}
+
+// WriteJSONWithValidator writes v as a 200 JSON body carrying a strong ETag of
+// its encoded bytes, or answers 304 with no body when the request's
+// If-None-Match names that tag (ADR 0391).
+//
+// The tag is a hash of the body, not a version the caller supplies, so it
+// cannot confirm bytes the read would not send now; the price is that the
+// caller's work is done before the comparison, and a 304 saves the transfer,
+// not the read. If-None-Match is compared weakly (RFC 9110 §13.1.2): `W/"t"`
+// matches `"t"` and `*` matches. A 304 carries the headers already set on w and
+// the ETag, and no Content-Type. It takes no status: a 304 has no body, so
+// there is nothing for [WriteError]'s masking to skip. Call it on a GET's
+// success path only.
+func WriteJSONWithValidator(w http.ResponseWriter, r *http.Request, v any) {
+	ctx := r.Context()
+
+	buf, ok := encodeJSON(ctx, w, v)
+	if !ok {
+		return
+	}
+
+	tag := bodyTag(buf.Bytes())
+	w.Header().Set("ETag", tag)
+
+	if noneMatch(r.Header.Values("If-None-Match"), tag) {
+		w.WriteHeader(http.StatusNotModified)
+
+		return
+	}
+
+	w.Header().Set("Content-Type", contentTypeJSON)
+	w.WriteHeader(http.StatusOK)
+	writeBody(ctx, w, buf)
+}
+
+// bodyTag is the strong entity tag of an encoded body: the first half of its
+// SHA-256, hex, quoted — the derivation the admin panel's assets use.
+//
+// It is a content hash and not a process-seeded one, so two replicas, or one
+// restarted, give one body one tag.
+func bodyTag(body []byte) string {
+	sum := sha256.Sum256(body)
+
+	return `"` + hex.EncodeToString(sum[:16]) + `"`
+}
+
+// noneMatch reports whether any member of the If-None-Match lines names tag.
+//
+// Every line is read and split on commas, because a client or a proxy may send
+// the list either way. The comparison is weak, as the header requires: a `W/`
+// prefix is dropped before comparing, and `*` matches any current body.
+func noneMatch(lines []string, tag string) bool {
+	for _, line := range lines {
+		for _, member := range strings.Split(line, ",") {
+			member = strings.TrimSpace(member)
+			if member == "*" || strings.TrimPrefix(member, "W/") == tag {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // contentTypeHTML is the Content-Type of HTML responses.

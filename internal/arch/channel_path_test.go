@@ -117,7 +117,7 @@ func TestEveryChannelScopedRouteNarrowsThroughTheOneHelper(t *testing.T) {
 			"(the segment spelling or the route registration shape may have changed)")
 
 	for _, route := range routes {
-		assert.True(t, reachesChannelScope(route, callers),
+		assert.True(t, reaches(route, callers, channelScopeHelper),
 			"%s names a sales channel in its path but never reaches corehttp.%s.\n"+
 				"The segment is a value the CLIENT supplies: read on its own it lets any "+
 				"publishable key read any channel's catalog by editing a URL. It is safe "+
@@ -125,6 +125,37 @@ func TestEveryChannelScopedRouteNarrowsThroughTheOneHelper(t *testing.T) {
 				"written once (ADR 0044).",
 			route.where(), channelScopeHelper)
 	}
+}
+
+// TestEveryChannelScopedRouteAnswersWithTheValidator holds ADR 0391 on the
+// routes nobody listed: every storefront GET whose path names a channel writes
+// its success through corehttp.WriteJSONWithValidator, directly or through one
+// package-local wrapper.
+//
+// The population is the coverage half's, so it reaches plugins as well as
+// modules: the search is a plugin's route under the same segment, and a read
+// that answers with the plain writer serves a body no client can revalidate —
+// nothing fails, the 304 simply never comes.
+func TestEveryChannelScopedRouteAnswersWithTheValidator(t *testing.T) {
+	t.Parallel()
+
+	routes, callers := channelRouteScan(t)
+
+	reads := 0
+	for _, route := range routes {
+		if route.verb != "GET" {
+			continue
+		}
+		reads++
+		assert.True(t, reaches(route, callers, validatedWriterName),
+			"%s is a channel-scoped catalog read that never reaches corehttp.%s.\n"+
+				"Its body cannot be revalidated: a client holding it gets the whole body "+
+				"again on every read (ADR 0391).",
+			route.where(), validatedWriterName)
+	}
+
+	require.Positive(t, reads,
+		"no channel-scoped storefront GET was found; the scan has gone BLIND")
 }
 
 // TestNothingOutsideCoreReadsTheChannelSegment is the default-deny half.
@@ -371,16 +402,16 @@ func channelRoute(call *ast.CallExpr, consts map[string]string, pkg string) (cha
 	}, true
 }
 
-// reachesChannelScope reports whether the route's handler calls the helper, or
-// calls something in its own package that does.
-func reachesChannelScope(route channelScopedRoute, callers map[string][]string) bool {
+// reaches reports whether the route's handler calls name, or calls something in
+// its own package that does.
+func reaches(route channelScopedRoute, callers map[string][]string, name string) bool {
 	direct := callers[route.pkg+"."+route.handler]
-	if slices.Contains(direct, channelScopeHelper) {
+	if slices.Contains(direct, name) {
 		return true
 	}
 
 	for _, called := range direct {
-		if slices.Contains(callers[route.pkg+"."+called], channelScopeHelper) {
+		if slices.Contains(callers[route.pkg+"."+called], name) {
 			return true
 		}
 	}

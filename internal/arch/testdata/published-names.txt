@@ -324,6 +324,7 @@ core/http WritePrivateAsset
 core/http WriteError
 core/http WriteHTML
 core/http WriteJSON
+core/http WriteJSONWithValidator
 core/http WriteRedirect
 core/http/redisguard CodeIdempotencyStoreFailed
 core/http/redisguard CodeInvalidConfig
@@ -400,6 +401,7 @@ core/openapi New
 core/openapi Operation
 core/openapi Parameter
 core/openapi Response
+core/openapi Revalidated
 core/openapi Version
 core/openapi WithCursor
 core/personaldata Anonymized
