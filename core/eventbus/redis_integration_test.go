@@ -17,6 +17,7 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
 )
 
@@ -524,6 +525,89 @@ func TestRedisIntegrationTakesOverWhatADeadConsumerWasHolding(t *testing.T) {
 		// name means it happened and the ACK did not.
 		t.Errorf("the takeover left %s pending under %q after %s; a taken-over message that "+
 			"is not ACKed has only changed owner", entry.ID, entry.Consumer, entry.Idle)
+	}
+}
+
+// TestRedisIntegrationLeavesAMessageFailingDuringShutdownPending is ADR 0420:
+// a handler whose fault may pass still fails once the bus's shutdown has
+// begun, and its message is left unacknowledged, so the next process takes it
+// over rather than the shutdown dropping it as processed.
+func TestRedisIntegrationLeavesAMessageFailingDuringShutdownPending(t *testing.T) {
+	client := startRedis(t)
+	cfg := testConfig(t, "stopping")
+	stream := cfg.StreamName("order.placed")
+
+	stopping, err := eventbus.NewRedisStream(client, cfg, discardLogger())
+	if err != nil {
+		t.Fatalf("NewRedisStream returned an error: %v", err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	if err := stopping.Subscribe("order.placed", func(context.Context, eventbus.Event) error {
+		once.Do(func() { close(entered); <-release })
+		return coreerrors.Unavailable("busy", "a parcel of the order is being opened")
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+	if err := stopping.Publish(t.Context(), eventbus.Event{Name: "order.placed", ID: "evt_failed_in_shutdown"}); err != nil {
+		t.Fatalf("Publish returned an error: %v", err)
+	}
+	select {
+	case <-entered:
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out: the handler never received the event")
+	}
+
+	shut := make(chan error, 1)
+	go func() { shut <- stopping.Shutdown(context.Background()) }()
+	// The bus refuses a publish once its shutdown has begun; the handler fails
+	// after that, and its last call comes a second and a quarter later still.
+	deadline := time.Now().Add(10 * time.Second)
+	for stopping.Publish(t.Context(), eventbus.Event{Name: "order.placed", ID: "evt_probe"}) == nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the bus's shutdown never began")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(release)
+	if err := <-shut; err != nil {
+		t.Fatalf("Shutdown returned an error: %v", err)
+	}
+
+	pending, err := client.XPendingExt(t.Context(), &redis.XPendingExtArgs{
+		Stream: stream, Group: cfg.Group, Start: "-", End: "+", Count: 10,
+	}).Result()
+	if err != nil {
+		t.Fatalf("XPendingExt returned an error: %v", err)
+	}
+	if len(pending) != 1 || pending[0].Consumer != "stopping" {
+		t.Fatalf("the message failing during shutdown has to stay pending under its reader, got %v", pending)
+	}
+
+	successorCfg := cfg
+	successorCfg.Consumer = "successor"
+	successorCfg.ClaimMinIdle = 300 * time.Millisecond
+	successor, err := eventbus.NewRedisStream(client, successorCfg, discardLogger())
+	if err != nil {
+		t.Fatalf("NewRedisStream returned an error: %v", err)
+	}
+	got := make(chan string, 4)
+	if err := successor.Subscribe("order.placed", func(_ context.Context, e eventbus.Event) error {
+		got <- e.ID
+		return nil
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+	select {
+	case id := <-got:
+		if id != "evt_failed_in_shutdown" {
+			t.Errorf("the redelivered event = %q, expected evt_failed_in_shutdown", id)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("timed out: the message left pending at shutdown never reached the next process")
+	}
+	if err := successor.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown returned an error: %v", err)
 	}
 }
 

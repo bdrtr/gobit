@@ -63,6 +63,9 @@ type fakeStore struct {
 	// open committing while this one waits for the order's lock looks like
 	// (ADR 0409).
 	onLock func(f *fakeStore)
+	// busy names the references whose dispatch lock another transaction
+	// holds: TryLockReferenceDispatch answers false for them (ADR 0420).
+	busy map[string]bool
 	// fulWrites counts how many times the fulfillment row was written to; that
 	// the idempotent branches DO NOT TOUCH the row A SECOND TIME is proven with
 	// it.
@@ -865,12 +868,45 @@ func (f *fakeStore) LockReferenceDispatch(_ context.Context, reference string) e
 	return nil
 }
 
+// TryLockReferenceDispatch records the attempt and answers false for a
+// reference in busy; a free lock is taken as LockReferenceDispatch takes it,
+// onLock included.
+func (f *fakeStore) TryLockReferenceDispatch(_ context.Context, reference string) (bool, error) {
+	f.mu.Lock()
+	if f.busy[reference] {
+		f.locks = append(f.locks, "busy:"+reference)
+		f.mu.Unlock()
+
+		return false, nil
+	}
+	f.locks = append(f.locks, "dispatch:"+reference)
+	onLock := f.onLock
+	f.mu.Unlock()
+
+	if onLock != nil {
+		onLock(f)
+	}
+
+	return true, nil
+}
+
 // putLiveParcel writes an outgoing parcel holding units of one line, as another
 // open that committed would have left it.
 func (f *fakeStore) putLiveParcel(id, reference, lineID string, units int64) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.fuls[id] = models.Fulfillment{ID: id, Reference: reference, Status: models.StatusPending}
+	f.items["item_"+id] = models.FulfillmentItem{
+		ID: "item_" + id, FulfillmentID: id, LineItemID: lineID, Quantity: units,
+	}
+}
+
+// putLiveReturnParcel writes a parcel bringing returnID back holding units of
+// one line, as another open of it that committed would have left it.
+func (f *fakeStore) putLiveReturnParcel(id, reference, returnID, lineID string, units int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fuls[id] = models.Fulfillment{ID: id, Reference: reference, Status: models.StatusPending, ReturnID: returnID}
 	f.items["item_"+id] = models.FulfillmentItem{
 		ID: "item_" + id, FulfillmentID: id, LineItemID: lineID, Quantity: units,
 	}

@@ -142,6 +142,11 @@ type CreateFulfillmentInput struct {
 // under different keys therefore never hold more than the ceiling they read
 // between them: the second one waits on the lock and counts the first one's
 // units, whether or not the first one's link to the order is written yet.
+//
+// A parcel bringing a return back takes the same lock, its reference being the
+// order: it may hold what its return names less what that return's live parcels
+// hold, counted under the lock (ADR 0420), so two of them opened at once never
+// bring back more than the return names between them.
 func (s *Service) CreateFulfillment(
 	ctx context.Context,
 	in CreateFulfillmentInput,
@@ -173,10 +178,10 @@ func (s *Service) CreateFulfillment(
 		return models.Fulfillment{}, err
 	}
 	retry := s.isRetry(ctx, key)
-	// ceilings is what the order may ship per line, read for an outgoing parcel
-	// that is not a retry; the transaction holds the parcel to it under the
-	// order's lock. It stays nil on a retry and on a parcel bringing a return
-	// back.
+	// ceilings is, per line, what the order may ship for an outgoing parcel or
+	// what the return names for one bringing it back, read when the request is
+	// not a retry; the transaction holds the parcel to it under the order's
+	// lock. It stays nil on a retry.
 	var ceilings map[string]int64
 	owedDefault := false
 	if !retry {
@@ -207,10 +212,10 @@ func (s *Service) CreateFulfillment(
 			return err
 		}
 
-		if returnID == "" {
-			if err := s.store.LockReferenceDispatch(ctx, reference); err != nil {
-				return err
-			}
+		// Every parcel of the order waits for the others, the ones bringing a
+		// return back included (ADR 0409, ADR 0420).
+		if err := s.store.LockReferenceDispatch(ctx, reference); err != nil {
+			return err
 		}
 
 		created, inserted, err := s.store.InsertFulfillmentIfAbsent(ctx, models.Fulfillment{
@@ -255,7 +260,13 @@ func (s *Service) CreateFulfillment(
 			return nil
 		}
 
-		if ceilings != nil {
+		switch {
+		case ceilings == nil:
+		case returnID != "":
+			if err := s.holdToReturn(ctx, reference, returnID, items, ceilings); err != nil {
+				return err
+			}
+		default:
 			if items, err = s.holdToCeiling(ctx, reference, items, ceilings, owedDefault); err != nil {
 				return err
 			}
@@ -390,6 +401,7 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 	// publish below knows there was no new act to report.
 	var (
 		reference  string
+		returnID   string
 		canceledAt time.Time
 	)
 
@@ -444,11 +456,11 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 		// event is units that left a live parcel and went nowhere: the
 		// cancellation that counted them as gone is never recomputed, and the
 		// stock stays deducted with nothing saying it should not be (ADR 0139).
-		if err := s.recordFulfillmentCanceled(ctx, ful.ID, ful.Reference, now); err != nil {
+		if err := s.recordFulfillmentCanceled(ctx, ful.ID, ful.Reference, ful.ReturnID, now); err != nil {
 			return err
 		}
 
-		reference, canceledAt = ful.Reference, now
+		reference, returnID, canceledAt = ful.Reference, ful.ReturnID, now
 
 		return nil
 	})
@@ -460,7 +472,7 @@ func (s *Service) CancelFulfillment(ctx context.Context, id string) error {
 	// no second act to announce. Publishing anyway would tell a subscriber that
 	// units were released when none were.
 	if !canceledAt.IsZero() {
-		s.publishFulfillmentCanceled(ctx, id, reference, canceledAt)
+		s.publishFulfillmentCanceled(ctx, id, reference, returnID, canceledAt)
 	}
 
 	return nil
@@ -996,6 +1008,50 @@ func (s *Service) CommittedQuantitiesForReference(ctx context.Context, reference
 	}
 
 	return s.store.CommittedQuantitiesForReference(ctx, reference)
+}
+
+// CodeDispatchBusy refuses a count asked while a parcel of the same order is
+// being opened: the order's dispatch lock is held, and asking again later
+// counts that parcel once it commits (ADR 0420).
+const CodeDispatchBusy = "fulfillment_dispatch_busy"
+
+// HeldForReferenceLocked is [Service.CommittedQuantitiesForReference] read
+// under the reference's dispatch lock, in a transaction of its own (ADR 0420).
+//
+// It does not wait for the lock. A parcel of the order being opened holds it
+// for its whole provider call, and a bus consumer waiting there would hold a
+// pooled connection for as long as a carrier takes. So a lock in use answers
+// [errors.KindUnavailable] with [CodeDispatchBusy] at once, a fault that
+// passes, and the caller asks again: once the open commits, its parcel is
+// counted, and a write-off therefore puts back no unit the new parcel holds. A
+// parcel whose link to its order was not written is counted, since the
+// reference is what this module stores.
+func (s *Service) HeldForReferenceLocked(ctx context.Context, reference string) (map[string]int64, error) {
+	reference = strings.TrimSpace(reference)
+	if err := requireText("the reference", reference); err != nil {
+		return nil, err
+	}
+
+	var held map[string]int64
+	err := s.store.WithTx(ctx, func(ctx context.Context) error {
+		taken, err := s.store.TryLockReferenceDispatch(ctx, reference)
+		if err != nil {
+			return err
+		}
+		if !taken {
+			return errors.Unavailable(CodeDispatchBusy,
+				"a parcel of %s is being opened, so what its parcels hold cannot be counted "+
+					"yet; ask again once it commits", reference)
+		}
+		held, err = s.store.CommittedQuantitiesForReference(ctx, reference)
+
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return held, nil
 }
 
 // CommittedQuantities sums, per order line, the units a live outgoing parcel

@@ -79,13 +79,15 @@ type DispatchBound interface {
 //
 // A parcel naming a return carries goods the customer sends back, not goods the
 // order still owes, so the order's bound would refuse it for every unit already
-// shipped (D234). It is bounded by what that return still awaits instead
-// ([Service.refuseOverReturn], ADR 0384).
+// shipped (D234). It is bounded by what that return names instead
+// ([Service.refuseOverReturn], ADR 0384), and held under the order's lock to
+// what the return's live parcels leave of it ([Service.holdToReturn],
+// ADR 0420).
 func (s *Service) refuseOverDispatch(
 	ctx context.Context, reference, returnID string, items []FulfillmentItemInput,
 ) (map[string]int64, error) {
 	if returnID != "" {
-		return nil, s.refuseOverReturn(ctx, reference, returnID, items)
+		return s.refuseOverReturn(ctx, reference, returnID, items)
 	}
 
 	if s.bound == nil {

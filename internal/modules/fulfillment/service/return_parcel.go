@@ -44,8 +44,8 @@ func refuseWrongDirection(option models.ShippingOption, returnID string, items [
 	return nil
 }
 
-// refuseOverReturn refuses a parcel that would bring back more than its return
-// still awaits.
+// refuseOverReturn refuses a parcel that would bring back what its return does
+// not name, and answers, per line, what the return names.
 //
 // # The bound
 //
@@ -55,15 +55,23 @@ func refuseWrongDirection(option models.ShippingOption, returnID string, items [
 // module answers "awaits" from its own status rule, so no status word is copied
 // here (the D59 class).
 //
+// What the return names is read here, before the transaction, and holds no
+// parcel; what its live parcels hold is counted inside it, under the order's
+// lock ([Service.holdToReturn], ADR 0420): a target both sides of which are read
+// the same way, so two parcels opened at once cannot each count the units the
+// other is about to take. Whether the return still awaits its goods stays a
+// read before the transaction, since asking the order module while holding this
+// module's locks takes a second connection from the same pool (ADR 0135).
+//
 // # It fails CLOSED, like the outgoing bound
 //
 // A return that cannot be read is not a bound; an unknown return keeps the kind
 // it was reported with, so it answers 404 the way an unknown order does.
 func (s *Service) refuseOverReturn(
 	ctx context.Context, reference, returnID string, items []FulfillmentItemInput,
-) error {
+) (map[string]int64, error) {
 	if s.bound == nil {
-		return errors.Internal(CodeDispatchBoundUnknown,
+		return nil, errors.Internal(CodeDispatchBoundUnknown,
 			"the fulfillment module has no way to check what return %s still awaits, so a "+
 				"parcel cannot be opened; the fulfilling flow is what answers it and it "+
 				"was not bound", returnID)
@@ -71,34 +79,58 @@ func (s *Service) refuseOverReturn(
 
 	awaited, lines, err := s.bound.ReturnLines(ctx, reference, returnID)
 	if err != nil {
-		return errors.Wrap(err, errors.KindOf(err), CodeDispatchBoundUnknown,
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeDispatchBoundUnknown,
 			"what return %s of order %s still awaits could not be read, so nothing was opened",
 			returnID, reference)
 	}
 	if !awaited {
-		return errors.Conflict(CodeReturnNotAwaited,
+		return nil, errors.Conflict(CodeReturnNotAwaited,
 			"return %s of order %s awaits no goods; it is another order's, received or canceled",
 			returnID, reference)
-	}
-
-	inbound, err := s.store.ReturningQuantities(ctx, returnID)
-	if err != nil {
-		return err
 	}
 
 	for _, item := range items {
 		named, inReturn := lines[item.LineItemID]
 		if !inReturn {
-			return errors.Invalid(CodeLineNotDispatchable,
+			return nil, errors.Invalid(CodeLineNotDispatchable,
 				"line %s is not in return %s; a parcel bringing a return back holds only "+
 					"what the return names", item.LineItemID, returnID)
 		}
-		remaining := max(named-inbound[item.LineItemID], 0)
-		if item.Quantity > remaining {
+		if item.Quantity > named {
+			return nil, errors.Conflict(CodeLineNotDispatchable,
+				"return %s names %d unit(s) of line %s and the parcel asks for %d",
+				returnID, named, item.LineItemID, item.Quantity)
+		}
+	}
+	if lines == nil {
+		lines = map[string]int64{}
+	}
+
+	return lines, nil
+}
+
+// holdToReturn holds a parcel bringing a return back to what the return names
+// less what that return's live parcels hold (ADR 0420, gap D265).
+//
+// It runs inside the transaction, after the order's dispatch lock and after the
+// parcel's row is written but before its items are: the parcel being opened is
+// not in the count, and a parcel committed by the lock's last holder is. Only
+// this return's parcels count; another return of the same order names its own
+// units.
+func (s *Service) holdToReturn(
+	ctx context.Context, reference, returnID string, items []FulfillmentItemInput, named map[string]int64,
+) error {
+	held, err := s.store.ReturningQuantities(ctx, returnID)
+	if err != nil {
+		return err
+	}
+
+	for _, item := range items {
+		if left := named[item.LineItemID] - held[item.LineItemID]; left < item.Quantity {
 			return errors.Conflict(CodeLineNotDispatchable,
-				"return %s still awaits %d unit(s) of line %s and the parcel asks for %d; what "+
-					"the return names minus what its live parcels hold is the bound",
-				returnID, remaining, item.LineItemID, item.Quantity)
+				"return %s of order %s still awaits %d unit(s) of line %s and the parcel asks "+
+					"for %d; what the return names minus what its live parcels hold is the bound",
+				returnID, reference, max(left, 0), item.LineItemID, item.Quantity)
 		}
 	}
 

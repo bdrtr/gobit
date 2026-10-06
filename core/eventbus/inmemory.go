@@ -85,6 +85,8 @@ func (b *inMemoryBus) Publish(ctx context.Context, e Event) error {
 	for _, h := range handlers {
 		go func() {
 			defer b.wg.Done()
+			// There is no pending list here: an event whose handler still
+			// failed is gone, during a shutdown as at any other time (ADR 0420).
 			invokeHandler(hctx, b.log, e, h)
 		}()
 	}

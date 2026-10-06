@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	coreerrors "github.com/bdrtr/gobit/core/errors"
 	"github.com/bdrtr/gobit/core/eventbus"
 	"github.com/bdrtr/gobit/internal/workflows/ordercancel"
 )
@@ -275,8 +276,22 @@ type harness struct {
 	inventory    *fakeInventory
 	committed    map[string]int64
 	committedErr error
-	links        map[string]map[string][]string
-	linkErr      error
+	// committedOf, when set, is what each LIVE outgoing parcel of the order
+	// holds, by parcel id, whatever the links say: a question about named
+	// parcels sums only those, and the module's count by reference sums them
+	// all (ADR 0420).
+	committedOf map[string]map[string]int64
+	// committedByRef, when set, answers the module's count per reference: an
+	// order absent from it holds nothing, so a flow asking about the wrong
+	// order gets the wrong answer.
+	committedByRef map[string]map[string]int64
+	// heldAsked records every reference the module's count was asked about.
+	heldAsked []string
+	// busyFor is how many times the module's count answers that a parcel of
+	// the order is being opened before it answers.
+	busyFor int
+	links   map[string]map[string][]string
+	linkErr error
 	// held is what ONE parcel carries, per line, and it answers for a canceled
 	// parcel too — the seam the parcel handler reads.
 	held    map[string]int64
@@ -320,13 +335,33 @@ func (h *harness) handle(t *testing.T, e eventbus.Event) error {
 	return h.flow.HandleLineCanceled(t.Context(), e)
 }
 
-// CommittedQuantities answers what a live parcel holds.
-func (h *harness) CommittedQuantities(context.Context, []string) (map[string]int64, error) {
+// HeldForReferenceLocked answers what the order's live parcels hold, counted
+// by reference: whatever the links say, which is the point (ADR 0420).
+func (h *harness) HeldForReferenceLocked(_ context.Context, reference string) (map[string]int64, error) {
+	h.heldAsked = append(h.heldAsked, reference)
 	if h.committedErr != nil {
 		return nil, h.committedErr
 	}
+	if h.busyFor > 0 {
+		h.busyFor--
 
-	return h.committed, nil
+		return nil, coreerrors.Unavailable("fulfillment_dispatch_busy", "a parcel of %s is being opened", reference)
+	}
+	if h.committedByRef != nil {
+		return h.committedByRef[reference], nil
+	}
+	if h.committedOf == nil {
+		return h.committed, nil
+	}
+
+	out := map[string]int64{}
+	for _, held := range h.committedOf {
+		for line, units := range held {
+			out[line] += units
+		}
+	}
+
+	return out, nil
 }
 
 // ListMany answers the links.

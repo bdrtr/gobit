@@ -77,9 +77,10 @@ type CommittedQuantitiesForReferenceRow struct {
 
 // CommittedQuantitiesForReference sums, per order line, the units the live
 // outgoing parcels opened for one reference hold, by the reference this module
-// stores rather than by the order's link (ADR 0409, gap D265). A parcel opening
-// reads it twice, before it asks what the order owes and again under the
-// reference's lock, and the difference is what a parcel opened in between took.
+// stores rather than by the order's link (ADR 0409, gap D265). It is read once,
+// under the reference's dispatch lock: by a parcel opening, which may take its
+// line's ceiling less this, and by a cancellation, which puts back none of it
+// (ADR 0420).
 func (q *Queries) CommittedQuantitiesForReference(ctx context.Context, reference string) ([]CommittedQuantitiesForReferenceRow, error) {
 	rows, err := q.db.Query(ctx, committedQuantitiesForReference, reference)
 	if err != nil {

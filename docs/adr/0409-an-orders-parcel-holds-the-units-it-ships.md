@@ -3,7 +3,7 @@
 **Summary:** A parcel opened for an order's goods holds the items named, or every unit still owed on an order sold one delivery, and no outgoing parcel holds none.
 It costs a refusal where the order owes nothing or names no items without that default, and a lock per order on every outgoing parcel.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0420](0420-every-parcel-waits-for-its-orders-lock.md), whose return parcels and cancellations take its lock
 - **Date:** 2026-10-06
 - **Amends:** [0140](0140-a-parcel-records-which-order-it-is-for.md), whose order-route parcel held no unit, and [0324](0324-the-panel-ships-an-order.md), whose page chose no line
 

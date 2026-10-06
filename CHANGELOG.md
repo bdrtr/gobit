@@ -11,6 +11,37 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **Every parcel waits for its order's lock** (ADR 0420, D264, D265). **For
+  plugin authors:** the order cancellation flow resolves `fulfillment.interop`
+  as an interface that now requires `HeldForReferenceLocked(ctx, reference)`
+  and no longer `CommittedQuantities`; an installation that registers its own
+  `fulfillment.interop` without the new method fails at startup. The method
+  answers, per order line, the units the order's live outgoing parcels hold,
+  counted by reference under the order's dispatch lock, and answers an
+  unavailable fault, `fulfillment_dispatch_busy`, at once while a parcel of
+  the order is being opened. `core/eventbus.HandlerRetryDelays()` answers the
+  bus's waits between a failing handler's calls, for a handler that bounds
+  its own waits by them. On the Redis bus a handler that still fails with a
+  fault that may pass once the bus's shutdown has begun leaves its message
+  pending, and the next process takes it over and delivers it again, where
+  it was acknowledged and dropped as processed; an invalid event and a panic
+  are acknowledged as before, and the in-memory bus is unchanged. **For
+  integrators:** the `fulfillment.canceled`
+  event, and its webhook, carry `return_id`, the return a parcel was bringing
+  back, empty for a parcel that went out. **For operators:** two parcels
+  opened at once to bring one return back can no longer together carry more
+  than the return names; the second answers 409
+  `fulfillment_line_not_dispatchable`. A line write-off or a box cancel no
+  longer puts back units that a parcel being opened is about to hold: its
+  restock, which runs on the event bus after the request has returned, asks
+  again while the parcel is opened, about 45 seconds a delivery at most; a
+  delivery that still meets it is logged as failed, the outbox relay
+  delivers the event once more within about a minute, and the line's next
+  act restores the shelf. A parcel whose link to its order was not written
+  is counted by a write-off, and its cancel puts its units back; a return
+  parcel's cancel puts nothing back. A write-off committing while an open
+  waits for the order's lock is still seen by neither (D265).
+
 - **An order's parcel holds the units it ships** (ADR 0409, D264, D265). **For
   API consumers:** `POST /admin/v1/orders/{id}/fulfillments` takes `items`
   (`line_item_id`, `quantity`); without them an order sold exactly one delivery

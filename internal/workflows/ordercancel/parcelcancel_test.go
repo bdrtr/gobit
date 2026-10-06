@@ -294,17 +294,16 @@ func TestARedeliveredParcelEventAddsNothing(t *testing.T) {
 		"and it does not even reach the write: the target was already met")
 }
 
-// TestAParcelBoundToNoOrderIsNotAnError covers the parcel opened by hand.
-//
-// The binding is a Module Link written by the flow that opens a parcel for an
-// order. A parcel opened straight through the admin endpoint has none, and there
-// is nothing to put back against because nothing wrote anything off.
-func TestAParcelBoundToNoOrderIsNotAnError(t *testing.T) {
+// TestAParcelWhoseReferenceNamesNoOrderIsNotAnError covers a parcel the link
+// binds to no order and whose reference no order answers to: nothing wrote its
+// units off, so there is nothing to put back, and the bus is not asked to try
+// again (ADR 0420).
+func TestAParcelWhoseReferenceNamesNoOrderIsNotAnError(t *testing.T) {
 	t.Parallel()
 
 	h := newHarness(t)
 	h.held = map[string]int64{testLineItemID: 3}
-	h.lines = orderLinesJSON(5, 5)
+	h.linesErr = coreerrors.NotFound("order_not_found", "no such order")
 	h.links[linkOrderFulfillment] = map[string][]string{}
 
 	require.NoError(t, h.handleParcel(t, parcelEvent(testFulfillmentID)))

@@ -32,7 +32,30 @@ func TestCancelingAParcelANNOUNCESIt(t *testing.T) {
 		"the id is derived from the parcel, so the outbox's ON CONFLICT writes one row")
 	assert.Equal(t, ful.ID, published.Data["fulfillment_id"])
 	assert.Equal(t, ful.Reference, published.Data["reference"])
+	assert.Equal(t, "", published.Data["return_id"], "a parcel that went out brings no return back")
 	assert.NotEmpty(t, published.Data["canceled_at"])
+}
+
+// TestACanceledReturnParcelNamesItsReturn is ADR 0420: a parcel bringing a
+// return back holds none of the order's outgoing units, and the event says so,
+// in the outbox row and the direct publish alike, so the order cancellation
+// flow does not act on its reference.
+func TestACanceledReturnParcelNamesItsReturn(t *testing.T) {
+	t.Parallel()
+
+	setup := newSetup(t)
+	optionID := returnOption(t, setup)
+	setup.bound.returnLines = map[string]int64{"oli_1": 1}
+	ful, err := setup.svc.CreateFulfillment(t.Context(), returnParcel(optionID, "key-coming-back", 1))
+	require.NoError(t, err)
+
+	require.NoError(t, setup.svc.CancelFulfillment(t.Context(), ful.ID))
+
+	require.Len(t, setup.events.published, 1)
+	assert.Equal(t, "ret_A", setup.events.published[0].Data["return_id"])
+	rows := setup.store.outboxRows()
+	require.Len(t, rows, 1)
+	assert.Equal(t, "ret_A", rows[0].data["return_id"])
 }
 
 // TestTheOutboxRowIsWrittenINSIDETheTransaction is the guarantee.

@@ -62,9 +62,13 @@
 // work that must survive one belongs to internal/core/workflow's saga engine
 // or to a sweep that derives the effect again.
 //
-// There is exactly one reason a message is delivered twice, and a handler's
-// outcome is not it: the consumer that read it stopped without ACKing, which in
-// this bus means the process died mid-dispatch. The Redis backend hands such a
+// There is exactly one reason a message is delivered twice: the consumer that
+// read it stopped without ACKing. In this bus that means the process died
+// mid-dispatch, or, on the Redis backend, that a handler's fault that may pass
+// still stood once the bus's shutdown had begun, which leaves the message
+// pending for the next process rather than counting it processed (ADR 0420);
+// the InMemory backend has no pending list and counts it processed as at any
+// other time. A handler's outcome is otherwise not a reason. The Redis backend hands such a
 // message to another consumer after an idle threshold. The poison pill is
 // bounded there as well — a message that has been delivered three times without
 // an ACK has emptied three consumers, and it is kept in the dead-letter stream
@@ -124,6 +128,7 @@ import (
 	"log/slog"
 	"maps"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"time"
 
@@ -302,20 +307,37 @@ func deliverable(e Event) Event {
 // here.
 var handlerRetryDelays = []time.Duration{250 * time.Millisecond, time.Second}
 
+// HandlerRetryDelays answers the waits between a failing handler's calls, a
+// copy: a delivery calls a handler at most once more than there are waits
+// (ADR 0240).
+//
+// A handler that waits inside a call of its own multiplies its wait by the
+// number of calls. On the Redis backend the whole delivery has to end inside
+// [RedisConfig.ClaimMinIdle], or another process takes the message over while
+// it is still being handled; a handler derives its own bound from these and
+// [DefaultClaimMinIdle] rather than copying the figures (ADR 0420). A bound
+// derived from the default holds only while the configured idle time is not
+// set below it.
+func HandlerRetryDelays() []time.Duration {
+	return slices.Clone(handlerRetryDelays)
+}
+
 // invokeHandler calls the handler in a panic- and error-safe way, and calls it
-// again when it returns an error that may pass (ADR 0240).
+// again when it returns an error that may pass (ADR 0240). It answers whether
+// the handler's last call still ended in such an error.
 //
 // A handler returns an error for a fault that may pass and nil for one that
 // never will, which is what its callers have been told; the bus now acts on
 // that. An error of [errors.KindInvalid] is not tried again, since the event
 // itself cannot succeed, and neither is a panic, which is a bug rather than a
 // fault. The last error is logged with the number of attempts; nothing else
-// keeps it.
-func invokeHandler(ctx context.Context, log *slog.Logger, e Event, h Handler) {
+// keeps it, but the Redis backend leaves the message pending when the fault
+// that may pass met its shutdown ([redisBus.dispatch]).
+func invokeHandler(ctx context.Context, log *slog.Logger, e Event, h Handler) (failed bool) {
 	for attempt := 1; ; attempt++ {
 		panicked, err := callHandler(ctx, log, e, h)
 		if err == nil || panicked {
-			return
+			return false
 		}
 		if errors.KindOf(err) == errors.KindInvalid || attempt > len(handlerRetryDelays) {
 			log.ErrorContext(ctx, "the event handler returned an error",
@@ -325,7 +347,7 @@ func invokeHandler(ctx context.Context, log *slog.Logger, e Event, h Handler) {
 				"attempts", attempt,
 			)
 
-			return
+			return errors.KindOf(err) != errors.KindInvalid
 		}
 		log.WarnContext(ctx, "the event handler returned an error and is called again",
 			attrEvent, e.Name,

@@ -1052,9 +1052,24 @@ past and is not corrected retroactively.
   [ADR 0409](adr/0409-an-orders-parcel-holds-the-units-it-ships.md) holds
   nothing the dispatch bound counts, and an addition riding in its parent's
   parcel ([ADR 0197](adr/0197-an-addition-travels-in-its-parents-parcel.md))
-  commits none of its units. A write-off landing while a parcel for the same
-  units is being opened is seen by neither: the units can end on the shelf
-  and in the box ([gaps D265](gaps.md)).
+  commits none of its units. The bus consumer that restocks a write-off waits
+  for a parcel of the order being opened, about 45 seconds a delivery at most,
+  and then counts it
+  ([ADR 0420](adr/0420-every-parcel-waits-for-its-orders-lock.md)); on Redis
+  the stream's later messages wait behind it. A delivery that still meets the
+  open is logged as failed and not stored, the outbox relay delivers the event
+  once more within about a minute, and the line's next act restores the
+  shelf, so units stay off it only when both deliveries meet an open and
+  nothing later touches the line. The bound is per message: a Redis read
+  takes up to 16 messages and each one's idle time starts at the read, so
+  with an open holding the order's lock past about a minute and two or more
+  processes, the later busy messages of one order can be taken over and run
+  twice, and with three or more one can be dead-lettered while it is still
+  being handled. An open reads what
+  was written off before it waits for the order's lock, and a write-off
+  committing during that wait, which can last another open's carrier call, is
+  seen by neither: the units can end on the shelf and in the box, or the box
+  can ship units that were written off ([gaps D265](gaps.md)).
 
 - **A return parcel buys no label.** The order page opens one from its return
   and moves it like any parcel

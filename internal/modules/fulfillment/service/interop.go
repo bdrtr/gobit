@@ -562,6 +562,25 @@ func (i *Interop) CommittedQuantitiesForReference(
 	return i.svc.CommittedQuantitiesForReference(ctx, reference)
 }
 
+// HeldForReferenceLocked sums, per order line, the units the live outgoing
+// parcels opened for the reference hold, read under the order's dispatch lock
+// (ADR 0420). A cancellation asks it before putting stock back. It does not
+// wait for the lock: while a parcel of the order is being opened it answers
+// [errors.KindUnavailable] with [CodeDispatchBusy], and asked again after the
+// open commits it counts that parcel. It counts a parcel whose link to the
+// order was not written.
+//
+// The counterpart on the consumer side:
+//
+//	type Fulfillment interface {
+//	    HeldForReferenceLocked(ctx context.Context, reference string) (map[string]int64, error)
+//	}
+func (i *Interop) HeldForReferenceLocked(
+	ctx context.Context, reference string,
+) (map[string]int64, error) {
+	return i.svc.HeldForReferenceLocked(ctx, reference)
+}
+
 // CommittedQuantities sums, per order line, the units a live outgoing parcel
 // holds.
 //

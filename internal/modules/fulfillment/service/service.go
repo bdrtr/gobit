@@ -327,6 +327,10 @@ type Store interface {
 	// reference until the transaction ends (ADR 0409, gap D265); it is called
 	// inside WithTx.
 	LockReferenceDispatch(ctx context.Context, reference string) error
+	// TryLockReferenceDispatch takes the same lock only if it is free and
+	// answers whether it did, without waiting (ADR 0420); it is called inside
+	// WithTx.
+	TryLockReferenceDispatch(ctx context.Context, reference string) (bool, error)
 }
 
 // Options are the service's construction dependencies.

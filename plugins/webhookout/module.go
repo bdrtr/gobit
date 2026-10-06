@@ -144,10 +144,11 @@ const (
 	// topicFulfillmentCanceled is published when a parcel will not be sent
 	// (ADR 0139). It is the fulfillment module's FIRST event.
 	//
-	// It carries the parcel, what it was opened for, and the moment — no money,
-	// no counts and no personal data, so it needs no new redaction rule. An
-	// operator's own system wants it for the reason gobit does: units that were
-	// counted as leaving the building are not leaving after all.
+	// It carries the parcel, what it was opened for, the return it was bringing
+	// back if any (ADR 0420), and the moment — no money, no counts and no
+	// personal data, so it needs no new redaction rule. An operator's own
+	// system wants it for the reason gobit does: units that were counted as
+	// leaving the building are not leaving after all.
 	topicFulfillmentCanceled = "fulfillment.canceled"
 	// topicCartCreated is published when a cart is opened (ADR 0153). It is the
 	// cart module's FIRST event.
@@ -735,7 +736,7 @@ var TopicFields = map[string][]string{
 		"bought_quantity", fieldCanceledAt, "canceled_before", "canceled_quantity", "cancellation_id",
 		fieldOrderID, "order_line_item_id", "variant_id",
 	},
-	topicFulfillmentCanceled: {fieldCanceledAt, "fulfillment_id", "reference"},
+	topicFulfillmentCanceled: {fieldCanceledAt, "fulfillment_id", "reference", "return_id"},
 	topicCartCreated:         {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
 	topicCartCompleted:       {fieldCartID, fieldCurrencyCode, fieldOccurredAt, fieldRegionID},
 	topicOrderCanceled:       {fieldCanceledAt, fieldOrderID},

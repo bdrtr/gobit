@@ -11,6 +11,10 @@ import (
 // is a concurrency primitive, the shape the order module's spending lock has.
 const dispatchLockSQL = `SELECT pg_advisory_xact_lock($1)`
 
+// dispatchTryLockSQL takes the same lock if it is free and answers whether it
+// did, without waiting (ADR 0420).
+const dispatchTryLockSQL = `SELECT pg_try_advisory_xact_lock($1)`
+
 // dispatchLockClass is the class of the dispatch lock, the upper 32 bits of its
 // key; internal/arch holds every class in the tree apart.
 const dispatchLockClass int64 = 8
@@ -37,6 +41,27 @@ func (r *Repository) LockReferenceDispatch(ctx context.Context, reference string
 	}
 
 	return nil
+}
+
+// TryLockReferenceDispatch takes the reference's dispatch lock until the
+// transaction ends if no other transaction holds it, and answers false at once
+// if one does (ADR 0420).
+//
+// A reader that must not hold a pooled connection while an open's carrier call
+// runs asks this one: a bus consumer counting what the order's parcels hold.
+// Like [Repository.LockReferenceDispatch] it must be called inside
+// [Repository.WithTx].
+func (r *Repository) TryLockReferenceDispatch(ctx context.Context, reference string) (bool, error) {
+	if err := requireTx(ctx, "TryLockReferenceDispatch"); err != nil {
+		return false, err
+	}
+	tx, _ := txFromContext(ctx)
+	var taken bool
+	if err := tx.QueryRow(ctx, dispatchTryLockSQL, dispatchLockKey(reference)).Scan(&taken); err != nil {
+		return false, classify(err, codeQueryFailed, "could not try the reference's dispatch lock")
+	}
+
+	return taken, nil
 }
 
 // dispatchLockKey is the reference's key: the class above, the FNV-1a digest of

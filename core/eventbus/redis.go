@@ -733,11 +733,24 @@ func (b *redisBus) keepDeadLetter(ctx context.Context, stream string, entry redi
 // package comment). A message that cannot be decoded is logged and ACKed too;
 // otherwise it would stay in the pending list forever.
 //
+// One outcome is the exception (ADR 0420): a handler whose fault may pass and
+// still did not, once [redisBus.Shutdown] has begun, leaves the message
+// UNACKED. The fault may be the shutdown itself — a handler that ends its own
+// wait when its process stops — and the process is about to go, so the
+// message stays pending and the next process takes it over
+// ([redisBus.reclaim]), as it would had this one died holding it. An invalid
+// event and a panic are ACKed as before, since another delivery cannot help.
+//
 // The ACK is also why [redisBus.reclaim] never sees a message this line
 // finished: what stays pending is exactly what a process was holding when it
-// died.
+// died or stopped.
 func (b *redisBus) dispatch(stream, eventName string, msg redis.XMessage) {
-	defer b.ack(stream, msg.ID)
+	ack := true
+	defer func() {
+		if ack {
+			b.ack(stream, msg.ID)
+		}
+	}()
 
 	e, err := decodeMessage(eventName, msg)
 	if err != nil {
@@ -762,7 +775,14 @@ func (b *redisBus) dispatch(stream, eventName string, msg redis.XMessage) {
 	// and observability" in the package comment.
 	hctx := context.WithoutCancel(b.ctx)
 	for _, h := range handlers {
-		invokeHandler(hctx, b.log, e, h)
+		if invokeHandler(hctx, b.log, e, h) && b.ctx.Err() != nil {
+			ack = false
+		}
+	}
+	if !ack {
+		b.log.WarnContext(hctx, "a handler failed while the bus was shutting down; the message "+
+			"stays pending and the next process takes it over",
+			attrStream, stream, attrMessageID, msg.ID, attrEvent, e.Name)
 	}
 }
 

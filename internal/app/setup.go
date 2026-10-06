@@ -185,7 +185,11 @@ func registerWorkflows(c *container.Container, log *slog.Logger) error {
 		return err
 	}
 
-	// The cancellation flow is wired LAST and provides nothing.
+	// The cancellation flow provides `ordercancel.shutdown`, which nothing
+	// resolves: it is registered so that the container closes the flow BEFORE
+	// the bus, ending the pauses of the handlers the bus's shutdown then waits
+	// for (ADR 0420). Being wired after the bus, registered in openApplication,
+	// is therefore load-bearing.
 	//
 	// It is the first flow in this repository that only LISTENS: no endpoint, no
 	// interop, no caller. What it needs from being wired is the subscription, which

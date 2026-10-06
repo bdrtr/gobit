@@ -4,7 +4,7 @@
 a quarter of a second and then a second later, before it logs the error and
 counts the event as processed; an invalid event and a panic are not repeated.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0420](0420-every-parcel-waits-for-its-orders-lock.md), whose Redis bus leaves a message pending when its handler still fails during the bus's shutdown
 - **Date:** 2026-09-29
 - **Amends:** [0239](0239-a-canceled-parcel-recalls-its-replacement.md), whose recall the bus did not repeat
 

@@ -15,9 +15,17 @@ import (
 // constant across that line would tie them together at compile time.
 const topicFulfillmentCanceled = "fulfillment.canceled"
 
-// fieldFulfillmentID is the only payload key this flow reads off the parcel
-// event; everything else about the parcel is asked for by identity.
+// fieldFulfillmentID is the parcel the event names; what it held is asked for
+// by identity.
 const fieldFulfillmentID = "fulfillment_id"
+
+// fieldReference is what the canceled parcel was opened for: its order in every
+// flow this repository ships (ADR 0409).
+const fieldReference = "reference"
+
+// fieldReturnID is the order return a canceled parcel was bringing back, empty
+// for a parcel that went out (ADR 0420).
+const fieldReturnID = "return_id"
 
 // linkOrderFulfillment binds an order to the parcels opened for it. The name is
 // repeated here for the topic's reason.
@@ -59,18 +67,31 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 			"the cancellation flow is not wired, so a canceled parcel cannot be acted on")
 	}
 
-	// The orders are read from the LINK rather than from the event's reference
-	// field. The fulfillment module never validates that field and says so in its
-	// own record, so reading it as an order identifier would be reading a
-	// convention; the link is the binding this repository trusts (ADR 0134).
+	// The orders are read from the LINK first. A parcel is bound to MORE than one
+	// order since ADR 0197: the order it was opened for and the additions that
+	// joined it. Its items are the first order's lines, but the link does not say
+	// which order that is, so each line is put back against the bound order that
+	// HAS it.
 	//
-	// A parcel is bound to MORE than one order since ADR 0197: the order it was
-	// opened for and the additions that joined it. Its items are the first
-	// order's lines, but the link does not say which order that is, so each
-	// line is put back against the bound order that HAS it.
+	// When the link names none, an OUTGOING parcel's reference is its order:
+	// the fulfillment module holds every outgoing parcel to the order its
+	// reference names and counts an order's parcels by it (ADR 0409, ADR 0420),
+	// so a parcel whose link write failed (D264) releases its units as a linked
+	// one does. A reference no order answers to releases nothing. A parcel
+	// bringing a return back is bound to no order and holds none of its
+	// outgoing units (ADR 0384), so its cancel releases nothing either; the
+	// event names its return.
 	orderIDs, err := w.ordersOfParcel(ctx, fulfillmentID)
-	if err != nil || len(orderIDs) == 0 {
+	if err != nil {
 		return err
+	}
+	byReference := false
+	if len(orderIDs) == 0 {
+		reference := text(e, fieldReference)
+		if reference == "" || text(e, fieldReturnID) != "" {
+			return nil
+		}
+		orderIDs, byReference = []string{reference}, true
 	}
 
 	held, err := w.fulfillment.QuantitiesOfFulfillment(ctx, fulfillmentID)
@@ -86,6 +107,13 @@ func (w *Workflow) HandleFulfillmentCanceled(ctx context.Context, e eventbus.Eve
 
 	owners, err := w.lineOwners(ctx, orderIDs)
 	if err != nil {
+		if byReference && errors.KindOf(err) == errors.KindNotFound {
+			w.log.DebugContext(ctx, "a canceled parcel's reference names no order, so nothing was put back",
+				"fulfillment_id", fulfillmentID, "reference", orderIDs[0])
+
+			return nil
+		}
+
 		return err
 	}
 
@@ -290,18 +318,7 @@ func (w *Workflow) lineOwners(ctx context.Context, orderIDs []string) (map[strin
 func (w *Workflow) committedQuantities(
 	ctx context.Context, orderID string,
 ) (map[string]int64, error) {
-	byOrder, err := w.links.ListMany(ctx, linkOrderFulfillment, []string{orderID})
-	if err != nil {
-		return nil, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
-			"the parcels of order %s could not be read", orderID)
-	}
-
-	parcels := byOrder[orderID]
-	if len(parcels) == 0 {
-		return map[string]int64{}, nil
-	}
-
-	committed, err := w.fulfillment.CommittedQuantities(ctx, parcels)
+	committed, err := w.heldUnderLock(ctx, orderID)
 	if err != nil {
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
 			"the units still in the parcels of order %s could not be read", orderID)

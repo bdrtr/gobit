@@ -543,12 +543,20 @@ func fieldExpr(value *ast.CompositeLit, field string) ast.Expr {
 //     against the module's constant by [TestThePanelCatalogNamesAgree], and
 //     whether the module's surface satisfies the panel's interface by
 //     [TestEveryInteropConsumerIsPinned] (gap D251).
+//   - [shutdownFamily]: a registration whose only consumer is the container's
+//     own Shutdown. A flow that only listens on the bus registers itself after
+//     the bus so that the container closes it BEFORE the bus, ending the
+//     pauses of the handlers the bus's shutdown then waits for (ADR 0420).
+//     Nothing resolves it by name, so it is outside the consumer audit by
+//     construction; what holds it is the flow's own test that a container
+//     shutdown finds no handler pausing.
 const (
 	interopFamily   = ".interop"
 	serviceFamily   = ".service"
 	queryFamily     = ".query"
 	providerFamily  = ".providers"
 	adminFamily     = ".admin"
+	shutdownFamily  = ".shutdown"
 	reportingFamily = "error.reporter"
 	aiFamily        = "ai.provider"
 	coreFamily      = "core."
@@ -687,7 +695,7 @@ func knownFamily(name string) bool {
 	if name == reportingFamily || name == aiFamily {
 		return true
 	}
-	for _, suffix := range []string{interopFamily, serviceFamily, queryFamily, providerFamily, adminFamily} {
+	for _, suffix := range []string{interopFamily, serviceFamily, queryFamily, providerFamily, adminFamily, shutdownFamily} {
 		if strings.HasSuffix(name, suffix) {
 			return true
 		}

@@ -313,7 +313,7 @@ bus.
 | `product.created` / `product.updated` | `product_id`, `status` |
 | `product.deleted` | `product_id` |
 | `payment.captured` / `payment.refunded` | `payment_collection_id`, `occurred_at` |
-| `fulfillment.canceled` | `fulfillment_id`, `reference`, `canceled_at` |
+| `fulfillment.canceled` | `fulfillment_id`, `reference`, `return_id` (empty for a parcel that went out), `canceled_at` |
 | `cart.created` / `cart.completed` | `cart_id`, `region_id`, `currency_code`, `occurred_at` |
 
 `plugins/webhookout` lists the same fields, `customer_id` withheld, as

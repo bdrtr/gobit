@@ -39,11 +39,14 @@ func TestAFailingHandlerIsCalledAgain(t *testing.T) {
 	calls := 0
 	transient := errors.Unavailable("db_down", "the connection was reset")
 
-	invokeHandler(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)),
+	failed := invokeHandler(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)),
 		Event{Name: "order.placed", ID: "evt_1"}, countingHandler(&calls, transient, transient))
 
 	if calls != 3 {
 		t.Fatalf("the handler was called %d times, expected 3", calls)
+	}
+	if failed {
+		t.Error("a handler that succeeded on its third call did not fail")
 	}
 	if strings.Contains(buf.String(), "level=ERROR") {
 		t.Errorf("a handler that succeeded is not an error: %s", buf.String())
@@ -58,11 +61,15 @@ func TestAHandlerThatKeepsFailingIsCalledThreeTimesAndLogged(t *testing.T) {
 	calls := 0
 	down := errors.Unavailable("db_down", "the connection was reset")
 
-	invokeHandler(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)),
+	failed := invokeHandler(context.Background(), slog.New(slog.NewTextHandler(&buf, nil)),
 		Event{Name: "order.placed", ID: "evt_2"}, countingHandler(&calls, down, down, down, down))
 
 	if calls != 3 {
 		t.Fatalf("the handler was called %d times, expected 3", calls)
+	}
+	if !failed {
+		t.Error("a handler whose fault that may pass still stood is reported as failed, " +
+			"which is what leaves its message pending during a Redis shutdown (ADR 0420)")
 	}
 	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "attempts=3") {
 		t.Errorf("the last error has to be logged with the attempts: %s", buf.String())
@@ -74,17 +81,23 @@ func TestAHandlerThatKeepsFailingIsCalledThreeTimesAndLogged(t *testing.T) {
 func TestAnInvalidEventIsNotTriedAgain(t *testing.T) {
 	shortRetries(t)
 	calls := 0
-	invokeHandler(context.Background(), quietLogger(), Event{Name: "order.placed"},
+	failed := invokeHandler(context.Background(), quietLogger(), Event{Name: "order.placed"},
 		countingHandler(&calls, errors.Invalid("event_unusable", "no order_id")))
 	if calls != 1 {
 		t.Errorf("an invalid event was handled %d times, expected once", calls)
 	}
+	if failed {
+		t.Error("an invalid event is not a fault another delivery could pass")
+	}
 
 	panics := 0
-	invokeHandler(context.Background(), quietLogger(), Event{Name: "order.placed"},
+	failed = invokeHandler(context.Background(), quietLogger(), Event{Name: "order.placed"},
 		func(context.Context, Event) error { panics++; panic("a bug") })
 	if panics != 1 {
 		t.Errorf("a panicking handler was called %d times, expected once", panics)
+	}
+	if failed {
+		t.Error("a panic is a bug, not a fault another delivery could pass")
 	}
 }
 

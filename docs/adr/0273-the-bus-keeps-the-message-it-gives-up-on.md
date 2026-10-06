@@ -5,7 +5,7 @@ the Redis bus's dead-letter stream before it is acknowledged; the outbox
 relay's alarm stands on that pile too, and `gobit deadletters` lists, redrives
 and discards it.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0420](0420-every-parcel-waits-for-its-orders-lock.md), whose Redis bus leaves a message pending, not processed, when its handler still fails during the bus's shutdown
 - **Date:** 2026-10-01
 - **Amends:** [0162](0162-a-message-a-dead-consumer-was-holding-comes-back.md), whose dead letter was a log line
 

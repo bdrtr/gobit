@@ -162,6 +162,7 @@ core/eventbus EventBus.Publish
 core/eventbus EventBus.Shutdown
 core/eventbus EventBus.Subscribe
 core/eventbus Handler
+core/eventbus HandlerRetryDelays
 core/eventbus MaxLenUnlimited
 core/eventbus NewInMemory
 core/eventbus NewRedisStream

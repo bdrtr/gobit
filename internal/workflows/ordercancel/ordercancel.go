@@ -50,6 +50,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/bdrtr/gobit/core/container"
 	"github.com/bdrtr/gobit/core/errors"
@@ -69,6 +71,10 @@ const (
 	ServiceLink = "core.link"
 	// ServiceEventBus is the bus this flow listens on.
 	ServiceEventBus = "core.eventbus"
+	// ServiceWorkflow is the name this flow registers itself under, so that
+	// the container shuts it down before the bus (ADR 0420). Nothing resolves
+	// it; the container's shutdown is its only reader.
+	ServiceWorkflow = "ordercancel.shutdown"
 )
 
 // topicLineCanceled is the event this flow listens to.
@@ -128,8 +134,10 @@ type Inventory interface {
 
 // Fulfillment is the slice of the fulfillment module this flow calls.
 type Fulfillment interface {
-	// CommittedQuantities sums, per order line, the units a live parcel holds.
-	CommittedQuantities(ctx context.Context, fulfillmentIDs []string) (map[string]int64, error)
+	// HeldForReferenceLocked sums, per order line, the units the order's live
+	// outgoing parcels hold, counted by the reference the module stores and
+	// under the order's dispatch lock (ADR 0420).
+	HeldForReferenceLocked(ctx context.Context, reference string) (map[string]int64, error)
 	// QuantitiesOfFulfillment sums, per order line, the units ONE parcel holds —
 	// a CANCELED one included, which is the whole reason it is separate from the
 	// method above.
@@ -169,7 +177,63 @@ type Workflow struct {
 	orders      Orders
 	links       Links
 	log         *slog.Logger
+	// busyWaits are the pauses between asks while a parcel of the order is
+	// being opened ([Workflow.heldUnderLock]).
+	busyWaits []time.Duration
+	// draw answers a number in [0, n]; it spreads each pause ([jittered]).
+	draw func(n int64) int64
+	// stop is closed by [Workflow.Shutdown], which ends every pause at once.
+	stop     chan struct{}
+	stopOnce sync.Once
 }
+
+// busyBudget is how long one call of a handler may spend asking again while a
+// parcel of the order is being opened (ADR 0420).
+//
+// The bus calls a failing handler once more than it has retry delays, waiting
+// those delays between the calls (ADR 0240), and on the Redis backend a whole
+// delivery has to end inside the takeover idle time, or another process takes
+// the message over while this one still handles it. ADR 0240 refused waits of
+// minutes in a handler for that reason, and the budget keeps to it: the calls
+// share three quarters of [eventbus.DefaultClaimMinIdle] less the delays
+// between them, and the last quarter is left for the asks themselves. The flow
+// cannot see the bus's configured idle time, so the budget is derived from the
+// default: an embedder who sets the takeover time below about 45 s brings the
+// overlap back. The bound is per message, too: a read takes up to a batch of
+// messages and each one's idle time starts at the read, so the later ones of a
+// batch of busy messages can still pass it.
+func busyBudget() time.Duration {
+	delays := eventbus.HandlerRetryDelays()
+	var between time.Duration
+	for _, d := range delays {
+		between += d
+	}
+
+	return (eventbus.DefaultClaimMinIdle*3/4 - between) / time.Duration(len(delays)+1)
+}
+
+// defaultBusyWaits are the pauses between asks for what an order's parcels
+// hold while a parcel of it is being opened: short at first, then a second
+// apart, until [busyBudget] is spent (ADR 0420).
+//
+// The bus's own retries are a second and a quarter, and an open's carrier call
+// can take longer, so a busy answer handed straight to the bus would end the
+// direct delivery within it. Waiting here holds no connection: the fulfillment
+// module answers busy without waiting.
+var defaultBusyWaits = func() []time.Duration {
+	budget := busyBudget()
+	var waits []time.Duration
+	var spent time.Duration
+	for _, wait := range []time.Duration{100 * time.Millisecond, 200 * time.Millisecond,
+		400 * time.Millisecond, 800 * time.Millisecond} {
+		waits, spent = append(waits, wait), spent+wait
+	}
+	for spent+time.Second <= budget {
+		waits, spent = append(waits, time.Second), spent+time.Second
+	}
+
+	return waits
+}()
 
 // New builds the flow from already-resolved dependencies.
 func New(
@@ -181,8 +245,27 @@ func New(
 
 	return &Workflow{
 		inventory: inventory, fulfillment: fulfillment, orders: orders,
-		links: links, log: log,
+		links: links, log: log, busyWaits: defaultBusyWaits,
+		draw: drawUniform,
+		stop: make(chan struct{}),
 	}
+}
+
+// Shutdown ends every pause [Workflow.heldUnderLock] is in and every one it
+// would start: a handler asking again while a parcel is being opened returns
+// its busy fault at once (ADR 0420).
+//
+// The bus hands a handler a context its own shutdown does not cancel, so the
+// flow is registered in the container after the bus and closed before it,
+// which lets the bus's shutdown find no handler still pausing. On Redis the
+// busy fault, failing once the bus's shutdown has begun, leaves the message
+// pending and the next process takes it over; the in-memory bus has no pending
+// list, and the event comes back only if the relay has not yet published its
+// outbox row.
+func (w *Workflow) Shutdown(context.Context) error {
+	w.stopOnce.Do(func() { close(w.stop) })
+
+	return nil
 }
 
 // HandleLineCanceled puts back the stock of units that were written off.
@@ -383,34 +466,60 @@ func targetOnShelf(bought, canceledTotal, committed int64) int64 {
 
 // committedQuantity answers how many units of the line a live parcel holds.
 //
-// The parcels are found through the "order_fulfillment" LINK, which is the only
-// binding between an order and its shipments that can be trusted: the shipment
-// also carries a free-text reference the module never validates, and reading that
-// as the order would be reading a convention (the fulfillment module says so).
+// The fulfillment module counts them by the reference it stores, under the
+// order's dispatch lock (ADR 0420): the population it holds a new parcel to
+// (ADR 0409), so a parcel whose link to the order was not written counts, and a
+// parcel being opened while the units are written off is counted once it
+// commits rather than missed and its units put back on the shelf.
 func (w *Workflow) committedQuantity(ctx context.Context, orderID, lineItemID string) (int64, error) {
-	if w.links == nil || w.fulfillment == nil {
+	if w.fulfillment == nil {
 		return 0, errors.Internal(CodeNotReady,
 			"the cancellation flow is not wired, so a canceled line cannot be acted on")
 	}
 
-	byOrder, err := w.links.ListMany(ctx, linkOrderFulfillment, []string{orderID})
-	if err != nil {
-		return 0, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
-			"the parcels of order %s could not be read", orderID)
-	}
-
-	parcels := byOrder[orderID]
-	if len(parcels) == 0 {
-		return 0, nil
-	}
-
-	committed, err := w.fulfillment.CommittedQuantities(ctx, parcels)
+	committed, err := w.heldUnderLock(ctx, orderID)
 	if err != nil {
 		return 0, errors.Wrap(err, errors.KindOf(err), CodeEventUnusable,
 			"the shipped units of order %s could not be read", orderID)
 	}
 
 	return committed[lineItemID], nil
+}
+
+// heldUnderLock asks the fulfillment module what the order's live outgoing
+// parcels hold, and asks again while it answers that a parcel of the order is
+// being opened (ADR 0420).
+//
+// That answer is [errors.KindUnavailable]: the module does not wait for the
+// order's dispatch lock, which an open holds for its whole carrier call. This
+// flow waits instead, holding nothing, by [Workflow.busyWaits], each pause
+// spread by [jittered]; a parcel that commits in the meantime is counted on the
+// next ask. Past the last wait, when the context ends or when the flow is shut
+// down, the busy answer goes to the bus, which calls the handler twice more
+// (ADR 0240), all of it inside [busyBudget]. The event is not stored after
+// that, but both topics are outbox topics, so the relay delivers it once more
+// within about a minute, and the restock is a target the line's next act
+// brings the shelf up to (ADR 0142).
+func (w *Workflow) heldUnderLock(ctx context.Context, orderID string) (map[string]int64, error) {
+	for attempt := 0; ; attempt++ {
+		held, err := w.fulfillment.HeldForReferenceLocked(ctx, orderID)
+		if err == nil || errors.KindOf(err) != errors.KindUnavailable || attempt >= len(w.busyWaits) {
+			return held, err
+		}
+
+		timer := time.NewTimer(jittered(w.busyWaits[attempt], w.draw))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+
+			return nil, err
+		case <-w.stop:
+			timer.Stop()
+
+			return nil, err
+		case <-timer.C:
+		}
+	}
 }
 
 // itemOf answers which inventory item the variant tracks; false for a variant
@@ -564,6 +673,14 @@ func FromContainer(c *container.Container, log *slog.Logger) (*Workflow, error) 
 	if err := bus.Subscribe(topicFulfillmentCanceled, w.HandleFulfillmentCanceled); err != nil {
 		return nil, errors.Wrap(err, errors.KindOf(err), CodeNotReady,
 			"the cancellation flow could not subscribe to %q", topicFulfillmentCanceled)
+	}
+
+	// Registered so that the container closes it, and closes it BEFORE the bus,
+	// which was registered earlier: [Workflow.Shutdown] ends the pauses of the
+	// handlers the bus's own shutdown then waits for.
+	if err := c.Provide(ServiceWorkflow, w); err != nil {
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeNotReady,
+			"the cancellation flow could not be registered for shutdown")
 	}
 
 	return w, nil

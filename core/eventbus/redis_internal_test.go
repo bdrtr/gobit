@@ -531,6 +531,34 @@ func TestConsumeDeliversDecodedEventAndAcks(t *testing.T) {
 	}
 }
 
+// TestAHandlerFailingOutsideShutdownIsStillAcked is ADR 0240's rule, which ADR
+// 0420 narrows only for a shutdown: a handler whose fault may pass and still
+// stood after its three calls, while the bus is running, counts the event
+// processed and the message is ACKed.
+func TestAHandlerFailingOutsideShutdownIsStillAcked(t *testing.T) {
+	shortRetries(t)
+	cfg := fakeConfig()
+	stream := cfg.StreamName(testEventName)
+	fake := newFakeStreamClient(
+		scriptedRead(stream, eventMessage("7-0", "evt_07", testEventName, time.Now(), `{}`)),
+	)
+	bus := newRedisBus(fake, cfg, quietLogger())
+	if err := bus.Subscribe(testEventName, func(context.Context, Event) error {
+		return errors.Unavailable("down", "the module is unreachable")
+	}); err != nil {
+		t.Fatalf("Subscribe returned an error: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !slices.Contains(fake.ackedIDs(), "7-0") {
+		if time.Now().After(deadline) {
+			t.Fatal("a handler that failed while the bus was running left its message unacked")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	shutdownBus(t, bus)
+}
+
 // TestConsumeHandlerCtxCarriesNoPublisherValues pins the Redis backend's ctx
 // behavior from the [Handler] contract.
 //

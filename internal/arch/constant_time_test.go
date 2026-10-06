@@ -57,7 +57,7 @@ var notSecretComparisons = map[string][]string{
 	// The version field of a stored argon2id hash: its format, not the hash.
 	"contrib/identity-session/password.go": {"version != argon2.Version"},
 	// An error's kind against a constant.
-	"core/eventbus/eventbus.go": {"errors.KindOf(err) == errors.KindInvalid"},
+	"core/eventbus/eventbus.go": {"errors.KindOf(err) == errors.KindInvalid", "errors.KindOf(err) != errors.KindInvalid"},
 	// The fingerprint of the caller's own request, compared with the one the
 	// same key stored: it identifies a request, and the caller holds both.
 	"core/http/callback_guard.go": {"record.Fingerprint == keys.fingerprint"},

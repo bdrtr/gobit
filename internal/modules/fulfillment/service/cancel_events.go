@@ -53,12 +53,21 @@ const (
 	EventFieldFulfillmentID = "fulfillment_id"
 	// EventFieldReference is what the parcel was opened FOR, verbatim.
 	//
-	// It is the order identifier in every flow this repository ships, and it is
-	// still free text this module never validates (Principle 2.2). A subscriber
-	// that needs the order must read the "order_fulfillment" LINK rather than
-	// this field; it is carried so an operator reading a forwarded webhook sees
-	// what the parcel was for without a second lookup.
+	// It is the order identifier in every flow this repository ships: an
+	// outgoing parcel is held to the order its reference names and the order's
+	// parcels are counted by it (ADR 0409, ADR 0420). A subscriber reads the
+	// "order_fulfillment" LINK first, because the link also binds the additions
+	// that joined the parcel (ADR 0197), which this field does not name; the
+	// order cancellation flow falls back to this field when the link names no
+	// order, which is a parcel whose link write failed. It also lets an
+	// operator reading a forwarded webhook see what the parcel was for without
+	// a second lookup.
 	EventFieldReference = "reference"
+	// EventFieldReturnID is the order return the parcel was bringing back, or
+	// empty for a parcel that went out (ADR 0384, ADR 0420). A parcel coming
+	// back holds none of the order's outgoing units, so a subscriber that
+	// counts those skips it; an event written before the field reads as empty.
+	EventFieldReturnID = "return_id"
 	// EventFieldCanceledAt is the moment, RFC 3339 with nanoseconds, UTC.
 	EventFieldCanceledAt = "canceled_at"
 )
@@ -77,10 +86,11 @@ func fulfillmentCanceledEventID(fulfillmentID string) string {
 //
 // Both the outbox row and the direct publish use it, which is what makes them one
 // event rather than two that can drift apart.
-func fulfillmentCanceledPayload(fulfillmentID, reference string, at time.Time) map[string]any {
+func fulfillmentCanceledPayload(fulfillmentID, reference, returnID string, at time.Time) map[string]any {
 	return map[string]any{
 		EventFieldFulfillmentID: fulfillmentID,
 		EventFieldReference:     reference,
+		EventFieldReturnID:      returnID,
 		EventFieldCanceledAt:    at.UTC().Format(time.RFC3339Nano),
 	}
 }
@@ -94,7 +104,7 @@ func fulfillmentCanceledPayload(fulfillmentID, reference string, at time.Time) m
 // that, and accepting the loss quietly would leave the guarantee looking present
 // while it was not.
 func (s *Service) recordFulfillmentCanceled(
-	ctx context.Context, fulfillmentID, reference string, at time.Time,
+	ctx context.Context, fulfillmentID, reference, returnID string, at time.Time,
 ) error {
 	if s.events == nil {
 		// Unreachable through the module, which refuses to register without a bus.
@@ -106,7 +116,7 @@ func (s *Service) recordFulfillmentCanceled(
 
 	return s.store.WriteOutboxEvent(ctx,
 		fulfillmentCanceledEventID(fulfillmentID), EventFulfillmentCanceled,
-		fulfillmentCanceledPayload(fulfillmentID, reference, at))
+		fulfillmentCanceledPayload(fulfillmentID, reference, returnID, at))
 }
 
 // publishFulfillmentCanceled sends the event AFTER the transaction has committed.
@@ -116,7 +126,7 @@ func (s *Service) recordFulfillmentCanceled(
 // stays as the FAST path so the units are usually back in the same request rather
 // than up to a minute later.
 func (s *Service) publishFulfillmentCanceled(
-	ctx context.Context, fulfillmentID, reference string, at time.Time,
+	ctx context.Context, fulfillmentID, reference, returnID string, at time.Time,
 ) {
 	if s.events == nil {
 		return
@@ -125,7 +135,7 @@ func (s *Service) publishFulfillmentCanceled(
 	err := s.events.Publish(ctx, eventbus.Event{
 		ID:   fulfillmentCanceledEventID(fulfillmentID),
 		Name: EventFulfillmentCanceled,
-		Data: fulfillmentCanceledPayload(fulfillmentID, reference, at),
+		Data: fulfillmentCanceledPayload(fulfillmentID, reference, returnID, at),
 	})
 	if err != nil {
 		s.log.ErrorContext(ctx,
