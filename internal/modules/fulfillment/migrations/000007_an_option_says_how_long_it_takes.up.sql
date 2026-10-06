@@ -21,6 +21,7 @@ ALTER TABLE shipping_options
         CHECK ((delivery_min_days IS NULL) = (delivery_max_days IS NULL)),
     ADD CONSTRAINT shipping_options_delivery_days_range
         CHECK (delivery_min_days IS NULL
+               OR delivery_max_days IS NULL
                OR (delivery_min_days >= 0
                    AND delivery_min_days <= delivery_max_days
                    AND delivery_max_days <= 365));
