@@ -91,7 +91,14 @@ func TestAConnectionOpenedAfterTheDefaultChangedIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	target.Path = "/" + database
 
-	pool, err := db.New(ctx, db.DefaultConfig(target.String()), nil)
+	// No connection is kept open in the background: pgxpool builds MinConns
+	// on a goroutine of its own, and one it started before the ALTER below and
+	// finished after Reset joined the pool with the old default and answered
+	// the SELECT (CI run 37412956907). With none, every session this pool
+	// holds is one the test opened.
+	cfg := db.DefaultConfig(target.String())
+	cfg.MinConns = 0
+	pool, err := db.New(ctx, cfg, nil)
 	require.NoError(t, err, "the database starts at the server's default, READ COMMITTED")
 	t.Cleanup(func() {
 		pool.Close()
