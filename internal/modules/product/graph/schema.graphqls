@@ -15,7 +15,7 @@
 # order, payment) rest on contracts already solved on the REST side, such as the
 # idempotency header, the error class -> HTTP code mapping and event publishing.
 # Putting an empty Mutation type here would mean assuming that someone will add
-# writing to it tomorrow.
+# writing to it tomorrow. ADR 0414 records this as the decision.
 
 "Timestamp; RFC 3339 (UTC)."
 scalar Time

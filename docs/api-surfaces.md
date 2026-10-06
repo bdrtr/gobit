@@ -99,7 +99,8 @@ make openapi-client CLIENT_LANG=go # or typescript-fetch, python, …
 The SDK is **not vendored** into the repository: since the schema is generated
 from the router, versioning a second artifact and keeping it in sync with the
 schema is needless weight. The command is documented; whoever wants one
-generates it in their own language.
+generates it in their own language
+([ADR 0415](adr/0415-a-client-is-generated-where-it-is-built.md)).
 
 ## The GraphQL storefront read surface
 
@@ -118,7 +119,7 @@ catalog's vocabulary — `collections`, `categories`, `tags` and
 listing's `productFacets` and the `optionValues` its filter takes, the same
 reads as the channel-scoped `product-facets` and `option-values` endpoints
 ([ADR 0226](adr/0226-the-graphql-storefront-counts-what-it-lists.md)), and **no
-mutation**. The contract is the file
+mutation** ([ADR 0414](adr/0414-graphql-reads-the-catalog-and-nothing-else.md)). The contract is the file
 `internal/modules/product/graph/schema.graphqls` — an inspectable artifact just
 like the OpenAPI document; the Go side is **generated** from it (`make gen`,
 gqlgen).

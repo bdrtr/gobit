@@ -117,7 +117,7 @@ about a particular cache's behaviour that only the operator running it can choos
 
 No purge endpoint. It would shorten the window rather than replace the TTL, and it
 needs a list of which URLs a write invalidates — which is the join above, from the
-other direction.
+other direction. Decided in [ADR 0417](../adr/0417-gobit-keeps-no-data-cache.md).
 
 ## What was not measured
 

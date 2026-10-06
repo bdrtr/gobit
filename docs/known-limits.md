@@ -232,6 +232,11 @@ past and is not corrected retroactively.
   order from a cart that named none, and every order placed before the
   upgrade, records none, and the admin list's channel filter and the trials
   read it as none.
+- **No point of sale.** A counter sale is an operator's cart in the store's
+  channel, completed with an offline method and paid in a second act; gobit
+  records no terminal, drawer or change, prints no receipt and has no
+  card-terminal provider
+  ([ADR 0418](adr/0418-a-counter-sale-is-an-operators-cart.md)).
 
 ## The category tree
 
@@ -739,6 +744,10 @@ past and is not corrected retroactively.
   `with_count=false`. A stamp that would let the read stop early was refused: the
   body moves with the clock and with writes in three modules that publish no
   version.
+- **GraphQL reads the catalog only.** `POST /store/v1/graphql` has no mutation
+  and no cart, checkout, order or customer type
+  ([ADR 0414](adr/0414-graphql-reads-the-catalog-and-nothing-else.md)); a client
+  that reads the catalog there reads everything else over REST.
 
 ## The limit of the invariants
 
@@ -980,7 +989,8 @@ past and is not corrected retroactively.
 - **A registered screen gets the frame and a script, and nothing else.** There
   is no way to add a column or a section to an existing screen; ADR 0030's
   refusal of server-renderer extension points is why there are no template
-  slots. Since [ADR 0157](adr/0157-the-panels-address-belongs-to-the-panel.md) a
+  slots, and a plugin's view of a customer or an order is a screen of its own
+  ([ADR 0416](adr/0416-a-plugin-adds-a-screen-not-a-section.md)). Since [ADR 0157](adr/0157-the-panels-address-belongs-to-the-panel.md) a
   plugin cannot serve a page of its own at the panel's address either — the
   registry refuses the binding at startup, because the rules that live there (a
   content policy, an origin check, a privilege per screen) are applied by the

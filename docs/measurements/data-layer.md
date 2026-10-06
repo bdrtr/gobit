@@ -51,6 +51,7 @@ re-checking that key-space agreement.
 
 1. ~~**No read cache. Nothing is cached, anywhere.**~~ **NOT WARRANTED —
    measured 2026-09-05.** The premise was wrong, and the measurement says so.
+   Recorded as [ADR 0417](../adr/0417-gobit-keeps-no-data-cache.md).
 
    Measured with pgbench against the load fixture (52,004 products), 16 clients,
    on this machine:

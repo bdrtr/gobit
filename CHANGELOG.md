@@ -1638,6 +1638,30 @@ design. It is fixed with `1.0.0`.
 
 ### Decisions
 
+- **GraphQL reads the catalog and nothing else** (ADR 0414). **For
+  integrators:** `POST /store/v1/graphql` keeps no mutation and gains no cart,
+  checkout, order or customer type; those stay REST. It reopens when a client
+  in this repository needs one.
+
+- **A client of gobit is generated where it is built** (ADR 0415). **For
+  integrators:** gobit ships no JavaScript or TypeScript SDK; generate one from
+  `/openapi.json` (`make openapi-client CLIENT_LANG=typescript-fetch`, or
+  openapi-typescript).
+
+- **A plugin adds a screen, not a section** (ADR 0416). **For plugin
+  authors:** register a screen with `Host.RegisterAdminPage`; a shipped screen
+  takes no plugin section or column.
+
+- **gobit keeps no data cache** (ADR 0417). **For operators:** reuse is
+  HTTP's (`STOREFRONT_CATALOG_CACHE_TTL`, the `ETag`); put a cache in front for
+  more.
+
+- **A counter sale is an operator's cart in a store's channel** (ADR 0418).
+  **For operators:** sell at a counter through `/admin/v1/carts` in the store's
+  channel with an offline method; gobit ships no till. A completion needs no
+  shipping address or delivery, which `TestACounterSaleNeedsNoAddressOrDelivery`
+  now holds.
+
 - **An experiment runs outside gobit** (ADR 0402). **For contributors:** gobit
   assigns no arm, records no exposure and computes no stopping rule; an
   experiment product keyed on the embedder's own visitor hears gobit through
