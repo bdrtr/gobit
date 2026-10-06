@@ -5,7 +5,7 @@ columns and keeps it, and a job applies its rows a minute at a time, updating
 and creating products and variants, while `GET` reports what the rows did. It
 costs a table holding the file until the import ends; prices follow in 0206.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0424](0424-the-catalogs-file-carries-its-costs.md), whose import also writes the costs
 - **Date:** 2026-09-27
 - **Amended by:** [0207](0207-an-import-writes-its-prices-through-pricing.md) for the price columns, which are now applied; the record this one calls 0206 is 0207, because [0206](0206-a-base-price-is-changed-at-one-unit.md) first corrected the write they use
 

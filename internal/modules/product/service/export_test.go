@@ -142,8 +142,9 @@ func TestTheCatalogLeavesAsCSV(t *testing.T) {
 
 	header, rows, pages := exported(t, svc, service.ExportOptions{})
 
-	assert.Equal(t, []string{"variant_price_eur", "variant_price_try"}, header[len(header)-2:],
-		"one column per currency a region sells in, sorted, once")
+	assert.Equal(t, []string{"variant_price_eur", "variant_price_try", "variant_cost_eur", "variant_cost_try"},
+		header[len(header)-4:],
+		"one price column per currency a region sells in, sorted, once, then a cost column for each (ADR 0424)")
 	require.Len(t, rows, 3, "two variants and a product with none")
 	assert.Equal(t, 1, pages)
 

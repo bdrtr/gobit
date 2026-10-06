@@ -43,7 +43,8 @@ var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 // The file is read in full here and refused as a whole when it cannot be
 // applied at all: not UTF-8, not CSV, a row of another width, a column the
 // export does not write, a column twice, or neither product_id nor
-// product_handle. A file with price columns is refused as well when this
+// product_handle. The export's price and cost columns are read in any
+// currency (ADR 0207, ADR 0424). A file with price columns is refused as well when this
 // installation has no pricing module to write them (ADR 0207). A row that can
 // be read but not applied is the job's to refuse, one row at a time.
 func (s *Service) CreateImport(ctx context.Context, file []byte) (models.Import, error) {
@@ -171,7 +172,8 @@ func checkImportHeader(header []string) error {
 		switch {
 		case seen[column]:
 			return errors.Invalid(codeImportInvalid, "the column %q is in the header twice", column)
-		case !slices.Contains(exportColumns, column) && !priceColumn.MatchString(column):
+		case !slices.Contains(exportColumns, column) && !priceColumn.MatchString(column) &&
+			!costColumn.MatchString(column):
 			return errors.Invalid(codeImportInvalid,
 				"the column %q is not one the export writes; a misspelled column would be left out "+
 					"of every row", column)
@@ -306,10 +308,12 @@ func (s *Service) applyImportRow(ctx context.Context, row importRow) models.Impo
 }
 
 // importRow finds or creates the row's product, then its variant, then writes
-// the variant's prices.
+// the variant's prices and its unit costs (ADR 0207, ADR 0424).
 //
-// The price cells are read before anything is written, so a row whose price
-// cannot be read, or which prices no variant, changes nothing.
+// The price and cost cells are read before anything is written, so a row whose
+// price or cost cannot be read, or which prices or costs no variant, changes
+// nothing. A cost list's bound on currencies is the stored list's, and is held
+// where the list is written, after the product and the variant.
 func (s *Service) importRow(ctx context.Context, row importRow) (models.ImportRowOutcome, error) {
 	amounts, err := row.prices()
 	if err != nil {
@@ -318,6 +322,14 @@ func (s *Service) importRow(ctx context.Context, row importRow) (models.ImportRo
 	if len(amounts) > 0 && !row.hasVariant() {
 		return models.ImportRowOutcome{}, errors.Invalid(codeImportInvalid,
 			"the row has a price and no variant; a price belongs to a variant")
+	}
+	costs, err := row.costs()
+	if err != nil {
+		return models.ImportRowOutcome{}, err
+	}
+	if len(costs) > 0 && !row.hasVariant() {
+		return models.ImportRowOutcome{}, errors.Invalid(codeImportInvalid,
+			"the row has a cost and no variant; a cost belongs to a variant")
 	}
 
 	product, found, err := s.importedProduct(ctx, row)
@@ -331,6 +343,9 @@ func (s *Service) importRow(ctx context.Context, row importRow) (models.ImportRo
 		}
 		if len(created.Variants) > 0 {
 			if _, err := s.importPrices(ctx, created.Variants[0].ID, amounts); err != nil {
+				return models.ImportRowOutcome{}, err
+			}
+			if _, err := s.importCosts(ctx, created.Variants[0].ID, costs); err != nil {
 				return models.ImportRowOutcome{}, err
 			}
 		}
@@ -354,11 +369,17 @@ func (s *Service) importRow(ctx context.Context, row importRow) (models.ImportRo
 	if err != nil {
 		return models.ImportRowOutcome{}, err
 	}
+	changedCosts, err := s.importCosts(ctx, variantID, costs)
+	if err != nil {
+		return models.ImportRowOutcome{}, err
+	}
 	if created {
 		return models.ImportRowOutcome{Created: true}, nil
 	}
 
-	return models.ImportRowOutcome{Updated: changedProduct || changedVariant || changedPrices}, nil
+	return models.ImportRowOutcome{
+		Updated: changedProduct || changedVariant || changedPrices || changedCosts,
+	}, nil
 }
 
 // importedProduct finds the row's product: by id, or else by handle.

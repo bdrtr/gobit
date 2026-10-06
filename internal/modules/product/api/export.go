@@ -116,7 +116,12 @@ func describeAdminExport(d *openapi.Doc) {
 			"After the fixed columns comes one variant_price_<currency> column per currency a " +
 			"region sells in, holding the variant's base price at one unit in minor units — " +
 			"the price the catalog's price filter compares (ADR 0041) — and empty when there " +
-			"is none. It takes pricing:read as well as product:read, because it carries prices. " +
+			"is none. Then comes one variant_cost_<currency> column per the same currency, " +
+			"holding what one unit of the variant costs the shop there in minor units (ADR " +
+			"0401) and empty when it has no cost in it; a cost in a currency no region sells " +
+			"in reaches no order and has no column (ADR 0424). It takes pricing:read as well " +
+			"as product:read, because it carries prices; the costs are product:read's, as on " +
+			"GET /admin/v1/variants/{id}/costs. " +
 			"An error before the first row is an ordinary error response; one after it drops " +
 			"the connection, so a partial file cannot pass for a whole one.",
 		Parameters: []openapi.Parameter{

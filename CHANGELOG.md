@@ -296,6 +296,21 @@ design. It is fixed with `1.0.0`.
   label is bought and no provider verb is added: they wait for a carrier plugin
   that opens a return label.
 
+- **The catalog's file carries its costs** (ADR 0424). **For operators:**
+  `GET /admin/v1/products/export` writes, after the price columns, one
+  `variant_cost_<currency>` column per currency a region sells in, holding the
+  variant's unit cost there in minor units and empty when it has none; a cost
+  in a currency no region sells in has no column. `POST /admin/v1/products/imports`
+  reads `variant_cost_<currency>` columns in any currency: a non-empty cell
+  writes that currency's cost (a whole number from 0 to 10^12) and leaves the
+  variant's other currencies, an empty cell leaves the cost, and no cell clears
+  one. A cost cell on a row with no variant, or one that cannot be read,
+  refuses the row before it writes anything; a cost in a new currency on a
+  variant carrying 50 refuses the row after its product, variant and prices
+  were written. **For integrators:** a client that reads the export by column
+  position has one column more per currency a region sells in; the cost columns need no
+  scope beyond `product:read` to export and `product:write` to import.
+
 - **The panel shows what an order's goods cost** (ADR 0412). **For
   operators:** the order list has a "Placed margin" column, and the order page
   prints each line's unit cost and the placed margin with its sales and cost;

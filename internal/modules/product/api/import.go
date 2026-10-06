@@ -143,7 +143,14 @@ func describeAdminImport(d *openapi.Doc) {
 			"currency, in minor units, through the pricing module, and gives the variant a price " +
 			"set when it has none; a quantity tier and a list price keep their amounts. A file " +
 			"with price columns also requires pricing:write, and is answered 403 without it and " +
-			"422 in an installation without the pricing module (ADR 0207).",
+			"422 in an installation without the pricing module (ADR 0207).\n\n" +
+			"A variant_cost_<currency> cell sets what one unit of the variant costs the shop in " +
+			"that currency, in minor units from 0 to 10^12, and leaves its other currencies as " +
+			"they are; an empty cell leaves the cost, and a cost is cleared on the variant, not " +
+			"through the file. A cost cell on a row with no variant, or one that is not a whole " +
+			"number in range, refuses the row before it writes anything; a cost in a new " +
+			"currency on a variant that already carries 50 refuses the row when the costs are " +
+			"written, after its product and variant (ADR 0424).",
 		RequestBody: map[string]any{
 			"required": true,
 			"content": map[string]any{

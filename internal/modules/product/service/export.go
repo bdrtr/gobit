@@ -47,7 +47,8 @@ const (
 )
 
 // exportColumns are the columns every export starts with, in order. The
-// price columns follow, one per currency a region sells in.
+// price columns follow, one per currency a region sells in, and then the cost
+// columns, one per the same currency (ADR 0424).
 var exportColumns = []string{
 	columnProductID, columnProductHandle, "product_title", "product_subtitle", "product_description",
 	"product_status", "product_thumbnail", "product_is_giftcard", "product_discountable",
@@ -64,8 +65,10 @@ var exportColumns = []string{
 //
 // A variant's price in each currency a region sells in is its base price at
 // one unit, bound to no list and read by ADR 0041's definition, the one the
-// catalog's price filter compares. Amounts are in minor units, as everywhere
-// else.
+// catalog's price filter compares. Its unit cost in each of those currencies
+// follows (ADR 0401, ADR 0424): an order is placed in a region's currency, so a
+// cost in another reaches no order and has no column. Amounts are in minor
+// units, as everywhere else.
 //
 // The pages are read by cursor, newest first, so a product created while the
 // export runs is not in it and none is written twice. afterPage runs once each
@@ -93,6 +96,9 @@ func (s *Service) ExportProducts(
 	for _, currency := range currencies {
 		header = append(header, "variant_price_"+strings.ToLower(currency))
 	}
+	for _, currency := range currencies {
+		header = append(header, costColumnPrefix+strings.ToLower(currency))
+	}
 	if err := writer.Write(header); err != nil {
 		return errors.Wrap(err, errors.KindInternal, codeQueryFailed, "the export's header could not be written")
 	}
@@ -102,8 +108,12 @@ func (s *Service) ExportProducts(
 		if err != nil {
 			return err
 		}
+		costs, err := s.exportCosts(ctx, page.Items, currencies)
+		if err != nil {
+			return err
+		}
 		for i := range page.Items {
-			for _, row := range exportRows(&page.Items[i], prices, currencies) {
+			for _, row := range exportRows(&page.Items[i], prices, costs, currencies) {
 				if err := writer.Write(row); err != nil {
 					return errors.Wrap(err, errors.KindInternal, codeQueryFailed,
 						"the export's row for product %s could not be written", page.Items[i].ID)
@@ -232,7 +242,7 @@ func (s *Service) basePrices(ctx context.Context, products []models.Product) (ma
 
 // exportRows are a product's rows: one per variant, or one with the variant
 // columns empty.
-func exportRows(p *models.Product, prices map[string]map[string]int64, currencies []string) [][]string {
+func exportRows(p *models.Product, prices, costs map[string]map[string]int64, currencies []string) [][]string {
 	product := []string{
 		p.ID, cell(p.Handle), cell(p.Title), cell(deref(p.Subtitle)), cell(deref(p.Description)),
 		p.Status.String(), cell(deref(p.Thumbnail)), strconv.FormatBool(p.IsGiftcard),
@@ -243,7 +253,7 @@ func exportRows(p *models.Product, prices map[string]map[string]int64, currencie
 		joinIDs(p.Categories, func(c models.Category) string { return c.ID }),
 		cell(jsonCell(p.Metadata)),
 	}
-	emptyVariant := make([]string, len(exportColumns)-len(product)+len(currencies))
+	emptyVariant := make([]string, len(exportColumns)-len(product)+2*len(currencies))
 
 	if len(p.Variants) == 0 {
 		return [][]string{append(slices.Clone(product), emptyVariant...)}
@@ -260,17 +270,60 @@ func exportRows(p *models.Product, prices map[string]map[string]int64, currencie
 			v.ID, cell(v.Title), cell(deref(v.SKU)), cell(deref(v.Barcode)), cell(deref(v.EAN)),
 			cell(deref(v.UPC)), strconv.FormatBool(v.ManageInventory), strconv.FormatBool(v.AllowBackorder),
 			number(v.Weight), cell(jsonCell(options)), cell(jsonCell(v.Metadata)))
-		for _, currency := range currencies {
-			if amount, ok := prices[v.ID][currency]; ok {
-				row = append(row, strconv.FormatInt(amount, 10))
-			} else {
-				row = append(row, "")
-			}
-		}
+		row = appendAmounts(row, prices[v.ID], currencies)
+		row = appendAmounts(row, costs[v.ID], currencies)
 		rows = append(rows, row)
 	}
 
 	return rows
+}
+
+// appendAmounts appends one cell per currency: the amount in minor units, or
+// empty when there is none.
+func appendAmounts(row []string, amounts map[string]int64, currencies []string) []string {
+	for _, currency := range currencies {
+		if amount, ok := amounts[currency]; ok {
+			row = append(row, strconv.FormatInt(amount, 10))
+		} else {
+			row = append(row, "")
+		}
+	}
+
+	return row
+}
+
+// exportCosts reads the page's variants' unit costs, by variant and currency,
+// in one read (ADR 0424). There is nothing to read when no region sells in a
+// currency, since the export then has no cost column.
+func (s *Service) exportCosts(
+	ctx context.Context, products []models.Product, currencies []string,
+) (map[string]map[string]int64, error) {
+	if len(currencies) == 0 {
+		return nil, nil
+	}
+	var variantIDs []string
+	for i := range products {
+		for j := range products[i].Variants {
+			variantIDs = append(variantIDs, products[i].Variants[j].ID)
+		}
+	}
+	if len(variantIDs) == 0 {
+		return nil, nil
+	}
+	byVariant, err := s.repo.ListVariantCosts(ctx, variantIDs)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]map[string]int64, len(byVariant))
+	for id, costs := range byVariant {
+		amounts := make(map[string]int64, len(costs))
+		for _, c := range costs {
+			amounts[c.CurrencyCode] = c.Amount
+		}
+		out[id] = amounts
+	}
+
+	return out, nil
 }
 
 // cell guards a text cell against being read as a formula.

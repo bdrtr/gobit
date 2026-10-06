@@ -1095,8 +1095,10 @@ past and is not corrected retroactively.
   bundle costs its own entry. gobit converts no currency. The panel prints a
   line's cost and the placed margin on the order page and the margin on the
   order list, and writes a variant's cost one currency at a time
-  ([ADR 0412](adr/0412-the-panel-shows-what-an-orders-goods-cost.md)); the
-  sales report and the CSV export and import carry neither. No other margin is
+  ([ADR 0412](adr/0412-the-panel-shows-what-an-orders-goods-cost.md)), and the
+  product CSV carries and writes a variant's costs in the currencies a region
+  sells in ([ADR 0424](adr/0424-the-catalogs-file-carries-its-costs.md)); the sales report carries neither. No other
+  margin is
   kept: no provider's fee, carrier's cost, after-sale margin or cost of goods
   in the journal
   ([ADR 0426](adr/0426-the-margin-gobit-keeps-is-the-placed-margin.md)).

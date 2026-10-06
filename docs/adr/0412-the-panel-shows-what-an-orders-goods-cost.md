@@ -3,7 +3,7 @@
 **Summary:** The variant page writes a variant's unit cost one currency at a time, and the order list and order page print the placed margin and each line's cost.
 It costs two reads on the order module's panel surface and a cost write that compares what it was drawn with.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0424](0424-the-catalogs-file-carries-its-costs.md), whose CSV export and import carry the costs
 - **Date:** 2026-10-06
 
 ## Context

@@ -5,7 +5,7 @@ per variant with its base price in a column per currency a region sells in, so
 a shop can take its catalog to a spreadsheet or to another system. It is the
 first half of B2.6; the columns it writes are the ones an import will read.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0424](0424-the-catalogs-file-carries-its-costs.md), whose export also carries the costs
 - **Date:** 2026-09-27
 
 Measurement: [measurements/0204](../measurements/0204-fifty-thousand-rows.md)
