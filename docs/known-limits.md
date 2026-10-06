@@ -708,8 +708,10 @@ past and is not corrected retroactively.
   promotion's share of one line.
 - **An order read at a moment cannot say everything it was.** Since
   [ADR 0171](adr/0171-an-order-can-be-read-as-it-stood.md) an order can be read
-  as it stood at a past moment, and on the timeline (ADR 0170) the status on an
-  opening entry is still today's. Three things have no past: the contact and
+  as it stood at a past moment, since
+  [ADR 0411](adr/0411-an-order-read-at-a-moment-says-where-it-was-going.md)
+  with the shipping address and the deliveries in force then, and on the
+  timeline (ADR 0170) the status on an opening entry is still today's. Three things have no past: the contact and
   addresses before an erasure (the reading says `erased_since`), a claim
   evidence that was removed, and whether an order archived before archiving
   was dated was completed or archived at a moment after its completion. A cart

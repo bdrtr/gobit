@@ -263,6 +263,15 @@ func describeAsOf(d *openapi.Doc) {
 			"holds now is the one it held then, \"erased\" when it had been erased by the " +
 			"moment, and \"erased_since\" when it was held then and is gone now. " +
 			"\n\n" +
+			"WHERE IT WAS GOING AND ON WHICH SERVICE (ADR 0411). \"shipping_address\" is the " +
+			"shipping row written last at or before the moment, or the one the order was " +
+			"placed with when every row is stamped later; its \"address\" is null once the " +
+			"contact it held then was erased (see \"contact\"). \"deliveries\" are the sold " +
+			"deliveries, each with the latest change made at or before the moment, " +
+			"\"change_id\" absent while one stood as sold. Both are stamped by the database, " +
+			"and a moment between two stamps of one write, such as a delivery change's credit " +
+			"line and the change, reads the first without the second. " +
+			"\n\n" +
 			"A capture and a parcel's transitions are stamped by the process that wrote them " +
 			"and everything else by the database, so a moment between two events on different " +
 			"clocks is answered as exactly as those clocks agree. A moment that has not " +

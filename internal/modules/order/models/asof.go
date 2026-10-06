@@ -6,8 +6,8 @@ import "time"
 //
 // Every field is DERIVED from rows that carry their own moment: the order's
 // stamps, its lines and line cancellations, its credits, its after-sales
-// records' stamps, the payment collection's movements and the parcels'
-// transitions. Nothing here is stored, so nothing here can disagree with the
+// records' stamps, the payment collection's movements, the parcels'
+// transitions, its shipping address rows and its delivery changes. Nothing here is stored, so nothing here can disagree with the
 // records it is read from; a field whose past the records do not keep is not
 // guessed but said to be unknown.
 type OrderAsOf struct {
@@ -34,6 +34,48 @@ type OrderAsOf struct {
 	// Contact says whether the contact and addresses the order holds today are
 	// the ones it held at At.
 	Contact ContactAsOf
+	// ShippingAddress is the shipping address row in force at At: the one
+	// written last at or before it, or the one the order was placed with when
+	// every row's stamp is later; nil when the order recorded none (ADR 0411).
+	ShippingAddress *AddressAsOf
+	// Deliveries are the order's deliveries as they stood at At, in the order
+	// they were sold (ADR 0411).
+	Deliveries []DeliveryAsOf
+}
+
+// AddressAsOf is an address row in force at a moment. Address holds the row's
+// content only while the order holds the contact it held then; it is nil
+// otherwise, and ID and Since still name the row.
+type AddressAsOf struct {
+	// ID is the row.
+	ID string
+	// Since is the row's stamp.
+	Since time.Time
+	// Address is the row's content, nil once the contact it held then is gone.
+	Address *OrderAddress
+}
+
+// DeliveryAsOf is a sold delivery as it stood at a moment: the method with its
+// latest change made at or before it (ADR 0199).
+type DeliveryAsOf struct {
+	// ShippingMethodID is the method sold; it stays the method's through its
+	// changes.
+	ShippingMethodID string
+	// ShippingOptionID, Name and Amount are the method's as sold, or its
+	// latest change's.
+	ShippingOptionID string
+	Name             string
+	Amount           int64
+	// ChangeID names the change in force; empty while the method stood as sold.
+	ChangeID string
+	// Difference, CreditLineID and PaymentCollectionID are the change's
+	// (ADR 0199, ADR 0200); zero and empty while the method stood as sold.
+	Difference          int64
+	CreditLineID        string
+	PaymentCollectionID string
+	// Since is the change's stamp, or the order's placement for a method as
+	// sold.
+	Since time.Time
 }
 
 // MoneyAsOf is an order's money at a moment.
@@ -74,9 +116,12 @@ type RecordAsOf struct {
 
 // ContactAsOf says what the order's contact was at a moment.
 //
-// The e-mail and the addresses are written once when the order is placed and
-// changed only by erasure, which empties them; so before an erasure the contact
-// held now IS the contact held then, and after one there is none.
+// The e-mail and the billing address are written once when the order is placed
+// and changed only by erasure, which empties them; so before an erasure the
+// contact held now IS the contact held then, and after one there is none. The
+// shipping address can also be corrected (ADR 0195), each correction a new row,
+// and the reading names the row in force ([OrderAsOf.ShippingAddress]); the
+// rows are emptied by an erasure all the same.
 type ContactAsOf string
 
 // Contact states.

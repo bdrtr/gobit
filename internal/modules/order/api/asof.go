@@ -24,6 +24,34 @@ type orderAsOfDTO struct {
 	Replacements []recordAsOfDTO    `json:"replacements"`
 	Shipments    []recordAsOfDTO    `json:"shipments"`
 	Contact      models.ContactAsOf `json:"contact"`
+	// ShippingAddress is the shipping row in force at the moment; null when
+	// the order recorded none (ADR 0411).
+	ShippingAddress *addressAsOfDTO `json:"shipping_address"`
+	// Deliveries are the sold deliveries as they stood at the moment.
+	Deliveries []deliveryAsOfDTO `json:"deliveries"`
+}
+
+// addressAsOfDTO is an address row in force at the moment.
+type addressAsOfDTO struct {
+	ID    string    `json:"id"`
+	Since time.Time `json:"since"`
+	// Address is null once the contact the order held then is gone (see
+	// "contact").
+	Address *orderAddressDTO `json:"address"`
+}
+
+// deliveryAsOfDTO is a sold delivery with its latest change by the moment.
+type deliveryAsOfDTO struct {
+	ShippingMethodID string `json:"shipping_method_id"`
+	ShippingOptionID string `json:"shipping_option_id"`
+	Name             string `json:"name"`
+	Amount           int64  `json:"amount"`
+	// ChangeID is absent while the method stood as sold.
+	ChangeID            string    `json:"change_id,omitempty"`
+	Difference          int64     `json:"difference"`
+	CreditLineID        string    `json:"credit_line_id,omitempty"`
+	PaymentCollectionID string    `json:"payment_collection_id,omitempty"`
+	Since               time.Time `json:"since"`
 }
 
 // moneyAsOfDTO is the order's money at the moment.
@@ -98,6 +126,19 @@ func toOrderAsOfDTO(asOf *models.OrderAsOf) orderAsOfDTO {
 		Replacements: toRecordAsOfDTOs(asOf.Replacements),
 		Shipments:    toRecordAsOfDTOs(asOf.Shipments),
 		Contact:      asOf.Contact,
+		Deliveries:   make([]deliveryAsOfDTO, 0, len(asOf.Deliveries)),
+	}
+	if row := asOf.ShippingAddress; row != nil {
+		out.ShippingAddress = &addressAsOfDTO{ID: row.ID, Since: row.Since, Address: toOrderAddressDTO(row.Address)}
+	}
+	for i := range asOf.Deliveries {
+		delivery := &asOf.Deliveries[i]
+		out.Deliveries = append(out.Deliveries, deliveryAsOfDTO{
+			ShippingMethodID: delivery.ShippingMethodID, ShippingOptionID: delivery.ShippingOptionID,
+			Name: delivery.Name, Amount: delivery.Amount, ChangeID: delivery.ChangeID,
+			Difference: delivery.Difference, CreditLineID: delivery.CreditLineID,
+			PaymentCollectionID: delivery.PaymentCollectionID, Since: delivery.Since,
+		})
 	}
 	if asOf.Status != nil {
 		status := string(*asOf.Status)

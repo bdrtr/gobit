@@ -28,9 +28,10 @@ const (
 //
 // Every answer comes from a row that carries its own moment, which is what
 // ADR 0170 put on the timeline: the order's stamps, its line cancellations and
-// credits, its after-sales stamps, the payment collection's movements and the
-// parcels' transitions. A status at the moment is the latest stamp at or before
-// it; money at the moment is the movements up to it. The order's recorded
+// credits, its after-sales stamps, the payment collection's movements, the
+// parcels' transitions, and its shipping address rows and delivery changes
+// (ADR 0411). A status at the moment is the latest stamp at or before it; money
+// at the moment is the movements up to it. The order's recorded
 // summary is NOT read: it keeps only its latest value.
 //
 // # The clocks
@@ -95,6 +96,13 @@ func (s *Service) OrderAsOf(ctx context.Context, orderID string, at time.Time) (
 	if in.replacements, err = s.store.ListReplacementsByOrder(ctx, orderID, timelinePageLimit); err != nil {
 		return models.OrderAsOf{}, err
 	}
+	// Every address row, the superseded ones too: the order read keeps only
+	// the current one (ADR 0195, ADR 0411).
+	addresses, err := s.store.OrderAddressesByOrderIDs(ctx, []string{orderID})
+	if err != nil {
+		return models.OrderAsOf{}, err
+	}
+	in.addresses = addresses[orderID]
 
 	return orderAsOf(at, &in), nil
 }
@@ -110,6 +118,9 @@ type asOfInputs struct {
 	claims        []models.Claim
 	exchanges     []models.Exchange
 	replacements  []models.Replacement
+	// addresses are every address row of the order, in the store's
+	// (address_type, created_at, id) order.
+	addresses []models.OrderAddress
 }
 
 // orderAsOf derives the reading. It reads nothing, so every rule it applies can
@@ -120,6 +131,8 @@ func orderAsOf(at time.Time, in *asOfInputs) models.OrderAsOf {
 	out.Money = moneyAt(at, in)
 	out.Lines = linesAt(at, in.order.Items, in.cancellations)
 	out.Contact = contactAt(&in.order.Order, at)
+	out.ShippingAddress = shippingAddressAt(at, in.addresses, out.Contact)
+	out.Deliveries = deliveriesAt(at, in.order.PlacedAt, in.order.ShippingMethods, in.order.DeliveryChanges)
 
 	for i := range in.returns {
 		out.Returns = appendRecord(out.Returns, at, in.returns[i].ID, in.returns[i].CreatedAt,
@@ -243,6 +256,87 @@ func contactAt(order *models.Order, at time.Time) models.ContactAsOf {
 	default:
 		return models.ContactErased
 	}
+}
+
+// shippingAddressAt is the shipping row in force at the moment: the one written
+// last at or before it, in the store's (created_at, id) order (ADR 0411).
+//
+// superseded_at is not read. A correction closes the old row and writes the new
+// one on the database's clock, one after the other (ADR 0241), so a moment
+// between the two stamps reads the closed row, and before order migration
+// 000037 a successor stamped at its transaction's start reads from then: as
+// exactly as those stamps agree. When every row's stamp is later than the
+// moment — rows written in the placing transaction can be stamped after
+// placed_at, and the reading refuses a moment before placed_at — the first row
+// stands, the one the order was placed with.
+//
+// The row is always named; its content only while the contact it held then is
+// held now (contactAt): after an erasure the row reads as emptied, and an
+// emptied row is not the address it was.
+func shippingAddressAt(at time.Time, rows []models.OrderAddress, contact models.ContactAsOf) *models.AddressAsOf {
+	var first, last *models.OrderAddress
+	for i := range rows {
+		if rows[i].Type != models.AddressShipping {
+			continue
+		}
+		if first == nil {
+			first = &rows[i]
+		}
+		if !rows[i].CreatedAt.After(at) {
+			last = &rows[i]
+		}
+	}
+	if last == nil {
+		last = first
+	}
+	if last == nil {
+		return nil
+	}
+
+	out := &models.AddressAsOf{ID: last.ID, Since: last.CreatedAt}
+	if contact == models.ContactHeld {
+		address := *last
+		out.Address = &address
+	}
+
+	return out
+}
+
+// deliveriesAt are the sold methods with the latest change each had by the
+// moment (ADR 0411): the fold [models.CurrentDeliveries] makes over all the
+// changes, over the ones made at or before the moment, oldest first as the
+// store returns them. A method with no change by then stands as sold, since
+// the order's placement.
+func deliveriesAt(
+	at, placed time.Time, methods []models.OrderShippingMethod, changes []models.DeliveryChange,
+) []models.DeliveryAsOf {
+	out := make([]models.DeliveryAsOf, 0, len(methods))
+	for i := range methods {
+		delivery := models.DeliveryAsOf{
+			ShippingMethodID: methods[i].ID,
+			ShippingOptionID: methods[i].ShippingOptionID,
+			Name:             methods[i].Name,
+			Amount:           methods[i].Amount,
+			Since:            placed,
+		}
+		for j := range changes {
+			change := &changes[j]
+			if change.ShippingMethodID != methods[i].ID || change.CreatedAt.After(at) {
+				continue
+			}
+			delivery.ShippingOptionID = change.ShippingOptionID
+			delivery.Name = change.Name
+			delivery.Amount = change.Amount
+			delivery.ChangeID = change.ID
+			delivery.Difference = change.Difference
+			delivery.CreditLineID = change.CreditLineID
+			delivery.PaymentCollectionID = change.PaymentCollectionID
+			delivery.Since = change.CreatedAt
+		}
+		out = append(out, delivery)
+	}
+
+	return out
 }
 
 // stamp is a status a record enters and the moment it did; the moment is nil

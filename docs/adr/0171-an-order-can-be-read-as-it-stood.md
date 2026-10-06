@@ -5,7 +5,7 @@ at a past moment: its status, money, canceled units, after-sales records and
 parcels then, all derived from rows that carry their own moment. A field whose
 past the records do not keep is said to be unknown rather than guessed.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0411](0411-an-order-read-at-a-moment-says-where-it-was-going.md), which adds the shipping address and the deliveries
 - **Date:** 2026-09-25
 
 Measurement: [measurements/0171](../measurements/0171-an-order-then.md)

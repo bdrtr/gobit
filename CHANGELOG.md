@@ -229,6 +229,15 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **An order read at a moment says where it was going** (ADR 0411). **For API
+  consumers:** `GET /admin/v1/orders/{id}/as-of` carries `shipping_address`,
+  the shipping row written last at or before the moment (`id`, `since` and
+  `address`, which is null once the contact held then was erased), and
+  `deliveries`, each sold delivery with the latest change made by the moment
+  (`change_id`, `difference`, `credit_line_id` and `payment_collection_id`
+  from that change, `since` its stamp or the order's placement). A client
+  decoding the reading strictly sees two new keys; nothing stored changes.
+
 - **An order records the channel it was sold in** (ADR 0410). **For API
   consumers:** `GET /admin/v1/orders/{id}`, every admin route answering with
   the order record, and each row of `GET /admin/v1/orders` carry

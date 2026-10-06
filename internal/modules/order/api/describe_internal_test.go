@@ -504,6 +504,20 @@ func describedEndpoints() []endpointExpectation {
 				Replacements: []recordAsOfDTO{{ID: "orep_1", Status: "dispatched", Since: describeSampleTime}},
 				Shipments:    []recordAsOfDTO{{ID: "ful_1", Status: "shipped", Since: describeSampleTime}},
 				Contact:      "held",
+				ShippingAddress: &addressAsOfDTO{
+					ID: "oaddr_1", Since: describeSampleTime,
+					Address: &orderAddressDTO{
+						FirstName: "Ada", LastName: "Lovelace", Company: "Engines Ltd",
+						Address1: "12 Main St", Address2: "Floor 3", City: "Springfield",
+						Province: "North", PostalCode: "62701", CountryCode: "TR",
+						Phone: "+905551112233", Metadata: map[string]any{"gate_code": "4411"},
+					},
+				},
+				Deliveries: []deliveryAsOfDTO{{
+					ShippingMethodID: "oship_1", ShippingOptionID: "sopt_1", Name: "Pickup",
+					Amount: 1000, ChangeID: "odchg_1", Difference: -500, CreditLineID: "ocl_1",
+					PaymentCollectionID: "paycol_2", Since: describeSampleTime,
+				}},
 			},
 		},
 		{
