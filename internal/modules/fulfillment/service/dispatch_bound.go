@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"maps"
+	"slices"
 
 	"github.com/bdrtr/gobit/core/errors"
 )
@@ -12,15 +14,17 @@ const CodeLineNotDispatchable = "fulfillment_line_not_dispatchable"
 // CodeDispatchBoundUnknown is a parcel whose bound could not be read.
 const CodeDispatchBoundUnknown = "fulfillment_dispatch_bound_unknown"
 
-// DispatchBound answers, per order line, how many units a new parcel may hold.
+// DispatchBound answers, per order line, how many units the order may ship.
 //
 // It is the narrow slice of the fulfilling flow this module calls, declared HERE
 // with primitive types only: this module cannot import that package, so the
 // signature has to be one it can repeat verbatim (ADR 0001/0006).
 type DispatchBound interface {
-	// DispatchableQuantities answers, per line of the order, how many units are
-	// still owed. A line the order does not have is ABSENT from the map.
-	DispatchableQuantities(
+	// DispatchCeilings answers, per line of the order, how many units it may
+	// ship at all: what it sold less what was written off, whatever any parcel
+	// holds (ADR 0409). nil lineItemIDs asks for every line, and a line the
+	// order does not have is ABSENT from the map.
+	DispatchCeilings(
 		ctx context.Context, orderID string, lineItemIDs []string,
 	) (map[string]int64, error)
 	// ReturnLines answers whether order orderID's return returnID still awaits its
@@ -29,7 +33,8 @@ type DispatchBound interface {
 	ReturnLines(ctx context.Context, orderID, returnID string) (awaited bool, lines map[string]int64, err error)
 }
 
-// refuseOverDispatch refuses a parcel that would hold more than the order owes.
+// refuseOverDispatch refuses a parcel that would hold more than the order may
+// ship, and answers the line ceilings it read for an outgoing one.
 //
 // # What was wrong
 //
@@ -59,6 +64,13 @@ type DispatchBound interface {
 // the cart module gives when its pricing flow is missing and the answer ADR 0007
 // gives for an unconfigured authenticator.
 //
+// What it reads is the line's ceiling, what the order may ship at all. What
+// its parcels already hold is counted by this module, inside the transaction
+// and under the order's lock ([Service.holdToCeiling], ADR 0409): the units a
+// parcel may still take are the ceiling less that count, a target both sides
+// of which are read the same way, rather than a difference against a bound
+// that counts parcels through a link written after their transaction (D265).
+//
 // # A retry is not a second parcel
 //
 // It is not asked for a retry at all ([Service.isRetry]).
@@ -71,46 +83,98 @@ type DispatchBound interface {
 // ([Service.refuseOverReturn], ADR 0384).
 func (s *Service) refuseOverDispatch(
 	ctx context.Context, reference, returnID string, items []FulfillmentItemInput,
-) error {
+) (map[string]int64, error) {
 	if returnID != "" {
-		return s.refuseOverReturn(ctx, reference, returnID, items)
+		return nil, s.refuseOverReturn(ctx, reference, returnID, items)
 	}
 
 	if s.bound == nil {
-		return errors.Internal(CodeDispatchBoundUnknown,
-			"the fulfillment module has no way to check what order %s still owes, so a "+
+		return nil, errors.Internal(CodeDispatchBoundUnknown,
+			"the fulfillment module has no way to check what order %s may ship, so a "+
 				"parcel cannot be opened; the fulfilling flow is what answers it and it "+
 				"was not bound", reference)
 	}
 
-	lineIDs := make([]string, 0, len(items))
+	// No items asks for every line: a parcel of what the order owes fills its
+	// list from them under the lock.
+	var lineIDs []string
 	for _, item := range items {
 		lineIDs = append(lineIDs, item.LineItemID)
 	}
-
-	owed, err := s.bound.DispatchableQuantities(ctx, reference, lineIDs)
+	ceilings, err := s.bound.DispatchCeilings(ctx, reference, lineIDs)
 	if err != nil {
-		return errors.Wrap(err, errors.KindOf(err), CodeDispatchBoundUnknown,
-			"what order %s still owes could not be read, so nothing was opened", reference)
+		return nil, errors.Wrap(err, errors.KindOf(err), CodeDispatchBoundUnknown,
+			"what order %s may ship could not be read, so nothing was opened", reference)
 	}
 
 	for _, item := range items {
-		remaining, onTheOrder := owed[item.LineItemID]
+		ceiling, onTheOrder := ceilings[item.LineItemID]
 		if !onTheOrder {
-			return errors.Invalid(CodeLineNotDispatchable,
+			return nil, errors.Invalid(CodeLineNotDispatchable,
 				"line %s is not on order %s; a parcel cannot hold goods the order did "+
 					"not sell", item.LineItemID, reference)
 		}
-		if item.Quantity > remaining {
-			return errors.Conflict(CodeLineNotDispatchable,
+		if item.Quantity > ceiling {
+			return nil, errors.Conflict(CodeLineNotDispatchable,
+				"line %s of order %s may ship %d unit(s) at all and the parcel asks for %d; "+
+					"what was sold minus what was written off is the ceiling",
+				item.LineItemID, reference, ceiling, item.Quantity)
+		}
+	}
+	if ceilings == nil {
+		ceilings = map[string]int64{}
+	}
+
+	return ceilings, nil
+}
+
+// holdToCeiling holds an outgoing parcel to what its order may still ship, and
+// fills the list of one asked to hold what is owed (ADR 0409, gaps D264, D265).
+//
+// It runs inside the transaction, after the order's dispatch lock: the units
+// the order's live outgoing parcels hold are read there, by the reference this
+// module stores, so a parcel committed by the lock's last holder is counted
+// whether or not its link to the order is written yet. A line may still take
+// its ceiling less what they hold; a parcel asking for more is refused, and a
+// parcel asked to hold what is owed takes exactly that on every line where it
+// is above zero, or is refused when it is zero everywhere. The ceiling is read
+// before the transaction, so a write-off landing between that read and this
+// one is not seen here (D265).
+func (s *Service) holdToCeiling(
+	ctx context.Context, reference string, items []FulfillmentItemInput, ceilings map[string]int64, owedDefault bool,
+) ([]FulfillmentItemInput, error) {
+	held, err := s.store.CommittedQuantitiesForReference(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+
+	if owedDefault {
+		items = nil
+		for _, line := range slices.Sorted(maps.Keys(ceilings)) {
+			if left := ceilings[line] - held[line]; left > 0 {
+				items = append(items, FulfillmentItemInput{LineItemID: line, Quantity: left})
+			}
+		}
+		if len(items) == 0 {
+			return nil, errors.Conflict(CodeNothingOwed,
+				"order %s owes no unit to a parcel: what it sold is written off or already "+
+					"in a live parcel, so nothing was opened", reference)
+		}
+
+		return normalizeItems(items)
+	}
+
+	for _, item := range items {
+		if left := ceilings[item.LineItemID] - held[item.LineItemID]; left < item.Quantity {
+			return nil, errors.Conflict(CodeLineNotDispatchable,
 				"line %s of order %s owes %d more unit(s) and the parcel asks for %d; "+
-					"what was sold minus what was canceled minus what is already in a "+
-					"live parcel is the bound",
-				item.LineItemID, reference, remaining, item.Quantity)
+					"what was sold minus what was written off minus what the order's live "+
+					"parcels hold is the bound",
+				item.LineItemID, reference, max(left, 0), item.Quantity)
 		}
 	}
 
-	return nil
+	return items, nil
 }
 
 // isRetry reports whether the idempotency key already names a fulfillment.

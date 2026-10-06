@@ -150,6 +150,15 @@ type Fulfillments interface {
 	CreateFulfillment(
 		ctx context.Context, reference, optionID, idempotencyKey string, destination json.RawMessage,
 	) (string, error)
+	// CreateFulfillmentHolding opens a shipment holding items, the order's
+	// goods, and returns its identifier (ADR 0409).
+	//
+	// items is [{"line_item_id","quantity"}]; nil asks for every unit the
+	// order still owes to a parcel, which the module counts under the order's
+	// lock on a first open. The rest is CreateFulfillment's.
+	CreateFulfillmentHolding(
+		ctx context.Context, reference, optionID, idempotencyKey string, destination, items json.RawMessage,
+	) (string, error)
 	// FulfillmentStatus returns the shipment's status.
 	FulfillmentStatus(ctx context.Context, fulfillmentID string) (string, error)
 	// CommittedQuantities sums, per order line, the units a LIVE outgoing parcel

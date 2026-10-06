@@ -5,7 +5,7 @@ and the fulfilling flow under `order:write`, and marks a parcel shipped with
 its tracking, delivered, back undelivered or canceled through a new
 `fulfillment.admin` surface under `fulfillment:write`.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0409](0409-an-orders-parcel-holds-the-units-it-ships.md), whose form names each line's units
 - **Date:** 2026-10-02
 
 ## Context

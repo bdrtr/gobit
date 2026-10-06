@@ -2,10 +2,23 @@ package fulfilling
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
 )
+
+// CodeItemsRequired refuses a parcel that names no items for an order not sold
+// exactly one delivery: there is no single parcel to default its goods to
+// (ADR 0409).
+const CodeItemsRequired = "fulfilling_items_required"
+
+// OpenItem is one line of a parcel opened for an order's goods: the order line
+// and how many of its units the parcel holds (ADR 0409).
+type OpenItem struct {
+	LineItemID string `json:"line_item_id"`
+	Quantity   int64  `json:"quantity"`
+}
 
 // OpenResult reports what opening a shipment did.
 type OpenResult struct {
@@ -42,8 +55,40 @@ type OpenResult struct {
 //
 // Retrying is safe in both directions: the same idempotency key returns the
 // same shipment, and binding a pair that is already bound is a no-op.
+//
+// # The parcel holds what it ships
+//
+// It holds the items named, or, when none are, every line's units the order
+// still owes to a parcel, which the fulfillment module counts under the order's
+// lock (ADR 0409). That default needs an order sold exactly one delivery on a
+// shipping option, the same test the option's default makes; any other order
+// names its items or is refused with [CodeItemsRequired]. Until ADR 0409 this
+// parcel held no item, so the write-off, the dispatch bound and a cancel each
+// counted nothing in it (gap D264).
 func (w *Workflows) OpenForOrder(
+	ctx context.Context, orderID, optionID, idempotencyKey string, items []OpenItem,
+) (OpenResult, error) {
+	if items == nil {
+		items = []OpenItem{}
+	}
+
+	return w.open(ctx, orderID, optionID, idempotencyKey, items)
+}
+
+// OpenForReplacement opens a parcel for an after-sale replacement's goods and
+// binds it to the order (ADR 0090). The goods are not the order's lines, so the
+// parcel holds no order line and the order's bound counts nothing in it; the
+// rest is [Workflows.OpenForOrder]'s.
+func (w *Workflows) OpenForReplacement(
 	ctx context.Context, orderID, optionID, idempotencyKey string,
+) (OpenResult, error) {
+	return w.open(ctx, orderID, optionID, idempotencyKey, nil)
+}
+
+// open opens the parcel. A nil items opens one holding no order line; a non-nil
+// one opens one holding those items, or, empty, what the order still owes.
+func (w *Workflows) open(
+	ctx context.Context, orderID, optionID, idempotencyKey string, items []OpenItem,
 ) (OpenResult, error) {
 	switch {
 	case strings.TrimSpace(orderID) == "":
@@ -63,19 +108,29 @@ func (w *Workflows) OpenForOrder(
 	// A parcel opened without an option goes on the service the order was
 	// sold, when it was sold exactly one, or on the one it was changed to
 	// since (ADR 0198, 0199). The operator no longer has to know which that
-	// is; naming another is still theirs to do.
-	if strings.TrimSpace(optionID) == "" {
+	// is; naming another is still theirs to do. A parcel asking for what the
+	// order owes needs the same one delivery (ADR 0409).
+	owedDefault := items != nil && len(items) == 0
+	if strings.TrimSpace(optionID) == "" || owedDefault {
 		sold, err := w.orders.ShippingOptionOf(ctx, orderID)
 		if err != nil {
 			return OpenResult{}, errors.Wrap(err, errors.KindOf(err), CodeOrderUnreadable,
 				"the delivery order %s was sold could not be read", orderID)
 		}
-		if sold == "" {
+		switch {
+		case sold == "" && strings.TrimSpace(optionID) == "":
 			return OpenResult{}, errors.Invalid(CodeInvalidInput,
-				"no shipping option was named, and order %s was not sold exactly one to default to",
+				"no shipping option was named, and order %s was not sold exactly one delivery on a "+
+					"shipping option to default to",
 				orderID)
+		case sold == "" && owedDefault:
+			return OpenResult{}, errors.Invalid(CodeItemsRequired,
+				"order %s was not sold exactly one delivery on a shipping option, so a parcel cannot "+
+					"default to every "+
+					"unit it owes; name the items the parcel holds", orderID)
+		case strings.TrimSpace(optionID) == "":
+			optionID = sold
 		}
-		optionID = sold
 	}
 
 	// What is bound before the call is what tells an "already open" apart from
@@ -86,10 +141,9 @@ func (w *Workflows) OpenForOrder(
 		return OpenResult{}, err
 	}
 
-	fulfillmentID, err := w.fulfillments.CreateFulfillment(ctx, orderID, optionID, idempotencyKey, destination)
+	fulfillmentID, err := w.create(ctx, orderID, optionID, idempotencyKey, destination, items)
 	if err != nil {
-		return OpenResult{}, errors.Wrap(err, errors.KindOf(err), CodeCreateFailed,
-			"a shipment could not be opened for order %s", orderID)
+		return OpenResult{}, err
 	}
 
 	// An idempotency key OUTLIVES the shipment it opened, so a key whose
@@ -138,6 +192,47 @@ func (w *Workflows) OpenForOrder(
 	// same rule in two places.
 
 	return result, nil
+}
+
+// create asks the fulfillment module for the parcel.
+//
+// A parcel holding the order's goods passes the module's conflicts through as
+// they are: "the order owes nothing" or "the line owes fewer units" is the
+// answer the operator has to read, and wrapping it would answer with this
+// flow's code instead (ADR 0409). An invalid request keeps the code it always
+// answered with, a return option's among them (ADR 0384).
+func (w *Workflows) create(
+	ctx context.Context, orderID, optionID, idempotencyKey string, destination json.RawMessage, items []OpenItem,
+) (string, error) {
+	if items == nil {
+		fulfillmentID, err := w.fulfillments.CreateFulfillment(ctx, orderID, optionID, idempotencyKey, destination)
+		if err != nil {
+			return "", errors.Wrap(err, errors.KindOf(err), CodeCreateFailed,
+				"a shipment could not be opened for order %s", orderID)
+		}
+
+		return fulfillmentID, nil
+	}
+
+	var listed json.RawMessage
+	if len(items) > 0 {
+		encoded, err := json.Marshal(items)
+		if err != nil {
+			return "", errors.Internal(CodeCreateFailed, "the parcel's items could not be encoded: %v", err)
+		}
+		listed = encoded
+	}
+	fulfillmentID, err := w.fulfillments.CreateFulfillmentHolding(
+		ctx, orderID, optionID, idempotencyKey, destination, listed)
+	switch {
+	case err == nil:
+		return fulfillmentID, nil
+	case errors.IsConflict(err):
+		return "", err
+	default:
+		return "", errors.Wrap(err, errors.KindOf(err), CodeCreateFailed,
+			"a shipment could not be opened for order %s", orderID)
+	}
 }
 
 // Shipment is one shipment of an order, as the order's side sees it.

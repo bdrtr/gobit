@@ -543,7 +543,7 @@ func (u *UI) renderOrder(
 		"FulfillmentPrivilege":  scopeFulfillmentRead,
 		"ParcelMoves":           parcelMoves,
 		"CanMoveParcels":        u.canMoveParcels(r),
-		"ParcelOpening":         u.parcelOpeningFor(r, deliveries, deliveriesRead),
+		"ParcelOpening":         u.parcelOpeningFor(r, detail.ID, detail.Lines, deliveries, deliveriesRead),
 		"Deliveries":            u.deliveriesView(r, &detail, deliveries, deliveriesRead, scales),
 		"Invoice":               u.invoiceOf(r, detail.ID, detail.Currency, scales),
 		"CanCancel":             u.canCancelOrder(r, detail.Status),

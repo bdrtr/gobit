@@ -273,10 +273,23 @@ func describeFulfillments(d *openapi.Doc) {
 			"in return_id and holds at most what that return still awaits; it is bound to no " +
 			"order. A return option without return_id, or return_id on another option, is " +
 			"422 fulfillment_option_direction_mismatch; a return that awaits nothing is 409 " +
-			"fulfillment_return_not_awaited.",
+			"fulfillment_return_not_awaited. " +
+			"An outgoing parcel names its \"items\", each within what its line may still ship: " +
+			"what was sold, less what was written off, less what the order's live parcels hold, " +
+			"counted under the order's lock (ADR 0409). With no items it answers 422 " +
+			"fulfillment_items_required; a parcel of every unit still owed is opened through " +
+			"POST /admin/v1/orders/{id}/fulfillments.",
 		RequestBody: d.RequestBody(createFulfillmentRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The opened fulfillment", d.Item(fulfillmentDTO{})),
+			"409": openapi.ErrorResponse("A line may ship fewer units than named " +
+				"(fulfillment_line_not_dispatchable), the key names another parcel " +
+				"(fulfillment_idempotency_key_mismatch), or a return awaits nothing " +
+				"(fulfillment_return_not_awaited)."),
+			"422": openapi.ErrorResponse("The request is invalid: an outgoing parcel with no " +
+				"items (fulfillment_items_required, ADR 0409), a line not on the order " +
+				"(fulfillment_line_not_dispatchable), or a direction mismatch " +
+				"(fulfillment_option_direction_mismatch)."),
 		},
 	})
 

@@ -182,3 +182,23 @@ func newDispatchHarnessWithLines(
 		Workflows: flow, orders: orders, fulfillments: fulfillments, links: links,
 	}
 }
+
+// TestTheCeilingCountsNoParcel is what the fulfillment module holds a parcel to
+// under the order's lock (ADR 0409): what was sold less what was written off,
+// whatever any parcel holds, since the module counts its parcels itself. Every
+// line is answered when none is named, and a line the order does not have stays
+// absent.
+func TestTheCeilingCountsNoParcel(t *testing.T) {
+	t.Parallel()
+
+	h := newDispatchHarness(t, 5, 2, 3)
+
+	ceilings, err := h.DispatchCeilings(t.Context(), testOrderID, nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{testLineID: 3}, ceilings,
+		"bought 5, canceled 2: the 3 units in a live parcel are not taken off")
+
+	asked, err := h.DispatchCeilings(t.Context(), testOrderID, []string{"oli_not_on_the_order"})
+	require.NoError(t, err)
+	assert.Empty(t, asked, "a line the order does not have is absent")
+}

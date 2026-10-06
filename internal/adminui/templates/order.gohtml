@@ -367,17 +367,25 @@ moved by the fulfillment module (ADR 0324). The open form carries a key drawn
 with the page, so a second press, or a reload of the page it lands on, opens
 nothing new. An order sold several deliveries is asked which one the parcel
 goes on, and the module sends it on the option that delivery stands on when
-the form is sent (ADR 0332).
+the form is sent (ADR 0332). The parcel holds the units chosen per line, each
+bounded by what the line still owes and prefilled with it on an order sold one
+delivery; a blank or zero leaves the line out, and a form naming no unit opens
+nothing (ADR 0409).
 */}}
 {{ with .ParcelOpening }}
 {{ if .NoDelivery }}
 <p class="muted">This order was sold no delivery, so there is none to open a parcel on.</p>
+{{ else if .NothingOwed }}
+<p class="muted">Every unit of this order is in a parcel or written off, so there is nothing to open a parcel for.</p>
+{{ else if .OwedUnread }}
+<p class="muted">What this order still owes a parcel could not be read, so no parcel can be opened here.</p>
 {{ else }}
 <form method="post" action="{{ $.OrdersPath }}/{{ $.Order.ID }}/parcels">
   <input type="hidden" name="key" value="{{ .Key }}">
   {{ with .Deliveries }}<select name="delivery" aria-label="delivery" required>
     {{ range . }}<option value="{{ .ID }}">{{ .Name }} ({{ .ShippingOptionID }})</option>{{ end }}
   </select>{{ end }}
+  {{ range .Lines }}<label>{{ .Title }} <input type="number" name="units_{{ .ID }}" min="0" max="{{ .Owed }}" value="{{ .Prefill }}" aria-label="units of {{ .Title }}"></label>{{ end }}
   <button type="submit">Open a parcel</button>
 </form>
 {{ end }}

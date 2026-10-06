@@ -65,7 +65,8 @@ func TestAnOrderReadNowIsTheLiveOrder(t *testing.T) {
 	optionID := newShippingOption(ctx, t, profileID, "E2E As Of Shipping", shippingOptionFee, false)
 	flow, err := fulfillingwf.FromContainer(ctr)
 	require.NoError(t, err)
-	opened, err := flow.OpenForOrder(ctx, placed.OrderID, optionID, "e2e-asof-"+placed.OrderID)
+	opened, err := flow.OpenForOrder(ctx, placed.OrderID, optionID, "e2e-asof-"+placed.OrderID,
+		[]fulfillingwf.OpenItem{{LineItemID: detail.Items[0].ID, Quantity: 1}})
 	require.NoError(t, err)
 	shipped, err := shippingSvc.MarkShipped(ctx, opened.FulfillmentID, "ASOF-"+opened.FulfillmentID, "")
 	require.NoError(t, err)

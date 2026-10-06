@@ -20,6 +20,17 @@ type recordingFulfilling struct {
 	orderID string
 	request json.RawMessage
 	already bool
+	// owed is DispatchableQuantities' answer and owedAsked the lines it was
+	// asked about (ADR 0409).
+	owed      map[string]int64
+	owedAsked []string
+}
+
+func (f *recordingFulfilling) DispatchableQuantities(
+	_ context.Context, orderID string, lineItemIDs []string,
+) (map[string]int64, error) {
+	f.orderID, f.owedAsked = orderID, lineItemIDs
+	return f.owed, nil
 }
 
 func (f *recordingFulfilling) OpenForOrder(
@@ -108,7 +119,7 @@ func TestThePanelOpensAParcelThroughTheFlowTheAPICalls(t *testing.T) {
 	flow := &recordingFulfilling{}
 	surface := &AfterSalesSurface{fulfilling: flow}
 
-	parcel, already, err := surface.OpenParcel(context.Background(), "order_1", "", "panel-k")
+	parcel, already, err := surface.OpenParcel(context.Background(), "order_1", "", "panel-k", nil)
 	require.NoError(t, err)
 	assert.Equal(t, "ful_1", parcel)
 	assert.False(t, already)
@@ -117,12 +128,37 @@ func TestThePanelOpensAParcelThroughTheFlowTheAPICalls(t *testing.T) {
 		"the key alone; no option, so the flow takes the one the order was sold")
 
 	flow.already = true
-	_, already, err = surface.OpenParcel(context.Background(), "order_1", "", "panel-k")
+	_, already, err = surface.OpenParcel(context.Background(), "order_1", "", "panel-k", nil)
 	require.NoError(t, err)
 	assert.True(t, already, "a key that had already opened the parcel says so")
 
-	_, _, err = (&AfterSalesSurface{}).OpenParcel(context.Background(), "order_1", "", "panel-k")
+	_, _, err = (&AfterSalesSurface{}).OpenParcel(context.Background(), "order_1", "", "panel-k", nil)
 	require.Error(t, err)
+	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
+}
+
+// TestThePanelsParcelHoldsTheUnitsItNames is ADR 0409: the quantities the
+// operator chose cross to the flow as the parcel's items, in line id order, and
+// what each line still owes is read from the flow for every line.
+func TestThePanelsParcelHoldsTheUnitsItNames(t *testing.T) {
+	t.Parallel()
+
+	flow := &recordingFulfilling{owed: map[string]int64{"oli_a": 2, "oli_b": 1}}
+	surface := &AfterSalesSurface{fulfilling: flow}
+
+	_, _, err := surface.OpenParcel(context.Background(), "order_1", "", "panel-k",
+		map[string]int64{"oli_b": 1, "oli_a": 2})
+	require.NoError(t, err)
+	assert.JSONEq(t,
+		`{"idempotency_key":"panel-k","items":[{"line_item_id":"oli_a","quantity":2},{"line_item_id":"oli_b","quantity":1}]}`,
+		string(flow.request))
+
+	owed, err := surface.OwedUnits(context.Background(), "order_1")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int64{"oli_a": 2, "oli_b": 1}, owed)
+	assert.Nil(t, flow.owedAsked, "every line is asked about")
+
+	_, err = (&AfterSalesSurface{}).OwedUnits(context.Background(), "order_1")
 	assert.Equal(t, errors.KindUnavailable, errors.KindOf(err))
 }
 

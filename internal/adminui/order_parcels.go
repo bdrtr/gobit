@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -44,17 +45,39 @@ const (
 	formParcelDelivery = "delivery"
 	formTrackingNumber = "tracking_number"
 	formTrackingURL    = "tracking_url"
+	// formParcelUnits prefixes the field of each line's units in the parcel,
+	// "units_<line id>" (ADR 0409).
+	formParcelUnits = "units_"
 )
 
 // ParcelOpener is the narrow surface a parcel is opened through: the order
 // module's, over the fulfilling flow.
 type ParcelOpener interface {
 	// OpenParcel opens a parcel for the order on the delivery deliveryID
-	// names, or on the one it was sold when that is empty, and reports
-	// whether the key had already opened it.
+	// names, or on the one it was sold when that is empty, holding the units
+	// items names per order line, and reports whether the key had already
+	// opened it (ADR 0409).
 	OpenParcel(
-		ctx context.Context, orderID, deliveryID, idempotencyKey string,
+		ctx context.Context, orderID, deliveryID, idempotencyKey string, items map[string]int64,
 	) (fulfillmentID string, alreadyOpen bool, err error)
+}
+
+// OwedReader is the narrow surface what an order still owes a parcel is read
+// through, per line: the order module's, over the fulfilling flow's dispatch
+// bound (ADR 0409).
+type OwedReader interface {
+	// OwedUnits answers, per order line, how many units a new parcel may hold.
+	OwedUnits(ctx context.Context, orderID string) (map[string]int64, error)
+}
+
+// parcelLine is one line of the open form: the order line, what the page calls
+// it, how many of its units are still owed, which bounds the field, and what
+// the field is prefilled with.
+type parcelLine struct {
+	ID      string
+	Title   string
+	Owed    int64
+	Prefill int64
 }
 
 // DeliveryLister is the narrow surface an order's deliveries are read
@@ -74,13 +97,19 @@ type parcelDelivery struct {
 	Amount int64 `json:"amount"`
 }
 
-// parcelOpening is what the open form draws: the key it carries, and the
-// deliveries to choose from when the order was sold several; NoDelivery says
-// the order was sold none, so there is nothing to open a parcel on.
+// parcelOpening is what the open form draws: the key it carries, the
+// deliveries to choose from when the order was sold several, and the lines
+// still owed a parcel (ADR 0409); NoDelivery says the order was sold none, so
+// there is nothing to open a parcel on, NothingOwed that every unit is in a
+// parcel or written off, and OwedUnread that what the order owes could not be
+// read, so no line can be named and no form is drawn.
 type parcelOpening struct {
-	Key        string
-	Deliveries []parcelDelivery
-	NoDelivery bool
+	Key         string
+	Deliveries  []parcelDelivery
+	NoDelivery  bool
+	Lines       []parcelLine
+	NothingOwed bool
+	OwedUnread  bool
 }
 
 // ParcelMover is the narrow surface a parcel is moved through: the
@@ -195,8 +224,13 @@ func (u *UI) deliveriesOf(r *http.Request, orderID string) (deliveries []parcelD
 // not open a parcel, who is drawn no form. An order sold one delivery is
 // opened on it by the flow, so only an order sold several is asked which
 // (ADR 0332); deliveries the surface cannot list leave the choice to the flow,
-// which refuses an order it cannot default.
-func (u *UI) parcelOpeningFor(r *http.Request, deliveries []parcelDelivery, read bool) *parcelOpening {
+// which refuses an order it cannot default. The lines still owed a parcel are
+// named on the form, each bounded by what it owes (ADR 0409). An order sold one
+// delivery is offered every owed unit; one sold several is offered none, since
+// one parcel would take every delivery's goods, and the operator names them.
+func (u *UI) parcelOpeningFor(
+	r *http.Request, orderID string, lines []orderLine, deliveries []parcelDelivery, read bool,
+) *parcelOpening {
 	if !u.canOpenParcels(r) {
 		return nil
 	}
@@ -208,8 +242,72 @@ func (u *UI) parcelOpeningFor(r *http.Request, deliveries []parcelDelivery, read
 	case len(deliveries) > 1:
 		opening.Deliveries = deliveries
 	}
+	opening.Lines, opening.NothingOwed, opening.OwedUnread = u.owedLines(r, orderID, lines)
+	if read && len(deliveries) == 1 {
+		for i := range opening.Lines {
+			opening.Lines[i].Prefill = opening.Lines[i].Owed
+		}
+	}
 
 	return opening
+}
+
+// owedLines are the order's lines still owed a parcel, in the page's order,
+// whether the order owes none, and whether what it owes could not be read, by a
+// surface that cannot say or a read that failed.
+func (u *UI) owedLines(r *http.Request, orderID string, lines []orderLine) (owedLines []parcelLine, nothing, unread bool) {
+	reader, ok := u.afterSales.(OwedReader)
+	if !ok {
+		return nil, false, true
+	}
+	ctx := r.Context()
+	owed, err := reader.OwedUnits(ctx, orderID)
+	if err != nil {
+		corehttp.LoggerFromContext(ctx).WarnContext(ctx,
+			"the panel could not read what the order still owes a parcel", "error", err, "order_id", orderID)
+
+		return nil, false, true
+	}
+	var out []parcelLine
+	for i := range lines {
+		line := &lines[i]
+		if owed[line.ID] > 0 {
+			out = append(out, parcelLine{ID: line.ID, Title: line.Title, Owed: owed[line.ID]})
+		}
+	}
+
+	return out, len(out) == 0, false
+}
+
+// parcelUnits reads the units the form names per line: a blank or zero field
+// leaves the line out, a value that is not a whole number is refused, and so is
+// a form naming no unit at all (ADR 0409). The panel never sends a parcel no
+// items: the flow would read that as every unit still owed, the opposite of a
+// form left at zero.
+func parcelUnits(r *http.Request) (map[string]int64, error) {
+	units := map[string]int64{}
+	for field, values := range r.PostForm {
+		line, ok := strings.CutPrefix(field, formParcelUnits)
+		if !ok || line == "" || len(values) == 0 {
+			continue
+		}
+		text := strings.TrimSpace(values[0])
+		if text == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(text, 10, 64)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("the units of line %s are not a whole number: %q", line, text)
+		}
+		if n > 0 {
+			units[line] = n
+		}
+	}
+	if len(units) == 0 {
+		return nil, fmt.Errorf("the form named no unit; name at least one unit the parcel holds")
+	}
+
+	return units, nil
 }
 
 // openParcel opens a parcel for the order in the path with the key the form
@@ -234,8 +332,15 @@ func (u *UI) openParcel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	units, err := parcelUnits(r)
+	if err != nil {
+		u.renderOrder(w, r, http.StatusUnprocessableEntity, orderID,
+			&afterSaleOutcome{Refused: err.Error() + "; nothing was opened."})
+		return
+	}
+
 	parcel, already, err := opener.OpenParcel(r.Context(), orderID,
-		strings.TrimSpace(r.PostFormValue(formParcelDelivery)), key)
+		strings.TrimSpace(r.PostFormValue(formParcelDelivery)), key, units)
 	switch {
 	case err == nil && already:
 		u.renderOrder(w, r, http.StatusOK, orderID, &afterSaleOutcome{

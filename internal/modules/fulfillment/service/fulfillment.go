@@ -35,10 +35,16 @@ type CreateFulfillmentInput struct {
 	// IdempotencyKey prevents the same fulfillment from being created twice; it
 	// is required.
 	IdempotencyKey string
-	// Items are the items entering the fulfillment; it may be empty (e.g. the
-	// shipping-free fulfillment of a digital product, or a bulk shipment with no
-	// item breakdown).
+	// Items are the items entering the fulfillment. Empty, the parcel holds no
+	// order line, as an after-sale replacement's does, unless ItemsOwed asks for
+	// what the order still owes (ADR 0409).
 	Items []FulfillmentItemInput
+	// ItemsOwed asks the module to fill an empty Items with every line's units
+	// the order still owes to a parcel: its ceiling less what the order's live
+	// parcels hold, counted under the order's lock (ADR 0409).
+	// A retry is answered from its key and fills nothing, and a parcel bringing a
+	// return back names its units instead (ADR 0384).
+	ItemsOwed bool
 	// Destination is where the parcel goes, handed to the provider as it is;
 	// nil when the caller has none (ADR 0194). This module does not store it:
 	// the order is the one holder of the address.
@@ -112,6 +118,24 @@ type CreateFulfillmentInput struct {
 //
 // Its units never left with the order's goods, so every reader that counts the
 // order's parcels through the link must not see it (ADR 0384).
+//
+// # A parcel of what the order owes
+//
+// ItemsOwed with no items fills the parcel with every line's units still owed,
+// and refuses with [CodeNothingOwed] when none are (ADR 0409). The module fills
+// it rather than its caller so that a retry, which is answered from its key
+// before anything is asked, carries no list that a write-off in between could
+// have changed.
+//
+// # Two parcels opened at once
+//
+// What the order may ship per line, its ceiling, is read before the
+// transaction. Inside it the order's dispatch lock is taken and the units its
+// live outgoing parcels hold are counted by reference; a line may take its
+// ceiling less that count and no more (gaps D264, D265). Two opens for one order
+// under different keys therefore never hold more than the ceiling they read
+// between them: the second one waits on the lock and counts the first one's
+// units, whether or not the first one's link to the order is written yet.
 func (s *Service) CreateFulfillment(
 	ctx context.Context,
 	in CreateFulfillmentInput,
@@ -142,15 +166,25 @@ func (s *Service) CreateFulfillment(
 	if err != nil {
 		return models.Fulfillment{}, err
 	}
-	if !s.isRetry(ctx, key) {
+	retry := s.isRetry(ctx, key)
+	// ceilings is what the order may ship per line, read for an outgoing parcel
+	// that is not a retry; the transaction holds the parcel to it under the
+	// order's lock. It stays nil on a retry and on a parcel bringing a return
+	// back.
+	var ceilings map[string]int64
+	owedDefault := false
+	if !retry {
+		// A parcel bringing a return back with no items is refused here, so the
+		// default to what the order owes only ever fills an outgoing one.
 		if err := refuseWrongDirection(option, returnID, items); err != nil {
 			return models.Fulfillment{}, err
 		}
+		owedDefault = in.ItemsOwed && len(items) == 0
 
-		// The bound is checked BEFORE the transaction opens: asking another module
+		// The bound is read BEFORE the transaction opens: asking another module
 		// while holding this one's locks takes a second connection from the same
 		// pool (ADR 0130's measurement, ADR 0135's reason).
-		if err := s.refuseOverDispatch(ctx, reference, returnID, items); err != nil {
+		if ceilings, err = s.refuseOverDispatch(ctx, reference, returnID, items); err != nil {
 			return models.Fulfillment{}, err
 		}
 	}
@@ -160,6 +194,12 @@ func (s *Service) CreateFulfillment(
 		provider, err := s.providers.Get(option.ProviderID)
 		if err != nil {
 			return err
+		}
+
+		if returnID == "" {
+			if err := s.store.LockReferenceDispatch(ctx, reference); err != nil {
+				return err
+			}
 		}
 
 		created, inserted, err := s.store.InsertFulfillmentIfAbsent(ctx, models.Fulfillment{
@@ -192,13 +232,22 @@ func (s *Service) CreateFulfillment(
 			if err != nil {
 				return err
 			}
-			if saved, wanted := savedItemsKey(out.Items), requestedItemsKey(items); saved != wanted {
+			// A retry that asked for what the order owes named no list: the parcel's
+			// list is the one its first open filled (ADR 0409).
+			askedOwed := in.ItemsOwed && len(in.Items) == 0
+			if saved, wanted := savedItemsKey(out.Items), requestedItemsKey(items); !askedOwed && saved != wanted {
 				return errors.Conflict(CodeIdempotencyMismatch,
 					"the same idempotency key was used with a different item list: existing [%s], requested [%s] (%s)",
 					saved, wanted, existing.ID)
 			}
 			s.log.DebugContext(ctx, "the existing fulfillment was returned", "fulfillment", existing.ID, "key", key)
 			return nil
+		}
+
+		if ceilings != nil {
+			if items, err = s.holdToCeiling(ctx, reference, items, ceilings, owedDefault); err != nil {
+				return err
+			}
 		}
 
 		result, err := provider.Create(ctx, coreprovider.CreateFulfillmentInput{

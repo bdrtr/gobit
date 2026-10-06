@@ -11,6 +11,32 @@ design. It is fixed with `1.0.0`.
 
 ### Breaking changes
 
+- **An order's parcel holds the units it ships** (ADR 0409, D264, D265). **For
+  API consumers:** `POST /admin/v1/orders/{id}/fulfillments` takes `items`
+  (`line_item_id`, `quantity`); without them an order sold exactly one delivery
+  on a shipping option gets a parcel of every unit still owed, any other order
+  answers 422 `fulfilling_items_required`, and one that owes nothing 409
+  `fulfillment_nothing_owed`. Its 409s now carry the fulfillment module's
+  codes, `fulfillment_line_not_dispatchable` and
+  `fulfillment_idempotency_key_mismatch` among them, where a key mismatch
+  answered `fulfilling_create_failed`; `fulfilling_shipment_canceled` is
+  unchanged. `POST /admin/v1/fulfillments` with no `items` for an outgoing
+  parcel answers 422 `fulfillment_items_required`. Every outgoing parcel may
+  hold, per line, what the order sold less what was written off less what its
+  live outgoing parcels hold: a second parcel for units a first one holds, and
+  one of two parcels opened at once that together exceed it, answer 409
+  `fulfillment_line_not_dispatchable`. A write-off puts back none of a
+  parcel's units, and canceling the parcel releases them. **For operators:**
+  the order page's open form names each line's units, prefilled with what the
+  line owes on an order sold one delivery and left at zero on several, and a
+  form naming no unit opens nothing. **For plugin authors:** the fulfilling
+  flow's `Interop.OpenForOrder` request takes `items`, an after-sale
+  replacement's parcel goes through `Interop.OpenForReplacement`, the flow
+  answers `Interop.DispatchCeilings`, the fulfillment module's
+  `service.DispatchBound` asks `DispatchCeilings` in place of
+  `DispatchableQuantities`, its interop gains `CreateFulfillmentHolding`, and
+  `service.Store` gains `CommittedQuantitiesForReference` and
+  `LockReferenceDispatch`.
 - **A refund document names the sale it amends** (ADR 0406, D247, D262). **For
   integrators:** `POST /admin/v1/invoices` with `"kind":"refund"` and no
   `amends_invoice_id`, with one of spaces alone, or with a row naming no

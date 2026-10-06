@@ -5,7 +5,7 @@ on every parcel it opens. It costs a link write on a path that did not have one,
 and it makes three earlier decisions true that were describing a subtraction
 which never subtracted.
 
-- **Status:** Accepted; amended by [0384](0384-a-return-parcel-brings-back-the-return-it-names.md), which leaves a parcel bringing a return back unbound
+- **Status:** Accepted; amended by [0384](0384-a-return-parcel-brings-back-the-return-it-names.md), which leaves a parcel bringing a return back unbound, and by [0409](0409-an-orders-parcel-holds-the-units-it-ships.md), whose order-route parcel holds its units
 - **Date:** 2026-09-11
 
 ## Context

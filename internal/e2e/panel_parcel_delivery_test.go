@@ -75,15 +75,18 @@ func TestAnOperatorShipsOneOfAnOrdersDeliveriesInThePanel(t *testing.T) {
 	require.Len(t, choice, 2, "the form names the freight delivery by its option")
 	assert.Contains(t, page, "("+post+")</option>", "and the other delivery")
 
-	opened := send(http.MethodPost, pagePath+"/parcels", url.Values{"key": {key[1]}, "delivery": {choice[1]}})
+	units := regexp.MustCompile(`name="(units_[^"]+)" min="0" max="(\d+)"`).FindStringSubmatch(page)
+	require.Len(t, units, 3, "the form offers the order's line at what it owes (ADR 0409)")
+	opened := send(http.MethodPost, pagePath+"/parcels",
+		url.Values{"key": {key[1]}, "delivery": {choice[1]}, units[1]: {units[2]}})
 	require.Equal(t, http.StatusOK, opened.Code, opened.Body.String())
 	require.Len(t, panelParcelOpened.FindStringSubmatch(opened.Body.String()), 2, "the page names the parcel it opened")
 	handed, ok := carrierSpy.shipmentFor(key[1])
 	require.True(t, ok, "the parcel reached the carrier under the form's key")
 	assert.Equal(t, freight, handed.OptionID, "on the delivery chosen")
 
-	unnamed := send(http.MethodPost, pagePath+"/parcels", url.Values{"key": {"panel-unnamed-" + orderID}})
+	unnamed := send(http.MethodPost, pagePath+"/parcels", url.Values{"key": {"panel-unnamed-" + orderID}, units[1]: {"1"}})
 	require.Equal(t, http.StatusUnprocessableEntity, unnamed.Code, unnamed.Body.String())
-	assert.Contains(t, unnamed.Body.String(), "not sold exactly one to default to",
+	assert.Contains(t, unnamed.Body.String(), "on a shipping option to default to",
 		"a form that names no delivery is refused on an order sold two")
 }

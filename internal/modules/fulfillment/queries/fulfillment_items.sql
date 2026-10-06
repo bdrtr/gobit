@@ -49,6 +49,21 @@ WHERE i.fulfillment_id = ANY (sqlc.arg('fulfillment_ids')::text[])
 GROUP BY i.line_item_id
 ORDER BY i.line_item_id;
 
+-- CommittedQuantitiesForReference sums, per order line, the units the live
+-- outgoing parcels opened for one reference hold, by the reference this module
+-- stores rather than by the order's link (ADR 0409, gap D265). A parcel opening
+-- reads it twice, before it asks what the order owes and again under the
+-- reference's lock, and the difference is what a parcel opened in between took.
+-- name: CommittedQuantitiesForReference :many
+SELECT i.line_item_id, SUM(i.quantity)::bigint AS quantity
+FROM fulfillment_items i
+JOIN fulfillments f ON f.id = i.fulfillment_id
+WHERE f.reference = sqlc.arg('reference')
+  AND f.status <> 'canceled'
+  AND f.return_id IS NULL
+GROUP BY i.line_item_id
+ORDER BY i.line_item_id;
+
 -- ReturningQuantitiesForReturn sums, per order line, the units the live parcels
 -- bringing one return back hold (ADR 0384).
 --

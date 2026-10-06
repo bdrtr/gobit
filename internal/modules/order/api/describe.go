@@ -392,6 +392,11 @@ func describeFulfilling(d *openapi.Doc) {
 			"since (ADR 0198, 0199). An order sold none or several has to be told which. " +
 			"The order may have SEVERAL shipments, and since ADR 0197 a parcel may also carry " +
 			"an addition that joined it. " +
+			"The parcel holds the \"items\" named, each within what its line still owes, or, " +
+			"when none are named on an order sold exactly one delivery, every unit still owed " +
+			"to a parcel; an order sold none or several has to name them (422 " +
+			"fulfilling_items_required), and one that owes nothing answers 409 " +
+			"fulfillment_nothing_owed (ADR 0409). " +
 			"Every parcel opened here goes out to the customer: a return option answers 422 " +
 			"\"fulfilling_create_failed\", and goods coming back travel in a parcel opened " +
 			"through POST /admin/v1/fulfillments naming its \"return_id\" (ADR 0384).",
@@ -400,8 +405,14 @@ func describeFulfilling(d *openapi.Doc) {
 			"200": openapi.Response("The shipment that was already open",
 				d.Item(shipmentOpenedDTO{})),
 			"201": openapi.Response("The opened shipment", d.Item(shipmentOpenedDTO{})),
+			"409": openapi.ErrorResponse("The order owes no unit to a parcel " +
+				"(fulfillment_nothing_owed), a line owes fewer units than named " +
+				"(fulfillment_line_not_dispatchable), the key names a parcel opened with " +
+				"another list (fulfillment_idempotency_key_mismatch) (ADR 0409), or the key " +
+				"names a parcel that was canceled (fulfilling_shipment_canceled)."),
 			"422": openapi.ErrorResponse("The request is invalid; a return option is refused " +
-				"here (ADR 0384)."),
+				"here (ADR 0384), and an order not sold exactly one delivery names its items " +
+				"(fulfilling_items_required, ADR 0409)."),
 		},
 	})
 

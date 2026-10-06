@@ -92,6 +92,13 @@ const (
 	// CodeIdempotencyMismatch reports that the same key was used for ANOTHER
 	// fulfillment.
 	CodeIdempotencyMismatch = "fulfillment_idempotency_key_mismatch"
+	// CodeNothingOwed refuses a parcel asked to hold what the order still owes
+	// when it owes no unit to a parcel (ADR 0409).
+	CodeNothingOwed = "fulfillment_nothing_owed"
+	// CodeItemsRequired refuses an outgoing parcel the module's own route is
+	// asked to open with no items: it would hold units nobody counts (ADR 0409,
+	// gap D264).
+	CodeItemsRequired = "fulfillment_items_required"
 	// CodeProfileInUse reports that a profile still holding options was about to
 	// be deleted.
 	CodeProfileInUse = "fulfillment_shipping_profile_in_use"
@@ -312,6 +319,14 @@ type Store interface {
 	// bringing order return returnID back hold — pending, shipped or delivered
 	// (ADR 0384).
 	ReturningQuantities(ctx context.Context, returnID string) (map[string]int64, error)
+	// CommittedQuantitiesForReference sums, per order line, the units the LIVE
+	// outgoing parcels opened for the reference hold, found by the reference
+	// rather than by the order's link (ADR 0409).
+	CommittedQuantitiesForReference(ctx context.Context, reference string) (map[string]int64, error)
+	// LockReferenceDispatch serializes the outgoing parcels opened for the
+	// reference until the transaction ends (ADR 0409, gap D265); it is called
+	// inside WithTx.
+	LockReferenceDispatch(ctx context.Context, reference string) error
 }
 
 // Options are the service's construction dependencies.

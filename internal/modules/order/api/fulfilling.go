@@ -71,6 +71,11 @@ type Fulfilling interface {
 	// on at the price a change would write, as [{"id","name","amount"}]
 	// (ADR 0388).
 	DeliveryQuoteJSON(ctx context.Context, orderID string) (json.RawMessage, error)
+
+	// DispatchableQuantities answers, per line of the order, how many units a
+	// new parcel may still hold; nil lineItemIDs asks for every line. The
+	// panel's open form is drawn with it (ADR 0409).
+	DispatchableQuantities(ctx context.Context, orderID string, lineItemIDs []string) (map[string]int64, error)
 }
 
 // changeDeliveryRequest is the body of the delivery change endpoint.
@@ -96,6 +101,17 @@ type openShipmentRequest struct {
 	// IdempotencyKey is required. Without one a retried request opens a SECOND
 	// parcel for the same order.
 	IdempotencyKey string `json:"idempotency_key"`
+	// Items are the units the parcel holds. Left out on an order sold one
+	// delivery, the parcel holds every unit still owed to a parcel (ADR 0409).
+	Items []openShipmentItem `json:"items,omitempty"`
+}
+
+// openShipmentItem is one line of the units a parcel holds.
+type openShipmentItem struct {
+	// LineItemID is the order line.
+	LineItemID string `json:"line_item_id"`
+	// Quantity is how many of its units the parcel holds.
+	Quantity int64 `json:"quantity"`
 }
 
 // shipmentOpenedDTO is what the open endpoint answers.

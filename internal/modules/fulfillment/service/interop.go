@@ -302,9 +302,10 @@ func (i *Interop) RankLocations(
 // SHIPPING LABEL from being printed when a saga retries a step. If the key is
 // the same but the reference or the option differs, errors.Conflict is returned.
 //
-// The item breakdown is NOT given through this surface: what the saga needs is
-// to open a single fulfillment for the whole order, and per-item partial
-// shipment is the admin API's subject.
+// It opens a parcel that holds no order line: an after-sale replacement's,
+// whose goods are not the order's lines. A parcel an operator opens for the
+// order's own goods holds them, and goes through [Interop.CreateFulfillmentHolding]
+// (ADR 0409).
 //
 // It carries no return either, so it opens outgoing parcels only: a return
 // option answers errors.Invalid with [CodeOptionDirectionMismatch], and a
@@ -339,6 +340,65 @@ func (i *Interop) CreateFulfillment(
 	if err != nil {
 		return "", err
 	}
+	return ful.ID, nil
+}
+
+// interopItem is one item of [Interop.CreateFulfillmentHolding]'s list.
+type interopItem struct {
+	LineItemID string `json:"line_item_id"`
+	Quantity   int64  `json:"quantity"`
+}
+
+// CreateFulfillmentHolding opens a parcel for an order's goods and returns its
+// identifier (ADR 0409).
+//
+// items is [{"line_item_id","quantity"}], the units the parcel holds; empty or
+// "null" asks for every line's units the order still owes to a parcel, which
+// this module counts under the order's lock on a first open and refuses with
+// [CodeNothingOwed] when there are none. Everything else is
+// [Interop.CreateFulfillment]'s: the same key returns the same parcel, and a
+// return option is refused.
+//
+// The counterpart on the consumer side:
+//
+//	type FulfillmentHolder interface {
+//	    CreateFulfillmentHolding(ctx context.Context, reference, optionID, idempotencyKey string,
+//	        destination, items json.RawMessage) (string, error)
+//	}
+func (i *Interop) CreateFulfillmentHolding(
+	ctx context.Context,
+	reference, optionID, idempotencyKey string,
+	destination, items json.RawMessage,
+) (string, error) {
+	address, err := decodeDestination(destination)
+	if err != nil {
+		return "", err
+	}
+
+	var listed []interopItem
+	if len(items) > 0 && string(items) != "null" {
+		if err := json.Unmarshal(items, &listed); err != nil {
+			return "", errors.Invalid(CodeInvalidInput, "the parcel's items could not be read: %v", err)
+		}
+	}
+	in := CreateFulfillmentInput{
+		Reference:        reference,
+		ShippingOptionID: optionID,
+		IdempotencyKey:   idempotencyKey,
+		Destination:      address,
+		// Read only when the list is empty: a parcel of the order's goods that
+		// names nothing asks for what the order still owes.
+		ItemsOwed: true,
+	}
+	for _, item := range listed {
+		in.Items = append(in.Items, FulfillmentItemInput(item))
+	}
+
+	ful, err := i.svc.CreateFulfillment(ctx, in)
+	if err != nil {
+		return "", err
+	}
+
 	return ful.ID, nil
 }
 

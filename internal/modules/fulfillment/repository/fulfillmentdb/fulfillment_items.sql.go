@@ -59,6 +59,47 @@ func (q *Queries) CommittedQuantitiesForFulfillments(ctx context.Context, fulfil
 	return items, nil
 }
 
+const committedQuantitiesForReference = `-- name: CommittedQuantitiesForReference :many
+SELECT i.line_item_id, SUM(i.quantity)::bigint AS quantity
+FROM fulfillment_items i
+JOIN fulfillments f ON f.id = i.fulfillment_id
+WHERE f.reference = $1
+  AND f.status <> 'canceled'
+  AND f.return_id IS NULL
+GROUP BY i.line_item_id
+ORDER BY i.line_item_id
+`
+
+type CommittedQuantitiesForReferenceRow struct {
+	LineItemID string
+	Quantity   int64
+}
+
+// CommittedQuantitiesForReference sums, per order line, the units the live
+// outgoing parcels opened for one reference hold, by the reference this module
+// stores rather than by the order's link (ADR 0409, gap D265). A parcel opening
+// reads it twice, before it asks what the order owes and again under the
+// reference's lock, and the difference is what a parcel opened in between took.
+func (q *Queries) CommittedQuantitiesForReference(ctx context.Context, reference string) ([]CommittedQuantitiesForReferenceRow, error) {
+	rows, err := q.db.Query(ctx, committedQuantitiesForReference, reference)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CommittedQuantitiesForReferenceRow{}
+	for rows.Next() {
+		var i CommittedQuantitiesForReferenceRow
+		if err := rows.Scan(&i.LineItemID, &i.Quantity); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createFulfillmentItem = `-- name: CreateFulfillmentItem :one
 
 INSERT INTO fulfillment_items (id, fulfillment_id, line_item_id, quantity)

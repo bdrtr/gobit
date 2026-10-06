@@ -338,14 +338,14 @@ type stubShipping struct {
 	calls         []shippingCall
 }
 
-// shippingCall is one OpenForOrder call.
+// shippingCall is one OpenForReplacement call.
 type shippingCall struct {
 	orderID string
 	request string
 }
 
-// OpenForOrder records the request and answers with the scripted parcel.
-func (s *stubShipping) OpenForOrder(
+// OpenForReplacement records the request and answers with the scripted parcel.
+func (s *stubShipping) OpenForReplacement(
 	_ context.Context, orderID string, request json.RawMessage,
 ) (fulfillmentID string, alreadyOpen bool, err error) {
 	s.calls = append(s.calls, shippingCall{orderID: orderID, request: string(request)})

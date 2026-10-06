@@ -761,8 +761,14 @@ func (a recordingAfterSales) OpenClaim(context.Context, string, string, int64, s
 	return "", a.surfaces.reach(ServiceOrderAdmin)
 }
 
-func (a recordingAfterSales) OpenParcel(context.Context, string, string, string) (parcel string, already bool, err error) {
+func (a recordingAfterSales) OpenParcel(
+	context.Context, string, string, string, map[string]int64,
+) (parcel string, already bool, err error) {
 	return "ful_walk", false, a.surfaces.reach(ServiceOrderAdmin)
+}
+
+func (a recordingAfterSales) OwedUnits(context.Context, string) (map[string]int64, error) {
+	return nil, a.surfaces.reach(ServiceOrderAdmin)
 }
 
 func (a recordingAfterSales) CancelOrder(context.Context, string, string) error {
@@ -1177,7 +1183,7 @@ var walkForms = map[string]url.Values{
 	routeKey(http.MethodPost, OrderClaimEvidencePath):       {formEvidenceCaption: {"walk"}},
 	routeKey(http.MethodPost, OrderClaimEvidenceDetachPath): {},
 	// An order's parcels (ADR 0324).
-	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}},
+	routeKey(http.MethodPost, OrderParcelsPath):   {formParcelKey: {"walk"}, "units_walk": {"1"}},
 	routeKey(http.MethodPost, OrderParcelActPath): {},
 	// Writing the store profile (ADR 0336).
 	routeKey(http.MethodPost, StoreProfilePath):    {formProfileName: {"Walk"}, formProfileCountry: {"TR"}},

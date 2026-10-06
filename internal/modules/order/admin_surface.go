@@ -3,6 +3,8 @@ package order
 import (
 	"context"
 	"encoding/json"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -40,8 +42,11 @@ type AfterSalesSurface struct {
 // second press, or a reload of the page it landed on, opens nothing new. The
 // parcel goes on the delivery deliveryID names, on the option it stands on now
 // (ADR 0332), or, when deliveryID is empty, on the one the order was sold.
+//
+// It holds the units items names per order line, or, when items is empty on an
+// order sold one delivery, every unit still owed (ADR 0409).
 func (s *AfterSalesSurface) OpenParcel(
-	ctx context.Context, orderID, deliveryID, idempotencyKey string,
+	ctx context.Context, orderID, deliveryID, idempotencyKey string, items map[string]int64,
 ) (fulfillmentID string, alreadyOpen bool, err error) {
 	if s == nil || s.fulfilling == nil {
 		return "", false, errors.Unavailable(codeSetupFailed, "the fulfilling flow is not set up")
@@ -52,16 +57,35 @@ func (s *AfterSalesSurface) OpenParcel(
 			return "", false, err
 		}
 	}
+	type item struct {
+		LineItemID string `json:"line_item_id"`
+		Quantity   int64  `json:"quantity"`
+	}
+	listed := make([]item, 0, len(items))
+	for _, line := range slices.Sorted(maps.Keys(items)) {
+		listed = append(listed, item{LineItemID: line, Quantity: items[line]})
+	}
 	request, err := json.Marshal(struct {
 		IdempotencyKey   string `json:"idempotency_key"`
 		ShippingOptionID string `json:"shipping_option_id,omitempty"`
-	}{idempotencyKey, optionID})
+		Items            []item `json:"items,omitempty"`
+	}{idempotencyKey, optionID, listed})
 	if err != nil {
 		return "", false, errors.Wrap(err, errors.KindInternal, codeSetupFailed,
 			"the parcel request could not be encoded")
 	}
 
 	return s.fulfilling.OpenForOrder(ctx, orderID, request)
+}
+
+// OwedUnits answers, per line of the order, how many units a new parcel may
+// still hold; the panel draws its open form with it (ADR 0409).
+func (s *AfterSalesSurface) OwedUnits(ctx context.Context, orderID string) (map[string]int64, error) {
+	if s == nil || s.fulfilling == nil {
+		return nil, errors.Unavailable(codeSetupFailed, "the fulfilling flow is not set up")
+	}
+
+	return s.fulfilling.DispatchableQuantities(ctx, orderID, nil)
 }
 
 // adminDelivery is one of an order's deliveries as the panel offers it (ADR

@@ -71,6 +71,11 @@ func (f *fakeFulfilling) OpenForOrder(
 	return f.fulfillmentID, f.alreadyOpen, nil
 }
 
+// DispatchableQuantities is not reached by the handler.
+func (f *fakeFulfilling) DispatchableQuantities(context.Context, string, []string) (map[string]int64, error) {
+	return nil, nil
+}
+
 // ShipmentsOfOrderJSON records the call and returns the scripted list.
 func (f *fakeFulfilling) ShipmentsOfOrderJSON(
 	_ context.Context, orderID string,

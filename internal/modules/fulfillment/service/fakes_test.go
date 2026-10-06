@@ -59,6 +59,10 @@ type fakeStore struct {
 	// locks records the locks taken in order; the claim that a lock is taken has
 	// to be directly readable.
 	locks []string
+	// onLock, when set, runs inside LockReferenceDispatch: it is what another
+	// open committing while this one waits for the order's lock looks like
+	// (ADR 0409).
+	onLock func(f *fakeStore)
 	// fulWrites counts how many times the fulfillment row was written to; that
 	// the idempotent branches DO NOT TOUCH the row A SECOND TIME is proven with
 	// it.
@@ -820,6 +824,64 @@ func (f *fakeStore) ReturningQuantities(
 	return out, nil
 }
 
+// CommittedQuantitiesForReference sums the units of the live outgoing parcels
+// opened for the reference, the way the SQL does (ADR 0409).
+func (f *fakeStore) CommittedQuantitiesForReference(
+	_ context.Context,
+	reference string,
+) (map[string]int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	out := map[string]int64{}
+	for _, id := range slices.Sorted(maps.Keys(f.items)) {
+		item := f.items[id]
+		parcel, known := f.fuls[item.FulfillmentID]
+		if !known || parcel.Reference != reference || parcel.Status == models.StatusCanceled ||
+			parcel.ReturnID != "" {
+			continue
+		}
+		out[item.LineItemID] += item.Quantity
+	}
+
+	return out, nil
+}
+
+// LockReferenceDispatch records the lock and runs onLock; the lock itself is
+// the database's, and the integration package proves it holds.
+func (f *fakeStore) LockReferenceDispatch(_ context.Context, reference string) error {
+	f.mu.Lock()
+	f.locks = append(f.locks, "dispatch:"+reference)
+	onLock := f.onLock
+	f.mu.Unlock()
+
+	if onLock != nil {
+		onLock(f)
+	}
+
+	return nil
+}
+
+// putLiveParcel writes an outgoing parcel holding units of one line, as another
+// open that committed would have left it.
+func (f *fakeStore) putLiveParcel(id, reference, lineID string, units int64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.fuls[id] = models.Fulfillment{ID: id, Reference: reference, Status: models.StatusPending}
+	f.items["item_"+id] = models.FulfillmentItem{
+		ID: "item_" + id, FulfillmentID: id, LineItemID: lineID, Quantity: units,
+	}
+}
+
+// cancelParcel marks a parcel canceled, as a cancel that committed would.
+func (f *fakeStore) cancelParcel(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	parcel := f.fuls[id]
+	parcel.Status = models.StatusCanceled
+	f.fuls[id] = parcel
+}
+
 // paginate applies limit/offset to an in-memory list.
 func paginate[T any](items []T, limit, offset int64) []T {
 	if offset >= int64(len(items)) {
@@ -1117,6 +1179,10 @@ type fakeDispatchBound struct {
 	returnErr error
 	// returnCalls counts the return questions.
 	returnCalls int
+	// during, when set, runs inside every DispatchCeilings call: it is how a
+	// test changes the store after the open read the ceiling and before it
+	// takes the order's lock (ADR 0409, gap D265).
+	during func()
 }
 
 // returnAsked returns how many return questions this fake was given.
@@ -1156,14 +1222,19 @@ func (f *fakeDispatchBound) asked() int {
 	return f.calls
 }
 
-// DispatchableQuantities answers what the order still owes.
-func (f *fakeDispatchBound) DispatchableQuantities(
+// DispatchCeilings answers what the order may ship per line; with no parcel
+// held, what it owes.
+func (f *fakeDispatchBound) DispatchCeilings(
 	_ context.Context, _ string, lineItemIDs []string,
 ) (map[string]int64, error) {
 	f.mu.Lock()
 	f.calls++
+	during := f.during
 	f.mu.Unlock()
 
+	if during != nil {
+		during()
+	}
 	if f.err != nil {
 		return nil, f.err
 	}

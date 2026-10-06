@@ -214,9 +214,11 @@ type Subscriber interface {
 // parcels nothing could find again — and would miss the refusal that flow
 // makes when an idempotency key names a shipment somebody canceled (ADR 0088).
 type Shipping interface {
-	// OpenForOrder opens a shipment for an order and binds the two. The
-	// request carries the shipping option and the idempotency key.
-	OpenForOrder(
+	// OpenForReplacement opens a shipment for a replacement's goods and binds
+	// it to the order. The request carries the shipping option and the
+	// idempotency key; the parcel holds no order line, since the goods are not
+	// the order's lines (ADR 0409).
+	OpenForReplacement(
 		ctx context.Context, orderID string, request json.RawMessage,
 	) (fulfillmentID string, alreadyOpen bool, err error)
 }

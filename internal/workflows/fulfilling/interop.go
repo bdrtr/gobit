@@ -35,6 +35,10 @@ type interopOpenRequest struct {
 	ShippingOptionID string `json:"shipping_option_id"`
 	// IdempotencyKey is required. Without one a retry opens a SECOND parcel.
 	IdempotencyKey string `json:"idempotency_key"`
+	// Items are the units the parcel holds; left out, every unit the order
+	// still owes, on an order sold one delivery (ADR 0409). A replacement's
+	// parcel ignores them.
+	Items []OpenItem `json:"items,omitempty"`
 }
 
 // OpenForOrder opens a shipment for an order and binds the two.
@@ -52,7 +56,32 @@ func (i *Interop) OpenForOrder(
 			"the shipment request could not be read: %v", err)
 	}
 
-	out, err := i.w.OpenForOrder(ctx, orderID, body.ShippingOptionID, body.IdempotencyKey)
+	out, err := i.w.OpenForOrder(ctx, orderID, body.ShippingOptionID, body.IdempotencyKey, body.Items)
+	if err != nil {
+		return "", false, err
+	}
+
+	return out.FulfillmentID, out.AlreadyOpen, nil
+}
+
+// OpenForReplacement opens the parcel an after-sale replacement's goods leave
+// in, bound to the order and holding no order line; the rules are
+// [Workflows.OpenForReplacement]'s and the request is [Interop.OpenForOrder]'s,
+// its items ignored.
+//
+// It is apart from OpenForOrder so that the order's own route, which an
+// operator's request reaches as it was sent, cannot open a parcel the order's
+// bound counts nothing in (ADR 0409).
+func (i *Interop) OpenForReplacement(
+	ctx context.Context, orderID string, request json.RawMessage,
+) (fulfillmentID string, alreadyOpen bool, err error) {
+	var body interopOpenRequest
+	if err := json.Unmarshal(request, &body); err != nil {
+		return "", false, errors.Invalid(CodeInvalidInput,
+			"the shipment request could not be read: %v", err)
+	}
+
+	out, err := i.w.OpenForReplacement(ctx, orderID, body.ShippingOptionID, body.IdempotencyKey)
 	if err != nil {
 		return "", false, err
 	}
@@ -154,6 +183,16 @@ func (i *Interop) DispatchableQuantities(
 	ctx context.Context, orderID string, lineItemIDs []string,
 ) (map[string]int64, error) {
 	return i.w.DispatchableQuantities(ctx, orderID, lineItemIDs)
+}
+
+// DispatchCeilings answers, per order line, how many units the order may ship
+// at all, whatever any parcel holds; the rules are [Workflows.DispatchCeilings]'s.
+// The fulfillment module holds every outgoing parcel to it under the order's
+// lock (ADR 0409).
+func (i *Interop) DispatchCeilings(
+	ctx context.Context, orderID string, lineItemIDs []string,
+) (map[string]int64, error) {
+	return i.w.DispatchCeilings(ctx, orderID, lineItemIDs)
 }
 
 // ReturnLines answers whether an order return still awaits its goods and, per

@@ -372,6 +372,34 @@ func TestFulfillmentCreationTranslatesItems(t *testing.T) {
 		"an item without a quantity must be rejected: %s", rec.Body.String())
 }
 
+// TestAnOutgoingParcelNamesItsItemsOnTheModuleRoute is ADR 0409 on the module's
+// own route: an outgoing parcel with no items, or an empty list, is refused
+// with 422 and reaches no service, since it would hold units nobody counts; a
+// parcel bringing a return back keeps its own refusal in the service.
+func TestAnOutgoingParcelNamesItsItemsOnTheModuleRoute(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeFulfillments{fulfillment: models.Fulfillment{
+		ID: "ful_1", Reference: "order_1", ShippingOptionID: "sopt_1",
+		ProviderID: "manual", Status: models.StatusPending,
+	}}
+	r := newRouter(svc)
+
+	for _, body := range []string{
+		`{"reference":"order_1","shipping_option_id":"sopt_1","idempotency_key":"a"}`,
+		`{"reference":"order_1","shipping_option_id":"sopt_1","idempotency_key":"a","items":[]}`,
+	} {
+		rec := doRequest(t, r, http.MethodPost, "/admin/v1/fulfillments", body)
+		require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+		assert.Contains(t, rec.Body.String(), service.CodeItemsRequired)
+	}
+	assert.Empty(t, svc.lastCreateInput.IdempotencyKey, "nothing reached the service")
+
+	rec := doRequest(t, r, http.MethodPost, "/admin/v1/fulfillments",
+		`{"reference":"order_1","shipping_option_id":"sopt_1","idempotency_key":"b","return_id":"oret_1"}`)
+	assert.Equal(t, http.StatusCreated, rec.Code, "a return parcel is the service's to judge: %s", rec.Body.String())
+}
+
 // TestFulfillmentResponseCarriesItems proves that the list field is always an
 // array.
 func TestFulfillmentResponseCarriesItems(t *testing.T) {

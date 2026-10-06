@@ -449,7 +449,8 @@ func describedEndpoints() []endpointExpectation {
 			// opened a parcel and 200 when the idempotency key had already
 			// opened one. The 201 is the one this table checks.
 			method: http.MethodPost, path: "/admin/v1/orders/{id}/fulfillments", status: "201",
-			request: openShipmentRequest{}, response: shipmentOpenedDTO{
+			request: openShipmentRequest{Items: []openShipmentItem{{LineItemID: "oli_1", Quantity: 1}}},
+			response: shipmentOpenedDTO{
 				FulfillmentID: "ful_1", AlreadyOpen: false,
 			},
 		},

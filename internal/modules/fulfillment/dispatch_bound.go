@@ -48,14 +48,14 @@ func newDispatchBound(c *container.Container, log *slog.Logger) *dispatchBound {
 	return &dispatchBound{c: c, log: log}
 }
 
-// DispatchableQuantities answers what the order still owes, per line.
+// DispatchCeilings answers what the order may ship at all, per line (ADR 0409).
 //
 // An unresolvable flow answers an ERROR rather than an empty map, and the
 // difference is the whole point: the service treats a line missing from the map as
 // "not on this order" and refuses it, so an empty map would look like a refusal of
 // every line and read to an operator as a data problem. The error says what is
 // actually wrong — nobody is answering.
-func (b *dispatchBound) DispatchableQuantities(
+func (b *dispatchBound) DispatchCeilings(
 	ctx context.Context, orderID string, lineItemIDs []string,
 ) (map[string]int64, error) {
 	svc, err := b.resolve(ctx)
@@ -63,11 +63,11 @@ func (b *dispatchBound) DispatchableQuantities(
 		return nil, err
 	}
 
-	return svc.DispatchableQuantities(ctx, orderID, lineItemIDs)
+	return svc.DispatchCeilings(ctx, orderID, lineItemIDs)
 }
 
 // ReturnLines answers what an order return still brings back (ADR 0384), from the
-// same flow and with the same failure as [dispatchBound.DispatchableQuantities].
+// same flow and with the same failure as [dispatchBound.DispatchCeilings].
 func (b *dispatchBound) ReturnLines(
 	ctx context.Context, orderID, returnID string,
 ) (awaited bool, lines map[string]int64, err error) {

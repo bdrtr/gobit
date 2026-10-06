@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 
@@ -16,6 +18,7 @@ import (
 	coreplugin "github.com/bdrtr/gobit/core/plugin"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
 	fulfillmentsvc "github.com/bdrtr/gobit/internal/modules/fulfillment/service"
+	fulfillingwf "github.com/bdrtr/gobit/internal/workflows/fulfilling"
 )
 
 // This file proves ADR 0194 on the production wiring: a parcel opened for an
@@ -117,13 +120,26 @@ func spyOptionPriced(t *testing.T, amount int64, adminOnly bool) string {
 }
 
 // openSpyParcel opens a parcel for the order on the spy carrier and returns the
-// idempotency key it was opened under and the parcel's id.
+// idempotency key it was opened under and the parcel's id. The parcel names
+// every unit the order still owes, since these orders were sold no delivery to
+// default the parcel's goods to (ADR 0409).
 func openSpyParcel(t *testing.T, orderID, optionID string) (key, fulfillmentID string) {
 	t.Helper()
 
+	flow, err := fulfillingwf.FromContainer(ctr)
+	require.NoError(t, err)
+	owed, err := flow.DispatchableQuantities(t.Context(), orderID, nil)
+	require.NoError(t, err)
+	items := make([]map[string]any, 0, len(owed))
+	for _, line := range slices.Sorted(maps.Keys(owed)) {
+		if owed[line] > 0 {
+			items = append(items, map[string]any{"line_item_id": line, "quantity": owed[line]})
+		}
+	}
+
 	key = fmt.Sprintf("carrier-destination-%d", fixtureCounter.Add(1))
 	opened, err := adminRequestWithBody(http.MethodPost, "/admin/v1/orders/"+orderID+"/fulfillments",
-		map[string]any{"shipping_option_id": optionID, "idempotency_key": key})
+		map[string]any{"shipping_option_id": optionID, "idempotency_key": key, "items": items})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusCreated, opened.Code, "body: %s", opened.Body.String())
 

@@ -13,6 +13,11 @@ import (
 	"github.com/bdrtr/gobit/internal/workflows/fulfilling"
 )
 
+// oneItem is a parcel's list naming one line, the shape the tests about opening
+// a parcel use so that the default to what the order owes stays out of them
+// (ADR 0409).
+var oneItem = []fulfilling.OpenItem{{LineItemID: "li_1", Quantity: 1}}
+
 // newFlow builds the flow over fakes.
 func newFlow(t *testing.T, orders *fakeOrders, ful *fakeFulfillments, links *fakeLinks) *fulfilling.Workflows {
 	t.Helper()
@@ -38,7 +43,7 @@ func TestOpeningAShipmentReportsTheParcelItOpened(t *testing.T) {
 
 	flow := newFlow(t, &fakeOrders{}, &fakeFulfillments{id: "ful_1"}, newFakeLinks())
 
-	result, err := flow.OpenForOrder(context.Background(), "order_1", "so_1", "key-1")
+	result, err := flow.OpenForOrder(context.Background(), "order_1", "so_1", "key-1", oneItem)
 	require.NoError(t, err)
 
 	assert.Equal(t, "ful_1", result.FulfillmentID)
@@ -58,7 +63,7 @@ func TestAnUnknownOrderOpensNoParcel(t *testing.T) {
 	flow := newFlow(t, &fakeOrders{err: coreerrors.NotFound("order_not_found", "no such order")},
 		ful, newFakeLinks())
 
-	_, err := flow.OpenForOrder(context.Background(), "order_missing", "so_1", "key-1")
+	_, err := flow.OpenForOrder(context.Background(), "order_missing", "so_1", "key-1", oneItem)
 
 	require.Error(t, err)
 	assert.True(t, coreerrors.IsNotFound(err), "the refusal lost its kind: %v", err)
@@ -75,9 +80,9 @@ func TestASecondPressOpensNoSecondParcel(t *testing.T) {
 	flow := newFlow(t, &fakeOrders{}, ful, links)
 	ctx := context.Background()
 
-	first, err := flow.OpenForOrder(ctx, "order_1", "so_1", "key-1")
+	first, err := flow.OpenForOrder(ctx, "order_1", "so_1", "key-1", oneItem)
 	require.NoError(t, err)
-	second, err := flow.OpenForOrder(ctx, "order_1", "so_1", "key-1")
+	second, err := flow.OpenForOrder(ctx, "order_1", "so_1", "key-1", oneItem)
 	require.NoError(t, err)
 
 	assert.False(t, first.AlreadyOpen)
@@ -96,7 +101,7 @@ func TestAMissingIdempotencyKeyIsRefused(t *testing.T) {
 	ful := &fakeFulfillments{id: "ful_1"}
 	flow := newFlow(t, &fakeOrders{}, ful, newFakeLinks())
 
-	_, err := flow.OpenForOrder(context.Background(), "order_1", "so_1", "  ")
+	_, err := flow.OpenForOrder(context.Background(), "order_1", "so_1", "  ", oneItem)
 
 	require.Error(t, err)
 	assert.True(t, coreerrors.IsInvalid(err), "%v", err)
@@ -271,6 +276,13 @@ type fakeFulfillments struct {
 	options    []map[string]any
 	quoteErr   error
 	quotedWith json.RawMessage
+
+	// holding says the parcel was opened holding the order's goods and items
+	// is the list it was given, nil for what the order owes (ADR 0409);
+	// holdingErr is the module's refusal.
+	holding    bool
+	items      json.RawMessage
+	holdingErr error
 }
 
 // ListOptionsJSON records the request and answers the scripted options.
@@ -313,6 +325,21 @@ func (f *fakeFulfillments) CreateFulfillment(
 	}
 
 	return f.id, nil
+}
+
+// CreateFulfillmentHolding records the items it was asked to hold, nil for
+// "what the order owes", and opens the parcel the way CreateFulfillment does
+// (ADR 0409). holdingErr, when set, is the module's refusal.
+func (f *fakeFulfillments) CreateFulfillmentHolding(
+	ctx context.Context, reference, optionID, key string, destination, items json.RawMessage,
+) (string, error) {
+	f.holding = true
+	f.items = items
+	if f.holdingErr != nil {
+		return "", f.holdingErr
+	}
+
+	return f.CreateFulfillment(ctx, reference, optionID, key, destination)
 }
 
 // FulfillmentStatus answers with a fixed status or the injected fault.
@@ -389,7 +416,7 @@ func TestAKeyThatNamesACanceledShipmentOpensNothing(t *testing.T) {
 	fulfillments := &fakeFulfillments{id: "ful_1", status: "canceled"}
 	flow := newFlow(t, &fakeOrders{}, fulfillments, newFakeLinks())
 
-	_, err := flow.OpenForOrder(context.Background(), "order_1", "sopt_1", "key-1")
+	_, err := flow.OpenForOrder(context.Background(), "order_1", "sopt_1", "key-1", oneItem)
 
 	require.Error(t, err, "a key naming a canceled shipment may not report an open one")
 	assert.Equal(t, fulfilling.CodeShipmentCanceled, coreerrors.CodeOf(err))
@@ -411,7 +438,7 @@ func TestALiveShipmentStillOpens(t *testing.T) {
 	fulfillments := &fakeFulfillments{id: "ful_1"}
 	flow := newFlow(t, &fakeOrders{}, fulfillments, newFakeLinks())
 
-	result, err := flow.OpenForOrder(context.Background(), "order_1", "sopt_1", "key-1")
+	result, err := flow.OpenForOrder(context.Background(), "order_1", "sopt_1", "key-1", oneItem)
 
 	require.NoError(t, err)
 	assert.Equal(t, "ful_1", result.FulfillmentID)
@@ -434,7 +461,7 @@ func TestAStatusThatCannotBeReadDoesNotPassAsOpen(t *testing.T) {
 	}
 	flow := newFlow(t, &fakeOrders{}, fulfillments, newFakeLinks())
 
-	_, err := flow.OpenForOrder(context.Background(), "order_1", "sopt_1", "key-1")
+	_, err := flow.OpenForOrder(context.Background(), "order_1", "sopt_1", "key-1", oneItem)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "ful_1", "the opened shipment has to be named")
@@ -452,14 +479,14 @@ func TestTheParcelGoesWhereTheOrderWent(t *testing.T) {
 	ful := &fakeFulfillments{id: "ful_1", links: newFakeLinks()}
 	flow := newFlow(t, orders, ful, ful.links)
 
-	_, err := flow.OpenForOrder(context.Background(), "order_1", "so_1", "key-1")
+	_, err := flow.OpenForOrder(context.Background(), "order_1", "so_1", "key-1", oneItem)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"first_name":"Ada","address_1":"12 Main St","country_code":"US"}`,
 		string(ful.destination))
 
 	none := &fakeFulfillments{id: "ful_2", links: newFakeLinks()}
 	_, err = newFlow(t, &fakeOrders{}, none, none.links).
-		OpenForOrder(context.Background(), "order_2", "so_1", "key-2")
+		OpenForOrder(context.Background(), "order_2", "so_1", "key-2", oneItem)
 	require.NoError(t, err)
 	assert.JSONEq(t, `null`, string(none.destination), "an order with no address hands on none")
 }
@@ -472,20 +499,96 @@ func TestAParcelGoesOnTheServiceTheOrderWasSold(t *testing.T) {
 
 	sold := &fakeFulfillments{id: "ful_1", links: newFakeLinks()}
 	_, err := newFlow(t, &fakeOrders{sold: "so_express"}, sold, sold.links).
-		OpenForOrder(context.Background(), "order_1", "", "key-1")
+		OpenForOrder(context.Background(), "order_1", "", "key-1", oneItem)
 	require.NoError(t, err)
 	assert.Equal(t, "so_express", sold.option, "the parcel goes on the service the shopper paid for")
 
 	named := &fakeFulfillments{id: "ful_2", links: newFakeLinks()}
 	_, err = newFlow(t, &fakeOrders{sold: "so_express"}, named, named.links).
-		OpenForOrder(context.Background(), "order_1", "so_standard", "key-2")
+		OpenForOrder(context.Background(), "order_1", "so_standard", "key-2", oneItem)
 	require.NoError(t, err)
 	assert.Equal(t, "so_standard", named.option, "an option the operator names is kept")
 
 	none := &fakeFulfillments{id: "ful_3", links: newFakeLinks()}
 	_, err = newFlow(t, &fakeOrders{}, none, none.links).
-		OpenForOrder(context.Background(), "order_1", " ", "key-3")
+		OpenForOrder(context.Background(), "order_1", " ", "key-3", oneItem)
 	require.Error(t, err)
 	assert.True(t, coreerrors.IsInvalid(err), "%v", err)
 	assert.Zero(t, none.calls, "nothing to default to opens nothing")
+}
+
+// TestAWholeOrderParcelAsksForWhatIsOwed opens a parcel naming no items on an
+// order sold one delivery, and asks the module for every unit still owed rather
+// than for an empty parcel (ADR 0409, gap D264).
+func TestAWholeOrderParcelAsksForWhatIsOwed(t *testing.T) {
+	t.Parallel()
+
+	ful := &fakeFulfillments{id: "ful_1", links: newFakeLinks()}
+	_, err := newFlow(t, &fakeOrders{sold: "so_express"}, ful, ful.links).
+		OpenForOrder(context.Background(), "order_1", "", "key-1", nil)
+	require.NoError(t, err)
+	assert.True(t, ful.holding, "the parcel holds the order's goods")
+	assert.Nil(t, ful.items, "no list is sent: the module fills what the order owes")
+	assert.Equal(t, "so_express", ful.option)
+
+	named := &fakeFulfillments{id: "ful_2", links: newFakeLinks()}
+	_, err = newFlow(t, &fakeOrders{sold: "so_express"}, named, named.links).
+		OpenForOrder(context.Background(), "order_1", "so_standard", "key-2", []fulfilling.OpenItem{})
+	require.NoError(t, err)
+	assert.True(t, named.holding)
+	assert.Nil(t, named.items, "an option named on an order sold one delivery still defaults its goods")
+	assert.Equal(t, "so_standard", named.option)
+}
+
+// TestAnOrderSoldSeveralDeliveriesNamesItsItems refuses a parcel naming no items
+// on an order not sold exactly one delivery: one parcel would take every
+// delivery's goods (ADR 0409).
+func TestAnOrderSoldSeveralDeliveriesNamesItsItems(t *testing.T) {
+	t.Parallel()
+
+	ful := &fakeFulfillments{id: "ful_1", links: newFakeLinks()}
+	_, err := newFlow(t, &fakeOrders{}, ful, ful.links).
+		OpenForOrder(context.Background(), "order_1", "so_standard", "key-1", nil)
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsInvalid(err), "%v", err)
+	assert.Equal(t, fulfilling.CodeItemsRequired, coreerrors.CodeOf(err))
+	assert.Zero(t, ful.calls, "nothing is opened")
+}
+
+// TestNamedItemsArePassedAsNamed sends the list the operator named to the
+// module as it is, and passes the module's refusal through with its own code
+// (ADR 0409).
+func TestNamedItemsArePassedAsNamed(t *testing.T) {
+	t.Parallel()
+
+	ful := &fakeFulfillments{id: "ful_1", links: newFakeLinks()}
+	_, err := newFlow(t, &fakeOrders{}, ful, ful.links).OpenForOrder(context.Background(), "order_1",
+		"so_standard", "key-1", []fulfilling.OpenItem{{LineItemID: "li_1", Quantity: 2}, {LineItemID: "li_2", Quantity: 1}})
+	require.NoError(t, err)
+	assert.True(t, ful.holding)
+	assert.JSONEq(t, `[{"line_item_id":"li_1","quantity":2},{"line_item_id":"li_2","quantity":1}]`, string(ful.items))
+
+	refused := &fakeFulfillments{id: "ful_2", links: newFakeLinks(),
+		holdingErr: coreerrors.Conflict("fulfillment_nothing_owed", "order_1 owes no unit")}
+	_, err = newFlow(t, &fakeOrders{sold: "so_express"}, refused, refused.links).
+		OpenForOrder(context.Background(), "order_1", "", "key-2", nil)
+	require.Error(t, err)
+	assert.True(t, coreerrors.IsConflict(err), "%v", err)
+	assert.Equal(t, "fulfillment_nothing_owed", coreerrors.CodeOf(err),
+		"the module's refusal is the answer the operator reads")
+}
+
+// TestAReplacementParcelHoldsNoOrderLine opens an after-sale replacement's parcel
+// through the call that holds no order line, on an order sold several
+// deliveries too, since the goods are not the order's lines (ADR 0409).
+func TestAReplacementParcelHoldsNoOrderLine(t *testing.T) {
+	t.Parallel()
+
+	ful := &fakeFulfillments{id: "ful_1", links: newFakeLinks()}
+	result, err := newFlow(t, &fakeOrders{}, ful, ful.links).
+		OpenForReplacement(context.Background(), "order_1", "so_standard", "replacement-1")
+	require.NoError(t, err)
+	assert.Equal(t, "ful_1", result.FulfillmentID)
+	assert.False(t, ful.holding, "a replacement's parcel holds no order line")
+	assert.Equal(t, 1, ful.calls)
 }

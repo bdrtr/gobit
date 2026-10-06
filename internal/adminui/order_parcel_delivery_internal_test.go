@@ -78,14 +78,14 @@ func TestAParcelIsOpenedOnTheDeliveryChosen(t *testing.T) {
 	require.Len(t, key, 2, "the form still carries its key")
 
 	rec = campaignsRequest(panel, http.MethodPost, page+"/parcels",
-		url.Values{formParcelKey: {key[1]}, formParcelDelivery: {" osm_bulky "}}, writer...)
+		url.Values{formParcelKey: {key[1]}, formParcelDelivery: {" osm_bulky "}, "units_oli_ring": {"1"}}, writer...)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, []string{"order_1|osm_bulky|" + key[1]}, two.keys, "the delivery chosen")
 	assert.Contains(t, rec.Body.String(), "Parcel ful_new was opened.")
 
 	two.openErr = errors.NotFound("order_delivery_missing", "order order_1 has no delivery osm_gone; draw the page again")
 	rec = campaignsRequest(panel, http.MethodPost, page+"/parcels",
-		url.Values{formParcelKey: {key[1]}, formParcelDelivery: {"osm_gone"}}, writer...)
+		url.Values{formParcelKey: {key[1]}, formParcelDelivery: {"osm_gone"}, "units_oli_ring": {"1"}}, writer...)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 	assert.Contains(t, rec.Body.String(), "has no delivery osm_gone")
 

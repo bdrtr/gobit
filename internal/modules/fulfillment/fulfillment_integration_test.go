@@ -1743,8 +1743,8 @@ const generousReturnLine = "line_returned"
 // tests of that one refusal.
 type generousBound struct{}
 
-// DispatchableQuantities answers generously for whatever it is asked about.
-func (generousBound) DispatchableQuantities(
+// DispatchCeilings answers generously for whatever it is asked about.
+func (generousBound) DispatchCeilings(
 	_ context.Context, _ string, lineItemIDs []string,
 ) (map[string]int64, error) {
 	out := make(map[string]int64, len(lineItemIDs))

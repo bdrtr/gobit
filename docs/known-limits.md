@@ -1013,6 +1013,13 @@ past and is not corrected retroactively.
   ([ADR 0195](adr/0195-a-shipping-address-can-be-corrected.md)), and opening a
   parcel on an option no delivery stands on stays an `/admin/v1` call
   ([ADR 0332](adr/0332-the-panel-opens-a-parcel-on-the-delivery-chosen.md)).
+  A parcel opened before
+  [ADR 0409](adr/0409-an-orders-parcel-holds-the-units-it-ships.md) holds
+  nothing the dispatch bound counts, and an addition riding in its parent's
+  parcel ([ADR 0197](adr/0197-an-addition-travels-in-its-parents-parcel.md))
+  commits none of its units. A write-off landing while a parcel for the same
+  units is being opened is seen by neither: the units can end on the shelf
+  and in the box ([gaps D265](gaps.md)).
 
 - **A return parcel is an admin API call and buys no label.**
   `POST /admin/v1/fulfillments` opens one naming its return

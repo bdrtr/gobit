@@ -537,8 +537,15 @@ func TestAShipmentOpenedThroughTheFlowIsBoundToItsOrder(t *testing.T) {
 		"the fulfilling flow must resolve from the same container the composition root uses; "+
 			"a surface it cannot find is one no installation has")
 
+	order, err := orderSvc.GetOrder(ctx, orderResult.OrderID)
+	require.NoError(t, err)
+	require.Len(t, order.Items, 1)
+	// The parcel names its unit: the order was sold no delivery, so it has no
+	// single parcel to default its goods to (ADR 0409).
+	items := []fulfillingwf.OpenItem{{LineItemID: order.Items[0].ID, Quantity: shippingQuantity}}
+
 	key := "e2e-bound-" + orderResult.OrderID
-	opened, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID, key)
+	opened, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID, key, items)
 	require.NoError(t, err)
 	require.NotEmpty(t, opened.FulfillmentID)
 	assert.False(t, opened.AlreadyOpen, "the first press cannot be a repeat")
@@ -555,7 +562,7 @@ func TestAShipmentOpenedThroughTheFlowIsBoundToItsOrder(t *testing.T) {
 
 	// A second press with the same key: no second parcel, no second binding,
 	// and the repeat is REPORTED.
-	repeat, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID, key)
+	repeat, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID, key, items)
 	require.NoError(t, err)
 	assert.Equal(t, opened.FulfillmentID, repeat.FulfillmentID,
 		"the same idempotency key opened a SECOND parcel")
@@ -579,7 +586,7 @@ func TestAShipmentOpenedThroughTheFlowIsBoundToItsOrder(t *testing.T) {
 	// An order that does not exist opens NOTHING. The fulfillment module cannot
 	// refuse it — it never validates the reference — so this flow is the only
 	// place the refusal can happen.
-	_, err = flow.OpenForOrder(ctx, "order_does_not_exist", optionID, key+"-missing")
+	_, err = flow.OpenForOrder(ctx, "order_does_not_exist", optionID, key+"-missing", items)
 	require.Error(t, err, "a parcel was opened for an order that does not exist")
 
 	// --- a SECOND parcel on the same order ---
@@ -588,7 +595,10 @@ func TestAShipmentOpenedThroughTheFlowIsBoundToItsOrder(t *testing.T) {
 	// ship in several parcels. Asserting it with one parcel would leave both
 	// halves untested — the constraint would accept the second row either way,
 	// and a FetchByIDs that read only the first id would still look correct.
-	secondOpened, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID, key+"-2")
+	// The order's one unit is in the first parcel, so the second is a
+	// replacement's, which holds no order line and is bound all the same
+	// (ADR 0409).
+	secondOpened, err := flow.OpenForReplacement(ctx, orderResult.OrderID, optionID, key+"-2")
 	require.NoError(t, err,
 		"a second parcel could not be opened for the order; an order ships in several")
 	require.NotEqual(t, opened.FulfillmentID, secondOpened.FulfillmentID)
@@ -733,8 +743,11 @@ func TestTheOrderTimelineComposesWhatTheModulesRecord(t *testing.T) {
 
 	flow, err := fulfillingwf.FromContainer(ctr)
 	require.NoError(t, err)
+	placedOrder, err := orderSvc.GetOrder(ctx, orderResult.OrderID)
+	require.NoError(t, err)
 	opened, err := flow.OpenForOrder(ctx, orderResult.OrderID, optionID,
-		"e2e-timeline-"+orderResult.OrderID)
+		"e2e-timeline-"+orderResult.OrderID,
+		[]fulfillingwf.OpenItem{{LineItemID: placedOrder.Items[0].ID, Quantity: shippingQuantity}})
 	require.NoError(t, err)
 
 	entries, err := orderSvc.Timeline(ctx, orderResult.OrderID)

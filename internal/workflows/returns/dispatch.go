@@ -353,7 +353,7 @@ func (w *Workflows) openParcel(
 			"the shipment request for replacement %s could not be built", detail.ReplacementID)
 	}
 
-	fulfillmentID, alreadyOpen, err = w.shipping.OpenForOrder(ctx, detail.OrderID, request)
+	fulfillmentID, alreadyOpen, err = w.shipping.OpenForReplacement(ctx, detail.OrderID, request)
 	if err != nil {
 		return "", false, errors.Wrap(err, errors.KindOf(err), CodeParcelNotOpened,
 			"no parcel could be opened for replacement %s, so nothing was sent",

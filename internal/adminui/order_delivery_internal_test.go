@@ -32,7 +32,9 @@ type fakeDeliveryChanger struct {
 	changeErr  error
 }
 
-func (f *fakeDeliveryChanger) OpenParcel(context.Context, string, string, string) (parcel string, already bool, err error) {
+func (f *fakeDeliveryChanger) OpenParcel(
+	context.Context, string, string, string, map[string]int64,
+) (parcel string, already bool, err error) {
 	return "ful_1", false, nil
 }
 

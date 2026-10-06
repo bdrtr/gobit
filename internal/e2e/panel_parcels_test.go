@@ -74,7 +74,14 @@ func TestAnOperatorShipsAnOrderInThePanel(t *testing.T) {
 	key := regexp.MustCompile(`name="key" value="(panel-[0-9a-f]+)"`).FindStringSubmatch(page)
 	require.Len(t, key, 2, "the order page offers to open a parcel")
 
-	opened := send(http.MethodPost, pagePath+"/parcels", url.Values{"key": {key[1]}})
+	// The form names the order's line, prefilled with what it owes on an order
+	// sold one delivery (ADR 0409); it is sent as drawn.
+	units := regexp.MustCompile(`name="(units_[^"]+)" min="0" max="\d+" value="(\d+)"`).FindStringSubmatch(page)
+	require.Len(t, units, 3, "the form names the order's line")
+	assert.NotEqual(t, "0", units[2], "one delivery: the line is prefilled with what it owes")
+	drawn := url.Values{"key": {key[1]}, units[1]: {units[2]}}
+
+	opened := send(http.MethodPost, pagePath+"/parcels", drawn)
 	require.Equal(t, http.StatusOK, opened.Code, opened.Body.String())
 	match := panelParcelOpened.FindStringSubmatch(opened.Body.String())
 	require.Len(t, match, 2, "the page names the parcel it opened")
@@ -83,7 +90,7 @@ func TestAnOperatorShipsAnOrderInThePanel(t *testing.T) {
 	require.True(t, ok, "the parcel reached the carrier under the form's key")
 	assert.Equal(t, optionID, handed.OptionID, "on the delivery the order was sold")
 
-	again := send(http.MethodPost, pagePath+"/parcels", url.Values{"key": {key[1]}})
+	again := send(http.MethodPost, pagePath+"/parcels", drawn)
 	assert.Contains(t, again.Body.String(), "This form had already opened parcel "+parcel+"; nothing new was opened.")
 
 	shipped := send(http.MethodPost, pagePath+"/parcels/"+parcel+"/ship",

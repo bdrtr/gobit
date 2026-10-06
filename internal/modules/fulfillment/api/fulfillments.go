@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -46,6 +47,17 @@ func (h *Handler) createFulfillment(w http.ResponseWriter, r *http.Request) {
 	var body createFulfillmentRequest
 	if err := decodeBody(w, r, &body); err != nil {
 		corehttp.WriteError(ctx, w, err)
+		return
+	}
+
+	// An outgoing parcel names its units here. One holding none would carry goods
+	// no write-off, no dispatch bound and no cancel counts (gap D264); a parcel
+	// of every unit still owed is the order route's to open, and an after-sale
+	// replacement's goes through the fulfilling flow (ADR 0409).
+	if strings.TrimSpace(body.ReturnID) == "" && len(body.Items) == 0 {
+		corehttp.WriteError(ctx, w, coreerrors.Invalid(service.CodeItemsRequired,
+			"an outgoing parcel names the items it holds; a parcel of every unit an order "+
+				"still owes is opened through POST /admin/v1/orders/{id}/fulfillments"))
 		return
 	}
 

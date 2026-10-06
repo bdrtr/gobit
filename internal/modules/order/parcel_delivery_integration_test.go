@@ -97,16 +97,16 @@ func TestThePanelOpensAParcelOnTheDeliveryItNames(t *testing.T) {
 	assert.Equal(t, map[string]string{books: "so_books|Books by post", bulky: "so_freight|so_freight"}, got,
 		"each delivery as it stands, the changed one on its new option")
 
-	_, _, err = surface.OpenParcel(ctx, placed.ID, bulky, "panel-1")
+	_, _, err = surface.OpenParcel(ctx, placed.ID, bulky, "panel-1", nil)
 	require.NoError(t, err)
-	_, _, err = surface.OpenParcel(ctx, placed.ID, "", "panel-2")
+	_, _, err = surface.OpenParcel(ctx, placed.ID, "", "panel-2", nil)
 	require.NoError(t, err)
 	require.Len(t, opener.requests, 2)
 	assert.JSONEq(t, `{"idempotency_key":"panel-1","shipping_option_id":"so_freight"}`, opener.requests[0],
 		"the delivery's option as it stands now")
 	assert.JSONEq(t, `{"idempotency_key":"panel-2"}`, opener.requests[1], "no delivery, the flow's default")
 
-	_, _, err = surface.OpenParcel(ctx, placed.ID, "osm_missing", "panel-3")
+	_, _, err = surface.OpenParcel(ctx, placed.ID, "osm_missing", "panel-3", nil)
 	require.Error(t, err)
 	assert.Equal(t, service.CodeDeliveryMissing, errors.CodeOf(err), "a delivery the order does not have: %v", err)
 	assert.Len(t, opener.requests, 2, "and no flow is asked")

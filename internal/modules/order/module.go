@@ -884,6 +884,19 @@ func (p *fulfillingFlow) OpenForOrder(
 	return p.svc.OpenForOrder(ctx, orderID, request)
 }
 
+// DispatchableQuantities answers what the order still owes a parcel.
+func (p *fulfillingFlow) DispatchableQuantities(
+	ctx context.Context, orderID string, lineItemIDs []string,
+) (map[string]int64, error) {
+	p.once.Do(func() { p.resolve(ctx) })
+
+	if p.err != nil {
+		return nil, p.err
+	}
+
+	return p.svc.DispatchableQuantities(ctx, orderID, lineItemIDs)
+}
+
 // ShipmentsOfOrderJSON lists the shipments bound to the order.
 func (p *fulfillingFlow) ShipmentsOfOrderJSON(
 	ctx context.Context, orderID string,
