@@ -153,7 +153,7 @@ func TestGetStoreProductByHandle(t *testing.T) {
 
 	fx := newStoreFixture(t)
 
-	product, err := fx.svc.GetStoreProduct(context.Background(), "shirt", nil)
+	product, err := fx.svc.GetStoreProduct(context.Background(), "shirt", nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, "shirt", product.Handle)
 	require.Len(t, product.Variants, 1)
@@ -167,7 +167,7 @@ func TestGetStoreProductByID(t *testing.T) {
 
 	fx := newStoreFixture(t)
 
-	product, err := fx.svc.GetStoreProduct(context.Background(), fx.products[0].ID, nil)
+	product, err := fx.svc.GetStoreProduct(context.Background(), fx.products[0].ID, nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, fx.products[0].ID, product.ID)
 }
@@ -185,7 +185,7 @@ func TestGetStoreProductHidesDraft(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	_, err = svc.GetStoreProduct(ctx, draft.ID, nil)
+	_, err = svc.GetStoreProduct(ctx, draft.ID, nil, "")
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "a draft product should not be findable in the storefront: %v", err)
 }

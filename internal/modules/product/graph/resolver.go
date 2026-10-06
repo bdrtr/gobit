@@ -119,6 +119,7 @@ func (r *queryResolver) Products(
 	attributes []service.AttributeCriterion,
 	inStock *bool,
 	price *service.PriceBracket,
+	regionID *string,
 ) (*ProductList, error) {
 	// "after" and "offset" name two different positions; honoring both would
 	// serve the page N rows past the cursor, which is a position neither of
@@ -161,6 +162,7 @@ func (r *queryResolver) Products(
 		InStock:         inStock,
 		Price:           price,
 		SalesChannelIDs: SalesChannelIDsFromContext(ctx),
+		RegionID:        strings.TrimSpace(stringValue(regionID)),
 		Limit:           intValue(limit),
 		Offset:          intValue(offset),
 		After:           cursor,
@@ -189,13 +191,14 @@ func stringValue(v *string) string {
 // hidden from the list through the single-item endpoint would make hiding
 // entirely pointless, and because storefront addresses carry the handle this is
 // exactly the guessable query.
-func (r *queryResolver) Product(ctx context.Context, id, handle *string) (*service.StoreProduct, error) {
+func (r *queryResolver) Product(ctx context.Context, id, handle, regionID *string) (*service.StoreProduct, error) {
 	selector, err := singleSelector(id, handle)
 	if err != nil {
 		return nil, err
 	}
 
-	product, err := r.svc.GetStoreProduct(ctx, selector, SalesChannelIDsFromContext(ctx))
+	product, err := r.svc.GetStoreProduct(ctx, selector, SalesChannelIDsFromContext(ctx),
+		strings.TrimSpace(stringValue(regionID)))
 	if err != nil {
 		return nil, err
 	}

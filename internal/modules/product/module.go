@@ -133,6 +133,14 @@ const PricesName = "pricing.service"
 // holds the two together.
 const StockName = "inventory.service"
 
+// RankerName is the container name of fulfillment's interop, whose warehouse
+// ranking a storefront read naming the shopper's region counts by (ADR 0422).
+// It is repeated here as a string for [PricesName]'s reason; fulfillment's
+// InteropName is its source and internal/arch holds the two together. An
+// unresolvable name reads as "fulfillment is not installed": such a read counts
+// as if it named no region.
+const RankerName = "fulfillment.interop"
+
 // Error codes.
 const (
 	codeSetupFailed = "product_module_setup_failed"
@@ -278,7 +286,9 @@ func (m *Module) Register(ctx context.Context, c *container.Container) error {
 		// Pricing is resolved the same way, for the import's price columns.
 		Prices: &importPrices{c: c, log: log},
 		// And inventory, for a variant's inventory item (ADR 0310).
-		Stock:  &variantStock{c: c, log: log},
+		Stock: &variantStock{c: c, log: log},
+		// And fulfillment, for the warehouses that serve a region (ADR 0422).
+		Ranker: &locationRanker{c: c, log: log},
 		Logger: log,
 	})
 	if err != nil {
@@ -568,3 +578,41 @@ func (v *variantStock) CreateItemForStock(ctx context.Context, sku, title string
 
 // codeStockUnavailable reports an installation whose inventory is not bound.
 const codeStockUnavailable = "product_stock_unavailable"
+
+// locationRanker resolves fulfillment's interop on first use, as
+// [variantStock] resolves inventory's (ADR 0422).
+type locationRanker struct {
+	c    *container.Container
+	log  *slog.Logger
+	once sync.Once
+	svc  service.LocationRanker
+	err  error
+}
+
+// That the wrapper satisfies the surface the service expects is pinned at
+// compile time.
+var _ service.LocationRanker = (*locationRanker)(nil)
+
+// RankLocations asks fulfillment's ranking, or answers
+// [service.CodeRankerUnavailable] when fulfillment is not bound.
+func (l *locationRanker) RankLocations(
+	ctx context.Context, destinationRegionID string, candidateLocationIDs []string,
+) ([]string, error) {
+	l.once.Do(func() {
+		svc, err := container.Resolve[service.LocationRanker](l.c, RankerName)
+		if err != nil {
+			l.err = errors.Wrap(err, errors.KindUnavailable, service.CodeRankerUnavailable,
+				"fulfillment's ranking (%q) is not bound; a storefront read counts as if it named no region",
+				RankerName)
+			l.log.InfoContext(ctx, "warehouse ranking unbound", "provider", RankerName, "error", err)
+
+			return
+		}
+		l.svc = svc
+	})
+	if l.err != nil {
+		return nil, l.err
+	}
+
+	return l.svc.RankLocations(ctx, destinationRegionID, candidateLocationIDs)
+}

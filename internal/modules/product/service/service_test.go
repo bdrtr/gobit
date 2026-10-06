@@ -100,7 +100,7 @@ func TestCreateProductDerivedHandleStaysAddressable(t *testing.T) {
 
 	// The real assertion: the product has to be openable in the storefront with
 	// its own handle.
-	fetched, err := svc.GetStoreProduct(ctx, product.Handle, nil)
+	fetched, err := svc.GetStoreProduct(ctx, product.Handle, nil, "")
 	require.NoError(t, err, "the product should be readable with the derived handle")
 	assert.Equal(t, product.ID, fetched.ID)
 }

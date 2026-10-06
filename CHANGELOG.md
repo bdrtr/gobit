@@ -231,6 +231,18 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **The badge counts the warehouses that serve the region** (ADR 0422, D267).
+  **For integrators:** `GET /store/v1/sales-channels/{sales_channel_id}/products`,
+  the single product read under it and the GraphQL `products` and `product`
+  queries take an optional `region_id` (`regionId`); with it, `in_stock`, the
+  `in_stock` filter and `restock_expected_at` count only the warehouses the
+  checkout would rank for that region among those the channel ships from, so a
+  page no longer says in stock where the region's checkout refuses with
+  `fulfillment_no_serviceable_location`. Without it every read answers as
+  before; the parameter is additive. A storefront passes the region it already
+  resolves. **For operators:** a read naming a region costs one fulfillment
+  ranking per page.
+
 - **A shipping option says how many days it takes** (ADR 0421). **For
   integrators:** `POST /admin/v1/shipping-options` takes `delivery_days`
   (`{"min":3,"max":5}`, business days, 0 <= min <= max <= 365, both or

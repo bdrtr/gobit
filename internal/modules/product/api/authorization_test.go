@@ -440,7 +440,7 @@ func (f *scopeCatalog) ListStoreProducts(
 }
 
 // GetStoreProduct counts the call.
-func (f *scopeCatalog) GetStoreProduct(context.Context, string, []string) (service.StoreProduct, error) {
+func (f *scopeCatalog) GetStoreProduct(context.Context, string, []string, string) (service.StoreProduct, error) {
 	f.count()
 	return service.StoreProduct{}, nil
 }

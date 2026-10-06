@@ -226,11 +226,13 @@ func bundleInStock(
 	return true
 }
 
-// unitsAvailable is how many units a counted variant can supply: the channel's
-// warehouses when the read is narrowed, the item's available quantity when it
-// is not, and zero when there is no readable record.
+// unitsAvailable is how many units a counted variant can supply: the counted
+// warehouses' when the read is narrowed (a non-nil set, the channel's and the
+// region's, ADR 0092 and ADR 0422; an empty one counts nothing), the item's
+// available quantity when it is not (nil), and zero when there is no readable
+// record.
 func unitsAvailable(extra enrichment, served map[string]bool) int64 {
-	if len(served) > 0 {
+	if served != nil {
 		return sellableAt(extra.sellableByLocation, served)
 	}
 	quantity, ok := recordInt(extra.inventory, foreignAvailableQuantity)

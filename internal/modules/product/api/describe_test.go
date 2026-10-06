@@ -476,7 +476,7 @@ func TestStoreListDescribesOnlyParametersItReads(t *testing.T) {
 	assert.ElementsMatch(t, []string{
 		"collection_id", "category_id", "category_tree_id", "tag_id", "option_value", "variant_id", "attribute", "in_stock",
 		"currency_code", "min_price", "max_price",
-		"q", "sort", "limit", "offset", "after", "with_count",
+		"q", "sort", "limit", "offset", "after", "with_count", "region_id",
 	}, names,
 		"the parameters have to be the same as the ones storeListProducts reads")
 	assert.NotContains(t, names, "sales_channel_id",
@@ -627,7 +627,8 @@ func TestStoreItemEndpointDescribesPathParameter(t *testing.T) {
 	paths, _ := storefrontDoc(t)
 	op := storefrontOperation(t, paths, http.MethodGet, describedProductPath)
 
-	assert.Empty(t, parameterNames(t, op, "query"), "the single endpoint does not read the query string")
+	assert.Equal(t, []string{"region_id"}, parameterNames(t, op, "query"),
+		"the single endpoint reads the shopper's region and nothing else from the query string (ADR 0422)")
 	assert.Equal(t, []string{"sales_channel_id", "id"}, parameterNames(t, op, "path"),
 		"both segments have to be described, and in the order the address reads")
 

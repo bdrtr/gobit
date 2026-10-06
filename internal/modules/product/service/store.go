@@ -211,8 +211,16 @@ type StoreListOptions struct {
 	// Both stay in the contract because GraphQL still produces them and because a
 	// caller inside this module may hand over either.
 	SalesChannelIDs []string
-	Limit           int
-	Offset          int
+	// RegionID is the shopper's region, which the storefront knows and the
+	// checkout ranks warehouses by (ADR 0422). With it, the stock badge, the
+	// in-stock filter and the restock date count only the warehouses the
+	// checkout would rank for the region, among the ones the channels ship
+	// from; empty counts as before. It is a narrowing the client chooses, not a
+	// gate: an unknown id counts the warehouses bound to no region, which is
+	// what the checkout ranks for it.
+	RegionID string
+	Limit    int
+	Offset   int
 	// After is the opaque position from a previous page's NextCursor; the zero
 	// value is the first page. See [ListProductsOptions.After].
 	After corepage.Cursor
@@ -289,7 +297,9 @@ type StoreVariant struct {
 }
 
 // locationsServingChannels is the set of warehouses the request's sales
-// channels ship from (ADR 0092).
+// channels ship from (ADR 0092), nil when they narrow nothing. A read naming
+// the shopper's region narrows it once more, to the warehouses the checkout
+// ranks for the region ([Service.narrowToRegion], ADR 0422).
 //
 // # Why a failure does NOT fail the read
 //
@@ -324,6 +334,13 @@ func (s *Service) locationsServingChannels(
 		for _, locationID := range locationIDs {
 			served[locationID] = true
 		}
+	}
+	// A channel bound to no warehouse is one nobody has configured, not one
+	// that ships from nowhere: it narrows nothing, as the checkout reads it.
+	// nil is that answer; a non-nil set counts its members and nothing else
+	// ([unitsAvailable]), so an empty one would count nothing at all.
+	if len(served) == 0 {
+		return nil
 	}
 
 	return served
@@ -456,7 +473,7 @@ func (s *Service) ListStoreProducts(ctx context.Context, opts StoreListOptions) 
 		return ListResult[StoreProduct]{}, err
 	}
 
-	items, err := s.toStoreProducts(ctx, result.Items, opts.SalesChannelIDs)
+	items, err := s.toStoreProducts(ctx, result.Items, opts.SalesChannelIDs, opts.RegionID)
 	if err != nil {
 		return ListResult[StoreProduct]{}, err
 	}
@@ -649,12 +666,11 @@ func (s *Service) scanStoreProducts(
 			return ListResult[StoreProduct]{}, err
 		}
 
-		enriched, chunkRead, err := s.enrichStoreProducts(ctx, page.Items, opts.SalesChannelIDs)
+		enriched, chunkRead, err := s.enrichStoreProducts(ctx, page.Items, opts.SalesChannelIDs, opts.RegionID)
 		if err != nil {
 			return ListResult[StoreProduct]{}, err
 		}
-		maps.Copy(read.extras, chunkRead.extras)
-		read.served = chunkRead.served
+		read.merge(chunkRead)
 
 		for i := range enriched {
 			scanned++
@@ -715,6 +731,8 @@ func storeScanResult(items []StoreProduct, limit int, nextCursor string) ListRes
 // giving away the existence of a draft product with an error like "unauthorized"
 // is a leak as well.
 //
+// regionID narrows the badge as [StoreListOptions.RegionID] does.
+//
 // salesChannelIDs carries the SAME meaning as in the listing (see
 // [StoreListOptions.SalesChannelIDs]) and the single-record endpoint is subject
 // to the SAME filter: showing a product that is hidden in the list through the
@@ -728,13 +746,14 @@ func (s *Service) GetStoreProduct(
 	ctx context.Context,
 	idOrHandle string,
 	salesChannelIDs []string,
+	regionID string,
 ) (StoreProduct, error) {
 	product, err := s.visibleStoreProduct(ctx, idOrHandle, salesChannelIDs)
 	if err != nil {
 		return StoreProduct{}, err
 	}
 
-	items, err := s.toStoreProducts(ctx, []models.Product{product}, salesChannelIDs)
+	items, err := s.toStoreProducts(ctx, []models.Product{product}, salesChannelIDs, regionID)
 	if err != nil {
 		return StoreProduct{}, err
 	}
@@ -894,10 +913,12 @@ func (s *Service) storeProductsByIDs(
 	if err := s.attachRelations(ctx, visible); err != nil {
 		return nil, err
 	}
+	// The by-id reads name no region: search, related products, add-ons and
+	// the badge read count the channel's warehouses (ADR 0422).
 	if dated {
-		return s.toStoreProducts(ctx, visible, salesChannelIDs)
+		return s.toStoreProducts(ctx, visible, salesChannelIDs, "")
 	}
-	items, _, err := s.enrichStoreProducts(ctx, visible, salesChannelIDs)
+	items, _, err := s.enrichStoreProducts(ctx, visible, salesChannelIDs, "")
 
 	return items, err
 }
@@ -907,16 +928,52 @@ func (s *Service) storeProductsByIDs(
 // The restock dates are decided from it ([Service.restockDates]).
 type storeRead struct {
 	extras map[string]enrichment
+	// served is the set the badge counted: nil counts every warehouse, any
+	// other set its members alone ([unitsAvailable]).
 	served map[string]bool
+	// narrowed says the read was narrowed to the shopper's region (ADR 0422):
+	// it named one AND fulfillment judged it. A read that named a region the
+	// ranking could not judge is not narrowed, and counts the channel's answer
+	// for its badge and its restock dates alike.
+	narrowed bool
+	// region, channel and judged are, for a narrowed read, the region, the set
+	// the narrowing started from and what it decided, so a restock date at a
+	// warehouse the breakdown did not name is judged by the same rule
+	// ([Service.restockCounted]).
+	region  string
+	channel map[string]bool
+	judged  map[string]bool
+}
+
+// merge takes a later chunk's read into the scan's: the extras accumulate, and
+// so do the counted sets and the region's judgments of the chunks.
+func (r *storeRead) merge(chunk storeRead) {
+	maps.Copy(r.extras, chunk.extras)
+	r.narrowed, r.region, r.channel = chunk.narrowed, chunk.region, chunk.channel
+	if chunk.served == nil {
+		r.served = nil
+
+		return
+	}
+	if r.served == nil {
+		r.served = map[string]bool{}
+	}
+	maps.Copy(r.served, chunk.served)
+	if chunk.judged != nil {
+		if r.judged == nil {
+			r.judged = map[string]bool{}
+		}
+		maps.Copy(r.judged, chunk.judged)
+	}
 }
 
 // toStoreProducts converts the products into the storefront shape, enriches
 // the variants and dates the ones with nothing to sell: it is the path of a
 // caller that publishes every product it is handed.
 func (s *Service) toStoreProducts(
-	ctx context.Context, products []models.Product, salesChannelIDs []string,
+	ctx context.Context, products []models.Product, salesChannelIDs []string, regionID string,
 ) ([]StoreProduct, error) {
-	items, read, err := s.enrichStoreProducts(ctx, products, salesChannelIDs)
+	items, read, err := s.enrichStoreProducts(ctx, products, salesChannelIDs, regionID)
 	if err != nil {
 		return nil, err
 	}
@@ -930,7 +987,7 @@ func (s *Service) toStoreProducts(
 // products its filter keeps, and the badge read ([Service.VariantsInStock])
 // dates none.
 func (s *Service) enrichStoreProducts(
-	ctx context.Context, products []models.Product, salesChannelIDs []string,
+	ctx context.Context, products []models.Product, salesChannelIDs []string, regionID string,
 ) ([]StoreProduct, storeRead, error) {
 	variantIDs := make([]string, 0, len(products))
 	var componentIDs []string
@@ -948,14 +1005,26 @@ func (s *Service) enrichStoreProducts(
 
 	// The warehouses the read may count, resolved ONCE for the whole page: the
 	// set belongs to the request's channels, not to a variant.
-	served := s.locationsServingChannels(ctx, salesChannelIDs)
+	channel := s.locationsServingChannels(ctx, salesChannelIDs)
+	region := trimmedRegion(regionID)
 
 	// A bundle's components ride on the same graph call as the page's variants
-	// (ADR 0235): their stock records are what the bundle's badge reads.
-	extras, err := s.enrichVariants(ctx, append(slices.Clone(variantIDs), componentIDs...), len(served) > 0)
+	// (ADR 0235): their stock records are what the bundle's badge reads. A read
+	// naming a region needs the breakdown even when no channel binds
+	// warehouses: the region is judged per warehouse (ADR 0422).
+	extras, err := s.enrichVariants(ctx, append(slices.Clone(variantIDs), componentIDs...),
+		channel != nil || region != "")
 	if err != nil {
 		return nil, storeRead{}, err
 	}
+	read := storeRead{extras: extras, served: channel}
+	if region != "" {
+		if served, judged, ok := s.narrowToRegion(ctx, region, extras, channel); ok {
+			read.narrowed = true
+			read.served, read.region, read.channel, read.judged = served, region, channel, judged
+		}
+	}
+	served := read.served
 	parts, err := s.bundleParts(ctx, componentIDs)
 	if err != nil {
 		return nil, storeRead{}, err
@@ -989,7 +1058,7 @@ func (s *Service) enrichStoreProducts(
 			InStock:  productInStock(variants),
 		})
 	}
-	return out, storeRead{extras: extras, served: served}, nil
+	return out, read, nil
 }
 
 // enrichVariants gathers the price and stock records of the variants with a
@@ -1044,7 +1113,7 @@ func (s *Service) enrichVariants(
 		// remembering to delete it.
 		//
 		// It costs one more provider call and one more query, and only while a
-		// sales channel narrows the read.
+		// sales channel or the shopper's region narrows the read.
 		expansions = append(expansions, query.Expansion{
 			Link:   LinkVariantInventory,
 			As:     keyInventoryStock,
@@ -1096,7 +1165,8 @@ func (s *Service) enrichVariants(
 //
 // The answer is the earliest moment over the warehouses the read counts, the
 // channel's when it is narrowed and every one when it is not, as
-// [unitsAvailable] decides. A failed call logs and leaves the dates absent: the
+// [unitsAvailable] decides; a read naming a region counts the ones the
+// checkout ranks for it ([Service.restockCounted], ADR 0422). A failed call logs and leaves the dates absent: the
 // date is a display concern, and the catalog does not fail for it.
 func (s *Service) restockDates(ctx context.Context, items []StoreProduct, read storeRead) {
 	var asking []string
@@ -1131,13 +1201,19 @@ func (s *Service) restockDates(ctx context.Context, items []StoreProduct, read s
 		return
 	}
 
-	dates := make(map[string]*time.Time, len(records))
+	forecasts := make(map[string]map[string]time.Time, len(records))
 	for _, rec := range records {
 		id, ok := rec[filterID].(string)
 		if !ok || id == "" || !slices.Contains(asking, id) {
 			continue
 		}
-		if at := earliestRestock(restockByLocation(asRecord(rec[keyInventoryRestock])), read.served); at != nil {
+		forecasts[id] = restockByLocation(asRecord(rec[keyInventoryRestock]))
+	}
+	counted := s.restockCounted(ctx, read, forecasts)
+
+	dates := make(map[string]*time.Time, len(forecasts))
+	for id, byLocation := range forecasts {
+		if at := earliestRestock(byLocation, counted); at != nil {
 			dates[id] = at
 		}
 	}
@@ -1165,11 +1241,11 @@ func restockByLocation(record query.Record) map[string]time.Time {
 }
 
 // earliestRestock is the first moment over the warehouses the read counts:
-// the served ones when the read is narrowed, every one when it is not.
+// the served ones when the read is narrowed, every one when it is not (nil).
 func earliestRestock(byLocation map[string]time.Time, served map[string]bool) *time.Time {
 	var earliest *time.Time
 	for locationID, at := range byLocation {
-		if len(served) > 0 && !served[locationID] {
+		if served != nil && !served[locationID] {
 			continue
 		}
 		if earliest == nil || at.Before(*earliest) {

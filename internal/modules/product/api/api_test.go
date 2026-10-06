@@ -42,6 +42,8 @@ type fakeCatalog struct {
 	variantLinks      func(ctx context.Context, variantID string) (service.VariantLinks, error)
 	listStoreProducts func(ctx context.Context, opts service.StoreListOptions) (service.ListResult[service.StoreProduct], error)
 	getStoreProduct   func(ctx context.Context, idOrHandle string, salesChannelIDs []string) (service.StoreProduct, error)
+	// storeProductRegions records the region each single read named (ADR 0422).
+	storeProductRegions []string
 
 	addSalesChannel    func(ctx context.Context, productID, salesChannelID string) error
 	removeSalesChannel func(ctx context.Context, productID, salesChannelID string) error
@@ -139,7 +141,9 @@ func (f *fakeCatalog) GetStoreProduct(
 	ctx context.Context,
 	idOrHandle string,
 	salesChannelIDs []string,
+	regionID string,
 ) (service.StoreProduct, error) {
+	f.storeProductRegions = append(f.storeProductRegions, regionID)
 	return f.getStoreProduct(ctx, idOrHandle, salesChannelIDs)
 }
 

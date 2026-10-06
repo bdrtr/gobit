@@ -190,7 +190,7 @@ func TestInteropReturnsTheSameShapeAsTheStorefront(t *testing.T) {
 	fx := newInteropFixture(t)
 	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 
-	storefront, err := fx.svc.GetStoreProduct(ctx, product.ID, nil)
+	storefront, err := fx.svc.GetStoreProduct(ctx, product.ID, nil, "")
 	require.NoError(t, err)
 	expectedRaw, err := json.Marshal(storefront)
 	require.NoError(t, err)

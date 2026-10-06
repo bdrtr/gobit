@@ -78,6 +78,7 @@ type Storefront interface {
 		ctx context.Context,
 		idOrHandle string,
 		salesChannelIDs []string,
+		regionID string,
 	) (service.StoreProduct, error)
 
 	StoreRelatedProducts(

@@ -202,10 +202,10 @@ type ComplexityRoot struct {
 		Categories        func(childComplexity int, parentID *string, limit *int, offset *int) int
 		Collections       func(childComplexity int, limit *int, offset *int) int
 		OptionValues      func(childComplexity int, limit *int, offset *int) int
-		Product           func(childComplexity int, id *string, handle *string) int
+		Product           func(childComplexity int, id *string, handle *string, regionID *string) int
 		ProductAttributes func(childComplexity int) int
 		ProductFacets     func(childComplexity int, q *string, collectionID *string, categoryID *string, categoryTreeID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion) int
-		Products          func(childComplexity int, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, categoryTreeID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion, inStock *bool, price *service.PriceBracket) int
+		Products          func(childComplexity int, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, categoryTreeID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion, inStock *bool, price *service.PriceBracket, regionID *string) int
 		Tags              func(childComplexity int, limit *int, offset *int) int
 	}
 
@@ -254,8 +254,8 @@ type ProductResolver interface {
 	AddOns(ctx context.Context, obj *service.StoreProduct) ([]service.StoreAddOn, error)
 }
 type QueryResolver interface {
-	Products(ctx context.Context, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, categoryTreeID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion, inStock *bool, price *service.PriceBracket) (*service.ListResult[service.StoreProduct], error)
-	Product(ctx context.Context, id *string, handle *string) (*service.StoreProduct, error)
+	Products(ctx context.Context, limit *int, offset *int, after *string, q *string, sort *models.ProductOrder, collectionID *string, categoryID *string, categoryTreeID *string, tagID *string, optionValue *string, variantIds []string, attributes []service.AttributeCriterion, inStock *bool, price *service.PriceBracket, regionID *string) (*service.ListResult[service.StoreProduct], error)
+	Product(ctx context.Context, id *string, handle *string, regionID *string) (*service.StoreProduct, error)
 	Collections(ctx context.Context, limit *int, offset *int) (*service.ListResult[models.Collection], error)
 	Categories(ctx context.Context, parentID *string, limit *int, offset *int) (*service.ListResult[models.Category], error)
 	Tags(ctx context.Context, limit *int, offset *int) (*service.ListResult[models.Tag], error)
@@ -977,7 +977,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.Product(childComplexity, args["id"].(*string), args["handle"].(*string)), true
+		return e.ComplexityRoot.Query.Product(childComplexity, args["id"].(*string), args["handle"].(*string), args["regionId"].(*string)), true
 	case "Query.productAttributes":
 		if e.ComplexityRoot.Query.ProductAttributes == nil {
 			break
@@ -1005,7 +1005,7 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 			return 0, false
 		}
 
-		return e.ComplexityRoot.Query.Products(childComplexity, args["limit"].(*int), args["offset"].(*int), args["after"].(*string), args["q"].(*string), args["sort"].(*models.ProductOrder), args["collectionId"].(*string), args["categoryId"].(*string), args["categoryTreeId"].(*string), args["tagId"].(*string), args["optionValue"].(*string), args["variantIds"].([]string), args["attributes"].([]service.AttributeCriterion), args["inStock"].(*bool), args["price"].(*service.PriceBracket)), true
+		return e.ComplexityRoot.Query.Products(childComplexity, args["limit"].(*int), args["offset"].(*int), args["after"].(*string), args["q"].(*string), args["sort"].(*models.ProductOrder), args["collectionId"].(*string), args["categoryId"].(*string), args["categoryTreeId"].(*string), args["tagId"].(*string), args["optionValue"].(*string), args["variantIds"].([]string), args["attributes"].([]service.AttributeCriterion), args["inStock"].(*bool), args["price"].(*service.PriceBracket), args["regionId"].(*string)), true
 	case "Query.tags":
 		if e.ComplexityRoot.Query.Tags == nil {
 			break
@@ -1959,6 +1959,14 @@ func (ec *executionContext) field_Query_product_args(ctx context.Context, rawArg
 		return nil, err
 	}
 	args["handle"] = arg1
+	arg2, err := graphql.ProcessArgField(ctx, rawArgs, "regionId",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOID2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["regionId"] = arg2
 	return args, nil
 }
 
@@ -2077,6 +2085,14 @@ func (ec *executionContext) field_Query_products_args(ctx context.Context, rawAr
 		return nil, err
 	}
 	args["price"] = arg13
+	arg14, err := graphql.ProcessArgField(ctx, rawArgs, "regionId",
+		func(ctx context.Context, v any) (*string, error) {
+			return ec.unmarshalOID2ᚖstring(ctx, v)
+		})
+	if err != nil {
+		return nil, err
+	}
+	args["regionId"] = arg14
 	return args, nil
 }
 
@@ -4729,7 +4745,7 @@ func (ec *executionContext) _Query_products(ctx context.Context, field graphql.C
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().Products(ctx, fc.Args["limit"].(*int), fc.Args["offset"].(*int), fc.Args["after"].(*string), fc.Args["q"].(*string), fc.Args["sort"].(*models.ProductOrder), fc.Args["collectionId"].(*string), fc.Args["categoryId"].(*string), fc.Args["categoryTreeId"].(*string), fc.Args["tagId"].(*string), fc.Args["optionValue"].(*string), fc.Args["variantIds"].([]string), fc.Args["attributes"].([]service.AttributeCriterion), fc.Args["inStock"].(*bool), fc.Args["price"].(*service.PriceBracket))
+			return ec.Resolvers.Query().Products(ctx, fc.Args["limit"].(*int), fc.Args["offset"].(*int), fc.Args["after"].(*string), fc.Args["q"].(*string), fc.Args["sort"].(*models.ProductOrder), fc.Args["collectionId"].(*string), fc.Args["categoryId"].(*string), fc.Args["categoryTreeId"].(*string), fc.Args["tagId"].(*string), fc.Args["optionValue"].(*string), fc.Args["variantIds"].([]string), fc.Args["attributes"].([]service.AttributeCriterion), fc.Args["inStock"].(*bool), fc.Args["price"].(*service.PriceBracket), fc.Args["regionId"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *service.ListResult[service.StoreProduct]) graphql.Marshaler {
@@ -4773,7 +4789,7 @@ func (ec *executionContext) _Query_product(ctx context.Context, field graphql.Co
 		},
 		func(ctx context.Context) (any, error) {
 			fc := graphql.GetFieldContext(ctx)
-			return ec.Resolvers.Query().Product(ctx, fc.Args["id"].(*string), fc.Args["handle"].(*string))
+			return ec.Resolvers.Query().Product(ctx, fc.Args["id"].(*string), fc.Args["handle"].(*string), fc.Args["regionId"].(*string))
 		},
 		nil,
 		func(ctx context.Context, selections ast.SelectionSet, v *service.StoreProduct) graphql.Marshaler {

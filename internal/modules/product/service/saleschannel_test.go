@@ -242,17 +242,17 @@ func TestGetStoreProductIsFilteredToo(t *testing.T) {
 	product := seedProduct(t, fx.svc, "shirt", "Shirt")
 	require.NoError(t, fx.svc.AddProductSalesChannel(ctx, product.ID, "sc_a"))
 
-	found, err := fx.svc.GetStoreProduct(ctx, "shirt", []string{"sc_a"})
+	found, err := fx.svc.GetStoreProduct(ctx, "shirt", []string{"sc_a"}, "")
 	require.NoError(t, err)
 	assert.Equal(t, product.ID, found.ID)
 
-	_, err = fx.svc.GetStoreProduct(ctx, "shirt", []string{"sc_b"})
+	_, err = fx.svc.GetStoreProduct(ctx, "shirt", []string{"sc_b"}, "")
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "the product should not be findable in a foreign channel: %v", err)
 
 	// A call by id is subject to the same filter; closing the handle and leaving
 	// the id open would pierce the hiding.
-	_, err = fx.svc.GetStoreProduct(ctx, product.ID, []string{"sc_b"})
+	_, err = fx.svc.GetStoreProduct(ctx, product.ID, []string{"sc_b"}, "")
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "a call by id should be filtered too: %v", err)
 }
@@ -276,7 +276,7 @@ func TestStoreListingWithoutChannelIdentityIsNotFiltered(t *testing.T) {
 	assert.Equal(t, []string{"shirt"}, storeHandles(result.Items),
 		"the filter should not be applied on a request that carries no channel identity")
 
-	single, err := fx.svc.GetStoreProduct(ctx, "shirt", nil)
+	single, err := fx.svc.GetStoreProduct(ctx, "shirt", nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, product.ID, single.ID)
 }

@@ -130,5 +130,5 @@ type Catalog interface {
 	DeleteTag(ctx context.Context, id string) error
 
 	ListStoreProducts(ctx context.Context, opts service.StoreListOptions) (service.ListResult[service.StoreProduct], error)
-	GetStoreProduct(ctx context.Context, idOrHandle string, salesChannelIDs []string) (service.StoreProduct, error)
+	GetStoreProduct(ctx context.Context, idOrHandle string, salesChannelIDs []string, regionID string) (service.StoreProduct, error)
 }

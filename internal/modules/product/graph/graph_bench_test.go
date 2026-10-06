@@ -57,7 +57,7 @@ func (s *benchStorefront) ListStoreProducts(
 
 // GetStoreProduct returns the first product of the prepared page.
 func (s *benchStorefront) GetStoreProduct(
-	_ context.Context, _ string, _ []string,
+	_ context.Context, _ string, _ []string, _ string,
 ) (service.StoreProduct, error) {
 	return s.list.Items[0], nil
 }

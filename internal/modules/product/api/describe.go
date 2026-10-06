@@ -128,8 +128,8 @@ func Describe(d *openapi.Doc) {
 					"not this parameter is given. "+
 					"true keeps what can be bought and false keeps what cannot; leaving the "+
 					"parameter out filters nothing. "+
-					"The answer is over the sellable total across ALL locations and is not "+
-					"regional. "+
+					"The answer counts the locations the channel ships from, and with region_id "+
+					"only the ones the checkout ranks for that region (ADR 0422). "+
 					"It cannot be a database predicate, so the listing SCANS the catalog for it "+
 					"and the page can come back SHORT with a cursor -- keep paging until "+
 					"\"next_cursor\" is absent, which is the listing's end-of-catalog signal in "+
@@ -222,6 +222,7 @@ func Describe(d *openapi.Doc) {
 					"enriching the WHOLE catalog. Send with_count=false, or leave the "+
 					"parameter out.",
 			),
+			regionParameter(),
 		},
 		Responses: map[string]any{
 			// The envelope SCHEMA has to say the counter can drop as well:
@@ -246,6 +247,7 @@ func Describe(d *openapi.Doc) {
 		Parameters: []openapi.Parameter{
 			salesChannelPathParameter(),
 			storeProductParameter(),
+			regionParameter(),
 		},
 		Responses: map[string]any{
 			"200": openapi.Response("Storefront product", d.Item(service.StoreProduct{})),
@@ -1247,6 +1249,17 @@ func queryParameter(name, valueType, description string) openapi.Parameter {
 		Schema:      map[string]any{schemaType: valueType},
 		Description: description,
 	}
+}
+
+// regionParameter describes the shopper's region (ADR 0422), which the two
+// catalog reads take alike.
+func regionParameter() openapi.Parameter {
+	return queryParameter("region_id", typeString,
+		"The shopper's region. With it, in_stock, the in_stock filter and "+
+			"restock_expected_at count only the locations the checkout would rank for the "+
+			"region among those the channel ships from; without it they count as before. "+
+			"The id is not looked up: a region no location is bound to counts the locations "+
+			"bound to none, which is what the checkout ranks for it.")
 }
 
 // variantIDsParameter describes the repeated variant_id filter (ADR 0191).

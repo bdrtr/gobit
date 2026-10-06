@@ -1026,11 +1026,12 @@ func complexityCosts(costs *ComplexityRoot) {
 		_ []service.AttributeCriterion,
 		_ *bool,
 		_ *service.PriceBracket,
+		_ *string,
 	) int {
 		return rootQueryCost + pageSize(limit)*child
 	}
 
-	costs.Query.Product = func(child int, _, _ *string) int {
+	costs.Query.Product = func(child int, _, _, _ *string) int {
 		return rootQueryCost + child
 	}
 

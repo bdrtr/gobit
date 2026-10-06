@@ -56,6 +56,7 @@ func (silentStorefront) GetStoreProduct(
 	_ context.Context,
 	_ string,
 	_ []string,
+	_ string,
 ) (service.StoreProduct, error) {
 	return service.StoreProduct{}, nil
 }

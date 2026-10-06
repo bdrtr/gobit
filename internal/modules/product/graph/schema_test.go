@@ -334,11 +334,12 @@ func TestProductsArgumentsMatchWhatTheServiceReads(t *testing.T) {
 		// The price bracket is ONE argument and one option field, which is
 		// what an input object buys: three flat arguments would map one field
 		// to three names and the pair below would stop being a mapping.
-		"Price":  "price",
-		"Order":  "sort",
-		"Limit":  "limit",
-		"Offset": "offset",
-		"After":  "after",
+		"Price":    "price",
+		"RegionID": "regionId",
+		"Order":    "sort",
+		"Limit":    "limit",
+		"Offset":   "offset",
+		"After":    "after",
 	}
 
 	// The fields the client CANNOT GIVE: their values come from the request's
@@ -406,6 +407,9 @@ func TestProductFacetsTakesTheListingsFilters(t *testing.T) {
 		"sort":    "a count has no order",
 		"inStock": enriched,
 		"price":   enriched,
+		// ADR 0422: the region narrows the stock answers, and a count reads
+		// none of them.
+		"regionId": "it narrows the stock answers, which a count does not read",
 	}
 
 	query := compiledSchema(t).Query
@@ -472,6 +476,9 @@ func TestEmptyTextArgumentBuildsNoFilter(t *testing.T) {
 		"tagId":          "TagID",
 		"optionValue":    "OptionValue",
 		"q":              "Search",
+		// A narrowing rather than a filter, carried as a string whose empty
+		// value is "no region" (ADR 0422): it must arrive as "".
+		"regionId": "RegionID",
 	}
 
 	// Text arguments that are NOT filters. A cursor names a POSITION: its
@@ -520,6 +527,13 @@ func TestEmptyTextArgumentBuildsNoFilter(t *testing.T) {
 				require.Empty(t, response.Errors)
 
 				value := reflect.ValueOf(call.recorded(svc, t)).FieldByName(name)
+				if value.Kind() == reflect.String {
+					assert.Empty(t, value.String(),
+						"an empty %q argument must narrow nothing; the empty string must reach the service",
+						arg.Name)
+
+					return
+				}
 				require.Equal(t, reflect.Pointer, value.Kind(),
 					"%s must be a pointer; the only thing carrying the 'not given' distinction is nil",
 					name)

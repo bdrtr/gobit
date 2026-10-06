@@ -119,6 +119,10 @@ type Options struct {
 	// Stock is inventory's surface a variant's inventory item is created
 	// through (ADR 0310); if nil is given, a variant is not stocked here.
 	Stock VariantStock
+	// Ranker is fulfillment's ranking of warehouses for a region, which a
+	// storefront read naming the shopper's region counts by (ADR 0422); if nil
+	// is given, such a read counts as if it named no region.
+	Ranker LocationRanker
 	// Events is the bus the catalog events are published on; if nil is given, the
 	// events are silently skipped (rationale: [Service.publishProductEvent]).
 	Events EventPublisher
@@ -141,6 +145,7 @@ type Service struct {
 	uploads UploadReader
 	prices  ImportPrices
 	stock   VariantStock
+	ranker  LocationRanker
 	events  EventPublisher
 	log     *slog.Logger
 	now     func() time.Time
@@ -170,6 +175,7 @@ func New(opts Options) (*Service, error) {
 		uploads: opts.Uploads,
 		prices:  opts.Prices,
 		stock:   opts.Stock,
+		ranker:  opts.Ranker,
 		events:  opts.Events,
 		log:     log,
 		now:     now,

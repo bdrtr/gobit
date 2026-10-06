@@ -232,6 +232,14 @@ past and is not corrected retroactively.
   order from a cart that named none, and every order placed before the
   upgrade, records none, and the admin list's channel filter and the trials
   read it as none.
+- **A read that names no region counts every region's warehouses.** A
+  storefront catalog read that names the shopper's region counts only the
+  warehouses the checkout ranks for it
+  ([ADR 0422](adr/0422-the-badge-counts-the-warehouses-that-serve-the-region.md));
+  one that names none, and related products, add-ons, search and the stock
+  alert, count every warehouse the channel ships from, so a warehouse bound to
+  another region can show a variant in stock that the checkout will not ship
+  there.
 - **No point of sale.** A counter sale is an operator's cart in the store's
   channel, completed with an offline method and paid in a second act; gobit
   records no terminal, drawer or change, prints no receipt and has no

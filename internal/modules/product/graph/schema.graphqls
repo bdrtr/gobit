@@ -180,6 +180,14 @@ type Query {
     "count" beside it is refused.
     """
     price: PriceFilter
+    """
+    The shopper's region (ADR 0422). With it, inStock, the inStock filter and
+    restockExpectedAt count only the warehouses the checkout would rank for
+    the region among those the request's channels ship from; without it they
+    count as before. A region no warehouse is bound to counts the warehouses
+    bound to none, which is what the checkout ranks for it.
+    """
+    regionId: ID
   ): ProductList!
 
   """
@@ -192,8 +200,10 @@ type Query {
   request's channels the result is null and the error is of the "not found"
   class: giving away the EXISTENCE of a product sold in another channel with a
   different error would pierce the hiding itself.
+
+  regionId narrows the stock answers as on the products query (ADR 0422).
   """
-  product(id: ID, handle: String): Product
+  product(id: ID, handle: String, regionId: ID): Product
 
   """
   The catalog's vocabulary (ADR 0225): what a storefront names in a filter
@@ -491,10 +501,9 @@ type Product {
   arithmetic over records the request reads anyway. A product with NO variants
   is not in stock — there is nothing under it to sell.
 
-  The answer is over the sellable total across ALL locations and is NOT
-  regional. Making it regional means deciding which locations serve which
-  region, a question nothing in this repository asks yet, and it would be a
-  different decision with its own record.
+  The answer counts the locations the request's channels ship from (ADR 0093)
+  and, when the query names the shopper's regionId, only the ones the checkout
+  ranks for that region (ADR 0422).
   """
   inStock: Boolean!
   "Sellable units. The price and the inventory are HERE, not at the product level."

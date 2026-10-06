@@ -180,7 +180,7 @@ func TestAStorefrontProductCarriesNoCost(t *testing.T) {
 	_, err := svc.SetVariantCosts(ctx, product.Variants[0].ID, []models.VariantCost{{CurrencyCode: "TRY", Amount: planted}})
 	require.NoError(t, err)
 
-	single, err := svc.GetStoreProduct(ctx, product.ID, nil)
+	single, err := svc.GetStoreProduct(ctx, product.ID, nil, "")
 	require.NoError(t, err)
 	page, err := svc.ListStoreProducts(ctx, service.StoreListOptions{VariantIDs: []string{product.Variants[0].ID}})
 	require.NoError(t, err)

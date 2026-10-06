@@ -1813,3 +1813,15 @@ func TestTheProductModuleResolvesItsWritersByTheirOwnersNames(t *testing.T) {
 	assert.Equal(t, pricing.ServiceName, product.PricesName)
 	assert.Equal(t, inventory.ServiceName, product.StockName)
 }
+
+// TestTheProductModuleRanksByFulfillmentsOwnNames binds the name and the code
+// the storefront's region narrowing reads fulfillment by (ADR 0422). A drifted
+// name reads as "fulfillment is not installed" and a drifted code as a failed
+// ranking: either way a read naming a region counts the channel's warehouses
+// again, which is the badge that promised stock the region's checkout refused.
+func TestTheProductModuleRanksByFulfillmentsOwnNames(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, fulfillment.InteropName, product.RankerName)
+	assert.Equal(t, fulfillmentsvc.CodeNoServiceableLocation, productsvc.CodeNoServiceableLocation)
+}

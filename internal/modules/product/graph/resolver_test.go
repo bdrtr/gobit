@@ -34,6 +34,7 @@ type fakeStorefront struct {
 	listOptions     []service.StoreListOptions
 	singleSelectors []string
 	singleChannels  [][]string
+	singleRegions   []string
 	relatedCalls    []relatedCall
 
 	list    service.ListResult[service.StoreProduct]
@@ -195,12 +196,14 @@ func (s *fakeStorefront) GetStoreProduct(
 	_ context.Context,
 	idOrHandle string,
 	salesChannelIDs []string,
+	regionID string,
 ) (service.StoreProduct, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.singleSelectors = append(s.singleSelectors, idOrHandle)
 	s.singleChannels = append(s.singleChannels, salesChannelIDs)
+	s.singleRegions = append(s.singleRegions, regionID)
 
 	if s.err != nil {
 		return service.StoreProduct{}, s.err
@@ -393,6 +396,26 @@ func TestSingleEndpointPassesTheChannels(t *testing.T) {
 	require.Empty(t, response.Errors)
 	assert.Equal(t, []string{"t-shirt"}, svc.singleSelectors)
 	assert.Equal(t, [][]string{{"sc_1"}}, svc.singleChannels)
+}
+
+// TestTheRegionReachesBothCatalogQueries holds GraphQL to REST (ADR 0422): the
+// regionId argument of products and of product reaches the service trimmed,
+// and its absence reaches it as no region.
+func TestTheRegionReachesBothCatalogQueries(t *testing.T) {
+	t.Parallel()
+
+	svc := &fakeStorefront{single: service.StoreProduct{
+		Product: models.Product{ID: "prod_1", Handle: "t-shirt"},
+	}}
+	response, _ := runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ products(regionId: " reg_tr ") { count } }`)
+	require.Empty(t, response.Errors)
+	assert.Equal(t, "reg_tr", svc.lastList(t).RegionID)
+
+	response, _ = runQuery(t, identityWith([]string{"sc_1"}), svc,
+		`{ a: product(handle: "t-shirt", regionId: "reg_eu") { id } b: product(handle: "t-shirt") { id } }`)
+	require.Empty(t, response.Errors)
+	assert.ElementsMatch(t, []string{"reg_eu", ""}, svc.singleRegions)
 }
 
 // TestRelatedAsksForItsProductWithTheIdentitysChannels holds the related field

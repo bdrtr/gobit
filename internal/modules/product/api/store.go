@@ -132,6 +132,14 @@ func variantIDsParam(r *http.Request) []string {
 	return values
 }
 
+// regionParam reads the shopper's region (ADR 0422). An absent or blank one
+// is "" and narrows nothing; the id is not looked up, since a region no
+// warehouse is bound to counts the warehouses bound to none, which is what the
+// checkout ranks for it.
+func regionParam(r *http.Request) string {
+	return strings.TrimSpace(r.URL.Query().Get("region_id"))
+}
+
 // storeListProducts GET /store/v1/sales-channels/{sales_channel_id}/products
 //
 // This is the heart of Phase 4: the storefront listing returns products
@@ -254,6 +262,7 @@ func (h *Handler) storeListProducts(w http.ResponseWriter, r *http.Request) {
 		InStock:         inStock,
 		Price:           bracket,
 		SalesChannelIDs: channels,
+		RegionID:        regionParam(r),
 		Limit:           limit,
 		Offset:          offset,
 		After:           after,
@@ -295,7 +304,7 @@ func (h *Handler) storeGetProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	product, err := h.svc.GetStoreProduct(r.Context(), id, channels)
+	product, err := h.svc.GetStoreProduct(r.Context(), id, channels, regionParam(r))
 	if err != nil {
 		corehttp.WriteError(r.Context(), w, err)
 		return

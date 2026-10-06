@@ -4,7 +4,7 @@
 request's sales channel ships from, so it agrees with the checkout that refuses
 an order it cannot serve.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0422](0422-the-badge-counts-the-warehouses-that-serve-the-region.md), whose badge also narrows to the shopper's region
 - **Date:** 2026-09-09
 
 ## Context
