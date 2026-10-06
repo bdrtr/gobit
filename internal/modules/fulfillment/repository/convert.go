@@ -69,6 +69,8 @@ const (
 // directly through SQL return an understandable error as well.
 var checkConstraintMessages = map[string]string{
 	"shipping_options_calculated_zero":             "the amount of a calculated shipping option must be zero; the fee comes from the provider",
+	"shipping_options_delivery_days_paired":        "a shipping option's delivery days are a minimum and a maximum given together",
+	"shipping_options_delivery_days_range":         "a shipping option's delivery days must satisfy 0 <= minimum <= maximum <= 365",
 	"shipping_options_price_type_valid":            "the price type of a shipping option must be 'flat' or 'calculated'",
 	"shipping_options_name_check":                  "the name of a shipping option cannot be empty",
 	"shipping_options_provider_check":              "the provider of a shipping option cannot be empty",
@@ -369,12 +371,33 @@ func toOption(row fulfillmentdb.ShippingOption) (models.ShippingOption, error) {
 		RegionID:          row.RegionID,
 		IsReturn:          row.IsReturn,
 		AdminOnly:         row.AdminOnly,
+		DeliveryDays:      toDeliveryDays(row.DeliveryMinDays, row.DeliveryMaxDays),
 		Data:              data,
 		Metadata:          meta,
 		CreatedAt:         toTime(row.CreatedAt),
 		UpdatedAt:         toTime(row.UpdatedAt),
 		DeletedAt:         toTimePtr(row.DeletedAt),
 	}, nil
+}
+
+// toDeliveryDays reads an option's two day columns: nil when it carries none.
+// The schema keeps them NULL together (shipping_options_delivery_days_paired),
+// so one NULL reads as none.
+func toDeliveryDays(minDays, maxDays *int32) *models.DeliveryDays {
+	if minDays == nil || maxDays == nil {
+		return nil
+	}
+	return &models.DeliveryDays{Min: *minDays, Max: *maxDays}
+}
+
+// fromDeliveryDays writes an option's days into its two columns, both NULL for
+// none.
+func fromDeliveryDays(days *models.DeliveryDays) (minDays, maxDays *int32) {
+	if days == nil {
+		return nil, nil
+	}
+	low, high := days.Min, days.Max
+	return &low, &high
 }
 
 // toRule converts a database row to the domain model.

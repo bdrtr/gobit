@@ -14,28 +14,38 @@ UPDATE shipping_options
 SET name       = $1::text,
     amount     = $2::bigint,
     admin_only = $3::boolean,
+    delivery_min_days = $4::integer,
+    delivery_max_days = $5::integer,
     updated_at = now()
-WHERE id = $4
+WHERE id = $6
   AND deleted_at IS NULL
-  AND name = $5::text
-  AND amount = $6::bigint
-  AND admin_only = $7::boolean
-RETURNING id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at
+  AND name = $7::text
+  AND amount = $8::bigint
+  AND admin_only = $9::boolean
+  AND delivery_min_days IS NOT DISTINCT FROM $10::integer
+  AND delivery_max_days IS NOT DISTINCT FROM $11::integer
+RETURNING id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at, delivery_min_days, delivery_max_days
 `
 
 type ReviseShippingOptionParams struct {
-	Name          string
-	Amount        int64
-	AdminOnly     bool
-	ID            string
-	ReadName      string
-	ReadAmount    int64
-	ReadAdminOnly bool
+	Name                string
+	Amount              int64
+	AdminOnly           bool
+	DeliveryMinDays     *int32
+	DeliveryMaxDays     *int32
+	ID                  string
+	ReadName            string
+	ReadAmount          int64
+	ReadAdminOnly       bool
+	ReadDeliveryMinDays *int32
+	ReadDeliveryMaxDays *int32
 }
 
-// ReviseShippingOption writes the option's name, fee and storefront
-// visibility only while they are still the ones the caller read (ADR 0333):
-// one conditional UPDATE, so a revision made meanwhile is never written over.
+// ReviseShippingOption writes the option's name, fee, storefront visibility
+// and delivery days only while they are still the ones the caller read (ADR
+// 0333, ADR 0421): one conditional UPDATE, so a revision made meanwhile is
+// never written over. The days are compared with IS NOT DISTINCT FROM, since an
+// option without them holds NULL and NULL = NULL is not true.
 //
 // The provider, the profile, the price type, the region and the provider's
 // configuration are not among them. A calculated option takes no fee of its
@@ -46,10 +56,14 @@ func (q *Queries) ReviseShippingOption(ctx context.Context, arg ReviseShippingOp
 		arg.Name,
 		arg.Amount,
 		arg.AdminOnly,
+		arg.DeliveryMinDays,
+		arg.DeliveryMaxDays,
 		arg.ID,
 		arg.ReadName,
 		arg.ReadAmount,
 		arg.ReadAdminOnly,
+		arg.ReadDeliveryMinDays,
+		arg.ReadDeliveryMaxDays,
 	)
 	var i ShippingOption
 	err := row.Scan(
@@ -68,6 +82,8 @@ func (q *Queries) ReviseShippingOption(ctx context.Context, arg ReviseShippingOp
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeliveryMinDays,
+		&i.DeliveryMaxDays,
 	)
 	return i, err
 }

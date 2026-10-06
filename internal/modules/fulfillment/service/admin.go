@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strings"
 
 	"github.com/bdrtr/gobit/core/errors"
@@ -114,19 +115,47 @@ func (a *AdminSurface) ReturnOptionsJSON(ctx context.Context, regionID, currency
 	return body, nil
 }
 
-// ReviseShippingOption writes the option's name, fee and storefront
-// visibility from the ones the operator read, and refuses when another writer
-// changed any of them since (ADR 0333); the fee is in the currency's minor
-// units, and adminOnly keeps the option off the storefront.
+// ReviseShippingOption writes the option's name, fee, storefront visibility
+// and delivery days from the ones the operator read, and refuses when another
+// writer changed any of them since (ADR 0333, ADR 0421); the fee is in the
+// currency's minor units, adminOnly keeps the option off the storefront, and
+// the days are business days, both nil for none.
 func (a *AdminSurface) ReviseShippingOption(
 	ctx context.Context, id, readName string, readAmount int64, readAdminOnly bool,
-	name string, amount int64, adminOnly bool,
+	readMinDays, readMaxDays *int64,
+	name string, amount int64, adminOnly bool, minDays, maxDays *int64,
 ) error {
-	_, err := a.svc.ReviseShippingOption(ctx, id,
-		models.OptionTerms{Name: readName, Amount: readAmount, AdminOnly: readAdminOnly},
-		models.OptionTerms{Name: name, Amount: amount, AdminOnly: adminOnly})
+	readDays, err := deliveryDaysOf(readMinDays, readMaxDays)
+	if err != nil {
+		return err
+	}
+	days, err := deliveryDaysOf(minDays, maxDays)
+	if err != nil {
+		return err
+	}
+	_, err = a.svc.ReviseShippingOption(ctx, id,
+		models.OptionTerms{Name: readName, Amount: readAmount, AdminOnly: readAdminOnly, DeliveryDays: readDays},
+		models.OptionTerms{Name: name, Amount: amount, AdminOnly: adminOnly, DeliveryDays: days})
 
 	return err
+}
+
+// deliveryDaysOf reads the panel's two day figures as an option's days: both
+// nil is none, one alone is refused, and each is held to the range an int32
+// carries before the service holds it to an option's (ADR 0421).
+func deliveryDaysOf(minDays, maxDays *int64) (*models.DeliveryDays, error) {
+	switch {
+	case minDays == nil && maxDays == nil:
+		return nil, nil
+	case minDays == nil || maxDays == nil:
+		return nil, errors.Invalid(CodeInvalidInput,
+			"an option's delivery days are a minimum and a maximum given together")
+	case *minDays < math.MinInt32 || *minDays > math.MaxInt32 || *maxDays < math.MinInt32 || *maxDays > math.MaxInt32:
+		return nil, errors.Invalid(CodeInvalidInput,
+			"an option's delivery days are at most %d: %d to %d given", models.MaxDeliveryDays, *minDays, *maxDays)
+	}
+
+	return &models.DeliveryDays{Min: int32(*minDays), Max: int32(*maxDays)}, nil
 }
 
 // codeAdminEncodeFailed reports choices the panel's surface could not encode.
@@ -178,14 +207,21 @@ func (a *AdminSurface) OptionChoicesJSON(ctx context.Context) (json.RawMessage, 
 // CreateShippingOption writes a shipping option and returns its id (ADR
 // 0334): priceType is "flat", whose fee is amount in the currency's minor
 // units, or "calculated", whose fee its provider quotes; an empty region
-// offers it in every region, and adminOnly keeps it off the storefront.
+// offers it in every region, adminOnly keeps it off the storefront, and the
+// days are how many business days its delivery takes, both nil for none (ADR
+// 0421).
 func (a *AdminSurface) CreateShippingOption(
 	ctx context.Context, name, providerID, profileID, priceType string, amount int64,
-	currency, regionID string, isReturn, adminOnly bool,
+	currency, regionID string, isReturn, adminOnly bool, minDays, maxDays *int64,
 ) (string, error) {
+	days, err := deliveryDaysOf(minDays, maxDays)
+	if err != nil {
+		return "", err
+	}
 	option, err := a.svc.CreateShippingOption(ctx, CreateOptionInput{
 		Name: name, ProviderID: providerID, ShippingProfileID: profileID, PriceType: priceType,
 		Amount: amount, CurrencyCode: currency, RegionID: regionID, IsReturn: isReturn, AdminOnly: adminOnly,
+		DeliveryDays: days,
 	})
 	if err != nil {
 		return "", err

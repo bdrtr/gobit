@@ -34,6 +34,10 @@ const (
 	FieldIsReturn = "is_return"
 	// FieldAdminOnly says the option does not reach the storefront surface.
 	FieldAdminOnly = "admin_only"
+	// FieldDeliveryMinDays and FieldDeliveryMaxDays are how many business days
+	// the option's delivery takes; nil when it says nothing (ADR 0421).
+	FieldDeliveryMinDays = "delivery_min_days"
+	FieldDeliveryMaxDays = "delivery_max_days"
 	// FieldCreatedAt is the creation time.
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt is the last update time.
@@ -67,8 +71,20 @@ var optionFieldGetters = map[string]func(option models.ShippingOption) any{
 	FieldRegionID:     func(option models.ShippingOption) any { return option.RegionID },
 	FieldIsReturn:     func(option models.ShippingOption) any { return option.IsReturn },
 	FieldAdminOnly:    func(option models.ShippingOption) any { return option.AdminOnly },
-	FieldCreatedAt:    func(option models.ShippingOption) any { return option.CreatedAt },
-	FieldUpdatedAt:    func(option models.ShippingOption) any { return option.UpdatedAt },
+	FieldDeliveryMinDays: func(option models.ShippingOption) any {
+		if option.DeliveryDays == nil {
+			return nil
+		}
+		return option.DeliveryDays.Min
+	},
+	FieldDeliveryMaxDays: func(option models.ShippingOption) any {
+		if option.DeliveryDays == nil {
+			return nil
+		}
+		return option.DeliveryDays.Max
+	},
+	FieldCreatedAt: func(option models.ShippingOption) any { return option.CreatedAt },
+	FieldUpdatedAt: func(option models.ShippingOption) any { return option.UpdatedAt },
 }
 
 // QueryProvider is the read surface the fulfillment module opens to the Query

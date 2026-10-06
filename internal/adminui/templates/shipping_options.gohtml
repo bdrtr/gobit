@@ -9,9 +9,11 @@ calculated one asks its provider for the fee. An option the storefront does
 not offer is for the panel and the telephone order alone. The rows come
 newest first, through the module's shipping_option entity.
 
-Each row's form renames its option, sets a flat option's fee and says whether
-the storefront offers it; it carries them as the row was drawn, and the
-module refuses when another operator revised the option first. The provider,
+Each row's form renames its option, sets a flat option's fee, says whether
+the storefront offers it and how many business days its delivery takes; it
+carries them as the row was drawn, and the module refuses when another
+operator revised the option first. The days are the carrier's working days,
+the least and the most, both or neither (ADR 0421). The provider,
 the profile, the price type and the region are the option's identity and
 are not revised here.
 
@@ -48,6 +50,8 @@ region charges in the currency typed.
       {{ range $.Regions }}<option value="{{ .ID }}"{{ if eq ($.Typed.Get "region_id") .ID }} selected{{ end }}>{{ .Name }} ({{ .Currency }})</option>{{ end }}
     </select>
     <input name="currency_code" value="{{ $.Typed.Get "currency_code" }}" placeholder="currency, for every region" aria-label="currency" maxlength="3">
+    <input name="delivery_min_days" value="{{ $.Typed.Get "delivery_min_days" }}" placeholder="least business days" aria-label="least business days" inputmode="numeric">
+    <input name="delivery_max_days" value="{{ $.Typed.Get "delivery_max_days" }}" placeholder="most business days" aria-label="most business days" inputmode="numeric">
     <label><input type="checkbox" name="is_return" value="1"{{ if $.Typed.Get "is_return" }} checked{{ end }}> for returns</label>
     <label><input type="checkbox" name="admin_only" value="1"{{ if $.Typed.Get "admin_only" }} checked{{ end }}> panel only</label>
     <button type="submit">Write the shipping option</button>
@@ -62,7 +66,7 @@ region charges in the currency typed.
 <div class="scroll">
 <table>
   <thead>
-    <tr><th>Option</th><th>Provider</th><th>Profile</th><th>Region</th><th class="num">Fee</th><th>Storefront</th>{{ if .CanRevise }}<th></th>{{ end }}</tr>
+    <tr><th>Option</th><th>Provider</th><th>Profile</th><th>Region</th><th class="num">Fee</th><th>Delivery</th><th>Storefront</th>{{ if .CanRevise }}<th></th>{{ end }}</tr>
   </thead>
   <tbody>
   {{ range $row := .Options }}
@@ -72,6 +76,7 @@ region charges in the currency typed.
       <td><span class="muted">{{ .Profile }}</span></td>
       <td>{{ with .Region }}{{ . }}{{ else }}<span class="muted">every region</span>{{ end }}</td>
       <td class="num">{{ with .Fee }}{{ . }}{{ else }}<span class="muted">from the provider</span>{{ end }}</td>
+      <td>{{ with .Days }}{{ . }}{{ else }}<span class="muted">not said</span>{{ end }}</td>
       <td>{{ if .AdminOnly }}<span class="muted">panel only</span>{{ else }}offered{{ end }}</td>
       {{ if $.CanRevise }}
       <td>
@@ -81,10 +86,14 @@ region charges in the currency typed.
             <input type="hidden" name="read_name" value="{{ $row.Name }}">
             <input type="hidden" name="read_amount" value="{{ $row.Amount }}">
             <input type="hidden" name="read_admin_only" value="{{ $row.AdminOnly }}">
+            <input type="hidden" name="read_delivery_min_days" value="{{ $row.MinDays }}">
+            <input type="hidden" name="read_delivery_max_days" value="{{ $row.MaxDays }}">
             <input type="hidden" name="price_type" value="{{ $row.PriceType }}">
             <input type="hidden" name="currency_code" value="{{ $row.Currency }}">
             <input name="name" value="{{ $row.FormName }}" aria-label="name" required>
             {{ if eq $row.PriceType $.FlatPriceType }}<input name="amount" value="{{ $row.FormAmount }}" aria-label="fee" placeholder="{{ $row.Currency }}" inputmode="decimal" required>{{ end }}
+            <input name="delivery_min_days" value="{{ $row.FormMinDays }}" aria-label="least business days" placeholder="least days" inputmode="numeric">
+            <input name="delivery_max_days" value="{{ $row.FormMaxDays }}" aria-label="most business days" placeholder="most days" inputmode="numeric">
             <label><input type="checkbox" name="admin_only" value="1"{{ if $row.FormAdminOnly }} checked{{ end }}> panel only</label>
             <button type="submit">Write</button>
           </form>

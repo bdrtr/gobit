@@ -22,7 +22,7 @@ func (f *fakeStore) ReviseShippingOption(
 	defer f.mu.Unlock()
 
 	current, ok := f.options[id]
-	if !ok || current.DeletedAt != nil || current.Terms() != read {
+	if !ok || current.DeletedAt != nil || !sameTerms(current.Terms(), read) {
 		return models.ShippingOption{}, false, nil
 	}
 	if current.PriceType != models.PriceFlat && next.Amount != 0 {
@@ -30,9 +30,18 @@ func (f *fakeStore) ReviseShippingOption(
 			"the amount of a calculated shipping option must be zero; the fee comes from the provider")
 	}
 	current.Name, current.Amount, current.AdminOnly = next.Name, next.Amount, next.AdminOnly
+	current.DeliveryDays = next.DeliveryDays
 	current.UpdatedAt = testNow
 	f.options[id] = current
 	return current, true, nil
+}
+
+// sameTerms compares two terms as the query does: the days by value, IS NOT
+// DISTINCT FROM, and not by the address their pointer holds.
+func sameTerms(a, b models.OptionTerms) bool {
+	sameDays := (a.DeliveryDays == nil) == (b.DeliveryDays == nil) &&
+		(a.DeliveryDays == nil || *a.DeliveryDays == *b.DeliveryDays)
+	return sameDays && a.Name == b.Name && a.Amount == b.Amount && a.AdminOnly == b.AdminOnly
 }
 
 // TestAShippingOptionIsRevisedFromWhatWasRead is ADR 0333: the name trimmed,

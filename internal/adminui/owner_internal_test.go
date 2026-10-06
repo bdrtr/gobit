@@ -1034,7 +1034,9 @@ func (p recordingParcels) ReturnOptionsJSON(context.Context, string, string) (js
 	return json.RawMessage(`[{"id":"sopt_walk","name":"Walk"}]`), p.surfaces.reach(ServiceFulfillmentAdmin)
 }
 
-func (p recordingParcels) ReviseShippingOption(context.Context, string, string, int64, bool, string, int64, bool) error {
+func (p recordingParcels) ReviseShippingOption(
+	context.Context, string, string, int64, bool, *int64, *int64, string, int64, bool, *int64, *int64,
+) error {
 	return p.surfaces.reach(ServiceFulfillmentAdmin)
 }
 
@@ -1044,7 +1046,7 @@ func (p recordingParcels) OptionChoicesJSON(context.Context) (json.RawMessage, e
 }
 
 func (p recordingParcels) CreateShippingOption(
-	context.Context, string, string, string, string, int64, string, string, bool, bool,
+	context.Context, string, string, string, string, int64, string, string, bool, bool, *int64, *int64,
 ) (string, error) {
 	return "sopt_walk", p.surfaces.reach(ServiceFulfillmentAdmin)
 }

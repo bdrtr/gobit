@@ -691,6 +691,14 @@ past and is not corrected retroactively.
   or re-records it, and a changed date is a cancel and a new receipt. A
   receipt names no supplier, cost or purchase order: `reference` carries the
   embedder's number.
+- **A delivery estimate is the storefront's.** A shipping option carries how
+  many business days its delivery takes, the least and the most, and a variant
+  its restock moment
+  ([ADR 0421](adr/0421-a-shipping-option-says-how-many-days-it-takes.md));
+  gobit turns no day count into a date, since it holds no shop time zone or
+  calendar, ranks no warehouse by time, and records no promise on the order. A
+  warehouse farther from a region than an option assumes delivers later than
+  the option says.
 - **A reduction's reference price is known only from the day the price history
   began.** Since [ADR 0167](adr/0167-a-price-keeps-its-history.md) every price
   write keeps a snapshot, and a storefront sale price carries the lowest price

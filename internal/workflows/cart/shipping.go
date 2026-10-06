@@ -36,12 +36,22 @@ type quoteRequest struct {
 
 // quotedOption is one option as the fulfillment module priced it.
 type quotedOption struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Amount       int64  `json:"amount"`
-	CurrencyCode string `json:"currency_code"`
-	IsReturn     bool   `json:"is_return"`
-	AdminOnly    bool   `json:"admin_only"`
+	ID           string        `json:"id"`
+	Name         string        `json:"name"`
+	Amount       int64         `json:"amount"`
+	CurrencyCode string        `json:"currency_code"`
+	IsReturn     bool          `json:"is_return"`
+	AdminOnly    bool          `json:"admin_only"`
+	DeliveryDays *DeliveryDays `json:"delivery_days,omitempty"`
+}
+
+// DeliveryDays is how many business days an option's delivery takes, the
+// least and the most, as the fulfillment module answers them (ADR 0421). They
+// are the carrier's working days: the flow turns them into no date and the
+// checkout reads none.
+type DeliveryDays struct {
+	Min int32 `json:"min"`
+	Max int32 `json:"max"`
 }
 
 // quoteResponse is the response schema of the option listing.
@@ -233,12 +243,14 @@ func (w *Workflows) quote(ctx context.Context, snap Snapshot, operator bool) (qu
 	return answer, nil
 }
 
-// ListedOption is one shipping option a cart can take, priced for it.
+// ListedOption is one shipping option a cart can take, priced for it, with
+// how many business days its delivery takes when the option says (ADR 0421).
 type ListedOption struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Amount       int64  `json:"amount"`
-	CurrencyCode string `json:"currency_code"`
+	ID           string        `json:"id"`
+	Name         string        `json:"name"`
+	Amount       int64         `json:"amount"`
+	CurrencyCode string        `json:"currency_code"`
+	DeliveryDays *DeliveryDays `json:"delivery_days,omitempty"`
 }
 
 // ShippingOptionsFor lists the shipping options the cart can take, each priced
@@ -288,6 +300,7 @@ func (w *Workflows) shippingOptions(ctx context.Context, cartID string, operator
 		}
 		out = append(out, ListedOption{
 			ID: option.ID, Name: option.Name, Amount: option.Amount, CurrencyCode: snap.CurrencyCode,
+			DeliveryDays: option.DeliveryDays,
 		})
 	}
 

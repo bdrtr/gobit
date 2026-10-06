@@ -43,9 +43,10 @@ const createShippingOption = `-- name: CreateShippingOption :one
 
 INSERT INTO shipping_options (
     id, name, provider_id, shipping_profile_id, price_type, amount,
-    currency_code, region_id, is_return, admin_only, data, metadata
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at
+    currency_code, region_id, is_return, admin_only, data, metadata,
+    delivery_min_days, delivery_max_days
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+RETURNING id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at, delivery_min_days, delivery_max_days
 `
 
 type CreateShippingOptionParams struct {
@@ -61,6 +62,8 @@ type CreateShippingOptionParams struct {
 	AdminOnly         bool
 	Data              []byte
 	Metadata          []byte
+	DeliveryMinDays   *int32
+	DeliveryMaxDays   *int32
 }
 
 // shipping_options queries.
@@ -88,6 +91,8 @@ func (q *Queries) CreateShippingOption(ctx context.Context, arg CreateShippingOp
 		arg.AdminOnly,
 		arg.Data,
 		arg.Metadata,
+		arg.DeliveryMinDays,
+		arg.DeliveryMaxDays,
 	)
 	var i ShippingOption
 	err := row.Scan(
@@ -106,12 +111,14 @@ func (q *Queries) CreateShippingOption(ctx context.Context, arg CreateShippingOp
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeliveryMinDays,
+		&i.DeliveryMaxDays,
 	)
 	return i, err
 }
 
 const getShippingOption = `-- name: GetShippingOption :one
-SELECT id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at FROM shipping_options
+SELECT id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at, delivery_min_days, delivery_max_days FROM shipping_options
 WHERE id = $1 AND deleted_at IS NULL
 `
 
@@ -134,12 +141,14 @@ func (q *Queries) GetShippingOption(ctx context.Context, id string) (ShippingOpt
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeliveryMinDays,
+		&i.DeliveryMaxDays,
 	)
 	return i, err
 }
 
 const getShippingOptionsByIDs = `-- name: GetShippingOptionsByIDs :many
-SELECT id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at FROM shipping_options
+SELECT id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at, delivery_min_days, delivery_max_days FROM shipping_options
 WHERE id = ANY ($1::text[]) AND deleted_at IS NULL
 ORDER BY id
 `
@@ -171,6 +180,8 @@ func (q *Queries) GetShippingOptionsByIDs(ctx context.Context, ids []string) ([]
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeliveryMinDays,
+			&i.DeliveryMaxDays,
 		); err != nil {
 			return nil, err
 		}
@@ -183,7 +194,7 @@ func (q *Queries) GetShippingOptionsByIDs(ctx context.Context, ids []string) ([]
 }
 
 const listEligibleShippingOptions = `-- name: ListEligibleShippingOptions :many
-SELECT shipping_options.id, shipping_options.name, shipping_options.provider_id, shipping_options.shipping_profile_id, shipping_options.price_type, shipping_options.amount, shipping_options.currency_code, shipping_options.region_id, shipping_options.is_return, shipping_options.admin_only, shipping_options.data, shipping_options.metadata, shipping_options.created_at, shipping_options.updated_at, shipping_options.deleted_at FROM shipping_options
+SELECT shipping_options.id, shipping_options.name, shipping_options.provider_id, shipping_options.shipping_profile_id, shipping_options.price_type, shipping_options.amount, shipping_options.currency_code, shipping_options.region_id, shipping_options.is_return, shipping_options.admin_only, shipping_options.data, shipping_options.metadata, shipping_options.created_at, shipping_options.updated_at, shipping_options.deleted_at, shipping_options.delivery_min_days, shipping_options.delivery_max_days FROM shipping_options
 JOIN shipping_profiles
   ON shipping_profiles.id = shipping_options.shipping_profile_id
  AND shipping_profiles.deleted_at IS NULL
@@ -259,6 +270,8 @@ func (q *Queries) ListEligibleShippingOptions(ctx context.Context, arg ListEligi
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeliveryMinDays,
+			&i.DeliveryMaxDays,
 		); err != nil {
 			return nil, err
 		}
@@ -271,7 +284,7 @@ func (q *Queries) ListEligibleShippingOptions(ctx context.Context, arg ListEligi
 }
 
 const listShippingOptions = `-- name: ListShippingOptions :many
-SELECT id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at FROM shipping_options
+SELECT id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at, delivery_min_days, delivery_max_days FROM shipping_options
 WHERE deleted_at IS NULL
   AND ($1::text IS NULL OR region_id = $1::text)
   AND ($2::text IS NULL OR shipping_profile_id = $2::text)
@@ -322,6 +335,8 @@ func (q *Queries) ListShippingOptions(ctx context.Context, arg ListShippingOptio
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.DeletedAt,
+			&i.DeliveryMinDays,
+			&i.DeliveryMaxDays,
 		); err != nil {
 			return nil, err
 		}
@@ -338,7 +353,7 @@ UPDATE shipping_options
 SET deleted_at = now(),
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at
+RETURNING id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at, delivery_min_days, delivery_max_days
 `
 
 // SoftDeleteShippingOption SOFT deletes the option (plan Section 8).
@@ -365,6 +380,8 @@ func (q *Queries) SoftDeleteShippingOption(ctx context.Context, id string) (Ship
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeliveryMinDays,
+		&i.DeliveryMaxDays,
 	)
 	return i, err
 }
@@ -379,21 +396,25 @@ SET name       = $2,
     admin_only = $7,
     data       = $8,
     metadata   = $9,
+    delivery_min_days = $10,
+    delivery_max_days = $11,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at
+RETURNING id, name, provider_id, shipping_profile_id, price_type, amount, currency_code, region_id, is_return, admin_only, data, metadata, created_at, updated_at, deleted_at, delivery_min_days, delivery_max_days
 `
 
 type UpdateShippingOptionParams struct {
-	ID        string
-	Name      string
-	PriceType string
-	Amount    int64
-	RegionID  string
-	IsReturn  bool
-	AdminOnly bool
-	Data      []byte
-	Metadata  []byte
+	ID              string
+	Name            string
+	PriceType       string
+	Amount          int64
+	RegionID        string
+	IsReturn        bool
+	AdminOnly       bool
+	Data            []byte
+	Metadata        []byte
+	DeliveryMinDays *int32
+	DeliveryMaxDays *int32
 }
 
 func (q *Queries) UpdateShippingOption(ctx context.Context, arg UpdateShippingOptionParams) (ShippingOption, error) {
@@ -407,6 +428,8 @@ func (q *Queries) UpdateShippingOption(ctx context.Context, arg UpdateShippingOp
 		arg.AdminOnly,
 		arg.Data,
 		arg.Metadata,
+		arg.DeliveryMinDays,
+		arg.DeliveryMaxDays,
 	)
 	var i ShippingOption
 	err := row.Scan(
@@ -425,6 +448,8 @@ func (q *Queries) UpdateShippingOption(ctx context.Context, arg UpdateShippingOp
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.DeliveryMinDays,
+		&i.DeliveryMaxDays,
 	)
 	return i, err
 }

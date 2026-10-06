@@ -201,6 +201,9 @@ type CreateOptionInput struct {
 	IsReturn bool
 	// AdminOnly says the option will not reach the storefront surface.
 	AdminOnly bool
+	// DeliveryDays is how many business days the option's delivery takes; nil
+	// says nothing (ADR 0421).
+	DeliveryDays *models.DeliveryDays
 	// Data is the configuration to be handed to the provider.
 	Data map[string]any
 	// Metadata is the store's free-form extra data.
@@ -290,6 +293,9 @@ func (s *Service) validateOptionInput(in CreateOptionInput) (models.ShippingOpti
 	if err := checkTextLen("the region identifier", regionID); err != nil {
 		return models.ShippingOption{}, err
 	}
+	if err := requireDeliveryDays(in.DeliveryDays); err != nil {
+		return models.ShippingOption{}, err
+	}
 
 	return models.ShippingOption{
 		ID:                models.NewShippingOptionID(),
@@ -302,6 +308,7 @@ func (s *Service) validateOptionInput(in CreateOptionInput) (models.ShippingOpti
 		RegionID:          regionID,
 		IsReturn:          in.IsReturn,
 		AdminOnly:         in.AdminOnly,
+		DeliveryDays:      in.DeliveryDays,
 		Data:              in.Data,
 		Metadata:          in.Metadata,
 	}, nil
@@ -429,6 +436,12 @@ type UpdateOptionInput struct {
 	IsReturn *bool
 	// AdminOnly, if given, changes the storefront visibility.
 	AdminOnly *bool
+	// DeliveryDays, if given, changes how many business days the option's
+	// delivery takes (ADR 0421).
+	DeliveryDays *models.DeliveryDays
+	// ClearDeliveryDays takes the option's days off. nil already means "leave
+	// them", so clearing is said apart, and it may not come with DeliveryDays.
+	ClearDeliveryDays bool
 	// Data, if given, REPLACES the provider configuration.
 	Data map[string]any
 	// Metadata, if given, REPLACES the metadata.
@@ -497,6 +510,18 @@ func (s *Service) UpdateShippingOption(
 	}
 	if in.AdminOnly != nil {
 		next.AdminOnly = *in.AdminOnly
+	}
+	switch {
+	case in.ClearDeliveryDays && in.DeliveryDays != nil:
+		return models.ShippingOption{}, errors.Invalid(CodeInvalidInput,
+			"delivery days cannot be written and cleared in one update")
+	case in.ClearDeliveryDays:
+		next.DeliveryDays = nil
+	case in.DeliveryDays != nil:
+		if daysErr := requireDeliveryDays(in.DeliveryDays); daysErr != nil {
+			return models.ShippingOption{}, daysErr
+		}
+		next.DeliveryDays = in.DeliveryDays
 	}
 	if in.Data != nil {
 		next.Data = in.Data

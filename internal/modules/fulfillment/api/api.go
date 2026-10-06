@@ -16,8 +16,8 @@
 // # What NEVER LEAKS into the store surface
 //
 // The storefront response carries only the fields the customer needs to see:
-// identity, name, rate, currency and price type. The three things left out are
-// deliberate:
+// identity, name, rate, currency, price type and how many business days the
+// delivery takes (ADR 0421). The three things left out are deliberate:
 //
 //   - admin_only options are NEVER listed; the filter sits in SQL and the row
 //     is never read on the store path (see service.ListShippingOptionsFor).
@@ -384,21 +384,46 @@ type profileDTO struct {
 // it to be able to edit the option. The store representation is separate
 // ([storeOptionDTO]) and does not carry this field.
 type optionDTO struct {
-	ID                string         `json:"id"`
-	Name              string         `json:"name"`
-	ProviderID        string         `json:"provider_id"`
-	ShippingProfileID string         `json:"shipping_profile_id"`
-	PriceType         string         `json:"price_type"`
-	Amount            int64          `json:"amount"`
-	CurrencyCode      string         `json:"currency_code"`
-	RegionID          string         `json:"region_id"`
-	IsReturn          bool           `json:"is_return"`
-	AdminOnly         bool           `json:"admin_only"`
-	Data              map[string]any `json:"data,omitempty"`
-	Metadata          map[string]any `json:"metadata,omitempty"`
-	Rules             []ruleDTO      `json:"rules,omitempty"`
-	CreatedAt         time.Time      `json:"created_at"`
-	UpdatedAt         time.Time      `json:"updated_at"`
+	ID                string           `json:"id"`
+	Name              string           `json:"name"`
+	ProviderID        string           `json:"provider_id"`
+	ShippingProfileID string           `json:"shipping_profile_id"`
+	PriceType         string           `json:"price_type"`
+	Amount            int64            `json:"amount"`
+	CurrencyCode      string           `json:"currency_code"`
+	RegionID          string           `json:"region_id"`
+	IsReturn          bool             `json:"is_return"`
+	AdminOnly         bool             `json:"admin_only"`
+	DeliveryDays      *deliveryDaysDTO `json:"delivery_days,omitempty"`
+	Data              map[string]any   `json:"data,omitempty"`
+	Metadata          map[string]any   `json:"metadata,omitempty"`
+	Rules             []ruleDTO        `json:"rules,omitempty"`
+	CreatedAt         time.Time        `json:"created_at"`
+	UpdatedAt         time.Time        `json:"updated_at"`
+}
+
+// deliveryDaysDTO is how many business days an option's delivery takes, the
+// least and the most (ADR 0421). They are the carrier's working days; gobit
+// turns them into no date, since it holds no shop time zone or calendar.
+type deliveryDaysDTO struct {
+	Min int32 `json:"min"`
+	Max int32 `json:"max"`
+}
+
+// toDeliveryDaysDTO carries an option's days, nil when it has none.
+func toDeliveryDaysDTO(days *models.DeliveryDays) *deliveryDaysDTO {
+	if days == nil {
+		return nil
+	}
+	return &deliveryDaysDTO{Min: days.Min, Max: days.Max}
+}
+
+// fromDeliveryDaysDTO reads a request's days, nil when it names none.
+func fromDeliveryDaysDTO(days *deliveryDaysDTO) *models.DeliveryDays {
+	if days == nil {
+		return nil
+	}
+	return &models.DeliveryDays{Min: days.Min, Max: days.Max}
 }
 
 // ruleDTO is the external representation of a shipping option rule.
@@ -423,6 +448,8 @@ type quotedOptionDTO struct {
 	ShippingProfileID string `json:"shipping_profile_id"`
 	IsReturn          bool   `json:"is_return"`
 	AdminOnly         bool   `json:"admin_only"`
+	// DeliveryDays is absent on an option that says none (ADR 0421).
+	DeliveryDays *deliveryDaysDTO `json:"delivery_days,omitempty"`
 }
 
 // storeOptionDTO is the STORE surface's representation of a quoted option.
@@ -437,6 +464,9 @@ type storeOptionDTO struct {
 	Amount       int64  `json:"amount"`
 	CurrencyCode string `json:"currency_code"`
 	PriceType    string `json:"price_type"`
+	// DeliveryDays is how many business days the delivery takes, absent on an
+	// option that says none (ADR 0421).
+	DeliveryDays *deliveryDaysDTO `json:"delivery_days,omitempty"`
 }
 
 // fulfillmentDTO is the external representation of a fulfillment.
@@ -507,6 +537,7 @@ func toOptionDTO(option models.ShippingOption) optionDTO {
 		RegionID:          option.RegionID,
 		IsReturn:          option.IsReturn,
 		AdminOnly:         option.AdminOnly,
+		DeliveryDays:      toDeliveryDaysDTO(option.DeliveryDays),
 		Data:              option.Data,
 		Metadata:          option.Metadata,
 		Rules:             rules,
@@ -540,6 +571,7 @@ func toQuotedOptionDTO(quoted service.QuotedOption) quotedOptionDTO {
 		ShippingProfileID: quoted.Option.ShippingProfileID,
 		IsReturn:          quoted.Option.IsReturn,
 		AdminOnly:         quoted.Option.AdminOnly,
+		DeliveryDays:      toDeliveryDaysDTO(quoted.Option.DeliveryDays),
 	}
 }
 
@@ -551,6 +583,7 @@ func toStoreOptionDTO(quoted service.QuotedOption) storeOptionDTO {
 		Amount:       quoted.Amount,
 		CurrencyCode: quoted.CurrencyCode,
 		PriceType:    quoted.Option.PriceType.String(),
+		DeliveryDays: toDeliveryDaysDTO(quoted.Option.DeliveryDays),
 	}
 }
 

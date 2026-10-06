@@ -81,6 +81,8 @@ type ShippingOption struct {
 	CreatedAt         pgtype.Timestamptz
 	UpdatedAt         pgtype.Timestamptz
 	DeletedAt         pgtype.Timestamptz
+	DeliveryMinDays   *int32
+	DeliveryMaxDays   *int32
 }
 
 type ShippingOptionRule struct {

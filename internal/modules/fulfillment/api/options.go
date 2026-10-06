@@ -23,13 +23,16 @@ type createOptionRequest struct {
 	PriceType         string `json:"price_type"`
 	// Amount is an INTEGER in minor units and is meaningful only on "flat"
 	// options.
-	Amount       int64          `json:"amount"`
-	CurrencyCode string         `json:"currency_code"`
-	RegionID     string         `json:"region_id"`
-	IsReturn     bool           `json:"is_return"`
-	AdminOnly    bool           `json:"admin_only"`
-	Data         map[string]any `json:"data"`
-	Metadata     map[string]any `json:"metadata"`
+	Amount       int64  `json:"amount"`
+	CurrencyCode string `json:"currency_code"`
+	RegionID     string `json:"region_id"`
+	IsReturn     bool   `json:"is_return"`
+	AdminOnly    bool   `json:"admin_only"`
+	// DeliveryDays is how many business days the delivery takes, the least
+	// and the most; left out, the option says none (ADR 0421).
+	DeliveryDays *deliveryDaysDTO `json:"delivery_days"`
+	Data         map[string]any   `json:"data"`
+	Metadata     map[string]any   `json:"metadata"`
 }
 
 // createOption creates a new shipping option.
@@ -52,6 +55,7 @@ func (h *Handler) createOption(w http.ResponseWriter, r *http.Request) {
 		RegionID:          body.RegionID,
 		IsReturn:          body.IsReturn,
 		AdminOnly:         body.AdminOnly,
+		DeliveryDays:      fromDeliveryDaysDTO(body.DeliveryDays),
 		Data:              body.Data,
 		Metadata:          body.Metadata,
 	})
@@ -121,14 +125,18 @@ func (h *Handler) getOption(w http.ResponseWriter, r *http.Request) {
 // provider_id and shipping_profile_id are ABSENT HERE; the rationale is in the
 // [service.UpdateOptionInput] documentation.
 type updateOptionRequest struct {
-	Name      *string        `json:"name"`
-	PriceType *string        `json:"price_type"`
-	Amount    *int64         `json:"amount"`
-	RegionID  *string        `json:"region_id"`
-	IsReturn  *bool          `json:"is_return"`
-	AdminOnly *bool          `json:"admin_only"`
-	Data      map[string]any `json:"data"`
-	Metadata  map[string]any `json:"metadata"`
+	Name      *string `json:"name"`
+	PriceType *string `json:"price_type"`
+	Amount    *int64  `json:"amount"`
+	RegionID  *string `json:"region_id"`
+	IsReturn  *bool   `json:"is_return"`
+	AdminOnly *bool   `json:"admin_only"`
+	// DeliveryDays, sent, replaces the option's days; ClearDeliveryDays takes
+	// them off, and the two may not come together (ADR 0421).
+	DeliveryDays      *deliveryDaysDTO `json:"delivery_days"`
+	ClearDeliveryDays bool             `json:"clear_delivery_days"`
+	Data              map[string]any   `json:"data"`
+	Metadata          map[string]any   `json:"metadata"`
 }
 
 // updateOption updates the given fields of the option.
@@ -142,14 +150,16 @@ func (h *Handler) updateOption(w http.ResponseWriter, r *http.Request) {
 	}
 
 	option, err := h.svc.UpdateShippingOption(ctx, chi.URLParam(r, "id"), service.UpdateOptionInput{
-		Name:      body.Name,
-		PriceType: body.PriceType,
-		Amount:    body.Amount,
-		RegionID:  body.RegionID,
-		IsReturn:  body.IsReturn,
-		AdminOnly: body.AdminOnly,
-		Data:      body.Data,
-		Metadata:  body.Metadata,
+		Name:              body.Name,
+		PriceType:         body.PriceType,
+		Amount:            body.Amount,
+		RegionID:          body.RegionID,
+		IsReturn:          body.IsReturn,
+		AdminOnly:         body.AdminOnly,
+		DeliveryDays:      fromDeliveryDaysDTO(body.DeliveryDays),
+		ClearDeliveryDays: body.ClearDeliveryDays,
+		Data:              body.Data,
+		Metadata:          body.Metadata,
 	})
 	if err != nil {
 		corehttp.WriteError(ctx, w, err)

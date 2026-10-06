@@ -261,8 +261,11 @@ func storeEndpoints() []endpointExpectation {
 		},
 		{
 			method: http.MethodGet, path: "/store/v1/carts/{id}/shipping-options", status: "200",
-			response: shippingOptionDTO{ID: "so_1", Name: "Courier", Amount: 4_900, CurrencyCode: "TRY"},
-			list:     true,
+			response: shippingOptionDTO{
+				ID: "so_1", Name: "Courier", Amount: 4_900, CurrencyCode: "TRY",
+				DeliveryDays: &deliveryDaysDTO{Min: 3, Max: 5},
+			},
+			list: true,
 		},
 		{
 			method: http.MethodPost, path: "/store/v1/carts/{id}/shipping-methods", status: "201",

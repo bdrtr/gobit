@@ -47,7 +47,12 @@ func describeOptionRecords(d *openapi.Doc) {
 			"\"admin_only\" keeps the option off the storefront while leaving it usable from " +
 			"the admin surface — a courier an operator can pick for a phone order but a " +
 			"shopper cannot choose. \"is_return\" marks an option that ships the OTHER WAY: " +
-			"a parcel on it brings back the order return its return_id names.",
+			"a parcel on it brings back the order return its return_id names." +
+			"\n\n" +
+			"\"delivery_days\" is how many BUSINESS days the delivery takes, the least and " +
+			"the most, 0 <= min <= max <= 365 (422 fulfillment_invalid_input otherwise); left " +
+			"out, the option says none. They are the carrier's working days: gobit turns them " +
+			"into no date and the checkout reads none (ADR 0421).",
 		RequestBody: d.RequestBody(createOptionRequest{}),
 		Responses: map[string]any{
 			"201": openapi.Response("The created option", d.Item(optionDTO{})),
@@ -105,7 +110,11 @@ func describeOptionRecords(d *openapi.Doc) {
 			"an option can even belong to, and moving an option between them after carts " +
 			"have chosen it would change what those carts agreed to; creating a new option " +
 			"and retiring the old one says the same thing without rewriting history." +
-			minorUnitNote,
+			minorUnitNote +
+			"\n\n" +
+			"\"delivery_days\" replaces the option's business days, held as on creation; " +
+			"\"clear_delivery_days\" takes them off, and the two may not be sent together " +
+			"(ADR 0421).",
 		RequestBody: d.RequestBody(updateOptionRequest{}),
 		Responses: map[string]any{
 			"200": openapi.Response("The updated option", d.Item(optionDTO{})),

@@ -28,7 +28,7 @@ func TestThePanelRevisesAShippingOptionFromWhatItRead(t *testing.T) {
 	profile := newProfile(ctx, t, svc)
 	option := newOption(ctx, t, svc, profile.ID, 2_500)
 
-	require.NoError(t, surface.ReviseShippingOption(ctx, option.ID, option.Name, 2_500, false, " Economy ", 1_750, true))
+	require.NoError(t, surface.ReviseShippingOption(ctx, option.ID, option.Name, 2_500, false, nil, nil, " Economy ", 1_750, true, nil, nil))
 	stored, err := svc.GetShippingOption(ctx, option.ID)
 	require.NoError(t, err)
 	assert.Equal(t, models.OptionTerms{Name: "Economy", Amount: 1_750, AdminOnly: true}, stored.Terms())
@@ -41,7 +41,7 @@ func TestThePanelRevisesAShippingOptionFromWhatItRead(t *testing.T) {
 		"a fee read before the revision":        {Name: "Economy", Amount: 2_500, AdminOnly: true},
 		"a visibility read before the revision": {Name: "Economy", Amount: 1_750},
 	} {
-		err = surface.ReviseShippingOption(ctx, option.ID, read.Name, read.Amount, read.AdminOnly, "Express", 3_000, false)
+		err = surface.ReviseShippingOption(ctx, option.ID, read.Name, read.Amount, read.AdminOnly, nil, nil, "Express", 3_000, false, nil, nil)
 		require.Error(t, err, label)
 		assert.Equal(t, service.CodeOptionRevised, errors.CodeOf(err), "%s: %v", label, err)
 		assert.Contains(t, err.Error(), `it is "Economy" now`, label)
@@ -55,19 +55,19 @@ func TestThePanelRevisesAShippingOptionFromWhatItRead(t *testing.T) {
 		ShippingProfileID: profile.ID, PriceType: "calculated", CurrencyCode: testCurrency,
 	})
 	require.NoError(t, err)
-	err = surface.ReviseShippingOption(ctx, calculated.ID, calculated.Name, 0, false, calculated.Name, 500, false)
+	err = surface.ReviseShippingOption(ctx, calculated.ID, calculated.Name, 0, false, nil, nil, calculated.Name, 500, false, nil, nil)
 	require.Error(t, err)
 	assert.True(t, errors.IsInvalid(err), "a fee on a calculated option: %v", err)
 	assert.Contains(t, err.Error(), "the fee comes from the provider")
-	require.NoError(t, surface.ReviseShippingOption(ctx, calculated.ID, calculated.Name, 0, false, "Carrier rate", 0, true),
+	require.NoError(t, surface.ReviseShippingOption(ctx, calculated.ID, calculated.Name, 0, false, nil, nil, "Carrier rate", 0, true, nil, nil),
 		"a calculated option is renamed and hidden with no fee of its own")
-	err = surface.ReviseShippingOption(ctx, calculated.ID, calculated.Name, 0, false, calculated.Name, 500, false)
+	err = surface.ReviseShippingOption(ctx, calculated.ID, calculated.Name, 0, false, nil, nil, calculated.Name, 500, false, nil, nil)
 	require.Error(t, err)
 	assert.Equal(t, service.CodeOptionRevised, errors.CodeOf(err),
 		"a stale read is told the option moved, whatever else it sends: %v", err)
 
 	require.NoError(t, svc.DeleteShippingOption(ctx, option.ID))
-	err = surface.ReviseShippingOption(ctx, option.ID, "Economy", 1_750, true, "Gone", 0, false)
+	err = surface.ReviseShippingOption(ctx, option.ID, "Economy", 1_750, true, nil, nil, "Gone", 0, false, nil, nil)
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "a deleted option: %v", err)
 }

@@ -236,7 +236,9 @@ func describeEligibility(d *openapi.Doc) {
 			"(GET /store/v1/shipping-options) or appears without these fields: the " +
 			"two endpoints read the same catalog, their representations differ. " +
 			"Cart facts are considered TRUSTED here, so options with a rule " +
-			"depending on subtotal, item_count and total_weight are listed as well.",
+			"depending on subtotal, item_count and total_weight are listed as well. " +
+			"delivery_days is how many business days the delivery takes, absent on an " +
+			"option that says none (ADR 0421).",
 		Parameters: eligibilityParameters(),
 		Responses: map[string]any{
 			"200": openapi.Response("Eligible options (admin representation)",
@@ -256,7 +258,10 @@ func describeEligibility(d *openapi.Doc) {
 			"options with a rule depending on these three facts are removed from " +
 			"the list entirely, and the rate of \"calculated\" options is only a " +
 			"PRESENTATION — the real rate is determined at the payment step with " +
-			"the cart's real facts.",
+			"the cart's real facts. delivery_days is how many BUSINESS days the " +
+			"delivery takes, the least and the most, absent on an option that says " +
+			"none: the carrier's working days, which gobit turns into no date, so the " +
+			"storefront renders them in its own calendar (ADR 0421).",
 		Parameters: eligibilityParameters(),
 		Responses: map[string]any{
 			"200": openapi.Response("Eligible options (storefront representation)",

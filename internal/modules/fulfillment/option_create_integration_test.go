@@ -43,7 +43,7 @@ func TestThePanelWritesAShippingOptionOnTheRealSchema(t *testing.T) {
 		"the profile just written comes first")
 
 	id, err := surface.CreateShippingOption(ctx, "Panel courier", manual.ID, profile.ID, "flat", 1_990,
-		testCurrency, testRegion, false, true)
+		testCurrency, testRegion, false, true, nil, nil)
 	require.NoError(t, err)
 	option, err := svc.GetShippingOption(ctx, id)
 	require.NoError(t, err)
@@ -51,7 +51,7 @@ func TestThePanelWritesAShippingOptionOnTheRealSchema(t *testing.T) {
 	assert.Equal(t, manual.ID+"|"+profile.ID+"|"+testCurrency+"|"+testRegion,
 		option.ProviderID+"|"+option.ShippingProfileID+"|"+option.CurrencyCode+"|"+option.RegionID)
 
-	_, err = surface.CreateShippingOption(ctx, "Orphan", manual.ID, "sprof_missing", "flat", 0, testCurrency, "", false, false)
+	_, err = surface.CreateShippingOption(ctx, "Orphan", manual.ID, "sprof_missing", "flat", 0, testCurrency, "", false, false, nil, nil)
 	require.Error(t, err)
 	assert.True(t, errors.IsNotFound(err), "a profile that is not there: %v", err)
 }

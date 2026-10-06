@@ -82,6 +82,23 @@ func requireAmount(label string, amount int64) error {
 	return nil
 }
 
+// requireDeliveryDays validates how many business days an option says its
+// delivery takes (ADR 0421): nil says nothing, and a pair holds 0 <= Min <= Max
+// <= [models.MaxDeliveryDays]. The schema holds the same range
+// (shipping_options_delivery_days_range); refusing here says which bound the
+// figures crossed.
+func requireDeliveryDays(days *models.DeliveryDays) error {
+	if days == nil {
+		return nil
+	}
+	if days.Min < 0 || days.Min > days.Max || days.Max > models.MaxDeliveryDays {
+		return errors.Invalid(CodeInvalidInput,
+			"an option's delivery days are a minimum and a maximum with 0 <= minimum <= maximum <= %d: %d to %d given",
+			models.MaxDeliveryDays, days.Min, days.Max)
+	}
+	return nil
+}
+
 // requireRange validates that a counter-like field is between zero and
 // upperBound.
 //

@@ -13,8 +13,9 @@
 -- name: CreateShippingOption :one
 INSERT INTO shipping_options (
     id, name, provider_id, shipping_profile_id, price_type, amount,
-    currency_code, region_id, is_return, admin_only, data, metadata
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    currency_code, region_id, is_return, admin_only, data, metadata,
+    delivery_min_days, delivery_max_days
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 RETURNING *;
 
 -- name: GetShippingOption :one
@@ -95,6 +96,8 @@ SET name       = $2,
     admin_only = $7,
     data       = $8,
     metadata   = $9,
+    delivery_min_days = $10,
+    delivery_max_days = $11,
     updated_at = now()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING *;

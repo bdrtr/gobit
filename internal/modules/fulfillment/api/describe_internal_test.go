@@ -255,11 +255,11 @@ func describedEndpoints() []endpointExpectation {
 
 		{
 			method: http.MethodGet, path: pathAdminEligible, status: "200",
-			response: quotedOptionDTO{}, list: true,
+			response: quotedOptionDTO{DeliveryDays: &deliveryDaysDTO{}}, list: true,
 		},
 		{
 			method: http.MethodGet, path: pathStoreOptions, status: "200",
-			response: storeOptionDTO{}, list: true,
+			response: storeOptionDTO{DeliveryDays: &deliveryDaysDTO{}}, list: true,
 		},
 
 		{
@@ -328,9 +328,10 @@ func describedEndpoints() []endpointExpectation {
 // declares the field and the sample has to write it.
 func filledOption() optionDTO {
 	return optionDTO{
-		Data:     map[string]any{"k": "v"},
-		Metadata: map[string]any{"k": "v"},
-		Rules:    []ruleDTO{{}},
+		DeliveryDays: &deliveryDaysDTO{},
+		Data:         map[string]any{"k": "v"},
+		Metadata:     map[string]any{"k": "v"},
+		Rules:        []ruleDTO{{}},
 	}
 }
 

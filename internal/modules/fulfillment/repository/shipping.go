@@ -181,6 +181,7 @@ func (r *Repository) CreateShippingOption(
 		return models.ShippingOption{}, err
 	}
 
+	minDays, maxDays := fromDeliveryDays(option.DeliveryDays)
 	row, err := r.queries(ctx).CreateShippingOption(ctx, fulfillmentdb.CreateShippingOptionParams{
 		ID:                option.ID,
 		Name:              option.Name,
@@ -194,6 +195,8 @@ func (r *Repository) CreateShippingOption(
 		AdminOnly:         option.AdminOnly,
 		Data:              data,
 		Metadata:          meta,
+		DeliveryMinDays:   minDays,
+		DeliveryMaxDays:   maxDays,
 	})
 	if err != nil {
 		return models.ShippingOption{}, classify(err, codeQueryFailed, "could not create shipping option")
@@ -341,16 +344,19 @@ func (r *Repository) UpdateShippingOption(
 		return models.ShippingOption{}, err
 	}
 
+	minDays, maxDays := fromDeliveryDays(option.DeliveryDays)
 	row, err := r.queries(ctx).UpdateShippingOption(ctx, fulfillmentdb.UpdateShippingOptionParams{
-		ID:        option.ID,
-		Name:      option.Name,
-		PriceType: option.PriceType.String(),
-		Amount:    option.Amount,
-		RegionID:  option.RegionID,
-		IsReturn:  option.IsReturn,
-		AdminOnly: option.AdminOnly,
-		Data:      data,
-		Metadata:  meta,
+		ID:              option.ID,
+		Name:            option.Name,
+		PriceType:       option.PriceType.String(),
+		Amount:          option.Amount,
+		RegionID:        option.RegionID,
+		IsReturn:        option.IsReturn,
+		AdminOnly:       option.AdminOnly,
+		Data:            data,
+		Metadata:        meta,
+		DeliveryMinDays: minDays,
+		DeliveryMaxDays: maxDays,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

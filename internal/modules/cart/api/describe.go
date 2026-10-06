@@ -255,7 +255,10 @@ func describeShipping(d *openapi.Doc) {
 		Summary: "Lists the shipping options the cart can take, each priced for the cart. " +
 			"The subtotal, the item count and the weight are the server's, read from the cart, " +
 			"so an option whose rule reads them is listed when the cart meets it; every option " +
-			"listed is one the shipping method write accepts (ADR 0292).",
+			"listed is one the shipping method write accepts (ADR 0292). delivery_days is how " +
+			"many BUSINESS days the delivery takes, the least and the most, absent on an option " +
+			"that says none: the carrier's working days, which gobit turns into no date, so the " +
+			"storefront renders them in its own calendar (ADR 0421).",
 		Responses: map[string]any{
 			"200": openapi.Response("The options, all on one page", d.List(shippingOptionDTO{})),
 		},

@@ -49,6 +49,8 @@ const (
 	fieldOptionRegion   = "region_id"
 	fieldOptionReturn   = "is_return"
 	fieldOptionAdmin    = "admin_only"
+	fieldOptionMinDays  = "delivery_min_days"
+	fieldOptionMaxDays  = "delivery_max_days"
 )
 
 // priceFlat is the price type whose fee the option carries; the other,
@@ -69,6 +71,10 @@ const (
 	formOptionProfile      = "shipping_profile_id"
 	formOptionRegion       = "region_id"
 	formOptionReturn       = "is_return"
+	formOptionMinDays      = "delivery_min_days"
+	formOptionMaxDays      = "delivery_max_days"
+	formReadMinDays        = "read_delivery_min_days"
+	formReadMaxDays        = "read_delivery_max_days"
 )
 
 // ShippingOptionCreator is the narrow surface a shipping option is written
@@ -78,10 +84,12 @@ type ShippingOptionCreator interface {
 	// profiles an option is written on.
 	OptionChoicesJSON(ctx context.Context) (json.RawMessage, error)
 	// CreateShippingOption writes an option and returns its id; the fee is in
-	// the currency's minor units, and an empty region is every region.
+	// the currency's minor units, an empty region is every region, and the
+	// days are how many business days its delivery takes, both nil for none
+	// (ADR 0421).
 	CreateShippingOption(
 		ctx context.Context, name, providerID, profileID, priceType string, amount int64,
-		currency, regionID string, isReturn, adminOnly bool,
+		currency, regionID string, isReturn, adminOnly bool, minDays, maxDays *int64,
 	) (string, error)
 }
 
@@ -108,12 +116,13 @@ type optionRegion struct {
 // ShippingOptionReviser is the narrow surface a shipping option's terms are
 // revised through (ADR 0333).
 type ShippingOptionReviser interface {
-	// ReviseShippingOption writes the option's name, fee in minor units and
-	// storefront visibility, and refuses when they are no longer the ones
-	// read.
+	// ReviseShippingOption writes the option's name, fee in minor units,
+	// storefront visibility and delivery days, and refuses when they are no
+	// longer the ones read (ADR 0421).
 	ReviseShippingOption(
 		ctx context.Context, id, readName string, readAmount int64, readAdminOnly bool,
-		name string, amount int64, adminOnly bool,
+		readMinDays, readMaxDays *int64,
+		name string, amount int64, adminOnly bool, minDays, maxDays *int64,
 	) error
 }
 
@@ -121,20 +130,27 @@ type ShippingOptionReviser interface {
 // offers: the option as drawn, or what was typed in the form a refusal came
 // back to.
 type shippingOptionRow struct {
-	ID            string
-	Name          string
-	Provider      string
-	Profile       string
-	PriceType     string
-	Amount        int64
-	Currency      string
-	Fee           string
-	Region        string
-	IsReturn      bool
-	AdminOnly     bool
+	ID        string
+	Name      string
+	Provider  string
+	Profile   string
+	PriceType string
+	Amount    int64
+	Currency  string
+	Fee       string
+	Region    string
+	IsReturn  bool
+	AdminOnly bool
+	// MinDays and MaxDays are the option's business days as drawn, empty when
+	// it says none; Days prints them (ADR 0421).
+	MinDays       string
+	MaxDays       string
+	Days          string
 	FormName      string
 	FormAmount    string
 	FormAdminOnly bool
+	FormMinDays   string
+	FormMaxDays   string
 	Refused       bool
 }
 
@@ -209,12 +225,43 @@ func (u *UI) writeShippingOption(r *http.Request, creator ShippingOptionCreator,
 		}
 	}
 
-	_, err := creator.CreateShippingOption(ctx, name,
+	minDays, maxDays, err := formDays(r.PostFormValue(formOptionMinDays), r.PostFormValue(formOptionMaxDays))
+	if err != nil {
+		return err
+	}
+
+	_, err = creator.CreateShippingOption(ctx, name,
 		r.PostFormValue(formOptionProvider), r.PostFormValue(formOptionProfile), r.PostFormValue(formOptionPriceType),
 		amount, currency, regionID,
-		r.PostFormValue(formOptionReturn) != "", r.PostFormValue(formOptionAdminOnly) != "")
+		r.PostFormValue(formOptionReturn) != "", r.PostFormValue(formOptionAdminOnly) != "", minDays, maxDays)
 
 	return err
+}
+
+// formDays reads two day fields: both blank says none, and a figure that is not
+// a whole number is refused here; the module holds the pair to an option's
+// range (ADR 0421).
+func formDays(minText, maxText string) (minDays, maxDays *int64, err error) {
+	read := func(text string) (*int64, error) {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return nil, nil
+		}
+		value, parseErr := strconv.ParseInt(text, 10, 64)
+		if parseErr != nil {
+			return nil, errors.Invalid("admin_ui_delivery_days",
+				"Delivery days are whole numbers of business days: %q is not one.", text)
+		}
+		return &value, nil
+	}
+	if minDays, err = read(minText); err != nil {
+		return nil, nil, err
+	}
+	if maxDays, err = read(maxText); err != nil {
+		return nil, nil, err
+	}
+
+	return minDays, maxDays, nil
 }
 
 // optionRegions reads the regions a new option may be offered in.
@@ -318,9 +365,14 @@ func (u *UI) reviseShippingOption(w http.ResponseWriter, r *http.Request) {
 func (u *UI) sendOptionRevision(r *http.Request, reviser ShippingOptionReviser, id, name string) error {
 	readAmount, amountErr := strconv.ParseInt(r.PostFormValue(formReadAmount), 10, 64)
 	readAdminOnly, adminErr := strconv.ParseBool(r.PostFormValue(formReadAdminOnly))
-	if amountErr != nil || adminErr != nil {
+	readMin, readMax, daysErr := formDays(r.PostFormValue(formReadMinDays), r.PostFormValue(formReadMaxDays))
+	if amountErr != nil || adminErr != nil || daysErr != nil {
 		return errors.Invalid("admin_ui_read_option",
-			"The fee or the visibility the row was drawn with could not be read; draw the list again.")
+			"The fee, the visibility or the days the row was drawn with could not be read; draw the list again.")
+	}
+	minDays, maxDays, err := formDays(r.PostFormValue(formOptionMinDays), r.PostFormValue(formOptionMaxDays))
+	if err != nil {
+		return err
 	}
 	var amount int64
 	if r.PostFormValue(formOptionPriceType) == priceFlat {
@@ -332,8 +384,8 @@ func (u *UI) sendOptionRevision(r *http.Request, reviser ShippingOptionReviser, 
 	}
 
 	return reviser.ReviseShippingOption(r.Context(), id,
-		r.PostFormValue(formReadName), readAmount, readAdminOnly,
-		name, amount, r.PostFormValue(formOptionAdminOnly) != "")
+		r.PostFormValue(formReadName), readAmount, readAdminOnly, readMin, readMax,
+		name, amount, r.PostFormValue(formOptionAdminOnly) != "", minDays, maxDays)
 }
 
 // renderShippingOptions lists the options, newest first, with a refused
@@ -359,6 +411,7 @@ func (u *UI) renderShippingOptions(
 		Fields: []string{
 			fieldID, fieldName, fieldOptionProvider, fieldOptionProfile, fieldOptionPrice, fieldAmount,
 			fieldCurrencyCod, fieldOptionRegion, fieldOptionReturn, fieldOptionAdmin,
+			fieldOptionMinDays, fieldOptionMaxDays,
 		},
 		// One more than the page, so whether there is a next one comes out of
 		// this read.
@@ -418,11 +471,32 @@ func shippingOptionOf(rec query.Record, scales map[string]int, typed url.Values,
 		row.FormAmount, _ = formatAmount(row.Amount, row.Currency, scales)
 		row.Fee = minorText(row.Amount, row.Currency, scales)
 	}
+	minDays, hasMin := intValue(rec[fieldOptionMinDays])
+	maxDays, hasMax := intValue(rec[fieldOptionMaxDays])
+	if hasMin && hasMax {
+		row.MinDays, row.MaxDays = strconv.Itoa(minDays), strconv.Itoa(maxDays)
+		row.Days = daysText(minDays, maxDays)
+	}
 	row.FormName, row.FormAdminOnly = row.Name, row.AdminOnly
+	row.FormMinDays, row.FormMaxDays = row.MinDays, row.MaxDays
 	if revised != "" && row.ID == revised {
 		row.FormName, row.FormAmount = typed.Get(formGroupName), typed.Get(formOptionAmount)
 		row.FormAdminOnly, row.Refused = typed.Get(formOptionAdminOnly) != "", true
+		row.FormMinDays, row.FormMaxDays = typed.Get(formOptionMinDays), typed.Get(formOptionMaxDays)
 	}
 
 	return row
+}
+
+// daysText prints an option's business days: one figure when the least and the
+// most agree, a range otherwise.
+func daysText(minDays, maxDays int) string {
+	if minDays == maxDays {
+		if minDays == 1 {
+			return "1 business day"
+		}
+		return strconv.Itoa(minDays) + " business days"
+	}
+
+	return strconv.Itoa(minDays) + "–" + strconv.Itoa(maxDays) + " business days"
 }

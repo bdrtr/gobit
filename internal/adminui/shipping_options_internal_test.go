@@ -21,16 +21,32 @@ import (
 type fakeOptionReviser struct {
 	fakeParcelMover
 	revised []string
-	err     error
+	// days records each revision's read and written days, "read->written",
+	// a missing pair printed as "-" (ADR 0421).
+	days []string
+	err  error
 }
 
 func (f *fakeOptionReviser) ReviseShippingOption(
 	_ context.Context, id, readName string, readAmount int64, readAdminOnly bool,
-	name string, amount int64, adminOnly bool,
+	readMinDays, readMaxDays *int64,
+	name string, amount int64, adminOnly bool, minDays, maxDays *int64,
 ) error {
 	f.revised = append(f.revised, fmt.Sprintf("%s|%s|%d|%t|%s|%d|%t",
 		id, readName, readAmount, readAdminOnly, name, amount, adminOnly))
+	f.days = append(f.days, dayPair(readMinDays, readMaxDays)+"->"+dayPair(minDays, maxDays))
 	return f.err
+}
+
+// dayPair prints two day figures as "min-max", a missing one as "-".
+func dayPair(minDays, maxDays *int64) string {
+	text := func(v *int64) string {
+		if v == nil {
+			return "-"
+		}
+		return fmt.Sprint(*v)
+	}
+	return text(minDays) + "/" + text(maxDays)
 }
 
 // optionsCatalog holds a flat option, a calculated one the storefront does
@@ -236,6 +252,8 @@ type fakeOptionWriter struct {
 	choiceErr error
 	written   []string
 	writeErr  error
+	// days records each write's days, "min/max", a missing one "-".
+	days []string
 }
 
 func (f *fakeOptionWriter) OptionChoicesJSON(context.Context) (json.RawMessage, error) {
@@ -244,10 +262,11 @@ func (f *fakeOptionWriter) OptionChoicesJSON(context.Context) (json.RawMessage, 
 
 func (f *fakeOptionWriter) CreateShippingOption(
 	_ context.Context, name, providerID, profileID, priceType string, amount int64,
-	currency, regionID string, isReturn, adminOnly bool,
+	currency, regionID string, isReturn, adminOnly bool, minDays, maxDays *int64,
 ) (string, error) {
 	f.written = append(f.written, fmt.Sprintf("%s|%s|%s|%s|%d|%s|%s|%t|%t",
 		name, providerID, profileID, priceType, amount, currency, regionID, isReturn, adminOnly))
+	f.days = append(f.days, dayPair(minDays, maxDays))
 	return "sopt_new", f.writeErr
 }
 

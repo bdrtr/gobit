@@ -231,6 +231,22 @@ design. It is fixed with `1.0.0`.
 
 ### Fixes
 
+- **A shipping option says how many days it takes** (ADR 0421). **For
+  integrators:** `POST /admin/v1/shipping-options` takes `delivery_days`
+  (`{"min":3,"max":5}`, business days, 0 <= min <= max <= 365, both or
+  neither, else 422 `fulfillment_invalid_input`), `PATCH
+  /admin/v1/shipping-options/{id}` replaces it or takes it off with
+  `clear_delivery_days` (not both); the option record,
+  `GET /store/v1/shipping-options`, `GET /admin/v1/shipping-options/eligible`
+  and both carts' `shipping-options` listings carry it, absent on an option
+  that says none; the `shipping_option` read-layer entity offers
+  `delivery_min_days` and `delivery_max_days`. gobit turns no day count into a
+  date: the storefront renders it. The fulfillment module's panel surface takes
+  the two figures on `CreateShippingOption` and the read and written pairs on
+  `ReviseShippingOption`. **For operators:** the shipping options page prints
+  each option's days and its forms write them; fulfillment migration 000007
+  adds the two columns, and existing options carry none.
+
 - **A return's parcel is opened from its return** (ADR 0413, D266). **For
   operators:** the order page lists each return's parcels under the return and,
   while it is requested, opens one on a return option for the units it still

@@ -12,11 +12,12 @@ import (
 // revised the option since the caller read it (ADR 0333).
 const CodeOptionRevised = "fulfillment_shipping_option_revised"
 
-// ReviseShippingOption renames the option, sets its fee and says whether the
-// storefront offers it, writing them only while they are the ones the caller
-// read, and refuses with [CodeOptionRevised] when another writer changed any
-// of them since (ADR 0333). The name is checked as a new option's is and the
-// fee as a flat option's; a calculated option keeps a fee of zero, its fee
+// ReviseShippingOption renames the option, sets its fee, says whether the
+// storefront offers it and how many business days its delivery takes, writing
+// them only while they are the ones the caller read, and refuses with
+// [CodeOptionRevised] when another writer changed any of them since (ADR 0333,
+// ADR 0421). The name is checked as a new option's is, the days as a new
+// option's are, and the fee as a flat option's; a calculated option keeps a fee of zero, its fee
 // being the provider's, which the schema holds. The provider, the profile,
 // the price type and the region are kept.
 func (s *Service) ReviseShippingOption(
@@ -30,6 +31,9 @@ func (s *Service) ReviseShippingOption(
 		return models.ShippingOption{}, err
 	}
 	if err := requireAmount("the shipping fee", next.Amount); err != nil {
+		return models.ShippingOption{}, err
+	}
+	if err := requireDeliveryDays(next.DeliveryDays); err != nil {
 		return models.ShippingOption{}, err
 	}
 

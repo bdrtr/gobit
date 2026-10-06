@@ -7,6 +7,7 @@ import (
 
 	"github.com/bdrtr/gobit/core/errors"
 	coreprovider "github.com/bdrtr/gobit/core/provider"
+	"github.com/bdrtr/gobit/internal/modules/fulfillment/models"
 )
 
 // This file is the fulfillment module's CROSS-MODULE surface (ADR 0001,
@@ -126,7 +127,8 @@ type interopListRequest struct {
 //	      "provider_id":         "manual",
 //	      "shipping_profile_id": "sprof_...",
 //	      "is_return":           false,
-//	      "admin_only":          false
+//	      "admin_only":          false,
+//	      "delivery_days":       {"min": 3, "max": 5}  // absent when the option says none
 //	    }
 //	  ]
 //	}
@@ -149,6 +151,23 @@ type interopOption struct {
 	ShippingProfileID string `json:"shipping_profile_id"`
 	IsReturn          bool   `json:"is_return"`
 	AdminOnly         bool   `json:"admin_only"`
+	// DeliveryDays is how many business days the option's delivery takes,
+	// absent when it says none (ADR 0421).
+	DeliveryDays *interopDeliveryDays `json:"delivery_days,omitempty"`
+}
+
+// interopDeliveryDays is an option's business days, the least and the most.
+type interopDeliveryDays struct {
+	Min int32 `json:"min"`
+	Max int32 `json:"max"`
+}
+
+// toInteropDeliveryDays carries the option's days, nil when it has none.
+func toInteropDeliveryDays(days *models.DeliveryDays) *interopDeliveryDays {
+	if days == nil {
+		return nil
+	}
+	return &interopDeliveryDays{Min: days.Min, Max: days.Max}
 }
 
 // Interop translates the fulfillment service into a PRIMITIVE cross-module
@@ -244,6 +263,7 @@ func (i *Interop) ListOptionsJSON(ctx context.Context, request json.RawMessage) 
 			ShippingProfileID: quoted[idx].Option.ShippingProfileID,
 			IsReturn:          quoted[idx].Option.IsReturn,
 			AdminOnly:         quoted[idx].Option.AdminOnly,
+			DeliveryDays:      toInteropDeliveryDays(quoted[idx].Option.DeliveryDays),
 		})
 	}
 

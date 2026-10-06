@@ -28,7 +28,7 @@ var notPersonalColumns = map[string][]string{
 	"shipping_options": {
 		"id", "name", "region_id", "shipping_profile_id", "provider_id", "price_type", "amount",
 		"currency_code", "is_return", "admin_only", "data", "metadata", "created_at", "updated_at",
-		"deleted_at",
+		"deleted_at", "delivery_min_days", "delivery_max_days",
 	},
 	"shipping_option_rules": {
 		"id", "shipping_option_id", "attribute", "operator", "rule_values", "created_at",

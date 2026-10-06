@@ -1080,6 +1080,16 @@ type shippingOptionDTO struct {
 	Name         string `json:"name"`
 	Amount       int64  `json:"amount"`
 	CurrencyCode string `json:"currency_code"`
+	// DeliveryDays is how many business days the delivery takes, absent on an
+	// option that says none (ADR 0421).
+	DeliveryDays *deliveryDaysDTO `json:"delivery_days,omitempty"`
+}
+
+// deliveryDaysDTO is an option's business days, the least and the most: the
+// carrier's working days, which gobit turns into no date (ADR 0421).
+type deliveryDaysDTO struct {
+	Min int32 `json:"min"`
+	Max int32 `json:"max"`
 }
 
 // listShippingOptions lists the shipping options the cart can take

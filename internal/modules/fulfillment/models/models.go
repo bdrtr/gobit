@@ -209,6 +209,20 @@ type ShippingProfile struct {
 	DeletedAt *time.Time
 }
 
+// MaxDeliveryDays is the most business days an option may say its delivery
+// takes: a year of them, past which the figure is a typing mistake rather
+// than a carrier's service (ADR 0421).
+const MaxDeliveryDays = 365
+
+// DeliveryDays is how many business days a shipping option's delivery takes:
+// the carrier's working days, at least Min and at most Max, 0 <= Min <= Max <=
+// [MaxDeliveryDays] (ADR 0421). gobit turns no day count into a date: it holds
+// no shop time zone or calendar (ADR 0399), so the storefront renders them.
+type DeliveryDays struct {
+	Min int32
+	Max int32
+}
+
 // ShippingOption is a shipping option offered to the customer.
 type ShippingOption struct {
 	// ID is the identifier prefixed with "sopt_".
@@ -239,6 +253,9 @@ type ShippingOption struct {
 	// AdminOnly says the option appears only on the admin surface (e.g. "hand
 	// delivery"). It does NOT REACH the storefront surface.
 	AdminOnly bool
+	// DeliveryDays is how many business days the option's delivery takes, nil
+	// when the option says nothing (ADR 0421).
+	DeliveryDays *DeliveryDays
 	// Data is configuration belonging to the provider and is passed to the
 	// Quote call as is. It does NOT REACH the storefront surface: it is the
 	// provider's internal data.
