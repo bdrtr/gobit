@@ -366,11 +366,11 @@ past and is not corrected retroactively.
   **The moderation queue is the exception to the sentence above, and to the
   paragraph's whole shape** ([ADR 0076](adr/0076-the-panels-migration-begins-with-the-review-screen.md)).
   It writes — approving and rejecting a review — and it writes through NO panel
-  form and no module admin surface: it is a client of `/admin/v1`, which is what
-  [ADR 0030](adr/0030-the-panel-becomes-an-admin-api-client.md) decided every
-  screen becomes. It is the first, the others are still rendered on the server,
-  and the order they move in is not decided. Until they do, the panel
-  carries two shapes and this entry describes both.
+  form and no module admin surface: it is a client of `/admin/v1`, the one
+  screen ADR 0030's migration moved before
+  [ADR 0431](adr/0431-the-panel-is-rendered-by-the-server.md) kept every
+  other screen on the server. The panel carries both shapes, and this entry
+  describes both.
 
   A draft product and its variants are created in the panel since
   [ADR 0307](adr/0307-the-panel-creates-a-product-and-its-variants.md), and a
@@ -1010,8 +1010,8 @@ past and is not corrected retroactively.
   code may come FROM, not what it may do once it is there.
 
 - **A registered screen gets the frame and a script, and nothing else.** There
-  is no way to add a column or a section to an existing screen; ADR 0030's
-  refusal of server-renderer extension points is why there are no template
+  is no way to add a column or a section to an existing screen; the refusal of
+  server-renderer extension points (ADR 0155) is why there are no template
   slots, and a plugin's view of a customer or an order is a screen of its own
   ([ADR 0416](adr/0416-a-plugin-adds-a-screen-not-a-section.md)). Since [ADR 0157](adr/0157-the-panels-address-belongs-to-the-panel.md) a
   plugin cannot serve a page of its own at the panel's address either — the

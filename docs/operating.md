@@ -350,7 +350,7 @@ README's phase-status table.
   a binary installed with `go install …/cmd/server@v0.9.0`
   ([ADR 0182](adr/0182-an-installed-binary-starts-a-project.md)). Around that
   turn, 164 decisions: the sales channel moved into the catalog path, the admin
-  panel became a client of `/admin/v1` and gained plugin screens, privileges
+  panel moved its review screen to `/admin/v1` and gained plugin screens, privileges
   and a second factor, events leave through an outbox, the gap inventory closed
   on 2026-09-08, and the commerce surface grew — store credit, exchanges,
   replacements, partial cancellation, carrier tracking, scheduled publication

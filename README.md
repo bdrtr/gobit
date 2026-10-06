@@ -198,10 +198,10 @@ assembles the installation through the published facade (ADR 0025). The fork
 model makes projects diverge and turns upgrading into a nightmare; that was the
 brief's first sentence and it held.
 
-**The panel becomes a client of the API — half built.** ADR 0030 decided the
-panel becomes a single-page client of `/admin/v1`, ADR 0076 moved the first
-screen there, and five screens are still rendered on the server. It stands open
-in the defect ledger (D34), and that is why this line exists: a decided future
+**The panel renders on the server.** ADR 0030 decided the panel would become a
+single-page client of `/admin/v1`; ADR 0076 moved the review screen there, and
+every screen after it was built as a server form through a module's admin
+surface. ADR 0431 records what the tree does and closes D34: a decided future
 is not written as a present fact.
 
 **Measure, do not guess.** The brief's list of common mistakes had *offset
@@ -252,7 +252,7 @@ on a list; it is that.
 
 | Document | What it answers |
 |---|---|
-| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 425 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
+| [`docs/adr/README.md`](./docs/adr/README.md) | The INDEX of the decisions: 426 records, each with its decision in one sentence. In case of conflict, **the ADR wins** |
 | [`docs/mimari.md`](./docs/mimari.md) | The architecture narrative: layers, the life cycle of a request and of a module, data, sagas, the core packages |
 | [`docs/gaps.md`](./docs/gaps.md) | The defect ledger: every fault this repository found in itself, one sentence and the ADR that closed it |
 | [`docs/known-limits.md`](./docs/known-limits.md) | The known limits: eighty-three items in seven groups — identity and authorization, sales channel scope, the category tree, a product's history, tax, installation and operation, the limit of the invariants |

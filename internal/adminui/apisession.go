@@ -24,7 +24,8 @@ const authorizationHeader = "Authorization"
 //
 // # What it is for
 //
-// ADR 0030 decided the panel becomes a client of the admin API. The API
+// The review screen is a client of the admin API (ADR 0076), and so is a
+// plugin's screen (ADR 0155). The API
 // authenticates from an `Authorization` header ([corehttp.RequireAdmin]) and a
 // browser cannot send one from a page it merely loaded — the token is HttpOnly
 // and never enters JavaScript (ADR 0011, unchanged). So the credential is moved
@@ -48,7 +49,7 @@ const authorizationHeader = "Authorization"
 //     deliberately, since the attacker is the one who omits it. Those clients
 //     were never CSRF-able to begin with: nothing makes a browser attach a
 //     bearer token to a cross-site request.
-//   - Applying it to NONE would be the hole ADR 0030 opens and does not close.
+//   - Applying it to NONE would be the hole ADR 0076's cookie opens and does not close.
 //     Once the cookie reaches `/admin/v1`, a page on a compromised subdomain can
 //     make the browser POST there with the session attached — the case
 //     `SameSite=Strict` does not cover, because it treats "site" at the

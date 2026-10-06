@@ -1,17 +1,13 @@
 // Package adminui is gobit's admin panel: server-rendered HTML.
 //
-// # A DECIDED FUTURE that is not this package
+// # A screen is rendered here (ADR 0431)
 //
-// Read this before adding a screen. ADR 0030 decided on 2026-09-06 that the
-// panel becomes a single-page application served as static assets, where "every
-// read and every write goes over the same admin API an external client would
-// use". That decision stands and it is NOT BUILT: what follows describes today's
-// package, server-rendered templates reading the Query layer in process.
-//
-// So a new section built the way the existing ones are built is more of the
-// thing that was decided away — which is a reason to weigh it, not a refusal.
-// ADR 0031 already writes the same fact in the future tense; a gate's godoc had
-// written it in the present, and D34 records what that cost.
+// Read this before adding a screen. The panel's screens are rendered by the
+// server and reach the modules through their admin surfaces, and a new screen
+// is built that way. ADR 0030 had decided on 2026-09-06 that the panel would
+// become a single-page application over the admin API; it was built for the
+// review screen alone (ADR 0076), and ADR 0431 superseded it. A decided future
+// written as a present fact is what D34 records the cost of.
 //
 // # Neither core nor module — a FOURTH tree
 //
@@ -36,7 +32,7 @@
 // example of the same pattern.
 //
 // The review screen takes its data from `/admin/v1` instead, in the browser,
-// which is the shape ADR 0030 decided and ADR 0076 started. It knows no module
+// the one screen ADR 0076 moved there and ADR 0431 kept. It knows no module
 // either — it reads an API — so the sentence above it stays true and the
 // mechanism under it does not.
 //

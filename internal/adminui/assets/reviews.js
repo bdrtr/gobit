@@ -1,5 +1,5 @@
-// reviews.js is the panel's review screen, and the first client of the admin
-// API the panel is becoming (ADR 0030).
+// reviews.js is the panel's review screen, its one screen that is a client of
+// the admin API (ADR 0076, ADR 0431).
 //
 // It is written without a framework and without a build step for the reason the
 // SMTP plugin writes its own MIME and the error reporters write their own

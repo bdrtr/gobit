@@ -30,8 +30,8 @@ const (
 	LoginPath = URLPrefix + "/login"
 	// LogoutPath ends the session.
 	LogoutPath = URLPrefix + "/logout"
-	// ReviewsPath is the moderation queue, and the panel's FIRST screen served
-	// as a client of the admin API rather than rendered here (ADR 0030).
+	// ReviewsPath is the moderation queue, the panel's one screen served as a
+	// client of the admin API rather than rendered here (ADR 0076, ADR 0431).
 	ReviewsPath = URLPrefix + "/reviews"
 	// ReviewsScriptPath serves that screen's client.
 	//

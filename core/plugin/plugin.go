@@ -483,10 +483,10 @@ type AdminPage struct {
 	// named — a URL would have forced the policy open for every installation,
 	// including the ones that installed no plugin.
 	//
-	// The screen is a client of /admin/v1 (ADR 0030): the panel renders a shell
+	// The screen is a client of /admin/v1 (ADR 0155): the panel renders a shell
 	// carrying the API prefix, and this script fills it with the operator's own
-	// session. There is no template slot and a plugin never ships one, which is
-	// what keeps ADR 0030's rejected alternative rejected.
+	// session. There is no template slot and a plugin never ships one, so a
+	// plugin reaches no server renderer (ADR 0155, ADR 0416).
 	Script []byte
 }
 

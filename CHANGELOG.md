@@ -1762,6 +1762,13 @@ design. It is fixed with `1.0.0`.
 
 ### Decisions
 
+- **The panel is rendered by the server** (ADR 0431, D34). **For operators
+  and contributors:** the panel's screens are rendered by the server and
+  write through each module's admin surface, and a new screen is built that
+  way; the review screen stays a browser client of `/admin/v1`. ADR 0030's
+  single-page panel is superseded. The cookie that reaches `/admin/v1` and its
+  same-origin check stay, for the review screen and a plugin's screens.
+
 - **Selling ahead of stock is a backordered line** (ADR 0425). **For
   operators:** a pre-order is a variant with `allow_backorder` and an expected
   supplier receipt; the storefront shows `restock_expected_at` and the

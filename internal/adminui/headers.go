@@ -6,9 +6,9 @@ import "net/http"
 //
 // # Why the panel needs a policy of its own
 //
-// The panel renders HTML inside an administrator's session, and since ADR 0030
-// its newer screens are CLIENTS of /admin/v1: a shell rendered on the server, a
-// script that fills it. That shape is what makes a policy load-bearing rather
+// The panel renders HTML inside an administrator's session, and its review
+// screen (ADR 0076) and a plugin's screens (ADR 0155) are CLIENTS of /admin/v1:
+// a shell rendered on the server, a script that fills it. That shape is what makes a policy load-bearing rather
 // than decorative — a script the panel serves has the operator's session, so the
 // question "which scripts may run here" is the question "who may act as the
 // administrator".

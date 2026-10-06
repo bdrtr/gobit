@@ -99,7 +99,7 @@ func TestTheCookiePathCoversBothAdminTrees(t *testing.T) {
 		CookiePath, URLPrefix)
 	assert.True(t, strings.HasPrefix(corehttp.DefaultAdminPrefix, CookiePath),
 		"%q does not cover the admin API %q, so the panel's script authenticates on no "+
-			"call and ADR 0030's client cannot work", CookiePath, corehttp.DefaultAdminPrefix)
+			"call and the review screen cannot work", CookiePath, corehttp.DefaultAdminPrefix)
 
 	// And it covers NO MORE than it has to. The store surface must never see
 	// this cookie: it is a credential for a different audience and every

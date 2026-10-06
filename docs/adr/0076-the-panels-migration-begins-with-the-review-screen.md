@@ -3,7 +3,7 @@
 **Summary:** The panel's first screen served from `/admin/v1` is the moderation
 queue, and the cookie that reaches it is guarded by an origin check.
 
-- **Status:** Accepted
+- **Status:** Accepted; amended by [0431](0431-the-panel-is-rendered-by-the-server.md), whose migration stops at this screen
 - **Date:** 2026-09-09
 - **Amends:** [ADR 0011](0011-yonetim-paneli-dorduncu-agac.md) decision 3, as
   [ADR 0030](0030-the-panel-becomes-an-admin-api-client.md) said it would.
